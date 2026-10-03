@@ -179,7 +179,8 @@ fn view_keys_rotate_and_flip_and_the_header_resets_them() {
             offset(c.center(), 60.0, 40.0),
         ],
     );
-    h.snapshot("canvas_rotated_flipped");
+    // 回転した頁のテクスチャの補間は、GPU のドライバの層で数画素ゆれる（同じ木で 0〜13 画素）。それ以外の差は落とす
+    h.snapshot_options("canvas_rotated_flipped", &egui_kittest::SnapshotOptions::new().failed_pixel_count_threshold(32));
     use egui_kittest::kittest::Queryable;
     h.get_by_label("-15°").click();
     h.run();
