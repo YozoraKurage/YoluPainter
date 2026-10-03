@@ -1,15 +1,10 @@
 [package]
-name = "yolu-bridge"
+name = "yolu-link-demo"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
+yolu-core.workspace = true
 yolu-protocol.workspace = true
 interprocess = "2.4"   # 0BSD OR Apache-2.0
-
-[build-dependencies]
-csbindgen = "1.9"      # MIT（C# の宣言を作るだけで、DLL には入らない）
