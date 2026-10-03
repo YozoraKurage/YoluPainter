@@ -1,0 +1,6 @@
+//! 画面の部品（配色・書体・アイコン・部品・メニュー）。
+pub mod fonts;
+pub mod icons;
+pub mod menu;
+pub mod theme;
+pub mod widgets;

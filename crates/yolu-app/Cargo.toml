@@ -4,4 +4,24 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[lib]
+name = "yolu_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yolupainter"
+path = "src/main.rs"
+
 [dependencies]
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "accesskit"] }
+egui = "0.36"
+egui_dock = "0.21"
+yolu-core.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }

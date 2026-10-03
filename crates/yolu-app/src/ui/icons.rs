@@ -1,0 +1,169 @@
+//! アイコン（Unity 版の Editor/UI/Icons から写した白の 48 px の PNG。Fluent UI System Icons と Phosphor、どちらも MIT。
+//! 出どころは assets/icons/THIRD-PARTY-NOTICES.md）。egui-wgpu は mipmap を作らないので、読むときに 16・24・32 px に縮めた版も
+//! 作り、描く大きさ（物理の画素）に近いものを使う（48 px を 15 px に直に縮めると線がちらつく）。
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use egui::{Color32, ColorImage, Painter, Rect, TextureHandle, TextureOptions};
+
+macro_rules! icon_files {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/icons/", $name, ".png")) as &[u8])),*]
+    };
+}
+
+const FILES: &[(&str, &[u8])] = icon_files!(
+    "add",
+    "delete",
+    "expand_less",
+    "expand_more",
+    "chevron_right",
+    "arrow_drop_down",
+    "check",
+    "restart_alt",
+    "visibility",
+    "visibility_off",
+    "swap_horiz",
+    "color_square",
+    "target",
+    "stylus",
+    "opacity",
+    "paint_brush",
+    "shapes",
+    "square",
+    "layers",
+    "library",
+    "palette",
+    "tune",
+    "view_in_ar",
+    "flip",
+    "rotate_90_degrees_cw",
+    "rotate_90_degrees_ccw",
+    "warning",
+    "info",
+    "close",
+    "tools/brush",
+    "tools/brush_selected",
+    "tools/eraser",
+    "tools/eraser_selected",
+);
+
+const SIZES: [u32; 4] = [16, 24, 32, 48];
+
+pub struct Icons {
+    map: HashMap<&'static str, Vec<(u32, TextureHandle)>>,
+}
+
+impl Icons {
+    pub fn load(ctx: &egui::Context) -> Icons {
+        let mut map = HashMap::new();
+        for (name, bytes) in FILES {
+            let Ok(decoded) = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+            else {
+                continue;
+            };
+            let mut rgba = decoded.to_rgba8();
+            // 縮めるときに透明の画素の色がにじまないよう、乗算済みにしてから縮める
+            for p in rgba.pixels_mut() {
+                let a = p[3] as u32;
+                for c in 0..3 {
+                    p[c] = ((p[c] as u32 * a + 127) / 255) as u8;
+                }
+            }
+            let mut set = Vec::new();
+            for size in SIZES {
+                let scaled = if rgba.width() == size {
+                    rgba.clone()
+                } else {
+                    image::imageops::resize(
+                        &rgba,
+                        size,
+                        size,
+                        image::imageops::FilterType::Triangle,
+                    )
+                };
+                let image = ColorImage::from_rgba_premultiplied(
+                    [size as usize, size as usize],
+                    scaled.as_raw(),
+                );
+                let handle =
+                    ctx.load_texture(format!("icon:{name}@{size}"), image, TextureOptions::LINEAR);
+                set.push((size, handle));
+            }
+            map.insert(*name, set);
+        }
+        Icons { map }
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.map.contains_key(name)
+    }
+
+    /// rect の中央に size（論理の点）の大きさで、色を付けて描く。無いアイコンは名前の頭文字。
+    pub fn paint(&self, painter: &Painter, rect: Rect, name: &str, color: Color32, size: f32) {
+        let at = Rect::from_center_size(rect.center(), egui::vec2(size, size));
+        match self.map.get(name) {
+            Some(set) => {
+                let physical = size * painter.ctx().pixels_per_point();
+                let texture = set
+                    .iter()
+                    .find(|(s, _)| *s as f32 >= physical - 0.5)
+                    .unwrap_or_else(|| set.last().expect("icon sizes"))
+                    .1
+                    .id();
+                painter.image(
+                    texture,
+                    at,
+                    Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    color,
+                );
+            }
+            None => {
+                let letter: String = name
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().collect())
+                    .unwrap_or_else(|| "?".into());
+                painter.text(
+                    at.center(),
+                    egui::Align2::CENTER_CENTER,
+                    letter,
+                    egui::FontId::proportional(size * 0.7),
+                    color,
+                );
+            }
+        }
+    }
+}
+
+/// 文脈にアイコンを置く（部品は `get` で取り出す。毎回の引数で渡さないため）。
+pub fn install(ctx: &egui::Context) {
+    let icons = Arc::new(Icons::load(ctx));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("yolu.icons"), icons));
+}
+
+pub fn get(ctx: &egui::Context) -> Option<Arc<Icons>> {
+    ctx.data(|d| d.get_temp::<Arc<Icons>>(egui::Id::new("yolu.icons")))
+}
+
+/// アイコンを描く（入っていなければ頭文字）。
+pub fn paint(painter: &Painter, rect: Rect, name: &str, color: Color32, size: f32) {
+    match get(painter.ctx()) {
+        Some(icons) => icons.paint(painter, rect, name, color, size),
+        None => {
+            let letter: String = name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().collect())
+                .unwrap_or_else(|| "?".into());
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                letter,
+                egui::FontId::proportional(size * 0.7),
+                color,
+            );
+        }
+    }
+}

@@ -1,0 +1,14 @@
+# egui_kittest のスナップショットの決まり（cargo test は crates/yolu-app で走るので、出力はその tests/snapshots）。
+# 正解の PNG はコンテナの llvmpipe（Mesa のソフトの描画、wgpu の GL）で撮ったもの。Windows・macOS の実の GPU では
+# 縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
+output_path = "tests/snapshots"
+threshold = 0.6
+max_failed_pixels = 0
+
+[windows]
+threshold = 2.0
+max_failed_pixels = 4000
+
+[mac]
+threshold = 2.0
+max_failed_pixels = 4000
