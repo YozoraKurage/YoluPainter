@@ -37,3 +37,5 @@ python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --verify
 ```
 
 検証の出力は `target/io-fixtures/comparison/`。既存の正解データは変更しない。C#出力が保存済みのPNGから変わった場合も検証を失敗させる。小さい人工画像27件の検証であり、すべての画像サイズ・圧縮ランタイムでのバイト一致を保証するものではない。
+
+PSDの入力・互換判定・書き戻し正解は [psd/README.md](psd/README.md) を参照。

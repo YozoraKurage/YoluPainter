@@ -1,0 +1,6 @@
+Unity コミット: 4ba8d1fe30d4c1729f4e3bd2036a0beb0d9509ca
+Core・PSD 試験の連結 SHA-256: ed5de5ad723afaa4282ccd7d7cd01c0cee3ce73eb4031ce6421e63c5a0992066
+C# 試験: 173 成功
+固有の入力・予算: 2337 件
+編集可能: 481 件
+書き戻しの正解: 481 件

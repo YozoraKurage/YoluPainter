@@ -1,0 +1,271 @@
+//! Unity 版と同じ境界を持つ PSD v1 RGB8 と、PSB の原本保持。
+//! DTO の並びは上から下、画素も上の行から。原本の編集には必ず `write_edited` を使う。
+mod binary;
+mod bridge;
+mod composite;
+mod descriptor;
+mod read;
+mod write;
+use crate::{check, Result};
+pub use read::{read, read_stream};
+pub use write::{write, write_edited};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompatibilityMode {
+    EditableRaster,
+    PreserveOnly,
+    Rejected,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub code: String,
+    pub message: String,
+    pub offset: usize,
+    pub length: usize,
+}
+impl Diagnostic {
+    pub fn is_informational(&self) -> bool {
+        matches!(
+            self.code.as_str(),
+            "NotCarriedIntoExport" | "CompositeDiffers"
+        )
+    }
+}
+#[derive(Clone, Debug)]
+pub struct ReadResult {
+    mode: CompatibilityMode,
+    document: Option<Document>,
+    original: Option<Vec<u8>>,
+    diagnostics: Vec<Diagnostic>,
+}
+impl ReadResult {
+    pub fn mode(&self) -> CompatibilityMode {
+        self.mode
+    }
+    pub fn document(&self) -> Option<&Document> {
+        self.document.as_ref()
+    }
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+    pub fn original_bytes(&self) -> Option<&[u8]> {
+        self.original.as_deref()
+    }
+    pub fn copy_original_bytes(&self) -> Option<Vec<u8>> {
+        self.original.clone()
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Limits {
+    pub max_source_bytes: usize,
+    pub max_output_bytes: usize,
+    pub max_dimension: u32,
+    pub max_canvas_pixels: u64,
+    pub max_layers: usize,
+    pub max_decoded_bytes: u64,
+    pub max_metadata_bytes: usize,
+    pub max_name_code_units: usize,
+    pub max_diagnostics: usize,
+    pub max_group_depth: usize,
+}
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_source_bytes: 128 * 1024 * 1024,
+            max_output_bytes: 128 * 1024 * 1024,
+            max_dimension: 8192,
+            max_canvas_pixels: 4096 * 4096,
+            max_layers: 256,
+            max_decoded_bytes: 256 * 1024 * 1024,
+            max_metadata_bytes: 4 * 1024 * 1024,
+            max_name_code_units: 4096,
+            max_diagnostics: 128,
+            max_group_depth: 32,
+        }
+    }
+}
+impl Limits {
+    fn validate(&self) -> Result<()> {
+        check(
+            self.max_source_bytes >= 26
+                && self.max_source_bytes <= i32::MAX as usize
+                && self.max_output_bytes >= 26
+                && self.max_output_bytes <= i32::MAX as usize
+                && (1..=30000).contains(&self.max_dimension)
+                && self.max_canvas_pixels > 0
+                && (1..=32767).contains(&self.max_layers)
+                && self.max_decoded_bytes >= 4
+                && self.max_name_code_units > 0
+                && self.max_diagnostics > 0
+                && self.max_group_depth <= 1000,
+            "PSD の予算設定が不正です",
+        )
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Document {
+    pub width: u32,
+    pub height: u32,
+    pub layers: Vec<Layer>,
+    pub composite_rgba: Option<Vec<u8>>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Layer {
+    pub id: i32,
+    pub name: String,
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+    pub opacity: u8,
+    pub visible: bool,
+    pub blend_mode: BlendMode,
+    pub clipping: bool,
+    pub mask: Option<Mask>,
+    pub pixels_rgba: Vec<u8>,
+    pub kind: LayerKind,
+    /// PSD の lspf と同じビット（0:透明、1:画素、2:位置、31:全体）。
+    pub locks: u32,
+}
+impl Default for Layer {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: "Layer".into(),
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 0,
+            opacity: 255,
+            visible: true,
+            blend_mode: BlendMode::Normal,
+            clipping: false,
+            mask: None,
+            pixels_rgba: Vec::new(),
+            kind: LayerKind::Raster,
+            locks: 0,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LayerKind {
+    Raster,
+    Group {
+        children: Vec<Layer>,
+        divider_id: i32,
+    },
+    Adjustment(Adjustment),
+    SolidColor([u8; 3]),
+}
+/// PSD の刻みの整数で持つ。刻みの間の値へ勝手に丸めない。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Adjustment {
+    Invert,
+    Levels {
+        input_black: u16,
+        input_white: u16,
+        output_black: u16,
+        output_white: u16,
+        gamma: u16,
+    },
+    HueSaturation {
+        hue: i16,
+        saturation: i16,
+        lightness: i16,
+    },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mask {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+    pub default_color: u8,
+    pub enabled: bool,
+    pub density: u8,
+    pub pixels: Vec<u8>,
+}
+impl Mask {
+    fn at(&self, x: i64, y: i64) -> u8 {
+        let x = x - i64::from(self.left);
+        let y = y - i64::from(self.top);
+        if x < 0 || y < 0 || x >= i64::from(self.width) || y >= i64::from(self.height) {
+            self.default_color
+        } else {
+            self.pixels[(y * i64::from(self.width) + x) as usize]
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    LinearDodge,
+    LinearBurn,
+    HardLight,
+    SoftLight,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Difference,
+    Exclusion,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+    DarkerColor,
+    LighterColor,
+    PassThrough,
+}
+impl BlendMode {
+    pub const ALL: [Self; 27] = [
+        Self::Normal,
+        Self::Multiply,
+        Self::Screen,
+        Self::Overlay,
+        Self::Darken,
+        Self::Lighten,
+        Self::ColorDodge,
+        Self::ColorBurn,
+        Self::LinearDodge,
+        Self::LinearBurn,
+        Self::HardLight,
+        Self::SoftLight,
+        Self::VividLight,
+        Self::LinearLight,
+        Self::PinLight,
+        Self::HardMix,
+        Self::Difference,
+        Self::Exclusion,
+        Self::Subtract,
+        Self::Divide,
+        Self::Hue,
+        Self::Saturation,
+        Self::Color,
+        Self::Luminosity,
+        Self::DarkerColor,
+        Self::LighterColor,
+        Self::PassThrough,
+    ];
+    pub fn key(self) -> [u8; 4] {
+        [
+            *b"norm", *b"mul ", *b"scrn", *b"over", *b"dark", *b"lite", *b"div ", *b"idiv",
+            *b"lddg", *b"lbrn", *b"hLit", *b"sLit", *b"vLit", *b"lLit", *b"pLit", *b"hMix",
+            *b"diff", *b"smud", *b"fsub", *b"fdiv", *b"hue ", *b"sat ", *b"colr", *b"lum ",
+            *b"dkCl", *b"lgCl", *b"pass",
+        ][self as usize]
+    }
+    pub fn from_key(key: [u8; 4]) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.key() == key)
+    }
+}

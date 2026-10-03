@@ -55,11 +55,55 @@ cargo run -p yolu-io --example composite_png -- sample.ylp output.png
 
 `composite_png(&core)` は下原点のRGBAをPNGの上からの行へ並べ、Unity版 `RgbaPng` と同じ適応フィルター・チャンク配置で出力する。flate2のzlibバックエンド（libz-sys）を使う。合成26モードと圧縮用パターンの人工データ計27件でC#出力とPNG全バイトが一致することを検証している。圧縮結果はdeflate実装の版にも依存し、すべてのランタイム・画像での一致を保証するものではない。
 
+## PSD・PSB
+
+`psd` はUnity版と同じRGB8 PSDコーデック。`psd::Document`・`Layer`・`Mask`・`Adjustment` はcoreの文書に依存しないデータ型で、レイヤーとRGBAの行は上から下。名前、正の一意なPSDレイヤーID、キャンバス外の画素、透明画素のRGBを保持する。
+
+```rust,no_run
+use yolu_io::psd::{self, CompatibilityMode, Limits};
+let limits = Limits::default();
+let origin = psd::read(&std::fs::read("sample.psd")?, &limits)?;
+for note in origin.diagnostics() {
+    eprintln!("{}: {}", note.code, note.message);
+}
+if origin.mode() == CompatibilityMode::EditableRaster {
+    let mut document = origin.to_core()?; // M1以外の情報があれば理由を添えて拒否。
+    document.add_layer("新しい層")?;
+    let edited = psd::Document::from_core(&document)?;
+    let bytes = psd::write_edited(&origin, &edited, &limits)?;
+    // bytesを新規出力または外部改変検知・一時ファイル置換を備えた保存処理へ渡す。
+}
+# Ok::<(), yolu_io::Error>(())
+```
+
+| 要素 | 読み取り・書き出し |
+|---|---|
+| PSD v1 RGB8、raw / PackBits RLE | 読める。書き出しはraw。統合画像は白背景のRGB＋元の透明度を格納 |
+| ラスター、26合成モード、クリッピング、表示・不透明度、Unicode名・ID | 読み書き。ID欠落・不正・重複を名前で補修しない |
+| ラスターマスク | 矩形・既定値0/255・有効/無効・濃度・画素を保持 |
+| グループ | 入れ子、通過・分離、マスク、グループと区切りのIDを保持 |
+| 調整 | 反転、RGB一括のレベル補正、マスターの色相/彩度。PSDの整数刻みで保持。チャンネル別補正・Colorize等は保護 |
+| 単色塗りつぶし `SoCo` | RGBの色を保持。8bit未満の端数は丸めて通知。画素キャッシュを使わないことも通知 |
+| レイヤーロック `lspf` | 透明・画素・位置・全体を保持。対応のないビットは通知 |
+| 描画に関係しない既知メタデータ、sRGB IEC61966-2.1、1:1ピクセル比 | 編集可能として受理し、書き出しに含まれない情報を `NotCarriedIntoExport` で通知 |
+| PSB、RGB8以外、ZIP圧縮、未知タグ・調整、効果、テキスト、スマートオブジェクト、ベクターマスク | `PreserveOnly` と理由を返し、原本全体だけを保持。PSBの復号・新規生成はしない |
+| 構造破損・予算超過 | `Rejected`。原本保持上限内なら原本バイトは残る |
+
+`psd::read` / `read_stream` は `ReadResult` を返す。編集可能な場合にだけ `document()` が値を持つ。`original_bytes()` / `copy_original_bytes()` は元のファイル全体で、原本保持予算を超えたときだけ保持しない。未知情報を編集後のファイルへ部分的に継ぎ足す方式ではない。**取り込んだ原本の編集保存には `write_edited` を使う**。`PreserveOnly`・`Rejected` はそこで拒否する。`write` は新しく作ったPSDスナップショット用。
+
+原本コピーはバックアップ・保全のためで、外部で変更されたファイルを上書きする許可にはならない。PSD APIはファイルシステムを操作しない。保存先の外部改変検出・バックアップ・最後の一度の置換は呼び出し側の責務で、.ylp用の `SaveTarget` をPSDには使えない。
+
+`ReadResult::to_core` と `psd::Document::to_core/from_core` はM1のラスターColor、26合成モード、クリッピング、表示、不透明度を変換する。読み込み時にUndo履歴を残さず、PSDのIDはcoreの永続IDに埋め込んで再出力する。同名レイヤーもIDで区別する。M1が保持できないグループ・調整・塗りつぶし・マスク・ロック、キャンバス外の画素、非Color/無効Colorは変換を拒否する。`core_issues()` で拒否する項目を確認できる。coreからの出力矩形はタイルの範囲になり、不透明度は最も近い1/255へ丸める。原本の圧縮や矩形までバイト一致で戻すAPIではない。
+
+既定の `Limits` は原本・出力各128 MiB、寸法8192、キャンバス16,777,216画素、256レイヤー記録（区切りを含む）、復号256 MiB、メタデータ4 MiB、名前4096 UTF-16単位、診断128件、グループ32段。書き出しは確保前に構造・画素・出力長を検証する。全体をメモリで扱うため、ストリーミング型の大規模文書向けではなく、これらはプロセス全体の使用メモリの保証ではない。
+
+統合画像は参照合成と比較する。通常合成だけで大きく違えば編集を止め、合成モード・マスク・グループ・調整等があれば `CompositeDiffers` で見え方の差を知らせる。参照合成はYoluPainterの式であり、Photoshop/CSPの見え方の再現を保証しない。C#由来の人工入力2,337件で互換モードと原本保持、拒否以外の診断コードを照合し、481件で書き戻したPSDの全バイトが一致することを確認している。再生成・検証の条件は [PSDフィクスチャ](tests/fixtures/psd/README.md) を参照。
+
 ## リソースと未対応の中身
 
 画像はRGBA8のPNGを復号し、寸法と下の行からの画素ハッシュを検証する。スマートマテリアル・スマートマスク・マテリアル・ブラシは埋め込まれたファイル全体を保持する。内側のmanifest、正本、種別、チャンネル、画像、ブラシのschema・画像参照も検証する。
 
-M1以外の効果の実行、ブラシ設定の描画上の意味、PSD原本・合成PNG・メッシュマップ・画面設定の復号は未実装。これらは読み飛ばして破棄せず、原本のエントリとして残す。`notes()` を呼び出し側の画面に提示できる。画像リソース以外のPNGをすべて復号するAPIではない。
+M1以外の効果の実行、ブラシ設定の描画上の意味、.ylp内のPSD原本・合成PNG・メッシュマップ・画面設定の自動復号は未実装。PSD単体は下記のAPIで読み書きできる。これらは読み飛ばして破棄せず、原本のエントリとして残す。`notes()` を呼び出し側の画面に提示できる。画像リソース以外のPNGをすべて復号するAPIではない。
 
 形式8以降、正本22以降、未知の列挙値・アルゴリズム版は理由を添えて断る。ZIP64・暗号化・分割ZIP、RGBA8以外のリソースPNGは扱わない。正本とZIPの1エントリは512 MiB、ZIPの展開総量は768 MiB・1000エントリ、復号リソースも768 MiBまで。これらはデータ量の上限であり、プロセスの最大メモリ使用量の保証ではない。
 

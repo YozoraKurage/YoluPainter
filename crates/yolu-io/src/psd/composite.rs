@@ -1,0 +1,242 @@
+//! PSD DTO 上の参照合成。画素の式のみ core と共有し、文書モデルには依存しない。
+use super::*;
+use yolu_core::{
+    blend::{blend, blend_rgb, clip_onto, fade},
+    Rgba8,
+};
+fn mode(m: BlendMode) -> yolu_core::BlendMode {
+    yolu_core::BlendMode::from_index(m as u8).unwrap()
+}
+fn byte(v: f64) -> u8 {
+    (v * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8
+}
+struct Entry<'a> {
+    layer: &'a Layer,
+    children: Vec<Entry<'a>>,
+    clips: Vec<Entry<'a>>,
+}
+fn entry(l: &Layer) -> Option<Entry<'_>> {
+    if !l.visible || l.opacity == 0 {
+        return None;
+    }
+    let children = match &l.kind {
+        LayerKind::Group { children, .. } => {
+            let p = plan(children);
+            if p.is_empty() {
+                return None;
+            }
+            p
+        }
+        _ => Vec::new(),
+    };
+    Some(Entry {
+        layer: l,
+        children,
+        clips: Vec::new(),
+    })
+}
+fn plan(layers: &[Layer]) -> Vec<Entry<'_>> {
+    let bottom: Vec<_> = layers.iter().rev().collect();
+    let mut p = Vec::new();
+    for (i, l) in bottom.iter().enumerate() {
+        if i > 0 && l.clipping {
+            continue;
+        }
+        let Some(mut e) = entry(l) else { continue };
+        if !matches!(l.kind, LayerKind::Adjustment(_)) {
+            for c in bottom.iter().skip(i + 1).take_while(|c| c.clipping) {
+                if let Some(c) = entry(c) {
+                    e.clips.push(c)
+                }
+            }
+        }
+        p.push(e)
+    }
+    p
+}
+fn amount(l: &Layer, x: i64, y: i64) -> f64 {
+    let opacity = f64::from(l.opacity) / 255.0;
+    match &l.mask {
+        Some(m) if m.enabled => {
+            opacity * (1.0 - f64::from(m.density) / 255.0 * (f64::from(255 - m.at(x, y)) / 255.0))
+        }
+        _ => opacity,
+    }
+}
+fn pixel(l: &Layer, x: i64, y: i64) -> Rgba8 {
+    if let LayerKind::SolidColor([r, g, b]) = l.kind {
+        return Rgba8::new(r, g, b, 255);
+    }
+    let x = x - i64::from(l.left);
+    let y = y - i64::from(l.top);
+    if x < 0 || y < 0 || x >= i64::from(l.width) || y >= i64::from(l.height) {
+        Rgba8::TRANSPARENT
+    } else {
+        Rgba8::from_slice(&l.pixels_rgba[(y * i64::from(l.width) + x) as usize * 4..])
+    }
+}
+fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
+    for e in p {
+        let l = e.layer;
+        let a = amount(l, x, y);
+        if let LayerKind::Adjustment(adj) = &l.kind {
+            below = adjust(adj, below, a, l.blend_mode);
+            continue;
+        }
+        let group = matches!(l.kind, LayerKind::Group { .. });
+        if group && l.blend_mode == BlendMode::PassThrough && e.clips.is_empty() {
+            below = fade(below, evaluate(&e.children, below, x, y), a);
+            continue;
+        }
+        let mut g = if group {
+            evaluate(&e.children, Rgba8::TRANSPARENT, x, y)
+        } else {
+            pixel(l, x, y)
+        };
+        for c in &e.clips {
+            let l = c.layer;
+            if let LayerKind::Adjustment(adj) = &l.kind {
+                g = adjust(adj, g, amount(l, x, y), l.blend_mode)
+            } else {
+                let px = if matches!(l.kind, LayerKind::Group { .. }) {
+                    evaluate(&c.children, Rgba8::TRANSPARENT, x, y)
+                } else {
+                    pixel(l, x, y)
+                };
+                g = clip_onto(g, px, amount(l, x, y), mode(l.blend_mode))
+            }
+        }
+        below = blend(below, g, a, mode(l.blend_mode))
+    }
+    below
+}
+pub(super) fn composite(d: &Document) -> Vec<u8> {
+    let p = plan(&d.layers);
+    let mut out = vec![0; d.width as usize * d.height as usize * 4];
+    for y in 0..d.height {
+        for x in 0..d.width {
+            let i = (y as usize * d.width as usize + x as usize) * 4;
+            out[i..i + 4].copy_from_slice(
+                &evaluate(&p, Rgba8::TRANSPARENT, i64::from(x), i64::from(y)).to_array(),
+            )
+        }
+    }
+    out
+}
+pub(super) fn matte(p: &mut [u8]) {
+    for c in p.as_chunks_mut::<4>().0 {
+        let a = f64::from(c[3]) / 255.0;
+        let white = 255.0 * (1.0 - a);
+        for v in &mut c[..3] {
+            *v = (f64::from(*v) * a + white + 0.5).floor().clamp(0.0, 255.0) as u8
+        }
+    }
+}
+fn adjust(a: &Adjustment, c: Rgba8, amount: f64, m: BlendMode) -> Rgba8 {
+    if amount <= 0.0 || c.a == 0 {
+        return c;
+    }
+    let rgb = match *a {
+        Adjustment::Invert => [255 - c.r, 255 - c.g, 255 - c.b],
+        Adjustment::Levels {
+            input_black,
+            input_white,
+            output_black,
+            output_white,
+            gamma,
+        } => [c.r, c.g, c.b].map(|v| {
+            let ib = f64::from(input_black) / 255.0;
+            let iw = f64::from(input_white) / 255.0;
+            let ob = f64::from(output_black) / 255.0;
+            let ow = f64::from(output_white) / 255.0;
+            let t = ((f64::from(v) / 255.0 - ib) / (iw - ib))
+                .clamp(0.0, 1.0)
+                .powf(1.0 / (f64::from(gamma) / 100.0));
+            byte(ob + t * (ow - ob))
+        }),
+        Adjustment::HueSaturation {
+            hue,
+            saturation,
+            lightness,
+        } => {
+            let r = f64::from(c.r) / 255.0;
+            let g = f64::from(c.g) / 255.0;
+            let b = f64::from(c.b) / 255.0;
+            let max = r.max(g.max(b));
+            let min = r.min(g.min(b));
+            let mut l = (max + min) / 2.0;
+            let d = max - min;
+            let mut h = 0.0;
+            let mut s = 0.0;
+            if d > 1e-12 {
+                s = if l > 0.5 {
+                    d / (2.0 - max - min)
+                } else {
+                    d / (max + min)
+                };
+                h = if max == r {
+                    (g - b) / d + if g < b { 6.0 } else { 0.0 }
+                } else if max == g {
+                    (b - r) / d + 2.0
+                } else {
+                    (r - g) / d + 4.0
+                };
+                h /= 6.0
+            }
+            h += f64::from(hue) / 360.0;
+            h -= h.floor();
+            s = (s * (1.0 + f64::from(saturation) / 100.0)).clamp(0.0, 1.0);
+            let light = f64::from(lightness) / 100.0;
+            l = if light >= 0.0 {
+                l + (1.0 - l) * light
+            } else {
+                l * (1.0 + light)
+            };
+            if s <= 0.0 {
+                [byte(l); 3]
+            } else {
+                let q = if l < 0.5 {
+                    l * (1.0 + s)
+                } else {
+                    l + s - l * s
+                };
+                let p = 2.0 * l - q;
+                [h + 1.0 / 3.0, h, h - 1.0 / 3.0].map(|mut t| {
+                    if t < 0.0 {
+                        t += 1.0
+                    }
+                    if t > 1.0 {
+                        t -= 1.0
+                    }
+                    byte(if t < 1.0 / 6.0 {
+                        p + (q - p) * 6.0 * t
+                    } else if t < 0.5 {
+                        q
+                    } else if t < 2.0 / 3.0 {
+                        p + (q - p) * (2.0 / 3.0 - t) * 6.0
+                    } else {
+                        p
+                    })
+                })
+            }
+        }
+    };
+    let dr = f64::from(c.r) / 255.0;
+    let dg = f64::from(c.g) / 255.0;
+    let db = f64::from(c.b) / 255.0;
+    let (r, g, b) = blend_rgb(
+        mode(m),
+        dr,
+        dg,
+        db,
+        f64::from(rgb[0]) / 255.0,
+        f64::from(rgb[1]) / 255.0,
+        f64::from(rgb[2]) / 255.0,
+    );
+    Rgba8::new(
+        byte(dr + (r - dr) * amount),
+        byte(dg + (g - dg) * amount),
+        byte(db + (b - db) * amount),
+        c.a,
+    )
+}
