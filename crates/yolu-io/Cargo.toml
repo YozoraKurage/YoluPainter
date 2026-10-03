@@ -5,3 +5,9 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+flate2 = "1"
+crc32fast = "1"
+sha2 = "0.10"
+serde = "1"
+serde_json = "1"
+png = "0.18"

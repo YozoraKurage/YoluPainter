@@ -1,0 +1,873 @@
+use crate::{
+    archive::{split_set, Files},
+    check, hash, is_hash, valid_id, Archive, Error, NativeDocument, NativeValue, Result, Selection,
+    MAX_ENTRY_BYTES, MAX_TOTAL_BYTES,
+};
+use serde::{
+    de::{self, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer,
+};
+use serde_json::{Map, Value};
+use std::{collections::HashSet, fmt, io::Cursor, sync::Arc};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WriterInfo {
+    pub app: String,
+    pub version: String,
+    pub unity: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FormatInfo {
+    pub format: i32,
+    pub saved_by: Option<WriterInfo>,
+    pub created_by: Option<WriterInfo>,
+}
+#[derive(Clone, Debug)]
+pub struct TextureSet {
+    pub id: String,
+    pub name: String,
+    pub material_slot: u16,
+    pub document: NativeDocument,
+    pub selection: Option<Selection>,
+}
+#[derive(Clone, Debug)]
+pub struct Resource {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub content: String,
+    pub entry: String,
+    pub metadata: Value,
+}
+/// 元エントリと移行後のエントリを持つ。未知のエントリ・JSONキーもそのまま保つ。
+#[derive(Clone, Debug)]
+pub struct Project {
+    original: Archive,
+    files: Files,
+    info: FormatInfo,
+    sets: Vec<TextureSet>,
+    current: String,
+    resources: Vec<Resource>,
+    notes: Vec<String>,
+    unknown: Vec<String>,
+}
+impl Project {
+    pub fn read(bytes: &[u8]) -> Result<Self> {
+        Self::from_archive(Archive::read(bytes)?)
+    }
+    pub fn info(&self) -> &FormatInfo {
+        &self.info
+    }
+    pub fn sets(&self) -> &[TextureSet] {
+        &self.sets
+    }
+    pub fn current_set(&self) -> &str {
+        &self.current
+    }
+    pub fn resources(&self) -> &[Resource] {
+        &self.resources
+    }
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+    pub fn unknown_entries(&self) -> &[String] {
+        &self.unknown
+    }
+    pub fn original_archive(&self) -> &Archive {
+        &self.original
+    }
+    pub fn migrated_entries(&self) -> &Files {
+        &self.files
+    }
+    /// 読んだ形式と全エントリ内容を保って再保存する。
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.original.to_bytes()
+    }
+    /// 明示的に形式6へ移行する。正本と未知のエントリの内容は変えない。
+    pub fn upgraded(&self, writer: WriterInfo) -> Result<Self> {
+        let mut files = self.files.clone();
+        let mut info = if let Some(b) = self.original.files.get("ylp.json") {
+            json(b, 65536)?
+        } else {
+            serde_json::json!({})
+        };
+        info["format"] = Value::from(6);
+        let w = writer_json(&writer);
+        if info.get("createdBy").is_none() {
+            if let Some(w) = self
+                .info
+                .created_by
+                .as_ref()
+                .or(self.info.saved_by.as_ref())
+            {
+                info["createdBy"] = writer_json(w);
+            } else {
+                info["createdBy"] = w.clone();
+            }
+        }
+        info["savedBy"] = w;
+        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
+        Self::from_archive(Archive::build(
+            files,
+            3,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    /// 既存セットの正本だけを置き換える。選択範囲・リソースを含めて再検証する。
+    pub fn with_document(&self, set_id: &str, doc: &NativeDocument) -> Result<Self> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = if self.info.format < 3 {
+            "document.utpaint".into()
+        } else {
+            format!("sets/{set_id}/document.utpaint")
+        };
+        let mut files = self.original.files.clone();
+        files.insert(name, Arc::from(doc.to_bytes()));
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    fn from_archive(original: Archive) -> Result<Self> {
+        let info = if let Some(b) = original.files.get("ylp.json") {
+            let root = json(b, 65536)?;
+            let format = number(&root, "format", 2, i32::MAX as i64)? as i32;
+            let saved = writer(&root["savedBy"])?;
+            let created = if root.get("createdBy").is_some_and(|v| !v.is_null()) {
+                Some(writer(&root["createdBy"])?)
+            } else {
+                None
+            };
+            check(
+                format <= 6,
+                format!(
+                    ".ylp形式{format}（{} {}で保存）は未対応です。対応上限は形式6です",
+                    saved.app, saved.version
+                ),
+            )?;
+            FormatInfo {
+                format,
+                saved_by: Some(saved),
+                created_by: created,
+            }
+        } else {
+            FormatInfo {
+                format: 1,
+                saved_by: None,
+                created_by: None,
+            }
+        };
+        let mut files = original.files.clone();
+        files.remove("ylp.json");
+        let mut notes = Vec::new();
+        if info.format < 3 {
+            check(
+                !files.contains_key("project.json")
+                    && !files.keys().any(|k| k.starts_with("sets/")),
+                "旧形式に移行先のセットが既にあります",
+            )?;
+            let doc = NativeDocument::read(
+                files
+                    .get("document.utpaint")
+                    .ok_or_else(|| Error("旧形式の正本がありません".into()))?,
+            )?;
+            let mut slot = 0;
+            if let Some(b) = files.get("view.json") {
+                match json(b, 65536).and_then(|j| {
+                    if j.get("materialSlot").is_none_or(Value::is_null) {
+                        Ok(0)
+                    } else {
+                        number(&j, "materialSlot", 0, 65535)
+                    }
+                }) {
+                    Ok(v) => slot = v,
+                    Err(e) => {
+                        notes.push(format!("view.jsonのスロットを読めないため0を使います: {e}"))
+                    }
+                }
+            }
+            let id = doc.id();
+            let names: Vec<_> = files
+                .keys()
+                .filter(|n| moves_into_set(n))
+                .cloned()
+                .collect();
+            for n in names {
+                let b = files.remove(&n).unwrap();
+                files.insert(format!("sets/{id}/{n}"), b);
+            }
+            let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
+            files.insert("project.json".into(), Arc::from(project.into_bytes()));
+            notes.push(format!(
+                "形式{}を形式6の並びへメモリ上で移行しました",
+                info.format
+            ));
+        }
+        let root = json(required(&files, "project.json")?, 65536)?;
+        let list = array(&root, "sets", 1, 64)?;
+        let current = id_text(&root, "current")?.to_string();
+        let mut ids = HashSet::new();
+        let mut names = HashSet::new();
+        let mut slots = HashSet::new();
+        let mut sets = Vec::new();
+        for s in list {
+            let id = id_text(s, "id")?.to_string();
+            let name = label(s, "name")?.to_string();
+            let slot = number(s, "materialSlot", 0, 65535)? as u16;
+            check(
+                ids.insert(id.clone()) && names.insert(name.to_uppercase()) && slots.insert(slot),
+                "セットのID・名前・スロットが重複しています",
+            )?;
+            let prefix = format!("sets/{id}/");
+            let document =
+                NativeDocument::read(required(&files, &format!("{prefix}document.utpaint"))?)?;
+            let selection = files
+                .get(&format!("{prefix}selection.bin"))
+                .map(|b| Selection::read(b, &document))
+                .transpose()?;
+            sets.push(TextureSet {
+                id,
+                name,
+                material_slot: slot,
+                document,
+                selection,
+            });
+        }
+        check(ids.contains(&current), "現在のセットが一覧にありません")?;
+        let mut budget = 0usize;
+        let resources = load_resources(&files, &mut budget, 0, &mut notes)?;
+        let resource_entries: HashSet<_> = resources.iter().map(|r| r.entry.as_str()).collect();
+        let mut unknown = Vec::new();
+        for n in files.keys() {
+            let known = if let Some((id, leaf)) = split_set(n) {
+                ids.contains(id) && moves_into_set(leaf)
+            } else if n.starts_with("resources/") {
+                resource_entries.contains(n.as_str())
+            } else {
+                [
+                    "project.json",
+                    "resources.json",
+                    "view.json",
+                    "brush.json",
+                    "thumbnail.png",
+                    "model.json",
+                ]
+                .contains(&n.as_str())
+            };
+            if !known {
+                unknown.push(n.clone());
+            }
+        }
+        for n in &unknown {
+            notes.push(format!("未対応のエントリを原本のまま保持します: {n}"));
+        }
+        notes.push("正本の全項目は保持されます。描画用coreへの変換は未実装です".into());
+        Ok(Self {
+            original,
+            files,
+            info,
+            sets,
+            current,
+            resources,
+            notes,
+            unknown,
+        })
+    }
+}
+fn moves_into_set(n: &str) -> bool {
+    ["document.utpaint", "selection.bin", "imported-original.psd"].contains(&n)
+        || n.starts_with("composite/")
+        || n.starts_with("meshmap-") && n.ends_with(".bin")
+}
+fn writer_json(w: &WriterInfo) -> Value {
+    serde_json::json!({"app":w.app,"version":w.version,"unity":w.unity})
+}
+fn writer(v: &Value) -> Result<WriterInfo> {
+    Ok(WriterInfo {
+        app: text(v, "app", 1, 256)?.into(),
+        version: text(v, "version", 1, 256)?.into(),
+        unity: text(v, "unity", 1, 256)?.into(),
+    })
+}
+fn required<'a>(f: &'a Files, n: &str) -> Result<&'a [u8]> {
+    f.get(n)
+        .map(|b| b.as_ref())
+        .ok_or_else(|| Error(format!("エントリがありません: {n}")))
+}
+fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
+    let s = v
+        .get(k)
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error(format!("{k} が文字列ではありません")))?;
+    check(
+        (min..=max).contains(&s.encode_utf16().count()),
+        format!("{k} の文字数が範囲外です"),
+    )?;
+    Ok(s)
+}
+fn label<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
+    let s = text(v, k, 1, 256)?;
+    check(
+        !s.trim().is_empty() && !s.chars().any(|c| c < ' ' || c == '\x7f'),
+        "名前が空または制御文字を含んでいます",
+    )?;
+    Ok(s)
+}
+fn number(v: &Value, k: &str, min: i64, max: i64) -> Result<i64> {
+    let n = v
+        .get(k)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| Error(format!("{k} が整数ではありません")))?;
+    check((min..=max).contains(&n), format!("{k} が範囲外です"))?;
+    Ok(n)
+}
+fn id_text<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
+    let s = text(v, k, 36, 36)?;
+    check(
+        valid_id(s),
+        format!("{k} は空でない小文字のGUIDである必要があります"),
+    )?;
+    Ok(s)
+}
+fn array<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a Vec<Value>> {
+    let a = v
+        .get(k)
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error(format!("{k} が配列ではありません")))?;
+    check(
+        (min..=max).contains(&a.len()),
+        format!("{k} の個数が範囲外です"),
+    )?;
+    Ok(a)
+}
+fn load_resources(
+    files: &Files,
+    budget: &mut usize,
+    depth: usize,
+    notes: &mut Vec<String>,
+) -> Result<Vec<Resource>> {
+    check(depth <= 8, "リソースの入れ子が深すぎます")?;
+    let Some(b) = files.get("resources.json") else {
+        return Ok(Vec::new());
+    };
+    let root = json(b, 1024 * 1024)?;
+    let list = array(&root, "resources", 0, 256)?;
+    let mut ids = HashSet::new();
+    let mut decoded = HashSet::new();
+    let mut result = Vec::new();
+    for v in list {
+        let id = id_text(v, "id")?.to_string();
+        check(ids.insert(id.clone()), "リソースのIDが重複しています")?;
+        let name = label(v, "name")?.to_string();
+        let kind = text(v, "kind", 1, 32)?.to_string();
+        check(
+            depth == 0 || kind == "image",
+            "スマートリソースに画像以外のリソースがあります",
+        )?;
+        check(
+            ["image", "smartMaterial", "smartMask", "brush", "material"].contains(&kind.as_str()),
+            format!("未知のリソース種別です: {kind}"),
+        )?;
+        let content = text(v, "content", 64, 64)?.to_string();
+        check(is_hash(&content), "リソースのハッシュが不正です")?;
+        if let Some(origin) = v.get("origin").filter(|v| !v.is_null()) {
+            validate_origin(origin)?;
+        }
+        let ext = match kind.as_str() {
+            "image" => "png",
+            "brush" => "ylbrush",
+            _ => "ylsmart",
+        };
+        let entry = format!("resources/{content}.{ext}");
+        let bytes = required(files, &entry)?;
+        if kind == "image" {
+            let w = number(v, "width", 1, 8192)? as u32;
+            let h = number(v, "height", 1, 8192)? as u32;
+            if let Some(c) = v.get("colorSpace").filter(|v| !v.is_null()) {
+                check(
+                    c.as_str()
+                        .is_some_and(|s| ["srgb", "linear", "unspecified"].contains(&s)),
+                    "未知の色空間です",
+                )?;
+            }
+            if decoded.insert((content.clone(), w, h)) {
+                let rgba = png_pixels(bytes, w, h, budget)?;
+                use sha2::{Digest, Sha256};
+                let mut sha = Sha256::new();
+                sha.update(b"YLPRGBA8");
+                sha.update(w.to_le_bytes());
+                sha.update(h.to_le_bytes());
+                for row in rgba.chunks_exact(w as usize * 4).rev() {
+                    sha.update(row);
+                }
+                check(
+                    format!("{:x}", sha.finalize()) == content,
+                    "画像の画素ハッシュが一致しません",
+                )?;
+            }
+        } else {
+            let len = number(v, "length", 1, MAX_ENTRY_BYTES as i64)? as usize;
+            check(
+                bytes.len() == len && hash(bytes) == content,
+                "リソースファイルの長さまたはSHA-256が一致しません",
+            )?;
+            if decoded.insert((format!("{content}:{kind}"), 0, 0)) {
+                add_budget(budget, bytes.len())?;
+                if kind == "brush" {
+                    validate_brush(bytes, budget, notes)?;
+                } else {
+                    let a = Archive::read_profile(
+                        bytes,
+                        "application/x-yolupainter-smart",
+                        "YOLUPAINTER-SMART-",
+                        1,
+                    )?;
+                    let info = json(required(&a.files, "smart.json")?, 65536)?;
+                    number(&info, "format", 1, 1)?;
+                    writer(&info["savedBy"])?;
+                    label(&info, "name")?;
+                    let actual = text(&info, "kind", 1, 32)?;
+                    check(
+                        actual
+                            == if kind == "smartMask" {
+                                "smartMask"
+                            } else {
+                                "smartMaterial"
+                            },
+                        "スマートリソースの種類が索引と一致しません",
+                    )?;
+                    let d = NativeDocument::read(required(&a.files, "layers.utpaint")?)?;
+                    check(
+                        number(&info, "width", 1, 8192)? == d.width() as i64
+                            && number(&info, "height", 1, 8192)? == d.height() as i64
+                            && number(&info, "layers", 1, 2048)? == d.layer_count() as i64,
+                        "スマートリソースの寸法・層数が一致しません",
+                    )?;
+                    validate_smart(&info, &d)?;
+                    load_resources(&a.files, budget, depth + 1, notes)?;
+                    notes.push(format!("スマートリソース「{name}」をファイルごと保持します（描画用の展開は未実装）"));
+                }
+            }
+        }
+        result.push(Resource {
+            id,
+            kind,
+            name,
+            content,
+            entry,
+            metadata: v.clone(),
+        });
+    }
+    Ok(result)
+}
+fn origin_text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
+    let s = text(v, k, min, max)?;
+    check(
+        !s.chars().any(|c| c < ' ' || c == '\x7f'),
+        "出どころに制御文字があります",
+    )?;
+    Ok(s)
+}
+fn validate_origin(v: &Value) -> Result<()> {
+    match text(v, "type", 1, 32)? {
+        "none" => {}
+        "unityAsset" => {
+            let g = text(v, "guid", 32, 32)?;
+            check(
+                g.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "アセットGUIDが不正です",
+            )?;
+            origin_text(v, "path", 1, 1024)?;
+            if v.get("localFileID").is_some() {
+                number(v, "localFileID", i64::MIN, i64::MAX)?;
+            }
+            if let Some(x) = v.get("stamp").filter(|v| !v.is_null()) {
+                let _ = x;
+                origin_text(v, "stamp", 0, 128)?;
+            }
+        }
+        "file" | "library" => {
+            let library = v["type"] == "library";
+            let p = origin_text(v, if library { "file" } else { "path" }, 1, 1024)?;
+            if library {
+                check(
+                    !p.contains('\\')
+                        && !p.contains(':')
+                        && p.split('/').all(|c| !c.is_empty() && c != ".." && c != "."),
+                    "置き場の相対パスが不正です",
+                )?;
+            }
+            check(
+                is_hash(text(v, "sha256", 64, 64)?),
+                "出どころのSHA-256が不正です",
+            )?;
+            number(v, "length", 0, i64::MAX)?;
+        }
+        "builtIn" => {
+            let s = text(v, "key", 1, 64)?;
+            check(
+                s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                "内蔵リソースのキーが不正です",
+            )?;
+            number(v, "version", 1, i32::MAX as i64)?;
+        }
+        _ => return Err(Error("未知のリソース出どころです".into())),
+    }
+    Ok(())
+}
+fn add_budget(b: &mut usize, n: usize) -> Result<()> {
+    *b = b
+        .checked_add(n)
+        .ok_or_else(|| Error("リソース予算超過です".into()))?;
+    check(*b <= MAX_TOTAL_BYTES, "復号リソースの768 MiB予算超過です")
+}
+fn png_pixels(bytes: &[u8], w: u32, h: u32, budget: &mut usize) -> Result<Vec<u8>> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_limits(png::Limits {
+        bytes: MAX_ENTRY_BYTES,
+    });
+    let mut r = decoder
+        .read_info()
+        .map_err(|e| Error(format!("PNGが不正です: {e}")))?;
+    let i = r.info();
+    check(
+        i.width == w
+            && i.height == h
+            && i.color_type == png::ColorType::Rgba
+            && i.bit_depth == png::BitDepth::Eight,
+        "PNGは索引と同じ寸法のRGBA8である必要があります",
+    )?;
+    check(
+        i.animation_control.is_none(),
+        "アニメーションPNGは未対応です",
+    )?;
+    let len = w as usize * h as usize * 4;
+    add_budget(budget, len)?;
+    let mut out = vec![0; len];
+    let frame = r
+        .next_frame(&mut out)
+        .map_err(|e| Error(format!("PNGの復号に失敗しました: {e}")))?;
+    check(frame.buffer_size() == len, "PNGの復号長が不正です")?;
+    r.finish()
+        .map_err(|e| Error(format!("PNG終端が不正です: {e}")))?;
+    Ok(out)
+}
+fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<String>) -> Result<()> {
+    let a = Archive::read_profile(
+        bytes,
+        "application/x-yolupainter-brush",
+        "YOLUPAINTER-BRUSH-",
+        1,
+    )?;
+    let state = json(required(&a.files, "state.json")?, 65536)?;
+    let schema = state
+        .get("schema")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| Error("ブラシのschemaがありません".into()))?;
+    check((1..=3).contains(&schema), "未知のブラシschemaです")?;
+    for key in ["tipId", "textureId", "dualTipId"] {
+        if let Some(v) = state.get(key) {
+            check(v.as_str() == Some(""), "携帯ブラシに外部画像IDがあります")?;
+        }
+    }
+    let mut tips = 0;
+    for (name, b) in &a.files {
+        if name.ends_with(".png") {
+            if name.starts_with("tip-") {
+                tips += 1;
+            }
+            let d = png::Decoder::new(Cursor::new(b.as_ref()));
+            let r = d.read_info().map_err(|e| Error(e.to_string()))?;
+            let (w, h) = (r.info().width, r.info().height);
+            check(
+                (1..=2048).contains(&w) && (1..=2048).contains(&h),
+                "ブラシの画像寸法が範囲外です",
+            )?;
+            png_pixels(b, w, h, budget)?;
+        }
+    }
+    for i in 0..tips {
+        check(
+            a.files.contains_key(&format!("tip-{i}.png")),
+            "ブラシの筆先番号が連続していません",
+        )?;
+    }
+    notes.push(
+        "ブラシ設定と画像を原本のまま保持します。ブラシ設定の意味の検証・実行は未実装です".into(),
+    );
+    Ok(())
+}
+
+// serde_json::Value 単体では重複キーを最後の値で上書きするため、ここで拒否する。
+struct Strict(Value);
+impl<'de> Deserialize<'de> for Strict {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Strict;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("重複キーのないJSON")
+            }
+            fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<Strict, E> {
+                Ok(Strict(v.into()))
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<Strict, E> {
+                Ok(Strict(v.into()))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<Strict, E> {
+                Ok(Strict(v.into()))
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<Strict, E> {
+                serde_json::Number::from_f64(v)
+                    .map(|n| Strict(Value::Number(n)))
+                    .ok_or_else(|| E::custom("有限でない数値"))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Strict, E> {
+                Ok(Strict(v.into()))
+            }
+            fn visit_unit<E: de::Error>(self) -> std::result::Result<Strict, E> {
+                Ok(Strict(Value::Null))
+            }
+            fn visit_none<E: de::Error>(self) -> std::result::Result<Strict, E> {
+                self.visit_unit()
+            }
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> std::result::Result<Strict, A::Error> {
+                let mut v = Vec::new();
+                while let Some(Strict(x)) = a.next_element()? {
+                    v.push(x);
+                }
+                Ok(Strict(Value::Array(v)))
+            }
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                mut a: A,
+            ) -> std::result::Result<Strict, A::Error> {
+                let mut v = Map::new();
+                while let Some((k, Strict(x))) = a.next_entry::<String, Strict>()? {
+                    if v.insert(k, x).is_some() {
+                        return Err(de::Error::custom("重複したJSONキー"));
+                    }
+                }
+                Ok(Strict(Value::Object(v)))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+fn json(b: &[u8], max: usize) -> Result<Value> {
+    check(b.len() <= max, "JSONのバイト予算超過です")?;
+    let Strict(v) = serde_json::from_slice(b)?;
+    fn bounds(v: &Value, d: usize) -> bool {
+        d <= 16
+            && match v {
+                Value::Array(a) => a.iter().all(|v| bounds(v, d + 1)),
+                Value::Object(o) => o
+                    .iter()
+                    .all(|(k, v)| k.encode_utf16().count() <= 1024 && bounds(v, d + 1)),
+                Value::String(s) => s.encode_utf16().count() <= 1024,
+                _ => true,
+            }
+    }
+    check(
+        v.is_object() && bounds(&v, 0),
+        "JSONの深さ・文字列長・最上位オブジェクトが不正です",
+    )?;
+    Ok(v)
+}
+
+fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
+    let names = [
+        "Color",
+        "Roughness",
+        "Metallic",
+        "Height",
+        "Normal",
+        "Emission",
+    ];
+    let mask = info["kind"] == "smartMask";
+    if mask {
+        check(
+            d.layer_count() == 1
+                && d.field("layers[0].kind") == Some(&NativeValue::Int(1))
+                && d.field("layers[0].fill_count") == Some(&NativeValue::Int(0))
+                && d.field("layers[0].has_mask") == Some(&NativeValue::Bool(true))
+                && d.field("layers[0].filters.count")
+                    .is_none_or(|v| *v == NativeValue::Int(0)),
+            "スマートマスクは値を持たない塗りつぶし1層とマスクが必要です",
+        )?;
+    }
+    let mut enabled = HashSet::new();
+    let mut stages = HashSet::new();
+    for layer in 0..d.layer_count() {
+        let prefix = format!("layers[{layer}]");
+        if d.field(&format!("{prefix}.kind"))
+            .is_none_or(|v| *v == NativeValue::Int(0))
+        {
+            let mut color_present = false;
+            let mut color_enabled = true;
+            for f in d.fields().iter().filter(|f| {
+                f.path.starts_with(&format!("{prefix}.channels[")) && f.path.ends_with(".channel")
+            }) {
+                if f.value == NativeValue::Int(0) {
+                    color_present = true;
+                    color_enabled = d.field(&format!(
+                        "{}.enabled",
+                        f.path.strip_suffix(".channel").unwrap()
+                    )) == Some(&NativeValue::Bool(true));
+                }
+            }
+            if !color_present || color_enabled {
+                enabled.insert(0);
+            }
+        }
+    }
+    for f in d.fields() {
+        if f.path.ends_with(".has_surface_path") {
+            check(
+                f.value == NativeValue::Bool(false),
+                "スマートリソースにはモデル上のパスを保存できません",
+            )?;
+        }
+        if f.path.contains(".filters.items[") && f.path.ends_with(".generator.pin_count") {
+            check(
+                f.value == NativeValue::Int(0),
+                "スマートリソースのGeneratorにベイクの固定があります",
+            )?;
+            let p = f.path.strip_suffix(".generator.pin_count").unwrap();
+            if let Some(NativeValue::Guid(id)) = d.field(&format!("{p}.id")) {
+                stages.insert(crate::guid(id));
+            }
+        }
+        if (f.path.contains(".fills[") || f.path.contains(".channels["))
+            && f.path.ends_with(".channel")
+            && !f.path.contains(".filters.")
+        {
+            if let NativeValue::Int(c) = f.value {
+                let p = f.path.strip_suffix(".channel").unwrap();
+                if f.path.contains(".adjustment.channels[")
+                    || d.field(&format!("{p}.enabled")) == Some(&NativeValue::Bool(true))
+                {
+                    enabled.insert(c);
+                }
+            }
+        }
+    }
+    if mask {
+        enabled.clear();
+    }
+    let actual: Vec<_> = (0..6)
+        .filter(|c| enabled.contains(c))
+        .map(|c| Value::String(names[c as usize].into()))
+        .collect();
+    check(
+        array(info, "channels", 0, 6)? == &actual,
+        "スマートリソースのチャンネルが正本と一致しません",
+    )?;
+    if info.get("repin").is_some_and(|v| !v.is_null()) {
+        let mut seen = HashSet::new();
+        for v in array(info, "repin", 0, 65536)? {
+            let id = v
+                .as_str()
+                .ok_or_else(|| Error("repinのIDが文字列ではありません".into()))?;
+            check(
+                valid_id(id) && seen.insert(id) && stages.contains(id),
+                "repinは正本のGenerator IDを重複なく指定する必要があります",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn brush(state: &str, names: &[&str]) -> Vec<u8> {
+        let mut files = Files::from([("state.json".into(), Arc::from(state.as_bytes()))]);
+        for n in names {
+            files.insert(n.to_string(), Arc::from([0u8]));
+        }
+        Archive::build(
+            files,
+            1,
+            "application/x-yolupainter-brush",
+            "YOLUPAINTER-BRUSH-",
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap()
+    }
+    #[test]
+    fn portable_brush_schemas_and_external_ids_are_checked() {
+        for schema in 1..=3 {
+            validate_brush(
+                &brush(&format!("{{\"schema\":{schema}}}"), &[]),
+                &mut 0,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        }
+        for state in [
+            "{\"schema\":4}",
+            "{\"schema\":0}",
+            "{\"schema\":3,\"tipId\":\"external\"}",
+            "{\"schema\":3,\"textureId\":null}",
+        ] {
+            assert!(validate_brush(&brush(state, &[]), &mut 0, &mut Vec::new()).is_err());
+        }
+    }
+    #[test]
+    fn portable_brush_invalid_png_is_refused() {
+        assert!(validate_brush(
+            &brush("{\"schema\":3}", &["tip-0.png"]),
+            &mut 0,
+            &mut Vec::new()
+        )
+        .is_err());
+    }
+    #[test]
+    fn smart_metadata_channels_repins_and_model_paths_are_checked() {
+        let archive = Archive::read(include_bytes!("../tests/fixtures/format5.ylp")).unwrap();
+        let r = json(&archive.files["resources.json"], 1024 * 1024).unwrap();
+        let material = r["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["kind"] == "smartMaterial")
+            .unwrap();
+        let a = Archive::read_profile(
+            &archive.files[&format!(
+                "resources/{}.ylsmart",
+                material["content"].as_str().unwrap()
+            )],
+            "application/x-yolupainter-smart",
+            "YOLUPAINTER-SMART-",
+            1,
+        )
+        .unwrap();
+        let info = json(&a.files["smart.json"], 65536).unwrap();
+        let doc = NativeDocument::read(&a.files["layers.utpaint"]).unwrap();
+        validate_smart(&info, &doc).unwrap();
+        let mut bad = info.clone();
+        bad["channels"] = serde_json::json!(["Future"]);
+        assert!(validate_smart(&bad, &doc).is_err());
+        let mut bad = info;
+        bad["repin"] = serde_json::json!(["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"]);
+        assert!(validate_smart(&bad, &doc).is_err());
+    }
+    #[test]
+    fn decoded_resource_budget_is_bounded_without_allocating() {
+        let mut budget = MAX_TOTAL_BYTES - 3;
+        assert!(add_budget(&mut budget, 4).is_err());
+    }
+}
