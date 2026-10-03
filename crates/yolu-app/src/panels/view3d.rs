@@ -1,5 +1,5 @@
-//! 3D ビューの枠。中身は後で (a) wgpu の自前の 3D か、(b) 埋め込んだ Unity のプレイヤー（UaaL。Windows では子の窓の HWND を
-//! このタブの矩形に合わせて動かす）を差し込む。今は空の枠と「3D ビュー（準備中）」の表示だけ。
+//! 3D ビューのタブ: 自前の wgpu の 3D（`crate::view3d`。モデル・カメラ・面に描く）と、後で差し込む外の窓（埋め込んだ Unity の
+//! プレイヤー（UaaL）。Windows では子の窓の HWND をこのタブの矩形に合わせて動かす）への知らせ。
 //!
 //! 外の窓へ知らせる口: `View3dHost` を渡すと、タブの中身の矩形（物理の画素、ネイティブの窓のクライアント領域の左上が原点）が
 //! 決まった・変わったとき（`Placed`）、隠れたとき（別のタブの裏・閉じた。`Hidden`）、別の窓に出したとき（`Placed` の viewport・
@@ -8,11 +8,14 @@
 
 use std::sync::{Arc, Mutex};
 
-use egui::{pos2, vec2, Modifiers, Order, Rect, Sense, Ui, ViewportId};
+use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, ViewportId};
 
 use crate::canvas::HEADER_HEIGHT;
+use crate::pen::PenSample;
+use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
+use crate::view3d::{input, render::View3dRenderer};
 
 /// タブの中身の置き場所。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,49 +99,62 @@ impl View3dSlot {
         self.this_frame.map(|(_, r)| r)
     }
 
-    /// タブの中身を描き、置き場所と入力を記録する。
-    pub fn show(&mut self, ui: &mut Ui) {
+    /// タブの中身を描き、置き場所と入力を記録する。renderer は wgpu の 3D（無ければ 3D を描けないと出す）。
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        app: &mut AppState,
+        renderer: Option<&mut View3dRenderer>,
+        pen: &[PenSample],
+    ) {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
         let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_HEIGHT));
         let content = Rect::from_min_max(pos2(full.left(), header.bottom()), full.max);
-        let p = ui.painter().clone();
-        w::fill(&p, header, t::PANEL_HEADER);
-        w::hline(
-            &p,
-            header.left(),
-            header.right(),
-            header.bottom() - 1.0,
-            t::BORDER,
-        );
-        w::text(
-            &p,
-            Rect::from_min_max(pos2(header.left() + 8.0, header.top()), header.max),
-            "3D · モデルなし",
-            t::LABEL_DIM,
-            Align::Left,
-        );
-        w::fill(&p, content, t::CANVAS_BG);
-        let text = Rect::from_center_size(content.center(), vec2(content.width().min(360.0), 60.0));
-        w::text(
-            &p,
-            Rect::from_min_size(text.min, vec2(text.width(), 22.0)),
-            "3D ビュー（準備中）",
-            t::LABEL.with_color(t::TEXT_DIM),
-            Align::Center,
-        );
-        w::text(
-            &p,
-            Rect::from_min_size(
-                pos2(text.left(), text.top() + 24.0),
-                vec2(text.width(), 18.0),
-            ),
-            "Unity のプレイヤーか wgpu の 3D をここに差し込みます。",
-            t::LABEL_SMALL,
-            Align::Center,
-        );
-
+        let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
+        input::handle(ui, app, content, pen);
+
+        let p = ui.painter().clone();
+        let drawn = match (app.view3d.model.clone(), renderer) {
+            (Some(model), Some(renderer)) => {
+                let size = [
+                    (content.width() * ppp).round().max(1.0) as u32,
+                    (content.height() * ppp).round().max(1.0) as u32,
+                ];
+                let id = renderer.prepare(
+                    &app.doc,
+                    &model,
+                    app.view3d.material,
+                    &app.view3d.camera,
+                    size,
+                );
+                p.image(
+                    id,
+                    content,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+                true
+            }
+            _ => false,
+        };
+        if !drawn {
+            self.placeholder(ui, app, content);
+        } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
+            // ブラシのカーソル（回している・パンしているあいだは出さない）
+            if response.contains_pointer() && content.contains(pointer) {
+                if app.view3d.input.nav.is_some() {
+                    ui.ctx().set_cursor_icon(CursorIcon::Move);
+                } else if input::draw_cursor(ui, app, content, pointer) {
+                    ui.ctx().set_cursor_icon(CursorIcon::None);
+                } else {
+                    ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                }
+            }
+        }
+        self.header(ui, app, header);
+
         let placement = Placement {
             viewport: ui.ctx().viewport_id(),
             rect_px: [
@@ -152,7 +168,6 @@ impl View3dSlot {
         };
         self.this_frame = Some((placement, content));
 
-        let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         if response.contains_pointer() || response.dragged() {
             let input = ui.input(|i| {
                 let at = i.pointer.hover_pos().unwrap_or(content.min) - content.min;
@@ -168,6 +183,97 @@ impl View3dSlot {
             if self.last_input != Some(input) {
                 self.last_input = Some(input);
                 self.emit(View3dEvent::Input(input));
+            }
+        }
+    }
+
+    fn header(&self, ui: &mut Ui, app: &mut AppState, bar: Rect) {
+        let p = ui.painter().clone();
+        w::fill(&p, bar, t::PANEL_HEADER);
+        w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
+        let label = match &app.view3d.model {
+            Some(m) => format!("3D · {} · {} 三角形", m.name, m.triangle_count()),
+            None => "3D · モデルなし".to_string(),
+        };
+        w::text(
+            &p,
+            Rect::from_min_max(
+                pos2(bar.left() + 8.0, bar.top()),
+                pos2(bar.right() - 32.0, bar.bottom()),
+            ),
+            &label,
+            t::LABEL_DIM,
+            Align::Left,
+        );
+        if app.view3d.model.is_some() {
+            let r =
+                Rect::from_min_size(pos2(bar.right() - 28.0, bar.top() + 2.0), vec2(24.0, 22.0));
+            if w::icon_button(
+                ui,
+                r,
+                "view3d.frame",
+                "target",
+                "モデル全体が見える位置へ戻す",
+                false,
+                !app.is_stroking(),
+                16.0,
+            )
+            .clicked()
+            {
+                app.apply(Action::FrameModel);
+            }
+        }
+    }
+
+    /// モデルが無い・3D を描けないときの中身。
+    fn placeholder(&self, ui: &mut Ui, app: &mut AppState, content: Rect) {
+        let p = ui.painter().clone();
+        w::fill(&p, content, t::CANVAS_BG);
+        let text = Rect::from_center_size(content.center(), vec2(content.width().min(360.0), 88.0));
+        let (title, detail) = if app.view3d.model.is_none() {
+            (
+                "モデルがありません",
+                "Unity からモデルを送るか（Live Link）、試しの立方体を読んでください。",
+            )
+        } else {
+            (
+                "3D を描けません",
+                "この環境では GPU（wgpu）を使えませんでした。",
+            )
+        };
+        w::text(
+            &p,
+            Rect::from_min_size(text.min, vec2(text.width(), 22.0)),
+            title,
+            t::LABEL.with_color(t::TEXT_DIM),
+            Align::Center,
+        );
+        w::text(
+            &p,
+            Rect::from_min_size(
+                pos2(text.left(), text.top() + 24.0),
+                vec2(text.width(), 18.0),
+            ),
+            detail,
+            t::LABEL_SMALL,
+            Align::Center,
+        );
+        if app.view3d.model.is_none() {
+            let r =
+                Rect::from_center_size(pos2(text.center().x, text.top() + 64.0), vec2(160.0, 24.0));
+            if w::button(
+                ui,
+                r,
+                "view3d.demo",
+                "試しの立方体を読む",
+                true,
+                true,
+                None,
+                Some("view_in_ar"),
+            )
+            .clicked()
+            {
+                app.apply(Action::LoadDemoModel);
             }
         }
     }

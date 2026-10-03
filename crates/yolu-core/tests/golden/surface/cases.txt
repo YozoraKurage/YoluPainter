@@ -1,0 +1,206 @@
+# yolu-core の面の計算（geometry）と Unity 版の SurfaceGeometry（Editor/Preview の原文）を照らし合わせる事例（両方がこの台本を読む）。
+# 書き方（1 行 1 命令、# から行末はコメント）:
+#   case 名前
+#   clear                                      三角形を空に
+#   cube R S M                                 試しの立方体（Unity 版の LoadDemoMesh と同じ）を足す（R・S・M はレンダラー・スロット・マテリアルの組）
+#   sphere N 半径 R S M [面]                    立方体を n × n に分けて膨らませた球（yolu-core の cube_sphere）。面は含める面の番号の文字（既定 012345）
+#   plate X0 Y0 X1 Y1 Z R S M                   Z の高さの四角（2 つの三角形、UV 0〜1。法線は −Z）
+#   soup 種 個数 大きさ R S M                     乱数の三角形（splitmix64）
+#   build 世代 [溶接の許し]                       SurfaceGeometry を作る
+#   out                                        形の指紋（三角形の数・非多様体の辺・箱・遮蔽の許し・隣り合わせ・BVH の節点と並び）
+#   ray OX OY OZ TX TY TZ 裏を見ない 届く距離     O から T へのレイ（届く距離は inf も可）
+#   rays 種 本数 裏を見ない                       箱のまわりから中へ向けた乱数のレイの当たりの指紋
+#   budget default | budget 鍵=値…              ダブの予算（triangles pixels rays tests visits）
+#   cache new | cache none                     遮蔽の結果を覚えるもの（ストロークの間）
+#   dab CX CY CZ TX TY TZ 半径 幅 高さ 硬さ [ignore]   カメラ C から T へのレイの当たりで面の上のダブ
+#   closest PX PY PZ 届く距離 FX FY FZ 節点の上限 マテリアル   最近点
+#   region 三角形 Triangle|UvIsland|MeshPart|Material
+# 小数は 2 進で割り切れるか短い 10 進だけ（読み方の違いは params の指紋で見張る）。
+
+case cube_basics
+cube 0 0 0
+build 1
+out
+ray 0.1 0.2 -3 0.1 0.2 0 1 inf
+ray 0 0 0 0 0 -1 1 inf
+ray 0 0 0 0 0 -1 0 inf
+ray 0 0 -3 0 0 0 1 2
+ray 1.6 0.4 -2 0.45 0.1 -0.5 1 inf
+ray -2 3 -2.5 0.5 -0.5 0.5 1 inf
+ray 0.5 -3 0.25 0.5 3 0.25 0 inf
+rays 11 400 1
+rays 12 400 0
+closest 0.1 0 -0.9 1 0 0 0 10000 -1
+closest 0.1 0 -0.9 10 0 0 1 10000 -1
+closest 0 0 0 10 0 0 0 10000 5
+closest 0 0 0 10 0 0 0 0 -1
+closest 2 2 2 10 0 0 0 10000 -1
+region 4 Triangle
+region 4 UvIsland
+region 4 MeshPart
+region 4 Material
+
+case cube_dabs
+cube 0 0 0
+build 1
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+dab 1.6 0.4 -2 -0.45 0 -0.5 0.2 256 256 0.8
+dab 0 0 3 -0.45 0 0.5 0.2 256 256 0.8
+dab 1.6 0.4 -2 0.45 0.45 -0.5 0.35 512 384 0
+dab 1.6 0.4 -2 0.45 0.45 -0.5 0.35 512 384 0.5
+dab 1.6 0.4 -2 0.45 0.45 -0.5 0.35 512 384 1
+dab 1.6 0.4 -2 0.2 -0.3 -0.5 0.125 2048 2048 0.75
+dab -1.5 1.5 -1.5 -0.4 0.5 -0.4 0.3 1024 1024 0.25
+dab 1.6 0.4 -2 0 0 -0.5 0.05 64 64 0.8
+dab 1.6 0.4 -2 0 0 -0.5 0.002 64 64 0.8
+
+case cube_ignore_and_budgets
+cube 0 0 0
+build 1
+dab 0 0 -3 -0.45 0 -0.5 0.2 256 256 0.8 ignore
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8 ignore
+budget triangles=1
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget triangles=3
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget pixels=10
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8 ignore
+budget rays=10
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget visits=1
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget tests=1
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget tests=40 visits=100000
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+budget default
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.2 256 256 0.8
+
+case sphere16
+sphere 16 0.5 0 0 0
+build 3
+out
+rays 1 300 1
+rays 2 300 0
+dab 0.3 0.6 -2 0 0 0 0.05 1024 1024 0.8
+dab 0.3 0.6 -2 0 0 0 0.15 1024 1024 0.5
+dab 0.3 0.6 -2 0 0 0 0.3 1024 1024 0.5
+dab 0.3 0.6 -2 0.25 0.25 0 0.3 2048 1024 0.9
+dab 0.3 0.6 -2 0.5 0 0 0.2 512 512 0.8
+dab 2 0 0 0 0.25 0.4 0.25 1024 1024 0.8
+closest 0.4 0.4 0.4 1 0 0 0 100000 -1
+closest 0.1 0.2 0.1 1 1 1 1 100000 -1
+closest 0.1 0.2 0.1 1 -1 -1 -1 100000 0
+region 100 UvIsland
+region 100 MeshPart
+budget visits=50000
+dab 0.3 0.6 -2 0 0 0 0.3 1024 1024 0.5
+budget rays=5000
+dab 0.3 0.6 -2 0 0 0 0.3 1024 1024 0.5
+budget pixels=20000
+dab 0.3 0.6 -2 0 0 0 0.3 1024 1024 0.5
+budget triangles=40
+dab 0.3 0.6 -2 0 0 0 0.3 1024 1024 0.5
+
+case sphere16_cache
+sphere 16 0.5 0 0 0
+build 3
+cache new
+dab 0.3 0.6 -2 0 0 0 0.15 1024 1024 0.5
+dab 0.3 0.6 -2 0.03125 0 0 0.15 1024 1024 0.5
+dab 0.3 0.6 -2 0.0625 0.015625 0 0.15 1024 1024 0.5
+budget visits=60000
+dab 0.3 0.6 -2 0.09375 0.03125 0 0.15 1024 1024 0.5
+budget default
+dab 0.3 0.6 -2 0.09375 0.03125 0 0.15 1024 1024 0.5
+dab 0.25 0.6 -2 0.09375 0.03125 0 0.15 1024 1024 0.5
+dab 0.25 0.6 -2 0.09375 0.03125 0 0.15 512 1024 0.5
+cache none
+dab 0.25 0.6 -2 0.09375 0.03125 0 0.15 512 1024 0.5
+
+case shell
+# 体（スロット 0）の手前と右に、少しだけ浮いた服（レンダラー 1・スロット 1）
+sphere 12 0.5 0 0 0
+sphere 12 0.505 1 1 1 03
+build 4
+out
+dab 0.3 0.6 -2 0 0 0 0.2 1024 1024 0.8
+dab 0.3 0.6 -2 -0.3 0.4 0 0.2 1024 1024 0.8
+dab -0.2 0.2 -2 -0.35 0.1 -0.3 0.15 1024 1024 0.8
+dab 2 0.5 0.5 0 0 0 0.2 1024 1024 0.8
+rays 5 400 1
+closest 0.1 0.2 -0.6 1 0 0 0 100000 1
+closest 0.1 0.2 -0.6 1 0 0 0 100000 0
+region 10 Material
+region 300 Material
+
+case thin_plates
+# 板（スロット 0）のすぐ手前に小さな板（スロット 1）: 薄い服の縁の遮蔽
+plate -0.5 -0.5 0.5 0.5 0 0 0 0
+plate -0.25 -0.25 0.25 0.25 -0.0009765625 1 1 1
+build 5
+out
+dab 0.1 0.05 -2 0.3 0.1 0 0.2 512 512 0.8
+dab 0.1 0.05 -2 0.26 0.1 0 0.1 1024 1024 0.8
+dab 0.1 0.05 -2 0 0 -0.0009765625 0.2 512 512 0.8
+dab 1 1 -1 0.3 0.3 0 0.3 256 256 0.6
+ray 0.1 0.05 -2 0.25 0.1 0 0 inf
+ray 0.1 0.05 -2 0.2499 0.1 0 0 inf
+
+case soup
+soup 42 2000 1 0 0 0
+soup 43 500 0.5 2 3 1
+build 6
+out
+rays 7 1000 1
+rays 8 1000 0
+ray -2 -2 -2 0 0 0 0 inf
+ray -2 -2 -2 0 0 0 0 1.5
+closest 0 0 0 1 0 0 0 100000 -1
+closest 0.25 -0.5 0.75 2 0 1 0 100000 -1
+closest 0.25 -0.5 0.75 2 0 0 0 100000 1
+closest 0.25 -0.5 0.75 2 0 0 0 7 -1
+region 17 UvIsland
+region 17 MeshPart
+region 2100 Material
+
+case weld
+# 量子化の境目の近くの点: 溶接の格子で同じ点になるものだけがつながる
+plate 0 0 1 1 0 0 0 0
+plate 1.0000004 0 2 1 0 0 0 0
+plate 1.0000006 1 2 2 0 0 0 0
+plate 0 1 1.0000005 2 0 0 0 0
+build 7
+out
+build 7 0.001
+out
+build 7 0.00000001
+out
+
+case multi_slot
+cube 0 0 0
+sphere 4 0.5 1 1 0
+sphere 4 0.25 2 2 1
+build 8
+out
+dab 1.6 0.4 -2 0.45 0.1 -0.5 0.3 256 256 0.8
+region 3 MeshPart
+region 3 Material
+region 20 Material
+region 200 Material
+closest 0 0 -1 2 0 0 0 100000 1
+
+case edge_coverage
+# ダブの縁のテクセルで 1 − SmoothStep が単精度の丸めで −2.4e−7 になる（C# も同じ値。ApplyPixel は負の覆いを断るので、
+# 塗る側（SurfaceStroke）は 0 以下の覆いを塗らない）
+cube 0 0 0
+build 1
+dab 1.6 0.4 -2 0.1 0.1 -0.5 0.022 2048 2048 0.8
+
+case big
+sphere 76 0.5 0 0 0
+build 9
+out
+rays 3 2000 1
+dab 0.3 0.6 -2 0 0 0 0.05 2048 2048 0.8

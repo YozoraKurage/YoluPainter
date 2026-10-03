@@ -1,0 +1,123 @@
+# 生成: tools/csharp-golden（手で書き換えない）。Unity 版の SurfaceGeometry（Editor/Preview の原文）の出力。
+# source: YoluPainter 4ba8d1fe30d4 Editor/Preview/Surface*=b1ca71763e1101b1 UnityEngine.CoreModule debug
+case cube_basics params=a5e8570898d27d6f
+out 0 structure tris=12 nonmanifold=0 center=00000000,00000000,00000000 extents=3f000000,3f000000,3f000000 eps=35e878d0 adj=818cab66fc437e15 nodes=3 bvh=8c2fefc6ccbdb0f9
+out 1 ray tri=1 r=0 s=0 m=0 dist=40200000 pos=3dcccccd,3e4ccccd,bf000000 n=00000000,00000000,bf800000 bary=3e99999b,3ecccccd,3e999999 uv=3e48b43b,3ead0e56
+out 2 ray none
+out 3 ray tri=0 r=0 s=0 m=0 dist=3f000000 pos=00000000,00000000,bf000000 n=00000000,00000000,bf800000 bary=00000000,3f000000,3f000000 uv=3e2aaaac,3e800000
+out 4 ray none
+out 5 ray tri=1 r=0 s=0 m=0 dist=3ff4f648 pos=3ee66664,3dccccd0,bf000002 n=00000000,00000000,bf800000 bary=3eccccd2,3d4ccce5,3f0cccc9 uv=3e98ead7,3e968729
+out 6 ray tri=8 r=0 s=0 m=0 dist=406fba4e pos=be5b6db0,3f000000,beb6db68 n=00000000,3f800000,00000000 bary=3f124922,3e12492c,3e924926 uv=3edfd131,3f17c57c
+out 7 ray tri=11 r=0 s=0 m=0 dist=40200000 pos=3f000000,bf000000,3e800000 n=00000000,bf800000,80000000 bary=3f400000,80000000,3e800000 uv=3f7ae148,3f23d70a
+out 8 rays n=400 hits=397 hash=71c128234f7c0fc8
+out 9 rays n=400 hits=400 hash=7205d95092607e3a
+out 10 closest tri=1 r=0 s=0 m=0 dist=3ecccccc pos=3dccccd0,00000000,bf000000 n=00000000,00000000,bf800000 bary=3f000000,3ecccccc,3dccccd0 uv=3e48b43b,3e800000
+out 11 closest tri=2 r=0 s=0 m=0 dist=3fb33333 pos=3dcccccc,00000000,3f000000 n=00000000,80000000,3f800000 bary=3dcccccc,3f000000,3ecccccd uv=3ef0fb3a,3e800000
+out 12 closest none
+out 13 closest exceeded
+out 14 closest tri=2 r=0 s=0 m=0 dist=402646e1 pos=3f000000,3f000000,3f000000 n=00000000,80000000,3f800000 bary=00000000,3f800000,00000000 uv=3eb4e81c,3ef0a3d7
+out 15 region n=1 hash=cd3ac65e44f721b1
+out 16 region n=2 hash=0ccce026fefe46f4
+out 17 region n=12 hash=e554888727308865
+out 18 region n=12 hash=e554888727308865
+case cube_dabs params=0666deebdef3a77c
+out 0 dab tri=1 pixels=1196 hash=461d4712a42e7201 cand=1530 rays=1196 tests=13578 visited=6 visits=3588 mincov=34000000 clipped=0 why=-
+out 1 dab tri=0 pixels=700 hash=c6a5df1db1f31f86 cand=874 rays=700 tests=7968 visited=4 visits=2100 mincov=372e0000 clipped=0 why=-
+out 2 dab tri=3 pixels=718 hash=c066a3fcb65c72d5 cand=874 rays=718 tests=7902 visited=4 visits=2154 mincov=35b00000 clipped=0 why=-
+out 3 dab tri=1 pixels=6153 hash=a93bc008e3a551ae cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=b4000000 clipped=0 why=-
+out 4 dab tri=1 pixels=6153 hash=2d08ea0cb072818b cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=b4800000 clipped=0 why=-
+out 5 dab tri=1 pixels=6153 hash=f488a95776fddb20 cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=3f800000 clipped=0 why=-
+out 6 dab tri=0 pixels=26576 hash=8ceab0cf374b86ba cand=67950 rays=26576 tests=305478 visited=6 visits=79728 mincov=00000000 clipped=0 why=-
+out 7 dab tri=8 pixels=43375 hash=abe0f5df462f7efb cand=70605 rays=43375 tests=520500 visited=8 visits=130125 mincov=b4000000 clipped=0 why=-
+out 8 dab tri=0 pixels=4 hash=29dde858638fb005 cand=8 rays=4 tests=48 visited=6 visits=12 mincov=3dfbf378 clipped=0 why=-
+out 9 dab tri=0 pixels=0 hash=cbf29ce484222325 cand=0 rays=0 tests=0 visited=6 visits=0 mincov=7f800000 clipped=0 why=-
+case cube_ignore_and_budgets params=2217a0bcea6aefd4
+out 0 dab tri=0 pixels=700 hash=b065501120aeee40 cand=874 rays=0 tests=0 visited=4 visits=0 mincov=37300000 clipped=0 why=-
+out 1 dab tri=1 pixels=690 hash=9088f3f752155860 cand=855 rays=0 tests=0 visited=4 visits=0 mincov=38854000 clipped=0 why=-
+out 2 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=690 tests=7506 visited=2 visits=2070 mincov=7f800000 clipped=1 why=triangles
+out 3 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=690 tests=7506 visited=4 visits=2070 mincov=7f800000 clipped=1 why=triangles
+out 4 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=0 rays=0 tests=0 visited=1 visits=0 mincov=7f800000 clipped=1 why=pixels
+out 5 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=0 rays=0 tests=0 visited=1 visits=0 mincov=7f800000 clipped=1 why=pixels
+out 6 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=11 tests=114 visited=6 visits=30 mincov=7f800000 clipped=1 why=visibility
+out 7 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=1 tests=0 visited=6 visits=2 mincov=7f800000 clipped=1 why=bvh
+out 8 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=1 tests=2 visited=6 visits=2 mincov=7f800000 clipped=1 why=bvh
+out 9 dab tri=1 pixels=0 hash=cbf29ce484222325 cand=855 rays=4 tests=41 visited=6 visits=12 mincov=7f800000 clipped=1 why=bvh
+out 10 dab tri=1 pixels=1196 hash=461d4712a42e7201 cand=1530 rays=1196 tests=13578 visited=6 visits=3588 mincov=34000000 clipped=0 why=-
+case sphere16 params=2d83ab4574b2d583
+out 0 structure tris=3072 nonmanifold=0 center=00000000,00000000,00000000 extents=3f000000,3f000000,3f000000 eps=35e878d0 adj=dbb31a0149e2aeb5 nodes=1023 bvh=baf0d0b3cffc93c5
+out 1 rays n=300 hits=273 hash=02877245b2031617
+out 2 rays n=300 hits=271 hash=ab376746de82a17a
+out 3 dab tri=338 pixels=1476 hash=46a80444b41d1907 cand=3289 rays=1476 tests=12330 visited=20 visits=28830 mincov=37180000 clipped=0 why=-
+out 4 dab tri=338 pixels=14369 hash=40c33cb587882e78 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=b4800000 clipped=0 why=-
+out 5 dab tri=338 pixels=75298 hash=1552909359a75061 cand=174170 rays=75298 tests=802326 visited=334 visits=1636492 mincov=b4800000 clipped=0 why=-
+out 6 dab tri=2076 pixels=0 hash=cbf29ce484222325 cand=262032 rays=128299 tests=1660284 visited=214 visits=3273921 mincov=7f800000 clipped=1 why=pixels
+out 7 dab tri=1805 pixels=3594 hash=3cf80202e97f6c81 cand=8270 rays=3642 tests=55248 visited=76 visits=95672 mincov=35a00000 clipped=0 why=-
+out 8 dab tri=928 pixels=66340 hash=2cfdebe4067c69d2 cand=146127 rays=67475 tests=1255896 visited=277 visits=1959791 mincov=b4000000 clipped=0 why=-
+out 9 closest tri=992 r=0 s=0 m=0 dist=3e4572b2 pos=3e93cd3a,3e93cd3a,3e93cd3a n=3f1369cc,3f0d49e2,3f1a694d bary=00000000,3f800000,00000000 uv=3eafc963,3efae147
+out 10 closest tri=2423 r=0 s=0 m=0 dist=3e823433 pos=3e44e7c8,3ed625ab,3e44e7c7 n=3eb9cfbd,3f5bb617,3eb9cfbd bary=3ea2a893,3ea2a888,3ebaaee7 uv=3f1275ed,3f5c47b7
+out 11 closest tri=2153 r=0 s=0 m=0 dist=3eed2f0e pos=be22d0d0,3ed9166b,be59166b n=beb9dde2,3f4ed074,beedb759 bary=00000000,00000000,3f800000 uv=3ee1eb85,3f2147ae
+out 12 region n=512 hash=f1a76199f5a84e25
+out 13 region n=3072 hash=7351b9c205db7825
+out 14 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=5520 rays=2577 tests=22854 visited=334 visits=50017 mincov=7f800000 clipped=1 why=bvh
+out 15 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=10440 rays=5001 tests=43404 visited=334 visits=98848 mincov=7f800000 clipped=1 why=visibility
+out 16 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=19700 rays=9796 tests=84660 visited=33 visits=193194 mincov=7f800000 clipped=1 why=pixels
+out 17 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=24620 rays=12313 tests=107520 visited=41 visits=247101 mincov=7f800000 clipped=1 why=triangles
+case sphere16_cache params=3653acc72aea1491
+out 0 dab tri=338 pixels=14369 hash=40c33cb587882e78 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=b4800000 clipped=0 why=- cachehits=0 cached=14369
+out 1 dab tri=339 pixels=14779 hash=e899ddb568bc8aed cand=35132 rays=14779 tests=19566 visited=90 visits=43421 mincov=34000000 clipped=0 why=- cachehits=13006 cached=16142
+out 2 dab tri=340 pixels=15642 hash=8809a23d09030954 cand=38022 rays=15642 tests=24522 visited=92 visits=53272 mincov=00000000 clipped=0 why=- cachehits=26412 cached=18378
+out 3 dab tri=341 pixels=0 hash=cbf29ce484222325 cand=40028 rays=16732 tests=28404 visited=100 visits=60019 mincov=7f800000 clipped=1 why=bvh cachehits=40605 cached=20972
+out 4 dab tri=341 pixels=16787 hash=4e05d32a9a78d2a1 cand=40508 rays=16787 tests=0 visited=100 visits=0 mincov=b4800000 clipped=0 why=- cachehits=57392 cached=20972
+out 5 dab tri=341 pixels=16428 hash=ca90084f1e4a65e6 cand=39397 rays=16428 tests=171132 visited=100 visits=353166 mincov=00000000 clipped=0 why=- cachehits=57392 cached=16428
+out 6 dab tri=341 pixels=8214 hash=ba53c6c996bf0653 cand=19637 rays=8214 tests=85560 visited=100 visits=175844 mincov=00000000 clipped=0 why=- cachehits=57392 cached=8214
+out 7 dab tri=341 pixels=8214 hash=ba53c6c996bf0653 cand=19637 rays=8214 tests=85560 visited=100 visits=175844 mincov=00000000 clipped=0 why=-
+case shell params=2eebe81603dd723c
+out 0 structure tris=2304 nonmanifold=0 center=3b23d700,b3c00000,bb23d700 extents=3f00a3d7,3efffffd,3f00a3d7 eps=35e93f59 adj=b42801fef0622e27 nodes=1023 bvh=2e13d487545afbaa
+out 1 dab tri=1909 pixels=26957 hash=3af80e0a4218aa69 cand=63733 rays=26957 tests=296402 visited=86 visits=715951 mincov=34000000 clipped=0 why=-
+out 2 dab tri=1251 pixels=23626 hash=b8e3cab84f25b00a cand=60535 rays=24676 tests=385036 visited=83 visits=883326 mincov=00000000 clipped=0 why=-
+out 3 dab tri=1896 pixels=13051 hash=1d01b650162f917e cand=33103 rays=13051 tests=171535 visited=42 visits=354995 mincov=b4000000 clipped=0 why=-
+out 4 dab tri=2199 pixels=27585 hash=ae4be70be3e93876 cand=65048 rays=27585 tests=289410 visited=88 visits=724543 mincov=b4800000 clipped=0 why=-
+out 5 rays n=400 hits=367 hash=ae268748b83937dc
+out 6 closest tri=1909 r=1 s=1 m=1 dist=3e0a8f55 pos=3da1856b,3e21856b,bef24821 n=3d9fe237,3e72e1f1,bf77e3e8 bary=00000000,00000000,3f800000 uv=3e45678a,3ea8f5c2
+out 7 closest tri=181 r=0 s=0 m=0 dist=3e0fae0e pos=3d9fec05,3e1fec05,beefe207 n=3d9fe267,3e72e200,bf77e3e6 bary=00000000,00000000,3f800000 uv=3e45678a,3ea8f5c2
+out 8 region n=1728 hash=e3a6fb1e721f9925
+out 9 region n=1728 hash=e3a6fb1e721f9925
+case thin_plates params=c850c458cdb2cbe2
+out 0 structure tris=4 nonmanifold=0 center=00000000,00000000,ba000000 extents=3f000000,3f000000,3a000000 eps=35bdd005 adj=5a89c158e6c3e9a5 nodes=1 bvh=b9965676f68f0849
+out 1 dab tri=1 pixels=22225 hash=9678056e04b612fd cand=42025 rays=32952 tests=131808 visited=2 visits=32952 mincov=34000000 clipped=0 why=-
+out 2 dab tri=1 pixels=18575 hash=796e2050c525d621 cand=42025 rays=32953 tests=131812 visited=2 visits=32953 mincov=00000000 clipped=0 why=-
+out 3 dab tri=2 pixels=0 hash=cbf29ce484222325 cand=168100 rays=66039 tests=264156 visited=2 visits=66039 mincov=7f800000 clipped=1 why=pixels
+out 4 dab tri=1 pixels=11656 hash=7f650755e47fb7a3 cand=16384 rays=14492 tests=57968 visited=2 visits=14492 mincov=34800000 clipped=0 why=-
+out 5 ray tri=3 r=1 s=1 m=1 dist=40005630 pos=3e7feccc,3dccc000,ba800400 n=00000000,00000000,bf800000 bary=3e99a000,39199a4e,3f332666 uv=3f7ff666,3f333000
+out 6 ray tri=3 r=1 s=1 m=1 dist=40005611 pos=3e7fd298,3dccc000,ba800400 n=00000000,00000000,bf800000 bary=3e99a000,39b5a073,3f33194c uv=3f7fe94c,3f333000
+case soup params=d2473b8f6931746e
+out 0 structure tris=2500 nonmanifold=0 center=3db93410,3dcb6ca0,3dcd6df0 extents=3f8b8a32,3f8c6b50,3f8c4882 eps=367e69ee adj=a6e4f0723147f065 nodes=1023 bvh=553391112807612f
+out 1 rays n=1000 hits=635 hash=ac5f5b4ba59283a3
+out 2 rays n=1000 hits=840 hash=5ef1fd8c1dd4dd4b
+out 3 ray none
+out 4 ray none
+out 5 closest tri=2089 r=2 s=3 m=1 dist=3d849adf pos=bd0496b3,3cc7a32d,3d4edd39 n=bf08639c,3f57c3a6,3d9be852 bary=3f800000,00000000,00000000 uv=3d8d51c2,3e76f1d7
+out 6 closest tri=1348 r=0 s=0 m=0 dist=3dd86964 pos=3e84810a,beec1c66,3f26f199 n=bf4f01d1,3ea5f1dc,3efb64ae bary=00000000,3f800000,00000000 uv=3f1a8169,3f74281b
+out 7 closest tri=2104 r=2 s=3 m=1 dist=3e7c97c1 pos=3e7d2c6e,bedc7698,3f036842 n=bf37c284,be0d817a,3f2eb0d1 bary=00000000,3f800000,00000000 uv=3f445e1e,3f4635a8
+out 8 closest exceeded
+out 9 region n=1 hash=acd58afcaaf42074
+out 10 region n=1 hash=acd58afcaaf42074
+out 11 region n=500 hash=f659a84233a66489
+case weld params=75037b9a0aab6ba0
+out 0 structure tris=8 nonmanifold=0 center=3f800000,3f800000,00000000 extents=3f800000,3f800000,00000000 eps=363dd002 adj=92657581b08014a3 nodes=1 bvh=15bae1b47eac4c95
+out 1 structure tris=8 nonmanifold=0 center=3f800000,3f800000,00000000 extents=3f800000,3f800000,00000000 eps=363dd002 adj=fbd26ba51ed16cb5 nodes=1 bvh=15bae1b47eac4c95
+out 2 structure tris=8 nonmanifold=0 center=3f800000,3f800000,00000000 extents=3f800000,3f800000,00000000 eps=363dd002 adj=59fa3558a49cef25 nodes=1 bvh=15bae1b47eac4c95
+case multi_slot params=23ca24d806d26520
+out 0 structure tris=396 nonmanifold=0 center=00000000,00000000,00000000 extents=3f000000,3f000000,3f000000 eps=35e878d0 adj=26699266bf69f565 nodes=127 bvh=b3e292e397c0da7b
+out 1 dab tri=1 pixels=2604 hash=8cd3a148b42b979f cand=4896 rays=2604 tests=58380 visited=8 visits=109672 mincov=36000000 clipped=0 why=-
+out 2 region n=12 hash=e554888727308865
+out 3 region n=204 hash=6f6d279af5cbbde5
+out 4 region n=204 hash=6f6d279af5cbbde5
+out 5 region n=204 hash=6f6d279af5cbbde5
+out 6 closest tri=215 r=2 s=2 m=1 dist=3f400000 pos=00000000,00000000,be800000 n=be654b06,be654b06,bf72d341 bary=00000000,00000000,3f800000 uv=3e2aaaab,3e800000
+case edge_coverage params=b10d81aca17fc4fe
+out 0 dab tri=1 pixels=829 hash=959e700503af1662 cand=1080 rays=829 tests=9606 visited=4 visits=2487 mincov=b4800000 clipped=0 why=-
+case big params=4ca1dc6d79aaf755
+out 0 structure tris=69312 nonmanifold=0 center=00000000,b4b00000,00000000 extents=3f000000,3efffff5,3f000000 eps=35e878cd adj=aa6cef9274dd5cf5 nodes=23935 bvh=29faed5d65c64fb8
+out 1 rays n=2000 hits=1789 hash=37d117b7972b174c
+out 2 dab tri=7535 pixels=5861 hash=f164cb28d8aef4d4 cand=13345 rays=5861 tests=60309 visited=166 visits=185351 mincov=34000000 clipped=0 why=-

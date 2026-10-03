@@ -1,4 +1,4 @@
-//! 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター・Generator。GPU にも OS にも頼らない純粋な計算で、cargo test で速く確かめる。
+//! 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター・Generator、3D の面の計算（`geometry`）。GPU にも OS にも頼らない純粋な計算で、cargo test で速く確かめる。
 //!
 //! 仕様は Unity 版の C# の Core（YoluPainter の `Runtime/Core`）。式・丸め・straight RGBA8 は同じにし、C# の Core に同じ入力を
 //! 通した出力（`tests/golden/`、`tools/csharp-golden/` で作る）とバイト一致を確かめる。
@@ -27,6 +27,7 @@ mod brush;
 mod composite;
 mod document;
 mod error;
+pub mod geometry;
 mod math;
 mod surface;
 mod types;

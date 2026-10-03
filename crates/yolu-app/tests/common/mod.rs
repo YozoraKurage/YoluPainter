@@ -32,6 +32,7 @@ pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
                 AppState::new(size, size),
                 PenInput::detached(),
             )
+            .with_render_state(cc.wgpu_render_state.as_ref())
         });
     h.run();
     h

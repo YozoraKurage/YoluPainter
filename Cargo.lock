@@ -4182,6 +4182,7 @@ dependencies = [
  "raw-window-handle",
  "windows",
  "yolu-core",
+ "yolu-protocol",
 ]
 
 [[package]]

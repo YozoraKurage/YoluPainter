@@ -18,6 +18,7 @@ use crate::ui::fonts::{self, FontReport};
 use crate::ui::menu::{self, PopupOutcome, PopupState};
 use crate::ui::theme as t;
 use crate::ui::{icons, widgets as w};
+use crate::view3d::render::{View3dRenderer, View3dStats};
 
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -99,6 +100,7 @@ struct Tabs<'a> {
     thumbs: &'a mut Thumbnails,
     colors: &'a mut ColorTextures,
     view3d: &'a mut View3dSlot,
+    renderer3d: &'a mut Option<View3dRenderer>,
     pen: &'a [PenSample],
     tab_rects: HashMap<Tab, Rect>,
 }
@@ -127,7 +129,9 @@ impl TabViewer for Tabs<'_> {
         }
         match tab {
             Tab::Canvas => canvas::show(ui, self.app, self.display, self.pen),
-            Tab::View3d => self.view3d.show(ui),
+            Tab::View3d => self
+                .view3d
+                .show(ui, self.app, self.renderer3d.as_mut(), self.pen),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
@@ -157,6 +161,8 @@ pub struct YoluApp {
     colors: ColorTextures,
     pen: PenInput,
     view3d: View3dSlot,
+    /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
+    renderer3d: Option<View3dRenderer>,
     pub fonts: FontReport,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
@@ -178,8 +184,11 @@ impl YoluApp {
         let mut app = YoluApp::with_state(
             AppState::new(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE),
             pen,
-        );
+        )
+        .with_render_state(cc.wgpu_render_state.as_ref());
         app.fonts = fonts;
+        // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
+        app.state.view3d.load_demo();
         if app.pen.is_hooked() {
             app.state.message =
                 "Windows Ink のペンを受けています（筆圧・傾き・消しゴムの端）。".into();
@@ -205,9 +214,36 @@ impl YoluApp {
             colors: ColorTextures::default(),
             pen,
             view3d: View3dSlot::default(),
+            renderer3d: None,
             fonts: FontReport::default(),
             tab_rects: HashMap::new(),
         }
+    }
+
+    /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
+    pub fn with_render_state(mut self, rs: Option<&eframe::egui_wgpu::RenderState>) -> YoluApp {
+        self.renderer3d = rs.map(View3dRenderer::new);
+        self
+    }
+
+    /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。
+    pub fn view3d_rect(&self) -> Option<Rect> {
+        self.view3d.content_rect()
+    }
+
+    /// 3D ビューの描画の数（上げたタイル・描いた回数。wgpu が無ければ None）。
+    pub fn view3d_stats(&self) -> Option<View3dStats> {
+        self.renderer3d.as_ref().map(|r| r.stats)
+    }
+
+    /// Live Link で受けたモデルを 3D ビューに読む（描いている最中なら、終わってから入れ替わる）。
+    pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
+        self.state.view3d.load_live_link(model)
+    }
+
+    /// Live Link で受けたポーズを 3D ビューのモデルに当てる（描いている最中なら、終わってから）。
+    pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), String> {
+        self.state.view3d.apply_live_link_pose(pose)
     }
 
     pub fn pen(&self) -> &PenInput {
@@ -316,6 +352,7 @@ impl YoluApp {
                     thumbs: &mut self.thumbs,
                     colors: &mut self.colors,
                     view3d: &mut self.view3d,
+                    renderer3d: &mut self.renderer3d,
                     pen: &pen,
                     tab_rects: HashMap::new(),
                 };

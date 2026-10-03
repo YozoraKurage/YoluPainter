@@ -7,7 +7,7 @@ YoluPainter のスタンドアロン版（Rust）。描くのはこのソフト�
 
 | クレート | 役目 |
 |---|---|
-| `yolu-core` | 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター。GPU にも OS にも頼らない |
+| `yolu-core` | 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター、3D の面の計算（当たり・BVH・面の上のダブ）。GPU にも OS にも頼らない |
 | `yolu-gpu` | wgpu での合成・ブラシ・ベイク（CPU の経路と照らし合わせる） |
 | `yolu-io` | .ylp（Unity 版と同じ形式）・PSD・画像の読み書き |
 | `yolu-protocol` | スタンドアロンと Unity のブリッジのあいだの通信の形 |
@@ -32,3 +32,5 @@ cargo test
 
 `yolu-core` の合成・ブラシ・Undo は、Unity 版の C# の Core とバイト一致を確かめている。正解のファイル（`crates/yolu-core/tests/golden/`）は
 `tools/csharp-golden/run.sh` で作り直す（Unity 版のリポジトリと、Unity に同梱の .NET・Mono が要る。事例は両方が読む `cases.txt`）。
+3D の面の計算（`yolu_core::geometry`）は、Unity 版の SurfaceGeometry とビットで一致を確かめている。正解（`crates/yolu-core/tests/golden/surface/`）は
+`tools/csharp-golden/run.sh surface` で作り直す（Unity 版の Editor/Preview の原文を、Unity に同梱の UnityEngine.CoreModule.dll と組む）。

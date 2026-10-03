@@ -8,6 +8,7 @@ use egui::{Pos2, Vec2};
 use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::{BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
 use crate::ui::menu::PopupState;
+use crate::view3d::View3dState;
 
 /// straight の RGBA（0〜1）。
 pub type Rgba = [f32; 4];
@@ -346,6 +347,10 @@ pub enum Action {
     BrushSmaller,
     BrushLarger,
     ToggleColorWheel,
+    /// 3D ビューに試しの立方体を読む。
+    LoadDemoModel,
+    /// 3D ビューのカメラをモデル全体が見える位置へ。
+    FrameModel,
     About,
 }
 
@@ -382,6 +387,8 @@ pub struct AppState {
     pub layer_drag: Option<(LayerId, usize)>,
     /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
     pub canvas_rect: Option<egui::Rect>,
+    /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
+    pub view3d: View3dState,
 }
 
 /// 新しい文書の既定の大きさ。
@@ -415,6 +422,7 @@ impl AppState {
             quit: false,
             layer_drag: None,
             canvas_rect: None,
+            view3d: View3dState::default(),
         }
     }
 
@@ -580,6 +588,19 @@ impl AppState {
             Action::BrushSmaller => self.brush.radius = (self.brush.radius / 1.15).max(0.5),
             Action::BrushLarger => self.brush.radius = (self.brush.radius * 1.15).min(MAX_RADIUS),
             Action::ToggleColorWheel => self.color.wheel = !self.color.wheel,
+            Action::LoadDemoModel => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.view3d.load_demo();
+                self.message = "3D ビューに試しの立方体を読みました。".into();
+            }
+            Action::FrameModel => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.view3d.frame_model();
+            }
             Action::About => {
                 self.message = format!(
                     "YoluPainter（Rust 版）{} — M1 の試作",

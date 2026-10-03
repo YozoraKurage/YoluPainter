@@ -17,6 +17,7 @@ eframe = { version = "0.36", default-features = false, features = ["wgpu", "defa
 egui = "0.36"
 egui_dock = "0.21"
 yolu-core.workspace = true
+yolu-protocol.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]

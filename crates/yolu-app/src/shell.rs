@@ -96,6 +96,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
+            Entry::item("3D ビューに試しの立方体を読む", Action::LoadDemoModel).enabled(free),
+            Entry::item("3D ビューでモデル全体を見る", Action::FrameModel)
+                .enabled(free && app.view3d.model.is_some()),
+            Entry::Separator,
             Entry::item("パネルの並びを戻す", Action::ResetLayout),
         ],
         _ => vec![Entry::item("YoluPainter について", Action::About)],
