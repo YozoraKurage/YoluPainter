@@ -33,7 +33,7 @@ fn unity_formats_1_to_6_roundtrip_every_entry() {
                 unity: "none".into(),
             })
             .unwrap();
-        assert_eq!(upgraded.info().format, 6);
+        assert_eq!(upgraded.info().format, 7);
         assert_eq!(upgraded.sets().len(), p.sets().len());
         for (a, b) in p.sets().iter().zip(upgraded.sets()) {
             assert_eq!(a.document.to_bytes(), b.document.to_bytes());

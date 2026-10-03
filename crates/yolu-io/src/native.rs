@@ -16,7 +16,7 @@ pub enum NativeValue {
     Bytes(Arc<[u8]>),
 }
 impl NativeValue {
-    fn write(&self, out: &mut Vec<u8>) {
+    pub(crate) fn write(&self, out: &mut Vec<u8>) {
         match self {
             Self::Int(v) => out.extend(v.to_le_bytes()),
             Self::Byte(v) => out.push(*v),

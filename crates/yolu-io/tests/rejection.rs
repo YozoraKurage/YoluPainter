@@ -89,7 +89,10 @@ fn unknown_entries_and_json_keys_survive_both_save_modes() {
         .unwrap();
     let a = Archive::read(&u.to_bytes().unwrap()).unwrap();
     assert_eq!(a.entries()["future.bin"].as_ref(), [7, 3, 9]);
-    assert_eq!(a.entries()["project.json"].as_ref(), f["project.json"]);
+    let project: serde_json::Value = serde_json::from_slice(&a.entries()["project.json"]).unwrap();
+    assert_eq!(project["future"], "保持する");
+    assert!(project["sets"][0].get("materialSlot").is_none());
+    assert!(project["sets"][0].get("material").is_some());
     let info: serde_json::Value = serde_json::from_slice(&a.entries()["ylp.json"]).unwrap();
     assert_eq!(info["future"]["mode"], 13);
 }
@@ -98,7 +101,7 @@ fn legacy_material_slot_fallback_is_reported() {
     let mut f = files(1);
     f.insert("view.json".into(), b"{\"materialSlot\":-1}".to_vec());
     let p = open(f).unwrap();
-    assert_eq!(p.sets()[0].material_slot, 0);
+    assert_eq!(p.sets()[0].material, yolu_io::MaterialRef::PendingSlot(0));
     assert!(p.notes().iter().any(|s| s.contains("スロット")));
 }
 #[test]

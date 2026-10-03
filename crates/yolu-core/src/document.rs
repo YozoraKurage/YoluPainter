@@ -337,6 +337,30 @@ impl Document {
         })
     }
 
+    /// 読み込み直後の文書と層に保存済みのIDを復元する（層は下からの順）。
+    /// 呼び出し前のIDを持つ履歴は消す。進行中のストローク・空ID・重複IDは拒否する。
+    /// 文書を消費するので、読み込みが完了するまで外部へ公開しないこと。
+    pub fn with_persistent_ids(
+        mut self,
+        document_id: u128,
+        layer_ids: &[LayerId],
+    ) -> Result<Self, CoreError> {
+        self.ensure_no_stroke()?;
+        let mut seen = std::collections::HashSet::new();
+        if document_id == 0
+            || layer_ids.len() != self.layers.len()
+            || layer_ids.iter().any(|id| id.0 == 0 || !seen.insert(*id))
+        {
+            return Err(CoreError::InvalidArgument("persistent_ids"));
+        }
+        self.id = document_id;
+        for (layer, id) in self.layers.iter_mut().zip(layer_ids) {
+            layer.id = *id;
+        }
+        self.external_mutation();
+        Ok(self)
+    }
+
     // ───────── 大きさ・状態 ─────────
 
     /// 文書の ID（作るたびに違う）。

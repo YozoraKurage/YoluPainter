@@ -1,12 +1,16 @@
 //! Unity 版 .ylp の検証、損失のない正本の読み書き、メモリ上の旧形式移行。
 mod archive;
+mod composite_png;
+mod core_bridge;
 mod native;
 mod project;
 mod selection;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use native::{NativeDocument, NativeField, NativeValue};
-pub use project::{FormatInfo, Project, Resource, TextureSet, WriterInfo};
+pub use project::{
+    FormatInfo, MaterialAsset, MaterialRef, Project, Resource, TextureSet, WriterInfo,
+};
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
 pub use store::{FileStamp, SaveTarget};
@@ -64,3 +68,10 @@ pub(crate) fn guid(b: &[u8]) -> String {
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 pub struct ReadmeExamples;
+
+pub use composite_png::composite_png;
+impl From<yolu_core::CoreError> for Error {
+    fn from(e: yolu_core::CoreError) -> Self {
+        Self(format!("core: {e}"))
+    }
+}

@@ -22,11 +22,95 @@ pub struct FormatInfo {
     pub saved_by: Option<WriterInfo>,
     pub created_by: Option<WriterInfo>,
 }
+/// 形式7のマテリアル参照。アセット参照がない名前は重複してよい。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MaterialRef {
+    Material {
+        name: String,
+        asset: Option<MaterialAsset>,
+    },
+    Unassigned,
+    PendingSlot(u16),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaterialAsset {
+    pub guid: String,
+    pub file_id: i64,
+}
+impl MaterialRef {
+    fn read(v: &Value) -> Result<Self> {
+        check(v.is_object(), "material がオブジェクトではありません")?;
+        let unassigned = match v.get("unassigned") {
+            None => false,
+            Some(x) => x
+                .as_bool()
+                .ok_or_else(|| Error("unassigned が真偽値ではありません".into()))?,
+        };
+        check(
+            usize::from(unassigned)
+                + usize::from(v.get("slot").is_some())
+                + usize::from(v.get("name").is_some())
+                == 1,
+            "material の種類を一つ指定してください",
+        )?;
+        if unassigned {
+            return Ok(Self::Unassigned);
+        }
+        if v.get("slot").is_some() {
+            return Ok(Self::PendingSlot(number(v, "slot", 0, 65535)? as u16));
+        }
+        let name = text(v, "name", 0, 256)?.to_string();
+        check(
+            !name.chars().any(|c| c < ' ' || c == '\x7f'),
+            "マテリアル名に制御文字があります",
+        )?;
+        check(
+            v.get("guid").is_some() == v.get("fileId").is_some(),
+            "guid と fileId は対で指定してください",
+        )?;
+        let asset = if v.get("guid").is_some() {
+            let guid = text(v, "guid", 32, 32)?.to_string();
+            check(
+                guid.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "マテリアルのGUIDが不正です",
+            )?;
+            Some(MaterialAsset {
+                guid,
+                file_id: number(v, "fileId", i64::MIN, i64::MAX)?,
+            })
+        } else {
+            None
+        };
+        Ok(Self::Material { name, asset })
+    }
+    fn to_json(&self) -> Value {
+        match self {
+            Self::Unassigned => serde_json::json!({"unassigned": true}),
+            Self::PendingSlot(slot) => serde_json::json!({"slot": slot}),
+            Self::Material { name, asset: None } => serde_json::json!({"name": name}),
+            Self::Material {
+                name,
+                asset: Some(asset),
+            } => serde_json::json!({"name": name, "guid": asset.guid, "fileId": asset.file_id}),
+        }
+    }
+    fn exclusive_key(&self) -> Option<String> {
+        match self {
+            Self::Unassigned => Some("unassigned".into()),
+            Self::PendingSlot(slot) => Some(format!("slot:{slot}")),
+            Self::Material { asset: Some(a), .. } => {
+                Some(format!("asset:{}:{}", a.guid, a.file_id))
+            }
+            Self::Material { asset: None, .. } => None,
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct TextureSet {
     pub id: String,
     pub name: String,
-    pub material_slot: u16,
+    pub material: MaterialRef,
     pub document: NativeDocument,
     pub selection: Option<Selection>,
 }
@@ -83,7 +167,7 @@ impl Project {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         self.original.to_bytes()
     }
-    /// 明示的に形式6へ移行する。正本と未知のエントリの内容は変えない。
+    /// 明示的に形式7へ移行する。正本と未知のエントリの内容は変えない。
     pub fn upgraded(&self, writer: WriterInfo) -> Result<Self> {
         let mut files = self.files.clone();
         let mut info = if let Some(b) = self.original.files.get("ylp.json") {
@@ -91,7 +175,7 @@ impl Project {
         } else {
             serde_json::json!({})
         };
-        info["format"] = Value::from(6);
+        info["format"] = Value::from(7);
         let w = writer_json(&writer);
         if info.get("createdBy").is_none() {
             if let Some(w) = self
@@ -134,6 +218,40 @@ impl Project {
             "YOLUPAINTER-YLP-",
         )?)
     }
+    /// 形式7のセットのマテリアル参照を置き換える。旧形式は先にupgradedで明示的に移行する。
+    pub fn with_material(&self, set_id: &str, material: MaterialRef) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "マテリアル参照を変える前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        let mut project = json(required(&files, "project.json")?, 65536)?;
+        let set = project["sets"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|set| set["id"].as_str() == Some(set_id))
+            .ok_or_else(|| Error("セットがありません".into()))?;
+        // 参照の既知の鍵だけを置換し、将来の拡張項目は保持する。
+        let reference = set["material"].as_object_mut().unwrap();
+        for key in ["name", "guid", "fileId", "unassigned", "slot"] {
+            reference.remove(key);
+        }
+        let Value::Object(replacement) = material.to_json() else {
+            unreachable!()
+        };
+        reference.extend(replacement);
+        files.insert(
+            "project.json".into(),
+            Arc::from(serde_json::to_vec(&project)?),
+        );
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
     fn from_archive(original: Archive) -> Result<Self> {
         let info = if let Some(b) = original.files.get("ylp.json") {
             let root = json(b, 65536)?;
@@ -145,9 +263,9 @@ impl Project {
                 None
             };
             check(
-                format <= 6,
+                format <= 7,
                 format!(
-                    ".ylp形式{format}（{} {}で保存）は未対応です。対応上限は形式6です",
+                    ".ylp形式{format}（{} {}で保存）は未対応です。対応上限は形式7です",
                     saved.app, saved.version
                 ),
             )?;
@@ -205,11 +323,31 @@ impl Project {
             let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
             files.insert("project.json".into(), Arc::from(project.into_bytes()));
             notes.push(format!(
-                "形式{}を形式6の並びへメモリ上で移行しました",
+                "形式{}を形式7の並びへメモリ上で移行しました",
                 info.format
             ));
         }
-        let root = json(required(&files, "project.json")?, 65536)?;
+        let mut root = json(required(&files, "project.json")?, 65536)?;
+        if info.format < 7 {
+            for set in root
+                .get_mut("sets")
+                .and_then(Value::as_array_mut)
+                .ok_or_else(|| Error("sets が配列ではありません".into()))?
+            {
+                if set.get("material").is_none() {
+                    let slot = number(set, "materialSlot", 0, 65535)?;
+                    set["material"] = serde_json::json!({"slot": slot});
+                }
+                set.as_object_mut()
+                    .ok_or_else(|| Error("セットがオブジェクトではありません".into()))?
+                    .remove("materialSlot");
+            }
+            files.insert("project.json".into(), Arc::from(serde_json::to_vec(&root)?));
+            notes.push(format!(
+                "形式{}のマテリアル参照を形式7へメモリ上で移行しました",
+                info.format
+            ));
+        }
         let list = array(&root, "sets", 1, 64)?;
         let current = id_text(&root, "current")?.to_string();
         let mut ids = HashSet::new();
@@ -219,10 +357,11 @@ impl Project {
         for s in list {
             let id = id_text(s, "id")?.to_string();
             let name = label(s, "name")?.to_string();
-            let slot = number(s, "materialSlot", 0, 65535)? as u16;
+            let material = MaterialRef::read(&s["material"])?;
+            let unique_material = material.exclusive_key().is_none_or(|k| slots.insert(k));
             check(
-                ids.insert(id.clone()) && names.insert(name.to_uppercase()) && slots.insert(slot),
-                "セットのID・名前・スロットが重複しています",
+                ids.insert(id.clone()) && names.insert(name.to_uppercase()) && unique_material,
+                "セットのID・名前・排他的なマテリアル参照が重複しています",
             )?;
             let prefix = format!("sets/{id}/");
             let document =
@@ -234,7 +373,7 @@ impl Project {
             sets.push(TextureSet {
                 id,
                 name,
-                material_slot: slot,
+                material,
                 document,
                 selection,
             });
@@ -267,7 +406,14 @@ impl Project {
         for n in &unknown {
             notes.push(format!("未対応のエントリを原本のまま保持します: {n}"));
         }
-        notes.push("正本の全項目は保持されます。描画用coreへの変換は未実装です".into());
+        for set in &sets {
+            for issue in set.document.core_issues() {
+                notes.push(format!(
+                    "セット「{}」はcoreへ変換できません: {issue}",
+                    set.name
+                ));
+            }
+        }
         Ok(Self {
             original,
             files,
