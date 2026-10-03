@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+yolu-core = { path = "crates/yolu-core" }
+yolu-gpu = { path = "crates/yolu-gpu" }
+yolu-io = { path = "crates/yolu-io" }
+yolu-protocol = { path = "crates/yolu-protocol" }
+
+[profile.dev]
+opt-level = 1            # 画素の処理は最適化なしだと遅すぎるので、開発でも少し最適化する
+[profile.dev.package."*"]
+opt-level = 3            # 依存のクレートは最適化して組む（初回だけ時間がかかる）
