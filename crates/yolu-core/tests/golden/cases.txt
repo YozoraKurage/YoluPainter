@@ -1,0 +1,651 @@
+# YoluPainter-rs の yolu-core と Unity 版の C# の Core を照らし合わせる事例（両方がこの台本を読む）。
+# 書き方（1 行 1 命令、# から行末はコメント）:
+#   case 名前                      事例の始まり
+#   canvas 幅 高さ タイル            空の文書
+#   layer 名前 モード 不透明度 [hidden] [clip] 中身    層を一番上へ（中身: empty | random:種 | sparse:種 | solid:R,G,B,A）。
+#                                    層の行は準備なので、行ごとに履歴を消す
+#   stroke 層 キー=値…              Color へのストロークを始める（radius hardness spacing opacity flow color=R,G,B,A
+#                                    psize popacity pflow erase。書かないキーは C# の BrushSettings の既定値）
+#   point X Y 筆圧                  入力の点（時刻 0）
+#   walk 種 個数 X0 Y0 歩幅          乱数の歩みの点（筆圧 0.1 + 0.9·u、次に x、y を ±歩幅·(2u − 1) 動かす）
+#   pixel X Y 覆い 筆圧              ApplyPixel（メッシュのダブ）
+#   commit | cancel | undo | redo
+#   visible 層 0|1  /  opacity 層 値  /  mode 層 モード  /  clip 層 0|1  /  move 層 新しい位置  /  remove 層  /  add 名前
+#   out composite  /  out layer 層  /  out region X Y W H
+# 乱数は splitmix64。色の成分は 1/8 で 0、1/8 で 255、ほかは一様。アルファは 1/4 で 0、1/4 で 255、ほかは一様。
+# 層の番号は今の並び（下から 0）。小数は 2 進で割り切れるか短い 10 進だけ（読み方の違いは params の指紋で見張る）。
+
+case blend_Normal
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Normal 1 sparse:12
+layer b Normal 0.6 random:13
+out composite
+
+case blend_Multiply
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Multiply 1 sparse:12
+layer b Multiply 0.6 random:13
+out composite
+
+case blend_Screen
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Screen 1 sparse:12
+layer b Screen 0.6 random:13
+out composite
+
+case blend_Overlay
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Overlay 1 sparse:12
+layer b Overlay 0.6 random:13
+out composite
+
+case blend_Darken
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Darken 1 sparse:12
+layer b Darken 0.6 random:13
+out composite
+
+case blend_Lighten
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Lighten 1 sparse:12
+layer b Lighten 0.6 random:13
+out composite
+
+case blend_ColorDodge
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a ColorDodge 1 sparse:12
+layer b ColorDodge 0.6 random:13
+out composite
+
+case blend_ColorBurn
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a ColorBurn 1 sparse:12
+layer b ColorBurn 0.6 random:13
+out composite
+
+case blend_LinearDodge
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a LinearDodge 1 sparse:12
+layer b LinearDodge 0.6 random:13
+out composite
+
+case blend_LinearBurn
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a LinearBurn 1 sparse:12
+layer b LinearBurn 0.6 random:13
+out composite
+
+case blend_HardLight
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a HardLight 1 sparse:12
+layer b HardLight 0.6 random:13
+out composite
+
+case blend_SoftLight
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a SoftLight 1 sparse:12
+layer b SoftLight 0.6 random:13
+out composite
+
+case blend_VividLight
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a VividLight 1 sparse:12
+layer b VividLight 0.6 random:13
+out composite
+
+case blend_LinearLight
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a LinearLight 1 sparse:12
+layer b LinearLight 0.6 random:13
+out composite
+
+case blend_PinLight
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a PinLight 1 sparse:12
+layer b PinLight 0.6 random:13
+out composite
+
+case blend_HardMix
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a HardMix 1 sparse:12
+layer b HardMix 0.6 random:13
+out composite
+
+case blend_Difference
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Difference 1 sparse:12
+layer b Difference 0.6 random:13
+out composite
+
+case blend_Exclusion
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Exclusion 1 sparse:12
+layer b Exclusion 0.6 random:13
+out composite
+
+case blend_Subtract
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Subtract 1 sparse:12
+layer b Subtract 0.6 random:13
+out composite
+
+case blend_Divide
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Divide 1 sparse:12
+layer b Divide 0.6 random:13
+out composite
+
+case blend_Hue
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Hue 1 sparse:12
+layer b Hue 0.6 random:13
+out composite
+
+case blend_Saturation
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Saturation 1 sparse:12
+layer b Saturation 0.6 random:13
+out composite
+
+case blend_Color
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Color 1 sparse:12
+layer b Color 0.6 random:13
+out composite
+
+case blend_Luminosity
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a Luminosity 1 sparse:12
+layer b Luminosity 0.6 random:13
+out composite
+
+case blend_DarkerColor
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a DarkerColor 1 sparse:12
+layer b DarkerColor 0.6 random:13
+out composite
+
+case blend_LighterColor
+canvas 24 20 8
+layer ground Normal 1 random:11
+layer a LighterColor 1 sparse:12
+layer b LighterColor 0.6 random:13
+out composite
+
+case clip_Normal
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Normal 1 clip sparse:23
+layer c2 Normal 0.45 clip random:24
+out composite
+
+case clip_Multiply
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Multiply 1 clip sparse:23
+layer c2 Multiply 0.45 clip random:24
+out composite
+
+case clip_Screen
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Screen 1 clip sparse:23
+layer c2 Screen 0.45 clip random:24
+out composite
+
+case clip_Overlay
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Overlay 1 clip sparse:23
+layer c2 Overlay 0.45 clip random:24
+out composite
+
+case clip_Darken
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Darken 1 clip sparse:23
+layer c2 Darken 0.45 clip random:24
+out composite
+
+case clip_Lighten
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Lighten 1 clip sparse:23
+layer c2 Lighten 0.45 clip random:24
+out composite
+
+case clip_ColorDodge
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 ColorDodge 1 clip sparse:23
+layer c2 ColorDodge 0.45 clip random:24
+out composite
+
+case clip_ColorBurn
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 ColorBurn 1 clip sparse:23
+layer c2 ColorBurn 0.45 clip random:24
+out composite
+
+case clip_LinearDodge
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 LinearDodge 1 clip sparse:23
+layer c2 LinearDodge 0.45 clip random:24
+out composite
+
+case clip_LinearBurn
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 LinearBurn 1 clip sparse:23
+layer c2 LinearBurn 0.45 clip random:24
+out composite
+
+case clip_HardLight
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 HardLight 1 clip sparse:23
+layer c2 HardLight 0.45 clip random:24
+out composite
+
+case clip_SoftLight
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 SoftLight 1 clip sparse:23
+layer c2 SoftLight 0.45 clip random:24
+out composite
+
+case clip_VividLight
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 VividLight 1 clip sparse:23
+layer c2 VividLight 0.45 clip random:24
+out composite
+
+case clip_LinearLight
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 LinearLight 1 clip sparse:23
+layer c2 LinearLight 0.45 clip random:24
+out composite
+
+case clip_PinLight
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 PinLight 1 clip sparse:23
+layer c2 PinLight 0.45 clip random:24
+out composite
+
+case clip_HardMix
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 HardMix 1 clip sparse:23
+layer c2 HardMix 0.45 clip random:24
+out composite
+
+case clip_Difference
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Difference 1 clip sparse:23
+layer c2 Difference 0.45 clip random:24
+out composite
+
+case clip_Exclusion
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Exclusion 1 clip sparse:23
+layer c2 Exclusion 0.45 clip random:24
+out composite
+
+case clip_Subtract
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Subtract 1 clip sparse:23
+layer c2 Subtract 0.45 clip random:24
+out composite
+
+case clip_Divide
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Divide 1 clip sparse:23
+layer c2 Divide 0.45 clip random:24
+out composite
+
+case clip_Hue
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Hue 1 clip sparse:23
+layer c2 Hue 0.45 clip random:24
+out composite
+
+case clip_Saturation
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Saturation 1 clip sparse:23
+layer c2 Saturation 0.45 clip random:24
+out composite
+
+case clip_Color
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Color 1 clip sparse:23
+layer c2 Color 0.45 clip random:24
+out composite
+
+case clip_Luminosity
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 Luminosity 1 clip sparse:23
+layer c2 Luminosity 0.45 clip random:24
+out composite
+
+case clip_DarkerColor
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 DarkerColor 1 clip sparse:23
+layer c2 DarkerColor 0.45 clip random:24
+out composite
+
+case clip_LighterColor
+canvas 24 20 8
+layer ground Normal 1 random:21
+layer base Overlay 0.8 random:22
+layer c1 LighterColor 1 clip sparse:23
+layer c2 LighterColor 0.45 clip random:24
+out composite
+
+# 表示・不透明度・クリッピングの組の規則と、層の操作の Undo
+case stack
+canvas 37 29 16
+layer ground Normal 1 random:31
+layer hidden Screen 1 hidden random:32
+layer zero Multiply 0 random:33
+layer base Normal 0.75 hidden sparse:34        # 見えない下地は上のクリップも隠す
+layer c0 Difference 1 clip random:35
+layer base2 Overlay 1 sparse:36
+layer c1 Multiply 0.5 clip random:37
+layer c2 Color 1 clip hidden random:38          # 見えないクリップは飛ばすが、組は続く
+layer c3 HardLight 0.3 clip solid:200,40,90,180
+layer flat Screen 0.5 solid:10,120,250,128
+layer empty Normal 1 empty
+out composite
+out region 3 5 20 11
+visible 3 1
+out composite
+opacity 9 0.25
+mode 5 SoftLight
+clip 5 1
+out composite
+undo
+undo
+out composite
+redo
+move 1 9
+out composite
+remove 4
+out composite
+undo
+undo
+undo
+out composite
+redo
+redo
+redo
+redo
+out composite
+
+# 一番下の層のクリッピングの印は効かない。値の極端な不透明度
+case bottom_clip
+canvas 33 17 16
+layer bottom Normal 1 clip random:41
+layer tiny Normal 1e-305 random:42
+layer denormal Multiply 5e-324 random:43
+layer almost Screen 0.99999999 random:44
+layer third LinearBurn 0.3333 sparse:45
+out composite
+
+# 一様なタイルと透明な画素の RGB（アルファ 0 でも RGB を持つ画素を読み込み、そのまま保つ）
+case uniform
+canvas 40 24 8
+layer a Normal 1 sparse:51
+layer b Normal 0.5 sparse:52
+layer c Divide 1 solid:128,0,255,0
+layer d Exclusion 0.7 solid:255,255,0,255
+out layer 0
+out composite
+
+# ブラシ
+case brush_line
+canvas 64 40 16
+layer paint Normal 1 empty
+stroke 0 radius=6 hardness=0.8 spacing=0.15 color=200,60,30,255
+point 4.5 20.25 0.3
+point 30.75 12.5 1
+point 60.125 30 0.6
+commit
+out layer 0
+
+case brush_soft
+canvas 64 40 16
+layer paint Normal 1 empty
+stroke 0 radius=7.5 hardness=0 spacing=0.1 opacity=0.7 flow=0.35 color=30,140,220,200 psize=1 popacity=1 pflow=1
+walk 5 40 10.5 10.5 3
+commit
+out layer 0
+
+case brush_over
+canvas 64 40 16
+layer base Normal 1 random:61
+stroke 0 radius=9 hardness=0.5 spacing=0.25 opacity=0.8 flow=0.6 color=250,250,20,128
+walk 6 25 40 20 4
+commit
+out layer 0
+
+case brush_erase
+canvas 64 40 16
+layer base Normal 1 random:62
+stroke 0 radius=8 hardness=0.3 spacing=0.2 flow=0.7 color=0,0,0,128 erase=1
+walk 7 30 20 20 3
+commit
+out layer 0
+stroke 0 radius=5 hardness=1 color=0,0,0,255 erase=1 psize=0 popacity=0
+point 2 2 1
+point 60 38 1
+commit
+out layer 0
+
+case brush_history
+canvas 64 40 16
+layer paint Normal 1 empty
+stroke 0 radius=5 color=255,0,0,255
+point 5 5 1
+point 40 30 1
+commit
+stroke 0 radius=4 color=0,255,0,200 hardness=0
+point 50 5 0.5
+point 10 35 1
+commit
+undo
+stroke 0 radius=6 color=0,0,255,100
+point 30 2 1
+point 30 38 0.25
+commit
+out layer 0
+redo
+undo
+out layer 0
+redo
+out layer 0
+undo
+undo
+undo
+out layer 0
+redo
+redo
+out layer 0
+
+case brush_cancel
+canvas 64 40 16
+layer base Normal 1 sparse:63
+stroke 0 radius=10 color=10,20,30,255
+walk 8 20 30 20 5
+cancel
+out layer 0
+stroke 0 radius=3 color=0,0,0,0
+point 10 10 1
+commit
+undo
+stroke 0 radius=10 color=10,20,30,255
+point 20 20 1
+undo
+commit
+undo
+out layer 0
+
+case brush_spacing
+canvas 64 40 16
+layer paint Normal 1 empty
+stroke 0 radius=1.5 spacing=0.01 color=255,128,0,255 hardness=0.6
+point 3 3 1
+point 3 3 1
+point 60.5 37.5 0.5
+commit
+stroke 0 radius=3 spacing=4 color=0,128,255,255
+point 1 20 1
+point 63 21 1
+commit
+stroke 0 radius=4 color=90,90,90,128
+point 32.5 32.5 1
+point 32.5 32.5 1
+commit
+stroke 0 radius=4 color=200,0,200,255
+point 16 8 0
+point 48 8 0
+commit
+out layer 0
+
+case brush_edges
+canvas 64 40 16
+layer paint Normal 1 empty
+stroke 0 radius=12 hardness=0.9 color=40,200,90,230 psize=0
+point -10 -6 1
+point 30 50 0.4
+point 75 20 1
+point 70 -15 0.8
+commit
+out layer 0
+
+case brush_hard
+canvas 64 40 16
+layer paint Normal 1 random:64
+stroke 0 radius=5.25 hardness=1 spacing=0.5 opacity=0.5 color=255,255,255,255 popacity=0
+walk 9 30 32 20 6
+commit
+stroke 0 radius=5.25 hardness=1 spacing=0.5 opacity=0.5 color=255,255,255,255 popacity=0
+walk 9 30 32 20 6
+commit
+out layer 0
+
+case brush_pixel
+canvas 16 16 4
+layer paint Normal 1 empty
+stroke 0 radius=2 hardness=1 spacing=0.5 color=255,0,0,255 psize=0 popacity=0
+pixel 5 9 1 1
+pixel 6 9 0.5 1
+pixel 6 9 0.5 1
+pixel -1 3 1 1
+commit
+stroke 0 radius=2 color=255,0,0,255 popacity=1 pflow=1
+pixel 4 4 1 0.5
+pixel 9 9 0.25 0.75
+commit
+stroke 0 radius=2 color=0,0,0,255 erase=1 psize=0 popacity=0
+pixel 5 9 1 1
+commit
+out layer 0
+undo
+out layer 0
+
+case brush_composite
+canvas 64 40 16
+layer ground Normal 1 random:65
+layer paint Multiply 0.8 empty
+layer clipped Screen 0.6 clip empty
+stroke 1 radius=10 hardness=0.4 color=30,60,200,255
+walk 10 20 32 20 4
+commit
+stroke 2 radius=6 color=255,200,0,255
+walk 11 20 32 20 5
+commit
+out composite
+
+case brush_tile128
+canvas 132 84 128
+layer paint Normal 1 sparse:66
+stroke 0 radius=40 hardness=0.7 spacing=0.12 opacity=0.9 flow=0.4 color=220,30,120,255 pflow=1
+walk 12 24 66 42 9
+commit
+out layer 0
+
+# 大きなダブ（外接 128² 以上で複数のタイルにかかるダブは、予算に収まるならタイルごとにワーカーが描く）
+case brush_parallel
+canvas 144 120 24
+layer paint Normal 1 sparse:67
+stroke 0 radius=70 hardness=0.5 spacing=0.05 opacity=0.85 flow=0.25 color=20,180,160,230 psize=0 pflow=1
+walk 13 30 72 60 6
+commit
+stroke 0 radius=70 hardness=0.2 spacing=0.1 flow=0.5 color=0,0,0,200 erase=1 psize=0
+walk 14 20 70 62 8
+commit
+out layer 0

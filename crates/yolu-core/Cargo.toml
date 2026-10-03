@@ -5,3 +5,8 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+glam = "0.33"
+rayon = "1.12"
+
+[dev-dependencies]
+sha2 = "0.10"

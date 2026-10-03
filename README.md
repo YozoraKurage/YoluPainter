@@ -20,3 +20,8 @@ YoluPainter のスタンドアロン版（Rust）。描くのはこのソフト�
 cargo build
 cargo test
 ```
+
+## C# 版との照合（正解のファイル）
+
+`yolu-core` の合成・ブラシ・Undo は、Unity 版の C# の Core とバイト一致を確かめている。正解のファイル（`crates/yolu-core/tests/golden/`）は
+`tools/csharp-golden/run.sh` で作り直す（Unity 版のリポジトリと、Unity に同梱の .NET・Mono が要る。事例は両方が読む `cases.txt`）。
