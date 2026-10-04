@@ -186,19 +186,30 @@ impl Document {
         F: Fn(Rgba8, f64) -> Rgba8 + Sync,
     {
         let effective = self.effective_region(region)?;
+        self.edit_effective(index, target, effective, |_, _, start, amount| {
+            pixel(start, amount)
+        })
+    }
+
+    /// [`Document::edit_region`] の、範囲を決めたあとの部分: effective（None は全体）の量のある画素へ pixel(x, y, 描く前, 量) を当てる。
+    /// 画像で置き換える入口（`replace_pixels`）は画素の位置が要るのでこちらを使う。
+    pub(super) fn edit_effective<F>(
+        &mut self,
+        index: usize,
+        target: Target,
+        effective: Option<SelectionMask>,
+        pixel: F,
+    ) -> Result<bool, CoreError>
+    where
+        F: Fn(u32, u32, Rgba8, f64) -> Rgba8 + Sync,
+    {
         let coords: Vec<TileCoord> = match &effective {
             Some(m) => m.tile_coords(),
             None => self.canvas_tiles().collect(),
         };
         let layer = self.layers[index].id;
-        let changes = self.edit_region_tiles(
-            index,
-            target,
-            effective.as_ref(),
-            &coords,
-            &mut 0,
-            |_, _, start, amount| pixel(start, amount),
-        )?;
+        let changes =
+            self.edit_region_tiles(index, target, effective.as_ref(), &coords, &mut 0, pixel)?;
         if changes.is_empty() {
             return Ok(false);
         }

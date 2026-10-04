@@ -584,7 +584,7 @@ impl Document {
 
     /// 読み込み用: 層の親を今の並びの順にまとめて置く（履歴を消す）。入れ子が正しくなければ断って何も変えない。
     pub fn set_structure_for_load(&mut self, parents: &[Option<LayerId>]) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         if parents.len() != self.layers.len() {
             return Err(CoreError::InvalidArgument("親の数が層の数と違う"));
         }
@@ -636,7 +636,7 @@ impl Document {
         channel: Channel,
         info: ChannelInfo,
     ) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         info.validate()?;
         if channel.is_standard() || self.channel_info(channel).is_some() {
             return Err(CoreError::InvalidArgument("その番号のチャンネルはもうある"));

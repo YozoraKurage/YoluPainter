@@ -421,6 +421,8 @@ pub enum Action {
     Stencil(crate::stencil::StencilOp),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
+    /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
+    Clip(crate::clipboard::ClipAction),
     Quit,
     Undo,
     Redo,
@@ -485,11 +487,13 @@ pub enum Action {
 }
 
 impl Action {
-    /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。
+    /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。クリップボードの操作は、コピーも読むだけのセットでは
+    /// 断る（そのセットの文書は中身の代わりの空の文書で、写しても意味が無い）。
     pub fn edits_document(&self) -> bool {
         matches!(
             self,
             Action::M2(_)
+                | Action::Clip(_)
                 | Action::Region(crate::region::RegionAction::IdColor(_))
                 | Action::Shelf(ShelfOp::Place { .. })
                 | Action::Sel(crate::selection::SelAction::Edit(_))
@@ -581,6 +585,8 @@ pub struct AppState {
     pub update: crate::update::UpdateState,
     /// 設定（退避を残す数）と設定の窓。
     pub prefs: crate::prefs::PrefsState,
+    /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
+    pub clip: crate::clipboard::ClipState,
 }
 
 /// ファイルの窓の頼み。
@@ -703,6 +709,7 @@ impl AppState {
             stencil: crate::stencil::StencilState::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
+            clip: crate::clipboard::ClipState::default(),
         }
     }
 
@@ -787,6 +794,7 @@ impl AppState {
             Action::Shelf(op) => self.shelf_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Sel(action) => self.sel_action(action),
+            Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {
                 if stroking {

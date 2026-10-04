@@ -209,6 +209,8 @@ impl YoluApp {
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.fonts = fonts;
         app.dialogs = true;
+        // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験の窓は繋がない
+        app.state.clip.use_system();
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
         // 関連付け（.ylp のダブルクリック）で起動されたら、そのプロジェクトを開く
@@ -595,6 +597,7 @@ impl YoluApp {
         self.state.poll_psd();
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();
+        self.state.poll_clipboard();
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）

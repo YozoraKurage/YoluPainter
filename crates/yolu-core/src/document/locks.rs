@@ -49,7 +49,7 @@ impl Document {
     }
     /// 読み込みの最後に使う。ロックは検証済みの型で受け、履歴を消す。
     pub fn set_locks_for_load(&mut self, id: LayerId, locks: LayerLocks) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let i = self.index_of(id)?;
         self.layers[i].locks = locks;
         self.external_mutation();

@@ -81,7 +81,7 @@ impl Document {
         channels: &[ChannelPaint],
         brush: &Brush,
     ) -> Result<(Stroke, bool), CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         brush.validate()?;
         self.validate_material(channels)?;
         let index = self.index_of(layer)?;

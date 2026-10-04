@@ -123,41 +123,48 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             }
             entries
         }
-        1 => vec![
-            Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
-                .shortcut("Ctrl+Z")
-                .enabled(free && app.can_undo()),
-            Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
-                .shortcut("Ctrl+Shift+Z / Ctrl+Y")
-                .enabled(free && app.can_redo()),
-            Entry::Separator,
-            Entry::item(Tool::Brush.name_in(l), Action::SelectTool(Tool::Brush))
-                .shortcut("B")
-                .radio(app.tool == Tool::Brush),
-            Entry::item(Tool::Eraser.name_in(l), Action::SelectTool(Tool::Eraser))
-                .shortcut("E")
-                .radio(app.tool == Tool::Eraser),
-            Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
-                .shortcut("G")
-                .radio(app.tool == Tool::Fill),
-            Entry::item(
-                Tool::PolygonFill.name_in(l),
-                Action::SelectTool(Tool::PolygonFill),
-            )
-            .shortcut("4")
-            .radio(app.tool == Tool::PolygonFill),
-            Entry::Separator,
-            Entry::item(
-                l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
-                Action::SwapColors,
-            )
-            .shortcut("X"),
-            Entry::item(
-                l.pick("初期設定の色", "Default Colors"),
-                Action::DefaultColors,
-            )
-            .shortcut("D"),
-        ],
+        1 => {
+            let mut entries = vec![
+                Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
+                    .shortcut("Ctrl+Z")
+                    .enabled(free && app.can_undo()),
+                Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
+                    .shortcut("Ctrl+Shift+Z / Ctrl+Y")
+                    .enabled(free && app.can_redo()),
+                Entry::Separator,
+            ];
+            entries.extend(crate::clipboard::menu_entries(app));
+            entries.push(Entry::Separator);
+            entries.extend([
+                Entry::item(Tool::Brush.name_in(l), Action::SelectTool(Tool::Brush))
+                    .shortcut("B")
+                    .radio(app.tool == Tool::Brush),
+                Entry::item(Tool::Eraser.name_in(l), Action::SelectTool(Tool::Eraser))
+                    .shortcut("E")
+                    .radio(app.tool == Tool::Eraser),
+                Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
+                    .shortcut("G")
+                    .radio(app.tool == Tool::Fill),
+                Entry::item(
+                    Tool::PolygonFill.name_in(l),
+                    Action::SelectTool(Tool::PolygonFill),
+                )
+                .shortcut("4")
+                .radio(app.tool == Tool::PolygonFill),
+                Entry::Separator,
+                Entry::item(
+                    l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
+                    Action::SwapColors,
+                )
+                .shortcut("X"),
+                Entry::item(
+                    l.pick("初期設定の色", "Default Colors"),
+                    Action::DefaultColors,
+                )
+                .shortcut("D"),
+            ]);
+            entries
+        }
         2 => match app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) {
             // 選んでいるレイヤーの右クリックと同じ項目
             Some(id) => layer_context(app, id),
@@ -534,11 +541,14 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         || app.sel.dialog.is_some()
         || crate::windows::modal_open(app)
     {
+        ctx.input(|i| crate::clipboard::keys::observe_blocked(i, &mut app.clip));
         return;
     }
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let mut actions = Vec::new();
     ctx.input_mut(|i| {
+        // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
+        actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
         let mut key = |m: Modifiers, k: Key, a: Action| {
             if i.consume_key(m, k) {
                 actions.push(a);

@@ -22,6 +22,11 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   `egui-winit → arboard → clipboard-win → error-code` から入る。
   出典: [clipboard-win の原文](https://github.com/DoumanAsh/clipboard-win/blob/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE)、
   [error-code の原文](https://github.com/DoumanAsh/error-code/blob/e4615e514db3ff64f5f1b328b4865b20a3dcdbc3/LICENSE)。
+- `yolu-app` は OS のクリップボードの画像のために `arboard 3.6.1` を `image-data` と `wayland-data-control`（Wayland の data-control を先に試し、
+  使えなければ X11）で直接使う。`arboard` 自体は `egui-winit` 経由で入っていたもので、増えるのは Linux だけの `wl-clipboard-rs 0.9.4`
+  （MIT OR Apache-2.0 から MIT）と、その依存の `os_pipe`・`tree_magic_mini`・`nom`（いずれも MIT）、`petgraph`・`fixedbitset`・
+  `hashbrown 0.15.5`（MIT OR Apache-2.0 から MIT）、`foldhash 0.1.5`（Zlib）。Windows の依存は変わらない。`tree_magic_mini` の GPL のデータ
+  （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を足さないこと。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
   OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
 - 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU は app・bridge ともクレート分の配布用全文束を生成できる**。
@@ -125,7 +130,7 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 |---|---:|---:|---:|---:|---|
 | Windows MSVC | 194 | 27 | 31 | 49 | 生成成功 |
 | Windows GNU | 194 | 27 | 31 | 49 | 生成成功 |
-| Linux GNU | 263 | 24 | 31 | 54 | 判断待ち |
+| Linux GNU | 271 | 24 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
@@ -693,9 +698,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `ac6d4977b9dbef036f3799ddc1fb6ac7e38c1a1782e973fe7e039d6772f3a097`。
 
-外部クレート 266 件（同名の別版は別件）。実行時 223 件。
+外部クレート 274 件（同名の別版は別件）。実行時 231 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -706,21 +711,21 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | Apache-2.0 AND MIT | 1 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 245 |
+| MIT | 252 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
-| Zlib | 1 |
+| Zlib | 2 |
 
 状態: 要確認。配布用全文束は生成しない。
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
-| accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| accesskit_atspi_common | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| accesskit_consumer | 0.36.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| accesskit_unix | 0.21.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| accesskit_winit | 0.32.2 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| accesskit_atspi_common | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| accesskit_consumer | 0.36.0 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| accesskit_unix | 0.21.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| accesskit_winit | 0.32.2 | 実行時 | Apache-2.0 | Apache-2.0 | 未取得の原文です。初回は --offline を外してください |
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
 | ahash | 0.8.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | allocator-api2 | 0.2.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -778,21 +783,21 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | downcast-rs | 1.2.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | dpi | 0.1.2 | 実行時 | Apache-2.0 AND MIT | Apache-2.0 AND MIT | 確認済み |
 | duplicate | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| ecolor | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| ecolor | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
 | ed25519-dalek | 2.2.0 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | ed25519 | 2.2.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| eframe | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| egui-wgpu | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| egui-winit | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| egui | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| eframe | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| egui-wgpu | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| egui-winit | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| egui | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
 | egui_dock | 0.21.1 | 実行時 | MIT | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
 | endi | 1.1.1 | 実行時 | MIT | MIT | 確認済み |
 | enumflags2 | 0.7.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | enumflags2_derive | 0.7.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
+| epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 未取得の原文です。初回は --offline を外してください / 未取得の原文です。初回は --offline を外してください |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | errno | 0.3.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -802,7 +807,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fixedbitset | 0.5.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | flate2 | 1.1.10 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| foldhash | 0.1.5 | 実行時 | Zlib | Zlib | 確認済み |
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | futures-core | 0.3.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -820,6 +827,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | guillotiere | 0.7.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | half | 2.7.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | harfrust | 0.12.0 | 実行時 | MIT | MIT | 確認済み |
+| hashbrown | 0.15.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | hashbrown | 0.16.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | hashbrown | 0.17.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | heck | 0.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -849,16 +857,19 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | naga-types | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | naga | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | nohash-hasher | 0.2.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| nom | 8.0.0 | 実行時 | MIT | MIT | 確認済み |
 | num-traits | 0.2.19 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | once_cell | 1.21.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ordered-float | 5.5.0 | 実行時 | MIT | MIT | 確認済み |
 | ordered-stream | 0.2.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| os_pipe | 1.2.3 | 実行時 | MIT | MIT | 確認済み |
 | parking | 2.2.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | parking_lot | 0.12.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | parking_lot_core | 0.9.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | paste | 1.0.15 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | peniko | 0.6.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | percent-encoding | 2.3.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| petgraph | 0.8.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | phf | 0.13.1 | 実行時 | MIT | MIT | 確認済み |
 | phf_generator | 0.13.1 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | phf_macros | 0.13.1 | ビルド・マクロ用 | MIT | MIT | 確認済み |
@@ -875,7 +886,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | proc-macro-crate | 3.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | proc-macro2-diagnostics | 0.10.1 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | proc-macro2 | 1.0.107 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
 | pxfm | 0.1.30 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | quick-xml | 0.41.0 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | quote | 1.0.47 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -913,7 +924,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | smithay-client-toolkit | 0.20.0 | 実行時 | MIT | MIT | 確認済み |
 | smithay-clipboard | 0.7.3 | 実行時 | MIT | MIT | 確認済み |
 | smol_str | 0.2.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 未取得の原文です。初回は --offline を外してください |
 | static_assertions | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -929,9 +940,10 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | tracing-attributes | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
+| tree_magic_mini | 3.2.2 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 確認済み |
+| ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 未取得の原文です。初回は --offline を外してください / 未取得の原文です。初回は --offline を外してください |
 | unicode-general-category | 1.1.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | unicode-ident | 1.0.26 | 実行時 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
 | unicode-segmentation | 1.13.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -962,6 +974,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | winit | 0.30.13 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | winnow | 1.0.4 | 実行時 | MIT | MIT | 確認済み |
 | winresource | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| wl-clipboard-rs | 0.9.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | x11-dl | 2.21.0 | 実行時 | MIT | MIT | 確認済み |
 | x11rb-protocol | 0.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | x11rb | 0.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |

@@ -8,6 +8,8 @@
 //! - 変化の記録（`change_serial` と `changed_tiles`）は、合成が変わり得るタイルをチャンネルごとに数で覚える。履歴や保存とは別。
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
+mod batch;
+mod clipboard;
 mod edits;
 mod effects;
 mod eval;
@@ -20,6 +22,7 @@ mod regions;
 mod resize;
 mod transform;
 mod triangle_fill;
+pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;
 pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
 pub use resize::{CanvasResampling, ResizeReport};
@@ -334,9 +337,11 @@ pub(crate) enum Command {
     },
     /// 層のパスを付ける・差し替える・外す（画素の入れ替えを伴うことがある）。
     Path(layer_path::PathCommand),
+    /// 複数の段を 1 段にまとめたもの（`Document::batch`・貼り付け）。当てるのは先頭から、戻すのは末尾から。
+    Compound(Vec<Entry>),
 }
 
-struct Entry {
+pub(crate) struct Entry {
     command: Command,
     cost: u64,
 }
@@ -408,6 +413,8 @@ pub struct Document {
     id_counter: u64,
     /// 効果（フィルター・Generator・Anchor・画像・グラデーション）の評価と、外から渡す入力。保存も Undo もしない。
     effects: eval::EffectState,
+    /// `Document::batch` の編集を実行している間 true（ストローク・Undo・Redo・履歴を消す書き込みを断る）。
+    batching: bool,
 }
 
 /// 128 bit の新しい ID（std の RandomState の鍵と通し番号から）。
@@ -478,6 +485,7 @@ impl Document {
             trimmed_bytes: 0,
             id_counter: 0,
             effects: eval::EffectState::default(),
+            batching: false,
         })
     }
 
@@ -489,7 +497,7 @@ impl Document {
         document_id: u128,
         layer_ids: &[LayerId],
     ) -> Result<Self, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let mut seen = std::collections::HashSet::new();
         if document_id == 0
             || layer_ids.len() != self.layers.len()
@@ -647,6 +655,24 @@ impl Document {
         } else {
             Ok(())
         }
+    }
+    /// ストローク・Undo・Redo・履歴を消す書き込み（読み込み用の直接の書き込み）は、`batch` の編集の中では断る
+    /// （まとめた段の位置と、巻き戻せることを守る）。
+    fn ensure_not_batching(&self) -> Result<(), CoreError> {
+        if self.batching {
+            Err(CoreError::BatchActive)
+        } else {
+            Ok(())
+        }
+    }
+    /// ストロークのない・まとめの中でもない（読み込み用の直接の書き込みの入口）。
+    fn ensure_loadable(&self) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        self.ensure_not_batching()
+    }
+    /// まとめている最中か（`batch` の編集の中）。
+    pub fn is_batching(&self) -> bool {
+        self.batching
     }
     fn new_layer_id(&mut self) -> LayerId {
         loop {
@@ -822,7 +848,7 @@ impl Document {
 
     /// まとめている変更を取り消して、その段ごと捨てる（ドラッグを Escape で止めたとき）。まとめが無ければ false。
     pub fn cancel_coalescing(&mut self) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         if self.coalesce.is_none() || self.undo.is_empty() {
             self.end_coalescing();
             return Ok(false);
@@ -849,7 +875,7 @@ impl Document {
         coord: TileCoord,
         bytes: &[u8],
     ) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         self.require_channel(channel)?;
         let index = self.index_of(id)?;
         self.ensure_raster(index)?;
@@ -880,7 +906,7 @@ impl Document {
         coord: TileCoord,
         bytes: &[u8],
     ) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
@@ -925,7 +951,7 @@ impl Document {
         y: u32,
         color: Rgba8,
     ) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         self.require_channel(channel)?;
         let index = self.index_of(id)?;
         self.ensure_raster(index)?;
@@ -959,7 +985,7 @@ impl Document {
         y: u32,
         hide: u8,
     ) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
@@ -1023,7 +1049,7 @@ impl Document {
 
     /// 履歴（Undo・Redo）を消す。
     pub fn clear_history(&mut self) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         self.clear_history_unchecked();
         Ok(())
     }
@@ -1123,7 +1149,7 @@ impl Document {
 
     /// 1 段戻す。戻す段が無ければ false。進行中のストロークがあれば断る。
     pub fn undo(&mut self) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let Some(mut entry) = self.undo.pop() else {
             return Ok(false);
         };
@@ -1139,7 +1165,7 @@ impl Document {
 
     /// 1 段やり直す。
     pub fn redo(&mut self) -> Result<bool, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         let Some(mut entry) = self.redo.pop() else {
             return Ok(false);
         };
@@ -1173,7 +1199,8 @@ impl Document {
 
     /// 予算を超えたら、遠い段（古い Undo、次に遠い Redo）から落とす。新しい minimum_undo_steps 段は超えても残す。
     fn trim_history(&mut self) {
-        if self.history_bytes <= self.undo_budget {
+        // まとめの途中で古い段を落とすと、失敗したときに元へ戻せない（`batch` が終わってから整理する）
+        if self.batching || self.history_bytes <= self.undo_budget {
             return;
         }
         let mut projected = self.history_bytes;
@@ -1403,6 +1430,7 @@ impl Document {
                 self.switch_projection(*id, if backwards { *old } else { *new })
             }
             Command::Path(m) => self.switch_path(m, backwards),
+            Command::Compound(steps) => self.switch_compound(steps, backwards),
         }
     }
 
@@ -1784,7 +1812,7 @@ impl Document {
         channel: Channel,
         brush: &Brush,
     ) -> Result<Stroke, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         brush.validate()?;
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
@@ -1841,7 +1869,7 @@ impl Document {
         layer: LayerId,
         brush: &Brush,
     ) -> Result<Stroke, CoreError> {
-        self.ensure_no_stroke()?;
+        self.ensure_loadable()?;
         brush.validate()?;
         let index = self.index_of(layer)?;
         // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無い層は、ロックの有無に関わらず同じ理由で断る

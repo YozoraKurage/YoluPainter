@@ -72,9 +72,9 @@ pub use brush::{
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
-    Affine2D, CanvasResampling, Document, EffectCounters, LayerLocks, LayerMergeReport,
-    MergeMethod, MergeRefusal, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats,
-    TriangleFill,
+    Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
+    LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, Resampling,
+    ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,

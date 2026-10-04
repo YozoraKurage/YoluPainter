@@ -68,6 +68,8 @@ impl State {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            // 交換しない: `batch` の編集の中かの印は本物の文書のもの（準備用の文書は自分の履歴を作るだけ）
+            batching: _,
         } = doc;
         Self {
             layers: std::mem::take(layers),
@@ -120,6 +122,9 @@ impl Document {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            // 写さない: 準備用の文書は `batch` の外（本物の文書が `batch` の中でも、準備用の文書は自分の履歴を作ってよい。
+            // 本物へは 1 段で交換し、それがまとめの中の 1 段になる）
+            batching: _,
         } = self;
         let mut d = Document::with_tile_size(*width, *height, *tile_size)?;
         d.id = *id;

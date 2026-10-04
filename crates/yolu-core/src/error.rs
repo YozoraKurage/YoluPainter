@@ -38,6 +38,10 @@ pub enum CoreError {
     StrokeBudgetExceeded,
     /// 作業のメモリの上限（Normal の出力など）を超えるので、確保の前に断った。
     WorkingBudgetExceeded,
+    /// 層の画素のコピー・カット・ペーストを断った理由（何も変えていない）。
+    Clipboard(crate::ClipboardRefusal),
+    /// `Document::batch` の編集の中では、ストローク・Undo・Redo・履歴を消す書き込みはできない（まとめは入れ子にもできない）。
+    BatchActive,
 }
 
 impl fmt::Display for CoreError {
@@ -65,6 +69,8 @@ impl fmt::Display for CoreError {
             CoreError::StrokeBudgetExceeded => {
                 write!(f, "ストロークの予算を超える（取り消した）")
             }
+            CoreError::Clipboard(reason) => write!(f, "{reason}"),
+            CoreError::BatchActive => write!(f, "まとめた編集の途中ではできない"),
         }
     }
 }

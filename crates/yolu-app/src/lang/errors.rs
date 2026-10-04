@@ -31,6 +31,8 @@ impl Lang {
             CoreError::SourceBudgetExceeded => "Pixel budget exceeded (cancelled)".into(),
             CoreError::StrokeBudgetExceeded => "Stroke budget exceeded (cancelled)".into(),
             CoreError::WorkingBudgetExceeded => "Working memory budget exceeded".into(),
+            CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
+            CoreError::BatchActive => "Not allowed inside a batch of edits".into(),
         }
     }
 
@@ -250,6 +252,18 @@ fn generator_kind_name(kind: generator::Kind) -> &'static str {
     }
 }
 
+fn clipboard_refusal(reason: yolu_core::ClipboardRefusal) -> &'static str {
+    use yolu_core::ClipboardRefusal::*;
+    match reason {
+        NoPixels => "This layer has no pixels",
+        NothingToCopy { selection: true } => "Nothing inside the selection",
+        NothingToCopy { selection: false } => "The layer is empty",
+        TooLarge { .. } => "The area to copy is too large",
+        OperationBudget { .. } => "The pasted layer exceeds the operation budget",
+        NotPaintLayer => "A fill layer cannot be cut",
+    }
+}
+
 fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
     use yolu_core::MergeRefusal::*;
     match reason {
@@ -321,6 +335,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "レベル補正の入力の範囲" => "Levels input range",
         "レベル補正の出力の範囲" => "Levels output range",
         "予算が今の画素より小さい" => "Budget is smaller than existing pixels",
+        "写した画素のバイト数が幅 × 高さ × 4 でない" => "Copied pixels must be width × height × 4 bytes",
+        "写した文書の大きさ" => "Size of the source document",
+        "写した矩形が文書の外" => "Copied rectangle lies outside the document",
+        "写した矩形が空" => "Copied rectangle is empty",
+        "画素が矩形の外" => "Pixel outside the rectangle",
+        "画素を置き換えられるのはラスターの層だけ" => "Only paint layers have pixels to replace",
+        "画像の大きさが文書と違う" => "Image size differs from the document",
+        "無効のチャンネルは切り取れない" => "Cannot cut a disabled channel",
+        "無効のチャンネルは置き換えられない" => "Cannot replace a disabled channel",
         "入れ子が輪になっている" => "Cyclic hierarchy",
         "入力の座標が範囲外" => "Input coordinates out of range",
         "入力の時刻が戻った" => "Input time moved backwards",
@@ -724,6 +747,31 @@ mod tests {
         }
         let error = CoreError::Unsupported("塗りつぶしの層には描けない");
         assert_eq!(Lang::En.core_error(&error), "Unsupported: Cannot paint a fill layer");
+    }
+    #[test]
+    fn clipboard_refusals_use_the_selected_language() {
+        use yolu_core::ClipboardRefusal::*;
+        let errors: Vec<CoreError> = [
+            NoPixels,
+            NothingToCopy { selection: true },
+            NothingToCopy { selection: false },
+            TooLarge { bytes: 2, limit: 1 },
+            OperationBudget { bytes: 2, limit: 1 },
+            NotPaintLayer,
+        ]
+        .into_iter()
+        .map(CoreError::Clipboard)
+        .chain([CoreError::BatchActive])
+        .collect();
+        let english: Vec<String> = errors.iter().map(|e| Lang::En.core_error(e)).collect();
+        for (i, (error, en)) in errors.iter().zip(&english).enumerate() {
+            assert_eq!(Lang::Ja.core_error(error), error.to_string());
+            assert!(en.is_ascii() && !en.is_empty(), "{en}");
+            assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
+            // 画面に出す理由に、開発用の数（バイト・MiB）は入れない
+            assert!(!error.to_string().chars().any(|c| c.is_ascii_digit()), "{error}");
+            assert!(!en.chars().any(|c| c.is_ascii_digit()), "{en}");
+        }
     }
     #[test]
     fn every_core_reason_has_an_english_text() {
