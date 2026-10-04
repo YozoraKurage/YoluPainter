@@ -346,8 +346,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     }
 
     // 16 進とアルファ
+    // 16 進の欄を広めに取る（同梱の書体の数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
     let line = rows.row(22.0, 6.0);
-    let cells = Rows::split(line, 2, 6.0);
+    let hex_width = ((line.width() - 6.0) * 0.52).round();
+    let cells = [
+        Rect::from_min_size(line.min, vec2(hex_width, line.height())),
+        Rect::from_min_max(pos2(line.left() + hex_width + 6.0, line.top()), line.max),
+    ];
     let hex = format!("#{}", to_hex(app.color.main));
     if let Some(typed) = w::text_field(
         ui,
@@ -425,7 +430,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         back,
         "color.sub",
         app.color.sub,
-        app.lang.pick("サブの色（背景色）。押すとメインの色と入れ替えます", "Background color. Click to swap with the foreground color."),
+        &format!(
+            "{} #{}",
+            app.lang.pick("サブの色（背景色）。押すとメインの色と入れ替えます", "Background color. Click to swap with the foreground color."),
+            to_hex(app.color.sub)
+        ),
         true,
     )
     .clicked()
@@ -438,7 +447,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         front,
         "color.main",
         app.color.main,
-        app.lang.pick("メインの色（描画色。ブラシで塗る色）", "Foreground color (the color the brush paints)"),
+        &format!(
+            "{} #{}",
+            app.lang.pick("メインの色（描画色。ブラシで塗る色）", "Foreground color (the color the brush paints)"),
+            to_hex(app.color.main)
+        ),
         true,
     );
     if w::icon_button(
@@ -469,27 +482,4 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     {
         app.apply(Action::DefaultColors);
     }
-    // 右にメインとサブの 16 進（小さく）
-    let info = Rect::from_min_size(
-        pos2(back.right() + 12.0, bottom - 42.0),
-        vec2((r.right() - back.right() - 20.0).max(0.0), 33.0),
-    );
-    let p = ui.painter();
-    w::text(
-        p,
-        Rect::from_min_size(info.min, vec2(info.width(), 16.0)),
-        &format!("{}  #{}", app.lang.pick("メイン", "Foreground"), to_hex(app.color.main)),
-        t::LABEL_SMALL,
-        w::Align::Left,
-    );
-    w::text(
-        p,
-        Rect::from_min_size(
-            pos2(info.left(), info.top() + 17.0),
-            vec2(info.width(), 16.0),
-        ),
-        &format!("{}  #{}", app.lang.pick("サブ", "Background"), to_hex(app.color.sub)),
-        t::LABEL_SMALL,
-        w::Align::Left,
-    );
 }

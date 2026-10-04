@@ -130,7 +130,7 @@ impl Fallback {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
             Fallback::Policy => lang
-                .pick("CPU で合成する設定", "Compositing set to CPU")
+                .pick("設定で GPU を使わない", "GPU turned off in the settings")
                 .into(),
             Fallback::NoDevice => lang.pick("GPU の装置がありません", "No GPU device").into(),
             Fallback::SoftwareAdapter => lang
@@ -142,19 +142,19 @@ impl Fallback {
                     .into(),
                 Unsupported::NormalChannel => lang
                     .pick(
-                        "法線のチャンネルは CPU で合成します",
+                        "法線のチャンネルは GPU で合成できません",
                         "Normal channels are composited on the CPU",
                     )
                     .into(),
                 Unsupported::AdjustmentLayer => lang
                     .pick(
-                        "調整の層は CPU で合成します",
+                        "調整の層は GPU で合成できません",
                         "Adjustment layers are composited on the CPU",
                     )
                     .into(),
                 Unsupported::IsolatedGroup => lang
                     .pick(
-                        "独立したグループは CPU で合成します",
+                        "独立したグループは GPU で合成できません",
                         "Isolated groups are composited on the CPU",
                     )
                     .into(),

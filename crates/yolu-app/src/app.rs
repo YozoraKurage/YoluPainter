@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Ui, WidgetText};
+use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Sense, Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
@@ -17,7 +17,7 @@ use crate::pen::{PenInput, PenSample};
 use crate::settings::{Problem, Settings};
 use crate::shell;
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
-use crate::ui::fonts::{self, FontReport};
+use crate::ui::fonts;
 use crate::ui::menu::{self, PopupOutcome, PopupState};
 use crate::ui::theme as t;
 use crate::ui::{icons, widgets as w};
@@ -61,17 +61,18 @@ impl Tab {
 
 /// Substance Painter の並び（左: ブラシとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
 /// プロパティ）。ブラシのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
-/// 左右の列は 1600 点の幅の窓で 300 点になる割合。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+/// 左の列は、いちばん小さい窓（960 点）でも 3 つのタブ（英語の Brushes・Assets・Channels）の見出しが収まる割合（1600 点の窓で約 330 点）。
+/// 右の列は 1600 点の幅の窓で約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
     let [center, left] =
         surface.split_left(
         NodeIndex::root(),
-        0.19,
+        0.21,
         vec![Tab::Brushes, Tab::Assets, Tab::Channels],
     );
-    let [_, right] = surface.split_right(center, 0.77, vec![Tab::TextureSets]);
+    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets]);
     surface.split_below(left, 0.66, vec![Tab::Color]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
     surface.split_below(layers, 0.45, vec![Tab::Properties]);
@@ -190,7 +191,6 @@ pub struct YoluApp {
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
-    pub fonts: FontReport,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
@@ -203,20 +203,18 @@ pub struct YoluApp {
 
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（窓を作るときに 1 度）。
-    pub fn setup(ctx: &egui::Context) -> FontReport {
+    pub fn setup(ctx: &egui::Context) {
         t::apply(ctx);
-        let report = fonts::install(ctx);
+        fonts::install(ctx);
         icons::install(ctx);
-        report
     }
 
     /// eframe の窓から作る（Windows ではペンの入力を窓に繋ぐ）。
     pub fn new(cc: &eframe::CreationContext<'_>) -> YoluApp {
-        let fonts = Self::setup(&cc.egui_ctx);
+        Self::setup(&cc.egui_ctx);
         let pen = PenInput::attach(cc);
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
-        app.fonts = fonts;
         app.dialogs = true;
         // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験の窓は繋がない
         app.state.clip.use_system();
@@ -268,10 +266,8 @@ impl YoluApp {
 
     /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
     pub fn for_context_with_settings(ctx: &egui::Context, settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
-        let fonts = Self::setup(ctx);
-        let mut app = YoluApp::with_settings(settings, pen);
-        app.fonts = fonts;
-        app
+        Self::setup(ctx);
+        YoluApp::with_settings(settings, pen)
     }
 
     /// 設定（言語・退避を残す数）の選択が変わっていれば、設定のファイルに書く。書けなくても動作は変えず、知らせるだけ。
@@ -294,10 +290,8 @@ impl YoluApp {
 
     /// 文脈と状態から作る（試験用。配色・書体・アイコンも入れる）。
     pub fn for_context(ctx: &egui::Context, state: AppState, pen: PenInput) -> YoluApp {
-        let fonts = Self::setup(ctx);
-        let mut app = YoluApp::with_state(state, pen);
-        app.fonts = fonts;
-        app
+        Self::setup(ctx);
+        YoluApp::with_state(state, pen)
     }
 
     /// 状態とペンの受け口から作る（`setup` は呼ぶ側で）。
@@ -311,7 +305,6 @@ impl YoluApp {
             pen,
             view3d: View3dSlot::default(),
             renderer3d: None,
-            fonts: FontReport::default(),
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
             dialogs: false,
@@ -645,12 +638,13 @@ impl YoluApp {
         }
 
         let mut bar = None;
+        let mut link_icon = None;
         egui::Panel::top("yolu.menubar")
             .exact_size(t::MENU_BAR_HEIGHT)
             .frame(Frame::NONE)
             .show(ui, |ui| {
                 let r = ui.max_rect();
-                let open = match self.state.popup.as_ref().map(|p| p.kind) {
+                let open_menu = match self.state.popup.as_ref().map(|p| p.kind) {
                     Some(PopupKind::MenuBar(i)) => Some(i),
                     _ => None,
                 };
@@ -658,34 +652,56 @@ impl YoluApp {
                     ui,
                     r,
                     &shell::menu_titles(self.state.lang),
-                    open,
+                    open_menu,
                     // 新しい版があるあいだ、ヘルプの見出しに印を付ける
                     self.state
                         .update
                         .offer()
                         .map(|_| shell::HELP_MENU),
                 ));
-                // 右端: プロジェクトの名前と保存の状態
-                let name = format!(
-                    "{}{}",
-                    self.state.project_name,
-                    if self.state.modified { " •" } else { "" }
+                // 右端: プロジェクトの名前と保存の状態。その左に Live Link の入口（Unity の印）。名前は、メニューの見出しの右から窓の右の縁までの
+                // 幅（最大 352）に収まるように後ろを詰め、印は「見えている名前」の左に置く（長い名前でも、印がメニューの見出しに重ならない）
+                let menu_end = bar
+                    .as_ref()
+                    .and_then(|b| b.rects.last())
+                    .map_or(r.left() + 6.0, |last| last.right());
+                let room = (r.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT)).clamp(0.0, 352.0);
+                let style = t::LABEL_DIM.with_color(if self.state.modified {
+                    t::TEXT
+                } else {
+                    t::TEXT_DIM
+                });
+                // 保存していない印（•）の分は、変わっても印が動かないよう、いつも幅に入れる
+                let marker_width = w::text_width(ui.painter(), " •", style);
+                let shown = w::fit(
+                    ui.painter(),
+                    &self.state.project_name,
+                    (room - marker_width).max(0.0),
+                    style,
                 );
+                let name_width = w::text_width(ui.painter(), &format!("{shown} •"), style);
                 let title = Rect::from_min_max(
-                    pos2(r.right() - 360.0, r.top()),
+                    pos2(r.right() - 8.0 - name_width, r.top()),
                     pos2(r.right() - 8.0, r.bottom()),
                 );
-                w::text(
-                    ui.painter(),
-                    title,
-                    &name,
-                    t::LABEL_DIM.with_color(if self.state.modified {
-                        t::TEXT
-                    } else {
-                        t::TEXT_DIM
-                    }),
-                    w::Align::Right,
+                let name = format!("{shown}{}", if self.state.modified { " •" } else { "" });
+                w::text(ui.painter(), title, &name, style, w::Align::Right);
+                if shown != self.state.project_name {
+                    // 詰めたときだけ、全体の名前をツールチップに
+                    ui.interact(title, ui.id().with("menubar.title"), Sense::hover())
+                        .on_hover_text(&self.state.project_name);
+                }
+                let link_open = matches!(
+                    self.state.popup.as_ref().map(|p| p.kind),
+                    Some(PopupKind::LiveLink)
                 );
+                link_icon = Some(shell::link_icon(
+                    ui,
+                    r,
+                    r.right() - 8.0 - name_width,
+                    &self.state,
+                    link_open,
+                ));
             });
         egui::Panel::top("yolu.options")
             .exact_size(t::OPTIONS_BAR_HEIGHT)
@@ -696,13 +712,12 @@ impl YoluApp {
                     shell::options_bar(ui, &mut self.state, r)
                 });
             });
-        let uploaded = self.display.stats.total_tiles;
         egui::Panel::bottom("yolu.status")
             .exact_size(t::STATUS_BAR_HEIGHT)
             .frame(Frame::NONE)
             .show(ui, |ui| {
                 let r = ui.max_rect();
-                shell::status_bar(ui, &self.state, r, uploaded);
+                shell::status_bar(ui, &self.state, r);
             });
         egui::Panel::left("yolu.tools")
             .exact_size(t::TOOL_STRIP_WIDTH)
@@ -743,6 +758,7 @@ impl YoluApp {
             });
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
+        self.state.canvas_visible = std::mem::take(&mut self.state.canvas_drawn);
 
         let bar = bar.unwrap_or(menu::BarOutcome {
             rects: Vec::new(),
@@ -754,7 +770,7 @@ impl YoluApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
             self.state.m2_cancel_drag();
         }
-        self.popups(&ctx, &bar);
+        self.popups(&ctx, &bar, link_icon);
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
@@ -795,7 +811,7 @@ impl YoluApp {
         }
     }
 
-    fn popups(&mut self, ctx: &egui::Context, bar: &menu::BarOutcome) {
+    fn popups(&mut self, ctx: &egui::Context, bar: &menu::BarOutcome, link_icon: Option<shell::LinkIcon>) {
         let open_bar = match self.state.popup.as_ref().map(|p| p.kind) {
             Some(PopupKind::MenuBar(i)) => Some(i),
             _ => None,
@@ -812,14 +828,25 @@ impl YoluApp {
                 self.open_bar_menu(ctx, bar, hover);
             }
         }
+        // Live Link の入口: 押したら窓を開く（開いていれば閉じる）
+        if let Some(icon) = link_icon.filter(|i| i.pressed) {
+            if matches!(self.state.popup.as_ref().map(|p| p.kind), Some(PopupKind::LiveLink)) {
+                self.state.popup = None;
+            } else if !self.state.is_stroking() {
+                self.state.popup = Some(OpenPopup {
+                    kind: PopupKind::LiveLink,
+                    state: PopupState::new(ctx, icon.rect),
+                });
+            }
+        }
         let Some(mut open) = self.state.popup.take() else {
             return;
         };
         let entries = shell::popup_entries(&self.state, open.kind);
-        let keep: Vec<Rect> = if matches!(open.kind, PopupKind::MenuBar(_)) {
-            bar.rects.clone()
-        } else {
-            Vec::new()
+        let keep: Vec<Rect> = match open.kind {
+            PopupKind::MenuBar(_) => bar.rects.clone(),
+            PopupKind::LiveLink => link_icon.map(|i| vec![i.rect]).unwrap_or_default(),
+            _ => Vec::new(),
         };
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &keep) {
             PopupOutcome::Open => self.state.popup = Some(open),

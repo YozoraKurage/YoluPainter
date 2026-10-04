@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 
 use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, ViewportId};
 
-use crate::canvas::HEADER_HEIGHT;
 use crate::pen::PenSample;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
@@ -71,6 +70,13 @@ impl View3dHost for RecordingHost {
     }
 }
 
+/// 隅のアイコンの結果。
+#[derive(Default)]
+struct Corner {
+    /// 設定のアイコンの矩形（設定のパネルは、その外を押すと閉じる。このアイコンは外に数えない）。
+    settings: Option<Rect>,
+}
+
 #[derive(Default)]
 pub struct View3dSlot {
     host: Option<Box<dyn View3dHost>>,
@@ -113,10 +119,8 @@ impl View3dSlot {
     ) {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
-        let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_HEIGHT));
-        let below = Rect::from_min_max(pos2(full.left(), header.bottom()), full.max);
         // スキンのあるモデルなら左にポーズの欄（無ければ全部が 3D の表示域）
-        let (pose_panel, content) = crate::panels::pose::split(app, below);
+        let (pose_panel, content) = crate::panels::pose::split(app, full);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(ui, app, content, pen);
@@ -181,9 +185,6 @@ impl View3dSlot {
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
         }
-        if let (true, Some((level, by_budget))) = (drawn, reduced) {
-            reduced_badge(ui, app.lang, content, level, by_budget);
-        }
         if !drawn {
             self.placeholder(ui, app, content);
         } else if app.view3d.pose.mode {
@@ -234,9 +235,9 @@ impl View3dSlot {
         if let Some(panel) = pose_panel {
             crate::panels::pose::show(ui, app, panel);
         }
-        let settings_button = self.header(ui, app, header);
+        let corner = self.corner(ui, app, content, reduced.filter(|_| drawn));
         if app.view3d.display.settings_open {
-            settings_panel(ui, app, content, settings_button);
+            settings_panel(ui, app, content, corner.settings);
         }
 
         let placement = Placement {
@@ -271,104 +272,77 @@ impl View3dSlot {
         }
     }
 
-    /// 見出しの帯: 名前と三角形の数、表示のドロップダウン、光と環境の設定のボタン、全体が見える位置へ戻すボタン。返すのは設定のボタンの矩形。
-    fn header(&self, ui: &mut Ui, app: &mut AppState, bar: Rect) -> Option<Rect> {
-        let p = ui.painter().clone();
-        w::fill(&p, bar, t::PANEL_HEADER);
-        w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
+    /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない。文字なし、名前と理由はツールチップ）: 3D の絵が元より縮んでいる印
+    /// （押せない。`reduced` は縮めた段と、メモリの予算で決まったか）、3D の表示の切り替え（押すとメニュー）、光と環境の設定、モデル全体が
+    /// 見える位置へ戻す。返すのは設定のアイコンの矩形（設定のパネルを下に置く）。
+    fn corner(&self, ui: &mut Ui, app: &mut AppState, view: Rect, reduced: Option<(u32, Option<bool>)>) -> Corner {
+        if app.view3d.model.is_none() {
+            return Corner::default();
+        }
         let lang = app.lang;
-        let has_model = app.view3d.model.is_some();
-        let mut right = bar.right() - 4.0;
-        if has_model {
-            let r = Rect::from_min_size(pos2(right - 24.0, bar.top() + 2.0), vec2(24.0, 22.0));
-            if w::icon_button(
-                ui,
-                r,
-                "view3d.frame",
-                "target",
-                lang.pick(
-                    "モデル全体が見える位置へ戻す",
-                    "Fit the whole model in view",
-                ),
-                false,
-                !app.is_stroking(),
-                16.0,
-            )
-            .clicked()
-            {
-                app.apply(Action::FrameModel);
-            }
-            right = r.left() - 4.0;
-        }
-        let mut settings = None;
-        if has_model {
-            let r = Rect::from_min_size(pos2(right - 24.0, bar.top() + 2.0), vec2(24.0, 22.0));
-            if w::icon_button(
-                ui,
-                r,
-                "view3d.settings",
-                "light_mode",
-                lang.pick(
-                    "光・環境・トーンマッピング",
-                    "Light, environment, tone mapping",
-                ),
-                app.view3d.display.settings_open,
-                true,
-                16.0,
-            )
-            .clicked()
-            {
-                app.apply(Action::View3d(Op::ToggleSettings));
-            }
-            settings = Some(r);
-            right = r.left() - 4.0;
-            let value = display::shading_label(app, app.view3d.display.shading);
-            let width = 156.0f32.min((right - bar.left() - 120.0).max(90.0));
-            let r = Rect::from_min_size(pos2(right - width, bar.top() + 2.0), vec2(width, 22.0));
-            let (response, b) = w::dropdown(
-                ui,
-                r,
-                "view3d.shading",
-                None,
-                &value,
-                Some(lang.pick(
-                    "3D の表示（マテリアル・中立・チャンネルだけ）",
-                    "3D shading (material, neutral, channel only)",
-                )),
-                true,
-                0.0,
-            );
-            if response.clicked() {
-                let ctx = ui.ctx().clone();
-                app.popup = Some(OpenPopup {
-                    kind: PopupKind::View3dShading,
-                    state: PopupState::new(&ctx, b).with_min_width(b.width()),
-                });
-            }
-            right = r.left() - 6.0;
-        }
-        let label = match &app.view3d.model {
-            Some(m) => lang.pick(
-                format!(
-                    "3D · {} · {} 三角形",
-                    m.display_name(lang),
-                    m.triangle_count()
-                ),
-                format!(
-                    "3D · {} · {} triangles",
-                    m.display_name(lang),
-                    m.triangle_count()
-                ),
-            ),
-            None => lang.pick("3D · モデルなし", "3D · No model").to_string(),
-        };
-        let label_rect = Rect::from_min_max(
-            pos2(bar.left() + 8.0, bar.top()),
-            pos2(right.max(bar.left() + 8.0), bar.bottom()),
+        let shading = display::shading_label(app, app.view3d.display.shading);
+        let open_shading = matches!(
+            app.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::View3dShading)
         );
-        let shown = w::fit(&p, &label, label_rect.width(), t::LABEL_DIM);
-        w::text(&p, label_rect, &shown, t::LABEL_DIM, Align::Left);
-        settings
+        let mut items = Vec::new();
+        if let Some((level, by_budget)) = reduced {
+            items.push(
+                w::CornerIcon::new("reduced", "warning", reduced_tooltip(lang, level, by_budget))
+                    .indicator()
+                    .color(t::WARNING),
+            );
+        }
+        items.push(
+            w::CornerIcon::new(
+                "shading",
+                "texture",
+                format!("{}: {shading}", lang.pick("3D の表示", "3D shading")),
+            )
+            .selected(open_shading),
+        );
+        items.push(
+            w::CornerIcon::new(
+                "settings",
+                "light_mode",
+                lang.pick("光・環境・トーンマッピング", "Light, environment, tone mapping"),
+            )
+            .selected(app.view3d.display.settings_open),
+        );
+        items.push(
+            w::CornerIcon::new(
+                "frame",
+                "target",
+                lang.pick("モデル全体が見える位置へ戻す", "Fit the whole model in view"),
+            )
+            .enabled(!app.is_stroking()),
+        );
+        let out = w::corner_icons(ui, "view3d", view, &items);
+        if let Some(i) = out.clicked {
+            match items[i].id {
+                "shading" => {
+                    let ctx = ui.ctx().clone();
+                    let b = out.rects[i];
+                    // 押したアイコンの下に開く
+                    app.popup = Some(OpenPopup {
+                        kind: PopupKind::View3dShading,
+                        state: PopupState::new(
+                            &ctx,
+                            Rect::from_min_size(pos2(b.left(), b.bottom() + 2.0), vec2(b.width(), 0.0)),
+                        ),
+                    });
+                }
+                "settings" => app.apply(Action::View3d(Op::ToggleSettings)),
+                "frame" => app.apply(Action::FrameModel),
+                _ => {}
+            }
+        }
+        Corner {
+            settings: items
+                .iter()
+                .position(|item| item.id == "settings")
+                .and_then(|i| out.rects.get(i).copied()),
+        }
     }
 
     /// モデルが無い・3D を描けないときの中身。
@@ -379,20 +353,23 @@ impl View3dSlot {
         // 名前・状態だけ（使い方の説明は置かない）
         let all_hidden = app.view3d.model.is_none() && app.view3d.full_model().is_some();
         let lang = app.lang;
+        // モデルが無いだけのときは、空の状態の文字（「モデルなし」）を置かず、読むボタンだけにする
         let title = if all_hidden {
-            lang.pick("すべて隠しています", "All hidden")
+            Some(lang.pick("すべて隠しています", "All hidden"))
         } else if app.view3d.model.is_none() {
-            lang.pick("モデルなし", "No model")
+            None
         } else {
-            lang.pick("3D を描けません（GPU なし）", "Cannot draw 3D (no GPU)")
+            Some(lang.pick("3D を描けません（GPU なし）", "Cannot draw 3D (no GPU)"))
         };
-        w::text(
-            &p,
-            Rect::from_min_size(text.min, vec2(text.width(), 22.0)),
-            title,
-            t::LABEL.with_color(t::TEXT_DIM),
-            Align::Center,
-        );
+        if let Some(title) = title {
+            w::text(
+                &p,
+                Rect::from_min_size(text.min, vec2(text.width(), 22.0)),
+                title,
+                t::LABEL.with_color(t::TEXT_DIM),
+                Align::Center,
+            );
+        }
         if app.view3d.full_model().is_none() {
             let r =
                 Rect::from_center_size(pos2(text.center().x, text.top() + 64.0), vec2(160.0, 24.0));
@@ -434,15 +411,9 @@ impl View3dSlot {
     }
 }
 
-/// 3D の絵が元の大きさより縮んでいることの印（左下。状態と短い理由は、見せている絵の上のツールチップ）。`by_budget` は縮めがメモリの予算で
+/// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で
 /// 決まったか（None は分からない: メッシュマップ）。
-fn reduced_badge(
-    ui: &mut Ui,
-    lang: crate::lang::Lang,
-    content: Rect,
-    level: u32,
-    by_budget: Option<bool>,
-) {
+fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>) -> String {
     let text = lang.pick(
         format!("縮小表示 1/{}", 1u64 << level),
         format!("Reduced 1/{}", 1u64 << level),
@@ -461,22 +432,7 @@ fn reduced_badge(
             "Shown smaller to stay within the GPU memory budget or size limit",
         ),
     };
-    let rect = Rect::from_min_size(
-        pos2(content.left() + 6.0, content.bottom() - 24.0),
-        vec2(112.0, 18.0),
-    );
-    let p = ui.painter().clone();
-    w::rounded(&p, rect, t::PANEL_BG.gamma_multiply(0.9), 3.0);
-    w::text(
-        &p,
-        rect,
-        &text,
-        t::LABEL.with_color(t::TEXT_DIM),
-        Align::Center,
-    );
-    let response = ui.interact(rect, ui.id().with("view3d.reduced"), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text.clone()));
-    response.on_hover_text(reason);
+    format!("{text}: {reason}")
 }
 
 const PANEL_WIDTH: f32 = 252.0;
@@ -487,9 +443,10 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     let width = PANEL_WIDTH.min((content.width() - 8.0).max(120.0));
+    // 隅のアイコンの列の下に置く（アイコンを隠さない）
     let pos = pos2(
         (content.right() - width - 6.0).max(content.left() + 4.0),
-        content.top() + 4.0,
+        w::corner_bottom(content, 3) + 4.0,
     );
     let panel = Rect::from_min_size(pos, vec2(width, PANEL_HEIGHT));
     egui::Area::new(egui::Id::new("view3d.settings.area"))

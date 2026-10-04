@@ -106,7 +106,6 @@ struct Loaded {
     rest: SurfaceGeometry,
     meshes: Vec<ModelMesh>,
     warnings: Vec<String>,
-    millis: f64,
 }
 
 struct Loading {
@@ -127,8 +126,8 @@ pub struct PoseEditor {
     pub drag: Option<super::gizmo::GizmoDrag>,
     /// ギズモの上にポインタがある輪（強調して描く）。
     pub hover_axis: Option<usize>,
-    /// 次のフレームで 3D ビューのタブを前に出す。
-    focus: bool,
+    /// 次のフレームで 3D ビューのタブを前に出す（FBX・試しの人形・Live Link のモデルが入ったとき）。
+    pub focus: bool,
 }
 
 impl PoseEditor {
@@ -206,7 +205,6 @@ pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
         return Err(ViewError::Stroking);
     }
     let revision = view3d.next_revision();
-    let clock = Instant::now();
     let (meshes, rest) = build_rest(&rig, revision, None)?;
     install(
         view3d,
@@ -215,7 +213,6 @@ pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
             rest,
             meshes,
             warnings: Vec::new(),
-            millis: clock.elapsed().as_secs_f64() * 1000.0,
         },
     );
     Ok(())
@@ -245,7 +242,6 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
         .unwrap_or_default();
     let flag = cancel.clone();
     std::thread::spawn(move || {
-        let clock = Instant::now();
         let result = (|| {
             let model = load_fbx(&path, &limits)?;
             if flag.load(Ordering::Relaxed) {
@@ -257,7 +253,6 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
                 rest,
                 meshes,
                 warnings: model.report.warnings,
-                millis: clock.elapsed().as_secs_f64() * 1000.0,
             })
         })();
         let _ = tx.send(result);
@@ -301,20 +296,19 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
                 let stale = loaded.rest.revision() != loading.revision;
                 view3d.pose.loading = None;
                 if !stale {
-                    let ms = loaded.millis;
                     let warnings = loaded.warnings.len();
-                    let (tris, bones) = (loaded.rest.triangle_count(), loaded.rig.bones().len());
                     install(view3d, loaded);
                     installed = true;
+                    // 名前と、読めなかった所があるか（件数は状態）。三角形・骨の数や読んだ時間は出さない
                     message = Some(if warnings > 0 {
                         lang.pick(
-                            format!("{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）・知らせ {warnings} 件"),
-                            format!("{name}: Triangles {tris} · Bones {bones} ({ms:.0} ms) · Notices {warnings}"),
+                            format!("{name}を読み込みました（知らせ {warnings} 件）"),
+                            format!("Loaded {name} ({warnings} notices)"),
                         )
                     } else {
                         lang.pick(
-                            format!("{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）"),
-                            format!("{name}: Triangles {tris} · Bones {bones} ({ms:.0} ms)"),
+                            format!("{name}を読み込みました"),
+                            format!("Loaded {name}"),
                         )
                     });
                 }
@@ -548,18 +542,8 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
                 app.message = app.lang.pick(
-                    format!(
-                        "{}: 三角形 {}・骨 {}",
-                        s.rig.name(),
-                        s.rig.triangle_count(),
-                        s.rig.bones().len()
-                    ),
-                    format!(
-                        "{}: Triangles {} · Bones {}",
-                        s.rig.name(),
-                        s.rig.triangle_count(),
-                        s.rig.bones().len()
-                    ),
+                    format!("{}を読み込みました", s.rig.name()),
+                    format!("Loaded {}", s.rig.name()),
                 );
                 if let Some(note) = note {
                     app.message += &format!(" {note}");
@@ -884,7 +868,9 @@ mod tests {
         assert_eq!(app.view3d.pose.loading_name(), Some("三角.fbx"));
         let (message, installed) = wait(&mut app);
         assert!(installed, "{message:?}");
-        assert!(message.unwrap().contains("三角形 1"));
+        // 名前を知らせる（三角形・骨の数や時間は出さない）
+        let message = message.unwrap();
+        assert!(message.contains("三角.fbx") && !message.contains("三角形"), "{message}");
         let s = app.view3d.pose.session.as_ref().unwrap();
         assert_eq!(s.rig.name(), "三角");
         assert_eq!(app.view3d.model.as_ref().unwrap().triangle_count(), 1);

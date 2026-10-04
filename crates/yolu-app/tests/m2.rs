@@ -198,6 +198,39 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     );
 }
 
+/// レイヤーの欄の上の合成モードと不透明度は、欄が狭くて 1 行に収まらないとき（窓の最小の幅など）は、名前を詰めずに 2 行に積む。
+/// ふつうの幅では横に並べる。どちらでも一覧は不透明度の下から始まる。
+#[test]
+fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
+    for lang in Lang::ALL {
+        for (width, stacked) in [(1280.0, false), (960.0, true)] {
+            let mut h = app(width, 800.0, 128);
+            apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+            let panel = |r: egui::Rect| r.left() > 700.0;
+            let slider = rect_of(&h, lang.pick("不透明度", "Opacity"), panel);
+            let blend = rect_of(&h, lang.pick("通常", "Normal"), panel);
+            if stacked {
+                assert!(slider.top() >= blend.bottom(), "{lang:?} {width}: 積む {slider:?} {blend:?}");
+                assert!(slider.left() <= blend.left() + 1.0, "{lang:?} {width}: 合成モードの下に揃える");
+            } else {
+                assert!(slider.left() >= blend.right(), "{lang:?} {width}: 横に並ぶ {slider:?} {blend:?}");
+                assert_eq!(slider.top(), blend.top(), "{lang:?} {width}");
+            }
+            // 名前は詰めずに出る（最小の幅でも「…」にならない）
+            yolu_app::ui::widgets::record_truncations(true);
+            yolu_app::ui::widgets::take_truncations();
+            h.step();
+            let truncated = yolu_app::ui::widgets::take_truncations();
+            yolu_app::ui::widgets::record_truncations(false);
+            assert!(!truncated.iter().any(|t| t == lang.pick("不透明度", "Opacity")), "{lang:?} {width}: {truncated:?}");
+            // 一覧は、積んだ分だけ下から始まる
+            let layer = h.state().state.doc.layers().first().map(|l| l.name().to_owned()).unwrap();
+            let row = rect_of(&h, &layer, |r| panel(r) && r.top() >= slider.top());
+            assert!(row.top() >= slider.bottom(), "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下");
+        }
+    }
+}
+
 /// スライダーのドラッグを押したまま Esc で止めると、値は押し始めに戻り、Undo の段は残らず、そのドラッグの残りは受けない。
 /// 離したあとの次のドラッグは普通に 1 回の Undo になる。
 #[test]

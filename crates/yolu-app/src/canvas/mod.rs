@@ -8,7 +8,7 @@ pub mod gpu;
 pub mod view;
 
 use egui::{
-    pos2, vec2, Color32, CursorIcon, Event, Key, PointerButton, Pos2, Rect, Sense, Stroke, Ui,
+    Color32, CursorIcon, Event, Key, PointerButton, Pos2, Rect, Sense, Stroke, Ui,
 };
 
 use self::display::CanvasDisplay;
@@ -17,21 +17,18 @@ use crate::engine::{BrushSample, Tilt};
 use crate::pen::PenSample;
 use crate::state::{AppState, RotateDrag, StrokeSource};
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align};
+use crate::ui::widgets as w;
 
-/// 見出しの帯の高さ。
-pub const HEADER_HEIGHT: f32 = 26.0;
 /// ポインタの角度を測らない、表示域の中心からの距離。
 const ROTATE_DEAD_ZONE: f32 = 4.0;
 
 /// キャンバスのタブを描く。
 pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &[PenSample]) {
-    let full = ui.max_rect();
-    let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_HEIGHT));
-    let rect = Rect::from_min_max(pos2(full.left(), header.bottom()), full.max);
+    let rect = ui.max_rect();
     let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
     app.canvas_rect = Some(rect);
-    ui.advance_cursor_after_rect(full);
+    app.canvas_drawn = true;
+    ui.advance_cursor_after_rect(rect);
     handle_input(ui, app, rect, pen);
     display.set_document_epoch(app.doc_epoch);
     display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
@@ -86,127 +83,77 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             });
         }
     }
-    draw_header(ui, app, header);
+    draw_corner(ui, app, rect);
 }
 
-fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
-    let p = ui.painter().clone();
-    w::fill(&p, bar, t::PANEL_HEADER);
-    w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
-    let left = bar.left() + 8.0;
-    let label = format!(
-        "2D · {} · {}  {}%",
-        app.sets.current().name,
-        crate::m2::channel_name(app.lang, &app.doc, app.m2.display_channel),
-        (app.view.zoom * 100.0).round() as i32
-    );
-    let width = w::text_width(&p, &label, t::LABEL_DIM).min((bar.width() - 16.0).max(0.0));
-    let shown = w::fit(&p, &label, width, t::LABEL_DIM);
-    w::text(
-        &p,
-        Rect::from_min_size(pos2(left, bar.top()), vec2(width, bar.height())),
-        &shown,
-        t::LABEL_DIM,
-        Align::Left,
-    );
-    let mut x = left + width + 8.0;
+/// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない）。読むだけのセットの鍵・表示の回転・左右反転・重ねて見ている
+/// メッシュマップだけが、今の状態のとき出る。文字は無く、名前と理由はツールチップ。
+fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
+    let lang = app.lang;
     let enabled = !app.is_stroking();
-    // 読むだけのセット: 鍵と「読むだけ」（理由はツールチップ）
-    if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        let text = app.lang.pick("読むだけ", "Read-only");
-        let bw = 20.0 + w::text_width(&p, text, t::LABEL_DIM) + 8.0;
-        if x + bw <= bar.right() {
-            let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
-            w::rounded(&p, r, t::CONTROL_BG, 3.0);
-            w::icon(
-                &p,
-                Rect::from_min_size(r.min, vec2(20.0, r.height())),
+    let mut items = Vec::new();
+    // 押したとき当てる操作（状態を見せるだけの印は None）
+    let mut actions: Vec<Option<crate::state::Action>> = Vec::new();
+    // 読むだけのセット: 鍵（理由はツールチップ）
+    if let Some(reason) = app.read_only_reason() {
+        items.push(
+            w::CornerIcon::new(
+                "readonly",
                 "lock",
-                t::WARNING,
-                14.0,
-            );
-            w::text(
-                &p,
-                Rect::from_min_max(pos2(r.left() + 20.0, r.top()), r.max),
-                text,
-                t::LABEL_DIM.with_color(t::WARNING),
-                Align::Left,
-            );
-            ui.interact(r, ui.id().with("canvas.readonly"), egui::Sense::hover())
-                .on_hover_text(reason);
-            x += bw + 4.0;
-        }
+                format!("{}: {reason}", lang.pick("読むだけ", "Read-only")),
+            )
+            .indicator()
+            .color(t::WARNING),
+        );
+        actions.push(None);
     }
     if app.view.angle != 0.0 {
-        let text = angle_label(app.view.angle);
-        let bw = 20.0 + w::text_width(&p, &text, t::LABEL_DIM) + 6.0;
-        if x + bw <= bar.right() {
-            let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
-            if w::button(
-                ui,
-                r,
-                "canvas.angle",
-                &text,
-                false,
-                enabled,
-                Some(app.lang.pick(
-                    "表示を回しています。押すと回転を戻します（Shift+R）。",
-                    "The view is rotated. Click to reset the rotation (Shift+R).",
-                )),
-                Some("rotate_90_degrees_cw"),
+        items.push(
+            w::CornerIcon::new(
+                "angle",
+                "rotate_90_degrees_cw",
+                lang.pick(
+                    format!("表示を回しています（{}）。押すと回転を戻します（Shift+R）", angle_label(app.view.angle)),
+                    format!("The view is rotated ({}). Click to reset the rotation (Shift+R)", angle_label(app.view.angle)),
+                ),
             )
-            .clicked()
-            {
-                app.apply(crate::state::Action::ResetRotation);
-            }
-            x += bw + 4.0;
-        }
+            .enabled(enabled),
+        );
+        actions.push(Some(crate::state::Action::ResetRotation));
     }
-    if app.view.flip && x + 24.0 <= bar.right() {
-        let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(24.0, 22.0));
-        if w::icon_button(
-            ui,
-            r,
-            "canvas.flip",
-            "flip",
-            app.lang.pick(
-                "表示を左右反転しています。押すと戻します（H）。",
-                "The view is mirrored. Click to restore it (H).",
-            ),
-            true,
-            enabled,
-            16.0,
-        )
-        .clicked()
-        {
-            app.apply(crate::state::Action::FlipView);
-        }
-        x += 28.0;
+    if app.view.flip {
+        items.push(
+            w::CornerIcon::new(
+                "flip",
+                "flip",
+                lang.pick(
+                    "表示を左右反転しています。押すと戻します（H）",
+                    "The view is mirrored. Click to restore it (H)",
+                ),
+            )
+            .enabled(enabled),
+        );
+        actions.push(Some(crate::state::Action::FlipView));
     }
-    // 焼いたメッシュマップを重ねて見ている: 名前（押すとやめる）
+    // 焼いたメッシュマップを重ねて見ている: 名前（押し込まれた見た目。押すとやめる）
     if let Some(name) = crate::bake::overlay::view_name(app) {
-        let lang = app.lang;
-        let text = format!("{}: {name}", lang.pick("メッシュマップ", "Mesh Map"));
-        let bw = 20.0 + w::text_width(&p, &text, t::LABEL) + 14.0;
-        if x + bw <= bar.right() {
-            let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
-            if w::button(
-                ui,
-                r,
-                "canvas.meshmap",
-                &text,
-                false,
-                true,
-                Some(lang.pick("押すと重ね表示をやめます", "Click to stop showing it")),
-                Some("visibility"),
+        items.push(
+            w::CornerIcon::new(
+                "meshmap",
+                "visibility",
+                format!("{}: {name}", lang.pick("メッシュマップ", "Mesh Map")),
             )
-            .clicked()
-            {
-                app.apply(crate::state::Action::Bake(crate::bake::BakeAction::View(
-                    crate::bake::MeshMapView::None,
-                )));
-            }
-        }
+            .selected(true),
+        );
+        actions.push(Some(crate::state::Action::Bake(
+            crate::bake::BakeAction::View(crate::bake::MeshMapView::None),
+        )));
+    }
+    if let Some(action) = w::corner_icons(ui, "canvas", view, &items)
+        .clicked
+        .and_then(|i| actions.swap_remove(i))
+    {
+        app.apply(action);
     }
 }
 

@@ -1,8 +1,9 @@
 //! テクスチャセットのパネル（Substance Painter の Texture Set List の並び）: 行は目・名前・状態のアイコン・解像度。押すと今のセットを
-//! 替え、ダブルクリックで名前を変え、右クリックでメニュー。下の 1 行に今のセットのマテリアルと Unity での見え方。
+//! 替え、ダブルクリックで名前を変え、右クリックでメニュー。マテリアルの名前や付いていない状態を書く帯は置かない（名前は行に出ている。
+//! 付いていない状態は行のアイコン、理由と詳しいマテリアルはツールチップ）。
 //!
-//! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖 = 今のモデルに無いマテリアル（鍵は残してある）、
-//! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）。画面には名前と短い状態だけを
+//! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖（薄い）= 今のモデルのマテリアルに付いていない、
+//! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）。画面にはアイコンだけを
 //! 出し、説明はツールチップに置く。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
@@ -13,28 +14,19 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
 pub const ROW_HEIGHT: f32 = 28.0;
-/// 下の説明の行の高さ。
-pub const FOOTER_HEIGHT: f32 = 22.0;
 
-/// セットの見え方: アイコンと色、画面に出す短い状態、ツールチップの説明。
+/// セットの見え方: アイコンと色、ツールチップの説明（状態を文字では出さない）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetLook {
     pub icon: &'static str,
     pub color: Color32,
-    pub label: &'static str,
     pub tooltip: String,
 }
 
-fn look(
-    icon: &'static str,
-    color: Color32,
-    label: &'static str,
-    tooltip: String,
-) -> Option<SetLook> {
+fn look(icon: &'static str, color: Color32, tooltip: String) -> Option<SetLook> {
     Some(SetLook {
         icon,
         color,
-        label,
         tooltip,
     })
 }
@@ -46,19 +38,23 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "lock",
             t::WARNING,
-            app.lang.pick("読むだけ", "Read-only"),
             format!("{}: {reason}", app.lang.pick("読むだけ", "Read-only")),
         );
     }
     let model = app.model.as_ref()?;
     let Some(material) = set.bound else {
-        return look(
-            "link_off",
-            t::TEXT_DIM,
-            app.lang.pick("モデルに無い", "not in this model"),
-            app.lang.pick("今のモデルに無いマテリアル。鍵は残してあり、そのマテリアルのあるモデルでまた付く", "Material not in this model. Its reference is kept for models that use it.")
-                .into(),
-        );
+        // 薄い切れた鎖。理由はツールチップ（マテリアルに付いていないセットと、今のモデルに無いマテリアルのセット）
+        let tooltip = match &set.material {
+            crate::sets::MaterialRef::Material { .. } => app.lang.pick(
+                "今のモデルに無いマテリアル。鍵は残してあり、そのマテリアルのあるモデルでまた付く",
+                "Material not in this model. Its reference is kept for models that use it.",
+            ),
+            _ => app.lang.pick(
+                "今のモデルのマテリアルに付いていない",
+                "Not assigned to a material of this model",
+            ),
+        };
+        return look("link_off", t::TEXT_DIM, tooltip.into());
     };
     // 流し込み先は Live Link のモデルだけの話（FBX・試しの人形は Unity に出さないので、無くても警告しない）
     let routed = !model.is_link()
@@ -71,7 +67,6 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "visibility_off",
             t::TEXT_DIM,
-            app.lang.pick("隠している", "Hidden"),
             app.lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity").into(),
         );
     }
@@ -79,7 +74,6 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "warning",
             t::WARNING,
-            app.lang.pick("流し込み先なし", "No Color route"),
             app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity).").into(),
         );
     }
@@ -87,7 +81,6 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "sync",
             t::ACCENT,
-            app.lang.pick("Unity に表示中", "Shown in Unity"),
             app.lang.pick("Unity に見せている", "Shown in Unity").into(),
         );
     }
@@ -98,10 +91,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
-    let list = Rect::from_min_max(
-        r.min,
-        pos2(r.right(), (r.bottom() - FOOTER_HEIGHT).max(r.top())),
-    );
+    let list = r;
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let n = app.sets.len();
     let content = n as f32 * ROW_HEIGHT;
@@ -134,26 +124,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             2.0,
         );
     }
-
-    // 下: 今のセットのマテリアルと見え方
-    let footer = Rect::from_min_max(pos2(r.left(), list.bottom()), r.max);
-    let p = ui.painter();
-    w::fill(p, footer, t::PANEL_HEADER);
-    let current = app.sets.current_index();
-    let set = app.sets.current();
-    let material = crate::sets::describe_material_in(&set.material, app.lang);
-    let (text, tip) = match set_state(app, current) {
-        Some(l) => (
-            format!("{material} · {}", l.label),
-            format!("{material}\n{}", l.tooltip),
-        ),
-        None => (material.clone(), material),
-    };
-    let inner = footer.shrink2(vec2(t::PADDING, 0.0));
-    let shown = w::fit(p, &text, inner.width(), t::LABEL_SMALL);
-    w::text(p, inner, &shown, t::LABEL_SMALL, Align::Left);
-    ui.interact(footer, ui.id().with("sets.footer"), Sense::hover())
-        .on_hover_text(tip);
 }
 
 fn set_row(
@@ -168,6 +138,7 @@ fn set_row(
         return;
     };
     let (uid, name, visible) = (set.uid, set.name.clone(), set.visible);
+    let material_ref = set.material.clone();
     let selected = index == app.sets.current_index();
     let free = !app.is_stroking();
     let doc = app.set_doc(index);
@@ -305,6 +276,9 @@ fn set_row(
             Align::Left,
         );
     }
+    // 行の上のツールチップ: マテリアル（詳しく。状態のアイコンの上ではアイコンの説明が先に出る）
+    let detail = crate::sets::material_tooltip_in(&material_ref, app.lang);
+    let response = response.on_hover_text(detail);
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, free, selected, &name));
 }

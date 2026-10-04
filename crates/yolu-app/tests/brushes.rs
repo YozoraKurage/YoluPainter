@@ -502,7 +502,7 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     // 既定の直径 32 の丸が今の大きさ
     let cell = |h: &H, size: u32| {
         rect_of(h, &format!("{size} px"), |r| {
-            r.left() < 340.0 && r.top() > 300.0 && r.width() < 30.0
+            r.left() < 400.0 && r.top() > 300.0 && r.width() < 30.0
         })
     };
     for size in [1u32, 3, 8, 24, 64, 128, 256] {
@@ -754,10 +754,10 @@ fn the_symmetry_category_sets_mode_center_and_count() {
     click(&mut h, at);
     assert_eq!(st(&h).sel.symmetry.center, (0.5, 0.5));
     assert!(in_pane_node(&h, "キャンバスの中心").accesskit_node().is_disabled());
-    // 指先は対称と組めないので、ペイント以外の対称のモードは無効（理由はツールチップ）
+    // 指先は対称と組めない。モードは替えられる（ペイントに戻したときに効く設定を用意できる）が、効く欄（中心など）は無効にする
     h.state_mut().state.m2.brush.effect = BrushEffect::SMUDGE;
     h.run();
-    assert!(h.get_by_label("縦").accesskit_node().is_disabled());
+    assert!(!h.get_by_label("縦").accesskit_node().is_disabled());
     assert!(!h.get_by_label("なし").accesskit_node().is_disabled());
     h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
     h.run();

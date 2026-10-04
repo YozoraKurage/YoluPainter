@@ -154,7 +154,7 @@ fn wheel_zooms_around_the_pointer() {
 }
 
 #[test]
-fn view_keys_rotate_and_flip_and_the_header_resets_them() {
+fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
     let mut h = app(1280.0, 800.0, 512);
     key(&h, Key::Minus, Modifiers::NONE);
     h.run();
@@ -185,10 +185,12 @@ fn view_keys_rotate_and_flip_and_the_header_resets_them() {
         &egui_kittest::SnapshotOptions::new().max_failed_pixels(32),
     );
     use egui_kittest::kittest::Queryable;
-    h.get_by_label("-15°").click();
+    // 隅のアイコン（文字なし。名前と角度はツールチップ）で、回転と反転を戻す
+    h.get_by_label("表示を回しています（-15°）。押すと回転を戻します（Shift+R）")
+        .click();
     h.run();
     assert_eq!(h.state().state.view.angle, 0.0);
-    h.get_by_label("表示を左右反転しています。押すと戻します（H）。")
+    h.get_by_label("表示を左右反転しています。押すと戻します（H）")
         .click();
     h.run();
     assert!(!h.state().state.view.flip);

@@ -313,24 +313,19 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
         });
     }
     if list.is_empty() {
-        let unreadable = app.shelf.unavailable.clone();
-        let (text, color) = match &unreadable {
-            Some(_) => (lang.pick("棚を読めません", "Shelf unreadable"), t::WARNING),
-            None if app.shelf.resources().is_empty() => (lang.pick("なし", "Empty"), t::TEXT_DIM),
-            None => (lang.pick("一致なし", "No match"), t::TEXT_DIM),
-        };
-        let at = Rect::from_min_size(
-            pos2(grid.left() + 8.0, grid.top() + 10.0),
-            vec2(grid.width() - 16.0, 18.0),
-        );
-        w::text(
-            ui.painter(),
-            at,
-            text,
-            t::LABEL_DIM.with_color(color),
-            Align::Left,
-        );
-        if let Some(reason) = unreadable {
+        // 空の棚・一致なしは、空の状態の文字（「なし」「一致なし」）を置かず、空のまま。読めないときだけ、その状態を出す
+        if let Some(reason) = app.shelf.unavailable.clone() {
+            let at = Rect::from_min_size(
+                pos2(grid.left() + 8.0, grid.top() + 10.0),
+                vec2(grid.width() - 16.0, 18.0),
+            );
+            w::text(
+                ui.painter(),
+                at,
+                lang.pick("棚を読めません", "Shelf unreadable"),
+                t::LABEL_DIM.with_color(t::WARNING),
+                Align::Left,
+            );
             ui.interact(at, ui.id().with("shelf.unreadable"), Sense::hover())
                 .on_hover_text(reason.reason(lang));
         }
@@ -504,20 +499,24 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     // 名前と状態（置けないときは短い理由。説明はツールチップ）
     if let Some((_, name, kind, detail)) = &selected {
         let p = ui.painter().clone();
-        let (text, color) = match &block {
-            Some(b) => (format!("{name} · {}", b.reason(lang)), t::WARNING),
-            None if detail.is_empty() => (name.clone(), t::TEXT_DIM),
-            None => (format!("{name} · {detail}"), t::TEXT_DIM),
+        // 名前は選んだ格子の素材に出ている（繰り返さない）。置けないときだけ、その短い理由を帯に出す。名前と状態はツールチップ
+        let full = match &block {
+            Some(b) => format!("{name} · {}", b.reason(lang)),
+            None if detail.is_empty() => name.clone(),
+            None => format!("{name} · {detail}"),
         };
-        let shown = w::fit(&p, &text, info.width(), t::LABEL_DIM);
-        w::text(
-            &p,
-            info,
-            &shown,
-            t::LABEL_DIM.with_color(color),
-            Align::Left,
-        );
-        let tip = format!("{} · {text}", kind.singular(lang));
+        if let Some(b) = &block {
+            let reason = b.reason(lang);
+            let shown = w::fit(&p, &reason, info.width(), t::LABEL_DIM);
+            w::text(
+                &p,
+                info,
+                &shown,
+                t::LABEL_DIM.with_color(t::WARNING),
+                Align::Left,
+            );
+        }
+        let tip = format!("{} · {full}", kind.singular(lang));
         ui.interact(info, ui.id().with("shelf.info"), Sense::hover())
             .on_hover_text(tip);
     }

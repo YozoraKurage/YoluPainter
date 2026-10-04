@@ -25,6 +25,8 @@ pub const TEXT: Color32 = hex(0xD9D9DC);
 pub const TEXT_DIM: Color32 = hex(0x9A9AA0);
 pub const TEXT_DISABLED: Color32 = hex(0x5C5C62);
 pub const WARNING: Color32 = hex(0xE8B03C);
+/// 接続できている印（Live Link の入口）。
+pub const OK: Color32 = hex(0x4CAF6A);
 pub const ERROR: Color32 = hex(0xE5534B);
 pub const SLIDER_FILL: Color32 = hex(0x355F96);
 pub const SLIDER_FILL_HOVER: Color32 = hex(0x3F70B0);

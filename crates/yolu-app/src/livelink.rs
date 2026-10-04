@@ -102,26 +102,102 @@ impl LinkView {
         )
     }
 
-    /// 状態の帯に出す短い文。
-    pub fn summary(&self) -> String { self.summary_in(Lang::Ja) }
+    /// 入口のアイコンのツールチップに出す短い文。
+    pub fn summary(&self) -> String {
+        self.summary_in(Lang::Ja)
+    }
 
     pub fn summary_in(&self, lang: Lang) -> String {
         match &self.status {
             LinkStatus::Off => lang.pick("Live Link: 切っています", "Live Link: Off").into(),
-            LinkStatus::Listening if self.mismatch.is_some() => {
-                lang.pick("Live Link: 版の合わない Unity を断りました", "Live Link: Version mismatch").into()
-            }
-            LinkStatus::Listening => lang.pick(format!("Live Link: Unity を待っています（{}）", self.name), format!("Live Link: Waiting for Unity ({})", self.name)),
-            LinkStatus::Connected { version, .. } => lang.pick(format!(
-                "Live Link: Unity とつながっています（版 {version}・セット {}）",
-                self.published.len()
-            ), format!(
-                "Live Link: Connected (v{version} · {} sets)",
-                self.published.len()
-            )),
-            LinkStatus::Failed(_) => lang.pick("Live Link: 待ち受けられません", "Live Link: Unavailable").into(),
+            LinkStatus::Listening if self.mismatch.is_some() => lang
+                .pick(
+                    "Live Link: 版の合わない Unity を断りました",
+                    "Live Link: Version mismatch",
+                )
+                .into(),
+            LinkStatus::Listening => lang.pick(
+                format!("Live Link: Unity を待っています（{}）", self.name),
+                format!("Live Link: Waiting for Unity ({})", self.name),
+            ),
+            LinkStatus::Connected { version, .. } => lang.pick(
+                format!(
+                    "Live Link: Unity とつながっています（版 {version}・セット {}）",
+                    self.published.len()
+                ),
+                format!(
+                    "Live Link: Connected (v{version} · {} sets)",
+                    self.published.len()
+                ),
+            ),
+            LinkStatus::Failed(_) => lang
+                .pick("Live Link: 待ち受けられません", "Live Link: Unavailable")
+                .into(),
         }
     }
+
+    /// 窓の先頭に出す状態の名前（名前だけ）。
+    pub fn state_label(&self, lang: Lang) -> &'static str {
+        match &self.status {
+            LinkStatus::Off => lang.pick("切断", "Off"),
+            LinkStatus::Listening if self.mismatch.is_some() => {
+                lang.pick("版が合いません", "Version mismatch")
+            }
+            LinkStatus::Listening => lang.pick("待機中", "Waiting"),
+            LinkStatus::Connected { .. } => lang.pick("接続中", "Connected"),
+            LinkStatus::Failed(_) => lang.pick("待ち受けられません", "Unavailable"),
+        }
+    }
+
+    /// 入口のアイコンの印の様子。
+    pub fn indicator(&self) -> LinkIndicator {
+        match &self.status {
+            LinkStatus::Off => LinkIndicator::Off,
+            LinkStatus::Failed(_) => LinkIndicator::Failed,
+            LinkStatus::Listening if self.mismatch.is_some() => LinkIndicator::Mismatch,
+            LinkStatus::Listening => LinkIndicator::Waiting,
+            LinkStatus::Connected { .. } => match self.notice {
+                Some((NoticeLevel::Error, _)) => LinkIndicator::Mismatch,
+                _ => LinkIndicator::Connected,
+            },
+        }
+    }
+
+    /// つながっている Unity の名前（挨拶の名乗りから。「(Unity 2022.3.22f1)」の形なら版の名前だけ）。つながっていなければ None。
+    pub fn unity_name(&self) -> Option<String> {
+        let LinkStatus::Connected { agent, .. } = &self.status else {
+            return None;
+        };
+        let version = agent
+            .find("(Unity ")
+            .and_then(|at| {
+                let rest = &agent[at + 1..];
+                rest.find(')').map(|end| rest[..end].to_owned())
+            })
+            .filter(|name| !name.trim().is_empty());
+        Some(version.unwrap_or_else(|| agent.clone()))
+    }
+
+    /// アイコンのツールチップ: 状態の文と、理由があれば（待ち受けられない・版が合わない・最後の知らせが誤り）その理由。
+    pub fn tooltip(&self, lang: Lang) -> String {
+        let summary = self.summary_in(lang);
+        match (&self.status, &self.mismatch, &self.notice) {
+            (LinkStatus::Failed(e), _, _) => format!("{summary}\n{e}"),
+            (_, Some(m), _) => format!("{summary}\n{m}"),
+            (_, _, Some((NoticeLevel::Error, n))) => format!("{summary}\n{n}"),
+            _ => summary,
+        }
+    }
+}
+
+/// 入口のアイコンの印の様子（切断は灰・待機中は薄い色・接続は緑・版の不一致は警告の色・待ち受けられないは赤）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkIndicator {
+    Off,
+    Waiting,
+    Connected,
+    Mismatch,
+    Failed,
 }
 
 /// 始める・やめるの頼み（メニューから。`YoluApp` が当てる）。
@@ -538,30 +614,18 @@ impl LiveLink {
         let ours = |m: &SceneModel| m.source == ModelSource::LiveLink { session };
         match message {
             Message::Model(model) => {
-                let summary = state.lang.pick(format!(
-                    "「{}」（マテリアル {}・メッシュ {}・頂点 {}）",
-                    model.name,
-                    model.materials.len(),
-                    model.meshes.len(),
-                    model
-                        .meshes
-                        .iter()
-                        .map(|m| m.positions.len())
-                        .sum::<usize>()
-                ), format!(
-                    "“{}” ({} materials · {} meshes · {} vertices)",
-                    model.name,
-                    model.materials.len(),
-                    model.meshes.len(),
-                    model
-                        .meshes
-                        .iter()
-                        .map(|m| m.positions.len())
-                        .sum::<usize>()
-                ));
+                // 同じつながりの 2 つ目以降のモデル（Unity が送り直した）は、3D ビューを前へ出し直さない
+                let first = !state.model.as_ref().is_some_and(ours);
                 let (report, shape) = state.receive_link_model(&model, session);
                 self.failed.clear();
-                let mut text = state.lang.pick(format!("Live Link: Unity からモデル{summary}を受けました。"), format!("Live Link: Model received from Unity: {summary}."));
+                let mut text = state.lang.pick(
+                    format!("Live Link: モデル「{}」を受けました。", model.name),
+                    format!("Live Link: Received the model “{}”.", model.name),
+                );
+                if shape.is_ok() && first {
+                    // 届いたモデルは 3D ビューに出す（キャンバスが前にあれば 3D ビューのタブを前へ）
+                    state.view3d.pose.focus = true;
+                }
                 if let Err(e) = shape {
                     let e = state.lang.view_error(&e);
                     text += &state.lang.pick(format!(" 3D ビューには出せません: {e}。"), format!(" Unavailable in 3D View: {e}."));

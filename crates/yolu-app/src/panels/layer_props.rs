@@ -4,7 +4,7 @@
 
 use egui::{pos2, vec2, Rect, Ui};
 
-use super::properties::{group_label, percent_row, section, slider_row, status_row, toggle_row};
+use super::properties::{group_label, percent_row, section, slider_row, toggle_row};
 use crate::engine::{
     AdjustmentSettings, AdjustmentType, BlendMode, ChannelKind, LayerId, LayerKind, Rgba8,
 };
@@ -313,6 +313,21 @@ fn adjustment_section(
     if !open {
         return;
     }
+    // 描くチャンネルに使えない調整は、注記の行を置かず、理由をツールチップに出す。欄は無効にしない: 層の値は効くチャンネル（色）の
+    // 出力には今も効くので、直すためにチャンネルを替えさせない
+    let paint = app.m2.paint_channel;
+    let reason = app
+        .doc
+        .channel_info(paint)
+        .filter(|info| !a.applies_to(info.kind))
+        .map(|_| {
+            let name = m2::channel_name(lang, &app.doc, paint);
+            lang.pick(
+                format!("{name} には効きません"),
+                format!("No effect on {name}"),
+            )
+        });
+    let why = reason.as_deref();
     let mut next: Option<Result<AdjustmentSettings, crate::engine::CoreError>> = None;
     match a.kind() {
         AdjustmentType::Invert => {}
@@ -335,7 +350,7 @@ fn adjustment_section(
                 ib,
                 range,
                 decimals(3),
-                Some(lang.pick("これ以下の入力は黒", "Input at or below this becomes black")),
+                why.or(Some(lang.pick("これ以下の入力は黒", "Input at or below this becomes black"))),
                 enabled,
             ) {
                 ib = v.min(iw - 0.004).max(0.0);
@@ -349,7 +364,7 @@ fn adjustment_section(
                 iw,
                 range,
                 decimals(3),
-                Some(lang.pick("これ以上の入力は白", "Input at or above this becomes white")),
+                why.or(Some(lang.pick("これ以上の入力は白", "Input at or above this becomes white"))),
                 enabled,
             ) {
                 iw = v.max(ib + 0.004).min(1.0);
@@ -363,10 +378,10 @@ fn adjustment_section(
                 gamma,
                 (0.1, 9.99),
                 decimals(2),
-                Some(lang.pick(
+                why.or(Some(lang.pick(
                     "中間の明るさ。1 より大きいと明るく、小さいと暗く",
                     "Midtones: above 1 brightens, below 1 darkens",
-                )),
+                ))),
                 enabled,
             ) {
                 gamma = v;
@@ -381,7 +396,7 @@ fn adjustment_section(
                 ob,
                 range,
                 decimals(3),
-                None,
+                why,
                 enabled,
             ) {
                 ob = v;
@@ -395,7 +410,7 @@ fn adjustment_section(
                 ow,
                 range,
                 decimals(3),
-                None,
+                why,
                 enabled,
             ) {
                 ow = v;
@@ -423,7 +438,7 @@ fn adjustment_section(
                 hue,
                 (-180.0, 180.0),
                 NumberFormat::int("°"),
-                None,
+                why,
                 enabled,
             ) {
                 hue = v;
@@ -436,7 +451,7 @@ fn adjustment_section(
                 lang.pick("彩度", "Saturation"),
                 sat as f64,
                 (-1.0, 1.0),
-                None,
+                why,
                 enabled,
             ) {
                 sat = v as f32;
@@ -449,7 +464,7 @@ fn adjustment_section(
                 lang.pick("明度", "Lightness"),
                 light as f64,
                 (-1.0, 1.0),
-                None,
+                why,
                 enabled,
             ) {
                 light = v as f32;
@@ -468,21 +483,6 @@ fn adjustment_section(
         Some(Ok(settings)) if settings != a => edit(app, Edit::Adjust { id, settings }),
         Some(Err(e)) => app.message = app.lang.core_error(&e),
         _ => {}
-    }
-    // 描くチャンネルに使えない調整は短く知らせる
-    let paint = app.m2.paint_channel;
-    if let Some(info) = app.doc.channel_info(paint) {
-        if !a.applies_to(info.kind) {
-            let name = m2::channel_name(lang, &app.doc, paint);
-            status_row(
-                ui,
-                rows,
-                &lang.pick(
-                    format!("{name} には効きません"),
-                    format!("No effect on {name}"),
-                ),
-            );
-        }
     }
 }
 

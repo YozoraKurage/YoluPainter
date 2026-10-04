@@ -265,7 +265,7 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
     assert!(s.message.contains("焼きました"), "{}", s.message);
     assert!(s.modified);
     assert_eq!(s.bake.view, MeshMapView::Coverage);
-    // キャンバスに重ねて見える（頁のテクスチャを作った）。見出しに名前のバッジ
+    // キャンバスに重ねて見える（頁のテクスチャを作った）。右上の隅に名前のアイコン（名前はツールチップ）
     assert_eq!(s.bake.overlay.page_count(), 1);
     h.get_by_label("メッシュマップ: UV の範囲");
     // 撮る絵は毎回同じに（かかった時間と書き出し先は毎回違う）
@@ -286,7 +286,7 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
         MeshMapView::Kind(MeshMapKind::AmbientOcclusion)
     );
     h.get_by_label("メッシュマップ: アンビエントオクルージョン");
-    // バッジを押すとやめる
+    // 隅のアイコンを押すとやめる
     h.get_by_label("メッシュマップ: アンビエントオクルージョン")
         .click();
     h.run();

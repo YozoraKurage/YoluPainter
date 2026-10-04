@@ -33,14 +33,26 @@ pub fn material_from_link(key: &LinkKey) -> MaterialRef {
     }
 }
 
-/// 鍵の、人に見せる説明。
+/// 鍵の、人に見せる説明（名前だけ。アセットの識別子やスロットの番号は出さない。詳しくは `material_tooltip_in`）。
 pub fn describe_material(material: &MaterialRef) -> String {
     describe_material_in(material, crate::lang::Lang::Ja)
 }
 
 pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
-        MaterialRef::Material { name, asset: None } => lang.pick(format!("マテリアル「{name}」"), format!("Material “{name}”")),
+        MaterialRef::Material { name, .. } => {
+            lang.pick(format!("マテリアル「{name}」"), format!("Material “{name}”"))
+        }
+        MaterialRef::Unassigned => lang.pick("マテリアルなし", "No material").into(),
+        MaterialRef::PendingSlot(_) => {
+            lang.pick("マテリアルに未割り当て", "Unassigned").into()
+        }
+    }
+}
+
+/// 鍵の詳しい説明（ツールチップ用。アセットの識別子・スロットの番号つき）。
+pub fn material_tooltip_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
+    match material {
         MaterialRef::Material {
             name,
             asset: Some(a),
@@ -51,8 +63,11 @@ pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> 
                 format!("Material “{name}” (asset {guid}… · {})", a.file_id),
             )
         }
-        MaterialRef::Unassigned => lang.pick("マテリアルの無いスロット", "No material").into(),
-        MaterialRef::PendingSlot(n) => lang.pick(format!("まだマテリアルに付いていない（スロット {n}）"), format!("Unassigned (slot {n})")),
+        MaterialRef::PendingSlot(n) => lang.pick(
+            format!("マテリアルに未割り当て（スロット {n}）"),
+            format!("Unassigned (slot {n})"),
+        ),
+        other => describe_material_in(other, lang),
     }
 }
 

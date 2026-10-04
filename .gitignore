@@ -1,3 +1,11 @@
 /target
 *.swp
 /.worktrees
+
+# egui_kittest のスナップショットの比較の出力（作業場の根から試験を回すと根の tests/snapshots にも出る）。正解の PNG だけを入れる。
+*.new.png
+*.diff.png
+*.old.png
+
+/tests/snapshots/
+*.diff.png

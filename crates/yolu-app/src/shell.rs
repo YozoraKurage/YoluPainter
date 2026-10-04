@@ -8,7 +8,7 @@ use yolu_core::export::ExportTemplate;
 use crate::bake::BakeAction;
 use crate::export::ExportAction;
 use crate::lang::Lang;
-use crate::livelink::{LinkStatus, NoticeLevel};
+use crate::livelink::LinkIndicator;
 use crate::m2::{Edit, UiOp};
 use crate::psd::{PsdAction, PsdTarget};
 use crate::selection::{SelAction, SelEdit};
@@ -357,6 +357,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::View3dShading => crate::view3d::display::entries(app),
         PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
+        PopupKind::LiveLink => link_entries(app),
     }
 }
 
@@ -772,100 +773,102 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
 }
 
-/// ステータスバーの Live Link の欄の色と文（状態の帯）。
-pub fn link_segment(app: &AppState) -> (egui::Color32, String) {
-    let link = &app.link;
-    let color = match &link.status {
-        LinkStatus::Off => t::TEXT_DISABLED,
-        LinkStatus::Failed(_) => t::ERROR,
-        LinkStatus::Listening if link.mismatch.is_some() => t::ERROR,
-        LinkStatus::Listening => t::TEXT_DIM,
-        LinkStatus::Connected { .. } => match link.notice {
-            Some((NoticeLevel::Error, _)) => t::WARNING,
-            _ => t::ACCENT,
-        },
-    };
-    (color, link.summary_in(app.lang))
+/// 状態の帯が出す文字（直前の操作の結果と理由だけ。文書の大きさ・メモリ・上げたタイル・合成の方式・Live Link の様子は出さない。
+/// 画面のどこにも出さない開発用の数は、試験が `AppState` から読む）。
+pub fn status_text(app: &AppState) -> &str {
+    &app.message
 }
 
-/// ステータスバー（左に知らせ、右に Live Link と文書の大きさとメモリと合成の経路）。
-pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect, uploaded: usize) {
+/// ステータスバー: 直前の操作の結果と理由だけを左に出す。
+pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
-    // Live Link（切っている間は出さない）
-    let mut r = r;
-    if app.link.status != LinkStatus::Off || app.link.notice.is_some() {
-        let (color, text) = link_segment(app);
-        let tw = w::text_width(&p, &text, t::LABEL_SMALL);
-        let seg = Rect::from_min_max(pos2(r.right() - tw - 30.0, r.top()), r.max);
-        p.circle_filled(pos2(seg.left() + 10.0, seg.center().y), 4.0, color);
-        w::text(
-            &p,
-            Rect::from_min_max(pos2(seg.left() + 20.0, seg.top()), seg.max),
-            &text,
-            t::LABEL_SMALL.with_color(if color == t::TEXT_DISABLED {
-                t::TEXT_DIM
-            } else {
-                color
-            }),
-            Align::Left,
-        );
-        w::vline(
-            &p,
-            seg.left(),
-            r.top() + 4.0,
-            r.bottom() - 4.0,
-            t::SEPARATOR,
-        );
-        let tip = match (&app.link.status, &app.link.mismatch, &app.link.notice) {
-            (LinkStatus::Failed(e), _, _) => e.clone(),
-            (_, Some(m), _) => format!("{}: {m}", app.lang.pick("版が合いません", "Version mismatch")),
-            (_, _, Some((_, n))) => n.clone(),
-            _ => text.clone(),
-        };
-        ui.interact(seg, ui.id().with("status.link"), Sense::hover())
-            .on_hover_text(tip);
-        r = Rect::from_min_max(r.min, pos2(seg.left(), r.bottom()));
+    let text = status_text(app);
+    let area = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), pos2(r.right() - 8.0, r.bottom()));
+    let shown = w::fit(&p, text, area.width(), t::LABEL_DIM);
+    w::text(&p, area, &shown, t::LABEL_DIM, Align::Left);
+    if shown != text {
+        ui.interact(area, ui.id().with("status.message"), Sense::hover())
+            .on_hover_text(text);
     }
-    let mib = |b: u64| b as f64 / 1048576.0;
-    let right = match app.lang {
-        Lang::Ja => format!(
-            "{} × {}   レイヤー {:.1} MiB   履歴 {:.1} MiB   上げたタイル {}   CPU で合成",
-            app.doc.width(),
-            app.doc.height(),
-            mib(app.doc.allocated_bytes()),
-            mib(app.doc.history_bytes()),
-            uploaded
-        ),
-        Lang::En => format!(
-            "{} × {}   Layers {:.1} MiB   History {:.1} MiB   Uploaded tiles {}   CPU compositing",
-            app.doc.width(),
-            app.doc.height(),
-            mib(app.doc.allocated_bytes()),
-            mib(app.doc.history_bytes()),
-            uploaded
-        ),
-    };
-    let rw = (r.width() * 0.6).min(w::text_width(&p, &right, t::LABEL_SMALL) + 16.0);
-    w::text(
-        &p,
-        Rect::from_min_max(
-            pos2(r.left() + 8.0, r.top()),
-            pos2(r.right() - rw - 8.0, r.bottom()),
-        ),
-        &app.message,
-        t::LABEL_DIM,
-        Align::Left,
+}
+
+/// Live Link の入口の印の色。
+pub fn link_indicator_color(indicator: LinkIndicator) -> egui::Color32 {
+    match indicator {
+        LinkIndicator::Off => t::TEXT_DISABLED,
+        LinkIndicator::Waiting => t::ACCENT_DIM,
+        LinkIndicator::Connected => t::OK,
+        LinkIndicator::Mismatch => t::WARNING,
+        LinkIndicator::Failed => t::ERROR,
+    }
+}
+
+/// メニューバーの右端の Live Link の入口（Unity の印）の結果。
+#[derive(Clone, Copy, Debug)]
+pub struct LinkIcon {
+    pub rect: Rect,
+    /// このフレームで押された（窓を開いているあいだは受け皿が上にあるので、生の入力で見る）。
+    pub pressed: bool,
+}
+
+/// Live Link の入口の印の幅と、名前の左端からその印の左端までの幅（印の幅と、名前との間の 8）。
+const LINK_ICON_WIDTH: f32 = 24.0;
+pub const LINK_ICON_SLOT: f32 = LINK_ICON_WIDTH + 8.0;
+
+/// メニューバーの右端、プロジェクトの名前の左に、Live Link の入口の印を置く。`left_of` はプロジェクトの名前の左端の x。
+pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: bool) -> LinkIcon {
+    let rect = Rect::from_min_size(
+        pos2(left_of - LINK_ICON_SLOT, bar.top() + 1.0),
+        vec2(LINK_ICON_WIDTH, bar.height() - 3.0),
     );
-    w::text(
-        &p,
-        Rect::from_min_max(
-            pos2(r.right() - rw - 8.0, r.top()),
-            pos2(r.right() - 8.0, r.bottom()),
-        ),
-        &right,
-        t::LABEL_SMALL,
-        Align::Right,
+    let link = &app.link;
+    let tip = link.tooltip(app.lang);
+    let response = ui.interact(rect, ui.id().with("menubar.livelink"), Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &tip)
+    });
+    let hover = response.hovered();
+    let pressed = ui.input(|i| {
+        i.pointer.primary_pressed() && i.pointer.press_origin().is_some_and(|at| rect.contains(at))
+    });
+    let p = ui.painter().clone();
+    if hover || open {
+        w::rounded(&p, rect, t::CONTROL_HOVER, 3.0);
+    }
+    w::unity_mark(&p, rect, link_indicator_color(link.indicator()));
+    response.on_hover_text(tip);
+    LinkIcon { rect, pressed }
+}
+
+/// Live Link の窓（入口の印を押すと開く）の中身: 状態・つながっている Unity・受け取ったモデルの名前と、待つ／切るの切り替え。
+/// 文は名前と状態だけ（手順は README）。
+pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let l = app.lang;
+    let link = &app.link;
+    let on = link.is_on();
+    let mut entries = vec![Entry::Heading(link.state_label(l).to_owned())];
+    if let Some(unity) = link.unity_name() {
+        entries.push(Entry::Heading(unity));
+    }
+    if let Some(model) = app.model.as_ref().filter(|m| m.is_link() && m.live) {
+        entries.push(Entry::Heading(format!(
+            "{}: {}",
+            l.pick("モデル", "Model"),
+            model.name
+        )));
+    }
+    entries.push(Entry::Separator);
+    entries.push(
+        Entry::item(l.pick("待つ", "Wait"), Action::ToggleLiveLink)
+            .radio(on)
+            .enabled(!on),
     );
+    entries.push(
+        Entry::item(l.pick("切る", "Stop"), Action::ToggleLiveLink)
+            .radio(!on)
+            .enabled(on),
+    );
+    entries
 }

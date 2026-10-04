@@ -316,7 +316,7 @@ fn brush_row(
         t::BORDER,
     );
 
-    let name_width = (row.width() * 0.46).clamp(80.0, 124.0);
+    let name_width = (row.width() * 0.52).clamp(80.0, 140.0);
     let name_rect = Rect::from_min_size(
         pos2(row.left() + 10.0, row.top() + 3.0),
         vec2(name_width, row.height() - 6.0),

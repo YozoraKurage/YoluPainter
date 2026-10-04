@@ -15,7 +15,7 @@ use crate::ui::widgets::{self as w, Align};
 pub const ROW_HEIGHT: f32 = 28.0;
 pub const TOOLBAR_HEIGHT: f32 = 30.0;
 /// 右端の種類の名前の幅。
-const KIND_WIDTH: f32 = 74.0;
+const KIND_WIDTH: f32 = 66.0;
 
 fn open(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect) {
     app.popup = Some(OpenPopup {

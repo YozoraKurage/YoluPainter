@@ -318,6 +318,8 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
     let free = !app.is_stroking() && app.read_only_reason().is_none();
     let any = app.doc.selection().is_some();
+    // 選択範囲が無いあいだは欄を無効にして、理由をツールチップに出す（注記の行は置かない）
+    let no_selection = lang.pick("選択範囲なし", "No selection");
     if let Some(v) = slider_row(
         ui,
         rows,
@@ -326,10 +328,14 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app.sel.radius as f32,
         (0.0, MAX_MODIFY_RADIUS as f32),
         NumberFormat::int(" px"),
-        Some(lang.pick(
-            "拡張・縮小・境界線・ぼかしの半径",
-            "Radius for Grow, Shrink, Border and Feather",
-        )),
+        Some(if any {
+            lang.pick(
+                "拡張・縮小・境界線・ぼかしの半径",
+                "Radius for Grow, Shrink, Border and Feather",
+            )
+        } else {
+            no_selection
+        }),
         any,
     ) {
         app.sel.radius = v.round().clamp(0.0, MAX_MODIFY_RADIUS as f32) as u32;
@@ -340,10 +346,14 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         "sel.edge-lock",
         lang.pick("端を固定", "Edge lock"),
         app.sel.edge_lock,
-        Some(lang.pick(
-            "選択範囲が画布の外へ続くものとして扱う（縮小・境界線・ぼかしが画布の端から離れない）",
-            "Treat the selection as continuing past the canvas edge (Shrink, Border and Feather do not pull away from it)",
-        )),
+        Some(if any {
+            lang.pick(
+                "選択範囲が画布の外へ続くものとして扱う（縮小・境界線・ぼかしが画布の端から離れない）",
+                "Treat the selection as continuing past the canvas edge (Shrink, Border and Feather do not pull away from it)",
+            )
+        } else {
+            no_selection
+        }),
         any,
     ) {
         app.sel.edge_lock = v;
@@ -354,7 +364,7 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             label: kind.name(lang),
             primary: false,
             enabled: any && free,
-            tooltip: kind.tooltip(lang),
+            tooltip: if any { kind.tooltip(lang) } else { no_selection },
         })
         .collect();
     if let Some(i) = flow_buttons(ui, rows, "sel.modify", &items) {
@@ -363,9 +373,6 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             radius: app.sel.radius,
             edge_lock: app.sel.edge_lock,
         })));
-    }
-    if !any {
-        status_row(ui, rows, lang.pick("選択範囲なし", "No selection"));
     }
 }
 
@@ -388,29 +395,16 @@ pub fn symmetry_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: L
 
 fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: bool) {
     let current = app.sel.symmetry.mode;
-    let blocked = matches!(
-        app.m2.brush.effect,
-        BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
-    );
-    let off = app
-        .view3d
-        .paintable_on_screen()
-        .then(|| lang.pick("3D では効きません", "No effect in 3D"));
-    let blocked_reason = lang.pick("指先・クローンでは使えません", "Not with smudge or clone");
     // モードのボタン
     let items: Vec<FlowButton> = MODES
         .iter()
         .map(|mode| {
-            let refused = blocked && *mode != SymmetryMode::None;
+            // モードは指先・クローンのあいだも替えられる（ペイントに戻したときに効く設定を用意できる）。効かない欄は下で無効にする
             FlowButton {
                 label: mode_name(lang, *mode),
                 primary: current == *mode,
-                enabled: free && !refused,
-                tooltip: if refused {
-                    blocked_reason
-                } else {
-                    mode_tooltip(lang, *mode)
-                },
+                enabled: free,
+                tooltip: mode_tooltip(lang, *mode),
             }
         })
         .collect();
@@ -420,6 +414,20 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
     if current == SymmetryMode::None {
         return;
     }
+    // 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。
+    // 3D の面のストロークは対称を見ない（core に 3D の対称は無い）ので、描ける先が 3D だけのあいだだけ無効にする（ドックを分けて
+    // キャンバスも出ているあいだは、2D に描く対称の設定を残す）。指先・クローンも対称を見ない
+    let reason: Option<&str> = if app.paints_only_in_3d() {
+        Some(lang.pick("3D では効きません", "No effect in 3D"))
+    } else if matches!(
+        app.m2.brush.effect,
+        BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
+    ) {
+        Some(lang.pick("指先・クローンでは使えません", "Not with smudge or clone"))
+    } else {
+        None
+    };
+    let live = free && reason.is_none();
     let (width, height) = (app.doc.width() as f64, app.doc.height() as f64);
     let (cx, cy) = app.sel.symmetry.center;
     let centered = NumberFormat {
@@ -427,7 +435,7 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         trim: true,
         suffix: " px",
     };
-    let tip = off.unwrap_or(lang.pick(
+    let tip = reason.unwrap_or(lang.pick(
         "軸の通る点（画布の座標）",
         "Where the axes cross (canvas pixels)",
     ));
@@ -440,7 +448,7 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         (0.0, width as f32),
         centered,
         Some(tip),
-        free,
+        live,
     );
     let ny = slider_row(
         ui,
@@ -451,7 +459,7 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         (0.0, height as f32),
         centered,
         Some(tip),
-        free,
+        live,
     );
     if nx.is_some() || ny.is_some() {
         let x = nx.map_or(cx, |v| v as f64 / width);
@@ -467,8 +475,8 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
             app.sel.symmetry.count as f32,
             (2.0, 16.0),
             NumberFormat::int(""),
-            Some(off.unwrap_or(lang.pick("中心のまわりの写しの数", "Copies around the center"))),
-            free,
+            Some(reason.unwrap_or(lang.pick("中心のまわりの写しの数", "Copies around the center"))),
+            live,
         ) {
             app.apply(Action::Sel(SelAction::Symmetry(SymOp::Count(
                 v.round() as u32
@@ -482,8 +490,8 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         "symmetry.center-canvas",
         lang.pick("キャンバスの中心", "Canvas center"),
         false,
-        free && app.sel.symmetry.center != (0.5, 0.5),
-        None,
+        live && app.sel.symmetry.center != (0.5, 0.5),
+        reason,
         None,
     )
     .clicked()
@@ -496,8 +504,8 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         "symmetry.axes",
         lang.pick("軸を表示", "Show axes"),
         app.sel.symmetry.show_axes,
-        None,
-        true,
+        reason,
+        reason.is_none(),
     ) {
         app.apply(Action::Sel(SelAction::Symmetry(SymOp::ShowAxes(v))));
     }

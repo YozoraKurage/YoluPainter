@@ -284,13 +284,18 @@ pub fn show<A: Clone>(
                         row.center().y.round(),
                         t::SEPARATOR,
                     ),
-                    Entry::Heading(label) => w::text(
-                        &p,
-                        Rect::from_min_max(pos2(row.left() + 28.0, row.top()), row.max),
-                        label,
-                        t::HEADER.with_color(t::TEXT_DIM),
-                        Align::Left,
-                    ),
+                    Entry::Heading(label) => {
+                        w::text(
+                            &p,
+                            Rect::from_min_max(pos2(row.left() + 28.0, row.top()), row.max),
+                            label,
+                            t::HEADER.with_color(t::TEXT_DIM),
+                            Align::Left,
+                        );
+                        // 試験と読み上げのため、見出しの行にも名前を付ける
+                        ui.interact(row.intersect(clip), id.with(("row", i)), Sense::hover())
+                            .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
+                    }
                     Entry::Item {
                         label,
                         shortcut,

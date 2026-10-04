@@ -651,7 +651,7 @@ impl Lang {
         match error {
             GeometryError::NonFinite => self.pick("メッシュの位置か UV に有限でない値があります", "Non-finite position or UV in the mesh"),
             GeometryError::BoundsOverflow => self.pick("メッシュの大きさが扱える範囲を超えています", "Mesh bounds exceed the supported range"),
-            GeometryError::InvalidTolerance => self.pick("溶接の許しは正の値にしてください", "Weld tolerance must be positive"),
+            GeometryError::InvalidTolerance => self.pick("溶接の許しは正の値でなければなりません", "Weld tolerance must be positive"),
             GeometryError::TooManyTriangles => self.pick("三角形が多すぎます", "Too many triangles"),
             GeometryError::Canceled => self.pick("取り消しました", "Cancelled"),
             GeometryError::Mismatch => self.pick("三角形の並びが元のスナップショットと違います", "Triangle order differs from the snapshot"),

@@ -36,7 +36,7 @@ jobs:
             build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
-            xvfb xauth fonts-noto-cjk nsis
+            xvfb xauth nsis
       - name: ワークスペース全体の試験（ソフトウェア描画）
         env:
           # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。

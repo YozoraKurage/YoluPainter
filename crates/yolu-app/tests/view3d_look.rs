@@ -24,6 +24,8 @@ use yolu_core::{Channel, HeightEdgeMode, LayerId, NormalSettings, NormalYDirecti
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
     click_tab(&mut h, yolu_app::Tab::View3d);
+    // マウスの矢印が 3D の表示域の上端に残ると、絵の測定（いちばん明るい画素など）に入る。見出しの帯が無いので、ポインタを外へ
+    move_to(&h, egui::pos2(1.0, 1.0));
     h.run();
     h
 }
@@ -548,7 +550,7 @@ fn a_document_over_the_byte_budget_is_shown_smaller_and_never_allocated_in_full(
     let s = stats(&h);
     assert_eq!((s.paint_level, s.paint_by_budget), (0, false), "{s:?}");
     assert!(s.paint_bytes > 0 && s.paint_bytes <= BUDGET, "{s:?}");
-    assert!(h.query_by_label("縮小表示 1/2").is_none());
+    assert!(h.query_by_label_contains("縮小表示 1/2").is_none());
     // Emission を使い始めると 8 バイト × 512² で予算（2 MiB）を超える: 確保する前に縮めを上げて作り直す
     let layer = first_layer(&h);
     h.state_mut()
@@ -571,8 +573,8 @@ fn a_document_over_the_byte_budget_is_shown_smaller_and_never_allocated_in_full(
         "予算を超えて確保していない: {} バイト",
         s.paint_bytes
     );
-    // 縮めたことを 3D の左下に出す（理由はツールチップ）
-    h.get_by_label("縮小表示 1/2");
+    // 縮めたことを 3D の右上の隅の警告のアイコンで出す（名前と理由はツールチップ）
+    h.get_by_label_contains("縮小表示 1/2");
     // 縮めた後も、変わったタイルだけを上げる（Color の 1 タイル）。何も変わらなければ作り直さない・描かない
     h.state_mut()
         .state
@@ -1303,7 +1305,9 @@ fn the_studio_environment_reflects_off_metal_and_rotates() {
     op(&mut h, Op::LightIntensity(0.0));
     let area = h.state().view3d_rect().unwrap();
     let c = area.center();
-    let (before, peak) = highlight(&h.render().unwrap(), area);
+    // 右上の隅のアイコンの列（白いアイコン）は、映り込みの測定に入れない
+    let scene = egui::Rect::from_min_max(egui::pos2(area.left(), area.top() + 44.0), area.max);
+    let (before, peak) = highlight(&h.render().unwrap(), scene);
     assert!(peak > 120.0, "つるつるの金属は面光源を映す: {peak}");
     // 正面の右上の面光源（方位 150°・高さ 40°）は、球の右上に映る
     assert!(
@@ -1312,14 +1316,14 @@ fn the_studio_environment_reflects_off_metal_and_rotates() {
     );
     // 環境を 60° 回すと、面光源は左上へ移る（150° → 210°）
     op(&mut h, Op::EnvRotation(60.0));
-    let (after, _) = highlight(&h.render().unwrap(), area);
+    let (after, _) = highlight(&h.render().unwrap(), scene);
     assert!(
         after.x < c.x - 5.0 && after.y < c.y - 5.0,
         "左上: {after:?}（中心 {c:?}）"
     );
     // 環境の明るさ 0 は、映り込みも拡散も無い（金属は黒）
     op(&mut h, Op::EnvIntensity(0.0));
-    let (_, dark) = highlight(&h.render().unwrap(), area);
+    let (_, dark) = highlight(&h.render().unwrap(), scene);
     assert!(dark < 40.0, "{dark}");
     assert!(h.state().view3d_stats().unwrap().env_bakes >= 1);
 }
@@ -1544,9 +1548,10 @@ fn the_shadow_map_is_redrawn_only_when_the_light_or_the_model_changes() {
 fn a_softer_shadow_has_a_wider_penumbra() {
     let mut h = ball_over_floor();
     op(&mut h, Op::Shadows(true));
-    // 床の影の縁を横切る線（床の上で x = −1.4 から −0.6 まで。カメラから見て右へ向かう）。完全な影と明るい床のあいだの途中の値の画素を数える
+    // 床の影の縁を横切る線（床の上で x = −1.25 から −0.6 まで。カメラから見て右へ向かう。始まりは表示域の端に掛からない所）。完全な影と
+    // 明るい床のあいだの途中の値の画素を数える
     let (from, to) = (
-        screen_of(&h, Vec3::new(-1.4, 0.0, 0.0)),
+        screen_of(&h, Vec3::new(-1.25, 0.0, 0.0)),
         screen_of(&h, Vec3::new(-0.6, 0.0, 0.0)),
     );
     let penumbra = |h: &mut Harness<'_, YoluApp>, softness: f32| -> usize {
@@ -1582,17 +1587,17 @@ fn a_softer_shadow_has_a_wider_penumbra() {
     assert!(soft > sharp * 3 && soft >= sharp + 8, "{sharp} → {soft}");
 }
 
-// ───────── 見出しの表示の切り替えと設定のパネル ─────────
+// ───────── 右上の隅の表示の切り替えと設定のパネル ─────────
 
 #[test]
-fn the_header_dropdown_switches_what_is_shown() {
+fn the_corner_shading_icon_switches_what_is_shown() {
     use egui_kittest::kittest::Queryable;
     let mut h = view(1100.0, 760.0, 64);
     h.state_mut().state.view3d.load_demo();
     h.run();
     assert_eq!(h.state().state.view3d.display.shading, Shading::Material);
-    // 見出しの箱（マテリアル (PBR)）を押すと一覧が開き、並びは Unity 版と同じ（マテリアル・中立・チャンネルだけ・メッシュマップ）
-    h.get_by_label("マテリアル (PBR)").click();
+    // 右上の隅のアイコン（3D の表示: マテリアル (PBR)）を押すと一覧が開き、並びは Unity 版と同じ（マテリアル・中立・チャンネルだけ・メッシュマップ）
+    h.get_by_label("3D の表示: マテリアル (PBR)").click();
     h.run();
     let body = h
         .state()
@@ -1625,7 +1630,7 @@ fn the_header_dropdown_switches_what_is_shown() {
     h.run();
     assert_eq!(h.state().state.view3d.display.shading, before);
     if h.state().state.popup.is_none() {
-        h.get_by_label("マテリアル (PBR)").click();
+        h.get_by_label("3D の表示: マテリアル (PBR)").click();
         h.run();
     }
     let at = popup_item(&h, "中立").center();
@@ -1633,7 +1638,7 @@ fn the_header_dropdown_switches_what_is_shown() {
     h.run();
     assert_eq!(h.state().state.view3d.display.shading, Shading::Neutral);
     assert!(h.state().state.popup.is_none());
-    h.get_by_label("中立").click();
+    h.get_by_label("3D の表示: 中立").click();
     h.run();
     let at = popup_item(&h, "ラフネス").center();
     click(&mut h, at);
@@ -1648,7 +1653,7 @@ fn the_header_dropdown_switches_what_is_shown() {
         .state
         .apply(Action::View3d(Op::Shading(Shading::Material)));
     h.run();
-    assert!(h.query_by_label("Material (PBR)").is_some());
+    assert!(h.query_by_label("3D shading: Material (PBR)").is_some());
 }
 
 #[test]
@@ -2054,7 +2059,7 @@ fn snapshot_settings_panel_and_shading_menu() {
     h.snapshot("view3d_settings_panel");
     h.state_mut().apply(Action::View3d(Op::CloseSettings));
     h.run();
-    h.get_by_label("マテリアル (PBR)").click();
+    h.get_by_label("3D の表示: マテリアル (PBR)").click();
     h.run();
     h.snapshot("view3d_shading_menu");
 }

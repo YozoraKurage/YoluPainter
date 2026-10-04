@@ -77,9 +77,9 @@ Windows Ink に相当する専用のペン入力処理はありません。マ�
 
 ### Linux（試用）
 
-C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。日本語表示には Noto Sans CJK を使用します。
+C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。画面の書体（BIZ UDPGothic）は実行ファイルに含まれるので、システムの日本語フォントは要りません。
 
-Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk`、`fonts-noto-cjk` です。GPU ドライバーは機器に合うものを使用してください。
+Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk` です。GPU ドライバーは機器に合うものを使用してください。
 
 ```sh
 cargo build --release -p yolu-app --locked

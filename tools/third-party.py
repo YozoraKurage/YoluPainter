@@ -72,6 +72,39 @@ def read_source(package, spec, offline):
     return origin, data.decode('utf-8-sig')
 
 
+def bundled_assets(package, config):
+    """クレートでない同梱物（実行ファイルに埋め込む書体）の確認。配布元の原本のまま（SHA-256 が合う）で、許容する許諾で、許諾の全文がある
+    ことを確かめ、全文束に足す全文を返す（アイコンと同じく、クレートの件数には含めない）。"""
+    texts, errors = [], []
+    for item in config.get('bundled', {}).get(package, []):
+        name = f"{item['name']} {item['version']}"
+        for license_id in item['selected']:
+            if license_id not in ALLOWED:
+                errors.append(f'{name}: 許容外: {license_id}')
+        for spec in [*item['files'], item['license_file']]:
+            path = (ROOT / spec['path']).resolve()
+            if not path.is_relative_to(ROOT):
+                errors.append(f"{name}: リポジトリ外のパスは使えません: {spec['path']}")
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                errors.append(f"{name}: {spec['path']} を読めません: {exc}")
+                continue
+            if digest(data) != spec['sha256']:
+                errors.append(f"{name}: {spec['path']} の SHA-256 が違います（配布元の原本から変わっています）")
+        license_file = item['license_file']
+        try:
+            text = (ROOT / license_file['path']).read_bytes().decode('utf-8-sig')
+        except (OSError, UnicodeDecodeError):
+            continue
+        if digest((ROOT / license_file['path']).read_bytes()) == license_file['sha256']:
+            origin = f"{item['repository']}/tree/{item['commit']}"
+            texts.append(f'\n{"=" * 72}\n{name}（同梱の書体。{", ".join(item["selected"])}）\n{origin}\n'
+                         f'SHA-256: {license_file["sha256"]}\n\n{text}\n')
+    return texts, errors
+
+
 def inventory(package, metadata, config, offline, include_update=False):
     keys = dependency_keys(package, 'normal,build', offline)
     normal = dependency_keys(package, 'normal,no-proc-macro', offline)
@@ -116,7 +149,8 @@ def inventory(package, metadata, config, offline, include_update=False):
                     record['issues'].append(str(exc))
         errors.extend(key + ': ' + issue for issue in record['issues'])
         records.append(record)
-    return records, texts, errors
+    bundled_texts, bundled_errors = bundled_assets(package, config)
+    return records, texts + bundled_texts, errors + bundled_errors
 
 
 def markdown(package, records, errors, lock_hash):

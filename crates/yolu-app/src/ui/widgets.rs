@@ -122,6 +122,23 @@ pub fn icon(p: &Painter, r: Rect, name: &str, color: Color32, size: f32) {
     icons::paint(p, r, name, color, size);
 }
 
+/// Unity の印（六角形の立方体）。Live Link の入口の印で、色が状態を表す。線だけを描くので、どの色でも読める。
+pub fn unity_mark(p: &Painter, r: Rect, color: Color32) {
+    let c = r.center();
+    let radius = (r.width().min(r.height()) * 0.38).max(4.0);
+    let at = |degrees: f32| {
+        let a = degrees.to_radians();
+        pos2(c.x + radius * a.cos(), c.y + radius * a.sin())
+    };
+    // 尖った上の六角形（上から時計回り）と、中心から 3 つの稜（左上・右上・下）
+    let hex: Vec<_> = (0..6).map(|i| at(-90.0 + 60.0 * i as f32)).collect();
+    let stroke = Stroke::new(1.4, color);
+    p.add(egui::Shape::closed_line(hex, stroke));
+    for degrees in [210.0, 330.0, 90.0] {
+        p.line_segment([c, at(degrees)], stroke);
+    }
+}
+
 /// 透明を表す市松（cell の大きさ）。
 pub fn checker(p: &Painter, r: Rect, cell: f32) {
     fill(p, r, t::CHECKER_LIGHT);
@@ -201,6 +218,149 @@ pub fn icon_button(
     icon(p, r, icon_name, color, size);
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, selected, tooltip));
     with_tooltip(response, Some(tooltip))
+}
+
+/// ビューの右上の隅に重ねる小さなアイコン 1 つ（文字なし。名前はツールチップ）。
+pub struct CornerIcon {
+    /// 試験・読み上げのための部品の名前（ほかの隅のアイコンと重ならない文字列）。
+    pub id: &'static str,
+    pub icon: &'static str,
+    pub tooltip: String,
+    /// 押し込まれた見た目（今その表示にしている）。
+    pub selected: bool,
+    /// 押せる（押せないものは今の状態を見せるだけ）。
+    pub clickable: bool,
+    /// 押せるか（押せない間は灰色）。
+    pub enabled: bool,
+    /// アイコンの色（None なら普通の色）。
+    pub color: Option<Color32>,
+}
+
+impl CornerIcon {
+    pub fn new(id: &'static str, icon: &'static str, tooltip: impl Into<String>) -> CornerIcon {
+        CornerIcon {
+            id,
+            icon,
+            tooltip: tooltip.into(),
+            selected: false,
+            clickable: true,
+            enabled: true,
+            color: None,
+        }
+    }
+    pub fn selected(mut self, on: bool) -> Self {
+        self.selected = on;
+        self
+    }
+    pub fn enabled(mut self, on: bool) -> Self {
+        self.enabled = on;
+        self
+    }
+    /// 状態を見せるだけ（押せない）。
+    pub fn indicator(mut self) -> Self {
+        self.clickable = false;
+        self
+    }
+    pub fn color(mut self, color: Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+/// 隅のアイコン 1 つの大きさ。
+pub const CORNER_ICON_SIZE: f32 = 24.0;
+/// 隅のアイコンの列とビューの端の間。
+pub const CORNER_MARGIN: f32 = 8.0;
+
+/// 隅のアイコンの列の結果。
+pub struct CornerOutcome {
+    /// 押されたアイコンの番号。
+    pub clicked: Option<usize>,
+    /// 各アイコンの矩形（開いたポップアップ・パネルを、そのアイコンの下に置くために）。
+    pub rects: Vec<Rect>,
+}
+
+/// 隅のアイコンの列の下の端（その下にパネルを置く）。
+pub fn corner_bottom(view: Rect, items: usize) -> f32 {
+    if items == 0 {
+        view.top()
+    } else {
+        view.top() + CORNER_MARGIN + CORNER_ICON_SIZE + 4.0
+    }
+}
+
+/// ビューの右上の隅に、小さなアイコンの列を重ねる（右から左ではなく、並べた順に左から右へ。右端が最後）。見出しの帯の代わり。
+/// 別の層（`egui::Area`）に置くので、下のビューの入力（描く・回す）は、アイコンの上では始まらない。
+pub fn corner_icons(ui: &mut Ui, id: &'static str, view: Rect, items: &[CornerIcon]) -> CornerOutcome {
+    if items.is_empty() {
+        return CornerOutcome {
+            clicked: None,
+            rects: Vec::new(),
+        };
+    }
+    let n = items.len() as f32;
+    let size = vec2(n * CORNER_ICON_SIZE + (n - 1.0) * 2.0 + 4.0, CORNER_ICON_SIZE + 4.0);
+    let at = pos2(view.right() - CORNER_MARGIN - size.x, view.top() + CORNER_MARGIN);
+    let mut clicked = None;
+    let rects: Vec<Rect> = (0..items.len())
+        .map(|i| {
+            Rect::from_min_size(
+                pos2(at.x + 2.0 + i as f32 * (CORNER_ICON_SIZE + 2.0), at.y + 2.0),
+                vec2(CORNER_ICON_SIZE, CORNER_ICON_SIZE),
+            )
+        })
+        .collect();
+    egui::Area::new(Id::new(("yolu.corner", id)))
+        .order(egui::Order::Middle)
+        .fixed_pos(at)
+        .constrain(false)
+        .show(ui.ctx(), |ui| {
+            let bar = Rect::from_min_size(at, size);
+            ui.allocate_exact_size(size, Sense::hover());
+            rounded(ui.painter(), bar, Color32::from_black_alpha(150), 6.0);
+            for (i, item) in items.iter().enumerate() {
+                let r = rects[i];
+                let response = interact(
+                    ui,
+                    r,
+                    Id::new(("yolu.corner", id, item.id)),
+                    item.enabled && item.clickable,
+                    Sense::click(),
+                );
+                let hover = item.enabled && item.clickable && response.hovered();
+                let pressed = item.enabled && item.clickable && response.is_pointer_button_down_on();
+                if item.selected {
+                    rounded(ui.painter(), r, t::ACCENT_DIM, 4.0);
+                } else if pressed {
+                    rounded(ui.painter(), r, t::CONTROL_ACTIVE, 4.0);
+                } else if hover {
+                    rounded(ui.painter(), r, t::CONTROL_HOVER, 4.0);
+                }
+                let color = if !item.enabled {
+                    t::TEXT_DISABLED
+                } else if let Some(color) = item.color {
+                    color
+                } else if item.selected || hover {
+                    Color32::WHITE
+                } else {
+                    t::TEXT
+                };
+                icon(ui.painter(), r, item.icon, color, 16.0);
+                response.widget_info(|| {
+                    WidgetInfo::selected(
+                        WidgetType::Button,
+                        item.enabled && item.clickable,
+                        item.selected,
+                        &item.tooltip,
+                    )
+                });
+                let response = with_tooltip(response, Some(&item.tooltip));
+                if item.enabled && item.clickable && response.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+    CornerOutcome { clicked, rects }
 }
 
 /// ツールの帯のボタン（ツールのアイコンは tools/<id> と tools/<id>_selected）。
@@ -895,13 +1055,15 @@ pub fn slider(
                 3.0,
             );
             let inner = r.shrink2(vec2(7.0, 0.0));
-            text(
+            // 値（幅広の数字）に重ならないよう、名前は値の左の幅に詰める
+            let value_width = text_width(p, &shown, t::VALUE);
+            let label = fit(
                 p,
-                inner,
                 spec.label,
-                t::LABEL.with_color(color),
-                Align::Left,
+                (inner.width() - value_width - 8.0).max(0.0),
+                t::LABEL,
             );
+            text(p, inner, &label, t::LABEL.with_color(color), Align::Left);
             text(p, inner, &shown, t::VALUE.with_color(color), Align::Right);
         }
     }

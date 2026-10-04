@@ -76,6 +76,15 @@ pub fn move_to(h: &Harness<'_, YoluApp>, at: Pos2) {
     h.event(Event::PointerMoved(at));
 }
 
+/// ポインタを `at` に置いたまま、ツールチップが出る時間（既定 0.5 秒。1 フレーム 1/60 秒）より長く待つ。ツールチップの文字は
+/// アクセシビリティの木に出るので、`query_by_label` で読める。
+pub fn hover_and_wait(h: &mut Harness<'_, YoluApp>, at: Pos2) {
+    move_to(h, at);
+    for _ in 0..60 {
+        h.step();
+    }
+}
+
 /// 左ボタンで points をなぞる（1 点ごとに 1 フレーム）。
 pub fn drag(h: &mut Harness<'_, YoluApp>, points: &[Pos2]) {
     press(h, points[0], PointerButton::Primary);
@@ -140,7 +149,7 @@ pub fn menu_title(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     rect_of(h, label, |r| r.top() < 24.0)
 }
 
-/// 開いているポップアップの中の項目。
+/// 開いているポップアップの中の項目（行の矩形が本体にすっぽり入るもの。同じ名前の下の部品が、本体の端をまたいで重なっても取り違えない）。
 pub fn popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     let body = h
         .state()
@@ -150,7 +159,7 @@ pub fn popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
         .expect("popup open")
         .state
         .rect;
-    rect_of(h, label, |r| body.contains(r.center()))
+    rect_of(h, label, |r| body.contains_rect(r))
 }
 
 pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {

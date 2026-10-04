@@ -20,8 +20,11 @@ use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 
 pub const ROW_HEIGHT: f32 = 30.0;
 pub const TOOLBAR_HEIGHT: f32 = 30.0;
-/// パネルの上の端から一覧の上の端まで（合成モードと不透明度の行）。
+/// パネルの上の端から一覧の上の端まで（合成モードと不透明度の行）。パネルが狭くて 1 行に収まらないときは、合成モードと不透明度を
+/// 2 行に積む（`STACKED_LIST_TOP`）。
 pub const LIST_TOP: f32 = 6.0 + 24.0 + 6.0;
+/// 合成モードと不透明度を 2 行に積んだときの、パネルの上の端から一覧の上の端まで。
+pub const STACKED_LIST_TOP: f32 = LIST_TOP + 24.0 + 4.0;
 /// 1 段の字下げ。
 const INDENT: f32 = 14.0;
 
@@ -179,8 +182,22 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let own_rect = Rect::from_min_size(top.min, vec2(18.0, top.height()));
     let rest = Rect::from_min_max(pos2(top.left() + 20.0, top.top()), top.max);
     let left_w = ((rest.width() - 6.0) * 0.42).floor();
-    let blend_rect = Rect::from_min_size(rest.min, vec2(left_w, rest.height()));
-    let opacity_rect = Rect::from_min_max(pos2(rest.left() + left_w + 6.0, rest.top()), rest.max);
+    let mut blend_rect = Rect::from_min_size(rest.min, vec2(left_w, rest.height()));
+    let mut opacity_rect =
+        Rect::from_min_max(pos2(rest.left() + left_w + 6.0, rest.top()), rest.max);
+    // 1 行の不透明度のスライダーは、名前と値（幅広の数字）と左右の余白が要る。収まらないほど狭いときは、名前を詰める代わりに
+    // 合成モードの下の行へ積み、名前を詰めずに出す
+    let opacity_label = lang.pick("不透明度", "Opacity");
+    let opacity_need = {
+        let p = ui.painter();
+        w::text_width(p, opacity_label, t::LABEL) + w::text_width(p, "100%", t::VALUE) + 8.0 + 14.0
+    };
+    let stacked = opacity_rect.width() < opacity_need;
+    if stacked {
+        blend_rect = Rect::from_min_size(rest.min, rest.size());
+        opacity_rect = blend_rect.translate(vec2(0.0, 28.0));
+    }
+    let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
         let name = m2::channel_name(lang, &app.doc, channel);
         let own_tip = if own {
@@ -226,7 +243,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             open_popup(app, &ctx, PopupKind::BlendMode(id), b, b.width());
         }
         let spec = SliderSpec::new(
-            lang.pick("不透明度", "Opacity"),
+            opacity_label,
             0.0,
             100.0,
             NumberFormat::int("%"),
@@ -255,10 +272,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     // 一覧
     thumbs.retain(&app.doc);
     let list = Rect::from_min_max(
-        pos2(r.left(), r.top() + LIST_TOP),
+        pos2(r.left(), r.top() + list_top),
         pos2(
             r.right(),
-            (r.bottom() - TOOLBAR_HEIGHT).max(r.top() + LIST_TOP),
+            (r.bottom() - TOOLBAR_HEIGHT).max(r.top() + list_top),
         ),
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);

@@ -4224,6 +4224,34 @@
       ]
     }
   },
+  "bundled": {
+    "yolu-app": [
+      {
+        "name": "BIZ UDPGothic",
+        "version": "1.051",
+        "declared": "OFL-1.1",
+        "selected": [
+          "OFL-1.1"
+        ],
+        "repository": "https://github.com/googlefonts/morisawa-biz-ud-gothic",
+        "commit": "18934af56b9c003ca58c54bffbf226848cb11032",
+        "files": [
+          {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf",
+            "sha256": "595dfefa96dcb281c40f5d560841f3fc623b0d9d12064481a7daf78044462673"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Bold.ttf",
+            "sha256": "3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8"
+          }
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/assets/fonts/OFL.txt",
+          "sha256": "e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc"
+        }
+      }
+    ]
+  },
   "targets": [
     "x86_64-pc-windows-gnu",
     "x86_64-pc-windows-msvc",

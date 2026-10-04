@@ -307,10 +307,10 @@ fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if !open {
         return;
     }
+    // 使える状態は文で説明しない（ベイクのボタンの名前が「ベイクし直す」になる）。使えない理由だけを出す
     let usable = app.usable_id_map();
-    match &usable {
-        Ok(_) => status_row(ui, rows, lang.pick("焼いた ID マップを使えます", "A baked ID map is ready")),
-        Err(reason) => status_row(ui, rows, reason),
+    if let Err(reason) = &usable {
+        status_row(ui, rows, reason);
     }
     // ベイクの窓を、ID マップにチェックを入れて開く
     let row = rows.row(24.0, 4.0);
@@ -424,9 +424,8 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             status_row(ui, rows, lang.pick("確かめています", "Checking"));
         } else if app.region_model().is_none() {
             status_row(ui, rows, &app.region_missing_reason());
-        } else {
-            status_row(ui, rows, lang.pick("このセットに部品がありません", "No parts in this set"));
         }
+        // 部品が無いセットは、空のまま（文字を置かない）
     }
     let row = rows.row(24.0, 4.0);
     if w::button(

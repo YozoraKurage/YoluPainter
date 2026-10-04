@@ -397,6 +397,8 @@ pub enum PopupKind {
     View3dShading,
     /// オプションバーの対称のモード（▾）。
     Symmetry,
+    /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
+    LiveLink,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -557,6 +559,10 @@ pub struct AppState {
     pub layer_drag: Option<LayerDrag>,
     /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
     pub canvas_rect: Option<egui::Rect>,
+    /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
+    /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
+    pub canvas_visible: bool,
+    pub canvas_drawn: bool,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
     /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
@@ -700,6 +706,8 @@ impl AppState {
             quit: false,
             layer_drag: None,
             canvas_rect: None,
+            canvas_visible: false,
+            canvas_drawn: false,
             sets,
             renaming_set: None,
             rename_set_started: false,
@@ -725,6 +733,12 @@ impl AppState {
 
     pub fn is_stroking(&self) -> bool {
         self.canvas.stroke.is_some() || self.doc.has_active_stroke()
+    }
+
+    /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
+    /// 2D にも描けるので偽。2D だけの設定（対称など）は、真のあいだだけ無効にする。
+    pub fn paints_only_in_3d(&self) -> bool {
+        self.view3d.paintable_on_screen() && !self.canvas_visible
     }
 
     /// 取り消せるか（多角形の点を打っている間は最後の点、ポーズのモードではポーズの取り消し）。

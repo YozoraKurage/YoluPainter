@@ -505,8 +505,13 @@ fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
     let s = &h.state().state;
     assert_eq!(s.link.status, LinkStatus::Listening, "待ち受けは続ける");
     assert!(s.message.contains("版の合わない"));
-    let (color, text) = yolu_app::shell::link_segment(s);
-    assert_eq!(color, yolu_app::ui::theme::ERROR);
+    // 入口の印は警告の色で、理由はツールチップ（状態の帯には出さない）
+    assert_eq!(s.link.indicator(), yolu_app::livelink::LinkIndicator::Mismatch);
+    assert_eq!(
+        yolu_app::shell::link_indicator_color(s.link.indicator()),
+        yolu_app::ui::theme::WARNING
+    );
+    let text = s.link.tooltip(s.lang);
     assert!(text.contains("版の合わない"), "{text}");
     h.snapshot("status_version_mismatch");
 
@@ -798,9 +803,12 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
         format!("set {hair_uid} Hair 512x512 material 1 tiles 16")
     );
 
-    // Hair を選んで真ん中に描く
+    // モデルが届くと 3D ビューのタブが前に出る（キャンバスは裏）
+    assert!(h.state().view3d_rect().is_some(), "モデルが届いたら 3D ビューを前に出す");
+    // Hair を選んで、キャンバスのタブを前に戻し、真ん中に描く
     h.state_mut().state.apply(Action::SelectSet(hair_uid));
     h.run();
+    click_tab(&mut h, yolu_app::Tab::Canvas);
     assert_eq!(h.state().state.doc.width(), 512);
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -3.0, 0.0), offset(c, 3.0, 0.0)]);

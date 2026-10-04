@@ -5,3 +5,5 @@
 *.ylp binary
 crates/*/tests/golden/** -text
 crates/*/tests/fixtures/** -text
+*.ttf binary
+crates/yolu-app/assets/fonts/OFL.txt -text

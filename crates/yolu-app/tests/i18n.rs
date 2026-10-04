@@ -42,7 +42,14 @@ fn panels_draw_in_both_languages_without_clipped_text() {
         for panel in 0..3 {
             let mut state = AppState::new(64, 64);
             state.lang = lang;
+            if panel == 1 {
+                // モデルを入れて最初のセットを隠す（行の右に状態のアイコンが付き、その理由がツールチップに言語ごとに出る）
+                state.receive_link_model(&three_material_model(), 0).1.unwrap();
+                let uid = state.sets.get(0).unwrap().uid;
+                state.apply(Action::ToggleSetVisible(uid));
+            }
             state.sets.get_mut(0).unwrap().name = "Sample".into();
+            let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
             let mut textures = color::ColorTextures::default();
             let mut h = Harness::builder().with_size(vec2(300.0, 360.0))
@@ -64,9 +71,11 @@ fn panels_draw_in_both_languages_without_clipped_text() {
             let mut labels = Vec::new();
             for shape in &h.output().shapes { text_shapes(&shape.shape, shape.clip_rect, &mut labels); }
             let expected = match panel {
-                0 => lang.pick("メイン  #", "Foreground  #"),
+                // メインとサブの色の文字は置かない（色の四角のツールチップ）。16 進の欄の文字
+                0 => "#000000",
                 1 => "Sample",
-                _ => lang.pick("なし", "Empty"),
+                // 空の棚は、空の状態の文字を置かない（上の操作の名前だけ）
+                _ => lang.pick("層を保存", "Save Layer"),
             };
             assert!(labels.iter().any(|s| s.contains(expected)), "{labels:?}");
             if panel == 0 {
@@ -74,6 +83,21 @@ fn panels_draw_in_both_languages_without_clipped_text() {
             }
             h.snapshot(format!("i18n_{}_{}", lang.pick("ja", "en"), panel));
             snapshots.extend_harness(&mut h);
+            if panel == 1 {
+                // セットの名前は言語に依らないので、言語の確認は状態のアイコン: 隠したセットの理由が、その言語の文で、行のアイコンの上に出る
+                let tooltip = lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity");
+                let look = look.expect("隠したセットには状態のアイコンが付く");
+                assert_eq!((look.icon, look.tooltip.as_str()), ("visibility_off", tooltip), "{lang:?}");
+                if lang == Lang::En {
+                    assert!(!has_japanese(tooltip));
+                }
+                // ポインタをアイコン（最初の行の右寄り）の上に置いて、ツールチップが出るまで待つ
+                h.event(egui::Event::PointerMoved(egui::pos2(250.0, 8.0 + texture_sets::ROW_HEIGHT / 2.0)));
+                for _ in 0..30 {
+                    h.step();
+                }
+                assert!(h.query_by_label(tooltip).is_some(), "{lang:?}: 状態のアイコンの上に「{tooltip}」が出ない");
+            }
         }
     }
 }
@@ -773,7 +797,8 @@ fn english_3d_view_and_pose_panel_have_no_japanese() {
     let mut h = english_app();
     click_tab(&mut h, Tab::View3d);
     assert_english(&h, "no model", &[]);
-    assert!(all_texts(&h).iter().any(|t| t == "No model"));
+    // モデルが無いだけのときは、空の状態の文字（「No model」）を置かない
+    assert!(!all_texts(&h).iter().any(|t| t == "No model"));
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     let demo = h.state().state.view3d.model.as_ref().map(|m| vec![m.name.clone()]).unwrap_or_default();
@@ -808,8 +833,8 @@ fn assert_english_message(h: &Harness<'_, YoluApp>, data: &[String]) {
     assert!(!has_japanese(&m), "{m}");
 }
 
-#[test]
-fn english_texture_set_states_have_no_japanese() {
+/// マテリアル 3 つ（流し込み先のあるもの・無いもの・割り当てなし）の Live Link のモデル。
+fn three_material_model() -> yolu_protocol::Model {
     use yolu_protocol::{channel, ChannelRoute, MaterialInfo, MaterialKey, MeshData, Model, Submesh, TextureProperty};
     let material = |name: Option<&str>, color_route: bool| MaterialInfo {
         key: match name {
@@ -826,7 +851,7 @@ fn english_texture_set_states_have_no_japanese() {
     };
     let materials = vec![material(Some("Skin"), true), material(Some("Hair"), false), material(None, true)];
     let n = materials.len() as u32;
-    let model = Model {
+    Model {
         generation: 1,
         name: "Sample".into(),
         materials,
@@ -839,7 +864,12 @@ fn english_texture_set_states_have_no_japanese() {
             uv0: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
             submeshes: (0..n).map(|m| Submesh { material: m, indices: vec![0, 1, 2] }).collect(),
         }],
-    };
+    }
+}
+
+#[test]
+fn english_texture_set_states_have_no_japanese() {
+    let model = three_material_model();
     let mut h = english_app();
     h.state_mut().load_live_link_model(&model).unwrap();
     h.run();
@@ -947,12 +977,16 @@ fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages() {
 /// プリセットなど。言語に依らない配置の積み残し）。`KNOWN` が詰まる文字の全部で、増えれば落ち、直せば一覧から消す。
 #[test]
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
-    // チャンネルの名前（チャンネルのパネルの行）、ブラシの一覧の行の名前（狭いドックの筆・消しゴムのグループ）、
-    // アルファのタブの先端の名前、テクスチャセットの名前と説明
-    const KNOWN_JA: [&str; 9] = [
-        "エミッション", "カラー", "ソフト消しゴム", "テクスチャセット 1", "ノーマル", "ハイト", "まだマテリアルに付いていない（スロット 0）", "メタリック", "ラフネス",
+    // チャンネルの名前（チャンネルのパネルの行）、プリセット・効果・合成モードの箱の値、テクスチャセットの名前。
+    // （レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
+    const KNOWN_JA: [&str; 5] = [
+        "エミッション", "テクスチャセット 1", "ノーマル", "メタリック", "ラフネス",
     ];
-    const KNOWN_EN: [&str; 8] = ["Color", "Emission", "Height", "Metallic", "Normal", "Roughness", "Round (hardness)", "Watercolor Edge"];
+    // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。ブラシの 2 つ（「効かない」注記と
+    // 「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき（注記は欄を無効にしてツールチップへ）一覧から消える
+    const KNOWN_EN: [&str; 8] = [
+        "Emission", "Height", "Metallic", "Normal", "Roughness", "Round (hardness)", "Texture Set 1", "Watercolor Edge",
+    ];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();

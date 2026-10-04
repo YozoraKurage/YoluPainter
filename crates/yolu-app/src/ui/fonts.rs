@@ -1,126 +1,88 @@
-//! 日本語の書体。egui の既定の書体には日本語が無いので、OS の書体を実行時に読む（同梱しない。書体のライセンスを持ち込まないため）。
-//! 見つからなければ egui の既定のまま（日本語は豆腐になる）。`YOLU_UI_FONT=パス[:番号]` で差し替えられる（太字は
-//! `YOLU_UI_FONT_BOLD`）。
-
-use std::path::PathBuf;
+//! 画面の書体。BIZ UDPGothic（Regular と Bold。SIL OFL 1.1。全文は `assets/fonts/OFL.txt`）を実行ファイルに同梱し、全 OS で同じ書体を使う。
+//! OS の書体を読む方式は、Windows の游ゴシックが縦の寸法の癖で文字を上に寄せ、かなを広げて見せたのでやめた。
+//!
+//! 英数字も同じ書体で揃える（egui の既定の Ubuntu Light と組まない）: 同じ書体なら、かなと英字の高さと太さが揃い、行の中で字の
+//! 大きさがばらつかない。egui の既定の書体は、この書体に無い記号（絵文字など）を補う後ろ盾として末尾に残す。
+//! 縦の位置は書体の寸法（ascent 1802・descent 246・1 em = 2048）のとおりで、行の高さの真ん中が漢字の字面の真ん中に合うので、
+//! 補正（`FontTweak`）は入れない（`tests/fonts.rs` が字面の真ん中を測って確かめる）。
 
 use egui::{FontData, FontDefinitions, FontFamily};
 
 use super::theme::BOLD;
 
-/// 読んだ書体（試験と状態の表示用）。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FontReport {
-    pub regular: Option<String>,
-    pub bold: Option<String>,
-}
+/// 普通の太さ。
+const REGULAR: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Regular.ttf");
+/// 太字。
+const BOLD_FACE: &[u8] = include_bytes!("../../assets/fonts/BIZUDPGothic-Bold.ttf");
 
-fn candidates(bold: bool) -> Vec<(PathBuf, u32)> {
-    let env = if bold {
-        "YOLU_UI_FONT_BOLD"
-    } else {
-        "YOLU_UI_FONT"
-    };
-    let mut list = Vec::new();
-    if let Ok(value) = std::env::var(env) {
-        let (path, index) = match value.rsplit_once(':') {
-            Some((p, i)) if i.chars().all(|c| c.is_ascii_digit()) && !i.is_empty() => {
-                (p.to_owned(), i.parse().unwrap_or(0))
-            }
-            _ => (value.clone(), 0),
-        };
-        list.push((PathBuf::from(path), index));
-    }
-    let names: &[(&str, u32)] = if cfg!(windows) {
-        if bold {
-            &[
-                ("C:\\Windows\\Fonts\\YuGothB.ttc", 0),
-                ("C:\\Windows\\Fonts\\meiryob.ttc", 0),
-                ("C:\\Windows\\Fonts\\msgothic.ttc", 0),
-            ]
-        } else {
-            &[
-                ("C:\\Windows\\Fonts\\YuGothM.ttc", 0),
-                ("C:\\Windows\\Fonts\\meiryo.ttc", 0),
-                ("C:\\Windows\\Fonts\\msgothic.ttc", 0),
-            ]
-        }
-    } else if cfg!(target_os = "macos") {
-        if bold {
-            &[
-                ("/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc", 0),
-                ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
-            ]
-        } else {
-            &[
-                ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 0),
-                ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
-            ]
-        }
-    } else if bold {
-        &[
-            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 0),
-            ("/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc", 0),
-            ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", 0),
-        ]
-    } else {
-        &[
-            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
-            ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
-            (
-                "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-                0,
-            ),
-            ("/usr/share/fonts/truetype/fonts-japanese-gothic.ttf", 0),
-        ]
-    };
-    list.extend(names.iter().map(|(p, i)| (PathBuf::from(p), *i)));
-    list
-}
+/// 同梱した書体の名前（`FontDefinitions::font_data` の鍵）。
+pub const REGULAR_NAME: &str = "biz-udpgothic-regular";
+pub const BOLD_NAME: &str = "biz-udpgothic-bold";
 
-fn load(bold: bool) -> Option<(String, FontData)> {
-    candidates(bold).into_iter().find_map(|(path, index)| {
-        let bytes = std::fs::read(&path).ok()?;
-        let mut data = FontData::from_owned(bytes);
-        data.index = index;
-        Some((path.display().to_string(), data))
-    })
-}
-
-/// 書体を入れる。日本語の書体を一番先に置き（英数字もその書体で揃える）、egui の既定の書体を後ろに残す（記号の補い）。
-pub fn install(ctx: &egui::Context) -> FontReport {
+/// 書体の定義（普通・太字を先頭に置き、egui の既定の書体を後ろに残す）。
+pub fn definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
-    let mut report = FontReport::default();
-    let regular = load(false);
-    let bold = load(true);
-    if let Some((path, data)) = regular {
-        fonts.font_data.insert("ui".into(), data.into());
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
-            let list = fonts.families.entry(family.clone()).or_default();
-            if family == FontFamily::Proportional {
-                list.insert(0, "ui".into());
-            } else {
-                list.push("ui".into());
-            }
-        }
-        report.regular = Some(path);
-    }
-    let mut bold_list: Vec<String> = Vec::new();
-    if let Some((path, data)) = bold {
-        fonts.font_data.insert("ui-bold".into(), data.into());
-        bold_list.push("ui-bold".into());
-        report.bold = Some(path);
-    }
-    bold_list.extend(
+    fonts
+        .font_data
+        .insert(REGULAR_NAME.into(), FontData::from_static(REGULAR).into());
+    fonts
+        .font_data
+        .insert(BOLD_NAME.into(), FontData::from_static(BOLD_FACE).into());
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .insert(0, REGULAR_NAME.into());
+    // 均等幅は既定の書体（Hack）のまま、日本語だけ同梱の書体で補う
+    fonts
+        .families
+        .entry(FontFamily::Monospace)
+        .or_default()
+        .push(REGULAR_NAME.into());
+    // 太字: 太字 → 普通 → 既定（記号の補い）
+    let mut bold = vec![BOLD_NAME.to_owned()];
+    bold.extend(
         fonts
             .families
             .get(&FontFamily::Proportional)
             .cloned()
             .unwrap_or_default(),
     );
+    fonts.families.insert(FontFamily::Name(BOLD.into()), bold);
     fonts
-        .families
-        .insert(FontFamily::Name(BOLD.into()), bold_list);
-    ctx.set_fonts(fonts);
-    report
+}
+
+/// 書体を入れる。
+pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(definitions());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_bundled_faces_come_first_and_the_defaults_stay_as_a_fallback() {
+        let fonts = definitions();
+        let proportional = &fonts.families[&FontFamily::Proportional];
+        assert_eq!(proportional[0], REGULAR_NAME);
+        assert!(proportional.len() > 1, "既定の書体を後ろ盾に残す");
+        let bold = &fonts.families[&FontFamily::Name(BOLD.into())];
+        assert_eq!(bold[0], BOLD_NAME);
+        assert_eq!(bold[1], REGULAR_NAME);
+        // 均等幅は既定の書体が先で、日本語だけ同梱の書体で補う
+        let mono = &fonts.families[&FontFamily::Monospace];
+        assert_ne!(mono[0], REGULAR_NAME);
+        assert_eq!(mono.last().map(String::as_str), Some(REGULAR_NAME));
+    }
+
+    #[test]
+    fn the_faces_are_the_published_files() {
+        // 同梱ファイルは配布元の原本のまま（加工しない。SHA-256 は tools/licenses-reviewed.json の bundled にも置く）
+        assert_eq!(REGULAR.len(), 4_669_688);
+        assert_eq!(BOLD_FACE.len(), 4_640_592);
+        for face in [REGULAR, BOLD_FACE] {
+            assert_eq!(&face[..4], &[0, 1, 0, 0], "TrueType");
+        }
+    }
 }

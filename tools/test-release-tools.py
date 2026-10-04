@@ -72,6 +72,66 @@ class LicenseChecks(unittest.TestCase):
                 (self.root / 'LICENSE').write_text('変更された原文')
                 self.assertIn('SHA-256', ' '.join(self.inspect()[2]))
 
+    def bundled(self):
+        """実行ファイルに埋め込む書体（クレートでない同梱物）の設定と、その原本・許諾の全文。"""
+        (self.root / 'face.ttf').write_bytes(b'font bytes')
+        (self.root / 'OFL.txt').write_text('同梱の書体の許諾の全文')
+        digest = lambda name: hashlib.sha256((self.root / name).read_bytes()).hexdigest()
+        item = {'name': 'Face', 'version': '1.0', 'declared': 'OFL-1.1', 'selected': ['OFL-1.1'],
+                'repository': 'https://example.invalid/face', 'commit': 'abc123',
+                'files': [{'path': 'face.ttf', 'sha256': digest('face.ttf')}],
+                'license_file': {'path': 'OFL.txt', 'sha256': digest('OFL.txt')}}
+        return {'bundled': {'fixture': [item]}}, item, digest
+
+    def test_bundled_font_is_verified_and_its_license_text_joins_the_bundle(self):
+        config, _, _ = self.bundled()
+        with patch.object(licenses, 'ROOT', self.root):
+            texts, errors = licenses.bundled_assets('fixture', config)
+        self.assertFalse(errors)
+        self.assertIn('同梱の書体の許諾の全文', texts[0])
+        self.assertIn('Face 1.0', texts[0])
+        self.assertEqual(licenses.bundled_assets('another', config), ([], []), '別の製品には付かない')
+
+    def test_bundled_font_that_changed_from_the_original_is_rejected(self):
+        config, _, _ = self.bundled()
+        (self.root / 'face.ttf').write_bytes(b'edited font')
+        with patch.object(licenses, 'ROOT', self.root):
+            self.assertIn('SHA-256', ' '.join(licenses.bundled_assets('fixture', config)[1]))
+
+    def test_bundled_font_without_the_license_text_or_with_an_unapproved_license_is_rejected(self):
+        config, item, _ = self.bundled()
+        (self.root / 'OFL.txt').write_text('書き換えた許諾')
+        with patch.object(licenses, 'ROOT', self.root):
+            texts, errors = licenses.bundled_assets('fixture', config)
+        self.assertIn('SHA-256', ' '.join(errors))
+        self.assertFalse(texts, '全文が原本と違うなら束に入れない')
+        (self.root / 'OFL.txt').unlink()
+        with patch.object(licenses, 'ROOT', self.root):
+            self.assertTrue(licenses.bundled_assets('fixture', config)[1])
+        config, item, _ = self.bundled()
+        item['selected'] = ['OFL-1.1', 'GPL-3.0-only']
+        with patch.object(licenses, 'ROOT', self.root):
+            self.assertIn('許容外', ' '.join(licenses.bundled_assets('fixture', config)[1]))
+
+    def test_bundled_font_outside_the_repository_is_rejected(self):
+        config, item, _ = self.bundled()
+        item['files'][0]['path'] = '../outside.ttf'
+        with patch.object(licenses, 'ROOT', self.root):
+            self.assertIn('リポジトリ外', ' '.join(licenses.bundled_assets('fixture', config)[1]))
+
+    def test_inventory_adds_the_bundled_font_errors_and_text(self):
+        config, item, _ = self.bundled()
+        with patch.object(licenses, 'ROOT', self.root):
+            _, texts, errors = self.inspect_with({**self.config, **config})
+            self.assertFalse(errors)
+            self.assertTrue(any('同梱の書体の許諾の全文' in t for t in texts))
+            (self.root / 'face.ttf').write_bytes(b'edited font')
+            self.assertIn('SHA-256', ' '.join(self.inspect_with({**self.config, **config})[2]))
+
+    def inspect_with(self, config):
+        with patch.object(licenses, 'dependency_keys', return_value={'fixture@1.0.0'}):
+            return licenses.inventory('fixture', self.metadata, config, True)
+
     def test_git_dependency_is_rejected(self):
         self.package['source'] = 'git+https://example.invalid/repo'
         self.assertTrue(self.inspect()[2])
