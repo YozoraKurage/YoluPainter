@@ -1,6 +1,6 @@
 //! カラーのパネル（Unity 版の ColorPanel）: 彩度×明度の四角と色相の帯（または色相の円とその中の四角。右上の切り替え）、
-//! 16 進の欄とアルファ、使った色の履歴。左下にメインの色（描画色）とサブの色（背景色）を Photoshop の配置で重ね、
-//! 入れ替え（X）と初期設定（D）のボタンを添える。色相は描き手の操作で決めた値を覚え、彩度や明度が 0 になっても失わない。
+//! 16 進の欄とアルファ、使った色の履歴。メインの色（描画色）とサブの色（背景色）の 2 枚は、左のツールの帯の一番下へ置く
+//! （`color_swatch`）。色相は描き手の操作で決めた値を覚え、彩度や明度が 0 になっても失わない。
 
 use egui::{
     pos2, vec2, Color32, ColorImage, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui,
@@ -13,8 +13,6 @@ use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
 /// 色相の円の太さ（半径に対する割合）。
 pub const RING_THICKNESS: f32 = 0.17;
-/// 左下のメインとサブの色の場所の高さ。
-const SWATCH_BLOCK: f32 = 56.0;
 
 /// 色のパネルの絵（彩度×明度は色相が変わったら作り直す）。
 #[derive(Default)]
@@ -219,13 +217,14 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     let mut rows = Rows::new(r, 8.0);
     let stacked = r.width() - 2.0 * t::PADDING < HEX_ALPHA_ONE_LINE;
     let lines = if stacked { 2.0 } else { 1.0 };
-    let fixed = 8.0 + 6.0 + lines * (22.0 + 6.0) + 16.0 + 6.0 + SWATCH_BLOCK + 8.0;
+    let fixed = 8.0 + 6.0 + lines * (22.0 + 6.0) + 16.0 + 6.0 + 8.0;
     // 円は欄の幅いっぱいまで大きくする（幅の広い欄で小さく見えないように。上限は 320）
     let most = if app.color.wheel {
         // 細い欄では切り替えのボタンを円の上に置くので、その分も高さに足す
         (r.width() - 2.0 * t::PADDING + TOGGLE_LANE).clamp(72.0, 346.0)
     } else {
-        160.0
+        // 四角と色相の帯は、2 枚の色を帯へ移して空いた高さの分、幅に合わせて縦にも伸ばす（細い欄は 160 のまま）
+        ((r.width() - 2.0 * t::PADDING - 52.0) * 1.25).clamp(160.0, 320.0)
     };
     let sv_height = (r.height() - fixed).clamp(72.0, most);
     let area = rows.row(sv_height, 6.0);
@@ -451,69 +450,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             app.color.set_main(*c);
         }
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &label));
-    }
-
-    // 左下: メインの色とサブの色（描画色が左上、背景色が右下に重なる。右上に入れ替え、左下に初期設定）
-    let bottom = (r.bottom() - 10.0).max(rows.y() + SWATCH_BLOCK - 10.0);
-    let left = r.left() + t::PADDING + 4.0;
-    let front = Rect::from_min_size(pos2(left, bottom - 42.0), vec2(22.0, 22.0));
-    let back = Rect::from_min_size(pos2(left + 11.0, bottom - 31.0), vec2(22.0, 22.0));
-    if w::color_swatch(
-        ui,
-        back,
-        "color.sub",
-        app.color.sub,
-        &format!(
-            "{} #{}",
-            app.lang.pick("サブの色（背景色）。押すとメインの色と入れ替えます", "Background color. Click to swap with the foreground color."),
-            to_hex(app.color.sub)
-        ),
-        true,
-    )
-    .clicked()
-    {
-        app.apply(Action::SwapColors);
-    }
-    w::fill(ui.painter(), front.expand(1.0), t::PANEL_BG);
-    let _ = w::color_swatch(
-        ui,
-        front,
-        "color.main",
-        app.color.main,
-        &format!(
-            "{} #{}",
-            app.lang.pick("メインの色（描画色。ブラシで塗る色）", "Foreground color (the color the brush paints)"),
-            to_hex(app.color.main)
-        ),
-        true,
-    );
-    if w::icon_button(
-        ui,
-        Rect::from_min_size(pos2(left + 21.0, bottom - 56.0), vec2(14.0, 14.0)),
-        "color.swap",
-        "swap_horiz",
-        app.lang.pick("メインとサブの色を入れ替え（X）", "Swap foreground and background colors (X)"),
-        false,
-        true,
-        12.0,
-    )
-    .clicked()
-    {
-        app.apply(Action::SwapColors);
-    }
-    if w::icon_button(
-        ui,
-        Rect::from_min_size(pos2(left - 2.0, bottom - 8.0), vec2(14.0, 14.0)),
-        "color.default",
-        "restart_alt",
-        app.lang.pick("初期設定の色（D）", "Default colors (D)"),
-        false,
-        true,
-        11.0,
-    )
-    .clicked()
-    {
-        app.apply(Action::DefaultColors);
     }
 }
 

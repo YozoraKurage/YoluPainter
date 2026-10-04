@@ -496,11 +496,6 @@ impl AppState {
         layer: LayerId,
         mode: ProjectionMode,
     ) -> Option<yolu_core::fill_image::Placement> {
-        let bounds = self.model_bounds()?;
-        if mode != ProjectionMode::Decal {
-            return Some(placement::fit_to_bounds(&bounds, mode));
-        }
-        let rotation = self.view3d.camera.rotation();
         let image = self.doc.layer(layer).and_then(|l| {
             l.fill_images().find_map(|(_, id)| {
                 self.doc
@@ -509,12 +504,56 @@ impl AppState {
                     .map(|i| (i.width, i.height))
             })
         });
+        self.fitted_placement_for(mode, image)
+    }
+
+    /// `fitted_placement` の、まだ層が無い（これから作る）ときの形。`image` は差す画像の大きさ（デカールの縦横比に使う）。
+    pub fn fitted_placement_for(
+        &self,
+        mode: ProjectionMode,
+        image: Option<(u32, u32)>,
+    ) -> Option<yolu_core::fill_image::Placement> {
+        let bounds = self.model_bounds()?;
+        if mode != ProjectionMode::Decal {
+            return Some(placement::fit_to_bounds(&bounds, mode));
+        }
+        let rotation = self.view3d.camera.rotation();
         Some(placement::decal_fit(
             &bounds,
             rotation * yolu_core::glam::Vec3::Z,
             rotation * yolu_core::glam::Vec3::Y,
             image,
         ))
+    }
+
+    /// 棚の画像を塗りつぶしの層が指すために取る: 名前と大きさ（デカールを置く道と、メニューが画像・デカールの層を作る道が同じに使う）。
+    /// 棚に無い・復号できない（予算など）ときは理由。取ったあとで読めなければ手放してから返す（どの層も指さない画像を予算に残さない）。
+    pub(crate) fn take_shelf_image(
+        &mut self,
+        image: ImageId,
+    ) -> Result<(String, (u32, u32)), String> {
+        let lang = self.lang;
+        let rid = inputs::resource_id(image);
+        let Some(name) = self.shelf.get(&rid).map(|r| r.name.clone()) else {
+            return Err(lang
+                .pick("棚に画像がありません", "The shelf has no such image")
+                .into());
+        };
+        self.use_shelf_image(&rid)?;
+        match self
+            .doc
+            .effect_inputs()
+            .image(image)
+            .map(|i| (i.width, i.height))
+        {
+            Some(size) => Ok((name, size)),
+            None => {
+                self.release_shelf_image(image);
+                Err(lang
+                    .pick("画像を読めません", "Cannot read the image")
+                    .into())
+            }
+        }
     }
 
     /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだ層の上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
@@ -542,28 +581,12 @@ impl AppState {
             );
             return;
         }
-        let rid = inputs::resource_id(image);
-        let Some(resource) = self.shelf.get(&rid).cloned() else {
-            self.message = lang
-                .pick("棚に画像がありません", "The shelf has no such image")
-                .into();
-            return;
-        };
-        if let Err(why) = self.use_shelf_image(&rid) {
-            self.message = why;
-            return;
-        }
-        let Some(size) = self
-            .doc
-            .effect_inputs()
-            .image(image)
-            .map(|i| (i.width, i.height))
-        else {
-            self.release_shelf_image(image);
-            self.message = lang
-                .pick("画像を読めません", "Cannot read the image")
-                .into();
-            return;
+        let (name, size) = match self.take_shelf_image(image) {
+            Ok(taken) => taken,
+            Err(why) => {
+                self.message = why;
+                return;
+            }
         };
         let channel = self.m2.paint_channel;
         let kind = self
@@ -571,17 +594,11 @@ impl AppState {
             .channel_info(channel)
             .map_or(ChannelKind::Color, |c| c.kind);
         let placed = placement::decal_at(&hit, &view, gui, size);
-        let projection = Projection {
-            mode: ProjectionMode::Decal,
-            wrap: Wrap::None,
-            placement: placed,
-            ..Projection::default()
-        };
+        let projection = placement::new_projection(ProjectionMode::Decal, Some(placed));
         let above = self
             .selected_layer
             .filter(|id| self.doc.layer(*id).is_some());
         self.doc.end_coalescing();
-        let name = resource.name.clone();
         let result = self.doc.batch(|d| {
             let id = d.add_fill_layer(&name, &[(channel, default_fallback(kind))], above)?;
             d.set_fill_image(id, channel, Some(image))?;

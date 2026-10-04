@@ -8,7 +8,7 @@ use crate::engine::{
 use crate::lang::Lang;
 use crate::m2::{
     self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label,
-    AdjustmentKind, BrushOp, Edit, EffectKind, UiOp,
+    BrushOp, Edit, EffectKind, UiOp,
 };
 use crate::region::RegionAction;
 use crate::state::{Action, AppState};
@@ -19,6 +19,8 @@ use crate::ui::menu::Entry;
 pub enum Popup {
     /// レイヤーのパネルの調整ボタン。
     NewAdjustment,
+    /// レイヤーのパネルの塗りつぶしボタン（単色・グラデーション・画像 ▸・デカール ▸）。
+    NewFill,
     /// レイヤーの一覧の空白の右クリック。
     LayerBlank,
     /// ブラシの一覧の行の右クリック（対象は `brushes.ui.context`）。
@@ -208,42 +210,10 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             }
             v
         }
-        Popup::NewAdjustment => AdjustmentKind::ALL
-            .iter()
-            .map(|k| Entry::item(k.name(lang), Action::M2(Edit::NewAdjustment(*k))).enabled(free))
-            .collect(),
-        Popup::LayerBlank => {
-            let mut v = vec![
-                Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer)
-                    .shortcut("Ctrl+Shift+N")
-                    .enabled(free),
-                Entry::item(
-                    lang.pick("新規グループ", "New Group"),
-                    Action::M2(Edit::NewGroup),
-                )
-                .enabled(free),
-                Entry::item(
-                    lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
-                    Action::M2(Edit::NewFill),
-                )
-                .enabled(free),
-                Entry::Separator,
-            ];
-            for k in AdjustmentKind::ALL {
-                v.push(
-                    Entry::item(
-                        format!(
-                            "{}: {}",
-                            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
-                            k.name(lang)
-                        ),
-                        Action::M2(Edit::NewAdjustment(k)),
-                    )
-                    .enabled(free),
-                );
-            }
-            v
-        }
+        Popup::NewAdjustment => crate::layermenu::adjustment_entries(app),
+        Popup::NewFill => crate::layermenu::fill_entries(app),
+        // 選んだ層が無いときのメニューバーの「レイヤー」と同じ並び
+        Popup::LayerBlank => crate::shell::layer_menu(app, None),
         Popup::BrushContext => {
             let Some(key) = app.brushes.ui.context else {
                 return Vec::new();

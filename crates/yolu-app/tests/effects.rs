@@ -302,32 +302,48 @@ fn a_mask_anchor_needs_the_mask_and_an_anchor_generator_needs_an_anchor_below() 
     fx(&mut s, FxOp::AddAnchor { layer, placement: AnchorPlacement::Mask });
     let mask_anchor = s.doc.layer(layer).unwrap().mask().unwrap().anchor().unwrap().clone();
     assert!(mask_anchor.name().contains("マスク"), "{}", mask_anchor.name());
-    // 自分の層の Anchor は読めない: メニューの項目は押せない
+    // 自分の層の Anchor は読めない: メニュー（ジェネレーター ▸）の項目は押せない。ラベルは名前だけで、理由はツールチップ
     s.lang = Lang::En;
     let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
-    let anchor_entry = entries
-        .iter()
+    let anchor_entry = yolu_app::ui::menu::leaves(&entries)
+        .into_iter()
         .find_map(|e| match e {
-            yolu_app::ui::menu::Entry::Item { label, enabled, .. } if label.starts_with("Anchor") => Some((label.clone(), *enabled)),
+            yolu_app::ui::menu::Entry::Item { label, enabled, tooltip, .. } if label.starts_with("Anchor") => {
+                Some((label.clone(), *enabled, tooltip.clone()))
+            }
             _ => None,
         })
         .unwrap();
     assert!(!anchor_entry.1, "{}", anchor_entry.0);
-    assert!(anchor_entry.0.contains("no anchor below"), "{}", anchor_entry.0);
+    assert_eq!(anchor_entry.0, "Anchor", "ラベルに理由を続けない");
+    assert!(anchor_entry.2.as_deref().is_some_and(|t| t.contains("no anchor below")), "{:?}", anchor_entry.2);
 }
 
 // ───────── メニュー ─────────
 
 #[test]
 fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refuses() {
+    use yolu_app::ui::menu::{leaves, Entry};
     for lang in Lang::ALL {
         let mut s = AppState::new(64, 64);
         s.lang = lang;
         let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
-        let labels: Vec<(String, bool)> = entries
-            .iter()
+        // 並びは フィルター（平ら）→ 区切り → ジェネレーター ▸。見出し（「…の画素」・「Generator」）は置かない
+        assert!(!entries.iter().any(|e| matches!(e, Entry::Heading(_))), "{lang:?}: 見出しを置かない");
+        let separator = entries.iter().position(|e| matches!(e, Entry::Separator)).expect("区切り");
+        assert_eq!(separator, 13, "{lang:?}: フィルターが 13 種、平らに並ぶ");
+        assert!(entries[..separator].iter().all(|e| matches!(e, Entry::Item { .. })));
+        match &entries[separator + 1..] {
+            [Entry::Submenu { label, entries: generators, .. }] => {
+                assert_eq!(label, lang.pick("ジェネレーター", "Generators"));
+                assert_eq!(generators.len(), 10, "{lang:?}");
+            }
+            other => panic!("{lang:?}: 区切りの後はジェネレーターの入れ子だけ: {other:?}"),
+        }
+        let labels: Vec<(String, bool)> = leaves(&entries)
+            .into_iter()
             .filter_map(|e| match e {
-                yolu_app::ui::menu::Entry::Item { label, enabled, .. } => Some((label.clone(), *enabled)),
+                Entry::Item { label, enabled, .. } => Some((label.clone(), *enabled)),
                 _ => None,
             })
             .collect();
@@ -337,26 +353,33 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
         for target in [FilterTarget::Content, FilterTarget::Mask] {
             let entries = yolu_app::fx::menu::add_entries(&s, target);
             for expected in [Kind::Noise, Kind::Grunge] {
-                assert!(entries.iter().any(|e| matches!(e,
-                    yolu_app::ui::menu::Entry::Item { action: Action::Fx(FxOp::AddGenerator { kind, .. }), enabled: true, .. } if *kind == expected
+                assert!(leaves(&entries).iter().any(|e| matches!(e,
+                    Entry::Item { action: Action::Fx(FxOp::AddGenerator { kind, .. }), enabled: true, .. } if *kind == expected
                 )));
             }
         }
 
-        // 法線のチャンネル: ぼかし以外は理由つきで押せない
+        // 法線のチャンネル: ぼかし以外は押せない。理由はラベルに続けず、ツールチップに置く
         s.apply(Action::M2Ui(UiOp::PaintChannel(Channel::Normal)));
         let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
-        let disabled: Vec<&String> = entries
-            .iter()
+        let disabled: Vec<(&String, &Option<String>)> = leaves(&entries)
+            .into_iter()
             .filter_map(|e| match e {
-                yolu_app::ui::menu::Entry::Item { label, enabled: false, .. } => Some(label),
+                Entry::Item { label, enabled: false, tooltip, .. } => Some((label, tooltip)),
                 _ => None,
             })
             .collect();
         assert!(disabled.len() >= 6, "{lang:?}: {disabled:?}");
-        assert!(disabled.iter().all(|l| l.contains(" — ")), "{lang:?}: 理由を添える {disabled:?}");
+        assert!(disabled.iter().all(|(l, _)| !l.contains(" — ")), "{lang:?}: ラベルに理由を続けない {disabled:?}");
+        assert!(
+            disabled.iter().all(|(_, t)| t.as_deref().is_some_and(|t| !t.is_empty())),
+            "{lang:?}: 理由はツールチップに {disabled:?}"
+        );
         if lang == Lang::En {
-            assert!(disabled.iter().all(|l| !l.chars().any(|c| matches!(c, '\u{3040}'..='\u{9fff}'))), "{disabled:?}");
+            assert!(
+                disabled.iter().all(|(l, t)| !l.chars().chain(t.iter().flat_map(|t| t.chars())).any(|c| matches!(c, '\u{3040}'..='\u{9fff}'))),
+                "{disabled:?}"
+            );
         }
     }
 }

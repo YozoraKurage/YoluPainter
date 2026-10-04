@@ -1,0 +1,1506 @@
+//! レイヤーと効果を足すメニューの組み直しと、メインとサブの色の 2 枚（ツールの帯の一番下）の試験。
+//! - 「フィルター」のメニューは、フィルターを平らに並べ、区切りのあと「ジェネレーター ▸」。見出し（「…の画素」・「Generator」）は置かず、
+//!   押せない理由はラベルに続けずツールチップへ。
+//! - 「レイヤー」のメニューは、メニューバーと右クリックと一覧の空白で同じ関数。新規塗りつぶし ▸・新規調整 ▸ の入れ子、効果、グループ、属性。
+//! - 画像・デカールの塗りつぶしは、棚の画像（またはファイル）を選んで 1 回の Undo で作る。選ばずに閉じたら何も作らない。
+//! - 2 枚の色は、ツールの帯の下の端に付き、最小の窓でもアイコンと重ならない。
+mod common;
+
+use std::path::PathBuf;
+
+use common::{app, click, menu_title, popup_item};
+use egui::{pos2, vec2, Event, Rect};
+use egui_kittest::kittest::Queryable;
+use egui_kittest::Harness;
+use yolu_app::engine::{Channel, LayerKind, Rgba8};
+use yolu_app::fillfx::inputs;
+use yolu_app::lang::Lang;
+use yolu_app::layermenu::Op;
+use yolu_app::m2::{AdjustmentKind, Edit};
+use yolu_app::state::{Action, AppState, DialogRequest, PopupKind, Tool};
+use yolu_app::ui::menu::{leaves, Entry};
+use yolu_app::{shell, YoluApp};
+use yolu_core::fill_image::{Placement, ProjectionMode, Wrap};
+use yolu_core::{FilterTarget, ImageId};
+
+const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
+const GREEN: Rgba8 = Rgba8::new(0, 255, 0, 255);
+const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
+const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
+
+fn quad_image() -> Vec<u8> {
+    [RED, GREEN, BLUE, WHITE]
+        .iter()
+        .flat_map(|c| [c.r, c.g, c.b, c.a])
+        .collect()
+}
+
+/// 画像を棚へ入れる（出どころなし）。棚の ID と、文書の画像の ID。
+fn shelf_image(s: &mut AppState, name: &str) -> (String, ImageId) {
+    let rid = s
+        .shelf
+        .add_image(Lang::Ja, name, &quad_image(), 2, 2)
+        .expect("棚へ入る");
+    let id = inputs::image_id(&rid).expect("GUID");
+    (rid, id)
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("yolu-layer-menu-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// 並びの形（項目の名前・押せるか・キー・入れ子の中身）を文字にする。2 つのメニューが同じ並びかを比べるのに使う。
+fn shape(entries: &[Entry<Action>]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|e| match e {
+            Entry::Item {
+                label,
+                enabled,
+                shortcut,
+                ..
+            } => format!(
+                "item:{label}:{enabled}:{}",
+                shortcut.clone().unwrap_or_default()
+            ),
+            Entry::Submenu {
+                label,
+                entries,
+                enabled,
+                ..
+            } => format!("sub:{label}:{enabled}[{}]", shape(entries).join("|")),
+            Entry::Separator => "---".to_owned(),
+            Entry::Heading(label) => format!("head:{label}"),
+        })
+        .collect()
+}
+
+/// 項目の名前（区切りは `None`）。
+fn names(entries: &[Entry<Action>]) -> Vec<Option<String>> {
+    entries
+        .iter()
+        .map(|e| e.label().map(str::to_owned))
+        .collect()
+}
+
+fn submenu<'a>(entries: &'a [Entry<Action>], label: &str) -> &'a [Entry<Action>] {
+    entries
+        .iter()
+        .find_map(|e| match e {
+            Entry::Submenu {
+                label: l, entries, ..
+            } if l == label => Some(entries.as_slice()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("入れ子 {label} が無い: {:?}", names(entries)))
+}
+
+fn has_japanese(text: &str) -> bool {
+    text.chars().any(|c| matches!(c, '\u{3040}'..='\u{9fff}'))
+}
+
+// ───────── 効果のメニュー ─────────
+
+#[test]
+fn the_filter_menu_has_no_heading_and_the_generators_are_one_submenu() {
+    for lang in Lang::ALL {
+        for edit_mask in [false, true] {
+            let mut s = AppState::new(64, 64);
+            s.lang = lang;
+            let layer = s.selected_layer.unwrap();
+            if edit_mask {
+                s.apply(Action::M2(Edit::AddMask(layer)));
+                assert!(s.m2.edit_mask, "マスクを足すと描く先がマスクになる");
+            }
+            let entries = shell::menu_entries(&s, 4);
+            // 見出し（足す先の名前・Generator）は置かない
+            assert!(
+                !entries.iter().any(|e| matches!(e, Entry::Heading(_))),
+                "{lang:?} {edit_mask}: {:?}",
+                names(&entries)
+            );
+            for text in names(&entries).into_iter().flatten() {
+                assert!(
+                    !text.contains("の画素") && !text.contains("pixels") && text != "Generator",
+                    "{lang:?}: {text}"
+                );
+            }
+            // 並び: フィルター 13 種（平ら）→ 区切り → ジェネレーター ▸ → 区切り → アンカーの項目
+            let labels = names(&entries);
+            assert_eq!(labels[13], None, "{lang:?}");
+            assert_eq!(
+                labels[14].as_deref(),
+                Some(lang.pick("ジェネレーター", "Generators"))
+            );
+            assert_eq!(labels[15], None);
+            assert!(
+                labels[16]
+                    .as_deref()
+                    .is_some_and(|l| l.contains(lang.pick("アンカー", "Anchor"))),
+                "{lang:?}: {labels:?}"
+            );
+            assert!(entries[..13]
+                .iter()
+                .all(|e| matches!(e, Entry::Item { .. })));
+            let generators = submenu(&entries, lang.pick("ジェネレーター", "Generators"));
+            assert_eq!(generators.len(), 10, "{lang:?}: ジェネレーターの種類の全部");
+            // 足す先は、今の編集の状態のまま（マスクを描いていればマスク、そうでなければ層の画素）
+            let target = if edit_mask {
+                FilterTarget::Mask
+            } else {
+                FilterTarget::Content
+            };
+            assert_eq!(yolu_app::fx::menu::target(&s), target);
+            assert!(leaves(&entries).iter().any(|e| matches!(
+                e,
+                Entry::Item { action: Action::Fx(yolu_app::fx::FxOp::AddFilter { target: t, .. }), .. } if *t == target
+            )));
+            if lang == Lang::En {
+                for text in labels.into_iter().flatten() {
+                    assert!(!has_japanese(&text), "{text}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);
+        let generators = submenu(&entries, lang.pick("ジェネレーター", "Generators"));
+        let anchor = generators
+            .iter()
+            .find_map(|e| match e {
+                Entry::Item {
+                    label,
+                    enabled,
+                    tooltip,
+                    ..
+                } if label.contains(lang.pick("アンカー", "Anchor")) => {
+                    Some((label.clone(), *enabled, tooltip.clone()))
+                }
+                _ => None,
+            })
+            .expect("アンカーの項目");
+        assert!(!anchor.1, "アンカーが無いので押せない");
+        assert!(
+            !anchor.0.contains('—'),
+            "ラベルに理由を続けない: {}",
+            anchor.0
+        );
+        assert_eq!(anchor.0, lang.pick("アンカー", "Anchor"));
+        let why = anchor.2.expect("理由はツールチップ");
+        assert_eq!(
+            why,
+            lang.pick("この層より下にアンカーが無い", "no anchor below this layer")
+        );
+    }
+}
+
+#[test]
+fn the_effect_button_popup_has_the_same_order_without_a_heading() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let popup = yolu_app::m2_menu::entries(
+            &s,
+            yolu_app::m2_menu::Popup::AddEffect(FilterTarget::Content),
+        );
+        let bar = shell::menu_entries(&s, 4);
+        // メニューバーの「フィルター」は、ボタンのポップアップに、区切りとアンカーの項目が続くだけ
+        assert_eq!(shape(&popup), shape(&bar[..popup.len()]));
+        assert!(!popup.iter().any(|e| matches!(e, Entry::Heading(_))));
+        assert!(matches!(popup.last(), Some(Entry::Submenu { .. })));
+    }
+}
+
+// ───────── レイヤーのメニュー ─────────
+
+#[test]
+fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let id = s.selected_layer.unwrap();
+        let bar = shell::menu_entries(&s, 2);
+        let context = shell::popup_entries(&s, PopupKind::LayerContext(id));
+        assert_eq!(shape(&bar), shape(&context), "{lang:?}: 同じ並び");
+        // 選んだ層が無いとき: メニューバーと一覧の空白の右クリックが同じ並び（足す項目とグループだけ）
+        s.selected_layer = None;
+        let bar = shell::menu_entries(&s, 2);
+        let blank = shell::popup_entries(&s, PopupKind::M2(yolu_app::m2_menu::Popup::LayerBlank));
+        assert_eq!(shape(&bar), shape(&blank), "{lang:?}");
+        let labels: Vec<_> = names(&bar);
+        assert_eq!(
+            labels,
+            [
+                Some(lang.pick("新規レイヤー", "New Layer").to_owned()),
+                Some(
+                    lang.pick("新規塗りつぶしレイヤー", "New Fill Layer")
+                        .to_owned()
+                ),
+                Some(
+                    lang.pick("新規調整レイヤー", "New Adjustment Layer")
+                        .to_owned()
+                ),
+                None,
+                Some(lang.pick("新規グループ", "New Group").to_owned()),
+            ]
+        );
+    }
+}
+
+#[test]
+fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let v = shell::menu_entries(&s, 2);
+        let labels = names(&v);
+        let ja_en = |ja: &str, en: &str| Some(lang.pick(ja, en).to_owned());
+        let head = [
+            ja_en("新規レイヤー", "New Layer"),
+            ja_en("新規塗りつぶしレイヤー", "New Fill Layer"),
+            ja_en("新規調整レイヤー", "New Adjustment Layer"),
+            None,
+            ja_en("フィルター", "Filter"),
+            ja_en("ジェネレーター", "Generators"),
+            ja_en("アンカーを置く", "Add Anchor"),
+            None,
+            ja_en("新規グループ", "New Group"),
+            ja_en("レイヤーをグループ化", "Group Layers"),
+            None,
+            ja_en("複製", "Duplicate"),
+        ];
+        assert_eq!(&labels[..head.len()], &head, "{lang:?}: {labels:?}");
+        // 新規レイヤーのキー
+        assert!(matches!(&v[0], Entry::Item { shortcut: Some(k), .. } if k == "Ctrl+Shift+N"));
+        // 参照レイヤーは先頭でなく、属性（クリッピング・マスク・ロック）の組の中
+        let at = |name: &str| {
+            labels
+                .iter()
+                .position(|l| l.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name}: {labels:?}"))
+        };
+        let reference = at(lang.pick("参照レイヤー", "Reference Layer"));
+        assert!(reference > at(lang.pick("複製", "Duplicate")));
+        assert_eq!(reference + 1, at(lang.pick("クリッピング", "Clipping")));
+        assert!(reference < at(lang.pick("レイヤーマスクを追加", "Add Layer Mask")));
+        assert!(
+            at(lang.pick("レイヤーマスクを追加", "Add Layer Mask"))
+                < at(lang.pick("変形", "Transform"))
+        );
+        // 新規グループは、新規レイヤーの組ではなくグループ化の組
+        assert_eq!(
+            at(lang.pick("新規グループ", "New Group")) + 1,
+            at(lang.pick("レイヤーをグループ化", "Group Layers"))
+        );
+        // 理由・種類を「: 」でつないだ平らな項目（旧「新規調整レイヤー: …」）は無い
+        for l in labels.iter().flatten() {
+            assert!(!l.contains(": ") && !l.contains(" — "), "{l}");
+        }
+        // 入れ子の中は、フィルター 13 種・ジェネレーター 10 種・調整 9 種（全部）・塗りつぶし 4 種
+        let filters = submenu(&v, lang.pick("フィルター", "Filter"));
+        assert_eq!(filters.len(), 13);
+        let generators = submenu(&v, lang.pick("ジェネレーター", "Generators"));
+        assert_eq!(generators.len(), 10);
+        let adjustments = submenu(&v, lang.pick("新規調整レイヤー", "New Adjustment Layer"));
+        let expected: Vec<Option<String>> = AdjustmentKind::ALL
+            .iter()
+            .map(|k| Some(k.name(lang).to_owned()))
+            .collect();
+        assert_eq!(names(adjustments), expected, "{lang:?}: 調整の種類は全部");
+        let fills = submenu(&v, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
+        assert_eq!(
+            names(fills),
+            [
+                ja_en("単色", "Solid Color"),
+                ja_en("グラデーション", "Gradient"),
+                ja_en("画像", "Image"),
+                ja_en("デカール", "Decal"),
+            ]
+        );
+        if lang == Lang::En {
+            assert!(
+                labels.iter().flatten().all(|l| !has_japanese(l)),
+                "{labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_fill_submenus_list_the_shelf_images_and_the_file_import() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let import = lang.pick("ファイルから取り込む…", "Import from File…");
+        let fills = submenu(
+            &shell::menu_entries(&s, 2),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        )
+        .to_vec();
+        // 棚が空なら「ファイルから取り込む…」だけ
+        for (kind, mode) in [
+            ("画像", ProjectionMode::Uv),
+            ("デカール", ProjectionMode::Decal),
+        ] {
+            let kind = match (lang, kind) {
+                (Lang::En, "画像") => "Image",
+                (Lang::En, _) => "Decal",
+                _ => kind,
+            };
+            let inner = submenu(&fills, kind);
+            assert_eq!(names(inner), [Some(import.to_owned())], "{lang:?} {kind}");
+            assert!(
+                matches!(&inner[0], Entry::Item { action: Action::LayerMenu(Op::FillImageDialog(m)), .. } if *m == mode)
+            );
+        }
+        // 棚に画像があれば、その一覧（寸法つき）→ 区切り → 取り込み
+        let (_, image) = shelf_image(&mut s, "四色");
+        let fills = submenu(
+            &shell::menu_entries(&s, 2),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        )
+        .to_vec();
+        let inner = submenu(&fills, lang.pick("画像", "Image")).to_vec();
+        assert_eq!(
+            names(&inner),
+            [
+                Some("四色  (2 × 2)".to_owned()),
+                None,
+                Some(import.to_owned())
+            ]
+        );
+        assert!(
+            matches!(&inner[0], Entry::Item { action: Action::LayerMenu(Op::FillImage { image: i, mode: ProjectionMode::Uv }), .. } if *i == image)
+        );
+        let inner = submenu(&fills, lang.pick("デカール", "Decal")).to_vec();
+        assert!(matches!(
+            &inner[0],
+            Entry::Item {
+                action: Action::LayerMenu(Op::FillImage {
+                    mode: ProjectionMode::Decal,
+                    ..
+                }),
+                ..
+            }
+        ));
+    }
+}
+
+// ───────── 塗りつぶしの作成 ─────────
+
+fn layer_count(s: &AppState) -> usize {
+    s.doc.layers().len()
+}
+
+#[test]
+fn a_menu_image_fill_adds_one_fill_layer_with_the_image_and_one_undo_takes_it_back() {
+    let mut s = AppState::new(64, 64);
+    let (_, image) = shelf_image(&mut s, "四色");
+    let below = s.selected_layer.unwrap();
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Uv,
+    }));
+    let id = s.selected_layer.expect("足した層を選ぶ");
+    assert_ne!(id, below);
+    assert_eq!(layer_count(&s), 2);
+    let layer = s.doc.layer(id).unwrap();
+    assert_eq!(layer.kind(), LayerKind::Fill);
+    assert_eq!(layer.name(), "四色");
+    assert_eq!(layer.fill_image(Channel::Color), Some(image));
+    assert_eq!(layer.projection().mode, ProjectionMode::Uv);
+    assert_eq!(s.doc.undo_count(), steps + 1, "{}", s.message);
+    assert!(
+        s.message.starts_with("画像の塗りつぶしを足しました"),
+        "{}",
+        s.message
+    );
+    // 選んでいた層の上に重なる
+    let order: Vec<_> = s.doc.layers().iter().map(|l| l.id()).collect();
+    assert!(order.iter().position(|l| *l == id) > order.iter().position(|l| *l == below));
+    // 1 回の取り消しで層ごと戻り、やり直しで戻る
+    s.apply(Action::Undo);
+    assert_eq!(layer_count(&s), 1);
+    assert!(s.doc.layer(id).is_none());
+    s.apply(Action::Redo);
+    assert_eq!(
+        s.doc.layer(id).unwrap().fill_image(Channel::Color),
+        Some(image)
+    );
+}
+
+#[test]
+fn a_menu_decal_is_a_fill_layer_with_the_decal_projection_fitted_to_the_model() {
+    // モデルが無くても作れる（置き場は初めのまま）
+    let mut s = AppState::new(64, 64);
+    let (_, image) = shelf_image(&mut s, "四色");
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Decal,
+    }));
+    let id = s.selected_layer.unwrap();
+    let p = *s.doc.layer(id).unwrap().projection();
+    assert_eq!(p.mode, ProjectionMode::Decal);
+    assert_eq!(p.wrap, Wrap::None, "デカールは 1 回だけ（繰り返さない）");
+    assert_eq!(
+        s.doc.layer(id).unwrap().fill_image(Channel::Color),
+        Some(image)
+    );
+    assert!(
+        s.message.starts_with("デカールを置きました"),
+        "{}",
+        s.message
+    );
+
+    // 試しの立方体があれば、今の 3D ビューから見て正面に合わせる
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::LoadDemoModel);
+    let (_, image) = shelf_image(&mut s, "四色");
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Decal,
+    }));
+    let id = s.selected_layer.unwrap();
+    let p = *s.doc.layer(id).unwrap().projection();
+    assert_eq!(p.mode, ProjectionMode::Decal);
+    assert_ne!(
+        p.placement,
+        Placement::default(),
+        "モデルの外形に合わせた置き場"
+    );
+    assert!(!s.fillfx.handles_hidden, "置き場のハンドルを出す");
+    assert_eq!(
+        s.doc.undo_count(),
+        steps + 1,
+        "層・画像・投影が 1 回の Undo"
+    );
+    s.apply(Action::Undo);
+    assert!(s.doc.layer(id).is_none());
+}
+
+#[test]
+fn a_menu_gradient_fill_is_one_undo_and_opens_the_shape_for_editing() {
+    let mut s = AppState::new(64, 64);
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillGradient));
+    let id = s.selected_layer.unwrap();
+    let layer = s.doc.layer(id).unwrap();
+    assert_eq!(layer.kind(), LayerKind::Fill);
+    assert!(layer.fill_gradient(Channel::Color).is_some());
+    assert_eq!(
+        s.fillfx.edit_gradient,
+        Some((id, Channel::Color)),
+        "3D ビューで形を編集できる"
+    );
+    assert_eq!(s.doc.undo_count(), steps + 1, "{}", s.message);
+    s.apply(Action::Undo);
+    assert!(s.doc.layer(id).is_none());
+    assert_eq!(layer_count(&s), 1);
+}
+
+#[test]
+fn choosing_a_file_asks_for_it_and_changes_nothing_until_a_file_is_chosen() {
+    let mut s = AppState::new(64, 64);
+    let revision = s.doc.revision();
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillImageDialog(
+        ProjectionMode::Decal,
+    )));
+    assert_eq!(
+        s.dialog_request,
+        Some(DialogRequest::NewFillImage(ProjectionMode::Decal)),
+        "ファイルの窓を頼む"
+    );
+    // 選ばずに閉じる（窓の結果が来ない）と、何も作らず、履歴も増えない
+    s.dialog_request = None;
+    assert_eq!(layer_count(&s), 1);
+    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(s.doc.revision(), revision);
+    assert!(s.shelf.resources().iter().all(|r| r.kind != "image"));
+}
+
+#[test]
+fn a_chosen_file_goes_to_the_shelf_and_makes_the_layer_and_a_bad_file_makes_nothing() {
+    let dir = temp_dir("file");
+    let ok = dir.join("四色.png");
+    image::RgbaImage::from_raw(2, 2, quad_image())
+        .unwrap()
+        .save(&ok)
+        .unwrap();
+    let mut s = AppState::new(64, 64);
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillImageFile {
+        path: ok.clone(),
+        mode: ProjectionMode::Uv,
+    }));
+    let id = s.selected_layer.unwrap();
+    let layer = s.doc.layer(id).unwrap();
+    assert_eq!(layer.kind(), LayerKind::Fill, "{}", s.message);
+    assert_eq!(layer.name(), "四色");
+    assert!(layer.fill_image(Channel::Color).is_some());
+    assert!(
+        s.shelf.resources().iter().any(|r| r.kind == "image"),
+        "棚に入る"
+    );
+    assert_eq!(
+        s.doc.undo_count(),
+        steps + 1,
+        "文書の履歴は層を作った 1 回だけ"
+    );
+    // 同じファイルをもう一度選ぶと、棚には足さずにその画像で層を作る
+    let before = s.shelf.resources().len();
+    s.apply(Action::LayerMenu(Op::FillImageFile {
+        path: ok,
+        mode: ProjectionMode::Decal,
+    }));
+    assert_eq!(s.shelf.resources().len(), before);
+    assert_eq!(layer_count(&s), 3);
+
+    // 読めないファイル・無いファイル: 何も作らず、棚の選びも変えない
+    let (rid, _) = shelf_image(&mut s, "もう 1 枚");
+    s.shelf.selected = Some(rid.clone());
+    let junk = dir.join("junk.png");
+    std::fs::write(&junk, b"not a png").unwrap();
+    let steps = s.doc.undo_count();
+    let layers = layer_count(&s);
+    for path in [junk, dir.join("missing.png")] {
+        s.apply(Action::LayerMenu(Op::FillImageFile {
+            path,
+            mode: ProjectionMode::Uv,
+        }));
+        assert_eq!(layer_count(&s), layers, "{}", s.message);
+        assert_eq!(s.doc.undo_count(), steps);
+        assert_eq!(s.shelf.selected, Some(rid.clone()), "選びを元へ戻す");
+        assert!(!s.message.is_empty());
+    }
+}
+
+#[test]
+fn an_image_that_cannot_be_used_makes_no_layer_and_says_why() {
+    // 棚に無い画像
+    let mut s = AppState::new(64, 64);
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image: ImageId(0x1234_5678),
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(layer_count(&s), 1);
+    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(s.message, "棚に画像がありません");
+    s.lang = Lang::En;
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image: ImageId(0x1234_5678),
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(s.message, "The shelf has no such image");
+
+    // 復号の予算を超える画像: 断られた画像は誰も持たない
+    let mut s = AppState::new(64, 64);
+    let (_, image) = shelf_image(&mut s, "四色");
+    s.fx.inputs.image_limit = Some(10);
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(layer_count(&s), 1);
+    assert_eq!(s.doc.undo_count(), 0);
+    assert!(s.message.contains("予算"), "{}", s.message);
+    s.sync_effects();
+    assert_eq!(s.fx.inputs.decoded_image_count(), 0);
+}
+
+/// 断られた操作が何も残していない: 層の数・Undo の段・復号している画像（断られた画像を予算に残さない）。
+fn assert_nothing_made(s: &mut AppState, layers: usize, steps: usize, what: &str) {
+    assert_eq!(layer_count(s), layers, "{what}: {}", s.message);
+    assert_eq!(s.doc.undo_count(), steps, "{what}");
+    assert!(!s.message.is_empty(), "{what}: 理由を出す");
+    s.sync_effects();
+    assert_eq!(s.fx.inputs.decoded_image_count(), 0, "{what}: 画像を手放す");
+}
+
+/// 四色の PNG をファイルへ書く（ファイルから取り込む道の試験用）。
+fn quad_png(name: &str) -> PathBuf {
+    let path = temp_dir(name).join("四色.png");
+    image::RgbaImage::from_raw(2, 2, quad_image())
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    path
+}
+
+#[test]
+fn nothing_is_made_while_drawing() {
+    let mut s = AppState::new(64, 64);
+    let (_, image) = shelf_image(&mut s, "四色");
+    let file = quad_png("drawing");
+    let layer = s.selected_layer.unwrap();
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let shelf = s.shelf.resources().len();
+    for op in [
+        Op::FillImage {
+            image,
+            mode: ProjectionMode::Uv,
+        },
+        Op::FillImage {
+            image,
+            mode: ProjectionMode::Decal,
+        },
+        Op::FillGradient,
+        // ファイルの取り込みも、描いている間は棚へ入れず、層も作らない
+        Op::FillImageFile {
+            path: file.clone(),
+            mode: ProjectionMode::Decal,
+        },
+    ] {
+        s.message.clear();
+        s.apply(Action::LayerMenu(op.clone()));
+        assert_eq!(s.message, "描いている間はできません。", "{op:?}");
+        assert_eq!(layer_count(&s), 1, "{op:?}");
+        assert_eq!(s.shelf.resources().len(), shelf, "{op:?}: 棚も変えない");
+    }
+    s.lang = Lang::En;
+    s.apply(Action::LayerMenu(Op::FillImageFile {
+        path: file,
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(s.message, "Not while drawing.");
+    s.doc.cancel_stroke(stroke);
+}
+
+#[test]
+fn nothing_is_made_inside_a_locked_group_and_the_image_is_let_go() {
+    use yolu_core::LayerLocks;
+    let file = quad_png("locked");
+    for lock in [
+        LayerLocks::PIXELS,
+        LayerLocks::TRANSPARENCY,
+        LayerLocks::ALL,
+    ] {
+        let mut s = AppState::new(64, 64);
+        let (_, image) = shelf_image(&mut s, "四色");
+        let child = s.selected_layer.unwrap();
+        let group = s.doc.group_layers(&[child], "G").unwrap();
+        s.doc.set_layer_locks(group, lock).unwrap();
+        s.selected_layer = Some(child);
+        let (layers, steps) = (layer_count(&s), s.doc.undo_count());
+        for op in [
+            Op::FillImage {
+                image,
+                mode: ProjectionMode::Uv,
+            },
+            Op::FillImage {
+                image,
+                mode: ProjectionMode::Decal,
+            },
+            Op::FillGradient,
+            Op::FillImageFile {
+                path: file.clone(),
+                mode: ProjectionMode::Uv,
+            },
+        ] {
+            s.message.clear();
+            s.apply(Action::LayerMenu(op.clone()));
+            let what = format!("{lock:?} {op:?}");
+            assert!(
+                s.message.contains("ロック"),
+                "{what}: 親のロックを理由に出す: {}",
+                s.message
+            );
+            assert!(s.fillfx.edit_gradient.is_none(), "{what}");
+            // 棚へ取り込むファイルのほかは、何も変えていないので変更の印も付けない
+            assert!(
+                s.modified == matches!(op, Op::FillImageFile { .. }),
+                "{what}: 変更の印 {}",
+                s.modified
+            );
+            // 取り込んだファイルの画像は棚に残るが、どの層も指さず、復号したままにしない
+            assert_nothing_made(&mut s, layers, steps, &what);
+        }
+    }
+}
+
+#[test]
+fn a_gradient_fill_on_the_normal_channel_makes_no_layer_and_says_why() {
+    let mut s = AppState::new(64, 64);
+    s.m2.paint_channel = Channel::Normal;
+    let (layers, steps) = (layer_count(&s), s.doc.undo_count());
+    s.apply(Action::LayerMenu(Op::FillGradient));
+    assert_eq!(layer_count(&s), layers, "{}", s.message);
+    assert_eq!(s.doc.undo_count(), steps, "層は 1 回の Undo の中で戻る");
+    assert!(!s.modified, "変更の印を付けない");
+    assert!(s.message.contains("法線"), "{}", s.message);
+    assert!(s.fillfx.edit_gradient.is_none(), "形の編集を始めない");
+    s.lang = Lang::En;
+    s.apply(Action::LayerMenu(Op::FillGradient));
+    assert!(
+        !has_japanese(&s.message),
+        "英語の画面に日本語を出さない: {}",
+        s.message
+    );
+    // 法線の画像の塗りつぶしは作れる（画像は法線として差す）。ここは断られないことだけ確かめる
+    let (_, image) = shelf_image(&mut s, "四色");
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(layer_count(&s), layers + 1, "{}", s.message);
+}
+
+#[test]
+fn a_file_over_the_image_budget_makes_no_layer_and_the_decal_is_the_same() {
+    let file = quad_png("budget");
+    for mode in [ProjectionMode::Uv, ProjectionMode::Decal] {
+        let mut s = AppState::new(64, 64);
+        s.fx.inputs.image_limit = Some(10);
+        let (layers, steps) = (layer_count(&s), s.doc.undo_count());
+        s.apply(Action::LayerMenu(Op::FillImageFile {
+            path: file.clone(),
+            mode,
+        }));
+        assert!(s.message.contains("予算"), "{mode:?}: {}", s.message);
+        assert_nothing_made(&mut s, layers, steps, &format!("{mode:?}"));
+        // 取り込んだ画像は棚に残る（消えるのは層を作らなかったことだけ）。棚の画像から作り直しても、同じ断りで何も作らない
+        let image = s
+            .shelf
+            .selected
+            .as_deref()
+            .and_then(inputs::image_id)
+            .expect("取り込んだ画像を選んでいる");
+        s.message.clear();
+        s.apply(Action::LayerMenu(Op::FillImage { image, mode }));
+        assert!(s.message.contains("予算"), "{mode:?}: {}", s.message);
+        assert_nothing_made(&mut s, layers, steps, &format!("{mode:?} 棚から"));
+    }
+}
+
+#[test]
+fn the_menu_the_image_fields_projection_switch_and_place_decal_make_the_same_projection() {
+    use yolu_app::fillfx::FillOp;
+    use yolu_core::fill_image::Projection;
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::LoadDemoModel);
+    s.view3d.camera.yaw = -40.0;
+    s.view3d.camera.pitch = 15.0;
+    let (_, image) = shelf_image(&mut s, "四色");
+    let projection = |s: &AppState| *s.doc.layer(s.selected_layer.unwrap()).unwrap().projection();
+    for mode in [
+        ProjectionMode::Triplanar,
+        ProjectionMode::Planar,
+        ProjectionMode::Spherical,
+        ProjectionMode::Cylindrical,
+        ProjectionMode::Decal,
+    ] {
+        // メニューが作る層の投影
+        s.apply(Action::LayerMenu(Op::FillImage { image, mode }));
+        let from_menu = projection(&s);
+        assert_eq!(from_menu.mode, mode);
+        assert_ne!(from_menu.placement, Placement::default(), "{mode:?}");
+        // メニューで UV の画像の層を作り、画像の欄で投影の種類を替えた層（置き場は外形・今のビューに合わせる）
+        s.apply(Action::LayerMenu(Op::FillImage {
+            image,
+            mode: ProjectionMode::Uv,
+        }));
+        let layer = s.selected_layer.unwrap();
+        s.apply(Action::Fill(FillOp::ProjectionMode { layer, mode }));
+        assert_eq!(projection(&s), from_menu, "{mode:?}: 欄で替えた層と同じ");
+    }
+    // 3D ビューへ落として置くデカール: 置き場は当たった点で決まるので、置き場のほかは同じ（種類・繰り返さない・減衰）
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Decal,
+    }));
+    let from_menu = projection(&s);
+    s.apply(Action::Fill(FillOp::PlaceDecal {
+        image,
+        at: pos2(400.0, 300.0),
+        rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)),
+    }));
+    let placed = projection(&s);
+    assert_eq!(placed.mode, ProjectionMode::Decal);
+    let without_placement = |p: Projection| Projection {
+        placement: Placement::default(),
+        ..p
+    };
+    assert_eq!(without_placement(placed), without_placement(from_menu));
+}
+
+#[test]
+fn image_and_decal_fills_survive_saving_and_opening_and_stay_editable() {
+    let dir = temp_dir("save");
+    // 画像の塗りつぶし（UV）: アプリで開き直しても同じ層・同じ画像で、続けて編集できる
+    let path = dir.join("image.ylp");
+    let mut s = AppState::new(64, 64);
+    let (rid, image) = shelf_image(&mut s, "四色");
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Uv,
+    }));
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut t = AppState::new(8, 8);
+    t.apply(Action::OpenProject(path));
+    assert!(t.message.starts_with("開きました"), "{}", t.message);
+    t.sync_effects();
+    assert_eq!(t.read_only_reason(), None);
+    assert!(t.shelf.get(&rid).is_some());
+    let fills: Vec<_> = t
+        .doc
+        .layers()
+        .iter()
+        .filter(|l| l.kind() == LayerKind::Fill)
+        .map(|l| {
+            (
+                l.name().to_owned(),
+                l.fill_image(Channel::Color),
+                l.projection().mode,
+            )
+        })
+        .collect();
+    assert_eq!(
+        fills,
+        [("四色".to_owned(), Some(image), ProjectionMode::Uv)]
+    );
+    // 開いたあとも、メニューから足せて、1 回の Undo
+    let steps = t.doc.undo_count();
+    t.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(t.doc.undo_count(), steps + 1, "{}", t.message);
+
+    // デカールとグラデーション: 保存した正本の層が、同じ画像・投影・グラデーションを持つ
+    // （アプリで開く道は、デカールの位置のマップが無いので読むだけにする。ここでは正本を core の文書へ戻して見る）
+    let path = dir.join("decal.ylp");
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::LoadDemoModel);
+    let (rid, image) = shelf_image(&mut s, "四色");
+    s.apply(Action::LayerMenu(Op::FillImage {
+        image,
+        mode: ProjectionMode::Decal,
+    }));
+    let decal = s.selected_layer.unwrap();
+    let decal_projection = *s.doc.layer(decal).unwrap().projection();
+    s.apply(Action::LayerMenu(Op::FillGradient));
+    let gradient = s.selected_layer.unwrap();
+    let settings = s
+        .doc
+        .layer(gradient)
+        .unwrap()
+        .fill_gradient(Channel::Color)
+        .cloned()
+        .unwrap();
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).expect("読める");
+    let restored = project.sets()[0]
+        .document
+        .to_core()
+        .expect("core の文書にできる");
+    let find = |id| {
+        restored
+            .layers()
+            .iter()
+            .find(|l| l.id() == id)
+            .unwrap()
+            .clone()
+    };
+    let (d, g) = (find(decal), find(gradient));
+    assert_eq!(d.fill_image(Channel::Color), Some(image));
+    assert_eq!(*d.projection(), decal_projection);
+    assert_eq!(d.projection().mode, ProjectionMode::Decal);
+    assert_eq!(d.name(), "四色");
+    assert_eq!(g.fill_gradient(Channel::Color), Some(&settings));
+    assert!(
+        project.resources().iter().any(|r| r.id == rid),
+        "棚の画像も保存される"
+    );
+}
+
+// ───────── 画面の操作 ─────────
+
+/// 開いているポップアップの、入れ子の段数。
+fn depth(h: &Harness<'_, YoluApp>) -> usize {
+    h.state()
+        .state
+        .popup
+        .as_ref()
+        .map_or(0, |p| p.state.open_depth())
+}
+
+fn hover(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
+    h.event(Event::PointerMoved(at));
+    h.step();
+    h.step();
+}
+
+#[test]
+fn the_menu_bar_opens_the_fill_submenu_on_hover_and_a_click_in_it_makes_the_layer() {
+    let mut h = app(1280.0, 800.0, 64);
+    let at = menu_title(&h, "レイヤー").center();
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::MenuBar(2))
+    );
+    // ポインタが前の位置を持つように 1 度動かしてから、入れ子の行へ乗せる
+    hover(&mut h, pos2(640.0, 400.0));
+    let fill = popup_item(&h, "新規塗りつぶしレイヤー");
+    hover(&mut h, fill.center());
+    assert_eq!(depth(&h), 1, "乗せると右に開く");
+    let sub = h.state().state.popup.as_ref().unwrap().state.sub_rects()[0];
+    assert!(sub.left() > fill.right(), "{sub:?} {fill:?}");
+    // 入れ子の「単色」を押す
+    let solid = popup_item(&h, "単色");
+    hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
+    hover(&mut h, solid.center());
+    click(&mut h, solid.center());
+    assert!(h.state().state.popup.is_none(), "選んだら閉じる");
+    let id = h.state().state.selected_layer.unwrap();
+    assert_eq!(
+        h.state().state.doc.layer(id).unwrap().kind(),
+        LayerKind::Fill
+    );
+    assert_eq!(h.state().state.doc.layers().len(), 2);
+    h.state_mut().state.apply(Action::Undo);
+    assert_eq!(
+        h.state().state.doc.layers().len(),
+        1,
+        "1 回の取り消しで戻る"
+    );
+}
+
+#[test]
+fn escape_closes_the_fill_submenu_first_and_then_the_menu() {
+    let mut h = app(1280.0, 800.0, 64);
+    let at = menu_title(&h, "レイヤー").center();
+    click(&mut h, at);
+    hover(&mut h, pos2(640.0, 400.0));
+    let fill = popup_item(&h, "新規塗りつぶしレイヤー");
+    hover(&mut h, fill.center());
+    assert_eq!(depth(&h), 1);
+    common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    assert_eq!(depth(&h), 0, "Esc は入れ子から閉じる");
+    assert!(h.state().state.popup.is_some());
+    common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.state().state.popup.is_none());
+    assert_eq!(h.state().state.doc.layers().len(), 1, "何も作らない");
+}
+
+#[test]
+fn the_layers_toolbar_fill_button_opens_the_kinds_and_the_effect_button_the_filters() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        // 塗りつぶし: 押しただけでは作らず、種類のポップアップ
+        let fill = lang.pick("新規塗りつぶしレイヤー", "New Fill Layer");
+        h.get_by_label(fill).click();
+        h.run();
+        assert_eq!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::NewFill))
+        );
+        assert_eq!(h.state().state.doc.layers().len(), 1);
+        // 押せば画像の入れ子の中に「ファイルから取り込む…」がある
+        let kind = lang.pick("画像", "Image");
+        let row = popup_item(&h, kind);
+        hover(&mut h, pos2(640.0, 400.0));
+        hover(&mut h, row.center());
+        assert_eq!(depth(&h), 1);
+        assert!(h
+            .query_by_label(lang.pick("ファイルから取り込む…", "Import from File…"))
+            .is_some());
+        common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        assert!(h.state().state.popup.is_none());
+        // 調整: 今のポップアップ（種類の全部）
+        h.get_by_label(lang.pick("新規調整レイヤー", "New Adjustment Layer"))
+            .click();
+        h.run();
+        assert_eq!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::NewAdjustment))
+        );
+        for kind in AdjustmentKind::ALL {
+            assert!(
+                h.query_by_label(kind.name(lang)).is_some(),
+                "{lang:?} {kind:?}"
+            );
+        }
+        common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        // 効果: フィルター → 区切り → ジェネレーター ▸（見出しなし）
+        h.get_by_label(lang.pick("効果を足す", "Add Effect"))
+            .click();
+        h.run();
+        assert_eq!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddEffect(
+                FilterTarget::Content
+            )))
+        );
+        assert!(h
+            .query_by_label(lang.pick("ジェネレーター", "Generators"))
+            .is_some());
+        assert!(h.query_by_label("Generator").is_none());
+    }
+}
+
+#[test]
+fn the_effect_button_needs_a_selected_layer() {
+    let mut h = app(1280.0, 800.0, 64);
+    h.state_mut().state.selected_layer = None;
+    h.run();
+    h.get_by_label("効果を足す").click();
+    h.run();
+    assert!(
+        h.state().state.popup.is_none(),
+        "層が無ければ効果は足せない"
+    );
+}
+
+#[test]
+fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut h = app(960.0, 640.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let labels = [
+            lang.pick("新規レイヤー", "New Layer"),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
+            lang.pick("効果を足す", "Add Effect"),
+            lang.pick("レイヤーをグループ化", "Group Layers"),
+            lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
+            // 押せないときは名前に理由が続く
+            lang.pick("下のレイヤーでクリッピング", "Clip to the Layer Below"),
+            lang.pick("レイヤーを上へ", "Move Layer Up"),
+            lang.pick("レイヤーを下へ", "Move Layer Down"),
+            lang.pick("レイヤーを削除", "Delete Layer"),
+        ];
+        let rects: Vec<Rect> = labels
+            .iter()
+            .map(|l| {
+                h.query_all_by_label_contains(l)
+                    .filter(|n| n.rect().top() > 200.0)
+                    .map(|n| n.rect())
+                    .next()
+                    .unwrap_or_else(|| panic!("{lang:?} {l}"))
+            })
+            .collect();
+        for (i, a) in rects.iter().enumerate() {
+            assert!(
+                a.right() <= 960.0 && a.left() >= 0.0,
+                "{lang:?} {}: {a:?}",
+                labels[i]
+            );
+            for (j, b) in rects.iter().enumerate().skip(i + 1) {
+                assert!(
+                    !a.intersects(*b),
+                    "{lang:?} {} と {} が重なる: {a:?} {b:?}",
+                    labels[i],
+                    labels[j]
+                );
+            }
+        }
+        // 全部が同じ 1 行（帯）の中
+        let top = rects.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
+        let bottom = rects.iter().map(|r| r.bottom()).fold(f32::MIN, f32::max);
+        assert!(bottom - top < 32.0, "{lang:?}: 帯は 1 行 {top}..{bottom}");
+    }
+}
+
+// ───────── メインとサブの色（ツールの帯の一番下） ─────────
+
+fn tool_label(lang: Lang, tool: Tool) -> String {
+    match lang {
+        Lang::Ja => format!("{}（{}）", tool.name_in(lang), tool.key()),
+        Lang::En => format!("{} ({})", tool.name_in(lang), tool.key()),
+    }
+}
+
+fn swatch_labels(lang: Lang) -> [String; 4] {
+    // 色の四角のラベルは、ツールチップの文字そのもの（16 進が続く）
+    [
+        lang.pick(
+            "メインの色（描画色。ブラシで塗る色）",
+            "Foreground color (the color the brush paints)",
+        )
+        .to_owned(),
+        lang.pick(
+            "サブの色（背景色）。押すとメインの色と入れ替えます",
+            "Background color. Click to swap with the foreground color.",
+        )
+        .to_owned(),
+        lang.pick(
+            "メインとサブの色を入れ替え（X）",
+            "Swap foreground and background colors (X)",
+        )
+        .to_owned(),
+        lang.pick("初期設定の色（D）", "Default colors (D)")
+            .to_owned(),
+    ]
+}
+
+fn swatch_rects(h: &Harness<'_, YoluApp>, lang: Lang) -> [Rect; 4] {
+    let labels = swatch_labels(lang);
+    let find = |prefix: &str| {
+        let found: Vec<Rect> = h
+            .get_all_by_label_contains(prefix)
+            .map(|n| n.rect())
+            .collect();
+        assert_eq!(found.len(), 1, "{prefix}: ツールの帯に 1 つだけ: {found:?}");
+        found[0]
+    };
+    [
+        find(&labels[0]),
+        find(&labels[1]),
+        find(&labels[2]),
+        find(&labels[3]),
+    ]
+}
+
+#[test]
+fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tools() {
+    use yolu_app::ui::theme::TOOL_STRIP_WIDTH;
+    for (width, height) in [(1280.0, 800.0), (960.0, 640.0)] {
+        for lang in Lang::ALL {
+            let mut h = app(width, height, 64);
+            h.state_mut().state.lang = lang;
+            h.run();
+            let rects = swatch_rects(&h, lang);
+            // ツールの帯の下の端にある（帯は左端の幅 44、状態の帯の上まで）
+            let strip_bottom = height - 22.0;
+            for r in rects {
+                assert!(
+                    r.left() >= 0.0 && r.right() <= TOOL_STRIP_WIDTH,
+                    "{lang:?}: 帯の幅に収まる {r:?}"
+                );
+                assert!(r.bottom() <= strip_bottom, "{lang:?}: {r:?}");
+            }
+            let all = rects.iter().skip(1).fold(rects[0], |a, r| a.union(*r));
+            assert!(
+                all.bottom() > strip_bottom - 16.0 && all.top() > strip_bottom - 60.0,
+                "帯の下の端に付く: {all:?}"
+            );
+            // 最後のツールのすぐ下ではなく、窓が高ければ間が空く
+            let last_tool = Tool::ALL[Tool::ALL.len() - 1];
+            let last = h.get_by_label(&tool_label(lang, last_tool)).rect();
+            let top_of_colors = rects.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
+            assert!(
+                last.bottom() <= top_of_colors,
+                "{lang:?}: 最後のツールと色が重ならない {last:?} {rects:?}"
+            );
+            if height > 700.0 {
+                assert!(
+                    top_of_colors - last.bottom() > 20.0,
+                    "高い窓では色は帯の下の端に付く（ツールの下に寄らない）"
+                );
+            }
+            // どのツールのボタンとも重ならない
+            for tool in Tool::ALL {
+                let label = tool_label(lang, tool);
+                let r = h.get_by_label(&label).rect();
+                for c in rects {
+                    assert!(!r.intersects(c), "{lang:?} {label}: {r:?} と色 {c:?}");
+                }
+            }
+            // 2 枚の色の部品どうしも、メインとサブの重なり（Photoshop の配置）以外は重ならない
+            let overlap = |a: Rect, b: Rect| {
+                let i = a.intersect(b);
+                i.width() > 0.5 && i.height() > 0.5
+            };
+            assert!(!overlap(rects[2], rects[0]) && !overlap(rects[2], rects[1]));
+            assert!(!overlap(rects[3], rects[0]) && !overlap(rects[3], rects[1]));
+            assert!(!overlap(rects[2], rects[3]));
+            // メインとサブは重なる（描画色が手前）
+            assert!(overlap(rects[0], rects[1]));
+        }
+    }
+}
+
+#[test]
+fn the_color_squares_swap_and_reset_and_the_color_panel_no_longer_holds_them() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.state_mut().state.color.set_main([0.2, 0.4, 0.8, 1.0]);
+        h.state_mut().state.color.sub = [1.0, 1.0, 0.0, 1.0];
+        h.run();
+        let rects = swatch_rects(&h, lang);
+        let (main, sub) = (h.state().state.color.main, h.state().state.color.sub);
+        // 背景色の四角を押すと入れ替わる
+        click(&mut h, rects[1].center());
+        assert_eq!(
+            (h.state().state.color.main, h.state().state.color.sub),
+            (sub, main),
+            "{lang:?}"
+        );
+        // 入れ替えのボタン
+        click(&mut h, rects[2].center());
+        assert_eq!(
+            (h.state().state.color.main, h.state().state.color.sub),
+            (main, sub),
+            "{lang:?}"
+        );
+        // 初期設定（黒・白）
+        click(&mut h, rects[3].center());
+        assert_eq!(h.state().state.color.main, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(h.state().state.color.sub, [1.0, 1.0, 1.0, 1.0]);
+        // 色のパネルの中には 2 枚の色の部品が無い（ツールの帯に 1 つずつだけ。上の swatch_rects が 1 つだけを確かめている）
+        for r in swatch_rects(&h, lang) {
+            assert!(r.right() <= yolu_app::ui::theme::TOOL_STRIP_WIDTH);
+        }
+    }
+}
+
+#[test]
+fn the_keys_x_and_d_still_swap_and_reset_the_colors() {
+    let mut h = app(1280.0, 800.0, 64);
+    h.state_mut().state.color.set_main([0.2, 0.4, 0.8, 1.0]);
+    h.run();
+    let main = h.state().state.color.main;
+    common::key(&h, egui::Key::X, egui::Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.color.sub, main);
+    common::key(&h, egui::Key::D, egui::Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.color.main, [0.0, 0.0, 0.0, 1.0]);
+}
+
+/// 色のパネルだけを描く窓（`color::show`）。
+fn color_panel(width: f32, height: f32, wheel: bool, lang: Lang) -> Harness<'static, AppState> {
+    let mut state = AppState::new(64, 64);
+    state.lang = lang;
+    state.color.wheel = wheel;
+    let mut textures = yolu_app::panels::color::ColorTextures::default();
+    let mut ready = false;
+    let mut h = Harness::builder()
+        .with_size(vec2(width, height))
+        .with_render_options(common::render_options())
+        .wgpu()
+        .build_ui_state(
+            move |ui, state| {
+                if !ready {
+                    YoluApp::setup(ui.ctx());
+                    ready = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                yolu_app::panels::color::show(ui, state, &mut textures)
+            },
+            state,
+        );
+    h.run();
+    h
+}
+
+#[test]
+fn the_color_panel_gives_the_freed_height_to_the_color_surface_and_holds_no_swatches() {
+    for lang in Lang::ALL {
+        for wheel in [false, true] {
+            // 同じ幅で高さだけ増やすと、色の面（四角・円）が高くなる（2 枚の色の分の高さを取らない）
+            let surface = |height: f32| {
+                let h = color_panel(300.0, height, wheel, lang);
+                let label = if wheel {
+                    lang.pick("色相の円", "Hue wheel")
+                } else {
+                    lang.pick("彩度と明度", "Saturation and value")
+                };
+                h.get_by_label(label).rect().height()
+            };
+            let (low, high) = (surface(240.0), surface(300.0));
+            assert!(
+                high >= low + 55.0,
+                "{lang:?} wheel={wheel}: 高さ 240 → 300 で面が {low} → {high}（60 近く増える）"
+            );
+            // 2 枚の色の部品はパネルの中に無い
+            let h = color_panel(300.0, 300.0, wheel, lang);
+            for label in swatch_labels(lang) {
+                assert!(
+                    h.query_all_by_label_contains(&label).next().is_none(),
+                    "{lang:?}: {label}"
+                );
+            }
+            // 16 進の欄・アルファ・使った色は、パネルの下まで収まる
+            let hex = h
+                .get_all_by_value("#000000")
+                .next()
+                .expect("16 進の欄")
+                .rect();
+            assert!(hex.bottom() <= 300.0, "{hex:?}");
+        }
+    }
+}
+
+#[test]
+fn the_color_panel_wraps_hex_and_alpha_to_two_lines_when_narrow() {
+    for lang in Lang::ALL {
+        // 幅が足りなければ 16 進とアルファは 2 行（どちらも欄の幅）、あれば 1 行に並ぶ
+        let narrow = color_panel(150.0, 360.0, false, lang);
+        let hex = narrow.get_all_by_value("#000000").next().unwrap().rect();
+        let alpha = narrow.get_by_label("A").rect();
+        assert!(
+            alpha.top() >= hex.bottom(),
+            "{lang:?}: 狭い欄は 2 行 {hex:?} {alpha:?}"
+        );
+        let wide = color_panel(300.0, 360.0, false, lang);
+        let hex = wide.get_all_by_value("#000000").next().unwrap().rect();
+        let alpha = wide.get_by_label("A").rect();
+        assert!(
+            (alpha.center().y - hex.center().y).abs() < 2.0,
+            "{lang:?}: 広い欄は 1 行 {hex:?} {alpha:?}"
+        );
+    }
+}
+
+#[test]
+fn the_tool_strip_bottom_snapshot_at_the_minimum_window() {
+    let mut h = app(960.0, 640.0, 64);
+    h.run();
+    let image = h.render().expect("描画");
+    // 左端のツールの帯（幅 44）の全体
+    let cropped = image::imageops::crop_imm(&image, 0, 24 + 36, 48, 640 - 24 - 36 - 22).to_image();
+    egui_kittest::image_snapshot(&cropped, "menus_tool_strip_min");
+}
+
+/// 開いているメニュー全体（親と開いている入れ子）を切り抜いて撮る。
+fn snapshot_open_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let rect = h
+        .state()
+        .state
+        .popup
+        .as_ref()
+        .expect("開いている")
+        .state
+        .rect
+        .expand(2.0);
+    let image = h.render().expect("描画");
+    let cropped = image::imageops::crop_imm(
+        &image,
+        rect.left().max(0.0).floor() as u32,
+        rect.top().max(0.0).floor() as u32,
+        rect.width().ceil() as u32,
+        rect.height().ceil() as u32,
+    )
+    .to_image();
+    egui_kittest::image_snapshot(&cropped, name);
+}
+
+#[test]
+fn snapshot_the_layer_menu_with_the_image_submenu_open_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        let (_, _) = shelf_image(&mut h.state_mut().state, "四色");
+        h.run();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        hover(&mut h, pos2(640.0, 400.0));
+        let fill = popup_item(&h, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
+        hover(&mut h, fill.center());
+        let image = popup_item(&h, lang.pick("画像", "Image"));
+        hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
+        hover(&mut h, image.center());
+        assert_eq!(depth(&h), 2, "{lang:?}");
+        snapshot_open_menu(
+            &mut h,
+            &format!("menus_layer_fill_image_{}", lang.pick("ja", "en")),
+        );
+    }
+}
+
+#[test]
+fn snapshot_the_filter_menu_with_the_generators_open_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = menu_title(&h, lang.pick("フィルター", "Filter")).center();
+        click(&mut h, at);
+        hover(&mut h, pos2(640.0, 400.0));
+        let generators = popup_item(&h, lang.pick("ジェネレーター", "Generators"));
+        hover(&mut h, generators.center());
+        assert_eq!(depth(&h), 1, "{lang:?}");
+        snapshot_open_menu(
+            &mut h,
+            &format!("menus_filter_generators_{}", lang.pick("ja", "en")),
+        );
+    }
+}
+
+#[test]
+fn snapshot_the_filter_menu_on_a_normal_map_shows_the_reason_as_a_tooltip() {
+    let mut h = app(1280.0, 800.0, 64);
+    h.state_mut().state.m2.paint_channel = Channel::Normal;
+    h.run();
+    let at = menu_title(&h, "フィルター").center();
+    click(&mut h, at);
+    hover(&mut h, pos2(640.0, 400.0));
+    let sharpen = popup_item(&h, "シャープ");
+    h.event(Event::PointerMoved(sharpen.center()));
+    for _ in 0..60 {
+        h.step();
+    }
+    // ラベルは名前だけ。理由はツールチップ（アクセシビリティの木に出る）
+    let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
+    let tip = leaves(&entries)
+        .into_iter()
+        .find_map(|e| match e {
+            Entry::Item {
+                label,
+                enabled: false,
+                tooltip: Some(t),
+                ..
+            } if label == "シャープ" => Some(t.clone()),
+            _ => None,
+        })
+        .expect("法線ではシャープは押せず、理由を持つ");
+    assert!(
+        h.query_by_label(&tip).is_some(),
+        "押せない項目に乗せると理由が出る: {tip}"
+    );
+    snapshot_open_menu(&mut h, "menus_filter_refusal_tooltip");
+}
+
+#[test]
+fn snapshot_the_layers_toolbar_at_the_minimum_window() {
+    let mut h = app(960.0, 640.0, 64);
+    h.run();
+    let new_layer = h
+        .query_all_by_label("新規レイヤー")
+        .map(|n| n.rect())
+        .find(|r| r.top() > 200.0)
+        .expect("帯の新規レイヤー");
+    let delete = h
+        .query_all_by_label("レイヤーを削除")
+        .map(|n| n.rect())
+        .find(|r| r.top() > 200.0)
+        .expect("帯の削除");
+    let bar = new_layer.union(delete).expand2(vec2(8.0, 4.0));
+    let image = h.render().expect("描画");
+    let cropped = image::imageops::crop_imm(
+        &image,
+        bar.left().max(0.0).floor() as u32,
+        bar.top().max(0.0).floor() as u32,
+        bar.width().ceil() as u32,
+        bar.height().ceil() as u32,
+    )
+    .to_image();
+    egui_kittest::image_snapshot(&cropped, "menus_layers_toolbar_min");
+}

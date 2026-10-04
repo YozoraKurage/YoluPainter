@@ -222,20 +222,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             ]);
             entries
         }
-        2 => match app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) {
-            // 選んでいるレイヤーの右クリックと同じ項目
-            Some(id) => layer_context(app, id),
-            None => vec![
-                Entry::item(l.pick("新規レイヤー", "New Layer"), Action::NewLayer)
-                    .shortcut("Ctrl+Shift+N")
-                    .enabled(free),
-                Entry::item(
-                    l.pick("新規グループ", "New Group"),
-                    Action::M2(Edit::NewGroup),
-                )
-                .enabled(free),
-            ],
-        },
+        // 選んでいるレイヤーの右クリックと同じ項目（選んでいなければ、足す項目とグループだけ）
+        2 => layer_menu(app, app.selected_layer),
         3 => crate::selection::menu::select_menu(app),
         4 => crate::fx::menu::menu_entries(app),
         5 => vec![
@@ -453,9 +441,28 @@ fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
 
 /// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだ層の全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
-    use crate::m2::{self, AdjustmentKind, UiOp};
+    layer_menu(app, Some(id))
+}
+
+/// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
+/// 並びは 足す（新規レイヤー・塗りつぶし ▸・調整 ▸）→ 効果（フィルター ▸・ジェネレーター ▸・アンカー）→ グループ → 複製・結合など →
+/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 変形 → 名前・表示 → 順序・削除。選んだ層が無い（`None`）ときは、層に要らない
+/// 先頭の足す項目とグループだけ。
+pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Entry<Action>> {
+    use crate::m2::{self, UiOp};
     let lang = app.lang;
     let free = !app.is_stroking();
+    let mut v = crate::layermenu::creation_entries(app);
+    let new_group = Entry::item(
+        lang.pick("新規グループ", "New Group"),
+        Action::M2(Edit::NewGroup),
+    )
+    .enabled(free);
+    let Some(id) = id.filter(|id| app.doc.layer(*id).is_some()) else {
+        v.push(Entry::Separator);
+        v.push(new_group);
+        return v;
+    };
     let layer = app.doc.layer(id);
     let visible = layer.map(|l| l.visible()).unwrap_or(true);
     let group = layer.is_some_and(|l| l.is_group());
@@ -465,45 +472,12 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     let selected = app.selected_layers();
     let multi = selected.len() > 1 && selected.contains(&id);
     let members = app.doc.topmost_of(&selected).unwrap_or_default();
-    let mut v = vec![
-        Entry::item(lang.pick("参照レイヤー", "Reference Layer"), Action::Region(crate::region::RegionAction::ReferenceLayer(id))).checked(app.region.references.contains(&(app.doc.id(), id))).enabled(free),
-        Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer).enabled(free),
-        Entry::item(
-            lang.pick("新規グループ", "New Group"),
-            Action::M2(Edit::NewGroup),
-        )
-        .enabled(free),
-        Entry::item(
-            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
-            Action::M2(Edit::NewFill),
-        )
-        .enabled(free),
-    ];
-    for k in AdjustmentKind::ALL {
-        v.push(
-            Entry::item(
-                format!(
-                    "{}: {}",
-                    lang.pick("新規調整レイヤー", "New Adjustment Layer"),
-                    k.name(lang)
-                ),
-                Action::M2(Edit::NewAdjustment(k)),
-            )
-            .enabled(free),
-        );
-    }
+    // 効果（選んでいる層に足す。アンカーを置く・外す）
     v.push(Entry::Separator);
-    let duplicate = Entry::item(
-        lang.pick("複製", "Duplicate"),
-        Action::M2(Edit::DuplicateSelected),
-    )
-    .enabled(free);
-    // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」（選択範囲のメニューと帯）。複製のキーは、選択範囲が無いときだけ出す
-    v.push(if app.doc.selection().is_some() {
-        duplicate
-    } else {
-        duplicate.shortcut("Ctrl+J")
-    });
+    v.extend(crate::fx::menu::layer_entries(app, id));
+    // グループ（新規グループは層ではないので、足す組でなくここ）
+    v.push(Entry::Separator);
+    v.push(new_group);
     if group && !multi {
         v.push(
             Entry::item(
@@ -523,6 +497,18 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
             .enabled(free && app.selected_layer == Some(id)),
         );
     }
+    v.push(Entry::Separator);
+    let duplicate = Entry::item(
+        lang.pick("複製", "Duplicate"),
+        Action::M2(Edit::DuplicateSelected),
+    )
+    .enabled(free);
+    // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」（選択範囲のメニューと帯）。複製のキーは、選択範囲が無いときだけ出す
+    v.push(if app.doc.selection().is_some() {
+        duplicate
+    } else {
+        duplicate.shortcut("Ctrl+J")
+    });
     // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればその層を、グループならグループを、そうでなければ下の層と）
     let merge_label = if members.len() > 1 {
         lang.pick("レイヤーを結合", "Merge Layers")
@@ -573,6 +559,16 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
             .enabled(free),
         );
     }
+    // 属性: 参照レイヤー・クリッピング、マスク、ロック
+    v.push(Entry::Separator);
+    v.push(
+        Entry::item(
+            lang.pick("参照レイヤー", "Reference Layer"),
+            Action::Region(crate::region::RegionAction::ReferenceLayer(id)),
+        )
+        .checked(app.region.references.contains(&(app.doc.id(), id)))
+        .enabled(free),
+    );
     v.push(
         Entry::item(
             lang.pick("クリッピング", "Clipping"),
@@ -623,9 +619,6 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
             .enabled(free),
         );
     }
-    // アンカー（この層までの合成・マスクに名前を付けて、上の層の Generator が読めるようにする）
-    v.push(Entry::Separator);
-    v.extend(crate::fx::menu::anchor_entries_for(app, id));
     // ロック（選んでいる層の全部に効く。持っているロックにチェック）
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
@@ -1023,9 +1016,11 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り
     let starts_group = |tool: Tool| tool == Tool::SelectRect || tool == Tool::Move;
     let separators = Tool::ALL.iter().filter(|t| starts_group(**t)).count() as f32;
-    // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）
-    let step = ((r.height() - 6.0 - 4.0 - separators * 9.0) / Tool::ALL.len() as f32)
-        .clamp(28.0, 34.0);
+    // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
+    // 帯の下の端に付く 2 枚の色の分の高さを先に取る
+    let step = ((r.height() - 6.0 - 4.0 - separators * 9.0 - crate::panels::color_swatch::reserved_height())
+        / Tool::ALL.len() as f32)
+        .clamp(24.0, 34.0);
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
         if starts_group(tool) {
@@ -1045,6 +1040,7 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
         }
         y += step;
     }
+    crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
 }
 
 /// 状態の帯が出す文字（直前の操作の結果と理由だけ。文書の大きさ・メモリ・上げたタイル・合成の方式・Live Link の様子は出さない。

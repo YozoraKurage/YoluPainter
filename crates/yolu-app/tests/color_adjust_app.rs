@@ -379,14 +379,15 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
 fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() {
     let mut h = app(1280.0, 1000.0, 64);
     let _ = fill_layer(&mut h);
-    let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool) {
+    // (ラベル, 押せるか, 理由)。理由はラベルに続けず、ツールチップに置く
+    let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool, Option<String>) {
         let lang = h.state().state.lang;
         let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
-        entries
-            .iter()
+        yolu_app::ui::menu::leaves(&entries)
+            .into_iter()
             .find_map(|e| match e {
-                Entry::Item { label, enabled, .. } if label.starts_with(kind.name(lang)) => {
-                    Some((label.clone(), *enabled))
+                Entry::Item { label, enabled, tooltip, .. } if label.starts_with(kind.name(lang)) => {
+                    Some((label.clone(), *enabled, tooltip.clone()))
                 }
                 _ => None,
             })
@@ -400,36 +401,37 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     // スカラー（Height）: 色だけの 2 つは理由つきで断り、ほかは足せる
     h.state_mut().state.m2.paint_channel = Channel::Height;
     for kind in FILTER_SIX {
-        let (label, enabled) = label_of(&h, kind);
+        let (label, enabled, reason) = label_of(&h, kind);
         let colour_only = matches!(kind, FilterKind::GradientMap | FilterKind::ColorBalance);
         assert_eq!(enabled, !colour_only, "{kind:?} {label}");
-        assert_eq!(label.contains(" — "), colour_only, "{label}");
+        assert_eq!(reason.is_some(), colour_only, "{label}");
+        assert!(!label.contains(" — "), "ラベルに理由を続けない: {label}");
     }
     // 法線: 6 つとも断る
     h.state_mut().state.m2.paint_channel = Channel::Normal;
     for kind in FILTER_SIX {
-        let (label, enabled) = label_of(&h, kind);
-        assert!(!enabled && label.contains(" — "), "{kind:?} {label}");
+        let (label, enabled, reason) = label_of(&h, kind);
+        assert!(!enabled && reason.is_some() && !label.contains(" — "), "{kind:?} {label}");
     }
     // 英語の画面でも、理由は一般の文（「Unsupported value or operation」）に落ちず、日本語も混ざらない
     h.state_mut().state.set_language(Lang::En);
     h.run();
     for kind in FILTER_SIX {
-        let (label, _) = label_of(&h, kind);
-        let (_, reason) = label.split_once(" — ").expect(&label);
-        assert!(!has_japanese(&label), "{kind:?} {label}");
+        let (label, _, reason) = label_of(&h, kind);
+        let reason = reason.expect(&label);
+        assert!(!has_japanese(&label) && !has_japanese(&reason), "{kind:?} {label} {reason}");
         assert!(
             !reason.contains("Unsupported value or operation"),
-            "{kind:?} 法線: {label}"
+            "{kind:?} 法線: {label} {reason}"
         );
     }
     h.state_mut().state.m2.paint_channel = Channel::Height;
     for kind in [FilterKind::GradientMap, FilterKind::ColorBalance] {
-        let (label, enabled) = label_of(&h, kind);
+        let (label, enabled, reason) = label_of(&h, kind);
         assert!(!enabled, "{label}");
         assert!(
-            label.contains("apply only to color channels"),
-            "{kind:?} {label}"
+            reason.as_deref().is_some_and(|r| r.contains("apply only to color channels")),
+            "{kind:?} {label} {reason:?}"
         );
     }
 }

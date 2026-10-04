@@ -5,6 +5,7 @@ pub mod brush_props;
 pub mod brushes;
 pub mod channels;
 pub mod color;
+pub mod color_swatch;
 pub mod color_adjust;
 pub mod fill_props;
 pub mod grunge_picker;

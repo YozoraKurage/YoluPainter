@@ -1,5 +1,6 @@
 //! 効果のメニューの項目（メニューバーの「フィルター」・レイヤーのパネルの効果のボタン・プロパティの欄のドロップダウン）。
-//! 断られる項目は黙って隠さず、理由を添えて押せない項目にする（チャンネルの型・層の種類・マスクの有無・読める Anchor が無い）。
+//! 断られる項目は黙って隠さず、押せない項目にして理由をツールチップに置く（チャンネルの型・層の種類・マスクの有無・読める Anchor が無い。
+//! ラベルは名前だけで、理由は続けない）。フィルターは平らに並べ、Generator は「ジェネレーター ▸」の入れ子にまとめる。
 
 use yolu_core::generator::{self, anchor::ReadMode, Blend, Kind, NoiseSpace, Shape};
 use yolu_core::{AnchorId, AnchorPlacement, Channel, EffectSettings, FilterTarget, LayerId};
@@ -12,59 +13,72 @@ use crate::ui::menu::Entry;
 
 /// 効果を足す先: マスクに描いているあいだはマスク、そうでなければ層の画素。
 pub fn target(app: &AppState) -> FilterTarget {
-    let has_mask = app
-        .selected_layer
-        .and_then(|id| app.doc.layer(id))
-        .is_some_and(|l| l.mask().is_some());
-    if app.m2.edit_mask && has_mask {
+    match app.selected_layer {
+        Some(id) => target_for(app, id),
+        None => FilterTarget::Content,
+    }
+}
+
+/// `layer` に効果を足す先（その層を選んでマスクに描いているあいだはマスク、そうでなければ層の画素）。
+pub fn target_for(app: &AppState, layer: LayerId) -> FilterTarget {
+    let has_mask = app.doc.layer(layer).is_some_and(|l| l.mask().is_some());
+    if app.m2.edit_mask && app.selected_layer == Some(layer) && has_mask {
         FilterTarget::Mask
     } else {
         FilterTarget::Content
     }
 }
 
-/// 足す先の見出し（画素なら描くチャンネルの名前）。
-fn heading(app: &AppState, target: FilterTarget) -> String {
-    let lang = app.lang;
-    match target {
-        FilterTarget::Mask => lang.pick("マスク", "Mask").to_owned(),
-        FilterTarget::Content => {
-            let channel = crate::m2::channel_name(lang, &app.doc, app.m2.paint_channel);
-            lang.pick(format!("{channel} の画素"), format!("{channel} pixels"))
-        }
-    }
+/// 押せない効果の項目（ラベルは名前だけ。理由はツールチップ）。
+fn refused(label: &str, why: impl Into<String>) -> Entry<Action> {
+    Entry::item(label, Action::Fx(FxOp::Deselect))
+        .enabled(false)
+        .tooltip(why)
 }
 
-fn with_reason(lang: Lang, label: &str, why: &yolu_core::CoreError) -> String {
-    format!("{label} — {}", lang.core_error(why))
+/// 「ジェネレーター」（フィルターと並べる入れ子のメニューの名前）。
+pub fn generators_label(lang: Lang) -> &'static str {
+    lang.pick("ジェネレーター", "Generators")
 }
 
-/// フィルターと Generator を足す項目（選んでいる層。足す先は `target`）。
-pub fn add_entries(app: &AppState, target: FilterTarget) -> Vec<Entry<Action>> {
+/// フィルターを足す項目（平らな並び。足す先は `target`）。断られる項目は、押せない項目にして理由をツールチップに置く。
+pub fn filter_entries(app: &AppState, layer: LayerId, target: FilterTarget) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let Some(layer) = app
-        .selected_layer
-        .filter(|id| app.doc.layer(*id).is_some())
-    else {
-        return Vec::new();
-    };
     let channel = app.m2.paint_channel;
-    let mut v = vec![Entry::Heading(heading(app, target))];
+    let mut v = Vec::new();
     for kind in FilterKind::ALL {
         let label = kind.name(lang);
-        match app.doc.filter_refusal(layer, target, &kind.settings(), channel) {
+        match app
+            .doc
+            .filter_refusal(layer, target, &kind.settings(), channel)
+        {
             Ok(()) => v.push(
                 Entry::item(label, Action::Fx(FxOp::AddFilter { target, kind })).enabled(free),
             ),
-            Err(why) => v.push(Entry::item(with_reason(lang, label, &why), Action::Fx(FxOp::Deselect)).enabled(false)),
+            Err(why) => v.push(refused(label, lang.core_error(&why))),
         }
     }
-    v.push(Entry::Heading("Generator".to_owned()));
+    v
+}
+
+/// Generator を足す項目（平らな並び。足す先は `target`）。
+pub fn generator_entries(
+    app: &AppState,
+    layer: LayerId,
+    target: FilterTarget,
+) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = !app.is_stroking();
+    let channel = app.m2.paint_channel;
+    let mut v = Vec::new();
     for kind in names::GENERATOR_KINDS {
         let label = names::generator_name(lang, kind);
         let settings = EffectSettings::generator(generator::Settings::new(kind));
-        let refusal = app.doc.filter_refusal(layer, target, &settings, channel).err();
+        let refusal = app
+            .doc
+            .filter_refusal(layer, target, &settings, channel)
+            .err();
         let no_anchor = kind == Kind::Anchor
             && refusal.is_none()
             && app
@@ -75,22 +89,51 @@ pub fn add_entries(app: &AppState, target: FilterTarget) -> Vec<Entry<Action>> {
             (None, false) => v.push(
                 Entry::item(label, Action::Fx(FxOp::AddGenerator { target, kind })).enabled(free),
             ),
-            (Some(why), _) => v.push(
-                Entry::item(with_reason(lang, label, &why), Action::Fx(FxOp::Deselect))
-                    .enabled(false),
-            ),
-            (None, true) => v.push(
-                Entry::item(
-                    format!(
-                        "{label} — {}",
-                        lang.pick("この層より下にアンカーが無い", "no anchor below this layer")
-                    ),
-                    Action::Fx(FxOp::Deselect),
-                )
-                .enabled(false),
-            ),
+            (Some(why), _) => v.push(refused(label, lang.core_error(&why))),
+            (None, true) => v.push(refused(
+                label,
+                lang.pick("この層より下にアンカーが無い", "no anchor below this layer"),
+            )),
         }
     }
+    v
+}
+
+/// フィルターを足す項目、区切り、「ジェネレーター ▸」（効果のボタンのポップアップと、メニューバーの「フィルター」の先頭）。
+/// 見出しは置かない（足す先はマスクを描いているかどうかで決まる）。選んでいる層が無ければ空。
+pub fn add_entries(app: &AppState, target: FilterTarget) -> Vec<Entry<Action>> {
+    match app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) {
+        Some(layer) => add_entries_for(app, layer, target),
+        None => Vec::new(),
+    }
+}
+
+/// `add_entries` の、層を指す版。
+pub fn add_entries_for(app: &AppState, layer: LayerId, target: FilterTarget) -> Vec<Entry<Action>> {
+    let mut v = filter_entries(app, layer, target);
+    v.push(Entry::Separator);
+    v.push(Entry::submenu(
+        generators_label(app.lang),
+        generator_entries(app, layer, target),
+    ));
+    v
+}
+
+/// レイヤーのメニューの効果の項目: 「フィルター ▸」「ジェネレーター ▸」、アンカーを置く・外す。足す先は `target_for`。
+pub fn layer_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let target = target_for(app, layer);
+    let mut v = vec![
+        Entry::submenu(
+            lang.pick("フィルター", "Filter"),
+            filter_entries(app, layer, target),
+        ),
+        Entry::submenu(
+            generators_label(lang),
+            generator_entries(app, layer, target),
+        ),
+    ];
+    v.extend(anchor_entries_for(app, layer));
     v
 }
 

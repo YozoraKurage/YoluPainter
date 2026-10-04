@@ -499,6 +499,8 @@ pub enum Action {
     Path(crate::pathtool::PathAction),
     /// 塗りつぶしの層の画像と投影・デカール・形のグラデーション（文書を変える操作は 1 つが 1 回の Undo。置き場のギズモは画面だけ）。
     Fill(crate::fillfx::FillOp),
+    /// レイヤーのメニューの「新規塗りつぶしレイヤー」の画像・デカール・グラデーション（層の作成と中身の設定は 1 回の Undo）。
+    LayerMenu(crate::layermenu::Op),
     /// グラデーションの道具（形・終点・塗る/消す・ドラッグで塗る）。
     Gradient(crate::gradient::GradientOp),
     ToggleRulerSnap,
@@ -589,6 +591,7 @@ impl Action {
             Self::Sel(..) => "Sel",
             Self::Path(..) => "Path",
             Self::Fill(..) => "Fill",
+            Self::LayerMenu(..) => "LayerMenu",
             Self::Gradient(..) => "Gradient",
             Self::Clip(..) => "Clip",
             Self::OpenLogFolder => "OpenLogFolder",
@@ -659,6 +662,7 @@ impl Action {
         matches!(
             self,
             Action::M2(_)
+                | Action::LayerMenu(_)
                 | Action::Clip(_)
                 | Action::Region(crate::region::RegionAction::IdColor(_))
                 | Action::Shelf(ShelfOp::Place { .. })
@@ -830,6 +834,8 @@ pub enum DialogRequest {
     ProjectModel,
     /// 塗りつぶしの画像にする PNG を選ぶ（棚へ取り込む）。
     FillImage,
+    /// 新しい塗りつぶしの層の画像にする PNG を選ぶ（棚へ取り込み、その画像と投影で層を作る）。
+    NewFillImage(yolu_core::fill_image::ProjectionMode),
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -1088,6 +1094,7 @@ impl AppState {
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
             Action::Fill(op) => self.fill_apply(op),
+            Action::LayerMenu(op) => self.layer_menu_apply(op),
             Action::Gradient(op) => self.gradient_apply(op),
             Action::ToggleRulerSnap => self.toggle_snap(),
             Action::Clip(action) => self.clip_action(action),

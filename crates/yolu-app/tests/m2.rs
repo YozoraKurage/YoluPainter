@@ -26,6 +26,18 @@ fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
     h.state().state.popup.as_ref().map(|p| p.kind)
 }
 
+/// 帯の塗りつぶしのボタンを押して、ポップアップの「単色」を選ぶ（押しただけでは作らない）。
+fn toolbar_new_fill(h: &mut Harness<'_, YoluApp>) {
+    h.get_by_label("新規塗りつぶしレイヤー").click();
+    h.run();
+    assert_eq!(
+        popup_kind(h),
+        Some(PopupKind::M2(yolu_app::m2_menu::Popup::NewFill))
+    );
+    let at = popup_item(h, "単色").center();
+    click(h, at);
+}
+
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
     h.state_mut().state.apply(action);
     h.run();
@@ -61,8 +73,7 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     undo(&mut h);
     assert_eq!(doc_layers(&h), 1, "グループ化は 1 回の取り消しで戻る");
     // 塗りつぶし
-    h.get_by_label("新規塗りつぶしレイヤー").click();
-    h.run();
+    toolbar_new_fill(&mut h);
     let fill = h.state().state.selected_layer.unwrap();
     assert_eq!(
         h.state().state.doc.layer(fill).unwrap().kind(),
@@ -430,8 +441,7 @@ fn painting_goes_to_the_paint_channel_and_the_canvas_shows_the_display_channel()
 #[test]
 fn a_layer_that_cannot_be_painted_says_why() {
     let mut h = app(1280.0, 800.0, 128);
-    h.get_by_label("新規塗りつぶしレイヤー").click();
-    h.run();
+    toolbar_new_fill(&mut h);
     stroke_across(&mut h, 0.0);
     let undo_steps = h.state().state.doc.undo_count();
     stroke_across(&mut h, 0.0);
@@ -830,8 +840,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
 fn fill_and_adjustment_properties_edit_and_undo() {
     let mut h = app(1280.0, 1000.0, 128);
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    h.get_by_label("新規塗りつぶしレイヤー").click();
-    h.run();
+    toolbar_new_fill(&mut h);
     let fill = h.state().state.selected_layer.unwrap();
     // 作ったときは描画色
     assert_eq!(

@@ -399,8 +399,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     toolbar(ui, app, &ctx, r, list, enabled);
 }
 
-/// 下の操作の帯のボタンの数（左 6 つ・右 3 つ）。
-const TOOLBAR_BUTTONS: usize = 9;
+/// 下の操作の帯のボタンの数（左 7 つ・右 3 つ）。
+const TOOLBAR_BUTTONS: usize = 10;
 
 /// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
 pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
@@ -465,10 +465,12 @@ fn toolbar(
         vec2(r.width(), TOOLBAR_HEIGHT),
     );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
-    // ボタンは左に 6 つ（新規・塗りつぶし・調整・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
+    // ボタンは左に 7 つ（新規・塗りつぶし・調整・効果・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
     // 重ならないよう間隔を詰める
     let pitch = ((bar.width() - 8.0) / TOOLBAR_BUTTONS as f32).min(27.0);
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
+    // 狭いパネルでは、ボタンの幅に合わせてアイコンも小さくする（隣のアイコンに触れない）
+    let icon = |base: f32| base.min((pitch - 2.0).max(10.0));
     let selected = app.selected_layer.and_then(|id| app.doc.layer(id));
     let has = selected.is_some() && enabled;
     let has_mask = selected.is_some_and(|l| l.mask().is_some());
@@ -495,25 +497,26 @@ fn toolbar(
         lang.pick("新規レイヤー", "New Layer"),
         false,
         enabled,
-        18.0,
+        icon(18.0),
     )
     .clicked()
     {
         app.apply(Action::NewLayer);
     }
+    let b = next();
     if w::icon_button(
         ui,
-        next(),
+        b,
         "layers.fill",
         "format_color_fill",
         lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
         false,
         enabled,
-        17.0,
+        icon(17.0),
     )
     .clicked()
     {
-        app.apply(Action::M2(Edit::NewFill));
+        open_popup(app, ctx, PopupKind::M2(Popup::NewFill), b, 0.0);
     }
     let b = next();
     let response = w::icon_button(
@@ -524,10 +527,27 @@ fn toolbar(
         lang.pick("新規調整レイヤー", "New Adjustment Layer"),
         false,
         enabled,
-        17.0,
+        icon(17.0),
     );
     if response.clicked() {
         open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
+    }
+    // 効果（フィルター・ジェネレーター）を選んでいる層に足す
+    let b = next();
+    if w::icon_button(
+        ui,
+        b,
+        "layers.effect",
+        "auto_awesome",
+        lang.pick("効果を足す", "Add Effect"),
+        false,
+        has,
+        icon(17.0),
+    )
+    .clicked()
+    {
+        let target = crate::fx::menu::target(app);
+        open_popup(app, ctx, PopupKind::M2(Popup::AddEffect(target)), b, 0.0);
     }
     if w::icon_button(
         ui,
@@ -537,7 +557,7 @@ fn toolbar(
         lang.pick("レイヤーをグループ化", "Group Layers"),
         false,
         has,
-        17.0,
+        icon(17.0),
     )
     .clicked()
     {
@@ -556,7 +576,7 @@ fn toolbar(
         mask_tip,
         editing,
         has,
-        17.0,
+        icon(17.0),
     )
     .clicked()
     {
@@ -579,7 +599,7 @@ fn toolbar(
         &clip_tip,
         clipping,
         has && clip_reason.is_none(),
-        17.0,
+        icon(17.0),
     )
     .clicked()
     {
@@ -596,7 +616,7 @@ fn toolbar(
         lang.pick("レイヤーを上へ", "Move Layer Up"),
         false,
         has,
-        18.0,
+        icon(18.0),
     )
     .clicked()
     {
@@ -610,7 +630,7 @@ fn toolbar(
         lang.pick("レイヤーを下へ", "Move Layer Down"),
         false,
         has,
-        18.0,
+        icon(18.0),
     )
     .clicked()
     {
@@ -624,7 +644,7 @@ fn toolbar(
         lang.pick("レイヤーを削除", "Delete Layer"),
         false,
         has && can_delete,
-        17.0,
+        icon(17.0),
     )
     .clicked()
     {

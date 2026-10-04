@@ -27,6 +27,7 @@ pub mod drafting;
 pub mod gesture;
 pub mod lang;
 pub mod layerops;
+pub mod layermenu;
 pub mod livelink;
 pub mod m2;
 pub mod m2_menu;

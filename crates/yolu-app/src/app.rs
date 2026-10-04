@@ -606,6 +606,21 @@ impl YoluApp {
                         .apply(Action::Fill(crate::fillfx::FillOp::ImportImage(path)));
                 }
             }
+            Some(DialogRequest::NewFillImage(mode)) => {
+                let lang = self.state.lang;
+                // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(lang.pick("画像で塗りつぶしを作る", "Create a fill from an image"))
+                    .add_filter("PNG", &["png", "PNG"])
+                    .pick_file()
+                {
+                    self.state
+                        .apply(Action::LayerMenu(crate::layermenu::Op::FillImageFile {
+                            path,
+                            mode,
+                        }));
+                }
+            }
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
                 if let Some(paths) = rfd::FileDialog::new()

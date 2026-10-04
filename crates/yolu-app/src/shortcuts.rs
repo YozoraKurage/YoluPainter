@@ -80,15 +80,16 @@ pub fn action_label(app: &AppState, action: &Action) -> Option<String> {
         return Some(tool.name_in(app.lang).into());
     }
     for index in 0..6 {
-        for entry in crate::shell::menu_entries(app, index) {
+        let entries = crate::shell::menu_entries(app, index);
+        for entry in crate::ui::menu::leaves(&entries) {
             if let Entry::Item {
                 label,
                 action: candidate,
                 ..
             } = entry
             {
-                if &candidate == action {
-                    return Some(label);
+                if candidate == action {
+                    return Some(label.clone());
                 }
             }
         }

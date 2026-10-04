@@ -253,14 +253,18 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
                 assert!(!has_japanese(&text), "{text:?}");
             }
         }
-        let names: Vec<String> = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content)
-            .iter()
+        let entries = yolu_app::fx::menu::add_entries(&h.state().state, FilterTarget::Content);
+        let names: Vec<String> = yolu_app::ui::menu::leaves(&entries)
+            .into_iter()
             .filter_map(|e| match e {
                 yolu_app::ui::menu::Entry::Item { label, .. } => Some(label.clone()),
                 _ => None,
             })
             .collect();
         assert!(names.len() >= 15, "{names:?}");
+        if lang == Lang::En {
+            assert!(names.iter().all(|n| !has_japanese(n)), "{names:?}");
+        }
     }
 }
 
