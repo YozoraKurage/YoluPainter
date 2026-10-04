@@ -56,3 +56,5 @@ pub mod view3d;
 pub mod windows;
 
 pub use app::{Tab, YoluApp};
+
+pub mod navigator;

@@ -120,6 +120,61 @@ fn to_image(width: u32, height: u32, straight: &[u8]) -> ColorImage {
 }
 
 impl CanvasDisplay {
+    /// 表示と同じチャンネルの合成を、最大 256 点の縮小像にする。行は上から下。
+    /// CPU の正本を共用するので表示バックエンドの切り替えには依存しない。
+    pub fn thumbnail(
+        doc: &Document,
+        channel: Channel,
+    ) -> Result<ColorImage, crate::engine::CoreError> {
+        let (w, h) = (doc.width(), doc.height());
+        let scale = (256.0 / w.max(h) as f64).min(1.0);
+        let (tw, th) = (
+            (w as f64 * scale).round().max(1.0) as usize,
+            (h as f64 * scale).round().max(1.0) as usize,
+        );
+        let mut sums = vec![[0u64; 5]; tw * th];
+        let mut buffer = Vec::new();
+        for y in (0..h).step_by(128) {
+            for x in (0..w).step_by(128) {
+                let (bw, bh) = (128.min(w - x), 128.min(h - y));
+                buffer.resize((bw * bh * 4) as usize, 0);
+                doc.composite_into(
+                    channel,
+                    DocRect::new(x, y, bw, bh),
+                    &mut buffer,
+                    RowOrder::BottomUp,
+                )?;
+                for py in 0..bh {
+                    for px in 0..bw {
+                        let tx = (x + px) as usize * tw / w as usize;
+                        let ty = (y + py) as usize * th / h as usize;
+                        let i = ((py * bw + px) * 4) as usize;
+                        let p = Color32::from_rgba_unmultiplied(
+                            buffer[i],
+                            buffer[i + 1],
+                            buffer[i + 2],
+                            buffer[i + 3],
+                        );
+                        let sum = &mut sums[(th - 1 - ty) * tw + tx];
+                        for c in 0..4 {
+                            sum[c] += p[c] as u64;
+                        }
+                        sum[4] += 1;
+                    }
+                }
+            }
+        }
+        Ok(ColorImage::new(
+            [tw, th],
+            sums.into_iter()
+                .map(|s| {
+                    let c = |i: usize| ((s[i] + s[4] / 2) / s[4].max(1)) as u8;
+                    Color32::from_rgba_premultiplied(c(0), c(1), c(2), c(3))
+                })
+                .collect(),
+        ))
+    }
+
     pub fn new() -> CanvasDisplay {
         CanvasDisplay::default()
     }

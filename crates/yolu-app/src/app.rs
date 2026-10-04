@@ -38,6 +38,7 @@ pub enum Tab {
     Channels,
     History,
     ColorSets,
+    Navigator,
 }
 
 impl Tab {
@@ -56,6 +57,7 @@ impl Tab {
             Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
             Tab::Layers => lang.pick("レイヤー", "Layers"),
             Tab::Properties => lang.pick("プロパティ", "Properties"),
+            Tab::Navigator => lang.pick("ナビゲーター", "Navigator"),
             Tab::Channels => lang.pick("チャンネル", "Channels"),
             Tab::History => lang.pick("ヒストリー", "History"),
             Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
@@ -77,7 +79,7 @@ pub fn default_dock() -> DockState<Tab> {
         vec![Tab::Brushes, Tab::Assets, Tab::Channels],
     );
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets]);
-    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
+    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets, Tab::Navigator]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
     surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
     dock
@@ -159,6 +161,7 @@ impl TabViewer for Tabs<'_> {
             );
         }
         match tab {
+            Tab::Navigator => crate::navigator::show(ui, self.app),
             Tab::Canvas => canvas::show(ui, self.app, self.display, self.pen),
             Tab::View3d => self
                 .view3d

@@ -8,8 +8,10 @@ use egui::{pos2, vec2, Pos2, Rect, Vec2};
 use crate::engine::{DVec2, Tilt};
 
 pub const ROTATE_STEP: f32 = 15.0;
-pub const MIN_ZOOM: f32 = 0.2;
-pub const MAX_ZOOM: f32 = 16.0;
+// 全体フィットに対する倍率。最大32768画素の文書を1点の表示域から100%にしても、
+// 次の拡大を扱える範囲。小さい文書の100%も同じ入口で扱う。
+pub const MIN_ZOOM: f32 = 1.0 / 65536.0;
+pub const MAX_ZOOM: f32 = 65536.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasView {
@@ -258,6 +260,14 @@ impl ViewState {
         self.angle = 0.0;
     }
 
+    /// 文書の 1 画素を画面の 1 点で表示する。表示域の中心の画素を保つ。
+    pub fn actual_size(&mut self, rect: Rect, width: u32, height: u32) {
+        let fit = (rect.width() / width as f32).min(rect.height() / height as f32);
+        if fit.is_finite() && fit > 0.0 {
+            self.zoom_to(1.0 / fit, None, rect);
+        }
+    }
+
     /// 拡大率を変える。pointer の下の画素は動かない（None なら表示域の中心）。
     pub fn zoom_to(&mut self, zoom: f32, pointer: Option<Pos2>, rect: Rect) {
         let next = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
@@ -357,7 +367,7 @@ mod tests {
         let before = s.view(rect, 256, 256).to_canvas(at);
         s.zoom_to(3.5, Some(at), rect);
         assert!(close(before, s.view(rect, 256, 256).to_canvas(at)));
-        s.zoom_to(100.0, None, rect);
+        s.zoom_to(MAX_ZOOM * 2.0, None, rect);
         assert_eq!(s.zoom, MAX_ZOOM);
     }
 
