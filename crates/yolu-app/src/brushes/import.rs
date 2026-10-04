@@ -1,4 +1,4 @@
-//! ブラシのファイルの取り込み（ABR・GBR・GIH・VBR・PNG・PAT）を、画面を止めずに行う。
+//! ブラシのファイルの取り込み（ABR・GBR・GIH・VBR・PNG・PAT・CLIP STUDIO の SUT）を、画面を止めずに行う。
 //!
 //! 読み込み（`yolu_io::brushes::import`）と保存（画像・ブラシのファイル）は別のスレッドで、1 回の取り込み（ファイルの並び）が 1 つの仕事。
 //! ファイルごとに「読む → ブラシにして番号と名前を決める → 置く」を済ませ、置けたブラシだけを画面の側へ送る。画面の側は届いた分を
@@ -146,8 +146,13 @@ fn load_file(
         + set
             .notes
             .iter()
-            .filter(|n| matches!(n, Unrepresented::PatternSkipped { .. }))
-            .count();
+            .map(|n| match n {
+                Unrepresented::PatternSkipped { .. } => 1,
+                // 多すぎて読まなかった .sut のブラシ
+                Unrepresented::ClipStudio(brushes::SutNote::BrushesCapped(count)) => *count,
+                _ => 0,
+            })
+            .sum::<usize>();
     let mut loaded = Loaded {
         brushes: Vec::new(),
         skipped,
@@ -535,12 +540,12 @@ impl AppState {
     }
 }
 
-/// 取り込みのファイルの種類か（ドロップされたファイルのうち、取り込みの対象にするもの。読めない種類 `.kpp` `.sut` も理由を
+/// 取り込みのファイルの種類か（ドロップされたファイルのうち、取り込みの対象にするもの。読めない種類 `.kpp` も理由を
 /// 出すために通す）。
 pub fn is_brush_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         let e = e.to_ascii_lowercase();
-        brushes::FileKind::EXTENSIONS.contains(&e.as_str()) || matches!(e.as_str(), "kpp" | "sut")
+        brushes::FileKind::EXTENSIONS.contains(&e.as_str()) || e == "kpp"
     })
 }
 
@@ -581,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn only_brush_files_and_the_two_refused_kinds_are_taken_from_a_drop() {
+    fn only_brush_files_and_the_refused_kind_are_taken_from_a_drop() {
         for ok in [
             "a.abr", "a.GBR", "a.gih", "a.vbr", "a.pat", "a.png", "a.PNG", "a.kpp", "a.sut",
         ] {

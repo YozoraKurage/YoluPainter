@@ -8,6 +8,7 @@
 )]
 
 pub mod corpus;
+pub mod sut;
 
 /// ビッグエンディアンの書き出し器（ABR・パターン・記述子の組み立て用）。
 #[derive(Default, Clone)]

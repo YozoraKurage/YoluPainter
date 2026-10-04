@@ -22,6 +22,8 @@ pub enum Source {
     },
     PhotoshopPattern,
     PngTip,
+    /// CLIP STUDIO PAINT のサブツール（`.sut`）。
+    ClipStudioSut,
     /// 同梱の Krita 4 の既定の筆先。
     BundledKrita4,
 }
@@ -54,6 +56,7 @@ impl Source {
             },
             Self::PhotoshopPattern => "Photoshop pattern".into(),
             Self::PngTip => "PNG tip".into(),
+            Self::ClipStudioSut => "CLIP STUDIO SUT".into(),
             Self::BundledKrita4 => "Krita 4".into(),
         }
     }
@@ -235,6 +238,208 @@ pub enum DualNote {
     Flip,
 }
 
+/// CLIP STUDIO の「影響元設定」の対象（`.sut` の効果の列の名前から分かる）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SutTarget {
+    Size,
+    Opacity,
+    Flow,
+    /// 太さ（真円率）。
+    Thickness,
+}
+
+impl SutTarget {
+    fn texts(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Size => ("大きさ", "size"),
+            Self::Opacity => ("不透明度", "opacity"),
+            Self::Flow => ("流量", "flow"),
+            Self::Thickness => ("太さ", "thickness"),
+        }
+    }
+}
+
+/// CLIP STUDIO の「影響元設定」の入力のうち、このアプリで同じ式で使えないもの（筆圧は最小値と曲線で写す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SutInput {
+    Tilt,
+    Speed,
+    Random,
+}
+
+impl SutInput {
+    fn texts(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Tilt => ("ペンの傾き", "pen tilt"),
+            Self::Speed => ("速さ", "speed"),
+            Self::Random => ("ランダム", "random"),
+        }
+    }
+}
+
+/// CLIP STUDIO の `.sut` の設定のうち、読めなかった・表せない・近似したもの。
+#[derive(Clone, Debug, PartialEq)]
+pub enum SutNote {
+    /// 筆先・質感の画像は素材に入っているプレビュー（PNG）から取った。元の大きさの画像は CLIP STUDIO 独自の入れ物（`.layer`）の
+    /// 中にあり、読まない。解像度はプレビューまで。
+    PreviewImage,
+    /// 筆先にできない素材があった（特定できない・画像を取り出せない・筆先の数の上限を超えた）ので、その筆先は使わない。1 枚も
+    /// 使えなければ丸い筆先にした。
+    TipMissing,
+    /// 筆先の素材を名前で決められず、素材の並びで当てた（別の画像かもしれない）。
+    TipGuessed,
+    /// 複数の筆先を使う順序の設定は読まず、ランダムにした。
+    TipOrder,
+    /// 質感の素材を特定できなかった（または画像を取り出せなかった）ので、質感なし。
+    TextureMissing,
+    /// 質感の素材を名前で決められず、素材の並びで当てた（別の画像かもしれない）。
+    TextureGuessed,
+    TextureRotation,
+    TextureBrightness,
+    TextureContrast,
+    /// 質感の合わせ方（乗算にした）。
+    TextureMode,
+    /// 「描点ごとに質感」は無く、ストロークに 1 回だけ当てる。
+    TextureEachTip,
+    /// 筆先の向き（角度の基準と、向きに従う設定）。
+    Direction,
+    /// 色の混ぜ（CLIP STUDIO の「色の混ぜ」: 絵の具量・絵の具濃度・色延び）。値は元の設定のまま（0〜100）。列は `BrushMixColor`
+    /// （絵の具量: RGB の混ぜの割合）・`BrushMixAlpha`（絵の具濃度: 透明成分の混ぜの割合）・`BrushMixColorExtension`（色延び）。
+    ColorMixing {
+        paint: f64,
+        density: f64,
+        stretch: f64,
+    },
+    /// 吹き付け効果。
+    Spray,
+    DualBrush,
+    /// 入り抜き。
+    StartEnd,
+    /// 手ぶれ補正。
+    Stabilizer,
+    /// 色の変化。
+    ColorChange,
+    /// 合成モード。
+    BlendMode,
+    /// 影響元設定の筆圧以外の入力。
+    Influence {
+        target: SutTarget,
+        input: SutInput,
+    },
+    /// 影響元設定の中身を読めなかった（この版の形が分からない）ので、外した。
+    InfluenceUnreadable(SutTarget),
+    /// 太さの筆圧は無い。
+    ThicknessPressure,
+    /// 筆圧の曲線の点が 16 を超え、16 点に取り直した。
+    CurveSimplified(SutTarget),
+    /// ブラシの設定の表（`Variant`）か、行の番号の列（`VariantID`）が無く、設定は既定のまま。
+    SettingsMissing,
+    /// 画像を取り出せなかった素材の数（ファイル全体）。
+    MaterialsUnreadable(usize),
+    /// ブラシが多く、上限を超えた分は読まなかった（ファイル全体。読まなかったブラシの数）。
+    BrushesCapped(usize),
+    /// 素材が多く、上限を超えた分は読まなかった（ファイル全体）。
+    MaterialsCapped,
+}
+
+impl SutNote {
+    fn texts(&self) -> (String, String) {
+        match self {
+            Self::PreviewImage => (
+                "筆先・質感の画像は素材のプレビューから取った（元の大きさの画像は独自の入れ物の中にあり、読まない。解像度はプレビューまで）".into(),
+                "Tip and texture images come from the material's preview; the full-size image is in a proprietary container and is not read, so resolution is limited to the preview.".into(),
+            ),
+            Self::TipMissing => (
+                "筆先にできない素材がある（特定できない・画像を取り出せない・筆先の数の上限を超えた）ので、その筆先は使わず、1 枚も無ければ丸い筆先にした".into(),
+                "Some tip materials could not be used (not identified, image not extracted, or over the limit on tips); they are left out, and a round tip is used if none remain.".into(),
+            ),
+            Self::TipGuessed => (
+                "筆先の画像は、素材の名前では決められず、素材の並びで当てた（別の画像かもしれない）".into(),
+                "The tip image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
+            ),
+            Self::TipOrder => (
+                "複数の筆先を使う順序は読まず、ランダムにした".into(),
+                "The order for using several tips is not read; random order is used.".into(),
+            ),
+            Self::TextureMissing => (
+                "質感の素材を特定できなかった（または画像を取り出せなかった）ので、質感なし".into(),
+                "The texture material could not be identified (or its image extracted); the brush has no texture.".into(),
+            ),
+            Self::TextureGuessed => (
+                "質感の画像は、素材の名前では決められず、素材の並びで当てた（別の画像かもしれない）".into(),
+                "The texture image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
+            ),
+            Self::TextureRotation => ("質感の回転は未対応".into(), "Texture rotation is not supported.".into()),
+            Self::TextureBrightness => ("質感の明るさは未対応".into(), "Texture brightness is not supported.".into()),
+            Self::TextureContrast => ("質感のコントラストは未対応".into(), "Texture contrast is not supported.".into()),
+            Self::TextureMode => (
+                "質感の合わせ方は読まず、乗算にした".into(),
+                "The texture blend mode is not read; Multiply is used.".into(),
+            ),
+            Self::TextureEachTip => (
+                "質感: 描点ごとの適用は未対応で、ストロークに 1 回だけ当てる".into(),
+                "Texture per dab is not supported; the texture is applied once per stroke.".into(),
+            ),
+            Self::Direction => (
+                "筆先の向き（角度と、向きに従う設定）は未対応".into(),
+                "Tip direction (angle and follow-direction) is not supported.".into(),
+            ),
+            Self::ColorMixing { paint, density, stretch } => (
+                format!("色の混ぜは未対応（絵の具量 {paint}・絵の具濃度 {density}・色延び {stretch}）"),
+                format!("Color mixing is not supported (amount of paint {paint}, density of paint {density}, color stretch {stretch})."),
+            ),
+            Self::Spray => ("吹き付け効果は未対応".into(), "The spray effect is not supported.".into()),
+            Self::DualBrush => ("デュアルブラシは未対応".into(), "Dual brush is not supported.".into()),
+            Self::StartEnd => ("入り抜きは未対応".into(), "Start and end taper is not supported.".into()),
+            Self::Stabilizer => ("手ぶれ補正は未対応".into(), "Stabilization is not supported.".into()),
+            Self::ColorChange => ("色の変化は未対応".into(), "Color change is not supported.".into()),
+            Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
+            Self::Influence { target, input } => {
+                let (tja, ten) = target.texts();
+                let (ija, ien) = input.texts();
+                (
+                    format!("{tja}の影響元「{ija}」は未対応で、外した"),
+                    format!("The {ien} influence on {ten} is not supported; it is left off."),
+                )
+            }
+            Self::InfluenceUnreadable(target) => {
+                let (tja, ten) = target.texts();
+                (
+                    format!("{tja}の影響元設定を読めなかった（この版の形が分からない）ので、外した"),
+                    format!("The influence settings for {ten} could not be read (unknown layout in this version); they are left off."),
+                )
+            }
+            Self::ThicknessPressure => (
+                "太さの筆圧の影響は未対応で、外した".into(),
+                "The pen pressure influence on thickness is not supported; it is left off.".into(),
+            ),
+            Self::CurveSimplified(target) => {
+                let (tja, ten) = target.texts();
+                (
+                    format!("{tja}の筆圧の曲線は 16 点に取り直した（点が 16 を超える）"),
+                    format!("The pen pressure curve for {ten} was resampled to 16 points (it had more)."),
+                )
+            }
+            Self::SettingsMissing => (
+                "ブラシの設定の表（Variant）か行の番号の列（VariantID）が無く、設定は既定のまま".into(),
+                "The settings table (Variant) or its row-number column (VariantID) is missing; settings are left at their defaults.".into(),
+            ),
+            Self::MaterialsUnreadable(count) => (
+                format!("画像を取り出せなかった素材が {count} 個ある"),
+                format!("{count} materials had no image that could be extracted."),
+            ),
+            Self::BrushesCapped(count) => (
+                format!("ブラシが多く、上限を超えた {count} 個は読まなかった"),
+                format!("{count} brushes beyond the limit were not read."),
+            ),
+            Self::MaterialsCapped => (
+                "素材が多く、上限を超えた分は読まなかった".into(),
+                "There are more materials than the limit; the rest were not read.".into(),
+            ),
+        }
+    }
+}
+
 /// 元のファイルの設定のうち、core のブラシで表せない・近似した・読めなかったもの。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Unrepresented {
@@ -299,6 +504,9 @@ pub enum Unrepresented {
     },
     /// 模様の読み替え。
     Pattern(PatternNote),
+
+    // CLIP STUDIO .sut
+    ClipStudio(SutNote),
 }
 
 impl Unrepresented {
@@ -457,6 +665,7 @@ impl Unrepresented {
                 format!("Pattern '{name}' was skipped: {}.", reason.texts().1),
             ),
             Pattern(note) => note.texts(),
+            ClipStudio(note) => note.texts(),
         }
     }
 

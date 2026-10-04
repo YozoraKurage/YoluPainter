@@ -1,6 +1,10 @@
 //! ブラシのファイルの取り込み（ABR・GBR・PAT）・表せなかった項目・読めないファイルの理由・保存と読み戻し・取消・模様と Krita の筆先の選び・
 //! 裏のスレッドの見本。画面を描かないので Wine でも回る（`headless_`）。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
 mod brush_import_files;
+/// 合成の .sut（SQLite）の組み立ては、読み手の試験（yolu-io）と同じものを使う。
+#[allow(dead_code)]
+#[path = "../../yolu-io/tests/brush_files/sut.rs"]
+mod sut_files;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -193,6 +197,92 @@ fn headless_an_abr_gives_several_brushes_and_a_second_import_gets_new_names() {
     let key = imported(&s)[1].key;
     s.apply(Action::Brush(BrushAction::Delete(key)));
     assert_eq!((brush_files(&dir), image_files(&dir)), (3, 1));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn headless_a_sut_is_imported_with_its_tip_pressure_and_the_item_names_it_could_not_represent() {
+    use sut_files::*;
+    let dir = temp_dir("sut");
+    let tip = png_gray(2, 2, &[0, 255, 255, 0]);
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&tip))
+        .brush(
+            "Soft ink",
+            1,
+            &[
+                ("BrushSize", real(40.0)),
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["x/tip_a.png", "cat/a", "tip_a"]])),
+                ),
+                (
+                    "BrushSizeEffector",
+                    blob(effector(44, 0x10 | 0x20, 20, &[&[(0.0, 0.0), (1.0, 1.0)]])),
+                ),
+                ("BrushUseSpray", int(1)),
+            ],
+        )
+        .build();
+    let path = write(&dir, "soft_ink.sut", &file);
+    let mut s = state(&dir);
+    import(&mut s, std::slice::from_ref(&path));
+    let list = imported(&s);
+    assert_eq!(list.len(), 1);
+    let e = &list[0];
+    assert_eq!((e.name.as_str(), e.group), ("Soft ink", Group::Imported));
+    assert!(
+        s.message.starts_with("ブラシを 1 個取り込みました"),
+        "{}",
+        s.message
+    );
+    // 筆先の画像（暗い画素が塗る。行は下から）と、筆圧の最小値・半径
+    let tip = e.baseline.tip.image.as_ref().expect("画像の筆先");
+    assert_eq!(tip.alpha(), [0, 255, 255, 0]);
+    assert_eq!(e.baseline.base.radius, 20.0);
+    assert!(e.baseline.base.pressure_size);
+    assert!(
+        (e.baseline.pressure.size.min() - 0.2).abs() < 1e-6,
+        "保存の精度（f32）に丸まる"
+    );
+    // 表せなかった項目は名前の一覧（並びは項目の順）。傾き・吹き付け・プレビューの解像度
+    let meta = e.import.as_ref().expect("出どころ");
+    assert_eq!(meta.source, "CLIP STUDIO SUT");
+    assert_eq!(meta.gaps, [Gap::Controls, Gap::ImageResolution, Gap::Spray]);
+    let names = |lang| -> Vec<&'static str> { meta.gaps.iter().map(|g| g.name(lang)).collect() };
+    assert_eq!(
+        names(Lang::Ja),
+        ["コントロール", "画像の解像度", "吹き付け"]
+    );
+    assert_eq!(names(Lang::En), ["Controls", "Image resolution", "Spray"]);
+    // 保存して読み戻しても同じ（筆先の画像は置き場に 1 枚）
+    assert_eq!((brush_files(&dir), image_files(&dir)), (1, 1));
+    let back = state(&dir);
+    assert!(
+        back.brushes.problems.is_empty(),
+        "{:?}",
+        back.brushes.problems
+    );
+    assert_eq!(imported(&back)[0].baseline, e.baseline);
+    assert_eq!(imported(&back)[0].import, e.import);
+    // 同じファイルをもう一度: 名前は重ならず、筆先の画像は同じ内容なので増えない
+    import(&mut s, &[path]);
+    let names: Vec<String> = imported(&s).iter().map(|e| e.name.clone()).collect();
+    assert_eq!(names, ["Soft ink", "Soft ink 2"]);
+    assert_eq!((brush_files(&dir), image_files(&dir)), (2, 1));
+    // SQLite でないファイルは理由を両方の言語で出して、何も足さない
+    let broken = write(&dir, "broken.sut", b"not a database at all");
+    for (lang, expect) in [
+        (Lang::Ja, "SQLite のデータベース）として読めません"),
+        (Lang::En, "Not a readable CLIP STUDIO brush"),
+    ] {
+        s.lang = lang;
+        s.message.clear();
+        import(&mut s, std::slice::from_ref(&broken));
+        assert!(s.message.contains(expect), "{lang:?}: {}", s.message);
+    }
+    assert_eq!(imported(&s).len(), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

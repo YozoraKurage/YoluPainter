@@ -1,5 +1,5 @@
-//! ブラシ形式の取り込み: GIMP の GBR・GIH・VBR、Photoshop の ABR（版 1・2・6〜10）・PAT、PNG の筆先を、core のブラシ
-//! （[`yolu_core::Brush`]）にする。アプリへの口は [`import`] の 1 本（メモリ上のバイト列からは [`import_bytes`]）。
+//! ブラシ形式の取り込み: GIMP の GBR・GIH・VBR、Photoshop の ABR（版 1・2・6〜10）・PAT、CLIP STUDIO の SUT、PNG の筆先を、
+//! core のブラシ（[`yolu_core::Brush`]）にする。アプリへの口は [`import`] の 1 本（メモリ上のバイト列からは [`import_bytes`]）。
 //!
 //! - 元のアプリの設定のうち core で表せるもの（筆先・間隔・角度・真円率・ゆらぎ・散布・筆圧・フェード・傾き・色の変化・
 //!   デュアルブラシ・質感）は `Brush` に入れる。表せないもの・近似したもの・読めなかったものは、ブラシごとの
@@ -21,6 +21,7 @@ mod notes;
 mod pattern;
 mod png_tip;
 mod reader;
+mod sut;
 
 use std::io::Read;
 use std::path::Path;
@@ -33,8 +34,8 @@ pub use error::{
     SkippedPattern, UnsupportedFile,
 };
 pub use notes::{
-    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, TextureNote, Unrepresented,
-    VbrShape,
+    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutNote, SutTarget,
+    TextureNote, Unrepresented, VbrShape,
 };
 pub use reader::MAX_DECODED_BYTES;
 
@@ -42,6 +43,9 @@ use reader::Budget;
 
 /// これより大きいファイルは読み込む前に断る。市販の `.abr` の大きいもの（数十 MB）が入る大きさ。
 pub const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `.sut` の上限。公開の調べでは実物は 21 KB〜15 MB（素材の画像を含む）。SQLite はメモリ上へ写して開くので、ファイルの大きさの 2 倍までメモリを使う。
+pub const MAX_SUT_BYTES: u64 = 128 * 1024 * 1024;
 
 /// `.vbr` の上限。パラメトリックブラシは 10 行ほどの文字（実物は 200 バイト前後）なので、改行だけの巨大なファイルを
 /// 行に割って確保する前に断る。
@@ -56,11 +60,13 @@ pub enum FileKind {
     Gih,
     Vbr,
     Png,
+    /// CLIP STUDIO PAINT のサブツール（SQLite）。
+    Sut,
 }
 
 impl FileKind {
     /// ファイル選択で示す拡張子。
-    pub const EXTENSIONS: [&'static str; 6] = ["abr", "pat", "gbr", "gih", "vbr", "png"];
+    pub const EXTENSIONS: [&'static str; 7] = ["abr", "pat", "gbr", "gih", "vbr", "png", "sut"];
 
     /// 拡張子（点なし。大文字小文字を区別しない）から。読まない種類は理由つきで断る。
     pub fn from_extension(extension: &str) -> Result<FileKind, UnsupportedFile> {
@@ -71,7 +77,7 @@ impl FileKind {
             "gih" => Ok(FileKind::Gih),
             "vbr" => Ok(FileKind::Vbr),
             "png" => Ok(FileKind::Png),
-            "sut" => Err(UnsupportedFile::ClipStudio),
+            "sut" => Ok(FileKind::Sut),
             "kpp" => Err(UnsupportedFile::KritaPreset),
             other => Err(UnsupportedFile::Extension(printable(other, 16))),
         }
@@ -81,6 +87,7 @@ impl FileKind {
     pub fn max_bytes(self) -> u64 {
         match self {
             FileKind::Vbr => MAX_VBR_BYTES,
+            FileKind::Sut => MAX_SUT_BYTES,
             _ => MAX_FILE_BYTES,
         }
     }
@@ -135,6 +142,8 @@ pub enum SkipReason {
     NoTipShape,
     /// プリセットが指す筆先がファイルに無い。
     TipNotInFile,
+    /// ブラシの設定の行がファイルに無い（名前だけが残っている）。
+    SettingsNotInFile,
 }
 
 /// 1 つのファイルの取り込み結果（ファイルの並び。ABR はプリセット、次に使われなかった筆先）。
@@ -188,6 +197,7 @@ pub fn import_bytes(
     match kind {
         FileKind::Abr => abr::read_abr(bytes, fallback_name, &mut budget),
         FileKind::Pat => pattern::read_pat_brushes(bytes, &mut budget),
+        FileKind::Sut => sut::read_sut(bytes, fallback_name, &mut budget),
         FileKind::Gbr => gimp::read_gbr(bytes, fallback_name, &mut budget).map(one),
         FileKind::Gih => gimp::read_gih(bytes, fallback_name, &mut budget).map(one),
         FileKind::Vbr => {

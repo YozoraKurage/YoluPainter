@@ -12,5 +12,7 @@ sha2 = "0.10"
 serde = "1"
 serde_json = "1"
 png = "0.18"
+# CLIP STUDIO のブラシ（.sut）は SQLite。読み取り専用・メモリ上で開く（bundled の SQLite はパブリックドメイン、rusqlite は MIT）
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "serialize", "limits", "hooks"] }
 yolu-core.workspace = true
 yolu-brush-sets.workspace = true

@@ -203,6 +203,139 @@ fn photoshop_files_survive_every_corruption() {
     hammer(FileKind::Pat, &pat_file(), "pat");
 }
 
+/// 壊し方の試験の土台にする、小さな .sut（ページ 512 バイト）。筆先・質感・影響元・表せない設定を一通り持つ。
+fn sut_base() -> Vec<u8> {
+    use brush_files::sut::*;
+    let tip = png_gray(2, 2, &[0, 255, 255, 0]);
+    let grain = png_gray(2, 1, &[255, 40]);
+    let mut builder = SutBuilder::new()
+        .node("Tool", 0, 0)
+        .material(Some("tip_a"), tar(&[("thumbnail/thumbnail.png", &tip)]))
+        .material(Some("grain"), tar(&[("thumbnail/thumbnail.png", &grain)]))
+        .brush(
+            "Painter",
+            1,
+            &[
+                ("BrushSize", real(30.0)),
+                ("Opacity", int(90)),
+                ("BrushFlow", int(70)),
+                ("BrushInterval", int(20)),
+                ("BrushThickness", int(80)),
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["x/tip_a.png", "cat/a", "tip_a"]])),
+                ),
+                (
+                    "TextureImage",
+                    blob(refs(&[["x/grain.png", "cat/g", "grain"]])),
+                ),
+                ("TextureDensity", int(60)),
+                (
+                    "BrushSizeEffector",
+                    blob(effector(
+                        44,
+                        0x10 | 0x40,
+                        20,
+                        &[&[(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]],
+                    )),
+                ),
+                ("OpacityEffector", blob(effector(40, 0x10, 0, &[]))),
+                ("BrushUseSpray", int(1)),
+                ("BrushMixColor", int(25)),
+            ],
+        );
+    builder.filler = 12;
+    builder.page_size = 512;
+    builder.build()
+}
+
+#[test]
+fn sut_files_survive_every_corruption() {
+    let base = sut_base();
+    let set = import_bytes(FileKind::Sut, &base, Some("F")).expect("土台は取り込める");
+    let b = &set.brushes[0];
+    assert!(b.brush.tip.image.is_some() && b.brush.texture.is_some() && b.brush.base.pressure_size);
+    assert!(base.len() < 12 * 1024, "土台は小さい: {}", base.len());
+    // 取り込めた・断った の数は、壊し方の網羅の中の割合の目安（SQLite は使っていないページの書き換えでは変わらない）
+    let (before_ok, before_err) = (
+        IMPORTED.load(Ordering::Relaxed),
+        REFUSED.load(Ordering::Relaxed),
+    );
+    hammer_all(FileKind::Sut, &base, "sut");
+    let (ok, err) = (
+        IMPORTED.load(Ordering::Relaxed) - before_ok,
+        REFUSED.load(Ordering::Relaxed) - before_err,
+    );
+    eprintln!(
+        "sut: {} バイトから {} 通り（取り込めた {ok}、断った {err}）",
+        base.len(),
+        ok + err
+    );
+    assert!(
+        ok > 0 && err > base.len() / 2,
+        "取り込めた {ok}、断った {err}"
+    );
+}
+
+#[test]
+fn sut_files_with_extreme_but_well_formed_shapes_never_make_the_reader_build_an_invalid_brush() {
+    use brush_files::sut::*;
+    // バイトの壊し方では届かない、形としては正しい極端な .sut。筆先の参照が上限いっぱい（同じ素材を 1024 個・名前の当たらない
+    // 参照 1024 個）・素材の数と参照の数がちょうど 256・1 つ多い・素材が上限。どれも core の検証を通るブラシで取り込めるか、型で断る
+    let tip = png_gray(1, 1, &[0]);
+    let data = tar(&[("thumbnail/thumbnail.png", &tip)]);
+    let brush = |array: Vec<u8>| {
+        [
+            ("BrushUsePatternImage", int(1)),
+            ("BrushPatternImageArray", blob(array)),
+        ]
+    };
+    let named = |n: usize, same: bool| -> Vec<u8> {
+        let names: Vec<String> = (0..n)
+            .map(|i| format!("mat{:04}", if same { 0 } else { i }))
+            .collect();
+        let items: Vec<[&str; 3]> = names
+            .iter()
+            .map(|n| [n.as_str(), n.as_str(), n.as_str()])
+            .collect();
+        refs(&items)
+    };
+    let with_materials = |count: usize, named_materials: bool, array: Vec<u8>| {
+        let mut builder = SutBuilder::new();
+        builder.filler = 0;
+        builder.material_names = named_materials;
+        for i in 0..count {
+            builder = builder.material(Some(&format!("mat{i:04}")), data.clone());
+        }
+        builder.brush("Extreme", 1, &brush(array)).build()
+    };
+    for (what, file) in [
+        (
+            "同じ素材 1024 個",
+            with_materials(3, true, named(1024, true)),
+        ),
+        (
+            "名前の当たらない 1024 個",
+            with_materials(256, false, named(1024, false)),
+        ),
+        (
+            "素材と参照がちょうど 256",
+            with_materials(256, false, named(256, false)),
+        ),
+        (
+            "参照が素材より 1 つ多い",
+            with_materials(256, false, named(257, false)),
+        ),
+        (
+            "名前の当たる 256 個",
+            with_materials(256, true, named(256, false)),
+        ),
+    ] {
+        check(FileKind::Sut, &file, what);
+    }
+}
+
 #[test]
 fn png_files_survive_every_corruption() {
     use png::{BitDepth, ColorType};
@@ -252,6 +385,7 @@ fn random_garbage_and_random_corruptions_never_panic() {
             gbr_gray(3, 2, &[1, 2, 3, 4, 5, 6], "Tip", 50),
         ),
         (FileKind::Gih, gih("Hose\n3 ncells:3\n", &cells())),
+        (FileKind::Sut, sut_base()),
     ];
     for round in 0..3000 {
         // 完全なゴミ
@@ -264,6 +398,7 @@ fn random_garbage_and_random_corruptions_never_panic() {
             FileKind::Gih,
             FileKind::Vbr,
             FileKind::Png,
+            FileKind::Sut,
         ] {
             check(kind, &garbage, &format!("ゴミ {round}"));
         }

@@ -46,6 +46,7 @@ egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
 ed25519-dalek = "2.2"   # 試験で、使い捨ての鍵で更新情報に署名する（本物の鍵は使わない）
 hex = "0.4"
 serde_json = "1"
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "serialize"] }   # MIT。試験で、合成の CLIP STUDIO のブラシ（.sut。SQLite）を一から組む（yolu-io が読み取りに使う版と同じ）
 yolu-bridge = { path = "../yolu-bridge" }   # 試験で Unity の役（本物のブリッジの C の口）を別のプロセスで動かす
 
 [build-dependencies]

@@ -5,7 +5,7 @@
 //! ブラシのファイルに残す（`import.gaps`）ので、読み戻しても印と一覧が変わらない。知らない ID は読み飛ばす（情報だけで、
 //! 描き方には関わらない）。注記の種類を足すと、ここの対応がコンパイルで止まる（黙って項目なしにしない）。
 
-use yolu_io::brushes::{DualNote, TextureNote, Unrepresented};
+use yolu_io::brushes::{DualNote, SutNote, TextureNote, Unrepresented};
 
 use crate::lang::Lang;
 
@@ -44,10 +44,23 @@ pub enum Gap {
     DualScatter,
     DualCount,
     DualFlip,
+    ImageResolution,
+    TipImage,
+    TipOrder,
+    TextureRotation,
+    TipDirection,
+    ColorMixing,
+    Spray,
+    DualBrush,
+    StartEnd,
+    Stabilizer,
+    ColorChange,
+    BlendMode,
+    PressureCurve,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 32] = [
+    pub const ALL: [Gap; 45] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -80,6 +93,19 @@ impl Gap {
         Gap::DualScatter,
         Gap::DualCount,
         Gap::DualFlip,
+        Gap::ImageResolution,
+        Gap::TipImage,
+        Gap::TipOrder,
+        Gap::TextureRotation,
+        Gap::TipDirection,
+        Gap::ColorMixing,
+        Gap::Spray,
+        Gap::DualBrush,
+        Gap::StartEnd,
+        Gap::Stabilizer,
+        Gap::ColorChange,
+        Gap::BlendMode,
+        Gap::PressureCurve,
     ];
 
     /// ファイルに書く名前。
@@ -117,6 +143,19 @@ impl Gap {
             Gap::DualScatter => "dual-scatter",
             Gap::DualCount => "dual-count",
             Gap::DualFlip => "dual-flip",
+            Gap::ImageResolution => "image-resolution",
+            Gap::TipImage => "tip-image",
+            Gap::TipOrder => "tip-order",
+            Gap::TextureRotation => "texture-rotation",
+            Gap::TipDirection => "tip-direction",
+            Gap::ColorMixing => "color-mixing",
+            Gap::Spray => "spray",
+            Gap::DualBrush => "dual-brush",
+            Gap::StartEnd => "start-end",
+            Gap::Stabilizer => "stabilizer",
+            Gap::ColorChange => "color-change",
+            Gap::BlendMode => "blend-mode",
+            Gap::PressureCurve => "pressure-curve",
         }
     }
 
@@ -162,12 +201,25 @@ impl Gap {
             Gap::DualScatter => lang.pick("デュアルブラシの散布", "Dual brush scatter"),
             Gap::DualCount => lang.pick("デュアルブラシの数", "Dual brush count"),
             Gap::DualFlip => lang.pick("デュアルブラシの反転", "Dual brush flip"),
+            Gap::ImageResolution => lang.pick("画像の解像度", "Image resolution"),
+            Gap::TipImage => lang.pick("筆先の画像", "Tip image"),
+            Gap::TipOrder => lang.pick("筆先の順序", "Tip order"),
+            Gap::TextureRotation => lang.pick("質感の回転", "Texture rotation"),
+            Gap::TipDirection => lang.pick("筆先の向き", "Tip direction"),
+            Gap::ColorMixing => lang.pick("色の混ぜ", "Color mixing"),
+            Gap::Spray => lang.pick("吹き付け", "Spray"),
+            Gap::DualBrush => lang.pick("デュアルブラシ", "Dual brush"),
+            Gap::StartEnd => lang.pick("入り抜き", "Start and end"),
+            Gap::Stabilizer => lang.pick("手ぶれ補正", "Stabilization"),
+            Gap::ColorChange => lang.pick("色の変化", "Color change"),
+            Gap::BlendMode => lang.pick("合成モード", "Blend mode"),
+            Gap::PressureCurve => lang.pick("筆圧の曲線", "Pressure curve"),
         }
     }
 }
 
-/// 注記 1 つが指す項目。取り込んだ模様を使えず読み飛ばした注記（`PatternSkipped`）はどのブラシの項目でもないので None
-/// （取り込めなかった数として別に数える）。
+/// 注記 1 つが指す項目。取り込んだ模様を使えず読み飛ばした注記（`PatternSkipped`）などファイル全体の数の注記は、どのブラシの項目でも
+/// ないので None（取り込めなかった数として別に数える）。
 pub fn of_note(note: &Unrepresented) -> Option<Gap> {
     use Unrepresented as U;
     Some(match note {
@@ -210,6 +262,36 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             DualNote::ScatterOneAxis => Gap::DualScatter,
             DualNote::CountJitter => Gap::DualCount,
             DualNote::Flip => Gap::DualFlip,
+        },
+        U::ClipStudio(note) => match note {
+            SutNote::PreviewImage => Gap::ImageResolution,
+            SutNote::TipMissing | SutNote::TipGuessed => Gap::TipImage,
+            SutNote::TipOrder => Gap::TipOrder,
+            SutNote::TextureMissing | SutNote::TextureGuessed => Gap::TexturePattern,
+            SutNote::TextureRotation => Gap::TextureRotation,
+            SutNote::TextureBrightness => Gap::TextureBrightness,
+            SutNote::TextureContrast => Gap::TextureContrast,
+            SutNote::TextureMode => Gap::TextureMode,
+            SutNote::TextureEachTip => Gap::TextureEachTip,
+            SutNote::Direction => Gap::TipDirection,
+            SutNote::ColorMixing { .. } => Gap::ColorMixing,
+            SutNote::Spray => Gap::Spray,
+            SutNote::DualBrush => Gap::DualBrush,
+            SutNote::StartEnd => Gap::StartEnd,
+            SutNote::Stabilizer => Gap::Stabilizer,
+            SutNote::ColorChange => Gap::ColorChange,
+            SutNote::BlendMode => Gap::BlendMode,
+            SutNote::Influence { .. }
+            | SutNote::InfluenceUnreadable(_)
+            | SutNote::ThicknessPressure => Gap::Controls,
+            SutNote::CurveSimplified(_) => Gap::PressureCurve,
+            SutNote::SettingsMissing => Gap::PresetSettings,
+            // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
+            // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
+            // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
+            SutNote::MaterialsUnreadable(_)
+            | SutNote::MaterialsCapped
+            | SutNote::BrushesCapped(_) => return None,
         },
         U::PatternSkipped { .. } => return None,
     })
@@ -272,5 +354,19 @@ mod tests {
             [Gap::ColorTip, Gap::WetEdges, Gap::TextureEachTip]
         );
         assert_eq!(fold(&[]), Vec::<Gap>::new());
+    }
+
+    #[test]
+    fn clip_studio_guessed_and_missing_images_fold_into_the_image_items() {
+        let sut = |n: SutNote| Unrepresented::ClipStudio(n);
+        // 当てずっぽうの推定も、欠けた筆先も「筆先の画像」の項目、質感の推定は「質感の模様」の項目。ファイル全体の数は項目にしない
+        let notes = [
+            sut(SutNote::TipGuessed),
+            sut(SutNote::TipMissing),
+            sut(SutNote::TextureGuessed),
+            sut(SutNote::MaterialsUnreadable(2)),
+            sut(SutNote::BrushesCapped(3)),
+        ];
+        assert_eq!(fold(&notes), [Gap::TexturePattern, Gap::TipImage]);
     }
 }

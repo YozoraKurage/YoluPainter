@@ -19,6 +19,8 @@ pub fn kind_code(kind: FileKind) -> u8 {
         FileKind::Abr => 3,
         FileKind::Pat => 4,
         FileKind::Png => 5,
+        // C# の読み手に無い形式（照合の事例には使わない）
+        FileKind::Sut => 6,
     }
 }
 

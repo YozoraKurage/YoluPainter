@@ -1805,7 +1805,6 @@ fn files_are_read_by_extension_and_unsupported_ones_are_refused() {
         "拡張子は大文字小文字を区別しない"
     );
     for (file, expected) in [
-        ("a.sut", UnsupportedFile::ClipStudio),
         ("a.kpp", UnsupportedFile::KritaPreset),
         ("a.myb", UnsupportedFile::Extension("myb".into())),
         ("noextension", UnsupportedFile::Extension(String::new())),
@@ -1816,6 +1815,12 @@ fn files_are_read_by_extension_and_unsupported_ones_are_refused() {
             "{file}"
         );
     }
+    // .sut は読む形式（SQLite でなければ理由つきで断る）
+    let sut = dir.file("a.sut", &[0; 16]);
+    assert!(matches!(
+        import(&sut),
+        Err(BrushImportError::Fault(Fault::SutNotDatabase))
+    ));
     assert!(
         matches!(import(&dir.0.join("missing.abr")), Err(BrushImportError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound)
     );
@@ -2075,6 +2080,10 @@ fn every_message_exists_in_both_languages() {
         Fault::NoPatterns,
         Fault::NotPng,
         Fault::PngLimits,
+        Fault::SutNotDatabase,
+        Fault::SutNoNodeTable,
+        Fault::SutNoBrushes,
+        Fault::SutLimits,
     ];
     let refusals = vec![
         PatternRefusal::ChannelsDiffer,
@@ -2101,7 +2110,6 @@ fn every_message_exists_in_both_languages() {
         std::io::ErrorKind::NotFound,
     )));
     errors.push(BrushImportError::FileTooLarge { limit: 1 });
-    errors.push(BrushImportError::Unsupported(UnsupportedFile::ClipStudio));
     errors.push(BrushImportError::Unsupported(UnsupportedFile::KritaPreset));
     errors.push(BrushImportError::Unsupported(UnsupportedFile::Extension(
         "xyz".into(),
