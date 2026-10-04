@@ -535,14 +535,7 @@ mod tests {
         std::fs::write(&path, TRIANGLE_FBX).unwrap();
         let mut s = AppState::new(64, 64);
         pose::open_fbx(&mut s.view3d, &path);
-        let mut installed = false;
-        for _ in 0..500 {
-            installed = pose::poll(&mut s.view3d).1;
-            if installed {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let installed = pose::wait_for_load(&mut s.view3d).1;
         assert!(installed);
         assert!(s.bind_rig_model().is_none(), "付いただけで作らない");
         let m = s.model.as_ref().unwrap();

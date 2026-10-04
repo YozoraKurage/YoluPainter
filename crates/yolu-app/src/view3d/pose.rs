@@ -270,6 +270,20 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
     });
 }
 
+#[cfg(test)]
+pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) {
+    if let Some(loading) = &mut view3d.pose.loading {
+        let result = loading
+            .rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .expect("FBXの完了通知が来ない（受信切断またはハング検出上限）");
+        let (tx, rx) = channel();
+        tx.send(result).unwrap();
+        loading.rx = rx;
+    }
+    poll(view3d)
+}
+
 /// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文と、モデルを入れたかを返す。
 pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
     let mut message = None;
@@ -831,14 +845,7 @@ mod tests {
     const TRIANGLE_FBX: &str = "; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n\tFBXVersion: 7400\n}\nGlobalSettings:  {\n\tVersion: 1000\n\tProperties70:  {\n\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",100\n\t}\n}\nObjects:  {\n\tModel: 100, \"Model::Tri\", \"Mesh\" {\n\t\tVersion: 232\n\t}\n\tGeometry: 200, \"Geometry::Tri\", \"Mesh\" {\n\t\tVertices: *9 {\n\t\t\ta: 0,0,0,1,0,0,0,1,0\n\t\t}\n\t\tPolygonVertexIndex: *3 {\n\t\t\ta: 0,1,-3\n\t\t}\n\t\tLayerElementUV: 0 {\n\t\t\tMappingInformationType: \"ByPolygonVertex\"\n\t\t\tReferenceInformationType: \"Direct\"\n\t\t\tUV: *6 {\n\t\t\t\ta: 0,0,1,0,0,1\n\t\t\t}\n\t\t}\n\t\tLayer: 0 {\n\t\t\tLayerElement:  {\n\t\t\t\tType: \"LayerElementUV\"\n\t\t\t\tTypedIndex: 0\n\t\t\t}\n\t\t}\n\t}\n}\nConnections:  {\n\tC: \"OO\",100,0\n\tC: \"OO\",200,100\n}\n";
 
     fn wait(app: &mut AppState) -> (Option<String>, bool) {
-        for _ in 0..500 {
-            let r = poll(&mut app.view3d);
-            if !app.view3d.pose.is_loading() {
-                return r;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        panic!("読み込みが終わらない");
+        wait_for_load(&mut app.view3d)
     }
 
     #[test]

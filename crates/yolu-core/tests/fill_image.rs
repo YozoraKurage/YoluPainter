@@ -1,8 +1,7 @@
 #[path = "support/fill_cases.rs"]
 mod cases;
 use cases::*;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::AtomicBool;
 use yolu_core::{fill_image::*, Rgba8};
 
 #[test]
@@ -415,26 +414,6 @@ fn decal_depth_facing_and_shape_alpha_have_known_answers() {
     })
     .unwrap();
     assert_eq!(outside.pixel(0, 0).unwrap(), Rgba8::TRANSPARENT);
-}
-
-#[test]
-fn cancellation_during_render_returns_no_partial_image() {
-    let d = picture(31, 23, false);
-    let c = ImageMipChain::build(&d, 31, 23, Conversion::None, false, u64::MAX, None).unwrap();
-    let s = FillSampler::bind(FillInput {
-        width: 4096,
-        height: 4096,
-        image: Some(&c),
-        ..FillInput::default()
-    })
-    .unwrap();
-    let stop = AtomicBool::new(false);
-    std::thread::scope(|scope| {
-        let task = scope.spawn(|| s.render(0, 0, 4096, 4096, u64::MAX, Some(&stop)));
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        stop.store(true, Ordering::Relaxed);
-        assert_eq!(task.join().unwrap(), Err(FillError::Canceled));
-    });
 }
 
 #[test]
@@ -1002,78 +981,6 @@ fn geometry_maps_drive_planar_triplanar_and_decal_to_known_pixels() {
             );
         }
     }
-}
-
-// ---- 取り消しは途中でも効く ----
-
-/// 取消なしで掛かる時間 T の 1/3 で取消を立て、`Canceled` で、立ててから戻るまでが T の 1/4 より短いこと。
-/// 行・三角形ごとの確認が無く、段や終わりだけの確認だと、立てたあとも T の半分ほど走ってこの時間に収まらない。
-fn assert_cancels_promptly(run: impl Fn(&AtomicBool) -> Result<(), FillError> + Sync) {
-    let start = Instant::now();
-    run(&AtomicBool::new(false)).unwrap();
-    let full = start.elapsed();
-    assert!(
-        full > Duration::from_millis(10),
-        "取消なしの時間が短すぎて測れない: {full:?}"
-    );
-    let stop = AtomicBool::new(false);
-    std::thread::scope(|scope| {
-        let task = scope.spawn(|| run(&stop));
-        std::thread::sleep(full / 3);
-        let raised = Instant::now();
-        stop.store(true, Ordering::Relaxed);
-        let result = task.join().unwrap();
-        let latency = raised.elapsed();
-        assert_eq!(result, Err(FillError::Canceled), "全体 {full:?}");
-        assert!(
-            latency < full / 4,
-            "取消を立ててから戻るまで {latency:?}（全体 {full:?}）"
-        );
-    });
-}
-
-#[test]
-fn cancellation_during_mip_build_stops_early_without_a_chain() {
-    let pixels = vec![0u8; 8192 * 8192 * 4];
-    assert_cancels_promptly(|cancel| {
-        ImageMipChain::build(
-            &pixels,
-            8192,
-            8192,
-            Conversion::None,
-            false,
-            u64::MAX,
-            Some(cancel),
-        )
-        .map(|_| ())
-    });
-}
-
-#[test]
-fn cancellation_during_geometry_bake_stops_early_without_maps() {
-    use yolu_core::{
-        geometry::*,
-        glam::{Vec2, Vec3},
-    };
-    // どれも UV の箱が全面で、覆う画素はごくわずか。覆われていない画素を三角形のたびに調べ直す
-    let triangles = (0..40)
-        .map(|i| {
-            let edge = 0.002 * (i + 1) as f32;
-            SurfaceTriangle::new(
-                Vec3::new(i as f32 * 0.01, 0., 0.),
-                Vec3::X,
-                Vec3::Y,
-                Vec2::ZERO,
-                Vec2::ONE,
-                Vec2::new(1., 1. - edge),
-            )
-        })
-        .collect();
-    let geometry = SurfaceGeometry::new(triangles, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-    assert_cancels_promptly(|cancel| {
-        ModelMaps::from_geometry(&geometry, 1024, 1024, 0, u64::MAX, u64::MAX, Some(cancel))
-            .map(|_| ())
-    });
 }
 
 // ---- 画像が無い・読めない・大きさが違う ----

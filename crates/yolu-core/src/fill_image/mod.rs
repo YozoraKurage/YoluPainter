@@ -1,5 +1,7 @@
 //! 塗りつぶし画像の評価。C# FillImageSampler の式・straight RGBA8 を保つ、文書に依存しない口。
 //! 入力は左下原点。ミップは元画像を借用し、出力は成功した領域だけを返す。
+#[cfg(test)]
+mod cancellation_tests;
 mod maps;
 mod mip;
 mod projection;
@@ -33,6 +35,8 @@ impl std::fmt::Display for FillError {
 }
 impl std::error::Error for FillError {}
 pub(crate) fn canceled(cancel: Option<&AtomicBool>) -> Result<(), FillError> {
+    #[cfg(test)]
+    cancellation_tests::checkpoint(cancel);
     if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
         Err(FillError::Canceled)
     } else {

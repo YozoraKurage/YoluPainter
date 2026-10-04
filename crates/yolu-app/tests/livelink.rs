@@ -2,6 +2,9 @@
 //! タイルだけを返す。細かい振る舞いは試験のスレッドが Unity の役（yolu-protocol）をする。通しの試験は、本物のブリッジ（yolu-bridge の
 //! C の口。Unity の C# が呼ぶもの）を別のプロセス（この試験の実行ファイルを子として起こす）で動かす。
 mod common;
+#[path = "../../yolu-protocol/tests/support/wait.rs"]
+mod wait;
+use wait::{ChildGuard, WATCHDOG};
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
@@ -27,15 +30,20 @@ fn unique_name(tag: &str) -> String {
     )
 }
 
-/// 1 フレームずつ進めて、条件が成り立つまで待つ。
+/// 通知をUIへ反映するためフレームを進める。期限は性能条件ではなく、通信のハング検出用。
 fn step_until(h: &mut Harness<'_, YoluApp>, what: &str, mut cond: impl FnMut(&YoluApp) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + WATCHDOG;
     loop {
         h.step();
         if cond(h.state()) {
             return;
         }
-        assert!(Instant::now() < deadline, "{what} を待ったが来ない");
+        assert!(
+            Instant::now() < deadline,
+            "{what} を待ったが来ない: 接続={:?}, メッセージ={}",
+            h.state().state.link.status,
+            h.state().state.message
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -152,7 +160,7 @@ impl FakeUnity {
         what: &str,
         mut done: impl FnMut(&[Message]) -> bool,
     ) -> Vec<Message> {
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + WATCHDOG;
         let mut got = Vec::new();
         let mut closed = None;
         loop {
@@ -168,7 +176,7 @@ impl FakeUnity {
                 return got;
             }
             assert!(
-                Instant::now() < deadline,
+                closed.is_none() && Instant::now() < deadline,
                 "{what} が来ない: {got:?}（切れた: {closed:?}）"
             );
             std::thread::sleep(Duration::from_millis(2));
@@ -182,11 +190,11 @@ fn read_image(path: &str, w: u32, h: u32) -> Vec<u8> {
     let mut image = vec![0u8; (w * h * 4) as usize];
     for y in 0..h.div_ceil(ts) {
         for x in 0..w.div_ceil(ts) {
-            let mut tries = 0;
-            while img.read_tile_into_image(x, y, &mut image).unwrap() == TileRead::Torn {
-                tries += 1;
-                assert!(tries < 1000);
-            }
+            // 通知の発行までフレームを進めた後は、次のフレームまで書き手は更新しない。
+            assert_eq!(
+                img.read_tile_into_image(x, y, &mut image).unwrap(),
+                TileRead::Complete
+            );
         }
     }
     image
@@ -493,10 +501,16 @@ fn child_unity() {
         stdin.read_line(&mut line).unwrap();
         assert_eq!(line.trim(), want);
     };
-    let poll = |what: &str, mut f: Box<dyn FnMut() -> bool + '_>| {
-        let deadline = Instant::now() + Duration::from_secs(20);
+    let poll = |h: u64, what: &str, mut f: Box<dyn FnMut() -> bool + '_>| {
+        let deadline = Instant::now() + WATCHDOG;
         while !f() {
-            assert!(Instant::now() < deadline, "{what}");
+            assert!(
+                Instant::now() < deadline && matches!(ylb_status(h), 0 | 1),
+                "{what}: 接続状態={}, 受信番号={}, セット数={}",
+                ylb_status(h),
+                ylb_serial(h),
+                ylb_set_count(h)
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     };
@@ -510,7 +524,7 @@ fn child_unity() {
             agent.len() as i32,
         );
         assert_ne!(h, 0);
-        poll("つながる", Box::new(|| ylb_status(h) == 1));
+        poll(h, "つながる", Box::new(|| ylb_status(h) == 1));
         say("connected".into());
         // モデル: Body（流し込み先あり・256）と Hair（流し込み先あり・512）
         let mname = "子のモデル";
@@ -557,7 +571,7 @@ fn child_unity() {
         assert_eq!(ylb_model_submesh(h, 0, 0, [0, 2, 1].as_ptr(), 3), 0);
         assert_eq!(ylb_model_submesh(h, 0, 1, [1, 2, 3].as_ptr(), 3), 0);
         assert_eq!(ylb_model_send(h), 1);
-        poll("2 つのセット", Box::new(|| ylb_set_count(h) == 2));
+        poll(h, "2 つのセット", Box::new(|| ylb_set_count(h) == 2));
         let mut infos = Vec::new();
         for i in 0..2 {
             let mut info = YlbSetInfo::default();
@@ -602,6 +616,7 @@ fn child_unity() {
         wait_line("painted");
         let hair = infos[1];
         poll(
+            h,
             "汚れたタイル",
             Box::new(|| ylb_channel_dirty(h, hair.set, 0) > 0),
         );
@@ -631,20 +646,14 @@ fn child_unity() {
 }
 
 /// 子のプロセスの Unity の役を起こす。返すのは子・子の標準入力・子の「UNITY: …」の行。
-fn spawn_child_unity(
-    name: &str,
-) -> (
-    std::process::Child,
-    std::process::ChildStdin,
-    mpsc::Receiver<String>,
-) {
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args(["child_unity", "--exact", "--nocapture", "--test-threads=1"])
-        .env("YLAPP_CHILD_UNITY", name)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+fn spawn_child_unity(name: &str) -> (ChildGuard, std::process::ChildStdin, mpsc::Receiver<String>) {
+    let mut child = ChildGuard::spawn(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["child_unity", "--exact", "--nocapture", "--test-threads=1"])
+            .env("YLAPP_CHILD_UNITY", name)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped()),
+    );
     let to_child = child.stdin.take().unwrap();
     let (tx, rx) = mpsc::channel::<String>();
     let out = child.stdout.take().unwrap();
@@ -660,26 +669,47 @@ fn spawn_child_unity(
     (child, to_child, rx)
 }
 
+fn next_child_line(
+    frames: &mut impl Frames,
+    rx: &mpsc::Receiver<String>,
+    child: &mut ChildGuard,
+    what: &str,
+) -> String {
+    let deadline = Instant::now() + WATCHDOG;
+    loop {
+        frames.next_frame();
+        match rx.try_recv() {
+            Ok(line) => return line,
+            Err(mpsc::TryRecvError::Disconnected) => panic!(
+                "{what}: 子の標準出力が閉じた、pid={}, 状態={:?}",
+                child.id(),
+                child.try_wait()
+            ),
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        // 子が終了していても、標準出力の読み手が最後の行を送るまで待つ。
+        let status = child.try_wait().expect("子の状態を調べる");
+        assert!(
+            Instant::now() < deadline,
+            "{what}: 子の通知が来ない、pid={}, 状態={status:?}",
+            child.id()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
     let mut h = app(1280.0, 800.0, 256);
     let name = listen(&mut h, "proc");
     let (mut child, mut to_child, rx) = spawn_child_unity(&name);
     // 子の行を待つあいだもフレームを進める（知らせを読み、タイルを出すのは画面のスレッド）
-    let next_line = |h: &mut Harness<'_, YoluApp>| -> String {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            h.step();
-            if let Ok(line) = rx.try_recv() {
-                return line;
-            }
-            assert!(Instant::now() < deadline, "子の Unity が黙った");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    };
-    assert_eq!(next_line(&mut h), "connected");
-    let body = next_line(&mut h);
-    let hair = next_line(&mut h);
+    assert_eq!(
+        next_child_line(&mut h, &rx, &mut child, "接続完了"),
+        "connected"
+    );
+    let body = next_child_line(&mut h, &rx, &mut child, "Bodyの初回セット");
+    let hair = next_child_line(&mut h, &rx, &mut child, "Hairの初回セット");
     let s = &h.state().state;
     assert_eq!(s.sets.len(), 2);
     assert_eq!(s.model.as_ref().unwrap().name, "子のモデル");
@@ -703,7 +733,7 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
     let expected = composite_pixel(&h.state().state.doc, 256, 256);
     assert_eq!(expected[3], 255);
     writeln!(to_child, "painted").unwrap();
-    let line = next_line(&mut h);
+    let line = next_child_line(&mut h, &rx, &mut child, "Hairの描画タイル");
     let (tiles, center) = line
         .strip_prefix("hair tiles ")
         .and_then(|r| r.split_once(" center "))
@@ -717,17 +747,20 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
             expected[0], expected[1], expected[2], expected[3]
         )
     );
-    assert_eq!(next_line(&mut h), "posed");
+    assert_eq!(
+        next_child_line(&mut h, &rx, &mut child, "ポーズ送信完了"),
+        "posed"
+    );
     step_until(&mut h, "ポーズ", |a| {
         a.state.view3d.model.as_ref().unwrap().meshes[0].positions[0]
             == yolu_core::glam::Vec3::new(0.0, 0.0, 1.0)
     });
     writeln!(to_child, "bye").unwrap();
-    assert_eq!(next_line(&mut h), "done");
+    assert_eq!(next_child_line(&mut h, &rx, &mut child, "切断完了"), "done");
     step_until(&mut h, "切れた", |a| {
         a.state.link.status == LinkStatus::Listening
     });
-    assert!(child.wait().unwrap().success());
+    assert!(child.finish().success());
 }
 
 /// 画面（wgpu）を使わずに、AppState と LiveLink を画面のフレームと同じ順（頼み → 受ける → 出す）で回す。GPU の無い所・Windows 向けに
@@ -769,13 +802,18 @@ impl Headless {
     }
 
     fn until(&mut self, what: &str, mut cond: impl FnMut(&yolu_app::state::AppState) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + WATCHDOG;
         loop {
             self.frame();
             if cond(&self.state) {
                 return;
             }
-            assert!(Instant::now() < deadline, "{what} を待ったが来ない");
+            assert!(
+                Instant::now() < deadline,
+                "{what} を待ったが来ない: 接続={:?}, メッセージ={}",
+                self.state.link.status,
+                self.state.message
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -799,20 +837,12 @@ impl Headless {
 fn headless_the_unity_bridge_in_another_process_sees_the_painted_tiles() {
     let (mut a, name) = Headless::listen(256, "hproc");
     let (mut child, mut to_child, rx) = spawn_child_unity(&name);
-    let next_line = |a: &mut Headless| -> String {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            a.frame();
-            if let Ok(line) = rx.try_recv() {
-                return line;
-            }
-            assert!(Instant::now() < deadline, "子の Unity が黙った");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    };
-    assert_eq!(next_line(&mut a), "connected");
-    let body = next_line(&mut a);
-    let hair = next_line(&mut a);
+    assert_eq!(
+        next_child_line(&mut a, &rx, &mut child, "接続完了"),
+        "connected"
+    );
+    let body = next_child_line(&mut a, &rx, &mut child, "Bodyの初回セット");
+    let hair = next_child_line(&mut a, &rx, &mut child, "Hairの初回セット");
     let (body_uid, hair_uid) = (
         a.state.sets.get(0).unwrap().uid,
         a.state.sets.get(1).unwrap().uid,
@@ -831,7 +861,7 @@ fn headless_the_unity_bridge_in_another_process_sees_the_painted_tiles() {
     assert_eq!(expected[3], 255);
     a.frame();
     writeln!(to_child, "painted").unwrap();
-    let line = next_line(&mut a);
+    let line = next_child_line(&mut a, &rx, &mut child, "Hairの描画タイル");
     let (tiles, center) = line
         .strip_prefix("hair tiles ")
         .and_then(|r| r.split_once(" center "))
@@ -844,15 +874,18 @@ fn headless_the_unity_bridge_in_another_process_sees_the_painted_tiles() {
             expected[0], expected[1], expected[2], expected[3]
         )
     );
-    assert_eq!(next_line(&mut a), "posed");
+    assert_eq!(
+        next_child_line(&mut a, &rx, &mut child, "ポーズ送信完了"),
+        "posed"
+    );
     a.until("ポーズ", |s| {
         s.view3d.model.as_ref().unwrap().meshes[0].positions[0]
             == yolu_core::glam::Vec3::new(0.0, 0.0, 1.0)
     });
     writeln!(to_child, "bye").unwrap();
-    assert_eq!(next_line(&mut a), "done");
+    assert_eq!(next_child_line(&mut a, &rx, &mut child, "切断完了"), "done");
     a.until("切れた", |s| s.link.status == LinkStatus::Listening);
-    assert!(child.wait().unwrap().success());
+    assert!(child.finish().success());
     // やめると待ち受けも消える
     a.state.apply(Action::ToggleLiveLink);
     a.frame();

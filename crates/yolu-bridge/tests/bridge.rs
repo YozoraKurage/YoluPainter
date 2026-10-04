@@ -14,10 +14,21 @@ fn unique_name(tag: &str) -> String {
     )
 }
 
-fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+fn wait_for(h: u64, what: &str, mut f: impl FnMut() -> bool) {
+    // 本物のソケットとバックグラウンド受信には外部のスケジューリングがある。上限はハング検出用。
+    let deadline = Instant::now() + Duration::from_secs(120);
     while !f() {
-        assert!(Instant::now() < deadline, "{what} を待ったが来ない");
+        let status = ylb_status(h);
+        if !matches!(status, 0 | 1) && f() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline && matches!(status, 0 | 1),
+            "{what} を待ったが来ない: 接続状態={status}, 受信番号={}, セット数={}, 知らせ={:?}",
+            ylb_serial(h),
+            ylb_set_count(h),
+            events(h)
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -142,9 +153,18 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 512, 128) };
     assert_ne!(server, 0);
     let h = connect(&name);
-    wait_for("つながり", || ylb_status(h) == 1);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    let before_model = ylb_serial(h);
     let generation = send_quad_model(h);
-    wait_for("2 つのテクスチャセット", || sets(h).len() == 2);
+    wait_for(h, "2 つのテクスチャセット", || sets(h).len() == 2);
+    // TextureSet だけでも全タイルが dirty になる。各セットの初回 TilesChanged も
+    // 受信してからコピーしないと、遅れて来た初回通知が1タイルの更新に混ざる。
+    wait_for(
+        h,
+        "2セットの追加と初回タイル通知（計4件）",
+        || ylb_serial(h) >= before_model + 4,
+    );
+    assert_eq!(ylb_serial(h), before_model + 4, "余分なエラー通知がない");
     let all = sets(h);
     let mut images = Vec::new();
     for (i, s) in all.iter().enumerate() {
@@ -154,7 +174,7 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
         );
         assert_eq!(s.channel_mask, 1, "Color だけ");
         // 知らせた時の中身は全部が汚れている
-        wait_for("汚れたタイル", || {
+        wait_for(h, "汚れたタイル", || {
             ylb_channel_dirty(h, s.set, 0) == 16
         });
         let mut image = vec![0u8; 512 * 512 * 4];
@@ -196,7 +216,7 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
         ylb_test_server_paint(server, 1, 0, 2, 3, 3, 4, 0xff00_ff00),
         1
     );
-    wait_for("1 タイルの知らせ", || {
+    wait_for(h, "1 タイルの知らせ", || {
         ylb_channel_dirty(h, all[1].set, 0) == 1
     });
     let mut strip = vec![0u8; 4 * 128 * 128 * 4];
@@ -246,7 +266,7 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
         0
     );
     assert_eq!(ylb_pose_send(h), 1);
-    wait_for("ポーズ", || {
+    wait_for(h, "ポーズ", || {
         let mut st = YlbTestServerStats::default();
         unsafe { ylb_test_server_stats(server, &mut st) };
         st.poses == 1
@@ -268,7 +288,7 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
 
     // モデルを閉じるとセットが消える
     assert_eq!(ylb_model_close(h), 0);
-    wait_for("セットが消える", || sets(h).is_empty());
+    wait_for(h, "セットが消える", || sets(h).is_empty());
 
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_status(h), YLB_E_HANDLE);
@@ -277,15 +297,10 @@ fn a_model_comes_back_as_patterned_texture_sets_and_single_tiles_update() {
 }
 
 #[test]
-fn a_missing_standalone_fails_without_blocking() {
+fn a_missing_standalone_reports_failure() {
     let name = unique_name("none");
-    let started = Instant::now();
     let h = connect(&name);
-    assert!(
-        started.elapsed() < Duration::from_millis(500),
-        "ylb_connect は待たない"
-    );
-    wait_for("失敗", || ylb_status(h) == 3);
+    wait_for(h, "失敗", || ylb_status(h) == 3);
     let ev = events(h);
     assert!(ev.iter().any(|e| e.0 == 3), "{ev:?}");
     // つながっていないので送れない
@@ -309,4 +324,23 @@ fn bad_names_and_unknown_handles_are_refused() {
     assert_eq!(ylb_status(987654321), YLB_E_HANDLE);
     assert_eq!(ylb_set_count(987654321), YLB_E_HANDLE);
     assert_eq!(ylb_pose_begin(987654321), YLB_E_HANDLE);
+}
+
+#[test]
+fn connect_returns_before_the_peer_sends_its_welcome() {
+    use interprocess::local_socket::traits::Listener as _;
+    use yolu_protocol::link;
+    let name = unique_name("pending");
+    let listener = link::listen(&name).unwrap();
+    // 返るまでは accept も Welcome も実行しない。同期の挨拶待ちなら
+    // 挨拶の時間切れで失敗し、Connecting のまま返るという条件を満たせない。
+    let h = connect(&name);
+    assert_eq!(ylb_status(h), 0, "相手の挨拶より先に返る");
+    let stream = listener.accept().unwrap();
+    let (conn, _reader, _) = link::accept(stream, "試験", 1).unwrap();
+    wait_for(h, "保留していた挨拶の完了", || {
+        ylb_status(h) == 1
+    });
+    assert_eq!(ylb_disconnect(h), 0);
+    drop(conn);
 }

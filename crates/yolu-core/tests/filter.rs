@@ -367,14 +367,14 @@ fn cancel_in_generator_sampling_stops_at_the_row_and_late_cancel_is_still_cancel
         );
     }
 }
-/// 同時に pixel を読んでいるスレッドの最大数を数える。別のスレッドが入るまで、行頭で最大 200 回・1ms ずつ待つ。
+/// 同時に pixel を読む数を数える。並列性を要求する場合だけ最初の2ワーカーを待ち合わせる。
 struct Probe {
     data: Vec<u8>,
     width: u32,
     height: u32,
     active: AtomicUsize,
     peak: AtomicUsize,
-    waits: AtomicUsize,
+    rendezvous: Option<(std::sync::Mutex<usize>, std::sync::Condvar)>,
 }
 impl Probe {
     fn new(width: u32, height: u32) -> Self {
@@ -384,7 +384,7 @@ impl Probe {
             height,
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
-            waits: AtomicUsize::new(0),
+            rendezvous: None,
         }
     }
     fn peak(&self) -> usize {
@@ -398,11 +398,20 @@ impl Source for Probe {
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
-        if x == 0
-            && self.peak.load(Ordering::SeqCst) < 2
-            && self.waits.fetch_add(1, Ordering::SeqCst) < 200
-        {
-            std::thread::sleep(Duration::from_millis(1));
+        if let Some((arrived, ready)) = &self.rendezvous {
+            let mut count = arrived.lock().unwrap();
+            if *count < 2 {
+                *count += 1;
+                ready.notify_all();
+                // 実行速度ではなく2ワーカーの同時到達を検証する。上限は直列化の退行で固まるのを防ぐだけ。
+                let (count, timeout) = ready
+                    .wait_timeout_while(count, Duration::from_secs(120), |n| *n < 2)
+                    .unwrap();
+                assert!(
+                    !timeout.timed_out() || *count >= 2,
+                    "2つ目のワーカーが入力に到達しない"
+                );
+            }
         }
         self.active.fetch_sub(1, Ordering::SeqCst);
         let i = (y as usize * self.width as usize + x as usize) * 4;
@@ -443,7 +452,10 @@ fn budget_sets_the_number_of_simultaneous_blocks_and_never_changes_bytes() {
         (OUTPUT + 3 * WORKING, 3),
         (256 * 1024 * 1024, 4),
     ] {
-        let probe = Probe::new(67, 71);
+        let mut probe = Probe::new(67, 71);
+        if limit == 4 {
+            probe.rendezvous = Some((std::sync::Mutex::new(0), std::sync::Condvar::new()));
+        }
         let options = Options {
             block_size: 16,
             working_budget: budget,
@@ -483,7 +495,10 @@ fn statistics_scan_runs_blocks_in_parallel_within_the_budget() {
     assert_eq!(block_working_bytes(&stack, 16, 67, 71), Ok(1024));
     let mut results = Vec::new();
     for (budget, limit) in [(1024, 1), (2 * 1024, 2), (256 * 1024 * 1024, 4)] {
-        let probe = Probe::new(67, 71);
+        let mut probe = Probe::new(67, 71);
+        if limit == 4 {
+            probe.rendezvous = Some((std::sync::Mutex::new(0), std::sync::Condvar::new()));
+        }
         let options = Options {
             block_size: 16,
             working_budget: budget,

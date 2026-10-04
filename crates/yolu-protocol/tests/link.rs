@@ -3,7 +3,9 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+#[path = "support/wait.rs"]
+mod wait;
+use wait::{ChildGuard, MessageReader};
 
 use yolu_protocol::host::PublishedSet;
 use yolu_protocol::link::{self, accept, connect_and_greet, wrong_direction};
@@ -53,30 +55,9 @@ fn model(materials: usize) -> Model {
     }
 }
 
-/// 時間切れ付きで次の命令を待つ（Idle は読み直す）。
-fn next_message(reader: &mut ConnectionReader, conn: &Connection) -> Received {
-    reader.set_timeout(Some(Duration::from_millis(200)));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match reader.next(conn).expect("読めるはず") {
-            Received::Idle if Instant::now() < deadline => continue,
-            other => return other,
-        }
-    }
-}
-
-fn connect_retrying(name: &str) -> (Connection, ConnectionReader, Welcome) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        match connect_and_greet(name, "試験のブリッジ") {
-            Ok(x) => return x,
-            Err(e) if Instant::now() < deadline => {
-                let _ = e;
-                thread::sleep(Duration::from_millis(20));
-            }
-            Err(e) => panic!("つなげない: {e}"),
-        }
-    }
+#[track_caller]
+fn next_message(reader: &mut MessageReader, _conn: &Connection) -> Received {
+    reader.next("次のプロトコル命令（呼び出し元の期待値）", None)
 }
 
 #[test]
@@ -86,7 +67,8 @@ fn messages_round_trip_and_unknown_commands_are_refused_without_dropping_the_lin
     let server = thread::spawn(move || {
         use interprocess::local_socket::traits::Listener as _;
         let stream = listener.accept().unwrap();
-        let (conn, mut reader, hello) = accept(stream, "試験のスタンドアロン", 42).unwrap();
+        let (conn, reader, hello) = accept(stream, "試験のスタンドアロン", 42).unwrap();
+        let mut reader = MessageReader::new(conn.clone(), reader);
         assert_eq!(hello.max_version, PROTOCOL_VERSION);
         // Model がそのまま届く
         let got = next_message(&mut reader, &conn);
@@ -112,7 +94,7 @@ fn messages_round_trip_and_unknown_commands_are_refused_without_dropping_the_lin
         );
     });
 
-    let (conn, mut reader, welcome) = connect_retrying(&name);
+    let (conn, mut reader, welcome) = wait::connect(&name, None);
     assert_eq!((welcome.version, welcome.session), (PROTOCOL_VERSION, 42));
     conn.send(&Message::Model(model(2))).unwrap();
     assert_eq!(
@@ -211,7 +193,8 @@ fn child_standalone() {
     println!("ready");
     use interprocess::local_socket::traits::Listener as _;
     let stream = listener.accept().unwrap();
-    let (conn, mut reader, _) = accept(stream, "子のスタンドアロン", 7).unwrap();
+    let (conn, reader, _) = accept(stream, "子のスタンドアロン", 7).unwrap();
+    let mut reader = MessageReader::new(conn.clone(), reader);
     let Received::Message(Message::Model(m)) = next_message(&mut reader, &conn) else {
         panic!("Model が来ない")
     };
@@ -251,35 +234,33 @@ fn child_standalone() {
         sets.push(set);
     }
     // Bye まで待ってから閉じる（共有メモリのファイルは sets を落とすと消える）
-    loop {
-        match next_message(&mut reader, &conn) {
-            Received::Message(Message::Bye) => break,
-            _ => continue,
-        }
+    match next_message(&mut reader, &conn) {
+        Received::Message(Message::Bye) => {}
+        other => panic!("Byeを待っていた: {other:?}"),
     }
 }
 
 #[test]
 fn tiles_written_by_another_process_arrive_through_shared_memory() {
     let name = unique_name("proc");
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "child_standalone",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env("YLP_LINK_CHILD", &name)
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let (conn, mut reader, welcome) = connect_retrying(&name);
+    let mut child = ChildGuard::spawn(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "child_standalone",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("YLP_LINK_CHILD", &name)
+            .stdout(std::process::Stdio::null()),
+    );
+    let (conn, mut reader, welcome) = wait::connect(&name, Some(&mut child));
     assert_eq!(welcome.session, 7);
     conn.send(&Message::Model(model(2))).unwrap();
     let mut got = Vec::new();
     let mut paths = Vec::new();
     while got.len() < 2 {
-        match next_message(&mut reader, &conn) {
+        match reader.next("別プロセスのセット・タイル通知", Some(&mut child)) {
             Received::Message(Message::TextureSet(s)) => {
                 assert_eq!((s.width, s.height, s.tile_size), (300, 200, 128));
                 let image =
@@ -304,7 +285,7 @@ fn tiles_written_by_another_process_arrive_through_shared_memory() {
     }
     // 知らせは TextureSet の直後に来る。残りの TilesChanged を受ける
     while got.iter().any(|g| g.2.len() < 6) {
-        match next_message(&mut reader, &conn) {
+        match reader.next("別プロセスのセット・タイル通知", Some(&mut child)) {
             Received::Message(Message::TilesChanged(t)) => got
                 .iter_mut()
                 .find(|g| g.0.set == t.set)
@@ -335,7 +316,7 @@ fn tiles_written_by_another_process_arrive_through_shared_memory() {
         }
     }
     conn.send(&Message::Bye).unwrap();
-    let status = child.wait().unwrap();
+    let status = child.finish();
     assert!(status.success());
     // 書き手が閉じた後に読み手を落とすと、ファイルは残らない（Windows では写像している間は名前が残り得る）
     assert!(got.iter().all(|g| g.1.writer_closed()));

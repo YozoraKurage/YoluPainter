@@ -1,9 +1,10 @@
 //! 試しのスタンドアロンを別のプロセスで起こし、モデルを送ると模様のテクスチャセットが共有メモリで届き、描き足した所だけが返ること。
 
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+#[path = "../../yolu-protocol/tests/support/wait.rs"]
+mod wait;
+use wait::ChildGuard;
 
-use yolu_protocol::link::connect_and_greet;
 use yolu_protocol::*;
 
 fn material(name: &str, color_route: bool) -> MaterialInfo {
@@ -32,19 +33,12 @@ fn material(name: &str, color_route: bool) -> MaterialInfo {
 #[test]
 fn the_demo_paints_each_material_and_returns_only_changed_tiles() {
     let name = format!("ylp-demo-test-{}", std::process::id());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_yolu-link-demo"))
-        .args(["--name", &name, "--animate", "--once"])
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let (conn, mut reader, _) = loop {
-        match connect_and_greet(&name, "試験") {
-            Ok(x) => break x,
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => panic!("{e}"),
-        }
-    };
+    let mut child = ChildGuard::spawn(
+        Command::new(env!("CARGO_BIN_EXE_yolu-link-demo"))
+            .args(["--name", &name, "--animate", "--once"])
+            .stdout(Stdio::null()),
+    );
+    let (conn, mut reader, _) = wait::connect(&name, Some(&mut child));
     conn.send(&Message::Model(Model {
         generation: 1,
         name: "試し".into(),
@@ -69,14 +63,11 @@ fn the_demo_paints_each_material_and_returns_only_changed_tiles() {
         }],
     }))
     .unwrap();
-    reader.set_timeout(Some(Duration::from_millis(200)));
     let mut set: Option<(TextureSet, SharedImageReader)> = None;
     let mut first_tiles = 0usize;
     let mut later: Vec<usize> = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(20);
     while later.len() < 3 {
-        assert!(Instant::now() < deadline, "描き足しが届かない");
-        match reader.next(&conn).unwrap() {
+        match reader.next("デモのセット・下地・3回の描き足し", Some(&mut child)) {
             Received::Message(Message::TextureSet(s)) => {
                 assert!(
                     set.is_none(),
@@ -101,15 +92,17 @@ fn the_demo_paints_each_material_and_returns_only_changed_tiles() {
     // 最初は下地で全部（2 × 2 タイル）、描き足しは一部だけ
     assert_eq!(first_tiles, 4);
     assert!(later.iter().all(|n| (1..4).contains(n)), "{later:?}");
+    conn.send(&Message::Bye).unwrap();
+    assert!(child.finish().success());
     let (_, img) = set.unwrap();
     let mut image = vec![0u8; 256 * 256 * 4];
     for y in 0..2 {
         for x in 0..2 {
-            let mut tries = 0;
-            while img.read_tile_into_image(x, y, &mut image).unwrap() == TileRead::Torn {
-                tries += 1;
-                assert!(tries < 1000);
-            }
+            assert_eq!(
+                img.read_tile_into_image(x, y, &mut image).unwrap(),
+                TileRead::Complete,
+                "書き手の終了後は競合しない"
+            );
         }
     }
     // 対角の太い線の真ん中はマテリアルの色、隅は下地（色を薄めたもの）。どれも不透明
@@ -121,7 +114,4 @@ fn the_demo_paints_each_material_and_returns_only_changed_tiles() {
     );
     assert_eq!(px(250, 5)[3], 255);
     assert!(px(250, 5)[0] > 230, "{:?}", px(250, 5));
-    conn.send(&Message::Bye).unwrap();
-    let status = child.wait().unwrap();
-    assert!(status.success());
 }
