@@ -41,11 +41,13 @@ pub enum Tool {
     IdSelect,
     /// 移動・変形（選んでいる層をハンドルで移動・拡大縮小・回転。形は `transform`）。
     Move,
+    /// パス（2D のキャンバスとモデルの面の上に引く、編集できる曲線。`pathtool`）。
+    Path,
 }
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 12] = [
+    pub const ALL: [Tool; 13] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
@@ -58,6 +60,7 @@ impl Tool {
         Tool::Wand,
         Tool::IdSelect,
         Tool::Move,
+        Tool::Path,
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
@@ -74,6 +77,7 @@ impl Tool {
             Tool::Polygon => "select-polygon",
             Tool::Wand => "magic-wand",
             Tool::Move => "move",
+            Tool::Path => "path",
         }
     }
     pub fn name(self) -> &'static str {
@@ -94,6 +98,7 @@ impl Tool {
             Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
             Tool::Wand => lang.pick("自動選択", "Magic Wand"),
             Tool::Move => lang.pick("移動・変形", "Move / Transform"),
+            Tool::Path => lang.pick("パス", "Path"),
         }
     }
     pub fn key(self) -> &'static str {
@@ -110,6 +115,7 @@ impl Tool {
             Tool::Polygon => "Shift+L",
             Tool::Wand => "W",
             Tool::Move => "V",
+            Tool::Path => "P",
         }
     }
     /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
@@ -437,6 +443,8 @@ pub enum Action {
     Brush(crate::brushes::BrushAction),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
+    /// パスの道具（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
+    Path(crate::pathtool::PathAction),
     /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     Quit,
@@ -510,6 +518,9 @@ impl Action {
     /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。クリップボードの操作は、コピーも読むだけのセットでは
     /// 断る（そのセットの文書は中身の代わりの空の文書で、写しても意味が無い）。
     pub fn edits_document(&self) -> bool {
+        if let Action::Path(a) = self {
+            return a.edits_document();
+        }
         matches!(
             self,
             Action::M2(_)
@@ -619,6 +630,8 @@ pub struct AppState {
     pub transform: crate::transform::TransformState,
     /// スポイトの設定（層だけか全体か）。
     pub eyedrop: crate::eyedrop::EyedropState,
+    /// パスの道具（選んだ点・点のドラッグ・スライダーの途中の値。パスそのものは文書が持つ）。
+    pub path: crate::pathtool::PathState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
@@ -771,6 +784,7 @@ impl AppState {
             layer_ops: Default::default(),
             transform: Default::default(),
             eyedrop: Default::default(),
+            path: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -784,6 +798,7 @@ impl AppState {
         self.canvas.stroke.is_some()
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
+            || self.path.drag.is_some()
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
@@ -870,6 +885,7 @@ impl AppState {
             Action::Stencil(op) => self.stencil_op(op),
             Action::Brush(action) => self.brush_action(action),
             Action::Sel(action) => self.sel_action(action),
+            Action::Path(a) => self.path_apply(a),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {
@@ -1051,6 +1067,7 @@ impl AppState {
                 if tool != self.tool {
                     self.sel_tool_changed();
                     self.transform_cancel_drag();
+                    self.path_tool_changed();
                 }
                 self.tool = tool;
             }

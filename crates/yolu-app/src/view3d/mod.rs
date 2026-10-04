@@ -66,6 +66,9 @@ pub struct View3dState {
     pending: Option<Arc<ViewModel>>,
     /// ストロークの最中にモデルを閉じると言われた（終わってから閉じる）。
     pending_close: bool,
+    /// 三角形・UV・スロットの並びが替わるモデルに入れ替えたときの、替わる前の形（アプリが 3D のパスの付け直しに使って取り出す。
+    /// ポーズだけの入れ替えでは残さない。続けて替わったら、最初の形のまま）。
+    replaced: Option<Arc<ViewModel>>,
     revision: u32,
     pub input: SurfaceInput,
     /// 表示の設定（マテリアル・中立・チャンネルだけ、光・環境・トーンマッピング）。
@@ -104,6 +107,11 @@ impl View3dState {
     }
 
     fn apply_model(&mut self, model: Arc<ViewModel>) {
+        if let Some(old) = &self.full {
+            if !same_structure(&old.geometry, &model.geometry) {
+                self.replaced.get_or_insert_with(|| old.clone());
+            }
+        }
         let keep_camera = self
             .full
             .as_ref()
@@ -247,8 +255,54 @@ impl View3dState {
         self.pending.as_ref().or(self.full.as_ref())
     }
 
+    /// 見せる形の三角形の番号を、受けたままの形の番号に直す（隠したマテリアルのサブメッシュを除いて組んだ形は、そのぶん番号がずれる。
+    /// 3D のパスの点の番号は、保存と Unity 版と同じ受けたままの形のもの）。範囲外なら None。
+    pub fn full_triangle(&self, shown: u32) -> Option<u32> {
+        let (full, model) = (self.full.as_ref()?, self.model.as_ref()?);
+        if Arc::ptr_eq(full, model) {
+            return ((shown as usize) < model.triangle_count()).then_some(shown);
+        }
+        let mut remaining = shown as usize;
+        let mut base = 0usize;
+        for mesh in &full.meshes {
+            for s in &mesh.submeshes {
+                let n = s.indices.len() / 3;
+                if !self.shown_hidden.contains(&s.material) {
+                    if remaining < n {
+                        return Some((base + remaining) as u32);
+                    }
+                    remaining -= n;
+                }
+                base += n;
+            }
+        }
+        None
+    }
+
+    /// このマテリアルの面を、今は見せる形から除いているか。
+    pub fn is_material_hidden(&self, material: i32) -> bool {
+        self.shown_hidden.contains(&material)
+    }
+
+    /// モデルの三角形・UV・スロットの並びが替わったときの、替わる前の形（取り出す。無ければ None）。
+    pub fn take_replaced(&mut self) -> Option<Arc<ViewModel>> {
+        self.replaced.take()
+    }
+
     /// 待っているモデルがあるか（試験用）。
     pub fn has_pending_model(&self) -> bool {
         self.pending.is_some()
     }
+}
+
+/// 三角形の並び・UV・レンダラーとスロットが同じか（位置・法線は見ない。3D のパスの指紋と同じ範囲を、ハッシュを作らずに比べる）。
+fn same_structure(a: &yolu_core::geometry::SurfaceGeometry, b: &yolu_core::geometry::SurfaceGeometry) -> bool {
+    a.triangle_count() == b.triangle_count()
+        && a.triangles().iter().zip(b.triangles()).all(|(x, y)| {
+            x.renderer == y.renderer
+                && x.material_slot == y.material_slot
+                && x.uv_a == y.uv_a
+                && x.uv_b == y.uv_b
+                && x.uv_c == y.uv_c
+        })
 }

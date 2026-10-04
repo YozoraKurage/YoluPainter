@@ -344,6 +344,10 @@ impl AppState {
         };
         self.view3d.material = material;
         self.view3d.set_hidden(hidden);
+        // モデルの三角形・UV が替わったなら、前のモデルに結び付いた 3D のパスを新しいモデルへ付け直す（描くマテリアルが決まったあと）
+        if let Some(old) = self.view3d.take_replaced() {
+            self.path_rebind_after_model(&old);
+        }
     }
 }
 

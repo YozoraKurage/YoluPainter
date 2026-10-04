@@ -47,6 +47,14 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     crate::bake::overlay::paint(&painter, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
     crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
+    // パスの道具: 選んでいる層の 2D のパスの線と点
+    let hover_for_path = ui.input(|i| i.pointer.hover_pos());
+    crate::pathtool::canvas::paint_overlay(
+        &painter,
+        &view,
+        app,
+        hover_for_path.filter(|p| rect.contains(*p) && response.contains_pointer()),
+    );
 
     // ブラシのカーソル（回している・回すキーを押している・パンしている・ステンシルを動かしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
@@ -80,6 +88,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         } else if app.tool == crate::state::Tool::Move {
             let icon = crate::transform::canvas::cursor(app, &view, hover);
             ui.ctx().set_cursor_icon(icon);
+        } else if app.tool.is_path() {
+            ui.ctx().set_cursor_icon(match hover {
+                Some(p) => crate::pathtool::canvas::cursor_icon(app, &view, p),
+                None => CursorIcon::Crosshair,
+            });
         } else if let Some(p) = hover {
             let radius = (app.brush.radius * view.pixel_size()).max(1.5);
             painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
@@ -453,6 +466,18 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             }
             continue;
         }
+        // パスの道具: 触れる・動く・離すを、押す・動く・離すにする（点を足す・掴む・動かす）
+        if app.tool.is_path() && !pen_stroke_running {
+            let usable = !blocked
+                && !app.canvas.rotate_key_held
+                && !app.canvas.space_held
+                && !app.stencil.handling()
+                && (app.path.pen_in(false) || on_top(ui, rect, p));
+            if usable || !s.contact {
+                crate::pathtool::canvas::pen_sample(app, &view, p, s.pointer_id, s.contact);
+            }
+            continue;
+        }
         match app.canvas.stroke {
             None if s.contact
                 && !blocked
@@ -560,6 +585,11 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                                     now,
                                 );
                             }
+                        } else if app.tool.is_path() {
+                            if !pen_frame && !app.stencil.handling() {
+                                let view = app.view.view(rect, w_px, h_px);
+                                crate::pathtool::canvas::press(app, &view, pos, StrokeSource::Mouse);
+                            }
                         } else if !pen_frame
                             && app.canvas.stroke.is_none()
                             && !app.stencil.handling()
@@ -598,6 +628,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                                 StrokeSource::Mouse,
                                 event_modifiers.shift,
                             );
+                        }
+                        if app.path.drag.is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface) {
+                            let view = app.view.view(rect, w_px, h_px);
+                            crate::pathtool::canvas::release(app, &view, pos, StrokeSource::Mouse);
                         }
                         if app.sel.drag.is_some() {
                             let view = app.view.view(rect, w_px, h_px);
@@ -647,6 +681,12 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                         StrokeSource::Mouse,
                         modifiers.shift,
                     );
+                }
+                if app.path.drag.is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface)
+                    && !pen_frame
+                {
+                    let view = app.view.view(rect, w_px, h_px);
+                    crate::pathtool::canvas::moved(app, &view, pos, StrokeSource::Mouse);
                 }
                 if app.canvas.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     let view = app.view.view(rect, w_px, h_px);
@@ -712,6 +752,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             } => {
                 if crate::transform::canvas::cancel(app) {
                     // 移動・変形のドラッグは何も変えずにやめた
+                } else if app.path_cancel(ctx.cumulative_pass_nr()) {
+                    // パスの点のドラッグを捨てた（ドラッグが無ければ選んだ点を外した）
                 } else if app.is_stroking() {
                     finish_stroke(app, true);
                 } else if let Some(drag) = app.canvas.rotating.take() {
@@ -747,6 +789,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる
                 finish_stroke(app, false);
+                app.path_finish_drag();
                 app.canvas.pen_once = None;
                 app.sel.cancel_drafts();
                 app.transform_cancel_drag(); // 離したのを受け取れないので、移動・変形は何も変えずにやめる
@@ -766,6 +809,15 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         finish_stroke(app, false);
+    }
+    // パスの点のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
+    if app.path.drag.is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface)
+        && !ui.input(|i| i.pointer.primary_down())
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        app.path_finish_drag();
     }
     // 選択の形のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
     if app

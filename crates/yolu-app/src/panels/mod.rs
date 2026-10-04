@@ -8,6 +8,7 @@ pub mod color;
 pub mod layer_props;
 pub mod layers;
 pub mod material;
+pub mod path_props;
 pub mod pose;
 pub mod properties;
 pub mod region_props;

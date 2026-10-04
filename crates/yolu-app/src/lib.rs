@@ -25,6 +25,7 @@ pub mod matpaint;
 pub mod model;
 pub mod newproject;
 pub mod panels;
+pub mod pathtool;
 pub mod pen;
 pub mod prefs;
 pub mod project;

@@ -28,6 +28,8 @@ pub enum Context {
     Selection,
     /// 移動・変形の道具（変形の数値・補間と、選んでいる層のロック。どの層を選んでいても）。
     Transform,
+    /// パスの道具（パスの状態・ブラシ・組。どの層を選んでいても）。
+    Path,
 }
 
 /// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
@@ -37,6 +39,9 @@ pub fn context(app: &AppState) -> Context {
     }
     if app.tool == crate::state::Tool::Move {
         return Context::Transform;
+    }
+    if app.tool.is_path() {
+        return Context::Path;
     }
     let kind = app
         .selected_layer
@@ -316,6 +321,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         Context::Tool => super::region_props::body(ui, app, &mut rows, &ctx),
         Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),
         Context::Transform => crate::transform::props::body(ui, app, &mut rows, &ctx),
+        Context::Path => super::path_props::body(ui, app, &mut rows),
         Context::Paint => match tab {
             0 => super::brush_props::alpha_tab(ui, app, &mut rows, &ctx),
             1 => super::brush_props::stencil_tab(ui, app, &mut rows),

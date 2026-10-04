@@ -28,6 +28,19 @@ pub const LIST_TOP: f32 = 6.0 + 24.0 + 6.0;
 pub const STACKED_LIST_TOP: f32 = LIST_TOP + 24.0 + 4.0;
 /// 1 段の字下げ。
 const INDENT: f32 = 14.0;
+/// 行の右端の印（描くチャンネルを使っていない層・パスの層）の幅。
+const MARK_WIDTH: f32 = 20.0;
+
+/// 右から `slot` 番目（0 が右端）の印の左端が、行の右端から内へどれだけか。
+fn mark_inset(slot: usize) -> f32 {
+    24.0 + MARK_WIDTH * slot as f32
+}
+
+/// 名前欄の右端が、行の右端から内へどれだけか（印が `marks` 個）。印が無いときと 1 つのときは同じ（1 つぶんの場所を空けておく）で、
+/// 2 つ並ぶときだけ 2 つ目のぶん狭める。
+fn name_right_inset(marks: usize) -> f32 {
+    26.0 + MARK_WIDTH * marks.saturating_sub(1) as f32
+}
 
 /// サムネイルの絵の出どころ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -780,6 +793,7 @@ fn layer_row(
     };
     let (name, visible, kind) = (layer.name().to_owned(), layer.visible(), layer.kind());
     let has_mask = layer.mask().is_some();
+    let has_path = layer.path().is_some();
     let channel = app.m2.paint_channel;
     let no_pixels = kind == LayerKind::Raster && !layer.is_channel_enabled(channel);
     let clipped = app
@@ -849,7 +863,7 @@ fn layer_row(
     let name_rect = Rect::from_min_max(
         pos2(x + 2.0, row.top() + 4.0),
         pos2(
-            row.right() - 26.0 - if locked { 20.0 } else { 0.0 },
+            row.right() - name_right_inset(usize::from(locked) + usize::from(has_path) + usize::from(no_pixels)),
             row.bottom() - 4.0,
         ),
     );
@@ -1053,8 +1067,8 @@ fn layer_row(
     }
     if no_pixels {
         let mark = Rect::from_min_size(
-            pos2(row.right() - 24.0 - if locked { 20.0 } else { 0.0 }, row.top()),
-            vec2(20.0, row.height()),
+            pos2(row.right() - mark_inset(usize::from(locked)), row.top()),
+            vec2(MARK_WIDTH, row.height()),
         );
         w::icon(&painter, mark, "link_off", t::TEXT_DISABLED, 13.0);
         ui.interact(
@@ -1067,6 +1081,21 @@ fn layer_row(
             "This layer does not use the paint channel",
         ));
     }
+    // 右端の印: パスで描かれた層（手では描けない。ラスタライズで普通の層になる）
+    if has_path {
+        let at = row.right() - mark_inset(usize::from(locked) + usize::from(no_pixels));
+        let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));
+        w::icon(&painter, mark, "conversion_path", t::TEXT_DIM, 13.0);
+        ui.interact(
+            mark,
+            ui.make_persistent_id(("layer.path", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(lang.pick(
+            "パスで描かれたレイヤー（手では描けません。ラスタライズで普通のレイヤーになります）",
+            "Drawn by a path (it cannot be painted by hand; Rasterize makes it a normal layer)",
+        ));
+    }
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, enabled, selected, &name)
     });
@@ -1075,6 +1104,17 @@ fn layer_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_name_field_stops_next_to_the_marks_that_are_drawn() {
+        for marks in 1..=2 {
+            // いちばん左の印の左端のすぐ外（2 点の隙間）まで名前を出す。それ以上は空けない
+            let leftmost = mark_inset(marks - 1);
+            assert_eq!(name_right_inset(marks), leftmost + 2.0, "{marks} 個");
+        }
+        // 印が無いときは、1 つぶんの場所のまま（行の右端の余白）
+        assert_eq!(name_right_inset(0), name_right_inset(1));
+    }
 
     #[test]
     fn thumbnails_follow_the_channel_and_forget_dead_layers() {

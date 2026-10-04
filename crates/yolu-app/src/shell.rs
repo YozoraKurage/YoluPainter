@@ -11,6 +11,7 @@ use crate::lang::Lang;
 use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
 use crate::livelink::LinkIndicator;
 use crate::m2::{Edit, UiOp};
+use crate::pathtool::PathAction;
 use crate::psd::{PsdAction, PsdTarget};
 use crate::selection::{SelAction, SelEdit};
 use crate::shelf::ShelfOp;
@@ -187,6 +188,9 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .shortcut("I")
                 .radio(app.tool == Tool::Eyedropper),
+                Entry::item(Tool::Path.name_in(l), Action::SelectTool(Tool::Path))
+                    .shortcut("P")
+                    .radio(app.tool == Tool::Path),
                 Entry::Separator,
                 Entry::item(
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -505,6 +509,15 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
         .shortcut("Ctrl+Shift+E")
         .enabled(free),
     );
+    if layer.is_some_and(|l| l.path().is_some()) {
+        v.push(
+            Entry::item(
+                lang.pick("パスをラスタライズ", "Rasterize Path"),
+                Action::Path(PathAction::Rasterize(id)),
+            )
+            .enabled(free),
+        );
+    }
     // アセットの棚へ（層のまとまり・マスク）
     v.push(
         Entry::item(
@@ -753,6 +766,12 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::NONE, Key::G, Action::SelectTool(Tool::Fill));
         key(Modifiers::NONE, Key::Num4, Action::SelectTool(Tool::PolygonFill));
         key(Modifiers::NONE, Key::I, Action::SelectTool(Tool::Eyedropper));
+        key(Modifiers::NONE, Key::P, Action::SelectTool(Tool::Path));
+        // パスの道具: 選んでいる点（無ければ最後の点）を消す
+        if app.tool == Tool::Path {
+            key(Modifiers::NONE, Key::Delete, Action::Path(PathAction::DeleteSelected));
+            key(Modifiers::NONE, Key::Backspace, Action::Path(PathAction::DeleteSelected));
+        }
         key(Modifiers::NONE, Key::X, Action::SwapColors);
         key(Modifiers::NONE, Key::D, Action::DefaultColors);
         key(Modifiers::NONE, Key::OpenBracket, Action::BrushSmaller);
@@ -802,6 +821,11 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
     if app.tool == Tool::Eyedropper {
         crate::eyedrop::options(ui, app, r, x + 4.0);
+        return;
+    }
+    // パスの道具は、点の太さ・閉じる・点を消す・ラスタライズ
+    if app.tool.is_path() {
+        crate::panels::path_props::options(ui, app, r, x);
         return;
     }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定
@@ -926,7 +950,7 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
         if tool == Tool::SelectRect || tool == Tool::Move {
-            // 描く道具と選ぶ道具・選ぶ道具と動かす道具の区切り
+            // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り
             w::strip_separator(
                 &p,
                 Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 9.0)),

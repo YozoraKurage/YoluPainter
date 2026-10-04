@@ -86,6 +86,11 @@ fn begin(
         crate::eyedrop::pick_surface(app, rect, at);
         return;
     }
+    // パスの道具は、押した面の点（掴む・差し込む・足す）。ストロークは持たず、点のドラッグだけが続く
+    if app.tool.is_path() {
+        crate::pathtool::surface::press(app, rect, at, source);
+        return;
+    }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
     if app.tool.is_region() {
         if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {
@@ -373,6 +378,17 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             }
             continue;
         }
+        // パスの道具: 触れる・動く・離すを、押す・動く・離すにする
+        if app.tool.is_path() && app.view3d.input.stroke.is_none() {
+            let usable = !press_blocked
+                && on_top(ui, rect, p)
+                && app.view3d.input.nav.is_none()
+                && !app.stencil.handling();
+            if usable || app.path.pen_in(true) || !s.contact {
+                crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, s.contact, usable);
+            }
+            continue;
+        }
         match app.view3d.input.stroke {
             None if s.contact
                 && !press_blocked
@@ -464,6 +480,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                         finish(app, false);
                     }
                     if *button == PointerButton::Primary {
+                        crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
                         if let Some(start) = app.view3d.input.clone_press.take() {
                             if start.distance(pos) <= CLICK_DISTANCE {
                                 set_clone_source(app, rect, start);
@@ -490,6 +507,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 }
                 if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     add(app, rect, pos, 1.0);
+                }
+                if !pen_frame {
+                    crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
                 }
                 if app.view3d.pose.drag.is_some() {
                     drag_at = Some(pos);
@@ -522,7 +542,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 pressed: true,
                 ..
             } => {
-                if app.view3d.input.stroke.is_some() {
+                // パスの点のドラッグを捨てる（無ければ選んだ点を外す）
+                let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
+                if app.view3d.input.stroke.is_some() && !path_esc {
                     finish(app, true);
                 }
                 // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）
@@ -533,6 +555,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
                 finish(app, false);
+                app.path_finish_drag();
                 app.view3d.input.pen_once = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
@@ -551,6 +574,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         finish(app, false);
+    }
+    if app.path.drag.is_some_and(|d| d.source == StrokeSource::Mouse && d.surface)
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        app.path_finish_drag();
     }
     if app.view3d.pose.drag.is_some()
         && !primary

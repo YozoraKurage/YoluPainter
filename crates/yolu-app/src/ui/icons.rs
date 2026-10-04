@@ -95,6 +95,9 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "lock_transparency",
     "arrow_move",
     "flip_vertical",
+    "tools/path",
+    "tools/path_selected",
+    "conversion_path",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];

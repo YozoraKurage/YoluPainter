@@ -204,6 +204,19 @@ impl View3dSlot {
                     CursorIcon::Default
                 });
             }
+        } else if app.tool.is_path() {
+            // パスの道具: 選んでいる層のパスの線と点を重ねる（ブラシの円は出さない）
+            let pointer = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            crate::pathtool::surface::paint_overlay(&ui.painter_at(content), app, content, pointer);
+            if let Some(p) = pointer {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else {
+                    crate::pathtool::surface::cursor_icon(app, content, p)
+                });
+            }
         } else if app.tool.is_region() {
             // 範囲の道具: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
             let pointer = ui
