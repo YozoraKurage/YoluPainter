@@ -125,7 +125,7 @@ impl<'a> Stack<'a> {
             && layer.has_content(self.channel, applies)
     }
 
-    fn make_entry(&self, i: usize) -> Option<Entry> {
+    pub(crate) fn make_entry(&self, i: usize) -> Option<Entry> {
         let l = &self.layers[i];
         if l.is_group() {
             if !l.visible || l.opacity_in(self.channel) <= 0.0 {
@@ -153,7 +153,7 @@ impl<'a> Stack<'a> {
     }
 
     /// 1 つの段（親の子）の計画（C# の PlanLevel）。
-    fn plan_level(&self, parent: Option<LayerId>) -> Vec<Entry> {
+    pub(crate) fn plan_level(&self, parent: Option<LayerId>) -> Vec<Entry> {
         let siblings = self.siblings(parent);
         let mut plan = Vec::new();
         for (k, &i) in siblings.iter().enumerate() {
@@ -971,10 +971,21 @@ pub(crate) fn composite_into(
     out: &mut [u8],
     order: RowOrder,
 ) {
+    composite_entries_into(stack, stack.plan(), tile_size, rect, out, order)
+}
+
+/// `composite_into` の、計画（段の並び）を渡す形。グループの中身だけを透明から重ねるとき（グループの出力）に、そのグループの子の計画を渡す。
+pub(crate) fn composite_entries_into(
+    stack: &Stack<'_>,
+    entries: Vec<Entry>,
+    tile_size: u32,
+    rect: Rect,
+    out: &mut [u8],
+    order: RowOrder,
+) {
     if rect.is_empty() {
         return;
     }
-    let entries = stack.plan();
     if entries.is_empty() {
         out.fill(0);
         return;

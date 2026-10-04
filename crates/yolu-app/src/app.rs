@@ -571,12 +571,7 @@ impl YoluApp {
             }
             Some(DialogRequest::PsdExport) => {
                 let lang = self.state.lang;
-                let stem = crate::export::stem(&self.state);
-                let name = if self.state.sets.len() > 1 {
-                    format!("{stem}_{}.psd", self.state.sets.current().name)
-                } else {
-                    format!("{stem}.psd")
-                };
+                let name = crate::psd::default_export_name(&self.state);
                 let mut dialog = rfd::FileDialog::new()
                     .set_title(lang.pick("PSD に書き出す", "Export PSD"))
                     .add_filter("PSD", &["psd"])

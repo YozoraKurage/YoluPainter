@@ -505,8 +505,9 @@ fn imported_locks_are_in_core_without_history_and_the_project_stores_them() {
 }
 
 #[test]
-fn the_colour_blend_of_a_layer_is_written_and_a_different_other_channel_is_refused() {
-    // Color の合成が層の値と違うとき、Color のほうを書く（C# が書き出すチャンネルの値で書くのと同じ）
+fn the_colour_blend_of_a_layer_is_written_whatever_the_other_channels_say() {
+    // Color の合成が層の値と違うとき、Color のほうを書く（C# が書き出すチャンネルの値で書くのと同じ）。ほかのチャンネルの設定は、その
+    // チャンネルの PSD の値になるので、Color の PSD には関わらず、断らない
     let mut d = new_doc();
     raster(&mut d, "bg", gradient);
     let a = raster(&mut d, "a", soft);
@@ -523,14 +524,15 @@ fn the_colour_blend_of_a_layer_is_written_and_a_different_other_channel_is_refus
         (projected.layers[0].blend_mode, projected.layers[0].opacity),
         (BlendMode::Multiply, 100)
     );
-    // 層の値と Color が同じ値のほかのチャンネルの設定は、効くものが変わらないので書ける
-    d.set_channel_blend(
-        a,
-        Channel::Roughness,
-        ChannelBlend::new(Some(CoreBlend::Multiply), Some(100.0 / 255.0)),
-        false,
-    )
-    .unwrap();
+    for (channel, blend) in [
+        (
+            Channel::Roughness,
+            ChannelBlend::new(Some(CoreBlend::Multiply), Some(100.0 / 255.0)),
+        ),
+        (Channel::Metallic, ChannelBlend::new(Some(CoreBlend::Screen), None)),
+    ] {
+        d.set_channel_blend(a, channel, blend, false).unwrap();
+    }
     let (back, _) = round_trip(&d);
     assert_eq!(back.layers()[1].blend_mode(), CoreBlend::Multiply);
     assert_eq!(
@@ -538,47 +540,15 @@ fn the_colour_blend_of_a_layer_is_written_and_a_different_other_channel_is_refus
         0,
         "読み込み直すと層の値になる"
     );
-    // Color と違うなら断る
-    d.set_channel_blend(
-        a,
-        Channel::Metallic,
-        ChannelBlend::new(Some(CoreBlend::Screen), None),
-        false,
-    )
-    .unwrap();
-    let why = refusal(&d);
-    assert!(
-        why.contains("「a」") && why.contains("Metallic") && why.contains("1 組"),
-        "{why}"
-    );
-    d.set_channel_blend(a, Channel::Metallic, ChannelBlend::default(), false)
-        .unwrap();
-    // グループ: 明示の設定のあるチャンネルが違えば断る
+    // グループも Color の値で書く。ほかのチャンネルの実効の値が違っても断らない
     let inner = raster(&mut d, "inner", soft);
     let g = d.group_layers(&[inner], "group").unwrap();
     d.set_channel_opacity(g, Channel::Emission, Some(64.0 / 255.0), false)
         .unwrap();
-    let why = refusal(&d);
-    assert!(
-        why.contains("「group」") && why.contains("Emission"),
-        "{why}"
-    );
-    // Color だけが層の値と違うグループも断る。ほかの標準のチャンネルの実効の値は層の値のままで、読み込み直すと Color の値になって
-    // 合成が変わる（Color と Emission が同じ値でも、間の Roughness などが違う）
+    assert_eq!(Psd::from_core(&d).unwrap().layers[0].opacity, 255);
     d.set_channel_opacity(g, Channel::Color, Some(64.0 / 255.0), false)
         .unwrap();
-    let why = refusal(&d);
-    assert!(
-        why.contains("「group」") && why.contains("Roughness"),
-        "{why}"
-    );
-    // 標準の 6 つが同じ値なら、どのチャンネルでも効く値は同じなので書ける（Color の値が層の値になって読み込み直す）
-    for channel in Channel::ALL {
-        d.set_channel_opacity(g, channel, Some(64.0 / 255.0), false)
-            .unwrap();
-    }
-    let projected = Psd::from_core(&d).unwrap();
-    assert_eq!(projected.layers[0].opacity, 64);
+    assert_eq!(Psd::from_core(&d).unwrap().layers[0].opacity, 64);
     let (back, _) = round_trip(&d);
     let group = back.layers().iter().find(|l| l.is_group()).unwrap();
     assert_eq!(group.opacity_in(Channel::Roughness), 64.0 / 255.0);
@@ -586,44 +556,29 @@ fn the_colour_blend_of_a_layer_is_written_and_a_different_other_channel_is_refus
 }
 
 #[test]
-fn an_adjustment_must_blend_the_same_in_every_channel_it_acts_on() {
+fn an_adjustments_colour_opacity_is_written_whatever_the_other_channels_it_acts_on_say() {
     let mut d = new_doc();
     raster(&mut d, "bg", gradient);
     let adj = adjust(&mut d, "adjust", AdjustmentSettings::invert());
     assert!(d.layer(adj).unwrap().enabled_channels().len() > 1);
-    // Color だけが層の値と違う調整: 効くほかのチャンネルの実効の値が違う
     d.set_channel_opacity(adj, Channel::Color, Some(150.0 / 255.0), false)
         .unwrap();
-    let why = refusal(&d);
-    assert!(
-        why.contains("「adjust」") && why.contains("Roughness"),
-        "{why}"
-    );
-    // 効くチャンネルを Color だけにすれば、ほかのチャンネルは効かないので書ける。読み込み直すと効く標準のチャンネル全部になる
-    // （調整の効くチャンネルは持ち越さない。C# の取り込みと同じ）
+    assert_eq!(Psd::from_core(&d).unwrap().layers[0].opacity, 150);
+    // 効くチャンネルを Color だけにしても同じ。読み込み直すと効く標準のチャンネル全部になる（調整の効くチャンネルは持ち越さない。
+    // C# の取り込みと同じ）
     for channel in d.layer(adj).unwrap().enabled_channels() {
         if channel != Channel::Color {
             d.set_channel_enabled(adj, channel, false).unwrap();
         }
     }
-    let projected = Psd::from_core(&d).unwrap();
-    assert_eq!(projected.layers[0].opacity, 150);
-    // 効くチャンネルが全部同じ値でも書ける
-    let mut e = new_doc();
-    raster(&mut e, "bg", gradient);
-    let adj = adjust(&mut e, "adjust", AdjustmentSettings::invert());
-    for channel in e.layer(adj).unwrap().enabled_channels() {
-        e.set_channel_opacity(adj, channel, Some(150.0 / 255.0), false)
-            .unwrap();
-    }
-    assert_eq!(Psd::from_core(&e).unwrap().layers[0].opacity, 150);
+    assert_eq!(Psd::from_core(&d).unwrap().layers[0].opacity, 150);
 }
 
 /// 断りの事例: 名前・文書の組み方・断りの文に入っているべき語。
 type RefusedCase<'a> = (&'a str, Box<dyn Fn(&mut Document)>, &'a [&'a str]);
 
 #[test]
-fn what_psd_has_no_form_for_is_refused_with_the_layer_name_and_nothing_is_flattened() {
+fn the_strict_export_refuses_what_psd_has_no_form_for_with_the_layer_name_and_nothing_is_flattened() {
     let cases: Vec<RefusedCase> = vec![
         (
             "inverted mask",
@@ -651,54 +606,6 @@ fn what_psd_has_no_form_for_is_refused_with_the_layer_name_and_nothing_is_flatte
                 fill(d, "glass", Rgba8::new(1, 2, 3, 128));
             }),
             &["「glass」", "半透明"],
-        ),
-        (
-            "fill without a colour value",
-            Box::new(|d| {
-                raster(d, "bg", gradient);
-                let f = fill(d, "emptied", Rgba8::new(1, 2, 3, 255));
-                d.set_fill_value(f, Channel::Color, None, false).unwrap();
-            }),
-            &["「emptied」", "Color の値"],
-        ),
-        (
-            "fill in another channel",
-            Box::new(|d| {
-                raster(d, "bg", gradient);
-                d.add_fill_layer(
-                    "rough",
-                    &[(Channel::Roughness, Rgba8::new(9, 9, 9, 255))],
-                    None,
-                )
-                .unwrap();
-            }),
-            &["「rough」", "Roughness"],
-        ),
-        (
-            "disabled colour on a raster",
-            Box::new(|d| {
-                let a = raster(d, "off", gradient);
-                d.set_channel_enabled(a, Channel::Color, false).unwrap();
-            }),
-            &["「off」", "Color が無効"],
-        ),
-        (
-            "adjustment disabled in colour",
-            Box::new(|d| {
-                raster(d, "bg", gradient);
-                let a = adjust(d, "not here", AdjustmentSettings::invert());
-                d.set_channel_enabled(a, Channel::Color, false).unwrap();
-            }),
-            &["「not here」", "Color で無効"],
-        ),
-        (
-            "raster with another channel",
-            Box::new(|d| {
-                let a = raster(d, "metal", gradient);
-                d.set_channel_pixel(a, Channel::Metallic, 1, 1, Rgba8::new(5, 5, 5, 255))
-                    .unwrap();
-            }),
-            &["「metal」", "Metallic"],
         ),
         (
             "levels between the steps",
@@ -1027,6 +934,7 @@ fn undo_of_a_core_edit_after_import_does_not_reach_the_import() {
 fn export_blockers_name_every_reason_for_every_layer_and_agree_with_from_core() {
     use yolu_io::psd::{export_blockers, Blocker, Refusal};
     let mut d = new_doc();
+    // Color を無効にした層・ほかのチャンネルだけが違う層は、Color の PSD では隠すか Color の値で書くので、断る理由にならない
     let off = raster(&mut d, "off", gradient);
     d.set_channel_enabled(off, Channel::Color, false).unwrap();
     let inv = raster(&mut d, "inverted", soft);
@@ -1050,9 +958,7 @@ fn export_blockers_name_every_reason_for_every_layer_and_agree_with_from_core() 
     assert_eq!(
         reasons,
         [
-            ("off", &Refusal::ColorDisabled),
             ("inverted", &Refusal::InvertedMask),
-            ("inverted", &Refusal::ChannelBlend("Height".into())),
             ("between", &Refusal::LevelsBetweenSteps),
             ("folder", &Refusal::ClippedGroup),
         ]

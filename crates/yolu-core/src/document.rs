@@ -21,6 +21,7 @@ pub(crate) mod locks;
 mod material;
 mod merge;
 mod operations;
+mod outputs;
 mod regions;
 mod resize;
 mod transform;

@@ -1,8 +1,10 @@
 //! PSD DTO 上の参照合成。画素の式のみ core と共有し、文書モデルには依存しない。
 use super::*;
+use crate::{Error, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
 use yolu_core::{
     blend::{blend, blend_rgb, clip_onto, fade},
-    Rgba8,
+    CoreError, Rgba8,
 };
 fn mode(m: BlendMode) -> yolu_core::BlendMode {
     yolu_core::BlendMode::from_index(m as u8).unwrap()
@@ -124,10 +126,12 @@ fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
     }
     below
 }
-pub(super) fn composite(d: &Document) -> Vec<u8> {
+/// 1 行ずつ重ねる。行の前に `before_row` を呼び、`Err` ならそこで止める（取消の確かめの間隔は画布の幅の画素。画素ごとの式は 1 つのスレッドで評価する）。
+fn composite_with(d: &Document, mut before_row: impl FnMut() -> Result<()>) -> Result<Vec<u8>> {
     let p = plan(&d.layers);
     let mut out = vec![0; d.width as usize * d.height as usize * 4];
     for y in 0..d.height {
+        before_row()?;
         for x in 0..d.width {
             let i = (y as usize * d.width as usize + x as usize) * 4;
             out[i..i + 4].copy_from_slice(
@@ -135,7 +139,20 @@ pub(super) fn composite(d: &Document) -> Vec<u8> {
             )
         }
     }
-    out
+    Ok(out)
+}
+/// 取消の旗を行ごとに見て重ねる（立っていたら `Cancelled`）。
+pub(super) fn composite_cancellable(d: &Document, cancel: Option<&AtomicBool>) -> Result<Vec<u8>> {
+    composite_with(d, || {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            Err(Error::Core(CoreError::Cancelled))
+        } else {
+            Ok(())
+        }
+    })
+}
+pub(super) fn composite(d: &Document) -> Vec<u8> {
+    composite_cancellable(d, None).expect("取消の旗が無ければ止まらない")
 }
 pub(super) fn matte(p: &mut [u8]) {
     for c in p.as_chunks_mut::<4>().0 {
@@ -265,4 +282,70 @@ fn adjust(
         byte(db + (b - db) * amount),
         c.a,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn solid(w: u32, h: u32) -> Document {
+        Document {
+            width: w,
+            height: h,
+            layers: vec![Layer {
+                id: 1,
+                name: "塗り".into(),
+                kind: LayerKind::SolidColor([10, 20, 30]),
+                ..Layer::default()
+            }],
+            composite_rgba: None,
+        }
+    }
+
+    /// 取消の確かめは 1 行ごと。止めた行より先は評価しない（大きな画布で、取消が効かない時間を作らない）。
+    #[test]
+    fn the_cancel_check_runs_before_every_row_and_stops_the_work() {
+        let d = solid(8, 20);
+        let mut rows = 0;
+        let full = composite_with(&d, || {
+            rows += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rows, 20);
+        assert_eq!(full, composite(&d));
+        assert_eq!(&full[..4], [10, 20, 30, 255]);
+
+        let mut rows = 0;
+        let flag = AtomicBool::new(false);
+        let err = composite_with(&d, || {
+            rows += 1;
+            if rows == 5 {
+                flag.store(true, Ordering::Relaxed);
+            }
+            if flag.load(Ordering::Relaxed) {
+                Err(Error::Core(CoreError::Cancelled))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert!(matches!(err, Error::Core(CoreError::Cancelled)), "{err}");
+        assert_eq!(rows, 5, "旗が立った行で止まる");
+    }
+
+    #[test]
+    fn a_raised_flag_stops_before_any_pixel_and_no_flag_never_stops() {
+        let d = solid(64, 64);
+        let flag = AtomicBool::new(true);
+        assert!(matches!(
+            composite_cancellable(&d, Some(&flag)),
+            Err(Error::Core(CoreError::Cancelled))
+        ));
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(
+            composite_cancellable(&d, Some(&flag)).unwrap(),
+            composite(&d)
+        );
+    }
 }

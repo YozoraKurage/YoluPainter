@@ -1,5 +1,6 @@
 //! Unity 版と同じ境界を持つ PSD v1 RGB8 と、PSB の原本保持。
 //! DTO の並びは上から下、画素も上の行から。原本の編集には必ず `write_edited` を使う。
+mod bake;
 mod binary;
 mod bridge;
 mod composite;
@@ -7,8 +8,12 @@ mod descriptor;
 mod read;
 mod write;
 use crate::{check, Result};
-pub use bridge::{export_blockers, Blocker, Refusal};
-pub use read::{read, read_stream};
+pub use bake::{
+    check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode, ExportNote, ExportOptions,
+    ExportPlan, Exported, FillSources, NoteAction, RoundedParameter, RoundedValue,
+};
+pub use bridge::{Blocker, Refusal};
+pub use read::{read, read_cancellable, read_stream};
 pub use write::{write, write_edited};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

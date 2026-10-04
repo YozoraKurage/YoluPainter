@@ -385,6 +385,30 @@ fn values_between_the_psd_steps_are_refused_one_reason_each_and_never_rounded() 
             ]),
         ),
     );
+    // 焼き込みの書き出しが展開できない値のカーブ（黒と白が 32 回入れ替わるランプ）も、厳密な書き出しは展開をしないので、収まる曲線と同じ理由で断る
+    // （展開の失敗を言う `GradientMapCurveStops` は焼き込みの書き出しだけ）
+    let alternating: Vec<ColorStop> = (0..32)
+        .map(|i| {
+            let v = if i % 2 == 0 { 0 } else { 255 };
+            ColorStop {
+                position: f64::from(i) / 31.0,
+                color: Rgba8::new(v, v, v, 255),
+                midpoint: 0.5,
+            }
+        })
+        .collect();
+    let unfit = gradient(
+        alternating,
+        flat(),
+        Some(vec![
+            CurvePoint { x: 0.0, y: 0.0 },
+            CurvePoint { x: 0.5, y: 0.6 },
+            CurvePoint { x: 1.0, y: 1.0 },
+        ]),
+    );
+    only(Refusal::GradientMapCurve, &unfit);
+    let message = Psd::from_core(&unfit).unwrap_err().to_string();
+    assert!(!message.contains("停止点の上限"), "{message}");
     // 最後の分岐点の中点は使われないので、刻みの間でも断らない
     let ok = gradient(vec![stop(0.0, 0.5), stop(1.0, 0.37)], flat(), None);
     assert!(blockers(&ok).is_empty());
@@ -437,14 +461,22 @@ fn values_between_the_psd_steps_are_refused_one_reason_each_and_never_rounded() 
 }
 
 #[test]
-fn a_new_adjustment_that_does_not_act_on_color_is_refused_like_the_others() {
+fn a_new_adjustment_that_does_not_act_on_color_is_written_hidden_like_the_others() {
     let mut d = new_doc();
     let s = AdjustmentSettings::tone_curve(ToneCurves::identity());
     let id = d
         .add_adjustment_layer("調整", s, Some(&[Channel::Roughness]), None)
         .unwrap();
     assert!(!d.layer(id).unwrap().is_channel_enabled(Channel::Color));
-    only(Refusal::AdjustmentColorDisabled, &d);
+    assert!(blockers(&d).is_empty());
+    let projected = Psd::from_core(&d).unwrap();
+    let layer = projected
+        .layers
+        .iter()
+        .find(|l| l.name == "調整")
+        .expect("層は残る");
+    assert!(!layer.visible, "Color に効かない調整は隠した層で書く");
+    assert!(matches!(layer.kind, LayerKind::Adjustment(_)));
 }
 
 /// 書いた PSD の指定のタグの本体の `at` 番目のバイトから `with` で書き換える。

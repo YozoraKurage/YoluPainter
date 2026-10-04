@@ -248,6 +248,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);
+    crate::psd_export::show_options(ctx, app);
+    crate::psd_export::show_confirm(ctx, app);
     psd_report(ctx, app);
     merge_confirm(ctx, app);
     crate::update::window::show(ctx, app);
@@ -259,6 +261,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 pub fn modal_open(app: &AppState) -> bool {
     app.export.confirm.is_some()
         || app.psd.confirm.is_some()
+        || app.psd.options_open
+        || app.psd.notes_confirm.is_some()
         || app.update.window_open()
         || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
         || app.np.window.is_some()
@@ -400,23 +404,37 @@ fn export_report(ctx: &egui::Context, app: &mut AppState) {
 }
 
 fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
-    let Some(path) = app.psd.confirm.clone() else {
+    let Some(replace) = app.psd.confirm.clone() else {
         return;
     };
     let lang = app.lang;
+    let summary = match replace.files.as_slice() {
+        [only] => only
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        many => lang.pick(
+            format!("{} 個のファイル", many.len()),
+            format!("{} files", many.len()),
+        ),
+    };
     let spec = ListSpec {
         id: "psd-confirm",
-        title: lang.pick("取り込んだ PSD を置き換える", "Replace the Imported PSD").into(),
+        title: if replace.imported {
+            lang.pick("取り込んだ PSD を置き換える", "Replace the Imported PSD")
+        } else {
+            lang.pick("置き換えるファイル", "Files to Replace")
+        }
+        .into(),
         icon: "warning",
         modal: true,
         width: 460.0,
-        summary: Some((
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            true,
-        )),
-        rows: vec![Row::text(path.display().to_string(), false)],
+        summary: Some((summary, true)),
+        rows: replace
+            .files
+            .iter()
+            .map(|p| Row::text(p.display().to_string(), false))
+            .collect(),
         buttons: vec![
             Button {
                 label: lang.pick("やめる", "Cancel").into(),
@@ -427,10 +445,17 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
                 label: lang.pick("置き換える", "Replace").into(),
                 primary: true,
                 tooltip: Some(
-                    lang.pick(
-                        "この文書を取り込んだ PSD です。書き出した PSD に置き換えます",
-                        "This document was imported from this PSD. It is replaced by the exported PSD",
-                    )
+                    if replace.imported {
+                        lang.pick(
+                            "この文書を取り込んだ PSD です。書き出した PSD に置き換えます",
+                            "This document was imported from this PSD. It is replaced by the exported PSD",
+                        )
+                    } else {
+                        lang.pick(
+                            "同じ名前のファイルを書き出した PSD に置き換えます",
+                            "Replaces the files with the same names with the exported PSDs",
+                        )
+                    }
                     .into(),
                 ),
             },

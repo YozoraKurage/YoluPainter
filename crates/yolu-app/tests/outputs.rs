@@ -168,7 +168,6 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
             "テンプレート: lilToon…",
             DialogRequest::ExportFolder("liltoon".into()),
         ),
-        ("PSD…", DialogRequest::PsdExport),
     ] {
         let at = menu_title(&h, "ファイル").center();
         click(&mut h, at);
@@ -177,6 +176,14 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         assert_eq!(h.state().state.dialog_request, Some(expect), "{label}");
         h.state_mut().state.dialog_request = None;
     }
+    // PSD の書き出しは、先に設定の窓（方式・チャンネル）を開き、ファイルはその窓の「書き出し…」で選ぶ
+    let at = menu_title(&h, "ファイル").center();
+    click(&mut h, at);
+    let at = popup_item(&h, "PSD…").center();
+    click(&mut h, at);
+    assert!(h.state().state.psd.options_open);
+    assert_eq!(h.state().state.dialog_request, None);
+    apply(&mut h, Action::Psd(PsdAction::CancelExportOptions));
     // 英語
     h.state_mut().state.lang = Lang::En;
     h.run();
@@ -186,10 +193,8 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     popup_item(&h, "Template: HDRP Lit…");
     let at = popup_item(&h, "PSD…").center();
     click(&mut h, at);
-    assert_eq!(
-        h.state().state.dialog_request,
-        Some(DialogRequest::PsdExport)
-    );
+    assert!(h.state().state.psd.options_open);
+    apply(&mut h, Action::Psd(PsdAction::CancelExportOptions));
     // 描いている間は選べない
     h.state_mut().state.dialog_request = None;
     let layer = h.state().state.selected_layer.unwrap();
@@ -875,26 +880,255 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     assert!(h.state().state.message.contains("Preserve only"));
 }
 
+/// 窓の中に描いた文字（描いた順）。
+fn window_texts(h: &Harness<'_, YoluApp>, window: &str) -> Vec<String> {
+    use egui::epaint::Shape;
+    fn walk(shape: &Shape, area: egui::Rect, out: &mut Vec<String>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, area, out)),
+            Shape::Text(text)
+                if area
+                    .expand(1.0)
+                    .contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())) =>
+            {
+                out.push(text.galley.job.text.clone())
+            }
+            _ => {}
+        }
+    }
+    let area = yolu_app::windows::window_rect(&h.ctx, window)
+        .unwrap_or_else(|| panic!("{window} を描いていない"));
+    let mut out = Vec::new();
+    for shape in &h.output().shapes {
+        walk(&shape.shape, area, &mut out);
+    }
+    out
+}
+
+/// 窓の中の、名前の部品の中心（同じ名前のドックの部品に取り違えない）。
+fn in_window(h: &Harness<'_, YoluApp>, window: &str, label: &str) -> egui::Pos2 {
+    let area = yolu_app::windows::window_rect(&h.ctx, window)
+        .unwrap_or_else(|| panic!("{window} を描いていない"));
+    rect_of(h, label, |r| area.contains_rect(r)).center()
+}
+
 #[test]
-fn exporting_a_psd_refuses_an_inverted_mask_with_the_reason_and_writes_nothing() {
-    let dir = TempDir::new("psd-refuse");
+fn exporting_a_psd_with_an_inverted_mask_lists_what_it_bakes_and_writes_only_after_the_yes() {
+    let dir = TempDir::new("psd-bake");
     let mut h = app(1280.0, 800.0, 64);
     let layer = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::AddMask(layer)));
-    // マスクそのものは PSD に書ける。書けないのは PSD に非破壊の反転が無い、反転したマスク
+    // マスクそのものは PSD に書ける。PSD に非破壊の反転が無い、反転したマスクは、反転した値の画素に焼く
     apply(
         &mut h,
         Action::M2(yolu_app::m2::Edit::MaskInverted(layer, true)),
     );
+    let before = h.state().state.doc.revision();
     apply(
         &mut h,
         Action::Psd(PsdAction::Export(dir.0.join("out.psd"))),
     );
-    assert!(!h.state().state.psd.is_busy());
-    assert!(dir.files().is_empty());
-    shot(&mut h, "psd-report", "psd_export_refused");
-    h.get_by_label("閉じる").click();
+    settle(&mut h);
+    assert!(dir.files().is_empty(), "確かめるまで何も書かない");
+    assert!(h.state().state.psd.notes_confirm.is_some());
+    let texts = window_texts(&h, "psd-bake");
+    assert!(texts.iter().any(|t| t == "反転したマスク"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "マスクの画素へ"), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("焼く 1")), "{texts:?}");
+    shot(&mut h, "psd-bake", "psd_export_check");
+    // やめる
+    h.get_by_label("やめる").click();
     h.run();
+    assert!(h.state().state.psd.notes_confirm.is_none());
+    assert!(dir.files().is_empty());
+    // もう一度、書く
+    apply(
+        &mut h,
+        Action::Psd(PsdAction::Export(dir.0.join("out.psd"))),
+    );
+    settle(&mut h);
+    h.get_by_label("書く").click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(dir.files(), ["out.psd"]);
+    assert!(h.state().state.message.contains("書き出しました"));
+    assert_eq!(h.state().state.doc.revision(), before, "文書は変わらない");
+    assert!(h
+        .state()
+        .state
+        .doc
+        .layer(layer)
+        .unwrap()
+        .mask()
+        .unwrap()
+        .inverted());
+    // 英語
+    h.state_mut().state.lang = Lang::En;
+    apply(
+        &mut h,
+        Action::Psd(PsdAction::Export(dir.0.join("again.psd"))),
+    );
+    settle(&mut h);
+    let texts = window_texts(&h, "psd-bake");
+    assert!(texts.iter().any(|t| t == "Inverted mask"), "{texts:?}");
+    assert!(texts.iter().any(|t| t == "To mask pixels"), "{texts:?}");
+    // 日本語が残ってよいのは、利用者の名前（層の名前）だけ
+    let layer_name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
+    assert!(
+        texts.iter().all(|t| !has_japanese(t) || *t == layer_name),
+        "{texts:?}"
+    );
+    shot(&mut h, "psd-bake", "psd_export_check_english");
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert_eq!(dir.files(), ["out.psd"]);
+}
+
+#[test]
+fn the_psd_check_window_lists_bakes_rounds_and_drops_per_channel() {
+    use yolu_core::{
+        AdjustmentSettings, AnchorPlacement, EffectSettings, FilterSpec, FilterTarget,
+    };
+    let dir = TempDir::new("psd-check");
+    let mut h = app(1280.0, 800.0, 64);
+    {
+        let s = &mut h.state_mut().state;
+        let base = s.selected_layer.unwrap();
+        paint_left_half(&mut s.doc, base, [200, 80, 40, 255]);
+        s.doc
+            .add_filter(
+                base,
+                FilterTarget::Content,
+                FilterSpec::new(EffectSettings::blur(3)).channels(&[Channel::Color]),
+            )
+            .unwrap();
+        s.doc
+            .add_anchor(base, AnchorPlacement::Layer, None, None)
+            .unwrap();
+        s.doc
+            .add_fill_layer(
+                "ガラス",
+                &[(Channel::Color, yolu_core::Rgba8::new(10, 90, 200, 120))],
+                None,
+            )
+            .unwrap();
+        s.doc
+            .add_adjustment_layer(
+                "明るさ",
+                AdjustmentSettings::levels(0.3, 1.0, 1.234, 0.0, 1.0).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
+        s.psd.export.channels = vec![Channel::Color, Channel::Roughness];
+    }
+    apply(
+        &mut h,
+        Action::Psd(PsdAction::Export(dir.0.join("out.psd"))),
+    );
+    settle(&mut h);
+    let texts = window_texts(&h, "psd-bake");
+    for want in [
+        "カラー",
+        "ラフネス",
+        "ガラス",
+        "半透明の塗りつぶし",
+        "明るさ",
+        "アンカー",
+        "落とす",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.starts_with("レベル補正: 入力の黒 76.5→76、ガンマ 1.234→1.23")),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|t| t.starts_with("最大差 ")), "{texts:?}");
+    shot(&mut h, "psd-bake", "psd_export_check_many");
+    h.get_by_label("書く").click();
+    h.run();
+    settle(&mut h);
+    assert_eq!(dir.files(), ["out_Color.psd", "out_Roughness.psd"]);
+}
+
+#[test]
+fn the_psd_export_window_chooses_the_mode_and_channels_and_asks_for_the_file() {
+    let mut h = app(1280.0, 800.0, 64);
+    apply(&mut h, Action::Psd(PsdAction::ExportDialog));
+    let texts = window_texts(&h, "psd-export");
+    for want in [
+        "PSD の書き出し",
+        "方式",
+        "焼き込んで書く",
+        "平らに 1 枚",
+        "チャンネル",
+        "カラー",
+        "ラフネス",
+        "ノーマル",
+        "やめる",
+        "書き出し…",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    shot(&mut h, "psd-export", "psd_export_options");
+    // 方式
+    let at = in_window(&h, "psd-export", "平らに 1 枚");
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.psd.export.mode,
+        yolu_io::psd::ExportMode::Flat
+    );
+    let at = in_window(&h, "psd-export", "焼き込んで書く");
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.psd.export.mode,
+        yolu_io::psd::ExportMode::Bake
+    );
+    // チャンネル: 足す・外す・最後の 1 つは外せない
+    let channels = |h: &Harness<'_, YoluApp>| h.state().state.psd.export.channels.clone();
+    assert_eq!(channels(&h), [Channel::Color]);
+    let at = in_window(&h, "psd-export", "ラフネス");
+    click(&mut h, at);
+    assert_eq!(channels(&h), [Channel::Color, Channel::Roughness]);
+    let at = in_window(&h, "psd-export", "カラー");
+    click(&mut h, at);
+    assert_eq!(channels(&h), [Channel::Roughness]);
+    let at = in_window(&h, "psd-export", "ラフネス");
+    click(&mut h, at);
+    assert_eq!(channels(&h), [Channel::Roughness], "最後の 1 つは外せない");
+    // 書き出し…: 窓を閉じて、書き出す先を選ぶ窓を頼む。初めのファイル名は 1 つのチャンネルなら末尾にチャンネル
+    let name = yolu_app::psd::default_export_name(&h.state().state);
+    assert!(name.ends_with("_Roughness.psd"), "{name}");
+    let at = in_window(&h, "psd-export", "書き出し…");
+    click(&mut h, at);
+    assert!(!h.state().state.psd.options_open);
+    assert_eq!(
+        h.state().state.dialog_request,
+        Some(DialogRequest::PsdExport)
+    );
+    // 英語: 窓の文字に日本語が残らない。やめるで閉じる
+    h.state_mut().state.dialog_request = None;
+    h.state_mut().state.lang = Lang::En;
+    apply(&mut h, Action::Psd(PsdAction::ExportDialog));
+    let texts = window_texts(&h, "psd-export");
+    for want in [
+        "Export PSD",
+        "Mode",
+        "Bake and write",
+        "Flatten to one layer",
+        "Channels",
+        "Export…",
+        "Cancel",
+    ] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    assert!(texts.iter().all(|t| !has_japanese(t)), "{texts:?}");
+    shot(&mut h, "psd-export", "psd_export_options_english");
+    let at = in_window(&h, "psd-export", "Cancel");
+    click(&mut h, at);
+    assert!(!h.state().state.psd.options_open);
 }
 
 // ───────── 画面なしの保存の往復（Windows 向けに組んで wine でも回す） ─────────

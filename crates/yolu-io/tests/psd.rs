@@ -432,3 +432,27 @@ fn invalid_limits_and_large_dimensions_fail_before_allocating_pixels() {
         Mode::Rejected
     );
 }
+
+/// 統合画像を参照合成と照らす間だけ取消の旗を見る。立っていれば `Cancelled` で戻り（壊れた PSD の断りとは別）、立っていなければ同じ結果。
+#[test]
+fn a_cancel_flag_stops_the_composite_check_of_a_read_without_calling_the_file_broken() {
+    use std::sync::atomic::AtomicBool;
+    let bytes = psd::write(&sample(), &Limits::default()).unwrap();
+    let flag = AtomicBool::new(true);
+    let err = psd::read_cancellable(&bytes, &Limits::default(), Some(&flag)).unwrap_err();
+    assert!(
+        matches!(err, yolu_io::Error::Core(yolu_core::CoreError::Cancelled)),
+        "{err}"
+    );
+    flag.store(false, std::sync::atomic::Ordering::Relaxed);
+    let read = psd::read_cancellable(&bytes, &Limits::default(), Some(&flag)).unwrap();
+    assert_eq!(read.mode(), Mode::EditableRaster);
+    // 旗の無い読み込みと同じ
+    let plain = psd::read(&bytes, &Limits::default()).unwrap();
+    assert_eq!(plain.mode(), read.mode());
+    assert_eq!(plain.diagnostics(), read.diagnostics());
+    // 統合画像まで進まない壊れた PSD は、旗が立っていても今までどおり断りの結果（Err にしない）
+    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    let truncated = psd::read_cancellable(&bytes[..40], &Limits::default(), Some(&flag)).unwrap();
+    assert_ne!(truncated.mode(), Mode::EditableRaster);
+}

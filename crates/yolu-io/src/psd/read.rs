@@ -2,9 +2,12 @@ use super::{binary::Reader, *};
 use crate::{check, check_budget, Error, Result};
 use std::collections::HashSet;
 use std::io::Read;
+use std::sync::atomic::AtomicBool;
 
 struct State<'a> {
     limits: &'a Limits,
+    /// 参照合成との照合（時間のかかる所）が見る取消の旗。
+    cancel: Option<&'a AtomicBool>,
     notes: Vec<Diagnostic>,
     unsupported: bool,
     metadata: usize,
@@ -72,6 +75,14 @@ fn rejected(original: Option<Vec<u8>>, code: &str, message: String) -> ReadResul
     }
 }
 pub fn read(bytes: &[u8], limits: &Limits) -> Result<ReadResult> {
+    read_cancellable(bytes, limits, None)
+}
+/// 取消の旗を、統合画像を参照合成と照らす間に見る読み込み（立っていたら `Error::Core(Cancelled)`。壊れた PSD の断りとは別）。
+pub fn read_cancellable(
+    bytes: &[u8],
+    limits: &Limits,
+    cancel: Option<&AtomicBool>,
+) -> Result<ReadResult> {
     limits.validate()?;
     if bytes.len() > limits.max_source_bytes {
         return Ok(rejected(
@@ -80,7 +91,7 @@ pub fn read(bytes: &[u8], limits: &Limits) -> Result<ReadResult> {
             "PSD 原本の保持予算超過".into(),
         ));
     }
-    Ok(read_owned(bytes.to_vec(), limits))
+    read_owned(bytes.to_vec(), limits, cancel)
 }
 /// 読み手を閉じず、原本の上限+1バイトまでで止める。
 pub fn read_stream(reader: &mut impl Read, limits: &Limits) -> Result<ReadResult> {
@@ -96,12 +107,13 @@ pub fn read_stream(reader: &mut impl Read, limits: &Limits) -> Result<ReadResult
             "PSD 原本の保持予算超過".into(),
         ))
     } else {
-        Ok(read_owned(b, limits))
+        read_owned(b, limits, None)
     }
 }
-fn read_owned(bytes: Vec<u8>, limits: &Limits) -> ReadResult {
+fn read_owned(bytes: Vec<u8>, limits: &Limits, cancel: Option<&AtomicBool>) -> Result<ReadResult> {
     let mut s = State {
         limits,
+        cancel,
         notes: Vec::new(),
         unsupported: false,
         metadata: 0,
@@ -109,7 +121,9 @@ fn read_owned(bytes: Vec<u8>, limits: &Limits) -> ReadResult {
         omitted: Vec::new(),
     };
     match parse(&bytes, &mut s) {
-        Err(e) => rejected(Some(bytes), "MalformedOrLimit", e.to_string()),
+        // 取消は壊れた PSD ではない
+        Err(e @ Error::Core(yolu_core::CoreError::Cancelled)) => Err(e),
+        Err(e) => Ok(rejected(Some(bytes), "MalformedOrLimit", e.to_string())),
         Ok(doc) => {
             for (what, offset, length, count) in std::mem::take(&mut s.omitted) {
                 s.note(
@@ -121,7 +135,7 @@ fn read_owned(bytes: Vec<u8>, limits: &Limits) -> ReadResult {
                     length,
                 )
             }
-            ReadResult {
+            Ok(ReadResult {
                 mode: if s.unsupported {
                     CompatibilityMode::PreserveOnly
                 } else {
@@ -130,7 +144,7 @@ fn read_owned(bytes: Vec<u8>, limits: &Limits) -> ReadResult {
                 document: if s.unsupported { None } else { doc },
                 original: Some(bytes),
                 diagnostics: s.notes,
-            }
+            })
         }
     }
 }
@@ -301,7 +315,7 @@ fn parse(bytes: &[u8], s: &mut State) -> Result<Option<Document>> {
         let offset = r.pos;
         decode_composite(r, width, height, channels as usize, &mut merged, s)?;
         if !s.unsupported {
-            let mut expected = super::composite::composite(&doc);
+            let mut expected = super::composite::composite_cancellable(&doc, s.cancel)?;
             super::composite::matte(&mut expected);
             let worst = merged
                 .iter()
@@ -1708,6 +1722,7 @@ mod tests {
     fn state(limits: &Limits) -> State<'_> {
         State {
             limits,
+            cancel: None,
             notes: Vec::new(),
             unsupported: false,
             metadata: 0,

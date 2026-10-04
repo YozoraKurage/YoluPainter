@@ -268,7 +268,7 @@ fn map_fill_error(e: fill_image::FillError) -> CoreError {
         fill_image::FillError::Canceled => CoreError::Cancelled,
     }
 }
-fn cancelled(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
+pub(super) fn cancelled(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
     if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
         Err(CoreError::Cancelled)
     } else {
@@ -621,7 +621,7 @@ impl Document {
             .min(cols.max(rows))
     }
 
-    fn range_of_rect(&self, rect: Rect) -> TileRange {
+    pub(super) fn range_of_rect(&self, rect: Rect) -> TileRange {
         let ts = self.tile_size;
         TileRange {
             x0: rect.x / ts,
@@ -801,16 +801,28 @@ impl Document {
         rect: Rect,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
-        let mut set = EvalSet::default();
         if !self.layers.iter().any(|l| {
             l.has_evaluated_output(channel)
                 || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
         }) {
-            return Ok(set);
+            return Ok(EvalSet::default());
         }
         let stack = Stack::new(&self.layers, channel, kind, None);
+        self.evaluate_entries(&stack.plan(), channel, rect, cancel)
+    }
+
+    /// 計画（段の並び）に出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
+    /// 出力（そのグループの子の計画）が同じ道を通る。
+    pub(super) fn evaluate_entries(
+        &self,
+        entries: &[Entry],
+        channel: Channel,
+        rect: Rect,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<EvalSet, CoreError> {
+        let mut set = EvalSet::default();
         let mut indices = Vec::new();
-        collect_layers(&stack.plan(), &mut indices);
+        collect_layers(entries, &mut indices);
         let range = self.range_of_rect(rect);
         for i in indices {
             let l = &self.layers[i];
@@ -881,7 +893,7 @@ impl Document {
 
     /// 層の（フィルター・投影を通した）出力の面を、タイルの範囲だけ。評価済みのブロックを使い回し、足りないブロックは作業メモリの
     /// 予算に収まる数ずつ並べて評価する（結果は並びによらない）。
-    fn output_surface(
+    pub(super) fn output_surface(
         &self,
         index: usize,
         key: SourceKey,
