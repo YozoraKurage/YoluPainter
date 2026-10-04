@@ -26,6 +26,7 @@ pub mod gradient;
 pub mod drafting;
 pub mod gesture;
 pub mod lang;
+pub mod library;
 pub mod layerops;
 pub mod layermenu;
 pub mod livelink;

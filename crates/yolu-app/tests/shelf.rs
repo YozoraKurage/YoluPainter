@@ -1001,7 +1001,10 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
         ja.contains(&"マスクをスマートマスクとして保存".to_owned()),
         "{ja:?}"
     );
-    assert_eq!(shelf_menu(&s), ["置く", "書き出す…", "棚から消す…"]);
+    assert_eq!(
+        shelf_menu(&s),
+        ["置く", "書き出す…", "ライブラリへ入れる", "棚から消す…"]
+    );
     s.shelf.selected = Some(ids(&s, "smartMask").pop().unwrap());
     assert_eq!(shelf_menu(&s)[0], "マスクに適用");
     s.lang = Lang::En;
@@ -1010,7 +1013,12 @@ fn headless_the_menus_name_the_shelf_actions_in_both_languages() {
     assert!(en.contains(&"Save Mask as Smart Mask".to_owned()), "{en:?}");
     assert_eq!(
         shelf_menu(&s),
-        ["Apply to Mask", "Export…", "Remove from the shelf…"]
+        [
+            "Apply to Mask",
+            "Export…",
+            "Put into the library",
+            "Remove from the shelf…"
+        ]
     );
     // 層にマスクが無ければ、マスクの保存は出さない
     s.apply(Action::M2(Edit::RemoveMask(base)));
@@ -2346,11 +2354,22 @@ mod ui {
         // プロジェクトの棚だけの並びを調べる試験の窓（同梱の素材は別の試験で見る）
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
+        settle(&mut h);
         h
     }
 
     fn st<'a>(h: &'a Harness<'_, YoluApp>) -> &'a AppState {
         &h.state().state
+    }
+
+    /// 別のスレッドで作る項目の絵と情報ができるまで待って、描き直す（見えている項目を頼む→できるまで待つ→描く、を 3 回）。
+    pub fn settle(h: &mut Harness<'_, YoluApp>) {
+        for _ in 0..3 {
+            h.run();
+            h.state_mut().state.shelf.wait_inspections();
+            h.state_mut().state.library.wait_probes();
+        }
+        h.run();
     }
 
     fn apply(h: &mut Harness<'_, YoluApp>, a: Action) {
@@ -2485,6 +2504,7 @@ mod ui {
             h.step();
         }
         h.run();
+        settle(&mut h);
         h
     }
 
@@ -2520,6 +2540,7 @@ mod ui {
             [
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), false),
+                ("ライブラリへ入れる".to_owned(), false),
                 ("棚から消す…".to_owned(), false),
             ]
         );
@@ -2536,6 +2557,7 @@ mod ui {
             [
                 ("置く".to_owned(), true),
                 ("書き出す…".to_owned(), true),
+                ("ライブラリへ入れる".to_owned(), true),
                 ("棚から消す…".to_owned(), true),
             ]
         );
@@ -2581,12 +2603,14 @@ mod ui {
     #[test]
     fn snapshot_shelf_bundled() {
         let mut h = window_with_bundled();
+        settle(&mut h);
         h.snapshot("assets_shelf_bundled");
         h.state_mut().state.lang = Lang::En;
         h.state_mut().state.shelf.filter = Some(ItemKind::SmartMaterial);
         h.run();
         let at = card(&h, "Rusty Iron").center();
         click(&mut h, at);
+        settle(&mut h);
         h.snapshot("assets_shelf_bundled_english");
     }
 
@@ -2807,8 +2831,8 @@ mod ui {
             &mut h,
             Action::Shelf(ShelfOp::ImportFile(fixtures().join("images.ylsmart"))),
         );
-        h.run();
-        h.run();
+        // 項目の情報は別のスレッドで作るので、できるまで待つ
+        settle(&mut h);
         let id = st(&h).shelf.selected.clone().unwrap();
         assert_eq!(st(&h).shelf.block_of(&id), Some(&Block::Images));
         assert!(h.get_by_label("置く").accesskit_node().is_disabled());
@@ -2828,10 +2852,10 @@ mod ui {
             &mut h,
             Action::Shelf(ShelfOp::ImportFile(fixtures().join("filtered.ylsmart"))),
         );
-        h.run();
-        h.run();
+        settle(&mut h);
         let id = st(&h).shelf.selected.clone().unwrap();
-        // 効果の層が core に入ったので、フィルター入りの素材は印なしで置ける
+        // 効果の層が core に入ったので、フィルター入りの素材は印なしで置ける（見終わっている）
+        assert!(st(&h).shelf.info(&id).is_some());
         assert_eq!(st(&h).shelf.block_of(&id), None);
         assert!(!st(&h).shelf.warns(&id));
         assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
@@ -3035,6 +3059,7 @@ mod ui {
             .get_by_label(".ylsmart を読み込む…")
             .accesskit_node()
             .is_disabled());
+        settle(&mut h);
         h.snapshot("assets_shelf_unreadable");
     }
 
@@ -3079,6 +3104,7 @@ mod ui {
         h.state_mut().state.shelf.hold_saves(true);
         h.get_by_label("層を保存").click();
         h.run();
+        settle(&mut h);
         h.snapshot("assets_shelf_saving");
         h.state_mut()
             .state
@@ -3091,6 +3117,7 @@ mod ui {
         let mut h = window();
         let at = card(&h, "raster").center();
         click(&mut h, at);
+        settle(&mut h);
         h.snapshot("assets_shelf");
     }
 
@@ -3102,6 +3129,7 @@ mod ui {
         h.run();
         let at = card(&h, "mask").center();
         click(&mut h, at);
+        settle(&mut h);
         h.snapshot("assets_shelf_english");
     }
 
@@ -3111,6 +3139,7 @@ mod ui {
         click_tab(&mut h, yolu_app::Tab::Assets);
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
+        settle(&mut h);
         h.snapshot("assets_shelf_empty");
         apply(
             &mut h,
@@ -3118,6 +3147,7 @@ mod ui {
         );
         h.run();
         h.run();
+        settle(&mut h);
         h.snapshot("assets_shelf_blocked");
     }
 
@@ -3135,6 +3165,7 @@ mod ui {
             h.step();
         }
         h.run();
+        settle(&mut h);
         h.snapshot("assets_shelf_dragging");
         release(&h, to, PointerButton::Primary);
         h.run();

@@ -5,6 +5,7 @@ mod composite_png;
 mod core_bridge;
 pub mod export;
 mod generation;
+pub mod library;
 mod native;
 mod project;
 mod selection;

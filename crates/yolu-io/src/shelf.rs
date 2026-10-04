@@ -1,7 +1,7 @@
 //! プロジェクト内の素材。外部の参照先を開かず、検証した埋め込みの写しを保持する。
 use crate::{
-    archive::Files, check, check_budget, project, Archive, NativeDocument, NativeValue, Project, Resource,
-    Result, MAX_TOTAL_BYTES,
+    archive::Files, check, check_budget, is_hash, project, Archive, NativeDocument, NativeValue, Project,
+    Resource, Result, MAX_TOTAL_BYTES,
 };
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
@@ -112,6 +112,13 @@ impl Shelf {
             .iter()
             .find(|r| r.id == id)
             .map(|r| self.files[&r.entry].as_ref())
+    }
+    /// 素材の中身を、写さずに共有して返す（別のスレッドへ渡して、サムネイルや書き出しを作るため）。
+    pub fn content_arc(&self, id: &str) -> Option<Arc<[u8]>> {
+        self.resources
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| self.files[&r.entry].clone())
     }
     /// 索引の1項目と写しを追加。同種・同内容は既存の ID を返す。拒否では何も変えない。
     pub fn add(&mut self, metadata: Value, bytes: &[u8]) -> Result<String> {
@@ -406,6 +413,59 @@ impl Shelf {
             "画像は素材のファイルとして追加できません",
         )?;
         self.add(json!({"id":id,"kind":kind.as_str(),"name":name,"content":crate::hash(bytes),"length":bytes.len(),"origin":origin}),bytes)
+    }
+    /// 個人のライブラリのファイル（ライブラリからの相対パス `rel`・ファイルの SHA-256・長さ）から取り込んだ素材を追加する。出どころは
+    /// `library`（見せる・印を付けるだけ。中身は写しを持つので、ライブラリの無い所でも開ける）。同じ種類・同じ中身が既にあれば、その ID。
+    pub fn add_file_from_library(
+        &mut self,
+        id: &str,
+        name: &str,
+        kind: ResourceKind,
+        bytes: &[u8],
+        rel: &str,
+        sha256: &str,
+    ) -> Result<String> {
+        check(
+            crate::library::is_library_path(rel),
+            "ライブラリの相対パスが安全ではありません",
+        )?;
+        check(is_hash(sha256), "出どころのSHA-256が不正です")?;
+        self.add_file(
+            id,
+            name,
+            kind,
+            bytes,
+            json!({"type":"library","file":rel,"sha256":sha256,"length":bytes.len()}),
+        )
+    }
+    /// ライブラリの画像（左下原点・straight RGBA8 に直したもの）を取り込む。出どころの `sha256`・`length` は元のファイルのもの。
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_image_from_library(
+        &mut self,
+        id: &str,
+        name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        color_space: &str,
+        rel: &str,
+        sha256: &str,
+        length: u64,
+    ) -> Result<String> {
+        check(
+            crate::library::is_library_path(rel),
+            "ライブラリの相対パスが安全ではありません",
+        )?;
+        check(is_hash(sha256), "出どころのSHA-256が不正です")?;
+        self.add_image(
+            id,
+            name,
+            rgba,
+            width,
+            height,
+            color_space,
+            json!({"type":"library","file":rel,"sha256":sha256,"length":length}),
+        )
     }
     /// 出どころの記録を持たない素材（アプリの中で作った・外のファイルから読んだもの）を追加する。外のパスを .ylp に書き込まない。
     pub fn add_file_without_origin(

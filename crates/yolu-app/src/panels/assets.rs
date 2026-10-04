@@ -1,7 +1,9 @@
-//! アセットのパネル（Substance のシェルフ）: 棚の素材（画像・ブラシ・マテリアル・スマートマテリアル・スマートマスク）をサムネイルの
-//! 格子で並べる。上に種類の絞り込み（すべて・5 種類のアイコン）と .ylsmart の読み込み、名前の検索、選んだ層の保存（層・マスク）、
-//! 下に選んだ素材の名前と状態（置けないときは短い理由）と操作（置く・書き出す・消す）。格子の素材はダブルクリック・右クリック・
-//! ドラッグでレイヤーのパネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行の層のマスク）。
+//! アセットのパネル（Substance のシェルフ）: 置き場（このプロジェクトの棚・個人のライブラリ）を切り替えて、素材（画像・ブラシ・マテリアル・
+//! スマートマテリアル・スマートマスク）をサムネイルの格子で並べる。上に置き場の切り替え、種類の絞り込み（すべて・5 種類のアイコン）と
+//! ファイルの読み込み、名前の検索、選んだ層の保存（層・マスク。棚のとき）、下に選んだ素材の状態（置けないときは短い理由）と操作
+//! （置く・書き出す・ライブラリへ入れる・プロジェクトで使う・消す）。格子の素材はダブルクリック・右クリック・ドラッグでレイヤーの
+//! パネルへ置く（スマートマテリアルは落とした行の間・グループの中、スマートマスクは落とした行の層のマスク）。
+//! サムネイルと項目の情報は別のスレッドで作り（見えている項目だけ頼み、できた分から出す）、描いている間も画面を止めない。
 //! 画面には名前と状態と短い理由だけを出し、説明はツールチップに置く。
 
 use std::path::PathBuf;
@@ -10,8 +12,10 @@ use egui::{
     pos2, vec2, Color32, DragAndDrop, Id, Rect, Sense, TextureHandle, Ui, WidgetInfo, WidgetType,
 };
 
+use crate::brushes::{sample::SampleSpec, BrushAction, BrushKey};
 use crate::engine::Document;
 use crate::lang::Lang;
+use crate::library::{self, Source};
 use crate::m2::{DropTarget, Row};
 use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
@@ -28,6 +32,8 @@ pub const THUMB_BOX: f32 = 64.0;
 pub const BAR_W: f32 = 10.0;
 /// 下の名前と操作の帯の高さ。
 pub const FOOTER_H: f32 = 62.0;
+/// 見えている行の上下に余分に頼む行の数（スクロールの先読み）。
+const AHEAD_ROWS: usize = 1;
 
 /// 格子に並べる 1 つ。
 struct Card {
@@ -42,6 +48,24 @@ struct Card {
     /// 同梱の素材（棚に入っていない。消せない・書き出せない）。
     builtin: bool,
     thumb: Option<TextureHandle>,
+    /// 個人のライブラリの項目（ファイル・利用者のブラシ）。棚の項目ではない。
+    library: bool,
+    /// ライブラリのファイルが、いまのプロジェクトの棚にも（同じ中身で）ある。
+    in_project: bool,
+    /// 利用者のブラシ（絵は見本のストローク。設定は描くときに取り出す）。
+    brush: Option<BrushKey>,
+    /// ツールチップに添える置き場所（ライブラリの相対パス）。
+    place: Option<String>,
+}
+
+fn pending_label(app: &AppState) -> Option<(&'static str, String)> {
+    let lang = app.lang;
+    if let Some(name) = app.shelf.saving_name() {
+        return Some((app.shelf.saving_label(lang), name.to_owned()));
+    }
+    app.library
+        .writing_name()
+        .map(|name| (lang.pick("書き込み中", "Writing"), name.to_owned()))
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
@@ -50,13 +74,93 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     app.shelf.use_language(lang);
-    // 見える項目のサムネイルと説明は 1 フレームに数個ずつ作る（大きな素材が一度に並んでも固まらない）
-    if app.shelf.inspect_pending(2) {
-        ctx.request_repaint();
+    app.library.set_context(&ctx);
+    let source = app.library.source;
+    // 項目の情報とサムネイルは別のスレッドで作る。できた分を受け取り、見えている項目の分は格子を描くときに頼む
+    match source {
+        Source::Project => app.shelf.begin_inspection_frame(&ctx),
+        Source::Library => {
+            let folder = app.library_root();
+            app.library.prepare(folder);
+            app.library.begin_frame();
+            app.library.poll();
+        }
     }
+    // できたときは、別のスレッドが描き直しを頼む（こちらから見に来続けない。受け取りは `frame`）
 
     let mut rows = w::Rows::new(r, 6.0);
-    // 種類の絞り込み（左）と、.ylsmart の読み込み（右）
+    // 置き場の切り替え（左）と、ライブラリの読み直し・フォルダを開く（右）
+    let row = rows.row(24.0, 4.0);
+    let tools = if source == Source::Library {
+        2.0 * 28.0
+    } else {
+        0.0
+    };
+    let width = ((row.width() - tools - 4.0 - 4.0) / 2.0).clamp(40.0, 110.0);
+    for (i, s) in Source::ALL.into_iter().enumerate() {
+        let b = Rect::from_min_size(
+            pos2(row.left() + i as f32 * (width + 4.0), row.top()),
+            vec2(width, row.height()),
+        );
+        if w::button(
+            ui,
+            b,
+            ("shelf.source", i),
+            s.name(lang),
+            s == source,
+            true,
+            Some(s.tooltip(lang)),
+            None,
+        )
+        .clicked()
+            && s != source
+        {
+            app.library.source = s;
+            app.shelf.scroll = 0.0;
+            if s == Source::Library {
+                app.library.refresh();
+            }
+        }
+    }
+    if source == Source::Library {
+        let refresh = Rect::from_min_size(
+            pos2(row.right() - 54.0, row.top()),
+            vec2(26.0, row.height()),
+        );
+        if w::icon_button(
+            ui,
+            refresh,
+            "shelf.library.refresh",
+            "sync",
+            lang.pick("一覧を読み直す", "Reload the list"),
+            false,
+            true,
+            16.0,
+        )
+        .clicked()
+        {
+            app.apply(Action::Shelf(ShelfOp::LibraryRefresh));
+        }
+        let reveal = Rect::from_min_size(
+            pos2(row.right() - 26.0, row.top()),
+            vec2(26.0, row.height()),
+        );
+        if w::icon_button(
+            ui,
+            reveal,
+            "shelf.library.reveal",
+            "folder_open",
+            lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+            false,
+            app.library_root().is_some(),
+            16.0,
+        )
+        .clicked()
+        {
+            app.apply(Action::Shelf(ShelfOp::LibraryReveal));
+        }
+    }
+    // 種類の絞り込み（左）と、ファイルの読み込み（右）
     let row = rows.row(26.0, 4.0);
     let mut x = row.left();
     let mut filters: Vec<(Option<ItemKind>, &str, &str)> =
@@ -77,19 +181,42 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         pos2(row.right() - 26.0, row.top()),
         vec2(26.0, row.height()),
     );
-    if w::icon_button(
-        ui,
-        import,
-        "shelf.import",
-        "import",
-        lang.pick(".ylsmart を読み込む…", "Import .ylsmart…"),
-        false,
-        app.shelf.unavailable.is_none(),
-        16.0,
-    )
-    .clicked()
-    {
-        app.apply(Action::Shelf(ShelfOp::ImportDialog));
+    match source {
+        Source::Project => {
+            if w::icon_button(
+                ui,
+                import,
+                "shelf.import",
+                "import",
+                lang.pick(".ylsmart を読み込む…", "Import .ylsmart…"),
+                false,
+                app.shelf.unavailable.is_none(),
+                16.0,
+            )
+            .clicked()
+            {
+                app.apply(Action::Shelf(ShelfOp::ImportDialog));
+            }
+        }
+        Source::Library => {
+            if w::icon_button(
+                ui,
+                import,
+                "shelf.library.add",
+                "add",
+                lang.pick(
+                    "ライブラリへファイルを足す…（PNG・.ylsmart）",
+                    "Add files to the library… (PNG, .ylsmart)",
+                ),
+                false,
+                app.library_root().is_some(),
+                16.0,
+            )
+            .clicked()
+            {
+                app.apply(Action::Shelf(ShelfOp::LibraryAddDialog));
+            }
+        }
     }
     // 名前の検索
     let row = rows.row(24.0, 6.0);
@@ -102,35 +229,39 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ) {
         app.shelf.scroll = 0.0;
     }
-    // 選んだ層の保存（別のスレッドで書き出している間は、名前と「やめる」）
-    let row = rows.row(24.0, 6.0);
-    if let Some(name) = app.shelf.saving_name().map(str::to_owned) {
-        ctx.request_repaint_after(std::time::Duration::from_millis(100));
-        let cancel = Rect::from_min_size(
-            pos2(row.right() - 72.0, row.top()),
-            vec2(72.0, row.height()),
-        );
-        let label = Rect::from_min_max(row.min, pos2(cancel.left() - 6.0, row.bottom()));
-        let p = ui.painter().clone();
-        let text = format!("{}: {name}", lang.pick("保存中", "Saving"));
-        let shown = w::fit(&p, &text, label.width(), t::LABEL_DIM);
-        w::text(&p, label, &shown, t::LABEL_DIM, Align::Left);
-        if w::button(
-            ui,
-            cancel,
-            "shelf.save.cancel",
-            lang.pick("やめる", "Cancel"),
-            false,
-            true,
-            None,
-            None,
-        )
-        .clicked()
-        {
-            app.apply(Action::Shelf(ShelfOp::CancelSave));
+    // 別のスレッドで走っている仕事（層の保存・ライブラリのファイルの取り込み・ライブラリへの書き込み）の名前と「やめる」。
+    // 走っていないときは、棚では選んだ層の保存
+    let pending = pending_label(app);
+    if pending.is_some() || source == Source::Project {
+        let row = rows.row(24.0, 6.0);
+        if let Some((label, name)) = pending {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            let cancel = Rect::from_min_size(
+                pos2(row.right() - 72.0, row.top()),
+                vec2(72.0, row.height()),
+            );
+            let text_rect = Rect::from_min_max(row.min, pos2(cancel.left() - 6.0, row.bottom()));
+            let p = ui.painter().clone();
+            let text = format!("{label}: {name}");
+            let shown = w::fit(&p, &text, text_rect.width(), t::LABEL_DIM);
+            w::text(&p, text_rect, &shown, t::LABEL_DIM, Align::Left);
+            if w::button(
+                ui,
+                cancel,
+                "shelf.save.cancel",
+                lang.pick("やめる", "Cancel"),
+                false,
+                true,
+                None,
+                None,
+            )
+            .clicked()
+            {
+                app.apply(Action::Shelf(ShelfOp::CancelSave));
+            }
+        } else {
+            save_buttons(ui, app, row);
         }
-    } else {
-        save_buttons(ui, app, row);
     }
 
     let top = rows.y();
@@ -138,6 +269,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         pos2(r.left() + t::PADDING, top),
         pos2(r.right() - t::PADDING, (r.bottom() - FOOTER_H).max(top)),
     );
+    app.library.grid_rect = (source == Source::Library).then_some(grid);
     cards(ui, app, &ctx, grid);
     footer(
         ui,
@@ -299,10 +431,9 @@ pub fn grid_metrics(width: f32, height: f32, count: usize) -> GridMetrics {
     }
 }
 
-fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
+/// 棚（プロジェクト）の項目の格子の 1 つ分（棚の並びのまま。組み込みの素材も）。
+fn project_cards(app: &mut AppState, ctx: &egui::Context) -> Vec<Card> {
     let lang = app.lang;
-    w::rounded(ui.painter(), grid, t::MENU_BG, 4.0);
-    // 並べる素材（棚の並びのまま）
     let ids: Vec<String> = app.shelf.visible().iter().map(|r| r.id.clone()).collect();
     let mut list: Vec<Card> = Vec::with_capacity(ids.len());
     for id in ids {
@@ -327,11 +458,122 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
             warn,
             builtin,
             thumb,
+            library: false,
+            in_project: false,
+            brush: None,
+            place: None,
         });
     }
+    list
+}
+
+/// 個人のライブラリの項目（フォルダのファイルと、利用者のブラシ）の格子の 1 つ分。
+fn library_cards(app: &mut AppState, ctx: &egui::Context) -> Vec<Card> {
+    let lang = app.lang;
+    let filter = app.shelf.filter;
+    let search = app.shelf.search.clone();
+    let items = app.library.visible(filter, &search);
+    let project = app.library.project_index(app.shelf.shelf());
+    let mut list: Vec<Card> = Vec::with_capacity(items.len());
+    for item in items {
+        let info = app.library.info(&item.rel);
+        let block = info.and_then(|i| i.inspected.block.clone());
+        let detail = info
+            .map(|i| {
+                shelf::describe(
+                    lang,
+                    item.kind,
+                    Some(&i.inspected),
+                    (i.inspected.width, i.inspected.height),
+                    false,
+                )
+            })
+            .unwrap_or_default();
+        let content = info.map_or("", |i| i.content.as_str());
+        let in_project = app
+            .library
+            .entry(&item.rel)
+            .is_some_and(|e| project.contains(e.kind, &item.rel, content));
+        let thumb = app.library.texture(ctx, &item.rel);
+        list.push(Card {
+            warn: block
+                .as_ref()
+                .is_some_and(|b| !matches!(b, shelf::Block::Kind(_))),
+            block: block.map(|b| b.reason(lang)),
+            id: item.id,
+            name: item.name,
+            kind: item.kind,
+            detail,
+            builtin: false,
+            thumb,
+            library: true,
+            in_project,
+            brush: None,
+            place: Some(item.rel),
+        });
+    }
+    // 利用者のブラシ（今の brushes/ をそのまま。ライブラリのフォルダへは写さない）
+    if filter.is_none_or(|f| f == ItemKind::Brush) {
+        let needle = search.trim().to_lowercase();
+        for entry in app.brushes.lib.entries() {
+            if !entry.key.is_user()
+                || !(needle.is_empty() || entry.name.to_lowercase().contains(&needle))
+            {
+                continue;
+            }
+            list.push(Card {
+                id: format!("{}{}", library::BRUSH_PREFIX, entry.key.token()),
+                name: entry.name.clone(),
+                kind: ItemKind::Brush,
+                detail: entry.group.name(lang).to_owned(),
+                block: None,
+                warn: false,
+                builtin: false,
+                thumb: None,
+                library: true,
+                in_project: false,
+                brush: Some(entry.key),
+                place: None,
+            });
+        }
+    }
+    list
+}
+
+/// 見えている行（上下に `AHEAD_ROWS` 行の余裕）の項目。
+fn wanted(list: &[Card], columns: usize, scroll: f32, height: f32) -> &[Card] {
+    let step = CELL_H + GAP;
+    let first = (((scroll - GAP) / step).floor().max(0.0) as usize).saturating_sub(AHEAD_ROWS);
+    let last = ((scroll + height) / step).floor().max(0.0) as usize + AHEAD_ROWS;
+    let from = (first * columns).min(list.len());
+    let to = ((last + 1) * columns).min(list.len());
+    &list[from..to]
+}
+
+fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
+    let lang = app.lang;
+    w::rounded(ui.painter(), grid, t::MENU_BG, 4.0);
+    let source = app.library.source;
+    // 並べる素材（棚の並びのまま。ライブラリはフォルダの並び、ブラシが最後）
+    let list = match source {
+        Source::Project => project_cards(app, ctx),
+        Source::Library => library_cards(app, ctx),
+    };
     if list.is_empty() {
         // 空の棚・一致なしは、空の状態の文字（「なし」「一致なし」）を置かず、空のまま。読めないときだけ、その状態を出す
-        if let Some(reason) = app.shelf.unavailable.clone() {
+        let unreadable = match source {
+            Source::Project => app
+                .shelf
+                .unavailable
+                .clone()
+                .map(|r| (lang.pick("棚を読めません", "Shelf unreadable"), r)),
+            Source::Library => app
+                .library
+                .problem()
+                .cloned()
+                .map(|r| (lang.pick("ライブラリを読めません", "Library unreadable"), r)),
+        };
+        if let Some((text, reason)) = unreadable {
             let at = Rect::from_min_size(
                 pos2(grid.left() + 8.0, grid.top() + 10.0),
                 vec2(grid.width() - 16.0, 18.0),
@@ -339,7 +581,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
             w::text(
                 ui.painter(),
                 at,
-                lang.pick("棚を読めません", "Shelf unreadable"),
+                text,
                 t::LABEL_DIM.with_color(t::WARNING),
                 Align::Left,
             );
@@ -358,6 +600,23 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
         app.shelf.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
     }
     app.shelf.scroll = app.shelf.scroll.clamp(0.0, max_scroll);
+    // 見えている項目（と先読みの行）だけ、情報とサムネイルを別のスレッドへ頼む
+    let near = wanted(&list, columns, app.shelf.scroll, grid.height());
+    match source {
+        Source::Project => {
+            let ids: Vec<String> = near.iter().map(|c| c.id.clone()).collect();
+            let cache = app.library.cache().cloned();
+            app.shelf.request_inspections(&ids, cache.as_ref());
+        }
+        Source::Library => {
+            let rels: Vec<String> = near
+                .iter()
+                .filter(|c| c.brush.is_none())
+                .filter_map(|c| library::rel_of(&c.id).map(str::to_owned))
+                .collect();
+            app.library.request_probes(&rels);
+        }
+    }
     let painter = ui.painter_at(grid);
     for (i, card) in list.iter().enumerate() {
         let (cx, cy) = (i % columns, i / columns);
@@ -385,6 +644,40 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
     }
 }
 
+/// カードが選ばれているか（棚の項目は棚の選び、ライブラリの項目はライブラリの選び）。
+fn is_selected(app: &AppState, card: &Card) -> bool {
+    let selected = if card.library {
+        app.library.selected.as_deref()
+    } else {
+        app.shelf.selected.as_deref()
+    };
+    selected == Some(card.id.as_str())
+}
+
+fn select(app: &mut AppState, card: &Card) {
+    if card.library {
+        app.library.selected = Some(card.id.clone());
+    } else {
+        app.shelf.selected = Some(card.id.clone());
+    }
+}
+
+/// カードの主の操作（ダブルクリック）。
+fn primary_action(card: &Card) -> Option<Action> {
+    if let Some(key) = card.brush {
+        return Some(Action::Brush(BrushAction::Select(key)));
+    }
+    if card.library && matches!(card.kind, ItemKind::Brush | ItemKind::Material) {
+        // ブラシ・マテリアルのファイルは、まだ置けない種類。プロジェクトの棚へ入れる
+        let rel = library::rel_of(&card.id)?;
+        return Some(Action::Shelf(ShelfOp::UseFromLibrary(rel.to_owned())));
+    }
+    Some(Action::Shelf(ShelfOp::Place {
+        id: card.id.clone(),
+        target: PlaceTarget::Selected,
+    }))
+}
+
 fn card_cell(
     ui: &mut Ui,
     app: &mut AppState,
@@ -393,7 +686,7 @@ fn card_cell(
     cell: Rect,
     card: &Card,
 ) {
-    let selected = app.shelf.selected.as_deref() == Some(card.id.as_str());
+    let selected = is_selected(app, card);
     let hit = cell.intersect(grid);
     let response = ui.interact(
         hit,
@@ -409,33 +702,53 @@ fn card_cell(
         pos2(cell.center().x - THUMB_BOX / 2.0, cell.top() + 4.0),
         vec2(THUMB_BOX, THUMB_BOX),
     );
-    w::checker(painter, thumb, 6.0);
-    match &card.thumb {
-        Some(handle) => {
-            let [tw, th] = handle.size();
-            let k = (THUMB_BOX / tw as f32).min(THUMB_BOX / th as f32);
-            let at = Rect::from_center_size(thumb.center(), vec2(tw as f32 * k, th as f32 * k));
-            painter.image(
-                handle.id(),
-                at,
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
+    if let Some(key) = card.brush {
+        // 利用者のブラシは、白い紙の上の見本のストローク（見本は別のスレッドで描く）
+        let spec = SampleSpec {
+            width: 96,
+            height: 64,
+            eraser: false,
+        };
+        if let Some(brush) = app.brushes.lib.entry(key).map(|e| e.baseline.clone()) {
+            let old = ui.clip_rect();
+            ui.set_clip_rect(old.intersect(grid));
+            super::brushes::paint_sample(ui, app, thumb, &brush, spec);
+            ui.set_clip_rect(old);
         }
-        None => {
-            w::rounded(painter, thumb, t::PANEL_HEADER, 3.0);
-            w::icon(painter, thumb, card.kind.icon(), t::TEXT_DIM, 24.0);
+    } else {
+        w::checker(painter, thumb, 6.0);
+        match &card.thumb {
+            Some(handle) => {
+                let [tw, th] = handle.size();
+                let k = (THUMB_BOX / tw as f32).min(THUMB_BOX / th as f32);
+                let at = Rect::from_center_size(thumb.center(), vec2(tw as f32 * k, th as f32 * k));
+                painter.image(
+                    handle.id(),
+                    at,
+                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            None => {
+                w::rounded(painter, thumb, t::PANEL_HEADER, 3.0);
+                w::icon(painter, thumb, card.kind.icon(), t::TEXT_DIM, 24.0);
+            }
         }
     }
     w::outline(painter, thumb, t::BORDER, 1.0, 0.0);
-    // 置けないしるし（右上。素材の中身で置けないものだけ。種類で置けないものは下の名前の帯に理由を出す）と種類の印（左下）
-    if card.warn {
+    // 置けないしるし（右上。素材の中身で置けないものだけ。種類で置けないものは下の名前の帯に理由を出す）と、
+    // プロジェクトにもあるしるし（ライブラリのファイル）
+    if card.warn || card.in_project {
         let badge = Rect::from_min_size(
             pos2(thumb.right() - 16.0, thumb.top() + 2.0),
             vec2(14.0, 14.0),
         );
         w::rounded(painter, badge, t::PANEL_BG, 7.0);
-        w::icon(painter, badge, "warning", t::WARNING, 11.0);
+        if card.warn {
+            w::icon(painter, badge, "warning", t::WARNING, 11.0);
+        } else {
+            w::icon(painter, badge, "check", t::ACCENT, 11.0);
+        }
     }
     if card.builtin {
         // 組み込みの印（左上。消せない・書き出せない元）
@@ -464,16 +777,15 @@ fn card_cell(
         Align::Center,
     );
     if response.clicked() || response.drag_started() {
-        app.shelf.selected = Some(card.id.clone());
+        select(app, card);
     }
     if response.double_clicked() {
-        app.apply(Action::Shelf(ShelfOp::Place {
-            id: card.id.clone(),
-            target: PlaceTarget::Selected,
-        }));
+        if let Some(action) = primary_action(card) {
+            app.apply(action);
+        }
     }
     if response.secondary_clicked() {
-        app.shelf.selected = Some(card.id.clone());
+        select(app, card);
         if let Some(at) = response.interact_pointer_pos() {
             app.popup = Some(OpenPopup {
                 kind: PopupKind::Shelf,
@@ -481,22 +793,33 @@ fn card_cell(
             });
         }
     }
-    if response.drag_started() {
+    // 利用者のブラシは、レイヤーへ置けないので、引かない
+    if response.drag_started() && card.brush.is_none() {
         response.dnd_set_drag_payload(ShelfDrag {
             id: card.id.clone(),
             kind: card.kind,
             name: card.name.clone(),
         });
     }
+    let lang = app.lang;
     let mut tip = card.name.clone();
     if !card.detail.is_empty() {
         tip += &format!("\n{}", card.detail);
+    }
+    if let Some(place) = &card.place {
+        tip += &format!("\n{place}");
     }
     if let Some(reason) = &card.block {
         tip += &format!("\n{reason}");
     }
     if card.builtin {
-        tip += &format!("\n{}", app.lang.pick("組み込み", "Built-in"));
+        tip += &format!("\n{}", lang.pick("組み込み", "Built-in"));
+    }
+    if card.in_project {
+        tip += &format!(
+            "\n{}",
+            lang.pick("プロジェクトにあります", "Already in the project")
+        );
     }
     let name = card.name.clone();
     response
@@ -505,6 +828,13 @@ fn card_cell(
 }
 
 fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
+    match app.library.source {
+        Source::Project => project_footer(ui, app, r),
+        Source::Library => library_footer(ui, app, r),
+    }
+}
+
+fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let lang = app.lang;
     let info = Rect::from_min_size(r.min, vec2(r.width(), 18.0));
     let buttons = Rect::from_min_size(pos2(r.left(), info.bottom() + 4.0), vec2(r.width(), 26.0));
@@ -566,7 +896,7 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
             )
             .to_owned(),
     };
-    let icons = 2.0 * 28.0;
+    let icons = 3.0 * 28.0;
     let main = Rect::from_min_size(
         buttons.min,
         vec2(buttons.width() - icons - 2.0, buttons.height()),
@@ -615,8 +945,30 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
             app.apply(Action::Shelf(ShelfOp::ExportDialog(id.clone())));
         }
     }
-    let remove = Rect::from_min_size(
+    let to_library = Rect::from_min_size(
         pos2(export.right() + 2.0, buttons.top()),
+        vec2(26.0, buttons.height()),
+    );
+    if w::icon_button(
+        ui,
+        to_library,
+        "shelf.to-library",
+        "library",
+        lang.pick("ライブラリへ入れる", "Put into the library"),
+        false,
+        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+            && !app.is_stroking()
+            && !matches!(block, Some(shelf::Block::Unreadable(_))),
+        16.0,
+    )
+    .clicked()
+    {
+        if let Some(id) = &id {
+            app.apply(Action::Shelf(ShelfOp::ToLibrary(id.clone())));
+        }
+    }
+    let remove = Rect::from_min_size(
+        pos2(to_library.right() + 2.0, buttons.top()),
         vec2(26.0, buttons.height()),
     );
     if w::icon_button(
@@ -640,6 +992,234 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
             app.apply(Action::Shelf(ShelfOp::AskRemove(id.clone())));
         }
     }
+}
+
+/// ライブラリの下の帯: 選んだ項目の状態（置けない理由。選んでいなければ一覧の状態）と操作（置く・使う・プロジェクトで使う・フォルダを開く・消す）。
+fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
+    let lang = app.lang;
+    let info = Rect::from_min_size(r.min, vec2(r.width(), 18.0));
+    let buttons = Rect::from_min_size(pos2(r.left(), info.bottom() + 4.0), vec2(r.width(), 26.0));
+    let selected = app.library.selected.clone();
+    let rel = selected
+        .as_deref()
+        .and_then(library::rel_of)
+        .filter(|rel| app.library.entry(rel).is_some())
+        .map(str::to_owned);
+    let brush_key = selected
+        .as_deref()
+        .and_then(|id| id.strip_prefix(library::BRUSH_PREFIX))
+        .and_then(BrushKey::parse_token);
+    let kind = match (&rel, brush_key) {
+        (Some(rel), _) => app.library.entry(rel).map(|e| app.library.kind_of(e)),
+        (None, Some(_)) => Some(ItemKind::Brush),
+        _ => None,
+    };
+    let block = rel
+        .as_deref()
+        .and_then(|rel| app.library.info(rel))
+        .and_then(|i| i.inspected.block.clone());
+    // 状態: 置けない理由。何も選んでいなければ、一覧の状態（読み飛ばした数・途中までの一覧）
+    let p = ui.painter().clone();
+    let (text, tip) = match (&block, kind) {
+        (Some(b), _) => (Some(b.reason(lang)), None),
+        (None, Some(_)) => (None, None),
+        (None, None) => list_status(app),
+    };
+    if let Some(text) = &text {
+        let shown = w::fit(&p, text, info.width(), t::LABEL_DIM);
+        w::text(
+            &p,
+            info,
+            &shown,
+            t::LABEL_DIM.with_color(t::WARNING),
+            Align::Left,
+        );
+        ui.interact(info, ui.id().with("shelf.library.info"), Sense::hover())
+            .on_hover_text(tip.unwrap_or_else(|| text.clone()));
+    }
+    let free = !app.is_stroking();
+    let mask = kind == Some(ItemKind::SmartMask);
+    let file_kind = rel.is_some().then_some(kind).flatten();
+    // 主の操作: 置く（画像・スマート素材）・使う（ブラシ・マテリアルのファイルは棚へ入れる。利用者のブラシは今のブラシにする）
+    let uses = matches!(kind, Some(ItemKind::Brush | ItemKind::Material));
+    let (label, tip, enabled, action) = match (&rel, brush_key, kind) {
+        (_, Some(key), _) if rel.is_none() => (
+            lang.pick("使う", "Use"),
+            lang.pick(
+                "このブラシを今のブラシにする",
+                "Make this the current brush",
+            )
+            .to_owned(),
+            free,
+            Some(Action::Brush(BrushAction::Select(key))),
+        ),
+        (Some(rel), _, _) if uses => (
+            lang.pick("使う", "Use"),
+            lang.pick(
+                "写しをプロジェクトの棚へ入れる（まだ置けない種類）",
+                "Copy it into the project's shelf (cannot be placed yet)",
+            )
+            .to_owned(),
+            free && app.shelf.unavailable.is_none()
+                && !matches!(block, Some(shelf::Block::Unreadable(_))),
+            Some(Action::Shelf(ShelfOp::UseFromLibrary(rel.clone()))),
+        ),
+        (Some(rel), _, _) => (
+            if mask {
+                lang.pick("マスクに適用", "Apply to Mask")
+            } else {
+                lang.pick("置く", "Place")
+            },
+            match (&block, mask) {
+                (Some(b), _) => b.reason(lang),
+                (None, true) => lang
+                    .pick(
+                        "選んでいるレイヤーのマスクをこのマスクに入れ替える（1 回の取り消し）",
+                        "Replace the selected layer's mask with this one (one undo step)",
+                    )
+                    .to_owned(),
+                (None, false) => lang
+                    .pick(
+                        "選んでいるレイヤーの上に新しいレイヤーとして置く（1 回の取り消し）",
+                        "Put it above the selected layer as new layers (one undo step)",
+                    )
+                    .to_owned(),
+            },
+            free && block.is_none() && app.can_edit() && app.library.info(rel).is_some(),
+            Some(Action::Shelf(ShelfOp::Place {
+                id: library::library_id(rel),
+                target: PlaceTarget::Selected,
+            })),
+        ),
+        _ => (lang.pick("置く", "Place"), String::new(), false, None),
+    };
+    let icons = 3.0 * 28.0;
+    let main = Rect::from_min_size(
+        buttons.min,
+        vec2(buttons.width() - icons - 2.0, buttons.height()),
+    );
+    if w::button(
+        ui,
+        main,
+        "shelf.place",
+        label,
+        true,
+        enabled,
+        (!tip.is_empty()).then_some(tip.as_str()),
+        None,
+    )
+    .clicked()
+    {
+        if let Some(action) = action {
+            app.apply(action);
+        }
+    }
+    let usable = rel.is_some()
+        && free
+        && app.shelf.unavailable.is_none()
+        && !matches!(block, Some(shelf::Block::Unreadable(_)));
+    let use_icon = Rect::from_min_size(
+        pos2(main.right() + 4.0, buttons.top()),
+        vec2(26.0, buttons.height()),
+    );
+    if w::icon_button(
+        ui,
+        use_icon,
+        "shelf.library.use",
+        "import",
+        lang.pick(
+            "プロジェクトで使う（写しを .ylp に入れる）",
+            "Use in this project (a copy goes into the .ylp)",
+        ),
+        false,
+        usable,
+        16.0,
+    )
+    .clicked()
+    {
+        if let Some(rel) = &rel {
+            app.apply(Action::Shelf(ShelfOp::UseFromLibrary(rel.clone())));
+        }
+    }
+    let reveal = Rect::from_min_size(
+        pos2(use_icon.right() + 2.0, buttons.top()),
+        vec2(26.0, buttons.height()),
+    );
+    if w::icon_button(
+        ui,
+        reveal,
+        "shelf.library.open",
+        "folder_open",
+        lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+        false,
+        app.library_root().is_some(),
+        16.0,
+    )
+    .clicked()
+    {
+        app.apply(Action::Shelf(ShelfOp::LibraryReveal));
+    }
+    let remove = Rect::from_min_size(
+        pos2(reveal.right() + 2.0, buttons.top()),
+        vec2(26.0, buttons.height()),
+    );
+    if w::icon_button(
+        ui,
+        remove,
+        "shelf.library.remove",
+        "delete",
+        lang.pick(
+            "ライブラリから消す（プロジェクトの写しと置いた層はそのまま）",
+            "Remove from the library (project copies and placed layers stay)",
+        ),
+        false,
+        file_kind.is_some() && free,
+        16.0,
+    )
+    .clicked()
+    {
+        if let Some(rel) = &rel {
+            app.apply(Action::Shelf(ShelfOp::LibraryAskRemove(rel.clone())));
+        }
+    }
+}
+
+/// 何も選んでいないときの、ライブラリの一覧の状態（読み飛ばしたファイル・途中までの一覧）。短い文と、ツールチップの全文。
+fn list_status(app: &AppState) -> (Option<String>, Option<String>) {
+    let lang = app.lang;
+    let library = &app.library;
+    if library.truncated() {
+        return (
+            Some(match lang {
+                Lang::Ja => format!("先頭の {} 件だけ", yolu_io::library::MAX_ENTRIES),
+                Lang::En => format!("First {} only", yolu_io::library::MAX_ENTRIES),
+            }),
+            None,
+        );
+    }
+    let skipped = library.skipped();
+    if skipped.is_empty() {
+        return (None, None);
+    }
+    let text = match lang {
+        Lang::Ja => format!("{} 件を読み飛ばしました", skipped.len()),
+        Lang::En => format!("Skipped {}", skipped.len()),
+    };
+    let mut tip = text.clone();
+    for s in skipped.iter().take(8) {
+        let why = match &s.reason {
+            yolu_io::library::SkipReason::Link => lang.pick("リンク", "Link").to_owned(),
+            yolu_io::library::SkipReason::Name => {
+                lang.pick("名前が使えません", "Name not allowed").to_owned()
+            }
+            yolu_io::library::SkipReason::Deep => lang.pick("深すぎます", "Too deep").to_owned(),
+            yolu_io::library::SkipReason::Unreadable(_) => {
+                lang.pick("読めません", "Unreadable").to_owned()
+            }
+        };
+        tip += &format!("\n{}: {why}", s.rel);
+    }
+    (Some(text), Some(tip))
 }
 
 /// 引いている素材の影（ポインタの近くに名前）。
@@ -795,6 +1375,9 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
 
 /// 棚の素材の右クリックのメニュー（選んでいる素材）。
 pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
+    if app.library.source == Source::Library {
+        return library_menu_entries(app);
+    }
     let lang = app.lang;
     let Some(res) = app.shelf.selected_resource() else {
         return Vec::new();
@@ -825,6 +1408,14 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(kind.is_some_and(ItemKind::is_smart) && !builtin),
         Entry::item(
+            lang.pick("ライブラリへ入れる", "Put into the library"),
+            Action::Shelf(ShelfOp::ToLibrary(id.clone())),
+        )
+        .enabled(
+            free && !builtin
+                && !matches!(app.shelf.block_of(&id), Some(shelf::Block::Unreadable(_))),
+        ),
+        Entry::item(
             lang.pick("棚から消す…", "Remove from the shelf…"),
             Action::Shelf(ShelfOp::AskRemove(id)),
         )
@@ -832,26 +1423,122 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     ]
 }
 
-/// 毎フレーム: 別のスレッドの書き出しが終わっていれば棚へ入れ、窓に落とした .ylsmart を棚へ入れる（.ylp は `YoluApp` が開く）。
-pub fn frame(ctx: &egui::Context, state: &mut AppState) {
-    state.shelf.context = Some(ctx.clone());
-    state.shelf_poll();
-    import_dropped(ctx, state);
+/// ライブラリの項目の右クリックのメニュー（選んでいる項目）。
+fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let Some(id) = app.library.selected.clone() else {
+        return Vec::new();
+    };
+    let free = !app.is_stroking();
+    if let Some(key) = id
+        .strip_prefix(library::BRUSH_PREFIX)
+        .and_then(BrushKey::parse_token)
+    {
+        return vec![Entry::item(
+            lang.pick("使う", "Use"),
+            Action::Brush(BrushAction::Select(key)),
+        )
+        .enabled(free)];
+    }
+    let Some(rel) = library::rel_of(&id).map(str::to_owned) else {
+        return Vec::new();
+    };
+    let Some(entry) = app.library.entry(&rel) else {
+        return Vec::new();
+    };
+    let kind = app.library.kind_of(entry);
+    let block = app
+        .library
+        .info(&rel)
+        .and_then(|i| i.inspected.block.clone());
+    let unreadable = matches!(block, Some(shelf::Block::Unreadable(_)));
+    let uses = matches!(kind, ItemKind::Brush | ItemKind::Material);
+    let mut items = Vec::new();
+    if uses {
+        items.push(
+            Entry::item(
+                lang.pick("使う", "Use"),
+                Action::Shelf(ShelfOp::UseFromLibrary(rel.clone())),
+            )
+            .enabled(free && !unreadable && app.shelf.unavailable.is_none()),
+        );
+    } else {
+        items.push(
+            Entry::item(
+                if kind == ItemKind::SmartMask {
+                    lang.pick("マスクに適用", "Apply to Mask")
+                } else {
+                    lang.pick("置く", "Place")
+                },
+                Action::Shelf(ShelfOp::Place {
+                    id: id.clone(),
+                    target: PlaceTarget::Selected,
+                }),
+            )
+            .enabled(free && block.is_none() && app.can_edit() && app.library.info(&rel).is_some()),
+        );
+        items.push(
+            Entry::item(
+                lang.pick("プロジェクトで使う", "Use in this project"),
+                Action::Shelf(ShelfOp::UseFromLibrary(rel.clone())),
+            )
+            .enabled(free && !unreadable && app.shelf.unavailable.is_none()),
+        );
+    }
+    items.push(Entry::Separator);
+    items.push(Entry::item(
+        lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+        Action::Shelf(ShelfOp::LibraryReveal),
+    ));
+    items.push(
+        Entry::item(
+            lang.pick("ライブラリから消す…", "Remove from the library…"),
+            Action::Shelf(ShelfOp::LibraryAskRemove(rel)),
+        )
+        .enabled(free),
+    );
+    items
 }
 
-fn import_dropped(ctx: &egui::Context, state: &mut AppState) {
+/// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、窓に落としたファイルを入れる
+/// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
+/// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
+pub fn frame(ctx: &egui::Context, state: &mut AppState) {
+    state.shelf.context = Some(ctx.clone());
+    // 棚の項目の絵（アセットの欄・塗りつぶしの画像の箱が頼む）は、欄が見えていなくても受け取る
+    state.shelf.attach_repaint(ctx);
+    state.shelf.poll_inspections(shelf::INSPECTIONS_PER_FRAME);
+    state.shelf_poll();
+    state.library_poll();
+    // 格子の範囲はこのフレームで描いたときだけ入る（前のフレームの分を取り、今のフレームの描画が入れ直す）
+    let grid = state.library.grid_rect.take();
+    import_dropped(ctx, state, grid);
+}
+
+fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
+    let over_grid = state.library.source == Source::Library
+        && grid
+            .zip(ctx.input(|i| i.pointer.latest_pos()))
+            .is_some_and(|(r, p)| r.contains(p));
     let dropped: Vec<PathBuf> = ctx.input(|i| {
         i.raw
             .dropped_files
             .iter()
             .map(|f| f.path().to_path_buf())
             .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("ylsmart"))
+                p.extension().is_some_and(|e| {
+                    e.eq_ignore_ascii_case("ylsmart")
+                        || (over_grid && e.eq_ignore_ascii_case("png"))
+                })
             })
             .collect()
     });
-    if !dropped.is_empty() {
+    if dropped.is_empty() {
+        return;
+    }
+    if over_grid {
+        state.apply(Action::Shelf(ShelfOp::LibraryAddFiles(dropped)));
+    } else {
         state.apply(Action::Shelf(ShelfOp::ImportFiles(dropped)));
     }
 }
@@ -906,6 +1593,49 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 .save_file()
             {
                 state.apply(Action::Shelf(ShelfOp::ExportFile { id, path }));
+            }
+        }
+        DialogRequest::LibraryAdd => {
+            if let Some(paths) = rfd::FileDialog::new()
+                .set_title(lang.pick("ライブラリへ足すファイル", "Files to add to the library"))
+                .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
+                .pick_files()
+            {
+                state.apply(Action::Shelf(ShelfOp::LibraryAddFiles(paths)));
+            }
+        }
+        DialogRequest::LibraryRemove => {
+            let Some(rel) = state.library.pending_remove.take() else {
+                return;
+            };
+            let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
+            let yes = rfd::MessageDialog::new()
+                .set_title("YoluPainter")
+                .set_description(match lang {
+                    Lang::Ja => format!(
+                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いた層は残ります）"
+                    ),
+                    Lang::En => format!(
+                        "Remove \"{name}\" from the library folder? (Copies inside projects and placed layers stay.)"
+                    ),
+                })
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .set_level(rfd::MessageLevel::Warning)
+                .show()
+                == rfd::MessageDialogResult::Yes;
+            if yes {
+                state.apply(Action::Shelf(ShelfOp::LibraryRemove(rel)));
+            }
+        }
+        DialogRequest::LibraryReveal => {
+            if let Some(root) = state.library_root() {
+                if let Err(e) = library::ops::open_folder(&root) {
+                    state.message = format!(
+                        "{}: {}",
+                        lang.pick("フォルダを開けません", "Cannot open the folder"),
+                        lang.file_error(&e)
+                    );
+                }
             }
         }
         DialogRequest::ShelfRemove => {

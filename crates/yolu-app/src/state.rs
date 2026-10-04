@@ -756,6 +756,8 @@ pub struct AppState {
     pub view3d: View3dState,
     /// アセットの棚（.ylp の resources）。
     pub shelf: ShelfState,
+    /// 個人のライブラリ（フォルダ。アセットの欄が棚と切り替えて見せる）。
+    pub library: crate::library::LibraryState,
     /// 選択範囲と 2D の対称の画面の状態（選択範囲そのものは文書が持つ）。
     pub sel: crate::selection::SelState,
     /// メッシュマップのベイク（設定・窓・走っている仕事）。
@@ -814,6 +816,12 @@ pub enum DialogRequest {
     ShelfExport,
     /// 棚の素材（`shelf.pending_remove`）を消してよいか確かめる。
     ShelfRemove,
+    /// ライブラリへ足すファイル（PNG・.ylsmart。複数）を選ぶ。
+    LibraryAdd,
+    /// ライブラリのファイル（`library.pending_remove`）を消してよいか確かめる。
+    LibraryRemove,
+    /// ライブラリのフォルダを OS のファイルの窓で開く。
+    LibraryReveal,
     /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
     ExportFolder(String),
     /// 描くチャンネルの PNG を書き出すファイルを選ぶ。
@@ -939,6 +947,7 @@ impl AppState {
             dialog_request: None,
             view3d: View3dState::default(),
             shelf: ShelfState::default(),
+            library: Default::default(),
             sel: crate::selection::SelState::default(),
             bake: Default::default(),
             export: Default::default(),

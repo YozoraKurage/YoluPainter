@@ -13,11 +13,15 @@
 //!   （画素 8 MiB 以上）か大きな棚（素材と棚の使用量の合計が 8 MiB 以上）への「層を保存」は、変換・圧縮・サムネイルに加えて
 //!   棚の写しへの追加も別のスレッドで済ませ、画面のスレッドは足した後の棚に差し替えるだけにする（その間は消す・読み込むを断る）。
 //!   消す・読み込むは画面のスレッドで行い、棚が 240〜420 MiB だと、消すは 1.4〜2.8 秒、読み込みは 2〜4 秒止まる。サムネイルのための
-//!   展開は 1 項目 0.1 秒前後（画素 64 MiB の素材で 0.5 秒。1 フレームに 2 個まで）。測定は tests/shelf.rs の `measure_`
+//!   展開は別のスレッドで行うので画面を止めない（1 項目 0.1 秒前後。画素 64 MiB の素材で 0.5 秒）。測定は tests/shelf.rs の `measure_`
 //!   （最適化 1 のビルドの値。本番のビルドでは短くなる）。
 //! - 棚を .ylp に書くのは「変えたとき」だけ（`write_into`）。変えていなければ、開いたファイルの resources をバイト列のまま残す。
-//! - サムネイルと一覧の説明は、棚の項目を最初に見るときに 1 度だけ作って覚える（`Inspected`。作るのは 1 フレームに数個まで）。
-//!   画素は文書の合成の参照の式で 64 点に標本化する（保存の正本には使わない）。
+//! - サムネイルと一覧の説明は、棚の項目が見えたときに別のスレッドで 1 度だけ作って覚える（`Inspected`。`request_inspections` が
+//!   見えている項目だけ頼み、できた分を `poll_inspections` が 1 フレームに数個ずつ受け取る。スクロールで見えなくなった項目の仕事は
+//!   始めずに捨てる）。同じ中身の絵は、利用者のキャッシュのフォルダに中身の札で覚える（`library::cache`）。画素は文書の合成の参照の式で
+//!   64 点に標本化する（保存の正本には使わない）。
+//! - 個人のライブラリ（`library`）のファイルを「プロジェクトで使う」は、別のスレッドで読んで検証し、写しを棚の写しへ足す
+//!   （`spawn_import`。出どころは `library`。保存と同じく 1 つずつで、やめられる）。ライブラリへ入れる・置く・消すは `library::ops`。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -39,6 +43,8 @@ use yolu_io::{NativeValue, Project, Resource};
 
 use crate::engine::{Channel, CoreError, Document, LayerId};
 use crate::lang::Lang;
+use crate::library::cache::{Cache, Cached};
+use crate::library::service::{Cancel, Service, Work};
 use crate::state::{AppState, DialogRequest};
 
 /// 棚の素材のメモリの予算（Unity 版の既定は RAM の 1/16 を 256〜4096 MiB に収めた値。ここでは固定）。
@@ -51,6 +57,15 @@ pub const THUMB: u32 = 64;
 pub const PREVIEW_BUDGET: u64 = 128 * 1024 * 1024;
 /// 画像のサムネイルを作る画素数の上限（これを超える画像は種類のアイコンで見せる）。
 pub const IMAGE_THUMB_PIXELS: u64 = 4096 * 4096;
+
+/// 同梱の素材を言語に合わせて組む（`builtin:` 付きの ID。無い・組めないときは None）。
+fn build_builtin_material(id: &str, lang: Lang) -> Option<SmartMaterial> {
+    let entry = smart_library::entries()
+        .iter()
+        .find(|e| format!("{BUILTIN_PREFIX}{}", e.id) == id)?;
+    let japanese = lang == Lang::Ja;
+    entry.build(entry.name(japanese), japanese).ok()
+}
 
 /// 同梱の素材の項目の ID の前置き（プロジェクトの棚の ID は UUID なので重ならない）。
 pub const BUILTIN_PREFIX: &str = "builtin:";
@@ -176,8 +191,28 @@ impl Block {
 
 enum Thumb {
     None,
-    Pending(ColorImage),
+    Pending(Picture),
     Ready(TextureHandle),
+}
+
+/// サムネイルの画素（straight RGBA8。画像の上の行から）。別のスレッドで作り、画面のスレッドで GPU へ上げる。ディスクのキャッシュへも
+/// この形で書く（`Color32` は掛け済みなので、そこから戻すと値が少しずれる）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl Picture {
+    fn into_image(self) -> ColorImage {
+        let mut image = ColorImage::from_rgba_unmultiplied(
+            [self.width as usize, self.height as usize],
+            &self.rgba,
+        );
+        image.source_size = egui::vec2(self.width as f32, self.height as f32);
+        image
+    }
 }
 
 /// 項目を見て 1 度だけ作る情報（言語に依らない部分）。
@@ -191,7 +226,46 @@ pub struct Inspected {
 }
 
 impl Inspected {
-    fn bare(block: Option<Block>) -> Inspected {
+    /// サムネイルのテクスチャ（作ってあれば。初めて使うときに GPU へ上げる）。
+    pub(crate) fn texture(&mut self, ctx: &egui::Context, name: &str) -> Option<TextureHandle> {
+        if let Thumb::Pending(picture) = &mut self.thumb {
+            let picture = std::mem::replace(
+                picture,
+                Picture {
+                    width: 0,
+                    height: 0,
+                    rgba: Vec::new(),
+                },
+            );
+            let handle = ctx.load_texture(name, picture.into_image(), TextureOptions::LINEAR);
+            self.thumb = Thumb::Ready(handle);
+        }
+        match &self.thumb {
+            Thumb::Ready(h) => Some(h.clone()),
+            _ => None,
+        }
+    }
+
+    /// サムネイルを付ける（別のスレッドで作った絵）。
+    pub(crate) fn with_picture(mut self, picture: Picture) -> Inspected {
+        self.thumb = Thumb::Pending(picture);
+        self
+    }
+
+    /// 絵があるか（作ったか・GPU へ上げたか）。
+    pub fn has_thumbnail(&self) -> bool {
+        !matches!(self.thumb, Thumb::None)
+    }
+
+    /// まだ GPU へ上げていない絵の画素（試験が、作った絵を比べるため。上げたあとは None）。
+    pub fn picture(&self) -> Option<&Picture> {
+        match &self.thumb {
+            Thumb::Pending(picture) => Some(picture),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn bare(block: Option<Block>) -> Inspected {
         Inspected {
             width: 0,
             height: 0,
@@ -201,6 +275,157 @@ impl Inspected {
             thumb: Thumb::None,
         }
     }
+}
+
+/// 別のスレッドで見た結果（項目の ID と、そのときの中身の札。棚が変わっていたら捨てる）。
+struct Inspection {
+    id: String,
+    content: String,
+    info: Inspected,
+}
+
+/// 項目を見るのに要るもの（棚から写しを共有して取り出す。別のスレッドへ渡せる）。
+struct Input {
+    id: String,
+    kind: ItemKind,
+    content: String,
+    bytes: Option<Arc<[u8]>>,
+    width: u32,
+    height: u32,
+    builtin: Option<Lang>,
+    preview_budget: u64,
+    image_thumb_pixels: u64,
+}
+
+impl Input {
+    /// 項目を見て情報とサムネイルを作る（重い。画面のスレッドでは試験とごく小さな項目だけ）。`cache` があれば、同じ中身の絵は
+    /// そこから読み、作った絵はそこへ覚える。取り消されたら（結果は捨てられるので）早く切り上げる。
+    fn run(self, cache: Option<&Cache>, cancel: Option<&Cancel>) -> Inspected {
+        let stopped = || cancel.is_some_and(Cancel::is_set);
+        if stopped() {
+            return Inspected::bare(None);
+        }
+        let bytes = self.bytes.as_deref();
+        match self.kind {
+            _ if is_builtin(&self.id) => {
+                let Some(material) = self
+                    .builtin
+                    .and_then(|l| build_builtin_material(&self.id, l))
+                else {
+                    return Inspected::bare(Some(Block::Unreadable(Unreadable::same("?"))));
+                };
+                let key = Cache::key(
+                    "builtin",
+                    &format!("{}:{}", self.id, env!("CARGO_PKG_VERSION")),
+                );
+                remembered(cache, &key, stopped, || (inspect_builtin(&material), None)).0
+            }
+            ItemKind::Image => {
+                let key = Cache::key("image", &self.content);
+                remembered(cache, &key, stopped, || {
+                    (
+                        inspect_image_sized(
+                            self.width,
+                            self.height,
+                            bytes,
+                            self.image_thumb_pixels,
+                        ),
+                        None,
+                    )
+                })
+                .0
+            }
+            ItemKind::SmartMaterial | ItemKind::SmartMask => {
+                let key = Cache::key("smart", &self.content);
+                remembered(cache, &key, stopped, || {
+                    inspect_smart_kind(bytes, self.preview_budget)
+                })
+                .0
+            }
+            ItemKind::Brush | ItemKind::Material => Inspected::bare(Some(Block::Kind(self.kind))),
+        }
+    }
+}
+
+/// キャッシュにあればそれを、無ければ `make` で作って（置けない理由が無く、サムネイルがあるときだけ）覚える。
+pub(crate) fn remembered(
+    cache: Option<&Cache>,
+    key: &str,
+    stopped: impl Fn() -> bool,
+    make: impl FnOnce() -> (Inspected, Option<SmartKind>),
+) -> (Inspected, Option<SmartKind>) {
+    if let Some(found) = cache.and_then(|c| c.get(key)) {
+        return from_cached(found);
+    }
+    let (info, kind) = make();
+    if let (Some(cache), false) = (cache, stopped()) {
+        if let Some(cached) = to_cached(&info, kind) {
+            cache.put(key, &cached);
+        }
+    }
+    (info, kind)
+}
+
+/// 覚える説明（`key=value` の行）。サムネイルがあって置けない理由の無い項目だけ覚える。
+pub(crate) fn to_cached(info: &Inspected, kind: Option<SmartKind>) -> Option<Cached> {
+    let Thumb::Pending(picture) = &info.thumb else {
+        return None;
+    };
+    if info.block.is_some() {
+        return None;
+    }
+    let mut text = format!(
+        "w={}\nh={}\nlayers={}\n",
+        info.width, info.height, info.layers
+    );
+    if !info.channels.is_empty() {
+        let names: Vec<_> = info.channels.iter().map(|c| channel_name(*c)).collect();
+        text += &format!("channels={}\n", names.join(","));
+    }
+    match kind {
+        Some(SmartKind::Mask) => text += "kind=mask\n",
+        Some(SmartKind::Material) => text += "kind=material\n",
+        None => {}
+    }
+    Some(Cached {
+        info: text,
+        width: picture.width,
+        height: picture.height,
+        rgba: picture.rgba.clone(),
+    })
+}
+
+/// 覚えていた絵と説明から（読めない説明は、寸法 0 のまま絵だけ）。
+pub(crate) fn from_cached(cached: Cached) -> (Inspected, Option<SmartKind>) {
+    let mut out = Inspected::bare(None);
+    let mut kind = None;
+    for line in cached.info.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "w" => out.width = value.parse().unwrap_or(0),
+            "h" => out.height = value.parse().unwrap_or(0),
+            "layers" => out.layers = value.parse().unwrap_or(0),
+            "channels" => {
+                out.channels = value.split(',').filter_map(channel_from_name).collect();
+            }
+            "kind" => {
+                kind = match value {
+                    "mask" => Some(SmartKind::Mask),
+                    "material" => Some(SmartKind::Material),
+                    _ => None,
+                }
+            }
+            _ => {}
+        }
+    }
+    out.thumb = Thumb::Pending(Picture {
+        width: cached.width,
+        height: cached.height,
+        rgba: cached.rgba,
+    });
+    (out, kind)
 }
 
 /// 棚を読めなかった理由。日本語は yolu-io の診断のまま、英語は種類ごとの短い文（診断の本文は日本語なので、英語の窓には出さない）。
@@ -220,6 +445,14 @@ impl Unreadable {
         Unreadable {
             ja: Lang::Ja.io_error(e),
             en: Lang::En.io_error(e),
+        }
+    }
+
+    /// 言語ごとの文。
+    pub fn pair(ja: &str, en: &str) -> Unreadable {
+        Unreadable {
+            ja: ja.to_owned(),
+            en: en.to_owned(),
         }
     }
 
@@ -272,6 +505,8 @@ pub struct ShelfState {
     builtin_lang: Option<Lang>,
     /// 同梱の素材を一覧に出すか（既定は出す。プロジェクトの棚だけの並びを調べる試験が false にする）。
     pub show_builtin: bool,
+    /// 見えている項目の情報とサムネイルを作る別のスレッドの仕事場（棚を替えると、前の棚の仕事は捨てる）。
+    inspector: Service<Inspection>,
 }
 
 /// 別のスレッドで書き出している素材。
@@ -281,6 +516,8 @@ struct PendingSave {
     rx: std::sync::mpsc::Receiver<Result<Staged, yolu_io::Error>>,
     /// やめた・捨てたことをスレッドへ伝える旗（サムネイルを作らず切り上げる。変換と圧縮の途中では止められない）。
     cancel: Arc<AtomicBool>,
+    /// 個人のライブラリのファイルを取り込んでいる（層の保存ではない）。
+    from_library: bool,
 }
 
 impl Drop for PendingSave {
@@ -290,10 +527,10 @@ impl Drop for PendingSave {
 }
 
 /// 走っている書き出しのスレッドの数え（作った時に増え、落ちた時に減る。パニックでも減る）。
-struct Running(Arc<AtomicUsize>);
+pub(crate) struct Running(Arc<AtomicUsize>);
 
 impl Running {
-    fn start(count: &Arc<AtomicUsize>) -> Running {
+    pub(crate) fn start(count: &Arc<AtomicUsize>) -> Running {
         count.fetch_add(1, Ordering::SeqCst);
         Running(count.clone())
     }
@@ -314,11 +551,77 @@ struct Encoded {
 
 /// 素材を棚の写しへ足した結果。`next` が足した後の棚（同じ中身が既にあったときは足す前のまま）。足すときの棚全体の検証は棚の
 /// 大きさに比例して長いので、別のスレッドの保存では、そちらで済ませて画面のスレッドは `next` に差し替えるだけにする。
-struct Staged {
+pub(crate) struct Staged {
     next: Shelf,
     id: String,
     added: bool,
     info: Option<Inspected>,
+    /// 元の画像が 8 ビットへ丸められた（16 ビットの PNG）。取り込みの知らせに足す。
+    rounded: bool,
+}
+
+impl Staged {
+    /// 元の画像を 8 ビットへ丸めたことを覚える。
+    pub(crate) fn rounded(mut self, rounded: bool) -> Staged {
+        self.rounded = rounded;
+        self
+    }
+}
+
+/// 棚の写し `shelf` へ、個人のライブラリのファイルの中身（スマート素材・ブラシ・マテリアルの .yl* ファイルそのまま）を足す。出どころは
+/// ライブラリ（`rel`・ファイルの `sha256`）。拒否では何も返さない（元の棚は変わらない）。
+pub(crate) fn stage_library_file(
+    mut shelf: Shelf,
+    name: &str,
+    kind: ResourceKind,
+    bytes: &[u8],
+    rel: &str,
+    sha256: &str,
+) -> Result<Staged, yolu_io::Error> {
+    let before = shelf.resources().len();
+    let id = shelf.add_file_from_library(&new_resource_id(), name, kind, bytes, rel, sha256)?;
+    let added = shelf.resources().len() > before;
+    Ok(Staged {
+        next: shelf,
+        id,
+        added,
+        info: None,
+        rounded: false,
+    })
+}
+
+/// `stage_library_file` の画像版（画素は文書と同じ向き＝下の行が先の straight RGBA8。`length` は元のファイルの長さ）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_library_image(
+    mut shelf: Shelf,
+    name: &str,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    rel: &str,
+    sha256: &str,
+    length: u64,
+) -> Result<Staged, yolu_io::Error> {
+    let before = shelf.resources().len();
+    let id = shelf.add_image_from_library(
+        &new_resource_id(),
+        name,
+        rgba,
+        width,
+        height,
+        "unspecified",
+        rel,
+        sha256,
+        length,
+    )?;
+    let added = shelf.resources().len() > before;
+    Ok(Staged {
+        next: shelf,
+        id,
+        added,
+        info: None,
+        rounded: false,
+    })
 }
 
 /// 棚の写し `shelf` へ素材を足す（拒否では何も返さない。元の棚は変わらない）。
@@ -341,11 +644,17 @@ fn stage(
         id,
         added,
         info: done.info,
+        rounded: false,
     })
 }
 
 /// この大きさ（画素のバイト）以上の素材の書き出しは別のスレッドで行う（Unity 版と同じ 8 MiB）。
 pub const ASYNC_SAVE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 項目の情報とサムネイルを作るスレッドの数（描いている間も画面を止めないよう、少なく）。
+pub const INSPECT_WORKERS: usize = 1;
+/// 1 フレームに画面のスレッドが受け取るできあがりの数。
+pub const INSPECTIONS_PER_FRAME: usize = 8;
 
 impl Default for ShelfState {
     fn default() -> Self {
@@ -377,6 +686,7 @@ impl ShelfState {
             builtin: Vec::new(),
             builtin_lang: None,
             show_builtin: true,
+            inspector: Service::new(INSPECT_WORKERS),
         }
     }
 
@@ -407,11 +717,7 @@ impl ShelfState {
 
     /// 同梱の素材を今の言語で組む（棚に無い ID・組めないときは None）。
     pub fn build_builtin(&self, id: &str, lang: Lang) -> Option<SmartMaterial> {
-        let entry = smart_library::entries()
-            .iter()
-            .find(|e| format!("{BUILTIN_PREFIX}{}", e.id) == id)?;
-        let japanese = lang == Lang::Ja;
-        entry.build(entry.name(japanese), japanese).ok()
+        build_builtin_material(id, lang)
     }
 
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ（途中の画面・取り消しを確かめるため）。
@@ -444,9 +750,61 @@ impl ShelfState {
         self.saving.as_ref().map(|p| p.name.as_str())
     }
 
+    /// 別のスレッドの仕事の呼び名（層の保存か、ライブラリのファイルの取り込みか）。
+    pub fn saving_label(&self, lang: Lang) -> &'static str {
+        if self.saving.as_ref().is_some_and(|p| p.from_library) {
+            lang.pick("取り込み中", "Importing")
+        } else {
+            lang.pick("保存中", "Saving")
+        }
+    }
+
+    /// 個人のライブラリのファイルを別のスレッドで読んで検証し、棚の写しへ足す（できたら `shelf_poll` が棚へ入れる）。`job` は取り消しの
+    /// 旗と棚の写しをもらい、足した後の棚を返す。次の保存・取り込みは、終わるまで断る（やめても、スレッドが終わるまで）。
+    pub(crate) fn spawn_import(
+        &mut self,
+        name: String,
+        kind: ItemKind,
+        job: impl FnOnce(&AtomicBool, Shelf) -> Result<Staged, yolu_io::Error> + Send + 'static,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let repaint = self.context.clone();
+        let hold = self.hold.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let running = Running::start(&self.running);
+        let thread_cancel = cancel.clone();
+        let snapshot = self.shelf.clone();
+        std::thread::spawn(move || {
+            let done = job(&thread_cancel, snapshot).and_then(|staged| {
+                if thread_cancel.load(Ordering::SeqCst) {
+                    Err(yolu_io::Error::Core(CoreError::Cancelled))
+                } else {
+                    Ok(staged)
+                }
+            });
+            while hold.load(Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            drop(running);
+            let _ = tx.send(done);
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+        self.saving = Some(PendingSave {
+            name,
+            kind,
+            rx,
+            cancel,
+            from_library: true,
+        });
+    }
+
     /// 次の保存を始められない理由（書き出しが走っている間。やめた保存のスレッドが終わるまでも）。
     pub fn busy_reason(&self, lang: Lang) -> Option<&'static str> {
-        if self.saving.is_some() {
+        if self.saving.as_ref().is_some_and(|p| p.from_library) {
+            Some(lang.pick("取り込み中です", "Already importing"))
+        } else if self.saving.is_some() {
             Some(lang.pick("保存中です", "Already saving"))
         } else if self.saves_running() > 0 {
             Some(lang.pick("やめた保存を終えています", "Finishing the cancelled save"))
@@ -569,32 +927,119 @@ impl ShelfState {
         self.inspected.get(id)
     }
 
-    /// 項目の情報とサムネイルを（まだなら）作る。
+    /// 項目を見るのに要るものを集める（無い項目・知らない種類は None）。
+    fn input_of(&self, id: &str) -> Option<Input> {
+        let r = self.get(id)?;
+        let kind = ItemKind::of(&r.kind)?;
+        Some(Input {
+            id: id.to_owned(),
+            kind,
+            content: r.content.clone(),
+            bytes: if is_builtin(id) || matches!(kind, ItemKind::Brush | ItemKind::Material) {
+                None
+            } else {
+                self.shelf.content_arc(id)
+            },
+            width: r.metadata["width"].as_u64().unwrap_or(0) as u32,
+            height: r.metadata["height"].as_u64().unwrap_or(0) as u32,
+            builtin: self.builtin_lang,
+            preview_budget: self.preview_budget,
+            image_thumb_pixels: self.image_thumb_pixels,
+        })
+    }
+
+    /// 項目の情報とサムネイルを（まだなら）この場で作る。試験用（画面のスレッドで画素を展開するので、画面は使わない。
+    /// 画面は `request_inspections` で別のスレッドへ頼む）。
     pub fn inspect(&mut self, id: &str) {
         if self.inspected.contains_key(id) {
             return;
         }
-        let Some(r) = self.get(id) else { return };
-        let Some(kind) = ItemKind::of(&r.kind) else {
+        let Some(input) = self.input_of(id) else {
             return;
         };
-        let info = match kind {
-            _ if is_builtin(id) => match self.builtin_lang.and_then(|l| self.build_builtin(id, l)) {
-                Some(material) => inspect_builtin(&material),
-                None => Inspected::bare(Some(Block::Unreadable(Unreadable::same("?")))),
-            },
-            ItemKind::Image => {
-                inspect_image(r, self.shelf.content_bytes(id), self.image_thumb_pixels)
-            }
-            ItemKind::SmartMaterial | ItemKind::SmartMask => {
-                inspect_smart(self.shelf.content_bytes(id), self.preview_budget)
-            }
-            ItemKind::Brush | ItemKind::Material => Inspected::bare(Some(Block::Kind(kind))),
-        };
+        let info = input.run(None, None);
         self.inspected.insert(id.to_owned(), info);
     }
 
-    /// 見える項目のうちまだ見ていないものを `limit` 個まで見る。まだ残っていれば true（次のフレームでも続ける）。
+    /// 新しいフレームの始まり（見えている項目を `request_inspections` で頼む前に 1 度）。
+    pub fn begin_inspection_frame(&self, ctx: &egui::Context) {
+        self.inspector.set_context(ctx.clone());
+        self.inspector.begin_frame();
+    }
+
+    /// できたときに画面を描き直させる口（棚のタブを開いていなくても、塗りつぶしの画像の箱などが `request_inspections` で頼める）。
+    pub fn attach_repaint(&self, ctx: &egui::Context) {
+        self.inspector.set_context(ctx.clone());
+    }
+
+    /// 見えている項目のうち、まだ見ていないものの情報とサムネイルを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。
+    /// 置けるか・読めるかの判定が要らない種類（ブラシ・マテリアル）はその場で決める。`cache` はディスクのキャッシュ。
+    pub fn request_inspections(&mut self, ids: &[String], cache: Option<&Arc<Cache>>) {
+        for id in ids {
+            if self.inspected.contains_key(id) {
+                continue;
+            }
+            let Some(input) = self.input_of(id) else {
+                continue;
+            };
+            if matches!(input.kind, ItemKind::Brush | ItemKind::Material) {
+                let info = input.run(None, None);
+                self.inspected.insert(id.clone(), info);
+                continue;
+            }
+            let cache = cache.cloned();
+            self.inspector.request(id, move || -> Work<Inspection> {
+                Box::new(move |cancel| Inspection {
+                    id: input.id.clone(),
+                    content: input.content.clone(),
+                    info: input.run(cache.as_deref(), Some(cancel)),
+                })
+            });
+        }
+    }
+
+    /// できあがった項目を `limit` 個まで受け取って覚える（棚から消えた・中身が替わった項目の結果は捨てる）。受け取った数。
+    pub fn poll_inspections(&mut self, limit: usize) -> usize {
+        let done = self.inspector.poll(limit);
+        let count = done.len();
+        for (key, result) in done {
+            match result {
+                Some(Inspection { id, content, info }) => {
+                    if self.get(&id).is_some_and(|r| r.content == content) {
+                        self.inspected.insert(id, info);
+                    }
+                }
+                // 仕事が途中で落ちた項目は、読めない印で覚える（頼み直し続けない）
+                None => {
+                    if self.get(&key).is_some() {
+                        self.inspected.insert(
+                            key,
+                            Inspected::bare(Some(Block::Unreadable(Unreadable::same("?")))),
+                        );
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// 頼んであって、まだ受け取っていない項目があるか（あれば、画面は続けて描き直す）。
+    pub fn inspections_pending(&self) -> bool {
+        self.inspector.pending() > 0
+    }
+
+    /// 試験用: 頼んだ仕事がすべて終わるまで待って、できた分を受け取る。
+    pub fn wait_inspections(&mut self) {
+        self.inspector.wait_done();
+        while self.poll_inspections(usize::MAX) > 0 {}
+    }
+
+    /// 試験用: true の間、別のスレッドは新しい項目を見始めない。
+    pub fn hold_inspections(&self, hold: bool) {
+        self.inspector.hold(hold);
+    }
+
+    /// 見える項目のうちまだ見ていないものを `limit` 個まで、この場で見る（試験用。画面は `request_inspections`）。まだ残っていれば true。
     pub fn inspect_pending(&mut self, limit: usize) -> bool {
         let todo: Vec<String> = self
             .visible()
@@ -611,15 +1056,7 @@ impl ShelfState {
     /// サムネイルのテクスチャ（作ってあれば。初めて使うときに GPU へ上げる）。
     pub fn texture(&mut self, ctx: &egui::Context, id: &str) -> Option<TextureHandle> {
         let info = self.inspected.get_mut(id)?;
-        if let Thumb::Pending(image) = &mut info.thumb {
-            let image = std::mem::take(image);
-            let handle = ctx.load_texture(format!("shelf:{id}"), image, TextureOptions::LINEAR);
-            info.thumb = Thumb::Ready(handle);
-        }
-        match &info.thumb {
-            Thumb::Ready(h) => Some(h.clone()),
-            _ => None,
-        }
+        info.texture(ctx, &format!("shelf:{id}"))
     }
 
     /// 一覧に出す説明（層の数・大きさ・チャンネル）。
@@ -627,32 +1064,11 @@ impl ShelfState {
         let Some(kind) = ItemKind::of(&r.kind) else {
             return String::new();
         };
-        let size = |w: u32, h: u32| format!("{w} × {h}");
-        match (kind, self.info(&r.id)) {
-            (ItemKind::Image, _) => size(
-                r.metadata["width"].as_u64().unwrap_or(0) as u32,
-                r.metadata["height"].as_u64().unwrap_or(0) as u32,
-            ),
-            (ItemKind::SmartMaterial, Some(i)) if i.width > 0 => {
-                let mut text = format!(
-                    "{} {}",
-                    i.layers,
-                    lang.pick("層", if i.layers == 1 { "layer" } else { "layers" }),
-                );
-                // 同梱の素材は大きさに依らない（値と Generator だけ）ので、大きさを出さない
-                if !is_builtin(&r.id) {
-                    text += &format!(" · {}", size(i.width, i.height));
-                }
-                if !i.channels.is_empty() {
-                    let names: Vec<_> =
-                        i.channels.iter().map(|c| channel_label(lang, *c)).collect();
-                    text += &format!(" · {}", names.join(", "));
-                }
-                text
-            }
-            (ItemKind::SmartMask, Some(i)) if i.width > 0 => size(i.width, i.height),
-            _ => String::new(),
-        }
+        let image_size = (
+            r.metadata["width"].as_u64().unwrap_or(0) as u32,
+            r.metadata["height"].as_u64().unwrap_or(0) as u32,
+        );
+        describe(lang, kind, self.info(&r.id), image_size, is_builtin(&r.id))
     }
 
     /// 棚の素材の置けない理由（まだ見ていなければ None）。
@@ -695,6 +1111,38 @@ impl ShelfState {
     }
 }
 
+/// 項目の説明（画像は大きさ、スマートマテリアルは層の数・大きさ・チャンネル、スマートマスクは大きさ。まだ見ていない項目は空）。
+/// 同梱の素材は大きさに依らない（値と Generator だけ）ので、大きさを出さない。
+pub(crate) fn describe(
+    lang: Lang,
+    kind: ItemKind,
+    info: Option<&Inspected>,
+    image_size: (u32, u32),
+    builtin: bool,
+) -> String {
+    let size = |w: u32, h: u32| format!("{w} × {h}");
+    match (kind, info) {
+        (ItemKind::Image, _) => size(image_size.0, image_size.1),
+        (ItemKind::SmartMaterial, Some(i)) if i.width > 0 => {
+            let mut text = format!(
+                "{} {}",
+                i.layers,
+                lang.pick("層", if i.layers == 1 { "layer" } else { "layers" }),
+            );
+            if !builtin {
+                text += &format!(" · {}", size(i.width, i.height));
+            }
+            if !i.channels.is_empty() {
+                let names: Vec<_> = i.channels.iter().map(|c| channel_label(lang, *c)).collect();
+                text += &format!(" · {}", names.join(", "));
+            }
+            text
+        }
+        (ItemKind::SmartMask, Some(i)) if i.width > 0 => size(i.width, i.height),
+        _ => String::new(),
+    }
+}
+
 /// .NET の GUID の並びから、.ylp の ID の文字列へ（yolu-io の `guid` と同じ）。
 fn guid_text(b: &[u8; 16]) -> String {
     format!(
@@ -730,6 +1178,19 @@ fn channel_from_name(name: &str) -> Option<Channel> {
     })
 }
 
+/// `channel_from_name` の逆（索引・キャッシュに書く名前）。標準のチャンネル以外は空。
+fn channel_name(c: Channel) -> &'static str {
+    match c {
+        Channel::Color => "Color",
+        Channel::Roughness => "Roughness",
+        Channel::Metallic => "Metallic",
+        Channel::Height => "Height",
+        Channel::Normal => "Normal",
+        Channel::Emission => "Emission",
+        _ => "",
+    }
+}
+
 fn channel_label(lang: Lang, c: Channel) -> &'static str {
     match c {
         Channel::Color => lang.pick("カラー", "Color"),
@@ -744,9 +1205,13 @@ fn channel_label(lang: Lang, c: Channel) -> &'static str {
 
 // ───────── 項目を見る（サムネイル・置けない理由） ─────────
 
-fn inspect_image(r: &Resource, bytes: Option<&[u8]>, thumb_pixels: u64) -> Inspected {
-    let width = r.metadata["width"].as_u64().unwrap_or(0) as u32;
-    let height = r.metadata["height"].as_u64().unwrap_or(0) as u32;
+/// 画像の情報とサムネイル（寸法は索引にある値。画素数が `thumb_pixels` を超える画像・読めない画像は、寸法だけでサムネイル無し）。
+pub(crate) fn inspect_image_sized(
+    width: u32,
+    height: u32,
+    bytes: Option<&[u8]>,
+    thumb_pixels: u64,
+) -> Inspected {
     let mut info = Inspected::bare(None);
     info.width = width;
     info.height = height;
@@ -755,20 +1220,25 @@ fn inspect_image(r: &Resource, bytes: Option<&[u8]>, thumb_pixels: u64) -> Inspe
     }
     let Some(bytes) = bytes else { return info };
     if let Ok(img) = image::load_from_memory_with_format(bytes, image::ImageFormat::Png) {
-        let (w, h) = fit_size(img.width(), img.height());
-        // 小さい画像は拡大して見せる（ぼかさず、画素のまま）
-        let filter = if w >= img.width() {
-            image::imageops::FilterType::Nearest
-        } else {
-            image::imageops::FilterType::Triangle
-        };
-        let small = image::imageops::resize(&img.to_rgba8(), w, h, filter);
-        info.thumb = Thumb::Pending(ColorImage::from_rgba_unmultiplied(
-            [w as usize, h as usize],
-            small.as_raw(),
-        ));
+        info.thumb = Thumb::Pending(image_picture(&img.to_rgba8()));
     }
     info
+}
+
+/// 画像（straight RGBA8）のサムネイル。長い辺が `THUMB` に収まる大きさで、小さい画像は拡大して見せる（ぼかさず、画素のまま）。
+pub(crate) fn image_picture(img: &image::RgbaImage) -> Picture {
+    let (w, h) = fit_size(img.width(), img.height());
+    let filter = if w >= img.width() {
+        image::imageops::FilterType::Nearest
+    } else {
+        image::imageops::FilterType::Triangle
+    };
+    let small = image::imageops::resize(img, w, h, filter);
+    Picture {
+        width: w,
+        height: h,
+        rgba: small.into_raw(),
+    }
 }
 
 /// 長い辺が `THUMB` に収まる大きさ（細長くても 1 以上）。
@@ -780,13 +1250,20 @@ fn fit_size(w: u32, h: u32) -> (u32, u32) {
     )
 }
 
-fn inspect_smart(bytes: Option<&[u8]>, preview_budget: u64) -> Inspected {
+/// スマート素材の情報とサムネイル（ファイルの中の種類。スマートマテリアルかスマートマスクか。読めなければ None）。
+pub(crate) fn inspect_smart_kind(
+    bytes: Option<&[u8]>,
+    preview_budget: u64,
+) -> (Inspected, Option<SmartKind>) {
     let Some(bytes) = bytes else {
-        return Inspected::bare(Some(Block::Unreadable(Unreadable::same("?"))));
+        return (
+            Inspected::bare(Some(Block::Unreadable(Unreadable::same("?")))),
+            None,
+        );
     };
     let file = match SmartFile::read(bytes) {
         Ok(f) => f,
-        Err(e) => return Inspected::bare(Some(block_from(&e))),
+        Err(e) => return (Inspected::bare(Some(block_from(&e))), None),
     };
     let info = file.info();
     let mut out = Inspected::bare(None);
@@ -802,7 +1279,7 @@ fn inspect_smart(bytes: Option<&[u8]>, preview_budget: u64) -> Inspected {
     // サムネイルのために展開する量には上限がある（超える素材はアイコンで見せる。置くときには上限なしで展開する）
     match file.to_core_within(preview_budget) {
         Ok(material) => {
-            out.thumb = smart_thumbnail(&material)
+            out.thumb = smart_picture(&material)
                 .map(Thumb::Pending)
                 .unwrap_or(Thumb::None)
         }
@@ -810,7 +1287,7 @@ fn inspect_smart(bytes: Option<&[u8]>, preview_budget: u64) -> Inspected {
         Err(yolu_io::Error::Budget(_) | yolu_io::Error::Core(CoreError::SourceBudgetExceeded)) => {}
         Err(e) => out.block = Some(smart_block(&file, &e)),
     }
-    out
+    (out, Some(file.kind()))
 }
 
 /// 捕まえた素材を .ylsmart のバイト列にして、一覧の情報（サムネイル）を作る（別のスレッドでも呼ぶ）。`cancel` が立っていれば
@@ -838,32 +1315,33 @@ fn inspect_builtin(material: &SmartMaterial) -> Inspected {
     out.height = material.height();
     out.layers = material.layers().len();
     out.channels = material.channels();
-    out.thumb = builtin_thumbnail(material)
+    out.thumb = builtin_picture(material)
         .map(Thumb::Pending)
         .unwrap_or(Thumb::None);
     out
 }
 
-fn builtin_thumbnail(material: &SmartMaterial) -> Option<ColorImage> {
+fn builtin_picture(material: &SmartMaterial) -> Option<Picture> {
     let (w, h) = (material.width(), material.height());
     let doc = material.fragment_document().ok()?;
     let all = doc
         .composite_channel(Channel::Color, yolu_core::Rect::new(0, 0, w, h))
         .ok()?;
     let (tw, th) = fit_size(w, h);
-    let mut pixels = Vec::with_capacity((tw * th) as usize);
+    let mut rgba = Vec::with_capacity((tw * th) as usize * 4);
     for ty in 0..th {
         for tx in 0..tw {
             let x = (((tx as f32 + 0.5) * w as f32 / tw as f32) as u32).min(w - 1);
             // 画像は上の行から、文書は下の行から
             let y = h - 1 - (((ty as f32 + 0.5) * h as f32 / th as f32) as u32).min(h - 1);
-            let p = &all[(y as usize * w as usize + x as usize) * 4..][..4];
-            pixels.push(egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]));
+            rgba.extend_from_slice(&all[(y as usize * w as usize + x as usize) * 4..][..4]);
         }
     }
-    let mut image = ColorImage::new([tw as usize, th as usize], pixels);
-    image.source_size = egui::vec2(tw as f32, th as f32);
-    Some(image)
+    Some(Picture {
+        width: tw,
+        height: th,
+        rgba,
+    })
 }
 
 /// 保存したばかりの素材の情報（読み直さない）。
@@ -873,7 +1351,7 @@ fn inspect_material(material: &SmartMaterial) -> Inspected {
     out.height = material.height();
     out.layers = material.layers().len();
     out.channels = material.channels();
-    out.thumb = smart_thumbnail(material)
+    out.thumb = smart_picture(material)
         .map(Thumb::Pending)
         .unwrap_or(Thumb::None);
     out
@@ -911,10 +1389,10 @@ fn smart_block(file: &SmartFile, e: &yolu_io::Error) -> Block {
 }
 
 /// 素材の絵（長い辺が `THUMB`。文書の合成の参照の式で標本化する。マスクは見せる量の灰色）。
-fn smart_thumbnail(material: &SmartMaterial) -> Option<ColorImage> {
+fn smart_picture(material: &SmartMaterial) -> Option<Picture> {
     let (w, h) = (material.width(), material.height());
     let (tw, th) = fit_size(w, h);
-    let mut pixels = Vec::with_capacity((tw * th) as usize);
+    let mut rgba = Vec::with_capacity((tw * th) as usize * 4);
     let sample = |tx: u32, ty: u32| {
         let x = (((tx as f32 + 0.5) * w as f32 / tw as f32) as u32).min(w - 1);
         // 画像は上の行から、文書は下の行から
@@ -928,7 +1406,7 @@ fn smart_thumbnail(material: &SmartMaterial) -> Option<ColorImage> {
                 let (x, y) = sample(tx, ty);
                 let f = mask.factor_at(x, y).unwrap_or(1.0).clamp(0.0, 1.0);
                 let g = (f * 255.0).round() as u8;
-                pixels.push(egui::Color32::from_gray(g));
+                rgba.extend_from_slice(&[g, g, g, 255]);
             }
         }
     } else {
@@ -946,15 +1424,15 @@ fn smart_thumbnail(material: &SmartMaterial) -> Option<ColorImage> {
                     .composite_pixel(channel, x, y)
                     .map(|p| p.to_array())
                     .unwrap_or([0; 4]);
-                pixels.push(egui::Color32::from_rgba_unmultiplied(
-                    p[0], p[1], p[2], p[3],
-                ));
+                rgba.extend_from_slice(&p);
             }
         }
     }
-    let mut image = ColorImage::new([tw as usize, th as usize], pixels);
-    image.source_size = egui::vec2(tw as f32, th as f32);
-    Some(image)
+    Some(Picture {
+        width: tw,
+        height: th,
+        rgba,
+    })
 }
 
 // ───────── 操作 ─────────
@@ -1000,6 +1478,20 @@ pub enum ShelfOp {
         path: PathBuf,
     },
     ExportDialog(String),
+    /// 棚の素材（プロジェクトの棚の ID）を個人のライブラリへ入れる（別のスレッドで書く。同じバイト列があれば書かない）。
+    ToLibrary(String),
+    /// ライブラリのファイル（相対パス）をこのプロジェクトで使う＝写しを .ylp の棚へ入れる（別のスレッドで読んで検証する）。
+    UseFromLibrary(String),
+    /// ライブラリのファイルを消してよいか確かめる／消す（ファイルだけ。プロジェクトの写しと置いた層は変わらない）。
+    LibraryAskRemove(String),
+    LibraryRemove(String),
+    /// ライブラリへファイル（PNG・.ylsmart）を足す（別のスレッドで検証して書く）／足すファイルを選ぶ窓を開く。
+    LibraryAddFiles(Vec<PathBuf>),
+    LibraryAddDialog,
+    /// ライブラリのフォルダを OS のファイルの窓で開く。
+    LibraryReveal,
+    /// ライブラリの一覧を読み直す。
+    LibraryRefresh,
 }
 
 /// 棚へ入れた結果（新しく入ったか、同じ中身が既にあったか）。
@@ -1018,7 +1510,7 @@ pub struct ShelfDrag {
 
 /// 棚の画像を、1 枚のペイントの層の素材にする（置くときに文書の大きさへ引き伸ばす。置くのは 1 回の Undo の層の挿入と同じ道）。
 /// 画素は straight RGBA8 のまま（透明の画素の RGB も保つ）。読めない・大きさが索引と違うときの理由は棚の画像の言葉で言う。
-fn image_as_material(
+pub(crate) fn image_as_material(
     lang: Lang,
     png: &[u8],
     width: u32,
@@ -1053,6 +1545,17 @@ fn image_as_material(
         .map_err(|e| core_reason(lang, &e))?;
     doc.capture_smart_material(&[id], name)
         .map_err(|e| core_reason(lang, &e))
+}
+
+/// .ylsmart のバイト列を、置ける core の素材にする。読めた素材を置けないときは、項目に出す理由と同じ言い方で断る。
+pub(crate) fn smart_material_from(lang: Lang, bytes: &[u8]) -> Result<SmartMaterial, String> {
+    match SmartFile::read(bytes) {
+        Err(e) => Err(io_reason(lang, &e)),
+        Ok(file) => file.to_core().map_err(|e| match smart_block(&file, &e) {
+            Block::Unreadable(_) => io_reason(lang, &e),
+            block => block.reason(lang),
+        }),
+    }
 }
 
 /// 新しい素材の ID（小文字のハイフン付き GUID。文書の ID の作り方と同じ乱数）。
@@ -1096,6 +1599,9 @@ fn shelf_full_reason(lang: Lang) -> &'static str {
 
 /// yolu-io の断りの短い理由（読み込み・棚の予算・保存）。
 pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
+    if let Some(text) = crate::library::known_reason(lang, e) {
+        return text;
+    }
     let m = e.to_string();
     if m.contains(REFUSAL_RESOURCE_COUNT) {
         shelf_full_reason(lang).into()
@@ -1140,10 +1646,22 @@ impl AppState {
     pub fn shelf_apply(&mut self, op: ShelfOp) {
         // 書き出しをやめるのは、描いている間でもできる（棚にも文書にも触らない）
         if op == ShelfOp::CancelSave {
+            if let Some(w) = self.library.write.take() {
+                self.message = format!(
+                    "{}: {}",
+                    self.lang.pick("書き込みをやめました", "Cancelled writing"),
+                    w.name
+                );
+            }
             if let Some(p) = self.shelf.saving.take() {
                 self.message = format!(
                     "{}: {}",
-                    self.lang.pick("保存をやめました", "Cancelled saving"),
+                    if p.from_library {
+                        self.lang
+                            .pick("取り込みをやめました", "Cancelled importing")
+                    } else {
+                        self.lang.pick("保存をやめました", "Cancelled saving")
+                    },
                     p.name
                 );
             }
@@ -1218,10 +1736,22 @@ impl AppState {
                     self.dialog_request = Some(DialogRequest::ShelfExport);
                 }
             }
+            ShelfOp::ToLibrary(id) => self.library_put(&id),
+            ShelfOp::UseFromLibrary(rel) => self.library_use(&rel),
+            ShelfOp::LibraryAskRemove(rel) => self.library_ask_remove(&rel),
+            ShelfOp::LibraryRemove(rel) => self.library_remove(&rel),
+            ShelfOp::LibraryAddFiles(paths) => self.library_add_files(&paths),
+            ShelfOp::LibraryAddDialog => {
+                if self.library_idle() {
+                    self.dialog_request = Some(DialogRequest::LibraryAdd);
+                }
+            }
+            ShelfOp::LibraryReveal => self.dialog_request = Some(DialogRequest::LibraryReveal),
+            ShelfOp::LibraryRefresh => self.library.refresh(),
         }
     }
 
-    fn shelf_refusal(&mut self, reason: String) {
+    pub(crate) fn shelf_refusal(&mut self, reason: String) {
         self.message = format!("{}: {reason}", self.lang.pick("できません", "Cannot"));
     }
 
@@ -1237,7 +1767,7 @@ impl AppState {
     }
 
     /// 棚を変えてよいか（読めなかった棚には足さない・消さない）。
-    fn shelf_writable(&mut self) -> bool {
+    pub(crate) fn shelf_writable(&mut self) -> bool {
         match self.shelf.unavailable.clone() {
             Some(e) => {
                 self.shelf_refusal(format!(
@@ -1332,6 +1862,7 @@ impl AppState {
                 kind,
                 rx,
                 cancel,
+                from_library: false,
             });
             return;
         }
@@ -1395,6 +1926,25 @@ impl AppState {
         }
     }
 
+    /// ライブラリのファイルを取り込んだ棚に差し替える（足していなければそのまま）。見せている一覧（絞り込み・検索）は変えず、
+    /// 取り込んだ素材をプロジェクトの棚で選んでおく。
+    fn shelf_adopt_quiet(&mut self, staged: Staged) -> Kept {
+        if staged.added {
+            self.shelf.shelf = staged.next;
+            if let Some(info) = staged.info {
+                self.shelf.inspected.insert(staged.id.clone(), info);
+            }
+            self.shelf.changed = true;
+            self.modified = true;
+        }
+        self.shelf.selected = Some(staged.id);
+        if staged.added {
+            Kept::Added
+        } else {
+            Kept::Existing
+        }
+    }
+
     /// 別のスレッドの書き出しが終わっていれば棚へ入れる（毎フレーム）。
     pub fn shelf_poll(&mut self) {
         let lang = self.lang;
@@ -1412,6 +1962,26 @@ impl AppState {
         if let Some(result) = result {
             let pending = self.shelf.saving.take().expect("上で確かめた");
             match result {
+                Ok(staged) if pending.from_library => {
+                    let rounded = staged.rounded;
+                    let kept = self.shelf_adopt_quiet(staged);
+                    let name = &pending.name;
+                    self.message = match kept {
+                        Kept::Added => format!(
+                            "{}: {name}{}",
+                            lang.pick("プロジェクトに取り込みました", "Added to the project"),
+                            if rounded {
+                                format!(" · {}", crate::library::rounded_note(lang))
+                            } else {
+                                String::new()
+                            }
+                        ),
+                        Kept::Existing => format!(
+                            "{}: {name}",
+                            lang.pick("すでにプロジェクトにあります", "Already in the project")
+                        ),
+                    };
+                }
                 Ok(staged) => {
                     let kept = self.shelf_adopt(&pending.name, pending.kind, staged);
                     self.shelf_keep_message(&pending.name, kept);
@@ -1443,6 +2013,10 @@ impl AppState {
 
     fn shelf_place(&mut self, id: &str, target: PlaceTarget) {
         let lang = self.lang;
+        // ライブラリのファイルは、棚へ入れずに、読んで置く
+        if let Some(rel) = crate::library::rel_of(id) {
+            return self.library_place(rel, target);
+        }
         let Some(res) = self.shelf.get(id) else {
             return;
         };
@@ -1474,19 +2048,25 @@ impl AppState {
         } else if kind == Some(ItemKind::Image) {
             image_as_material(lang, bytes, width, height, &name)
         } else {
-            match SmartFile::read(bytes) {
-                Err(e) => Err(io_reason(lang, &e)),
-                // 読めた素材を置けないときは、項目に出す理由と同じ言い方で断る
-                Ok(file) => file.to_core().map_err(|e| match smart_block(&file, &e) {
-                    Block::Unreadable(_) => io_reason(lang, &e),
-                    block => block.reason(lang),
-                }),
-            }
+            smart_material_from(lang, bytes)
         };
         let material = match made {
             Ok(m) => m,
             Err(reason) => return self.shelf_refusal(reason),
         };
+        self.place_material(&name, material, target, builtin);
+    }
+
+    /// 組み上がった素材を文書へ置く（スマートマスクは層のマスクへ、スマートマテリアルは層の組として。1 回の Undo）。棚の項目も、
+    /// ライブラリのファイルも、この道を通る。置けないときは何も変えず、理由を短く出す。
+    pub(crate) fn place_material(
+        &mut self,
+        name: &str,
+        material: SmartMaterial,
+        target: PlaceTarget,
+        builtin: bool,
+    ) {
+        let lang = self.lang;
         if material.kind() == SmartKind::Mask {
             let layer = match target {
                 PlaceTarget::Mask(layer) => Some(layer),
@@ -1834,6 +2414,96 @@ mod tests {
             assert!(!unreadable.contains("合成") && !mismatch.contains("合成"));
             assert!(image_as_material(lang, &png(2, 1), 2, 1, "x").is_ok());
         }
+    }
+
+    fn picture(seed: u8) -> Picture {
+        Picture {
+            width: 2,
+            height: 1,
+            rgba: vec![seed, 2, 3, 0, 5, 6, seed, 255],
+        }
+    }
+
+    fn cache_in(name: &str) -> (Cache, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("yolu-shelf-cache-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        (Cache::new(dir.clone()), dir)
+    }
+
+    #[test]
+    fn a_remembered_picture_and_its_description_come_back_instead_of_being_made_again() {
+        let (cache, dir) = cache_in("again");
+        let key = Cache::key("smart", "abc");
+        let made = || {
+            let mut info = Inspected::bare(None);
+            info.width = 3;
+            info.height = 2;
+            info.layers = 2;
+            info.channels = vec![Channel::Color, Channel::Roughness];
+            (info.with_picture(picture(9)), Some(SmartKind::Mask))
+        };
+        let (first, kind) = remembered(Some(&cache), &key, || false, made);
+        assert_eq!(kind, Some(SmartKind::Mask));
+        assert_eq!(cache.usage().0, 1);
+        let (again, kind) = remembered(
+            Some(&cache),
+            &key,
+            || false,
+            || panic!("覚えているので作り直さない"),
+        );
+        assert_eq!(kind, Some(SmartKind::Mask));
+        assert_eq!(
+            (again.width, again.height, again.layers, &again.channels),
+            (first.width, first.height, first.layers, &first.channels)
+        );
+        assert_eq!(
+            again.picture(),
+            Some(&picture(9)),
+            "透明な画素の RGB も同じ"
+        );
+        // 覚えるのは、置けない理由が無く、絵のあるものだけ
+        let blocked = Cache::key("smart", "blocked");
+        remembered(
+            Some(&cache),
+            &blocked,
+            || false,
+            || (Inspected::bare(Some(Block::Images)), None),
+        );
+        let bare = Cache::key("smart", "bare");
+        remembered(
+            Some(&cache),
+            &bare,
+            || false,
+            || (Inspected::bare(None), None),
+        );
+        assert_eq!(cache.usage().0, 1);
+        // 取り消されたら（結果は捨てられるので）覚えない
+        let stopped = Cache::key("smart", "stopped");
+        remembered(Some(&cache), &stopped, || true, || (made().0, None));
+        assert_eq!(cache.usage().0, 1);
+        // キャッシュが無ければ、いつも作る
+        let (info, _) = remembered(None, &key, || false, made);
+        assert_eq!(info.layers, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_description_kept_with_a_picture_reads_back_even_if_a_line_is_missing_or_unknown() {
+        let cached = Cached {
+            info: "w=7\nfuture=1\nlayers=oops\nchannels=Color,Bogus\nkind=other\n".into(),
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 4],
+        };
+        let (info, kind) = from_cached(cached);
+        assert_eq!((info.width, info.height, info.layers), (7, 0, 0));
+        assert_eq!(info.channels, [Channel::Color]);
+        assert_eq!(kind, None);
+        assert_eq!(
+            info.picture().map(|p| p.rgba.clone()),
+            Some(vec![1, 2, 3, 4])
+        );
     }
 
     #[test]

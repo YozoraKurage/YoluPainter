@@ -325,6 +325,8 @@ impl YoluApp {
             app.state.attach_brush_store(dir.join("brushes"));
             app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
         }
+        // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
+        app.state.library.attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
@@ -492,7 +494,10 @@ impl YoluApp {
             Some(
                 request @ (DialogRequest::ShelfImport
                 | DialogRequest::ShelfExport
-                | DialogRequest::ShelfRemove),
+                | DialogRequest::ShelfRemove
+                | DialogRequest::LibraryAdd
+                | DialogRequest::LibraryRemove
+                | DialogRequest::LibraryReveal),
             ) => assets::run_dialog(&mut self.state, request),
             Some(DialogRequest::ExportFolder(id)) => {
                 let lang = self.state.lang;

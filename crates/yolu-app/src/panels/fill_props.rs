@@ -317,8 +317,11 @@ fn image_box(
         .as_deref()
         .and_then(|rid| app.shelf.get(rid))
         .map(|res| (res.id.clone(), res.name.clone()));
+    // サムネイルは別のスレッドで作る（大きな画像でも画面を止めない）。できるまでは種類のアイコン
     if let Some((rid, _)) = &resource {
-        app.shelf.inspect(rid);
+        let cache = app.library.cache().cloned();
+        app.shelf
+            .request_inspections(std::slice::from_ref(rid), cache.as_ref());
     }
     let thumb_tex = resource
         .as_ref()

@@ -76,6 +76,9 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                     }
                 }, state);
             h.run();
+            // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
+            h.state_mut().shelf.wait_inspections();
+            h.run();
             let mut labels = Vec::new();
             for shape in &h.output().shapes { text_shapes(&shape.shape, shape.clip_rect, &mut labels); }
             let expected = match panel {
@@ -1023,6 +1026,9 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
                 },
                 state,
             );
+        h.run();
+        // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
+        h.state_mut().shelf.wait_inspections();
         h.run();
         widgets::take_truncations();
         h.step();
