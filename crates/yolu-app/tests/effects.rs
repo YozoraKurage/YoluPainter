@@ -331,7 +331,18 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
                 _ => None,
             })
             .collect();
-        assert_eq!(labels.len(), 7 + 8, "{lang:?}: {labels:?}");
+        assert_eq!(labels.len(), 7 + 10, "{lang:?}: {labels:?}");
+        let layer = s.selected_layer.unwrap();
+        s.apply(Action::M2(Edit::AddMask(layer)));
+        for target in [FilterTarget::Content, FilterTarget::Mask] {
+            let entries = yolu_app::fx::menu::add_entries(&s, target);
+            for expected in [Kind::Noise, Kind::Grunge] {
+                assert!(entries.iter().any(|e| matches!(e,
+                    yolu_app::ui::menu::Entry::Item { action: Action::Fx(FxOp::AddGenerator { kind, .. }), enabled: true, .. } if *kind == expected
+                )));
+            }
+        }
+
         // 法線のチャンネル: ぼかし以外は理由つきで押せない
         s.apply(Action::M2Ui(UiOp::PaintChannel(Channel::Normal)));
         let entries = yolu_app::fx::menu::add_entries(&s, FilterTarget::Content);

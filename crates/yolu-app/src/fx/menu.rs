@@ -218,6 +218,10 @@ pub enum FxChoice {
     Axis,
     Direction,
     NoiseSpace,
+    ProceduralSpace,
+    NoiseBasis,
+    CellOutput,
+    FractalMode,
     Shape,
     Anchor,
     AnchorChannel,
@@ -284,6 +288,50 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
                 })
                 .collect()
         }
+        FxChoice::ProceduralSpace => names::PROCEDURAL_SPACES
+            .iter()
+            .map(|value| {
+                let mut next = g.clone();
+                next.procedural.space = *value;
+                Entry::item(names::procedural_space_name(lang, *value), set_generator(layer, id, next))
+                    .radio(g.procedural.space == *value)
+                    .enabled(free)
+            })
+            .collect(),
+        FxChoice::NoiseBasis => names::NOISE_BASES
+            .iter()
+            .map(|value| {
+                let mut next = g.clone();
+                next.procedural.basis = *value;
+                // セルの出力は Worley 専用（core が断る）ので、ほかの基底へ替えるときは既定へ戻す
+                if *value != generator::NoiseBasis::Worley {
+                    next.procedural.cell_output = generator::CellOutput::F1;
+                }
+                Entry::item(names::noise_basis_name(lang, *value), set_generator(layer, id, next))
+                    .radio(g.procedural.basis == *value)
+                    .enabled(free)
+            })
+            .collect(),
+        FxChoice::CellOutput => names::CELL_OUTPUTS
+            .iter()
+            .map(|value| {
+                let mut next = g.clone();
+                next.procedural.cell_output = *value;
+                Entry::item(names::cell_output_name(*value), set_generator(layer, id, next))
+                    .radio(g.procedural.cell_output == *value)
+                    .enabled(free)
+            })
+            .collect(),
+        FxChoice::FractalMode => names::FRACTAL_MODES
+            .iter()
+            .map(|value| {
+                let mut next = g.clone();
+                next.procedural.fractal = *value;
+                Entry::item(names::fractal_mode_name(*value), set_generator(layer, id, next))
+                    .radio(g.procedural.fractal == *value)
+                    .enabled(free)
+            })
+            .collect(),
         FxChoice::NoiseSpace => [NoiseSpace::Model, NoiseSpace::Uv]
             .iter()
             .map(|s| {

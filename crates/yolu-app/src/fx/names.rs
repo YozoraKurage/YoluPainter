@@ -2,7 +2,9 @@
 
 use yolu_core::effects::{generator_kind_name, EffectSettings};
 use yolu_core::filter::Settings as Filter;
-use yolu_core::generator::{anchor::ReadMode, Blend, Kind, NoiseSpace, Shape};
+use yolu_core::generator::{
+    anchor::ReadMode, Blend, CellOutput, FractalMode, Kind, NoiseBasis, NoiseSpace, ProceduralSpace, Shape,
+};
 use yolu_core::{Anchor, AnchorPlacement, Channel, FilterEffect, FilterTarget};
 
 use crate::lang::Lang;
@@ -57,7 +59,7 @@ impl FilterKind {
 }
 
 /// 足せる Generator の種類（メニューの並び）。
-pub const GENERATOR_KINDS: [Kind; 8] = [
+pub const GENERATOR_KINDS: [Kind; 10] = [
     Kind::EdgeWear,
     Kind::Dirt,
     Kind::PositionGradient,
@@ -66,6 +68,8 @@ pub const GENERATOR_KINDS: [Kind; 8] = [
     Kind::Direction,
     Kind::IdColor,
     Kind::Anchor,
+    Kind::Noise,
+    Kind::Grunge,
 ];
 
 pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
@@ -136,6 +140,46 @@ pub fn noise_space_name(lang: Lang, space: NoiseSpace) -> &'static str {
     match space {
         NoiseSpace::Model => lang.pick("モデルの上（3D）", "On the model (3D)"),
         NoiseSpace::Uv => lang.pick("UV（継ぎ目が出る）", "UV (seams show)"),
+    }
+}
+
+pub const PROCEDURAL_SPACES: [ProceduralSpace; 3] = [ProceduralSpace::Position, ProceduralSpace::Uv, ProceduralSpace::Triplanar];
+
+pub fn procedural_space_name(lang: Lang, space: ProceduralSpace) -> &'static str {
+    match space {
+        ProceduralSpace::Position => lang.pick("位置", "Position"),
+        ProceduralSpace::Uv => "UV",
+        ProceduralSpace::Triplanar => lang.pick("トライプラナー", "Triplanar"),
+    }
+}
+
+pub const NOISE_BASES: [NoiseBasis; 3] = [NoiseBasis::Value, NoiseBasis::Perlin, NoiseBasis::Worley];
+
+pub fn noise_basis_name(lang: Lang, basis: NoiseBasis) -> &'static str {
+    match basis {
+        NoiseBasis::Value => lang.pick("値", "Value"),
+        NoiseBasis::Perlin => "Perlin",
+        NoiseBasis::Worley => "Worley",
+    }
+}
+
+pub const CELL_OUTPUTS: [CellOutput; 3] = [CellOutput::F1, CellOutput::F2, CellOutput::F2MinusF1];
+
+pub fn cell_output_name(output: CellOutput) -> &'static str {
+    match output {
+        CellOutput::F1 => "F1",
+        CellOutput::F2 => "F2",
+        CellOutput::F2MinusF1 => "F2−F1",
+    }
+}
+
+pub const FRACTAL_MODES: [FractalMode; 3] = [FractalMode::Fbm, FractalMode::Ridged, FractalMode::Turbulence];
+
+pub fn fractal_mode_name(mode: FractalMode) -> &'static str {
+    match mode {
+        FractalMode::Fbm => "fBm",
+        FractalMode::Ridged => "ridged",
+        FractalMode::Turbulence => "turbulence",
     }
 }
 

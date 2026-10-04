@@ -287,3 +287,243 @@ fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
         );
     }
 }
+
+fn procedural(h: &Harness<'_, YoluApp>) -> yolu_core::generator::Settings {
+    let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+    match effect.settings() {
+        yolu_core::EffectSettings::Generator(g) => *g.clone(),
+        _ => panic!("Generator"),
+    }
+}
+
+#[test]
+fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
+    use yolu_core::generator::{CellOutput, NoiseBasis, GrungePreset};
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 1800.0, 32);
+        h.state_mut().state.set_language(lang);
+        fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind: Kind::Noise });
+        let steps = h.state().state.doc.undo_count();
+        h.get_by_label(lang.pick("振り直す", "Reroll")).click(); h.run();
+        assert_ne!(procedural(&h).procedural.seed, 0);
+        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        apply(&mut h, Action::Undo);
+        assert_eq!(procedural(&h).procedural.seed, 0);
+        let slider = rect_of(&h, lang.pick("模様の大きさ", "Pattern Size"), |r| r.left() > 1000.0);
+        let y = slider.center().y + 8.0;
+        drag(&mut h, &[pos2(slider.left() + 30.0, y), pos2(slider.left() + 80.0, y), pos2(slider.left() + 120.0, y)]);
+        assert_ne!(procedural(&h).procedural.scale, 0.1);
+        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        apply(&mut h, Action::Undo);
+        assert_eq!(procedural(&h).procedural.scale, 0.1);
+        let basis = rect_of(&h, lang.pick("基底: Perlin", "Basis: Perlin"), |r| r.left() > 1000.0);
+        click(&mut h, basis.center());
+        let choice = popup_item(&h, "Worley"); click(&mut h, choice.center());
+        assert_eq!(procedural(&h).procedural.basis, NoiseBasis::Worley);
+        let cell = rect_of(&h, lang.pick("セルの出力: F1", "Cell Output: F1"), |r| r.left() > 1000.0);
+        click(&mut h, cell.center());
+        let choice = popup_item(&h, "F2−F1"); click(&mut h, choice.center());
+        assert_eq!(procedural(&h).procedural.cell_output, CellOutput::F2MinusF1);
+        let basis = rect_of(&h, lang.pick("基底: Worley", "Basis: Worley"), |r| r.left() > 1000.0);
+        click(&mut h, basis.center());
+        let choice = popup_item(&h, "Perlin"); click(&mut h, choice.center());
+        assert_eq!(procedural(&h).procedural.cell_output, CellOutput::F1);
+        fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind: Kind::Grunge });
+        let steps = h.state().state.doc.undo_count();
+        h.get_by_label(lang.pick("布目", "Weave")).click(); h.run();
+        assert_eq!(procedural(&h).procedural.preset, GrungePreset::Weave);
+        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        apply(&mut h, Action::Undo);
+        assert_eq!(procedural(&h).procedural.preset, GrungePreset::Stain);
+        if lang == Lang::En { assert!(!shown_texts(&h).iter().any(|(t, _)| has_japanese(t))); }
+    }
+}
+
+/// ノイズ・グランジの欄の、見えている操作を全部触る。どれも core に断られず（状態の帯が空のまま）、設定が変わり、1 回の Undo になる。
+fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind: Kind) {
+    use egui::{Event, Modifiers};
+    use yolu_core::generator::{CellOutput, FractalMode, NoiseBasis, ProceduralSpace};
+    let column = |r: Rect| r.left() > 1000.0;
+    // 1 つの操作の後に、断られていない・設定が変わった・1 回の Undo、を確かめる
+    fn accepted(h: &Harness<'_, YoluApp>, what: &str, steps: usize, before: &yolu_core::generator::Settings) {
+        let state = &h.state().state;
+        assert!(state.message.is_empty(), "{what}: {}", state.message);
+        assert_ne!(&procedural(h), before, "{what}: 設定が変わらない");
+        assert_eq!(state.doc.undo_count(), steps + 1, "{what}: 1 回の Undo");
+    }
+    let run = |h: &mut Harness<'_, YoluApp>, what: &str, act: &dyn Fn(&mut Harness<'_, YoluApp>)| {
+        h.state_mut().state.message.clear();
+        let (steps, before) = (h.state().state.doc.undo_count(), procedural(h));
+        act(h);
+        accepted(h, what, steps, &before);
+    };
+    let slide_to = |h: &mut Harness<'_, YoluApp>, label: &str, end: f32| {
+        let r = rect_of(h, label, column);
+        let y = r.center().y + 8.0;
+        drag(h, &[pos2(r.left() + 30.0, y), pos2(r.left() + (30.0 + end) / 2.0, y), pos2(r.left() + end, y)]);
+    };
+    let slide = |h: &mut Harness<'_, YoluApp>, label: &str| slide_to(h, label, 120.0);
+    let choose = |h: &mut Harness<'_, YoluApp>, shown: &str, item: &str| {
+        let r = rect_of(h, shown, column);
+        click(h, r.center());
+        let choice = popup_item(h, item);
+        click(h, choice.center());
+    };
+    let t = |ja: &'static str, en: &'static str| lang.pick(ja, en);
+    // 共通
+    run(h, "空間", &|h| choose(h, &format!("{}: {}", t("空間", "Space"), t("位置", "Position")), "UV"));
+    assert_eq!(procedural(h).procedural.space, ProceduralSpace::Uv);
+    run(h, "空間（トライプラナー）", &|h| choose(h, &format!("{}: UV", t("空間", "Space")), t("トライプラナー", "Triplanar")));
+    run(h, "シード", &|h| {
+        let field = h
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .map(|n| n.rect())
+            .find(|r| column(*r))
+            .expect("右の列の数の入力欄はシードだけ");
+        click(h, field.center());
+        key(h, egui::Key::A, Modifiers::COMMAND);
+        h.step();
+        h.event(Event::Text("7".into()));
+        h.step();
+        key(h, egui::Key::Enter, Modifiers::NONE);
+        h.run();
+    });
+    assert_eq!(procedural(h).procedural.seed, 7);
+    run(h, "振り直す", &|h| {
+        h.get_by_label(t("振り直す", "Reroll")).click();
+        h.run();
+    });
+    for label in [
+        t("模様の大きさ", "Pattern Size"),
+        t("にじみ", "Bleed"),
+        t("トライプラナーの幅", "Triplanar Width"),
+        &format!("{} X", t("回転", "Rotation")),
+        &format!("{} Y", t("回転", "Rotation")),
+        &format!("{} Z", t("回転", "Rotation")),
+    ] {
+        run(h, label, &|h| slide(h, label));
+    }
+    match kind {
+        Kind::Noise => {
+            run(h, "基底", &|h| choose(h, &format!("{}: Perlin", t("基底", "Basis")), "Worley"));
+            assert_eq!(procedural(h).procedural.basis, NoiseBasis::Worley);
+            run(h, "セルの出力", &|h| choose(h, &format!("{}: F1", t("セルの出力", "Cell Output")), "F2−F1"));
+            assert_eq!(procedural(h).procedural.cell_output, CellOutput::F2MinusF1);
+            run(h, "重ね方", &|h| choose(h, &format!("{}: fBm", t("重ね方", "Fractal")), "ridged"));
+            assert_eq!(procedural(h).procedural.fractal, FractalMode::Ridged);
+            // オクターブは初期値（5）が 1〜8 の真ん中より少し上なので、手前へ動かす
+            run(h, "オクターブ", &|h| slide_to(h, t("オクターブ", "Octaves"), 50.0));
+            for label in [t("ラクナリティ", "Lacunarity"), t("ゲイン", "Gain")] {
+                run(h, label, &|h| slide(h, label));
+            }
+            // Worley から戻すとセルの出力も既定へ戻り、core に断られない
+            run(h, "基底（戻す）", &|h| choose(h, &format!("{}: Worley", t("基底", "Basis")), "Perlin"));
+            assert_eq!(procedural(h).procedural.cell_output, CellOutput::F1);
+        }
+        _ => {
+            run(h, "プリセット", &|h| {
+                h.get_by_label(t("布目", "Weave")).click();
+                h.run();
+            });
+        }
+    }
+    // 範囲・反転・合成・強さ（上限を先に動かすので、下限も動く）
+    for label in [t("上限", "High"), t("下限", "Low"), t("やわらかさ", "Softness")] {
+        run(h, label, &|h| slide(h, label));
+    }
+    run(h, "反転", &|h| {
+        let r = rect_of(h, t("反転", "Invert"), column);
+        click(h, pos2(r.left() + 8.0, r.center().y));
+    });
+    assert!(procedural(h).invert);
+    run(h, "合成", &|h| choose(h, &format!("{}: {}", t("合成", "Combine"), t("乗算", "Multiply")), t("加算", "Add")));
+    let (steps, strength) = (h.state().state.doc.undo_count(), selected_strength(h));
+    slide(h, t("強さ", "Strength"));
+    assert_ne!(selected_strength(h), strength);
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert!(h.state().state.message.is_empty(), "{}", h.state().state.message);
+}
+
+fn selected_strength(h: &Harness<'_, YoluApp>) -> f64 {
+    let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+    effect.strength()
+}
+
+#[test]
+fn procedural_panels_have_no_breakup_rows_and_every_visible_control_is_accepted() {
+    for lang in Lang::ALL {
+        for kind in [Kind::Noise, Kind::Grunge] {
+            let mut h = app(1280.0, 3200.0, 32);
+            h.state_mut().state.set_language(lang);
+            fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind });
+            if kind == Kind::Grunge {
+                while !yolu_app::panels::grunge_picker::ready() { std::thread::sleep(std::time::Duration::from_millis(10)); }
+                h.run();
+            }
+            // 崩しの組（量・シード・大きさ・置き場）は、重ねるノイズを持たない種類には出さない（core が断るので、同じ名前のシードも 1 つだけ）
+            let texts = shown_texts(&h);
+            let column: Vec<&String> = texts.iter().filter(|(_, r)| r.left() > 1000.0).map(|(t, _)| t).collect();
+            for gone in [lang.pick("崩し", "Breakup"), lang.pick("量", "Amount"), lang.pick("置き場", "Placed")] {
+                assert!(!column.iter().any(|t| t.as_str() == gone || t.starts_with(&format!("{gone}: "))), "{lang:?} {kind:?}: {gone}");
+            }
+            assert!(!column.iter().any(|t| t.as_str() == lang.pick("大きさ", "Size")), "{lang:?} {kind:?}: 崩しの大きさ");
+            assert_eq!(column.iter().filter(|t| t.as_str() == lang.pick("シード", "Seed")).count(), 1, "{lang:?} {kind:?}");
+            touch_every_procedural_control(&mut h, lang, kind);
+        }
+    }
+}
+
+#[test]
+fn shape_generator_edit_button_toggles_the_3d_target() {
+    let mut h = app(1280.0, 1800.0, 32);
+    apply(&mut h, Action::LoadDemoModel);
+    fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind: Kind::ShapeGradient });
+    let Some(Selected::Filter { layer, id }) = selected(&h) else { panic!("選択") };
+    let steps = h.state().state.doc.undo_count();
+    h.get_by_label("3D ビューで編集").click(); h.run();
+    assert_eq!(h.state().state.fillfx.edit_filter, Some((layer, id)));
+    assert_eq!(yolu_app::fillfx::gizmo::target(&h.state().state), Some(yolu_app::fillfx::gizmo::Target::Filter(layer, id)));
+    h.get_by_label("3D ビューで編集").click(); h.run();
+    assert_eq!(h.state().state.fillfx.edit_filter, None);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+}
+
+#[test]
+fn snapshot_procedural_panels_in_both_languages() {
+    let mut results = SnapshotResults::new();
+    for lang in Lang::ALL {
+        for (kind, name) in [(Kind::Noise, "noise"), (Kind::Grunge, "grunge")] {
+            let mut h = app(1280.0, 1800.0, 32);
+            h.state_mut().state.set_language(lang);
+            fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind });
+            if kind == Kind::Grunge {
+                while !yolu_app::panels::grunge_picker::ready() { std::thread::sleep(std::time::Duration::from_millis(10)); }
+                h.run();
+            }
+            h.snapshot(format!("fx_procedural_{name}_{}", if lang == Lang::Ja { "ja" } else { "en" }));
+            results.extend_harness(&mut h);
+        }
+    }
+    results.unwrap();
+}
+
+#[test]
+fn procedural_fallback_mark_explains_uv_in_both_languages() {
+    for lang in Lang::ALL {
+        for target in [FilterTarget::Content, FilterTarget::Mask] {
+            let mut h = app(1280.0, 1800.0, 32);
+            h.state_mut().state.set_language(lang);
+            let layer = h.state().state.selected_layer.unwrap();
+            if target == FilterTarget::Mask { apply(&mut h, Action::M2(Edit::AddMask(layer))); }
+            fx(&mut h, FxOp::AddGenerator { target, kind: Kind::Noise });
+            let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+            let label = yolu_app::fx::names::effect_label(lang, effect, target, h.state().state.m2.paint_channel,
+                |c| yolu_app::m2::channel_name(lang, &h.state().state.doc, c));
+            let row = h.get_by_label(&label).rect();
+            move_to(&h, pos2(row.right() - 74.0, row.center().y));
+            for _ in 0..90 { h.step(); }
+            let reason = lang.pick("UV の空間", "evaluated in UV space");
+            assert!(shown_texts(&h).iter().any(|(t, r)| t.contains(reason) && r.top() > row.top() && r.top() < row.top() + 90.0));
+        }
+    }
+}

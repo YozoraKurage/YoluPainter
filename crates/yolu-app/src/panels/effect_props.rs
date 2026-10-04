@@ -591,10 +591,18 @@ fn generator_rows(
                 next.use_bent_normal = on;
             }
         }
-        Kind::ShapeGradient => shape_rows(ui, app, rows, ctx, g, &mut next, enabled),
+        Kind::ShapeGradient => {
+            shape_rows(ui, app, rows, ctx, g, &mut next, enabled);
+            let editing = app.fillfx.edit_filter == Some((layer, id));
+            let r = rows.row(24.0, 4.0);
+            if w::button(ui, r, "fx.shape.edit", lang.pick("3D ビューで編集", "Edit in 3D View"), editing,
+                enabled && app.view3d.model.is_some(), Some(lang.pick("3D ビューに形とハンドルを出す", "Show the shape in the 3D view with handles")), Some("view_in_ar")).clicked() {
+                app.apply(Action::Fill(crate::fillfx::FillOp::EditFilter(if editing { None } else { Some((layer, id)) })));
+            }
+        },
         Kind::IdColor => id_color_rows(ui, app, rows, layer, id, g, &mut next, enabled),
-        // ノイズ・グランジの欄（基底・重ね方・プリセットの格子）は続きの担当で足す。今は範囲と強さだけ
-        Kind::EdgeWear | Kind::Thickness | Kind::Anchor | Kind::Noise | Kind::Grunge => {}
+        Kind::Noise | Kind::Grunge => procedural_rows(ui, app, rows, ctx, &mut next, enabled),
+        Kind::EdgeWear | Kind::Thickness | Kind::Anchor => {}
     }
     // 範囲（ID の色は 0 か 1 なので範囲とやわらかさは出さない。反転は出す）
     if g.kind != Kind::IdColor {
@@ -650,50 +658,52 @@ fn generator_rows(
     ) {
         next.invert = on;
     }
-    // 崩し
-    group_label(ui, rows, lang.pick("崩し", "Breakup"));
-    if let Some(v) = percent_row(ui, rows, "fx.noise", lang.pick("量", "Amount"), g.noise_amount, (0.0, 1.0), None, enabled) {
-        next.noise_amount = v;
-    }
-    if let Some(v) = int_row(
-        ui,
-        rows,
-        "fx.noise.seed",
-        lang.pick("シード", "Seed"),
-        g.noise_seed,
-        Some(lang.pick("同じシードなら同じノイズ", "The same seed gives the same noise.")),
-    ) {
-        next.noise_seed = v;
-    }
-    if let Some(v) = slider_row(
-        ui,
-        rows,
-        "fx.noise.scale",
-        lang.pick("大きさ", "Size"),
-        g.noise_scale as f32,
-        (0.005, 0.5),
-        decimals(3),
-        Some(lang.pick(
-            "いちばん大きな模様の大きさ（モデルの境界箱の対角線に対する割合。UV なら UV の正方形に対する割合）",
-            "The size of the largest features, as a fraction of the model's bounding-box diagonal (or of the UV square)",
-        )),
-        enabled && g.noise_amount > 0.0,
-    ) {
-        next.noise_scale = (v as f64).clamp(0.001, 1.0);
-    }
-    if let Some(rect) = choice_row(
-        ui,
-        rows,
-        "fx.noise.space",
-        lang.pick("置き場", "Placed"),
-        names::noise_space_name(lang, g.noise_space),
-        Some(lang.pick(
-            "モデルの上: UV の継ぎ目でも途切れません（位置のマップを読みます）。UV: マップは要りませんが、UV アイランドの境目で途切れます。",
-            "On the model: continuous across UV seams (reads the Position map). UV: needs no map, but jumps where UV islands meet.",
-        )),
-        enabled && g.noise_amount > 0.0,
-    ) {
-        open_popup(app, ctx, Popup::Fx(FxChoice::NoiseSpace), rect, rect.width());
+    // 崩し（ノイズ・グランジは重ねるノイズを持たない。core が断るので出さない）
+    if !g.kind.is_procedural() {
+        group_label(ui, rows, lang.pick("崩し", "Breakup"));
+        if let Some(v) = percent_row(ui, rows, "fx.noise", lang.pick("量", "Amount"), g.noise_amount, (0.0, 1.0), None, enabled) {
+            next.noise_amount = v;
+        }
+        if let Some(v) = int_row(
+            ui,
+            rows,
+            "fx.noise.seed",
+            lang.pick("シード", "Seed"),
+            g.noise_seed,
+            Some(lang.pick("同じシードなら同じノイズ", "The same seed gives the same noise.")),
+        ) {
+            next.noise_seed = v;
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "fx.noise.scale",
+            lang.pick("大きさ", "Size"),
+            g.noise_scale as f32,
+            (0.005, 0.5),
+            decimals(3),
+            Some(lang.pick(
+                "いちばん大きな模様の大きさ（モデルの境界箱の対角線に対する割合。UV なら UV の正方形に対する割合）",
+                "The size of the largest features, as a fraction of the model's bounding-box diagonal (or of the UV square)",
+            )),
+            enabled && g.noise_amount > 0.0,
+        ) {
+            next.noise_scale = (v as f64).clamp(0.001, 1.0);
+        }
+        if let Some(rect) = choice_row(
+            ui,
+            rows,
+            "fx.noise.space",
+            lang.pick("置き場", "Placed"),
+            names::noise_space_name(lang, g.noise_space),
+            Some(lang.pick(
+                "モデルの上: UV の継ぎ目でも途切れません（位置のマップを読みます）。UV: マップは要りませんが、UV アイランドの境目で途切れます。",
+                "On the model: continuous across UV seams (reads the Position map). UV: needs no map, but jumps where UV islands meet.",
+            )),
+            enabled && g.noise_amount > 0.0,
+        ) {
+            open_popup(app, ctx, Popup::Fx(FxChoice::NoiseSpace), rect, rect.width());
+        }
     }
     // 合成
     if let Some(rect) = choice_row(
@@ -1041,6 +1051,177 @@ pub fn anchor_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, layer: Layer
                 AnchorPlacement::Mask => "mask",
             };
             anchor_fields(ui, app, rows, id, &name, key);
+        }
+    }
+}
+
+/// ノイズ・グランジの欄。共通（空間・シード・大きさ・回転ほか）を土台に、ノイズ専用の段とグランジのプリセットの格子を足す。
+fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context, next: &mut generator::Settings, enabled: bool) {
+    let lang = app.lang;
+    let kind = next.kind;
+    let p = &mut next.procedural;
+    // 共通
+    if let Some(rect) = choice_row(
+        ui,
+        rows,
+        "fx.procedural.space",
+        lang.pick("空間", "Space"),
+        names::procedural_space_name(lang, p.space),
+        None,
+        enabled,
+    ) {
+        open_popup(app, ctx, Popup::Fx(FxChoice::ProceduralSpace), rect, rect.width());
+    }
+    // ノイズ専用（core は、グランジが基底・重ね方などを既定から動かすと断る）
+    if kind == Kind::Noise {
+        if let Some(rect) = choice_row(
+            ui,
+            rows,
+            "fx.procedural.basis",
+            lang.pick("基底", "Basis"),
+            names::noise_basis_name(lang, p.basis),
+            None,
+            enabled,
+        ) {
+            open_popup(app, ctx, Popup::Fx(FxChoice::NoiseBasis), rect, rect.width());
+        }
+        if p.basis == generator::NoiseBasis::Worley {
+            if let Some(rect) = choice_row(
+                ui,
+                rows,
+                "fx.procedural.cell_output",
+                lang.pick("セルの出力", "Cell Output"),
+                names::cell_output_name(p.cell_output),
+                None,
+                enabled,
+            ) {
+                open_popup(app, ctx, Popup::Fx(FxChoice::CellOutput), rect, rect.width());
+            }
+        }
+        if let Some(rect) = choice_row(
+            ui,
+            rows,
+            "fx.procedural.fractal",
+            lang.pick("重ね方", "Fractal"),
+            names::fractal_mode_name(p.fractal),
+            None,
+            enabled,
+        ) {
+            open_popup(app, ctx, Popup::Fx(FxChoice::FractalMode), rect, rect.width());
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "fx.procedural.octaves",
+            lang.pick("オクターブ", "Octaves"),
+            p.octaves as f32,
+            (1.0, 8.0),
+            NumberFormat::int(""),
+            None,
+            enabled,
+        ) {
+            p.octaves = v.round() as u32;
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "fx.procedural.lacunarity",
+            lang.pick("ラクナリティ", "Lacunarity"),
+            p.lacunarity as f32,
+            (1.0, 4.0),
+            decimals(3),
+            None,
+            enabled,
+        ) {
+            p.lacunarity = v as f64;
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "fx.procedural.gain",
+            lang.pick("ゲイン", "Gain"),
+            p.gain as f32,
+            (0.0, 1.0),
+            decimals(3),
+            None,
+            enabled,
+        ) {
+            p.gain = v as f64;
+        }
+    }
+    // グランジ専用（core は、ノイズがプリセットを既定から動かすと断る）
+    if kind == Kind::Grunge {
+        group_label(ui, rows, lang.pick("プリセット", "Preset"));
+        let r = rows.row(super::grunge_picker::height(rows.width()), 4.0);
+        ui.add_enabled_ui(enabled, |ui| {
+            if let Some(preset) = super::grunge_picker::show(ui, r, p.preset, lang) {
+                p.preset = preset;
+                p.scale = preset.default_scale();
+                (next.low, next.high) = preset.default_levels();
+            }
+        });
+    }
+    // 共通
+    if let Some(v) = int_row(ui, rows, "fx.procedural.seed", lang.pick("シード", "Seed"), p.seed, None) {
+        p.seed = v;
+    }
+    let r = rows.row(24.0, 4.0);
+    if w::button(ui, r, "fx.procedural.reroll", lang.pick("振り直す", "Reroll"), false, enabled, None, Some("restart_alt")).clicked() {
+        p.seed = p.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+    }
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "fx.procedural.scale",
+        lang.pick("模様の大きさ", "Pattern Size"),
+        p.scale as f32,
+        (0.001, 1.0),
+        decimals(3),
+        None,
+        enabled,
+    ) {
+        p.scale = (v as f64).clamp(0.001, 1.0);
+    }
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "fx.procedural.bleed",
+        lang.pick("にじみ", "Bleed"),
+        p.bleed as f32,
+        (0.0, 1.0),
+        decimals(3),
+        None,
+        enabled,
+    ) {
+        p.bleed = (v as f64).clamp(0.0, 1.0);
+    }
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "fx.procedural.blend_width",
+        lang.pick("トライプラナーの幅", "Triplanar Width"),
+        p.blend_width as f32,
+        (0.0, 1.0),
+        decimals(3),
+        None,
+        enabled,
+    ) {
+        p.blend_width = (v as f64).clamp(0.0, 1.0);
+    }
+    let rotation_tip = lang.pick("UV では回転は効きません", "Rotation has no effect in UV space");
+    for (i, axis) in (0..3).map(|i| (i, names::axis_name(i))) {
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            &format!("fx.procedural.rotation.{i}"),
+            &format!("{} {axis}", lang.pick("回転", "Rotation")),
+            p.rotation[i] as f32,
+            (-360.0, 360.0),
+            decimals(1),
+            Some(rotation_tip),
+            enabled,
+        ) {
+            p.rotation[i] = v as f64;
         }
     }
 }

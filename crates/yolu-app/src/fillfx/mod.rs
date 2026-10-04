@@ -3,8 +3,11 @@
 //! - 文書が持つもの（チャンネルごとの画像の参照・層ごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
 //!   選ぶ・渡す・覚えるだけ。どの変更も `Action::Fill` を通る（欄・キー・試験と同じ道）。1 つの操作が 1 回の Undo で、スライダー・数値・ギズモの
 //!   ドラッグは `coalesce` で離すまでを 1 回にまとめる。断られたら何も変えず、理由を状態の帯へ。
-//! - 画像の画素は棚（`inputs`）から、文書の効果の入力へ渡す。マップ（位置・法線）とモデルのルートは、その入力を作る側（メッシュマップの
-//!   ベイク）が渡す。入力がそろわない間は、core が値を見せ、その理由を `inactive_effect_list` が言う（欄は理由を短く出す）。
+//! - 画像の画素は棚から、文書の効果の入力へ渡す。復号・予算・失敗の理由・文書への受け渡しは効果の画面と共通で、`fx::inputs` が持つ
+//!   （画像を差す操作が先に `use_shelf_image` で頼み、層が指したあとは毎フレームの `sync_effects` が保つ。差さなかった画像は
+//!   `release_shelf_image` で手放す）。ここの `inputs` は棚の画像の ID と色空間の再公開だけ。マップ（位置・法線）とモデルのルートは、
+//!   入力を作る側（メッシュマップのベイク）が渡す。入力がそろわない間は、core が値を見せ、その理由を `inactive_effect_list` が言う
+//!   （欄は理由を短く出す）。
 //! - 置き場（投影の箱・グラデーションの形）は 3D ビューのギズモ（`gizmo`、`view3d::shape_gizmo`）で動かす。決め方は `placement`。
 
 pub mod gizmo;
@@ -45,8 +48,6 @@ pub struct FillFxState {
     /// ランプの分岐点の選び（欄が覚える）。`ramp_for` はどのグラデーションの選びか。
     pub ramp_selection: Selection,
     pub ramp_for: Option<(LayerId, Channel)>,
-    /// 展開した棚の画像の覚え。
-    pub images: inputs::ImageCache,
 }
 
 /// 塗りつぶしの操作（`Action::Fill`）。
@@ -237,7 +238,12 @@ impl AppState {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;
                 };
-                self.fillfx_sync_images(image);
+                if let Some(image) = image {
+                    if let Err(why) = self.use_shelf_image(&inputs::resource_id(image)) {
+                        self.message = why;
+                        return;
+                    }
+                }
                 self.doc.end_coalescing();
                 match self.doc.set_fill_image(layer, channel, image) {
                     Ok(()) => {
@@ -251,7 +257,13 @@ impl AppState {
                                 None => lang.pick("画像を外しました", "Image removed").into(),
                             };
                     }
-                    Err(e) => self.fill_refusal(&e),
+                    Err(e) => {
+                        // 画像は先に復号して文書へ渡してある（core はそれを見てから断る）。差さなかった画像は手放す
+                        if let Some(image) = image {
+                            self.release_shelf_image(image);
+                        }
+                        self.fill_refusal(&e);
+                    }
                 }
             }
             FillOp::Projection {
@@ -367,7 +379,12 @@ impl AppState {
                 match self.shelf.set_image_color_space(lang, &id, text) {
                     Ok(true) => {
                         self.modified = true;
-                        self.fillfx_sync_images(Some(image));
+                        // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
+                        if self.fx.inputs.has_decoded_image(image) {
+                            if let Err(why) = self.use_shelf_image(&id) {
+                                self.message = why;
+                            }
+                        }
                     }
                     Ok(false) => {}
                     Err(why) => self.message = why,
@@ -532,13 +549,17 @@ impl AppState {
                 .into();
             return;
         };
-        self.fillfx_sync_images(Some(image));
+        if let Err(why) = self.use_shelf_image(&rid) {
+            self.message = why;
+            return;
+        }
         let Some(size) = self
             .doc
             .effect_inputs()
             .image(image)
             .map(|i| (i.width, i.height))
         else {
+            self.release_shelf_image(image);
             self.message = lang
                 .pick("画像を読めません", "Cannot read the image")
                 .into();
@@ -578,16 +599,16 @@ impl AppState {
                         "{}: {name}",
                         lang.pick("デカールを置きました", "Decal placed")
                     ),
-                    Some(why) => format!(
-                        "{}: {name}（{why}）",
-                        lang.pick(
-                            "デカールを置きました。まだ出ません",
-                            "Decal placed, not shown yet"
-                        ),
+                    Some(why) => lang.pick(
+                        format!("デカールを置きました。まだ出ません: {name}（{why}）"),
+                        format!("Decal placed, not shown yet: {name} ({why})"),
                     ),
                 };
             }
-            Err(e) => self.fill_refusal(&e),
+            Err(e) => {
+                self.release_shelf_image(image);
+                self.fill_refusal(&e);
+            }
         }
     }
 

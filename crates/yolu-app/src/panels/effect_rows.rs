@@ -270,6 +270,14 @@ fn effect_row(
             .ok()
             .flatten()
             .map(|r| lang.inactive_reason(&r))
+            .or_else(|| {
+                let reason = app.doc.generator_fallback(layer, id).ok().flatten()?;
+                let EffectSettings::Generator(g) = effect.settings() else { return None; };
+                Some(lang.fallback_effect(&yolu_core::FallbackEffect {
+                    layer, layer_name: app.doc.layer(layer)?.name().to_owned(),
+                    mask: target == FilterTarget::Mask, kind: g.kind, reason: yolu_core::InactiveReason::Generator(reason),
+                }))
+            })
     } else {
         None
     };

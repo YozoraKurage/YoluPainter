@@ -136,14 +136,43 @@ impl InputsState {
     pub fn decoded_image_count(&self) -> usize {
         self.images.len()
     }
+
+    /// この画像を復号して持っているか。
+    pub fn has_decoded_image(&self, id: ImageId) -> bool {
+        self.images.contains_key(&id)
+    }
 }
 
 /// 棚のリソースの ID（ハイフン付きの GUID）から、文書の画像の ID へ。
 pub fn image_id(resource_id: &str) -> Option<ImageId> {
-    u128::from_str_radix(&resource_id.replace('-', ""), 16)
-        .ok()
+    let hex = resource_id.replace('-', "");
+    (hex.len() == 32)
+        .then(|| u128::from_str_radix(&hex, 16).ok())
+        .flatten()
         .filter(|v| *v != 0)
         .map(ImageId)
+}
+
+/// 画像の ID に対応する棚の画像の ID（小文字のハイフン付き GUID。棚に無ければ `shelf_resource` で見つからない）。
+pub fn resource_id(id: ImageId) -> String {
+    let h = format!("{:032x}", id.0);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
+}
+
+/// 棚の画像の色空間（索引の文字と core の型）。
+pub fn space_of(resource: &yolu_io::Resource) -> (&'static str, yolu_core::ImageColorSpace) {
+    match resource.metadata.get("colorSpace").and_then(|v| v.as_str()) {
+        Some("srgb") => ("srgb", yolu_core::ImageColorSpace::Srgb),
+        Some("linear") => ("linear", yolu_core::ImageColorSpace::Linear),
+        _ => ("unspecified", yolu_core::ImageColorSpace::Unspecified),
+    }
 }
 
 /// 入力がそろわないことが理由の、効いていない効果（Anchor を選んでいない・ID の色が無いなど、文書の中の設定の不備は含めない）。
@@ -344,13 +373,13 @@ impl AppState {
         // 棚から消えた画像・使わなくなった画像・中身の替わった画像は手放す
         state
             .images
-            .retain(|id, (content, _)| wanted_set.contains(id) && present.get(id).is_some_and(|r| &r.content == content));
+            .retain(|id, (content, _)| wanted_set.contains(id) && present.get(id).is_some_and(|r| &image_key(r) == content));
         let mut used = state.decoded_image_bytes();
         // 失敗は、同じ中身・同じ上限で、持っている分が減っていないあいだだけ覚える（中身が変われば別の画像、減れば予算で断った画像を通せる）
         let limit = state.image_limit.unwrap_or(yolu_io::MAX_TOTAL_BYTES);
         state.image_errors.retain(|id, failure| {
             wanted_set.contains(id)
-                && present.get(id).is_some_and(|r| r.content == failure.content)
+                && present.get(id).is_some_and(|r| image_key(r) == failure.content)
                 && used >= failure.used
                 && limit == failure.limit
         });
@@ -369,14 +398,14 @@ impl AppState {
                 Ok(mut found) => {
                     if let Some((found_id, image)) = found.pop() {
                         used += image.pixels.len();
-                        state.images.insert(found_id, (resource.content.clone(), image));
+                        state.images.insert(found_id, (image_key(resource), image));
                     }
                 }
                 Err(e) => {
                     state.image_errors.insert(
                         id,
                         ImageFailure {
-                            content: resource.content.clone(),
+                            content: image_key(resource),
                             used,
                             limit,
                             reason: self.lang.io_error(&e),
@@ -409,6 +438,14 @@ impl AppState {
         }
         self.sync_effect_inputs_with(true);
         Ok(id)
+    }
+
+    /// `use_shelf_image` で頼んだ画像を手放す（頼んだ操作が断られて、どの層も指さないとき）。ほかの層が指している画像は、そのまま持つ。
+    /// 手放さないと、断られた画像が棚から消えるまで復号したまま残り、通算の予算を食い続ける。
+    pub fn release_shelf_image(&mut self, id: ImageId) {
+        if self.fx.inputs.requested.remove(&id) {
+            self.sync_effect_inputs_with(true);
+        }
     }
 
     /// 1 つのセットの今の鍵（モデルの入力と、渡す画像から）。`needed` は読むマップの種類（読むだけのセットは文書が無いので全部）。
@@ -547,7 +584,12 @@ impl AppState {
                 }
                 continue;
             }
-            if self.fx.inputs.keys.get(&uid) == Some(&key) {
+            let images_match = self.fx.inputs.images.iter().all(|(id, (_, image))| {
+                self.set_doc(index).effect_inputs().image(*id).is_some_and(|current| {
+                    current.hash == image.hash && current.color_space == image.color_space
+                })
+            });
+            if self.fx.inputs.keys.get(&uid) == Some(&key) && images_match {
                 continue;
             }
             let inputs = self.build_effect_inputs(index, input.as_deref(), frame, &needed);
@@ -693,6 +735,10 @@ impl AppState {
     }
 }
 
+fn image_key(resource: &yolu_io::Resource) -> String {
+    format!("{}:{}", resource.content, space_of(resource).0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +746,19 @@ mod tests {
     use crate::project::open_within;
     use crate::state::Action;
     use yolu_core::{Channel, Rgba8};
+
+    #[test]
+    fn resource_ids_round_trip() {
+        let id = ImageId(0x0123_4567_89ab_cdef_0011_2233_4455_6677);
+        let text = resource_id(id);
+        assert_eq!(text, "01234567-89ab-cdef-0011-223344556677");
+        assert_eq!(image_id(&text), Some(id));
+        assert_eq!(image_id(&text.replace('-', "")), Some(id));
+        assert_eq!(image_id("00000000-0000-0000-0000-000000000000"), None);
+        assert_eq!(image_id("not-a-guid"), None);
+        assert_eq!(image_id("1234"), None);
+    }
+
 
     const IMAGE: &str = "00000000-0000-4000-8000-000000000001";
 

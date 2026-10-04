@@ -656,7 +656,7 @@ pub struct AppState {
     pub eyedrop: crate::eyedrop::EyedropState,
     /// パスの道具（選んだ点・点のドラッグ・スライダーの途中の値。パスそのものは文書が持つ）。
     pub path: crate::pathtool::PathState,
-    /// 塗りつぶしの層の画像と投影・形のグラデーションの画面の状態（置き場のギズモ・ランプの選び・展開した画像の覚え）。
+    /// 塗りつぶしの層の画像と投影・形のグラデーションの画面の状態（置き場のギズモ・ランプの選び）。
     pub fillfx: crate::fillfx::FillFxState,
     /// グラデーションの道具の設定と途中の状態。
     pub gradient: crate::gradient::GradientState,
