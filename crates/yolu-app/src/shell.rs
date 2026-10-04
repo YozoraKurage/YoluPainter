@@ -796,6 +796,11 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::SHIFT, Key::U, Action::SelectTool(Tool::Ruler));
         key(Modifiers::NONE, Key::U, Action::SelectTool(Tool::Shape));
         key(
+            Modifiers::SHIFT,
+            Key::Q,
+            Action::Sel(SelAction::Ui(crate::selection::SelUiOp::QuickMask(None))),
+        );
+        key(
             Modifiers::NONE,
             Key::M,
             Action::SelectTool(Tool::SelectRect),
@@ -809,6 +814,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::NONE, Key::Num4, Action::SelectTool(Tool::PolygonFill));
         key(Modifiers::NONE, Key::I, Action::SelectTool(Tool::Eyedropper));
         key(Modifiers::NONE, Key::P, Action::SelectTool(Tool::Path));
+        key(Modifiers::NONE, Key::S, Action::SelectTool(Tool::SelectPen));
         // パスの道具: 選んでいる点（無ければ最後の点）を消す
         if app.tool == Tool::Path {
             key(Modifiers::NONE, Key::Delete, Action::Path(PathAction::DeleteSelected));

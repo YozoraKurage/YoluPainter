@@ -1126,7 +1126,7 @@ fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
     assert_eq!(selected(&s, TRI2), 0, "別の島");
     assert_eq!(selected(&s, TRI4), 0);
     assert!(s.message.contains("ID の色 #"), "{}", s.message);
-    assert!(s.message.contains("置き換え"), "{}", s.message);
+    assert!(s.message.contains("新規"), "{}", s.message);
     let undo = s.doc.undo_count();
     press(&mut s, TRI4, true, false);
     assert_eq!(s.doc.undo_count(), undo + 1);
@@ -1164,7 +1164,7 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
     press(&mut s, TRI0);
     press(&mut s, TRI4);
     assert_eq!((selected(&s, TRI0), selected(&s, TRI4)), (255, 255));
-    assert!(s.message.contains("足す"), "{}", s.message);
+    assert!(s.message.contains("追加"), "{}", s.message);
     // 「引く」なら、押した部品だけが外れる
     s.apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(SelectionCombine::Subtract))));
     press(&mut s, TRI0);

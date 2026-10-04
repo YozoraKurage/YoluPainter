@@ -199,31 +199,9 @@ impl SelectionMask {
         tiles: impl IntoIterator<Item = (TileCoord, Vec<u8>)>,
     ) -> Result<SelectionMask, CoreError> {
         let empty = Self::empty(width, height, tile_size)?;
-        let ts = tile_size as usize;
-        let (cols, rows) = (width.div_ceil(tile_size), height.div_ceil(tile_size));
         let mut map = HashMap::new();
         for (coord, amounts) in tiles {
-            if coord.x >= cols || coord.y >= rows {
-                return Err(CoreError::InvalidArgument("選択範囲のタイルが文書の外"));
-            }
-            if amounts.len() != ts * ts {
-                return Err(CoreError::InvalidArgument("選択範囲のタイルの長さ"));
-            }
-            let w = (width - coord.x * tile_size).min(tile_size) as usize;
-            let h = (height - coord.y * tile_size).min(tile_size) as usize;
-            let mut any = false;
-            for (i, &a) in amounts.iter().enumerate() {
-                if a == 0 {
-                    continue;
-                }
-                if i % ts >= w || i / ts >= h {
-                    return Err(CoreError::InvalidArgument(
-                        "選択範囲のタイルの余白が 0 でない",
-                    ));
-                }
-                any = true;
-            }
-            if !any {
+            if !Self::check_tile(width, height, tile_size, coord, &amounts)? {
                 return Err(CoreError::InvalidArgument("選択範囲のタイルが空"));
             }
             let tile = Amounts::from_bytes(amounts).expect("空でない");
@@ -235,6 +213,58 @@ impl SelectionMask {
             return Ok(empty);
         }
         Ok(Self::from_map(width, height, tile_size, map))
+    }
+
+    /// タイル 1 枚の量の検査（画布の中・長さ・画布の外の余白が 0）。量のある画素が 1 つでもあれば true。
+    fn check_tile(
+        width: u32,
+        height: u32,
+        tile_size: u32,
+        coord: TileCoord,
+        amounts: &[u8],
+    ) -> Result<bool, CoreError> {
+        let ts = tile_size as usize;
+        let (cols, rows) = (width.div_ceil(tile_size), height.div_ceil(tile_size));
+        if coord.x >= cols || coord.y >= rows {
+            return Err(CoreError::InvalidArgument("選択範囲のタイルが文書の外"));
+        }
+        if amounts.len() != ts * ts {
+            return Err(CoreError::InvalidArgument("選択範囲のタイルの長さ"));
+        }
+        let w = (width - coord.x * tile_size).min(tile_size) as usize;
+        let h = (height - coord.y * tile_size).min(tile_size) as usize;
+        let mut any = false;
+        for (i, &a) in amounts.iter().enumerate() {
+            if a == 0 {
+                continue;
+            }
+            if i % ts >= w || i / ts >= h {
+                return Err(CoreError::InvalidArgument(
+                    "選択範囲のタイルの余白が 0 でない",
+                ));
+            }
+            any = true;
+        }
+        Ok(any)
+    }
+
+    /// 一部のタイルの量だけを置き換えた選択範囲（ペンで描くストロークの途中の見え方の更新に使う。置き換えないタイルは同じ中身を
+    /// 共有するので、置き換えた枚数に比例する）。タイルの検査は [`SelectionMask::from_amount_tiles`] と同じ（画布の中・TileSize²
+    /// バイト・画布の外の余白が 0。同じタイルを 2 度渡せば後のものが残る）。全部 0 のタイルは「無いタイル」にする。
+    pub fn with_tiles(
+        &self,
+        tiles: impl IntoIterator<Item = (TileCoord, Vec<u8>)>,
+    ) -> Result<SelectionMask, CoreError> {
+        let d = &self.0;
+        let mut map = d.tiles.clone();
+        for (coord, amounts) in tiles {
+            if Self::check_tile(d.width, d.height, d.tile_size, coord, &amounts)? {
+                map.insert(coord, Amounts::from_bytes(amounts).expect("空でない"));
+            } else {
+                map.remove(&coord);
+            }
+        }
+        Ok(Self::from_map(d.width, d.height, d.tile_size, map))
     }
 
     // ───────── 読む ─────────

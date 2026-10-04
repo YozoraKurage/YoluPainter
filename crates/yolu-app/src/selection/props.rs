@@ -1,5 +1,5 @@
 //! 選択範囲と対称の、オプションバーとプロパティの欄の部品。
-//! - 選択の道具のオプションバー: 組み合わせ方（置き換え・足す・引く・重ねる）、すべて・解除・反転、自動選択の許容値・隣接・全レイヤー
+//! - 選択の道具のオプションバー: 作成方法（新規・追加・削除・共通）、すべて・解除・反転、自動選択の許容値・隣接・全レイヤー
 //! - ブラシ・消しゴムのオプションバーの右端: 対称の切り替えとモードの選び（▾）
 //! - プロパティの欄: 選択の道具では「選択範囲を変更」。対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ（`symmetry_fields`）
 //!
@@ -8,7 +8,7 @@
 use egui::{pos2, vec2, Rect, Ui};
 
 use super::symmetry::{axis_name, mode_name, mode_tooltip, AXES_3D, MODES};
-use super::{combine_name, combine_tooltip, ModifyKind, SelAction, SelEdit, SymOp};
+use super::{combine_tooltip, ModifyKind, SelAction, SelEdit, SymOp};
 use crate::engine::{BrushEffect, SelectionCombine, SymmetryMode, MAX_MODIFY_RADIUS};
 use crate::lang::Lang;
 use crate::panels::properties::{group_label, section, slider_row, status_row, toggle_row};
@@ -84,37 +84,126 @@ fn flow_buttons(ui: &mut Ui, rows: &mut Rows, salt: &str, items: &[FlowButton]) 
     clicked
 }
 
-/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。
-pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
-    let (y, h) = (r.top() + 6.0, r.height() - 12.0);
+/// 作成方法（新規・追加・削除・共通）の並び。
+pub const CREATION_MODES: [SelectionCombine; 4] = [
+    SelectionCombine::Replace,
+    SelectionCombine::Add,
+    SelectionCombine::Subtract,
+    SelectionCombine::Intersect,
+];
+
+/// 作成方法のアイコンの組（CLIP STUDIO の「作成方法」）。選んでいる作成方法が点き、Shift・Ctrl・Shift+Ctrl を押しているあいだは、
+/// 実際に効く作成方法が一時的に点く（選んでいるものは枠だけになる）。置いた幅だけ進めた x を返す。
+fn creation_group(
+    ui: &mut Ui,
+    app: &mut AppState,
+    y: f32,
+    h: f32,
+    x: f32,
+    held: egui::Modifiers,
+) -> f32 {
     let l = app.lang;
-    let p = ui.painter().clone();
-    for mode in [
-        SelectionCombine::Replace,
-        SelectionCombine::Add,
-        SelectionCombine::Subtract,
-        SelectionCombine::Intersect,
-    ] {
-        let name = combine_name(l, mode);
-        let width = w::text_width(&p, name, t::LABEL) + 22.0;
-        let at = Rect::from_min_size(pos2(x, y), vec2(width, h));
-        if w::button(
+    let effective = super::combine_of(app.sel.combine, held);
+    let width = CREATION_MODES.len() as f32 * 28.0 + 4.0;
+    let group = Rect::from_min_size(pos2(x, y), vec2(width, h));
+    w::rounded(ui.painter(), group, t::CONTROL_BG, 5.0);
+    let mut bx = x + 2.0;
+    for mode in CREATION_MODES {
+        let at = Rect::from_min_size(pos2(bx, y), vec2(28.0, h));
+        let lit = effective == mode;
+        if w::icon_button(
             ui,
             at,
             ("options.select.mode", mode),
-            name,
-            app.sel.combine == mode,
+            super::saved::creation_icon(mode),
+            combine_tooltip(l, mode),
+            lit,
             true,
-            Some(combine_tooltip(l, mode)),
-            None,
+            18.0,
         )
         .clicked()
         {
             app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::Combine(mode))));
         }
-        x += width + 4.0;
+        // 修飾キーで一時的に替わっているあいだ、選んでいる作成方法は枠だけで残す
+        if app.sel.combine == mode && !lit {
+            w::outline(ui.painter(), at.shrink(1.0), t::ACCENT, 1.0, 4.0);
+        }
+        bx += 28.0;
     }
-    x += 4.0;
+    x + width
+}
+
+/// 選択ペン・選択消しの切り替え（選択ペンの道具のオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
+fn pen_group(
+    ui: &mut Ui,
+    app: &mut AppState,
+    y: f32,
+    h: f32,
+    x: f32,
+    held: egui::Modifiers,
+) -> f32 {
+    let l = app.lang;
+    let erasing = super::pen::erases(app.sel.pen_erase, held);
+    let items = [
+        (
+            false,
+            "edit",
+            l.pick(
+                "選択ペン: 選択範囲に足す（Shift）",
+                "Selection Pen: add to the selection (Shift)",
+            ),
+        ),
+        (
+            true,
+            "tools/eraser",
+            l.pick(
+                "選択消し: 選択範囲から消す（Ctrl）",
+                "Selection Eraser: remove from the selection (Ctrl)",
+            ),
+        ),
+    ];
+    let width = items.len() as f32 * 28.0 + 4.0;
+    let group = Rect::from_min_size(pos2(x, y), vec2(width, h));
+    w::rounded(ui.painter(), group, t::CONTROL_BG, 5.0);
+    let mut bx = x + 2.0;
+    for (erase, icon, tip) in items {
+        let at = Rect::from_min_size(pos2(bx, y), vec2(28.0, h));
+        let lit = erasing == erase;
+        if w::icon_button(
+            ui,
+            at,
+            ("options.select.pen", erase),
+            icon,
+            tip,
+            lit,
+            true,
+            18.0,
+        )
+        .clicked()
+        {
+            app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(erase))));
+        }
+        if app.sel.pen_erase == erase && !lit {
+            w::outline(ui.painter(), at.shrink(1.0), t::ACCENT, 1.0, 4.0);
+        }
+        bx += 28.0;
+    }
+    x + width
+}
+
+/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。
+pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
+    let (y, h) = (r.top() + 6.0, r.height() - 12.0);
+    let l = app.lang;
+    let p = ui.painter().clone();
+    let held = ui.input(|i| i.modifiers);
+    x = if app.tool == Tool::SelectPen {
+        pen_group(ui, app, y, h, x, held)
+    } else {
+        creation_group(ui, app, y, h, x, held)
+    };
+    x += 8.0;
     w::vline(&p, x, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
     x += 8.0;
     let free = !app.is_stroking() && app.read_only_reason().is_none();
@@ -159,6 +248,73 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
             app.apply(Action::Sel(SelAction::Edit(edit)));
         }
         x += 32.0;
+    }
+    // クイックマスク（入っているあいだ点く）
+    let at = Rect::from_min_size(pos2(x, y), vec2(28.0, h));
+    if w::icon_button(
+        ui,
+        at,
+        "options.select.quick-mask",
+        "quick_mask",
+        l.pick("クイックマスク（Shift+Q）", "Quick Mask (Shift+Q)"),
+        app.sel.quick,
+        !app.is_stroking(),
+        20.0,
+    )
+    .clicked()
+    {
+        app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::QuickMask(None))));
+    }
+    x += 32.0;
+    if app.tool == Tool::SelectPen {
+        x += 4.0;
+        w::vline(&p, x, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+        x += 8.0;
+        let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
+        if !fits(x, 150.0) {
+            return;
+        }
+        let at = Rect::from_min_size(pos2(x, y), vec2(150.0, h));
+        let b = &mut app.brush;
+        let out = w::slider(
+            ui,
+            at,
+            "options.sel-pen.size",
+            b.radius * 2.0,
+            &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px")).tooltip(
+                l.pick(
+                    "ブラシの直径（[ と ]）。ブラシと共通",
+                    "Brush diameter ([ and ]), shared with the brush",
+                ),
+            ),
+        );
+        if out.changed {
+            b.radius = (out.value / 2.0).max(0.5);
+        }
+        x += 150.0 + 10.0;
+        if !fits(x, 130.0) {
+            return;
+        }
+        let at = Rect::from_min_size(pos2(x, y), vec2(130.0, h));
+        let out = w::slider(
+            ui,
+            at,
+            "options.sel-pen.hardness",
+            b.hardness * 100.0,
+            &SliderSpec::new(
+                l.pick("硬さ", "Hardness"),
+                0.0,
+                100.0,
+                NumberFormat::int("%"),
+            )
+            .tooltip(l.pick(
+                "縁のぼけ。ブラシと共通",
+                "Edge softness, shared with the brush",
+            )),
+        );
+        if out.changed {
+            b.hardness = out.value / 100.0;
+        }
     }
     if app.tool == Tool::Wand {
         x += 4.0;
@@ -310,6 +466,7 @@ pub fn symmetry_options(ui: &mut Ui, app: &mut AppState, r: Rect, left: f32) {
 
 /// プロパティの欄の選択の道具の中身（選択範囲を変更）。
 pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    tool_settings(ui, app, rows);
     let lang = app.lang;
     let (open, _) = section(
         ui,
@@ -380,6 +537,178 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             radius: app.sel.radius,
             edge_lock: app.sel.edge_lock,
         })));
+    }
+}
+
+/// プロパティの欄の選択の道具の設定（形の道具: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 切り替えと直径・硬さ・不透明度）。
+fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let lang = app.lang;
+    let tool = app.tool;
+    if tool == Tool::SelectPen {
+        let (open, _) = section(
+            ui,
+            app,
+            rows,
+            "selection-pen",
+            tool.name_in(lang),
+            "edit",
+            None,
+        );
+        if !open {
+            return;
+        }
+        let items = [
+            FlowButton {
+                label: lang.pick("選択ペン", "Pen"),
+                primary: !app.sel.pen_erase,
+                enabled: true,
+                tooltip: lang.pick("選択範囲に足す（Shift）", "Add to the selection (Shift)"),
+            },
+            FlowButton {
+                label: lang.pick("選択消し", "Eraser"),
+                primary: app.sel.pen_erase,
+                enabled: true,
+                tooltip: lang.pick(
+                    "選択範囲から消す（Ctrl）",
+                    "Remove from the selection (Ctrl)",
+                ),
+            },
+        ];
+        if let Some(i) = flow_buttons(ui, rows, "sel.pen.mode", &items) {
+            app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(i == 1))));
+        }
+        let shared = lang.pick("ブラシと共通", "Shared with the brush");
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "sel.pen.size",
+            lang.pick("直径", "Size"),
+            app.brush.radius * 2.0,
+            (1.0, 256.0),
+            NumberFormat::int(" px"),
+            Some(shared),
+            true,
+        ) {
+            app.brush.radius = (v / 2.0).max(0.5);
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "sel.pen.hardness",
+            lang.pick("硬さ", "Hardness"),
+            app.brush.hardness * 100.0,
+            (0.0, 100.0),
+            NumberFormat::int("%"),
+            Some(shared),
+            true,
+        ) {
+            app.brush.hardness = v / 100.0;
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "sel.pen.opacity",
+            lang.pick("不透明度", "Opacity"),
+            app.brush.opacity * 100.0,
+            (0.0, 100.0),
+            NumberFormat::int("%"),
+            Some(lang.pick(
+                "足す量の上限（ブラシと共通）",
+                "Largest amount a stroke adds (shared with the brush)",
+            )),
+            true,
+        ) {
+            app.brush.opacity = v / 100.0;
+        }
+        return;
+    }
+    if !matches!(
+        tool,
+        Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso | Tool::Polygon
+    ) {
+        return;
+    }
+    let (open, _) = section(
+        ui,
+        app,
+        rows,
+        "selection-tool",
+        tool.name_in(lang),
+        "tune",
+        None,
+    );
+    if !open {
+        return;
+    }
+    let rect = tool == Tool::SelectRect;
+    let shaped = matches!(tool, Tool::SelectRect | Tool::SelectEllipse);
+    // 長方形は角を丸めたときだけ縁が滑らかになる
+    let aa_applies = !rect || app.sel.corner_radius > 0;
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "sel.antialias",
+        lang.pick("アンチエイリアス", "Anti-alias"),
+        app.sel.antialias,
+        Some(if aa_applies {
+            lang.pick(
+                "縁を滑らかにする（切ると、縁の量は 0 か 255 だけ）",
+                "Smooth the edge (off: the edge is all or nothing)",
+            )
+        } else {
+            lang.pick("角が丸いときに効く", "Applies to rounded corners")
+        }),
+        aa_applies,
+    ) {
+        app.sel.antialias = v;
+    }
+    if shaped {
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            "sel.fixed-ratio",
+            lang.pick("縦横比を固定", "Fixed ratio"),
+            app.sel.fixed_ratio,
+            Some(lang.pick(
+                "常に正方形・正円にする（切っていても、押し始めたあとに Shift を押すあいだは固定）",
+                "Always a square or circle (with it off, Shift pressed after starting holds the ratio)",
+            )),
+            true,
+        ) {
+            app.sel.fixed_ratio = v;
+        }
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            "sel.from-center",
+            lang.pick("中心から", "From center"),
+            app.sel.from_center,
+            Some(lang.pick(
+                "押した点を中心に広げる（切っていても、Alt を押すあいだは中心から）",
+                "Grow around the pressed point (with it off, Alt held does the same)",
+            )),
+            true,
+        ) {
+            app.sel.from_center = v;
+        }
+    }
+    if rect {
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "sel.corner-radius",
+            lang.pick("角の丸め", "Corner radius"),
+            app.sel.corner_radius as f32,
+            (0.0, 512.0),
+            NumberFormat::int(" px"),
+            Some(lang.pick(
+                "長方形の角の半径（短い辺の半分まで）",
+                "Radius of the rectangle's corners (up to half the short side)",
+            )),
+            true,
+        ) {
+            app.sel.corner_radius = v.round().clamp(0.0, 512.0) as u32;
+        }
     }
 }
 

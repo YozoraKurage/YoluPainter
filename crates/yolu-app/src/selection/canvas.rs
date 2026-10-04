@@ -11,8 +11,9 @@ use std::time::Duration;
 use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
 
 use super::outline::Run;
+use super::overlay::Tint;
 use super::symmetry::{axis_lines, mirrored_points};
-use super::{combine_of, SelAction, SelEdit, ShapeDrag};
+use super::{combine_of, pen, quick, shape, SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
@@ -32,6 +33,15 @@ const MAX_DASHED_RUNS: usize = 6_000;
 const MAX_DRAWN_RUNS: usize = 40_000;
 /// 点線を流す間は、この間隔で描き直す。
 const ANTS_FRAME: Duration = Duration::from_millis(60);
+/// 選択ペンのストロークの被覆の色（足す: 青、消す: 橙）と濃さ。
+const PEN_ADD_TINT: Tint = Tint {
+    rgb: [70, 150, 255],
+    alpha: 0.45,
+};
+const PEN_ERASE_TINT: Tint = Tint {
+    rgb: [255, 160, 40],
+    alpha: 0.45,
+};
 /// 点線の黒の長さと 1 周期（画面の点）。
 const DASH_LENGTH: f32 = 4.0;
 const DASH_PERIOD: f32 = 8.0;
@@ -59,7 +69,9 @@ pub fn press(
         return;
     }
     let canvas = view.to_canvas(pos);
+    app.sel.press_modifiers = modifiers;
     match app.tool {
+        Tool::SelectPen => pen::press(app, view, pos, source, modifiers),
         Tool::Wand => {
             let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
             let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
@@ -163,9 +175,12 @@ pub fn moved(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
             drag.lasso.push(canvas);
         }
     }
+    if drag.tool == Tool::SelectPen {
+        pen::moved(app, view, pos, source);
+    }
 }
 
-/// 離した。形を選択範囲にする（クリックなら解除。組み合わせを足す・引く・重ねるにしていれば何もしない）。
+/// 離した。形を選択範囲にする（クリックなら解除。作成方法を追加・削除・共通にしていれば何もしない）。
 pub fn release(
     app: &mut AppState,
     view: &CanvasView,
@@ -179,6 +194,11 @@ pub fn release(
     let Some(mut drag) = app.sel.drag.take() else {
         return;
     };
+    if drag.tool == Tool::SelectPen {
+        // 離したら、ストロークを選択範囲に反映する（1 回の Undo）
+        pen::finish(app, false);
+        return;
+    }
     let canvas = view.to_canvas(pos);
     drag.current = canvas;
     drag.moved = drag.moved.max(pos.distance(drag.start_screen));
@@ -186,8 +206,11 @@ pub fn release(
         drag.lasso.push(canvas);
     }
     let click = drag.moved < CLICK_RADIUS;
-    let mode = combine_of(app.sel.combine, modifiers);
-    let (a, b) = (drag.start, drag.current);
+    let pressed_with = app.sel.press_modifiers;
+    let mode = drag_mode(app.sel.combine, drag.tool, pressed_with, modifiers);
+    let c = shape::Constraint::of(&app.sel, drag.tool, pressed_with, modifiers);
+    let (a, b) = shape::drag_corners(drag.start, drag.current, c.square, c.center);
+    let corner_radius = app.sel.corner_radius;
     let edit = match drag.tool {
         _ if click => {
             if mode == SelectionCombine::Replace && app.doc.selection().is_some() {
@@ -196,6 +219,14 @@ pub fn release(
                 None
             }
         }
+        Tool::SelectRect if corner_radius > 0 => Some(SelEdit::RoundRect {
+            x0: a.0.min(b.0).round() as i64,
+            y0: a.1.min(b.1).round() as i64,
+            x1: a.0.max(b.0).round() as i64,
+            y1: a.1.max(b.1).round() as i64,
+            radius: corner_radius,
+            mode,
+        }),
         Tool::SelectRect => Some(SelEdit::Rect {
             x0: a.0.min(b.0).round() as i64,
             y0: a.1.min(b.1).round() as i64,
@@ -221,6 +252,29 @@ pub fn release(
     }
 }
 
+/// 形のドラッグの組み合わせ方。Shift は押し始めに押していれば「追加」、押し始めたあとに押したなら縦横比の固定（長方形・楕円）で、
+/// 追加には使わない。Ctrl は押し始めか離したときのどちらかに押していれば「削除」。修飾が無ければオプションバーの値。
+fn drag_mode(
+    base: SelectionCombine,
+    tool: Tool,
+    pressed_with: Modifiers,
+    now: Modifiers,
+) -> SelectionCombine {
+    let constrains = matches!(tool, Tool::SelectRect | Tool::SelectEllipse)
+        && shape::shift_constrains(pressed_with, now);
+    let shift = pressed_with.shift || (now.shift && !constrains);
+    let ctrl = pressed_with.ctrl || pressed_with.command || now.ctrl || now.command;
+    combine_of(
+        base,
+        Modifiers {
+            shift,
+            ctrl,
+            command: ctrl,
+            ..Modifiers::NONE
+        },
+    )
+}
+
 /// ペン（Windows Ink）の 1 点。触れた・動いた・離したを、押す・動く・離すにする。
 pub fn pen_sample(
     app: &mut AppState,
@@ -244,6 +298,11 @@ pub fn pen_sample(
         }
         _ => {}
     }
+}
+
+/// ペンの 1 点が来たことを覚える（選択ペンが筆圧と消しゴムの端を使う。キャンバスの入力が、ペンの点ごとに 1 度呼ぶ）。
+pub fn note_pen(app: &mut AppState, pointer_id: u32, pressure: f32, eraser_end: bool) {
+    app.sel.pen_note = Some((pointer_id, pressure, eraser_end));
 }
 
 /// Esc: 途中の形を捨てる。何かあったか。
@@ -434,6 +493,11 @@ fn paint_partial_edge_note(painter: &Painter, lang: Lang) {
 
 /// 選択範囲の縁（白の線の上を黒の点線が流れる）。
 fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mut AppState) {
+    // クイックマスクでは赤い重ねが選択範囲（縁の点線は出さない）
+    if app.sel.quick {
+        app.sel.edge_partial = false;
+        return;
+    }
     let Some(mask) = app.doc.selection().cloned() else {
         app.sel.edge_partial = false;
         return;
@@ -460,14 +524,28 @@ fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &m
 }
 
 /// ドラッグ中の形と多角形の途中。
-fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState) {
+fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState, modifiers: Modifiers) {
     let screen = |p: (f64, f64)| view.to_screen(p.0, p.1);
     if let Some(d) = &app.sel.drag {
-        if d.moved < CLICK_RADIUS {
+        if d.moved < CLICK_RADIUS || d.tool == Tool::SelectPen {
             return;
         }
-        let (a, b) = (d.start, d.current);
+        let c = shape::Constraint::of(&app.sel, d.tool, app.sel.press_modifiers, modifiers);
+        let (a, b) = shape::drag_corners(d.start, d.current, c.square, c.center);
         match d.tool {
+            Tool::SelectRect if app.sel.corner_radius > 0 => {
+                let points: Vec<Pos2> = shape::rounded_rect_points(
+                    a.0.min(b.0).round() as i64,
+                    a.1.min(b.1).round() as i64,
+                    a.0.max(b.0).round() as i64,
+                    a.1.max(b.1).round() as i64,
+                    app.sel.corner_radius,
+                )
+                .iter()
+                .map(|p| screen((p.x, p.y)))
+                .collect();
+                path(painter, &points, true);
+            }
             Tool::SelectRect => {
                 let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(screen);
                 path(painter, &corners, true);
@@ -516,8 +594,13 @@ fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState) {
     }
 }
 
-/// 軸と映した側のカーソルに使う対称（描いている間はそのストロークに固めた対称）。
+/// 軸と映した側のカーソルに使う対称（描いている間はそのストロークに固めた対称）。クイックマスクと選択ペンのストロークは対称を使わない
+/// （選択範囲は 1 か所しか変わらない）ので、写しのカーソルも軸も出さない。クイックマスクのストロークは `begin_canvas_stroke` を通らず、
+/// `stroke_symmetry` は前の通常のストロークのものが残るので、ここで先に断つ。
 pub fn active_symmetry(app: &AppState) -> Option<CanvasSymmetry> {
+    if app.sel.quick || app.tool == Tool::SelectPen {
+        return None;
+    }
     let s = if app.is_stroking() {
         app.sel.stroke_symmetry?
     } else {
@@ -552,9 +635,54 @@ pub fn paint_overlay(
     view: &CanvasView,
     app: &mut AppState,
 ) {
+    if app.sel.quick {
+        quick::paint(painter, view, app);
+    } else {
+        app.sel.quick_overlay.clear();
+    }
     paint_ants(ctx, painter, view, app);
-    paint_drafts(painter, view, app);
+    paint_pen(ctx, painter, view, app);
+    paint_drafts(painter, view, app, ctx.input(|i| i.modifiers));
     paint_axes(painter, view, app);
+}
+
+/// 選択ペンの道具: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。
+fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mut AppState) {
+    let drawing = app.sel.pen.as_ref().is_some_and(|a| !a.quick);
+    if drawing {
+        pen::sync(app);
+    }
+    let sel = &mut app.sel;
+    match sel.pen.as_ref().filter(|a| !a.quick) {
+        Some(active) => {
+            let tint = if active.stroke.erase {
+                PEN_ERASE_TINT
+            } else {
+                PEN_ADD_TINT
+            };
+            sel.pen_overlay.paint(
+                painter,
+                view,
+                active.stroke.cover(),
+                tint,
+                Some(active.stroke.synced_tiles()),
+                "select-pen",
+            );
+        }
+        None => sel.pen_overlay.clear(),
+    }
+    if app.tool != Tool::SelectPen {
+        return;
+    }
+    let Some(at) = ctx.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    if !painter.clip_rect().contains(at) || ctx.layer_id_at(at) != Some(painter.layer_id()) {
+        return;
+    }
+    let radius = (app.brush.radius * view.pixel_size()).max(1.5);
+    painter.circle_stroke(at, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
+    painter.circle_stroke(at, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
 }
 
 /// ブラシのカーソルを、対称の写しの所にも描く（水色の円。radius は画面の点）。

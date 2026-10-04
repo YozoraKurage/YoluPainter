@@ -1970,3 +1970,54 @@ fn per_pixel_painting_for_the_3d_view_does_not_mirror_in_uv_space() {
     assert_eq!(px(&d, a, 5, 5), red());
     assert!(blank(&d, a, 50, 5));
 }
+
+#[test]
+fn replacing_some_tiles_keeps_the_others_and_drops_tiles_that_became_empty() {
+    let d = doc(40, 20, 16);
+    let base = SelectionMask::rectangle(&d, 0, 0, 40, 20);
+    let mut inner = vec![0u8; 256];
+    for y in 0..16 {
+        for x in 0..16 {
+            inner[y * 16 + x] = (x * 16) as u8;
+        }
+    }
+    // タイル (1, 0) だけを置き換え、(0, 0) は全部 0 にして「無いタイル」にする
+    let next = base
+        .with_tiles([
+            (TileCoord::new(1, 0), inner.clone()),
+            (TileCoord::new(0, 0), vec![0u8; 256]),
+        ])
+        .unwrap();
+    assert_eq!(next.amount(3, 3), 0, "0 にしたタイル");
+    assert_eq!(next.amount(16 + 5, 3), 80, "置き換えたタイル");
+    assert_eq!(next.amount(39, 19), 255, "触れていないタイルはそのまま");
+    assert!(!next.tile_coords().contains(&TileCoord::new(0, 0)));
+    // 元の札は変わらない（不変）
+    assert_eq!(base.amount(3, 3), 255);
+    // 置き換えなしなら同じ中身
+    assert_eq!(base.with_tiles([]).unwrap(), base);
+    // 同じタイルを 2 度渡せば後のものが残る
+    let twice = base
+        .with_tiles([
+            (TileCoord::new(1, 0), vec![9u8; 256]),
+            (TileCoord::new(1, 0), inner),
+        ])
+        .unwrap();
+    assert_eq!(twice.amount(16 + 5, 3), 80);
+}
+
+#[test]
+fn replacing_tiles_refuses_what_a_stored_file_could_not_hold() {
+    let d = doc(20, 20, 16);
+    let base = SelectionMask::none(&d);
+    let tile = |fill: u8| vec![fill; 16 * 16];
+    assert!(base.with_tiles([(TileCoord::new(2, 0), tile(1))]).is_err(), "文書の外");
+    assert!(base
+        .with_tiles([(TileCoord::new(0, 0), vec![1u8; 10])])
+        .is_err(), "長さ");
+    // 右上のタイルは 4×4 だけが画布: 余白に量があれば断る
+    assert!(base.with_tiles([(TileCoord::new(1, 1), tile(255))]).is_err());
+    // 量が全部 0 のタイルは断らず、無いタイルのまま
+    let cleared = base.with_tiles([(TileCoord::new(0, 0), tile(0))]).unwrap();
+    assert!(cleared.is_empty());
+}

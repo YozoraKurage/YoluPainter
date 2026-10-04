@@ -179,7 +179,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
 
 fn modify_labels(lang: Lang) -> [&'static str; 7] {
     lang.pick(
-        ["半径", "端を固定", "拡張", "縮小", "境界線", "ぼかし", "境界をくっきり"],
+        ["半径", "端を固定", "拡張", "縮小", "境界線", "境界をぼかす", "境界をくっきり"],
         ["Radius", "Edge lock", "Grow", "Shrink", "Border", "Feather", "Sharpen Edge"],
     )
 }
@@ -187,7 +187,8 @@ fn modify_labels(lang: Lang) -> [&'static str; 7] {
 #[test]
 fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_and_come_back() {
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 800.0, 256);
+        // 選択の道具の設定の欄が上に付いたので、変更のボタンが全部見える高さにする
+        let mut h = app(1280.0, 1000.0, 256);
         h.state_mut().state.lang = lang;
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
         assert!(h.state().state.doc.selection().is_none());

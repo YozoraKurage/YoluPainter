@@ -297,6 +297,10 @@ fn begin_stroke(
         );
         return false;
     }
+    // クイックマスクが入っていれば、ブラシ・消しゴムは選択ペン・選択消しとして働く
+    if let Some(began) = crate::selection::quick::begin(app, source, eraser) {
+        return began;
+    }
     let Some(layer) = app.selected_layer else {
         app.message = app
             .lang
@@ -369,6 +373,9 @@ fn add_point(
         crate::region::tools::drag_to(app, crate::region::tools::Where::Canvas(view), p);
         return;
     }
+    if crate::selection::quick::add_point(app, view, p, pressure) {
+        return;
+    }
     let (mut x, mut y) = view.to_canvas(p);
     if let Some(mut hold) = app.canvas.shift_hold {
         let (ox, oy) = hold.origin;
@@ -438,6 +445,9 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     app.canvas.ruler_constraint = None;
     let endpoint = app.canvas.current_end.take();
     if crate::region::tools::finish_drag(app, cancel) {
+        return;
+    }
+    if crate::selection::quick::finish(app, cancel) {
         return;
     }
     let Some(stroke) = app.stroke.take() else {
@@ -553,6 +563,7 @@ struct Frame {
 
 /// ペンの 1 点。触れた最初の点で行き先を決め（`press_kind`）、離すまで変えない。Shift は直線、Ctrl とサイドボタンは描かない。
 fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Frame) {
+    crate::selection::canvas::note_pen(app, s.pointer_id, s.pressure, s.eraser);
     let p = s.pos_points(ui.ctx().pixels_per_point());
     let (w_px, h_px) = (app.doc.width(), app.doc.height());
     let view = app.view.view(rect, w_px, h_px);

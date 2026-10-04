@@ -205,10 +205,10 @@ fn tool_names_and_option_bar_follow_the_language() {
     h.get_by_label("Magic Wand (W)").click();
     h.run();
     for label in [
-        "Replace",
-        "Add",
-        "Subtract",
-        "Intersect",
+        "New: replace the selection",
+        "Add to the selection (Shift)",
+        "Subtract from the selection (Ctrl)",
+        "Intersect: keep only the overlap (Shift + Ctrl)",
         "Contiguous",
         "Sample All Layers",
     ] {
@@ -477,26 +477,26 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    h.get_by_label("足す").click();
+    h.get_by_label("追加選択: 選択範囲に足す（Shift）").click();
     h.run();
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));
     assert!(selected(&h, left) && selected(&h, right), "足す");
     // 「引く」: 左の外側を引く
-    h.get_by_label("引く").click();
+    h.get_by_label("一部削除: 選択範囲から引く（Ctrl）").click();
     h.run();
     drag_rect(&mut h, (-130.0, -80.0), (-60.0, 80.0));
     assert_eq!(amount_at(&h, left), 0, "引いた所は外れる");
     assert!(selected(&h, at(&h, -30.0, 0.0)), "引いていない所は残る");
     assert!(selected(&h, right));
     // 「重ねる」: 右の半分と重なる所だけ
-    h.get_by_label("重ねる").click();
+    h.get_by_label("選択中を選択: 重なる所だけ残す（Shift + Ctrl）").click();
     h.run();
     drag_rect(&mut h, (0.0, -80.0), (130.0, 80.0));
     assert!(selected(&h, right));
     assert_eq!(amount_at(&h, at(&h, -30.0, 0.0)), 0);
     // 置き換え + Shift で足す・Ctrl で引く・Shift+Ctrl で重ねる
-    h.get_by_label("置き換え").click();
+    h.get_by_label("新規選択: 新しい形で置き換える").click();
     h.run();
     drag_rect(&mut h, (-120.0, -60.0), (0.0, 60.0));
     drag_with_by(&mut h, &[(10.0, -60.0), (120.0, 60.0)], Modifiers::SHIFT);
@@ -626,7 +626,7 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
     undo(&mut h);
     assert_eq!(st(&h).doc.selection(), Some(&original));
     // Esc で取り消し
-    open(&mut h, "ぼかし…");
+    open(&mut h, "境界をぼかす…");
     assert_eq!(st(&h).sel.dialog.map(|d| d.radius), Some(12));
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
@@ -663,7 +663,7 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
         ("拡張", original.grow(6, budget).unwrap()),
         ("縮小", original.shrink(6, false, budget).unwrap()),
         ("境界線", original.border(6, false, budget).unwrap()),
-        ("ぼかし", original.feather(6.0, false, budget).unwrap()),
+        ("境界をぼかす", original.feather(6.0, false, budget).unwrap()),
         ("境界をくっきり", original.sharpen()),
     ] {
         let at = rect_of(&h, label, |r| r.left() > 1000.0).center();

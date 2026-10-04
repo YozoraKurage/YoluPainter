@@ -1,5 +1,5 @@
 //! 選択範囲と 2D の対称の道具（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
-//! 足す・引く・重ねるで組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
+//! 作成方法（新規・追加・削除・共通）で組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
 //! core の `SelectionMask` の操作を呼ぶだけ。選択範囲は文書（`Document`）が持つので、セットごとに別で、Undo・.ylp の保存と読み込みも文書に付く。
 //!
 //! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
@@ -7,6 +7,8 @@
 //! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸、3D の面の対称（ミラー・放射状）
 //! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さな窓
 //! - `io`: .ylp の `selection.bin` との受け渡し
+//! - `pen`: 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す）。`quick`: クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・
+//!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて覚えた選択範囲（セッションの中だけ）
 //!
 //! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
 //! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
@@ -19,7 +21,12 @@ pub mod io;
 pub mod menu;
 mod ops;
 pub mod outline;
+pub mod overlay;
+pub mod pen;
 pub mod props;
+pub mod quick;
+pub mod saved;
+pub mod shape;
 pub mod symmetry;
 
 use crate::engine::{
@@ -28,6 +35,7 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::state::{Action, AppState, StrokeSource, Tool};
+use std::collections::HashMap;
 
 pub use self::symmetry::SymmetryState;
 
@@ -58,7 +66,7 @@ impl ModifyKind {
             ModifyKind::Grow => lang.pick("拡張", "Grow"),
             ModifyKind::Shrink => lang.pick("縮小", "Shrink"),
             ModifyKind::Border => lang.pick("境界線", "Border"),
-            ModifyKind::Feather => lang.pick("ぼかし", "Feather"),
+            ModifyKind::Feather => lang.pick("境界をぼかす", "Feather"),
             ModifyKind::Sharpen => lang.pick("境界をくっきり", "Sharpen Edge"),
         }
     }
@@ -129,9 +137,28 @@ pub enum SelEdit {
         ry: f64,
         mode: SelectionCombine,
     },
+    /// 角を丸めた長方形（画素の座標。角の半径は短い辺の半分までに丸める。縁の滑らかさは `SelState::antialias`）。
+    RoundRect {
+        x0: i64,
+        y0: i64,
+        x1: i64,
+        y1: i64,
+        radius: u32,
+        mode: SelectionCombine,
+    },
     /// 投げ縄・多角形（画布の座標の点。3 つ未満なら何も選ばない）。
     Polygon {
         points: Vec<(f64, f64)>,
+        mode: SelectionCombine,
+    },
+    /// できあがった形（選択ペンの 1 ストロークの被覆）を、今の選択範囲と組み合わせる。
+    Shape {
+        mask: SelectionMask,
+        mode: SelectionCombine,
+    },
+    /// 覚えておいた選択範囲（今の文書のもの。番号は `saved` の並び）を、今の選択範囲と組み合わせる。
+    Recall {
+        index: usize,
         mode: SelectionCombine,
     },
     /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。
@@ -162,6 +189,10 @@ pub enum SelUiOp {
     CancelAmount,
     /// 選択範囲の下のボタンの帯を出す・出さない。
     Bar(bool),
+    /// クイックマスクを入れる・切る（None は切り替え）。
+    QuickMask(Option<bool>),
+    /// 選択ペンの道具の基本（false が選択ペン、true が選択消し。Shift・Ctrl は押している間だけ替える）。
+    PenErase(bool),
 }
 
 /// 2D の対称の設定の操作（画面だけ）。
@@ -201,6 +232,8 @@ pub enum SelAction {
     Edit(SelEdit),
     Ui(SelUiOp),
     Symmetry(SymOp),
+    /// 名前を付けて覚えた選択範囲（保存・消す・窓。セッションの中だけ）。
+    Saved(saved::SavedOp),
 }
 
 /// 量を聞く窓の状態。
@@ -247,11 +280,39 @@ pub struct SelState {
     pub polygon_hover: Option<(f64, f64)>,
     /// 最後に押した時刻と点（ダブルクリックで多角形を閉じる）。
     pub last_press: Option<(f64, egui::Pos2)>,
+    /// 形のドラッグを押し始めたときの修飾（離したときと見比べて、追加か縦横比の固定かを分ける）。
+    pub press_modifiers: egui::Modifiers,
     /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
     pub pen_down: Option<u32>,
     pub symmetry: SymmetryState,
     /// 描いているストロークに固めた対称（軸の表示はこれ）。
     pub stroke_symmetry: Option<CanvasSymmetry>,
+    /// 縁の滑らかさ（楕円・なげなわ・多角形・角丸の長方形）。切ると縁は 0 か 255 だけ。
+    pub antialias: bool,
+    /// 長方形・楕円を常に縦横比 1:1（正方形・正円）にする（Shift を押しているあいだの形を、押さなくても）。
+    pub fixed_ratio: bool,
+    /// 長方形・楕円を、押した点が中心になるように広げる（Alt を押しているあいだの形を、押さなくても）。
+    pub from_center: bool,
+    /// 長方形の角の丸め（画素。0 は丸めない）。
+    pub corner_radius: u32,
+    /// 選択ペンの道具の基本: false が選択ペン、true が選択消し。
+    pub pen_erase: bool,
+    /// 動いているペンのストローク（選択ペンの道具・クイックマスクのブラシ）。
+    pub pen: Option<pen::ActivePen>,
+    /// 最後に来たペンの点（ID・筆圧・消しゴムの端）。選択ペンが筆圧と消しゴムの端を使う。
+    pub pen_note: Option<(u32, f32, bool)>,
+    /// クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・消しゴムを選択ペン・選択消しとして使う）。
+    pub quick: bool,
+    /// 重ね表示のタイル（クイックマスクの赤・選択ペンの途中）。
+    pub quick_overlay: overlay::TileOverlay,
+    pub pen_overlay: overlay::TileOverlay,
+    /// 名前を付けて覚えた選択範囲（テクスチャセットごと。キーはセットの uid）。セッションの中だけで、.ylp には入れない。
+    pub saved: HashMap<u32, Vec<saved::SavedSelection>>,
+    /// 覚えた札の合計（プロジェクト全体）の上限（バイト）と、1 回のペンのストロークの作業の上限。試験が小さい値に替えて断りを通す。
+    pub saved_budget: u64,
+    pub pen_budget: u64,
+    /// 覚えた選択範囲の窓（開いていれば）。
+    pub saved_window: Option<saved::SavedWindow>,
     /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
     pub animate: bool,
     /// 帯をドラッグでずらした量（初めの位置から。選択範囲を外すと戻る）。
@@ -289,9 +350,24 @@ impl Default for SelState {
             polygon: Vec::new(),
             polygon_hover: None,
             last_press: None,
+            press_modifiers: egui::Modifiers::NONE,
             pen_down: None,
             symmetry: SymmetryState::default(),
             stroke_symmetry: None,
+            antialias: true,
+            fixed_ratio: false,
+            from_center: false,
+            corner_radius: 0,
+            pen_erase: false,
+            pen: None,
+            pen_note: None,
+            quick: false,
+            quick_overlay: overlay::TileOverlay::default(),
+            pen_overlay: overlay::TileOverlay::default(),
+            saved: HashMap::new(),
+            saved_budget: saved::SAVED_BUDGET_BYTES,
+            pen_budget: pen::PEN_BUDGET_BYTES,
+            saved_window: None,
             animate: true,
             bar_offset: egui::Vec2::ZERO,
             edge_partial: false,
@@ -302,9 +378,25 @@ impl Default for SelState {
 }
 
 impl SelState {
+    /// 選択ペンの筆圧（0〜1）。ペンならその点の筆圧、マウスならタッチの筆圧（無ければ 1）。
+    pub fn pen_pressure(&self, source: StrokeSource, touch: Option<f32>) -> f32 {
+        match source {
+            StrokeSource::Pen(id) => self
+                .pen_note
+                .filter(|(n, _, _)| *n == id)
+                .map_or(1.0, |(_, p, _)| p),
+            StrokeSource::Mouse => touch.unwrap_or(1.0),
+        }
+    }
+
     /// 途中の形（ドラッグ・多角形）を捨てる。何かあったか。
     pub fn cancel_drafts(&mut self) -> bool {
-        let any = self.drag.is_some() || !self.polygon.is_empty();
+        // クイックマスクのブラシのストロークは描くストロークの流れ（`canvas.stroke`）が終わらせる。選択ペンの道具のものは、ほかの形と同じく捨てる
+        let pen = self.pen.as_ref().is_some_and(|a| !a.quick);
+        if pen {
+            self.pen = None;
+        }
+        let any = self.drag.is_some() || !self.polygon.is_empty() || pen;
         self.drag = None;
         self.polygon.clear();
         self.polygon_hover = None;
@@ -376,7 +468,12 @@ impl Tool {
     pub fn is_select(self) -> bool {
         matches!(
             self,
-            Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso | Tool::Polygon | Tool::Wand
+            Tool::SelectRect
+                | Tool::SelectEllipse
+                | Tool::Lasso
+                | Tool::Polygon
+                | Tool::Wand
+                | Tool::SelectPen
         )
     }
 
@@ -389,27 +486,31 @@ impl Tool {
 /// 組み合わせ方の名前。
 pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
     match mode {
-        SelectionCombine::Replace => lang.pick("置き換え", "Replace"),
-        SelectionCombine::Add => lang.pick("足す", "Add"),
-        SelectionCombine::Subtract => lang.pick("引く", "Subtract"),
-        SelectionCombine::Intersect => lang.pick("重ねる", "Intersect"),
+        SelectionCombine::Replace => lang.pick("新規", "New"),
+        SelectionCombine::Add => lang.pick("追加", "Add"),
+        SelectionCombine::Subtract => lang.pick("削除", "Subtract"),
+        SelectionCombine::Intersect => lang.pick("共通", "Intersect"),
     }
 }
 
 /// 組み合わせ方のツールチップ（キー付き）。
 pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
     match mode {
-        SelectionCombine::Replace => lang.pick("新しい形で置き換える", "Replace the selection"),
-        SelectionCombine::Add => {
-            lang.pick("選択範囲に足す（Shift）", "Add to the selection (Shift)")
-        }
+        SelectionCombine::Replace => lang.pick(
+            "新規選択: 新しい形で置き換える",
+            "New: replace the selection",
+        ),
+        SelectionCombine::Add => lang.pick(
+            "追加選択: 選択範囲に足す（Shift）",
+            "Add to the selection (Shift)",
+        ),
         SelectionCombine::Subtract => lang.pick(
-            "選択範囲から引く（Ctrl）",
+            "一部削除: 選択範囲から引く（Ctrl）",
             "Subtract from the selection (Ctrl)",
         ),
         SelectionCombine::Intersect => lang.pick(
-            "重なる所だけ残す（Shift + Ctrl）",
-            "Keep only the overlap (Shift + Ctrl)",
+            "選択中を選択: 重なる所だけ残す（Shift + Ctrl）",
+            "Intersect: keep only the overlap (Shift + Ctrl)",
         ),
     }
 }
@@ -436,6 +537,7 @@ impl AppState {
             SelAction::Edit(edit) => self.sel_edit(edit),
             SelAction::Ui(op) => self.sel_ui(op),
             SelAction::Symmetry(op) => self.sel_symmetry(op),
+            SelAction::Saved(op) => self.sel_saved(op),
         }
     }
 
@@ -499,6 +601,15 @@ impl AppState {
                 combine_name(lang, mode)
             )
         })
+    }
+
+    /// 縁の滑らかさの設定を形に当てる（切っていれば、半分以上の量を全部に・ほかを 0 にする）。
+    fn edge_of(&self, shape: SelectionMask) -> SelectionMask {
+        if self.sel.antialias {
+            shape
+        } else {
+            shape.sharpen()
+        }
     }
 
     /// 自動選択の基準の層（選んだレイヤー。ラスターでない・全レイヤーなら None で、チャンネルの合成）。
@@ -605,12 +716,33 @@ impl AppState {
             } => {
                 let shape = SelectionMask::ellipse(&self.doc, cx, cy, rx, ry)
                     .map_err(|e| lang.core_error(&e))?;
+                let shape = self.edge_of(shape);
+                self.combine_shape(shape, mode)
+            }
+            SelEdit::RoundRect {
+                x0,
+                y0,
+                x1,
+                y1,
+                radius,
+                mode,
+            } => {
+                let points = shape::rounded_rect_points(x0, y0, x1, y1, radius);
+                let shape =
+                    SelectionMask::polygon(&self.doc, &points).map_err(|e| lang.core_error(&e))?;
+                let shape = self.edge_of(shape);
                 self.combine_shape(shape, mode)
             }
             SelEdit::Polygon { points, mode } => {
                 let shape = SelectionMask::polygon(&self.doc, &dvec(&points))
                     .map_err(|e| lang.core_error(&e))?;
+                let shape = self.edge_of(shape);
                 self.combine_shape(shape, mode)
+            }
+            SelEdit::Shape { mask, mode } => self.combine_shape(mask, mode),
+            SelEdit::Recall { index, mode } => {
+                let mask = self.saved_mask(index)?;
+                self.combine_shape(mask, mode)
             }
             SelEdit::Fill => self.sel_fill(false),
             SelEdit::Erase => self.sel_fill(true),
@@ -676,6 +808,8 @@ impl AppState {
             }
             SelUiOp::CancelAmount => self.sel.dialog = None,
             SelUiOp::Bar(on) => self.prefs.settings.selection_bar = on,
+            SelUiOp::QuickMask(on) => self.quick_mask(on),
+            SelUiOp::PenErase(erase) => self.sel.pen_erase = erase,
         }
     }
 
@@ -738,6 +872,13 @@ impl AppState {
     pub fn sel_doc_changed(&mut self) {
         self.sel.cancel_drafts();
         self.sel.dialog = None;
+        // クイックマスクは今の文書の見え方。ストロークも重ね表示も、前の文書のものは持ち越さない
+        self.sel.pen = None;
+        self.sel.quick = false;
+        self.sel.quick_overlay.clear();
+        self.sel.pen_overlay.clear();
+        // 別のプロジェクトを開いたときは、前のセットの覚えた選択範囲を捨てる（セットを切り替えるだけなら、全部のセットが残るので何も捨てない）
+        self.sel_prune_saved();
     }
 
     /// 道具を替えたとき: 途中の形を捨てる。

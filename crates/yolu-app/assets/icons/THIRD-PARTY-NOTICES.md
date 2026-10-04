@@ -32,6 +32,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `data_scatter` | fluent | `data_scatter` | regular |
 | `delete` | fluent | `delete` | regular |
 | `deselect` | fluent | `select_all_off` | regular |
+| `edit` | fluent | `edit` | regular |
 | `expand_less` | fluent | `chevron_up` | regular |
 | `expand_more` | fluent | `chevron_down` | regular |
 | `flip` | fluent | `flip_horizontal` | regular |
@@ -55,12 +56,16 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `opacity` | fluent | `drop` | regular |
 | `paint_brush` | fluent | `paint_brush` | regular |
 | `palette` | fluent | `color` | regular |
+| `quick_mask` | fluent | `shape_organic` | regular |
 | `restart_alt` | fluent | `arrow_reset` | regular |
 | `rotate_90_degrees_ccw` | fluent | `arrow_rotate_counterclockwise` | regular |
 | `rotate_90_degrees_cw` | fluent | `arrow_rotate_clockwise` | regular |
 | `save` | fluent | `save` | regular |
 | `search` | fluent | `search` | regular |
 | `select_all` | fluent | `select_all_on` | regular |
+| `shape_intersect` | fluent | `shape_intersect` | regular |
+| `shape_subtract` | fluent | `shape_subtract` | regular |
+| `shape_union` | fluent | `shape_union` | regular |
 | `shapes` | fluent | `shapes` | regular |
 | `square` | fluent | `image` | regular |
 | `stylus` | fluent | `inking_tool` | regular |
@@ -82,6 +87,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/id-select_selected` | phosphor | `swatches` | fill |
 | `tools/lasso` | fluent | `lasso` | regular |
 | `tools/lasso_selected` | fluent | `lasso` | filled |
+| `tools/liquify` | fluent | `ink_stroke` | regular |
+| `tools/liquify_selected` | fluent | `ink_stroke` | regular |
 | `tools/magic-wand` | fluent | `wand` | regular |
 | `tools/magic-wand_selected` | fluent | `wand` | filled |
 | `tools/move` | fluent | `arrow_move` | regular |
@@ -92,6 +99,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/polygon-fill_selected` | fluent | `triangle` | filled |
 | `tools/select-ellipse` | phosphor | `circle-dashed` | regular |
 | `tools/select-ellipse_selected` | phosphor | `circle-dashed` | bold |
+| `tools/select-pen` | phosphor | `selection-plus` | regular |
+| `tools/select-pen_selected` | phosphor | `selection-plus` | bold |
 | `tools/select-polygon` | phosphor | `polygon` | regular |
 | `tools/select-polygon_selected` | phosphor | `polygon` | regular |
 | `tools/select-rectangle` | fluent | `select_object` | regular |
@@ -104,6 +113,10 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `warning` | fluent | `warning` | regular |
 
 `tools/liquify` and `tools/liquify_selected` reuse the existing Fluent UI `ink_stroke` PNG unchanged.
+
+Icons added for the selection tools (same process; Fluent regular unless noted): `shape_union` (shape_union), `shape_subtract`
+(shape_subtract), `shape_intersect` (shape_intersect), `edit` (edit), `quick_mask` (shape_organic), and the selection pen tool icon
+`tools/select-pen` (Phosphor selection-plus regular) with `tools/select-pen_selected` (Phosphor selection-plus bold).
 
 ## Fluent UI System Icons
 

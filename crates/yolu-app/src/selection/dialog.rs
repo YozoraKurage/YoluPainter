@@ -24,6 +24,7 @@ pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
 
 /// 開いていれば窓を描き、押されたものを `Action` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
+    super::saved::show_window(ctx, app);
     let Some(mut dialog) = app.sel.dialog else {
         return;
     };

@@ -1,18 +1,20 @@
 //! 選択範囲のメニュー（メニューバーの「選択範囲」）と、対称のモードのポップアップ（オプションバーの ▾）。項目は `Action` を返し、
 //! 選ばれたあとに閉じてから当てるのは `YoluApp`（ほかのメニューと同じ）。
 
+use super::saved::SavedOp;
 use super::symmetry::{mode_name, MODES};
 use super::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
 use crate::state::{Action, AppState, Tool};
 use crate::ui::menu::Entry;
 
 /// 選択の道具（メニューとツールの帯の順）。
-pub const SELECT_TOOLS: [Tool; 5] = [
+pub const SELECT_TOOLS: [Tool; 6] = [
     Tool::SelectRect,
     Tool::SelectEllipse,
     Tool::Lasso,
     Tool::Polygon,
     Tool::Wand,
+    Tool::SelectPen,
 ];
 
 /// メニューバーの「選択範囲」の中身。
@@ -98,6 +100,23 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             edit(SelEdit::ToMask),
         )
         .enabled(free && any && app.selected_layer.is_some()),
+    );
+    v.push(
+        Entry::item(
+            l.pick("クイックマスク", "Quick Mask"),
+            Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
+        )
+        .shortcut("Shift+Q")
+        .checked(app.sel.quick)
+        .enabled(app.sel.quick || !app.is_stroking()),
+    );
+    // 覚えた選択範囲の窓（保存も呼び出しもここ）。選択範囲も覚えたものも無ければ開く意味が無い
+    v.push(
+        Entry::item(
+            format!("{}…", super::saved::window_title(l)),
+            Action::Sel(SelAction::Saved(SavedOp::OpenWindow)),
+        )
+        .enabled(any || !app.saved_selections().is_empty()),
     );
     v.push(
         Entry::item(

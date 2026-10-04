@@ -43,6 +43,8 @@ pub enum Tool {
     Wand,
     /// ID の色で選択（焼いた ID マップの色から選択範囲を作る）。
     IdSelect,
+    /// 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す。形は `selection::pen`）。
+    SelectPen,
     /// 移動・変形（選んでいる層をハンドルで移動・拡大縮小・回転。形は `transform`）。
     Move,
     Liquify,
@@ -52,7 +54,7 @@ pub enum Tool {
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 17] = [
+    pub const ALL: [Tool; 18] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
@@ -67,6 +69,7 @@ impl Tool {
         Tool::Polygon,
         Tool::Wand,
         Tool::IdSelect,
+        Tool::SelectPen,
         Tool::Move,
         Tool::Liquify,
         Tool::Path,
@@ -83,6 +86,7 @@ impl Tool {
             Tool::PolygonFill => "polygon-fill",
             Tool::Eyedropper => "eyedropper",
             Tool::IdSelect => "id-select",
+            Tool::SelectPen => "select-pen",
             Tool::SelectRect => "select-rectangle",
             Tool::SelectEllipse => "select-ellipse",
             Tool::Lasso => "lasso",
@@ -108,6 +112,7 @@ impl Tool {
             Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
             Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
             Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
+            Tool::SelectPen => lang.pick("選択ペン", "Selection Pen"),
             Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
             Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
             Tool::Lasso => lang.pick("なげなわ", "Lasso"),
@@ -129,6 +134,7 @@ impl Tool {
             Tool::PolygonFill => "4",
             Tool::Eyedropper => "I",
             Tool::IdSelect => "Shift+W",
+            Tool::SelectPen => "S",
             Tool::SelectRect => "M",
             Tool::SelectEllipse => "Shift+M",
             Tool::Lasso => "L",
