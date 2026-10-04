@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 組み直しが長い（アプリの試験の実行形式が 70 本以上）ので、画面の試験は別のジョブに分けて並べて回す。
   linux:
     name: Linux の試験と静的検査
     runs-on: ubuntu-latest
@@ -44,8 +45,37 @@ jobs:
             xvfb xauth nsis
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
-      - name: 描画する試験（ソフトウェアの Vulkan、1 本ずつ）
+      - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # cargo fmt --check は既存の整形差分を解消してから追加する。
+
+  linux-render:
+    name: Linux の画面の試験（ソフトウェアの Vulkan）
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
+      - name: ビルドとソフトウェア描画の依存を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
+            libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
+            libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth nsis
+      - name: 描画する試験（1 本ずつ）
         env:
           # 収録済みの画面の正解は、手元の既定（wgpu の Vulkan と Mesa の lavapipe）で撮ったもの。GL の llvmpipe は
           # コンピュートが足りず（GPU 合成の試験が省略になる）、環境の反射の絵も違うので使わない。
@@ -72,10 +102,6 @@ jobs:
           name: snapshot-diffs
           path: ${{ runner.temp }}/snapshot-diffs
           if-no-files-found: ignore
-      - name: Clippy（警告をエラーにする）
-        if: ${{ !cancelled() }}
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # cargo fmt --check は既存の整形差分を解消してから追加する。
 
   windows:
     name: Windows のビルドと画面なし試験
