@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+yolu-update = { path = "../yolu-update" }
+ed25519-dalek = "2.2"
+getrandom = "0.3"
+hex = "0.4"
+semver = "1"
+serde_json = "1"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }

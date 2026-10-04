@@ -1,0 +1,145 @@
+name: 配布物の作成
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 配布の種類
+        required: true
+        type: choice
+        default: prerelease
+        options: [prerelease, stable]
+      dry-run:
+        description: 検証のみ（Draft Release を作らない）
+        required: true
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Linux のビルド依存
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
+      - name: Rust を準備
+        run: rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
+      - run: rustup default stable
+      - name: ビルドと配布物の作成
+        env:
+          PYTHON: python
+        run: |
+          cargo xtask build --target ${{ matrix.target }} --release
+          cargo xtask bundle --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  metadata:
+    needs: build
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: target/dist
+          merge-multiple: true
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: rustup default stable
+      - name: 版の確認
+        id: version
+        shell: bash
+        env:
+          RELEASE_KIND: ${{ inputs.kind }}
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 > target/metadata.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          m = json.loads(Path('target/metadata.json').read_text())
+          v = next(p['version'] for p in m['packages'] if p['name'] == 'yolu-app')
+          if os.environ['RELEASE_KIND'] == 'stable' and '-' in v:
+              raise SystemExit('stable にプレリリース版は使えません')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('version=' + v + '\n')
+          PY
+      - name: 未署名の更新情報を確認
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: cargo xtask updater-json --version "$VERSION" --assets target/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-preview
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    if: ${{ !inputs.dry-run }}
+    needs: metadata
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-preview
+          path: target/dist
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: rustup default stable
+      - name: 署名ツールをビルド
+        run: cargo build --locked -p xtask
+      - name: 更新情報に署名
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          YOLUPAINTER_UPDATE_PRIVATE_KEY: ${{ secrets.YOLUPAINTER_UPDATE_PRIVATE_KEY }}
+        run: target/debug/xtask updater-json --version "$VERSION" --assets target/dist --sign
+      - name: 公開鍵で署名と配布物を確認
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+        run: target/debug/xtask verify --version "$VERSION" --assets target/dist --public-key "$PUBLIC_KEY"
+      - name: Draft Release を作成
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          RELEASE_KIND: ${{ inputs.kind }}
+        shell: bash
+        run: |
+          args=(--draft --target "$GITHUB_SHA" --title "YoluPainter $VERSION" --notes '')
+          if [ "$RELEASE_KIND" = prerelease ]; then args+=(--prerelease); fi
+          gh release create "v$VERSION" "${args[@]}" target/dist/*

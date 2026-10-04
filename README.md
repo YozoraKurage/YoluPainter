@@ -124,6 +124,6 @@ Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存�
 
 ## 許諾の一覧と配布用の全文
 
-使用しているライブラリ・フォント・アイコンの許諾は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。現在の一覧は Windows GNU 向けで、Mac・Linux・Windows MSVC の一覧を兼ねません。配布用の許諾全文の生成方法は[開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文)にあります。
+使用しているライブラリ・フォント・アイコンの許諾は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。配布物には、その対象の依存を照合した一覧（`DEPENDENCIES.md`）と許諾の全文を同梱しています。配布用の許諾全文の生成方法は[開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文)にあります。
 
 試験や Unity ブリッジのビルドについては [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。

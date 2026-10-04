@@ -3,7 +3,7 @@
 Windows 向け `yolu-app`（スタンドアロン）と `yolu-bridge`（Unity に入れる DLL）の依存一覧。
 対象は `x86_64-pc-windows-gnu`、既定の機能、下表に記録した Cargo.lock。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
-Mac・Linux・Windows MSVC の一覧を兼ねるものではない。
+以下の全文一覧は Windows GNU の基準構成。配布物ごとの照合は次節のとおり。
 
 `tools/third-party.py` は Cargo の通常依存とビルド依存を製品別にたどり、試験用依存を除く。
 手続きマクロとビルド依存も保守的に全文束へ含める。「実行時」は通常依存の到達範囲であり、
@@ -12,7 +12,7 @@ Mac・Linux・Windows MSVC の一覧を兼ねるものではない。
 クレートに原文が無い場合は、そのクレートの発行時コミットにある上流の原文を取得する。
 単に同じ種類の一般的な許諾文で代用せず、著作権表記と NOTICE も保持する。
 
-生成方法は [README](README.md#許諾の一覧と配布用の全文) を参照。
+生成方法は [開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<クレート>/` にできる。
 生成物は Git に入れない。この文書は確認済みの依存構成の記録で、配布には生成した全文を同梱する。
 
@@ -70,9 +70,22 @@ Fluent UI System Icons と Phosphor Icons は MIT。
 Wine 用の `bcryptprimitives.dll` はこのリポジトリの小さな接続コードから試験時だけ作る。
 Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DLL をコピーして作るものではない。
 
+
+## 配布対象別の照合
+
+配布物（Windows MSVC の zip、Linux の tar.gz）には、その対象の依存を `tools/third-party.py` で照合した一覧を
+`DEPENDENCIES.md`、許諾の全文を `THIRD_PARTY_LICENSES.txt` として同梱する。
+Windows GNU の一覧を別の対象へ流用しない。更新用クレートの依存も、同梱の一覧と全文に含める。
+結果は `target/third-party/<target>/<クレート>/` に出力する。
+
+署名検証に追加した `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause、
+その他の追加依存は MIT または Apache-2.0 を選択。原文と追加の著作権通知は
+`tools/licenses-reviewed.json` のハッシュで固定している。
+
+
 ## yolu-app の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `d19d315ee6a40e7de4d20cae9075f4023bd4e28bd024adbdbe8a5ce8f7244f13`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2d11171be9e09f860cbe480334d540f2c901ef6337da9bf1243556297a96fcfe`。
 
 外部クレート 180 件（同名の別版は別件）。実行時 153 件。
 
@@ -278,7 +291,7 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 
 ## yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `d19d315ee6a40e7de4d20cae9075f4023bd4e28bd024adbdbe8a5ce8f7244f13`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2d11171be9e09f860cbe480334d540f2c901ef6337da9bf1243556297a96fcfe`。
 
 外部クレート 17 件（同名の別版は別件）。実行時 6 件。
 
@@ -313,3 +326,53 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 | widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+
+## yolu-update の依存一覧
+
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `2d11171be9e09f860cbe480334d540f2c901ef6337da9bf1243556297a96fcfe`。
+
+外部クレート 31 件（同名の別版は別件）。実行時 22 件。
+
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+
+| 選択した許諾（追加条件を含む） | 件数 |
+|---|---:|
+| BSD-3-Clause | 3 |
+| MIT | 27 |
+| MIT AND Unicode-3.0 | 1 |
+
+状態: クレートの許諾照合は成功。
+
+| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+|---|---|---|---|---|---|
+| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| curve25519-dalek-derive | 0.1.1 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| curve25519-dalek | 4.1.3 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
+| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| ed25519-dalek | 2.2.0 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
+| ed25519 | 2.2.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| hex | 0.4.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| itoa | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| memchr | 2.8.3 | 実行時 | Unlicense OR MIT | MIT | 確認済み |
+| proc-macro2 | 1.0.107 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| quote | 1.0.47 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| rustc_version | 0.4.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| semver | 1.0.28 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde | 1.0.229 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_core | 1.0.229 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_derive | 1.0.229 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_json | 1.0.151 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| signature | 2.2.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
+| syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
+| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
+| zeroize | 1.9.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| zmij | 1.0.23 | 実行時 | MIT | MIT | 確認済み |

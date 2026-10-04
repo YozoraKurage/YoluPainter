@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows 配布物の依存を照合し、許諾一覧と検証済み全文の束を作る。"""
+"""対象ごとの配布物の依存を照合し、許諾一覧と検証済み全文の束を作る。"""
 import argparse
 from collections import Counter
 import hashlib
@@ -24,7 +24,7 @@ ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
 
 def cargo(*args):
     command = os.environ.get('CARGO', str(Path.home() / '.cargo/bin/cargo'))
-    return subprocess.check_output([command, *args], cwd=ROOT, text=True)
+    return subprocess.check_output([command, *args], cwd=ROOT, text=True, encoding='utf-8')
 
 
 def digest(data):
@@ -72,9 +72,12 @@ def read_source(package, spec, offline):
     return origin, data.decode('utf-8-sig')
 
 
-def inventory(package, metadata, config, offline):
+def inventory(package, metadata, config, offline, include_update=False):
     keys = dependency_keys(package, 'normal,build', offline)
     normal = dependency_keys(package, 'normal,no-proc-macro', offline)
+    if include_update:
+        keys |= dependency_keys('yolu-update', 'normal,build', offline)
+        normal |= dependency_keys('yolu-update', 'normal,no-proc-macro', offline)
     packages = {}
     for item in metadata['packages']:
         key = item['name'] + '@' + item['version']
@@ -130,31 +133,45 @@ def markdown(package, records, errors, lock_hash):
     return '\n'.join(lines) + '\n'
 
 
+def use_utf8_output():
+    """Windows の runner では標準出力がパイプで、既定の符号化（ANSI）では日本語を書けず落ちる。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+
+
 def main():
+    global TARGET
+    use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'all'], default='all')
+    parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'xtask', 'all'], default='all')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
+    parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'])
+    parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     args = parser.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True)
+    TARGET = args.target or 'x86_64-pc-windows-gnu'
+    output = OUT / TARGET if args.target else OUT
+    output.mkdir(parents=True, exist_ok=True)
     selected = ['yolu-app', 'yolu-bridge'] if args.package == 'all' else [args.package]
     # 失敗した今回の結果と、以前の成功した全文束を取り違えない。
     for package in selected:
-        (OUT / package / 'THIRD_PARTY_LICENSES.txt').unlink(missing_ok=True)
-    config = json.loads(CONFIG.read_text())
-    if config['schema'] != 1 or config['target'] != TARGET:
+        (output / package / 'THIRD_PARTY_LICENSES.txt').unlink(missing_ok=True)
+    config = json.loads(CONFIG.read_text(encoding='utf-8'))
+    if config['schema'] != 1 or TARGET not in config.get('targets', [config.get('target')]):
         raise ValueError('設定の版または対象が違います')
     metadata = json.loads(cargo('metadata', '--locked', '--format-version', '1',
                                '--filter-platform', TARGET, *(['--offline'] if args.offline else [])))
     lock_hash = digest((ROOT / 'Cargo.lock').read_bytes())
     failures = 0
     for package in selected:
-        records, texts, errors = inventory(package, metadata, config, args.offline)
-        directory = OUT / package
+        records, texts, errors = inventory(package, metadata, config, args.offline, args.include_update)
+        directory = output / package
         directory.mkdir(exist_ok=True)
         (directory / 'inventory.json').write_text(json.dumps({'target': TARGET, 'package': package,
-            'lock_sha256': lock_hash, 'records': records, 'issues': errors}, ensure_ascii=False, indent=2) + '\n')
-        (directory / 'THIRD_PARTY.md').write_text(markdown(package, records, errors, lock_hash))
+            'lock_sha256': lock_hash, 'records': records, 'issues': errors}, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (directory / 'THIRD_PARTY.md').write_text(markdown(package, records, errors, lock_hash), encoding='utf-8')
         if errors:
             failures += 1
             print(f'{package}: {len(records)} クレート、要確認', file=sys.stderr)
@@ -163,14 +180,14 @@ def main():
         else:
             if args.bundle:
                 if package == 'yolu-app':
-                    texts.append('\n同梱アイコン\n' + (ROOT / 'crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md').read_text())
+                    texts.append('\n同梱アイコン\n' + (ROOT / 'crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md').read_text(encoding='utf-8'))
                 temporary = directory / 'THIRD_PARTY_LICENSES.txt.tmp'
                 temporary.write_text(
                     f'{package} 第三者の許諾全文\n対象: {TARGET}\nCargo.lock SHA-256: {lock_hash}\n'
-                    + '\n'.join(texts))
+                    + '\n'.join(texts), encoding='utf-8')
                 temporary.replace(directory / 'THIRD_PARTY_LICENSES.txt')
             print(f'{package}: {len(records)} クレート、照合成功')
-    print('結果: target/third-party/<クレート>/')
+    print('結果: ' + str(output.relative_to(ROOT)) + '/<クレート>/')
     return 1 if failures else 0
 
 
