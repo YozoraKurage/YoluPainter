@@ -1,0 +1,20 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=a kind=Raster parent=3 id=0000006600000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+2 name=levels kind=Adjustment parent=3 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- adjustment=Levels/3fb4141414141414/3fecdcdcdcdcdcdd/3ff5eb851eb851ec/3fa4141414141414/3fee1e1e1e1e1e1e/0/0/0 channels=0,1,2,3,4,5
+3 name=pass kind=Group parent=-1 id=0000006801300000 visible=1 opacity=190 mode=PassThrough clip=0 locks=0 mask=1/0/255/66615d74cc399085
+4 name=b kind=Raster parent=7 id=0000006900000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+5 name=hue kind=Adjustment parent=7 id=0000006a00000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- adjustment=HueSaturation/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/c052400000000000/3fdae147ae147ae1/bfc70a3d70a3d70a channels=0,5
+6 name=invert kind=Adjustment parent=7 id=0000006b00000000 visible=1 opacity=100 mode=Normal clip=1 locks=0 mask=- adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+7 name=isolated kind=Group parent=-1 id=0000006c01340000 visible=1 opacity=255 mode=Multiply clip=0 locks=0 mask=-
+8 name=fill in group kind=Fill parent=10 id=0000006d00000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- fill=30,90,160,255 channels=0
+9 name=clipped in group kind=Raster parent=10 id=0000006e00000000 visible=1 opacity=255 mode=Normal clip=1 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+10 name=fills kind=Group parent=-1 id=0000006f01370000 visible=1 opacity=255 mode=PassThrough clip=0 locks=0 mask=-
+11 name=inner kind=Raster parent=12 id=0000007000000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+12 name=inner group kind=Group parent=13 id=0000007101390000 visible=1 opacity=255 mode=PassThrough clip=0 locks=0 mask=-
+13 name=outer group kind=Group parent=-1 id=00000072013a0000 visible=1 opacity=200 mode=Screen clip=0 locks=0 mask=-
+14 name=empty kind=Group parent=-1 id=00000073013b0000 visible=0 opacity=255 mode=PassThrough clip=0 locks=0 mask=-
+15 name=in hidden group kind=Raster parent=16 id=0000007400000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+16 name=hidden group kind=Group parent=-1 id=00000075013d0000 visible=0 opacity=255 mode=PassThrough clip=0 locks=0 mask=-
+composite 50093dac4552cc67

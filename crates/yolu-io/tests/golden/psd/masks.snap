@@ -1,0 +1,8 @@
+canvas 24 16
+diagnostics 
+0 name=partial kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=0/0/40/a0c14eb4e4f5e98d pixels=3ce1ce8cf2044365 channels=0
+1 name=mostly hidden kind=Raster parent=-1 id=0000006600000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/255/f394af79220fa5c5 pixels=8969833464a3afb5 channels=0
+2 name=neutral kind=Raster parent=-1 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/255/c86ec345c0ee8125 pixels=3ce1ce8cf2044365 channels=0
+3 name=graded kind=Raster parent=-1 id=0000006800000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/160/6cf74cf252ae37e9 pixels=8969833464a3afb5 channels=0
+4 name=all hidden kind=Raster parent=-1 id=0000006900000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/255/062cd595814e97a5 pixels=3ce1ce8cf2044365 channels=0
+composite 5f290b35ce99aca7

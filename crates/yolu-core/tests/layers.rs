@@ -1405,3 +1405,73 @@ fn a_raster_layer_with_an_active_filter_is_not_a_plain_stack() {
     d.remove_filter(a, f).unwrap();
     assert!(d.is_plain_stack());
 }
+
+/// 時間に上限を置いて走らせる。入れ子の印付けが段数の指数の時間だったときは終わらずに止まるので、別のスレッドで待って落とす
+/// （止まったスレッドは試験のプロセスが終わるまで残る）。中で落ちたときは、その落ち方をそのまま返す。
+fn within<T: Send + 'static>(
+    limit: std::time::Duration,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let start = std::time::Instant::now();
+    let handle = std::thread::spawn(f);
+    while !handle.is_finished() {
+        assert!(start.elapsed() < limit, "{limit:?} の中で終わらない");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    match handle.join() {
+        Ok(v) => v,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+#[test]
+fn deeply_nested_groups_mark_every_layer_once_and_do_not_take_exponential_time() {
+    // 入れ子のグループの印付けが、段ごとに子孫を数え直して段数の指数の時間になっていた（PSD の入れ子の上限は 32 段）。
+    within(std::time::Duration::from_secs(20), || {
+        let mut d = Document::with_tile_size(16, 16, 8).unwrap();
+        let leaf = d.add_layer("leaf").unwrap();
+        d.set_pixel(leaf, 9, 9, Rgba8::new(10, 20, 30, 255))
+            .unwrap();
+        d.add_layer_mask(leaf).unwrap(); // 空のマスク（タイルは無い）
+        let mut groups = Vec::new();
+        let mut top = leaf;
+        for n in 0..40 {
+            top = d.group_layers(&[top], &format!("g{n}")).unwrap();
+            groups.push(top);
+        }
+        assert_eq!(d.depth_of(leaf).unwrap(), 40);
+        // 途中のグループのマスクに画素を 1 つ（タイル (0, 0)）。中身の層のタイルは (1, 1)
+        let mid = groups[20];
+        d.add_layer_mask(mid).unwrap();
+        d.set_mask_pixel(mid, 1, 1, 255).unwrap();
+        let (mask_tile, leaf_tile) = (TileCoord::new(0, 0), TileCoord::new(1, 1));
+
+        // 一番外側のグループの変更は、中身の層と、入れ子の途中のグループのマスクのタイルを変わったことにする
+        let since = d.change_serial();
+        d.set_layer_visible(top, false).unwrap();
+        let tiles = changed(&d, Channel::Color, since);
+        assert!(
+            tiles.contains(&leaf_tile) && tiles.contains(&mask_tile),
+            "{tiles:?}"
+        );
+        assert_eq!(at(&d, 9, 9), Rgba8::TRANSPARENT);
+        // 途中のグループの変更は、その子孫だけ。外側のグループのマスクのタイルは変わらない
+        let since = d.change_serial();
+        d.set_layer_visible(groups[10], false).unwrap();
+        let tiles = changed(&d, Channel::Color, since);
+        assert!(tiles.contains(&leaf_tile), "{tiles:?}");
+        assert!(!tiles.contains(&mask_tile), "{tiles:?}");
+        d.set_layer_visible(groups[10], true).unwrap();
+        // 読み込みの親の置き直しは、全部の層（入れ子の途中のグループのマスクも）に印を付ける
+        let parents: Vec<_> = d.layers().iter().map(|l| l.parent()).collect();
+        let since = d.change_serial();
+        d.set_structure_for_load(&parents).unwrap();
+        let tiles = changed(&d, Channel::Color, since);
+        assert!(
+            tiles.contains(&leaf_tile) && tiles.contains(&mask_tile),
+            "{tiles:?}"
+        );
+        d.set_layer_visible(top, true).unwrap();
+        assert_eq!(at(&d, 9, 9), Rgba8::new(10, 20, 30, 255));
+    });
+}

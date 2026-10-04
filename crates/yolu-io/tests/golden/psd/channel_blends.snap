@@ -1,0 +1,8 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=colour override kind=Raster parent=-1 id=0000006600000000 visible=1 opacity=100 mode=Multiply clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+2 name=inner kind=Raster parent=3 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+3 name=group kind=Group parent=-1 id=0000006801300000 visible=1 opacity=128 mode=Screen clip=0 locks=0 mask=-
+4 name=adjust kind=Adjustment parent=-1 id=0000006900000000 visible=1 opacity=150 mode=Normal clip=0 locks=0 mask=- adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+composite 8fdb916a5f478b60

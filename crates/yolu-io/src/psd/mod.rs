@@ -7,6 +7,7 @@ mod descriptor;
 mod read;
 mod write;
 use crate::{check, Result};
+pub use bridge::{export_blockers, Blocker, Refusal};
 pub use read::{read, read_stream};
 pub use write::{write, write_edited};
 

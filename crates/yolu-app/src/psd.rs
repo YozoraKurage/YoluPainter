@@ -1,12 +1,14 @@
 //! PSD の読み込みと書き出し（RGB8 の PSD。Unity 版の `ImportPsd`・`ExportPsd` と同じ考え方）。コーデックは yolu-io の `psd`。
 //!
 //! - **読み込み**（新しいテクスチャセットか、今のセットの文書として）: 別のスレッドで読む（ファイルを読む・`psd::read`・core の文書への変換）。
-//!   編集できる（`EditableRaster`）うえ core の文書に変えられるものだけを入れる。**原本を保つだけ（`PreserveOnly`）・拒否（`Rejected`）・
-//!   core で扱えない中身（マスク・グループ・調整・ロックなど）は、何も変えずに理由（診断の一覧）を窓で見せる**。名前だけでレイヤーを
-//!   結び付けない（`to_core` は ID で扱う）。PSD の原本は書き換えない。今のセットの文書を替える読み込みは、読み終わったときに描いている
-//!   最中か、読んでいる間に文書が変わっていれば入れない（描きかけのストロークを取り残さず、描いたものを黙って捨てない）。
-//! - **書き出し**（今の文書）: Color のラスターの層だけを書ける。マスク・グループ・塗りつぶし・調整・チャンネルごとの合成・Color 以外の
-//!   チャンネルがあれば、平らにせず理由を見せて書かない（黙って捨てない）。書くのは別のスレッドで、一時ファイルへ書いて読み戻して確かめ、
+//!   編集できる（`EditableRaster`）うえ core の文書に変えられるものだけを入れる。グループ（入れ子・通過/分離）・塗りつぶし（単色）・調整
+//!   （反転・レベル補正・色相/彩度）・マスク・クリッピングは core の層になる。**原本を保つだけ（`PreserveOnly`）・拒否（`Rejected`）・
+//!   core で扱えない中身（キャンバス外の画素）・`.ylp` に書けない中身（層のロック）は、何も変えずに理由（診断の一覧）を窓で見せる**。
+//!   名前だけでレイヤーを結び付けない（`to_core` は ID で扱う）。PSD の原本は書き換えない。今のセットの文書を替える読み込みは、
+//!   読み終わったときに描いている最中か、読んでいる間に文書が変わっていれば入れない（描きかけのストロークを取り残さず、描いたものを黙って捨てない）。
+//! - **書き出し**（今の文書）: Color の写しを書く。ラスター・グループ・単色の塗りつぶし・調整・クリッピング・マスク（有効/無効・濃度）・層のロックは
+//!   PSD の形で書き、反転したマスク・クリッピングされたグループ・半透明の塗りつぶし・刻みの間の調整・Color 以外のチャンネルの中身・Color と
+//!   違うチャンネルごとの合成は、平らにせず理由を見せて書かない（黙って捨てない）。書くのは別のスレッドで、一時ファイルへ書いて読み戻して確かめ、
 //!   最後に 1 回の置き換え。取り込んだ PSD と同じファイルへ書くときは確かめる。
 
 use std::path::{Path, PathBuf};
@@ -16,7 +18,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::Vec2;
-use yolu_core::{Channel, Document, LayerKind};
+use yolu_core::Document;
 use yolu_io::psd::{self, CompatibilityMode, Diagnostic, Limits};
 
 use crate::lang::Lang;
@@ -195,74 +197,76 @@ fn diagnostic_lines(lang: Lang, diagnostics: &[Diagnostic]) -> Vec<Line> {
     lines
 }
 
-/// 書き出せない理由（PSD に書けるのは Color のラスターの層だけ。書けない中身は平らにせず断る）。`psd::Document::from_core` も
-/// 同じものを機能ごとの理由で断る（日本語だけ）ので、これは何の層・何の中身かを画面の言語で先に言う場所。マスク・チャンネルごとの合成・
-/// フィルターと Generator・Anchor・パスは、断らなければ書けてしまう（`from_core` は層ごとに保存している元の画素を書き、効果入りの
-/// 合成は統合画像だけに入る。効果とパスの設定は PSD に残らず、層の画素と統合画像も食い違う）。層のロックは PSD の lspf に書けるので断らない。
+/// 書き出せない理由（層の名前つき。画面の言語）。何が断られるかの判断は `psd::export_blockers`（`from_core` が断るのと同じもの。
+/// `from_core` の断りは日本語の診断）で、ここは理由の種類から画面の文を作る。
 pub fn export_blockers(lang: Lang, doc: &Document) -> Vec<String> {
-    let mut out = Vec::new();
-    for layer in doc.layers() {
-        let name = layer.name();
-        if layer.kind() != LayerKind::Raster {
-            out.push(lang.pick(
-                format!(
-                    "「{name}」は{}（PSD に書けるのはラスターのレイヤーだけ）",
-                    crate::m2::layer_kind_label(lang, layer.kind())
-                ),
-                format!(
-                    "\"{name}\" is a {} layer (only raster layers can be written)",
-                    crate::m2::layer_kind_label(lang, layer.kind())
-                ),
-            ));
-            continue;
-        }
-        if layer.mask().is_some() {
-            out.push(lang.pick(
-                format!("「{name}」にマスクがあります"),
-                format!("\"{name}\" has a mask"),
-            ));
-        }
-        if layer.channel_blends().next().is_some() {
-            out.push(lang.pick(
-                format!("「{name}」にチャンネルごとの合成があります"),
-                format!("\"{name}\" has per-channel blending"),
-            ));
-        }
-        // 効果（効いていない段・無効の段も、設定が PSD に残らないので断る）。マスクの段はマスクがあるので上で断っている
-        if !layer.filters().is_empty() {
-            out.push(lang.pick(
-                format!("「{name}」にフィルターか Generator があります"),
-                format!("\"{name}\" has filters or generators"),
-            ));
-        }
-        if layer.anchor().is_some() {
-            out.push(lang.pick(
-                format!("「{name}」に Anchor があります"),
-                format!("\"{name}\" has an anchor"),
-            ));
-        }
-        if layer.path().is_some() {
-            out.push(lang.pick(
-                format!("「{name}」にパスがあります"),
-                format!("\"{name}\" has a path"),
-            ));
-        }
-        let mut channels = layer.surface_channels();
-        channels.extend(layer.enabled_channels());
-        if channels.iter().any(|c| *c != Channel::Color) {
-            out.push(lang.pick(
-                format!("「{name}」が Color 以外のチャンネルを使っています"),
-                format!("\"{name}\" uses channels other than Color"),
-            ));
-        }
-        if !layer.is_channel_enabled(Channel::Color) {
-            out.push(lang.pick(
-                format!("「{name}」の Color が無効です"),
-                format!("\"{name}\" has Color disabled"),
-            ));
-        }
+    psd::export_blockers(doc)
+        .iter()
+        .map(|b| blocker_text(lang, b))
+        .collect()
+}
+
+fn blocker_text(lang: Lang, b: &psd::Blocker) -> String {
+    use psd::Refusal::*;
+    let name = &b.layer;
+    match &b.refusal {
+        OtherChannel(label) => lang.pick(
+            format!("「{name}」が Color 以外のチャンネルを使っています（{label}）"),
+            format!("\"{name}\" uses a channel other than Color ({label})"),
+        ),
+        ClippedGroup => lang.pick(
+            format!("「{name}」はクリッピングされたグループです"),
+            format!("\"{name}\" is a clipped group"),
+        ),
+        InvertedMask => lang.pick(
+            format!("「{name}」のマスクは反転しています"),
+            format!("\"{name}\" has an inverted mask"),
+        ),
+        ChannelBlend(label) => lang.pick(
+            format!("「{name}」の {label} の合成が Color と違います"),
+            format!("\"{name}\" blends differently in {label} than in Color"),
+        ),
+        ColorDisabled => lang.pick(
+            format!("「{name}」の Color が無効です"),
+            format!("\"{name}\" has Color disabled"),
+        ),
+        FillWithoutColor => lang.pick(
+            format!("「{name}」は Color の値が無い、または Color が無効な塗りつぶしです"),
+            format!("\"{name}\" is a fill without a Color value or with Color disabled"),
+        ),
+        FillTranslucent => lang.pick(
+            format!("「{name}」は半透明の塗りつぶしです"),
+            format!("\"{name}\" is a translucent fill"),
+        ),
+        AdjustmentColorDisabled => lang.pick(
+            format!("「{name}」は Color で無効な調整です"),
+            format!("\"{name}\" is an adjustment disabled in Color"),
+        ),
+        LevelsBetweenSteps => lang.pick(
+            format!("「{name}」のレベル補正は PSD の刻みの間にあります"),
+            format!("\"{name}\" has levels between PSD's steps"),
+        ),
+        LevelsRange => lang.pick(
+            format!("「{name}」のレベル補正の入力が PSD の範囲に収まりません"),
+            format!("\"{name}\" has a levels input outside PSD's range"),
+        ),
+        HueSaturationBetweenSteps => lang.pick(
+            format!("「{name}」の色相・彩度は PSD の刻みの間にあります"),
+            format!("\"{name}\" has hue/saturation between PSD's steps"),
+        ),
+        Effects => lang.pick(
+            format!("「{name}」にフィルターか Generator があります"),
+            format!("\"{name}\" has filters or generators"),
+        ),
+        Anchor => lang.pick(
+            format!("「{name}」に Anchor があります"),
+            format!("\"{name}\" has an anchor"),
+        ),
+        Path => lang.pick(
+            format!("「{name}」にパスがあります"),
+            format!("\"{name}\" has a path"),
+        ),
     }
-    out
 }
 
 impl AppState {
@@ -737,7 +741,9 @@ fn import_worker(path: &Path, cancel: &AtomicBool) -> Result<Output, String> {
         CompatibilityMode::EditableRaster => {}
     }
     let document = result.document().ok_or("編集用の文書がありません")?;
-    let issues = document.core_issues();
+    // core に入れられない内容と、core には入れられるが `.ylp` に書けない内容（層のロック）。どちらも黙って外さず断る
+    let mut issues = document.core_issues();
+    issues.extend(document.project_issues());
     if !issues.is_empty() {
         let mut reason = issues
             .iter()
@@ -822,7 +828,7 @@ mod tests {
     use super::*;
     use crate::state::Action;
     use std::sync::atomic::AtomicU32;
-    use yolu_core::{LayerId, TileCoord};
+    use yolu_core::{Channel, LayerId, TileCoord};
 
     /// 試験用の一時フォルダ（終わると消す）。
     struct Dir(PathBuf);
@@ -1058,21 +1064,21 @@ mod tests {
         std::fs::write(dir.0.join("big.psb.psd"), &psb).unwrap();
         // 壊れたファイルは拒否
         std::fs::write(dir.0.join("broken.psd"), b"8BPS-not-a-psd").unwrap();
-        // マスクを持つ PSD は編集できるが、このアプリで扱えない
-        let mut masked = psd::Document::from_core(&painted().doc).unwrap();
-        masked.layers[0].mask = Some(psd::Mask {
-            left: 0,
-            top: 0,
-            width: 4,
-            height: 4,
-            default_color: 255,
-            enabled: true,
-            density: 255,
-            pixels: vec![128; 16],
-        });
+        // 層のロックを持つ PSD は編集できるが、ロックは `.ylp` に書けず画面で外せないので、このアプリでは扱わない
+        let mut locked = psd::Document::from_core(&painted().doc).unwrap();
+        locked.layers[0].locks = 2;
         std::fs::write(
-            dir.0.join("masked.psd"),
-            psd::write(&masked, &Limits::default()).unwrap(),
+            dir.0.join("locked.psd"),
+            psd::write(&locked, &Limits::default()).unwrap(),
+        )
+        .unwrap();
+        // キャンバスの外にはみ出す画素を持つ PSD は、切り捨てずに断る
+        let mut wide = psd::Document::from_core(&painted().doc).unwrap();
+        wide.layers[0].left = 20;
+        wide.composite_rgba = None; // 統合画像は層から計算し直す（層と統合画像の食い違いで原本の保持だけになるのを避ける）
+        std::fs::write(
+            dir.0.join("wide.psd"),
+            psd::write(&wide, &Limits::default()).unwrap(),
         )
         .unwrap();
 
@@ -1081,7 +1087,8 @@ mod tests {
         for (file, expect_mode, expect_text) in [
             ("big.psb.psd", "原本の保持のみ", "PSB"),
             ("broken.psd", "拒否", ""),
-            ("masked.psd", "読み込めません", "マスク"),
+            ("locked.psd", "読み込めません", "ロック"),
+            ("wide.psd", "読み込めません", "キャンバス外"),
         ] {
             s.apply(Action::Psd(PsdAction::Import {
                 path: dir.0.join(file),
@@ -1164,27 +1171,50 @@ mod tests {
         let path = dir.0.join("out.psd");
         let mut s = painted();
         assert!(export_blockers(Lang::Ja, &s.doc).is_empty());
-        // マスク
+        // 反転したマスク（PSD に非破壊の反転が無い）。マスクそのものは書ける
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
+        assert!(
+            export_blockers(Lang::Ja, &s.doc).is_empty(),
+            "マスクは書ける"
+        );
+        s.doc.set_layer_mask_inverted(layer, true).unwrap();
         let why = export_blockers(Lang::Ja, &s.doc);
         assert_eq!(why.len(), 1);
-        assert!(why[0].contains("マスク"), "{why:?}");
+        assert!(why[0].contains("反転"), "{why:?}");
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         assert!(!s.psd.is_busy());
         assert!(s.message.contains("書き出せません"), "{}", s.message);
         let report = s.psd.report.take().unwrap();
-        assert!(!report.ok && !report.importing && report.lines[0].text.contains("マスク"));
+        assert!(!report.ok && !report.importing && report.lines[0].text.contains("反転"));
         assert!(dir.files().is_empty(), "何も書かない");
         // 英語
-        assert!(export_blockers(Lang::En, &s.doc)[0].contains("mask"));
-        // グループ・塗りつぶし・調整
+        assert!(export_blockers(Lang::En, &s.doc)[0].contains("inverted"));
+        // クリッピングされたグループ・半透明の塗りつぶし
         let mut t = painted();
         t.apply(Action::M2(crate::m2::Edit::NewGroup));
-        t.apply(Action::M2(crate::m2::Edit::NewFill));
+        let group = t.selected_layer.unwrap();
+        t.doc.set_layer_clipping(group, true).unwrap();
         let why = export_blockers(Lang::Ja, &t.doc);
-        assert!(why.iter().any(|w| w.contains("グループ")), "{why:?}");
-        assert!(why.iter().any(|w| w.contains("塗りつぶし")), "{why:?}");
+        assert!(
+            why.iter().any(|w| w.contains("クリッピングされたグループ")),
+            "{why:?}"
+        );
+        t.apply(Action::M2(crate::m2::Edit::NewFill));
+        let fill = t.selected_layer.unwrap();
+        t.doc
+            .set_fill_value(
+                fill,
+                Channel::Color,
+                Some(yolu_core::Rgba8::new(1, 2, 3, 100)),
+                false,
+            )
+            .unwrap();
+        let why = export_blockers(Lang::En, &t.doc);
+        assert!(
+            why.iter().any(|w| w.contains("translucent fill")),
+            "{why:?}"
+        );
         // Color 以外のチャンネル
         let mut u = painted();
         let layer = u.selected_layer.unwrap();
@@ -1193,64 +1223,6 @@ mod tests {
             .unwrap();
         let why = export_blockers(Lang::Ja, &u.doc);
         assert!(why[0].contains("Color 以外"), "{why:?}");
-        // 効果（Color のぼかし）: from_core は元の画素を書き、効果入りの合成と食い違うので断る。何も書かない
-        let mut w = painted();
-        let layer = w.selected_layer.unwrap();
-        w.doc
-            .add_filter(
-                layer,
-                yolu_core::FilterTarget::Content,
-                yolu_core::FilterSpec::new(yolu_core::EffectSettings::blur(3))
-                    .channels(&[Channel::Color]),
-            )
-            .unwrap();
-        let why = export_blockers(Lang::Ja, &w.doc);
-        assert_eq!(why.len(), 1, "{why:?}");
-        assert!(why[0].contains("フィルター"), "{why:?}");
-        assert!(export_blockers(Lang::En, &w.doc)[0].contains("filters"));
-        w.apply(Action::Psd(PsdAction::Export(path.clone())));
-        assert!(!w.psd.is_busy());
-        assert!(w.message.contains("書き出せません"), "{}", w.message);
-        assert!(w.psd.report.take().unwrap().lines[0]
-            .text
-            .contains("フィルター"));
-        assert!(dir.files().is_empty(), "何も書かない");
-        // 効果を外せば書き出せる（無効の段も断るので、外すまで断る）
-        let filter = w.doc.layer(layer).unwrap().filters()[0].id();
-        w.doc.set_filter_enabled(layer, filter, false).unwrap();
-        assert_eq!(
-            export_blockers(Lang::Ja, &w.doc).len(),
-            1,
-            "無効の段も設定が PSD に残らない"
-        );
-        w.doc.remove_filter(layer, filter).unwrap();
-        assert!(export_blockers(Lang::Ja, &w.doc).is_empty());
-        // Anchor
-        let mut x = painted();
-        let layer = x.selected_layer.unwrap();
-        x.doc
-            .add_anchor(layer, yolu_core::AnchorPlacement::Layer, Some("a"), None)
-            .unwrap();
-        let why = export_blockers(Lang::Ja, &x.doc);
-        assert!(why.len() == 1 && why[0].contains("Anchor"), "{why:?}");
-        // パス（2D）
-        let mut y = painted();
-        let layer = y.selected_layer.unwrap();
-        y.doc
-            .set_canvas_path(
-                layer,
-                yolu_core::paths::CanvasPath {
-                    id: 1,
-                    channel: Channel::Color,
-                    brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings::default()),
-                    points: vec![yolu_core::paths::CanvasPoint::new(4.0, 4.0, 1.0).unwrap()],
-                    material: None,
-                },
-            )
-            .unwrap();
-        let why = export_blockers(Lang::Ja, &y.doc);
-        assert!(why.len() == 1 && why[0].contains("パス"), "{why:?}");
-        assert!(export_blockers(Lang::En, &y.doc)[0].contains("path"));
         // 読むだけのセット
         let mut v = painted();
         v.sets.get_mut(0).unwrap().read_only = Some("試験".into());
@@ -1262,17 +1234,69 @@ mod tests {
         assert!(dir.files().is_empty());
     }
 
-    /// `from_core` はマスク・チャンネルごとの合成・ラスター以外を黙って落とさず、機能ごとの理由で断る。先の断りは同じものを層の名前つきで
-    /// 画面の言語で言う。層のロックは PSD に書けるので、どちらも断らない。
+    /// グループ・塗りつぶし・調整・マスクは PSD に書けて、取り込み直すと同じ層になる（画面の操作で作った文書で、書き出して取り込む）。
+    #[test]
+    fn groups_fills_adjustments_and_masks_export_and_come_back_as_the_same_layers() {
+        let dir = Dir::new("m2-round-trip");
+        let path = dir.0.join("m2.psd");
+        let mut s = painted();
+        let base = s.selected_layer.unwrap();
+        s.apply(Action::M2(crate::m2::Edit::AddMask(base)));
+        s.doc.set_mask_pixel(base, 3, 3, 200).unwrap();
+        s.apply(Action::M2(crate::m2::Edit::NewFill));
+        s.apply(Action::M2(crate::m2::Edit::NewAdjustment(
+            crate::m2::AdjustmentKind::Invert,
+        )));
+        s.apply(Action::M2(crate::m2::Edit::NewGroup));
+        assert!(
+            export_blockers(Lang::Ja, &s.doc).is_empty(),
+            "{:?}",
+            export_blockers(Lang::Ja, &s.doc)
+        );
+        let expected: Vec<_> = s
+            .doc
+            .layers()
+            .iter()
+            .map(|l| (l.name().to_string(), l.kind(), l.mask().is_some()))
+            .collect();
+        let composite = s.doc.composite(s.doc.bounds()).unwrap();
+        s.apply(Action::Psd(PsdAction::Export(path.clone())));
+        s.wait_psd();
+        assert!(
+            s.psd.report.as_ref().is_none_or(|r| r.ok),
+            "{:?}",
+            s.psd.report
+        );
+        assert!(path.exists());
+        let mut t = AppState::new(32, 32);
+        t.apply(Action::Psd(PsdAction::Import {
+            path,
+            target: PsdTarget::CurrentSet,
+        }));
+        t.wait_psd();
+        let got: Vec<_> = t
+            .doc
+            .layers()
+            .iter()
+            .map(|l| (l.name().to_string(), l.kind(), l.mask().is_some()))
+            .collect();
+        assert_eq!(got, expected);
+        assert_eq!(t.doc.composite(t.doc.bounds()).unwrap(), composite);
+    }
+
+    /// `from_core` は PSD に形が無い中身を黙って落とさず、機能ごとの理由で断る。先の断りは同じものを層の名前つきで画面の言語で言う。
+    /// 層のロックは PSD に書けるので、どちらも断らない。
     #[test]
     fn from_core_refuses_what_the_up_front_refusal_names_and_writes_the_locks() {
         use yolu_core::{BlendMode, ChannelBlend, LayerLocks};
         let mut s = painted();
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
+        s.doc.set_layer_mask_inverted(layer, true).unwrap();
         let err = psd::Document::from_core(&s.doc).unwrap_err().to_string();
-        assert!(err.contains("マスク"), "{err}");
+        assert!(err.contains("反転"), "{err}");
         assert_eq!(export_blockers(Lang::Ja, &s.doc).len(), 1);
+        // Color と違う、ほかのチャンネルの合成（Color の合成は PSD の層の合成として書ける）
         let mut t = painted();
         let layer = t.selected_layer.unwrap();
         t.doc
@@ -1283,72 +1307,21 @@ mod tests {
                 false,
             )
             .unwrap();
+        assert!(psd::Document::from_core(&t.doc).is_ok());
+        assert!(export_blockers(Lang::Ja, &t.doc).is_empty());
+        t.doc
+            .set_channel_blend(
+                layer,
+                Channel::Roughness,
+                ChannelBlend::new(Some(BlendMode::Screen), None),
+                false,
+            )
+            .unwrap();
         let err = psd::Document::from_core(&t.doc).unwrap_err().to_string();
-        assert!(err.contains("チャンネルごとの合成"), "{err}");
+        assert!(err.contains("Roughness") && err.contains("合成"), "{err}");
         let why = export_blockers(Lang::Ja, &t.doc);
-        assert!(
-            why.iter().any(|w| w.contains("チャンネルごとの合成")),
-            "{why:?}"
-        );
-        // 効果（Color のぼかし）・Anchor・パス: 書けば元の画素だけが層に入り、効果の設定は PSD に残らない。from_core も機能ごとの理由で断る
-        let mut f = painted();
-        let layer = f.selected_layer.unwrap();
-        f.doc
-            .add_filter(
-                layer,
-                yolu_core::FilterTarget::Content,
-                yolu_core::FilterSpec::new(yolu_core::EffectSettings::blur(3))
-                    .channels(&[Channel::Color]),
-            )
-            .unwrap();
-        let err = psd::Document::from_core(&f.doc).unwrap_err().to_string();
-        assert!(err.contains("フィルター"), "{err}");
-        assert_eq!(export_blockers(Lang::Ja, &f.doc).len(), 1);
-        let mut x = painted();
-        let layer = x.selected_layer.unwrap();
-        x.doc
-            .add_anchor(layer, yolu_core::AnchorPlacement::Layer, Some("a"), None)
-            .unwrap();
-        let err = psd::Document::from_core(&x.doc).unwrap_err().to_string();
-        assert!(err.contains("Anchor"), "{err}");
-        assert_eq!(export_blockers(Lang::Ja, &x.doc).len(), 1);
-        let mut y = painted();
-        let layer = y.selected_layer.unwrap();
-        y.doc
-            .set_canvas_path(
-                layer,
-                yolu_core::paths::CanvasPath {
-                    id: 1,
-                    channel: Channel::Color,
-                    brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings::default()),
-                    points: vec![yolu_core::paths::CanvasPoint::new(4.0, 4.0, 1.0).unwrap()],
-                    material: None,
-                },
-            )
-            .unwrap();
-        let err = psd::Document::from_core(&y.doc).unwrap_err().to_string();
-        assert!(err.contains("パス"), "{err}");
-        assert_eq!(export_blockers(Lang::Ja, &y.doc).len(), 1);
-        // グループ・塗りつぶし: from_core も、何の層かを言って断る。先の断りは層の名前と種類を画面の言語で出す
-        let mut u = painted();
-        u.apply(Action::M2(crate::m2::Edit::NewGroup));
-        u.apply(Action::M2(crate::m2::Edit::NewFill));
-        let err = psd::Document::from_core(&u.doc).unwrap_err().to_string();
-        assert!(
-            err.contains("の層です") && err.contains("ラスターの層だけ"),
-            "{err}"
-        );
-        let why = export_blockers(Lang::Ja, &u.doc);
-        assert!(
-            why.iter()
-                .any(|w| w.contains("グループ") && w.contains('「')),
-            "{why:?}"
-        );
-        assert!(
-            why.iter()
-                .any(|w| w.contains("塗りつぶし") && w.contains('「')),
-            "{why:?}"
-        );
+        assert!(why.iter().any(|w| w.contains("Roughness")), "{why:?}");
+        assert!(export_blockers(Lang::En, &t.doc)[0].contains("blends differently in Roughness"));
         // 層のロック: 先の断りは出さず、from_core は lspf のビットで書く
         let mut v = painted();
         let layer = v.selected_layer.unwrap();

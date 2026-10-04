@@ -1451,7 +1451,10 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
     let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
     // 画面が理由を言い分けられるよう、種類で返す（壊れたデータでも予算超過でもない）
     assert!(
-        matches!(err, yolu_io::Error::Unwritable(yolu_io::Unwritable::ManualIdColors)),
+        matches!(
+            err,
+            yolu_io::Error::Unwritable(yolu_io::Unwritable::ManualIdColors)
+        ),
         "{err:?}"
     );
     assert!(err.to_string().contains("ID の色"), "{err}");
@@ -1476,7 +1479,10 @@ fn layer_locks_are_refused_instead_of_dropped() {
             doc.set_layer_locks(target, lock).unwrap();
             let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
             assert!(
-                matches!(err, yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks)),
+                matches!(
+                    err,
+                    yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks)
+                ),
                 "{lock:?} {err:?}"
             );
             assert!(err.to_string().contains("ロック"), "{lock:?} {err}");
@@ -1547,55 +1553,23 @@ fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) ->
 
 /// PSD に表せない中身は、平らにも黙って落とすこともせず、機能ごとの理由で断る（`NativeDocument::from_core` が手動の ID の色と層のロックを
 /// 断るのと対。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening）。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
-/// 中身を外した同じ文書は書ける。
+/// 中身を外した同じ文書は書ける。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
 #[test]
 fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
     type Setup = fn(&mut Document, LayerId);
-    let sets: [(&str, &str, Setup); 15] = [
-        ("マスク", "マスク", |d, id| {
-            d.add_layer_mask(id).unwrap()
-        }),
-        ("無効なマスク", "マスク", |d, id| {
-            d.add_layer_mask(id).unwrap();
-            d.set_layer_mask_enabled(id, false).unwrap();
-        }),
-        ("反転したマスク", "マスク", |d, id| {
+    let sets: [(&str, &str, Setup); 10] = [
+        ("反転したマスク", "反転", |d, id| {
             d.add_layer_mask(id).unwrap();
             d.set_layer_mask_inverted(id, true).unwrap();
         }),
-        ("濃度を変えたマスク", "マスク", |d, id| {
+        ("非表示の反転したマスク", "反転", |d, id| {
+            d.set_layer_visible(id, false).unwrap();
             d.add_layer_mask(id).unwrap();
-            d.set_layer_mask_density(id, 0.5, false).unwrap();
+            d.set_layer_mask_inverted(id, true).unwrap();
         }),
         (
-            "Color の合成モード",
-            "チャンネルごとの合成",
-            |d, id| {
-                d.set_channel_blend(
-                    id,
-                    Channel::Color,
-                    ChannelBlend::new(Some(BlendMode::Multiply), None),
-                    false,
-                )
-                .unwrap()
-            },
-        ),
-        (
-            "Color の不透明度",
-            "チャンネルごとの合成",
-            |d, id| {
-                d.set_channel_blend(
-                    id,
-                    Channel::Color,
-                    ChannelBlend::new(None, Some(0.5)),
-                    false,
-                )
-                .unwrap()
-            },
-        ),
-        (
-            "Metallic の合成",
-            "チャンネルごとの合成",
+            "Metallic の合成（Color と違う）",
+            "Metallic",
             |d, id| {
                 d.set_channel_blend(
                     id,
@@ -1678,10 +1652,6 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
         ("Color を無効", "Color が無効", |d, id| {
             d.set_channel_enabled(id, Channel::Color, false).unwrap()
         }),
-        ("非表示のマスク", "マスク", |d, id| {
-            d.set_layer_visible(id, false).unwrap();
-            d.add_layer_mask(id).unwrap();
-        }),
     ];
     let control = psd_source();
     psd::Document::from_core(&control).expect("何も足さなければ書ける");
@@ -1697,7 +1667,7 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             );
         }
     }
-    // 種類が違う層は、種類を言って断る
+    // グループ・塗りつぶし・調整は PSD の形で書ける（断らない）。Color の合成と、マスクの有効・濃度も同じ
     type AddLayer = fn(&mut Document) -> LayerId;
     let kinds: [(&str, LayerKind, AddLayer); 3] = [
         ("グループ", LayerKind::Group, |d| {
@@ -1716,23 +1686,43 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
         let mut doc = psd_source();
         let id = add(&mut doc);
         assert_eq!(doc.layer(id).unwrap().kind(), kind);
-        let err = psd_refusal(&doc, word);
-        assert!(
-            err.contains(word) && err.contains("層「種類」") && err.contains("ラスターの層だけ"),
-            "{word}: {err}"
-        );
-        // 非表示でも断る
+        let projected = psd::Document::from_core(&doc).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(projected.layers[0].name, "種類", "{word}");
+        // 非表示でも書ける
         doc.set_layer_visible(id, false).unwrap();
-        psd_refusal(&doc, &format!("{word}（非表示）"));
+        assert!(!psd::Document::from_core(&doc).unwrap().layers[0].visible);
     }
+    let mut doc = psd_source();
+    let id = id_of(&doc, "中");
+    doc.add_layer_mask(id).unwrap();
+    doc.set_layer_mask_enabled(id, false).unwrap();
+    doc.set_layer_mask_density(id, 0.5, false).unwrap();
+    doc.set_channel_blend(
+        id,
+        Channel::Color,
+        ChannelBlend::new(Some(BlendMode::Multiply), Some(0.5)),
+        false,
+    )
+    .unwrap();
+    let projected = psd::Document::from_core(&doc).unwrap();
+    let mid = projected.layers.iter().find(|l| l.name == "中").unwrap();
+    assert_eq!(
+        (
+            mid.blend_mode,
+            mid.opacity,
+            mid.mask.as_ref().map(|m| (m.enabled, m.density))
+        ),
+        (psd::BlendMode::Multiply, 128, Some((false, 128)))
+    );
     // 断っても文書は変わらない（履歴も合成も）
     let mut doc = psd_source();
     let id = id_of(&doc, "中");
     doc.add_layer_mask(id).unwrap();
+    doc.set_layer_mask_inverted(id, true).unwrap();
     let (undo, before) = (doc.undo_count(), composites(&doc));
-    psd_refusal(&doc, "マスク");
+    psd_refusal(&doc, "反転したマスク");
     assert_eq!((doc.undo_count(), composites(&doc)), (undo, before));
-    // 外せば書ける（Undo で戻した文書）
+    // 外せば書ける（反転を Undo で戻した文書。マスクそのものは書ける）
     assert!(doc.undo().unwrap());
     psd::Document::from_core(&doc).unwrap();
 }
@@ -1751,7 +1741,7 @@ fn psd_export_refuses_an_active_stroke_until_it_ends() {
     psd::Document::from_core(&doc).unwrap();
 }
 
-/// PSD が表せるロック（透明部分・画素・位置・すべて）は、断らずに lspf へ書く（C# の PsdLockTests。ビットは lspf と同じ: 0 透明部分・1 画素・
+/// PSD が表せるロック（透明部分・画素・位置・すべて）は、断らずに lspf へ書き、取り込めば core のロックに戻る（C# の PsdLockTests。ビットは lspf と同じ: 0 透明部分・1 画素・
 /// 2 位置・31 すべて）。すべては 0x80000000 だけで書き、その下の個別のビットは足さない（効くロックは同じ）。
 #[test]
 fn psd_export_writes_the_locks_a_psd_can_hold() {
@@ -1771,8 +1761,8 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
             7,
             1,
         ),
-        // すべてと個別を重ねても、書くのは 0x80000000 だけ
-        (all_four, 0x8000_0007, 0x8000_0000, 0),
+        // すべてと個別を重ねても、投影も書くのも 0x80000000 だけ
+        (all_four, 0x8000_0000, 0x8000_0000, 0),
     ];
     let unlocked = psd_source();
     let plain = psd_bytes(&unlocked);
@@ -1821,15 +1811,31 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
             vec![0, on_disk, 0],
             "{lock:?}"
         );
-        // 取り込み側は、まだロックを core の層に持てないので理由つきで断る（黙って外さない）
-        let issues = again.core_issues();
+        // 取り込み側: core はロックを持てる。`.ylp` に書けないので、アプリの取り込みが `project_issues` の理由で断る（黙って外さない）
+        assert!(again.core_issues().is_empty(), "{lock:?}");
+        let issues = again.project_issues();
         assert!(
             issues
                 .iter()
                 .any(|i| i.contains("locks") && i.contains("ロック")),
             "{lock:?}: {issues:?}"
         );
-        assert!(again.to_core().is_err(), "{lock:?}");
+        let back = again.to_core().unwrap();
+        // すべてが立てば、書くのは 0x80000000 だけなので、戻るのもすべてだけ
+        let expected = if lock.contains(LayerLocks::ALL) {
+            LayerLocks::ALL
+        } else {
+            lock
+        };
+        assert_eq!(
+            back.layer(id_of(&back, "中")).unwrap().locks(),
+            expected,
+            "{lock:?}"
+        );
+        assert_eq!(
+            back.layer(id_of(&back, "上")).unwrap().locks(),
+            LayerLocks::NONE
+        );
     }
 }
 

@@ -1,0 +1,7 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=soft kind=Raster parent=-1 id=0000006600000000 visible=1 opacity=183 mode=Multiply clip=1 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+2 name=hidden kind=Raster parent=-1 id=0000006700000000 visible=0 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+3 name=overlay kind=Raster parent=-1 id=0000006800000000 visible=1 opacity=99 mode=SoftLight clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+composite 613f4967f442ce71

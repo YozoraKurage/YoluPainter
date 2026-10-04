@@ -1,0 +1,1 @@
+Group 'clipped group' is clipped. Photoshop's handling of a clipped folder is not verified (psd-tools treats it as unsupported in Photoshop), so it is not exported. Native project can still be saved losslessly.

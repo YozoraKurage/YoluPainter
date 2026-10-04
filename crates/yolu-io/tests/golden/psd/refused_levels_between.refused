@@ -1,0 +1,1 @@
+Adjustment layer 'between': PSD Levels stores whole 0-255 steps and gamma in hundredths; this Levels setting is between them. Native project can still be saved losslessly.

@@ -1,0 +1,6 @@
+canvas 24 16
+diagnostics 
+0 name=default zero kind=Raster parent=-1 id=0000000100000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/255/db3d5743b63c77c0 pixels=3ce1ce8cf2044365 channels=0
+1 name=spills out kind=Raster parent=-1 id=0000000200000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=1/0/200/c5571105735ef3c9 pixels=8969833464a3afb5 channels=0
+2 name=disabled kind=Raster parent=-1 id=0000000300000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=0/0/77/730f1b9352569f7a pixels=3ce1ce8cf2044365 channels=0
+composite 3ce1ce8cf2044365

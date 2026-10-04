@@ -1,0 +1,18 @@
+# YoluPainter 7a6f982a2882 Runtime/Core=7db2a03f82c635e2 debug
+case plain export
+case masks export
+case fills export
+case adjustments export
+case groups export
+case locks export
+case channel_blends export
+case import_masks import
+case import_groups import
+case refused_inverted_mask refused
+case refused_clipped_group refused
+case refused_translucent_fill refused
+case refused_levels_between refused
+case refused_gamma_between refused
+case refused_hue_between refused
+case refused_saturation_between refused
+case refused_levels_range refused

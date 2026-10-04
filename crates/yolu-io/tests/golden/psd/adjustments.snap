@@ -1,0 +1,14 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=plain0 kind=Adjustment parent=-1 id=0000006600000000 visible=1 opacity=160 mode=Normal clip=0 locks=0 mask=1/0/255/57a78d9808e47425 adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+2 name=shape0 kind=Raster parent=-1 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+3 name=clipped0 kind=Adjustment parent=-1 id=0000006800000000 visible=1 opacity=255 mode=Overlay clip=1 locks=0 mask=- adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+4 name=plain1 kind=Adjustment parent=-1 id=0000006900000000 visible=1 opacity=160 mode=Normal clip=0 locks=0 mask=1/0/255/57a78d9808e47425 adjustment=Levels/3fb4141414141414/3fecdcdcdcdcdcdd/3ff5eb851eb851ec/3fa4141414141414/3fee1e1e1e1e1e1e/0/0/0 channels=0,1,2,3,4,5
+5 name=shape1 kind=Raster parent=-1 id=0000006a00000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+6 name=clipped1 kind=Adjustment parent=-1 id=0000006b00000000 visible=1 opacity=255 mode=Overlay clip=1 locks=0 mask=- adjustment=Levels/3fb4141414141414/3fecdcdcdcdcdcdd/3ff5eb851eb851ec/3fa4141414141414/3fee1e1e1e1e1e1e/0/0/0 channels=0,1,2,3,4,5
+7 name=plain2 kind=Adjustment parent=-1 id=0000006c00000000 visible=1 opacity=160 mode=Normal clip=0 locks=0 mask=1/0/255/57a78d9808e47425 adjustment=HueSaturation/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/c052400000000000/3fdae147ae147ae1/bfc70a3d70a3d70a channels=0,5
+8 name=shape2 kind=Raster parent=-1 id=0000006d00000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+9 name=clipped2 kind=Adjustment parent=-1 id=0000006e00000000 visible=1 opacity=255 mode=Overlay clip=1 locks=0 mask=- adjustment=HueSaturation/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/c052400000000000/3fdae147ae147ae1/bfc70a3d70a3d70a channels=0,5
+10 name=hidden kind=Adjustment parent=-1 id=0000006f00000000 visible=0 opacity=255 mode=Normal clip=0 locks=0 mask=- adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+composite a6a134ec465bbdb7

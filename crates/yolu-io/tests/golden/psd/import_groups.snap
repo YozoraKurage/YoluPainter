@@ -1,0 +1,10 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000001000000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=leaf kind=Raster parent=4 id=0000000b00000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+2 name=fill kind=Fill parent=4 id=0000000c00000000 visible=1 opacity=140 mode=Overlay clip=1 locks=0 mask=- fill=200,10,90,255 channels=0
+3 name=adjust kind=Adjustment parent=4 id=0000000d00000000 visible=1 opacity=99 mode=Normal clip=0 locks=0 mask=- adjustment=Levels/3fb4141414141414/3fecdcdcdcdcdcdd/3ff5eb851eb851ec/3fa4141414141414/3fee1e1e1e1e1e1e/0/0/0 channels=0,1,2,3,4,5
+4 name=inner kind=Group parent=5 id=0000000e05dc0000 visible=1 opacity=180 mode=PassThrough clip=0 locks=0 mask=-
+5 name=outer kind=Group parent=-1 id=0000000f00000000 visible=1 opacity=255 mode=Multiply clip=0 locks=0 mask=-
+6 name=hidden hue kind=Adjustment parent=-1 id=0000001100000000 visible=0 opacity=255 mode=Normal clip=0 locks=0 mask=- adjustment=HueSaturation/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/c052400000000000/3fdae147ae147ae1/bfc70a3d70a3d70a channels=0,5
+composite cf97ed5001c75f4a

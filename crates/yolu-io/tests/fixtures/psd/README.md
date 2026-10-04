@@ -32,3 +32,14 @@ cargo test -p yolu-io --test psd
 Rust の試験では互換モード・原本保持、拒否以外の診断コード集合、編集可能な入力の書き戻しバイト列を比較する。診断の文章は言語が異なるため比較しない。拒否結果の詳細コードは Rust 側では `MalformedOrLimit` にまとめる。保持専用・拒否の入力については、編集用データの取得と編集書き出しが拒否されることを確認する。
 
 これらの人工データによる比較は、任意の PSD・全機能の組合せ・Photoshop/CSP の描画一致を保証するものではない。
+
+## PSD の写し（core ⇔ PSD）の正解
+
+`../../golden/psd/` は Unity 版の `PsdBridge.Export`・`Import` と `PsdCodec` に人工データを通した正解（マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）。`<事例>.psd` は C# の書き出しのバイト列（取り込み事例は C# が組んだ PSD）、`<事例>.snap` はそれを C# で取り込んだ文書の中身、`<事例>.refused` は C# が書き出しを断る事例の理由。Photoshop/CSP の実データは含まない。台本は `tools/csharp-golden/PsdBridgeGolden.cs` と `tests/psd_golden.rs` が同じものを持つ。
+
+```sh
+tools/csharp-golden/run.sh psd          # Unity 版は /workspace、$YOLUPAINTER_UNITY_SOURCE か --source で変えられる
+cargo test -p yolu-io --test psd_golden
+```
+
+Rust の試験は、同じ台本の文書を core で組んで `from_core` → `write` した結果が C# の書き出しと全バイト一致することと、その PSD を `to_core` にした中身が C# の取り込みと同じこと、C# が断る書き出しを Rust も断ることを確かめる。往復・断り・ロック・ID の試験は `tests/psd_m2.rs`。

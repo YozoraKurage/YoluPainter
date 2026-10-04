@@ -16,6 +16,9 @@
 #   run.sh export              書き出しの台本（crates/yolu-core/tests/golden/export/cases.txt）を Unity 版の ExportTemplates・TexturePadding に通し、
 #                              同じフォルダへ index.txt と <事例>.bin を書く
 #   run.sh export-bench [回数]  4096² のテンプレートの Build とパディングの覆い・塗り広げの時間（Mono）
+#   run.sh psd                 PSD の写し（PsdBridge の書き出しと取り込み。マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）の
+#                              台本を実 C# に通し、crates/yolu-io/tests/golden/psd/ へ <事例>.psd・.snap・.refused と index.txt を書く
+#                              （C# が最後まで走ってから出力先へ移し、前の回の index.txt が挙げる事例のファイルだけを置き換える）
 # オプション:
 #   --source DIR   Unity 版のリポジトリ（Runtime/Core を読む。既定 /workspace か $YOLUPAINTER_UNITY_SOURCE）
 #   --out DIR      golden の出力先（既定は台本と同じフォルダ）
@@ -33,7 +36,7 @@ while [[ $# -gt 0 ]]; do
     --source) source_dir="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --release) optimize="-optimize+"; flavor="release"; shift ;;
-    golden|bench|selection-bench|selbin|surface|surface-bench|filter|filter-bench|export|export-bench|docops|docops-bench) mode="$1"; shift ;;
+    golden|bench|selection-bench|selbin|surface|surface-bench|filter|filter-bench|export|export-bench|docops|docops-bench|psd) mode="$1"; shift ;;
     -h|--help) sed -n "2,$(awk 'NR>1 && !/^#/ {print NR-1; exit}' "$0")p" "$0"; exit 0 ;;
     *) extra+=("$1"); shift ;;
   esac
@@ -44,6 +47,7 @@ cases="$repo/crates/yolu-core/tests/golden/cases.txt"
 [[ "$mode" == filter* ]] && cases="$repo/crates/yolu-core/tests/golden/filter/cases.txt"
 [[ "$mode" == export* ]] && cases="$repo/crates/yolu-core/tests/golden/export/cases.txt"
 [[ "$mode" == docops* ]] && cases="$repo/crates/yolu-core/tests/golden/docops/cases.txt"
+[[ "$mode" == psd && -z "$out" ]] && out="$repo/crates/yolu-io/tests/golden/psd"
 [[ -n "$out" ]] || out="$(dirname "$cases")"
 core="$source_dir/Runtime/Core"
 [[ -d "$core" ]] || { echo "Core のソースが無い: $core" >&2; exit 3; }
@@ -70,6 +74,37 @@ if [[ "$mode" == export* ]]; then
   export GOLDEN_SOURCE="YoluPainter $commit${dirty:+（Runtime/Core に未コミットの変更あり）} Runtime/Core=$fingerprint $flavor"
   "$mono" "$build/export.exe" golden "$cases" "$out"
   echo "書いた: $out/index.txt（$(grep -c '^case ' "$out/index.txt") 事例、$(ls "$out"/*.bin | wc -l) 個の .bin、$(du -sh "$out" | cut -f1)）"
+  exit 0
+fi
+
+if [[ "$mode" == psd ]]; then
+  build="$repo/target/csharp-golden/psd-$flavor"
+  mkdir -p "$build"
+  rsp="$build/build.rsp"
+  {
+    echo "-nologo"; echo "-target:exe"; echo "-langversion:9.0"; echo "$optimize"; echo "-nostdlib+"; echo "-nowarn:CS1591,CS0618"
+    echo "-out:\"$build/psd.exe\""
+    for f in "$api"/*.dll "$api"/Facades/*.dll; do echo "-r:\"$f\""; done
+    find "$core" -name '*.cs' | LC_ALL=C sort | sed 's/.*/"&"/'
+    echo "\"$here/PsdBridgeGolden.cs\""
+  } > "$rsp"
+  "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
+  commit="$(git -C "$source_dir" rev-parse --short=12 HEAD 2>/dev/null || echo 不明)"
+  dirty="$(git -C "$source_dir" status --porcelain -- Runtime/Core 2>/dev/null | head -1)"
+  fingerprint="$(cd "$core" && find . -name '*.cs' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16)"
+  export GOLDEN_SOURCE="YoluPainter $commit${dirty:+（Runtime/Core に未コミットの変更あり）} Runtime/Core=$fingerprint $flavor"
+  # 先にビルドの下の作業場へ書き、C# が最後まで走ってから出力先へ移す（途中で落ちても出力先は変わらない）。出力先で消すのは、前の
+  # 回の index.txt が挙げる事例のファイルだけ（--out に既存のフォルダーを渡しても、ほかのファイルは触らない）
+  stage="$build/stage"; rm -rf "$stage"; mkdir -p "$stage" "$out"
+  "$mono" "$build/psd.exe" golden "$stage"
+  if [[ -f "$out/index.txt" ]]; then
+    while read -r keyword name _; do
+      if [[ "$keyword" == case && "$name" =~ ^[A-Za-z0-9_]+$ ]]; then rm -f "$out/$name.psd" "$out/$name.snap" "$out/$name.refused"; fi
+    done < "$out/index.txt"
+  fi
+  cp -f "$stage"/* "$out"/
+  rm -rf "$stage"
+  echo "書いた: $out/index.txt（$(grep -c '^case ' "$out/index.txt") 事例、$(du -sh "$out" | cut -f1)）"
   exit 0
 fi
 

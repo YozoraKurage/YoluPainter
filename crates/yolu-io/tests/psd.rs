@@ -226,7 +226,8 @@ fn every_m1_blend_and_clipping_round_trips() {
     }
 }
 #[test]
-fn m1_refuses_features_and_off_canvas_even_when_hidden() {
+fn m2_layers_are_carried_into_core_and_off_canvas_pixels_are_refused_even_when_hidden() {
+    // グループ・調整・塗りつぶし・マスク・ロックは core に入る（往復の試験は psd_m2.rs）
     let variants = [
         LayerKind::Group {
             children: vec![],
@@ -239,7 +240,8 @@ fn m1_refuses_features_and_off_canvas_even_when_hidden() {
         let mut d = sample();
         d.layers[0].kind = kind;
         d.layers[0].visible = false;
-        assert!(d.to_core().is_err())
+        assert!(d.core_issues().is_empty());
+        d.to_core().unwrap();
     }
     let mut d = sample();
     d.layers[0].mask = Some(Mask {
@@ -252,13 +254,15 @@ fn m1_refuses_features_and_off_canvas_even_when_hidden() {
         density: 255,
         pixels: vec![255],
     });
-    assert!(d.to_core().is_err());
+    d.to_core().unwrap();
     d.layers[0].mask = None;
     d.layers[0].locks = 1;
-    assert!(d.to_core().is_err());
+    d.to_core().unwrap();
     d.layers[0].locks = 0;
     d.layers[0].left = -1;
     assert!(d.to_core().is_err());
+    d.layers[0].visible = false;
+    assert_eq!(d.core_issues().len(), 1, "隠していても切り捨てない");
 }
 #[test]
 fn write_refuses_invalid_structure_limits_and_adjustments() {

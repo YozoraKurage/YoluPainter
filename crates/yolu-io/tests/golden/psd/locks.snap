@@ -1,0 +1,11 @@
+canvas 24 16
+diagnostics 
+0 name=transparency kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=1 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=pixels kind=Fill parent=-1 id=0000006600000000 visible=1 opacity=255 mode=Normal clip=0 locks=2 mask=- fill=1,2,3,255 channels=0
+2 name=position kind=Adjustment parent=-1 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=4 mask=- adjustment=Invert/0/3ff0000000000000/3ff0000000000000/0/3ff0000000000000/0/0/0 channels=0,1,2,3,4,5
+3 name=all kind=Raster parent=-1 id=0000006800000000 visible=1 opacity=255 mode=Normal clip=0 locks=8 mask=- pixels=8969833464a3afb5 channels=0
+4 name=in locked folder kind=Raster parent=5 id=0000006900000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+5 name=locked folder kind=Group parent=-1 id=0000006a01320000 visible=1 opacity=255 mode=PassThrough clip=0 locks=8 mask=-
+6 name=everything kind=Raster parent=-1 id=0000006b00000000 visible=1 opacity=255 mode=Normal clip=0 locks=8 mask=- pixels=8969833464a3afb5 channels=0
+7 name=plain kind=Raster parent=-1 id=0000006c00000000 visible=1 opacity=255 mode=Normal clip=0 locks=5 mask=- pixels=3ce1ce8cf2044365 channels=0
+composite 3ce1ce8cf2044365

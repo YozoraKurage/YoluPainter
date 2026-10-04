@@ -596,8 +596,9 @@ impl Document {
         for (l, p) in self.layers.iter_mut().zip(parents) {
             l.parent = *p;
         }
+        // 全部の層を 1 枚ずつ（グループの子孫もここで全部通るので、グループごとに子孫を数え直さない）
         for i in 0..self.layers.len() {
-            self.mark_layer(i, None);
+            self.mark_layer_alone(i, None);
         }
         self.external_mutation();
         Ok(())

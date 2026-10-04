@@ -1,0 +1,1 @@
+Adjustment layer 'between': PSD Hue/Saturation stores whole degrees and whole percents; this setting is between them. Native project can still be saved losslessly.

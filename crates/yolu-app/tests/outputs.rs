@@ -876,11 +876,16 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
 }
 
 #[test]
-fn exporting_a_psd_refuses_a_mask_with_the_reason_and_writes_nothing() {
+fn exporting_a_psd_refuses_an_inverted_mask_with_the_reason_and_writes_nothing() {
     let dir = TempDir::new("psd-refuse");
     let mut h = app(1280.0, 800.0, 64);
     let layer = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::AddMask(layer)));
+    // マスクそのものは PSD に書ける。書けないのは PSD に非破壊の反転が無い、反転したマスク
+    apply(
+        &mut h,
+        Action::M2(yolu_app::m2::Edit::MaskInverted(layer, true)),
+    );
     apply(
         &mut h,
         Action::Psd(PsdAction::Export(dir.0.join("out.psd"))),

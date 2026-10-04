@@ -1462,29 +1462,42 @@ impl Document {
     // ───────── 変化の記録の印 ─────────
 
     /// 層が変わったことにする（C# の MarkLayerChanged）: ラスターは面のあるタイル、塗りつぶし・調整は画布全体、グループは中身と
-    /// グループのマスクのタイル。channel が None なら全チャンネル。
+    /// グループのマスクのタイル。channel が None なら全チャンネル。グループは自分と子孫の全部を `mark_layer_alone` で 1 回ずつ
+    /// （入れ子のグループごとに子孫を数え直すと、入れ子の段数の指数の時間になる）。
     fn mark_layer(&mut self, index: usize, channel: Option<Channel>) {
+        let mut targets: Vec<usize> = Vec::new();
+        if self.layers[index].is_group() {
+            let id = self.layers[index].id;
+            targets.extend((0..self.layers.len()).filter(|&i| self.is_descendant(i, id)));
+        }
+        targets.push(index);
+        for i in targets {
+            self.mark_layer_alone(i, channel);
+        }
+    }
+
+    /// 層 1 枚だけの印（グループは自分のマスクのタイルだけ。中身の層は `mark_layer` が子孫として別に呼ぶ）。層ごとにすることは、
+    /// 入れ子の中の層にも漏れなく働くよう、ここに置く。
+    fn mark_layer_alone(&mut self, index: usize, channel: Option<Channel>) {
+        // マスクの Anchor を読む段のために、この層のマスクの出力が変わったことを数える（入れ子の中の層も 1 回ずつ）
         self.note_mask_output(index);
-        let layer = &self.layers[index];
-        if layer.is_group() {
-            let id = layer.id;
-            let descendants: Vec<usize> = (0..self.layers.len())
-                .filter(|&i| self.is_descendant(i, id))
-                .collect();
-            for i in descendants {
-                self.mark_layer(i, channel);
-            }
-            if let Some(m) = &self.layers[index].mask {
-                let coords = m.surface.tile_coords();
-                for c in self.mark_targets(channel) {
-                    for coord in &coords {
-                        self.journal.mark(c, *coord);
-                    }
+        if self.layers[index].is_group() {
+            self.mark_mask(index, channel);
+        } else {
+            self.mark_layer_object(index, None, channel);
+        }
+    }
+
+    /// 層のマスクのタイルを変わったことにする（マスクが無ければ何もしない）。
+    fn mark_mask(&mut self, index: usize, channel: Option<Channel>) {
+        if let Some(m) = &self.layers[index].mask {
+            let coords = m.surface.tile_coords();
+            for c in self.mark_targets(channel) {
+                for coord in &coords {
+                    self.journal.mark(c, *coord);
                 }
             }
-            return;
         }
-        self.mark_layer_object(index, None, channel);
     }
 
     /// グループでない層の印（層は文書の index か、文書の外の object）。

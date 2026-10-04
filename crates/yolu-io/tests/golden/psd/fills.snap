@@ -1,0 +1,9 @@
+canvas 24 16
+diagnostics 
+0 name=bg kind=Raster parent=-1 id=0000006500000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=3ce1ce8cf2044365 channels=0
+1 name=paint kind=Fill parent=-1 id=0000006600000000 visible=1 opacity=128 mode=Multiply clip=0 locks=0 mask=1/0/160/57a78d9808e47425 fill=200,100,50,255 channels=0
+2 name=shape kind=Raster parent=-1 id=0000006700000000 visible=1 opacity=255 mode=Normal clip=0 locks=0 mask=- pixels=8969833464a3afb5 channels=0
+3 name=clipped fill kind=Fill parent=-1 id=0000006800000000 visible=1 opacity=90 mode=Normal clip=1 locks=0 mask=- fill=250,20,20,255 channels=0
+4 name=hidden kind=Fill parent=-1 id=0000006900000000 visible=0 opacity=255 mode=Normal clip=0 locks=0 mask=- fill=1,2,3,255 channels=0
+5 name=overlay kind=Fill parent=-1 id=0000006a00000000 visible=1 opacity=255 mode=Overlay clip=0 locks=0 mask=- fill=10,200,30,255 channels=0
+composite bac9e17f4ea5ab84
