@@ -428,6 +428,9 @@ fn the_settings_window_opens_from_the_view_menu_and_edits_every_value_into_the_f
     pick(&mut h, "CPU のスレッド: 自動（8）", "4");
     assert_eq!(h.state().state.prefs.settings.cpu_threads, Some(4));
     let _ = h.get_by_label("CPU のスレッド: 4 ・ 再起動で反映");
+    h.get_by_label("起動時に Live Link を待ち受ける").click();
+    h.run();
+    assert!(!h.state().state.settings().livelink_on_startup);
     shot(&mut h, "prefs_window_changed");
     // 言語（選ぶと窓の文言も替わる）
     pick(&mut h, "言語: 日本語", "English");
@@ -449,6 +452,7 @@ fn the_settings_window_opens_from_the_view_menu_and_edits_every_value_into_the_f
         "stroke_budget_mib=256",
         "cpu_threads=4",
         "compositing=cpu",
+        "livelink_on_startup=off",
     ] {
         assert!(written.lines().any(|l| l == line), "{line}\n{written}");
     }
@@ -466,6 +470,7 @@ fn the_settings_window_opens_from_the_view_menu_and_edits_every_value_into_the_f
     assert_eq!(s.export.padding, 8);
     assert_eq!(s.prefs.settings.cpu_threads, Some(4));
     assert_eq!(s.prefs.threads_at_start, Some(4));
+    assert!(!s.settings().livelink_on_startup);
     assert_eq!(s.prefs.settings.compositing, Compositing::Cpu);
     assert_eq!(s.doc.undo_budget_bytes(), 512 * MIB, "文書にも入っている");
     assert_eq!(s.doc.source_budget_bytes(), 4096 * MIB);

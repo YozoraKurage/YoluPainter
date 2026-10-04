@@ -261,7 +261,24 @@ impl YoluApp {
         app.open_startup_project(std::env::args_os());
         // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際の窓だけ。試験は呼ばない）
         app.state.update_startup();
+        app.start_live_link(&cc.egui_ctx, std::env::args_os());
         app
+    }
+
+    /// 実アプリ起動時の待ち受け。試験は接続名と引数を差し替えて同じ経路を通す。
+    pub fn start_live_link(
+        &mut self,
+        ctx: &egui::Context,
+        args: impl Iterator<Item = std::ffi::OsString>,
+    ) {
+        let forced = args.skip(1).any(|arg| arg == "--livelink");
+        if self.state.prefs.settings.livelink_on_startup || forced {
+            // 起動時の知らせを待機の文で上書きしない。状態は右端の印とツールチップに出す。
+            let message = self.state.message.clone();
+            self.link.start(ctx, &mut self.state);
+            self.state.message = message;
+            self.state.link = self.link.view();
+        }
     }
 
     /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧の窓が開く）。始められなければ使わず、理由を状態の帯に出す。
@@ -1127,8 +1144,8 @@ fn canvas_backend(setting: crate::settings::Compositing) -> crate::canvas::gpu::
 
 /// 起動の引数（実行ファイルの名前のあと）が .ylp ならそのパス。関連付けとエクスプローラーの「プログラムから開く」が渡す形。
 /// 無い・開けないファイルでも渡す（黙って空の画面を出さず、開く処理が理由を知らせる）。.ylp 以外は開かない。
-fn startup_project(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<std::path::PathBuf> {
-    let path = std::path::PathBuf::from(args.nth(1)?);
+fn startup_project(args: impl Iterator<Item = std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(args.skip(1).find(|arg| arg != "--livelink")?);
     path.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("ylp"))
         .then_some(path)
@@ -1166,6 +1183,57 @@ impl eframe::App for YoluApp {
 mod tests {
     use super::*;
     use crate::lang::Lang;
+
+    #[test]
+    fn live_link_startup_obeys_settings_and_explicit_launch_flag() {
+        let ctx = egui::Context::default();
+        for (i, (enabled, flag, expected)) in [
+            (true, false, true), (false, false, false),
+            (false, true, true), (true, true, true),
+        ].into_iter().enumerate() {
+            let mut app = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
+            let name = format!("yl-start-{}-{i}", std::process::id());
+            app.link.set_name(&name).unwrap();
+            app.state.prefs.settings.livelink_on_startup = enabled;
+            app.state.message = "起動時の知らせ".into();
+            let mut args = vec![std::ffi::OsString::from("yolupainter")];
+            if flag { args.push("--livelink".into()); }
+            app.start_live_link(&ctx, args.into_iter());
+            assert_eq!(app.state.link.is_on(), expected);
+            assert_eq!(app.state.message, "起動時の知らせ");
+            assert_eq!(yolu_protocol::link::connect(&name).is_ok(), expected);
+            if expected {
+                assert_eq!(app.state.link.status, crate::livelink::LinkStatus::Listening);
+            }
+        }
+    }
+
+    #[test]
+    fn live_link_startup_conflict_keeps_the_existing_listener_and_shows_failure() {
+        let ctx = egui::Context::default();
+        let name = format!("yl-start-busy-{}", std::process::id());
+        let mut first = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
+        let mut second = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
+        for app in [&mut first, &mut second] {
+            app.link.set_name(&name).unwrap();
+            app.start_live_link(&ctx, ["yolupainter"].into_iter().map(Into::into));
+        }
+        assert_eq!(first.state.link.status, crate::livelink::LinkStatus::Listening);
+        assert!(matches!(second.state.link.status, crate::livelink::LinkStatus::Failed(_)));
+        assert!(!second.state.link.tooltip(Lang::Ja).is_empty());
+        assert!(yolu_protocol::link::connect(&name).is_ok());
+    }
+
+    #[test]
+    fn live_link_flag_preserves_project_arguments_in_either_order() {
+        for args in [
+            vec!["yolupainter", "--livelink", "sample.ylp"],
+            vec!["yolupainter", "sample.ylp", "--livelink"],
+        ] {
+            assert_eq!(startup_project(args.into_iter().map(Into::into)), Some("sample.ylp".into()));
+        }
+        assert_eq!(startup_project(["yolupainter", "--livelink"].into_iter().map(Into::into)), None);
+    }
 
     #[test]
     fn only_an_existing_ylp_argument_opens_at_startup() {

@@ -153,6 +153,8 @@ pub struct Settings {
     pub navigation: crate::view3d::navigation::Preferences,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
+    /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
+    pub livelink_on_startup: bool,
 }
 
 impl Default for Settings {
@@ -172,6 +174,7 @@ impl Default for Settings {
             navigation: crate::view3d::navigation::Preferences::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
+            livelink_on_startup: true,
         }
     }
 }
@@ -402,6 +405,7 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
+            "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -495,6 +499,9 @@ fn render(settings: &Settings) -> String {
     }
     settings.navigation.write(&mut text);
     crate::uv_wireframe::save_settings(&mut text, settings);
+    if !settings.livelink_on_startup {
+        text += "livelink_on_startup=off\n";
+    }
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -566,7 +573,23 @@ mod tests {
             navigation: crate::view3d::navigation::Preferences::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
+            livelink_on_startup: true,
         }
+    }
+
+    #[test]
+    fn live_link_startup_defaults_on_and_survives_restart_when_disabled() {
+        let dir = temp_dir("livelink");
+        let path = dir.join("settings.conf");
+        assert!(load(&path).0.livelink_on_startup);
+        let off = Settings { livelink_on_startup: false, ..Settings::default() };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_on_startup=off"));
+        save(&path, &Settings::default()).unwrap();
+        assert_eq!(load(&path), (Settings::default(), vec![]));
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("livelink_on_startup"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

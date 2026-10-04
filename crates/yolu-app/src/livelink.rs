@@ -1,7 +1,7 @@
 //! Live Link のスタンドアロンの側（yolu-link-demo の作りを画面に載せたもの）。Unity のエディタの YoluPainter（Live Link の受け口）が
 //! つなぎ、シーンのモデルを送ってくる。描いたテクスチャは共有メモリで返し、Unity が本物のマテリアルで見せる。
 //!
-//! - ファイル ▸ Live Link で待ち受ける（名前は既定で `yolupainter-livelink`、環境変数 `YOLUPAINTER_LINK_NAME` で替えられる）。Unity の
+//! - 起動時（設定で切れる）・--livelink・ファイル ▸ Live Link で待ち受ける（名前は既定で `yolupainter-livelink`、環境変数 `YOLUPAINTER_LINK_NAME` で替えられる）。Unity の
 //!   ブリッジが挨拶すると、読める版を取り決めて返す。重ならなければ断り、状態の帯に版の不一致を出す。つなげる Unity は 1 つで、
 //!   2 つ目は Busy で断る。
 //! - モデル（Model）を受けたら、マテリアルごとにテクスチャセットを結び付け・作り（`sets`）、目を開いていて Unity が Color を見せられる

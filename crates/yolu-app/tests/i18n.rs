@@ -1114,3 +1114,21 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu
         assert_eq!(seen, known, "{lang:?}: 詰められた文字が一覧と違う。新しく詰まったなら配置を直す。直したなら一覧から消す");
     }
 }
+
+#[test]
+fn live_link_startup_can_be_toggled_in_both_languages() {
+    use yolu_app::prefs::PrefsAction;
+    for lang in Lang::ALL {
+        let mut h = english_app_sized(1280.0, 800.0, lang);
+        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.run();
+        let label = lang.pick("起動時に Live Link を待ち受ける", "Start Live Link on launch");
+        assert!(h.state().state.settings().livelink_on_startup);
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, label).click();
+        h.run();
+        assert!(!h.state().state.settings().livelink_on_startup);
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, label).click();
+        h.run();
+        assert!(h.state().state.settings().livelink_on_startup);
+    }
+}

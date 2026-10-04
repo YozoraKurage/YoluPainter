@@ -1125,3 +1125,33 @@ fn strokes_in_the_3d_view_paint_the_set_and_go_back_to_unity() {
     assert_eq!(shown.triangle_count(), 1);
     assert!(shown.geometry.triangles().iter().all(|t| t.material == 0));
 }
+
+#[test]
+fn headless_new_document_gets_material_sets_and_painted_document_is_preserved() {
+    for painted in [false, true] {
+        let (mut app, name) = Headless::listen(256, if painted { "keep" } else { "new" });
+        assert!(app.state.is_pristine());
+        if painted { app.paint((100.0, 128.0), (140.0, 128.0)); }
+        let id = app.state.doc.id();
+        let revision = app.state.doc.revision();
+        let pixel = composite_pixel(&app.state.doc, 128, 128);
+        let undo = app.state.doc.can_undo();
+        let unity = FakeUnity::connect(&name);
+        app.until("接続", |s| matches!(s.link.status, LinkStatus::Connected { .. }));
+        for generation in [1, 2] {
+            unity.send(Message::Model(model(generation, vec![
+                material("First", 256, true), material("Second", 512, true),
+            ])));
+            app.until("モデル受信", |s| s.model.as_ref().is_some_and(|m| m.generation == generation));
+            assert_eq!(app.state.sets.len(), 2);
+            assert_eq!(app.state.sets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+            assert_eq!(app.state.doc.id(), id);
+            assert_eq!(app.state.doc.revision(), revision);
+            assert_eq!(app.state.doc.can_undo(), undo);
+            assert_eq!(composite_pixel(&app.state.doc, 128, 128), pixel);
+            assert_eq!(app.state.set_doc(1).width(), 512);
+        }
+        unity.send(Message::Bye);
+        app.until("切断", |s| s.link.status == LinkStatus::Listening);
+    }
+}

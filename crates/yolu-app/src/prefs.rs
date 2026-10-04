@@ -51,6 +51,7 @@ pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
 pub enum Pref {
     /// 書き出しの余白（テクセル。-1 は届くかぎり全部）。
     ExportPadding(i32),
+    LiveLinkOnStartup(bool),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -174,6 +175,7 @@ impl AppState {
             }
             PrefsAction::ChooseLibraryFolder => self.dialog_request = Some(DialogRequest::PrefsLibraryFolder),
             PrefsAction::Set(pref) => match pref {
+                Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::ExportPadding(v) => {
                     if EXPORT_PADDINGS.contains(&v) {
                         self.prefs.settings.export_padding = v;
@@ -378,7 +380,7 @@ fn window_height() -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     window::HEADER_HEIGHT
         + 8.0
-        + dropdown * 2.0 // 言語・書き出しの余白
+        + dropdown * 3.0 // 言語・Live Link・書き出しの余白
         + SEPARATOR
         + dropdown * 3.0 // 予算
         + t::SLIDER_ROW_HEIGHT
@@ -442,6 +444,21 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             lang.pick("画面の言語", "The language of the screen"),
             PrefChoice::Language,
         ));
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("livelink-on-startup"),
+            lang.pick("起動時に Live Link を待ち受ける", "Start Live Link on launch"),
+            s.livelink_on_startup,
+            Some(lang.pick(
+                "次の起動から反映。--livelink を付けて起動すると、この設定によらず待ち受けます",
+                "Applies on the next launch. Launching with --livelink always starts listening",
+            )),
+            enabled,
+        );
+        if next != s.livelink_on_startup {
+            requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkOnStartup(next))));
+        }
         requests.extend(choice(
             ui,
             &mut rows,

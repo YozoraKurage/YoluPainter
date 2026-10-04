@@ -154,7 +154,7 @@ Mac では表の `Ctrl` を `Command` に読み替えてください。メニュ
 
 同じ PC で動く Unity エディターと接続します。Unity 2022.3 のプロジェクトに、**Live Link 対応の Unity 版 YoluPainter（VPM パッケージ `net.yozolab.yolupainter`）と OS に合うネイティブブリッジ**が必要です。`YozoLab → YoluPainter → Live Link` がない版では、この接続は利用できません。Windows 用は `yolu_bridge.dll`、Linux 用は `libyolu_bridge.so` です。
 
-1. スタンドアロンを起動し、「ファイル → Live Link」を有効にします。下の状態欄に Unity を待っていることが表示されます。
+1. スタンドアロンを起動します。既定では Live Link を待ち受け、メニューバー右端の印に状態が出ます。「表示 → 設定…」の「起動時に Live Link を待ち受ける」で次回からの自動待ち受けを切れます。`--livelink` を付けて起動すると、設定によらず待ち受けます。手動で始めるには「ファイル → Live Link」を使います。
 2. Unity で `YozoLab → YoluPainter → Live Link` を開きます。接続名（`Link name`）を `yolupainter-livelink` にして `Connect` を押します。
 3. シーンのモデルのゲームオブジェクトを指定します。選択中のものなら `Use selection` を押し、`Send model` で送ります。
 4. スタンドアロンのテクスチャセット欄でマテリアルを選び、2D または 3D ビューで描きます。表示中で、Unity 側に Color の反映先があるセットの合成結果が Unity に送られます。
