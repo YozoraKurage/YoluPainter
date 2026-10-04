@@ -41,6 +41,7 @@ pub mod prefs;
 pub mod project;
 pub mod psd;
 pub mod psd_export;
+pub mod psd_import;
 pub mod recovery;
 pub mod region;
 pub mod selection;

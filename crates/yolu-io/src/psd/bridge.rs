@@ -39,7 +39,7 @@ pub(super) fn psd_locks(locks: LayerLocks) -> u32 {
     bits
 }
 /// `psd_locks` の逆。
-fn core_locks(bits: u32) -> LayerLocks {
+pub(super) fn core_locks(bits: u32) -> LayerLocks {
     let mut locks = LayerLocks::NONE;
     for (bit, lock) in [
         (1, LayerLocks::TRANSPARENCY),
@@ -405,7 +405,7 @@ pub(super) fn divider_part(id: LayerId) -> i32 {
     ((((id.0 >> 80) & 0xffff) as u32) | ((((id.0 >> 64) & 0xffff) as u32) << 16)) as i32
 }
 /// `divider_part` の逆（取り込みで区切りの ID を core の層 ID に持つ）。
-fn divider_bits(divider: i32) -> u128 {
+pub(super) fn divider_bits(divider: i32) -> u128 {
     let d = divider as u32;
     (u128::from(d & 0xffff) << 80) | (u128::from(d >> 16) << 64)
 }
@@ -442,7 +442,7 @@ fn order<'a>(top_down: &'a [Layer], parent: Option<usize>, out: &mut Vec<Item<'a
         out.push(Item { layer: l, parent })
     }
 }
-fn mask_off_canvas(m: &Mask, width: u32, height: u32) -> bool {
+pub(super) fn mask_off_canvas(m: &Mask, width: u32, height: u32) -> bool {
     let (w, h) = (i64::from(width), i64::from(height));
     (0..m.height).any(|y| {
         (0..m.width).any(|x| {
@@ -511,8 +511,65 @@ impl Document {
         }
         Ok(())
     }
+    /// ラスターの層の画素を core の Color の面へ。`import_pixels` と違い、画布からはみ出す層は、はみ出した所を入れずに切る
+    /// （アルファが 0 でない画素を切ったら true を返す。透明の画素は、切っても何も失わない）。層の画素が空の層は何もしない。
+    pub(super) fn import_pixels_clipped(
+        &self,
+        d: &mut CoreDocument,
+        id: LayerId,
+        l: &Layer,
+    ) -> Result<bool> {
+        if l.width == 0 || l.height == 0 {
+            return Ok(false);
+        }
+        let (cw, ch) = (i64::from(self.width), i64::from(self.height));
+        let (left, top) = (i64::from(l.left), i64::from(l.top));
+        let (right, bottom) = (left + i64::from(l.width), top + i64::from(l.height));
+        let (x0, x1) = (left.max(0), right.min(cw));
+        let (y0, y1) = (top.max(0), bottom.min(ch));
+        let mut clipped = false;
+        if x0 != left || x1 != right || y0 != top || y1 != bottom {
+            for y in 0..i64::from(l.height) {
+                let row_outside = top + y < y0 || top + y >= y1;
+                for x in 0..i64::from(l.width) {
+                    if (row_outside || left + x < x0 || left + x >= x1)
+                        && l.pixels_rgba[(y as usize * l.width as usize + x as usize) * 4 + 3] != 0
+                    {
+                        clipped = true;
+                        break;
+                    }
+                }
+                if clipped {
+                    break;
+                }
+            }
+        }
+        if x0 >= x1 || y0 >= y1 {
+            return Ok(clipped);
+        }
+        let ts = d.tile_size();
+        // core の行は下から。PSD の行 y0..y1 は core の行 (高さ − y1)..(高さ − y0)
+        let (cx0, cx1) = (x0 as u32, x1 as u32);
+        let (cy0, cy1) = ((ch - y1) as u32, (ch - y0) as u32);
+        let mut tile = vec![0u8; (ts * ts * 4) as usize];
+        for ty in cy0 / ts..cy1.div_ceil(ts) {
+            for tx in cx0 / ts..cx1.div_ceil(ts) {
+                tile.fill(0);
+                for y in (ty * ts).max(cy0)..((ty + 1) * ts).min(cy1) {
+                    let row = (ch - 1 - i64::from(y) - top) as usize;
+                    for x in (tx * ts).max(cx0)..((tx + 1) * ts).min(cx1) {
+                        let src = (row * l.width as usize + (i64::from(x) - left) as usize) * 4;
+                        let dest = ((y % ts) * ts + x % ts) as usize * 4;
+                        tile[dest..dest + 4].copy_from_slice(&l.pixels_rgba[src..src + 4])
+                    }
+                }
+                d.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &tile)?;
+            }
+        }
+        Ok(clipped)
+    }
     /// マスクを core へ。core は隠す量（255 − PSD の値）を持ち、何も隠さないタイルは持たないので、隠す所のあるタイルだけを入れる。
-    fn import_mask(&self, d: &mut CoreDocument, id: LayerId, m: &Mask) -> Result<()> {
+    pub(super) fn import_mask(&self, d: &mut CoreDocument, id: LayerId, m: &Mask) -> Result<()> {
         d.add_layer_mask(id)?;
         let (w, h, ts) = (self.width, self.height, d.tile_size());
         let mut tile = vec![0u8; (ts * ts * 4) as usize];

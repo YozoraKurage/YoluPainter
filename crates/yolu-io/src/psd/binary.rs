@@ -4,6 +4,8 @@ pub(super) struct Reader<'a> {
     pub data: &'a [u8],
     pub pos: usize,
     pub end: usize,
+    /// 予約領域・余白がゼロでなくても断らない（写しとしての取り込み。原本を保つ読みは厳密）。
+    pub lenient: bool,
 }
 impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
@@ -11,6 +13,13 @@ impl<'a> Reader<'a> {
             data,
             pos: 0,
             end: data.len(),
+            lenient: false,
+        }
+    }
+    pub fn lenient(data: &'a [u8]) -> Self {
+        Self {
+            lenient: true,
+            ..Self::new(data)
         }
     }
     pub fn remaining(&self) -> usize {
@@ -34,6 +43,7 @@ impl<'a> Reader<'a> {
             data: self.data,
             pos,
             end: pos + n,
+            lenient: self.lenient,
         })
     }
     pub fn section(&mut self) -> Result<Self> {
@@ -62,7 +72,8 @@ impl<'a> Reader<'a> {
         Ok(self.take(4)?.try_into().unwrap())
     }
     pub fn zeros(&mut self, n: usize) -> Result<()> {
-        if self.take(n)?.iter().any(|b| *b != 0) {
+        let lenient = self.lenient;
+        if self.take(n)?.iter().any(|b| *b != 0) && !lenient {
             return self.fail("予約領域・余白がゼロではありません");
         }
         Ok(())
@@ -72,14 +83,18 @@ impl<'a> Reader<'a> {
             n.checked_mul(2)
                 .ok_or_else(|| Error::InvalidData("UTF-16 長のオーバーフロー".into()))?,
         )?;
-        String::from_utf16(
-            &b.as_chunks::<2>()
-                .0
-                .iter()
-                .map(|b| u16::from_be_bytes([b[0], b[1]]))
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|_| Error::InvalidData(format!("{}: 不正なUTF-16", self.pos)))
+        let units = b
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
+            .collect::<Vec<_>>();
+        if self.lenient {
+            // 写しとしての取り込み: 対にならない代用対は置き換え文字にして読む
+            return Ok(String::from_utf16_lossy(&units));
+        }
+        String::from_utf16(&units)
+            .map_err(|_| Error::InvalidData(format!("{}: 不正なUTF-16", self.pos)))
     }
 }
 pub(super) trait Emit {

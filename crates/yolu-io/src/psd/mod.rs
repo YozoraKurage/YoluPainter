@@ -5,6 +5,7 @@ mod binary;
 mod bridge;
 mod composite;
 mod descriptor;
+mod import;
 mod read;
 mod write;
 use crate::{check, Result};
@@ -13,6 +14,10 @@ pub use bake::{
     ExportPlan, Exported, FillSources, NoteAction, RoundedParameter, RoundedValue,
 };
 pub use bridge::{Blocker, Refusal};
+pub use import::{
+    import_copy, CopyImport, CopyOptions, CopyOutcome, CopyRefusal, ImportAction, ImportDetail,
+    ImportFeature, ImportNote, Unchecked, ADJUSTMENT_TAG_KEYS,
+};
 pub use read::{read, read_cancellable, read_stream};
 pub use write::{write, write_edited};
 
