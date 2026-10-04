@@ -61,7 +61,8 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 書体を変更して配る場合は、予約された書体名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
 [既存のアイコンの表記](crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
-アイコンは下表のクレート件数には含めない。
+アイコン 91 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
+Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
 
 ### 同梱の画面の書体（BIZ UDPGothic）
 
@@ -69,7 +70,8 @@ Fluent UI System Icons と Phosphor Icons は MIT。
 埋め込み、全 OS で同じ書体を使う。許諾は **SIL Open Font License 1.1**。
 配布元は [googlefonts/morisawa-biz-ud-gothic](https://github.com/googlefonts/morisawa-biz-ud-gothic) のリリース v1.051
 （コミット `18934af56b9c003ca58c54bffbf226848cb11032`）の TTF で、加工せずに `crates/yolu-app/assets/fonts/` へ置く。
-許諾の全文は同じ場所の `OFL.txt`（配布元の同じコミットの原文）で、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
+許諾の全文は同じ場所の `OFL.txt`（配布元の同じコミットの原文）と
+[書体の第三者表記](crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
 （アイコンと同じ扱い）。
 
 | 同梱ファイル | SHA-256 |
@@ -78,8 +80,8 @@ Fluent UI System Icons と Phosphor Icons は MIT。
 | `BIZUDPGothic-Bold.ttf` | `3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8` |
 | `OFL.txt` | `e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc` |
 
-この SHA-256 と許諾の種類は `tools/licenses-reviewed.json` の `bundled` に固定し、`tools/third-party.py` が app の照合のたびに確かめる
-（ファイルが原本から変わっていれば要確認で、全文束を作らない）。書体を加工して配る場合は、予約された書体名などの条件を再確認する。
+書体・アイコン・筆先の各ファイルと表記の SHA-256、許諾の種類は `tools/licenses-reviewed.json` の `bundled` に固定し、`tools/third-party.py` が app の照合のたびに確かめる
+（確認済みファイルの変更・欠落、対象フォルダーへの未登録ファイルの追加では全文束を作らない）。書体を加工して配る場合は、予約された書体名などの条件を再確認する。
 
 `libz-sys` の Rust 側は MIT を選び、同梱 zlib の Zlib 許諾も含める。
 `unicode-ident` の Unicode-3.0、ビルド用 `regex-syntax` の Unicode データの Unicode-DFS-2016、
@@ -105,9 +107,13 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 ## 同梱の筆先とブラシ形式
 
 `crates/yolu-brush-sets/data/krita4/brushes/` は、Krita の `Krita_4_Default_Resources.bundle` の筆先 76 個（`.png`・`.gih`・`.gbr`）を
-1 バイトも変えずに持つ。束の `meta.xml`（許諾 **CC0 1.0** の宣言）、`SHA256SUMS`、出どころと束の SHA-256 を書いた `README.md` も原本のまま同じ場所にある。
+1 バイトも変えずに持つ。束の原本の `meta.xml`（許諾 **CC0 1.0** の宣言）と、取り込み時に作成した
+`SHA256SUMS`・出どころと束の SHA-256 を書いた `README.md` は `crates/yolu-brush-sets/data/krita4/` にある。
 作者の表記（CC0 では不要）: David Revoy（Deevad）と、Ramon Miranda・Razvanc・Radian・Wolthera・Storm・Scottyp ほかの派生、Krita プロジェクト。
 Krita のプリセット（`.kpp`）・SVG の筆先・パターンは入れていない。このアプリでの設定（半径・間隔など）は独自のもの。
+[筆先の第三者表記](crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
+`tools/licenses-reviewed.json` で筆先 76 個・元の宣言・取り込み記録・表記のハッシュを照合する。
+ロゴを除くアプリの同梱画像はこの筆先と前述のアイコンであり、試験の fixtures・snapshots は配布へ含めない。
 
 ブラシ形式の読み手は公開された形式の説明から書いた。他のプロジェクトのコードは使っていない:
 GIMP の `gbr.txt`・`gih.txt`・`vbr.txt`（devel-docs）、Photoshop File Formats Specification（版 1・2 のブラシ、記述子、パターン）、
@@ -153,13 +159,15 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 
 原文取得後は `--offline` でも同じ照合ができる。
 配布物には対象ごとの `THIRD_PARTY.md` を `DEPENDENCIES.md`、全文を `THIRD_PARTY_LICENSES.txt` として同梱する。
+`LICENSE`・この `THIRD_PARTY.md`・`README.md` も同梱する。zip・tar.gz とインストーラーは
+`xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](docs/RELEASING.md) と一致する。
 別の対象の一覧を流用しない。結果は `target/third-party/<target>/<クレート>/` に出力する。
 
 | 対象 | app（更新依存込み） | bridge | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 194 | 27 | 31 | 49 | 生成成功 |
-| Windows GNU | 194 | 27 | 31 | 49 | 生成成功 |
-| Linux GNU | 271 | 24 | 31 | 54 | 判断待ち |
+| Windows MSVC | 200 | 27 | 31 | 49 | 生成成功 |
+| Windows GNU | 200 | 27 | 31 | 49 | 生成成功 |
+| Linux GNU | 274 | 24 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
@@ -169,11 +177,59 @@ Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` 
 `blocked` を維持する。以下の Linux 集計の MIT 件数にはこの 2 件も含まれるが、許可済みという意味ではない。
 Linux app の全文束は生成せず、依存の変更・削除も行わない。bridge・update・xtask の照合は成功する。
 
+## Cargo.lock 全体と試験専用の依存
+
+`python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU の workspace 全体を調べる。
+通常・ビルド依存に加えて試験依存の原文も照合し、他 OS・無効な機能の依存を含む lock 全件を
+`target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
+配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
+
+照合した Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。外部クレート 462 件の内訳は次のとおり。
+
+| 範囲（3 対象の和集合、同名の別版は別件） | 件数 | 結果 |
+|---|---:|---|
+| 通常・ビルド依存 | 317 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
+| 試験専用 | 13 | MIT 12 件は原文を照合。MPL-2.0 1 件は未承認 |
+| 対象外（他 OS・現在無効な機能） | 132 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
+| Cargo.lock に無い古い登録 | 0 | 削除なし |
+
+試験専用の一覧（配布用全文束には含めない）:
+
+| クレート | 版 | 宣言 | 選択・状態 |
+|---|---|---|---|
+| anyhow | 1.0.104 | MIT OR Apache-2.0 | MIT |
+| colored | 2.2.0 | MPL-2.0 | 未承認 |
+| dify | 0.8.0 | MIT | MIT |
+| egui_kittest | 0.36.2 | MIT OR Apache-2.0 | MIT |
+| getopts | 0.2.24 | MIT OR Apache-2.0 | MIT |
+| getrandom | 0.4.3 | MIT OR Apache-2.0 | MIT |
+| is-docker | 0.2.0 | MIT | MIT |
+| is-wsl | 0.4.0 | MIT | MIT |
+| kittest | 0.4.0 | MIT OR Apache-2.0 | MIT |
+| lazy_static | 1.5.1 | MIT OR Apache-2.0 | MIT |
+| open | 5.4.4 | MIT | MIT |
+| tempfile | 3.27.0 | MIT OR Apache-2.0 | MIT |
+| windows-sys | 0.59.0 | MIT OR Apache-2.0 | MIT |
+
+`egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
+現在の製品の依存には含まれない。上記の lock 監査はこの 1 件と Linux の 2 件で終了 1 となる。
+
+全 462 件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した。Linux の既知の 2 件に加え、
+対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
+現在の Windows・Linux の依存には含まれないが、このクレートを使う対象・機能を追加するときは判断が必要。
+`self_cell` の GPL は Apache-2.0 と選択できる条件、対象外の `r-efi 5.3.0`・`6.0.0` の LGPL は MIT・Apache-2.0 と選択できる条件。
+`colored` 原文の GPL の言及は MPL の Secondary License の定義であり、GPL を選択した記録ではない。
+`x11rb 0.13.2` の `examples/record.rs` は GPLv3 のサンプルを元にした旨の表記があるが、製品で使うライブラリにこの examples は含めない。
+ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` の試験用ファイル名一覧、
+前述の `tree_magic_mini` の無効な `with-gpl-data` 機能と変更履歴である。
+AGPL の表記は検出しなかった。文字列検索だけで許諾の不存在を保証するものではない。
+依存構成と各クレートの blocked は解除していない。
+
 ## Windows MSVC の製品別一覧
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 200 件（同名の別版は別件）。実行時 164 件。
 
@@ -400,7 +456,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
@@ -450,7 +506,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 200 件（同名の別版は別件）。実行時 164 件。
 
@@ -677,7 +733,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
@@ -727,7 +783,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `ac6d4977b9dbef036f3799ddc1fb6ac7e38c1a1782e973fe7e039d6772f3a097`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 274 件（同名の別版は別件）。実行時 231 件。
 
@@ -750,11 +806,11 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
-| accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| accesskit_atspi_common | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| accesskit_consumer | 0.36.0 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| accesskit_unix | 0.21.1 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| accesskit_winit | 0.32.2 | 実行時 | Apache-2.0 | Apache-2.0 | 未取得の原文です。初回は --offline を外してください |
+| accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| accesskit_atspi_common | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| accesskit_consumer | 0.36.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| accesskit_unix | 0.21.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| accesskit_winit | 0.32.2 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
 | ahash | 0.8.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | allocator-api2 | 0.2.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -812,21 +868,21 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | downcast-rs | 1.2.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | dpi | 0.1.2 | 実行時 | Apache-2.0 AND MIT | Apache-2.0 AND MIT | 確認済み |
 | duplicate | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| ecolor | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| ecolor | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ed25519-dalek | 2.2.0 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | ed25519 | 2.2.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| eframe | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| egui-wgpu | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| egui-winit | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| egui | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| eframe | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| egui-wgpu | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| egui-winit | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| egui | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | egui_dock | 0.21.1 | 実行時 | MIT | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | endi | 1.1.1 | 実行時 | MIT | MIT | 確認済み |
 | enumflags2 | 0.7.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | enumflags2_derive | 0.7.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
-| epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
-| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 未取得の原文です。初回は --offline を外してください / 未取得の原文です。初回は --offline を外してください |
+| epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | errno | 0.3.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -915,7 +971,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | proc-macro-crate | 3.5.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | proc-macro2-diagnostics | 0.10.1 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | proc-macro2 | 1.0.107 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 未取得の原文です。初回は --offline を外してください |
+| profiling | 1.0.18 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | pxfm | 0.1.30 | 実行時 | BSD-3-Clause OR Apache-2.0 | Apache-2.0 | 確認済み |
 | quick-xml | 0.41.0 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | quote | 1.0.47 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -953,7 +1009,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | smithay-client-toolkit | 0.20.0 | 実行時 | MIT | MIT | 確認済み |
 | smithay-clipboard | 0.7.3 | 実行時 | MIT | MIT | 確認済み |
 | smol_str | 0.2.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 未取得の原文です。初回は --offline を外してください |
+| spirv | 0.4.0+sdk-1.4.341.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | static_assertions | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | subtle | 2.6.1 | 実行時 | BSD-3-Clause | BSD-3-Clause | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -972,7 +1028,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | tree_magic_mini | 3.2.2 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 未取得の原文です。初回は --offline を外してください / 未取得の原文です。初回は --offline を外してください |
+| ufbx | 0.11.5 | 実行時 | MIT OR Unlicense | MIT | 確認済み |
 | unicode-general-category | 1.1.0 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | unicode-ident | 1.0.26 | 実行時 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
 | unicode-segmentation | 1.13.3 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1027,7 +1083,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
 
 外部クレート 24 件（同名の別版は別件）。実行時 12 件。
 
@@ -1072,7 +1128,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ## 開発用 xtask の依存一覧
 
-`cargo xtask` 自体は製品に同梱しない。以下は通常依存とビルド依存を含み、試験用依存を除いた集合。
+`cargo xtask` 自体は製品に同梱しない。通常依存とビルド依存を含み、試験用依存を除いた集合。
 各対象で `python3 tools/third-party.py --target <target> --package xtask` を実行して照合した。
 `yolu-update` 単独も同じ指定の `--package yolu-update` で各 31 件を照合済み（その全件は上の app の集合に含まれる）。
 「○」は対象に含まれ原文の照合が成功したもの、「—」は対象外。

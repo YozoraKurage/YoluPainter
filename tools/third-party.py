@@ -73,13 +73,21 @@ def read_source(package, spec, offline):
 
 
 def bundled_assets(package, config):
-    """クレートでない同梱物（実行ファイルに埋め込む書体）の確認。配布元の原本のまま（SHA-256 が合う）で、許容する許諾で、許諾の全文がある
-    ことを確かめ、全文束に足す全文を返す（アイコンと同じく、クレートの件数には含めない）。"""
+    """クレートでない同梱物と表記を SHA-256 で照合し、全文束に加える。"""
     texts, errors = [], []
     for item in config.get('bundled', {}).get(package, []):
         name = f"{item['name']} {item['version']}"
+        if not item['selected'] or not item['files']:
+            errors.append(f'{name}: 許諾または同梱ファイルの登録がありません')
+        for pattern in item.get('file_globs', []):
+            actual = {p.relative_to(ROOT).as_posix() for p in ROOT.glob(pattern) if p.is_file()}
+            reviewed = {spec['path'] for spec in item['files']}
+            for path in sorted(actual - reviewed):
+                errors.append(f'{name}: 未登録の同梱ファイル: {path}')
+        verified = {}
         for license_id in item['selected']:
-            if license_id not in ALLOWED:
+            # CC0 は既存の Krita 筆先で使用。クレートの許容一覧には加えない。
+            if license_id not in ALLOWED | {'CC0-1.0'}:
                 errors.append(f'{name}: 許容外: {license_id}')
         for spec in [*item['files'], item['license_file']]:
             path = (ROOT / spec['path']).resolve()
@@ -92,15 +100,18 @@ def bundled_assets(package, config):
                 errors.append(f"{name}: {spec['path']} を読めません: {exc}")
                 continue
             if digest(data) != spec['sha256']:
-                errors.append(f"{name}: {spec['path']} の SHA-256 が違います（配布元の原本から変わっています）")
+                errors.append(f"{name}: {spec['path']} の SHA-256 が違います（確認済みの内容から変わっています）")
+            else:
+                verified[spec['path']] = data
         license_file = item['license_file']
-        try:
-            text = (ROOT / license_file['path']).read_bytes().decode('utf-8-sig')
-        except (OSError, UnicodeDecodeError):
-            continue
-        if digest((ROOT / license_file['path']).read_bytes()) == license_file['sha256']:
-            origin = f"{item['repository']}/tree/{item['commit']}"
-            texts.append(f'\n{"=" * 72}\n{name}（同梱の書体。{", ".join(item["selected"])}）\n{origin}\n'
+        if license_file['path'] in verified:
+            try:
+                text = verified[license_file['path']].decode('utf-8-sig')
+            except UnicodeDecodeError:
+                errors.append(f'{name}: 許諾の文を UTF-8 として読めません')
+                continue
+            origin = item.get('origin') or f"{item['repository']}/tree/{item['commit']}"
+            texts.append(f'\n{"=" * 72}\n{name}（同梱物。{", ".join(item["selected"])}）\n{origin}\n'
                          f'SHA-256: {license_file["sha256"]}\n\n{text}\n')
     return texts, errors
 
@@ -111,6 +122,13 @@ def inventory(package, metadata, config, offline, include_update=False):
     if include_update:
         keys |= dependency_keys('yolu-update', 'normal,build', offline)
         normal |= dependency_keys('yolu-update', 'normal,no-proc-macro', offline)
+    records, texts, errors = review_packages(keys, normal, metadata, config, offline)
+    bundled_texts, bundled_errors = bundled_assets(package, config)
+    return records, texts + bundled_texts, errors + bundled_errors
+
+
+def review_packages(keys, normal, metadata, config, offline):
+    """指定した集合の宣言・選択条件・原文を同じ規則で照合する。"""
     packages = {}
     for item in metadata['packages']:
         key = item['name'] + '@' + item['version']
@@ -149,8 +167,65 @@ def inventory(package, metadata, config, offline, include_update=False):
                     record['issues'].append(str(exc))
         errors.extend(key + ': ' + issue for issue in record['issues'])
         records.append(record)
-    bundled_texts, bundled_errors = bundled_assets(package, config)
-    return records, texts + bundled_texts, errors + bundled_errors
+    return records, texts, errors
+
+
+def audit_lock(metadata, config, offline):
+    """lock 全件を、対象の通常・ビルド依存、試験依存、対象外に分類する。"""
+    targets = config['targets']
+    runtime, development = set(), set()
+    membership = {}
+    for target in targets:
+        membership[target] = {}
+        for role, edges in [('通常・ビルド', 'normal,build'), ('試験込み', 'normal,build,dev')]:
+            output = cargo('tree', '--locked', *(['--offline'] if offline else []),
+                           '--workspace', '--target', target, '-e', edges,
+                           '--prefix', 'none', '--format', '{p}')
+            keys = set()
+            for line in output.splitlines():
+                if not line.strip():
+                    continue
+                match = re.match(r'^(\S+) v(\S+)', line)
+                if not match:
+                    raise ValueError(f'依存の行を解釈できません: {line}')
+                keys.add('@'.join(match.groups()))
+            membership[target][role] = keys
+            (runtime if role == '通常・ビルド' else development).update(keys)
+    records, _, errors = review_packages(development, runtime, metadata, config, offline)
+    reviewed = {r['crate'] + '@' + r['version']: r for r in records}
+    all_keys = set()
+    for p in metadata['packages']:
+        if p['id'] in metadata['workspace_members']:
+            continue
+        key = p['name'] + '@' + p['version']
+        if key in all_keys:
+            raise ValueError('同じ名前・版で取得元が異なる依存は要確認: ' + key)
+        all_keys.add(key)
+        if key not in reviewed:
+            reviewed[key] = {'crate': p['name'], 'version': p['version'], 'declared': p['license'],
+                             'selected': [], 'issues': [], 'role': '対象外（未承認）'}
+        r = reviewed[key]
+        r['scope'] = '通常・ビルド' if key in runtime else '試験のみ' if key in development else '対象外'
+        r['targets'] = [t for t in targets if key in membership[t]['試験込み']]
+    # metadata の対象外が黙って欠落したときも、lock 全件を確認した扱いにしない。
+    lock_keys = set()
+    for block in (ROOT / 'Cargo.lock').read_text(encoding='utf-8').split('[[package]]')[1:]:
+        if re.search(r'^source = ', block, re.M):
+            name = re.search(r'^name = "([^"]+)"', block, re.M)[1]
+            version = re.search(r'^version = "([^"]+)"', block, re.M)[1]
+            lock_keys.add(name + '@' + version)
+    if lock_keys != all_keys:
+        errors.append('Cargo.lock と metadata の外部クレート集合が一致しません')
+    stale = sorted(config['crates'].keys() - all_keys)
+    errors.extend('Cargo.lock に無い古い登録: ' + key for key in stale)
+    report = {'lock_sha256': digest((ROOT / 'Cargo.lock').read_bytes()), 'targets': targets,
+              'records': [reviewed[key] for key in sorted(reviewed)], 'stale': stale, 'issues': errors}
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / 'lock-inventory.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print('lock 全体: ' + str(len(all_keys)) + ' 件、' + str(dict(Counter(r['scope'] for r in reviewed.values()))))
+    for error in errors:
+        print('  ' + error, file=sys.stderr)
+    return 1 if errors else 0
 
 
 def markdown(package, records, errors, lock_hash):
@@ -180,6 +255,7 @@ def main():
     use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'xtask', 'all'], default='all')
+    parser.add_argument('--audit-lock', action='store_true', help='3 対象の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'])
@@ -189,6 +265,15 @@ def main():
     output = OUT / TARGET if args.target else OUT
     output.mkdir(parents=True, exist_ok=True)
     selected = ['yolu-app', 'yolu-bridge'] if args.package == 'all' else [args.package]
+    if args.audit_lock:
+        if args.bundle or args.target or args.package != 'all' or args.include_update:
+            parser.error('--audit-lock は --offline 以外と併用できません')
+        config = json.loads(CONFIG.read_text(encoding='utf-8'))
+        if config['schema'] != 1:
+            raise ValueError('設定の版が違います')
+        metadata = json.loads(cargo('metadata', '--locked', '--format-version', '1',
+                                   *(['--offline'] if args.offline else [])))
+        return audit_lock(metadata, config, args.offline)
     # 失敗した今回の結果と、以前の成功した全文束を取り違えない。
     for package in selected:
         (output / package / 'THIRD_PARTY_LICENSES.txt').unlink(missing_ok=True)
@@ -213,8 +298,6 @@ def main():
                 print('  ' + error, file=sys.stderr)
         else:
             if args.bundle:
-                if package == 'yolu-app':
-                    texts.append('\n同梱アイコン\n' + (ROOT / 'crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md').read_text(encoding='utf-8'))
                 temporary = directory / 'THIRD_PARTY_LICENSES.txt.tmp'
                 temporary.write_text(
                     f'{package} 第三者の許諾全文\n対象: {TARGET}\nCargo.lock SHA-256: {lock_hash}\n'

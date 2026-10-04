@@ -8,3 +8,6 @@ crates/*/tests/fixtures/** -text
 *.ttf binary
 crates/yolu-app/assets/fonts/OFL.txt -text
 crates/yolu-brush-sets/data/** -text
+
+# 許諾表記は SHA-256 で照合するため、Windows のチェックアウトも LF に固定する
+crates/yolu-app/assets/**/THIRD-PARTY-NOTICES.md text eol=lf

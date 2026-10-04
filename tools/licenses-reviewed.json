@@ -4222,6 +4222,175 @@
           "sha256": "d0235d2a1f657b6fd18fd4ce98988348969a9284d94281b6d117830aa259a07a"
         }
       ]
+    },
+    "anyhow@1.0.104": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "colored@2.2.0": {
+      "declared": "MPL-2.0",
+      "selected": [],
+      "blocked": [
+        "試験専用。MPL-2.0 は許容一覧に無いため未承認。配布依存へ追加しない。"
+      ],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85"
+        }
+      ]
+    },
+    "dify@0.8.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE.md",
+          "sha256": "c35cbe1320ca6ae72103c6d1c0082124f96945be17cd25e4cacb25090aa0f9ab"
+        }
+      ]
+    },
+    "egui_kittest@0.36.2": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
+          "sha256": "95ca92f5f8ea5231f1580b3a2a799e8260af3114b900e1def5355a7f44bcf60c"
+        }
+      ]
+    },
+    "getopts@0.2.24": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+        }
+      ]
+    },
+    "getrandom@0.4.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b"
+        }
+      ]
+    },
+    "is-docker@0.2.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "7377e48a67377f0baa9ccee6425e125eb7b96d5b8e706f4c99479ca4ffa21b77"
+        }
+      ]
+    },
+    "is-wsl@0.4.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "7377e48a67377f0baa9ccee6425e125eb7b96d5b8e706f4c99479ca4ffa21b77"
+        }
+      ]
+    },
+    "kittest@0.4.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "3dedec8a09b1844fab7e18532859d69ab87867ec0409d07349d8900423f2eb17"
+        }
+      ]
+    },
+    "lazy_static@1.5.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "open@5.4.4": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE.md",
+          "sha256": "e63690624d604aa626c3c62b6ead1a9f4a916d2260ac8132022acbafe2556045"
+        }
+      ]
+    },
+    "tempfile@3.27.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36"
+        }
+      ]
+    },
+    "windows-sys@0.59.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "license-mit",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ]
     }
   },
   "bundled": {
@@ -4243,11 +4412,734 @@
           {
             "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Bold.ttf",
             "sha256": "3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts/OFL.txt",
+            "sha256": "e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc"
           }
         ],
         "license_file": {
-          "path": "crates/yolu-app/assets/fonts/OFL.txt",
-          "sha256": "e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc"
+          "path": "crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md",
+          "sha256": "705e49df60df9b129b8bf5058e5040c0810be752c248fd60eeb97d935c544be7"
+        },
+        "file_globs": [
+          "crates/yolu-app/assets/fonts/*.ttf"
+        ]
+      },
+      {
+        "name": "Fluent UI System Icons・Phosphor Icons",
+        "version": "同梱 PNG",
+        "declared": "MIT",
+        "selected": [
+          "MIT"
+        ],
+        "origin": "https://github.com/microsoft/fluentui-system-icons ; https://github.com/phosphor-icons/core",
+        "files": [
+          {
+            "path": "crates/yolu-app/assets/icons/3d_rotation.png",
+            "sha256": "92fc10fd48030abcb2216ebcba89c89fd841f758489e42894123fd4a256bfd23"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/accessibility.png",
+            "sha256": "9129f90a1be2ff92dd5fd9681bffc2f0e5234ceff254824dd0d14e72a4788bb0"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/add.png",
+            "sha256": "2962b410e69f962fe01993e59195b16812410f126c52b1729b4ef3a3c50a9f8d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/anchor.png",
+            "sha256": "587d84bcd7cb33f3a46fa26554d68463862b7d44c5abe259e12d7cdcf578da45"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/arrow_drop_down.png",
+            "sha256": "c0032a33b307b68bdd267f8053c83505c79c7d6637a2e980df02aeed80e8655b"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/arrow_maximize.png",
+            "sha256": "0f9a81f9da7c0bb6686ed39fcc5563f06e99d60c73b11a6ed496c4307c4aaf45"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/arrow_minimize.png",
+            "sha256": "1000acc3eec42ed4f5b0cfc39a0bdf7bc410446673ca3afe54a1aa019351e14c"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/arrow_move.png",
+            "sha256": "01750cc75decee9e6623d41a06db89995e74cc9d93c0bd1228f4b2659d71cca3"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/auto_awesome.png",
+            "sha256": "31ceffe752ff53d584cd805c80c9856aff13af6a43b7545c379dd8a58ba4ce6b"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/blur_on.png",
+            "sha256": "00079753e53560905935643430c66d56b13ec69be1c35e51df2f813e427a8076"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/check.png",
+            "sha256": "83f34ec08148bda17cf3abeaea9b331fd7f9f3938b81fb8fa8fe02705fff88d7"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/chevron_right.png",
+            "sha256": "1f90affdef876f917b4514e7aae2f3ddfe5621fbf4a8695f6f7a3d065e77e7b5"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/close.png",
+            "sha256": "de0e51781b3e8eada35ad79bcbae58e1d626a00ec202b7c152320bf010bddc2f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/color_square.png",
+            "sha256": "7d838d6f105eb8f5c061c9423d85ce6c9c0660a0cc8419a0f3389d8110b7c7ed"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/content_copy.png",
+            "sha256": "58dc7e554cb02ea4953a67638488a39915d046c0471fe7f7e1776586b56ad101"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/contrast.png",
+            "sha256": "3861a201f761e1b9c134b5815513d0c2b359c729404d40b76bdafc03fb11d67e"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/conversion_path.png",
+            "sha256": "181c8f2de27916549fa437915054cb71344b3815114652478fdf39cf0c7df49a"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/copy_add.png",
+            "sha256": "294e4013e663df505269c3e7af07f0a49eebde6f9342a69d5221a402d844dfaa"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/data_scatter.png",
+            "sha256": "6ad18e3fd1f35005a1d772abc62f8709de917386ff50ee5975017fe0ceaa196f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/delete.png",
+            "sha256": "579467b63b472384b88e6e2abd95a6ccab72da84e0fc35158f486265dd5fe1c2"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/deselect.png",
+            "sha256": "25b5ce0b99ae4ecc6176c29f0fb591d2f90a0c7a1c0830802c4ccc4835662cc7"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/expand_less.png",
+            "sha256": "6d90ebd1c6a2c7d72e8ac566dee153b085f3d0815a859f8f4a2ef418c5a6cf82"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/expand_more.png",
+            "sha256": "c0032a33b307b68bdd267f8053c83505c79c7d6637a2e980df02aeed80e8655b"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/flip.png",
+            "sha256": "4f961d2a2eaa464f0e907083b8bbf2611f8eb584c26212e02d3b5eb6bbfbeb9a"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/flip_vertical.png",
+            "sha256": "383cf9b81044ffc9a199b4dd140429ab4ba32d03014edb8fc89772c941b29516"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/folder.png",
+            "sha256": "882ea6df5c06460f076290d0321a28168929c33fcc4da53d596232f9fe8a16ea"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/folder_open.png",
+            "sha256": "ed76be77db3e2746b1ad300c5fc0b086aa180fd789f4617a0da6b4dd4e7dc8a0"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/format_color_fill.png",
+            "sha256": "701b463e26416de775d3d2c4be2d8bec960ad7366ccd3de78366e187a03e8212"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/grid_dots.png",
+            "sha256": "4ad0bd101bdcffa81065af7f155ca8aa1746d1fd56ba8b70a56ac2bfb33f23ae"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/import.png",
+            "sha256": "371d566ca178c75ffd18a8ad1e9fdef0b489620ba304587db78d28afec0d2f4d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/info.png",
+            "sha256": "fdbfc6276a2534f3df2dd2814ffa3a31f91c29710b2c220ffd724545bcdf917b"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/ink_stroke.png",
+            "sha256": "fd9e62675ebc28d52e5c1caef3694ed77a5c12207ef65c913e3535b267b419fb"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/invert_colors.png",
+            "sha256": "2d276453f000b6f4355a90cb20517ec06fdfa56951cf469ff9425f4d6b3d1f76"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/keyboard_arrow_down.png",
+            "sha256": "ec26e08cdb70331b59a0f57286aff3cd5afeb7a37996088255babcf4b64f20dd"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/layers.png",
+            "sha256": "c85a82745b6ca020f71fa4a89e834a5d81d28c625c6da85c19764625b17ccc8d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/library.png",
+            "sha256": "9b5b357663d251204453a8094c1617d210cb75479703258821ed0ccdc5c31905"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/light_mode.png",
+            "sha256": "042822ad5e55655cb588520988a10ae77e70ff121edf7caac67d584431dcea5b"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/link_off.png",
+            "sha256": "33dbc32f7ecdfea775246ac07cf2b1e047dc0116ae9d6e19e47ed0090ec8de19"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/lock.png",
+            "sha256": "18c7b7ae09e8d0e9e69d220efb6d585f033549023e483dee961ccc95254e5539"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/lock_filled.png",
+            "sha256": "0983eef49643efef05396c015017558de75db73972ed11ce9e5669a8849a6daa"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/lock_transparency.png",
+            "sha256": "6e049d4c63ad5a0a84bc62ae676454dcbc0418ffd30d381e4d8700e534b43ce2"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/opacity.png",
+            "sha256": "4cb2d1fdd995afdd42bcfb0bc330d5ea9b1905819e29220be1947126dc7cb7c4"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/paint_brush.png",
+            "sha256": "9dce4ddd30ae596e59354ad21f161ff70feddd3281e0aaea6aa36d2438e81830"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/palette.png",
+            "sha256": "cd980b25c0895c4495372aaa0033cd688d98e7074ba31209c06f53d6257316e3"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/restart_alt.png",
+            "sha256": "b4be34d011835e3b3eb29421c7de9d9386134de63b09e00f76633ae5a704763f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/rotate_90_degrees_ccw.png",
+            "sha256": "f7ed1487a1f833d8e611eb3be6056353dc0c577c58844fa02cd14712f209fc19"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/rotate_90_degrees_cw.png",
+            "sha256": "2143e3408728dec91a6bcfcce2cd327ae4b760319ce38a60c19062f2cae75033"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/save.png",
+            "sha256": "c31d0449a5d403ec0c2c208508f7857faff258ebe0c92ff8f9ff11afe6c5f804"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/search.png",
+            "sha256": "88b2931a1d2b8e96fd6f74237b7d8e94c15ec1220f3ebabd8412fe400050a62e"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/select_all.png",
+            "sha256": "bc89ef0ec8b494c42dd1e095a3fc55721c2c797232363bd07f1224521ef51d6f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/shapes.png",
+            "sha256": "889195d85b1f32cd9bc45e3d4eb4121302c325db395cf1e0eaf3baeb06778697"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/square.png",
+            "sha256": "6e922704256fc78ee14675e95e6caa9919b13212717d7f0023db792e251df773"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/stylus.png",
+            "sha256": "bb264a4c46ffa1ba8f14b473596f60dddecb395fba3a6d96095d8e482f56627a"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/swap_horiz.png",
+            "sha256": "6f10b5b51d09074de7849b5dc8446878a2eeb5583bb73a67f353ab65f22cb838"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/sync.png",
+            "sha256": "202fd6625999843ee57071eee6fb54e1e6b951ccbb33bb4400c6501a0073bbf8"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/target.png",
+            "sha256": "c3afae9a44f1286945b46781f223599530efd99d824a9c30df622cd009b2d207"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/texture.png",
+            "sha256": "1dda712597bdb5b7692f5e34a3395dadc69cbb9404a18582db0fd5738ca5619d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/brush.png",
+            "sha256": "8cd02f02761b3e5c3e5506447f2d53db5353d7f039c82e2fd0bd655e3dd162e5"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/brush_selected.png",
+            "sha256": "d1b196525a572010c95dd3ae0860cfd0f2e0d4819d9e2672afb58509621b33ed"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/eraser.png",
+            "sha256": "3f81fbf9d1f33a3f8dbb8862245bd5502f1d0a097e88866cbbfdc1c69e0cc915"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/eraser_selected.png",
+            "sha256": "73cc748fd45703a3f4a070ecbc9eafc3c4b4bbfcb3789fb810a6e1ac3525a2e1"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/eyedropper.png",
+            "sha256": "2c1cfa7949e9995497d6de2cb1feaa549c4edc6c76e4e36cc5ad19114efcc3b9"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/eyedropper_selected.png",
+            "sha256": "46c51d66a3ade82ad81b65e638825ac9da32b2a80f64b518bb22989ee3276b36"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/fill.png",
+            "sha256": "701b463e26416de775d3d2c4be2d8bec960ad7366ccd3de78366e187a03e8212"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/fill_selected.png",
+            "sha256": "d76cbf7e4c519d85e309e9b5d7a76e340618b007210c8b75c2bda0439dc256b9"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/gradient.png",
+            "sha256": "16344de7b95a414c2dee7da84d2003c02176fec01a474b787b3c6c0e99199ce9"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/gradient_selected.png",
+            "sha256": "15afec63fa9c0c0956b476b9cfcf5ce06e1d7247077cc1a7d9685fafdcbffb5d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/id-select.png",
+            "sha256": "bf8197a41cc106a9bfe3e54f7d198520999b7ac7511abaf1e8c53106d313d731"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/id-select_selected.png",
+            "sha256": "89bea25ab24ecb524f95fe71b3b516f8f63e279b43639ae69168975c2ceaa7b1"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/lasso.png",
+            "sha256": "787865b97897e19bbc582757a432346aecccf8ae383c07ef89c5bafe84d5cc5a"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/lasso_selected.png",
+            "sha256": "ee52111dde23dd0b8296aac2b11e5fff8477d6cfe6440f0a93dbaba4658c9050"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/magic-wand.png",
+            "sha256": "9c66ff5e6c92350ed482bd41ecff472373e6eff551fb466d0fa720bfc0f0c89d"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/magic-wand_selected.png",
+            "sha256": "aea0f84b3c78caa3e6ca377fb58d533d1ef256b11bdfe7e6d3615e8fa24acc48"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/move.png",
+            "sha256": "01750cc75decee9e6623d41a06db89995e74cc9d93c0bd1228f4b2659d71cca3"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/move_selected.png",
+            "sha256": "c5c3e9c38abdf978658165a5156ab70b8f0772f5a04eb102073aa0f26aa63780"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/path.png",
+            "sha256": "181c8f2de27916549fa437915054cb71344b3815114652478fdf39cf0c7df49a"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/path_selected.png",
+            "sha256": "0dcf02c8fd11358adca967eeddbf392609e155ec784442f5ba8eeb988207baf3"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/polygon-fill.png",
+            "sha256": "ce044e7744eded7a125f52fc57c4b1e9da91f1d8c620fd4e1487141de9845586"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/polygon-fill_selected.png",
+            "sha256": "c7a9e7c1c1a6dc8545c41e42c9a6822768a048c78cbd66eec415f0bf5cf96951"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-ellipse.png",
+            "sha256": "6d1613754c8dc6b6292b2c961eb1e39025f18723cea11e91135958c45a015cf1"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-ellipse_selected.png",
+            "sha256": "53a2bee884933901b19f346fa196f73bd55d06a040b92513d04048f76b9b9117"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-polygon.png",
+            "sha256": "0135ae5d3dabe8c3c7371518e411a4c8f571a0b90b872e64a2b3705ea1efb11c"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-polygon_selected.png",
+            "sha256": "0135ae5d3dabe8c3c7371518e411a4c8f571a0b90b872e64a2b3705ea1efb11c"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-rectangle.png",
+            "sha256": "803ba0d9c97f0183dfde1db516c2c734dd0ecc6f27411ba839f4fa3cb97f7bff"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/select-rectangle_selected.png",
+            "sha256": "ebc4f07f78d1577d4aa0fb4365aea3605c9ac5f948d27d46a3805a452935a67e"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tune.png",
+            "sha256": "1df5a746ffedd24914dceab69604e42d50ea078efbea4481a46168d171f0cf4e"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/view_in_ar.png",
+            "sha256": "9aad31579b973523f64aa8dc3f1e7fee141752a643e875d7fe8223ccaca88493"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/vignette.png",
+            "sha256": "b2af564bfea2189b684dde693c0dee1f5932929921988f336e281e991ad6f1b4"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/visibility.png",
+            "sha256": "ea71161ee1f73bbf1d0758e76043476a3ced8fbffea9654877092145c700abfe"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/visibility_off.png",
+            "sha256": "9c43c553ae6cd6bb46cd4a7ed1181af403f099f060785ad4619c49dd15f69416"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/warning.png",
+            "sha256": "18c12d0493735b3997edb04bbc6db9519df9e512bca3387778c24bfd15b301c8"
+          }
+        ],
+        "file_globs": [
+          "crates/yolu-app/assets/icons/**/*.png"
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
+          "sha256": "2609cb45af9b56a9bac183bc93e36f28d7f76aac1e48657e13e942bcb9cd33f9"
+        }
+      },
+      {
+        "name": "Krita 4 の筆先",
+        "version": "2026-10-02 取得",
+        "declared": "CC0-1.0",
+        "selected": [
+          "CC0-1.0"
+        ],
+        "origin": "https://invent.kde.org/graphics/krita/-/blob/master/krita/data/bundles/Krita_4_Default_Resources.bundle (SHA-256: 4180f474052305e9de6eaac1d832c1ddeb0654142bcde2eb2460629cf23796d0)",
+        "files": [
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/abominable_snowman.png",
+            "sha256": "d90383dc9cfdedf0d6fb0bb94b1f325e077d85131ab4c16da17e0a941979e1ce"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bamboo_leaves_random.gih",
+            "sha256": "cb276f66a6c4e157daa68855306f46965eb5b33f7eac8ebb1ad648312ff47748"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bokey_circle.gbr",
+            "sha256": "f57ea96ebeb487984182f7138fc16cc023db1cd6a2da2401429f409759ca0cd0"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/brick.gih",
+            "sha256": "a2da664a375bbafb9535bc30e87fe68a2bb2fdbe24dafa4e983df3f89753961d"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristle.png",
+            "sha256": "49c33b62fa4b0d9bfbb9e257d0b802b40a60cab09cd4c7f19c92a9e566d1d830"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_chisel_dense.png",
+            "sha256": "ad6927d0e85d4725325413b4b7e6792ee86045496039d42ba2ee94f750f06336"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_circle_dense.png",
+            "sha256": "aa76cc258a0e7f4da03f2e4445427c577655917640f7a15f730fe1ef5494dcd7"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_circle_medium.png",
+            "sha256": "e605d9a36f17f65b351616f20a4f68941df03ee424f97e8245138ce83eee32fb"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_circle_random.gih",
+            "sha256": "5da51484e7d5b5c41a65b00043e37d9492940e79c513bf83d98b2c83ad7037f2"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_circle_sparse.png",
+            "sha256": "ac8deef641470c036508459cd713ed24040c21a07c5809703f977d325a5aaabd"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/bristles_grouped.gbr",
+            "sha256": "1bc74c1c12dba9ba97ed83ea3ed212c3448cddb8f57a4a3685dd93463e9ce9c4"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk.png",
+            "sha256": "b9705df56768bcd1a989f10de39fd609613f35c4c105085927271cef4b6409a8"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk_chisel.gih",
+            "sha256": "083b8e58acef21e27b937b0dbba10a53fa7338715d86f5b8c320a0f1e8841332"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk_chisel_random.gih",
+            "sha256": "0a5d3d279a1d4a106664bfc59c5f1852675b7e39ef08a51b6e672816c820cc88"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk_chisel_random_small.gih",
+            "sha256": "f8f08a0cd1ad64dbf12e7424303a847e6bffa82e1b557a1dc30fad86baac2226"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk_round_hard.png",
+            "sha256": "56d041000417c9a9de40a79f0a1bd9e7abb7c8711aebe75005ea1abc4bfc4b75"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chalk_sparse.png",
+            "sha256": "781638b7a11e6ff5e1e330143b2b0a8533d3e3af59928bcb9b6d42eb3179c142"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_bent_rough.gih",
+            "sha256": "0aeecd59724c7619480ec2e6c56a7e6372b1dd0b612e1992bffd8c4ecf08f05d"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_dense_smear.png",
+            "sha256": "d330ecf18c8a319dd00acf82b6b038e07671ed973531dd652fd1b42b837b8167"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_eroded.png",
+            "sha256": "c0e72d39c96f50c0bc38318595e11b50d775f376f503e9b8aa2df716a6f00f88"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_knife.gbr",
+            "sha256": "f04d9da3ba06232222aa33f1199cd54613051f6b00701c6ad68333d150e90697"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_soft.png",
+            "sha256": "c69633875e9a1ecd0dd6d19b0894b6a52f462c3947e0399517b69ea97b127d67"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/chisel_streaks.png",
+            "sha256": "3165b445199bdab7536437e9e8382c3571d3707a0a92970c7609c5a2498e36fd"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/circle_hard_eroded.gih",
+            "sha256": "490b5735b8bf44b635408c62dfbce1d20317a677105e58de0b9c0ccefb529ae9"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/crackles.gbr",
+            "sha256": "cda0e5efeff731bd18ee20853eb430609836154ce44c10e57492d9b37543c079"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/fairy-dust.gih",
+            "sha256": "07d8298fa0d2466be1c200331755574ad01c6c76927fa3a6372547f1647306d5"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/floor.gih",
+            "sha256": "9bcd1ef98af0a1466c87df301e85a5654e3c208f7620f84999101aa019bf3c7e"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/freckles.png",
+            "sha256": "c68aa37c9955bd6d6a3f43b01b9068c607a42a39c7568c575ea748f9961ad98f"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/gradient.png",
+            "sha256": "b3f7f1613b8115d4652587142a3c78f275a025f5b44d3f12f7b263ef68ba08eb"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/graphite_grain.gih",
+            "sha256": "35fb08cf9e11f6b6fe3b95a2edd97ff5d3f5db6db88dd66bbcbecc61c37bd8c9"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/grass.gih",
+            "sha256": "691f86eea14fa15d8fc3fe58f15738d1c9953677673cef2180aa7c288774978e"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/grass_patch.gih",
+            "sha256": "83c0ebe5c2afce96332047735feadfe4edf83f8afa302d1c8584b3ecb4be03aa"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/hair.png",
+            "sha256": "a0d677053d418a8d95331b7d586359bf1f6fc809bffe2219ebe625248285d990"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/hearts.gih",
+            "sha256": "3c41f21fc03373ebb65ea11ae2340abca1eee057100b4796cba774fedbac8928"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/impressionism_brush.gih",
+            "sha256": "5904627b0a1b7f1b33b902b7beb311a22b1ade202d25d4606a78bab4b7ee9dac"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/leaves.png",
+            "sha256": "e6557c0c6162ee5a71eee2b54833eb91e089e65301c5be3a6d6ba2cac9dd0a7b"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/mountains_distant.gih",
+            "sha256": "ce39ed16540782eae7d22418813d658782e72d4f550e4eb01be88125b18d7c18"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/noise.gih",
+            "sha256": "bdbfc5a21c12f4a6a5f117a522436d273978dfee5973818292c5479e5a9ab274"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/oil_bristle.png",
+            "sha256": "2d03540df1984a2b98f1b1968fceff16ffd4f330de0ddd3a7144fe7c0f8793da"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/oil_knife.png",
+            "sha256": "0c355d441498a9cfddb6281684c39828f73b8edbe775628b3a49b316d2bc2782"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/paint_splats.gih",
+            "sha256": "6647b9d712ddebc88e678e49b45fecdd2f63748bf0ae157c61f9fa140c7309d5"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/plain_rake.png",
+            "sha256": "c69633875e9a1ecd0dd6d19b0894b6a52f462c3947e0399517b69ea97b127d67"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rake_dense.png",
+            "sha256": "213d645995894ad09f688127aaea69098dfe0a58f5d2e83a11509c7c22c1fd09"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rake_dotted.png",
+            "sha256": "5b5c852670fe8c591f617f0a89f97ad0d044b1bf38478a3e41f3696d55bb1b61"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rake_flat.png",
+            "sha256": "51e667bae1811db3798495dc4f1a0519ba41febd29b3b890753204822d0c2e5f"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rake_sparse.png",
+            "sha256": "f8a7f35b5c73cf32c81a6e5e926bd696e85634f03806e6f4c5c2a4c8999a5236"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/random-debris.gbr",
+            "sha256": "071045ea314f7beb41c6f42584d9b07617de67da977f4b7d783910a528260ebd"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/random-vegetal.gih",
+            "sha256": "367900ead7da211c90a69afa294011d25a2fa334ce733c5b256040f171f15315"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/random_particles.png",
+            "sha256": "74589dc39d241c012363534fe642332e76168da93a61893e37454f7f44874d3a"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rock.png",
+            "sha256": "05098cc65e91d0091dccc570bffda3b680ec89ac059328e7c8c86eaf7cfd7a53"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rock_light.gih",
+            "sha256": "49aa7d0f4185150e380e9fad17bb58c35a86969da7d0bf92723c90ee6a77001f"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rock_pitted.gih",
+            "sha256": "877cca0d242234d872c9e3919c2aad441558132f7d52513d6d0e2c53a15f16a2"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/rock_scraped.gih",
+            "sha256": "8fc230fcbd94326afaeb53fafb4ad07e45c7aa3bdde259640c2450da6689a93a"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/scales.png",
+            "sha256": "9b938e2191f4bebdbce2d8f70a7d8874364cbcadd960d649fc976e6f0cbb6d0f"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/scratches_rough.gih",
+            "sha256": "8e8f7b2ee1b258d2e563c6c5771a2a1a7fc836c24f1386cc3dbcae3c8cc01271"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/scribbles.png",
+            "sha256": "04e776a747744a48312eccc11a5d8aedee66fe4c4341cc5d5eabc1f7a4f489ab"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/shapes_mech_random.gih",
+            "sha256": "a9ec10c4901843051668c738a1fbd47de6aa7ccff9e04454ea0dfa22b0f97ffd"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/shapes_round_random.gih",
+            "sha256": "ba15d2b8f8d97d85d28169d1e4d5558a09fc64ef682fefb271d506a88d30b02a"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/shapes_spiked_random.gih",
+            "sha256": "f6cc4f1895ebde399c6a4a574962853a682a2f270ad650163fb811c37844ec20"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/smear_paint.png",
+            "sha256": "212c3ed329533b12f3dbfa844a8ec0aa776c52c7ce2e5e4956e79c15aac9bbea"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/smoke.png",
+            "sha256": "e77ecb37d9e548c8911cd0d2fb8f88232688cca28daad7dd6eaf8c21cdac7fe9"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/snow.gih",
+            "sha256": "81597bd0168b8c9231825bcc2d030b47de363d4599cf69b5fd75067d9e7c35c6"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/sparkle.png",
+            "sha256": "ec7d8b171de92e16794303424e6062412107115820ade9d3103f55e2b32e856b"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/spike_blob.png",
+            "sha256": "ce9b31b434ca7f6c45658d014ac470ffc0870cb841e4a05b908444b340c3c7ec"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/spike_eroded.png",
+            "sha256": "004b511d3c95f4e8e2cb2e205e4ea2f751cd9daa15dfd0f5d6a4594b2dace944"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/spines.png",
+            "sha256": "5e1a3f2bea09ad3cd39ead9fb09d1e6edd4ca86f19cf33d5dc97ccdebccc0999"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/splat_dots.png",
+            "sha256": "c5b911af902057892cbe27db68e055695b111c615aee89a552dc8acde5114d8c"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/splats_large.gih",
+            "sha256": "3ee50f28acb6f3dc9d24b9d96aeb389fbb4038c6be3bcaca6877543d9654eb23"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/square_eroded.png",
+            "sha256": "2183900a02f79fa320542d495bdf10df6e32de9ec8c2654e268f5fecf1cedb12"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/square_rough.png",
+            "sha256": "93d5beb29afc755d06e191186d6e7299fe87b9812e60fc812bf88c7101f2472d"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/square_rough_lightgrey.png",
+            "sha256": "4be4e7464997ba1b944645ff96d53655b62843403af8b0b88d96d3aba4d30569"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/starfield.png",
+            "sha256": "a4be4d00833ae1bdd42b7aa22ad8352ea55dcc0d1cf40c5f425eebb3d8e61609"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/vegetal.gbr",
+            "sha256": "24fe112d8f025696d98d6c5859d4edd572604dcef6dec9a6fafaab64b2be0df1"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/vegetal_stylised.gih",
+            "sha256": "9676d1a697462b00d72e86e8435f6065c355ba924380201ebb459571c8859f10"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/water_still.gih",
+            "sha256": "466caadf1e053b85f35bff71b6a3e3118baabcea4578bc9e7614bf0ec9d8f9aa"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/brushes/watercolor.gih",
+            "sha256": "2d45b22b406961672627011cdc2b2f012c8a33cc9fad568243328c94733de7bc"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/README.md",
+            "sha256": "2acf9fee5a34a1a10a6984de483826ddbbf96c9fb8b3a6a2d203b2b1f32c5622"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/meta.xml",
+            "sha256": "5660ffb6a636960847cb77ee75f0fbae38ba65c29d601bc577482fe6bc12e4f5"
+          },
+          {
+            "path": "crates/yolu-brush-sets/data/krita4/SHA256SUMS",
+            "sha256": "7abf9867216b323b7076d0c0509de082cb5bfabdfd3a784d8fe176bbdb96a8b9"
+          }
+        ],
+        "file_globs": [
+          "crates/yolu-brush-sets/data/krita4/brushes/*"
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md",
+          "sha256": "0ce758c1725a0ad668aa76c2e700160b578d27999639f2b211ef415a5d0b0ac3"
         }
       }
     ]

@@ -4,12 +4,13 @@ import hashlib
 import importlib.util
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import subprocess
 import tempfile
 import unittest
 import sys
 sys.dont_write_bytecode = True
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('third_party', ROOT / 'tools/third-party.py')
@@ -211,6 +212,112 @@ class LicenseChecks(unittest.TestCase):
         code, _, err = self.run_main_with_ansi_pipes()
         self.assertEqual(code, 1)
         self.assertIn('要確認', err)
+
+
+class BundledAuditChecks(unittest.TestCase):
+
+    def setUp(self):
+        (ROOT / 'target').mkdir(exist_ok=True)
+        self.tmp = tempfile.TemporaryDirectory(dir=ROOT / 'target')
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        (self.root / 'a.png').write_bytes(b'asset')
+        (self.root / 'NOTICE').write_text('許諾', encoding='utf-8')
+
+        def f(name):
+            return {'path': name, 'sha256': licenses.digest((self.root / name).read_bytes())}
+        self.item = {'name': 'fixture', 'version': '1', 'selected': ['MIT'], 'origin': 'https://example.invalid', 'files': [f('a.png')], 'file_globs': ['*.png'], 'license_file': f('NOTICE')}
+        self.config = {'bundled': {'fixture': [self.item]}}
+
+    def run_assets(self):
+        with patch.object(licenses, 'ROOT', self.root):
+            return licenses.bundled_assets('fixture', self.config)
+
+    def test_new_image_rejected(self):
+        (self.root / 'b.png').write_bytes(b'new')
+        self.assertIn('未登録', str(self.run_assets()[1]))
+
+    def test_changed_notice_rejected(self):
+        (self.root / 'NOTICE').write_text('changed', encoding='utf-8')
+        (texts, errors) = self.run_assets()
+        self.assertFalse(texts)
+        self.assertTrue(errors)
+
+    def test_escaped_notice_not_read(self):
+        self.item['license_file']['path'] = '../outside'
+        (texts, errors) = self.run_assets()
+        self.assertFalse(texts)
+        self.assertIn('リポジトリ外', str(errors))
+
+    def test_notice_not_utf8_rejected(self):
+        (self.root / 'NOTICE').write_bytes(b'\xff')
+        self.item['license_file']['sha256'] = licenses.digest(b'\xff')
+        self.assertIn('UTF-8', str(self.run_assets()[1]))
+
+    def test_no_selected_license_rejected(self):
+        self.item['selected'] = []
+        self.assertTrue(self.run_assets()[1])
+
+    def test_lock_categorizes_test_and_other_targets(self):
+        packages = []
+        reviews = {}
+        for name in ['runtime', 'test', 'other']:
+            p = self.root / name
+            p.mkdir()
+            (p / 'LICENSE').write_text('許諾', encoding='utf-8')
+            packages.append({'name': name, 'version': '1.0', 'source': 'registry+fixture', 'id': name, 'license': 'MIT', 'repository': None, 'manifest_path': str(p / 'Cargo.toml')})
+            if name != 'other':
+                reviews[name + '@1.0'] = {'declared': 'MIT', 'selected': ['MIT'], 'blocked': [], 'files': [{'path': 'LICENSE', 'sha256': licenses.digest('許諾'.encode())}]}
+        (self.root / 'Cargo.lock').write_text('\n'.join((f'[[package]]\nname = "{n}"\nversion = "1.0"\nsource = "registry+fixture"\n' for n in ['runtime', 'test', 'other'])), encoding='utf-8')
+
+        def cargo(*args):
+            return '\nruntime v1.0\n\ntest v1.0\n' if 'normal,build,dev' in args else 'runtime v1.0\n'
+        with patch.object(licenses, 'ROOT', self.root), patch.object(licenses, 'OUT', self.root / 'out'), patch.object(licenses, 'cargo', side_effect=cargo):
+            self.assertEqual(licenses.audit_lock({'packages': packages, 'workspace_members': []}, {'targets': ['fixture'], 'crates': reviews}, True), 0)
+        r = json.loads((self.root / 'out/lock-inventory.json').read_text(encoding='utf-8'))
+        self.assertEqual({x['crate']: x['scope'] for x in r['records']}, {'runtime': '通常・ビルド', 'test': '試験のみ', 'other': '対象外'})
+        reviews['stale@1.0'] = reviews['test@1.0']
+        with patch.object(licenses, 'ROOT', self.root), patch.object(licenses, 'OUT', self.root / 'out'), patch.object(licenses, 'cargo', side_effect=cargo):
+            self.assertEqual(licenses.audit_lock({'packages': packages, 'workspace_members': []}, {'targets': ['fixture'], 'crates': reviews}, True), 1)
+
+    def test_windows_paths_match_registered_posix_paths(self):
+        # Windows の relative_to が返す区切りを、Linux の CI でも再現する。
+        (self.root / 'assets').mkdir()
+        (self.root / 'a.png').rename(self.root / 'assets/a.png')
+        self.item['files'][0]['path'] = 'assets/a.png'
+        self.item['file_globs'] = ['assets/*.png']
+        entry = Mock()
+        entry.is_file.return_value = True
+        entry.relative_to.return_value = PureWindowsPath('assets/a.png')
+        self.assertEqual(str(entry.relative_to(self.root)), 'assets\\a.png')
+        with patch.object(type(self.root), 'glob', return_value=[entry]):
+            texts, errors = self.run_assets()
+        self.assertFalse(errors)
+        self.assertTrue(texts)
+
+    def test_notice_hashes_survive_autocrlf_checkout(self):
+        # 本番の属性・原文・登録ハッシュを使い、Git 自身の CRLF 変換を通す。
+        config = json.loads((ROOT / 'tools/licenses-reviewed.json').read_text(encoding='utf-8'))
+        notices = [item['license_file'] for item in config['bundled']['yolu-app']]
+        (self.root / '.gitattributes').write_bytes((ROOT / '.gitattributes').read_bytes())
+        for spec in notices:
+            path = self.root / spec['path']
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((ROOT / spec['path']).read_bytes())
+        # 対照ファイルが CRLF になることで、試験が変換を実際に通したと確認する。
+        (self.root / 'control.txt').write_bytes(b'first\nsecond\n')
+        def git(*args):
+            return subprocess.run(['git', '-c', 'core.autocrlf=true', '-c', 'core.safecrlf=false',
+                                   *args], cwd=self.root, check=True, capture_output=True)
+        git('init', '--quiet')
+        git('add', '.gitattributes', 'control.txt', *[spec['path'] for spec in notices])
+        for name in ['control.txt', *[spec['path'] for spec in notices]]:
+            (self.root / name).unlink()
+        git('checkout-index', '--all', '--force')
+        self.assertEqual((self.root / 'control.txt').read_bytes(), b'first\r\nsecond\r\n')
+        for spec in notices:
+            with self.subTest(path=spec['path']):
+                self.assertEqual(licenses.digest((self.root / spec['path']).read_bytes()), spec['sha256'])
 
 
 if __name__ == '__main__':
