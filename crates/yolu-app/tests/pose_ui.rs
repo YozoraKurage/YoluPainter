@@ -138,15 +138,15 @@ fn the_pose_tab_joins_properties_when_a_skinned_model_loads_and_stays_after_the_
     {
         let dock = &h.state().dock;
         let pose = dock.find_tab(&Tab::Pose).expect("ポーズのタブが足された");
-        let props = dock.find_tab(&Tab::Properties).unwrap();
+        let layers = dock.find_tab(&Tab::Layers).unwrap();
         assert_eq!(
             (pose.surface, pose.node),
-            (props.surface, props.node),
-            "右のドックのプロパティと同じ組"
+            (layers.surface, layers.node),
+            "右のドックのレイヤーと同じ組"
         );
-        // プロパティは見えたまま（足したタブを前へ出さない）
-        let leaf = dock.leaf(props.node_path()).unwrap();
-        assert_eq!(leaf.tabs[leaf.active.0], Tab::Properties);
+        // レイヤーは見えたまま（足したタブを前へ出さない）
+        let leaf = dock.leaf(layers.node_path()).unwrap();
+        assert_eq!(leaf.tabs[leaf.active.0], Tab::Layers);
     }
     assert!(h.state().tab_rects.contains_key(&Tab::Pose));
     assert!(
@@ -199,8 +199,8 @@ fn the_pose_tab_is_added_back_after_the_layout_is_reset() {
     let dock = &h.state().dock;
     let pose = dock.find_tab(&Tab::Pose).expect("足し直された");
     assert_eq!(pose.surface, egui_dock::SurfaceIndex::main());
-    let props = dock.find_tab(&Tab::Properties).unwrap();
-    assert_eq!((pose.surface, pose.node), (props.surface, props.node));
+    let layers = dock.find_tab(&Tab::Layers).unwrap();
+    assert_eq!((pose.surface, pose.node), (layers.surface, layers.node));
 }
 
 #[test]

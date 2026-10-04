@@ -215,6 +215,12 @@ impl View3dState {
             }
             meshes.push(out);
         }
+        // 見せる面が 1 つも無い（全部のマテリアルを隠した）ときは、形を持たない（3D ビューの操作の途中も終わる）
+        if !keep.iter().any(|k| *k) {
+            self.model = None;
+            self.shown_base = None;
+            return;
+        }
         self.shown_base = self.shown_base.take().filter(|b| {
             b.hidden == self.hidden && same_mask(&b.mask, &mask) && b.total == total
         });

@@ -32,8 +32,9 @@ pub fn ensure_tab(app: &AppState, dock: &mut DockState<crate::Tab>) {
     if app.view3d.pose.session.is_none() || dock.find_tab(&crate::Tab::Pose).is_some() {
         return;
     }
+    // レイヤーと同じ組へ（プロパティの組はヒストリーもあり、3 つ並べると最小の窓で名前が欠ける）
     let target = dock
-        .find_tab(&crate::Tab::Properties)
+        .find_tab(&crate::Tab::Layers)
         .map(|p| p.node_path());
     match target.and_then(|path| dock.leaf_mut(path).ok()) {
         Some(leaf) => leaf.tabs.push(crate::Tab::Pose),
