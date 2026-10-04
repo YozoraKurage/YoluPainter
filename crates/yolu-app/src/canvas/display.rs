@@ -220,7 +220,7 @@ impl CanvasDisplay {
     }
 
     /// 文書の矩形（画素の座標 x0..x1 × y0..y1）を、写しで回した 4 隅の四角として描く。
-    fn quad(
+    pub(crate) fn quad(
         painter: &Painter,
         texture: egui::TextureId,
         view: &CanvasView,

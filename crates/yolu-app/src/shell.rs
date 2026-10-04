@@ -3,9 +3,14 @@
 
 use egui::{pos2, vec2, Key, Modifiers, Rect, Sense, Ui};
 
+use yolu_core::export::ExportTemplate;
+
+use crate::bake::BakeAction;
+use crate::export::ExportAction;
 use crate::lang::Lang;
 use crate::livelink::{LinkStatus, NoticeLevel};
 use crate::m2::{Edit, UiOp};
+use crate::psd::{PsdAction, PsdTarget};
 use crate::state::{Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
@@ -26,13 +31,53 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 5] {
     ]
 }
 
+/// ファイルメニューの読み込み（PSD）と書き出し（テンプレートの画像・PSD）。
+fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let free = !app.is_stroking();
+    let l = app.lang;
+    let mut entries = vec![
+        Entry::Separator,
+        Entry::Heading(l.pick("読み込み", "Import").to_owned()),
+        Entry::item(
+            l.pick(
+                "PSD を新しいテクスチャセットへ…",
+                "PSD as a New Texture Set…",
+            ),
+            Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
+        )
+        .enabled(free),
+        Entry::item(
+            l.pick(
+                "PSD を今のセットの文書へ…",
+                "PSD as the Current Set's Document…",
+            ),
+            Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
+        )
+        .enabled(free && app.read_only_reason().is_none()),
+        Entry::Heading(l.pick("書き出し", "Export").to_owned()),
+    ];
+    for template in ExportTemplate::built_in() {
+        entries.push(
+            Entry::item(
+                format!("{}: {}…", l.pick("テンプレート", "Template"), template.name),
+                Action::Export(ExportAction::Template(template.id)),
+            )
+            .enabled(free),
+        );
+    }
+    entries.push(
+        Entry::item(l.pick("PSD…", "PSD…"), Action::Psd(PsdAction::ExportDialog)).enabled(free),
+    );
+    entries
+}
+
 /// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let l = app.lang;
     match index {
         0 => {
-            vec![
+            let mut entries = vec![
                 Entry::item(
                     l.pick("新規プロジェクト…", "New Project…"),
                     Action::NewProjectDialog,
@@ -56,7 +101,20 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
                 Entry::item(l.pick("終了", "Quit"), Action::Quit).shortcut("Ctrl+Q"),
-            ]
+            ];
+            // 読み込み・書き出しは Live Link の前の区切りの前に入れる
+            if let Some(at) = entries.iter().position(|e| {
+                matches!(
+                    e,
+                    Entry::Item {
+                        action: Action::ToggleLiveLink,
+                        ..
+                    }
+                )
+            }) {
+                entries.splice(at - 1..at - 1, import_export_entries(app));
+            }
+            entries
         }
         1 => vec![
             Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
@@ -163,6 +221,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Action::FrameModel,
             )
             .enabled(free && app.view3d.model.is_some()),
+            Entry::item(
+                l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                Action::Bake(BakeAction::OpenWindow),
+            ),
             Entry::Separator,
             Entry::Heading(l.pick("言語", "Language").to_owned()),
             Entry::item(Lang::Ja.name(), Action::M2Ui(UiOp::Language(Lang::Ja)))
@@ -383,7 +445,7 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
-    if ctx.egui_wants_keyboard_input() || app.popup.is_some() {
+    if ctx.egui_wants_keyboard_input() || app.popup.is_some() || crate::windows::modal_open(app) {
         return;
     }
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;

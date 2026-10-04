@@ -396,6 +396,12 @@ pub enum Action {
     SaveProject,
     SaveProjectAsDialog,
     SaveProjectAs(PathBuf),
+    /// メッシュマップのベイク（窓・開始・取消・チェック・2D での重ね表示）。
+    Bake(crate::bake::BakeAction),
+    /// テンプレートの画像の書き出し。
+    Export(crate::export::ExportAction),
+    /// PSD の読み込みと書き出し。
+    Psd(crate::psd::PsdAction),
 }
 
 impl Action {
@@ -472,16 +478,28 @@ pub struct AppState {
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+    /// メッシュマップのベイク（設定・窓・走っている仕事）。
+    pub bake: crate::bake::BakeState,
+    /// テンプレートの書き出し（パディング・確かめ・結果・走っている仕事）。
+    pub export: crate::export::ExportState,
+    /// PSD の読み書き（結果・確かめ・走っている仕事）。
+    pub psd: crate::psd::PsdState,
 }
 
 /// ファイルの窓の頼み。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogRequest {
     New,
     Open,
     SaveAs,
     /// 3D ビューに開くモデル（FBX）を選ぶ。
     OpenModel,
+    /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
+    ExportFolder(String),
+    /// 読み込む PSD を選ぶ。
+    PsdImport(crate::psd::PsdTarget),
+    /// PSD の書き出し先を選ぶ。
+    PsdExport,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -534,6 +552,9 @@ impl AppState {
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
+            bake: Default::default(),
+            export: Default::default(),
+            psd: Default::default(),
         }
     }
 
@@ -849,6 +870,9 @@ impl AppState {
                 }
                 crate::project::save_from(self, &path);
             }
+            Action::Bake(a) => self.bake_apply(a),
+            Action::Export(a) => self.export_apply(a),
+            Action::Psd(a) => self.psd_apply(a),
         }
     }
 }

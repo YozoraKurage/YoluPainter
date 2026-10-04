@@ -39,6 +39,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t::CANVAS_BG);
     display.paint(&painter, &view);
+    // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
+    crate::bake::overlay::paint(&painter, app, &view);
 
     // ブラシのカーソル（回している・回すキーを押している・パンしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
@@ -151,6 +153,32 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         .clicked()
         {
             app.apply(crate::state::Action::FlipView);
+        }
+        x += 28.0;
+    }
+    // 焼いたメッシュマップを重ねて見ている: 名前（押すとやめる）
+    if let Some(name) = crate::bake::overlay::view_name(app) {
+        let lang = app.lang;
+        let text = format!("{}: {name}", lang.pick("メッシュマップ", "Mesh Map"));
+        let bw = 20.0 + w::text_width(&p, &text, t::LABEL) + 14.0;
+        if x + bw <= bar.right() {
+            let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
+            if w::button(
+                ui,
+                r,
+                "canvas.meshmap",
+                &text,
+                false,
+                true,
+                Some(lang.pick("押すと重ね表示をやめます", "Click to stop showing it")),
+                Some("visibility"),
+            )
+            .clicked()
+            {
+                app.apply(crate::state::Action::Bake(crate::bake::BakeAction::View(
+                    crate::bake::MeshMapView::None,
+                )));
+            }
         }
     }
 }

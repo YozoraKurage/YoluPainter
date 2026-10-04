@@ -154,6 +154,8 @@ pub struct TextureSet {
     pub read_only: Option<String>,
     /// 最後に開いた・保存した時の文書（id と版）。今の文書と同じなら、保存で正本を書き直さない（開いたファイルのバイト列のまま）。
     pub saved: Option<(u128, u64)>,
+    /// 焼いたメッシュマップ（種類ごとに最後の 1 枚。文書の外の派生物で、Undo に入らない。.ylp にセットごとに保存する）。
+    pub mesh_maps: crate::bake::MeshMapSet,
     stash: Option<Stash>,
 }
 
@@ -193,6 +195,7 @@ impl TextureSets {
                 bound: None,
                 read_only: None,
                 saved: None,
+                mesh_maps: Default::default(),
                 stash: None,
             }],
             current: 0,
@@ -281,6 +284,7 @@ impl TextureSets {
             bound: None,
             read_only,
             saved: None,
+            mesh_maps: Default::default(),
             stash: Some(Stash::new(doc)),
         });
         self.list.len() - 1

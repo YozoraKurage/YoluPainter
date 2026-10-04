@@ -300,6 +300,55 @@ impl YoluApp {
                     crate::view3d::pose::open_file(&mut self.state, &path);
                 }
             }
+            Some(DialogRequest::ExportFolder(id)) => {
+                let lang = self.state.lang;
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_title(
+                        lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
+                    )
+                    .pick_folder()
+                {
+                    self.state
+                        .apply(Action::Export(crate::export::ExportAction::TemplateTo {
+                            id,
+                            dir,
+                        }));
+                }
+            }
+            Some(DialogRequest::PsdImport(target)) => {
+                let lang = self.state.lang;
+                // 今の文書を替えるときは、保存していない変更を捨ててよいか聞く
+                if target == crate::psd::PsdTarget::NewSet || self.confirm_discard() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title(lang.pick("PSD を読み込む", "Import PSD"))
+                        .add_filter("PSD", &["psd", "PSD"])
+                        .pick_file()
+                    {
+                        self.state
+                            .apply(Action::Psd(crate::psd::PsdAction::Import { path, target }));
+                    }
+                }
+            }
+            Some(DialogRequest::PsdExport) => {
+                let lang = self.state.lang;
+                let stem = crate::export::stem(&self.state);
+                let name = if self.state.sets.len() > 1 {
+                    format!("{stem}_{}.psd", self.state.sets.current().name)
+                } else {
+                    format!("{stem}.psd")
+                };
+                let mut dialog = rfd::FileDialog::new()
+                    .set_title(lang.pick("PSD に書き出す", "Export PSD"))
+                    .add_filter("PSD", &["psd"])
+                    .set_file_name(name);
+                if let Some(dir) = self.state.project.as_ref().and_then(|p| p.path().parent()) {
+                    dialog = dialog.set_directory(dir);
+                }
+                if let Some(path) = dialog.save_file() {
+                    self.state
+                        .apply(Action::Psd(crate::psd::PsdAction::Export(path)));
+                }
+            }
             None => {}
         }
     }
@@ -409,6 +458,10 @@ impl YoluApp {
         self.handle_requests(&ctx);
         self.link.poll(&mut self.state);
         self.state.link = self.link.view();
+        // 別のスレッドの仕事（ベイク・書き出し・PSD）の終わりを受ける
+        self.state.poll_bake();
+        self.state.poll_export();
+        self.state.poll_psd();
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
@@ -528,6 +581,7 @@ impl YoluApp {
             self.state.m2_cancel_drag();
         }
         self.popups(&ctx, &bar);
+        crate::windows::show(&ctx, &mut self.state);
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す
@@ -539,6 +593,7 @@ impl YoluApp {
         if (self.state.quit || close_requested) && !self.closing {
             if self.confirm_close() {
                 self.closing = true;
+                crate::windows::stop_jobs(&mut self.state, std::time::Duration::from_secs(3));
                 if self.state.quit {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }

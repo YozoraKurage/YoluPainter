@@ -14,8 +14,11 @@
 
 use std::path::{Path, PathBuf};
 
+use yolu_core::mesh_maps::MeshMapKind;
 use yolu_io::{composite_pngs, NativeDocument, Project, SaveTarget, SetSpec, WriterInfo};
 
+/// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
+const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
 use crate::engine::{Channel, Document, TileCoord};
 use crate::sets::TextureSets;
@@ -198,7 +201,23 @@ pub fn open_into(state: &mut AppState, path: &Path) {
         .position(|s| s.id == project.current_set())
         .unwrap_or(0);
     let count = parts.len();
-    let (sets, doc) = TextureSets::from_parts(parts, current);
+    let (mut sets, doc) = TextureSets::from_parts(parts, current);
+    // メッシュマップ（セットごとの派生物）。壊れていれば読まずに知らせる（ファイルのエントリはそのまま残る）
+    let (mut map_count, mut map_problems) = (0usize, Vec::new());
+    for (i, set) in project.sets().iter().enumerate() {
+        for kind in MeshMapKind::ALL {
+            match project.mesh_map(&set.id, kind, MESH_MAP_LIMIT_BYTES) {
+                Ok(Some(map)) => {
+                    if let Some(target) = sets.get_mut(i) {
+                        target.mesh_maps.load(map);
+                        map_count += 1;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => map_problems.push(format!("{} {}: {e}", set.name, kind.name())),
+            }
+        }
+    }
     state.replace_sets(sets, doc);
     state.project_name = path
         .file_stem()
@@ -215,6 +234,16 @@ pub fn open_into(state: &mut AppState, path: &Path) {
             " 読むだけのセット {}: {}。",
             read_only.len(),
             read_only.join("・")
+        );
+    }
+    if map_count > 0 {
+        text += &format!(" メッシュマップ {map_count} 枚。");
+    }
+    if !map_problems.is_empty() {
+        text += &format!(
+            " 読めないメッシュマップ {}（ファイルには残っています）: {}。",
+            map_problems.len(),
+            map_problems.join("、")
         );
     }
     // io の知らせのうち、セットごとの変換の理由は上で言ったので除く
@@ -323,6 +352,20 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         None => Project::create(writer(), &specs, &current),
     }
     .map_err(|e| e.to_string())?;
+    // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
+    let mut project = project;
+    let mut maps_written = Vec::new();
+    for (i, set) in state.sets.iter().enumerate() {
+        let unsaved = set.mesh_maps.unsaved();
+        for map in &unsaved {
+            project = project
+                .with_mesh_map(&set.id, map)
+                .map_err(|e| format!("セット「{}」のメッシュマップ: {e}", set.name))?;
+        }
+        if !unsaved.is_empty() {
+            maps_written.push((i, unsaved));
+        }
+    }
     let overwrite = path.exists();
     let reuse = state
         .project
@@ -358,6 +401,12 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             set.saved = Some((*id, *revision));
         }
     }
+    let map_total: usize = maps_written.iter().map(|(_, m)| m.len()).sum();
+    for (i, maps) in &maps_written {
+        if let Some(set) = state.sets.get_mut(*i) {
+            set.mesh_maps.mark_saved(maps);
+        }
+    }
     state.modified = false;
     state.project_name = path
         .file_stem()
@@ -369,6 +418,9 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         state.sets.len(),
         written.len()
     );
+    if map_total > 0 {
+        text += &format!(" メッシュマップ {map_total} 枚を書きました。");
+    }
     if overwrite {
         let name = path
             .file_name()

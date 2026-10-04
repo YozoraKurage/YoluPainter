@@ -1,0 +1,816 @@
+//! ベイクの試験（画面なし）。試しの立方体と、Live Link と同じ形のモデルを別のスレッドで焼き、結果・取消・捨てる条件・古さの判定を確かめる。
+
+use yolu_core::mesh_maps::{MeshMapKind, MeshMapStaleReason, MeshMapState};
+use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, MeshPose, Model, Pose, Submesh};
+
+use super::*;
+use crate::state::Action;
+
+fn bake(a: BakeAction) -> Action {
+    Action::Bake(a)
+}
+
+/// 試しの立方体を読んだ 64 × 64 の状態。速く焼けるように設定を小さくする。
+fn cube() -> AppState {
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::LoadDemoModel);
+    quick(&mut s);
+    s
+}
+
+fn quick(s: &mut AppState) {
+    s.bake.settings.maps = vec![
+        MeshMapKind::WorldNormal,
+        MeshMapKind::Position,
+        MeshMapKind::AmbientOcclusion,
+    ];
+    s.bake.settings.ao_samples = 8;
+    s.bake.settings.padding = 4;
+}
+
+fn info(name: &str) -> MaterialInfo {
+    MaterialInfo {
+        key: MaterialKey::Material {
+            name: name.into(),
+            asset: None,
+        },
+        shader: String::new(),
+        textures: vec![],
+        routes: vec![],
+    }
+}
+
+/// 2 枚の板（左は 1 つ目、右は 2 つ目のマテリアル。UV は 0〜1 の中で左右に分ける）。
+fn two_quads(generation: u32, lift: f32) -> Model {
+    let quad = |x: f32, u0: f32| MeshData {
+        key: format!("{x}"),
+        name: format!("板{x}"),
+        skinned: false,
+        positions: vec![
+            [x, 0.0, 0.0],
+            [x + 1.0, 0.0, 0.0],
+            [x, 1.0, lift],
+            [x + 1.0, 1.0, lift],
+        ],
+        normals: vec![],
+        uv0: vec![[u0, 0.0], [u0 + 0.5, 0.0], [u0, 1.0], [u0 + 0.5, 1.0]],
+        submeshes: vec![Submesh {
+            material: if u0 == 0.0 { 0 } else { 1 },
+            indices: vec![0, 1, 2, 2, 1, 3],
+        }],
+    };
+    Model {
+        generation,
+        name: "二枚".into(),
+        materials: vec![info("Skin"), info("Hair")],
+        meshes: vec![quad(0.0, 0.0), quad(2.0, 0.5)],
+    }
+}
+
+fn kinds(s: &AppState, index: usize) -> Vec<MeshMapKind> {
+    s.sets
+        .get(index)
+        .unwrap()
+        .mesh_maps
+        .iter()
+        .map(|m| m.kind())
+        .collect()
+}
+
+#[test]
+fn refusals_come_in_the_order_the_window_shows_them() {
+    let lang_ja = |s: &mut AppState| s.bake_refusal().unwrap();
+    let mut s = AppState::new(64, 64);
+    assert_eq!(lang_ja(&mut s), "モデルがありません");
+    s.apply(Action::LoadDemoModel);
+    assert_eq!(s.bake_refusal(), None);
+    // マップを 1 つも選んでいない
+    let maps = std::mem::take(&mut s.bake.settings.maps);
+    assert_eq!(lang_ja(&mut s), "チェックしたマップがありません");
+    s.bake.settings.maps = maps;
+    // 描いている間
+    let layer = s.selected_layer.unwrap();
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    assert_eq!(lang_ja(&mut s), "描いている間はできません");
+    s.apply(bake(BakeAction::Start));
+    assert!(!s.bake.is_baking(), "描いている間は始めない");
+    assert_eq!(s.message, "描いている間はできません");
+    s.doc.end_stroke(stroke).unwrap();
+    assert_eq!(s.bake_refusal(), None);
+    // 英語
+    s.lang = Lang::En;
+    s.bake.settings.maps.clear();
+    assert_eq!(s.bake_refusal().unwrap(), "No map is checked");
+}
+
+#[test]
+fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
+    let mut s = cube();
+    assert!(!s.modified);
+    s.apply(bake(BakeAction::Start));
+    assert!(s.bake.is_baking(), "別のスレッドで走っている");
+    assert_eq!(
+        s.bake_refusal().as_deref(),
+        Some("ベイク中です"),
+        "走っている間は 2 つ目を始めない"
+    );
+    let progress = s.bake.progress().unwrap();
+    assert_eq!((progress.index, progress.total), (1, 1));
+    s.wait_bake();
+    assert!(!s.bake.is_baking());
+    assert_eq!(
+        kinds(&s, 0),
+        [
+            MeshMapKind::WorldNormal,
+            MeshMapKind::Position,
+            MeshMapKind::AmbientOcclusion
+        ]
+    );
+    let map = s
+        .sets
+        .current()
+        .mesh_maps
+        .get(MeshMapKind::Position)
+        .unwrap();
+    let p = map.provenance();
+    assert_eq!((p.width, p.height), (64, 64), "大きさは文書");
+    assert_eq!(p.target_slots, [0]);
+    assert_eq!((p.padding, p.antialiasing), (4, 1));
+    assert!(map.coverage().contains(&1), "立方体の面が UV を覆う");
+    assert!(s.modified, "保存していない変更になる");
+    assert_eq!(
+        s.bake.view,
+        MeshMapView::Coverage,
+        "初めて焼いたら UV の範囲を見せる"
+    );
+    assert!(s.message.contains("焼きました"), "{}", s.message);
+    assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| *ok));
+    assert!(s.sets.current().mesh_maps.report().is_some());
+    // 今の条件で焼いたものなので Current
+    for kind in kinds(&s, 0) {
+        let check = s.mesh_map_check(0, kind).unwrap();
+        assert_eq!(
+            check.state,
+            MeshMapState::Current,
+            "{kind:?}: {:?}",
+            check.reasons
+        );
+    }
+    // 文書は変わらない（描くレイヤーではない）
+    assert!(!s.doc.can_undo());
+}
+
+#[test]
+fn rebaking_replaces_the_same_kind_and_leaves_the_others() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let before = s
+        .sets
+        .current()
+        .mesh_maps
+        .get(MeshMapKind::Position)
+        .unwrap()
+        .clone();
+    s.bake.settings.maps = vec![MeshMapKind::Position];
+    s.bake.settings.padding = 8;
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(kinds(&s, 0).len(), 3, "焼き直した種類だけ置き換える");
+    let after = s
+        .sets
+        .current()
+        .mesh_maps
+        .get(MeshMapKind::Position)
+        .unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&before, after));
+    assert_eq!(after.provenance().padding, 8);
+    // 余白を変えたので、焼き直していない種類は古い
+    let check = s.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
+    assert_eq!(check.state, MeshMapState::Stale);
+    assert!(check
+        .reasons
+        .contains(&MeshMapStaleReason::Padding { baked: 4, now: 8 }));
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Current
+    );
+}
+
+#[test]
+fn a_result_is_discarded_when_the_model_changed_while_baking() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    // 焼いている間に別のモデルへ替える（形が変わるので、結果の意味が変わる）
+    s.apply(Action::LoadDemoModel);
+    s.wait_bake();
+    assert!(s.sets.current().mesh_maps.is_empty(), "捨てる");
+    assert!(s.message.contains("捨てました"), "{}", s.message);
+    assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
+    assert!(!s.modified);
+    // 同じ形でもう一度焼けば入る
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(kinds(&s, 0).len(), 3);
+}
+
+#[test]
+fn a_result_is_discarded_when_the_document_was_replaced() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    let (doc, _) = crate::state::blank_document(64, 64);
+    s.doc = doc; // 同じ大きさでも別の文書
+    s.wait_bake();
+    assert!(s.sets.current().mesh_maps.is_empty());
+    assert!(s.message.contains("文書"), "{}", s.message);
+}
+
+#[test]
+fn cancel_keeps_the_previous_maps_and_the_rest_of_the_queue() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let previous: Vec<_> = s.sets.current().mesh_maps.iter().cloned().collect();
+    // 取消が来るまで始めない仕事にして取り消す（取消が効いたことを、焼き終わる速さに頼らず確かめる）
+    s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];
+    s.bake.park_next = true;
+    s.apply(bake(BakeAction::Start));
+    assert!(s.bake.is_baking());
+    s.apply(bake(BakeAction::Cancel));
+    assert!(s.bake.progress().unwrap().canceling);
+    assert!(s.message.contains("取り消しています"), "{}", s.message);
+    s.wait_bake();
+    assert!(s.message.contains("取り消しました"), "{}", s.message);
+    let now: Vec<_> = s.sets.current().mesh_maps.iter().cloned().collect();
+    assert_eq!(now.len(), previous.len());
+    assert!(
+        now.iter()
+            .zip(&previous)
+            .all(|(a, b)| std::sync::Arc::ptr_eq(a, b)),
+        "取り消したら前のマップのまま"
+    );
+    assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
+}
+
+#[test]
+fn checks_keep_one_map_and_one_set() {
+    let mut s = cube();
+    for kind in s.bake.settings.maps.clone().into_iter().skip(1) {
+        s.apply(bake(BakeAction::Map(kind, false)));
+    }
+    assert_eq!(s.bake.settings.maps.len(), 1);
+    s.apply(bake(BakeAction::Map(s.bake.settings.maps[0], false)));
+    assert_eq!(s.bake.settings.maps.len(), 1, "最後の 1 つは外せない");
+    assert!(s.message.contains("1 つは残します"), "{}", s.message);
+    // 足すと種類の並びの順に入る
+    s.apply(bake(BakeAction::Map(MeshMapKind::WorldNormal, true)));
+    s.apply(bake(BakeAction::Map(MeshMapKind::Curvature, true)));
+    assert_eq!(
+        s.bake.settings.maps,
+        [
+            MeshMapKind::WorldNormal,
+            MeshMapKind::Curvature,
+            MeshMapKind::Position
+        ]
+        .into_iter()
+        .filter(|k| s.bake.settings.maps.contains(k))
+        .collect::<Vec<_>>()
+    );
+    // セット（1 つだけなら外せない）
+    let uid = s.sets.current().uid;
+    s.apply(bake(BakeAction::Set(uid, false)));
+    assert!(s.bake.skipped.is_empty());
+}
+
+#[test]
+fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model() {
+    let mut s = AppState::new(64, 64);
+    let (report, shape) = s.receive_link_model(&two_quads(1, 0.0), 0);
+    assert_eq!(shape, Ok(()));
+    assert_eq!(report.created, ["Hair"]);
+    quick(&mut s);
+    // モデルに無いマテリアルのセット
+    let (doc, _) = crate::state::blank_document(32, 32);
+    s.sets.push(
+        crate::sets::guid_string(doc.id()),
+        "Gone".into(),
+        false,
+        MaterialRef::Material {
+            name: "Gone".into(),
+            asset: None,
+        },
+        None,
+        doc,
+    );
+    s.bind_model();
+    assert_eq!(s.bakeable_sets(), [0, 1], "モデルに無いセットは焼かない");
+    assert_eq!(s.set_slots(0), Some(vec![0]));
+    assert_eq!(s.set_slots(1), Some(vec![1]));
+    assert_eq!(s.set_slots(2), None);
+    s.apply(bake(BakeAction::Start));
+    let first = s.bake.progress().unwrap();
+    assert_eq!((first.index, first.total), (1, 2));
+    s.wait_bake();
+    assert_eq!(kinds(&s, 0).len(), 3);
+    assert_eq!(kinds(&s, 1).len(), 3, "2 つ目のセットも焼く");
+    assert!(kinds(&s, 2).is_empty());
+    let slot_of = |i: usize| {
+        s.sets
+            .get(i)
+            .unwrap()
+            .mesh_maps
+            .get(MeshMapKind::Position)
+            .unwrap()
+            .provenance()
+            .target_slots
+            .clone()
+    };
+    assert_eq!(slot_of(0), [0]);
+    assert_eq!(slot_of(1), [1]);
+    assert!(
+        s.message.contains("2 個のテクスチャセット"),
+        "{}",
+        s.message
+    );
+    // モデルに無いセットの状態を聞くと、マップは無い
+    assert!(s.mesh_map_check(2, MeshMapKind::Position).is_none());
+    // 外したセットは焼かない
+    let hair = s.sets.get(1).unwrap().uid;
+    s.apply(bake(BakeAction::Set(hair, false)));
+    assert_eq!(s.bakeable_sets(), [0]);
+}
+
+#[test]
+fn a_moved_vertex_or_a_new_model_makes_the_maps_stale_for_their_reason() {
+    let mut s = AppState::new(64, 64);
+    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Current
+    );
+    // ポーズ（頂点が動く。三角形・UV は同じ）
+    let moved: Vec<[f32; 3]> = two_quads(1, 0.5).meshes[0].positions.clone();
+    s.receive_link_pose(&Pose {
+        generation: 1,
+        meshes: vec![MeshPose {
+            mesh: 0,
+            positions: moved,
+            normals: vec![],
+        }],
+    })
+    .unwrap();
+    let check = s.mesh_map_check(0, MeshMapKind::Position).unwrap();
+    assert_eq!(check.state, MeshMapState::Stale);
+    assert_eq!(check.reasons, [MeshMapStaleReason::ShapeChanged]);
+    // 書き出しの AO には使わない
+    assert_eq!(
+        s.occlusion_for_export(0),
+        Occlusion::Stale(stale_reasons(&check))
+    );
+    // モデルが無くなると照合できない
+    s.close_link_model(1);
+    let check = s.mesh_map_check(0, MeshMapKind::Position).unwrap();
+    assert_eq!(check.state, MeshMapState::Unverified);
+}
+
+/// 床と壁（同じマテリアル。2 枚の板が辺で接して凹む角を作る）。
+fn corner_model() -> Model {
+    let plate = |positions: [[f32; 3]; 4], u0: f32| MeshData {
+        key: format!("{u0}"),
+        name: format!("板{u0}"),
+        skinned: false,
+        positions: positions.to_vec(),
+        normals: vec![],
+        uv0: vec![[u0, 0.0], [u0 + 0.5, 0.0], [u0, 1.0], [u0 + 0.5, 1.0]],
+        submeshes: vec![Submesh {
+            material: 0,
+            indices: vec![0, 1, 2, 2, 1, 3],
+        }],
+    };
+    Model {
+        generation: 1,
+        name: "角".into(),
+        materials: vec![info("Skin")],
+        meshes: vec![
+            plate(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [1.0, 0.0, 1.0],
+                ],
+                0.0,
+            ),
+            plate(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                ],
+                0.5,
+            ),
+        ],
+    }
+}
+
+#[test]
+fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
+    let mut s = AppState::new(64, 64);
+    let _ = s.receive_link_model(&corner_model(), 0);
+    quick(&mut s);
+    s.bake.settings.ao_samples = 32;
+    assert_eq!(s.occlusion_for_export(0), Occlusion::None);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let Occlusion::Bytes(bytes) = s.occlusion_for_export(0) else {
+        panic!("焼いた AO が使える");
+    };
+    assert_eq!(bytes.len(), 64 * 64);
+    let map = s
+        .sets
+        .current()
+        .mesh_maps
+        .get(MeshMapKind::AmbientOcclusion)
+        .unwrap();
+    for (i, c) in map.coverage().iter().enumerate() {
+        if *c == 0 {
+            assert_eq!(bytes[i], 255, "UV の外は遮蔽なし");
+        } else {
+            let v = map.value((i % 64) as i32, (i / 64) as i32, 0).unwrap();
+            assert_eq!(bytes[i], yolu_core::export::occlusion_byte(v));
+        }
+    }
+    assert!(bytes.iter().any(|b| *b < 255), "凹む角に遮蔽が出る");
+    // 文書の大きさが変わったら使わない
+    let (doc, _) = crate::state::blank_document(32, 32);
+    s.doc = doc;
+    assert!(matches!(s.occlusion_for_export(0), Occlusion::Stale(_)));
+}
+
+#[test]
+fn viewing_a_map_the_set_does_not_have_falls_back_to_none() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::View(MeshMapView::Kind(
+        MeshMapKind::Position,
+    ))));
+    assert_eq!(
+        s.bake.view,
+        MeshMapView::None,
+        "焼いていないマップは見られない"
+    );
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    s.apply(bake(BakeAction::View(MeshMapView::Kind(
+        MeshMapKind::Position,
+    ))));
+    assert_eq!(s.bake.view, MeshMapView::Kind(MeshMapKind::Position));
+    s.apply(bake(BakeAction::View(MeshMapView::Kind(
+        MeshMapKind::Height,
+    ))));
+    assert_eq!(s.bake.view, MeshMapView::None);
+}
+
+#[test]
+fn names_cover_every_kind_in_both_languages() {
+    for kind in MeshMapKind::ALL {
+        for lang in Lang::ALL {
+            assert!(!kind_label(lang, kind).is_empty());
+            assert!(!kind_short(lang, kind).is_empty());
+            assert!(!window::kind_help(lang, kind).is_empty());
+        }
+    }
+    assert_eq!(slot_list(&[0, 2]), "0, 2");
+    assert_eq!(slot_list(&[]), "—");
+}
+
+use crate::sets::MaterialRef;
+
+#[test]
+fn a_figure_bakes_each_set_and_a_new_pose_makes_the_maps_stale() {
+    use crate::view3d::pose::{set_pose, PoseAction};
+    use yolu_core::glam::Quat;
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::Pose(PoseAction::LoadFigure));
+    assert!(s.view3d.pose.session.is_some(), "{}", s.message);
+    quick(&mut s);
+    assert_eq!(s.bake_refusal(), None);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(s.sets.len(), 2, "肌と顔");
+    assert!(
+        s.message.contains("2 個のテクスチャセット"),
+        "{}",
+        s.message
+    );
+    for i in 0..2 {
+        assert_eq!(kinds(&s, i).len(), 3, "セット {i}");
+        assert_eq!(
+            s.mesh_map_check(i, MeshMapKind::Position).unwrap().state,
+            MeshMapState::Current
+        );
+    }
+    // 骨を曲げる（三角形・UV は同じで、頂点が動く）と、焼いたマップは古い
+    let mut pose = s.view3d.pose.session.as_ref().unwrap().pose().clone();
+    let arm = s
+        .view3d
+        .pose
+        .session
+        .as_ref()
+        .unwrap()
+        .rig
+        .bones()
+        .iter()
+        .position(|b| b.name == "右上腕")
+        .expect("試しの人形の腕");
+    pose.locals[arm].rotation = Quat::from_rotation_z(-1.0);
+    set_pose(&mut s.view3d, pose).unwrap();
+    for i in 0..2 {
+        let check = s.mesh_map_check(i, MeshMapKind::Position).unwrap();
+        assert_eq!(check.state, MeshMapState::Stale, "セット {i}");
+        assert!(check.reasons.contains(&MeshMapStaleReason::ShapeChanged));
+    }
+    // 今の形で焼き直せば、また最新
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Current
+    );
+}
+
+#[test]
+fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_reason() {
+    // 8192 × 8192 に 10 種類は、メモリ予算（512 MiB）を超える
+    let mut s = AppState::new(8192, 8192);
+    s.apply(Action::LoadDemoModel);
+    s.bake.settings.maps = MeshMapKind::ALL.to_vec();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(s.message.contains("予算"), "{}", s.message);
+    assert!(s.sets.current().mesh_maps.is_empty());
+    assert!(!s.modified);
+    assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
+    // UV が 0〜1 の外（繰り返し・UDIM）はベイクできない
+    let mut model = two_quads(1, 0.0);
+    model.meshes[0].uv0[3] = [1.5, 1.0];
+    let mut t = AppState::new(64, 64);
+    t.receive_link_model(&model, 0).1.unwrap();
+    quick(&mut t);
+    t.apply(bake(BakeAction::Start));
+    t.wait_bake();
+    assert!(t.message.contains("UV"), "{}", t.message);
+    assert!(t.sets.iter().all(|x| x.mesh_maps.is_empty()));
+    // 英語
+    t.lang = Lang::En;
+    t.apply(bake(BakeAction::Start));
+    t.wait_bake();
+    assert!(
+        t.message.starts_with("Mesh maps were not baked"),
+        "{}",
+        t.message
+    );
+}
+
+#[test]
+fn the_built_input_is_released_when_nothing_needs_it() {
+    let mut s = cube();
+    assert!(s.bake_input().is_ok());
+    assert!(s.bake.input.is_some());
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_none(), "窓も焼いたマップも無ければ手放す");
+    // 窓を開いている間・マップがあるあいだは持つ
+    s.apply(bake(BakeAction::OpenWindow));
+    assert!(s.bake_input().is_ok());
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some());
+    s.apply(bake(BakeAction::CloseWindow));
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(s.bake_input().is_ok());
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some(), "焼いたマップの古さの判定に要る");
+}
+
+// ───────── モデルの同一性・入力を作る場所 ─────────
+
+/// Live Link のポーズで、1 枚目の板の上の頂点を `z` に動かす（形が変わり、モデルは作り直される）。
+fn lift(s: &mut AppState, z: f32) {
+    let mut positions = two_quads(1, 0.0).meshes[0].positions.clone();
+    positions[2][2] = z;
+    positions[3][2] = z;
+    s.receive_link_pose(&Pose {
+        generation: 1,
+        meshes: vec![MeshPose {
+            mesh: 0,
+            positions,
+            normals: vec![],
+        }],
+    })
+    .unwrap();
+}
+
+/// 窓の表示と同じ作り方（別のスレッド）で入力ができるまで待つ。
+fn wait_input(s: &mut AppState) -> Result<Arc<MeshBakeInput>, String> {
+    let start = Instant::now();
+    loop {
+        if let Some(result) = s.bake_input_nowait() {
+            return result;
+        }
+        assert!(start.elapsed().as_secs() < 120, "入力ができない");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+fn fresh_hash(s: &AppState) -> String {
+    input::build_input(s.view3d.full_model().unwrap())
+        .unwrap()
+        .hash()
+        .to_owned()
+}
+
+#[test]
+fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
+    let mut s = AppState::new(64, 64);
+    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    for round in 0..60 {
+        let z = 0.001 * (3 * round + 1) as f32;
+        lift(&mut s, z);
+        let first = s.bake_input().unwrap();
+        assert_eq!(first.hash(), fresh_hash(&s));
+        // 誰も入力を求めないうちに、モデルが 2 回替わる（旧モデルの割り当ては次のモデルに使われやすい）
+        lift(&mut s, z + 0.0005);
+        lift(&mut s, z + 0.001);
+        let now = s.bake_input().unwrap();
+        assert_eq!(
+            now.hash(),
+            fresh_hash(&s),
+            "{round} 回目: 古い形の入力を返した"
+        );
+        assert_ne!(now.hash(), first.hash());
+    }
+}
+
+#[test]
+fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() {
+    let mut s = AppState::new(64, 64);
+    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    quick(&mut s);
+    for round in 0..12 {
+        s.apply(bake(BakeAction::Start));
+        s.wait_bake();
+        assert_eq!(
+            s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+            MeshMapState::Current,
+            "{round} 回目"
+        );
+        // 窓は閉じていて、マップがあるので入力は残っている。そのまま 2 回替わる
+        let z = 0.01 * (2 * round + 1) as f32;
+        lift(&mut s, z);
+        lift(&mut s, z + 0.01);
+        let check = s.mesh_map_check(0, MeshMapKind::Position).unwrap();
+        assert_eq!(check.state, MeshMapState::Stale, "{round} 回目");
+        assert_eq!(check.reasons, [MeshMapStaleReason::ShapeChanged]);
+        assert!(
+            matches!(s.occlusion_for_export(0), Occlusion::Stale(_)),
+            "{round} 回目: 古い AO を書き出しに使う"
+        );
+    }
+}
+
+#[test]
+fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
+    for round in 0..20 {
+        let mut s = AppState::new(64, 64);
+        let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+        quick(&mut s);
+        s.apply(bake(BakeAction::Start));
+        assert!(s.bake.is_baking());
+        // 焼いている間に 2 回替わる（偶数回で元のアドレスに戻りやすい）
+        lift(&mut s, 0.1);
+        lift(&mut s, 0.2);
+        s.wait_bake();
+        assert!(
+            s.sets.iter().all(|x| x.mesh_maps.is_empty()),
+            "{round} 回目: 古い形の結果を入れた"
+        );
+        assert!(s.message.contains("捨てました"), "{}", s.message);
+        assert!(!s.modified);
+    }
+}
+
+#[test]
+fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model() {
+    let mut s = AppState::new(64, 64);
+    let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
+    quick(&mut s);
+    // 作っている最中は None（窓は「確認中」）。入力の理由で断らない
+    assert!(s.bake_input_nowait().is_none());
+    assert!(s.bake.is_checking());
+    assert_eq!(s.bake_refusal_nowait(), None);
+    assert!(s.bake.input.is_none(), "このスレッドでは作っていない");
+    let first = wait_input(&mut s).unwrap();
+    assert!(!s.bake.is_checking());
+    assert_eq!(first.hash(), fresh_hash(&s));
+    assert!(
+        s.bake_input_nowait().is_some(),
+        "同じモデルなら作り直さない"
+    );
+
+    // モデルが替わると、また別のスレッドで作り直す（その間も窓は止まらない）
+    lift(&mut s, 0.3);
+    assert!(s.bake_input_nowait().is_none());
+    assert!(s.bake.is_checking());
+    // 作っている間にまた替わっても、古い形は入れず、最新のモデルで作り直す
+    lift(&mut s, 0.4);
+    let latest = wait_input(&mut s).unwrap();
+    assert_eq!(latest.hash(), fresh_hash(&s));
+    assert_ne!(latest.hash(), first.hash());
+
+    // 始める・書き出すときの入力は、作っている最中なら終わりを待つ（二重に作らない）
+    lift(&mut s, 0.5);
+    assert!(s.bake_input_nowait().is_none());
+    let waited = s.bake_input().unwrap();
+    assert_eq!(waited.hash(), fresh_hash(&s));
+    assert!(!s.bake.is_checking());
+
+    // 窓を閉じていれば、作っている最中のものは手放す
+    lift(&mut s, 0.6);
+    assert!(s.bake_input_nowait().is_none());
+    s.release_idle_bake_input();
+    assert!(!s.bake.is_checking());
+}
+
+#[test]
+fn a_failed_input_is_remembered_and_shown_as_the_reason() {
+    use crate::view3d::model::ViewModel;
+    // UV が有限でない（3D ビューは受けるが、ベイクの入力は作れない）
+    let valid = ViewModel::demo(1);
+    let mut meshes = valid.meshes.clone();
+    meshes[0].uvs[0] = yolu_core::glam::Vec2::new(f32::NAN, 0.0);
+    let broken = ViewModel::with_geometry(
+        &valid.name,
+        meshes,
+        valid.materials.clone(),
+        valid.geometry.clone(),
+    );
+    let mut s = AppState::new(64, 64);
+    s.view3d.set_model(broken);
+    quick(&mut s);
+    let failed = wait_input(&mut s);
+    assert!(failed.is_err());
+    let again = s.bake_input_nowait();
+    assert!(
+        matches!(again, Some(Err(_))),
+        "失敗も覚える（作り直さない）"
+    );
+    assert!(!s.bake.is_checking());
+    let reason = s.bake_refusal_nowait().expect("入力の理由で断る");
+    assert!(reason.starts_with("ベイクできません"), "{reason}");
+    s.apply(bake(BakeAction::Start));
+    assert!(!s.bake.is_baking());
+    assert!(s.message.starts_with("ベイクできません"), "{}", s.message);
+}
+
+#[test]
+fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
+    use yolu_core::mesh_maps::MeshIdSource;
+    let status =
+        |s: &AppState, kind| window::id_status(s.lang, kind, s.sets.current().mesh_maps.report());
+    // 立方体は 1 つのスロット: スロットごとなら 1 色
+    let mut s = cube();
+    s.bake.settings.maps = vec![MeshMapKind::Id];
+    s.bake.settings.id_source = MeshIdSource::MaterialSlot;
+    assert_eq!(status(&s, MeshMapKind::Id), None, "焼く前は何も言わない");
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert_eq!(s.sets.current().mesh_maps.report().unwrap().id_parts, 1);
+    let text = status(&s, MeshMapKind::Id).expect("部品が 1 つ");
+    assert!(text.contains("1 色"), "{text}");
+    assert_eq!(status(&s, MeshMapKind::Position), None, "ID のページだけ");
+    s.lang = Lang::En;
+    assert_eq!(
+        status(&s, MeshMapKind::Id).as_deref(),
+        Some("Last bake: one part, one ID color")
+    );
+    // 2 枚の板（同じマテリアルでも別のスロット）: 高ポリが無くても板ごとに別の色。1 色とは言わない
+    let mut t = AppState::new(64, 64);
+    let _ = t.receive_link_model(&corner_model(), 0);
+    quick(&mut t);
+    t.bake.settings.maps = vec![MeshMapKind::Id];
+    for source in [MeshIdSource::MaterialSlot, MeshIdSource::UvIsland] {
+        t.bake.settings.id_source = source;
+        t.apply(bake(BakeAction::Start));
+        t.wait_bake();
+        assert_eq!(
+            t.sets.current().mesh_maps.report().unwrap().id_parts,
+            2,
+            "{source:?}"
+        );
+        assert_eq!(status(&t, MeshMapKind::Id), None, "{source:?}");
+    }
+}
