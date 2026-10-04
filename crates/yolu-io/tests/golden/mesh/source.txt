@@ -1,0 +1,4 @@
+Unity Core commit: 94c81415171f14e2f168ceb5497d8d3cd08ea803
+Core SHA-256: 1582c88a9f0607c17fdc653faf5585723712f6ccad3c4f2e8ce61da6d05ebdc7
+Compiler: Unity bundled Roslyn, optimize+
+Runtime: Unity bundled Mono

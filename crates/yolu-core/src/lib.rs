@@ -45,6 +45,7 @@ pub mod filter;
 pub mod geometry;
 mod layer;
 mod math;
+pub mod mesh_maps;
 pub mod normal;
 pub mod skin;
 mod surface;

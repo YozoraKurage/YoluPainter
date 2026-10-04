@@ -77,3 +77,5 @@ impl From<yolu_core::CoreError> for Error {
 }
 
 pub mod psd;
+
+pub mod mesh_map;

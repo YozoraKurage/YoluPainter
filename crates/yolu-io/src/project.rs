@@ -306,6 +306,64 @@ impl Project {
             "YOLUPAINTER-YLP-",
         )?)
     }
+    /// セットの派生メッシュマップを読む。壊れた派生物はエラーを返し、元のエントリは保持する。
+    pub fn mesh_map(
+        &self,
+        set_id: &str,
+        kind: yolu_core::mesh_maps::MeshMapKind,
+        max_bytes: usize,
+    ) -> Result<Option<yolu_core::mesh_maps::BakedMeshMap>> {
+        let name = self.mesh_map_entry(set_id, kind)?;
+        self.original
+            .files
+            .get(&name)
+            .map(|bytes| {
+                let map = crate::mesh_map::read_with_limit(bytes, max_bytes)?;
+                check(
+                    map.kind() == kind,
+                    "メッシュマップのエントリ名と種類が一致しません",
+                )?;
+                Ok(map)
+            })
+            .transpose()
+    }
+    /// 指定した種類の派生物だけを置き換えたプロジェクトを返す。文書と未知のエントリは保つ。
+    /// 書くのは形式7だけ（メッシュマップの `.bin` の版3は形式7の一部）。旧形式は先にupgradedで移行する。
+    pub fn with_mesh_map(
+        &self,
+        set_id: &str,
+        map: &yolu_core::mesh_maps::BakedMeshMap,
+    ) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "メッシュマップを書く前にupgradedで形式7へ移行してください",
+        )?;
+        let name = self.mesh_map_entry(set_id, map.kind())?;
+        let mut files = self.original.files.clone();
+        files.insert(name, Arc::from(crate::mesh_map::write(map)?));
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    fn mesh_map_entry(
+        &self,
+        set_id: &str,
+        kind: yolu_core::mesh_maps::MeshMapKind,
+    ) -> Result<String> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let entry = crate::mesh_map::entry_name(kind);
+        Ok(if self.info.format < 3 {
+            entry
+        } else {
+            format!("sets/{set_id}/{entry}")
+        })
+    }
     /// 形式7のセットのマテリアル参照を置き換える。旧形式は先にupgradedで明示的に移行する。
     pub fn with_material(&self, set_id: &str, material: MaterialRef) -> Result<Self> {
         check(

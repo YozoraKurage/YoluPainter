@@ -9,5 +9,4 @@ publish.workspace = true
 glam = "0.33"
 rayon = "1.12"
 
-[dev-dependencies]
 sha2 = "0.10"
