@@ -4206,6 +4206,12 @@ dependencies = [
 [[package]]
 name = "yolu-gpu"
 version = "0.0.1"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "wgpu",
+ "yolu-core",
+]
 
 [[package]]
 name = "yolu-io"
