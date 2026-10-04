@@ -1,7 +1,10 @@
 use crate::{check, Result};
 use flate2::{write::ZlibEncoder, Compression};
 use std::io::Write;
-use yolu_core::Document;
+use yolu_core::{Channel, Document};
+
+/// Normal の出力が確保してよい作業のバイト数（Unity 版 `NormalMaps.DefaultWorkingBudgetBytes` と同じ）。
+const NORMAL_WORKING_BYTES: u64 = 256 * 1024 * 1024;
 
 /// 現在のColor合成をRGBA8 PNGへ書く。上下の向き、行フィルター、チャンク配置は
 /// Unity版RgbaPngと同じ。圧縮バイトはdeflate実装の版にも依存する。
@@ -12,6 +15,32 @@ pub fn composite_png(doc: &Document) -> Result<Vec<u8>> {
     )?;
     let rgba = doc.composite(doc.bounds())?;
     encode(&rgba, doc.width(), doc.height())
+}
+/// 使っている標準チャンネルごとの合成の PNG（`composite/<チャンネル>.png` の中身。番号の順）。Unity 版の `YlpContent.Composites` と
+/// 同じ選び方で、どれかの層が有効にしているチャンネルと、Height → Normal が有効で Height を使っているときの Normal。Normal は
+/// Unity 向けの出力（OpenGL の向き・不透明・塗っていない所は平ら）。Color は使う層が無くても必ず含める。ユーザーチャンネルの
+/// PNG は作らない（Unity 版のインポーターが名前を知らない）。
+pub fn composite_pngs(doc: &Document) -> Result<Vec<(Channel, Vec<u8>)>> {
+    check(
+        doc.width() <= 8192 && doc.height() <= 8192,
+        "PNGの寸法の上限は8192です",
+    )?;
+    let mut out = Vec::new();
+    for channel in Channel::ALL {
+        let used = channel == Channel::Color
+            || doc.layers().iter().any(|l| l.is_channel_enabled(channel))
+            || channel == Channel::Normal && doc.derives_normal();
+        if !used {
+            continue;
+        }
+        let rgba = if channel == Channel::Normal {
+            doc.normal_output(NORMAL_WORKING_BYTES)?
+        } else {
+            doc.composite_channel(channel, doc.bounds())?
+        };
+        out.push((channel, encode(&rgba, doc.width(), doc.height())?));
+    }
+    Ok(out)
 }
 pub(crate) fn encode(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     let stride = width as usize * 4;

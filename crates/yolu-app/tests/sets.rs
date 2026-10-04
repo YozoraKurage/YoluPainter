@@ -353,7 +353,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
         "開いただけでは形式を変えない"
     );
     for (i, set) in s.sets.iter().enumerate() {
-        assert!(set.read_only.is_none(), "M1 の中身だけなので描ける");
+        assert!(set.read_only.is_none(), "core が持つ中身だけなので描ける");
         assert_eq!(
             set.material,
             MaterialRef::PendingSlot(i as u16),
@@ -435,6 +435,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
 #[test]
 fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
+    // format4.ylp の最初のセットはフィルターとマスクのフィルターを持つ（core に無い）。2 つ目の Trim は core が持つ中身だけ
     let dir = TempDir::new("readonly");
     let path = dir.0.join("format4.ylp");
     std::fs::copy(fixture("format4.ylp"), &path).unwrap();
@@ -444,14 +445,20 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
     h.run();
     let s = &h.state().state;
     assert_eq!(s.sets.len(), 2);
-    for set in s.sets.iter() {
-        let reason = set
-            .read_only
-            .as_deref()
-            .expect("別のチャンネルがあるので読むだけ");
-        assert!(reason.contains("core で扱えない中身"), "{reason}");
-    }
-    assert!(s.message.contains("読むだけのセット 2"), "{}", s.message);
+    let reason = s
+        .sets
+        .get(0)
+        .unwrap()
+        .read_only
+        .as_deref()
+        .expect("フィルターがあるので読むだけ");
+    assert!(reason.contains("core で扱えない中身"), "{reason}");
+    assert!(reason.contains("フィルター"), "{reason}");
+    assert!(
+        s.sets.get(1).unwrap().read_only.is_none(),
+        "Trim は core が持つ中身だけ"
+    );
+    assert!(s.message.contains("読むだけのセット 1"), "{}", s.message);
     // 描けない
     let c = canvas_rect(&h).center();
     let was = canvas_pixel(&h, c);
@@ -473,6 +480,118 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         }
         assert_eq!(saved.migrated_entries().get(name), Some(bytes), "{name}");
     }
+}
+
+/// C# が書いた M2 の文書（グループ・マスク・チャンネルごとの合成・調整・塗りつぶし）の 2 セットを入れた .ylp。
+fn m2_project(path: &std::path::Path) -> Vec<yolu_io::NativeDocument> {
+    let natives: Vec<_> = ["m2-groups", "m2-channels"]
+        .iter()
+        .map(|n| {
+            yolu_io::NativeDocument::read(&std::fs::read(fixture(&format!("{n}.utpaint"))).unwrap())
+                .unwrap()
+        })
+        .collect();
+    let specs: Vec<_> = natives
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            let core = n.to_core().unwrap();
+            yolu_io::SetSpec {
+                id: format!("00000000-0000-4000-8000-00000000010{i}"),
+                name: format!("M2 {i}"),
+                material: yolu_io::MaterialRef::Material {
+                    name: format!("M2 {i}"),
+                    asset: None,
+                },
+                document: Some(n.clone()),
+                composites: yolu_io::composite_pngs(&core).unwrap(),
+            }
+        })
+        .collect();
+    let id = specs[0].id.clone();
+    let project = yolu_io::Project::create(writer(), &specs, &id).unwrap();
+    std::fs::write(path, project.to_bytes().unwrap()).unwrap();
+    natives
+}
+fn writer() -> yolu_io::WriterInfo {
+    yolu_io::WriterInfo {
+        app: "試験の書き手".into(),
+        version: "0.0.1".into(),
+        unity: "standalone".into(),
+    }
+}
+
+#[test]
+fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without_losing_them() {
+    let dir = TempDir::new("m2");
+    let path = dir.0.join("m2.ylp");
+    let natives = m2_project(&path);
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(s.sets.len(), 2);
+    for set in s.sets.iter() {
+        assert!(set.read_only.is_none(), "{:?}", set.read_only);
+    }
+    // 描かずに保存しても正本は書き直さない（バイト列のまま）
+    h.state_mut().state.apply(Action::SaveProject);
+    assert!(
+        h.state().state.message.contains("書き直した正本 0"),
+        "{}",
+        h.state().state.message
+    );
+    // 層の表示を切ると、そのセットだけ正本を書き直す。グループ・マスク・チャンネルごとの合成・調整は残り、もう 1 つのセットはバイト列のまま
+    let doc = &h.state().state.doc;
+    let target = doc
+        .layers()
+        .iter()
+        .find(|l| l.mask().is_some() || l.is_group())
+        .map(|l| l.id())
+        .expect("グループかマスクのある層");
+    let mut expected = natives[0].to_core().unwrap();
+    let visible = expected.layer(target).unwrap().visible();
+    expected.set_layer_visible(target, !visible).unwrap();
+    h.state_mut().state.apply(Action::ToggleVisible(target));
+    h.run();
+    assert!(h.state().state.modified);
+    h.state_mut().state.apply(Action::SaveProject);
+    let message = h.state().state.message.clone();
+    assert!(message.starts_with("保存しました"), "{message}");
+    assert!(message.contains("書き直した正本 1"), "{message}");
+    let saved = read_project(&path);
+    assert_eq!(
+        saved.sets()[0].document.to_bytes(),
+        yolu_io::NativeDocument::from_core(&expected)
+            .unwrap()
+            .to_bytes()
+    );
+    assert_eq!(saved.sets()[1].document.to_bytes(), natives[1].to_bytes());
+    assert_eq!(saved.sets()[0].document.version(), 21);
+    // 書き直したセットの合成は、使っているチャンネルごと（Color のほか Height）に書く。Unity 版が合成の並びからチャンネルを出す
+    let first = saved.sets()[0].id.clone();
+    let channels = yolu_io::composite_pngs(&expected).unwrap();
+    assert!(channels
+        .iter()
+        .any(|(c, _)| *c == yolu_core::Channel::Height));
+    for (channel, png) in channels {
+        let entry = format!(
+            "sets/{first}/composite/{}.png",
+            channel.standard_name().unwrap()
+        );
+        assert_eq!(
+            saved.migrated_entries().get(&entry).map(|b| &b[..]),
+            Some(png.as_slice()),
+            "{entry}"
+        );
+    }
+    // 1 回 Undo して保存すると、元の正本に戻る
+    h.state_mut().state.apply(Action::Undo);
+    h.state_mut().state.apply(Action::SaveProject);
+    assert_eq!(
+        read_project(&path).sets()[0].document.to_bytes(),
+        natives[0].to_bytes()
+    );
 }
 
 #[test]

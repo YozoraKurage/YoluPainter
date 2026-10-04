@@ -11,6 +11,11 @@
 | `m1-mode-00.ylp` 〜 `m1-mode-25.ylp` と同名PNG | 形式7・正本21の書き手と CPU 合成。26合成モード、連続クリッピング、最下層のクリッピング印、非表示層、半透明、透明RGB、日本語名、17×11画素・8タイルの外周。00はmaterial全種類と先頭でない現在セットも含む。 |
 | `m1-pattern.ylp` と同名PNG | 65×33画素の縞とグラデーション。圧縮が効くdeflateストリームでもC#出力と全バイト一致することを検証。 |
 | `selection-v1.bin` | C#の `SelectionBinary.Write` による選択範囲 |
+| `m2-groups.utpaint`・`m2-masks.utpaint`・`m2-channels.utpaint`・`m2-clipping.utpaint`・`m2-tiny.utpaint` と同名 `.composite` | Unity 0.2.0のCore（正本21）の実際の書き手（`tools/io-fixtures/M2Fixture.cs`）。グループ（通過・分離・入れ子・空・非表示・クリップ）、ラスターマスク（有効・反転・濃度・画素なし・グループのマスク）、チャンネルごとの有効と合成、塗りつぶし・調整（反転・レベル補正・色相/彩度/明度）、Normalの設定、クリッピング、1画素。`.composite` はC#の全チャンネルの合成（番号の順、下の行から）に続けてNormalのファイル出力 |
+| `user-channels-v22.utpaint` | Rustの `from_core` が書いた版22（ユーザーチャンネル3つ、番号6・8・9）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる） |
+| `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
+| `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
+| `rust-written-v21.unity.txt`・`rust-written-v21.composite` | 上の版21をUnity 0.2.0の `DocumentBinary.ReadId` / `Read` に読ませ、`Write` で書き直したバイト列が元と同じか、層の数を記録したものと、C#の全チャンネルの合成（`m2-*.composite` と同じ並び） |
 
 旧正本のデータは各版の基礎配置を表す人工データであり、全版と全属性の組合せを網羅するものではない。
 
@@ -25,6 +30,19 @@ python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE"
 `UNITY_SOURCE` はUnity版のソース。読み取りだけ行う。Unity同梱のRoslynとMonoを使い、エディタやテストデーモンは起動しない。ビルド結果はRust側の `target/io-fixtures/`、生成物はこのフォルダ。`DocumentBinary.CurrentVersion` が21でなければ生成を断る。
 
 元の形式1〜6のZIPはこのツールでは作り直さない。新しい試験データを追加するときも、原本のファイルを上書きして互換性の基準を置き換えない。
+
+層の種類・チャンネルの正本5件と全チャンネルの合成の再生成（出力は同じバイト列になる）:
+
+```sh
+python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --m2
+```
+
+Rustが書く正解の正本（版22と版21）と、Unity 0.2.0の読み手の記録の取り直し。正本を作り直したときだけ:
+
+```sh
+YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test m2_bridge version_22_fixture version_21
+python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --user-channels --rust-written
+```
 
 形式7の合成データの再生成:
 

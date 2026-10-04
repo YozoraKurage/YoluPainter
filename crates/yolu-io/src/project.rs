@@ -122,9 +122,10 @@ pub struct SetSpec {
     pub material: MaterialRef,
     /// 新しい正本。None なら元のプロジェクトの同じ ID のセットのエントリをバイト列のまま残す（新しいセットには要る）。
     pub document: Option<NativeDocument>,
-    /// 新しい正本の Color の合成の PNG（`composite/Color.png`）。正本を替えたセットの `composite/` の下は、中身と合わない
-    /// 派生を残さないよう全部を消してから、これがあれば書く。
-    pub composite_color: Option<Vec<u8>>,
+    /// 新しい正本の、使っているチャンネルごとの合成の PNG（`composite/<チャンネル>.png`。`composite_pngs` が作る）。標準の
+    /// チャンネルだけで、同じチャンネルを 2 回は渡せない。正本を替えたセットの `composite/` の下は、中身と合わない派生を
+    /// 残さないよう全部を消してから、これを書く（Unity 版のインポーターはここからチャンネルの一覧を出す）。
+    pub composites: Vec<(yolu_core::Channel, Vec<u8>)>,
 }
 #[derive(Clone, Debug)]
 pub struct Resource {
@@ -223,7 +224,7 @@ impl Project {
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
             list.push(set_json(None, spec));
-            put_set_entries(&mut files, spec);
+            put_set_entries(&mut files, spec)?;
         }
         let project = serde_json::json!({"sets": list, "current": current});
         files.insert(
@@ -268,7 +269,7 @@ impl Project {
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
             list.push(set_json(previous, spec));
-            put_set_entries(&mut files, spec);
+            put_set_entries(&mut files, spec)?;
         }
         project["sets"] = Value::Array(list);
         project["current"] = Value::from(current);
@@ -594,22 +595,37 @@ fn set_json(previous: Option<&Value>, spec: &SetSpec) -> Value {
     set
 }
 /// セットの正本と合成を置く（正本が無ければ何もしない）。
-fn put_set_entries(files: &mut Files, spec: &SetSpec) {
+fn put_set_entries(files: &mut Files, spec: &SetSpec) -> Result<()> {
     let Some(doc) = &spec.document else {
-        return;
+        return Ok(());
     };
+    let mut composites = Vec::with_capacity(spec.composites.len());
+    for (channel, png) in &spec.composites {
+        let name = channel.standard_name().ok_or_else(|| {
+            Error(format!(
+                "セット「{}」の合成のチャンネルが標準ではありません: {channel:?}",
+                spec.name
+            ))
+        })?;
+        check(
+            !composites.iter().any(|(n, _)| *n == name),
+            format!("セット「{}」の合成が重複しています: {name}", spec.name),
+        )?;
+        composites.push((name, png));
+    }
     let prefix = format!("sets/{}/", spec.id);
     files.retain(|n, _| !n.starts_with(&format!("{prefix}composite/")));
     files.insert(
         format!("{prefix}document.utpaint"),
         Arc::from(doc.to_bytes()),
     );
-    if let Some(png) = &spec.composite_color {
+    for (name, png) in composites {
         files.insert(
-            format!("{prefix}composite/Color.png"),
+            format!("{prefix}composite/{name}.png"),
             Arc::from(png.as_slice()),
         );
     }
+    Ok(())
 }
 fn moves_into_set(n: &str) -> bool {
     ["document.utpaint", "selection.bin", "imported-original.psd"].contains(&n)

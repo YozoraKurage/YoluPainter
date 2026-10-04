@@ -2,7 +2,8 @@
 //!
 //! - 開く: yolu-io の `SaveTarget::open`（ZIP・manifest・正本を検証し、保存で外からの書き換えを見張る印を取る）で読み、セットごとに
 //!   正本（`NativeDocument`）を core の文書へ変える（`to_core`。透明の画素の RGB・文書とレイヤーの ID を保つ）。core で扱えない中身
-//!   （マスク・フィルター・Generator・別のチャンネル など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
+//!   （フィルター・Generator・パス・Anchor・塗りつぶしの画像など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
+//!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルは core が持つので描ける。
 //!   読むだけのセットは、保存した合成の PNG（`composite/Color.png`）を 1 枚のレイヤーにして見せる（描けない。Live Link でも Unity に
 //!   見せる）。
 //! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書を
@@ -13,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use yolu_io::{composite_png, NativeDocument, Project, SaveTarget, SetSpec, WriterInfo};
+use yolu_io::{composite_pngs, NativeDocument, Project, SaveTarget, SetSpec, WriterInfo};
 
 use yolu_core::NormalSettings;
 
@@ -75,7 +76,7 @@ fn to_core(native: &NativeDocument) -> Result<Document, String> {
         let mut text = issues
             .iter()
             .take(3)
-            .map(|i| i.trim_start_matches("M1で保持できない項目: ").to_owned())
+            .cloned()
             .collect::<Vec<_>>()
             .join("、");
         if issues.len() > 3 {
@@ -353,8 +354,8 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
                 set.name
             ));
         }
-        let (document, composite_color) = if in_base && (set.read_only.is_some() || unchanged) {
-            (None, None)
+        let (document, composites) = if in_base && (set.read_only.is_some() || unchanged) {
+            (None, Vec::new())
         } else {
             if let Some(why) = ylp_unsupported(doc, state.lang) {
                 return Err(match state.lang {
@@ -370,17 +371,17 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             }
             let native = NativeDocument::from_core(doc)
                 .map_err(|e| format!("セット「{}」を正本にできません: {e}", set.name))?;
-            let png = composite_png(doc)
+            let pngs = composite_pngs(doc)
                 .map_err(|e| format!("セット「{}」の合成の PNG を作れません: {e}", set.name))?;
             written.push((i, doc.id(), doc.revision()));
-            (Some(native), Some(png))
+            (Some(native), pngs)
         };
         specs.push(SetSpec {
             id: set.id.clone(),
             name: set.name.clone(),
             material: set.material.clone(),
             document,
-            composite_color,
+            composites,
         });
     }
     let current = state.sets.current().id.clone();

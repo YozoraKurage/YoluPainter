@@ -1,8 +1,20 @@
 use crate::{check, guid, is_hash, Error, Result, MAX_ENTRY_BYTES};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
+
+/// Unity 版（0.2.0 の `DocumentBinary`）が書き、読める正本の一番新しい版。
+pub const UNITY_NATIVE_VERSION: i32 = 21;
+/// 文書のユーザーチャンネル（core の 6〜63）の一覧を足した版。ユーザーチャンネルのある文書だけがこの版になり、
+/// Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「ユーザーチャンネル（正本の版 22）」）。
+pub const USER_CHANNELS_VERSION: i32 = 22;
+/// この読み手が読める一番新しい版。
+pub const MAX_NATIVE_VERSION: i32 = USER_CHANNELS_VERSION;
+/// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
+const STANDARD_CHANNELS: i32 = 6;
+/// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
+type UserChannels = BTreeMap<i32, i32>;
 
 /// 正本の値。f64 は演算せずビットを保存し、RGBA・GUID の並びも変えない。
 #[derive(Clone, Debug, PartialEq)]
@@ -115,7 +127,7 @@ impl NativeDocument {
             r.blob("magic", 8)?.as_ref() == b"DOTPAINT",
             "正本の識別子が不正です",
         )?;
-        let version = r.int("version", 1, 21)?;
+        let version = r.int("version", 1, MAX_NATIVE_VERSION)?;
         let id = guid(&r.id("id", false)?);
         let width = r.int("width", 1, 8192)?;
         let height = r.int("height", 1, 8192)?;
@@ -131,13 +143,18 @@ impl NativeDocument {
                 Ok(())
             })?;
         }
+        let user = if version >= USER_CHANNELS_VERSION {
+            user_channels(&mut r)?
+        } else {
+            UserChannels::new()
+        };
         let count = r.int("layer_count", 0, 2048)?;
         let mut layers = Vec::new();
         let mut ids = HashSet::new();
         let mut anchor_ids = HashMap::new();
         for i in 0..count {
             let l = r.block(&format!("layers[{i}]"), |r| {
-                layer(r, version, width, height, ts)
+                layer(r, version, width, height, ts, &user)
             })?;
             check(ids.insert(l.id), "レイヤーIDが重複しています")?;
             for id in &l.anchors {
@@ -320,7 +337,54 @@ struct Layer {
     anchors: Vec<[u8; 16]>,
     references: Vec<[u8; 16]>,
 }
-fn layer(r: &mut Reader<'_>, v: i32, w: i32, h: i32, ts: i32) -> Result<Layer> {
+/// 版 22 のユーザーチャンネルの一覧: 数（1〜58。0 の一覧は書かない）、番号の昇順に番号（6〜63）・名前（1〜128 文字、制御文字なし、
+/// 標準の名前とも重ならない）・種類・色空間・既定の RGBA。
+fn user_channels(r: &mut Reader<'_>) -> Result<UserChannels> {
+    let n = r.int("user_channel_count", 1, 64 - STANDARD_CHANNELS)?;
+    let mut names: HashSet<String> = [
+        "Color",
+        "Roughness",
+        "Metallic",
+        "Height",
+        "Normal",
+        "Emission",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let mut user = UserChannels::new();
+    let mut previous = STANDARD_CHANNELS - 1;
+    for i in 0..n {
+        r.block(&format!("user_channels[{i}]"), |r| {
+            let c = r.int("channel", STANDARD_CHANNELS, 63)?;
+            check(c > previous, "ユーザーチャンネルの番号の並びが不正です")?;
+            previous = c;
+            let name = r.string("name")?;
+            let chars = name.chars().count();
+            check(
+                (1..=128).contains(&chars) && !name.chars().any(char::is_control),
+                "ユーザーチャンネルの名前が不正です",
+            )?;
+            check(names.insert(name), "チャンネルの名前が重複しています")?;
+            let kind = r.int("kind", 0, 2)?;
+            r.int("color_space", 0, 1)?;
+            r.blob("default", 4)?;
+            user.insert(c, kind);
+            Ok(())
+        })?;
+    }
+    Ok(user)
+}
+fn layer(
+    r: &mut Reader<'_>,
+    v: i32,
+    w: i32,
+    h: i32,
+    ts: i32,
+    user: &UserChannels,
+) -> Result<Layer> {
+    // 版 22 でユーザーチャンネルを置けるのは、チャンネルごとの合成・塗りつぶしの値・調整の対象・ラスターのチャンネル
+    let channel_total = STANDARD_CHANNELS + user.len() as i32;
     let id = r.id("id", false)?;
     r.string("name")?;
     r.boolean("visible")?;
@@ -341,11 +405,14 @@ fn layer(r: &mut Reader<'_>, v: i32, w: i32, h: i32, ts: i32) -> Result<Layer> {
         }
         if flags & 4 != 0 {
             let n = r.byte("channel_blend_count")?;
-            check((1..=6).contains(&n), "チャンネル合成数が不正です")?;
+            check(
+                (1..=channel_total).contains(&(n as i32)),
+                "チャンネル合成数が不正です",
+            )?;
             let mut seen = HashSet::new();
             for i in 0..n {
                 r.block(&format!("channel_blends[{i}]"), |r| {
-                    unique_channel(r, &mut seen)?;
+                    layer_channel(r, &mut seen, user)?;
                     let p = r.byte("parts")?;
                     check((1..=3).contains(&p), "未知の合成属性です")?;
                     if p & 1 != 0 {
@@ -389,10 +456,10 @@ fn layer(r: &mut Reader<'_>, v: i32, w: i32, h: i32, ts: i32) -> Result<Layer> {
     let mut images = HashSet::new();
     let mut references = Vec::new();
     if v >= 3 {
-        let n = r.int("fill_count", 0, if kind == 1 { 6 } else { 0 })?;
+        let n = r.int("fill_count", 0, if kind == 1 { channel_total } else { 0 })?;
         for i in 0..n {
             r.block(&format!("fills[{i}]"), |r| {
-                unique_channel(r, &mut fills)?;
+                layer_channel(r, &mut fills, user)?;
                 r.boolean("enabled")?;
                 r.blob("rgba", 4)?;
                 Ok(())
@@ -460,23 +527,30 @@ fn layer(r: &mut Reader<'_>, v: i32, w: i32, h: i32, ts: i32) -> Result<Layer> {
                     "色相・彩度・明度が範囲外です",
                 )?;
             }
-            let n = r.int("channel_count", 0, 6)?;
+            let n = r.int("channel_count", 0, channel_total)?;
             let mut seen = HashSet::new();
             for i in 0..n {
                 r.block(&format!("channels[{i}]"), |r| {
-                    let c = unique_channel(r, &mut seen)?;
-                    check(t != 2 || c == 0 || c == 5, "調整対象のチャンネルが不正です")
+                    let c = layer_channel(r, &mut seen, user)?;
+                    check(
+                        t != 2 || c == 0 || c == 5 || user.get(&c) == Some(&0),
+                        "調整対象のチャンネルが不正です",
+                    )
                 })?;
             }
             Ok(())
         })?;
     }
-    let n = r.int("channel_count", 0, if kind == 0 { 6 } else { 0 })?;
+    let n = r.int(
+        "channel_count",
+        0,
+        if kind == 0 { channel_total } else { 0 },
+    )?;
     let mut channels = HashSet::new();
     let mut enabled = HashSet::new();
     for i in 0..n {
         r.block(&format!("channels[{i}]"), |r| {
-            let c = unique_channel(r, &mut channels)?;
+            let c = layer_channel(r, &mut channels, user)?;
             if r.boolean("enabled")? {
                 enabled.insert(c);
             }
@@ -535,8 +609,27 @@ fn layer(r: &mut Reader<'_>, v: i32, w: i32, h: i32, ts: i32) -> Result<Layer> {
         references,
     })
 }
+/// 標準のチャンネルだけの項目（塗りつぶしの画像・グラデーション、フィルター、パスのマテリアル）。
 fn unique_channel(r: &mut Reader<'_>, seen: &mut HashSet<i32>) -> Result<i32> {
-    let c = r.int("channel", 0, 5)?;
+    let c = r.int("channel", 0, STANDARD_CHANNELS - 1)?;
+    check(seen.insert(c), "チャンネルが重複しています")?;
+    Ok(c)
+}
+/// ユーザーチャンネルも置ける項目。版 21 までは標準だけ、版 22 は一覧にある番号だけ。
+fn layer_channel(r: &mut Reader<'_>, seen: &mut HashSet<i32>, user: &UserChannels) -> Result<i32> {
+    let max = if user.is_empty() {
+        STANDARD_CHANNELS - 1
+    } else {
+        63
+    };
+    let c = r.int("channel", 0, max)?;
+    check(
+        c < STANDARD_CHANNELS || user.contains_key(&c),
+        format!(
+            "{}.channel {c} は文書のチャンネルの一覧にありません",
+            r.prefix
+        ),
+    )?;
     check(seen.insert(c), "チャンネルが重複しています")?;
     Ok(c)
 }

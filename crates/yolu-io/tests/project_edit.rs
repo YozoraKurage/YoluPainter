@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 
 use yolu_core::{BrushSettings, Document, Rgba8};
 use yolu_io::{
-    composite_png, Archive, MaterialAsset, MaterialRef, NativeDocument, Project, SaveTarget,
-    SetSpec, WriterInfo,
+    composite_png, composite_pngs, Archive, MaterialAsset, MaterialRef, NativeDocument, Project,
+    SaveTarget, SetSpec, WriterInfo,
 };
 
 fn writer() -> WriterInfo {
@@ -50,7 +50,7 @@ fn spec(id: &str, name: &str, material: MaterialRef, doc: Option<&Document>) -> 
         name: name.into(),
         material,
         document: doc.map(|d| NativeDocument::from_core(d).unwrap()),
-        composite_color: doc.map(|d| composite_png(d).unwrap()),
+        composites: doc.map(|d| composite_pngs(d).unwrap()).unwrap_or_default(),
     }
 }
 
@@ -165,7 +165,7 @@ fn with_sets_renames_rebinds_adds_and_keeps_the_rest_byte_for_byte() {
             None,
         ),
         SetSpec {
-            composite_color: None,
+            composites: Vec::new(),
             ..spec(&ids[1], "Cloth", MaterialRef::PendingSlot(1), Some(&edited))
         },
         spec(&ids[2], "Skin 2", MaterialRef::PendingSlot(2), None),
@@ -244,7 +244,7 @@ fn with_sets_keeps_keys_it_does_not_know() {
             name: format!("{} 改", s.name),
             material: s.material.clone(),
             document: None,
-            composite_color: None,
+            composites: Vec::new(),
         })
         .collect();
     let q = p.with_sets(writer(), &specs, p.current_set()).unwrap();

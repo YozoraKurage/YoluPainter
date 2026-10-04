@@ -8,7 +8,10 @@ mod project;
 mod selection;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
-pub use native::{NativeDocument, NativeField, NativeValue};
+pub use native::{
+    NativeDocument, NativeField, NativeValue, MAX_NATIVE_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
+};
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Project, Resource, SetSpec, TextureSet, WriterInfo,
 };
@@ -70,7 +73,7 @@ pub(crate) fn guid(b: &[u8]) -> String {
 #[doc = include_str!("../README.md")]
 pub struct ReadmeExamples;
 
-pub use composite_png::composite_png;
+pub use composite_png::{composite_png, composite_pngs};
 impl From<yolu_core::CoreError> for Error {
     fn from(e: yolu_core::CoreError) -> Self {
         Self(format!("core: {e}"))

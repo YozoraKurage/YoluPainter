@@ -923,7 +923,7 @@ fn headless_opening_a_file_while_linked_swaps_the_published_sets() {
             !old.contains(&set.uid),
             "開き直したセットの番号は前と重ならない"
         );
-        assert!(set.read_only.is_none(), "M1 の中身だけなので描ける");
+        assert!(set.read_only.is_none(), "core が持つ中身だけなので描ける");
     }
     for m in &got {
         if let Message::TextureSet(t) = m {

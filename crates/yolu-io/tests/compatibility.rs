@@ -75,7 +75,8 @@ fn native_edit_is_reserialized_and_validated() {
     assert!(d
         .with_value("layers[0].opacity", NativeValue::Float(f64::NAN))
         .is_err());
-    assert!(d.with_value("version", NativeValue::Int(22)).is_err());
+    // 未知の版は断る（22 は読める版。その意味は m2_bridge の版 22 の試験）
+    assert!(d.with_value("version", NativeValue::Int(23)).is_err());
 }
 #[test]
 fn csharp_native_versions_1_to_21_roundtrip() {

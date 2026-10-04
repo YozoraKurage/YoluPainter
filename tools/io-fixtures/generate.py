@@ -9,6 +9,11 @@ import shutil
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--verify', action='store_true', help='既存の27件の.ylpをC#とRustの例で合成しPNG全バイトを比較')
 parser.add_argument('--m1', action='store_true', help='形式7とM1合成の正解データを生成')
+parser.add_argument('--m2', action='store_true', help='M2の層の正本5件と全チャンネルの合成を生成')
+parser.add_argument('--user-channels', action='store_true',
+                    help='Rustが書いた版22の正本（user-channels-v22.utpaint）をUnity版の読み手に読ませた結果を記録')
+parser.add_argument('--rust-written', action='store_true',
+                    help='Rustが書いた版21の正本（rust-written-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致と合成を記録')
 parser.add_argument('--source', type=Path, required=True, help='Unity 版ソース（読むだけ）')
 parser.add_argument('--unity-data', type=Path, default=Path('/opt/unity/Editor/Data'))
 args = parser.parse_args()
@@ -47,5 +52,14 @@ if args.verify:
             raise SystemExit(f'C#の出力が既存の正解データと不一致: {name}')
         print(f'{name}: {len(actual)} bytes / SHA-256 {hashlib.sha256(actual).hexdigest()}', flush=True)
     print('同じ.ylp 27件のC#・Rust合成PNGは、全ファイルで全バイト一致しました')
+elif args.m2:
+    subprocess.run(mono + ['--m2', str(fixtures)], check=True)
+elif args.user_channels:
+    subprocess.run(mono + ['--unity-reads', str(fixtures / 'user-channels-v22.utpaint'),
+                           str(fixtures / 'user-channels-v22.unity.txt')], check=True)
+elif args.rust_written:
+    subprocess.run(mono + ['--rust-written', str(fixtures / 'rust-written-v21.utpaint'),
+                           str(fixtures / 'rust-written-v21.unity.txt'),
+                           str(fixtures / 'rust-written-v21.composite')], check=True)
 else:
     subprocess.run(mono + (['--m1'] if args.m1 else []) + [str(fixtures)], check=True)

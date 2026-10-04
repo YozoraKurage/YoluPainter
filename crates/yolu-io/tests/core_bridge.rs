@@ -86,39 +86,71 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
 }
 #[test]
 fn unsupported_fields_are_reported_and_original_stays_writable() {
+    // M2 で扱えるようになった項目（Normal の設定・属性・マスク・チャンネル・種類）は、もう断る項目に出ない。
+    // 断るのは core に無い機能（フィルター・パス・手動ID色・塗りつぶしの画像・グラデーション・ロック・Anchor）
     let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues().join("\n");
     for what in [
-        "normal",
-        "attributes",
-        "mask",
-        "channels[1]",
         "filters",
         "surface_path",
         "canvas_path",
         "manual_id_colors",
-        "projection",
+        "images",
         "gradients",
-        "kind",
+        "locks",
+        "anchor",
     ] {
-        assert!(issues.contains(what), "{what}");
+        assert!(issues.contains(what), "{what}: {issues}");
+    }
+    for what in [
+        "normal",
+        "attributes",
+        ".mask.enabled",
+        "channels[",
+        "kind",
+        "parent",
+    ] {
+        assert!(!issues.contains(what), "{what}: {issues}");
     }
     assert!(rich.to_core().is_err());
     assert_eq!(
         rich.to_bytes(),
         include_bytes!("fixtures/native-rich-v21.utpaint")
     );
+    // 断る理由は層の機能ごとに 1 つ（同じ機能の項目を並べない）
+    let mut sorted = rich.core_issues();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), rich.core_issues().len());
+}
+#[test]
+fn m1_fixture_edits_that_m2_can_hold_convert_now() {
     let p = fixture(0);
     let native = current(&p);
-    for (path, value) in [
-        ("normal.strength", NativeValue::Float(5.0)),
-        ("layers[0].channels[0].enabled", NativeValue::Bool(false)),
-        ("layers[0].channels[0].channel", NativeValue::Int(1)),
-    ] {
-        let changed = native.with_value(path, value).unwrap();
-        assert!(changed.core_issues().iter().any(|s| s.contains(path)));
-        assert!(changed.to_core().is_err());
-    }
+    let strength = native
+        .with_value("normal.strength", NativeValue::Float(5.0))
+        .unwrap();
+    assert!(strength.core_issues().is_empty());
+    assert_eq!(
+        strength.to_core().unwrap().normal_settings().strength(),
+        5.0
+    );
+    let disabled = native
+        .with_value("layers[0].channels[0].enabled", NativeValue::Bool(false))
+        .unwrap();
+    let core = disabled.to_core().unwrap();
+    assert!(!core.layers()[0].is_channel_enabled(Channel::Color));
+    assert_eq!(
+        NativeDocument::from_core(&core).unwrap().to_bytes(),
+        disabled.to_bytes(),
+        "無効にしたチャンネルの画素と印も往復する"
+    );
+    let roughness = native
+        .with_value("layers[0].channels[0].channel", NativeValue::Int(1))
+        .unwrap();
+    assert!(roughness.to_core().unwrap().layers()[0]
+        .surface(Channel::Roughness)
+        .is_some());
 }
 #[test]
 fn edge_padding_is_refused_without_losing_original_bytes() {
@@ -148,15 +180,17 @@ fn edge_padding_is_refused_without_losing_original_bytes() {
     );
 }
 #[test]
-fn from_core_refuses_extra_channels_size_tile_size_and_active_stroke() {
+fn from_core_keeps_extra_channels_and_refuses_size_tile_size_and_active_stroke() {
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
     let id = doc.add_layer("層").unwrap();
     doc.import_tile(id, Channel::Height, TileCoord::new(0, 0), &[17; 256])
         .unwrap();
-    assert!(NativeDocument::from_core(&doc)
-        .unwrap_err()
-        .to_string()
-        .contains("Height"));
+    let native = NativeDocument::from_core(&doc).unwrap();
+    let back = native.to_core().unwrap();
+    assert_eq!(
+        back.layers()[0].pixel(Channel::Height, 0, 0).unwrap(),
+        Rgba8::new(17, 17, 17, 17)
+    );
     assert!(NativeDocument::from_core(&Document::with_tile_size(8193, 8, 8).unwrap()).is_err());
     assert!(NativeDocument::from_core(&Document::with_tile_size(8, 8, 3).unwrap()).is_err());
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
