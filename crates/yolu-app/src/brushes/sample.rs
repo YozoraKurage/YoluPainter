@@ -1,0 +1,692 @@
+//! ブラシの見本のストローク: そのブラシの実際の設定で、core が小さな文書に S 字の 1 本（筆圧 0 → 1 → 0）を描き、画像にする。
+//! 毎フレームは描かない。画像は「描く設定の札」（描く直前の正規のブラシと大きさの Debug の文字列のハッシュ）で覚え、札が変わった
+//! 見本だけを描き直す。描く量にも覚える量にも上限がある（1 フレームに描く数・覚える枚数とバイト数。超えた分は次のフレームへ送り、
+//! 一番使っていない画像から捨てる）。
+//!
+//! 見本は実寸の関係を保ったまま、画像に収まるよう縮める（直径が画像の高さの 62% を超えるブラシは縮め、細すぎるものは 3 画素まで
+//! 太らせる。質感の大きさ・入り抜き・デュアルの半径・ぼかしの半径・クローンのずれ・筆の速さも同じ倍率）。手ぶれ補正は糸の遅れで
+//! 線を短くするだけなので見本では 0、描く色は黒、背景色は白、乱数の種は 0（同じブラシは同じ絵）、対称とステンシルは無し。
+//! 消しゴムは灰色を一面に敷いて消し、効果のブラシ（ぼかし・指先・クローン）は縦の帯を並べた絵の上に描く。
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Weak};
+
+use egui::{ColorImage, TextureHandle, TextureId, TextureOptions};
+
+use super::canonical;
+use crate::engine::{
+    Brush, BrushEffect, BrushSample, BrushSettings, BrushTip, Channel, CoreError, DVec2, Document,
+    Rgba8, RowOrder, Stroke,
+};
+
+/// 画像の大きさの上限（画素）。
+pub const MAX_WIDTH: u32 = 1024;
+pub const MAX_HEIGHT: u32 = 256;
+/// 1 フレームに描く見本の数の上限。
+pub const RENDERS_PER_FRAME: usize = 4;
+/// 覚える見本の枚数とバイト数の上限。
+pub const MAX_ENTRIES: usize = 96;
+pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// 見本の大きさ（画素）と、消しゴムとして描くか。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SampleSpec {
+    pub width: u32,
+    pub height: u32,
+    pub eraser: bool,
+}
+
+impl SampleSpec {
+    /// 一覧の行の見本。
+    pub fn row(eraser: bool) -> SampleSpec {
+        SampleSpec {
+            width: 340,
+            height: 60,
+            eraser,
+        }
+    }
+    /// ツールプロパティの上の見本。
+    pub fn tool(eraser: bool) -> SampleSpec {
+        SampleSpec {
+            width: 448,
+            height: 72,
+            eraser,
+        }
+    }
+    /// 詳細の窓の上の見本。
+    pub fn detail(eraser: bool) -> SampleSpec {
+        SampleSpec {
+            width: 640,
+            height: 88,
+            eraser,
+        }
+    }
+    fn clamped(self) -> SampleSpec {
+        SampleSpec {
+            width: self.width.clamp(16, MAX_WIDTH),
+            height: self.height.clamp(8, MAX_HEIGHT),
+            eraser: self.eraser,
+        }
+    }
+}
+
+/// 描いた見本（straight RGBA8、1 行目が上）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SampleImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// 画像に収まる倍率: 直径が高さの 62% を超えれば縮め、3 画素に満たなければ 3 画素まで。
+fn fit_scale(diameter: f64, height: f64) -> f64 {
+    let diameter = diameter.max(1.0);
+    let (min, max) = (3.0, 0.62 * height);
+    if diameter > max {
+        max / diameter
+    } else if diameter < min {
+        min / diameter
+    } else {
+        1.0
+    }
+}
+
+/// 描く直前のブラシ（見本の決まりを当てて縮めたもの）。手ぶれ補正以外の描き手の設定（入り抜き・曲線）は渡されたまま使う。
+fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
+    let spec = spec.clamped();
+    let assist = brush.assist;
+    let mut b = canonical(brush);
+    let f = fit_scale(b.base.radius * 2.0, spec.height as f64);
+    b.base.radius = (b.base.radius * f).max(0.5);
+    b.base.color = Rgba8::new(0, 0, 0, 255);
+    b.base.erase = spec.eraser;
+    b.color.secondary = Rgba8::new(255, 255, 255, 255);
+    b.assist = crate::engine::StrokeAssist {
+        stabilizer: 0.0,
+        taper_in: (assist.taper_in * f).min(10_000.0),
+        taper_out: (assist.taper_out * f).min(10_000.0),
+        curve: assist.curve,
+    };
+    if let Some(t) = &mut b.texture {
+        t.scale = (t.scale * f).clamp(0.05, 64.0);
+    }
+    if let Some(d) = &mut b.dual {
+        d.radius = (d.radius * f).clamp(0.5, 65536.0);
+    }
+    b.controls.speed_max = (b.controls.speed_max * f).max(1.0);
+    b.effect = match b.effect {
+        BrushEffect::Blur { radius } => BrushEffect::Blur {
+            radius: ((radius as f64 * f).round() as u32).clamp(1, 64),
+        },
+        BrushEffect::Clone { offset } => BrushEffect::Clone { offset: offset * f },
+        other => other,
+    };
+    if spec.eraser {
+        b.effect = BrushEffect::Paint;
+    }
+    b
+}
+
+/// 画像（筆先・質感・デュアルの先端）の指紋: 名前・大きさ・画素。
+fn pixel_print(tip: &BrushTip) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    tip.name().hash(&mut hasher);
+    (tip.width(), tip.height()).hash(&mut hasher);
+    tip.alpha().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// 画像の指紋の覚え（画像の Arc ごと）。画像は作ったあと変わらないので、同じ Arc は 1 度だけ計算する（毎フレーム・行ごとに
+/// 数 MB の画素を読まない）。弱い参照を持つので、覚えている間はその置き場所が別の画像に使い回されない。
+#[derive(Default)]
+struct TipPrints(HashMap<usize, (Weak<BrushTip>, u64)>);
+
+/// 覚える画像の数の上限（超えたら、もう無い画像の分を捨て、それでも多ければ全部捨てて数え直す）。
+const MAX_TIP_PRINTS: usize = 256;
+
+impl TipPrints {
+    fn print(&mut self, tip: &Arc<BrushTip>) -> u64 {
+        let at = Arc::as_ptr(tip) as usize;
+        if let Some((_, print)) = self.0.get(&at) {
+            return *print;
+        }
+        if self.0.len() >= MAX_TIP_PRINTS {
+            self.0.retain(|_, (alive, _)| alive.strong_count() > 0);
+        }
+        if self.0.len() >= MAX_TIP_PRINTS {
+            self.0.clear();
+        }
+        let print = pixel_print(tip);
+        self.0.insert(at, (Arc::downgrade(tip), print));
+        print
+    }
+}
+
+fn key_with(brush: &Brush, spec: SampleSpec, print: &mut dyn FnMut(&Arc<BrushTip>) -> u64) -> u64 {
+    let spec = spec.clamped();
+    let preview = preview_brush(brush, spec);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    spec.hash(&mut hasher);
+    format!("{preview:?}").hash(&mut hasher);
+    // Debug は画像の名前と大きさしか出さない。同じ名前・大きさで画素だけが違う画像は別の絵になるので、画素の指紋を混ぜる
+    let tips = preview
+        .tip
+        .image
+        .iter()
+        .chain(&preview.tip.images)
+        .chain(preview.texture.iter().map(|t| &t.image))
+        .chain(preview.dual.iter().filter_map(|d| d.tip.as_ref()));
+    for tip in tips {
+        print(tip).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// 描く設定の札（同じ札なら同じ絵）。
+pub fn key_of(brush: &Brush, spec: SampleSpec) -> u64 {
+    key_with(brush, spec, &mut |tip| pixel_print(tip))
+}
+
+/// 画像の座標（左上原点・y は下向き）の点で線を描く。
+fn stroke_line(
+    doc: &mut Document,
+    layer: crate::engine::LayerId,
+    brush: &Brush,
+    points: &[(f64, f64, f64)],
+    height: f64,
+    speed: f64,
+) -> Result<(), CoreError> {
+    let mut stroke: Stroke = doc.begin_brush_stroke(layer, brush)?;
+    let mut time = 0.0;
+    let mut last: Option<(f64, f64)> = None;
+    for &(x, y, pressure) in points {
+        if let Some((px, py)) = last {
+            time += ((x - px).powi(2) + (y - py).powi(2)).sqrt() / speed;
+        }
+        last = Some((x, y));
+        let sample = BrushSample::new(x, height - y, pressure, time, DVec2::ZERO)?;
+        stroke.add_sample(doc, sample)?;
+    }
+    doc.end_stroke(stroke)?;
+    Ok(())
+}
+
+/// 見本を描く。
+pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError> {
+    let spec = spec.clamped();
+    let (w, h) = (spec.width as f64, spec.height as f64);
+    let b = preview_brush(brush, spec);
+    let mut doc = Document::new(spec.width, spec.height)?;
+    let layer = doc.add_layer("sample")?;
+    if spec.eraser {
+        doc.fill(
+            layer,
+            Channel::Color,
+            Rgba8::new(96, 96, 96, 255),
+            1.0,
+            None,
+            false,
+        )?;
+    } else if !b.effect.is_paint() {
+        doc.fill(
+            layer,
+            Channel::Color,
+            Rgba8::new(236, 236, 236, 255),
+            1.0,
+            None,
+            false,
+        )?;
+        // 縦の帯: 暗い・赤・暗い・青
+        let bar = BrushSettings {
+            radius: (h * 0.07).max(2.0),
+            hardness: 1.0,
+            spacing: 0.1,
+            pressure_size: false,
+            pressure_opacity: false,
+            ..BrushSettings::default()
+        };
+        for (i, color) in [
+            Rgba8::new(40, 40, 44, 255),
+            Rgba8::new(214, 66, 60, 255),
+            Rgba8::new(40, 40, 44, 255),
+            Rgba8::new(52, 108, 214, 255),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let x = w * (0.18 + 0.215 * i as f64);
+            let line = Brush::from(BrushSettings { color, ..bar });
+            stroke_line(
+                &mut doc,
+                layer,
+                &line,
+                &[(x, 0.0, 1.0), (x, h, 1.0)],
+                h,
+                1000.0,
+            )?;
+        }
+    }
+    // S 字（画像の左右の端から半径の分だけ離す）
+    let radius = b.base.radius;
+    let pad = (radius * 1.3).max(0.07 * w).max(4.0);
+    let amp = (h * 0.5 - radius * 1.15 - 2.0).clamp(0.0, 0.3 * h);
+    let length = (w - 2.0 * pad) * 1.1;
+    let n = ((length / 1.5).ceil() as usize).clamp(16, 900);
+    let points: Vec<(f64, f64, f64)> = (0..=n)
+        .map(|i| {
+            let t = i as f64 / n as f64;
+            (
+                pad + t * (w - 2.0 * pad),
+                h * 0.5 - amp * (std::f64::consts::TAU * t).sin(),
+                (std::f64::consts::PI * t).sin(),
+            )
+        })
+        .collect();
+    // 速さは効きの上限の 35% ほどで進める（筆の速さの設定が見本でも見える）
+    let speed = 0.35 * b.controls.speed_max;
+    stroke_line(&mut doc, layer, &b, &points, h, speed)?;
+    let mut rgba = vec![0u8; spec.width as usize * spec.height as usize * 4];
+    doc.composite_into(Channel::Color, doc.bounds(), &mut rgba, RowOrder::TopDown)?;
+    Ok(SampleImage {
+        width: spec.width,
+        height: spec.height,
+        rgba,
+    })
+}
+
+/// 描いた回数などの数（試験が「描き直す条件」を確かめる）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SampleStats {
+    pub renders: u64,
+    pub hits: u64,
+    /// 1 フレームの上限で次へ送った数。
+    pub deferred: u64,
+    pub evicted: u64,
+    pub failed: u64,
+}
+
+struct Slot {
+    image: SampleImage,
+    texture: Option<TextureHandle>,
+    used: u64,
+}
+
+/// 見本の画像の置き場（札 → 画像）。
+#[derive(Default)]
+pub struct SampleCache {
+    slots: HashMap<u64, Slot>,
+    tip_prints: TipPrints,
+    clock: u64,
+    bytes: usize,
+    frame: Option<u64>,
+    renders_in_frame: usize,
+    pub stats: SampleStats,
+}
+
+impl SampleCache {
+    /// フレームの頭（フレームの番号が変わったら、そのフレームに描いた数を数え直す）。
+    pub fn begin_frame(&mut self, frame: u64) {
+        if self.frame != Some(frame) {
+            self.frame = Some(frame);
+            self.renders_in_frame = 0;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// 覚えている画像のバイト数。
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// 見本の札を返す（無ければ描く。このフレームの上限に達していれば None で、描くのは次のフレーム）。
+    pub fn request(&mut self, brush: &Brush, spec: SampleSpec) -> Option<u64> {
+        let prints = &mut self.tip_prints;
+        let key = key_with(brush, spec, &mut |tip| prints.print(tip));
+        self.clock += 1;
+        if let Some(slot) = self.slots.get_mut(&key) {
+            slot.used = self.clock;
+            self.stats.hits += 1;
+            return Some(key);
+        }
+        if self.renders_in_frame >= RENDERS_PER_FRAME {
+            self.stats.deferred += 1;
+            return None;
+        }
+        self.renders_in_frame += 1;
+        self.stats.renders += 1;
+        let spec = spec.clamped();
+        let image = render(brush, spec).unwrap_or_else(|_| {
+            self.stats.failed += 1;
+            // 描けなかった設定は空の画像で覚える（毎フレーム描き直さない）
+            SampleImage {
+                width: spec.width,
+                height: spec.height,
+                rgba: vec![0; spec.width as usize * spec.height as usize * 4],
+            }
+        });
+        self.bytes += image.rgba.len();
+        self.slots.insert(
+            key,
+            Slot {
+                image,
+                texture: None,
+                used: self.clock,
+            },
+        );
+        self.evict(key);
+        Some(key)
+    }
+
+    /// 上限を超えていれば、一番使っていない画像から捨てる（今入れた `keep` は残す）。
+    fn evict(&mut self, keep: u64) {
+        while self.slots.len() > MAX_ENTRIES || self.bytes > MAX_BYTES {
+            let Some((&oldest, _)) = self
+                .slots
+                .iter()
+                .filter(|(k, _)| **k != keep)
+                .min_by_key(|(_, s)| s.used)
+            else {
+                break;
+            };
+            if let Some(slot) = self.slots.remove(&oldest) {
+                self.bytes -= slot.image.rgba.len();
+                self.stats.evicted += 1;
+            }
+        }
+    }
+
+    pub fn image(&self, key: u64) -> Option<&SampleImage> {
+        self.slots.get(&key).map(|s| &s.image)
+    }
+
+    /// 画面に出す絵（初めて出すときに作る）。
+    pub fn texture(&mut self, ctx: &egui::Context, key: u64) -> Option<TextureId> {
+        let slot = self.slots.get_mut(&key)?;
+        let handle = slot.texture.get_or_insert_with(|| {
+            let image = ColorImage::from_rgba_unmultiplied(
+                [slot.image.width as usize, slot.image.height as usize],
+                &slot.image.rgba,
+            );
+            ctx.load_texture(
+                format!("brush-sample-{key:016x}"),
+                image,
+                TextureOptions::LINEAR,
+            )
+        });
+        Some(handle.id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brushes::builtin;
+
+    fn ink(image: &SampleImage) -> usize {
+        image.rgba.chunks(4).filter(|p| p[3] > 0).count()
+    }
+
+    #[test]
+    fn the_sample_is_deterministic_and_draws_something_inside_the_image() {
+        let spec = SampleSpec::row(false);
+        for b in builtin::all() {
+            let eraser = b.group.is_eraser();
+            let spec = SampleSpec { eraser, ..spec };
+            let a = render(&b.brush, spec).unwrap();
+            let again = render(&b.brush, spec).unwrap();
+            assert_eq!(a, again, "{}: 同じブラシは同じ絵", b.id);
+            assert_eq!((a.width, a.height), (340, 60));
+            assert_eq!(a.rgba.len(), 340 * 60 * 4);
+            assert!(ink(&a) > 0, "{}: 何か描く", b.id);
+            // 端の列には描かない（S 字は端から離す）。消しゴムの灰色の地は全面にある
+            if !eraser && b.brush.effect.is_paint() {
+                for y in 0..60usize {
+                    assert_eq!(a.rgba[(y * 340) * 4 + 3], 0, "{}: 左端", b.id);
+                    assert_eq!(a.rgba[(y * 340 + 339) * 4 + 3], 0, "{}: 右端", b.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_sample_follows_pressure_from_nothing_through_full_and_back() {
+        // 筆圧で直径が変わるブラシは、両端が細く真ん中が太い
+        let mut b = Brush::default();
+        b.base.radius = 10.0;
+        b.base.pressure_size = true;
+        let image = render(&b, SampleSpec::row(false)).unwrap();
+        let column = |x: usize| {
+            (0..60usize)
+                .filter(|y| image.rgba[(y * 340 + x) * 4 + 3] > 0)
+                .count()
+        };
+        let (left, middle, right) = (column(40), column(170), column(300));
+        assert!(middle > left && middle > right, "{left} {middle} {right}");
+        // 筆圧に従わなければ同じ太さ
+        b.base.pressure_size = false;
+        b.base.pressure_opacity = false;
+        let flat = render(&b, SampleSpec::row(false)).unwrap();
+        let flat_column = |x: usize| {
+            (0..60usize)
+                .filter(|y| flat.rgba[(y * 340 + x) * 4 + 3] > 0)
+                .count()
+        };
+        assert!(flat_column(40).abs_diff(flat_column(170)) <= 4);
+    }
+
+    #[test]
+    fn big_and_tiny_brushes_are_scaled_to_fit() {
+        assert_eq!(fit_scale(30.0, 60.0), 1.0);
+        assert!((fit_scale(200.0, 60.0) * 200.0 - 0.62 * 60.0).abs() < 1e-9);
+        assert!((fit_scale(1.0, 60.0) - 3.0).abs() < 1e-9);
+        let mut huge = Brush::default();
+        huge.base.radius = 128.0;
+        let image = render(&huge, SampleSpec::row(false)).unwrap();
+        assert!(ink(&image) > 0 && ink(&image) < 340 * 60);
+    }
+
+    #[test]
+    fn the_key_changes_with_what_is_drawn_and_not_with_what_is_not() {
+        let spec = SampleSpec::row(false);
+        let base = Brush::default();
+        let key = key_of(&base, spec);
+        // 見本に出ない設定（色・乱数の種・背景色・手ぶれ補正の糸・対称・ステンシル）では変わらない
+        let mut same = base.clone();
+        same.seed = 99;
+        same.base.color = Rgba8::new(10, 20, 30, 255);
+        same.color.secondary = Rgba8::new(1, 2, 3, 255);
+        same.assist.stabilizer = 120.0;
+        assert_eq!(key_of(&same, spec), key);
+        // 見本に出る設定は、どれか 1 つが変わっても変わる
+        type Change = (&'static str, Box<dyn Fn(&mut Brush)>);
+        let changes: Vec<Change> = vec![
+            ("radius", Box::new(|b| b.base.radius = 30.0)),
+            ("hardness", Box::new(|b| b.base.hardness = 0.1)),
+            ("spacing", Box::new(|b| b.base.spacing = 0.5)),
+            ("opacity", Box::new(|b| b.base.opacity = 0.5)),
+            ("flow", Box::new(|b| b.base.flow = 0.2)),
+            ("pressure", Box::new(|b| b.base.pressure_size = false)),
+            ("tip angle", Box::new(|b| b.tip.angle = 30.0)),
+            (
+                "tip image",
+                Box::new(|b| b.tip.image = yolu_core::builtin_tip("dots")),
+            ),
+            ("jitter", Box::new(|b| b.jitter.scatter = 1.0)),
+            (
+                "texture",
+                Box::new(|b| {
+                    b.texture = Some(crate::engine::PaperTexture::new(
+                        yolu_core::builtin_tip("grain").unwrap(),
+                        0.5,
+                    ))
+                }),
+            ),
+            ("dual", Box::new(|b| b.dual = Some(Default::default()))),
+            ("color", Box::new(|b| b.color.hue = 0.3)),
+            ("controls", Box::new(|b| b.controls.fade_size = 50)),
+            ("taper", Box::new(|b| b.assist.taper_in = 30.0)),
+            ("curve", Box::new(|b| b.assist.curve = true)),
+            ("effect", Box::new(|b| b.effect = BrushEffect::BLUR)),
+        ];
+        let mut seen = vec![key];
+        for (name, change) in &changes {
+            let mut b = base.clone();
+            change(&mut b);
+            let k = key_of(&b, spec);
+            assert!(!seen.contains(&k), "{name}: 札が変わらない");
+            seen.push(k);
+        }
+        assert_ne!(key_of(&base, spec), key_of(&base, SampleSpec::row(true)));
+        assert_ne!(key_of(&base, spec), key_of(&base, SampleSpec::tool(false)));
+    }
+
+    #[test]
+    fn images_with_the_same_name_and_size_but_other_pixels_get_other_keys() {
+        use crate::engine::{DualBrush, PaperTexture};
+        let tip = |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
+        let (a, b) = (tip([0, 255, 255, 0]), tip([255, 0, 0, 255]));
+        let same_as_a = tip([0, 255, 255, 0]);
+        assert_eq!(format!("{a:?}"), format!("{b:?}"), "Debug だけでは見分けられない画像");
+        let spec = SampleSpec::row(false);
+        type Put = fn(&mut Brush, Arc<BrushTip>);
+        let places: [(&str, Put); 4] = [
+            ("tip", |br, t| br.tip.image = Some(t)),
+            ("tips", |br, t| br.tip.images = vec![t]),
+            ("texture", |br, t| br.texture = Some(PaperTexture::new(t, 0.5))),
+            ("dual", |br, t| {
+                br.dual = Some(DualBrush {
+                    tip: Some(t),
+                    ..DualBrush::default()
+                })
+            }),
+        ];
+        let mut cache = SampleCache::default();
+        for (place, put) in places {
+            let make = |t: &Arc<BrushTip>| {
+                let mut br = Brush::default();
+                put(&mut br, t.clone());
+                br
+            };
+            let (ba, bb, bc) = (make(&a), make(&b), make(&same_as_a));
+            assert_ne!(key_of(&ba, spec), key_of(&bb, spec), "{place}: 画素だけが違う");
+            assert_eq!(key_of(&ba, spec), key_of(&bc, spec), "{place}: 中身が同じなら同じ札");
+            // キャッシュも同じ札を使い、画素だけが違うブラシには別の見本を描く
+            cache.begin_frame(1000 + cache.stats.renders);
+            let ka = cache.request(&ba, spec).unwrap();
+            let kb = cache.request(&bb, spec).unwrap();
+            assert_eq!((ka, kb), (key_of(&ba, spec), key_of(&bb, spec)), "{place}");
+            assert_ne!(ka, kb, "{place}");
+        }
+        // 同じ画像は何度要求しても指紋を 1 度しか計算せず、描き直さない
+        let renders = cache.stats.renders;
+        let prints = cache.tip_prints.0.len();
+        cache.begin_frame(5000);
+        let mut br = Brush::default();
+        br.tip.image = Some(a.clone());
+        cache.request(&br, spec);
+        cache.request(&br, spec);
+        assert_eq!(cache.stats.renders, renders);
+        assert_eq!(cache.tip_prints.0.len(), prints);
+        // 覚えた画像の数は上限を超えない（捨てられた画像の置き場所を別の画像が使っても、指紋は取り違えない）
+        for i in 0..(MAX_TIP_PRINTS * 2) {
+            let t = Arc::new(BrushTip::new("x", 1, 1, vec![i as u8]).unwrap());
+            let mut br = Brush::default();
+            br.tip.image = Some(t);
+            let k = {
+                let prints = &mut cache.tip_prints;
+                key_with(&br, spec, &mut |t| prints.print(t))
+            };
+            assert_eq!(k, key_of(&br, spec), "{i}");
+        }
+        assert!(cache.tip_prints.0.len() <= MAX_TIP_PRINTS);
+    }
+
+    #[test]
+    fn the_cache_redraws_only_changed_brushes_and_caps_work_and_memory() {
+        let spec = SampleSpec::row(false);
+        let mut cache = SampleCache::default();
+        let mut brushes: Vec<Brush> = (0..10)
+            .map(|i| {
+                let mut b = Brush::default();
+                b.base.radius = 4.0 + i as f64;
+                b
+            })
+            .collect();
+        // 1 フレームに描くのは上限まで。残りは次のフレーム
+        cache.begin_frame(1);
+        let ready: Vec<bool> = brushes
+            .iter()
+            .map(|b| cache.request(b, spec).is_some())
+            .collect();
+        assert_eq!(ready.iter().filter(|r| **r).count(), RENDERS_PER_FRAME);
+        assert_eq!(cache.stats.renders, RENDERS_PER_FRAME as u64);
+        assert_eq!(cache.stats.deferred, (10 - RENDERS_PER_FRAME) as u64);
+        for frame in 2..=4 {
+            cache.begin_frame(frame);
+            for b in &brushes {
+                cache.request(b, spec);
+            }
+        }
+        assert_eq!(cache.len(), 10);
+        assert_eq!(
+            cache.stats.renders, 10,
+            "全部が揃ったら、1 つも描き直さない"
+        );
+        // 同じフレームで begin_frame を重ねても数え直さない
+        let hits = cache.stats.hits;
+        cache.begin_frame(4);
+        cache.request(&brushes[0], spec);
+        assert_eq!(cache.stats.hits, hits + 1);
+        // 設定が変わった 1 つだけ描き直す
+        brushes[3].jitter.size = 0.4;
+        cache.begin_frame(5);
+        for b in &brushes {
+            cache.request(b, spec).expect("1 つだけなので上限内");
+        }
+        assert_eq!(cache.stats.renders, 11);
+        // 見本に出ない設定が変わっても描き直さない
+        brushes[5].seed = 7;
+        brushes[6].assist.stabilizer = 50.0;
+        brushes[7].base.color = Rgba8::new(9, 9, 9, 255);
+        cache.begin_frame(6);
+        for b in &brushes {
+            cache.request(b, spec).unwrap();
+        }
+        assert_eq!(cache.stats.renders, 11);
+        // 覚える量の上限: 大きな見本を溜め続けても、バイト数・枚数の上限を超えない
+        let big = SampleSpec::detail(false);
+        for i in 0..40 {
+            if i % RENDERS_PER_FRAME == 0 {
+                cache.begin_frame(100 + i as u64);
+            }
+            let mut b = Brush::default();
+            b.base.radius = 1.0 + i as f64 * 0.37;
+            let _ = cache.request(&b, big);
+            assert!(cache.bytes() <= MAX_BYTES, "{}", cache.bytes());
+            assert!(cache.len() <= MAX_ENTRIES);
+        }
+        assert!(cache.stats.evicted > 0);
+    }
+
+    #[test]
+    fn textures_are_made_lazily_from_the_cached_image() {
+        let ctx = egui::Context::default();
+        let mut cache = SampleCache::default();
+        cache.begin_frame(1);
+        let key = cache
+            .request(&Brush::default(), SampleSpec::row(false))
+            .unwrap();
+        let a = cache.texture(&ctx, key).unwrap();
+        assert_eq!(cache.texture(&ctx, key), Some(a), "同じ絵を作り直さない");
+        assert_eq!(cache.texture(&ctx, key ^ 1), None);
+        assert_eq!(cache.image(key).unwrap().width, 340);
+    }
+}

@@ -2,10 +2,13 @@
 //! 計算は core（`engine` が指す先と、3D の面の計算 `yolu_core::geometry`）に任せ、ここは画面と入力だけ。テクスチャセット（`sets`）、
 //! Live Link（`livelink`。Unity から受けたモデルの記録は `model`、3D の形は `view3d`）、.ylp の開く・保存（`project`）も画面の状態との
 //! 受け渡しだけ。メッシュマップのベイク（`bake`）・テンプレートの書き出し（`export`）・PSD の読み書き（`psd`）は、長い処理を別の
-//! スレッドで走らせ（進み具合と取消つき）、終わったとき状態が変わっていないか確かめてから結果を入れる。浮いた窓は `windows`・`ui::window`。自動更新のつなぎ（確かめ・ダウンロード・インストーラーの起動）は `update`。
+//! スレッドで走らせ（進み具合と取消つき）、終わったとき状態が変わっていないか確かめてから結果を入れる。浮いた窓は `windows`・`ui::window`。
+//! ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本のストローク・保存）は `brushes`、その画面は左のドックの `panels::brushes` と
+//! 詳細の窓 `panels::brush_detail`（欄は `panels::brush_props`）。
 
 pub mod app;
 pub mod bake;
+pub mod brushes;
 pub mod canvas;
 pub mod clipboard;
 pub mod engine;

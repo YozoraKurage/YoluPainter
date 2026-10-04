@@ -419,6 +419,8 @@ pub enum Action {
     Shelf(ShelfOp),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
+    /// ブラシの一覧（替える・追加・複製・削除・名前・並べ替え・元に戻す。文書は変えない）。
+    Brush(crate::brushes::BrushAction),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
     /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
@@ -530,7 +532,7 @@ pub struct AppState {
     pub view: ViewState,
     /// ステータスバーの知らせ。
     pub message: String,
-    /// プロパティの欄のタブ（ブラシ・アルファ・ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
+    /// プロパティの欄のタブ（アルファ・ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
@@ -587,6 +589,8 @@ pub struct AppState {
     pub prefs: crate::prefs::PrefsState,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
+    /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
+    pub brushes: crate::brushes::BrushesState,
 }
 
 /// ファイルの窓の頼み。
@@ -710,6 +714,7 @@ impl AppState {
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
+            brushes: crate::brushes::BrushesState::default(),
         }
     }
 
@@ -793,6 +798,7 @@ impl AppState {
             Action::Region(a) => self.region_apply(a),
             Action::Shelf(op) => self.shelf_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
+            Action::Brush(action) => self.brush_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
@@ -949,6 +955,10 @@ impl AppState {
             }
             Action::ResetLayout => self.reset_layout = true,
             Action::SelectTool(tool) => {
+                // ブラシと消しゴムは道具ごとに最後のブラシへ（ストロークの最中に替わるなら断る）
+                if tool != self.tool && !self.brush_for_tool(tool) {
+                    return;
+                }
                 if tool != self.tool {
                     self.sel_tool_changed();
                 }

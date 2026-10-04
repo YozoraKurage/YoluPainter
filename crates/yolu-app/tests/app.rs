@@ -451,17 +451,25 @@ fn color_panel_picks_hex_swap_and_wheel() {
 #[test]
 fn properties_tabs_and_pen_toggles() {
     use egui_kittest::kittest::Queryable;
-    let mut h = app(1280.0, 800.0, 256);
-    let pen = rect_of(&h, "筆圧で直径を変える", |r| r.left() > 1000.0);
+    let mut h = app(1600.0, 900.0, 256);
+    // 筆圧の切り替えは左のブラシのパネル（ツールプロパティ）にある（オプションバーにも同じ切り替えがある）
+    let in_panel = |r: egui::Rect| r.left() < 340.0 && r.top() > 80.0;
+    let pen = rect_of(&h, "筆圧で直径を変える", in_panel);
     click(&mut h, pen.center());
     assert!(!h.state().state.brush.pressure_size);
-    let flow = rect_of(&h, "筆圧で流量を変える", |r| r.left() > 1000.0);
+    let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
-    h.get_by_label("アルファ").click(); // タブ（見出しはまだ無い）
+    // 右のプロパティはアルファのタブから始まる（ブラシのタブは無い）
+    assert_eq!(h.state().state.property_tab, 0);
+    h.get_by_label("ステンシル").click();
     h.run();
     assert_eq!(h.state().state.property_tab, 1);
-    let hardness = rect_of(&h, "硬さ", |r| r.left() > 1000.0);
+    h.get_by_label("アルファ").click(); // タブ（見出しはまだ無い）
+    h.run();
+    assert_eq!(h.state().state.property_tab, 0);
+    let side = |r: egui::Rect| r.left() > 1300.0;
+    let hardness = rect_of(&h, "硬さ", side);
     click(&mut h, pos2(hardness.left() + 2.0, hardness.bottom() - 4.0));
     assert!(h.state().state.brush.hardness < 0.05);
     h.snapshot("properties_alpha");

@@ -1,6 +1,8 @@
 //! ドックのパネルの中身。
 pub mod assets;
+pub mod brush_detail;
 pub mod brush_props;
+pub mod brushes;
 pub mod channels;
 pub mod color;
 pub mod layer_props;

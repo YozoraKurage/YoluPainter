@@ -1,6 +1,7 @@
 //! プロパティの欄（Substance Painter の並び）: 選んでいる物の中身だけを出す。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
-//! 頭にタブ（ブラシ｜アルファ｜ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈は
-//! レイヤーの欄だけ。中身は縦に積み、はみ出したらスクロールする（ブラシの欄は `brush_props`、レイヤーの欄は `layer_props`）。
+//! 頭にタブ（アルファ｜ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈は
+//! レイヤーの欄だけ。中身は縦に積み、はみ出したらスクロールする（アルファの欄は `brush_props`、レイヤーの欄は `layer_props`）。
+//! ブラシそのもの（一覧・ツールプロパティ・詳細）は左のドックのブラシのパネル（`brushes`）と詳細の窓（`brush_detail`）。
 //! 値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
@@ -12,7 +13,7 @@ use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
-pub const TAB_ICONS: [&str; 5] = ["paint_brush", "shapes", "square", "layers", "tune"];
+pub const TAB_ICONS: [&str; 4] = ["shapes", "square", "layers", "tune"];
 
 /// 欄の文脈。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,11 +50,10 @@ pub fn context(app: &AppState) -> Context {
     }
 }
 
-/// タブの名前（4 つ目はマスクに描くあいだだけマスク）。
-pub fn tab_labels(app: &AppState) -> [&'static str; 5] {
+/// タブの名前（3 つ目はマスクに描くあいだだけマスク）。
+pub fn tab_labels(app: &AppState) -> [&'static str; 4] {
     let l = app.lang;
     [
-        l.pick("ブラシ", "Brush"),
         l.pick("アルファ", "Alpha"),
         l.pick("ステンシル", "Stencil"),
         if app.m2.edit_mask {
@@ -311,11 +311,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         Context::Tool => super::region_props::body(ui, app, &mut rows, &ctx),
         Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),
         Context::Paint => match tab {
-            0 => super::brush_props::brush_tab(ui, app, &mut rows, &ctx),
-            1 => super::brush_props::alpha_tab(ui, app, &mut rows, &ctx),
-            2 => super::brush_props::stencil_tab(ui, app, &mut rows),
-            3 if app.m2.edit_mask => super::layer_props::mask_tab(ui, app, &mut rows),
-            3 => super::brush_props::material_tab(ui, app, &mut rows),
+            0 => super::brush_props::alpha_tab(ui, app, &mut rows, &ctx),
+            1 => super::brush_props::stencil_tab(ui, app, &mut rows),
+            2 if app.m2.edit_mask => super::layer_props::mask_tab(ui, app, &mut rows),
+            2 => super::brush_props::material_tab(ui, app, &mut rows),
             _ => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         },
     }

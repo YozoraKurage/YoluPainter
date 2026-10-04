@@ -2,9 +2,10 @@
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
 use crate::engine::{Channel, ChannelInfo, ChannelKind, DualBrushMode, TextureMode};
+use crate::brushes::BrushAction;
 use crate::m2::{
-    self, dual_mode_label, kind_label, new_channel_info, preset_label, texture_mode_label,
-    tip_label, AdjustmentKind, BrushOp, Edit, EffectKind, UiOp,
+    self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label,
+    AdjustmentKind, BrushOp, Edit, EffectKind, UiOp,
 };
 use crate::region::RegionAction;
 use crate::state::{Action, AppState};
@@ -17,7 +18,8 @@ pub enum Popup {
     NewAdjustment,
     /// レイヤーの一覧の空白の右クリック。
     LayerBlank,
-    Preset,
+    /// ブラシの一覧の行の右クリック（対象は `brushes.ui.context`）。
+    BrushContext,
     Effect,
     Tip,
     Texture,
@@ -138,21 +140,39 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             }
             v
         }
-        Popup::Preset => {
-            let mut v = Vec::new();
-            let mut category = "";
-            for (i, p) in m2::presets().iter().enumerate() {
-                let (name, cat) = preset_label(lang, p);
-                if p.category != category {
-                    category = p.category;
-                    v.push(Entry::Heading(cat.to_owned()));
-                }
-                v.push(
-                    Entry::item(name, Action::M2Ui(UiOp::Preset(i)))
-                        .radio(app.m2.preset == Some(i)),
-                );
-            }
-            v
+        Popup::BrushContext => {
+            let Some(key) = app.brushes.ui.context else {
+                return Vec::new();
+            };
+            let user = key.is_user();
+            vec![
+                Entry::item(
+                    lang.pick("名前を変更", "Rename"),
+                    Action::Brush(BrushAction::StartRename(key)),
+                )
+                .enabled(free && user),
+                Entry::item(
+                    lang.pick("複製", "Duplicate"),
+                    Action::Brush(BrushAction::Duplicate(key)),
+                )
+                .enabled(free),
+                Entry::item(
+                    lang.pick("この設定で登録", "Register These Settings"),
+                    Action::Brush(BrushAction::Register(key)),
+                )
+                .enabled(free && user && app.brush_is_modified(key)),
+                Entry::item(
+                    lang.pick("元に戻す", "Revert"),
+                    Action::Brush(BrushAction::Revert(key)),
+                )
+                .enabled(free && app.brush_is_modified(key)),
+                Entry::Separator,
+                Entry::item(
+                    lang.pick("削除", "Delete"),
+                    Action::Brush(BrushAction::Delete(key)),
+                )
+                .enabled(free && user),
+            ]
         }
         Popup::Effect => {
             let current = EffectKind::of(&app.m2.brush.effect);

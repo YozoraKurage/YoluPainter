@@ -26,6 +26,8 @@ use crate::view3d::render::{View3dRenderer, View3dStats};
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
+    /// ブラシの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭）。
+    Brushes,
     Assets,
     Color,
     Canvas,
@@ -44,6 +46,7 @@ impl Tab {
     /// 言語ごとのタブの名前。
     pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
+            Tab::Brushes => lang.pick("ブラシ", "Brushes"),
             Tab::Assets => lang.pick("アセット", "Assets"),
             Tab::Color => lang.pick("カラー", "Color"),
             Tab::Canvas => lang.pick("キャンバス", "Canvas"),
@@ -56,15 +59,20 @@ impl Tab {
     }
 }
 
-/// Substance Painter の並び（左: アセットとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・プロパティ）。
+/// Substance Painter の並び（左: ブラシとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
+/// プロパティ）。ブラシのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
 /// 左右の列は 1600 点の幅の窓で 300 点になる割合。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
     let [center, left] =
-        surface.split_left(NodeIndex::root(), 0.19, vec![Tab::Assets, Tab::Channels]);
+        surface.split_left(
+        NodeIndex::root(),
+        0.19,
+        vec![Tab::Brushes, Tab::Assets, Tab::Channels],
+    );
     let [_, right] = surface.split_right(center, 0.77, vec![Tab::TextureSets]);
-    surface.split_below(left, 0.48, vec![Tab::Color]);
+    surface.split_below(left, 0.66, vec![Tab::Color]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
     surface.split_below(layers, 0.45, vec![Tab::Properties]);
     dock
@@ -154,6 +162,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
+            Tab::Brushes => crate::panels::brushes::show(ui, self.app),
         }
     }
 
@@ -239,8 +248,15 @@ impl YoluApp {
         );
         // 「すべて残す」を外したときに戻る数も、保存してあった数にする（直に代入すると既定の 10 に戻ってしまう）
         app.state.prefs_apply(crate::prefs::PrefsAction::SetBackups(loaded.backups));
-        if let Some(message) = startup_message(lang, &problems, app.pen.is_hooked()) {
-            app.state.message = message;
+        // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
+        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
+            app.state.attach_brush_store(dir.join("brushes"));
+        }
+        let mut notices: Vec<String> = Vec::new();
+        notices.extend(startup_message(lang, &problems, app.pen.is_hooked()));
+        notices.extend(app.state.brush_problem_message());
+        if !notices.is_empty() {
+            app.state.message = notices.join(" ");
         }
         // 「起動時に更新を確かめる」の選択は、言語の設定と同じフォルダの別のファイル
         if let Some(path) = settings.as_deref().and_then(crate::update::config::path_for) {

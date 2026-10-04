@@ -1,7 +1,7 @@
 //! 選択範囲と対称の、オプションバーとプロパティの欄の部品。
 //! - 選択の道具のオプションバー: 組み合わせ方（置き換え・足す・引く・重ねる）、すべて・解除・反転、自動選択の許容値・隣接・全レイヤー
 //! - ブラシ・消しゴムのオプションバーの右端: 対称の切り替えとモードの選び（▾）
-//! - プロパティの欄: 選択の道具では「選択範囲を変更」、描く道具では「対称」
+//! - プロパティの欄: 選択の道具では「選択範囲を変更」。対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ（`symmetry_fields`）
 //!
 //! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
@@ -369,24 +369,10 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// プロパティの欄の「対称」（描く道具のタブの末尾）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
-pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+/// ブラシの詳細の窓の「対称」の欄（見出しと既定に戻すは窓が出す）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
+/// 指先・クローンは対称と組めないので、対称のモードは「なし」のほかを無効にする。
+pub fn symmetry_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     rows.indent = 0.0;
-    let (open, reset) = section(
-        ui,
-        app,
-        rows,
-        "brush-symmetry",
-        lang.pick("対称", "Symmetry"),
-        "flip",
-        Some(lang.pick("対称を既定に戻す", "Reset symmetry")),
-    );
-    if reset {
-        app.sel.symmetry = super::SymmetryState::default();
-    }
-    if !open {
-        return;
-    }
     let free = !app.is_stroking();
     // 2D のキャンバスと 3D のビューを並べて見ているときは、どちらの設定も出す（別々に効く）
     let both = app.view3d.paintable_on_screen();
@@ -402,14 +388,30 @@ pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: 
 
 fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: bool) {
     let current = app.sel.symmetry.mode;
+    let blocked = matches!(
+        app.m2.brush.effect,
+        BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
+    );
+    let off = app
+        .view3d
+        .paintable_on_screen()
+        .then(|| lang.pick("3D では効きません", "No effect in 3D"));
+    let blocked_reason = lang.pick("指先・クローンでは使えません", "Not with smudge or clone");
     // モードのボタン
     let items: Vec<FlowButton> = MODES
         .iter()
-        .map(|mode| FlowButton {
-            label: mode_name(lang, *mode),
-            primary: current == *mode,
-            enabled: free,
-            tooltip: mode_tooltip(lang, *mode),
+        .map(|mode| {
+            let refused = blocked && *mode != SymmetryMode::None;
+            FlowButton {
+                label: mode_name(lang, *mode),
+                primary: current == *mode,
+                enabled: free && !refused,
+                tooltip: if refused {
+                    blocked_reason
+                } else {
+                    mode_tooltip(lang, *mode)
+                },
+            }
         })
         .collect();
     if let Some(i) = flow_buttons(ui, rows, "symmetry.mode", &items) {
@@ -425,10 +427,10 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         trim: true,
         suffix: " px",
     };
-    let tip = lang.pick(
+    let tip = off.unwrap_or(lang.pick(
         "軸の通る点（画布の座標）",
         "Where the axes cross (canvas pixels)",
-    );
+    ));
     let nx = slider_row(
         ui,
         rows,
@@ -465,7 +467,7 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
             app.sel.symmetry.count as f32,
             (2.0, 16.0),
             NumberFormat::int(""),
-            Some(lang.pick("中心のまわりの写しの数", "Copies around the center")),
+            Some(off.unwrap_or(lang.pick("中心のまわりの写しの数", "Copies around the center"))),
             free,
         ) {
             app.apply(Action::Sel(SelAction::Symmetry(SymOp::Count(
@@ -498,16 +500,6 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         true,
     ) {
         app.apply(Action::Sel(SelAction::Symmetry(SymOp::ShowAxes(v))));
-    }
-    if matches!(
-        app.m2.brush.effect,
-        BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
-    ) {
-        status_row(
-            ui,
-            rows,
-            lang.pick("指先・クローンでは使えません", "Not with smudge or clone"),
-        );
     }
 }
 

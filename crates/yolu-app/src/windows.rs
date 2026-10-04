@@ -240,6 +240,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     bake::window::show(ctx, app);
+    crate::panels::brush_detail::show(ctx, app);
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);

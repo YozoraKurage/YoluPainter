@@ -963,40 +963,6 @@ fn option_bar_toggle_and_menu_set_the_symmetry_mode_and_the_axes_show() {
 }
 
 #[test]
-fn properties_symmetry_section_sets_mode_center_and_count() {
-    // プロパティの欄が縦に収まる高さ
-    let mut h = app(1280.0, 2400.0, 256);
-    let side = |r: egui::Rect| r.left() > 1000.0;
-    for (label, mode) in [
-        ("縦", SymmetryMode::Vertical),
-        ("横", SymmetryMode::Horizontal),
-        ("両方", SymmetryMode::Both),
-        ("放射状", SymmetryMode::Radial),
-    ] {
-        let at = rect_of(&h, label, side).center();
-        click(&mut h, at);
-        assert_eq!(st(&h).sel.symmetry.mode, mode, "{label}");
-    }
-    // 放射状のときだけ写しの数と中心が出る
-    rect_of(&h, "写しの数", side);
-    rect_of(&h, "中心 X", side);
-    sym(&mut h, SymOp::Center(0.25, 0.75));
-    let c = st(&h).canvas_symmetry();
-    assert_eq!((c.center.x, c.center.y), (64.0, 192.0));
-    rect_of(&h, "中心 X", side);
-    sym(&mut h, SymOp::Count(5));
-    assert_eq!(st(&h).canvas_symmetry().count, 5);
-    sym(&mut h, SymOp::Count(40));
-    assert_eq!(st(&h).sel.symmetry.count, 16, "16 に丸める");
-    let at = rect_of(&h, "キャンバスの中心", side).center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.center, (0.5, 0.5));
-    let at = rect_of(&h, "なし", side).center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-}
-
-#[test]
 fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     let mut h = app(1000.0, 640.0, 512);
     let r = canvas_rect(&h);

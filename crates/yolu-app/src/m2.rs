@@ -13,8 +13,8 @@ use crate::engine::{
 use crate::lang::Lang;
 use crate::state::AppState;
 
-/// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 4 つ目。
-pub const MASK_TAB: usize = 3;
+/// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 3 つ目（アルファ・ステンシル・マテリアル/マスク・レイヤー）。
+pub const MASK_TAB: usize = 2;
 
 /// 調整レイヤーの種類（新しく足すときの選択肢）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -685,9 +685,9 @@ impl AppState {
         self.set_edit_mask(false);
     }
 
-    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 4 つ目のタブはマスクを描くあいだだけ
+    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 3 つ目のタブはマスクを描くあいだだけ
     /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
-    /// ブラシへ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+    /// 先頭のタブ（アルファ）へ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
     pub fn set_edit_mask(&mut self, on: bool) {
         let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
@@ -876,11 +876,14 @@ impl AppState {
                 self.set_edit_mask(on && has_mask); // マスクを描くと決めたら、マスクの設定が見えるように
             }
             UiOp::Preset(index) => {
+                // 一覧の組み込みのブラシ（core の組み込みの番号）に替える。描画色・背景色・手ぶれ補正と入り抜きは残る
                 if stroking {
                     return refuse(self);
                 }
                 if let Some(preset) = presets().get(index) {
-                    self.apply_preset(index, preset.brush.clone());
+                    self.brush_action(crate::brushes::BrushAction::Select(
+                        crate::brushes::BrushKey::Builtin(preset.id),
+                    ));
                 }
             }
             UiOp::Brush(op) => {
@@ -891,30 +894,6 @@ impl AppState {
             }
             UiOp::Language(lang) => self.set_language(lang),
         }
-    }
-
-    /// 組み込みのブラシを今のブラシへ写す。描画色・背景色・手ぶれ補正と入り抜き（描き手の設定）は残し、消しゴムのブラシならツールも消しゴムにする。
-    pub fn apply_preset(&mut self, index: usize, brush: Brush) {
-        let base = brush.base;
-        self.brush = crate::state::BrushState {
-            radius: base.radius as f32,
-            hardness: base.hardness as f32,
-            spacing: base.spacing as f32,
-            opacity: base.opacity as f32,
-            flow: base.flow as f32,
-            pressure_size: base.pressure_size,
-            pressure_opacity: base.pressure_opacity,
-            pressure_flow: base.pressure_flow,
-        };
-        let assist = self.m2.brush.assist;
-        self.m2.brush = brush;
-        self.m2.brush.assist = assist;
-        self.m2.preset = Some(index);
-        self.tool = if base.erase {
-            crate::state::Tool::Eraser
-        } else {
-            crate::state::Tool::Brush
-        };
     }
 
     fn apply_brush_op(&mut self, op: BrushOp) {

@@ -430,15 +430,15 @@ fn headless_m2_edits_are_one_undo_each() {
     }
 }
 
-/// マスクに描くあいだだけ 4 つ目のタブはマスク。やめたときにマスクのタブにいたなら、そのタブはもう無いのでブラシへ戻す
+/// マスクに描くあいだだけ 3 つ目のタブはマスク。やめたときにマスクのタブにいたなら、そのタブはもう無いので先頭のタブ（アルファ）へ戻す
 /// （マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
 #[test]
-fn headless_leaving_the_mask_returns_the_properties_tab_to_the_brush() {
+fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
     use yolu_app::m2::MASK_TAB;
     let mut s = AppState::new(64, 64);
     let id = s.selected_layer.unwrap();
     assert_eq!(s.property_tab, 0);
-    // マスクを足す → マスクのタブ。編集をやめる → ブラシ。もう一度 → マスク
+    // マスクを足す → マスクのタブ。編集をやめる → 先頭（アルファ）。もう一度 → マスク
     s.apply(Action::M2(Edit::AddMask(id)));
     assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
     s.apply(Action::M2Ui(UiOp::EditMask(false)));
@@ -710,40 +710,6 @@ fn snapshot_channels_panel() {
     );
     apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
     h.snapshot("m2_channels_panel");
-}
-
-#[test]
-fn snapshot_properties_brush_sections() {
-    // 小見出しを全部開いて、欄を送りながら撮る（中ほどと、終わり）
-    let mut h = app(1280.0, 1000.0, 256);
-    {
-        let s = &mut h.state_mut().state;
-        for key in [
-            "brush-jitter",
-            "brush-texture",
-            "brush-dual",
-            "brush-color",
-            "brush-fade",
-            "brush-assist",
-        ] {
-            s.sections.insert(key, true);
-        }
-    }
-    let chalk = yolu_app::m2::presets()
-        .iter()
-        .position(|p| p.id == "chalk")
-        .unwrap();
-    apply(&mut h, Action::M2Ui(UiOp::Preset(chalk)));
-    apply(
-        &mut h,
-        Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::DualEnabled(true))),
-    );
-    h.state_mut().state.m2.props_scroll = 330.0;
-    h.run();
-    h.snapshot("m2_properties_brush_middle");
-    h.state_mut().state.m2.props_scroll = 100_000.0;
-    h.run();
-    h.snapshot("m2_properties_brush_end");
 }
 
 #[test]
@@ -1248,33 +1214,6 @@ fn the_two_languages_name_the_panels() {
     h.run();
     assert!(h.query_by_label("Add Channel").is_some());
     assert!(h.query_by_label("Roughness").is_some());
-}
-
-#[test]
-fn properties_sections_open_and_their_sliders_change_the_brush() {
-    let mut h = app(1280.0, 1500.0, 256);
-    // ゆらぎの小見出しを開く（ブラシの欄を少し送って見える所へ）
-    h.state_mut().state.m2.props_scroll = 120.0;
-    h.run();
-    h.get_by_label("ゆらぎ").click();
-    h.run();
-    assert!(h.state().state.section_open("brush-jitter", false));
-    h.state_mut().state.m2.props_scroll = 220.0;
-    h.run();
-    let slider = h.get_by_label("サイズ").rect();
-    drag(
-        &mut h,
-        &[
-            pos2(slider.left() + 2.0, slider.center().y),
-            pos2(slider.left() + slider.width() * 0.6, slider.center().y),
-        ],
-    );
-    let size = h.state().state.m2.brush.jitter.size;
-    assert!((0.5..0.7).contains(&size), "{size}");
-    // 既定に戻す（ゆらぎの見出しの右端）
-    h.get_by_label("ゆらぎを既定に戻す").click();
-    h.run();
-    assert_eq!(h.state().state.m2.brush.jitter.size, 0.0);
 }
 
 // ───────── 保存（.ylp） ─────────
@@ -1825,48 +1764,10 @@ fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
 }
 
 #[test]
-fn the_brush_panel_picks_presets_tips_and_effects_from_its_own_menus() {
-    let mut h = app(1280.0, 1000.0, 128);
-    // 組み込みのブラシ
-    h.get_by_label("プリセット: カスタム").click();
-    h.run();
-    let at = popup_item(&h, "チョーク").center();
-    click(&mut h, at);
-    let state = &h.state().state;
-    assert!(state.m2.brush.tip.image.is_some() && state.m2.brush.texture.is_some());
-    assert_eq!(state.brush.radius, 18.0);
-    assert_eq!(popup_kind(&h), None, "選んだら閉じる");
-    h.get_by_label("プリセット: チョーク").click();
-    h.run();
-    let at = popup_item(&h, "ソフト消しゴム").center();
-    click(&mut h, at);
-    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Eraser);
-    // 効果（ぼかし）: 消しゴムはツールごと描くほうへ戻る。選ぶとストロークは効果のブラシで始まる
-    assert_eq!(popup_kind(&h), None);
-    h.state_mut().state.m2.props_scroll = 100_000.0;
-    h.run();
-    h.get_by_label("種類: ペイント").click();
-    h.run();
-    let at = popup_item(&h, "ぼかし").center();
-    click(&mut h, at);
-    assert!(matches!(
-        h.state().state.m2.brush.effect,
-        yolu_app::engine::BrushEffect::Blur { .. }
-    ));
-    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Brush);
-    stroke_across(&mut h, 0.0);
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
-}
-
-#[test]
 fn the_alpha_tab_picks_a_tip_image() {
     let mut h = app(1280.0, 1000.0, 128);
-    // アルファのタブ（2 つ目）
-    h.state_mut().state.property_tab = 1;
+    // アルファのタブ（先頭。右のプロパティの欄の既定のタブ）
+    h.state_mut().state.property_tab = 0;
     h.run();
     assert!(h.state().state.m2.brush.tip.image.is_none());
     h.get_by_label("ドット").click();

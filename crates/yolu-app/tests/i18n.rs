@@ -4,6 +4,7 @@ use egui::{epaint::Shape, vec2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
 use common::*;
 use yolu_app::{
+    brushes::{BrushAction, Category, Group},
     engine::BlendMode,
     lang::Lang,
     m2::{AdjustmentKind, BrushOp, Edit, EffectKind, UiOp},
@@ -312,7 +313,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese() {
     assert!(!japanese_left(&h, &[]).is_empty());
     h.state_mut().state.lang = Lang::En;
     h.run();
-    for tab in [Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
@@ -332,13 +333,33 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese() {
     assert_english(&h, "mask", &[]);
     apply(&mut h, Action::M2Ui(UiOp::EditMask(false)));
     apply(&mut h, Action::SetBlend(id, BlendMode::Multiply));
+    // ブラシの詳細の窓: 全カテゴリ・効果の種類・デュアルブラシ
+    h.state_mut().state.brushes.ui.detail.open = true;
+    for category in Category::ALL {
+        h.state_mut().state.brushes.ui.detail.category = category;
+        h.run();
+        assert_english(&h, category.name(Lang::En), &[]);
+    }
+    h.state_mut().state.brushes.ui.detail.category = Category::Effect;
     for kind in EffectKind::ALL {
         apply(&mut h, Action::M2Ui(UiOp::Brush(BrushOp::Effect(kind))));
         assert_english(&h, kind.name(Lang::En), &[]);
     }
     apply(&mut h, Action::M2Ui(UiOp::Brush(BrushOp::Effect(EffectKind::Paint))));
     apply(&mut h, Action::M2Ui(UiOp::Brush(BrushOp::DualEnabled(true))));
+    h.state_mut().state.brushes.ui.detail.category = Category::Dual;
+    h.run();
     assert_english(&h, "dual brush", &[]);
+    h.state_mut().state.brushes.ui.detail.open = false;
+    h.run();
+    // 一覧: 全グループ（組み込みの名前・利用者のブラシ）
+    click_tab(&mut h, Tab::Brushes);
+    apply(&mut h, Action::Brush(BrushAction::Add));
+    for group in Group::ALL {
+        h.state_mut().state.brushes.ui.group = group;
+        h.run();
+        assert_english(&h, group.name(Lang::En), &[]);
+    }
     // メニュー（開いているあいだは項目も描く）
     for (i, title) in ["File", "Edit", "Layer", "View", "Help"].into_iter().enumerate() {
         let at = menu_title(&h, title).center();
@@ -841,10 +862,27 @@ fn english_texture_set_states_have_no_japanese() {
 fn walk_states(lang: Lang, width: f32, height: f32, mut visit: impl FnMut(&mut Harness<'static, YoluApp>, &str)) {
     let mut h = english_app_sized(width, height, lang);
     visit(&mut h, "default");
-    for tab in [Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
+    // ブラシの一覧（全グループ）と詳細の窓（全カテゴリ）
+    click_tab(&mut h, Tab::Brushes);
+    for group in Group::ALL {
+        h.state_mut().state.brushes.ui.group = group;
+        h.run();
+        visit(&mut h, group.name(lang));
+    }
+    h.state_mut().state.brushes.ui.detail.open = true;
+    for category in Category::ALL {
+        h.state_mut().state.brushes.ui.detail.category = category;
+        h.state_mut().state.brushes.ui.detail.scroll = 0.0;
+        h.run();
+        visit(&mut h, category.name(lang));
+    }
+    h.state_mut().state.brushes.ui.detail.open = false;
+    h.state_mut().state.brushes.ui.group = Group::Pen;
+    h.run();
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     visit(&mut h, "test cube");
@@ -905,11 +943,12 @@ fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages() {
 /// プリセットなど。言語に依らない配置の積み残し）。`KNOWN` が詰まる文字の全部で、増えれば落ち、直せば一覧から消す。
 #[test]
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
-    // チャンネルの名前（チャンネルのパネルの行）、プリセット・効果・合成モードの箱の値、テクスチャセットの名前と説明
-    const KNOWN_JA: [&str; 11] = [
-        "エミッション", "カスタム", "カラー", "テクスチャセット 1", "ノーマル", "ハイト", "ペイント", "まだマテリアルに付いていない（スロット 0）", "メタリック", "ラフネス", "手ぶれ補正と入り抜き",
+    // チャンネルの名前（チャンネルのパネルの行）、ブラシの一覧の行の名前（狭いドックの筆・消しゴムのグループ）、
+    // アルファのタブの先端の名前、テクスチャセットの名前と説明
+    const KNOWN_JA: [&str; 9] = [
+        "エミッション", "カラー", "ソフト消しゴム", "テクスチャセット 1", "ノーマル", "ハイト", "まだマテリアルに付いていない（スロット 0）", "メタリック", "ラフネス",
     ];
-    const KNOWN_EN: [&str; 8] = ["Color", "Custom", "Emission", "Height", "Metallic", "Normal", "Paint", "Roughness"];
+    const KNOWN_EN: [&str; 8] = ["Color", "Emission", "Height", "Metallic", "Normal", "Roughness", "Round (hardness)", "Watercolor Edge"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();

@@ -2321,6 +2321,12 @@ mod ui {
     /// 人工の棚（6 種）を持った窓。縦を伸ばして格子が 3 行見えるようにする。
     pub fn window() -> Harness<'static, YoluApp> {
         let mut h = app(1280.0, 1000.0, 64);
+        // 左の列の先頭はブラシのパネルなので、棚の「アセット」のタブを前へ出す
+        click_tab(&mut h, yolu_app::Tab::Assets);
+        // タブを押した時刻から間を空ける（このあとのダブルクリックの 1 回目が、タブの押下との 2 回押しに数えられないように）
+        for _ in 0..30 {
+            h.step();
+        }
         h.state_mut().state.shelf = ShelfState::with_shelf(fixture_shelf());
         h.run();
         h
@@ -2890,6 +2896,7 @@ mod ui {
     #[test]
     fn an_unreadable_shelf_is_named_and_cannot_be_changed_from_the_panel() {
         let mut h = app(1280.0, 800.0, 64);
+        click_tab(&mut h, yolu_app::Tab::Assets);
         h.state_mut().state.shelf = ShelfState::unreadable("試験の理由");
         h.run();
         assert!(h.get_by_label("層を保存").accesskit_node().is_disabled());
@@ -2970,6 +2977,7 @@ mod ui {
     #[test]
     fn snapshot_shelf_blocked_and_empty() {
         let mut h = app(1280.0, 800.0, 64);
+        click_tab(&mut h, yolu_app::Tab::Assets);
         h.snapshot("assets_shelf_empty");
         apply(
             &mut h,

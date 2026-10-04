@@ -1,0 +1,126 @@
+//! 組み込みのブラシ（消せない元）。core の組み込み 13 個（`m2::presets()`）に、各道具の「標準」と効果のブラシ 3 つを足し、
+//! グループ（ペン・筆・エアブラシ・消しゴム・効果・特殊）に分けたもの。ここに無い id の組み込みは作らない（保存した並びの
+//! 読み戻しは、ここに載っている id だけを組み込みと見る）。
+
+use std::sync::OnceLock;
+
+use super::{canonical, Group};
+use crate::engine::{Brush, BrushEffect, BrushSettings, DVec2};
+use crate::lang::Lang;
+use crate::m2;
+
+/// 組み込みの 1 つ。`brush` は正規の形（`canonical`）。
+pub struct Builtin {
+    pub id: &'static str,
+    pub group: Group,
+    pub brush: Brush,
+}
+
+/// 今の画面の既定の設定（描く道具の「標準」。起動直後の設定と同じで、選んでも何も変わらない）。
+pub const STANDARD: &str = "standard";
+/// 消しゴムの「標準」（設定は描く道具の標準と同じ。消しゴムのグループの先頭）。
+pub const STANDARD_ERASER: &str = "standard-eraser";
+
+/// core の組み込みの id が属するグループ。
+fn preset_group(id: &str) -> Group {
+    match id {
+        "hard-round" | "ink-pen" | "pencil" | "marker" => Group::Pen,
+        "dry-brush" | "watercolor" | "chalk" | "charcoal" => Group::Brush,
+        "soft-round" | "airbrush" => Group::Airbrush,
+        "soft-eraser" | "hard-eraser" => Group::Eraser,
+        _ => Group::Special,
+    }
+}
+
+/// 組み込みの全部（グループごとに画面の並びで）。初めて呼んだときに 1 回だけ作る。
+pub fn all() -> &'static [Builtin] {
+    static ALL: OnceLock<Vec<Builtin>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        let presets = m2::presets();
+        let preset = |id: &str| {
+            presets
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| canonical(&p.brush))
+                .expect("core の組み込みのブラシ")
+        };
+        let standard = canonical(&Brush::default());
+        let effect = |radius: f64, hardness: f64, flow: f64, effect: BrushEffect| {
+            canonical(&Brush {
+                effect,
+                ..Brush::from(BrushSettings {
+                    radius,
+                    hardness,
+                    flow,
+                    spacing: 0.1,
+                    ..BrushSettings::default()
+                })
+            })
+        };
+        let mut v = Vec::new();
+        let mut add =
+            |id: &'static str, group: Group, brush: Brush| v.push(Builtin { id, group, brush });
+        add(STANDARD, Group::Pen, standard.clone());
+        for id in ["hard-round", "ink-pen", "pencil", "marker"] {
+            add(id, preset_group(id), preset(id));
+        }
+        for id in ["dry-brush", "watercolor", "chalk", "charcoal"] {
+            add(id, preset_group(id), preset(id));
+        }
+        for id in ["soft-round", "airbrush"] {
+            add(id, preset_group(id), preset(id));
+        }
+        add(STANDARD_ERASER, Group::Eraser, standard);
+        for id in ["soft-eraser", "hard-eraser"] {
+            add(id, preset_group(id), preset(id));
+        }
+        add(
+            "blur",
+            Group::Effect,
+            effect(20.0, 0.5, 0.6, BrushEffect::BLUR),
+        );
+        add(
+            "smudge",
+            Group::Effect,
+            effect(16.0, 0.5, 1.0, BrushEffect::SMUDGE),
+        );
+        add(
+            "clone",
+            Group::Effect,
+            effect(
+                20.0,
+                0.7,
+                1.0,
+                BrushEffect::Clone {
+                    offset: DVec2::new(64.0, 0.0),
+                },
+            ),
+        );
+        add("splatter", preset_group("splatter"), preset("splatter"));
+        v
+    })
+}
+
+/// id の組み込み。
+pub fn find(id: &str) -> Option<&'static Builtin> {
+    all().iter().find(|b| b.id == id)
+}
+
+/// 組み込みの表示名。
+pub fn name(lang: Lang, id: &str) -> String {
+    let own = match id {
+        STANDARD | STANDARD_ERASER => Some(lang.pick("標準", "Standard")),
+        "blur" => Some(lang.pick("ぼかし", "Blur")),
+        "smudge" => Some(lang.pick("指先", "Smudge")),
+        "clone" => Some(lang.pick("クローン", "Clone")),
+        _ => None,
+    };
+    match own {
+        Some(name) => name.to_owned(),
+        None => m2::presets()
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| m2::preset_label(lang, p).0.to_owned())
+            .unwrap_or_else(|| id.to_owned()),
+    }
+}
