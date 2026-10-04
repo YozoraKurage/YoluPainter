@@ -2,6 +2,7 @@
 pub mod assets;
 pub mod color;
 pub mod layers;
+pub mod pose;
 pub mod properties;
 pub mod texture_sets;
 pub mod view3d;

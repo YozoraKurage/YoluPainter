@@ -49,6 +49,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "texture",
     "folder_open",
     "save",
+    "accessibility",
     "tools/brush",
     "tools/brush_selected",
     "tools/eraser",

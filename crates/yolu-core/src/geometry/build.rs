@@ -95,11 +95,15 @@ impl Cancel<'_> {
     }
 }
 
+/// 作り直さずに使う隣り合わせ（CSR の offsets・並び・非多様体の辺の数。位置だけ変えたスナップショットのため）。
+pub(crate) type Adjacency = (Vec<u32>, Vec<u32>, u32);
+
 pub(crate) fn build(
     source: Vec<SurfaceTriangle>,
     revision: u32,
     weld_tolerance: f32,
     cancel: Cancel<'_>,
+    reuse: Option<Adjacency>,
 ) -> Result<SurfaceGeometry, GeometryError> {
     if !weld_tolerance.is_finite() || weld_tolerance <= 0.0 {
         return Err(GeometryError::InvalidTolerance);
@@ -147,7 +151,10 @@ pub(crate) fn build(
     let snapshot_ms = clock.elapsed().as_secs_f64() * 1000.0;
 
     let clock = Instant::now();
-    let (offsets, neighbors, non_manifold) = build_adjacency(&triangles, weld_tolerance, &cancel)?;
+    let (offsets, neighbors, non_manifold) = match reuse {
+        Some(a) => a,
+        None => build_adjacency(&triangles, weld_tolerance, &cancel)?,
+    };
     let adjacency_ms = clock.elapsed().as_secs_f64() * 1000.0;
 
     let clock = Instant::now();
@@ -177,6 +184,7 @@ pub(crate) fn build(
         revision,
         bounds,
         non_manifold_edge_count: non_manifold,
+        brush_scale: magnitude(bounds.size()),
         timings: super::BuildTimings {
             snapshot_ms,
             adjacency_ms,

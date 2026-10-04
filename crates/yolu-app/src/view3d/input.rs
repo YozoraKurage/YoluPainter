@@ -10,7 +10,7 @@ use egui::{Color32, Event, Key, PointerButton, Pos2, Rect, Stroke, Ui};
 use yolu_core::geometry::{pick, world_radius, CameraView, SurfaceStroke};
 use yolu_core::glam::{Vec2, Vec3};
 
-use super::Nav;
+use super::{gizmo, Nav};
 use crate::pen::PenSample;
 use crate::state::{AppState, StrokeSource};
 
@@ -180,6 +180,19 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     }
     let blocked = app.popup.is_some() || app.popup_was_open;
     let events = ui.input(|i| i.events.clone());
+    // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
+    let pose_mode = app.view3d.pose.mode;
+    let pen: &[PenSample] = if pose_mode { &[] } else { pen };
+    let snap = ui.input(|i| i.modifiers.command);
+    // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
+    // モデルの組み直しが走るので、高いポーリングのマウスやペンでは、途中の位置は描かれずに捨てられるだけ）。ボタンを離す・Esc・
+    // フォーカスを失うの前には、そこまでの位置を当ててから終える
+    let mut drag_at: Option<Pos2> = None;
+    let flush = |app: &mut AppState, drag_at: &mut Option<Pos2>| {
+        if let Some(at) = drag_at.take() {
+            gizmo::drag_to(app, rect, at, snap);
+        }
+    };
 
     // ペン（Windows Ink）。点があればこのフレームのストロークはペンだけで描く
     let pen_frame =
@@ -238,7 +251,13 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                         && !pen_frame
                         && app.view3d.input.nav.is_none()
                     {
-                        begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
+                        if pose_mode {
+                            if app.view3d.pose.drag.is_none() {
+                                gizmo::press(app, rect, pos);
+                            }
+                        } else {
+                            begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
+                        }
                     }
                 } else {
                     if app.view3d.input.nav.is_some_and(|(_, b)| b == *button) {
@@ -249,6 +268,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                     {
                         finish(app, false);
                     }
+                    if *button == PointerButton::Primary {
+                        flush(app, &mut drag_at);
+                        gizmo::release(app, true);
+                    }
                 }
                 app.view3d.input.last_pointer = Some(pos);
             }
@@ -257,6 +280,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 let previous = app.view3d.input.last_pointer.unwrap_or(pos);
                 if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     add(app, rect, pos, 1.0);
+                }
+                if app.view3d.pose.drag.is_some() {
+                    drag_at = Some(pos);
                 }
                 if let Some((nav, _)) = app.view3d.input.nav {
                     let d = pos - previous;
@@ -289,16 +315,22 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 if app.view3d.input.stroke.is_some() {
                     finish(app, true);
                 }
+                // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）
+                drag_at = None;
+                gizmo::release(app, false);
                 app.view3d.input.nav = None;
             }
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
                 finish(app, false);
+                flush(app, &mut drag_at);
+                gizmo::release(app, true);
                 app.view3d.input.nav = None;
             }
             _ => {}
         }
     }
+    flush(app, &mut drag_at);
     // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える
     let (primary, any_down) = ui.input(|i| (i.pointer.primary_down(), i.pointer.any_down()));
     if app.view3d.input.stroke == Some(StrokeSource::Mouse)
@@ -308,6 +340,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         finish(app, false);
+    }
+    if app.view3d.pose.drag.is_some()
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        gizmo::release(app, true);
     }
     if !any_down {
         app.view3d.input.nav = None;

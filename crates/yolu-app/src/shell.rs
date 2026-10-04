@@ -9,6 +9,7 @@ use crate::state::{blend_name, Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
+use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し。
 pub const MENU_TITLES: [&str; 5] = ["ファイル", "編集", "レイヤー", "表示", "ヘルプ"];
@@ -42,10 +43,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         1 => vec![
             Entry::item("取り消し", Action::Undo)
                 .shortcut("Ctrl+Z")
-                .enabled(free && app.doc.can_undo()),
+                .enabled(free && app.can_undo()),
             Entry::item("やり直し", Action::Redo)
                 .shortcut("Ctrl+Shift+Z / Ctrl+Y")
-                .enabled(free && app.doc.can_redo()),
+                .enabled(free && app.can_redo()),
             Entry::Separator,
             Entry::item("ブラシ", Action::SelectTool(Tool::Brush))
                 .shortcut("B")
@@ -102,6 +103,15 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .enabled(free),
             Entry::Separator,
             Entry::item("3D ビューに試しの立方体を読む", Action::LoadDemoModel).enabled(free),
+            Entry::item("3D ビューに FBX を開く…", Action::Pose(PoseAction::OpenFbx)).enabled(free),
+            Entry::item(
+                "3D ビューに試しの人形を読む",
+                Action::Pose(PoseAction::LoadFigure),
+            )
+            .enabled(free),
+            Entry::item("ポーズのモード", Action::Pose(PoseAction::ToggleMode))
+                .checked(app.view3d.pose.mode)
+                .enabled(free && app.view3d.pose.session.is_some()),
             Entry::item("3D ビューでモデル全体を見る", Action::FrameModel)
                 .enabled(free && app.view3d.model.is_some()),
             Entry::Separator,

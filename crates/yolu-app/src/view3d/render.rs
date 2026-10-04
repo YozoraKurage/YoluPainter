@@ -107,6 +107,10 @@ pub struct View3dStats {
     pub renders: usize,
     /// 文書から塗った絵へ縮めた段（0 なら同じ大きさ）。
     pub paint_level: u32,
+    /// 今 GPU に上げているモデルの世代（`ViewModel::revision`）。モデルを入れ替えたのに追いついていないと、見える形と当たる形がずれる。
+    pub mesh_revision: u32,
+    /// これまでに頂点を上げ直した回数。
+    pub mesh_uploads: usize,
 }
 
 struct Target {
@@ -119,7 +123,10 @@ struct Target {
 struct GpuMesh {
     buffer: wgpu::Buffer,
     vertices: u32,
-    model: usize,
+    /// 上げたモデルの世代（`ViewModel::revision`）。モデルの見分けはアドレスでなく世代で行う: ポーズの変更はモデルを何度も入れ替え、
+    /// 落とした古いモデルのアドレスを次の新しいモデルが使うことがあり、そうなると上げ直しも描き直しも起きない。世代は
+    /// `View3dState::next_revision` で作るので、モデルごとに違う。
+    model: u32,
     material: i32,
 }
 
@@ -144,7 +151,8 @@ struct PaintTexture {
 struct SceneKey {
     camera: [u32; 6],
     size: [u32; 2],
-    model: usize,
+    /// モデルの世代（`GpuMesh::model` と同じ）。
+    model: u32,
     material: i32,
     paint: u64,
 }
@@ -363,7 +371,7 @@ impl View3dRenderer {
                 camera.distance.to_bits(),
             ],
             size,
-            model: std::sync::Arc::as_ptr(model) as usize,
+            model: model.revision(),
             material,
             paint: paint.version,
         };
@@ -436,7 +444,7 @@ impl View3dRenderer {
 
     /// モデルとテクスチャセットの頂点を上げる（変わったときだけ）。
     fn ensure_mesh(&mut self, model: &std::sync::Arc<ViewModel>, material: i32) {
-        let key = std::sync::Arc::as_ptr(model) as usize;
+        let key = model.revision();
         if self
             .mesh
             .as_ref()
@@ -475,6 +483,8 @@ impl View3dRenderer {
             model: key,
             material,
         });
+        self.stats.mesh_revision = key;
+        self.stats.mesh_uploads += 1;
     }
 
     /// 塗った絵を文書に合わせる: 初めと文書が変わったときは全部、ほかは変わったタイルだけを合成して上げる。

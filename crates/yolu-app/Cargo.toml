@@ -19,6 +19,7 @@ egui = "0.36"
 egui_dock = "0.21"
 yolu-core.workspace = true
 yolu-io.workspace = true
+yolu-model.workspace = true
 yolu-protocol.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 interprocess = "2.4"   # 0BSD OR Apache-2.0（Live Link の待ち受け）

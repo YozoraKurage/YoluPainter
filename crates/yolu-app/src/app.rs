@@ -280,6 +280,15 @@ impl YoluApp {
                     self.state.apply(Action::SaveProjectAs(path));
                 }
             }
+            Some(DialogRequest::OpenModel) => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("3D ビューに FBX を開く")
+                    .add_filter("FBX", &["fbx", "FBX"])
+                    .pick_file()
+                {
+                    crate::view3d::pose::open_file(&mut self.state, &path);
+                }
+            }
             None => {}
         }
     }
@@ -391,6 +400,12 @@ impl YoluApp {
         self.state.link = self.link.view();
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
+        // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
+        if crate::view3d::pose::frame(&mut self.state, &ctx) {
+            if let Some(path) = self.dock.find_tab(&Tab::View3d) {
+                let _ = self.dock.set_active_tab(path);
+            }
+        }
         if self.state.reset_layout {
             self.dock = default_dock();
             self.state.reset_layout = false;
@@ -483,6 +498,8 @@ impl YoluApp {
                     .show_inside(ui, &mut tabs);
                 self.tab_rects = tabs.tab_rects;
             });
+        // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
+        self.state.view3d.visible = self.view3d.content_rect().is_some();
 
         let bar = bar.unwrap_or(menu::BarOutcome {
             rects: Vec::new(),

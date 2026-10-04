@@ -14,7 +14,7 @@ use glam::Vec2;
 use super::camera::CameraView;
 use super::dab::{DabRefusal, SurfaceBrushBudget, SurfaceVisibilityCache};
 use super::stroke::{ScreenStrokeSampler, TooManyDabs};
-use super::unity::{fmax, magnitude};
+use super::unity::fmax;
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::{BrushSettings, CoreError, Document, Stroke};
 
@@ -93,9 +93,7 @@ impl SurfaceStroke {
         at: Vec2,
         pressure: f32,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
-        let world_radius = fmax(0.000001, magnitude(geometry.bounds().size()))
-            * brush.radius as f32
-            / doc.width() as f32;
+        let world_radius = world_radius(&geometry, brush.radius, doc.width());
         let mut s = SurfaceStroke {
             geometry,
             view,
@@ -244,10 +242,10 @@ pub fn pick(geometry: &SurfaceGeometry, view: &CameraView, at: Vec2) -> Option<S
     geometry.raycast(view.ray(at), true, f32::INFINITY)
 }
 
-/// ブラシの半径（文書の画素）のモデルの単位での大きさ（筆圧の前。Unity 版と同じ式）。
+/// ブラシの半径（文書の画素）のモデルの単位での大きさ（筆圧の前。Unity 版と同じ式: max(1e-6, 箱の対角線) × 半径 / 文書の幅。
+/// 箱の対角線は `brush_scale`（ポーズを付けたスナップショットでも元の形の値）。
 pub fn world_radius(geometry: &SurfaceGeometry, brush_radius: f64, document_width: u32) -> f32 {
-    fmax(0.000001, magnitude(geometry.bounds().size())) * brush_radius as f32
-        / document_width as f32
+    fmax(0.000001, geometry.brush_scale()) * brush_radius as f32 / document_width as f32
 }
 
 /// 区間の始まりの点でのダブの間隔（面の上の直径 × 間隔を画面に直す。0.5 以上。面に当たらなければ 1）。

@@ -14,6 +14,7 @@ mod dab;
 mod model;
 mod paint;
 mod query;
+mod refit;
 mod regions;
 mod stroke;
 pub(crate) mod unity;
@@ -31,6 +32,7 @@ pub use paint::{pick, world_radius, SurfaceStroke, SurfaceStrokeError, SurfaceSt
 pub use query::{
     barycentric, closest_point, intersect_triangle, uv_barycentric, NodeBudgetExceeded,
 };
+pub use refit::BvhUpdate;
 pub use regions::{region, SurfaceRegionKind};
 pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
 pub use unity::{Bounds, Ray};
@@ -137,6 +139,8 @@ pub enum GeometryError {
     TooManyTriangles,
     /// 取り消した（`SurfaceGeometry::build_cancelable` の印）。
     Canceled,
+    /// 位置を変えた三角形の並び・スロット・UV が元のスナップショットと違う（`SurfaceGeometry::reposition`）。
+    Mismatch,
 }
 
 impl std::fmt::Display for GeometryError {
@@ -147,6 +151,7 @@ impl std::fmt::Display for GeometryError {
             GeometryError::InvalidTolerance => "溶接の許しは正の値にしてください",
             GeometryError::TooManyTriangles => "三角形が多すぎます",
             GeometryError::Canceled => "取り消しました",
+            GeometryError::Mismatch => "三角形の並びが元のスナップショットと違います",
         })
     }
 }
@@ -177,6 +182,8 @@ pub struct SurfaceGeometry {
     pub(crate) revision: u32,
     pub(crate) bounds: Bounds,
     pub(crate) non_manifold_edge_count: u32,
+    /// ブラシの半径をモデルの単位に直す基準（箱の対角線。`reposition` は元の値を引き継ぐ）。
+    pub(crate) brush_scale: f32,
     pub(crate) timings: BuildTimings,
 }
 
@@ -190,7 +197,13 @@ impl SurfaceGeometry {
         revision: u32,
         weld_tolerance: f32,
     ) -> Result<SurfaceGeometry, GeometryError> {
-        build::build(triangles, revision, weld_tolerance, build::Cancel(None))
+        build::build(
+            triangles,
+            revision,
+            weld_tolerance,
+            build::Cancel(None),
+            None,
+        )
     }
 
     /// 別のスレッドで組むとき: cancel を立てると途中でやめて `Canceled` を返す（作りかけは返さない）。
@@ -205,6 +218,7 @@ impl SurfaceGeometry {
             revision,
             weld_tolerance,
             build::Cancel(Some(cancel)),
+            None,
         )
     }
 
@@ -233,6 +247,11 @@ impl SurfaceGeometry {
     /// 全体の箱。
     pub fn bounds(&self) -> Bounds {
         self.bounds
+    }
+    /// ブラシの半径をモデルの単位に直す基準の長さ（作ったときの箱の対角線。ポーズで位置だけ変えたスナップショットは、元の形の値を
+    /// 引き継ぐので、ポーズでブラシの大きさが変わらない）。
+    pub fn brush_scale(&self) -> f32 {
+        self.brush_scale
     }
     /// モデルの半径の目安（箱の半分の対角線。0.0001 以上。カメラの距離と寄る範囲に使う）。
     pub fn model_radius(&self) -> f32 {

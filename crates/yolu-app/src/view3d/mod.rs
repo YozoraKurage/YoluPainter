@@ -1,8 +1,10 @@
 //! 3D ビュー: モデル（`model`）、wgpu の描画（`render`）、入力（`input`: 面に描く・回す・パン・寄る）、ブラシのカーソル。
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
+pub mod gizmo;
 pub mod input;
 pub mod model;
+pub mod pose;
 pub mod render;
 
 use std::sync::Arc;
@@ -54,6 +56,11 @@ pub struct View3dState {
     pending_close: bool,
     revision: u32,
     pub input: SurfaceInput,
+    /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
+    pub pose: pose::PoseEditor,
+    /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
+    /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
+    pub visible: bool,
 }
 
 impl View3dState {
@@ -209,6 +216,11 @@ impl View3dState {
         } else if self.shown_hidden != self.hidden {
             self.rebuild_shown();
         }
+    }
+
+    /// いちばん新しい受けたままの形（ストロークの後に入れ替わるのを待っているものがあればそれ）。
+    pub fn latest_model(&self) -> Option<&Arc<ViewModel>> {
+        self.pending.as_ref().or(self.full.as_ref())
     }
 
     /// 待っているモデルがあるか（試験用）。

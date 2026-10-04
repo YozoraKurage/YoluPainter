@@ -358,6 +358,8 @@ pub enum Action {
     LoadDemoModel,
     /// 3D ビューのカメラをモデル全体が見える位置へ。
     FrameModel,
+    /// ポーズの変更（FBX を開く・試しの人形・モード・戻す・取り消し）。
+    Pose(crate::view3d::pose::PoseAction),
     About,
     /// テクスチャセットを選ぶ（uid）。
     SelectSet(u32),
@@ -456,6 +458,8 @@ pub enum DialogRequest {
     New,
     Open,
     SaveAs,
+    /// 3D ビューに開くモデル（FBX）を選ぶ。
+    OpenModel,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -513,6 +517,21 @@ impl AppState {
         self.canvas.stroke.is_some() || self.doc.has_active_stroke()
     }
 
+    /// 取り消せるか（ポーズのモードではポーズの取り消し）。
+    pub fn can_undo(&self) -> bool {
+        match &self.view3d.pose.session {
+            Some(s) if crate::view3d::pose::owns_undo(self) => s.can_undo(),
+            _ => self.doc.can_undo(),
+        }
+    }
+
+    pub fn can_redo(&self) -> bool {
+        match &self.view3d.pose.session {
+            Some(s) if crate::view3d::pose::owns_undo(self) => s.can_redo(),
+            _ => self.doc.can_redo(),
+        }
+    }
+
     pub fn section_open(&self, key: &'static str, default: bool) -> bool {
         *self.sections.get(key).unwrap_or(&default)
     }
@@ -541,7 +560,10 @@ impl AppState {
     pub fn apply(&mut self, action: Action) {
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| s.message = "描いている間はできません。".into();
-        if action.edits_document() && !stroking {
+        // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
+        let pose_undo =
+            matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
+        if action.edits_document() && !stroking && !pose_undo {
             if let Some(reason) = self.read_only_reason() {
                 self.message = format!("読むだけのテクスチャセットです: {reason}");
                 return;
@@ -552,6 +574,9 @@ impl AppState {
             Action::Undo => {
                 if stroking {
                     return refuse(self);
+                }
+                if crate::view3d::pose::owns_undo(self) {
+                    return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Undo));
                 }
                 match self.doc.undo() {
                     Ok(true) => {
@@ -566,6 +591,9 @@ impl AppState {
             Action::Redo => {
                 if stroking {
                     return refuse(self);
+                }
+                if crate::view3d::pose::owns_undo(self) {
+                    return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Redo));
                 }
                 match self.doc.redo() {
                     Ok(true) => {
@@ -689,6 +717,7 @@ impl AppState {
                 }
                 self.view3d.frame_model();
             }
+            Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::About => {
                 self.message = format!(
                     "YoluPainter（Rust 版）{} — M2 の試作",

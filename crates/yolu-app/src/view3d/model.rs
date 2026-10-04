@@ -42,6 +42,22 @@ impl ViewModel {
         })
     }
 
+    /// 作ってあるスナップショットから（ポーズを付けた形。メッシュはスナップショットと同じ三角形の並び）。
+    pub fn with_geometry(
+        name: &str,
+        meshes: Vec<ModelMesh>,
+        materials: Vec<String>,
+        geometry: Arc<SurfaceGeometry>,
+    ) -> ViewModel {
+        ViewModel {
+            name: name.to_string(),
+            meshes,
+            geometry,
+            materials,
+            link_generation: None,
+        }
+    }
+
     /// 試しの立方体（Unity 版のデモと同じ。6 面が別の UV アイランド）。
     pub fn demo(revision: u32) -> ViewModel {
         ViewModel::new(

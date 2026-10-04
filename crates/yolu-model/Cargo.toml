@@ -1,0 +1,10 @@
+[package]
+name = "yolu-model"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+# MIT OR Unlicense（C の ufbx 0.23.1 を cc で組む。C のコンパイラが要る。Windows 向けは mingw-w64 か MSVC）
+ufbx = "0.11.5"
+yolu-core.workspace = true

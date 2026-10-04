@@ -15,7 +15,7 @@ use crate::pen::PenSample;
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
-use crate::view3d::{input, render::View3dRenderer};
+use crate::view3d::{gizmo, input, render::View3dRenderer};
 
 /// タブの中身の置き場所。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,7 +110,9 @@ impl View3dSlot {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
         let header = Rect::from_min_size(full.min, vec2(full.width(), HEADER_HEIGHT));
-        let content = Rect::from_min_max(pos2(full.left(), header.bottom()), full.max);
+        let below = Rect::from_min_max(pos2(full.left(), header.bottom()), full.max);
+        // スキンのあるモデルなら左にポーズの欄（無ければ全部が 3D の表示域）
+        let (pose_panel, content) = crate::panels::pose::split(app, below);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(ui, app, content, pen);
@@ -141,6 +143,23 @@ impl View3dSlot {
         };
         if !drawn {
             self.placeholder(ui, app, content);
+        } else if app.view3d.pose.mode {
+            // ポーズのモード: ギズモ（輪の上は掴む形のポインタ）
+            let pointer = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            gizmo::draw(ui, app, content, pointer);
+            if pointer.is_some() {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else if app.view3d.pose.drag.is_some() {
+                    CursorIcon::Grabbing
+                } else if app.view3d.pose.hover_axis.is_some() {
+                    CursorIcon::Grab
+                } else {
+                    CursorIcon::Default
+                });
+            }
         } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             // ブラシのカーソル（回している・パンしているあいだは出さない）
             if response.contains_pointer() && content.contains(pointer) {
@@ -152,6 +171,9 @@ impl View3dSlot {
                     ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
                 }
             }
+        }
+        if let Some(panel) = pose_panel {
+            crate::panels::pose::show(ui, app, panel);
         }
         self.header(ui, app, header);
 
