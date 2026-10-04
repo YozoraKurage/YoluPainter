@@ -1,0 +1,15 @@
+invalid-0:refused
+invalid-1:refused
+invalid-2:refused
+invalid-3:refused
+invalid-4:refused
+invalid-5:refused
+invalid-6:refused
+invalid-7:refused
+invalid-8:refused
+invalid-9:refused
+invalid-10:refused
+invalid-11:refused
+mip-budget-11:refused
+mip-budget-12:accepted
+mip-bytes:12

@@ -1,0 +1,7 @@
+# 画素やバイト列の正解は改行の変換をしない（Windows の core.autocrlf で LF が CRLF になるとバイト数が変わり、全バイトの照合が落ちる）
+*.rgba binary
+*.bin binary
+*.png binary
+*.ylp binary
+crates/*/tests/golden/** -text
+crates/*/tests/fixtures/** -text

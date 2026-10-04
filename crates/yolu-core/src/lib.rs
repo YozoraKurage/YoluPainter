@@ -42,6 +42,7 @@ mod composite;
 mod document;
 mod error;
 pub mod export;
+pub mod fill_image;
 pub mod filter;
 pub mod generator;
 pub mod geometry;
