@@ -426,6 +426,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bevy_mikktspace"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bff34eb29ff4b8a8688bc7299f14fb6b597461ca80fec03ed7d22939ab33e48f"
+
+[[package]]
 name = "bit-set"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4433,13 +4439,16 @@ dependencies = [
 name = "yolu-app"
 version = "0.0.1"
 dependencies = [
+ "bevy_mikktspace",
  "eframe",
  "egui",
  "egui_dock",
  "egui_kittest",
+ "half",
  "image",
  "interprocess",
  "raw-window-handle",
+ "rayon",
  "rfd",
  "windows",
  "yolu-bridge",

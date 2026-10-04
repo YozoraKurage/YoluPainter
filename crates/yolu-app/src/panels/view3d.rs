@@ -12,9 +12,13 @@ use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, V
 
 use crate::canvas::HEADER_HEIGHT;
 use crate::pen::PenSample;
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, OpenPopup, PopupKind};
+use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align};
+use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
+use crate::view3d::brdf::Curve;
+use crate::view3d::display::{self, EnvKind, Op, Shading};
+use crate::view3d::render::MeshMapSource;
 use crate::view3d::{gizmo, input, render::View3dRenderer};
 
 /// タブの中身の置き場所。
@@ -118,19 +122,49 @@ impl View3dSlot {
         input::handle(ui, app, content, pen);
 
         let p = ui.painter().clone();
+        // 焼いたメッシュマップだけを見せているのに、今のセットにそのマップが無ければ（セットを替えた・焼き直して消えた）マテリアルへ戻す
+        if let Shading::MeshMap(kind) = app.view3d.display.shading {
+            if app.sets.current().mesh_maps.get(kind).is_none() {
+                app.apply(Action::View3d(Op::Shading(Shading::Material)));
+            }
+        }
+        // 3D の絵が元より縮んでいるとき（縮めた段、予算で決まったか）。メッシュマップの表示ではそのマップの縮め
+        let mut reduced: Option<(u32, Option<bool>)> = None;
         let drawn = match (app.view3d.model.clone(), renderer) {
             (Some(model), Some(renderer)) => {
                 let size = [
                     (content.width() * ppp).round().max(1.0) as u32,
                     (content.height() * ppp).round().max(1.0) as u32,
                 ];
+                let set = app.sets.current();
+                let map = match app.view3d.display.shading {
+                    Shading::MeshMap(kind) => set.mesh_maps.get(kind).map(|map| MeshMapSource {
+                        key: ((set.uid as u64) << 40)
+                            ^ ((kind as i32 as u64) << 32)
+                            ^ set.mesh_maps.revision(),
+                        map,
+                    }),
+                    _ => None,
+                };
                 let id = renderer.prepare(
                     &app.doc,
                     &model,
                     app.view3d.material,
                     &app.view3d.camera,
                     size,
+                    &app.view3d.display,
+                    map.as_ref(),
                 );
+                if renderer.wants_repaint() {
+                    // 法線マップの接線を作っている最中: 出来たら描き直す
+                    ui.ctx().request_repaint();
+                }
+                let stats = renderer.stats;
+                reduced = match app.view3d.display.shading {
+                    Shading::MeshMap(_) => (stats.map_level > 0).then_some((stats.map_level, None)),
+                    _ => (stats.paint_level > 0)
+                        .then_some((stats.paint_level, Some(stats.paint_by_budget))),
+                };
                 p.image(
                     id,
                     content,
@@ -144,6 +178,9 @@ impl View3dSlot {
         // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
         if drawn && !app.view3d.pose.mode {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
+        }
+        if let (true, Some((level, by_budget))) = (drawn, reduced) {
+            reduced_badge(ui, app.lang, content, level, by_budget);
         }
         if !drawn {
             self.placeholder(ui, app, content);
@@ -195,7 +232,10 @@ impl View3dSlot {
         if let Some(panel) = pose_panel {
             crate::panels::pose::show(ui, app, panel);
         }
-        self.header(ui, app, header);
+        let settings_button = self.header(ui, app, header);
+        if app.view3d.display.settings_open {
+            settings_panel(ui, app, content, settings_button);
+        }
 
         let placement = Placement {
             viewport: ui.ctx().viewport_id(),
@@ -229,37 +269,25 @@ impl View3dSlot {
         }
     }
 
-    fn header(&self, ui: &mut Ui, app: &mut AppState, bar: Rect) {
+    /// 見出しの帯: 名前と三角形の数、表示のドロップダウン、光と環境の設定のボタン、全体が見える位置へ戻すボタン。返すのは設定のボタンの矩形。
+    fn header(&self, ui: &mut Ui, app: &mut AppState, bar: Rect) -> Option<Rect> {
         let p = ui.painter().clone();
         w::fill(&p, bar, t::PANEL_HEADER);
         w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
         let lang = app.lang;
-        let label = match &app.view3d.model {
-            Some(m) => lang.pick(
-                format!("3D · {} · {} 三角形", m.display_name(lang), m.triangle_count()),
-                format!("3D · {} · {} triangles", m.display_name(lang), m.triangle_count()),
-            ),
-            None => lang.pick("3D · モデルなし", "3D · No model").to_string(),
-        };
-        w::text(
-            &p,
-            Rect::from_min_max(
-                pos2(bar.left() + 8.0, bar.top()),
-                pos2(bar.right() - 32.0, bar.bottom()),
-            ),
-            &label,
-            t::LABEL_DIM,
-            Align::Left,
-        );
-        if app.view3d.model.is_some() {
-            let r =
-                Rect::from_min_size(pos2(bar.right() - 28.0, bar.top() + 2.0), vec2(24.0, 22.0));
+        let has_model = app.view3d.model.is_some();
+        let mut right = bar.right() - 4.0;
+        if has_model {
+            let r = Rect::from_min_size(pos2(right - 24.0, bar.top() + 2.0), vec2(24.0, 22.0));
             if w::icon_button(
                 ui,
                 r,
                 "view3d.frame",
                 "target",
-                lang.pick("モデル全体が見える位置へ戻す", "Fit the whole model in view"),
+                lang.pick(
+                    "モデル全体が見える位置へ戻す",
+                    "Fit the whole model in view",
+                ),
                 false,
                 !app.is_stroking(),
                 16.0,
@@ -268,7 +296,77 @@ impl View3dSlot {
             {
                 app.apply(Action::FrameModel);
             }
+            right = r.left() - 4.0;
         }
+        let mut settings = None;
+        if has_model {
+            let r = Rect::from_min_size(pos2(right - 24.0, bar.top() + 2.0), vec2(24.0, 22.0));
+            if w::icon_button(
+                ui,
+                r,
+                "view3d.settings",
+                "light_mode",
+                lang.pick(
+                    "光・環境・トーンマッピング",
+                    "Light, environment, tone mapping",
+                ),
+                app.view3d.display.settings_open,
+                true,
+                16.0,
+            )
+            .clicked()
+            {
+                app.apply(Action::View3d(Op::ToggleSettings));
+            }
+            settings = Some(r);
+            right = r.left() - 4.0;
+            let value = display::shading_label(app, app.view3d.display.shading);
+            let width = 156.0f32.min((right - bar.left() - 120.0).max(90.0));
+            let r = Rect::from_min_size(pos2(right - width, bar.top() + 2.0), vec2(width, 22.0));
+            let (response, b) = w::dropdown(
+                ui,
+                r,
+                "view3d.shading",
+                None,
+                &value,
+                Some(lang.pick(
+                    "3D の表示（マテリアル・中立・チャンネルだけ）",
+                    "3D shading (material, neutral, channel only)",
+                )),
+                true,
+                0.0,
+            );
+            if response.clicked() {
+                let ctx = ui.ctx().clone();
+                app.popup = Some(OpenPopup {
+                    kind: PopupKind::View3dShading,
+                    state: PopupState::new(&ctx, b).with_min_width(b.width()),
+                });
+            }
+            right = r.left() - 6.0;
+        }
+        let label = match &app.view3d.model {
+            Some(m) => lang.pick(
+                format!(
+                    "3D · {} · {} 三角形",
+                    m.display_name(lang),
+                    m.triangle_count()
+                ),
+                format!(
+                    "3D · {} · {} triangles",
+                    m.display_name(lang),
+                    m.triangle_count()
+                ),
+            ),
+            None => lang.pick("3D · モデルなし", "3D · No model").to_string(),
+        };
+        let label_rect = Rect::from_min_max(
+            pos2(bar.left() + 8.0, bar.top()),
+            pos2(right.max(bar.left() + 8.0), bar.bottom()),
+        );
+        let shown = w::fit(&p, &label, label_rect.width(), t::LABEL_DIM);
+        w::text(&p, label_rect, &shown, t::LABEL_DIM, Align::Left);
+        settings
     }
 
     /// モデルが無い・3D を描けないときの中身。
@@ -331,5 +429,332 @@ impl View3dSlot {
             self.covered = covered;
             self.emit(View3dEvent::Covered(covered));
         }
+    }
+}
+
+/// 3D の絵が元の大きさより縮んでいることの印（左下。状態と短い理由は、見せている絵の上のツールチップ）。`by_budget` は縮めがメモリの予算で
+/// 決まったか（None は分からない: メッシュマップ）。
+fn reduced_badge(
+    ui: &mut Ui,
+    lang: crate::lang::Lang,
+    content: Rect,
+    level: u32,
+    by_budget: Option<bool>,
+) {
+    let text = lang.pick(
+        format!("縮小表示 1/{}", 1u64 << level),
+        format!("Reduced 1/{}", 1u64 << level),
+    );
+    let reason = match by_budget {
+        Some(true) => lang.pick(
+            "GPU のメモリの予算を超えるので、3D には縮めて見せています（絵と書き出しは元の大きさのまま）",
+            "Shown smaller in 3D to stay within the GPU memory budget (the texture and exports keep their size)",
+        ),
+        Some(false) => lang.pick(
+            "GPU のテクスチャの大きさの上限を超えるので、3D には縮めて見せています（絵と書き出しは元の大きさのまま）",
+            "Shown smaller in 3D because it exceeds the GPU texture size limit (the texture and exports keep their size)",
+        ),
+        None => lang.pick(
+            "GPU のメモリの予算か大きさの上限を超えるので、縮めて見せています",
+            "Shown smaller to stay within the GPU memory budget or size limit",
+        ),
+    };
+    let rect = Rect::from_min_size(
+        pos2(content.left() + 6.0, content.bottom() - 24.0),
+        vec2(112.0, 18.0),
+    );
+    let p = ui.painter().clone();
+    w::rounded(&p, rect, t::PANEL_BG.gamma_multiply(0.9), 3.0);
+    w::text(
+        &p,
+        rect,
+        &text,
+        t::LABEL.with_color(t::TEXT_DIM),
+        Align::Center,
+    );
+    let response = ui.interact(rect, ui.id().with("view3d.reduced"), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text.clone()));
+    response.on_hover_text(reason);
+}
+
+const PANEL_WIDTH: f32 = 252.0;
+const PANEL_HEIGHT: f32 = 436.0;
+
+/// 光・環境・トーンマッピングの設定（見出しの設定のボタンの下に浮かせる小さなパネル）。外を押すか Esc で閉じる。
+fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option<Rect>) {
+    let ctx = ui.ctx().clone();
+    let lang = app.lang;
+    let width = PANEL_WIDTH.min((content.width() - 8.0).max(120.0));
+    let pos = pos2(
+        (content.right() - width - 6.0).max(content.left() + 4.0),
+        content.top() + 4.0,
+    );
+    let panel = Rect::from_min_size(pos, vec2(width, PANEL_HEIGHT));
+    egui::Area::new(egui::Id::new("view3d.settings.area"))
+        .order(Order::Foreground)
+        .fixed_pos(pos)
+        .show(&ctx, |ui| {
+            // 下の 3D へ押しが通らないように、パネルの全体を受ける（部品はその上に描く）
+            ui.allocate_rect(panel, Sense::click_and_drag());
+            let p = ui.painter().clone();
+            w::rounded(&p, panel, t::PANEL_BG, 4.0);
+            w::outline(&p, panel, t::BORDER, 1.0, 4.0);
+            let d = app.view3d.display;
+            let mut rows = Rows::new(panel, 8.0);
+            let heading = |rows: &mut Rows, p: &egui::Painter, title: &str| {
+                let r = rows.row(18.0, 4.0);
+                w::text(
+                    p,
+                    r,
+                    title,
+                    t::LABEL_BOLD.with_color(t::TEXT_DIM),
+                    Align::Left,
+                );
+            };
+            let slider = |ui: &mut Ui,
+                          app: &mut AppState,
+                          rows: &mut Rows,
+                          id: &str,
+                          label: &str,
+                          value: f32,
+                          min: f32,
+                          max: f32,
+                          decimals: u8,
+                          suffix: &str,
+                          enabled: bool,
+                          op: fn(f32) -> Op| {
+                let r = rows.row(22.0, 4.0);
+                let spec = SliderSpec::new(
+                    label,
+                    min,
+                    max,
+                    NumberFormat {
+                        decimals,
+                        trim: true,
+                        suffix,
+                    },
+                )
+                .enabled(enabled);
+                let out = w::slider(ui, r, ("view3d.set", id), value, &spec);
+                if out.changed {
+                    app.apply(Action::View3d(op(out.value)));
+                }
+            };
+
+            // 環境
+            heading(&mut rows, &p, lang.pick("環境", "Environment"));
+            let r = rows.row(24.0, 4.0);
+            for (i, (kind, cell)) in EnvKind::ALL.iter().zip(Rows::split(r, 3, 4.0)).enumerate() {
+                if w::button(
+                    ui,
+                    cell,
+                    ("view3d.set.env", i),
+                    kind.label(lang),
+                    d.env == *kind,
+                    true,
+                    None,
+                    None,
+                )
+                .clicked()
+                {
+                    app.apply(Action::View3d(Op::Env(*kind)));
+                }
+            }
+            let env_on = d.env != EnvKind::None;
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "env_intensity",
+                lang.pick("明るさ", "Intensity"),
+                d.env_intensity,
+                0.0,
+                4.0,
+                2,
+                "",
+                env_on,
+                Op::EnvIntensity,
+            );
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "env_rotation",
+                lang.pick("回転", "Rotation"),
+                d.env_rotation,
+                -180.0,
+                180.0,
+                0,
+                "°",
+                env_on,
+                Op::EnvRotation,
+            );
+            let r = rows.row(22.0, 4.0);
+            let background = w::toggle(
+                ui,
+                r,
+                "view3d.set.background",
+                lang.pick("背景に映す", "Show as background"),
+                d.env_background,
+                None,
+                env_on,
+            );
+            if background != d.env_background {
+                app.apply(Action::View3d(Op::EnvBackground(background)));
+            }
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "env_blur",
+                lang.pick("ぼかし", "Blur"),
+                d.env_blur * 100.0,
+                0.0,
+                100.0,
+                0,
+                "%",
+                env_on && d.env_background,
+                |v| Op::EnvBlur(v / 100.0),
+            );
+            rows.space(4.0);
+
+            // ライト
+            heading(&mut rows, &p, lang.pick("ライト", "Light"));
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "light_intensity",
+                lang.pick("強さ", "Strength"),
+                d.light_intensity,
+                0.0,
+                4.0,
+                2,
+                "",
+                true,
+                Op::LightIntensity,
+            );
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "light_yaw",
+                lang.pick("方位", "Azimuth"),
+                d.light_yaw,
+                -180.0,
+                180.0,
+                0,
+                "°",
+                true,
+                Op::LightYaw,
+            );
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "light_pitch",
+                lang.pick("高さ", "Elevation"),
+                d.light_pitch,
+                -89.0,
+                89.0,
+                0,
+                "°",
+                true,
+                Op::LightPitch,
+            );
+            let r = rows.row(22.0, 4.0);
+            let shadows = w::toggle(
+                ui,
+                r,
+                "view3d.set.shadows",
+                lang.pick("影", "Shadows"),
+                d.shadows,
+                None,
+                true,
+            );
+            if shadows != d.shadows {
+                app.apply(Action::View3d(Op::Shadows(shadows)));
+            }
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "shadow_softness",
+                lang.pick("やわらかさ", "Softness"),
+                d.shadow_softness * 100.0,
+                0.0,
+                100.0,
+                0,
+                "%",
+                d.shadows,
+                |v| Op::ShadowSoftness(v / 100.0),
+            );
+            rows.space(4.0);
+
+            // トーンマッピング
+            heading(&mut rows, &p, lang.pick("トーンマッピング", "Tone Mapping"));
+            let r = rows.row(24.0, 4.0);
+            for (i, (curve, cell)) in [Curve::None, Curve::Neutral, Curve::Aces]
+                .iter()
+                .zip(Rows::split(r, 3, 4.0))
+                .enumerate()
+            {
+                if w::button(
+                    ui,
+                    cell,
+                    ("view3d.set.tone", i),
+                    display::tone_label(lang, *curve),
+                    d.tone_map == *curve,
+                    true,
+                    None,
+                    None,
+                )
+                .clicked()
+                {
+                    app.apply(Action::View3d(Op::Tone(*curve)));
+                }
+            }
+            slider(
+                ui,
+                app,
+                &mut rows,
+                "exposure",
+                lang.pick("露出", "Exposure"),
+                d.exposure,
+                -6.0,
+                6.0,
+                1,
+                " EV",
+                true,
+                Op::Exposure,
+            );
+            rows.space(4.0);
+            let r = rows.row(24.0, 0.0);
+            if w::button(
+                ui,
+                r,
+                "view3d.set.reset",
+                lang.pick("既定に戻す", "Reset"),
+                false,
+                true,
+                Some(lang.pick(
+                    "光・環境・影・トーンマッピングを既定へ",
+                    "Light, environment, shadows and tone mapping to defaults",
+                )),
+                Some("restart_alt"),
+            )
+            .clicked()
+            {
+                app.apply(Action::View3d(Op::ResetLighting));
+            }
+        });
+    // 外を押す・Esc で閉じる（設定のボタンを押したときは、ボタンの側が開閉する）
+    let pressed = ctx.input(|i| i.pointer.any_pressed());
+    let at = ctx.input(|i| i.pointer.interact_pos());
+    let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let outside =
+        pressed && at.is_some_and(|a| !panel.contains(a) && !button.is_some_and(|b| b.contains(a)));
+    if (outside || escape) && app.popup.is_none() {
+        app.apply(Action::View3d(Op::CloseSettings));
     }
 }

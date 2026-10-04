@@ -28,6 +28,9 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。
+- `bevy_mikktspace 1.0.0`（3D ビューの法線マップの接線）は **Zlib AND (MIT OR Apache-2.0)**。MikkTSpace の参照実装（Morten S. Mikkelsen）を
+  Rust に書き直したもので、Zlib の注意書きは独立した許諾ファイルが無くクレートの `src/lib.rs` の冒頭にある。MIT の `LICENSE-MIT` とともに
+  その原文（`lib.rs`）を全文束へ含める。選ぶのは MIT で、Zlib の条件（出所を偽らない・改変を明示する・注意書きを消さない）は残す。
 - 自作部分の配布許諾、Rust 標準ライブラリ、実際にリンクする MinGW/GCC ランタイム、追加で同梱する DLL の表記は、
   最終的な配布物と使用ツールチェーンに合わせて別途確認する。このクレート一覧だけで製品全体の配布可否は確定しない。
 
@@ -115,9 +118,9 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 
 | 対象 | app（更新依存込み） | bridge | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 192 | 17 | 31 | 49 | 生成成功 |
-| Windows GNU | 192 | 17 | 31 | 49 | 生成成功 |
-| Linux GNU | 262 | 14 | 31 | 54 | 判断待ち |
+| Windows MSVC | 194 | 27 | 31 | 49 | 生成成功 |
+| Windows GNU | 194 | 27 | 31 | 49 | 生成成功 |
+| Linux GNU | 263 | 24 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
@@ -131,9 +134,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 192 件（同名の別版は別件）。実行時 162 件。
+外部クレート 194 件（同名の別版は別件）。実行時 164 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -145,10 +148,10 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 167 |
+| MIT | 168 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
-| MIT AND Zlib | 1 |
+| MIT AND Zlib | 2 |
 | Zlib | 1 |
 
 状態: クレートの許諾照合は成功。
@@ -166,6 +169,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ash | 0.38.0+1.3.281 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -215,6 +219,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | gl_generator | 0.14.0 | ビルド・マクロ用 | Apache-2.0 | Apache-2.0 | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | glow | 0.17.0 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
@@ -350,9 +355,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 17 件（同名の別版は別件）。実行時 6 件。
+外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -360,7 +365,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 |---|---:|
 | 0BSD | 2 |
 | Apache-2.0 | 1 |
-| MIT | 12 |
+| MIT | 22 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Unicode-DFS-2016 | 1 |
 
@@ -369,8 +374,15 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
+| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
+| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -380,8 +392,11 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
 | regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
+| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -390,9 +405,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 192 件（同名の別版は別件）。実行時 162 件。
+外部クレート 194 件（同名の別版は別件）。実行時 164 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -404,10 +419,10 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 167 |
+| MIT | 168 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
-| MIT AND Zlib | 1 |
+| MIT AND Zlib | 2 |
 | Zlib | 1 |
 
 状態: クレートの許諾照合は成功。
@@ -425,6 +440,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | ash | 0.38.0+1.3.281 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -474,6 +490,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | foldhash | 0.2.0 | 実行時 | Zlib | Zlib | 確認済み |
 | font-types | 0.12.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | gl_generator | 0.14.0 | ビルド・マクロ用 | Apache-2.0 | Apache-2.0 | 確認済み |
 | glam | 0.33.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | glow | 0.17.0 | 実行時 | MIT OR Apache-2.0 OR Zlib | MIT | 確認済み |
@@ -609,9 +626,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 17 件（同名の別版は別件）。実行時 6 件。
+外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -619,7 +636,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 |---|---:|
 | 0BSD | 2 |
 | Apache-2.0 | 1 |
-| MIT | 12 |
+| MIT | 22 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Unicode-DFS-2016 | 1 |
 
@@ -628,8 +645,15 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
+| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
+| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -639,8 +663,11 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
 | regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
+| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 | widestring | 1.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-link | 0.2.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows-sys | 0.61.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -649,9 +676,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 262 件（同名の別版は別件）。実行時 222 件。
+外部クレート 263 件（同名の別版は別件）。実行時 223 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -665,7 +692,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | MIT | 242 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
-| MIT AND Zlib | 1 |
+| MIT AND Zlib | 2 |
 | Zlib | 1 |
 
 状態: 要確認。配布用全文束は生成しない。
@@ -699,6 +726,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | atspi-proxies | 0.13.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | atspi | 0.29.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | autocfg | 1.5.1 | ビルド・マクロ用 | Apache-2.0 OR MIT | MIT | 確認済み |
+| bevy_mikktspace | 1.0.0 | 実行時 | Zlib AND (MIT OR Apache-2.0) | MIT AND Zlib | 確認済み |
 | bit-set | 0.10.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bit-vec | 0.9.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | bitflags | 2.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -937,9 +965,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `9d4cfdaba6c6d8ec3a1034021b1f65c159aea54c312c3f9bfd129a4521a4fc83`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
 
-外部クレート 14 件（同名の別版は別件）。実行時 3 件。
+外部クレート 24 件（同名の別版は別件）。実行時 12 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -947,7 +975,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 |---|---:|
 | 0BSD | 1 |
 | Apache-2.0 | 1 |
-| MIT | 10 |
+| MIT | 20 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Unicode-DFS-2016 | 1 |
 
@@ -956,8 +984,15 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | aho-corasick | 1.1.5 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
+| block-buffer | 0.10.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| crypto-common | 0.1.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | csbindgen | 1.9.8 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| digest | 0.10.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | doctest-file | 1.1.1 | ビルド・マクロ用 | 0BSD | 0BSD | 確認済み |
+| generic-array | 0.14.7 | 実行時 | MIT | MIT | 確認済み |
+| getrandom | 0.3.4 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | interprocess | 2.4.4 | 実行時 | 0BSD OR Apache-2.0 | Apache-2.0 | 確認済み |
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | memchr | 2.8.3 | ビルド・マクロ用 | Unlicense OR MIT | MIT | 確認済み |
@@ -967,8 +1002,11 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | regex-automata | 0.4.18 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | regex-syntax | 0.8.11 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT AND Unicode-DFS-2016 | 確認済み |
 | regex | 1.13.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | syn | 2.0.119 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| typenum | 1.20.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | unicode-ident | 1.0.26 | ビルド・マクロ用 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | 確認済み |
+| version_check | 0.9.5 | ビルド・マクロ用 | MIT/Apache-2.0 | MIT | 確認済み |
 
 ## 開発用 xtask の依存一覧
 

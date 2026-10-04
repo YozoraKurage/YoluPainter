@@ -304,6 +304,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
+        PopupKind::View3dShading => crate::view3d::display::entries(app),
         PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
     }
 }

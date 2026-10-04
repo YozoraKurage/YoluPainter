@@ -396,6 +396,24 @@
         }
       ]
     },
+    "bevy_mikktspace@1.0.0": {
+      "declared": "Zlib AND (MIT OR Apache-2.0)",
+      "selected": [
+        "MIT",
+        "Zlib"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "9c39b81e83a00d1c48977e0e6f799638874703c9c63bd49d882efa7d7b0c93cd"
+        },
+        {
+          "path": "src/lib.rs",
+          "sha256": "fa8e325aff353900eda3490836342012638473347252167910c9a76c60fd537c"
+        }
+      ]
+    },
     "bit-set@0.10.0": {
       "declared": "Apache-2.0 OR MIT",
       "selected": [

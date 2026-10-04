@@ -237,6 +237,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     }
     let blocked = app.popup.is_some() || app.popup_was_open;
     app.region.modifiers = ui.input(|i| i.modifiers);
+    // 設定のパネルを開いているあいだの押しは、パネルの外でも 3D に使わない（パネルは外の押しで閉じる。その押しが描き始め・回し始めに
+    // ならないように。このフレームの押しで閉じるときも、パネルはこの後に描くので開いている）。ホイールは使える
+    let press_blocked = blocked || app.view3d.display.settings_open;
     let events = ui.input(|i| i.events.clone());
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
@@ -270,7 +273,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
         }
         match app.view3d.input.stroke {
             None if s.contact
-                && !blocked
+                && !press_blocked
                 && on_top(ui, rect, p)
                 && app.view3d.input.nav.is_none()
                 && !app.stencil.handling() =>
@@ -313,7 +316,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             } => {
                 let pos = *pos;
                 if *pressed {
-                    if blocked || !on_top(ui, rect, pos) || app.view3d.input.stroke.is_some() {
+                    if press_blocked || !on_top(ui, rect, pos) || app.view3d.input.stroke.is_some()
+                    {
                         continue;
                     }
                     let nav = match button {

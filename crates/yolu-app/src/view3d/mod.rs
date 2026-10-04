@@ -1,11 +1,16 @@
 //! 3D ビュー: モデル（`model`）、wgpu の描画（`render`）、入力（`input`: 面に描く・回す・パン・寄る）、ブラシのカーソル。
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
+pub mod brdf;
+pub mod display;
+pub mod environment;
 pub mod gizmo;
 pub mod input;
 pub mod model;
+pub mod paint;
 pub mod pose;
 pub mod render;
+pub mod tangents;
 
 use std::sync::Arc;
 
@@ -58,6 +63,8 @@ pub struct View3dState {
     pending_close: bool,
     revision: u32,
     pub input: SurfaceInput,
+    /// 表示の設定（マテリアル・中立・チャンネルだけ、光・環境・トーンマッピング）。
+    pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
     /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの

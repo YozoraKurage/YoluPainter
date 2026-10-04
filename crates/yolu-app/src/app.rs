@@ -478,6 +478,52 @@ impl YoluApp {
         self.renderer3d.as_ref().map(|r| r.stats)
     }
 
+    /// 3D の GPU の積みが終わるまで待つ・GPU の名前（計測用）。
+    pub fn view3d_wait_gpu(&self) {
+        if let Some(r) = &self.renderer3d {
+            r.wait_gpu();
+        }
+    }
+
+    pub fn view3d_adapter(&self) -> Option<String> {
+        self.renderer3d.as_ref().map(|r| r.adapter_name())
+    }
+
+    /// 3D が次のフレームも求めているか（接線を作っている最中など。窓の描き直しの要求と同じ）。
+    pub fn view3d_wants_repaint(&self) -> bool {
+        self.renderer3d.as_ref().is_some_and(|r| r.wants_repaint())
+    }
+
+    /// 試験用: 塗った絵のバイトの予算を小さくして、縮めの道を通す。
+    pub fn view3d_set_paint_budget(&mut self, bytes: u64) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_paint_budget(bytes);
+        }
+    }
+
+    /// 試験用: 塗った絵を捨てる（次の描きが文書から全部を作り直す）。
+    pub fn view3d_invalidate_paint(&mut self) {
+        if let Some(r) = &mut self.renderer3d {
+            r.invalidate_paint();
+        }
+    }
+
+    /// 試験用: 塗った絵のチャンネルの 1 段の中身（形式のバイト列、行は下から。大きさつき）。
+    pub fn view3d_read_paint_level(
+        &self,
+        slot: crate::view3d::paint::Slot,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2])> {
+        self.renderer3d.as_ref()?.read_paint_level(slot, level)
+    }
+
+    /// 試験用: 接線を作るスレッドが仕事の前に呼ぶ口（接線が着く前のフレームを決定的に作る）。
+    pub fn view3d_set_tangent_hook(&mut self, hook: Option<crate::view3d::render::TangentHook>) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_tangent_hook(hook);
+        }
+    }
+
     /// Live Link と同じ形のモデルを読む（Live Link が受けたときと同じ道: 記録・テクスチャセットの結び付け・3D の形。描いている
     /// 最中なら、3D の形は終わってから入れ替わる）。つながりの外から読んだものなので Unity には出さない。
     pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {

@@ -1,7 +1,7 @@
 //! 3D ビューに見せるモデル: 索引つきのメッシュ（表示）と、そこから作った当たりの幾何（core の `SurfaceGeometry`）。
 //! 今は試しの立方体と、Live Link で受けたモデル（`yolu_protocol::Model`）の口。どちらも作った後は変えない（ポーズが変われば作り直す）。
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use yolu_core::geometry::{
     demo_cube, model_triangles, ModelMesh, Submesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
@@ -89,6 +89,8 @@ impl From<ModelError> for ViewError {
     }
 }
 
+use super::tangents::{model_tangents, Tangent};
+
 /// 3D ビューのモデル。
 pub struct ViewModel {
     pub name: String,
@@ -100,6 +102,8 @@ pub struct ViewModel {
     pub link_generation: Option<u32>,
     /// 試しの立方体か（見出しの名前を表示の言語に合わせる）。
     pub demo: bool,
+    /// 角ごとの接線（`tangents`）。法線マップを見せるときだけ、最初に要る所で作る。
+    tangents: OnceLock<Arc<Vec<Tangent>>>,
 }
 
 impl ViewModel {
@@ -122,6 +126,7 @@ impl ViewModel {
             materials,
             link_generation: None,
             demo: false,
+            tangents: OnceLock::new(),
         })
     }
 
@@ -139,6 +144,7 @@ impl ViewModel {
             materials,
             link_generation: None,
             demo: false,
+            tangents: OnceLock::new(),
         }
     }
 
@@ -243,6 +249,17 @@ impl ViewModel {
 
     pub fn triangle_count(&self) -> usize {
         self.geometry.triangle_count()
+    }
+
+    /// 角ごとの接線（MikkTSpace。`render` が上げる頂点の並び）。最初に呼んだスレッドが作り、ほかは待つ（数万三角形で数百ミリ秒）。
+    pub fn tangents(&self) -> &Arc<Vec<Tangent>> {
+        self.tangents
+            .get_or_init(|| Arc::new(model_tangents(&self.meshes)))
+    }
+
+    /// 出来ていれば接線（待たない）。
+    pub fn tangents_ready(&self) -> Option<&Arc<Vec<Tangent>>> {
+        self.tangents.get()
     }
 
     pub fn revision(&self) -> u32 {

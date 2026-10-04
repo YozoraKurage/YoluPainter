@@ -393,6 +393,8 @@ pub enum PopupKind {
     SetContext(u32),
     /// アセットの棚の素材の右クリック（選んでいる素材）。
     Shelf,
+    /// 3D ビューの表示のドロップダウン（マテリアル・中立・チャンネルだけ）。
+    View3dShading,
     /// オプションバーの対称のモード（▾）。
     Symmetry,
 }
@@ -447,6 +449,8 @@ pub enum Action {
     LoadDemoModel,
     /// 3D ビューのカメラをモデル全体が見える位置へ。
     FrameModel,
+    /// 3D ビューの表示の切り替え（何を見せるか・光・環境・トーンマッピング）。
+    View3d(crate::view3d::display::Op),
     /// ポーズの変更（FBX を開く・試しの人形・モード・戻す・取り消し）。
     Pose(crate::view3d::pose::PoseAction),
     About,
@@ -957,6 +961,7 @@ impl AppState {
                 self.view3d.frame_model();
             }
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
+            Action::View3d(op) => self.view3d.display.apply(op),
             Action::About => {
                 self.message = self.lang.pick(
                     format!(
