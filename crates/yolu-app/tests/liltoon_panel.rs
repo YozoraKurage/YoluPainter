@@ -269,3 +269,180 @@ fn a_slot_past_sixteen_user_channels_says_it_is_not_drawn() {
     assert!(h.query_by_label("2影色: マスク 16").is_some());
     assert_eq!(h.query_all_by_label_contains("描かない").count(), 0);
 }
+
+/// Live Link で Unity から受けた値（試験が文書へ直に入れる）。影は入、範囲 0.25、影色、マットキャップの絵は届いた・影色の絵は予算超え。
+fn received_from_unity() -> yolu_core::look::ReceivedLook {
+    let mut look = MaterialLook {
+        kind: LookKind::LilToon,
+        shader: "Hidden/lilToonOutline".into(),
+        ..MaterialLook::default()
+    };
+    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties.insert("_ShadowBorder".into(), LookValue::Float(0.25));
+    look.properties
+        .insert("_ShadowColor".into(), LookValue::Color([0.4, 0.3, 0.5, 1.0]));
+    look.textures
+        .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    let mut r = yolu_core::look::ReceivedLook {
+        look,
+        source: "lilToon 2.3.4 · Standard/Opaque+Outline".into(),
+        ..Default::default()
+    };
+    r.images.insert(
+        "_ShadowStrengthMask".into(),
+        std::sync::Arc::new(yolu_core::look::ReceivedImage {
+            width: 2,
+            height: 2,
+            srgb: false,
+            pixels: vec![255; 16].into(),
+        }),
+    );
+    r.missing.insert(
+        "_ShadowColorTex".into(),
+        yolu_core::look::MissingImage::OverBudget,
+    );
+    r
+}
+
+#[test]
+fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
+    let mut snapshots = egui_kittest::SnapshotResults::new();
+    for lang in Lang::ALL {
+        let mut h = harness(lang);
+        h.state_mut()
+            .state
+            .doc
+            .set_received_look(Some(received_from_unity()))
+            .unwrap();
+        // 欄で 1 項目だけ変える（範囲）
+        h.state_mut().apply(Action::Look(LookOp::Value {
+            name: "_ShadowBorder",
+            value: LookValue::Float(0.6),
+            drag: false,
+        }));
+        h.run();
+        click_label(&mut h, lang.pick("影設定", "Shadow"));
+        h.run();
+        // 種類は Unity の値の lilToon、行の様子は「最後の値」（Live Link のモデルが無い）
+        let _ = h.get_by_label(&format!("{}: lilToon", lang.pick("種類", "Kind")));
+        let _ = h.get_by_label(lang.pick("Unity の値: 最後の値", "Unity Values: Last received"));
+        // 変えた項目には印、変えていない項目には無い
+        assert!(h.query_by_label(&format!("{} •", lang.pick("範囲", "Border"))).is_some());
+        assert!(h.query_by_label(&format!("{} •", lang.pick("ぼかし", "Blur"))).is_none());
+        // 受けた絵のスロットと、送られなかった絵のスロット
+        let _ = h.get_by_label(&format!(
+            "{}: {}",
+            lang.pick("影の強度マスク", "Shadow Strength Mask"),
+            lang.pick("Unity のテクスチャ", "Unity texture")
+        ));
+        let header = h.get_by_label(lang.pick("見た目", "Look")).rect();
+        let mut all = Vec::new();
+        for shape in &h.output().shapes {
+            texts(&shape.shape, &mut all);
+        }
+        for (p, text) in &all {
+            if p.x >= header.left() - 4.0 && p.x <= header.right() + 4.0 && p.y >= header.top() - 2.0 {
+                assert_plain("見た目の欄（Unity の値）", text);
+                if lang == Lang::En {
+                    assert!(!has_japanese(text), "{text}");
+                }
+            }
+        }
+        h.snapshot(format!("liltoon_panel_unity_{}", lang.pick("ja", "en")));
+        snapshots.extend_harness(&mut h);
+        // Unity に合わせる: 欄で変えた値が外れ、Unity の値で描く（1 回の Undo）
+        let steps = h.state().state.doc.undo_count();
+        click_label(&mut h, lang.pick("Unity に合わせる", "Match Unity"));
+        h.run();
+        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        assert!(h.state().state.doc.look().properties.is_empty());
+        assert_eq!(
+            yolu_app::look::liltoon::number(h.state().state.doc.drawn_look(), "_ShadowBorder"),
+            0.25
+        );
+    }
+}
+
+#[test]
+fn a_unity_texture_past_sixteen_says_it_is_not_drawn() {
+    let mut h = harness(Lang::Ja);
+    let mut r = received_from_unity();
+    r.missing.clear();
+    r.look.properties.insert("_UseRim".into(), LookValue::Float(1.0));
+    // 流し込み先（_MainTex）のほかの全部のスロットに Unity のテクスチャ（20 枚）: 並びで 17 枚目から描かない
+    for slot in &yolu_app::look::liltoon::SLOTS[1..] {
+        r.images.insert(
+            slot.name.into(),
+            std::sync::Arc::new(yolu_core::look::ReceivedImage {
+                width: 2,
+                height: 2,
+                srgb: false,
+                pixels: vec![255; 16].into(),
+            }),
+        );
+    }
+    h.state_mut().state.doc.set_received_look(Some(r)).unwrap();
+    h.run();
+    let doc = &h.state().state.doc;
+    assert!(!yolu_app::look::panel::slot_over_received_limit(doc, "_MatCap2ndTex"));
+    assert!(yolu_app::look::panel::slot_over_received_limit(doc, "_RimColorTex"));
+    assert!(!yolu_app::look::panel::slot_over_received_limit(doc, "_ShadowColorTex"));
+    click_label(&mut h, "リムライト設定");
+    h.run();
+    assert!(h.query_by_label("リムライトの色: Unity のテクスチャ（描かない）").is_some());
+    assert_eq!(h.query_all_by_label_contains("描かない").count(), 1, "開いた節の、16 枚を超えたスロットだけ");
+    // 欄で前のスロットを割り当てると、その分だけ後ろのスロットが描ける（印が消える）
+    let mut look = h.state().state.doc.look().clone();
+    for slot in ["_MainColorAdjustMask", "_AlphaMask"] {
+        look.textures.insert(slot.into(), TextureSource::Channel(Channel::Color));
+    }
+    h.state_mut().state.doc.set_look(look, false).unwrap();
+    h.run();
+    assert!(!yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_RimColorTex"));
+    assert!(h.query_by_label("リムライトの色: Unity のテクスチャ").is_some());
+    assert_eq!(h.query_all_by_label_contains("描かない").count(), 0);
+}
+
+#[test]
+fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_base_reset_follows_unity() {
+    for lang in Lang::ALL {
+        let mut h = harness(lang);
+        // Unity の値: 不透明・輪郭線あり（Hidden/lilToonOutline）
+        h.state_mut()
+            .state
+            .doc
+            .set_received_look(Some(received_from_unity()))
+            .unwrap();
+        h.run();
+        click_label(&mut h, lang.pick("基本設定", "Base Setting"));
+        h.run();
+        let (mode, outline) = (lang.pick("描画モード", "Rendering Mode"), lang.pick("輪郭線", "Outline"));
+        let marked = |h: &Harness<'_, YoluApp>, label: &str| h.query_all_by_label_contains(&format!("{label} •")).count() > 0;
+        assert!(!marked(&h, mode) && !marked(&h, outline), "変えていなければ印は無い");
+        // 欄で描画モードを変える: 描画モードだけに印（輪郭線は Unity と同じ）
+        h.state_mut().apply(Action::Look(LookOp::Mode(yolu_app::look::liltoon::RenderMode::Cutout)));
+        h.run();
+        assert!(marked(&h, mode) && !marked(&h, outline));
+        // 輪郭線も切る: 両方に印
+        h.state_mut().apply(Action::Look(LookOp::Outline(false)));
+        h.run();
+        assert!(marked(&h, mode) && marked(&h, outline));
+        // 基本設定の節を既定に戻すと、描画モードと輪郭線も Unity の値（1 回の Undo）
+        let steps = h.state().state.doc.undo_count();
+        h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Base)));
+        h.run();
+        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        assert!(h.state().state.doc.look().shader.is_empty());
+        let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
+        assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, true));
+        assert!(!marked(&h, mode) && !marked(&h, outline));
+        // 受けた値の無いセットでは、既定（不透明・輪郭線なし）に戻る
+        h.state_mut().state.doc.set_received_look(None).unwrap();
+        h.state_mut().apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
+        h.state_mut().apply(Action::Look(LookOp::Mode(yolu_app::look::liltoon::RenderMode::Transparent)));
+        h.state_mut().apply(Action::Look(LookOp::Outline(true)));
+        h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Base)));
+        let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
+        assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, false));
+    }
+}

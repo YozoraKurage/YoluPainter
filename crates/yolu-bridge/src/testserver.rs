@@ -37,6 +37,30 @@ pub struct YlbTestServerStats {
     pub last_materials_count: u32,
     pub last_materials_routes: u32,
     pub last_materials_shader_len: u32,
+    /// 受けたマテリアルの値（MaterialValues）の数と、最後の値のマテリアルの番号・種類（0 値なし・1 lilToon）・プロパティの数・
+    /// キーワードの数・スロットの数・シェーダー名の長さ。
+    pub values: u32,
+    pub last_values_material: u32,
+    pub last_values_kind: u32,
+    pub last_values_properties: u32,
+    pub last_values_keywords: u32,
+    pub last_values_slots: u32,
+    pub last_values_shader_len: u32,
+    /// 受けた描いていないスロットの絵（MaterialTexture）の数と、その画素のバイトの合計（KiB、切り上げ）。
+    pub textures: u32,
+    pub texture_kib: u32,
+}
+
+/// 自己診断のスタンドアロンが受けた、描いていないスロットの絵 1 つの様子（`ylb_test_server_texture`）。
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct YlbTestServerTexture {
+    pub width: u32,
+    pub height: u32,
+    /// 0 でなければ sRGB。
+    pub srgb: u32,
+    /// 真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）の RGBA を r | g << 8 | b << 16 | a << 24 に詰めたもの。
+    pub center: u32,
 }
 
 const PALETTE: [[u8; 3]; 8] = [
@@ -69,6 +93,9 @@ struct Shared {
     next_set: u32,
     sets: Vec<PublishedSet>,
     stats: YlbTestServerStats,
+    /// マテリアルの番号ごとの最後の値と、(番号, スロット) ごとの最後の絵（試験が名前で引く）。
+    values: std::collections::BTreeMap<u32, MaterialValues>,
+    textures: std::collections::BTreeMap<(u32, String), MaterialTexture>,
 }
 
 pub struct TestServer {
@@ -96,6 +123,8 @@ impl TestServer {
             next_set: 0,
             sets: Vec::new(),
             stats: YlbTestServerStats::default(),
+            values: Default::default(),
+            textures: Default::default(),
         }));
         let (s, sh) = (stop.clone(), shared.clone());
         let thread = thread::Builder::new()
@@ -204,6 +233,51 @@ impl TestServer {
         lock(&self.shared).stats
     }
 
+    /// 最後に受けた、マテリアル `material` の値のプロパティ `name`（無ければ None）。
+    pub fn value(&self, material: u32, name: &str) -> Option<PropertyValue> {
+        lock(&self.shared)
+            .values
+            .get(&material)?
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value)
+    }
+
+    /// 最後に受けた、マテリアル `material` の値のスロット `name` の様子（無ければ None）。
+    pub fn slot(&self, material: u32, name: &str) -> Option<SlotState> {
+        lock(&self.shared)
+            .values
+            .get(&material)?
+            .slots
+            .iter()
+            .find(|x| x.name == name)
+            .map(|x| x.state)
+    }
+
+    /// 最後に受けた、マテリアル `material` のキーワード `name` があるか。
+    pub fn has_keyword(&self, material: u32, name: &str) -> bool {
+        lock(&self.shared)
+            .values
+            .get(&material)
+            .is_some_and(|v| v.keywords.iter().any(|k| k == name))
+    }
+
+    /// 最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。
+    pub fn texture(&self, material: u32, slot: &str) -> Option<YlbTestServerTexture> {
+        let g = lock(&self.shared);
+        let t = g.textures.get(&(material, slot.to_owned()))?;
+        let (x, y) = (t.width / 2, t.height / 2);
+        let at = (y as usize * t.width as usize + x as usize) * 4;
+        let p = &t.pixels[at..at + 4];
+        Some(YlbTestServerTexture {
+            width: t.width,
+            height: t.height,
+            srgb: t.srgb as u32,
+            center: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &self,
@@ -260,6 +334,8 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
             g.stats.meshes = m.meshes.len() as u32;
             g.stats.vertices = m.meshes.iter().map(|x| x.positions.len() as u32).sum();
             g.generation = m.generation;
+            g.values.clear();
+            g.textures.clear();
             // 前のモデルのセットを片付ける
             for old in std::mem::take(&mut g.sets) {
                 let _ = conn.send(&Message::TextureSetRemoved { set: old.set });
@@ -372,6 +448,37 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                 .first()
                 .map(|x| x.shader.len() as u32)
                 .unwrap_or(0);
+        }
+        Message::MaterialValues(v) => {
+            if v.generation != g.generation || v.material >= g.stats.materials {
+                g.stats.refused += 1;
+                let _ = conn.send(&error_message(
+                    ErrorCode::Refused,
+                    Kind::MaterialValues as u16,
+                    "古い世代か、無いマテリアルの値です".into(),
+                ));
+                return;
+            }
+            g.stats.values += 1;
+            g.stats.last_values_material = v.material;
+            g.stats.last_values_kind = v.kind as u32;
+            g.stats.last_values_properties = v.properties.len() as u32;
+            g.stats.last_values_keywords = v.keywords.len() as u32;
+            g.stats.last_values_slots = v.slots.len() as u32;
+            g.stats.last_values_shader_len = v.shader.len() as u32;
+            g.values.insert(v.material, v);
+        }
+        Message::MaterialTexture(t) => {
+            if t.generation != g.generation || t.material >= g.stats.materials {
+                g.stats.refused += 1;
+                return;
+            }
+            g.stats.textures += 1;
+            g.stats.texture_kib = g
+                .stats
+                .texture_kib
+                .saturating_add(t.pixels.len().div_ceil(1024) as u32);
+            g.textures.insert((t.material, t.slot.clone()), t);
         }
         Message::Error(_) => {}
         _ => {}

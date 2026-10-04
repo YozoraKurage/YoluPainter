@@ -186,3 +186,87 @@ fn the_look_is_refused_for_missing_sets_and_kept_across_set_edits() {
         .insert("_X".into(), LookValue::Float(f32::INFINITY));
     assert!(p.with_look(A, Some(&bad)).is_err());
 }
+
+fn received() -> yolu_core::look::ReceivedLook {
+    let mut look = lil();
+    look.shader = "Hidden/lilToonTransparent".into();
+    look.properties
+        .insert("_ShadowBorder".into(), LookValue::Float(0.3));
+    let mut r = yolu_core::look::ReceivedLook {
+        look,
+        source: "lilToon 2.3.4 · Standard/Transparent".into(),
+        ..Default::default()
+    };
+    r.images.insert(
+        "_MatCapTex".into(),
+        std::sync::Arc::new(yolu_core::look::ReceivedImage {
+            width: 1,
+            height: 1,
+            srgb: true,
+            pixels: vec![1, 2, 3, 4].into(),
+        }),
+    );
+    r.missing.insert(
+        "_ShadowColorTex".into(),
+        yolu_core::look::MissingImage::OverBudget,
+    );
+    r
+}
+
+#[test]
+fn received_values_are_kept_beside_the_users_look_and_images_are_not_written() {
+    use yolu_core::look::MissingImage;
+    let p = project();
+    let name = format!("sets/{A}/look.json");
+    // 受けた見た目だけ: エントリを作り、利用者の設定は既定のまま
+    let q = p.with_received_look(A, Some(&received())).unwrap();
+    let back = q.received_look(A).unwrap().expect("受けた見た目");
+    assert_eq!(back.look, received().look);
+    assert_eq!(back.source, received().source);
+    assert!(back.images.is_empty(), "絵の画素は書かない");
+    assert_eq!(back.missing["_MatCapTex"], MissingImage::Pending, "絵のあったスロットは届いていない");
+    assert_eq!(back.missing["_ShadowColorTex"], MissingImage::OverBudget);
+    assert!(q.look(A).unwrap().is_none_or(|l| l.is_default()));
+    assert_eq!(q.received_look(B).unwrap(), None);
+    // 利用者の設定を書いても、受けた見た目は残る。既定に戻しても（None）、受けた見た目があればエントリは残る
+    let mine = MaterialLook {
+        kind_chosen: true,
+        ..MaterialLook::default()
+    };
+    let r = q.with_look(A, Some(&mine)).unwrap();
+    assert_eq!(r.look(A).unwrap(), Some(mine));
+    assert_eq!(r.received_look(A).unwrap(), Some(back.clone()));
+    let r = r.with_look(A, None).unwrap();
+    assert!(entries(&r).contains_key(&name));
+    assert_eq!(r.received_look(A).unwrap(), Some(back.clone()));
+    // 受けた見た目を外すと、利用者の設定が既定ならエントリごと消える
+    let gone = r.with_received_look(A, None).unwrap();
+    assert!(!entries(&gone).contains_key(&name));
+    // 利用者の設定があれば、受けた見た目だけを外す
+    let kept = q
+        .with_look(A, Some(&lil()))
+        .unwrap()
+        .with_received_look(A, None)
+        .unwrap();
+    assert_eq!(kept.look(A).unwrap(), Some(lil()));
+    assert_eq!(kept.received_look(A).unwrap(), None);
+}
+
+#[test]
+fn a_broken_received_section_is_refused_and_kept() {
+    let p = project().with_received_look(A, Some(&received())).unwrap();
+    let name = format!("sets/{A}/look.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&entries(&p)[&name]).unwrap();
+    v["received"]["missing"]["_MatCapTex"] = serde_json::json!("lost");
+    let broken = serde_json::to_vec(&v).unwrap();
+    assert!(yolu_io::look::read_received(&broken).is_err());
+    // 利用者の設定は読める（壊れているのは受けた見た目だけ）
+    assert!(yolu_io::look::read(&broken).is_ok());
+    v["received"] = serde_json::json!(3);
+    assert!(yolu_io::look::read_received(&serde_json::to_vec(&v).unwrap()).is_err());
+    // 受けた見た目の無いエントリ
+    assert_eq!(
+        yolu_io::look::read_received(&yolu_io::look::write(&lil(), None).unwrap()).unwrap(),
+        None
+    );
+}

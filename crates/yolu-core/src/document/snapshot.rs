@@ -24,6 +24,9 @@ impl Document {
             selection,
             id_colors,
             look,
+            received_look,
+            drawn_look,
+            look_serial,
             source_budget,
             stroke_budget,
             undo_budget,
@@ -56,6 +59,9 @@ impl Document {
         copy.selection = selection.clone();
         copy.id_colors = id_colors.clone();
         copy.look = look.clone();
+        copy.received_look = received_look.clone();
+        copy.drawn_look = drawn_look.clone();
+        copy.look_serial = *look_serial;
         copy.source_budget = *source_budget;
         copy.stroke_budget = *stroke_budget;
         copy.undo_budget = *undo_budget;

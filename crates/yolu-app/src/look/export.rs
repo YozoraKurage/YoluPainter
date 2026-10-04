@@ -29,7 +29,8 @@ fn covered_by_template(slot: &str, source: &TextureSource) -> bool {
 
 /// lilToon の詰め方で足す画像（スロットの名前と、書き出しの取り決め）。見た目の設定が lilToon でなければ空。
 pub fn extra_images(doc: &Document) -> Vec<(&'static str, ExportImage)> {
-    let look = doc.look();
+    // 描く見た目（Unity から受けた値があればその上に利用者の設定）で決める: 3D ビューで見たとおりに詰める
+    let look = doc.drawn_look();
     if look.kind != LookKind::LilToon {
         return Vec::new();
     }
@@ -134,7 +135,7 @@ fn channel_values(doc: &Document, channel: Channel, max_working_bytes: u64) -> R
 /// チャンネルごとに合成して出力へ書いたら捨てる）。
 pub fn slot_image(doc: &Document, slot: &str, max_working_bytes: u64) -> Result<Vec<u8>, ExportError> {
     let source = doc
-        .look()
+        .drawn_look()
         .textures
         .get(slot)
         .copied()

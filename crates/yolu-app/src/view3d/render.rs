@@ -25,7 +25,8 @@ use yolu_core::Document;
 use super::brdf::{self, Curve};
 use super::display::{Display, EnvKind, Shading};
 use super::environment::{self, Baked, Source, FACE_SIZE, MIP_COUNT};
-use super::look_gpu::{self, LookGpu, SetDraw};
+use super::look_gpu::{self, LookBudget, LookGpu, SetDraw};
+use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
 use super::user_layers::USER_BUDGET_BYTES;
 use super::model::ViewModel;
 use super::other_sets::OtherSet;
@@ -100,14 +101,17 @@ pub struct View3dStats {
     /// 今のセットの lilToon のスロットが読むユーザーチャンネルの配列のバイト数（ミップ込み）と、文書から縮めた段（持っていなければ 0）。
     pub user_bytes: u64,
     pub user_level: u32,
+    /// 今のセットの、Live Link で Unity から受けた絵の配列のバイト数（ミップ込み）と層の大きさ（持っていなければ 0）。
+    pub received_bytes: u64,
+    pub received_size: [u32; 2],
     /// これまでに lilToon の値（一様バッファの中身）を作った回数（今のセットとほかのセット。値が変わらないフレームでは作らない）。
     pub look_params_builds: u64,
-    /// ほかのセットの絵（ユーザーチャンネルの配列を含む）のバイト数（ミップ込み）と、いちばん縮めた段。
+    /// ほかのセットの絵（ユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数（ミップ込み）と、いちばん縮めた段。
     pub other_bytes: u64,
     pub other_level: u32,
     /// 今のセットだった絵を、GPU の中のミップのコピーで縮めてほかのセットへ回した回数（文書を合成し直さなかった回数。これまでの合計）。
     pub other_demotions: usize,
-    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット。ユーザーチャンネルの配列を含む。ミップ込み）のバイト数の最大。今のセットが替わるフレームでも、
+    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット。ユーザーチャンネルの配列と受けた絵の配列を含む。ミップ込み）のバイト数の最大。今のセットが替わるフレームでも、
     /// 前の絵と新しい絵が満量で重なって予算を超えないことの記録（直前のフレームの終わりの分から数える）。
     pub peak_bytes: u64,
     /// ほかのセットの合成の作業用のバッファが抱えているバイト数（CPU。作り終えたら手放すので、普通は 0）。
@@ -301,6 +305,8 @@ pub struct View3dRenderer {
     total_budget: u64,
     /// 今のセットのユーザーチャンネルの配列に渡す予算（全体から今のセットの標準のチャンネルの絵を引いた残り。`sync_sets` が決める）。
     user_budget: u64,
+    /// 今のセットの、Unity から受けた絵の配列に渡す予算（標準のチャンネルの絵とユーザーチャンネルの配列を引いた残り。`sync_sets` が決める）。
+    received_budget: u64,
     /// ほかのセットの絵の辺の上限。
     other_cap: u32,
     /// 予算が足りずに絵を持っていないセットのマテリアル。
@@ -420,6 +426,10 @@ fn make_set_bind(
             resource: wgpu::BindingResource::TextureView(look.image_view(which).unwrap_or(white)),
         });
     }
+    entries.push(wgpu::BindGroupEntry {
+        binding: 11,
+        resource: wgpu::BindingResource::TextureView(look.received.view()),
+    });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("yolu-3d-set"),
         layout,
@@ -538,6 +548,8 @@ impl View3dRenderer {
         set_entries.push(texture_entry(8, wgpu::TextureViewDimension::D2Array));
         set_entries.push(texture_entry(9, d2));
         set_entries.push(texture_entry(10, d2));
+        // 11: Unity から受けた、描いていないスロットの絵の配列（look_gpu・received_layers）
+        set_entries.push(texture_entry(11, wgpu::TextureViewDimension::D2Array));
         // 輪郭線の頂点が太さのマスク（どのチャンネルのことも）と値を読む
         for e in &mut set_entries {
             e.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
@@ -862,6 +874,7 @@ impl View3dRenderer {
             blank_bind,
             total_budget: super::paint::PAINT_BUDGET_BYTES,
             user_budget: USER_BUDGET_BYTES,
+            received_budget: RECEIVED_BUDGET_BYTES,
             other_cap: OTHER_SET_MAX_SIZE,
             unpainted: Vec::new(),
             pending_builds: 0,
@@ -1129,7 +1142,9 @@ impl View3dRenderer {
             other_sets: self.held.iter().filter(|h| h.paint.is_built()).count(),
             other_skipped: self.unpainted.len(),
             other_pending: self.pending_builds,
-            user_bytes: self.current_look.bytes(),
+            user_bytes: self.current_look.users.bytes(),
+            received_bytes: self.current_look.received.bytes(),
+            received_size: self.current_look.received.size().unwrap_or_default(),
             look_params_builds: self.current_look.params_builds(),
             user_level: self.current_look.users.level(),
             other_bytes: self
@@ -1161,9 +1176,10 @@ impl View3dRenderer {
     /// 残り）に収まる分だけ持つ。収まらない（遠い）セットは持たず、その面は絵の無い描き方で、マテリアルを `unpainted` に残す。モデルの面が
     /// 1 つも無いマテリアル（隠した・全部の面を隠した）のセットは持たない。持ち物は文書が変わったとき（版・変化の記録）だけ同期し、新しく
     /// 作り始めるのは 1 フレームの時間（`BUILD_FRAME_BUDGET`）に収まるあいだと、そのフレームの最初の 1 つだけ。
-    /// lilToon の見た目のセットが持つユーザーチャンネルの配列も同じ予算に入る: 今のセットの配列は標準のチャンネルの絵の残りから
-    /// （`user_budget`。ほかのセットより先）、ほかのセットは標準のチャンネルの絵と配列を合わせた分で持つ・持たないを決める。配列を
-    /// 作るのは `sync_looks`（今のセットが替わったら、前のセットの配列はここで手放す）。
+    /// lilToon の見た目のセットが持つユーザーチャンネルの配列と、Live Link で Unity から受けた絵の配列も同じ予算に入る: 今のセットの配列は
+    /// 標準のチャンネルの絵の残りから（ユーザーチャンネルは `user_budget`、受けた絵はその残りの `received_budget`。ほかのセットより先）、
+    /// ほかのセットは標準のチャンネルの絵と 2 つの配列を合わせた分で持つ・持たないを決める。配列を作るのは `sync_looks`（今のセットが
+    /// 替わったら、前のセットの配列はここで手放す）。
     fn sync_sets(
         &mut self,
         doc: &Document,
@@ -1224,13 +1240,18 @@ impl View3dRenderer {
             limit,
             self.user_budget,
         ));
+        // Unity から受けた絵の配列も、その残りから（セットごとの上限まで）
+        self.received_budget = remaining;
+        remaining = remaining.saturating_sub(look_gpu::planned_received_bytes(doc, limit, self.received_budget));
         let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
         self.unpainted.clear();
         for o in want {
-            // ほかのセットは、標準のチャンネルの絵とユーザーチャンネルの配列を合わせて持つか持たないか（片方だけは持たない）
+            // ほかのセットは、標準のチャンネルの絵とユーザーチャンネルの配列と受けた絵の配列を合わせて持つか持たないか（一部だけは持たない）
             let (shift, bytes) = self.paint.estimate(o.doc, self.other_cap);
+            let other_limit = limit.min(self.other_cap);
             let need = bytes
-                + look_gpu::planned_user_bytes(o.doc, shift, limit.min(self.other_cap), USER_BUDGET_BYTES);
+                + look_gpu::planned_user_bytes(o.doc, shift, other_limit, USER_BUDGET_BYTES)
+                + look_gpu::planned_received_bytes(o.doc, other_limit, RECEIVED_BUDGET_BYTES);
             if need <= remaining {
                 remaining -= need;
                 keep.push(o);
@@ -1310,7 +1331,7 @@ impl View3dRenderer {
         }
     }
 
-    /// 今 GPU に持っている絵（今のセットとほかのセット。lilToon のユーザーチャンネルの配列を含む）のバイト数。
+    /// 今 GPU に持っている絵（今のセットとほかのセット。lilToon のユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数。
     fn picture_bytes(&self) -> u64 {
         self.paint.bytes()
             + self.current_look.bytes()
@@ -1403,8 +1424,13 @@ impl View3dRenderer {
     ) {
         let queue = self.rs.queue.clone();
         let limit = self.user_limit();
+        let budget = LookBudget {
+            limit,
+            users: self.user_budget,
+            received: self.received_budget,
+        };
         self.current_look
-            .sync(doc, &self.paint, limit, self.user_budget, &queue, encoder);
+            .sync(doc, &self.paint, budget, &queue, encoder);
         self.note_peak();
         // ほかのセットの配列の大きさは、持つかどうかの計画（`sync_sets`）と同じ上限・予算で決まる
         let other_limit = limit.min(self.other_cap);
@@ -1414,8 +1440,12 @@ impl View3dRenderer {
                 continue;
             }
             if let Some(o) = others.iter().find(|o| o.doc.id() == h.doc_id) {
-                h.look
-                    .sync(o.doc, &h.paint, other_limit, USER_BUDGET_BYTES, &queue, encoder);
+                let budget = LookBudget {
+                    limit: other_limit,
+                    users: USER_BUDGET_BYTES,
+                    received: RECEIVED_BUDGET_BYTES,
+                };
+                h.look.sync(o.doc, &h.paint, budget, &queue, encoder);
                 self.note_peak();
             }
         }

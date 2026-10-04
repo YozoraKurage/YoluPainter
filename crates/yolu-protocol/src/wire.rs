@@ -65,6 +65,17 @@ impl Writer {
     pub fn i64(&mut self, v: i64) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
+    pub fn i32(&mut self, v: i32) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+    pub fn f32(&mut self, v: f32) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+    /// 長さ（u32）とバイトの並び。
+    pub fn bytes(&mut self, v: &[u8]) {
+        self.u32(v.len() as u32);
+        self.buf.extend_from_slice(v);
+    }
     /// 長さ（u32）と UTF-8 のバイト。
     pub fn str(&mut self, s: &str) {
         self.u32(s.len() as u32);
@@ -145,6 +156,23 @@ impl<'a> Reader<'a> {
     }
     pub fn i64(&mut self) -> Result<i64, DecodeError> {
         Ok(i64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+    pub fn i32(&mut self) -> Result<i32, DecodeError> {
+        Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    /// 有限の f32（無限・NaN は `what` の決まりに合わない）。
+    pub fn finite_f32(&mut self, what: &'static str) -> Result<f32, DecodeError> {
+        let v = f32::from_le_bytes(self.take(4)?.try_into().unwrap());
+        if v.is_finite() {
+            Ok(v)
+        } else {
+            Err(DecodeError::Invalid(what))
+        }
+    }
+    /// 長さ（u32、max まで）とバイトの並び。
+    pub fn bytes(&mut self, max: usize, what: &'static str) -> Result<&'a [u8], DecodeError> {
+        let n = self.count(max, 1, what)?;
+        self.take(n)
     }
     /// 長さの決まったバイトの並び。
     pub fn array<const N: usize>(&mut self) -> Result<[u8; N], DecodeError> {

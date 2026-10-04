@@ -127,6 +127,8 @@ pub struct Builder {
     pub pose: Option<Vec<MeshPose>>,
     /// 組み立て中のマテリアルの更新。
     pub materials: Option<Vec<MaterialInfo>>,
+    /// 組み立て中のマテリアルの値（`ylb_values_*`）。
+    pub values: Option<MaterialValues>,
     /// 最後に送ったモデルの世代と、メッシュごとの頂点の数（ポーズの確かめ）・マテリアルの数（更新の確かめ）。
     pub sent_generation: u32,
     pub sent_vertices: Vec<usize>,

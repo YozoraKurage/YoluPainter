@@ -194,6 +194,64 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_pose_send(ulong handle);
 
         /// <summary>
+        ///  マテリアルの値の組み立てを始める（前の組み立ては捨てる）。送ったモデルがあるときだけ。`material` は送ったモデルのマテリアルの番号、
+        ///  `kind` は 0 = 値なし（前に送った値を捨てさせる）・1 = lilToon、`source` は何の対応と確かめたかの文（人に見せるだけ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_begin", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_begin(ulong handle, int material, int kind, byte* shader, int shader_len, byte* source, int source_len);
+
+        /// <summary>
+        ///  Float・Range の値を足す（有限の数だけ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_float", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_float(ulong handle, byte* name, int name_len, float value);
+
+        /// <summary>
+        ///  Integer の値を足す。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_int", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_int(ulong handle, byte* name, int name_len, int value);
+
+        /// <summary>
+        ///  色の値を足す（マテリアルに入っているままの値。`[HDR]` でない色はガンマの空間）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_color", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_color(ulong handle, byte* name, int name_len, float r, float g, float b, float a);
+
+        /// <summary>
+        ///  ベクトルの値を足す（テクスチャのタイリング・オフセットは `&lt;名前&gt;_ST` の名前で）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_vector", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_vector(ulong handle, byte* name, int name_len, float x, float y, float z, float w);
+
+        /// <summary>
+        ///  有効なキーワードを足す（重ねて足したものは 1 つ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_keyword", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_keyword(ulong handle, byte* name, int name_len);
+
+        /// <summary>
+        ///  描いていないスロットの様子を足す。`state`: 0 入っていない・1 絵を送る（この値を送った後に ylb_texture_send）・2 前に送った絵と同じ・
+        ///  3 予算を超えて送らない・4 読めない。`width`・`height` は元のテクスチャの大きさ。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_slot", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_slot(ulong handle, byte* name, int name_len, int state, uint width, uint height);
+
+        /// <summary>
+        ///  組み立てた値を送る（積むだけ）。返すのは 1 = 積んだ、0 = スタンドアロンに印（MATERIAL_VALUES）が無いので送らない（組み立ては捨てる）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_send(ulong handle);
+
+        /// <summary>
+        ///  描いていないスロットの絵を送る（積むだけ。直前の値で状態 1 と言ったスロット）。`pixels` は RGBA8（straight）で行は下から、
+        ///  `pixel_len` は幅 × 高さ × 4。辺は MAX_SLOT_TEXTURE_SIZE まで（送る側が縮める）。`srgb` が 0 でなければ Unity はこの絵を sRGB として
+        ///  読む。返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_texture_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_texture_send(ulong handle, int material, byte* slot, int slot_len, uint width, uint height, int srgb, byte* pixels, int pixel_len);
+
+        /// <summary>
         ///  テクスチャセットの数。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_set_count", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -288,6 +346,26 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_stats", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_test_server_stats(ulong server, YlbTestServerStats* stats);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` の値のプロパティ `name` を `out`（4 つの f32。数は x、Int は x に
+        ///  数として）へ写す。返すのは型（0 Float・1 Int・2 Color・3 Vector）、無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_value", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_value(ulong server, uint material, byte* name, int name_len, float* @out);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `name` の様子（0〜4。`ylb_values_slot` と同じ番号）。
+        ///  キーワードを引くときは `keyword` を 0 でなくする（あれば 1、無ければ 0）。値が無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_slot", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_slot(ulong server, uint material, byte* name, int name_len, int keyword);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_texture", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_texture(ulong server, uint material, byte* slot, int slot_len, YlbTestServerTexture* @out);
 
 
     }
@@ -464,6 +542,40 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         public uint last_materials_count;
         public uint last_materials_routes;
         public uint last_materials_shader_len;
+        /// <summary>
+        ///  受けたマテリアルの値（MaterialValues）の数と、最後の値のマテリアルの番号・種類（0 値なし・1 lilToon）・プロパティの数・
+        ///  キーワードの数・スロットの数・シェーダー名の長さ。
+        /// </summary>
+        public uint values;
+        public uint last_values_material;
+        public uint last_values_kind;
+        public uint last_values_properties;
+        public uint last_values_keywords;
+        public uint last_values_slots;
+        public uint last_values_shader_len;
+        /// <summary>
+        ///  受けた描いていないスロットの絵（MaterialTexture）の数と、その画素のバイトの合計（KiB、切り上げ）。
+        /// </summary>
+        public uint textures;
+        public uint texture_kib;
+    }
+
+    /// <summary>
+    ///  自己診断のスタンドアロンが受けた、描いていないスロットの絵 1 つの様子（`ylb_test_server_texture`）。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbTestServerTexture
+    {
+        public uint width;
+        public uint height;
+        /// <summary>
+        ///  0 でなければ sRGB。
+        /// </summary>
+        public uint srgb;
+        /// <summary>
+        ///  真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）の RGBA を r | g &lt;&lt; 8 | b &lt;&lt; 16 | a &lt;&lt; 24 に詰めたもの。
+        /// </summary>
+        public uint center;
     }
 
 

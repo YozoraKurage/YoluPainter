@@ -423,7 +423,7 @@ impl AppState {
                     }
                 }
             };
-            let look = self.set_doc(index).look().clone();
+            let look = self.set_doc(index).drawn_look().clone();
             sets.push(SetInput {
                 native,
                 inputs,

@@ -12,6 +12,11 @@
 //! 文書（[`crate::Document`]）が持ち、変更は 1 回の Undo（[`crate::Document::set_look`]）。画素ではないので、文書の正本
 //! （`document.utpaint`）には入らない: `.ylp` へは呼び手が別のエントリとして書き、読み込み直後に [`crate::Document::restore_look`] で戻す
 //! （手動の ID 色・選択範囲と同じ流儀）。
+//!
+//! 外から受けた見た目（[`ReceivedLook`]。Live Link で Unity の本物のマテリアルから受けた値と、描いていないスロットの絵）は、利用者の
+//! 設定とは別に文書が持つ（[`crate::Document::set_received_look`]。Undo にも版にも入らない。受け取りは利用者の操作ではないので）。
+//! 描く見た目（[`crate::Document::drawn_look`]）は、受けた値の上に利用者の設定を重ねたもの（[`MaterialLook::over`]）: 利用者が欄で
+//! 変えた項目だけが受けた値に勝つ。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -146,6 +151,9 @@ impl TextureSource {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MaterialLook {
     pub kind: LookKind,
+    /// 利用者が描き方（`kind`）を欄で選んだ。受けた見た目（[`ReceivedLook`]）があるとき、選んでいなければ受けた描き方で描く
+    /// （受けた見た目が無いときは使わない）。
+    pub kind_chosen: bool,
     /// Unity のシェーダーの名前（lilToon のときの描画モード・輪郭線。空は [`LILTOON_SHADER`] と同じ）。標準でも持ったままにする
     /// （標準へ切り替えて戻したとき、元の lilToon の設定に戻る）。
     pub shader: String,
@@ -209,6 +217,32 @@ impl MaterialLook {
             }
         }
         look
+    }
+
+    /// 受けた見た目の値（`base`）の上に、この設定（利用者の設定）を重ねた、描く見た目。利用者が持つ項目が勝つ: プロパティ・
+    /// テクスチャのスロットは名前ごと、シェーダーは空でなければ、キーワードは 1 つでもあれば全部。描き方は、利用者が選んでいれば
+    /// （`kind_chosen`）その描き方、選んでいなければ lilToon にした利用者の設定か受けた描き方。
+    pub fn over(&self, base: &MaterialLook) -> MaterialLook {
+        let mut out = base.clone();
+        out.kind = if self.kind_chosen || self.kind == LookKind::LilToon {
+            self.kind
+        } else {
+            base.kind
+        };
+        out.kind_chosen = self.kind_chosen;
+        if !self.shader.is_empty() {
+            out.shader = self.shader.clone();
+        }
+        for (k, v) in &self.properties {
+            out.properties.insert(k.clone(), *v);
+        }
+        for (k, v) in &self.textures {
+            out.textures.insert(k.clone(), *v);
+        }
+        if !self.keywords.is_empty() {
+            out.keywords = self.keywords.clone();
+        }
+        out
     }
 
     /// 形の検査（数・名前の長さ・制御文字・有限の値・成分の番号）。断るときは何の値か。
@@ -279,6 +313,100 @@ impl MaterialLook {
 
 /// 文書が持つ見た目の設定（共有。Undo の段も同じものを指す）。
 pub(crate) type SharedLook = Arc<MaterialLook>;
+
+/// 受けた絵の辺の上限（Live Link の送り手は 2048 まで縮めて送る。余裕をとる）。
+pub const MAX_RECEIVED_IMAGE_SIZE: u32 = 4096;
+
+/// 受けた絵 1 枚（描いていないスロットの、外のマテリアルのテクスチャ）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceivedImage {
+    pub width: u32,
+    pub height: u32,
+    /// sRGB として読む（RGB をリニアへ直してから使う）。偽はリニアのまま。
+    pub srgb: bool,
+    /// RGBA8（straight）、行は下から。幅 × 高さ × 4 バイト。
+    pub pixels: Arc<[u8]>,
+}
+
+/// 受けた見た目のスロットの、絵が無い理由（絵があれば無い）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MissingImage {
+    /// 送り手に絵があり、まだ届いていない（届く途中・保存したファイルから開いた。絵は保存しない）。
+    Pending,
+    /// 送り手が予算を超えたので送らなかった。
+    OverBudget,
+    /// 送り手が読めなかった・受け手が持てなかった。
+    Unreadable,
+}
+
+impl MissingImage {
+    /// 保存の名前。
+    pub fn key(self) -> &'static str {
+        match self {
+            MissingImage::Pending => "pending",
+            MissingImage::OverBudget => "overBudget",
+            MissingImage::Unreadable => "unreadable",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<MissingImage> {
+        match key {
+            "pending" => Some(MissingImage::Pending),
+            "overBudget" => Some(MissingImage::OverBudget),
+            "unreadable" => Some(MissingImage::Unreadable),
+            _ => None,
+        }
+    }
+}
+
+/// 外から受けた見た目（Live Link で Unity の本物のマテリアルから）。文書が持つが、Undo にも版にも入らない。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ReceivedLook {
+    /// 値（描き方・シェーダー・プロパティ・キーワード。`textures` は送り手が描いた絵を見せるスロットのチャンネル）。
+    pub look: MaterialLook,
+    /// 何の対応と確かめた値か（人に見せるだけ。例: "lilToon 2.3.4 · Standard/Opaque"）。
+    pub source: String,
+    /// 描いていないスロットの絵（スロットの名前 → 絵）。
+    pub images: BTreeMap<String, Arc<ReceivedImage>>,
+    /// 絵の無いスロットの、無い理由。
+    pub missing: BTreeMap<String, MissingImage>,
+}
+
+impl ReceivedLook {
+    /// 形の検査（値は [`MaterialLook::validate`]、絵は大きさとバイトの数、名前の長さと制御文字）。
+    pub fn validate(&self) -> Result<(), CoreError> {
+        self.look.validate()?;
+        let name_ok = |s: &str| {
+            let n = s.encode_utf16().count();
+            (1..=MAX_NAME).contains(&n) && !s.chars().any(|c| c.is_control())
+        };
+        if self.source.encode_utf16().count() > MAX_SHADER_NAME || self.source.chars().any(|c| c.is_control()) {
+            return Err(CoreError::InvalidArgument("受けた見た目の出どころ"));
+        }
+        if self.images.len() + self.missing.len() > MAX_TEXTURES {
+            return Err(CoreError::InvalidArgument("受けた見た目の絵の数"));
+        }
+        for (name, image) in &self.images {
+            let size_ok = (1..=MAX_RECEIVED_IMAGE_SIZE).contains(&image.width)
+                && (1..=MAX_RECEIVED_IMAGE_SIZE).contains(&image.height);
+            if !name_ok(name)
+                || !size_ok
+                || image.pixels.len() as u64 != image.width as u64 * image.height as u64 * 4
+            {
+                return Err(CoreError::InvalidArgument("受けた見た目の絵"));
+            }
+        }
+        if self.missing.keys().any(|n| !name_ok(n)) {
+            return Err(CoreError::InvalidArgument("受けた見た目のスロットの名前"));
+        }
+        Ok(())
+    }
+
+    /// 絵のバイトの合計。
+    pub fn image_bytes(&self) -> u64 {
+        self.images.values().map(|i| i.pixels.len() as u64).sum()
+    }
+}
 
 #[cfg(test)]
 mod tests {

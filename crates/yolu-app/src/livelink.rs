@@ -41,8 +41,13 @@ use crate::view3d::model::ViewError;
 pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
 
 /// このスタンドアロンが挨拶で出す機能の印（`yolu_protocol::feature`。双方の共通部分がそのつながりで使える機能）。
-/// 印を立てる機能（マテリアルの値など）を足すときは、ここに `feature` のビットを足す（ビットの割り当ては `yolu_protocol::feature`）。
-pub const FEATURES: u64 = 0;
+/// 印を立てる機能を足すときは、ここに `feature` のビットを足す（ビットの割り当ては `yolu_protocol::feature`）。
+/// マテリアルの値（MATERIAL_VALUES）: Unity の本物の lilToon のマテリアルの値と描いていないスロットの絵を受けて描く（`look::link`）。
+pub const FEATURES: u64 = feature::MATERIAL_VALUES;
+
+/// Unity に出すチャンネル（セットの共有メモリ。今は Color だけ）。Unity はここにあるチャンネルの流し込み先だけを描いた絵で見せ、ほかの
+/// 流し込み先は元のテクスチャのまま見せる（マテリアルの値で描くときも同じ決まり。`look::link`）。
+pub const PUBLISHED_CHANNELS: &[u8] = &[channel::COLOR];
 
 /// 挨拶の名乗り（名乗りの文字列・Cargo の版・出す機能の印）。
 pub fn identity() -> Identity {
@@ -459,6 +464,8 @@ pub struct LiveLink {
     failed: BTreeSet<u32>,
     failed_for_model: u64,
     tiles_sent: u64,
+    /// 受けたマテリアルの値（Unity の lilToon。`look::link`）。
+    values: crate::look::link::LinkValues,
 }
 
 impl Default for LiveLink {
@@ -499,6 +506,7 @@ impl LiveLink {
             failed: BTreeSet::new(),
             failed_for_model: 0,
             tiles_sent: 0,
+            values: Default::default(),
         }
     }
 
@@ -615,6 +623,10 @@ impl LiveLink {
     }
 
     fn disconnect(&mut self, state: &mut AppState) {
+        // 受けたばかりの値（同じフレームの、切れる前の命令）を、捨てる前にセットへ当てる（切っても最後の値が残る）
+        if let Some(session) = self.current_session() {
+            self.values.apply(state, session);
+        }
         if let Some(a) = self.active.take() {
             let _ = a.out.send(Out::Bye);
             let _ = self.active_session.compare_exchange(
@@ -632,6 +644,8 @@ impl LiveLink {
         self.published.clear();
         self.failed.clear();
         self.link_info = None;
+        // 受けた値は捨てる（セットの文書に当てた受けた見た目は、最後の値として残る）
+        self.values.clear();
     }
 
     fn current_session(&self) -> Option<u64> {
@@ -757,6 +771,10 @@ impl LiveLink {
                 }
             }
         }
+        // 受けたマテリアルの値を、付いたテクスチャセットへ当てる（変わったセット・文書が替わったセットだけ）
+        if let Some(session) = self.current_session() {
+            self.values.apply(state, session);
+        }
     }
 
     /// Unity へ返す誤りの返事。表示の言語に依らず、プロトコルの診断として日本語の文に固定する
@@ -784,6 +802,8 @@ impl LiveLink {
                 let first = !state.model.as_ref().is_some_and(ours);
                 let (report, shape) = state.receive_link_model(&model, session);
                 self.failed.clear();
+                self.values
+                    .model(model.generation, model.materials.len() as u32);
                 let mut text = state.lang.pick(
                     format!("Live Link: モデル「{}」を受けました。", model.name),
                     format!("Live Link: Received the model “{}”.", model.name),
@@ -830,6 +850,34 @@ impl LiveLink {
                     "モデルを受ける前のマテリアルの更新は使えません".into(),
                 ),
             },
+            Message::MaterialValues(values) => {
+                // 値は今のつながりのモデルの世代のもの。合わない値は何も変えずに断る
+                let generation = state
+                    .model
+                    .as_ref()
+                    .filter(|m| ours(m))
+                    .map(|m| m.generation);
+                let result = match generation {
+                    Some(_) => self.values.receive_values(values),
+                    None => Err("モデルを受ける前のマテリアルの値は使えません".into()),
+                };
+                if let Err(e) = result {
+                    self.reply_error(ErrorCode::Refused, Kind::MaterialValues as u16, e);
+                }
+            }
+            Message::MaterialTexture(texture) => {
+                let lang = state.lang;
+                match self.values.receive_texture(texture, lang) {
+                    Ok(()) => {}
+                    // 命令の食い違いは Unity への返事だけ（開発の診断の文で、画面には出さない）
+                    Err(crate::look::link::TextureRefused::Protocol(e)) => {
+                        self.reply_error(ErrorCode::Refused, Kind::MaterialTexture as u16, e)
+                    }
+                    Err(crate::look::link::TextureRefused::OverBudget(e)) => {
+                        self.notify(NoticeLevel::Warning, format!("Live Link: {e}"), state)
+                    }
+                }
+            }
             Message::ModelClosed { generation } => {
                 if state.model.as_ref().is_some_and(ours) && state.close_link_model(generation) {
                     self.notify(
@@ -1014,7 +1062,7 @@ fn create(
         doc.width(),
         doc.height(),
         doc.tile_size(),
-        &[channel::COLOR],
+        PUBLISHED_CHANNELS,
     )
     .map_err(|e| e.to_string())?;
     let mut p = Published {

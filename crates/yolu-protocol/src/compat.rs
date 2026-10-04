@@ -296,8 +296,8 @@ pub fn accepts(common: u64, message: &Message) -> bool {
     accepts_with(common, message, Kind::required_feature)
 }
 
-/// `accepts` の、命令の種類ごとに要る印の決め方を選べる形（`need_of`）。印を要る命令が今は無いので、試験が印の要る表を差し込んで、
-/// 「どの命令がどの印を要るか」から送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す。
+/// `accepts` の、命令の種類ごとに要る印の決め方を選べる形（`need_of`）。試験が印の要る表を差し込んで、「どの命令がどの印を要るか」から
+/// 送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す（今は MaterialValues・MaterialTexture が MATERIAL_VALUES を要る）。
 pub fn accepts_with(common: u64, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
     satisfies(common, need_of(message.kind()))
 }

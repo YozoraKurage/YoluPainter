@@ -21,17 +21,19 @@ use yolu_protocol::*;
 
 use crate::copy::{copy_dirty, Strip};
 use crate::session::{Session, Status};
-use crate::testserver::{TestServer, YlbTestServerStats};
+use crate::testserver::{TestServer, YlbTestServerStats, YlbTestServerTexture};
 
 /// この口の版。関数の意味・引数・構造体を変えたら、または C# が新しく足した関数・欄に頼るようになったら上げる（Unity は読んだ DLL を
 /// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、再起動の案内を出す）。
 /// 2: マテリアルの更新（ylb_materials_*）・全面の写し直し（ylb_channel_mark_all_dirty）・帯だけの写し（ylb_copy_dirty の image が null）・
 /// 自己診断のサーバーの鍵の差し替えと統計の欄の追加。
 /// 3: 互いの版と機能の印（ylb_connect_with・ylb_common_features・ylb_peer_app_version・ylb_link_report・ylb_test_server_configure）。
-pub const ABI_VERSION: u32 = 3;
+/// 4: マテリアルの値（ylb_values_*・ylb_texture_send）、自己診断のサーバーの値の引き出し（ylb_test_server_value・_slot・_texture）と
+/// 統計の欄の追加。
+pub const ABI_VERSION: u32 = 4;
 
-/// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能（マテリアルの値など）を足すときは、ここに `feature` のビットを足す。
-pub const BRIDGE_FEATURES: u64 = 0;
+/// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能を足すときは、ここに `feature` のビットを足す。
+pub const BRIDGE_FEATURES: u64 = yolu_protocol::feature::MATERIAL_VALUES;
 
 pub const YLB_E_HANDLE: i32 = -1;
 pub const YLB_E_ARGUMENT: i32 = -2;
@@ -704,6 +706,7 @@ pub extern "C" fn ylb_model_send(handle: u64) -> i32 {
         b.sent_materials = material_count;
         b.pose = None;
         b.materials = None;
+        b.values = None;
         generation as i32
     })
 }
@@ -932,6 +935,302 @@ pub extern "C" fn ylb_pose_send(handle: u64) -> i32 {
             return YLB_E_STATE;
         }
         n
+    })
+}
+
+// ───────── マテリアルの値を送る（機能の印 MATERIAL_VALUES がスタンドアロンにもあるときだけ。lilToon のプロパティの値と描いていないスロットの絵） ─────────
+
+/// マテリアルの値の組み立てを始める（前の組み立ては捨てる）。送ったモデルがあるときだけ。`material` は送ったモデルのマテリアルの番号、
+/// `kind` は 0 = 値なし（前に送った値を捨てさせる）・1 = lilToon、`source` は何の対応と確かめたかの文（人に見せるだけ）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_begin(
+    handle: u64,
+    material: i32,
+    kind: i32,
+    shader: *const u8,
+    shader_len: i32,
+    source: *const u8,
+    source_len: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let (Some(shader), Some(source)) = (text(shader, shader_len), text(source, source_len)) else {
+            return YLB_E_ARGUMENT;
+        };
+        let kind = match kind {
+            0 => ValuesKind::None,
+            1 => ValuesKind::LilToon,
+            _ => return YLB_E_ARGUMENT,
+        };
+        if shader.len() > MAX_NAME_BYTES || source.len() > MAX_NAME_BYTES {
+            return YLB_E_ARGUMENT;
+        }
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        if b.sent_generation == 0 {
+            return YLB_E_STATE;
+        }
+        if material < 0 || material as usize >= b.sent_materials {
+            return YLB_E_ARGUMENT;
+        }
+        b.values = Some(MaterialValues {
+            generation: b.sent_generation,
+            material: material as u32,
+            kind,
+            shader: shader.to_owned(),
+            source: source.to_owned(),
+            properties: Vec::new(),
+            keywords: Vec::new(),
+            slots: Vec::new(),
+        });
+        0
+    })
+}
+
+/// 値の名前（1〜MAX_VALUE_NAME_BYTES バイトの UTF-8、制御文字なし）。
+unsafe fn value_name<'a>(name: *const u8, len: i32) -> Option<&'a str> {
+    text(name, len).filter(|n| {
+        !n.is_empty() && n.len() <= MAX_VALUE_NAME_BYTES && !n.chars().any(char::is_control)
+    })
+}
+
+/// 組み立て中の値にプロパティを足す（同じ名前は置き換える）。
+unsafe fn push_value(handle: u64, name: (*const u8, i32), value: PropertyValue) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(name) = value_name(name.0, name.1) else {
+            return YLB_E_ARGUMENT;
+        };
+        let finite = match value {
+            PropertyValue::Float(x) => x.is_finite(),
+            PropertyValue::Int(_) => true,
+            PropertyValue::Color(c) | PropertyValue::Vector(c) => c.iter().all(|x| x.is_finite()),
+        };
+        if !finite {
+            return YLB_E_ARGUMENT;
+        }
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(v) = b.values.as_mut() else {
+            return YLB_E_STATE;
+        };
+        if let Some(p) = v.properties.iter_mut().find(|p| p.name == name) {
+            p.value = value;
+            return 0;
+        }
+        if v.properties.len() >= MAX_VALUE_PROPERTIES {
+            return YLB_E_ARGUMENT;
+        }
+        v.properties.push(PropertyEntry {
+            name: name.to_owned(),
+            value,
+        });
+        0
+    })
+}
+
+/// Float・Range の値を足す（有限の数だけ）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_float(handle: u64, name: *const u8, name_len: i32, value: f32) -> i32 {
+    push_value(handle, (name, name_len), PropertyValue::Float(value))
+}
+
+/// Integer の値を足す。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_int(handle: u64, name: *const u8, name_len: i32, value: i32) -> i32 {
+    push_value(handle, (name, name_len), PropertyValue::Int(value))
+}
+
+/// 色の値を足す（マテリアルに入っているままの値。`[HDR]` でない色はガンマの空間）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_color(
+    handle: u64,
+    name: *const u8,
+    name_len: i32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) -> i32 {
+    push_value(handle, (name, name_len), PropertyValue::Color([r, g, b, a]))
+}
+
+/// ベクトルの値を足す（テクスチャのタイリング・オフセットは `<名前>_ST` の名前で）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_vector(
+    handle: u64,
+    name: *const u8,
+    name_len: i32,
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+) -> i32 {
+    push_value(handle, (name, name_len), PropertyValue::Vector([x, y, z, w]))
+}
+
+/// 有効なキーワードを足す（重ねて足したものは 1 つ）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_keyword(handle: u64, name: *const u8, name_len: i32) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(name) = value_name(name, name_len).filter(|n| !n.contains(' ')) else {
+            return YLB_E_ARGUMENT;
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(v) = b.values.as_mut() else {
+            return YLB_E_STATE;
+        };
+        if v.keywords.iter().any(|k| k == name) {
+            return 0;
+        }
+        if v.keywords.len() >= MAX_VALUE_KEYWORDS {
+            return YLB_E_ARGUMENT;
+        }
+        v.keywords.push(name.to_owned());
+        0
+    })
+}
+
+/// 描いていないスロットの様子を足す。`state`: 0 入っていない・1 絵を送る（この値を送った後に ylb_texture_send）・2 前に送った絵と同じ・
+/// 3 予算を超えて送らない・4 読めない。`width`・`height` は元のテクスチャの大きさ。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_values_slot(
+    handle: u64,
+    name: *const u8,
+    name_len: i32,
+    state: i32,
+    width: u32,
+    height: u32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(name) = value_name(name, name_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        let state = match state {
+            0 => SlotState::Empty,
+            1 => SlotState::Follows,
+            2 => SlotState::Unchanged,
+            3 => SlotState::OverBudget,
+            4 => SlotState::Unreadable,
+            _ => return YLB_E_ARGUMENT,
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(v) = b.values.as_mut() else {
+            return YLB_E_STATE;
+        };
+        if v.slots.iter().any(|x| x.name == name) || v.slots.len() >= MAX_VALUE_SLOTS {
+            return YLB_E_ARGUMENT;
+        }
+        v.slots.push(SlotTexture {
+            name: name.to_owned(),
+            state,
+            width,
+            height,
+        });
+        0
+    })
+}
+
+/// 組み立てた値を送る（積むだけ）。返すのは 1 = 積んだ、0 = スタンドアロンに印（MATERIAL_VALUES）が無いので送らない（組み立ては捨てる）。
+#[no_mangle]
+pub extern "C" fn ylb_values_send(handle: u64) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        if s.status() != Status::Connected {
+            return YLB_E_STATE;
+        }
+        let Some(values) = s
+            .builder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values
+            .take()
+        else {
+            return YLB_E_STATE;
+        };
+        let message = Message::MaterialValues(values);
+        if !compat::accepts(s.common_features(), &message) {
+            return 0;
+        }
+        if !s.enqueue(&message) {
+            return YLB_E_STATE;
+        }
+        1
+    })
+}
+
+/// 描いていないスロットの絵を送る（積むだけ。直前の値で状態 1 と言ったスロット）。`pixels` は RGBA8（straight）で行は下から、
+/// `pixel_len` は幅 × 高さ × 4。辺は MAX_SLOT_TEXTURE_SIZE まで（送る側が縮める）。`srgb` が 0 でなければ Unity はこの絵を sRGB として
+/// 読む。返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_texture_send(
+    handle: u64,
+    material: i32,
+    slot: *const u8,
+    slot_len: i32,
+    width: u32,
+    height: u32,
+    srgb: i32,
+    pixels: *const u8,
+    pixel_len: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(slot) = value_name(slot, slot_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if width == 0
+            || height == 0
+            || width > MAX_SLOT_TEXTURE_SIZE
+            || height > MAX_SLOT_TEXTURE_SIZE
+            || pixel_len as i64 != width as i64 * height as i64 * 4
+        {
+            return YLB_E_ARGUMENT;
+        }
+        let Some(pixels) = bytes(pixels, pixel_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if s.status() != Status::Connected {
+            return YLB_E_STATE;
+        }
+        let (generation, materials) = {
+            let b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+            (b.sent_generation, b.sent_materials)
+        };
+        if generation == 0 {
+            return YLB_E_STATE;
+        }
+        if material < 0 || material as usize >= materials {
+            return YLB_E_ARGUMENT;
+        }
+        if !compat::satisfies(s.common_features(), Kind::MaterialTexture.required_feature()) {
+            return 0;
+        }
+        let message = Message::MaterialTexture(MaterialTexture {
+            generation,
+            material: material as u32,
+            slot: slot.to_owned(),
+            width,
+            height,
+            srgb: srgb != 0,
+            pixels: pixels.to_vec(),
+        });
+        if !s.enqueue(&message) {
+            return YLB_E_STATE;
+        }
+        1
     })
 }
 
@@ -1296,5 +1595,93 @@ pub unsafe extern "C" fn ylb_test_server_stats(server: u64, stats: *mut YlbTestS
         }
         *stats = s.stats();
         0
+    })
+}
+
+/// 自己診断のスタンドアロンが最後に受けた、マテリアル `material` の値のプロパティ `name` を `out`（4 つの f32。数は x、Int は x に
+/// 数として）へ写す。返すのは型（0 Float・1 Int・2 Color・3 Vector）、無ければ YLB_E_ARGUMENT。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_test_server_value(
+    server: u64,
+    material: u32,
+    name: *const u8,
+    name_len: i32,
+    out: *mut f32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = servers.get(&server) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(name) = text(name, name_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if out.is_null() {
+            return YLB_E_ARGUMENT;
+        }
+        let (kind, v) = match s.value(material, name) {
+            Some(PropertyValue::Float(x)) => (0, [x, 0.0, 0.0, 0.0]),
+            Some(PropertyValue::Int(x)) => (1, [x as f32, 0.0, 0.0, 0.0]),
+            Some(PropertyValue::Color(c)) => (2, c),
+            Some(PropertyValue::Vector(c)) => (3, c),
+            None => return YLB_E_ARGUMENT,
+        };
+        std::ptr::copy_nonoverlapping(v.as_ptr(), out, 4);
+        kind
+    })
+}
+
+/// 自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `name` の様子（0〜4。`ylb_values_slot` と同じ番号）。
+/// キーワードを引くときは `keyword` を 0 でなくする（あれば 1、無ければ 0）。値が無ければ YLB_E_ARGUMENT。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_test_server_slot(
+    server: u64,
+    material: u32,
+    name: *const u8,
+    name_len: i32,
+    keyword: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = servers.get(&server) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(name) = text(name, name_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if keyword != 0 {
+            return s.has_keyword(material, name) as i32;
+        }
+        s.slot(material, name).map_or(YLB_E_ARGUMENT, |st| st as i32)
+    })
+}
+
+/// 自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。無ければ YLB_E_ARGUMENT。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_test_server_texture(
+    server: u64,
+    material: u32,
+    slot: *const u8,
+    slot_len: i32,
+    out: *mut YlbTestServerTexture,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = servers.get(&server) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(slot) = text(slot, slot_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if out.is_null() {
+            return YLB_E_ARGUMENT;
+        }
+        match s.texture(material, slot) {
+            Some(t) => {
+                *out = t;
+                0
+            }
+            None => YLB_E_ARGUMENT,
+        }
     })
 }

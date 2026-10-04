@@ -42,6 +42,16 @@ pub const MAX_TEXTURE_PROPERTIES: usize = 256;
 pub const MAX_TILES_PER_MESSAGE: usize = 1 << 16;
 /// テクスチャセットの幅・高さの上限（Unity のテクスチャの上限）。
 pub const MAX_TEXTURE_SIZE: u32 = 16384;
+/// 1 つのマテリアルの値（MaterialValues）のプロパティの数の上限（lilToon 2.3 は約 600。スタンドアロンの見た目の設定の上限と同じ）。
+pub const MAX_VALUE_PROPERTIES: usize = 2048;
+/// MaterialValues のキーワードの数の上限。
+pub const MAX_VALUE_KEYWORDS: usize = 256;
+/// MaterialValues のスロット（テクスチャのプロパティ）の数の上限。
+pub const MAX_VALUE_SLOTS: usize = 256;
+/// MaterialValues のプロパティ・キーワード・スロットの名前の長さの上限（バイト。UTF-16 の 128 文字が収まる）。
+pub const MAX_VALUE_NAME_BYTES: usize = 512;
+/// 描いていないスロットの絵（MaterialTexture）の辺の上限（送る側が縮めてから送る）。
+pub const MAX_SLOT_TEXTURE_SIZE: u32 = 2048;
 
 /// 命令の種類（枠の頭に入る番号）。番号は変えない。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -53,6 +63,8 @@ pub enum Kind {
     Pose = 0x0011,
     Materials = 0x0012,
     ModelClosed = 0x0013,
+    MaterialValues = 0x0014,
+    MaterialTexture = 0x0015,
     Welcome = 0x0101,
     Reject = 0x0102,
     TextureSet = 0x0110,
@@ -70,6 +82,8 @@ impl Kind {
             0x0011 => Kind::Pose,
             0x0012 => Kind::Materials,
             0x0013 => Kind::ModelClosed,
+            0x0014 => Kind::MaterialValues,
+            0x0015 => Kind::MaterialTexture,
             0x0101 => Kind::Welcome,
             0x0102 => Kind::Reject,
             0x0110 => Kind::TextureSet,
@@ -94,14 +108,19 @@ impl Kind {
             | Kind::TextureSetRemoved
             | Kind::TilesChanged
             | Kind::Error => 0,
+            Kind::MaterialValues | Kind::MaterialTexture => crate::compat::feature::MATERIAL_VALUES,
         }
     }
     /// 誰が送る命令か。
     pub fn direction(self) -> Direction {
         match self {
-            Kind::Hello | Kind::Model | Kind::Pose | Kind::Materials | Kind::ModelClosed => {
-                Direction::ToStandalone
-            }
+            Kind::Hello
+            | Kind::Model
+            | Kind::Pose
+            | Kind::Materials
+            | Kind::ModelClosed
+            | Kind::MaterialValues
+            | Kind::MaterialTexture => Direction::ToStandalone,
             Kind::Welcome
             | Kind::Reject
             | Kind::TextureSet
@@ -356,6 +375,113 @@ pub struct TilesChanged {
     pub tiles: Vec<Tile>,
 }
 
+/// マテリアルの値の種類（スタンドアロンがどの見た目で描くか）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ValuesKind {
+    /// 値なし（描ける見た目のシェーダーでない・確かめられない）。前に送った値を捨てる合図。
+    None = 0,
+    /// 版・バリアント・プロパティを確かめた lilToon。
+    LilToon = 1,
+}
+
+impl ValuesKind {
+    /// 知らない番号（新しい送り手が足した見た目）は値なしとして読む（描けない値を lilToon として描かない）。
+    pub fn from_u8(v: u8) -> ValuesKind {
+        match v {
+            1 => ValuesKind::LilToon,
+            _ => ValuesKind::None,
+        }
+    }
+}
+
+/// マテリアルのプロパティの値（Unity の型ごと。色はマテリアルに入っているままの値＝ガンマの空間、`[HDR]` の色はリニア）。
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PropertyValue {
+    /// Float・Range（Unity の古い Int も）。
+    Float(f32),
+    /// Integer。
+    Int(i32),
+    Color([f32; 4]),
+    /// Vector と、テクスチャのタイリング・オフセット（`<名前>_ST`）。
+    Vector([f32; 4]),
+}
+
+/// プロパティ 1 つ。
+#[derive(Clone, PartialEq, Debug)]
+pub struct PropertyEntry {
+    pub name: String,
+    pub value: PropertyValue,
+}
+
+/// 描いていないスロット（YoluPainter の流し込み先でないテクスチャのプロパティ）の絵の様子。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum SlotState {
+    /// テクスチャが入っていない（シェーダーの既定で描く）。
+    Empty = 0,
+    /// 絵を送る（この命令の後ろに MaterialTexture が来る）。
+    Follows = 1,
+    /// 前に送った絵と同じ（受け手は持っている絵を使い続ける。モデルを送り直した後は使わない）。
+    Unchanged = 2,
+    /// 送る絵の予算を超えたので送らない。
+    OverBudget = 3,
+    /// 読めない（送る側の理由。描けない形式など）。
+    Unreadable = 4,
+}
+
+impl SlotState {
+    /// 知らない番号は「読めない」として読む（絵は来ない）。
+    pub fn from_u8(v: u8) -> SlotState {
+        match v {
+            0 => SlotState::Empty,
+            1 => SlotState::Follows,
+            2 => SlotState::Unchanged,
+            3 => SlotState::OverBudget,
+            _ => SlotState::Unreadable,
+        }
+    }
+}
+
+/// スロット 1 つの様子と、元のテクスチャの大きさ（入っていなければ 0）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SlotTexture {
+    pub name: String,
+    pub state: SlotState,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// マテリアルの値（Unity → スタンドアロン。機能の印 MATERIAL_VALUES）。モデルの 1 つのマテリアルの、シェーダーの名前・プロパティの値・
+/// キーワード・描いていないスロットの絵の様子。同じマテリアルの前の値を置き換える。
+#[derive(Clone, PartialEq, Debug)]
+pub struct MaterialValues {
+    pub generation: u32,
+    /// モデルのマテリアルの並びの番号。
+    pub material: u32,
+    pub kind: ValuesKind,
+    pub shader: String,
+    /// 何の対応と確かめたか（例: "lilToon 2.3.4 · Standard/Opaque"。人に見せるだけ）。
+    pub source: String,
+    pub properties: Vec<PropertyEntry>,
+    pub keywords: Vec<String>,
+    pub slots: Vec<SlotTexture>,
+}
+
+/// 描いていないスロットの絵（Unity → スタンドアロン。機能の印 MATERIAL_VALUES）。直前の MaterialValues で `Follows` と言ったスロットのもの。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MaterialTexture {
+    pub generation: u32,
+    pub material: u32,
+    pub slot: String,
+    pub width: u32,
+    pub height: u32,
+    /// Unity がこの絵を sRGB として読む（RGB をリニアへ直してから使う）。偽はリニアのまま。
+    pub srgb: bool,
+    /// RGBA8（straight）、行は下から（Unity の並び）。幅 × 高さ × 4 バイト。
+    pub pixels: Vec<u8>,
+}
+
 /// 誤りの種類。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
@@ -401,6 +527,8 @@ pub enum Message {
     Pose(Pose),
     Materials(MaterialsUpdate),
     ModelClosed { generation: u32 },
+    MaterialValues(MaterialValues),
+    MaterialTexture(MaterialTexture),
     Welcome(Welcome),
     Reject(Reject),
     TextureSet(TextureSet),
@@ -418,6 +546,8 @@ impl Message {
             Message::Pose(_) => Kind::Pose,
             Message::Materials(_) => Kind::Materials,
             Message::ModelClosed { .. } => Kind::ModelClosed,
+            Message::MaterialValues(_) => Kind::MaterialValues,
+            Message::MaterialTexture(_) => Kind::MaterialTexture,
             Message::Welcome(_) => Kind::Welcome,
             Message::Reject(_) => Kind::Reject,
             Message::TextureSet(_) => Kind::TextureSet,
@@ -481,6 +611,57 @@ impl Message {
                 write_materials(&mut w, &m.materials);
             }
             Message::ModelClosed { generation } => w.u32(*generation),
+            Message::MaterialValues(v) => {
+                w = Writer::with_capacity(64 + v.properties.len() * 40);
+                w.u32(v.generation);
+                w.u32(v.material);
+                w.u8(v.kind as u8);
+                w.str(&v.shader);
+                w.str(&v.source);
+                w.u32(v.properties.len() as u32);
+                for p in &v.properties {
+                    w.str(&p.name);
+                    match p.value {
+                        PropertyValue::Float(x) => {
+                            w.u8(0);
+                            w.f32(x);
+                        }
+                        PropertyValue::Int(x) => {
+                            w.u8(1);
+                            w.i32(x);
+                        }
+                        PropertyValue::Color(c) => {
+                            w.u8(2);
+                            c.iter().for_each(|x| w.f32(*x));
+                        }
+                        PropertyValue::Vector(c) => {
+                            w.u8(3);
+                            c.iter().for_each(|x| w.f32(*x));
+                        }
+                    }
+                }
+                w.u32(v.keywords.len() as u32);
+                for k in &v.keywords {
+                    w.str(k);
+                }
+                w.u32(v.slots.len() as u32);
+                for slot in &v.slots {
+                    w.str(&slot.name);
+                    w.u8(slot.state as u8);
+                    w.u32(slot.width);
+                    w.u32(slot.height);
+                }
+            }
+            Message::MaterialTexture(t) => {
+                w = Writer::with_capacity(48 + t.slot.len() + t.pixels.len());
+                w.u32(t.generation);
+                w.u32(t.material);
+                w.str(&t.slot);
+                w.u32(t.width);
+                w.u32(t.height);
+                w.bool(t.srgb);
+                w.bytes(&t.pixels);
+            }
             Message::Welcome(x) => {
                 w.u16(x.version);
                 w.str(&x.agent);
@@ -658,6 +839,90 @@ impl Message {
             Kind::ModelClosed => Message::ModelClosed {
                 generation: r.u32()?,
             },
+            Kind::MaterialValues => {
+                let generation = r.u32()?;
+                let material = r.u32()?;
+                let kind = ValuesKind::from_u8(r.u8()?);
+                let shader = r.str(MAX_NAME_BYTES, "シェーダーの名前")?;
+                let source = r.str(MAX_NAME_BYTES, "値の出どころ")?;
+                // 名前（4 バイト以上）・型（1）・値（4 以上）
+                let count = r.count(MAX_VALUE_PROPERTIES, 9, "プロパティの数")?;
+                let mut properties = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let name = r.str(MAX_VALUE_NAME_BYTES, "プロパティの名前")?;
+                    let value = match r.u8()? {
+                        0 => PropertyValue::Float(r.finite_f32("プロパティの値")?),
+                        1 => PropertyValue::Int(r.i32()?),
+                        t @ (2 | 3) => {
+                            let mut c = [0f32; 4];
+                            for x in &mut c {
+                                *x = r.finite_f32("プロパティの値")?;
+                            }
+                            if t == 2 {
+                                PropertyValue::Color(c)
+                            } else {
+                                PropertyValue::Vector(c)
+                            }
+                        }
+                        _ => return Err(DecodeError::Invalid("プロパティの型")),
+                    };
+                    properties.push(PropertyEntry { name, value });
+                }
+                let count = r.count(MAX_VALUE_KEYWORDS, 4, "キーワードの数")?;
+                let mut keywords = Vec::with_capacity(count);
+                for _ in 0..count {
+                    keywords.push(r.str(MAX_VALUE_NAME_BYTES, "キーワード")?);
+                }
+                let count = r.count(MAX_VALUE_SLOTS, 13, "スロットの数")?;
+                let mut slots = Vec::with_capacity(count);
+                for _ in 0..count {
+                    slots.push(SlotTexture {
+                        name: r.str(MAX_VALUE_NAME_BYTES, "スロットの名前")?,
+                        state: SlotState::from_u8(r.u8()?),
+                        width: r.u32()?,
+                        height: r.u32()?,
+                    });
+                }
+                Message::MaterialValues(MaterialValues {
+                    generation,
+                    material,
+                    kind,
+                    shader,
+                    source,
+                    properties,
+                    keywords,
+                    slots,
+                })
+            }
+            Kind::MaterialTexture => {
+                let generation = r.u32()?;
+                let material = r.u32()?;
+                let slot = r.str(MAX_VALUE_NAME_BYTES, "スロットの名前")?;
+                let width = r.u32()?;
+                let height = r.u32()?;
+                if width == 0
+                    || height == 0
+                    || width > MAX_SLOT_TEXTURE_SIZE
+                    || height > MAX_SLOT_TEXTURE_SIZE
+                {
+                    return Err(DecodeError::Invalid("スロットの絵の大きさ"));
+                }
+                let srgb = r.bool()?;
+                let max = (MAX_SLOT_TEXTURE_SIZE as usize).pow(2) * 4;
+                let pixels = r.bytes(max, "スロットの絵の画素")?;
+                if pixels.len() != width as usize * height as usize * 4 {
+                    return Err(DecodeError::Invalid("スロットの絵の画素の数"));
+                }
+                Message::MaterialTexture(MaterialTexture {
+                    generation,
+                    material,
+                    slot,
+                    width,
+                    height,
+                    srgb,
+                    pixels: pixels.to_vec(),
+                })
+            }
             Kind::Welcome => {
                 let version = r.u16()?;
                 let agent = r.str(MAX_NAME_BYTES, "送り手の名前")?;

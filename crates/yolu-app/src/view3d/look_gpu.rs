@@ -16,6 +16,7 @@ use yolu_core::{Channel, ColorSpace, Document, ImageColorSpace, ImageId};
 
 use super::brdf;
 use super::paint::{ImageTexture, Paint, Slot as PaintSlot};
+use super::received_layers::{self, ReceivedLayers, MAX_RECEIVED_LAYERS};
 use super::user_layers::{UserLayers, MAX_LAYERS};
 use crate::look::liltoon::{self, RenderMode, SlotUse, SLOTS};
 
@@ -30,6 +31,8 @@ pub const NS: usize = 21;
 pub const LIL_BYTES: u64 = ((NP + 3 * NS + MAX_LAYERS) * 16) as u64;
 
 const IMAGE_SOURCES: [i32; 2] = [32, 33];
+/// Unity から受けた絵の配列の元の番号の始まり（40〜55）。
+const RECEIVED_SOURCE: i32 = 40;
 
 /// セットの描き方（描くパイプラインの選び）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -99,10 +102,54 @@ fn all_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     out
 }
 
+/// 描く見た目で割り当てていないスロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。層の上限を超えたものも含む）。
+pub fn received_images(
+    doc: &Document,
+    look: &MaterialLook,
+) -> Vec<(String, Arc<yolu_core::look::ReceivedImage>)> {
+    let Some(received) = doc.received_look() else {
+        return Vec::new();
+    };
+    if look.kind != LookKind::LilToon {
+        return Vec::new();
+    }
+    SLOTS
+        .iter()
+        .filter(|s| !look.textures.contains_key(s.name))
+        .filter_map(|s| received.images.get(s.name).map(|i| (s.name.to_owned(), i.clone())))
+        .collect()
+}
+
+/// 3D ビューが受けた絵の配列に持つもの（[`received_images`] の先から [`MAX_RECEIVED_LAYERS`] 枚）。
+pub fn received_layered(
+    doc: &Document,
+    look: &MaterialLook,
+) -> Vec<(String, Arc<yolu_core::look::ReceivedImage>)> {
+    let mut all = received_images(doc, look);
+    all.truncate(MAX_RECEIVED_LAYERS);
+    all
+}
+
+/// Unity から受けた絵のあるスロットのうち、配列の層の上限（[`MAX_RECEIVED_LAYERS`]）を超えて持たないもの（17 枚目から。そのスロットは
+/// 割り当てのない既定で描く。欄が理由を出す）。
+pub fn dropped_received(doc: &Document, look: &MaterialLook) -> Vec<String> {
+    received_images(doc, look)
+        .into_iter()
+        .skip(MAX_RECEIVED_LAYERS)
+        .map(|(slot, _)| slot)
+        .collect()
+}
+
+/// この文書の描く見た目が持つ、受けた絵の配列のバイト数（ミップ込み。`limit` は辺の上限、`budget` はバイトの予算）。3D ビューの全体の
+/// 予算の計画に使う（[`received_layers::plan`]）。
+pub fn planned_received_bytes(doc: &Document, limit: u32, budget: u64) -> u64 {
+    received_layers::plan(&received_layered(doc, doc.drawn_look()), limit, budget).1
+}
+
 /// この文書の見た目が持つユーザーチャンネルの配列のバイト数（ミップ込み。`paint_shift` は標準のチャンネルの縮め）。3D ビューの
 /// 全体の予算の計画に使う（[`super::user_layers::plan`]）。
 pub fn planned_user_bytes(doc: &Document, paint_shift: u32, limit: u32, budget: u64) -> u64 {
-    let count = wanted_users(doc, doc.look()).len();
+    let count = wanted_users(doc, doc.drawn_look()).len();
     super::user_layers::plan([doc.width(), doc.height()], count, paint_shift, limit, budget).1
 }
 
@@ -127,6 +174,18 @@ pub fn params(
     look: &MaterialLook,
     users: &[Channel],
     images: [Option<ImageColorSpace>; 2],
+) -> Vec<f32> {
+    params_with(doc, look, users, images, &[])
+}
+
+/// `params` に、Unity から受けた絵（`received`: スロットの名前・配列の層・sRGB か）を足したもの。受けた絵は、割り当てていない
+/// スロットだけが読む（割り当てたチャンネル・画像が勝つ）。
+pub fn params_with(
+    doc: &Document,
+    look: &MaterialLook,
+    users: &[Channel],
+    images: [Option<ImageColorSpace>; 2],
+    received: &[(&str, usize, bool)],
 ) -> Vec<f32> {
     let v = |name: &str| liltoon::value(look, name);
     let x = |name: &str| liltoon::number(look, name);
@@ -289,6 +348,11 @@ pub fn params(
     for (i, slot) in SLOTS.iter().enumerate() {
         def[i] = slot.default.rgba();
         let Some(source) = look.textures.get(slot.name) else {
+            if let Some((_, layer, srgb)) = received.iter().find(|r| r.0 == slot.name) {
+                let s = RECEIVED_SOURCE + *layer as i32;
+                src[i] = [s * 4, s * 4 + 1, s * 4 + 2, s * 4 + 3];
+                flags[i] = [f32::from(*srgb), 1.0, s as f32, 0.0];
+            }
             continue;
         };
         match source {
@@ -477,10 +541,23 @@ struct HeldImage {
     texture: ImageTexture,
 }
 
+/// 見た目の配列の辺の上限とバイトの予算（[`LookGpu::sync`]。3D ビューの全体の予算の計画が決める）。
+#[derive(Clone, Copy, Debug)]
+pub struct LookBudget {
+    /// ユーザーチャンネルの配列の辺の上限（受けた絵の配列は、これと [`received_layers::MAX_LAYER_SIZE`] の小さいほう）。
+    pub limit: u32,
+    /// ユーザーチャンネルの配列のバイトの予算。
+    pub users: u64,
+    /// Unity から受けた絵の配列のバイトの予算。
+    pub received: u64,
+}
+
 /// 1 つのセットの見た目の GPU の持ち物。
 pub struct LookGpu {
     pub buffer: wgpu::Buffer,
     pub users: UserLayers,
+    /// Unity から受けた、描いていないスロットの絵（束ねの 11）。
+    pub received: ReceivedLayers,
     images: [Option<HeldImage>; 2],
     written: Vec<f32>,
     /// 中身が変わるたびに増える（描き直しの鍵）。
@@ -500,6 +577,10 @@ pub struct LookGpu {
 struct ParamsKey {
     doc: u128,
     revision: u64,
+    /// 描く見た目の番号（利用者の設定・受けた見た目のどちらが変わっても進む）。
+    look_serial: u64,
+    /// 受けた絵の層の並び（スロットの名前と sRGB か）。
+    received: Vec<(String, bool)>,
     /// 見た目の設定の入れ物の番地（文書は設定を替えるたびに新しい入れ物にする。番地の使い回しは版で分ける）。
     look: usize,
     users: Vec<Channel>,
@@ -508,10 +589,14 @@ struct ParamsKey {
 
 impl LookGpu {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> LookGpu {
-        LookGpu::with_users(device, UserLayers::new(device, queue))
+        LookGpu::with_users(
+            device,
+            UserLayers::new(device, queue),
+            ReceivedLayers::new(device, queue),
+        )
     }
 
-    fn with_users(device: &wgpu::Device, users: UserLayers) -> LookGpu {
+    fn with_users(device: &wgpu::Device, users: UserLayers, received: ReceivedLayers) -> LookGpu {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("yolu-3d-liltoon"),
             size: LIL_BYTES,
@@ -521,6 +606,7 @@ impl LookGpu {
         LookGpu {
             buffer,
             users,
+            received,
             images: [None, None],
             written: Vec::new(),
             version: 0,
@@ -534,7 +620,7 @@ impl LookGpu {
 
     /// 同じ道具の、まっさらな別の持ち物（ほかのセット用）。
     pub fn sibling(&self, device: &wgpu::Device) -> LookGpu {
-        let mut look = LookGpu::with_users(device, self.users.sibling());
+        let mut look = LookGpu::with_users(device, self.users.sibling(), self.received.sibling());
         look.builds = self.builds.clone();
         look
     }
@@ -563,24 +649,29 @@ impl LookGpu {
         self.images[which].as_ref().map(|h| h.texture.view())
     }
 
-    /// GPU のバイト数（ユーザーチャンネルの配列。画像は数えない）。
+    /// GPU のバイト数（ユーザーチャンネルの配列と、Unity から受けた絵の配列。画像は数えない）。
     pub fn bytes(&self) -> u64 {
-        self.users.bytes()
+        self.users.bytes() + self.received.bytes()
     }
 
-    /// 文書の見た目の設定に合わせる（値・ユーザーチャンネルの配列・画像）。`paint` はそのセットの標準のチャンネルの絵（縮めと画像の作り方）、
-    /// `limit`・`budget` はユーザーチャンネルの配列の辺の上限とバイトの予算。標準の見た目のセットは、持ち物を手放すだけで値を作らない
+    /// 文書の見た目の設定に合わせる（値・ユーザーチャンネルの配列・画像・受けた絵の配列）。`paint` はそのセットの標準のチャンネルの絵（縮めと
+    /// 画像の作り方）、`budget` は配列の辺の上限とバイトの予算。標準の見た目のセットは、持ち物を手放すだけで値を作らない
     /// （描き方は PBR で、値を読まない）。lilToon のセットも、文書・版・設定が前と同じなら値を作り直さない（描くたびに回るので）。
     pub fn sync(
         &mut self,
         doc: &Document,
         paint: &Paint,
-        limit: u32,
-        budget: u64,
+        budget: LookBudget,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        let look = doc.look();
+        let LookBudget {
+            limit,
+            users: budget,
+            received: received_budget,
+        } = budget;
+        // 描く見た目（Unity から受けた値があれば、その上に利用者の設定を重ねたもの）
+        let look = doc.drawn_look();
         let draw = SetDraw::of(look);
         if !draw.lil {
             if self.draw != draw {
@@ -591,6 +682,9 @@ impl LookGpu {
             self.params_key = None;
             self.users.sync(doc, &[], 0, limit, budget, encoder);
             if self.images.iter_mut().any(|i| i.take().is_some()) {
+                self.image_version += 1;
+            }
+            if self.received.sync(&[], limit, received_budget) {
                 self.image_version += 1;
             }
             return;
@@ -635,9 +729,20 @@ impl LookGpu {
             }
             spaces[which] = self.images[which].as_ref().map(|h| h.space);
         }
+        // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、層の上限まで）
+        let wanted = received_layered(doc, look);
+        if self.received.sync(&wanted, limit, received_budget) {
+            self.image_version += 1;
+        }
+        let received: Vec<(String, bool)> = wanted
+            .iter()
+            .map(|(slot, image)| (slot.clone(), image.srgb))
+            .collect();
         let key = ParamsKey {
             doc: doc.id(),
             revision: doc.revision(),
+            look_serial: doc.look_serial(),
+            received: received.clone(),
             look: look as *const MaterialLook as usize,
             users: self.users.channels().to_vec(),
             spaces,
@@ -647,7 +752,11 @@ impl LookGpu {
         }
         self.params_key = Some(key);
         self.builds.fetch_add(1, Ordering::Relaxed);
-        let values = params(doc, look, self.users.channels(), spaces);
+        let layers: Vec<(&str, usize, bool)> = received
+            .iter()
+            .filter_map(|(slot, srgb)| Some((slot.as_str(), self.received.layer_of(slot)?, *srgb)))
+            .collect();
+        let values = params_with(doc, look, self.users.channels(), spaces, &layers);
         // ビットで比べる（整数の並び -1 などはビットのまま f32 に入れていて、NaN になる）
         let same = values.len() == self.written.len()
             && values
@@ -777,6 +886,108 @@ mod tests {
         let v = params(&gone, &look, &users, [None, None]);
         assert_eq!(slot_src(&v, 4), [-1; 4]);
         assert_eq!(slot_src(&v, 5), [-1, -3, -2, 8]);
+    }
+
+    fn received_image(srgb: bool) -> Arc<yolu_core::look::ReceivedImage> {
+        Arc::new(yolu_core::look::ReceivedImage {
+            width: 2,
+            height: 2,
+            srgb,
+            pixels: vec![255; 16].into(),
+        })
+    }
+
+    /// 受けた見た目: _MainTex は流し込み先（Color）、ほかの全部のスロットに Unity から受けた絵（色・マットキャップのスロットは sRGB）。
+    fn received_everywhere(doc: &mut Document) {
+        let mut look = lil();
+        look.textures
+            .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+        let mut r = yolu_core::look::ReceivedLook {
+            look,
+            ..Default::default()
+        };
+        for slot in &SLOTS[1..] {
+            r.images
+                .insert(slot.name.into(), received_image(matches!(slot.usage, SlotUse::Color | SlotUse::Image)));
+        }
+        doc.set_received_look(Some(r)).unwrap();
+    }
+
+    #[test]
+    fn received_images_fill_the_unassigned_slots_up_to_the_layer_limit() {
+        let mut doc = Document::new(8, 8).unwrap();
+        received_everywhere(&mut doc);
+        let drawn = doc.drawn_look().clone();
+        let all = received_images(&doc, &drawn);
+        assert_eq!(all.len(), SLOTS.len() - 1, "流し込み先（_MainTex）は受けた絵を読まない");
+        let layered = received_layered(&doc, &drawn);
+        assert_eq!(layered.len(), MAX_RECEIVED_LAYERS);
+        // スロットの並びで先の 16 枚が層、17 枚目からは持たない
+        assert_eq!(
+            dropped_received(&doc, &drawn),
+            SLOTS[1 + MAX_RECEIVED_LAYERS..]
+                .iter()
+                .map(|s| s.name.to_owned())
+                .collect::<Vec<_>>()
+        );
+        // LookGpu と同じく、層の番号は並びの順
+        let layers: Vec<(&str, usize, bool)> = layered
+            .iter()
+            .enumerate()
+            .map(|(k, (slot, image))| (slot.as_str(), k, image.srgb))
+            .collect();
+        let v = params_with(&doc, &drawn, &[], [None, None], &layers);
+        // 流し込み先は 3D ビューの絵（Color）
+        assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
+        assert_eq!(slot_flags(&v, 0), [1.0, 1.0, 0.0, 0.0]);
+        // 色調補正マスク（層 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
+        assert_eq!(slot_src(&v, 1), [160, 161, 162, 163]);
+        assert_eq!(slot_flags(&v, 1), [0.0, 1.0, 40.0, 0.0]);
+        // ノーマルマップ（層 2 = 元 42）: シェーダーは元が 40 以上なら X を A × R で読む
+        assert_eq!(slot_flags(&v, 3), [0.0, 1.0, 42.0, 0.0]);
+        // 影色（層 6 = 元 46）は sRGB
+        assert_eq!(slot_flags(&v, 7), [1.0, 1.0, 46.0, 0.0]);
+        // マットキャップの絵のスロットも受けた絵で描く（層 13 = 元 53）
+        assert_eq!(slot_flags(&v, 14), [1.0, 1.0, 53.0, 0.0]);
+        // 16 枚目（マットキャップ 2nd、層 15 = 元 55）まで
+        assert_eq!(slot_flags(&v, 16), [1.0, 1.0, 55.0, 0.0]);
+        // 17 枚目からは割り当てのない既定
+        for (i, slot) in SLOTS.iter().enumerate().skip(1 + MAX_RECEIVED_LAYERS) {
+            assert_eq!(slot_src(&v, i), [-1; 4], "{}", slot.name);
+            assert_eq!(slot_flags(&v, i), [0.0; 4], "{}", slot.name);
+        }
+    }
+
+    #[test]
+    fn a_slot_assigned_here_wins_over_the_received_image() {
+        let mut doc = Document::new(8, 8).unwrap();
+        received_everywhere(&mut doc);
+        // 利用者が影色を Color に割り当てる（受けた絵より勝つ）
+        let mut mine = lil();
+        mine.textures
+            .insert("_ShadowColorTex".into(), TextureSource::Channel(Channel::Color));
+        doc.set_look(mine, false).unwrap();
+        let drawn = doc.drawn_look().clone();
+        let layered = received_layered(&doc, &drawn);
+        assert!(layered.iter().all(|(slot, _)| slot != "_ShadowColorTex"));
+        // 影色が抜けた分、17 枚目（マットキャップ 2nd のマスク）が層に入る
+        assert!(layered.iter().any(|(slot, _)| slot == "_MatCap2ndBlendMask"));
+        assert!(!dropped_received(&doc, &drawn).contains(&"_MatCap2ndBlendMask".to_owned()));
+        let layers: Vec<(&str, usize, bool)> = layered
+            .iter()
+            .enumerate()
+            .map(|(k, (slot, image))| (slot.as_str(), k, image.srgb))
+            .collect();
+        let v = params_with(&doc, &drawn, &[], [None, None], &layers);
+        assert_eq!(slot_src(&v, 7), [0, 1, 2, 3], "割り当てたチャンネル");
+        assert_eq!(slot_flags(&v, 7), [1.0, 1.0, 0.0, 0.0]);
+        // 標準の見た目を選ぶと、受けた絵は読まない
+        let mut standard = doc.look().clone();
+        standard.kind = LookKind::Standard;
+        standard.kind_chosen = true;
+        doc.set_look(standard, false).unwrap();
+        assert!(received_images(&doc, doc.drawn_look()).is_empty());
+        assert_eq!(planned_received_bytes(&doc, 1024, u64::MAX), 0);
     }
 
     #[test]

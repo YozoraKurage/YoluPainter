@@ -14,7 +14,7 @@ use yolu_app::look::LookOp;
 use yolu_app::m2::Edit;
 use yolu_app::recovery::{RecoveryAction, RecoverySettings};
 use yolu_app::state::{Action, AppState};
-use yolu_core::look::{LookKind, LookValue, TextureSource};
+use yolu_core::look::{LookKind, LookValue, MissingImage, ReceivedImage, ReceivedLook, TextureSource};
 use yolu_core::mesh_maps::MeshMapKind;
 use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, FilterTarget, Rgba8};
 
@@ -252,6 +252,88 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     assert!(!s2.doc.can_undo(), "復旧は Undo の段を積まない");
 }
 
+/// Live Link で Unity から受けた値（試験が文書へ直に入れる）: 範囲 0.25、マットキャップの絵が届いている。
+fn received_from_unity() -> ReceivedLook {
+    let mut look = yolu_core::look::MaterialLook {
+        kind: LookKind::LilToon,
+        shader: "Hidden/lilToonOutline".into(),
+        ..Default::default()
+    };
+    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties.insert("_ShadowBorder".into(), LookValue::Float(0.25));
+    look.textures
+        .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    let mut r = ReceivedLook {
+        look,
+        source: "lilToon 2.3.4 · Standard/Opaque+Outline".into(),
+        ..Default::default()
+    };
+    r.images.insert(
+        "_MatCapTex".into(),
+        std::sync::Arc::new(ReceivedImage {
+            width: 2,
+            height: 2,
+            srgb: true,
+            pixels: [[255u8, 0, 0, 255]; 4].concat().into(),
+        }),
+    );
+    r.missing
+        .insert("_ShadowColorTex".into(), MissingImage::OverBudget);
+    r
+}
+
+/// 保存した形（絵の画素は持たず、絵のあったスロットは「届いていない」）。
+fn as_stored(r: &ReceivedLook) -> ReceivedLook {
+    let mut out = r.clone();
+    for slot in std::mem::take(&mut out.images).into_keys() {
+        out.missing.insert(slot, MissingImage::Pending);
+    }
+    out
+}
+
+#[test]
+fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_off() {
+    let dir = Dir::new("recovery-received");
+    let root = dir.0.join("recovery");
+    let mut s = AppState::new_in(32, 32, Lang::Ja);
+    s.recovery.enable(root.clone(), settings()).unwrap();
+    // 保存の設定は切（.ylp には書かない）。復旧は開いていた時の見た目に戻すので、設定によらず書く
+    s.prefs.settings.livelink_keep_values = false;
+    s.doc.set_received_look(Some(received_from_unity())).unwrap();
+    s.apply(Action::Look(LookOp::Value {
+        name: "_ShadowBorder",
+        value: LookValue::Float(0.8),
+        drag: false,
+    }));
+    assert!(s.modified);
+    let from = Instant::now();
+    s.recovery_tick_at(from);
+    s.recovery_tick_at(from + Duration::from_secs(16));
+    s.recovery_wait();
+    // 書き置きの世代の look.json の received は、値と絵のあったスロットの名前だけ（画素は書かない）
+    let store = yolu_io::GenerationStore::new(s.recovery.session_dir().unwrap());
+    let mut files = store.load().unwrap().files;
+    files.remove(yolu_io::INFO_NAME);
+    let project = yolu_io::Project::from_entries(files).unwrap();
+    let id = project.sets()[0].id.clone();
+    let stored = project.received_look(&id).unwrap().expect("受けた値が書き置きにある");
+    assert_eq!(stored, as_stored(&received_from_unity()));
+    assert!(stored.images.is_empty());
+    // 落ちた体で起動して、その世代を開くと受けた値も戻る（欄で変えた項目が勝つまま。Undo の段は積まない）
+    assert!(s.recovery.is_idle());
+    drop(s);
+    let mut s2 = AppState::new_in(32, 32, Lang::Ja);
+    s2.recovery.enable(root, settings()).unwrap();
+    s2.recovery_apply(RecoveryAction::Open);
+    assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
+    let r = s2.doc.received_look().expect("受けた値が戻る");
+    assert_eq!(r, &as_stored(&received_from_unity()));
+    assert_eq!(r.missing["_MatCapTex"], MissingImage::Pending, "絵はつなぎ直すまで届いていない");
+    assert_eq!(s2.doc.drawn_look().float("_ShadowBorder", 0.5), 0.8);
+    assert_eq!(s2.doc.drawn_look().kind, LookKind::LilToon);
+    assert!(!s2.doc.can_undo());
+}
+
 fn cube() -> AppState {
     let mut s = AppState::new(64, 64);
     s.bake.backend = BakeBackend::Cpu;
@@ -326,6 +408,41 @@ fn unlocking_a_set_whose_inputs_arrive_says_why_its_look_cannot_be_read() {
     assert!(again.message.contains("編集できます"), "{}", again.message);
     assert!(again.message.contains("見た目の設定を読めません"), "{}", again.message);
     assert!(again.doc.look().is_default());
+}
+
+#[test]
+fn unlocking_a_set_whose_inputs_arrive_brings_back_the_received_values() {
+    // Generator の入力（焼いたマップ）がそろわないので読むだけで開くセットに、Unity から受けた値を保存しておく
+    let dir = Dir::new("waiting-received");
+    let path = dir.0.join("waiting.ylp");
+    let mut s = cube();
+    s.apply(Action::M2(Edit::NewFill));
+    let layer = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::AddMask(layer)));
+    s.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Mask,
+        kind: yolu_core::generator::Kind::EdgeWear,
+    }));
+    s.apply(Action::Bake(BakeAction::Start));
+    s.wait_bake();
+    s.sync_effects();
+    s.doc.set_received_look(Some(received_from_unity())).unwrap();
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+
+    let mut again = AppState::new(64, 64);
+    again.bake.backend = BakeBackend::Cpu;
+    again.apply(Action::OpenProject(path));
+    assert!(again.read_only_reason().is_some(), "入力がそろわない");
+    // 入力がそろって編集できるようになると、受けた値も戻る（開いたときと同じ）
+    again.apply(Action::LoadDemoModel);
+    again.sync_effect_inputs_with(true);
+    assert!(again.read_only_reason().is_none(), "{:?} {}", again.read_only_reason(), again.message);
+    let r = again.doc.received_look().expect("受けた値が戻る");
+    assert_eq!(r, &as_stored(&received_from_unity()));
+    assert_eq!(again.doc.drawn_look().kind, LookKind::LilToon);
+    assert_eq!(again.doc.drawn_look().float("_ShadowBorder", 0.5), 0.25);
+    assert!(!again.doc.can_undo(), "戻すのは Undo の段にならない");
 }
 
 #[test]

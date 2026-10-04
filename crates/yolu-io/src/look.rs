@@ -23,10 +23,25 @@
 //!     "_ShadowStrengthMask": { "packed": [ { "channel": 7, "component": 0 }, { "channel": 7, "component": 0 }, "zero", "one" ] },
 //!     "_MatCapTex": { "image": "<32 桁の 16 進>" }
 //!   },
-//!   "keywords": []
+//!   "keywords": [],
+//!   "kindChosen": true,
+//!   "received": {
+//!     "kind": "lilToon",
+//!     "shader": "Hidden/lilToonTransparent",
+//!     "source": "lilToon 2.3.4 · Standard/Transparent",
+//!     "properties": { "_ShadowBorder": { "float": 0.3 } },
+//!     "textures": { "_MainTex": { "channel": 0 } },
+//!     "keywords": [],
+//!     "missing": { "_MatCapTex": "pending", "_ShadowColorTex": "overBudget" }
+//!   }
 //! }
 //! ```
 //!
+//! - 根の本体（`kind`〜`keywords`）は利用者の設定。`kindChosen` は利用者が欄で描き方を選んだか（無ければ偽）。
+//! - `received` は Live Link で Unity のマテリアルから受けた値（`yolu_core::look::ReceivedLook`。本体と同じ形と、出どころの文 `source`、
+//!   絵の無いスロットの理由 `missing`）。描くときは受けた値の上に利用者の設定を重ねる。受けた絵の画素は書かない（Unity のアセットで、
+//!   つなぎ直せば届く）。絵のあったスロットは `missing` の `pending`（届いていない）として書く。理由は `pending`・`overBudget`・`unreadable`。
+//!   利用者の設定と受けた見た目は別々に書き換える（[`write`] は `received` を前のエントリのまま、[`write_received`] は本体を前のまま）。
 //! - `format` は 1。2 以上は読まずに断る（エントリはバイト列のまま残る）。
 //! - `kind` は `standard`・`lilToon`。知らない値は断る。
 //! - `channel` は文書のチャンネルの番号（標準 0〜5・ユーザーチャンネル 6〜63。正本の版 22 のチャンネルの一覧の番号）。文書に無い番号は
@@ -37,7 +52,9 @@
 //!   本体が混ざったエントリを作らない。読めないエントリを上書きするかどうかは呼び手が決めて、利用者に知らせる）。
 
 use serde_json::{Map, Value};
-use yolu_core::look::{LookKind, LookValue, MaterialLook, PlaneSource, TextureSource};
+use yolu_core::look::{
+    LookKind, LookValue, MaterialLook, MissingImage, PlaneSource, ReceivedLook, TextureSource,
+};
 use yolu_core::{Channel, ImageId};
 
 use crate::{check, check_budget, Error, Result};
@@ -49,13 +66,75 @@ pub const FORMAT: i64 = 1;
 /// エントリの大きさの上限。
 pub const MAX_BYTES: usize = 1 << 20;
 
-/// 読む（形の違い・新しい版・知らない種類・範囲の外は断る）。
+/// 読む（形の違い・新しい版・知らない種類・範囲の外は断る）。利用者の設定だけ（`received` は [`read_received`]）。
 pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
+    let obj = root_object(bytes)?;
+    let mut look = read_body(&obj, "look.json")?;
+    look.kind_chosen = match obj.get("kindChosen") {
+        None | Some(Value::Null) => false,
+        Some(v) => v
+            .as_bool()
+            .ok_or_else(|| invalid("look.json の kindChosen が真偽ではありません"))?,
+    };
+    look.validate()
+        .map_err(|e| invalid(format!("look.json の値が範囲外です: {e}")))?;
+    Ok(look)
+}
+
+/// 受けた見た目（`received`。Live Link で Unity のマテリアルから受けた値）を読む。無ければ None。絵の画素は保存しないので、
+/// 絵のあったスロットは「届いていない」（`missing` の `pending`）として戻る。
+pub fn read_received(bytes: &[u8]) -> Result<Option<ReceivedLook>> {
+    let obj = root_object(bytes)?;
+    let Some(received) = obj.get("received").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let r = received
+        .as_object()
+        .ok_or_else(|| invalid("look.json の received がオブジェクトではありません"))?;
+    let look = read_body(r, "look.json の received")?;
+    let source = match r.get("source") {
+        None | Some(Value::Null) => String::new(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| invalid("look.json の received.source が文字列ではありません"))?
+            .to_owned(),
+    };
+    let mut missing = std::collections::BTreeMap::new();
+    if let Some(m) = r.get("missing") {
+        let m = m
+            .as_object()
+            .ok_or_else(|| invalid("look.json の received.missing がオブジェクトではありません"))?;
+        check_budget(
+            m.len() <= yolu_core::look::MAX_TEXTURES,
+            "look.json の received.missing の数が上限を超えています",
+        )?;
+        for (slot, why) in m {
+            let why = why
+                .as_str()
+                .and_then(MissingImage::from_key)
+                .ok_or_else(|| invalid(format!("look.json の received.missing の {slot} が違います")))?;
+            missing.insert(slot.clone(), why);
+        }
+    }
+    let received = ReceivedLook {
+        look,
+        source,
+        images: Default::default(),
+        missing,
+    };
+    received
+        .validate()
+        .map_err(|e| invalid(format!("look.json の received が範囲外です: {e}")))?;
+    Ok(Some(received))
+}
+
+/// 中身のオブジェクト（予算・JSON・形式の版を確かめる）。
+fn root_object(bytes: &[u8]) -> Result<Map<String, Value>> {
     check_budget(bytes.len() <= MAX_BYTES, "look.json のバイト予算超過です")?;
     let root: Value = serde_json::from_slice(bytes)?;
-    let obj = root
-        .as_object()
-        .ok_or_else(|| invalid("look.json がオブジェクトではありません"))?;
+    let Value::Object(obj) = root else {
+        return Err(invalid("look.json がオブジェクトではありません"));
+    };
     let format = obj
         .get("format")
         .and_then(Value::as_i64)
@@ -66,17 +145,22 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
             "look.json の形式 {format} はこの版では読めません（{FORMAT} まで）"
         )));
     }
+    Ok(obj)
+}
+
+/// 見た目の本体（kind・shader・properties・textures・keywords）を読む。`at` は誤りの文に出す場所。
+fn read_body(obj: &Map<String, Value>, at: &str) -> Result<MaterialLook> {
     let kind = obj
         .get("kind")
         .and_then(Value::as_str)
-        .ok_or_else(|| invalid("look.json の kind が文字列ではありません"))?;
+        .ok_or_else(|| invalid(format!("{at} の kind が文字列ではありません")))?;
     let kind = LookKind::from_key(kind)
-        .ok_or_else(|| invalid(format!("look.json の知らない kind です: {kind}")))?;
+        .ok_or_else(|| invalid(format!("{at} の知らない kind です: {kind}")))?;
     let shader = match obj.get("shader") {
         None | Some(Value::Null) => String::new(),
         Some(v) => v
             .as_str()
-            .ok_or_else(|| invalid("look.json の shader が文字列ではありません"))?
+            .ok_or_else(|| invalid(format!("{at} の shader が文字列ではありません")))?
             .to_owned(),
     };
     let mut look = MaterialLook {
@@ -87,7 +171,7 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
     if let Some(props) = obj.get("properties") {
         let props = props
             .as_object()
-            .ok_or_else(|| invalid("look.json の properties がオブジェクトではありません"))?;
+            .ok_or_else(|| invalid(format!("{at} の properties がオブジェクトではありません")))?;
         check_budget(
             props.len() <= yolu_core::look::MAX_PROPERTIES,
             "look.json のプロパティの数が上限を超えています",
@@ -99,7 +183,7 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
     if let Some(textures) = obj.get("textures") {
         let textures = textures
             .as_object()
-            .ok_or_else(|| invalid("look.json の textures がオブジェクトではありません"))?;
+            .ok_or_else(|| invalid(format!("{at} の textures がオブジェクトではありません")))?;
         check_budget(
             textures.len() <= yolu_core::look::MAX_TEXTURES,
             "look.json のテクスチャの数が上限を超えています",
@@ -111,7 +195,7 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
     if let Some(keywords) = obj.get("keywords") {
         let keywords = keywords
             .as_array()
-            .ok_or_else(|| invalid("look.json の keywords が配列ではありません"))?;
+            .ok_or_else(|| invalid(format!("{at} の keywords が配列ではありません")))?;
         check_budget(
             keywords.len() <= yolu_core::look::MAX_KEYWORDS,
             "look.json のキーワードの数が上限を超えています",
@@ -119,28 +203,29 @@ pub fn read(bytes: &[u8]) -> Result<MaterialLook> {
         for k in keywords {
             look.keywords.push(
                 k.as_str()
-                    .ok_or_else(|| invalid("look.json のキーワードが文字列ではありません"))?
+                    .ok_or_else(|| invalid(format!("{at} のキーワードが文字列ではありません")))?
                     .to_owned(),
             );
         }
     }
     look.validate()
-        .map_err(|e| invalid(format!("look.json の値が範囲外です: {e}")))?;
+        .map_err(|e| invalid(format!("{at} の値が範囲外です: {e}")))?;
     Ok(look)
 }
 
-/// 書く。`previous` は同じエントリの前のバイト列（同じ形式のオブジェクトなら、知らないキーを残す。ほかは残さない）。
-pub fn write(look: &MaterialLook, previous: Option<&[u8]>) -> Result<Vec<u8>> {
-    look.validate()
-        .map_err(|e| invalid(format!("見た目の設定が範囲外です: {e}")))?;
-    let mut root: Map<String, Value> = previous
+/// 前のエントリの、同じ形式のオブジェクト（知らないキーを残す元）。ほかの形式・壊れたものは空。
+fn previous_object(previous: Option<&[u8]>) -> Map<String, Value> {
+    previous
         .and_then(|b| serde_json::from_slice::<Value>(b).ok())
         .and_then(|v| match v {
             Value::Object(m) if m.get("format").and_then(Value::as_i64) == Some(FORMAT) => Some(m),
             _ => None,
         })
-        .unwrap_or_default();
-    root.insert("format".into(), Value::from(FORMAT));
+        .unwrap_or_default()
+}
+
+/// 見た目の本体を書く（`kind`・`shader`・`properties`・`textures`・`keywords`）。
+fn write_body(root: &mut Map<String, Value>, look: &MaterialLook) {
     root.insert("kind".into(), Value::from(look.kind.key()));
     if look.shader.is_empty() {
         root.remove("shader");
@@ -163,9 +248,89 @@ pub fn write(look: &MaterialLook, previous: Option<&[u8]>) -> Result<Vec<u8>> {
         "keywords".into(),
         Value::Array(look.keywords.iter().map(|k| Value::from(k.as_str())).collect()),
     );
+}
+
+fn finish(root: Map<String, Value>) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec_pretty(&Value::Object(root))?;
     check_budget(bytes.len() <= MAX_BYTES, "look.json のバイト予算超過です")?;
     Ok(bytes)
+}
+
+/// 書く（利用者の設定）。`previous` は同じエントリの前のバイト列（同じ形式のオブジェクトなら、知らないキーと受けた見た目
+/// （`received`）を残す。ほかは残さない）。
+pub fn write(look: &MaterialLook, previous: Option<&[u8]>) -> Result<Vec<u8>> {
+    look.validate()
+        .map_err(|e| invalid(format!("見た目の設定が範囲外です: {e}")))?;
+    let mut root = previous_object(previous);
+    root.insert("format".into(), Value::from(FORMAT));
+    write_body(&mut root, look);
+    if look.kind_chosen {
+        root.insert("kindChosen".into(), Value::from(true));
+    } else {
+        root.remove("kindChosen");
+    }
+    finish(root)
+}
+
+/// 受けた見た目（`received`）だけを置き換えて書く（None は外す）。利用者の設定と知らないキーは前のエントリのまま（前のエントリが無ければ、
+/// 利用者の設定は既定（標準）で書く。読めない前のエントリには書かずに断る）。絵の画素は書かず、絵のあったスロットは `missing` の `pending` にする。
+/// 利用者の設定が既定で受けた見た目も無いなら None（エントリを消す）。
+pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+    // 読めない前のエントリ（新しい形式・壊れた）の上には書かない（利用者の設定を黙って消さない）
+    if let Some(b) = previous {
+        root_object(b)?;
+    }
+    let mut root = previous_object(previous);
+    // 読めない本体は既定と見なさない（受けた見た目を外しても、エントリごと消さない）
+    let user_default = root.is_empty()
+        || read(&serde_json::to_vec(&Value::Object(root.clone()))?)
+            .map(|l| l.is_default())
+            .unwrap_or(false);
+    if root.is_empty() {
+        root.insert("format".into(), Value::from(FORMAT));
+        write_body(&mut root, &MaterialLook::default());
+    }
+    match received {
+        None => {
+            root.remove("received");
+            if user_default && root.keys().all(|k| BODY_KEYS.contains(&k.as_str())) {
+                return Ok(None);
+            }
+        }
+        Some(r) => {
+            r.validate()
+                .map_err(|e| invalid(format!("受けた見た目が範囲外です: {e}")))?;
+            let mut body = Map::new();
+            write_body(&mut body, &r.look);
+            if !r.source.is_empty() {
+                body.insert("source".into(), Value::from(r.source.as_str()));
+            }
+            let mut missing: Map<String, Value> = r
+                .missing
+                .iter()
+                .map(|(k, why)| (k.clone(), Value::from(why.key())))
+                .collect();
+            for slot in r.images.keys() {
+                missing.insert(slot.clone(), Value::from(MissingImage::Pending.key()));
+            }
+            if !missing.is_empty() {
+                body.insert("missing".into(), Value::Object(missing));
+            }
+            root.insert("received".into(), Value::Object(body));
+        }
+    }
+    finish(root).map(Some)
+}
+
+/// 利用者の設定の本体のキー（これだけのエントリは、既定なら消してよい）。
+const BODY_KEYS: [&str; 7] = ["format", "kind", "shader", "properties", "textures", "keywords", "kindChosen"];
+
+/// 前のエントリに受けた見た目（`received`）があるか（読めなくても、キーがあれば true）。
+pub fn has_received(previous: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(previous)
+        .ok()
+        .and_then(|v| v.get("received").map(|r| !r.is_null()))
+        .unwrap_or(false)
 }
 
 fn invalid(why: impl Into<String>) -> Error {
@@ -358,6 +523,41 @@ mod tests {
         assert_eq!(write(&look, None).unwrap(), bytes);
         let standard = MaterialLook::default();
         assert_eq!(read(&write(&standard, None).unwrap()).unwrap(), standard);
+    }
+
+    #[test]
+    fn the_kind_choice_round_trips_and_a_rewrite_keeps_the_received_values() {
+        let mut look = sample();
+        look.kind_chosen = true;
+        let bytes = write(&look, None).unwrap();
+        assert_eq!(read(&bytes).unwrap(), look);
+        let mut received = ReceivedLook {
+            look: sample(),
+            ..ReceivedLook::default()
+        };
+        received.look.kind_chosen = false;
+        let with = write_received(Some(&received), Some(&bytes)).unwrap().unwrap();
+        assert_eq!(read(&with).unwrap(), look, "利用者の設定はそのまま");
+        // 利用者の設定を書き直しても受けた見た目は残る
+        let mut changed = look.clone();
+        changed.kind_chosen = false;
+        let rewritten = write(&changed, Some(&with)).unwrap();
+        assert_eq!(read(&rewritten).unwrap(), changed);
+        assert_eq!(read_received(&rewritten).unwrap(), Some(received));
+        assert!(has_received(&rewritten));
+        assert!(!has_received(&bytes));
+        // 知らないキーがあれば、受けた見た目を外してもエントリは残る
+        let mut v: Value = serde_json::from_slice(&write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap()).unwrap();
+        v["futureKey"] = Value::from(1);
+        let kept = write_received(None, Some(&serde_json::to_vec(&v).unwrap())).unwrap();
+        assert!(kept.is_some());
+        let plain = write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap();
+        assert_eq!(write_received(None, Some(&plain)).unwrap(), None);
+        // 本体が読めない（形式は同じ）エントリは、受けた見た目を外しても消さない
+        let mut broken: Value = serde_json::from_slice(&plain).unwrap();
+        broken["properties"]["_A"] = serde_json::json!({"float": "x"});
+        let kept = write_received(None, Some(&serde_json::to_vec(&broken).unwrap())).unwrap();
+        assert!(kept.is_some());
     }
 
     #[test]

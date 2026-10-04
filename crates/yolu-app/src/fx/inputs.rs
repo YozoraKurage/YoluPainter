@@ -624,6 +624,7 @@ impl AppState {
         };
         let selection = native.selection.clone();
         let look = project.project().look(&set.id);
+        let received = project.project().received_look(&set.id);
         let mut doc = match crate::project::to_core(&native.document, self.lang, budget) {
             Ok(doc) => doc,
             Err(reason) => {
@@ -645,7 +646,8 @@ impl AppState {
         // 選択範囲（selection.bin）は開いたときと同じく文書に戻す
         let restored = crate::selection::io::restore_into(&mut doc, selection.as_ref(), self.lang);
         // 見た目の設定（look.json）も開いたときと同じく戻す（読めなければ標準のまま、理由を言う）
-        let look_restored = crate::look::io::restore_from(&mut doc, look, self.lang);
+        let look_restored = crate::look::io::restore_from(&mut doc, look, self.lang)
+            .and(crate::look::io::restore_received_from(&mut doc, received, self.lang));
         let saved = Some((doc.id(), doc.revision()));
         self.put_set_doc(index, doc);
         if let Some(set) = self.sets.get_mut(index) {

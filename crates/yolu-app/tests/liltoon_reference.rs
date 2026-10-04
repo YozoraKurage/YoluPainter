@@ -779,6 +779,18 @@ fn camera_rotation(c: &OrbitCamera) -> Quat {
 /// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだ窓も）。`view` を渡すと、3D の表示域がその大きさに
 /// なるように窓の大きさを合わせる（Unity の絵と同じ投影にする。窓の中の欄の幅が変わっても同じ場面になるように）。
 fn render(scene: &Scene, view: Option<(u32, u32)>) -> (Harness<'static, YoluApp>, image::RgbaImage) {
+    render_as(scene, view, &|doc| {
+        let look = (scene.look)(doc);
+        doc.set_look(look, false).unwrap();
+    })
+}
+
+/// `render` の、文書の見た目の当て方を選べる形（`setup` が描いた後の文書に見た目を当てる。Live Link の値で描く比べ）。
+fn render_as(
+    scene: &Scene,
+    view: Option<(u32, u32)>,
+    setup: &dyn Fn(&mut Document),
+) -> (Harness<'static, YoluApp>, image::RgbaImage) {
     let mut h = harness();
     if let Some((w, hgt)) = view {
         for _ in 0..4 {
@@ -808,8 +820,7 @@ fn render(scene: &Scene, view: Option<(u32, u32)>) -> (Harness<'static, YoluApp>
     {
         let doc = &mut h.state_mut().state.doc;
         (scene.paint)(doc);
-        let look = (scene.look)(doc);
-        doc.set_look(look, false).unwrap();
+        setup(doc);
     }
     // マットキャップの絵は文書の効果の入力の画像として渡す（棚の画像と同じ道）
     if scene.name == "matcap" || scene.name == "matcap2" {
@@ -948,6 +959,119 @@ fn compare() {
                 o.0[3] = 255;
             }
             d.save(dir.join(format!("diff_{}.png", scene.name))).unwrap();
+        }
+    }
+}
+
+/// Live Link が送る値（`tools/liltoon-reference.cs` が Unity のパッケージの `LiveLinkMaterialValues` で読んで書いた `link_<名前>.txt`
+/// と絵）から、スタンドアロンが受けたときと同じ受けた見た目（`look::link::received_look`）を作る。lilToon と判定されなければ None。
+fn link_received(dir: &Path, name: &str) -> Option<yolu_core::look::ReceivedLook> {
+    use yolu_protocol::{ChannelRoute, MaterialValues, PropertyEntry, PropertyValue, SlotState, SlotTexture, ValuesKind};
+    let text = std::fs::read_to_string(dir.join(format!("link_{name}.txt"))).ok()?;
+    let mut values = MaterialValues {
+        generation: 1,
+        material: 0,
+        kind: ValuesKind::LilToon,
+        shader: String::new(),
+        source: String::new(),
+        properties: Vec::new(),
+        keywords: Vec::new(),
+        slots: Vec::new(),
+    };
+    let mut routes = Vec::new();
+    let mut images = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let p: Vec<&str> = line.split(' ').collect();
+        let f = |i: usize| p[i].parse::<f32>().unwrap();
+        match p[0] {
+            "none" => return None,
+            "shader" => values.shader = line["shader ".len()..].to_owned(),
+            "source" => values.source = line["source ".len()..].to_owned(),
+            "route" => routes.push(ChannelRoute {
+                channel: p[1].parse().unwrap(),
+                property: p[2].to_owned(),
+            }),
+            "prop" => {
+                let v = [f(3), f(4), f(5), f(6)];
+                let value = match p[1] {
+                    "0" => PropertyValue::Float(v[0]),
+                    "1" => PropertyValue::Int(v[0] as i32),
+                    "2" => PropertyValue::Color(v),
+                    _ => PropertyValue::Vector(v),
+                };
+                values.properties.push(PropertyEntry {
+                    name: p[2].to_owned(),
+                    value,
+                });
+            }
+            "keyword" => values.keywords.push(p[1].to_owned()),
+            "slot" if p.len() == 3 => values.slots.push(SlotTexture {
+                name: p[1].to_owned(),
+                state: if p[2] == "empty" { SlotState::Empty } else { SlotState::Unreadable },
+                width: 0,
+                height: 0,
+            }),
+            "slot" => {
+                let (w, h) = (p[2].parse().unwrap(), p[3].parse().unwrap());
+                values.slots.push(SlotTexture {
+                    name: p[1].to_owned(),
+                    state: SlotState::Follows,
+                    width: w,
+                    height: h,
+                });
+                let pixels = std::fs::read(dir.join(p[5])).unwrap();
+                images.insert(
+                    p[1].to_owned(),
+                    std::sync::Arc::new(yolu_core::look::ReceivedImage {
+                        width: w,
+                        height: h,
+                        srgb: p[4] == "1",
+                        pixels: pixels.into(),
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+    Some(yolu_app::look::link::received_look(
+        &values,
+        &routes,
+        &images,
+        &Default::default(),
+    ))
+}
+
+#[test]
+#[ignore = "手で回す（LILTOON_REF_DIR の link_*.txt の値だけで描き、unity_*.png と比べる）"]
+fn compare_through_live_link() {
+    let Some(dir) = out_dir() else {
+        return;
+    };
+    let background = [31u8, 33, 38];
+    println!("| 場面 | 画素の差の平均 | 95 % | 最大 | 比べた画素 | 片方だけの画素 | 受けた絵 |");
+    println!("|---|---:|---:|---:|---:|---:|---:|");
+    for scene in scenes() {
+        let Ok(unity) = image::open(dir.join(format!("unity_{}.png", scene.name))) else {
+            println!("| {} | （Unity の絵が無い） | | | | | |", scene.name);
+            continue;
+        };
+        let unity = unity.to_rgba8();
+        let Some(received) = link_received(&dir, scene.name) else {
+            println!("| {} | （lilToon と判定されない） | | | | | |", scene.name);
+            continue;
+        };
+        let images = received.images.len();
+        // 利用者の設定は既定のまま（標準）、受けた見た目だけで描く（Live Link でつないだ直後と同じ）
+        let (_h, ours) = render_as(&scene, Some(unity.dimensions()), &|doc| {
+            doc.set_received_look(Some(received.clone())).unwrap();
+        });
+        ours.save(dir.join(format!("link_{}.png", scene.name))).unwrap();
+        match diff(&ours, &unity, background) {
+            Some((mean, p95, max, n, only)) => println!(
+                "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} | {images} |",
+                scene.name
+            ),
+            None => println!("| {} | （大きさが違う） | | | | | |", scene.name),
         }
     }
 }

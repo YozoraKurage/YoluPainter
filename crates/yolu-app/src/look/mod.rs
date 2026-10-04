@@ -5,6 +5,7 @@
 pub mod export;
 pub mod io;
 pub mod liltoon;
+pub mod link;
 pub mod panel;
 
 use yolu_core::look::{LookKind, LookValue, MaterialLook, PlaneSource, TextureSource};
@@ -179,8 +180,11 @@ pub enum LookOp {
         slot: &'static str,
         source: Option<TextureSource>,
     },
-    /// 節の値を既定へ。
+    /// 節の値を既定へ（Unity から受けた値があれば、その節は Unity の値で描く）。基本設定の節は、その節の行の描画モードと輪郭線の入切
+    /// （シェーダーの名前）も戻す。
     Reset(Section),
+    /// Unity から受けた値に合わせる（欄で変えた値・描画モード・輪郭線・描き方の選びを外す。スロットの割り当ては残す）。
+    FollowReceived,
     /// lilToon のひな形（lilToon にして、入にしている機能のマスクのユーザーチャンネルを作って割り当てる）。
     Template,
 }
@@ -206,7 +210,7 @@ pub fn default_textures(look: &mut MaterialLook) {
 
 /// 見た目の設定が指すプロジェクトの画像（マットキャップの絵。効果の入力として復号してもらう）。
 pub fn image_ids(doc: &Document) -> Vec<ImageId> {
-    let look = doc.look();
+    let look = doc.drawn_look();
     if look.kind != LookKind::LilToon {
         return Vec::new();
     }
@@ -351,9 +355,17 @@ fn free_name(doc: &Document, base: &str) -> String {
 /// チャンネル（R・G）の詰め合わせにする。機能が 1 つも入でなければ影を入にする。作ったチャンネルの数を返す。
 pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError> {
     doc.batch(|d| {
+        // 入にしている機能は描く見た目（Unity から受けた値を含む）で見て、割り当ては利用者の設定に書く
+        let drawn = d.drawn_look().clone();
         let mut look = d.look().clone();
         look.kind = LookKind::LilToon;
-        default_textures(&mut look);
+        let mut assigned = drawn.clone();
+        default_textures(&mut assigned);
+        for (slot, source) in &assigned.textures {
+            if !drawn.textures.contains_key(slot) {
+                look.textures.insert(slot.clone(), *source);
+            }
+        }
         let toggles = [
             "_UseShadow",
             "_UseRim",
@@ -362,9 +374,12 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             "_UseEmission",
             "_UseEmission2nd",
         ];
-        let outline = liltoon::shader_info(&look).outline;
-        if !outline && !toggles.iter().any(|t| liltoon::on(&look, t)) {
+        let outline = liltoon::shader_info(&drawn).outline;
+        let mut on_now = drawn.clone();
+        if !outline && !toggles.iter().any(|t| liltoon::on(&drawn, t)) {
             look.properties
+                .insert("_UseShadow".into(), LookValue::Float(1.0));
+            on_now.properties
                 .insert("_UseShadow".into(), LookValue::Float(1.0));
         }
         let mut made = 0usize;
@@ -382,13 +397,16 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             let on = if mask.toggle == "outline" {
                 outline
             } else {
-                liltoon::on(&look, mask.toggle)
+                liltoon::on(&on_now, mask.toggle)
             };
-            if !on || look.textures.contains_key(mask.slot) {
+            let has_image = d
+                .received_look()
+                .is_some_and(|r| r.images.contains_key(mask.slot));
+            if !on || look.textures.contains_key(mask.slot) || drawn.textures.contains_key(mask.slot) || has_image {
                 continue;
             }
             if mask.slot == "_ShadowStrengthMask"
-                && liltoon::number(&look, "_ShadowMaskType").round() == 2.0
+                && liltoon::number(&drawn, "_ShadowMaskType").round() == 2.0
             {
                 let right = add(
                     d,
@@ -455,16 +473,21 @@ impl AppState {
             return;
         }
         let mut look = self.doc.look().clone();
+        // 描画モード・輪郭線の今の様子は描く見た目（Unity から受けた値を含む）から読み、変えた値は利用者の設定に書く
+        let drawn = self.doc.drawn_look().clone();
         let mut coalesce = false;
         match op {
             LookOp::Kind(kind) => {
                 look.kind = kind;
-                if kind == LookKind::LilToon && look.textures.is_empty() {
+                // Unity から受けた値があるときだけ「選んだ」と覚える（受けた値の描き方より欄の選びが勝つ）。無いときの選びは種類だけで
+                // 足り、標準に戻した設定は既定のまま（保存しない）
+                look.kind_chosen = self.doc.received_look().is_some();
+                if kind == LookKind::LilToon && drawn.textures.is_empty() {
                     default_textures(&mut look);
                 }
             }
             LookOp::Mode(mode) => {
-                let info = liltoon::shader_info(&look);
+                let info = liltoon::shader_info(&drawn);
                 look.shader = liltoon::shader_name(mode, info.outline);
                 let cutoff = match mode {
                     RenderMode::Cutout => Some(0.5),
@@ -477,8 +500,14 @@ impl AppState {
                 }
             }
             LookOp::Outline(on) => {
-                let info = liltoon::shader_info(&look);
+                let info = liltoon::shader_info(&drawn);
                 look.shader = liltoon::shader_name(info.mode, on);
+            }
+            LookOp::FollowReceived => {
+                look = MaterialLook {
+                    textures: look.textures,
+                    ..MaterialLook::default()
+                };
             }
             LookOp::Value { name, value, drag } => {
                 look.properties.insert(name.into(), value);
@@ -495,6 +524,10 @@ impl AppState {
             LookOp::Reset(section) => {
                 for name in section.props() {
                     look.properties.remove(*name);
+                }
+                // 描画モードと輪郭線の入切は基本設定の節の行（輪郭線設定の節は、輪郭線が入のときに出る値だけ）
+                if section == Section::Base {
+                    look.shader.clear();
                 }
             }
             LookOp::Template => unreachable!("上で扱った"),

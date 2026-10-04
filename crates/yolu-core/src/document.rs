@@ -468,6 +468,12 @@ pub struct Document {
     id_colors: crate::mesh_maps::IdColorAssignments,
     /// 見た目の設定（3D ビューの描き方と lilToon の値。画素ではなく、正本には入らない。`look`）。
     look: crate::look::SharedLook,
+    /// 外から受けた見た目（Live Link。Undo にも版にも入らない。`look`）。
+    received_look: Option<std::sync::Arc<crate::look::ReceivedLook>>,
+    /// 描く見た目（受けた見た目があるときだけ、その上に `look` を重ねたもの。無ければ `look` を描く）。
+    drawn_look: Option<crate::look::SharedLook>,
+    /// 描く見た目が変わるたびに増える番号（利用者の設定・受けた見た目・Undo のどれでも。描き直しの鍵）。
+    look_serial: u64,
     /// 進行中のストロークが描く面（active があるときだけ意味がある）。
     active_target: Target,
     next_stroke: u64,
@@ -543,6 +549,9 @@ impl Document {
             triangle_fill: None,
             id_colors: crate::mesh_maps::IdColorAssignments::default(),
             look: Default::default(),
+            received_look: None,
+            drawn_look: None,
+            look_serial: 0,
             active_target: Target::Channel(Channel::Color),
             next_stroke: 1,
             revision: 0,
@@ -1378,6 +1387,7 @@ impl Document {
             Command::Look { old, new } => {
                 // 画素も合成も変えないので、タイルの変化は記録しない
                 self.look = if backwards { old.clone() } else { new.clone() };
+                self.refresh_drawn_look();
                 Ok(())
             }
             Command::Swap(state) => self.swap_state(state),

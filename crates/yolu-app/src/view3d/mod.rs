@@ -12,6 +12,7 @@ pub mod model;
 pub mod navigation;
 pub mod other_sets;
 pub mod paint;
+pub mod received_layers;
 pub mod pose;
 pub mod render;
 pub mod shape_gizmo;

@@ -191,7 +191,7 @@ fn sets(h: u64) -> Vec<YlbSetInfo> {
 
 #[test]
 fn the_version_is_asked_first() {
-    assert_eq!(ylb_abi_version(), 3);
+    assert_eq!(ylb_abi_version(), 4);
     assert_eq!(ylb_protocol_versions(), (1 << 16) | 1);
 }
 
@@ -823,7 +823,7 @@ fn the_peer_version_and_the_marks_are_asked_through_the_c_functions() {
     assert_eq!(r.update_self, none);
     assert_eq!(ylb_disconnect(h), 0);
 
-    // 機能の印: スタンドアロンが持つ印をこのブリッジは出さないので、共通は無く、自分を上げれば使える機能として出る
+    // 機能の印: 共通はこのブリッジも出す印（マテリアルの値）だけで、ブリッジに無い印（アニメーション）は自分を上げれば使える機能として出る
     let (h, r) = report_against("marks", "0.3.0", v(0, 1, 0), v(0, 0, 0), feature::MATERIAL_VALUES | feature::ANIMATION);
     assert_eq!(r.peer_features, feature::MATERIAL_VALUES | feature::ANIMATION);
     assert_eq!(r.own_features, BRIDGE_FEATURES);
@@ -996,6 +996,188 @@ fn the_test_server_with_another_protocol_range_refuses_and_the_report_names_the_
     assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
     assert_eq!(report.refused_update, 2, "スタンドアロンを上げる");
     assert_eq!(report.refused_to, yolu_protocol::AppVersion::NONE_PACKED);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+// ───────── マテリアルの値（機能の印 MATERIAL_VALUES） ─────────
+
+fn stats(server: u64) -> YlbTestServerStats {
+    let mut s = YlbTestServerStats::default();
+    assert_eq!(unsafe { ylb_test_server_stats(server, &mut s) }, 0);
+    s
+}
+
+fn put_values(h: u64, material: i32) -> i32 {
+    unsafe {
+        let (shader, source) = ("Hidden/lilToonOutline", "lilToon 2.3.4 · Standard/Opaque+Outline");
+        let r = ylb_values_begin(
+            h,
+            material,
+            1,
+            shader.as_ptr(),
+            shader.len() as i32,
+            source.as_ptr(),
+            source.len() as i32,
+        );
+        if r != 0 {
+            return r;
+        }
+        let n = |s: &str| (s.as_ptr(), s.len() as i32);
+        let (p, l) = n("_ShadowBorder");
+        assert_eq!(ylb_values_float(h, p, l, 0.25), 0);
+        // 同じ名前は置き換える
+        assert_eq!(ylb_values_float(h, p, l, 0.3), 0);
+        let (p, l) = n("_UseShadow");
+        assert_eq!(ylb_values_int(h, p, l, 1), 0);
+        let (p, l) = n("_ShadowColor");
+        assert_eq!(ylb_values_color(h, p, l, 0.5, 0.25, 0.75, 1.0), 0);
+        let (p, l) = n("_MainTex_ST");
+        assert_eq!(ylb_values_vector(h, p, l, 2.0, 1.0, 0.5, 0.0), 0);
+        // 有限でない値・空の名前・制御文字の名前は断る
+        assert_eq!(ylb_values_float(h, p, l, f32::NAN), YLB_E_ARGUMENT);
+        assert_eq!(ylb_values_color(h, p, l, 0.0, f32::INFINITY, 0.0, 1.0), YLB_E_ARGUMENT);
+        let (p0, _) = n("x");
+        assert_eq!(ylb_values_float(h, p0, 0, 1.0), YLB_E_ARGUMENT);
+        let (pc, lc) = n("_A\n");
+        assert_eq!(ylb_values_float(h, pc, lc, 1.0), YLB_E_ARGUMENT);
+        let (p, l) = n("_EMISSION");
+        assert_eq!(ylb_values_keyword(h, p, l), 0);
+        assert_eq!(ylb_values_keyword(h, p, l), 0, "重ねて足しても 1 つ");
+        let (p, l) = n("A B");
+        assert_eq!(ylb_values_keyword(h, p, l), YLB_E_ARGUMENT);
+        let (p, l) = n("_MatCapTex");
+        assert_eq!(ylb_values_slot(h, p, l, 1, 4, 2), 0);
+        assert_eq!(ylb_values_slot(h, p, l, 1, 4, 2), YLB_E_ARGUMENT, "同じスロットは 1 つ");
+        let (p, l) = n("_ShadowColorTex");
+        assert_eq!(ylb_values_slot(h, p, l, 3, 4096, 4096), 0);
+        assert_eq!(ylb_values_slot(h, p, l, 9, 1, 1), YLB_E_ARGUMENT);
+        ylb_values_send(h)
+    }
+}
+
+fn send_texture(h: u64, material: i32, pixels: &[u8], width: u32, height: u32) -> i32 {
+    let slot = "_MatCapTex";
+    unsafe {
+        ylb_texture_send(
+            h,
+            material,
+            slot.as_ptr(),
+            slot.len() as i32,
+            width,
+            height,
+            1,
+            pixels.as_ptr(),
+            pixels.len() as i32,
+        )
+    }
+}
+
+#[test]
+fn material_values_reach_a_standalone_with_the_mark() {
+    use yolu_protocol::feature;
+    assert_ne!(BRIDGE_FEATURES & feature::MATERIAL_VALUES, 0, "ブリッジは値の印を出す");
+    let name = unique_name("values");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), feature::MATERIAL_VALUES),
+        0
+    );
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_ne!(ylb_common_features(h) & feature::MATERIAL_VALUES, 0);
+    // モデルを送る前は組み立てを始めない
+    assert_eq!(put_values(h, 0), YLB_E_STATE);
+    send_quad_model(h);
+    // 無いマテリアルの番号は断る
+    assert_eq!(put_values(h, 2), YLB_E_ARGUMENT);
+    assert_eq!(put_values(h, 1), 1);
+    wait_for(h, "値", || stats(server).values == 1);
+    let st = stats(server);
+    assert_eq!(
+        (
+            st.last_values_material,
+            st.last_values_kind,
+            st.last_values_properties,
+            st.last_values_keywords,
+            st.last_values_slots,
+        ),
+        (1, 1, 4, 1, 2)
+    );
+    assert_eq!(st.last_values_shader_len, "Hidden/lilToonOutline".len() as u32);
+    let mut out = [0f32; 4];
+    let read = |name: &str, out: &mut [f32; 4]| unsafe {
+        ylb_test_server_value(server, 1, name.as_ptr(), name.len() as i32, out.as_mut_ptr())
+    };
+    assert_eq!(read("_ShadowBorder", &mut out), 0);
+    assert_eq!(out[0], 0.3);
+    assert_eq!(read("_UseShadow", &mut out), 1);
+    assert_eq!(out[0], 1.0);
+    assert_eq!(read("_ShadowColor", &mut out), 2);
+    assert_eq!(out, [0.5, 0.25, 0.75, 1.0]);
+    assert_eq!(read("_MainTex_ST", &mut out), 3);
+    assert_eq!(read("_Nothing", &mut out), YLB_E_ARGUMENT);
+    let slot = |name: &str, keyword: i32| unsafe {
+        ylb_test_server_slot(server, 1, name.as_ptr(), name.len() as i32, keyword)
+    };
+    assert_eq!(slot("_MatCapTex", 0), 1);
+    assert_eq!(slot("_ShadowColorTex", 0), 3);
+    assert_eq!(slot("_EMISSION", 1), 1);
+    assert_eq!(slot("_OTHER", 1), 0);
+
+    // 絵: 幅 × 高さ × 4 と合わない長さ・上限を超える辺・無いマテリアルは断る
+    let mut pixels = vec![0u8; 4 * 2 * 4];
+    for (i, p) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        *p = [i as u8 * 10, 20, 30, 255];
+    }
+    assert_eq!(send_texture(h, 1, &pixels[..31], 4, 2), YLB_E_ARGUMENT);
+    // 辺 0・辺の上限（2048）を超える絵は、長さが幅 × 高さ × 4 と合っていても断る
+    assert_eq!(send_texture(h, 1, &[], 4, 0), YLB_E_ARGUMENT);
+    assert_eq!(send_texture(h, 1, &[], 0, 2), YLB_E_ARGUMENT);
+    let edge = yolu_protocol::MAX_SLOT_TEXTURE_SIZE;
+    let over = vec![0u8; (edge as usize + 1) * 4];
+    assert_eq!(send_texture(h, 1, &over, edge + 1, 1), YLB_E_ARGUMENT);
+    assert_eq!(send_texture(h, 1, &over, 1, edge + 1), YLB_E_ARGUMENT);
+    assert_eq!(send_texture(h, 5, &pixels, 4, 2), YLB_E_ARGUMENT);
+    // 上限ちょうどは送る（同じスロットの絵は、あとの 4 × 2 で置き換わる）
+    assert_eq!(send_texture(h, 1, &over[..edge as usize * 4], edge, 1), 1);
+    assert_eq!(send_texture(h, 1, &pixels, 4, 2), 1);
+    wait_for(h, "絵", || stats(server).textures == 2);
+    let mut t = YlbTestServerTexture::default();
+    let s = "_MatCapTex";
+    assert_eq!(
+        unsafe { ylb_test_server_texture(server, 1, s.as_ptr(), s.len() as i32, &mut t) },
+        0
+    );
+    // 真ん中は (2, 1) の画素（行は下から、1 行 4 画素）: 番号 6
+    assert_eq!((t.width, t.height, t.srgb), (4, 2, 1));
+    assert_eq!(t.center.to_le_bytes(), [60, 20, 30, 255]);
+    assert_eq!(stats(server).refused, 0);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn material_values_are_not_sent_to_a_standalone_without_the_mark() {
+    // 印を出さない（値を知らない）スタンドアロン: 組み立ては受け付けるが、送らずに 0 を返す。モデル・ポーズは今までどおり
+    let name = unique_name("novalues");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), 0), 0);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_eq!(ylb_common_features(h), 0);
+    send_quad_model(h);
+    wait_for(h, "モデル", || stats(server).models == 1);
+    assert_eq!(put_values(h, 0), 0);
+    let pixels = vec![255u8; 16];
+    assert_eq!(send_texture(h, 0, &pixels, 2, 2), 0);
+    // 後から送った印の要らない命令が届くまで待ち、その前に値・絵が届いていないことを見る
+    assert_eq!(ylb_model_close(h), 0);
+    wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
+    let st = stats(server);
+    assert_eq!((st.values, st.textures, st.unknown), (0, 0, 0));
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
 }

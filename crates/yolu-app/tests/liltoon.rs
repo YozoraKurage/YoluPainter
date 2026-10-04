@@ -12,7 +12,9 @@ use yolu_app::view3d::model::ViewModel;
 use yolu_app::YoluApp;
 use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
 use yolu_core::glam::{Vec2, Vec3};
-use yolu_core::look::{LookKind, LookValue, MaterialLook, PlaneSource, TextureSource};
+use yolu_core::look::{
+    LookKind, LookValue, MaterialLook, PlaneSource, ReceivedImage, ReceivedLook, TextureSource,
+};
 use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, Rgba8};
 
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
@@ -774,6 +776,195 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
     assert_eq!(s.other_bytes, mip_bytes(side1, 4) + mip_bytes(side1, 8));
     assert!(s.peak_bytes <= need, "{s:?}");
+}
+
+// ───────── Live Link で Unity から受けた絵 ─────────
+
+/// 一色の受けた絵（`side` × `side`、straight の RGBA8）。
+fn solid(side: u32, rgba: [u8; 4], srgb: bool) -> std::sync::Arc<ReceivedImage> {
+    std::sync::Arc::new(ReceivedImage {
+        width: side,
+        height: side,
+        srgb,
+        pixels: rgba.repeat((side * side) as usize).into(),
+    })
+}
+
+/// Unity から受けた見た目（`look`）と絵。
+fn received_with(look: MaterialLook, images: &[(&str, std::sync::Arc<ReceivedImage>)]) -> ReceivedLook {
+    let mut r = ReceivedLook {
+        look,
+        ..ReceivedLook::default()
+    };
+    for (slot, image) in images {
+        r.images.insert((*slot).into(), image.clone());
+    }
+    r
+}
+
+fn set_received(h: &mut Harness<'_, YoluApp>, set: usize, r: Option<ReceivedLook>) {
+    h.state_mut().state.set_doc_mut(set).set_received_look(r).unwrap();
+    h.run();
+}
+
+fn lil_received() -> MaterialLook {
+    MaterialLook {
+        kind: LookKind::LilToon,
+        ..MaterialLook::default()
+    }
+}
+
+#[test]
+fn a_texture_received_from_unity_draws_its_slot_and_a_channel_assigned_here_wins() {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    let (_, lc) = lil_light(Vec3::NEG_Z);
+    let albedo = |c: [u8; 4]| lin([c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]);
+    // メインカラーを Unity から受けた絵で描く（流し込み先でない。sRGB の絵はリニアへ直して読む）
+    let orange = [200u8, 120, 60, 255];
+    set_received(&mut h, 0, Some(received_with(lil_received(), &[("_MainTex", solid(4, orange, true))])));
+    let image = h.render().expect("描ける");
+    assert_close(px(&image, middle(&h)), to_bytes(albedo(orange) * lc), 2, "受けた絵");
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.received_bytes, s.received_size), (mip_bytes(4, 8), [4, 4]), "2 層（GL）で持つ: {s:?}");
+    // 欄で Color を割り当てると、チャンネルが勝つ（受けた絵の配列は手放す）
+    let green = [60u8, 180, 90, 255];
+    fill_color(&mut h, green);
+    set_look(&mut h, lil());
+    let image = h.render().expect("描ける");
+    assert_close(px(&image, middle(&h)), to_bytes(albedo(green) * lc), 2, "割り当てたチャンネル");
+    assert_eq!(h.state().view3d_stats().unwrap().received_bytes, 0);
+    // 割り当てを外すと、また受けた絵
+    let mut unassigned = lil();
+    unassigned.textures.clear();
+    set_look(&mut h, unassigned);
+    let image = h.render().expect("描ける");
+    assert_close(px(&image, middle(&h)), to_bytes(albedo(orange) * lc), 2, "割り当てを外した");
+}
+
+#[test]
+fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alpha_is_zero() {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 88.0); // ほぼ真上から: 平らな面は影の境界、法線の傾きがよく見える
+    fill_color(&mut h, [230, 200, 180, 255]);
+    let mut look = lil();
+    look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+    look.properties.insert("_UseBumpMap".into(), LookValue::Float(1.0));
+    set_look(&mut h, look);
+    let draw = |h: &mut Harness<'_, YoluApp>, normal: [u8; 4]| {
+        set_received(h, 0, Some(received_with(lil_received(), &[("_BumpMap", solid(4, normal, false))])));
+        px(&h.render().expect("描ける"), middle(h))
+    };
+    // RGB の絵（A は 1、X は R）と、DXT5nm（R は 1、X は A）の同じ法線は同じ絵
+    let rgb = draw(&mut h, [51, 200, 255, 255]);
+    let nm = draw(&mut h, [255, 200, 0, 51]);
+    assert_close(nm, rgb, 1, "DXT5nm の X = A × R");
+    // A が 0（X = 0）でも G（Y）を読む（乗算済みにすると Y が 0 に落ちる）
+    let rgb0 = draw(&mut h, [0, 200, 255, 255]);
+    let nm0 = draw(&mut h, [255, 200, 0, 0]);
+    assert_close(nm0, rgb0, 1, "A が 0 の DXT5nm の Y");
+    let lost = draw(&mut h, [0, 0, 255, 255]);
+    assert!(
+        (0..3).any(|k| lost[k].abs_diff(rgb0[k]) > 10),
+        "Y が違えば絵も違う（試験が Y を見ている）: {lost:?} {rgb0:?}"
+    );
+    set_received(&mut h, 0, None);
+    let flat = px(&h.render().expect("描ける"), middle(&h));
+    assert!((0..3).any(|k| flat[k].abs_diff(rgb[k]) > 10), "法線マップが効いている: {flat:?} {rgb:?}");
+}
+
+#[test]
+fn a_unity_texture_past_the_layer_limit_draws_the_slot_default() {
+    use yolu_app::look::liltoon::{SlotDefault, SLOTS};
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    // 利用者の設定は値だけ（スロットは割り当てない: メインカラーも受けた絵）
+    let mut look = lil();
+    look.textures.clear();
+    look.properties.insert("_UseMatCap2nd".into(), LookValue::Float(1.0));
+    look.properties.insert("_MatCap2ndBlendMode".into(), LookValue::Float(0.0));
+    set_look(&mut h, look);
+    // メインカラーと、その後ろのスロットに既定と同じ値の絵（描く絵は変わらない）を `fillers` 枚。マットキャップ 2nd（並びの 17 番目）に赤
+    let neutral = |d: SlotDefault| d.rgba().map(|v| (v * 255.0).round() as u8);
+    let draw = |h: &mut Harness<'_, YoluApp>, fillers: usize, red: bool| {
+        let mut images: Vec<(&str, std::sync::Arc<ReceivedImage>)> = vec![("_MainTex", solid(2, [200, 120, 60, 255], true))];
+        images.extend(SLOTS[1..16].iter().take(fillers).map(|s| (s.name, solid(2, neutral(s.default), false))));
+        if red {
+            images.push(("_MatCap2ndTex", solid(2, [255, 0, 0, 255], true)));
+        }
+        set_received(h, 0, Some(received_with(lil_received(), &images)));
+        px(&h.render().expect("描ける"), middle(h))
+    };
+    let white = draw(&mut h, 15, false);
+    // 前に 15 枚: 16 枚目なので受けた絵で描く
+    let red_drawn = draw(&mut h, 14, true);
+    assert!(red_drawn[1] + 30 < white[1], "16 枚目までは受けた絵で描く: {red_drawn:?} {white:?}");
+    assert!(!yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_MatCap2ndTex"));
+    // 前に 16 枚あると、17 枚目は持たず既定（白）で描く
+    let dropped = draw(&mut h, 15, true);
+    assert_close(dropped, white, 1, "17 枚目は既定");
+    assert!(yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_MatCap2ndTex"));
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!(s.received_bytes, mip_bytes(2, 4 * 16), "層は 16 まで: {s:?}");
+}
+
+#[test]
+fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets() {
+    let mut h = two_sets(64);
+    light(&mut h, 180.0, 0.0);
+    let images = [
+        ("_ShadowColorTex", solid(32, [40, 20, 60, 255], true)),
+        ("_MatCapTex", solid(32, [255, 0, 0, 255], true)),
+    ];
+    for i in 0..2 {
+        fill_set(&mut h, i, [230, 200, 180, 255]);
+        let mut look = lil_received();
+        look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+        look.properties.insert("_UseMatCap".into(), LookValue::Float(1.0));
+        look.properties.insert("_MatCapBlendMode".into(), LookValue::Float(0.0));
+        look.textures
+            .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+        set_received(&mut h, i, Some(received_with(look, &images)));
+    }
+    let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
+    let received = mip_bytes(32, 8);
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.received_bytes, s.received_size), (received, [32, 32]), "{s:?}");
+    assert_eq!(s.other_bytes, mip_bytes(side1, 4) + received, "ほかのセットの受けた絵も数える: {s:?}");
+    // ほかのセットは、標準のチャンネルの絵と受けた絵の配列の両方が入るときだけ持つ
+    let need = mip_bytes(side0, 4) + received + mip_bytes(side1, 4) + received;
+    h.state_mut().view3d_set_paint_budget(need - 1);
+    h.run();
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.other_sets, s.other_skipped), (0, 1), "{s:?}");
+    assert_eq!(s.received_bytes, received, "今のセットが先: {s:?}");
+    h.step();
+    let s = h.state().view3d_stats().unwrap();
+    assert!(s.peak_bytes < need, "{s:?}");
+    h.state_mut().view3d_set_paint_budget(need);
+    h.run();
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
+    assert!(s.peak_bytes <= need, "{s:?}");
+    // 今のセットの受けた絵の配列は、標準のチャンネルの絵の残りに収まるまで縮める（ほかのセットは持たない）
+    let budget = mip_bytes(side0, 4) + mip_bytes(16, 8);
+    h.state_mut().view3d_set_paint_budget(budget);
+    h.run();
+    h.step();
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.received_bytes, s.received_size), (mip_bytes(16, 8), [16, 16]), "{s:?}");
+    assert_eq!(s.other_sets, 0, "{s:?}");
+    assert!(s.peak_bytes <= budget, "{s:?}");
+    // 縮めても受けた絵で描く（マットキャップの赤）
+    let image = h.render().expect("描ける");
+    let c = px(&image, screen_of(&h, Vec3::new(-0.65, 0.0, 0.0)));
+    assert!(c[0] > c[1] + 30, "{c:?}");
 }
 
 #[test]

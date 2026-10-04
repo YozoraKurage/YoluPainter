@@ -159,6 +159,8 @@ pub struct Settings {
     pub uv_wireframe_color: [u8; 4],
     /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
     pub livelink_on_startup: bool,
+    /// Live Link で Unity から受けたマテリアルの値を .ylp に保存するか（`look.json` の `received`。既定は保存する）。
+    pub livelink_keep_values: bool,
     /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
@@ -184,6 +186,7 @@ impl Default for Settings {
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
+            livelink_keep_values: true,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
         }
@@ -437,6 +440,7 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
+            "livelink_keep_values" => settings.livelink_keep_values = value != "off",
             "color_wheel" => settings.color_wheel = value != "off",
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
@@ -557,6 +561,9 @@ fn render(settings: &Settings) -> String {
     if !settings.livelink_on_startup {
         text += "livelink_on_startup=off\n";
     }
+    if !settings.livelink_keep_values {
+        text += "livelink_keep_values=off\n";
+    }
     if !settings.color_wheel {
         text += "color_wheel=off\n";
     }
@@ -645,9 +652,22 @@ mod tests {
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
+            livelink_keep_values: false,
             color_wheel: true,
             gpu_memory: GpuMemory::Mib(1536),
         }
+    }
+
+    #[test]
+    fn keeping_the_unity_values_defaults_on_and_survives_restart_when_disabled() {
+        let dir = temp_dir("livelinkvalues");
+        let path = dir.join("settings.conf");
+        assert!(load(&path).0.livelink_keep_values);
+        let off = Settings { livelink_keep_values: false, ..Settings::default() };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -766,6 +786,7 @@ mod tests {
         back.backups = BackupKeep::All;
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
+        back.livelink_keep_values = true;
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値

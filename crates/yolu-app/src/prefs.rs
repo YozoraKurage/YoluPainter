@@ -53,6 +53,8 @@ pub enum Pref {
     /// 書き出しの余白（テクセル。-1 は届くかぎり全部）。
     ExportPadding(i32),
     LiveLinkOnStartup(bool),
+    /// Unity から受けたマテリアルの値を .ylp に保存するか。
+    LiveLinkKeepValues(bool),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -196,6 +198,7 @@ impl AppState {
             PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
+                Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
                 Pref::ExportPadding(v) => {
                     if EXPORT_PADDINGS.contains(&v) {
                         self.prefs.settings.export_padding = v;
@@ -510,6 +513,21 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         );
         if next != s.livelink_on_startup {
             requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkOnStartup(next))));
+        }
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("livelink-keep-values"),
+            lang.pick("Unity から受けたマテリアルの値を保存する", "Save material values received from Unity"),
+            s.livelink_keep_values,
+            Some(lang.pick(
+                "Live Link で受けた lilToon の値を .ylp に入れる（受けたテクスチャの画素は入れない）。切ると、次に保存するときに外す",
+                "Stores the lilToon values received through Live Link in the .ylp (not the pixels of received textures). When off, they are removed on the next save",
+            )),
+            enabled,
+        );
+        if next != s.livelink_keep_values {
+            requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkKeepValues(next))));
         }
         requests.extend(choice(
             ui,

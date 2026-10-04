@@ -22,7 +22,7 @@ const NU: i32 = 16;
 struct Lil {
     p: array<vec4<f32>, 60>,
     // スロットごとの成分の元（-1 既定・-2 は 0・-3 は 1・0 以上は 元 × 4 + 成分。元は 0〜5 標準のチャンネル（Slot の番号）・
-    // 6〜21 ユーザーチャンネルの配列の層・32〜33 画像）
+    // 6〜21 ユーザーチャンネルの配列の層・32〜33 画像・40〜55 Unity から受けた絵の配列の層）
     slot_src: array<vec4<i32>, 21>,
     // スロットの既定の値（割り当てていない成分）
     slot_def: array<vec4<f32>, 21>,
@@ -36,6 +36,10 @@ struct Lil {
 @group(1) @binding(8) var user_tex: texture_2d_array<f32>;
 @group(1) @binding(9) var image1_tex: texture_2d<f32>;
 @group(1) @binding(10) var image2_tex: texture_2d<f32>;
+// Live Link で Unity から受けた、描いていないスロットの絵（層 1 つがスロット 1 つ。元の番号 40〜55。Unity が読むのと同じ straight で、
+// 割り戻さない。A は不透明度とは限らない: DXT5nm のノーマルマップは A に X を持つ）
+@group(1) @binding(11) var received_tex: texture_2d_array<f32>;
+const NR: i32 = 16;
 
 // 値の並び（render.rs の `liltoon::params` と同じ）
 const P_MODE: i32 = 0;            // x 描画モード（0 不透明・1 カットアウト・2 半透明）、y Cutoff、z Cull、w 非表示
@@ -157,6 +161,8 @@ fn fetch_grad(src: i32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec4<f32
         return unpremultiply(textureSampleGrad(image1_tex, paint_sampler, uv, gx, gy));
     } else if (src == 33) {
         return unpremultiply(textureSampleGrad(image2_tex, paint_sampler, uv, gx, gy));
+    } else if (src >= 40 && src < 40 + NR) {
+        return textureSampleGrad(received_tex, paint_sampler, uv, src - 40, gx, gy);
     }
     return vec4<f32>(0.0);
 }
@@ -187,6 +193,8 @@ fn fetch_level(src: i32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
         return unpremultiply(textureSampleLevel(image1_tex, paint_sampler, uv, lod));
     } else if (src == 33) {
         return unpremultiply(textureSampleLevel(image2_tex, paint_sampler, uv, lod));
+    } else if (src >= 40 && src < 40 + NR) {
+        return textureSampleLevel(received_tex, paint_sampler, uv, src - 40, lod);
     }
     return vec4<f32>(0.0);
 }
@@ -305,9 +313,14 @@ fn lil_gray(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(1.0 / 3.0));
 }
 
-fn lil_unpack_normal(t: vec4<f32>, scale: f32) -> vec3<f32> {
-    // Unity のノーマルマップの取り込み（DXT5nm）と同じく、XY から Z を作り直す
-    let xy = (t.xy * 2.0 - vec2<f32>(1.0)) * scale;
+fn lil_unpack_normal(t: vec4<f32>, scale: f32, ag: bool) -> vec3<f32> {
+    // Unity のノーマルマップの取り込み（DXT5nm）と同じく、XY から Z を作り直す。`ag` は Unity から受けた絵: X は lilUnpackNormalScale と
+    // 同じく A × R（RGB の絵は A が 1 で R、DXT5nm の絵は R が 1 で A）
+    var x = t.x;
+    if (ag) {
+        x = t.w * t.x;
+    }
+    let xy = (vec2<f32>(x, t.y) * 2.0 - vec2<f32>(1.0)) * scale;
     return vec3<f32>(xy, sqrt(1.0 - saturate(dot(xy, xy))));
 }
 
@@ -437,7 +450,8 @@ fn lil_shade(f: VsOut, front: bool) -> vec4<f32> {
     let bump_st = lil.p[P_BUMP_ST];
     let bump_tex = slot_grad(SLOT_BUMP, uv_main * bump_st.xy + bump_st.zw, gx * bump_st.xy, gy * bump_st.xy);
     if (bump.x > 0.5 && lil.p[P_FLAGS].x > 0.5) {
-        let t = lil_unpack_normal(bump_tex, bump.y);
+        let bump_flags = lil.slot_flags[SLOT_BUMP];
+        let t = lil_unpack_normal(bump_tex, bump.y, bump_flags.y > 0.5 && bump_flags.z >= 40.0);
         n = normalize(f.tangent * t.x + f.bitangent * t.y + geometric * t.z);
     }
     let flip = lil.p[P_LIGHT2].w;

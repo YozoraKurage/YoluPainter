@@ -58,6 +58,49 @@ fn sample_model() -> Model {
     }
 }
 
+fn sample_values() -> MaterialValues {
+    MaterialValues {
+        generation: 3,
+        material: 0,
+        kind: ValuesKind::LilToon,
+        shader: "Hidden/lilToonCutoutOutline".into(),
+        source: "lilToon 2.3.4 · Standard/Cutout+Outline".into(),
+        properties: vec![
+            PropertyEntry {
+                name: "_ShadowBorder".into(),
+                value: PropertyValue::Float(0.25),
+            },
+            PropertyEntry {
+                name: "_UseShadow".into(),
+                value: PropertyValue::Int(1),
+            },
+            PropertyEntry {
+                name: "_ShadowColor".into(),
+                value: PropertyValue::Color([0.82, 0.76, 0.85, 1.0]),
+            },
+            PropertyEntry {
+                name: "_MainTex_ST".into(),
+                value: PropertyValue::Vector([2.0, 1.0, 0.5, 0.0]),
+            },
+        ],
+        keywords: vec!["_EMISSION".into()],
+        slots: vec![
+            SlotTexture {
+                name: "_MatCapTex".into(),
+                state: SlotState::Follows,
+                width: 256,
+                height: 256,
+            },
+            SlotTexture {
+                name: "_ShadowColorTex".into(),
+                state: SlotState::OverBudget,
+                width: 4096,
+                height: 4096,
+            },
+        ],
+    }
+}
+
 fn all_messages() -> Vec<Message> {
     vec![
         Message::Hello(Hello {
@@ -108,6 +151,26 @@ fn all_messages() -> Vec<Message> {
             materials: sample_model().materials,
         }),
         Message::ModelClosed { generation: 3 },
+        Message::MaterialValues(sample_values()),
+        Message::MaterialValues(MaterialValues {
+            generation: 3,
+            material: 1,
+            kind: ValuesKind::None,
+            shader: "Standard".into(),
+            source: String::new(),
+            properties: vec![],
+            keywords: vec![],
+            slots: vec![],
+        }),
+        Message::MaterialTexture(MaterialTexture {
+            generation: 3,
+            material: 0,
+            slot: "_MatCapTex".into(),
+            width: 2,
+            height: 3,
+            srgb: true,
+            pixels: (0..24).collect(),
+        }),
         Message::Welcome(Welcome {
             version: 1,
             agent: "standalone".into(),

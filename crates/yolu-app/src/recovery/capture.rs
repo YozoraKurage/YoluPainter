@@ -185,6 +185,14 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
     // 読めなかったエントリを上書きしたかは、復旧の写しでは知らせない（開いた .ylp には手を付けない。保存のときに知らせる）
     let (project, _) = crate::look::io::write_into(project, &looks, capture.lang)
         .map_err(RecoveryError::Text)?;
+    // Unity から受けた値（復旧は、開いていた時の見た目に戻すために、保存の設定によらず書く）
+    let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.received_look())))
+        .collect();
+    let project = crate::look::io::write_received_into(project, &received, capture.lang)
+        .map_err(RecoveryError::Text)?;
     // アセットの棚（保存と同じく、変えたときだけ resources を書き直す）
     match &capture.shelf {
         Some(shelf) => Ok(project.with_shelf(shelf, crate::project::writer())?),

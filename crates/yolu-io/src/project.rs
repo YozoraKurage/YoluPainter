@@ -437,8 +437,55 @@ impl Project {
             .map(|b| crate::look::read(b))
             .transpose()
     }
-    /// セットの見た目の設定だけを置き換える（None はエントリを消す）。形式 7 だけ（旧形式は先に upgraded）。前のエントリの知らない
-    /// キーは残す。正本・ほかのエントリには触らない。
+    /// セットの受けた見た目（`look.json` の `received`。Live Link で Unity のマテリアルから受けた値）。無ければ None。読めないものは
+    /// エラーを返し、元のエントリはバイト列のまま残る。
+    pub fn received_look(&self, set_id: &str) -> Result<Option<yolu_core::look::ReceivedLook>> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        match self
+            .files
+            .get(&format!("sets/{set_id}/{}", crate::look::ENTRY))
+        {
+            Some(b) => crate::look::read_received(b),
+            None => Ok(None),
+        }
+    }
+    /// セットの受けた見た目だけを置き換える（None は外す）。利用者の設定と知らないキーは前のエントリのまま。利用者の設定が既定で
+    /// 受けた見た目も知らないキーも無くなれば、エントリを消す。形式 7 だけ。
+    pub fn with_received_look(
+        &self,
+        set_id: &str,
+        received: Option<&yolu_core::look::ReceivedLook>,
+    ) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "見た目の設定を書く前にupgradedで形式7へ移行してください",
+        )?;
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = format!("sets/{set_id}/{}", crate::look::ENTRY);
+        let mut files = self.original.files.clone();
+        match crate::look::write_received(received, files.get(&name).map(|b| &b[..]))? {
+            Some(bytes) => {
+                files.insert(name, Arc::from(bytes));
+            }
+            None => {
+                files.remove(&name);
+            }
+        }
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    /// セットの見た目の設定だけを置き換える（None は既定に戻す。受けた見た目（`received`）が無ければエントリを消す）。形式 7 だけ
+    /// （旧形式は先に upgraded）。前のエントリの知らないキーと受けた見た目は残す。正本・ほかのエントリには触らない。
     pub fn with_look(
         &self,
         set_id: &str,
@@ -459,9 +506,18 @@ impl Project {
                 let bytes = crate::look::write(look, files.get(&name).map(|b| &b[..]))?;
                 files.insert(name, Arc::from(bytes));
             }
-            None => {
-                files.remove(&name);
-            }
+            None => match files.get(&name).filter(|b| crate::look::has_received(b)) {
+                Some(previous) => {
+                    let bytes = crate::look::write(
+                        &yolu_core::look::MaterialLook::default(),
+                        Some(&previous[..]),
+                    )?;
+                    files.insert(name, Arc::from(bytes));
+                }
+                None => {
+                    files.remove(&name);
+                }
+            },
         }
         Self::from_archive(Archive::build(
             files,

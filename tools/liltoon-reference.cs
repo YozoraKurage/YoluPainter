@@ -6,7 +6,9 @@ using UnityEngine.Rendering;
 // 使い方: `crates/yolu-app/tests/liltoon_reference.rs` の export_and_render が書いたフォルダ（scenes.txt・*.mesh.txt・*.rgba）の
 // 場所を、下の __DIR__ に置き換えて渡す。
 //   sed "s#__DIR__#$DIR#" tools/liltoon-reference.cs > /tmp/snippet.cs && .devcontainer/unity/unity-do.sh run /tmp/snippet.cs
-// 場面ごとに unity_<名前>.png を同じフォルダに書く。
+// 場面ごとに unity_<名前>.png を同じフォルダに書く。Live Link が送るマテリアルの値（Unity のパッケージの LiveLinkMaterialValues が
+// 読むものと同じ。プロパティ・キーワード・描いた絵を見せるプロパティ・描いていないスロットの絵）も link_<名前>.txt と
+// link_<名前>_<スロット>.rgba に書く（`liltoon_reference.rs` の compare_through_live_link が、その値だけで 3D ビューを描いて比べる）。
 //
 // 撮る間だけ、プロジェクトの色空間をリニアにし（VRChat と同じ。lilToon の式はリニアで比べる）、lilToon のシェーダー設定の機能を
 // 全部入れる（テクスチャを読む機能は、使うマテリアルがあるときに lilToon が自分で入れるのと同じ）。終わったら両方を元に戻す。
@@ -208,6 +210,38 @@ try
             tex.filterMode = FilterMode.Trilinear;
             made.Add(tex);
             mat.SetTexture(slot, tex);
+        }
+
+        // Live Link が送る値（読むだけ。マテリアルは変えない）
+        {
+            var binding = Yozolab.YoluPainter.Editor.Preview.PreviewMaterialBindings.Resolve(mat);
+            var link = new System.Text.StringBuilder();
+            if (!Yozolab.YoluPainter.Editor.LiveLink.LiveLinkMaterialValues.IsVerifiedLilToon(binding))
+                link.AppendLine("none");
+            else
+            {
+                var shown = binding.Channels.Where(c => c.Keywords.All(k => mat.IsKeywordEnabled(k))).ToList();
+                // Live Link と同じく、スタンドアロンが描いた絵で見せるのは Color の流し込み先だけ
+                var routed = shown.Where(c => c.Channel == Yozolab.YoluPainter.Core.PaintChannel.Color).Select(c => c.Property).ToList();
+                var snap = Yozolab.YoluPainter.Editor.LiveLink.LiveLinkMaterialValues.Read(mat, binding, routed);
+                link.AppendLine("shader " + snap.Shader);
+                link.AppendLine("source " + snap.Source);
+                foreach (var c in shown) link.AppendLine("route " + (int)c.Channel + " " + c.Property);
+                foreach (var pr in snap.Properties)
+                    link.AppendLine(string.Format(inv, "prop {0} {1} {2:R} {3:R} {4:R} {5:R}", pr.Type, pr.Name, pr.Value.x, pr.Value.y, pr.Value.z, pr.Value.w));
+                foreach (var k in snap.Keywords) link.AppendLine("keyword " + k);
+                foreach (var sl in snap.Slots)
+                {
+                    if (sl.Texture == null) { link.AppendLine("slot " + sl.Name + " empty"); continue; }
+                    var size = Yozolab.YoluPainter.Editor.LiveLink.LiveLinkMaterialValues.SendSize(sl.Texture);
+                    var pixels = Yozolab.YoluPainter.Editor.LiveLink.LiveLinkMaterialValues.ReadPixels(sl.Texture, size.x, size.y, sl.Srgb);
+                    if (pixels == null) { link.AppendLine("slot " + sl.Name + " unreadable"); continue; }
+                    var file = "link_" + name + "_" + sl.Name + ".rgba";
+                    File.WriteAllBytes(Path.Combine(dir, file), pixels);
+                    link.AppendLine("slot " + sl.Name + " " + size.x + " " + size.y + " " + (sl.Srgb ? 1 : 0) + " " + file);
+                }
+            }
+            File.WriteAllText(Path.Combine(dir, "link_" + name + ".txt"), link.ToString());
         }
 
         // 物・光・カメラ
