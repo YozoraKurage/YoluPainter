@@ -132,7 +132,7 @@ fn create_refuses_what_the_format_refuses() {
     );
     assert!(two_unassigned.is_err());
     let no_document = Project::create(writer(), &[spec(A, "a", MaterialRef::Unassigned, None)], A);
-    assert!(no_document.unwrap_err().0.contains("正本がありません"));
+    assert!(no_document.unwrap_err().to_string().contains("正本がありません"));
     let bad_current = Project::create(
         writer(),
         &[spec(A, "a", MaterialRef::Unassigned, Some(&doc))],
@@ -216,7 +216,7 @@ fn with_sets_renames_rebinds_adds_and_keeps_the_rest_byte_for_byte() {
     assert!(q
         .with_sets(writer(), &specs[1..], C)
         .unwrap_err()
-        .0
+        .to_string()
         .contains("並びにありません"));
 }
 

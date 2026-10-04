@@ -866,7 +866,7 @@ fn layer_row(
             let next = next.trim().to_owned();
             if !next.is_empty() {
                 if let Err(e) = app.doc.set_layer_name(id, &next) {
-                    app.message = e.to_string();
+                    app.message = app.lang.core_error(&e);
                 }
                 app.modified = true;
             }

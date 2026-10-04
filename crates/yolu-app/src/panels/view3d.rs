@@ -213,9 +213,13 @@ impl View3dSlot {
         let p = ui.painter().clone();
         w::fill(&p, bar, t::PANEL_HEADER);
         w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
+        let lang = app.lang;
         let label = match &app.view3d.model {
-            Some(m) => format!("3D · {} · {} 三角形", m.name, m.triangle_count()),
-            None => "3D · モデルなし".to_string(),
+            Some(m) => lang.pick(
+                format!("3D · {} · {} 三角形", m.display_name(lang), m.triangle_count()),
+                format!("3D · {} · {} triangles", m.display_name(lang), m.triangle_count()),
+            ),
+            None => lang.pick("3D · モデルなし", "3D · No model").to_string(),
         };
         w::text(
             &p,
@@ -235,7 +239,7 @@ impl View3dSlot {
                 r,
                 "view3d.frame",
                 "target",
-                "モデル全体が見える位置へ戻す",
+                lang.pick("モデル全体が見える位置へ戻す", "Fit the whole model in view"),
                 false,
                 !app.is_stroking(),
                 16.0,
@@ -254,12 +258,13 @@ impl View3dSlot {
         let text = Rect::from_center_size(content.center(), vec2(content.width().min(360.0), 88.0));
         // 名前・状態だけ（使い方の説明は置かない）
         let all_hidden = app.view3d.model.is_none() && app.view3d.full_model().is_some();
+        let lang = app.lang;
         let title = if all_hidden {
-            "すべて隠しています"
+            lang.pick("すべて隠しています", "All hidden")
         } else if app.view3d.model.is_none() {
-            "モデルなし"
+            lang.pick("モデルなし", "No model")
         } else {
-            "3D を描けません（GPU なし）"
+            lang.pick("3D を描けません（GPU なし）", "Cannot draw 3D (no GPU)")
         };
         w::text(
             &p,
@@ -275,7 +280,7 @@ impl View3dSlot {
                 ui,
                 r,
                 "view3d.demo",
-                "試しの立方体を読む",
+                lang.pick("試しの立方体を読む", "Load Test Cube"),
                 true,
                 true,
                 None,

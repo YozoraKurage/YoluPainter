@@ -32,6 +32,8 @@ use yolu_protocol::{
 use crate::engine::{Channel, Document, RowOrder, TileCoord};
 use crate::model::{ModelSource, SceneModel};
 use crate::state::AppState;
+use crate::lang::Lang;
+use crate::view3d::model::ViewError;
 
 /// 挨拶で名乗る名前。
 pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
@@ -101,18 +103,23 @@ impl LinkView {
     }
 
     /// 状態の帯に出す短い文。
-    pub fn summary(&self) -> String {
+    pub fn summary(&self) -> String { self.summary_in(Lang::Ja) }
+
+    pub fn summary_in(&self, lang: Lang) -> String {
         match &self.status {
-            LinkStatus::Off => "Live Link: 切っています".into(),
+            LinkStatus::Off => lang.pick("Live Link: 切っています", "Live Link: Off").into(),
             LinkStatus::Listening if self.mismatch.is_some() => {
-                "Live Link: 版の合わない Unity を断りました".into()
+                lang.pick("Live Link: 版の合わない Unity を断りました", "Live Link: Version mismatch").into()
             }
-            LinkStatus::Listening => format!("Live Link: Unity を待っています（{}）", self.name),
-            LinkStatus::Connected { version, .. } => format!(
+            LinkStatus::Listening => lang.pick(format!("Live Link: Unity を待っています（{}）", self.name), format!("Live Link: Waiting for Unity ({})", self.name)),
+            LinkStatus::Connected { version, .. } => lang.pick(format!(
                 "Live Link: Unity とつながっています（版 {version}・セット {}）",
                 self.published.len()
-            ),
-            LinkStatus::Failed(_) => "Live Link: 待ち受けられません".into(),
+            ), format!(
+                "Live Link: Connected (v{version} · {} sets)",
+                self.published.len()
+            )),
+            LinkStatus::Failed(_) => lang.pick("Live Link: 待ち受けられません", "Live Link: Unavailable").into(),
         }
     }
 }
@@ -314,7 +321,7 @@ impl LiveLink {
         let listener = match link::Server::bind(&self.name, true) {
             Ok(l) => l,
             Err(e) => {
-                let text = format!("Live Link を「{}」で待ち受けられません: {e}", self.name);
+                let text = state.lang.pick(format!("Live Link を「{}」で待ち受けられません: {e}", self.name), format!("Live Link unavailable at “{}”: {e}", self.name));
                 self.status = LinkStatus::Failed(text.clone());
                 self.notify(NoticeLevel::Error, text, state);
                 return;
@@ -355,7 +362,7 @@ impl LiveLink {
             thread: Some(thread),
         });
         self.status = LinkStatus::Listening;
-        let text = format!("Live Link: Unity を待っています（{}）。", self.name);
+        let text = state.lang.pick(format!("Live Link: Unity を待っています（{}）。", self.name), format!("Live Link: Waiting for Unity ({}).", self.name));
         self.notify(NoticeLevel::Info, text, state);
     }
 
@@ -367,9 +374,9 @@ impl LiveLink {
         self.status = LinkStatus::Off;
         self.mismatch = None;
         let text = if was_connected {
-            "Live Link を切りました。"
+            state.lang.pick("Live Link を切りました。", "Live Link disconnected.")
         } else {
-            "Live Link の待ち受けをやめました。"
+            state.lang.pick("Live Link の待ち受けをやめました。", "Live Link stopped.")
         };
         self.notify(NoticeLevel::Info, text.into(), state);
     }
@@ -419,10 +426,13 @@ impl LiveLink {
                         session,
                     };
                     self.mismatch = None;
-                    let text = format!(
+                    let text = state.lang.pick(format!(
                         "Live Link: Unity とつながりました（{}・プロトコルの版 {version}）。",
                         hello.agent
-                    );
+                    ), format!(
+                        "Live Link: Connected ({} · protocol v{version}).",
+                        hello.agent
+                    ));
                     self.notify(NoticeLevel::Info, text, state);
                 }
                 Event::Refused { text } => {
@@ -430,21 +440,24 @@ impl LiveLink {
                     self.mismatch = Some(text);
                     self.notify(
                         NoticeLevel::Error,
-                        "Live Link: 版の合わない Unity を断りました。".into(),
+                        state.lang.pick("Live Link: 版の合わない Unity を断りました。", "Live Link: Version mismatch.").into(),
                         state,
                     );
                 }
                 Event::Busy { agent } => {
-                    let text = format!("Live Link: 2 つ目の Unity（{agent}）を断りました。");
+                    let text = state.lang.pick(format!("Live Link: 2 つ目の Unity（{agent}）を断りました。"), format!("Live Link: Second Unity connection refused ({agent})."));
                     self.notify(NoticeLevel::Warning, text, state);
                 }
                 Event::Unauthorized { text } => {
                     // 理由は鍵の断りの文（古いブリッジ・別の鍵など）。つながっている Unity には影響しない
-                    let text = format!("Live Link: 鍵の合わない接続を断りました（{text}）。");
+                    let text = state.lang.pick(
+                        format!("Live Link: 鍵の合わない接続を断りました（{text}）。"),
+                        format!("Live Link: Connection refused, key mismatch ({text})."),
+                    );
                     self.notify(NoticeLevel::Warning, text, state);
                 }
                 Event::HandshakeFailed(e) => {
-                    let text = format!("Live Link: つなぎ始めで失敗しました: {e}");
+                    let text = state.lang.pick(format!("Live Link: つなぎ始めで失敗しました: {e}"), format!("Live Link: Handshake failed: {e}"));
                     self.notify(NoticeLevel::Warning, text, state);
                 }
                 Event::Message { session, message } => {
@@ -454,9 +467,11 @@ impl LiveLink {
                 }
                 Event::Unknown { session, kind } => {
                     if Some(session) == self.current_session() {
-                        let text = format!(
+                        let text = state.lang.pick(format!(
                             "Live Link: Unity からの知らない命令（種類 0x{kind:04x}）を断りました。"
-                        );
+                        ), format!(
+                            "Live Link: Unknown Unity command (0x{kind:04x})."
+                        ));
                         self.notify(NoticeLevel::Warning, text, state);
                     }
                 }
@@ -466,10 +481,13 @@ impl LiveLink {
                     text,
                 } => {
                     if Some(session) == self.current_session() {
-                        let text = format!(
+                        let text = state.lang.pick(format!(
                             "Live Link: Unity からの命令（{}）を読めません: {text}",
                             link::kind_name(kind)
-                        );
+                        ), format!(
+                            "Live Link: Invalid Unity command ({}): {text}",
+                            link::kind_name(kind)
+                        ));
                         self.notify(NoticeLevel::Warning, text, state);
                     }
                 }
@@ -486,11 +504,11 @@ impl LiveLink {
                     let (level, text) = match reason {
                         None => (
                             NoticeLevel::Info,
-                            "Live Link: Unity が切りました。".to_owned(),
+                            state.lang.pick("Live Link: Unity が切りました。", "Live Link: Unity disconnected.").to_owned(),
                         ),
                         Some(e) => (
                             NoticeLevel::Warning,
-                            format!("Live Link: Unity とのつながりが切れました: {e}"),
+                            state.lang.pick(format!("Live Link: Unity とのつながりが切れました: {e}"), format!("Live Link: Connection lost: {e}")),
                         ),
                     };
                     self.notify(level, text, state);
@@ -499,6 +517,8 @@ impl LiveLink {
         }
     }
 
+    /// Unity へ返す誤りの返事。表示の言語に依らず、プロトコルの診断として日本語の文に固定する
+    /// （画面に出る知らせは `state.lang` で作る。返事を受ける Unity の側が、自分の言語で扱う）。
     fn reply_error(&self, code: ErrorCode, kind: u16, text: String) {
         if let Some(a) = &self.active {
             a.send(error_message(code, kind, text));
@@ -518,7 +538,7 @@ impl LiveLink {
         let ours = |m: &SceneModel| m.source == ModelSource::LiveLink { session };
         match message {
             Message::Model(model) => {
-                let summary = format!(
+                let summary = state.lang.pick(format!(
                     "「{}」（マテリアル {}・メッシュ {}・頂点 {}）",
                     model.name,
                     model.materials.len(),
@@ -528,18 +548,29 @@ impl LiveLink {
                         .iter()
                         .map(|m| m.positions.len())
                         .sum::<usize>()
-                );
+                ), format!(
+                    "“{}” ({} materials · {} meshes · {} vertices)",
+                    model.name,
+                    model.materials.len(),
+                    model.meshes.len(),
+                    model
+                        .meshes
+                        .iter()
+                        .map(|m| m.positions.len())
+                        .sum::<usize>()
+                ));
                 let (report, shape) = state.receive_link_model(&model, session);
                 self.failed.clear();
-                let mut text = format!("Live Link: Unity からモデル{summary}を受けました。");
+                let mut text = state.lang.pick(format!("Live Link: Unity からモデル{summary}を受けました。"), format!("Live Link: Model received from Unity: {summary}."));
                 if let Err(e) = shape {
-                    text += &format!(" 3D ビューには出せません: {e}。");
+                    let e = state.lang.view_error(&e);
+                    text += &state.lang.pick(format!(" 3D ビューには出せません: {e}。"), format!(" Unavailable in 3D View: {e}."));
                 }
                 if !report.created.is_empty() {
-                    text += &format!(" 新しいテクスチャセット: {}。", report.created.join("・"));
+                    text += &state.lang.pick(format!(" 新しいテクスチャセット: {}。", report.created.join("・")), format!(" New texture sets: {}.", report.created.join(", ")));
                 }
                 if !report.unmatched.is_empty() {
-                    text += &format!(" モデルに無いセット: {}。", report.unmatched.join("・"));
+                    text += &state.lang.pick(format!(" モデルに無いセット: {}。", report.unmatched.join("・")), format!(" Sets not in this model: {}.", report.unmatched.join(", ")));
                 }
                 self.notify(NoticeLevel::Info, text, state);
             }
@@ -548,10 +579,10 @@ impl LiveLink {
                 let result = if state.model.as_ref().is_some_and(ours) {
                     state.receive_link_pose(&pose)
                 } else {
-                    Err("モデルを受ける前のポーズは使えません".into())
+                    Err(ViewError::NoLinkModel)
                 };
                 if let Err(e) = result {
-                    self.reply_error(ErrorCode::Refused, 0x0011, e);
+                    self.reply_error(ErrorCode::Refused, 0x0011, Lang::Ja.view_error(&e));
                 }
             }
             Message::Materials(update) => match state.model.as_mut().filter(|m| ours(m)) {
@@ -573,17 +604,21 @@ impl LiveLink {
                 if state.model.as_ref().is_some_and(ours) && state.close_link_model(generation) {
                     self.notify(
                         NoticeLevel::Info,
-                        "Live Link: Unity がモデルを閉じました。".into(),
+                        state.lang.pick("Live Link: Unity がモデルを閉じました。", "Live Link: Unity closed the model.").into(),
                         state,
                     );
                 }
             }
             Message::Error(e) => {
-                let text = format!(
+                let text = state.lang.pick(format!(
                     "Live Link: Unity からの誤りの知らせ（{}）: {}",
                     link::kind_name(e.kind),
                     e.text
-                );
+                ), format!(
+                    "Live Link: Unity error ({}): {}",
+                    link::kind_name(e.kind),
+                    e.text
+                ));
                 self.notify(NoticeLevel::Warning, text, state);
             }
             Message::Hello(_) => self.reply_error(
@@ -660,7 +695,7 @@ impl LiveLink {
                 if self.failed.contains(&uid) {
                     continue;
                 }
-                match create(session, uid, generation, material, &name, doc) {
+                match create(session, uid, generation, material, &name, doc, state.lang) {
                     Ok((p, tiles)) => {
                         out.push(p.set.announce());
                         self.tiles_sent += tiles as u64;
@@ -668,23 +703,27 @@ impl LiveLink {
                     }
                     Err(e) => {
                         self.failed.insert(uid);
-                        notes.push(format!(
+                        notes.push(state.lang.pick(format!(
                             "Live Link: テクスチャセット「{name}」を Unity に出せません: {e}"
-                        ));
+                        ), format!(
+                            "Live Link: Cannot publish texture set “{name}”: {e}"
+                        )));
                     }
                 }
                 continue;
             }
             let p = self.published.get_mut(&uid).expect("上で確かめた");
-            match write_changes(p, doc) {
+            match write_changes(p, doc, state.lang) {
                 Ok(tiles) if !tiles.is_empty() => {
                     self.tiles_sent += tiles.len() as u64;
                     out.extend(p.set.tiles_changed(channel::COLOR, &tiles));
                 }
                 Ok(_) => {}
-                Err(e) => notes.push(format!(
+                Err(e) => notes.push(state.lang.pick(format!(
                     "Live Link: テクスチャセット「{name}」の共有メモリに書けません: {e}"
-                )),
+                ), format!(
+                    "Live Link: Cannot update texture set “{name}”: {e}"
+                ))),
             }
             // 世代・マテリアルの番号・名前が変わったら知らせ直す（ブリッジは知らせを受けると全部のタイルを読み直すので、中身を書いた後に）
             if p.set.generation != generation || p.set.material != material || p.set.name != name {
@@ -706,6 +745,7 @@ impl LiveLink {
 }
 
 /// 文書の全部を合成して共有メモリに書いた、新しい出しもの。返すのは書いたタイルの数。
+#[allow(clippy::too_many_arguments)]
 fn create(
     session: u64,
     uid: u32,
@@ -713,19 +753,27 @@ fn create(
     material: u32,
     name: &str,
     doc: &Document,
+    lang: Lang,
 ) -> Result<(Published, usize), String> {
     if doc.width() > MAX_TEXTURE_SIZE || doc.height() > MAX_TEXTURE_SIZE {
-        return Err(format!(
+        return Err(lang.pick(format!(
             "大きさ {}×{} は Unity のテクスチャの上限 {MAX_TEXTURE_SIZE} を超えます",
             doc.width(),
             doc.height()
-        ));
+        ), format!(
+            "Texture size {}×{} exceeds the Unity limit ({MAX_TEXTURE_SIZE})",
+            doc.width(),
+            doc.height()
+        )));
     }
     if !valid_tile_size(doc.tile_size()) {
-        return Err(format!(
+        return Err(lang.pick(format!(
             "タイルの大きさ {} は共有メモリで使えません（16〜1024 の 2 の冪）",
             doc.tile_size()
-        ));
+        ), format!(
+            "Invalid shared tile size {} (power of two, 16–1024)",
+            doc.tile_size()
+        )));
     }
     let set = PublishedSet::create(
         session,
@@ -748,12 +796,12 @@ fn create(
     let all: Vec<TileCoord> = (0..doc.height().div_ceil(ts))
         .flat_map(|y| (0..doc.width().div_ceil(ts)).map(move |x| TileCoord::new(x, y)))
         .collect();
-    let n = write_tiles(&mut p, doc, &all)?.len();
+    let n = write_tiles(&mut p, doc, &all, lang)?.len();
     Ok((p, n))
 }
 
 /// 前に書いた後に変わったタイルを書く（文書が替わっていれば全部）。返すのは書いたタイル。
-fn write_changes(p: &mut Published, doc: &Document) -> Result<Vec<Tile>, String> {
+fn write_changes(p: &mut Published, doc: &Document, lang: Lang) -> Result<Vec<Tile>, String> {
     let ts = doc.tile_size();
     let coords = if p.doc_id != doc.id() {
         None
@@ -767,13 +815,14 @@ fn write_changes(p: &mut Published, doc: &Document) -> Result<Vec<Tile>, String>
     });
     p.doc_id = doc.id();
     p.since = doc.change_serial();
-    write_tiles(p, doc, &coords)
+    write_tiles(p, doc, &coords, lang)
 }
 
 fn write_tiles(
     p: &mut Published,
     doc: &Document,
     coords: &[TileCoord],
+    lang: Lang,
 ) -> Result<Vec<Tile>, String> {
     let ts = doc.tile_size() as usize;
     let mut buf = Vec::new();
@@ -781,7 +830,7 @@ fn write_tiles(
     let img = p
         .set
         .image_mut(channel::COLOR)
-        .ok_or("Color の共有メモリがありません")?;
+        .ok_or(lang.pick("Color の共有メモリがありません", "Color shared memory not found"))?;
     for c in coords {
         let Some(rect) = doc.tile_rect(*c) else {
             continue;
@@ -791,7 +840,7 @@ fn write_tiles(
         }
         buf.resize(rect.width as usize * rect.height as usize * 4, 0);
         doc.composite_into(Channel::Color, rect, &mut buf, RowOrder::BottomUp)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| lang.core_error(&e))?;
         let row = rect.width as usize * 4;
         img.write_tile(c.x, c.y, |slot| {
             for r in 0..rect.height as usize {

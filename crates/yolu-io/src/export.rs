@@ -115,7 +115,7 @@ impl From<std::io::Error> for ExportError {
 
 impl From<ExportError> for crate::Error {
     fn from(e: ExportError) -> Self {
-        crate::Error(e.to_string())
+        crate::Error::InvalidData(e.to_string())
     }
 }
 

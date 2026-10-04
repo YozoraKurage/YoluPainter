@@ -1,4 +1,4 @@
-use crate::{check, Result};
+use crate::{check_budget, Result};
 use flate2::{write::ZlibEncoder, Compression};
 use std::io::Write;
 use yolu_core::{Channel, Document};
@@ -9,7 +9,7 @@ const NORMAL_WORKING_BYTES: u64 = 256 * 1024 * 1024;
 /// 現在のColor合成をRGBA8 PNGへ書く。上下の向き、行フィルター、チャンク配置は
 /// Unity版RgbaPngと同じ。圧縮バイトはdeflate実装の版にも依存する。
 pub fn composite_png(doc: &Document) -> Result<Vec<u8>> {
-    check(
+    check_budget(
         doc.width() <= 8192 && doc.height() <= 8192,
         "PNGの寸法の上限は8192です",
     )?;
@@ -21,7 +21,7 @@ pub fn composite_png(doc: &Document) -> Result<Vec<u8>> {
 /// Unity 向けの出力（OpenGL の向き・不透明・塗っていない所は平ら）。Color は使う層が無くても必ず含める。ユーザーチャンネルの
 /// PNG は作らない（Unity 版のインポーターが名前を知らない）。
 pub fn composite_pngs(doc: &Document) -> Result<Vec<(Channel, Vec<u8>)>> {
-    check(
+    check_budget(
         doc.width() <= 8192 && doc.height() <= 8192,
         "PNGの寸法の上限は8192です",
     )?;

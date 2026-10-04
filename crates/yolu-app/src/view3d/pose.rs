@@ -21,8 +21,9 @@ use yolu_core::geometry::{
 use yolu_core::skin::{demo_figure, FigureDetail, Pose, Rig};
 use yolu_model::{load_fbx, ModelLimits};
 
-use super::model::ViewModel;
+use super::model::{ViewError, ViewModel};
 use super::View3dState;
+use crate::lang::Lang;
 use crate::state::{AppState, DialogRequest};
 
 /// 取り消しの並びの長さ（1 つはポーズの写し。骨 500・BlendShape 200 で約 20 KiB）。
@@ -110,7 +111,7 @@ struct Loaded {
 
 struct Loading {
     name: String,
-    rx: Receiver<Result<Loaded, String>>,
+    rx: Receiver<Result<Loaded, ViewError>>,
     cancel: Arc<AtomicBool>,
     revision: u32,
 }
@@ -145,19 +146,18 @@ fn build_rest(
     rig: &Rig,
     revision: u32,
     cancel: Option<&AtomicBool>,
-) -> Result<(Vec<ModelMesh>, SurfaceGeometry), String> {
-    let meshes = rig.deform(&rig.rest_pose()).map_err(|e| e.to_string())?;
-    let triangles = model_triangles(&meshes).ok_or("メッシュの添字が頂点の数を超えています")?;
+) -> Result<(Vec<ModelMesh>, SurfaceGeometry), ViewError> {
+    let meshes = rig.deform(&rig.rest_pose())?;
+    let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
     if triangles.is_empty() {
-        return Err("三角形がありません".into());
+        return Err(ViewError::NoTriangles);
     }
     let geometry = match cancel {
         Some(c) => {
             SurfaceGeometry::build_cancelable(triangles, revision, DEFAULT_WELD_TOLERANCE, c)
         }
         None => SurfaceGeometry::new(triangles, revision, DEFAULT_WELD_TOLERANCE),
-    }
-    .map_err(|e| e.to_string())?;
+    }?;
     Ok((meshes, geometry))
 }
 
@@ -168,7 +168,7 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
     let model = ViewModel::with_geometry(
         rig.name(),
         loaded.meshes,
-        rig.materials().to_vec(),
+        rig.materials().iter().cloned().map(Some).collect(),
         rest.clone(),
     );
     if view3d.material < 0 || view3d.material as usize >= model.materials.len().max(1) {
@@ -201,9 +201,9 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
 }
 
 /// スキンをそのまま読む（試しの人形・試験。UI のスレッドで組む）。
-pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), String> {
+pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
-        return Err(STROKING.into());
+        return Err(ViewError::Stroking);
     }
     let revision = view3d.next_revision();
     let clock = Instant::now();
@@ -222,7 +222,7 @@ pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), String> {
 }
 
 /// 試しの人形を読む。
-pub fn load_figure(view3d: &mut View3dState) -> Result<(), String> {
+pub fn load_figure(view3d: &mut View3dState) -> Result<(), ViewError> {
     load_rig(view3d, demo_figure(FigureDetail::SMALL))
 }
 
@@ -247,9 +247,9 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
     std::thread::spawn(move || {
         let clock = Instant::now();
         let result = (|| {
-            let model = load_fbx(&path, &limits).map_err(|e| e.to_string())?;
+            let model = load_fbx(&path, &limits)?;
             if flag.load(Ordering::Relaxed) {
-                return Err("取り消しました".to_string());
+                return Err(ViewError::Cancelled);
             }
             let (meshes, rest) = build_rest(&model.rig, revision, Some(&flag))?;
             Ok(Loaded {
@@ -284,8 +284,14 @@ pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) 
     poll(view3d)
 }
 
-/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文と、モデルを入れたかを返す。
+/// `poll_in`の、日本語のもの（試験・言語を持たない呼び出し）。
 pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
+    poll_in(view3d, Lang::Ja)
+}
+
+/// フレームの初めに: 読み終わった FBX を入れ、ほかのモデルに替わったセッションを終える。知らせる文（言語に合わせる）と、
+/// モデルを入れたかを返す。
+pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
     let mut message = None;
     let mut installed = false;
     if let Some(loading) = &view3d.pose.loading {
@@ -301,21 +307,29 @@ pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
                     install(view3d, loaded);
                     installed = true;
                     message = Some(if warnings > 0 {
-                        format!(
-                            "{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）・知らせ {warnings} 件"
+                        lang.pick(
+                            format!("{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）・知らせ {warnings} 件"),
+                            format!("{name}: Triangles {tris} · Bones {bones} ({ms:.0} ms) · Notices {warnings}"),
                         )
                     } else {
-                        format!("{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）")
+                        lang.pick(
+                            format!("{name}: 三角形 {tris}・骨 {bones}（{ms:.0} ms）"),
+                            format!("{name}: Triangles {tris} · Bones {bones} ({ms:.0} ms)"),
+                        )
                     });
                 }
             }
             Ok(Err(e)) => {
-                message = Some(format!("{}: {e}", loading.name));
+                message = Some(format!("{}: {}", loading.name, lang.view_error(&e)));
                 view3d.pose.loading = None;
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
-                message = Some(format!("{}: 読み込みが止まりました", loading.name));
+                message = Some(format!(
+                    "{}: {}",
+                    loading.name,
+                    lang.view_error(&ViewError::LoadStopped)
+                ));
                 view3d.pose.loading = None;
             }
         }
@@ -332,30 +346,27 @@ pub fn poll(view3d: &mut View3dState) -> (Option<String>, bool) {
     (message, installed)
 }
 
-const STROKING: &str = "描いている間はポーズを変えられません。";
-
 /// ポーズを当てる（スキニング → 三角形の写し → 休みの形の refit → モデルを入れ替える）。
-fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), String> {
+fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     let revision = view3d.next_revision();
     let s = view3d
         .pose
         .session
         .as_mut()
-        .ok_or("ポーズを付けるモデルがありません")?;
+        .ok_or(ViewError::NoPoseModel)?;
     let clock = Instant::now();
-    let meshes = s.rig.deform(&pose).map_err(|e| e.to_string())?;
+    let meshes = s.rig.deform(&pose)?;
     let skin_ms = clock.elapsed().as_secs_f64() * 1000.0;
     let clock2 = Instant::now();
-    let triangles = model_triangles(&meshes).ok_or("メッシュの添字が頂点の数を超えています")?;
+    let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
     let geometry = s
         .rest
-        .reposition(triangles, revision, BvhUpdate::Refit)
-        .map_err(|e| e.to_string())?;
+        .reposition(triangles, revision, BvhUpdate::Refit)?;
     let refit_ms = clock2.elapsed().as_secs_f64() * 1000.0;
     let model = ViewModel::with_geometry(
         s.rig.name(),
         meshes,
-        s.rig.materials().to_vec(),
+        s.rig.materials().iter().cloned().map(Some).collect(),
         Arc::new(geometry),
     );
     s.pose = pose;
@@ -378,16 +389,16 @@ fn push_undo(s: &mut PoseSession, before: Pose) {
 }
 
 /// 1 回で終わる変更（取り消しに 1 つ積む）。
-pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), String> {
+pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
-        return Err(STROKING.into());
+        return Err(ViewError::Stroking);
     }
     let s = view3d
         .pose
         .session
         .as_mut()
-        .ok_or("ポーズを付けるモデルがありません")?;
-    s.rig.check_pose(&pose).map_err(|e| e.to_string())?;
+        .ok_or(ViewError::NoPoseModel)?;
+    s.rig.check_pose(&pose)?;
     if s.pose == pose {
         return Ok(());
     }
@@ -400,15 +411,15 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), String> {
 }
 
 /// 続けて変える操作を始める（ギズモ・スライダーのドラッグ）。
-pub fn begin_edit(view3d: &mut View3dState) -> Result<(), String> {
+pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
-        return Err(STROKING.into());
+        return Err(ViewError::Stroking);
     }
     let s = view3d
         .pose
         .session
         .as_mut()
-        .ok_or("ポーズを付けるモデルがありません")?;
+        .ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
         s.edit_start = Some(s.pose.clone());
     }
@@ -416,16 +427,16 @@ pub fn begin_edit(view3d: &mut View3dState) -> Result<(), String> {
 }
 
 /// 続けて変えている途中のポーズ（取り消しには積まない）。
-pub fn edit(view3d: &mut View3dState, pose: Pose) -> Result<(), String> {
+pub fn edit(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     let s = view3d
         .pose
         .session
         .as_ref()
-        .ok_or("ポーズを付けるモデルがありません")?;
+        .ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
-        return Err("ポーズの操作が始まっていません".into());
+        return Err(ViewError::NoPoseEdit);
     }
-    s.rig.check_pose(&pose).map_err(|e| e.to_string())?;
+    s.rig.check_pose(&pose)?;
     if s.pose == pose {
         return Ok(());
     }
@@ -450,17 +461,17 @@ pub fn end_edit(view3d: &mut View3dState, commit: bool) {
 }
 
 /// 取り消し（変えていなければ false）。
-pub fn undo(view3d: &mut View3dState) -> Result<bool, String> {
+pub fn undo(view3d: &mut View3dState) -> Result<bool, ViewError> {
     step(view3d, true)
 }
 
-pub fn redo(view3d: &mut View3dState) -> Result<bool, String> {
+pub fn redo(view3d: &mut View3dState) -> Result<bool, ViewError> {
     step(view3d, false)
 }
 
-fn step(view3d: &mut View3dState, back: bool) -> Result<bool, String> {
+fn step(view3d: &mut View3dState, back: bool) -> Result<bool, ViewError> {
     if view3d.input.stroke.is_some() {
-        return Err(STROKING.into());
+        return Err(ViewError::Stroking);
     }
     let Some(s) = view3d.pose.session.as_mut() else {
         return Ok(false);
@@ -495,7 +506,7 @@ fn step(view3d: &mut View3dState, back: bool) -> Result<bool, String> {
 }
 
 /// ファイルにあったときのポーズへ（取り消せる）。
-pub fn reset(view3d: &mut View3dState) -> Result<(), String> {
+pub fn reset(view3d: &mut View3dState) -> Result<(), ViewError> {
     let rest = match &view3d.pose.session {
         Some(s) => s.rig.rest_pose(),
         None => return Ok(()),
@@ -507,12 +518,13 @@ pub fn reset(view3d: &mut View3dState) -> Result<(), String> {
 /// （`DialogRequest::OpenModel`。窓に落としたファイルもここへ来る）ので、ここは OS の窓に頼らない。
 pub fn open_file(app: &mut AppState, path: &Path) {
     if app.is_stroking() {
-        app.message = STROKING.into();
+        app.message = app.lang.view_error(&ViewError::Stroking);
         return;
     }
     open_fbx(&mut app.view3d, path);
     app.message = format!(
-        "読み込み中: {}",
+        "{}: {}",
+        app.lang.pick("読み込み中", "Loading"),
         path.file_name()
             .map(|s| s.to_string_lossy())
             .unwrap_or_default()
@@ -522,7 +534,7 @@ pub fn open_file(app: &mut AppState, path: &Path) {
 /// 操作を当てる（`Action::Pose`）。描いている最中は、モードを切ることのほかは断る。
 pub fn apply_action(app: &mut AppState, action: PoseAction) {
     if app.is_stroking() {
-        app.message = STROKING.into();
+        app.message = app.lang.view_error(&ViewError::Stroking);
         return;
     }
     let result = match action {
@@ -535,11 +547,19 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.view3d.pose.focus = true;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
-                app.message = format!(
-                    "{}: 三角形 {}・骨 {}",
-                    s.rig.name(),
-                    s.rig.triangle_count(),
-                    s.rig.bones().len()
+                app.message = app.lang.pick(
+                    format!(
+                        "{}: 三角形 {}・骨 {}",
+                        s.rig.name(),
+                        s.rig.triangle_count(),
+                        s.rig.bones().len()
+                    ),
+                    format!(
+                        "{}: Triangles {} · Bones {}",
+                        s.rig.name(),
+                        s.rig.triangle_count(),
+                        s.rig.bones().len()
+                    ),
                 );
                 if let Some(note) = note {
                     app.message += &format!(" {note}");
@@ -558,17 +578,17 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.message = "ポーズを取り消しました。".into();
+                app.message = app.lang.pick("ポーズを取り消しました。", "Pose undone.").into();
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.message = "ポーズをやり直しました。".into();
+                app.message = app.lang.pick("ポーズをやり直しました。", "Pose redone.").into();
             }
         }),
     };
     if let Err(e) = result {
-        app.message = e;
+        app.message = app.lang.view_error(&e);
     }
 }
 
@@ -591,7 +611,7 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     if let Some(path) = dropped {
         open_file(app, &path);
     }
-    let (message, installed) = poll(&mut app.view3d);
+    let (message, installed) = poll_in(&mut app.view3d, app.lang);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();
     let note = if installed {
@@ -760,7 +780,7 @@ mod tests {
         app.apply(Action::Pose(PoseAction::Reset));
         app.apply(Action::Pose(PoseAction::ToggleMode));
         assert!(!app.view3d.pose.mode, "描いている間はモードも変えない");
-        assert_eq!(app.message, STROKING);
+        assert_eq!(app.message, ViewError::Stroking.to_string());
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
             app.dialog_request, None,

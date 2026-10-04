@@ -67,7 +67,7 @@ impl Selection {
         fn int(b: &[u8], at: &mut usize) -> Result<i32> {
             let s = b
                 .get(*at..*at + 4)
-                .ok_or_else(|| Error("選択範囲が途中で切れています".into()))?;
+                .ok_or_else(|| Error::InvalidData("選択範囲が途中で切れています".into()))?;
             *at += 4;
             Ok(i32::from_le_bytes(s.try_into().unwrap()))
         }

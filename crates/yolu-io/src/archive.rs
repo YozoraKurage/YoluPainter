@@ -1,4 +1,4 @@
-use crate::{check, hash, is_hash, valid_id, Error, Result};
+use crate::{check, check_budget, hash, is_hash, valid_id, Error, Result};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -35,7 +35,7 @@ impl Archive {
         Self::build(files, 3, "application/x-yolupainter", "YOLUPAINTER-YLP-")
     }
     pub(crate) fn build(files: Files, level: u32, mime: &str, prefix: &str) -> Result<Self> {
-        check(files.len() <= 1000, "エントリが1000個を超えています")?;
+        check_budget(files.len() <= 1000, "エントリが1000個を超えています")?;
         let mut manifest = format!("{prefix}{level}\n");
         let mut total = 0usize;
         for (name, b) in &files {
@@ -46,8 +46,8 @@ impl Archive {
             )?;
             total = total
                 .checked_add(b.len())
-                .ok_or_else(|| Error("長さが過大です".into()))?;
-            check(
+                .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
+            check_budget(
                 b.len() <= MAX_ENTRY_BYTES && total <= MAX_TOTAL_BYTES,
                 "アーカイブの予算超過です",
             )?;
@@ -83,7 +83,7 @@ impl Archive {
             } else {
                 (0, data)
             };
-            let offset = u32::try_from(out.len()).map_err(|_| Error("zip64は未対応です".into()))?;
+            let offset = u32::try_from(out.len()).map_err(|_| Error::InvalidData("zip64は未対応です".into()))?;
             let crc = crc32fast::hash(data);
             put32(&mut out, 0x04034b50);
             for n in [20, 0, method, 0, 33] {
@@ -123,7 +123,7 @@ impl Archive {
         Ok(out)
     }
     pub(crate) fn read_profile(b: &[u8], mime: &str, prefix: &str, newest: u32) -> Result<Self> {
-        check(
+        check_budget(
             b.len() <= MAX_TOTAL_BYTES + 2 * 1024 * 1024,
             "圧縮ファイルの予算超過です",
         )?;
@@ -144,7 +144,7 @@ impl Archive {
                 b.get(i..i + 4) == Some(b"PK\x05\x06")
                     && u16at(b, i + 20).is_ok_and(|n| i + 22 + n as usize == b.len())
             })
-            .ok_or_else(|| Error("ZIP終端がありません".into()))?;
+            .ok_or_else(|| Error::InvalidData("ZIP終端がありません".into()))?;
         check(
             u16at(b, end + 4)? == 0 && u16at(b, end + 6)? == 0,
             "分割ZIPは未対応です",
@@ -185,7 +185,7 @@ impl Archive {
                 "暗号化・未知の圧縮方式・分割ZIPは未対応です",
             )?;
             let name = std::str::from_utf8(slice(b, at + 46, nl)?)
-                .map_err(|_| Error("ZIP名がUTF-8ではありません".into()))?
+                .map_err(|_| Error::InvalidData("ZIP名がUTF-8ではありません".into()))?
                 .to_string();
             check_extra(slice(b, at + 46 + nl, xl)?)?;
             let local = u32at(b, at + 42)? as usize;
@@ -215,7 +215,7 @@ impl Archive {
             let start = local + 30 + nl + local_extra;
             let finish = start
                 .checked_add(packed)
-                .ok_or_else(|| Error("長さが過大です".into()))?;
+                .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
             check(
                 finish <= central_start,
                 "ZIPエントリが中央ディレクトリに重なっています",
@@ -246,8 +246,8 @@ impl Archive {
             };
             total = total
                 .checked_add(len)
-                .ok_or_else(|| Error("長さが過大です".into()))?;
-            check(
+                .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
+            check_budget(
                 len <= limit && total <= MAX_TOTAL_BYTES + 1024 * 1024 + 256,
                 "展開の予算超過です",
             )?;
@@ -288,15 +288,15 @@ impl Archive {
         )?;
         let manifest = files
             .remove(MANIFEST)
-            .ok_or_else(|| Error("manifestがありません".into()))?;
+            .ok_or_else(|| Error::InvalidData("manifestがありません".into()))?;
         let text = std::str::from_utf8(&manifest)
-            .map_err(|_| Error("manifestがUTF-8ではありません".into()))?;
+            .map_err(|_| Error::InvalidData("manifestがUTF-8ではありません".into()))?;
         let mut lines = text.split('\n');
         let head = lines.next().unwrap_or("");
         let level = head
             .strip_prefix(prefix)
             .and_then(|v| v.parse::<u32>().ok())
-            .ok_or_else(|| Error("未知のmanifestです".into()))?;
+            .ok_or_else(|| Error::InvalidData("未知のmanifestです".into()))?;
         check(
             level > 0 && level <= newest && head == format!("{prefix}{level}"),
             format!("manifest {head} は未対応です。対応上限は{newest}です"),
@@ -317,11 +317,11 @@ impl Archive {
             )?;
             let len = parts[1]
                 .parse::<usize>()
-                .map_err(|_| Error("長さが過大です".into()))?;
+                .map_err(|_| Error::Budget("長さが過大です".into()))?;
             total = total
                 .checked_add(len)
-                .ok_or_else(|| Error("長さが過大です".into()))?;
-            check(
+                .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
+            check_budget(
                 len <= MAX_ENTRY_BYTES && total <= MAX_TOTAL_BYTES,
                 "manifestの予算超過です",
             )?;
@@ -331,7 +331,7 @@ impl Archive {
             )?;
             let data = files
                 .get(name)
-                .ok_or_else(|| Error(format!("エントリがありません: {name}")))?;
+                .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {name}")))?;
             check(
                 data.len() == len && hash(data) == digest,
                 format!("SHA-256または長さが一致しません: {name}"),
@@ -423,9 +423,9 @@ fn slice(b: &[u8], at: usize, n: usize) -> Result<&[u8]> {
     b.get(
         at..at
             .checked_add(n)
-            .ok_or_else(|| Error("長さが過大です".into()))?,
+            .ok_or_else(|| Error::Budget("長さが過大です".into()))?,
     )
-    .ok_or_else(|| Error("ZIPが途中で切れています".into()))
+    .ok_or_else(|| Error::InvalidData("ZIPが途中で切れています".into()))
 }
 fn u16at(b: &[u8], at: usize) -> Result<u16> {
     Ok(u16::from_le_bytes(slice(b, at, 2)?.try_into().unwrap()))
@@ -572,6 +572,8 @@ mod tests {
         let size = (MAX_ENTRY_BYTES as u32 + 1).to_le_bytes();
         b[at + 24..at + 28].copy_from_slice(&size);
         b[local + 22..local + 26].copy_from_slice(&size);
-        assert!(Archive::read(&b).unwrap_err().to_string().contains("予算"));
+        let error = Archive::read(&b).unwrap_err();
+        assert!(matches!(error, Error::Budget(_)), "{error:?}");
+        assert!(error.to_string().contains("予算"));
     }
 }

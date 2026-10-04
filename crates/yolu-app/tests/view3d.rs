@@ -286,6 +286,35 @@ fn two_material_model() -> yolu_protocol::Model {
     }
 }
 
+/// マテリアルの無いスロットの面に描こうとしたときの知らせの名前も、表示の言語で（日本語の名前を英語の文に埋めない）。
+#[test]
+fn painting_a_face_without_a_material_names_the_slot_in_the_selected_language() {
+    use yolu_app::lang::Lang;
+    for lang in Lang::ALL {
+        let (mut h, _) = cube_view(1000.0, 700.0, 256);
+        h.state_mut().state.lang = lang;
+        let mut model = two_material_model();
+        model.materials[1].key = yolu_protocol::MaterialKey::Unassigned;
+        h.state_mut().load_live_link_model(&model).unwrap();
+        h.state_mut().state.view3d.camera.yaw = -40.0;
+        h.state_mut().state.view3d.camera.pitch = 15.0;
+        h.run();
+        let rect = h.state().view3d_rect().unwrap();
+        // 右の面はマテリアルの無いスロット。最初のセット（肌）を描いているので、描き始めない
+        let side = screen_of(&h, rect, Vec3::new(0.5, 0.0, -0.2));
+        click(&mut h, side);
+        assert!(!h.state().state.doc.can_undo());
+        let message = h.state().state.message.clone();
+        match lang {
+            Lang::Ja => assert!(message.contains("マテリアルなし"), "{message}"),
+            Lang::En => {
+                assert!(message.contains("No material"), "{message}");
+                assert!(message.chars().all(|c| (c as u32) < 0x3000), "{message}");
+            }
+        }
+    }
+}
+
 #[test]
 fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     let (mut h, _) = cube_view(1000.0, 700.0, 256);

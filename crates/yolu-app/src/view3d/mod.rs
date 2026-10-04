@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use yolu_core::geometry::OrbitCamera;
 
-use self::model::ViewModel;
+use self::model::{ViewError, ViewModel};
 use crate::state::StrokeSource;
 
 /// 回す・パンのドラッグ。
@@ -129,6 +129,7 @@ impl View3dState {
             .ok()
             .map(|mut m| {
                 m.link_generation = full.link_generation;
+                m.demo = full.demo;
                 Arc::new(m)
             });
     }
@@ -154,7 +155,7 @@ impl View3dState {
     }
 
     /// Live Link で受けたモデルを読む（描くテクスチャセットは `AppState::sync_view3d` が決める）。
-    pub fn load_live_link(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
+    pub fn load_live_link(&mut self, model: &yolu_protocol::Model) -> Result<(), ViewError> {
         let revision = self.next_revision();
         let m = ViewModel::from_live_link(model, revision)?;
         self.set_model(m);
@@ -162,13 +163,13 @@ impl View3dState {
     }
 
     /// Live Link のポーズを当てる（描いている最中なら、待たせているモデルに当てて終わってから入れ替える。カメラはそのまま）。
-    pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), String> {
+    pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), ViewError> {
         let base = self
             .pending
             .as_ref()
             .or(self.full.as_ref())
             .cloned()
-            .ok_or("ポーズを当てるモデルがありません")?;
+            .ok_or(ViewError::NoPoseBase)?;
         let revision = self.next_revision();
         let posed = base.with_pose(pose, revision)?;
         self.set_model(posed);

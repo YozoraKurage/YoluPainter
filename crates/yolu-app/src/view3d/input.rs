@@ -46,29 +46,35 @@ fn begin(
     let p = local(rect, at);
     let material = app.view3d.material;
     if material < 0 {
-        app.message = format!(
-            "今のテクスチャセット「{}」はこのモデルにありません。",
-            app.sets.current().name
+        let name = app.sets.current().name.clone();
+        app.message = app.lang.pick(
+            format!("今のテクスチャセット「{name}」はこのモデルにありません。"),
+            format!("Texture set “{name}” is not in this model."),
         );
         return;
     }
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!("読むだけのテクスチャセットには描けません: {reason}");
+        app.message = format!(
+            "{}: {reason}",
+            app.lang.pick(
+                "読むだけのテクスチャセットには描けません",
+                "Cannot paint on a read-only texture set"
+            )
+        );
         return;
     }
     if let Some(hit) = pick(&model.geometry, &view, p) {
         if hit.material != material {
-            let name = model
-                .materials
-                .get(hit.material as usize)
-                .cloned()
-                .unwrap_or_else(|| format!("{}", hit.material));
-            app.message = format!("ほかのテクスチャセット（{name}）の面です。");
+            let name = model.material_name(hit.material as usize, app.lang);
+            app.message = app.lang.pick(
+                format!("ほかのテクスチャセット（{name}）の面です。"),
+                format!("Surface of another texture set ({name})."),
+            );
             return;
         }
     }
     let Some(layer) = app.selected_layer else {
-        app.message = "描くレイヤーがありません。".into();
+        app.message = app.lang.pick("描くレイヤーがありません。", "No layer to paint on.").into();
         return;
     };
     if let Some(reason) = app.paint_blocker() {
@@ -92,7 +98,7 @@ fn begin(
     let mut stroke = match app.begin_paint_stroke(layer, eraser) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
             return;
         }
     };
@@ -118,7 +124,7 @@ fn begin(
         }
         Err(e) => {
             app.doc.cancel_stroke(stroke);
-            app.message = e.to_string();
+            app.message = app.lang.surface_error(&e);
         }
     }
 }
@@ -141,7 +147,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
                 app.doc.cancel_stroke(stroke);
             }
             app.view3d.stroke_ended();
-            app.message = format!("{e}");
+            app.message = app.lang.surface_error(&e);
         }
     }
 }
@@ -159,7 +165,7 @@ pub fn finish(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.doc.cancel_stroke(stroke);
-        app.message = "ストロークを取り消しました。".into();
+        app.message = app.lang.pick("ストロークを取り消しました。", "Stroke cancelled.").into();
     } else {
         let mut surface = surface;
         let last = surface
@@ -168,14 +174,14 @@ pub fn finish(app: &mut AppState, cancel: bool) {
         match last {
             Some(Err(e)) => {
                 app.doc.cancel_stroke(stroke);
-                app.message = format!("{e}");
+                app.message = app.lang.surface_error(&e);
             }
             _ => {
                 if let Some(note) = surface.as_ref().and_then(|s| s.note) {
-                    app.message = note.to_string();
+                    app.message = app.lang.dab_refusal(note).into();
                 }
                 if let Err(e) = app.doc.end_stroke(stroke) {
-                    app.message = e.to_string();
+                    app.message = app.lang.core_error(&e);
                 }
             }
         }

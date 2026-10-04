@@ -76,6 +76,13 @@ fn unknown_entries_and_json_keys_survive_both_save_modes() {
     });
     let p = open(f.clone()).unwrap();
     assert!(p.unknown_entries().contains(&"future.bin".into()));
+    // 知らせは種類で持つ（画面が言語ごとの文を作る）。形式 3 の読み込みはマテリアル参照のメモリ上の移行も知らせる
+    assert!(p
+        .notes()
+        .contains(&yolu_io::Note::UnknownEntryKept("future.bin".into())));
+    assert!(p
+        .notes()
+        .contains(&yolu_io::Note::MaterialRefsMigrated { format: 3 }));
     let a = Archive::read(&p.to_bytes().unwrap()).unwrap();
     for (k, v) in &f {
         assert_eq!(a.entries()[k].as_ref(), v);
@@ -102,7 +109,10 @@ fn legacy_material_slot_fallback_is_reported() {
     f.insert("view.json".into(), b"{\"materialSlot\":-1}".to_vec());
     let p = open(f).unwrap();
     assert_eq!(p.sets()[0].material, yolu_io::MaterialRef::PendingSlot(0));
-    assert!(p.notes().iter().any(|s| s.contains("スロット")));
+    assert!(p
+        .notes()
+        .iter()
+        .any(|n| matches!(n, yolu_io::Note::ViewSlotUnreadable(_)) && n.to_string().contains("スロット")));
 }
 #[test]
 fn resource_unknown_kind_origin_and_missing_pixels_are_refused() {

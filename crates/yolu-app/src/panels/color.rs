@@ -189,7 +189,7 @@ fn sv_square(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures, r: Rect, 
         r.top() + (1.0 - app.color.val) * r.height(),
     );
     marker(&p.with_clip_rect(r.expand(8.0)), at, 6.0);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "彩度と明度"));
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, app.lang.pick("彩度と明度", "Saturation and value")));
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
@@ -277,7 +277,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             ),
             6.0,
         );
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, "色相の円"));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, app.lang.pick("色相の円", "Hue wheel")));
     } else {
         let sv = Rect::from_min_size(
             area.min,
@@ -319,12 +319,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             1.5,
             2.0,
         );
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, "色相"));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, app.lang.pick("色相", "Hue")));
     }
     let tip = if app.color.wheel {
-        "四角と色相の帯"
+        app.lang.pick("四角と色相の帯", "Square and hue bar")
     } else {
-        "色相の円"
+        app.lang.pick("色相の円", "Hue wheel")
     };
     if w::icon_button(
         ui,
@@ -354,7 +354,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         cells[0],
         "color.hex",
         &hex,
-        Some("16 進の色（#RRGGBB）"),
+        Some(app.lang.pick("16 進の色（#RRGGBB）", "Hex color (#RRGGBB)")),
         false,
     )
     .committed
@@ -363,10 +363,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             app.color
                 .set_main([rgb[0], rgb[1], rgb[2], app.color.main[3]]);
         } else {
-            app.message = format!("16 進の色として読めません: {typed}");
+            app.message = format!("{}: {typed}", app.lang.pick("16 進の色として読めません", "Invalid hex color"));
         }
     }
-    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%")).tooltip("描画色のアルファ");
+    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%")).tooltip(app.lang.pick("描画色のアルファ", "Alpha of the brush color"));
     let alpha = w::slider(
         ui,
         cells[1],
@@ -425,7 +425,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         back,
         "color.sub",
         app.color.sub,
-        "サブの色（背景色）。押すとメインの色と入れ替えます",
+        app.lang.pick("サブの色（背景色）。押すとメインの色と入れ替えます", "Background color. Click to swap with the foreground color."),
         true,
     )
     .clicked()
@@ -438,7 +438,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         front,
         "color.main",
         app.color.main,
-        "メインの色（描画色。ブラシで塗る色）",
+        app.lang.pick("メインの色（描画色。ブラシで塗る色）", "Foreground color (the color the brush paints)"),
         true,
     );
     if w::icon_button(
@@ -446,7 +446,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         Rect::from_min_size(pos2(left + 21.0, bottom - 56.0), vec2(14.0, 14.0)),
         "color.swap",
         "swap_horiz",
-        "メインとサブの色を入れ替え（X）",
+        app.lang.pick("メインとサブの色を入れ替え（X）", "Swap foreground and background colors (X)"),
         false,
         true,
         12.0,
@@ -460,7 +460,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         Rect::from_min_size(pos2(left - 2.0, bottom - 8.0), vec2(14.0, 14.0)),
         "color.default",
         "restart_alt",
-        "初期設定の色（D）",
+        app.lang.pick("初期設定の色（D）", "Default colors (D)"),
         false,
         true,
         11.0,
@@ -478,7 +478,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     w::text(
         p,
         Rect::from_min_size(info.min, vec2(info.width(), 16.0)),
-        &format!("メイン  #{}", to_hex(app.color.main)),
+        &format!("{}  #{}", app.lang.pick("メイン", "Foreground"), to_hex(app.color.main)),
         t::LABEL_SMALL,
         w::Align::Left,
     );
@@ -488,7 +488,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             pos2(info.left(), info.top() + 17.0),
             vec2(info.width(), 16.0),
         ),
-        &format!("サブ  #{}", to_hex(app.color.sub)),
+        &format!("{}  #{}", app.lang.pick("サブ", "Background"), to_hex(app.color.sub)),
         t::LABEL_SMALL,
         w::Align::Left,
     );

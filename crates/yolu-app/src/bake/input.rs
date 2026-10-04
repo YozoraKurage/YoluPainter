@@ -126,7 +126,7 @@ mod tests {
     }
 
     fn model(meshes: Vec<ModelMesh>) -> ViewModel {
-        ViewModel::new("試し", meshes, vec!["A".into(), "B".into()], 1).unwrap()
+        ViewModel::new("試し", meshes, vec![Some("A".into()), Some("B".into())], 1).unwrap()
     }
 
     #[test]

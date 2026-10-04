@@ -46,8 +46,8 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "lock",
             t::WARNING,
-            "読むだけ",
-            format!("読むだけ: {reason}"),
+            app.lang.pick("読むだけ", "Read-only"),
+            format!("{}: {reason}", app.lang.pick("読むだけ", "Read-only")),
         );
     }
     let model = app.model.as_ref()?;
@@ -55,8 +55,8 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "link_off",
             t::TEXT_DIM,
-            "モデルに無い",
-            "今のモデルに無いマテリアル。鍵は残してあり、そのマテリアルのあるモデルでまた付く"
+            app.lang.pick("モデルに無い", "not in this model"),
+            app.lang.pick("今のモデルに無いマテリアル。鍵は残してあり、そのマテリアルのあるモデルでまた付く", "Material not in this model. Its reference is kept for models that use it.")
                 .into(),
         );
     };
@@ -71,24 +71,24 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "visibility_off",
             t::TEXT_DIM,
-            "隠している",
-            "3D ビューと Unity に見せていない".into(),
+            app.lang.pick("隠している", "Hidden"),
+            app.lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity").into(),
         );
     }
     if !routed {
         return look(
             "warning",
             t::WARNING,
-            "流し込み先なし",
-            "Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）".into(),
+            app.lang.pick("流し込み先なし", "No Color route"),
+            app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity).").into(),
         );
     }
     if app.link.published.contains(&set.uid) {
         return look(
             "sync",
             t::ACCENT,
-            "Unity に表示中",
-            "Unity に見せている".into(),
+            app.lang.pick("Unity に表示中", "Shown in Unity"),
+            app.lang.pick("Unity に見せている", "Shown in Unity").into(),
         );
     }
     None
@@ -141,7 +141,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     w::fill(p, footer, t::PANEL_HEADER);
     let current = app.sets.current_index();
     let set = app.sets.current();
-    let material = crate::sets::describe_material(&set.material);
+    let material = crate::sets::describe_material_in(&set.material, app.lang);
     let (text, tip) = match set_state(app, current) {
         Some(l) => (
             format!("{material} · {}", l.label),
@@ -251,9 +251,9 @@ fn set_row(
             "visibility_off"
         },
         if visible {
-            "隠す（3D ビューと Unity に見せない）"
+            app.lang.pick("隠す（3D ビューと Unity に見せない）", "Hide in the 3D View and Unity")
         } else {
-            "見せる"
+            app.lang.pick("見せる", "Show")
         },
         false,
         true,

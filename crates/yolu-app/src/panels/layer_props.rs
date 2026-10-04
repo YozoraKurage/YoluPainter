@@ -466,7 +466,7 @@ fn adjustment_section(
     }
     match next {
         Some(Ok(settings)) if settings != a => edit(app, Edit::Adjust { id, settings }),
-        Some(Err(e)) => app.message = e.to_string(),
+        Some(Err(e)) => app.message = app.lang.core_error(&e),
         _ => {}
     }
     // 描くチャンネルに使えない調整は短く知らせる

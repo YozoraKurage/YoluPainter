@@ -15,7 +15,7 @@ use yolu_protocol::{channel, MaterialInfo, MaterialKey as LinkKey};
 
 use crate::canvas::view::ViewState;
 use crate::engine::{Document, LayerId};
-use crate::state::{blank_document, AppState, DEFAULT_DOCUMENT_SIZE};
+use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
 
 pub use yolu_io::{MaterialAsset, MaterialRef};
 
@@ -35,18 +35,24 @@ pub fn material_from_link(key: &LinkKey) -> MaterialRef {
 
 /// 鍵の、人に見せる説明。
 pub fn describe_material(material: &MaterialRef) -> String {
+    describe_material_in(material, crate::lang::Lang::Ja)
+}
+
+pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
-        MaterialRef::Material { name, asset: None } => format!("マテリアル「{name}」"),
+        MaterialRef::Material { name, asset: None } => lang.pick(format!("マテリアル「{name}」"), format!("Material “{name}”")),
         MaterialRef::Material {
             name,
             asset: Some(a),
-        } => format!(
-            "マテリアル「{name}」（アセット {}…・{}）",
-            &a.guid[..a.guid.len().min(8)],
-            a.file_id
-        ),
-        MaterialRef::Unassigned => "マテリアルの無いスロット".into(),
-        MaterialRef::PendingSlot(n) => format!("まだマテリアルに付いていない（スロット {n}）"),
+        } => {
+            let guid = &a.guid[..a.guid.len().min(8)];
+            lang.pick(
+                format!("マテリアル「{name}」（アセット {guid}…・{}）", a.file_id),
+                format!("Material “{name}” (asset {guid}… · {})", a.file_id),
+            )
+        }
+        MaterialRef::Unassigned => lang.pick("マテリアルの無いスロット", "No material").into(),
+        MaterialRef::PendingSlot(n) => lang.pick(format!("まだマテリアルに付いていない（スロット {n}）"), format!("Unassigned (slot {n})")),
     }
 }
 
@@ -181,14 +187,40 @@ fn next_uid() -> u32 {
 /// 最初のセットの名前。
 pub const FIRST_SET_NAME: &str = "テクスチャセット 1";
 
+/// 最初のセットの名前（言語ごと）。
+pub fn first_set_name(lang: crate::lang::Lang) -> &'static str {
+    lang.pick(FIRST_SET_NAME, "Texture Set 1")
+}
+
 impl TextureSets {
     /// モデル無しの最初のセット 1 つ（文書は呼ぶ側の `AppState.doc`。鍵はスロット 0 = 最初に読んだモデルの最初のスロットのマテリアル）。
     pub fn first(doc: &Document) -> TextureSets {
+        Self::first_in(doc, crate::lang::Lang::Ja)
+    }
+
+    /// 言語を替えたとき、既定の名前のまま（利用者が変えていない最初のセット）を新しい言語の名前にする。
+    /// 利用者が付けた名前・マテリアルから付けた名前、ほかのセットの名前と重なるときは触らない。
+    pub fn retitle_defaults(&mut self, from: crate::lang::Lang, to: crate::lang::Lang) {
+        let (old, new) = (first_set_name(from), first_set_name(to));
+        if old == new {
+            return;
+        }
+        for i in 0..self.list.len() {
+            let taken = self.list.iter().any(|s| s.name.to_uppercase() == new.to_uppercase());
+            let set = &mut self.list[i];
+            if set.auto_name && set.name == old && !taken {
+                set.name = new.into();
+            }
+        }
+    }
+
+    /// `first`の、名前を言語に合わせたもの。
+    pub fn first_in(doc: &Document, lang: crate::lang::Lang) -> TextureSets {
         TextureSets {
             list: vec![TextureSet {
                 uid: next_uid(),
                 id: guid_string(doc.id()),
-                name: FIRST_SET_NAME.into(),
+                name: first_set_name(lang).into(),
                 auto_name: true,
                 material: MaterialRef::PendingSlot(0),
                 visible: true,
@@ -425,13 +457,13 @@ impl AppState {
     /// 今のセットを替える（描いている間は断る）。表示（拡大・回転）と選んだレイヤーはセットごとに覚える。
     pub fn switch_set(&mut self, index: usize) -> Result<(), String> {
         if index >= self.sets.len() {
-            return Err("そのテクスチャセットはありません。".into());
+            return Err(self.lang.pick("そのテクスチャセットはありません。", "Texture set not found.").into());
         }
         if index == self.sets.current_index() {
             return Ok(());
         }
         if self.is_stroking() {
-            return Err("描いている間はテクスチャセットを替えません。".into());
+            return Err(self.lang.pick("描いている間はテクスチャセットを替えません。", "Cannot switch texture sets during a stroke.").into());
         }
         self.doc.end_coalescing();
         let incoming = self.sets.list[index]
@@ -519,7 +551,7 @@ impl AppState {
                 continue;
             }
             let size = size_for(&infos[mi]);
-            let (doc, _) = blank_document(size, size);
+            let (doc, _) = blank_document_in(size, size, self.lang);
             let name = unique_name(
                 &name_for(&keys[mi]),
                 self.sets.list.iter().map(|s| s.name.as_str()),
@@ -548,16 +580,16 @@ impl AppState {
     pub fn rename_set(&mut self, uid: u32, name: &str) -> Result<(), String> {
         let name = name.trim();
         let Some(i) = self.sets.index_of(uid) else {
-            return Err("そのテクスチャセットはありません。".into());
+            return Err(self.lang.pick("そのテクスチャセットはありません。", "Texture set not found.").into());
         };
         if let Some(reason) = &self.sets.list[i].read_only {
-            return Err(format!("読むだけのテクスチャセットです: {reason}"));
+            return Err(format!("{}: {reason}", self.lang.pick("読むだけのテクスチャセットです", "Read-only texture set")));
         }
         if name.is_empty()
             || name.chars().any(|c| c.is_control())
             || name.encode_utf16().count() > 256
         {
-            return Err("テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。".into());
+            return Err(self.lang.pick("テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。", "Invalid texture set name (1–256 characters, no control characters).").into());
         }
         let upper = name.to_uppercase();
         if self
@@ -566,9 +598,7 @@ impl AppState {
             .iter()
             .any(|s| s.uid != uid && s.name.to_uppercase() == upper)
         {
-            return Err(format!(
-                "「{name}」はほかのテクスチャセットと同じ名前です。"
-            ));
+            return Err(self.lang.pick(format!("「{name}」はほかのテクスチャセットと同じ名前です。"), format!("Another texture set is already named {name}.")));
         }
         let set = &mut self.sets.list[i];
         if set.name != name {
@@ -715,7 +745,7 @@ mod tests {
 
     #[test]
     fn set_ids_are_the_document_ids_as_written_by_yolu_io() {
-        let (doc, _) = blank_document(32, 32);
+        let (doc, _) = crate::state::blank_document(32, 32);
         let native = yolu_io::NativeDocument::from_core(&doc).unwrap();
         assert_eq!(guid_string(doc.id()), native.id());
         assert_eq!(guid_string(1), "00000000-0000-0000-0000-000000000001");

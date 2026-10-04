@@ -3,7 +3,9 @@
 //! クリッピング、チャンネルごとの有効と合成（版 14）、Normal の出力の設定（版 7）、版 22 のユーザーチャンネル。core に無い項目は先に
 //! 検査して断り、部分変換を返さない。
 use crate::native::{UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
-use crate::{check, Error, NativeDocument, NativeValue as V, Result, MAX_ENTRY_BYTES};
+use crate::{
+    check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
+};
 use std::collections::HashMap;
 use yolu_core::{
     AdjustmentSettings, BlendMode, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
@@ -60,10 +62,10 @@ impl<'a> Fields<'a> {
         self.0
             .get(p)
             .copied()
-            .ok_or_else(|| Error(format!("正本の項目がありません: {p}")))
+            .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {p}")))
     }
     fn wrong(p: &str) -> Error {
-        Error(format!("正本の項目の型が違います: {p}"))
+        Error::InvalidData(format!("正本の項目の型が違います: {p}"))
     }
     fn int(&self, p: &str) -> Result<i32> {
         match self.get(p)? {
@@ -112,7 +114,7 @@ impl<'a> Fields<'a> {
         usize::try_from(c)
             .ok()
             .and_then(Channel::from_index)
-            .ok_or_else(|| Error(format!("{p} のチャンネル {c} は範囲外です")))
+            .ok_or_else(|| Error::InvalidData(format!("{p} のチャンネル {c} は範囲外です")))
     }
     fn rgba(&self, p: &str) -> Result<Rgba8> {
         let b = self.bytes(p)?;
@@ -269,7 +271,7 @@ impl NativeDocument {
                     default: f.rgba(&format!("{p}.default"))?,
                 };
                 doc.insert_channel_for_load(f.channel(&format!("{p}.channel"))?, info)
-                    .map_err(|e| Error(format!("{p}をcoreにできません: {e}")))?;
+                    .map_err(|e| Error::from(e).in_context(format!("{p}をcoreにできません")))?;
             }
         }
         let mut ids = Vec::with_capacity(self.layer_count());
@@ -278,7 +280,7 @@ impl NativeDocument {
             let p = format!("layers[{i}]");
             load_layer(&mut doc, &f, &p, version).map_err(|e| {
                 let name = f.text(&format!("{p}.name")).unwrap_or_default();
-                Error(format!("{p}「{name}」をcoreにできません: {e}"))
+                e.in_context(format!("{p}「{name}」をcoreにできません"))
             })?;
             ids.push(LayerId(core_id(f.guid(&format!("{p}.id"))?)));
             parents.push(if version >= 6 {
@@ -302,7 +304,7 @@ impl NativeDocument {
                         by_guid
                             .get(g)
                             .copied()
-                            .ok_or_else(|| Error("親グループがありません".into()))
+                            .ok_or_else(|| Error::InvalidData("親グループがありません".into()))
                     })
                     .transpose()
             })
@@ -319,18 +321,18 @@ impl NativeDocument {
     pub fn from_core(doc: &Document) -> Result<Self> {
         check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
         // 手動の ID の色（正本の版 19）はまだ書けない。黙って落とさず、空でなければ断る
-        check(
-            doc.id_colors().colors().is_empty(),
-            "手動の ID の色はまだ .ylp に書けません",
-        )?;
+        if !doc.id_colors().colors().is_empty() {
+            return Err(Error::Unwritable(Unwritable::ManualIdColors));
+        }
         // 層のロック（正本の版 12）もまだ書けない。読み込み側は native の locks を core に無い項目として断るので、書き出しも断って対にする
-        check(
-            doc.layers()
-                .iter()
-                .all(|l| l.locks() == yolu_core::LayerLocks::NONE),
-            "層のロックはまだ .ylp に書けません",
-        )?;
-        check(
+        if doc
+            .layers()
+            .iter()
+            .any(|l| l.locks() != yolu_core::LayerLocks::NONE)
+        {
+            return Err(Error::Unwritable(Unwritable::LayerLocks));
+        }
+        check_budget(
             doc.width() <= 8192 && doc.height() <= 8192,
             "正本の寸法の上限は8192です",
         )?;
@@ -338,7 +340,7 @@ impl NativeDocument {
             (8..=512).contains(&doc.tile_size()) && doc.tile_size().is_power_of_two(),
             "正本のタイル寸法は8〜512の2の累乗です",
         )?;
-        check(doc.layers().len() <= 2048, "正本の層数の上限は2048です")?;
+        check_budget(doc.layers().len() <= 2048, "正本の層数の上限は2048です")?;
         let user: Vec<Channel> = doc
             .channels()
             .into_iter()
@@ -438,7 +440,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         u8::try_from(blend)
             .ok()
             .and_then(BlendMode::from_index)
-            .ok_or_else(|| Error(format!("合成モード {blend} は範囲外です")))?,
+            .ok_or_else(|| Error::InvalidData(format!("合成モード {blend} は範囲外です")))?,
     )?;
     let attributes = if version >= 12 {
         f.byte(&format!("{p}.attributes"))?
@@ -461,7 +463,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
                     u8::try_from(m)
                         .ok()
                         .and_then(BlendMode::from_index)
-                        .ok_or_else(|| Error(format!("{b}.mode {m} は範囲外です")))?,
+                        .ok_or_else(|| Error::InvalidData(format!("{b}.mode {m} は範囲外です")))?,
                 )
             } else {
                 None
@@ -491,7 +493,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             let tile = format!("{ch}.tiles[{t}]");
             let coord = tile_coord(f, &tile)?;
             doc.import_tile(id, c, coord, f.bytes(&format!("{tile}.rgba"))?)
-                .map_err(|e| Error(format!("{tile}を変換できません: {e}")))?;
+                .map_err(|e| Error::from(e).in_context(format!("{tile}を変換できません")))?;
         }
         // 画素の無いチャンネルも面を持つ（C# の GetChannel）。有効の印は保存した値に
         let has_surface = doc.layer(id).is_some_and(|l| l.surface(c).is_some());
@@ -509,7 +511,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             let tile = format!("{p}.mask.tiles[{t}]");
             let coord = tile_coord(f, &tile)?;
             doc.import_mask_tile(id, coord, f.bytes(&format!("{tile}.rgba"))?)
-                .map_err(|e| Error(format!("{tile}を変換できません: {e}")))?;
+                .map_err(|e| Error::from(e).in_context(format!("{tile}を変換できません")))?;
         }
     }
     Ok(())
@@ -519,8 +521,8 @@ fn tile_coord(f: &Fields<'_>, tile: &str) -> Result<TileCoord> {
     let x = f.int(&format!("{tile}.x"))?;
     let y = f.int(&format!("{tile}.y"))?;
     Ok(TileCoord::new(
-        u32::try_from(x).map_err(|_| Error(format!("{tile}.x が負です")))?,
-        u32::try_from(y).map_err(|_| Error(format!("{tile}.y が負です")))?,
+        u32::try_from(x).map_err(|_| Error::InvalidData(format!("{tile}.x が負です")))?,
+        u32::try_from(y).map_err(|_| Error::InvalidData(format!("{tile}.y が負です")))?,
     ))
 }
 
@@ -529,7 +531,7 @@ struct Out(Vec<u8>);
 impl Out {
     fn raw(&mut self, b: &[u8]) -> Result<()> {
         self.0.extend_from_slice(b);
-        check(
+        check_budget(
             self.0.len() <= MAX_ENTRY_BYTES,
             "正本の512 MiB予算を超えています",
         )
@@ -547,7 +549,7 @@ impl Out {
         self.raw(&v.to_le_bytes())
     }
     fn text(&mut self, v: &str) -> Result<()> {
-        check(v.len() <= 4096, "正本の文字列はUTF-8で4096バイトまでです")?;
+        check_budget(v.len() <= 4096, "正本の文字列はUTF-8で4096バイトまでです")?;
         self.int(v.len() as i32)?;
         self.raw(v.as_bytes())
     }
@@ -570,7 +572,7 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     let named = |why: &str| format!("層「{}」の{why}", layer.name());
     w.raw(&native_id(layer.id().0))?;
     w.text(layer.name())
-        .map_err(|e| Error(named(&format!("名前: {e}"))))?;
+        .map_err(|e| e.in_context(named("名前")))?;
     w.boolean(layer.visible())?;
     w.float(layer.opacity())?;
     w.int(layer.blend_mode() as i32)?;
@@ -601,7 +603,7 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     if layer.kind() == LayerKind::Adjustment {
         let a = layer
             .adjustment()
-            .ok_or_else(|| Error(named("調整の設定がありません")))?;
+            .ok_or_else(|| Error::InvalidData(named("調整の設定がありません")))?;
         w.int(a.kind() as i32)?;
         w.int(AdjustmentSettings::ALGORITHM_VERSION)?;
         for v in [
@@ -681,11 +683,10 @@ mod tests {
         // 予算ちょうどなら通り、1 バイト足りなければ断る（画素もマスクも数える）
         assert!(native.to_core_within(Some(whole)).is_ok());
         for budget in [whole - 1, whole / 2, 1, 0] {
-            let message = native
-                .to_core_within(Some(budget))
-                .err()
-                .unwrap()
-                .to_string();
+            let error = native.to_core_within(Some(budget)).err().unwrap();
+            // 壊れたファイルではなく予算超過として返す（画面が言い分ける）
+            assert!(matches!(error, Error::Budget(_)), "{error:?}");
+            let message = error.to_string();
             assert!(message.contains("layers["), "{message}");
             assert!(message.contains("予算"), "{message}");
         }

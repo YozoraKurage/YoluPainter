@@ -1,6 +1,6 @@
 use crate::{
     archive::{split_set, Files},
-    check, hash, is_hash, valid_id, Archive, Error, NativeDocument, NativeValue, Result, Selection,
+    check, check_budget, hash, is_hash, valid_id, Archive, Error, NativeDocument, NativeValue, Result, Selection,
     MAX_ENTRY_BYTES, MAX_TOTAL_BYTES,
 };
 use serde::{
@@ -44,7 +44,7 @@ impl MaterialRef {
             None => false,
             Some(x) => x
                 .as_bool()
-                .ok_or_else(|| Error("unassigned が真偽値ではありません".into()))?,
+                .ok_or_else(|| Error::InvalidData("unassigned が真偽値ではありません".into()))?,
         };
         check(
             usize::from(unassigned)
@@ -137,6 +137,53 @@ pub struct Resource {
     pub metadata: Value,
 }
 /// 元エントリと移行後のエントリを持つ。未知のエントリ・JSONキーもそのまま保つ。
+/// 開けたが気をつけることの知らせ。画面は種類から短い文を作り、`Display` は診断（日本語）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Note {
+    /// view.json のマテリアルのスロットを読めず 0 を使う（中身は読めなかった理由）。
+    ViewSlotUnreadable(String),
+    /// 古い形式の並びを、形式 7 へメモリ上で移行した。
+    Migrated { format: i32 },
+    /// 古い形式のマテリアル参照を、形式 7 へメモリ上で移行した。
+    MaterialRefsMigrated { format: i32 },
+    /// 知らないエントリを原本のまま保持する（エントリ名）。
+    UnknownEntryKept(String),
+    /// セットを core へ変換できない（セット名と、core へ渡せない項目）。
+    SetNotConvertible { set: String, issue: String },
+    /// スマートリソースをファイルごと保持する（描画用の展開は未実装。リソース名）。
+    SmartResourceKept(String),
+    /// ブラシ設定と画像を原本のまま保持する。
+    BrushKept,
+}
+impl std::fmt::Display for Note {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ViewSlotUnreadable(e) => {
+                write!(f, "view.jsonのスロットを読めないため0を使います: {e}")
+            }
+            Self::Migrated { format } => {
+                write!(f, "形式{format}を形式7の並びへメモリ上で移行しました")
+            }
+            Self::MaterialRefsMigrated { format } => {
+                write!(f, "形式{format}のマテリアル参照を形式7へメモリ上で移行しました")
+            }
+            Self::UnknownEntryKept(name) => {
+                write!(f, "未対応のエントリを原本のまま保持します: {name}")
+            }
+            Self::SetNotConvertible { set, issue } => {
+                write!(f, "セット「{set}」はcoreへ変換できません: {issue}")
+            }
+            Self::SmartResourceKept(name) => write!(
+                f,
+                "スマートリソース「{name}」をファイルごと保持します（描画用の展開は未実装）"
+            ),
+            Self::BrushKept => f.write_str(
+                "ブラシ設定と画像を原本のまま保持します。ブラシ設定の意味の検証・実行は未実装です",
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Project {
     original: Archive,
@@ -145,7 +192,7 @@ pub struct Project {
     sets: Vec<TextureSet>,
     current: String,
     resources: Vec<Resource>,
-    notes: Vec<String>,
+    notes: Vec<Note>,
     unknown: Vec<String>,
 }
 impl Project {
@@ -164,7 +211,7 @@ impl Project {
     pub fn resources(&self) -> &[Resource] {
         &self.resources
     }
-    pub fn notes(&self) -> &[String] {
+    pub fn notes(&self) -> &[Note] {
         &self.notes
     }
     pub fn unknown_entries(&self) -> &[String] {
@@ -406,7 +453,7 @@ impl Project {
             .unwrap()
             .iter_mut()
             .find(|set| set["id"].as_str() == Some(set_id))
-            .ok_or_else(|| Error("セットがありません".into()))?;
+            .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
         // 参照の既知の鍵だけを置換し、将来の拡張項目は保持する。
         let reference = set["material"].as_object_mut().unwrap();
         for key in ["name", "guid", "fileId", "unassigned", "slot"] {
@@ -437,13 +484,13 @@ impl Project {
             } else {
                 None
             };
-            check(
-                format <= 7,
-                format!(
-                    ".ylp形式{format}（{} {}で保存）は未対応です。対応上限は形式7です",
-                    saved.app, saved.version
-                ),
-            )?;
+            if format > 7 {
+                return Err(Error::UnsupportedFormat {
+                    format,
+                    app: saved.app,
+                    version: saved.version,
+                });
+            }
             FormatInfo {
                 format,
                 saved_by: Some(saved),
@@ -468,7 +515,7 @@ impl Project {
             let doc = NativeDocument::read(
                 files
                     .get("document.utpaint")
-                    .ok_or_else(|| Error("旧形式の正本がありません".into()))?,
+                    .ok_or_else(|| Error::InvalidData("旧形式の正本がありません".into()))?,
             )?;
             let mut slot = 0;
             if let Some(b) = files.get("view.json") {
@@ -480,9 +527,7 @@ impl Project {
                     }
                 }) {
                     Ok(v) => slot = v,
-                    Err(e) => {
-                        notes.push(format!("view.jsonのスロットを読めないため0を使います: {e}"))
-                    }
+                    Err(e) => notes.push(Note::ViewSlotUnreadable(e.to_string())),
                 }
             }
             let id = doc.id();
@@ -497,31 +542,25 @@ impl Project {
             }
             let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
             files.insert("project.json".into(), Arc::from(project.into_bytes()));
-            notes.push(format!(
-                "形式{}を形式7の並びへメモリ上で移行しました",
-                info.format
-            ));
+            notes.push(Note::Migrated { format: info.format });
         }
         let mut root = json(required(&files, "project.json")?, 65536)?;
         if info.format < 7 {
             for set in root
                 .get_mut("sets")
                 .and_then(Value::as_array_mut)
-                .ok_or_else(|| Error("sets が配列ではありません".into()))?
+                .ok_or_else(|| Error::InvalidData("sets が配列ではありません".into()))?
             {
                 if set.get("material").is_none() {
                     let slot = number(set, "materialSlot", 0, 65535)?;
                     set["material"] = serde_json::json!({"slot": slot});
                 }
                 set.as_object_mut()
-                    .ok_or_else(|| Error("セットがオブジェクトではありません".into()))?
+                    .ok_or_else(|| Error::InvalidData("セットがオブジェクトではありません".into()))?
                     .remove("materialSlot");
             }
             files.insert("project.json".into(), Arc::from(serde_json::to_vec(&root)?));
-            notes.push(format!(
-                "形式{}のマテリアル参照を形式7へメモリ上で移行しました",
-                info.format
-            ));
+            notes.push(Note::MaterialRefsMigrated { format: info.format });
         }
         let list = array(&root, "sets", 1, 64)?;
         let current = id_text(&root, "current")?.to_string();
@@ -579,14 +618,14 @@ impl Project {
             }
         }
         for n in &unknown {
-            notes.push(format!("未対応のエントリを原本のまま保持します: {n}"));
+            notes.push(Note::UnknownEntryKept(n.clone()));
         }
         for set in &sets {
             for issue in set.document.core_issues() {
-                notes.push(format!(
-                    "セット「{}」はcoreへ変換できません: {issue}",
-                    set.name
-                ));
+                notes.push(Note::SetNotConvertible {
+                    set: set.name.clone(),
+                    issue,
+                });
             }
         }
         Ok(Self {
@@ -630,7 +669,7 @@ fn put_set_entries(files: &mut Files, spec: &SetSpec) -> Result<()> {
     let mut composites = Vec::with_capacity(spec.composites.len());
     for (channel, png) in &spec.composites {
         let name = channel.standard_name().ok_or_else(|| {
-            Error(format!(
+            Error::InvalidData(format!(
                 "セット「{}」の合成のチャンネルが標準ではありません: {channel:?}",
                 spec.name
             ))
@@ -673,13 +712,13 @@ pub(crate) fn writer(v: &Value) -> Result<WriterInfo> {
 pub(crate) fn required<'a>(f: &'a Files, n: &str) -> Result<&'a [u8]> {
     f.get(n)
         .map(|b| b.as_ref())
-        .ok_or_else(|| Error(format!("エントリがありません: {n}")))
+        .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {n}")))
 }
 pub(crate) fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
     let s = v
         .get(k)
         .and_then(Value::as_str)
-        .ok_or_else(|| Error(format!("{k} が文字列ではありません")))?;
+        .ok_or_else(|| Error::InvalidData(format!("{k} が文字列ではありません")))?;
     check(
         (min..=max).contains(&s.encode_utf16().count()),
         format!("{k} の文字数が範囲外です"),
@@ -698,7 +737,7 @@ pub(crate) fn number(v: &Value, k: &str, min: i64, max: i64) -> Result<i64> {
     let n = v
         .get(k)
         .and_then(Value::as_i64)
-        .ok_or_else(|| Error(format!("{k} が整数ではありません")))?;
+        .ok_or_else(|| Error::InvalidData(format!("{k} が整数ではありません")))?;
     check((min..=max).contains(&n), format!("{k} が範囲外です"))?;
     Ok(n)
 }
@@ -714,7 +753,7 @@ fn array<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a Vec<Va
     let a = v
         .get(k)
         .and_then(Value::as_array)
-        .ok_or_else(|| Error(format!("{k} が配列ではありません")))?;
+        .ok_or_else(|| Error::InvalidData(format!("{k} が配列ではありません")))?;
     check(
         (min..=max).contains(&a.len()),
         format!("{k} の個数が範囲外です"),
@@ -725,7 +764,7 @@ pub(crate) fn load_resources(
     files: &Files,
     budget: &mut usize,
     depth: usize,
-    notes: &mut Vec<String>,
+    notes: &mut Vec<Note>,
 ) -> Result<Vec<Resource>> {
     check(depth <= 8, "リソースの入れ子が深すぎます")?;
     let Some(b) = files.get("resources.json") else {
@@ -826,7 +865,7 @@ pub(crate) fn load_resources(
                     )?;
                     validate_smart(&info, &d)?;
                     load_resources(&a.files, budget, depth + 1, notes)?;
-                    notes.push(format!("スマートリソース「{name}」をファイルごと保持します（描画用の展開は未実装）"));
+                    notes.push(Note::SmartResourceKept(name.clone()));
                 }
             }
         }
@@ -894,15 +933,15 @@ fn validate_origin(v: &Value) -> Result<()> {
             )?;
             number(v, "version", 1, i32::MAX as i64)?;
         }
-        _ => return Err(Error("未知のリソース出どころです".into())),
+        _ => return Err(Error::InvalidData("未知のリソース出どころです".into())),
     }
     Ok(())
 }
 fn add_budget(b: &mut usize, n: usize) -> Result<()> {
     *b = b
         .checked_add(n)
-        .ok_or_else(|| Error("リソース予算超過です".into()))?;
-    check(*b <= MAX_TOTAL_BYTES, "復号リソースの768 MiB予算超過です")
+        .ok_or_else(|| Error::Budget("リソース予算超過です".into()))?;
+    check_budget(*b <= MAX_TOTAL_BYTES, "復号リソースの768 MiB予算超過です")
 }
 fn png_pixels(bytes: &[u8], w: u32, h: u32, budget: &mut usize) -> Result<Vec<u8>> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
@@ -911,7 +950,7 @@ fn png_pixels(bytes: &[u8], w: u32, h: u32, budget: &mut usize) -> Result<Vec<u8
     });
     let mut r = decoder
         .read_info()
-        .map_err(|e| Error(format!("PNGが不正です: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("PNGが不正です: {e}")))?;
     let i = r.info();
     check(
         i.width == w
@@ -929,13 +968,13 @@ fn png_pixels(bytes: &[u8], w: u32, h: u32, budget: &mut usize) -> Result<Vec<u8
     let mut out = vec![0; len];
     let frame = r
         .next_frame(&mut out)
-        .map_err(|e| Error(format!("PNGの復号に失敗しました: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("PNGの復号に失敗しました: {e}")))?;
     check(frame.buffer_size() == len, "PNGの復号長が不正です")?;
     r.finish()
-        .map_err(|e| Error(format!("PNG終端が不正です: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("PNG終端が不正です: {e}")))?;
     Ok(out)
 }
-fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<String>) -> Result<()> {
+fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<Note>) -> Result<()> {
     let a = Archive::read_profile(
         bytes,
         "application/x-yolupainter-brush",
@@ -946,7 +985,7 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<String>) -> 
     let schema = state
         .get("schema")
         .and_then(Value::as_i64)
-        .ok_or_else(|| Error("ブラシのschemaがありません".into()))?;
+        .ok_or_else(|| Error::InvalidData("ブラシのschemaがありません".into()))?;
     check((1..=3).contains(&schema), "未知のブラシschemaです")?;
     for key in ["tipId", "textureId", "dualTipId"] {
         if let Some(v) = state.get(key) {
@@ -960,7 +999,7 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<String>) -> 
                 tips += 1;
             }
             let d = png::Decoder::new(Cursor::new(b.as_ref()));
-            let r = d.read_info().map_err(|e| Error(e.to_string()))?;
+            let r = d.read_info().map_err(|e| Error::InvalidData(e.to_string()))?;
             let (w, h) = (r.info().width, r.info().height);
             check(
                 (1..=2048).contains(&w) && (1..=2048).contains(&h),
@@ -975,9 +1014,7 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<String>) -> 
             "ブラシの筆先番号が連続していません",
         )?;
     }
-    notes.push(
-        "ブラシ設定と画像を原本のまま保持します。ブラシ設定の意味の検証・実行は未実装です".into(),
-    );
+    notes.push(Note::BrushKept);
     Ok(())
 }
 
@@ -1041,7 +1078,7 @@ impl<'de> Deserialize<'de> for Strict {
     }
 }
 pub(crate) fn json(b: &[u8], max: usize) -> Result<Value> {
-    check(b.len() <= max, "JSONのバイト予算超過です")?;
+    check_budget(b.len() <= max, "JSONのバイト予算超過です")?;
     let Strict(v) = serde_json::from_slice(b)?;
     fn bounds(v: &Value, d: usize) -> bool {
         d <= 16
@@ -1154,7 +1191,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
         for v in array(info, "repin", 0, 65536)? {
             let id = v
                 .as_str()
-                .ok_or_else(|| Error("repinのIDが文字列ではありません".into()))?;
+                .ok_or_else(|| Error::InvalidData("repinのIDが文字列ではありません".into()))?;
             check(
                 valid_id(id) && seen.insert(id) && stages.contains(id),
                 "repinは正本のGenerator IDを重複なく指定する必要があります",

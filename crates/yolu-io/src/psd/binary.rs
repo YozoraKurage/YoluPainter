@@ -17,7 +17,7 @@ impl<'a> Reader<'a> {
         self.end - self.pos
     }
     pub fn fail<T>(&self, why: &str) -> Result<T> {
-        Err(Error(format!("{}: {why}", self.pos)))
+        Err(Error::InvalidData(format!("{}: {why}", self.pos)))
     }
     pub fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if n > self.remaining() {
@@ -70,7 +70,7 @@ impl<'a> Reader<'a> {
     pub fn utf16(&mut self, n: usize) -> Result<String> {
         let b = self.take(
             n.checked_mul(2)
-                .ok_or_else(|| Error("UTF-16 長のオーバーフロー".into()))?,
+                .ok_or_else(|| Error::InvalidData("UTF-16 長のオーバーフロー".into()))?,
         )?;
         String::from_utf16(
             &b.as_chunks::<2>()
@@ -79,7 +79,7 @@ impl<'a> Reader<'a> {
                 .map(|b| u16::from_be_bytes([b[0], b[1]]))
                 .collect::<Vec<_>>(),
         )
-        .map_err(|_| Error(format!("{}: 不正なUTF-16", self.pos)))
+        .map_err(|_| Error::InvalidData(format!("{}: 不正なUTF-16", self.pos)))
     }
 }
 pub(super) trait Emit {

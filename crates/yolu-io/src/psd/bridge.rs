@@ -1,6 +1,6 @@
 //! M1のラスターColor文書への明示変換。名前によるレイヤー対応付けはしない。
 use super::*;
-use crate::{check, Error, Result};
+use crate::{check, check_budget, Error, Result};
 use std::collections::HashSet;
 use yolu_core::{Channel, Document as CoreDocument, LayerId, TileCoord};
 impl ReadResult {
@@ -11,7 +11,7 @@ impl ReadResult {
         )?;
         self.document
             .as_ref()
-            .ok_or_else(|| Error("編集用文書がありません".into()))?
+            .ok_or_else(|| Error::InvalidData("編集用文書がありません".into()))?
             .to_core()
     }
 }
@@ -90,13 +90,13 @@ impl Document {
             "ストロークを確定・取消してからPSDを書き出してください",
         )?;
         let limits = Limits::default();
-        check(
+        check_budget(
             d.width() <= limits.max_dimension
                 && d.height() <= limits.max_dimension
                 && u64::from(d.width()) * u64::from(d.height()) <= limits.max_canvas_pixels,
             "PSD キャンバス予算超過",
         )?;
-        check(
+        check_budget(
             !d.layers().is_empty() && d.layers().len() <= limits.max_layers,
             "PSD レイヤー数の予算超過",
         )?;
@@ -118,7 +118,7 @@ impl Document {
             )?;
             let surface = l
                 .surface(Channel::Color)
-                .ok_or_else(|| Error("Color面がありません".into()))?;
+                .ok_or_else(|| Error::InvalidData("Color面がありません".into()))?;
             let (mut left, mut bottom, mut right, mut top) = (d.width(), d.height(), 0, 0);
             for c in surface.tile_coords() {
                 left = left.min(c.x * d.tile_size());
@@ -135,7 +135,7 @@ impl Document {
             let width = right - left;
             let height = top - bottom;
             budget += u64::from(width) * u64::from(height) * 4;
-            check(budget <= 128 * 1024 * 1024, "PSD 投影の128 MiB画素予算超過")?;
+            check_budget(budget <= 128 * 1024 * 1024, "PSD 投影の128 MiB画素予算超過")?;
             let mut pixels = vec![0; width as usize * height as usize * 4];
             for y in 0..height {
                 for x in 0..width {

@@ -661,7 +661,7 @@ impl AppState {
         let revision = self.doc.revision();
         match self.m2_apply(edit) {
             Ok(()) => {}
-            Err(e) => self.message = e.to_string(),
+            Err(e) => self.message = self.lang.core_error(&e),
         }
         if self.doc.revision() != revision {
             self.modified = true;
@@ -827,7 +827,7 @@ impl AppState {
                 self.message = self.lang.pick("取り消しました。", "Cancelled.").into();
             }
             Ok(false) => {}
-            Err(e) => self.message = e.to_string(),
+            Err(e) => self.message = self.lang.core_error(&e),
         }
     }
 
@@ -899,7 +899,7 @@ impl AppState {
                 }
                 self.apply_brush_op(op);
             }
-            UiOp::Language(lang) => self.lang = lang,
+            UiOp::Language(lang) => self.set_language(lang),
         }
     }
 

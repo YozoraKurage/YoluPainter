@@ -191,14 +191,14 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2) {
             let world = match s.rig.world_matrices(s.pose()) {
                 Ok(w) => w,
                 Err(e) => {
-                    app.message = e.to_string();
+                    app.message = app.lang.view_error(&e.into());
                     return;
                 }
             };
             let start = s.pose().clone();
             let (tangent, ppr) = grab_motion(&view, a, r.center, r.center_screen, grabbed, p);
             if let Err(e) = pose::begin_edit(&mut app.view3d) {
-                app.message = e;
+                app.message = app.lang.view_error(&e);
                 return;
             }
             app.view3d.pose.drag = Some(GizmoDrag {
@@ -262,7 +262,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, snap: bool) {
     s.rig
         .rotate_bone_world(&mut next, &d.world, d.bone, d.axis_world, angle);
     if let Err(e) = pose::edit(&mut app.view3d, next) {
-        app.message = e;
+        app.message = app.lang.view_error(&e);
     }
 }
 

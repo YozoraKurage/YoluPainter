@@ -1,4 +1,8 @@
-use crate::{check, hash, Error, Project, Result, MAX_TOTAL_BYTES};
+use crate::{check, check_budget, hash, Error, Project, Result, MAX_TOTAL_BYTES};
+
+fn conflict(ok: bool, reason: impl Into<String>) -> Result<()> {
+    if ok { Ok(()) } else { Err(Error::SaveConflict(reason.into())) }
+}
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -34,7 +38,7 @@ impl SaveTarget {
     }
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        check(
+        conflict(
             absent(&path)?,
             "保存先が既にあります。上書きにはopenで印を取得してください",
         )?;
@@ -62,7 +66,7 @@ impl SaveTarget {
         let name = self
             .path
             .file_name()
-            .ok_or_else(|| Error("保存先がファイルではありません".into()))?
+            .ok_or_else(|| Error::InvalidData("保存先がファイルではありません".into()))?
             .to_string_lossy();
         let lock_path = parent.join(format!(".{name}.save.lock~"));
         let _lock = Pending::create(lock_path)?;
@@ -80,12 +84,12 @@ impl SaveTarget {
         phase("flushed")?;
         pending.file.take();
         let (written, new_stamp) = read_stamp(&pending.path)?;
-        check(written == bytes, "一時ファイルの内容が変化しました")?;
+        conflict(written == bytes, "一時ファイルの内容が変化しました")?;
         Project::read(&written)?;
         phase("disk-verified")?;
         if let Some(expected) = &self.expected {
             let (previous, stamp) = read_stamp(&self.path)?;
-            check(&stamp == expected, "保存先が外部で変更されています")?;
+            conflict(&stamp == expected, "保存先が外部で変更されています")?;
             let backups = parent.join(format!("{name}-backups~"));
             fs::create_dir_all(&backups)?;
             check(
@@ -104,7 +108,7 @@ impl SaveTarget {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     let (b, _) = read_stamp(&backup)?;
-                    check(b == previous, "既存のバックアップが一致しません")?;
+                    conflict(b == previous, "既存のバックアップが一致しません")?;
                 }
                 Err(e) => return Err(e.into()),
             };
@@ -121,12 +125,12 @@ impl SaveTarget {
         match &self.expected {
             Some(want) => {
                 let (_, actual) = read_stamp(&self.path)?;
-                check(
+                conflict(
                     &actual == want,
                     "保存先が外部で変更されています。上書きしません",
                 )
             }
-            None => check(
+            None => conflict(
                 absent(&self.path)?,
                 "新規保存先が外部で作られました。上書きしません",
             ),
@@ -146,7 +150,7 @@ fn read_stamp(path: &Path) -> Result<(Vec<u8>, FileStamp)> {
         metadata.is_file() && !metadata.file_type().is_symlink(),
         "通常のファイルではありません",
     )?;
-    check(
+    check_budget(
         metadata.len() <= (MAX_TOTAL_BYTES + 2 * 1024 * 1024) as u64,
         "ファイルの読み込み予算超過です",
     )?;
@@ -155,7 +159,7 @@ fn read_stamp(path: &Path) -> Result<(Vec<u8>, FileStamp)> {
     f.take((MAX_TOTAL_BYTES + 2 * 1024 * 1024 + 1) as u64)
         .read_to_end(&mut b)?;
     let after = fs::metadata(path)?;
-    check(
+    conflict(
         b.len() as u64 == metadata.len()
             && after.len() == metadata.len()
             && after.modified()? == metadata.modified()?,
@@ -265,7 +269,7 @@ mod tests {
             let (p, mut t) = SaveTarget::open(s.file()).unwrap();
             let error = t.save_inner(&p, |p| {
                 if p == phase {
-                    Err(Error("注入した保存障害".into()))
+                    Err(Error::InvalidData("注入した保存障害".into()))
                 } else {
                     Ok(())
                 }

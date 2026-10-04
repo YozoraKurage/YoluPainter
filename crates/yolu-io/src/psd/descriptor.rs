@@ -1,6 +1,6 @@
 //! SoCo の ActionDescriptor。知らない型は長さを推測せず拒否する。
 use super::binary::Reader;
-use crate::{check, Error, Result};
+use crate::{check, check_budget, Error, Result};
 enum Value {
     Object(Vec<u8>, Vec<(Vec<u8>, Value)>),
     Number(f64),
@@ -8,14 +8,14 @@ enum Value {
 }
 fn count(r: &mut Reader) -> Result<usize> {
     let n = r.u32()? as usize;
-    check(n <= 100000, "記述子の項目数上限超過")?;
+    check_budget(n <= 100000, "記述子の項目数上限超過")?;
     Ok(n)
 }
 fn name(r: &mut Reader) -> Result<()> {
     let n = r.u32()? as usize;
     let bytes = n
         .checked_mul(2)
-        .ok_or_else(|| Error("記述子名長のオーバーフロー".into()))?;
+        .ok_or_else(|| Error::InvalidData("記述子名長のオーバーフロー".into()))?;
     r.take(bytes)?;
     Ok(())
 }
@@ -24,7 +24,7 @@ fn key(r: &mut Reader) -> Result<Vec<u8>> {
     Ok(r.take(if n == 0 { 4 } else { n })?.to_vec())
 }
 fn object(r: &mut Reader, depth: usize) -> Result<Value> {
-    check(depth <= 32, "記述子の深さ上限超過")?;
+    check_budget(depth <= 32, "記述子の深さ上限超過")?;
     name(r)?;
     let class = key(r)?;
     let n = count(r)?;
@@ -37,7 +37,7 @@ fn object(r: &mut Reader, depth: usize) -> Result<Value> {
     Ok(Value::Object(class, items))
 }
 fn value(r: &mut Reader, t: [u8; 4], depth: usize) -> Result<Value> {
-    check(depth <= 32, "記述子の深さ上限超過")?;
+    check_budget(depth <= 32, "記述子の深さ上限超過")?;
     match &t {
         b"Objc" | b"GlbO" => return object(r, depth + 1),
         b"doub" => {

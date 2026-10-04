@@ -19,6 +19,7 @@ pub mod pen;
 pub mod project;
 pub mod psd;
 pub mod sets;
+mod settings;
 pub mod shell;
 pub mod state;
 pub mod ui;

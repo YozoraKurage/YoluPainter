@@ -40,3 +40,5 @@ mod tests {
         assert_eq!(Lang::default(), Lang::Ja);
     }
 }
+
+mod errors;

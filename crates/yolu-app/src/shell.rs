@@ -624,7 +624,10 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
         let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, 32.0));
-        let tip = format!("{}（{}）", tool.name_in(app.lang), tool.key());
+        let tip = app.lang.pick(
+            format!("{}（{}）", tool.name_in(app.lang), tool.key()),
+            format!("{} ({})", tool.name_in(app.lang), tool.key()),
+        );
         if w::tool_button(ui, at, tool.id(), &tip, app.tool == tool).clicked() {
             app.apply(Action::SelectTool(tool));
         }
@@ -645,7 +648,7 @@ pub fn link_segment(app: &AppState) -> (egui::Color32, String) {
             _ => t::ACCENT,
         },
     };
-    (color, link.summary())
+    (color, link.summary_in(app.lang))
 }
 
 /// ステータスバー（左に知らせ、右に Live Link と文書の大きさとメモリと合成の経路）。
@@ -680,7 +683,7 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect, uploaded: usize) {
         );
         let tip = match (&app.link.status, &app.link.mismatch, &app.link.notice) {
             (LinkStatus::Failed(e), _, _) => e.clone(),
-            (_, Some(m), _) => format!("版が合いません: {m}"),
+            (_, Some(m), _) => format!("{}: {m}", app.lang.pick("版が合いません", "Version mismatch")),
             (_, _, Some((_, n))) => n.clone(),
             _ => text.clone(),
         };

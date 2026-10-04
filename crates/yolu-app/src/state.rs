@@ -504,8 +504,13 @@ pub enum DialogRequest {
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
 pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
+    blank_document_in(width, height, Lang::Ja)
+}
+
+/// `blank_document`の、最初のレイヤーの名前を言語に合わせたもの（新しいレイヤーの名前と同じ言い方）。
+pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
     let mut doc = Document::new(width, height).expect("文書の大きさ");
-    let first = doc.add_layer("レイヤー 1").ok();
+    let first = doc.add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
     (doc, first)
 }
@@ -514,11 +519,42 @@ pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
 pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
+    /// 表示の言語を替える。既定の名前のまま（利用者が付けていない）のプロジェクト名・最初のテクスチャセット・
+    /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
+    pub fn set_language(&mut self, lang: Lang) {
+        let old = self.lang;
+        if old == lang {
+            return;
+        }
+        self.lang = lang;
+        let untitled = |l: Lang| l.pick("名称未設定", "Untitled");
+        if self.project.is_none() && self.project_name == untitled(old) {
+            self.project_name = untitled(lang).into();
+        }
+        self.sets.retitle_defaults(old, lang);
+        let first_layer = |l: Lang| format!("{} 1", l.pick("レイヤー", "Layer"));
+        if self.project.is_none() && !self.doc.can_undo() && self.doc.layers().len() == 1 {
+            let layer = &self.doc.layers()[0];
+            if layer.name() == first_layer(old) {
+                let id = layer.id();
+                // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
+                if self.doc.set_layer_name(id, &first_layer(lang)).is_ok() {
+                    let _ = self.doc.clear_history();
+                }
+            }
+        }
+    }
+
     pub fn new(width: u32, height: u32) -> AppState {
-        let (doc, first) = blank_document(width, height);
-        let sets = TextureSets::first(&doc);
+        Self::new_in(width, height, Lang::default())
+    }
+
+    /// 言語を決めて作る（最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる）。
+    pub fn new_in(width: u32, height: u32, lang: Lang) -> AppState {
+        let (doc, first) = blank_document_in(width, height, lang);
+        let sets = TextureSets::first_in(&doc, lang);
         AppState {
-            lang: Lang::default(),
+            lang,
             m2: M2State::default(),
             doc,
             stroke: None,
@@ -536,7 +572,7 @@ impl AppState {
             canvas: CanvasInput::default(),
             popup: None,
             popup_was_open: false,
-            project_name: "名称未設定".into(),
+            project_name: lang.pick("名称未設定", "Untitled").into(),
             modified: false,
             reset_layout: false,
             quit: false,
@@ -645,7 +681,7 @@ impl AppState {
                         self.modified = true;
                     }
                     Ok(false) => {}
-                    Err(e) => self.message = e.to_string(),
+                    Err(e) => self.message = self.lang.core_error(&e),
                 }
                 self.ensure_selection();
             }
@@ -662,7 +698,7 @@ impl AppState {
                         self.modified = true;
                     }
                     Ok(false) => {}
-                    Err(e) => self.message = e.to_string(),
+                    Err(e) => self.message = self.lang.core_error(&e),
                 }
                 self.ensure_selection();
             }
@@ -705,7 +741,7 @@ impl AppState {
                             self.set_edit_mask(false);
                             self.modified = true;
                         }
-                        Err(e) => self.message = e.to_string(),
+                        Err(e) => self.message = self.lang.core_error(&e),
                     }
                 }
             }
@@ -741,7 +777,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if let Err(e) = self.doc.set_layer_blend_mode(id, mode) {
-                    self.message = e.to_string();
+                    self.message = self.lang.core_error(&e);
                     return;
                 }
                 self.modified = true;
@@ -762,7 +798,13 @@ impl AppState {
             | Action::ResetRotation
             | Action::FlipView => {
                 if stroking || self.canvas.rotating.is_some() {
-                    self.message = "描いている間・ドラッグの間は回せません。".into();
+                    self.message = self
+                        .lang
+                        .pick(
+                            "描いている間・ドラッグの間は回せません。",
+                            "Cannot rotate during a stroke or drag.",
+                        )
+                        .into();
                     return;
                 }
                 match action {
@@ -785,7 +827,13 @@ impl AppState {
                     return refuse(self);
                 }
                 self.view3d.load_demo();
-                self.message = "3D ビューに試しの立方体を読みました。".into();
+                self.message = self
+                    .lang
+                    .pick(
+                        "3D ビューに試しの立方体を読みました。",
+                        "Test cube loaded in the 3D View.",
+                    )
+                    .into();
             }
             Action::FrameModel => {
                 if stroking {
@@ -795,9 +843,15 @@ impl AppState {
             }
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::About => {
-                self.message = format!(
-                    "YoluPainter（Rust 版）{} — M2 の試作",
-                    env!("CARGO_PKG_VERSION")
+                self.message = self.lang.pick(
+                    format!(
+                        "YoluPainter（Rust 版）{} — M2 の試作",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    format!(
+                        "YoluPainter (Rust) {} — M2 prototype",
+                        env!("CARGO_PKG_VERSION")
+                    ),
                 )
             }
             Action::SelectSet(uid) => {
@@ -810,7 +864,10 @@ impl AppState {
             Action::ToggleSetVisible(uid) => self.toggle_set_visible(uid),
             Action::StartRenameSet(uid) => match self.sets.by_uid(uid) {
                 Some(set) if set.read_only.is_some() => {
-                    self.message = "読むだけのテクスチャセットです。".into()
+                    self.message = self
+                        .lang
+                        .pick("読むだけのテクスチャセットです。", "This texture set is read-only.")
+                        .into()
                 }
                 Some(_) => {
                     self.renaming_set = Some(uid);

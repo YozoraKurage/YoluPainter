@@ -1,6 +1,6 @@
 //! プロジェクト内の素材。外部の参照先を開かず、検証した埋め込みの写しを保持する。
 use crate::{
-    archive::Files, check, project, Archive, NativeDocument, NativeValue, Project, Resource,
+    archive::Files, check, check_budget, project, Archive, NativeDocument, NativeValue, Project, Resource,
     Result, MAX_TOTAL_BYTES,
 };
 use serde_json::{json, Value};
@@ -116,8 +116,8 @@ impl Shelf {
         files.insert(item.entry.clone(), Arc::from(bytes));
         files.insert("resources.json".into(), Arc::from(write_index(&resources)?));
         let next = Self::read(&files, self.budget)?;
-        check(next.used <= self.budget, "素材のメモリ予算超過です")?;
-        check(
+        check_budget(next.used <= self.budget, "素材のメモリ予算超過です")?;
+        check_budget(
             files.values().map(|b| b.len()).sum::<usize>() <= MAX_TOTAL_BYTES,
             "素材のアーカイブ予算超過です",
         )?;
@@ -226,7 +226,7 @@ fn write_index(resources: &[Resource]) -> Result<Vec<u8>> {
     } else {
         "\n  ]\n}\n"
     });
-    check(s.len() <= 1024 * 1024, "resources.json の予算超過です")?;
+    check_budget(s.len() <= 1024 * 1024, "resources.json の予算超過です")?;
     Ok(s.into_bytes())
 }
 fn memory(resources: &[Resource], files: &Files) -> Result<u64> {
@@ -254,7 +254,7 @@ fn memory(resources: &[Resource], files: &Files) -> Result<u64> {
                 if name.ends_with(".png") {
                     let reader = png::Decoder::new(std::io::Cursor::new(b.as_ref()))
                         .read_info()
-                        .map_err(|e| crate::Error(e.to_string()))?;
+                        .map_err(|e| crate::Error::InvalidData(e.to_string()))?;
                     bytes += reader.info().width as u64 * reader.info().height as u64;
                 }
             }

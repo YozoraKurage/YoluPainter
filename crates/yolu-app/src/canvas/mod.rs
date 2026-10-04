@@ -92,7 +92,7 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     let enabled = !app.is_stroking();
     // 読むだけのセット: 鍵と「読むだけ」（理由はツールチップ）
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
-        let text = "読むだけ";
+        let text = app.lang.pick("読むだけ", "Read-only");
         let bw = 20.0 + w::text_width(&p, text, t::LABEL_DIM) + 8.0;
         if x + bw <= bar.right() {
             let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
@@ -128,7 +128,10 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
                 &text,
                 false,
                 enabled,
-                Some("表示を回しています。押すと回転を戻します（Shift+R）。"),
+                Some(app.lang.pick(
+                    "表示を回しています。押すと回転を戻します（Shift+R）。",
+                    "The view is rotated. Click to reset the rotation (Shift+R).",
+                )),
                 Some("rotate_90_degrees_cw"),
             )
             .clicked()
@@ -145,7 +148,10 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
             r,
             "canvas.flip",
             "flip",
-            "表示を左右反転しています。押すと戻します（H）。",
+            app.lang.pick(
+                "表示を左右反転しています。押すと戻します（H）。",
+                "The view is mirrored. Click to restore it (H).",
+            ),
             true,
             enabled,
             16.0,
@@ -210,11 +216,14 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
 
 fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool {
     if let Some(reason) = app.read_only_reason() {
-        app.message = format!("読むだけのテクスチャセットには描けません: {reason}");
+        app.message = format!(
+            "{}: {reason}",
+            app.lang.pick("読むだけのテクスチャセットには描けません", "Cannot paint on a read-only texture set")
+        );
         return false;
     }
     let Some(layer) = app.selected_layer else {
-        app.message = "描くレイヤーがありません。".into();
+        app.message = app.lang.pick("描くレイヤーがありません。", "No layer to paint on.").into();
         return false;
     };
     if let Some(reason) = app.paint_blocker() {
@@ -235,7 +244,7 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool 
             true
         }
         Err(e) => {
-            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
             false
         }
     }
@@ -284,7 +293,7 @@ fn add_point(
             // core は失敗したストロークを取り消してから返す（予算を超えたなど）。札を手放して知らせる
             app.stroke = None;
             app.canvas.stroke = None;
-            app.message = e.to_string();
+            app.message = app.lang.core_error(&e);
         }
     }
 }
@@ -299,9 +308,9 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.doc.cancel_stroke(stroke);
-        app.message = "ストロークを取り消しました。".into();
+        app.message = app.lang.pick("ストロークを取り消しました。", "Stroke cancelled.").into();
     } else if let Err(e) = app.doc.end_stroke(stroke) {
-        app.message = e.to_string();
+        app.message = app.lang.core_error(&e);
     }
 }
 

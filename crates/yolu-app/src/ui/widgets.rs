@@ -75,11 +75,31 @@ pub fn text_width(p: &Painter, s: &str, style: TextStyle) -> f32 {
         .x
 }
 
+thread_local! {
+    /// 試験用の記録（`record_truncations` の間だけ貯める）。
+    static TRUNCATED: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `fit` が幅に収まらず詰めた文字（詰める前の文字）を、`take_truncations` で取れるように貯める・貯めないを切り替える（試験用。このスレッドだけ）。
+pub fn record_truncations(on: bool) {
+    TRUNCATED.with(|t| *t.borrow_mut() = on.then(Vec::new));
+}
+
+/// 貯めた分を取り出す（貯めていなければ空）。
+pub fn take_truncations() -> Vec<String> {
+    TRUNCATED.with(|t| t.borrow_mut().as_mut().map(std::mem::take).unwrap_or_default())
+}
+
 /// 幅に収まらなければ後ろを「…」で詰める。
 pub fn fit(p: &Painter, s: &str, width: f32, style: TextStyle) -> String {
     if text_width(p, s, style) <= width {
         return s.to_owned();
     }
+    TRUNCATED.with(|t| {
+        if let Some(list) = t.borrow_mut().as_mut() {
+            list.push(s.to_owned());
+        }
+    });
     let chars: Vec<char> = s.chars().collect();
     let (mut lo, mut hi) = (0usize, chars.len());
     while lo < hi {

@@ -322,6 +322,8 @@ fn a_model_becomes_texture_sets_and_strokes_come_back_as_changed_tiles() {
         h.state().state.view3d.model.as_ref().unwrap().meshes[0].positions[3]
     };
     assert_eq!(pos(&h), yolu_core::glam::Vec3::splat(2.0));
+    // Unity へ返す誤りの返事は、画面の言語（ここは English）に依らず日本語の診断に固定
+    h.state_mut().state.lang = yolu_app::lang::Lang::En;
     unity.send(Message::Pose(Pose {
         generation: 1,
         meshes: vec![MeshPose {
@@ -333,9 +335,11 @@ fn a_model_becomes_texture_sets_and_strokes_come_back_as_changed_tiles() {
     let got = unity.collect_until(&mut h, "ポーズを断る知らせ", |m| {
         m.iter().any(|m| matches!(m, Message::Error(_)))
     });
-    assert!(got
-        .iter()
-        .any(|m| matches!(m, Message::Error(e) if e.code == ErrorCode::Refused)));
+    assert!(got.iter().any(|m| matches!(
+        m,
+        Message::Error(e) if e.code == ErrorCode::Refused && e.text == "ポーズの頂点の数がメッシュと違います"
+    )), "{got:?}");
+    h.state_mut().state.lang = yolu_app::lang::Lang::Ja;
     assert_eq!(pos(&h), yolu_core::glam::Vec3::splat(2.0));
 
     // 目を閉じると Unity から外し、開くとまた出す

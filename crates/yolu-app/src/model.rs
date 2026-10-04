@@ -21,6 +21,7 @@ use yolu_protocol::{MaterialInfo, MaterialKey, MaterialsUpdate, Model, Pose};
 
 use crate::sets::BindReport;
 use crate::state::AppState;
+use crate::view3d::model::ViewError;
 
 /// モデルの出どころ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,7 +218,7 @@ impl AppState {
         &mut self,
         model: &Model,
         session: u64,
-    ) -> (BindReport, Result<(), String>) {
+    ) -> (BindReport, Result<(), ViewError>) {
         let shape = self.view3d.load_live_link(model);
         self.model = Some(SceneModel::from_link(model, session));
         let report = self.bind_model();
@@ -226,16 +227,16 @@ impl AppState {
 
     /// Live Link で受けたポーズを 3D ビューの形に当てる（描いている最中なら、待たせている形に当てて終わってから）。今の記録と
     /// 世代が違う・メッシュや頂点の数が合わないものは、何も変えずに断る。
-    pub fn receive_link_pose(&mut self, pose: &Pose) -> Result<(), String> {
+    pub fn receive_link_pose(&mut self, pose: &Pose) -> Result<(), ViewError> {
         match &self.model {
             Some(m) if m.is_link() && m.generation == pose.generation => {}
             Some(m) => {
-                return Err(format!(
-                    "ポーズの世代 {} は今のモデルの世代 {} と違います",
-                    pose.generation, m.generation
-                ))
+                return Err(ViewError::PoseGeneration {
+                    pose: pose.generation,
+                    model: Some(m.generation),
+                })
             }
-            None => return Err("モデルを受ける前のポーズは使えません".into()),
+            None => return Err(ViewError::NoLinkModel),
         }
         self.view3d.apply_live_link_pose(pose)
     }

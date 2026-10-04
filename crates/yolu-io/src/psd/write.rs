@@ -1,5 +1,5 @@
 use super::{binary::Emit, *};
-use crate::{check, Result};
+use crate::{check, check_budget, Result};
 use std::collections::HashSet;
 const DIVIDER: &str = "</Layer group>";
 pub fn write_edited(origin: &ReadResult, edited: &Document, limits: &Limits) -> Result<Vec<u8>> {
@@ -73,7 +73,7 @@ fn flatten<'a>(
                 children,
                 divider_id,
             } => {
-                check(depth < limits.max_group_depth, "グループ深さの予算超過")?;
+                check_budget(depth < limits.max_group_depth, "グループ深さの予算超過")?;
                 check(
                     *divider_id >= 0 && (*divider_id == 0 || ids.insert(*divider_id)),
                     "区切りIDが不正・重複しています",
@@ -82,7 +82,7 @@ fn flatten<'a>(
                     layer: l,
                     divider: true,
                 });
-                check(out.len() <= limits.max_layers, "レイヤー記録数の予算超過")?;
+                check_budget(out.len() <= limits.max_layers, "レイヤー記録数の予算超過")?;
                 flatten(children, depth + 1, out, ids, limits)?
             }
             LayerKind::Raster => {
@@ -115,7 +115,7 @@ fn flatten<'a>(
             layer: l,
             divider: false,
         });
-        check(out.len() <= limits.max_layers, "レイヤー記録数の予算超過")?;
+        check_budget(out.len() <= limits.max_layers, "レイヤー記録数の予算超過")?;
     }
     Ok(())
 }
@@ -215,13 +215,13 @@ fn preflight<'a>(d: &'a Document, limits: &Limits) -> Result<(Vec<Record<'a>>, u
         metadata += extra;
         info += 58 + extra + 8 + layer + if r.mask().is_some() { 8 + mask } else { 0 };
     }
-    check(
+    check_budget(
         pixels <= limits.max_decoded_bytes && metadata <= limits.max_metadata_bytes as u64,
         "PSD の画素・メタデータ予算超過",
     )?;
     info += info & 1;
     let total = 26 + 4 + 4 + 4 + 4 + info + 4 + 2 + canvas;
-    check(
+    check_budget(
         total <= limits.max_output_bytes as u64 && total <= i32::MAX as u64,
         "PSD 出力予算超過",
     )?;

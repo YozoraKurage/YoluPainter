@@ -931,7 +931,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     assert!(reopened
         .notes()
         .iter()
-        .all(|n| !n.contains("coreへ変換できません")));
+        .all(|n| !matches!(n, yolu_io::Note::SetNotConvertible { .. })));
     assert_same_document(
         &user,
         &reopened.sets()[0].document.to_core().unwrap(),
@@ -1170,13 +1170,18 @@ fn from_core_refuses_what_the_native_format_cannot_hold() {
     for i in 0..2049 {
         doc.add_group(&format!("層 {i}"), None).unwrap();
     }
-    let message = NativeDocument::from_core(&doc).err().unwrap().to_string();
+    // 上限は壊れたデータではなく予算・上限の超過として返す（画面が言い分ける）
+    let error = NativeDocument::from_core(&doc).err().unwrap();
+    assert!(matches!(error, yolu_io::Error::Budget(_)), "{error:?}");
+    let message = error.to_string();
     assert!(message.contains("2048"), "{message}");
     // 名前は UTF-8 で 4096 バイトまで（C# の読み手の ReadString の上限）
     let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
     let id = doc.add_layer("層").unwrap();
     doc.set_layer_name(id, &"あ".repeat(1366)).unwrap();
-    let message = NativeDocument::from_core(&doc).err().unwrap().to_string();
+    let error = NativeDocument::from_core(&doc).err().unwrap();
+    assert!(matches!(error, yolu_io::Error::Budget(_)), "{error:?}");
+    let message = error.to_string();
     assert!(message.contains("4096"), "{message}");
     doc.set_layer_name(id, &"あ".repeat(1365)).unwrap();
     assert!(NativeDocument::from_core(&doc).is_ok());
@@ -1438,10 +1443,13 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
     )
     .unwrap();
     doc.set_id_colors(colors).unwrap();
-    let err = yolu_io::NativeDocument::from_core(&doc)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("ID の色"), "{err}");
+    let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
+    // 画面が理由を言い分けられるよう、種類で返す（壊れたデータでも予算超過でもない）
+    assert!(
+        matches!(err, yolu_io::Error::Unwritable(yolu_io::Unwritable::ManualIdColors)),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("ID の色"), "{err}");
     assert_eq!(doc.id_colors().colors().len(), 1);
 }
 
@@ -1461,10 +1469,12 @@ fn layer_locks_are_refused_instead_of_dropped() {
     ] {
         for target in [id, group] {
             doc.set_layer_locks(target, lock).unwrap();
-            let err = yolu_io::NativeDocument::from_core(&doc)
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("ロック"), "{lock:?} {err}");
+            let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
+            assert!(
+                matches!(err, yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks)),
+                "{lock:?} {err:?}"
+            );
+            assert!(err.to_string().contains("ロック"), "{lock:?} {err}");
             assert_eq!(doc.layer(target).unwrap().locks(), lock);
             doc.set_layer_locks(target, LayerLocks::NONE).unwrap();
         }

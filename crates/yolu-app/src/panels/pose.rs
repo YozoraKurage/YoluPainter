@@ -55,6 +55,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .as_ref()
             .is_some_and(|s| s.is_editing());
     let has = app.view3d.pose.session.is_some();
+    let lang = app.lang;
 
     // 頭のボタン
     let bar = Rect::from_min_size(r.min, vec2(r.width(), TOOLBAR));
@@ -72,7 +73,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         next(26.0),
         "pose.mode",
         "accessibility",
-        "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押して骨を選ぶ）",
+        lang.pick(
+            "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押して骨を選ぶ）",
+            "Pose mode (drag a gizmo ring in the 3D View to rotate; click a surface to pick a bone)",
+        ),
         app.view3d.pose.mode,
         free && has,
         18.0,
@@ -86,7 +90,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         next(26.0),
         "pose.open",
         "folder_open",
-        "FBX を開く",
+        lang.pick("FBX を開く", "Open FBX"),
         false,
         free,
         18.0,
@@ -106,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         next(26.0),
         "pose.reset",
         "restart_alt",
-        "ポーズを戻す（ファイルのポーズへ）",
+        lang.pick("ポーズを戻す（ファイルのポーズへ）", "Reset pose (to the file's pose)"),
         false,
         free && !editing && posed,
         18.0,
@@ -128,10 +132,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         ui,
         next(half),
         "pose.undo",
-        "取り消し",
+        lang.pick("取り消し", "Undo"),
         false,
         free && !editing && can_undo,
-        Some("ポーズの取り消し（ポーズのモードでは Ctrl+Z）"),
+        Some(lang.pick(
+            "ポーズの取り消し（ポーズのモードでは Ctrl+Z）",
+            "Undo pose (Ctrl+Z in pose mode)",
+        )),
         None,
     )
     .clicked()
@@ -142,10 +149,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         ui,
         next(half),
         "pose.redo",
-        "やり直し",
+        lang.pick("やり直し", "Redo"),
         false,
         free && !editing && can_redo,
-        Some("ポーズのやり直し（ポーズのモードでは Ctrl+Shift+Z）"),
+        Some(lang.pick(
+            "ポーズのやり直し（ポーズのモードでは Ctrl+Shift+Z）",
+            "Redo pose (Ctrl+Shift+Z in pose mode)",
+        )),
         None,
     )
     .clicked()
@@ -163,7 +173,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::text(
             &p,
             row(y, BONE_ROW),
-            &format!("読み込み中: {name}"),
+            &format!("{}: {name}", lang.pick("読み込み中", "Loading")),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -175,8 +185,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
     };
     // 名前と数・知らせ
     let info = format!(
-        "{} · 骨 {} · BlendShape {}",
+        "{} · {} {} · BlendShape {}",
         s.rig.name(),
+        lang.pick("骨", "Bones"),
         s.rig.bones().len(),
         s.rig.blend_shape_count()
     );
@@ -201,7 +212,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::text(
             &p,
             Rect::from_min_max(pos2(at.left() + 20.0, at.top()), at.max),
-            &format!("知らせ {} 件", s.warnings.len()),
+            &lang.pick(
+                format!("知らせ {} 件", s.warnings.len()),
+                format!("Notices {}", s.warnings.len()),
+            ),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -229,7 +243,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
     .max(0.0);
 
-    w::subsection_header(ui, row(y, header), "pose.bones", "骨", true);
+    w::subsection_header(ui, row(y, header), "pose.bones", lang.pick("骨", "Bones"), true);
     y += header;
     let list = Rect::from_min_size(pos2(r.left() + 4.0, y), vec2(r.width() - 8.0, tree_height));
     bone_tree(ui, app, list);
@@ -513,12 +527,12 @@ fn set_weight(app: &mut AppState, m: usize, k: usize, value: f32, active: bool, 
     if changed {
         if !s.is_editing() {
             if let Err(e) = pose::begin_edit(&mut app.view3d) {
-                app.message = e;
+                app.message = app.lang.view_error(&e);
                 return;
             }
         }
         if let Err(e) = pose::edit(&mut app.view3d, next) {
-            app.message = e;
+            app.message = app.lang.view_error(&e);
         }
     }
     if released || !active {

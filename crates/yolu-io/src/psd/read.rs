@@ -1,5 +1,5 @@
 use super::{binary::Reader, *};
-use crate::{check, Error, Result};
+use crate::{check, check_budget, Error, Result};
 use std::collections::HashSet;
 use std::io::Read;
 
@@ -38,8 +38,8 @@ impl State<'_> {
         self.metadata = self
             .metadata
             .checked_add(n)
-            .ok_or_else(|| Error("メタデータ長のオーバーフロー".into()))?;
-        check(
+            .ok_or_else(|| Error::InvalidData("メタデータ長のオーバーフロー".into()))?;
+        check_budget(
             self.metadata <= self.limits.max_metadata_bytes,
             "PSD のメタデータ予算超過",
         )
@@ -48,8 +48,8 @@ impl State<'_> {
         self.pixels = self
             .pixels
             .checked_add(n)
-            .ok_or_else(|| Error("画素長のオーバーフロー".into()))?;
-        check(
+            .ok_or_else(|| Error::InvalidData("画素長のオーバーフロー".into()))?;
+        check_budget(
             self.pixels <= self.limits.max_decoded_bytes,
             "PSD の復号予算超過",
         )
@@ -188,7 +188,7 @@ fn parse(bytes: &[u8], s: &mut State) -> Result<Option<Document>> {
             let signed = info.i16()?;
             merged_alpha = signed < 0;
             let count = i32::from(signed).unsigned_abs() as usize;
-            check(count <= s.limits.max_layers, "PSD レイヤー数の予算超過")?;
+            check_budget(count <= s.limits.max_layers, "PSD レイヤー数の予算超過")?;
             if count == 0 {
                 s.preserve("NoLayers", "レイヤー記録がありません", info.pos - 2, 0)
             }
@@ -439,7 +439,7 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     rec.layer.name = name.iter().map(|b| char::from(*b)).collect();
     extra.zeros((4 - (n + 1) % 4) % 4)?;
     let unicode = tags(extra, Some(&mut rec), s)?;
-    check(
+    check_budget(
         rec.layer.name.encode_utf16().count() <= s.limits.max_name_code_units,
         "名前長の予算超過",
     )?;
@@ -567,7 +567,7 @@ fn tree(records: Vec<Record>, s: &State) -> Result<Vec<Layer>> {
     for r in records {
         match r.section {
             3 => {
-                check(
+                check_budget(
                     stack.len() < s.limits.max_group_depth,
                     "グループ深さの予算超過",
                 )?;
@@ -576,7 +576,7 @@ fn tree(records: Vec<Record>, s: &State) -> Result<Vec<Layer>> {
             1 | 2 => {
                 let (outer, id) = stack
                     .pop()
-                    .ok_or_else(|| Error("区切りのないグループ".into()))?;
+                    .ok_or_else(|| Error::InvalidData("区切りのないグループ".into()))?;
                 current.reverse();
                 let mut l = r.layer;
                 l.kind = LayerKind::Group {
@@ -959,7 +959,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                     continue;
                 }
                 let n = b.u32()? as usize;
-                check(n <= s.limits.max_name_code_units, "Unicode名長の予算超過")?;
+                check_budget(n <= s.limits.max_name_code_units, "Unicode名長の予算超過")?;
                 rec.layer.name = b.utf16(n)?;
                 if b.remaining() > 3 {
                     s.preserve("UnicodeNameTail", "未知のluni末尾", b.pos, b.remaining())

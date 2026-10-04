@@ -4,7 +4,7 @@ use yolu_io::{composite_png, Error, Project, Result};
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() != 2 {
-        return Err(Error(
+        return Err(Error::InvalidData(
             "使い方: composite_png <入力.ylp> <出力.png>（出力は新しいファイル）".into(),
         ));
     }

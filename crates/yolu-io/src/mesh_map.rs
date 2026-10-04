@@ -1,5 +1,5 @@
 //! .ylp 内の meshmap-*.bin。形式1〜3を読み、形式3で書く。
-use crate::{check, Error, Result};
+use crate::{check, check_budget, Error, Result};
 use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
 use std::io::{Read, Write};
 use yolu_core::mesh_maps::{BakedMeshMap, MeshMapKind, MeshMapProvenance};
@@ -14,7 +14,7 @@ pub fn parse_entry_name(name: &str) -> Option<MeshMapKind> {
         .find(|k| entry_name(*k) == name)
 }
 fn core_error(e: yolu_core::mesh_maps::MeshMapError) -> Error {
-    Error(e.to_string())
+    Error::InvalidData(e.to_string())
 }
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
@@ -32,12 +32,12 @@ impl<'a> Reader<'a> {
     }
     fn string(&mut self) -> Result<String> {
         let n = self.int()?;
-        check(
+        check_budget(
             (0..=4096).contains(&n),
             "メッシュマップの文字列が長すぎます",
         )?;
         String::from_utf8(self.take(n as usize)?.to_vec())
-            .map_err(|_| Error("メッシュマップの UTF-8 が不正です".into()))
+            .map_err(|_| Error::InvalidData("メッシュマップの UTF-8 が不正です".into()))
     }
 }
 fn int(out: &mut Vec<u8>, n: i32) {
@@ -182,7 +182,7 @@ pub fn read_with_limit(bytes: &[u8], max_bytes: usize) -> Result<BakedMeshMap> {
     )?;
     let texels = width as usize * height as usize;
     let expected = texels * (1 + 2 * kind.channels());
-    check(
+    check_budget(
         expected * 2 <= max_bytes,
         "メッシュマップの展開がメモリ予算を超えます",
     )?;

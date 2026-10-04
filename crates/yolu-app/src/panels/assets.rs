@@ -5,10 +5,10 @@ use egui::Ui;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Rows};
 
-pub fn show(ui: &mut Ui) {
+pub fn show(ui: &mut Ui, lang: crate::lang::Lang) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     let mut rows = Rows::new(r, 8.0);
     let row = rows.row(60.0, 0.0);
-    w::wrapped_text(ui.painter(), row, "準備中", t::LABEL_DIM);
+    w::wrapped_text(ui.painter(), row, lang.pick("準備中", "Coming soon"), t::LABEL_DIM);
 }

@@ -152,7 +152,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
-            Tab::Assets => assets::show(ui),
+            Tab::Assets => assets::show(ui, self.app.lang),
         }
     }
 
@@ -188,6 +188,7 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
+    settings: Option<(std::path::PathBuf, crate::lang::Lang)>,
 }
 
 impl YoluApp {
@@ -203,19 +204,55 @@ impl YoluApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> YoluApp {
         let fonts = Self::setup(&cc.egui_ctx);
         let pen = PenInput::attach(cc);
-        let mut app = YoluApp::with_state(
-            AppState::new(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE),
-            pen,
-        )
-        .with_render_state(cc.wgpu_render_state.as_ref());
+        let mut app = YoluApp::with_settings(crate::settings::path(), pen)
+            .with_render_state(cc.wgpu_render_state.as_ref());
         app.fonts = fonts;
         app.dialogs = true;
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
-        if app.pen.is_hooked() {
-            app.state.message = "Windows Ink のペンを受けています。".into();
-        }
         app
+    }
+
+    /// 設定のファイル（無ければ保存しない）から言語を決めて作る（`setup` は呼ぶ側で）。最初のレイヤー・テクスチャセット・
+    /// プロジェクトの名前がその言語になる。読めない設定は既定の日本語に戻し、知らせる（ファイルは、言語を選び直すまで触らない）。
+    fn with_settings(settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
+        let (lang, unreadable) = match settings.as_deref().map(crate::settings::load) {
+            Some(Ok(lang)) => (lang, false),
+            Some(Err(_)) => (crate::lang::Lang::default(), true),
+            None => (crate::lang::Lang::default(), false),
+        };
+        let mut app = YoluApp::with_state(
+            AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
+            pen,
+        );
+        if let Some(message) = startup_message(lang, unreadable, app.pen.is_hooked()) {
+            app.state.message = message;
+        }
+        app.settings = settings.map(|path| (path, lang));
+        app
+    }
+
+    /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
+    pub fn for_context_with_settings(ctx: &egui::Context, settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
+        let fonts = Self::setup(ctx);
+        let mut app = YoluApp::with_settings(settings, pen);
+        app.fonts = fonts;
+        app
+    }
+
+    /// 言語の選択が変わっていれば、設定のファイルに書く。書けなくても動作は変えず、知らせるだけ。
+    /// 失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
+    fn persist_language(&mut self) {
+        let Some((path, saved)) = &mut self.settings else {
+            return;
+        };
+        if *saved == self.state.lang {
+            return;
+        }
+        *saved = self.state.lang;
+        if crate::settings::save(path, *saved).is_err() {
+            self.state.message = saved.pick("言語の設定を保存できません。", "Cannot save language setting.").into();
+        }
     }
 
     /// 文脈と状態から作る（試験用。配色・書体・アイコンも入れる）。
@@ -242,6 +279,7 @@ impl YoluApp {
             link: LiveLink::new(),
             dialogs: false,
             closing: false,
+            settings: None,
         }
     }
 
@@ -270,10 +308,11 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::Open) => {
+                let lang = self.state.lang;
                 if self.confirm_discard() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .set_title("プロジェクトを開く")
-                        .add_filter("YoluPainter プロジェクト", &["ylp"])
+                        .set_title(lang.pick("プロジェクトを開く", "Open Project"))
+                        .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
                         .pick_file()
                     {
                         self.state.apply(Action::OpenProject(path));
@@ -281,10 +320,11 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::SaveAs) => {
+                let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.project_name);
                 if let Some(path) = rfd::FileDialog::new()
-                    .set_title("別名で保存")
-                    .add_filter("YoluPainter プロジェクト", &["ylp"])
+                    .set_title(lang.pick("別名で保存", "Save As"))
+                    .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
                     .set_file_name(name)
                     .save_file()
                 {
@@ -292,8 +332,9 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::OpenModel) => {
+                let lang = self.state.lang;
                 if let Some(path) = rfd::FileDialog::new()
-                    .set_title("3D ビューに FBX を開く")
+                    .set_title(lang.pick("3D ビューに FBX を開く", "Open FBX in the 3D View"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
@@ -360,7 +401,10 @@ impl YoluApp {
         }
         rfd::MessageDialog::new()
             .set_title("YoluPainter")
-            .set_description("保存していない変更があります。変更を捨てて終わりますか？")
+            .set_description(self.state.lang.pick(
+                "保存していない変更があります。変更を捨てて終わりますか？",
+                "There are unsaved changes. Discard them and quit?",
+            ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Warning)
             .show()
@@ -374,7 +418,10 @@ impl YoluApp {
         }
         rfd::MessageDialog::new()
             .set_title("YoluPainter")
-            .set_description("保存していない変更があります。変更を捨てますか？")
+            .set_description(self.state.lang.pick(
+                "保存していない変更があります。変更を捨てますか？",
+                "There are unsaved changes. Discard them?",
+            ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Warning)
             .show()
@@ -392,7 +439,7 @@ impl YoluApp {
         });
         if let Some(path) = dropped {
             if self.state.is_stroking() {
-                self.state.message = "描いている間は開きません。".into();
+                self.state.message = self.state.lang.pick("描いている間は開きません。", "Cannot open during a stroke.").into();
             } else if self.confirm_discard() {
                 self.state.apply(Action::OpenProject(path));
             }
@@ -418,12 +465,12 @@ impl YoluApp {
     /// Live Link と同じ形のモデルを読む（Live Link が受けたときと同じ道: 記録・テクスチャセットの結び付け・3D の形。描いている
     /// 最中なら、3D の形は終わってから入れ替わる）。つながりの外から読んだものなので Unity には出さない。
     pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
-        self.state.receive_link_model(model, 0).1
+        self.state.receive_link_model(model, 0).1.map_err(|e| e.to_string())
     }
 
     /// Live Link と同じ形のポーズを当てる（描いている最中なら、終わってから）。
     pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), String> {
-        self.state.receive_link_pose(pose)
+        self.state.receive_link_pose(pose).map_err(|e| e.to_string())
     }
 
     pub fn pen(&self) -> &PenInput {
@@ -664,12 +711,41 @@ impl YoluApp {
     }
 }
 
+/// 起動時の状態の帯の知らせ（読めなかった言語の設定と、Windows Ink の接続。両方あれば両方）。
+fn startup_message(lang: crate::lang::Lang, settings_unreadable: bool, ink_connected: bool) -> Option<String> {
+    let mut parts = Vec::new();
+    if settings_unreadable {
+        parts.push(lang.pick("言語の設定を読めません。", "Cannot read the language setting."));
+    }
+    if ink_connected {
+        parts.push(lang.pick("Windows Ink のペンを受けています。", "Windows Ink connected."));
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
+        self.persist_language();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::from(t::WINDOW_BG).to_array()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lang::Lang;
+
+    #[test]
+    fn startup_message_keeps_both_notices() {
+        assert_eq!(startup_message(Lang::Ja, false, false), None);
+        assert_eq!(startup_message(Lang::En, false, true).as_deref(), Some("Windows Ink connected."));
+        assert_eq!(startup_message(Lang::En, true, false).as_deref(), Some("Cannot read the language setting."));
+        // Windows Ink の知らせで、読めなかった設定の知らせを上書きしない
+        let both = startup_message(Lang::Ja, true, true).unwrap();
+        assert!(both.contains("言語の設定を読めません") && both.contains("Windows Ink"), "{both}");
     }
 }

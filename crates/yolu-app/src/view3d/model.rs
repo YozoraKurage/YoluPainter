@@ -6,17 +6,100 @@ use std::sync::Arc;
 use yolu_core::geometry::{
     demo_cube, model_triangles, ModelMesh, Submesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
 };
+use yolu_core::geometry::GeometryError;
 use yolu_core::glam::{Vec2, Vec3};
+use yolu_core::skin::RigError;
+use yolu_model::ModelError;
+
+/// 3D ビュー・ポーズの失敗。文は表示するときに `Lang::view_error` が種類から作る（Display は日本語）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum ViewError {
+    /// 描いている間はポーズを変えない・読まない。
+    Stroking,
+    /// ポーズを付けるモデルが無い。
+    NoPoseModel,
+    /// 続けて変える操作が始まっていない。
+    NoPoseEdit,
+    /// Live Link のポーズを受けたとき、その元のモデル（Unity から受けたもの）がまだ無い。
+    NoLinkModel,
+    /// 3D ビューに、Live Link のポーズを当てるモデルが無い。
+    NoPoseBase,
+    /// メッシュの添字が頂点の数を超える。
+    BadMeshIndex,
+    /// 三角形が無い。
+    NoTriangles,
+    /// 読み込みの途中で取り消した。
+    Cancelled,
+    /// 読み込みのスレッドが結果を返さずに止まった。
+    LoadStopped,
+    /// Live Link のポーズの世代がモデルと違う（モデルが無ければ None）。
+    PoseGeneration { pose: u32, model: Option<u32> },
+    /// Live Link のポーズのメッシュの番号が範囲外。
+    PoseMesh,
+    /// Live Link のポーズの頂点の数がメッシュと違う。
+    PoseVertices,
+    Rig(RigError),
+    Geometry(GeometryError),
+    Model(ModelError),
+}
+
+impl std::fmt::Display for ViewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stroking => f.write_str("描いている間はポーズを変えられません。"),
+            Self::NoPoseModel => f.write_str("ポーズを付けるモデルがありません"),
+            Self::NoPoseEdit => f.write_str("ポーズの操作が始まっていません"),
+            Self::NoLinkModel => f.write_str("モデルを受ける前のポーズは使えません"),
+            Self::NoPoseBase => f.write_str("ポーズを当てるモデルがありません"),
+            Self::BadMeshIndex => f.write_str("メッシュの添字が頂点の数を超えています"),
+            Self::NoTriangles => f.write_str("三角形がありません"),
+            Self::Cancelled => f.write_str("取り消しました"),
+            Self::LoadStopped => f.write_str("読み込みが止まりました"),
+            Self::PoseGeneration { pose, model: Some(model) } => write!(
+                f,
+                "ポーズの世代 {pose} は今のモデルの世代 {model} と違います"
+            ),
+            Self::PoseGeneration { pose, model: None } => {
+                write!(f, "ポーズの世代 {pose} のモデルがありません")
+            }
+            Self::PoseMesh => f.write_str("ポーズのメッシュの番号が範囲外です"),
+            Self::PoseVertices => f.write_str("ポーズの頂点の数がメッシュと違います"),
+            Self::Rig(e) => e.fmt(f),
+            Self::Geometry(e) => e.fmt(f),
+            Self::Model(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ViewError {}
+
+impl From<RigError> for ViewError {
+    fn from(e: RigError) -> Self {
+        Self::Rig(e)
+    }
+}
+impl From<GeometryError> for ViewError {
+    fn from(e: GeometryError) -> Self {
+        Self::Geometry(e)
+    }
+}
+impl From<ModelError> for ViewError {
+    fn from(e: ModelError) -> Self {
+        Self::Model(e)
+    }
+}
 
 /// 3D ビューのモデル。
 pub struct ViewModel {
     pub name: String,
     pub meshes: Vec<ModelMesh>,
     pub geometry: Arc<SurfaceGeometry>,
-    /// マテリアルの組の名前（番号 = 組）。
-    pub materials: Vec<String>,
+    /// マテリアルの組（番号 = 組）の名前。マテリアルの無いスロットは None（名前は表示のときに言語で作る）。
+    pub materials: Vec<Option<String>>,
     /// Live Link のモデルの世代（ポーズはこの世代のモデルにだけ当てる）。試しの立方体は None。
     pub link_generation: Option<u32>,
+    /// 試しの立方体か（見出しの名前を表示の言語に合わせる）。
+    pub demo: bool,
 }
 
 impl ViewModel {
@@ -24,21 +107,21 @@ impl ViewModel {
     pub fn new(
         name: &str,
         meshes: Vec<ModelMesh>,
-        materials: Vec<String>,
+        materials: Vec<Option<String>>,
         revision: u32,
-    ) -> Result<ViewModel, String> {
-        let triangles = model_triangles(&meshes).ok_or("メッシュの添字が頂点の数を超えています")?;
+    ) -> Result<ViewModel, ViewError> {
+        let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
         if triangles.is_empty() {
-            return Err("三角形がありません".into());
+            return Err(ViewError::NoTriangles);
         }
-        let geometry = SurfaceGeometry::new(triangles, revision, DEFAULT_WELD_TOLERANCE)
-            .map_err(|e| e.to_string())?;
+        let geometry = SurfaceGeometry::new(triangles, revision, DEFAULT_WELD_TOLERANCE)?;
         Ok(ViewModel {
             name: name.to_string(),
             meshes,
             geometry: Arc::new(geometry),
             materials,
             link_generation: None,
+            demo: false,
         })
     }
 
@@ -46,7 +129,7 @@ impl ViewModel {
     pub fn with_geometry(
         name: &str,
         meshes: Vec<ModelMesh>,
-        materials: Vec<String>,
+        materials: Vec<Option<String>>,
         geometry: Arc<SurfaceGeometry>,
     ) -> ViewModel {
         ViewModel {
@@ -55,25 +138,47 @@ impl ViewModel {
             geometry,
             materials,
             link_generation: None,
+            demo: false,
         }
     }
 
     /// 試しの立方体（Unity 版のデモと同じ。6 面が別の UV アイランド）。
     pub fn demo(revision: u32) -> ViewModel {
-        ViewModel::new(
+        let mut m = ViewModel::new(
             "試しの立方体",
             vec![demo_cube()],
-            vec!["試しの立方体".into()],
+            vec![Some("試しの立方体".into())],
             revision,
         )
-        .expect("試しの立方体は作れる")
+        .expect("試しの立方体は作れる");
+        m.demo = true;
+        m
+    }
+
+    /// スロットのマテリアルの名前（マテリアルの無いスロットと試しの立方体は表示の言語で。範囲外は番号）。
+    pub fn material_name(&self, slot: usize, lang: crate::lang::Lang) -> String {
+        match self.materials.get(slot) {
+            Some(_) if self.demo => self.display_name(lang).to_owned(),
+            Some(Some(name)) => name.clone(),
+            Some(None) => lang.pick("マテリアルなし", "No material").into(),
+            None => slot.to_string(),
+        }
+    }
+
+    /// 見出しに出す名前（試しの立方体は表示の言語で）。
+    pub fn display_name(&self, lang: crate::lang::Lang) -> &str {
+        if self.demo {
+            lang.pick("試しの立方体", "Test Cube")
+        } else {
+            &self.name
+        }
     }
 
     /// Live Link で受けたモデル（位置は Unity の座標・根のローカルの空間。UV の無いメッシュは描けない（UV は 0））。
     pub fn from_live_link(
         model: &yolu_protocol::Model,
         revision: u32,
-    ) -> Result<ViewModel, String> {
+    ) -> Result<ViewModel, ViewError> {
         let meshes = model
             .meshes
             .iter()
@@ -96,8 +201,8 @@ impl ViewModel {
             .materials
             .iter()
             .map(|m| match &m.key {
-                yolu_protocol::MaterialKey::Unassigned => "マテリアルなし".to_string(),
-                yolu_protocol::MaterialKey::Material { name, .. } => name.clone(),
+                yolu_protocol::MaterialKey::Unassigned => None,
+                yolu_protocol::MaterialKey::Material { name, .. } => Some(name.clone()),
             })
             .collect();
         let mut m = ViewModel::new(&model.name, meshes, materials, revision)?;
@@ -111,19 +216,22 @@ impl ViewModel {
         &self,
         pose: &yolu_protocol::Pose,
         revision: u32,
-    ) -> Result<ViewModel, String> {
+    ) -> Result<ViewModel, ViewError> {
         if self.link_generation != Some(pose.generation) {
-            return Err("ポーズの世代がモデルと違います".into());
+            return Err(ViewError::PoseGeneration {
+                pose: pose.generation,
+                model: self.link_generation,
+            });
         }
         let mut meshes = self.meshes.clone();
         for p in &pose.meshes {
             let m = meshes
                 .get_mut(p.mesh as usize)
-                .ok_or("ポーズのメッシュの番号が範囲外です")?;
+                .ok_or(ViewError::PoseMesh)?;
             if p.positions.len() != m.positions.len()
                 || (!p.normals.is_empty() && p.normals.len() != m.positions.len())
             {
-                return Err("ポーズの頂点の数がメッシュと違います".into());
+                return Err(ViewError::PoseVertices);
             }
             m.positions = p.positions.iter().map(|v| Vec3::from_array(*v)).collect();
             m.normals = p.normals.iter().map(|v| Vec3::from_array(*v)).collect();
@@ -190,7 +298,7 @@ mod tests {
         let m = ViewModel::from_live_link(&model, 5).unwrap();
         assert_eq!(m.triangle_count(), 4);
         assert_eq!(m.revision(), 5);
-        assert_eq!(m.materials, vec!["肌".to_string(), "服".to_string()]);
+        assert_eq!(m.materials, vec![Some("肌".to_string()), Some("服".to_string())]);
         let t = m.geometry.triangles();
         assert_eq!(
             t.iter()

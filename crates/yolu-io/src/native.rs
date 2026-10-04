@@ -1,4 +1,4 @@
-use crate::{check, guid, is_hash, Error, Result, MAX_ENTRY_BYTES};
+use crate::{check, check_budget, guid, is_hash, Error, Result, MAX_ENTRY_BYTES};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -100,7 +100,7 @@ impl NativeDocument {
         let field = fields
             .iter_mut()
             .find(|f| f.path == path)
-            .ok_or_else(|| Error(format!("正本の項目がありません: {path}")))?;
+            .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {path}")))?;
         check(
             std::mem::discriminant(&field.value) == std::mem::discriminant(&value),
             "正本の値の型を変更できません",
@@ -113,7 +113,7 @@ impl NativeDocument {
         Self::read(&out)
     }
     pub fn read(b: &[u8]) -> Result<Self> {
-        check(
+        check_budget(
             b.len() <= MAX_ENTRY_BYTES,
             "正本の512 MiB予算を超えています",
         )?;
@@ -197,7 +197,7 @@ impl NativeDocument {
             while parent != [0; 16] {
                 let p = *by_id
                     .get(&parent)
-                    .ok_or_else(|| Error("親グループがありません".into()))?;
+                    .ok_or_else(|| Error::InvalidData("親グループがありません".into()))?;
                 check(
                     p > i && layers[p].kind == 3 && ancestors.insert(p),
                     "親グループの位置・種類・循環が不正です",
@@ -243,9 +243,9 @@ impl Reader<'_> {
         let end = self
             .at
             .checked_add(n)
-            .ok_or_else(|| Error("長さが過大です".into()))?;
+            .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
         let s = self.bytes.get(self.at..end).ok_or_else(|| {
-            Error(format!(
+            Error::InvalidData(format!(
                 "正本が途中で切れています: {} (位置{})",
                 self.prefix, self.at
             ))
@@ -324,7 +324,7 @@ impl Reader<'_> {
         let len = i32::from_le_bytes(self.take(4)?.try_into().unwrap());
         check((0..=4096).contains(&len), "文字列の長さが不正です")?;
         let s = std::str::from_utf8(self.take(len as usize)?)
-            .map_err(|_| Error("文字列がUTF-8ではありません".into()))?
+            .map_err(|_| Error::InvalidData("文字列がUTF-8ではありません".into()))?
             .to_string();
         self.add(n, NativeValue::Text(s.clone()));
         Ok(s)
@@ -912,7 +912,7 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
                 for (channel, halo) in halos.iter_mut().enumerate() {
                     if !content || channels.contains(&(channel as i32)) {
                         *halo += radius;
-                        check(
+                        check_budget(
                             *halo <= 512,
                             "フィルタースタックの到達半径が512を超えています",
                         )?;
