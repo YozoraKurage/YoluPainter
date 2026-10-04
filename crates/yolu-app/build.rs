@@ -7,7 +7,6 @@ use std::{env, path::Path};
 
 mod shortcut_catalog_build;
 
-
 /// exe のアイコン（ロゴ。インストーラーも同じファイルを使う）。
 const ICON: &str = "assets/logo/yolupainter.ico";
 
