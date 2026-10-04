@@ -12,7 +12,7 @@ use super::overlay::Tint;
 use super::pen;
 use crate::canvas::view::CanvasView;
 use crate::engine::SelectionMask;
-use crate::state::{AppState, StrokeSource, Tool};
+use crate::state::{AppState, StrokeSource};
 
 /// 赤い重ね（満量の画素の濃さ）。
 pub const TINT: Tint = Tint {
@@ -53,7 +53,7 @@ pub fn begin(app: &mut AppState, source: StrokeSource, eraser: bool) -> Option<b
     if !app.sel.quick {
         return None;
     }
-    let erase = eraser || app.tool == Tool::Eraser;
+    let erase = eraser || app.tool.erases();
     if !pen::begin(app, source, erase, true) {
         return Some(false);
     }

@@ -1,9 +1,13 @@
+//! 図形と定規の欄: オプションバー（図形の種類・線か塗り、定規の種類・点の数・削除、スナップ）と、左のドックのツールプロパティ（図形の線か塗り・
+//! 角の丸み・直径と不透明度、定規の点の数・削除・スナップ）。図形の種類と定規の種類はサブツールの一覧（`subtool`）でも選べる。
+
 use super::{Figure, RulerKind};
+use crate::panels::properties::{choice_buttons, slider_row, toggle_row, ChoiceButton};
 use crate::{
-    state::{AppState, Tool},
+    state::{Action, AppState, Tool},
     ui::{
         theme as t,
-        widgets::{self as w, NumberFormat, SliderSpec},
+        widgets::{self as w, NumberFormat, Rows},
     },
 };
 use egui::{pos2, vec2, Rect, Ui};
@@ -14,8 +18,11 @@ pub fn snap_button(ui: &mut Ui, app: &mut AppState, at: Rect) {
         at,
         "drafting.snap",
         "grid_dots",
-        app.lang
-            .pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)"),
+        &crate::shortcuts::tip_with_key(
+            app.lang,
+            app.lang.pick("定規にスナップ", "Snap to Ruler"),
+            &Action::ToggleRulerSnap,
+        ),
         app.drafting.snap,
         !app.is_stroking(),
         20.0,
@@ -117,28 +124,132 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
             app.drafting.rulers.remove(&app.doc.id());
         }
     }
-    if app.tool == Tool::Shape && app.drafting.figure == Figure::Rectangle {
-        let at = Rect::from_min_size(pos2(x, r.top() + 6.0), vec2(150.0, r.height() - 12.0));
-        let out = w::slider(
-            ui,
-            at,
-            "drafting.corner",
-            app.drafting.corner,
-            &SliderSpec::new(
-                lang.pick("角の丸み", "Corner Radius"),
-                0.0,
-                256.0,
-                NumberFormat::int(" px"),
-            ),
-        );
-        if enabled && out.changed {
-            app.drafting.corner = out.value;
-        }
-        x += 158.0;
-    }
     snap_button(
         ui,
         app,
         Rect::from_min_size(pos2(x, r.top() + 6.0), vec2(28.0, r.height() - 12.0)),
     );
+}
+
+/// 図形のツールプロパティ: 図形の種類・線か塗り・角の丸み（長方形）と、描くときの直径・不透明度（ブラシと共通）。
+pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let lang = app.lang;
+    let enabled = !app.is_stroking();
+    let figures = [Figure::Line, Figure::Rectangle, Figure::Ellipse];
+    let items = [
+        ChoiceButton { id: "props.line", label: lang.pick("直線", "Line"), selected: app.drafting.figure == Figure::Line, enabled, tooltip: None },
+        ChoiceButton { id: "props.rectangle", label: lang.pick("長方形", "Rectangle"), selected: app.drafting.figure == Figure::Rectangle, enabled, tooltip: None },
+        ChoiceButton { id: "props.ellipse", label: lang.pick("楕円", "Ellipse"), selected: app.drafting.figure == Figure::Ellipse, enabled, tooltip: None },
+    ];
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        app.drafting.figure = figures[i];
+        if figures[i] == Figure::Line {
+            app.drafting.fill = false;
+        }
+    }
+    if app.drafting.figure != Figure::Line {
+        let items = [
+            ChoiceButton { id: "props.outline", label: lang.pick("線で描く", "Outline"), selected: !app.drafting.fill, enabled, tooltip: None },
+            ChoiceButton { id: "props.fill", label: lang.pick("塗る", "Fill"), selected: app.drafting.fill, enabled, tooltip: None },
+        ];
+        if let Some(i) = choice_buttons(ui, rows, &items) {
+            app.drafting.fill = i == 1;
+        }
+    }
+    if app.drafting.figure == Figure::Rectangle {
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "drafting.corner",
+            lang.pick("角の丸み", "Corner Radius"),
+            app.drafting.corner,
+            (0.0, 256.0),
+            NumberFormat::int(" px"),
+            None,
+            enabled,
+        ) {
+            app.drafting.corner = v;
+        }
+    }
+    let shared = lang.pick("ブラシと共通", "Shared with the brush");
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "drafting.size",
+        lang.pick("直径", "Size"),
+        app.brush.radius * 2.0,
+        (1.0, 256.0),
+        NumberFormat::int(" px"),
+        Some(shared),
+        enabled && !(app.drafting.fill && app.drafting.figure != Figure::Line),
+    ) {
+        app.brush.radius = (v / 2.0).max(0.5);
+    }
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "drafting.opacity",
+        lang.pick("不透明度", "Opacity"),
+        app.brush.opacity * 100.0,
+        (0.0, 100.0),
+        NumberFormat::int("%"),
+        Some(shared),
+        enabled,
+    ) {
+        app.brush.opacity = v / 100.0;
+    }
+}
+
+/// 定規のツールプロパティ: 定規の種類・パースの点の数・削除・スナップ。
+pub fn ruler_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let lang = app.lang;
+    let enabled = !app.is_stroking();
+    let kinds = [RulerKind::Line, RulerKind::Parallel, RulerKind::Concentric, RulerKind::Perspective];
+    let items = [
+        ChoiceButton { id: "props.ruler.line", label: lang.pick("直線定規", "Straight Ruler"), selected: app.drafting.ruler_kind == RulerKind::Line, enabled, tooltip: None },
+        ChoiceButton { id: "props.ruler.parallel", label: lang.pick("平行線", "Parallel"), selected: app.drafting.ruler_kind == RulerKind::Parallel, enabled, tooltip: None },
+        ChoiceButton { id: "props.ruler.circle", label: lang.pick("同心円", "Concentric"), selected: app.drafting.ruler_kind == RulerKind::Concentric, enabled, tooltip: None },
+        ChoiceButton { id: "props.ruler.perspective", label: lang.pick("パース", "Perspective"), selected: app.drafting.ruler_kind == RulerKind::Perspective, enabled, tooltip: None },
+    ];
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        app.drafting.ruler_kind = kinds[i];
+        if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
+            r.kind = kinds[i];
+        }
+    }
+    if app.drafting.ruler_kind == RulerKind::Perspective {
+        let items = [
+            ChoiceButton { id: "props.ruler.one", label: lang.pick("1 点", "1 Point"), selected: !app.drafting.two_points, enabled, tooltip: None },
+            ChoiceButton { id: "props.ruler.two", label: lang.pick("2 点", "2 Points"), selected: app.drafting.two_points, enabled, tooltip: None },
+        ];
+        if let Some(i) = choice_buttons(ui, rows, &items) {
+            app.drafting.two_points = i == 1;
+            if let Some(r) = app.drafting.rulers.get_mut(&app.doc.id()) {
+                r.two_points = i == 1;
+            }
+        }
+    }
+    let delete = [ChoiceButton {
+        id: "props.ruler.delete",
+        label: lang.pick("削除", "Delete"),
+        selected: false,
+        enabled: enabled && app.ruler().is_some(),
+        tooltip: None,
+    }];
+    if choice_buttons(ui, rows, &delete).is_some() {
+        app.drafting.rulers.remove(&app.doc.id());
+    }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "props.ruler.snap",
+        lang.pick("定規にスナップ", "Snap to Ruler"),
+        app.drafting.snap,
+        crate::shortcuts::shortcut_text(&Action::ToggleRulerSnap).as_deref(),
+        enabled,
+    ) {
+        if v != app.drafting.snap {
+            app.toggle_snap();
+        }
+    }
 }

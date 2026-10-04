@@ -204,15 +204,20 @@ fn tool_names_and_option_bar_follow_the_language() {
     }
     h.get_by_label("Magic Wand (W)").click();
     h.run();
+    // 作成方法は、オプションバーとツールプロパティの両方に（同じ値）。許容値はオプションバーとツールプロパティ、隣接と全レイヤーはツールプロパティ
     for label in [
         "New: replace the selection",
         "Add to the selection (Shift)",
         "Subtract from the selection (Ctrl)",
         "Intersect: keep only the overlap (Shift + Ctrl)",
-        "Contiguous",
-        "Sample All Layers",
+        "Tolerance",
     ] {
-        h.get_by_label(label);
+        bar_rect(&h, label);
+        dock_rect(&h, label);
+    }
+    for label in ["Contiguous", "Sample All Layers"] {
+        dock_rect(&h, label);
+        assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
     }
     h.state_mut().state.sel.animate = false;
     h.snapshot("selection_english");
@@ -477,27 +482,27 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    h.get_by_label("追加選択: 選択範囲に足す（Shift）").click();
-    h.run();
+    let button = bar_rect(&h, "追加選択: 選択範囲に足す（Shift）").center();
+    click(&mut h, button);
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));
     assert!(selected(&h, left) && selected(&h, right), "足す");
     // 「引く」: 左の外側を引く
-    h.get_by_label("一部削除: 選択範囲から引く（Ctrl）").click();
-    h.run();
+    let button = bar_rect(&h, "一部削除: 選択範囲から引く（Ctrl）").center();
+    click(&mut h, button);
     drag_rect(&mut h, (-130.0, -80.0), (-60.0, 80.0));
     assert_eq!(amount_at(&h, left), 0, "引いた所は外れる");
     assert!(selected(&h, at(&h, -30.0, 0.0)), "引いていない所は残る");
     assert!(selected(&h, right));
     // 「重ねる」: 右の半分と重なる所だけ
-    h.get_by_label("選択中を選択: 重なる所だけ残す（Shift + Ctrl）").click();
-    h.run();
+    let button = bar_rect(&h, "選択中を選択: 重なる所だけ残す（Shift + Ctrl）").center();
+    click(&mut h, button);
     drag_rect(&mut h, (0.0, -80.0), (130.0, 80.0));
     assert!(selected(&h, right));
     assert_eq!(amount_at(&h, at(&h, -30.0, 0.0)), 0);
     // 置き換え + Shift で足す・Ctrl で引く・Shift+Ctrl で重ねる
-    h.get_by_label("新規選択: 新しい形で置き換える").click();
-    h.run();
+    let button = bar_rect(&h, "新規選択: 新しい形で置き換える").center();
+    click(&mut h, button);
     drag_rect(&mut h, (-120.0, -60.0), (0.0, 60.0));
     drag_with_by(&mut h, &[(10.0, -60.0), (120.0, 60.0)], Modifiers::SHIFT);
     assert!(selected(&h, left) && selected(&h, right), "Shift で足す");
@@ -523,13 +528,13 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
 }
 
 #[test]
-fn option_bar_select_all_deselect_and_invert_buttons() {
+fn tool_properties_select_all_deselect_and_invert_buttons() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     h.get_by_label("すべてを選択（Ctrl+A）").click();
     h.run();
     assert!(selected(&h, at(&h, 0.0, 0.0)));
-    // 選択範囲があるあいだは、キャンバスの上の帯にも同じ名前のボタンがある（ここはプロパティの欄のボタン）
+    // 選択範囲があるあいだは、キャンバスの上の帯にも同じ名前のボタンがある（ここはツールプロパティのボタン）
     let canvas = canvas_rect(&h);
     let beside = |h: &Harness<'_, YoluApp>, label: &str| {
         rect_of(h, label, |r| !canvas.contains_rect(r)).center()
@@ -653,7 +658,8 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
 
 #[test]
 fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
-    let mut h = app(1280.0, 800.0, 256);
+    // ツールプロパティの下のほう（選択範囲を変更）まで見える高さの窓
+    let mut h = app(1280.0, 1100.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-40.0, -30.0), (40.0, 30.0));
     let original = st(&h).doc.selection().unwrap().clone();
@@ -666,7 +672,7 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
         ("境界をぼかす", original.feather(6.0, false, budget).unwrap()),
         ("境界をくっきり", original.sharpen()),
     ] {
-        let at = rect_of(&h, label, |r| r.left() > 1000.0).center();
+        let at = rect_of(&h, label, |r| r.left() < 340.0 && r.top() > 62.0).center();
         let before = steps(&h);
         click(&mut h, at);
         if expect == original {
@@ -686,7 +692,7 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
     key(&h, Key::D, Modifiers::COMMAND);
     h.run();
     let before = steps(&h);
-    let at = rect_of(&h, "拡張", |r| r.left() > 1000.0).center();
+    let at = rect_of(&h, "拡張", |r| r.left() < 340.0 && r.top() > 62.0).center();
     click(&mut h, at);
     assert_eq!(steps(&h), before);
 }

@@ -1,7 +1,7 @@
 //! 窓の外枠（Unity 版の Shell）: メニューの中身、オプションバー（今のツールの設定を 1 行で）、ツールの帯、ステータスバー、
 //! キーの割り当て。
 
-use egui::{pos2, vec2, Key, Modifiers, Rect, Sense, Ui};
+use egui::{pos2, vec2, Modifiers, Rect, Sense, Ui};
 
 use yolu_core::export::ExportTemplate;
 
@@ -13,12 +13,11 @@ use crate::livelink::LinkIndicator;
 use crate::m2::{Edit, UiOp};
 use crate::pathtool::PathAction;
 use crate::psd::{PsdAction, PsdTarget};
-use crate::selection::{SelAction, SelEdit};
 use crate::shelf::ShelfOp;
 use crate::state::{Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
+use crate::ui::widgets::{self as w, Align};
 use crate::update::UpdateAction;
 use crate::view3d::pose::PoseAction;
 
@@ -168,46 +167,28 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             entries.extend(crate::clipboard::menu_entries(app));
             entries.extend(crate::screen_pick::menu_entries(app));
             entries.push(Entry::Separator);
+            // 道具の項目は、名前もキーも道具の表（`tools`）のとおり（メニューにキーを重ねて書かない）
+            let tool_entry = |tool: Tool| {
+                Entry::item(tool.name_in(l), Action::SelectTool(tool))
+                    .shortcut(tool.key())
+                    .radio(app.tool == tool)
+            };
             entries.extend([
-                Entry::item(Tool::Brush.name_in(l), Action::SelectTool(Tool::Brush))
-                    .shortcut("B")
-                    .radio(app.tool == Tool::Brush),
-                Entry::item(Tool::Eraser.name_in(l), Action::SelectTool(Tool::Eraser))
-                    .shortcut("E")
-                    .radio(app.tool == Tool::Eraser),
-                Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
-                    .shortcut("G")
-                    .radio(app.tool == Tool::Fill),
-                Entry::item(Tool::Shape.name_in(l), Action::SelectTool(Tool::Shape))
-                    .shortcut("U").radio(app.tool == Tool::Shape),
-                Entry::item(Tool::Ruler.name_in(l), Action::SelectTool(Tool::Ruler))
-                    .shortcut("Shift+U").radio(app.tool == Tool::Ruler),
-                Entry::item(Tool::Gradient.name_in(l), Action::SelectTool(Tool::Gradient))
-                    .shortcut("Shift+G")
-                    .radio(app.tool == Tool::Gradient),
-                Entry::item(
-                    Tool::PolygonFill.name_in(l),
-                    Action::SelectTool(Tool::PolygonFill),
-                )
-                .shortcut("4")
-                .radio(app.tool == Tool::PolygonFill),
-                Entry::item(Tool::Move.name_in(l), Action::SelectTool(Tool::Move))
-                    .shortcut("V")
-                    .radio(app.tool == Tool::Move),
+                tool_entry(Tool::Brush),
+                tool_entry(Tool::Eraser),
+                tool_entry(Tool::Fill),
+                tool_entry(Tool::Shape),
+                tool_entry(Tool::Ruler),
+                tool_entry(Tool::Gradient),
+                tool_entry(Tool::PolygonFill),
+                tool_entry(Tool::Move),
                 Entry::Separator,
                 transform_entry(l, Xform::Flip { horizontal: true }, free),
                 transform_entry(l, Xform::Flip { horizontal: false }, free),
                 transform_entry(l, Xform::Rotate90 { clockwise: true }, free),
                 transform_entry(l, Xform::Rotate90 { clockwise: false }, free),
-                Entry::item(
-                    Tool::Eyedropper.name_in(l),
-                    Action::SelectTool(Tool::Eyedropper),
-                )
-                .shortcut("I")
-                .radio(app.tool == Tool::Eyedropper),
-                Entry::item(Tool::Path.name_in(l), Action::SelectTool(Tool::Path))
-                    .shortcut("P")
-                    .radio(app.tool == Tool::Path),
+                tool_entry(Tool::Eyedropper),
+                tool_entry(Tool::Path),
                 Entry::Separator,
                 Entry::item(
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -705,11 +686,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v
 }
 
-fn sel_edit(edit: SelEdit) -> Action {
-    Action::Sel(SelAction::Edit(edit))
-}
-
-/// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。
+/// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     if ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
@@ -719,9 +696,6 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         ctx.input(|i| crate::clipboard::keys::observe_blocked(i, &mut app.clip));
         return;
     }
-    crate::screen_pick::shortcuts(ctx, app);
-    let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    let has_selection = app.doc.selection().is_some();
     let mut actions = Vec::new();
     // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
@@ -737,12 +711,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
         actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
         if arrows_move {
-            for (k, dir) in [
-                (Key::ArrowLeft, (-1.0, 0.0)),
-                (Key::ArrowRight, (1.0, 0.0)),
-                (Key::ArrowUp, (0.0, -1.0)),
-                (Key::ArrowDown, (0.0, 1.0)),
-            ] {
+            for (k, dir) in crate::keymap::MOVE_KEYS {
                 if i.consume_key(Modifiers::SHIFT, k) {
                     arrows.push((dir, true));
                 } else if i.consume_key(Modifiers::NONE, k) {
@@ -750,95 +719,11 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
                 }
             }
         }
-        let mut key = |m: Modifiers, k: Key, a: Action| {
-            if i.consume_key(m, k) {
-                actions.push(a);
-            }
-        };
-        // Shift 付きを先に取る（consume_key は書いていない Shift を気にしない。取った押下は消えるので、次の Ctrl+Z には残らない）
-        key(cmd_shift, Key::E, Action::M2(Edit::MergeVisible));
-        key(cmd_shift, Key::G, Action::M2(Edit::UngroupSelected));
-        key(Modifiers::COMMAND, Key::E, Action::M2(Edit::MergeDown));
-        // Ctrl+J: 選択範囲があれば、その画素を新しいレイヤーへ（Photoshop の「コピーしたレイヤー」）。無ければレイヤーの複製
-        if has_selection {
-            key(Modifiers::COMMAND, Key::J, sel_edit(SelEdit::ToNewLayer));
-        }
-        key(Modifiers::COMMAND, Key::J, Action::M2(Edit::DuplicateSelected));
-        key(Modifiers::COMMAND, Key::G, Action::M2(Edit::GroupSelected));
-        key(cmd_shift, Key::I, sel_edit(SelEdit::Invert));
-        key(cmd_shift, Key::Z, Action::Redo);
-        key(Modifiers::COMMAND, Key::A, sel_edit(SelEdit::All));
-        key(Modifiers::COMMAND, Key::D, sel_edit(SelEdit::Clear));
-        // 選択範囲があるときだけ: 消去（Delete）
-        if has_selection {
-            key(Modifiers::NONE, Key::Delete, sel_edit(SelEdit::Erase));
-        }
-        key(Modifiers::COMMAND, Key::Z, Action::Undo);
-        key(Modifiers::COMMAND, Key::Y, Action::Redo);
-        key(cmd_shift, Key::N, Action::NewLayer);
-        key(cmd_shift, Key::S, Action::SaveProjectAsDialog);
-        key(Modifiers::COMMAND, Key::S, Action::SaveProject);
-        key(Modifiers::COMMAND, Key::O, Action::OpenProjectDialog);
-        key(Modifiers::COMMAND, Key::N, Action::NewProjectDialog);
-        key(Modifiers::COMMAND, Key::Num1, Action::ToggleRulerSnap);
-        key(Modifiers::COMMAND, Key::Num0, Action::FitView);
-        key(Modifiers::COMMAND, Key::Plus, Action::ZoomIn);
-        key(Modifiers::COMMAND, Key::Equals, Action::ZoomIn);
-        key(Modifiers::COMMAND, Key::Minus, Action::ZoomOut);
-        key(Modifiers::COMMAND, Key::Q, Action::Quit);
-        key(Modifiers::SHIFT, Key::R, Action::ResetRotation);
-        // Shift 付きの道具を先に（consume_key は書いていない Shift を気にしない）
-        key(
-            Modifiers::SHIFT,
-            Key::M,
-            Action::SelectTool(Tool::SelectEllipse),
-        );
-        key(Modifiers::SHIFT, Key::L, Action::SelectTool(Tool::Polygon));
-        key(Modifiers::SHIFT, Key::W, Action::SelectTool(Tool::IdSelect));
-        key(Modifiers::SHIFT, Key::G, Action::SelectTool(Tool::Gradient));
-        key(Modifiers::SHIFT, Key::U, Action::SelectTool(Tool::Ruler));
-        key(Modifiers::NONE, Key::U, Action::SelectTool(Tool::Shape));
-        key(
-            Modifiers::SHIFT,
-            Key::Q,
-            Action::Sel(SelAction::Ui(crate::selection::SelUiOp::QuickMask(None))),
-        );
-        key(
-            Modifiers::NONE,
-            Key::M,
-            Action::SelectTool(Tool::SelectRect),
-        );
-        key(Modifiers::NONE, Key::V, Action::SelectTool(Tool::Move));
-        key(Modifiers::NONE, Key::L, Action::SelectTool(Tool::Lasso));
-        key(Modifiers::NONE, Key::W, Action::SelectTool(Tool::Wand));
-        key(Modifiers::NONE, Key::B, Action::SelectTool(Tool::Brush));
-        key(Modifiers::NONE, Key::E, Action::SelectTool(Tool::Eraser));
-        key(Modifiers::NONE, Key::G, Action::SelectTool(Tool::Fill));
-        key(Modifiers::NONE, Key::Num4, Action::SelectTool(Tool::PolygonFill));
-        key(Modifiers::NONE, Key::I, Action::SelectTool(Tool::Eyedropper));
-        key(Modifiers::NONE, Key::P, Action::SelectTool(Tool::Path));
-        key(Modifiers::NONE, Key::S, Action::SelectTool(Tool::SelectPen));
-        // パスの道具: 選んでいる点（無ければ最後の点）を消す
-        if app.tool == Tool::Path {
-            key(Modifiers::NONE, Key::Delete, Action::Path(PathAction::DeleteSelected));
-            key(Modifiers::NONE, Key::Backspace, Action::Path(PathAction::DeleteSelected));
-        }
-        key(
-            Modifiers::NONE,
-            Key::Q,
-            Action::Fill(crate::fillfx::FillOp::ToggleHandles),
-        );
-        key(Modifiers::NONE, Key::X, Action::SwapColors);
-        key(Modifiers::NONE, Key::D, Action::DefaultColors);
-        key(Modifiers::NONE, Key::OpenBracket, Action::BrushSmaller);
-        key(Modifiers::NONE, Key::CloseBracket, Action::BrushLarger);
-        key(Modifiers::NONE, Key::H, Action::FlipView);
-        key(Modifiers::NONE, Key::Minus, Action::RotateLeft);
-        key(Modifiers::NONE, Key::Equals, Action::RotateRight);
+        actions.extend(crate::keymap::dispatch(i, app));
         // ^ はキーの位置が配列で違うので文字で見る（JIS の ^ のキー、US の Shift+6）
         if i.events
             .iter()
-            .any(|e| matches!(e, egui::Event::Text(s) if s == "^"))
+            .any(|e| matches!(e, egui::Event::Text(s) if s == crate::keymap::ROTATE_RIGHT_TEXT))
         {
             actions.push(Action::RotateRight);
         }
@@ -851,13 +736,12 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     }
 }
 
-/// オプションバー（今のツールの設定。ブラシと消しゴムは直径・硬さ・不透明度・流量・間隔と筆圧の切り替え）。
+/// オプションバー（今のツールの、よく使う 2〜3 個。ブラシと消しゴムは直径・不透明度と対称。ツールプロパティと同じ値を見せる）。
 pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::hline(&p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
     let mut x = r.left() + 8.0;
-    let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     w::icon(
         &p,
         Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
@@ -867,145 +751,8 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     );
     x += 30.0;
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
-    if app.tool.is_select() {
-        crate::selection::props::select_options(ui, app, r, x + 4.0);
-        return;
-    }
-    if app.tool == Tool::Liquify { crate::transform::advanced::options(ui, app, r, x + 4.0); return; }
-    if app.tool == Tool::Move {
-        crate::transform::props::options(ui, app, r, x + 4.0);
-        return;
-    }
-    if app.tool == Tool::Eyedropper {
-        crate::eyedrop::options(ui, app, r, x + 4.0);
-        return;
-    }
-    // パスの道具は、点の太さ・閉じる・点を消す・ラスタライズ
-    if app.tool.is_path() {
-        crate::panels::path_props::options(ui, app, r, x);
-        return;
-    }
-    if matches!(app.tool, Tool::Shape | Tool::Ruler) {
-        crate::drafting::props::options(ui, app, r, x);
-        return;
-    }
-    if app.tool == Tool::Gradient {
-        crate::gradient::props::options(ui, app, r, x);
-        return;
-    }
-    // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定
-    if app.tool.is_region() {
-        crate::panels::region_props::options(ui, app, r, x);
-        return;
-    }
-    let mut next = |width: f32| {
-        let at = Rect::from_min_size(pos2(x + 4.0, y), vec2(width, h));
-        x += width + 8.0;
-        at
-    };
-    let l = app.lang;
-    crate::drafting::props::snap_button(ui, app, next(28.0));
-    let b = &mut app.brush;
-    let out = w::slider(
-        ui,
-        next(150.0),
-        "options.size",
-        b.radius * 2.0,
-        &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
-            .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])")),
-    );
-    if out.changed {
-        b.radius = (out.value / 2.0).max(0.5);
-    }
-    let out = w::slider(
-        ui,
-        next(130.0),
-        "options.hardness",
-        b.hardness * 100.0,
-        &SliderSpec::new(
-            l.pick("硬さ", "Hardness"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
-    );
-    if out.changed {
-        b.hardness = out.value / 100.0;
-    }
-    let out = w::slider(
-        ui,
-        next(130.0),
-        "options.opacity",
-        b.opacity * 100.0,
-        &SliderSpec::new(
-            l.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
-    );
-    if out.changed {
-        b.opacity = out.value / 100.0;
-    }
-    let out = w::slider(
-        ui,
-        next(120.0),
-        "options.flow",
-        b.flow * 100.0,
-        &SliderSpec::new(l.pick("流量", "Flow"), 0.0, 100.0, NumberFormat::int("%")),
-    );
-    if out.changed {
-        b.flow = out.value / 100.0;
-    }
-    let out = w::slider(
-        ui,
-        next(120.0),
-        "options.spacing",
-        b.spacing * 100.0,
-        &SliderSpec::new(
-            l.pick("間隔", "Spacing"),
-            1.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .tooltip(l.pick(
-            "ダブの間隔（直径に対する割合）",
-            "Distance between dabs (of the diameter)",
-        )),
-    );
-    if out.changed {
-        b.spacing = out.value / 100.0;
-    }
-    if w::icon_button(
-        ui,
-        next(28.0),
-        "options.pressure-size",
-        "stylus",
-        l.pick("筆圧で直径を変える", "Pen pressure changes the size"),
-        b.pressure_size,
-        true,
-        20.0,
-    )
-    .clicked()
-    {
-        b.pressure_size = !b.pressure_size;
-    }
-    if w::icon_button(
-        ui,
-        next(28.0),
-        "options.pressure-opacity",
-        "opacity",
-        l.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity"),
-        b.pressure_opacity,
-        true,
-        20.0,
-    )
-    .clicked()
-    {
-        b.pressure_opacity = !b.pressure_opacity;
-    }
-    // 対称（右端。左の部品に重なるほど狭ければ出さない）
-    crate::selection::props::symmetry_options(ui, app, r, x);
+    // 道具ごとの項目は道具の表（`tools`）が持つ
+    (app.tool.def().options)(ui, app, r, x);
 }
 
 /// ツールの帯（左）。
@@ -1013,8 +760,8 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
-    // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り
-    let starts_group = |tool: Tool| tool == Tool::SelectRect || tool == Tool::Move;
+    // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り（道具の表の `starts_group`）
+    let starts_group = |tool: Tool| tool.def().starts_group;
     let separators = Tool::ALL.iter().filter(|t| starts_group(**t)).count() as f32;
     // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
     // 帯の下の端に付く 2 枚の色の分の高さを先に取る

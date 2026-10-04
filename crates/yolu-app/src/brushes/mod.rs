@@ -307,7 +307,7 @@ impl IdSource {
 pub struct BrushLibrary {
     entries: Vec<Entry>,
     current: BrushKey,
-    /// 道具ごとに最後に使ったブラシ（[描く道具, 消しゴム]）。
+    /// 道具ごとの一覧で選んでいるブラシ（[ブラシの一覧, 消しゴムの一覧]。道具を替えると、その道具の一覧の選びへ戻る）。
     last: [BrushKey; 2],
     /// 次に付ける利用者のブラシの番号。
     ids: IdSource,
@@ -836,7 +836,7 @@ impl AppState {
         if !tool.paints() {
             return true;
         }
-        let eraser = tool == Tool::Eraser;
+        let eraser = tool.erases();
         let current_eraser = self
             .brushes
             .lib
@@ -880,6 +880,9 @@ impl AppState {
             Tool::Brush
         };
         if self.tool != tool {
+            // `switch_tool` は `brush_for_tool` と互いに呼び合うので通らない。離れる道具の変えたままの設定を一覧へ書き戻す
+            // （入る道具はブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
+            self.subtool_leave(self.tool);
             self.sel_tool_changed();
             self.tool = tool;
         }

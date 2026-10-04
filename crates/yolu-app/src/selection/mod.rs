@@ -463,26 +463,6 @@ fn exact_bounds(mask: &SelectionMask) -> Option<(u32, u32, u32, u32)> {
     found
 }
 
-impl Tool {
-    /// 選択の道具か。
-    pub fn is_select(self) -> bool {
-        matches!(
-            self,
-            Tool::SelectRect
-                | Tool::SelectEllipse
-                | Tool::Lasso
-                | Tool::Polygon
-                | Tool::Wand
-                | Tool::SelectPen
-        )
-    }
-
-    /// 画素にブラシで描く道具か（3D ビューの入力が描き始めてよいか）。
-    pub fn paints(self) -> bool {
-        matches!(self, Tool::Brush | Tool::Eraser)
-    }
-}
-
 /// 組み合わせ方の名前。
 pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
     match mode {
@@ -515,14 +495,14 @@ pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
     }
 }
 
-/// キーの修飾から組み合わせ方（Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値）。
+/// キーの修飾から組み合わせ方（Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。組み合わせは `keymap::GESTURES` の表）。
 pub fn combine_of(base: SelectionCombine, modifiers: egui::Modifiers) -> SelectionCombine {
-    let ctrl = modifiers.command || modifiers.ctrl;
-    match (modifiers.shift, ctrl) {
-        (true, true) => SelectionCombine::Intersect,
-        (true, false) => SelectionCombine::Add,
-        (false, true) => SelectionCombine::Subtract,
-        (false, false) => base,
+    use crate::keymap::Operation;
+    match crate::keymap::gesture("selection", egui::PointerButton::Primary, &modifiers, false) {
+        Some(Operation::SelectionAdd) => SelectionCombine::Add,
+        Some(Operation::SelectionSubtract) => SelectionCombine::Subtract,
+        Some(Operation::SelectionIntersect) => SelectionCombine::Intersect,
+        _ => base,
     }
 }
 

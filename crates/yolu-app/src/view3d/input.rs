@@ -22,7 +22,8 @@ use super::{gizmo, Nav};
 use crate::engine::BrushEffect;
 use crate::gesture::{self, ZoomDrag};
 use crate::pen::{PenPress, PenSample, PressKind};
-use crate::state::{AppState, StrokeSource, Tool};
+use crate::state::{AppState, StrokeSource};
+use crate::tools::input::Surface;
 
 fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
     rect.contains(p)
@@ -47,7 +48,7 @@ const CLICK_DISTANCE: f32 = 4.0;
 /// 今の道具がクローンのブラシか（元を決められる）。
 fn clone_active(app: &AppState) -> bool {
     app.tool.paints()
-        && app.tool != Tool::Eraser
+        && !app.tool.erases()
         && matches!(app.m2.brush.effect, BrushEffect::Clone { .. })
 }
 
@@ -85,34 +86,37 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
-    // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描く道具の一時的なスポイトは 2D だけ）
-    if app.tool == crate::state::Tool::Eyedropper {
-        crate::eyedrop::pick_surface(app, rect, at);
-        return;
-    }
-    // パスの道具は、押した面の点（掴む・差し込む・足す）。ストロークは持たず、点のドラッグだけが続く
-    if app.tool.is_path() {
-        crate::pathtool::surface::press(app, rect, at, source);
-        return;
-    }
-    // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
-    if app.tool.is_region() {
-        if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {
-            app.view3d.input.stroke = Some(source);
-            app.view3d.input.stroke_points = 0;
+    match app.tool.def().surface {
+        // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描く道具の一時的なスポイトは 2D だけ）
+        Surface::Pick => {
+            crate::eyedrop::pick_surface(app, rect, at);
+            return;
         }
-        return;
-    }
-    if !app.tool.paints() {
-        // 選択の道具は 2D のキャンバスだけで使う（3D ビューで描き始めない）
-        app.message = app
-            .lang
-            .pick(
-                "この道具は 2D のキャンバスで使います",
-                "This tool works on the 2D canvas",
-            )
-            .into();
-        return;
+        // パスの道具は、押した面の点（掴む・差し込む・足す）。ストロークは持たず、点のドラッグだけが続く
+        Surface::Path => {
+            crate::pathtool::surface::press(app, rect, at, source);
+            return;
+        }
+        // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
+        Surface::Region => {
+            if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {
+                app.view3d.input.stroke = Some(source);
+                app.view3d.input.stroke_points = 0;
+            }
+            return;
+        }
+        // 選択・移動と変形・図形・グラデーションなどは 2D のキャンバスだけで使う（3D ビューで描き始めない）
+        Surface::Unsupported => {
+            app.message = app
+                .lang
+                .pick(
+                    "この道具は 2D のキャンバスで使います",
+                    "This tool works on the 2D canvas",
+                )
+                .into();
+            return;
+        }
+        Surface::Paint => {}
     }
     let Some(model) = app.view3d.model.clone() else {
         return;
@@ -337,12 +341,12 @@ pub fn finish(app: &mut AppState, cancel: bool) {
 /// 押しの組み合わせから、ビューを動かす操作（右ボタン・ペンのサイドボタンは回す・Shift でパン、中ボタンはパン、左は Ctrl+Space で拡縮・
 /// Space でパン・Alt で回す・Shift を足すとパン）。どれにも当たらなければ None（左は描く）。
 fn nav_of(button: PointerButton, m: &Modifiers, space: bool) -> Option<Nav> {
-    match button {
-        PointerButton::Secondary => Some(if m.shift { Nav::Pan } else { Nav::Orbit }),
-        PointerButton::Middle => Some(Nav::Pan),
-        PointerButton::Primary if gesture::zoom_chord(m, space) => Some(Nav::Zoom),
-        PointerButton::Primary if space => Some(Nav::Pan),
-        PointerButton::Primary if m.alt => Some(if m.shift { Nav::Pan } else { Nav::Orbit }),
+    use crate::keymap::Operation;
+    // 組み合わせは `keymap::GESTURES` の表
+    match crate::keymap::gesture("view3d", button, m, space)? {
+        Operation::Orbit => Some(Nav::Orbit),
+        Operation::Pan => Some(Nav::Pan),
+        Operation::Zoom => Some(Nav::Zoom),
         _ => None,
     }
 }
@@ -499,7 +503,7 @@ fn pen_sample(
                         crate::fillfx::gizmo::Source::Pen(s.pointer_id),
                     ) {
                         // 形のギズモのハンドルの上: 描かずにドラッグを始める
-                    } else if app.tool.is_path() {
+                    } else if app.tool.def().surface == Surface::Path {
                         // パスの道具: 押す・動く・離すを、点を足す・掴む・動かすにする
                         crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, true);
                     } else {
@@ -603,7 +607,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
-    let space = ui.input(|i| i.key_down(Key::Space)) && !ctx.egui_wants_keyboard_input();
+    let space = ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
     // モデルの組み直しが走るので、高いポーリングのマウスやペンでは、途中の位置は描かれずに捨てられるだけ）。ボタンを離す・Esc・
     // フォーカスを失うの前には、そこまでの位置を当ててから終える

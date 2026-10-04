@@ -6,7 +6,7 @@
 //! は `Key` の押下で来る。どの経路でも 1 回の押下は 1 回の操作になるよう、`Paste` / `Key` の押下を処理したら V の離しを 1 回だけ
 //! 見送る（`ClipState::v_handled`）。
 
-use egui::{Event, InputState, Key, Modifiers};
+use egui::{Event, InputState, Key};
 
 use super::{ClipAction, ClipState};
 use crate::state::Action;
@@ -15,20 +15,14 @@ use crate::state::Action;
 pub fn shortcut_actions(i: &mut InputState, clip: &mut ClipState) -> Vec<Action> {
     let mut out = Vec::new();
     let mut push = |a: ClipAction| out.push(Action::Clip(a));
-    let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    // Shift 付きを先に（consume_key は書いていない Shift を気にしない）
-    if i.consume_key(cmd_shift, Key::C) {
-        push(ClipAction::CopyMerged);
-    }
-    if i.consume_key(Modifiers::COMMAND, Key::C) {
-        push(ClipAction::Copy);
-    }
-    if i.consume_key(Modifiers::COMMAND, Key::X) {
-        push(ClipAction::Cut);
-    }
-    if i.consume_key(Modifiers::COMMAND, Key::V) {
-        push(ClipAction::Paste);
-        clip.v_handled = true;
+    // キーの割り当ては `keymap::CLIPBOARD_KEYS`（Shift 付きが先。consume_key は書いていない Shift を気にしない）
+    for (modifiers, key, action) in crate::keymap::CLIPBOARD_KEYS {
+        if i.consume_key(modifiers, key) {
+            push(action);
+            if action == ClipAction::Paste {
+                clip.v_handled = true;
+            }
+        }
     }
     // egui-winit の置き換え後の事象と、V の離し。Shift は事象の並びの中の、その時点の修飾（フレームの終わりでは離している
     // こともある）で見る: フレームの初めは前のフレームの終わりの修飾、途中は `ModifiersChanged` と `Key` の修飾で変わる

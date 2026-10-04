@@ -1,12 +1,13 @@
-//! グラデーションの道具の欄: オプションバー（形・終点・不透明度・塗る/消す）と、プロパティの欄（同じ設定と、マテリアルで塗るときの終点）。
-//! 画面には名前と値だけを出し、説明はツールチップ。操作は `Action::Gradient`（キー・試験と同じ道）。
+//! グラデーションの道具の欄: オプションバー（形・不透明度・塗る/消す）と、左のドックのツールプロパティ（形・終点・不透明度・塗る/消す、マテリアルで塗る
+//! ときの終点）。形と終点の組はサブツールの一覧（`subtool`）でも選べる。画面には名前と値だけを出し、説明はツールチップ。操作は `Action::Gradient`
+//! （キー・試験と同じ道）。
 
 use egui::{pos2, vec2, Rect, Ui};
 use yolu_core::material::GradientShape;
 
 use super::{End, GradientOp};
 use crate::lang::Lang;
-use crate::panels::properties::{section, slider_row, toggle_row};
+use crate::panels::properties::{choice_buttons, slider_row, toggle_row, ChoiceButton};
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
@@ -99,33 +100,6 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         x += width + 2.0;
     }
     x += 10.0;
-    // 終点（マスクでは決まっているので出さない）
-    if !app.m2.edit_mask {
-        for end in [End::Transparent, End::Sub] {
-            let name = end_name(lang, end);
-            let width = w::text_width(ui.painter(), name, t::LABEL) + 22.0;
-            let at = Rect::from_min_size(pos2(x, y), vec2(width, h));
-            if w::button(
-                ui,
-                at,
-                ("gradient.end", end as u8),
-                name,
-                app.gradient.end == end,
-                true,
-                Some(lang.pick(
-                    "終点の色（始点は描画色。補間は乗算済みアルファ）",
-                    "The colour at the end (the start is the paint color; interpolated premultiplied)",
-                )),
-                None,
-            )
-            .clicked()
-            {
-                op(app, GradientOp::End(end));
-            }
-            x += width + 2.0;
-        }
-        x += 10.0;
-    }
     // 不透明度
     let at = Rect::from_min_size(pos2(x, y), vec2(130.0, h));
     let out = w::slider(
@@ -167,60 +141,39 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     }
 }
 
-/// プロパティの欄: 道具の設定と、マテリアルで塗るときの終点。
-pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+/// ツールプロパティ: 道具の設定（形・終点・不透明度・塗る/消す）と、マテリアルで塗るときの終点。
+pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let lang = app.lang;
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "gradient-tool",
-        lang.pick("グラデーション", "Gradient"),
-        "palette",
-        None,
-    );
-    if !open {
-        return;
-    }
-    let r = rows.row(24.0, 4.0);
-    let cols = Rows::split(r, 2, 4.0);
-    for (k, shape) in [GradientShape::Linear, GradientShape::Radial]
-        .into_iter()
+    let shapes = [GradientShape::Linear, GradientShape::Radial];
+    let items: Vec<ChoiceButton> = shapes
+        .iter()
         .enumerate()
-    {
-        if w::button(
-            ui,
-            cols[k],
-            ("gradient.prop.shape", k),
-            shape_name(lang, shape),
-            app.gradient.shape == shape,
-            true,
-            None,
-            None,
-        )
-        .clicked()
-        {
-            op(app, GradientOp::Shape(shape));
-        }
+        .map(|(k, shape)| ChoiceButton {
+            id: ["gradient.prop.shape.0", "gradient.prop.shape.1"][k],
+            label: shape_name(lang, *shape),
+            selected: app.gradient.shape == *shape,
+            enabled: true,
+            tooltip: None,
+        })
+        .collect();
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        op(app, GradientOp::Shape(shapes[i]));
     }
     if !app.m2.edit_mask {
-        let r = rows.row(24.0, 4.0);
-        let cols = Rows::split(r, 2, 4.0);
-        for (k, end) in [End::Transparent, End::Sub].into_iter().enumerate() {
-            if w::button(
-                ui,
-                cols[k],
-                ("gradient.prop.end", k),
-                end_name(lang, end),
-                app.gradient.end == end,
-                true,
-                None,
-                None,
-            )
-            .clicked()
-            {
-                op(app, GradientOp::End(end));
-            }
+        let ends = [End::Transparent, End::Sub];
+        let items: Vec<ChoiceButton> = ends
+            .iter()
+            .enumerate()
+            .map(|(k, end)| ChoiceButton {
+                id: ["gradient.prop.end.0", "gradient.prop.end.1"][k],
+                label: end_name(lang, *end),
+                selected: app.gradient.end == *end,
+                enabled: true,
+                tooltip: None,
+            })
+            .collect();
+        if let Some(i) = choice_buttons(ui, rows, &items) {
+            op(app, GradientOp::End(ends[i]));
         }
     }
     if let Some(v) = slider_row(
@@ -235,6 +188,22 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         true,
     ) {
         app.brush.opacity = v / 100.0;
+    }
+    // 塗る・消す
+    let (names, tips) = paint_erase_names(app);
+    let items: Vec<ChoiceButton> = [false, true]
+        .into_iter()
+        .enumerate()
+        .map(|(k, erase)| ChoiceButton {
+            id: ["gradient.prop.erase.0", "gradient.prop.erase.1"][k],
+            label: names[k],
+            selected: app.gradient.erase == erase,
+            enabled: true,
+            tooltip: Some(tips[k]),
+        })
+        .collect();
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        op(app, GradientOp::Erase(i == 1));
     }
     // マテリアルで塗るとき: 終点を現在のマテリアルにして、2 つのマテリアルの間を塗る
     if app.paints_material() {

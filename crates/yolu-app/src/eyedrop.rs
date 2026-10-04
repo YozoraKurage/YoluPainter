@@ -24,7 +24,8 @@ use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
 use crate::state::{AppState, Tool};
 use crate::ui::theme as t;
-use crate::ui::widgets as w;
+use crate::panels::properties::toggle_row;
+use crate::ui::widgets::{self as w, Rows};
 
 /// スポイトの設定（画面の状態。文書には入らない）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -34,10 +35,10 @@ pub struct EyedropState {
     pub screen_request: Option<crate::screen_pick::Mode>,
 }
 
-/// 押したときにスポイトとして働くか（スポイトの道具、または 2D で Alt を押した描く道具）。
-pub fn picks(app: &AppState, alt: bool) -> bool {
+/// 押したときにスポイトとして働くか（スポイトの道具、または 2D でスポイトの修飾（`keymap::picks`。Alt）を押した描く道具）。
+pub fn picks(app: &AppState, pick: bool) -> bool {
     app.tool == Tool::Eyedropper
-        || (alt
+        || (pick
             && matches!(
                 app.tool,
                 Tool::Brush | Tool::Eraser | Tool::Fill | Tool::PolygonFill
@@ -208,6 +209,7 @@ fn read_pixel(
 
 /// オプションバーの欄（`x` から右へ）。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
+    let x = x + 4.0;
     let lang = app.lang;
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let width = 22.0 + w::text_width(ui.painter(), all_layers_label(lang), t::LABEL) + 8.0;
@@ -227,6 +229,26 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         true,
     );
     crate::screen_pick::options(ui, app, r, x + width + 8.0);
+}
+
+/// ツールプロパティ: 取る元（選んだレイヤーか全レイヤーか）と、画面から取る（Windows）。取る元はサブツールの一覧でも選べる。
+pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let lang = app.lang;
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "props.eyedropper.all-layers",
+        all_layers_label(lang),
+        app.eyedrop.all_layers,
+        Some(lang.pick(
+            "選んだレイヤーでなく、チャンネルの合成から取る",
+            "Pick from the composite instead of the selected layer",
+        )),
+        true,
+    ) {
+        app.eyedrop.all_layers = v;
+    }
+    crate::screen_pick::props(ui, app, rows);
 }
 
 fn all_layers_label(lang: Lang) -> &'static str {

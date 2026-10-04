@@ -26,8 +26,8 @@ use crate::view3d::render::{View3dRenderer, View3dStats};
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
-    /// ブラシの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭）。
-    Brushes,
+    /// サブツールの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭。中身は今の道具に合わせて替わる）。
+    SubTools,
     Assets,
     Color,
     /// ポーズ（ボーンのインスペクター・BlendShape・面を隠す）。スキンのあるモデルを読むと、プロパティと同じ組へ足される。
@@ -51,7 +51,7 @@ impl Tab {
     /// 言語ごとのタブの名前。
     pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            Tab::Brushes => lang.pick("ブラシ", "Brushes"),
+            Tab::SubTools => lang.pick("サブツール", "Tools"),
             Tab::Assets => lang.pick("アセット", "Assets"),
             Tab::Color => lang.pick("カラー", "Color"),
             Tab::Pose => lang.pick("ポーズ", "Pose"),
@@ -68,9 +68,9 @@ impl Tab {
     }
 }
 
-/// Substance Painter の並び（左: ブラシとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
-/// プロパティ）。ブラシのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
-/// 左の列は、いちばん小さい窓（960 点）でも 3 つのタブ（英語の Brushes・Assets・Channels）の見出しが収まる割合（1600 点の窓で約 330 点）。
+/// Substance Painter の並び（左: サブツールとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
+/// プロパティ）。サブツールのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
+/// 左の列は、いちばん小さい窓（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点の窓で約 330 点）。
 /// 右の列は 1600 点の幅の窓で約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
@@ -79,7 +79,7 @@ pub fn default_dock() -> DockState<Tab> {
         surface.split_left(
         NodeIndex::root(),
         0.21,
-        vec![Tab::Brushes, Tab::Assets, Tab::Channels],
+        vec![Tab::SubTools, Tab::Assets, Tab::Channels],
     );
     // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小の窓で名前が欠ける）
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
@@ -178,7 +178,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Properties => properties::show(ui, self.app),
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
-            Tab::Brushes => crate::panels::brushes::show(ui, self.app),
+            Tab::SubTools => crate::panels::subtools::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
         }
     }
@@ -323,6 +323,7 @@ impl YoluApp {
         // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
             app.state.attach_brush_store(dir.join("brushes"));
+            app.state.attach_subtool_store(dir.join("subtools"));
             app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
         }
         // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
@@ -330,6 +331,7 @@ impl YoluApp {
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
+        notices.extend(app.state.subtool_problem_message());
         if !notices.is_empty() {
             app.state.message = notices.join(" ");
         }

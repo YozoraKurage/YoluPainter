@@ -881,6 +881,19 @@ fn replace_file(
     })
 }
 
+/// 設定のフォルダの文のファイルを置く（一時ファイルへ書いて読み戻して確かめ、最後の 1 回の置換で確定）。ブラシ以外の設定のファイル
+/// （サブツールのプリセット）も、同じ置き方を使う。`limit` はそのファイルの大きさの上限（読み戻しもここまで。超えれば `TooLarge`）。
+pub(crate) fn replace_text(
+    path: &Path,
+    text: &str,
+    limit: u64,
+    verify: impl FnOnce(&str) -> bool,
+) -> Result<(), StoreError> {
+    replace_bytes(path, text.as_bytes(), limit, |read| {
+        std::str::from_utf8(read).is_ok_and(verify)
+    })
+}
+
 /// `replace_file` のバイト列版（画像）。読み戻しは `limit` バイトまで。
 fn replace_bytes(
     path: &Path,

@@ -19,6 +19,7 @@ pub mod pose;
 pub mod properties;
 pub mod region_props;
 pub mod stencil_props;
+pub mod subtools;
 pub mod texture_sets;
 pub mod tip_library;
 pub mod view3d;

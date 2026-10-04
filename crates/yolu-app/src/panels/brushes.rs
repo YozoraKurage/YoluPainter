@@ -1,6 +1,7 @@
-//! 左のドックの「ブラシ」のパネル（クリスタのサブツール・ツールプロパティ・ブラシサイズに当たる）。上から、グループのタブ・
-//! ブラシの一覧（名前と、そのブラシの実際の設定で core が描いた見本のストローク）・一覧の操作の帯、ツールプロパティ（今の設定の見本と
-//! 主な項目、右下の調整のボタンで詳細の窓）、ブラシサイズ（決まった大きさの丸）。入りきらなければ全体がスクロールする。
+//! 左のドックのサブツールのパネルの、ブラシと消しゴムの部分（クリスタのサブツールの一覧・ツールプロパティ・ブラシサイズに当たる）。
+//! パネルの組み立ては `subtools`。ここは、ブラシの一覧（グループのタブ・名前と、そのブラシの実際の設定で core が描いた見本のストロークの行・
+//! 一覧の操作の帯。消しゴムの道具は消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ（今の設定の見本と主な項目、右下の
+//! 調整のボタンで詳細の窓）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
 //! 一覧の操作は `Action::Brush`（行を押して替える・追加・複製・削除・名前・並べ替え・元に戻す）。ブラシの設定は文書ではないので Undo に
 //! 入れない。画面には名前と値だけを出し、説明はツールチップ。
 
@@ -13,16 +14,16 @@ use crate::m2_menu::Popup;
 use crate::state::{Action, AppState};
 use crate::ui::menu::context_anchor;
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
+use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 
 /// 決まった直径（px）。アプリの直径の上限（256）まで。
 pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
 
-const GROUP_STRIP: f32 = 30.0;
-const ROW_HEIGHT: f32 = 36.0;
-const FOOTER_HEIGHT: f32 = 28.0;
-const MIN_LIST: f32 = 96.0;
-const SECTION_HEIGHT: f32 = t::PANEL_HEADER_HEIGHT;
+pub(super) const GROUP_STRIP: f32 = 30.0;
+pub(super) const ROW_HEIGHT: f32 = 36.0;
+pub(super) const FOOTER_HEIGHT: f32 = 28.0;
+pub(super) const MIN_LIST: f32 = 96.0;
+pub(super) const SECTION_HEIGHT: f32 = t::PANEL_HEADER_HEIGHT;
 /// ツールプロパティの項目の行の高さと間。
 const FIELD_HEIGHT: f32 = 20.0;
 const FIELD_GAP: f32 = 3.0;
@@ -109,9 +110,10 @@ pub(super) fn is_eraser(app: &AppState) -> bool {
         .is_some_and(|e| e.group.is_eraser())
 }
 
-/// タブに出すグループ（組み込みのあるグループはいつも。取り込んだブラシが 1 つでもあれば「取り込み」も）。
+/// ブラシの道具のタブに出すグループ（組み込みのあるグループはいつも。取り込んだブラシが 1 つでもあれば「取り込み」も）。消しゴムのグループは
+/// 消しゴムの道具の一覧なので出さない（ブラシと消しゴムを同じ一覧に並べない）。
 pub fn tab_groups(app: &AppState) -> Vec<Group> {
-    let mut groups = Group::ALL.to_vec();
+    let mut groups: Vec<Group> = Group::ALL.iter().copied().filter(|g| !g.is_eraser()).collect();
     if app
         .brushes
         .lib
@@ -125,7 +127,7 @@ pub fn tab_groups(app: &AppState) -> Vec<Group> {
 }
 
 /// グループのタブ（短い名前。全名はツールチップ。入りきらなければ名前を詰め、それでも入らなければアイコンだけ）。
-fn group_strip(ui: &mut Ui, r: Rect, app: &mut AppState) {
+pub(super) fn group_strip(ui: &mut Ui, r: Rect, app: &mut AppState) {
     let lang = app.lang;
     {
         let p = ui.painter();
@@ -191,10 +193,9 @@ fn drop_target(list_keys: &[BrushKey], position: f32) -> DropAt {
     }
 }
 
-/// ブラシの一覧の中（行・ドラッグの追従・スクロール・空白）。
-fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect) {
+/// ブラシの一覧の中（行・ドラッグの追従・スクロール・空白）。`group` は出すグループ（消しゴムの道具は消しゴムのグループ）。
+pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Group) {
     let lang = app.lang;
-    let group = app.brushes.ui.group;
     let live = app.brush_live();
     let current = app.brushes.lib.current();
     let rows: Vec<(BrushKey, String, bool, Group)> = app
@@ -469,8 +470,8 @@ fn brush_row(
     let _ = response.on_hover_text(tooltip);
 }
 
-/// 一覧の下の帯: 元に戻す・複製・追加・削除（右寄せ）。
-fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
+/// 一覧の下の帯: 元に戻す・複製・取り込み・追加・削除（右寄せ）。`with_import` が偽なら取り込みは出さない（消しゴムの一覧）。
+pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bool) {
     let lang = app.lang;
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
     w::hline(ui.painter(), bar.left(), bar.right(), bar.top(), t::BORDER);
@@ -521,24 +522,27 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         app.apply(Action::Brush(BrushAction::Add));
     }
     x -= 28.0;
-    if w::icon_button(
-        ui,
-        button(x),
-        "brush.import",
-        "import",
-        lang.pick(
-            "ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）",
-            "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
-        ),
-        app.brushes.import.is_busy(),
-        !app.brushes.import.is_busy(),
-        17.0,
-    )
-    .clicked()
+    if with_import
+        && w::icon_button(
+            ui,
+            button(x),
+            "brush.import",
+            "import",
+            lang.pick(
+                "ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）",
+                "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
+            ),
+            app.brushes.import.is_busy(),
+            !app.brushes.import.is_busy(),
+            17.0,
+        )
+        .clicked()
     {
         app.apply(Action::Brush(BrushAction::ImportDialog));
     }
-    x -= 28.0;
+    if with_import {
+        x -= 28.0;
+    }
     if w::icon_button(
         ui,
         button(x),
@@ -578,14 +582,14 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
 }
 
 /// ツールプロパティの項目の行の数（効果のブラシなら 1 行増える）。
-fn tool_fields(app: &AppState) -> usize {
+pub(super) fn tool_fields(app: &AppState) -> usize {
     6 + matches!(
         app.m2.brush.effect,
         BrushEffect::Blur { .. } | BrushEffect::Smudge { .. }
     ) as usize
 }
 
-fn tool_body_height(app: &AppState) -> f32 {
+pub(super) fn tool_body_height(app: &AppState) -> f32 {
     4.0 + TOOL_SAMPLE_HEIGHT + 6.0 + tool_fields(app) as f32 * (FIELD_HEIGHT + FIELD_GAP) + 4.0
 }
 
@@ -628,7 +632,7 @@ fn field(
     out.changed.then_some(out.value)
 }
 
-fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
+pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
     let in_3d = app.view3d.paintable_on_screen();
@@ -801,7 +805,7 @@ fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         app.brushes.ui.detail.open = !open;
     }
     // 効果のブラシの主な値
-    let tool_is_eraser = app.tool == crate::state::Tool::Eraser;
+    let tool_is_eraser = app.tool.erases();
     let effect_off = if tool_is_eraser {
         Some(lang.pick("消しゴムでは使えません", "Not available with the eraser"))
     } else if in_3d {
@@ -858,19 +862,65 @@ fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     }
 }
 
+/// ブラシ・消しゴムのツールプロパティ（今の設定の見本と主な項目。欄の中身は `tool_body`）。
+pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let area = rows.full_row(tool_body_height(app), 0.0);
+    tool_body(ui, app, area);
+}
+
+/// オプションバー（ブラシ・消しゴム）: 定規へのスナップ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）、右端の対称。
+/// 硬さ・流量・間隔・筆圧はツールプロパティ。
+pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
+    let (y, h) = (r.top() + 6.0, r.height() - 12.0);
+    let mut x = x + 4.0;
+    let mut next = |width: f32| {
+        let at = Rect::from_min_size(pos2(x, y), vec2(width, h));
+        x += width + 8.0;
+        at
+    };
+    let l = app.lang;
+    let editable = !app.is_stroking();
+    crate::drafting::props::snap_button(ui, app, next(28.0));
+    let b = &mut app.brush;
+    let out = w::slider(
+        ui,
+        next(150.0),
+        "options.size",
+        b.radius * 2.0,
+        &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
+            .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])"))
+            .enabled(editable),
+    );
+    if out.changed {
+        b.radius = (out.value / 2.0).max(0.5);
+    }
+    let out = w::slider(
+        ui,
+        next(130.0),
+        "options.opacity",
+        b.opacity * 100.0,
+        &SliderSpec::new(l.pick("不透明度", "Opacity"), 0.0, 100.0, NumberFormat::int("%")).enabled(editable),
+    );
+    if out.changed {
+        b.opacity = out.value / 100.0;
+    }
+    // 対称（右端。左の部品に重なるほど狭ければ出さない）
+    crate::selection::props::symmetry_options(ui, app, r, x);
+}
+
 /// ブラシサイズの格子の列の数（欄の幅に入るだけ。1 列以上、全部の数まで）。
-fn size_columns(width: f32) -> usize {
+pub(super) fn size_columns(width: f32) -> usize {
     (((width - 2.0 * t::PADDING) / SIZE_CELL_MIN).floor().max(1.0) as usize).min(SIZES.len())
 }
 
 /// ブラシサイズの格子の高さ（段の数 × 段の高さと上下の余白）。
-fn sizes_height(width: f32) -> f32 {
+pub(super) fn sizes_height(width: f32) -> f32 {
     let rows = SIZES.len().div_ceil(size_columns(width));
     rows as f32 * SIZE_ROW + 8.0
 }
 
 /// ブラシサイズの格子: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。欄の幅に入るだけ並べ、入りきらなければ段を足す。
-fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
+pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
     let diameter = app.brush.radius * 2.0;
@@ -945,7 +995,7 @@ fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
 }
 
 /// 見出しの帯（折りたためる。開閉は `AppState::sections` が覚える）。
-fn section_band(
+pub(super) fn section_band(
     ui: &mut Ui,
     app: &mut AppState,
     y: f32,
@@ -969,129 +1019,6 @@ fn section_band(
         app.sections.insert(key, out.open);
     }
     out.open
-}
-
-pub fn show(ui: &mut Ui, app: &mut AppState) {
-    let r = ui.max_rect();
-    ui.advance_cursor_after_rect(r);
-    let ctx = ui.ctx().clone();
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
-    let lang = app.lang;
-
-    // 取り込んだブラシが無くなったら、「取り込み」のタブは消えるので、ほかのグループへ戻す
-    if app.brushes.ui.group == Group::Imported && !tab_groups(app).contains(&Group::Imported) {
-        app.brushes.ui.group = Group::Pen;
-        app.brushes.ui.list_scroll = 0.0;
-    }
-    let tool_open = app.section_open("brush-tool", true);
-    let size_open = app.section_open("brush-sizes", true);
-    let tool_h = if tool_open {
-        tool_body_height(app)
-    } else {
-        0.0
-    };
-    let size_h = if size_open {
-        sizes_height(r.width() - 8.0)
-    } else {
-        0.0
-    };
-    let fixed = GROUP_STRIP + FOOTER_HEIGHT + SECTION_HEIGHT * 2.0 + tool_h + size_h;
-    let list_h = (r.height() - fixed).max(MIN_LIST);
-    let content = fixed + list_h;
-    app.brushes.ui.panel_content = content;
-
-    // 全体のスクロール（一覧の中でホイールを使い切れなければ、全体を送る）
-    let max_scroll = (content - r.height()).max(0.0);
-    let list_scrolls = app.brushes.ui.list_content > list_h;
-    let list_top_guess = r.top() - app.brushes.ui.panel_scroll + GROUP_STRIP;
-    let list_rect_guess =
-        Rect::from_min_size(pos2(r.left(), list_top_guess), vec2(r.width(), list_h));
-    if ui.rect_contains_pointer(r) {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        if ui.rect_contains_pointer(list_rect_guess) && list_scrolls {
-            app.brushes.ui.list_scroll -= wheel;
-        } else {
-            app.brushes.ui.panel_scroll -= wheel;
-        }
-    }
-    app.brushes.ui.panel_scroll = app.brushes.ui.panel_scroll.clamp(0.0, max_scroll);
-    let scroll = app.brushes.ui.panel_scroll;
-    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
-    let area = Rect::from_min_max(
-        pos2(r.left(), r.top() - scroll),
-        pos2(r.right() - bar, r.bottom()),
-    );
-    let outer = ui.clip_rect();
-    ui.set_clip_rect(r.intersect(outer));
-
-    let mut y = area.top();
-    group_strip(
-        ui,
-        Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), GROUP_STRIP)),
-        app,
-    );
-    y += GROUP_STRIP;
-    let list = Rect::from_min_size(
-        pos2(area.left(), y),
-        vec2(area.width(), list_h - FOOTER_HEIGHT),
-    );
-    list_body(ui, app, list);
-    y += list.height();
-    footer(
-        ui,
-        app,
-        Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), FOOTER_HEIGHT)),
-    );
-    y += FOOTER_HEIGHT;
-    // ツールプロパティ
-    let open = section_band(
-        ui,
-        app,
-        y,
-        area,
-        "brush-tool",
-        lang.pick("ツールプロパティ", "Tool Properties"),
-        "tune",
-    );
-    y += SECTION_HEIGHT;
-    if open {
-        tool_body(
-            ui,
-            app,
-            Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), tool_h)),
-        );
-        y += tool_h;
-    }
-    // ブラシサイズ
-    let open = section_band(
-        ui,
-        app,
-        y,
-        area,
-        "brush-sizes",
-        lang.pick("ブラシサイズ", "Brush Size"),
-        "target",
-    );
-    y += SECTION_HEIGHT;
-    if open {
-        sizes_body(
-            ui,
-            app,
-            Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), size_h)),
-        );
-    }
-    ui.set_clip_rect(outer);
-    if max_scroll > 0.0 {
-        let track = r.height();
-        let bar_h = (track * track / content).max(16.0);
-        let bar_y = r.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(r.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
 }
 
 #[cfg(test)]

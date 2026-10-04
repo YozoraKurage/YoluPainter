@@ -360,7 +360,7 @@ fn snapshot_brush_panel_thick_paint_group() {
         .apply(Action::Brush(BrushAction::Select(b("oil"))));
     h.run();
     h.run();
-    let tab = h.state().tab_rects[&yolu_app::Tab::Brushes];
+    let tab = h.state().tab_rects[&yolu_app::Tab::SubTools];
     let color = h.state().tab_rects[&yolu_app::Tab::Color];
     let rect = Rect::from_min_max(
         pos2(tab.left() - 2.0, tab.top()),

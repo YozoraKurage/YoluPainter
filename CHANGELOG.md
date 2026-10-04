@@ -7,6 +7,7 @@
 初回リリースに含まれる機能です。Windows を主な対象とし、Mac・Linux は試用向けです。
 
 - **2D・3D のペイント**: ブラシ、消しゴム、Windows Ink の筆圧、13 個の組み込みブラシ、ブラシの詳細設定と自分のブラシの保存。ぼかし・指先・クローン、対称、ステンシル、スポイト。3D では一部の筆先・動的設定に制限があります。
+- **サブツールとツールプロパティ**: 左のドックの「サブツール」に、今の道具のサブツールの一覧・ツールプロパティ・ブラシサイズを 1 か所にまとめました。ブラシと消しゴムは別の一覧で、バケツ・ポリゴン塗りつぶし・グラデーション・図形・定規・スポイト・移動・ゆがみは設定の組のプリセット、選択の道具は同じ並びの道具です。自分のサブツールは設定のフォルダに保存できます（[詳しくは](docs/SUBTOOLS.md)）。右のプロパティは選んでいる層の中身だけ、上のオプションバーはよく使う 2〜3 項目で、どちらもツールプロパティと同じ値を見せます。
 - **ブラシの取り込み**: Photoshop の ABR・PAT、GIMP の GBR・GIH・VBR、PNG の筆先を取り込み。Krita 4 の既定の筆先 76 個（CC0）を同梱。
 - **レイヤーの編集**: グループ、マスク、塗りつぶし、調整（階調の反転・レベル補正・色相/彩度/明度）、クリッピング、26 種類の合成モード。複数選択、結合、4 種類のロック、移動・拡大縮小・回転・反転、取り消しとやり直し。
 - **選択と塗りつぶし**: 長方形・楕円形・なげなわ・多角形・自動選択、選択範囲の合成と加工。バケツ、ポリゴン塗りつぶし、ID の色で選択、2D のグラデーション。コピー・カット・結合してコピー・ペーストと OS の画像クリップボード。
@@ -29,6 +30,7 @@
 Features included in the first release. Windows is the primary platform; Mac and Linux support is experimental.
 
 - **2D and 3D painting**: brushes, erasing, Windows Ink pressure, 13 built-in brushes, Brush Details, and custom brush saving. Blur, Smudge, Clone, symmetry, stencils, and Eyedropper. Some brush tip and dynamics settings are limited in 3D.
+- **Sub tools and tool properties**: the Tools tab on the left shows the current tool's sub tool list, tool properties, and brush size in one place. Brushes and erasers have separate lists; Fill, Polygon Fill, Gradient, Shape, Ruler, Eyedropper, Move/Transform, and Liquify use presets of their settings; selection tools list each other. Your own sub tools are saved in the settings folder ([details](docs/SUBTOOLS.md)). The Properties panel on the right shows only the selected layer, and the options bar keeps the two or three most-used items, both showing the same values as the tool properties.
 - **Brush import**: import Photoshop ABR/PAT, GIMP GBR/GIH/VBR, and PNG tips. Includes 76 default Krita 4 tips (CC0).
 - **Layer editing**: groups, masks, fills, adjustments (Invert, Levels, Hue/Saturation/Lightness), clipping, and 26 blend modes. Multiple selection, merging, four lock types, moving, scaling, rotation, flipping, undo, and redo.
 - **Selections and fills**: Rectangle Select, Ellipse Select, Lasso, Polygon Select, Magic Wand, selection combinations and modifications. Fill, Polygon Fill, ID Color Select, and 2D gradients. Copy, Cut, Copy Merged, Paste, and OS image clipboard support.

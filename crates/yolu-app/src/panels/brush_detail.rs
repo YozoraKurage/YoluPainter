@@ -178,10 +178,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.ui.detail.placed {
         // 初めは、左のドックの右・上の寄りに置く（キャンバスの真ん中を空ける）
         let screen = ctx.content_rect();
-        let min = pos2(
-            screen.left() + t::TOOL_STRIP_WIDTH + t::DOCK_WIDTH + 24.0,
-            screen.top() + 124.0,
-        );
+        let dock_right = match app.subtools.ui.panel_right {
+            right if right > 0.0 => right,
+            _ => screen.left() + t::TOOL_STRIP_WIDTH + t::DOCK_WIDTH,
+        };
+        let min = pos2(dock_right + 24.0, screen.top() + 124.0);
         let center = min + vec2(WIDTH, HEIGHT) / 2.0;
         app.brushes.ui.detail.offset = center - screen.center();
         app.brushes.ui.detail.placed = true;

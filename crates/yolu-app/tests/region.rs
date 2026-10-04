@@ -1950,34 +1950,34 @@ fn id_select_panel_and_the_options_bar_snapshots_in_both_languages() {
 }
 
 #[test]
-fn the_range_menu_lists_the_kinds_and_the_bucket_adds_similar_colors() {
+fn the_sub_tool_list_has_the_ranges_and_the_bucket_adds_similar_colors() {
     let mut h = app_with_model(1280.0, 800.0, 128);
     key(&h, Key::G, Modifiers::NONE);
     h.run();
-    // オプションバーの範囲の箱を押す
-    let b = rect_of(&h, "範囲: UV アイランド", |r| r.top() < 80.0);
-    click(&mut h, b.center());
+    // サブツールの一覧に範囲の種類が並ぶ（近い色はバケツだけ）。初めは UV アイランド
     for name in ["近い色", "三角形", "メッシュの塊", "UV アイランド", "マテリアル"] {
-        let _ = popup_item(&h, name);
+        let _ = dock_rect(&h, name);
     }
-    let at = popup_item(&h, "近い色").center();
+    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::UvIsland);
+    let at = dock_rect(&h, "近い色").center();
     click(&mut h, at);
     assert!(h.state().state.region.by_color);
     // 範囲の種類を選ぶと、近い色はやめる
-    let at = rect_of(&h, "範囲: 近い色", |r| r.top() < 80.0).center();
-    click(&mut h, at);
-    let at = popup_item(&h, "メッシュの塊").center();
+    let at = dock_rect(&h, "メッシュの塊").center();
     click(&mut h, at);
     assert!(!h.state().state.region.by_color);
     assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
-    // ポリゴン塗りつぶしには近い色が無い
+    // ポリゴン塗りつぶしには近い色が無く、自分の一覧の選び（初めは UV アイランド）
     key(&h, Key::Num4, Modifiers::NONE);
     h.run();
-    let at = rect_of(&h, "範囲: メッシュの塊", |r| r.top() < 80.0).center();
-    click(&mut h, at);
+    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::UvIsland);
     let names: Vec<_> = ["近い色", "三角形"].iter().map(|n| h.query_all_by_label(n).count()).collect();
     assert!(names[1] > 0);
-    assert_eq!(names[0], 0, "ポリゴン塗りつぶしの範囲に近い色は出ない");
+    assert_eq!(names[0], 0, "ポリゴン塗りつぶしの一覧に近い色は出ない");
+    // バケツへ戻ると、バケツが最後に選んだ範囲
+    key(&h, Key::G, Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
 }
 
 #[test]

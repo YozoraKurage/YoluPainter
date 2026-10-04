@@ -355,7 +355,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     assert!(!japanese_left(&h, &[]).is_empty());
     h.state_mut().state.lang = Lang::En;
     h.run();
-    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::SubTools, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
@@ -395,7 +395,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     h.state_mut().state.brushes.ui.detail.open = false;
     h.run();
     // 一覧: 全グループ（組み込みの名前・利用者のブラシ）
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     apply(&mut h, Action::Brush(BrushAction::Add));
     for group in Group::ALL {
         h.state_mut().state.brushes.ui.group = group;
@@ -958,12 +958,12 @@ fn english_texture_set_states_have_no_japanese_gpu() {
 fn walk_states(lang: Lang, width: f32, height: f32, mut visit: impl FnMut(&mut Harness<'static, YoluApp>, &str)) {
     let mut h = english_app_sized(width, height, lang);
     visit(&mut h, "default");
-    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::SubTools, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
     // ブラシの一覧（全グループ）と詳細の窓（全カテゴリ）
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
         h.state_mut().state.brushes.ui.group = group;
         h.run();

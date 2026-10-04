@@ -7,7 +7,7 @@ use crate::{
     state::{Action, AppState},
     ui::{menu::Entry, theme as t, widgets as w},
 };
-use egui::{pos2, vec2, Key, Modifiers, Rect, Ui};
+use egui::{pos2, vec2, Rect, Ui};
 
 #[cfg(any(windows, test))]
 mod native_input;
@@ -31,7 +31,7 @@ impl Mode {
             ),
         }
     }
-    fn shortcut(self) -> &'static str {
+    pub(crate) fn shortcut(self) -> &'static str {
         match self {
             Self::Visible => "Ctrl+Alt+I",
             Self::HideWindow => "Ctrl+Alt+Shift+I",
@@ -89,25 +89,6 @@ pub fn request(app: &mut AppState, mode: Mode) {
     }
 }
 
-pub fn shortcuts(ctx: &egui::Context, app: &mut AppState) {
-    if !cfg!(windows) || app.is_stroking() {
-        return;
-    }
-    for mode in [Mode::HideWindow, Mode::Visible] {
-        let modifiers = Modifiers::CTRL
-            | Modifiers::ALT
-            | if mode == Mode::HideWindow {
-                Modifiers::SHIFT
-            } else {
-                Modifiers::NONE
-            };
-        if ctx.input_mut(|i| i.consume_key(modifiers, Key::I)) {
-            request(app, mode);
-            break;
-        }
-    }
-}
-
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     if !cfg!(windows) {
         return;
@@ -133,6 +114,24 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
             request(app, mode);
         }
         x += width + 6.0;
+    }
+}
+
+/// ツールプロパティの画面から取るボタン（Windows だけ）。
+pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut w::Rows) {
+    if !cfg!(windows) {
+        return;
+    }
+    let modes = [Mode::Visible, Mode::HideWindow];
+    let items = modes.map(|mode| crate::panels::properties::ChoiceButton {
+        id: mode.shortcut(),
+        label: mode.label(app.lang),
+        selected: false,
+        enabled: !app.is_stroking(),
+        tooltip: Some(mode.shortcut()),
+    });
+    if let Some(i) = crate::panels::properties::choice_buttons(ui, rows, &items) {
+        request(app, modes[i]);
     }
 }
 

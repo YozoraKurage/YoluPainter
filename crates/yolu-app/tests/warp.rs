@@ -142,7 +142,7 @@ fn snapshot_warp_grid_and_options_both_languages() {
                         return;
                     }
                     let bar = Rect::from_min_size(pos2(0., 0.), vec2(800., 40.));
-                    yolu_app::transform::advanced::options(ui, s, bar, 8.);
+                    yolu_app::transform::props::options(ui, s, bar, 8.);
                     let v =
                         s.view
                             .view(Rect::from_min_size(pos2(0., 50.), vec2(500., 440.)), 32, 32);

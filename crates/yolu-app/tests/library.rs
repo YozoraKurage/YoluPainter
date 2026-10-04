@@ -2189,7 +2189,7 @@ mod ui {
         }
         // ブラシのタブを開いている間（ライブラリの置き場のまま）、ブラシの一覧の上へ落とした PNG は筆先の取り込みへ行き、
         // ライブラリには何も書かない
-        click_tab(&mut h, yolu_app::Tab::Brushes);
+        click_tab(&mut h, yolu_app::Tab::SubTools);
         h.run();
         assert_eq!(st(&h).library.source, Source::Library);
         assert!(st(&h).library.grid_rect.is_none(), "格子は描いていない");

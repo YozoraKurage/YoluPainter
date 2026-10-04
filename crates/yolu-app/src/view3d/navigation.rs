@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use egui::{Key, Modifiers, Pos2, Rect, Ui};
+use egui::{Modifiers, Pos2, Rect, Ui};
 use yolu_core::geometry::{pick, Bounds, OrbitCamera};
 use yolu_core::glam::{Vec2, Vec3};
 
@@ -279,7 +279,7 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     });
     if over
         && ui.input(|i| i.modifiers == Modifiers::NONE)
-        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Period))
+        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, crate::keymap::VIEW3D_FRAME))
     {
         frame_selected(app, rect);
     }

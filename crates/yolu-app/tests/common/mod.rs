@@ -146,6 +146,18 @@ pub fn rect_of(h: &Harness<'_, YoluApp>, label: &str, pick: impl Fn(Rect) -> boo
         .unwrap_or_else(|| panic!("{label}: {rects:?}"))
 }
 
+/// オプションバー（メニューバーの下の帯）の部品。同じ値は左のドックのツールプロパティにも出るので、名前だけでは 2 つに当たる。
+pub fn bar_rect(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    rect_of(h, label, |r| r.top() > 24.0 && r.bottom() < 62.0)
+}
+
+/// 左のドックのサブツールのパネルの中（一覧・ツールプロパティ・ブラシサイズ）の部品。
+pub fn dock_rect(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    rect_of(h, label, |r| {
+        r.left() < 390.0 && r.top() > 62.0 && r.bottom() < 700.0
+    })
+}
+
 /// メニューバーの見出し（同じ名前のドックのタブより上にある）。
 pub fn menu_title(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     rect_of(h, label, |r| r.top() < 24.0)

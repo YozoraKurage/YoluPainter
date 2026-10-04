@@ -1,37 +1,18 @@
-//! 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の欄: オプションバー（範囲・塗る/消す・不透明度・許容）と、プロパティの欄
-//! （範囲の節と、続けてブラシのマテリアル。ID の色で選択は ID マップの節）。値は `AppState::region` で、操作は `Action::Region` を通す
-//! （キー・試験と同じ道）。画面には名前と値だけを出し、説明はツールチップ。
+//! 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の欄: オプションバー（塗る/消す・不透明度・許容。ID の色で選択は作成方法と許容）と、
+//! 左のドックのツールプロパティ（バケツの許容・隣接・参照・色差・隙間閉じ・領域の拡縮・塗り残し、ID の色で選択の ID マップ）。範囲の種類
+//! （近い色・三角形・メッシュの塊・UV アイランド・マテリアル）はサブツールの一覧（`subtool`）で選ぶ。値は `AppState::region` で、操作は
+//! `Action::Region` を通す（キー・試験と同じ道）。画面には名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
 
-use super::properties::{choice_row, group_label, open_popup, slider_row, status_row, toggle_row};
-use crate::lang::Lang;
-use crate::m2_menu::Popup;
+use super::properties::{choice_buttons, group_label, slider_row, status_row, toggle_row, ChoiceButton};
 use crate::region::idcolor::{hex_of, manual_state_lines, parse_rgb};
 use crate::engine::SelectionCombine;
-use crate::region::{kind_name, IdColorOp, RegionAction};
+use crate::region::{IdColorOp, RegionAction};
 use crate::selection::{combine_name, combine_tooltip, SelAction, SelUiOp};
 use crate::state::{Action, AppState, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
-
-/// 範囲の欄の名前（オプションバーとプロパティで同じ）。
-fn range_label(lang: Lang) -> &'static str {
-    lang.pick("範囲", "Region")
-}
-
-/// 今の範囲の名前（バケツは近い色も）。
-pub fn range_value(app: &AppState) -> &'static str {
-    let lang = app.lang;
-    if app.tool == Tool::Fill && app.region.by_color {
-        lang.pick("近い色", "Similar colors")
-    } else {
-        kind_name(lang, app.region.kind)
-    }
-}
-
-const RANGE_TIP_JA: &str = "クリック・ドラッグで塗る範囲: 三角形、つながったメッシュの塊、UV アイランド、このテクスチャセットのマテリアル全体";
-const RANGE_TIP_EN: &str = "What a click or drag fills: the triangle, the connected mesh part, the UV island or the whole material of this texture set";
 
 // ───────── オプションバー ─────────
 
@@ -145,19 +126,13 @@ fn combine_buttons(ui: &mut Ui, app: &mut AppState, cursor: &mut Cursor, right: 
     cursor.x += 8.0;
 }
 
-/// オプションバーの中身（ツールのアイコンの右から）。
+/// オプションバーの中身（ツールのアイコンの右から）。バケツ・ポリゴン塗りつぶしは塗る/消すと不透明度（バケツの近い色は許容も）、ID の色で
+/// 選択は作成方法と許容。範囲の種類はサブツール、ほかの値はツールプロパティ。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
-    let ctx = ui.ctx().clone();
     let lang = app.lang;
     let mut cursor = Cursor { x, y: r.top() + 6.0, h: r.height() - 12.0 };
     match app.tool {
         Tool::Fill | Tool::PolygonFill => {
-            let at = cursor.next(190.0);
-            let tip = lang.pick(RANGE_TIP_JA, RANGE_TIP_EN);
-            let (response, b) = w::dropdown(ui, at, "options.region", Some(range_label(lang)), range_value(app), Some(tip), true, 0.0);
-            if response.clicked() {
-                open_popup(app, &ctx, Popup::Region, b, b.width());
-            }
             paint_erase(ui, app, &mut cursor);
             let at = cursor.next(130.0);
             opacity_slider(ui, app, at);
@@ -166,24 +141,6 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
                 let v = app.region.tolerance as f32;
                 if let Some(v) = tolerance_slider(ui, app, at, "options.tolerance", 255.0, lang.pick("押した画素の色との各成分の差の上限", "The largest per-channel difference from the pressed pixel"), v) {
                     app.apply(Action::Region(RegionAction::Tolerance(v as u8)));
-                }
-                let at = cursor.next(100.0);
-                let v = w::toggle(ui, at, "options.contiguous", lang.pick("隣接", "Contiguous"), app.region.contiguous, None, true);
-                if v != app.region.contiguous {
-                    app.apply(Action::Region(RegionAction::Contiguous(v)));
-                }
-                let at = cursor.next(150.0);
-                let v = w::toggle(
-                    ui,
-                    at,
-                    "options.sample-all",
-                    lang.pick("全レイヤーを見る", "Sample All Layers"),
-                    app.region.sample_all,
-                    Some(lang.pick("選んだレイヤーでなく合成を見る", "Use the composite instead of the selected layer")),
-                    true,
-                );
-                if v != app.region.sample_all {
-                    app.apply(Action::Region(RegionAction::SampleAll(v)));
                 }
             }
         }
@@ -215,52 +172,62 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     }
 }
 
-// ───────── プロパティの欄 ─────────
+// ───────── ツールプロパティ ─────────
 
-/// 範囲の道具の文脈のとき、欄に出すか（ID の色で選択はいつも。バケツとポリゴン塗りつぶしは、ペイントの層かマスクに塗るあいだ）。
-pub fn owns_properties(app: &AppState, paint_context: bool) -> bool {
-    match app.tool {
-        Tool::IdSelect => true,
-        Tool::Fill | Tool::PolygonFill | Tool::Gradient => paint_context,
-        _ => false,
-    }
-}
-
-pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
-    match app.tool {
-        Tool::IdSelect => id_section(ui, app, rows),
-        Tool::Fill | Tool::PolygonFill => {
-            region_section(ui, app, rows, ctx);
-            super::material::material_section(ui, app, rows);
-        }
-        Tool::Gradient => {
-            crate::gradient::props::body(ui, app, rows);
-            super::material::material_section(ui, app, rows);
-        }
-        _ => {}
-    }
-}
-
-fn region_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
+/// 塗る・消すの 1 行（マスクでは白・黒）。
+fn paint_erase_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let (open, _) = super::properties::section(
+    let mask = app.m2.edit_mask;
+    let (paint, erase) = if mask {
+        (lang.pick("白（見せる）", "White (show)"), lang.pick("黒（隠す）", "Black (hide)"))
+    } else {
+        (lang.pick("塗る", "Paint"), lang.pick("消す", "Erase"))
+    };
+    let (paint_tip, erase_tip) = if mask {
+        (
+            lang.pick("マスクを白で塗る（レイヤーを見せる）", "Fill the mask with white (shows the layer)"),
+            lang.pick("マスクを黒で塗る（レイヤーを隠す）", "Fill the mask with black (hides the layer)"),
+        )
+    } else {
+        (
+            lang.pick("描画色と不透明度で塗る", "Fill with the paint color and the opacity"),
+            lang.pick("透明にする", "Erase to transparent"),
+        )
+    };
+    let erasing = app.region.erase;
+    let items = [
+        ChoiceButton { id: "props.region.paint", label: paint, selected: !erasing, enabled: true, tooltip: Some(paint_tip) },
+        ChoiceButton { id: "props.region.erase", label: erase, selected: erasing, enabled: true, tooltip: Some(erase_tip) },
+    ];
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        app.apply(Action::Region(RegionAction::Erase(i == 1)));
+    }
+}
+
+/// 不透明度の 1 行（ブラシと共通の値）。
+fn opacity_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let lang = app.lang;
+    if let Some(v) = slider_row(
         ui,
-        app,
         rows,
-        "region",
-        lang.pick("範囲", "Region"),
-        "view_in_ar",
-        None,
-    );
-    if !open {
-        return;
+        "props.region.opacity",
+        lang.pick("不透明度", "Opacity"),
+        app.brush.opacity * 100.0,
+        (0.0, 100.0),
+        NumberFormat::int("%"),
+        Some(lang.pick("ブラシと共通", "Shared with the brush")),
+        true,
+    ) {
+        app.brush.opacity = v / 100.0;
     }
-    let value = range_value(app);
-    // 見出しが「範囲」なので、箱は名前なしで幅いっぱいに（狭い欄でも値を切らない）
-    if let Some(b) = choice_row(ui, rows, "region.kind", "", value, Some(lang.pick(RANGE_TIP_JA, RANGE_TIP_EN)), true) {
-        open_popup(app, ctx, Popup::Region, b, b.width());
-    }
-    if app.tool == Tool::Fill && app.region.by_color {
+}
+
+/// バケツ: 塗る・消す、不透明度、近い色なら許容・隣接・参照・色差・隙間閉じ・領域の拡縮・塗り残し。モデルの範囲なら領域の拡縮。
+pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let lang = app.lang;
+    paint_erase_row(ui, app, rows);
+    opacity_row(ui, app, rows);
+    if app.region.by_color {
         let tol = app.region.tolerance as f32;
         if let Some(v) = slider_row(
             ui,
@@ -280,31 +247,35 @@ fn region_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
             app.apply(Action::Region(RegionAction::Contiguous(v)));
         }
         bucket_properties(ui, app, rows);
-    } else if app.region_model().is_none() {
-        status_row(ui, rows, &app.region_missing_reason());
-    }
-    if app.tool == Tool::Fill && !app.region.by_color {
-        if let Some(v)=slider_row(ui,rows,"bucket.margin",lang.pick("領域の拡縮","Area scaling"),app.region.color.margin as f32,(-200.0,200.0),NumberFormat::int(" px"),None,true) {
+    } else {
+        if app.region_model().is_none() {
+            status_row(ui, rows, &app.region_missing_reason());
+        }
+        if let Some(v) = slider_row(ui, rows, "bucket.margin", lang.pick("領域の拡縮", "Area scaling"), app.region.color.margin as f32, (-200.0, 200.0), NumberFormat::int(" px"), None, true) {
             app.apply(Action::Region(RegionAction::Margin(v.round() as i16)));
         }
     }
     rows.space(4.0);
 }
 
+/// ポリゴン塗りつぶし: 塗る・消す、不透明度。
+pub fn polygon_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    paint_erase_row(ui, app, rows);
+    opacity_row(ui, app, rows);
+    if app.region_model().is_none() {
+        status_row(ui, rows, &app.region_missing_reason());
+    }
+    rows.space(4.0);
+}
+
+/// ID の色で選択: 作成方法、許容、ID マップ（ベイク・部品の手動の色）。
+pub fn id_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    crate::selection::props::creation_row(ui, app, rows);
+    id_section(ui, app, rows);
+}
+
 fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let (open, _) = super::properties::section(
-        ui,
-        app,
-        rows,
-        "id-map",
-        lang.pick("ID マップ", "ID Map"),
-        "palette",
-        None,
-    );
-    if !open {
-        return;
-    }
     // 使える状態は文で説明しない（ベイクのボタンの名前が「ベイクし直す」になる）。使えない理由だけを出す
     let usable = app.usable_id_map();
     if let Err(reason) = &usable {

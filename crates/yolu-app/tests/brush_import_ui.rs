@@ -345,7 +345,7 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
         assert!(st(&h).message.is_empty() || !st(&h).message.contains("tip.png"));
     }
     // ブラシのタブへ戻れば、一覧の上の PNG は取り込もうとする
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     h.run();
     let inside = st(&h)
         .brushes
@@ -496,7 +496,7 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
 
 /// ブラシのパネルの全体（タブの帯から、下のカラーのパネルの見出しの上まで）。
 fn panel_rect(h: &H) -> Rect {
-    let tab = h.state().tab_rects[&Tab::Brushes];
+    let tab = h.state().tab_rects[&Tab::SubTools];
     let color = h.state().tab_rects[&Tab::Color];
     Rect::from_min_max(
         pos2(tab.left() - 2.0, tab.top()),

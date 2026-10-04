@@ -27,7 +27,7 @@ use yolu_core::{CoreError, LayerId, LayerPath};
 
 use self::edit::{Place, PointOp, Refusal};
 use crate::lang::Lang;
-use crate::state::{AppState, StrokeSource, Tool};
+use crate::state::{AppState, StrokeSource};
 use crate::view3d::model::ViewModel;
 
 /// 点を掴む距離・線に近いとみなす距離（画面の点）。
@@ -36,13 +36,6 @@ pub const GRAB_RADIUS: f32 = 8.0;
 pub const CLICK_RADIUS: f32 = 4.0;
 /// パスの線と点の色（Unity 版と同じ橙）。
 pub const PATH_COLOR: Color32 = Color32::from_rgb(255, 204, 51);
-
-impl Tool {
-    /// パスの道具か。
-    pub fn is_path(self) -> bool {
-        self == Tool::Path
-    }
-}
 
 /// 選んでいる点（層とパスの ID で確かめる。層・パスが替わったら無効）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

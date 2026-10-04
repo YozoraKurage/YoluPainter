@@ -17,7 +17,8 @@ use self::view::{angle_label, CanvasView};
 use crate::engine::{BrushSample, Tilt};
 use crate::gesture;
 use crate::pen::{PenPress, PenSample, PressKind};
-use crate::state::{AppState, ShiftHold, StrokeSource, Tool};
+use crate::state::{AppState, ShiftHold, StrokeSource};
+use crate::tools::input::{CanvasKind, InputCtx};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
@@ -104,21 +105,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
                 .set_cursor_icon(zoom_cursor(ui.input(|i| i.modifiers.alt)));
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
-        } else if app.tool.is_region()
-            || app.tool.is_select()
-            || matches!(app.tool, Tool::Shape | Tool::Ruler)
-            || app.tool == crate::state::Tool::Gradient
-            || crate::eyedrop::picks(app, ui.input(|i| i.modifiers.alt))
-        {
+        } else if crate::eyedrop::picks(app, crate::keymap::picks(&ui.input(|i| i.modifiers))) {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
-        } else if matches!(app.tool, crate::state::Tool::Move | crate::state::Tool::Liquify) {
-            let icon = crate::transform::canvas::cursor(app, &view, hover);
+        } else if let Some(icon) = app.tool.def().cursor.icon(app, &view, hover) {
             ui.ctx().set_cursor_icon(icon);
-        } else if app.tool.is_path() {
-            ui.ctx().set_cursor_icon(match hover {
-                Some(p) => crate::pathtool::canvas::cursor_icon(app, &view, p),
-                None => CursorIcon::Crosshair,
-            });
         } else if let Some(p) = hover {
             let radius = (app.brush.radius * view.pixel_size()).max(1.5);
             painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
@@ -254,10 +244,10 @@ fn begin_any(
     source: StrokeSource,
     eraser: bool,
     rect: Rect,
-    alt: bool,
+    pick: bool,
     shift: bool,
 ) -> bool {
-    if crate::eyedrop::picks(app, alt) {
+    if crate::eyedrop::picks(app, pick) {
         crate::eyedrop::pick_canvas(app, view, p);
         return false;
     }
@@ -585,7 +575,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                 PressKind::View => {
                     nav::press(app, rect, p, &frame.modifiers);
                 }
-                PressKind::Tool if drives_pen(app.tool) => {
+                PressKind::Tool if drives_pen(app) => {
                     drive_pen(app, &view, p, s.pointer_id, true, frame);
                 }
                 PressKind::Tool => {
@@ -596,7 +586,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                         source,
                         s.eraser,
                         rect,
-                        frame.modifiers.alt,
+                        crate::keymap::picks(&frame.modifiers),
                         frame.modifiers.shift,
                     ) {
                         first_point(
@@ -654,17 +644,13 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
     }
 }
 
-/// ペンを押す・動く・離すとして渡す道具（描かない道具）。
-fn drives_pen(tool: Tool) -> bool {
-    tool.is_select()
-        || tool.is_path()
-        || matches!(tool, Tool::Move | Tool::Liquify)
-        || tool == Tool::Gradient
-        || matches!(tool, Tool::Shape | Tool::Ruler)
+/// ペンを押す・動く・離すとして渡す道具（ドラッグの札を持つ道具。道具の表の `canvas`）。
+fn drives_pen(app: &AppState) -> bool {
+    app.tool.def().canvas.is_some()
 }
 
-/// 選択・移動と変形・グラデーション・パスの道具のペン（触れる・動く・離すを、押す・動く・離すにする）。押しの始めは今の道具へ、続きと離すは
-/// 始めた側へ（途中で道具を替えても、始めた側を終わらせる）。
+/// ドラッグの札を持つ道具（選択・移動と変形・グラデーション・図形と定規・パス）のペン（触れる・動く・離すを、押す・動く・離すにする）。押しの始めは今の道具へ、
+/// 続きと離すは始めた側へ（途中で道具を替えても、始めた側を終わらせる）。
 fn drive_pen(
     app: &mut AppState,
     view: &CanvasView,
@@ -673,30 +659,19 @@ fn drive_pen(
     contact: bool,
     frame: &Frame,
 ) {
-    let path_down = app.path.pen_down.is_some_and(|d| d.id == id && !d.surface);
-    let starting = contact
-        && app.sel.pen_down != Some(id)
-        && app.transform.pen_down != Some(id)
-        && app.gradient.pen_down != Some(id)
-        && app.drafting.pen_down != Some(id)
-        && !path_down;
-    if app.sel.pen_down == Some(id) || (starting && app.tool.is_select()) {
-        crate::selection::canvas::pen_sample(app, view, p, id, contact, frame.modifiers, frame.now);
-    }
-    if app.transform.pen_down == Some(id) || (starting && matches!(app.tool, Tool::Move | Tool::Liquify)) {
-        crate::transform::canvas::pen_sample(app, view, p, id, contact, frame.modifiers);
-    }
-    if app.gradient.pen_down == Some(id) || (starting && app.tool == Tool::Gradient) {
-        crate::gradient::canvas::pen_sample(app, view, p, id, contact);
-    }
-    if app.drafting.pen_down == Some(id)
-        || (starting && matches!(app.tool, Tool::Shape | Tool::Ruler))
-    {
-        let rect = app.canvas_rect.unwrap_or(Rect::NOTHING);
-        crate::drafting::canvas::pen_sample(app, view, p, id, contact, frame.modifiers, rect);
-    }
-    if path_down || (starting && app.tool.is_path()) {
-        crate::pathtool::canvas::pen_sample(app, view, p, id, contact);
+    let ctx = InputCtx {
+        modifiers: frame.modifiers,
+        now: frame.now,
+        rect: app.canvas_rect.unwrap_or(Rect::NOTHING),
+        pass: 0,
+    };
+    let starting = contact && !CanvasKind::ALL.iter().any(|k| k.handler().pen_active(app, id));
+    let current = app.tool.def().canvas;
+    for kind in CanvasKind::ALL {
+        let handler = kind.handler();
+        if handler.pen_active(app, id) || (starting && current == Some(kind)) {
+            handler.pen(app, view, p, id, contact, &ctx);
+        }
     }
 }
 
@@ -739,8 +714,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
         (
             i.events.clone(),
             i.modifiers,
-            i.key_down(Key::R),
-            i.key_down(Key::Space),
+            i.key_down(crate::keymap::VIEW_ROTATE),
+            i.key_down(crate::keymap::VIEW_PAN),
         )
     });
     let mut clock = MouseClock::new(
@@ -809,58 +784,19 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         }
                         if !app.is_stroking() && nav::press(app, rect, pos, event_modifiers) {
                             // R・Space・Ctrl+Space を押しながらの左ドラッグ: 回す・パン・拡縮
-                        } else if matches!(app.tool, crate::state::Tool::Move | crate::state::Tool::Liquify) {
-                            if !app.stencil.handling() {
+                        } else if let Some(kind) = app.tool.def().canvas {
+                            // ドラッグの札を持つ道具（選択・移動と変形・グラデーション・図形と定規・パス）
+                            let handler = kind.handler();
+                            if !handler.respects_stencil() || !app.stencil.handling() {
                                 let view = app.view.view(rect, w_px, h_px);
-                                crate::transform::canvas::press(
-                                    app,
-                                    &view,
-                                    pos,
-                                    StrokeSource::Mouse,
-                                    *event_modifiers,
-                                );
+                                let ctx = InputCtx {
+                                    modifiers: *event_modifiers,
+                                    now,
+                                    rect,
+                                    pass: ctx.cumulative_pass_nr(),
+                                };
+                                handler.press(app, &view, pos, StrokeSource::Mouse, &ctx);
                             }
-                        } else if matches!(app.tool, Tool::Shape | Tool::Ruler) {
-                            if !app.stencil.handling() {
-                                let view = app.view.view(rect, w_px, h_px);
-                                crate::drafting::canvas::press(
-                                    app,
-                                    &view,
-                                    pos,
-                                    StrokeSource::Mouse,
-                                    *event_modifiers,
-                                );
-                            }
-                        } else if app.tool == crate::state::Tool::Gradient {
-                            if !app.stencil.handling() {
-                                let view = app.view.view(rect, w_px, h_px);
-                                crate::gradient::canvas::press(
-                                    app,
-                                    &view,
-                                    pos,
-                                    StrokeSource::Mouse,
-                                );
-                            }
-                        } else if app.tool.is_path() {
-                            if !app.stencil.handling() {
-                                let view = app.view.view(rect, w_px, h_px);
-                                crate::pathtool::canvas::press(
-                                    app,
-                                    &view,
-                                    pos,
-                                    StrokeSource::Mouse,
-                                );
-                            }
-                        } else if app.tool.is_select() {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::selection::canvas::press(
-                                app,
-                                &view,
-                                pos,
-                                StrokeSource::Mouse,
-                                *event_modifiers,
-                                now,
-                            );
                         } else if app.canvas.stroke.is_none() && !app.stencil.handling() && {
                             let view = app.view.view(rect, w_px, h_px);
                             begin_any(
@@ -870,7 +806,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                                 StrokeSource::Mouse,
                                 false,
                                 rect,
-                                event_modifiers.alt,
+                                crate::keymap::picks(event_modifiers),
                                 event_modifiers.shift,
                             )
                         } {
@@ -888,70 +824,22 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         }
                     }
                     (PointerButton::Primary, false) => {
-                        if app
-                            .drafting
-                            .drag
-                            .is_some_and(|d| d.source == StrokeSource::Mouse)
-                        {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::drafting::canvas::release(
-                                app,
-                                &view,
-                                pos,
-                                StrokeSource::Mouse,
-                                *event_modifiers,
-                                rect,
-                            );
+                        // 離した: ドラッグを始めた側が終わらせる（道具を替えていても）
+                        let ctx = InputCtx {
+                            modifiers: *event_modifiers,
+                            now,
+                            rect,
+                            pass: ctx.cumulative_pass_nr(),
+                        };
+                        for kind in CanvasKind::ALL {
+                            let handler = kind.handler();
+                            if handler.dragging(app, Some(StrokeSource::Mouse)) {
+                                let view = app.view.view(rect, w_px, h_px);
+                                handler.release(app, &view, pos, StrokeSource::Mouse, &ctx);
+                            }
                         }
                         if app.canvas.stroke == Some(StrokeSource::Mouse) {
                             finish_stroke(app, false);
-                        }
-                        if app
-                            .transform
-                            .drag
-                            .as_ref()
-                            .is_some_and(|d| d.source == StrokeSource::Mouse)
-                        {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::transform::canvas::release(
-                                app,
-                                &view,
-                                pos,
-                                StrokeSource::Mouse,
-                                event_modifiers.shift,
-                            );
-                        }
-                        if app
-                            .path
-                            .drag
-                            .is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface)
-                        {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::pathtool::canvas::release(app, &view, pos, StrokeSource::Mouse);
-                        }
-                        if app
-                            .gradient
-                            .drag
-                            .as_ref()
-                            .is_some_and(|d| d.source == StrokeSource::Mouse)
-                        {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::gradient::canvas::release(app, &view, pos, StrokeSource::Mouse);
-                        }
-                        if app
-                            .sel
-                            .drag
-                            .as_ref()
-                            .is_some_and(|d| d.source == StrokeSource::Mouse)
-                        {
-                            let view = app.view.view(rect, w_px, h_px);
-                            crate::selection::canvas::release(
-                                app,
-                                &view,
-                                pos,
-                                StrokeSource::Mouse,
-                                *event_modifiers,
-                            );
                         }
                         if !pen_frame {
                             nav::released(app, rect);
@@ -959,7 +847,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     }
                     (PointerButton::Middle, true) => {
                         if !frame.no_press && !pen_frame && on_top(ui, rect, pos) {
-                            if modifiers.shift {
+                            // 中ボタン: パン、Shift を足すと回転（`keymap::GESTURES`）
+                            if crate::keymap::gesture("canvas", PointerButton::Middle, &modifiers, false)
+                                == Some(crate::keymap::Operation::Rotate)
+                            {
                                 app.canvas.middle_rotating = !app.is_stroking();
                             } else {
                                 app.canvas.panning = true;
@@ -977,36 +868,20 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
             Event::PointerMoved(pos) => {
                 let pos = *pos;
                 let previous = app.canvas.last_pointer.unwrap_or(pos);
-                if !pen_frame && app.drafting.drag.is_some() {
-                    let view = app.view.view(rect, w_px, h_px);
-                    crate::drafting::canvas::moved(app, &view, pos, StrokeSource::Mouse, modifiers);
-                }
-                if app.tool.is_select() && !pen_frame {
-                    let view = app.view.view(rect, w_px, h_px);
-                    crate::selection::canvas::moved(app, &view, pos, StrokeSource::Mouse);
-                }
-                if app.transform.drag.is_some() && !pen_frame {
-                    let view = app.view.view(rect, w_px, h_px);
-                    crate::transform::canvas::moved(
-                        app,
-                        &view,
-                        pos,
-                        StrokeSource::Mouse,
-                        modifiers.shift,
-                    );
-                }
-                if app
-                    .path
-                    .drag
-                    .is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface)
-                    && !pen_frame
-                {
-                    let view = app.view.view(rect, w_px, h_px);
-                    crate::pathtool::canvas::moved(app, &view, pos, StrokeSource::Mouse);
-                }
-                if app.gradient.drag.is_some() && !pen_frame {
-                    let view = app.view.view(rect, w_px, h_px);
-                    crate::gradient::canvas::moved(app, &view, pos, StrokeSource::Mouse);
+                if !pen_frame {
+                    let move_ctx = InputCtx {
+                        modifiers,
+                        now,
+                        rect,
+                        pass: ctx.cumulative_pass_nr(),
+                    };
+                    for kind in CanvasKind::ALL {
+                        let handler = kind.handler();
+                        if handler.wants_move(app) {
+                            let view = app.view.view(rect, w_px, h_px);
+                            handler.moved(app, &view, pos, StrokeSource::Mouse, &move_ctx);
+                        }
+                    }
                 }
                 if app.canvas.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     let view = app.view.view(rect, w_px, h_px);
@@ -1047,139 +922,85 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 pressed: true,
                 ..
             } => {
-                if app.drafting_cancel() {
-                    // 図形と定規は離すまで画素・定規を変更しない。
-                } else if crate::transform::canvas::cancel(app) {
-                    // 移動・変形のドラッグは何も変えずにやめた
-                } else if app.path_cancel(ctx.cumulative_pass_nr()) {
+                let ctx = InputCtx {
+                    modifiers,
+                    now,
+                    rect,
+                    pass: ctx.cumulative_pass_nr(),
+                };
+                // 図形・移動と変形・パスは、ストロークや表示の回転より先に。グラデーション・選択は、それらがなければ
+                let cancelled = |app: &mut AppState, first: bool| {
+                    CanvasKind::ALL
+                        .iter()
+                        .filter(|k| k.handler().cancel_first() == first)
+                        .any(|k| k.handler().cancel(app, &ctx))
+                };
+                if cancelled(app, true) {
+                    // 図形と定規は離すまで画素・定規を変更しない。移動・変形のドラッグは何も変えずにやめた。
                     // パスの点のドラッグを捨てた（ドラッグが無ければ選んだ点を外した）
                 } else if app.is_stroking() {
                     finish_stroke(app, true);
                 } else if let Some(drag) = app.canvas.rotating.take() {
                     app.view.angle = drag.start_angle;
                     app.view.pan = drag.start_pan;
-                } else if !crate::gradient::canvas::cancel(app) {
-                    crate::selection::canvas::cancel(app);
+                } else {
+                    cancelled(app, false);
                 }
             }
             Event::Key {
-                key: Key::Enter,
-                pressed: true,
-                ..
-            } if app.transform.drag.is_some() && !typing && !blocked => {
-                // ドラッグの途中の Enter: その位置で確定する（あとで離しても、もう何もしない）
-                crate::transform::canvas::commit(app);
-            }
-            Event::Key {
-                key: Key::Enter,
+                key: key @ (Key::Enter | Key::Backspace),
                 pressed: true,
                 modifiers: event_modifiers,
                 ..
-            } if app.tool == crate::state::Tool::Polygon && !typing && !blocked => {
-                crate::selection::canvas::finish_polygon(app, *event_modifiers);
-            }
-            Event::Key {
-                key: Key::Backspace,
-                pressed: true,
-                ..
-            } if app.tool == crate::state::Tool::Polygon && !typing && !blocked => {
-                crate::selection::canvas::remove_last_point(app);
+            } if !typing && !blocked => {
+                // ドラッグの途中の Enter（移動・変形）、多角形の確定・最後の点（選択）
+                for kind in CanvasKind::ALL {
+                    if kind.handler().key(app, *key, *event_modifiers) {
+                        break;
+                    }
+                }
             }
             Event::WindowFocused(false) => {
-                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる
+                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる。移動と変形・グラデーション・図形は
+                // 何も変えずにやめる
                 finish_stroke(app, false);
-                app.path_finish_drag();
+                for kind in CanvasKind::ALL {
+                    kind.handler().focus_lost(app);
+                }
                 app.canvas.pen_press = None;
-                app.sel.cancel_drafts();
-                app.transform_cancel_drag(); // 離したのを受け取れないので、移動・変形は何も変えずにやめる
-                app.drafting_cancel();
-                app.drafting.pen_down = None;
-                app.gradient_cancel_drag(); // 離したのを受け取れないので、グラデーションは何も塗らずにやめる
                 nav::cancel(app);
                 app.canvas.rotate_key_held = false;
             }
             _ => {}
         }
     }
-    if let Some(drag) = app.drafting.drag.as_mut() {
-        drag.shift = modifiers.shift;
-        drag.alt = modifiers.alt;
+    let frame_ctx = InputCtx {
+        modifiers,
+        now,
+        rect,
+        pass: ctx.cumulative_pass_nr(),
+    };
+    for kind in CanvasKind::ALL {
+        kind.handler().each_frame(app, &frame_ctx);
     }
-    // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える
-    if app.canvas.stroke == Some(StrokeSource::Mouse)
-        && !ui.input(|i| i.pointer.primary_down())
+    // ボタンを離したのを取りこぼしたとき（窓の外で離したなど）も、押していなければ終える。ストローク・ドラッグの札を持つ道具のドラッグは、
+    // 最後の位置で終える（道具ごとの終わらせ方は受け口が決める）
+    let released = !ui.input(|i| i.pointer.primary_down())
         && !events
             .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        finish_stroke(app, false);
-    }
-    // パスの点のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
-    if app
-        .path
-        .drag
-        .is_some_and(|d| d.source == StrokeSource::Mouse && !d.surface)
-        && !ui.input(|i| i.pointer.primary_down())
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        app.path_finish_drag();
-    }
-    // 選択の形のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
-    if app
-        .sel
-        .drag
-        .as_ref()
-        .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !ui.input(|i| i.pointer.primary_down())
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        let view = app.view.view(rect, w_px, h_px);
-        let at = app.canvas.last_pointer.unwrap_or(rect.center());
-        crate::selection::canvas::release(app, &view, at, StrokeSource::Mouse, modifiers);
-    }
-    // 移動・変形のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
-    if app
-        .transform
-        .drag
-        .as_ref()
-        .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !ui.input(|i| i.pointer.primary_down())
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        crate::transform::canvas::commit(app);
-    }
-    // グラデーションのドラッグも、離したのを取りこぼしたら、最後の位置で塗る
-    if app
-        .gradient
-        .drag
-        .as_ref()
-        .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !ui.input(|i| i.pointer.primary_down())
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        let view = app.view.view(rect, w_px, h_px);
-        let at = app.canvas.last_pointer.unwrap_or(rect.center());
-        crate::gradient::canvas::release(app, &view, at, StrokeSource::Mouse);
-    }
-    if app
-        .drafting
-        .drag
-        .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !ui.input(|i| i.pointer.primary_down())
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        // 図形は離した位置が不明なら取消し、画素を変更しない。
-        app.drafting_cancel();
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }));
+    if released {
+        if app.canvas.stroke == Some(StrokeSource::Mouse) {
+            finish_stroke(app, false);
+        }
+        for kind in CanvasKind::ALL {
+            let handler = kind.handler();
+            if handler.dragging(app, Some(StrokeSource::Mouse)) {
+                let view = app.view.view(rect, w_px, h_px);
+                let at = app.canvas.last_pointer.unwrap_or(rect.center());
+                handler.lost_release(app, &view, at, &frame_ctx);
+            }
+        }
     }
     // ペンが回す・拡縮している間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     if !ui.input(|i| i.pointer.primary_down()) && !nav::pen_driven(app) {

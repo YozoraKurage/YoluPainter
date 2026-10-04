@@ -1168,7 +1168,7 @@ impl AppState {
                     },
                 };
                 // 効果のブラシは消しゴムにできない。描くツールへ戻す
-                if kind != EffectKind::Paint && self.tool == crate::state::Tool::Eraser {
+                if kind != EffectKind::Paint && self.tool.erases() {
                     self.tool = crate::state::Tool::Brush;
                 }
             }

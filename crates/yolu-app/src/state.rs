@@ -76,84 +76,27 @@ impl Tool {
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
-        match self {
-            Tool::Brush => "brush",
-            Tool::Eraser => "eraser",
-            Tool::Fill => "fill",
-            Tool::Gradient => "gradient",
-            Tool::Shape => "shape",
-            Tool::Ruler => "ruler",
-            Tool::PolygonFill => "polygon-fill",
-            Tool::Eyedropper => "eyedropper",
-            Tool::IdSelect => "id-select",
-            Tool::SelectPen => "select-pen",
-            Tool::SelectRect => "select-rectangle",
-            Tool::SelectEllipse => "select-ellipse",
-            Tool::Lasso => "lasso",
-            Tool::Polygon => "select-polygon",
-            Tool::Wand => "magic-wand",
-            Tool::Move => "move",
-            Tool::Liquify => "liquify",
-            Tool::Path => "path",
-        }
+        self.def().id
     }
     pub fn name(self) -> &'static str {
         self.name_in(Lang::Ja)
     }
     /// 言語ごとの名前。
     pub fn name_in(self, lang: Lang) -> &'static str {
-        match self {
-            Tool::Brush => lang.pick("ブラシ", "Brush"),
-            Tool::Eraser => lang.pick("消しゴム", "Eraser"),
-            Tool::Fill => lang.pick("バケツ", "Fill"),
-            Tool::Gradient => lang.pick("グラデーション", "Gradient"),
-            Tool::Shape => lang.pick("図形", "Shape"),
-            Tool::Ruler => lang.pick("定規", "Ruler"),
-            Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
-            Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
-            Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
-            Tool::SelectPen => lang.pick("選択ペン", "Selection Pen"),
-            Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
-            Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
-            Tool::Lasso => lang.pick("なげなわ", "Lasso"),
-            Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
-            Tool::Wand => lang.pick("自動選択", "Magic Wand"),
-            Tool::Move => lang.pick("移動・変形", "Move / Transform"),
-            Tool::Liquify => lang.pick("ゆがみ", "Liquify"),
-            Tool::Path => lang.pick("パス", "Path"),
-        }
+        self.def().name(lang)
     }
     pub fn key(self) -> &'static str {
-        match self {
-            Tool::Brush => "B",
-            Tool::Eraser => "E",
-            Tool::Fill => "G",
-            Tool::Gradient => "Shift+G",
-            Tool::Shape => "U",
-            Tool::Ruler => "Shift+U",
-            Tool::PolygonFill => "4",
-            Tool::Eyedropper => "I",
-            Tool::IdSelect => "Shift+W",
-            Tool::SelectPen => "S",
-            Tool::SelectRect => "M",
-            Tool::SelectEllipse => "Shift+M",
-            Tool::Lasso => "L",
-            Tool::Polygon => "Shift+L",
-            Tool::Wand => "W",
-            Tool::Move => "V",
-            Tool::Liquify => "",
-            Tool::Path => "P",
-        }
+        self.def().key
     }
     /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
-    /// ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
+    /// 道具の表（`tools`）が持つ。ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
     pub fn is_region(self) -> bool {
-        matches!(self, Tool::Fill | Tool::PolygonFill | Tool::IdSelect)
+        self.def().region
     }
     /// 押した瞬間に終わるツール（バケツ・ID の色で選択・スポイト）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
     /// 押し直さないよう、入力の側が押している間の印（`pen_press`）を持つ。
     pub fn is_one_shot(self) -> bool {
-        matches!(self, Tool::Fill | Tool::IdSelect | Tool::Eyedropper)
+        self.def().one_shot
     }
 }
 
@@ -493,6 +436,8 @@ pub enum Action {
     Stencil(crate::stencil::StencilOp),
     /// ブラシの一覧（替える・追加・複製・削除・名前・並べ替え・元に戻す。文書は変えない）。
     Brush(crate::brushes::BrushAction),
+    /// サブツールの一覧（バケツ・グラデーション・図形などのプリセット。替える・追加・複製・削除・名前・元に戻す・登録。文書は変えない）。
+    SubTool(crate::subtool::SubToolAction),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
     /// パスの道具（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
@@ -588,6 +533,7 @@ impl Action {
             Self::Fx(..) => "Fx",
             Self::Stencil(..) => "Stencil",
             Self::Brush(..) => "Brush",
+            Self::SubTool(..) => "SubTool",
             Self::Sel(..) => "Sel",
             Self::Path(..) => "Path",
             Self::Fill(..) => "Fill",
@@ -691,6 +637,8 @@ pub struct AppState {
     pub mat: crate::matpaint::MaterialPaint,
     /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
     pub region: crate::region::RegionState,
+    /// サブツール（バケツ・グラデーション・図形などの設定の組のプリセット。ブラシと消しゴムは `brushes`）。アプリの状態で、.ylp には入れない。
+    pub subtools: crate::subtool::SubToolState,
     pub doc: Document,
     /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
     /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
@@ -908,6 +856,7 @@ impl AppState {
             m2: M2State::default(),
             mat: Default::default(),
             region: Default::default(),
+            subtools: Default::default(),
             doc,
             doc_epoch: 0,
             stroke: None,
@@ -997,6 +946,8 @@ impl AppState {
             return false;
         }
         if tool != self.tool {
+            // 今の道具の設定を覚え、入る道具の今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
+            self.subtool_leave(self.tool);
             self.sel_tool_changed();
             if !keep_effect {
                 self.fx.selected = None; // 選んだ効果の欄は道具を替えたら閉じる
@@ -1006,6 +957,7 @@ impl AppState {
             self.path_tool_changed();
             self.gradient_cancel_drag();
             self.drafting_cancel();
+            self.subtool_enter(tool);
         }
         self.tool = tool;
         true
@@ -1061,7 +1013,7 @@ impl AppState {
     /// 今のツールで描くブラシの設定（ペンの消しゴムの端なら消す）。
     pub fn stroke_settings(&self, pen_eraser: bool) -> BrushSettings {
         self.brush
-            .settings(self.color.main, self.tool == Tool::Eraser || pen_eraser)
+            .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
     /// 操作を当てる。描いている最中は、表示と色の操作のほかは断る。
@@ -1100,6 +1052,7 @@ impl AppState {
             Action::Fx(op) => self.fx_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Brush(action) => self.brush_action(action),
+            Action::SubTool(action) => self.subtool_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
             Action::Fill(op) => self.fill_apply(op),

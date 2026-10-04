@@ -185,7 +185,7 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
 fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_tab_closed() {
     let (mut h, _) = window();
     // 左の列をブラシへ（棚の格子が絵を頼まない）。別のスレッドは、頼まれても止めておく
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     h.run();
     h.state_mut().state.shelf.hold_inspections(true);
     let (rid, image) = shelf_image(&mut h, "石の模様");
