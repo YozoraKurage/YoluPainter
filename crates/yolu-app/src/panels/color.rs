@@ -118,17 +118,36 @@ impl ColorTextures {
     }
 }
 
-/// 円の外接の正方形（領域の中央。右上の切り替えのボタンの分を空ける）。
+/// 右上の切り替えのボタンの分の幅（円はその左の残りの幅に収める）。
+const TOGGLE_LANE: f32 = 26.0;
+
+/// 円の外接の正方形。右上の切り替えのボタンの分を、右に空ける（横長の欄）か上に空ける（縦長の細い欄）かの、円が大きくなるほうに置く。
 pub fn wheel_rect(area: Rect) -> Rect {
-    let size = area.height().min(area.width() - 2.0 * 26.0).max(0.0);
-    Rect::from_min_size(
-        pos2(
-            area.center().x - size * 0.5,
-            area.top() + (area.height() - size) * 0.5,
-        ),
-        vec2(size, size),
-    )
+    let beside = area.height().min(area.width() - TOGGLE_LANE).max(0.0);
+    let below = (area.height() - TOGGLE_LANE).min(area.width()).max(0.0);
+    if below > beside {
+        let top = area.top() + TOGGLE_LANE;
+        Rect::from_min_size(
+            pos2(
+                area.center().x - below * 0.5,
+                top + (area.bottom() - top - below) * 0.5,
+            ),
+            vec2(below, below),
+        )
+    } else {
+        let lane = area.width() - TOGGLE_LANE;
+        Rect::from_min_size(
+            pos2(
+                area.left() + (lane - beside) * 0.5,
+                area.top() + (area.height() - beside) * 0.5,
+            ),
+            vec2(beside, beside),
+        )
+    }
 }
+
+/// 16 進とアルファを 1 行に並べるのに足りる幅（これより狭ければ 2 行に分けて、どちらも欄の幅で見せる）。
+const HEX_ALPHA_ONE_LINE: f32 = 180.0;
 
 /// 円の中の彩度×明度の四角。
 pub fn wheel_square(wheel: Rect) -> Rect {
@@ -198,8 +217,17 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     let ctx = ui.ctx().clone();
     app.color.sync_hsv();
     let mut rows = Rows::new(r, 8.0);
-    let fixed = 8.0 + 6.0 + 22.0 + 6.0 + 16.0 + 6.0 + SWATCH_BLOCK + 8.0;
-    let sv_height = (r.height() - fixed).clamp(72.0, if app.color.wheel { 220.0 } else { 160.0 });
+    let stacked = r.width() - 2.0 * t::PADDING < HEX_ALPHA_ONE_LINE;
+    let lines = if stacked { 2.0 } else { 1.0 };
+    let fixed = 8.0 + 6.0 + lines * (22.0 + 6.0) + 16.0 + 6.0 + SWATCH_BLOCK + 8.0;
+    // 円は欄の幅いっぱいまで大きくする（幅の広い欄で小さく見えないように。上限は 320）
+    let most = if app.color.wheel {
+        // 細い欄では切り替えのボタンを円の上に置くので、その分も高さに足す
+        (r.width() - 2.0 * t::PADDING + TOGGLE_LANE).clamp(72.0, 346.0)
+    } else {
+        160.0
+    };
+    let sv_height = (r.height() - fixed).clamp(72.0, most);
     let area = rows.row(sv_height, 6.0);
     let toggle = Rect::from_min_size(pos2(area.right() - 22.0, area.top()), vec2(22.0, 22.0));
     if app.color.wheel {
@@ -347,12 +375,17 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
 
     // 16 進とアルファ
     // 16 進の欄を広めに取る（同梱の書体の数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
-    let line = rows.row(22.0, 6.0);
-    let hex_width = ((line.width() - 6.0) * 0.52).round();
-    let cells = [
-        Rect::from_min_size(line.min, vec2(hex_width, line.height())),
-        Rect::from_min_max(pos2(line.left() + hex_width + 6.0, line.top()), line.max),
-    ];
+    let cells = if stacked {
+        // 狭い欄: 16 進とアルファを 2 行に（「#RRGGBB」が欠けないように）
+        [rows.row(22.0, 6.0), rows.row(22.0, 6.0)]
+    } else {
+        let line = rows.row(22.0, 6.0);
+        let hex_width = ((line.width() - 6.0) * 0.52).round();
+        [
+            Rect::from_min_size(line.min, vec2(hex_width, line.height())),
+            Rect::from_min_max(pos2(line.left() + hex_width + 6.0, line.top()), line.max),
+        ]
+    };
     let hex = format!("#{}", to_hex(app.color.main));
     if let Some(typed) = w::text_field(
         ui,
@@ -481,5 +514,24 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     .clicked()
     {
         app.apply(Action::DefaultColors);
+    }
+}
+
+#[cfg(test)]
+mod wheel_layout_tests {
+    use super::*;
+
+    #[test]
+    fn a_narrow_tall_panel_puts_the_toggle_above_and_the_wheel_uses_the_whole_width() {
+        // 狭い欄（幅 110・高さ 300）: 右に空けると 84、上に空けると 110。大きいほう
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(110.0, 300.0));
+        let wheel = wheel_rect(area);
+        assert_eq!(wheel.width(), 110.0);
+        assert!(wheel.top() >= TOGGLE_LANE);
+        // 横長の欄（幅 300・高さ 160）: 右に空けて高さいっぱい
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(300.0, 160.0));
+        let wheel = wheel_rect(area);
+        assert_eq!(wheel.width(), 160.0);
+        assert!(wheel.right() <= 300.0 - TOGGLE_LANE);
     }
 }

@@ -287,7 +287,7 @@ impl YoluApp {
             app.state.attach_brush_store(dir.join("brushes"));
         }
         let mut notices: Vec<String> = Vec::new();
-        notices.extend(startup_message(lang, &problems, app.pen.is_hooked()));
+        notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
         if !notices.is_empty() {
             app.state.message = notices.join(" ");
@@ -1097,12 +1097,9 @@ fn startup_project(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option
         .then_some(path)
 }
 
-/// 起動時の状態の帯の知らせ（既定へ戻した設定の理由と、Windows Ink の接続。あれば全部）。
-fn startup_message(lang: crate::lang::Lang, problems: &[Problem], ink_connected: bool) -> Option<String> {
-    let mut parts: Vec<String> = problems.iter().map(|p| p.text(lang)).collect();
-    if ink_connected {
-        parts.push(lang.pick("Windows Ink のペンを受けています。", "Windows Ink connected.").into());
-    }
+/// 起動時の状態の帯の知らせ（既定へ戻した設定の理由。あれば全部）。ペンを受けていることは知らせない（状態の文を帯に出さない）。
+fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<String> {
+    let parts: Vec<String> = problems.iter().map(|p| p.text(lang)).collect();
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
@@ -1207,22 +1204,20 @@ mod tests {
 
     #[test]
     fn startup_message_keeps_all_notices() {
-        assert_eq!(startup_message(Lang::Ja, &[], false), None);
-        assert_eq!(startup_message(Lang::En, &[], true).as_deref(), Some("Windows Ink connected."));
-        assert_eq!(startup_message(Lang::En, &[Problem::Unreadable], false).as_deref(), Some("Cannot read the settings."));
+        assert_eq!(startup_message(Lang::Ja, &[]), None);
+        assert_eq!(startup_message(Lang::En, &[Problem::Unreadable]).as_deref(), Some("Cannot read the settings."));
         assert_eq!(
-            startup_message(Lang::En, &[Problem::Language("x".into())], false).as_deref(),
+            startup_message(Lang::En, &[Problem::Language("x".into())]).as_deref(),
             Some("Cannot read the language setting.")
         );
-        // Windows Ink の知らせで、読めなかった設定の知らせを上書きしない。理由が 2 つなら 2 つ
+        // 読めなかった設定の理由が 2 つ以上なら全部
         let both = startup_message(
             Lang::Ja,
             &[Problem::Language("x".into()), Problem::Invalid { key: "cpu_threads", value: "0".into() }, Problem::Backups("-2".into())],
-            true,
         )
         .unwrap();
         assert!(
-            both.contains("言語の設定を読めません") && both.contains("CPU のスレッド") && both.contains("退避を残す数") && both.contains("Windows Ink"),
+            both.contains("言語の設定を読めません") && both.contains("CPU のスレッド") && both.contains("退避を残す数") && !both.contains("Windows Ink"),
             "{both}"
         );
     }

@@ -649,12 +649,10 @@ fn is_screen_text(text: &str) -> bool {
 
 /// 指示の言い回しを含むが、断った理由や起きたことを言っているだけの文（原文）。新しい文が引っかかったら、使い方の説明でないかを
 /// 確かめ、説明なら状態か理由に書き直す（ここに足すのは、断った理由・起きたこと・確かめの文だけ）。
-const ALLOWED: [&str; 3] = [
+const ALLOWED: [&str; 2] = [
     // 回転・反転を断った理由（描いている・ドラッグしている間）
     "描いている間・ドラッグの間は回せません。",
     "Cannot rotate during a stroke or drag.",
-    // 起動時の状態（ペンを受けている）
-    "Windows Ink のペンを受けています。",
 ];
 
 fn offenders(filter: impl Fn(&Literal) -> bool, rule: impl Fn(&str) -> bool) -> Vec<String> {

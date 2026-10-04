@@ -27,7 +27,9 @@ const SECTION_HEIGHT: f32 = t::PANEL_HEADER_HEIGHT;
 const FIELD_HEIGHT: f32 = 20.0;
 const FIELD_GAP: f32 = 3.0;
 const TOOL_SAMPLE_HEIGHT: f32 = 44.0;
-const SIZES_BODY: f32 = 50.0;
+/// ブラシサイズの丸の 1 マスの最小の幅と、1 段の高さ。幅に入るだけ並べ、入りきらなければ段を足す。
+const SIZE_CELL_MIN: f32 = 32.0;
+const SIZE_ROW: f32 = 42.0;
 const PEN_BUTTON: f32 = 24.0;
 /// 大きさの数字（細い丸の幅に収める）。
 const SIZE_LABEL: t::TextStyle = t::TextStyle {
@@ -853,22 +855,38 @@ fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     }
 }
 
-/// ブラシサイズの帯: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。
+/// ブラシサイズの格子の列の数（欄の幅に入るだけ。1 列以上、全部の数まで）。
+fn size_columns(width: f32) -> usize {
+    (((width - 2.0 * t::PADDING) / SIZE_CELL_MIN).floor().max(1.0) as usize).min(SIZES.len())
+}
+
+/// ブラシサイズの格子の高さ（段の数 × 段の高さと上下の余白）。
+fn sizes_height(width: f32) -> f32 {
+    let rows = SIZES.len().div_ceil(size_columns(width));
+    rows as f32 * SIZE_ROW + 8.0
+}
+
+/// ブラシサイズの格子: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。欄の幅に入るだけ並べ、入りきらなければ段を足す。
 fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
     let diameter = app.brush.radius * 2.0;
     let near = nearest_size(diameter);
     let n = SIZES.len();
+    let columns = size_columns(area.width());
     let inner = Rect::from_min_size(
         pos2(area.left() + t::PADDING, area.top() + 4.0),
-        vec2(area.width() - 2.0 * t::PADDING, SIZES_BODY - 8.0),
+        vec2(area.width() - 2.0 * t::PADDING, area.height() - 8.0),
     );
-    let cell_w = inner.width() / n as f32;
+    let cell_w = inner.width() / columns as f32;
     for (i, size) in SIZES.iter().enumerate() {
+        let (row, column) = (i / columns, i % columns);
         let cell = Rect::from_min_size(
-            pos2(inner.left() + i as f32 * cell_w, inner.top()),
-            vec2(cell_w, inner.height()),
+            pos2(
+                inner.left() + column as f32 * cell_w,
+                inner.top() + row as f32 * SIZE_ROW,
+            ),
+            vec2(cell_w, SIZE_ROW),
         );
         let label = lang.pick(format!("{size} px"), format!("{size} px"));
         let response = ui.interact(
@@ -901,8 +919,7 @@ fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                 t::TEXT_DIM
             },
         );
-        // 丸が細いほど数字がぶつかるので、狭いときは 1 つおきに（今の大きさは必ず）
-        if cell_w >= 17.0 || i % 2 == 0 || on {
+        {
             w::text(
                 p,
                 Rect::from_min_size(
@@ -970,7 +987,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     } else {
         0.0
     };
-    let size_h = if size_open { SIZES_BODY } else { 0.0 };
+    let size_h = if size_open {
+        sizes_height(r.width() - 8.0)
+    } else {
+        0.0
+    };
     let fixed = GROUP_STRIP + FOOTER_HEIGHT + SECTION_HEIGHT * 2.0 + tool_h + size_h;
     let list_h = (r.height() - fixed).max(MIN_LIST);
     let content = fixed + list_h;

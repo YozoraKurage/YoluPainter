@@ -507,7 +507,7 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     // 既定の直径 32 の丸が今の大きさ
     let cell = |h: &H, size: u32| {
         rect_of(h, &format!("{size} px"), |r| {
-            r.left() < 400.0 && r.top() > 300.0 && r.width() < 30.0
+            r.left() < 400.0 && r.top() > 300.0 && r.width() < 60.0
         })
     };
     for size in [1u32, 3, 8, 24, 64, 128, 256] {
@@ -1023,7 +1023,8 @@ fn snapshot_brush_panel() {
 
 #[test]
 fn snapshot_brush_panel_modified_and_user_brush() {
-    let mut h = app(1600.0, 900.0, 128);
+    // ブラシサイズの格子が 2 段になっても一覧の「鉛筆」まで見える高さ
+    let mut h = app(1600.0, 1000.0, 128);
     click_row(&mut h, "鉛筆");
     h.state_mut().state.brush.radius = 9.0;
     h.state_mut()
@@ -1134,7 +1135,7 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
     h.state_mut().state.brushes.ui.panel_scroll = 100_000.0;
     h.run();
     assert!(st(&h).brushes.ui.panel_scroll > 0.0);
-    let cell = rect_of(&h, "64 px", |r| r.left() < 340.0 && r.width() < 30.0);
+    let cell = rect_of(&h, "64 px", |r| r.left() < 340.0 && r.width() < 60.0);
     click(&mut h, cell.center());
     assert_eq!(st(&h).brush.radius, 32.0);
 }
