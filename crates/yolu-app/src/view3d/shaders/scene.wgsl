@@ -37,12 +37,6 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var color_tex: texture_2d<f32>;
-@group(0) @binding(2) var metallic_tex: texture_2d<f32>;
-@group(0) @binding(3) var roughness_tex: texture_2d<f32>;
-@group(0) @binding(4) var normal_tex: texture_2d<f32>;
-@group(0) @binding(5) var emission_tex: texture_2d<f32>;
-@group(0) @binding(6) var height_tex: texture_2d<f32>;
 @group(0) @binding(7) var paint_sampler: sampler;
 @group(0) @binding(8) var env_cube: texture_cube<f32>;
 @group(0) @binding(9) var env_sampler: sampler;
@@ -50,12 +44,24 @@ struct Uniforms {
 @group(0) @binding(11) var shadow_map: texture_depth_2d;
 @group(0) @binding(12) var shadow_sampler: sampler_comparison;
 
+// group 1: マテリアル（テクスチャセット）ごとの絵。マテリアルごとに束ねを替えて描く（絵を持たない面は既定の 1 × 1 と painted = 0）。
+@group(1) @binding(0) var color_tex: texture_2d<f32>;
+@group(1) @binding(1) var metallic_tex: texture_2d<f32>;
+@group(1) @binding(2) var roughness_tex: texture_2d<f32>;
+@group(1) @binding(3) var normal_tex: texture_2d<f32>;
+@group(1) @binding(4) var emission_tex: texture_2d<f32>;
+@group(1) @binding(5) var height_tex: texture_2d<f32>;
+struct SetParams {
+    // x: 絵を貼る（1）、y: このセットの Normal を法線マップに読む（1）、z: 今のセット（1。焼いたメッシュマップは今のセットの面だけ）
+    flags: vec4<f32>,
+};
+@group(1) @binding(6) var<uniform> set_params: SetParams;
+
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,
-    @location(4) paint: f32,
 };
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -64,7 +70,6 @@ struct VsOut {
     @location(2) tangent: vec3<f32>,
     @location(3) bitangent: vec3<f32>,
     @location(4) uv: vec2<f32>,
-    @location(5) paint: f32,
 };
 
 @vertex
@@ -77,7 +82,6 @@ fn vs_main(v: VsIn) -> VsOut {
     // Unity の頂点シェーダーと同じ: cross(normal, tangent) × w
     o.bitangent = cross(v.normal, v.tangent.xyz) * v.tangent.w;
     o.uv = v.uv;
-    o.paint = v.paint;
     return o;
 }
 
@@ -249,7 +253,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     let tex_emission = textureSample(emission_tex, paint_sampler, f.uv).rgb;
     let tex_height = textureSample(height_tex, paint_sampler, f.uv).r;
     let tex_map = textureSample(map_tex, paint_sampler, f.uv);
-    let painted = f.paint > 0.5;
+    let painted = set_params.flags.x > 0.5;
     let background = checker_gamma(f.uv);
     var base_gamma = background;
     if (painted) {
@@ -262,7 +266,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
         if (u.mode.x > 2.5) {
             // 焼いたメッシュマップ（乗算済み。覆わないテクセルは透明 = 市松）
             c = background;
-            if (painted) {
+            if (painted && set_params.flags.z > 0.5) {
                 c = background * (1.0 - tex_map.a) + tex_map.rgb;
             }
         } else if (painted) {
@@ -284,7 +288,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
 
     let geometric = normalize(f.normal);
     var n = geometric;
-    if (painted && u.mode.z > 0.5 && u.mode.w > 0.5) {
+    if (painted && set_params.flags.y > 0.5 && u.mode.z > 0.5 && u.mode.w > 0.5) {
         // YoluPainter の Normal の出力: リニアの RGB に詰めた接空間の法線（OpenGL の Y+）。補間したままの接線・従接線・法線で読む
         let t = tex_normal * 2.0 - vec3<f32>(1.0);
         n = normalize(f.tangent * t.x + f.bitangent * t.y + geometric * t.z);

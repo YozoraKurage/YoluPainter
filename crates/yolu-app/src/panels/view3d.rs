@@ -155,7 +155,8 @@ impl View3dSlot {
                     }),
                     _ => None,
                 };
-                let id = renderer.prepare(
+                let others = crate::view3d::other_sets::collect(app);
+                let id = renderer.prepare_sets(
                     &app.doc,
                     &model,
                     app.view3d.material,
@@ -163,7 +164,10 @@ impl View3dSlot {
                     size,
                     &app.view3d.display,
                     map.as_ref(),
+                    &others,
                 );
+                drop(others);
+                crate::view3d::other_sets::finish(app, renderer.unpainted_materials());
                 if renderer.wants_repaint() {
                     // 法線マップの接線を作っている最中: 出来たら描き直す
                     ui.ctx().request_repaint();
@@ -182,7 +186,10 @@ impl View3dSlot {
                 );
                 true
             }
-            _ => false,
+            _ => {
+                crate::view3d::other_sets::finish(app, &[]);
+                false
+            }
         };
         // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
         if drawn && !app.view3d.pose.mode {

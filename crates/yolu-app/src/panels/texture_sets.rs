@@ -4,7 +4,8 @@
 //! 下に、足す・消す・プロジェクトの構成のボタン（足す・消すは `newproject`）。
 //!
 //! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖（薄い）= 今のモデルのマテリアルに付いていない、
-//! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）。画面にはアイコンだけを
+//! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）・3D ビューのメモリの予算で
+//! 絵を見せていない（両方あるときも、Unity に見せているときも、印は注意 1 つで、ツールチップが全部を言う）。画面にはアイコンだけを
 //! 出し、説明はツールチップに置く。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
@@ -73,14 +74,27 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
             app.lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity").into(),
         );
     }
-    if !routed {
-        return look(
-            "warning",
-            t::WARNING,
-            app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity).").into(),
-        );
+    let published = app.link.published.contains(&set.uid);
+    let unpainted = app.view3d.unpainted.contains(&(material as i32));
+    if !routed || unpainted {
+        // 行の印は 1 つ。Unity の流し込み先が無いことと、3D ビューの予算で絵を見せていないことは別の事実なので、どちらもツールチップで言う
+        // （予算の警告が、Unity に見えない警告や「Unity に見せている」の印を隠さない）
+        let mut lines: Vec<&str> = Vec::new();
+        if !routed {
+            lines.push(app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity)."));
+        }
+        if unpainted {
+            lines.push(app.lang.pick(
+                "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
+                "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
+            ));
+            if published && routed {
+                lines.push(app.lang.pick("Unity に見せている", "Shown in Unity"));
+            }
+        }
+        return look("warning", t::WARNING, lines.join("\n"));
     }
-    if app.link.published.contains(&set.uid) {
+    if published {
         return look(
             "sync",
             t::ACCENT,

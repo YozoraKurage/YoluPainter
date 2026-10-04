@@ -2,7 +2,9 @@
 //!
 //! - 描き先は自前の色（Rgba8Unorm）と深度のテクスチャで、egui のネイティブのテクスチャとして画像で貼る（egui の描画のパスの MSAA・
 //!   深度の設定に左右されない）。描くのはカメラ・大きさ・モデル・塗った絵・表示の設定のどれかが変わったときだけ。
-//! - 塗った絵は標準の 6 チャンネルのテクスチャ（`paint`。変わったタイルだけを上げる）、面の見え方は `shaders/scene.wgsl`: マテリアル（Unity の
+//! - 塗った絵は標準の 6 チャンネルのテクスチャ（`paint`。変わったタイルだけを上げる）。今のセットの絵に加えて、ほかのテクスチャセットの絵も
+//!   縮めた段で持って見せる（`prepare_sets`。マテリアルごとに束ね（group 1）を替えて描く。頂点はマテリアル順に並べる）。面の見え方は
+//!   `shaders/scene.wgsl`: マテリアル（Unity の
 //!   Standard と同じ BRDF の PBR）・中立（Unity 版のプレビューの簡単な明暗）・チャンネルだけ（光なし）。環境（`environment`。空・スタジオを
 //!   CPU で焼いた GGX のキューブと SH）と背景、トーンマッピングと露出（HDR の描き先に描いて `shaders/tonemap.wgsl` で 8 bit へ）は Unity 版と同じ作り。
 //! - 色の約束: 出力は「画面にそのまま出す値」（ガンマ）。中立・チャンネルだけはガンマの空間のまま、マテリアルはリニアで解いて最後にガンマへ。
@@ -24,6 +26,7 @@ use super::brdf::{self, Curve};
 use super::display::{Display, EnvKind, Shading};
 use super::environment::{self, Baked, Source, FACE_SIZE, MIP_COUNT};
 use super::model::ViewModel;
+use super::other_sets::OtherSet;
 use super::paint::{ImageTexture, Paint, PaintStats, Slot};
 use super::tangents::Tangent;
 
@@ -32,8 +35,14 @@ pub const BACKGROUND: [f64; 3] = [0.12, 0.13, 0.15];
 const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// 頂点 1 つ: 位置 3・法線 3・UV 2・接線 4・絵を貼るか 1（f32）。
-const VERTEX_FLOATS: usize = 13;
+/// 頂点 1 つ: 位置 3・法線 3・UV 2・接線 4（f32）。絵を貼るか・どの絵かは、マテリアルごとの描きで束ね（group 1）が決める。
+const VERTEX_FLOATS: usize = 12;
+/// 今のセットでないセットの絵の一辺の上限（縮めて持つ。今のセットは文書の大きさのまま）。
+pub const OTHER_SET_MAX_SIZE: u32 = 1024;
+/// 1 フレームの同期（今のセットとほかのセットの合成・上げ）にかけてよい時間。ほかのセットの絵を新しく作り始める（文書を合成して縮める。
+/// 重い）のは、この時間に収まっているあいだと、そのフレームの最初の 1 つだけ。残りは次のフレームから（セットの多いプロジェクトで
+/// 1 フレームに重なって止まらないように。小さな文書は 1 フレームで全部作る）。
+pub const BUILD_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(40);
 /// 一様バッファの大きさ（`shaders/scene.wgsl` の `Uniforms`）。
 const UNIFORM_BYTES: u64 = 128 + 9 * 16 + 9 * 16 + 64 + 16;
 /// 影のマップの 1 辺（Depth32Float で 16 MiB。Unity 版と同じ 2048）。
@@ -78,6 +87,22 @@ pub struct View3dStats {
     /// 最後の `prepare` の CPU の時間（マイクロ秒）: 全体と、そのうち塗った絵の同期（合成・縮め・上げ・ミップの積み）。GPU の実行は含まない。
     pub last_prepare_us: u64,
     pub last_sync_us: u64,
+    /// 今のセットでないセットの絵を持っている数（GPU に作ってあるもの）。
+    pub other_sets: usize,
+    /// 持ちたいが、メモリの予算が足りずに持っていないセットの数（その面は絵の無い描き方）。
+    pub other_skipped: usize,
+    /// 持ちたいが、まだ作っていないセットの数（1 フレームに作る数を絞っているので、次のフレームから）。
+    pub other_pending: usize,
+    /// ほかのセットの絵のバイト数（ミップ込み）と、いちばん縮めた段。
+    pub other_bytes: u64,
+    pub other_level: u32,
+    /// 今のセットだった絵を、GPU の中のミップのコピーで縮めてほかのセットへ回した回数（文書を合成し直さなかった回数。これまでの合計）。
+    pub other_demotions: usize,
+    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット。ミップ込み）のバイト数の最大。今のセットが替わるフレームでも、
+    /// 前の絵と新しい絵が満量で重なって予算を超えないことの記録（直前のフレームの終わりの分から数える）。
+    pub peak_bytes: u64,
+    /// ほかのセットの合成の作業用のバッファが抱えているバイト数（CPU。作り終えたら手放すので、普通は 0）。
+    pub other_scratch_bytes: u64,
 }
 
 impl From<PaintStats> for View3dStats {
@@ -117,9 +142,41 @@ struct GpuMesh {
     /// 落とした古いモデルのアドレスを次の新しいモデルが使うことがあり、そうなると上げ直しも描き直しも起きない。世界は
     /// `View3dState::next_revision` で作るので、モデルごとに違う。
     model: u32,
-    material: i32,
     /// 上げた接線の見分け（0 なら接線なし）。
     tangent_stamp: usize,
+    /// マテリアル順に並べた頂点の範囲（マテリアルごとに別の束ねで描く）。
+    ranges: Vec<MaterialRange>,
+}
+
+/// 頂点の並びの中の、1 つのマテリアルの範囲。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MaterialRange {
+    material: i32,
+    start: u32,
+    count: u32,
+}
+
+/// 1 つのセットの絵を束ねたもの（group 1: 6 チャンネルのテクスチャとパラメータ）。`uid`・`layout_version` が替わったら作り直す。
+struct SetBind {
+    bind: wgpu::BindGroup,
+    uid: u64,
+    layout_version: u64,
+}
+
+/// 今のセットでないセットの絵（文書の ID でセットを見分ける。マテリアルは今の割り当て）。
+struct HeldSet {
+    doc_id: u128,
+    material: i32,
+    paint: Paint,
+    bind: Option<SetBind>,
+}
+
+/// マテリアルごとの描きで使う束ね。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pick {
+    Current,
+    Held(usize),
+    Blank,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -129,6 +186,7 @@ struct SceneKey {
     /// モデルの世代（`GpuMesh::model` と同じ）。
     model: u32,
     material: i32,
+    /// 今のセットとほかのセットの絵の鍵（`paint_key`）。
     paint: u64,
     tangents: usize,
     env: u64,
@@ -201,8 +259,31 @@ pub struct MeshMapSource<'a> {
 /// 3D ビューの描画（wgpu の装置は eframe と同じもの）。
 pub struct View3dRenderer {
     rs: egui_wgpu::RenderState,
+    /// 今のセットの絵。
     paint: Paint,
+    current_bind: Option<SetBind>,
+    /// 今のセットでないセットの絵（予算に入る分だけ。今のセットから近い順に持つ）。
+    held: Vec<HeldSet>,
+    /// 絵を持たない面の束ね（既定の 1 × 1、絵を貼らない）。
+    blank_bind: wgpu::BindGroup,
+    /// メモリの予算の全体（今のセットの絵のバイト数を引いた残りに、ほかのセットが入る）。
+    total_budget: u64,
+    /// ほかのセットの絵の辺の上限。
+    other_cap: u32,
+    /// 予算が足りずに絵を持っていないセットのマテリアル。
+    unpainted: Vec<i32>,
+    /// 持ちたいが、1 フレームの作る数の上限で待たせているセットの数。
+    pending_builds: usize,
+    /// ミップのコピーで縮めた回数（`View3dStats::other_demotions`）。
+    demotions: usize,
+    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット）のバイト数の最大（`View3dStats::peak_bytes`）。
+    peak_bytes: u64,
+    /// ほかのセットの絵を新しく作り始めてよい 1 フレームの時間（`BUILD_FRAME_BUDGET`）。
+    build_budget: std::time::Duration,
+    /// ほかのセットの絵を見せるか（計測が、今のセットだけを同期する前の実装と同じ仕事と比べるために切る。普段は true）。
+    show_others: bool,
     scene_layout: wgpu::BindGroupLayout,
+    set_layout: wgpu::BindGroupLayout,
     ldr: Pipelines,
     hdr: Pipelines,
     tone: ToneMap,
@@ -231,7 +312,7 @@ pub struct View3dRenderer {
     target: Option<Target>,
     hdr_target: Option<HdrTarget>,
     mesh: Option<GpuMesh>,
-    bind: Option<(wgpu::BindGroup, (u64, u64, u64, u64))>,
+    bind: Option<(wgpu::BindGroup, (u64, u64, u64))>,
     last_key: Option<SceneKey>,
     /// 接線を作っているモデルのスレッドと、最後に出来た接線（ポーズで同じ形のモデルが続くとき、出来るまでこれを使う）。
     inflight: Option<Inflight>,
@@ -242,6 +323,46 @@ pub struct View3dRenderer {
     tangents_failed: Option<u32>,
     tangent_hook: Option<TangentHook>,
     pub stats: View3dStats,
+}
+
+/// 1 つのセットの絵の束ね（group 1）。`painted` なら絵を貼り、そうでなければ市松（`paint` は既定の 1 × 1 を見せる持ち物でよい）。
+/// `current` は今のセット（焼いたメッシュマップはその面だけに見せる）。パラメータは束ねと同じ寿命で変わらない（Normal を使い始めた・
+/// やめたときは、束ねごと作り直す）。
+fn make_set_bind(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    paint: &Paint,
+    painted: bool,
+    current: bool,
+) -> wgpu::BindGroup {
+    let flags = [
+        f32::from(painted),
+        f32::from(painted && paint.has(Slot::Normal)),
+        f32::from(painted && current),
+        0.0,
+    ];
+    let bytes: Vec<u8> = flags.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("yolu-3d-set-params"),
+        contents: &bytes,
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let mut entries: Vec<wgpu::BindGroupEntry> = Slot::ALL
+        .iter()
+        .map(|slot| wgpu::BindGroupEntry {
+            binding: slot.index() as u32,
+            resource: wgpu::BindingResource::TextureView(paint.view(*slot)),
+        })
+        .collect();
+    entries.push(wgpu::BindGroupEntry {
+        binding: 6,
+        resource: params.as_entire_binding(),
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("yolu-3d-set"),
+        layout,
+        entries: &entries,
+    })
 }
 
 fn texture_entry(
@@ -304,7 +425,6 @@ impl View3dRenderer {
             },
             count: None,
         }];
-        entries.extend((1..=6).map(|b| texture_entry(b, d2)));
         entries.push(sampler_entry(7));
         entries.push(texture_entry(8, wgpu::TextureViewDimension::Cube));
         entries.push(sampler_entry(9));
@@ -320,14 +440,38 @@ impl View3dRenderer {
             label: Some("yolu-3d-scene"),
             entries: &entries,
         });
+        // group 1: 面ごとの絵（6 チャンネルのテクスチャ）と、その持ち主のパラメータ（x: 絵を貼る、y: 法線マップを読む）
+        let mut set_entries: Vec<wgpu::BindGroupLayoutEntry> =
+            (0..6).map(|b| texture_entry(b, d2)).collect();
+        set_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 6,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+        let set_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("yolu-3d-set"),
+            entries: &set_entries,
+        });
         let scene_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("yolu-3d-scene"),
+                bind_group_layouts: &[Some(&scene_layout), Some(&set_layout)],
+                immediate_size: 0,
+            });
+        // 背景は面ごとの絵を読まない（group 1 を束ねなくてよい）
+        let background_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("yolu-3d-background"),
                 bind_group_layouts: &[Some(&scene_layout)],
                 immediate_size: 0,
             });
         let attributes = wgpu::vertex_attr_array![
-            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32
+            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
         ];
         let make = |format: wgpu::TextureFormat| Pipelines {
             scene: device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -373,7 +517,7 @@ impl View3dRenderer {
             }),
             background: device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("yolu-3d-background"),
-                layout: Some(&scene_pipeline_layout),
+                layout: Some(&background_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &scene_module,
                     entry_point: Some("vs_bg"),
@@ -589,10 +733,24 @@ impl View3dRenderer {
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
+        let paint = Paint::new(rs);
+        let blank_bind = make_set_bind(device, &set_layout, &paint, false, false);
         View3dRenderer {
             rs: rs.clone(),
-            paint: Paint::new(rs),
+            paint,
+            current_bind: None,
+            held: Vec::new(),
+            blank_bind,
+            total_budget: super::paint::PAINT_BUDGET_BYTES,
+            other_cap: OTHER_SET_MAX_SIZE,
+            unpainted: Vec::new(),
+            pending_builds: 0,
+            demotions: 0,
+            peak_bytes: 0,
+            build_budget: BUILD_FRAME_BUDGET,
+            show_others: true,
             scene_layout,
+            set_layout,
             ldr,
             hdr,
             tone: ToneMap {
@@ -636,14 +794,61 @@ impl View3dRenderer {
         }
     }
 
-    /// 塗った絵のバイトの予算を決める（試験が小さくして、縮めの道を通す）。
+    /// 塗った絵のバイトの予算を決める（試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、ほかのセットの絵が入る。
     pub fn set_paint_budget(&mut self, bytes: u64) {
+        self.total_budget = bytes;
         self.paint.set_budget(bytes);
     }
 
-    /// 試験用: 塗った絵を捨てる（次の描きが文書から全部を作り直す）。
+    /// ほかのセットの絵を新しく作り始めてよい 1 フレームの時間を決める（試験が 0 にして、1 フレームに 1 つずつの道を通す）。
+    pub fn set_other_build_budget(&mut self, budget: std::time::Duration) {
+        self.build_budget = budget;
+    }
+
+    /// 計測用: false にすると、ほかのセットの絵を見せない（今のセットの絵だけを同期する。`prepare` と同じ仕事）。
+    pub fn set_show_other_sets(&mut self, show: bool) {
+        self.show_others = show;
+    }
+
+    /// ほかのセットの絵の辺の上限を決める（試験が小さくして、縮めの道を通す）。
+    pub fn set_other_cap(&mut self, cap: u32) {
+        self.other_cap = cap.max(1);
+    }
+
+    /// 試験用: 塗った絵を捨てる（次の描きが文書から全部を作り直す。ほかのセットの絵も）。
     pub fn invalidate_paint(&mut self) {
         self.paint.invalidate();
+        self.held.clear();
+        self.current_bind = None;
+    }
+
+    /// メモリの予算が足りずに絵を持っていないセットのマテリアル（最後に描いたときの）。
+    pub fn unpainted_materials(&self) -> &[i32] {
+        &self.unpainted
+    }
+
+    /// 絵を作ってあるほかのセットのマテリアル（最後に描いたときの。作った順）。
+    pub fn held_materials(&self) -> Vec<i32> {
+        self.held
+            .iter()
+            .filter(|h| h.paint.is_built())
+            .map(|h| h.material)
+            .collect()
+    }
+
+    /// 試験用: ほかのセットの絵のチャンネルの 1 段の中身（`Paint::read_level`）と、縮めた段。そのマテリアルのセットの絵が無ければ None。
+    pub fn read_other_level(
+        &self,
+        material: i32,
+        slot: Slot,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2], u32)> {
+        let held = self
+            .held
+            .iter()
+            .find(|h| h.material == material && h.paint.is_built())?;
+        let (texels, size) = held.paint.read_level(slot, level)?;
+        Some((texels, size, held.paint.level()))
     }
 
     /// 試験用: 塗った絵のチャンネルの 1 段の中身（`Paint::read_level`）。
@@ -668,12 +873,14 @@ impl View3dRenderer {
     }
 
     /// 接線を作っている最中で、今の表示がそれを読むか（出来たら描き直したいので、窓は次のフレームも要る）。光なしの表示へ替えた・法線マップを
-    /// 使う層が無くなったときは、作っていても求めない（絵は変わらないのに窓を回し続けない）。
+    /// 使う層が無くなったときは、作っていても求めない（絵は変わらないのに窓を回し続けない）。ほかのセットの絵を、1 フレームに作る数の上限で
+    /// 待たせているあいだも求める。
     pub fn wants_repaint(&self) -> bool {
-        self.tangents_wanted && self.inflight.is_some()
+        (self.tangents_wanted && self.inflight.is_some()) || self.pending_builds > 0
     }
 
-    /// 文書の変わった所を上げ、要れば描き直して、egui に貼るテクスチャを返す（size は物理の画素）。
+    /// 文書の変わった所を上げ、要れば描き直して、egui に貼るテクスチャを返す（size は物理の画素）。今のセットだけを見せる
+    /// （`prepare_sets` にほかのセットを渡さない形）。
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -685,7 +892,26 @@ impl View3dRenderer {
         display: &Display,
         map: Option<&MeshMapSource>,
     ) -> egui::TextureId {
+        self.prepare_sets(doc, model, material, camera, size, display, map, &[])
+    }
+
+    /// `prepare` に、今のセットでないセット（`others`）の絵を足して見せる。今のセットは文書の大きさのまま、ほかのセットは縮めた段で
+    /// 持ち（メモリの予算に入る。今のセットから近い順に、足りなければ遠いものから持たない）、そのセットの文書が変わったときだけ
+    /// 上げ直す。
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_sets(
+        &mut self,
+        doc: &Document,
+        model: &Arc<ViewModel>,
+        material: i32,
+        camera: &OrbitCamera,
+        size: [u32; 2],
+        display: &Display,
+        map: Option<&MeshMapSource>,
+        others: &[OtherSet<'_>],
+    ) -> egui::TextureId {
         let started = std::time::Instant::now();
+        let others = if self.show_others { others } else { &[] };
         let size = [size[0].max(1), size[1].max(1)];
         let mut encoder = self
             .rs
@@ -693,12 +919,12 @@ impl View3dRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("yolu-3d"),
             });
-        self.paint.sync(doc, &mut encoder);
+        self.sync_sets(doc, model, material, others, started, &mut encoder);
         let sync_us = started.elapsed().as_micros() as u64;
         self.sync_environment(display);
         self.sync_map(display, map, &mut encoder);
-        let use_normal_map = self.paint.has(Slot::Normal) && !display.is_unlit();
-        self.ensure_mesh(model, material, use_normal_map);
+        let use_normal_map = self.any_normal_map() && !display.is_unlit();
+        self.ensure_mesh(model, use_normal_map);
         let resized = self.ensure_target(size);
         let tone = display.uses_tone_map();
         if tone {
@@ -706,6 +932,7 @@ impl View3dRenderer {
         }
         self.ensure_shadow(display);
         self.ensure_bind();
+        self.ensure_set_binds();
         let key = SceneKey {
             camera: [
                 camera.target.x.to_bits(),
@@ -718,7 +945,7 @@ impl View3dRenderer {
             size,
             model: model.revision(),
             material,
-            paint: self.paint.version(),
+            paint: self.paint_key(material),
             tangents: self.mesh.as_ref().map_or(0, |m| m.tangent_stamp),
             env: self.env.version,
             map: self.map_version,
@@ -729,7 +956,14 @@ impl View3dRenderer {
             if display.uses_shadows() {
                 self.update_shadow(model, display.light_direction(), &mut encoder);
             }
-            self.draw_scene(&mut encoder, camera, size, display, use_normal_map);
+            self.draw_scene(
+                &mut encoder,
+                camera,
+                size,
+                display,
+                use_normal_map,
+                material,
+            );
             self.last_key = Some(key);
             self.stats.renders += 1;
             if tone {
@@ -750,9 +984,241 @@ impl View3dRenderer {
             tangents_exact: self.stats.tangents_exact,
             last_prepare_us: started.elapsed().as_micros() as u64,
             last_sync_us: sync_us,
+            other_sets: self.held.iter().filter(|h| h.paint.is_built()).count(),
+            other_skipped: self.unpainted.len(),
+            other_pending: self.pending_builds,
+            other_bytes: self.held.iter().map(|h| h.paint.bytes()).sum(),
+            other_level: self.held.iter().map(|h| h.paint.level()).max().unwrap_or(0),
+            other_demotions: self.demotions,
+            peak_bytes: self.peak_bytes,
+            other_scratch_bytes: self
+                .held
+                .iter()
+                .map(|h| h.paint.scratch_bytes() as u64)
+                .sum(),
             ..paint
         };
         self.target.as_ref().expect("作った").id
+    }
+
+    /// 今のセットとほかのセット（`others`）の絵を、文書に合わせる。
+    ///
+    /// 順番は、GPU のメモリが予算を超えて重ならないように決めてある: (1) 今のセットが替わったら前の絵を取り出す、(2) 新しい今のセットの
+    /// 絵が取る分（`Paint::planned_bytes`）を予算から引いて、ほかのセットの持つ・持たないを決め、持たないものを捨てる、(3) 前の絵がまだ
+    /// 見せるセット（`others` にある）なら、ほかのセットの持ち物へ回してその場で上限の大きさへ縮める（ミップの段をコピー。
+    /// `Paint::demote`。文書を合成し直さない。辺が奇数などでコピーできないときだけ、その場で文書から縮めて作り直す）、(4) 新しい今のセットを
+    /// 作る、(5) ほかのセットを文書に合わせる。ほかのセットは、今のセットから並びの上で近い順に、予算（全体から今のセットの絵を引いた
+    /// 残り）に収まる分だけ持つ。収まらない（遠い）セットは持たず、その面は絵の無い描き方で、マテリアルを `unpainted` に残す。モデルの面が
+    /// 1 つも無いマテリアル（隠した・全部の面を隠した）のセットは持たない。持ち物は文書が変わったとき（版・変化の記録）だけ同期し、新しく
+    /// 作り始めるのは 1 フレームの時間（`BUILD_FRAME_BUDGET`）に収まるあいだと、そのフレームの最初の 1 つだけ。
+    fn sync_sets(
+        &mut self,
+        doc: &Document,
+        model: &ViewModel,
+        material: i32,
+        others: &[OtherSet<'_>],
+        started: std::time::Instant,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let id = doc.id();
+        // 前のフレームの終わりに持っていた絵の分から数える（同期の途中の最大が、予算を超えていないかの記録）
+        self.peak_bytes = self.picture_bytes();
+        let mut previous: Option<u128> = None;
+        if self.paint.doc_id().is_some_and(|d| d != id) {
+            let mut fresh = self.paint.sibling();
+            fresh.set_budget(self.total_budget);
+            fresh.stats = self.paint.stats;
+            let old = std::mem::replace(&mut self.paint, fresh);
+            self.current_bind = None;
+            // まだ見せるセットなら、ほかのセットの持ち物へ（縮めるのは下。満量のままの間も、持っている絵の数に入る）。見せないなら、
+            // ここで捨てる（GPU のメモリを返す）
+            if let Some(old_id) = old
+                .doc_id()
+                .filter(|d| others.iter().any(|o| o.doc.id() == *d))
+            {
+                self.held.retain(|h| h.doc_id != old_id);
+                self.held.push(HeldSet {
+                    doc_id: old_id,
+                    material: -1,
+                    paint: old,
+                    bind: None,
+                });
+                previous = Some(old_id);
+            }
+        }
+        // 今のセットになった文書は、ほかのセットとしては持たない
+        self.held.retain(|h| h.doc_id != id);
+
+        let shown = model_materials(model);
+        let mut want: Vec<&OtherSet<'_>> = others
+            .iter()
+            .filter(|o| o.doc.id() != id && o.material != material && shown.contains(&o.material))
+            .collect();
+        want.sort_by_key(|o| o.rank);
+        let mut remaining = self
+            .total_budget
+            .saturating_sub(self.paint.planned_bytes(doc));
+        let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
+        self.unpainted.clear();
+        for o in want {
+            let need = self.paint.estimate_bytes(o.doc, self.other_cap);
+            if need <= remaining {
+                remaining -= need;
+                keep.push(o);
+            } else {
+                self.unpainted.push(o.material);
+            }
+        }
+        // 持たなくなったものは、新しい今のセットの絵を作る前に捨てる（GPU のメモリを返す）
+        self.held
+            .retain(|h| keep.iter().any(|o| o.doc.id() == h.doc_id));
+        let mut builds = 0;
+        self.pending_builds = 0;
+        // 前のセットの絵は、新しい絵を作る前に縮める（満量の前の絵と、満量の新しい絵が重ならないように）
+        if let Some(old_id) = previous {
+            // 持たないと決めたなら、上の「捨てる」で無くなっている
+            if let Some(held) = self.held.iter_mut().find(|h| h.doc_id == old_id) {
+                let o = keep
+                    .iter()
+                    .find(|o| o.doc.id() == old_id)
+                    .expect("持つものだけが残っている");
+                held.material = o.material;
+                held.paint.set_budget(u64::MAX);
+                held.paint.set_cap(Some(self.other_cap));
+                if held.paint.demote(o.doc) {
+                    self.demotions += 1;
+                } else if held.paint.needs_rebuild(o.doc) {
+                    // コピーでは縮められない: 満量のまま残さず、その場で文書から縮めて作り直す（作り直しの枠に数える）
+                    held.paint.sync(o.doc, encoder);
+                    builds += 1;
+                }
+                // 今のセットだった間に抱えた作業用のバッファも手放す（ほかのセットになったら要らない）
+                held.paint.release_scratch();
+                self.note_peak();
+            }
+        }
+        self.paint.sync(doc, encoder);
+        self.note_peak();
+        for o in keep {
+            let at = match self.held.iter().position(|h| h.doc_id == o.doc.id()) {
+                Some(at) => at,
+                None => {
+                    let mut paint = self.paint.sibling();
+                    paint.set_budget(u64::MAX);
+                    self.held.push(HeldSet {
+                        doc_id: o.doc.id(),
+                        material: o.material,
+                        paint,
+                        bind: None,
+                    });
+                    self.held.len() - 1
+                }
+            };
+            let held = &mut self.held[at];
+            held.material = o.material;
+            // ほかのセットは上限だけで縮める（予算は上の計画で見た。今のセットだった絵の予算の値を持ち越さない）
+            held.paint.set_budget(u64::MAX);
+            held.paint.set_cap(Some(self.other_cap));
+            if held.paint.demote(o.doc) {
+                self.demotions += 1;
+            }
+            let rebuild = held.paint.needs_rebuild(o.doc);
+            if !rebuild && held.paint.synced_with(o.doc) {
+                continue;
+            }
+            if rebuild {
+                if builds > 0 && started.elapsed() >= self.build_budget {
+                    self.pending_builds += 1;
+                    continue;
+                }
+                builds += 1;
+            }
+            held.paint.sync(o.doc, encoder);
+            // 作業用のバッファは文書の大きさになる。ほかのセットが数に比例して抱えないように、作り終えたら手放す
+            held.paint.release_scratch();
+            self.note_peak();
+        }
+    }
+
+    /// 今 GPU に持っている絵（今のセットとほかのセット）のバイト数。
+    fn picture_bytes(&self) -> u64 {
+        self.paint.bytes() + self.held.iter().map(|h| h.paint.bytes()).sum::<u64>()
+    }
+
+    /// 同期の途中で持っていた絵のバイト数の最大を更新する。
+    fn note_peak(&mut self) {
+        self.peak_bytes = self.peak_bytes.max(self.picture_bytes());
+    }
+
+    /// どれかのセットの絵が Normal を使っているか（法線マップの接線を作る・読むかの全体の決め）。
+    fn any_normal_map(&self) -> bool {
+        self.paint.has(Slot::Normal)
+            || self
+                .held
+                .iter()
+                .any(|h| h.paint.is_built() && h.paint.has(Slot::Normal))
+    }
+
+    /// 全部のセットの絵の鍵（絵の中身・作りの世代・持ち主・マテリアルのどれかが変わると変わる。描き直しの鍵）。
+    fn paint_key(&self, material: i32) -> u64 {
+        let mix = |a: u64, b: u64| (a ^ b).wrapping_mul(0x0000_0100_0000_01b3);
+        let one = |k: u64, p: &Paint, material: i32| {
+            [
+                p.uid(),
+                p.version(),
+                p.layout_version(),
+                material as u32 as u64,
+                u64::from(p.is_built()),
+            ]
+            .into_iter()
+            .fold(k, mix)
+        };
+        let mut key = one(0xcbf2_9ce4_8422_2325, &self.paint, material);
+        for h in &self.held {
+            key = one(key, &h.paint, h.material);
+        }
+        key
+    }
+
+    /// セットごとの束ね（group 1）を、絵の作りが替わったときだけ作り直す。
+    fn ensure_set_binds(&mut self) {
+        let device = self.rs.device.clone();
+        let layout = &self.set_layout;
+        let stale = |bind: &Option<SetBind>, paint: &Paint| {
+            bind.as_ref()
+                .is_none_or(|b| b.uid != paint.uid() || b.layout_version != paint.layout_version())
+        };
+        if stale(&self.current_bind, &self.paint) {
+            self.current_bind = Some(SetBind {
+                bind: make_set_bind(&device, layout, &self.paint, true, true),
+                uid: self.paint.uid(),
+                layout_version: self.paint.layout_version(),
+            });
+        }
+        for h in &mut self.held {
+            if h.paint.is_built() && stale(&h.bind, &h.paint) {
+                h.bind = Some(SetBind {
+                    bind: make_set_bind(&device, layout, &h.paint, true, false),
+                    uid: h.paint.uid(),
+                    layout_version: h.paint.layout_version(),
+                });
+            }
+        }
+    }
+
+    /// このマテリアルの面を描くときの束ね（今のセットの絵・ほかのセットの絵・絵の無い描き方）。
+    fn pick(&self, material: i32, current: i32) -> Pick {
+        if current >= 0 && material == current {
+            return Pick::Current;
+        }
+        match self
+            .held
+            .iter()
+            .position(|h| h.material == material && h.paint.is_built() && h.bind.is_some())
+        {
+            Some(i) => Pick::Held(i),
+            None => Pick::Blank,
+        }
     }
 
     /// 描き先を大きさに合わせる（作り直したら true）。
@@ -961,14 +1427,9 @@ impl View3dRenderer {
         self.map_version += 1;
     }
 
-    /// 束ね（チャンネルのテクスチャ・環境のキューブ・メッシュマップ）を、変わったときだけ作り直す。
+    /// 束ね（group 0: 環境のキューブ・メッシュマップ・影。面ごとの絵は `ensure_set_binds`）を、変わったときだけ作り直す。
     fn ensure_bind(&mut self) {
-        let key = (
-            self.paint.layout_version(),
-            self.env.version,
-            self.map_version,
-            self.shadow_version,
-        );
+        let key = (self.env.version, self.map_version, self.shadow_version);
         if self.bind.as_ref().is_some_and(|(_, k)| *k == key) {
             return;
         }
@@ -977,12 +1438,6 @@ impl View3dRenderer {
             binding: 0,
             resource: self.uniforms.as_entire_binding(),
         }];
-        for slot in Slot::ALL {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 1 + slot.index() as u32,
-                resource: wgpu::BindingResource::TextureView(self.paint.view(slot)),
-            });
-        }
         entries.push(wgpu::BindGroupEntry {
             binding: 7,
             resource: wgpu::BindingResource::Sampler(&self.paint_sampler),
@@ -1061,8 +1516,9 @@ impl View3dRenderer {
         (stale, false)
     }
 
-    /// モデルとテクスチャセットの頂点を上げる（変わったときだけ）。法線マップを使うときは接線も。
-    fn ensure_mesh(&mut self, model: &Arc<ViewModel>, material: i32, use_normal_map: bool) {
+    /// モデルの頂点を上げる（変わったときだけ）。法線マップを使うときは接線も。頂点はマテリアル順（同じマテリアルはモデルの並びの順）に
+    /// 並べて、マテリアルごとの範囲を覚える（セットごとに束ねを替えて描くため）。接線の番号は、モデルの角の並びのまま読む。
+    fn ensure_mesh(&mut self, model: &Arc<ViewModel>, use_normal_map: bool) {
         let key = model.revision();
         let triangles: usize = model.meshes.iter().map(|m| m.triangle_count()).sum();
         let corners = triangles * 3;
@@ -1076,35 +1532,54 @@ impl View3dRenderer {
         if self
             .mesh
             .as_ref()
-            .is_some_and(|m| m.model == key && m.material == material && m.tangent_stamp == stamp)
+            .is_some_and(|m| m.model == key && m.tangent_stamp == stamp)
         {
             self.stats.tangents_exact = exact;
             return;
         }
-        let mut data: Vec<u8> = Vec::with_capacity(corners * VERTEX_FLOATS * 4);
+        // サブメッシュをマテリアル順に（安定。角の番号 = 接線の番号は、モデルの並びで数える）
+        let normals: Vec<Vec<yolu_core::glam::Vec3>> =
+            model.meshes.iter().map(|m| m.vertex_normals()).collect();
+        let mut subs: Vec<(i32, usize, usize, usize)> = Vec::new();
         let mut corner = 0usize;
-        for mesh in &model.meshes {
-            let normals = mesh.vertex_normals();
-            for s in &mesh.submeshes {
-                let paint = if s.material == material { 1.0f32 } else { 0.0 };
-                for &i in &s.indices {
-                    let i = i as usize;
-                    let p = mesh.positions[i];
-                    let n = normals[i];
-                    let uv = mesh.uvs.get(i).copied().unwrap_or_default();
-                    // 接線が無いとき（法線マップを使わない・まだ作っている）は 0。シェーダーは `mode.w` で読まない
-                    let t = tangents
-                        .as_ref()
-                        .and_then(|t| t.get(corner))
-                        .copied()
-                        .unwrap_or([0.0; 4]);
-                    for v in [
-                        p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y, t[0], t[1], t[2], t[3], paint,
-                    ] {
-                        data.extend_from_slice(&v.to_le_bytes());
-                    }
-                    corner += 1;
+        for (mi, mesh) in model.meshes.iter().enumerate() {
+            for (si, s) in mesh.submeshes.iter().enumerate() {
+                subs.push((s.material, mi, si, corner));
+                corner += s.indices.len();
+            }
+        }
+        subs.sort_by_key(|(material, ..)| *material);
+        let mut data: Vec<u8> = Vec::with_capacity(corners * VERTEX_FLOATS * 4);
+        let mut ranges: Vec<MaterialRange> = Vec::new();
+        for (material, mi, si, first) in subs {
+            let mesh = &model.meshes[mi];
+            let s = &mesh.submeshes[si];
+            let start = (data.len() / (VERTEX_FLOATS * 4)) as u32;
+            for (k, &i) in s.indices.iter().enumerate() {
+                let i = i as usize;
+                let p = mesh.positions[i];
+                let n = normals[mi][i];
+                let uv = mesh.uvs.get(i).copied().unwrap_or_default();
+                // 接線が無いとき（法線マップを使わない・まだ作っている）は 0。シェーダーは `mode.w` で読まない
+                let t = tangents
+                    .as_ref()
+                    .and_then(|t| t.get(first + k))
+                    .copied()
+                    .unwrap_or([0.0; 4]);
+                for v in [
+                    p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y, t[0], t[1], t[2], t[3],
+                ] {
+                    data.extend_from_slice(&v.to_le_bytes());
                 }
+            }
+            let count = s.indices.len() as u32;
+            match ranges.last_mut() {
+                Some(r) if r.material == material => r.count += count,
+                _ => ranges.push(MaterialRange {
+                    material,
+                    start,
+                    count,
+                }),
             }
         }
         let buffer = self
@@ -1119,8 +1594,8 @@ impl View3dRenderer {
             buffer,
             vertices: (data.len() / (VERTEX_FLOATS * 4)) as u32,
             model: key,
-            material,
             tangent_stamp: stamp,
+            ranges,
         });
         self.stats.mesh_revision = key;
         self.stats.mesh_uploads += 1;
@@ -1358,6 +1833,7 @@ impl View3dRenderer {
         size: [u32; 2],
         display: &Display,
         use_normal_map: bool,
+        current_material: i32,
     ) {
         let bytes = self.uniform_bytes(camera, size, display, use_normal_map);
         self.rs.queue.write_buffer(&self.uniforms, 0, &bytes);
@@ -1408,7 +1884,29 @@ impl View3dRenderer {
                 pass.set_pipeline(&pipelines.scene);
                 pass.set_bind_group(0, bind, &[]);
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
-                pass.draw(0..mesh.vertices, 0..1);
+                // マテリアルごとに絵の束ねを替えて描く。隣り合うマテリアルが同じ束ね（絵の無いもの）なら 1 回にまとめる
+                let mut i = 0;
+                while i < mesh.ranges.len() {
+                    let pick = self.pick(mesh.ranges[i].material, current_material);
+                    let start = mesh.ranges[i].start;
+                    let mut end = start + mesh.ranges[i].count;
+                    i += 1;
+                    while i < mesh.ranges.len()
+                        && pick == Pick::Blank
+                        && self.pick(mesh.ranges[i].material, current_material) == pick
+                    {
+                        end += mesh.ranges[i].count;
+                        i += 1;
+                    }
+                    let set_bind = match pick {
+                        Pick::Current => self.current_bind.as_ref().map(|b| &b.bind),
+                        Pick::Held(at) => self.held[at].bind.as_ref().map(|b| &b.bind),
+                        Pick::Blank => None,
+                    }
+                    .unwrap_or(&self.blank_bind);
+                    pass.set_bind_group(1, set_bind, &[]);
+                    pass.draw(start..end, 0..1);
+                }
             }
         }
         if tone {
@@ -1445,6 +1943,20 @@ impl View3dRenderer {
             pass.draw(0..3, 0..1);
         }
     }
+}
+
+/// モデルの面が（見せる形に）あるマテリアル（昇順・重ならない）。
+fn model_materials(model: &ViewModel) -> Vec<i32> {
+    let mut v: Vec<i32> = model
+        .meshes
+        .iter()
+        .flat_map(|m| m.submeshes.iter())
+        .filter(|s| !s.indices.is_empty())
+        .map(|s| s.material)
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {

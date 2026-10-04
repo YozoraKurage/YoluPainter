@@ -12,6 +12,11 @@
 //! - GPU のテクスチャの辺の上限か、使っているチャンネルのミップ込みの合計のバイト数の予算（`PAINT_BUDGET_BYTES`）を超える文書は、2 の累乗で
 //!   縮めて持つ（`shift`。縮めるときは箱で平均する）。新しいチャンネルを使い始めて予算を超えるときは、縮めを上げて全部を作り直す
 //!   （縮めは上げるだけ。文書が替わると決め直す）。メッシュマップの 1 枚も同じく予算（半分）と辺の上限で縮める。
+//! - 今のセットでないセットの絵も同じ `Paint` の兄弟（`sibling`）で持つ。辺の上限（`set_cap`）で縮めて持ち、文書が変わったとき
+//!   （版・変化の記録）だけ同期する。今のセットが替わったとき、前のセットの絵は、ミップの段をコピーして上限の大きさへ縮める
+//!   （`demote`。文書を合成し直さない）。
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use eframe::egui_wgpu::{self, wgpu};
 use yolu_core::export::uses;
@@ -156,11 +161,14 @@ struct PaintSet {
     doc_id: u128,
     doc_size: (u32, u32),
     serial: u64,
+    /// 最後に同期した文書の版（`Document::revision`。`synced_with` が、変わっていないセットの同期を飛ばすのに使う）。
+    revision: u64,
     /// Normal を作ったときの出力の設定。層の合成を変えない設定（Height → Normal・強さ・端）は変化の記録にタイルを足さないので、
     /// 変わったら Normal を作り直す。
     normal_settings: NormalSettings,
 }
 
+#[derive(Clone)]
 struct Mips {
     layout: wgpu::BindGroupLayout,
     rgba: wgpu::RenderPipeline,
@@ -183,7 +191,18 @@ pub struct Paint {
     scratch_height: Vec<u8>,
     /// 使っているチャンネル全部のバイトの予算（メッシュマップ 1 枚はこの半分）。
     budget: u64,
+    /// 辺の上限（今のセットでないセットの縮め。None は GPU の上限だけ）。
+    cap: Option<u32>,
+    /// 上限をゆるめた（次の同期で、上限で縮めていた絵を元の大きさで作り直す）。
+    uncapped: bool,
+    /// 作った順の番号（プロセスの中で一意。束ねの鍵に使う: 絵を持つ入れ物が替わっても、世代の数が同じに戻らない）。
+    uid: u64,
     pub stats: PaintStats,
+}
+
+fn next_uid() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Paint {
@@ -306,8 +325,221 @@ impl Paint {
             scratch: Vec::new(),
             scratch_height: Vec::new(),
             budget: PAINT_BUDGET_BYTES,
+            cap: None,
+            uncapped: false,
+            uid: next_uid(),
             stats: PaintStats::default(),
         }
+    }
+
+    /// 同じ装置・同じ道具（ミップのパイプライン・既定の 1 × 1）を使う、まっさらな別の絵（ほかのセット用）。
+    pub fn sibling(&self) -> Paint {
+        Paint {
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            mips: self.mips.clone(),
+            defaults: self.defaults.clone(),
+            set: None,
+            version: 0,
+            layout_version: 0,
+            scratch: Vec::new(),
+            scratch_height: Vec::new(),
+            budget: self.budget,
+            cap: None,
+            uncapped: false,
+            uid: next_uid(),
+            stats: PaintStats::default(),
+        }
+    }
+
+    /// 辺の上限を決める（ほかのセットを縮めて持つ。None は GPU の上限だけ）。ゆるめたときは、次の同期が縮めていた絵を元の大きさで
+    /// 作り直す。きつくしたときは、`demote` が GPU の中で縮める（できなければ次の同期が作り直す）。
+    pub fn set_cap(&mut self, cap: Option<u32>) {
+        if self.cap == cap {
+            return;
+        }
+        let looser = match (self.cap, cap) {
+            (Some(_), None) => true,
+            (Some(old), Some(new)) => new > old,
+            (None, _) => false,
+        };
+        self.uncapped |= looser;
+        self.cap = cap;
+    }
+
+    pub fn uid(&self) -> u64 {
+        self.uid
+    }
+
+    /// 絵を作ってあるか（文書を一度も同期していなければ false。見え方は既定の 1 × 1 ばかり）。
+    pub fn is_built(&self) -> bool {
+        self.set.is_some()
+    }
+
+    /// 今持っている絵の文書の ID。
+    pub fn doc_id(&self) -> Option<u128> {
+        self.set.as_ref().map(|s| s.doc_id)
+    }
+
+    /// 文書を最後に同期してから変わっていないか（文書の ID・変化の通し番号・版・Normal の設定が同じ）。同じなら同期は何もしない。
+    pub fn synced_with(&self, doc: &Document) -> bool {
+        self.set.as_ref().is_some_and(|s| {
+            s.doc_id == doc.id()
+                && s.serial == doc.change_serial()
+                && s.revision == doc.revision()
+                && s.normal_settings == doc.normal_settings()
+        })
+    }
+
+    /// 次の同期が絵を全部作り直すか（初め・文書が替わった・縮めを上げる・上限をゆるめた・変化の記録が切れた）。ほかのセットの作り直しは
+    /// 1 フレームに数を絞る。
+    pub fn needs_rebuild(&self, doc: &Document) -> bool {
+        let (want_shift, _) = self.shift_for(doc);
+        self.rebuild_needed(doc, want_shift)
+    }
+
+    fn rebuild_needed(&self, doc: &Document, want_shift: u32) -> bool {
+        match &self.set {
+            None => true,
+            Some(s) => {
+                s.doc_id != doc.id()
+                    || s.doc_size != (doc.width(), doc.height())
+                    // 新しく使い始めたチャンネルで予算を超えるときは、縮めを上げて作り直す（下げるのは文書が替わるとき）
+                    || s.shift < want_shift
+                    // 上限をゆるめたときは、縮めていた絵を元の大きさへ戻す
+                    || (self.uncapped && s.shift > want_shift)
+                    // 変化の記録がこの文書のものでない（since がこの文書の番号でない）
+                    || s.serial > doc.change_serial()
+            }
+        }
+    }
+
+    /// この文書を `cap`（辺の上限）で縮めて持つとしたときのバイト数（使っているチャンネルのミップ込み。持つかどうかの計画に使う）。
+    pub fn estimate_bytes(&self, doc: &Document, cap: u32) -> u64 {
+        let limit = self.side_limit().min(cap);
+        let per_texel = used_bytes_per_texel(doc);
+        let shift = choose_shift([doc.width(), doc.height()], per_texel, limit, u64::MAX);
+        let size = [
+            doc.width().div_ceil(1 << shift).max(1),
+            doc.height().div_ceil(1 << shift).max(1),
+        ];
+        mip_bytes(size, per_texel)
+    }
+
+    /// 次の同期のあとに、この文書の絵が取るバイト数（使っているチャンネルのミップ込み）。作り直すなら今の予算と上限で決まる大きさ、
+    /// 作り直さないなら今の大きさ。今のセットが替わるとき、新しい絵を作る前に予算の残りを決めるのに使う。
+    pub fn planned_bytes(&self, doc: &Document) -> u64 {
+        let (want, _) = self.shift_for(doc);
+        let shift = match &self.set {
+            Some(s) if !self.rebuild_needed(doc, want) => s.shift,
+            _ => want,
+        };
+        let size = [
+            doc.width().div_ceil(1 << shift).max(1),
+            doc.height().div_ceil(1 << shift).max(1),
+        ];
+        mip_bytes(size, used_bytes_per_texel(doc))
+    }
+
+    /// 同期の作業用のバッファを、容量ごと手放す。合成の作業は文書の大きさ（帯の分、Height から作る Wrap の Normal は文書全体）に
+    /// なるので、作り終えたあとも抱えたままだと、ほかのセットの数に比例して CPU のメモリが残る。
+    pub fn release_scratch(&mut self) {
+        self.scratch = Vec::new();
+        self.scratch_height = Vec::new();
+    }
+
+    /// 同期の作業用のバッファが抱えているバイト数（容量。試験と計測用）。
+    pub fn scratch_bytes(&self) -> usize {
+        self.scratch.capacity() + self.scratch_height.capacity()
+    }
+
+    /// 持っている絵の縮めの段（作っていなければ 0）。
+    pub fn level(&self) -> u32 {
+        self.set.as_ref().map_or(0, |s| s.shift)
+    }
+
+    /// 持っている絵のバイト数（作ってあるチャンネルのミップ込み）。
+    pub fn bytes(&self) -> u64 {
+        self.gpu_bytes()
+    }
+
+    /// 上限できつくなった分を、持っている絵のミップの段をコピーして縮める（GPU の中だけ。文書を合成し直さない）。コピーした段は
+    /// 文書から縮めて作る段と同じ大きさのときだけ使う（奇数の辺で段の大きさが切り上げと合わないとき・文書が替わっているときは
+    /// 何もせず false。次の同期が作り直す）。縮めた絵は、持っていた変化の通し番号のまま。続く同期が、その後に変わったタイルを足す。
+    /// コピーは別の積みですぐに出す: 続く同期の書き込み（`write_texture`）は次の `submit` の頭で行われるので、同じ積みの中でコピーすると
+    /// 足したタイルを古い絵で上書きしてしまう（`clear_flat_normal` と同じ事情）。
+    pub fn demote(&mut self, doc: &Document) -> bool {
+        let (want, by_budget) = self.shift_for(doc);
+        let Some(set) = self.set.as_ref() else {
+            return false;
+        };
+        if set.doc_id != doc.id()
+            || set.doc_size != (doc.width(), doc.height())
+            || set.shift >= want
+        {
+            return false;
+        }
+        let k = want - set.shift;
+        let size = [
+            doc.width().div_ceil(1 << want),
+            doc.height().div_ceil(1 << want),
+        ];
+        if k >= set.levels
+            || [(set.size[0] >> k).max(1), (set.size[1] >> k).max(1)] != size
+            || set.serial > doc.change_serial()
+        {
+            return false;
+        }
+        let (old_levels, old_size) = (set.levels, set.size);
+        let levels = old_levels - k;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("yolu-3d-demote"),
+            });
+        let mut moved: [Option<ChannelTexture>; 6] = Default::default();
+        for slot in Slot::ALL {
+            let Some(old) = set.textures[slot.index()].as_ref() else {
+                continue;
+            };
+            let new = self.make_texture(slot.format(), size, levels);
+            for j in k..old_levels {
+                let (w, h) = ((old_size[0] >> j).max(1), (old_size[1] >> j).max(1));
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &old.texture,
+                        mip_level: j,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &new.texture,
+                        mip_level: j - k,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+            moved[slot.index()] = Some(new);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        let set = self.set.as_mut().expect("確かめた");
+        set.textures = moved;
+        set.size = size;
+        set.levels = levels;
+        set.shift = want;
+        set.by_budget = by_budget;
+        self.layout_version += 1;
+        self.version += 1;
+        self.stats.level = want;
+        self.stats.by_budget = by_budget;
+        self.stats.gpu_bytes = self.gpu_bytes();
+        true
     }
 
     /// バイトの予算を決める（試験が小さくして、縮めの道を通す）。決め直したあと、次の同期で必要なら全部を作り直す。
@@ -412,19 +644,9 @@ impl Paint {
 
     /// 文書に合わせる: 初めと文書が変わったときは全部、ほかは変わったタイルだけを合成して上げる。
     pub fn sync(&mut self, doc: &Document, encoder: &mut wgpu::CommandEncoder) {
-        let (w, h) = (doc.width(), doc.height());
         let since = self.set.as_ref().map_or(0, |s| s.serial);
         let (want_shift, _) = self.shift_for(doc);
-        let rebuild = match &self.set {
-            None => true,
-            Some(s) => {
-                s.doc_id != doc.id()
-                    || s.doc_size != (w, h)
-                    // 新しく使い始めたチャンネルで予算を超えるときは、縮めを上げて作り直す（下げるのは文書が替わるとき）
-                    || s.shift < want_shift
-                    || doc.changed_tiles(Channel::Color, since).is_none()
-            }
-        };
+        let rebuild = self.rebuild_needed(doc, want_shift);
         if rebuild {
             self.create_set(doc);
             self.layout_version += 1;
@@ -484,6 +706,8 @@ impl Paint {
         }
         let set = self.set.as_mut().expect("作った");
         set.serial = serial;
+        set.revision = doc.revision();
+        self.uncapped = false;
         if changed {
             self.version += 1;
         }
@@ -522,19 +746,19 @@ impl Paint {
             .sum()
     }
 
-    /// 文書を持つ縮めの段（2 の shift 乗）と、それが予算で決まったか。使っているチャンネルのミップ込みの合計が予算に収まり、辺が GPU の
-    /// 上限に収まるまで上げる。
-    fn shift_for(&self, doc: &Document) -> (u32, bool) {
-        let limit = self
-            .device
+    /// 絵の一辺の上限（GPU の上限と `MAX_PAINT_SIZE` の小さい方。上限 `cap` は含めない）。
+    fn side_limit(&self) -> u32 {
+        self.device
             .limits()
             .max_texture_dimension_2d
-            .min(MAX_PAINT_SIZE);
-        let per_texel: u64 = Slot::ALL
-            .iter()
-            .filter(|s| uses(doc, s.channel()))
-            .map(|s| s.bytes_per_texel() as u64)
-            .sum();
+            .min(MAX_PAINT_SIZE)
+    }
+
+    /// 文書を持つ縮めの段（2 の shift 乗）と、それが予算で決まったか。使っているチャンネルのミップ込みの合計が予算に収まり、辺が GPU の
+    /// 上限（と、あれば `cap`）に収まるまで上げる。`cap` で決まる縮めは予算で決まるのではないので、`by_budget` にしない。
+    fn shift_for(&self, doc: &Document) -> (u32, bool) {
+        let limit = self.side_limit().min(self.cap.unwrap_or(u32::MAX));
+        let per_texel = used_bytes_per_texel(doc);
         let (w, h) = (doc.width(), doc.height());
         let shift = choose_shift([w, h], per_texel, limit, self.budget);
         let by_limit = choose_shift([w, h], 0, limit, u64::MAX);
@@ -555,6 +779,7 @@ impl Paint {
             doc_id: doc.id(),
             doc_size: (w, h),
             serial: 0,
+            revision: 0,
             normal_settings: doc.normal_settings(),
         });
     }
@@ -877,6 +1102,15 @@ impl Paint {
 }
 
 // ───────── 縮めの決め方 ─────────
+
+/// 文書が使っているチャンネルの 1 テクセルのバイト数の合計。
+fn used_bytes_per_texel(doc: &Document) -> u64 {
+    Slot::ALL
+        .iter()
+        .filter(|s| uses(doc, s.channel()))
+        .map(|s| s.bytes_per_texel() as u64)
+        .sum()
+}
 
 /// 大きさ（辺）のテクスチャ（全部の段）のバイト数。`bytes_per_texel` は 1 テクセルのバイト数（チャンネルを重ねるなら合計）。
 fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
@@ -1342,6 +1576,20 @@ mod tests {
         }
         // 予算が 1 テクセルにも足りなくても、止まる（1 × 1）
         assert_eq!(choose_shift([4, 4], 15, 8192, 1), 2);
+    }
+
+    #[test]
+    fn a_cap_on_the_side_shrinks_other_sets_like_the_texture_limit() {
+        // ほかのセットの上限（辺 1024）: 4096² は 1/4、2048² は 1/2、1024² 以下は縮めない。予算には依らない（u64::MAX）
+        assert_eq!(choose_shift([4096, 4096], 15, 1024, u64::MAX), 2);
+        assert_eq!(choose_shift([2048, 2048], 15, 1024, u64::MAX), 1);
+        assert_eq!(choose_shift([1024, 1024], 15, 1024, u64::MAX), 0);
+        assert_eq!(choose_shift([1000, 700], 15, 1024, u64::MAX), 0);
+        // 細長い絵は長い辺で決まる
+        assert_eq!(choose_shift([4096, 512], 4, 1024, u64::MAX), 2);
+        // 縮めた後のバイト数（持つかどうかの計画が見積もる値）: 4096² の Color だけは 1024² のミップ込み
+        let reduced = [1024u32, 1024];
+        assert_eq!(mip_bytes(reduced, 4), 4 * 1_398_101);
     }
 
     #[test]

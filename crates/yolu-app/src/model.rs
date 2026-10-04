@@ -342,6 +342,10 @@ impl AppState {
             }
             Some(_) => (-1, Vec::new()),
         };
+        if self.view3d.material != material {
+            // 今のセットが替わると、ほかのセットの顔ぶれが替わる（3D が描かれるまで、前の印を残さない）
+            self.view3d.unpainted.clear();
+        }
         self.view3d.material = material;
         self.view3d.set_hidden(hidden);
         // モデルの三角形・UV が替わったなら、前のモデルに結び付いた 3D のパスを新しいモデルへ付け直す（描くマテリアルが決まったあと）

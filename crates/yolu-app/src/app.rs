@@ -775,6 +775,44 @@ impl YoluApp {
         self.renderer3d.as_ref()?.read_paint_level(slot, level)
     }
 
+    /// 試験用: ほかのテクスチャセット（マテリアルの番号）の絵のチャンネルの 1 段の中身と、その縮めた段（絵を持っていなければ None）。
+    pub fn view3d_read_other_level(
+        &self,
+        material: i32,
+        slot: crate::view3d::paint::Slot,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2], u32)> {
+        self.renderer3d.as_ref()?.read_other_level(material, slot, level)
+    }
+
+    /// 試験用: 絵を持っているほかのテクスチャセットのマテリアル。
+    pub fn view3d_held_materials(&self) -> Vec<i32> {
+        self.renderer3d
+            .as_ref()
+            .map_or_else(Vec::new, |r| r.held_materials())
+    }
+
+    /// 試験用: ほかのテクスチャセットの絵を新しく作り始めてよい 1 フレームの時間（0 なら 1 フレームに 1 つ）。
+    pub fn view3d_set_other_build_budget(&mut self, budget: std::time::Duration) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_other_build_budget(budget);
+        }
+    }
+
+    /// 計測用: ほかのテクスチャセットの絵を見せるか（false は今のセットの絵だけを同期する、前の実装と同じ仕事）。
+    pub fn view3d_set_show_other_sets(&mut self, show: bool) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_show_other_sets(show);
+        }
+    }
+
+    /// 試験用: ほかのテクスチャセットの絵の辺の上限を小さくして、縮めの道を通す。
+    pub fn view3d_set_other_cap(&mut self, cap: u32) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_other_cap(cap);
+        }
+    }
+
     /// 試験用: 接線を作るスレッドが仕事の前に呼ぶ口（接線が着く前のフレームを決定的に作る）。
     pub fn view3d_set_tangent_hook(&mut self, hook: Option<crate::view3d::render::TangentHook>) {
         if let Some(r) = &mut self.renderer3d {

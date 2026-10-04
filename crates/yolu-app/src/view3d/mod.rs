@@ -9,6 +9,7 @@ pub mod gizmo;
 pub mod input;
 pub mod model;
 pub mod navigation;
+pub mod other_sets;
 pub mod paint;
 pub mod pose;
 pub mod render;
@@ -77,6 +78,10 @@ pub struct View3dState {
     pub camera: OrbitCamera,
     /// 描くテクスチャセット（マテリアルの組の番号。負ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
     pub material: i32,
+    /// メモリの予算が足りずに、絵を 3D に見せていないセットのマテリアル（今のセットでないセットだけ。描くたびに `other_sets::finish` が入れる。
+    /// テクスチャセットの一覧が印にする）。3D のタブが前に出ていないあいだは描かれず更新されないので、モデルが替わる・閉じる・今のセットの
+    /// マテリアルが替わるときに空にする（別のモデルのマテリアルの番号の印を、別のセットの行に残さない）。
+    pub unpainted: Vec<i32>,
     /// 受けたままの形。
     full: Option<Arc<ViewModel>>,
     /// 見せる形から除いているマテリアル（`model` を組んだ時の値）と、次に除くマテリアル。
@@ -147,6 +152,7 @@ impl View3dState {
             self.camera = OrbitCamera::framing(&model.geometry.bounds());
         }
         self.full = Some(model);
+        self.unpainted.clear();
         self.rebuild_shown();
     }
 
@@ -339,6 +345,7 @@ impl View3dState {
         }
         self.full = None;
         self.model = None;
+        self.unpainted.clear();
     }
 
     /// 受けたままの形が Live Link のモデルなら、その世代（待っているモデルがあればそちら）。
@@ -369,6 +376,7 @@ impl View3dState {
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;
+            self.unpainted.clear();
         } else if let Some(m) = self.pending.take() {
             self.apply_model(m);
         } else if self.shown_hidden != self.hidden || !same_mask(&self.shown_mask, &self.face_mask)
