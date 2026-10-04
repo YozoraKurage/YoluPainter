@@ -28,7 +28,10 @@ impl Default for Options<'_> {
     }
 }
 impl Options<'_> {
+    #[cfg_attr(test, track_caller)]
     pub(super) fn check(&self) -> Result<(), Error> {
+        #[cfg(test)]
+        super::cancellation_tests::checkpoint(self.cancel, std::panic::Location::caller());
         if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             Err(Error::Canceled)
         } else {

@@ -1,4 +1,6 @@
 //! 編集できる 2D/3D の筆跡。評価は独立した面を返し、文書・選択・履歴を変更しない。
+#[cfg(test)]
+mod cancellation_tests;
 mod render;
 mod surface;
 use crate::geometry::DabRefusal;

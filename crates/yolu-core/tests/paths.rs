@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::AtomicBool;
 use yolu_core::{
     geometry::*,
     glam::{Vec2, Vec3},
@@ -751,100 +750,6 @@ fn surface_dabs_are_identical_for_one_two_and_four_workers_when_rays_are_sharded
         painted(&base) < painted(&run(1, &free)),
         "覆いの板が画素に効いていない"
     );
-}
-
-/// 完走の時間を測り、その 1/8 の所で別スレッドから取り消して、完走の半分より早く Canceled で戻ることを見る。
-/// 取り消す前に入口の検査だけで返るのでは時間が縮まらないので、途中の検査が効いていなければ落ちる。
-/// ほかの試験と同じ処理系で動くので、3 回の試行のうち 1 回でも満たせばよい。
-fn assert_cancels_midway(
-    run: impl Fn(&Options<'_>) -> Result<Rendered, Error>,
-    base: impl Fn() -> Options<'static>,
-) {
-    let start = Instant::now();
-    run(&base()).unwrap();
-    let full = start.elapsed();
-    assert!(full > Duration::from_millis(20), "経路が短すぎる: {full:?}");
-    let mut last = String::new();
-    for _ in 0..3 {
-        let flag = AtomicBool::new(false);
-        let options = Options {
-            cancel: Some(&flag),
-            ..base()
-        };
-        let (result, elapsed) = std::thread::scope(|s| {
-            s.spawn(|| {
-                std::thread::sleep(full / 8);
-                flag.store(true, Ordering::Relaxed);
-            });
-            let start = Instant::now();
-            let r = run(&options);
-            (r, start.elapsed())
-        });
-        if matches!(result, Err(Error::Canceled)) && elapsed < full / 2 {
-            eprintln!("パス取消: 完走 {full:?}、1/8 で取消 → {elapsed:?}");
-            return;
-        }
-        last = format!(
-            "完走 {full:?}、取消後 {elapsed:?}、結果 {:?}",
-            result.map(|_| ())
-        );
-    }
-    panic!("途中で取り消せていない: {last}");
-}
-#[test]
-fn canvas_path_cancels_midway_without_a_partial_result() {
-    // 70 点の往復で約 160 万サンプル（上限 400 万の内）。サンプルごとの Painter::apply の検査を通る。
-    let points = (0..70)
-        .map(|i| {
-            let x = if i % 2 == 0 { 20.0 } else { 1000.0 };
-            CanvasPoint::new(x, 20.0 + i as f64 * 14.0, 1.0).unwrap()
-        })
-        .collect();
-    let path = CanvasPath {
-        id: 0,
-        channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.5,
-            spacing: 0.17,
-            ..Default::default()
-        }),
-        points,
-        material: None,
-    };
-    let base = || Options {
-        width: 1024,
-        height: 1024,
-        ..Default::default()
-    };
-    assert_cancels_midway(|o| render_canvas(&path, o), base);
-}
-#[test]
-fn surface_path_cancels_midway_without_a_partial_result() {
-    // 300 点の往復で約 1 万のダブ。ダブごとの検査と、ダブの画素ごとの Painter::apply の検査を通る。
-    let g = plane();
-    let mut path = surface(3, &g);
-    path.brush = PathBrush(BrushSettings {
-        radius: 0.05,
-        spacing: 0.17,
-        pressure_size: false,
-        ..Default::default()
-    });
-    path.points = (0..300)
-        .map(|i| {
-            let v = 0.8 * i as f64 / 300.0;
-            if i % 2 == 0 {
-                PathPoint::new(1, 0.05, v, 1.0).unwrap()
-            } else {
-                PathPoint::new(0, 0.9 - v, v, 1.0).unwrap()
-            }
-        })
-        .collect();
-    let base = || Options {
-        width: 128,
-        height: 128,
-        ..Default::default()
-    };
-    assert_cancels_midway(|o| render_surface(&path, &g, o), base);
 }
 
 fn invalid(r: Result<(), Error>, what: &str) -> String {
