@@ -297,10 +297,13 @@
       "selected": [
         "BSL-1.0"
       ],
-      "blocked": [
-        "許容一覧にない BSL-1.0"
-      ],
-      "files": []
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/DoumanAsh/clipboard-win/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE",
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+        }
+      ]
     },
     "codespan-reporting@0.13.1": {
       "declared": "Apache-2.0",
@@ -627,9 +630,7 @@
         "Ubuntu-font-1.0",
         "Bitstream-Vera"
       ],
-      "blocked": [
-        "Hack 書体の Bitstream Vera 条件は未承認"
-      ],
+      "blocked": [],
       "files": [
         {
           "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/LICENSE-MIT",
@@ -644,7 +645,7 @@
           "sha256": "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002"
         },
         {
-          "path": "fonts/Hack-Regular.txt",
+          "url": "https://raw.githubusercontent.com/emilk/egui/49682f8baa058bf49e011035cfbd6e825f88a5ef/crates/epaint_default_fonts/fonts/Hack-Regular.txt",
           "sha256": "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87"
         },
         {
@@ -671,10 +672,13 @@
       "selected": [
         "BSL-1.0"
       ],
-      "blocked": [
-        "許容一覧にない BSL-1.0"
-      ],
-      "files": []
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/DoumanAsh/error-code/e4615e514db3ff64f5f1b328b4865b20a3dcdbc3/LICENSE",
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+        }
+      ]
     },
     "euclid@0.22.14": {
       "declared": "MIT OR Apache-2.0",

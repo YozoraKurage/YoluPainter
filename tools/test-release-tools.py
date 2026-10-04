@@ -54,8 +54,19 @@ class LicenseChecks(unittest.TestCase):
         self.assertTrue(self.inspect()[2])
 
     def test_removing_block_note_does_not_approve_license(self):
-        self.review['selected'] = ['MIT', 'Bitstream-Vera']
+        self.review['selected'] = ['MIT', 'GPL-3.0-only']
         self.assertIn('許容外', ' '.join(self.inspect()[2]))
+
+    def test_approved_licenses_still_require_matching_text(self):
+        for license_id in ['BSL-1.0', 'Bitstream-Vera']:
+            with self.subTest(license=license_id):
+                self.package['license'] = license_id
+                self.review['declared'] = license_id
+                self.review['selected'] = [license_id]
+                (self.root / 'LICENSE').write_text('試験用の原文')
+                self.assertFalse(self.inspect()[2])
+                (self.root / 'LICENSE').write_text('変更された原文')
+                self.assertIn('SHA-256', ' '.join(self.inspect()[2]))
 
     def test_git_dependency_is_rejected(self):
         self.package['source'] = 'git+https://example.invalid/repo'

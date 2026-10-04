@@ -16,8 +16,10 @@ OUT = ROOT / 'target/third-party'
 CONFIG = ROOT / 'tools/licenses-reviewed.json'
 TARGET = 'x86_64-pc-windows-gnu'
 # Ubuntu は egui 標準書体について承認された例外。
+# BSL-1.0 と Hack 書体の Bitstream Vera は 2026-10-04 にユーザーが追加承認。
 ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
-           'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0'}
+           'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0',
+           'BSL-1.0', 'Bitstream-Vera'}
 
 
 def cargo(*args):

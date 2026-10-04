@@ -16,16 +16,16 @@ Mac・Linux・Windows MSVC の一覧を兼ねるものではない。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<クレート>/` にできる。
 生成物は Git に入れない。この文書は確認済みの依存構成の記録で、配布には生成した全文を同梱する。
 
-## 配布前に解決する点
+## 承認済みの条件と配布前に確認する点
 
 - `clipboard-win 5.4.1` と `error-code 3.4.0` は **BSL-1.0（Boost Software License）**。
-  現在の許容一覧に無いため未承認。`egui-winit → arboard → clipboard-win → error-code` から入る。
-  出典: [clipboard-win の発行時宣言](https://github.com/DoumanAsh/clipboard-win/blob/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/Cargo.toml)、
+  **2026-10-04 にユーザーが使用を許可した**。`egui-winit → arboard → clipboard-win → error-code` から入る。
+  出典: [clipboard-win の原文](https://github.com/DoumanAsh/clipboard-win/blob/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE)、
   [error-code の原文](https://github.com/DoumanAsh/error-code/blob/e4615e514db3ff64f5f1b328b4865b20a3dcdbc3/LICENSE)。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
-  OFL-1.1・Ubuntu Font Licence の承認だけではこの条件を自動的に承認したことにせず、要確認としている。
-- このため **app の配布用全文束は生成を拒否する**。依存の削除・差し替え・許諾の自動承認はしない。
-  bridge のクレート分は照合に成功する。
+  **2026-10-04 にユーザーがこの条件も許可した**。OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
+- 上記の発行時コミットの原文と SHA-256 を照合し、**app・bridge ともクレート分の配布用全文束を生成できる**。
+  未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。
 - 自作部分の配布許諾、Rust 標準ライブラリ、実際にリンクする MinGW/GCC ランタイム、追加で同梱する DLL の表記は、
@@ -92,7 +92,7 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 | MIT AND Zlib | 1 |
 | Zlib | 1 |
 
-状態: 要確認。配布用全文束は生成しない。
+状態: クレートの許諾照合は成功。
 
 | クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
@@ -117,7 +117,7 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 | cc | 1.6.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg-if | 1.0.5 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | cfg_aliases | 0.2.2 | ビルド・マクロ用 | MIT | MIT | 確認済み |
-| clipboard-win | 5.4.1 | 実行時 | BSL-1.0 | BSL-1.0 | 許容一覧にない BSL-1.0 / 許容外: BSL-1.0 / 検証済み全文なし |
+| clipboard-win | 5.4.1 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | codespan-reporting | 0.13.1 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | color | 0.3.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | cpufeatures | 0.2.17 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -141,9 +141,9 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
-| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | Hack 書体の Bitstream Vera 条件は未承認 / 許容外: Bitstream-Vera |
+| epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
-| error-code | 3.4.0 | 実行時 | BSL-1.0 | BSL-1.0 | 許容一覧にない BSL-1.0 / 許容外: BSL-1.0 / 検証済み全文なし |
+| error-code | 3.4.0 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |

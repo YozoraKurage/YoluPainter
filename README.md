@@ -51,7 +51,8 @@ python3 tools/third-party.py --package yolu-bridge --bundle
 `target/third-party/<クレート>/` に一覧と、照合に成功した場合だけ `THIRD_PARTY_LICENSES.txt` ができる。
 全文を該当する配布物と一緒に入れる。初回はクレートと、同梱されていない原文の取得にネット接続が必要。
 取得後は `--offline` で再照合できる。原文は発行時コミットと SHA-256 で固定され、版の変更・原文の欠落・未承認の許諾では終了 1 になる。
-現状の app は BSL-1.0 と Hack 書体の Bitstream Vera 条件が未承認のため、全文束を生成しない。
+2026-10-04 にユーザーが BSL-1.0（clipboard-win・error-code）と Hack 書体の Bitstream Vera 条件を許可した。
+発行時の原文と SHA-256 を照合し、app・bridge とも全文束を生成できる。
 依存を更新したときは `tools/licenses-reviewed.json` の原文・条件を確認し、一覧も更新する。
 
 ## Windows 向けの画面なし試験（Wine）
