@@ -148,11 +148,11 @@ On Mac, read `Ctrl` in this table as `Command`; menus still display `Ctrl`. You 
 
 Connect to the Unity Editor running on the same PC. A Unity 2022.3 project needs **a Live Link-enabled version of YoluPainter for Unity (VPM package `net.yozolab.yolupainter`) and the native bridge for your OS**. Versions without `YozoLab → YoluPainter → Live Link` cannot use this connection. The bridge is `yolu_bridge.dll` on Windows and `libyolu_bridge.so` on Linux.
 
-1. Start the standalone application and enable File → Live Link. The status area at the bottom shows that it is waiting for Unity.
-2. In Unity, open `YozoLab → YoluPainter → Live Link`, set `Link name` to `yolupainter-livelink`, and press `Connect`.
-3. Specify the model's GameObject in the scene. Press `Use selection` to use the current selection, then `Send model`.
-4. Select a material in the standalone application's Texture Sets panel and paint in the 2D or 3D view. The composite of the displayed set is sent to Unity when that set has a Color destination in Unity.
-5. Save your work as `.ylp`. End the connection with `Disconnect` in Unity or File → Live Link in the standalone application.
+1. In Unity, right-click the model's GameObject in the Hierarchy and choose Open in YoluPainter (the large button of the `YozoLab → YoluPainter → Live Link` window does the same). If the standalone application is not running, it is started; then Unity connects and sends the model. The standalone application installed by the installer is used (choose its location once if it is elsewhere).
+2. Select a material in the standalone application's Texture Sets panel and paint in the 2D or 3D view. The composite of the displayed set is sent to Unity when that set has a Color destination in Unity.
+3. Save your work as `.ylp`. After a script recompile or entering or leaving Play mode, Unity connects again by itself.
+
+The standalone application listens for Live Link when it starts, and the icon at the right end of the menu bar shows the state. Turn this off with "Start Live Link on launch" in View → Settings… (starting with `--livelink` always listens; File → Live Link starts it by hand). The link name, Connect, Send model and the rest are under Details in the Unity window.
 
 Unity temporarily displays painted colors on materials such as lilToon and Standard. This does not write to the original texture or material assets, and disconnecting removes the temporary display. Live Link does not save your working file; save it in the standalone application.
 

@@ -154,11 +154,11 @@ Mac では表の `Ctrl` を `Command` に読み替えてください。メニュ
 
 同じ PC で動く Unity エディターと接続します。Unity 2022.3 のプロジェクトに、**Live Link 対応の Unity 版 YoluPainter（VPM パッケージ `net.yozolab.yolupainter`）と OS に合うネイティブブリッジ**が必要です。`YozoLab → YoluPainter → Live Link` がない版では、この接続は利用できません。Windows 用は `yolu_bridge.dll`、Linux 用は `libyolu_bridge.so` です。
 
-1. スタンドアロンを起動します。既定では Live Link を待ち受け、メニューバー右端の印に状態が出ます。「表示 → 設定…」の「起動時に Live Link を待ち受ける」で次回からの自動待ち受けを切れます。`--livelink` を付けて起動すると、設定によらず待ち受けます。手動で始めるには「ファイル → Live Link」を使います。
-2. Unity で `YozoLab → YoluPainter → Live Link` を開きます。接続名（`Link name`）を `yolupainter-livelink` にして `Connect` を押します。
-3. シーンのモデルのゲームオブジェクトを指定します。選択中のものなら `Use selection` を押し、`Send model` で送ります。
-4. スタンドアロンのテクスチャセット欄でマテリアルを選び、2D または 3D ビューで描きます。表示中で、Unity 側に Color の反映先があるセットの合成結果が Unity に送られます。
-5. 作業を `.ylp` に保存します。接続を終えるには Unity の `Disconnect`、またはスタンドアロンの「ファイル → Live Link」を使います。
+1. Unity のヒエラルキーでモデルのゲームオブジェクトを右クリックし、「Open in YoluPainter」を選びます（`YozoLab → YoluPainter → Live Link` の窓の大きなボタンでも同じです）。スタンドアロンが動いていなければ起動し、つないでモデルを送ります。スタンドアロンの場所は、インストーラーで入れたものを使います（別の場所なら初めに 1 回だけ選びます）。
+2. スタンドアロンのテクスチャセット欄でマテリアルを選び、2D または 3D ビューで描きます。表示中で、Unity 側に Color の反映先があるセットの合成結果が Unity に送られます。
+3. 作業を `.ylp` に保存します。スクリプトの再コンパイルや Play の出入りのあとは、Unity が自動でつなぎ直します。
+
+スタンドアロンは起動すると Live Link を待ち受け、メニューバー右端の印に状態が出ます。「表示 → 設定…」の「起動時に Live Link を待ち受ける」で切れます（`--livelink` を付けて起動すると、設定によらず待ち受けます。手動で始めるには「ファイル → Live Link」）。接続名・Connect・Send model などは Unity の窓の「詳しく」にあります。
 
 Unity では lilToon・Standard などのマテリアルに描いた色を一時表示します。元のテクスチャやマテリアルのアセットへ書き込む操作ではありません。切断すると一時表示を外します。Live Link は作業ファイルの保存を代行しないため、スタンドアロン側で保存してください。
 
