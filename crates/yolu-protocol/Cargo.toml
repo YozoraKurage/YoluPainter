@@ -8,3 +8,20 @@ publish.workspace = true
 [dependencies]
 interprocess = "2.4"   # 0BSD OR Apache-2.0
 memmap2 = "0.9"        # MIT OR Apache-2.0
+getrandom = "0.3"      # MIT OR Apache-2.0（Live Link の鍵と挨拶の nonce を OS の乱数から）
+sha2 = "0.10"          # MIT OR Apache-2.0（鍵を知っていることを示す HMAC-SHA256。HMAC は auth.rs に 20 行で）
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"           # MIT OR Apache-2.0（自分の euid と、相手のプロセスの euid を比べる）
+
+[target.'cfg(windows)'.dependencies]
+widestring = "1"       # MIT OR Apache-2.0（interprocess と同じ。名前付きパイプのセキュリティ記述子の SDDL）
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }

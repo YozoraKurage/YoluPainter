@@ -229,6 +229,7 @@ mod tests {
             max_version: 1,
             agent: "試験".into(),
             features: 0,
+            auth: None,
         });
         let mut data = encode_message(&a);
         data.extend(encode_message(&Message::Bye));

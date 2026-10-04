@@ -10,14 +10,21 @@
 //! 書き手は通し番号を奇数にしてから書き、偶数に戻す。読み手は写す前と後で番号を比べ、違えば（または奇数なら）そのタイルを「ちぎれた」として
 //! 次に回す。どちらも待たない（描いている手を Unity の読みで止めない。Unity の主スレッドを書き手で止めない）。
 //!
-//! ファイルの置き場: Linux は /dev/shm（RAM の上）を先に試し、入らなければ（コンテナでは 64 MB しか無いことが多い）一時フォルダ。
-//! Windows は一時フォルダ（FILE_ATTRIBUTE_TEMPORARY で、ディスクへの書き出しを控えさせる）。`YOLUPAINTER_LINK_SHM_DIR` で選べる。
+//! ファイルの置き場と権限: 自分だけのフォルダ（`private`）の中に、自分だけが読み書きできるファイル（Unix は 0600、Windows は自分だけの DACL）
+//! として作る。Linux は /dev/shm（RAM の上）を先に試し、入らなければ（コンテナでは 64 MB しか無いことが多い）Live Link のフォルダ。
+//! Windows は FILE_ATTRIBUTE_TEMPORARY で、ディスクへの書き出しを控えさせる。`YOLUPAINTER_LINK_SHM_DIR` で選べる。
+//! 読み手は、持ち主が自分でほかの人の読み書きの印が無いファイルだけを開く。
+//!
+//! 落ちた書き手（Drop が走らない）は 1 チャンネルあたり最大 64 MB（4096²）のファイルを残す。待ち受けを始めるときに（`link::Server::bind`）、
+//! 書き手のいなくなったファイルを片付ける（`sweep_stale_images`）。書き手のいない印は、Unix では書き手が持つファイルの錠（flock。落ちれば OS が外す）、
+//! Windows ではファイル名の `p<プロセス番号>-` のプロセスがもう無いこと。
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{fence, AtomicU32, Ordering};
+use std::time::Duration;
 
 use memmap2::{Mmap, MmapMut};
 
@@ -165,7 +172,9 @@ pub enum TileRead {
     Torn,
 }
 
-/// 置き場の候補（前から試す）。
+/// 置き場の候補（前から試す）。`YOLUPAINTER_LINK_SHM_DIR` があればそれだけ（自分で選んだ場所。そこは作らず確かめない）。
+/// それ以外は、自分だけのフォルダ（0700。`private::ensure_private_dir`）: Linux は /dev/shm（RAM の上）の `yolupainter-<UID>` を先に
+/// 試し、入らなければ（コンテナでは 64 MB しか無いことが多い）Live Link のフォルダの `images`。
 pub fn candidate_dirs() -> Vec<PathBuf> {
     if let Some(dir) = std::env::var_os("YOLUPAINTER_LINK_SHM_DIR") {
         return vec![PathBuf::from(dir)];
@@ -175,11 +184,109 @@ pub fn candidate_dirs() -> Vec<PathBuf> {
     {
         let shm = Path::new("/dev/shm");
         if shm.is_dir() {
-            dirs.push(shm.to_path_buf());
+            dirs.push(shm.join(format!("yolupainter-{}", unsafe { libc::geteuid() })));
         }
     }
-    dirs.push(std::env::temp_dir());
+    if let Ok(link) = crate::private::link_dir() {
+        dirs.push(link.join("images"));
+    }
     dirs
+}
+
+/// 置き場を使えるようにする（自分だけのフォルダを作る・確かめる）。環境変数で選んだ置き場は何もしない。
+fn prepare_dir(dir: &Path) -> io::Result<()> {
+    if std::env::var_os("YOLUPAINTER_LINK_SHM_DIR").is_some() {
+        return Ok(());
+    }
+    crate::private::ensure_private_dir(dir)
+}
+
+/// 掃除で消さない若さ（作っている途中のファイルを、ほかのスタンドアロンの掃除が消さない）。
+const SWEEP_MIN_AGE: Duration = Duration::from_secs(2);
+
+/// 落ちた書き手が残した共有メモリのファイルを、置き場の候補から片付ける（消した数）。`YOLUPAINTER_LINK_SHM_DIR` で選んだ場所には触らない。
+/// 書き手が生きているファイル、名前が `p<プロセス番号>-…` の形でないファイル、自分だけのものでないフォルダ・ファイルは消さない。
+pub fn sweep_stale_images() -> usize {
+    if std::env::var_os("YOLUPAINTER_LINK_SHM_DIR").is_some() {
+        return 0;
+    }
+    candidate_dirs()
+        .iter()
+        .map(|d| sweep_dir(d, SWEEP_MIN_AGE))
+        .sum()
+}
+
+/// dir の中の、書き手がもういない共有メモリのファイルを消す（消した数）。min_age より新しいファイルは残す。
+pub fn sweep_dir(dir: &Path, min_age: Duration) -> usize {
+    // 自分だけのフォルダだけを掃く
+    if crate::private::check_private_dir(dir).is_err() {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(stem) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(FILE_PREFIX))
+            .and_then(|n| n.strip_suffix(FILE_SUFFIX))
+        else {
+            continue;
+        };
+        let Some(pid) = writer_pid_in_name(stem) else {
+            continue;
+        };
+        if writer_is_gone(&path, pid, min_age) && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// ファイルの名前（頭と尾を除いた所）の `p<プロセス番号>-…` の番号。
+fn writer_pid_in_name(stem: &str) -> Option<u32> {
+    let (digits, _) = stem.strip_prefix('p')?.split_once('-')?;
+    digits.parse().ok()
+}
+
+/// 普通の（リンクでない）ファイルで、min_age より古いか。
+fn old_regular_file(path: &Path, min_age: Duration) -> bool {
+    let Ok(m) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    m.is_file()
+        && m.modified()
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age >= min_age)
+}
+
+/// Unix: 自分のファイルで、書き手の錠を取れる（書き手が閉じた・落ちた）なら、書き手はいない。
+#[cfg(unix)]
+fn writer_is_gone(path: &Path, _pid: u32, min_age: Duration) -> bool {
+    use std::os::unix::io::AsRawFd;
+    if !old_regular_file(path, min_age) {
+        return false;
+    }
+    let Ok(file) = crate::private::open_private_file(path) else {
+        return false;
+    };
+    crate::private::check_private_file(&file, path).is_ok()
+        && unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0
+}
+
+/// Windows: 名前のプロセスがもう無ければ、書き手はいない（番号は使い回されるので、別のプロセスが同じ番号なら残る。次の掃除で消える）。
+#[cfg(windows)]
+fn writer_is_gone(path: &Path, pid: u32, min_age: Duration) -> bool {
+    old_regular_file(path, min_age) && !crate::private::win::process_alive(pid)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn writer_is_gone(_path: &Path, _pid: u32, _min_age: Duration) -> bool {
+    false
 }
 
 /// ファイルの名前（頭と尾を除いた所）に使える文字か。
@@ -189,24 +296,6 @@ pub fn valid_stem(stem: &str) -> bool {
         && stem
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
-}
-
-fn open_options(write: bool) -> OpenOptions {
-    let mut o = OpenOptions::new();
-    o.read(true);
-    if write {
-        o.write(true).create_new(true);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // 読み・書き・消すのを共有する（相手が開いていても書き手が消せ、最後の写像が閉じたときに消える）
-        o.share_mode(7);
-        if write {
-            o.attributes(0x100); // FILE_ATTRIBUTE_TEMPORARY
-        }
-    }
-    o
 }
 
 fn read_u32(base: *const u8, off: usize) -> u32 {
@@ -246,7 +335,10 @@ impl SharedImageWriter {
     ) -> Result<SharedImageWriter, ShmError> {
         let mut last = None;
         for dir in candidate_dirs() {
-            match Self::create_in(&dir, stem, width, height, tile_size, set, channel) {
+            let made = prepare_dir(&dir)
+                .map_err(ShmError::Io)
+                .and_then(|()| Self::create_in(&dir, stem, width, height, tile_size, set, channel));
+            match made {
                 Ok(w) => return Ok(w),
                 Err(e) => last = Some(e),
             }
@@ -269,7 +361,14 @@ impl SharedImageWriter {
         }
         let layout = ImageLayout::new(width, height, tile_size)?;
         let path = dir.join(format!("{FILE_PREFIX}{stem}{FILE_SUFFIX}"));
-        let mut file = open_options(true).open(&path)?;
+        // 自分だけが読み書きできる新しいファイル（Unix は 0600、Windows は自分だけの DACL）。ほかのユーザーは描いた画素を読めない
+        let mut file = crate::private::create_private_file(&path, true)?;
+        // 書き手がいる間は錠を持つ（Unix。落ちれば OS が外す）。待ち受けの掃除（`sweep_stale_images`）は、錠を取れるファイルだけを消す
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        }
         let allocated = (|| -> io::Result<()> {
             if cfg!(windows) {
                 file.set_len(layout.total_bytes as u64)
@@ -419,10 +518,9 @@ impl SharedImageReader {
         if !valid_stem(stem) {
             return Err(ShmError::Invalid("ファイルの名前"));
         }
-        let file = open_options(false).open(path)?;
-        if !file.metadata()?.is_file() {
-            return Err(ShmError::Invalid("普通のファイルでない"));
-        }
+        // 自分のファイルだけを開く（持ち主が別のユーザー・ほかの人も読める・リンク・普通でないファイルは使わない）
+        let file = crate::private::open_private_file(path)?;
+        crate::private::check_private_file(&file, path)?;
         let map = unsafe { Mmap::map(&file)? };
         if map.len() < HEADER_BYTES {
             return Err(ShmError::Invalid("短すぎる"));
@@ -660,21 +758,162 @@ mod tests {
         assert_eq!(out[0], 9);
     }
 
+    /// 自分だけのファイルとして書く（読み手は持ち主と権限も確かめるので、試験の壊れたファイルもそうしておく）。
+    fn write_private(path: &Path, bytes: &[u8]) {
+        let _ = std::fs::remove_file(path);
+        let mut f = crate::private::create_private_file(path, false).unwrap();
+        f.write_all(bytes).unwrap();
+    }
+
     #[test]
     fn the_reader_refuses_foreign_or_broken_files() {
         let dir = temp_dir();
         let bad = dir.join("other.bin");
-        std::fs::write(&bad, [0u8; 256]).unwrap();
+        write_private(&bad, &[0u8; 256]);
         assert!(matches!(
             SharedImageReader::open(&bad),
             Err(ShmError::Invalid(_))
         ));
         let named = dir.join(format!("{FILE_PREFIX}broken{FILE_SUFFIX}"));
-        std::fs::write(&named, [0u8; 256]).unwrap();
+        write_private(&named, &[0u8; 256]);
         assert!(matches!(
             SharedImageReader::open(&named),
             Err(ShmError::Invalid("合言葉"))
         ));
         assert!(SharedImageWriter::create_in(&dir, "../escape", 16, 16, 16, 0, 0).is_err());
+    }
+
+    #[test]
+    fn the_writer_makes_private_files_and_the_reader_refuses_open_ones() {
+        let dir = temp_dir();
+        let w = SharedImageWriter::create_in(&dir, "perm", 64, 64, 64, 0, 0).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let mode = std::fs::metadata(w.path()).unwrap().mode() & 0o777;
+            assert_eq!(mode, 0o600, "ほかのユーザーは描いた画素を読めない");
+            // 権限を広げられたファイル（別のユーザーが読める）は開かない
+            std::fs::set_permissions(w.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(matches!(
+                SharedImageReader::open(w.path()),
+                Err(ShmError::Io(ref e)) if e.kind() == io::ErrorKind::PermissionDenied
+            ));
+            std::fs::set_permissions(w.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+            // 名前がリンクなら辿らない
+            let link = dir.join(format!("{FILE_PREFIX}link{FILE_SUFFIX}"));
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(w.path(), &link).unwrap();
+            assert!(SharedImageReader::open(&link).is_err());
+            std::fs::remove_file(&link).unwrap();
+        }
+        SharedImageReader::open(w.path()).unwrap();
+    }
+
+    /// 終わったプロセスの番号（落ちた書き手の名前に入っている番号の役）。
+    fn finished_pid() -> u32 {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--list"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    fn private_scratch(tag: &str) -> PathBuf {
+        let d = temp_dir().join(tag);
+        let _ = std::fs::remove_dir_all(&d);
+        crate::private::ensure_private_dir(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_sweep_removes_only_the_files_whose_writer_is_gone() {
+        let dir = private_scratch("sweep");
+        let dead = finished_pid();
+        let named =
+            |pid: u32, rest: &str| dir.join(format!("{FILE_PREFIX}p{pid}-{rest}{FILE_SUFFIX}"));
+        // 落ちた書き手のファイル（錠も持たない）
+        let stale = named(dead, "rdead-s1-t0-c0-n0");
+        write_private(&stale, &[0u8; 256]);
+        // 生きている書き手のファイル
+        let live = SharedImageWriter::create_in(
+            &dir,
+            &format!("p{}-rlive-s1-t0-c0-n0", std::process::id()),
+            32,
+            32,
+            16,
+            0,
+            0,
+        )
+        .unwrap();
+        // 名前の形が違うファイルは、書き手が分からないので消さない
+        let foreign = dir.join(format!("{FILE_PREFIX}perm{FILE_SUFFIX}"));
+        write_private(&foreign, &[0u8; 256]);
+        let other = dir.join("notes.txt");
+        write_private(&other, b"x");
+        // 作ったばかりのファイルは、書き手がいなくても残す（作っている途中かもしれない）
+        assert_eq!(sweep_dir(&dir, Duration::from_secs(3600)), 0);
+        assert!(stale.exists());
+        assert_eq!(sweep_dir(&dir, Duration::ZERO), 1);
+        assert!(!stale.exists(), "落ちた書き手のファイルが残っている");
+        assert!(live.path().exists(), "生きている書き手のファイルを消した");
+        assert!(foreign.exists() && other.exists());
+        // 書き手が閉じたら（Drop）、自分で消える。掃除は何もしない
+        let live_path = live.path().to_path_buf();
+        drop(live);
+        assert!(!live_path.exists());
+        assert_eq!(sweep_dir(&dir, Duration::ZERO), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sweep_does_not_follow_links_or_touch_dirs_others_can_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = private_scratch("sweep-link");
+        let dead = finished_pid();
+        let target = dir.join("target.bin");
+        write_private(&target, &[0u8; 16]);
+        let link = dir.join(format!(
+            "{FILE_PREFIX}p{dead}-rlink-s1-t0-c0-n0{FILE_SUFFIX}"
+        ));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(sweep_dir(&dir, Duration::ZERO), 0);
+        assert!(std::fs::symlink_metadata(&link).is_ok() && target.exists());
+        // 自分だけのものでないフォルダには触らない
+        let open = temp_dir().join("sweep-open");
+        let _ = std::fs::remove_dir_all(&open);
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let stale = open.join(format!(
+            "{FILE_PREFIX}p{dead}-ropen-s1-t0-c0-n0{FILE_SUFFIX}"
+        ));
+        std::fs::write(&stale, [0u8; 16]).unwrap();
+        assert_eq!(sweep_dir(&open, Duration::ZERO), 0);
+        assert!(stale.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&open);
+    }
+
+    #[test]
+    fn the_writer_pid_is_read_from_the_name() {
+        assert_eq!(writer_pid_in_name("p123-r0000abcd-s1-t0-c0-n0"), Some(123));
+        assert_eq!(writer_pid_in_name("perm"), None);
+        assert_eq!(writer_pid_in_name("p-r1"), None);
+        assert_eq!(writer_pid_in_name("p12x-r1"), None);
+        assert_eq!(writer_pid_in_name("q12-r1"), None);
+    }
+
+    #[test]
+    fn the_default_places_are_private_dirs() {
+        if std::env::var_os("YOLUPAINTER_LINK_SHM_DIR").is_some() {
+            return;
+        }
+        let w = SharedImageWriter::create("pl-test", 32, 32, 16, 0, 0).unwrap();
+        let dir = w.path().parent().unwrap().to_path_buf();
+        crate::private::check_private_dir(&dir).unwrap();
+        assert!(candidate_dirs().iter().all(|d| d.is_absolute()));
     }
 }

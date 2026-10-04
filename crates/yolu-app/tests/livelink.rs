@@ -406,6 +406,75 @@ fn a_model_becomes_texture_sets_and_strokes_come_back_as_changed_tiles() {
     assert!(h.state().state.message.contains("Unity が切りました"));
 }
 
+/// 鍵を知っているブリッジの挨拶の鍵の欄。
+fn hello_auth(key: &yolu_protocol::LinkKey) -> yolu_protocol::HelloAuth {
+    let nonce = yolu_protocol::auth::random_bytes().unwrap();
+    yolu_protocol::HelloAuth {
+        nonce,
+        proof: key.hello_proof(&nonce),
+    }
+}
+
+#[test]
+fn a_connection_without_the_right_key_is_refused_and_noted_while_the_link_stays_up() {
+    let mut h = app(1280.0, 800.0, 256);
+    let name = listen(&mut h, "keys");
+    let first = FakeUnity::connect(&name);
+    step_until(&mut h, "つながった", |a| {
+        matches!(a.state.link.status, LinkStatus::Connected { .. })
+    });
+    // 鍵の欄が無い（古いブリッジ）・別の鍵の挨拶は、つながっていても鍵の断りで返す（Busy を教えない）
+    for auth in [
+        None,
+        Some(hello_auth(&yolu_protocol::LinkKey::generate().unwrap())),
+    ] {
+        let stream = link::connect(&name).unwrap();
+        let mut s = &stream;
+        s.write_all(&encode_message(&Message::Hello(Hello {
+            min_version: 1,
+            max_version: PROTOCOL_VERSION,
+            agent: "知らない相手".into(),
+            features: 0,
+            auth,
+        })))
+        .unwrap();
+        let mut frames = FrameReader::new();
+        let frame = frames.read_frame(&mut s).unwrap().unwrap();
+        assert!(
+            matches!(frame.decode().unwrap(), Message::Reject(r) if r.code == RejectCode::Unauthorized)
+        );
+    }
+    step_until(&mut h, "鍵の断りの知らせ", |a| {
+        a.state.message.contains("鍵の合わない")
+    });
+    assert!(
+        matches!(h.state().state.link.status, LinkStatus::Connected { .. }),
+        "つながっている Unity は切れない"
+    );
+    assert!(h.state().state.link.mismatch.is_none(), "版の不一致とは別");
+    drop(first);
+}
+
+#[test]
+fn a_connection_that_never_greets_does_not_hold_the_slot_for_unity() {
+    let mut h = app(1280.0, 800.0, 256);
+    let name = listen(&mut h, "silent");
+    // 挨拶を送らないつなぎ（同じユーザーの行儀の悪いプログラム）が先にいても、Unity はつながれる（枠は挨拶が済んでから取る）
+    let silent = link::connect(&name).unwrap();
+    let unity = FakeUnity::connect(&name);
+    step_until(&mut h, "つながった", |a| {
+        matches!(a.state.link.status, LinkStatus::Connected { .. })
+    });
+    // つながっている間の 2 つ目は、鍵を知っていれば Busy で断る
+    match connect_and_greet(&name, "2 つ目の Unity") {
+        Err(LinkError::Rejected(r)) => assert_eq!(r.code, RejectCode::Busy),
+        Err(e) => panic!("{e}"),
+        Ok(_) => panic!("2 つ目はつながらない"),
+    }
+    drop(unity);
+    drop(silent);
+}
+
 #[test]
 fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
     let mut h = app(1280.0, 800.0, 256);
@@ -418,6 +487,7 @@ fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
         max_version: PROTOCOL_VERSION + 20,
         agent: "未来の Unity".into(),
         features: 0,
+        auth: Some(hello_auth(&yolu_protocol::LinkKey::load(&name).unwrap())),
     })))
     .unwrap();
     let mut frames = FrameReader::new();
@@ -515,7 +585,7 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 1);
+        assert_eq!(ylb_abi_version(), 2);
         let agent = "子の Unity";
         let h = ylb_connect(
             name.as_ptr(),

@@ -4511,8 +4511,13 @@ dependencies = [
 name = "yolu-protocol"
 version = "0.0.1"
 dependencies = [
+ "getrandom 0.3.4",
  "interprocess",
+ "libc",
  "memmap2",
+ "sha2",
+ "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

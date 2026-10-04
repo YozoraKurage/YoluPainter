@@ -65,6 +65,17 @@ fn all_messages() -> Vec<Message> {
             max_version: 4,
             agent: "unity".into(),
             features: 5,
+            auth: Some(HelloAuth {
+                nonce: [7; 32],
+                proof: [9; 32],
+            }),
+        }),
+        Message::Hello(Hello {
+            min_version: 1,
+            max_version: 1,
+            agent: "鍵の欄の無い古いブリッジ".into(),
+            features: 0,
+            auth: None,
         }),
         Message::Bye,
         Message::Model(sample_model()),
@@ -86,10 +97,22 @@ fn all_messages() -> Vec<Message> {
             agent: "standalone".into(),
             session: 99,
             features: 0,
+            proof: Some([3; 32]),
+        }),
+        Message::Welcome(Welcome {
+            version: 1,
+            agent: "鍵を確かめない古いスタンドアロン".into(),
+            session: 1,
+            features: 0,
+            proof: None,
         }),
         Message::Reject(Reject {
             code: RejectCode::VersionMismatch,
             text: "版".into(),
+        }),
+        Message::Reject(Reject {
+            code: RejectCode::Unauthorized,
+            text: "鍵".into(),
         }),
         Message::TextureSet(TextureSet {
             set: 4,
@@ -158,6 +181,20 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
         let payload = m.encode_payload();
         if payload.is_empty() {
             continue;
+        }
+        // 挨拶の鍵の欄・返事の証しは後ろに足した欄。途中で切れていれば欄が無いものとして読む（受け手が鍵無しとして断る）
+        match &m {
+            Message::Hello(h) if h.auth.is_some() => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
+                assert!(matches!(cut, Message::Hello(Hello { auth: None, .. })));
+                continue;
+            }
+            Message::Welcome(w) if w.proof.is_some() => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
+                assert!(matches!(cut, Message::Welcome(Welcome { proof: None, .. })));
+                continue;
+            }
+            _ => {}
         }
         assert!(
             Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).is_err(),
@@ -231,6 +268,7 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
         max_version: 1,
         agent: String::new(),
         features: 0,
+        auth: None,
     });
     assert!(Message::decode(Kind::Hello as u16, &hello.encode_payload()).is_err());
     // 枠の頭は種類を問わず作れる（知らない種類は読む側で断る）

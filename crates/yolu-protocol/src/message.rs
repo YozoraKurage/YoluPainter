@@ -114,6 +114,13 @@ pub mod channel {
     pub const COUNT: u8 = 6;
 }
 
+/// 挨拶の鍵の欄（`auth` を見よ）: 乱数の nonce と、鍵で作った証し。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HelloAuth {
+    pub nonce: [u8; crate::auth::NONCE_BYTES],
+    pub proof: [u8; crate::auth::PROOF_BYTES],
+}
+
 /// つないだ直後の挨拶（Unity → スタンドアロン）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hello {
@@ -124,6 +131,8 @@ pub struct Hello {
     pub agent: String,
     /// 機能の印（今は 0）。
     pub features: u64,
+    /// 鍵を知っている証し（後ろに足した欄。無いのは鍵を知らない古いブリッジで、スタンドアロンは断る）。
+    pub auth: Option<HelloAuth>,
 }
 
 /// 挨拶への返事（スタンドアロン → Unity）。
@@ -135,6 +144,8 @@ pub struct Welcome {
     /// このつながりの番号（共有メモリのファイルの名前に入る）。
     pub session: u64,
     pub features: u64,
+    /// スタンドアロンも鍵を知っている証し（後ろに足した欄。無いのは鍵を確かめない古いスタンドアロンで、ブリッジは使わない）。
+    pub proof: Option<[u8; crate::auth::PROOF_BYTES]>,
 }
 
 /// 断りの理由。
@@ -145,6 +156,8 @@ pub enum RejectCode {
     VersionMismatch = 1,
     /// ほかの Unity とつながっている。
     Busy = 2,
+    /// 鍵が無い・合わない（古いブリッジ、別の待ち受けの鍵、ほかのユーザー）。
+    Unauthorized = 3,
     /// それ以外。
     Other = 0xffff,
 }
@@ -154,6 +167,7 @@ impl RejectCode {
         match v {
             1 => RejectCode::VersionMismatch,
             2 => RejectCode::Busy,
+            3 => RejectCode::Unauthorized,
             _ => RejectCode::Other,
         }
     }
@@ -384,6 +398,10 @@ impl Message {
                 w.u16(h.max_version);
                 w.str(&h.agent);
                 w.u64(h.features);
+                if let Some(a) = &h.auth {
+                    w.raw(&a.nonce);
+                    w.raw(&a.proof);
+                }
             }
             Message::Bye => {}
             Message::Model(m) => {
@@ -426,6 +444,9 @@ impl Message {
                 w.str(&x.agent);
                 w.u64(x.session);
                 w.u64(x.features);
+                if let Some(p) = &x.proof {
+                    w.raw(p);
+                }
             }
             Message::Reject(x) => {
                 w.u16(x.code as u16);
@@ -478,11 +499,24 @@ impl Message {
                 if min_version > max_version {
                     return Err(DecodeError::Invalid("版の範囲"));
                 }
+                let agent = r.str(MAX_NAME_BYTES, "送り手の名前")?;
+                let features = r.u64()?;
+                // 鍵の欄は後ろに足したもの。無い（欄の分に足りない）のは古いブリッジで、鍵が無いものとして扱う（受け手が断る）。
+                // 欄の後ろはさらに新しい版の欄として読み飛ばす
+                let auth = if r.remaining() >= crate::auth::NONCE_BYTES + crate::auth::PROOF_BYTES {
+                    Some(HelloAuth {
+                        nonce: r.array()?,
+                        proof: r.array()?,
+                    })
+                } else {
+                    None
+                };
                 Message::Hello(Hello {
                     min_version,
                     max_version,
-                    agent: r.str(MAX_NAME_BYTES, "送り手の名前")?,
-                    features: r.u64()?,
+                    agent,
+                    features,
+                    auth,
                 })
             }
             Kind::Bye => Message::Bye,
@@ -569,6 +603,12 @@ impl Message {
                 agent: r.str(MAX_NAME_BYTES, "送り手の名前")?,
                 session: r.u64()?,
                 features: r.u64()?,
+                // 証しの欄は後ろに足したもの（足りなければ鍵を確かめない古いスタンドアロン）
+                proof: if r.remaining() >= crate::auth::PROOF_BYTES {
+                    Some(r.array()?)
+                } else {
+                    None
+                },
             }),
             Kind::Reject => Message::Reject(Reject {
                 code: RejectCode::from_u16(r.u16()?),

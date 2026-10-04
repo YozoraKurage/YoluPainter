@@ -15,7 +15,6 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use interprocess::local_socket::traits::Listener as _;
 use yolu_core::glam::DVec2;
 use yolu_core::{BrushSettings, Channel, Document, LayerId, Rgba8, RowOrder, TileCoord};
 use yolu_protocol::host::PublishedSet;
@@ -285,9 +284,10 @@ fn serve(
     stream: interprocess::local_socket::Stream,
     session: u64,
     args: &Args,
+    key: &yolu_protocol::ServerKey,
 ) -> Result<(), String> {
     let (conn, mut reader, hello) =
-        accept(stream, "yolu-link-demo", session).map_err(|e| e.to_string())?;
+        accept(stream, "yolu-link-demo", session, key).map_err(|e| e.to_string())?;
     println!(
         "つながりました: {}（版 {}〜{}）",
         hello.agent, hello.min_version, hello.max_version
@@ -468,7 +468,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let listener = match link::listen(&args.name) {
+    let listener = match link::Server::bind(&args.name, false) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("{} で待ち受けられません: {e}", args.name);
@@ -486,7 +486,7 @@ fn main() {
             }
         };
         session += 1;
-        if let Err(e) = serve(stream, session, &args) {
+        if let Err(e) = serve(stream, session, &args, &listener.key()) {
             println!("つながりを終えました: {e}");
         }
         if args.once {

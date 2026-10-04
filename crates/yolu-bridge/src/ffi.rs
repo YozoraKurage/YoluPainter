@@ -6,7 +6,7 @@
 //! - 返す値: 0 以上は成功、負は失敗（YLB_E_*）。文字列は UTF-8 のバイトと長さ。受け取る文字列の領域が足りなければ、要る長さを返して
 //!   入るだけ（文字の途中で切らない）写す。
 //! - Unity は一度読んだネイティブの DLL を手放さない。ドメインの読み直しの後も前のつながりが残るので、C# は最初に ylb_disconnect_all を呼ぶ。
-//!   この口は小さく保ち、変えるときは関数を足す（今の関数の意味を変えるなら ylb_abi_version を上げ、C# は合わない版を使わない）。
+//!   この口は小さく保ち、変えるときは関数を足す（今の関数の意味を変えるか、C# が新しい関数に頼るなら ylb_abi_version を上げ、C# は合わない版を使わない）。
 //! - パニックはここで受け止めて YLB_E_PANIC にする（Unity を落とさない）。
 //!
 //! 安全の決まり（unsafe の関数の全部）: ポインターは null か、渡した長さ（要素の数）のぶん読める（出力は書ける）領域を指すこと。
@@ -23,8 +23,11 @@ use crate::copy::{copy_dirty, Strip};
 use crate::session::{Session, Status};
 use crate::testserver::{TestServer, YlbTestServerStats};
 
-/// この口の版。関数の意味・引数・構造体を変えたら上げる（足すだけなら上げない）。
-pub const ABI_VERSION: u32 = 1;
+/// この口の版。関数の意味・引数・構造体を変えたら、または C# が新しく足した関数・欄に頼るようになったら上げる（Unity は読んだ DLL を
+/// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、再起動の案内を出す）。
+/// 2: マテリアルの更新（ylb_materials_*）・全面の写し直し（ylb_channel_mark_all_dirty）・帯だけの写し（ylb_copy_dirty の image が null）・
+/// 自己診断のサーバーの鍵の差し替えと統計の欄の追加。
+pub const ABI_VERSION: u32 = 2;
 
 pub const YLB_E_HANDLE: i32 = -1;
 pub const YLB_E_ARGUMENT: i32 = -2;
@@ -245,6 +248,103 @@ pub unsafe extern "C" fn ylb_model_begin(handle: u64, name: *const u8, name_len:
     })
 }
 
+/// マテリアルの組を足す（モデルとマテリアルの更新で同じ）。返すのはマテリアルの番号か、負の失敗。
+unsafe fn push_material(
+    materials: &mut Vec<MaterialInfo>,
+    unassigned: i32,
+    name: (*const u8, i32),
+    guid: (*const u8, i32),
+    file_id: i64,
+    shader: (*const u8, i32),
+) -> i32 {
+    let (Some(name), Some(guid), Some(shader)) = (
+        text(name.0, name.1),
+        text(guid.0, guid.1),
+        text(shader.0, shader.1),
+    ) else {
+        return YLB_E_ARGUMENT;
+    };
+    if name.len() > MAX_NAME_BYTES
+        || shader.len() > MAX_NAME_BYTES
+        || (!guid.is_empty() && !is_asset_guid(guid))
+        || materials.len() >= MAX_MATERIALS
+    {
+        return YLB_E_ARGUMENT;
+    }
+    let key = if unassigned != 0 {
+        MaterialKey::Unassigned
+    } else {
+        MaterialKey::Material {
+            name: name.to_owned(),
+            asset: (!guid.is_empty()).then(|| (guid.to_owned(), file_id)),
+        }
+    };
+    materials.push(MaterialInfo {
+        key,
+        shader: shader.to_owned(),
+        textures: Vec::new(),
+        routes: Vec::new(),
+    });
+    (materials.len() - 1) as i32
+}
+
+/// マテリアルにテクスチャのプロパティを足す。
+unsafe fn push_texture(
+    materials: &mut [MaterialInfo],
+    material: i32,
+    name: (*const u8, i32),
+    width: u32,
+    height: u32,
+) -> i32 {
+    let Some(name) = text(name.0, name.1) else {
+        return YLB_E_ARGUMENT;
+    };
+    let Some(mat) = usize::try_from(material)
+        .ok()
+        .and_then(|i| materials.get_mut(i))
+    else {
+        return YLB_E_ARGUMENT;
+    };
+    if name.len() > MAX_NAME_BYTES || mat.textures.len() >= MAX_TEXTURE_PROPERTIES {
+        return YLB_E_ARGUMENT;
+    }
+    mat.textures.push(TextureProperty {
+        name: name.to_owned(),
+        width,
+        height,
+    });
+    0
+}
+
+/// マテリアルに見せられるチャンネルと流し込み先を足す。
+unsafe fn push_route(
+    materials: &mut [MaterialInfo],
+    material: i32,
+    channel: i32,
+    property: (*const u8, i32),
+) -> i32 {
+    let Some(property) = text(property.0, property.1) else {
+        return YLB_E_ARGUMENT;
+    };
+    if !(0..channel::COUNT as i32).contains(&channel) || property.len() > MAX_NAME_BYTES {
+        return YLB_E_ARGUMENT;
+    }
+    let Some(mat) = usize::try_from(material)
+        .ok()
+        .and_then(|i| materials.get_mut(i))
+    else {
+        return YLB_E_ARGUMENT;
+    };
+    if mat.routes.iter().any(|r| r.channel == channel as u8) {
+        return YLB_E_ARGUMENT;
+    }
+    mat.routes.push(ChannelRoute {
+        channel: channel as u8,
+        property: property.to_owned(),
+    });
+    0
+}
+
 /// マテリアルの組を足す。unassigned が 0 でなければマテリアルの無いスロットの組（名前・GUID は使わない）。guid_len が 0 ならアセットでない。
 /// 返すのはマテリアルの番号。
 #[no_mangle]
@@ -263,41 +363,18 @@ pub unsafe extern "C" fn ylb_model_material(
         let Some(s) = session(handle) else {
             return YLB_E_HANDLE;
         };
-        let (Some(name), Some(guid), Some(shader)) = (
-            text(name, name_len),
-            text(guid, guid_len),
-            text(shader, shader_len),
-        ) else {
-            return YLB_E_ARGUMENT;
-        };
-        if name.len() > MAX_NAME_BYTES
-            || shader.len() > MAX_NAME_BYTES
-            || (!guid.is_empty() && !is_asset_guid(guid))
-        {
-            return YLB_E_ARGUMENT;
-        }
         let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
         let Some(m) = b.model.as_mut() else {
             return YLB_E_STATE;
         };
-        if m.materials.len() >= MAX_MATERIALS {
-            return YLB_E_ARGUMENT;
-        }
-        let key = if unassigned != 0 {
-            MaterialKey::Unassigned
-        } else {
-            MaterialKey::Material {
-                name: name.to_owned(),
-                asset: (!guid.is_empty()).then(|| (guid.to_owned(), file_id)),
-            }
-        };
-        m.materials.push(MaterialInfo {
-            key,
-            shader: shader.to_owned(),
-            textures: Vec::new(),
-            routes: Vec::new(),
-        });
-        (m.materials.len() - 1) as i32
+        push_material(
+            &mut m.materials,
+            unassigned,
+            (name, name_len),
+            (guid, guid_len),
+            file_id,
+            (shader, shader_len),
+        )
     })
 }
 
@@ -315,28 +392,11 @@ pub unsafe extern "C" fn ylb_model_material_texture(
         let Some(s) = session(handle) else {
             return YLB_E_HANDLE;
         };
-        let Some(name) = text(name, name_len) else {
-            return YLB_E_ARGUMENT;
-        };
         let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
         let Some(m) = b.model.as_mut() else {
             return YLB_E_STATE;
         };
-        let Some(mat) = usize::try_from(material)
-            .ok()
-            .and_then(|i| m.materials.get_mut(i))
-        else {
-            return YLB_E_ARGUMENT;
-        };
-        if name.len() > MAX_NAME_BYTES || mat.textures.len() >= MAX_TEXTURE_PROPERTIES {
-            return YLB_E_ARGUMENT;
-        }
-        mat.textures.push(TextureProperty {
-            name: name.to_owned(),
-            width,
-            height,
-        });
-        0
+        push_texture(&mut m.materials, material, (name, name_len), width, height)
     })
 }
 
@@ -353,30 +413,16 @@ pub unsafe extern "C" fn ylb_model_material_route(
         let Some(s) = session(handle) else {
             return YLB_E_HANDLE;
         };
-        let Some(property) = text(property, property_len) else {
-            return YLB_E_ARGUMENT;
-        };
-        if !(0..channel::COUNT as i32).contains(&channel) || property.len() > MAX_NAME_BYTES {
-            return YLB_E_ARGUMENT;
-        }
         let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
         let Some(m) = b.model.as_mut() else {
             return YLB_E_STATE;
         };
-        let Some(mat) = usize::try_from(material)
-            .ok()
-            .and_then(|i| m.materials.get_mut(i))
-        else {
-            return YLB_E_ARGUMENT;
-        };
-        if mat.routes.iter().any(|r| r.channel == channel as u8) {
-            return YLB_E_ARGUMENT;
-        }
-        mat.routes.push(ChannelRoute {
-            channel: channel as u8,
-            property: property.to_owned(),
-        });
-        0
+        push_route(
+            &mut m.materials,
+            material,
+            channel,
+            (property, property_len),
+        )
     })
 }
 
@@ -515,12 +561,15 @@ pub extern "C" fn ylb_model_send(handle: u64) -> i32 {
         let generation = b.sent_generation.wrapping_add(1).max(1);
         m.generation = generation;
         let vertices: Vec<usize> = m.meshes.iter().map(|x| x.positions.len()).collect();
+        let material_count = m.materials.len();
         if !s.enqueue(&Message::Model(m)) {
             return YLB_E_STATE;
         }
         b.sent_generation = generation;
         b.sent_vertices = vertices;
+        b.sent_materials = material_count;
         b.pose = None;
+        b.materials = None;
         generation as i32
     })
 }
@@ -541,6 +590,128 @@ pub extern "C" fn ylb_model_close(handle: u64) -> i32 {
             return YLB_E_STATE;
         }
         0
+    })
+}
+
+// ───────── マテリアルの更新を送る（モデルを送り直さずに、シェーダー・テクスチャのプロパティ・流し込み先だけを変える） ─────────
+
+/// マテリアルの更新の組み立てを始める（前の組み立ては捨てる）。送ったモデルがあるときだけ。足すマテリアルの数と並びは、送ったモデルと同じにする。
+#[no_mangle]
+pub extern "C" fn ylb_materials_begin(handle: u64) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        if b.sent_generation == 0 {
+            return YLB_E_STATE;
+        }
+        b.materials = Some(Vec::new());
+        0
+    })
+}
+
+/// 更新のマテリアルの組を足す（`ylb_model_material` と同じ引数）。返すのはマテリアルの番号。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_materials_material(
+    handle: u64,
+    unassigned: i32,
+    name: *const u8,
+    name_len: i32,
+    guid: *const u8,
+    guid_len: i32,
+    file_id: i64,
+    shader: *const u8,
+    shader_len: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(m) = b.materials.as_mut() else {
+            return YLB_E_STATE;
+        };
+        push_material(
+            m,
+            unassigned,
+            (name, name_len),
+            (guid, guid_len),
+            file_id,
+            (shader, shader_len),
+        )
+    })
+}
+
+/// 更新のマテリアルにテクスチャのプロパティを足す。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_materials_texture(
+    handle: u64,
+    material: i32,
+    name: *const u8,
+    name_len: i32,
+    width: u32,
+    height: u32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(m) = b.materials.as_mut() else {
+            return YLB_E_STATE;
+        };
+        push_texture(m, material, (name, name_len), width, height)
+    })
+}
+
+/// 更新のマテリアルに、見せられるチャンネルと流し込み先を足す。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_materials_route(
+    handle: u64,
+    material: i32,
+    channel: i32,
+    property: *const u8,
+    property_len: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(m) = b.materials.as_mut() else {
+            return YLB_E_STATE;
+        };
+        push_route(m, material, channel, (property, property_len))
+    })
+}
+
+/// 組み立てたマテリアルの更新を送る（積むだけ）。マテリアルの数は送ったモデルと同じでなければならない（違えば YLB_E_ARGUMENT）。返すのはマテリアルの数。
+#[no_mangle]
+pub extern "C" fn ylb_materials_send(handle: u64) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        if s.status() != Status::Connected {
+            return YLB_E_STATE;
+        }
+        let mut b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(materials) = b.materials.take() else {
+            return YLB_E_STATE;
+        };
+        if materials.len() != b.sent_materials {
+            return YLB_E_ARGUMENT;
+        }
+        let n = materials.len() as i32;
+        let generation = b.sent_generation;
+        if !s.enqueue(&Message::Materials(MaterialsUpdate {
+            generation,
+            materials,
+        })) {
+            return YLB_E_STATE;
+        }
+        n
     })
 }
 
@@ -723,6 +894,31 @@ pub extern "C" fn ylb_channel_dirty(handle: u64, set: u32, channel: i32) -> i32 
     })
 }
 
+/// チャンネルの全部のタイルを汚れたことにする（Unity 側のテクスチャを作り直した・失ったとき、次の ylb_copy_dirty で全面を写し直す）。
+#[no_mangle]
+pub extern "C" fn ylb_channel_mark_all_dirty(handle: u64, set: u32, channel: i32) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let mut st = s.state();
+        let Some(c) = st
+            .set_mut(set)
+            .and_then(|x| x.channel_mut(channel.clamp(0, 255) as u8))
+        else {
+            return YLB_E_ARGUMENT;
+        };
+        if c.image.is_none() {
+            return YLB_E_SHM;
+        }
+        c.dirty.iter_mut().for_each(|d| *d = true);
+        c.dirty_count = c.dirty.len() as u32;
+        let dirty = c.dirty_count as i32;
+        st.serial += 1;
+        dirty
+    })
+}
+
 /// 写した結果。
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -745,6 +941,7 @@ pub struct YlbCopyResult {
 /// 汚れたタイルを image（幅 × 高さ × 4 バイト、straight RGBA8、下の行から。Unity の Texture2D の RGBA32 の生の並び）へ写す。
 /// strip が null でなければ、strip_tiles 個までのタイルを帯（幅 strip_tiles × タイル、高さ タイル、下の行から）にも並べ、
 /// coords（2 × strip_tiles 個）にタイルの座標を書いて、そこで止める（残りは次に）。返すのは写したタイルの数。
+/// image は null でもよい（strip が要る）: 全体を GPU のテクスチャ（RenderTexture）に持つ側が、CPU に全体の写しを持たずに帯だけを受ける。
 #[no_mangle]
 pub unsafe extern "C" fn ylb_copy_dirty(
     handle: u64,
@@ -762,10 +959,11 @@ pub unsafe extern "C" fn ylb_copy_dirty(
         let Some(s) = session(handle) else {
             return YLB_E_HANDLE;
         };
-        if image.is_null() || image_len == 0 {
+        if (image.is_null() || image_len == 0) && strip.is_null() {
             return YLB_E_ARGUMENT;
         }
-        let image = std::slice::from_raw_parts_mut(image, image_len as usize);
+        let image = (!image.is_null() && image_len > 0)
+            .then(|| std::slice::from_raw_parts_mut(image, image_len as usize));
         let strip = if strip.is_null() {
             None
         } else {
@@ -895,6 +1093,18 @@ pub extern "C" fn ylb_test_server_paint(
             return YLB_E_ARGUMENT;
         }
         s.paint(material, channel as u8, x0, y0, x1, y1, rgba.to_le_bytes())
+    })
+}
+
+/// 自己診断のスタンドアロンの鍵のファイルを、別の鍵に差し替える（つなぎ直すブリッジは、鍵の合わない断りを受ける）。
+#[no_mangle]
+pub extern "C" fn ylb_test_server_replace_key(server: u64) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        match servers.get(&server) {
+            Some(s) => s.replace_key(),
+            None => YLB_E_HANDLE,
+        }
     })
 }
 

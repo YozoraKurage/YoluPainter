@@ -36,7 +36,9 @@ Unity 版へ組み込む場合は、対応する Unity パッケージのルー�
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
 
-core・io・protocol・bridge と app の画面なし試験が対象です。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+core・io・protocol・bridge と app の画面なし試験が対象です。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部を組むと wgpu・egui まで Windows 向けに組むため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+
+Wine は DACL（Live Link の鍵・名前付きパイプ・共有メモリのファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。別のユーザーとして開けないことを確かめる試験（`another_user_can_neither_connect_nor_read_the_files`）は、Linux で `sudo -n -u nobody` が使えるときだけ走ります。
 
 ## 配布用の許諾全文
 

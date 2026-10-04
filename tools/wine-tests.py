@@ -33,6 +33,8 @@ def main():
     parser.add_argument('--compat-bcrypt', action='store_true',
                         help='古い Wine 用の乱数 API 互換 DLL を試験専用に作る')
     parser.add_argument('--timeout', type=int, default=180, help='実行ごとの上限秒数')
+    parser.add_argument('--package', action='append', metavar='NAME',
+                        help='試すクレートを絞る（何度でも指定できる。既定は全部。例: --package yolu-protocol --package yolu-bridge）')
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout は正の整数が必要')
@@ -65,7 +67,7 @@ def main():
     else:
         # 同じ prefix で前回互換モードを使っていても、DLL 自体は prefix に置かない。
         env.pop('WINEPATH', None)
-    packages = ['yolu-core', 'yolu-io', 'yolu-protocol', 'yolu-bridge', 'yolu-app']
+    packages = args.package or ['yolu-core', 'yolu-io', 'yolu-protocol', 'yolu-bridge', 'yolu-app']
     cmd = ['cargo', 'test', '--locked', '--target', TARGET, '--no-run',
            '--lib', '--tests', '--message-format=json']
     for package in packages:

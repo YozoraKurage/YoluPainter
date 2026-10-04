@@ -23,9 +23,10 @@ pub struct Strip<'a> {
 }
 
 /// 汚れたタイルを写す（行優先の順）。帯があれば、帯のタイルの数まで写して止める（残りは次に）。ちぎれたタイルは汚れたまま残す。
+/// image は画像全体の CPU の写し。None なら帯だけに写す（GPU の側に全体を持つ Unity のテクスチャ。帯は必須）。
 pub fn copy_dirty(
     ch: &mut ChannelState,
-    image: &mut [u8],
+    mut image: Option<&mut [u8]>,
     mut strip: Option<Strip<'_>>,
 ) -> Result<CopyOutcome, ShmError> {
     let img = ch
@@ -33,8 +34,12 @@ pub fn copy_dirty(
         .as_ref()
         .ok_or(ShmError::Invalid("共有メモリを開けていない"))?;
     let l = *img.layout();
-    if image.len() != l.width as usize * l.height as usize * 4 {
-        return Err(ShmError::OutOfRange("画像の大きさ"));
+    match &image {
+        Some(image) if image.len() != l.width as usize * l.height as usize * 4 => {
+            return Err(ShmError::OutOfRange("画像の大きさ"))
+        }
+        None if strip.is_none() => return Err(ShmError::OutOfRange("写し先がない")),
+        _ => {}
     }
     let ts = l.tile_size as usize;
     if let Some(s) = &strip {
@@ -71,18 +76,20 @@ pub fn copy_dirty(
                 let r = img.read_tile_rows(x, y, s.pixels, n * ts * 4, stride, true)?;
                 if r == TileRead::Complete {
                     // 帯から画像へ（共有メモリを 2 度読まない。帯と画像が同じ中身になる）
-                    for row in 0..th as usize {
-                        let src = row * stride + n * ts * 4;
-                        let dst = ((y0 as usize + row) * width + x0 as usize) * 4;
-                        image[dst..dst + tw as usize * 4]
-                            .copy_from_slice(&s.pixels[src..src + tw as usize * 4]);
+                    if let Some(image) = image.as_deref_mut() {
+                        for row in 0..th as usize {
+                            let src = row * stride + n * ts * 4;
+                            let dst = ((y0 as usize + row) * width + x0 as usize) * 4;
+                            image[dst..dst + tw as usize * 4]
+                                .copy_from_slice(&s.pixels[src..src + tw as usize * 4]);
+                        }
                     }
                     s.coords[n * 2] = x;
                     s.coords[n * 2 + 1] = y;
                 }
                 r
             }
-            None => img.read_tile_into_image(x, y, image)?,
+            None => img.read_tile_into_image(x, y, image.as_deref_mut().expect("上で確かめた"))?,
         };
         if read == TileRead::Torn {
             out.torn += 1;

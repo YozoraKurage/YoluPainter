@@ -122,6 +122,36 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_model_close(ulong handle);
 
         /// <summary>
+        ///  マテリアルの更新の組み立てを始める（前の組み立ては捨てる）。送ったモデルがあるときだけ。足すマテリアルの数と並びは、送ったモデルと同じにする。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_materials_begin", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_materials_begin(ulong handle);
+
+        /// <summary>
+        ///  更新のマテリアルの組を足す（`ylb_model_material` と同じ引数）。返すのはマテリアルの番号。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_materials_material", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_materials_material(ulong handle, int unassigned, byte* name, int name_len, byte* guid, int guid_len, long file_id, byte* shader, int shader_len);
+
+        /// <summary>
+        ///  更新のマテリアルにテクスチャのプロパティを足す。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_materials_texture", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_materials_texture(ulong handle, int material, byte* name, int name_len, uint width, uint height);
+
+        /// <summary>
+        ///  更新のマテリアルに、見せられるチャンネルと流し込み先を足す。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_materials_route", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_materials_route(ulong handle, int material, int channel, byte* property, int property_len);
+
+        /// <summary>
+        ///  組み立てたマテリアルの更新を送る（積むだけ）。マテリアルの数は送ったモデルと同じでなければならない（違えば YLB_E_ARGUMENT）。返すのはマテリアルの数。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_materials_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_materials_send(ulong handle);
+
+        /// <summary>
         ///  ポーズの組み立てを始める。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_pose_begin", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -164,9 +194,16 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_channel_dirty(ulong handle, uint set, int channel);
 
         /// <summary>
+        ///  チャンネルの全部のタイルを汚れたことにする（Unity 側のテクスチャを作り直した・失ったとき、次の ylb_copy_dirty で全面を写し直す）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_channel_mark_all_dirty", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_channel_mark_all_dirty(ulong handle, uint set, int channel);
+
+        /// <summary>
         ///  汚れたタイルを image（幅 × 高さ × 4 バイト、straight RGBA8、下の行から。Unity の Texture2D の RGBA32 の生の並び）へ写す。
         ///  strip が null でなければ、strip_tiles 個までのタイルを帯（幅 strip_tiles × タイル、高さ タイル、下の行から）にも並べ、
         ///  coords（2 × strip_tiles 個）にタイルの座標を書いて、そこで止める（残りは次に）。返すのは写したタイルの数。
+        ///  image は null でもよい（strip が要る）: 全体を GPU のテクスチャ（RenderTexture）に持つ側が、CPU に全体の写しを持たずに帯だけを受ける。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_copy_dirty", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_copy_dirty(ulong handle, uint set, int channel, byte* image, ulong image_len, byte* strip, ulong strip_len, int strip_tiles, uint* coords, YlbCopyResult* result);
@@ -202,6 +239,12 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_paint", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_test_server_paint(ulong server, uint material, int channel, uint x0, uint y0, uint x1, uint y1, uint rgba);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンの鍵のファイルを、別の鍵に差し替える（つなぎ直すブリッジは、鍵の合わない断りを受ける）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_replace_key", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_replace_key(ulong server);
 
         /// <summary>
         ///  自己診断のスタンドアロンが受けたものの数。
@@ -319,6 +362,13 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         public float last_pose_x;
         public float last_pose_y;
         public float last_pose_z;
+        /// <summary>
+        ///  受けたマテリアルの更新の数と、最後の更新のマテリアルの数・流し込み先の数の合計・一番目のマテリアルのシェーダー名の長さ。
+        /// </summary>
+        public uint materials_updates;
+        public uint last_materials_count;
+        public uint last_materials_routes;
+        public uint last_materials_shader_len;
     }
 
 

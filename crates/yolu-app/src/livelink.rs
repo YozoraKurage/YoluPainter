@@ -20,12 +20,13 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use interprocess::local_socket::traits::Listener as _;
 use yolu_protocol::host::PublishedSet;
-use yolu_protocol::link::{self, accept, error_message, negotiate, wrong_direction, LinkError};
+use yolu_protocol::link::{
+    self, accept_with, error_message, negotiate, wrong_direction, LinkError,
+};
 use yolu_protocol::{
-    channel, shm::valid_tile_size, Connection, ErrorCode, Hello, Message, Received, RejectCode,
-    Tile, DEFAULT_LINK_NAME, MAX_TEXTURE_SIZE,
+    channel, shm::valid_tile_size, Connection, ErrorCode, Hello, Message, Received, Reject,
+    RejectCode, ServerKey, Tile, DEFAULT_LINK_NAME, MAX_TEXTURE_SIZE,
 };
 
 use crate::engine::{Channel, Document, RowOrder, TileCoord};
@@ -138,6 +139,10 @@ enum Event {
     /// ほかの Unity とつながっているので断った。
     Busy {
         agent: String,
+    },
+    /// 鍵が無い・合わない挨拶を断った（古いブリッジ・別の鍵・別のユーザーのつなぎ）。
+    Unauthorized {
+        text: String,
     },
     HandshakeFailed(String),
     Message {
@@ -306,7 +311,7 @@ impl LiveLink {
         if self.listening.is_some() {
             return;
         }
-        let listener = match link::listen_polling(&self.name) {
+        let listener = match link::Server::bind(&self.name, true) {
             Ok(l) => l,
             Err(e) => {
                 let text = format!("Live Link を「{}」で待ち受けられません: {e}", self.name);
@@ -322,6 +327,7 @@ impl LiveLink {
             let ctx = ctx.clone();
             let active = self.active_session.clone();
             let sessions = self.sessions.clone();
+            let key = listener.key();
             thread::Builder::new()
                 .name("yolu-livelink-listen".into())
                 .spawn(move || {
@@ -330,9 +336,10 @@ impl LiveLink {
                             Ok(stream) => {
                                 let session = sessions.fetch_add(1, Ordering::Relaxed) + 1;
                                 let (tx, ctx, active) = (tx.clone(), ctx.clone(), active.clone());
+                                let key = key.clone();
                                 let _ = thread::Builder::new()
                                     .name(format!("yolu-livelink-{session}"))
-                                    .spawn(move || serve(stream, session, tx, ctx, active));
+                                    .spawn(move || serve(stream, session, tx, ctx, active, key));
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 thread::sleep(Duration::from_millis(50))
@@ -429,6 +436,11 @@ impl LiveLink {
                 }
                 Event::Busy { agent } => {
                     let text = format!("Live Link: 2 つ目の Unity（{agent}）を断りました。");
+                    self.notify(NoticeLevel::Warning, text, state);
+                }
+                Event::Unauthorized { text } => {
+                    // 理由は鍵の断りの文（古いブリッジ・別の鍵など）。つながっている Unity には影響しない
+                    let text = format!("Live Link: 鍵の合わない接続を断りました（{text}）。");
                     self.notify(NoticeLevel::Warning, text, state);
                 }
                 Event::HandshakeFailed(e) => {
@@ -802,26 +814,50 @@ fn serve(
     tx: Sender<Event>,
     ctx: egui::Context,
     active: Arc<AtomicU64>,
+    key: Arc<ServerKey>,
 ) {
     let wake = |e: Event| {
         let _ = tx.send(e);
         ctx.request_repaint();
     };
-    if active
-        .compare_exchange(0, session, Ordering::AcqRel, Ordering::Relaxed)
-        .is_err()
-    {
-        match link::refuse(stream, RejectCode::Busy, BUSY_TEXT) {
-            Ok(hello) => wake(Event::Busy { agent: hello.agent }),
-            Err(e) => wake(Event::HandshakeFailed(e.to_string())),
-        }
-        return;
-    }
     let release = || {
         let _ = active.compare_exchange(session, 0, Ordering::AcqRel, Ordering::Relaxed);
     };
-    let (conn, mut reader, hello) = match accept(stream, AGENT, session) {
+    // 「つなげる Unity は 1 つ」の枠は、挨拶（鍵と版）が済んでから取る。挨拶を送らない接続や鍵の合わない接続が枠を塞がず、
+    // つながっていることも、鍵を知っている相手にしか教えない。
+    let busy_agent = std::cell::RefCell::new(String::new());
+    let claim = |hello: &Hello| {
+        active
+            .compare_exchange(0, session, Ordering::AcqRel, Ordering::Relaxed)
+            .map(|_| ())
+            .map_err(|_| {
+                *busy_agent.borrow_mut() = hello.agent.clone();
+                Reject {
+                    code: RejectCode::Busy,
+                    text: BUSY_TEXT.to_owned(),
+                }
+            })
+    };
+    let (conn, mut reader, hello) = match accept_with(
+        stream,
+        AGENT,
+        session,
+        &key,
+        link::HANDSHAKE_TIMEOUT,
+        &claim,
+    ) {
         Ok(x) => x,
+        Err(LinkError::Rejected(r)) if r.code == RejectCode::Busy => {
+            wake(Event::Busy {
+                agent: busy_agent.take(),
+            });
+            return;
+        }
+        Err(LinkError::Rejected(r)) if r.code == RejectCode::Unauthorized => {
+            release();
+            wake(Event::Unauthorized { text: r.text });
+            return;
+        }
         Err(LinkError::Rejected(r)) => {
             release();
             wake(Event::Refused { text: r.text });

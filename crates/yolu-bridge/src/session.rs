@@ -120,9 +120,12 @@ struct Outbox {
 pub struct Builder {
     pub model: Option<Model>,
     pub pose: Option<Vec<MeshPose>>,
-    /// 最後に送ったモデルの世代と、メッシュごとの頂点の数（ポーズの確かめ）。
+    /// 組み立て中のマテリアルの更新。
+    pub materials: Option<Vec<MaterialInfo>>,
+    /// 最後に送ったモデルの世代と、メッシュごとの頂点の数（ポーズの確かめ）・マテリアルの数（更新の確かめ）。
     pub sent_generation: u32,
     pub sent_vertices: Vec<usize>,
+    pub sent_materials: usize,
 }
 
 pub struct Session {

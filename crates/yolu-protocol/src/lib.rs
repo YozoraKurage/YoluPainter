@@ -11,14 +11,17 @@
 // 画素（4 バイト）・数（4 バイト）を chunks_exact で回すのは読みやすさのため（yolu-core と同じ）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
+pub mod auth;
 pub mod frame;
 pub mod host;
 pub mod link;
 pub mod message;
+pub mod private;
 pub mod shm;
 pub mod wire;
 
+pub use auth::{HelloCheck, LinkKey, ServerKey};
 pub use frame::{encode_message, Frame, FrameError, FrameReader};
-pub use link::{Connection, ConnectionReader, LinkError, Received, DEFAULT_LINK_NAME};
+pub use link::{Connection, ConnectionReader, LinkError, Received, Server, DEFAULT_LINK_NAME};
 pub use message::*;
 pub use shm::{ImageLayout, SharedImageReader, SharedImageWriter, ShmError, TileRead};

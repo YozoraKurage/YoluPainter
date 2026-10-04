@@ -6,9 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use interprocess::local_socket::traits::Listener as _;
 use yolu_protocol::host::PublishedSet;
-use yolu_protocol::link::{self, accept, error_message, wrong_direction};
+use yolu_protocol::link::{accept, error_message, wrong_direction};
 use yolu_protocol::*;
 
 /// 自己診断のスタンドアロンが受けたものの数。
@@ -33,6 +32,11 @@ pub struct YlbTestServerStats {
     pub last_pose_x: f32,
     pub last_pose_y: f32,
     pub last_pose_z: f32,
+    /// 受けたマテリアルの更新の数と、最後の更新のマテリアルの数・流し込み先の数の合計・一番目のマテリアルのシェーダー名の長さ。
+    pub materials_updates: u32,
+    pub last_materials_count: u32,
+    pub last_materials_routes: u32,
+    pub last_materials_shader_len: u32,
 }
 
 const PALETTE: [[u8; 3]; 8] = [
@@ -66,6 +70,7 @@ struct Shared {
 }
 
 pub struct TestServer {
+    name: String,
     stop: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
     thread: Option<JoinHandle<()>>,
@@ -77,7 +82,8 @@ fn lock(m: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 
 impl TestServer {
     pub fn start(name: &str, size: u32, tile_size: u32) -> std::io::Result<TestServer> {
-        let listener = link::listen_polling(name)?;
+        let listener = Server::bind(name, true)?;
+        let key = listener.key();
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(Shared {
             conn: None,
@@ -110,7 +116,7 @@ impl TestServer {
                         g.session
                     };
                     let Ok((conn, mut reader, _)) =
-                        accept(stream, "YoluPainter bridge test server", session)
+                        accept(stream, "YoluPainter bridge test server", session, &key)
                     else {
                         continue;
                     };
@@ -139,6 +145,7 @@ impl TestServer {
                 }
             })?;
         Ok(TestServer {
+            name: name.to_owned(),
             stop,
             shared,
             thread: Some(thread),
@@ -154,6 +161,17 @@ impl TestServer {
             }
         }
         lock(&self.shared).sets.clear();
+    }
+
+    /// 鍵のファイルを別の鍵に差し替える（古い・別の待ち受けの鍵が残っている状態。つなぐブリッジは鍵の断りを受ける）。
+    pub fn replace_key(&self) -> i32 {
+        let replaced = yolu_protocol::auth::key_path(&self.name)
+            .and_then(|path| yolu_protocol::LinkKey::generate()?.write_file(&path));
+        if replaced.is_ok() {
+            0
+        } else {
+            crate::ffi::YLB_E_STATE
+        }
     }
 
     pub fn stats(&self) -> YlbTestServerStats {
@@ -310,7 +328,26 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                 }
             }
         }
-        Message::Materials(_) | Message::Error(_) => {}
+        Message::Materials(m) => {
+            if m.generation != g.generation || m.materials.len() != g.stats.materials as usize {
+                g.stats.refused += 1;
+                let _ = conn.send(&error_message(
+                    ErrorCode::Refused,
+                    Kind::Materials as u16,
+                    "古い世代か、数の違うマテリアルの更新です".into(),
+                ));
+                return;
+            }
+            g.stats.materials_updates += 1;
+            g.stats.last_materials_count = m.materials.len() as u32;
+            g.stats.last_materials_routes = m.materials.iter().map(|x| x.routes.len() as u32).sum();
+            g.stats.last_materials_shader_len = m
+                .materials
+                .first()
+                .map(|x| x.shader.len() as u32)
+                .unwrap_or(0);
+        }
+        Message::Error(_) => {}
         _ => {}
     }
 }

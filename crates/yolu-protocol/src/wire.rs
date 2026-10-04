@@ -146,6 +146,10 @@ impl<'a> Reader<'a> {
     pub fn i64(&mut self) -> Result<i64, DecodeError> {
         Ok(i64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
+    /// 長さの決まったバイトの並び。
+    pub fn array<const N: usize>(&mut self) -> Result<[u8; N], DecodeError> {
+        Ok(self.take(N)?.try_into().unwrap())
+    }
     /// 数（u32）を読み、上限と残りのバイト（1 つあたり item_bytes）で確かめる。
     pub fn count(
         &mut self,
