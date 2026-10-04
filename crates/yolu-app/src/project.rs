@@ -10,8 +10,8 @@
 //! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書を
 //!   正本に戻し（`from_core`。Color の合成の PNG も書く）、描いていないセット・読むだけのセット・知らないエントリは開いた時のバイト列の
 //!   まま残す。セットの並び・名前・マテリアルの鍵・今のセットは `with_sets`、ファイルが無かったプロジェクトは `create`。書くのは
-//!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に残す。開いた後に外で
-//!   書き換えられていたら断る）。
+//!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に、設定の「退避を残す数」
+//!   （既定はすべて）だけ残す。開いた後に外で書き換えられていたら断る）。
 
 use std::path::{Path, PathBuf};
 
@@ -426,9 +426,10 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .project
         .as_ref()
         .is_some_and(|p| same_file(&p.path, path));
-    let stamp = if reuse {
+    let keep = state.prefs.backups;
+    let report = if reuse {
         let file = state.project.as_mut().expect("上で確かめた");
-        file.target.save(&project).map_err(|e| state.lang.io_error(&e))?
+        file.target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?
     } else {
         // 別の場所: あれば .ylp として読めるものだけを上書きする（読めないファイルを黙って潰さない）
         let mut target = if overwrite {
@@ -438,15 +439,14 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         } else {
             SaveTarget::create(path).map_err(|e| state.lang.io_error(&e))?
         };
-        let stamp = target.save(&project).map_err(|e| state.lang.io_error(&e))?;
+        let report = target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?;
         state.project = Some(ProjectFile {
             path: path.to_path_buf(),
             target,
             original: project.clone(),
         });
-        stamp
+        report
     };
-    let _ = stamp;
     if let Some(file) = state.project.as_mut() {
         file.original = project;
         file.path = path.to_path_buf();
@@ -493,19 +493,65 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             text += &state.lang.inactive_effects_not_in_composite(set, &inactive);
         }
     }
-    if overwrite {
+    text += &backup_text(state.lang, path, &report);
+    Ok(text)
+}
+
+/// 保存の知らせのうち退避の文。前の版は、退避する設定で上書きしたときだけ残る（退避しない設定・新規の保存では作らない）。
+/// 古い退避の整理で消せなかったものは、保存の成功と別に知らせる（保存は済んでいる）。
+fn backup_text(lang: Lang, path: &Path, report: &yolu_io::SaveReport) -> String {
+    let mut text = String::new();
+    if report.backup.is_some() {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        text += &state.lang.pick(format!(" 前の版は {name}-backups~ に残しました。"), format!(" Previous version: {name}-backups~."));
+        text += &lang.pick(format!(" 前の版は {name}-backups~ に残しました。"), format!(" Previous version: {name}-backups~."));
     }
-    Ok(text)
+    if let Some(first) = report.prune_failures.first() {
+        let n = report.prune_failures.len();
+        let reason = lang.file_error(&first.error);
+        text += &lang.pick(
+            format!(" 古い退避 {n} 件を消せませんでした（{reason}）。"),
+            format!(" Could not delete {n} old backup{} ({reason}).", if n == 1 { "" } else { "s" }),
+        );
+    }
+    text
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_backup_text_names_the_kept_version_and_the_old_ones_that_could_not_be_deleted() {
+        use yolu_io::{FileStamp, PruneFailure, SaveReport};
+        let report = |backup: bool, failures: usize| SaveReport {
+            stamp: FileStamp { sha256: String::new(), length: 0, modified: std::time::UNIX_EPOCH },
+            backup: backup.then(|| PathBuf::from("a.ylp-backups~/a-20260101T000000000Z.ylp")),
+            prune_failures: (0..failures)
+                .map(|i| PruneFailure {
+                    path: PathBuf::from(format!("old-{i}.ylp")),
+                    error: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                })
+                .collect(),
+        };
+        let path = Path::new("dir/a.ylp");
+        // 退避しない設定・新規の保存は、何も言わない
+        assert_eq!(backup_text(Lang::Ja, path, &report(false, 0)), "");
+        assert_eq!(backup_text(Lang::En, path, &report(false, 0)), "");
+        assert_eq!(backup_text(Lang::Ja, path, &report(true, 0)), " 前の版は a.ylp-backups~ に残しました。");
+        assert_eq!(backup_text(Lang::En, path, &report(true, 0)), " Previous version: a.ylp-backups~.");
+        // 整理で消せなかったものは件数と理由（OS のエラーの種類）。保存の成功の文は消さない
+        let one = backup_text(Lang::En, path, &report(true, 1));
+        assert_eq!(one, " Previous version: a.ylp-backups~. Could not delete 1 old backup (Access denied).");
+        let many = backup_text(Lang::En, path, &report(true, 3));
+        assert!(many.ends_with("Could not delete 3 old backups (Access denied)."), "{many}");
+        let ja = backup_text(Lang::Ja, path, &report(true, 2));
+        assert!(ja.contains("古い退避 2 件を消せませんでした（アクセスが拒否されました）"), "{ja}");
+        // 退避しない設定のとき整理は走らないが、理由だけがある報告でも文にする
+        assert!(backup_text(Lang::En, path, &report(false, 1)).starts_with(" Could not delete 1 old backup"));
+    }
 
     #[test]
     fn preview_flips_the_png_rows_to_bottom_up() {

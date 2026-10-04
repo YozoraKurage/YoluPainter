@@ -63,6 +63,13 @@ impl Lang {
             Error::SaveConflict(text) if text.contains("ロックのファイル") => {
                 self.pick(text.clone(), "Save lock file is a link".into())
             }
+            // 保存先の名前（.ylp で終わらない）と、保存の直前に外から作られた新規の保存先
+            Error::SaveConflict(text) if text.contains(".ylp で終わっていません") => {
+                self.pick(text.clone(), "The file name must end with .ylp".into())
+            }
+            Error::SaveConflict(text) if text.contains("外部で作られました") => {
+                self.pick(text.clone(), "A file appeared at the save target; not overwritten".into())
+            }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
                 format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 7）"),
@@ -899,6 +906,28 @@ mod tests {
             std::os::unix::fs::symlink(&dir, dir.join(".c.ylp.save.lock~")).unwrap();
             assert_eq!(refusal("c.ylp").1, "Save lock file is a link");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 保存先の名前と、保存の直前に外から作られた新規の保存先の拒否も、日英どちらでも言い分けられる。
+    #[test]
+    fn real_save_refusals_about_the_name_and_a_target_created_elsewhere_are_told_in_both_languages() {
+        use yolu_io::{Error, Project, SaveTarget};
+        let dir = std::env::temp_dir().join(format!("yolu-app-save-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sample = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../yolu-io/tests/fixtures/format1.ylp"));
+        let project = Project::read(sample).unwrap();
+        let error = SaveTarget::create(dir.join("a.txt")).unwrap_err();
+        assert!(matches!(error, Error::SaveConflict(_)), "{error:?}");
+        assert!(Lang::Ja.io_error(&error).contains(".ylp") && !Lang::Ja.io_error(&error).is_ascii());
+        assert_eq!(Lang::En.io_error(&error), "The file name must end with .ylp");
+        let mut target = SaveTarget::create(dir.join("b.ylp")).unwrap();
+        std::fs::write(dir.join("b.ylp"), b"made elsewhere").unwrap();
+        let error = target.save(&project).unwrap_err();
+        assert!(Lang::Ja.io_error(&error).contains("外部で作られました"), "{}", Lang::Ja.io_error(&error));
+        assert_eq!(Lang::En.io_error(&error), "A file appeared at the save target; not overwritten");
+        assert_eq!(std::fs::read(dir.join("b.ylp")).unwrap(), b"made elsewhere");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

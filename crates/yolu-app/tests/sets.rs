@@ -924,3 +924,112 @@ fn headless_open_paint_save_and_reopen() {
     assert_eq!(again.sets.current_index(), 1, "今のセットも保存する");
     assert_eq!(composite_pixel(&again.doc, 120, 100), [0, 255, 0, 255]);
 }
+
+// ───────── 退避の保持数・保存先の名前とフォルダー（保存の配線） ─────────
+
+/// 今のレイヤーに短い線を 1 本描いて、変更ありにする（保存のたびに内容が変わる）。
+fn paint_a_stroke(s: &mut yolu_app::state::AppState, x: f64) {
+    use yolu_app::engine::DVec2;
+    let layer = s.selected_layer.unwrap();
+    let brush = s.stroke_settings(false);
+    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    stroke.add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO).unwrap();
+    stroke.add_point(&mut s.doc, x + 6.0, 20.0, 1.0, DVec2::ZERO).unwrap();
+    s.doc.end_stroke(stroke).unwrap();
+    s.modified = true;
+}
+
+#[test]
+fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_app::state::AppState;
+    use yolu_io::BackupKeep;
+    let dir = TempDir::new("keep");
+    let path = dir.0.join("keep.ylp");
+    let mut s = AppState::new(64, 64);
+    assert_eq!(s.prefs.backups, BackupKeep::All, "既定はすべて残す");
+    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(2))));
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(!s.message.contains("前の版は"), "新しく作ったので前の版は無い");
+    for i in 0..4 {
+        paint_a_stroke(&mut s, 8.0 + 8.0 * i as f64);
+        s.apply(Action::SaveProject);
+        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        assert!(s.message.contains("前の版は keep.ylp-backups~ に残しました"), "{}", s.message);
+    }
+    // 4 回の上書きで、残るのは新しい 2 つだけ。今のファイルの 1 つ前の版が必ず入っている
+    assert_eq!(backups(&path).len(), 2);
+    let newest = yolu_io::backups(&path).unwrap().remove(0);
+    let before_last_save = std::fs::read(&newest).unwrap();
+    assert_ne!(before_last_save, std::fs::read(&path).unwrap());
+    assert!(yolu_io::Project::read(&before_last_save).is_ok(), "退避は .ylp として読める");
+    // 0: 退避しない（知らせにも出さず、すでにある 2 つは消さない）
+    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    paint_a_stroke(&mut s, 50.0);
+    s.apply(Action::SaveProject);
+    assert!(s.message.starts_with("保存しました") && !s.message.contains("前の版は"), "{}", s.message);
+    assert_eq!(backups(&path).len(), 2);
+    // すべて: 消さずに溜める
+    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
+    for i in 0..2 {
+        paint_a_stroke(&mut s, 20.0 + 8.0 * i as f64);
+        s.apply(Action::SaveProject);
+    }
+    assert_eq!(backups(&path).len(), 4);
+    // 英語の知らせ
+    s.set_language(yolu_app::lang::Lang::En);
+    paint_a_stroke(&mut s, 40.0);
+    s.apply(Action::SaveProject);
+    assert!(s.message.contains("Previous version: keep.ylp-backups~."), "{}", s.message);
+}
+
+#[test]
+fn saving_as_over_another_file_follows_the_setting_too() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_app::state::AppState;
+    use yolu_io::BackupKeep;
+    let dir = TempDir::new("keep-as");
+    let (a, b) = (dir.0.join("a.ylp"), dir.0.join("b.ylp"));
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::SaveProjectAs(a.clone()));
+    paint_a_stroke(&mut s, 10.0);
+    s.apply(Action::SaveProjectAs(b.clone()));
+    // b は新しい保存先なので退避なし。a に別名で保存し直す（a は上書き）と a の前の版を数に従って残す
+    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    paint_a_stroke(&mut s, 20.0);
+    s.apply(Action::SaveProjectAs(a.clone()));
+    assert!(s.message.starts_with("保存しました") && !s.message.contains("前の版は"), "{}", s.message);
+    assert!(backups(&a).is_empty());
+    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(1))));
+    paint_a_stroke(&mut s, 30.0);
+    s.apply(Action::SaveProjectAs(a.clone()));
+    assert!(s.message.contains("前の版は a.ylp-backups~"), "{}", s.message);
+    assert_eq!(backups(&a).len(), 1);
+}
+
+#[test]
+fn a_name_without_ylp_is_refused_and_a_missing_folder_is_created() {
+    use yolu_app::state::AppState;
+    let dir = TempDir::new("names");
+    let mut s = AppState::new(64, 64);
+    for bad in ["noext", "pic.png", "doc.ylp.bak", "doc.ylp~"] {
+        s.apply(Action::SaveProjectAs(dir.0.join("sub").join(bad)));
+        assert!(s.message.starts_with("保存できません") && s.message.contains(".ylp"), "{bad}: {}", s.message);
+        assert!(s.project.is_none(), "{bad}");
+    }
+    assert!(!dir.0.join("sub").exists(), "断った保存はフォルダーも作らない");
+    s.set_language(yolu_app::lang::Lang::En);
+    s.apply(Action::SaveProjectAs(dir.0.join("noext")));
+    assert!(s.message.ends_with("The file name must end with .ylp"), "{}", s.message);
+    // フォルダーは、なければ保存のときに作る（大文字の拡張子でも保存できる）
+    let nested = dir.0.join("a").join("b").join("Deep.YLP");
+    s.apply(Action::SaveProjectAs(nested.clone()));
+    assert!(s.message.starts_with("Saved"), "{}", s.message);
+    assert!(nested.is_file());
+    assert_eq!(s.project_name, "Deep");
+    // 開き直せる
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(nested.clone()));
+    assert!(again.project.is_some(), "{}", again.message);
+}

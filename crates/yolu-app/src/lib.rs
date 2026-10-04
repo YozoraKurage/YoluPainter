@@ -17,6 +17,7 @@ pub mod matpaint;
 pub mod model;
 pub mod panels;
 pub mod pen;
+pub mod prefs;
 pub mod project;
 pub mod psd;
 pub mod region;

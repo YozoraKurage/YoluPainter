@@ -250,6 +250,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .radio(l == Lang::En),
             Entry::Separator,
             Entry::item(
+                l.pick("設定…", "Settings…"),
+                Action::Prefs(crate::prefs::PrefsAction::Open),
+            ),
+            Entry::item(
                 l.pick("パネルの並びを戻す", "Reset Panel Layout"),
                 Action::ResetLayout,
             ),

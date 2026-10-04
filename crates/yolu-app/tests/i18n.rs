@@ -245,6 +245,24 @@ fn japanese_left(h: &Harness<'_, YoluApp>, data: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// 矩形の中に収まっている文字だけ（窓の中身。順は描いた順）。
+fn texts_inside(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
+    fn walk(shape: &Shape, area: Rect, out: &mut Vec<String>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, area, out)),
+            Shape::Text(text) if area.expand(1.0).contains_rect(Rect::from_min_size(text.pos, text.galley.size())) => {
+                out.push(text.galley.job.text.clone());
+            }
+            _ => {}
+        }
+    }
+    let mut texts = Vec::new();
+    for shape in &h.output().shapes {
+        walk(&shape.shape, area, &mut texts);
+    }
+    texts
+}
+
 fn all_texts(h: &Harness<'_, YoluApp>) -> Vec<String> {
     let mut texts = Vec::new();
     for shape in &h.output().shapes {
@@ -445,7 +463,7 @@ fn unwritable_settings_report_once_and_do_not_break_the_app() {
     h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(h.state().state.lang, Lang::En, "書けなくても言語は替わる");
-    assert_eq!(h.state().state.message, "Cannot save language setting.");
+    assert_eq!(h.state().state.message, "Cannot save the settings.");
     assert!(!path.exists());
     // 同じ選択で毎フレーム書き直さない（知らせを消したら、出し直さない）
     h.state_mut().state.message.clear();
@@ -479,6 +497,249 @@ fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing() {
     let h = app_with_settings(&path);
     assert_eq!(h.state().state.lang, Lang::En);
     assert_eq!(h.state().state.message, "");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn backups_to_keep_is_written_when_changed_and_restored_at_startup() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_io::BackupKeep;
+    let dir = settings_dir("backups");
+    let path = dir.join("settings.conf");
+    let mut h = app_with_settings(&path);
+    assert_eq!(h.state().state.prefs.backups, BackupKeep::All, "設定が無い初回はすべて残す");
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(5))));
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\nbackups=5\n");
+    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=5\n", "言語を替えても退避の数は残る");
+    drop(h);
+    // 次の起動は、書いた数で始まる（知らせは無い）
+    let mut h = app_with_settings(&path);
+    assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(5));
+    assert_eq!(h.state().state.lang, Lang::En);
+    assert_eq!(h.state().state.message, "");
+    // 0 も書いて戻る。「すべて」に戻すと行が消える。同じ選択では書き直さない
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=0\n");
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
+    std::fs::write(&path, "language=en\nbackups=9\n").unwrap();
+    h.run();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=9\n", "選択が変わらなければ書かない");
+    drop(h);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_language() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_io::BackupKeep;
+    let dir = settings_dir("backups-broken");
+    let path = dir.join("settings.conf");
+    for (bad, shown) in [("5000", "5000"), ("-1", "-1"), ("many", "many"), ("2.5", "2.5")] {
+        let text = format!("language=en\nbackups={bad}\n");
+        std::fs::write(&path, &text).unwrap();
+        let mut h = app_with_settings(&path);
+        assert_eq!(h.state().state.lang, Lang::En, "言語は読めたまま");
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::All, "{bad}");
+        assert_eq!(h.state().state.message, format!("Invalid Backups to Keep setting ({shown}); keeping all."));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "選ぶまで壊れたファイルには触らない");
+        h.state_mut().state.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(3))));
+        h.run();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=3\n", "選び直すと直る");
+    }
+    // 日本語は日本語で理由を言う
+    std::fs::write(&path, "backups=1001\n").unwrap();
+    let h = app_with_settings(&path);
+    assert_eq!(h.state().state.message, "退避を残す数の設定が正しくありません（1001）。すべて残します。");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages() {
+    use egui_kittest::kittest::NodeT;
+    use yolu_app::prefs;
+    use yolu_io::BackupKeep;
+    for lang in Lang::ALL {
+        let mut h = english_app_sized(1280.0, 800.0, lang);
+        let (view, item) = (lang.pick("表示", "View"), lang.pick("設定…", "Settings…"));
+        let (title, label, keep_all) =
+            (lang.pick("設定", "Settings"), lang.pick("退避を残す数", "Backups to keep"), lang.pick("すべて残す", "Keep all"));
+        assert!(prefs::last_rect(&h.ctx).is_none());
+        let at = menu_title(&h, view).center();
+        click(&mut h, at);
+        let at = popup_item(&h, item).center();
+        click(&mut h, at);
+        assert!(h.state().state.prefs.open, "{lang:?}");
+        h.run();
+        // 窓は画面の中にある
+        let rect = prefs::last_rect(&h.ctx).expect("窓を描いた");
+        assert!(Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0)).contains_rect(rect), "{rect:?}");
+        // 窓の中の文字は、窓の名前・欄の名前・チェックの名前・値だけ（説明文・注記・開発用の数を置かない。閉じるは絵とツールチップ）。
+        // 値は、画面に出している数（すべて残す間は、最後に選んだ数）
+        let only = |h: &Harness<'_, YoluApp>, value: &str, what: &str| {
+            let mut shown = texts_inside(h, rect);
+            shown.sort();
+            let mut want = vec![title.to_owned(), label.to_owned(), keep_all.to_owned(), value.to_owned()];
+            want.sort();
+            assert_eq!(shown, want, "{lang:?} {what}");
+        };
+        only(&h, "10", "開いた直後");
+        if lang == Lang::En {
+            assert_english(&h, "settings window", &[]);
+        }
+        // 「すべて残す」は入っている。外すと最後に選んだ数（まだ無ければ 10）になり、入れ直すとすべてに戻る
+        let checked = |h: &Harness<'_, YoluApp>| {
+            format!("{:?}", h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all).accesskit_node().toggled()) == "Some(True)"
+        };
+        assert!(checked(&h));
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all).click();
+        h.run();
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(10), "{lang:?}");
+        assert!(!checked(&h));
+        only(&h, "10", "外した直後");
+        h.state_mut().state.apply(Action::Prefs(prefs::PrefsAction::SetBackups(BackupKeep::Count(0))));
+        h.run();
+        assert!(!checked(&h));
+        only(&h, "0", "0 を選んだ");
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all).click();
+        h.run();
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::All);
+        only(&h, "0", "すべて残す（最後に選んだ数のまま）");
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all).click();
+        h.run();
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(0), "{lang:?}: 最後に選んだ数に戻る");
+        // 閉じるボタンで閉じる。窓の文字は画面から消える
+        h.get_by_label(lang.pick("閉じる", "Close")).click();
+        h.run();
+        assert!(!h.state().state.prefs.open);
+        let texts = all_texts(&h);
+        assert!(!texts.iter().any(|t| t == label || t == keep_all), "{lang:?}: {texts:?}");
+    }
+}
+
+/// 退避の数のスライダーをドラッグして選ぶ: 丸め・上限と 0 の端・ドラッグの間は書かず離すと 1 回だけ書く・Esc で取り消すと
+/// 押す前の数が残り何も書かない。
+#[test]
+fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_io::BackupKeep;
+    let dir = settings_dir("backups-drag");
+    let path = dir.join("settings.conf");
+    std::fs::write(&path, "language=en\nbackups=10\n").unwrap();
+    let mut h = app_with_settings(&path);
+    assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(10));
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.run();
+    let slider = h.get_by_role_and_label(egui::accesskit::Role::Slider, "Backups to keep").rect();
+    let y = slider.bottom() - 4.0;
+    let at = |fraction: f32| egui::pos2(slider.left() + slider.width() * fraction, y);
+    let backups = |h: &Harness<'_, YoluApp>| h.state().state.prefs.backups;
+    // 書いたかどうかは、ファイルを見張り用の中身に替えておき、書き換えられたかで見る
+    let watch = || std::fs::write(&path, "watch\n").unwrap();
+    let untouched = || assert_eq!(std::fs::read_to_string(&path).unwrap(), "watch\n", "書いてはいけない");
+    let primary = egui::PointerButton::Primary;
+    let shows = |h: &Harness<'_, YoluApp>, value: &str| {
+        let rect = yolu_app::prefs::last_rect(&h.ctx).unwrap();
+        assert!(texts_inside(h, rect).iter().any(|t| t == value), "{value}: {:?}", texts_inside(h, rect));
+    };
+
+    // ドラッグの間は値が動くが、設定のファイルへは書かない
+    watch();
+    press(&h, at(0.25), primary);
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(250));
+    assert!(h.state().state.prefs.dragging);
+    untouched();
+    move_to(&h, at(0.75));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(750));
+    untouched();
+    // 上限と 0 の端: 溝の外へ出しても、1000 と 0 で止まる
+    move_to(&h, egui::pos2(slider.right() + 80.0, y));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(1000));
+    shows(&h, "1000");
+    untouched();
+    move_to(&h, egui::pos2(slider.left() - 80.0, y));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(0));
+    shows(&h, "0");
+    untouched();
+    move_to(&h, at(0.75));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(750));
+    shows(&h, "750");
+    untouched();
+    // 離すと、そのときの数を 1 回だけ書く（そのあとのフレームでは書き直さない）
+    release(&h, at(0.75), primary);
+    h.step();
+    h.run();
+    assert!(!h.state().state.prefs.dragging);
+    assert_eq!(backups(&h), BackupKeep::Count(750));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=750\n");
+    watch();
+    h.step();
+    h.step();
+    untouched();
+
+    // 小数の位置は四捨五入（333.3 → 333）
+    drag(&mut h, &[at(0.3333)]);
+    assert_eq!(backups(&h), BackupKeep::Count(333));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=333\n");
+
+    // Esc で止めると、押す前の数に戻り、続きのドラッグも、離したときも書かない
+    watch();
+    press(&h, at(0.5), primary);
+    h.step();
+    move_to(&h, at(0.9));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(900));
+    key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(333), "押す前の数に戻る");
+    assert!(!h.state().state.prefs.dragging);
+    shows(&h, "333");
+    untouched();
+    move_to(&h, at(0.2));
+    h.step();
+    assert_eq!(backups(&h), BackupKeep::Count(333), "止めたあとのドラッグは受けない");
+    release(&h, at(0.2), primary);
+    h.step();
+    h.run();
+    assert_eq!(backups(&h), BackupKeep::Count(333));
+    untouched();
+    shows(&h, "333");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 前の起動で選んだ数が、「すべて残す」を外したときに戻る数になる（起動時に読んだ数を、最後に選んだ数として覚える）。
+#[test]
+fn the_saved_count_is_what_keep_all_returns_to_after_a_restart() {
+    use yolu_app::prefs::PrefsAction;
+    use yolu_io::BackupKeep;
+    let dir = settings_dir("backups-remembered");
+    let path = dir.join("settings.conf");
+    for saved in [5u32, 0, 1000] {
+        std::fs::write(&path, format!("language=en\nbackups={saved}\n")).unwrap();
+        let mut h = app_with_settings(&path);
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(saved));
+        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.run();
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all").click();
+        h.run();
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::All);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
+        // 外すと、既定の 10 ではなく保存してあった数に戻る
+        h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all").click();
+        h.run();
+        assert_eq!(h.state().state.prefs.backups, BackupKeep::Count(saved));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("language=en\nbackups={saved}\n"));
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }
 

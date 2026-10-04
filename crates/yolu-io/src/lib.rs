@@ -19,7 +19,10 @@ pub use project::{
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
-pub use store::{FileStamp, SaveTarget};
+pub use store::{
+    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveTarget,
+    MAX_BACKUPS_TO_KEEP,
+};
 
 /// 画面は種類から短い理由を作る。Display は内部の詳細診断を保つ。
 #[derive(Debug)]

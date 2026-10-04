@@ -480,6 +480,8 @@ pub enum Action {
     Psd(crate::psd::PsdAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
     Update(crate::update::UpdateAction),
+    /// 設定の窓と、退避を残す数。
+    Prefs(crate::prefs::PrefsAction),
 }
 
 impl Action {
@@ -577,6 +579,8 @@ pub struct AppState {
     pub stencil: crate::stencil::StencilState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
+    /// 設定（退避を残す数）と設定の窓。
+    pub prefs: crate::prefs::PrefsState,
 }
 
 /// ファイルの窓の頼み。
@@ -698,6 +702,7 @@ impl AppState {
             psd: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             update: crate::update::UpdateState::detect(),
+            prefs: crate::prefs::PrefsState::default(),
         }
     }
 
@@ -1056,6 +1061,7 @@ impl AppState {
             Action::Export(a) => self.export_apply(a),
             Action::Psd(a) => self.psd_apply(a),
             Action::Update(a) => self.update_apply(a),
+            Action::Prefs(a) => self.prefs_apply(a),
         }
     }
 }

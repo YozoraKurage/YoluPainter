@@ -14,6 +14,7 @@ use crate::panels::{
     view3d::View3dHost, view3d::View3dSlot,
 };
 use crate::pen::{PenInput, PenSample};
+use crate::settings::{Problem, Settings};
 use crate::shell;
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
 use crate::ui::fonts::{self, FontReport};
@@ -188,7 +189,7 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
-    settings: Option<(std::path::PathBuf, crate::lang::Lang)>,
+    settings: Option<(std::path::PathBuf, Settings)>,
 }
 
 impl YoluApp {
@@ -224,26 +225,26 @@ impl YoluApp {
         }
     }
 
-    /// 設定のファイル（無ければ保存しない）から言語を決めて作る（`setup` は呼ぶ側で）。最初のレイヤー・テクスチャセット・
-    /// プロジェクトの名前がその言語になる。読めない設定は既定の日本語に戻し、知らせる（ファイルは、言語を選び直すまで触らない）。
+    /// 設定のファイル（無ければ保存しない）から言語と退避を残す数を決めて作る（`setup` は呼ぶ側で）。最初のレイヤー・テクスチャセット・
+    /// プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（日本語・すべて残す）に戻し、理由を知らせる
+    /// （ファイルは、設定を選び直すまで触らない）。
     fn with_settings(settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
-        let (lang, unreadable) = match settings.as_deref().map(crate::settings::load) {
-            Some(Ok(lang)) => (lang, false),
-            Some(Err(_)) => (crate::lang::Lang::default(), true),
-            None => (crate::lang::Lang::default(), false),
-        };
+        let (loaded, problems) = settings.as_deref().map(crate::settings::load).unwrap_or_default();
+        let lang = loaded.lang;
         let mut app = YoluApp::with_state(
             AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
             pen,
         );
-        if let Some(message) = startup_message(lang, unreadable, app.pen.is_hooked()) {
+        // 「すべて残す」を外したときに戻る数も、保存してあった数にする（直に代入すると既定の 10 に戻ってしまう）
+        app.state.prefs_apply(crate::prefs::PrefsAction::SetBackups(loaded.backups));
+        if let Some(message) = startup_message(lang, &problems, app.pen.is_hooked()) {
             app.state.message = message;
         }
         // 「起動時に更新を確かめる」の選択は、言語の設定と同じフォルダの別のファイル
         if let Some(path) = settings.as_deref().and_then(crate::update::config::path_for) {
             app.state.update.attach_config(path);
         }
-        app.settings = settings.map(|path| (path, lang));
+        app.settings = settings.map(|path| (path, loaded));
         app
     }
 
@@ -255,18 +256,21 @@ impl YoluApp {
         app
     }
 
-    /// 言語の選択が変わっていれば、設定のファイルに書く。書けなくても動作は変えず、知らせるだけ。
-    /// 失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
-    fn persist_language(&mut self) {
+    /// 設定（言語・退避を残す数）の選択が変わっていれば、設定のファイルに書く。書けなくても動作は変えず、知らせるだけ。
+    /// 失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。退避の数は、スライダーをドラッグ
+    /// している間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    fn persist_settings(&mut self) {
         let Some((path, saved)) = &mut self.settings else {
             return;
         };
-        if *saved == self.state.lang {
+        let backups = if self.state.prefs.dragging { saved.backups } else { self.state.prefs.backups };
+        let now = Settings { lang: self.state.lang, backups };
+        if *saved == now {
             return;
         }
-        *saved = self.state.lang;
-        if crate::settings::save(path, *saved).is_err() {
-            self.state.message = saved.pick("言語の設定を保存できません。", "Cannot save language setting.").into();
+        *saved = now;
+        if crate::settings::save(path, &now).is_err() {
+            self.state.message = now.lang.pick("設定を保存できません。", "Cannot save the settings.").into();
         }
     }
 
@@ -717,6 +721,7 @@ impl YoluApp {
         self.popups(&ctx, &bar);
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
+        crate::prefs::show(&ctx, &mut self.state);
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す
@@ -810,14 +815,11 @@ fn startup_project(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option
         .then_some(path)
 }
 
-/// 起動時の状態の帯の知らせ（読めなかった言語の設定と、Windows Ink の接続。両方あれば両方）。
-fn startup_message(lang: crate::lang::Lang, settings_unreadable: bool, ink_connected: bool) -> Option<String> {
-    let mut parts = Vec::new();
-    if settings_unreadable {
-        parts.push(lang.pick("言語の設定を読めません。", "Cannot read the language setting."));
-    }
+/// 起動時の状態の帯の知らせ（既定へ戻した設定の理由と、Windows Ink の接続。あれば全部）。
+fn startup_message(lang: crate::lang::Lang, problems: &[Problem], ink_connected: bool) -> Option<String> {
+    let mut parts: Vec<String> = problems.iter().map(|p| p.text(lang)).collect();
     if ink_connected {
-        parts.push(lang.pick("Windows Ink のペンを受けています。", "Windows Ink connected."));
+        parts.push(lang.pick("Windows Ink のペンを受けています。", "Windows Ink connected.").into());
     }
     (!parts.is_empty()).then(|| parts.join(" "))
 }
@@ -825,7 +827,7 @@ fn startup_message(lang: crate::lang::Lang, settings_unreadable: bool, ink_conne
 impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
-        self.persist_language();
+        self.persist_settings();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -912,12 +914,16 @@ mod tests {
     }
 
     #[test]
-    fn startup_message_keeps_both_notices() {
-        assert_eq!(startup_message(Lang::Ja, false, false), None);
-        assert_eq!(startup_message(Lang::En, false, true).as_deref(), Some("Windows Ink connected."));
-        assert_eq!(startup_message(Lang::En, true, false).as_deref(), Some("Cannot read the language setting."));
-        // Windows Ink の知らせで、読めなかった設定の知らせを上書きしない
-        let both = startup_message(Lang::Ja, true, true).unwrap();
-        assert!(both.contains("言語の設定を読めません") && both.contains("Windows Ink"), "{both}");
+    fn startup_message_keeps_all_notices() {
+        assert_eq!(startup_message(Lang::Ja, &[], false), None);
+        assert_eq!(startup_message(Lang::En, &[], true).as_deref(), Some("Windows Ink connected."));
+        assert_eq!(startup_message(Lang::En, &[Problem::Unreadable], false).as_deref(), Some("Cannot read the settings."));
+        assert_eq!(
+            startup_message(Lang::En, &[Problem::Language("x".into())], false).as_deref(),
+            Some("Cannot read the language setting.")
+        );
+        // Windows Ink の知らせで、読めなかった設定の知らせを上書きしない。理由が 2 つなら 2 つ
+        let both = startup_message(Lang::Ja, &[Problem::Language("x".into()), Problem::Backups("-2".into())], true).unwrap();
+        assert!(both.contains("言語の設定を読めません") && both.contains("退避を残す数") && both.contains("Windows Ink"), "{both}");
     }
 }
