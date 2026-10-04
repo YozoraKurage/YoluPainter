@@ -4789,11 +4789,11 @@
           },
           {
             "path": "crates/yolu-app/assets/icons/tools/select-pen.png",
-            "sha256": "074766e310a30ecac856ee2f19b521fe04c3e40ba343527ab0669b827cba7600"
+            "sha256": "c918454008fef536384e03095ea8189c63648b9b1b3a2bedadd9cc77012b80a2"
           },
           {
             "path": "crates/yolu-app/assets/icons/tools/select-pen_selected.png",
-            "sha256": "c54ab11f5778a0baa58576700607f86b98c60385c0497dc31296b01262d70aac"
+            "sha256": "c8173b67c213687fc994c6c9662332bff3be6c2f01863fe53024a1a97b0c95a2"
           },
           {
             "path": "crates/yolu-app/assets/icons/tools/select-polygon.png",
@@ -4805,11 +4805,11 @@
           },
           {
             "path": "crates/yolu-app/assets/icons/tools/select-rectangle.png",
-            "sha256": "803ba0d9c97f0183dfde1db516c2c734dd0ecc6f27411ba839f4fa3cb97f7bff"
+            "sha256": "5eed08ef7ba57cd32dee89d7e984934cfebab373981113e87f3409a71e9272d6"
           },
           {
             "path": "crates/yolu-app/assets/icons/tools/select-rectangle_selected.png",
-            "sha256": "ebc4f07f78d1577d4aa0fb4365aea3605c9ac5f948d27d46a3805a452935a67e"
+            "sha256": "6f9cfa6c4c6cb5c43752119d8bee8bacd8aada572855a2c9e915f32153b7fd68"
           },
           {
             "path": "crates/yolu-app/assets/icons/tune.png",
@@ -4845,7 +4845,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "5e6b964d43c9981aecabc32d8d820805616aef2fb98f1513cdd54af98282bb87"
+          "sha256": "a6517de71131e1d5d8f86229ed57abe809ce0bacc72369eefa11dd2a2aaf3fa5"
         }
       },
       {

@@ -5,7 +5,7 @@ Fluent は [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluen
 Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT 許諾。原文は後段に保持する。
 元 SVG の取得コミットは記録されていないため、版を推定しない。確認済み PNG の SHA-256 は `tools/licenses-reviewed.json` に固定する。
 
-`tools/` の通常版は regular、`_selected` は Fluent の filled・Phosphor の fill（楕円は bold、多角形は通常版と同じ regular）。
+`tools/` の通常版は regular、`_selected` は Fluent の filled・Phosphor の fill（長方形と楕円の選択は bold、多角形は通常版と同じ regular）。
 その他は regular（`lock_filled` のみ filled）。`arrow_maximize`・`arrow_minimize`・`copy_add` はスタンドアロン側の追加。
 多角形選択の通常・選択中の 2 枚は Unity 版の `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
 
@@ -99,12 +99,12 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/polygon-fill_selected` | fluent | `triangle` | filled |
 | `tools/select-ellipse` | phosphor | `circle-dashed` | regular |
 | `tools/select-ellipse_selected` | phosphor | `circle-dashed` | bold |
-| `tools/select-pen` | phosphor | `selection-plus` | regular |
-| `tools/select-pen_selected` | phosphor | `selection-plus` | bold |
+| `tools/select-pen` | phosphor | `highlighter` | regular |
+| `tools/select-pen_selected` | phosphor | `highlighter` | fill |
 | `tools/select-polygon` | phosphor | `polygon` | regular |
 | `tools/select-polygon_selected` | phosphor | `polygon` | regular |
-| `tools/select-rectangle` | fluent | `select_object` | regular |
-| `tools/select-rectangle_selected` | fluent | `select_object` | filled |
+| `tools/select-rectangle` | phosphor | `selection` | regular |
+| `tools/select-rectangle_selected` | phosphor | `selection` | bold |
 | `tune` | fluent | `options` | regular |
 | `view_in_ar` | fluent | `cube` | regular |
 | `vignette` | fluent | `image_circle` | regular |
@@ -116,7 +116,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 
 Icons added for the selection tools (same process; Fluent regular unless noted): `shape_union` (shape_union), `shape_subtract`
 (shape_subtract), `shape_intersect` (shape_intersect), `edit` (edit), `quick_mask` (shape_organic), and the selection pen tool icon
-`tools/select-pen` (Phosphor selection-plus regular) with `tools/select-pen_selected` (Phosphor selection-plus bold).
+`tools/select-pen` (Phosphor highlighter regular) with `tools/select-pen_selected` (Phosphor highlighter fill). The rectangle selection
+tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Phosphor selection regular and bold.
 
 `uv_wireframe` is copied unchanged from the Unity package: Phosphor `polygon` (MIT).
 
