@@ -345,7 +345,7 @@ impl YoluApp {
 
     /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
-    /// 退避の数は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    /// 退避の数と UV ワイヤーフレームの色は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
         crate::colorsets::persist(&mut self.state);
         let Some((path, saved)) = &mut self.settings else {
@@ -354,6 +354,7 @@ impl YoluApp {
         let mut now = self.state.settings();
         if self.state.prefs.dragging {
             now.backups = saved.backups;
+            now.uv_wireframe_color = saved.uv_wireframe_color;
         }
         if *saved == now {
             return;

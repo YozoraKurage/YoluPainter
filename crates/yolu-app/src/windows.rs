@@ -229,6 +229,7 @@ pub fn show_list(
 
 /// 毎フレーム: 窓と仕事の札を描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
+    crate::shortcuts::show(ctx, app);
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
     if app.bake.is_baking()
         || app.bake.is_checking()

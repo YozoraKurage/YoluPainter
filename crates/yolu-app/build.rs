@@ -5,10 +5,14 @@
 
 use std::{env, path::Path};
 
+mod shortcut_catalog_build;
+
+
 /// exe のアイコン（ロゴ。インストーラーも同じファイルを使う）。
 const ICON: &str = "assets/logo/yolupainter.ico";
 
 fn main() {
+    shortcut_catalog_build::generate();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={ICON}");
     if let Some(revision) = git(&["rev-parse", "--short", "HEAD"]) {

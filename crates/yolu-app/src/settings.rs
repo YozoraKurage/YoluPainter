@@ -151,6 +151,8 @@ pub struct Settings {
     /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定の窓には無い）。
     pub selection_bar: bool,
     pub navigation: crate::view3d::navigation::Preferences,
+    pub uv_wireframe: bool,
+    pub uv_wireframe_color: [u8; 4],
 }
 
 impl Default for Settings {
@@ -168,6 +170,8 @@ impl Default for Settings {
             backups: BackupKeep::All,
             selection_bar: true,
             navigation: crate::view3d::navigation::Preferences::default(),
+            uv_wireframe: true,
+            uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
         }
     }
 }
@@ -326,6 +330,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "compositing" => lang.pick("表示の合成", "Display compositing"),
         "library_folder" => lang.pick("棚の場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
+        "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
         _ => lang.pick("設定", "Setting"),
     }
 }
@@ -395,6 +400,8 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
             "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
+            "uv_wireframe" => settings.uv_wireframe = value != "off",
+            "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -487,6 +494,7 @@ fn render(settings: &Settings) -> String {
         text += "selection_bar=off\n";
     }
     settings.navigation.write(&mut text);
+    crate::uv_wireframe::save_settings(&mut text, settings);
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -556,6 +564,8 @@ mod tests {
             backups: BackupKeep::Count(7),
             selection_bar: true,
             navigation: crate::view3d::navigation::Preferences::default(),
+            uv_wireframe: true,
+            uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
         }
     }
 

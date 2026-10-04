@@ -391,6 +391,7 @@ fn window_height() -> f32 {
         + t::SLIDER_ROW_HEIGHT
         + GAP // 退避を残す数
         + dropdown // すべて残す
+        + dropdown // UV ワイヤーフレーム
         + 8.0
 }
 
@@ -626,6 +627,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             Some(lang.pick("退避を消さない", "Never delete backups")),
             enabled,
         );
+        dragging |= crate::uv_wireframe::settings_row(ui, &mut rows, app);
         if next != keep_all {
             let keep = if next { BackupKeep::All } else { BackupKeep::Count(backup_count) };
             requests.push(Request::Do(PrefsAction::SetBackups(keep)));

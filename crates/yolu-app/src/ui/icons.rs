@@ -61,6 +61,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "data_scatter",
     "ink_stroke",
     "grid_dots",
+    "uv_wireframe",
     "arrow_maximize",
     "arrow_minimize",
     "copy_add",

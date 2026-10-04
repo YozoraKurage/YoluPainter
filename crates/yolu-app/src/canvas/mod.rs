@@ -61,6 +61,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     crate::selection::bar::show(ui, app, &view, rect);
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
+    crate::uv_wireframe::show(ui, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
     crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
     // パスの道具: 選んでいる層の 2D のパスの線と点

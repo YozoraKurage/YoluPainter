@@ -118,6 +118,8 @@ Icons added for the selection tools (same process; Fluent regular unless noted):
 (shape_subtract), `shape_intersect` (shape_intersect), `edit` (edit), `quick_mask` (shape_organic), and the selection pen tool icon
 `tools/select-pen` (Phosphor selection-plus regular) with `tools/select-pen_selected` (Phosphor selection-plus bold).
 
+`uv_wireframe` is copied unchanged from the Unity package: Phosphor `polygon` (MIT).
+
 ## Fluent UI System Icons
 
 ```

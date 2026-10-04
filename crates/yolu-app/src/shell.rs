@@ -239,6 +239,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         3 => crate::selection::menu::select_menu(app),
         4 => crate::fx::menu::menu_entries(app),
         5 => vec![
+            crate::uv_wireframe::menu_entry(app),
             Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
             Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
@@ -337,7 +338,11 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         Action::About,
     );
     if !app.update.enabled() {
-        return vec![Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder), about];
+        return vec![
+            crate::shortcuts::menu_entry(l),
+            Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder),
+            about,
+        ];
     }
     let busy = app.update.is_busy();
     let mut entries = Vec::new();
@@ -364,6 +369,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         .checked(on),
     );
     entries.push(Entry::Separator);
+    entries.push(crate::shortcuts::menu_entry(l));
     entries.push(Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder));
     entries.push(about);
     entries

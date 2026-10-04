@@ -54,6 +54,8 @@ pub mod ui;
 pub mod update;
 pub mod view3d;
 pub mod windows;
+pub mod uv_wireframe;
+pub mod shortcuts;
 
 pub use app::{Tab, YoluApp};
 

@@ -254,10 +254,40 @@ fn help_item(state: &AppState, label: &str) -> (bool, yolu_app::ui::menu::Check)
 fn headless_a_build_without_a_public_key_shows_nothing_and_sends_nothing() {
     let mut state = AppState::new(64, 64);
     assert!(!state.update.enabled());
-    // 更新の項目は出さず、ログのフォルダと「について」だけ（ログのフォルダは公開鍵の有無に関わらず出す）
+    // 更新の項目（更新・確認・自動確認）は出ない。ショートカット・ログのフォルダ・「について」は公開鍵の有無によらず出る
+
+    let updates = shell::menu_entries(&state, shell::HELP_MENU)
+
+        .iter()
+
+        .filter(|e| {
+
+            matches!(
+
+                e,
+
+                yolu_app::ui::menu::Entry::Item {
+
+                    action: Action::Update(_),
+
+                    ..
+
+                }
+
+            )
+
+        })
+
+        .count();
+
+    assert_eq!(updates, 0, "{:?}", help_labels(&state));
+
     assert_eq!(
+
         help_labels(&state),
-        ["ログのフォルダを開く", "YoluPainter について"]
+
+        ["ショートカット", "ログのフォルダを開く", "YoluPainter について"]
+
     );
     state.update_startup();
     assert!(!state.update.is_asking() && !state.update.window_open());

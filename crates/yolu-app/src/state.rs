@@ -476,6 +476,8 @@ pub struct OpenPopup {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     ScreenPick(crate::screen_pick::Mode),
+    ToggleUvWireframe,
+    ShowShortcuts,
     /// 文書を変える M2 の操作（層の種類・マスク・チャンネルごとの合成・文書のチャンネル。1 つが 1 回の Undo）。
     M2(Edit),
     /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
@@ -590,6 +592,8 @@ impl Action {
             Self::OpenLogFolder => "OpenLogFolder",
             Self::ToggleRulerSnap => "ToggleRulerSnap",
             Self::ScreenPick(..) => "ScreenPick",
+            Self::ToggleUvWireframe => "ToggleUvWireframe",
+            Self::ShowShortcuts => "ShowShortcuts",
             Self::Quit => "Quit",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -776,6 +780,8 @@ pub struct AppState {
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
     pub prefs: crate::prefs::PrefsState,
+    pub uv_wireframe: crate::uv_wireframe::Wireframe,
+    pub shortcuts: crate::shortcuts::ShortcutWindow,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
@@ -938,6 +944,8 @@ impl AppState {
             drafting: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
+            uv_wireframe: crate::uv_wireframe::Wireframe::default(),
+            shortcuts: crate::shortcuts::ShortcutWindow::default(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
             crash: Default::default(),
@@ -1061,6 +1069,8 @@ impl AppState {
         }
         match action {
             Action::OpenLogFolder => self.crash.request = Some(crate::crash::window::Request::Folder),
+            Action::ToggleUvWireframe => self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe,
+            Action::ShowShortcuts => self.shortcuts.open = true,
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
