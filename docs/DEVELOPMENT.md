@@ -14,7 +14,7 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 ## CI
 
-`.github/workflows/ci.yml` は `pull_request` と `workflow_dispatch` だけで起動します。非公開の間は Actions の実行時間を抑えるため、`main` への push では起動しません。**リポジトリを公開したら `push: { branches: [main] }` も `on` に追加してください。** 初回の実行は管理者の了承後に行います。
+`.github/workflows/ci.yml` は `main` への push・`pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`・`--test brush_list headless_`・`--test update headless_`・`--test recovery headless_`（復旧の OS のロックと置換）。GPU・画面の統合試験は対象外です。
@@ -24,7 +24,7 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合試験は通常の `cargo test` に含みます。
 
-CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査できます。設定追加時点では Actions 上で未実行です。初回は clippy の既存警告、Ubuntu の Mesa の版による画面の正解との差、GPU 試験が省かれていないかを確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
+CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査できます。初回の実行では、clippy の既存警告、Ubuntu の Mesa の版による画面の正解との差、GPU 試験が省かれていないかを確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
 
 ## Unity 用ブリッジ
 
