@@ -464,6 +464,7 @@ pub struct OpenPopup {
 /// 操作（メニュー・キー・ボタンから）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    ScreenPick(crate::screen_pick::Mode),
     /// 文書を変える M2 の操作（層の種類・マスク・チャンネルごとの合成・文書のチャンネル。1 つが 1 回の Undo）。
     M2(Edit),
     /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
@@ -577,6 +578,7 @@ impl Action {
             Self::Clip(..) => "Clip",
             Self::OpenLogFolder => "OpenLogFolder",
             Self::ToggleRulerSnap => "ToggleRulerSnap",
+            Self::ScreenPick(..) => "ScreenPick",
             Self::Quit => "Quit",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -1230,6 +1232,7 @@ impl AppState {
                     _ => self.view.flip_horizontally(),
                 }
             }
+            Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.reset_layout = true,
             Action::SelectTool(tool) => {
                 self.switch_tool(tool, false);

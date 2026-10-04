@@ -166,6 +166,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::Separator,
             ];
             entries.extend(crate::clipboard::menu_entries(app));
+            entries.extend(crate::screen_pick::menu_entries(app));
             entries.push(Entry::Separator);
             entries.extend([
                 Entry::item(Tool::Brush.name_in(l), Action::SelectTool(Tool::Brush))
@@ -714,6 +715,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         ctx.input(|i| crate::clipboard::keys::observe_blocked(i, &mut app.clip));
         return;
     }
+    crate::screen_pick::shortcuts(ctx, app);
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let has_selection = app.doc.selection().is_some();
     let mut actions = Vec::new();

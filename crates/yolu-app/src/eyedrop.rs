@@ -31,6 +31,7 @@ use crate::ui::widgets as w;
 pub struct EyedropState {
     /// 選んでいる層でなく、全レイヤーの合成から取る。
     pub all_layers: bool,
+    pub screen_request: Option<crate::screen_pick::Mode>,
 }
 
 /// 押したときにスポイトとして働くか（スポイトの道具、または 2D で Alt を押した描く道具）。
@@ -225,6 +226,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         )),
         true,
     );
+    crate::screen_pick::options(ui, app, r, x + width + 8.0);
 }
 
 fn all_layers_label(lang: Lang) -> &'static str {

@@ -1125,6 +1125,7 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<Stri
 
 impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        crate::screen_pick::frame(&mut self.state, _frame);
         self.apply_compositing();
         self.frame(ui);
         self.persist_settings();

@@ -20,6 +20,7 @@ pub mod engine;
 pub mod export;
 pub mod fx;
 pub mod eyedrop;
+pub mod screen_pick;
 pub mod fillfx;
 pub mod gradient;
 pub mod drafting;
