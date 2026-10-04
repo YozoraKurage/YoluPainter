@@ -1,0 +1,463 @@
+# YoluPainter-rs の書き出し（テンプレートとパディング）の yolu-core と Unity 版の C# の Core を照らし合わせる事例
+# （両方がこの台本を読む。tests/export_golden.rs と tools/csharp-golden/ExportGolden.cs）。1 行 1 命令、# から行末はコメント。
+# 文書（Golden の台本の部分集合）:
+#   case 名前 / canvas 幅 高さ タイル
+#   layer 名前 モード 不透明度 中身 [hidden] [clip]     Color の層を一番上へ（中身: empty | random:種 | sparse:種 | solid:R,G,B,A）
+#   paint 層 チャンネル 中身                            チャンネルを有効にして埋める（層は番号か @名前）
+#   chenable 層 チャンネル 0|1  /  group 名前 モード 不透明度 [印]
+#   fill 名前 モード 不透明度 チャンネル=R,G,B,A… [印]  /  adjust 名前 モード 不透明度 invert|levels:…|hsl:… [only=チャンネル,…] [印]
+#   normal 作る(0|1) 強さ clamp|wrap gl|dx              文書の Normal の出力の設定
+#   occlusion none | random:種 | flat:値                焼いた AO（1 テクセル 1 バイト）
+#   export テンプレートの ID                            テンプレートの画像ごとに should と、Build の結果（書かない画像も既定の値で作る）
+# パディング:
+#   size 幅 高さ / tri AX AY BX BY CX CY / cleartris / tris 種 個数 大きさ     三角形（画素の座標。nan・inf・-inf も書ける）
+#   coverage                                            覆いを出力（0/1 のバイト）し、以降の keep にする
+#   keep none | all | random:種:パーセント              覆いを直接作る
+#   image random:種 | opaque:種 | clear:種 | solid:R,G,B,A   塗り広げる画像
+#   dilate 段数（-1 は全部） [budget=バイト]            塗り広げた画像を出力。断られたら refused
+
+case doc_empty
+canvas 16 12 8
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion flat:255
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_color_only
+canvas 16 12 8
+layer base Normal 1 random:1
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion random:2
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_all_channels
+canvas 16 12 8
+layer a Normal 1 random:1
+paint @a Roughness sparse:2
+paint @a Metallic random:3
+paint @a Height random:4
+paint @a Normal sparse:5
+paint @a Emission random:6
+normal 1 4 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion random:9
+export unity-standard
+export unity-hdrp
+export liltoon
+normal 0 1 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_metallic_only
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+paint @a Metallic random:7
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion flat:200
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_roughness_only
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+paint @a Roughness random:8
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion none
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_height_derives_normal
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+paint @a Height random:10
+normal 1 8 wrap gl
+export unity-standard
+export unity-hdrp
+export liltoon
+normal 0 8 wrap gl
+export unity-standard
+export unity-hdrp
+export liltoon
+normal 1 0.5 clamp dx
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_normal_only
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+paint @a Normal random:11
+normal 1 4 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_emission_only
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+paint @a Emission random:12
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_no_channels_enabled
+canvas 16 12 8
+layer a Normal 1 empty
+chenable 0 Color 0
+normal 1 4 clamp gl
+occlusion random:3
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_fill_layers
+canvas 16 12 8
+fill f1 Normal 1 Metallic=200,200,200,255 Roughness=90,0,0,128
+fill f2 Multiply 0.5 Emission=255,100,0,200 hidden
+fill f3 Normal 0.75 Height=120,0,0,255
+normal 1 2 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_adjustment_layers
+canvas 16 12 8
+adjust inv Normal 1 invert only=Emission
+adjust lv Normal 0.5 levels:0.1,0.9,1.2,0,1 only=Metallic,Height
+normal 1 4 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_groups_and_hidden
+canvas 16 12 8
+group g PassThrough 1
+layer a Multiply 0.6 random:1 hidden
+paint @a Roughness random:2
+layer b Overlay 0.5 sparse:3 clip
+paint @b Metallic sparse:4
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_stacked_blends
+canvas 16 12 8
+layer a Normal 1 random:1
+paint @a Metallic random:2
+paint @a Roughness random:3
+layer b Multiply 0.6 random:4
+paint @b Metallic random:5
+paint @b Roughness random:6
+layer c Screen 0.8 sparse:7
+paint @c Emission random:8
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_odd_size
+canvas 21 13 8
+layer a Normal 1 random:21
+paint @a Roughness random:22
+paint @a Metallic sparse:23
+paint @a Height random:24
+paint @a Emission random:25
+normal 1 3 wrap gl
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion random:26
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_one_texel
+canvas 1 1 8
+layer a Normal 1 random:31
+paint @a Roughness random:32
+paint @a Metallic random:33
+paint @a Height random:34
+paint @a Emission random:35
+normal 1 4 wrap gl
+export unity-standard
+export unity-hdrp
+export liltoon
+occlusion flat:77
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_one_row
+canvas 19 1 8
+layer a Normal 1 random:41
+paint @a Roughness random:42
+paint @a Metallic random:43
+paint @a Height random:44
+normal 1 4 clamp gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case doc_one_column
+canvas 1 17 8
+layer a Normal 1 random:51
+paint @a Roughness random:52
+paint @a Metallic random:53
+paint @a Height random:54
+normal 1 4 wrap gl
+export unity-standard
+export unity-hdrp
+export liltoon
+
+
+case pad_quad_seam
+size 32 24
+tri 4.5 3.5 20.5 3.5 20.5 15.5
+tri 4.5 3.5 20.5 15.5 4.5 15.5
+coverage
+image random:1
+dilate 0
+dilate 1
+dilate 2
+dilate 5
+dilate 100
+dilate -1
+
+
+case pad_integer_edges
+size 16 16
+tri 2 2 10 2 2 10
+tri 10 10 14 10 14 14
+tri 6 0 7 0 6 1
+coverage
+image random:2
+dilate 1
+dilate 3
+dilate -1
+
+
+case pad_degenerate_and_bad_triangles
+size 20 14
+tri 3 3 3 3 3 3
+tri 1.5 1.5 9.5 9.5 5.5 5.5
+tri 12.25 2.5 12.25 2.5 15.75 2.5
+tri nan 0 1 1 0 1
+tri 0 0 inf 1 2 2
+tri 0 0 1 -inf 2 2
+tri -5 -5 -1 -5 -3 -1
+tri 25 3 30 3 27 9
+tri 1e9 1e9 2e9 1e9 1e9 2e9
+tri -3000000000.5 6 -3000000000.5 8 4 7
+coverage
+image random:3
+dilate -1
+
+
+case pad_triangle_covering_everything
+size 24 18
+tri -100 -100 200 -100 50 300
+coverage
+image random:4
+dilate 3
+dilate -1
+
+
+case pad_single_texel
+size 9 9
+tri 4.2 4.2 4.8 4.3 4.5 4.9
+coverage
+image random:5
+dilate 1
+dilate 2
+dilate -1
+
+
+case pad_corner_touch
+size 8 8
+tri 3.9 3.9 4.1 3.9 4 4.1
+coverage
+image random:6
+dilate 1
+dilate -1
+
+
+case pad_diagonal_sliver
+size 8 8
+tri 0.5 0.5 7.5 7.5 7.5 7
+coverage
+image random:7
+dilate 2
+dilate -1
+
+
+case pad_random_triangles_small
+size 64 48
+tris 11 40 12
+coverage
+image random:12
+dilate 3
+dilate -1
+
+
+case pad_random_triangles_dense
+size 100 70
+tris 5 300 20
+coverage
+image random:13
+dilate 1
+dilate 2
+dilate 4
+dilate 8
+dilate -1
+image opaque:14
+dilate 4
+dilate -1
+image clear:15
+dilate 4
+dilate -1
+image solid:10,20,30,40
+dilate -1
+image solid:255,0,0,255
+dilate 2
+
+
+case pad_many_triangles_batches
+size 300 200
+tris 3 70000 8
+coverage
+
+
+case pad_keep_sparse
+size 50 40
+keep random:7:2
+image random:3
+dilate 4
+dilate -1
+image opaque:4
+dilate -1
+
+
+case pad_keep_half
+size 50 40
+keep random:8:50
+image random:5
+dilate 1
+dilate -1
+
+
+# 段 1 の候補が約 2 万（既定の並列の下限 16384 を超え、並列の枝を通る）。段 2 以降は残りが 1 万 6 千以下で、並列にならない枝も通る（C# は並列にしない。結果は同じ）
+case pad_keep_parallel_ring
+size 256 160
+keep random:9:10
+image random:6
+dilate 1
+dilate 2
+dilate -1
+
+
+case pad_keep_all_and_none
+size 12 9
+keep all
+image random:7
+dilate -1
+keep none
+dilate -1
+dilate 3
+
+
+case pad_non_square
+size 1 17
+tri 0.2 3.2 0.8 3.4 0.5 5.7
+coverage
+image random:8
+dilate -1
+size 17 1
+cleartris
+tri 2.2 0.2 3.8 0.4 3.5 0.7
+coverage
+image random:9
+dilate 2
+dilate -1
+size 37 5
+cleartris
+tri 30 1 36 1 33 4
+coverage
+image random:10
+dilate -1
+size 3 3
+cleartris
+tri 1 1 2 1 1 2
+coverage
+image random:11
+dilate -1
+
+
+case pad_budget
+size 16 8
+keep random:3:20
+image random:3
+dilate -1 budget=1536
+dilate -1 budget=1535
+dilate -1 budget=0
+dilate 0 budget=1535
+dilate 0 budget=1536
+
+
+case pad_bad_inputs
+size 0 5
+coverage
+size 4 -3
+coverage
+size 8 8
+keep random:1:30
+image random:1
+dilate -2
+dilate -1
+
+
+case pad_large_island
+size 128 96
+tri 10 10 118 12 64 90
+tri 20 20 100 20 100 80
+tri 3 90 9 93 5 95
+coverage
+image random:16
+dilate 6
+dilate -1
+

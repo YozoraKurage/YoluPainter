@@ -115,6 +115,44 @@ if origin.mode() == CompatibilityMode::EditableRaster {
 
 直前の版は `<ファイル名>-backups~/` にSHA-256名で残し、自動削除しない。保存先ごとの排他的なロックファイルを作り、通常終了・エラー時には片付ける。プロセス強制終了後のロック回収は呼び出し側で扱う必要がある。非協調プロセスが最後の検査と置換の間に書く競合と、電源断時のディレクトリ永続性は保証の対象外。
 
+## 書き出し（テンプレートとパディング）
+
+`export` は書き出しのテンプレート（`yolu_core::export`。Unity Standard / URP Lit・HDRP Lit・lilToon）の画像をフォルダへPNGで書く。ファイル名はUnity版と同じ `<名前>[_<セット名>]_<接尾辞>.png`（セットが複数のときだけ `_<セット名>`。使えない文字は `_`）。
+
+```rust,no_run
+use yolu_core::export::ExportTemplate;
+use yolu_core::padding::Reach;
+use yolu_io::export::{write_template, PaddingSpec, SetExport, WriteOptions};
+
+# let (document, coverage): (yolu_core::Document, Vec<bool>) = unimplemented!();
+let report = write_template(
+    std::path::Path::new("out"),
+    &ExportTemplate::unity_standard(),
+    &SetExport {
+        stem: "Texture",
+        set_name: None,
+        document: &document,
+        occlusion: None,
+        padding: Some(PaddingSpec { coverage: &coverage, reach: Reach::Fill }),
+        max_working_bytes: 1 << 30,
+    },
+    &WriteOptions::default(),
+)?;
+for image in &report.written {
+    // Unityの取り込み設定は書かない。ここで渡す。
+    println!("{} srgb={} normal_map={}", image.file_name, image.srgb, image.normal_map);
+}
+# Ok::<(), yolu_io::export::ExportError>(())
+```
+
+- 書く画像は、読むものがある画像だけ（`should_write`）。使っていないチャンネルしか読まない画像は書かず、`skipped` に接尾辞を返す。
+- 手順は、(1) 名前・大きさ・上書きを確かめる、(2) 画像を1枚ずつ作って隠しの一時ファイルへ書き、`sync_all` して読み戻し、RGBAが一致することを確かめる、(3) 全部が済んでから1枚ずつ `rename` で置き換える。(2) までに失敗・取消すれば元のファイルは1つも変わらず、一時ファイルも残らない。(3) の途中の失敗だけ `ExportError::Partial` で済んだ分を知らせる（新しく作った分は消す）。
+- 既にあるファイルは、既定では置き換えず `WouldReplace`（何も書かない）。`existing_files` で見せて確かめてから `Overwrite::Replace`。置き換えない設定では `hard_link` で置くので、調べた後に他のプロセスが作ったファイルも上書きしない。フォルダ・リンクは置き換えない。
+- 複数のテクスチャセットは `plan_template` で書く画像とファイル名を出し、`clashes` で名前の重なりを確かめ、`write_images`（中身は呼び手の関数から1枚ずつ）で全部を1回の手順にする。
+- 画像の中身は1枚ずつしか持たない。上限は1辺8192（Unity版の `RgbaPng` と同じ）。PNGは `composite_png` と同じエンコーダ（行ごとの適応フィルター、圧縮バイトはdeflate実装の版に依存）。
+- Unityのインポートの設定（sRGB・ノーマルマップ・アルファを透明度に）はファイルに書かない。`WrittenImage` の `srgb`・`normal_map`・`alpha_is_transparency` を後で使う。
+- 取消は `WriteOptions::cancel` の旗（置き換えを始める前まで）。塗り広げの途中でも旗を見て、どこで止まっても `ExportError::Cancelled` で返る。
+
 ## 検証
 
 ```sh

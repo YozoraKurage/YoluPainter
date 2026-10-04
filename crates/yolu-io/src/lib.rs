@@ -2,6 +2,7 @@
 mod archive;
 mod composite_png;
 mod core_bridge;
+pub mod export;
 mod native;
 mod project;
 mod selection;

@@ -13,7 +13,7 @@ pub fn composite_png(doc: &Document) -> Result<Vec<u8>> {
     let rgba = doc.composite(doc.bounds())?;
     encode(&rgba, doc.width(), doc.height())
 }
-fn encode(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+pub(crate) fn encode(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     let stride = width as usize * 4;
     let mut compressed = ZlibEncoder::new(Vec::new(), Compression::default());
     let mut row = vec![0; stride + 1];
