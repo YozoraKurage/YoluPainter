@@ -1,0 +1,38 @@
+# 開発用の手順
+
+以下はリポジトリのルートで実行します。通常のビルドと操作は [README](../README.md) を参照してください。
+
+## 試験
+
+```sh
+cargo test --workspace --locked
+```
+
+GPU・画面の試験には動作する描画バックエンドが必要です。GPU 試験にはアダプターがないと処理を省くものがあるため、結果の passed だけで描画確認済みとは判断せず、標準エラーの理由も確認してください。詳しくは [yolu-gpu](../crates/yolu-gpu/README.md#検証と計測) を参照してください。
+
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です。Unity 版のソースと Unity 同梱の .NET・Mono が必要です。出力先は `--out` で指定できます。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。
+
+## Unity 用ブリッジ
+
+Linux 上で Bash、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意します。`tools/build-bridge.sh` を引数なしで実行すると、Linux と Windows のブリッジと C# 宣言を `target/bridge-out/` に作ります。Mac 用は生成しません。
+
+Unity 版へ組み込む場合は、対応する Unity パッケージのルートをスクリプトの引数に指定します。`Plugins/LiveLink/` と `Editor/LiveLink/Native/` の既存の配置先へコピーするので、変更先を確認してから実行してください。読み込み済みのネイティブライブラリを更新した後は Unity を再起動します。ブリッジの ABI を変えるときは Rust の `ABI_VERSION` と Unity の `LiveLinkBridge.ExpectedAbi` を合わせます。
+
+## Windows 向けの画面なし試験（Wine）
+
+Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
+
+core・io・protocol・bridge と app の画面なし試験が対象です。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+
+## 配布用の許諾全文
+
+Python 3.10 以降と Cargo を使います。
+
+```sh
+python3 tools/third-party.py --bundle --offline
+python3 tools/third-party.py --package yolu-bridge --bundle --offline
+```
+
+初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。
+
+このツールの対象は Windows GNU に固定されています。別のターゲットや依存を使って配るときは、この一覧を流用せず、実際の依存構成に対して許諾一覧と原文を確認してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。

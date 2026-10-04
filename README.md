@@ -1,76 +1,114 @@
 # YoluPainter-rs
 
-YoluPainter のスタンドアロン版（Rust）。描くのはこのソフトの窓で、Unity は塗った絵を lilToon などの本物のマテリアルで見せる
-（Unity のパッケージ YoluPainter とつなぐ）。まだ試作の前の骨組み。
+YoluPainter のスタンドアロン版です。2D キャンバスと 3D モデルにテクスチャを描き、レイヤーを含む作業を `.ylp` に保存できます。Unity 版 YoluPainter と Live Link でつなぐと、描いた色を Unity のシーンで実際のマテリアルに重ねて確認できます。
 
-## 構成（Cargo の作業場）
+Windows を主な対象としています。Mac・Linux は試用向けです。
 
-| クレート | 役目 |
+## できること
+
+- Color（色）のラスター層に、丸いブラシと消しゴムで描画。直径・硬さ・間隔・不透明度・流量を調整でき、Windows Ink の筆圧を直径・不透明度・流量に割り当てられます。
+- レイヤーの追加・削除・名前変更・並べ替え、表示・不透明度・26 種類の合成モードの変更、取り消しとやり直し。
+- 2D 表示の拡大縮小・移動・回転・左右反転。表示だけを変え、保存する画像は回転・反転しません。
+- 3D ビューの試しの立方体、または Live Link で受け取ったモデルに描画。マテリアルごとにテクスチャセットを切り替えられます。
+- `.ylp` の新規作成・読み込み・保存。Unity 版との互換性は[下の表](#unity-版との-ylp-の受け渡し)を参照してください。
+
+現在、画面から扱える描画チャンネルは Color です。PSD・PNG の取り込み／書き出し、モデルファイルの直接読み込み、グループ・マスク・調整層の編集は画面から利用できません。アセット欄は準備中です。
+
+## 動く環境とソースからの起動
+
+Rust の stable ツールチェーンと C/C++ のビルド環境が必要です。導入方法は [Rust のインストール手順](https://doc.rust-lang.org/book/ch01-01-installation.html)を参照してください。ソースを取得・展開し、`Cargo.toml` のあるフォルダで次のコマンドを実行します。初回のビルドには依存パッケージを取得するネット接続が必要です。
+
+表示には GPU と対応ドライバーが必要です。描画基盤は [wgpu](https://docs.rs/wgpu/30.0.1/wgpu/struct.Backends.html) で、Windows は Direct3D 12 または Vulkan、Mac は Metal、Linux は Vulkan などを使います。アプリ単体の起動に Unity は必要ありません。
+
+### Windows
+
+64 ビットの Windows と、Visual Studio Build Tools の「C++ によるデスクトップ開発」（Windows SDK を含む）、Rust の MSVC ツールチェーンを用意します。PowerShell で実行します。
+
+```powershell
+cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
+.\target\x86_64-pc-windows-msvc\release\yolupainter.exe
+```
+
+ペンタブレットはドライバー側でも Windows Ink を有効にしてください。ブラシ設定のペンのボタンで、どの項目を筆圧で変えるか選べます。
+
+### Mac（試用）
+
+Xcode Command Line Tools と Rust を用意し、Metal が使える環境で実行します。
+
+```sh
+cargo build --release -p yolu-app --locked
+./target/release/yolupainter
+```
+
+Windows Ink に相当する専用のペン入力処理はありません。マウス操作を基本とし、筆圧の取得は OS と入力機器に依存します。現在の Unity 用ブリッジの作成ツールは Mac 用ライブラリを生成しません。
+
+### Linux（試用）
+
+C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。日本語表示には Noto Sans CJK を使用します。
+
+Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk`、`fonts-noto-cjk` です。GPU ドライバーは機器に合うものを使用してください。
+
+```sh
+cargo build --release -p yolu-app --locked
+./target/release/yolupainter
+```
+
+マウスで描画できます。筆圧の取得はデスクトップ環境と入力機器に依存します。
+
+## 最初の操作
+
+起動すると、2048 × 2048 のキャンバスと試しの立方体が表示されます。カラー欄で色を選び、2D または 3D ビューを左ドラッグすると描けます。レイヤー欄で描く層を選び、必要に応じて「レイヤー」メニューから新しい層を追加してください。
+
+| 操作 | 入力 |
 |---|---|
-| `yolu-core` | 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター、3D の面の計算（当たり・BVH・面の上のダブ）。GPU にも OS にも頼らない |
-| `yolu-gpu` | wgpu での合成・ブラシ・ベイク（CPU の経路と照らし合わせる） |
-| `yolu-io` | .ylp（Unity 版と同じ形式）・PSD・画像の読み書き |
-| `yolu-protocol` | スタンドアロンと Unity のブリッジのあいだの通信の形 |
-| `yolu-bridge` | Unity のエディタ拡張が読む DLL（薄い。スタンドアロンにつなぐだけ） |
-| `yolu-app` | スタンドアロンの描画ソフト（egui） |
-| `yolu-link-demo` | Live Link の試しのスタンドアロン（yolu-app が載るまで。マテリアルごとに試しの模様を描いて返す） |
+| ブラシ／消しゴム | `B` / `E` |
+| ブラシを小さく／大きく | `[` / `]` |
+| 取り消し／やり直し | `Ctrl+Z` / `Ctrl+Shift+Z` または `Ctrl+Y` |
+| 描いているストロークの取消 | `Esc` |
+| 2D の拡大縮小 | ホイール |
+| 2D の移動 | 中ボタンドラッグ、または `Space`＋左ドラッグ |
+| 2D の回転 | `R`＋左ドラッグ、または `Shift`＋中ボタンドラッグ |
+| 2D の回転を戻す／左右反転 | `Shift+R` / `H` |
+| 2D を画面に合わせる | `Ctrl+0` |
+| 3D の回転 | 右ドラッグ、または `Alt`＋左ドラッグ |
+| 3D の移動／拡大縮小 | 中ボタンドラッグ／ホイール |
+| 新規／開く／保存／別名で保存 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 
-## 組む・試す
+Mac では表の `Ctrl` を `Command` に読み替えてください。メニューの表示は `Ctrl` です。`.ylp` はウィンドウへドラッグ＆ドロップしても開けます。モデル全体を見失ったら「表示 → 3D ビューでモデル全体を見る」、パネルを戻すには「表示 → パネルの並びを戻す」を使います。
 
-```
-cargo build
-cargo test
-```
+## Unity との Live Link
 
-## Unity 版へ入れるブリッジ
+同じ PC で動く Unity エディターと接続します。Unity 2022.3 のプロジェクトに、**Live Link 対応の Unity 版 YoluPainter（VPM パッケージ `net.yozolab.yolupainter`）と OS に合うネイティブブリッジ**が必要です。`YozoLab → YoluPainter → Live Link` がない版では、この接続は利用できません。Windows 用は `yolu_bridge.dll`、Linux 用は `libyolu_bridge.so` です。
 
-`tools/build-bridge.sh <Unity 版のパッケージの根>` が yolu-bridge を Linux（.so）と Windows（x86_64-pc-windows-gnu の .dll、mingw-w64 が要る）に
-組み、csbindgen の C# の宣言（`crates/yolu-bridge/generated/LiveLinkNative.g.cs`）と一緒に `Plugins/LiveLink` と `Editor/LiveLink/Native` へ写す。
-ブリッジの C の関数の意味を変えたら `ABI_VERSION`（`crates/yolu-bridge/src/ffi.rs`）と Unity 版の `LiveLinkBridge.ExpectedAbi` を一緒に上げる。
+1. スタンドアロンを起動し、「ファイル → Live Link」を有効にします。下の状態欄に Unity を待っていることが表示されます。
+2. Unity で `YozoLab → YoluPainter → Live Link` を開きます。接続名（`Link name`）を `yolupainter-livelink` にして `Connect` を押します。
+3. シーンのモデルのゲームオブジェクトを指定します。選択中のものなら `Use selection` を押し、`Send model` で送ります。
+4. スタンドアロンのテクスチャセット欄でマテリアルを選び、2D または 3D ビューで描きます。表示中で、Unity 側に Color の反映先があるセットの合成結果が Unity に送られます。
+5. 作業を `.ylp` に保存します。接続を終えるには Unity の `Disconnect`、またはスタンドアロンの「ファイル → Live Link」を使います。
 
-## C# 版との照合（正解のファイル）
+Unity では lilToon・Standard などのマテリアルに描いた色を一時表示します。元のテクスチャやマテリアルのアセットへ書き込む操作ではありません。切断すると一時表示を外します。Live Link は作業ファイルの保存を代行しないため、スタンドアロン側で保存してください。
 
-`yolu-core` の合成（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・Normal のベクトルの合成と出力を含む）・
-ブラシ・Undo は、Unity 版の C# の Core とバイト一致を確かめている。正解のファイル（`crates/yolu-core/tests/golden/`）は
-`tools/csharp-golden/run.sh` で作り直す（Unity 版のリポジトリと、Unity に同梱の .NET・Mono が要る。事例は両方が読む `cases.txt`、
-命令の書き方はその頭）。`run.sh bench` は C# の速さを、`cargo run --release -p yolu-core --example bench` は同じ中身の Rust の速さを測る。
-3D の面の計算（`yolu_core::geometry`）は、Unity 版の SurfaceGeometry とビットで一致を確かめている。正解（`crates/yolu-core/tests/golden/surface/`）は
-`tools/csharp-golden/run.sh surface` で作り直す（Unity 版の Editor/Preview の原文を、Unity に同梱の UnityEngine.CoreModule.dll と組む）。
+接続できる Unity は一度に 1 つです。版の不一致や待ち受け失敗は状態欄で確認できます。ブリッジを更新したときは Unity を再起動してください。接続名を変える場合は、スタンドアロン起動前に環境変数 `YOLUPAINTER_LINK_NAME` を設定し、Unity 側にも同じ名前を指定します。
+
+## Unity 版との .ylp の受け渡し
+
+| 内容 | スタンドアロンでの扱い |
+|---|---|
+| `.ylp` 形式 1〜7、内部の文書形式 1〜21 | 読み込み。保存時は `.ylp` 形式 7 に更新 |
+| Color のラスター層、名前・表示・不透明度・26 合成モード・クリッピング | 編集と保存。文書・レイヤーの ID、透明画素の RGB を保持 |
+| マスク、グループ、塗りつぶし、調整、ロック、別チャンネル、パス、フィルター、Generator、Anchor など | 含むセットを読み取り専用にし、理由を表示。元の文書を保持 |
+| 読み取り専用セットの見た目 | 保存済みの Color 合成画像を表示。画像がない・読めない場合は空の表示と理由を提示 |
+| 編集していないセット、埋め込みリソース、未知の追加エントリ | 元のデータを保持して保存 |
+| より新しい形式や未知の値、壊れたファイル | 読み込みを拒否して理由を表示 |
+
+Unity へ戻すときは、形式 7 と文書形式 21 を読める Unity 版で開いてください。古い Unity 版へ戻すための形式への変換はありません。読み取り専用セットは合成画像に置き換えて保存するのではなく、元の編集情報を残します。ただし、保存済み画像は最新の効果を再計算したものとは限りません。
+
+編集したセットは文書形式 21 と Color の合成画像で保存します。Undo の履歴は保存しません。`.ylp` 全体の ZIP バイト列や、ウィンドウ配置・モデルの接続状態まで両アプリで同じになることは保証しません。
+
+上書き時の直前の版は、同じフォルダの `<ファイル名>-backups~/` に残ります。自動削除はしません。読み込み後に別のアプリがファイルを書き換えた場合は、上書きを断ります。同じファイルを両アプリで同時編集せず、保存してからもう一方で開き直してください。
 
 ## 許諾の一覧と配布用の全文
 
-[THIRD_PARTY.md](THIRD_PARTY.md) に Windows GNU 向けの製品別一覧、フォント・アイコン、開発用の道具の許諾を記載している。
-Python 3.10 以降と Cargo が必要（追加の Python パッケージや cargo-about の導入は不要）。
+使用しているライブラリ・フォント・アイコンの許諾は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。現在の一覧は Windows GNU 向けで、Mac・Linux・Windows MSVC の一覧を兼ねません。配布用の許諾全文の生成方法は[開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文)にあります。
 
-```sh
-python3 tools/third-party.py --bundle
-# ブリッジだけを作る場合
-python3 tools/third-party.py --package yolu-bridge --bundle
-```
-
-`target/third-party/<クレート>/` に一覧と、照合に成功した場合だけ `THIRD_PARTY_LICENSES.txt` ができる。
-全文を該当する配布物と一緒に入れる。初回はクレートと、同梱されていない原文の取得にネット接続が必要。
-取得後は `--offline` で再照合できる。原文は発行時コミットと SHA-256 で固定され、版の変更・原文の欠落・未承認の許諾では終了 1 になる。
-2026-10-04 にユーザーが BSL-1.0（clipboard-win・error-code）と Hack 書体の Bitstream Vera 条件を許可した。
-発行時の原文と SHA-256 を照合し、app・bridge とも全文束を生成できる。
-依存を更新したときは `tools/licenses-reviewed.json` の原文・条件を確認し、一覧も更新する。
-
-## Windows 向けの画面なし試験（Wine）
-
-Linux 上で Python 3.10 以降・Wine・MinGW-w64 を用意し、Rust の対象を追加する。
-
-```sh
-rustup target add x86_64-pc-windows-gnu
-tools/wine-tests.sh
-# 古い Wine で bcryptprimitives.dll が不足する場合だけ
-tools/wine-tests.sh --compat-bcrypt
-```
-
-core・io・protocol・bridge の単体／結合試験と、app の単体試験・名前が `headless_` で始まる結合試験を実行する。
-ビルド結果から対象を選ぶので、以前の試験 exe を混ぜない。ログ・成功／失敗／無視の件数・除外した試験の名前は
-`target/wine-tests/summary.json` と同じディレクトリのログに残る。ビルド失敗・実行失敗・時間切れは終了 1。
-試験ごとの時間制限は `--timeout 180`（秒）で変更できる。専用 Wine 環境も `target/` 内に作る。
-
-wgpu／egui_kittest の画面の試験と `yolu-gpu` は Wine の描画バックエンドでの動作を検証できないため対象外。
-描画の検証はネイティブ環境の `cargo test` で別に行う。Wine の結果は Windows 実機、ペンタブ、Unity との接続確認の代わりにはならない。
-`--compat-bcrypt` の DLL は試験専用で、配布しない。
+試験や Unity ブリッジのビルドについては [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
