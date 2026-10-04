@@ -31,6 +31,9 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
           sudo apt-get update
@@ -39,31 +42,19 @@ jobs:
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
-      - name: 【一時】数学関数の調査（Linux）
-        continue-on-error: true
-        shell: bash
+      - name: 描画しないクレートの試験（並列）
+        run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
+      - name: 描画する試験（ソフトウェアの Vulkan、1 本ずつ）
+        if: ${{ !cancelled() }}
         env:
-          PROBE_OUT: ${{ runner.temp }}/probe_linux.txt
-        run: |
-          cargo test -p yolu-core --test zz_mathprobe --locked
-          python3 .github/probe/ref.py "$PROBE_OUT" linux
-      - name: 【一時】調査の結果をアップロード（Linux）
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: probe-linux
-          path: ${{ runner.temp }}/probe_linux.txt
-          if-no-files-found: ignore
-      - name: ワークスペース全体の試験（ソフトウェア描画）
-        env:
-          # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。
-          WGPU_BACKEND: gl
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          GALLIUM_DRIVER: llvmpipe
+          # 収録済みの画面の正解は、手元の既定（wgpu の Vulkan と Mesa の lavapipe）で撮ったもの。GL の llvmpipe は
+          # コンピュートが足りず（GPU 合成の試験が省略になる）、環境の反射の絵も違うので使わない。
+          WGPU_BACKEND: vulkan
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a cargo test --workspace --locked --no-fail-fast -- --nocapture --test-threads=1
+          xvfb-run -a cargo test -p yolu-gpu -p yolu-app --locked --no-fail-fast -- --nocapture --test-threads=1
       - name: 画面の正解との差の画像を残す
         if: failure()
         shell: bash
@@ -99,22 +90,11 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
       - name: アプリのビルド
         run: cargo build -p yolu-app --locked
-      - name: 【一時】数学関数の調査（Windows）
-        continue-on-error: true
-        shell: bash
-        env:
-          PROBE_OUT: ${{ runner.temp }}/probe_windows.txt
-        run: |
-          cargo test -p yolu-core --test zz_mathprobe --locked
-          python .github/probe/ref.py "$PROBE_OUT" windows
-      - name: 【一時】調査の結果をアップロード（Windows）
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: probe-windows
-          path: ${{ runner.temp }}/probe_windows.txt
-          if-no-files-found: ignore
       - name: 描画を使わないクレートの試験
         if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1

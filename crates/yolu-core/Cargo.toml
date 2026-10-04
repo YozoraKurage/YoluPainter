@@ -10,6 +10,3 @@ glam = "0.33"
 rayon = "1.12"
 
 sha2 = "0.10"
-
-[dev-dependencies]
-libm = "0.2"  # 一時の調査用（Windows と Linux の tan・atan・atan2 の比較）。調査後に外す

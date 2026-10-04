@@ -1,9 +1,10 @@
 # egui_kittest のスナップショットの決まり（cargo test は crates/yolu-app で走るので、出力はその tests/snapshots）。
-# 正解の PNG はコンテナの llvmpipe（Mesa のソフトの描画、wgpu の GL）で撮ったもの。Windows・macOS の実の GPU では
-# 縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
+# 正解の PNG はコンテナの既定（wgpu の Vulkan と Mesa の lavapipe、ソフトの描画）で撮ったもの。CI の Linux も同じ組だが Mesa の版が
+# 違い、三角形の縁の画素が 1〜2 個だけ閾値を越えてずれる。Linux は閾値を越える画素が 4 個までなら通す（本当の崩れは数百画素以上）。
+# Windows・macOS の実の GPU では縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
 output_path = "tests/snapshots"
 threshold = 0.6
-max_failed_pixels = 0
+max_failed_pixels = 4
 
 [windows]
 threshold = 2.0
