@@ -78,8 +78,9 @@ pub fn default_dock() -> DockState<Tab> {
         0.21,
         vec![Tab::Brushes, Tab::Assets, Tab::Channels],
     );
-    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets]);
-    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets, Tab::Navigator]);
+    // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小の窓で名前が欠ける）
+    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
+    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
     surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
     dock
