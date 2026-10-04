@@ -87,7 +87,8 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
             };
             assert!(labels.iter().any(|s| s.contains(expected)), "{labels:?}");
             if panel == 0 {
-                assert!(h.query_by_label(lang.pick("色相", "Hue")).is_some());
+                // 既定は色相の円と中の四角
+                assert!(h.query_by_label(lang.pick("色相の円", "Hue wheel")).is_some());
             }
             h.snapshot(format!("i18n_{}_{}", lang.pick("ja", "en"), panel));
             snapshots.extend_harness(&mut h);

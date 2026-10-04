@@ -139,6 +139,7 @@ impl AppState {
     pub fn settings(&self) -> Settings {
         Settings {
             lang: self.lang,
+            color_wheel: self.color.wheel,
             ..self.prefs.settings.clone()
         }
     }
@@ -147,6 +148,7 @@ impl AppState {
     pub fn load_settings(&mut self, settings: Settings) {
         self.export.padding = settings.export_padding;
         self.prefs.threads_at_start = settings.cpu_threads;
+        self.color.wheel = settings.color_wheel;
         // 「すべて残す」を外したときに戻る数も、保存してあった数にする
         if let BackupKeep::Count(n) = settings.backups {
             self.prefs.remembered_backups = n;

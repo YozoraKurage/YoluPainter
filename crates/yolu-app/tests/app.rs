@@ -410,6 +410,11 @@ fn layer_drag_reorders() {
 fn color_panel_picks_hex_swap_and_wheel() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1280.0, 800.0, 256);
+    // 既定は色相の円と中の四角。四角と色相の帯へ切り替えてから選ぶ（終わりに円へ戻す）
+    assert!(h.state().state.color.wheel);
+    h.get_by_label("四角と色相の帯").click();
+    h.run();
+    assert!(!h.state().state.color.wheel);
     let sv = h.get_by_label("彩度と明度").rect();
     click(&mut h, pos2(sv.right() - 0.5, sv.top() + 0.5));
     let c = h.state().state.color.main;

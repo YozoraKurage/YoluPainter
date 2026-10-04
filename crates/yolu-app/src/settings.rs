@@ -158,6 +158,8 @@ pub struct Settings {
     pub uv_wireframe_color: [u8; 4],
     /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
     pub livelink_on_startup: bool,
+    /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
+    pub color_wheel: bool,
 }
 
 impl Default for Settings {
@@ -179,6 +181,7 @@ impl Default for Settings {
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
+            color_wheel: true,
         }
     }
 }
@@ -429,6 +432,7 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
+            "color_wheel" => settings.color_wheel = value != "off",
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -544,6 +548,9 @@ fn render(settings: &Settings) -> String {
     if !settings.livelink_on_startup {
         text += "livelink_on_startup=off\n";
     }
+    if !settings.color_wheel {
+        text += "color_wheel=off\n";
+    }
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -626,6 +633,7 @@ mod tests {
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
+            color_wheel: true,
         }
     }
 
@@ -641,6 +649,28 @@ mod tests {
         save(&path, &Settings::default()).unwrap();
         assert_eq!(load(&path), (Settings::default(), vec![]));
         assert!(!std::fs::read_to_string(&path).unwrap().contains("livelink_on_startup"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_color_wheel_defaults_on_and_survives_restart_when_switched_off() {
+        let dir = temp_dir("colorwheel");
+        let path = dir.join("settings.conf");
+        assert!(load(&path).0.color_wheel);
+        let off = Settings { color_wheel: false, ..Settings::default() };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("color_wheel=off"));
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("color_wheel"));
+        // 切り替えは AppState の設定に出て、読んだ設定は AppState へ入る
+        let mut state = crate::state::AppState::new(8, 8);
+        assert!(state.color.wheel && state.settings().color_wheel);
+        state.apply(crate::state::Action::ToggleColorWheel);
+        assert!(!state.settings().color_wheel);
+        let mut again = crate::state::AppState::new(8, 8);
+        again.load_settings(state.settings());
+        assert!(!again.color.wheel);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

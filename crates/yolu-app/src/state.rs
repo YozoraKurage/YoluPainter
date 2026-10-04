@@ -314,7 +314,7 @@ impl Default for ColorState {
             val: 0.0,
             picked_for: None,
             recent: Vec::new(),
-            wheel: false,
+            wheel: true,
         };
         c.sync_hsv();
         c
