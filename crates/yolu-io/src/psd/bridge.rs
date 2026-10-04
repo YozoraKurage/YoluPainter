@@ -2,7 +2,76 @@
 use super::*;
 use crate::{check, check_budget, Error, Result};
 use std::collections::HashSet;
-use yolu_core::{Channel, Document as CoreDocument, LayerId, TileCoord};
+use yolu_core::{
+    Channel, Document as CoreDocument, Layer as CoreLayer, LayerId, LayerKind as CoreKind,
+    LayerLocks, TileCoord,
+};
+/// core の層のロック（1:透明部分・2:画素・4:位置・8:すべて）を PSD の lspf のビット（0:透明部分・1:画素・2:位置・31:すべて）へ。
+/// すべては 0x80000000 だけで書く（書き手がその下の個別のビットを足さない。効くロックは同じ。`write` が決める）。
+fn psd_locks(locks: LayerLocks) -> u32 {
+    let mut bits = 0;
+    for (lock, bit) in [
+        (LayerLocks::TRANSPARENCY, 1),
+        (LayerLocks::PIXELS, 2),
+        (LayerLocks::POSITION, 4),
+        (LayerLocks::ALL, 0x8000_0000),
+    ] {
+        if locks.contains(lock) {
+            bits |= bit;
+        }
+    }
+    bits
+}
+fn kind_label(kind: CoreKind) -> &'static str {
+    match kind {
+        CoreKind::Raster => "ラスター",
+        CoreKind::Fill => "塗りつぶし",
+        CoreKind::Adjustment => "調整",
+        CoreKind::Group => "グループ",
+    }
+}
+/// PSD へ写せない中身を、平らにも黙って落とすこともせず、機能ごとの理由で断る（C# の `PsdBridge.Export` の断りと対）。
+/// 書き出すのは Color のラスター層の画素・表示・不透明度・合成モード・クリッピング・ロックだけ。ほかの中身は PSD の形
+/// （マスク・グループ・塗りつぶし・調整・1 チャンネルの合成）が一部あっても、この写しがまだ書かないので、書けるようになるまで断る。
+fn refuse_what_psd_cannot_hold(d: &CoreDocument, l: &CoreLayer) -> Result<()> {
+    let name = l.name();
+    check(
+        l.kind() == CoreKind::Raster,
+        format!(
+            "層「{name}」は{}の層です。PSD に書けるのはラスターの層だけです",
+            kind_label(l.kind())
+        ),
+    )?;
+    check(
+        l.mask().is_none(),
+        format!("層「{name}」にマスクがあります。マスクはまだ PSD に書けません"),
+    )?;
+    check(
+        l.channel_blends().next().is_none(),
+        format!("層「{name}」にチャンネルごとの合成があります。PSD の層は合成モードと不透明度を 1 組しか持てません"),
+    )?;
+    // 標準の 6 つだけでなくユーザーチャンネル（番号 6 以降）も、面・有効の印・塗りつぶしの値のどれかがあれば断る
+    let mut others = l.surface_channels();
+    others.extend(l.enabled_channels());
+    others.extend(l.fill_values().map(|(c, _)| c));
+    others.retain(|c| *c != Channel::Color);
+    others.sort();
+    others.dedup();
+    if let Some(&ch) = others.first() {
+        let label = d
+            .channel_info(ch)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| format!("番号 {}", ch.index()));
+        check(
+            false,
+            format!("層「{name}」は Color 以外のチャンネル（{label}）を使っています。PSD に書けるのは Color だけです"),
+        )?
+    }
+    check(
+        l.is_channel_enabled(Channel::Color),
+        format!("層「{name}」の Color が無効です。無効にした Color の画素は PSD に書けません"),
+    )
+}
 impl ReadResult {
     pub fn to_core(&self) -> Result<CoreDocument> {
         check(
@@ -104,18 +173,7 @@ impl Document {
         let mut used = HashSet::new();
         let mut budget = 0u64;
         for l in d.layers().iter().rev() {
-            for ch in Channel::ALL {
-                if ch != Channel::Color {
-                    check(
-                        l.surface(ch).is_none() && !l.is_channel_enabled(ch),
-                        format!("層「{}」の{ch:?}はM1 PSD変換の対象外です", l.name()),
-                    )?
-                }
-            }
-            check(
-                l.is_channel_enabled(Channel::Color),
-                "無効なColorはM1 PSD変換の対象外です",
-            )?;
+            refuse_what_psd_cannot_hold(d, l)?;
             let surface = l
                 .surface(Channel::Color)
                 .ok_or_else(|| Error::InvalidData("Color面がありません".into()))?;
@@ -163,6 +221,7 @@ impl Document {
                 blend_mode: BlendMode::ALL[l.blend_mode() as usize],
                 clipping: l.clipping(),
                 pixels_rgba: pixels,
+                locks: psd_locks(l.locks()),
                 ..Layer::default()
             });
         }

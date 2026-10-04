@@ -596,7 +596,7 @@ mod tests {
         assert!(Lang::En.io_error(&errors[4]).contains("changed"));
         assert!(Lang::Ja.io_error(&errors[9]).contains("進行中"));
         // 保存先の周りの不具合は、データの不正（InvalidData の汎用文）にも「外で変わった」にも見せず、場所が理由だと言う
-        for (i, key) in [(10, "Backup location is not a folder"), (11, "link"), (12, "Cannot lock"), (13, "lock file")] {
+        for (i, key) in [(10, "Backup location is not a folder"), (11, "link"), (12, "lock file")] {
             let en = Lang::En.io_error(&errors[i]);
             assert!(en.contains(key) && !en.contains("changed") && !en.contains("Invalid"), "{en}");
         }

@@ -525,4 +525,63 @@ mod tests {
             }
         }
     }
+
+    /// 保存形式（.ylp の正本・PSD の取り込みの番号）に入る合成モードの数値は並べ替えず、個数も変えない（既存のファイルの意味が変わらない）。
+    /// 末尾に足すときは、この表と個数を意図して書き換える。C# の BlendModeTests.TheStoredValuesOfTheFirstModesNeverChange は
+    /// 0・1・2・25・26 と個数だけを見ているが、ここは 27 個の全部を C# の列挙の名前と並べて固定する。
+    #[test]
+    fn the_stored_values_of_every_mode_never_change() {
+        let stored: [(BlendMode, u8, &str); 27] = [
+            (Normal, 0, "Normal"),
+            (Multiply, 1, "Multiply"),
+            (Screen, 2, "Screen"),
+            (Overlay, 3, "Overlay"),
+            (Darken, 4, "Darken"),
+            (Lighten, 5, "Lighten"),
+            (ColorDodge, 6, "ColorDodge"),
+            (ColorBurn, 7, "ColorBurn"),
+            (LinearDodge, 8, "LinearDodge"),
+            (LinearBurn, 9, "LinearBurn"),
+            (HardLight, 10, "HardLight"),
+            (SoftLight, 11, "SoftLight"),
+            (VividLight, 12, "VividLight"),
+            (LinearLight, 13, "LinearLight"),
+            (PinLight, 14, "PinLight"),
+            (HardMix, 15, "HardMix"),
+            (Difference, 16, "Difference"),
+            (Exclusion, 17, "Exclusion"),
+            (Subtract, 18, "Subtract"),
+            (Divide, 19, "Divide"),
+            (Hue, 20, "Hue"),
+            (Saturation, 21, "Saturation"),
+            (Color, 22, "Color"),
+            (Luminosity, 23, "Luminosity"),
+            (DarkerColor, 24, "DarkerColor"),
+            (LighterColor, 25, "LighterColor"),
+            (PassThrough, 26, "PassThrough"),
+        ];
+        for (mode, value, name) in stored {
+            assert_eq!(mode as u8, value, "{name} の保存値");
+            assert_eq!(mode.name(), name);
+            assert_eq!(BlendMode::from_index(value), Some(mode), "{name}");
+            assert_eq!(BlendMode::from_name(name), Some(mode), "{name}");
+        }
+        // 個数: 層に付けられる 26 と、グループだけの PassThrough。その先の番号は無い
+        assert_eq!(stored.len(), 27);
+        assert_eq!(BlendMode::LAYER_MODES.len(), 26);
+        assert_eq!(
+            BlendMode::LAYER_MODES.to_vec(),
+            stored[..26].iter().map(|s| s.0).collect::<Vec<_>>(),
+            "層のモードは番号の順"
+        );
+        assert!(BlendMode::LAYER_MODES.iter().all(|m| *m != PassThrough));
+        for value in 27..=255u8 {
+            assert_eq!(BlendMode::from_index(value), None, "{value}");
+        }
+        assert_eq!(BlendMode::from_name("Normal "), None);
+        assert_eq!(BlendMode::from_name("normal"), None);
+        assert_eq!(BlendMode::default(), Normal);
+        // 成分ごとのモードは Multiply から Divide の 19 個（PassThrough・Hue 以降・Normal は成分ごとではない）
+        assert_eq!(stored.iter().filter(|s| s.0.is_separable()).count(), 19);
+    }
 }

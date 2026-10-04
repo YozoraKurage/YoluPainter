@@ -1481,3 +1481,447 @@ fn layer_locks_are_refused_instead_of_dropped() {
     }
     yolu_io::NativeDocument::from_core(&doc).unwrap();
 }
+
+// ───────── PSD への書き出し: 表せないものは断る、表せるロックは書く ─────────
+
+use yolu_io::psd::{self, CompatibilityMode, Limits};
+
+/// 下から「下」「中」「上」の 3 層（すべてラスターの Color で、画素を持つ）。
+fn psd_source() -> Document {
+    let mut doc = Document::with_tile_size(16, 12, 8).unwrap();
+    for (i, name) in ["下", "中", "上"].into_iter().enumerate() {
+        let id = doc.add_layer(name).unwrap();
+        paint(&mut doc, id, Channel::Color, i as u32 + 1);
+    }
+    doc
+}
+
+fn id_of(doc: &Document, name: &str) -> LayerId {
+    doc.layers()
+        .iter()
+        .find(|l| l.name() == name)
+        .unwrap_or_else(|| panic!("層「{name}」がありません"))
+        .id()
+}
+
+fn psd_bytes(doc: &Document) -> Vec<u8> {
+    psd::write(&psd::Document::from_core(doc).unwrap(), &Limits::default()).unwrap()
+}
+
+/// PSD への写しの断りの文（書けてしまったら、PSD の全画素を Debug で吐かずに、そのことだけを言って落ちる）。
+fn psd_refusal(doc: &Document, what: &str) -> String {
+    match psd::Document::from_core(doc) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("{what}: 断るはずが書けてしまった"),
+    }
+}
+
+/// 「lspf」の中身（4 バイト）を、出てきた順に。
+fn lspf_values(bytes: &[u8]) -> Vec<u32> {
+    bytes
+        .windows(4)
+        .enumerate()
+        .filter(|(_, w)| *w == b"lspf")
+        .map(|(at, _)| u32::from_be_bytes(bytes[at + 8..at + 12].try_into().unwrap()))
+        .collect()
+}
+
+/// 層の記録の印（opacity・clipping の次の 1 バイト。ビット 1 が非表示、ビット 0 が透明部分のロック）を、合成モードの印・不透明度・
+/// クリッピングが一致する記録について、出てきた順（下から上）に。lspf を介さず、書き出したバイト列の層の記録そのものを見る。
+fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) -> Vec<u8> {
+    let mut head = b"8BIM".to_vec();
+    head.extend(key);
+    head.extend([opacity, clipping]);
+    let n = head.len();
+    bytes
+        .windows(n + 2)
+        .filter(|w| w.starts_with(&head) && w[n + 1] == 0)
+        .map(|w| w[n])
+        .collect()
+}
+
+/// PSD に表せない中身は、平らにも黙って落とすこともせず、機能ごとの理由で断る（`NativeDocument::from_core` が手動の ID の色と層のロックを
+/// 断るのと対。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening）。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
+/// 中身を外した同じ文書は書ける。
+#[test]
+fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
+    type Setup = fn(&mut Document, LayerId);
+    let sets: [(&str, &str, Setup); 15] = [
+        ("マスク", "マスク", |d, id| {
+            d.add_layer_mask(id).unwrap()
+        }),
+        ("無効なマスク", "マスク", |d, id| {
+            d.add_layer_mask(id).unwrap();
+            d.set_layer_mask_enabled(id, false).unwrap();
+        }),
+        ("反転したマスク", "マスク", |d, id| {
+            d.add_layer_mask(id).unwrap();
+            d.set_layer_mask_inverted(id, true).unwrap();
+        }),
+        ("濃度を変えたマスク", "マスク", |d, id| {
+            d.add_layer_mask(id).unwrap();
+            d.set_layer_mask_density(id, 0.5, false).unwrap();
+        }),
+        (
+            "Color の合成モード",
+            "チャンネルごとの合成",
+            |d, id| {
+                d.set_channel_blend(
+                    id,
+                    Channel::Color,
+                    ChannelBlend::new(Some(BlendMode::Multiply), None),
+                    false,
+                )
+                .unwrap()
+            },
+        ),
+        (
+            "Color の不透明度",
+            "チャンネルごとの合成",
+            |d, id| {
+                d.set_channel_blend(
+                    id,
+                    Channel::Color,
+                    ChannelBlend::new(None, Some(0.5)),
+                    false,
+                )
+                .unwrap()
+            },
+        ),
+        (
+            "Metallic の合成",
+            "チャンネルごとの合成",
+            |d, id| {
+                d.set_channel_blend(
+                    id,
+                    Channel::Metallic,
+                    ChannelBlend::new(Some(BlendMode::Screen), None),
+                    false,
+                )
+                .unwrap()
+            },
+        ),
+        ("Metallic の画素", "Color 以外", |d, id| {
+            d.set_channel_pixel(id, Channel::Metallic, 3, 3, Rgba8::new(9, 9, 9, 255))
+                .unwrap();
+        }),
+        (
+            "Metallic を有効にしただけ",
+            "Color 以外",
+            |d, id| d.set_channel_enabled(id, Channel::Metallic, true).unwrap(),
+        ),
+        (
+            "無効にした Roughness の画素",
+            "Color 以外",
+            |d, id| {
+                d.set_channel_pixel(id, Channel::Roughness, 1, 1, Rgba8::new(9, 9, 9, 255))
+                    .unwrap();
+                d.set_channel_enabled(id, Channel::Roughness, false)
+                    .unwrap();
+            },
+        ),
+        // ユーザーチャンネル（番号 6 以降）も標準の 6 つと同じに、面・有効の印のどれがあっても断る
+        (
+            "ユーザーチャンネルの画素",
+            "Color 以外",
+            |d, id| {
+                let user = d
+                    .add_channel(info(
+                        "AO",
+                        ChannelKind::Scalar,
+                        ColorSpace::Linear,
+                        [255, 255, 255, 255],
+                    ))
+                    .unwrap();
+                assert!(!user.is_standard());
+                d.set_channel_pixel(id, user, 3, 3, Rgba8::new(9, 9, 9, 255))
+                    .unwrap();
+            },
+        ),
+        (
+            "ユーザーチャンネルを有効にしただけ",
+            "Color 以外",
+            |d, id| {
+                let user = d
+                    .add_channel(info(
+                        "Tint",
+                        ChannelKind::Color,
+                        ColorSpace::Srgb,
+                        [10, 20, 30, 255],
+                    ))
+                    .unwrap();
+                d.set_channel_enabled(id, user, true).unwrap();
+            },
+        ),
+        (
+            "無効にしたユーザーチャンネルの画素",
+            "Color 以外",
+            |d, id| {
+                let user = d
+                    .add_channel(info(
+                        "Detail",
+                        ChannelKind::Normal,
+                        ColorSpace::Linear,
+                        [128, 128, 255, 255],
+                    ))
+                    .unwrap();
+                d.set_channel_pixel(id, user, 1, 1, Rgba8::new(9, 9, 9, 255))
+                    .unwrap();
+                d.set_channel_enabled(id, user, false).unwrap();
+            },
+        ),
+        ("Color を無効", "Color が無効", |d, id| {
+            d.set_channel_enabled(id, Channel::Color, false).unwrap()
+        }),
+        ("非表示のマスク", "マスク", |d, id| {
+            d.set_layer_visible(id, false).unwrap();
+            d.add_layer_mask(id).unwrap();
+        }),
+    ];
+    let control = psd_source();
+    psd::Document::from_core(&control).expect("何も足さなければ書ける");
+    for (label, word, setup) in sets {
+        for name in ["下", "中", "上"] {
+            let mut doc = psd_source();
+            let id = id_of(&doc, name);
+            setup(&mut doc, id);
+            let err = psd_refusal(&doc, &format!("{label}（{name}）"));
+            assert!(
+                err.contains(word) && err.contains(&format!("層「{name}」")),
+                "{label}（{name}）: {err}"
+            );
+        }
+    }
+    // 種類が違う層は、種類を言って断る
+    type AddLayer = fn(&mut Document) -> LayerId;
+    let kinds: [(&str, LayerKind, AddLayer); 3] = [
+        ("グループ", LayerKind::Group, |d| {
+            d.add_group("種類", None).unwrap()
+        }),
+        ("塗りつぶし", LayerKind::Fill, |d| {
+            d.add_fill_layer("種類", &[(Channel::Color, Rgba8::new(1, 2, 3, 255))], None)
+                .unwrap()
+        }),
+        ("調整", LayerKind::Adjustment, |d| {
+            d.add_adjustment_layer("種類", AdjustmentSettings::invert(), None, None)
+                .unwrap()
+        }),
+    ];
+    for (word, kind, add) in kinds {
+        let mut doc = psd_source();
+        let id = add(&mut doc);
+        assert_eq!(doc.layer(id).unwrap().kind(), kind);
+        let err = psd_refusal(&doc, word);
+        assert!(
+            err.contains(word) && err.contains("層「種類」") && err.contains("ラスターの層だけ"),
+            "{word}: {err}"
+        );
+        // 非表示でも断る
+        doc.set_layer_visible(id, false).unwrap();
+        psd_refusal(&doc, &format!("{word}（非表示）"));
+    }
+    // 断っても文書は変わらない（履歴も合成も）
+    let mut doc = psd_source();
+    let id = id_of(&doc, "中");
+    doc.add_layer_mask(id).unwrap();
+    let (undo, before) = (doc.undo_count(), composites(&doc));
+    psd_refusal(&doc, "マスク");
+    assert_eq!((doc.undo_count(), composites(&doc)), (undo, before));
+    // 外せば書ける（Undo で戻した文書）
+    assert!(doc.undo().unwrap());
+    psd::Document::from_core(&doc).unwrap();
+}
+
+/// 描いている最中のストロークは、PSD への写しも断る（確定・取消のあとは書ける）。
+#[test]
+fn psd_export_refuses_an_active_stroke_until_it_ends() {
+    let mut doc = psd_source();
+    let id = id_of(&doc, "上");
+    let stroke = doc
+        .begin_stroke(id, &yolu_core::BrushSettings::default())
+        .unwrap();
+    let err = psd_refusal(&doc, "ストローク中");
+    assert!(err.contains("ストローク"), "{err}");
+    doc.cancel_stroke(stroke);
+    psd::Document::from_core(&doc).unwrap();
+}
+
+/// PSD が表せるロック（透明部分・画素・位置・すべて）は、断らずに lspf へ書く（C# の PsdLockTests。ビットは lspf と同じ: 0 透明部分・1 画素・
+/// 2 位置・31 すべて）。すべては 0x80000000 だけで書き、その下の個別のビットは足さない（効くロックは同じ）。
+#[test]
+fn psd_export_writes_the_locks_a_psd_can_hold() {
+    use yolu_core::LayerLocks;
+    let all_four = LayerLocks::from_bits(15).unwrap();
+    // （ロック, 投影の locks, lspf に書く値, 層の記録の印のビット 0）。ビット 0 は透明部分のロックだけが立ち、すべてを重ねたときは立てない
+    // （読み手が印を lspf に足すので、立てるとすべてに透明部分が増えて戻る）
+    let cases = [
+        (LayerLocks::TRANSPARENCY, 1u32, 1u32, 1u8),
+        (LayerLocks::PIXELS, 2, 2, 0),
+        (LayerLocks::POSITION, 4, 4, 0),
+        (LayerLocks::ALL, 0x8000_0000, 0x8000_0000, 0),
+        (LayerLocks::TRANSPARENCY | LayerLocks::PIXELS, 3, 3, 1),
+        (
+            LayerLocks::TRANSPARENCY | LayerLocks::PIXELS | LayerLocks::POSITION,
+            7,
+            7,
+            1,
+        ),
+        // すべてと個別を重ねても、書くのは 0x80000000 だけ
+        (all_four, 0x8000_0007, 0x8000_0000, 0),
+    ];
+    let unlocked = psd_source();
+    let plain = psd_bytes(&unlocked);
+    assert!(
+        lspf_values(&plain).is_empty(),
+        "ロックの無い文書は lspf を書かない"
+    );
+    for (lock, in_memory, on_disk, record_bit) in cases {
+        let mut doc = psd_source();
+        doc.set_layer_locks(id_of(&doc, "中"), lock).unwrap();
+        let projected = psd::Document::from_core(&doc).unwrap();
+        // 上から「上」「中」「下」。ロックしたのは「中」だけ
+        assert_eq!(
+            projected.layers.iter().map(|l| l.locks).collect::<Vec<_>>(),
+            vec![0, in_memory, 0],
+            "{lock:?}"
+        );
+        // ロックは描画に関わらない（画素も、貼り合わせた画像も同じ）
+        let base = psd::Document::from_core(&unlocked).unwrap();
+        assert_eq!(projected.composite_rgba, base.composite_rgba, "{lock:?}");
+        for (a, b) in projected.layers.iter().zip(&base.layers) {
+            assert_eq!(a.pixels_rgba, b.pixels_rgba, "{lock:?}");
+        }
+        let bytes = psd::write(&projected, &Limits::default()).unwrap();
+        assert_eq!(
+            lspf_values(&bytes),
+            vec![on_disk],
+            "{lock:?}: ロックした層にだけ書く"
+        );
+        // 層の記録の印のビット 0 も、下から「下」「中」「上」の順に、ロックした「中」だけ
+        assert_eq!(
+            layer_record_flags(&bytes, b"norm", 255, 0),
+            vec![0, record_bit, 0],
+            "{lock:?}: 層の記録の印のビット 0"
+        );
+        let read = psd::read(&bytes, &Limits::default()).unwrap();
+        assert_eq!(read.mode(), CompatibilityMode::EditableRaster, "{lock:?}");
+        assert!(
+            read.diagnostics().is_empty(),
+            "{lock:?}: {:?}",
+            read.diagnostics()
+        );
+        let again = read.document().unwrap();
+        assert_eq!(
+            again.layers.iter().map(|l| l.locks).collect::<Vec<_>>(),
+            vec![0, on_disk, 0],
+            "{lock:?}"
+        );
+        // 取り込み側は、まだロックを core の層に持てないので理由つきで断る（黙って外さない）
+        let issues = again.core_issues();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.contains("locks") && i.contains("ロック")),
+            "{lock:?}: {issues:?}"
+        );
+        assert!(again.to_core().is_err(), "{lock:?}");
+    }
+}
+
+/// ロックは非表示・クリッピング・不透明度・合成モードと重ねても、層の属性として一緒に書かれて読み戻る。透明部分のロックだけは層の印のビット 0 にも書く。
+#[test]
+fn psd_locks_travel_with_the_other_layer_attributes() {
+    use yolu_core::LayerLocks;
+    let mut doc = psd_source();
+    let (mid, top) = (id_of(&doc, "中"), id_of(&doc, "上"));
+    doc.set_layer_locks(mid, LayerLocks::TRANSPARENCY).unwrap();
+    doc.set_layer_visible(mid, false).unwrap();
+    doc.set_layer_clipping(mid, true).unwrap();
+    doc.set_layer_opacity(mid, 0.5, false).unwrap();
+    doc.set_layer_blend_mode(mid, BlendMode::Multiply).unwrap();
+    doc.set_layer_locks(top, LayerLocks::ALL).unwrap();
+    let bytes = psd_bytes(&doc);
+    // PSD の層の記録は下から上の順（「中」、「上」の順に出る）
+    assert_eq!(
+        lspf_values(&bytes),
+        vec![1, 0x8000_0000],
+        "ロックした 2 層にだけ"
+    );
+    // 層の記録の印は、「中」が非表示（ビット 1）と透明部分のロック（ビット 0）で 3。読み手は印を lspf に足して戻すので、書き手が
+    // 印のビット 0 を書かなくなっても読み戻しは通る。そこを読み戻しに頼らず、バイト列の記録で見る。
+    // 「下」「上」は通常・不透明・クリッピング無しで、「上」のすべては印のビット 0 を立てない
+    assert_eq!(
+        layer_record_flags(&bytes, b"mul ", 128, 1),
+        vec![3],
+        "「中」の記録の印"
+    );
+    assert_eq!(
+        layer_record_flags(&bytes, b"norm", 255, 0),
+        vec![0, 0],
+        "「下」「上」の記録の印"
+    );
+    let read = psd::read(&bytes, &Limits::default()).unwrap();
+    assert_eq!(read.mode(), CompatibilityMode::EditableRaster);
+    assert!(read.diagnostics().is_empty(), "{:?}", read.diagnostics());
+    let layers = &read.document().unwrap().layers;
+    let by_name = |n: &str| layers.iter().find(|l| l.name == n).unwrap();
+    assert_eq!(by_name("上").locks, 0x8000_0000);
+    let m = by_name("中");
+    assert_eq!(
+        (m.locks, m.visible, m.clipping, m.opacity, m.blend_mode),
+        (1, false, true, 128, psd::BlendMode::Multiply)
+    );
+    assert_eq!(by_name("下").locks, 0);
+}
+
+/// core の合成モードの番号と PSD 側の列挙は同じ並び（`from_core` は番号で対応づける。27 個の保存値は yolu-core の blend の試験が固定する）。
+#[test]
+fn psd_blend_modes_line_up_with_the_cores_stored_values() {
+    for i in 0..27u8 {
+        let core = BlendMode::from_index(i).unwrap();
+        assert_eq!(
+            format!("{:?}", psd::BlendMode::ALL[i as usize]),
+            core.name(),
+            "番号 {i}"
+        );
+    }
+    assert_eq!(psd::BlendMode::ALL.len(), 27);
+}
+
+/// 通過は PSD でもグループだけ。ほかのモードに言い換えて書かず、書き手が断る（C# の「どの層でも、PSD に対応が無いモードは別のモードで書かない」）。
+/// core も、グループでない層に通過を付けるのを断る（だから `from_core` はこの断りに届かない）。
+#[test]
+fn psd_never_writes_pass_through_as_another_mode_for_a_layer_that_is_not_a_group() {
+    let mut core = psd_source();
+    let id = id_of(&core, "上");
+    assert!(core
+        .set_layer_blend_mode(id, BlendMode::PassThrough)
+        .is_err());
+    assert!(core
+        .set_channel_blend_mode(id, Channel::Color, Some(BlendMode::PassThrough))
+        .is_err());
+    for kind in [
+        psd::LayerKind::Raster,
+        psd::LayerKind::Adjustment(psd::Adjustment::Invert),
+        psd::LayerKind::SolidColor([1, 2, 3]),
+    ] {
+        let mut doc = psd::Document::from_core(&psd_source()).unwrap();
+        doc.layers[0].kind = kind.clone();
+        doc.layers[0].blend_mode = psd::BlendMode::PassThrough;
+        let err = psd::write(&doc, &Limits::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("通過"), "{kind:?}: {err}");
+    }
+    // グループなら書ける
+    let mut doc = psd::Document::from_core(&psd_source()).unwrap();
+    doc.layers[0].kind = psd::LayerKind::Group {
+        children: vec![],
+        divider_id: 0,
+    };
+    doc.layers[0].blend_mode = psd::BlendMode::PassThrough;
+    doc.layers[0].width = 0;
+    doc.layers[0].height = 0;
+    doc.layers[0].pixels_rgba = vec![];
+    psd::write(&doc, &Limits::default()).unwrap();
+}

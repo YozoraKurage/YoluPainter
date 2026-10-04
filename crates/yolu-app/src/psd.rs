@@ -195,9 +195,9 @@ fn diagnostic_lines(lang: Lang, diagnostics: &[Diagnostic]) -> Vec<Line> {
     lines
 }
 
-/// 書き出せない理由（PSD に書けるのは Color のラスターの層だけ。書けない中身は平らにせず断る）。`psd::Document::from_core` が
-/// **黙って落とす**のはマスクとチャンネルごとの合成で、書けてしまうので先にここで断る。グループ・塗りつぶし・調整は Color の面が無く、
-/// `from_core` も「Color面がありません」と断るが、何の層かを日本語で出すために先に断る。
+/// 書き出せない理由（PSD に書けるのは Color のラスターの層だけ。書けない中身は平らにせず断る）。`psd::Document::from_core` も
+/// 同じものを機能ごとの理由で断る（日本語だけ）ので、これは何の層・何の中身かを画面の言語で先に言う場所。層のロックは PSD の
+/// lspf に書けるので断らない。
 pub fn export_blockers(lang: Lang, doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     for layer in doc.layers() {
@@ -1184,15 +1184,16 @@ mod tests {
         assert!(dir.files().is_empty());
     }
 
+    /// `from_core` はマスク・チャンネルごとの合成・ラスター以外を黙って落とさず、機能ごとの理由で断る。先の断りは同じものを層の名前つきで
+    /// 画面の言語で言う。層のロックは PSD に書けるので、どちらも断らない。
     #[test]
-    fn the_up_front_refusal_covers_what_from_core_drops_silently_and_names_what_it_rejects() {
-        use yolu_core::{BlendMode, ChannelBlend};
-        // マスク・チャンネルごとの合成: from_core は黙って落として書けてしまう（だから先に断る）
+    fn from_core_refuses_what_the_up_front_refusal_names_and_writes_the_locks() {
+        use yolu_core::{BlendMode, ChannelBlend, LayerLocks};
         let mut s = painted();
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        let projected = psd::Document::from_core(&s.doc).expect("マスクは黙って落とされる");
-        assert!(projected.layers.iter().all(|l| l.mask.is_none()));
+        let err = psd::Document::from_core(&s.doc).unwrap_err().to_string();
+        assert!(err.contains("マスク"), "{err}");
         assert_eq!(export_blockers(Lang::Ja, &s.doc).len(), 1);
         let mut t = painted();
         let layer = t.selected_layer.unwrap();
@@ -1204,21 +1205,22 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert!(
-            psd::Document::from_core(&t.doc).is_ok(),
-            "チャンネルごとの合成は黙って落とされる"
-        );
+        let err = psd::Document::from_core(&t.doc).unwrap_err().to_string();
+        assert!(err.contains("チャンネルごとの合成"), "{err}");
         let why = export_blockers(Lang::Ja, &t.doc);
         assert!(
             why.iter().any(|w| w.contains("チャンネルごとの合成")),
             "{why:?}"
         );
-        // グループ・塗りつぶし: from_core も断るが、何の層かは言わない。先の断りは層の名前と種類を日本語で出す
+        // グループ・塗りつぶし: from_core も、何の層かを言って断る。先の断りは層の名前と種類を画面の言語で出す
         let mut u = painted();
         u.apply(Action::M2(crate::m2::Edit::NewGroup));
         u.apply(Action::M2(crate::m2::Edit::NewFill));
         let err = psd::Document::from_core(&u.doc).unwrap_err().to_string();
-        assert!(err.contains("Color面がありません"), "{err}");
+        assert!(
+            err.contains("の層です") && err.contains("ラスターの層だけ"),
+            "{err}"
+        );
         let why = export_blockers(Lang::Ja, &u.doc);
         assert!(
             why.iter()
@@ -1230,6 +1232,13 @@ mod tests {
                 .any(|w| w.contains("塗りつぶし") && w.contains('「')),
             "{why:?}"
         );
+        // 層のロック: 先の断りは出さず、from_core は lspf のビットで書く
+        let mut v = painted();
+        let layer = v.selected_layer.unwrap();
+        v.doc.set_layer_locks(layer, LayerLocks::PIXELS).unwrap();
+        assert!(export_blockers(Lang::Ja, &v.doc).is_empty());
+        let projected = psd::Document::from_core(&v.doc).expect("ロックは書ける");
+        assert!(projected.layers.iter().any(|l| l.locks == 2));
     }
 
     #[test]

@@ -556,6 +556,79 @@ fn mask_changes_are_tracked_for_every_channel_the_layer_has() {
     }
 }
 
+/// マスクのタイルは隠す量をアルファに持ち、RGB は 0 でなければならない（ネイティブの straight RGBA8 の約束。C# の
+/// MaskTests.NativeReaderRefusesMaskTilesWithColour の、core へ入れる側の守り）。RGB の 1 バイトでも 0 でなければ、何も書かずに断る。
+#[test]
+fn a_mask_tile_with_colour_is_refused_before_anything_is_written() {
+    let (mut d, l) = full_red_layer();
+    d.add_layer_mask(l).unwrap();
+    d.clear_history().unwrap();
+    let n = (d.tile_size() * d.tile_size()) as usize;
+    let tile = |alpha: u8| -> Vec<u8> {
+        let mut t = vec![0u8; n * 4];
+        for p in t.as_chunks_mut::<4>().0 {
+            p[3] = alpha;
+        }
+        t
+    };
+    let coord = TileCoord::new(1, 0);
+    let (allocated, serial) = (d.allocated_bytes(), d.change_serial());
+    for pixel in [0, 1, n / 2, n - 1] {
+        for channel in 0..3 {
+            for value in [1u8, 128, 255] {
+                let mut bad = tile(200);
+                bad[pixel * 4 + channel] = value;
+                assert!(
+                    matches!(
+                        d.import_mask_tile(l, coord, &bad),
+                        Err(CoreError::InvalidArgument(_))
+                    ),
+                    "画素 {pixel} の{}={value}",
+                    ["R", "G", "B"][channel]
+                );
+                assert_eq!(
+                    d.layer(l).unwrap().mask().unwrap().surface().tile_count(),
+                    0
+                );
+                assert_eq!(
+                    (d.allocated_bytes(), d.change_serial()),
+                    (allocated, serial)
+                );
+                assert!(!d.can_undo(), "断ったものは履歴に何も残さない");
+                assert_eq!(at(&d, 9, 1).a, 255);
+            }
+        }
+    }
+    // 隠す量（アルファ）だけなら入る。履歴は残さず、同じ内容をもう一度入れても変わらない
+    assert_eq!(d.import_mask_tile(l, coord, &tile(200)), Ok(true));
+    assert_eq!(
+        d.layer(l)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .pixel(8, 0)
+            .unwrap(),
+        Rgba8::new(0, 0, 0, 200)
+    );
+    assert!(at(&d, 8, 0).a < 255);
+    assert!(!d.can_undo(), "読み込みは履歴を消す");
+    assert_eq!(d.import_mask_tile(l, coord, &tile(200)), Ok(false));
+    // 長さが違うタイルと、マスクの無い層も、書かずに断る
+    assert!(d
+        .import_mask_tile(l, TileCoord::new(0, 0), &tile(9)[..n * 4 - 4])
+        .is_err());
+    assert_eq!(
+        d.layer(l).unwrap().mask().unwrap().surface().tile_count(),
+        1
+    );
+    let bare = full(&mut d, "マスク無し", RED);
+    assert!(matches!(
+        d.import_mask_tile(bare, coord, &tile(9)),
+        Err(CoreError::Unsupported(_))
+    ));
+}
+
 // ───────── 調整・塗りつぶし ─────────
 
 fn one_pixel(c: Rgba8) -> (Document, LayerId) {

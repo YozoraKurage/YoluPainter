@@ -1,5 +1,12 @@
 use std::collections::BTreeMap;
+use yolu_core::{
+    AdjustmentSettings, BlendMode, Channel, ChannelBlend, Document, HeightEdgeMode, NormalSettings,
+    NormalYDirection,
+};
 use yolu_io::{Archive, NativeDocument, NativeValue, Project, Selection, WriterInfo};
+
+mod legacy_layout;
+use legacy_layout::{as_version, attribute_byte, NORMAL_SETTINGS_OFFSET};
 fn files(n: usize) -> BTreeMap<String, Vec<u8>> {
     Archive::read(
         &std::fs::read(format!(
@@ -273,4 +280,369 @@ fn selection_version_order_empty_padding_and_size_are_checked() {
     }
     b.push(0);
     assert!(Selection::read(&b, &d).is_err());
+}
+
+/// アルファ以外が 0 でないマスクのタイルは正本の読み込みで断る（ネイティブの straight RGBA8 の約束。C# の
+/// MaskTests.NativeReaderRefusesMaskTilesWithColour）。core の `import_mask_tile` も同じ約束を持つ（yolu-core/tests/layers.rs）が、
+/// 正本の読み手が先に断るので、壊れた正本は core の文書にならない。隠す量（アルファ）の変更は断らない。
+#[test]
+fn a_native_mask_tile_with_colour_is_refused() {
+    let d = NativeDocument::read(include_bytes!("fixtures/m2-masks.utpaint")).unwrap();
+    d.to_core().unwrap();
+    let paths: Vec<String> = d
+        .fields()
+        .iter()
+        .filter(|f| f.path.contains(".mask.tiles[") && f.path.ends_with(".rgba"))
+        .map(|f| f.path.clone())
+        .collect();
+    assert!(paths.len() >= 10, "マスクのタイルのある層が 2 つ");
+    let mut refused = 0;
+    for path in &paths {
+        let NativeValue::Bytes(bytes) = d.field(path).unwrap() else {
+            panic!("{path}")
+        };
+        let pixels = bytes.len() / 4;
+        for pixel in [0, 77, pixels - 1] {
+            for channel in 0..3 {
+                assert_eq!(
+                    bytes[pixel * 4 + channel],
+                    0,
+                    "{path}: 正本のマスクの RGB は 0"
+                );
+                let mut bad = bytes.to_vec();
+                bad[pixel * 4 + channel] = 1;
+                let err = d
+                    .with_value(path, NativeValue::Bytes(bad.into()))
+                    .expect_err(&format!("{path} 画素 {pixel} の {channel}"))
+                    .to_string();
+                assert!(
+                    err.contains("マスク") && err.contains("RGB"),
+                    "{path}: {err}"
+                );
+                refused += 1;
+            }
+        }
+        // アルファ（隠す量）は変えてよい: 読めて、core の文書になり、書き戻しも同じ
+        let mut alpha = bytes.to_vec();
+        alpha[3] = 77; // 先頭の画素（画布の中。右と上の余白はアルファも 0 でなければならない）
+        let changed = d
+            .with_value(path, NativeValue::Bytes(alpha.into()))
+            .unwrap();
+        assert_eq!(
+            NativeDocument::from_core(&changed.to_core().unwrap())
+                .unwrap()
+                .to_bytes(),
+            changed.to_bytes(),
+            "{path}"
+        );
+    }
+    assert_eq!(refused, paths.len() * 9);
+}
+
+/// 選択範囲の読み手が断るもののうち、識別子の違い・途中で切れたファイル・タイル数・同じ座標や逆順の 2 枚目（C# の
+/// SelectionPersistenceTests.AnythingItDoesNotWriteIsRefused の magic・count・order・truncated・short）。断る理由は種類ごとに違う文で言う。
+#[test]
+fn selection_magic_truncation_tile_count_and_tile_order_are_refused() {
+    let d = NativeDocument::read(include_bytes!("fixtures/native-v21.utpaint")).unwrap();
+    assert_eq!(
+        (d.width(), d.height(), d.tile_size()),
+        (9, 10, 8),
+        "2 × 2 のタイル"
+    );
+    let selection = |tiles: &[(i32, i32)]| {
+        let mut b = b"YLSL".to_vec();
+        for v in [1i32, 9, 10, 8, tiles.len() as i32] {
+            b.extend(v.to_le_bytes());
+        }
+        for &(x, y) in tiles {
+            b.extend(x.to_le_bytes());
+            b.extend(y.to_le_bytes());
+            let mut amounts = vec![0u8; 64];
+            // 画布の中（幅 9・高さ 10）の画素にだけ量を入れる
+            for (i, a) in amounts.iter_mut().enumerate() {
+                if x * 8 + (i as i32 % 8) < 9 && y * 8 + (i as i32 / 8) < 10 {
+                    *a = 7 + i as u8;
+                }
+            }
+            b.extend(amounts);
+        }
+        b
+    };
+    let refuse = |bytes: &[u8], what: &str, message: &str| {
+        let err = Selection::read(bytes, &d).expect_err(what).to_string();
+        assert!(err.contains(message), "{what}: {err}");
+    };
+    let good = selection(&[(0, 0), (1, 0)]);
+    let read = Selection::read(&good, &d).unwrap();
+    assert_eq!(read.to_bytes(), good);
+    assert_eq!(read.tiles().len(), 2);
+    // 識別子
+    let mut bad = good.clone();
+    bad[0] = b'X';
+    refuse(&bad, "識別子の違い", "識別子");
+    refuse(&[], "空", "識別子");
+    refuse(&good[..3], "識別子より短い", "識別子");
+    // 途中で切れた・長すぎる: どの長さでも断る。ヘッダーの途中は「途中で切れています」、そのあとは長さの不一致
+    for n in 0..good.len() {
+        assert!(
+            Selection::read(&good[..n], &d).is_err(),
+            "{n} バイトで切れたもの"
+        );
+    }
+    refuse(&good[..10], "ヘッダーの途中", "途中で切れて");
+    refuse(&good[..good.len() - 1], "最後の 1 バイトを欠く", "長さ");
+    refuse(&good[..24 + 72], "2 枚目をまるごと欠く", "長さ");
+    // タイルの数: 画布のタイル数（2 × 2）より多い・負・宣言と中身が合わない
+    for count in [5i32, 21, i32::MAX, -1, i32::MIN] {
+        let mut bad = good.clone();
+        bad[20..24].copy_from_slice(&count.to_le_bytes());
+        refuse(&bad, &format!("タイル数 {count}"), "タイル数");
+    }
+    for count in [1i32, 3] {
+        let mut bad = good.clone();
+        bad[20..24].copy_from_slice(&count.to_le_bytes());
+        refuse(&bad, &format!("宣言 {count} と中身（2 枚）"), "長さ");
+    }
+    // 並び: 2 枚目が 1 枚目と同じ座標・逆順・行をまたいで逆順は断る。(y, x) の昇順は通る
+    let mut same = good.clone();
+    same[24 + 72..24 + 72 + 8].copy_from_slice(&good[24..32]);
+    refuse(&same, "同じ座標の 2 枚目", "位置または並び");
+    refuse(&selection(&[(1, 0), (0, 0)]), "逆順", "位置または並び");
+    refuse(
+        &selection(&[(0, 1), (1, 0)]),
+        "行をまたいで逆順",
+        "位置または並び",
+    );
+    refuse(&selection(&[(1, 1), (1, 1)]), "同じ座標", "位置または並び");
+    for ok in [
+        vec![(0, 0), (1, 1)],
+        vec![(1, 0), (0, 1)],
+        vec![(0, 0), (1, 0), (0, 1), (1, 1)],
+    ] {
+        assert_eq!(
+            Selection::read(&selection(&ok), &d).unwrap().tiles().len(),
+            ok.len()
+        );
+    }
+}
+
+// ───────── 壊れた設定は落とさずに断る・旧版の並びの断り ─────────
+
+fn save(doc: &Document) -> Vec<u8> {
+    NativeDocument::from_core(doc).unwrap().to_bytes()
+}
+/// 読めないバイト列の断りの文（読めてしまったら、そのことだけを言って落ちる）。
+fn refusal(bytes: &[u8], what: &str) -> String {
+    match NativeDocument::read(bytes) {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("{what}: 断るはずが読めてしまった"),
+    }
+}
+
+/// チャンネルごとの合成の設定が壊れていたら、黙って落とさず断る（C# の ChannelBlendTests.BrokenSettingsAreRefusedInsteadOfDropped）。
+/// 並び: 層の属性の 1 バイト（ビット 2 が設定あり）、設定の数 1 バイト、設定ごとに チャンネル 4・部品の印 1・モード 4・不透明度 8。
+#[test]
+fn broken_channel_blend_settings_are_refused_instead_of_dropped() {
+    let mut d = Document::with_tile_size(16, 16, 8).unwrap();
+    let l = d.add_layer("L").unwrap();
+    d.set_channel_blend(
+        l,
+        Channel::Roughness,
+        ChannelBlend::new(Some(BlendMode::Multiply), Some(0.25)),
+        false,
+    )
+    .unwrap();
+    let bytes = save(&d);
+    let at = attribute_byte("L");
+    assert_eq!(bytes[at], 4, "属性のビット 2");
+    assert_eq!(bytes[at + 1], 1, "設定は 1 つ");
+    assert_eq!(
+        i32::from_le_bytes(bytes[at + 2..at + 6].try_into().unwrap()),
+        Channel::Roughness.index() as i32
+    );
+    assert_eq!(bytes[at + 6], 3, "モードと不透明度");
+    assert_eq!(
+        i32::from_le_bytes(bytes[at + 7..at + 11].try_into().unwrap()),
+        BlendMode::Multiply as i32
+    );
+    assert_eq!(
+        f64::from_le_bytes(bytes[at + 11..at + 19].try_into().unwrap()),
+        0.25
+    );
+    NativeDocument::read(&bytes).unwrap();
+    let with = |change: &dyn Fn(&mut Vec<u8>)| {
+        let mut b = bytes.clone();
+        change(&mut b);
+        b
+    };
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "空の一覧は書かれない",
+            with(&|b| b[at + 1] = 0),
+            "チャンネル合成数",
+        ),
+        (
+            "チャンネルの数より多い",
+            with(&|b| b[at + 1] = 7),
+            "チャンネル合成数",
+        ),
+        (
+            "未知のチャンネル",
+            with(&|b| b[at + 2..at + 6].copy_from_slice(&42i32.to_le_bytes())),
+            "channel",
+        ),
+        ("部品が無い", with(&|b| b[at + 6] = 0), "合成属性"),
+        ("未知の部品の印", with(&|b| b[at + 6] = 7), "合成属性"),
+        (
+            "未知のモード",
+            with(&|b| b[at + 7..at + 11].copy_from_slice(&99i32.to_le_bytes())),
+            "mode",
+        ),
+        (
+            "通過を層に",
+            with(&|b| {
+                b[at + 7..at + 11].copy_from_slice(&(BlendMode::PassThrough as i32).to_le_bytes())
+            }),
+            "通過合成はグループだけ",
+        ),
+        (
+            "不透明度が 1 より大きい",
+            with(&|b| b[at + 11..at + 19].copy_from_slice(&1.5f64.to_le_bytes())),
+            "opacity",
+        ),
+        (
+            "不透明度が NaN",
+            with(&|b| b[at + 11..at + 19].copy_from_slice(&f64::NAN.to_le_bytes())),
+            "opacity",
+        ),
+        ("途中で切れた", bytes[..at + 9].to_vec(), ""),
+    ];
+    for (what, b, message) in cases {
+        let err = refusal(&b, what);
+        assert!(err.contains(message), "{what}: {err}");
+    }
+    // 同じチャンネルが 2 回
+    d.set_channel_blend(
+        l,
+        Channel::Height,
+        ChannelBlend::new(None, Some(0.5)),
+        false,
+    )
+    .unwrap();
+    let two = save(&d);
+    assert_eq!(two[at + 1], 2);
+    let second = at + 2 + 4 + 1 + 4 + 8;
+    assert_eq!(
+        i32::from_le_bytes(two[second..second + 4].try_into().unwrap()),
+        Channel::Height.index() as i32
+    );
+    let mut dup = two.clone();
+    dup[second..second + 4].copy_from_slice(&(Channel::Roughness.index() as i32).to_le_bytes());
+    assert!(refusal(&dup, "同じチャンネルが 2 回").contains("重複"));
+}
+
+/// Normal の出力設定が壊れていたら断る（アルゴリズム版・強さの範囲と非数・端・向き・途中で切れた設定。C# の NativeArchiveRoundTripsNormalSettings の後半）。
+#[test]
+fn broken_normal_settings_are_refused() {
+    let mut d = Document::with_tile_size(16, 16, 8).unwrap();
+    d.add_layer("p").unwrap();
+    d.set_normal_settings(
+        NormalSettings::new(true, 12.5, HeightEdgeMode::Wrap, NormalYDirection::DirectX).unwrap(),
+        false,
+    )
+    .unwrap();
+    let bytes = save(&d);
+    NativeDocument::read(&bytes).unwrap();
+    let at = NORMAL_SETTINGS_OFFSET;
+    let tampered = |offset: usize, value: &[u8]| {
+        let mut b = bytes.clone();
+        b[at + offset..at + offset + value.len()].copy_from_slice(value);
+        b
+    };
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("アルゴリズムの版が新しい", tampered(0, &2i32.to_le_bytes())),
+        ("アルゴリズムの版が 0", tampered(0, &0i32.to_le_bytes())),
+        ("強さが NaN", tampered(5, &f64::NAN.to_le_bytes())),
+        ("強さが無限大", tampered(5, &f64::INFINITY.to_le_bytes())),
+        ("強さが範囲外", tampered(5, &1e6f64.to_le_bytes())),
+        ("強さが範囲のすぐ外", tampered(5, &256.5f64.to_le_bytes())),
+        ("未知の端の扱い", tampered(13, &7i32.to_le_bytes())),
+        ("未知の向き", tampered(17, &(-1i32).to_le_bytes())),
+        ("途中で切れた設定", bytes[..at + 10].to_vec()),
+    ];
+    for (what, b) in cases {
+        refusal(&b, what);
+    }
+    // 範囲の端は読める
+    for strength in [-256.0f64, 0.0, 256.0] {
+        NativeDocument::read(&tampered(5, &strength.to_le_bytes())).unwrap();
+    }
+}
+
+/// 版の数だけ変えた並びは、その版が持たない中身があれば断る（読み手は版ごとの並びで読み、持たない印を黙って無視しない）。
+/// チャンネルごとの合成（版 14）は版 13 以前、調整（版 4）は版 3 の並びでは読めない。
+#[test]
+fn a_layout_older_than_what_the_document_holds_is_refused() {
+    let mut d = Document::with_tile_size(16, 16, 8).unwrap();
+    let l = d.add_layer("L").unwrap();
+    d.set_channel_blend(
+        l,
+        Channel::Roughness,
+        ChannelBlend::new(Some(BlendMode::Screen), None),
+        false,
+    )
+    .unwrap();
+    let bytes = save(&d);
+    assert_eq!(NativeDocument::read(&bytes).unwrap().version(), 21);
+    for version in [20, 19, 15, 14] {
+        let older = as_version(&bytes, "L", version);
+        assert_eq!(
+            NativeDocument::read(&older).unwrap().version(),
+            version,
+            "版 {version}はまだ設定を持つ"
+        );
+    }
+    for version in [13i32, 12, 11, 10, 9] {
+        let mut older = bytes.clone();
+        older[8..12].copy_from_slice(&version.to_le_bytes());
+        let err = refusal(&older, &format!("版 {version}"));
+        if version >= 12 {
+            // 属性の 1 バイトの並び。設定の印（ビット 2）は版 14 から
+            assert!(err.contains("属性"), "版 {version}: {err}");
+        }
+    }
+    // 調整の層は版 3 の並び（種類が塗りつぶしまで）では読めない
+    let mut adjusted = Document::with_tile_size(16, 16, 8).unwrap();
+    adjusted
+        .add_adjustment_layer("A", AdjustmentSettings::invert(), None, None)
+        .unwrap();
+    adjusted.clear_history().unwrap();
+    let bytes = save(&adjusted);
+    NativeDocument::read(&bytes).unwrap();
+    let v3 = as_version(&bytes, "A", 3);
+    assert!(refusal(&v3, "版 3 に調整の層").contains("kind"));
+    // 4 以上なら調整を持てる
+    NativeDocument::read(&as_version(&bytes, "A", 4)).unwrap();
+    // 設定を持たない文書は、版の数だけ古くても読める（読み書きは compatibility.rs）
+    let mut plain = Document::with_tile_size(16, 16, 8).unwrap();
+    plain.add_layer("L").unwrap();
+    let plain = save(&plain);
+    for version in [13, 12] {
+        NativeDocument::read(&as_version(&plain, "L", version)).unwrap();
+    }
+}
+
+/// 全部入りの版 21 の正本（デカール・ID の色の Generator・形のグラデーション・塗りつぶしの画像・パス・Anchor・ロックなど）は、どの古い版の
+/// 並びとしても読めない（版の数だけを変えても、その版が持たない中身を黙って無視して読まない）。
+#[test]
+fn the_rich_document_is_refused_under_every_older_version_label() {
+    let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
+    for version in 1..=20 {
+        assert!(
+            rich.with_value("version", NativeValue::Int(version))
+                .is_err(),
+            "版 {version}"
+        );
+    }
+    rich.with_value("version", NativeValue::Int(21)).unwrap();
 }
