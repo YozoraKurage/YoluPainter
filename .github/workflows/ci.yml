@@ -39,6 +39,20 @@ jobs:
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
+      - name: 【一時】数学関数の調査（Linux）
+        continue-on-error: true
+        shell: bash
+        env:
+          PROBE_OUT: ${{ runner.temp }}/probe_linux.txt
+        run: |
+          cargo test -p yolu-core --test zz_mathprobe --locked
+          python3 .github/probe/ref.py "$PROBE_OUT" linux
+      - name: 【一時】調査の結果をアップロード（Linux）
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-linux
+          path: ${{ runner.temp }}/probe_linux.txt
+          if-no-files-found: ignore
       - name: ワークスペース全体の試験（ソフトウェア描画）
         env:
           # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。
@@ -49,8 +63,26 @@ jobs:
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a cargo test --workspace --locked -- --nocapture --test-threads=1
+          xvfb-run -a cargo test --workspace --locked --no-fail-fast -- --nocapture --test-threads=1
+      - name: 画面の正解との差の画像を残す
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/snapshot-diffs"
+          cd crates/yolu-app/tests/snapshots
+          for d in *.diff.png; do
+            [ -e "$d" ] || continue
+            cp "$d" "${d%.diff.png}.new.png" "$RUNNER_TEMP/snapshot-diffs/"
+          done
+      - name: 差の画像をアップロード
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-diffs
+          path: ${{ runner.temp }}/snapshot-diffs
+          if-no-files-found: ignore
       - name: Clippy（警告をエラーにする）
+        if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # cargo fmt --check は既存の整形差分を解消してから追加する。
 
@@ -69,15 +101,35 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: アプリのビルド
         run: cargo build -p yolu-app --locked
+      - name: 【一時】数学関数の調査（Windows）
+        continue-on-error: true
+        shell: bash
+        env:
+          PROBE_OUT: ${{ runner.temp }}/probe_windows.txt
+        run: |
+          cargo test -p yolu-core --test zz_mathprobe --locked
+          python .github/probe/ref.py "$PROBE_OUT" windows
+      - name: 【一時】調査の結果をアップロード（Windows）
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-windows
+          path: ${{ runner.temp }}/probe_windows.txt
+          if-no-files-found: ignore
       - name: 描画を使わないクレートの試験
-        run: cargo test --locked -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
       - name: アプリの単体試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
       - name: Live Link の統合試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test livelink --locked headless_ -- --test-threads=1
       - name: 自動更新の統合試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test update --locked headless_ -- --test-threads=1
       - name: ブラシの一覧の統合試験（画面なし。保存と読み戻し・壊れたファイル）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test brush_list --locked headless_ -- --test-threads=1
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test recovery --locked headless_ -- --test-threads=1
