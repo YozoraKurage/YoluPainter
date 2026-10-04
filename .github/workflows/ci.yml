@@ -121,13 +121,6 @@ jobs:
           cache-on-failure: true
       - name: アプリのビルド
         run: cargo build -p yolu-app --locked
-      - name: 【一時】保存のロックの競合を繰り返す
-        shell: bash
-        run: |
-          for i in $(seq 1 40); do
-            cargo test --locked -p yolu-io --lib only_one_saver -- --test-threads=1 -q 2>&1 | tail -3 || exit 1
-            [ "${PIPESTATUS[0]}" = 0 ] || exit 1
-          done
       - name: 描画を使わないクレートの試験
         if: ${{ !cancelled() }}
         run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
