@@ -350,12 +350,9 @@ fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
 #[test]
 fn the_symmetry_panel_offers_the_3d_items_beside_the_2d_ones() {
     use egui_kittest::kittest::Queryable;
-    // 対称の欄は、ブラシの欄の末尾にある（上の見出しを閉じて、スクロールなしで届くように）
+    // 対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ
     let (mut h, _rect) = cube_view();
-    for key in ["brush", "brush-effect"] {
-        h.state_mut().state.sections.insert(key, false);
-    }
-    h.run();
+    open_detail(&mut h, yolu_app::brushes::Category::Symmetry);
     // 3D のビューを出しているので、2D と 3D の両方の項目
     use egui::accesskit::Role;
     assert!(h
@@ -516,8 +513,8 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
             offset: Default::default(),
         },
     );
-    h.state_mut().state.sections.insert("brush", false);
-    h.run();
+    // クローンの欄は、ブラシの詳細の窓の「効果」のカテゴリ
+    open_detail(&mut h, yolu_app::brushes::Category::Effect);
     let disabled = |h: &Harness<'_, YoluApp>, label: &str| {
         h.get_by_role_and_label(Role::CheckBox, label)
             .accesskit_node()
@@ -528,13 +525,16 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     assert!(!disabled(&h, "全レイヤーから"));
     assert!(h.query_by_label("元がありません").is_none());
     assert!(h.query_by_label("元を決めました").is_none());
-    // Alt クリックで元を決めると、揃えるが使える
+    // Alt クリックで元を決めると、揃えるが使える（詳細の窓がモデルに重ならないよう、押す間は閉じる）
+    h.state_mut().state.brushes.ui.detail.open = false;
+    h.run();
     let source = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     press_with(&h, source, Modifiers::ALT);
     h.step();
     release_with(&h, source, Modifiers::ALT);
     h.run();
     assert!(h.state().state.view3d.clone.source.is_some());
+    open_detail(&mut h, yolu_app::brushes::Category::Effect);
     assert!(!disabled(&h, "揃える"));
     assert!(h.query_by_label("元を決めました").is_none());
     // マスクを描くあいだは、全レイヤーから読めない（描いているマスクだけを読む）ので、切った表示で薄い
@@ -544,7 +544,6 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     let layer = h.state().state.selected_layer.expect("レイヤー");
     h.state_mut().state.doc.add_layer_mask(layer).unwrap();
     h.state_mut().state.set_edit_mask(true);
-    h.state_mut().state.property_tab = 0; // マスクのタブへ移るので、ブラシのタブへ戻す
     h.run();
     assert!(disabled(&h, "全レイヤーから"));
     assert_eq!(
@@ -557,4 +556,13 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
         h.state().state.view3d.clone.all_layers,
         "設定は変えない（マスクをやめれば戻る）"
     );
+}
+
+/// ブラシの詳細の窓を、そのカテゴリで開く。
+fn open_detail(h: &mut Harness<'_, YoluApp>, category: yolu_app::brushes::Category) {
+    let ui = &mut h.state_mut().state.brushes.ui;
+    ui.detail.open = true;
+    ui.detail.category = category;
+    ui.detail.scroll = 0.0;
+    h.run();
 }

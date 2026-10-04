@@ -883,13 +883,13 @@ fn what_does_not_apply_in_3d_is_disabled_with_the_reason_instead_of_a_note() {
         .apply(Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
     h.run();
     assert!(in_pane_node(&h, "色相").accesskit_node().is_disabled());
-    // 効果のブラシは 3D では使えない（種類の箱は選べるが、値は無効）
+    // 効果のブラシ（ぼかし・指先・クローン）は 3D の面でも効く（3D の面のブラシ）
     h.state_mut()
         .state
         .apply(Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
     h.state_mut().state.m2.brush.effect = BrushEffect::BLUR;
     open_detail(&mut h, Category::Effect);
-    assert!(in_pane_node(&h, "半径").accesskit_node().is_disabled());
+    assert!(!in_pane_node(&h, "半径").accesskit_node().is_disabled());
 }
 
 fn in_pane_node<'a>(h: &'a H, label: &'a str) -> egui_kittest::Node<'a> {
