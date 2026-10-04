@@ -218,6 +218,18 @@ impl View3dSlot {
                     CursorIcon::Crosshair
                 });
             }
+        } else if app.tool == crate::state::Tool::Eyedropper {
+            // スポイト: ブラシの円は出さない
+            let pointer = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            if pointer.is_some() {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else {
+                    CursorIcon::Crosshair
+                });
+            }
         } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             // ブラシのカーソル（回している・パンしているあいだは出さない）
             if response.contains_pointer() && content.contains(pointer) {

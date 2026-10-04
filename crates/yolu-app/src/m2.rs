@@ -10,7 +10,7 @@ use yolu_core::LayerLocks;
 use crate::engine::{
     AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushPreset, Channel, ChannelBlend,
     ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush, DualBrushMode, LayerId,
-    LayerKind, PaperTexture, Rgba8, Stroke, TextureMode,
+    LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8, Stroke, TextureMode,
 };
 use crate::lang::Lang;
 use crate::layerops::Xform;
@@ -161,6 +161,12 @@ pub enum Edit {
     },
     /// 選んでいる層の移動・90° 回転・反転・数値と手のドラッグの変形。
     Transform(Xform),
+    /// 文書の Normal の出力の設定（Height → Normal・強さ・端・ファイルの Y の向き）。層の合成は変えない。`coalesce` はスライダーの
+    /// ドラッグ（離したとき 1 回の Undo にまとめる）。
+    NormalSettings {
+        settings: NormalSettings,
+        coalesce: bool,
+    },
 }
 
 /// ブラシの選択肢（ポップアップから選んだもの）。スライダーとスイッチは画面が `AppState::m2.brush` を直に変える。
@@ -293,6 +299,8 @@ pub struct M2State {
     pub renaming_channel: Option<Channel>,
     pub rename_channel_started: bool,
     pub channel_scroll: f32,
+    /// チャンネルのパネルの中身（一覧と Normal の設定）の高さ。前のフレームのもの（スクロールの上限に使う）。
+    pub channels_content: f32,
     /// プロパティの欄のスクロールと、前のフレームの中身の高さ（はみ出しの判定）。
     pub props_scroll: f32,
     pub props_content: f32,
@@ -314,6 +322,7 @@ impl Default for M2State {
             renaming_channel: None,
             rename_channel_started: false,
             channel_scroll: 0.0,
+            channels_content: 0.0,
             props_scroll: 0.0,
             props_content: 0.0,
         }
@@ -452,6 +461,14 @@ pub fn blend_choices(group: bool) -> Vec<BlendMode> {
     }
     v.extend(BlendMode::LAYER_MODES);
     v
+}
+
+/// ノーマルのファイルの Y の向きの名前（言語によらない）。
+pub fn direction_name(direction: NormalYDirection) -> &'static str {
+    match direction {
+        NormalYDirection::OpenGL => "OpenGL (Y+)",
+        NormalYDirection::DirectX => "DirectX (Y−)",
+    }
 }
 
 /// チャンネルの表示名（標準の 6 つは日本語ならカタカナ。ユーザーチャンネルは文書の名前）。
@@ -919,6 +936,24 @@ impl AppState {
             Edit::Lock { ids, flag, on } => self.change_locks(&ids, flag, on)?,
             Edit::Transform(x) => {
                 self.apply_xform(x)?;
+            }
+            Edit::NormalSettings { settings, coalesce } => {
+                let old = self.doc.normal_settings();
+                self.doc.set_normal_settings(settings, coalesce)?;
+                let lang = self.lang;
+                if settings.derive_from_height() != old.derive_from_height() {
+                    self.message = if settings.derive_from_height() {
+                        lang.pick("ハイト → ノーマルをオンにしました。", "Height → Normal on.")
+                    } else {
+                        lang.pick("ハイト → ノーマルをオフにしました。", "Height → Normal off.")
+                    }
+                    .into();
+                } else if settings.file_direction() != old.file_direction() {
+                    self.message = lang.pick(
+                        format!("ノーマルのファイル: {}", direction_name(settings.file_direction())),
+                        format!("Normal files: {}", direction_name(settings.file_direction())),
+                    );
+                }
             }
         }
         Ok(())

@@ -73,6 +73,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tools/fill_selected",
     "tools/polygon-fill",
     "tools/polygon-fill_selected",
+    "tools/eyedropper",
+    "tools/eyedropper_selected",
     "tools/id-select",
     "tools/id-select_selected",
     "select_all",

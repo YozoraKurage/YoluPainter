@@ -227,8 +227,9 @@ impl NativeDocument {
         self.to_core_within(None)
     }
 
-    /// `to_core` の画素の予算を指定できる形（None は core の既定の 256 MiB）。超えたら、どの層のどのタイルで断ったかを添えて断る。
-    pub(crate) fn to_core_within(&self, source_budget: Option<u64>) -> Result<Document> {
+    /// `to_core` の画素の予算を指定できる形（None は core の既定、`DEFAULT_SOURCE_BUDGET_BYTES`）。超えたら、どの層のどのタイルで
+    /// 断ったかを添えて `Error::Budget` で断る（壊れたファイルとは区別できる）。
+    pub fn to_core_within(&self, source_budget: Option<u64>) -> Result<Document> {
         let issues = self.core_issues();
         check(
             issues.is_empty(),

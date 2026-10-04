@@ -743,12 +743,15 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         "3D を描けません（GPU なし）",
         "Cannot draw 3D (no GPU)",
     ];
+    // 設定の窓のメモリの予算の値（MiB は値の単位で、説明でも内部の数でもない。状態の帯・ビューの隅には出さない）
+    const SETTING_VALUES: [&str; 3] = ["自動（{mib} MiB）", "Auto ({mib} MiB)", "{n} MiB"];
     let leaks: Vec<String> = literals
         .iter()
         .filter(|l| !l.tooltip && is_screen_text(&l.text))
         .filter(|l| !l.file.starts_with("lang/") && !l.file.starts_with("bake/") && !l.file.starts_with("export/") && !l.file.starts_with("view3d/"))
         .filter(|l| ["MiB", "CPU で合成", "CPU compositing", "上げたタイル", "Uploaded tiles", "Layers {", "History {"].iter().any(|w| l.text.contains(w)))
         .filter(|l| !REASONS.contains(&l.text.as_str()))
+        .filter(|l| !(l.file == "prefs.rs" && SETTING_VALUES.contains(&l.text.as_str())))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text))
         .collect();
     assert!(leaks.is_empty(), "開発用の数が画面の文字にある:\n{}", leaks.join("\n"));

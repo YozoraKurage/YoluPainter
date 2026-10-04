@@ -1,8 +1,11 @@
 //! M2 のポップアップ（自前のメニュー）の中身: 調整レイヤーの種類・一覧の空白の右クリック・ブラシの選択肢・チャンネルの種類。
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
-use crate::engine::{Channel, ChannelInfo, ChannelKind, DualBrushMode, TextureMode};
 use crate::brushes::BrushAction;
+use crate::engine::{
+    Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection, TextureMode,
+};
+use crate::lang::Lang;
 use crate::m2::{
     self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label,
     AdjustmentKind, BrushOp, Edit, EffectKind, UiOp,
@@ -39,6 +42,12 @@ pub enum Popup {
     StencilTiling,
     /// 移動・変形の補間。
     Resampling,
+    /// Normal の設定の端（Clamp・Wrap）。
+    NormalEdges,
+    /// Normal の設定のファイルの Y の向き（OpenGL・DirectX）。
+    NormalDirection,
+    /// 設定の窓の選択肢。
+    Pref(crate::prefs::PrefChoice),
 }
 
 fn tips(
@@ -59,6 +68,14 @@ fn tips(
         );
     }
     v
+}
+
+/// Normal の設定の端の名前（Height の微分が画布の外で読むもの）。
+pub fn edges_name(lang: Lang, mode: HeightEdgeMode) -> &'static str {
+    match mode {
+        HeightEdgeMode::Clamp => lang.pick("クランプ", "Clamp"),
+        HeightEdgeMode::Wrap => lang.pick("ラップ（タイル）", "Wrap (tiling)"),
+    }
 }
 
 /// 新しいユーザーチャンネルの名前（種類の名前に番号。文書の中で重ならない）。
@@ -93,6 +110,41 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             .radio(app.transform.resampling == mode)
         })
         .collect(),
+        Popup::Pref(choice) => crate::prefs::entries(app, choice),
+        Popup::NormalEdges => {
+            let current = app.doc.normal_settings();
+            [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]
+                .into_iter()
+                .map(|mode| {
+                    Entry::item(
+                        edges_name(lang, mode),
+                        Action::M2(Edit::NormalSettings {
+                            settings: current.with_edges(mode),
+                            coalesce: false,
+                        }),
+                    )
+                    .radio(current.edges() == mode)
+                    .enabled(free)
+                })
+                .collect()
+        }
+        Popup::NormalDirection => {
+            let current = app.doc.normal_settings();
+            [NormalYDirection::OpenGL, NormalYDirection::DirectX]
+                .into_iter()
+                .map(|direction| {
+                    Entry::item(
+                        m2::direction_name(direction),
+                        Action::M2(Edit::NormalSettings {
+                            settings: current.with_file_direction(direction),
+                            coalesce: false,
+                        }),
+                    )
+                    .radio(current.file_direction() == direction)
+                    .enabled(free)
+                })
+                .collect()
+        }
         Popup::Region => {
             let by_color = app.tool == crate::state::Tool::Fill;
             let mut v = Vec::new();

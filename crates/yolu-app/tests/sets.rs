@@ -945,7 +945,7 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     let dir = TempDir::new("keep");
     let path = dir.0.join("keep.ylp");
     let mut s = AppState::new(64, 64);
-    assert_eq!(s.prefs.backups, BackupKeep::All, "既定はすべて残す");
+    assert_eq!(s.prefs.settings.backups, BackupKeep::All, "既定はすべて残す");
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(2))));
     s.apply(Action::SaveProjectAs(path.clone()));
     assert!(s.message.starts_with("保存しました"), "{}", s.message);

@@ -201,6 +201,9 @@ pub struct YoluApp {
     settings: Option<(std::path::PathBuf, Settings)>,
     /// 前のフレームでウィンドウにフォーカスがあったか（失ったら復旧の書き置きを待たずに書く）。
     was_focused: Option<bool>,
+    /// 表示の合成の設定で、キャンバスの表示に入れた値（変わったときだけ入れ直す。試験や環境変数で決めた方針を、設定が変わらないうちは
+    /// 上書きしない）。
+    compositing_applied: crate::settings::Compositing,
 }
 
 impl YoluApp {
@@ -258,8 +261,9 @@ impl YoluApp {
         }
     }
 
-    /// 設定のファイル（無ければ保存しない）から言語と退避を残す数を決めて作る（`setup` は呼ぶ側で）。最初のレイヤー・テクスチャセット・
-    /// プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（日本語・すべて残す）に戻し、理由を知らせる
+    /// 設定のファイル（無ければ保存しない）から言語・書き出しの余白・メモリの予算・退避を残す数などを決めて作る（`setup` は呼ぶ側で）。
+    /// 最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（日本語・自動の予算・
+    /// すべて残す、など）に戻し、理由を知らせる
     /// （ファイルは、設定を選び直すまで触らない）。
     fn with_settings(settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
         let (loaded, problems) = settings.as_deref().map(crate::settings::load).unwrap_or_default();
@@ -268,8 +272,7 @@ impl YoluApp {
             AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
             pen,
         );
-        // 「すべて残す」を外したときに戻る数も、保存してあった数にする（直に代入すると既定の 10 に戻ってしまう）
-        app.state.prefs_apply(crate::prefs::PrefsAction::SetBackups(loaded.backups));
+        app.state.load_settings(loaded.clone());
         // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
             app.state.attach_brush_store(dir.join("brushes"));
@@ -284,8 +287,22 @@ impl YoluApp {
         if let Some(path) = settings.as_deref().and_then(crate::update::config::path_for) {
             app.state.update.attach_config(path);
         }
+        // 表示の合成の設定（自動のときは、環境変数 `YOLUPAINTER_CANVAS` か自動のまま）
+        app.compositing_applied = loaded.compositing;
+        if loaded.compositing != crate::settings::Compositing::Auto {
+            app.display.set_backend(canvas_backend(loaded.compositing));
+        }
         app.settings = settings.map(|path| (path, loaded));
         app
+    }
+
+    /// 設定の窓で表示の合成が変わっていれば、キャンバスの表示に入れる（次の合成から効く。保存・書き出しの合成は変わらず CPU）。
+    fn apply_compositing(&mut self) {
+        let now = self.state.prefs.settings.compositing;
+        if now != self.compositing_applied {
+            self.compositing_applied = now;
+            self.display.set_backend(canvas_backend(now));
+        }
     }
 
     /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
@@ -294,19 +311,21 @@ impl YoluApp {
         YoluApp::with_settings(settings, pen)
     }
 
-    /// 設定（言語・退避を残す数）の選択が変わっていれば、設定のファイルに書く。書けなくても動作は変えず、知らせるだけ。
-    /// 失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。退避の数は、スライダーをドラッグ
-    /// している間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数）の選択が変わっていれば、設定のファイルに書く。
+    /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
+    /// 退避の数は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
         let Some((path, saved)) = &mut self.settings else {
             return;
         };
-        let backups = if self.state.prefs.dragging { saved.backups } else { self.state.prefs.backups };
-        let now = Settings { lang: self.state.lang, backups };
+        let mut now = self.state.settings();
+        if self.state.prefs.dragging {
+            now.backups = saved.backups;
+        }
         if *saved == now {
             return;
         }
-        *saved = now;
+        *saved = now.clone();
         if crate::settings::save(path, &now).is_err() {
             self.state.message = now.lang.pick("設定を保存できません。", "Cannot save the settings.").into();
         }
@@ -335,6 +354,7 @@ impl YoluApp {
             closing: false,
             settings: None,
             was_focused: None,
+            compositing_applied: crate::settings::Compositing::Auto,
         }
     }
 
@@ -432,6 +452,52 @@ impl YoluApp {
                             id,
                             dir,
                         }));
+                }
+            }
+            Some(DialogRequest::ExportChannel) => {
+                let lang = self.state.lang;
+                let mut dialog = rfd::FileDialog::new()
+                    .set_title(lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"))
+                    .add_filter("PNG", &["png"])
+                    .set_file_name(crate::export::default_channel_file_name(&self.state));
+                if let Some(dir) = self
+                    .state
+                    .project
+                    .as_ref()
+                    .and_then(|p| p.path().parent())
+                    .filter(|d| d.is_dir())
+                {
+                    dialog = dialog.set_directory(dir);
+                }
+                if let Some(path) = dialog.save_file() {
+                    // 拡張子が無ければ .png を足す（窓の種類で付かない環境がある）。足した名前は窓が確かめていない
+                    self.state
+                        .apply(Action::Export(crate::export::channel_action(path)));
+                }
+            }
+            Some(DialogRequest::PrefsLibraryFolder) => {
+                let lang = self.state.lang;
+                let mut dialog = rfd::FileDialog::new()
+                    .set_title(lang.pick("棚の場所", "Library folder"));
+                if let Some(current) = self.state.prefs.settings.library_folder().filter(|d| d.is_dir()) {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    self.state.apply(Action::Prefs(crate::prefs::PrefsAction::Set(
+                        crate::prefs::Pref::LibraryFolder(Some(dir)),
+                    )));
+                }
+            }
+            Some(DialogRequest::ExportChannelsFolder) => {
+                let lang = self.state.lang;
+                if let Some(dir) = rfd::FileDialog::new()
+                    .set_title(
+                        lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
+                    )
+                    .pick_folder()
+                {
+                    self.state
+                        .apply(Action::Export(crate::export::ExportAction::ChannelsTo(dir)));
                 }
             }
             Some(DialogRequest::PsdImport(target)) => {
@@ -549,6 +615,11 @@ impl YoluApp {
         self.display.set_backend(policy);
     }
 
+    /// キャンバスの表示の合成の方針（設定の「表示の合成」と環境変数で決まる）。
+    pub fn canvas_backend(&self) -> crate::canvas::gpu::CanvasBackend {
+        self.display.backend()
+    }
+
     /// キャンバスの GPU の表示のテクスチャを読み戻す（試験・計測用。乗算済みの RGBA8、行は文書の下から上）。
     pub fn read_canvas_gpu_display(&mut self, rect: crate::engine::Rect) -> Result<Vec<u8>, String> {
         self.display.read_gpu_display(rect)
@@ -663,6 +734,7 @@ impl YoluApp {
         // 別のスレッドの仕事（ベイク・書き出し・PSD）の終わりを受ける
         self.state.poll_bake();
         self.state.poll_export();
+        self.state.sync_budgets();
         self.state.poll_psd();
         self.state.poll_newproject();
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
@@ -923,6 +995,17 @@ impl YoluApp {
     }
 }
 
+/// 設定の表示の合成から、キャンバスの表示の方針。自動は環境変数 `YOLUPAINTER_CANVAS`（無ければ自動）。
+fn canvas_backend(setting: crate::settings::Compositing) -> crate::canvas::gpu::CanvasBackend {
+    use crate::canvas::gpu::CanvasBackend;
+    use crate::settings::Compositing;
+    match setting {
+        Compositing::Auto => CanvasBackend::from_env(),
+        Compositing::Gpu => CanvasBackend::Gpu,
+        Compositing::Cpu => CanvasBackend::Cpu,
+    }
+}
+
 /// 起動の引数（実行ファイルの名前のあと）が .ylp ならそのパス。関連付けとエクスプローラーの「プログラムから開く」が渡す形。
 /// 無い・開けないファイルでも渡す（黙って空の画面を出さず、開く処理が理由を知らせる）。.ylp 以外は開かない。
 fn startup_project(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<std::path::PathBuf> {
@@ -943,6 +1026,7 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem], ink_connected:
 
 impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        self.apply_compositing();
         self.frame(ui);
         self.persist_settings();
     }
@@ -1045,7 +1129,15 @@ mod tests {
             Some("Cannot read the language setting.")
         );
         // Windows Ink の知らせで、読めなかった設定の知らせを上書きしない。理由が 2 つなら 2 つ
-        let both = startup_message(Lang::Ja, &[Problem::Language("x".into()), Problem::Backups("-2".into())], true).unwrap();
-        assert!(both.contains("言語の設定を読めません") && both.contains("退避を残す数") && both.contains("Windows Ink"), "{both}");
+        let both = startup_message(
+            Lang::Ja,
+            &[Problem::Language("x".into()), Problem::Invalid { key: "cpu_threads", value: "0".into() }, Problem::Backups("-2".into())],
+            true,
+        )
+        .unwrap();
+        assert!(
+            both.contains("言語の設定を読めません") && both.contains("CPU のスレッド") && both.contains("退避を残す数") && both.contains("Windows Ink"),
+            "{both}"
+        );
     }
 }

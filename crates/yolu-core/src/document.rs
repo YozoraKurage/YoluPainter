@@ -417,6 +417,9 @@ impl Journal {
     }
 }
 
+/// 層の画素の予算の既定（256 MiB。新しい文書と、予算を指定しない読み込みの値）。
+pub const DEFAULT_SOURCE_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
+
 /// 単独の書き手の CPU の文書。
 pub struct Document {
     id: u128,
@@ -508,7 +511,7 @@ impl Document {
             history_bytes: 0,
             undo_budget: 64 * 1024 * 1024,
             minimum_undo_steps: 0,
-            source_budget: 256 * 1024 * 1024,
+            source_budget: DEFAULT_SOURCE_BUDGET_BYTES,
             stroke_budget: 64 * 1024 * 1024,
             active: None,
             material: material::MaterialState::default(),
@@ -1120,7 +1123,7 @@ impl Document {
 
     // ───────── 予算 ─────────
 
-    /// 層の画素の予算（既定 256 MiB）。今の画素より小さくはできない。
+    /// 層の画素の予算（既定は `DEFAULT_SOURCE_BUDGET_BYTES`）。今の画素より小さくはできない。
     pub fn source_budget_bytes(&self) -> u64 {
         self.source_budget
     }

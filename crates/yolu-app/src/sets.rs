@@ -567,6 +567,8 @@ impl AppState {
         self.sel_doc_changed();
         self.ensure_selection();
         self.sync_view3d();
+        // 予算はプロジェクト全体: 今のセットの文書に、設定からほかのセットの使用量を引いた分を入れ直す
+        self.sync_budgets();
         Ok(())
     }
 
@@ -601,6 +603,7 @@ impl AppState {
         } else {
             self.bind_model_only();
         }
+        self.sync_budgets();
     }
 
     /// 今のモデル（無ければどれにも付けない）のマテリアルにセットを結び付け、セットの無いマテリアルにはセットを作る。

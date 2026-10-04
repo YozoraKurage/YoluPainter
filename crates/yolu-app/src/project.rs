@@ -83,13 +83,14 @@ pub fn writer() -> WriterInfo {
     }
 }
 
-/// 正本を core の文書へ。扱えない中身があれば、その理由（多ければ初めの 3 つと数）。
-fn to_core(native: &NativeDocument, lang: Lang) -> Result<Document, String> {
+/// 正本を core の文書へ。扱えない中身があれば、その理由（多ければ初めの 3 つと数）。`source_budget` は、この文書の層の画素に
+/// 許すバイト数（超えれば、読むだけのセットにして理由を出す）。
+pub(crate) fn to_core(native: &NativeDocument, lang: Lang, source_budget: u64) -> Result<Document, String> {
     let issues = native.core_issues();
     if !issues.is_empty() {
         return Err(lang.unsupported_features(&issues));
     }
-    let doc = native.to_core().map_err(|e| {
+    let doc = native.to_core_within(Some(source_budget)).map_err(|e| {
         format!("{}: {}", lang.pick("core の文書にできません", "Cannot convert to a core document"), lang.io_error(&e))
     })?;
     // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）はまだ app から文書へ渡していない。効果が効かない（入力のまま通る）文書は、
@@ -167,8 +168,14 @@ pub(crate) fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang
     (doc, None)
 }
 
-/// .ylp を開いて今の状態を置き換える。開けなければ何も変えずに理由を出す。
+/// .ylp を開いて今の状態を置き換える。開けなければ何も変えずに理由を出す。層の画素は、設定の予算（256 MiB を下回らない）まで読む。
 pub fn open_into(state: &mut AppState, path: &Path) {
+    let budget = state.load_source_bytes();
+    open_within(state, path, budget);
+}
+
+/// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
+pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
     let (project, target) = match SaveTarget::open(path) {
         Ok(x) => x,
         Err(e) => {
@@ -176,17 +183,18 @@ pub fn open_into(state: &mut AppState, path: &Path) {
             return;
         }
     };
-    open_project(state, project, Some((path.to_path_buf(), target)));
+    open_project(state, project, Some((path.to_path_buf(), target)), budget);
 }
 
 /// 復旧の世代から読んだプロジェクトで今の状態を置き換える。保存していない「名称未設定（復旧）」として開き、元の .ylp には
 /// つながない（保存先は利用者が選ぶ）。どのセットも、次の保存で正本と合成の PNG を書き直す。
 pub fn open_recovered(state: &mut AppState, project: Project) {
-    open_project(state, project, None);
+    let budget = state.load_source_bytes();
+    open_project(state, project, None, budget);
 }
 
 /// 開いた中身（ファイルなら保存先と印つき）で今の状態を置き換える。
-fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, SaveTarget)>) {
+fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, SaveTarget)>, budget: u64) {
     let entries = project.migrated_entries();
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
@@ -194,7 +202,7 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
     for set in project.sets() {
         let native = &set.document;
         let (w, h) = (native.width() as u32, native.height() as u32);
-        match to_core(native, state.lang) {
+        match to_core(native, state.lang, budget) {
             Ok(mut doc) => {
                 // 選択範囲（selection.bin）は文書に戻す（読めなければ選択なしで開き、理由を出す）
                 if let Err(e) =
@@ -514,7 +522,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .project
         .as_ref()
         .is_some_and(|p| p.is_file() && same_file(&p.path, path));
-    let keep = state.prefs.backups;
+    let keep = state.prefs.settings.backups;
     let report = if reuse {
         let file = state.project.as_mut().expect("上で確かめた");
         let target = file.target.as_mut().expect("ファイルのあるプロジェクトは印を持つ");
@@ -640,6 +648,47 @@ mod tests {
         assert!(ja.contains("古い退避 2 件を消せませんでした（アクセスが拒否されました）"), "{ja}");
         // 退避しない設定のとき整理は走らないが、理由だけがある報告でも文にする
         assert!(backup_text(Lang::En, path, &report(false, 1)).starts_with(" Could not delete 1 old backup"));
+    }
+
+    #[test]
+    fn a_set_is_read_within_the_given_pixel_budget_and_a_refusal_names_the_budget() {
+        use yolu_core::Rgba8;
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/project-budget-tests").join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("budget.ylp");
+        // 256 × 256 の 4 タイル（128 × 128 × 4 バイト = 64 KiB ずつ）を塗った文書を保存する
+        let mut source = AppState::new(256, 256);
+        let layer = source.selected_layer.unwrap();
+        for (x, y) in [(0, 0), (128, 0), (0, 128), (128, 128)] {
+            source.doc.set_pixel(layer, x, y, Rgba8::new(1, 2, 3, 255)).unwrap();
+        }
+        let bytes = source.doc.allocated_bytes();
+        assert_eq!(bytes, 4 * 65536);
+        source.apply(crate::state::Action::SaveProjectAs(path.clone()));
+        assert!(!source.modified, "{}", source.message);
+        // ちょうどの予算なら読める
+        let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
+        assert_eq!(to_core(&native, Lang::Ja, bytes).unwrap().allocated_bytes(), bytes);
+        // 1 バイト足りなければ、壊れたファイルではなく予算として断る（日英）
+        let ja = to_core(&native, Lang::Ja, bytes - 1).err().expect("断る");
+        assert!(ja.starts_with("core の文書にできません") && ja.contains("予算"), "{ja}");
+        let en = to_core(&native, Lang::En, bytes - 1).err().expect("断る");
+        assert_eq!(en, "Cannot convert to a core document: Size, count or memory limit exceeded");
+        // 開く: 予算に収まれば編集できるセット、収まらなければ読むだけのセット（理由つき）。どちらも元のファイルは変えない
+        let mut opened = AppState::new(64, 64);
+        open_within(&mut opened, &path, bytes);
+        assert!(opened.read_only_reason().is_none(), "{}", opened.message);
+        assert_eq!(opened.doc.allocated_bytes(), bytes);
+        let mut refused = AppState::new(64, 64);
+        open_within(&mut refused, &path, bytes - 1);
+        assert!(refused.read_only_reason().is_some_and(|r| r.contains("予算")), "{:?}", refused.read_only_reason());
+        assert!(refused.message.contains("読むだけのセット"), "{}", refused.message);
+        // 普通の開き方は設定の予算（既定は 256 MiB 以上）で読む
+        let mut normal = AppState::new(64, 64);
+        open_into(&mut normal, &path);
+        assert!(normal.read_only_reason().is_none(), "{}", normal.message);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

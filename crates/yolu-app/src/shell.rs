@@ -63,6 +63,16 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(free && app.read_only_reason().is_none()),
         Entry::Heading(l.pick("書き出し", "Export").to_owned()),
+        Entry::item(
+            l.pick("チャンネルを PNG…", "Channel as PNG…"),
+            Action::Export(ExportAction::ChannelDialog),
+        )
+        .enabled(free),
+        Entry::item(
+            l.pick("全チャンネルを画像に…", "All Channels as Images…"),
+            Action::Export(ExportAction::ChannelsDialog),
+        )
+        .enabled(free),
     ];
     for template in ExportTemplate::built_in() {
         entries.push(
@@ -171,6 +181,12 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 transform_entry(l, Xform::Flip { horizontal: false }, free),
                 transform_entry(l, Xform::Rotate90 { clockwise: true }, free),
                 transform_entry(l, Xform::Rotate90 { clockwise: false }, free),
+                Entry::item(
+                    Tool::Eyedropper.name_in(l),
+                    Action::SelectTool(Tool::Eyedropper),
+                )
+                .shortcut("I")
+                .radio(app.tool == Tool::Eyedropper),
                 Entry::Separator,
                 Entry::item(
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -736,6 +752,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::NONE, Key::E, Action::SelectTool(Tool::Eraser));
         key(Modifiers::NONE, Key::G, Action::SelectTool(Tool::Fill));
         key(Modifiers::NONE, Key::Num4, Action::SelectTool(Tool::PolygonFill));
+        key(Modifiers::NONE, Key::I, Action::SelectTool(Tool::Eyedropper));
         key(Modifiers::NONE, Key::X, Action::SwapColors);
         key(Modifiers::NONE, Key::D, Action::DefaultColors);
         key(Modifiers::NONE, Key::OpenBracket, Action::BrushSmaller);
@@ -781,6 +798,10 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
     if app.tool == Tool::Move {
         crate::transform::props::options(ui, app, r, x + 4.0);
+        return;
+    }
+    if app.tool == Tool::Eyedropper {
+        crate::eyedrop::options(ui, app, r, x + 4.0);
         return;
     }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定

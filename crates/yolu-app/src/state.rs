@@ -29,6 +29,8 @@ pub enum Tool {
     Fill,
     /// ポリゴン塗りつぶし（押したまま通った範囲を足していく。離して 1 回の Undo）。
     PolygonFill,
+    /// スポイト（押した所の値を描画色かマテリアルの値に取る。`eyedrop`）。
+    Eyedropper,
     /// 選択の道具（形は `selection`）。
     SelectRect,
     SelectEllipse,
@@ -43,11 +45,12 @@ pub enum Tool {
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 11] = [
+    pub const ALL: [Tool; 12] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
         Tool::PolygonFill,
+        Tool::Eyedropper,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
@@ -63,6 +66,7 @@ impl Tool {
             Tool::Eraser => "eraser",
             Tool::Fill => "fill",
             Tool::PolygonFill => "polygon-fill",
+            Tool::Eyedropper => "eyedropper",
             Tool::IdSelect => "id-select",
             Tool::SelectRect => "select-rectangle",
             Tool::SelectEllipse => "select-ellipse",
@@ -82,6 +86,7 @@ impl Tool {
             Tool::Eraser => lang.pick("消しゴム", "Eraser"),
             Tool::Fill => lang.pick("バケツ", "Fill"),
             Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
+            Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
             Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
             Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
             Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
@@ -97,6 +102,7 @@ impl Tool {
             Tool::Eraser => "E",
             Tool::Fill => "G",
             Tool::PolygonFill => "4",
+            Tool::Eyedropper => "I",
             Tool::IdSelect => "Shift+W",
             Tool::SelectRect => "M",
             Tool::SelectEllipse => "Shift+M",
@@ -111,10 +117,10 @@ impl Tool {
     pub fn is_region(self) -> bool {
         matches!(self, Tool::Fill | Tool::PolygonFill | Tool::IdSelect)
     }
-    /// 押した瞬間に終わる範囲のツール（バケツ・ID の色で選択）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
+    /// 押した瞬間に終わるツール（バケツ・ID の色で選択・スポイト）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
     /// 押し直さないよう、入力の側が押している間の印（`pen_once`）を持つ。
     pub fn is_one_shot(self) -> bool {
-        matches!(self, Tool::Fill | Tool::IdSelect)
+        matches!(self, Tool::Fill | Tool::IdSelect | Tool::Eyedropper)
     }
 }
 
@@ -494,7 +500,7 @@ pub enum Action {
     Project(crate::newproject::NpAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
     Update(crate::update::UpdateAction),
-    /// 設定の窓と、退避を残す数。
+    /// 設定の窓と、設定の値の選び。
     Prefs(crate::prefs::PrefsAction),
     /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
@@ -611,9 +617,11 @@ pub struct AppState {
     pub layer_ops: crate::layerops::LayerOpsState,
     /// 移動・変形の道具（ドラッグの途中・数値・補間）。
     pub transform: crate::transform::TransformState,
+    /// スポイトの設定（層だけか全体か）。
+    pub eyedrop: crate::eyedrop::EyedropState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
-    /// 設定（退避を残す数）と設定の窓。
+    /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
     pub prefs: crate::prefs::PrefsState,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
@@ -639,6 +647,12 @@ pub enum DialogRequest {
     ShelfRemove,
     /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
     ExportFolder(String),
+    /// 描くチャンネルの PNG を書き出すファイルを選ぶ。
+    ExportChannel,
+    /// 棚の場所のフォルダを選ぶ。
+    PrefsLibraryFolder,
+    /// 全チャンネルの画像を書き出すフォルダを選ぶ。
+    ExportChannelsFolder,
     /// 読み込む PSD を選ぶ。
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。
@@ -756,6 +770,7 @@ impl AppState {
             np: Default::default(),
             layer_ops: Default::default(),
             transform: Default::default(),
+            eyedrop: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),

@@ -11,6 +11,9 @@
 //!   全部）。UV は 3D ビューのモデルから、セットのマテリアルの三角形を使う。モデルが無い・セットの面が無ければ塗り広げず、そう知らせる。
 //! - **AO**: セットに今の条件で焼いたメッシュマップ（AO）があれば使う（古いものは使わず知らせる）。無ければ遮蔽なし（白）。
 //! - 読むだけのセット（core で扱えない中身の合成を見せているだけ）は書き出さない。
+//! - **チャンネルの画像**（ファイル → 書き出し）: 描くチャンネルを PNG に、全部のセットの使っている全チャンネルをフォルダに。値は
+//!   `yolu_core::export::channel_image`（詰めない・色を掛けない合成そのまま、Normal は文書の Y の向き）で、名前は
+//!   `<名前>[_<セット名>]_<チャンネル>.png`（チャンネルは言語によらず英語の綴り）。書く手順・余白・取消はテンプレートと同じ道を通す。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -19,20 +22,21 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::Vec2;
-use yolu_core::export::{build, ExportError as CalcError, ExportTemplate};
+use yolu_core::export::{
+    build, channel_image, ExportError as CalcError, ExportImage, ExportImageKind, ExportScalar,
+    ExportTemplate,
+};
 use yolu_core::glam::DVec2;
 use yolu_core::padding::{self, Reach};
+use yolu_core::{Channel, ChannelKind, ColorSpace, Document};
 use yolu_io::export::{
-    clashes, existing_files, plan_template, write_images, ExportError, ExportFile, Overwrite,
-    PlanSet, WriteOptions, WrittenImage,
+    clashes, existing_files, file_name, plan_template, sanitize, write_images, ExportError,
+    ExportFile, Overwrite, PlanSet, WriteOptions, WrittenImage,
 };
 use yolu_io::NativeDocument;
 
 use crate::bake::Occlusion;
 use crate::state::{AppState, DialogRequest};
-
-/// 画像を作る作業と塗り広げの作業のメモリの上限（Unity 版の StrokeBudgetBytes の上の方と同じ）。
-pub const WORKING_BYTES: u64 = 512 * 1024 * 1024;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +53,28 @@ pub enum ExportAction {
     Cancel,
     /// 結果の窓を閉じる。
     DismissReport,
+    /// 描くチャンネルを PNG に。書き出す先のファイルを選ぶ窓を頼む。
+    ChannelDialog,
+    /// 書き出す先のファイルが決まった（もうあるファイルは、選ぶ窓が置き換えてよいと確かめている）。
+    ChannelTo(PathBuf),
+    /// 書き出す先のファイルに、選ぶ窓が確かめていない名前（利用者が打った名前に拡張子を足したもの）が決まった。もうあれば、置き換える前に
+    /// 確かめの窓を出す。
+    ChannelNamed(PathBuf),
+    /// 全部のテクスチャセットの使っている全チャンネルを画像に。書き出す先のフォルダを選ぶ窓を頼む。
+    ChannelsDialog,
+    /// 書き出す先のフォルダが決まった。もうあるファイルがあれば、確かめの窓を出す。
+    ChannelsTo(PathBuf),
+}
+
+/// 何を書き出すか（確かめの窓の「置き換える」が、同じものをもう一度計画するのに使う）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum What {
+    /// テンプレート（ID）の画像。
+    Template(String),
+    /// 全チャンネルの画像。
+    Channels,
+    /// 描くチャンネルの 1 枚の PNG（書き出し先のファイル）。
+    ChannelFile(PathBuf),
 }
 
 /// 書き出しの計画で出た注意（言語は表示のときに決める）。
@@ -69,7 +95,7 @@ pub enum Note {
 /// もうあるファイルの確かめ（置き換えるか）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Confirm {
-    pub template: String,
+    pub what: What,
     pub dir: PathBuf,
     /// もうあるファイルの名前。
     pub existing: Vec<String>,
@@ -87,8 +113,11 @@ pub struct Report {
 }
 
 struct Job {
+    /// 画面に出す名前（テンプレートの名前・「チャンネル」）。
     template: String,
     dir: PathBuf,
+    /// 結果の窓を出すか（1 枚のチャンネルの PNG は、状態の帯だけ。注意も帯の文に入る）。
+    report: bool,
     total: usize,
     done: Arc<AtomicUsize>,
     cancel: Arc<AtomicBool>,
@@ -188,10 +217,22 @@ struct SetInput {
     uv: Option<Vec<[DVec2; 3]>>,
 }
 
+/// 書く画像 1 枚。
+struct PlannedImage {
+    /// `Plan::sets` の中の位置。
+    set: usize,
+    /// `Plan::template` の画像の番号（ファイル名の接尾辞・取り込みの種類の元）。
+    image: usize,
+    name: String,
+    /// チャンネルの画像（`yolu_core::export::channel_image`）か。None ならテンプレートの画像（`build`）。
+    channel: Option<Channel>,
+}
+
 struct Plan {
     sets: Vec<SetInput>,
-    /// (セットの番号, テンプレートの画像の番号, ファイル名)。
-    files: Vec<(usize, usize, String)>,
+    files: Vec<PlannedImage>,
+    /// テンプレートの書き出しはそのテンプレート、チャンネルの書き出しは、書く画像ごとの取り決め（接尾辞・種類）だけを持つ入れ物。
+    template: ExportTemplate,
     notes: Vec<Note>,
 }
 
@@ -224,14 +265,78 @@ fn uv_triangles(
         .collect()
 }
 
+/// チャンネルの画像のファイル名の末尾。標準のチャンネルは言語によらず英語の綴り（Unity 版と同じ）、ユーザーチャンネルは名前（使えない文字は
+/// `_`。空なら番号）。
+pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
+    if let Some(name) = channel.standard_name() {
+        return name.to_owned();
+    }
+    let name = doc
+        .channel_info(channel)
+        .map(|i| sanitize(&i.name))
+        .unwrap_or_default();
+    if name.is_empty() || name.starts_with('.') {
+        format!("Channel{}", channel.index())
+    } else {
+        name
+    }
+}
+
+/// 選ぶ窓が返したファイルから、書き出しの操作を決める。拡張子が無ければ `.png` を足す（窓の種類で付かない環境がある）。足した名前は
+/// 窓が確かめていないので `ChannelNamed`（もうあれば置き換える前に確かめる）、付いていればそのまま（窓が確かめた名前）。
+pub fn channel_action(chosen: PathBuf) -> ExportAction {
+    if chosen.extension().is_none() {
+        ExportAction::ChannelNamed(chosen.with_extension("png"))
+    } else {
+        ExportAction::ChannelTo(chosen)
+    }
+}
+
+/// 描くチャンネルの PNG の、書き出す先を選ぶ窓に出す初めのファイル名（全チャンネルの書き出しと同じ決まり）。
+pub fn default_channel_file_name(state: &AppState) -> String {
+    let doc = &state.doc;
+    let image = channel_image_spec(doc, state.m2.paint_channel);
+    let set = (state.sets.len() > 1).then(|| state.sets.current().name.as_str());
+    file_name(&stem(state), set, &image).unwrap_or_else(|_| "Texture.png".into())
+}
+
+/// チャンネルの画像の取り決め（接尾辞と、取り込みの種類。書く中身は `channel_image` が作る）。
+fn channel_image_spec(doc: &Document, channel: Channel) -> ExportImage {
+    let suffix = channel_suffix(doc, channel);
+    let info = doc.channel_info(channel);
+    match info {
+        _ if channel == Channel::Color => ExportImage::of(suffix, ExportImageKind::BaseColor),
+        Some(i) if i.kind == ChannelKind::Normal => {
+            ExportImage::of(suffix, ExportImageKind::Normal)
+        }
+        Some(i) if i.color_space == ColorSpace::Srgb => {
+            ExportImage::of(suffix, ExportImageKind::Emission)
+        }
+        _ => ExportImage::pack(
+            suffix,
+            ExportScalar::Zero,
+            ExportScalar::Zero,
+            ExportScalar::Zero,
+            ExportScalar::One,
+        ),
+    }
+}
+
+/// チャンネルの書き出しの範囲。
+enum Which<'a> {
+    /// 全部のセットの使っている全チャンネル。
+    All { stem: &'a str },
+    /// 1 つのセットの 1 つのチャンネルを、決まったファイル名で。
+    One {
+        set: usize,
+        channel: Channel,
+        file_name: String,
+    },
+}
+
 impl AppState {
-    /// 書き出す画像と名前を決め、文書を写す（このスレッド。写せなければ理由）。
-    fn plan_export(&mut self, template: &ExportTemplate, stem: &str) -> Result<Plan, String> {
-        let lang = self.lang;
-        let reach = Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
-        let padding_on = reach != Reach::Texels(0);
-        let mut notes = Vec::new();
-        // 書き出すセット（読むだけのセットは除く）
+    /// 書き出すセット（読むだけのセットは除く）の番号。除いたセットは注意に積む。
+    fn exportable_sets(&self, notes: &mut Vec<Note>) -> Vec<usize> {
         let mut indices = Vec::new();
         for i in 0..self.sets.len() {
             let set = self.sets.get(i).expect("範囲内");
@@ -241,6 +346,81 @@ impl AppState {
                 indices.push(i);
             }
         }
+        indices
+    }
+
+    /// 計画に出たセット（`indices` の位置。出てきた順）の文書を写し、塗り広げの UV を決める（このスレッド。写せなければ理由）。
+    /// 返すのは写した入力と、`indices` の位置からその入力の位置への対応。UV の無いセット・モデルの無いときは注意に積む。
+    #[allow(clippy::type_complexity)]
+    fn copy_sets(
+        &mut self,
+        indices: &[usize],
+        used: &[usize],
+        occlusions: &[Option<Vec<u8>>],
+        notes: &mut Vec<Note>,
+    ) -> Result<(Vec<SetInput>, Vec<Option<usize>>), String> {
+        let lang = self.lang;
+        let reach = Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
+        let padding_on = reach != Reach::Texels(0);
+        let model = self.view3d.full_model().cloned();
+        let mut sets: Vec<SetInput> = Vec::new();
+        let mut position: Vec<Option<usize>> = vec![None; indices.len()];
+        let mut no_model = false;
+        for &p in used {
+            let index = indices[p];
+            let (w, h) = {
+                let d = self.set_doc(index);
+                (d.width(), d.height())
+            };
+            let native = NativeDocument::from_core(self.set_doc(index)).map_err(|e| {
+                lang.pick(
+                    format!("文書を写せません: {e}"),
+                    format!("Cannot copy the document: {e}"),
+                )
+            })?;
+            let name = self.sets.get(index).expect("範囲内").name.clone();
+            let uv = if !padding_on {
+                None
+            } else {
+                match (&model, self.set_material(index)) {
+                    (None, _) => {
+                        no_model = true;
+                        None
+                    }
+                    (Some(m), Some(material)) => {
+                        let tris = uv_triangles(m, material, w, h);
+                        if tris.is_empty() {
+                            notes.push(Note::NoUv(name.clone()));
+                            None
+                        } else {
+                            Some(tris)
+                        }
+                    }
+                    (Some(_), None) => {
+                        notes.push(Note::NoUv(name.clone()));
+                        None
+                    }
+                }
+            };
+            sets.push(SetInput {
+                native,
+                occlusion: occlusions[p].clone(),
+                uv,
+            });
+            position[p] = Some(sets.len() - 1);
+        }
+        if no_model {
+            notes.push(Note::NoModel);
+        }
+        Ok((sets, position))
+    }
+
+    /// 書き出す画像と名前を決め、文書を写す（このスレッド。写せなければ理由）。
+    fn plan_export(&mut self, template: &ExportTemplate, stem: &str) -> Result<Plan, String> {
+        let lang = self.lang;
+        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
+        let mut notes = Vec::new();
+        let indices = self.exportable_sets(&mut notes);
         let several = self.sets.len() > 1;
         // AO（今の条件で焼いたものだけ）
         let mut occlusions = Vec::new();
@@ -284,87 +464,142 @@ impl AppState {
         let names: Vec<&str> = planned.iter().map(|p| p.file_name.as_str()).collect();
         let clash = clashes(names.iter().copied());
         if !clash.is_empty() {
-            return Err(lang.pick(
-                format!(
-                    "書き出しませんでした: 同じファイルになる画像があります: {}",
-                    clash.join("、")
-                ),
-                format!(
-                    "Nothing was exported: these images would write the same file: {}",
-                    clash.join(", ")
-                ),
-            ));
+            return Err(self.clash_message(&clash));
         }
         // 写す（planned に出たセットだけ）
-        let model = self.view3d.full_model().cloned();
-        let mut sets: Vec<SetInput> = Vec::new();
-        let mut position: Vec<Option<usize>> = vec![None; indices.len()];
+        let mut used: Vec<usize> = Vec::new();
+        for p in &planned {
+            if !used.contains(&p.set) {
+                used.push(p.set);
+            }
+        }
+        let (sets, position) = self.copy_sets(&indices, &used, &occlusions, &mut notes)?;
         let mut files = Vec::with_capacity(planned.len());
-        let mut no_model = false;
         let mut white = false;
         for p in &planned {
-            let slot = match position[p.set] {
-                Some(s) => s,
-                None => {
-                    let index = indices[p.set];
-                    let (w, h) = {
-                        let d = self.set_doc(index);
-                        (d.width(), d.height())
-                    };
-                    let native = NativeDocument::from_core(self.set_doc(index)).map_err(|e| {
-                        lang.pick(
-                            format!("文書を写せません: {e}"),
-                            format!("Cannot copy the document: {e}"),
-                        )
-                    })?;
-                    let name = self.sets.get(index).expect("範囲内").name.clone();
-                    let uv = if !padding_on {
-                        None
-                    } else {
-                        match (&model, self.set_material(index)) {
-                            (None, _) => {
-                                no_model = true;
-                                None
-                            }
-                            (Some(m), Some(material)) => {
-                                let tris = uv_triangles(m, material, w, h);
-                                if tris.is_empty() {
-                                    notes.push(Note::NoUv(name.clone()));
-                                    None
-                                } else {
-                                    Some(tris)
-                                }
-                            }
-                            (Some(_), None) => {
-                                notes.push(Note::NoUv(name.clone()));
-                                None
-                            }
-                        }
-                    };
-                    sets.push(SetInput {
-                        native,
-                        occlusion: occlusions[p.set].clone(),
-                        uv,
-                    });
-                    position[p.set] = Some(sets.len() - 1);
-                    sets.len() - 1
-                }
-            };
+            let slot = position[p.set].expect("使うセットは写した");
             let wants_occlusion = template.images[p.image]
                 .scalars()
                 .contains(&yolu_core::export::ExportScalar::Occlusion);
             if wants_occlusion && sets[slot].occlusion.is_none() {
                 white = true;
             }
-            files.push((slot, p.image, p.file_name.clone()));
-        }
-        if no_model {
-            notes.push(Note::NoModel);
+            files.push(PlannedImage {
+                set: slot,
+                image: p.image,
+                name: p.file_name.clone(),
+                channel: None,
+            });
         }
         if white {
             notes.push(Note::WhiteOcclusion);
         }
-        Ok(Plan { sets, files, notes })
+        Ok(Plan {
+            sets,
+            files,
+            template: template.clone(),
+            notes,
+        })
+    }
+
+    /// 同じファイルになる名前があるときの断りの文。
+    fn clash_message(&self, clash: &[String]) -> String {
+        self.lang.pick(
+            format!(
+                "書き出しませんでした: 同じファイルになる画像があります: {}",
+                clash.join("、")
+            ),
+            format!(
+                "Nothing was exported: these images would write the same file: {}",
+                clash.join(", ")
+            ),
+        )
+    }
+
+    /// チャンネルの画像（描くチャンネルの 1 枚、または全セットの全チャンネル）と名前を決め、文書を写す（このスレッド）。
+    fn plan_channels(&mut self, which: Which<'_>) -> Result<Plan, String> {
+        let lang = self.lang;
+        Reach::from_setting(self.export.padding).map_err(|e| e.to_string())?;
+        let mut notes = Vec::new();
+        // (indices の位置, チャンネル, ファイル名)
+        let mut wanted: Vec<(usize, Channel, String)> = Vec::new();
+        let indices = match &which {
+            Which::All { .. } => self.exportable_sets(&mut notes),
+            Which::One { set, .. } => {
+                if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
+                    return Err(format!(
+                        "{}: {reason}",
+                        lang.pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    ));
+                }
+                vec![*set]
+            }
+        };
+        let several = self.sets.len() > 1;
+        let mut images: Vec<ExportImage> = Vec::new();
+        let mut image_of: Vec<usize> = Vec::new();
+        for (position, &index) in indices.iter().enumerate() {
+            let doc = self.set_doc(index);
+            let channels: Vec<Channel> = match &which {
+                Which::All { .. } => doc
+                    .channels()
+                    .into_iter()
+                    .filter(|c| yolu_core::export::uses(doc, *c))
+                    .collect(),
+                Which::One { channel, .. } => vec![*channel],
+            };
+            for channel in channels {
+                let image = channel_image_spec(doc, channel);
+                let name = match &which {
+                    Which::All { stem } => file_name(
+                        stem,
+                        several.then(|| self.sets.get(index).expect("範囲内").name.as_str()),
+                        &image,
+                    )
+                    .map_err(|e| e.to_string())?,
+                    Which::One { file_name, .. } => file_name.clone(),
+                };
+                wanted.push((position, channel, name));
+                image_of.push(images.len());
+                images.push(image);
+            }
+        }
+        if wanted.is_empty() {
+            return Err(lang
+                .pick(
+                    "書き出すものがありません: どのレイヤーもチャンネルを使っていません",
+                    "Nothing to export: no layer uses any channel",
+                )
+                .into());
+        }
+        let clash = clashes(wanted.iter().map(|w| w.2.as_str()));
+        if !clash.is_empty() {
+            return Err(self.clash_message(&clash));
+        }
+        let mut used: Vec<usize> = Vec::new();
+        for (position, _, _) in &wanted {
+            if !used.contains(position) {
+                used.push(*position);
+            }
+        }
+        let occlusions = vec![None; indices.len()];
+        let (sets, position) = self.copy_sets(&indices, &used, &occlusions, &mut notes)?;
+        let files = wanted
+            .into_iter()
+            .zip(image_of)
+            .map(|((set, channel, name), image)| PlannedImage {
+                set: position[set].expect("使うセットは写した"),
+                image,
+                name,
+                channel: Some(channel),
+            })
+            .collect();
+        Ok(Plan {
+            sets,
+            files,
+            template: ExportTemplate::new("channels", "channels", images),
+            notes,
+        })
     }
 
     pub fn export_apply(&mut self, action: ExportAction) {
@@ -386,12 +621,38 @@ impl AppState {
                 }
                 self.dialog_request = Some(DialogRequest::ExportFolder(id));
             }
-            ExportAction::TemplateTo { id, dir } => self.start_export(&id, &dir, false),
+            ExportAction::TemplateTo { id, dir } => {
+                self.start_export(&What::Template(id), &dir, false)
+            }
             ExportAction::ConfirmReplace => {
                 if let Some(c) = self.export.confirm.take() {
-                    self.start_export(&c.template, &c.dir, true);
+                    match &c.what {
+                        What::ChannelFile(path) => self.start_channel_png(path),
+                        what => self.start_export(what, &c.dir, true),
+                    }
                 }
             }
+            ExportAction::ChannelDialog => {
+                if self.is_stroking() {
+                    self.message = lang
+                        .pick("描いている間はできません。", "Not while drawing.")
+                        .into();
+                    return;
+                }
+                self.dialog_request = Some(DialogRequest::ExportChannel);
+            }
+            ExportAction::ChannelTo(path) => self.start_channel_png(&path),
+            ExportAction::ChannelNamed(path) => self.confirm_channel_png(path),
+            ExportAction::ChannelsDialog => {
+                if self.is_stroking() {
+                    self.message = lang
+                        .pick("描いている間はできません。", "Not while drawing.")
+                        .into();
+                    return;
+                }
+                self.dialog_request = Some(DialogRequest::ExportChannelsFolder);
+            }
+            ExportAction::ChannelsTo(dir) => self.start_export(&What::Channels, &dir, false),
             ExportAction::CancelConfirm => {
                 if self.export.confirm.take().is_some() {
                     self.message = lang
@@ -414,29 +675,55 @@ impl AppState {
         }
     }
 
-    fn start_export(&mut self, id: &str, dir: &Path, replace: bool) {
+    /// 書き出しの作業（画像を作る・塗り広げる）が使えるメモリ。設定の「1 回の操作」（自動は物理メモリから）。
+    pub fn export_working_bytes(&self) -> u64 {
+        self.prefs.settings.budgets(self.prefs.ram_mib).stroke
+    }
+
+    /// 書き出せる状態か（描いていない・ほかの書き出しが走っていない）。だめなら理由を知らせて false。
+    fn export_ready(&mut self) -> bool {
         let lang = self.lang;
         if self.is_stroking() {
             self.message = lang
                 .pick("描いている間はできません。", "Not while drawing.")
                 .into();
-            return;
+            return false;
         }
         if self.export.job.is_some() {
             self.message = lang
                 .pick("書き出し中です。", "An export is running.")
                 .into();
+            return false;
+        }
+        true
+    }
+
+    /// テンプレートか全チャンネルの画像を `dir` へ書き出す。もうあるファイルがあれば（`replace` でなければ）、確かめの窓を出す。
+    fn start_export(&mut self, what: &What, dir: &Path, replace: bool) {
+        let lang = self.lang;
+        if !self.export_ready() {
             return;
         }
-        let Some(template) = ExportTemplate::built_in_by_id(id) else {
-            self.message = lang.pick(
-                format!("書き出しのテンプレート「{id}」はありません。"),
-                format!("No export template \"{id}\"."),
-            );
-            return;
-        };
         let stem = stem(self);
-        let plan = match self.plan_export(&template, &stem) {
+        let planned = match what {
+            What::Template(id) => match ExportTemplate::built_in_by_id(id) {
+                Some(template) => self.plan_export(&template, &stem),
+                None => {
+                    self.message = lang.pick(
+                        format!("書き出しのテンプレート「{id}」はありません。"),
+                        format!("No export template \"{id}\"."),
+                    );
+                    return;
+                }
+            },
+            What::Channels => self.plan_channels(Which::All { stem: &stem }),
+            // 1 枚のファイルは確かめの窓の「置き換える」で始まる（`ConfirmReplace`）。ここへは来ない
+            What::ChannelFile(path) => {
+                self.start_channel_png(path);
+                return;
+            }
+        };
+        let plan = match planned {
             Ok(p) => p,
             Err(e) => {
                 self.message = e;
@@ -444,10 +731,10 @@ impl AppState {
             }
         };
         if !replace {
-            let existing = existing_files(dir, plan.files.iter().map(|f| f.2.as_str()));
+            let existing = existing_files(dir, plan.files.iter().map(|f| f.name.as_str()));
             if !existing.is_empty() {
                 self.export.confirm = Some(Confirm {
-                    template: id.to_owned(),
+                    what: what.clone(),
                     dir: dir.to_path_buf(),
                     existing: existing
                         .iter()
@@ -465,6 +752,83 @@ impl AppState {
                 return;
             }
         }
+        let label = match what {
+            What::Template(_) => plan.template.name.clone(),
+            What::Channels => lang.pick("チャンネル", "Channels").into(),
+            What::ChannelFile(path) => path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        };
+        self.launch(plan, dir, replace, label, true);
+    }
+
+    /// 拡張子を足した名前の PNG: もうあれば、置き換える前に確かめる（選ぶ窓は、足す前の名前しか確かめていない）。無ければそのまま書く。
+    fn confirm_channel_png(&mut self, path: PathBuf) {
+        let lang = self.lang;
+        if !self.export_ready() {
+            return;
+        }
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            self.start_channel_png(&path);
+            return;
+        };
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        if existing_files(&dir, std::iter::once(name.as_str())).is_empty() {
+            self.start_channel_png(&path);
+            return;
+        }
+        self.export.confirm = Some(Confirm {
+            what: What::ChannelFile(path),
+            dir,
+            existing: vec![name],
+            total: 1,
+        });
+        self.message = lang.pick(
+            "もうあるファイル 1 個を置き換えるか確かめます。",
+            "Confirm replacing 1 existing file.",
+        )
+        .into();
+    }
+
+    /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶ窓が置き換えてよいと確かめているので、もうあれば置き換える）。
+    fn start_channel_png(&mut self, path: &Path) {
+        let lang = self.lang;
+        if !self.export_ready() {
+            return;
+        }
+        let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            self.message = lang
+                .pick("書き出す先のファイルがありません。", "No file to write to.")
+                .into();
+            return;
+        };
+        let dir = match path.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let set = self.sets.current_index();
+        let channel = self.m2.paint_channel;
+        let plan = match self.plan_channels(Which::One {
+            set,
+            channel,
+            file_name: file_name.clone(),
+        }) {
+            Ok(p) => p,
+            Err(e) => {
+                self.message = e;
+                return;
+            }
+        };
+        self.launch(plan, &dir, true, file_name, false);
+    }
+
+    /// 計画を別のスレッドで書き始める（`label` は状態の帯・結果に出す名前。`report` なら終わりに結果の窓を出す）。
+    fn launch(&mut self, plan: Plan, dir: &Path, replace: bool, label: String, report: bool) {
+        let lang = self.lang;
         let reach = Reach::from_setting(self.export.padding).unwrap_or(Reach::Fill);
         let total = plan.files.len();
         let done = Arc::new(AtomicUsize::new(0));
@@ -472,7 +836,7 @@ impl AppState {
         let (tx, rx) = channel();
         let input = WorkerInput {
             dir: dir.to_path_buf(),
-            template: template.clone(),
+            template: plan.template,
             sets: plan.sets,
             files: plan.files,
             overwrite: if replace {
@@ -484,6 +848,8 @@ impl AppState {
             done: done.clone(),
             cancel: cancel.clone(),
             park: std::mem::take(&mut self.export.park_next),
+            working_bytes: self.export_working_bytes(),
+            source_bytes: self.load_source_bytes(),
         };
         let spawned = std::thread::Builder::new()
             .name("yolu-export".into())
@@ -494,13 +860,21 @@ impl AppState {
             self.message = format!("{e}");
             return;
         }
-        self.message = lang.pick(
-            format!("書き出し中: {}（{total} 枚）…", template.name),
-            format!("Exporting: {} ({total} images)…", template.name),
-        );
+        self.message = if total == 1 {
+            lang.pick(
+                format!("書き出し中: {label}…"),
+                format!("Exporting: {label}…"),
+            )
+        } else {
+            lang.pick(
+                format!("書き出し中: {label}（{total} 枚）…"),
+                format!("Exporting: {label} ({total} images)…"),
+            )
+        };
         self.export.job = Some(Job {
-            template: template.name,
+            template: label,
             dir: dir.to_path_buf(),
+            report,
             total,
             done,
             cancel,
@@ -526,30 +900,44 @@ impl AppState {
         let job = self.export.job.take().expect("上で見た");
         match result {
             Ok(images) => {
-                let mut text = lang.pick(
-                    format!(
-                        "書き出しました: {} 枚（{}）→ {}。",
-                        images.len(),
-                        job.template,
-                        job.dir.display()
-                    ),
-                    format!(
-                        "Exported {} image(s) ({}) to {}.",
-                        images.len(),
-                        job.template,
-                        job.dir.display()
-                    ),
-                );
+                let mut text = if job.report {
+                    lang.pick(
+                        format!(
+                            "書き出しました: {} 枚（{}）→ {}。",
+                            images.len(),
+                            job.template,
+                            job.dir.display()
+                        ),
+                        format!(
+                            "Exported {} image(s) ({}) to {}.",
+                            images.len(),
+                            job.template,
+                            job.dir.display()
+                        ),
+                    )
+                } else {
+                    // 1 枚のファイルは、書いたファイルの場所を出す
+                    let path = images
+                        .first()
+                        .map(|i| i.path.display().to_string())
+                        .unwrap_or_default();
+                    lang.pick(
+                        format!("書き出しました: {path}。"),
+                        format!("Exported {path}."),
+                    )
+                };
                 for n in &job.notes {
                     text += &format!(" {}。", note_text(lang, n));
                 }
                 self.message = text;
-                self.export.report = Some(Report {
-                    template: job.template,
-                    dir: job.dir,
-                    images,
-                    notes: job.notes,
-                });
+                if job.report {
+                    self.export.report = Some(Report {
+                        template: job.template,
+                        dir: job.dir,
+                        images,
+                        notes: job.notes,
+                    });
+                }
             }
             Err(ExportError::Cancelled) => {
                 self.message = lang
@@ -590,12 +978,16 @@ struct WorkerInput {
     dir: PathBuf,
     template: ExportTemplate,
     sets: Vec<SetInput>,
-    files: Vec<(usize, usize, String)>,
+    files: Vec<PlannedImage>,
     overwrite: Overwrite,
     reach: Reach,
     done: Arc<AtomicUsize>,
     cancel: Arc<AtomicBool>,
     park: bool,
+    /// 画像を作る作業と塗り広げの作業のメモリの上限（設定の「1 回の操作」。Unity 版が塗り広げに渡す StrokeBudgetBytes と同じ）。
+    working_bytes: u64,
+    /// 写した文書を戻すときに 1 つの文書に許す層の画素（設定の「レイヤーの画素」。256 MiB を下回らない）。
+    source_bytes: u64,
 }
 
 /// 別のスレッドの本体: 写した正本を文書に戻し、塗り広げの覆いを作り、全部の画像を 1 回の `write_images` で書く。
@@ -610,6 +1002,8 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         done,
         cancel,
         park,
+        working_bytes,
+        source_bytes,
     } = input;
     if park {
         crate::windows::park_until_canceled(&cancel);
@@ -618,7 +1012,7 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         .iter()
         .map(|s| {
             s.native
-                .to_core()
+                .to_core_within(Some(source_bytes))
                 .map_err(|e| ExportError::Io(format!("写した文書を戻せません: {e}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -638,11 +1032,11 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
     }
     let export_files: Vec<ExportFile<'_>> = files
         .iter()
-        .map(|(set, image, name)| ExportFile {
-            name: name.clone(),
-            image: &template.images[*image],
-            width: docs[*set].width(),
-            height: docs[*set].height(),
+        .map(|f| ExportFile {
+            name: f.name.clone(),
+            image: &template.images[f.image],
+            width: docs[f.set].width(),
+            height: docs[f.set].height(),
         })
         .collect();
     let options = WriteOptions {
@@ -651,23 +1045,26 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
     };
     write_images(&dir, &export_files, &options, |i| {
         done.store(i, Ordering::Relaxed);
-        let (set, image, _) = &files[i];
-        let doc = &docs[*set];
-        let pixels = build(
-            doc,
-            &template.images[*image],
-            sets[*set].occlusion.as_deref(),
-            WORKING_BYTES,
-        )
+        let file = &files[i];
+        let doc = &docs[file.set];
+        let pixels = match file.channel {
+            Some(channel) => channel_image(doc, channel, working_bytes),
+            None => build(
+                doc,
+                &template.images[file.image],
+                sets[file.set].occlusion.as_deref(),
+                working_bytes,
+            ),
+        }
         .map_err(|e: CalcError| ExportError::from(e))?;
-        match &coverage[*set] {
+        match &coverage[file.set] {
             Some(keep) => Ok(padding::dilate_cancellable(
                 &pixels,
                 doc.width(),
                 doc.height(),
                 keep,
                 reach,
-                WORKING_BYTES,
+                working_bytes,
                 Some(&cancel),
             )?),
             None => Ok(pixels),

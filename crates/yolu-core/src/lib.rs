@@ -73,6 +73,7 @@ pub use brush::{
 };
 pub use document::{
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
+    DEFAULT_SOURCE_BUDGET_BYTES,
     LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
     PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };

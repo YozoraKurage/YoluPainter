@@ -72,7 +72,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
-        } else if app.tool.is_region() || app.tool.is_select() {
+        } else if app.tool.is_region()
+            || app.tool.is_select()
+            || crate::eyedrop::picks(app, ui.input(|i| i.modifiers.alt))
+        {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
         } else if app.tool == crate::state::Tool::Move {
             let icon = crate::transform::canvas::cursor(app, &view, hover);
@@ -189,7 +192,7 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
 }
 
 /// 押した点で始める: ブラシ・消しゴムはストローク、バケツ・ポリゴン塗りつぶし・ID の色で選択は範囲の道具（`region`）。
-/// ストロークかドラッグを始めたら true。
+/// スポイト（Alt を押した描く道具も）は押した所の値を取るだけで、始めない。ストロークかドラッグを始めたら true。
 fn begin_any(
     app: &mut AppState,
     view: &CanvasView,
@@ -197,7 +200,12 @@ fn begin_any(
     source: StrokeSource,
     eraser: bool,
     rect: Rect,
+    alt: bool,
 ) -> bool {
+    if crate::eyedrop::picks(app, alt) {
+        crate::eyedrop::pick_canvas(app, view, p);
+        return false;
+    }
     if app.tool.is_region() {
         if app.region.drag.is_some() {
             return false;
@@ -453,7 +461,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 && !app.canvas.space_held
                 && !app.stencil.handling() =>
             {
-                if begin_any(app, &view, p, StrokeSource::Pen(s.pointer_id), s.eraser, rect) {
+                if begin_any(app, &view, p, StrokeSource::Pen(s.pointer_id), s.eraser, rect, modifiers.alt) {
                     add_point(
                         app,
                         &view,
@@ -463,7 +471,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                         s.rotation,
                         s.time_ms as f64 / 1000.0,
                     );
-                } else if app.tool.is_one_shot() {
+                } else if app.tool.is_one_shot() || crate::eyedrop::picks(app, modifiers.alt) {
                     app.canvas.pen_once = Some(s.pointer_id);
                 }
             }
@@ -557,7 +565,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                             && !app.stencil.handling()
                             && {
                                 let view = app.view.view(rect, w_px, h_px);
-                                begin_any(app, &view, pos, StrokeSource::Mouse, false, rect)
+                                begin_any(app, &view, pos, StrokeSource::Mouse, false, rect, event_modifiers.alt)
                             }
                         {
                             let view = app.view.view(rect, w_px, h_px);

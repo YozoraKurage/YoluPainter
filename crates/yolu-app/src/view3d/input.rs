@@ -81,6 +81,11 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
+    // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描く道具の一時的なスポイトは 2D だけ）
+    if app.tool == crate::state::Tool::Eyedropper {
+        crate::eyedrop::pick_surface(app, rect, at);
+        return;
+    }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
     if app.tool.is_region() {
         if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {

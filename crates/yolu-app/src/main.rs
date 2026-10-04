@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> eframe::Result {
+    // CPU のスレッドの設定は、最初の rayon の利用より前に入れる（変えた値は次の起動から効く）
+    yolu_app::settings::apply_thread_setting();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("YoluPainter")

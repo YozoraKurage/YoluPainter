@@ -5,7 +5,7 @@
 use std::sync::atomic::AtomicBool;
 
 use yolu_core::export::{
-    build, default_value, occlusion_byte, should_write, working_bytes, ExportError, ExportImage,
+    build, channel_image, channel_working_bytes, default_value, occlusion_byte, should_write, working_bytes, ExportError, ExportImage,
     ExportImageKind, ExportScalar, ExportTemplate,
 };
 use yolu_core::glam::DVec2;
@@ -797,4 +797,85 @@ fn every_way_of_splitting_the_work_gives_the_same_result() {
         let got = coverage_tuned(w as u32, h as u32, triangles.iter().copied(), tuning).unwrap();
         assert!(got == base, "batch {triangle_batch}・band {band_rows}");
     }
+}
+
+// ───────── チャンネル 1 つのファイルの画像 ─────────
+
+#[test]
+fn a_channel_image_is_the_composite_and_a_normal_follows_the_file_direction() {
+    let mut doc = document(&[
+        (Channel::Color, &|x, _| [x as u8 * 30, 10, 20, 255]),
+        (Channel::Emission, &|_, _| [200, 100, 50, 128]),
+        (Channel::Roughness, &|_, y| [y as u8 * 60, 0, 0, 200]),
+        (Channel::Normal, &|x, _| [x as u8 * 20, 100, 220, 255]),
+    ]);
+    // Color・Emission・スカラーは、合成のバイトそのまま（詰めない・アルファを掛けない・不透明にしない）
+    for channel in [Channel::Color, Channel::Emission, Channel::Roughness] {
+        assert_eq!(
+            channel_image(&doc, channel, ALL).unwrap(),
+            doc.composite_channel(channel, doc.bounds()).unwrap(),
+            "{channel:?}"
+        );
+    }
+    let emission = channel_image(&doc, Channel::Emission, ALL).unwrap();
+    assert_eq!(px(&emission, 3, 1), [200, 100, 50, 128], "テンプレートの Emission と違い、アルファのまま");
+    // Color は、テンプレートの BaseColor と同じバイト
+    assert_eq!(
+        channel_image(&doc, Channel::Color, ALL).unwrap(),
+        build(&doc, image(&ExportTemplate::unity_hdrp(), "BaseColor"), None, ALL).unwrap()
+    );
+    // Normal: OpenGL はテンプレートの Normal と同じバイト、DirectX は緑だけが 255 − G
+    let opengl = channel_image(&doc, Channel::Normal, ALL).unwrap();
+    assert_eq!(
+        opengl,
+        build(&doc, image(&ExportTemplate::unity_hdrp(), "Normal"), None, ALL).unwrap()
+    );
+    doc.set_normal_settings(doc.normal_settings().with_file_direction(NormalYDirection::DirectX), false)
+        .unwrap();
+    let directx = channel_image(&doc, Channel::Normal, ALL).unwrap();
+    assert_ne!(directx, opengl);
+    for (a, b) in opengl.chunks(4).zip(directx.chunks(4)) {
+        assert_eq!([a[0], 255 - a[1], a[2], a[3]], [b[0], b[1], b[2], b[3]]);
+    }
+    assert_eq!(
+        build(&doc, image(&ExportTemplate::unity_hdrp(), "Normal"), None, ALL).unwrap(),
+        opengl,
+        "テンプレートは Unity 向けなので、ファイルの向きに依らず OpenGL"
+    );
+}
+
+#[test]
+fn a_channel_image_includes_the_normal_derived_from_height() {
+    let mut doc = document(&[(Channel::Height, &|x, _| [x as u8 * 30, 0, 0, 255])]);
+    doc.set_normal_settings(
+        NormalSettings::new(true, 8.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL).unwrap(),
+        false,
+    )
+    .unwrap();
+    let derived = channel_image(&doc, Channel::Normal, ALL).unwrap();
+    assert_eq!(derived, doc.normal_output(ALL).unwrap());
+    assert_ne!(px(&derived, 3, 1), [128, 128, 255, 255], "傾きのある所は平らでない");
+}
+
+#[test]
+fn a_channel_image_refuses_before_allocating_and_for_a_channel_the_document_lacks() {
+    let doc = document(&[(Channel::Color, &|_, _| [1, 2, 3, 255])]);
+    let n = (W * H) as u64;
+    assert_eq!(channel_working_bytes(&doc, Channel::Color), 4 * n);
+    assert_eq!(channel_working_bytes(&doc, Channel::Normal), doc.normal_working_bytes());
+    for channel in [Channel::Color, Channel::Normal] {
+        let needed = channel_working_bytes(&doc, channel);
+        assert_eq!(
+            channel_image(&doc, channel, needed - 1),
+            Err(ExportError::WorkingBudgetExceeded { needed, allowed: needed - 1 }),
+            "{channel:?}"
+        );
+        assert!(channel_image(&doc, channel, needed).is_ok(), "{channel:?}: ちょうどなら通る");
+    }
+    let missing = Channel::from_index(40).unwrap();
+    assert!(doc.channel_info(missing).is_none());
+    assert!(matches!(
+        channel_image(&doc, missing, ALL),
+        Err(ExportError::Core(_))
+    ));
 }

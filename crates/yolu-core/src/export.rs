@@ -378,6 +378,38 @@ pub fn build(
     }
 }
 
+/// [`channel_image`] が確保する作業のバイト数（出力。法線は [`Document::normal_working_bytes`]）。
+pub fn channel_working_bytes(document: &Document, channel: Channel) -> u64 {
+    if channel == Channel::Normal {
+        document.normal_working_bytes()
+    } else {
+        4 * document.width() as u64 * document.height() as u64
+    }
+}
+
+/// 1 つのチャンネルを、ほかの道具へ渡すファイルの画像（straight RGBA8、行は下から上、文書の大きさ。C# の `YlpContent.FileImage`）にする。
+/// Normal は文書の設定のファイルの Y の向き（[`Document::normal_file_output`]。DirectX なら緑を反転）、ほかはチャンネルの合成そのまま。
+/// テンプレートの画像（[`build`]）と違い、詰めたり色を掛けたりしない（Emission も合成のまま）ので、そのチャンネルだけを読み戻せる。
+/// 作業のバイト数（[`channel_working_bytes`]）が `max_working_bytes` を超えるなら、確保の前に断る。
+pub fn channel_image(
+    document: &Document,
+    channel: Channel,
+    max_working_bytes: u64,
+) -> Result<Vec<u8>, ExportError> {
+    let needed = channel_working_bytes(document, channel);
+    if needed > max_working_bytes {
+        return Err(ExportError::WorkingBudgetExceeded {
+            needed,
+            allowed: max_working_bytes,
+        });
+    }
+    if channel == Channel::Normal {
+        Ok(document.normal_file_output(max_working_bytes)?)
+    } else {
+        Ok(document.composite_channel(channel, document.bounds())?)
+    }
+}
+
 /// 並列の 1 仕事あたりの画素数（結果には効かない）。
 const PIXELS_PER_TASK: usize = 1 << 14;
 

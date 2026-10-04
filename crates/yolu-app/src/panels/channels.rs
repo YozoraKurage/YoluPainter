@@ -4,13 +4,14 @@
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
-use crate::engine::{Channel, ChannelInfo};
-use crate::m2::{self, Edit, UiOp};
-use crate::m2_menu::Popup;
+use super::properties::{group_label, open_popup, section, slider_row, toggle_row};
+use crate::engine::{Channel, ChannelInfo, NormalSettings};
+use crate::m2::{self, direction_name, Edit, UiOp};
+use crate::m2_menu::{edges_name, Popup};
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align};
+use crate::ui::widgets::{self as w, Align, NumberFormat, Rows};
 
 pub const ROW_HEIGHT: f32 = 28.0;
 pub const TOOLBAR_HEIGHT: f32 = 30.0;
@@ -30,39 +31,65 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     let enabled = app.can_edit();
-    let list = Rect::from_min_max(
+    // 一覧と、その下の Normal の設定は 1 つのスクロールで動く（下の帯の足す・消すは動かない）
+    let body = Rect::from_min_max(
         r.min,
         pos2(r.right(), (r.bottom() - TOOLBAR_HEIGHT).max(r.top())),
     );
-    w::fill(ui.painter(), list, t::CONTROL_BG);
     let channels = app.doc.channels();
-    let content = channels.len() as f32 * ROW_HEIGHT;
-    let max_scroll = (content - list.height()).max(0.0);
-    if ui.rect_contains_pointer(list) {
+    let list_height = channels.len() as f32 * ROW_HEIGHT;
+    let max_scroll = (app.m2.channels_content - body.height()).max(0.0);
+    if ui.rect_contains_pointer(body) {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
         app.m2.channel_scroll -= wheel;
     }
     app.m2.channel_scroll = app.m2.channel_scroll.clamp(0.0, max_scroll);
-    let row_width = list.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 };
+    let scroll = app.m2.channel_scroll;
+    w::fill(&ui.painter_at(body), body, t::PANEL_BG);
+    let list = Rect::from_min_size(
+        pos2(body.left(), body.top() - scroll),
+        vec2(body.width(), list_height),
+    );
+    w::fill(&ui.painter_at(body), list, t::CONTROL_BG);
+    // スクロールの帯は行に重ねて出す（行の幅を狭めると、名前が切れる）
+    let row_width = list.width();
     for (i, channel) in channels.iter().enumerate() {
         let row = Rect::from_min_size(
-            pos2(
-                list.left(),
-                list.top() + i as f32 * ROW_HEIGHT - app.m2.channel_scroll,
-            ),
+            pos2(list.left(), list.top() + i as f32 * ROW_HEIGHT),
             vec2(row_width, ROW_HEIGHT),
         );
-        if row.bottom() < list.top() || row.top() > list.bottom() {
+        if row.bottom() < body.top() || row.top() > body.bottom() {
             continue;
         }
-        channel_row(ui, app, &ctx, list, row, *channel);
+        channel_row(ui, app, &ctx, body, row, *channel);
+    }
+    // 一覧の下: Normal の設定
+    let outer_clip = ui.clip_rect();
+    ui.set_clip_rect(body.intersect(outer_clip));
+    let area = Rect::from_min_max(
+        pos2(body.left(), list.bottom()),
+        pos2(
+            body.right() - if max_scroll > 0.0 { 8.0 } else { 0.0 },
+            body.bottom().max(list.bottom() + 1.0),
+        ),
+    );
+    let mut rows = Rows::new(area, 0.0);
+    normal_section(ui, app, &mut rows, &ctx);
+    rows.indent = 0.0;
+    rows.space(8.0);
+    app.m2.channels_content = list_height + rows.used();
+    ui.set_clip_rect(outer_clip);
+    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする
+    if !ui.input(|i| i.pointer.primary_down()) {
+        app.m2_end_drag();
     }
     if max_scroll > 0.0 {
-        let bar_h = list.height() * list.height() / content;
-        let bar_y = list.top() + (list.height() - bar_h) * app.m2.channel_scroll / max_scroll;
+        let track = body.height();
+        let bar_h = (track * track / app.m2.channels_content).max(16.0);
+        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
         w::rounded(
             ui.painter(),
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
+            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
             t::CONTROL_ACTIVE,
             2.0,
         );
@@ -70,7 +97,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
 
     // 下: 足す・消す
     let bar = Rect::from_min_size(
-        pos2(r.left(), list.bottom()),
+        pos2(r.left(), body.bottom()),
         vec2(r.width(), TOOLBAR_HEIGHT),
     );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
@@ -104,6 +131,105 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     .clicked()
     {
         app.apply(Action::M2(Edit::RemoveChannel(paint)));
+    }
+}
+
+/// Normal の設定の節（文書の Normal の出力: Height から作る・強さ・端・ファイルの Y の向き）。値の変更は文書の操作（1 回の Undo。
+/// 強さのスライダーのドラッグは離したとき 1 回にまとまる）。強さと端は Height から作るときだけ効く。
+fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
+    let lang = app.lang;
+    // 初めは閉じておく（チャンネルの一覧を押しのけない。開いた・閉じたは覚える）
+    app.sections.entry("normal").or_insert(false);
+    let (open, _) = section(
+        ui,
+        app,
+        rows,
+        "normal",
+        lang.pick("ノーマル", "Normal"),
+        "3d_rotation",
+        None,
+    );
+    if !open {
+        return;
+    }
+    let settings = app.doc.normal_settings();
+    let enabled = app.can_edit();
+    let derive = settings.derive_from_height();
+    let edit = |app: &mut AppState, settings: NormalSettings, coalesce: bool| {
+        app.apply(Action::M2(Edit::NormalSettings { settings, coalesce }));
+    };
+    if let Some(next) = toggle_row(
+        ui,
+        rows,
+        "normal.derive",
+        lang.pick("ハイト → ノーマル", "Height → Normal"),
+        derive,
+        Some(lang.pick(
+            "ノーマルの出力（プレビュー・.ylp のテクスチャ・書き出し）で、描いたノーマルのレイヤーの下にハイトのチャンネルから作った法線を足します。ハイトから毎回作り直し、レイヤーには描きません",
+            "Adds the normal derived from the Height channel under the painted Normal layers in the Normal output (preview, .ylp texture, exports). It is regenerated from Height, never painted into a layer",
+        )),
+        enabled,
+    ) {
+        edit(app, settings.with_derive(next), false);
+    }
+    if let Some(value) = slider_row(
+        ui,
+        rows,
+        "normal.strength",
+        lang.pick("強さ", "Strength"),
+        settings.strength() as f32,
+        (
+            -(NormalSettings::MAX_STRENGTH as f32),
+            NormalSettings::MAX_STRENGTH as f32,
+        ),
+        NumberFormat {
+            decimals: 2,
+            trim: true,
+            suffix: "",
+        },
+        Some(lang.pick(
+            "ハイトの全範囲（0 → 1）で何テクセル分盛り上がるか。マイナスにすると凸が凹になります",
+            "Texels of rise for the full height range (0 → 1). Negative turns bumps into dents",
+        )),
+        enabled && derive,
+    ) {
+        if let Ok(next) = settings.with_strength(value as f64) {
+            edit(app, next, true);
+        }
+    }
+    // 狭い欄でも値を切らないよう、名前を上に置いて箱は幅いっぱいに
+    let dropdown = |ui: &mut Ui, rows: &mut Rows, id: &str, value: &str, tip: &str, enabled: bool| {
+        let r = rows.row(t::ROW_HEIGHT, 4.0);
+        let (response, at) = w::dropdown(ui, r, id, None, value, Some(tip), enabled, 0.0);
+        response.clicked().then_some(at)
+    };
+    group_label(ui, rows, lang.pick("端", "Edges"));
+    if let Some(at) = dropdown(
+        ui,
+        rows,
+        "normal.edges",
+        edges_name(lang, settings.edges()),
+        lang.pick(
+            "クランプ: キャンバスの端の傾きは端のテクセルで求めます。ラップ: 反対側の端を読みます（タイルするテクスチャ）",
+            "Clamp: the slope at the canvas edge uses the edge texel. Wrap: it reads the opposite edge (tiling textures)",
+        ),
+        enabled && derive,
+    ) {
+        open_popup(app, ctx, Popup::NormalEdges, at, at.width());
+    }
+    group_label(ui, rows, lang.pick("ファイルの Y", "File Y"));
+    if let Some(at) = dropdown(
+        ui,
+        rows,
+        "normal.direction",
+        direction_name(settings.file_direction()),
+        lang.pick(
+            "画像の書き出し・PNG・PSD で書くノーマルの画像の緑の向き。Unity は OpenGL（Y+）で、.ylp のテクスチャとプレビューは常に OpenGL です",
+            "Green direction of Normal images written by the exports. Unity uses OpenGL (Y+); the .ylp texture and the preview always do",
+        ),
+        enabled,
+    ) {
+        open_popup(app, ctx, Popup::NormalDirection, at, at.width());
     }
 }
 
