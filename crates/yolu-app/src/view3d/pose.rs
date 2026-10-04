@@ -7,6 +7,11 @@
 //! - ストロークの最中はポーズを変えない（描いている間の当たりと遮蔽の覚えは、そのスナップショットのもの）。断って知らせる。
 //! - FBX は別のスレッドで読む（読み込み・変換・休みの形の組み立て）。読み終わったらフレームの初めに入れ替える。
 //! - ポーズはまだ保存しない（保存するなら形式は後で決める）。
+//! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`（どちらもポーズの取り消しの並びとは別の持ち物は持たない:
+//!   数値の編集・戻しは 1 つの取り消しの段、隠すのは見せ方の状態で取り消しの対象ではない）。
+
+pub mod edit;
+pub mod hide;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -65,7 +70,6 @@ pub struct PoseSession {
     /// 木で開いている骨。
     pub expanded: HashSet<usize>,
     pub tree_scroll: f32,
-    pub shapes_scroll: f32,
     /// 次のフレームで木をこの骨まで送る（3D ビューで選んだとき）。
     pub reveal: Option<usize>,
     /// このセッションが最後に入れたモデルの世代（ほかのモデルに替わったら、このセッションは終わる）。
@@ -73,6 +77,10 @@ pub struct PoseSession {
     pub timings: PoseTimings,
     /// 読み込みの知らせ（近似・飛ばしたもの）。
     pub warnings: Vec<String>,
+    /// インスペクターが見せるオイラー角（数値で入れた値を、同じ回転の別の表し方へ読み替えて見せない）。
+    pub euler_hint: Option<edit::EulerHint>,
+    /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
+    pub hide: hide::HideState,
 }
 
 impl PoseSession {
@@ -128,6 +136,13 @@ pub struct PoseEditor {
     pub hover_axis: Option<usize>,
     /// 次のフレームで 3D ビューのタブを前に出す（FBX・試しの人形・Live Link のモデルが入ったとき）。
     pub focus: bool,
+    /// 隠し方のプリセット（個人の設定のフォルダ。モデルをまたいで残る）。
+    pub hide_presets: hide::store::Presets,
+    /// ポーズの欄（ドックのタブ）の縦のスクロールと、前のフレームの中身の高さ。
+    pub panel_scroll: f32,
+    pub panel_content: f32,
+    /// 隠し方を保存する名前の欄（決めた文字。空なら既定の名前）。
+    pub hide_name: String,
 }
 
 impl PoseEditor {
@@ -189,13 +204,16 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         selected: None,
         expanded,
         tree_scroll: 0.0,
-        shapes_scroll: 0.0,
         reveal: None,
         model_revision: revision,
         timings: PoseTimings::default(),
         warnings: loaded.warnings,
+        euler_hint: None,
+        hide: hide::HideState::default(),
     });
     view3d.pose.drag = None;
+    // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）
+    view3d.set_face_mask(None);
     view3d.set_model(model);
 }
 
@@ -417,6 +435,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
             view3d.pose.session = None;
             view3d.pose.mode = false;
             view3d.pose.drag = None;
+            view3d.set_face_mask(None);
         }
     }
     (message, installed)
@@ -670,6 +689,18 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     if let Some(path) = dropped {
         open_file(app, &path);
     }
+    // 続けて変える操作（欄の数値・スライダーのドラッグ）が、ボタンの離れを受け取れないまま残らないように。フォーカスを失ったら、
+    // そこまでを確定する（離したのを受け取れないので。ギズモのドラッグは 3D ビューの入力が同じ決まりで終える）
+    let (down, focus_lost) = ctx.input(|i| {
+        (
+            i.pointer.any_down(),
+            i.raw
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false))),
+        )
+    });
+    edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();

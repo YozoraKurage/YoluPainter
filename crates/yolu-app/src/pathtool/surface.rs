@@ -70,7 +70,7 @@ fn positions(
         .iter()
         .map(|p| {
             let t = g.triangles().get(p.triangle as usize)?;
-            if app.view3d.is_material_hidden(t.material) {
+            if app.view3d.is_material_hidden(t.material) || app.view3d.is_face_hidden(p.triangle) {
                 return None;
             }
             point_position(g, p).map(|(position, _)| position)

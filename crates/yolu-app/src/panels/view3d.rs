@@ -119,8 +119,7 @@ impl View3dSlot {
     ) {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
-        // スキンのあるモデルなら左にポーズの欄（無ければ全部が 3D の表示域）
-        let (pose_panel, content) = crate::panels::pose::split(app, full);
+        let content = full;
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(
@@ -281,9 +280,6 @@ impl View3dSlot {
                     ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
                 }
             }
-        }
-        if let Some(panel) = pose_panel {
-            crate::panels::pose::show(ui, app, panel);
         }
         let corner = self.corner(ui, app, content, reduced.filter(|_| drawn));
         if app.view3d.display.settings_open {

@@ -19,6 +19,7 @@ mod paint;
 mod query;
 mod refit;
 mod regions;
+mod restrict;
 mod sampling;
 mod stencil;
 mod stroke;

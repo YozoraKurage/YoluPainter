@@ -711,7 +711,7 @@ impl Lang {
 
 fn rig_what(what: &str) -> &str {
     match what {
-        "骨" => "bones",
+        "ボーン" => "bones",
         "メッシュ" => "meshes",
         "頂点" => "vertices",
         "三角形" => "triangles",
@@ -719,7 +719,7 @@ fn rig_what(what: &str) -> &str {
         "BlendShape" => "BlendShapes",
         "BlendShape の差分" => "BlendShape offsets",
         "1 つの頂点のウェイト" => "weights per vertex",
-        "骨の変換" => "bone transforms",
+        "ボーンの変換" => "bone transforms",
         "メッシュの位置・法線・UV" => "mesh positions, normals and UVs",
         "ポーズ" => "the pose",
         "スキンの行列・ウェイト（負のウェイトを含む）" => "skin matrices and weights",
@@ -946,7 +946,7 @@ mod tests {
     #[test]
     fn view_and_surface_errors_are_translated_by_kind() {
         use yolu_core::geometry::{DabRefusal, SurfaceStrokeError};
-        let rig = RigError::TooLarge { what: "骨", value: 2, limit: 1 };
+        let rig = RigError::TooLarge { what: "ボーン", value: 2, limit: 1 };
         let mut errors = vec![
             ViewError::Stroking,
             ViewError::NoPoseModel,
@@ -990,7 +990,7 @@ mod tests {
             assert!(en.is_ascii() && !en.is_empty(), "{en}");
             assert_ne!(ja, en);
         }
-        assert_eq!(Lang::En.view_error(&ViewError::Model(ModelError::Rig(RigError::TooLarge { what: "骨", value: 2, limit: 1 }))), "Too many bones (2, maximum 1)");
+        assert_eq!(Lang::En.view_error(&ViewError::Model(ModelError::Rig(RigError::TooLarge { what: "ボーン", value: 2, limit: 1 }))), "Too many bones (2, maximum 1)");
         use yolu_core::geometry::SamplingError;
         let mut dabs = vec![
             SurfaceStrokeError::TooManyDabs,

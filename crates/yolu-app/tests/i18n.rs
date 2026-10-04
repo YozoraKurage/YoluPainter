@@ -809,6 +809,7 @@ fn english_3d_view_and_pose_panel_have_no_japanese() {
     assert!(h.state().state.message.is_ascii(), "{}", h.state().state.message);
     h.state_mut().state.apply(Action::Pose(PoseAction::LoadFigure));
     h.run();
+    click_tab(&mut h, Tab::Pose);
     h.run();
     // 試しの人形の骨・メッシュ・マテリアルの名前は中身（言語に関わらない）
     let mut data = Vec::new();

@@ -18,6 +18,7 @@ pub mod tangents;
 use std::sync::Arc;
 
 use yolu_core::geometry::OrbitCamera;
+use yolu_core::geometry::{model_triangles, BvhUpdate, ModelMesh, Submesh, SurfaceGeometry};
 
 use self::model::{ViewError, ViewModel};
 use crate::state::StrokeSource;
@@ -81,6 +82,13 @@ pub struct View3dState {
     /// 見せる形から除いているマテリアル（`model` を組んだ時の値）と、次に除くマテリアル。
     shown_hidden: Vec<i32>,
     hidden: Vec<i32>,
+    /// 見せる形から除く面（受けたままの形の三角形の番号ごと。ポーズの画面の「面を隠す」）と、`model` を組んだ時の値。
+    face_mask: Option<Arc<pose::hide::FaceMask>>,
+    shown_mask: Option<Arc<pose::hide::FaceMask>>,
+    /// 見せる形の三角形の番号 → 受けたままの形の番号（何かを隠しているときだけ。隠していなければ空）。
+    shown_to_full: Vec<u32>,
+    /// 隠した形の幾何（同じ隠し方でポーズだけが替わったとき、組み直さず box だけ当て直す元）。
+    shown_base: Option<ShownBase>,
     /// ストロークの最中に来たモデル（ストロークが終わってから入れ替える。ストロークの間はモデルを変えない）。
     pending: Option<Arc<ViewModel>>,
     /// ストロークの最中にモデルを閉じると言われた（終わってから閉じる）。
@@ -142,39 +150,107 @@ impl View3dState {
         self.rebuild_shown();
     }
 
-    /// 見せる形を組み直す（隠すマテリアルが無ければ受けたまま。隠すと三角形が残らなければ見せる形は無し）。
+    /// 見せる形を組み直す（隠すマテリアルも隠す面も無ければ受けたまま。隠すと三角形が残らなければ見せる形は無し）。
+    /// 見せる三角形だけを残したメッシュを組み、幾何は、同じ隠し方でポーズだけが替わったなら前の幾何の箱を当て直し、そうでなければ
+    /// 受けたままの形の隣り合わせを写して作る（溶接し直さない。ブラシの大きさの基準も受けたままの形のもの）。
     fn rebuild_shown(&mut self) {
         self.shown_hidden = self.hidden.clone();
+        self.shown_mask = self.face_mask.clone();
+        self.shown_to_full.clear();
         let Some(full) = self.full.clone() else {
             self.model = None;
+            self.shown_base = None;
             return;
         };
+        let total = full.triangle_count();
+        let mask = self
+            .face_mask
+            .clone()
+            .filter(|m| m.len() == total && m.hidden_count() > 0);
         let hides = |m: i32| self.hidden.contains(&m);
-        if !full
-            .meshes
-            .iter()
-            .any(|mesh| mesh.submeshes.iter().any(|s| hides(s.material)))
+        if mask.is_none()
+            && !full
+                .meshes
+                .iter()
+                .any(|mesh| mesh.submeshes.iter().any(|s| hides(s.material)))
         {
             self.model = Some(full);
+            self.shown_base = None;
             return;
         }
-        let meshes = full
-            .meshes
-            .iter()
-            .map(|mesh| {
-                let mut mesh = mesh.clone();
-                mesh.submeshes.retain(|s| !hides(s.material));
-                mesh
-            })
-            .collect();
+        let mut keep = vec![false; total];
+        let mut map: Vec<u32> = Vec::new();
+        let mut base = 0usize;
+        let mut meshes = Vec::with_capacity(full.meshes.len());
+        for mesh in &full.meshes {
+            let mut out = ModelMesh {
+                name: mesh.name.clone(),
+                positions: mesh.positions.clone(),
+                normals: mesh.normals.clone(),
+                uvs: mesh.uvs.clone(),
+                submeshes: Vec::new(),
+            };
+            for s in &mesh.submeshes {
+                let n = s.indices.len() / 3;
+                if !hides(s.material) {
+                    let mut indices = Vec::with_capacity(s.indices.len());
+                    for (k, t) in s.indices.as_chunks::<3>().0.iter().enumerate() {
+                        let at = base + k;
+                        if mask.as_ref().is_some_and(|m| m.is_hidden(at)) {
+                            continue;
+                        }
+                        indices.extend_from_slice(t);
+                        keep[at] = true;
+                        map.push(at as u32);
+                    }
+                    // 面を隠して三角形が無くなったサブメッシュは、隠したマテリアルと同じく落とす
+                    if !indices.is_empty() || n == 0 {
+                        out.submeshes.push(Submesh {
+                            material: s.material,
+                            indices,
+                        });
+                    }
+                }
+                base += n;
+            }
+            meshes.push(out);
+        }
+        self.shown_base = self.shown_base.take().filter(|b| {
+            b.hidden == self.hidden && same_mask(&b.mask, &mask) && b.total == total
+        });
         let revision = self.next_revision();
-        self.model = ViewModel::new(&full.name, meshes, full.materials.clone(), revision)
-            .ok()
-            .map(|mut m| {
-                m.link_generation = full.link_generation;
-                m.demo = full.demo;
-                Arc::new(m)
-            });
+        let triangles = || model_triangles(&meshes);
+        let reused = self.shown_base.as_ref().and_then(|b| {
+            b.geometry
+                .reposition(triangles()?, revision, BvhUpdate::Refit)
+                .ok()
+        });
+        let geometry = match reused {
+            Some(g) => Some(g),
+            None => triangles().and_then(|t| full.geometry.restrict(&keep, t, revision).ok()),
+        };
+        let Some(geometry) = geometry else {
+            self.model = None;
+            self.shown_base = None;
+            return;
+        };
+        let geometry = Arc::new(geometry);
+        let mut shown = ViewModel::with_geometry(
+            &full.name,
+            meshes,
+            full.materials.clone(),
+            geometry.clone(),
+        );
+        shown.link_generation = full.link_generation;
+        shown.demo = full.demo;
+        self.shown_base = Some(ShownBase {
+            hidden: self.hidden.clone(),
+            mask,
+            total,
+            geometry,
+        });
+        self.shown_to_full = map;
+        self.model = Some(Arc::new(shown));
     }
 
     /// 隠すマテリアル（目を閉じたテクスチャセットのもの）を決める。変わったら見せる形を組み直す（描いている最中は終わってから）。
@@ -188,6 +264,31 @@ impl View3dState {
         if self.input.stroke.is_none() && self.pending.is_none() {
             self.rebuild_shown();
         }
+    }
+
+    /// 見せる形から除く面を決める（ポーズの画面の「面を隠す」。三角形は受けたままの形の番号。変わったら見せる形を組み直す。
+    /// 描いている最中は終わってから。三角形の数が今のモデルと違う印は使わない）。
+    pub fn set_face_mask(&mut self, mask: Option<Arc<pose::hide::FaceMask>>) {
+        if same_mask(&mask, &self.face_mask) {
+            return;
+        }
+        self.face_mask = mask;
+        if self.input.stroke.is_none() && self.pending.is_none() {
+            self.rebuild_shown();
+        }
+    }
+
+    /// 今決めている隠す面（見せる形へはまだ入っていないことがある）。
+    pub fn face_mask(&self) -> Option<&Arc<pose::hide::FaceMask>> {
+        self.face_mask.as_ref()
+    }
+
+    /// 受けたままの形のこの三角形を、今は見せる形から除いている面として隠しているか（マテリアルを隠しているものは含めない）。
+    pub fn is_face_hidden(&self, full_triangle: u32) -> bool {
+        let total = self.full.as_ref().map_or(0, |m| m.triangle_count());
+        self.shown_mask
+            .as_ref()
+            .is_some_and(|m| m.len() == total && m.is_hidden(full_triangle as usize))
     }
 
     /// 試しの立方体を読む。
@@ -264,7 +365,8 @@ impl View3dState {
             self.model = None;
         } else if let Some(m) = self.pending.take() {
             self.apply_model(m);
-        } else if self.shown_hidden != self.hidden {
+        } else if self.shown_hidden != self.hidden || !same_mask(&self.shown_mask, &self.face_mask)
+        {
             self.rebuild_shown();
         }
     }
@@ -274,28 +376,14 @@ impl View3dState {
         self.pending.as_ref().or(self.full.as_ref())
     }
 
-    /// 見せる形の三角形の番号を、受けたままの形の番号に直す（隠したマテリアルのサブメッシュを除いて組んだ形は、そのぶん番号がずれる。
-    /// 3D のパスの点の番号は、保存と Unity 版と同じ受けたままの形のもの）。範囲外なら None。
+    /// 見せる形の三角形の番号を、受けたままの形の番号に直す（隠したマテリアルのサブメッシュや隠した面を除いて組んだ形は、そのぶん番号が
+    /// ずれる。3D のパスの点の番号は、保存と Unity 版と同じ受けたままの形のもの）。範囲外なら None。
     pub fn full_triangle(&self, shown: u32) -> Option<u32> {
         let (full, model) = (self.full.as_ref()?, self.model.as_ref()?);
         if Arc::ptr_eq(full, model) {
             return ((shown as usize) < model.triangle_count()).then_some(shown);
         }
-        let mut remaining = shown as usize;
-        let mut base = 0usize;
-        for mesh in &full.meshes {
-            for s in &mesh.submeshes {
-                let n = s.indices.len() / 3;
-                if !self.shown_hidden.contains(&s.material) {
-                    if remaining < n {
-                        return Some((base + remaining) as u32);
-                    }
-                    remaining -= n;
-                }
-                base += n;
-            }
-        }
-        None
+        self.shown_to_full.get(shown as usize).copied()
     }
 
     /// このマテリアルの面を、今は見せる形から除いているか。
@@ -324,4 +412,23 @@ fn same_structure(a: &yolu_core::geometry::SurfaceGeometry, b: &yolu_core::geome
                 && x.uv_b == y.uv_b
                 && x.uv_c == y.uv_c
         })
+}
+
+/// 隠した形の幾何と、それを作ったときの隠し方（同じ隠し方でポーズだけが替わったときに使い回す）。
+struct ShownBase {
+    hidden: Vec<i32>,
+    mask: Option<Arc<pose::hide::FaceMask>>,
+    total: usize,
+    geometry: Arc<SurfaceGeometry>,
+}
+
+fn same_mask(
+    a: &Option<Arc<pose::hide::FaceMask>>,
+    b: &Option<Arc<pose::hide::FaceMask>>,
+) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        _ => false,
+    }
 }

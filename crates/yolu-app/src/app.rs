@@ -30,6 +30,8 @@ pub enum Tab {
     Brushes,
     Assets,
     Color,
+    /// ポーズ（ボーンのインスペクター・BlendShape・面を隠す）。スキンのあるモデルを読むと、プロパティと同じ組へ足される。
+    Pose,
     Canvas,
     View3d,
     TextureSets,
@@ -52,6 +54,7 @@ impl Tab {
             Tab::Brushes => lang.pick("ブラシ", "Brushes"),
             Tab::Assets => lang.pick("アセット", "Assets"),
             Tab::Color => lang.pick("カラー", "Color"),
+            Tab::Pose => lang.pick("ポーズ", "Pose"),
             Tab::Canvas => lang.pick("キャンバス", "Canvas"),
             Tab::View3d => lang.pick("3D ビュー", "3D View"),
             Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
@@ -171,6 +174,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Channels => crate::panels::channels::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
+            Tab::Pose => crate::panels::pose::show(ui, self.app),
             Tab::Properties => properties::show(ui, self.app),
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
@@ -302,6 +306,7 @@ impl YoluApp {
         // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
             app.state.attach_brush_store(dir.join("brushes"));
+            app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
         }
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
@@ -844,6 +849,7 @@ impl YoluApp {
                 let _ = self.dock.set_active_tab(path);
             }
         }
+        crate::panels::pose::ensure_tab(&self.state, &mut self.dock);
         if self.state.reset_layout {
             self.dock = default_dock();
             self.state.reset_layout = false;

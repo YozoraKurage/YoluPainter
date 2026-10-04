@@ -11,10 +11,12 @@
 
 mod deform;
 mod demo;
+mod influence;
 #[cfg(test)]
 mod tests;
 
 pub use demo::{demo_figure, FigureDetail};
+pub use influence::BonePathError;
 
 use glam::{Mat3, Mat4, Quat, Vec3};
 
@@ -215,7 +217,7 @@ impl std::fmt::Display for RigError {
             RigError::TooLarge { what, value, limit } => {
                 write!(f, "{what}が多すぎます（{value}、上限 {limit}）")
             }
-            RigError::BadParent { bone } => write!(f, "骨 {bone} の親が正しくありません"),
+            RigError::BadParent { bone } => write!(f, "ボーン {bone} の親が正しくありません"),
             RigError::BadMesh { mesh } => {
                 write!(f, "メッシュ {mesh} の添字か頂点の数が正しくありません")
             }
@@ -273,7 +275,7 @@ impl Rig {
                 Ok(())
             }
         };
-        limit("骨", bones.len(), budget.max_bones)?;
+        limit("ボーン", bones.len(), budget.max_bones)?;
         limit("メッシュ", meshes.len(), budget.max_meshes)?;
         let vertices: usize = meshes.iter().map(|m| m.mesh.positions.len()).sum();
         limit("頂点", vertices, budget.max_vertices)?;
@@ -301,7 +303,7 @@ impl Rig {
             }
             if !b.rest.is_finite() {
                 return Err(RigError::NonFinite {
-                    what: "骨の変換"
+                    what: "ボーンの変換"
                 });
             }
         }

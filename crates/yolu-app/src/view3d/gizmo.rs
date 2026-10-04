@@ -215,15 +215,18 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2) {
             return;
         }
     }
-    // 輪の外: 面の下の骨を選ぶ（三角形の番号がスキンと同じ、受けたままの形で当てる。隠したマテリアルの面も当たる）
-    let Some(model) = app.view3d.full_model().cloned() else {
+    // 輪の外: 面の下のボーンを選ぶ（見えている形で当て、三角形の番号をスキンと同じ受けたままの形の番号へ直す。隠したマテリアルや
+    // ボーンの影響で隠した面は見えないので当たらない）
+    let Some(model) = app.view3d.model.clone() else {
         return;
     };
+    let picked = pick(&model.geometry, &view, p)
+        .and_then(|hit| Some((app.view3d.full_triangle(hit.triangle)?, hit.barycentric)));
     let Some(s) = app.view3d.pose.session.as_mut() else {
         return;
     };
-    if let Some(hit) = pick(&model.geometry, &view, p) {
-        if let Some(bone) = s.rig.bone_at_triangle(hit.triangle, hit.barycentric) {
+    if let Some((triangle, barycentric)) = picked {
+        if let Some(bone) = s.rig.bone_at_triangle(triangle, barycentric) {
             s.selected = Some(bone);
             reveal(s, bone);
         }

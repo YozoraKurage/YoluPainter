@@ -249,7 +249,7 @@ fn convert(
         ModelError::Rig(RigError::TooLarge { what, value, limit })
     };
     if scene.nodes.count > budget.max_bones {
-        return Err(too_large("骨", scene.nodes.count, budget.max_bones));
+        return Err(too_large("ボーン", scene.nodes.count, budget.max_bones));
     }
     // 大きな配列を作る前に、三角形の数で断る（インスタンスごとに数える）
     let triangles: usize = scene
@@ -520,7 +520,7 @@ fn convert(
                 if joint_of_cluster.iter().any(|j| j.is_none()) {
                     report
                         .warnings
-                        .push(format!("{label}: 骨の無いクラスターのウェイトを捨てました"));
+                        .push(format!("{label}: ボーンの無いクラスターのウェイトを捨てました"));
                 }
                 let fallback = joints.len() as u32;
                 joints.push(Joint {
@@ -672,7 +672,7 @@ fn convert(
     report.max_transform_error = worst;
     if worst > 1e-3 {
         report.warnings.push(format!(
-            "骨の変換を完全には再現できません（最大の差 {worst:.4}）"
+            "ボーンの変換を完全には再現できません（最大の差 {worst:.4}）"
         ));
     }
     report.meshes = rig.meshes().len();

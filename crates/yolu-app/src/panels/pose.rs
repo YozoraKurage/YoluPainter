@@ -1,32 +1,47 @@
-//! 3D ビューの左のポーズの欄（スキンのあるモデルを読んでいるときだけ出す）: 頭に操作のボタン（ポーズのモード・FBX を開く・
-//! ポーズを戻す・取り消し・やり直し）、骨の木（開閉・選ぶ）、選んだ骨の回転、BlendShape のスライダー（メッシュごと）。
-//! 文言は名前と状態だけ（操作の説明はツールチップ）。
+//! ポーズの欄（ドックのタブ「ポーズ」。ほかのタブと同じく動かせる・別の窓に出せる。スキンのあるモデルを読んでいるときだけ中身が出る）:
+//! 頭に操作のボタン（ポーズのモード・FBX を開く・ポーズを戻す・取り消し・やり直し）、その下は縦にスクロールする 3 つの節。
+//! 「ボーン」はボーンの木（開閉・選ぶ）と、選んだボーンのインスペクター（位置・回転・大きさを数値で直す・項目ごとに戻す）、
+//! 「面を隠す」はボーンの影響で面を隠す項目と隠し方のプリセット、「BlendShape」はスライダー（メッシュごと・1 つずつ戻す）。
+//! 節の開閉は `AppState::sections` が覚える。文言は名前と状態だけ（操作の説明はツールチップ）。
 
-use egui::{pos2, vec2, Rect, Sense, Ui, UiBuilder};
+mod hide_ui;
+mod inspector;
+
+use egui::{pos2, vec2, Rect, Sense, Ui};
+use egui_dock::DockState;
 
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
+use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
+use crate::view3d::pose::edit::{self, Reset};
 use crate::view3d::pose::{self, PoseAction};
 
-/// 欄の幅（点）。
-pub const WIDTH: f32 = 260.0;
 const TOOLBAR: f32 = 30.0;
 const BONE_ROW: f32 = 22.0;
 const INDENT: f32 = 12.0;
+/// 木が見せる行の数（これより多いときは木の中でスクロールする）。
+const TREE_MAX_ROWS: usize = 12;
+const TREE_MIN_ROWS: usize = 3;
+/// BlendShape の 1 行の戻すボタンの幅。
+const SHAPE_RESET_W: f32 = 24.0;
 
-/// 3D ビューの中身を、ポーズの欄と 3D の表示域に分ける（欄を出さないなら None と全部）。
-pub fn split(app: &AppState, content: Rect) -> (Option<Rect>, Rect) {
-    if app.view3d.pose.session.is_none() && !app.view3d.pose.is_loading() {
-        return (None, content);
+/// スキンのあるモデルを読んでいて、ポーズのタブがドックのどこにも無ければ、プロパティと同じ組へ足す（前へは出さない。プロパティが見えたまま）。
+/// 足したタブは、動かしても別の窓へ出しても、そのまま残る（モデルが替わって欄が空になっても、タブはある）。ドックの配置を初めに戻したときは、
+/// 次のフレームで足し直す。
+pub fn ensure_tab(app: &AppState, dock: &mut DockState<crate::Tab>) {
+    if app.view3d.pose.session.is_none() || dock.find_tab(&crate::Tab::Pose).is_some() {
+        return;
     }
-    let width = WIDTH.min((content.width() * 0.5).floor());
-    let panel = Rect::from_min_max(content.min, pos2(content.left() + width, content.bottom()));
-    let view = Rect::from_min_max(pos2(panel.right() + 1.0, content.top()), content.max);
-    (Some(panel), view)
+    let target = dock
+        .find_tab(&crate::Tab::Properties)
+        .map(|p| p.node_path());
+    match target.and_then(|path| dock.leaf_mut(path).ok()) {
+        Some(leaf) => leaf.tabs.push(crate::Tab::Pose),
+        None => dock.push_to_first_leaf(crate::Tab::Pose),
+    }
 }
 
-/// 木で見えている骨（深さ優先、開いた骨の子だけ）と深さ。
+/// 木で見えているボーン（深さ優先、開いたボーンの子だけ）と深さ。
 pub fn visible_bones(s: &pose::PoseSession) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut stack: Vec<(usize, usize)> = s.rig.roots().map(|r| (r, 0)).collect();
@@ -42,10 +57,75 @@ pub fn visible_bones(s: &pose::PoseSession) -> Vec<(usize, usize)> {
     out
 }
 
-pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
+pub fn show(ui: &mut Ui, app: &mut AppState) {
+    let r = ui.max_rect();
+    ui.advance_cursor_after_rect(r);
+    let bar = Rect::from_min_size(r.min, vec2(r.width(), TOOLBAR));
+    toolbar(ui, app, bar);
+    let body = Rect::from_min_max(pos2(r.left(), bar.bottom()), r.max);
+    let lang = app.lang;
+    let loading = app.view3d.pose.loading_name().map(str::to_owned);
+    if loading.is_some() {
+        ui.ctx().request_repaint();
+    }
+    if app.view3d.pose.session.is_none() {
+        if let Some(name) = loading {
+            w::text(
+                ui.painter(),
+                Rect::from_min_size(
+                    pos2(body.left() + t::PADDING, body.top() + 4.0),
+                    vec2(body.width() - 2.0 * t::PADDING, BONE_ROW),
+                ),
+                &format!("{}: {name}", lang.pick("読み込み中", "Loading")),
+                t::LABEL_DIM,
+                Align::Left,
+            );
+        }
+        return;
+    }
+
+    // 縦のスクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
+    let max_scroll = (app.view3d.pose.panel_content - body.height()).max(0.0);
+    app.view3d.pose.panel_scroll = app.view3d.pose.panel_scroll.clamp(0.0, max_scroll);
+    let scroll = app.view3d.pose.panel_scroll;
+    let bar_w = if max_scroll > 0.0 { 8.0 } else { 0.0 };
+    let area = Rect::from_min_max(
+        pos2(body.left(), body.top() - scroll),
+        pos2(body.right() - bar_w, body.bottom()),
+    );
+    let outer_clip = ui.clip_rect();
+    ui.set_clip_rect(body.intersect(outer_clip));
+    let mut rows = Rows::new(area, 4.0);
+    let wheel_used = content(ui, app, &mut rows, body, loading.as_deref());
+    rows.indent = 0.0;
+    rows.space(8.0);
+    app.view3d.pose.panel_content = rows.used();
+    ui.set_clip_rect(outer_clip);
+    // 木が使わなかったホイールは、欄全体のスクロールへ
+    if !wheel_used && ui.rect_contains_pointer(body) {
+        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
+        if wheel != 0.0 {
+            app.view3d.pose.panel_scroll = (scroll - wheel).clamp(0.0, max_scroll);
+        }
+    }
+    // スライダー・数値の欄のドラッグを離したら、続けて変えていた操作を 1 つの取り消しの段にする
+    edit::finish_live_edit(app, ui.input(|i| i.pointer.any_down()));
+    if max_scroll > 0.0 {
+        let track = body.height();
+        let bar_h = (track * track / app.view3d.pose.panel_content).max(16.0);
+        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
+        w::rounded(
+            ui.painter(),
+            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
+            t::CONTROL_ACTIVE,
+            2.0,
+        );
+    }
+}
+
+/// 頭のボタンの帯。
+fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     let p = ui.painter().clone();
-    w::fill(&p, r, t::PANEL_BG);
-    w::vline(&p, r.right(), r.top(), r.bottom(), t::BORDER);
     let free = !app.is_stroking();
     let editing = app.view3d.pose.drag.is_some()
         || app
@@ -56,9 +136,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .is_some_and(|s| s.is_editing());
     let has = app.view3d.pose.session.is_some();
     let lang = app.lang;
-
-    // 頭のボタン
-    let bar = Rect::from_min_size(r.min, vec2(r.width(), TOOLBAR));
     w::fill(&p, bar, t::PANEL_HEADER);
     w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
     let mut x = bar.left() + 4.0;
@@ -74,7 +151,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "pose.mode",
         "accessibility",
         lang.pick(
-            "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押して骨を選ぶ）",
+            "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押してボーンを選ぶ）",
             "Pose mode (drag a gizmo ring in the 3D View to rotate; click a surface to pick a bone)",
         ),
         app.view3d.pose.mode,
@@ -110,7 +187,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
         next(26.0),
         "pose.reset",
         "restart_alt",
-        lang.pick("ポーズを戻す（ファイルのポーズへ）", "Reset pose (to the file's pose)"),
+        lang.pick(
+            "ポーズを戻す（ファイルのポーズへ）",
+            "Reset pose (to the file's pose)",
+        ),
         false,
         free && !editing && posed,
         18.0,
@@ -165,139 +245,168 @@ pub fn show(ui: &mut Ui, app: &mut AppState, r: Rect) {
     if let Some(a) = action {
         app.apply(Action::Pose(a));
     }
+}
 
-    let mut y = bar.bottom() + 4.0;
-    let row =
-        |y: f32, h: f32| Rect::from_min_max(pos2(r.left() + 8.0, y), pos2(r.right() - 8.0, y + h));
-    if let Some(name) = app.view3d.pose.loading_name() {
+/// 節の並び（読み込み中の知らせ・名前と知らせ・ボーン・面を隠す・BlendShape）。木がホイールを使ったら true。
+fn content(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    body: Rect,
+    loading: Option<&str>,
+) -> bool {
+    let lang = app.lang;
+    if let Some(name) = loading {
+        let at = rows.row(BONE_ROW, 0.0);
         w::text(
-            &p,
-            row(y, BONE_ROW),
+            ui.painter(),
+            at,
             &format!("{}: {name}", lang.pick("読み込み中", "Loading")),
             t::LABEL_DIM,
             Align::Left,
         );
-        y += BONE_ROW;
-        ui.ctx().request_repaint();
     }
     let Some(s) = app.view3d.pose.session.as_ref() else {
-        return;
+        return false;
     };
-    // 名前と数・知らせ
-    let info = format!(
-        "{} · {} {} · BlendShape {}",
-        s.rig.name(),
-        lang.pick("骨", "Bones"),
-        s.rig.bones().len(),
-        s.rig.blend_shape_count()
-    );
-    let info_rect = row(y, BONE_ROW);
+    // 名前と知らせ
+    let at = rows.row(BONE_ROW, 0.0);
     w::text(
-        &p,
-        info_rect,
-        &w::fit(&p, &info, info_rect.width(), t::LABEL_DIM),
+        ui.painter(),
+        at,
+        &w::fit(ui.painter(), s.rig.name(), at.width(), t::LABEL_DIM),
         t::LABEL_DIM,
         Align::Left,
     );
-    y += BONE_ROW;
     if !s.warnings.is_empty() {
-        let at = row(y, BONE_ROW);
-        w::icon(
-            &p,
-            Rect::from_min_size(at.min, vec2(16.0, at.height())),
-            "warning",
-            t::WARNING,
-            14.0,
+        let at = rows.row(BONE_ROW, 0.0);
+        warning_row(
+            ui,
+            at,
+            "pose.warnings",
+            s.warnings.len(),
+            &s.warnings.join("\n"),
+            lang,
         );
-        w::text(
-            &p,
-            Rect::from_min_max(pos2(at.left() + 20.0, at.top()), at.max),
-            &lang.pick(
-                format!("知らせ {} 件", s.warnings.len()),
-                format!("Notices {}", s.warnings.len()),
-            ),
-            t::LABEL_DIM,
-            Align::Left,
+    }
+    let has_shapes = s.rig.blend_shape_count() > 0;
+
+    let (open, reset_all) = super::properties::section(
+        ui,
+        app,
+        rows,
+        "pose.bones",
+        lang.pick("ボーン", "Bones"),
+        "accessibility",
+        Some(lang.pick(
+            "すべてのボーンを戻す（BlendShape はそのまま）",
+            "Reset all bones (BlendShapes stay)",
+        )),
+    );
+    if reset_all {
+        edit::reset(app, Reset::AllBones);
+    }
+    let mut wheel_used = false;
+    if open {
+        wheel_used = bones_section(ui, app, rows, body);
+    }
+    rows.indent = 0.0;
+
+    let (open, show_all) = super::properties::section(
+        ui,
+        app,
+        rows,
+        "pose.hide",
+        lang.pick("面を隠す", "Hide Surfaces"),
+        "visibility_off",
+        Some(lang.pick("すべて表示する", "Show everything")),
+    );
+    if show_all {
+        crate::view3d::pose::hide::show_all(app);
+    }
+    if open {
+        hide_ui::show(ui, app, rows);
+    }
+    rows.indent = 0.0;
+
+    if has_shapes {
+        let (open, reset_shapes) = super::properties::section(
+            ui,
+            app,
+            rows,
+            "pose.shapes",
+            "BlendShape",
+            "tune",
+            Some(lang.pick(
+                "すべての BlendShape を戻す（ボーンはそのまま）",
+                "Reset all BlendShapes (bones stay)",
+            )),
         );
-        let tip = s.warnings.join("\n");
-        ui.interact(at, ui.make_persistent_id("pose.warnings"), Sense::hover())
-            .on_hover_text(tip);
-        y += BONE_ROW;
-    }
-
-    // 骨の木と BlendShape の高さ
-    let shapes: Vec<(usize, usize)> = s
-        .rig
-        .meshes()
-        .iter()
-        .enumerate()
-        .flat_map(|(m, mesh)| (0..mesh.blend_shapes.len()).map(move |k| (m, k)))
-        .collect();
-    let selected_row = BONE_ROW;
-    let header = t::ROW_HEIGHT;
-    let available = (r.bottom() - y - 4.0).max(0.0);
-    let tree_height = if shapes.is_empty() {
-        available - header - selected_row
-    } else {
-        ((available - 2.0 * header - selected_row) * 0.55).max(BONE_ROW * 3.0)
-    }
-    .max(0.0);
-
-    w::subsection_header(ui, row(y, header), "pose.bones", lang.pick("骨", "Bones"), true);
-    y += header;
-    let list = Rect::from_min_size(pos2(r.left() + 4.0, y), vec2(r.width() - 8.0, tree_height));
-    bone_tree(ui, app, list);
-    y = list.bottom();
-
-    // 選んだ骨の回転（ローカル、XYZ のオイラー角）
-    if let Some(s) = app.view3d.pose.session.as_ref() {
-        let at = row(y + 2.0, selected_row);
-        if let Some(b) = s.selected {
-            let q = s.pose().locals[b].rotation;
-            let (ex, ey, ez) = q.to_euler(yolu_core::glam::EulerRot::XYZ);
-            // −0° と出さない
-            let deg = |r: f32| {
-                let d = r.to_degrees().round();
-                if d == 0.0 {
-                    0.0
-                } else {
-                    d
-                }
-            };
-            let (ex, ey, ez) = (deg(ex), deg(ey), deg(ez));
-            w::text(
-                &p,
-                at,
-                &w::fit(
-                    &p,
-                    &format!("{}  {ex:.0}° {ey:.0}° {ez:.0}°", s.rig.bones()[b].name),
-                    at.width(),
-                    t::LABEL_SMALL,
-                ),
-                t::LABEL_SMALL,
-                Align::Left,
-            );
+        if reset_shapes {
+            edit::reset(app, Reset::AllShapes);
         }
+        if open {
+            blend_shapes(ui, app, rows, body);
+        }
+        rows.indent = 0.0;
     }
-    y += selected_row + 2.0;
-
-    if !shapes.is_empty() {
-        w::subsection_header(ui, row(y, header), "pose.shapes", "BlendShape", true);
-        y += header;
-        let list = Rect::from_min_max(
-            pos2(r.left() + 4.0, y),
-            pos2(r.right() - 4.0, r.bottom() - 4.0),
-        );
-        blend_shapes(ui, app, list, &shapes);
-    }
+    wheel_used
 }
 
-fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) {
+/// 知らせの行（警告の印と件数。中身はツールチップ）。
+pub(crate) fn warning_row(
+    ui: &mut Ui,
+    at: Rect,
+    id: &'static str,
+    count: usize,
+    tip: &str,
+    lang: crate::lang::Lang,
+) {
+    let p = ui.painter().clone();
+    w::icon(
+        &p,
+        Rect::from_min_size(at.min, vec2(16.0, at.height())),
+        "warning",
+        t::WARNING,
+        14.0,
+    );
+    w::text(
+        &p,
+        Rect::from_min_max(pos2(at.left() + 20.0, at.top()), at.max),
+        &lang.pick(format!("知らせ {count} 件"), format!("Notices {count}")),
+        t::LABEL_DIM,
+        Align::Left,
+    );
+    ui.interact(at, ui.make_persistent_id(id), Sense::hover())
+        .on_hover_text(tip);
+}
+
+/// 「ボーン」の節の中身: 木と、選んだボーンのインスペクター。木がホイールを使ったら true。
+fn bones_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, body: Rect) -> bool {
+    let Some(s) = app.view3d.pose.session.as_ref() else {
+        return false;
+    };
+    let count = visible_bones(s).len();
+    let selected = s.selected;
+    // 木の高さは、欄の高さの半分まで（狭いドックでも、下のインスペクターを動かさずに見られるように）
+    let fit = ((body.height() * 0.5) / BONE_ROW).floor() as usize;
+    let height =
+        count.clamp(TREE_MIN_ROWS, fit.clamp(TREE_MIN_ROWS, TREE_MAX_ROWS)) as f32 * BONE_ROW;
+    let list = rows.row(height, 6.0);
+    let used = bone_tree(ui, app, list);
+    if let Some(bone) = selected {
+        inspector::show(ui, app, rows, bone);
+    }
+    used
+}
+
+/// ボーンの木。ホイールで木を動かしたら true（端まで来ていれば使わず、欄全体のスクロールへ回す）。
+fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
     let painter = ui.painter_at(list);
     w::fill(&painter, list, t::CONTROL_BG);
     let free = !app.is_stroking() && app.view3d.pose.drag.is_none();
     let Some(s) = app.view3d.pose.session.as_mut() else {
-        return;
+        return false;
     };
     let rows = visible_bones(s);
     let content = rows.len() as f32 * BONE_ROW;
@@ -312,8 +421,13 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) {
             }
         }
     }
-    if ui.rect_contains_pointer(list) {
-        s.tree_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
+    let mut wheel_used = false;
+    if max_scroll > 0.0 && ui.rect_contains_pointer(list) {
+        let next = (s.tree_scroll - ui.input(|i| i.smooth_scroll_delta.y)).clamp(0.0, max_scroll);
+        if next != s.tree_scroll {
+            s.tree_scroll = next;
+            wheel_used = true;
+        }
     }
     s.tree_scroll = s.tree_scroll.clamp(0.0, max_scroll);
     let mut select = None;
@@ -404,104 +518,17 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) {
     }
     if let Some(b) = select {
         s.selected = Some(b);
-        // 骨を選んだらポーズのモードへ（輪が出る）
+        // ボーンを選んだらポーズのモードへ（輪が出る）
         app.view3d.pose.mode = true;
     }
     if max_scroll > 0.0 {
-        let s = app
+        let scroll = app
             .view3d
             .pose
             .session
             .as_ref()
             .map(|s| s.tree_scroll)
             .unwrap_or(0.0);
-        let bar_h = (list.height() * list.height() / content).max(16.0);
-        let bar_y = list.top() + (list.height() - bar_h) * s / max_scroll;
-        w::rounded(
-            &painter,
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
-}
-
-fn blend_shapes(ui: &mut Ui, app: &mut AppState, list: Rect, shapes: &[(usize, usize)]) {
-    enum Row {
-        Mesh(usize),
-        Shape(usize, usize),
-    }
-    let free = !app.is_stroking() && app.view3d.pose.drag.is_none();
-    let Some(s) = app.view3d.pose.session.as_mut() else {
-        return;
-    };
-    // メッシュが 2 つ以上なら、メッシュの名前の行を挟む
-    let several = s
-        .rig
-        .meshes()
-        .iter()
-        .filter(|m| !m.blend_shapes.is_empty())
-        .count()
-        > 1;
-    let mut rows = Vec::new();
-    for (i, &(m, k)) in shapes.iter().enumerate() {
-        if several && (i == 0 || shapes[i - 1].0 != m) {
-            rows.push(Row::Mesh(m));
-        }
-        rows.push(Row::Shape(m, k));
-    }
-    let height = |r: &Row| match r {
-        Row::Mesh(_) => BONE_ROW,
-        Row::Shape(..) => t::SLIDER_ROW_HEIGHT,
-    };
-    let content: f32 = rows.iter().map(height).sum();
-    let max_scroll = (content - list.height()).max(0.0);
-    if ui.rect_contains_pointer(list) {
-        s.shapes_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    s.shapes_scroll = s.shapes_scroll.clamp(0.0, max_scroll);
-    let scroll = s.shapes_scroll;
-    let painter = ui.painter_at(list);
-    let mut child = ui.new_child(UiBuilder::new().max_rect(list));
-    child.set_clip_rect(list.intersect(ui.clip_rect()));
-    let width = list.width() - 8.0 - if max_scroll > 0.0 { 6.0 } else { 0.0 };
-    let mut y = list.top() - scroll;
-    let mut change = None;
-    for r in &rows {
-        let h = height(r);
-        let at = Rect::from_min_size(pos2(list.left() + 4.0, y), vec2(width, h - 4.0));
-        y += h;
-        if at.bottom() < list.top() || at.top() > list.bottom() {
-            continue;
-        }
-        let Some(s) = app.view3d.pose.session.as_ref() else {
-            return;
-        };
-        match *r {
-            Row::Mesh(m) => w::text(
-                &painter,
-                at,
-                &s.rig.meshes()[m].mesh.name,
-                t::LABEL_DIM,
-                Align::Left,
-            ),
-            Row::Shape(m, k) => {
-                let shape = &s.rig.meshes()[m].blend_shapes[k];
-                let value = s.pose().blend_weights[m][k];
-                let out = w::slider(
-                    &mut child,
-                    at,
-                    ("pose.shape", m, k),
-                    value,
-                    &SliderSpec::new(&shape.name, 0.0, 100.0, NumberFormat::int("")).enabled(free),
-                );
-                if out.changed || out.released {
-                    change = Some((m, k, out.value, out.active, out.released));
-                }
-            }
-        }
-    }
-    if max_scroll > 0.0 {
         let bar_h = (list.height() * list.height() / content).max(16.0);
         let bar_y = list.top() + (list.height() - bar_h) * scroll / max_scroll;
         w::rounded(
@@ -511,8 +538,86 @@ fn blend_shapes(ui: &mut Ui, app: &mut AppState, list: Rect, shapes: &[(usize, u
             2.0,
         );
     }
+    wheel_used
+}
+
+/// 「BlendShape」の節の中身: スライダー（メッシュが 2 つ以上なら、メッシュの名前の行を挟む）と、1 つずつ戻すボタン。
+fn blend_shapes(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, body: Rect) {
+    let free = !app.is_stroking() && app.view3d.pose.drag.is_none();
+    let lang = app.lang;
+    let Some(s) = app.view3d.pose.session.as_ref() else {
+        return;
+    };
+    let several = s
+        .rig
+        .meshes()
+        .iter()
+        .filter(|m| !m.blend_shapes.is_empty())
+        .count()
+        > 1;
+    let rest = s.rig.rest_pose();
+    let mut change = None;
+    let mut reset = None;
+    for (m, mesh) in s.rig.meshes().iter().enumerate() {
+        if mesh.blend_shapes.is_empty() {
+            continue;
+        }
+        if several {
+            let at = rows.row(BONE_ROW, 0.0);
+            if at.bottom() >= body.top() && at.top() <= body.bottom() {
+                w::text(
+                    ui.painter(),
+                    at,
+                    &w::fit(ui.painter(), &mesh.mesh.name, at.width(), t::LABEL_DIM),
+                    t::LABEL_DIM,
+                    Align::Left,
+                );
+            }
+        }
+        for (k, shape) in mesh.blend_shapes.iter().enumerate() {
+            let at = rows.slider_row();
+            if at.bottom() < body.top() || at.top() > body.bottom() {
+                continue;
+            }
+            let value = s.pose().blend_weights[m][k];
+            let out = w::slider(
+                ui,
+                at,
+                ("pose.shape", m, k),
+                value,
+                &SliderSpec::new(&shape.name, 0.0, 100.0, NumberFormat::int(""))
+                    .enabled(free)
+                    .inset(SHAPE_RESET_W + 4.0),
+            );
+            if out.changed || out.released {
+                change = Some((m, k, out.value, out.active, out.released));
+            }
+            let button = Rect::from_min_size(
+                pos2(at.right() - SHAPE_RESET_W, at.bottom() - 20.0),
+                vec2(SHAPE_RESET_W, 20.0),
+            );
+            let differs = value != rest.blend_weights[m][k];
+            if w::icon_button(
+                ui,
+                button,
+                ("pose.shape.reset", m, k),
+                "restart_alt",
+                lang.pick("この BlendShape を戻す", "Reset this BlendShape"),
+                false,
+                free && differs && !s.is_editing(),
+                14.0,
+            )
+            .clicked()
+            {
+                reset = Some(Reset::Shape(m, k));
+            }
+        }
+    }
     if let Some((m, k, value, active, released)) = change {
         set_weight(app, m, k, value, active, released);
+    }
+    if let Some(what) = reset {
+        edit::reset(app, what);
     }
 }
 

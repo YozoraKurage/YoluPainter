@@ -1,6 +1,7 @@
 //! ポーズの変更の画面の試験（egui_kittest。描画は wgpu のソフトの描画）: 試しの人形を読む、面を押して骨を選ぶ、ギズモで回す
 //! （取り消し・Esc・フォーカスを失う）、ポーズを付けた形に描く、描いている間はポーズを変えない、BlendShape のスライダー、
 //! 取り消しの行き先（読むだけのセット・別のタブ）、ファイルの窓の頼み、1 フレームに複数のポインタの動き・モデルの入れ替え。
+//! ポーズの欄はドックのタブ（`Tab::Pose`）。欄の中の試験（インスペクター・戻し・面を隠す・日英）は `pose_ui.rs`。
 mod common;
 
 use common::*;
@@ -22,6 +23,19 @@ fn figure_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブが前に出た");
     (h, rect)
+}
+
+/// ポーズのタブをドックから外して、左の上に浮いた窓にする（egui_dock は外した窓の大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
+fn float_pose_tab(h: &mut Harness<'static, YoluApp>) {
+    {
+        let dock = &mut h.state_mut().dock;
+        let path = dock.find_tab(&yolu_app::Tab::Pose).expect("ポーズのタブ");
+        dock.detach_tab(
+            path,
+            Rect::from_min_size(pos2(8.0, 40.0), egui::vec2(400.0, 980.0)),
+        );
+    }
+    h.run();
 }
 
 fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
@@ -139,12 +153,16 @@ fn select_upper_arm(h: &mut Harness<'static, YoluApp>, rect: Rect) -> usize {
 
 #[test]
 fn loading_the_figure_shows_the_pose_panel_and_tree() {
-    let (h, rect) = figure_view(256);
-    let app = &h.state().state;
-    assert!(app.view3d.pose.session.is_some());
-    assert_eq!(app.view3d.model.as_ref().unwrap().name, "試しの人形");
-    // 3D の表示域はポーズの欄の右
-    assert!(rect.left() > yolu_app::panels::pose::WIDTH);
+    let (mut h, rect) = figure_view(256);
+    {
+        let app = &h.state().state;
+        assert!(app.view3d.pose.session.is_some());
+        assert_eq!(app.view3d.model.as_ref().unwrap().name, "試しの人形");
+    }
+    // 3D の表示域はポーズの欄に削られない（欄はドックのタブ）
+    assert!(rect.width() > 500.0, "{rect:?}");
+    h.state_mut().state.sections.insert("pose.hide", false);
+    float_pose_tab(&mut h);
     // 木: 根と、その下の 1 段が開いている
     for name in ["腰", "背骨", "右太もも"] {
         assert!(h.query_by_label(name).is_some(), "{name}");
@@ -161,6 +179,7 @@ fn loading_the_figure_shows_the_pose_panel_and_tree() {
 #[test]
 fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     let (mut h, rect) = figure_view(256);
+    float_pose_tab(&mut h);
     let upper = select_upper_arm(&mut h, rect);
     assert!(h.query_by_label("右上腕").is_some(), "選んだ骨まで木が開く");
     assert!(
@@ -395,16 +414,18 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
 #[test]
 fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
     let (mut h, _rect) = figure_view(256);
+    h.state_mut().state.sections.insert("pose.hide", false);
+    float_pose_tab(&mut h);
     let before: Vec<Vec3> = h.state().state.view3d.model.as_ref().unwrap().meshes[0]
         .positions
         .clone();
     let slider = h.get_by_label("おなか").rect();
-    // 2 行のスライダー: 2 行目の溝を左から右の 3/4 まで
+    // 2 行のスライダー: 2 行目の溝を左から右の 7 割まで（右端は戻すボタンの分だけ空けてある）
     let y = slider.bottom() - 6.0;
     let points: Vec<Pos2> = (0..=6)
         .map(|k| {
             pos2(
-                slider.left() + 4.0 + (slider.width() * 0.75 - 4.0) * k as f32 / 6.0,
+                slider.left() + 4.0 + (slider.width() * 0.7 - 4.0) * k as f32 / 6.0,
                 y,
             )
         })
@@ -551,7 +572,8 @@ fn undo_goes_to_the_pixels_while_the_3d_tab_is_behind_the_canvas() {
 #[test]
 fn opening_an_fbx_asks_for_the_file_window_instead_of_opening_one() {
     let (mut h, _) = figure_view(256);
-    // 欄のボタン
+    // 欄のボタン（ポーズのタブの頭）
+    click_tab(&mut h, yolu_app::Tab::Pose);
     let at = h.get_by_label("FBX を開く").rect().center();
     click(&mut h, at);
     assert_eq!(
@@ -674,13 +696,13 @@ fn the_renderer_catches_up_when_the_model_is_replaced_twice_in_a_frame() {
 }
 
 #[test]
-fn pose_panel_and_gizmo_snapshot() {
+fn pose_gizmo_snapshot() {
     let (mut h, rect) = figure_view(256);
     select_upper_arm(&mut h, rect);
     // ポインタは輪の外へ（強調しない）
     move_to(&h, pos2(rect.right() - 10.0, rect.bottom() - 10.0));
     h.run();
-    h.snapshot("pose_panel_gizmo");
+    h.snapshot("pose_gizmo");
 }
 
 /// 計測（release で: cargo test --release -p yolu-app --test pose -- --ignored --nocapture）。7 万三角形の試しの人形で、
