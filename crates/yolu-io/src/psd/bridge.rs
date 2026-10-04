@@ -577,24 +577,6 @@ impl Document {
             }
         }
     }
-    /// core には入れられるが、`.ylp`（プロジェクトの正本）に書けない内容（層のロック）を、層ごとに 1 つ返す。アプリの取り込みはこれが
-    /// あれば断る（入れると外せず保存できない文書になるため。黙って外さない）。
-    pub fn project_issues(&self) -> Vec<String> {
-        fn walk(layers: &[Layer], path: &str, issues: &mut Vec<String>) {
-            for (i, l) in layers.iter().enumerate() {
-                let p = format!("{path}[{i}]");
-                if l.locks != 0 {
-                    issues.push(format!("{p}.locks: 層のロックは保存できません"))
-                }
-                if let LayerKind::Group { children, .. } = &l.kind {
-                    walk(children, &format!("{p}.children"), issues)
-                }
-            }
-        }
-        let mut issues = Vec::new();
-        walk(&self.layers, "layers", &mut issues);
-        issues
-    }
     /// ラスターの層の画素を core の Color の面へ（PSD は上から下、core は下から上）。
     fn import_pixels(&self, d: &mut CoreDocument, id: LayerId, l: &Layer) -> Result<()> {
         let ts = d.tile_size();

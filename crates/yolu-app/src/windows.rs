@@ -51,7 +51,7 @@ pub struct ListSpec {
     pub close_label: String,
 }
 
-/// 名前の窓（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-report"）の最後に描いた矩形（試験が窓の中だけを撮る）。
+/// 名前の窓（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験が窓の中だけを撮る）。
 pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     let id = if name == "bake" {
         Id::new("yolu.bake-window")
@@ -247,6 +247,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_report(ctx, app);
     psd_confirm(ctx, app);
     psd_report(ctx, app);
+    merge_confirm(ctx, app);
     crate::update::window::show(ctx, app);
     job_card(ctx, app);
     app.release_idle_bake_input();
@@ -260,6 +261,7 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
         || app.np.window.is_some()
         || app.np.remove_confirm.is_some()
+        || app.layer_ops.merge_confirm.is_some()
 }
 
 fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
@@ -440,6 +442,64 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Psd(PsdAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Psd(PsdAction::CancelConfirm)),
+        None => {}
+    }
+}
+
+/// 見た目が丸めの許容差を超えて変わる結合の確かめ（変わるチャンネルの名前と画素数だけ。最大の差などの検査値は出さない）。「結合する」で許容差なしに同じ結合を行う。
+fn merge_confirm(ctx: &egui::Context, app: &mut AppState) {
+    let Some(confirm) = app.layer_ops.merge_confirm.clone() else {
+        return;
+    };
+    let lang = app.lang;
+    let rows: Vec<Row> = confirm
+        .channels
+        .iter()
+        .map(|(channel, pixels)| Row {
+            left: crate::m2::channel_name(lang, &app.doc, *channel),
+            middle: String::new(),
+            right: lang.pick(format!("{pixels} 画素"), format!("{pixels} px")),
+            warning: false,
+        })
+        .collect();
+    let spec = ListSpec {
+        id: "merge-confirm",
+        title: lang.pick("レイヤーの結合", "Merge Layers").into(),
+        icon: "warning",
+        modal: true,
+        width: 420.0,
+        summary: Some((
+            lang.pick("見た目が変わります", "The look changes").into(),
+            true,
+        )),
+        rows,
+        buttons: vec![
+            Button {
+                label: lang.pick("やめる", "Cancel").into(),
+                primary: false,
+                tooltip: None,
+            },
+            Button {
+                label: lang.pick("結合する", "Merge").into(),
+                primary: true,
+                tooltip: Some(
+                    lang.pick(
+                        "見た目が変わっても結合します（取り消しで層が戻ります）",
+                        "Merges even though the look changes (Undo brings the layers back)",
+                    )
+                    .into(),
+                ),
+            },
+        ],
+        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+    };
+    let mut offset = app.layer_ops.confirm_offset;
+    let mut scroll = 0.0;
+    let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
+    app.layer_ops.confirm_offset = offset;
+    match reply {
+        Some(Reply::Button(1)) => app.apply(Action::M2(crate::m2::Edit::ConfirmMerge)),
+        Some(_) => app.apply(Action::M2(crate::m2::Edit::CancelMerge)),
         None => {}
     }
 }

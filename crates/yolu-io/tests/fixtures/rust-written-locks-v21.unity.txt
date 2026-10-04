@@ -1,0 +1,6 @@
+DocumentBinary.CurrentVersion: 21
+DocumentBinary.ReadId: OK
+DocumentBinary.Read: OK
+DocumentBinary.Write(Read) == input: True
+Layers: 15
+Locks (own/effective): 3/3, 1/1, 0/0, 4/4, 8/15, 5/5, 15/15, 3/3, 4/4, 0/3, 3/3, 0/3, 3/3, 0/0, 8/15

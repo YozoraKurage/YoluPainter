@@ -86,15 +86,14 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
 }
 #[test]
 fn unsupported_fields_are_reported_and_original_stays_writable() {
-    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）は、もう断る項目に出ない。
-    // 断るのは core に無い機能（手動ID色・ロック）。パスも core にある
+    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロックは、もう断る項目に出ない。
+    // 断るのは core に無い機能（手動ID色）だけ
     let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues().join("\n");
-    for what in ["manual_id_colors", "locks"] {
-        assert!(issues.contains(what), "{what}: {issues}");
-    }
+    assert!(issues.contains("manual_id_colors"), "{issues}");
     for what in [
         "normal",
+        "locks",
         "attributes",
         ".mask.enabled",
         "channels[",

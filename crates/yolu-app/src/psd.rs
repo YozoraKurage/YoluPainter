@@ -3,7 +3,7 @@
 //! - **読み込み**（新しいテクスチャセットか、今のセットの文書として）: 別のスレッドで読む（ファイルを読む・`psd::read`・core の文書への変換）。
 //!   編集できる（`EditableRaster`）うえ core の文書に変えられるものだけを入れる。グループ（入れ子・通過/分離）・塗りつぶし（単色）・調整
 //!   （反転・レベル補正・色相/彩度）・マスク・クリッピングは core の層になる。**原本を保つだけ（`PreserveOnly`）・拒否（`Rejected`）・
-//!   core で扱えない中身（キャンバス外の画素）・`.ylp` に書けない中身（層のロック）は、何も変えずに理由（診断の一覧）を窓で見せる**。
+//!   core で扱えない中身（キャンバス外の画素）は、何も変えずに理由（診断の一覧）を窓で見せる**。層のロック（lspf）は core の層のロックとして入る。
 //!   名前だけでレイヤーを結び付けない（`to_core` は ID で扱う）。PSD の原本は書き換えない。今のセットの文書を替える読み込みは、
 //!   読み終わったときに描いている最中か、読んでいる間に文書が変わっていれば入れない（描きかけのストロークを取り残さず、描いたものを黙って捨てない）。
 //! - **書き出し**（今の文書）: Color の写しを書く。ラスター・グループ・単色の塗りつぶし・調整・クリッピング・マスク（有効/無効・濃度）・層のロックは
@@ -742,9 +742,8 @@ fn import_worker(path: &Path, cancel: &AtomicBool) -> Result<Output, String> {
         CompatibilityMode::EditableRaster => {}
     }
     let document = result.document().ok_or("編集用の文書がありません")?;
-    // core に入れられない内容と、core には入れられるが `.ylp` に書けない内容（層のロック）。どちらも黙って外さず断る
-    let mut issues = document.core_issues();
-    issues.extend(document.project_issues());
+    // core に入れられない内容は、黙って外さず断る（層のロックは core が持ち、`.ylp` にも書ける）
+    let issues = document.core_issues();
     if !issues.is_empty() {
         let mut reason = issues
             .iter()
@@ -939,6 +938,43 @@ mod tests {
         assert_eq!((b.set_doc(0).width(), b.set_doc(0).layers().len()), (32, 1));
     }
 
+    /// 層のロックは、書き出す PSD の lspf を通って、取り込んだ文書の層に戻る（断らず、黙って外しもしない）。
+    #[test]
+    fn locks_come_back_through_a_psd_export_and_import() {
+        use yolu_core::LayerLocks;
+        let dir = Dir::new("locks");
+        let mut a = painted();
+        let layers: Vec<LayerId> = a.doc.layers().iter().map(|l| l.id()).collect();
+        a.doc
+            .set_layer_locks(layers[0], LayerLocks::TRANSPARENCY | LayerLocks::POSITION)
+            .unwrap();
+        a.doc.set_layer_locks(layers[1], LayerLocks::ALL).unwrap();
+        let path = dir.0.join("Locked.psd");
+        a.apply(Action::Psd(PsdAction::Export(path.clone())));
+        a.wait_psd();
+        assert!(a.message.contains("書き出しました"), "{}", a.message);
+        let mut b = AppState::new(32, 32);
+        b.apply(Action::Psd(PsdAction::Import {
+            path,
+            target: PsdTarget::NewSet,
+        }));
+        b.wait_psd();
+        assert!(b.message.contains("PSD を読み込みました"), "{}", b.message);
+        assert_eq!(b.doc.layers().len(), 2);
+        let [low, top] = [b.doc.layers()[0].id(), b.doc.layers()[1].id()];
+        assert_eq!(
+            b.doc.layer(low).unwrap().locks(),
+            LayerLocks::TRANSPARENCY | LayerLocks::POSITION
+        );
+        assert_eq!(
+            b.doc.effective_locks(top).unwrap(),
+            LayerLocks::from_bits(15).unwrap(),
+            "すべては個別を含んで効く"
+        );
+        assert!(!b.doc.can_undo(), "読み込みは Undo の段に入らない");
+        assert!(composite(&b) == composite(&a), "ロックは合成を変えない");
+    }
+
     #[test]
     fn importing_into_the_current_set_replaces_its_document() {
         let dir = Dir::new("current");
@@ -1065,14 +1101,6 @@ mod tests {
         std::fs::write(dir.0.join("big.psb.psd"), &psb).unwrap();
         // 壊れたファイルは拒否
         std::fs::write(dir.0.join("broken.psd"), b"8BPS-not-a-psd").unwrap();
-        // 層のロックを持つ PSD は編集できるが、ロックは `.ylp` に書けず画面で外せないので、このアプリでは扱わない
-        let mut locked = psd::Document::from_core(&painted().doc).unwrap();
-        locked.layers[0].locks = 2;
-        std::fs::write(
-            dir.0.join("locked.psd"),
-            psd::write(&locked, &Limits::default()).unwrap(),
-        )
-        .unwrap();
         // キャンバスの外にはみ出す画素を持つ PSD は、切り捨てずに断る
         let mut wide = psd::Document::from_core(&painted().doc).unwrap();
         wide.layers[0].left = 20;
@@ -1088,7 +1116,6 @@ mod tests {
         for (file, expect_mode, expect_text) in [
             ("big.psb.psd", "原本の保持のみ", "PSB"),
             ("broken.psd", "拒否", ""),
-            ("locked.psd", "読み込めません", "ロック"),
             ("wide.psd", "読み込めません", "キャンバス外"),
         ] {
             s.apply(Action::Psd(PsdAction::Import {

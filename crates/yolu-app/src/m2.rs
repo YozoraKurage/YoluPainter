@@ -5,12 +5,15 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+use yolu_core::LayerLocks;
+
 use crate::engine::{
     AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushPreset, Channel, ChannelBlend,
     ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush, DualBrushMode, LayerId,
     LayerKind, PaperTexture, Rgba8, Stroke, TextureMode,
 };
 use crate::lang::Lang;
+use crate::layerops::Xform;
 use crate::state::AppState;
 
 /// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 3 つ目（アルファ・ステンシル・マテリアル/マスク・レイヤー）。
@@ -132,6 +135,32 @@ pub enum Edit {
         info: ChannelInfo,
     },
     RemoveChannel(Channel),
+    /// Ctrl+E: 複数選んでいれば選んだ層を結合・グループならグループを結合・そうでなければ下の層と結合。
+    MergeDown,
+    /// Ctrl+Shift+E: 見えている層を 1 枚にする。
+    MergeVisible,
+    /// 見た目が変わると確かめた結合を、そのまま行う・やめる。
+    ConfirmMerge,
+    CancelMerge,
+    /// 選んでいるグループをほどく（グループでなければ断る）。
+    UngroupSelected,
+    /// 選んでいる層（グループなら中身ごと）の複製・表示の切り替え。
+    DuplicateSelected,
+    ToggleSelectedVisible,
+    /// ドラッグで選んだ層をまとめて動かす（`position` は `parent` の子の中の位置。0 が一番下）。
+    MoveLayers {
+        ids: Vec<LayerId>,
+        parent: Option<LayerId>,
+        position: usize,
+    },
+    /// 層のロックを付ける・外す（`flag` は個別の 1 種。全部をまとめて外すときは 15）。
+    Lock {
+        ids: Vec<LayerId>,
+        flag: LayerLocks,
+        on: bool,
+    },
+    /// 選んでいる層の移動・90° 回転・反転・数値と手のドラッグの変形。
+    Transform(Xform),
 }
 
 /// ブラシの選択肢（ポップアップから選んだもの）。スライダーとスイッチは画面が `AppState::m2.brush` を直に変える。
@@ -198,6 +227,8 @@ pub enum UiOp {
     Preset(usize),
     Brush(BrushOp),
     Language(Lang),
+    /// 移動・変形の補間（バイリニア・ニアレストネイバー）。
+    Resampling(yolu_core::Resampling),
 }
 
 /// 層の行の 1 つ（一覧の上から。閉じたグループの中身は含まない）。
@@ -612,11 +643,82 @@ pub fn drop_edit(
     })
 }
 
+/// 複数の層のドラッグで落とした所の移動（Unity 版の `DropLayers` と同じ）。選んだ層（とグループの中身）が運ばれる層で、
+/// 落とす先は運ばれない層から数える: グループの中へなら、そのグループの運ばれない子の数の位置（自分たちの中へは落とせない）、
+/// 線の上なら、その線のすぐ下の運ばれない最初の層の上、無ければ一番下。1 つしか運ぶものが無ければ単独のドラッグと同じ。
+pub fn drop_edit_for(
+    doc: &Document,
+    rows: &[Row],
+    dragged: &[LayerId],
+    target: DropTarget,
+) -> Option<Edit> {
+    let members = doc.topmost_of(dragged).ok()?;
+    if members.len() <= 1 {
+        return members
+            .first()
+            .and_then(|m| drop_edit(doc, rows, *m, target));
+    }
+    let carried = |id: LayerId| {
+        members
+            .iter()
+            .any(|m| *m == id || is_inside(doc, id, *m))
+    };
+    match target {
+        DropTarget::Into(group) => {
+            if carried(group) {
+                return None;
+            }
+            let children = doc.children_of(Some(group)).ok()?;
+            let position = children.iter().filter(|c| !carried(**c)).count();
+            Some(Edit::MoveLayers {
+                ids: members.clone(),
+                parent: Some(group),
+                position,
+            })
+        }
+        DropTarget::Gap(k) => {
+            for row in rows.iter().skip(k) {
+                if carried(row.id) {
+                    continue;
+                }
+                let parent = doc.layer(row.id)?.parent();
+                let rest: Vec<LayerId> = doc
+                    .children_of(parent)
+                    .ok()?
+                    .into_iter()
+                    .filter(|c| !carried(*c))
+                    .collect();
+                let position = rest.iter().position(|c| *c == row.id)? + 1;
+                return Some(Edit::MoveLayers {
+                    ids: members.clone(),
+                    parent,
+                    position,
+                });
+            }
+            Some(Edit::MoveLayers {
+                ids: members.clone(),
+                parent: None,
+                position: 0,
+            })
+        }
+    }
+}
+
 /// 一覧の中の高さ（行の上端からの距離を行の高さで割ったもの。0 が一番上の行の上端）から落とす先を決める。
 pub fn drop_target_at(
     doc: &Document,
     rows: &[Row],
     dragged: LayerId,
+    position: f32,
+) -> Option<DropTarget> {
+    drop_target_for(doc, rows, &[dragged], position)
+}
+
+/// `drop_target_at` の、運ぶ層が複数の形（選んだ層）。
+pub fn drop_target_for(
+    doc: &Document,
+    rows: &[Row],
+    dragged: &[LayerId],
     position: f32,
 ) -> Option<DropTarget> {
     if rows.is_empty() {
@@ -637,7 +739,7 @@ pub fn drop_target_at(
     } else {
         DropTarget::Gap(index + 1)
     };
-    drop_edit(doc, rows, dragged, target).map(|_| target)
+    drop_edit_for(doc, rows, dragged, target).map(|_| target)
 }
 
 // ───────── 操作 ─────────
@@ -655,6 +757,10 @@ impl AppState {
         let revision = self.doc.revision();
         match self.m2_apply(edit) {
             Ok(()) => {}
+            // ロックで断られたときは、どのロックか（と、親のグループのロックか）を言う短い文（ブラシ・バケツと同じ）
+            Err(e @ CoreError::LayerLocked { .. }) => {
+                self.message = crate::matpaint::refusal_text(self.lang, &e)
+            }
             Err(e) => self.message = self.lang.core_error(&e),
         }
         if self.doc.revision() != revision {
@@ -669,7 +775,7 @@ impl AppState {
             .filter(|id| self.doc.layer(*id).is_some())
     }
 
-    fn new_layer_name(&self, kind: LayerKind) -> String {
+    pub(crate) fn new_layer_name(&self, kind: LayerKind) -> String {
         let n = self
             .doc
             .layers()
@@ -680,7 +786,7 @@ impl AppState {
         format!("{} {n}", layer_kind_label(self.lang, kind))
     }
 
-    fn select_new(&mut self, id: LayerId) {
+    pub(crate) fn select_new(&mut self, id: LayerId) {
         self.selected_layer = Some(id);
         self.set_edit_mask(false);
     }
@@ -721,12 +827,7 @@ impl AppState {
                     .add_adjustment_layer(&name, kind.settings(), None, above)?;
                 self.select_new(id);
             }
-            Edit::GroupSelected => {
-                let id = above.ok_or(CoreError::LayerNotFound)?;
-                let name = self.new_layer_name(LayerKind::Group);
-                let group = self.doc.group_layers(&[id], &name)?;
-                self.select_new(group);
-            }
+            Edit::GroupSelected => self.group_selected_layers()?,
             Edit::Ungroup(id) => {
                 let first = self.doc.children_of(Some(id))?.last().copied();
                 self.doc.ungroup(id)?;
@@ -797,6 +898,28 @@ impl AppState {
             }
             Edit::SetChannel { channel, info } => self.doc.set_channel_info(channel, info)?,
             Edit::RemoveChannel(channel) => self.doc.remove_channel(channel)?,
+            Edit::MergeDown => self.merge_down_selected()?,
+            Edit::MergeVisible => self.merge_visible_layers()?,
+            Edit::ConfirmMerge => self.confirm_merge()?,
+            Edit::CancelMerge => self.cancel_merge(),
+            Edit::UngroupSelected => {
+                let id = self
+                    .selected_layer
+                    .filter(|id| self.doc.layer(*id).is_some_and(|l| l.is_group()))
+                    .ok_or(CoreError::Unsupported("グループではない"))?;
+                return self.m2_apply(Edit::Ungroup(id));
+            }
+            Edit::DuplicateSelected => self.duplicate_selected_layers()?,
+            Edit::ToggleSelectedVisible => self.toggle_selected_visibility()?,
+            Edit::MoveLayers {
+                ids,
+                parent,
+                position,
+            } => self.move_selected_layers(&ids, parent, position)?,
+            Edit::Lock { ids, flag, on } => self.change_locks(&ids, flag, on)?,
+            Edit::Transform(x) => {
+                self.apply_xform(x)?;
+            }
         }
         Ok(())
     }
@@ -893,6 +1016,7 @@ impl AppState {
                 self.apply_brush_op(op);
             }
             UiOp::Language(lang) => self.set_language(lang),
+            UiOp::Resampling(mode) => self.transform.resampling = mode,
         }
     }
 

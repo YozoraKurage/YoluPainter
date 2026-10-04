@@ -87,6 +87,12 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tools/select-polygon_selected",
     "tools/magic-wand",
     "tools/magic-wand_selected",
+    "tools/move",
+    "tools/move_selected",
+    "lock_filled",
+    "lock_transparency",
+    "arrow_move",
+    "flip_vertical",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];

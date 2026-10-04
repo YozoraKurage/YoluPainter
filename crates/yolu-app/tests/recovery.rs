@@ -395,13 +395,26 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
 fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
     let dir = TempDir::new("locked");
     let mut s = session(&dir.root());
+    // .ylp にまだ書けない中身（手動の ID の色）は、黙って落とさず理由を出し、世代を書かない
+    s.doc
+        .set_id_colors(
+            yolu_core::mesh_maps::IdColorAssignments::new("a".repeat(64), [(0, 0x123456)].into_iter().collect())
+                .unwrap(),
+        )
+        .unwrap();
+    s.modified = true;
+    write_after(&mut s, Instant::now());
+    assert!(s.message.contains("手動の ID の色"), "{}", s.message);
+    assert_eq!(s.recovery.checkpoints(), 0);
+    assert!(s.recovery.is_idle());
+    // 層のロックは .ylp に書けるようになったので、ロックのある文書は世代に書ける
+    let dir = TempDir::new("locked-ok");
+    let mut s = session(&dir.root());
     let layer = s.selected_layer.unwrap();
     s.doc.set_layer_locks(layer, yolu_core::LayerLocks::POSITION).unwrap();
     s.modified = true;
     write_after(&mut s, Instant::now());
-    assert!(s.message.contains("層のロックはまだ .ylp に書けません"), "{}", s.message);
-    assert_eq!(s.recovery.checkpoints(), 0);
-    assert!(s.recovery.is_idle());
+    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
 }
 
 #[test]

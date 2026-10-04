@@ -435,7 +435,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
 #[test]
 fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
-    // format4.ylp の最初のセットの文書を、ロックと手動の ID の色を持つ正本（core に無い）に差し替える。2 つ目の Trim は core が持つ中身だけ
+    // format4.ylp の最初のセットの文書を、手動の ID の色を持つ正本（core に無い。ロックは core が持つ）に差し替える。2 つ目の Trim は core が持つ中身だけ
     let dir = TempDir::new("readonly");
     let path = dir.0.join("format4.ylp");
     let base = read_project(&fixture("format4.ylp"));
@@ -463,12 +463,10 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         .unwrap()
         .read_only
         .as_deref()
-        .expect("ロックと手動の ID の色があるので読むだけ");
+        .expect("手動の ID の色があるので読むだけ");
     assert!(reason.contains("core で扱えない中身"), "{reason}");
-    assert!(
-        reason.contains("ロック") && reason.contains("手動"),
-        "{reason}"
-    );
+    assert!(reason.contains("手動"), "{reason}");
+    assert!(!reason.contains("ロック"), "ロックは core が持つ: {reason}");
     assert!(
         !reason.contains("フィルター"),
         "フィルターは core が持つ: {reason}"

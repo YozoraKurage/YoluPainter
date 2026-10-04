@@ -21,6 +21,7 @@ static class M2Fixture
     {
         if (args[0] == "--unity-reads") { UnityReads(args[1], args[2]); return true; }
         if (args[0] == "--rust-written") { RustWritten(args[1], args[2], args[3]); return true; }
+        if (args[0] == "--locks") { Locks(args[1]); return true; }
         if (args[0] != "--m2") return false;
         if (DocumentBinary.CurrentVersion != 21) throw new Exception("正本21の書き手が必要です");
         var root = args[1]; Directory.CreateDirectory(root);
@@ -167,6 +168,39 @@ static class M2Fixture
         return doc;
     }
 
+    /// 層のロック（版 12 の属性の印のビット 1 と、直後の int）を、C# の実際の書き手で。個別 4 種・重ね・すべて・グループ・塗りつぶし・調整・
+    /// クリッピング・チャンネルごとの合成との同居（属性の印のビット 1 と 2 の並び）・ロックの無い層。ロックは合成を変えない。
+    static PaintDocument LockedLayers()
+    {
+        var doc = new PaintDocument(19, 13, 8, 1024 * 1024, Id());
+        var none = Raster(doc, "ロック無し", 51);
+        var transparency = Raster(doc, "透明部分", 52); doc.SetLayerLocks(transparency.Id, LayerLocks.Transparency);
+        var pixels = Raster(doc, "画素", 53); doc.SetLayerLocks(pixels.Id, LayerLocks.Pixels);
+        var position = Raster(doc, "位置", 54); doc.SetLayerLocks(position.Id, LayerLocks.Position);
+        var all = Raster(doc, "すべて", 55); doc.SetLayerLocks(all.Id, LayerLocks.All);
+        var mixed = Raster(doc, "透明部分と位置（クリップ）", 56, PaintChannel.Color, PaintChannel.Height);
+        doc.SetLayerClipping(mixed.Id, true); doc.SetLayerLocks(mixed.Id, LayerLocks.Transparency | LayerLocks.Position);
+        doc.SetChannelBlend(mixed.Id, PaintChannel.Color, new ChannelBlend(LayerBlendMode.Multiply, .5)); // 属性の印のビット 1 と 2 が両方立つ
+        var every = Raster(doc, "個別 3 つ + すべて", 57); doc.SetLayerLocks(every.Id, LayerLocks.Transparency | LayerLocks.Pixels | LayerLocks.Position | LayerLocks.All);
+        var fill = doc.AddFillLayer("ロックした塗り", new Dictionary<PaintChannel, Rgba32> { { PaintChannel.Color, new Rgba32(30, 120, 220, 200) } }, Id());
+        doc.SetLayerLocks(fill.Id, LayerLocks.Pixels);
+        var adj = doc.AddAdjustmentLayer("ロックした調整", AdjustmentSettings.Levels(.1, .9, 1.2, 0, 1), new[] { PaintChannel.Color }, Id());
+        doc.SetLayerLocks(adj.Id, LayerLocks.Position);
+        var inside = Raster(doc, "ロックしたグループの中", 58);
+        var group = doc.GroupLayers(new[] { inside.Id }, "ロックしたグループ", Id());
+        doc.SetLayerLocks(group.Id, LayerLocks.Pixels | LayerLocks.Position);
+        var inner = Raster(doc, "ロックの無い層（ロックの層の隣）", 59);
+        return doc;
+    }
+
+    static void Locks(string root)
+    {
+        if (DocumentBinary.CurrentVersion != 21) throw new Exception("正本21の書き手が必要です");
+        Directory.CreateDirectory(root);
+        Save(root, "locks-v21", LockedLayers());
+        Console.WriteLine("層のロックの正本をC#で生成しました");
+    }
+
     static PaintDocument Tiny()
     {
         var doc = new PaintDocument(1, 1, 8, 1024 * 1024, Id());
@@ -211,6 +245,9 @@ static class M2Fixture
         if (doc == null) throw new Exception("C# の読み手が Rust の書いた正本を読めません: " + lines.Last());
         lines.Add("DocumentBinary.Write(Read) == input: " + DocumentBinary.Write(doc).SequenceEqual(bytes));
         lines.Add("Layers: " + doc.Layers.Count());
+        // ロックがあるときだけ、層ごとの自分のロックと効くロック（親のグループ・すべてを含む）の数も記録する（ロックの無い文書の記録は変わらない）
+        if (doc.Layers.Any(l => l.Locks != LayerLocks.None))
+            lines.Add("Locks (own/effective): " + string.Join(", ", doc.Layers.Select(l => (int)l.Locks + "/" + (int)doc.EffectiveLocks(l.Id))));
         File.WriteAllText(record, string.Join("\n", lines) + "\n", new UTF8Encoding(false));
         File.WriteAllBytes(composite, Composites(doc));
     }

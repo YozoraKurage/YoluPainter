@@ -8,6 +8,7 @@ use yolu_core::export::ExportTemplate;
 use crate::bake::BakeAction;
 use crate::export::ExportAction;
 use crate::lang::Lang;
+use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
 use crate::livelink::LinkIndicator;
 use crate::m2::{Edit, UiOp};
 use crate::psd::{PsdAction, PsdTarget};
@@ -162,6 +163,14 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .shortcut("4")
                 .radio(app.tool == Tool::PolygonFill),
+                Entry::item(Tool::Move.name_in(l), Action::SelectTool(Tool::Move))
+                    .shortcut("V")
+                    .radio(app.tool == Tool::Move),
+                Entry::Separator,
+                transform_entry(l, Xform::Flip { horizontal: true }, free),
+                transform_entry(l, Xform::Flip { horizontal: false }, free),
+                transform_entry(l, Xform::Rotate90 { clockwise: true }, free),
+                transform_entry(l, Xform::Rotate90 { clockwise: false }, free),
                 Entry::Separator,
                 Entry::item(
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -378,7 +387,20 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
     }
 }
 
-/// レイヤーの右クリックのメニュー。
+/// 変形のメニューの項目（左右反転・上下反転・90° 回転）。
+fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
+    let name = match x {
+        Xform::Flip { horizontal: true } => l.pick("左右反転", "Flip Horizontal"),
+        Xform::Flip { horizontal: false } => l.pick("上下反転", "Flip Vertical"),
+        Xform::Rotate90 { clockwise: true } => {
+            l.pick("時計回りに 90° 回転", "Rotate 90° Clockwise")
+        }
+        _ => l.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+    };
+    Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
+}
+
+/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだ層の全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
     use crate::m2::{self, AdjustmentKind, UiOp};
     let lang = app.lang;
@@ -389,6 +411,9 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     let has_mask = layer.is_some_and(|l| l.mask().is_some());
     let mask = layer.and_then(|l| l.mask());
     let editing = app.m2.edit_mask && app.selected_layer == Some(id);
+    let selected = app.selected_layers();
+    let multi = selected.len() > 1 && selected.contains(&id);
+    let members = app.doc.topmost_of(&selected).unwrap_or_default();
     let mut v = vec![
         Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer).enabled(free),
         Entry::item(
@@ -419,16 +444,18 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     v.push(
         Entry::item(
             lang.pick("複製", "Duplicate"),
-            Action::M2(Edit::Duplicate(id)),
+            Action::M2(Edit::DuplicateSelected),
         )
+        .shortcut("Ctrl+J")
         .enabled(free),
     );
-    if group {
+    if group && !multi {
         v.push(
             Entry::item(
                 lang.pick("グループ解除", "Ungroup"),
                 Action::M2(Edit::Ungroup(id)),
             )
+            .shortcut("Ctrl+Shift+G")
             .enabled(free),
         );
     } else {
@@ -437,9 +464,31 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
                 lang.pick("レイヤーをグループ化", "Group Layers"),
                 Action::M2(Edit::GroupSelected),
             )
+            .shortcut("Ctrl+G")
             .enabled(free && app.selected_layer == Some(id)),
         );
     }
+    // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればその層を、グループならグループを、そうでなければ下の層と）
+    let merge_label = if members.len() > 1 {
+        lang.pick("レイヤーを結合", "Merge Layers")
+    } else if group {
+        lang.pick("グループを結合", "Merge Group")
+    } else {
+        lang.pick("下のレイヤーと結合", "Merge Down")
+    };
+    v.push(
+        Entry::item(merge_label, Action::M2(Edit::MergeDown))
+            .shortcut("Ctrl+E")
+            .enabled(free && app.selected_layer == Some(id)),
+    );
+    v.push(
+        Entry::item(
+            lang.pick("表示レイヤーを結合", "Merge Visible"),
+            Action::M2(Edit::MergeVisible),
+        )
+        .shortcut("Ctrl+Shift+E")
+        .enabled(free),
+    );
     // アセットの棚へ（層のまとまり・マスク）
     v.push(
         Entry::item(
@@ -510,19 +559,62 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
             .enabled(free),
         );
     }
+    // ロック（選んでいる層の全部に効く。持っているロックにチェック）
+    let targets = if multi { selected.clone() } else { vec![id] };
+    v.push(Entry::Separator);
+    v.push(Entry::Heading(lang.pick("ロック", "Lock").to_owned()));
+    for flag in LOCK_FLAGS {
+        let own = targets
+            .iter()
+            .all(|t| app.doc.layer(*t).is_some_and(|l| l.locks().contains(flag)));
+        v.push(
+            Entry::item(
+                lock_name(lang, flag),
+                Action::M2(Edit::Lock {
+                    ids: targets.clone(),
+                    flag,
+                    on: !own,
+                }),
+            )
+            .checked(own)
+            .enabled(free),
+        );
+    }
+    v.push(Entry::Separator);
+    v.push(Entry::Heading(
+        lang.pick("変形", "Transform").to_owned(),
+    ));
+    for x in [
+        Xform::Flip { horizontal: true },
+        Xform::Flip { horizontal: false },
+        Xform::Rotate90 { clockwise: true },
+        Xform::Rotate90 { clockwise: false },
+    ] {
+        v.push(transform_entry(lang, x, free && app.selected_layer == Some(id)));
+    }
     v.push(Entry::Separator);
     v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));
-    v.push(
-        Entry::item(
-            if visible {
-                lang.pick("非表示にする", "Hide")
-            } else {
-                lang.pick("表示する", "Show")
-            },
-            Action::ToggleVisible(id),
-        )
-        .enabled(free),
-    );
+    if multi {
+        v.push(
+            Entry::item(
+                lang.pick("表示を切り替え", "Toggle Visibility"),
+                Action::M2(Edit::ToggleSelectedVisible),
+            )
+            .enabled(free),
+        );
+    } else {
+        v.push(
+            Entry::item(
+                if visible {
+                    lang.pick("非表示にする", "Hide")
+                } else {
+                    lang.pick("表示する", "Show")
+                },
+                Action::ToggleVisible(id),
+            )
+            .enabled(free),
+        );
+    }
     v.push(Entry::Separator);
     v.push(
         Entry::item(
@@ -538,12 +630,17 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
         )
         .enabled(free),
     );
+    let removed: usize = members
+        .iter()
+        .map(|m| m2::subtree_len(&app.doc, *m))
+        .sum::<usize>()
+        .max(m2::subtree_len(&app.doc, id));
     v.push(
         Entry::item(
             lang.pick("レイヤーを削除", "Delete Layer"),
             Action::DeleteLayer,
         )
-        .enabled(free && app.doc.layers().len() > m2::subtree_len(&app.doc, id)),
+        .enabled(free && app.doc.layers().len() > removed),
     );
     v
 }
@@ -564,15 +661,44 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     }
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let mut actions = Vec::new();
+    // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
+    // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
+    let canvas_shown = app
+        .canvas_frame
+        .is_some_and(|f| ctx.cumulative_frame_nr().saturating_sub(f) <= 1);
+    let arrows_move = app.tool == Tool::Move
+        && canvas_shown
+        && !app.is_stroking()
+        && app.transform.drag.is_none();
+    let mut arrows: Vec<((f64, f64), bool)> = Vec::new();
     ctx.input_mut(|i| {
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
         actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
+        if arrows_move {
+            for (k, dir) in [
+                (Key::ArrowLeft, (-1.0, 0.0)),
+                (Key::ArrowRight, (1.0, 0.0)),
+                (Key::ArrowUp, (0.0, -1.0)),
+                (Key::ArrowDown, (0.0, 1.0)),
+            ] {
+                if i.consume_key(Modifiers::SHIFT, k) {
+                    arrows.push((dir, true));
+                } else if i.consume_key(Modifiers::NONE, k) {
+                    arrows.push((dir, false));
+                }
+            }
+        }
         let mut key = |m: Modifiers, k: Key, a: Action| {
             if i.consume_key(m, k) {
                 actions.push(a);
             }
         };
         // Shift 付きを先に取る（consume_key は書いていない Shift を気にしない。取った押下は消えるので、次の Ctrl+Z には残らない）
+        key(cmd_shift, Key::E, Action::M2(Edit::MergeVisible));
+        key(cmd_shift, Key::G, Action::M2(Edit::UngroupSelected));
+        key(Modifiers::COMMAND, Key::E, Action::M2(Edit::MergeDown));
+        key(Modifiers::COMMAND, Key::J, Action::M2(Edit::DuplicateSelected));
+        key(Modifiers::COMMAND, Key::G, Action::M2(Edit::GroupSelected));
         key(cmd_shift, Key::I, sel_edit(SelEdit::Invert));
         key(cmd_shift, Key::Z, Action::Redo);
         key(Modifiers::COMMAND, Key::A, sel_edit(SelEdit::All));
@@ -603,6 +729,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
             Key::M,
             Action::SelectTool(Tool::SelectRect),
         );
+        key(Modifiers::NONE, Key::V, Action::SelectTool(Tool::Move));
         key(Modifiers::NONE, Key::L, Action::SelectTool(Tool::Lasso));
         key(Modifiers::NONE, Key::W, Action::SelectTool(Tool::Wand));
         key(Modifiers::NONE, Key::B, Action::SelectTool(Tool::Brush));
@@ -627,6 +754,9 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     for a in actions {
         app.apply(a);
     }
+    for (dir, shift) in arrows {
+        crate::transform::canvas::arrow(app, dir, shift);
+    }
 }
 
 /// オプションバー（今のツールの設定。ブラシと消しゴムは直径・硬さ・不透明度・流量・間隔と筆圧の切り替え）。
@@ -647,6 +777,10 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
     if app.tool.is_select() {
         crate::selection::props::select_options(ui, app, r, x + 4.0);
+        return;
+    }
+    if app.tool == Tool::Move {
+        crate::transform::props::options(ui, app, r, x + 4.0);
         return;
     }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定
@@ -770,8 +904,8 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
-        if tool == Tool::SelectRect {
-            // 描く道具と選ぶ道具の区切り
+        if tool == Tool::SelectRect || tool == Tool::Move {
+            // 描く道具と選ぶ道具・選ぶ道具と動かす道具の区切り
             w::strip_separator(
                 &p,
                 Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 9.0)),

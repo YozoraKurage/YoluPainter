@@ -1,8 +1,8 @@
 //! 正本（`NativeDocument`）と core の文書の行き来。意味は Unity 版の `DocumentBinary.Read` / `Write` と同じにする（C# が書いた正本は
-//! core を通して書き戻すとバイト一致する）。範囲は M2 の層（層の種類・入れ子と通過・分離・ラスターマスク・クリッピング・チャンネルごとの有効と
-//! 合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段（版 9・11・13・15）、
-//! Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス（版 8・10・18）。
-//! core に無い項目（ロック・手動の ID 色）は先に検査して断り、部分変換を返さない。
+//! core を通して書き戻すとバイト一致する）。範囲は M2 の層（層の種類・入れ子と通過・分離・ラスターマスク・クリッピング・層のロック（版 12）・
+//! チャンネルごとの有効と合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段
+//! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
+//! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
@@ -14,7 +14,7 @@ use yolu_core::paths;
 use yolu_core::{
     AdjustmentSettings, AnchorId, AnchorPlacement, BlendMode, BrushSettings, Channel, ChannelBlend,
     ChannelInfo, ChannelKind, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
-    FilterSpec, FilterTarget, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerPath,
+    FilterSpec, FilterTarget, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks, LayerPath,
     NormalSettings, NormalYDirection, Rgba8, TileCoord,
 };
 
@@ -143,7 +143,6 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         return Some((path.into(), "core に無い項目"));
     };
     let layer = format!("layers[{index}]");
-    let feature = |name: &str, why| Some((format!("{layer}.{name}"), why));
     let mut parts = rest.split('.');
     let head = parts.next().unwrap_or_default();
     match head.split('[').next().unwrap_or_default() {
@@ -163,6 +162,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "channel_count"
         | "channels"
         | "has_mask"
+        | "locks"
         | "has_surface_path"
         | "has_filters"
         | "has_canvas_path"
@@ -196,7 +196,6 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
                 && !matches!(fields.get(path), Some(V::Float(v)) if v.to_bits() == default.to_bits());
             unused_changed.then(|| (path.into(), "調整の種類が使わない値が既定ではない"))
         }
-        "locks" => feature("locks", "ロック"),
         _ => Some((path.into(), "core に無い項目")),
     }
 }
@@ -285,12 +284,13 @@ impl NativeDocument {
         }
         let mut ids = Vec::with_capacity(self.layer_count());
         let mut parents = Vec::with_capacity(self.layer_count());
+        let mut locks = Vec::with_capacity(self.layer_count());
         for i in 0..self.layer_count() {
             let p = format!("layers[{i}]");
-            load_layer(&mut doc, &f, &p, version).map_err(|e| {
+            locks.push(load_layer(&mut doc, &f, &p, version).map_err(|e| {
                 let name = f.text(&format!("{p}.name")).unwrap_or_default();
                 e.in_context(format!("{p}「{name}」をcoreにできません"))
-            })?;
+            })?);
             ids.push(LayerId(core_id(f.guid(&format!("{p}.id"))?)));
             parents.push(if version >= 6 {
                 f.guid(&format!("{p}.parent"))?
@@ -321,25 +321,25 @@ impl NativeDocument {
         if parents.iter().any(Option::is_some) {
             doc.set_structure_for_load(&parents)?;
         }
-        Ok(doc.with_persistent_ids(core_id(f.guid("id")?), &ids)?)
+        let mut doc = doc.with_persistent_ids(core_id(f.guid("id")?), &ids)?;
+        // ロックは読み終えてから付ける（読み手自身の画素・属性の設定をロックが断らないように。C# の `SetLocksForLoad` と同じ）。
+        // 付けるのは履歴を持たない読み込みの経路で、ロックは合成を変えない
+        for (id, locks) in ids.iter().zip(locks) {
+            if locks != LayerLocks::NONE {
+                doc.set_locks_for_load(*id, locks)?;
+            }
+        }
+        Ok(doc)
     }
 
     /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
-    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色と層のロックは断る。値の無い塗りつぶしのチャンネルと
+    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色は断る。値の無い塗りつぶしのチャンネルと
     /// グループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
     pub fn from_core(doc: &Document) -> Result<Self> {
         check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
         // 手動の ID の色（正本の版 19）はまだ書けない。黙って落とさず、空でなければ断る
         if !doc.id_colors().colors().is_empty() {
             return Err(Error::Unwritable(Unwritable::ManualIdColors));
-        }
-        // 層のロック（正本の版 12）もまだ書けない。読み込み側は native の locks を core に無い項目として断るので、書き出しも断って対にする
-        if doc
-            .layers()
-            .iter()
-            .any(|l| l.locks() != yolu_core::LayerLocks::NONE)
-        {
-            return Err(Error::Unwritable(Unwritable::LayerLocks));
         }
         check_budget(
             doc.width() <= 8192 && doc.height() <= 8192,
@@ -399,8 +399,9 @@ impl NativeDocument {
     }
 }
 
-/// 1 つの層を core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。
-fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<()> {
+/// 1 つの層を core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
+/// 付けるロック（属性の印のビット 1 が立っていれば、直後の int）。
+fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
     let name = f.text(&format!("{p}.name"))?;
     let kind = if version >= 3 {
         f.int(&format!("{p}.kind"))?
@@ -462,6 +463,16 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         version >= 5 && f.boolean(&format!("{p}.clipping"))?
     };
     doc.set_layer_clipping(id, clipping)?;
+    let locks = if attributes & 2 != 0 {
+        let bits = f.int(&format!("{p}.locks"))?;
+        u8::try_from(bits)
+            .ok()
+            .and_then(|b| LayerLocks::from_bits(b).ok())
+            .filter(|l| *l != LayerLocks::NONE)
+            .ok_or_else(|| Error::InvalidData(format!("{p}.locks {bits} は範囲外です")))?
+    } else {
+        LayerLocks::NONE
+    };
     if attributes & 4 != 0 {
         for k in 0..f.byte(&format!("{p}.channel_blend_count"))? {
             let b = format!("{p}.channel_blends[{k}]");
@@ -586,7 +597,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             }
         }
     }
-    Ok(())
+    Ok(locks)
 }
 
 /// 2D・3D のパス（`{p}` の下の項目）。ブラシは丸いブラシの設定（半径は 2D では画素、3D ではモデルの空間）。
@@ -1003,7 +1014,7 @@ impl Out {
     }
 }
 
-/// 1 つの層（C# の `DocumentBinary.Write` の層の並び。M2 に無いロック・画像・グラデーション・パス・フィルター・Anchor は書かない）。
+/// 1 つの層（C# の `DocumentBinary.Write` の層の並び）。
 fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     let named = |why: &str| format!("層「{}」の{why}", layer.name());
     w.raw(&native_id(layer.id().0))?;
@@ -1013,19 +1024,26 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     w.float(layer.opacity())?;
     w.int(layer.blend_mode() as i32)?;
     let blends: Vec<(Channel, ChannelBlend)> = layer.channel_blends().collect();
+    let locks = layer.locks();
     let images: Vec<(Channel, ImageId)> = layer.fill_images().collect();
     let fill_images = layer.kind() == LayerKind::Fill
         && (!images.is_empty() || *layer.projection() != Projection::default());
     let mask_anchor = layer.mask().and_then(|m| m.anchor());
     let anchors = layer.anchor().is_some() || mask_anchor.is_some();
     let gradients: Vec<(Channel, &generator::Settings)> = layer.fill_gradients().collect();
+    // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
+    // ビット 5 塗りつぶしのグラデーション。ロックの印（int、0 は書かない）は属性の直後、チャンネルごとの設定より前
     w.byte(
         u8::from(layer.clipping())
+            | if locks == LayerLocks::NONE { 0 } else { 2 }
             | if blends.is_empty() { 0 } else { 4 }
             | if fill_images { 8 } else { 0 }
             | if anchors { 16 } else { 0 }
             | if gradients.is_empty() { 0 } else { 32 },
     )?;
+    if locks != LayerLocks::NONE {
+        w.int(i32::from(locks.bits()))?;
+    }
     if !blends.is_empty() {
         w.byte(blends.len() as u8)?;
         for (c, b) in &blends {

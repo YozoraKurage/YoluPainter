@@ -939,14 +939,7 @@ fn shelf_full_reason(lang: Lang) -> &'static str {
 /// yolu-io の断りの短い理由（読み込み・棚の予算・保存）。
 pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
     let m = e.to_string();
-    // 層のロックは正本の版 12 の項目で、.ylp にも .ylsmart にもまだ書けない。ここでの保存先は .ylsmart なので、そちらの話にする
-    if let yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks) = e {
-        lang.pick(
-            "層のロックはまだ .ylsmart に書けません",
-            "Layer locks cannot be saved to .ylsmart yet",
-        )
-        .into()
-    } else if m.contains(REFUSAL_RESOURCE_COUNT) {
+    if m.contains(REFUSAL_RESOURCE_COUNT) {
         shelf_full_reason(lang).into()
     } else if m.contains(REFUSAL_IMAGES) {
         Block::Images.reason(lang)

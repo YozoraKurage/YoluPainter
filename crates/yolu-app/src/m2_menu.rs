@@ -37,6 +37,8 @@ pub enum Popup {
     StencilImage,
     StencilMode,
     StencilTiling,
+    /// 移動・変形の補間。
+    Resampling,
 }
 
 fn tips(
@@ -78,6 +80,19 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     match popup {
+        Popup::Resampling => [
+            yolu_core::Resampling::Bilinear,
+            yolu_core::Resampling::Nearest,
+        ]
+        .into_iter()
+        .map(|mode| {
+            Entry::item(
+                crate::transform::resampling_name(lang, mode),
+                Action::M2Ui(UiOp::Resampling(mode)),
+            )
+            .radio(app.transform.resampling == mode)
+        })
+        .collect(),
         Popup::Region => {
             let by_color = app.tool == crate::state::Tool::Fill;
             let mut v = Vec::new();

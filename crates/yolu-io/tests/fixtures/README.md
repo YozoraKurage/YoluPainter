@@ -12,6 +12,8 @@
 | `m1-pattern.ylp` と同名PNG | 65×33画素の縞とグラデーション。圧縮が効くdeflateストリームでもC#出力と全バイト一致することを検証。 |
 | `selection-v1.bin` | C#の `SelectionBinary.Write` による選択範囲 |
 | `m2-groups.utpaint`・`m2-masks.utpaint`・`m2-channels.utpaint`・`m2-clipping.utpaint`・`m2-tiny.utpaint` と同名 `.composite` | Unity 0.2.0のCore（正本21）の実際の書き手（`tools/io-fixtures/M2Fixture.cs`）。グループ（通過・分離・入れ子・空・非表示・クリップ）、ラスターマスク（有効・反転・濃度・画素なし・グループのマスク）、チャンネルごとの有効と合成、塗りつぶし・調整（反転・レベル補正・色相/彩度/明度）、Normalの設定、クリッピング、1画素。`.composite` はC#の全チャンネルの合成（番号の順、下の行から）に続けてNormalのファイル出力 |
+| `locks-v21.utpaint` と同名 `.composite` | Unity 0.2.0のCore（正本21）の実際の書き手（`tools/io-fixtures/M2Fixture.cs` の `--locks`）。層のロック（版12の属性の印のビット1と直後のint）: 個別4種・重ね・すべて・グループ・塗りつぶし・調整・クリッピングとチャンネルごとの合成との同居・ロックの無い層。ロックは合成を変えない（`.composite` はロックを外しても同じ） |
+| `rust-written-locks-v21.utpaint`・`.unity.txt`・`.composite` | `locks-v21` を編集してロックを付け外し・複製した版21をRustの `from_core` が書いたもの（固定のIDで、試験が同じバイト列を作ることを確かめる）と、それをUnity 0.2.0の `DocumentBinary` に読ませた記録（読めて、書き直すと同じバイト列、層ごとの自分のロックと効くロック）、C#の全チャンネルの合成 |
 | `user-channels-v22.utpaint` | Rustの `from_core` が書いた版22（ユーザーチャンネル3つ、番号6・8・9）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる） |
 | `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
 | `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
@@ -53,6 +55,14 @@ Rustが書く正解の正本（版22と版21）と、Unity 0.2.0の読み手の�
 ```sh
 YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test m2_bridge version_22_fixture version_21
 python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --user-channels --rust-written
+```
+
+層のロックの正本（C#の書き手）と、Rustが書いたロックつきの版21をUnity版の読み手に読ませる記録の取り直し（Rustが書く正本は `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test layer_locks rust_written` で作り直してから）:
+
+```sh
+python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --locks
+YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test layer_locks rust_written
+python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --rust-written-locks
 ```
 
 形式7の合成データの再生成:

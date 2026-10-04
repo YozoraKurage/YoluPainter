@@ -50,6 +50,7 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
     if open {
         layer_section(ui, app, rows, id, enabled, lang);
     }
+    lock_section(ui, app, rows);
     match kind {
         LayerKind::Fill => fill_section(ui, app, rows, id, enabled, lang),
         LayerKind::Adjustment => adjustment_section(ui, app, rows, id, enabled, lang),
@@ -123,6 +124,82 @@ fn layer_section(
         enabled,
     ) {
         edit(app, Edit::Clipping(id, on));
+    }
+}
+
+/// ロックの 4 種（選んでいる層の全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
+/// チェックせず、ツールチップで言う。1 回の Undo。
+pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    use crate::layerops::{lock_name, LOCK_FLAGS};
+    let lang = app.lang;
+    let ids = app.selected_layers();
+    if ids.is_empty() {
+        return;
+    }
+    let (open, _) = section(ui, app, rows, "locks", lang.pick("ロック", "Lock"), "lock", None);
+    if !open {
+        return;
+    }
+    let enabled = app.can_edit();
+    for flag in LOCK_FLAGS {
+        let own = ids
+            .iter()
+            .all(|id| app.doc.layer(*id).is_some_and(|l| l.locks().contains(flag)));
+        let effective = ids.iter().all(|id| {
+            app.doc
+                .effective_locks(*id)
+                .is_ok_and(|locks| locks.contains(flag))
+        });
+        let tip = if flag == yolu_core::LayerLocks::TRANSPARENCY {
+            lang.pick(
+                "描いても各画素の透明度は変わらず、色だけが変わる",
+                "Painting keeps each pixel's transparency and changes only its colour",
+            )
+        } else if flag == yolu_core::LayerLocks::PIXELS {
+            lang.pick(
+                "層の画素は変えられない（移動とマスクへの描画はできる）",
+                "The layer's pixels cannot be changed (it can still be moved and its mask painted)",
+            )
+        } else if flag == yolu_core::LayerLocks::POSITION {
+            lang.pick(
+                "層を動かす・変形できない",
+                "The layer cannot be moved or transformed",
+            )
+        } else {
+            lang.pick(
+                "画素・位置・層の設定を変えられない",
+                "Pixels, position and the layer's settings cannot be changed",
+            )
+        };
+        let tip = if effective && !own {
+            format!(
+                "{tip} — {}",
+                lang.pick(
+                    "すべてのロックかグループのロックが効いています",
+                    "in effect through Lock all or a locked group"
+                )
+            )
+        } else {
+            tip.to_owned()
+        };
+        if let Some(on) = toggle_row(
+            ui,
+            rows,
+            &format!("layer.lock.{}", flag.bits()),
+            lock_name(lang, flag),
+            own,
+            Some(&tip),
+            enabled,
+        ) {
+            edit(
+                app,
+                Edit::Lock {
+                    ids: ids.clone(),
+                    flag,
+                    on,
+                },
+            );
+        }
     }
 }
 

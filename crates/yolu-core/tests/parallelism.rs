@@ -2,7 +2,8 @@
 //! 領域の編集（塗りつぶし・グラデーション・マテリアルの塗り・マスクの塗り）が、スレッド数 1・2・3・既定のどれでも同じバイトで、
 //! 取消・予算の拒否では画素・確保量・履歴・版が元のまま。合成そのものは document.rs（`compositing_does_not_depend_on_the_thread_count`）、
 //! 1 本のストロークは同（`big_dabs_give_the_same_bytes_with_any_thread_count`）、ロック下の塗りと 1・4 スレッドの C# との一致は
-//! material_golden.rs が見る。層の操作（変形・結合・サイズ変更）のスレッド数は、その担当の試験に任せてここには置かない。
+//! material_golden.rs が見る。層の操作のうち、変形（任意の角度・拡大縮小・反転・90° 回転・選択範囲の持ち上げ・マスクと全チャンネル）と
+//! 結合のスレッド数は末尾の試験が見る（変形の取消・予算の拒否は元のバイトのまま）。サイズ変更は docops.rs・resize.rs に任せる。
 //! 結果は画素のバイトを SHA-256 に、確保量・タイルの数・変更の記録・履歴のバイト数・ストロークの統計を添えて比べる。
 
 #![allow(clippy::chunks_exact_to_as_chunks)]
@@ -702,5 +703,197 @@ fn large_effect_dabs_on_every_channel_and_a_mask_are_the_same_with_any_number_of
             );
             assert_eq!(other.0, one.0, "{effect:?}: スレッド {degree}");
         }
+    }
+}
+
+// ───────── 層の操作（変形・結合）: 画面の移動・変形の道具と結合が頼る ─────────
+
+use yolu_core::{Affine2D, LayerLocks, Resampling};
+
+/// 600×360 の canvas に、Height も持ち、マスクのある層を足したもの。層は下から bg・paint・heights（Color と Height・マスク）。
+fn operation_canvas(selection: bool) -> (Document, LayerId, LayerId) {
+    let (mut d, paint) = canvas(selection);
+    let mut rnd = Rnd(0xD1B5_4A32_D192_ED03);
+    let heights = d.add_layer("heights").unwrap();
+    import(&mut d, heights, Channel::Color, 64, &mut rnd, 0.5, false);
+    import(&mut d, heights, Channel::Height, 64, &mut rnd, 0.5, true);
+    d.add_layer_mask(heights).unwrap();
+    assert!(d.fill_mask(heights, 0.6, None, false).unwrap());
+    d.clear_history().unwrap();
+    (d, paint, heights)
+}
+
+/// 画素・確保量・選択範囲・履歴・版を 1 つの文字列にして、スレッド数どうしで比べる。
+fn operation_fingerprint(d: &Document, ids: &[LayerId]) -> String {
+    let mut parts = Vec::new();
+    for &id in ids {
+        let l = d.layer(id).unwrap();
+        for c in [Channel::Color, Channel::Height] {
+            parts.push(l.surface(c).map_or("-".to_owned(), surface_hash));
+        }
+        parts.push(l.mask().map_or("-".to_owned(), |m| surface_hash(m.surface())));
+    }
+    parts.push(format!(
+        "sel={}",
+        d.selection().map_or("-".to_owned(), |m| {
+            let mut bytes = Vec::new();
+            for y in 0..d.height() {
+                for x in 0..d.width() {
+                    bytes.push(m.amount(x, y));
+                }
+            }
+            hash(&bytes)
+        })
+    ));
+    parts.push(format!(
+        "alloc={} undo={} rev={}",
+        d.allocated_bytes(),
+        d.undo_count(),
+        d.revision()
+    ));
+    parts.join("|")
+}
+
+fn transforms() -> Vec<(&'static str, Affine2D, Resampling)> {
+    let parts = |pivot: (f64, f64), mv: (f64, f64), deg: f64, sc: (f64, f64)| {
+        Affine2D::from_parts(pivot, mv, deg, sc).unwrap()
+    };
+    vec![
+        ("整数の移動", Affine2D::translation(37.0, -21.0), Resampling::Bilinear),
+        ("小数の移動", Affine2D::translation(10.5, 3.25), Resampling::Bilinear),
+        ("任意の角度", parts((300.0, 180.0), (0.0, 0.0), 23.5, (1.0, 1.0)), Resampling::Bilinear),
+        ("拡大", parts((120.0, 90.0), (5.0, -5.0), 0.0, (2.5, 1.75)), Resampling::Bilinear),
+        ("縮小と回転", parts((300.0, 180.0), (0.0, 0.0), -71.0, (0.4, 0.6)), Resampling::Bilinear),
+        ("左右反転", parts((300.0, 180.0), (0.0, 0.0), 0.0, (-1.0, 1.0)), Resampling::Bilinear),
+        ("90° 回転", parts((300.0, 180.0), (0.0, 0.0), 90.0, (1.0, 1.0)), Resampling::Bilinear),
+        ("ニアレストの回転", parts((300.0, 180.0), (0.0, 0.0), 33.0, (1.3, 1.3)), Resampling::Nearest),
+        ("ニアレストの縮小", parts((0.0, 0.0), (0.0, 0.0), 0.0, (0.37, 0.37)), Resampling::Nearest),
+    ]
+}
+
+/// 変形は、どのスレッド数でも段ごとに同じバイトで（全チャンネル・マスク・選択範囲の持ち上げを含む）、全部を Undo すると元のバイトへ戻る。
+#[test]
+fn layer_transforms_are_the_same_with_any_number_of_threads() {
+    for selection in [false, true] {
+        for (name, t, resampling) in transforms() {
+            let stages = same_for_every_degree(name, || {
+                let (mut d, paint, heights) = operation_canvas(selection);
+                let ids = [paint, heights];
+                let original = operation_fingerprint(&d, &ids);
+                // 2 つの層をまとめて 1 回で（グループなら中身ごとの経路と同じ transform_layers）
+                assert!(d.transform_layers(&ids, t, resampling).unwrap(), "{name}");
+                let moved = operation_fingerprint(&d, &ids);
+                assert_ne!(moved, original, "{name}: 変形が画素を変えている");
+                // 続けて 1 つの層だけ（マスク込み）を、同じ変形で
+                d.transform_layer(heights, t, resampling, true).unwrap();
+                let twice = operation_fingerprint(&d, &ids);
+                while d.undo().unwrap() {}
+                let back = operation_fingerprint(&d, &ids);
+                assert_eq!(
+                    back.split("|alloc").next(),
+                    original.split("|alloc").next(),
+                    "{name}: 全部を戻すと元のバイト"
+                );
+                vec![original, moved, twice, back]
+            });
+            assert_eq!(stages.len(), 4, "{name}");
+        }
+    }
+}
+
+/// 変形の取消（タイルのまとまりごとに確認）は、どのスレッド数でも何も変えず、予算の拒否も元のバイトのまま。
+#[test]
+fn cancelled_or_refused_transforms_leave_the_exact_pixels_with_any_number_of_threads() {
+    let t = Affine2D::from_parts((300.0, 180.0), (0.0, 0.0), 17.0, (1.2, 1.2)).unwrap();
+    for degree in DEGREES {
+        with_degree(degree, || {
+            let (mut d, paint, heights) = operation_canvas(true);
+            let ids = [paint, heights];
+            let before = operation_fingerprint(&d, &ids);
+            // 最初の確認で取り消す・3 回目の確認で取り消す
+            for stop_at in [0usize, 2] {
+                let mut calls = 0;
+                let result = d.transform_layers_cancellable(&ids, t, Resampling::Bilinear, &mut || {
+                    calls += 1;
+                    calls > stop_at
+                });
+                assert_eq!(result, Err(CoreError::Cancelled), "{degree}: {stop_at}");
+                assert_eq!(operation_fingerprint(&d, &ids), before, "{degree}: {stop_at}");
+            }
+            // 一操作の予算が足りない
+            let budget = d.stroke_budget_bytes();
+            d.set_stroke_budget_bytes(4096).unwrap();
+            assert_eq!(
+                d.transform_layers(&ids, t, Resampling::Bilinear),
+                Err(CoreError::StrokeBudgetExceeded),
+                "{degree}"
+            );
+            assert_eq!(operation_fingerprint(&d, &ids), before, "{degree}: 予算の拒否");
+            d.set_stroke_budget_bytes(budget).unwrap();
+            // ロックの拒否
+            d.set_layer_locks(heights, LayerLocks::POSITION).unwrap();
+            let locked = operation_fingerprint(&d, &ids);
+            assert!(matches!(
+                d.transform_layers(&ids, t, Resampling::Bilinear),
+                Err(CoreError::LayerLocked { .. })
+            ));
+            assert_eq!(operation_fingerprint(&d, &ids), locked, "{degree}: ロックの拒否");
+        });
+    }
+}
+
+/// 結合の前後の合成を、結合の報告と同じ規則（両方とも透明な画素は数えない）で比べる。返すのは（変わった画素の数、チャンネルごとの最大の差）。
+fn color_difference(before: &[u8], after: &[u8]) -> (u64, u8) {
+    assert_eq!(before.len(), after.len());
+    let (mut changed, mut largest) = (0u64, 0u8);
+    for (a, b) in after.chunks_exact(4).zip(before.chunks_exact(4)) {
+        if a[3] == 0 && b[3] == 0 {
+            continue;
+        }
+        let delta = (0..4).map(|q| a[q].abs_diff(b[q])).max().expect("RGBA");
+        if delta != 0 {
+            changed += 1;
+            largest = largest.max(delta);
+        }
+    }
+    (changed, largest)
+}
+
+/// 結合（下の層・複数の層・表示している層）は、どのスレッド数でも同じバイトで、Undo で元に戻る。
+#[test]
+fn layer_merges_are_the_same_with_any_number_of_threads() {
+    for kind in ["down", "layers", "visible"] {
+        same_for_every_degree(kind, || {
+            let (mut d, paint, heights) = operation_canvas(false);
+            let ids = [paint, heights];
+            let before = operation_fingerprint(&d, &ids);
+            let composite = d.composite(d.bounds()).unwrap();
+            let report = match kind {
+                "down" => d.merge_down(heights, 255).unwrap(),
+                "layers" => d.merge_layers(&ids, 255).unwrap(),
+                _ => d.merge_visible("merged", 255).unwrap(),
+            };
+            let merged = report.result_id;
+            let after = operation_fingerprint(&d, &[merged]);
+            // 結合の前後の Color の合成は、報告と同じ規則で比べて報告と合う（変わった画素の数が同じで、最大の差は報告の内。報告が
+            // 正確なら 1 画素も変わらない）。報告そのものがスレッド数で変わらないことは、返す値の比べ合わせが見る
+            let (changed, largest) = color_difference(&composite, &d.composite(d.bounds()).unwrap());
+            assert_eq!(
+                changed,
+                report.changed_by_channel.get(&Channel::Color).copied().unwrap_or(0),
+                "{kind}: 報告の変わった画素の数"
+            );
+            assert!(largest <= report.max_difference, "{kind}: {largest} / {}", report.max_difference);
+            if report.exact() {
+                assert_eq!(changed, 0, "{kind}");
+            }
+            assert!(d.undo().unwrap());
+            assert_eq!(
+                operation_fingerprint(&d, &ids).split("|alloc").next(),
+                before.split("|alloc").next(),
+                "{kind}: 取り消すと元のバイト"
+            );
+            (after, report.changed_pixels, report.max_difference)
+        });
     }
 }

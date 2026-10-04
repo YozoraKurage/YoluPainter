@@ -11,6 +11,7 @@ use egui::{
 };
 
 use crate::engine::{Channel, Document, LayerId, LayerKind};
+use crate::layerops::lock_names;
 use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
@@ -313,6 +314,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         }
     }
 
+    let chosen = app.selected_layers();
     for (row_index, row) in rows.iter().enumerate() {
         let rect = Rect::from_min_size(
             pos2(
@@ -324,7 +326,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         if rect.bottom() < list.top() || rect.top() > list.bottom() {
             continue;
         }
-        layer_row(ui, app, thumbs, &ctx, list, rect, *row, &rows);
+        layer_row(ui, app, thumbs, &ctx, list, rect, *row, &rows, &chosen);
     }
     follow_drag(ui, app, list, &rows);
     crate::panels::assets::layer_list_drop(ui, app, list, &rows);
@@ -398,9 +400,14 @@ fn toolbar(
     let has = selected.is_some() && enabled;
     let has_mask = selected.is_some_and(|l| l.mask().is_some());
     let editing = app.m2.edit_mask && has_mask;
-    let can_delete = app
-        .selected_layer
-        .is_some_and(|id| app.doc.layers().len() > m2::subtree_len(&app.doc, id));
+    let removed: usize = app
+        .doc
+        .topmost_of(&app.selected_layers())
+        .unwrap_or_default()
+        .iter()
+        .map(|id| m2::subtree_len(&app.doc, *id))
+        .sum();
+    let can_delete = app.selected_layer.is_some() && app.doc.layers().len() > removed;
     let mut x = bar.left() + 4.0;
     let mut next = || {
         let b = button(x);
@@ -612,23 +619,34 @@ fn kind_thumb(
     }
 }
 
+/// ドラッグで運ぶ層: つかんだ層が複数選択の中にあれば選んだ層の全部、なければそれだけ。
+fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
+    let chosen = app.selected_layers();
+    if chosen.len() > 1 && chosen.contains(&id) {
+        chosen
+    } else {
+        vec![id]
+    }
+}
+
 /// ポインタの位置から、いまの落とす先を決める。
 fn update_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row], id: LayerId) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         let position = (p.y - list.top() + app.layer_scroll) / ROW_HEIGHT;
-        let target = m2::drop_target_at(&app.doc, rows, id, position);
+        let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
         app.layer_drag = Some(LayerDrag { id, target });
     }
 }
 
-/// ドラッグを終える（落とす先があれば落とす）。
+/// ドラッグを終える（落とす先があれば落とす。複数選んでいれば選んだ層をまとめて、1 回の Undo）。
 fn drop_drag(app: &mut AppState, rows: &[Row]) {
     if let Some(LayerDrag {
         id: dragged,
         target: Some(target),
     }) = app.layer_drag.take()
     {
-        if let Some(edit) = m2::drop_edit(&app.doc, rows, dragged, target) {
+        let ids = dragged_layers(app, dragged);
+        if let Some(edit) = m2::drop_edit_for(&app.doc, rows, &ids, target) {
             app.apply(Action::M2(edit));
         }
     }
@@ -649,6 +667,101 @@ fn follow_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
     }
 }
 
+/// 行を押して離したときの修飾キー（離したイベントの修飾。無ければ今の修飾）。
+fn click_modifiers(ui: &Ui) -> egui::Modifiers {
+    ui.input(|i| {
+        i.events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                egui::Event::PointerButton {
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } => Some(*modifiers),
+                _ => None,
+            })
+            .unwrap_or(i.modifiers)
+    })
+}
+
+/// 右クリックで選ぶ: 選んだ層の中の行なら選択をそのまま（押した行を描く先にする）、外の行ならその 1 つだけ。
+fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
+    if in_selection && app.has_multiple_layers_selected() {
+        let chosen = app.selected_layers();
+        app.select_layers(chosen, id);
+    } else {
+        app.select_single_layer(id);
+    }
+}
+
+/// 行の右端のロックの印。自分のロックなら押すと外す（選んだ層の中の行なら選んだ全部の自分のロックを外す）。
+fn lock_mark(
+    ui: &mut Ui,
+    app: &mut AppState,
+    row: Rect,
+    id: LayerId,
+    effective: yolu_core::LayerLocks,
+    chosen: &[LayerId],
+) {
+    use yolu_core::LayerLocks;
+    let lang = app.lang;
+    let own = app
+        .doc
+        .layer(id)
+        .map(|l| l.locks())
+        .unwrap_or(LayerLocks::NONE);
+    let full = effective.contains(LayerLocks::ALL);
+    let mark = Rect::from_min_size(
+        pos2(row.right() - 24.0, row.top()),
+        vec2(20.0, row.height()),
+    );
+    let names = lock_names(lang, effective).join(lang.pick("、", ", "));
+    let mut tip = if full {
+        lang.pick("ロック: すべて", "Locked: all").to_owned()
+    } else {
+        format!("{}: {names}", lang.pick("ロック", "Locked"))
+    };
+    let enabled = app.can_edit();
+    let own_locked = own != LayerLocks::NONE;
+    if !own_locked {
+        tip.push_str(lang.pick("（グループから）", " (from its group)"));
+    }
+    let response = ui.interact(
+        mark,
+        ui.make_persistent_id(("layer.lock", id.0)),
+        if own_locked && enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let painter = ui.painter_at(row);
+    w::icon(
+        &painter,
+        mark,
+        if full { "lock_filled" } else { "lock" },
+        if own_locked { t::TEXT_DIM } else { t::TEXT_DISABLED },
+        13.0,
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled && own_locked, &tip));
+    let clicked = response.clicked();
+    let _ = response.on_hover_text(&tip);
+    if clicked {
+        let ids = if chosen.len() > 1 && chosen.contains(&id) {
+            chosen.to_vec()
+        } else {
+            vec![id]
+        };
+        app.apply(Action::M2(Edit::Lock {
+            ids,
+            flag: LayerLocks::from_bits(15).expect("全部のロック"),
+            on: false,
+        }));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layer_row(
     ui: &mut Ui,
@@ -659,6 +772,7 @@ fn layer_row(
     row: Rect,
     info: Row,
     rows: &[Row],
+    chosen: &[LayerId],
 ) {
     let id = info.id;
     let Some(layer) = app.doc.layer(id) else {
@@ -673,6 +787,7 @@ fn layer_row(
         .layer_index(id)
         .is_some_and(|i| app.doc.is_effectively_clipped(i));
     let selected = app.selected_layer == Some(id);
+    let in_selection = selected || (chosen.len() > 1 && chosen.contains(&id));
     let editing_mask = selected && app.m2.edit_mask && has_mask;
     let enabled = app.can_edit();
     let lang = app.lang;
@@ -687,13 +802,15 @@ fn layer_row(
         },
     );
     let painter = ui.painter_at(list);
-    if selected {
+    if in_selection {
         w::fill(&painter, row, t::ACCENT_SOFT);
-        w::fill(
-            &painter,
-            Rect::from_min_size(row.min, vec2(3.0, row.height())),
-            t::ACCENT,
-        );
+        if selected {
+            w::fill(
+                &painter,
+                Rect::from_min_size(row.min, vec2(3.0, row.height())),
+                t::ACCENT,
+            );
+        }
     } else if response.hovered() {
         w::fill(&painter, row, t::CONTROL_HOVER);
     }
@@ -727,17 +844,37 @@ fn layer_row(
     if has_mask {
         x = mask_box.right() + 4.0;
     }
+    let effective_locks = app.doc.effective_locks(id).unwrap_or_default();
+    let locked = effective_locks != yolu_core::LayerLocks::NONE;
     let name_rect = Rect::from_min_max(
         pos2(x + 2.0, row.top() + 4.0),
-        pos2(row.right() - 26.0, row.bottom() - 4.0),
+        pos2(
+            row.right() - 26.0 - if locked { 20.0 } else { 0.0 },
+            row.bottom() - 4.0,
+        ),
     );
 
-    // 選ぶ・ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
-    if response.clicked() || response.drag_started() {
-        if app.selected_layer != Some(id) {
-            app.set_edit_mask(false);
+    // 選ぶ（Ctrl・Cmd で足し引き、Shift で範囲、Ctrl + Shift で範囲を足す。選んだ行を押してそのままドラッグすれば選んだ全部を運ぶ）・
+    // ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
+    if response.clicked() {
+        let modifiers = click_modifiers(ui);
+        if modifiers.command || modifiers.shift {
+            let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
+            if modifiers.shift {
+                app.select_layer_range(id, modifiers.command, &ids);
+            } else {
+                app.toggle_layer_selected(id);
+            }
+        } else {
+            app.select_single_layer(id);
         }
-        app.selected_layer = Some(id);
+        if app.renaming != Some(id) {
+            app.renaming = None;
+        }
+    } else if response.drag_started() {
+        if !in_selection {
+            app.select_single_layer(id);
+        }
         if app.renaming != Some(id) {
             app.renaming = None;
         }
@@ -751,7 +888,7 @@ fn layer_row(
         app.rename_started = false;
     }
     if response.secondary_clicked() {
-        app.selected_layer = Some(id);
+        select_for_menu(app, id, in_selection);
         if let Some(at) = response.interact_pointer_pos() {
             open_popup(
                 app,
@@ -860,7 +997,7 @@ fn layer_row(
             app.apply(Action::M2Ui(UiOp::EditMask(!editing_mask)));
         }
         if maskr.secondary_clicked() {
-            app.selected_layer = Some(id);
+            select_for_menu(app, id, in_selection);
             if let Some(at) = maskr.interact_pointer_pos() {
                 open_popup(
                     app,
@@ -909,10 +1046,14 @@ fn layer_row(
             Align::Left,
         );
     }
-    // 右端の印: 描くチャンネルを使っていないラスターの層
+    // 右端の印: ロック（すべては塗った錠、ほかの自分のロックは線の錠、グループから効いているだけなら薄い線の錠。自分のロックは押すと外す）と、
+    // 描くチャンネルを使っていないラスターの層
+    if locked {
+        lock_mark(ui, app, row, id, effective_locks, chosen);
+    }
     if no_pixels {
         let mark = Rect::from_min_size(
-            pos2(row.right() - 24.0, row.top()),
+            pos2(row.right() - 24.0 - if locked { 20.0 } else { 0.0 }, row.top()),
             vec2(20.0, row.height()),
         );
         w::icon(&painter, mark, "link_off", t::TEXT_DISABLED, 13.0);

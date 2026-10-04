@@ -50,7 +50,6 @@ impl Lang {
                 what.to_string(),
                 match what {
                     Unwritable::ManualIdColors => "Manual ID colors cannot be saved to .ylp yet".into(),
-                    Unwritable::LayerLocks => "Layer locks cannot be saved to .ylp yet".into(),
                 },
             ),
             // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。
@@ -973,7 +972,6 @@ mod tests {
             Error::InvalidData("正本が不正".into()),
             Error::Budget("アーカイブの予算超過です".into()),
             Error::Unwritable(Unwritable::ManualIdColors),
-            Error::Unwritable(Unwritable::LayerLocks),
             Error::SaveConflict("保存先が外部で変更されています".into()),
             Error::UnsupportedFormat { format: 99, app: "FuturePainter".into(), version: "9.0".into() },
             Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
@@ -998,16 +996,14 @@ mod tests {
         assert!(Lang::Ja.io_error(&errors[0]).contains("正本が不正"));
         assert!(Lang::Ja.io_error(&errors[1]).contains("アーカイブの予算超過"));
         assert!(Lang::Ja.io_error(&errors[2]).contains("ID の色"));
-        assert!(Lang::Ja.io_error(&errors[3]).contains("ロック"));
         assert!(Lang::En.io_error(&errors[1]).contains("limit exceeded"));
         assert!(Lang::En.io_error(&errors[2]).contains("Manual ID colors"));
-        assert!(Lang::En.io_error(&errors[3]).contains("Layer locks"));
         // 別の保存が進行中の衝突は、外で変わった衝突と日英どちらでも言い分ける
-        assert_eq!(Lang::En.io_error(&errors[9]), "Another save is in progress");
-        assert!(Lang::En.io_error(&errors[4]).contains("changed"));
-        assert!(Lang::Ja.io_error(&errors[9]).contains("進行中"));
+        assert_eq!(Lang::En.io_error(&errors[8]), "Another save is in progress");
+        assert!(Lang::En.io_error(&errors[3]).contains("changed"));
+        assert!(Lang::Ja.io_error(&errors[8]).contains("進行中"));
         // 保存先の周りの不具合は、データの不正（InvalidData の汎用文）にも「外で変わった」にも見せず、場所が理由だと言う
-        for (i, key) in [(10, "Backup location is not a folder"), (11, "link"), (12, "lock file")] {
+        for (i, key) in [(9, "Backup location is not a folder"), (10, "link"), (11, "lock file")] {
             let en = Lang::En.io_error(&errors[i]);
             assert!(en.contains(key) && !en.contains("changed") && !en.contains("Invalid"), "{en}");
         }

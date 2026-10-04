@@ -164,23 +164,14 @@ pub fn single_value(color: Rgba) -> Rgba8 {
     Rgba8::new(b(color[0]), b(color[1]), b(color[2]), b(color[3]))
 }
 
-/// ロックの種類の名前（複数なら「・」でつなぐ。「すべて」は 4 つ全部の意味）。
+/// 効いているロックの名前（「すべて」が付いていればそれだけ。複数なら「、」でつなぐ）。名前の表は `layerops::lock_name` の 1 つだけで、
+/// レイヤーの欄の錠の印・プロパティ・ロックの付け外しの状態の文と、断りの文が同じ言い方になる。
 pub fn lock_names(lang: Lang, lock: yolu_core::LayerLocks) -> String {
     use yolu_core::LayerLocks as L;
     if lock.contains(L::ALL) {
-        return lang.pick("すべて", "everything").into();
+        return crate::layerops::lock_name(lang, L::ALL).into();
     }
-    let mut names = Vec::new();
-    for (bit, ja, en) in [
-        (L::TRANSPARENCY, "透明度", "transparency"),
-        (L::PIXELS, "ピクセル", "pixels"),
-        (L::POSITION, "位置", "position"),
-    ] {
-        if lock.contains(bit) {
-            names.push(lang.pick(ja, en));
-        }
-    }
-    names.join(lang.pick("・", ", "))
+    crate::layerops::lock_names(lang, lock).join(lang.pick("、", ", "))
 }
 
 /// 断られた理由の短い文（core のエラーを、画面の言語で名前と理由だけにする）。

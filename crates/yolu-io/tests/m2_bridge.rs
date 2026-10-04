@@ -6,12 +6,13 @@ use yolu_core::{
 };
 use yolu_io::{NativeDocument, NativeValue, Project, SetSpec, WriterInfo};
 
-const FIXTURES: [&str; 5] = [
+const FIXTURES: [&str; 6] = [
     "m2-groups",
     "m2-masks",
     "m2-channels",
     "m2-clipping",
     "m2-tiny",
+    "locks-v21",
 ];
 
 fn read(name: &str) -> Vec<u8> {
@@ -947,22 +948,21 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
 // ───────── 断る ─────────
 
 #[test]
-fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() {
+fn the_rich_native_document_is_refused_only_for_manual_id_colors_and_still_writes_as_it_was() {
     let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues();
-    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）は core にあるので断らない
-    for (feature, reason) in [("manual_id_colors", "手動の ID 色"), (".locks", "ロック")] {
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.contains(feature) && i.contains(reason)),
-            "{feature}（{reason}）: {issues:?}"
-        );
-    }
+    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）・パス・層のロックは core にあるので断らない
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("manual_id_colors") && i.contains("手動の ID 色")),
+        "{issues:?}"
+    );
     let message = rich.to_core().err().unwrap().to_string();
     assert!(message.contains("coreへの変換を拒否しました"), "{message}");
-    assert!(message.contains(".locks"), "{message}");
+    assert!(message.contains("manual_id_colors"), "{message}");
     for effect in [
+        ".locks",
         ".filters",
         ".images",
         ".gradients",
@@ -976,52 +976,16 @@ fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() 
             "{effect}: {issues:?}"
         );
     }
-    // 非表示の層・無効にしたマスクの中身でも断る（黙って捨てない）。元の正本はそのまま書ける
+    // 断った文書の元の正本はそのまま書ける。層の機能で断る項目はもう無く（効果・パス・ロックは core が持つ）、断るのは文書の手動の ID 色だけ
     assert_eq!(
         NativeDocument::read(&rich.to_bytes()).unwrap().to_bytes(),
         rich.to_bytes()
     );
-    // 全部の層を非表示に、全部のマスクを無効にしても、断る項目は 1 つも変わらない（表示・有効を見て省くようになったら落ちる）
-    let mut changed = rich.clone();
-    let (mut hidden, mut disabled) = (Vec::new(), Vec::new());
-    for i in 0..rich.layer_count() {
-        for (path, list) in [
-            (format!("layers[{i}].visible"), &mut hidden),
-            (format!("layers[{i}].mask.enabled"), &mut disabled),
-        ] {
-            if rich.field(&path) == Some(&NativeValue::Bool(true)) {
-                changed = changed.with_value(&path, NativeValue::Bool(false)).unwrap();
-                list.push(i);
-            }
-        }
-    }
-    // 断る項目のある層が、実際に非表示・無効へ変わっている（変える対象が空で素通りしていない）
-    let layer_of = |issue: &str| -> usize {
-        let rest = issue.strip_prefix("layers[").expect(issue);
-        rest.split_once(']').unwrap().0.parse().unwrap()
-    };
-    let featured: Vec<usize> = issues
-        .iter()
-        .filter(|i| i.starts_with("layers["))
-        .map(|i| layer_of(i))
-        .collect();
-    let masked: Vec<usize> = issues
-        .iter()
-        .filter(|i| i.contains(".mask."))
-        .map(|i| layer_of(i))
-        .collect();
-    assert!(!featured.is_empty() && masked.is_empty(), "{issues:?}");
     assert!(
-        featured.iter().all(|i| hidden.contains(i)),
-        "{featured:?} / {hidden:?}"
+        issues.iter().all(|i| !i.starts_with("layers[")),
+        "{issues:?}"
     );
-    assert!(
-        masked.iter().all(|i| disabled.contains(i)),
-        "{masked:?} / {disabled:?}"
-    );
-    assert_eq!(changed.core_issues(), issues);
-    let message = changed.to_core().err().unwrap().to_string();
-    assert!(message.contains(".locks"), "{message}");
+    assert_eq!(issues.len(), 1, "{issues:?}");
 }
 
 #[test]
@@ -1051,6 +1015,73 @@ fn adjustment_values_the_kind_does_not_use_must_be_default_or_the_document_is_re
             "{path} = {value}: {issues:?}"
         );
         assert_eq!(changed.to_core().is_err(), refused, "{path} = {value}");
+        // どちらでも元のバイト列として書ける
+        assert_eq!(
+            NativeDocument::read(&changed.to_bytes())
+                .unwrap()
+                .to_bytes(),
+            changed.to_bytes()
+        );
+    }
+}
+
+/// 層ごとの断り（調整の種類が使わない値が既定ではない）は、層を非表示にしても、マスクを無効にしても変わらない。表示・有効を見て省くようになると、
+/// 描かれない層の値が黙って捨てられ、保存で変わる（`yolu-io/README.md` の「非表示の層・無効にしたマスクの中身でも断る」の裏付け）。
+#[test]
+fn adjustment_values_the_kind_does_not_use_are_refused_even_when_the_layer_is_hidden_or_its_mask_disabled(
+) {
+    for (fixture, name, param, value) in [
+        ("m2-channels", "反転（チャンネルなし）", "gamma", 2.0),
+        ("m2-channels", "色相", "gamma", 0.5),
+        // 有効なマスクのある調整の層（隠す・マスクを無効にするの両方を試す）
+        ("m2-masks", "レベル・マスク", "hue", 30.0),
+        ("m2-masks", "レベル・マスク", "lightness", 0.5),
+    ] {
+        let original = native(fixture);
+        assert!(original.core_issues().is_empty(), "{fixture}");
+        let layer = index_of(&original, name);
+        let path = format!("layers[{layer}].adjustment.{param}");
+        let refused = original
+            .with_value(&path, NativeValue::Float(value))
+            .unwrap();
+        let issues = refused.core_issues();
+        assert!(
+            issues.iter().any(|i| i.contains(&path)),
+            "{path}: {issues:?}"
+        );
+        // 全部の層を非表示に、全部のマスクを無効にする
+        let mut changed = refused.clone();
+        let (mut hidden, mut disabled) = (0, 0);
+        for i in 0..refused.layer_count() {
+            for (field, count) in [
+                (format!("layers[{i}].visible"), &mut hidden),
+                (format!("layers[{i}].mask.enabled"), &mut disabled),
+            ] {
+                if refused.field(&field) == Some(&NativeValue::Bool(true)) {
+                    changed = changed.with_value(&field, NativeValue::Bool(false)).unwrap();
+                    *count += 1;
+                }
+            }
+        }
+        // 断る値のある層が実際に非表示（マスクがあれば無効）へ変わっている（変える対象が空で素通りしていない）
+        assert!(hidden > 0, "{fixture}");
+        assert_eq!(
+            changed.field(&format!("layers[{layer}].visible")),
+            Some(&NativeValue::Bool(false)),
+            "{path}"
+        );
+        if refused.field(&format!("layers[{layer}].has_mask")) == Some(&NativeValue::Bool(true)) {
+            assert!(disabled > 0, "{fixture}");
+            assert_eq!(
+                changed.field(&format!("layers[{layer}].mask.enabled")),
+                Some(&NativeValue::Bool(false)),
+                "{path}"
+            );
+        }
+        // 断る項目は 1 つも変わらず、変換も同じ理由で断る
+        assert_eq!(changed.core_issues(), issues, "{path}");
+        let message = changed.to_core().err().unwrap().to_string();
+        assert!(message.contains(&path), "{message}");
         // どちらでも元のバイト列として書ける
         assert_eq!(
             NativeDocument::read(&changed.to_bytes())
@@ -1461,36 +1492,49 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
     assert_eq!(doc.id_colors().colors().len(), 1);
 }
 
-/// 層のロックもまだ正本に書けないので、黙って落とさずに保存を断る。親のグループだけに掛けた場合も、どの種類のロックも断る
-/// （文書は変えない）。ロックを外せば書ける。
+/// 層のロック（正本の版 12）は黙って落とさず書き、読み戻せる。個別の 4 種・重ね・親のグループだけに掛けた場合のどれも、
+/// 書いて読んで同じ自分のロックと効くロックに戻る。ロックを外せば、ロックの無い文書と同じバイト列に戻る。
 #[test]
-fn layer_locks_are_refused_instead_of_dropped() {
+fn layer_locks_are_written_and_read_back() {
     use yolu_core::LayerLocks;
     let mut doc = yolu_core::Document::new(16, 16).unwrap();
     let id = doc.add_layer("層").unwrap();
     let group = doc.add_group("g", None).unwrap();
+    let unlocked = NativeDocument::from_core(&doc).unwrap().to_bytes();
     for lock in [
         LayerLocks::TRANSPARENCY,
         LayerLocks::PIXELS,
         LayerLocks::POSITION,
         LayerLocks::ALL,
+        LayerLocks::TRANSPARENCY | LayerLocks::POSITION,
+        LayerLocks::from_bits(15).unwrap(),
     ] {
         for target in [id, group] {
             doc.set_layer_locks(target, lock).unwrap();
-            let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks)
-                ),
-                "{lock:?} {err:?}"
+            let native = NativeDocument::from_core(&doc).unwrap();
+            assert!(native.core_issues().is_empty(), "{lock:?}");
+            assert_ne!(native.to_bytes(), unlocked, "{lock:?}");
+            let back = native.to_core().unwrap();
+            for l in doc.layers() {
+                let again = back.layer(l.id()).unwrap();
+                assert_eq!(again.locks(), l.locks(), "{lock:?} {}", l.name());
+                assert_eq!(
+                    back.effective_locks(l.id()).unwrap(),
+                    doc.effective_locks(l.id()).unwrap(),
+                    "{lock:?} {}",
+                    l.name()
+                );
+            }
+            // 書き直しても同じバイト列
+            assert_eq!(
+                NativeDocument::from_core(&back).unwrap().to_bytes(),
+                native.to_bytes(),
+                "{lock:?}"
             );
-            assert!(err.to_string().contains("ロック"), "{lock:?} {err}");
-            assert_eq!(doc.layer(target).unwrap().locks(), lock);
             doc.set_layer_locks(target, LayerLocks::NONE).unwrap();
         }
     }
-    yolu_io::NativeDocument::from_core(&doc).unwrap();
+    assert_eq!(NativeDocument::from_core(&doc).unwrap().to_bytes(), unlocked);
 }
 
 // ───────── PSD への書き出し: 表せないものは断る、表せるロックは書く ─────────
@@ -1551,7 +1595,7 @@ fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) ->
         .collect()
 }
 
-/// PSD に表せない中身は、平らにも黙って落とすこともせず、機能ごとの理由で断る（`NativeDocument::from_core` が手動の ID の色と層のロックを
+/// PSD に表せない中身は、平らにも黙って落とすこともせず、機能ごとの理由で断る（`NativeDocument::from_core` が手動の ID の色を
 /// 断るのと対。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening）。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
 /// 中身を外した同じ文書は書ける。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
 #[test]
@@ -1811,17 +1855,27 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
             vec![0, on_disk, 0],
             "{lock:?}"
         );
-        // 取り込み側: core はロックを持てる。`.ylp` に書けないので、アプリの取り込みが `project_issues` の理由で断る（黙って外さない）
+        // 取り込み側は、ロックを core の層へ入れる（効くロックは書き出す前と同じ。すべては個別の下のビットを足さずに書くので、
+        // 自分のロックは「すべて」だけに畳まれるが、効くロックは変わらない）
         assert!(again.core_issues().is_empty(), "{lock:?}");
-        let issues = again.project_issues();
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.contains("locks") && i.contains("ロック")),
-            "{lock:?}: {issues:?}"
-        );
         let back = again.to_core().unwrap();
-        // すべてが立てば、書くのは 0x80000000 だけなので、戻るのもすべてだけ
+        assert!(!back.can_undo(), "{lock:?}: 読み込みは Undo の履歴に残さない");
+        let names = ["下", "中", "上"];
+        for name in names {
+            let id = id_of(&back, name);
+            let before = if name == "中" { lock } else { LayerLocks::NONE };
+            assert_eq!(
+                back.effective_locks(id).unwrap(),
+                doc.effective_locks(id_of(&doc, name)).unwrap(),
+                "{lock:?} {name}"
+            );
+            assert_eq!(
+                back.layer(id).unwrap().locks().contains(LayerLocks::ALL),
+                before.contains(LayerLocks::ALL),
+                "{lock:?} {name}"
+            );
+        }
+        // すべてが立てば、書くのは 0x80000000 だけなので、戻る自分のロックもすべてだけ
         let expected = if lock.contains(LayerLocks::ALL) {
             LayerLocks::ALL
         } else {
@@ -1832,10 +1886,9 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
             expected,
             "{lock:?}"
         );
-        assert_eq!(
-            back.layer(id_of(&back, "上")).unwrap().locks(),
-            LayerLocks::NONE
-        );
+        // 取り込んだ文書を書き出し直すと、同じ lspf（C# の PsdLockTests と同じ往復）
+        let again_bytes = psd_bytes(&back);
+        assert_eq!(lspf_values(&again_bytes), vec![on_disk], "{lock:?}");
     }
 }
 

@@ -599,11 +599,11 @@ fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(s.doc.undo_count(), undo);
     assert!(!painted(&s, TRI0));
-    assert_eq!(s.message, "レイヤーがロックされています: ピクセル");
+    assert_eq!(s.message, "レイヤーがロックされています: 画素");
     // ポリゴン塗りつぶし（始められない）
     s.message.clear();
     assert!(!begin_polygon(&mut s, Where::Canvas(&view), at));
-    assert_eq!(s.message, "レイヤーがロックされています: ピクセル");
+    assert_eq!(s.message, "レイヤーがロックされています: 画素");
     assert!(!s.is_stroking());
     // ブラシ
     assert!(s.begin_paint_stroke(id, false).is_err());
@@ -614,11 +614,11 @@ fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
     // 英語
     s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer is locked: pixels");
+    assert_eq!(s.message, "The layer is locked: Image pixels");
     // すべてのロック・親グループのロック
     s.doc.set_layer_locks(id, LayerLocks::ALL).unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer is locked: everything");
+    assert_eq!(s.message, "The layer is locked: All");
     s.doc.set_layer_locks(id, LayerLocks::NONE).unwrap();
     let group = s.doc.group_layers(&[id], "g").unwrap();
     s.doc
@@ -626,7 +626,7 @@ fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
         .unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
     assert!(s.message.starts_with("A parent group is locked"), "{}", s.message);
-    assert!(s.message.contains("pixels"), "{}", s.message);
+    assert!(s.message.contains("Image pixels"), "{}", s.message);
     // ロックを外せば塗れる
     s.doc.set_layer_locks(group, LayerLocks::NONE).unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
@@ -1821,7 +1821,7 @@ fn a_locked_layer_says_why_the_brush_cannot_start() {
     drag(&mut h, &[offset(c, -40.0, 0.0), offset(c, 40.0, 0.0)]);
     let s = &h.state().state;
     assert_eq!(s.doc.undo_count(), before, "何も描いていない");
-    assert_eq!(s.message, "描けません: レイヤーがロックされています: ピクセル");
+    assert_eq!(s.message, "描けません: レイヤーがロックされています: 画素");
     h.snapshot("region_locked_refusal");
 }
 

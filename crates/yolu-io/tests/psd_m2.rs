@@ -454,8 +454,8 @@ fn locks_round_trip_on_every_kind_and_a_locked_folder_locks_its_contents() {
 }
 
 #[test]
-fn imported_locks_are_in_core_without_history_but_the_project_cannot_store_them_yet() {
-    let mut psd = Psd {
+fn imported_locks_are_in_core_without_history_and_the_project_stores_them() {
+    let psd = Psd {
         width: 2,
         height: 1,
         layers: vec![
@@ -488,21 +488,20 @@ fn imported_locks_are_in_core_without_history_but_the_project_cannot_store_them_
         LayerLocks::TRANSPARENCY | LayerLocks::POSITION
     );
     assert_eq!(core.layers()[1].locks(), LayerLocks::ALL);
-    // .ylp の正本には書けない。アプリの取り込みは、書けない情報として断る（黙って外さない）
+    // .ylp の正本にも書ける（版 12 の並び）。書いて読み戻しても同じロックで、PSD に書き出し直しても同じ lspf
+    let native = yolu_io::NativeDocument::from_core(&core).unwrap();
+    assert!(native.core_issues().is_empty());
+    let again = native.to_core().unwrap();
     assert_eq!(
-        psd.project_issues(),
-        vec![
-            "layers[0].locks: 層のロックは保存できません".to_string(),
-            "layers[1].locks: 層のロックは保存できません".to_string()
-        ]
+        again.layers()[0].locks(),
+        LayerLocks::TRANSPARENCY | LayerLocks::POSITION
     );
-    assert!(matches!(
-        yolu_io::NativeDocument::from_core(&core),
-        Err(yolu_io::Error::Unwritable(yolu_io::Unwritable::LayerLocks))
-    ));
-    psd.layers[0].locks = 0;
-    psd.layers[1].locks = 0;
-    assert!(psd.project_issues().is_empty());
+    assert_eq!(again.layers()[1].locks(), LayerLocks::ALL);
+    let back = Psd::from_core(&again).unwrap();
+    assert_eq!(
+        back.layers.iter().map(|l| l.locks).collect::<Vec<_>>(),
+        psd.layers.iter().map(|l| l.locks).collect::<Vec<_>>()
+    );
 }
 
 #[test]

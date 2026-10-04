@@ -37,11 +37,13 @@ pub enum Tool {
     Wand,
     /// ID の色で選択（焼いた ID マップの色から選択範囲を作る）。
     IdSelect,
+    /// 移動・変形（選んでいる層をハンドルで移動・拡大縮小・回転。形は `transform`）。
+    Move,
 }
 
 impl Tool {
-    /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間に区切りが入る。
-    pub const ALL: [Tool; 10] = [
+    /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
+    pub const ALL: [Tool; 11] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
@@ -52,6 +54,7 @@ impl Tool {
         Tool::Polygon,
         Tool::Wand,
         Tool::IdSelect,
+        Tool::Move,
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
@@ -66,6 +69,7 @@ impl Tool {
             Tool::Lasso => "lasso",
             Tool::Polygon => "select-polygon",
             Tool::Wand => "magic-wand",
+            Tool::Move => "move",
         }
     }
     pub fn name(self) -> &'static str {
@@ -84,6 +88,7 @@ impl Tool {
             Tool::Lasso => lang.pick("なげなわ", "Lasso"),
             Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
             Tool::Wand => lang.pick("自動選択", "Magic Wand"),
+            Tool::Move => lang.pick("移動・変形", "Move / Transform"),
         }
     }
     pub fn key(self) -> &'static str {
@@ -98,6 +103,7 @@ impl Tool {
             Tool::Lasso => "L",
             Tool::Polygon => "Shift+L",
             Tool::Wand => "W",
+            Tool::Move => "V",
         }
     }
     /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
@@ -567,6 +573,8 @@ pub struct AppState {
     /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
     pub canvas_visible: bool,
     pub canvas_drawn: bool,
+    /// 最後にキャンバスのタブを描いたフレームの番号（`Context::cumulative_frame_nr`）。タブが後ろにあるあいだは進まない。
+    pub canvas_frame: Option<u64>,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
     /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
@@ -599,6 +607,10 @@ pub struct AppState {
     pub stencil: crate::stencil::StencilState,
     /// 新規プロジェクトの窓・プロジェクトの構成の窓と、プロジェクトのモデルのファイル。
     pub np: crate::newproject::NpState,
+    /// 層の複数選択と、見た目が変わる結合の確かめ。
+    pub layer_ops: crate::layerops::LayerOpsState,
+    /// 移動・変形の道具（ドラッグの途中・数値・補間）。
+    pub transform: crate::transform::TransformState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（退避を残す数）と設定の窓。
@@ -724,6 +736,7 @@ impl AppState {
             canvas_rect: None,
             canvas_visible: false,
             canvas_drawn: false,
+            canvas_frame: None,
             sets,
             renaming_set: None,
             rename_set_started: false,
@@ -741,6 +754,8 @@ impl AppState {
             psd: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             np: Default::default(),
+            layer_ops: Default::default(),
+            transform: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -749,8 +764,11 @@ impl AppState {
         }
     }
 
+    /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
-        self.canvas.stroke.is_some() || self.doc.has_active_stroke()
+        self.canvas.stroke.is_some()
+            || self.doc.has_active_stroke()
+            || self.transform.drag.is_some()
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
@@ -891,6 +909,17 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                if self.has_multiple_layers_selected() {
+                    let revision = self.doc.revision();
+                    if let Err(e) = self.delete_selected_layers() {
+                        self.message = self.lang.core_error(&e);
+                    }
+                    if self.doc.revision() != revision {
+                        self.modified = true;
+                    }
+                    self.ensure_selection();
+                    return;
+                }
                 if let Some(id) = self.selected_layer {
                     // グループは中身ごと消える。何も残らなくなる削除は断る
                     let size = crate::m2::subtree_len(&self.doc, id);
@@ -923,6 +952,14 @@ impl AppState {
             Action::LayerUp | Action::LayerDown => {
                 if stroking {
                     return refuse(self);
+                }
+                if self.has_multiple_layers_selected() {
+                    // 選んだ層をまとめて 1 段（それぞれの兄弟の中で。選んだ層どうしは追い越さない）
+                    let ids = self.selected_layers();
+                    if let Ok(true) = self.doc.step_layers(&ids, action == Action::LayerUp) {
+                        self.modified = true;
+                    }
+                    return;
                 }
                 if let Some(id) = self.selected_layer {
                     // 同じグループの兄弟の中で動かす（グループの外へは出さない）
@@ -998,6 +1035,7 @@ impl AppState {
                 }
                 if tool != self.tool {
                     self.sel_tool_changed();
+                    self.transform_cancel_drag();
                 }
                 self.tool = tool;
             }

@@ -55,14 +55,11 @@ pub enum Error {
 pub enum Unwritable {
     /// 手動の ID の色（正本の版 19）。
     ManualIdColors,
-    /// 層のロック（正本の版 12）。
-    LayerLocks,
 }
 impl fmt::Display for Unwritable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ManualIdColors => "手動の ID の色はまだ .ylp に書けません",
-            Self::LayerLocks => "層のロックはまだ .ylp に書けません",
         })
     }
 }

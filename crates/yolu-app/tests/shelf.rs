@@ -1599,20 +1599,16 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
         "ユーザーチャンネルは保存できません"
     );
     assert_eq!(io_reason(Lang::En, &error), "User channels cannot be saved");
-    // 層のロックを持つ層の保存（.ylp の話にしない）
+    // 層のロックを持つ層は保存できる（ロックも一緒に書く）
     s.doc.remove_channel(channel).unwrap();
     s.doc
         .set_layer_locks(base, yolu_core::LayerLocks::ALL)
         .unwrap();
     let material = s.doc.capture_smart_material(&[base], "x").unwrap();
-    let error = SmartFile::from_core(&material, &yolu_app::project::writer()).unwrap_err();
+    let file = SmartFile::from_core(&material, &yolu_app::project::writer()).unwrap();
     assert_eq!(
-        io_reason(Lang::Ja, &error),
-        "層のロックはまだ .ylsmart に書けません"
-    );
-    assert_eq!(
-        io_reason(Lang::En, &error),
-        "Layer locks cannot be saved to .ylsmart yet"
+        file.to_core().unwrap().layers()[0].locks(),
+        yolu_core::LayerLocks::ALL
     );
 }
 
@@ -1960,38 +1956,25 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
 }
 
 #[test]
-fn headless_a_layer_with_locks_is_not_saved_and_the_reason_speaks_of_ylsmart() {
-    // 層のロックはまだ書けない（.ylsmart の保存は、捕まえた層のロックを黙って落とさず断る）。同期も別のスレッドも
+fn headless_a_layer_with_locks_is_saved_to_the_shelf_with_its_locks() {
+    // 層のロックは正本の版 12 の項目で、.ylsmart にも書く（C# の CloneLayer がロックを写すのと同じ）。同期も別のスレッドも
     let (mut s, base) = painted(16);
     s.doc
         .set_layer_locks(base, yolu_core::LayerLocks::PIXELS)
         .unwrap();
-    let before = fingerprint(&s);
-    for async_bytes in [u64::MAX, 0] {
+    for (n, async_bytes) in [u64::MAX, 0].into_iter().enumerate() {
         s.shelf.async_bytes = async_bytes;
-        for (lang, want) in [
-            (Lang::Ja, "層のロックはまだ .ylsmart に書けません"),
-            (Lang::En, "Layer locks cannot be saved to .ylsmart yet"),
-        ] {
-            s.lang = lang;
-            s.modified = false;
-            s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-            s.shelf_wait();
-            assert!(s.message.contains(want), "{async_bytes}: {}", s.message);
-            // 保存先は .ylsmart。.ylp の話にはしない
-            assert!(!s.message.contains(".ylp"), "{}", s.message);
-            assert!(s.shelf.resources().is_empty() && !s.shelf.changed && !s.modified);
-        }
+        s.modified = false;
+        s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
+        s.shelf_wait();
+        assert_eq!(s.shelf.resources().len(), n + 1, "{async_bytes}: {}", s.message);
+        assert!(s.shelf.changed && s.modified, "{}", s.message);
     }
-    s.lang = Lang::Ja;
-    assert_eq!(fingerprint(&s), before);
-    // ロックを外せば保存できる
-    s.doc
-        .set_layer_locks(base, yolu_core::LayerLocks::NONE)
-        .unwrap();
-    s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
-    s.shelf_wait();
-    assert_eq!(s.shelf.resources().len(), 1, "{}", s.message);
+    // 文書のロックは変わらず、棚の素材のロックも持つ
+    assert_eq!(
+        s.doc.layer(base).unwrap().locks(),
+        yolu_core::LayerLocks::PIXELS
+    );
 }
 
 #[test]
