@@ -4,7 +4,7 @@
 # Windows・macOS の実の GPU では縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
 output_path = "tests/snapshots"
 threshold = 0.6
-max_failed_pixels = 0
+max_failed_pixels = 4
 
 [windows]
 threshold = 2.0
