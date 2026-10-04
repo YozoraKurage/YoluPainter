@@ -862,6 +862,9 @@ namespace YoluPainterRs.Golden
 
         static void Bench(int runs)
         {
+            // 共通ベンチから両言語の並列数を揃える。未指定なら従来どおり。
+            string threads = Environment.GetEnvironmentVariable("BENCH_THREADS");
+            if (!string.IsNullOrEmpty(threads)) CoreParallelism.MaxDegreeOfParallelism = int.Parse(threads);
             Console.WriteLine("C#（Mono " + Environment.Version + "）/ 論理プロセッサ " + Environment.ProcessorCount + " / CoreParallelism " + CoreParallelism.Degree);
             {
                 var doc = new PaintDocument(4096, 4096, 128); var l = doc.AddLayer("a"); FillRandom(doc, l, 1);

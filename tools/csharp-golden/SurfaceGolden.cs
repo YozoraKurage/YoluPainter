@@ -360,6 +360,9 @@ namespace YoluPainterRs.SurfaceGolden
 
         static void Bench(int repeat)
         {
+            // 共通ベンチから両言語の並列数を揃える。未指定なら従来どおり。
+            string threads = Environment.GetEnvironmentVariable("BENCH_THREADS");
+            if (!string.IsNullOrEmpty(threads)) Yozolab.YoluPainter.Core.CoreParallelism.MaxDegreeOfParallelism = int.Parse(threads);
             var triangles = new List<SurfaceTriangle>();
             AddSphere(triangles, 76, 0.5f, "012345", 0, 0, 0);
             var build = new List<double>(); var adjacency = new List<double>(); var bvhTimes = new List<double>(); SurfaceGeometry g = null;

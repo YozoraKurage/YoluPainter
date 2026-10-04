@@ -111,6 +111,13 @@ Unity へ戻すときは、形式 7 と文書形式 21 を読める Unity 版で
 
 YoluPainter-rs は [MIT License](LICENSE) で公開しています。
 
+## CPU の速さをまとめて測る
+
+Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存の Rust と C# の合成・ブラシ・面のベンチを同じ回数・並列上限・CPU 割当で順に測り、
+`target/bench-all/summary.md` に比較表、同じ場所にログと実行条件を保存する。Python 3.10 以降・taskset・上記の C# 用の Unity 同梱ツールが必要。
+`--source DIR` で Unity 版の場所、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
+合成・ブラシは予熱 2 回を除き、面は予熱なしの中央値。フィルターはレベル補正・ブラシのぼかし／指先を含む。GPU と独立フィルター全種は対象外。
+
 ## 許諾の一覧と配布用の全文
 
 使用しているライブラリ・フォント・アイコンの許諾は [THIRD_PARTY.md](THIRD_PARTY.md) を参照してください。現在の一覧は Windows GNU 向けで、Mac・Linux・Windows MSVC の一覧を兼ねません。配布用の許諾全文の生成方法は[開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文)にあります。
