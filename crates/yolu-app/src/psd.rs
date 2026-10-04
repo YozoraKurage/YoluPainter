@@ -637,6 +637,8 @@ impl AppState {
                 self.renaming = None;
                 self.layer_drag = None;
                 self.popup = None;
+                // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
+                self.sel_doc_changed();
                 self.ensure_selection();
                 if let Some(set) = self.sets.get_mut(self.sets.current_index()) {
                     set.saved = None;

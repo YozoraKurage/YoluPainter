@@ -24,34 +24,60 @@ pub type Rgba = [f32; 4];
 pub enum Tool {
     Brush,
     Eraser,
+    /// 選択の道具（形は `selection`）。
+    SelectRect,
+    SelectEllipse,
+    Lasso,
+    Polygon,
+    Wand,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 2] = [Tool::Brush, Tool::Eraser];
+    pub const ALL: [Tool; 7] = [
+        Tool::Brush,
+        Tool::Eraser,
+        Tool::SelectRect,
+        Tool::SelectEllipse,
+        Tool::Lasso,
+        Tool::Polygon,
+        Tool::Wand,
+    ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
         match self {
             Tool::Brush => "brush",
             Tool::Eraser => "eraser",
+            Tool::SelectRect => "select-rectangle",
+            Tool::SelectEllipse => "select-ellipse",
+            Tool::Lasso => "lasso",
+            Tool::Polygon => "select-polygon",
+            Tool::Wand => "magic-wand",
         }
     }
     pub fn name(self) -> &'static str {
-        match self {
-            Tool::Brush => "ブラシ",
-            Tool::Eraser => "消しゴム",
-        }
+        self.name_in(Lang::Ja)
     }
     /// 言語ごとの名前。
     pub fn name_in(self, lang: Lang) -> &'static str {
         match self {
             Tool::Brush => lang.pick("ブラシ", "Brush"),
             Tool::Eraser => lang.pick("消しゴム", "Eraser"),
+            Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
+            Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
+            Tool::Lasso => lang.pick("なげなわ", "Lasso"),
+            Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
+            Tool::Wand => lang.pick("自動選択", "Magic Wand"),
         }
     }
     pub fn key(self) -> &'static str {
         match self {
             Tool::Brush => "B",
             Tool::Eraser => "E",
+            Tool::SelectRect => "M",
+            Tool::SelectEllipse => "Shift+M",
+            Tool::Lasso => "L",
+            Tool::Polygon => "Shift+L",
+            Tool::Wand => "W",
         }
     }
 }
@@ -332,6 +358,8 @@ pub enum PopupKind {
     M2(crate::m2_menu::Popup),
     /// テクスチャセットの右クリック（セットの番号 uid）。
     SetContext(u32),
+    /// オプションバーの対称のモード（▾）。
+    Symmetry,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -349,6 +377,8 @@ pub enum Action {
     M2Ui(UiOp),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
+    /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
+    Sel(crate::selection::SelAction),
     Quit,
     Undo,
     Redo,
@@ -412,6 +442,7 @@ impl Action {
         matches!(
             self,
             Action::M2(_)
+                | Action::Sel(crate::selection::SelAction::Edit(_))
                 | Action::Undo
                 | Action::Redo
                 | Action::NewLayer
@@ -480,6 +511,8 @@ pub struct AppState {
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+    /// 選択範囲と 2D の対称の画面の状態（選択範囲そのものは文書が持つ）。
+    pub sel: crate::selection::SelState,
     /// メッシュマップのベイク（設定・窓・走っている仕事）。
     pub bake: crate::bake::BakeState,
     /// テンプレートの書き出し（パディング・確かめ・結果・走っている仕事）。
@@ -594,6 +627,7 @@ impl AppState {
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
+            sel: crate::selection::SelState::default(),
             bake: Default::default(),
             export: Default::default(),
             psd: Default::default(),
@@ -605,8 +639,11 @@ impl AppState {
         self.canvas.stroke.is_some() || self.doc.has_active_stroke()
     }
 
-    /// 取り消せるか（ポーズのモードではポーズの取り消し）。
+    /// 取り消せるか（多角形の点を打っている間は最後の点、ポーズのモードではポーズの取り消し）。
     pub fn can_undo(&self) -> bool {
+        if self.sel_has_polygon_point() {
+            return true; // 取り消しは最後の点に当たる（`Action::Undo` と同じ順）
+        }
         match &self.view3d.pose.session {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_undo(),
             _ => self.doc.can_undo(),
@@ -675,10 +712,15 @@ impl AppState {
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Stencil(op) => self.stencil_op(op),
+            Action::Sel(action) => self.sel_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {
                 if stroking {
                     return refuse(self);
+                }
+                // 多角形の途中なら、文書でなく最後の点を取り消す（Photoshop と同じ）
+                if self.sel_undo_polygon_point() {
+                    return;
                 }
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Undo));
@@ -824,7 +866,12 @@ impl AppState {
                 }
             }
             Action::ResetLayout => self.reset_layout = true,
-            Action::SelectTool(tool) => self.tool = tool,
+            Action::SelectTool(tool) => {
+                if tool != self.tool {
+                    self.sel_tool_changed();
+                }
+                self.tool = tool;
+            }
             Action::SwapColors => self.color.swap(),
             Action::DefaultColors => self.color.defaults(),
             Action::BrushSmaller => self.brush.radius = (self.brush.radius / 1.15).max(0.5),

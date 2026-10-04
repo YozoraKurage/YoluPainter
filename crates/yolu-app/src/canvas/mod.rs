@@ -39,6 +39,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t::CANVAS_BG);
     display.paint(&painter, &view);
+    // 選択の縁・ドラッグ中の形・対称の軸
+    crate::selection::canvas::paint_overlay(ui.ctx(), &painter, &view, app);
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
@@ -58,10 +60,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
+        } else if app.tool.is_select() {
+            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
         } else if let Some(p) = hover {
             let radius = (app.brush.radius * view.pixel_size()).max(1.5);
             painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
             painter.circle_stroke(p, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
+            crate::selection::canvas::paint_mirrored_cursors(&painter, &view, app, p, radius);
             ui.ctx().set_cursor_icon(if radius >= 4.0 {
                 CursorIcon::None
             } else {
@@ -243,7 +248,7 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool, rect: Re
             return false;
         }
     };
-    match app.begin_paint_stroke_with(layer, eraser, stencil) {
+    match app.begin_canvas_stroke(layer, eraser, stencil) {
         Ok(stroke) => {
             app.stroke = Some(stroke);
             app.canvas.stroke = Some(source);
@@ -375,7 +380,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     let ppp = ctx.pixels_per_point();
     let typing = ctx.egui_wants_keyboard_input();
     let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
-    let blocked = app.popup.is_some() || app.popup_was_open;
+    let blocked = app.popup.is_some() || app.popup_was_open || app.sel.dialog.is_some();
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
             i.events.clone(),
@@ -397,6 +402,27 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     for s in pen {
         let p = s.pos_points(ppp);
         let view = app.view.view(rect, w_px, h_px);
+        // 描いている最中のペンは、道具を選択へ替えても従来の match で終わらせる（離したのを受け取れず取り残さない）
+        let pen_stroke_running = matches!(app.canvas.stroke, Some(StrokeSource::Pen(_)));
+        if app.tool.is_select() && !pen_stroke_running {
+            // 選択の道具: 触れる・動く・離すを、押す・動く・離すにする
+            let usable = !blocked
+                && !app.canvas.rotate_key_held
+                && !app.canvas.space_held
+                && (app.sel.pen_down.is_some() || on_top(ui, rect, p));
+            if usable || !s.contact {
+                crate::selection::canvas::pen_sample(
+                    app,
+                    &view,
+                    p,
+                    s.pointer_id,
+                    s.contact,
+                    modifiers,
+                    now,
+                );
+            }
+            continue;
+        }
         match app.canvas.stroke {
             None if s.contact
                 && !blocked
@@ -461,6 +487,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 pos,
                 button,
                 pressed,
+                modifiers: event_modifiers,
                 ..
             } => {
                 let pos = *pos;
@@ -478,6 +505,18 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                             });
                         } else if app.canvas.space_held && !app.is_stroking() {
                             app.canvas.panning = true;
+                        } else if app.tool.is_select() {
+                            if !pen_frame {
+                                let view = app.view.view(rect, w_px, h_px);
+                                crate::selection::canvas::press(
+                                    app,
+                                    &view,
+                                    pos,
+                                    StrokeSource::Mouse,
+                                    *event_modifiers,
+                                    now,
+                                );
+                            }
                         } else if !pen_frame
                             && app.canvas.stroke.is_none()
                             && !app.stencil.handling()
@@ -498,6 +537,16 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                     (PointerButton::Primary, false) => {
                         if app.canvas.stroke == Some(StrokeSource::Mouse) {
                             finish_stroke(app, false);
+                        }
+                        if app.sel.drag.is_some() {
+                            let view = app.view.view(rect, w_px, h_px);
+                            crate::selection::canvas::release(
+                                app,
+                                &view,
+                                pos,
+                                StrokeSource::Mouse,
+                                *event_modifiers,
+                            );
                         }
                         app.canvas.rotating = None;
                         if !app.canvas.middle_rotating {
@@ -524,6 +573,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             Event::PointerMoved(pos) => {
                 let pos = *pos;
                 let previous = app.canvas.last_pointer.unwrap_or(pos);
+                if app.tool.is_select() && !pen_frame {
+                    let view = app.view.view(rect, w_px, h_px);
+                    crate::selection::canvas::moved(app, &view, pos, StrokeSource::Mouse);
+                }
                 if app.canvas.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     let view = app.view.view(rect, w_px, h_px);
                     add_point(
@@ -591,11 +644,29 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 } else if let Some(drag) = app.canvas.rotating.take() {
                     app.view.angle = drag.start_angle;
                     app.view.pan = drag.start_pan;
+                } else {
+                    crate::selection::canvas::cancel(app);
                 }
             }
+            Event::Key {
+                key: Key::Enter,
+                pressed: true,
+                modifiers: event_modifiers,
+                ..
+            } if app.tool == crate::state::Tool::Polygon && !typing && !blocked => {
+                crate::selection::canvas::finish_polygon(app, *event_modifiers);
+            }
+            Event::Key {
+                key: Key::Backspace,
+                pressed: true,
+                ..
+            } if app.tool == crate::state::Tool::Polygon && !typing && !blocked => {
+                crate::selection::canvas::remove_last_point(app);
+            }
             Event::WindowFocused(false) => {
-                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
+                // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる
                 finish_stroke(app, false);
+                app.sel.cancel_drafts();
                 app.canvas.rotating = None;
                 app.canvas.panning = false;
                 app.canvas.middle_rotating = false;
@@ -612,6 +683,21 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         finish_stroke(app, false);
+    }
+    // 選択の形のドラッグも、離したのを取りこぼしたら、最後の位置で確定する
+    if app
+        .sel
+        .drag
+        .as_ref()
+        .is_some_and(|d| d.source == StrokeSource::Mouse)
+        && !ui.input(|i| i.pointer.primary_down())
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        let view = app.view.view(rect, w_px, h_px);
+        let at = app.canvas.last_pointer.unwrap_or(rect.center());
+        crate::selection::canvas::release(app, &view, at, StrokeSource::Mouse, modifiers);
     }
     if !ui.input(|i| i.pointer.primary_down()) {
         app.canvas.rotating = None;

@@ -1040,11 +1040,17 @@ impl AppState {
     ) -> Result<Stroke, CoreError> {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
+        self.begin_stroke_with(id, &brush)
+    }
+
+    /// 渡したブラシで描き始める（マスクを選んでいればマスク、そうでなければ描くチャンネル）。2D のキャンバスは対称を足したブラシで
+    /// ここへ来る（`begin_canvas_stroke`）。
+    pub fn begin_stroke_with(&mut self, id: LayerId, brush: &Brush) -> Result<Stroke, CoreError> {
         if self.m2.edit_mask {
-            return self.doc.begin_brush_mask_stroke(id, &brush);
+            return self.doc.begin_brush_mask_stroke(id, brush);
         }
         self.doc
-            .begin_brush_stroke_in(id, self.m2.paint_channel, &brush)
+            .begin_brush_stroke_in(id, self.m2.paint_channel, brush)
     }
 
     /// 選んでいるレイヤー・チャンネルが消えていれば選び直す。

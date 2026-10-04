@@ -4,12 +4,13 @@
 //! 変わったタイルは `changed_tiles(channel, since)` と `change_serial()` で、読む側が通し番号を覚える（読んでも消えない）。
 
 pub use yolu_core::glam::DVec2;
+pub use yolu_core::selection::{DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS};
 pub use yolu_core::{
     AdjustmentSettings, AdjustmentType, BlendMode, Brush, BrushEffect, BrushPreset, BrushSample,
-    BrushSettings, BrushTip, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorDynamics,
-    ColorSpace, Controls, CoreError, Document, DualBrush, DualBrushMode, Jitter, Layer, LayerId,
-    LayerKind, PaperTexture, Rect, Rgba8, RowOrder, Stroke, StrokeAssist, TextureMode, TileCoord,
-    TipShape,
+    BrushSettings, BrushTip, CanvasSymmetry, Channel, ChannelBlend, ChannelInfo, ChannelKind,
+    ColorDynamics, ColorSpace, Controls, CoreError, Document, DualBrush, DualBrushMode, Jitter,
+    Layer, LayerId, LayerKind, PaperTexture, Rect, Rgba8, RowOrder, SelectionCombine,
+    SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, TileCoord, TipShape,
 };
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。

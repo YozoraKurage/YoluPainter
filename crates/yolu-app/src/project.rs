@@ -160,17 +160,26 @@ pub fn open_into(state: &mut AppState, path: &Path) {
     let entries = project.migrated_entries();
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
+    let mut selection_issues = Vec::new();
     for set in project.sets() {
         let native = &set.document;
         let (w, h) = (native.width() as u32, native.height() as u32);
         match to_core(native, state.lang) {
-            Ok(doc) => parts.push((
-                set.id.clone(),
-                set.name.clone(),
-                set.material.clone(),
-                None,
-                doc,
-            )),
+            Ok(mut doc) => {
+                // 選択範囲（selection.bin）は文書に戻す（読めなければ選択なしで開き、理由を出す）
+                if let Err(e) =
+                    crate::selection::io::restore_into(&mut doc, set.selection.as_ref(), state.lang)
+                {
+                    selection_issues.push(format!("{}: {e}", set.name));
+                }
+                parts.push((
+                    set.id.clone(),
+                    set.name.clone(),
+                    set.material.clone(),
+                    None,
+                    doc,
+                ))
+            }
             Err(reason) => {
                 read_only.push(set.name.clone());
                 let png = entries
@@ -239,6 +248,9 @@ pub fn open_into(state: &mut AppState, path: &Path) {
             read_only.len(),
             read_only.join(", ")
         ));
+    }
+    if !selection_issues.is_empty() {
+        text += &format!(" {}", selection_issues.join(" "));
     }
     if map_count > 0 {
         text += &state.lang.pick(format!(" メッシュマップ {map_count} 枚。"), format!(" {map_count} mesh map(s)."));
@@ -358,6 +370,15 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         None => Project::create(writer(), &specs, &current),
     }
     .map_err(|e| state.lang.io_error(&e))?;
+    // 選択範囲（selection.bin）は正本と別のエントリ。読むだけのセットは元のまま、描けるセットは今の選択範囲と違えば書き換える
+    let selections: Vec<(&str, Option<&crate::engine::SelectionMask>)> = state
+        .sets
+        .iter()
+        .enumerate()
+        .filter(|(_, set)| set.read_only.is_none())
+        .map(|(i, set)| (set.id.as_str(), state.set_doc(i).selection()))
+        .collect();
+    let project = crate::selection::io::write_into(project, &selections, state.lang)?;
     // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
     let mut project = project;
     let mut maps_written = Vec::new();

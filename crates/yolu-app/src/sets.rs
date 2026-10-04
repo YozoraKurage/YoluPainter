@@ -485,6 +485,7 @@ impl AppState {
         self.renaming = None;
         self.layer_drag = None;
         self.popup = None;
+        self.sel_doc_changed();
         self.ensure_selection();
         self.sync_view3d();
         Ok(())
@@ -501,6 +502,7 @@ impl AppState {
         self.renaming_set = None;
         self.layer_drag = None;
         self.popup = None;
+        self.sel_doc_changed();
         self.ensure_selection();
         self.bind_model();
     }

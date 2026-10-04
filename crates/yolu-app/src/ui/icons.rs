@@ -67,6 +67,18 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tools/brush_selected",
     "tools/eraser",
     "tools/eraser_selected",
+    "select_all",
+    "deselect",
+    "tools/select-rectangle",
+    "tools/select-rectangle_selected",
+    "tools/select-ellipse",
+    "tools/select-ellipse_selected",
+    "tools/lasso",
+    "tools/lasso_selected",
+    "tools/select-polygon",
+    "tools/select-polygon_selected",
+    "tools/magic-wand",
+    "tools/magic-wand_selected",
 );
 
 const SIZES: [u32; 4] = [16, 24, 32, 48];

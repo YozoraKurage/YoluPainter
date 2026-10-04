@@ -21,10 +21,15 @@ pub enum Context {
     Paint,
     /// 塗りつぶし・調整・グループの中身（これらには描けない）。
     Layer,
+    /// 選択の道具（選択範囲を変更。どの層を選んでいても）。
+    Selection,
 }
 
 /// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
 pub fn context(app: &AppState) -> Context {
+    if app.tool.is_select() {
+        return Context::Selection;
+    }
     let kind = app
         .selected_layer
         .and_then(|id| app.doc.layer(id))
@@ -295,6 +300,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let mut rows = Rows::new(area, 0.0);
     match context {
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
+        Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),
         Context::Paint => match tab {
             0 => super::brush_props::brush_tab(ui, app, &mut rows, &ctx),
             1 => super::brush_props::alpha_tab(ui, app, &mut rows, &ctx),

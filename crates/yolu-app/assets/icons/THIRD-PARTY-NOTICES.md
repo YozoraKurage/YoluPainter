@@ -5,7 +5,7 @@ were rasterized from two icon sets. The file name is the name the UI uses; the U
 each name to its source icon.
 
 - Microsoft Fluent UI System Icons — https://github.com/microsoft/fluentui-system-icons
-- Phosphor Icons — https://github.com/phosphor-icons/core (tools/brush)
+- Phosphor Icons — https://github.com/phosphor-icons/core (tools/brush, tools/select-polygon)
 
 ## Fluent UI System Icons
 

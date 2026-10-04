@@ -39,6 +39,17 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
+    if !app.tool.paints() {
+        // 選択の道具は 2D のキャンバスだけで使う（3D ビューで描き始めない）
+        app.message = app
+            .lang
+            .pick(
+                "この道具は 2D のキャンバスで使います",
+                "This tool works on the 2D canvas",
+            )
+            .into();
+        return;
+    }
     let Some(model) = app.view3d.model.clone() else {
         return;
     };

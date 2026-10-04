@@ -88,6 +88,7 @@ pub fn brush_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::C
     }
     rows.indent = 0.0;
     effect(ui, app, rows, ctx, lang);
+    crate::selection::props::symmetry_section(ui, app, rows, lang);
 }
 
 fn brush_basics(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context, lang: Lang) {

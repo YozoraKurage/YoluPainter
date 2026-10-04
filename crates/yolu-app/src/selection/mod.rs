@@ -1,0 +1,666 @@
+//! 選択範囲と 2D の対称の道具（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
+//! 足す・引く・重ねるで組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
+//! core の `SelectionMask` の操作を呼ぶだけ。選択範囲は文書（`Document`）が持つので、セットごとに別で、Undo・.ylp の保存と読み込みも文書に付く。
+//!
+//! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
+//! - `outline`: 選択範囲の縁の線分（点線の元）
+//! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸
+//! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さな窓
+//! - `io`: .ylp の `selection.bin` との受け渡し
+//!
+//! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
+//! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定で、ストロークを始めるときに
+//! ブラシへ写して固める（途中で変えても、そのストロークには効かない）。
+
+pub mod canvas;
+pub mod dialog;
+pub mod io;
+pub mod menu;
+pub mod outline;
+pub mod props;
+pub mod symmetry;
+
+use crate::engine::{
+    CanvasSymmetry, CoreError, DVec2, Document, LayerKind, SelectionCombine, SelectionMask,
+    SymmetryMode, DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
+};
+use crate::lang::Lang;
+use crate::state::{Action, AppState, StrokeSource, Tool};
+
+pub use self::symmetry::SymmetryState;
+
+/// 選択範囲を変える操作（半径を取るものと、取らないもの）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModifyKind {
+    /// どの画素も、半径の円の中の最大の量になる。
+    Grow,
+    Shrink,
+    /// 縁の帯（拡張 − 縮小）。
+    Border,
+    Feather,
+    /// 半分以上の量を全部に、ほかを 0 に（半径は取らない）。
+    Sharpen,
+}
+
+impl ModifyKind {
+    pub const ALL: [ModifyKind; 5] = [
+        ModifyKind::Grow,
+        ModifyKind::Shrink,
+        ModifyKind::Border,
+        ModifyKind::Feather,
+        ModifyKind::Sharpen,
+    ];
+
+    pub fn name(self, lang: Lang) -> &'static str {
+        match self {
+            ModifyKind::Grow => lang.pick("拡張", "Grow"),
+            ModifyKind::Shrink => lang.pick("縮小", "Shrink"),
+            ModifyKind::Border => lang.pick("境界線", "Border"),
+            ModifyKind::Feather => lang.pick("ぼかし", "Feather"),
+            ModifyKind::Sharpen => lang.pick("境界をくっきり", "Sharpen Edge"),
+        }
+    }
+
+    /// 半径を取るか。
+    pub fn uses_radius(self) -> bool {
+        self != ModifyKind::Sharpen
+    }
+
+    /// 画布の縁を固定するかの設定が効くか（拡張は外へ広がるだけなので効かない）。
+    pub fn uses_edge_lock(self) -> bool {
+        matches!(
+            self,
+            ModifyKind::Shrink | ModifyKind::Border | ModifyKind::Feather
+        )
+    }
+
+    /// 半径の意味（ツールチップ）。
+    pub fn tooltip(self, lang: Lang) -> &'static str {
+        match self {
+            ModifyKind::Grow => lang.pick(
+                "半径の円の中の最大の量にする",
+                "Largest amount within a circle of the radius",
+            ),
+            ModifyKind::Shrink => lang.pick(
+                "半径の円の中の最小の量にする",
+                "Smallest amount within a circle of the radius",
+            ),
+            ModifyKind::Border => lang.pick(
+                "縁の帯だけを残す（拡張 − 縮小）",
+                "A band around the edge: Grow minus Shrink",
+            ),
+            ModifyKind::Feather => lang.pick(
+                "縁をぼかす（ガウス。標準偏差は半径 ÷ 3.5）",
+                "Soften the edge (Gaussian blur, σ = radius / 3.5)",
+            ),
+            ModifyKind::Sharpen => lang.pick(
+                "半分以上選ばれた所を全部選び、ほかを外す",
+                "At least half selected becomes fully selected",
+            ),
+        }
+    }
+}
+
+/// 選択範囲を変える操作（文書を変える。1 つが 1 回の Undo。選択範囲が変わらないときは段を積まない）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelEdit {
+    All,
+    Clear,
+    Invert,
+    Modify {
+        kind: ModifyKind,
+        radius: u32,
+        edge_lock: bool,
+    },
+    /// 画素の座標（左下が原点）の矩形。中心がこの中にある画素が選ばれる。
+    Rect {
+        x0: i64,
+        y0: i64,
+        x1: i64,
+        y1: i64,
+        mode: SelectionCombine,
+    },
+    Ellipse {
+        cx: f64,
+        cy: f64,
+        rx: f64,
+        ry: f64,
+        mode: SelectionCombine,
+    },
+    /// 投げ縄・多角形（画布の座標の点。3 つ未満なら何も選ばない）。
+    Polygon {
+        points: Vec<(f64, f64)>,
+        mode: SelectionCombine,
+    },
+    /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。
+    Wand {
+        x: u32,
+        y: u32,
+        mode: SelectionCombine,
+    },
+}
+
+/// 画面だけの選択の操作（Undo に入らない）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelUiOp {
+    /// 選択の道具の組み合わせ方（オプションバー）。
+    Combine(SelectionCombine),
+    /// 量を聞く窓を開く（選択範囲が無ければ開かない）。
+    OpenAmount(ModifyKind),
+    /// 窓の値で適用して閉じる。
+    ApplyAmount,
+    CancelAmount,
+}
+
+/// 2D の対称の設定の操作（画面だけ）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SymOp {
+    Mode(SymmetryMode),
+    /// 入っているなら切り、切っているなら最後のモードを入れ直す。
+    Toggle,
+    /// 放射状の写しの数（2〜16 に丸める）。
+    Count(u32),
+    /// 中心（文書の大きさに対する 0〜1）。
+    Center(f64, f64),
+    /// 中心をキャンバスの中央に戻す。
+    CenterCanvas,
+    ShowAxes(bool),
+}
+
+/// `Action::Sel` の中身。
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelAction {
+    Edit(SelEdit),
+    Ui(SelUiOp),
+    Symmetry(SymOp),
+}
+
+/// 量を聞く窓の状態。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AmountDialog {
+    pub kind: ModifyKind,
+    pub radius: u32,
+    pub edge_lock: bool,
+}
+
+/// ドラッグで決める形（矩形・楕円・投げ縄）の途中。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeDrag {
+    pub tool: Tool,
+    pub source: StrokeSource,
+    /// 押した画面の点（クリックとドラッグを分ける）。
+    pub start_screen: egui::Pos2,
+    /// 画布の座標。
+    pub start: (f64, f64),
+    pub current: (f64, f64),
+    /// 投げ縄の点（1 画素以上離れたものだけ）。
+    pub lasso: Vec<(f64, f64)>,
+    /// 画面で動いた最大の距離（クリックかドラッグか）。
+    pub moved: f32,
+}
+
+/// 選択範囲と対称の画面の状態。
+pub struct SelState {
+    /// 選択の道具の組み合わせ方（キーの修飾が無いとき）。
+    pub combine: SelectionCombine,
+    /// 自動選択の許し幅（0〜255）・隣接・全レイヤー（選んだレイヤーでなく合成から選ぶ）。
+    pub tolerance: u8,
+    pub contiguous: bool,
+    pub all_layers: bool,
+    /// 拡張・縮小・境界・ぼかしの半径（画素）と、画布の縁を固定するか。
+    pub radius: u32,
+    pub edge_lock: bool,
+    pub dialog: Option<AmountDialog>,
+    /// 窓を見出しで動かした量。
+    pub dialog_offset: egui::Vec2,
+    pub drag: Option<ShapeDrag>,
+    /// 多角形の途中の点（画布の座標）と、ポインタの今の位置（ゴムの線）。
+    pub polygon: Vec<(f64, f64)>,
+    pub polygon_hover: Option<(f64, f64)>,
+    /// 最後に押した時刻と点（ダブルクリックで多角形を閉じる）。
+    pub last_press: Option<(f64, egui::Pos2)>,
+    /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
+    pub pen_down: Option<u32>,
+    pub symmetry: SymmetryState,
+    /// 描いているストロークに固めた対称（軸の表示はこれ）。
+    pub stroke_symmetry: Option<CanvasSymmetry>,
+    /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
+    pub animate: bool,
+    /// 最後に描いたとき、縁を一部しか描かなかったか（縁が多すぎて打ち切った・1 画面の上限を超えた）。
+    pub edge_partial: bool,
+    outline: Option<OutlineCache>,
+}
+
+struct OutlineCache {
+    mask: SelectionMask,
+    runs: Vec<outline::Run>,
+    truncated: bool,
+}
+
+impl Default for SelState {
+    fn default() -> Self {
+        SelState {
+            combine: SelectionCombine::Replace,
+            tolerance: 32,
+            contiguous: true,
+            all_layers: false,
+            radius: 5,
+            edge_lock: false,
+            dialog: None,
+            dialog_offset: egui::Vec2::ZERO,
+            drag: None,
+            polygon: Vec::new(),
+            polygon_hover: None,
+            last_press: None,
+            pen_down: None,
+            symmetry: SymmetryState::default(),
+            stroke_symmetry: None,
+            animate: true,
+            edge_partial: false,
+            outline: None,
+        }
+    }
+}
+
+impl SelState {
+    /// 途中の形（ドラッグ・多角形）を捨てる。何かあったか。
+    pub fn cancel_drafts(&mut self) -> bool {
+        let any = self.drag.is_some() || !self.polygon.is_empty();
+        self.drag = None;
+        self.polygon.clear();
+        self.polygon_hover = None;
+        self.last_press = None;
+        self.pen_down = None;
+        any
+    }
+
+    /// 選択範囲の縁の線分（選択範囲が変わったときだけ求め直す）。打ち切ったかも返す。
+    pub fn outline_of(&mut self, mask: &SelectionMask) -> (&[outline::Run], bool) {
+        let fresh = self.outline.as_ref().is_some_and(|c| c.mask.same_as(mask));
+        if !fresh {
+            let (runs, truncated) = outline::outline(mask);
+            self.outline = Some(OutlineCache {
+                mask: mask.clone(),
+                runs,
+                truncated,
+            });
+        }
+        let cache = self.outline.as_ref().expect("上で入れた");
+        (&cache.runs, cache.truncated)
+    }
+}
+
+impl Tool {
+    /// 選択の道具か。
+    pub fn is_select(self) -> bool {
+        matches!(
+            self,
+            Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso | Tool::Polygon | Tool::Wand
+        )
+    }
+
+    /// 画素にブラシで描く道具か（3D ビューの入力が描き始めてよいか）。
+    pub fn paints(self) -> bool {
+        matches!(self, Tool::Brush | Tool::Eraser)
+    }
+}
+
+/// 組み合わせ方の名前。
+pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
+    match mode {
+        SelectionCombine::Replace => lang.pick("置き換え", "Replace"),
+        SelectionCombine::Add => lang.pick("足す", "Add"),
+        SelectionCombine::Subtract => lang.pick("引く", "Subtract"),
+        SelectionCombine::Intersect => lang.pick("重ねる", "Intersect"),
+    }
+}
+
+/// 組み合わせ方のツールチップ（キー付き）。
+pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
+    match mode {
+        SelectionCombine::Replace => lang.pick("新しい形で置き換える", "Replace the selection"),
+        SelectionCombine::Add => {
+            lang.pick("選択範囲に足す（Shift）", "Add to the selection (Shift)")
+        }
+        SelectionCombine::Subtract => lang.pick(
+            "選択範囲から引く（Ctrl）",
+            "Subtract from the selection (Ctrl)",
+        ),
+        SelectionCombine::Intersect => lang.pick(
+            "重なる所だけ残す（Shift + Ctrl）",
+            "Keep only the overlap (Shift + Ctrl)",
+        ),
+    }
+}
+
+/// キーの修飾から組み合わせ方（Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値）。
+pub fn combine_of(base: SelectionCombine, modifiers: egui::Modifiers) -> SelectionCombine {
+    let ctrl = modifiers.command || modifiers.ctrl;
+    match (modifiers.shift, ctrl) {
+        (true, true) => SelectionCombine::Intersect,
+        (true, false) => SelectionCombine::Add,
+        (false, true) => SelectionCombine::Subtract,
+        (false, false) => base,
+    }
+}
+
+fn dvec(points: &[(f64, f64)]) -> Vec<DVec2> {
+    points.iter().map(|&(x, y)| DVec2::new(x, y)).collect()
+}
+
+impl AppState {
+    /// 選択範囲の操作を当てる（`Action::Sel`）。
+    pub fn sel_action(&mut self, action: SelAction) {
+        match action {
+            SelAction::Edit(edit) => self.sel_edit(edit),
+            SelAction::Ui(op) => self.sel_ui(op),
+            SelAction::Symmetry(op) => self.sel_symmetry(op),
+        }
+    }
+
+    /// 選択範囲を変える（描いている間と読むだけのセットは `Action::apply` が先に断る）。断られたら何も変えず、理由をステータスバーへ。
+    pub fn sel_edit(&mut self, edit: SelEdit) {
+        if self.is_stroking() {
+            self.message = self
+                .lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into();
+            return;
+        }
+        let revision = self.doc.revision();
+        match self.sel_apply(edit) {
+            Ok(text) => self.message = text,
+            Err(e) => self.message = e,
+        }
+        if self.doc.revision() != revision {
+            self.modified = true;
+        }
+    }
+
+    /// 選択範囲を `next` にする。今と同じ中身なら Undo の段を積まず、false を返す。
+    fn set_selection_if_changed(&mut self, next: Option<SelectionMask>) -> Result<bool, CoreError> {
+        let next = next.filter(|m| !m.is_empty());
+        if next.as_ref() == self.doc.selection() {
+            return Ok(false);
+        }
+        self.doc.set_selection(next)?;
+        Ok(true)
+    }
+
+    /// 新しい形を今の選択範囲と組み合わせて置く。
+    fn combine_shape(
+        &mut self,
+        shape: SelectionMask,
+        mode: SelectionCombine,
+    ) -> Result<String, String> {
+        let lang = self.lang;
+        let next = match self.doc.selection() {
+            Some(current) if mode != SelectionCombine::Replace => {
+                Some(current.combine(&shape, mode).map_err(|e| e.to_string())?)
+            }
+            _ => (mode != SelectionCombine::Subtract).then_some(shape),
+        };
+        let changed = self
+            .set_selection_if_changed(next)
+            .map_err(|e| e.to_string())?;
+        Ok(if self.doc.selection().is_none() {
+            lang.pick("何も選ばれていません。", "Nothing is selected.")
+                .into()
+        } else if !changed {
+            lang.pick("選択範囲は変わりません。", "The selection did not change.")
+                .into()
+        } else {
+            format!(
+                "{}: {}",
+                lang.pick("選択範囲", "Selection"),
+                combine_name(lang, mode)
+            )
+        })
+    }
+
+    /// 自動選択の基準の層（選んだレイヤー。ラスターでない・全レイヤーなら None で、チャンネルの合成）。
+    fn wand_layer(&self) -> Option<crate::engine::LayerId> {
+        if self.sel.all_layers {
+            return None;
+        }
+        let id = self.selected_layer?;
+        let layer = self.doc.layer(id)?;
+        (layer.kind() == LayerKind::Raster).then_some(id)
+    }
+
+    fn sel_apply(&mut self, edit: SelEdit) -> Result<String, String> {
+        let lang = self.lang;
+        let none =
+            || -> String { lang.pick("選択範囲がありません。", "No selection.").into() };
+        match edit {
+            SelEdit::All => {
+                let all = SelectionMask::all(&self.doc);
+                let changed = self
+                    .set_selection_if_changed(Some(all))
+                    .map_err(|e| e.to_string())?;
+                Ok(if changed {
+                    lang.pick("すべてを選択しました。", "Selected all.").into()
+                } else {
+                    lang.pick("すでにすべて選択しています。", "Already all selected.")
+                        .into()
+                })
+            }
+            SelEdit::Clear => {
+                if self.doc.selection().is_none() {
+                    return Ok(none());
+                }
+                self.doc.clear_selection().map_err(|e| e.to_string())?;
+                Ok(lang.pick("選択を解除しました。", "Deselected.").into())
+            }
+            SelEdit::Invert => {
+                let Some(current) = self.doc.selection().cloned() else {
+                    return Ok(none());
+                };
+                self.set_selection_if_changed(Some(current.invert()))
+                    .map_err(|e| e.to_string())?;
+                Ok(if self.doc.selection().is_none() {
+                    lang.pick("反転して、何も残りません。", "Nothing is left selected.")
+                        .into()
+                } else {
+                    lang.pick("選択範囲を反転しました。", "Inverted the selection.")
+                        .into()
+                })
+            }
+            SelEdit::Modify {
+                kind,
+                radius,
+                edge_lock,
+            } => {
+                let Some(current) = self.doc.selection().cloned() else {
+                    return Ok(none());
+                };
+                let r = radius.min(MAX_MODIFY_RADIUS);
+                let budget = DEFAULT_WORKING_BUDGET_BYTES;
+                let next = match kind {
+                    ModifyKind::Grow => current.grow(r, budget),
+                    ModifyKind::Shrink => current.shrink(r, edge_lock, budget),
+                    ModifyKind::Border => current.border(r, edge_lock, budget),
+                    ModifyKind::Feather => current.feather(r as f64, edge_lock, budget),
+                    ModifyKind::Sharpen => Ok(current.sharpen()),
+                }
+                .map_err(|e| e.to_string())?;
+                let changed = self
+                    .set_selection_if_changed(Some(next))
+                    .map_err(|e| e.to_string())?;
+                let name = kind.name(lang);
+                Ok(if self.doc.selection().is_none() {
+                    format!(
+                        "{name}: {}",
+                        lang.pick("何も残りません。", "nothing is left selected.")
+                    )
+                } else if !changed {
+                    format!("{name}: {}", lang.pick("変わりません。", "no change."))
+                } else if kind.uses_radius() {
+                    format!("{name}: {r} px")
+                } else {
+                    format!("{name}{}", lang.pick("。", "."))
+                })
+            }
+            SelEdit::Rect {
+                x0,
+                y0,
+                x1,
+                y1,
+                mode,
+            } => {
+                let shape = SelectionMask::rectangle(&self.doc, x0, y0, x1, y1);
+                self.combine_shape(shape, mode)
+            }
+            SelEdit::Ellipse {
+                cx,
+                cy,
+                rx,
+                ry,
+                mode,
+            } => {
+                let shape =
+                    SelectionMask::ellipse(&self.doc, cx, cy, rx, ry).map_err(|e| e.to_string())?;
+                self.combine_shape(shape, mode)
+            }
+            SelEdit::Polygon { points, mode } => {
+                let shape =
+                    SelectionMask::polygon(&self.doc, &dvec(&points)).map_err(|e| e.to_string())?;
+                self.combine_shape(shape, mode)
+            }
+            SelEdit::Wand { x, y, mode } => {
+                let shape = SelectionMask::magic_wand(
+                    &self.doc,
+                    self.wand_layer(),
+                    self.m2.paint_channel,
+                    x,
+                    y,
+                    self.sel.tolerance,
+                    self.sel.contiguous,
+                    DEFAULT_WORKING_BUDGET_BYTES,
+                )
+                .map_err(|e| e.to_string())?;
+                self.combine_shape(shape, mode)
+            }
+        }
+    }
+
+    /// 画面だけの選択の操作。
+    pub fn sel_ui(&mut self, op: SelUiOp) {
+        match op {
+            SelUiOp::Combine(mode) => self.sel.combine = mode,
+            SelUiOp::OpenAmount(kind) => {
+                if self.is_stroking() {
+                    self.message = self
+                        .lang
+                        .pick("描いている間はできません。", "Not while drawing.")
+                        .into();
+                } else if self.doc.selection().is_none() {
+                    self.message = self
+                        .lang
+                        .pick("選択範囲がありません。", "No selection.")
+                        .into();
+                } else if let Some(reason) = self.read_only_reason() {
+                    self.message = format!(
+                        "{}: {reason}",
+                        self.lang
+                            .pick("読むだけのテクスチャセットです", "Read-only texture set")
+                    );
+                } else {
+                    self.sel.dialog = Some(AmountDialog {
+                        kind,
+                        radius: self.sel.radius,
+                        edge_lock: self.sel.edge_lock,
+                    });
+                    self.sel.dialog_offset = egui::Vec2::ZERO;
+                }
+            }
+            SelUiOp::ApplyAmount => {
+                if let Some(d) = self.sel.dialog.take() {
+                    self.sel.radius = d.radius;
+                    self.sel.edge_lock = d.edge_lock;
+                    self.apply(Action::Sel(SelAction::Edit(SelEdit::Modify {
+                        kind: d.kind,
+                        radius: d.radius,
+                        edge_lock: d.edge_lock,
+                    })));
+                }
+            }
+            SelUiOp::CancelAmount => self.sel.dialog = None,
+        }
+    }
+
+    /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
+    pub fn sel_symmetry(&mut self, op: SymOp) {
+        if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_)) {
+            self.message = self
+                .lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into();
+            return;
+        }
+        let s = &mut self.sel.symmetry;
+        match op {
+            SymOp::Mode(mode) => s.set_mode(mode),
+            SymOp::Toggle => s.toggle(),
+            SymOp::Count(n) => s.set_count(n),
+            SymOp::Center(x, y) => s.set_center(x, y),
+            SymOp::CenterCanvas => s.center = (0.5, 0.5),
+            SymOp::ShowAxes(on) => s.show_axes = on,
+        }
+    }
+
+    /// 多角形の点を打っている途中か（取り消しが最後の点に当たる間。メニューの「取り消し」もこのあいだは押せる）。
+    pub fn sel_has_polygon_point(&self) -> bool {
+        self.tool == Tool::Polygon && !self.sel.polygon.is_empty()
+    }
+
+    /// 多角形の途中の点があれば最後の 1 つを取り消す（取り消しのキーを文書でなく途中の形に当てる）。取り消したか。
+    pub fn sel_undo_polygon_point(&mut self) -> bool {
+        if !self.sel_has_polygon_point() {
+            return false;
+        }
+        canvas::remove_last_point(self);
+        true
+    }
+
+    /// 文書（セット）が替わったとき: 前の文書に向けた途中の形と、量を聞く窓を捨てる。
+    pub fn sel_doc_changed(&mut self) {
+        self.sel.cancel_drafts();
+        self.sel.dialog = None;
+    }
+
+    /// 道具を替えたとき: 途中の形を捨てる。
+    pub fn sel_tool_changed(&mut self) {
+        self.sel.cancel_drafts();
+    }
+
+    /// 2D のキャンバスのストロークに渡す対称（文書の大きさに写した中心）。3D の面のストロークには渡さない（core は見ない）。
+    pub fn canvas_symmetry(&self) -> CanvasSymmetry {
+        self.sel
+            .symmetry
+            .canvas(self.doc.width(), self.doc.height())
+    }
+
+    /// 2D のキャンバスで描き始める（対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは `begin_paint_stroke`。
+    pub fn begin_canvas_stroke(
+        &mut self,
+        id: crate::engine::LayerId,
+        eraser: bool,
+        stencil: Option<std::sync::Arc<yolu_core::BrushStencil>>,
+    ) -> Result<crate::engine::Stroke, CoreError> {
+        let mut brush = self.stroke_brush(eraser);
+        brush.stencil = stencil;
+        brush.symmetry = self.canvas_symmetry();
+        let result = self.begin_stroke_with(id, &brush);
+        self.sel.stroke_symmetry = result
+            .is_ok()
+            .then_some(brush.symmetry)
+            .filter(|s| s.enabled());
+        result
+    }
+}
+
+/// 文書の選択範囲があるか。
+pub fn has_selection(doc: &Document) -> bool {
+    doc.selection().is_some()
+}

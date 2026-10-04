@@ -11,6 +11,7 @@ use crate::lang::Lang;
 use crate::livelink::{LinkStatus, NoticeLevel};
 use crate::m2::{Edit, UiOp};
 use crate::psd::{PsdAction, PsdTarget};
+use crate::selection::{SelAction, SelEdit};
 use crate::state::{Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
@@ -18,14 +19,15 @@ use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
-pub const MENU_TITLES: [&str; 5] = ["ファイル", "編集", "レイヤー", "表示", "ヘルプ"];
+pub const MENU_TITLES: [&str; 6] = ["ファイル", "編集", "レイヤー", "選択範囲", "表示", "ヘルプ"];
 
 /// 言語ごとのメニューバーの見出し。
-pub fn menu_titles(lang: Lang) -> [&'static str; 5] {
+pub fn menu_titles(lang: Lang) -> [&'static str; 6] {
     [
         lang.pick("ファイル", "File"),
         lang.pick("編集", "Edit"),
         lang.pick("レイヤー", "Layer"),
+        lang.pick("選択範囲", "Select"),
         lang.pick("表示", "View"),
         lang.pick("ヘルプ", "Help"),
     ]
@@ -156,7 +158,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .enabled(free),
             ],
         },
-        3 => vec![
+        3 => crate::selection::menu::select_menu(app),
+        4 => vec![
             Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
             Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
@@ -290,6 +293,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
+        PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
     }
 }
 
@@ -443,9 +447,17 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     v
 }
 
+fn sel_edit(edit: SelEdit) -> Action {
+    Action::Sel(SelAction::Edit(edit))
+}
+
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
-    if ctx.egui_wants_keyboard_input() || app.popup.is_some() || crate::windows::modal_open(app) {
+    if ctx.egui_wants_keyboard_input()
+        || app.popup.is_some()
+        || app.sel.dialog.is_some()
+        || crate::windows::modal_open(app)
+    {
         return;
     }
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
@@ -457,7 +469,10 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
             }
         };
         // Shift 付きを先に取る（consume_key は書いていない Shift を気にしない。取った押下は消えるので、次の Ctrl+Z には残らない）
+        key(cmd_shift, Key::I, sel_edit(SelEdit::Invert));
         key(cmd_shift, Key::Z, Action::Redo);
+        key(Modifiers::COMMAND, Key::A, sel_edit(SelEdit::All));
+        key(Modifiers::COMMAND, Key::D, sel_edit(SelEdit::Clear));
         key(Modifiers::COMMAND, Key::Z, Action::Undo);
         key(Modifiers::COMMAND, Key::Y, Action::Redo);
         key(cmd_shift, Key::N, Action::NewLayer);
@@ -471,6 +486,20 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::COMMAND, Key::Minus, Action::ZoomOut);
         key(Modifiers::COMMAND, Key::Q, Action::Quit);
         key(Modifiers::SHIFT, Key::R, Action::ResetRotation);
+        // Shift 付きの道具を先に（consume_key は書いていない Shift を気にしない）
+        key(
+            Modifiers::SHIFT,
+            Key::M,
+            Action::SelectTool(Tool::SelectEllipse),
+        );
+        key(Modifiers::SHIFT, Key::L, Action::SelectTool(Tool::Polygon));
+        key(
+            Modifiers::NONE,
+            Key::M,
+            Action::SelectTool(Tool::SelectRect),
+        );
+        key(Modifiers::NONE, Key::L, Action::SelectTool(Tool::Lasso));
+        key(Modifiers::NONE, Key::W, Action::SelectTool(Tool::Wand));
         key(Modifiers::NONE, Key::B, Action::SelectTool(Tool::Brush));
         key(Modifiers::NONE, Key::E, Action::SelectTool(Tool::Eraser));
         key(Modifiers::NONE, Key::X, Action::SwapColors);
@@ -509,6 +538,10 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     );
     x += 30.0;
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+    if app.tool.is_select() {
+        crate::selection::props::select_options(ui, app, r, x + 4.0);
+        return;
+    }
     let mut next = |width: f32| {
         let at = Rect::from_min_size(pos2(x + 4.0, y), vec2(width, h));
         x += width + 8.0;
@@ -614,6 +647,8 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     {
         b.pressure_opacity = !b.pressure_opacity;
     }
+    // 対称（右端。左の部品に重なるほど狭ければ出さない）
+    crate::selection::props::symmetry_options(ui, app, r, x);
 }
 
 /// ツールの帯（左）。
@@ -623,6 +658,14 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
+        if tool == Tool::SelectRect {
+            // 描く道具と選ぶ道具の区切り
+            w::strip_separator(
+                &p,
+                Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 9.0)),
+            );
+            y += 9.0;
+        }
         let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, 32.0));
         let tip = app.lang.pick(
             format!("{}（{}）", tool.name_in(app.lang), tool.key()),

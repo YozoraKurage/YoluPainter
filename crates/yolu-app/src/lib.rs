@@ -18,6 +18,7 @@ pub mod panels;
 pub mod pen;
 pub mod project;
 pub mod psd;
+pub mod selection;
 pub mod sets;
 mod settings;
 pub mod shell;
