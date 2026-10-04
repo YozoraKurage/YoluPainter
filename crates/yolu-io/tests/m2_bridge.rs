@@ -1597,13 +1597,14 @@ fn layer_record_flags(bytes: &[u8], key: &[u8; 4], opacity: u8, clipping: u8) ->
         .collect()
 }
 
-/// PSD に表せない中身は、平らにも黙って落とすこともせず、機能ごとの理由で断る（`NativeDocument::from_core` が手動の ID の色を
-/// 断るのと対。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening）。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
-/// 中身を外した同じ文書は書ける。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
+/// 厳密な書き出し（`psd::Document::from_core`。C# の ExportRefusesWhatPsdCannotRepresentInsteadOfFlattening と対）は、PSD に表せない中身を、
+/// 平らにも黙って落とすこともせず、機能ごとの理由で断る。断る理由は層の名前と機能を言い、どの位置の層でも、非表示でも変わらない。
+/// 書くのは Color のチャンネルだけ（C# の PsdBridge.Export(document, channel) と同じ）なので、ほかのチャンネルの中身・有効の印・合成は Color の PSD を
+/// 変えず、Color を無効にした層は隠した層になる。マスク（無効・濃度）・グループ・塗りつぶし・調整・Color の合成は PSD の形があり、書く（往復は psd_m2.rs）。
 #[test]
 fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
     type Setup = fn(&mut Document, LayerId);
-    let sets: [(&str, &str, Setup); 10] = [
+    let sets: [(&str, &str, Setup); 2] = [
         ("反転したマスク", "反転", |d, id| {
             d.add_layer_mask(id).unwrap();
             d.set_layer_mask_inverted(id, true).unwrap();
@@ -1613,43 +1614,22 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             d.add_layer_mask(id).unwrap();
             d.set_layer_mask_inverted(id, true).unwrap();
         }),
-        (
-            "Metallic の合成（Color と違う）",
-            "Metallic",
-            |d, id| {
-                d.set_channel_blend(
-                    id,
-                    Channel::Metallic,
-                    ChannelBlend::new(Some(BlendMode::Screen), None),
-                    false,
-                )
-                .unwrap()
-            },
-        ),
-        ("Metallic の画素", "Color 以外", |d, id| {
+    ];
+    // Color 以外のチャンネルの中身・有効の印は、Color の PSD には効かない（C# の PsdBridge.Export(document, channel) と同じく、書くのは
+    // そのチャンネルだけ。ほかのチャンネルは、書き出しの窓でチャンネルを選んで別の PSD に書く）。Color の PSD は何も足さない文書と同じバイト列
+    let others: [(&str, Setup); 6] = [
+        ("Metallic の画素", |d, id| {
             d.set_channel_pixel(id, Channel::Metallic, 3, 3, Rgba8::new(9, 9, 9, 255))
                 .unwrap();
         }),
-        (
-            "Metallic を有効にしただけ",
-            "Color 以外",
-            |d, id| d.set_channel_enabled(id, Channel::Metallic, true).unwrap(),
-        ),
-        (
-            "無効にした Roughness の画素",
-            "Color 以外",
-            |d, id| {
+        ("Metallic を有効にしただけ", |d, id| d.set_channel_enabled(id, Channel::Metallic, true).unwrap(),),
+        ("無効にした Roughness の画素", |d, id| {
                 d.set_channel_pixel(id, Channel::Roughness, 1, 1, Rgba8::new(9, 9, 9, 255))
                     .unwrap();
                 d.set_channel_enabled(id, Channel::Roughness, false)
                     .unwrap();
-            },
-        ),
-        // ユーザーチャンネル（番号 6 以降）も標準の 6 つと同じに、面・有効の印のどれがあっても断る
-        (
-            "ユーザーチャンネルの画素",
-            "Color 以外",
-            |d, id| {
+            },),
+        ("ユーザーチャンネルの画素", |d, id| {
                 let user = d
                     .add_channel(info(
                         "AO",
@@ -1661,12 +1641,8 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                 assert!(!user.is_standard());
                 d.set_channel_pixel(id, user, 3, 3, Rgba8::new(9, 9, 9, 255))
                     .unwrap();
-            },
-        ),
-        (
-            "ユーザーチャンネルを有効にしただけ",
-            "Color 以外",
-            |d, id| {
+            },),
+        ("ユーザーチャンネルを有効にしただけ", |d, id| {
                 let user = d
                     .add_channel(info(
                         "Tint",
@@ -1676,12 +1652,8 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                     ))
                     .unwrap();
                 d.set_channel_enabled(id, user, true).unwrap();
-            },
-        ),
-        (
-            "無効にしたユーザーチャンネルの画素",
-            "Color 以外",
-            |d, id| {
+            },),
+        ("無効にしたユーザーチャンネルの画素", |d, id| {
                 let user = d
                     .add_channel(info(
                         "Detail",
@@ -1693,11 +1665,7 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                 d.set_channel_pixel(id, user, 1, 1, Rgba8::new(9, 9, 9, 255))
                     .unwrap();
                 d.set_channel_enabled(id, user, false).unwrap();
-            },
-        ),
-        ("Color を無効", "Color が無効", |d, id| {
-            d.set_channel_enabled(id, Channel::Color, false).unwrap()
-        }),
+            },),
     ];
     let control = psd_source();
     psd::Document::from_core(&control).expect("何も足さなければ書ける");
@@ -1712,6 +1680,24 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                 "{label}（{name}）: {err}"
             );
         }
+    }
+    for (label, setup) in others {
+        for name in ["下", "中", "上"] {
+            let mut doc = psd_source();
+            let id = id_of(&doc, name);
+            let before = psd_bytes(&doc);
+            setup(&mut doc, id);
+            assert!(psd_bytes(&doc) == before, "{label}（{name}）: Color の PSD が変わった");
+        }
+    }
+    // Color を無効にした層は、Color の PSD では隠した層（C# と同じ。断らない）
+    for name in ["下", "中", "上"] {
+        let mut doc = psd_source();
+        let id = id_of(&doc, name);
+        doc.set_channel_enabled(id, Channel::Color, false).unwrap();
+        let back = psd::Document::from_core(&doc).expect("Color を無効にした層も書ける");
+        let layer = back.layers.iter().find(|l| l.name == name).expect(name);
+        assert!(!layer.visible, "Color を無効（{name}）");
     }
     // グループ・塗りつぶし・調整は PSD の形で書ける（断らない）。Color の合成と、マスクの有効・濃度も同じ
     type AddLayer = fn(&mut Document) -> LayerId;

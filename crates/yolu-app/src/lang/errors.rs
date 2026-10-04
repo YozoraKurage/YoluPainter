@@ -315,6 +315,9 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "texture scale（0.05〜64）" => "Texture scale (0.05–64)",
         "その番号のチャンネルはもうある" => "Channel ID already exists",
         "ぼかしの半径（1〜64）" => "Blur radius (1–64)",
+        "ラスターと塗りつぶし以外には、層の出力の画素が無い" => "Only raster and fill layers have layer output pixels",
+        "グループ以外には、グループの出力が無い" => "Only groups have a group output",
+        "調整の層ではない" => "Not an adjustment layer",
         "筆圧の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）" => {
             "Pen pressure curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)"
         }
