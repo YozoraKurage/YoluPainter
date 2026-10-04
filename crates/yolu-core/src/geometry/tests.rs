@@ -450,3 +450,379 @@ fn surface_stroke_skips_other_texture_sets_and_refuses_on_budget() {
     }
     assert_eq!(err, Some(SurfaceStrokeError::Dab(DabRefusal::PixelBudget)));
 }
+
+/// ステンシルを通した 3D のストローク: 画面に貼り付いた画像の白い所だけが塗られる。
+mod stencil {
+    use super::*;
+    use crate::brush::{BrushStencil, ImageColorSpace, StencilImage, StencilMapping, StencilPoint};
+    use crate::brush::{StencilMode, StencilTiling};
+
+    const VIEW: f32 = 400.0;
+
+    /// 左半分が白、右半分が黒の 64 × 8 の画像（量のモードで、左半分だけが通る）。
+    fn half_image(white: bool, black: bool) -> Arc<StencilImage> {
+        let mut rgba = Vec::new();
+        for _ in 0..8 {
+            for x in 0..64 {
+                let v = if (x < 32 && white) || (x >= 32 && !black) {
+                    255
+                } else {
+                    0
+                };
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        Arc::new(
+            StencilImage::new(
+                64,
+                8,
+                rgba,
+                ImageColorSpace::Srgb,
+                StencilImage::DEFAULT_MIP_BUDGET_BYTES,
+            )
+            .unwrap(),
+        )
+    }
+
+    /// 表示域いっぱいに画像を貼る写し（画像の x は画面の x、画像の y は上向きなので画面の y と逆）。
+    fn fill_view() -> SurfaceStencil {
+        let to_image =
+            StencilMapping::new(64.0 / VIEW as f64, 0.0, 0.0, 0.0, -8.0 / VIEW as f64, 8.0)
+                .unwrap();
+        SurfaceStencil::new(to_image, 64.0 / VIEW as f64).unwrap()
+    }
+
+    fn paint(
+        image: Option<Arc<StencilImage>>,
+        surface: Option<SurfaceStencil>,
+    ) -> Result<std::collections::BTreeSet<(u32, u32)>, SurfaceStrokeError> {
+        Ok(paint_alphas(image, surface)?.into_keys().collect())
+    }
+
+    /// 塗られた画素（覆いが 0 でない画素）と、その覆い。
+    fn paint_alphas(
+        image: Option<Arc<StencilImage>>,
+        surface: Option<SurfaceStencil>,
+    ) -> Result<std::collections::BTreeMap<(u32, u32), u8>, SurfaceStrokeError> {
+        let mut doc = Document::new(256, 256).unwrap();
+        let layer = doc.add_layer("1").unwrap();
+        doc.clear_history().unwrap();
+        let g = Arc::new(cube());
+        let mut cam = OrbitCamera::framing(&g.bounds());
+        cam.yaw = -40.0;
+        cam.pitch = 15.0;
+        let view = cam.view(VIEW, VIEW);
+        let settings = BrushSettings {
+            radius: 16.0,
+            color: Rgba8::new(220, 40, 30, 255),
+            ..BrushSettings::default()
+        };
+        let mut brush = crate::Brush::from(settings);
+        brush.stencil = image.map(|i| {
+            Arc::new(BrushStencil::new(
+                i,
+                StencilMode::Mask,
+                StencilTiling::None,
+                false,
+                None,
+                &[],
+            ))
+        });
+        let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
+        let from = view.to_screen(Vec3::new(-0.45, 0.0, -0.5)).unwrap();
+        let to = view.to_screen(Vec3::new(0.5, 0.0, -0.25)).unwrap();
+        let begun = SurfaceStroke::begin_with_stencil(
+            &mut doc,
+            &mut stroke,
+            g,
+            view,
+            &settings,
+            Some(0),
+            from,
+            1.0,
+            surface,
+        );
+        let mut s = match begun {
+            Ok(s) => s,
+            Err(e) => {
+                doc.cancel_stroke(stroke);
+                return Err(e);
+            }
+        };
+        for i in 1..=12 {
+            let p = from + (to - from) * (i as f32 / 12.0);
+            s.add(&mut doc, &mut stroke, p, 1.0).unwrap();
+        }
+        s.finish(&mut doc, &mut stroke).unwrap();
+        doc.end_stroke(stroke).unwrap();
+        let mut painted = std::collections::BTreeMap::new();
+        for y in 0..256 {
+            for x in 0..256 {
+                let a = doc.composite_pixel(crate::Channel::Color, x, y).unwrap().a;
+                if a > 0 {
+                    painted.insert((x, y), a);
+                }
+            }
+        }
+        Ok(painted)
+    }
+
+    #[test]
+    fn only_the_open_part_of_the_stencil_is_painted() {
+        let plain = paint(None, None).unwrap();
+        assert!(plain.len() > 200, "{}", plain.len());
+        // 全部が白: ステンシルを使わないのと同じ画素が塗られる
+        let open = paint(Some(half_image(true, false)), Some(fill_view())).unwrap();
+        assert_eq!(open, plain);
+        // 全部が黒: 何も塗られない
+        let shut = paint(Some(half_image(false, true)), Some(fill_view())).unwrap();
+        assert!(shut.is_empty(), "{}", shut.len());
+        // 半分: 左の画素だけ（使わないときに塗られる画素の一部で、画面の左へ寄る）
+        let half = paint(Some(half_image(true, true)), Some(fill_view())).unwrap();
+        assert!(
+            half.len() > 20 && half.len() < plain.len(),
+            "{}",
+            half.len()
+        );
+        assert!(half.is_subset(&plain));
+    }
+
+    #[test]
+    fn the_stencil_follows_its_screen_placement_not_the_model() {
+        // 画像を画面の右へずらすと、白い（左半分の）所が右へ動いて、塗られる画素の組が変わる
+        let left = paint(Some(half_image(true, true)), Some(fill_view())).unwrap();
+        let mut to_image = fill_view().screen_to_image();
+        to_image.x0 = -32.0; // 画像の左端が画面の x = 200 になる（白い半分が右の半分を覆う）
+        let moved = SurfaceStencil::new(to_image, 64.0 / VIEW as f64).unwrap();
+        let right = paint(Some(half_image(true, true)), Some(moved)).unwrap();
+        assert!(!right.is_empty() && right != left);
+        assert!(left.is_disjoint(&right) || left.intersection(&right).count() < left.len() / 2);
+    }
+
+    #[test]
+    fn a_stencil_brush_without_a_placement_is_refused() {
+        // 画素ごとの点が無いので、文書が断る（黙って塗らない・ステンシルを無視して塗らない）
+        let err = paint(Some(half_image(true, false)), None).unwrap_err();
+        assert!(matches!(err, SurfaceStrokeError::Core(_)), "{err:?}");
+    }
+
+    // ───────── 置き場の口（足跡・点・断り）の直接の試験 ─────────
+
+    /// XY 平面の三角形 1 つだけの面（カメラは −Z 側から +Z を見る）。
+    fn single(a: Vec3, b: Vec3, c: Vec3, uv: [Vec2; 3]) -> SurfaceGeometry {
+        SurfaceGeometry::new(
+            vec![SurfaceTriangle::new(a, b, c, uv[0], uv[1], uv[2])],
+            1,
+            DEFAULT_WELD_TOLERANCE,
+        )
+        .unwrap()
+    }
+
+    /// 面積 2（(0,0)-(2,0)-(0,2)）、UV の面積は 64 × 64 の文書で 512 テクセル（(0,0)-(0.5,0)-(0,0.5)）の三角形。
+    /// テクセルの大きさは √(2 / 512) = 1/16 モデルの単位。
+    fn known_triangle() -> SurfaceGeometry {
+        single(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            [Vec2::ZERO, Vec2::new(0.5, 0.0), Vec2::new(0.0, 0.5)],
+        )
+    }
+
+    fn hit_on(triangle: u32, position: Vec3) -> SurfaceHit {
+        SurfaceHit {
+            revision: 1,
+            renderer: 0,
+            material_slot: 0,
+            material: 0,
+            triangle,
+            position,
+            normal: Vec3::new(0.0, 0.0, -1.0),
+            barycentric: Vec3::new(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),
+            uv: Vec2::ZERO,
+            distance: 0.0,
+        }
+    }
+
+    /// (0.5, 0.5, 0) を真正面から、この距離で見る 400 × 400 のカメラ。
+    fn camera_at(distance: f32) -> CameraView {
+        OrbitCamera {
+            target: Vec3::new(0.5, 0.5, 0.0),
+            yaw: 0.0,
+            pitch: 0.0,
+            distance,
+            model_radius: 1.0,
+        }
+        .view(400.0, 400.0)
+    }
+
+    fn surface(image_per_point: f64) -> SurfaceStencil {
+        SurfaceStencil::new(fill_view().screen_to_image(), image_per_point).unwrap()
+    }
+
+    #[test]
+    fn a_surface_stencil_refuses_a_non_finite_or_negative_ratio() {
+        let to_image = fill_view().screen_to_image();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.001] {
+            assert!(
+                matches!(
+                    SurfaceStencil::new(to_image, bad),
+                    Err(crate::error::CoreError::InvalidArgument(_))
+                ),
+                "{bad}"
+            );
+        }
+        let zero = SurfaceStencil::new(to_image, 0.0).expect("0 は読める（いちばん細かい段）");
+        assert_eq!(zero.image_per_point(), 0.0);
+        assert_eq!(zero.screen_to_image(), to_image);
+    }
+
+    #[test]
+    fn the_footprint_is_texel_size_in_screen_points_times_image_pixels_per_point() {
+        let g = known_triangle();
+        let hit = hit_on(0, Vec3::new(0.5, 0.5, 0.0));
+        // テクセル 1/16 モデルの単位 → 距離 4 で 400 点の縦の画角 30° は 1 単位 = 400 / (2 × 4 × tan 15°) 点 → × 画像の画素 / 点
+        let tan_half = 15.0f64.to_radians().tan();
+        let expect = |distance: f64, per_point: f64| {
+            (1.0 / 16.0) * 400.0 / (2.0 * distance * tan_half) * per_point
+        };
+        let near = surface(0.5).footprint(&g, &camera_at(4.0), &hit, 64, 64);
+        assert!((near - expect(4.0, 0.5)).abs() < 1e-4, "{near}");
+        // 比例: 画像の画素 / 点を 2 倍にすると 2 倍、距離を 2 倍にすると半分
+        let double = surface(1.0).footprint(&g, &camera_at(4.0), &hit, 64, 64);
+        assert!((double - 2.0 * near).abs() < 1e-4, "{double}");
+        let far_hit = hit_on(0, Vec3::new(0.5, 0.5, 0.0));
+        let far = surface(0.5).footprint(&g, &camera_at(8.0), &far_hit, 64, 64);
+        assert!((far - expect(8.0, 0.5)).abs() < 1e-4 && far < near, "{far}");
+        // 文書の画素が 4 倍（縦横 2 倍ずつ）なら、テクセルは半分
+        let finer = surface(0.5).footprint(&g, &camera_at(4.0), &hit, 128, 128);
+        assert!((finer - near / 2.0).abs() < 1e-4, "{finer}");
+        // 0 は 0 のまま（負でも非有限でもない）。カメラの後ろ（近い面より手前）は画面の点が 0 になる（Unity 版の WorldRadiusToGuiPoints と同じ）
+        assert_eq!(
+            surface(0.0).footprint(&g, &camera_at(4.0), &hit, 64, 64),
+            0.0
+        );
+        let behind = hit_on(0, Vec3::new(0.5, 0.5, -10.0));
+        assert_eq!(
+            surface(0.5).footprint(&g, &camera_at(4.0), &behind, 64, 64),
+            0.0
+        );
+    }
+
+    #[test]
+    fn the_footprint_is_one_when_the_triangle_or_its_areas_are_unusable() {
+        let view = camera_at(4.0);
+        let at = Vec3::new(0.5, 0.5, 0.0);
+        let uv = [Vec2::ZERO, Vec2::new(0.5, 0.0), Vec2::new(0.0, 0.5)];
+        let point = |g: &SurfaceGeometry, triangle: u32| {
+            surface(0.5).footprint(g, &view, &hit_on(triangle, at), 64, 64)
+        };
+        // 当たった三角形が無い
+        assert_eq!(point(&known_triangle(), 7), 1.0);
+        // 面積が 0（3 点が一直線）
+        let line = single(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            uv,
+        );
+        assert_eq!(point(&line, 0), 1.0);
+        // UV の面積が 0
+        let no_uv = single(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            [Vec2::new(0.3, 0.3); 3],
+        );
+        assert_eq!(point(&no_uv, 0), 1.0);
+        // 外積は有限（面の組み立てを通る）が、長さを出すところで単精度が溢れて面積が有限でなくなる
+        let huge = single(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0e15, 0.0, 0.0),
+            Vec3::new(0.0, 2.0e15, 0.0),
+            uv,
+        );
+        assert_eq!(point(&huge, 0), 1.0);
+        // 同じ入力で正しいときは、1 ではない
+        assert_ne!(point(&known_triangle(), 0), 1.0);
+    }
+
+    #[test]
+    fn the_point_is_the_screen_position_mapped_into_the_image() {
+        let view = camera_at(4.0);
+        let to_image = StencilMapping::new(0.5, 0.0, 10.0, 0.0, -0.25, 7.0).unwrap();
+        let s = SurfaceStencil::new(to_image, 0.5).unwrap();
+        // 注視点は画面の中心（200, 200）に見える → 画像の (110, −43)
+        let p = s.point(&view, Vec3::new(0.5, 0.5, 0.0), 2.5);
+        assert!(
+            (p.x - 110.0).abs() < 1e-3 && (p.y + 43.0).abs() < 1e-3,
+            "{p:?}"
+        );
+        assert_eq!(p.footprint, 2.5, "足跡はそのまま添える");
+    }
+
+    #[test]
+    fn a_point_behind_the_camera_or_too_far_is_read_from_nowhere() {
+        let far = StencilImage::FAR_AWAY;
+        let nowhere = |footprint: f64| StencilPoint {
+            x: -far,
+            y: -far,
+            footprint,
+        };
+        let view = camera_at(4.0);
+        let s = surface(0.5);
+        // カメラの後ろ（距離 4 の位置の、さらに後ろ）
+        assert_eq!(
+            s.point(&view, Vec3::new(0.5, 0.5, -10.0), 3.5),
+            nowhere(3.5)
+        );
+        // 写した先が FAR_AWAY 以上
+        let wild = StencilMapping::new(1.0e12, 0.0, 0.0, 0.0, 1.0, 0.0).unwrap();
+        let s = SurfaceStencil::new(wild, 0.5).unwrap();
+        assert_eq!(s.point(&view, Vec3::new(0.5, 0.5, 0.0), 1.5), nowhere(1.5));
+        let wild_y = StencilMapping::new(1.0, 0.0, 0.0, 0.0, -1.0e12, 0.0).unwrap();
+        let s = SurfaceStencil::new(wild_y, 0.5).unwrap();
+        assert_eq!(s.point(&view, Vec3::new(0.5, 0.5, 0.0), 1.5), nowhere(1.5));
+    }
+
+    /// 横 1 画素ごとに白と黒が入れ替わる 64 × 8 の縞（いちばん細かい段では縞、粗い段では灰色）。
+    fn stripe_image() -> Arc<StencilImage> {
+        let mut rgba = Vec::new();
+        for _ in 0..8 {
+            for x in 0..64 {
+                let v = if x % 2 == 0 { 255 } else { 0 };
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        Arc::new(
+            StencilImage::new(
+                64,
+                8,
+                rgba,
+                ImageColorSpace::Srgb,
+                StencilImage::DEFAULT_MIP_BUDGET_BYTES,
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_larger_footprint_reads_a_coarser_mip_level_and_shows_in_the_painted_values() {
+        // 置き場（画面 → 画像の写し）は同じで、足跡を決める画像の画素 / 点だけを変える。縞の画像は、細かい段では 0 か 255、粗い段では灰色
+        let crisp = paint_alphas(Some(stripe_image()), Some(surface(0.0))).unwrap();
+        let blurry = paint_alphas(Some(stripe_image()), Some(surface(3.0))).unwrap();
+        let crisp_max = crisp.values().copied().max().unwrap();
+        let blurry_max = blurry.values().copied().max().unwrap();
+        assert_eq!(crisp_max, 255, "細かい段: 縞の白は全部通る");
+        assert!(
+            blurry_max < 200,
+            "粗い段: 縞が灰色にならされて、全部は通らない（{blurry_max}）"
+        );
+        assert!(
+            blurry.len() > crisp.len(),
+            "灰色は縞の黒の所にも届く（{} と {}）",
+            blurry.len(),
+            crisp.len()
+        );
+    }
+}

@@ -511,10 +511,13 @@ impl StencilMapping {
     }
     /// 画布の画素 (px, py) の中心の、画像の点。
     pub fn map(&self, px: i64, py: i64) -> (f64, f64) {
-        let (cx, cy) = (px as f64 + 0.5, py as f64 + 0.5);
+        self.map_point(px as f64 + 0.5, py as f64 + 0.5)
+    }
+    /// 元の空間の連続した点 (x, y) の、画像の点（3D のビューが画面の点を渡す）。
+    pub fn map_point(&self, x: f64, y: f64) -> (f64, f64) {
         (
-            self.xx * cx + self.xy * cy + self.x0,
-            self.yx * cx + self.yy * cy + self.y0,
+            self.xx * x + self.xy * y + self.x0,
+            self.yx * x + self.yy * y + self.y0,
         )
     }
 }

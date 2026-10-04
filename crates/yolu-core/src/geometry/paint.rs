@@ -13,6 +13,7 @@ use glam::Vec2;
 
 use super::camera::CameraView;
 use super::dab::{DabRefusal, SurfaceBrushBudget, SurfaceVisibilityCache};
+use super::stencil::SurfaceStencil;
 use super::stroke::{ScreenStrokeSampler, TooManyDabs};
 use super::unity::fmax;
 use super::{SurfaceGeometry, SurfaceHit};
@@ -75,6 +76,8 @@ pub struct SurfaceStroke {
     pressure_size: bool,
     width: i32,
     height: i32,
+    /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
+    stencil: Option<SurfaceStencil>,
     pub stats: SurfaceStrokeStats,
     /// 最後に知らせたい理由（予算以外で作らなかったダブ）。
     pub note: Option<DabRefusal>,
@@ -93,6 +96,25 @@ impl SurfaceStroke {
         at: Vec2,
         pressure: f32,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
+        Self::begin_with_stencil(
+            doc, stroke, geometry, view, brush, material, at, pressure, None,
+        )
+    }
+
+    /// [`SurfaceStroke::begin`] に、ステンシルの置き場を足したもの。ストロークの `Brush` がステンシルを持つときは、ここで置き場を渡す
+    /// （渡さないと、画素ごとにステンシルの上の点が無いので文書が断る）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_with_stencil(
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        geometry: Arc<SurfaceGeometry>,
+        view: CameraView,
+        brush: &BrushSettings,
+        material: Option<i32>,
+        at: Vec2,
+        pressure: f32,
+        stencil: Option<SurfaceStencil>,
+    ) -> Result<SurfaceStroke, SurfaceStrokeError> {
         let world_radius = world_radius(&geometry, brush.radius, doc.width());
         let mut s = SurfaceStroke {
             geometry,
@@ -107,6 +129,7 @@ impl SurfaceStroke {
             pressure_size: brush.pressure_size,
             width: doc.width() as i32,
             height: doc.height() as i32,
+            stencil,
             stats: SurfaceStrokeStats::default(),
             note: None,
         };
@@ -220,6 +243,9 @@ impl SurfaceStroke {
             return Ok(());
         }
         self.stats.dabs += 1;
+        let footprint = self
+            .stencil
+            .map(|st| st.footprint(&self.geometry, &self.view, &hit, self.width, self.height));
         for p in &dab.pixels {
             // ダブの縁では 1 − SmoothStep が単精度の丸めで −2.4e−7 などになる（C# の BuildSurfaceDabs も同じ値）。apply_pixel は
             // 0〜1 の外を断ってストロークを取り消すので、0 以下は塗らない（覆い 0 は何も変えないので、0 に丸めるのと同じ）
@@ -227,7 +253,17 @@ impl SurfaceStroke {
                 continue;
             }
             let coverage = p.coverage.min(1.0) as f64;
-            stroke.apply_pixel(doc, p.x as i64, p.y as i64, coverage, pressure as f64)?;
+            match (self.stencil, footprint) {
+                (Some(st), Some(footprint)) => stroke.apply_pixel_at(
+                    doc,
+                    p.x as i64,
+                    p.y as i64,
+                    coverage,
+                    pressure as f64,
+                    st.point(&self.view, p.position, footprint),
+                )?,
+                _ => stroke.apply_pixel(doc, p.x as i64, p.y as i64, coverage, pressure as f64)?,
+            };
         }
         self.stats.pixels += dab.pixels.len();
         Ok(())

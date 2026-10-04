@@ -141,6 +141,10 @@ impl View3dSlot {
             }
             _ => false,
         };
+        // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
+        if drawn && !app.view3d.pose.mode {
+            crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
+        }
         if !drawn {
             self.placeholder(ui, app, content);
         } else if app.view3d.pose.mode {
@@ -165,6 +169,8 @@ impl View3dSlot {
             if response.contains_pointer() && content.contains(pointer) {
                 if app.view3d.input.nav.is_some() {
                     ui.ctx().set_cursor_icon(CursorIcon::Move);
+                } else if let Some(icon) = crate::stencil::cursor_icon(&app.stencil) {
+                    ui.ctx().set_cursor_icon(icon);
                 } else if input::draw_cursor(ui, app, content, pointer) {
                     ui.ctx().set_cursor_icon(CursorIcon::None);
                 } else {

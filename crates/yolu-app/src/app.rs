@@ -390,6 +390,17 @@ impl YoluApp {
                         .apply(Action::Psd(crate::psd::PsdAction::Export(path)));
                 }
             }
+            Some(DialogRequest::OpenStencil) => {
+                let lang = self.state.lang;
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(lang.pick("ステンシルの画像を開く", "Open a stencil image"))
+                    .add_filter("PNG", &["png", "PNG"])
+                    .pick_file()
+                {
+                    self.state
+                        .apply(Action::Stencil(crate::stencil::StencilOp::Load(path)));
+                }
+            }
             None => {}
         }
     }
@@ -501,6 +512,7 @@ impl YoluApp {
         self.state.popup_was_open = self.state.popup.is_some();
         let pen = self.pen.drain();
         shell::handle_shortcuts(&ctx, &mut self.state);
+        crate::stencil::update_keys(&ctx, &mut self.state);
         self.open_dropped(&ctx);
         self.handle_requests(&ctx);
         self.link.poll(&mut self.state);

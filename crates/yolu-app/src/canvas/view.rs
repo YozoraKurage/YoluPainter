@@ -126,6 +126,21 @@ impl CanvasView {
         )
     }
 
+    /// キャンバスの画素の座標 → 画面の座標の係数 [a, b, c, d, e, g]: 画面の x = a·x + b·y + c、y = d·x + e·y + g（`to_screen` と同じ写し）。
+    /// 画像を画面に貼ったステンシルなど、画面を通る写しを 1 つの行列にまとめるのに使う。
+    pub fn screen_affine(&self) -> [f64; 6] {
+        let f = if self.flip { -1.0 } else { 1.0 };
+        let (w, h, s) = (self.width as f64, self.height as f64, self.scale);
+        [
+            self.cos * f * s,
+            self.sin * s,
+            self.cx - self.cos * f * s * w * 0.5 - self.sin * s * h * 0.5,
+            self.sin * f * s,
+            -self.cos * s,
+            self.cy - self.sin * f * s * w * 0.5 + self.cos * s * h * 0.5,
+        ]
+    }
+
     /// 画面の向き（y は下向き）をキャンバスの向き（y は上向き）に。回転・反転・y の向きを直し、長さは保つ（拡大は掛けない）。
     pub fn direction_to_canvas(&self, dx: f64, dy: f64) -> (f64, f64) {
         let ux = self.cos * dx + self.sin * dy;
@@ -376,6 +391,32 @@ mod tests {
         // 表示を時計回りに 90° 回していると、同じ向きの軸はキャンバスの上では 90° 戻った向きになる
         let r = rotated.rotation_to_canvas(90.0);
         assert!(r.abs() < 1e-9, "{r}");
+    }
+
+    #[test]
+    fn the_screen_affine_is_the_same_map_as_to_screen() {
+        for angle in [0.0, 15.0, 90.0, -90.0, 180.0, 33.3] {
+            for flip in [false, true] {
+                let v = CanvasView::new(
+                    Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, 200.0)),
+                    256,
+                    128,
+                    1.7,
+                    vec2(12.0, -5.0),
+                    angle,
+                    flip,
+                );
+                let [a, b, c, d, e, g] = v.screen_affine();
+                for (x, y) in [(0.0, 0.0), (37.25, 99.5), (256.0, 128.0), (-10.0, 300.0)] {
+                    let s = v.to_screen(x, y);
+                    let (sx, sy) = (a * x + b * y + c, d * x + e * y + g);
+                    assert!(
+                        (sx - s.x as f64).abs() < 1e-3 && (sy - s.y as f64).abs() < 1e-3,
+                        "angle {angle} flip {flip}: ({sx}, {sy}) {s:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

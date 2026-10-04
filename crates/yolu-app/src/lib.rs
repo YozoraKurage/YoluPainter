@@ -22,6 +22,7 @@ pub mod sets;
 mod settings;
 pub mod shell;
 pub mod state;
+pub mod stencil;
 pub mod ui;
 pub mod view3d;
 pub mod windows;

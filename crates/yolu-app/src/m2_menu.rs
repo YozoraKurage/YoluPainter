@@ -28,6 +28,10 @@ pub enum Popup {
     /// ユーザーチャンネルの種類。
     ChannelKind(Channel),
     ChannelContext(Channel),
+    /// ステンシルの画像（読む・読んだ画像・外す）。
+    StencilImage,
+    StencilMode,
+    StencilTiling,
 }
 
 fn tips(
@@ -210,6 +214,9 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 })
                 .collect()
         }
+        Popup::StencilImage => crate::panels::stencil_props::image_entries(app),
+        Popup::StencilMode => crate::panels::stencil_props::mode_entries(app),
+        Popup::StencilTiling => crate::panels::stencil_props::tiling_entries(app),
         Popup::ChannelContext(channel) => {
             let user = !channel.is_standard();
             vec![

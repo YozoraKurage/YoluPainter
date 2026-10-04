@@ -16,6 +16,7 @@ mod paint;
 mod query;
 mod refit;
 mod regions;
+mod stencil;
 mod stroke;
 pub(crate) mod unity;
 
@@ -34,6 +35,7 @@ pub use query::{
 };
 pub use refit::BvhUpdate;
 pub use regions::{region, SurfaceRegionKind};
+pub use stencil::SurfaceStencil;
 pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
 pub use unity::{Bounds, Ray};
 

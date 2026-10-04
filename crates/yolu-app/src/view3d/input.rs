@@ -93,16 +93,25 @@ fn begin(
             .into();
         return;
     }
+    // ステンシル: 置き場とカメラはストロークの始めに決める（面のテクセルの点を画面へ写して、そこの画像を読む）
+    let (stencil_brush, surface_stencil) = match app.surface_stencil(rect) {
+        Ok(Some((brush, surface))) => (Some(brush), Some(surface)),
+        Ok(None) => (None, None),
+        Err(e) => {
+            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            return;
+        }
+    };
     // 全部入りのブラシ。面のダブは筆先・ゆらぎ・質感・デュアル・フェード・傾き・回転・速さ・手ぶれ補正を受け取らず（効くのは基本の値・色・
-    // 色の変化・消しゴム・筆圧）、効果のブラシも塗れない
-    let mut stroke = match app.begin_paint_stroke(layer, eraser) {
+    // 色の変化・消しゴム・筆圧・ステンシル）、効果のブラシも塗れない
+    let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
         Ok(s) => s,
         Err(e) => {
             app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
             return;
         }
     };
-    match SurfaceStroke::begin(
+    match SurfaceStroke::begin_with_stencil(
         &mut app.doc,
         &mut stroke,
         model.geometry.clone(),
@@ -111,6 +120,7 @@ fn begin(
         Some(material),
         p,
         pressure.clamp(0.0, 1.0),
+        surface_stencil,
     ) {
         Ok(s) => {
             app.stroke = Some(stroke);
@@ -206,7 +216,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
-    let snap = ui.input(|i| i.modifiers.command);
+    let (snap, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
     // モデルの組み直しが走るので、高いポーリングのマウスやペンでは、途中の位置は描かれずに捨てられるだけ）。ボタンを離す・Esc・
     // フォーカスを失うの前には、そこまでの位置を当ててから終える
@@ -226,7 +236,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             None if s.contact
                 && !blocked
                 && on_top(ui, rect, p)
-                && app.view3d.input.nav.is_none() =>
+                && app.view3d.input.nav.is_none()
+                && !app.stencil.handling() =>
             {
                 begin(
                     app,
@@ -246,6 +257,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     }
 
     for event in &events {
+        // T を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。ポーズのモードでは描かない）
+        let over = match event {
+            Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
+            _ => false,
+        };
+        if !pose_mode && crate::stencil::handle_event(app, event, rect, over, shift) {
+            continue;
+        }
         match event {
             Event::PointerButton {
                 pos,
@@ -278,7 +297,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                             if app.view3d.pose.drag.is_none() {
                                 gizmo::press(app, rect, pos);
                             }
-                        } else {
+                        } else if !app.stencil.handling() {
                             begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
                         }
                     }
@@ -375,6 +394,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     if !any_down {
         app.view3d.input.nav = None;
     }
+    crate::stencil::settle(app, any_down);
 }
 
 /// ブラシのカーソル: ポインタの下の面の、ブラシの半径の円（面の接平面の円を画面へ写した楕円）。白と黒の二重の線。

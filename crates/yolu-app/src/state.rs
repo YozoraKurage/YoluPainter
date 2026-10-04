@@ -347,6 +347,8 @@ pub enum Action {
     M2(Edit),
     /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
     M2Ui(UiOp),
+    /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
+    Stencil(crate::stencil::StencilOp),
     Quit,
     Undo,
     Redo,
@@ -484,6 +486,8 @@ pub struct AppState {
     pub export: crate::export::ExportState,
     /// PSD の読み書き（結果・確かめ・走っている仕事）。
     pub psd: crate::psd::PsdState,
+    /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
+    pub stencil: crate::stencil::StencilState,
 }
 
 /// ファイルの窓の頼み。
@@ -500,6 +504,8 @@ pub enum DialogRequest {
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。
     PsdExport,
+    /// ステンシルの画像（PNG）を選ぶ。
+    OpenStencil,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -591,6 +597,7 @@ impl AppState {
             bake: Default::default(),
             export: Default::default(),
             psd: Default::default(),
+            stencil: crate::stencil::StencilState::default(),
         }
     }
 
@@ -667,6 +674,7 @@ impl AppState {
         match action {
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
+            Action::Stencil(op) => self.stencil_op(op),
             Action::Quit => self.quit = true,
             Action::Undo => {
                 if stroking {

@@ -41,14 +41,18 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     display.paint(&painter, &view);
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
+    // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
+    crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
 
-    // ブラシのカーソル（回している・回すキーを押している・パンしているあいだは出さない）
+    // ブラシのカーソル（回している・回すキーを押している・パンしている・ステンシルを動かしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
     let pointer_on_canvas = hover.is_some_and(|p| rect.contains(p)) && response.contains_pointer();
     let busy =
         app.canvas.rotate_key_held || app.canvas.rotating.is_some() || app.canvas.middle_rotating;
     if pointer_on_canvas {
-        if busy {
+        if let Some(icon) = crate::stencil::cursor_icon(&app.stencil) {
+            ui.ctx().set_cursor_icon(icon);
+        } else if busy {
             ui.ctx().set_cursor_icon(CursorIcon::Move);
         } else if app.canvas.panning {
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
@@ -214,7 +218,7 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
             .is_none_or(|layer| layer == ui.layer_id())
 }
 
-fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool {
+fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool, rect: Rect) -> bool {
     if let Some(reason) = app.read_only_reason() {
         app.message = format!(
             "{}: {reason}",
@@ -231,7 +235,15 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool 
         return false;
     }
     let settings = app.stroke_settings(eraser);
-    match app.begin_paint_stroke(layer, eraser) {
+    // ステンシルの置き場はストロークの始めに決める（ストロークの間は変えない）
+    let stencil = match app.canvas_stencil(rect) {
+        Ok(s) => s,
+        Err(e) => {
+            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            return false;
+        }
+    };
+    match app.begin_paint_stroke_with(layer, eraser, stencil) {
         Ok(stroke) => {
             app.stroke = Some(stroke);
             app.canvas.stroke = Some(source);
@@ -390,9 +402,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 && !blocked
                 && on_top(ui, rect, p)
                 && !app.canvas.rotate_key_held
-                && !app.canvas.space_held =>
+                && !app.canvas.space_held
+                && !app.stencil.handling() =>
             {
-                if begin_stroke(app, StrokeSource::Pen(s.pointer_id), s.eraser) {
+                if begin_stroke(app, StrokeSource::Pen(s.pointer_id), s.eraser, rect) {
                     add_point(
                         app,
                         &view,
@@ -427,6 +440,14 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
         } else {
             now
         };
+        // T を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない）
+        let over = match event {
+            Event::PointerButton { pos, .. } => on_top(ui, rect, *pos),
+            _ => false,
+        };
+        if crate::stencil::handle_event(app, event, rect, over, modifiers.shift) {
+            continue;
+        }
         match event {
             Event::Touch { force, phase, .. } => {
                 if let Some(f) = force {
@@ -459,7 +480,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                             app.canvas.panning = true;
                         } else if !pen_frame
                             && app.canvas.stroke.is_none()
-                            && begin_stroke(app, StrokeSource::Mouse, false)
+                            && !app.stencil.handling()
+                            && begin_stroke(app, StrokeSource::Mouse, false, rect)
                         {
                             let view = app.view.view(rect, w_px, h_px);
                             add_point(
@@ -594,6 +616,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     if !ui.input(|i| i.pointer.primary_down()) {
         app.canvas.rotating = None;
     }
+    crate::stencil::settle(app, ui.input(|i| i.pointer.any_down()));
 }
 
 #[cfg(test)]

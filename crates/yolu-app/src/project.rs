@@ -241,7 +241,7 @@ pub fn open_into(state: &mut AppState, path: &Path) {
         ));
     }
     if map_count > 0 {
-        text += &format!(" メッシュマップ {map_count} 枚。");
+        text += &state.lang.pick(format!(" メッシュマップ {map_count} 枚。"), format!(" {map_count} mesh map(s)."));
     }
     if !map_problems.is_empty() {
         text += &format!(

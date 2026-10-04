@@ -1028,7 +1028,18 @@ impl AppState {
 
     /// 描き始める（マスクを選んでいればマスク、そうでなければ描くチャンネル）。
     pub fn begin_paint_stroke(&mut self, id: LayerId, eraser: bool) -> Result<Stroke, CoreError> {
-        let brush = self.stroke_brush(eraser);
+        self.begin_paint_stroke_with(id, eraser, None)
+    }
+
+    /// [`AppState::begin_paint_stroke`] に、ステンシル（`canvas_stencil`・`surface_stencil` が作ったもの）を足したもの。
+    pub fn begin_paint_stroke_with(
+        &mut self,
+        id: LayerId,
+        eraser: bool,
+        stencil: Option<std::sync::Arc<yolu_core::BrushStencil>>,
+    ) -> Result<Stroke, CoreError> {
+        let mut brush = self.stroke_brush(eraser);
+        brush.stencil = stencil;
         if self.m2.edit_mask {
             return self.doc.begin_brush_mask_stroke(id, &brush);
         }

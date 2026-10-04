@@ -1298,20 +1298,10 @@ pub fn alpha_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::C
     }
 }
 
+/// ステンシルのタブ（中身は `stencil_props`）。
 pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    let lang = app.lang;
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "stencil",
-        lang.pick("ステンシル", "Stencil"),
-        "square",
-        None,
-    );
-    if open {
-        status_row(ui, rows, lang.pick("準備中", "Not available yet"));
-    }
+    let ctx = ui.ctx().clone();
+    super::stencil_props::stencil_tab(ui, app, rows, &ctx);
 }
 
 pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
