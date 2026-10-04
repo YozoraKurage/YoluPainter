@@ -29,6 +29,8 @@ pub enum Tool {
     Fill,
     /// グラデーション（2D のキャンバスをドラッグして、始点から終点へ線形か放射で塗る）。
     Gradient,
+    Shape,
+    Ruler,
     /// ポリゴン塗りつぶし（押したまま通った範囲を足していく。離して 1 回の Undo）。
     PolygonFill,
     /// スポイト（押した所の値を描画色かマテリアルの値に取る。`eyedrop`）。
@@ -49,11 +51,13 @@ pub enum Tool {
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 14] = [
+    pub const ALL: [Tool; 16] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
         Tool::Gradient,
+        Tool::Shape,
+        Tool::Ruler,
         Tool::PolygonFill,
         Tool::Eyedropper,
         Tool::SelectRect,
@@ -72,6 +76,8 @@ impl Tool {
             Tool::Eraser => "eraser",
             Tool::Fill => "fill",
             Tool::Gradient => "gradient",
+            Tool::Shape => "shape",
+            Tool::Ruler => "ruler",
             Tool::PolygonFill => "polygon-fill",
             Tool::Eyedropper => "eyedropper",
             Tool::IdSelect => "id-select",
@@ -94,6 +100,8 @@ impl Tool {
             Tool::Eraser => lang.pick("消しゴム", "Eraser"),
             Tool::Fill => lang.pick("バケツ", "Fill"),
             Tool::Gradient => lang.pick("グラデーション", "Gradient"),
+            Tool::Shape => lang.pick("図形", "Shape"),
+            Tool::Ruler => lang.pick("定規", "Ruler"),
             Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
             Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
             Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
@@ -112,6 +120,8 @@ impl Tool {
             Tool::Eraser => "E",
             Tool::Fill => "G",
             Tool::Gradient => "Shift+G",
+            Tool::Shape => "U",
+            Tool::Ruler => "Shift+U",
             Tool::PolygonFill => "4",
             Tool::Eyedropper => "I",
             Tool::IdSelect => "Shift+W",
@@ -406,6 +416,23 @@ pub struct CanvasInput {
     pub stroke_points: usize,
     /// ストロークの最後の入力の時刻（秒。戻さない）。
     pub stroke_time: Option<f64>,
+    /// 確定した 2D ストロークの終点（文書座標）。
+    pub previous_end: Option<(f64, f64)>,
+    /// 描いている 2D ストロークの今の終点（文書座標）。確定すると `previous_end` になる。
+    pub current_end: Option<(f64, f64)>,
+    /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定。
+    pub shift_hold: Option<ShiftHold>,
+    pub ruler_constraint: Option<crate::drafting::Constraint>,
+}
+
+/// Shift で押した点（文書座標）のまわりのぶれの抑え。画面の点で一定の距離（`SHIFT_HOLD_POINTS`）を超えて動くまで、点を押した所に留める。
+/// 超えたら、`locks` なら最初に動いた向きを 45 度刻みで固定してそれに沿わせ、そうでなければ（前の終点から線を引いた押しなら）
+/// 続きは普通に描く。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShiftHold {
+    pub origin: (f64, f64),
+    pub locks: bool,
+    pub direction: Option<(f64, f64)>,
 }
 
 /// 開いているポップアップの種類。
@@ -460,6 +487,7 @@ pub enum Action {
     Fill(crate::fillfx::FillOp),
     /// グラデーションの道具（形・終点・塗る/消す・ドラッグで塗る）。
     Gradient(crate::gradient::GradientOp),
+    ToggleRulerSnap,
     /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     OpenLogFolder,
@@ -548,6 +576,7 @@ impl Action {
             Self::Gradient(..) => "Gradient",
             Self::Clip(..) => "Clip",
             Self::OpenLogFolder => "OpenLogFolder",
+            Self::ToggleRulerSnap => "ToggleRulerSnap",
             Self::Quit => "Quit",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -728,6 +757,7 @@ pub struct AppState {
     pub fillfx: crate::fillfx::FillFxState,
     /// グラデーションの道具の設定と途中の状態。
     pub gradient: crate::gradient::GradientState,
+    pub drafting: crate::drafting::Drafting,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
@@ -890,6 +920,7 @@ impl AppState {
             path: Default::default(),
             fillfx: Default::default(),
             gradient: Default::default(),
+            drafting: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -905,6 +936,7 @@ impl AppState {
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
             || self.path.drag.is_some()
+            || self.drafting.drag.is_some()
     }
 
     /// ドックのタブの見出しをつかんでいる最中か、離した直後のフレームか（このあいだ、ビューは描き始め・回し始めない）。
@@ -928,6 +960,7 @@ impl AppState {
             self.transform_cancel_drag();
             self.path_tool_changed();
             self.gradient_cancel_drag();
+            self.drafting_cancel();
         }
         self.tool = tool;
         true
@@ -1024,6 +1057,7 @@ impl AppState {
             Action::Path(a) => self.path_apply(a),
             Action::Fill(op) => self.fill_apply(op),
             Action::Gradient(op) => self.gradient_apply(op),
+            Action::ToggleRulerSnap => self.toggle_snap(),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {

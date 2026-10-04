@@ -418,16 +418,14 @@ fn the_pen_tip_and_the_eraser_end_paint_on_the_canvas() {
 }
 
 #[test]
-fn the_pen_side_button_never_paints_on_the_canvas_and_neither_does_a_modifier() {
+fn the_pen_side_button_alt_and_ctrl_never_paint_on_the_canvas() {
     let c0 = |h: &H| canvas_rect(h).center();
-    let cases: [(&str, Pen, Modifiers); 8] = [
+    let cases: [(&str, Pen, Modifiers); 6] = [
         ("サイドボタン", Pen::barrel(), Modifiers::NONE),
         ("サイドボタン + 消しゴムの端", Pen { barrel: true, eraser: true, emulate: Emulate::No }, Modifiers::NONE),
         ("Alt", Pen::tip(), Modifiers::ALT),
-        ("Shift", Pen::tip(), Modifiers::SHIFT),
         ("Ctrl", Pen::tip(), Modifiers::CTRL),
         ("Alt + 消しゴムの端", Pen::eraser(), Modifiers::ALT),
-        ("Shift + 消しゴムの端", Pen::eraser(), Modifiers::SHIFT),
         ("サイドボタン + Alt", Pen { barrel: true, ..Pen::tip() }, Modifiers::ALT),
     ];
     for (name, pen, m) in cases {

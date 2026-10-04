@@ -177,6 +177,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
                     .shortcut("G")
                     .radio(app.tool == Tool::Fill),
+                Entry::item(Tool::Shape.name_in(l), Action::SelectTool(Tool::Shape))
+                    .shortcut("U").radio(app.tool == Tool::Shape),
+                Entry::item(Tool::Ruler.name_in(l), Action::SelectTool(Tool::Ruler))
+                    .shortcut("Shift+U").radio(app.tool == Tool::Ruler),
                 Entry::item(Tool::Gradient.name_in(l), Action::SelectTool(Tool::Gradient))
                     .shortcut("Shift+G")
                     .radio(app.tool == Tool::Gradient),
@@ -258,6 +262,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             )
             .shortcut("Shift+R")
             .enabled(free && app.view.angle != 0.0),
+            Entry::item(l.pick("定規にスナップ", "Snap to Ruler"), Action::ToggleRulerSnap)
+                .shortcut("Ctrl+1").checked(app.drafting.snap).enabled(free),
             Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
                 .shortcut("H")
                 .checked(app.view.flip)
@@ -768,6 +774,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::COMMAND, Key::S, Action::SaveProject);
         key(Modifiers::COMMAND, Key::O, Action::OpenProjectDialog);
         key(Modifiers::COMMAND, Key::N, Action::NewProjectDialog);
+        key(Modifiers::COMMAND, Key::Num1, Action::ToggleRulerSnap);
         key(Modifiers::COMMAND, Key::Num0, Action::FitView);
         key(Modifiers::COMMAND, Key::Plus, Action::ZoomIn);
         key(Modifiers::COMMAND, Key::Equals, Action::ZoomIn);
@@ -783,6 +790,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::SHIFT, Key::L, Action::SelectTool(Tool::Polygon));
         key(Modifiers::SHIFT, Key::W, Action::SelectTool(Tool::IdSelect));
         key(Modifiers::SHIFT, Key::G, Action::SelectTool(Tool::Gradient));
+        key(Modifiers::SHIFT, Key::U, Action::SelectTool(Tool::Ruler));
+        key(Modifiers::NONE, Key::U, Action::SelectTool(Tool::Shape));
         key(
             Modifiers::NONE,
             Key::M,
@@ -863,6 +872,10 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
         crate::panels::path_props::options(ui, app, r, x);
         return;
     }
+    if matches!(app.tool, Tool::Shape | Tool::Ruler) {
+        crate::drafting::props::options(ui, app, r, x);
+        return;
+    }
     if app.tool == Tool::Gradient {
         crate::gradient::props::options(ui, app, r, x);
         return;
@@ -878,6 +891,7 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
         at
     };
     let l = app.lang;
+    crate::drafting::props::snap_button(ui, app, next(28.0));
     let b = &mut app.brush;
     let out = w::slider(
         ui,
@@ -986,17 +1000,22 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
+    // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り
+    let starts_group = |tool: Tool| tool == Tool::SelectRect || tool == Tool::Move;
+    let separators = Tool::ALL.iter().filter(|t| starts_group(**t)).count() as f32;
+    // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）
+    let step = ((r.height() - 6.0 - 4.0 - separators * 9.0) / Tool::ALL.len() as f32)
+        .clamp(28.0, 34.0);
     let mut y = r.top() + 6.0;
     for tool in Tool::ALL {
-        if tool == Tool::SelectRect || tool == Tool::Move {
-            // 描く道具と選ぶ道具・選ぶ道具と動かす道具（移動・変形とパス）の区切り
+        if starts_group(tool) {
             w::strip_separator(
                 &p,
                 Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 9.0)),
             );
             y += 9.0;
         }
-        let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, 32.0));
+        let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, step - 2.0));
         let tip = app.lang.pick(
             format!("{}（{}）", tool.name_in(app.lang), tool.key()),
             format!("{} ({})", tool.name_in(app.lang), tool.key()),
@@ -1004,7 +1023,7 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
         if w::tool_button(ui, at, tool.id(), &tip, app.tool == tool).clicked() {
             app.apply(Action::SelectTool(tool));
         }
-        y += 34.0;
+        y += step;
     }
 }
 

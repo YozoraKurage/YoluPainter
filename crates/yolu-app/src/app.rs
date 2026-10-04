@@ -970,6 +970,8 @@ impl YoluApp {
         // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
         // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
         if !self.state.canvas_visible {
+            self.state.drafting_cancel();
+            self.state.drafting.pen_down = None;
             self.state.canvas.pen_press = None;
             crate::canvas::nav::cancel(&mut self.state);
         }

@@ -752,6 +752,26 @@ impl AppState {
             .canvas(self.doc.width(), self.doc.height())
     }
 
+    /// 幾何形状に沿って描く。補間と手ぶれ補正だけを切り、入り抜きと筆先の設定は保つ。
+    pub fn begin_guided_canvas_stroke(
+        &mut self,
+        id: crate::engine::LayerId,
+        eraser: bool,
+        stencil: Option<std::sync::Arc<yolu_core::BrushStencil>>,
+    ) -> Result<crate::engine::Stroke, CoreError> {
+        let mut brush = self.stroke_brush(eraser);
+        brush.stencil = stencil;
+        brush.symmetry = self.canvas_symmetry();
+        brush.assist.stabilizer = 0.0;
+        brush.assist.curve = false;
+        let result = self.begin_stroke_with(id, &brush);
+        self.sel.stroke_symmetry = result
+            .is_ok()
+            .then_some(brush.symmetry)
+            .filter(|s| s.enabled());
+        result
+    }
+
     /// 2D のキャンバスで描き始める（対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは `begin_paint_stroke`。
     pub fn begin_canvas_stroke(
         &mut self,

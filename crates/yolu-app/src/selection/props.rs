@@ -231,14 +231,21 @@ pub fn symmetry_options(ui: &mut Ui, app: &mut AppState, r: Rect, left: f32) {
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let l = app.lang;
     let on = app.sel.symmetry.enabled();
+    let p = ui.painter().clone();
     let mode_text = if on {
         Some(mode_name(l, app.sel.symmetry.mode))
     } else {
         None
     };
-    let p = ui.painter().clone();
     let text_w = mode_text.map_or(0.0, |t| w::text_width(&p, t, t::LABEL) + 8.0);
-    let total = 28.0 + 20.0 + text_w + 14.0;
+    // モード名が入らないほど狭い（窓の最小の幅で、英語の長い名前）ときは、名前を落としてトグルと ▾ を残す
+    let fixed = 28.0 + 20.0 + 14.0;
+    let (mode_text, text_w) = if r.right() - 8.0 - (fixed + text_w) >= left {
+        (mode_text, text_w)
+    } else {
+        (None, 0.0)
+    };
+    let total = fixed + text_w;
     let start = r.right() - 8.0 - total;
     if start < left {
         return;

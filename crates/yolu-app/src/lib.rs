@@ -22,6 +22,7 @@ pub mod fx;
 pub mod eyedrop;
 pub mod fillfx;
 pub mod gradient;
+pub mod drafting;
 pub mod gesture;
 pub mod lang;
 pub mod layerops;

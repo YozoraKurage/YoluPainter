@@ -590,6 +590,12 @@ impl AppState {
     /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。
     pub(crate) fn document_replaced(&mut self) {
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
+        self.canvas.previous_end = None;
+        self.canvas.current_end = None;
+        self.canvas.shift_hold = None;
+        self.canvas.ruler_constraint = None;
+        self.drafting_cancel();
+        self.drafting.pen_down = None;
     }
 
     /// セットの並びを丸ごと置き換える（開いたとき）。`current` の文書が `self.doc` になる。
@@ -602,6 +608,7 @@ impl AppState {
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
         self.doc = doc;
+        self.drafting.rulers.clear();
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();
