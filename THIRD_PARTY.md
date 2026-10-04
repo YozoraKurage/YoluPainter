@@ -16,21 +16,20 @@ Mac・Linux・Windows MSVC の一覧を兼ねるものではない。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<クレート>/` にできる。
 生成物は Git に入れない。この文書は確認済みの依存構成の記録で、配布には生成した全文を同梱する。
 
-## 承認済みの条件と配布前に確認する点
+## 適用する許諾と配布時の表記
 
 - `clipboard-win 5.4.1` と `error-code 3.4.0` は **BSL-1.0（Boost Software License）**。
-  **2026-10-04 にユーザーが使用を許可した**。`egui-winit → arboard → clipboard-win → error-code` から入る。
+  `egui-winit → arboard → clipboard-win → error-code` から入る。
   出典: [clipboard-win の原文](https://github.com/DoumanAsh/clipboard-win/blob/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE)、
   [error-code の原文](https://github.com/DoumanAsh/error-code/blob/e4615e514db3ff64f5f1b328b4865b20a3dcdbc3/LICENSE)。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
-  **2026-10-04 にユーザーがこの条件も許可した**。OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
+  OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
 - 上記の発行時コミットの原文と SHA-256 を照合し、**app・bridge ともクレート分の配布用全文束を生成できる**。
   未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。
 - 自作部分の配布許諾、Rust 標準ライブラリ、実際にリンクする MinGW/GCC ランタイム、追加で同梱する DLL の表記は、
   最終的な配布物と使用ツールチェーンに合わせて別途確認する。このクレート一覧だけで製品全体の配布可否は確定しない。
-  リポジトリはバイナリ配布時に公開する。
 
 ## フォントとアイコン
 
@@ -45,7 +44,7 @@ Mac・Linux・Windows MSVC の一覧を兼ねるものではない。
 | Hack | MIT、DejaVu のパブリックドメインの注記、Bitstream Vera、`fonts/Hack-Regular.txt` |
 | emoji-icon-font | MIT、`fonts/emoji-icon-font-mit-license.txt` |
 
-OFL-1.1 と Ubuntu Font Licence は標準書体に限って含めてよいものとし、各書体の著作権・名称・条件を原文のまま残す。
+標準書体の OFL-1.1 と Ubuntu Font Licence は、各書体の著作権・名称・条件を原文のまま全文束に含める。
 書体を変更して配る場合は、予約された書体名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
 [既存のアイコンの表記](crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
@@ -57,7 +56,7 @@ Fluent UI System Icons と Phosphor Icons は MIT。
 
 ## 生成・試験に使う道具
 
-今回の道具は Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。
+許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。
 以下は開発環境で使う道具の許諾であり、道具本体を製品へ同梱しない。
 
 | 道具 | 許諾・参照元 |
