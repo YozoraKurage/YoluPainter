@@ -1,6 +1,6 @@
 //! ブラシの振る舞い（Unity 版の C# の Core の試験 BrushTests・BrushDynamicsTests・StrokeAssistTests・StrokeCurveTests・
 //! BrushEffectTests のうち、1 つの面へ描くストロークの範囲を移したもの。値は C# の試験の期待値そのもの）と、C# に無い拡張
-//! （筆先の反転・紙の質感のモード）の試験。マスク・マテリアルで塗る・保存の部分はまだ無いので移していない（選択範囲は selection.rs、透明部分のロックは docops.rs の試験）。
+//! （筆先の反転・紙の質感のモード）の試験。マスクへの効果のブラシはここ、複数チャンネルは material.rs、スレッド数は parallelism.rs、保存の部分はまだ無いので移していない（選択範囲は selection.rs、透明部分のロックは docops.rs の試験）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::HashSet;
@@ -1851,6 +1851,126 @@ fn smudge_reset_forgets_the_previous_position() {
         "継ぎ目をまたいだ後の最初のダブは位置を覚えるだけ"
     );
     d.end_stroke(st).unwrap();
+}
+
+/// C# の MaskPixelsUseTheSameEffectAndKeepOneUndo: ぼかし・指先・クローンをマスクへ描くと、色ではなく同じ画素演算が効き
+/// （同じ画素を Color へ描いた結果と同じバイト）、Undo は 1 回でマスクだけを戻し、Redo で同じ結果に戻る。
+#[test]
+fn mask_pixels_use_the_same_effect_and_keep_one_undo() {
+    for effect in [BLUR, SMUDGE, CLONE] {
+        let (mut d, l) = effect_doc(16, W, H);
+        d.add_layer_mask(l).unwrap();
+        for y in 0..H {
+            for x in 0..W {
+                let hide = ((x * 29 + y * 17) % 256) as u8;
+                d.set_mask_pixel(l, x as u32, y as u32, hide).unwrap();
+                d.set_pixel(l, x as u32, y as u32, Rgba8::new(0, 0, 0, hide))
+                    .unwrap();
+            }
+        }
+        d.clear_history().unwrap();
+        let mask_bytes = |d: &Document| {
+            d.layer(l)
+                .unwrap()
+                .mask()
+                .unwrap()
+                .surface()
+                .to_canvas_bytes()
+        };
+        let color_bytes = |d: &Document| {
+            d.layer(l)
+                .unwrap()
+                .surface(Channel::Color)
+                .unwrap()
+                .to_canvas_bytes()
+        };
+        let (mask_before, color_before) = (mask_bytes(&d), color_bytes(&d));
+        assert_eq!(mask_before, color_before);
+        let b = effect_brush(effect);
+        let samples = [
+            sample_at(5.0, 5.0, 1.0, 0.0),
+            sample_at(12.0, 7.0, 1.0, 1.0),
+        ];
+        let mut st = d.begin_brush_mask_stroke(l, &b).unwrap();
+        for p in samples {
+            st.add_sample(&mut d, p).unwrap();
+        }
+        assert!(d.end_stroke(st).unwrap().changed, "{effect:?}");
+        let expected = mask_bytes(&d);
+        assert_ne!(expected, mask_before, "{effect:?} はマスクを変える");
+        assert_eq!(color_bytes(&d), color_before, "マスクの描画は色に触れない");
+        assert_eq!(d.undo_count(), 1, "{effect:?}");
+        assert!(d.undo().unwrap());
+        assert_eq!(mask_bytes(&d), mask_before, "{effect:?}");
+        assert_eq!(d.undo_count(), 0);
+        assert!(d.redo().unwrap());
+        assert_eq!(mask_bytes(&d), expected, "{effect:?}");
+        // 同じ画素を Color へ描いた結果と同じ
+        paint(&mut d, l, &b, &samples);
+        assert_eq!(
+            color_bytes(&d),
+            expected,
+            "{effect:?} マスクにも同じ画素演算が効く"
+        );
+    }
+}
+
+/// マスクへの効果のストロークも、予算の拒否・取消・不正な入力で、元のマスクのバイトと履歴へ戻す。
+#[test]
+fn effect_strokes_on_a_mask_cancel_and_refuse_back_to_the_exact_mask() {
+    for effect in [BLUR, SMUDGE, CLONE] {
+        let (mut d, l) = effect_doc(16, W, H);
+        d.add_layer_mask(l).unwrap();
+        for y in 0..H {
+            for x in 0..W {
+                d.set_mask_pixel(l, x as u32, y as u32, ((x * 29 + y * 17) % 256) as u8)
+                    .unwrap();
+            }
+        }
+        d.clear_history().unwrap();
+        let mask = |d: &Document| {
+            d.layer(l)
+                .unwrap()
+                .mask()
+                .unwrap()
+                .surface()
+                .to_canvas_bytes()
+        };
+        let saved = mask(&d);
+        let run = |d: &mut Document| {
+            let mut st = d.begin_brush_mask_stroke(l, &effect_brush(effect)).unwrap();
+            let r = st
+                .add_sample(d, sample_at(5.0, 5.0, 1.0, 0.0))
+                .and_then(|_| st.add_sample(d, sample_at(12.0, 7.0, 1.0, 1.0)));
+            (st, r)
+        };
+        // Escape（取消）
+        let (st, r) = run(&mut d);
+        r.unwrap();
+        assert_ne!(mask(&d), saved);
+        d.cancel_stroke(st);
+        assert_eq!((mask(&d), d.undo_count()), (saved.clone(), 0), "{effect:?}");
+        // ストロークの予算
+        d.set_stroke_budget_bytes(10).unwrap();
+        let (_, r) = run(&mut d);
+        assert_eq!(r, Err(CoreError::StrokeBudgetExceeded), "{effect:?}");
+        assert!(!d.has_active_stroke());
+        assert_eq!((mask(&d), d.undo_count()), (saved.clone(), 0), "{effect:?}");
+        d.set_stroke_budget_bytes(4 << 20).unwrap();
+        // 不正な入力
+        let (mut st, r) = run(&mut d);
+        r.unwrap();
+        let bad = [BrushPixel {
+            x: 5,
+            y: 5,
+            coverage: 2.0,
+        }];
+        assert!(st
+            .apply_dab(&mut d, &bad, DVec2::new(5.0, 5.0), 1.0)
+            .is_err());
+        assert!(!d.has_active_stroke());
+        assert_eq!((mask(&d), d.undo_count()), (saved.clone(), 0), "{effect:?}");
+    }
 }
 
 // ───────── C# に無い拡張 ─────────

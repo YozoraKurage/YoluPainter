@@ -523,6 +523,53 @@ fn budgets_refuse_and_cancel_exactly() {
     assert!(doc.set_source_budget_bytes(3).is_err());
 }
 
+/// C# の CoreTests.ReducedSourceBudgetRejectsUndoAtomicallyUntilBudgetIsRestored: 消しゴムのストロークを、予算を縮めたあとで戻すと、
+/// 画素・確保量・履歴の件数と中身・版・変化の通し番号のどれも変えずに断り、予算を戻せば成功する（Redo も 1 段として残る）。
+#[test]
+fn a_reduced_source_budget_refuses_a_stroke_undo_atomically_until_it_is_restored() {
+    let (mut doc, l) = small();
+    pixel(&mut doc, l, 1, 1, Rgba8::new(10, 20, 30, 255));
+    let mut s = doc
+        .begin_stroke(
+            l,
+            &BrushSettings {
+                erase: true,
+                ..opaque(RED)
+            },
+        )
+        .unwrap();
+    s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0).unwrap();
+    doc.end_stroke(s).unwrap();
+    assert_eq!(doc.allocated_bytes(), 0, "消すとタイルが無くなる");
+    doc.set_source_budget_bytes(0).unwrap();
+    let state = |d: &Document| {
+        (
+            all(d),
+            d.allocated_bytes(),
+            (d.undo_count(), d.redo_count(), d.history_bytes()),
+            (d.revision(), d.change_serial()),
+        )
+    };
+    let before = state(&doc);
+    assert_eq!(before.2 .0, 2);
+    for _ in 0..3 {
+        assert_eq!(doc.undo(), Err(CoreError::SourceBudgetExceeded));
+        assert_eq!(state(&doc), before, "断った Undo は何も変えない");
+        assert!(doc.can_undo() && !doc.can_redo());
+    }
+    // 1 バイト足りない予算でも同じ。1 タイル（64）の分があれば通る
+    doc.set_source_budget_bytes(63).unwrap();
+    assert_eq!(doc.undo(), Err(CoreError::SourceBudgetExceeded));
+    assert_eq!(state(&doc), before);
+    doc.set_source_budget_bytes(64).unwrap();
+    assert_eq!(doc.undo(), Ok(true));
+    assert_eq!(px(&doc, l, 1, 1), Rgba8::new(10, 20, 30, 255));
+    assert_eq!((doc.undo_count(), doc.redo_count()), (1, 1));
+    // 戻したあとのやり直しも、予算が足りれば元どおり
+    assert_eq!(doc.redo(), Ok(true));
+    assert_eq!((px(&doc, l, 1, 1).a, doc.allocated_bytes()), (0, 0));
+}
+
 // ───────── ClippingTests ─────────
 
 const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);

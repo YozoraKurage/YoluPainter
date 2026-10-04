@@ -383,6 +383,64 @@ fn region_budgets_and_redo_are_atomic() {
     assert_eq!(d.redo_count(), 1);
     assert!(d.layer(l).unwrap().surface(Channel::Normal).is_none());
 }
+/// C# の MaterialRegionTests.ARefusedUndoDoesNotRestoreAnyOfTheDenseChannels: 6 チャンネルとも画素が密な層を `fill_material` で
+/// 一様に塗ってから予算を縮めると、Undo は全チャンネルの増分を先にまとめて確かめて断る。最初のチャンネルの分（252）だけなら
+/// 入る予算でも、どのチャンネルも戻さない。予算が足りれば全チャンネルが元のバイトへ戻る。
+#[test]
+fn a_refused_region_undo_restores_none_of_the_dense_channels() {
+    let mut d = Document::with_tile_size(8, 8, 8).unwrap();
+    let l = d.add_layer("塗り").unwrap();
+    for c in Channel::ALL {
+        d.set_channel_enabled(l, c, true).unwrap();
+        for y in 0..8 {
+            for x in 0..8 {
+                d.set_channel_pixel(l, c, x, y, Rgba8::new(x as u8, y as u8, 11, 255))
+                    .unwrap();
+            }
+        }
+    }
+    d.clear_history().unwrap();
+    let before = snapshot(&d, l);
+    assert_eq!(d.allocated_bytes(), 6 * 256);
+    let paint: Vec<_> = Channel::ALL
+        .iter()
+        .map(|c| ChannelPaint::new(*c, Rgba8::new(200, 30, 50, 255)))
+        .collect();
+    assert!(d.fill_material(l, &paint, 1.0, None, false).unwrap());
+    assert_eq!(
+        d.allocated_bytes(),
+        6 * 4,
+        "一様に塗るとタイルは 4 バイトの一様になる"
+    );
+    let painted = snapshot(&d, l);
+    assert_ne!(painted, before);
+    let (revision, serial, history) = (d.revision(), d.change_serial(), d.history_bytes());
+    // 1 チャンネル分（256 - 4）の増分は入るが、6 チャンネル分は入らない予算
+    d.set_source_budget_bytes(d.allocated_bytes() + 256)
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(d.undo(), Err(CoreError::SourceBudgetExceeded));
+        assert_eq!(snapshot(&d, l), painted, "どのチャンネルも戻らない");
+        assert_eq!(
+            (d.revision(), d.change_serial(), d.history_bytes()),
+            (revision, serial, history)
+        );
+        assert_eq!((d.undo_count(), d.redo_count()), (1, 0));
+    }
+    // 5 チャンネル分までの予算でも、残りの 1 チャンネル分が足りないので断る
+    d.set_source_budget_bytes(6 * 4 + 5 * 252).unwrap();
+    assert_eq!(d.undo(), Err(CoreError::SourceBudgetExceeded));
+    assert_eq!(snapshot(&d, l), painted);
+    // ちょうど入る予算で通り、全チャンネルが元の画素へ戻る
+    d.set_source_budget_bytes(6 * 256).unwrap();
+    assert!(d.undo().unwrap());
+    assert_eq!(snapshot(&d, l), before);
+    assert_eq!((d.undo_count(), d.redo_count()), (0, 1));
+    // やり直しは縮むので、予算を絞っても通る
+    d.set_source_budget_bytes(6 * 256).unwrap();
+    assert!(d.redo().unwrap());
+    assert_eq!(snapshot(&d, l), painted);
+}
 #[test]
 fn no_op_region_keeps_redo_and_disabled_channels() {
     let mut d = Document::new(8, 8).unwrap();
@@ -993,4 +1051,327 @@ fn triangle_fill_does_not_depend_on_the_thread_count() {
         Err(CoreError::SourceBudgetExceeded)
     );
     assert!(run(1, None, None).0.is_ok());
+}
+
+// ───────── 効果のブラシ × 複数チャンネル（C# の BrushEffectTests） ─────────
+
+const EW: usize = 19;
+const EH: usize = 13;
+const BLUR: BrushEffect = BrushEffect::Blur { radius: 2 };
+const SMUDGE: BrushEffect = BrushEffect::Smudge { strength: 0.6 };
+const CLONE: BrushEffect = BrushEffect::Clone {
+    offset: DVec2::new(-2.25, 0.5),
+};
+const EFFECTS: [BrushEffect; 3] = [BLUR, SMUDGE, CLONE];
+/// C# の BrushEffectTests.Settings: 半径 3・硬さ 0.6・間隔 0.2・不透明度 0.7・流量 0.6・筆圧は不透明度と流量だけ。
+fn effect_brush(effect: BrushEffect) -> Brush {
+    Brush {
+        effect,
+        ..Brush::from(BrushSettings {
+            radius: 3.0,
+            hardness: 0.6,
+            spacing: 0.2,
+            opacity: 0.7,
+            flow: 0.6,
+            pressure_size: false,
+            pressure_opacity: true,
+            pressure_flow: true,
+            ..BrushSettings::default()
+        })
+    }
+}
+fn at(x: f64, y: f64, time: f64) -> BrushSample {
+    BrushSample::new(x, y, 1.0, time, DVec2::ZERO).unwrap()
+}
+/// C# の試験のストローク: (5, 5) から (12, 7) への 2 点。
+fn effect_stroke(s: &mut Stroke, d: &mut Document) -> Result<(), CoreError> {
+    s.add_sample(d, at(5.0, 5.0, 0.0))?;
+    s.add_sample(d, at(12.0, 7.0, 1.0))
+}
+/// C# の BrushEffectTests.Make: 19×13 の層の全チャンネルに、チャンネルごとに違う決まった模様（アルファ 0・120・255 が混ざる）。
+fn effect_layer(tile: u32) -> (Document, LayerId) {
+    let mut d = Document::with_tile_size(EW as u32, EH as u32, tile).unwrap();
+    let l = d.add_layer("塗り").unwrap();
+    for (i, c) in Channel::ALL.iter().enumerate() {
+        d.set_channel_enabled(l, *c, true).unwrap();
+        for y in 0..EH {
+            for x in 0..EW {
+                let a = if (x + y) % 5 == 0 {
+                    0
+                } else if (x + y) % 3 == 0 {
+                    120
+                } else {
+                    255
+                };
+                let p = Rgba8::new(
+                    ((x * 31 + i * 7) % 256) as u8,
+                    ((y * 47 + i) % 256) as u8,
+                    ((x * 19 + y * 7) % 256) as u8,
+                    a,
+                );
+                d.set_channel_pixel(l, *c, x as u32, y as u32, p).unwrap();
+            }
+        }
+    }
+    d.clear_history().unwrap();
+    (d, l)
+}
+fn red_material(channels: &[Channel]) -> Vec<ChannelPaint> {
+    channels
+        .iter()
+        .map(|c| ChannelPaint::new(*c, Rgba8::new(255, 0, 0, 255)))
+        .collect()
+}
+
+/// C# の MaterialChannelsComputeFromTheirOwnPixelsAndCancelTogether: 効果のブラシ（ぼかし・指先・クローン）の複数チャンネルのストロークは、
+/// 各チャンネルが自分の画素から計算する（1 チャンネルずつ別の文書で描いた結果と同じバイトで、チャンネルどうしは違う）。
+/// Undo 1 回で全チャンネルが戻り、Redo で同じ結果に戻り、取消は全チャンネルを元へ戻す。
+#[test]
+fn effect_brushes_compute_each_channel_from_its_own_pixels_and_undo_and_cancel_together() {
+    for effect in EFFECTS {
+        let (mut d, l) = effect_layer(16);
+        let originals: Vec<_> = Channel::ALL.iter().map(|c| bytes(&d, l, *c)).collect();
+        let b = effect_brush(effect);
+        let mut s = d
+            .begin_material_brush_stroke(l, &red_material(&Channel::ALL), &b)
+            .unwrap();
+        effect_stroke(&mut s, &mut d).unwrap();
+        assert!(d.end_stroke(s).unwrap().changed, "{effect:?}");
+        let outputs: Vec<_> = Channel::ALL.iter().map(|c| bytes(&d, l, *c)).collect();
+        for (i, c) in Channel::ALL.iter().enumerate() {
+            let (mut one, ol) = effect_layer(16);
+            let mut s = one.begin_brush_stroke_in(ol, *c, &b).unwrap();
+            effect_stroke(&mut s, &mut one).unwrap();
+            one.end_stroke(s).unwrap();
+            assert_eq!(outputs[i], bytes(&one, ol, *c), "{effect:?} {c:?}");
+            assert_ne!(outputs[i], originals[i], "{effect:?} {c:?} は変わる");
+            for j in 0..i {
+                assert_ne!(outputs[i], outputs[j], "{effect:?} {c:?} は自分の画素から");
+            }
+        }
+        assert_eq!(d.undo_count(), 1, "{effect:?}");
+        assert!(d.undo().unwrap());
+        for (i, c) in Channel::ALL.iter().enumerate() {
+            assert_eq!(bytes(&d, l, *c), originals[i], "{effect:?} {c:?}");
+        }
+        assert!(d.redo().unwrap());
+        for (i, c) in Channel::ALL.iter().enumerate() {
+            assert_eq!(bytes(&d, l, *c), outputs[i], "{effect:?} {c:?}");
+        }
+        let saved = snapshot(&d, l);
+        let mut s = d
+            .begin_material_brush_stroke(l, &red_material(&Channel::ALL), &b)
+            .unwrap();
+        effect_stroke(&mut s, &mut d).unwrap();
+        assert_ne!(snapshot(&d, l), saved, "{effect:?} 取消の前は描けている");
+        d.cancel_stroke(s);
+        assert_eq!(snapshot(&d, l), saved, "{effect:?}");
+    }
+}
+
+/// 効果のブラシのチャンネル数の違いで 1 チャンネルの結果が変わらない（2 チャンネルでも 6 チャンネルでも同じ）。
+#[test]
+fn an_effect_channels_result_does_not_depend_on_which_other_channels_are_in_the_stroke() {
+    for effect in EFFECTS {
+        let b = effect_brush(effect);
+        let run = |channels: &[Channel]| {
+            let (mut d, l) = effect_layer(8);
+            let mut s = d
+                .begin_material_brush_stroke(l, &red_material(channels), &b)
+                .unwrap();
+            effect_stroke(&mut s, &mut d).unwrap();
+            d.end_stroke(s).unwrap();
+            bytes(&d, l, Channel::Roughness)
+        };
+        let six = run(&Channel::ALL);
+        assert_eq!(six, run(&[Channel::Roughness]), "{effect:?}");
+        assert_eq!(
+            six,
+            run(&[Channel::Height, Channel::Roughness]),
+            "{effect:?}"
+        );
+    }
+}
+
+/// 無効のチャンネル（描いた面は残る）を含む効果のブラシのストロークの前の状態: Color は有効、Height は無効だが画素が残る。
+/// どちらも一様で不透明な 1 タイル（4 バイト）なので、書くとタイルが広がって元画素の予算を使う。
+fn growth_layer() -> (Document, LayerId) {
+    let mut d = Document::with_tile_size(32, 32, 8).unwrap();
+    let l = d.add_layer("塗り").unwrap();
+    d.set_channel_enabled(l, Channel::Height, true).unwrap();
+    for c in [Channel::Color, Channel::Height] {
+        d.import_tile(l, c, TileCoord::new(0, 0), &[255u8; 8 * 8 * 4])
+            .unwrap();
+    }
+    d.set_channel_enabled(l, Channel::Height, false).unwrap();
+    d.clear_history().unwrap();
+    assert_eq!(d.allocated_bytes(), 8);
+    (d, l)
+}
+fn growth_brush(effect: BrushEffect) -> Brush {
+    let effect = match effect {
+        BrushEffect::Clone { .. } => BrushEffect::Clone {
+            offset: DVec2::new(-4.0, 0.0),
+        },
+        e => e,
+    };
+    Brush {
+        base: BrushSettings {
+            radius: 6.0,
+            ..effect_brush(effect).base
+        },
+        ..effect_brush(effect)
+    }
+}
+
+/// growth_layer の効果のストロークの 3 つの点（効果によって、1 つ目では何も広げないものもある）。
+fn growth_sample(i: usize) -> BrushSample {
+    let (x, y, time) = [(5.0, 5.0, 0.0), (12.0, 7.0, 1.0), (9.0, 5.0, 2.0)][i];
+    at(x, y, time)
+}
+/// growth_layer へ `channels` だけのストロークを元画素の予算の余裕なしに与えて、何番目の点で初めて元画素が広がるかと、そこまでに
+/// 広がったバイト数（ほかのチャンネルの面は動かさないので、Color だけなら Color の広がり）。
+fn first_growth(effect: BrushEffect, channels: &[Channel]) -> (usize, u64) {
+    let (mut d, l) = growth_layer();
+    let before = d.allocated_bytes();
+    let mut s = d
+        .begin_material_brush_stroke(l, &red_material(channels), &growth_brush(effect))
+        .unwrap();
+    for i in 0..3 {
+        s.add_sample(&mut d, growth_sample(i)).unwrap();
+        let grown = d.allocated_bytes() - before;
+        if grown > 0 {
+            d.cancel_stroke(s);
+            return (i, grown);
+        }
+    }
+    panic!("{effect:?} {channels:?} は元画素を広げない");
+}
+
+/// C# の ASourceGrowthRefusalRollsBackPixelsAndChannelsEnabledByTheStroke: 元画素の予算が 1 タイルの広がりも許さないとき、複数
+/// チャンネルの効果のストロークは断られ、ストロークが有効にしたチャンネルも書いた画素も元へ戻り、Undo の段を残さない。
+/// もう 1 つの余裕は、Color が最初に広がる分（Color だけのストロークを同じ余裕で走らせると、その点まで通る）。Color の分を先に書き
+/// 終えてから、Height が余裕の無さで断る。そのときも Color まで戻る。どちらの余裕でも、断られるのは Color が初めて広がる点。
+#[test]
+fn a_source_growth_refusal_rolls_back_pixels_and_the_channels_the_stroke_enabled() {
+    for effect in EFFECTS {
+        let (point, color_room) = first_growth(effect, &[Channel::Color]);
+        let (both_point, both_grown) = first_growth(effect, &[Channel::Color, Channel::Height]);
+        assert_eq!(both_point, point, "{effect:?}");
+        assert!(
+            both_grown > color_room,
+            "{effect:?} Height も広がる（Color の分だけでは足りない）"
+        );
+        // Color の余裕で Color だけのストロークは、広がる点まで通る（Color の分は断られない）
+        {
+            let (mut d, l) = growth_layer();
+            d.set_source_budget_bytes(d.allocated_bytes() + color_room)
+                .unwrap();
+            let mut s = d
+                .begin_material_brush_stroke(
+                    l,
+                    &red_material(&[Channel::Color]),
+                    &growth_brush(effect),
+                )
+                .unwrap();
+            for i in 0..=point {
+                s.add_sample(&mut d, growth_sample(i)).unwrap();
+            }
+            d.cancel_stroke(s);
+        }
+        for room in [0, color_room] {
+            let (mut d, l) = growth_layer();
+            let saved = snapshot(&d, l);
+            assert!(!saved.0[3].1, "Height は無効");
+            d.set_source_budget_bytes(d.allocated_bytes() + room)
+                .unwrap();
+            let mut s = d
+                .begin_material_brush_stroke(
+                    l,
+                    &red_material(&[Channel::Color, Channel::Height]),
+                    &growth_brush(effect),
+                )
+                .unwrap();
+            assert!(
+                d.layer(l).unwrap().is_channel_enabled(Channel::Height),
+                "ストロークが Height を有効にする"
+            );
+            let mut refused = None;
+            for i in 0..3 {
+                if let Err(e) = s.add_sample(&mut d, growth_sample(i)) {
+                    refused = Some((i, e));
+                    break;
+                }
+            }
+            assert_eq!(
+                refused,
+                Some((point, CoreError::SourceBudgetExceeded)),
+                "{effect:?} {room}"
+            );
+            assert!(!d.has_active_stroke());
+            assert_eq!(snapshot(&d, l), saved, "{effect:?} {room}");
+            // 戻したあとは、予算が足りれば同じ入力が通る
+            d.set_source_budget_bytes(1 << 20).unwrap();
+            let mut s = d
+                .begin_material_brush_stroke(
+                    l,
+                    &red_material(&[Channel::Color, Channel::Height]),
+                    &growth_brush(effect),
+                )
+                .unwrap();
+            for i in 0..3 {
+                s.add_sample(&mut d, growth_sample(i)).unwrap();
+            }
+            assert!(d.end_stroke(s).unwrap().changed, "{effect:?} {room}");
+            assert_eq!(d.undo_count(), 1);
+        }
+    }
+}
+
+/// C# の BudgetsAndInvalidInputsCancelAllChannelsWithoutAnUndo（複数チャンネル）: ストロークの予算の拒否も、不正な入力
+/// （覆いが範囲外のダブ）も、無効のチャンネルを有効にしたストロークごと取り消して Undo の段を残さない。
+#[test]
+fn effect_budgets_and_invalid_inputs_cancel_every_channel_without_an_undo() {
+    for effect in EFFECTS {
+        let (mut d, l) = effect_layer(16);
+        d.set_channel_enabled(l, Channel::Height, false).unwrap();
+        d.clear_history().unwrap();
+        let saved = snapshot(&d, l);
+        let channels = red_material(&[Channel::Color, Channel::Height]);
+        d.set_stroke_budget_bytes(10).unwrap();
+        let mut s = d
+            .begin_material_brush_stroke(l, &channels, &effect_brush(effect))
+            .unwrap();
+        assert!(d.layer(l).unwrap().is_channel_enabled(Channel::Height));
+        let r = effect_stroke(&mut s, &mut d);
+        assert_eq!(r, Err(CoreError::StrokeBudgetExceeded), "{effect:?}");
+        assert!(!d.has_active_stroke());
+        assert_eq!(snapshot(&d, l), saved, "{effect:?}");
+        assert_eq!(d.undo_count(), 0);
+        d.set_stroke_budget_bytes(4 << 20).unwrap();
+        let mut s = d
+            .begin_material_brush_stroke(l, &channels, &effect_brush(effect))
+            .unwrap();
+        effect_stroke(&mut s, &mut d).unwrap();
+        let bad = [BrushPixel {
+            x: 5,
+            y: 5,
+            coverage: 2.0,
+        }];
+        assert!(s
+            .apply_dab(&mut d, &bad, DVec2::new(5.0, 5.0), 1.0)
+            .is_err());
+        assert!(!d.has_active_stroke());
+        assert_eq!(snapshot(&d, l), saved, "{effect:?}");
+        assert_eq!(d.undo_count(), 0);
+        assert!(!d.layer(l).unwrap().is_channel_enabled(Channel::Height));
+        // 時刻が戻る入力でも同じ（取消して返す）
+        let mut s = d
+            .begin_material_brush_stroke(l, &channels, &effect_brush(effect))
+            .unwrap();
+        s.add_sample(&mut d, at(5.0, 5.0, 1.0)).unwrap();
+        assert!(s.add_sample(&mut d, at(6.0, 5.0, 0.5)).is_err());
+        assert!(!d.has_active_stroke());
+        assert_eq!(snapshot(&d, l), saved, "{effect:?}");
+    }
 }

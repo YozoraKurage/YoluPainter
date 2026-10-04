@@ -3,14 +3,17 @@
 
 // 画素の格子を (x, y) の添字で見比べる試験なので、添字の範囲の繰り返しの方が読みやすい。
 #![allow(clippy::needless_range_loop)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use yolu_core::glam::DVec2;
+use yolu_core::material::ChannelPaint;
 use yolu_core::selection::{
     DEFAULT_WORKING_BUDGET_BYTES as BUDGET, MAX_MODIFY_RADIUS, MAX_POLYGON_POINTS,
 };
 use yolu_core::{
-    Brush, BrushSettings, CanvasSymmetry, Channel, CoreError, Document, LayerId, Rgba8,
-    SelectionCombine, SelectionMask, SymmetryMode, TileCoord,
+    Brush, BrushEffect, BrushPixel, BrushSample, BrushSettings, BrushTip, CanvasSymmetry, Channel,
+    CoreError, Document, DualBrush, DualBrushMode, LayerId, LayerLocks, Rgba8, SelectionCombine,
+    SelectionMask, SymmetryMode, TileCoord,
 };
 
 fn doc(w: u32, h: u32, tile: u32) -> Document {
@@ -1250,6 +1253,593 @@ fn symmetry_refuses_bad_settings_smudge_and_too_much_work() {
     assert_eq!(r, Err(CoreError::WorkingBudgetExceeded));
     assert!(!big.has_active_stroke(), "取り消した");
     assert_eq!(big.undo_count(), 0);
+}
+
+// ───────── 2D の対称の細部（C# の CanvasSymmetryTests） ─────────
+
+/// C# の CanvasSymmetryTests.Brush: 半径 4・硬さ 0.6・流量 0.5・筆圧の割り当てなし、中心 (32, 32)。
+fn sym_brush(mode: SymmetryMode, count: u32) -> Brush {
+    let mut b = Brush::from(BrushSettings {
+        radius: 4.0,
+        hardness: 0.6,
+        flow: 0.5,
+        pressure_size: false,
+        pressure_opacity: false,
+        ..BrushSettings::default()
+    });
+    b.symmetry = CanvasSymmetry::new(mode, DVec2::new(32.0, 32.0), count).unwrap();
+    b
+}
+fn sym_dot(d: &mut Document, l: LayerId, b: &Brush, x: f64, y: f64) {
+    let mut s = d.begin_brush_stroke(l, b).unwrap();
+    s.add_sample(d, BrushSample::new(x, y, 1.0, 0.0, DVec2::ZERO).unwrap())
+        .unwrap();
+    d.end_stroke(s).unwrap();
+}
+fn sym_doc(side: u32) -> (Document, LayerId) {
+    let mut d = doc(side, side, 16);
+    let l = d.add_layer("paint").unwrap();
+    d.clear_history().unwrap();
+    (d, l)
+}
+fn composite_color(d: &Document) -> Vec<u8> {
+    d.composite(d.bounds()).unwrap()
+}
+fn channel_bytes(d: &Document, l: LayerId, c: Channel) -> Vec<u8> {
+    d.layer(l).unwrap().surface(c).unwrap().to_canvas_bytes()
+}
+
+/// C# の TransformsHaveTheRequestedCentersAndReturnByTheirInverse: 縦・横・両方・放射状 7 の写しの数と、中心 (11.25, 7.75) のまわりの
+/// 写し先（放射状は回転の式、縦は x = 4、横は y = 13）。逆写しで元へ戻る。
+#[test]
+fn transforms_have_the_requested_centers_and_return_by_their_inverse() {
+    for (mode, count, copies) in [
+        (SymmetryMode::Vertical, 2, 2),
+        (SymmetryMode::Horizontal, 2, 2),
+        (SymmetryMode::Both, 4, 4),
+        (SymmetryMode::Radial, 7, 7),
+    ] {
+        let s = CanvasSymmetry::new(mode, DVec2::new(11.25, 7.75), count).unwrap();
+        let t = s.transforms().unwrap();
+        assert_eq!(t.len(), copies, "{mode:?}");
+        for (i, t) in t.iter().enumerate() {
+            let (x, y) = t.map(18.5, 2.5);
+            if mode == SymmetryMode::Radial {
+                let a = 2.0 * std::f64::consts::PI * i as f64 / count as f64;
+                assert!((x - (11.25 + a.cos() * 7.25 + a.sin() * 5.25)).abs() < 1e-12);
+                assert!((y - (7.75 + a.sin() * 7.25 - a.cos() * 5.25)).abs() < 1e-12);
+            } else if i == 1 && mode != SymmetryMode::Horizontal {
+                assert_eq!(x, 4.0);
+            } else if i == 1 {
+                assert_eq!(y, 13.0);
+            }
+            let (ox, oy) = t.inverse(x, y);
+            assert!((ox - 18.5).abs() < 1e-12 && (oy - 2.5).abs() < 1e-12);
+        }
+    }
+}
+
+/// C# の RadialFootprintsMatchAnalyticalCirclesAndUseMaximumCoverage: 放射状 2・3・4・7・16 の足跡は、写した円ごとの被覆率の最大
+/// （独立に書いた式。中心を回した位置・smoothstep の縁）に流量 0.5 を掛けたアルファと ±1 で一致する。
+#[test]
+fn radial_footprints_match_analytical_circles_and_use_maximum_coverage() {
+    for count in [2u32, 3, 4, 7, 16] {
+        let (mut d, l) = sym_doc(64);
+        sym_dot(
+            &mut d,
+            l,
+            &sym_brush(SymmetryMode::Radial, count),
+            20.5,
+            23.5,
+        );
+        let mut painted = 0;
+        for y in 0..64 {
+            for x in 0..64 {
+                let mut largest: f64 = 0.0;
+                for i in 0..count {
+                    let a = 2.0 * std::f64::consts::PI * i as f64 / count as f64;
+                    let cx = 32.0 - 11.5 * a.cos() + 8.5 * a.sin();
+                    let cy = 32.0 - 11.5 * a.sin() - 8.5 * a.cos();
+                    let r = ((x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2)).sqrt()
+                        / 4.0;
+                    let coverage = if r > 1.0 {
+                        0.0
+                    } else if r <= 0.6 {
+                        1.0
+                    } else {
+                        let t = (1.0 - r) / 0.4;
+                        t * t * (3.0 - 2.0 * t)
+                    };
+                    largest = largest.max(coverage);
+                }
+                let alpha = (largest * 0.5 * 255.0 + 0.5).floor() as i32;
+                let got = px(&d, l, x, y).a as i32;
+                assert!(
+                    (got - alpha).abs() <= 1,
+                    "{count} {x},{y}: {got} と {alpha}"
+                );
+                painted += (got > 0) as usize;
+            }
+        }
+        assert!(painted > 20 * count as usize / 2, "{count} は塗れている");
+    }
+}
+
+/// C# の AsymmetricTipsAreReflectedWithTheirShape: 左右非対称の筆先（3×2・角度 31°・真円率 0.7）の縦・横・両方の写しは、元の
+/// ダブを画布の中心で鏡映した形そのもの（元の足跡と、その鏡映の最大）。
+#[test]
+fn asymmetric_tips_are_reflected_with_their_shape() {
+    for mode in [
+        SymmetryMode::Vertical,
+        SymmetryMode::Horizontal,
+        SymmetryMode::Both,
+    ] {
+        let mut b = sym_brush(SymmetryMode::None, 2);
+        b.tip.image = Some(std::sync::Arc::new(
+            BrushTip::new("asymmetric", 3, 2, vec![0, 80, 255, 255, 20, 0]).unwrap(),
+        ));
+        b.tip.angle = 31.0;
+        b.tip.roundness = 0.7;
+        let (mut single, a) = sym_doc(64);
+        sym_dot(&mut single, a, &b, 20.5, 23.5);
+        b.symmetry = CanvasSymmetry::new(mode, DVec2::new(32.0, 32.0), 2).unwrap();
+        let (mut symmetric, c) = sym_doc(64);
+        sym_dot(&mut symmetric, c, &b, 20.5, 23.5);
+        let source = composite_color(&single);
+        let result = composite_color(&symmetric);
+        let alpha = |x: usize, y: usize| source[(y * 64 + x) * 4 + 3] as i32;
+        let mut mirrored_differs = false;
+        for y in 0..64 {
+            for x in 0..64 {
+                let mut expected = alpha(x, y);
+                if mode != SymmetryMode::Horizontal {
+                    expected = expected.max(alpha(63 - x, y));
+                }
+                if mode != SymmetryMode::Vertical {
+                    expected = expected.max(alpha(x, 63 - y));
+                }
+                if mode == SymmetryMode::Both {
+                    expected = expected.max(alpha(63 - x, 63 - y));
+                }
+                let got = result[(y * 64 + x) * 4 + 3] as i32;
+                assert!((got - expected).abs() <= 1, "{mode:?} {x},{y}");
+                mirrored_differs |= (alpha(x, y) - alpha(63 - x, y)).abs() > 20;
+            }
+        }
+        assert!(
+            mirrored_differs,
+            "{mode:?} 筆先が左右非対称でなければ試験にならない"
+        );
+    }
+}
+
+/// C# の CoincidentCopiesPaintOnceAndSettingsAreFrozen のうち重なりの分: 中心に打つと、両方・放射状 16 の全部の写しが同じ場所に
+/// 重なる。重なりは 1 回だけ塗る（流量 0.5 が 16 回掛からない）ので対称なしの 1 ダブと同じバイト。Undo 1 回で消え、Redo で同じバイト
+/// に戻る。C# の「設定はストロークの開始で固定される」は、Rust ではブラシを借りるだけでストロークへ届く経路が無く（型が保証する）、
+/// 試験にならないので置かない。
+#[test]
+fn coincident_copies_paint_once() {
+    for mode in [SymmetryMode::Both, SymmetryMode::Radial] {
+        let (mut single, a) = sym_doc(64);
+        let mut plain = sym_brush(SymmetryMode::None, 2);
+        plain.base.hardness = 1.0;
+        sym_dot(&mut single, a, &plain, 32.0, 32.0);
+        let (mut symmetric, c) = sym_doc(64);
+        let mut brush = sym_brush(mode, 16);
+        brush.base.hardness = 1.0;
+        let mut s = symmetric.begin_brush_stroke(c, &brush).unwrap();
+        s.add_sample(
+            &mut symmetric,
+            BrushSample::new(32.0, 32.0, 1.0, 0.0, DVec2::ZERO).unwrap(),
+        )
+        .unwrap();
+        symmetric.end_stroke(s).unwrap();
+        let painted = composite_color(&symmetric);
+        assert_eq!(painted, composite_color(&single), "{mode:?}");
+        assert!(painted.iter().any(|b| *b != 0));
+        assert_eq!(symmetric.undo_count(), 1);
+        assert!(symmetric.undo().unwrap());
+        assert!(composite_color(&symmetric).iter().all(|b| *b == 0));
+        assert!(symmetric.redo().unwrap());
+        assert_eq!(composite_color(&symmetric), painted, "{mode:?}");
+    }
+}
+
+/// C# の BlurReadsOneFrozenFrameForAllOverlappingCopies: 写し同士が重なるぼかし（両方・半径 8 の 4 つの円が重なる）は、どの
+/// 画素を書くより前に凍結した 1 枚の枠を読む。対称なしで、4 つの円の和を 1 つのダブとして渡した結果と同じバイト、Undo は 1 段。
+#[test]
+fn blur_reads_one_frozen_frame_for_all_overlapping_copies() {
+    let layer = |d: &mut Document| {
+        let l = d.add_layer("paint").unwrap();
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                d.set_pixel(
+                    l,
+                    x,
+                    y,
+                    Rgba8::new((x % 2 * 200) as u8, (y % 3 * 90) as u8, 50, 255),
+                )
+                .unwrap();
+            }
+        }
+        d.clear_history().unwrap();
+        l
+    };
+    let mut d = doc(64, 64, 16);
+    let id = layer(&mut d);
+    let mut reference = doc(64, 64, 16);
+    let rid = layer(&mut reference);
+    let mut brush = sym_brush(SymmetryMode::Both, 2);
+    brush.base.radius = 8.0;
+    brush.base.hardness = 1.0;
+    brush.effect = BrushEffect::BLUR;
+    sym_dot(&mut d, id, &brush, 29.0, 30.0);
+    brush.symmetry = CanvasSymmetry::default();
+    let mut pixels = Vec::new();
+    for y in 0..64i64 {
+        for x in 0..64i64 {
+            let inside = [29.0, 35.0].iter().any(|cx| {
+                [30.0, 34.0]
+                    .iter()
+                    .any(|cy| (x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2) <= 64.0)
+            });
+            if inside {
+                pixels.push(BrushPixel {
+                    x,
+                    y,
+                    coverage: 1.0,
+                });
+            }
+        }
+    }
+    assert!(pixels.len() > 300);
+    let mut s = reference.begin_brush_stroke(rid, &brush).unwrap();
+    s.apply_dab(&mut reference, &pixels, DVec2::new(29.0, 30.0), 1.0)
+        .unwrap();
+    reference.end_stroke(s).unwrap();
+    assert_eq!(composite_color(&d), composite_color(&reference));
+    assert_ne!(
+        composite_color(&d),
+        {
+            let mut untouched = doc(64, 64, 16);
+            layer(&mut untouched);
+            composite_color(&untouched)
+        },
+        "ぼかしは画素を変えている"
+    );
+    assert_eq!(d.undo_count(), 1);
+}
+
+/// C# の DualBrushCopiesFollowTheSameAxes と AShiftedFractionalMirrorAxisUsesPixelCoordinates: デュアルブラシの 2 つ目の筆先も
+/// 同じ軸で写る（両方で左右対称）。小数の中心 23.25 の縦の軸は画素の座標で、(15.5, 20.5) の円が x = 31 の円へ写る。
+#[test]
+fn dual_copies_follow_the_axes_and_a_fractional_axis_uses_pixel_coordinates() {
+    let (mut d, l) = sym_doc(64);
+    let mut b = sym_brush(SymmetryMode::Both, 2);
+    b.dual = Some(DualBrush {
+        radius: 3.0,
+        hardness: 1.0,
+        mode: DualBrushMode::Multiply,
+        ..DualBrush::default()
+    });
+    sym_dot(&mut d, l, &b, 20.5, 23.5);
+    let p = composite_color(&d);
+    assert!(p.iter().any(|v| *v != 0));
+    for y in 0..64 {
+        for x in 0..64 {
+            assert_eq!(
+                p[(y * 64 + x) * 4 + 3],
+                p[(y * 64 + 63 - x) * 4 + 3],
+                "{x},{y}"
+            );
+            assert_eq!(
+                p[(y * 64 + x) * 4 + 3],
+                p[((63 - y) * 64 + x) * 4 + 3],
+                "{x},{y}"
+            );
+        }
+    }
+    let (mut d, l) = sym_doc(64);
+    let mut b = sym_brush(SymmetryMode::Vertical, 2);
+    b.symmetry = CanvasSymmetry::new(SymmetryMode::Vertical, DVec2::new(23.25, 32.0), 2).unwrap();
+    b.base.hardness = 1.0;
+    sym_dot(&mut d, l, &b, 15.5, 20.5);
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let (dy, dx, mx) = (
+                y as f64 + 0.5 - 20.5,
+                x as f64 + 0.5 - 15.5,
+                x as f64 + 0.5 - 31.0,
+            );
+            let inside = dx * dx + dy * dy <= 16.0 || mx * mx + dy * dy <= 16.0;
+            assert_eq!(px(&d, l, x, y).a, if inside { 128 } else { 0 }, "{x},{y}");
+        }
+    }
+}
+
+/// C# の MaterialChannelsSelectionMaskAndLocksKeepTheirContracts: 対称のマテリアルのストロークは選択範囲で切り（写しだけが範囲の
+/// 中に落ちる）、全チャンネルへ同じ写しを置き、Undo 1 回。画像のロックは断り、同じロックのままマスクのストロークは写しを置く。
+#[test]
+fn symmetric_material_selection_mask_and_locks_keep_their_contracts() {
+    let (mut d, l) = sym_doc(64);
+    let mut b = sym_brush(SymmetryMode::Both, 2);
+    b.base.flow = 1.0;
+    d.set_selection(Some(SelectionMask::rectangle(&d, 32, 0, 64, 64)))
+        .unwrap();
+    d.clear_history().unwrap();
+    let material = [
+        ChannelPaint::new(Channel::Color, Rgba8::new(200, 20, 10, 255)),
+        ChannelPaint::new(Channel::Roughness, Rgba8::new(90, 90, 90, 255)),
+    ];
+    let mut s = d.begin_material_brush_stroke(l, &material, &b).unwrap();
+    s.add_sample(
+        &mut d,
+        BrushSample::new(20.5, 23.5, 1.0, 0.0, DVec2::ZERO).unwrap(),
+    )
+    .unwrap();
+    d.end_stroke(s).unwrap();
+    assert_eq!(px(&d, l, 20, 23).a, 0, "元のダブは選択範囲の外");
+    assert_eq!(px(&d, l, 43, 23).r, 200);
+    let rough = d
+        .layer(l)
+        .unwrap()
+        .pixel(Channel::Roughness, 43, 23)
+        .unwrap();
+    assert_eq!(rough.r, 90);
+    assert_eq!(
+        channel_bytes(&d, l, Channel::Color)
+            .chunks_exact(4)
+            .filter(|p| p[3] > 0)
+            .count(),
+        channel_bytes(&d, l, Channel::Roughness)
+            .chunks_exact(4)
+            .filter(|p| p[3] > 0)
+            .count(),
+        "全チャンネルが同じ写しの足跡"
+    );
+    assert_eq!(d.undo_count(), 1);
+    d.undo().unwrap();
+    assert!(composite_color(&d).iter().all(|b| *b == 0));
+    d.redo().unwrap();
+    // 画像のロックは断り、何も変えない。マスクのストロークは同じロックのまま写しを置く（マスクは画像のロックの対象ではない）
+    d.add_layer_mask(l).unwrap();
+    d.set_layer_locks(l, LayerLocks::PIXELS).unwrap();
+    d.clear_history().unwrap();
+    let before = composite_color(&d);
+    assert!(matches!(
+        d.begin_brush_stroke(l, &b),
+        Err(CoreError::LayerLocked { .. })
+    ));
+    assert_eq!((composite_color(&d), d.undo_count()), (before, 0));
+    let mut s = d.begin_brush_mask_stroke(l, &b).unwrap();
+    s.add_sample(
+        &mut d,
+        BrushSample::new(20.5, 23.5, 1.0, 0.0, DVec2::ZERO).unwrap(),
+    )
+    .unwrap();
+    d.end_stroke(s).unwrap();
+    assert_eq!(d.layer(l).unwrap().locks(), LayerLocks::PIXELS);
+    let hide = |x: u32, y: u32| {
+        d.layer(l)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .pixel(x, y)
+            .unwrap()
+            .a
+    };
+    assert!(hide(43, 23) > 0 && hide(20, 23) == 0);
+    assert_eq!(d.undo_count(), 1);
+}
+
+/// C# の CancellationAndBudgetRefusalRestoreEveryChannel: 対称のマテリアルのストロークの取消も予算の拒否も、全チャンネルを元へ戻して
+/// 段を残さない。
+#[test]
+fn symmetric_material_cancel_and_budget_refusal_restore_every_channel() {
+    for budget in [false, true] {
+        let (mut d, l) = sym_doc(64);
+        let before = (d.allocated_bytes(), d.undo_count(), d.has_active_stroke());
+        let material = [
+            ChannelPaint::new(Channel::Color, Rgba8::new(200, 20, 10, 255)),
+            ChannelPaint::new(Channel::Height, Rgba8::new(90, 90, 90, 255)),
+        ];
+        if budget {
+            d.set_stroke_budget_bytes(4096).unwrap();
+        }
+        let b = sym_brush(SymmetryMode::Both, 2);
+        let mut s = d.begin_material_brush_stroke(l, &material, &b).unwrap();
+        let sample = BrushSample::new(20.5, 23.5, 1.0, 0.0, DVec2::ZERO).unwrap();
+        if budget {
+            assert_eq!(
+                s.add_sample(&mut d, sample),
+                Err(CoreError::StrokeBudgetExceeded)
+            );
+            assert!(!d.has_active_stroke());
+        } else {
+            s.add_sample(&mut d, sample).unwrap();
+            assert!(d.active_stroke_stats().unwrap().rollback_bytes > 0);
+            d.cancel_stroke(s);
+        }
+        assert!(d.active_stroke_stats().is_none());
+        assert_eq!(
+            (d.allocated_bytes(), d.undo_count(), d.has_active_stroke()),
+            before
+        );
+        assert!(!d.layer(l).unwrap().is_channel_enabled(Channel::Height));
+        assert!(composite_color(&d).iter().all(|b| *b == 0));
+    }
+}
+
+/// C# の TransparencyLockPreservesEachChannelsAlphaOnSymmetryCopies: 透明部分のロックは、対称の写しの全部が全チャンネルのアルファ
+/// （と透明な画素の RGB）を守る。色の部分だけが写しの全部に塗られ、Undo 1 回。
+#[test]
+fn transparency_lock_preserves_each_channels_alpha_on_every_symmetry_copy() {
+    let (mut d, l) = sym_doc(64);
+    d.set_channel_enabled(l, Channel::Height, true).unwrap();
+    for c in [Channel::Color, Channel::Height] {
+        for y in 0..64u32 {
+            for x in 0..64u32 {
+                d.set_channel_pixel(l, c, x, y, Rgba8::new(10, 20, 30, (x % 3 * 80) as u8))
+                    .unwrap();
+            }
+        }
+    }
+    let before = composite_color(&d);
+    let height_before = channel_bytes(&d, l, Channel::Height);
+    d.set_layer_locks(l, LayerLocks::TRANSPARENCY).unwrap();
+    d.clear_history().unwrap();
+    let material = [
+        ChannelPaint::new(Channel::Color, Rgba8::new(230, 210, 190, 255)),
+        ChannelPaint::new(Channel::Height, Rgba8::new(200, 200, 200, 255)),
+    ];
+    let mut s = d
+        .begin_material_brush_stroke(l, &material, &sym_brush(SymmetryMode::Both, 2))
+        .unwrap();
+    s.add_sample(
+        &mut d,
+        BrushSample::new(20.5, 23.5, 1.0, 0.0, DVec2::ZERO).unwrap(),
+    )
+    .unwrap();
+    d.end_stroke(s).unwrap();
+    let after = composite_color(&d);
+    for i in (0..before.len()).step_by(4) {
+        assert_eq!(
+            after[i + 3],
+            before[i + 3],
+            "アルファは変わらない {}",
+            i / 4
+        );
+        if before[i + 3] == 0 {
+            assert_eq!(
+                px(&d, l, (i / 4 % 64) as u32, (i / 4 / 64) as u32),
+                Rgba8::new(10, 20, 30, 0),
+                "透明な画素の RGB も守る"
+            );
+        }
+    }
+    let height = channel_bytes(&d, l, Channel::Height);
+    for (i, (a, b)) in height
+        .chunks_exact(4)
+        .zip(height_before.chunks_exact(4))
+        .enumerate()
+    {
+        assert_eq!(a[3], b[3], "Height のアルファも変わらない {i}");
+    }
+    assert_ne!(height, height_before);
+    let h = d.layer(l).unwrap().pixel(Channel::Height, 20, 23).unwrap();
+    assert_ne!(h.r, 10, "不透明な画素は塗れている");
+    assert_ne!(after, before);
+    // 写しの全部に効いている: 4 つの写しの中心の画素（x % 3 が 0 でないのでアルファがある）が全チャンネルで塗られている
+    for (x, y) in [(20u32, 23u32), (43, 23), (20, 40), (43, 40)] {
+        for c in [Channel::Color, Channel::Height] {
+            let p = d.layer(l).unwrap().pixel(c, x, y).unwrap();
+            assert!(
+                p.r > 10 && p.a == (x % 3 * 80) as u8,
+                "写し ({x},{y}) {c:?} {p:?}"
+            );
+        }
+    }
+    assert_eq!(d.undo_count(), 1);
+}
+
+// ───────── 層への勾配（C# の RegionToolTests） ─────────
+
+/// C# の RegionToolTests.GradientsRunBetweenTheirEndsAndFadeWithoutDarkening: 線形は両端の色へ走り、列に沿って一定。透明へ消える
+/// 勾配は乗算済みアルファで補間するので色（緑 200）を保ったままアルファだけが半分になり、暗くならない。放射状は中心の画素がほぼ
+/// 始点の色で、対称。範囲外の不透明度・有限でない端は断って何も変えない。
+#[test]
+fn gradients_run_between_their_ends_and_fade_without_darkening() {
+    use yolu_core::material::GradientSettings;
+    let horizontal = |from: Rgba8, to: Rgba8| GradientSettings {
+        start: DVec2::new(0.0, 0.0),
+        end: DVec2::new(64.0, 0.0),
+        from,
+        to,
+        ..GradientSettings::default()
+    };
+    let (mut d, l) = sym_doc(64);
+    let g = horizontal(Rgba8::new(255, 0, 0, 255), Rgba8::new(0, 0, 255, 255));
+    assert!(d.gradient(l, Channel::Color, &g, None, false).unwrap());
+    assert!(px(&d, l, 0, 5).r > 245);
+    assert!(px(&d, l, 63, 5).b > 245);
+    for x in 0..64 {
+        for y in [5, 17, 40, 63] {
+            assert_eq!(
+                px(&d, l, x, y),
+                px(&d, l, x, 0),
+                "横の勾配は列に沿って一定 {x},{y}"
+            );
+        }
+    }
+    let reds: Vec<u8> = (0..64).map(|x| px(&d, l, x, 5).r).collect();
+    assert!(
+        reds.windows(2).all(|w| w[0] >= w[1]),
+        "赤は端に向かって単調に減る"
+    );
+    assert_eq!(d.undo_count(), 1);
+    d.undo().unwrap();
+    assert_eq!(d.allocated_bytes(), 0);
+
+    let (mut e, fade) = sym_doc(64);
+    let g = horizontal(Rgba8::new(0, 200, 0, 255), Rgba8::TRANSPARENT);
+    e.gradient(fade, Channel::Color, &g, None, false).unwrap();
+    let mid = px(&e, fade, 32, 1);
+    assert_eq!(mid.g, 200, "透明へ消えても色を保つ（乗算済みの補間）");
+    assert!((120..=135).contains(&mid.a), "{mid:?}");
+    for x in 0..64 {
+        let p = px(&e, fade, x, 1);
+        if p.a > 0 {
+            assert_eq!((p.r, p.g, p.b), (0, 200, 0), "暗くならない {x}");
+        }
+    }
+
+    let (mut r, radial) = sym_doc(64);
+    let g = GradientSettings {
+        shape: yolu_core::material::GradientShape::Radial,
+        start: DVec2::new(32.0, 32.0),
+        end: DVec2::new(32.0, 64.0),
+        from: Rgba8::new(255, 255, 255, 255),
+        to: Rgba8::new(0, 0, 0, 255),
+        ..GradientSettings::default()
+    };
+    r.gradient(radial, Channel::Color, &g, None, false).unwrap();
+    assert!(
+        px(&r, radial, 32, 32).r > 245,
+        "中心の画素（中心で測る）はほぼ始点の色"
+    );
+    assert_eq!(
+        px(&r, radial, 32, 16),
+        px(&r, radial, 16, 32),
+        "放射状は対称"
+    );
+    assert!(px(&r, radial, 32, 63).r < 10, "終点の側は終点の色");
+
+    let before = (r.allocated_bytes(), r.undo_count(), r.revision());
+    for bad in [
+        GradientSettings {
+            opacity: 2.0,
+            ..GradientSettings::default()
+        },
+        GradientSettings {
+            opacity: -0.1,
+            ..GradientSettings::default()
+        },
+        GradientSettings {
+            start: DVec2::new(f64::NAN, 0.0),
+            ..GradientSettings::default()
+        },
+        GradientSettings {
+            end: DVec2::new(0.0, f64::INFINITY),
+            ..GradientSettings::default()
+        },
+    ] {
+        assert!(matches!(
+            r.gradient(radial, Channel::Color, &bad, None, false),
+            Err(CoreError::InvalidArgument(_))
+        ));
+    }
+    assert_eq!((r.allocated_bytes(), r.undo_count(), r.revision()), before);
 }
 
 // ───────── 予算・壊れた入力 ─────────

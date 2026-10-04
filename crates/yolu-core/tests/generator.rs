@@ -1245,3 +1245,160 @@ fn generated_scalars_are_finite_unit_values_and_ramps_give_mapped() {
         }
     }
 }
+
+/// C# の AnchorTests.ChainsOfAnchorsAreFollowed: Anchor が別の Anchor の読む層を読む連鎖。L1（描いた Height）の Anchor 1 を、
+/// L2（Height 10 の塗りつぶし）のフィルターが Add で読み、L2 の Anchor 2 を L3 のフィルターが読み、…と 4 段つなぎ、最後の
+/// Anchor をプローブ層のマスクが読む。どの段の値も「その層までの合成」を読んだ値で、L1 に 1 画素描くと、どの段の出力にも
+/// プローブのマスクにも、その 1 画素だけが（段ごとに 10 ずつ足されて）現れる。
+#[test]
+fn chains_of_anchors_are_followed() {
+    use anchor::*;
+    const AW: u32 = 8;
+    const AH: u32 = 6;
+    const LINKS: usize = 4;
+    let grey = |v: u8| Rgba8::new(v, v, v, 255);
+    let solid = |v: u8| -> Vec<u8> { (0..AW * AH).flat_map(|_| grey(v).to_array()).collect() };
+    // 層の番号（下から）: 0 下地、1 L1、2.. 連鎖の層、最後がプローブ。Anchor の ID は置かれた層の番号 + 1。
+    let points: Vec<Point> = (1..=LINKS + 1)
+        .map(|host| Point {
+            id: host as u128 + 1,
+            host,
+            placement: Placement::Layer,
+        })
+        .collect();
+    validate_points(&points, LINKS + 3).unwrap();
+    let run = |painted: &[(u32, u32)]| -> (Vec<Vec<u8>>, Vec<u8>) {
+        let mut l1 = vec![0u8; (AW * AH * 4) as usize];
+        for (x, y) in painted {
+            l1[((y * AW + x) * 4) as usize..][..4].copy_from_slice(&grey(128).to_array());
+        }
+        let l1_image = Image::new(&l1, AW, AH).unwrap();
+        let fill = solid(10);
+        let fill_image = Image::new(&fill, AW, AH).unwrap();
+        let reading = |id: u128, blend: Blend| {
+            let mut s = Settings::new(Kind::Anchor);
+            s.blend = blend;
+            s.anchor = Reference {
+                id,
+                channel: Channel::Height,
+                read: ReadMode::Value,
+            };
+            s
+        };
+        let mut outputs: Vec<Vec<u8>> = Vec::new();
+        // 連鎖の層 k（2 から）は、その下の Anchor（層 k − 1 の Anchor）を Add で読む
+        for k in 2..2 + LINKS {
+            let next = {
+                let images: Vec<Image> = outputs
+                    .iter()
+                    .map(|o| Image::new(o, AW, AH).unwrap())
+                    .collect();
+                let mut layers = vec![
+                    Layer::new(Content::Fill(grey(40))),
+                    Layer::new(Content::Pixels(&l1_image)),
+                ];
+                layers.extend(images.iter().map(|i| Layer::new(Content::Pixels(i))));
+                assert_eq!(layers.len(), k, "下の層だけで Anchor の面を作る");
+                let host = k - 1;
+                let plan = Plan::new(&layers, host, (AW, AH), ChannelKind::Scalar).unwrap();
+                let sample = LayerSample {
+                    source: &plan,
+                    read: Read::Scalar,
+                };
+                let reader = reading(host as u128 + 1, Blend::Add);
+                assert_eq!(
+                    reader.anchor.resolve(&points, k, LINKS + 3),
+                    Ok(points[host - 1])
+                );
+                let bound =
+                    BoundGenerator::bind(&reader, &[], None, (AW, AH), Ok(&sample)).unwrap();
+                assert!(bound.inactive().is_none(), "連鎖の段 {k} は有効");
+                let out = evaluate(
+                    &fill_image,
+                    &bound,
+                    Rect::new(0, 0, AW, AH),
+                    Target::Scalar,
+                    1.0,
+                    &Options::default(),
+                )
+                .unwrap();
+                out.pixels
+            };
+            outputs.push(next);
+        }
+        // プローブ: マスクが最後の連鎖の層の Anchor を読む（置換）
+        let images: Vec<Image> = outputs
+            .iter()
+            .map(|o| Image::new(o, AW, AH).unwrap())
+            .collect();
+        let mut layers = vec![
+            Layer::new(Content::Fill(grey(40))),
+            Layer::new(Content::Pixels(&l1_image)),
+        ];
+        layers.extend(images.iter().map(|i| Layer::new(Content::Pixels(i))));
+        let host = layers.len() - 1;
+        let plan = Plan::new(&layers, host, (AW, AH), ChannelKind::Scalar).unwrap();
+        let sample = LayerSample {
+            source: &plan,
+            read: Read::Scalar,
+        };
+        let probe = reading(host as u128 + 1, Blend::Replace);
+        assert_eq!(
+            probe.anchor.resolve(&points, LINKS + 2, LINKS + 3),
+            Ok(points[host - 1])
+        );
+        let bound = BoundGenerator::bind(&probe, &[], None, (AW, AH), Ok(&sample)).unwrap();
+        let empty = vec![0u8; (AW * AH * 4) as usize];
+        let mask = evaluate(
+            &Image::new(&empty, AW, AH).unwrap(),
+            &bound,
+            Rect::new(0, 0, AW, AH),
+            Target::Mask,
+            1.0,
+            &Options::default(),
+        )
+        .unwrap();
+        (outputs, mask.pixels)
+    };
+    let (plain, plain_mask) = run(&[]);
+    let (painted, painted_mask) = run(&[(3, 2)]);
+    for (k, (a, b)) in plain.iter().zip(&painted).enumerate() {
+        for i in 0..(AW * AH) as usize {
+            let (x, y) = (i as u32 % AW, i as u32 / AW);
+            // 段 k の出力は、下地 40（描いた画素は 128）に 10 を k + 1 回足した値
+            let base = if (x, y) == (3, 2) { 128 } else { 40 };
+            assert_eq!(b[i * 4], base + 10 * (k as u8 + 1), "段 {k} ({x},{y})");
+            assert_eq!(a[i * 4], 40 + 10 * (k as u8 + 1), "段 {k} ({x},{y}) 描く前");
+            assert_eq!(a[i * 4 + 3], 255);
+        }
+        let changed: Vec<usize> = (0..(AW * AH) as usize)
+            .filter(|i| a[i * 4..i * 4 + 4] != b[i * 4..i * 4 + 4])
+            .collect();
+        assert_eq!(
+            changed,
+            vec![(2 * AW + 3) as usize],
+            "段 {k} は 1 画素だけ変わる"
+        );
+    }
+    // プローブのマスクの隠す量は 255 − 最後の段の値。描いた画素は 4 つの Anchor を通って現れる
+    for i in 0..(AW * AH) as usize {
+        let painted_here = i == (2 * AW + 3) as usize;
+        let last = if painted_here { 128 } else { 40 } + 10 * LINKS as u8;
+        assert_eq!(painted_mask[i * 4 + 3], 255 - last, "マスク {i}");
+        assert_eq!(
+            plain_mask[i * 4 + 3],
+            255 - (40 + 10 * LINKS as u8),
+            "マスク {i} 描く前"
+        );
+        assert_eq!(
+            &painted_mask[i * 4..i * 4 + 3],
+            &[0, 0, 0],
+            "マスクは RGB を持たない"
+        );
+    }
+    assert_ne!(
+        painted_mask[(2 * AW + 3) as usize * 4 + 3],
+        painted_mask[3],
+        "描いた画素のマスクだけが違う（4 つの Anchor を通して）"
+    );
+}

@@ -1219,6 +1219,74 @@ fn ungrouping_holds_the_groups_pixels_in_the_history_and_budget() {
     );
 }
 
+/// C# の CoreTests.SourceBudgetIsAlsoEnforcedByLayerRestore: ラスター層を消したあとで元画素の予算を縮めると、Undo は層の画素・
+/// 別のチャンネル・マスクをまとめて断る（一部だけ戻さない）。層は戻らず、履歴・版・通し番号も変わらない。予算を戻せば層ごと戻る。
+#[test]
+fn removing_a_raster_layer_then_a_reduced_budget_refuses_the_undo_whole_until_it_is_restored() {
+    let mut d = Document::with_tile_size(16, 16, 4).unwrap();
+    d.add_layer("keep").unwrap();
+    let a = d.add_layer("A").unwrap();
+    d.set_pixel(a, 1, 1, Rgba8::new(10, 20, 30, 255)).unwrap();
+    d.set_channel_enabled(a, Channel::Roughness, true).unwrap();
+    d.set_channel_pixel(a, Channel::Roughness, 5, 6, Rgba8::new(7, 8, 9, 255))
+        .unwrap();
+    d.add_layer_mask(a).unwrap();
+    d.set_mask_pixel(a, 9, 9, 200).unwrap();
+    d.clear_history().unwrap();
+    let painted: Vec<_> = d
+        .channels()
+        .into_iter()
+        .map(|c| d.composite_channel(c, d.bounds()).unwrap())
+        .collect();
+    assert_eq!(d.allocated_bytes(), 3 * 64);
+    d.remove_layer(a).unwrap();
+    assert_eq!(d.allocated_bytes(), 0);
+    d.set_source_budget_bytes(0).unwrap();
+    let state = |d: &Document| {
+        (
+            shape(d),
+            d.allocated_bytes(),
+            (d.undo_count(), d.redo_count(), d.history_bytes()),
+            (d.revision(), d.change_serial()),
+        )
+    };
+    let before = state(&d);
+    assert_eq!(before.2 .0, 1);
+    // 0 でも、層の分に 1 バイト足りなくても、断って何も変えない。3 面の分（192）あれば通る
+    for budget in [0, 64, 128, 191] {
+        d.set_source_budget_bytes(budget).unwrap();
+        assert_eq!(d.undo(), Err(CoreError::SourceBudgetExceeded), "{budget}");
+        assert_eq!(state(&d), before, "{budget}");
+        assert!(d.layer(a).is_none());
+    }
+    d.set_source_budget_bytes(192).unwrap();
+    assert_eq!(d.undo(), Ok(true));
+    assert_eq!(shape(&d), "keep A");
+    assert_eq!(d.layers()[1].id(), a);
+    assert_eq!(d.allocated_bytes(), 192);
+    let restored: Vec<_> = d
+        .channels()
+        .into_iter()
+        .map(|c| d.composite_channel(c, d.bounds()).unwrap())
+        .collect();
+    assert_eq!(restored, painted);
+    assert_eq!(
+        d.layer(a)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .pixel(9, 9)
+            .unwrap()
+            .a,
+        200
+    );
+    // やり直し（もう一度消す）は増えないので、どの予算でも通る
+    d.set_source_budget_bytes(192).unwrap();
+    assert_eq!(d.redo(), Ok(true));
+    assert!(d.layer(a).is_none());
+}
+
 #[test]
 fn a_plain_stack_is_raster_layers_without_groups_masks_or_channel_blends() {
     let mut d = Document::with_tile_size(8, 8, 8).unwrap();
