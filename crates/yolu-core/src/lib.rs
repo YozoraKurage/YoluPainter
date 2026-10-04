@@ -39,6 +39,7 @@ mod adjust;
 pub mod blend;
 pub mod brush;
 mod composite;
+pub mod curve;
 mod document;
 pub mod effects;
 mod error;

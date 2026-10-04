@@ -3,22 +3,23 @@
 //!
 //! - 分岐点は、何も無い所を押すと足し（その位置のランプの色・不透明度で）、ドラッグで動かし、右クリックか、行の外へドラッグして離すと消す
 //!   （2 つは残す）。ひし形は中点を動かす。ドラッグは下書きに溜め、離したところで 1 回の変更として返す（Esc は元のまま。文書も履歴も触らない）。
-//! - カーブは、点の無い所を押すと点を足してそのまま動かせ、点をドラッグで動かし、右クリックか枠の外へ離すと消す（両端は横に動かず、消せない）。
+//! - 値のカーブの編集は `ui::curve`（トーンカーブ・筆圧のカーブと共通の部品）へ委ね、ここは `Ramp` の値のカーブへの出し入れだけ。
 //! - 編集の計算（足す・消す・動かす）は `ops` にまとめた純粋な関数で、試験が直に確かめる。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui};
 use yolu_core::generator::{ColorStop, CurvePoint, OpacityStop, Ramp};
 use yolu_core::Rgba8;
 
+use super::curve;
 use super::theme as t;
-use super::widgets::{checker, fill, outline, rounded};
+use super::widgets::{checker, fill, outline};
 
 /// 色・不透明度の分岐点の数の上限と、カーブの点の数の上限、分岐点の最小の間隔（core の `Ramp::new` の検査と同じ）。
 pub const MAX_STOPS: usize = 32;
-pub const MAX_CURVE_POINTS: usize = 16;
+pub const MAX_CURVE_POINTS: usize = curve::MAX_POINTS;
 pub const MIN_GAP: f64 = 0.0001;
 /// カーブの点の最小の横の間隔。
-pub const MIN_CURVE_GAP: f64 = 0.02;
+pub const MIN_CURVE_GAP: f64 = curve::MIN_GAP;
 
 /// 選んでいる分岐点（行と番号）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -166,67 +167,25 @@ pub mod ops {
 
     /// カーブの点を足す（横の間隔を残せる所だけ）。足した番号も返す。
     pub fn add_curve_point(ramp: &Ramp, x: f64, y: f64) -> Option<(Ramp, usize)> {
-        let points = ramp.curve();
-        let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
-        if points.len() >= MAX_CURVE_POINTS
-            || points
-                .iter()
-                .any(|p| (p.x - x).abs() < MIN_CURVE_GAP - 1e-6)
-        {
-            return None;
-        }
-        let mut list = points.to_vec();
-        list.push(CurvePoint { x, y });
-        list.sort_by(|a, b| a.x.total_cmp(&b.x));
-        let index = list.iter().position(|p| p.x == x)?;
-        Some((with_curve(ramp, list)?, index))
+        let (next, k) = curve::ops::add_point(ramp.value_curve(), x, y)?;
+        Some((ramp.with_value_curve(next), k))
     }
 
     /// カーブの点を動かす（両端は縦だけ。ほかは隣との間隔を残す）。
     pub fn move_curve_point(ramp: &Ramp, k: usize, x: f64, y: f64) -> Option<Ramp> {
-        let mut list = ramp.curve().to_vec();
-        let last = list.len().checked_sub(1)?;
-        if k > last {
-            return None;
-        }
-        let y = y.clamp(0.0, 1.0);
-        let x = if k == 0 {
-            0.0
-        } else if k == last {
-            1.0
-        } else {
-            let min = list[k - 1].x + MIN_CURVE_GAP;
-            let max = list[k + 1].x - MIN_CURVE_GAP;
-            x.clamp(min, max.max(min))
-        };
-        list[k] = CurvePoint { x, y };
-        with_curve(ramp, list)
+        Some(ramp.with_value_curve(curve::ops::move_point(ramp.value_curve(), k, x, y)?))
     }
 
     /// カーブの点を消す（両端・2 点は消さない）。
     pub fn remove_curve_point(ramp: &Ramp, k: usize) -> Option<Ramp> {
-        let mut list = ramp.curve().to_vec();
-        if list.len() <= 2 || k == 0 || k + 1 >= list.len() {
-            return None;
-        }
-        list.remove(k);
-        with_curve(ramp, list)
+        Some(ramp.with_value_curve(curve::ops::remove_point(ramp.value_curve(), k)?))
     }
 
     /// カーブのよく使う形（線形・やわらかい・かたい・S 字。Unity 版の筆圧のカーブと同じ点）。
-    pub const CURVE_PRESETS: [&[(f64, f64)]; 4] = [
-        &[(0.0, 0.0), (1.0, 1.0)],
-        &[(0.0, 0.0), (0.3, 0.55), (1.0, 1.0)],
-        &[(0.0, 0.0), (0.55, 0.3), (1.0, 1.0)],
-        &[(0.0, 0.0), (0.3, 0.15), (0.7, 0.85), (1.0, 1.0)],
-    ];
+    pub const CURVE_PRESETS: [&[(f64, f64)]; 4] = curve::ops::PRESETS;
 
     pub fn curve_preset(ramp: &Ramp, index: usize) -> Option<Ramp> {
-        let points = CURVE_PRESETS.get(index)?;
-        with_curve(
-            ramp,
-            points.iter().map(|&(x, y)| CurvePoint { x, y }).collect(),
-        )
+        Some(ramp.with_value_curve(curve::ops::preset(index)?))
     }
 
     /// 選んだ分岐点の位置（行と番号が範囲外なら 0）。
@@ -552,18 +511,10 @@ fn paint_stops(ui: &Ui, r: Rect, ramp: &Ramp, selection: Selection, scalar: bool
 // ───────── 値のカーブの編集 ─────────
 
 /// 曲線の編集の部品の高さ。
-pub const CURVE_HEIGHT: f32 = 116.0;
-const GRAB: f32 = 7.0;
-const REMOVE_MARGIN: f32 = 16.0;
-
-#[derive(Clone)]
-struct CurveDrag {
-    index: usize,
-    original: Ramp,
-    draft: Ramp,
-}
+pub const CURVE_HEIGHT: f32 = curve::HEIGHT;
 
 /// 値のカーブの編集（横が形の値、縦がランプの位置）。変更が決まったとき（足した・消した・ドラッグを離した）だけ新しいランプを返す。
+/// 点の操作は `ui::curve::curve_editor` と同じ。
 pub fn curve_editor(
     ui: &mut Ui,
     r: Rect,
@@ -572,151 +523,8 @@ pub fn curve_editor(
     tooltip: &str,
     enabled: bool,
 ) -> Option<Ramp> {
-    let id = ui.make_persistent_id(id_salt);
-    let enabled = enabled && ui.is_enabled();
-    let response = ui.interact(
-        r,
-        id,
-        if enabled {
-            Sense::click_and_drag()
-        } else {
-            Sense::hover()
-        },
-    );
-    let drag_id = id.with("drag");
-    let mut drag: Option<CurveDrag> = ui.data(|d| d.get_temp(drag_id));
-    if drag.as_ref().is_some_and(|d| d.original != *ramp) {
-        ui.data_mut(|data| data.remove::<CurveDrag>(drag_id));
-        drag = None;
-    }
-    let g = r.shrink(6.0);
-    let to_xy = |m: egui::Pos2| {
-        (
-            f64::from((m.x - g.left()) / g.width().max(1.0)).clamp(0.0, 1.0),
-            f64::from(1.0 - (m.y - g.top()) / g.height().max(1.0)).clamp(0.0, 1.0),
-        )
-    };
-    let to_screen = |x: f64, y: f64| {
-        pos2(
-            g.left() + x as f32 * g.width(),
-            g.bottom() - y as f32 * g.height(),
-        )
-    };
-    let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
-    let (pressed, secondary, down) = ui.input(|i| {
-        (
-            i.pointer.primary_pressed(),
-            i.pointer.secondary_pressed(),
-            i.pointer.primary_down(),
-        )
-    });
-    let mut result: Option<Ramp> = None;
-    if enabled && drag.is_none() && (pressed || secondary) && response.hovered() {
-        if let Some(m) = pointer {
-            let nearest = ramp
-                .curve()
-                .iter()
-                .enumerate()
-                .map(|(k, p)| (k, to_screen(p.x, p.y).distance(m)))
-                .filter(|(_, d)| *d <= GRAB)
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(k, _)| k);
-            if secondary {
-                if let Some(k) = nearest {
-                    result = ops::remove_curve_point(ramp, k);
-                }
-            } else {
-                let (x, y) = to_xy(m);
-                let started = match nearest {
-                    Some(k) => Some((k, ramp.clone())),
-                    None => ops::add_curve_point(ramp, x, y).map(|(next, k)| (k, next)),
-                };
-                if let Some((k, working)) = started {
-                    drag = Some(CurveDrag {
-                        index: k,
-                        original: ramp.clone(),
-                        draft: working,
-                    });
-                }
-            }
-        }
-    }
-    if let Some(mut d) = drag.take() {
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            ui.data_mut(|data| data.remove::<CurveDrag>(drag_id));
-        } else if down {
-            if let Some(m) = pointer {
-                let (x, y) = to_xy(m);
-                if let Some(next) = ops::move_curve_point(&d.draft, d.index, x, y) {
-                    d.draft = next;
-                }
-            }
-            ui.data_mut(|data| data.insert_temp(drag_id, d));
-        } else {
-            let outside = pointer.is_some_and(|m| !r.expand(REMOVE_MARGIN).contains(m));
-            let mut done = d.draft.clone();
-            if outside {
-                if let Some(next) = ops::remove_curve_point(&done, d.index) {
-                    done = next;
-                }
-            }
-            if done != d.original {
-                result = Some(done);
-            }
-            ui.data_mut(|data| data.remove::<CurveDrag>(drag_id));
-        }
-    }
-    let live: Option<Ramp> = ui
-        .data(|data| data.get_temp::<CurveDrag>(drag_id))
-        .map(|d| d.draft);
-    let shown = live.as_ref().unwrap_or(ramp);
-    if ui.is_rect_visible(r) {
-        let p = ui.painter();
-        rounded(p, r, t::CONTROL_BG, 3.0);
-        outline(p, r, t::BORDER, 1.0, 3.0);
-        for q in 1..4 {
-            let f = q as f32 / 4.0;
-            p.line_segment(
-                [
-                    pos2(g.left() + g.width() * f, g.top()),
-                    pos2(g.left() + g.width() * f, g.bottom()),
-                ],
-                egui::Stroke::new(1.0, t::SEPARATOR),
-            );
-            p.line_segment(
-                [
-                    pos2(g.left(), g.top() + g.height() * f),
-                    pos2(g.right(), g.top() + g.height() * f),
-                ],
-                egui::Stroke::new(1.0, t::SEPARATOR),
-            );
-        }
-        let line: Vec<egui::Pos2> = (0..=64)
-            .map(|k| {
-                let x = k as f64 / 64.0;
-                to_screen(x, shown.curve_value(x).unwrap_or(x))
-            })
-            .collect();
-        p.add(egui::Shape::line(line, egui::Stroke::new(1.5, t::ACCENT)));
-        let active = ui
-            .data(|data| data.get_temp::<CurveDrag>(drag_id))
-            .map(|d| d.index);
-        for (k, point) in shown.curve().iter().enumerate() {
-            let c = to_screen(point.x, point.y);
-            p.circle_filled(
-                c,
-                4.0,
-                if active == Some(k) {
-                    Color32::YELLOW
-                } else {
-                    Color32::WHITE
-                },
-            );
-            p.circle_stroke(c, 4.0, egui::Stroke::new(1.0, Color32::BLACK));
-        }
-    }
-    let _ = response.on_hover_text(tooltip);
-    result
+    curve::curve_editor(ui, r, id_salt, ramp.value_curve(), tooltip, enabled)
+        .map(|next| ramp.with_value_curve(next))
 }
 
 #[cfg(test)]

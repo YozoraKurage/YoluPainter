@@ -1,5 +1,6 @@
-//! 独立した色・不透明度の分岐点、中点、PCHIP の値カーブ。
+//! 独立した色・不透明度の分岐点、中点、PCHIP の値カーブ（`crate::curve::Curve`）。
 use super::{unit, Error};
+use crate::curve::{Curve, CurvePoint};
 use crate::{
     math::{clamp01, to_byte},
     Rgba8,
@@ -19,22 +20,16 @@ pub struct OpacityStop {
     pub opacity: f64,
     pub midpoint: f64,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CurvePoint {
-    pub x: f64,
-    pub y: f64,
-}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ramp {
     colors: Vec<ColorStop>,
     opacities: Vec<OpacityStop>,
-    curve: Vec<CurvePoint>,
-    tangents: Vec<f64>,
+    curve: Curve,
 }
 impl Ramp {
     /// 履歴に積む大きさ（C# の `GradientRamp.ByteSize`: 64 + 色・不透明度・カーブの点の数 × 24）。
     pub fn byte_size(&self) -> u64 {
-        64 + 24 * (self.colors.len() + self.opacities.len() + self.curve.len()) as u64
+        64 + 24 * (self.colors.len() + self.opacities.len() + self.curve.points().len()) as u64
     }
 }
 impl Default for Ramp {
@@ -75,8 +70,10 @@ impl Ramp {
         opacities: Vec<OpacityStop>,
         curve: Option<Vec<CurvePoint>>,
     ) -> Result<Self, Error> {
-        let curve =
-            curve.unwrap_or_else(|| vec![CurvePoint { x: 0., y: 0. }, CurvePoint { x: 1., y: 1. }]);
+        let curve = match curve {
+            Some(points) => Curve::new(points),
+            None => Ok(Curve::identity()),
+        };
         fn positions(p: impl Iterator<Item = f64>, gap: f64) -> bool {
             let mut last = None;
             for x in p {
@@ -87,74 +84,43 @@ impl Ramp {
             }
             true
         }
+        let invalid = Error::Invalid("ランプの点・中点・カーブが範囲外です");
+        let Ok(curve) = curve else {
+            return Err(invalid);
+        };
         if !(2..=32).contains(&colors.len())
             || !(2..=32).contains(&opacities.len())
-            || !(2..=16).contains(&curve.len())
             || !positions(colors.iter().map(|s| s.position), 0.0001)
             || !positions(opacities.iter().map(|s| s.position), 0.0001)
-            || !positions(curve.iter().map(|p| p.x), 0.02 - 1e-6)
-            || curve[0].x != 0.
-            || curve[curve.len() - 1].x != 1.
             || colors
                 .iter()
                 .any(|s| !s.midpoint.is_finite() || !(0.01..=0.99).contains(&s.midpoint))
             || opacities.iter().any(|s| {
                 !unit(s.opacity) || !s.midpoint.is_finite() || !(0.01..=0.99).contains(&s.midpoint)
             })
-            || curve.iter().any(|p| !unit(p.y))
         {
-            return Err(Error::Invalid("ランプの点・中点・カーブが範囲外です"));
+            return Err(invalid);
         }
         for s in &mut colors {
             s.color.a = 255;
-        }
-        let n = curve.len();
-        let mut m = vec![0.; n];
-        let mut h = vec![0.; n - 1];
-        let mut d = vec![0.; n - 1];
-        for k in 0..n - 1 {
-            h[k] = curve[k + 1].x - curve[k].x;
-            d[k] = (curve[k + 1].y - curve[k].y) / h[k];
-        }
-        if n == 2 {
-            m[0] = d[0];
-            m[1] = d[0];
-        } else {
-            for k in 1..n - 1 {
-                if d[k - 1] * d[k] > 0. {
-                    let w1 = 2. * h[k] + h[k - 1];
-                    let w2 = h[k] + 2. * h[k - 1];
-                    m[k] = (w1 + w2) / (w1 / d[k - 1] + w2 / d[k]);
-                }
-            }
-            fn edge(h0: f64, h1: f64, d0: f64, d1: f64) -> f64 {
-                let m = ((2. * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
-                fn sign(x: f64) -> i32 {
-                    if x > 0. {
-                        1
-                    } else if x < 0. {
-                        -1
-                    } else {
-                        0
-                    }
-                }
-                if sign(m) != sign(d0) {
-                    0.
-                } else if sign(d0) != sign(d1) && m.abs() > (3. * d0).abs() {
-                    3. * d0
-                } else {
-                    m
-                }
-            }
-            m[0] = edge(h[0], h[1], d[0], d[1]);
-            m[n - 1] = edge(h[n - 2], h[n - 3], d[n - 2], d[n - 3]);
         }
         Ok(Self {
             colors,
             opacities,
             curve,
-            tangents: m,
         })
+    }
+    /// 値のカーブだけを差し替えた新しいランプ（カーブは検査済みなので失敗しない）。
+    pub fn with_value_curve(&self, curve: Curve) -> Self {
+        Self {
+            colors: self.colors.clone(),
+            opacities: self.opacities.clone(),
+            curve,
+        }
+    }
+    /// 値のカーブ（`crate::curve::Curve`）。
+    pub fn value_curve(&self) -> &Curve {
+        &self.curve
     }
     pub fn colors(&self) -> &[ColorStop] {
         &self.colors
@@ -163,7 +129,7 @@ impl Ramp {
         &self.opacities
     }
     pub fn curve(&self) -> &[CurvePoint] {
-        &self.curve
+        self.curve.points()
     }
     pub fn curve_value(&self, input: f64) -> Result<f64, Error> {
         if !input.is_finite() {
@@ -172,23 +138,7 @@ impl Ramp {
         Ok(self.curve_value_unchecked(input))
     }
     fn curve_value_unchecked(&self, input: f64) -> f64 {
-        let x = clamp01(input);
-        let mut k = 1;
-        while k < self.curve.len() - 1 && self.curve[k].x < x {
-            k += 1;
-        }
-        let a = self.curve[k - 1];
-        let b = self.curve[k];
-        let h = b.x - a.x;
-        let t = (x - a.x) / h;
-        let t2 = t * t;
-        let t3 = t2 * t;
-        clamp01(
-            (2. * t3 - 3. * t2 + 1.) * a.y
-                + (t3 - 2. * t2 + t) * h * self.tangents[k - 1]
-                + (-2. * t3 + 3. * t2) * b.y
-                + (t3 - t2) * h * self.tangents[k],
-        )
+        self.curve.value_unchecked(input)
     }
     pub fn evaluate(&self, input: f64, scalar: bool) -> Result<Rgba8, Error> {
         self.sample_stops(self.curve_value(input)?, scalar)

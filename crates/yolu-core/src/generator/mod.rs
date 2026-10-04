@@ -13,7 +13,8 @@ pub use preview::preview;
 pub use procedural::{
     CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
 };
-pub use ramp::{ColorStop, CurvePoint, OpacityStop, Preset, Ramp};
+pub use crate::curve::CurvePoint;
+pub use ramp::{ColorStop, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
 use std::{collections::BTreeMap, fmt};
 

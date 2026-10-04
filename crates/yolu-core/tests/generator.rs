@@ -1172,6 +1172,44 @@ fn settings_hold_the_anchor_reference_and_check_it_like_csharp() {
     assert_eq!(r(8).resolve(&points, 1, 2), Err(Issue::Missing));
 }
 #[test]
+fn ramp_value_curve_is_the_shared_curve_type_and_evaluates_through_it() {
+    use yolu_core::curve::Curve;
+    let a = ramp();
+    // ランプの値のカーブは共通の Curve。点も評価も Ramp の窓口と同じ
+    let c: &Curve = a.value_curve();
+    assert_eq!(c.points(), a.curve());
+    for i in 0..=2000 {
+        let x = i as f64 / 2000.;
+        assert_eq!(c.value(x).unwrap(), a.curve_value(x).unwrap(), "{x}");
+    }
+    // カーブだけを差し替えると、色・不透明度はそのまま、評価はカーブを通る
+    let softer = Curve::new(vec![
+        CurvePoint { x: 0., y: 0. },
+        CurvePoint { x: 0.3, y: 0.7 },
+        CurvePoint { x: 1., y: 1. },
+    ])
+    .unwrap();
+    let b = a.with_value_curve(softer.clone());
+    assert_eq!((b.colors(), b.opacities()), (a.colors(), a.opacities()));
+    assert_eq!(b.value_curve(), &softer);
+    assert_eq!(b.curve_value(0.3).unwrap(), softer.value(0.3).unwrap());
+    assert_eq!(
+        b.evaluate(0.3, false).unwrap(),
+        a.sample_stops(softer.value(0.3).unwrap(), false).unwrap()
+    );
+    // 作り直しても同じ（Ramp::new の検査は Curve::new と同じ）
+    let again = Ramp::new(
+        b.colors().to_vec(),
+        b.opacities().to_vec(),
+        Some(b.curve().to_vec()),
+    )
+    .unwrap();
+    assert_eq!(again, b);
+    // 履歴の大きさは点の数ぶん（4 点から 3 点で 24 バイト小さい）
+    assert_eq!(a.curve().len(), 4);
+    assert_eq!(a.byte_size() - b.byte_size(), 24);
+}
+#[test]
 fn ramp_normalizes_color_stop_alpha_like_csharp_gradient_stop() {
     // C# の GradientStop は色の α を 255 にそろえる。そろえた形が == で等しい。
     let a = ramp();
