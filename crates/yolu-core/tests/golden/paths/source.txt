@@ -1,0 +1,4 @@
+e74600169cd7e0063c4bd3ed3dd9d2ca1d18e6a6
+69ea0e403cad790abd6e1f9c6a86ec2df6f793a464a1aac2d26466451b2414ed  Runtime/Core/Paths/CanvasPath.cs
+65015d1b003bdc2fb0709b2c67d15ac4ee5f1f25f2bd2fb201e07fb30310a476  Runtime/Core/Paths/SurfacePath.cs
+087793a4e701491586f9468bca8ce84af3e81be7840e38f6a08a0045ca3a8b81  Editor/Preview/SurfacePathRenderer.cs

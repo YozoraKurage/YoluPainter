@@ -1,0 +1,27 @@
+canvas-0-0
+surface-0-0 0 0
+canvas-1-0
+surface-1-0 1 0
+canvas-2-0
+surface-2-0 21 0
+canvas-3-0
+surface-3-0 41 0
+canvas-4-0
+surface-4-0 41 0
+canvas-5-0
+surface-5-0 41 0
+canvas-6-0
+surface-6-0 41 0
+canvas-7-0
+surface-7-0 41 0
+canvas-8-0
+surface-8-0 41 0
+canvas-9-0
+canvas-9-1
+surface-9-0 41 0
+surface-9-1 41 0
+surface-10-0 75 30
+surface-11-0 77 6
+surface-12-0 22 0
+surface-13-0 66 0
+surface-14-0 67 0
