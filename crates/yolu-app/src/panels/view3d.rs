@@ -496,7 +496,7 @@ fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>)
 }
 
 const PANEL_WIDTH: f32 = 252.0;
-const PANEL_HEIGHT: f32 = 436.0;
+const PANEL_HEIGHT: f32 = 464.0;
 
 /// 光・環境・トーンマッピングの設定（見出しの設定のボタンの下に浮かせる小さなパネル）。外を押すか Esc で閉じる。
 fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option<Rect>) {
@@ -520,6 +520,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             w::outline(&p, panel, t::BORDER, 1.0, 4.0);
             let d = app.view3d.display;
             let mut rows = Rows::new(panel, 8.0);
+            if display::navigation_settings(ui, app, &mut rows, content) { return; }
             let heading = |rows: &mut Rows, p: &egui::Painter, title: &str| {
                 let r = rows.row(18.0, 4.0);
                 w::text(

@@ -150,6 +150,7 @@ pub struct Settings {
     pub backups: BackupKeep,
     /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定の窓には無い）。
     pub selection_bar: bool,
+    pub navigation: crate::view3d::navigation::Preferences,
 }
 
 impl Default for Settings {
@@ -166,6 +167,7 @@ impl Default for Settings {
             library_folder: None,
             backups: BackupKeep::All,
             selection_bar: true,
+            navigation: crate::view3d::navigation::Preferences::default(),
         }
     }
 }
@@ -313,6 +315,8 @@ impl Problem {
 pub fn setting_name(lang: Lang, key: &str) -> &'static str {
     match key {
         "language" => lang.pick("言語", "Language"),
+        "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
+        "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
         "export_padding" => lang.pick("書き出しの余白", "Export padding"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーの画素", "Layer pixels"),
@@ -390,6 +394,7 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             },
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
+            "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -481,6 +486,7 @@ fn render(settings: &Settings) -> String {
     if !settings.selection_bar {
         text += "selection_bar=off\n";
     }
+    settings.navigation.write(&mut text);
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -549,6 +555,7 @@ mod tests {
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
             selection_bar: true,
+            navigation: crate::view3d::navigation::Preferences::default(),
         }
     }
 

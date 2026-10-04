@@ -356,6 +356,7 @@ fn nav_press(
     m: &Modifiers,
     space: bool,
 ) {
+    app.view3d.input.navigation = Some(super::navigation::Drag::new(&app.view3d, app.prefs.settings.navigation, pos));
     app.view3d.input.nav = Some((nav, button));
     if nav == Nav::Zoom {
         app.view3d.input.zoom = Some(ZoomDrag::new(pos, m.alt));
@@ -386,14 +387,13 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
     };
     let d = pos - previous;
     match nav {
-        Nav::Orbit => app.view3d.camera.orbit(d.x, d.y),
-        Nav::Pan => app.view3d.camera.pan(d.x, d.y, rect.height()),
+        Nav::Orbit | Nav::Pan => super::navigation::move_by(app, rect, nav, d.x, d.y),
         Nav::Zoom => {
             if let Some(mut zoom) = app.view3d.input.zoom {
                 let dx = zoom.moved_to(pos);
                 // 動かさずに離せば寄る（クリック）なので、少しの揺れでは動かさない
                 if !zoom.is_click() {
-                    app.view3d.camera.zoom(dx / gesture::POINTS_PER_NOTCH);
+                    super::navigation::move_by(app, rect, Nav::Zoom, dx / gesture::POINTS_PER_NOTCH, 0.0);
                 }
                 app.view3d.input.zoom = Some(zoom);
             }
@@ -408,10 +408,11 @@ fn nav_release(app: &mut AppState, rect: Rect, pos: Pos2, button: PointerButton)
         if let Some(zoom) = app.view3d.input.zoom.take() {
             if zoom.is_click() {
                 let sign = if zoom.out { -1.0 } else { 1.0 };
-                app.view3d.camera.zoom(sign * gesture::CLICK_NOTCHES);
+                super::navigation::move_by(app, rect, Nav::Zoom, sign * gesture::CLICK_NOTCHES, 0.0);
             }
         }
         app.view3d.input.nav = None;
+        app.view3d.input.navigation = None;
     }
     if button == PointerButton::Primary {
         if let Some(start) = app.view3d.input.clone_press.take() {
@@ -424,6 +425,7 @@ fn nav_release(app: &mut AppState, rect: Rect, pos: Pos2, button: PointerButton)
 
 /// ビューを動かす操作の途中を全部やめる。
 fn nav_cancel(app: &mut AppState) {
+    app.view3d.input.navigation = None;
     app.view3d.input.nav = None;
     app.view3d.input.zoom = None;
 }
@@ -579,8 +581,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         app.view3d.stroke_ended();
     }
     if app.view3d.model.is_none() {
-        app.view3d.input.nav = None;
-        app.view3d.input.zoom = None;
+        nav_cancel(app);
         app.view3d.input.pen_press = None;
         return;
     }
@@ -591,6 +592,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     // つかんでいる間・離した直後と、押しがほかの部品のものであるときも、描き始めも回し始めもしない
     let press_blocked =
         blocked || app.view3d.display.settings_open || app.dock_grabbed() || foreign;
+    super::navigation::shortcut(ui, app, rect, foreign);
     let events = ui.input(|i| i.events.clone());
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
@@ -723,7 +725,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     egui::MouseWheelUnit::Line => delta.y,
                     egui::MouseWheelUnit::Page => delta.y * 3.0,
                 };
-                app.view3d.camera.zoom(notches);
+                super::navigation::wheel(app, rect, p, notches);
             }
             Event::Key {
                 key: Key::Escape,

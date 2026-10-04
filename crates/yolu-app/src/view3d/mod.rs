@@ -8,6 +8,7 @@ pub mod environment;
 pub mod gizmo;
 pub mod input;
 pub mod model;
+pub mod navigation;
 pub mod paint;
 pub mod pose;
 pub mod render;
@@ -41,6 +42,7 @@ pub struct SurfaceInput {
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
     pub nav: Option<(Nav, egui::PointerButton)>,
+    pub navigation: Option<navigation::Drag>,
     pub last_pointer: Option<egui::Pos2>,
     /// 最後のストロークで受けた点の数（試験用）。
     pub stroke_points: usize,
@@ -56,6 +58,7 @@ impl SurfaceInput {
     pub fn drop_presses(&mut self) {
         self.pen_press = None;
         self.nav = None;
+        self.navigation = None;
         self.zoom = None;
         self.clone_press = None;
     }

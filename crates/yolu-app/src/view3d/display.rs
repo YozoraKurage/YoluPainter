@@ -80,6 +80,7 @@ pub struct Display {
     pub shadow_softness: f32,
     /// 設定のパネルを開いているか（画面の状態。描き方には効かない）。
     pub settings_open: bool,
+    pub navigation_open: bool,
 }
 
 impl Default for Display {
@@ -103,6 +104,7 @@ impl Default for Display {
             shadows: false,
             shadow_softness: 0.25,
             settings_open: false,
+            navigation_open: false,
         }
     }
 }
@@ -314,6 +316,117 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
         );
     }
     v
+}
+
+/// 同じ設定パネルの「表示」「視点」の切り替え。視点の内容はこの側で描き、タブ本体の配置には触れない。
+pub fn navigation_settings(
+    ui: &mut egui::Ui,
+    app: &mut AppState,
+    rows: &mut crate::ui::widgets::Rows,
+    view: egui::Rect,
+) -> bool {
+    use super::navigation::{self, OrbitCenter, ZoomCenter};
+    use crate::ui::{theme as t, widgets as w};
+    let lang = app.lang;
+    let r = rows.row(24.0, 4.0);
+    for (i, cell) in w::Rows::split(r, 2, 4.0).into_iter().enumerate() {
+        if w::button(
+            ui,
+            cell,
+            ("view3d.settings.tab", i),
+            if i == 0 {
+                lang.pick("表示", "Display")
+            } else {
+                lang.pick("視点", "Navigation")
+            },
+            app.view3d.display.navigation_open == (i == 1),
+            true,
+            None,
+            None,
+        )
+        .clicked()
+        {
+            app.view3d.display.navigation_open = i == 1;
+        }
+    }
+    if !app.view3d.display.navigation_open {
+        return false;
+    }
+    let r = rows.row(22.0, 4.0);
+    w::text(
+        ui.painter(),
+        r,
+        lang.pick("回転の中心", "Orbit center"),
+        t::LABEL_BOLD,
+        w::Align::Left,
+    );
+    for center in OrbitCenter::ALL {
+        let r = rows.row(26.0, 4.0);
+        if w::button(ui, r, ("view3d.orbit", center as u8), center.label(lang),
+            app.prefs.settings.navigation.orbit == center, true,
+            Some(if center == OrbitCenter::Surface {
+                lang.pick("回し始めの面を中心にし、パンの速さも面の深さに合わせます。面が無ければ今の中心です。",
+                    "Orbit around the starting surface and pan at its depth. Empty space keeps the current center.")
+            } else {
+                lang.pick("回し始めに中心を決め、離すまで保ちます。", "Choose the pivot at the start and keep it until release.")
+            }), None).clicked()
+        {
+            app.prefs.settings.navigation.orbit = center;
+        }
+    }
+    rows.space(6.0);
+    let r = rows.row(22.0, 4.0);
+    w::text(
+        ui.painter(),
+        r,
+        lang.pick("ズームの中心", "Zoom center"),
+        t::LABEL_BOLD,
+        w::Align::Left,
+    );
+    for center in [ZoomCenter::View, ZoomCenter::Pointer] {
+        let r = rows.row(26.0, 4.0);
+        let label = match center {
+            ZoomCenter::View => lang.pick("画面の中心へ", "Toward view center"),
+            ZoomCenter::Pointer => lang.pick("ポインタの所へ", "Toward pointer"),
+        };
+        if w::button(
+            ui,
+            r,
+            ("view3d.zoom", center as u8),
+            label,
+            app.prefs.settings.navigation.zoom == center,
+            true,
+            Some(lang.pick(
+                "面が無ければポインタの向きへ寄ります。",
+                "Empty space zooms along the pointer direction.",
+            )),
+            None,
+        )
+        .clicked()
+        {
+            app.prefs.settings.navigation.zoom = center;
+        }
+    }
+    rows.space(6.0);
+    let r = rows.row(26.0, 4.0);
+    if w::button(
+        ui,
+        r,
+        "view3d.frame_selected",
+        lang.pick("選んだ所に合わせる", "Frame Selected"),
+        false,
+        !app.is_stroking() && navigation::selected_bounds(&app.view3d).is_some(),
+        Some(lang.pick(
+            "今のテクスチャセットの面を画面に収めます（3D ビュー上で .）。",
+            "Fit the active texture set in view (. over the 3D View).",
+        )),
+        Some("target"),
+    )
+    .clicked()
+    {
+        navigation::frame_selected(app, view);
+    }
+    true
 }
 
 #[cfg(test)]

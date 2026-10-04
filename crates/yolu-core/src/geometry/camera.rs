@@ -82,6 +82,36 @@ impl OrbitCamera {
         self.distance = (self.distance * (-notches * 0.18).exp()).clamp(r * 0.05, r * 100.0);
     }
 
+    /// 任意の点のまわりを回す。その点の画面上の位置は変えない。
+    pub fn orbit_about(&mut self, pivot: Vec3, dx_points: f32, dy_points: f32) {
+        let before = self.rotation();
+        self.orbit(dx_points, dy_points);
+        self.target = pivot + (self.rotation() * before.inverse()) * (self.target - pivot);
+    }
+
+    /// 押した点の奥行きに合わせてパンする（奥行きは視線方向の距離）。
+    pub fn pan_at_depth(&mut self, dx_points: f32, dy_points: f32, view_height: f32, depth: f32) {
+        let units = 2.0 * depth * (FIELD_OF_VIEW * 0.5).to_radians().tan() / view_height.max(1.0);
+        self.target += self.rotation() * Vec3::new(-dx_points * units, dy_points * units, 0.0);
+    }
+
+    /// 点へ寄る。その点と同じレイの画面位置を保ち、従来の距離制限を使う。
+    pub fn zoom_towards(&mut self, point: Vec3, notches: f32) {
+        let distance = self.distance;
+        self.zoom(notches);
+        let ratio = self.distance / distance;
+        self.target += (point - self.target) * (1.0 - ratio);
+    }
+
+    /// 今の向きを保ち、縦横の狭い方にも境界球が入る距離へ移る。モデル全体の半径は保つ。
+    pub fn frame_bounds(&mut self, bounds: &Bounds, width: f32, height: f32) {
+        let tan =
+            (FIELD_OF_VIEW * 0.5).to_radians().tan() * (width.max(1.0) / height.max(1.0)).min(1.0);
+        let radius = bounds.extents.length().max(0.0001);
+        self.target = bounds.center;
+        self.distance = (radius / tan.atan().sin() * 1.15).max(self.model_radius * 0.05);
+    }
+
     /// この大きさ（物理の画素）の表示域で見たときのカメラ。
     pub fn view(&self, width: f32, height: f32) -> CameraView {
         let rotation = self.rotation();
@@ -226,6 +256,67 @@ mod tests {
             .to_screen(c.target + c.rotation() * Vec3::X * 0.1)
             .unwrap();
         assert!((px - (edge.x - 250.0)).abs() < 0.05, "{px} {edge}");
+    }
+
+    #[test]
+    fn orbit_about_keeps_an_off_center_point_fixed_even_at_pitch_limit() {
+        let mut c = OrbitCamera::default();
+        let pivot = c.target + c.rotation() * Vec3::new(0.3, -0.2, -0.5);
+        let screen = c.view(640.0, 480.0).to_screen(pivot).unwrap();
+        let distance = c.position().distance(pivot);
+        for (dx, dy) in [(30.0, 10.0), (-20.0, 400.0), (10.0, -800.0)] {
+            c.orbit_about(pivot, dx, dy);
+            assert!((c.view(640.0, 480.0).to_screen(pivot).unwrap() - screen).length() < 0.002);
+            assert!((c.position().distance(pivot) - distance).abs() < 0.00001);
+        }
+    }
+
+    #[test]
+    fn depth_pan_tracks_the_pointer_in_screen_points() {
+        let mut c = OrbitCamera::default();
+        let p = c.target + c.rotation() * Vec3::new(0.2, 0.1, -1.0);
+        let before = c.view(640.0, 480.0).to_screen(p).unwrap();
+        let depth = (p - c.position()).dot(c.rotation() * Vec3::Z);
+        c.pan_at_depth(43.0, -21.0, 480.0, depth);
+        let after = c.view(640.0, 480.0).to_screen(p).unwrap();
+        assert!((after - before - Vec2::new(43.0, -21.0)).length() < 0.002);
+    }
+
+    #[test]
+    fn zoom_towards_keeps_the_point_fixed_including_distance_limits() {
+        let mut c = OrbitCamera::default();
+        let p = c.target + c.rotation() * Vec3::new(0.4, -0.2, -0.5);
+        let before = c.view(640.0, 480.0).to_screen(p).unwrap();
+        for notches in [1.0, -2.0, 100.0, 1.0, -100.0, -1.0] {
+            c.zoom_towards(p, notches);
+            assert!((c.view(640.0, 480.0).to_screen(p).unwrap() - before).length() < 0.03);
+            assert!((c.model_radius * 0.05..=c.model_radius * 100.0).contains(&c.distance));
+        }
+    }
+
+    #[test]
+    fn frame_bounds_fits_both_wide_and_narrow_views_without_changing_orientation() {
+        let b = Bounds::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(2.0, 1.0, 3.0));
+        for (w, h) in [(800.0, 300.0), (120.0, 600.0)] {
+            let mut c = OrbitCamera::default();
+            let original = c;
+            c.frame_bounds(&b, w, h);
+            assert_eq!(
+                (c.yaw, c.pitch, c.model_radius),
+                (original.yaw, original.pitch, original.model_radius)
+            );
+            for x in [-1.0, 1.0] {
+                for y in [-1.0, 1.0] {
+                    for z in [-1.0, 1.0] {
+                        let p = c
+                            .view(w, h)
+                            .to_screen(b.center + b.extents * Vec3::new(x, y, z))
+                            .unwrap();
+                        assert!(p.x > 0.0 && p.x < w && p.y > 0.0 && p.y < h, "{p}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
