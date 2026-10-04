@@ -364,6 +364,7 @@ fn add_point(
     time: f64,
 ) {
     // ポリゴン塗りつぶしのドラッグは、点でなく通った範囲を足す
+    if app.region.leftover_drag.is_some() { crate::region::bucket::drag(app, view, p); return; }
     if app.region.drag.is_some() {
         crate::region::tools::drag_to(app, crate::region::tools::Where::Canvas(view), p);
         return;

@@ -7,6 +7,8 @@
 //! 入力は `canvas`・`view3d::input` が、始める・動く・終える・Esc・フォーカスを失うの同じ道（ストロークと同じ）から呼ぶ。ドラッグは
 //! `AppState::region.drag` の札で持ち、離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・離したのを取りこぼす で必ず終える。
 
+pub mod bucket;
+pub mod color;
 pub mod idcolor;
 pub mod index;
 pub mod overlay;
@@ -35,6 +37,10 @@ pub struct RegionState {
     pub contiguous: bool,
     /// 近い色: 層でなくチャンネルの合成を見る。
     pub sample_all: bool,
+    pub color: color::Options,
+    pub references: std::collections::HashSet<(u128, yolu_core::LayerId)>,
+    pub leftover_drag: Option<bucket::Drag>,
+    pub job: Option<bucket::Job>,
     /// 消す（画素は透明に。マスクは黒 = 隠す）か、塗る（描画色と不透明度。マスクは白 = 見せる）か。
     pub erase: bool,
     /// ID の色で選ぶときの許し幅（8 bit のチャンネルの差の最大）。
@@ -59,6 +65,10 @@ impl Default for RegionState {
             tolerance: 32,
             contiguous: true,
             sample_all: false,
+            color: Default::default(),
+            references: Default::default(),
+            leftover_drag: None,
+            job: None,
             erase: false,
             id_tolerance: yolu_core::id_colors::DEFAULT_TOLERANCE,
             modifiers: egui::Modifiers::NONE,
@@ -81,6 +91,13 @@ pub enum RegionAction {
     Tolerance(u8),
     Contiguous(bool),
     SampleAll(bool),
+    Reference(color::Reference),
+    ReferenceLayer(yolu_core::LayerId),
+    Distance(color::Distance),
+    Gap(u8),
+    Margin(i16),
+    Leftovers(bool),
+    MaxArea(u32),
     Erase(bool),
     IdTolerance(u8),
     /// 手動の ID の色を直す部品（部品の並びの番号）。
@@ -134,7 +151,29 @@ impl AppState {
             }
             RegionAction::Tolerance(v) => r.tolerance = v,
             RegionAction::Contiguous(v) => r.contiguous = v,
-            RegionAction::SampleAll(v) => r.sample_all = v,
+            RegionAction::SampleAll(v) => {
+                r.sample_all = v;
+                r.color.reference = if v {
+                    color::Reference::Visible
+                } else {
+                    color::Reference::Editing
+                };
+            }
+            RegionAction::Reference(v) => {
+                r.color.reference = v;
+                r.sample_all = v == color::Reference::Visible;
+            }
+            RegionAction::ReferenceLayer(id) => {
+                let key = (self.doc.id(), id);
+                if self.doc.layer(id).is_some() && !r.references.remove(&key) {
+                    r.references.insert(key);
+                }
+            }
+            RegionAction::Distance(v) => r.color.distance = v,
+            RegionAction::Gap(v) => r.color.gap = v.min(32),
+            RegionAction::Margin(v) => r.color.margin = v.clamp(-200, 200),
+            RegionAction::Leftovers(v) => r.color.leftovers = v,
+            RegionAction::MaxArea(v) => r.color.max_area = v.clamp(1, 65536),
             RegionAction::Erase(v) => r.erase = v,
             RegionAction::IdTolerance(v) => {
                 r.id_tolerance = v;

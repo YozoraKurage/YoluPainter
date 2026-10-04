@@ -211,20 +211,8 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
         if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64 {
             return;
         }
-        let r = &app.region;
-        let source = (!r.sample_all).then_some(layer);
-        let channel = app.m2.paint_channel;
-        let mask = SelectionMask::magic_wand(
-            &app.doc,
-            source,
-            channel,
-            x as u32,
-            y as u32,
-            r.tolerance,
-            r.contiguous,
-            app.doc.source_budget_bytes(),
-        );
-        (mask, lang.pick("近い色", "similar colors"))
+        super::bucket::start(app, vec![(x, y)]);
+        return;
     } else {
         if app.region_model().is_none() {
             return needs_model(app);
@@ -252,6 +240,13 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             kind_name(lang, kind),
         )
     };
+    let mask = mask.and_then(|mask| {
+        let margin=app.region.color.margin;
+        let budget=app.doc.source_budget_bytes();
+        if margin>0 { mask.grow(margin as u32,budget) }
+        else if margin<0 { mask.shrink(margin.unsigned_abs() as u32,false,budget) }
+        else { Ok(mask) }
+    });
     let mask = match mask {
         Ok(m) => m,
         Err(e) => {
@@ -393,6 +388,7 @@ pub fn drag_to(app: &mut AppState, w: Where, at: Pos2) {
 
 /// ドラッグを終える（cancel なら捨てる）。ドラッグが無ければ false。
 pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
+    if super::bucket::finish(app, cancel) { return true; }
     let Some(drag) = app.region.drag.take() else {
         return false;
     };
@@ -437,6 +433,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
 pub fn canvas_press(app: &mut AppState, view: &CanvasView, at: Pos2, _source: StrokeSource) -> bool {
     let w = Where::Canvas(view);
     match app.tool {
+        Tool::Fill if app.region.by_color && app.region.color.leftovers => super::bucket::begin(app, view, at),
         Tool::Fill => {
             bucket(app, w, at);
             false

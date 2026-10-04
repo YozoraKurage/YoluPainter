@@ -279,20 +279,14 @@ fn region_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         if let Some(v) = toggle_row(ui, rows, "region.contiguous", lang.pick("隣接", "Contiguous"), c, None, true) {
             app.apply(Action::Region(RegionAction::Contiguous(v)));
         }
-        let s = app.region.sample_all;
-        if let Some(v) = toggle_row(
-            ui,
-            rows,
-            "region.sample-all",
-            lang.pick("全レイヤーを見る", "Sample All Layers"),
-            s,
-            Some(lang.pick("選んだレイヤーでなく合成を見る", "Use the composite instead of the selected layer")),
-            true,
-        ) {
-            app.apply(Action::Region(RegionAction::SampleAll(v)));
-        }
+        bucket_properties(ui, app, rows);
     } else if app.region_model().is_none() {
         status_row(ui, rows, &app.region_missing_reason());
+    }
+    if app.tool == Tool::Fill && !app.region.by_color {
+        if let Some(v)=slider_row(ui,rows,"bucket.margin",lang.pick("領域の拡縮","Area scaling"),app.region.color.margin as f32,(-200.0,200.0),NumberFormat::int(" px"),None,true) {
+            app.apply(Action::Region(RegionAction::Margin(v.round() as i16)));
+        }
     }
     rows.space(4.0);
 }
@@ -451,5 +445,118 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         let r = rows.row(t::ROW_HEIGHT, 2.0);
         let shown = w::fit(ui.painter(), &why, r.width(), t::LABEL_DIM);
         w::text(ui.painter(), r, &shown, t::LABEL_DIM.with_color(t::WARNING), w::Align::Left);
+    }
+}
+
+fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    use crate::region::color::{Distance, Reference};
+    let lang = app.lang;
+    for (value, ja, en) in [
+        (Reference::Editing, "編集している層", "Editing layer"),
+        (Reference::Visible, "全部の層", "All visible layers"),
+        (Reference::Marked, "参照レイヤー", "Reference layers"),
+    ] {
+        let current = if app.region.sample_all {
+            Reference::Visible
+        } else {
+            app.region.color.reference
+        };
+        if toggle_row(
+            ui,
+            rows,
+            ja,
+            lang.pick(ja, en),
+            current == value,
+            None,
+            true,
+        ) == Some(true)
+        {
+            app.apply(Action::Region(RegionAction::Reference(value)));
+        }
+    }
+    let p = app.region.color.distance == Distance::Perceptual;
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "bucket.distance",
+        lang.pick("知覚の色差", "Perceptual difference"),
+        p,
+        Some(lang.pick(
+            "オフ: RGB の差の最大。オン: 人の見え方に合わせた色差の近似",
+            "Off: largest RGB difference. On: approximate perceptual color difference",
+        )),
+        true,
+    ) {
+        app.apply(Action::Region(RegionAction::Distance(if v {
+            Distance::Perceptual
+        } else {
+            Distance::Rgb
+        })));
+    }
+    for (id, ja, en, value, min, max) in [
+        (
+            "bucket.gap",
+            "隙間閉じ",
+            "Close gap",
+            app.region.color.gap as f32,
+            0.0,
+            32.0,
+        ),
+        (
+            "bucket.margin",
+            "領域の拡縮",
+            "Area scaling",
+            app.region.color.margin as f32,
+            -200.0,
+            200.0,
+        ),
+    ] {
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            id,
+            lang.pick(ja, en),
+            value,
+            (min, max),
+            NumberFormat::int(" px"),
+            None,
+            true,
+        ) {
+            let action = if id == "bucket.gap" {
+                RegionAction::Gap(v.round() as u8)
+            } else {
+                RegionAction::Margin(v.round() as i16)
+            };
+            app.apply(Action::Region(action));
+        }
+    }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "bucket.leftovers",
+        lang.pick("塗り残し部分に塗る", "Paint unfilled areas"),
+        app.region.color.leftovers,
+        Some(lang.pick(
+            "なぞった範囲に触れる小さな閉領域の透明・白い部分",
+            "Transparent or white pixels of small enclosed regions touched by the stroke",
+        )),
+        true,
+    ) {
+        app.apply(Action::Region(RegionAction::Leftovers(v)));
+    }
+    if app.region.color.leftovers {
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "bucket.area",
+            lang.pick("囲みの最大面積", "Maximum enclosed area"),
+            app.region.color.max_area as f32,
+            (1.0, 65536.0),
+            NumberFormat::int(" px²"),
+            None,
+            true,
+        ) {
+            app.apply(Action::Region(RegionAction::MaxArea(v.round() as u32)));
+        }
     }
 }

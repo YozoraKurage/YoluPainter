@@ -456,6 +456,7 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     let multi = selected.len() > 1 && selected.contains(&id);
     let members = app.doc.topmost_of(&selected).unwrap_or_default();
     let mut v = vec![
+        Entry::item(lang.pick("参照レイヤー", "Reference Layer"), Action::Region(crate::region::RegionAction::ReferenceLayer(id))).checked(app.region.references.contains(&(app.doc.id(), id))).enabled(free),
         Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer).enabled(free),
         Entry::item(
             lang.pick("新規グループ", "New Group"),

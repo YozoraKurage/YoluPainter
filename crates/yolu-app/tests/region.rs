@@ -2005,3 +2005,20 @@ fn the_options_bar_of_each_range_tool_fits_a_narrow_window_in_both_languages() {
     h.run();
     h.snapshot("region_idselect_narrow_english");
 }
+
+#[test]
+fn headless_bucket_surface_region_ignores_color_reference_and_gap_but_scales_area() {
+    let (mut s, rect) = fill_state(SurfaceRegionKind::Triangle);
+    let view = canvas_view(&s, rect);
+    let at = at_uv(&s, rect, TRI0);
+    s.region.color.reference = yolu_app::region::color::Reference::Marked;
+    s.region.color.gap = 32;
+    s.region.color.margin = -200;
+    let before = s.doc.undo_count();
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert_eq!(s.doc.undo_count(), before);
+    s.region.color.margin = 0;
+    bucket(&mut s, Where::Canvas(&view), at);
+    assert_eq!(s.doc.undo_count(), before + 1);
+    assert!(painted(&s, TRI0));
+}

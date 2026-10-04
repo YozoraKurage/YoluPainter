@@ -803,6 +803,7 @@ impl YoluApp {
     pub fn frame(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.state.popup_was_open = self.state.popup.is_some();
+        crate::region::bucket::poll(&mut self.state, &ctx);
         let pen = self.pen.drain();
         shell::handle_shortcuts(&ctx, &mut self.state);
         crate::stencil::update_keys(&ctx, &mut self.state);

@@ -939,6 +939,7 @@ impl AppState {
         self.canvas.stroke.is_some()
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
+            || self.region.job.is_some() || self.region.leftover_drag.is_some()
             || self.path.drag.is_some()
             || self.drafting.drag.is_some()
     }
