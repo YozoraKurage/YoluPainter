@@ -1,0 +1,73 @@
+name: CI
+
+# 非公開の間は実行時間を抑える。公開後は main への push も追加する。
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux の試験と静的検査
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: ビルドとソフトウェア描画の依存を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
+            libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
+            libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth fonts-noto-cjk
+      - name: ワークスペース全体の試験（ソフトウェア描画）
+        env:
+          # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。
+          WGPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a cargo test --workspace --locked -- --nocapture --test-threads=1
+      - name: Clippy（警告をエラーにする）
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # cargo fmt --check は既存の整形差分を解消してから追加する。
+
+  windows:
+    name: Windows のビルドと画面なし試験
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: アプリのビルド
+        run: cargo build -p yolu-app --locked
+      - name: 描画を使わないクレートの試験
+        run: cargo test --locked -p yolu-core -p yolu-io -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
+      - name: アプリの単体試験（画面なし）
+        run: cargo test -p yolu-app --lib --locked -- --test-threads=1
+      - name: Live Link の統合試験（画面なし）
+        run: cargo test -p yolu-app --test livelink --locked headless_ -- --test-threads=1

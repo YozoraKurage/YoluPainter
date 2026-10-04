@@ -12,6 +12,20 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です。Unity 版のソースと Unity 同梱の .NET・Mono が必要です。出力先は `--out` で指定できます。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。
 
+## CI
+
+`.github/workflows/ci.yml` は `pull_request` と `workflow_dispatch` だけで起動します。非公開の間は Actions の実行時間を抑えるため、`main` への push では起動しません。**リポジトリを公開したら `push: { branches: [main] }` も `on` に追加してください。** 初回の実行は管理者の了承後に行います。
+
+- Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa、Noto Sans CJK とビルド用のパッケージを導入し、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`。GPU・画面の統合試験は対象外です。
+- 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
+
+`cargo fmt --check` は既存の `crates/yolu-core/src/geometry/query.rs` に整形差分があるため、まだ必須検査にしていません。コードの整形を別途済ませてから追加してください。
+
+Unity 版 C# を実行する正解の再生成・照合は、Unity 版のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合試験は通常の `cargo test` に含みます。
+
+CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査できます。設定追加時点では Actions 上で未実行です。初回は clippy の既存警告、Ubuntu の Mesa・フォントの版による画面の正解との差、GPU 試験が省かれていないかを確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
+
 ## Unity 用ブリッジ
 
 Linux 上で Bash、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意します。`tools/build-bridge.sh` を引数なしで実行すると、Linux と Windows のブリッジと C# 宣言を `target/bridge-out/` に作ります。Mac 用は生成しません。
