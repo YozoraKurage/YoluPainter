@@ -6,6 +6,7 @@ members = ["crates/*"]
 version = "0.0.1"
 edition = "2021"
 publish = false
+license = "MIT"
 
 [workspace.dependencies]
 yolu-core = { path = "crates/yolu-core" }
