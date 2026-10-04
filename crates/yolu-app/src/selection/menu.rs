@@ -62,6 +62,15 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
                 .radio(app.tool == tool),
         );
     }
+    // ID の色で選択（範囲の道具。焼いた ID マップの色から選択範囲を作る）も選ぶ道具に並べる
+    v.push(
+        Entry::item(
+            Tool::IdSelect.name_in(l),
+            Action::SelectTool(Tool::IdSelect),
+        )
+        .shortcut(Tool::IdSelect.key())
+        .radio(app.tool == Tool::IdSelect),
+    );
     v
 }
 

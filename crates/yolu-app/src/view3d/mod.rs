@@ -25,6 +25,8 @@ pub enum Nav {
 #[derive(Default)]
 pub struct SurfaceInput {
     pub stroke: Option<StrokeSource>,
+    /// 押した瞬間に終わるツール（バケツ・ID の色で選択）をペンで押している間の印（ペンの番号。2D の `CanvasInput::pen_once` と同じ）。
+    pub pen_once: Option<u32>,
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
     pub nav: Option<(Nav, egui::PointerButton)>,

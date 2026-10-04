@@ -21,6 +21,8 @@ pub enum Context {
     Paint,
     /// 塗りつぶし・調整・グループの中身（これらには描けない）。
     Layer,
+    /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）。ブラシのタブは出さず、その道具の欄だけ。
+    Tool,
     /// 選択の道具（選択範囲を変更。どの層を選んでいても）。
     Selection,
 }
@@ -34,10 +36,16 @@ pub fn context(app: &AppState) -> Context {
         .selected_layer
         .and_then(|id| app.doc.layer(id))
         .map(|l| l.kind());
-    match kind {
+    let base = match kind {
         Some(LayerKind::Raster) | None => Context::Paint,
         Some(_) if app.m2.edit_mask => Context::Paint,
         Some(_) => Context::Layer,
+    };
+    // 範囲の道具は、その道具の欄（ID の色で選択はどの層でも。バケツとポリゴン塗りつぶしは、塗れる層のとき）
+    if super::region_props::owns_properties(app, base == Context::Paint) {
+        Context::Tool
+    } else {
+        base
     }
 }
 
@@ -300,6 +308,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let mut rows = Rows::new(area, 0.0);
     match context {
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
+        Context::Tool => super::region_props::body(ui, app, &mut rows, &ctx),
         Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),
         Context::Paint => match tab {
             0 => super::brush_props::brush_tab(ui, app, &mut rows, &ctx),

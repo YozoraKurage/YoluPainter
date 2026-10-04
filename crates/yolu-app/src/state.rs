@@ -24,29 +24,42 @@ pub type Rgba = [f32; 4];
 pub enum Tool {
     Brush,
     Eraser,
+    /// バケツ（範囲を 1 回で塗る。範囲は近い色か、モデルの三角形・メッシュの塊・UV アイランド・マテリアル）。
+    Fill,
+    /// ポリゴン塗りつぶし（押したまま通った範囲を足していく。離して 1 回の Undo）。
+    PolygonFill,
     /// 選択の道具（形は `selection`）。
     SelectRect,
     SelectEllipse,
     Lasso,
     Polygon,
     Wand,
+    /// ID の色で選択（焼いた ID マップの色から選択範囲を作る）。
+    IdSelect,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 7] = [
+    /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間に区切りが入る。
+    pub const ALL: [Tool; 10] = [
         Tool::Brush,
         Tool::Eraser,
+        Tool::Fill,
+        Tool::PolygonFill,
         Tool::SelectRect,
         Tool::SelectEllipse,
         Tool::Lasso,
         Tool::Polygon,
         Tool::Wand,
+        Tool::IdSelect,
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
         match self {
             Tool::Brush => "brush",
             Tool::Eraser => "eraser",
+            Tool::Fill => "fill",
+            Tool::PolygonFill => "polygon-fill",
+            Tool::IdSelect => "id-select",
             Tool::SelectRect => "select-rectangle",
             Tool::SelectEllipse => "select-ellipse",
             Tool::Lasso => "lasso",
@@ -62,6 +75,9 @@ impl Tool {
         match self {
             Tool::Brush => lang.pick("ブラシ", "Brush"),
             Tool::Eraser => lang.pick("消しゴム", "Eraser"),
+            Tool::Fill => lang.pick("バケツ", "Fill"),
+            Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
+            Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
             Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
             Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
             Tool::Lasso => lang.pick("なげなわ", "Lasso"),
@@ -73,12 +89,25 @@ impl Tool {
         match self {
             Tool::Brush => "B",
             Tool::Eraser => "E",
+            Tool::Fill => "G",
+            Tool::PolygonFill => "4",
+            Tool::IdSelect => "Shift+W",
             Tool::SelectRect => "M",
             Tool::SelectEllipse => "Shift+M",
             Tool::Lasso => "L",
             Tool::Polygon => "Shift+L",
             Tool::Wand => "W",
         }
+    }
+    /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
+    /// ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
+    pub fn is_region(self) -> bool {
+        matches!(self, Tool::Fill | Tool::PolygonFill | Tool::IdSelect)
+    }
+    /// 押した瞬間に終わる範囲のツール（バケツ・ID の色で選択）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
+    /// 押し直さないよう、入力の側が押している間の印（`pen_once`）を持つ。
+    pub fn is_one_shot(self) -> bool {
+        matches!(self, Tool::Fill | Tool::IdSelect)
     }
 }
 
@@ -333,6 +362,9 @@ pub struct RotateDrag {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasInput {
     pub stroke: Option<StrokeSource>,
+    /// 押した瞬間に終わるツール（バケツ・ID の色で選択）をペンで押している間の印（ペンの番号）。ペンの `contact` は押している間ずっと
+    /// 続くので、印がなければ次の点でまた押したことになる。離した点・窓がフォーカスを失ったときに下ろす。
+    pub pen_once: Option<u32>,
     /// egui の Touch の筆圧（winit が出したとき）。
     pub touch_pressure: Option<f32>,
     pub panning: bool,
@@ -375,6 +407,9 @@ pub enum Action {
     M2(Edit),
     /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
     M2Ui(UiOp),
+    /// マテリアルで塗る（組・値）と、範囲の道具（範囲の種類・許容・塗る/消す・手動の ID の色）の操作。
+    Mat(crate::matpaint::MatAction),
+    Region(crate::region::RegionAction),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
@@ -442,6 +477,7 @@ impl Action {
         matches!(
             self,
             Action::M2(_)
+                | Action::Region(crate::region::RegionAction::IdColor(_))
                 | Action::Sel(crate::selection::SelAction::Edit(_))
                 | Action::Undo
                 | Action::Redo
@@ -462,6 +498,10 @@ pub struct AppState {
     pub lang: Lang,
     /// M2 の画面の状態（層の種類・チャンネル・全部入りのブラシ）。
     pub m2: M2State,
+    /// マテリアルで塗る設定（ブラシ・バケツ・ポリゴン塗りつぶしが使う）。
+    pub mat: crate::matpaint::MaterialPaint,
+    /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
+    pub region: crate::region::RegionState,
     pub doc: Document,
     /// 描いているストロークの札（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
     pub stroke: Option<Stroke>,
@@ -595,6 +635,8 @@ impl AppState {
         AppState {
             lang,
             m2: M2State::default(),
+            mat: Default::default(),
+            region: Default::default(),
             doc,
             stroke: None,
             selected_layer: first,
@@ -711,6 +753,8 @@ impl AppState {
         match action {
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
+            Action::Mat(a) => self.mat_apply(a),
+            Action::Region(a) => self.region_apply(a),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Sel(action) => self.sel_action(action),
             Action::Quit => self.quit = true,

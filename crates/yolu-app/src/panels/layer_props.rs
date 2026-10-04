@@ -179,7 +179,7 @@ fn fill_section(
                 .clicked()
                 {
                     let c = app.color.main;
-                    let v = m2::fill_from_color(info.kind, c);
+                    let v = m2::fill_from_color(c);
                     edit(
                         app,
                         Edit::FillValue {
@@ -240,7 +240,7 @@ fn fill_section(
                     )
                     .clicked()
                     {
-                        let next = m2::fill_from_color(info.kind, app.color.main);
+                        let next = m2::fill_from_color(app.color.main);
                         if next != v {
                             edit(
                                 app,

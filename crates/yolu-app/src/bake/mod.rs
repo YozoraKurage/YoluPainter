@@ -409,6 +409,8 @@ impl AppState {
         };
         let doc = self.set_doc(index);
         let mut settings = self.bake.settings.clone();
+        // 手動の ID の色はセットの文書の状態（ID マップに入る。別のモデルのものなら core が焼く前に断る）
+        settings.manual_id_colors = doc.id_colors().clone();
         settings.width = doc.width() as i32;
         settings.height = doc.height() as i32;
         settings.target_slot = slots[0];
@@ -429,6 +431,9 @@ impl AppState {
     ) -> MeshMapExpectation {
         let doc = self.set_doc(index);
         let slots = self.set_slots(index);
+        // 手動の ID の色を直したら、前の ID マップは古い（焼いたときの設定と同じ手動の色で比べる）
+        let mut settings = self.bake.settings.clone();
+        settings.manual_id_colors = doc.id_colors().clone();
         MeshMapExpectation {
             mesh_hash: input.map(|i| i.hash().to_owned()),
             topology_hash: input.map(|i| i.topology_hash().to_owned()),
@@ -438,7 +443,7 @@ impl AppState {
             target_slot: slots.as_ref().map_or(-2, |s| s[0]),
             target_slots: slots.unwrap_or_default(),
             uv_channel: 0,
-            settings: Some(self.bake.settings.clone()),
+            settings: Some(settings),
             material_identity: input
                 .map(|i| material_identity(i, None))
                 .unwrap_or_default(),
@@ -590,9 +595,11 @@ impl AppState {
     }
 
     /// 窓を閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。毎フレーム呼ぶ。
+    /// 作り直す）。作っている最中のものも、窓を閉じていれば手放す（ID の色の道具を選んでいるときを除く）。毎フレーム呼ぶ。
     pub fn release_idle_bake_input(&mut self) {
-        if self.bake.window.is_none() {
+        // ID の色の道具（強調・部品の欄）は、窓が無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
+        // 始まって終わらない
+        if self.bake.window.is_none() && self.tool != crate::state::Tool::IdSelect {
             self.bake.pending = None;
         }
         if self.bake.input.is_some()

@@ -463,16 +463,10 @@ pub fn kind_label(lang: Lang, kind: ChannelKind) -> &'static str {
     }
 }
 
-/// 描画色（0〜1）から塗りつぶしの値へ（スカラーのチャンネルは明るさの灰色。アルファは 255）。
-pub fn fill_from_color(kind: ChannelKind, c: [f32; 4]) -> Rgba8 {
-    let b = crate::state::to_byte;
-    match kind {
-        ChannelKind::Scalar => {
-            let g = b(0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]);
-            Rgba8::new(g, g, g, 255)
-        }
-        _ => Rgba8::new(b(c[0]), b(c[1]), b(c[2]), 255),
-    }
+/// 描画色（0〜1）から塗りつぶしの層の値へ（描画色のまま。アルファは 255）。バケツ・ポリゴン塗りつぶしの 1 チャンネルの値
+/// （`matpaint::single_value`）と同じ変換で、チャンネルの種類によらない（Unity 版の塗りつぶしの層も `GetBrush().Color`）。
+pub fn fill_from_color(c: [f32; 4]) -> Rgba8 {
+    crate::matpaint::single_value([c[0], c[1], c[2], 1.0])
 }
 
 /// 新しいユーザーチャンネルの情報（種類ごとの既定の色空間と値）。
@@ -692,8 +686,8 @@ impl AppState {
     }
 
     /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 4 つ目のタブはマスクを描くあいだだけ
-    /// マスクで、それ以外はマテリアル（準備中）なので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
-    /// ブラシへ戻す（使えないタブに落とさない）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+    /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
+    /// ブラシへ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
     pub fn set_edit_mask(&mut self, on: bool) {
         let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
@@ -714,11 +708,7 @@ impl AppState {
             }
             Edit::NewFill => {
                 let name = self.new_layer_name(LayerKind::Fill);
-                let kind = self
-                    .doc
-                    .channel_info(self.m2.paint_channel)
-                    .map_or(ChannelKind::Color, |i| i.kind);
-                let value = fill_from_color(kind, self.color.main);
+                let value = fill_from_color(self.color.main);
                 let id =
                     self.doc
                         .add_fill_layer(&name, &[(self.m2.paint_channel, value)], above)?;
@@ -1049,6 +1039,11 @@ impl AppState {
         if self.m2.edit_mask {
             return self.doc.begin_brush_mask_stroke(id, brush);
         }
+        if self.paints_material() {
+            // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（層で無効のチャンネルは有効にする）
+            let channels = self.paint_channels();
+            return self.doc.begin_material_brush_stroke(id, &channels, brush);
+        }
         self.doc
             .begin_brush_stroke_in(id, self.m2.paint_channel, brush)
     }
@@ -1096,7 +1091,8 @@ impl AppState {
             );
         }
         let channel = self.m2.paint_channel;
-        if layer.surface(channel).is_some() && !layer.is_channel_enabled(channel) {
+        // マテリアルで塗るなら、無効のチャンネルは core が有効にする
+        if !self.mat.enabled && layer.surface(channel).is_some() && !layer.is_channel_enabled(channel) {
             return Some(format!(
                 "{}: {}",
                 lang.pick(

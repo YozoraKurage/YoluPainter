@@ -49,6 +49,16 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     // ブラシのカーソル（回している・回すキーを押している・パンしている・ステンシルを動かしているあいだは出さない）
     let hover = ui.input(|i| i.pointer.hover_pos());
     let pointer_on_canvas = hover.is_some_and(|p| rect.contains(p)) && response.contains_pointer();
+    // 範囲の道具: ポインタの下の範囲の UV の輪郭（回している・パンしているあいだは出さない）
+    {
+        let navigating = app.canvas.rotate_key_held
+            || app.canvas.rotating.is_some()
+            || app.canvas.middle_rotating
+            || app.canvas.panning
+            || app.canvas.space_held;
+        let at = hover.filter(|_| pointer_on_canvas && !navigating);
+        crate::region::overlay::paint_canvas(&painter, app, &view, at);
+    }
     let busy =
         app.canvas.rotate_key_held || app.canvas.rotating.is_some() || app.canvas.middle_rotating;
     if pointer_on_canvas {
@@ -60,7 +70,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
         } else if app.canvas.space_held {
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
-        } else if app.tool.is_select() {
+        } else if app.tool.is_region() || app.tool.is_select() {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
         } else if let Some(p) = hover {
             let radius = (app.brush.radius * view.pixel_size()).max(1.5);
@@ -223,6 +233,30 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
             .is_none_or(|layer| layer == ui.layer_id())
 }
 
+/// 押した点で始める: ブラシ・消しゴムはストローク、バケツ・ポリゴン塗りつぶし・ID の色で選択は範囲の道具（`region`）。
+/// ストロークかドラッグを始めたら true。
+fn begin_any(
+    app: &mut AppState,
+    view: &CanvasView,
+    p: Pos2,
+    source: StrokeSource,
+    eraser: bool,
+    rect: Rect,
+) -> bool {
+    if app.tool.is_region() {
+        if app.region.drag.is_some() {
+            return false;
+        }
+        let began = crate::region::tools::canvas_press(app, view, p, source);
+        if began {
+            app.canvas.stroke = Some(source);
+            app.canvas.stroke_points = 0;
+        }
+        return began;
+    }
+    begin_stroke(app, source, eraser, rect)
+}
+
 fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool, rect: Rect) -> bool {
     if let Some(reason) = app.read_only_reason() {
         app.message = format!(
@@ -261,7 +295,11 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool, rect: Re
             true
         }
         Err(e) => {
-            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
+            app.message = format!(
+                "{}: {}",
+                app.lang.pick("描けません", "Cannot paint"),
+                crate::matpaint::refusal_text(app.lang, &e)
+            );
             false
         }
     }
@@ -278,6 +316,11 @@ fn add_point(
     rotation: Option<f32>,
     time: f64,
 ) {
+    // ポリゴン塗りつぶしのドラッグは、点でなく通った範囲を足す
+    if app.region.drag.is_some() {
+        crate::region::tools::drag_to(app, crate::region::tools::Where::Canvas(view), p);
+        return;
+    }
     let (x, y) = view.to_canvas(p);
     let Some(stroke) = app.stroke.as_mut() else {
         return;
@@ -318,6 +361,9 @@ fn add_point(
 /// ストロークを終える（cancel なら捨てる）。
 pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     app.canvas.stroke = None;
+    if crate::region::tools::finish_drag(app, cancel) {
+        return;
+    }
     let Some(stroke) = app.stroke.take() else {
         // 札を失っていても、core に進行中のストロークが残っていれば取り消す（取り残さない）
         app.doc.cancel_active_stroke();
@@ -394,6 +440,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
         frame_dt,
         events.iter().filter(|e| is_mouse_sample_event(e)).count(),
     );
+    app.region.modifiers = modifiers;
     app.canvas.rotate_key_held = r_down && !typing && !modifiers.any() && !blocked;
     app.canvas.space_held = space_down && !typing && !blocked;
 
@@ -402,6 +449,13 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     for s in pen {
         let p = s.pos_points(ppp);
         let view = app.view.view(rect, w_px, h_px);
+        // 押した瞬間に終わるツール（バケツ・ID の色で選択）をこのペンで押している間は、次の点で押し直さない（離したら印を下ろす）
+        if app.canvas.pen_once == Some(s.pointer_id) {
+            if !s.contact {
+                app.canvas.pen_once = None;
+            }
+            continue;
+        }
         // 描いている最中のペンは、道具を選択へ替えても従来の match で終わらせる（離したのを受け取れず取り残さない）
         let pen_stroke_running = matches!(app.canvas.stroke, Some(StrokeSource::Pen(_)));
         if app.tool.is_select() && !pen_stroke_running {
@@ -431,7 +485,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 && !app.canvas.space_held
                 && !app.stencil.handling() =>
             {
-                if begin_stroke(app, StrokeSource::Pen(s.pointer_id), s.eraser, rect) {
+                if begin_any(app, &view, p, StrokeSource::Pen(s.pointer_id), s.eraser, rect) {
                     add_point(
                         app,
                         &view,
@@ -441,6 +495,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                         s.rotation,
                         s.time_ms as f64 / 1000.0,
                     );
+                } else if app.tool.is_one_shot() {
+                    app.canvas.pen_once = Some(s.pointer_id);
                 }
             }
             Some(StrokeSource::Pen(id)) if id == s.pointer_id && s.contact => add_point(
@@ -520,7 +576,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                         } else if !pen_frame
                             && app.canvas.stroke.is_none()
                             && !app.stencil.handling()
-                            && begin_stroke(app, StrokeSource::Mouse, false, rect)
+                            && {
+                                let view = app.view.view(rect, w_px, h_px);
+                                begin_any(app, &view, pos, StrokeSource::Mouse, false, rect)
+                            }
                         {
                             let view = app.view.view(rect, w_px, h_px);
                             add_point(
@@ -666,6 +725,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）。選択の途中の形は捨てる
                 finish_stroke(app, false);
+                app.canvas.pen_once = None;
                 app.sel.cancel_drafts();
                 app.canvas.rotating = None;
                 app.canvas.panning = false;

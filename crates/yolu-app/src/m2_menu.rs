@@ -6,6 +6,7 @@ use crate::m2::{
     self, dual_mode_label, kind_label, new_channel_info, preset_label, texture_mode_label,
     tip_label, AdjustmentKind, BrushOp, Edit, EffectKind, UiOp,
 };
+use crate::region::RegionAction;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 
@@ -28,6 +29,8 @@ pub enum Popup {
     /// ユーザーチャンネルの種類。
     ChannelKind(Channel),
     ChannelContext(Channel),
+    /// バケツ・ポリゴン塗りつぶしの範囲（今のツールで並びが違う）。
+    Region,
     /// ステンシルの画像（読む・読んだ画像・外す）。
     StencilImage,
     StencilMode,
@@ -73,6 +76,32 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     match popup {
+        Popup::Region => {
+            let by_color = app.tool == crate::state::Tool::Fill;
+            let mut v = Vec::new();
+            if by_color {
+                v.push(
+                    Entry::item(
+                        lang.pick("近い色", "Similar colors"),
+                        Action::Region(RegionAction::ByColor(true)),
+                    )
+                    .radio(app.region.by_color),
+                );
+            }
+            for kind in crate::region::KINDS {
+                let action = if by_color {
+                    // バケツ: 範囲の種類を選んだら、近い色はやめる
+                    Action::Region(RegionAction::FillRange(kind))
+                } else {
+                    Action::Region(RegionAction::Kind(kind))
+                };
+                v.push(
+                    Entry::item(crate::region::kind_name(lang, kind), action)
+                        .radio((!by_color || !app.region.by_color) && app.region.kind == kind),
+                );
+            }
+            v
+        }
         Popup::NewAdjustment => AdjustmentKind::ALL
             .iter()
             .map(|k| Entry::item(k.name(lang), Action::M2(Edit::NewAdjustment(*k))).enabled(free))

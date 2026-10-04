@@ -132,6 +132,15 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             Entry::item(Tool::Eraser.name_in(l), Action::SelectTool(Tool::Eraser))
                 .shortcut("E")
                 .radio(app.tool == Tool::Eraser),
+            Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
+                .shortcut("G")
+                .radio(app.tool == Tool::Fill),
+            Entry::item(
+                Tool::PolygonFill.name_in(l),
+                Action::SelectTool(Tool::PolygonFill),
+            )
+            .shortcut("4")
+            .radio(app.tool == Tool::PolygonFill),
             Entry::Separator,
             Entry::item(
                 l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
@@ -493,6 +502,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
             Action::SelectTool(Tool::SelectEllipse),
         );
         key(Modifiers::SHIFT, Key::L, Action::SelectTool(Tool::Polygon));
+        key(Modifiers::SHIFT, Key::W, Action::SelectTool(Tool::IdSelect));
         key(
             Modifiers::NONE,
             Key::M,
@@ -502,6 +512,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(Modifiers::NONE, Key::W, Action::SelectTool(Tool::Wand));
         key(Modifiers::NONE, Key::B, Action::SelectTool(Tool::Brush));
         key(Modifiers::NONE, Key::E, Action::SelectTool(Tool::Eraser));
+        key(Modifiers::NONE, Key::G, Action::SelectTool(Tool::Fill));
+        key(Modifiers::NONE, Key::Num4, Action::SelectTool(Tool::PolygonFill));
         key(Modifiers::NONE, Key::X, Action::SwapColors);
         key(Modifiers::NONE, Key::D, Action::DefaultColors);
         key(Modifiers::NONE, Key::OpenBracket, Action::BrushSmaller);
@@ -540,6 +552,11 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
     if app.tool.is_select() {
         crate::selection::props::select_options(ui, app, r, x + 4.0);
+        return;
+    }
+    // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定
+    if app.tool.is_region() {
+        crate::panels::region_props::options(ui, app, r, x);
         return;
     }
     let mut next = |width: f32| {

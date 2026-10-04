@@ -1306,17 +1306,5 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 }
 
 pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    let lang = app.lang;
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "material",
-        lang.pick("マテリアル", "Material"),
-        "layers",
-        None,
-    );
-    if open {
-        status_row(ui, rows, lang.pick("準備中", "Not available yet"));
-    }
+    super::material::material_tab(ui, app, rows);
 }

@@ -39,6 +39,14 @@ fn begin(
     source: StrokeSource,
     eraser: bool,
 ) {
+    // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
+    if app.tool.is_region() {
+        if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {
+            app.view3d.input.stroke = Some(source);
+            app.view3d.input.stroke_points = 0;
+        }
+        return;
+    }
     if !app.tool.paints() {
         // 選択の道具は 2D のキャンバスだけで使う（3D ビューで描き始めない）
         app.message = app
@@ -57,11 +65,7 @@ fn begin(
     let p = local(rect, at);
     let material = app.view3d.material;
     if material < 0 {
-        let name = app.sets.current().name.clone();
-        app.message = app.lang.pick(
-            format!("今のテクスチャセット「{name}」はこのモデルにありません。"),
-            format!("Texture set “{name}” is not in this model."),
-        );
+        app.message = app.region_missing_reason();
         return;
     }
     if let Some(reason) = app.read_only_reason() {
@@ -151,6 +155,11 @@ fn begin(
 }
 
 fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
+    // ポリゴン塗りつぶしのドラッグは、通った範囲を足す
+    if app.region.drag.is_some() {
+        crate::region::tools::drag_to(app, crate::region::tools::Where::Surface(rect), at);
+        return;
+    }
     let (Some(stroke), Some(surface)) = (app.stroke.as_mut(), app.view3d.input.surface.as_mut())
     else {
         return;
@@ -176,6 +185,10 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
 /// 3D のストロークを終える（cancel なら捨てる）。
 pub fn finish(app: &mut AppState, cancel: bool) {
     if app.view3d.input.stroke.is_none() {
+        return;
+    }
+    if crate::region::tools::finish_drag(app, cancel) {
+        app.view3d.stroke_ended();
         return;
     }
     let surface = app.view3d.input.surface.take();
@@ -215,7 +228,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     // ストロークの札をほか（キャンバスの Esc・フォーカスを失ったとき）が手放したら、こちらも終える
-    if app.view3d.input.stroke.is_some() && app.stroke.is_none() {
+    if app.view3d.input.stroke.is_some() && app.stroke.is_none() && app.region.drag.is_none() {
         app.view3d.stroke_ended();
     }
     if app.view3d.model.is_none() {
@@ -223,9 +236,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
         return;
     }
     let blocked = app.popup.is_some() || app.popup_was_open;
+    app.region.modifiers = ui.input(|i| i.modifiers);
     let events = ui.input(|i| i.events.clone());
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.view3d.pose.mode;
+    // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
+    if pose_mode {
+        app.view3d.input.pen_once = None;
+    }
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift) = ui.input(|i| (i.modifiers.command, i.modifiers.shift));
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
@@ -243,6 +261,13 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
         !pen.is_empty() || matches!(app.view3d.input.stroke, Some(StrokeSource::Pen(_)));
     for s in pen {
         let p = s.pos_points(ppp);
+        // 押した瞬間に終わるツール（バケツ・ID の色で選択）をこのペンで押している間は、次の点で押し直さない（離したら印を下ろす）
+        if app.view3d.input.pen_once == Some(s.pointer_id) {
+            if !s.contact {
+                app.view3d.input.pen_once = None;
+            }
+            continue;
+        }
         match app.view3d.input.stroke {
             None if s.contact
                 && !blocked
@@ -258,6 +283,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                     StrokeSource::Pen(s.pointer_id),
                     s.eraser,
                 );
+                if app.tool.is_one_shot() {
+                    app.view3d.input.pen_once = Some(s.pointer_id);
+                }
             }
             Some(StrokeSource::Pen(id)) if id == s.pointer_id && s.contact => {
                 add(app, rect, p, s.pressure)
@@ -376,6 +404,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので）
                 finish(app, false);
+                app.view3d.input.pen_once = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
                 app.view3d.input.nav = None;
