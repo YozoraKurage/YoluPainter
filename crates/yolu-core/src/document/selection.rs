@@ -145,21 +145,13 @@ impl Document {
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
         }
-        let target = if reveal { 0.0 } else { 255.0 };
         self.edit_region(index, Target::Mask, region, move |start, coverage| {
-            // C# の MaskFillRule: (A + (目標 − A) × 量 × 範囲) / 255 を丸める
-            let hide =
-                to_byte((start.a as f64 + (target - start.a as f64) * amount * coverage) / 255.0);
-            if hide == 0 {
-                Rgba8::TRANSPARENT
-            } else {
-                Rgba8::new(0, 0, 0, hide)
-            }
+            mask_fill_pixel(start, amount, coverage, reveal)
         })
     }
 
     /// 編集の効く範囲: 渡した範囲と選択範囲の重なり、どちらか、どちらも無ければ None（全体）。
-    fn effective_region(
+    pub(super) fn effective_region(
         &self,
         region: Option<&SelectionMask>,
     ) -> Result<Option<SelectionMask>, CoreError> {
@@ -193,15 +185,59 @@ impl Document {
             Some(m) => m.tile_coords(),
             None => self.canvas_tiles().collect(),
         };
+        let layer = self.layers[index].id;
+        let changes = self.edit_region_tiles(
+            index,
+            target,
+            effective.as_ref(),
+            &coords,
+            &mut 0,
+            |_, _, start, amount| pixel(start, amount),
+        )?;
+        if changes.is_empty() {
+            return Ok(false);
+        }
+        for c in &changes {
+            self.mark_target_tile(index, target, c.coord);
+        }
+        let cost = 64
+            + changes
+                .iter()
+                .map(|c| {
+                    16 + c.before.as_ref().map_or(0, |t| t.byte_size())
+                        + c.after.as_ref().map_or(0, |t| t.byte_size())
+                })
+                .sum::<u64>();
+        self.revision += 1;
+        self.push(Entry {
+            command: Command::Stroke {
+                layer,
+                target,
+                changes,
+            },
+            cost,
+        });
+        Ok(true)
+    }
+    pub(super) fn edit_region_tiles<F>(
+        &mut self,
+        index: usize,
+        target: Target,
+        effective: Option<&SelectionMask>,
+        coords: &[TileCoord],
+        rollback: &mut u64,
+        pixel: F,
+    ) -> Result<Vec<TileChange>, CoreError>
+    where
+        F: Fn(u32, u32, Rgba8, f64) -> Rgba8 + Sync,
+    {
         let growth = self.growth_for(index, target);
         let stroke_budget = self.stroke_budget;
         let (width, height, ts) = (self.width, self.height, self.tile_size);
-        let layer = self.layers[index].id;
         let surface = self.target_surface_mut(index, target).expect("編集の面");
         let n = ts as usize * ts as usize;
         let batch = (rayon::current_num_threads() * 4).max(1);
         let mut changes: Vec<TileChange> = Vec::new();
-        let mut rollback = 0u64;
         let mut failure = None;
         'batches: for chunk in coords.chunks(batch) {
             let computed: Vec<Option<(bool, Option<Tile>)>> = {
@@ -231,7 +267,12 @@ impl Document {
                                 }
                                 let o = i * 4;
                                 let start = Rgba8::from_slice(&bytes[o..o + 4]);
-                                let next = pixel(start, amounts[i] as f64 / 255.0);
+                                let next = pixel(
+                                    coord.x * ts + x as u32,
+                                    coord.y * ts + y as u32,
+                                    start,
+                                    amounts[i] as f64 / 255.0,
+                                );
                                 bytes[o..o + 4].copy_from_slice(&next.to_array());
                             }
                         }
@@ -248,8 +289,8 @@ impl Document {
                     continue;
                 }
                 let before = surface.tile(coord).cloned();
-                rollback += 64 + before.as_ref().map_or(0, |t| t.byte_size());
-                if rollback > stroke_budget {
+                *rollback += 64 + before.as_ref().map_or(0, |t| t.byte_size());
+                if *rollback > stroke_budget {
                     failure = Some(CoreError::StrokeBudgetExceeded);
                     break 'batches;
                 }
@@ -273,35 +314,31 @@ impl Document {
             }
             return Err(e);
         }
-        if changes.is_empty() {
-            return Ok(false);
-        }
-        for c in &changes {
-            self.mark_target_tile(index, target, c.coord);
-        }
-        let cost = 64
-            + changes
-                .iter()
-                .map(|c| {
-                    16 + c.before.as_ref().map_or(0, |t| t.byte_size())
-                        + c.after.as_ref().map_or(0, |t| t.byte_size())
-                })
-                .sum::<u64>();
-        self.revision += 1;
-        self.push(Entry {
-            command: Command::Stroke {
-                layer,
-                target,
-                changes,
-            },
-            cost,
-        });
-        Ok(true)
+        Ok(changes)
+    }
+}
+
+/// マスクの塗りの画素の式（C# の MaskFillRule）: 隠す量 A を、目標（隠すなら 255・見せるなら 0）へ (A + (目標 − A) × amount × coverage) / 255
+/// を丸めた値にする。amount は塗る量、coverage は範囲・三角形・グラデーションの量（どちらも 0〜1）。マスクの塗りつぶし・
+/// グラデーション・三角形の塗りが同じ式を通る（1 か所だけ直って食い違わないように）。
+pub(super) fn mask_fill_pixel(start: Rgba8, amount: f64, coverage: f64, reveal: bool) -> Rgba8 {
+    let target = if reveal { 0.0 } else { 255.0 };
+    let hide = to_byte((start.a as f64 + (target - start.a as f64) * amount * coverage) / 255.0);
+    if hide == 0 {
+        Rgba8::TRANSPARENT
+    } else {
+        Rgba8::new(0, 0, 0, hide)
     }
 }
 
 /// 塗りつぶしの画素の式（C# の FillRule の、透明部分のロックの無い形）。amount は範囲の量（0〜1）。
-fn fill_pixel(start: Rgba8, color: Rgba8, opacity: f64, amount: f64, erase: bool) -> Rgba8 {
+pub(super) fn fill_pixel(
+    start: Rgba8,
+    color: Rgba8,
+    opacity: f64,
+    amount: f64,
+    erase: bool,
+) -> Rgba8 {
     if !erase {
         return blend(start, color, opacity * amount, BlendMode::Normal);
     }

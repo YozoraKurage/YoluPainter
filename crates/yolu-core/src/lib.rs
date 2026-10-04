@@ -46,7 +46,10 @@ pub mod fill_image;
 pub mod filter;
 pub mod generator;
 pub mod geometry;
+pub mod id_colors;
 mod layer;
+pub mod material;
+pub mod material_triangles;
 mod math;
 pub mod mesh_maps;
 pub mod normal;
@@ -57,6 +60,7 @@ pub mod smart;
 mod surface;
 mod symmetry;
 mod types;
+pub mod uv_layout;
 
 pub use adjust::{AdjustmentSettings, AdjustmentType};
 pub use brush::{
@@ -65,7 +69,7 @@ pub use brush::{
     ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping, StencilMode, StencilPoint,
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
-pub use document::{Document, Stroke, StrokeResult, StrokeStats};
+pub use document::{Document, Stroke, StrokeResult, StrokeStats, TriangleFill};
 pub use error::CoreError;
 pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};

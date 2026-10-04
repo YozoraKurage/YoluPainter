@@ -9,6 +9,10 @@
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
 mod edits;
+mod material;
+mod regions;
+mod triangle_fill;
+pub use triangle_fill::TriangleFill;
 mod selection;
 mod smart;
 mod smart_resample;
@@ -129,6 +133,9 @@ impl Stroke {
         match doc.active.as_mut() {
             Some(a) if a.id == self.id => {
                 a.reset_effect_direction();
+                for state in &mut doc.material.extra {
+                    state.reset_effect_direction();
+                }
                 Ok(())
             }
             _ => Err(CoreError::NoActiveStroke),
@@ -198,6 +205,11 @@ type Order = Vec<(LayerId, Option<LayerId>)>;
 
 /// 履歴の 1 段。Insert・Remove・Structure の層は、文書に無い側の状態のときに段が持つ。
 pub(crate) enum Command {
+    Material(material::MaterialCommand),
+    IdColors {
+        old: crate::mesh_maps::IdColorAssignments,
+        new: crate::mesh_maps::IdColorAssignments,
+    },
     Stroke {
         layer: LayerId,
         target: Target,
@@ -331,6 +343,9 @@ pub struct Document {
     source_budget: u64,
     stroke_budget: u64,
     active: Option<StrokeState>,
+    material: material::MaterialState,
+    triangle_fill: Option<triangle_fill::TriangleState>,
+    id_colors: crate::mesh_maps::IdColorAssignments,
     /// 進行中のストロークが描く面（active があるときだけ意味がある）。
     active_target: Target,
     next_stroke: u64,
@@ -398,6 +413,9 @@ impl Document {
             source_budget: 256 * 1024 * 1024,
             stroke_budget: 64 * 1024 * 1024,
             active: None,
+            material: material::MaterialState::default(),
+            triangle_fill: None,
+            id_colors: crate::mesh_maps::IdColorAssignments::default(),
             active_target: Target::Channel(Channel::Color),
             next_stroke: 1,
             revision: 0,
@@ -498,9 +516,37 @@ impl Document {
         self.active.as_ref().map(|a| StrokeStats {
             stamps: a.stamp_count,
             samples: a.sample_count,
-            tiles: a.tiles.len(),
-            rollback_bytes: a.rollback_total(),
-            parallel_dabs: a.parallel_dabs,
+            tiles: self.triangle_fill.as_ref().map_or_else(
+                || {
+                    a.tiles.len()
+                        + self
+                            .material
+                            .extra
+                            .iter()
+                            .map(|s| s.tiles.len())
+                            .sum::<usize>()
+                },
+                |s| s.tile_count(),
+            ),
+            rollback_bytes: self.triangle_fill.as_ref().map_or_else(
+                || {
+                    a.rollback_total()
+                        + self
+                            .material
+                            .extra
+                            .iter()
+                            .map(|s| s.rollback_total())
+                            .sum::<u64>()
+                },
+                |s| s.rollback,
+            ),
+            parallel_dabs: a.parallel_dabs
+                + self
+                    .material
+                    .extra
+                    .iter()
+                    .map(|s| s.parallel_dabs)
+                    .sum::<u64>(),
         })
     }
 
@@ -1099,6 +1145,11 @@ impl Document {
             self.mark_clip_bases();
         }
         match command {
+            Command::Material(m) => self.restore_material(m, backwards),
+            Command::IdColors { old, new } => {
+                self.id_colors = if backwards { old.clone() } else { new.clone() };
+                Ok(())
+            }
             Command::Stroke {
                 layer,
                 target,
@@ -1608,10 +1659,13 @@ impl Document {
     }
 
     /// 進行中のストロークと面へ f を当て、変わったタイルを記録する。失敗したらストロークを取り消してから返す。
-    fn with_stroke<F>(&mut self, id: u64, f: F) -> Result<bool, CoreError>
+    fn with_stroke<F>(&mut self, id: u64, mut f: F) -> Result<bool, CoreError>
     where
-        F: FnOnce(&mut StrokeState, &mut Surface, &mut Vec<TileCoord>) -> Result<bool, CoreError>,
+        F: FnMut(&mut StrokeState, &mut Surface, &mut Vec<TileCoord>) -> Result<bool, CoreError>,
     {
+        if !self.material.extra.is_empty() {
+            return self.with_material_stroke(id, f);
+        }
         let target = self.active_target;
         let state = match self.active.as_mut() {
             Some(a) if a.id == id => a,
@@ -1650,9 +1704,15 @@ impl Document {
             Some(a) if a.id == stroke.id => {}
             _ => return Err(CoreError::NoActiveStroke),
         }
+        if self.triangle_fill.is_some() {
+            return Ok(self.finish_triangles(false));
+        }
         self.with_stroke(stroke.id, |state, surface, changed| {
             state.finish_input(surface, changed)
         })?;
+        if self.material.started {
+            return self.finish_material();
+        }
         let state = self.active.take().expect("確かめた");
         let target = self.active_target;
         let surface = self
@@ -1708,6 +1768,13 @@ impl Document {
 
     /// 進行中のストロークを（札が無くても）取り消す。フォーカスを失った・Escape・札を落としたときに。取り消したら true。
     pub fn cancel_active_stroke(&mut self) -> bool {
+        if self.triangle_fill.is_some() {
+            self.finish_triangles(true);
+            return true;
+        }
+        if self.material.started {
+            return self.cancel_material();
+        }
         let Some(state) = self.active.take() else {
             return false;
         };

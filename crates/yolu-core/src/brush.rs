@@ -15,7 +15,7 @@
 //!
 //! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
 //! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。C# の
-//! 透明部分のロック・複数のチャンネル（マテリアルで塗る）・クローンの合成の読み元はまだ無い。
+//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。透明部分のロック・クローンの合成の読み元はまだ無い。
 //!
 //! ```
 //! use yolu_core::{builtin_tip, Brush, BrushSettings, Document, DualBrush, PaperTexture, Rgba8};
@@ -452,6 +452,10 @@ impl StrokeState {
     pub(crate) fn without_stencil_colour(mut self) -> Self {
         self.stencil_kind = None;
         self
+    }
+
+    pub(crate) fn set_budgets(&mut self, budgets: Budgets) {
+        self.budgets = budgets;
     }
 
     pub(crate) fn last_time(&self) -> f64 {

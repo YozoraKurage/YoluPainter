@@ -25,6 +25,28 @@ impl IdColorAssignments {
         )?;
         Ok(Self { binding, colors })
     }
+    /// 手動色を結び付けたモデルの指紋。
+    pub fn binding(&self) -> &str {
+        &self.binding
+    }
+    /// 塊の番号と 0xRRGGBB の色（番号順）。
+    pub fn colors(&self) -> &BTreeMap<usize, u32> {
+        &self.colors
+    }
+    /// 塊の色を変更した新しい値。None はその塊の指定を外す。別モデルへの流用は拒否する。
+    pub fn with_color(&self, binding: &str, part: usize, rgb: Option<u32>) -> Result<Self> {
+        check(
+            self.colors.is_empty() || binding == self.binding,
+            "手動ID色が別のモデルに属しています",
+        )?;
+        let mut colors = self.colors.clone();
+        if let Some(rgb) = rgb {
+            colors.insert(part, rgb);
+        } else {
+            colors.remove(&part);
+        }
+        Self::new(binding.to_owned(), colors)
+    }
     pub fn key(&self) -> String {
         if self.colors.is_empty() {
             String::new()
