@@ -22,6 +22,7 @@ yolu-gpu.workspace = true
 yolu-io.workspace = true
 yolu-model.workspace = true
 yolu-protocol.workspace = true
+yolu-update.workspace = true   # 更新の確かめ（署名・版・SHA-256・大きさ）。通信は `update/http.rs`
 half = "2.7"   # MIT OR Apache-2.0（環境のキューブを half float で上げる。wgpu の naga が既に使っている版）
 rayon = "1.12"   # MIT OR Apache-2.0（環境の畳み込みを並べる。yolu-core が既に使っている）
 bevy_mikktspace = "1.0"   # Zlib AND (MIT OR Apache-2.0)（接線。Unity の RecalculateTangents と同じ MikkTSpace。依存なし・unsafe なし）
@@ -31,8 +32,14 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] } 
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Networking_WinHttp"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
+ed25519-dalek = "2.2"   # 試験で、使い捨ての鍵で更新情報に署名する（本物の鍵は使わない）
+hex = "0.4"
+serde_json = "1"
 yolu-bridge = { path = "../yolu-bridge" }   # 試験で Unity の役（本物のブリッジの C の口）を別のプロセスで動かす
+
+[build-dependencies]
+winresource = "0.1.31"

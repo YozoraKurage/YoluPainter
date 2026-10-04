@@ -31,6 +31,11 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 - `bevy_mikktspace 1.0.0`（3D ビューの法線マップの接線）は **Zlib AND (MIT OR Apache-2.0)**。MikkTSpace の参照実装（Morten S. Mikkelsen）を
   Rust に書き直したもので、Zlib の注意書きは独立した許諾ファイルが無くクレートの `src/lib.rs` の冒頭にある。MIT の `LICENSE-MIT` とともに
   その原文（`lib.rs`）を全文束へ含める。選ぶのは MIT で、Zlib の条件（出所を偽らない・改変を明示する・注意書きを消さない）は残す。
+- exe のバージョン情報（アイコン・製品名・版）を埋めるビルド用の `winresource`（MIT）は、実行ファイルには入らず、ビルド依存として全文束に含める。
+- 更新の通信は OS の部品を呼ぶだけで、通信の部品は同梱しない。Windows は OS 付属の WinHTTP、Linux は利用者の環境の `curl` を呼ぶ。
+- Windows のインストーラーは NSIS 3（zlib/libpng 許諾）で作る。作ったインストーラーには NSIS の実行時の部品（stub）が入り、
+  圧縮方式ごとの部品（LZMA・bzip2・zlib）にはそれぞれの許諾と NSIS の例外が付く。上流の表記は
+  [NSIS の許諾](https://nsis.sourceforge.io/NSIS_License) を参照。インストーラーに入れるファイルは zip と同じで、全文束も同じ物を入れる。
 - 自作部分の配布許諾、Rust 標準ライブラリ、実際にリンクする MinGW/GCC ランタイム、追加で同梱する DLL の表記は、
   最終的な配布物と使用ツールチェーンに合わせて別途確認する。このクレート一覧だけで製品全体の配布可否は確定しない。
 
@@ -99,7 +104,7 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 ## 配布対象別の照合
 
 `cargo xtask bundle` と同じく app は `--include-update` を付けた集合を記載する。
-更新用 `yolu-update` の依存は app の一覧に含まれるが、app 本体に組み込み済みという意味ではない。
+`yolu-update` はアプリの自動更新として組み込み済みで、その依存も app の一覧に含まれる。
 bridge は更新依存を加えず別に照合し、開発用 `xtask` の依存は後段に分ける。
 同名でも別版のクレートは別件として数える。製品間・対象間の件数は重複する。
 
@@ -134,9 +139,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
 
-外部クレート 194 件（同名の別版は別件）。実行時 164 件。
+外部クレート 200 件（同名の別版は別件）。実行時 164 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -148,7 +153,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 168 |
+| MIT | 174 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -292,6 +297,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | serde_core | 1.0.229 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_derive | 1.0.229 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_json | 1.0.151 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_spanned | 1.1.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | signature | 2.2.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -306,6 +312,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
@@ -347,6 +356,8 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | windows_x86_64_msvc | 0.52.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows_x86_64_msvc | 0.53.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | winit | 0.30.13 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| winnow | 1.0.4 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| winresource | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | xml-rs | 0.8.29 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | zerocopy-derive | 0.8.59 | ビルド・マクロ用 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
 | zerocopy | 0.8.59 | 実行時 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
@@ -405,9 +416,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
 
-外部クレート 194 件（同名の別版は別件）。実行時 164 件。
+外部クレート 200 件（同名の別版は別件）。実行時 164 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -419,7 +430,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 168 |
+| MIT | 174 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -563,6 +574,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | serde_core | 1.0.229 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_derive | 1.0.229 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_json | 1.0.151 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_spanned | 1.1.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | signature | 2.2.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -577,6 +589,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | syn | 3.0.6 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | tracing-core | 0.1.36 | 実行時 | MIT | MIT | 確認済み |
 | tracing | 0.1.44 | 実行時 | MIT | MIT | 確認済み |
 | type-map | 0.5.1 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
@@ -618,6 +633,8 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | windows_x86_64_gnu | 0.52.6 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | windows_x86_64_gnu | 0.53.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | winit | 0.30.13 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
+| winnow | 1.0.4 | ビルド・マクロ用 | MIT | MIT | 確認済み |
+| winresource | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | xml-rs | 0.8.29 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | zerocopy-derive | 0.8.59 | ビルド・マクロ用 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
 | zerocopy | 0.8.59 | 実行時 | BSD-2-Clause OR Apache-2.0 OR MIT | MIT | 確認済み |
@@ -676,9 +693,9 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `2881f2e7310cba97c44f5320d0f500b5edffead4433bd34773d37f830073dff8`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `cd029495a7a3fdd2666223aadc372f41dc28664e5ad81d7bcc3642f357aaa6c6`。
 
-外部クレート 263 件（同名の別版は別件）。実行時 223 件。
+外部クレート 266 件（同名の別版は別件）。実行時 223 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -689,7 +706,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | Apache-2.0 AND MIT | 1 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 242 |
+| MIT | 245 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -882,6 +899,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | serde_derive | 1.0.229 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_json | 1.0.151 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | serde_repr | 0.1.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| serde_spanned | 1.1.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | sha2 | 0.10.9 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | shlex | 2.0.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | signal-hook-registry | 1.4.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -904,6 +922,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | thiserror-impl | 2.0.21 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 1.0.69 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | thiserror | 2.0.21 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| toml | 1.1.6+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_datetime | 1.1.1+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_edit | 0.25.15+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | toml_parser | 1.1.3+spec-1.1.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -942,6 +961,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | wgpu | 30.0.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | winit | 0.30.13 | 実行時 | Apache-2.0 | Apache-2.0 | 確認済み |
 | winnow | 1.0.4 | 実行時 | MIT | MIT | 確認済み |
+| winresource | 0.1.31 | ビルド・マクロ用 | MIT | MIT | 確認済み |
 | x11-dl | 2.21.0 | 実行時 | MIT | MIT | 確認済み |
 | x11rb-protocol | 0.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | x11rb | 0.13.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |

@@ -210,7 +210,18 @@ impl YoluApp {
         app.dialogs = true;
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
+        // 関連付け（.ylp のダブルクリック）で起動されたら、そのプロジェクトを開く
+        app.open_startup_project(std::env::args_os());
+        // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際の窓だけ。試験は呼ばない）
+        app.state.update_startup();
         app
+    }
+
+    /// 起動の引数（実行ファイルの名前のあと）に .ylp があれば開く。開けないときは、`OpenProject` が message に理由を書く。
+    pub fn open_startup_project(&mut self, args: impl Iterator<Item = std::ffi::OsString>) {
+        if let Some(path) = startup_project(args) {
+            self.state.apply(Action::OpenProject(path));
+        }
     }
 
     /// 設定のファイル（無ければ保存しない）から言語を決めて作る（`setup` は呼ぶ側で）。最初のレイヤー・テクスチャセット・
@@ -227,6 +238,10 @@ impl YoluApp {
         );
         if let Some(message) = startup_message(lang, unreadable, app.pen.is_hooked()) {
             app.state.message = message;
+        }
+        // 「起動時に更新を確かめる」の選択は、言語の設定と同じフォルダの別のファイル
+        if let Some(path) = settings.as_deref().and_then(crate::update::config::path_for) {
+            app.state.update.attach_config(path);
         }
         app.settings = settings.map(|path| (path, lang));
         app
@@ -412,7 +427,8 @@ impl YoluApp {
 
     /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。
     fn confirm_close(&self) -> bool {
-        if !self.state.modified || !self.dialogs {
+        // 更新のために終わるときは、保存するか捨てるかを更新の窓で選び済み
+        if !self.state.modified || !self.dialogs || self.state.update.is_quitting() {
             return true;
         }
         rfd::MessageDialog::new()
@@ -573,6 +589,8 @@ impl YoluApp {
         self.state.poll_bake();
         self.state.poll_export();
         self.state.poll_psd();
+        // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
+        self.state.poll_update();
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
@@ -596,11 +614,16 @@ impl YoluApp {
                     Some(PopupKind::MenuBar(i)) => Some(i),
                     _ => None,
                 };
-                bar = Some(menu::menu_bar(
+                bar = Some(menu::menu_bar_marked(
                     ui,
                     r,
                     &shell::menu_titles(self.state.lang),
                     open,
+                    // 新しい版があるあいだ、ヘルプの見出しに印を付ける
+                    self.state
+                        .update
+                        .offer()
+                        .map(|_| shell::HELP_MENU),
                 ));
                 // 右端: プロジェクトの名前と保存の状態
                 let name = format!(
@@ -700,6 +723,8 @@ impl YoluApp {
         self.handle_requests(&ctx);
         self.link.publish(&mut self.state);
         self.state.link = self.link.view();
+        // 「保存して更新」: 保存先を選ぶ窓も済んだこのフレームの終わりに、保存の結果を見て入れる
+        self.state.update_finish_save();
         // 終了・窓を閉じる: 保存していない変更があれば聞く（窓を開かない試験では聞かない）
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if (self.state.quit || close_requested) && !self.closing {
@@ -776,6 +801,15 @@ impl YoluApp {
     }
 }
 
+/// 起動の引数（実行ファイルの名前のあと）が .ylp ならそのパス。関連付けとエクスプローラーの「プログラムから開く」が渡す形。
+/// 無い・開けないファイルでも渡す（黙って空の画面を出さず、開く処理が理由を知らせる）。.ylp 以外は開かない。
+fn startup_project(mut args: impl Iterator<Item = std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(args.nth(1)?);
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ylp"))
+        .then_some(path)
+}
+
 /// 起動時の状態の帯の知らせ（読めなかった言語の設定と、Windows Ink の接続。両方あれば両方）。
 fn startup_message(lang: crate::lang::Lang, settings_unreadable: bool, ink_connected: bool) -> Option<String> {
     let mut parts = Vec::new();
@@ -803,6 +837,79 @@ impl eframe::App for YoluApp {
 mod tests {
     use super::*;
     use crate::lang::Lang;
+
+    #[test]
+    fn only_an_existing_ylp_argument_opens_at_startup() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/startup-arg-tests")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.join("A.YLP");
+        let other = dir.join("a.png");
+        std::fs::write(&project, b"x").unwrap();
+        std::fs::write(&other, b"x").unwrap();
+        let args = |list: &[&std::path::Path]| {
+            std::iter::once(std::ffi::OsString::from("yolupainter"))
+                .chain(list.iter().map(|p| p.as_os_str().to_owned()))
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        assert_eq!(startup_project(args(&[&project])), Some(project.clone()));
+        assert_eq!(startup_project(args(&[])), None);
+        assert_eq!(startup_project(args(&[&other])), None);
+        // 無い .ylp も渡す（開く処理が「開けません」を知らせる）
+        let missing = dir.join("missing.ylp");
+        assert_eq!(startup_project(args(&[&missing])), Some(missing));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn startup_app(args: &[&std::path::Path]) -> YoluApp {
+        let mut app = YoluApp::with_state(crate::state::AppState::new(64, 64), PenInput::detached());
+        app.open_startup_project(
+            std::iter::once(std::ffi::OsString::from("yolupainter"))
+                .chain(args.iter().map(|p| p.as_os_str().to_owned())),
+        );
+        app
+    }
+
+    #[test]
+    fn a_ylp_argument_opens_through_the_app_and_a_bad_one_says_why() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/startup-open-tests")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 保存した .ylp を、引数で開く
+        let project = dir.join("Opened.ylp");
+        let mut source = crate::state::AppState::new(64, 64);
+        source.apply(Action::SaveProjectAs(project.clone()));
+        assert!(!source.modified, "{}", source.message);
+        let app = startup_app(&[&project]);
+        assert_eq!(app.state.project.as_ref().map(|p| p.path().to_path_buf()), Some(project.clone()));
+        assert!(!app.state.message.contains("開けません"), "{}", app.state.message);
+        // 壊れた .ylp・無い .ylp は、開かずに理由を知らせる（元の文書はそのまま）
+        let broken = dir.join("Broken.ylp");
+        std::fs::write(&broken, b"not a project").unwrap();
+        for bad in [broken, dir.join("missing.ylp")] {
+            let app = startup_app(&[&bad]);
+            assert!(app.state.project.is_none(), "{}", bad.display());
+            assert!(
+                app.state.message.starts_with("開けません: "),
+                "{}: {}",
+                bad.display(),
+                app.state.message
+            );
+        }
+        // .ylp ではない引数・引数なしは、何も開かず、知らせもない
+        let other = dir.join("a.png");
+        std::fs::write(&other, b"x").unwrap();
+        for args in [vec![other.as_path()], Vec::new()] {
+            let app = startup_app(&args);
+            assert!(app.state.project.is_none() && app.state.message.is_empty());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn startup_message_keeps_both_notices() {

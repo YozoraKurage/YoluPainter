@@ -1,17 +1,36 @@
 //! 署名付き更新情報の検証。HTTP は呼び出し側が実装し、ファイルの置換は行わない。
 use ed25519_dalek::{Signature, VerifyingKey};
-use semver::Version;
+pub use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub const RELEASE_BASE: &str = "https://github.com/YozoraKurage/YoluPainter-rs/releases/download";
+/// アプリが更新情報を取る場所。GitHub の「最新の Release」（下書き・プレリリースを除く最新）の資産へ飛ぶ。
+/// ファイル名に schema の番号（`UPDATER_SCHEMA`）を含める。schema を上げた更新情報は別の名前に置き、
+/// 旧い schema を読むアプリが取る更新情報を旧形式のまま残すため。
+pub const UPDATER_URL: &str =
+    "https://github.com/YozoraKurage/YoluPainter-rs/releases/latest/download/updater-v1.json";
+/// 更新情報の本文の schema。変えるときは `UPDATER_FILE` と `UPDATER_URL` の番号も上げ、旧い名前のファイルも残して配る。
+pub const UPDATER_SCHEMA: u32 = 1;
+/// Release に置く更新情報のファイル名（`UPDATER_URL` の末尾）。
+pub const UPDATER_FILE: &str = "updater-v1.json";
 pub const MAX_METADATA: usize = 1024 * 1024;
 pub const MAX_ASSET: u64 = 2 * 1024 * 1024 * 1024;
 /// 更新情報に載せられる配布物の数の上限。対象を足しても旧版のクライアントが読めるよう、
 /// 既知の対象の数ではなく固定の値にする。
 pub const MAX_ASSETS: usize = 32;
-pub const TARGETS: [&str; 2] = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"];
+/// 配布物の種類の鍵。三つ組みの対象のアーカイブ（zip・tar.gz）のほかに、Windows のインストーラーを別の鍵で載せる。
+/// 知らない鍵の配布物は旧いクライアントが読み飛ばすので、種類を足しても schema は上げない。
+pub const WINDOWS_ARCHIVE: &str = "x86_64-pc-windows-msvc";
+pub const LINUX_ARCHIVE: &str = "x86_64-unknown-linux-gnu";
+/// Windows のインストーラー（NSIS の setup.exe）。インストール済みの Windows のアプリが自分を更新するときの配布物。
+pub const WINDOWS_INSTALLER: &str = "x86_64-pc-windows-msvc-setup";
+pub const TARGETS: [&str; 3] = [WINDOWS_ARCHIVE, LINUX_ARCHIVE, WINDOWS_INSTALLER];
+/// アーカイブ（zip・tar.gz）の対象か。`build`・`bundle` に渡せるのはこれだけ。
+pub fn is_archive_target(target: &str) -> bool {
+    target == WINDOWS_ARCHIVE || target == LINUX_ARCHIVE
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
@@ -59,14 +78,22 @@ pub struct Envelope {
 
 pub fn asset_name(version: &Version, target: &str) -> Result<String, Error> {
     let extension = match target {
-        "x86_64-pc-windows-msvc" => "zip",
-        "x86_64-unknown-linux-gnu" => "tar.gz",
+        WINDOWS_ARCHIVE => "zip",
+        LINUX_ARCHIVE => "tar.gz",
+        WINDOWS_INSTALLER => "exe",
         _ => return Err(fail("未対応の配布ターゲットです")),
     };
     Ok(format!("yolupainter-{version}-{target}.{extension}"))
 }
 pub fn asset_url(version: &Version, name: &str) -> String {
     format!("{RELEASE_BASE}/v{version}/{name}")
+}
+/// その版の Release のページ（アプリを自動で入れ替えない環境で、利用者に開いてもらう）。
+pub fn release_page(version: &Version) -> String {
+    let releases = RELEASE_BASE
+        .strip_suffix("/download")
+        .unwrap_or(RELEASE_BASE);
+    format!("{releases}/tag/v{version}")
 }
 pub fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -76,6 +103,33 @@ pub fn sha256(bytes: &[u8]) -> String {
 /// 認証情報を別ホストへ転送しない。試験にはメモリ上の実装を利用できる。
 pub trait Transport {
     fn get(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Error>;
+}
+
+fn parse_hex_key(key: Option<&str>) -> Result<[u8; 32], Error> {
+    let key = key.ok_or_else(|| fail("更新用公開鍵が組み込まれていません"))?;
+    hex::decode(key)
+        .map_err(|_| fail("公開鍵の形式が不正です"))?
+        .try_into()
+        .map_err(|_| fail("公開鍵の長さが不正です"))
+}
+
+/// ビルド時に組み込んだ公開鍵（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。未設定・空・形式が不正なら Err。
+/// アプリは、これが Ok のビルドだけに更新の項目を出す。弱い鍵は `UpdateClient::with_public_key` が断る。
+pub fn embedded_public_key() -> Result<[u8; 32], Error> {
+    parse_hex_key(option_env!("YOLUPAINTER_UPDATE_PUBLIC_KEY"))
+}
+
+fn verifying_key(key: [u8; 32]) -> Result<VerifyingKey, Error> {
+    let key = VerifyingKey::from_bytes(&key).map_err(|_| fail("公開鍵が不正です"))?;
+    if key.is_weak() {
+        return Err(fail("弱い公開鍵は使えません"));
+    }
+    Ok(key)
+}
+
+/// 公開鍵として使えるか（曲線の上の点で、弱い鍵でない）。配布のビルドが、組み込む前に確かめる。
+pub fn check_public_key(key: [u8; 32]) -> Result<(), Error> {
+    verifying_key(key).map(|_| ())
 }
 
 pub struct UpdateClient<T> {
@@ -88,20 +142,14 @@ impl<T: Transport> UpdateClient<T> {
         Self::from_hex_key(transport, option_env!("YOLUPAINTER_UPDATE_PUBLIC_KEY"))
     }
     fn from_hex_key(transport: T, key: Option<&str>) -> Result<Self, Error> {
-        let key = key.ok_or_else(|| fail("更新用公開鍵が組み込まれていません"))?;
-        let bytes: [u8; 32] = hex::decode(key)
-            .map_err(|_| fail("公開鍵の形式が不正です"))?
-            .try_into()
-            .map_err(|_| fail("公開鍵の長さが不正です"))?;
-        Self::with_public_key(transport, bytes)
+        Self::with_public_key(transport, parse_hex_key(key)?)
     }
     /// 呼び出し側が信頼した公開鍵だけを渡す。更新情報から公開鍵を取得しない。
     pub fn with_public_key(transport: T, key: [u8; 32]) -> Result<Self, Error> {
-        let key = VerifyingKey::from_bytes(&key).map_err(|_| fail("公開鍵が不正です"))?;
-        if key.is_weak() {
-            return Err(fail("弱い公開鍵は使えません"));
-        }
-        Ok(Self { transport, key })
+        Ok(Self {
+            transport,
+            key: verifying_key(key)?,
+        })
     }
     pub fn check(
         &self,
@@ -129,7 +177,9 @@ impl<T: Transport> UpdateClient<T> {
         let manifest: RawManifest =
             serde_json::from_str(&envelope.payload).map_err(|_| fail("本文の形式が不正です"))?;
         let version = Version::parse(&manifest.version).map_err(|_| fail("版の形式が不正です"))?;
-        if manifest.schema != 1 || manifest.assets.is_empty() || manifest.assets.len() > MAX_ASSETS
+        if manifest.schema != UPDATER_SCHEMA
+            || manifest.assets.is_empty()
+            || manifest.assets.len() > MAX_ASSETS
         {
             return Err(fail("更新情報の版または配布物の数が不正です"));
         }
@@ -187,6 +237,7 @@ impl<T: Transport> UpdateClient<T> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct AvailableUpdate {
     version: Version,
     asset: Asset,
@@ -292,6 +343,75 @@ mod tests {
         assert_eq!(verified.bytes(), b"archive");
         assert_eq!(verified.version().to_string(), "1.2.0");
         assert_eq!(c.transport.calls.borrow().len(), 2);
+    }
+    #[test]
+    fn installer_is_its_own_asset_kind_and_the_app_picks_it_by_key() {
+        let version = Version::parse("1.2.0").unwrap();
+        assert_eq!(
+            asset_name(&version, WINDOWS_INSTALLER).unwrap(),
+            "yolupainter-1.2.0-x86_64-pc-windows-msvc-setup.exe"
+        );
+        assert!(is_archive_target(WINDOWS_ARCHIVE) && is_archive_target(LINUX_ARCHIVE));
+        assert!(!is_archive_target(WINDOWS_INSTALLER));
+        let mut m = manifest();
+        let name = asset_name(&version, WINDOWS_INSTALLER).unwrap();
+        m.assets.push(Asset {
+            target: WINDOWS_INSTALLER.into(),
+            url: asset_url(&version, &name),
+            name,
+            sha256: sha256(b"installer"),
+            size: 9,
+        });
+        let c = client(m, |_| {});
+        let current = Version::parse("1.0.0").unwrap();
+        let zip = c
+            .check(URL, &current, WINDOWS_ARCHIVE, false)
+            .unwrap()
+            .unwrap();
+        assert!(zip.asset().name.ends_with(".zip"));
+        let setup = c
+            .check(URL, &current, WINDOWS_INSTALLER, false)
+            .unwrap()
+            .unwrap();
+        assert!(setup.asset().name.ends_with("-setup.exe"));
+        // 載っていない種類を求められたら、別の種類で代用せず断る。
+        assert!(c.check(URL, &current, LINUX_ARCHIVE, false).is_err());
+    }
+    #[test]
+    fn installer_asset_fields_are_checked_like_any_other() {
+        let version = Version::parse("1.2.0").unwrap();
+        let name = asset_name(&version, WINDOWS_INSTALLER).unwrap();
+        let good = Asset {
+            target: WINDOWS_INSTALLER.into(),
+            url: asset_url(&version, &name),
+            name,
+            sha256: sha256(b"installer"),
+            size: 9,
+        };
+        for n in 0..3 {
+            let mut m = manifest();
+            let mut a = good.clone();
+            match n {
+                0 => a.name = "yolupainter-1.2.0-x86_64-pc-windows-msvc.zip".into(),
+                1 => a.url = "https://example.invalid/setup.exe".into(),
+                _ => a.size = 0,
+            }
+            m.assets.push(a);
+            assert!(check(&client(m, |_| {})).is_err(), "{n}");
+        }
+    }
+    #[test]
+    fn update_locations_follow_the_release_base_and_the_schema() {
+        let releases = RELEASE_BASE.strip_suffix("/download").unwrap();
+        assert_eq!(
+            UPDATER_URL,
+            format!("{releases}/latest/download/{UPDATER_FILE}")
+        );
+        assert_eq!(UPDATER_FILE, format!("updater-v{UPDATER_SCHEMA}.json"));
+        assert_eq!(
+            release_page(&Version::parse("1.2.0-rc.1").unwrap()),
+            format!("{releases}/tag/v1.2.0-rc.1")
+        );
     }
     #[test]
     fn unsigned_rejected() {
@@ -473,7 +593,13 @@ mod tests {
         // この試験の組みでは公開鍵を組み込んでいないので、未設定はエラーになる。
         if option_env!("YOLUPAINTER_UPDATE_PUBLIC_KEY").is_none() {
             assert!(UpdateClient::embedded(fake()).is_err());
+            assert_eq!(
+                embedded_public_key().unwrap_err(),
+                fail("更新用公開鍵が組み込まれていません")
+            );
         }
+        assert_eq!(parse_hex_key(Some(&good)).unwrap().len(), 32);
+        assert!(parse_hex_key(Some("")).is_err());
     }
     #[test]
     fn weak_or_invalid_public_keys_rejected() {

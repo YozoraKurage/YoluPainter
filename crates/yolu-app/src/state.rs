@@ -478,6 +478,8 @@ pub enum Action {
     Export(crate::export::ExportAction),
     /// PSD の読み込みと書き出し。
     Psd(crate::psd::PsdAction),
+    /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
+    Update(crate::update::UpdateAction),
 }
 
 impl Action {
@@ -573,6 +575,8 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
+    /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
+    pub update: crate::update::UpdateState,
 }
 
 /// ファイルの窓の頼み。
@@ -693,6 +697,7 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             stencil: crate::stencil::StencilState::default(),
+            update: crate::update::UpdateState::detect(),
         }
     }
 
@@ -1050,6 +1055,7 @@ impl AppState {
             Action::Bake(a) => self.bake_apply(a),
             Action::Export(a) => self.export_apply(a),
             Action::Psd(a) => self.psd_apply(a),
+            Action::Update(a) => self.update_apply(a),
         }
     }
 }

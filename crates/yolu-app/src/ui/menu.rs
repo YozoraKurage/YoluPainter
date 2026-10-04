@@ -422,6 +422,17 @@ pub struct BarOutcome {
 
 /// メニューバー: 見出しを並べる。押下とホバーは生の入力で見る（開いているメニューの受け皿が上にあっても切り替えられるように）。
 pub fn menu_bar(ui: &mut Ui, r: Rect, titles: &[&str], open: Option<usize>) -> BarOutcome {
+    menu_bar_marked(ui, r, titles, open, None)
+}
+
+/// `menu_bar` に、`marked` の見出しの右上へ小さな印（青い点。新しい版があるときのヘルプなど）を付けたもの。
+pub fn menu_bar_marked(
+    ui: &mut Ui,
+    r: Rect,
+    titles: &[&str],
+    open: Option<usize>,
+    marked: Option<usize>,
+) -> BarOutcome {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
@@ -461,6 +472,9 @@ pub fn menu_bar(ui: &mut Ui, r: Rect, titles: &[&str], open: Option<usize>) -> B
             w::rounded(&p, item, t::CONTROL_HOVER, 3.0);
         }
         w::text(&p, item, title, t::LABEL, Align::Center);
+        if marked == Some(i) {
+            p.circle_filled(pos2(item.right() - 6.0, item.center().y - 6.0), 3.0, t::ACCENT);
+        }
         out.rects.push(item);
         x += width;
     }

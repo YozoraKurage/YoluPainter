@@ -36,7 +36,7 @@ jobs:
             build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
-            xvfb xauth fonts-noto-cjk
+            xvfb xauth fonts-noto-cjk nsis
       - name: ワークスペース全体の試験（ソフトウェア描画）
         env:
           # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。
@@ -71,3 +71,5 @@ jobs:
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
       - name: Live Link の統合試験（画面なし）
         run: cargo test -p yolu-app --test livelink --locked headless_ -- --test-threads=1
+      - name: 自動更新の統合試験（画面なし）
+        run: cargo test -p yolu-app --test update --locked headless_ -- --test-threads=1

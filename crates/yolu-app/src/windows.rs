@@ -235,6 +235,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.bake.is_probing_gpu()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.update.is_busy()
     {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
@@ -243,13 +244,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_report(ctx, app);
     psd_confirm(ctx, app);
     psd_report(ctx, app);
+    crate::update::window::show(ctx, app);
     job_card(ctx, app);
     app.release_idle_bake_input();
 }
 
 /// 確かめの窓や結果の窓が開いている（キーの割り当てを止める）。
 pub fn modal_open(app: &AppState) -> bool {
-    app.export.confirm.is_some() || app.psd.confirm.is_some()
+    app.export.confirm.is_some() || app.psd.confirm.is_some() || app.update.window_open()
 }
 
 fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
@@ -546,6 +548,19 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             canceling: p.canceling,
         });
     }
+    if let Some(p) = app.update.progress() {
+        entries.push(Entry {
+            id: "update",
+            text: format!(
+                "{} — {}",
+                lang.pick("更新をダウンロード中", "Downloading update"),
+                p.version
+            ),
+            fraction: Some(p.fraction),
+            cancel: Action::Update(crate::update::UpdateAction::Cancel),
+            canceling: p.canceling,
+        });
+    }
     if entries.is_empty() {
         return;
     }
@@ -651,13 +666,18 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
     app.apply(Action::Psd(PsdAction::Cancel));
+    app.apply(Action::Update(crate::update::UpdateAction::Cancel));
     let start = std::time::Instant::now();
-    while (app.bake.is_baking() || app.export.is_exporting() || app.psd.is_busy())
+    while (app.bake.is_baking()
+        || app.export.is_exporting()
+        || app.psd.is_busy()
+        || app.update.is_busy())
         && start.elapsed() < wait
     {
         app.poll_bake();
         app.poll_export();
         app.poll_psd();
+        app.poll_update();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }

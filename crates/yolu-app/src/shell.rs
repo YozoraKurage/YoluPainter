@@ -17,10 +17,14 @@ use crate::state::{Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
+use crate::update::UpdateAction;
 use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
 pub const MENU_TITLES: [&str; 6] = ["ファイル", "編集", "レイヤー", "選択範囲", "表示", "ヘルプ"];
+
+/// ヘルプの見出しの番号。
+pub const HELP_MENU: usize = 5;
 
 /// 言語ごとのメニューバーの見出し。
 pub fn menu_titles(lang: Lang) -> [&'static str; 6] {
@@ -250,11 +254,47 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Action::ResetLayout,
             ),
         ],
-        _ => vec![Entry::item(
-            l.pick("YoluPainter について", "About YoluPainter"),
-            Action::About,
-        )],
+        _ => help_entries(app),
     }
+}
+
+/// ヘルプのメニュー。更新の項目は、公開鍵を組み込んだビルドだけに出る（新しい版があれば先頭に）。
+fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let l = app.lang;
+    let about = Entry::item(
+        l.pick("YoluPainter について", "About YoluPainter"),
+        Action::About,
+    );
+    if !app.update.enabled() {
+        return vec![about];
+    }
+    let busy = app.update.is_busy();
+    let mut entries = Vec::new();
+    if let Some(label) = app.update.install_label(l) {
+        entries.push(
+            Entry::item(label, Action::Update(UpdateAction::Install))
+                .enabled(!busy && !app.is_stroking()),
+        );
+        entries.push(Entry::Separator);
+    }
+    entries.push(
+        Entry::item(
+            l.pick("更新を確かめる…", "Check for Updates…"),
+            Action::Update(UpdateAction::Check),
+        )
+        .enabled(!busy),
+    );
+    let on = app.update.preference() == crate::update::Preference::On;
+    entries.push(
+        Entry::item(
+            l.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
+            Action::Update(UpdateAction::SetCheckOnStartup(!on)),
+        )
+        .checked(on),
+    );
+    entries.push(Entry::Separator);
+    entries.push(about);
+    entries
 }
 
 /// ポップアップの中身（メニューバー・合成モード・レイヤーの右クリック）。

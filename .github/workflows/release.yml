@@ -46,12 +46,38 @@ jobs:
       - name: Rust を準備
         run: rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
       - run: rustup default stable
+      - name: NSIS を準備（Windows。runner に無ければ Chocolatey で 3.11.0 を入れ、どちらでも 3.11 であることを確かめる）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          $found = Get-Command makensis -ErrorAction SilentlyContinue
+          if ($found) {
+            $makensis = $found.Source
+          } elseif (Test-Path "$nsisDir\makensis.exe") {
+            $makensis = "$nsisDir\makensis.exe"
+          } else {
+            choco install nsis --version=3.11.0 --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS 3.11.0 を入れられません' }
+            $makensis = "$nsisDir\makensis.exe"
+          }
+          # 配布物の作り方を変えないため、入っていた物でも入れた物でも、使うのは 3.11 だけ（版が違えば止める）
+          $version = (& $makensis /VERSION | Out-String).Trim()
+          Write-Host "makensis: ${makensis} (${version})"
+          if ($version -notmatch '^v3\.11(\.0)?$') { throw "NSIS は 3.11 が要ります（${makensis} は ${version}）" }
+          # 確かめた物を、あとの手順（cargo xtask installer）が使う
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: ビルドと配布物の作成
         env:
           PYTHON: python
+          # 公開鍵は秘密ではない。入っていればアプリに組み込まれ、更新の項目が出る
+          YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+          REQUIRE_KEY: ${{ !inputs.dry-run && '--require-update-key' || '' }}
+        shell: bash
         run: |
-          cargo xtask build --target ${{ matrix.target }} --release
+          cargo xtask build --target ${{ matrix.target }} --release $REQUIRE_KEY
           cargo xtask bundle --target ${{ matrix.target }}
+          if [ "$RUNNER_OS" = Windows ]; then cargo xtask installer --target ${{ matrix.target }}; fi
       - uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.target }}

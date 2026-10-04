@@ -9,17 +9,24 @@ use std::{
     process::Command,
 };
 use yolu_update::{
-    asset_name, asset_url, sha256, Asset, Envelope, Manifest, Transport, UpdateClient, MAX_ASSET,
-    RELEASE_BASE, TARGETS,
+    asset_name, asset_url, check_public_key, is_archive_target, sha256, Asset, Envelope, Manifest,
+    Transport, UpdateClient, MAX_ASSET, RELEASE_BASE, TARGETS, UPDATER_FILE, UPDATER_SCHEMA,
+    WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
-const USAGE: &str = "命令: build --target T --release / bundle --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
+const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
+/// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
+const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
+const USAGE: &str = "命令: build --target T --release [--require-update-key] / bundle --target T / installer --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
+/// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
+/// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+        .ancestors()
+        .nth(2)
+        .expect("xtask は crates/ の下にある")
+        .to_path_buf()
 }
 fn run(command: &mut Command) -> Result<()> {
     if !command.status()?.success() {
@@ -59,9 +66,10 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     let mut output = None;
     let mut release = false;
     let mut sign = false;
+    let mut require_update_key = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--target" if matches!(command.as_str(), "build" | "bundle") => {
+            "--target" if matches!(command.as_str(), "build" | "bundle" | "installer") => {
                 target = Some(value(&mut args)?)
             }
             "--version" if matches!(command.as_str(), "updater-json" | "verify") => {
@@ -76,29 +84,26 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
             "--public-key" if command == "verify" => public_key = Some(value(&mut args)?),
             "--output" if command == "keygen" => output = Some(PathBuf::from(value(&mut args)?)),
             "--release" if command == "build" => release = true,
+            "--require-update-key" if command == "build" => require_update_key = true,
             "--sign" if command == "updater-json" => sign = true,
             _ => return Err(format!("未対応の引数: {arg}").into()),
         }
     }
     match command.as_str() {
-        "build" | "bundle" => {
+        "build" | "bundle" | "installer" => {
             let target = target.ok_or("--target が必要です")?;
-            asset_name(&Version::new(0, 0, 0), &target)?;
-            if command == "build" {
-                if !release {
-                    return Err("配布用ビルドには --release が必要です".into());
+            if !is_archive_target(&target) {
+                return Err("未対応の配布ターゲットです".into());
+            }
+            match command.as_str() {
+                "build" => {
+                    if !release {
+                        return Err("配布用ビルドには --release が必要です".into());
+                    }
+                    build(&target, require_update_key)
                 }
-                run(cargo().current_dir(root()).args([
-                    "build",
-                    "--locked",
-                    "-p",
-                    "yolu-app",
-                    "--target",
-                    &target,
-                    "--release",
-                ]))
-            } else {
-                bundle(&target)
+                "bundle" => bundle(&target),
+                _ => installer(&target),
             }
         }
         "updater-json" => {
@@ -155,16 +160,47 @@ fn remove_if_present(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn bundle(target: &str) -> Result<()> {
-    let root = root();
-    let version = workspace_version()?;
-    let name = asset_name(&version, target)?;
-    let out = root.join("target/dist");
-    fs::create_dir_all(&out)?;
-    // 前回成功した配布物を今回の失敗と取り違えない。
-    let destination = out.join(name);
-    remove_if_present(&destination)?;
-    run(python(&root).args([
+/// アプリに組み込む更新用の公開鍵。GitHub の変数は未設定だと空文字で渡るので、空は未設定として扱う。
+/// 入っているのに鍵として使えないものは、黙って更新なしのビルドにせず断る。
+/// `require` のとき（Draft を作る配布）は、未設定も断る（更新できないアプリを配らない）。
+fn update_public_key(environment: Option<String>, require: bool) -> Result<Option<String>> {
+    let Some(text) = environment
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        if require {
+            return Err(format!(
+                "{PUBLIC_KEY_ENV} が空です。リポジトリ変数に公開鍵を設定してください"
+            )
+            .into());
+        }
+        return Ok(None);
+    };
+    check_public_key(public_key_bytes(&text)?)?;
+    Ok(Some(text))
+}
+fn build(target: &str, require_update_key: bool) -> Result<()> {
+    let key = update_public_key(env::var(PUBLIC_KEY_ENV).ok(), require_update_key)?;
+    let mut command = cargo();
+    command.current_dir(root()).args([
+        "build",
+        "--locked",
+        "-p",
+        "yolu-app",
+        "--target",
+        target,
+        "--release",
+    ]);
+    match key {
+        Some(key) => command.env(PUBLIC_KEY_ENV, key),
+        // 空の値を渡さない（アプリは「組み込み済み」と見て、使えない鍵を持つ）。
+        None => command.env_remove(PUBLIC_KEY_ENV),
+    };
+    run(&mut command)
+}
+/// アーカイブ・インストーラーに入れるファイル（名前 → 元）。許諾の全文の束もここで作る。
+fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
+    run(python(root).args([
         "tools/third-party.py",
         "--package",
         "yolu-app",
@@ -182,7 +218,7 @@ fn bundle(target: &str) -> Result<()> {
     } else {
         "yolupainter"
     };
-    let entries = vec![
+    Ok(vec![
         (
             exe.to_owned(),
             root.join("target").join(target).join("release").join(exe),
@@ -195,8 +231,96 @@ fn bundle(target: &str) -> Result<()> {
             "THIRD_PARTY_LICENSES.txt".into(),
             license_dir.join("THIRD_PARTY_LICENSES.txt"),
         ),
-    ];
+    ])
+}
+fn bundle(target: &str) -> Result<()> {
+    let root = root();
+    let version = workspace_version()?;
+    let name = asset_name(&version, target)?;
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out)?;
+    // 前回成功した配布物を今回の失敗と取り違えない。
+    let destination = out.join(name);
+    remove_if_present(&destination)?;
+    let entries = payload(&root, target)?;
     write_archive(&destination, &entries, target.contains("windows"))?;
+    println!("配布物: {}", destination.display());
+    Ok(())
+}
+/// NSIS が数字 4 つの版（各 0〜65535）しか受けないので、プレリリース識別子は落とす（文字列の版は別に渡す）。
+fn numeric_version(version: &Version) -> Result<String> {
+    let part = |n: u64| {
+        u16::try_from(n).map_err(|_| "版の数字が 65535 を超えるのでインストーラーに入れられません")
+    };
+    Ok(format!(
+        "{}.{}.{}.0",
+        part(version.major)?,
+        part(version.minor)?,
+        part(version.patch)?
+    ))
+}
+/// makensis に渡す引数（スクリプトの前の -D まで。スクリプトのパスは呼ぶ側が最後に足す）。
+fn nsis_args(
+    version: &Version,
+    stage: &Path,
+    outfile: &Path,
+    icon: &Path,
+) -> Result<Vec<std::ffi::OsString>> {
+    let define = |name: &str, value: &std::ffi::OsStr| {
+        let mut argument = std::ffi::OsString::from(format!("-D{name}="));
+        argument.push(value);
+        argument
+    };
+    Ok(vec![
+        // 日本語の文字列を含むスクリプトを BOM の有無によらず UTF-8 として読む。警告もエラーにする。
+        "-INPUTCHARSET".into(),
+        "UTF8".into(),
+        "-WX".into(),
+        "-V2".into(),
+        define("VERSION", version.to_string().as_ref()),
+        define("VERSION_NUMERIC", numeric_version(version)?.as_ref()),
+        define("STAGE", stage.as_os_str()),
+        define("OUTFILE", outfile.as_os_str()),
+        define("ICON", icon.as_os_str()),
+    ])
+}
+fn makensis() -> Command {
+    Command::new(env::var_os("MAKENSIS").unwrap_or_else(|| "makensis".into()))
+}
+/// Windows のインストーラー（NSIS）。zip と同じファイルを段取り用のフォルダ（target/ の中）に集めて渡す。
+/// 一時ファイルに作ってから最後に 1 回の rename で置くので、失敗した作りかけを配布物として見せない。
+fn installer(target: &str) -> Result<()> {
+    if target != WINDOWS_ARCHIVE {
+        return Err("インストーラーは Windows（x86_64-pc-windows-msvc）だけです".into());
+    }
+    let root = root();
+    let version = workspace_version()?;
+    let name = asset_name(&version, WINDOWS_INSTALLER)?;
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out)?;
+    let destination = out.join(&name);
+    remove_if_present(&destination)?;
+    let entries = payload(&root, target)?;
+    let stage = root.join("target/installer").join(target);
+    let _ = fs::remove_dir_all(&stage);
+    fs::create_dir_all(&stage)?;
+    for (name, source) in &entries {
+        fs::copy(source, stage.join(name))?;
+    }
+    let temporary = out.join(format!("{name}.tmp"));
+    let _ = fs::remove_file(&temporary);
+    let built = nsis_args(&version, &stage, &temporary, &root.join(LOGO_ICON))
+        .and_then(|args| {
+            run(makensis()
+                .current_dir(&root)
+                .args(args)
+                .arg(root.join("installer/yolupainter.nsi")))
+        })
+        .and_then(|_| Ok(fs::rename(&temporary, &destination)?));
+    if let Err(error) = built {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
     println!("配布物: {}", destination.display());
     Ok(())
 }
@@ -272,14 +396,14 @@ fn public_key_bytes(text: &str) -> Result<[u8; 32]> {
         .try_into()
         .map_err(|_| "公開鍵は 32 バイト必要です".into())
 }
-/// `load_key` は署名するときだけ呼ぶ。鍵が読めない失敗でも古い updater.json は残さない。
+/// `load_key` は署名するときだけ呼ぶ。鍵が読めない失敗でも古い更新情報（`UPDATER_FILE`）は残さない。
 fn updater(
     version: Version,
     directory: &Path,
     sign: bool,
     load_key: impl FnOnce() -> Result<SigningKey>,
 ) -> Result<()> {
-    let output = directory.join("updater.json");
+    let output = directory.join(UPDATER_FILE);
     remove_if_present(&output)?;
     let mut assets = Vec::new();
     for target in TARGETS {
@@ -313,7 +437,7 @@ fn updater(
             .file_name()
             .into_string()
             .map_err(|_| "配布物名が UTF-8 ではありません")?;
-        if name != "updater.json.tmp" && !assets.iter().any(|a| a.name == name) {
+        if name != format!("{UPDATER_FILE}.tmp") && !assets.iter().any(|a| a.name == name) {
             return Err(format!(
                 "予期しない配布物: {name}（この版の配布物だけを置いたフォルダが必要です）"
             )
@@ -323,8 +447,14 @@ fn updater(
     if assets.is_empty() {
         return Err("配布物がありません".into());
     }
+    // インストールした Windows のアプリは、更新にインストーラーを使う。zip だけの版を出すと、
+    // その版の更新の確認が「対象の配布物がありません」で止まるので、必ず並べて出す。
+    let has = |target: &str| assets.iter().any(|a| a.target == target);
+    if has(WINDOWS_ARCHIVE) && !has(WINDOWS_INSTALLER) {
+        return Err("Windows のインストーラーがありません（zip と並べて出します）".into());
+    }
     let payload = serde_json::to_string(&Manifest {
-        schema: 1,
+        schema: UPDATER_SCHEMA,
         version: version.to_string(),
         assets,
     })?;
@@ -333,7 +463,7 @@ fn updater(
     } else {
         None
     };
-    let temporary = directory.join("updater.json.tmp");
+    let temporary = directory.join(format!("{UPDATER_FILE}.tmp"));
     fs::write(
         &temporary,
         serde_json::to_vec_pretty(&Envelope { payload, signature })?,
@@ -342,7 +472,7 @@ fn updater(
     Ok(())
 }
 /// 更新情報の URL の代わり。実際の取得はしない。
-const VERIFY_URL: &str = "https://verify.invalid/updater.json";
+const VERIFY_URL: &str = "https://verify.invalid/updater-verify.json";
 /// フォルダの中のファイルを、更新クレートの取得口として返す。
 struct DirectoryTransport {
     directory: PathBuf,
@@ -353,7 +483,7 @@ impl Transport for DirectoryTransport {
         let fail = |message: &str| yolu_update::Error(message.into());
         let prefix = format!("{RELEASE_BASE}/v{}/", self.version);
         let name = if url == VERIFY_URL {
-            "updater.json"
+            UPDATER_FILE
         } else {
             url.strip_prefix(&prefix)
                 .ok_or_else(|| fail("想定外の URL です"))?
@@ -515,14 +645,18 @@ mod tests {
         dir.join(asset_name(version, TARGETS[target]).unwrap())
     }
     fn assert_no_metadata(dir: &Path) {
-        assert!(!dir.join("updater.json").exists());
-        assert!(!dir.join("updater.json.tmp").exists());
+        assert!(!dir.join(UPDATER_FILE).exists());
+        assert!(!dir.join(format!("{UPDATER_FILE}.tmp")).exists());
     }
     /// 使い捨ての鍵で署名した配布物の置き場。公開鍵の hex も返す。
     fn signed_dist(version: &Version, targets: &[usize]) -> (Scratch, String) {
         let d = Scratch::new();
         for &t in targets {
             fs::write(asset_path(&d.0, version, t), format!("archive-{t}")).unwrap();
+            if t == 0 {
+                // zip はインストーラーと並べて出す。
+                fs::write(asset_path(&d.0, version, 2), "installer").unwrap();
+            }
         }
         updater(version.clone(), &d.0, true, || Ok(disposable_key())).unwrap();
         (d, hex::encode(disposable_key().verifying_key().to_bytes()))
@@ -534,7 +668,7 @@ mod tests {
         }
         impl yolu_update::Transport for Fake {
             fn get(&self, url: &str, _: usize) -> std::result::Result<Vec<u8>, yolu_update::Error> {
-                Ok(if url.ends_with("updater.json") {
+                Ok(if url.ends_with(UPDATER_FILE) {
                     self.metadata.clone()
                 } else {
                     b"archive".to_vec()
@@ -544,6 +678,11 @@ mod tests {
         let d = Scratch::new();
         let v = Version::new(1, 2, 3);
         fs::write(d.0.join(asset_name(&v, TARGETS[0]).unwrap()), b"archive").unwrap();
+        fs::write(
+            d.0.join(asset_name(&v, WINDOWS_INSTALLER).unwrap()),
+            b"setup",
+        )
+        .unwrap();
         let keys = Scratch::new();
         let path = keys.0.join("disposable.hex");
         fs::write(&path, hex::encode([42; 32])).unwrap();
@@ -551,14 +690,14 @@ mod tests {
         let key = disposable_key();
         let c = yolu_update::UpdateClient::with_public_key(
             Fake {
-                metadata: fs::read(d.0.join("updater.json")).unwrap(),
+                metadata: fs::read(d.0.join(UPDATER_FILE)).unwrap(),
             },
             key.verifying_key().to_bytes(),
         )
         .unwrap();
         let update = c
             .check(
-                "https://example.invalid/updater.json",
+                &format!("https://example.invalid/{UPDATER_FILE}"),
                 &Version::new(1, 0, 0),
                 TARGETS[0],
                 false,
@@ -573,10 +712,10 @@ mod tests {
     #[test]
     fn stale_metadata_removed_on_invalid_assets() {
         let d = Scratch::new();
-        fs::write(d.0.join("updater.json"), "stale").unwrap();
+        fs::write(d.0.join(UPDATER_FILE), "stale").unwrap();
         fs::write(d.0.join("unexpected.zip"), "x").unwrap();
         assert!(updater(Version::new(1, 0, 0), &d.0, false, no_key).is_err());
-        assert!(!d.0.join("updater.json").exists());
+        assert!(!d.0.join(UPDATER_FILE).exists());
     }
     #[test]
     fn empty_assets_rejected() {
@@ -610,7 +749,7 @@ mod tests {
         for (kind, make) in kinds {
             let d = Scratch::new();
             let outside = Scratch::new();
-            fs::write(d.0.join("updater.json"), "stale").unwrap();
+            fs::write(d.0.join(UPDATER_FILE), "stale").unwrap();
             make(&outside.0, &asset_path(&d.0, &v, 0));
             assert!(updater(v.clone(), &d.0, false, no_key).is_err(), "{kind}");
             assert_no_metadata(&d.0);
@@ -621,7 +760,7 @@ mod tests {
         let v = Version::new(1, 0, 0);
         let d = Scratch::new();
         fs::write(asset_path(&d.0, &v, 0), b"archive").unwrap();
-        fs::write(d.0.join("updater.json"), "stale").unwrap();
+        fs::write(d.0.join(UPDATER_FILE), "stale").unwrap();
         assert!(updater(v, &d.0, true, no_key).is_err());
         assert_no_metadata(&d.0);
     }
@@ -730,6 +869,144 @@ mod tests {
         assert!(envs.contains(&("PYTHONIOENCODING", Some("utf-8"))));
     }
     #[test]
+    fn windows_zip_needs_its_installer_and_both_are_listed() {
+        let v = Version::new(1, 0, 0);
+        let d = Scratch::new();
+        fs::write(asset_path(&d.0, &v, 0), b"zip").unwrap();
+        fs::write(d.0.join(UPDATER_FILE), "stale").unwrap();
+        // zip だけの版は、更新情報を作らず、前の更新情報も残さない。
+        let error = updater(v.clone(), &d.0, false, no_key).unwrap_err();
+        assert!(error.to_string().contains("インストーラー"), "{error}");
+        assert_no_metadata(&d.0);
+        // 並べれば、どちらも載る。
+        fs::write(asset_path(&d.0, &v, 2), b"setup").unwrap();
+        updater(v.clone(), &d.0, false, no_key).unwrap();
+        let envelope: Envelope =
+            serde_json::from_slice(&fs::read(d.0.join(UPDATER_FILE)).unwrap()).unwrap();
+        let manifest: Manifest = serde_json::from_str(&envelope.payload).unwrap();
+        let targets: Vec<_> = manifest.assets.iter().map(|a| a.target.as_str()).collect();
+        assert_eq!(targets, [WINDOWS_ARCHIVE, WINDOWS_INSTALLER]);
+        assert_eq!(manifest.schema, UPDATER_SCHEMA);
+        // Linux だけの配布は、インストーラーを要らない。
+        let d = Scratch::new();
+        fs::write(asset_path(&d.0, &v, 1), b"tar").unwrap();
+        updater(v, &d.0, false, no_key).unwrap();
+    }
+    #[test]
+    fn installer_alone_is_listed_but_stray_files_are_still_refused() {
+        let v = Version::new(1, 0, 0);
+        let d = Scratch::new();
+        fs::write(asset_path(&d.0, &v, 2), b"setup").unwrap();
+        fs::write(d.0.join("yolupainter-1.0.0-setup.exe"), b"x").unwrap();
+        assert!(updater(v, &d.0, false, no_key).is_err());
+    }
+    #[test]
+    fn installer_and_build_accept_only_archive_targets() {
+        for list in [
+            vec!["build", "--target", WINDOWS_INSTALLER, "--release"],
+            vec!["bundle", "--target", WINDOWS_INSTALLER],
+            vec!["installer", "--target", WINDOWS_INSTALLER],
+            vec!["installer", "--target", "aarch64-apple-darwin"],
+            vec!["installer"],
+            vec!["installer", "--target", TARGETS[1]],
+            vec!["updater-json", "--target", WINDOWS_ARCHIVE],
+            vec!["bundle", "--target", TARGETS[0], "--require-update-key"],
+        ] {
+            assert!(exec(&list).is_err(), "{list:?}");
+        }
+    }
+    #[test]
+    fn update_public_key_is_normalised_and_validated() {
+        let good = hex::encode(disposable_key().verifying_key().to_bytes());
+        // 未設定・空・空白だけは「無し」。GitHub の未設定の変数は空文字で渡る。
+        for unset in [None, Some(String::new()), Some("  \n".into())] {
+            assert_eq!(update_public_key(unset.clone(), false).unwrap(), None);
+            assert!(update_public_key(unset, true).is_err());
+        }
+        assert_eq!(
+            update_public_key(Some(format!(" {good}\n")), true).unwrap(),
+            Some(good)
+        );
+        // 入っているのに使えない鍵は、更新なしのビルドにせず断る（必須でなくても）。
+        let weak = format!("01{}", "00".repeat(31));
+        for bad in ["zz", &"ab".repeat(31), &"ab".repeat(33), weak.as_str()] {
+            assert!(update_public_key(Some(bad.into()), false).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn nsis_receives_numeric_and_full_versions_and_every_path() {
+        let v = Version::parse("1.2.3-rc.1+build5").unwrap();
+        assert_eq!(numeric_version(&v).unwrap(), "1.2.3.0");
+        assert!(numeric_version(&Version::new(0, 65536, 0)).is_err());
+        assert_eq!(
+            numeric_version(&Version::new(0, 65535, 1)).unwrap(),
+            "0.65535.1.0"
+        );
+        let icon = root().join(LOGO_ICON);
+        assert!(icon.is_file(), "ロゴの .ico が無い");
+        let args: Vec<String> = nsis_args(&v, Path::new("/s"), Path::new("/o.exe"), &icon)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        for expected in [
+            "-DVERSION=1.2.3-rc.1+build5",
+            "-DVERSION_NUMERIC=1.2.3.0",
+            "-DSTAGE=/s",
+            "-DOUTFILE=/o.exe",
+            &format!("-DICON={}", icon.display()),
+            "-WX",
+        ] {
+            assert!(args.iter().any(|a| a == expected), "{expected}: {args:?}");
+        }
+        // 日本語の文字列を BOM の有無によらず読む。
+        assert_eq!(&args[..2], ["-INPUTCHARSET", "UTF8"]);
+    }
+    #[test]
+    fn nsis_script_compiles_with_the_arguments_xtask_passes() {
+        // makensis が無い環境（開発機・Windows の CI）では確かめない。CI の Linux は入れて走らせる。
+        if makensis().arg("-VERSION").output().is_err() {
+            eprintln!("makensis が無いので、インストーラーのスクリプトの試験を飛ばす");
+            return;
+        }
+        let d = Scratch::new();
+        let stage = d.0.join("stage");
+        fs::create_dir_all(&stage).unwrap();
+        for name in [
+            "yolupainter.exe",
+            "README.md",
+            "THIRD_PARTY.md",
+            "DEPENDENCIES.md",
+            "THIRD_PARTY_LICENSES.txt",
+        ] {
+            fs::write(stage.join(name), name).unwrap();
+        }
+        fs::copy(root().join("LICENSE"), stage.join("LICENSE")).unwrap();
+        let output = d.0.join("yolupainter-test.exe.tmp");
+        let version = Version::parse("1.2.3-rc.1").unwrap();
+        let args = nsis_args(&version, &stage, &output, &root().join(LOGO_ICON)).unwrap();
+        let status = makensis()
+            .current_dir(root())
+            .args(args)
+            .arg(root().join("installer/yolupainter.nsi"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let bytes = fs::read(&output).unwrap();
+        assert_eq!(&bytes[..2], b"MZ");
+        // 製品名と版のバージョン情報（UTF-16）が入っている。
+        let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        let product: Vec<u8> = "YoluPainter"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let version_text: Vec<u8> = "1.2.3-rc.1"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert!(find(&product) && find(&version_text));
+    }
+    #[test]
     fn keygen_does_not_overwrite_and_limits_permissions() {
         let d = Scratch::new();
         let path = d.0.join("disposable.hex");
@@ -829,7 +1106,7 @@ mod tests {
             &public
         ])
         .is_err());
-        fs::remove_file(d.0.join("updater.json")).unwrap();
+        fs::remove_file(d.0.join(UPDATER_FILE)).unwrap();
         assert!(exec(&[
             "verify",
             "--version",

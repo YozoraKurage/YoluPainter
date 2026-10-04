@@ -14,6 +14,7 @@ yolu-gpu = { path = "crates/yolu-gpu" }
 yolu-io = { path = "crates/yolu-io" }
 yolu-model = { path = "crates/yolu-model" }
 yolu-protocol = { path = "crates/yolu-protocol" }
+yolu-update = { path = "crates/yolu-update" }
 
 [profile.dev]
 opt-level = 1            # 画素の処理は最適化なしだと遅すぎるので、開発でも少し最適化する
