@@ -175,12 +175,33 @@ pub enum BrushOp {
     Effect(EffectKind),
     /// 筆先の画像（None は丸い先端）。
     Tip(Option<&'static str>),
+    /// 同梱の Krita の筆先（`brushes::store::krita()` の添字。ホースなら複数の筆先と選び方も入る）。
+    KritaTip(usize),
     /// 紙の質感の画像（None は無し）。
     Texture(Option<&'static str>),
+    /// 取り込んだ模様（模様から作ったブラシの質感の画像）を紙の質感にする。
+    PatternTexture(crate::brushes::BrushKey),
     TextureMode(TextureMode),
     DualTip(Option<&'static str>),
     DualMode(DualBrushMode),
     DualEnabled(bool),
+}
+
+/// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。
+fn put_texture_image(
+    brush: &mut Brush,
+    prefs: TexturePrefs,
+    image: std::sync::Arc<yolu_core::BrushTip>,
+) {
+    brush.texture = Some(match brush.texture.take() {
+        Some(t) => PaperTexture { image, ..t },
+        None => PaperTexture {
+            image,
+            depth: prefs.depth,
+            scale: prefs.scale,
+            mode: prefs.mode,
+        },
+    });
 }
 
 /// 効果のブラシの種類。
@@ -388,6 +409,19 @@ pub fn tip_label(lang: Lang, id: &str) -> &'static str {
         "rim" => lang.pick("縁取り", "Rim"),
         "rounded-square" => lang.pick("角丸の四角", "Rounded Square"),
         _ => "",
+    }
+}
+
+/// 筆先・質感の画像の表示名（組み込みは言語ごとの名前、取り込んだ画像は画像の名前。名前が無ければ「取り込んだ画像」）。
+pub fn tip_display(lang: Lang, tip: &yolu_core::BrushTip) -> String {
+    let builtin = tip_label(lang, tip.name());
+    if !builtin.is_empty() && yolu_core::builtin_tip(tip.name()).is_some_and(|b| *b == *tip) {
+        return builtin.to_owned();
+    }
+    if tip.name().trim().is_empty() {
+        lang.pick("取り込んだ画像", "Imported image").to_owned()
+    } else {
+        tip.name().to_owned()
     }
 }
 
@@ -1081,7 +1115,29 @@ impl AppState {
                     self.tool = crate::state::Tool::Brush;
                 }
             }
-            BrushOp::Tip(id) => b.tip.image = id.and_then(yolu_core::builtin_tip),
+            BrushOp::Tip(id) => {
+                b.tip.image = id.and_then(yolu_core::builtin_tip);
+                // ホース（複数の筆先）が残っていると、1 枚の画像の選びが効かない
+                b.tip.images.clear();
+            }
+            BrushOp::KritaTip(index) => {
+                if let Some(krita) = crate::brushes::store::krita().brushes.get(index) {
+                    b.tip.image = krita.brush.tip.image.clone();
+                    b.tip.images = krita.brush.tip.images.clone();
+                    b.tip.selection = krita.brush.tip.selection;
+                }
+            }
+            BrushOp::PatternTexture(key) => {
+                let image = self
+                    .brushes
+                    .lib
+                    .entry(key)
+                    .and_then(|e| e.baseline.texture.as_ref())
+                    .map(|t| t.image.clone());
+                if let Some(image) = image {
+                    put_texture_image(b, self.m2.texture_prefs, image);
+                }
+            }
             BrushOp::Texture(None) => {
                 if let Some(t) = &b.texture {
                     self.m2.texture_prefs = TexturePrefs {
@@ -1094,18 +1150,7 @@ impl AppState {
             }
             BrushOp::Texture(Some(id)) => {
                 if let Some(image) = yolu_core::builtin_tip(id) {
-                    b.texture = Some(match b.texture.take() {
-                        Some(t) => PaperTexture { image, ..t },
-                        None => {
-                            let p = self.m2.texture_prefs;
-                            PaperTexture {
-                                image,
-                                depth: p.depth,
-                                scale: p.scale,
-                                mode: p.mode,
-                            }
-                        }
-                    });
+                    put_texture_image(b, self.m2.texture_prefs, image);
                 }
             }
             BrushOp::TextureMode(mode) => {

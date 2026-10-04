@@ -63,22 +63,42 @@ pub enum Popup {
 
 fn tips(
     app: &AppState,
-    current: Option<&str>,
+    current: Option<&yolu_core::BrushTip>,
     none: &str,
     op: fn(Option<&'static str>) -> BrushOp,
 ) -> Vec<Entry<Action>> {
     let mut v =
         vec![Entry::item(none, Action::M2Ui(UiOp::Brush(op(None)))).radio(current.is_none())];
     for id in yolu_core::brush::BUILTIN_TIPS {
+        // 名前だけ同じで中身が違う（取り込んだ）画像は、組み込みとして印を付けない
+        let on = current.is_some_and(|t| {
+            yolu_core::builtin_tip(id).is_some_and(|b| *b == *t)
+        });
         v.push(
             Entry::item(
                 tip_label(app.lang, id),
                 Action::M2Ui(UiOp::Brush(op(Some(id)))),
             )
-            .radio(current == Some(id)),
+            .radio(on),
         );
     }
     v
+}
+
+/// 取り込んだ模様（模様から作ったブラシの質感の画像）: 一覧の並びで、ブラシの名前と質感の画像。
+pub fn patterns(
+    app: &AppState,
+) -> Vec<(crate::brushes::BrushKey, String, std::sync::Arc<yolu_core::BrushTip>)> {
+    app.brushes
+        .lib
+        .entries()
+        .iter()
+        .filter(|e| e.import.as_ref().is_some_and(|m| m.pattern))
+        .filter_map(|e| {
+            let image = e.baseline.texture.as_ref()?.image.clone();
+            Some((e.key, e.name.clone(), image))
+        })
+        .collect()
 }
 
 /// Normal の設定の端の名前（Height の微分が画布の外で読むもの）。
@@ -264,24 +284,38 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         }
         Popup::Tip => tips(
             app,
-            app.m2.brush.tip.image.as_ref().map(|t| t.name()),
+            app.m2.brush.tip.image.as_deref(),
             lang.pick("丸（硬さ）", "Round (hardness)"),
             BrushOp::Tip,
         ),
-        Popup::Texture => tips(
-            app,
-            app.m2.brush.texture.as_ref().map(|t| t.image.name()),
-            lang.pick("なし", "None"),
-            BrushOp::Texture,
-        ),
+        Popup::Texture => {
+            let current = app.m2.brush.texture.as_ref().map(|t| &*t.image);
+            let mut v = tips(
+                app,
+                current,
+                lang.pick("なし", "None"),
+                BrushOp::Texture,
+            );
+            // 取り込んだ模様は、組み込みの質感の後ろに並べる
+            let patterns = patterns(app);
+            if !patterns.is_empty() {
+                v.push(Entry::Separator);
+                for (key, name, image) in patterns {
+                    v.push(
+                        Entry::item(name, Action::M2Ui(UiOp::Brush(BrushOp::PatternTexture(key))))
+                            .radio(current.is_some_and(|t| *t == *image)),
+                    );
+                }
+            }
+            v
+        }
         Popup::DualTip => tips(
             app,
             app.m2
                 .brush
                 .dual
                 .as_ref()
-                .and_then(|d| d.tip.as_ref())
-                .map(|t| t.name()),
+                .and_then(|d| d.tip.as_deref()),
             lang.pick("丸（硬さ）", "Round (hardness)"),
             BrushOp::DualTip,
         ),

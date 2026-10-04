@@ -221,6 +221,9 @@ impl YoluApp {
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.dialogs = true;
+        // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験の窓は画面のスレッドで描く
+        app.state.brushes.samples.render_in_background(&cc.egui_ctx);
+        app.state.brushes.krita.load_in_background();
         // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験の窓は繋がない
         app.state.clip.use_system();
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
@@ -556,6 +559,20 @@ impl YoluApp {
                         .apply(Action::Fill(crate::fillfx::FillOp::ImportImage(path)));
                 }
             }
+            Some(DialogRequest::ImportBrushes) => {
+                let lang = self.state.lang;
+                if let Some(paths) = rfd::FileDialog::new()
+                    .set_title(lang.pick("ブラシを取り込む", "Import Brushes"))
+                    .add_filter(
+                        lang.pick("ブラシのファイル", "Brush files"),
+                        &yolu_io::brushes::FileKind::EXTENSIONS,
+                    )
+                    .pick_files()
+                {
+                    self.state
+                        .apply(Action::Brush(crate::brushes::BrushAction::Import(paths)));
+                }
+            }
             None => {}
         }
     }
@@ -595,21 +612,42 @@ impl YoluApp {
             == rfd::MessageDialogResult::Yes
     }
 
-    /// 窓に落としたファイル（.ylp なら開く）。
+    /// 窓に落としたファイル（.ylp なら開く。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら取り込む。PNG はブラシの一覧の上に
+    /// 落としたときだけブラシの筆先として取り込む）。
     fn open_dropped(&mut self, ctx: &egui::Context) {
-        let dropped = ctx.input(|i| {
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
                 .iter()
                 .map(|f| f.path().to_path_buf())
-                .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")))
+                .collect()
         });
-        if let Some(path) = dropped {
+        if dropped.is_empty() {
+            return;
+        }
+        let project = dropped
+            .iter()
+            .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")));
+        if let Some(path) = project {
             if self.state.is_stroking() {
                 self.state.message = self.state.lang.pick("描いている間は開きません。", "Cannot open during a stroke.").into();
             } else if self.confirm_discard() {
-                self.state.apply(Action::OpenProject(path));
+                self.state.apply(Action::OpenProject(path.clone()));
             }
+            return;
+        }
+        let over_list = ctx
+            .input(|i| i.pointer.latest_pos())
+            .zip(self.state.brushes.ui.list_rect)
+            .is_some_and(|(p, r)| r.contains(p));
+        let brushes: Vec<std::path::PathBuf> = dropped
+            .into_iter()
+            .filter(|p| crate::brushes::import::is_brush_file(p))
+            .filter(|p| over_list || !crate::brushes::import::is_png(p))
+            .collect();
+        if !brushes.is_empty() {
+            self.state
+                .apply(Action::Brush(crate::brushes::BrushAction::Import(brushes)));
         }
     }
 
@@ -738,6 +776,8 @@ impl YoluApp {
         shell::handle_shortcuts(&ctx, &mut self.state);
         crate::stencil::update_keys(&ctx, &mut self.state);
         self.open_dropped(&ctx);
+        // 一覧の範囲はこのフレームで描いたときだけ入る（棚・チャンネルのタブを開いている間に、前の位置へ落とした PNG を取り込まない）
+        self.state.brushes.ui.list_rect = None;
         assets::frame(&ctx, &mut self.state);
         self.handle_requests(&ctx);
         self.link.poll(&mut self.state);
@@ -747,6 +787,7 @@ impl YoluApp {
         self.state.poll_export();
         self.state.sync_budgets();
         self.state.poll_psd();
+        self.state.poll_brush_import();
         self.state.poll_newproject();
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();

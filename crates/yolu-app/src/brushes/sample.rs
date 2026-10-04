@@ -7,9 +7,14 @@
 //! 太らせる。質感の大きさ・入り抜き・デュアルの半径・ぼかしの半径・クローンのずれ・筆の速さも同じ倍率）。手ぶれ補正は糸の遅れで
 //! 線を短くするだけなので見本では 0、描く色は黒、背景色は白、乱数の種は 0（同じブラシは同じ絵）、対称とステンシルは無し。
 //! 消しゴムは灰色を一面に敷いて消し、効果のブラシ（ぼかし・指先・クローン）は縦の帯を並べた絵の上に描く。
+//!
+//! 描く場所は 2 通り。既定は画面のスレッドで 1 フレームに数枚まで描く（試験・画面を持たない使い方）。`render_in_background` を呼ぶと、
+//! 描くのを別のスレッド（rayon の池）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の見本で画面が止まらない）。
+//! 描いている最中の札は重ねて頼まず、同時に頼む数にも上限がある。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Weak};
 
 use egui::{ColorImage, TextureHandle, TextureId, TextureOptions};
@@ -25,6 +30,8 @@ pub const MAX_WIDTH: u32 = 1024;
 pub const MAX_HEIGHT: u32 = 256;
 /// 1 フレームに描く見本の数の上限。
 pub const RENDERS_PER_FRAME: usize = 4;
+/// 別のスレッドへ同時に頼む見本の数の上限。
+pub const MAX_IN_FLIGHT: usize = 6;
 /// 覚える見本の枚数とバイト数の上限。
 pub const MAX_ENTRIES: usize = 96;
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -312,6 +319,14 @@ struct Slot {
     used: u64,
 }
 
+/// 別のスレッドで描く仕組み（頼み中の札と、できた絵の受け口）。
+struct Background {
+    ctx: egui::Context,
+    tx: Sender<(u64, SampleSpec, Option<SampleImage>)>,
+    rx: Receiver<(u64, SampleSpec, Option<SampleImage>)>,
+    in_flight: HashSet<u64>,
+}
+
 /// 見本の画像の置き場（札 → 画像）。
 #[derive(Default)]
 pub struct SampleCache {
@@ -321,6 +336,9 @@ pub struct SampleCache {
     bytes: usize,
     frame: Option<u64>,
     renders_in_frame: usize,
+    background: Option<Background>,
+    /// このフレームに、同時の上限で頼めなかった札があった（次のフレームで頼み直す）。
+    starved: bool,
     pub stats: SampleStats,
 }
 
@@ -330,6 +348,65 @@ impl SampleCache {
         if self.frame != Some(frame) {
             self.frame = Some(frame);
             self.renders_in_frame = 0;
+            self.starved = false;
+            self.collect();
+        }
+    }
+
+    /// 見本を描くのを別のスレッドへ出す（できたら `ctx` へ描き直しを頼む）。
+    pub fn render_in_background(&mut self, ctx: &egui::Context) {
+        let (tx, rx) = channel();
+        self.background = Some(Background {
+            ctx: ctx.clone(),
+            tx,
+            rx,
+            in_flight: HashSet::new(),
+        });
+    }
+
+    /// 別のスレッドで描いている最中の見本の数。
+    pub fn in_flight(&self) -> usize {
+        self.background.as_ref().map_or(0, |b| b.in_flight.len())
+    }
+
+    /// 札を返さなかった（`request` が None）とき、次のフレームを待たずに描き直す必要があるか。別のスレッドで描いている最中なら
+    /// 絵ができたとき（頼んだ側が描き直しを頼む）で足りる。
+    pub fn needs_next_frame(&self) -> bool {
+        self.background.is_none() || self.starved
+    }
+
+    /// 別のスレッドでできた絵を受ける。
+    fn collect(&mut self) {
+        let Some(background) = &mut self.background else {
+            return;
+        };
+        let done: Vec<_> = background.rx.try_iter().collect();
+        for (key, _, _) in &done {
+            background.in_flight.remove(key);
+        }
+        for (key, spec, image) in done {
+            let image = image.unwrap_or_else(|| {
+                self.stats.failed += 1;
+                // 描けなかった設定は空の画像で覚える（毎フレーム描き直さない）
+                SampleImage {
+                    width: spec.width,
+                    height: spec.height,
+                    rgba: vec![0; spec.width as usize * spec.height as usize * 4],
+                }
+            });
+            self.clock += 1;
+            self.bytes += image.rgba.len();
+            if let Some(old) = self.slots.insert(
+                key,
+                Slot {
+                    image,
+                    texture: None,
+                    used: self.clock,
+                },
+            ) {
+                self.bytes -= old.image.rgba.len();
+            }
+            self.evict(key);
         }
     }
 
@@ -355,6 +432,30 @@ impl SampleCache {
             slot.used = self.clock;
             self.stats.hits += 1;
             return Some(key);
+        }
+        if let Some(background) = &mut self.background {
+            if background.in_flight.contains(&key) {
+                return None;
+            }
+            if background.in_flight.len() >= MAX_IN_FLIGHT {
+                self.stats.deferred += 1;
+                self.starved = true;
+                return None;
+            }
+            background.in_flight.insert(key);
+            self.stats.renders += 1;
+            let (brush, spec) = (brush.clone(), spec.clamped());
+            let (tx, ctx) = (background.tx.clone(), background.ctx.clone());
+            rayon::spawn(move || {
+                // 池の仕事が落ちるとプロセスごと止まるので、描く途中で落ちても空の見本にする
+                let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    render(&brush, spec).ok()
+                }))
+                .unwrap_or(None);
+                let _ = tx.send((key, spec, image));
+                ctx.request_repaint();
+            });
+            return None;
         }
         if self.renders_in_frame >= RENDERS_PER_FRAME {
             self.stats.deferred += 1;

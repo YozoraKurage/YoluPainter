@@ -23,6 +23,7 @@ use crate::brushes::Category;
 use crate::engine::{BrushEffect, ColorDynamics, Controls, DVec2, Jitter, TipShape};
 use crate::lang::Lang;
 use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
+use super::tip_library;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, BrushState, Tool};
 use crate::ui::theme as t;
@@ -46,7 +47,8 @@ fn off_in_3d(app: &AppState, lang: Lang) -> Option<&'static str> {
 /// 硬さが効くか。丸い先端の縁の硬さなので、画像の先端では効かない（画像の縁のまま）。3D の面のダブは画像を使わずいつも丸いので、
 /// 3D では画像の先端でも効く。ツールプロパティと形状の欄が同じ判定を使う。
 pub fn hardness_applies(app: &AppState) -> bool {
-    app.view3d.paintable_on_screen() || app.m2.brush.tip.image.is_none()
+    let tip = &app.m2.brush.tip;
+    app.view3d.paintable_on_screen() || (tip.image.is_none() && tip.images.is_empty())
 }
 
 /// 欄に付けるツールチップ（無効なら理由、使えるなら普通の説明）。
@@ -589,14 +591,14 @@ fn texture_fields(
         .brush
         .texture
         .as_ref()
-        .map(|t| tip_label(lang, t.image.name()))
-        .unwrap_or(lang.pick("なし", "None"));
+        .map(|t| m2::tip_display(lang, &t.image))
+        .unwrap_or_else(|| lang.pick("なし", "None").to_owned());
     if let Some(b) = choice_row(
         ui,
         rows,
         "texture.image",
         lang.pick("画像", "Image"),
-        name,
+        &name,
         tip(off, lang.pick("紙の質感", "Paper texture")),
         free,
     ) {
@@ -680,8 +682,8 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
     let tip_name = d
         .tip
         .as_ref()
-        .map(|t| tip_label(lang, t.name()))
-        .unwrap_or(lang.pick("丸（硬さ）", "Round (hardness)"));
+        .map(|t| m2::tip_display(lang, t))
+        .unwrap_or_else(|| lang.pick("丸（硬さ）", "Round (hardness)").to_owned());
     let round = d.tip.is_none();
     let mode = d.mode;
     if let Some(b) = choice_row(
@@ -689,7 +691,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
         rows,
         "dual.tip",
         lang.pick("先端", "Tip"),
-        tip_name,
+        &tip_name,
         off,
         free,
     ) {
@@ -1110,40 +1112,13 @@ fn effect_fields(
 
 // ───────── 形状・アルファ（先端の画像） ─────────
 
-/// 先端の見本の大きさ（点）と、一覧の 1 マス。
-const THUMB: usize = 48;
+/// 一覧の 1 マス（見本の大きさは `brushes::krita::THUMB`）。
 const CELL: f32 = 40.0;
 const CELL_GAP: f32 = 4.0;
 
 /// 先端の画像の見本（白地に黒。丸い先端は縁がやわらかい円）。
 fn tip_image(id: Option<&str>) -> ColorImage {
-    let tip = id.and_then(yolu_core::builtin_tip);
-    let n = THUMB;
-    let mut pixels = Vec::with_capacity(n * n);
-    for y in 0..n {
-        for x in 0..n {
-            let fx = (x as f64 + 0.5) / n as f64 - 0.5;
-            let fy = 0.5 - (y as f64 + 0.5) / n as f64; // 画像の上が先端の上（行は下から）
-            let coverage = match &tip {
-                Some(t) => {
-                    // 長い辺を見本の幅に合わせて、縦横比を保つ
-                    let aspect = t.width() as f64 / t.height() as f64;
-                    let (u, v) = if aspect >= 1.0 {
-                        (0.5 + fx, 0.5 + fy * aspect)
-                    } else {
-                        (0.5 + fx / aspect, 0.5 + fy)
-                    };
-                    t.sample(u, v)
-                }
-                None => {
-                    let d = (fx * fx + fy * fy).sqrt() * 2.0;
-                    ((0.95 - d) / 0.4).clamp(0.0, 1.0)
-                }
-            };
-            pixels.push(Color32::from_gray((255.0 * (1.0 - coverage)).round() as u8));
-        }
-    }
-    ColorImage::new([n, n], pixels)
+    crate::brushes::krita::thumbnail(id.and_then(yolu_core::builtin_tip).as_deref())
 }
 
 #[derive(Clone, Default)]
@@ -1198,35 +1173,47 @@ fn tip_fields(
 ) {
     let off = off_in_3d(app, lang);
     let free = off.is_none();
-    let current: Option<&'static str> = app.m2.brush.tip.image.as_ref().and_then(|t| {
-        yolu_core::brush::BUILTIN_TIPS
-            .into_iter()
-            .find(|id| *id == t.name())
-    });
-    let round = app.m2.brush.tip.image.is_none();
+    let kind = tip_library::current(&app.m2.brush.tip);
     let hardness_on = hardness_applies(app);
     // 今の先端: 見本と名前
     let head = rows.row(48.0, 6.0);
     let swatch = Rect::from_min_size(head.min, vec2(48.0, 48.0));
+    let swatch_texture = match &kind {
+        tip_library::Current::Round => Some(tip_texture(ctx, None)),
+        tip_library::Current::Builtin(id) => Some(tip_texture(ctx, Some(id))),
+        tip_library::Current::Krita(index) => app.brushes.krita.texture(ctx, *index),
+        tip_library::Current::Image(tip) => Some(tip_library::image_texture(ctx, tip)),
+    };
     let p = ui.painter();
     w::rounded(p, swatch, Color32::WHITE, 3.0);
-    p.image(
-        tip_texture(ctx, current),
-        swatch.shrink(2.0),
-        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-        Color32::WHITE,
-    );
-    let name = current
-        .map(|id| tip_label(lang, id))
-        .unwrap_or(lang.pick("丸（硬さ）", "Round (hardness)"));
-    let from = if round {
-        lang.pick("先端の形", "Tip shape")
-    } else {
-        lang.pick("組み込みの画像", "Built-in image")
+    if let Some(texture) = swatch_texture {
+        p.image(
+            texture,
+            swatch.shrink(2.0),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    let name: String = match &kind {
+        tip_library::Current::Round => lang.pick("丸（硬さ）", "Round (hardness)").to_owned(),
+        tip_library::Current::Builtin(id) => tip_label(lang, id).to_owned(),
+        tip_library::Current::Krita(index) => app
+            .brushes
+            .krita
+            .name(*index)
+            .map(str::to_owned)
+            .unwrap_or_else(|| "Krita".to_owned()),
+        tip_library::Current::Image(tip) => m2::tip_display(lang, tip),
+    };
+    let from = match &kind {
+        tip_library::Current::Round => lang.pick("先端の形", "Tip shape"),
+        tip_library::Current::Builtin(_) => lang.pick("組み込みの画像", "Built-in image"),
+        tip_library::Current::Krita(_) => "Krita",
+        tip_library::Current::Image(_) => lang.pick("取り込んだ画像", "Imported image"),
     };
     let tx = head.left() + 56.0;
     let tw = head.width() - 56.0;
-    let shown = w::fit(ui.painter(), name, tw, t::LABEL_BOLD);
+    let shown = w::fit(ui.painter(), &name, tw, t::LABEL_BOLD);
     w::text(
         ui.painter(),
         Rect::from_min_size(pos2(tx, head.top() + 6.0), vec2(tw, 18.0)),
@@ -1306,7 +1293,8 @@ fn tip_fields(
             tip.follow_direction = v;
         }
     }
-    let image = tip.image.is_some();
+    // ホース（images が複数）にも反転は掛かる
+    let image = tip.image.is_some() || !tip.images.is_empty();
     let flip_tip = off.unwrap_or(lang.pick("画像の先端を反転する", "Mirrors an image tip"));
     let (a, b) = toggle_pair(
         ui,
@@ -1340,10 +1328,20 @@ fn tip_fields(
             let tip_name = id
                 .map(|i| tip_label(lang, i))
                 .unwrap_or(lang.pick("丸（硬さ）", "Round (hardness)"));
-            if tip_cell(ui, cell, *id, *id == current, tip_name) {
+            // 印は種類から決める（Krita・取り込んだ画像のときは丸にも組み込みにも付けない）
+            let selected = match &kind {
+                tip_library::Current::Round => id.is_none(),
+                tip_library::Current::Builtin(b) => *id == Some(*b),
+                _ => false,
+            };
+            if tip_cell(ui, cell, *id, selected, tip_name) {
                 app.apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(*id))));
             }
         }
+    }
+    // 同梱の Krita の筆先（詳細の窓の「形状」。プロパティの欄のアルファのタブには出さない）
+    if with_angle {
+        tip_library::krita_section(ui, app, rows, ctx);
     }
 }
 

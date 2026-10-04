@@ -402,7 +402,11 @@ fn headless_the_number_of_user_brushes_is_capped() {
     s.message.clear();
     s.apply(Action::Brush(BrushAction::Add));
     assert_eq!(user_names(&s).len(), MAX_USER_BRUSHES);
-    assert!(s.message.contains("256"), "{}", s.message);
+    assert!(
+        s.message.contains(&MAX_USER_BRUSHES.to_string()),
+        "{}",
+        s.message
+    );
     // 名前は全部ちがう
     let mut names = user_names(&s);
     names.sort();
@@ -695,16 +699,30 @@ fn headless_a_failed_save_is_reported_and_the_brush_stays_in_the_list() {
 }
 
 #[test]
-fn headless_imported_tip_images_are_not_saved_and_say_why() {
+fn headless_imported_tip_images_are_saved_with_the_brush_and_come_back() {
     let dir = temp_dir("imported");
     let mut s = AppState::new(64, 64);
     s.attach_brush_store(dir.clone());
-    s.m2.brush.tip.image = Some(std::sync::Arc::new(
+    let tip = std::sync::Arc::new(
         yolu_core::BrushTip::new("取り込み", 2, 2, vec![0, 255, 255, 0]).unwrap(),
-    ));
+    );
+    s.m2.brush.tip.image = Some(tip.clone());
     s.apply(Action::Brush(BrushAction::Add));
-    assert!(s.message.contains("取り込んだ画像"), "{}", s.message);
-    assert!(!dir.join("brush-00000001.ylbrush").exists());
+    assert!(s.message.starts_with("ブラシを追加しました"), "{}", s.message);
+    let key = s.brushes.lib.current();
+    assert!(dir.join("brush-00000001.ylbrush").exists());
+    // 画像は内容の名前で 1 枚（ブラシのファイルは画像の名前を指すだけ）
+    let images: Vec<_> = std::fs::read_dir(dir.join("images")).unwrap().collect();
+    assert_eq!(images.len(), 1);
+    // 別の起動で読み戻しても、同じ画像（名前・画素）のブラシ
+    let mut again = AppState::new(64, 64);
+    again.attach_brush_store(dir.clone());
+    assert!(again.brushes.problems.is_empty(), "{:?}", again.brushes.problems);
+    let back = again.brushes.lib.entry(key).expect("読み戻したブラシ");
+    assert_eq!(back.baseline.tip.image.as_deref(), Some(&*tip));
+    // 消すと、その画像のファイルも消える
+    again.apply(Action::Brush(BrushAction::Delete(key)));
+    assert_eq!(std::fs::read_dir(dir.join("images")).unwrap().count(), 0);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

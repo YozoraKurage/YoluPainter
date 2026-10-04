@@ -8,20 +8,29 @@
 //! ブラシの設定は文書ではない（Undo に入れない）。ストロークの最中は、ブラシを替える操作を断る。
 
 pub mod builtin;
+pub mod gaps;
+pub mod images;
+pub mod import;
+pub mod krita;
 pub mod sample;
 pub mod store;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use egui::Vec2;
+use egui::{Rect, Vec2};
 
 use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, StrokeAssist};
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
 
-/// 利用者のブラシの数の上限（ファイルとメモリを抑える）。
-pub const MAX_USER_BRUSHES: usize = 256;
+pub use gaps::Gap;
+
+/// 利用者のブラシの数の上限（ファイルとメモリを抑える。起動のときに読むファイルの数の上限と同じ。ABR 1 本のプリセットが
+/// 数百になる）。
+pub const MAX_USER_BRUSHES: usize = 1024;
 /// ブラシの名前の長さの上限（文字数）。
 pub const MAX_NAME_CHARS: usize = 40;
 
@@ -35,9 +44,12 @@ pub enum Group {
     /// ぼかし・指先・クローン。
     Effect,
     Special,
+    /// 取り込んだブラシ（ファイルから。組み込みは無く、1 つでもあるときだけタブを出す）。
+    Imported,
 }
 
 impl Group {
+    /// 組み込みのブラシがあり、いつもタブを出すグループ。
     pub const ALL: [Group; 6] = [
         Group::Pen,
         Group::Brush,
@@ -45,6 +57,17 @@ impl Group {
         Group::Eraser,
         Group::Effect,
         Group::Special,
+    ];
+
+    /// 保存できるグループの全部（取り込んだブラシのグループを含む）。
+    pub const EVERY: [Group; 7] = [
+        Group::Pen,
+        Group::Brush,
+        Group::Airbrush,
+        Group::Eraser,
+        Group::Effect,
+        Group::Special,
+        Group::Imported,
     ];
 
     /// ファイルに書く名前。
@@ -56,11 +79,12 @@ impl Group {
             Group::Eraser => "eraser",
             Group::Effect => "effect",
             Group::Special => "special",
+            Group::Imported => "imported",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Group> {
-        Group::ALL.into_iter().find(|g| g.id() == id)
+        Group::EVERY.into_iter().find(|g| g.id() == id)
     }
 
     pub fn name(self, lang: Lang) -> &'static str {
@@ -71,6 +95,7 @@ impl Group {
             Group::Eraser => lang.pick("消しゴム", "Eraser"),
             Group::Effect => lang.pick("効果", "Effects"),
             Group::Special => lang.pick("特殊", "Special"),
+            Group::Imported => lang.pick("取り込み", "Imported"),
         }
     }
 
@@ -83,6 +108,7 @@ impl Group {
             Group::Eraser => lang.pick("消し", "Erase"),
             Group::Effect => lang.pick("効果", "FX"),
             Group::Special => lang.pick("特殊", "Misc"),
+            Group::Imported => lang.pick("取込", "Import"),
         }
     }
 
@@ -94,6 +120,7 @@ impl Group {
             Group::Eraser => "tools/eraser",
             Group::Effect => "ink_stroke",
             Group::Special => "data_scatter",
+            Group::Imported => "import",
         }
     }
 
@@ -163,6 +190,41 @@ pub fn canonical(brush: &Brush) -> Brush {
     }
 }
 
+/// 取り込んだブラシの出どころと、表せなかった項目（ブラシのファイルに残す）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportMeta {
+    /// 出どころの名前（`yolu_io::brushes::Source::label`。固有名詞と版だけで、言語によらない）。
+    pub source: String,
+    /// Photoshop の模様から作ったブラシか（質感の画像の選びに、模様として並べる）。
+    pub pattern: bool,
+    /// 表せなかった項目（並び順に、重ならない）。
+    pub gaps: Vec<Gap>,
+}
+
+impl ImportMeta {
+    /// 項目の並びを整えて作る。
+    pub fn new(source: String, pattern: bool, gaps: Vec<Gap>) -> ImportMeta {
+        ImportMeta {
+            source,
+            pattern,
+            gaps,
+        }
+        .normalized()
+    }
+
+    /// 項目を並び順にして重なりを除く（保存して読み戻しても同じ値になる形）。
+    pub fn normalized(&self) -> ImportMeta {
+        let mut gaps = self.gaps.clone();
+        gaps.sort();
+        gaps.dedup();
+        ImportMeta {
+            source: self.source.clone(),
+            pattern: self.pattern,
+            gaps,
+        }
+    }
+}
+
 /// 一覧の 1 つ。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
@@ -174,6 +236,8 @@ pub struct Entry {
     pub baseline: Brush,
     /// 元と違う設定のまま使っている間の設定（元と同じなら None）。
     pub edited: Option<Brush>,
+    /// 取り込んだブラシなら、出どころと表せなかった項目。
+    pub import: Option<ImportMeta>,
 }
 
 impl Entry {
@@ -197,6 +261,39 @@ pub struct UserBrush {
     pub name: String,
     pub group: Group,
     pub brush: Brush,
+    pub import: Option<ImportMeta>,
+}
+
+/// 利用者のブラシの番号の取り出し口。取り込みの仕事（別のスレッド）も同じ口から取るので、画面で足すブラシと番号が重ならない。
+#[derive(Clone, Debug)]
+pub struct IdSource(Arc<AtomicU64>);
+
+/// 番号を使い切った印（u32 の外）。
+const IDS_EXHAUSTED: u64 = u32::MAX as u64 + 1;
+
+impl IdSource {
+    fn new() -> IdSource {
+        IdSource(Arc::new(AtomicU64::new(1)))
+    }
+
+    /// 番号を 1 つ取る（使い切っていたら None）。`taken` が true を返す番号は飛ばす。
+    pub fn take(&self, taken: impl Fn(u32) -> bool) -> Option<u32> {
+        loop {
+            let n = self.0.fetch_add(1, Ordering::Relaxed);
+            if n >= IDS_EXHAUSTED {
+                self.0.store(IDS_EXHAUSTED, Ordering::Relaxed);
+                return None;
+            }
+            if !taken(n as u32) {
+                return Some(n as u32);
+            }
+        }
+    }
+
+    /// `id` までの番号は取らない。
+    fn reserve_through(&self, id: u32) {
+        self.0.fetch_max(id as u64 + 1, Ordering::Relaxed);
+    }
 }
 
 /// 一覧の全体（並びは全グループをまたぐ 1 本の列。画面は今のグループのものだけを、この並びで出す）。
@@ -205,8 +302,8 @@ pub struct BrushLibrary {
     current: BrushKey,
     /// 道具ごとに最後に使ったブラシ（[描く道具, 消しゴム]）。
     last: [BrushKey; 2],
-    /// 次に付ける利用者のブラシの番号（使い切ったら None）。
-    next_id: Option<u32>,
+    /// 次に付ける利用者のブラシの番号。
+    ids: IdSource,
 }
 
 /// ドラッグの落とす先。
@@ -229,19 +326,21 @@ impl BrushLibrary {
                 group: b.group,
                 baseline: b.brush.clone(),
                 edited: None,
+                import: None,
             })
             .collect();
-        let mut next_id = Some(1);
+        let ids = IdSource::new();
         let mut users = users;
         users.sort_by_key(|u| u.id);
         for u in users {
-            next_id = next_id.and_then(|n: u32| u.id.checked_add(1).map(|after| n.max(after)));
+            ids.reserve_through(u.id);
             entries.push(Entry {
                 key: BrushKey::User(u.id),
                 name: u.name,
                 group: u.group,
                 baseline: canonical(&u.brush),
                 edited: None,
+                import: u.import,
             });
         }
         let mut ordered = Vec::with_capacity(entries.len());
@@ -256,26 +355,23 @@ impl BrushLibrary {
             entries: ordered,
             current: standard,
             last: [standard, BrushKey::Builtin(builtin::STANDARD_ERASER)],
-            next_id,
+            ids,
         }
     }
 
     /// 読めなかった・読まなかったファイルも含めて、`id` までの番号は新しいブラシに使わない。
     pub fn reserve_ids_through(&mut self, id: u32) {
-        self.next_id = self
-            .next_id
-            .and_then(|n| id.checked_add(1).map(|after| n.max(after)));
+        self.ids.reserve_through(id);
+    }
+
+    /// 番号の取り出し口（取り込みの仕事が使う。画面の側と同じ番号の列を共有する）。
+    pub fn id_source(&self) -> IdSource {
+        self.ids.clone()
     }
 
     /// 新しいブラシの番号を 1 つ取る（使い切っていたら None）。`taken` が true を返す番号は飛ばす。
     fn take_id(&mut self, taken: impl Fn(u32) -> bool) -> Option<u32> {
-        while let Some(id) = self.next_id {
-            self.next_id = id.checked_add(1);
-            if !taken(id) {
-                return Some(id);
-            }
-        }
-        None
+        self.ids.take(taken)
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -485,6 +581,8 @@ pub struct BrushUi {
     /// 右クリックのメニューの対象。
     pub context: Option<BrushKey>,
     pub detail: DetailWindow,
+    /// 前のフレームに一覧を描いた範囲（描かなかったフレームでは消える。ファイルを落とした所が一覧の上かを見る）。
+    pub list_rect: Option<Rect>,
 }
 
 impl Default for BrushUi {
@@ -501,6 +599,7 @@ impl Default for BrushUi {
             drag: None,
             context: None,
             detail: DetailWindow::default(),
+            list_rect: None,
         }
     }
 }
@@ -513,6 +612,10 @@ pub struct BrushesState {
     pub problems: Vec<store::Problem>,
     pub ui: BrushUi,
     pub samples: sample::SampleCache,
+    /// ファイルの取り込み（裏のスレッドの仕事）。
+    pub import: import::ImportState,
+    /// 詳細の窓の筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
+    pub krita: krita::KritaTips,
 }
 
 impl Default for BrushesState {
@@ -523,6 +626,8 @@ impl Default for BrushesState {
             problems: Vec::new(),
             ui: BrushUi::default(),
             samples: sample::SampleCache::default(),
+            import: import::ImportState::default(),
+            krita: krita::KritaTips::default(),
         }
     }
 }
@@ -547,6 +652,12 @@ pub enum BrushAction {
     Revert(BrushKey),
     /// 今の設定を、そのブラシの元として登録する（利用者のブラシだけ）。
     Register(BrushKey),
+    /// 取り込むファイルを選ぶ窓を開く。
+    ImportDialog,
+    /// これらのファイルのブラシを取り込む（裏のスレッドで読んで置く）。
+    Import(Vec<PathBuf>),
+    /// 取り込みをやめる（置いた分は残る）。
+    ImportCancel,
 }
 
 impl AppState {
@@ -596,6 +707,20 @@ impl AppState {
             .lang
             .pick("描いている間はできません。", "Not while drawing.")
             .into();
+    }
+
+    /// 取り込みの仕事が走っている間は、ブラシの数・名前・画像を変える操作（追加・複製・削除・登録）を断る。取り込みは始めに取った
+    /// 空きの数と名前で置き、置く画像をほかのブラシが指しているかどうかで画像の掃除が決まるので、同じときに変えると、数の上限を
+    /// 超えたり、置いたブラシが指す画像を消したりする。断ったなら true。
+    fn brush_refuse_while_importing(&mut self) -> bool {
+        if !self.brushes.import.is_busy() {
+            return false;
+        }
+        self.message = self
+            .lang
+            .pick("ブラシを取り込み中です。", "Importing brushes.")
+            .into();
+        true
     }
 
     fn brush_notice(&mut self, ja: String, en: String) {
@@ -649,6 +774,7 @@ impl AppState {
             name: entry.name.clone(),
             group: entry.group,
             brush: entry.baseline.clone(),
+            import: entry.import.clone(),
         };
         let result = match &self.brushes.store {
             Some(store) => store.save_brush(&user),
@@ -747,6 +873,9 @@ impl AppState {
         if self.is_stroking() {
             return self.brush_refuse();
         }
+        if self.brush_refuse_while_importing() {
+            return;
+        }
         if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
             return self.brush_notice(
                 format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
@@ -796,6 +925,12 @@ impl AppState {
                 group: source.group,
                 baseline: source.effective().clone(),
                 edited: None,
+                // 複製は元の出どころと表せなかった項目を引き継ぐ（模様のブラシの複製は、模様の一覧に重ねて並べない）。
+                // 今の設定からの追加は、利用者が作ったブラシ
+                import: from.and(source.import.clone()).map(|m| ImportMeta {
+                    pattern: false,
+                    ..m
+                }),
             },
         );
         self.brush_activate(key);
@@ -831,6 +966,9 @@ impl AppState {
             BrushAction::Delete(key) => {
                 if self.is_stroking() {
                     return self.brush_refuse();
+                }
+                if self.brush_refuse_while_importing() {
+                    return;
                 }
                 let Some(entry) = self.brushes.lib.entry(key).cloned() else {
                     return;
@@ -940,8 +1078,14 @@ impl AppState {
                     entry.edited = None;
                 }
             }
+            BrushAction::ImportDialog => self.brush_import_dialog(),
+            BrushAction::Import(paths) => self.brush_import_start(paths),
+            BrushAction::ImportCancel => self.brush_import_cancel(),
             BrushAction::Register(key) => {
                 if !key.is_user() {
+                    return;
+                }
+                if self.brush_refuse_while_importing() {
                     return;
                 }
                 if self.brushes.lib.current == key {
@@ -996,6 +1140,34 @@ mod tests {
                 assert_eq!(p.brush.base.erase, b.group.is_eraser(), "{}", b.id);
             }
         }
+    }
+
+    #[test]
+    fn brush_numbers_never_repeat_across_threads_and_run_out_cleanly() {
+        let ids = IdSource::new();
+        let taken: Vec<u32> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    let ids = ids.clone();
+                    scope.spawn(move || {
+                        (0..250)
+                            .map(|_| ids.take(|id| id % 7 == 0).unwrap())
+                            .collect::<Vec<u32>>()
+                    })
+                })
+                .collect();
+            workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+        });
+        let mut sorted = taken.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 1000, "どのスレッドの番号も重ならない");
+        assert!(taken.iter().all(|id| id % 7 != 0), "使われている番号は飛ばす");
+        // 番号を読んだファイルの続きから取り、使い切ったら None のまま
+        ids.reserve_through(u32::MAX - 1);
+        assert_eq!(ids.take(|_| false), Some(u32::MAX));
+        assert_eq!(ids.take(|_| false), None);
+        assert_eq!(ids.take(|_| false), None);
     }
 
     #[test]

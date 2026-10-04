@@ -91,7 +91,12 @@ pub(super) fn paint_sample(
                 );
             }
         }
-        None => ui.ctx().request_repaint(),
+        None => {
+            // 別のスレッドで描いている最中なら、絵ができたときに描き直しが来る
+            if app.brushes.samples.needs_next_frame() {
+                ui.ctx().request_repaint();
+            }
+        }
     }
 }
 
@@ -102,6 +107,21 @@ pub(super) fn is_eraser(app: &AppState) -> bool {
         .is_some_and(|e| e.group.is_eraser())
 }
 
+/// タブに出すグループ（組み込みのあるグループはいつも。取り込んだブラシが 1 つでもあれば「取り込み」も）。
+pub fn tab_groups(app: &AppState) -> Vec<Group> {
+    let mut groups = Group::ALL.to_vec();
+    if app
+        .brushes
+        .lib
+        .entries()
+        .iter()
+        .any(|e| e.group == Group::Imported)
+    {
+        groups.push(Group::Imported);
+    }
+    groups
+}
+
 /// グループのタブ（短い名前。全名はツールチップ。入りきらなければ名前を詰め、それでも入らなければアイコンだけ）。
 fn group_strip(ui: &mut Ui, r: Rect, app: &mut AppState) {
     let lang = app.lang;
@@ -110,14 +130,15 @@ fn group_strip(ui: &mut Ui, r: Rect, app: &mut AppState) {
         w::fill(p, r, t::PANEL_HEADER);
         w::hline(p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
     }
-    let n = Group::ALL.len();
+    let groups = tab_groups(app);
+    let n = groups.len();
     let tab_w = (r.width() - 4.0) / n as f32;
-    let widest = Group::ALL
+    let widest = groups
         .iter()
         .map(|g| w::text_width(ui.painter(), g.short(lang), t::HEADER))
         .fold(0.0f32, f32::max);
     let text_only = tab_w.round() - 1.0 >= widest + 8.0;
-    for (i, group) in Group::ALL.iter().enumerate() {
+    for (i, group) in groups.iter().enumerate() {
         let tab = Rect::from_min_size(
             pos2((r.left() + 2.0 + i as f32 * tab_w).round(), r.top() + 2.0),
             vec2(tab_w.round() - 1.0, r.height() - 3.0),
@@ -194,6 +215,7 @@ fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect) {
         app.brushes.ui.renaming = None;
     }
     w::fill(ui.painter(), list, t::CONTROL_BG);
+    app.brushes.ui.list_rect = Some(list);
     let content = rows.len() as f32 * ROW_HEIGHT;
     app.brushes.ui.list_content = content;
     let max_scroll = (content - list.height()).max(0.0);
@@ -287,6 +309,12 @@ fn brush_row(
     selected: bool,
 ) {
     let lang = app.lang;
+    let import = app
+        .brushes
+        .lib
+        .entry(key)
+        .and_then(|e| e.import.clone());
+    let gaps: Vec<crate::brushes::Gap> = import.iter().flat_map(|m| m.gaps.clone()).collect();
     let clip = ui.clip_rect();
     let hit = row.intersect(clip);
     let response = ui.interact(
@@ -364,7 +392,8 @@ fn brush_row(
         }
     } else {
         let dot = if modified { 12.0 } else { 0.0 };
-        let shown = w::fit(&painter, name, name_rect.width() - dot, t::LABEL);
+        let mark = if gaps.is_empty() { 0.0 } else { 16.0 };
+        let shown = w::fit(&painter, name, name_rect.width() - dot - mark, t::LABEL);
         let text_color = if selected { Color32::WHITE } else { t::TEXT };
         w::text(
             &painter,
@@ -373,9 +402,20 @@ fn brush_row(
             t::LABEL.with_color(text_color),
             Align::Left,
         );
+        let mut x = name_rect.left() + w::text_width(&painter, &shown, t::LABEL) + 8.0;
         if modified {
-            let x = name_rect.left() + w::text_width(&painter, &shown, t::LABEL) + 8.0;
             painter.circle_filled(pos2(x, name_rect.center().y), 3.0, t::WARNING);
+            x += 12.0;
+        }
+        // 取り込んだときに表せなかった項目がある印（項目の名前はツールチップ）
+        if !gaps.is_empty() {
+            w::icon(
+                &painter,
+                Rect::from_center_size(pos2(x + 2.0, name_rect.center().y), vec2(14.0, 14.0)),
+                "warning",
+                t::WARNING,
+                13.0,
+            );
         }
     }
 
@@ -407,11 +447,23 @@ fn brush_row(
 
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, name));
-    let tooltip = if modified {
+    let mut tooltip = if modified {
         lang.pick(format!("{name}（変更あり）"), format!("{name} (modified)"))
     } else {
         name.to_owned()
     };
+    if let Some(meta) = &import {
+        if !meta.source.is_empty() {
+            tooltip.push('\n');
+            tooltip.push_str(&meta.source);
+        }
+        if !gaps.is_empty() {
+            let names: Vec<&str> = gaps.iter().map(|g| g.name(lang)).collect();
+            tooltip.push('\n');
+            tooltip.push_str(lang.pick("表せなかった項目: ", "Not represented: "));
+            tooltip.push_str(&names.join(lang.pick("、", ", ")));
+        }
+    }
     let _ = response.on_hover_text(tooltip);
 }
 
@@ -465,6 +517,24 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     .clicked()
     {
         app.apply(Action::Brush(BrushAction::Add));
+    }
+    x -= 28.0;
+    if w::icon_button(
+        ui,
+        button(x),
+        "brush.import",
+        "import",
+        lang.pick(
+            "ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）",
+            "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
+        ),
+        app.brushes.import.is_busy(),
+        !app.brushes.import.is_busy(),
+        17.0,
+    )
+    .clicked()
+    {
+        app.apply(Action::Brush(BrushAction::ImportDialog));
     }
     x -= 28.0;
     if w::icon_button(
@@ -888,6 +958,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
     let lang = app.lang;
 
+    // 取り込んだブラシが無くなったら、「取り込み」のタブは消えるので、ほかのグループへ戻す
+    if app.brushes.ui.group == Group::Imported && !tab_groups(app).contains(&Group::Imported) {
+        app.brushes.ui.group = Group::Pen;
+        app.brushes.ui.list_scroll = 0.0;
+    }
     let tool_open = app.section_open("brush-tool", true);
     let size_open = app.section_open("brush-sizes", true);
     let tool_h = if tool_open {

@@ -90,7 +90,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     }
     // 名前の検索
     let row = rows.row(24.0, 6.0);
-    if search_field(ui, row, &mut app.shelf.search, lang.pick("検索", "Search")) {
+    if search_field(
+        ui,
+        row,
+        "shelf.search",
+        &mut app.shelf.search,
+        lang.pick("検索", "Search"),
+    ) {
         app.shelf.scroll = 0.0;
     }
     // 選んだ層の保存（別のスレッドで書き出している間は、名前と「やめる」）
@@ -192,9 +198,15 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
     }
 }
 
-/// 名前の検索の欄（打つたびに絞る）。変えたら true。
-fn search_field(ui: &mut Ui, r: Rect, text: &mut String, hint: &str) -> bool {
-    let id = ui.make_persistent_id("shelf.search");
+/// 名前の検索の欄（打つたびに絞る）。変えたら true。`id_salt` は欄ごとに変える（同じ画面に並んでも入力が混ざらない）。
+pub(crate) fn search_field(
+    ui: &mut Ui,
+    r: Rect,
+    id_salt: &'static str,
+    text: &mut String,
+    hint: &str,
+) -> bool {
+    let id = ui.make_persistent_id(id_salt);
     let had_focus = ui.memory(|m| m.has_focus(id));
     let hover = ui.rect_contains_pointer(r);
     {
@@ -244,7 +256,7 @@ fn search_field(ui: &mut Ui, r: Rect, text: &mut String, hint: &str) -> bool {
     );
     if !text.is_empty() {
         let b = Rect::from_min_size(pos2(r.right() - 22.0, r.top()), vec2(20.0, r.height()));
-        if w::icon_button(ui, b, "shelf.search.clear", "close", "×", false, true, 12.0).clicked() {
+        if w::icon_button(ui, b, (id_salt, "clear"), "close", "×", false, true, 12.0).clicked() {
             text.clear();
         }
     }

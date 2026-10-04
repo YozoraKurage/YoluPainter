@@ -237,6 +237,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.psd.is_busy()
         || app.np_is_busy()
         || app.update.is_busy()
+        || app.brushes.import.is_busy()
     {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
@@ -616,6 +617,24 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             canceling: p.canceling,
         });
     }
+    if let Some(p) = app.brushes.import.progress() {
+        entries.push(Entry {
+            id: "brush-import",
+            text: format!(
+                "{} — {}{}",
+                lang.pick("ブラシを取り込み中", "Importing brushes"),
+                p.file,
+                if p.total > 1 {
+                    format!(" ({}/{})", p.index, p.total)
+                } else {
+                    String::new()
+                }
+            ),
+            fraction: None,
+            cancel: Action::Brush(crate::brushes::BrushAction::ImportCancel),
+            canceling: p.canceling,
+        });
+    }
     if let Some(r) = &app.np.reopening {
         entries.push(Entry {
             id: "model",
@@ -744,17 +763,20 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Export(ExportAction::Cancel));
     app.apply(Action::Psd(PsdAction::Cancel));
     app.apply(Action::Update(crate::update::UpdateAction::Cancel));
+    app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
     let start = std::time::Instant::now();
     while (app.bake.is_baking()
         || app.export.is_exporting()
         || app.psd.is_busy()
-        || app.update.is_busy())
+        || app.update.is_busy()
+        || app.brushes.import.is_busy())
         && start.elapsed() < wait
     {
         app.poll_bake();
         app.poll_export();
         app.poll_psd();
         app.poll_update();
+        app.poll_brush_import();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }

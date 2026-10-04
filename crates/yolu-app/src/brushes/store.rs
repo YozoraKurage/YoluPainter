@@ -1,21 +1,29 @@
 //! 利用者のブラシの保存（設定のフォルダの `brushes/`）。ブラシ 1 つが 1 ファイル（`brush-<番号>.ylbrush`）、並びは `order.conf`。
 //!
 //! 形式は 1 行目が `yolupainter-brush 1`、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
-//! 同じ値）、筆先・質感の画像は組み込みの名前で持つ（取り込んだ画像は保存できない）。知らない項目・重なった項目・範囲を外れた値は
+//! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
+//! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
+//! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
 //! そのファイルを読み飛ばして理由を残す（ほかのファイルは読む）。版が新しいファイルは触らずに読み飛ばす。
-//! 書き込みは一時ファイルへ書いて読み戻して確かめてから、最後の 1 回の置換で確定する（置換に失敗したら元のファイルは変わらない）。
+//! 書き込みは、画像を先に置き（一時ファイルへ書いて読み戻して確かめてから置換）、ブラシのファイルを最後の 1 回の置換で確定する
+//! （途中で落ちても、ブラシのファイルは前の版のままか新しい版のどちらか。置いただけの画像は、内容で名づけるので無害）。
 //! 名前はファイルの中だけに持ち、ファイル名には使わない。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use super::{canonical, Group, UserBrush, MAX_NAME_CHARS};
+use super::gaps::Gap;
+use super::images;
+use super::{canonical, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
     Brush, BrushEffect, CoreError, DVec2, DualBrush, DualBrushMode, PaperTexture, TextureMode,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, TipSelection};
+use yolu_core::BrushTip;
+use yolu_io::brushes::bundled;
 
 pub const HEADER: &str = "yolupainter-brush 1";
 const EXTENSION: &str = "ylbrush";
@@ -24,6 +32,8 @@ const ORDER_FILE: &str = "order.conf";
 const MAX_FILE_BYTES: u64 = 64 * 1024;
 /// 読むファイルの数の上限（これより多い分は読み飛ばす）。
 const MAX_FILES: usize = 1024;
+/// 取り込んだブラシの出どころの名前の長さの上限（文字数）。
+pub const MAX_SOURCE_CHARS: usize = 64;
 
 /// 読み書きの失敗の種類（言語ごとの短い理由は `describe`）。
 #[derive(Debug)]
@@ -43,8 +53,8 @@ pub enum StoreError {
     UnknownTip(String),
     /// core の検証が断った設定。
     Invalid(CoreError),
-    /// 取り込んだ画像の筆先・質感は保存できない。
-    CustomImage,
+    /// 画像のファイルが読めない・壊れている・名前（指紋）と中身が合わない（先頭の数文字）。
+    BadImage(String),
     /// 書いたファイルを読み戻したら、書いた設定と違った。
     Mismatch,
     TooMany,
@@ -89,12 +99,10 @@ impl StoreError {
                 lang.pick(format!("知らない画像: {n}"), format!("Unknown image: {n}"))
             }
             StoreError::Invalid(e) => lang.core_error(e),
-            StoreError::CustomImage => lang
-                .pick(
-                    "取り込んだ画像の筆先は保存できません",
-                    "Imported tip images cannot be saved",
-                )
-                .into(),
+            StoreError::BadImage(short) => lang.pick(
+                format!("画像を読めません: {short}"),
+                format!("Cannot read the image: {short}"),
+            ),
             StoreError::Mismatch => lang
                 .pick(
                     "書いた内容を読み戻せませんでした",
@@ -159,12 +167,96 @@ fn dual_mode_id(mode: DualBrushMode) -> &'static str {
     }
 }
 
-/// 組み込みの筆先の名前（取り込んだ画像・名前だけ同じで中身が違う画像は保存できない）。
-fn tip_name(tip: &yolu_core::BrushTip) -> Result<&str, StoreError> {
-    match builtin_tip(tip.name()) {
-        Some(b) if *b == *tip => Ok(tip.name()),
-        _ => Err(StoreError::CustomImage),
+/// 同梱の Krita の筆先を読み込み済みか（読み込む前は、書くときに同梱の筆先かどうかを調べない）。同梱の筆先は読み込みが済んでから
+/// でないとブラシの中にいない（`img:` で置いても内容は同じ）ので、書くために 100 ms 級の読み込みを画面の側で待たない。
+static KRITA_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 同梱の Krita の筆先（初めて呼ぶと全部を読むので、画面のスレッドでは呼ばない）。呼んだことを覚える。
+pub fn krita() -> &'static bundled::BundledSet {
+    let set = bundled::krita4();
+    KRITA_LOADED.store(true, std::sync::atomic::Ordering::Release);
+    set
+}
+
+/// 読み込み済みなら同梱の Krita の筆先（読み込みを待たない）。
+pub fn krita_loaded() -> Option<&'static bundled::BundledSet> {
+    KRITA_LOADED
+        .load(std::sync::atomic::Ordering::Acquire)
+        .then(krita)
+}
+
+const IMAGE_PREFIX: &str = "img:";
+
+/// 書き出すブラシが指す取り込んだ画像（指紋と画像。重ならない）。
+#[derive(Default)]
+struct Pending {
+    images: Vec<(String, Arc<BrushTip>)>,
+}
+
+impl Pending {
+    /// 画像 1 枚の札: 組み込みの名前（名前だけ同じで中身が違う画像は組み込みとして扱わない）、同梱の Krita の筆先の ID、
+    /// そうでなければ取り込んだ画像（`img:<指紋>`）。
+    fn token(&mut self, tip: &Arc<BrushTip>) -> String {
+        if let Some(b) = builtin_tip(tip.name()).filter(|b| **b == **tip) {
+            return b.name().to_owned();
+        }
+        if let Some(set) = krita_loaded() {
+            let found = set
+                .brushes
+                .iter()
+                .find(|b| b.brush.tip.image.as_deref() == Some(&**tip));
+            if let Some(b) = found {
+                return b.id.clone();
+            }
+        }
+        let hash = images::fingerprint(tip);
+        if !self.images.iter().any(|(h, _)| *h == hash) {
+            self.images.push((hash.clone(), tip.clone()));
+        }
+        format!("{IMAGE_PREFIX}{hash}")
     }
+
+    /// 複数の筆先（ホース）の札: 同梱の Krita のホースと同じなら ID 1 つ、そうでなければ札の並び。
+    fn list(&mut self, tips: &[Arc<BrushTip>]) -> String {
+        if let Some(set) = krita_loaded() {
+            let found = set
+                .brushes
+                .iter()
+                .find(|b| !b.brush.tip.images.is_empty() && b.brush.tip.images == tips);
+            if let Some(b) = found {
+                return b.id.clone();
+            }
+        }
+        let tokens: Vec<String> = tips.iter().map(|t| self.token(t)).collect();
+        tokens.join(",")
+    }
+}
+
+/// 札から画像の並びへ（同梱のホースは複数、それ以外は 1 枚）。`load` は取り込んだ画像（指紋）を読む。
+fn resolve(
+    token: &str,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<Vec<Arc<BrushTip>>, StoreError> {
+    if let Some(hash) = token.strip_prefix(IMAGE_PREFIX) {
+        if !images::is_fingerprint(hash) {
+            return Err(StoreError::UnknownTip(token.chars().take(32).collect()));
+        }
+        return Ok(vec![load(hash)?]);
+    }
+    if token.starts_with(bundled::ID_PREFIX) {
+        let b = krita()
+            .brushes
+            .iter()
+            .find(|b| b.id == token)
+            .ok_or_else(|| StoreError::UnknownTip(token.chars().take(64).collect()))?;
+        return Ok(match &b.brush.tip.image {
+            Some(image) => vec![image.clone()],
+            None => b.brush.tip.images.clone(),
+        });
+    }
+    builtin_tip(token)
+        .map(|t| vec![t])
+        .ok_or_else(|| StoreError::UnknownTip(token.chars().take(64).collect()))
 }
 
 struct Writer(String);
@@ -182,9 +274,17 @@ impl Writer {
     }
 }
 
+/// 書き出した結果: ブラシの文と、その文が指す取り込んだ画像（指紋と画像。先に置いてから文を置く）。
+#[derive(Debug)]
+pub struct Encoded {
+    pub text: String,
+    pub images: Vec<(String, Arc<BrushTip>)>,
+}
+
 /// ブラシを書き出す（`brush` は正規の形でなくても、画面が持たない項目は書かない）。
-pub fn encode(user: &UserBrush) -> Result<String, StoreError> {
+pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
+    let mut pending = Pending::default();
     let mut w = Writer(format!("{HEADER}\n"));
     let name: String = user.name.chars().take(MAX_NAME_CHARS).collect();
     w.line("name", name.replace(['\n', '\r'], " "));
@@ -199,14 +299,13 @@ pub fn encode(user: &UserBrush) -> Result<String, StoreError> {
     w.bool("pressure_flow", b.base.pressure_flow);
     let t = &b.tip;
     match &t.image {
-        Some(image) => w.line("tip.image", tip_name(image)?),
+        Some(image) => w.line("tip.image", pending.token(image)),
         None => w.line("tip.image", "none"),
     }
     if t.images.is_empty() {
         w.line("tip.images", "none");
     } else {
-        let names: Result<Vec<&str>, StoreError> = t.images.iter().map(|i| tip_name(i)).collect();
-        w.line("tip.images", names?.join(","));
+        w.line("tip.images", pending.list(&t.images));
     }
     w.line(
         "tip.selection",
@@ -229,7 +328,7 @@ pub fn encode(user: &UserBrush) -> Result<String, StoreError> {
     w.line("jitter.scatter", j.scatter);
     w.line("jitter.count", j.count);
     if let Some(tex) = &b.texture {
-        w.line("texture", tip_name(&tex.image)?);
+        w.line("texture", pending.token(&tex.image));
         w.line("texture.depth", tex.depth);
         w.line("texture.scale", tex.scale);
         w.line("texture.mode", mode_id(tex.mode));
@@ -237,7 +336,7 @@ pub fn encode(user: &UserBrush) -> Result<String, StoreError> {
     if let Some(d) = &b.dual {
         w.line("dual", 1);
         match &d.tip {
-            Some(image) => w.line("dual.tip", tip_name(image)?),
+            Some(image) => w.line("dual.tip", pending.token(image)),
             None => w.line("dual.tip", "none"),
         }
         w.line("dual.radius", d.radius);
@@ -285,7 +384,20 @@ pub fn encode(user: &UserBrush) -> Result<String, StoreError> {
             w.line("effect.y", offset.y);
         }
     }
-    Ok(w.0)
+    if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
+        w.line("import.source", meta.source.replace(|c: char| c.is_control(), " "));
+        if meta.pattern {
+            w.bool("import.pattern", true);
+        }
+        if !meta.gaps.is_empty() {
+            let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
+            w.line("import.gaps", ids.join(","));
+        }
+    }
+    Ok(Encoded {
+        text: w.0,
+        images: pending.images,
+    })
 }
 
 /// 項目を取り出しながら読む（取り出さなかった項目は最後に「知らない項目」として断る）。
@@ -329,16 +441,22 @@ impl Reader {
             Some(_) => Err(StoreError::BadValue(key.into())),
         }
     }
+    /// 画像 1 枚の札（1 枚に決まらない札は値が読めない）。
     fn tip(
         &mut self,
         key: &str,
-    ) -> Result<Option<std::sync::Arc<yolu_core::BrushTip>>, StoreError> {
+        load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+    ) -> Result<Option<Arc<BrushTip>>, StoreError> {
         match self.take(key) {
             None => Ok(None),
-            Some(name) if name == "none" => Ok(None),
-            Some(name) => builtin_tip(&name)
-                .map(Some)
-                .ok_or(StoreError::UnknownTip(name)),
+            Some(token) if token == "none" => Ok(None),
+            Some(token) => {
+                let mut tips = resolve(&token, load)?;
+                match (tips.pop(), tips.is_empty()) {
+                    (Some(tip), true) => Ok(Some(tip)),
+                    _ => Err(StoreError::BadValue(key.into())),
+                }
+            }
         }
     }
 }
@@ -353,8 +471,28 @@ fn dual_mode(id: &str) -> Option<DualBrushMode> {
         .find(|m| dual_mode_id(*m) == id)
 }
 
-/// ファイルの中身から、名前・グループ・ブラシ（正規の形）を読む。
+/// 読んだブラシ 1 つ（ブラシは正規の形）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decoded {
+    pub name: String,
+    pub group: Group,
+    pub brush: Brush,
+    pub import: Option<ImportMeta>,
+}
+
+/// ファイルの中身から、名前・グループ・ブラシ（正規の形）を読む。取り込んだ画像（`img:`）は読めない（`decode_user`）。
 pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
+    let d = decode_user(text, &mut |hash| {
+        Err(StoreError::UnknownTip(format!("{IMAGE_PREFIX}{}", hash.chars().take(8).collect::<String>())))
+    })?;
+    Ok((d.name, d.group, d.brush))
+}
+
+/// ファイルの中身から読む。取り込んだ画像は `load`（指紋 → 画像）で読む。
+pub fn decode_user(
+    text: &str,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<Decoded, StoreError> {
     let mut lines = text.lines();
     match lines.next() {
         Some(HEADER) => {}
@@ -389,13 +527,11 @@ pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
     b.base.pressure_size = r.bool("pressure_size", b.base.pressure_size)?;
     b.base.pressure_opacity = r.bool("pressure_opacity", b.base.pressure_opacity)?;
     b.base.pressure_flow = r.bool("pressure_flow", b.base.pressure_flow)?;
-    b.tip.image = r.tip("tip.image")?;
+    b.tip.image = r.tip("tip.image", load)?;
     if let Some(list) = r.take("tip.images") {
         if list != "none" {
-            for name in list.split(',') {
-                b.tip.images.push(
-                    builtin_tip(name).ok_or_else(|| StoreError::UnknownTip(name.to_owned()))?,
-                );
+            for token in list.split(',') {
+                b.tip.images.extend(resolve(token, load)?);
             }
         }
     }
@@ -416,7 +552,7 @@ pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
     b.jitter.flow = r.float("jitter.flow", b.jitter.flow)?;
     b.jitter.scatter = r.float("jitter.scatter", b.jitter.scatter)?;
     b.jitter.count = r.parse("jitter.count", b.jitter.count)?;
-    if let Some(image) = r.tip("texture")? {
+    if let Some(image) = r.tip("texture", load)? {
         let mut texture = PaperTexture::new(image, 0.5);
         texture.depth = r.float("texture.depth", texture.depth)?;
         texture.scale = r.float("texture.scale", texture.scale)?;
@@ -428,7 +564,7 @@ pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
     }
     if r.bool("dual", false)? {
         let mut dual = DualBrush::default();
-        dual.tip = r.tip("dual.tip")?;
+        dual.tip = r.tip("dual.tip", load)?;
         dual.radius = r.float("dual.radius", dual.radius)?;
         dual.hardness = r.float("dual.hardness", dual.hardness)?;
         dual.spacing = r.float("dual.spacing", dual.spacing)?;
@@ -473,11 +609,46 @@ pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
         },
         Some(_) => return Err(StoreError::BadValue("effect".into())),
     };
+    let import = {
+        let source = r.take("import.source");
+        let pattern = r.take("import.pattern");
+        let gaps = r.take("import.gaps");
+        if source.is_none() && pattern.is_none() && gaps.is_none() {
+            None
+        } else {
+            let source: String = source
+                .unwrap_or_default()
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect::<String>()
+                .trim()
+                .chars()
+                .take(MAX_SOURCE_CHARS)
+                .collect();
+            let pattern = match pattern.as_deref() {
+                None | Some("0") => false,
+                Some("1") => true,
+                Some(_) => return Err(StoreError::BadValue("import.pattern".into())),
+            };
+            // 知らない項目の名前は読み飛ばす（新しい版が足した項目。描き方には関わらない情報）
+            let gaps = gaps
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(Gap::from_id)
+                .collect();
+            Some(ImportMeta::new(source, pattern, gaps))
+        }
+    };
     if let Some(key) = r.map.keys().min() {
         return Err(StoreError::UnknownKey(key.clone()));
     }
     b.validate().map_err(StoreError::Invalid)?;
-    Ok((name, group, canonical(&b)))
+    Ok(Decoded {
+        name,
+        group,
+        brush: canonical(&b),
+        import,
+    })
 }
 
 // ───────── フォルダ ─────────
@@ -508,11 +679,34 @@ fn read_text(path: &Path) -> Result<String, StoreError> {
     Ok(text)
 }
 
+/// 大きさを上限で止めて、バイト列で読む。
+fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, StoreError> {
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(StoreError::TooLarge);
+    }
+    Ok(bytes)
+}
+
 /// 一時ファイルに書いて同期し、`verify` が読み戻しを確かめたら `path` へ置き換える。失敗したら一時ファイルを消す。
 fn replace_file(
     path: &Path,
     text: &str,
     verify: impl FnOnce(&str) -> bool,
+) -> Result<(), StoreError> {
+    replace_bytes(path, text.as_bytes(), MAX_FILE_BYTES, |read| {
+        std::str::from_utf8(read).is_ok_and(verify)
+    })
+}
+
+/// `replace_file` のバイト列版（画像）。読み戻しは `limit` バイトまで。
+fn replace_bytes(
+    path: &Path,
+    bytes: &[u8],
+    limit: u64,
+    verify: impl FnOnce(&[u8]) -> bool,
 ) -> Result<(), StoreError> {
     let parent = path
         .parent()
@@ -528,10 +722,10 @@ fn replace_file(
         .create_new(true)
         .open(&pending)?;
     let result = (|| -> Result<(), StoreError> {
-        file.write_all(text.as_bytes())?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        if !verify(&read_text(&pending)?) {
+        if !verify(&read_bytes(&pending, limit)?) {
             return Err(StoreError::Mismatch);
         }
         std::fs::rename(&pending, path)?;
@@ -543,15 +737,39 @@ fn replace_file(
     result
 }
 
+/// ブラシのファイルの文が指す取り込んだ画像の指紋（文字として探す。読めない値のファイルでも数える）。
+fn image_hashes(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some((_, value)) = line.split_once('=') else {
+            continue;
+        };
+        for token in value.split(',') {
+            if let Some(hash) = token.trim().strip_prefix(IMAGE_PREFIX) {
+                if images::is_fingerprint(hash) && !found.iter().any(|h| h == hash) {
+                    found.push(hash.to_owned());
+                }
+            }
+        }
+    }
+    found
+}
+
 /// 設定のフォルダの `brushes/`。
 #[derive(Clone, Debug)]
 pub struct BrushStore {
     dir: PathBuf,
+    /// この実行で、置いた（読み戻して確かめた）画像の指紋。同じ筆先を使うブラシをまとめて置くとき・名前を変えて書き直すときに、
+    /// 画像を読み直さない（複製したストアも共有する。別のスレッドの取り込みの仕事と画面の側で同じ集合を使う）。
+    placed: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl BrushStore {
     pub fn new(dir: PathBuf) -> BrushStore {
-        BrushStore { dir }
+        BrushStore {
+            dir,
+            placed: Arc::default(),
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -567,23 +785,130 @@ impl BrushStore {
         std::fs::symlink_metadata(self.path_of(id)).is_ok()
     }
 
+    /// 取り込んだ画像のフォルダ。
+    pub fn images_dir(&self) -> PathBuf {
+        self.dir.join("images")
+    }
+
+    pub fn image_path(&self, hash: &str) -> PathBuf {
+        self.images_dir().join(format!("{hash}.png"))
+    }
+
+    /// 取り込んだ画像を読む（指紋と中身が合わなければ断る）。ファイルが無ければ知らない画像。
+    pub fn load_image(&self, hash: &str) -> Result<BrushTip, StoreError> {
+        let short = || hash.chars().take(8).collect::<String>();
+        if !images::is_fingerprint(hash) {
+            return Err(StoreError::BadImage(short()));
+        }
+        let bytes = match read_bytes(&self.image_path(hash), images::MAX_IMAGE_FILE_BYTES) {
+            Ok(bytes) => bytes,
+            Err(StoreError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(StoreError::UnknownTip(format!("{IMAGE_PREFIX}{}", short())))
+            }
+            Err(StoreError::TooLarge) => return Err(StoreError::BadImage(short())),
+            Err(e) => return Err(e),
+        };
+        let tip = images::decode(&bytes).map_err(|_| StoreError::BadImage(short()))?;
+        if images::fingerprint(&tip) != hash {
+            return Err(StoreError::BadImage(short()));
+        }
+        Ok(tip)
+    }
+
+    /// 画像を置く（同じ指紋のファイルが読めるなら、そのまま）。一時ファイルへ書いて読み戻して確かめてから置換する。
+    /// この実行で置いたものは、ファイルがまだあれば確かめ直さない。
+    fn save_image(&self, hash: &str, tip: &BrushTip) -> Result<(), StoreError> {
+        let placed = |s: &BrushStore| s.placed.lock().is_ok_and(|set| set.contains(hash));
+        if (placed(self) && self.image_path(hash).is_file()) || self.load_image(hash).is_ok() {
+            if let Ok(mut set) = self.placed.lock() {
+                set.insert(hash.to_owned());
+            }
+            return Ok(());
+        }
+        let png = images::encode(tip)?;
+        replace_bytes(
+            &self.image_path(hash),
+            &png,
+            images::MAX_IMAGE_FILE_BYTES,
+            |read| images::decode(read).is_ok_and(|got| got == *tip),
+        )?;
+        if let Ok(mut set) = self.placed.lock() {
+            set.insert(hash.to_owned());
+        }
+        Ok(())
+    }
+
+    /// ブラシを置く。画像を先に、ブラシのファイルを最後の 1 回の置換で。
     pub fn save_brush(&self, user: &UserBrush) -> Result<(), StoreError> {
-        let text = encode(user)?;
-        let expect = (
-            super::clean_name(&user.name).unwrap_or_default(),
-            user.group,
-            canonical(&user.brush),
-        );
-        replace_file(&self.path_of(user.id), &text, |read| {
-            decode(read).is_ok_and(|got| got == expect)
+        let encoded = encode(user)?;
+        for (hash, tip) in &encoded.images {
+            self.save_image(hash, tip)?;
+        }
+        let expect = Decoded {
+            name: super::clean_name(&user.name).unwrap_or_default(),
+            group: user.group,
+            brush: canonical(&user.brush),
+            import: user.import.as_ref().map(ImportMeta::normalized),
+        };
+        // 読み戻しの確かめでは、置いたばかりの画像は手元のものを使う（画像は置くときに読み戻して確かめ済み）
+        let have: HashMap<&str, &Arc<BrushTip>> = encoded
+            .images
+            .iter()
+            .map(|(hash, tip)| (hash.as_str(), tip))
+            .collect();
+        replace_file(&self.path_of(user.id), &encoded.text, |read| {
+            let mut load = |hash: &str| {
+                have.get(hash).map(|tip| Arc::clone(tip)).ok_or_else(|| {
+                    StoreError::UnknownTip(format!("{IMAGE_PREFIX}{}", hash.chars().take(8).collect::<String>()))
+                })
+            };
+            decode_user(read, &mut load).is_ok_and(|got| got == expect)
         })
     }
 
+    /// ブラシのファイルを消す。そのブラシだけが使っていた取り込んだ画像も消す（ほかのブラシのファイルが 1 つでも指していれば残す。
+    /// 読めないファイル・新しい版のファイルも、文字として探して数える）。画像を消せなくてもブラシを消したことは変わらない。
     pub fn delete_brush(&self, id: u32) -> Result<(), StoreError> {
-        match std::fs::remove_file(self.path_of(id)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
+        let path = self.path_of(id);
+        let used = read_text(&path)
+            .map(|text| image_hashes(&text))
+            .unwrap_or_default();
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        if !used.is_empty() {
+            self.remove_unused_images(used);
+        }
+        Ok(())
+    }
+
+    fn remove_unused_images(&self, mut candidates: Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if id_from_file(&name).is_none() {
+                continue;
+            }
+            // 読めないファイルがあれば、何が指しているか分からないので、何も消さない
+            let Ok(text) = read_text(&entry.path()) else {
+                return;
+            };
+            let kept = image_hashes(&text);
+            candidates.retain(|hash| !kept.contains(hash));
+            if candidates.is_empty() {
+                return;
+            }
+        }
+        for hash in candidates {
+            if std::fs::remove_file(self.image_path(&hash)).is_ok() {
+                if let Ok(mut set) = self.placed.lock() {
+                    set.remove(&hash);
+                }
+            }
         }
     }
 
@@ -631,14 +956,26 @@ pub fn load_all(dir: &Path) -> LoadReport {
         });
         files.truncate(MAX_FILES);
     }
+    // 取り込んだ画像は指紋ごとに 1 回だけ読み、同じ画像を使うブラシで共有する
+    let store = BrushStore::new(dir.to_path_buf());
+    let mut shared: HashMap<String, Arc<BrushTip>> = HashMap::new();
+    let mut load = |hash: &str| -> Result<Arc<BrushTip>, StoreError> {
+        if let Some(tip) = shared.get(hash) {
+            return Ok(tip.clone());
+        }
+        let tip = Arc::new(store.load_image(hash)?);
+        shared.insert(hash.to_owned(), tip.clone());
+        Ok(tip)
+    };
     for (id, name, _) in files {
-        let loaded = read_text(&dir.join(&name)).and_then(|text| decode(&text));
+        let loaded = read_text(&dir.join(&name)).and_then(|text| decode_user(&text, &mut load));
         match loaded {
-            Ok((display, group, brush)) => report.brushes.push(UserBrush {
+            Ok(d) => report.brushes.push(UserBrush {
                 id,
-                name: display,
-                group,
-                brush,
+                name: d.name,
+                group: d.group,
+                brush: d.brush,
+                import: d.import,
             }),
             Err(reason) => report.problems.push(Problem { file: name, reason }),
         }
@@ -667,6 +1004,7 @@ mod tests {
     use super::*;
     use crate::engine::{Jitter, TipShape};
     use crate::m2;
+    use yolu_core::brush::TipSelection;
 
     fn user(id: u32, brush: Brush) -> UserBrush {
         UserBrush {
@@ -674,7 +1012,15 @@ mod tests {
             name: format!("テスト {id}"),
             group: Group::Pen,
             brush: canonical(&brush),
+            import: None,
         }
+    }
+
+    /// ブラシの文だけ（画像のファイルを要しないブラシ）。
+    fn text(user: &UserBrush) -> String {
+        let encoded = encode(user).unwrap();
+        assert!(encoded.images.is_empty(), "画像のファイルを要しない");
+        encoded.text
     }
 
     #[test]
@@ -685,8 +1031,11 @@ mod tests {
                 name: "x".into(),
                 group: b.group,
                 brush: b.brush.clone(),
+                import: None,
             };
-            let text = encode(&u).unwrap_or_else(|e| panic!("{}: {e:?}", b.id));
+            let text = encode(&u)
+                .unwrap_or_else(|e| panic!("{}: {e:?}", b.id))
+                .text;
             let (name, group, brush) =
                 decode(&text).unwrap_or_else(|e| panic!("{}: {e:?}\n{text}", b.id));
             assert_eq!((name.as_str(), group), ("x", b.group), "{}", b.id);
@@ -694,7 +1043,7 @@ mod tests {
         }
         for p in m2::presets() {
             let u = user(2, p.brush.clone());
-            assert_eq!(decode(&encode(&u).unwrap()).unwrap().2, u.brush, "{}", p.id);
+            assert_eq!(decode(&text(&u)).unwrap().2, u.brush, "{}", p.id);
         }
     }
 
@@ -740,22 +1089,21 @@ mod tests {
             offset: DVec2::new(-12.5, 40.0),
         };
         let u = user(9, b);
-        let text = encode(&u).unwrap();
+        let text = text(&u);
         let (_, _, back) = decode(&text).unwrap();
         assert_eq!(back, u.brush);
         // 書き直しても同じ文
-        let again = encode(&UserBrush {
+        let again = self::text(&UserBrush {
             brush: back,
             ..u.clone()
-        })
-        .unwrap();
+        });
         assert_eq!(again, text);
         assert!(text.starts_with("yolupainter-brush 1\n"), "{text}");
     }
 
     #[test]
     fn broken_files_are_refused_with_a_reason() {
-        let ok = encode(&user(1, Brush::default())).unwrap();
+        let ok = text(&user(1, Brush::default()));
         let bad = |edit: &dyn Fn(&str) -> String| decode(&edit(&ok)).unwrap_err();
         assert!(matches!(decode("").unwrap_err(), StoreError::NotABrush));
         assert!(matches!(
@@ -808,17 +1156,206 @@ mod tests {
         ));
     }
 
+    fn custom(name: &str, seed: u8) -> Arc<BrushTip> {
+        let alpha: Vec<u8> = (0..16u32).map(|i| (i as u8).wrapping_mul(seed)).collect();
+        Arc::new(BrushTip::new(name, 4, 4, alpha).unwrap())
+    }
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/brush-store-tests")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
-    fn imported_tip_images_are_not_saved() {
-        let custom = std::sync::Arc::new(
-            yolu_core::BrushTip::new("grain", 2, 2, vec![0, 255, 255, 0]).unwrap(),
-        );
+    fn imported_images_are_named_by_content_and_the_text_alone_cannot_stand_in_for_them() {
         let mut b = Brush::default();
-        b.tip.image = Some(custom);
+        // 名前だけ組み込みと同じで中身が違う画像は、組み込みとして書かない
+        b.tip.image = Some(custom("grain", 3));
+        b.texture = Some(PaperTexture::new(custom("paper", 5), 0.5));
+        b.dual = Some(DualBrush {
+            tip: Some(custom("dual", 7)),
+            ..DualBrush::default()
+        });
+        let encoded = encode(&user(1, b.clone())).unwrap();
+        assert_eq!(encoded.images.len(), 3);
+        for (hash, tip) in &encoded.images {
+            assert!(images::is_fingerprint(hash));
+            assert_eq!(*hash, images::fingerprint(tip));
+            assert!(encoded.text.contains(&format!("img:{hash}")), "{}", encoded.text);
+        }
+        assert!(!encoded.text.contains("tip.image=grain"), "{}", encoded.text);
+        // 画像を渡さずに読むと、知らない画像として断る（画像のファイルが無いブラシは通さない）
+        assert!(matches!(decode(&encoded.text).unwrap_err(), StoreError::UnknownTip(n) if n.starts_with("img:")));
+        // 同じ画像を 2 か所に使っても 1 枚
+        let mut again = Brush::default();
+        again.tip.image = Some(custom("same", 9));
+        again.texture = Some(PaperTexture::new(custom("same", 9), 0.5));
+        assert_eq!(encode(&user(2, again)).unwrap().images.len(), 1);
+    }
+
+    #[test]
+    fn imported_brushes_are_saved_with_their_images_and_read_back_equal_with_shared_images() {
+        let dir = temp("images");
+        let store = BrushStore::new(dir.clone());
+        let tip = custom("tip", 3);
+        let mut a = Brush::default();
+        a.tip.image = Some(tip.clone());
+        a.texture = Some(PaperTexture::new(custom("paper", 5), 0.5));
+        let mut hose = Brush::default();
+        hose.tip.images = vec![custom("h1", 11), custom("h2", 13), tip.clone()];
+        hose.tip.selection = TipSelection::Sequential;
+        let meta = ImportMeta::new(
+            "Photoshop ABR v10".into(),
+            true,
+            vec![Gap::WetEdges, Gap::ColorTip, Gap::WetEdges],
+        );
+        let mut one = user(1, a);
+        one.group = Group::Imported;
+        one.import = Some(meta.clone());
+        let two = user(2, hose);
+        store.save_brush(&one).unwrap();
+        store.save_brush(&two).unwrap();
+        let report = load_all(&dir);
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        assert_eq!(report.brushes.len(), 2);
+        assert_eq!(report.brushes[0].brush, one.brush);
+        assert_eq!(report.brushes[1].brush, two.brush);
+        assert_eq!(report.brushes[0].group, Group::Imported);
+        let got = report.brushes[0].import.as_ref().unwrap();
+        assert_eq!(got.source, "Photoshop ABR v10");
+        assert!(got.pattern);
+        assert_eq!(got.gaps, [Gap::ColorTip, Gap::WetEdges], "並び順で重ならない");
+        assert_eq!(report.brushes[1].import, None);
+        // 2 つのブラシが使う同じ画像は読んだあとも 1 つを共有する
+        let first = report.brushes[0].brush.tip.image.as_ref().unwrap();
+        let shared = &report.brushes[1].brush.tip.images[2];
+        assert!(Arc::ptr_eq(first, shared));
+        // 画像のファイルは 5 枚（tip・paper・h1・h2。tip は共有）と、先に置いた一時ファイルが残らないこと
+        let files: Vec<String> = std::fs::read_dir(store.images_dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files.len(), 4, "{files:?}");
+        assert!(files.iter().all(|f| f.ends_with(".png")), "{files:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_brush_removes_only_the_images_nobody_else_uses() {
+        let dir = temp("gc");
+        let store = BrushStore::new(dir.clone());
+        let shared = custom("shared", 3);
+        let mut a = Brush::default();
+        a.tip.image = Some(shared.clone());
+        a.texture = Some(PaperTexture::new(custom("only-a", 5), 0.5));
+        let mut b = Brush::default();
+        b.tip.image = Some(shared.clone());
+        store.save_brush(&user(1, a)).unwrap();
+        store.save_brush(&user(2, b)).unwrap();
+        let count = || std::fs::read_dir(store.images_dir()).unwrap().count();
+        assert_eq!(count(), 2);
+        store.delete_brush(1).unwrap();
+        assert_eq!(count(), 1, "a だけの画像は消え、共有の画像は残る");
+        assert!(load_all(&dir).problems.is_empty());
+        // 読めないファイルが画像を指しているかもしれないときは、何も消さない（新しい版のファイルも）
+        let hash = images::fingerprint(&shared);
+        std::fs::write(
+            store.path_of(3),
+            format!("yolupainter-brush 9\ntip.image=img:{hash}\n"),
+        )
+        .unwrap();
+        store.delete_brush(2).unwrap();
+        assert_eq!(count(), 1, "新しい版のファイルが指している画像は残す");
+        store.delete_brush(3).unwrap();
+        assert_eq!(count(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_damaged_or_swapped_image_file_makes_that_brush_unreadable_and_nothing_else() {
+        let dir = temp("damaged");
+        let store = BrushStore::new(dir.clone());
+        let (tip_a, tip_b) = (custom("a", 3), custom("b", 5));
+        let mut a = Brush::default();
+        a.tip.image = Some(tip_a.clone());
+        let mut b = Brush::default();
+        b.tip.image = Some(tip_b.clone());
+        store.save_brush(&user(1, a)).unwrap();
+        store.save_brush(&user(2, b)).unwrap();
+        store.save_brush(&user(3, Brush::default())).unwrap();
+        // a の画像に b の画像の中身を置く（PNG としては読めるが、名前（指紋）と中身が合わない）
+        let (hash_a, hash_b) = (images::fingerprint(&tip_a), images::fingerprint(&tip_b));
+        std::fs::copy(store.image_path(&hash_b), store.image_path(&hash_a)).unwrap();
+        let report = load_all(&dir);
+        let ids: Vec<u32> = report.brushes.iter().map(|b| b.id).collect();
+        assert_eq!(ids, [2, 3]);
+        assert!(matches!(report.problems[0].reason, StoreError::BadImage(_)), "{:?}", report.problems);
+        // 画像のファイルが無いときは、知らない画像
+        std::fs::remove_file(store.image_path(&hash_b)).unwrap();
+        let report = load_all(&dir);
+        assert!(report
+            .problems
+            .iter()
+            .all(|p| matches!(p.reason, StoreError::UnknownTip(_) | StoreError::BadImage(_))));
+        for p in &report.problems {
+            assert!(!p.describe(Lang::Ja).is_empty() && !p.describe(Lang::En).is_empty());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unknown_gap_names_are_skipped_and_a_bad_pattern_flag_is_refused() {
+        let u = UserBrush {
+            import: Some(ImportMeta::new("GIMP GBR".into(), false, vec![Gap::Noise])),
+            ..user(1, Brush::default())
+        };
+        let ok = text(&u);
+        let with_unknown = ok.replace("import.gaps=noise", "import.gaps=noise,from-the-future");
+        let (_, _, _) = decode(&with_unknown).unwrap();
+        let d = decode_user(&with_unknown, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.import.unwrap().gaps, [Gap::Noise]);
         assert!(matches!(
-            encode(&user(1, b)).unwrap_err(),
-            StoreError::CustomImage
+            decode(&format!("{ok}import.pattern=yes\n")).unwrap_err(),
+            StoreError::DuplicateKey(_) | StoreError::BadValue(_)
         ));
+        // 取り込みの印が無いブラシのファイルは、これまでと同じ文（古いファイルも新しい版で変わらない）
+        assert!(!text(&user(2, Brush::default())).contains("import."));
+    }
+
+    #[test]
+    fn krita_tips_are_saved_by_id_once_the_set_is_loaded_and_read_back_equal() {
+        let krita = krita();
+        let single = krita
+            .brushes
+            .iter()
+            .find(|b| b.brush.tip.image.is_some())
+            .expect("1 枚の筆先");
+        let hose = krita
+            .brushes
+            .iter()
+            .find(|b| b.brush.tip.images.len() > 1)
+            .expect("ホース");
+        let mut a = Brush::default();
+        a.tip.image = single.brush.tip.image.clone();
+        let mut b = Brush::default();
+        b.tip.images = hose.brush.tip.images.clone();
+        b.tip.selection = hose.brush.tip.selection;
+        for (n, brush, id) in [(1, a, &single.id), (2, b, &hose.id)] {
+            let encoded = encode(&user(n, brush.clone())).unwrap();
+            assert!(encoded.images.is_empty(), "同梱の筆先は画像のファイルを置かない");
+            assert!(encoded.text.contains(id.as_str()), "{}", encoded.text);
+            let (_, _, back) = decode(&encoded.text).unwrap();
+            assert_eq!(back, canonical(&brush));
+        }
+        // 1 枚の筆先の欄に、ホースの札は入らない（値が読めない）
+        let mut bad = text(&user(3, Brush::default()));
+        bad = bad.replace("tip.image=none", &format!("tip.image={}", hose.id));
+        assert!(matches!(decode(&bad).unwrap_err(), StoreError::BadValue(k) if k == "tip.image"));
+        let unknown = bad.replace(&hose.id, "bundled:krita4/no-such-file.png");
+        assert!(matches!(decode(&unknown).unwrap_err(), StoreError::UnknownTip(_)));
     }
 
     #[test]

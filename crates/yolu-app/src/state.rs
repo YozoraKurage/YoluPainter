@@ -687,6 +687,8 @@ pub enum DialogRequest {
     PsdExport,
     /// ステンシルの画像（PNG）を選ぶ。
     OpenStencil,
+    /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT。複数）を選ぶ。
+    ImportBrushes,
     /// 新規プロジェクト・プロジェクトの構成の窓で、モデル（FBX）を選ぶ。
     ProjectModel,
     /// 塗りつぶしの画像にする PNG を選ぶ（棚へ取り込む）。
