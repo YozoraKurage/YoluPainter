@@ -1,0 +1,1016 @@
+//! lilToon の再現を Unity の lilToon と並べる材料（手で回す。`LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference
+//! -- --ignored --nocapture`）。
+//!
+//! 場面（合成の素材だけ: 球・板・試しの人形）ごとに、3D ビューの絵（`ours_<名前>.png`）と、Unity で同じ場面を組むための記述
+//! （`scenes.txt`）・メッシュ（`<名前>.mesh.txt`）・テクスチャ（`<名前>_<スロット>.rgba`、行は下から）を書く。Unity の側は
+//! `tools/liltoon-reference.cs`（常駐の Unity の `unity-do.sh run` で回す）が `unity_<名前>.png` を書き、`compare` が差を数える。
+//!
+//! 撮った Unity の絵は `tests/liltoon_unity/` に置き、`the_view_stays_within_the_measured_difference_from_unity_liltoon`（普段の試験）が
+//! 場面ごとの差を上限（`BOUNDS`）と照らす（影・リム・マットキャップ・発光・ノーマルマップ・SDF・AO・輪郭線・カットアウト・半透明・裏面・
+//! 色調補正の回帰）。
+mod common;
+
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+use common::*;
+use egui_kittest::Harness;
+use yolu_app::state::Action;
+use yolu_app::view3d::display::{EnvKind, Op};
+use yolu_app::view3d::environment::{self, SkyColors, Source};
+use yolu_app::view3d::model::ViewModel;
+use yolu_app::YoluApp;
+use yolu_core::geometry::{cube_sphere, ModelMesh, OrbitCamera, Submesh};
+use yolu_core::glam::{Quat, Vec2, Vec3};
+use yolu_core::look::{LookKind, LookValue, MaterialLook, TextureSource};
+use yolu_core::skin::{demo_figure, FigureDetail};
+use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, Document, ImageColorSpace, ImageInput, Rgba8};
+
+const WIDTH: f32 = 1000.0;
+const HEIGHT: f32 = 760.0;
+
+fn out_dir() -> Option<PathBuf> {
+    std::env::var_os("LILTOON_REF_DIR").map(PathBuf::from)
+}
+
+/// 場面の光（来る向きの yaw・pitch、度）。
+const LIGHT: (f32, f32) = (-140.0, 35.0);
+
+struct Scene {
+    name: &'static str,
+    meshes: Vec<ModelMesh>,
+    camera: OrbitCamera,
+    /// 文書を作る（層・チャンネル）。
+    paint: fn(&mut Document),
+    look: fn(&Document) -> MaterialLook,
+    /// Unity に渡すテクスチャ（スロット名 → 中身）。
+    textures: fn(&Document) -> Vec<(String, Texture)>,
+}
+
+struct Texture {
+    width: u32,
+    height: u32,
+    /// RGBA8、行は下から。
+    rgba: Vec<u8>,
+    srgb: bool,
+}
+
+fn sphere() -> Vec<ModelMesh> {
+    vec![cube_sphere(32, 0.5)]
+}
+
+fn camera(distance: f32, target: Vec3) -> OrbitCamera {
+    OrbitCamera {
+        target,
+        yaw: 0.0,
+        pitch: 0.0,
+        distance,
+        model_radius: 1.0,
+    }
+}
+
+fn fill(doc: &mut Document, c: [u8; 4]) {
+    doc.add_fill_layer("色", &[(Channel::Color, Rgba8::new(c[0], c[1], c[2], c[3]))], None)
+        .unwrap();
+}
+
+fn lil(shader: &str) -> MaterialLook {
+    let mut look = MaterialLook {
+        kind: LookKind::LilToon,
+        shader: shader.into(),
+        ..MaterialLook::default()
+    };
+    look.textures
+        .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    look
+}
+
+fn set(look: &mut MaterialLook, name: &str, v: f32) {
+    look.properties.insert(name.into(), LookValue::Float(v));
+}
+
+fn color(look: &mut MaterialLook, name: &str, c: [f32; 4]) {
+    look.properties.insert(name.into(), LookValue::Color(c));
+}
+
+fn main_texture(doc: &Document) -> Vec<(String, Texture)> {
+    vec![(
+        "_MainTex".into(),
+        Texture {
+            width: doc.width(),
+            height: doc.height(),
+            rgba: doc.composite_channel(Channel::Color, doc.bounds()).unwrap(),
+            srgb: true,
+        },
+    )]
+}
+
+/// ユーザーチャンネルを、何も描いていない所の既定に重ねた値で（lilToon の読み方。リニア）。
+fn user_texture(doc: &Document, channel: Channel) -> Texture {
+    let info = doc.channel_info(channel).unwrap().clone();
+    let raw = doc.composite_channel(channel, doc.bounds()).unwrap();
+    let d = info.default.to_array();
+    let mut rgba = Vec::with_capacity(raw.len());
+    for p in raw.as_chunks::<4>().0 {
+        let a = p[3] as u32;
+        for k in 0..4 {
+            let premult = if k == 3 { a } else { (p[k] as u32 * a + 127) / 255 };
+            let v = premult + (d[k] as u32 * (255 - a) + 127) / 255;
+            rgba.push(v.min(255) as u8);
+        }
+    }
+    // スカラーは値を RGB に・A は 1
+    if info.kind == ChannelKind::Scalar {
+        for p in rgba.as_chunks_mut::<4>().0 {
+            p[1] = p[0];
+            p[2] = p[0];
+            p[3] = 255;
+        }
+    }
+    Texture {
+        width: doc.width(),
+        height: doc.height(),
+        rgba,
+        srgb: info.color_space == ColorSpace::Srgb,
+    }
+}
+
+/// 合成のマットキャップの絵（球の正面に寄った明るい点と、縁の暗さ。自作の絵）。行は下から。
+fn matcap_image() -> (u32, Vec<u8>) {
+    let n = 128u32;
+    let mut out = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let u = (x as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+            let v = (y as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+            let r2 = (u * u + v * v).min(1.0);
+            let z = (1.0 - r2).sqrt();
+            let spot = (-((u + 0.35).powi(2) + (v - 0.4).powi(2)) * 18.0).exp();
+            let base = 0.15 + 0.6 * z;
+            let c = [base * 0.8 + spot, base * 0.9 + spot, base + spot * 0.8];
+            for k in c {
+                out.push((k.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+            out.push(255);
+        }
+    }
+    (n, out)
+}
+
+fn stripes_channel(doc: &mut Document, name: &str, kind: ChannelKind, default: Rgba8, value: Rgba8) -> Channel {
+    let channel = doc
+        .add_channel(ChannelInfo {
+            name: name.into(),
+            kind,
+            color_space: ColorSpace::Linear,
+            default,
+        })
+        .unwrap();
+    let layer = doc.add_layer(name).unwrap();
+    doc.set_channel_enabled(layer, channel, true).unwrap();
+    for y in 0..doc.height() {
+        for x in 0..doc.width() {
+            if (x / 16 + y / 16) % 2 == 0 {
+                doc.set_channel_pixel(layer, channel, x, y, value).unwrap();
+            }
+        }
+    }
+    channel
+}
+
+/// 2 つのスカラーのチャンネルに左右の傾き（u と 1 − u）を塗る（SDF の R・G）。
+fn gradient_channels(doc: &mut Document) -> (Channel, Channel) {
+    let mut make = |name: &str, flip: bool| {
+        let c = doc
+            .add_channel(ChannelInfo {
+                name: name.into(),
+                kind: ChannelKind::Scalar,
+                color_space: ColorSpace::Linear,
+                default: Rgba8::new(255, 255, 255, 255),
+            })
+            .unwrap();
+        let layer = doc.add_layer(name).unwrap();
+        doc.set_channel_enabled(layer, c, true).unwrap();
+        for y in 0..doc.height() {
+            for x in 0..doc.width() {
+                let mut v = (x * 255 / (doc.width() - 1)) as u8;
+                if flip {
+                    v = 255 - v;
+                }
+                doc.set_channel_pixel(layer, c, x, y, Rgba8::new(v, v, v, 255)).unwrap();
+            }
+        }
+        c
+    };
+    (make("顔の影 R", false), make("顔の影 G", true))
+}
+
+fn user_channels(doc: &Document) -> Vec<Channel> {
+    doc.channels().into_iter().filter(|c| !c.is_standard()).collect()
+}
+
+/// Unity のノーマルマップの取り込み（DXT5nm: A に X、G に Y、R は 1）と同じ並びに詰めた法線の出力。
+fn normal_texture(doc: &Document) -> Texture {
+    let out = doc.normal_output(u64::MAX).unwrap();
+    let mut rgba = Vec::with_capacity(out.len());
+    for p in out.as_chunks::<4>().0 {
+        rgba.extend_from_slice(&[255, p[1], 0, p[0]]);
+    }
+    Texture {
+        width: doc.width(),
+        height: doc.height(),
+        rgba,
+        srgb: false,
+    }
+}
+
+/// Emission の書き出し（値 × アルファ、不透明。sRGB）。
+fn emission_texture(doc: &Document) -> Texture {
+    let raw = doc.composite_channel(Channel::Emission, doc.bounds()).unwrap();
+    let mut rgba = Vec::with_capacity(raw.len());
+    for p in raw.as_chunks::<4>().0 {
+        let a = p[3] as u32;
+        for v in &p[..3] {
+            rgba.push(((*v as u32 * a + 127) / 255) as u8);
+        }
+        rgba.push(255);
+    }
+    Texture {
+        width: doc.width(),
+        height: doc.height(),
+        rgba,
+        srgb: true,
+    }
+}
+
+fn stripes_standard(doc: &mut Document, channel: Channel, value: Rgba8) {
+    let layer = doc.add_layer("縞").unwrap();
+    doc.set_channel_enabled(layer, channel, true).unwrap();
+    for y in 0..doc.height() {
+        for x in 0..doc.width() {
+            if (x / 16 + y / 16) % 2 == 0 {
+                doc.set_channel_pixel(layer, channel, x, y, value).unwrap();
+            }
+        }
+    }
+}
+
+fn scenes() -> Vec<Scene> {
+    vec![
+        Scene {
+            name: "shadow",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [230, 200, 190, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "shadow_3rd",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [200, 210, 240, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_ShadowBorder", 0.6);
+                set(&mut l, "_ShadowBlur", 0.3);
+                color(&mut l, "_Shadow3rdColor", [0.2, 0.15, 0.4, 1.0]);
+                set(&mut l, "_ShadowMainStrength", 0.4);
+                set(&mut l, "_LightMinLimit", 0.2);
+                set(&mut l, "_MonochromeLighting", 0.5);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "shadow_mask",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [230, 200, 190, 255]);
+                stripes_channel(d, "影の強さ", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(40, 40, 40, 255));
+            },
+            look: |d| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                let mask = d.channels().into_iter().find(|c| !c.is_standard()).unwrap();
+                l.textures
+                    .insert("_ShadowStrengthMask".into(), TextureSource::Channel(mask));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let mask = d.channels().into_iter().find(|c| !c.is_standard()).unwrap();
+                t.push(("_ShadowStrengthMask".into(), user_texture(d, mask)));
+                t
+            },
+        },
+        Scene {
+            name: "rim",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [120, 140, 200, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseRim", 1.0);
+                color(&mut l, "_RimColor", [1.0, 0.85, 0.6, 1.0]);
+                set(&mut l, "_RimDirStrength", 0.5);
+                color(&mut l, "_RimIndirColor", [0.4, 0.6, 1.0, 1.0]);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "matcap",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [190, 190, 200, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseMatCap", 1.0);
+                l.textures.insert(
+                    "_MatCapTex".into(),
+                    TextureSource::Image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001)),
+                );
+                set(&mut l, "_MatCapBlend", 0.8);
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let (n, rgba) = matcap_image();
+                t.push((
+                    "_MatCapTex".into(),
+                    Texture {
+                        width: n,
+                        height: n,
+                        rgba,
+                        srgb: true,
+                    },
+                ));
+                t
+            },
+        },
+        Scene {
+            name: "outline",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [230, 200, 190, 255]),
+            look: |_| {
+                let mut l = lil("Hidden/lilToonOutline");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_OutlineWidth", 1.0);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "emission",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [90, 90, 110, 255]);
+                stripes_channel(d, "発光のマスク", ChannelKind::Scalar, Rgba8::new(0, 0, 0, 255), Rgba8::new(255, 255, 255, 255));
+            },
+            look: |d| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseEmission", 1.0);
+                color(&mut l, "_EmissionColor", [1.0, 0.5, 0.2, 1.0]);
+                let mask = d.channels().into_iter().find(|c| !c.is_standard()).unwrap();
+                l.textures
+                    .insert("_EmissionBlendMask".into(), TextureSource::Channel(mask));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let mask = d.channels().into_iter().find(|c| !c.is_standard()).unwrap();
+                t.push(("_EmissionBlendMask".into(), user_texture(d, mask)));
+                t
+            },
+        },
+        Scene {
+            name: "figure",
+            meshes: figure(),
+            camera: OrbitCamera {
+                target: Vec3::new(0.0, 0.85, 0.0),
+                yaw: 20.0,
+                pitch: 5.0,
+                distance: 4.2,
+                model_radius: 1.0,
+            },
+            paint: |d| fill(d, [235, 205, 190, 255]),
+            look: |_| {
+                let mut l = lil("Hidden/lilToonOutline");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseRim", 1.0);
+                set(&mut l, "_OutlineWidth", 0.3);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "cutout",
+            meshes: vec![quad_with_alpha_uv()],
+            camera: camera(2.5, Vec3::ZERO),
+            paint: |d| {
+                // アルファが左から右へ 0 → 1 の色（カットアウトの Cutoff 0.5 で左半分を捨てる）
+                let layer = d.add_layer("色").unwrap();
+                for y in 0..d.height() {
+                    for x in 0..d.width() {
+                        let a = (x * 255 / (d.width() - 1)) as u8;
+                        d.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(200, 120, 60, a)).unwrap();
+                    }
+                }
+            },
+            look: |_| {
+                let mut l = lil("Hidden/lilToonCutout");
+                set(&mut l, "_UseShadow", 1.0);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "transparent",
+            meshes: vec![quad_with_alpha_uv()],
+            camera: camera(2.5, Vec3::ZERO),
+            paint: |d| {
+                let layer = d.add_layer("色").unwrap();
+                for y in 0..d.height() {
+                    for x in 0..d.width() {
+                        let a = (x * 255 / (d.width() - 1)) as u8;
+                        d.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(80, 160, 230, a)).unwrap();
+                    }
+                }
+            },
+            look: |_| {
+                let mut l = lil("Hidden/lilToonTransparent");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_Cutoff", 0.001);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "backface",
+            meshes: vec![quad_with_alpha_uv()],
+            camera: OrbitCamera {
+                target: Vec3::ZERO,
+                yaw: 160.0,
+                pitch: 10.0,
+                distance: 2.5,
+                model_radius: 1.0,
+            },
+            paint: |d| fill(d, [230, 200, 190, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_Cull", 0.0);
+                color(&mut l, "_BackfaceColor", [0.2, 0.4, 1.0, 0.6]);
+                set(&mut l, "_BackfaceForceShadow", 0.5);
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "normal",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [210, 210, 220, 255]);
+                stripes_standard(d, Channel::Normal, Rgba8::new(210, 128, 215, 255));
+            },
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseBumpMap", 1.0);
+                set(&mut l, "_BumpScale", 1.5);
+                l.textures
+                    .insert("_BumpMap".into(), TextureSource::Channel(Channel::Normal));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                t.push(("_BumpMap".into(), normal_texture(d)));
+                t
+            },
+        },
+        Scene {
+            name: "tone",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [200, 120, 60, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                l.properties
+                    .insert("_MainTexHSVG".into(), LookValue::Vector([0.15, 1.4, 0.85, 1.3]));
+                l
+            },
+            textures: main_texture,
+        },
+        Scene {
+            name: "sdf",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [230, 200, 190, 255]);
+                gradient_channels(d);
+            },
+            look: |d| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_ShadowMaskType", 2.0);
+                let c = user_channels(d);
+                l.textures.insert(
+                    "_ShadowStrengthMask".into(),
+                    TextureSource::Packed([
+                        yolu_core::look::PlaneSource::Channel { channel: c[0], component: 0 },
+                        yolu_core::look::PlaneSource::Channel { channel: c[1], component: 0 },
+                        yolu_core::look::PlaneSource::Zero,
+                        yolu_core::look::PlaneSource::One,
+                    ]),
+                );
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let c = user_channels(d);
+                let r = user_texture(d, c[0]);
+                let g = user_texture(d, c[1]);
+                let mut rgba = Vec::with_capacity(r.rgba.len());
+                for (a, b) in r.rgba.as_chunks::<4>().0.iter().zip(g.rgba.as_chunks::<4>().0) {
+                    rgba.extend_from_slice(&[a[0], b[0], 0, 255]);
+                }
+                t.push((
+                    "_ShadowStrengthMask".into(),
+                    Texture {
+                        width: d.width(),
+                        height: d.height(),
+                        rgba,
+                        srgb: false,
+                    },
+                ));
+                t
+            },
+        },
+        Scene {
+            name: "ao_flat",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [230, 200, 190, 255]);
+                stripes_channel(d, "AO", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(80, 80, 80, 255));
+            },
+            look: |d| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_ShadowMaskType", 1.0);
+                set(&mut l, "_ShadowStrength", 0.8);
+                set(&mut l, "_ShadowPostAO", 1.0);
+                l.properties
+                    .insert("_ShadowAOShift".into(), LookValue::Vector([1.2, -0.1, 1.0, 0.0]));
+                let c = user_channels(d);
+                l.textures
+                    .insert("_ShadowBorderMask".into(), TextureSource::Channel(c[0]));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let c = user_channels(d);
+                t.push(("_ShadowBorderMask".into(), user_texture(d, c[0])));
+                t
+            },
+        },
+        Scene {
+            name: "emission_rim",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [90, 90, 110, 255]);
+                stripes_standard(d, Channel::Emission, Rgba8::new(255, 200, 80, 255));
+            },
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseEmission", 1.0);
+                set(&mut l, "_EmissionMap_UVMode", 4.0);
+                l.textures
+                    .insert("_EmissionMap".into(), TextureSource::Channel(Channel::Emission));
+                set(&mut l, "_UseEmission2nd", 1.0);
+                color(&mut l, "_Emission2ndColor", [0.2, 0.4, 1.0, 1.0]);
+                set(&mut l, "_Emission2ndBlendMode", 0.0);
+                set(&mut l, "_Emission2ndBlend", 0.4);
+                set(&mut l, "_Emission2ndFluorescence", 0.5);
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                t.push(("_EmissionMap".into(), emission_texture(d)));
+                t
+            },
+        },
+        Scene {
+            name: "matcap2",
+            meshes: sphere(),
+            camera: OrbitCamera {
+                target: Vec3::ZERO,
+                yaw: 30.0,
+                pitch: 20.0,
+                distance: 3.0,
+                model_radius: 1.0,
+            },
+            paint: |d| {
+                fill(d, [190, 190, 200, 255]);
+                stripes_channel(d, "マットキャップのマスク", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(0, 0, 0, 255));
+            },
+            look: |d| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseMatCap2nd", 1.0);
+                l.textures.insert(
+                    "_MatCap2ndTex".into(),
+                    TextureSource::Image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001)),
+                );
+                set(&mut l, "_MatCap2ndBlendMode", 3.0);
+                set(&mut l, "_MatCap2ndZRotCancel", 0.0);
+                set(&mut l, "_MatCap2ndShadowMask", 0.7);
+                set(&mut l, "_MatCap2ndMainStrength", 0.3);
+                let c = user_channels(d);
+                l.textures
+                    .insert("_MatCap2ndBlendMask".into(), TextureSource::Channel(c[0]));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let (n, rgba) = matcap_image();
+                t.push((
+                    "_MatCap2ndTex".into(),
+                    Texture {
+                        width: n,
+                        height: n,
+                        rgba,
+                        srgb: true,
+                    },
+                ));
+                let c = user_channels(d);
+                t.push(("_MatCap2ndBlendMask".into(), user_texture(d, c[0])));
+                t
+            },
+        },
+        Scene {
+            name: "outline_mask",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| {
+                fill(d, [230, 200, 190, 255]);
+                stripes_channel(d, "輪郭線の太さ", ChannelKind::Scalar, Rgba8::new(255, 255, 255, 255), Rgba8::new(0, 0, 0, 255));
+            },
+            look: |d| {
+                let mut l = lil("Hidden/lilToonOutline");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_OutlineWidth", 2.0);
+                set(&mut l, "_OutlineFixWidth", 0.0);
+                color(&mut l, "_OutlineColor", [0.9, 0.2, 0.3, 1.0]);
+                l.properties
+                    .insert("_OutlineTexHSVG".into(), LookValue::Vector([0.0, 1.0, 1.0, 1.0]));
+                let c = user_channels(d);
+                l.textures
+                    .insert("_OutlineWidthMask".into(), TextureSource::Channel(c[0]));
+                l
+            },
+            textures: |d| {
+                let mut t = main_texture(d);
+                let c = user_channels(d);
+                t.push(("_OutlineWidthMask".into(), user_texture(d, c[0])));
+                t
+            },
+        },
+    ]
+}
+
+/// 試しの人形（休みの形。マテリアルは 1 つにまとめる）。
+fn figure() -> Vec<ModelMesh> {
+    let rig = demo_figure(FigureDetail {
+        sides: 24,
+        ring_spacing: 0.02,
+        head: 12,
+    });
+    rig.meshes()
+        .iter()
+        .map(|m| {
+            let mut mesh = m.mesh.clone();
+            let mut indices = Vec::new();
+            for s in &mesh.submeshes {
+                indices.extend_from_slice(&s.indices);
+            }
+            mesh.submeshes = vec![Submesh {
+                material: 0,
+                indices,
+            }];
+            mesh
+        })
+        .collect()
+}
+
+fn quad_with_alpha_uv() -> ModelMesh {
+    let h = 0.5;
+    ModelMesh {
+        name: "板".into(),
+        positions: vec![
+            Vec3::new(-h, -h, 0.0),
+            Vec3::new(h, -h, 0.0),
+            Vec3::new(-h, h, 0.0),
+            Vec3::new(h, h, 0.0),
+        ],
+        normals: vec![Vec3::NEG_Z; 4],
+        uvs: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(1.0, 1.0),
+        ],
+        submeshes: vec![Submesh {
+            material: 0,
+            indices: vec![0, 2, 1, 2, 3, 1],
+        }],
+    }
+}
+
+fn harness() -> Harness<'static, YoluApp> {
+    let mut h = app(WIDTH, HEIGHT, 256);
+    click_tab(&mut h, yolu_app::Tab::View3d);
+    move_to(&h, egui::pos2(1.0, 1.0));
+    h.run();
+    h
+}
+
+fn write_mesh(path: &Path, meshes: &[ModelMesh]) {
+    let mut s = String::new();
+    for m in meshes {
+        let normals = m.vertex_normals();
+        writeln!(s, "mesh {}", m.positions.len()).unwrap();
+        for (i, p) in m.positions.iter().enumerate() {
+            let n = normals[i];
+            let uv = m.uvs.get(i).copied().unwrap_or_default();
+            writeln!(s, "v {} {} {} {} {} {} {} {}", p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y).unwrap();
+        }
+        for sub in &m.submeshes {
+            writeln!(s, "sub {}", sub.indices.len()).unwrap();
+            for t in sub.indices.chunks(3) {
+                writeln!(s, "f {} {} {}", t[0], t[1], t[2]).unwrap();
+            }
+        }
+    }
+    std::fs::write(path, s).unwrap();
+}
+
+/// Unity の Quaternion.Euler(pitch, yaw, 0) を四元数の成分で。
+fn camera_rotation(c: &OrbitCamera) -> Quat {
+    c.rotation()
+}
+
+/// 場面を 3D ビューで描き、3D の表示域の絵を返す（光・環境・文書・見た目を組んだ窓も）。`view` を渡すと、3D の表示域がその大きさに
+/// なるように窓の大きさを合わせる（Unity の絵と同じ投影にする。窓の中の欄の幅が変わっても同じ場面になるように）。
+fn render(scene: &Scene, view: Option<(u32, u32)>) -> (Harness<'static, YoluApp>, image::RgbaImage) {
+    let mut h = harness();
+    if let Some((w, hgt)) = view {
+        for _ in 0..4 {
+            let rect = h.state().view3d_rect().expect("3D のタブ");
+            let (dw, dh) = (w as f32 - rect.width().round(), hgt as f32 - rect.height().round());
+            if dw == 0.0 && dh == 0.0 {
+                break;
+            }
+            let size = h.ctx.content_rect().size() + egui::vec2(dw, dh);
+            h.set_size(size);
+            h.run();
+        }
+    }
+    {
+        let state = &mut h.state_mut().state;
+        let revision = state.view3d.next_revision();
+        state.view3d.material = 0;
+        let model = ViewModel::new("場面", scene.meshes.clone(), vec![Some("場面".to_string())], revision).unwrap();
+        model.tangents();
+        state.view3d.set_model(model);
+        state.view3d.camera = scene.camera;
+    }
+    h.run();
+    h.state_mut().apply(Action::View3d(Op::LightYaw(LIGHT.0)));
+    h.state_mut().apply(Action::View3d(Op::LightPitch(LIGHT.1)));
+    h.state_mut().apply(Action::View3d(Op::Env(EnvKind::Sky)));
+    {
+        let doc = &mut h.state_mut().state.doc;
+        (scene.paint)(doc);
+        let look = (scene.look)(doc);
+        doc.set_look(look, false).unwrap();
+    }
+    // マットキャップの絵は文書の効果の入力の画像として渡す（棚の画像と同じ道）
+    if scene.name == "matcap" || scene.name == "matcap2" {
+        let (n, rgba) = matcap_image();
+        let image = ImageInput::new(n, n, rgba, ImageColorSpace::Srgb).unwrap();
+        let doc = &mut h.state_mut().state.doc;
+        let inputs = doc
+            .effect_inputs()
+            .clone()
+            .with_image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001), image);
+        doc.set_effect_inputs(inputs).unwrap();
+    }
+    h.run();
+    h.run();
+    let image = h.render().expect("描ける");
+    let rect = h.state().view3d_rect().expect("3D のタブ");
+    let (x0, y0) = (rect.left().round() as u32, rect.top().round() as u32);
+    let (w, hgt) = (rect.width().round() as u32, rect.height().round() as u32);
+    let crop = image::imageops::crop_imm(&image, x0, y0, w, hgt).to_image();
+    (h, crop)
+}
+
+#[test]
+#[ignore = "手で回す（LILTOON_REF_DIR に書く）"]
+fn export_and_render() {
+    let Some(dir) = out_dir() else {
+        eprintln!("LILTOON_REF_DIR が無いので書かない");
+        return;
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    let sky = environment::bake(&Source::Sky(SkyColors::default()));
+    let mut desc = String::new();
+    for scene in scenes() {
+        let (h, crop) = render(&scene, None);
+        let (w, hgt) = crop.dimensions();
+        crop.save(dir.join(format!("ours_{}.png", scene.name))).unwrap();
+        // Unity の場面の記述
+        let display = h.state().state.view3d.display;
+        let to_light = display.light_direction();
+        let cam = scene.camera;
+        let q = camera_rotation(&cam);
+        let pos = cam.position();
+        writeln!(desc, "scene {}", scene.name).unwrap();
+        writeln!(desc, "size {w} {hgt}").unwrap();
+        writeln!(desc, "camera {} {} {} {} {} {} {} 30", pos.x, pos.y, pos.z, q.x, q.y, q.z, q.w).unwrap();
+        writeln!(desc, "light {} {} {} 0.769", to_light.x, to_light.y, to_light.z).unwrap();
+        let sh: Vec<String> = sky.sh.iter().flat_map(|c| [c.x, c.y, c.z]).map(|v| v.to_string()).collect();
+        writeln!(desc, "sh {}", sh.join(" ")).unwrap();
+        writeln!(desc, "background 0.12 0.13 0.15").unwrap();
+        let mesh_file = format!("{}.mesh.txt", scene.name);
+        write_mesh(&dir.join(&mesh_file), &scene.meshes);
+        writeln!(desc, "mesh {mesh_file}").unwrap();
+        let doc = &h.state().state.doc;
+        let look = doc.look().clone();
+        writeln!(desc, "shader {}", look.shader_name()).unwrap();
+        for (name, value) in &look.properties {
+            match value {
+                LookValue::Float(v) => writeln!(desc, "float {name} {v}").unwrap(),
+                LookValue::Int(v) => writeln!(desc, "float {name} {v}").unwrap(),
+                LookValue::Color(c) => writeln!(desc, "color {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap(),
+                LookValue::Vector(c) => writeln!(desc, "vector {name} {} {} {} {}", c[0], c[1], c[2], c[3]).unwrap(),
+            }
+        }
+        for (slot, tex) in (scene.textures)(doc) {
+            let file = format!("{}_{slot}.rgba", scene.name);
+            std::fs::write(dir.join(&file), &tex.rgba).unwrap();
+            writeln!(desc, "texture {slot} {file} {} {} {}", tex.width, tex.height, u8::from(tex.srgb)).unwrap();
+        }
+        writeln!(desc, "end").unwrap();
+    }
+    std::fs::write(dir.join("scenes.txt"), desc).unwrap();
+    eprintln!("書いた: {}", dir.display());
+}
+
+/// 2 枚の絵の差（両方で物の画素だけ。背景の色から 3 より離れた画素を物とみなす）。
+fn diff(ours: &image::RgbaImage, unity: &image::RgbaImage, background: [u8; 3]) -> Option<(f64, f64, u8, usize, usize)> {
+    if ours.dimensions() != unity.dimensions() {
+        return None;
+    }
+    let is_bg = |p: [u8; 4]| (0..3).all(|k| p[k].abs_diff(background[k]) <= 3);
+    let mut diffs: Vec<u8> = Vec::new();
+    let mut only_one = 0usize;
+    for (a, b) in ours.pixels().zip(unity.pixels()) {
+        let (ba, bb) = (is_bg(a.0), is_bg(b.0));
+        if ba && bb {
+            continue;
+        }
+        if ba != bb {
+            only_one += 1;
+            continue;
+        }
+        let d = (0..3).map(|k| a.0[k].abs_diff(b.0[k])).max().unwrap();
+        diffs.push(d);
+    }
+    if diffs.is_empty() {
+        return None;
+    }
+    let mean = diffs.iter().map(|d| *d as f64).sum::<f64>() / diffs.len() as f64;
+    let mut sorted = diffs.clone();
+    sorted.sort_unstable();
+    let p95 = sorted[(sorted.len() * 95 / 100).min(sorted.len() - 1)] as f64;
+    Some((mean, p95, *sorted.last().unwrap(), diffs.len(), only_one))
+}
+
+#[test]
+#[ignore = "手で回す（LILTOON_REF_DIR の ours_*.png と unity_*.png を比べる）"]
+fn compare() {
+    let Some(dir) = out_dir() else {
+        return;
+    };
+    let background = [31u8, 33, 38]; // (0.12, 0.13, 0.15) × 255
+    println!("| 場面 | 画素の差の平均 | 95 % | 最大 | 比べた画素 | 片方だけの画素 |");
+    println!("|---|---:|---:|---:|---:|---:|");
+    for scene in scenes() {
+        let ours = image::open(dir.join(format!("ours_{}.png", scene.name)));
+        let unity = image::open(dir.join(format!("unity_{}.png", scene.name)));
+        let (Ok(ours), Ok(unity)) = (ours, unity) else {
+            println!("| {} | （絵が無い） | | | | |", scene.name);
+            continue;
+        };
+        let (ours, unity) = (ours.to_rgba8(), unity.to_rgba8());
+        match diff(&ours, &unity, background) {
+            Some((mean, p95, max, n, only)) => println!(
+                "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |",
+                scene.name
+            ),
+            None => println!("| {} | （大きさが違う） | | | | |", scene.name),
+        }
+        // 差の絵（差 × 4）
+        if ours.dimensions() == unity.dimensions() {
+            let mut d = image::RgbaImage::new(ours.width(), ours.height());
+            for ((a, b), o) in ours.pixels().zip(unity.pixels()).zip(d.pixels_mut()) {
+                for k in 0..3 {
+                    o.0[k] = (a.0[k].abs_diff(b.0[k]) as u32 * 4).min(255) as u8;
+                }
+                o.0[3] = 255;
+            }
+            d.save(dir.join(format!("diff_{}.png", scene.name))).unwrap();
+        }
+    }
+}
+
+/// Unity の lilToon の絵（`tests/liltoon_unity/unity_<名前>.png`）。合成の素材（球・板・試しの人形・縞の絵）だけの場面を、
+/// Unity 2022.3.22f1・lilToon 2.3.4（Linux のエディタの OpenGL、コンテナの実 GPU）で `tools/liltoon-reference.cs` が撮ったもの
+/// （2026-10-05。アルファは捨てて RGB で持つ）。場面を変えたら撮り直し、差の上限（`BOUNDS`）も測り直す。
+fn unity_image(name: &str) -> image::RgbaImage {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/liltoon_unity")
+        .join(format!("unity_{name}.png"));
+    image::open(&path)
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+        .to_rgba8()
+}
+
+/// 場面ごとの差の上限: 平均・95 % の値（0〜255）と、片方だけに物が写っている画素の数。測った値（llvmpipe の Vulkan と GL）に余裕を
+/// 足したもの。`transparent` は、描き先の sRGB の見え方を作れない機材（GL）ではガンマの値のまま重ねるので別の上限（GL の llvmpipe で
+/// 平均 28.13・95 % 42・片方だけ 5,135）。
+const BOUNDS: &[(&str, f64, f64, usize)] = &[
+    ("shadow", 0.5, 2.0, 2_600),
+    ("shadow_3rd", 0.5, 2.0, 2_600),
+    ("shadow_mask", 0.6, 2.0, 2_600),
+    ("rim", 0.5, 2.0, 2_600),
+    ("matcap", 0.8, 2.0, 2_600),
+    ("outline", 0.6, 2.0, 2_600),
+    ("emission", 0.8, 2.0, 2_600),
+    ("figure", 1.3, 2.0, 2_600),
+    ("cutout", 1.5, 2.0, 3_100),
+    ("transparent", 1.6, 3.0, 3_600),
+    ("backface", 0.5, 1.0, 2_600),
+    ("normal", 0.8, 2.0, 2_600),
+    ("tone", 0.5, 1.0, 2_600),
+    ("sdf", 1.0, 2.0, 2_600),
+    ("ao_flat", 0.6, 2.0, 2_600),
+    ("emission_rim", 9.5, 62.0, 2_600),
+    ("matcap2", 0.9, 2.0, 2_600),
+    ("outline_mask", 0.5, 2.0, 2_600),
+];
+const TRANSPARENT_GAMMA: (f64, f64, usize) = (30.0, 45.0, 5_600);
+
+#[test]
+fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
+    let background = [31u8, 33, 38]; // (0.12, 0.13, 0.15) × 255
+    let mut failures = Vec::new();
+    let scenes = scenes();
+    assert_eq!(scenes.len(), BOUNDS.len());
+    for scene in &scenes {
+        let unity = unity_image(scene.name);
+        let (h, ours) = render(scene, Some(unity.dimensions()));
+        let linear = h.state().view3d_stats().unwrap().linear_transparent;
+        let (mean, p95, max, n, only) = diff(&ours, &unity, background).unwrap_or_else(|| {
+            panic!("{}: 大きさが違う（{:?} と Unity の {:?}）", scene.name, ours.dimensions(), unity.dimensions())
+        });
+        let (_, bm, bp, bo) = *BOUNDS.iter().find(|b| b.0 == scene.name).expect("上限がある");
+        let (bm, bp, bo) = if scene.name == "transparent" && !linear { TRANSPARENT_GAMMA } else { (bm, bp, bo) };
+        println!("| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |", scene.name);
+        if mean > bm || p95 > bp || only > bo {
+            failures.push(format!(
+                "{}: 平均 {mean:.2}（上限 {bm}）・95 % {p95}（上限 {bp}）・片方だけ {only}（上限 {bo}）",
+                scene.name
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "Unity の lilToon との差が上限を超えた: {failures:#?}");
+}

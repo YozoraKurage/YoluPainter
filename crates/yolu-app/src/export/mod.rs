@@ -226,6 +226,8 @@ struct SetInput {
     occlusion: Option<Vec<u8>>,
     /// UV の三角形（画素の座標）。塗り広げないなら None。
     uv: Option<Vec<[DVec2; 3]>>,
+    /// 見た目の設定（正本には入らないので、写した文書へ戻す。lilToon の詰め方の画像が読む）。
+    look: yolu_core::look::MaterialLook,
 }
 
 /// 書く画像 1 枚。
@@ -237,6 +239,8 @@ struct PlannedImage {
     name: String,
     /// チャンネルの画像（`yolu_core::export::channel_image`）か。None ならテンプレートの画像（`build`）。
     channel: Option<Channel>,
+    /// lilToon の詰め方のスロットの画像（`look::export::slot_image`）か。
+    look_slot: Option<&'static str>,
 }
 
 struct Plan {
@@ -419,11 +423,13 @@ impl AppState {
                     }
                 }
             };
+            let look = self.set_doc(index).look().clone();
             sets.push(SetInput {
                 native,
                 inputs,
                 occlusion: occlusions[p].clone(),
                 uv,
+                look,
             });
             position[p] = Some(sets.len() - 1);
         }
@@ -467,6 +473,26 @@ impl AppState {
                 .collect();
             plan_template(stem, &plan_sets, template).map_err(|e| e.to_string())?
         };
+        // lilToon の詰め方: lilToon のテンプレートなら、見た目の設定が lilToon のセットのスロットの画像を足す
+        let mut template = template.clone();
+        let mut planned = planned;
+        let mut look_slots: Vec<Option<&'static str>> = vec![None; planned.len()];
+        if template.id == "liltoon" {
+            for (p, &i) in indices.iter().enumerate() {
+                for (slot, image) in crate::look::export::extra_images(self.set_doc(i)) {
+                    let name = several.then(|| self.sets.get(i).expect("範囲内").name.as_str());
+                    let file_name = file_name(stem, name, &image).map_err(|e| e.to_string())?;
+                    template.images.push(image);
+                    planned.push(yolu_io::export::PlannedFile {
+                        set: p,
+                        image: template.images.len() - 1,
+                        file_name,
+                    });
+                    look_slots.push(Some(slot));
+                }
+            }
+        }
+        let template = &template;
         if planned.is_empty() {
             return Err(lang.pick(
                 format!(
@@ -494,7 +520,7 @@ impl AppState {
         let (sets, position) = self.copy_sets(&indices, &used, &occlusions, &mut notes)?;
         let mut files = Vec::with_capacity(planned.len());
         let mut white = false;
-        for p in &planned {
+        for (p, look_slot) in planned.iter().zip(&look_slots) {
             let slot = position[p.set].expect("使うセットは写した");
             let wants_occlusion = template.images[p.image]
                 .scalars()
@@ -507,6 +533,7 @@ impl AppState {
                 image: p.image,
                 name: p.file_name.clone(),
                 channel: None,
+                look_slot: *look_slot,
             });
         }
         if white {
@@ -610,6 +637,7 @@ impl AppState {
                 image,
                 name,
                 channel: Some(channel),
+                look_slot: None,
             })
             .collect();
         Ok(Plan {
@@ -1036,6 +1064,8 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
             // 正本は効果の入力を持たないので、写す前の文書に渡していた入力を渡し直す（渡さないと、Generator・画像が入力のまま通る）
             doc.set_effect_inputs(s.inputs.clone())
                 .map_err(|e| ExportError::Io(format!("効果の入力を渡せません: {e}")))?;
+            doc.restore_look(s.look.clone())
+                .map_err(|e| ExportError::Io(format!("見た目の設定を戻せません: {e}")))?;
             Ok::<_, ExportError>(doc)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1070,9 +1100,10 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         done.store(i, Ordering::Relaxed);
         let file = &files[i];
         let doc = &docs[file.set];
-        let pixels = match file.channel {
-            Some(channel) => channel_image(doc, channel, working_bytes),
-            None => build(
+        let pixels = match (file.channel, file.look_slot) {
+            (_, Some(slot)) => crate::look::export::slot_image(doc, slot, working_bytes),
+            (Some(channel), None) => channel_image(doc, channel, working_bytes),
+            (None, None) => build(
                 doc,
                 &template.images[file.image],
                 sets[file.set].occlusion.as_deref(),

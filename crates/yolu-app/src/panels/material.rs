@@ -28,6 +28,7 @@ fn two_decimals() -> NumberFormat<'static> {
 /// 「マテリアル」のタブ。
 pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     material_section(ui, app, rows);
+    crate::look::panel::look_section(ui, app, rows);
 }
 
 /// 「ブラシのマテリアル」の節（開閉は他の欄と同じく覚える）。

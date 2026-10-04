@@ -6,6 +6,7 @@ mod core_bridge;
 pub mod export;
 mod generation;
 pub mod library;
+pub mod look;
 mod native;
 mod project;
 mod selection;

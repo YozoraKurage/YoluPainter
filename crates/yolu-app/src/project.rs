@@ -205,6 +205,10 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 {
                     selection_issues.push(format!("{}: {e}", set.name));
                 }
+                // 見た目の設定（look.json）。読めなければ標準で開いて理由を言う（ファイルには残る）
+                if let Err(e) = crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang) {
+                    selection_issues.push(format!("{}: {e}", set.name));
+                }
                 parts.push((
                     set.id.clone(),
                     set.name.clone(),
@@ -218,9 +222,18 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 let png = entries
                     .get(&format!("sets/{}/composite/Color.png", set.id))
                     .map(|b| &b[..]);
-                let (doc, note) = preview_document(png, w, h, state.lang);
+                let (mut doc, note) = preview_document(png, w, h, state.lang);
+                // 読むだけのセットも、見た目の設定で 3D に見せる（読めなければ標準のまま、通常のセットと同じ理由を言う）
+                let look = crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang).err();
+                if let Some(e) = &look {
+                    selection_issues.push(format!("{}: {e}", set.name));
+                }
                 let reason = match note {
                     Some(n) => format!("{reason}。{n}"),
+                    None => reason,
+                };
+                let reason = match look {
+                    Some(e) => format!("{reason}。{e}"),
                     None => reason,
                 };
                 parts.push((
@@ -495,6 +508,8 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .map(|(i, set)| (set.id.as_str(), state.set_doc(i).selection()))
         .collect();
     let project = crate::selection::io::write_into(project, &selections, state.lang)?;
+    // 見た目の設定（look.json。正本と別のエントリ。違うセットだけ書き換える）
+    let (project, looks_overwritten) = crate::look::io::save_into(state, project)?;
     // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
     let mut project = project;
     let mut maps_written = Vec::new();
@@ -592,6 +607,17 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         text += &state.lang.pick(
             format!(" メッシュマップ {map_total} 枚を書きました。"),
             format!(" Wrote {map_total} mesh map(s)."),
+        );
+    }
+    // 開くときに読めなかった見た目の設定（新しい形式など）を、変えた見た目で上書きしたセット
+    if !looks_overwritten.is_empty() {
+        let names: Vec<&str> = looks_overwritten
+            .iter()
+            .filter_map(|id| state.sets.iter().find(|s| s.id == *id).map(|s| s.name.as_str()))
+            .collect();
+        text += &state.lang.pick(
+            format!(" 読めなかった見た目の設定を上書きしました: {}。", names.join("、")),
+            format!(" Overwrote unreadable look settings: {}.", names.join(", ")),
         );
     }
     // 書き直したセットに入力のまま通る効果があれば、合成の PNG に入っていないことを言う（正本には設定が残る）

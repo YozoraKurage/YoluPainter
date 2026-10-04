@@ -88,6 +88,14 @@ Phosphor はブラシ・グラデーション・楕円選択・多角形選択�
 `tracing-core` 内の spin の MIT 原文も収集する。未使用の zlib contrib・zlib-ng は対象外。
 Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原文も保持する（共通設定のため Windows の束にも保守的に含める）。
 
+## lilToon の再現（式の移植）
+
+3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）と、見た目の欄のプロパティの名前・既定値
+（`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
+シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
+OpenLit Library 1.0.2（**CC0 1.0**）から移した。MIT の原文と出どころは [再現の第三者表記](crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
+にあり、`tools/licenses-reviewed.json` の `bundled` で照合して app の全文束に含める。クレートではないので、上の件数には含めない。
+
 ## 生成・試験に使う道具
 
 許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。

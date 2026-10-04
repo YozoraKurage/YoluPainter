@@ -519,6 +519,8 @@ pub enum Action {
     Pressure(crate::pen::window::PressureAction),
     /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
+    /// テクスチャセットの見た目の設定（標準・lilToon と lilToon の値。1 つが 1 回の Undo）。
+    Look(crate::look::LookOp),
 }
 
 impl Action {
@@ -593,6 +595,7 @@ impl Action {
             Self::Prefs(..) => "Prefs",
             Self::Pressure(..) => "Pressure",
             Self::Recovery(..) => "Recovery",
+            Self::Look(..) => "Look",
         }
     }
 
@@ -623,6 +626,7 @@ impl Action {
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
         ) || matches!(self, Action::Fill(op) if op.edits_document())
+            || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
     }
 }
@@ -1047,6 +1051,7 @@ impl AppState {
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
+            Action::Look(op) => self.look_apply(op),
             Action::Region(a) => self.region_apply(a),
             Action::Shelf(op) => self.shelf_apply(op),
             Action::Fx(op) => self.fx_apply(op),

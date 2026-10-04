@@ -51,6 +51,7 @@ pub mod generator;
 pub mod geometry;
 pub mod id_colors;
 mod layer;
+pub mod look;
 pub mod material;
 pub mod material_triangles;
 mod math;

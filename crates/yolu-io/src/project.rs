@@ -425,6 +425,51 @@ impl Project {
             "YOLUPAINTER-YLP-",
         )?)
     }
+    /// セットの見た目の設定（`sets/<ID>/look.json`）。無ければ None。読めない（壊れた・新しい形式の）ものはエラーを返し、元のエントリは
+    /// バイト列のまま残る（呼び手は標準の見た目で開いて知らせる）。
+    pub fn look(&self, set_id: &str) -> Result<Option<yolu_core::look::MaterialLook>> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        self.files
+            .get(&format!("sets/{set_id}/{}", crate::look::ENTRY))
+            .map(|b| crate::look::read(b))
+            .transpose()
+    }
+    /// セットの見た目の設定だけを置き換える（None はエントリを消す）。形式 7 だけ（旧形式は先に upgraded）。前のエントリの知らない
+    /// キーは残す。正本・ほかのエントリには触らない。
+    pub fn with_look(
+        &self,
+        set_id: &str,
+        look: Option<&yolu_core::look::MaterialLook>,
+    ) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "見た目の設定を書く前にupgradedで形式7へ移行してください",
+        )?;
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = format!("sets/{set_id}/{}", crate::look::ENTRY);
+        let mut files = self.original.files.clone();
+        match look {
+            Some(look) => {
+                let bytes = crate::look::write(look, files.get(&name).map(|b| &b[..]))?;
+                files.insert(name, Arc::from(bytes));
+            }
+            None => {
+                files.remove(&name);
+            }
+        }
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
     /// セットの派生メッシュマップを読む。壊れた派生物はエラーを返し、元のエントリは保持する。
     pub fn mesh_map(
         &self,
@@ -710,7 +755,7 @@ impl Project {
         let mut unknown = Vec::new();
         for n in files.keys() {
             let known = if let Some((id, leaf)) = split_set(n) {
-                ids.contains(id) && moves_into_set(leaf)
+                ids.contains(id) && (moves_into_set(leaf) || leaf == crate::look::ENTRY)
             } else if n.starts_with("resources/") {
                 resource_entries.contains(n.as_str())
             } else {

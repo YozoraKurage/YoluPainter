@@ -176,6 +176,15 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .collect();
     let project = crate::selection::io::write_into(project, &selections, capture.lang)
         .map_err(RecoveryError::Text)?;
+    // 見た目の設定（look.json）も、取った写しのものを、違うセットだけ書き換える
+    let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
+        .collect();
+    // 読めなかったエントリを上書きしたかは、復旧の写しでは知らせない（開いた .ylp には手を付けない。保存のときに知らせる）
+    let (project, _) = crate::look::io::write_into(project, &looks, capture.lang)
+        .map_err(RecoveryError::Text)?;
     // アセットの棚（保存と同じく、変えたときだけ resources を書き直す）
     match &capture.shelf {
         Some(shelf) => Ok(project.with_shelf(shelf, crate::project::writer())?),

@@ -538,6 +538,17 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "自分の層の Anchor を読む Generator（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
         "調整の層には画素が無い" => "Adjustment layers have no pixels",
         "面のダブを拒否した" => "The surface dab was refused",
+        "見た目の設定の復元は読み込み直後だけ" => "Look settings can only be restored right after loading",
+        "見た目のシェーダーの名前" => "Look shader name",
+        "見た目のプロパティの数" => "Number of look properties",
+        "見た目のテクスチャの数" => "Number of look textures",
+        "見た目のキーワードの数" => "Number of look keywords",
+        "見た目のプロパティの名前" => "Look property name",
+        "見た目のプロパティの値" => "Look property value",
+        "見た目のテクスチャの名前" => "Look texture name",
+        "見た目の詰め合わせの成分" => "Look packed texture component",
+        "見た目の画像の ID" => "Look image ID",
+        "見た目のキーワード" => "Look keyword",
         _ => return None,
     })
 }

@@ -1005,7 +1005,7 @@ impl AppState {
                 self.m2.display_channel = channel;
             }
             Edit::SetChannel { channel, info } => self.doc.set_channel_info(channel, info)?,
-            Edit::RemoveChannel(channel) => self.doc.remove_channel(channel)?,
+            Edit::RemoveChannel(channel) => crate::look::remove_channel(&mut self.doc, channel)?,
             Edit::MergeDown => self.merge_down_selected()?,
             Edit::MergeVisible => self.merge_visible_layers()?,
             Edit::ConfirmMerge => self.confirm_merge()?,

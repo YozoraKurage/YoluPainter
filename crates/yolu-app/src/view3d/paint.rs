@@ -416,6 +416,11 @@ impl Paint {
 
     /// この文書を `cap`（辺の上限）で縮めて持つとしたときのバイト数（使っているチャンネルのミップ込み。持つかどうかの計画に使う）。
     pub fn estimate_bytes(&self, doc: &Document, cap: u32) -> u64 {
+        self.estimate(doc, cap).1
+    }
+
+    /// `estimate_bytes` の、縮めの段とバイト数（ユーザーチャンネルの配列は、この段から縮める）。
+    pub fn estimate(&self, doc: &Document, cap: u32) -> (u32, u64) {
         let limit = self.side_limit().min(cap);
         let per_texel = used_bytes_per_texel(doc);
         let shift = choose_shift([doc.width(), doc.height()], per_texel, limit, u64::MAX);
@@ -423,22 +428,27 @@ impl Paint {
             doc.width().div_ceil(1 << shift).max(1),
             doc.height().div_ceil(1 << shift).max(1),
         ];
-        mip_bytes(size, per_texel)
+        (shift, mip_bytes(size, per_texel))
     }
 
     /// 次の同期のあとに、この文書の絵が取るバイト数（使っているチャンネルのミップ込み）。作り直すなら今の予算と上限で決まる大きさ、
     /// 作り直さないなら今の大きさ。今のセットが替わるとき、新しい絵を作る前に予算の残りを決めるのに使う。
     pub fn planned_bytes(&self, doc: &Document) -> u64 {
-        let (want, _) = self.shift_for(doc);
-        let shift = match &self.set {
-            Some(s) if !self.rebuild_needed(doc, want) => s.shift,
-            _ => want,
-        };
+        let shift = self.planned_level(doc);
         let size = [
             doc.width().div_ceil(1 << shift).max(1),
             doc.height().div_ceil(1 << shift).max(1),
         ];
         mip_bytes(size, used_bytes_per_texel(doc))
+    }
+
+    /// `planned_bytes` の縮めの段。
+    pub fn planned_level(&self, doc: &Document) -> u32 {
+        let (want, _) = self.shift_for(doc);
+        match &self.set {
+            Some(s) if !self.rebuild_needed(doc, want) => s.shift,
+            _ => want,
+        }
     }
 
     /// 同期の作業用のバッファを、容量ごと手放す。合成の作業は文書の大きさ（帯の分、Height から作る Wrap の Normal は文書全体）に
@@ -1113,7 +1123,7 @@ fn used_bytes_per_texel(doc: &Document) -> u64 {
 }
 
 /// 大きさ（辺）のテクスチャ（全部の段）のバイト数。`bytes_per_texel` は 1 テクセルのバイト数（チャンネルを重ねるなら合計）。
-fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
+pub(super) fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
     let levels = 32 - size[0].max(size[1]).leading_zeros();
     (0..levels)
         .map(|l| (size[0] >> l).max(1) as u64 * (size[1] >> l).max(1) as u64)
@@ -1123,7 +1133,7 @@ fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
 
 /// 大きさを 2 の shift 乗で縮める段数: 辺が `limit` に収まり、全部の段のバイト数（`bytes_per_texel` は重ねるチャンネルの合計）が
 /// `budget` に収まる最小の段。1 × 1 まで縮めても収まらないなら、そこまで。
-fn choose_shift(size: [u32; 2], bytes_per_texel: u64, limit: u32, budget: u64) -> u32 {
+pub(super) fn choose_shift(size: [u32; 2], bytes_per_texel: u64, limit: u32, budget: u64) -> u32 {
     let mut shift = 0;
     while shift < 31 {
         let reduced = [
@@ -1153,7 +1163,7 @@ fn expand(rect: DocRect, by: u32, bounds: DocRect) -> DocRect {
 }
 
 /// 矩形を縮めの境（2^shift）に合わせて外へ広げる（画布の端で切る）。
-fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
+pub(super) fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
     if shift == 0 {
         return rect;
     }
@@ -1269,7 +1279,7 @@ fn union(a: &DocRect, b: &DocRect) -> DocRect {
 /// 上げる矩形をまとめる: 隣り合って合わせても余計な面積がほとんど出ない矩形を 1 つにし（1 回の書き込みの手間が大きい API でも、
 /// 1 回のストロークの隣り合うタイルは 1 回で上がる）、全面のように大きくなったものは帯に切る（`keep_whole` なら切らない）。
 /// 各矩形のタイルの数は足し合わせる。
-fn plan_regions(
+pub(super) fn plan_regions(
     mut items: Vec<(DocRect, usize)>,
     shift: u32,
     bounds: DocRect,

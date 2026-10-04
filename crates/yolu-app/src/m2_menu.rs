@@ -67,6 +67,8 @@ pub enum Popup {
     GradientShape(crate::engine::LayerId, Channel),
     RampPresets(crate::engine::LayerId, Channel),
     CurvePresets(crate::engine::LayerId, Channel),
+    /// 見た目の設定の欄のドロップダウン（種類・描画モード・選ぶ値・テクスチャのスロット）。
+    Look(crate::look::panel::LookChoice),
 }
 
 fn tips(
@@ -150,6 +152,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         })
         .collect(),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
+        Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::NormalEdges => {
             let current = app.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]

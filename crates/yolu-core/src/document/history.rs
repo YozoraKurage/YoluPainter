@@ -25,6 +25,8 @@ pub enum HistoryKind {
     Anchor,
     Path,
     Batch,
+    /// 見た目の設定（`Document::set_look`）。
+    Look,
 }
 
 impl Document {
@@ -64,6 +66,7 @@ impl Command {
             Self::Anchor { .. } => HistoryKind::Anchor,
             Self::Path(_) => HistoryKind::Path,
             Self::Compound(_) => HistoryKind::Batch,
+            Self::Look { .. } => HistoryKind::Look,
             _ => HistoryKind::Other,
         }
     }

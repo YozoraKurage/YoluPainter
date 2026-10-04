@@ -5233,6 +5233,25 @@
           "path": "crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md",
           "sha256": "0ce758c1725a0ad668aa76c2e700160b578d27999639f2b211ef415a5d0b0ac3"
         }
+      },
+      {
+        "name": "lilToon（3D ビューの再現の式の移植）",
+        "version": "2.3.4",
+        "declared": "MIT",
+        "selected": [
+          "MIT"
+        ],
+        "origin": "https://github.com/lilxyzw/lilToon ; OpenLit Library 1.0.2（CC0-1.0、lilToon に同梱）",
+        "files": [
+          {
+            "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
+            "sha256": "ad1984ec1b15a74d1c0fedfdcb36129d29b2cd5bf8f6d31563c9d6997279d0cc"
+          }
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
+          "sha256": "ad1984ec1b15a74d1c0fedfdcb36129d29b2cd5bf8f6d31563c9d6997279d0cc"
+        }
       }
     ]
   },

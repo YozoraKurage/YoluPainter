@@ -756,6 +756,8 @@ pub struct SliderSpec<'a> {
     pub enabled: bool,
     /// 2 行目の右に空ける幅（筆圧のペンのボタン）。
     pub track_inset: f32,
+    /// 溝の位置と値の曲線（Unity の `PowerSlider` と同じ: 溝の位置は値の 1/power 乗に比例。1 なら等間隔）。
+    pub power: f32,
 }
 
 impl<'a> SliderSpec<'a> {
@@ -768,6 +770,7 @@ impl<'a> SliderSpec<'a> {
             tooltip: None,
             enabled: true,
             track_inset: 0.0,
+            power: 1.0,
         }
     }
     pub fn tooltip(mut self, tip: &'a str) -> Self {
@@ -781,6 +784,33 @@ impl<'a> SliderSpec<'a> {
     pub fn inset(mut self, inset: f32) -> Self {
         self.track_inset = inset;
         self
+    }
+    pub fn power(mut self, power: f32) -> Self {
+        self.power = if power.is_finite() && power > 0.0 { power } else { 1.0 };
+        self
+    }
+    /// 値の溝の位置（0〜1）。
+    pub fn fraction(&self, value: f32) -> f32 {
+        let (lo, hi) = (self.curve(self.min), self.curve(self.max));
+        if hi > lo {
+            ((self.curve(value) - lo) / (hi - lo)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+    /// 溝の位置（0〜1）の値。
+    pub fn value_at(&self, fraction: f32) -> f32 {
+        let (lo, hi) = (self.curve(self.min), self.curve(self.max));
+        let t = lo + (hi - lo) * fraction.clamp(0.0, 1.0);
+        let v = if self.power == 1.0 { t } else { t.signum() * t.abs().powf(self.power) };
+        v.clamp(self.min.min(self.max), self.max.max(self.min))
+    }
+    fn curve(&self, v: f32) -> f32 {
+        if self.power == 1.0 {
+            v
+        } else {
+            v.signum() * v.abs().powf(1.0 / self.power)
+        }
     }
 }
 
@@ -835,14 +865,7 @@ pub fn slider(
     } else {
         r
     };
-    let range = spec.max - spec.min;
-    let fraction = |v: f32| {
-        if range > 0.0 {
-            ((v - spec.min) / range).clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    };
+    let fraction = |v: f32| spec.fraction(v);
     let from = if spec.min < 0.0 && spec.max > 0.0 {
         fraction(0.0)
     } else {
@@ -963,8 +986,7 @@ pub fn slider(
                 ui.data_mut(|d| d.insert_temp(start_id, value));
             }
             if let Some(pointer) = response.interact_pointer_pos() {
-                let next = spec.min
-                    + range * ((pointer.x - track.left()) / track.width().max(1.0)).clamp(0.0, 1.0);
+                let next = spec.value_at((pointer.x - track.left()) / track.width().max(1.0));
                 if next != value {
                     out.value = next;
                     out.changed = true;

@@ -23,6 +23,7 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
         HistoryKind::Anchor => lang.pick("アンカーを変える", "Edit anchor"),
         HistoryKind::Path => lang.pick("パスを変える", "Edit path"),
         HistoryKind::Batch => lang.pick("まとめて編集", "Batch edit"),
+        HistoryKind::Look => lang.pick("見た目を変える", "Edit look"),
     }
 }
 
