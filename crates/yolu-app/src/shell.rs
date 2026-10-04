@@ -168,6 +168,9 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::item(Tool::Fill.name_in(l), Action::SelectTool(Tool::Fill))
                     .shortcut("G")
                     .radio(app.tool == Tool::Fill),
+                Entry::item(Tool::Gradient.name_in(l), Action::SelectTool(Tool::Gradient))
+                    .shortcut("Shift+G")
+                    .radio(app.tool == Tool::Gradient),
                 Entry::item(
                     Tool::PolygonFill.name_in(l),
                     Action::SelectTool(Tool::PolygonFill),
@@ -753,6 +756,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         );
         key(Modifiers::SHIFT, Key::L, Action::SelectTool(Tool::Polygon));
         key(Modifiers::SHIFT, Key::W, Action::SelectTool(Tool::IdSelect));
+        key(Modifiers::SHIFT, Key::G, Action::SelectTool(Tool::Gradient));
         key(
             Modifiers::NONE,
             Key::M,
@@ -772,6 +776,11 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
             key(Modifiers::NONE, Key::Delete, Action::Path(PathAction::DeleteSelected));
             key(Modifiers::NONE, Key::Backspace, Action::Path(PathAction::DeleteSelected));
         }
+        key(
+            Modifiers::NONE,
+            Key::Q,
+            Action::Fill(crate::fillfx::FillOp::ToggleHandles),
+        );
         key(Modifiers::NONE, Key::X, Action::SwapColors);
         key(Modifiers::NONE, Key::D, Action::DefaultColors);
         key(Modifiers::NONE, Key::OpenBracket, Action::BrushSmaller);
@@ -826,6 +835,10 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     // パスの道具は、点の太さ・閉じる・点を消す・ラスタライズ
     if app.tool.is_path() {
         crate::panels::path_props::options(ui, app, r, x);
+        return;
+    }
+    if app.tool == Tool::Gradient {
+        crate::gradient::props::options(ui, app, r, x);
         return;
     }
     // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、その道具の設定

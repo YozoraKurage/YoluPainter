@@ -1,0 +1,397 @@
+//! 3D ビューの形のギズモの操作と描画（Unity 版の `TexturePaintWindow.ShapeGizmo`）: 選んでいる塗りつぶしの層の、投影の置き場（型の上の
+//! 投影とデカールの箱）か、3D ビューで編集している塗りつぶしのグラデーションの形を、モデルの面の上で動かす・回す・大きさを変える。
+//!
+//! - 出る条件: 3D のモデルがあり、選んでいる層が塗りつぶしで、マスクを編集していない。グラデーションを「3D ビューで編集」にしていればその形
+//!   （ギズモは 1 つなのでグラデーションが先）、そうでなければ投影が UV 以外のとき置き場を出す（Q で隠す。Substance の Show/Hide manipulator）。
+//! - ハンドルを押したときだけ受け取り（ハンドルの無い所の押下は今のツールへ）、離すまでの変更は 1 回の Undo にまとめる（`coalesce`）。
+//!   Esc・窓のフォーカスの喪失・描き始めでは、ドラッグの前に戻して履歴にも残さない（`cancel_coalescing`）。
+//! - 計算は `view3d::shape_gizmo`（始まりの形とポインタから毎回計算する）。ここは文書への入れ方と、3D ビューへの重ね描きだけ。
+
+use egui::{pos2, vec2, Color32, Pos2, Rect, Shape as EguiShape, Stroke, Ui};
+use yolu_core::fill_image::ProjectionMode;
+use yolu_core::generator::Kind as GeneratorKind;
+use yolu_core::glam::Vec2;
+use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind};
+
+use crate::matpaint::refusal_text;
+use crate::state::AppState;
+use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
+
+/// ギズモが動かしているもの。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// 塗りつぶしの層の投影の置き場。
+    Projection(LayerId),
+    /// 塗りつぶしの層のチャンネルのグラデーションの形。
+    Gradient(LayerId, Channel),
+    /// 層（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形。
+    Filter(LayerId, FilterId),
+}
+
+impl Target {
+    pub fn layer(self) -> LayerId {
+        match self {
+            Target::Projection(l) | Target::Gradient(l, _) | Target::Filter(l, _) => l,
+        }
+    }
+}
+
+/// ドラッグを始めた入力。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Mouse,
+    Pen(u32),
+}
+
+/// ギズモのドラッグの途中。
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeDrag {
+    pub handle: Handle,
+    pub start: Shape,
+    /// 押した点（3D ビューの表示域の左上から）。
+    pub from: Vec2,
+    pub target: Target,
+    pub source: Source,
+    /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号の層へ当てない）。
+    pub doc_id: u128,
+}
+
+/// 形はモデルのルートの空間にあり、ルートはモデルの空間の原点・回転なし。
+pub fn root() -> Root {
+    Root::default()
+}
+
+fn local(rect: Rect, p: Pos2) -> Vec2 {
+    Vec2::new(p.x - rect.left(), p.y - rect.top())
+}
+
+/// いまギズモを出す対象（無ければ `None`）。3D のモデルが無ければ出さない。形のグラデーションの Generator（フィルターの欄で「3D ビューで
+/// 編集」にしたもの）が先で、続けて塗りつぶしのグラデーション、投影の置き場。マスクを編集している間は Generator 以外は出さない。
+pub fn target(app: &AppState) -> Option<Target> {
+    app.view3d.model.as_ref()?;
+    let id = app.selected_layer?;
+    let layer = app.doc.layer(id)?;
+    if let Some((l, f)) = app.fillfx.edit_filter {
+        if l == id && filter_volume(app, l, f).is_some() {
+            return Some(Target::Filter(l, f));
+        }
+    }
+    if app.m2.edit_mask {
+        return None;
+    }
+    if layer.kind() != LayerKind::Fill {
+        return None;
+    }
+    if let Some((l, ch)) = app.fillfx.edit_gradient {
+        if l == id && layer.fill_gradient(ch).is_some() {
+            return Some(Target::Gradient(l, ch));
+        }
+    }
+    if app.fillfx.handles_hidden {
+        return None;
+    }
+    (layer.projection().mode != ProjectionMode::Uv).then_some(Target::Projection(id))
+}
+
+/// 層のフィルターのスタックの段が、形のグラデーションの Generator なら、その形。
+fn filter_volume(
+    app: &AppState,
+    layer: LayerId,
+    filter: FilterId,
+) -> Option<yolu_core::generator::Volume> {
+    let (owner, effect, _) = app.doc.find_filter(filter)?;
+    if owner != layer {
+        return None;
+    }
+    let g = effect.settings().generator_settings()?;
+    (g.kind == GeneratorKind::ShapeGradient).then_some(g.volume)
+}
+
+/// 対象の今の形。
+pub fn shape(app: &AppState, target: Target) -> Option<Shape> {
+    let layer = app.doc.layer(target.layer())?;
+    match target {
+        Target::Projection(_) => {
+            let p = layer.projection();
+            Some(Shape::from_placement(
+                &p.placement,
+                p.mode == ProjectionMode::Spherical,
+            ))
+        }
+        Target::Gradient(_, ch) => layer
+            .fill_gradient(ch)
+            .map(|g| Shape::from_volume(&g.volume)),
+        Target::Filter(l, f) => filter_volume(app, l, f).map(|v| Shape::from_volume(&v)),
+    }
+}
+
+/// ポインタの下のハンドル（ギズモが出ていなければ `None`）。
+pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
+    let Some(t) = target(app) else {
+        return Handle::None;
+    };
+    let Some(s) = shape(app, t) else {
+        return Handle::None;
+    };
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    sg::hit(&s, &root(), &view, app.fillfx.gizmo_mode, local(rect, at))
+}
+
+/// ハンドルの画面の点（画面の座標。試験が掴む位置に使う）。
+pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> {
+    let t = target(app)?;
+    let s = shape(app, t)?;
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    sg::handle_points(&s, &root(), &view, app.fillfx.gizmo_mode)
+        .into_iter()
+        .find(|(h, _)| *h == handle)
+        .map(|(_, p)| pos2(rect.left() + p.x, rect.top() + p.y))
+}
+
+/// 左ボタン（かペンの接触）を押した: ハンドルの上ならドラッグを始めて true（ハンドルの無い所は false で、今のツールへ）。
+pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
+    if app.is_stroking() || app.fillfx.drag.is_some() {
+        return false;
+    }
+    let Some(t) = target(app) else {
+        return false;
+    };
+    let Some(start) = shape(app, t) else {
+        return false;
+    };
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let p = local(rect, at);
+    let handle = sg::hit(&start, &root(), &view, app.fillfx.gizmo_mode, p);
+    if handle == Handle::None {
+        return false;
+    }
+    if let Some(reason) = app.read_only_reason() {
+        app.message = format!(
+            "{}: {reason}",
+            app.lang
+                .pick("読むだけのテクスチャセットです", "Read-only texture set")
+        );
+        return true; // ハンドルを押したので、下のツールで描き始めない
+    }
+    app.doc.end_coalescing(); // 前の欄のドラッグにまとめない
+    app.fillfx.drag = Some(ShapeDrag {
+        handle,
+        start,
+        from: p,
+        target: t,
+        source,
+        doc_id: app.doc.id(),
+    });
+    true
+}
+
+/// ドラッグの途中（`symmetric` は Shift、`snap` は Ctrl）。始まりの形とポインタから毎回計算して、1 回の Undo にまとめて入れる。
+pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: bool) {
+    let Some(d) = app.fillfx.drag.clone() else {
+        return;
+    };
+    // テクスチャセットが替わった: 前の文書のドラッグは、ここでは何もせずに捨てる（替えるときに前の文書の変更は確定済み）
+    if app.doc.id() != d.doc_id {
+        app.fillfx.drag = None;
+        return;
+    }
+    // 層が替わった・無くなった: そこで終える
+    if app.selected_layer != Some(d.target.layer()) || app.doc.layer(d.target.layer()).is_none() {
+        release(app, true);
+        return;
+    }
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let next = sg::drag(
+        d.handle,
+        &d.start,
+        &root(),
+        &view,
+        d.from,
+        local(rect, at),
+        symmetric,
+        snap,
+        Snap::default(),
+    );
+    if Some(next) == shape(app, d.target) {
+        return;
+    }
+    let revision = app.doc.revision();
+    let result = match d.target {
+        Target::Projection(layer) => {
+            let Some(l) = app.doc.layer(layer) else {
+                return;
+            };
+            let mut p = *l.projection();
+            p.placement = next.into_placement();
+            if let Err(e) = p.validate() {
+                app.message = app.lang.fill_error(&e);
+                return;
+            }
+            app.doc.set_fill_projection(layer, p, true)
+        }
+        Target::Gradient(layer, ch) => {
+            let Some(mut g) = app
+                .doc
+                .layer(layer)
+                .and_then(|l| l.fill_gradient(ch))
+                .cloned()
+            else {
+                return;
+            };
+            g.volume = next.into_volume(&g.volume);
+            if g.validate().is_err() {
+                app.message = app
+                    .lang
+                    .pick("形の値が範囲外です", "The shape is out of range")
+                    .into();
+                return;
+            }
+            app.doc.set_fill_gradient(layer, ch, Some(g), true)
+        }
+        Target::Filter(layer, filter) => {
+            let Some(mut g) = app
+                .doc
+                .find_filter(filter)
+                .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
+            else {
+                return;
+            };
+            g.volume = next.into_volume(&g.volume);
+            if g.validate().is_err() {
+                app.message = app
+                    .lang
+                    .pick("形の値が範囲外です", "The shape is out of range")
+                    .into();
+                return;
+            }
+            app.doc
+                .set_filter_settings(layer, filter, EffectSettings::generator(g), true)
+        }
+    };
+    match result {
+        Ok(()) => {
+            if app.doc.revision() != revision {
+                app.modified = true;
+            }
+        }
+        Err(e) => {
+            app.message = refusal_text(app.lang, &e);
+            release(app, false);
+        }
+    }
+}
+
+/// ドラッグを終える。`commit` なら 1 回の Undo にまとめて確定、そうでなければ（Esc・フォーカスの喪失）ドラッグの前に戻して履歴にも残さない。
+pub fn release(app: &mut AppState, commit: bool) {
+    let Some(d) = app.fillfx.drag.take() else {
+        return;
+    };
+    if d.doc_id != app.doc.id() {
+        return; // 前の文書のドラッグ（替えるときに確定済み）。今の文書には触らない
+    }
+    if commit {
+        app.doc.end_coalescing();
+        return;
+    }
+    match app.doc.cancel_coalescing() {
+        Ok(true) => {
+            app.message = app
+                .lang
+                .pick("形の操作をやめました", "Shape edit cancelled")
+                .into();
+        }
+        Ok(false) => {}
+        Err(e) => {
+            app.message = app.lang.core_error(&e);
+            app.doc.end_coalescing();
+        }
+    }
+}
+
+/// ドラッグの途中か。
+pub fn dragging(app: &AppState) -> bool {
+    app.fillfx.drag.is_some()
+}
+
+/// 形の線とハンドルを 3D ビューへ重ねる。`pointer` はポインタ（掴める所を光らせる）。返すのは掴める（ドラッグ中ならそれ）ハンドル。
+pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> Handle {
+    let Some(t) = target(app) else {
+        app.fillfx.hover = Handle::None;
+        // 出さなくなった（層を替えた・隠した）ドラッグは取り残さない
+        if app.fillfx.drag.is_some() {
+            release(app, false);
+        }
+        return Handle::None;
+    };
+    // ドラッグ中に対象が替わったら終える（描く前に）
+    if app.fillfx.drag.as_ref().is_some_and(|d| d.target != t) {
+        release(app, false);
+    }
+    let Some(s) = shape(app, t) else {
+        return Handle::None;
+    };
+    let mode = app.fillfx.gizmo_mode;
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let hover = match &app.fillfx.drag {
+        Some(d) => d.handle,
+        None => pointer
+            .filter(|_| !app.is_stroking())
+            .map_or(Handle::None, |p| {
+                sg::hit(&s, &root(), &view, mode, local(rect, p))
+            }),
+    };
+    app.fillfx.hover = hover;
+    let painter = ui.painter_at(rect);
+    let to = |p: Vec2| pos2(rect.left() + p.x, rect.top() + p.y);
+    for line in sg::lines(&s, &root(), &view, mode, hover) {
+        let points: Vec<Pos2> = line.points.iter().map(|p| to(*p)).collect();
+        if line.filled {
+            painter.add(EguiShape::convex_polygon(points, line.color, Stroke::NONE));
+            continue;
+        }
+        // 明るい面の上でも見える縁
+        painter.add(EguiShape::line(
+            points.clone(),
+            Stroke::new(line.width + 2.0, Color32::from_black_alpha(115)),
+        ));
+        painter.add(EguiShape::line(points, Stroke::new(line.width, line.color)));
+    }
+    for (handle, at) in sg::handle_points(&s, &root(), &view, mode) {
+        let c = to(at);
+        if handle == Handle::MoveFree {
+            let r = Rect::from_center_size(c, vec2(sg::CENTER_POINTS, sg::CENTER_POINTS));
+            painter.rect_stroke(
+                r,
+                0.0,
+                Stroke::new(3.0, Color32::from_black_alpha(150)),
+                egui::StrokeKind::Middle,
+            );
+            painter.rect_stroke(
+                r,
+                0.0,
+                Stroke::new(
+                    1.5,
+                    if hover == handle {
+                        sg::HOVER
+                    } else {
+                        Color32::WHITE
+                    },
+                ),
+                egui::StrokeKind::Middle,
+            );
+        } else if handle.is_size() {
+            let r = Rect::from_center_size(c, vec2(sg::KNOB_POINTS, sg::KNOB_POINTS));
+            painter.rect_filled(r.expand(1.0), 0.0, Color32::from_black_alpha(180));
+            painter.rect_filled(r, 0.0, sg::knob_color(handle, hover));
+        }
+    }
+    hover
+}
+
+/// ハンドルを押す・ドラッグするあいだのカーソル。
+pub fn cursor(app: &AppState) -> Option<egui::CursorIcon> {
+    if app.fillfx.drag.is_some() {
+        return Some(egui::CursorIcon::Grabbing);
+    }
+    (app.fillfx.hover != Handle::None).then_some(egui::CursorIcon::Grab)
+}

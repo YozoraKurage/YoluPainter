@@ -545,6 +545,17 @@ impl YoluApp {
                         .apply(Action::Stencil(crate::stencil::StencilOp::Load(path)));
                 }
             }
+            Some(DialogRequest::FillImage) => {
+                let lang = self.state.lang;
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(lang.pick("画像を棚へ取り込む", "Add an image to the shelf"))
+                    .add_filter("PNG", &["png", "PNG"])
+                    .pick_file()
+                {
+                    self.state
+                        .apply(Action::Fill(crate::fillfx::FillOp::ImportImage(path)));
+                }
+            }
             None => {}
         }
     }
@@ -751,6 +762,9 @@ impl YoluApp {
         }
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
+        // 塗りつぶしの層が読む棚の画像を、文書の効果の入力へ（このセッションで差した画像と、Undo で戻した層の画像。画像を使う層を含む .ylp は、
+        // 開く前の判定（project.rs の inactive_effect_list）で読むだけになるので、ここへは来ない）
+        self.state.fillfx_sync_images(None);
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
         if crate::view3d::pose::frame(&mut self.state, &ctx) {
             if let Some(path) = self.dock.find_tab(&Tab::View3d) {

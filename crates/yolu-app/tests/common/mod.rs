@@ -186,3 +186,45 @@ pub fn click_tab(h: &mut Harness<'_, YoluApp>, tab: yolu_app::Tab) {
     let at = h.state().tab_rects.get(&tab).expect("tab shown").center();
     click(h, at);
 }
+
+/// 画面の文言に、使い方の説明・開発用の数が混じっていない（名前・状態・短い理由だけ。説明はツールチップ）。
+pub fn assert_plain(what: &str, text: &str) {
+    const HOW_TO: &[&str] = &[
+        "してください",
+        "ください",
+        "クリック",
+        "ドラッグして",
+        "押して",
+        "タップ",
+        "選んで",
+        "入力して",
+        "click",
+        "drag ",
+        "press ",
+        "please",
+        "choose ",
+        "select a",
+        "to add",
+        "you can",
+        "tap ",
+    ];
+    const DEV: &[&str] = &["MiB", "KiB", "GiB", "三角形", "triangles", "バイト"];
+    let lower = text.to_lowercase();
+    for word in HOW_TO.iter().chain(DEV) {
+        assert!(
+            !lower.contains(&word.to_lowercase()),
+            "{what}: 使い方・開発用の語「{word}」: {text}"
+        );
+    }
+    assert!(
+        text.chars().count() <= 70,
+        "{what}: 長い（{} 字）: {text}",
+        text.chars().count()
+    );
+}
+
+pub fn has_japanese(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}')
+    })
+}

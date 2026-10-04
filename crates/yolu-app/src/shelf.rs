@@ -427,6 +427,51 @@ impl ShelfState {
         &self.shelf
     }
 
+    /// 画像（左下原点・straight RGBA8）を棚へ足す（出どころの記録なし。外のパスを .ylp に書かない）。同じ中身が既にあれば、その ID
+    /// （棚は変わらない）。足したら棚は「変えた」になる。棚を読めなかった・予算や個数の上限・壊れた画素は理由を返す（棚は変わらない）。
+    pub fn add_image(
+        &mut self,
+        lang: Lang,
+        name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<String, String> {
+        if let Some(reason) = &self.unavailable {
+            return Err(reason.reason(lang).to_owned());
+        }
+        let before = self.shelf.resources().len();
+        let id = self
+            .shelf
+            .add_image_without_origin(&new_resource_id(), name, rgba, width, height, "srgb")
+            .map_err(|e| io_reason(lang, &e))?;
+        if self.shelf.resources().len() > before {
+            self.changed = true;
+        }
+        Ok(id)
+    }
+
+    /// 棚の画像の色空間（"srgb"・"linear"・"unspecified"）を替える。色空間は索引にだけあり、文書の履歴に入らない（Unity 版と同じ）。
+    /// 棚を読めなかった・無い画像・同じ値は false か理由。替えたら棚は「変えた」になる。
+    pub fn set_image_color_space(
+        &mut self,
+        lang: Lang,
+        id: &str,
+        space: &str,
+    ) -> Result<bool, String> {
+        if let Some(reason) = &self.unavailable {
+            return Err(reason.reason(lang).to_owned());
+        }
+        let changed = self
+            .shelf
+            .set_image_color_space(id, space)
+            .map_err(|e| io_reason(lang, &e))?;
+        if changed {
+            self.changed = true;
+        }
+        Ok(changed)
+    }
+
     pub fn resources(&self) -> &[Resource] {
         self.shelf.resources()
     }
@@ -998,8 +1043,13 @@ impl AppState {
             }
             ShelfOp::AskRemove(id) => {
                 if self.shelf.get(&id).is_some() && !self.shelf_refuse_while_saving() {
-                    self.shelf.pending_remove = Some(id);
-                    self.dialog_request = Some(DialogRequest::ShelfRemove);
+                    // 使われている画像は、確かめの窓を出す前に断る（確かめても消せない）
+                    if let Some(why) = self.shelf_image_in_use(&id) {
+                        self.shelf_refusal(why);
+                    } else {
+                        self.shelf.pending_remove = Some(id);
+                        self.dialog_request = Some(DialogRequest::ShelfRemove);
+                    }
                 }
             }
             ShelfOp::ImportFile(path) => {
@@ -1033,7 +1083,7 @@ impl AppState {
 
     /// 別のスレッドの保存が棚の写しへ足している間は、棚を変える操作（消す・読み込む）を断る（保存の結果は足した後の棚に
     /// 差し替えるので、その間に棚が変わると、変えた分が消える）。断ったら true。
-    fn shelf_refuse_while_saving(&mut self) -> bool {
+    pub(crate) fn shelf_refuse_while_saving(&mut self) -> bool {
         if self.shelf.saving.is_none() {
             return false;
         }
@@ -1361,6 +1411,33 @@ impl AppState {
         )
     }
 
+    /// 棚の画像を層が読んでいれば、消せない理由の文（読んでいなければ None。画像でない素材も None）。読み込んだプロジェクトの
+    /// 原本の層と、いまのセッションの全部のテクスチャセットの層を見る。消すと、層は棚に無い画像を指し、保存して開き直すとそのセットは
+    /// 読むだけになる。取り消しの履歴の中にだけある層（消した層を Undo で戻す）は見ない。
+    fn shelf_image_in_use(&self, id: &str) -> Option<String> {
+        let res = self.shelf.get(id).filter(|r| r.kind == "image")?;
+        let lang = self.lang;
+        let project = self.project.as_ref().map(|p| p.project());
+        let users = crate::fillfx::image_users(self, id);
+        if users.is_empty() && !self.shelf.used_by(project, id) {
+            return None;
+        }
+        let mut text = format!(
+            "{}: {}",
+            res.name,
+            lang.pick("レイヤーから使われています", "Used by a layer")
+        );
+        if !users.is_empty() {
+            let list = users.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = if users.len() > 3 { " …" } else { "" };
+            text += &match lang {
+                Lang::Ja => format!("（{list}{more}）"),
+                Lang::En => format!(" ({list}{more})"),
+            };
+        }
+        Some(text)
+    }
+
     fn shelf_remove(&mut self, id: &str) {
         let lang = self.lang;
         if !self.shelf_writable() {
@@ -1369,13 +1446,9 @@ impl AppState {
         let Some(res) = self.shelf.get(id) else {
             return;
         };
-        let (name, is_image) = (res.name.clone(), res.kind == "image");
-        let project = self.project.as_ref().map(|p| p.project());
-        if is_image && self.shelf.used_by(project, id) {
-            return self.shelf_refusal(format!(
-                "{name}: {}",
-                lang.pick("レイヤーから使われています", "Used by a layer")
-            ));
+        let name = res.name.clone();
+        if let Some(why) = self.shelf_image_in_use(id) {
+            return self.shelf_refusal(why);
         }
         match self.shelf.shelf.remove(id) {
             Ok(true) => {

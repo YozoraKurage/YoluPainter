@@ -43,6 +43,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     crate::selection::canvas::paint_overlay(ui.ctx(), &painter, &view, app);
     // 移動・変形の道具: 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠）
     crate::transform::canvas::paint_overlay(&painter, &view, app);
+    // グラデーションの道具: ドラッグ中の線
+    crate::gradient::canvas::paint_overlay(&painter, &view, app);
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
     // ステンシル（画面に貼り付いた半透明の画像。T を押しているあいだは枠も）
@@ -82,6 +84,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             ui.ctx().set_cursor_icon(CursorIcon::Grab);
         } else if app.tool.is_region()
             || app.tool.is_select()
+            || app.tool == crate::state::Tool::Gradient
             || crate::eyedrop::picks(app, ui.input(|i| i.modifiers.alt))
         {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
@@ -446,6 +449,18 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             }
             continue;
         }
+        if app.tool == crate::state::Tool::Gradient && !pen_stroke_running {
+            // グラデーションの道具: 触れる・動く・離すを、押す・動く・離すにする（ペンで描かない）
+            let usable = !blocked
+                && !app.canvas.rotate_key_held
+                && !app.canvas.space_held
+                && !app.stencil.handling()
+                && (app.gradient.pen_down.is_some() || on_top(ui, rect, p));
+            if usable || !s.contact {
+                crate::gradient::canvas::pen_sample(app, &view, p, s.pointer_id, s.contact);
+            }
+            continue;
+        }
         if app.tool.is_select() && !pen_stroke_running {
             // 選択の道具: 触れる・動く・離すを、押す・動く・離すにする
             let usable = !blocked
@@ -573,6 +588,11 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                                     *event_modifiers,
                                 );
                             }
+                        } else if app.tool == crate::state::Tool::Gradient {
+                            if !pen_frame && !app.stencil.handling() {
+                                let view = app.view.view(rect, w_px, h_px);
+                                crate::gradient::canvas::press(app, &view, pos, StrokeSource::Mouse);
+                            }
                         } else if app.tool.is_select() {
                             if !pen_frame {
                                 let view = app.view.view(rect, w_px, h_px);
@@ -633,6 +653,15 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                             let view = app.view.view(rect, w_px, h_px);
                             crate::pathtool::canvas::release(app, &view, pos, StrokeSource::Mouse);
                         }
+                        if app
+                            .gradient
+                            .drag
+                            .as_ref()
+                            .is_some_and(|d| d.source == StrokeSource::Mouse)
+                        {
+                            let view = app.view.view(rect, w_px, h_px);
+                            crate::gradient::canvas::release(app, &view, pos, StrokeSource::Mouse);
+                        }
                         if app.sel.drag.is_some() {
                             let view = app.view.view(rect, w_px, h_px);
                             crate::selection::canvas::release(
@@ -687,6 +716,10 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 {
                     let view = app.view.view(rect, w_px, h_px);
                     crate::pathtool::canvas::moved(app, &view, pos, StrokeSource::Mouse);
+                }
+                if app.gradient.drag.is_some() && !pen_frame {
+                    let view = app.view.view(rect, w_px, h_px);
+                    crate::gradient::canvas::moved(app, &view, pos, StrokeSource::Mouse);
                 }
                 if app.canvas.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     let view = app.view.view(rect, w_px, h_px);
@@ -759,7 +792,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 } else if let Some(drag) = app.canvas.rotating.take() {
                     app.view.angle = drag.start_angle;
                     app.view.pan = drag.start_pan;
-                } else {
+                } else if !crate::gradient::canvas::cancel(app) {
                     crate::selection::canvas::cancel(app);
                 }
             }
@@ -793,6 +826,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 app.canvas.pen_once = None;
                 app.sel.cancel_drafts();
                 app.transform_cancel_drag(); // 離したのを受け取れないので、移動・変形は何も変えずにやめる
+                app.gradient_cancel_drag(); // 離したのを受け取れないので、グラデーションは何も塗らずにやめる
                 app.canvas.rotating = None;
                 app.canvas.panning = false;
                 app.canvas.middle_rotating = false;
@@ -846,6 +880,21 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         crate::transform::canvas::commit(app);
+    }
+    // グラデーションのドラッグも、離したのを取りこぼしたら、最後の位置で塗る
+    if app
+        .gradient
+        .drag
+        .as_ref()
+        .is_some_and(|d| d.source == StrokeSource::Mouse)
+        && !ui.input(|i| i.pointer.primary_down())
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        let view = app.view.view(rect, w_px, h_px);
+        let at = app.canvas.last_pointer.unwrap_or(rect.center());
+        crate::gradient::canvas::release(app, &view, at, StrokeSource::Mouse);
     }
     if !ui.input(|i| i.pointer.primary_down()) {
         app.canvas.rotating = None;

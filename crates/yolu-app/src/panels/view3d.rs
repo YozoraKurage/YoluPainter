@@ -185,6 +185,16 @@ impl View3dSlot {
             // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
         }
+        // 塗りつぶしの層の置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
+        let mut gizmo_cursor = None;
+        if drawn && !app.view3d.pose.mode {
+            let pointer = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            crate::fillfx::gizmo::draw(ui, app, content, pointer);
+            gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
+            crate::fillfx::decal_drop(ui, app, content);
+        }
         if !drawn {
             self.placeholder(ui, app, content);
         } else if app.view3d.pose.mode {
@@ -204,6 +214,9 @@ impl View3dSlot {
                     CursorIcon::Default
                 });
             }
+        } else if let Some(icon) = gizmo_cursor {
+            // 形のギズモのハンドルの上（ブラシの円は出さない）
+            ui.ctx().set_cursor_icon(icon);
         } else if app.tool.is_path() {
             // パスの道具: 選んでいる層のパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui

@@ -27,6 +27,8 @@ pub enum Tool {
     Eraser,
     /// バケツ（範囲を 1 回で塗る。範囲は近い色か、モデルの三角形・メッシュの塊・UV アイランド・マテリアル）。
     Fill,
+    /// グラデーション（2D のキャンバスをドラッグして、始点から終点へ線形か放射で塗る）。
+    Gradient,
     /// ポリゴン塗りつぶし（押したまま通った範囲を足していく。離して 1 回の Undo）。
     PolygonFill,
     /// スポイト（押した所の値を描画色かマテリアルの値に取る。`eyedrop`）。
@@ -47,10 +49,11 @@ pub enum Tool {
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 13] = [
+    pub const ALL: [Tool; 14] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
+        Tool::Gradient,
         Tool::PolygonFill,
         Tool::Eyedropper,
         Tool::SelectRect,
@@ -68,6 +71,7 @@ impl Tool {
             Tool::Brush => "brush",
             Tool::Eraser => "eraser",
             Tool::Fill => "fill",
+            Tool::Gradient => "gradient",
             Tool::PolygonFill => "polygon-fill",
             Tool::Eyedropper => "eyedropper",
             Tool::IdSelect => "id-select",
@@ -89,6 +93,7 @@ impl Tool {
             Tool::Brush => lang.pick("ブラシ", "Brush"),
             Tool::Eraser => lang.pick("消しゴム", "Eraser"),
             Tool::Fill => lang.pick("バケツ", "Fill"),
+            Tool::Gradient => lang.pick("グラデーション", "Gradient"),
             Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
             Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
             Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
@@ -106,6 +111,7 @@ impl Tool {
             Tool::Brush => "B",
             Tool::Eraser => "E",
             Tool::Fill => "G",
+            Tool::Gradient => "Shift+G",
             Tool::PolygonFill => "4",
             Tool::Eyedropper => "I",
             Tool::IdSelect => "Shift+W",
@@ -445,6 +451,10 @@ pub enum Action {
     Sel(crate::selection::SelAction),
     /// パスの道具（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
     Path(crate::pathtool::PathAction),
+    /// 塗りつぶしの層の画像と投影・デカール・形のグラデーション（文書を変える操作は 1 つが 1 回の Undo。置き場のギズモは画面だけ）。
+    Fill(crate::fillfx::FillOp),
+    /// グラデーションの道具（形・終点・塗る/消す・ドラッグで塗る）。
+    Gradient(crate::gradient::GradientOp),
     /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     Quit,
@@ -537,7 +547,8 @@ impl Action {
                 | Action::ToggleVisible(_)
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
-        )
+        ) || matches!(self, Action::Fill(op) if op.edits_document())
+            || matches!(self, Action::Gradient(op) if op.edits_document())
     }
 }
 
@@ -632,6 +643,10 @@ pub struct AppState {
     pub eyedrop: crate::eyedrop::EyedropState,
     /// パスの道具（選んだ点・点のドラッグ・スライダーの途中の値。パスそのものは文書が持つ）。
     pub path: crate::pathtool::PathState,
+    /// 塗りつぶしの層の画像と投影・形のグラデーションの画面の状態（置き場のギズモ・ランプの選び・展開した画像の覚え）。
+    pub fillfx: crate::fillfx::FillFxState,
+    /// グラデーションの道具の設定と途中の状態。
+    pub gradient: crate::gradient::GradientState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定の窓。
@@ -674,6 +689,8 @@ pub enum DialogRequest {
     OpenStencil,
     /// 新規プロジェクト・プロジェクトの構成の窓で、モデル（FBX）を選ぶ。
     ProjectModel,
+    /// 塗りつぶしの画像にする PNG を選ぶ（棚へ取り込む）。
+    FillImage,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -785,6 +802,8 @@ impl AppState {
             transform: Default::default(),
             eyedrop: Default::default(),
             path: Default::default(),
+            fillfx: Default::default(),
+            gradient: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -886,6 +905,8 @@ impl AppState {
             Action::Brush(action) => self.brush_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
+            Action::Fill(op) => self.fill_apply(op),
+            Action::Gradient(op) => self.gradient_apply(op),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {
@@ -1068,6 +1089,7 @@ impl AppState {
                     self.sel_tool_changed();
                     self.transform_cancel_drag();
                     self.path_tool_changed();
+                    self.gradient_cancel_drag();
                 }
                 self.tool = tool;
             }

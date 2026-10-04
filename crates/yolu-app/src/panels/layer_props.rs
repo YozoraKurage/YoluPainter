@@ -52,7 +52,10 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
     }
     lock_section(ui, app, rows);
     match kind {
-        LayerKind::Fill => fill_section(ui, app, rows, id, enabled, lang),
+        LayerKind::Fill => {
+            fill_section(ui, app, rows, id, enabled, lang);
+            super::fill_props::sections(ui, app, rows, id, enabled, lang);
+        }
         LayerKind::Adjustment => adjustment_section(ui, app, rows, id, enabled, lang),
         _ => {}
     }

@@ -1,0 +1,742 @@
+//! 塗りつぶしの層の画像と投影・デカール・ワールドスペースのグラデーション（Substance の Fill の画像と Projection、Decal）の画面の状態と操作。
+//!
+//! - 文書が持つもの（チャンネルごとの画像の参照・層ごとの投影・チャンネルごとの形のグラデーション）は core の `Document` が決め、ここは
+//!   選ぶ・渡す・覚えるだけ。どの変更も `Action::Fill` を通る（欄・キー・試験と同じ道）。1 つの操作が 1 回の Undo で、スライダー・数値・ギズモの
+//!   ドラッグは `coalesce` で離すまでを 1 回にまとめる。断られたら何も変えず、理由を状態の帯へ。
+//! - 画像の画素は棚（`inputs`）から、文書の効果の入力へ渡す。マップ（位置・法線）とモデルのルートは、その入力を作る側（メッシュマップの
+//!   ベイク）が渡す。入力がそろわない間は、core が値を見せ、その理由を `inactive_effect_list` が言う（欄は理由を短く出す）。
+//! - 置き場（投影の箱・グラデーションの形）は 3D ビューのギズモ（`gizmo`、`view3d::shape_gizmo`）で動かす。決め方は `placement`。
+
+pub mod gizmo;
+pub mod inputs;
+pub mod placement;
+
+use std::path::PathBuf;
+
+use egui::{Pos2, Rect};
+use yolu_core::fill_image::{FillError, Projection, ProjectionMode, Wrap};
+use yolu_core::generator::Settings;
+use yolu_core::glam::Vec2;
+use yolu_core::{
+    Channel, ChannelKind, ImageId, InactiveReason, InactiveTarget, LayerId, LayerKind, Rgba8,
+};
+
+use crate::lang::Lang;
+use crate::matpaint::refusal_text;
+use crate::state::{AppState, DialogRequest};
+use crate::ui::ramp::Selection;
+use crate::view3d::shape_gizmo::{Handle, Mode};
+
+/// 塗りつぶしの画面の状態。
+#[derive(Default)]
+pub struct FillFxState {
+    /// ギズモの組（移動の矢印と中心の四角か、回す輪か）。
+    pub gizmo_mode: Mode,
+    /// 投影の置き場のハンドルを隠している（Q・欄のボタン）。
+    pub handles_hidden: bool,
+    /// 3D ビューで形を編集している塗りつぶしのグラデーション（層とチャンネル）。
+    pub edit_gradient: Option<(LayerId, Channel)>,
+    /// 3D ビューで形を編集している、フィルターの欄の形のグラデーションの Generator（層とフィルターの段）。
+    pub edit_filter: Option<(LayerId, yolu_core::FilterId)>,
+    /// ギズモのドラッグの途中。
+    pub drag: Option<gizmo::ShapeDrag>,
+    /// ポインタの下のハンドル（カーソル用。描くたびに更新）。
+    pub hover: Handle,
+    /// ランプの分岐点の選び（欄が覚える）。`ramp_for` はどのグラデーションの選びか。
+    pub ramp_selection: Selection,
+    pub ramp_for: Option<(LayerId, Channel)>,
+    /// 展開した棚の画像の覚え。
+    pub images: inputs::ImageCache,
+}
+
+/// 塗りつぶしの操作（`Action::Fill`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum FillOp {
+    /// チャンネルが読む画像を差す・外す（外しても値は残る）。
+    Image {
+        layer: LayerId,
+        channel: Channel,
+        image: Option<ImageId>,
+    },
+    /// 投影を置き換える（`coalesce` ならドラッグを 1 回にまとめる）。
+    Projection {
+        layer: LayerId,
+        projection: Box<Projection>,
+        coalesce: bool,
+    },
+    /// 投影の種類を替える。UV から型の上の投影に替えたとき、置き場が初めのままならモデルの外形に合わせる。
+    ProjectionMode {
+        layer: LayerId,
+        mode: ProjectionMode,
+    },
+    /// 置き場をモデルに合わせる（外形。デカールは今のビューから見て正面）。
+    FitPlacement {
+        layer: LayerId,
+    },
+    /// チャンネルのグラデーションを置き換える・外す。
+    Gradient {
+        layer: LayerId,
+        channel: Channel,
+        gradient: Option<Box<Settings>>,
+        coalesce: bool,
+    },
+    /// 新しい形のグラデーション（モデルの外形の半分の箱、色の階調つき）を足して 3D ビューで編集できるようにする。
+    AddGradient {
+        layer: LayerId,
+        channel: Channel,
+    },
+    /// 3D ビューのモデルへ画像をデカールとして置く（`at` は画面の点、`rect` は 3D ビューの表示域）。
+    PlaceDecal {
+        image: ImageId,
+        at: Pos2,
+        rect: Rect,
+    },
+    /// 棚の画像の読み方（色空間。文書の履歴に入らない）。リニアの画像は、色のチャンネルでは sRGB に直して読み、データのチャンネルでは
+    /// どれでも画素の値のまま読む。
+    ImageColorSpace {
+        image: ImageId,
+        space: yolu_core::ImageColorSpace,
+    },
+    /// 棚へ PNG を取り込む（棚の画像として入る。文書は変えない）。
+    ImportImage(PathBuf),
+    /// PNG を選ぶ窓を開く。
+    ImportImageDialog,
+    // ── 画面だけ ──
+    /// 置き場のハンドルを隠す・出す。
+    Handles(bool),
+    ToggleHandles,
+    GizmoMode(Mode),
+    /// グラデーションの形を 3D ビューで編集する・やめる。
+    EditGradient(Option<(LayerId, Channel)>),
+    /// フィルターの欄の形のグラデーションの Generator の形を 3D ビューで編集する・やめる。
+    EditFilter(Option<(LayerId, yolu_core::FilterId)>),
+}
+
+impl FillOp {
+    /// 文書を変える操作か（読むだけのセットでは断る）。
+    pub fn edits_document(&self) -> bool {
+        // 画像の読み方は棚の索引を替えるだけで、文書の層は変えない（読むだけのセットでも替えられる）
+        matches!(
+            self,
+            FillOp::Image { .. }
+                | FillOp::Projection { .. }
+                | FillOp::ProjectionMode { .. }
+                | FillOp::FitPlacement { .. }
+                | FillOp::Gradient { .. }
+                | FillOp::AddGradient { .. }
+                | FillOp::PlaceDecal { .. }
+        )
+    }
+}
+
+/// 画像を差したチャンネルに値が無いとき core が置く既定の値（画像が使えない所に出る）。
+pub fn default_fallback(kind: ChannelKind) -> Rgba8 {
+    match kind {
+        ChannelKind::Normal => Rgba8::new(128, 128, 255, 255),
+        ChannelKind::Scalar => Rgba8::new(128, 128, 128, 255),
+        ChannelKind::Color => Rgba8::new(255, 255, 255, 255),
+    }
+}
+
+impl Lang {
+    /// 塗りつぶしの投影の値の断り（core の `FillError`）。
+    pub fn fill_error(self, e: &FillError) -> String {
+        match e {
+            FillError::Invalid(what) => self.pick(
+                format!("投影の値が使えません: {what}"),
+                format!(
+                    "Invalid projection: {}",
+                    match *what {
+                        "投影に有限でない値" | "箱に有限でない値" =>
+                            "not a finite number",
+                        "繰り返しは 0.001..10000" => "tiling must be 0.001 to 10000",
+                        "オフセット・回転の範囲" => "offset or rotation out of range",
+                        "混ぜ幅・減衰の範囲" => "blend or falloff out of range",
+                        "減衰はデカールだけ" => "falloff is for decals only",
+                        "箱の位置・回転・大きさの範囲" =>
+                            "box position, rotation or size out of range",
+                        _ => "out of range",
+                    }
+                ),
+            ),
+            other => self.pick(other.to_string(), "The projection cannot be used".into()),
+        }
+    }
+}
+
+/// 層・チャンネルの効かない理由（無ければ `None`）。画像は `FillImage`、グラデーションは `FillGradient`、デカールは `Decal`。
+fn inactive_reason(
+    app: &AppState,
+    layer: LayerId,
+    target: InactiveTarget,
+) -> Option<InactiveReason> {
+    app.doc
+        .inactive_effect_list()
+        .into_iter()
+        .find(|e| e.layer == layer && e.target == target)
+        .map(|e| e.reason)
+}
+
+impl AppState {
+    /// 画像を使う層が、今は画像を投影できない理由（短い文。使えれば `None`）。
+    pub fn fill_image_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
+        inactive_reason(self, layer, InactiveTarget::FillImage(channel))
+            .map(|r| self.lang.inactive_reason(&r))
+    }
+
+    /// デカールが今は出ていない理由。
+    pub fn decal_problem(&self, layer: LayerId) -> Option<String> {
+        inactive_reason(self, layer, InactiveTarget::Decal).map(|r| self.lang.inactive_reason(&r))
+    }
+
+    /// チャンネルのグラデーションが今は値を見せている理由。
+    pub fn fill_gradient_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
+        inactive_reason(self, layer, InactiveTarget::FillGradient(channel))
+            .map(|r| self.lang.inactive_reason(&r))
+    }
+
+    /// 3D のモデルの外形（無ければ `None`）。
+    pub fn model_bounds(&self) -> Option<yolu_core::geometry::Bounds> {
+        self.view3d.model.as_ref().map(|m| m.geometry.bounds())
+    }
+
+    fn fill_refusal(&mut self, e: &yolu_core::CoreError) {
+        self.message = refusal_text(self.lang, e);
+    }
+
+    /// 塗りつぶしの層の id（塗りつぶしでなければ理由を出して `None`）。
+    fn fill_layer(&mut self, layer: LayerId) -> Option<LayerId> {
+        match self.doc.layer(layer).map(|l| l.kind()) {
+            Some(LayerKind::Fill) => Some(layer),
+            _ => {
+                self.message = self
+                    .lang
+                    .pick("塗りつぶしのレイヤーではありません", "Not a fill layer")
+                    .into();
+                None
+            }
+        }
+    }
+
+    /// 塗りつぶしの操作を当てる。断られたら何も変えず、理由を状態の帯へ。
+    pub fn fill_apply(&mut self, op: FillOp) {
+        let lang = self.lang;
+        if op.edits_document() && self.is_stroking() {
+            self.message = lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into();
+            return;
+        }
+        let revision = self.doc.revision();
+        match op {
+            FillOp::Image {
+                layer,
+                channel,
+                image,
+            } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                self.fillfx_sync_images(image);
+                self.doc.end_coalescing();
+                match self.doc.set_fill_image(layer, channel, image) {
+                    Ok(()) => {
+                        self.message =
+                            match image.and_then(|i| self.shelf.get(&inputs::resource_id(i))) {
+                                Some(r) => format!(
+                                    "{}: {}",
+                                    lang.pick("画像を差しました", "Image set"),
+                                    r.name
+                                ),
+                                None => lang.pick("画像を外しました", "Image removed").into(),
+                            };
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::Projection {
+                layer,
+                projection,
+                coalesce,
+            } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                let projection = *projection;
+                if let Err(e) = projection.validate() {
+                    self.message = lang.fill_error(&e);
+                    return;
+                }
+                if let Err(e) = self.doc.set_fill_projection(layer, projection, coalesce) {
+                    self.fill_refusal(&e);
+                }
+            }
+            FillOp::ProjectionMode { layer, mode } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                self.set_projection_mode(layer, mode);
+            }
+            FillOp::FitPlacement { layer } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                let Some(l) = self.doc.layer(layer) else {
+                    return;
+                };
+                let mut p = *l.projection();
+                match self.fitted_placement(layer, p.mode) {
+                    Some(placement) => {
+                        p.placement = placement;
+                        self.doc.end_coalescing();
+                        if let Err(e) = self.doc.set_fill_projection(layer, p, false) {
+                            self.fill_refusal(&e);
+                        }
+                    }
+                    None => {
+                        self.message = lang.pick("モデルがありません", "No model").into();
+                    }
+                }
+            }
+            FillOp::Gradient {
+                layer,
+                channel,
+                gradient,
+                coalesce,
+            } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                if !coalesce {
+                    self.doc.end_coalescing();
+                }
+                let gradient = gradient.map(|g| *g);
+                let clear = gradient.is_none();
+                if let Err(e) = self
+                    .doc
+                    .set_fill_gradient(layer, channel, gradient, coalesce)
+                {
+                    self.fill_refusal(&e);
+                } else if clear && self.fillfx.edit_gradient == Some((layer, channel)) {
+                    self.fillfx.edit_gradient = None;
+                }
+            }
+            FillOp::AddGradient { layer, channel } => {
+                let Some(layer) = self.fill_layer(layer) else {
+                    return;
+                };
+                let settings = placement::new_shape_gradient(self.model_bounds().as_ref());
+                self.doc.end_coalescing();
+                match self
+                    .doc
+                    .set_fill_gradient(layer, channel, Some(settings), false)
+                {
+                    Ok(()) => {
+                        self.fillfx.edit_gradient = Some((layer, channel));
+                        self.fillfx.handles_hidden = false;
+                    }
+                    Err(e) => self.fill_refusal(&e),
+                }
+            }
+            FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
+            FillOp::ImportImage(path) => {
+                // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
+                // その間に取り込むと取り込んだ画像が消え、その画像を差した層が棚に無い画像を指す）
+                if self.shelf_refuse_while_saving() {
+                    return;
+                }
+                self.import_image_file(&path)
+            }
+            FillOp::ImageColorSpace { image, space } => {
+                if self.is_stroking() {
+                    self.message = lang
+                        .pick("描いている間はできません。", "Not while drawing.")
+                        .into();
+                    return;
+                }
+                // 読み方は棚の索引に書くので、取り込みと同じく保存中は断る
+                if self.shelf_refuse_while_saving() {
+                    return;
+                }
+                let id = inputs::resource_id(image);
+                let text = match space {
+                    yolu_core::ImageColorSpace::Srgb => "srgb",
+                    yolu_core::ImageColorSpace::Linear => "linear",
+                    yolu_core::ImageColorSpace::Unspecified => "unspecified",
+                };
+                match self.shelf.set_image_color_space(lang, &id, text) {
+                    Ok(true) => {
+                        self.modified = true;
+                        self.fillfx_sync_images(Some(image));
+                    }
+                    Ok(false) => {}
+                    Err(why) => self.message = why,
+                }
+            }
+            FillOp::ImportImageDialog => {
+                if !self.shelf_refuse_while_saving() {
+                    self.dialog_request = Some(DialogRequest::FillImage)
+                }
+            }
+            FillOp::Handles(hidden) => {
+                if hidden
+                    && self
+                        .fillfx
+                        .drag
+                        .as_ref()
+                        .is_some_and(|d| matches!(d.target, gizmo::Target::Projection(_)))
+                {
+                    gizmo::release(self, false);
+                }
+                if !hidden
+                    && (self.fillfx.edit_gradient.is_some() || self.fillfx.edit_filter.is_some())
+                {
+                    gizmo::release(self, false);
+                    self.fillfx.edit_gradient = None;
+                    self.fillfx.edit_filter = None;
+                }
+                self.fillfx.handles_hidden = hidden;
+            }
+            FillOp::ToggleHandles => {
+                let hidden = !self.fillfx.handles_hidden;
+                self.fill_apply(FillOp::Handles(hidden));
+                return;
+            }
+            FillOp::GizmoMode(mode) => {
+                if self.fillfx.drag.is_none() {
+                    self.fillfx.gizmo_mode = mode;
+                }
+            }
+            FillOp::EditGradient(target) => {
+                if self.fillfx.edit_gradient != target {
+                    gizmo::release(self, false);
+                }
+                self.fillfx.edit_gradient = target;
+                if let Some((layer, _)) = target {
+                    self.fillfx.edit_filter = None; // ギズモは 1 つ
+                    self.selected_layer = Some(layer);
+                    self.set_edit_mask(false);
+                    self.fillfx.handles_hidden = false;
+                }
+            }
+            FillOp::EditFilter(target) => {
+                if self.fillfx.edit_filter != target {
+                    gizmo::release(self, false);
+                }
+                self.fillfx.edit_filter = target;
+                if let Some((layer, _)) = target {
+                    self.fillfx.edit_gradient = None;
+                    self.selected_layer = Some(layer);
+                }
+            }
+        }
+        if self.doc.revision() != revision {
+            self.modified = true;
+        }
+    }
+
+    /// 投影の種類を替える（C# の `SetProjectionMode`）。デカールは画像を 1 回（繰り返さない）、UV から型の上の投影に替えたとき置き場が
+    /// 初めのままならモデルの外形に合わせる。置き場のハンドルをすぐ動かせるように出す。
+    fn set_projection_mode(&mut self, layer: LayerId, mode: ProjectionMode) {
+        let Some(l) = self.doc.layer(layer) else {
+            return;
+        };
+        let p = *l.projection();
+        if p.mode == mode {
+            return;
+        }
+        let mut next = Projection { mode, ..p };
+        if mode == ProjectionMode::Decal && p.wrap == Wrap::Repeat && p.tiles == [1.0, 1.0] {
+            next.wrap = Wrap::None;
+        }
+        if mode != ProjectionMode::Uv && p.placement == yolu_core::fill_image::Placement::default()
+        {
+            if let Some(placement) = self.fitted_placement(layer, mode) {
+                next.placement = placement;
+            }
+        }
+        // 球でない投影へ替えるときの減衰は、デカールだけが持つ（core が断る）。デカールを出るなら既定の減衰へ戻す
+        if mode != ProjectionMode::Decal {
+            let d = Projection::default();
+            next.depth_hardness = d.depth_hardness;
+            next.backface_angle = d.backface_angle;
+            next.backface_hardness = d.backface_hardness;
+        }
+        self.doc.end_coalescing();
+        match self.doc.set_fill_projection(layer, next, false) {
+            Ok(()) => {
+                if mode != ProjectionMode::Uv {
+                    self.fillfx.handles_hidden = false;
+                }
+            }
+            Err(e) => self.fill_refusal(&e),
+        }
+    }
+
+    /// モデルの外形に合わせた置き場（モデルが無ければ `None`）。デカールは今の 3D ビューのカメラから見て正面。
+    pub fn fitted_placement(
+        &self,
+        layer: LayerId,
+        mode: ProjectionMode,
+    ) -> Option<yolu_core::fill_image::Placement> {
+        let bounds = self.model_bounds()?;
+        if mode != ProjectionMode::Decal {
+            return Some(placement::fit_to_bounds(&bounds, mode));
+        }
+        let rotation = self.view3d.camera.rotation();
+        let image = self.doc.layer(layer).and_then(|l| {
+            l.fill_images().find_map(|(_, id)| {
+                self.doc
+                    .effect_inputs()
+                    .image(id)
+                    .map(|i| (i.width, i.height))
+            })
+        });
+        Some(placement::decal_fit(
+            &bounds,
+            rotation * yolu_core::glam::Vec3::Z,
+            rotation * yolu_core::glam::Vec3::Y,
+            image,
+        ))
+    }
+
+    /// 3D ビューの点の面に、棚の画像のデカールを置く: 選んだ層の上に、今のチャンネルにその画像（と画像を使えないときの値）を持つ
+    /// 塗りつぶしの層を作り、投影をデカールにして面に向ける（1 回の Undo）。置けない（モデルの外・ほかのテクスチャセットの面）ときは
+    /// 何も変えずに理由を出す。
+    fn place_decal(&mut self, image: ImageId, at: Pos2, rect: Rect) {
+        let lang = self.lang;
+        let Some((model, material)) = self.region_model() else {
+            self.message = self.region_missing_reason();
+            return;
+        };
+        let view = self.view3d.camera.view(rect.width(), rect.height());
+        let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
+        let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
+            self.message = lang
+                .pick("モデルの上ではありません", "Not on the model")
+                .into();
+            return;
+        };
+        if hit.material != material {
+            let name = model.material_name(hit.material as usize, lang);
+            self.message = lang.pick(
+                format!("ほかのテクスチャセット（{name}）の面です。"),
+                format!("Surface of another texture set ({name})."),
+            );
+            return;
+        }
+        let rid = inputs::resource_id(image);
+        let Some(resource) = self.shelf.get(&rid).cloned() else {
+            self.message = lang
+                .pick("棚に画像がありません", "The shelf has no such image")
+                .into();
+            return;
+        };
+        self.fillfx_sync_images(Some(image));
+        let Some(size) = self
+            .doc
+            .effect_inputs()
+            .image(image)
+            .map(|i| (i.width, i.height))
+        else {
+            self.message = lang
+                .pick("画像を読めません", "Cannot read the image")
+                .into();
+            return;
+        };
+        let channel = self.m2.paint_channel;
+        let kind = self
+            .doc
+            .channel_info(channel)
+            .map_or(ChannelKind::Color, |c| c.kind);
+        let placed = placement::decal_at(&hit, &view, gui, size);
+        let projection = Projection {
+            mode: ProjectionMode::Decal,
+            wrap: Wrap::None,
+            placement: placed,
+            ..Projection::default()
+        };
+        let above = self
+            .selected_layer
+            .filter(|id| self.doc.layer(*id).is_some());
+        self.doc.end_coalescing();
+        let name = resource.name.clone();
+        let result = self.doc.batch(|d| {
+            let id = d.add_fill_layer(&name, &[(channel, default_fallback(kind))], above)?;
+            d.set_fill_image(id, channel, Some(image))?;
+            d.set_fill_projection(id, projection, false)?;
+            Ok(id)
+        });
+        match result {
+            Ok(id) => {
+                self.selected_layer = Some(id);
+                self.set_edit_mask(false);
+                self.fillfx.handles_hidden = false;
+                self.fillfx.edit_gradient = None;
+                self.message = match self.decal_problem(id) {
+                    None => format!(
+                        "{}: {name}",
+                        lang.pick("デカールを置きました", "Decal placed")
+                    ),
+                    Some(why) => format!(
+                        "{}: {name}（{why}）",
+                        lang.pick(
+                            "デカールを置きました。まだ出ません",
+                            "Decal placed, not shown yet"
+                        ),
+                    ),
+                };
+            }
+            Err(e) => self.fill_refusal(&e),
+        }
+    }
+
+    /// PNG のファイルを棚の画像として取り込む（文書は変えない）。大きすぎる・読めない・棚がいっぱいのときは理由を出す。棚にもう同じ中身が
+    /// あれば、足さずにその画像を選ぶだけ（棚も文書も「変えた」にしない）。
+    fn import_image_file(&mut self, path: &std::path::Path) {
+        let lang = self.lang;
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image")
+            .to_owned();
+        let (mut rgba, w, h) = match read_png(path, lang) {
+            Ok(read) => read,
+            Err(why) => {
+                self.message = format!("{name}: {why}");
+                return;
+            }
+        };
+        // 文書と同じ向き（下の行が先）で渡す（読んだ画素の並びをその場で返す。大きな画像の写しを重ねない）
+        flip_rows(&mut rgba, w as usize * 4);
+        let before = self.shelf.resources().len();
+        match self.shelf.add_image(lang, &name, &rgba, w, h) {
+            Ok(id) => {
+                let added = self.shelf.resources().len() > before;
+                self.shelf.selected = Some(id);
+                if added {
+                    self.modified = true;
+                }
+                self.message = format!(
+                    "{}: {name}",
+                    if added {
+                        lang.pick("棚に画像を取り込みました", "Image added to the shelf")
+                    } else {
+                        lang.pick("すでに棚にあります", "Already on the shelf")
+                    }
+                );
+            }
+            Err(why) => self.message = format!("{name}: {why}"),
+        }
+    }
+}
+
+/// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。
+const MAX_IMAGE_SIDE: u32 = 8192;
+
+/// PNG を straight RGBA8（上の行が先）で読む。寸法はヘッダーで先に見て、画素を読む前に断る（大きすぎる画像で全体を展開しない）。
+/// 読める上限（1 辺と確保）は `Limits` でも守る。
+fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), String> {
+    use image::ImageDecoder;
+    let unreadable = || {
+        lang.pick("PNG として読めません", "Not a readable PNG")
+            .to_owned()
+    };
+    let file = std::fs::File::open(path).map_err(|e| lang.file_error(&e))?;
+    let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))
+        .map_err(|_| unreadable())?;
+    let (w, h) = decoder.dimensions();
+    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
+        return Err(lang
+            .pick(
+                "画像の 1 辺は 1〜8192 です",
+                "Image sides must be 1 to 8192",
+            )
+            .to_owned());
+    }
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    limits.max_alloc = Some(1 << 30);
+    decoder.set_limits(limits).map_err(|_| unreadable())?;
+    let img = image::DynamicImage::from_decoder(decoder)
+        .map_err(|_| unreadable())?
+        .into_rgba8();
+    Ok((img.into_raw(), w, h))
+}
+
+/// 行の並びを上下逆にする（1 行は `stride` バイト）。
+fn flip_rows(raw: &mut [u8], stride: usize) {
+    let rows = raw.len() / stride;
+    for y in 0..rows / 2 {
+        let (head, tail) = raw.split_at_mut((rows - 1 - y) * stride);
+        head[y * stride..(y + 1) * stride].swap_with_slice(&mut tail[..stride]);
+    }
+}
+
+/// 棚の画像を読んでいる層の名前（全部のテクスチャセット。セットが 2 つ以上ならセットの名前を前に付ける）。棚から消す前の確かめに使う。
+pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
+    let Some(image) = inputs::image_id(resource_id) else {
+        return Vec::new();
+    };
+    let named = app.sets.len() > 1;
+    let mut users = Vec::new();
+    for (i, set) in app.sets.iter().enumerate() {
+        for layer in app.set_doc(i).layers() {
+            if layer.fill_images().any(|(_, id)| id == image) {
+                users.push(if named {
+                    format!("{}: {}", set.name, layer.name())
+                } else {
+                    layer.name().to_owned()
+                });
+            }
+        }
+    }
+    users
+}
+
+/// 3D ビューの上で棚の画像を引いているとき、落とす所の印（ポインタの下の面に当たるなら輪）を描き、離したらデカールを置く。画像でない
+/// 素材は何もしない（レイヤーの一覧が受け取る）。
+pub fn decal_drop(ui: &egui::Ui, app: &mut AppState, content: Rect) {
+    let ctx = ui.ctx();
+    let Some(drag) = egui::DragAndDrop::payload::<crate::shelf::ShelfDrag>(ctx) else {
+        return;
+    };
+    if drag.kind != crate::shelf::ItemKind::Image {
+        return;
+    }
+    let Some(at) = ctx.pointer_latest_pos().filter(|p| content.contains(*p)) else {
+        return;
+    };
+    let painter = ui.painter_at(content);
+    let on_model = app.region_model().is_some_and(|(model, _)| {
+        let view = app.view3d.camera.view(content.width(), content.height());
+        yolu_core::geometry::pick(
+            &model.geometry,
+            &view,
+            Vec2::new(at.x - content.left(), at.y - content.top()),
+        )
+        .is_some()
+    });
+    let color = if on_model {
+        egui::Color32::WHITE
+    } else {
+        crate::ui::theme::TEXT_DISABLED
+    };
+    painter.circle_stroke(
+        at,
+        14.0,
+        egui::Stroke::new(3.0, egui::Color32::from_black_alpha(140)),
+    );
+    painter.circle_stroke(at, 14.0, egui::Stroke::new(1.5, color));
+    if ui.input(|i| i.pointer.any_released()) {
+        if let Some(image) = inputs::image_id(&drag.id) {
+            app.apply(crate::state::Action::Fill(FillOp::PlaceDecal {
+                image,
+                at,
+                rect: content,
+            }));
+        }
+        egui::DragAndDrop::clear_payload(ctx);
+    }
+}

@@ -5,6 +5,7 @@ pub mod brush_props;
 pub mod brushes;
 pub mod channels;
 pub mod color;
+pub mod fill_props;
 pub mod layer_props;
 pub mod layers;
 pub mod material;

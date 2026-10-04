@@ -11,6 +11,7 @@ pub mod model;
 pub mod paint;
 pub mod pose;
 pub mod render;
+pub mod shape_gizmo;
 pub mod tangents;
 
 use std::sync::Arc;

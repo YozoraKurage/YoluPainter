@@ -221,7 +221,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 pub fn owns_properties(app: &AppState, paint_context: bool) -> bool {
     match app.tool {
         Tool::IdSelect => true,
-        Tool::Fill | Tool::PolygonFill => paint_context,
+        Tool::Fill | Tool::PolygonFill | Tool::Gradient => paint_context,
         _ => false,
     }
 }
@@ -231,6 +231,10 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
         Tool::IdSelect => id_section(ui, app, rows),
         Tool::Fill | Tool::PolygonFill => {
             region_section(ui, app, rows, ctx);
+            super::material::material_section(ui, app, rows);
+        }
+        Tool::Gradient => {
+            crate::gradient::props::body(ui, app, rows);
             super::material::material_section(ui, app, rows);
         }
         _ => {}

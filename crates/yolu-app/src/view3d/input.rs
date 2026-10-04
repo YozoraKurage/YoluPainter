@@ -363,6 +363,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     let flush = |app: &mut AppState, drag_at: &mut Option<Pos2>| {
         if let Some(at) = drag_at.take() {
             gizmo::drag_to(app, rect, at, snap);
+            // 塗りつぶしの形のギズモ（Shift で両側、Ctrl で刻み）
+            crate::fillfx::gizmo::drag_to(app, rect, at, shift, snap);
         }
     };
 
@@ -371,6 +373,21 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
         !pen.is_empty() || matches!(app.view3d.input.stroke, Some(StrokeSource::Pen(_)));
     for s in pen {
         let p = s.pos_points(ppp);
+        // 形のギズモをこのペンで掴んでいる間は、その点でドラッグを進め、離したら確定する
+        if app
+            .fillfx
+            .drag
+            .as_ref()
+            .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Pen(s.pointer_id))
+        {
+            if s.contact {
+                drag_at = Some(p);
+            } else {
+                flush(app, &mut drag_at);
+                crate::fillfx::gizmo::release(app, true);
+            }
+            continue;
+        }
         // 押した瞬間に終わるツール（バケツ・ID の色で選択）をこのペンで押している間は、次の点で押し直さない（離したら印を下ろす）
         if app.view3d.input.pen_once == Some(s.pointer_id) {
             if !s.contact {
@@ -396,6 +413,17 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 && app.view3d.input.nav.is_none()
                 && !app.stencil.handling() =>
             {
+                // 形のギズモのハンドルの上なら、描かずにドラッグを始める
+                if !pose_mode
+                    && crate::fillfx::gizmo::press(
+                        app,
+                        rect,
+                        p,
+                        crate::fillfx::gizmo::Source::Pen(s.pointer_id),
+                    )
+                {
+                    continue;
+                }
                 begin(
                     app,
                     rect,
@@ -467,7 +495,15 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                                 gizmo::press(app, rect, pos);
                             }
                         } else if !app.stencil.handling() {
-                            begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
+                            // 形のギズモのハンドルの上なら、描かずにドラッグを始める
+                            if !crate::fillfx::gizmo::press(
+                                app,
+                                rect,
+                                pos,
+                                crate::fillfx::gizmo::Source::Mouse,
+                            ) {
+                                begin(app, rect, pos, 1.0, StrokeSource::Mouse, false);
+                            }
                         }
                     }
                 } else {
@@ -490,6 +526,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                     if *button == PointerButton::Primary {
                         flush(app, &mut drag_at);
                         gizmo::release(app, true);
+                        if app.fillfx.drag.as_ref().is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse) {
+                            crate::fillfx::gizmo::release(app, true);
+                        }
                     }
                 }
                 app.view3d.input.last_pointer = Some(pos);
@@ -511,7 +550,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 if !pen_frame {
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
                 }
-                if app.view3d.pose.drag.is_some() {
+                if app.view3d.pose.drag.is_some()
+                    || app.fillfx.drag.as_ref().is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                {
                     drag_at = Some(pos);
                 }
                 if let Some((nav, _)) = app.view3d.input.nav {
@@ -547,9 +588,16 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 if app.view3d.input.stroke.is_some() && !path_esc {
                     finish(app, true);
                 }
-                // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）
+                // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）。形のギズモもドラッグの前へ戻す
                 drag_at = None;
                 gizmo::release(app, false);
+                // ペンで掴んでいた形のギズモは、ペンが触れたままの次の点で掴み直さず・描き始めない（離すまで待つ）
+                if let Some(crate::fillfx::gizmo::Source::Pen(id)) =
+                    app.fillfx.drag.as_ref().map(|d| d.source)
+                {
+                    app.view3d.input.pen_once = Some(id);
+                }
+                crate::fillfx::gizmo::release(app, false);
                 app.view3d.input.nav = None;
             }
             Event::WindowFocused(false) => {
@@ -559,6 +607,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                 app.view3d.input.pen_once = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
+                // 形のギズモは離したのを受け取れないので、ドラッグの前に戻す（履歴にも残さない）
+                drag_at = None;
+                crate::fillfx::gizmo::release(app, false);
                 app.view3d.input.nav = None;
             }
             _ => {}
@@ -590,6 +641,18 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         gizmo::release(app, true);
+    }
+    if app
+        .fillfx
+        .drag
+        .as_ref()
+        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+        && !primary
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        crate::fillfx::gizmo::release(app, true);
     }
     if !any_down {
         app.view3d.input.nav = None;

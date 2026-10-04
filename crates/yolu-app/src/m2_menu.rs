@@ -48,6 +48,17 @@ pub enum Popup {
     NormalDirection,
     /// 設定の窓の選択肢。
     Pref(crate::prefs::PrefChoice),
+    /// 塗りつぶしの層のチャンネルの画像（棚の画像の一覧・ファイルから取り込む・外す）。
+    FillImage(crate::engine::LayerId, Channel),
+    /// 棚の画像の読み方（色空間）。
+    ImageSpace(yolu_core::ImageId),
+    /// 塗りつぶしの層の投影の種類・外側。
+    ProjectionMode(crate::engine::LayerId),
+    ProjectionWrap(crate::engine::LayerId),
+    /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。
+    GradientShape(crate::engine::LayerId, Channel),
+    RampPresets(crate::engine::LayerId, Channel),
+    CurvePresets(crate::engine::LayerId, Channel),
 }
 
 fn tips(
@@ -330,6 +341,13 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 })
                 .collect()
         }
+        Popup::FillImage(..)
+        | Popup::ImageSpace(_)
+        | Popup::ProjectionMode(_)
+        | Popup::ProjectionWrap(_)
+        | Popup::GradientShape(..)
+        | Popup::RampPresets(..)
+        | Popup::CurvePresets(..) => crate::panels::fill_props::entries(app, popup),
         Popup::StencilImage => crate::panels::stencil_props::image_entries(app),
         Popup::StencilMode => crate::panels::stencil_props::mode_entries(app),
         Popup::StencilTiling => crate::panels::stencil_props::tiling_entries(app),

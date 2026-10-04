@@ -151,6 +151,29 @@ impl Shelf {
         *self = Self::read(&files, self.budget)?;
         Ok(true)
     }
+    /// 画像の色空間（"srgb"・"linear"・"unspecified"）を替える。色空間は索引にだけあり（画素と中身の鍵は変わらない）、リニアの画像を
+    /// 色のチャンネルへ読むときに sRGB に直す目印になる。同じなら false（棚は変わらない）。画像でない・無い ID・知らない色空間は断る。
+    pub fn set_image_color_space(&mut self, id: &str, space: &str) -> Result<bool> {
+        check(
+            matches!(space, "srgb" | "linear" | "unspecified"),
+            "画像の色空間が不正です",
+        )?;
+        let mut resources = self.resources.clone();
+        let Some(r) = resources
+            .iter_mut()
+            .find(|r| r.id == id && r.kind == "image")
+        else {
+            return Err(crate::Error::InvalidData("その画像が棚にありません".into()));
+        };
+        if r.metadata["colorSpace"].as_str().unwrap_or("unspecified") == space {
+            return Ok(false);
+        }
+        r.metadata["colorSpace"] = json!(space);
+        let mut files = self.files.clone();
+        files.insert("resources.json".into(), Arc::from(write_index(&resources)?));
+        *self = Self::read(&files, self.budget)?;
+        Ok(true)
+    }
     /// C# ResourceIndex.Write と同じ索引。未知のキーを含む原本の保存には entries を使う。
     pub fn canonical_index(&self) -> Result<Vec<u8>> {
         write_index(&self.resources)
@@ -331,6 +354,18 @@ impl Shelf {
         let metadata = json!({"id":id,"kind":"image","name":name,"content":content,"width":width,"height":height,"colorSpace":color_space,"origin":origin});
         let png = crate::composite_png::encode(rgba, width, height)?;
         self.add(metadata, &png)
+    }
+    /// 出どころの記録を持たない画像（アプリの中で作った・外のファイルから読んだもの）を追加する。外のパスを .ylp に書き込まない。
+    pub fn add_image_without_origin(
+        &mut self,
+        id: &str,
+        name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        color_space: &str,
+    ) -> Result<String> {
+        self.add_image(id, name, rgba, width, height, color_space, json!({"type":"none"}))
     }
     pub fn add_file(
         &mut self,

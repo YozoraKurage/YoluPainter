@@ -71,6 +71,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tools/eraser_selected",
     "tools/fill",
     "tools/fill_selected",
+    "tools/gradient",
+    "tools/gradient_selected",
     "tools/polygon-fill",
     "tools/polygon-fill_selected",
     "tools/eyedropper",

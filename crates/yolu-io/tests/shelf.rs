@@ -778,3 +778,30 @@ fn files_without_an_origin_record_none_and_deduplicate() {
     files.insert("resources.json".into(), Arc::from(index));
     assert_eq!(Shelf::read(&files, 1 << 20).unwrap().resources().len(), 1);
 }
+
+#[test]
+fn an_images_color_space_changes_only_the_index_and_round_trips() {
+    let mut shelf = Shelf::new(1 << 20);
+    let rgba = [255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 0];
+    let id = shelf
+        .add_image_without_origin("11111111-1111-1111-1111-111111111111", "tile", &rgba, 2, 2, "srgb")
+        .unwrap();
+    let content = shelf.resources()[0].content.clone();
+    let png = shelf.content_bytes(&id).unwrap().to_vec();
+    assert!(shelf.set_image_color_space(&id, "linear").unwrap());
+    let r = &shelf.resources()[0];
+    assert_eq!(r.metadata["colorSpace"], "linear");
+    assert_eq!(r.content, content, "画素の鍵は変わらない");
+    assert_eq!(shelf.content_bytes(&id).unwrap(), png, "PNG は変わらない");
+    // 同じ値は何もしない
+    assert!(!shelf.set_image_color_space(&id, "linear").unwrap());
+    // 索引にだけ書かれ、読み直しても同じ
+    let index = String::from_utf8(shelf.canonical_index().unwrap()).unwrap();
+    assert!(index.contains("\"colorSpace\": \"linear\""), "{index}");
+    let again = Shelf::read(shelf.entries(), 1 << 20).unwrap();
+    assert_eq!(again.resources()[0].metadata["colorSpace"], "linear");
+    // 知らない色空間・無い画像・画像でない素材は断る
+    assert!(shelf.set_image_color_space(&id, "pink").is_err());
+    assert!(shelf.set_image_color_space("22222222-2222-2222-2222-222222222222", "srgb").is_err());
+    assert_eq!(shelf.resources()[0].metadata["colorSpace"], "linear", "断ったら変えない");
+}

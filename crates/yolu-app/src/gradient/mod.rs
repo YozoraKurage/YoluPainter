@@ -1,0 +1,235 @@
+//! グラデーションの道具（Shift+G）: 2D のキャンバスをドラッグして、始点から終点へ、線形か放射で塗る。始点の色は描画色、終点は透明かサブの色
+//! （補間は乗算済みアルファ。core の `GradientSettings`）。選んだ層の描くチャンネル 1 つ、マテリアルで塗るときはその組の全部（終点を
+//! 現在のマテリアルにして 2 つのマテリアルの間も）、マスクを描くときはマスクに（白で見せる・黒で隠す）。どれも 1 回の Undo。ロックは core が断る。
+//! 3D ビューには使わない（形のグラデーションは塗りつぶしの層の `fillfx`）。
+
+pub mod canvas;
+pub mod props;
+
+use egui::Pos2;
+use yolu_core::glam::DVec2;
+use yolu_core::material::{ChannelPaint, GradientSettings, GradientShape};
+use yolu_core::{LayerKind, Rgba8};
+
+use crate::matpaint::MaterialPaint;
+use crate::matpaint::{refusal_text, single_value};
+use crate::state::{to_byte, AppState, Rgba, StrokeSource};
+
+/// 終点の色。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum End {
+    /// 透明（始点の色が消えていく）。
+    #[default]
+    Transparent,
+    /// サブの色（背景色）。
+    Sub,
+}
+
+/// 終点にするマテリアル（「現在のマテリアルを終点に」で写した値）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct EndMaterial {
+    pub paint: MaterialPaint,
+    pub color: Rgba,
+}
+
+/// ドラッグの途中（画布の座標。左下が原点）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientDrag {
+    pub source: StrokeSource,
+    pub start: (f64, f64),
+    pub current: (f64, f64),
+    pub start_screen: Pos2,
+}
+
+/// グラデーションの道具の設定と途中の状態。
+#[derive(Clone, Debug)]
+pub struct GradientState {
+    pub shape: GradientShape,
+    pub end: End,
+    /// 消す（マスクでは黒で隠す）か。
+    pub erase: bool,
+    /// マテリアルで塗るとき、終点を `end_material` にする。
+    pub between: bool,
+    pub end_material: Option<EndMaterial>,
+    pub drag: Option<GradientDrag>,
+    /// ペンで押している間のペンの番号。
+    pub pen_down: Option<u32>,
+}
+
+impl Default for GradientState {
+    fn default() -> Self {
+        GradientState {
+            shape: GradientShape::Linear,
+            end: End::Transparent,
+            erase: false,
+            between: false,
+            end_material: None,
+            drag: None,
+            pen_down: None,
+        }
+    }
+}
+
+/// グラデーションの操作（`Action::Gradient`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum GradientOp {
+    Shape(GradientShape),
+    End(End),
+    Erase(bool),
+    /// 2 つのマテリアルの間にする。
+    Between(bool),
+    /// 現在のマテリアルを終点にする。
+    CaptureEnd,
+    /// 画布の座標の始点から終点へ塗る（ドラッグを離したとき。試験も同じ道）。
+    Apply {
+        start: (f64, f64),
+        end: (f64, f64),
+    },
+}
+
+impl GradientOp {
+    /// 文書を変える操作か（読むだけのセットでは断る）。
+    pub fn edits_document(&self) -> bool {
+        matches!(self, GradientOp::Apply { .. })
+    }
+}
+
+fn rgba8(c: Rgba) -> Rgba8 {
+    Rgba8::new(to_byte(c[0]), to_byte(c[1]), to_byte(c[2]), to_byte(c[3]))
+}
+
+impl AppState {
+    /// これ以内（画布の画素）しか動かさなければ、ドラッグでなくクリックで、何も塗らない。
+    pub const GRADIENT_CLICK: f64 = 1.5;
+
+    /// 始点の色（描画色）と終点の色。
+    fn gradient_ends(&self) -> (Rgba8, Rgba8) {
+        let from = single_value(self.color.main);
+        let to = match self.gradient.end {
+            End::Transparent => Rgba8::TRANSPARENT,
+            End::Sub => rgba8(self.color.sub),
+        };
+        (from, to)
+    }
+
+    /// グラデーションの道具の操作を当てる。
+    pub fn gradient_apply(&mut self, op: GradientOp) {
+        let lang = self.lang;
+        match op {
+            GradientOp::Shape(shape) => self.gradient.shape = shape,
+            GradientOp::End(end) => self.gradient.end = end,
+            GradientOp::Erase(erase) => self.gradient.erase = erase,
+            GradientOp::Between(on) => self.gradient.between = on,
+            GradientOp::CaptureEnd => {
+                self.gradient.end_material = Some(EndMaterial {
+                    paint: self.mat.clone(),
+                    color: self.color.main,
+                });
+                self.gradient.between = true;
+                self.message = lang
+                    .pick(
+                        "現在のマテリアルを終点にしました",
+                        "The current material is the end",
+                    )
+                    .into();
+            }
+            GradientOp::Apply { start, end } => self.gradient_paint(start, end),
+        }
+    }
+
+    /// 始点から終点へ塗る（C# の `FinishToolDrag` のグラデーション）。
+    fn gradient_paint(&mut self, a: (f64, f64), b: (f64, f64)) {
+        let lang = self.lang;
+        if self.is_stroking() {
+            self.message = lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into();
+            return;
+        }
+        if (a.0 - b.0).hypot(a.1 - b.1) < Self::GRADIENT_CLICK {
+            return;
+        }
+        let Some(id) = self.selected_layer else {
+            self.message = lang
+                .pick("描くレイヤーがありません。", "No layer to paint on.")
+                .into();
+            return;
+        };
+        let masked = self.m2.edit_mask;
+        let kind = self.doc.layer(id).map(|l| l.kind());
+        if !masked && kind != Some(LayerKind::Raster) {
+            self.message = lang
+                .pick(
+                    "ペイントレイヤーかマスクだけにグラデーションを塗れます",
+                    "Only a paint layer or a mask takes a gradient",
+                )
+                .into();
+            return;
+        }
+        let (from, to) = self.gradient_ends();
+        let mut settings = GradientSettings {
+            shape: self.gradient.shape,
+            start: DVec2::new(a.0, a.1),
+            end: DVec2::new(b.0, b.1),
+            from,
+            to,
+            opacity: f64::from(self.brush.opacity),
+        };
+        let erase = self.gradient.erase;
+        let revision = self.doc.revision();
+        self.doc.end_coalescing();
+        let result = if masked {
+            // マスクは、始点の黒（隠す量 1）から透明へ。消す（reveal）なら見せる向き
+            settings.from = Rgba8::new(0, 0, 0, 255);
+            settings.to = Rgba8::TRANSPARENT;
+            self.doc.gradient_mask(id, &settings, None, erase)
+        } else if self.paints_material() {
+            let channels = self.paint_channels();
+            let end_paints: Option<Vec<ChannelPaint>> = if self.gradient.between {
+                self.gradient.end_material.as_ref().map(|m| {
+                    channels
+                        .iter()
+                        .map(|p| ChannelPaint::new(p.channel, m.paint.value(p.channel, m.color)))
+                        .collect()
+                })
+            } else {
+                None
+            };
+            self.doc
+                .gradient_material(id, &channels, end_paints.as_deref(), &settings, None, erase)
+        } else {
+            // 描くチャンネル 1 つ。無効のチャンネルは有効にして、1 回の Undo で塗る
+            let channel = self.m2.paint_channel;
+            self.doc.gradient_material(
+                id,
+                &[ChannelPaint::new(channel, from)],
+                Some(&[ChannelPaint::new(channel, to)]),
+                &settings,
+                None,
+                erase,
+            )
+        };
+        match result {
+            Ok(true) => {
+                self.message = lang
+                    .pick("グラデーションを塗りました", "Gradient applied")
+                    .into()
+            }
+            Ok(false) => {
+                self.message = lang
+                    .pick("塗る所がありません", "Nothing to paint there")
+                    .into()
+            }
+            Err(e) => self.message = refusal_text(lang, &e),
+        }
+        if self.doc.revision() != revision {
+            self.modified = true;
+        }
+    }
+
+    /// ドラッグの途中の形を捨てる（Esc・道具の切り替え・フォーカスを失ったとき）。何かあったか。
+    pub fn gradient_cancel_drag(&mut self) -> bool {
+        self.gradient.pen_down = None;
+        self.gradient.drag.take().is_some()
+    }
+}
