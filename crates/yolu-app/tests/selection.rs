@@ -800,6 +800,52 @@ fn a_selection_tool_pen_presses_drags_and_releases_like_the_mouse() {
 }
 
 #[test]
+fn holding_t_for_the_stencil_keeps_the_selection_tools_from_starting_a_shape() {
+    use yolu_app::stencil::StencilOp;
+    let dir = temp_dir("stencil-t");
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut()
+        .state
+        .apply(Action::Stencil(StencilOp::Load(half_open_png(&dir))));
+    h.run();
+    assert!(st(&h).stencil.image.is_some(), "{}", st(&h).message);
+    pick_tool(&mut h, Tool::SelectRect);
+    h.event(Event::Key {
+        key: Key::T,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    // マウス: T を押したままのドラッグはステンシルを動かし、選択の形は始まらない
+    let path = [at(&h, -60.0, -40.0), at(&h, 0.0, 0.0), at(&h, 60.0, 40.0)];
+    drag(&mut h, &path);
+    assert!(
+        st(&h).doc.selection().is_none(),
+        "T を押したままのドラッグで選択ができた"
+    );
+    assert!(st(&h).sel.drag.is_none());
+    // ペン: 触れても選択の形は始まらない
+    for (p, contact) in [
+        (at(&h, -60.0, -40.0), true),
+        (at(&h, 60.0, 40.0), true),
+        (at(&h, 60.0, 40.0), false),
+    ] {
+        h.state().pen().push(pen_at(p, contact));
+        h.step();
+    }
+    h.run();
+    assert!(
+        st(&h).doc.selection().is_none(),
+        "T を押したままのペンで選択ができた"
+    );
+    assert!(st(&h).sel.pen_down.is_none() && st(&h).sel.drag.is_none());
+    assert_eq!(steps(&h), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_the_pen_lifts() {
     use yolu_app::state::StrokeSource;
     let mut h = app(1000.0, 640.0, 512);
@@ -1370,6 +1416,165 @@ fn headless_refused_edits_change_nothing_and_say_why() {
     );
 }
 
+/// 拒否の文は画面の言語で出る（英語の画面に日本語の文を出さない）。文書・選択範囲・Undo の段は変わらない。
+#[test]
+fn headless_refusals_are_told_in_the_language_and_change_nothing() {
+    // 型の拒否: 点が多すぎる多角形・有限でない楕円・画布の外の種（既存の選択範囲があっても残る）
+    let refusals = [
+        (
+            SelEdit::Polygon {
+                points: vec![(1.0, 1.0); 100_001],
+                mode: SelectionCombine::Replace,
+            },
+            "多角形の点が多すぎる",
+            "Too many polygon points",
+        ),
+        (
+            SelEdit::Ellipse {
+                cx: f64::NAN,
+                cy: 0.0,
+                rx: 1.0,
+                ry: 1.0,
+                mode: SelectionCombine::Replace,
+            },
+            "値が範囲外",
+            "Invalid value",
+        ),
+        (
+            SelEdit::Wand {
+                x: 64,
+                y: 0,
+                mode: SelectionCombine::Replace,
+            },
+            "種が画布の外",
+            "Seed outside canvas",
+        ),
+    ];
+    for lang in [Lang::Ja, Lang::En] {
+        let mut s = doc_state(64);
+        s.lang = lang;
+        run(&mut s, rect(SelectionCombine::Replace, 10, 10, 20, 20));
+        let selection = s.doc.selection().cloned();
+        assert!(selection.is_some());
+        let steps = s.doc.undo_count();
+        for (edit, ja, en) in &refusals {
+            s.message.clear();
+            run(&mut s, edit.clone());
+            let m = s.message.clone();
+            assert_eq!(s.doc.selection(), selection.as_ref(), "{lang:?} {m}");
+            assert_eq!(s.doc.undo_count(), steps, "{lang:?} {m}");
+            match lang {
+                Lang::En => {
+                    assert!(m.is_ascii(), "英語の画面に日本語が混じる: {m:?}");
+                    assert!(m.contains(en), "{m:?}");
+                }
+                Lang::Ja => assert!(m.contains(ja), "{m:?}"),
+            }
+        }
+    }
+    // 作業の予算を超えるぼかし（8192² の全面を半径 200）
+    let mut s = doc_state(8192);
+    run(&mut s, SelEdit::All);
+    let selection = s.doc.selection().cloned();
+    let steps = s.doc.undo_count();
+    for lang in [Lang::Ja, Lang::En] {
+        s.lang = lang;
+        s.message.clear();
+        run(
+            &mut s,
+            SelEdit::Modify {
+                kind: ModifyKind::Feather,
+                radius: 200,
+                edge_lock: false,
+            },
+        );
+        assert_eq!(s.doc.selection(), selection.as_ref());
+        assert_eq!(s.doc.undo_count(), steps);
+        let expected = lang.core_error(&CoreError::WorkingBudgetExceeded);
+        assert!(s.message.contains(&expected), "{lang:?} {}", s.message);
+        assert_eq!(s.message.is_ascii(), lang == Lang::En, "{}", s.message);
+    }
+    assert_eq!(
+        Lang::En.core_error(&CoreError::WorkingBudgetExceeded),
+        "Working memory budget exceeded"
+    );
+}
+
+/// .ylp の選択範囲の受け渡しの失敗も画面の言語の文で返る。大きさの違う選択範囲は、文書を選択なしのまま、書き込みも断る。
+#[test]
+fn headless_selection_file_failures_are_told_in_the_language_and_touch_nothing() {
+    use yolu_app::selection::io::{restore_into, write_into};
+    use yolu_io::{SaveTarget, Selection};
+    let dir = temp_dir("io-lang");
+    let path = dir.join("one.ylp");
+    let mut saved = doc_state(64);
+    saved.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        saved.message.starts_with("保存しました"),
+        "{}",
+        saved.message
+    );
+    // 32² の文書の選択範囲（64² の文書とは大きさが違う）
+    let (mut small, _) = yolu_app::state::blank_document(32, 32);
+    small
+        .set_selection(Some(SelectionMask::rectangle(&small, 4, 4, 20, 20)))
+        .unwrap();
+    let small_mask = small.selection().cloned().unwrap();
+    let stored = Selection::from_core(&small_mask).unwrap();
+    for lang in [Lang::Ja, Lang::En] {
+        let (ja, en) = (
+            ("選択範囲を戻せません", "選択範囲の大きさが文書と違う"),
+            (
+                "Cannot restore the selection",
+                "Selection size does not match document",
+            ),
+        );
+        // 読み込み: 大きさが違えば選択なしのまま理由を返す。同じ大きさなら戻る（Undo の段は増えない）
+        let (mut doc, _) = yolu_app::state::blank_document(64, 64);
+        let err = restore_into(&mut doc, Some(&stored), lang).unwrap_err();
+        assert!(doc.selection().is_none() && !doc.can_undo(), "{lang:?}");
+        match lang {
+            Lang::En => {
+                assert!(err.is_ascii(), "英語の画面に日本語が混じる: {err:?}");
+                assert!(err.contains(en.0) && err.contains(en.1), "{err:?}");
+            }
+            Lang::Ja => assert!(err.contains(ja.0) && err.contains(ja.1), "{err:?}"),
+        }
+        let (mut same, _) = yolu_app::state::blank_document(32, 32);
+        restore_into(&mut same, Some(&stored), lang).unwrap();
+        assert_eq!(same.selection(), Some(&small_mask));
+        assert!(!same.can_undo());
+        restore_into(&mut same, None, lang).unwrap();
+
+        // 書き込み: 文書と大きさの違う選択範囲は、プロジェクトの検証が断る。理由は言語の文で、元のプロジェクトは変わらない
+        let (project, _target) = SaveTarget::open(&path).unwrap();
+        let id = project.sets()[0].id.clone();
+        let err = write_into(project.clone(), &[(id.as_str(), Some(&small_mask))], lang)
+            .map(|_| ())
+            .unwrap_err();
+        match lang {
+            Lang::En => {
+                assert!(err.is_ascii(), "英語の画面に日本語が混じる: {err:?}");
+                assert!(err.starts_with("Cannot write the selection"), "{err:?}");
+            }
+            Lang::Ja => assert!(err.starts_with("選択範囲を書けません"), "{err:?}"),
+        }
+        assert!(project.sets()[0].selection.is_none());
+        // 同じ大きさなら書ける
+        let (mut doc64, _) = yolu_app::state::blank_document(64, 64);
+        doc64
+            .set_selection(Some(SelectionMask::rectangle(&doc64, 4, 4, 20, 20)))
+            .unwrap();
+        let mask64 = doc64.selection().cloned().unwrap();
+        let written = write_into(project, &[(id.as_str(), Some(&mask64))], lang).unwrap();
+        assert_eq!(
+            written.sets()[0].selection,
+            Some(Selection::from_core(&mask64).unwrap())
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn headless_edge_lock_keeps_the_selection_at_the_canvas_edge_when_shrinking() {
     let mut s = doc_state(64);
@@ -1501,6 +1706,124 @@ fn headless_symmetry_is_refused_for_smudge_and_clone_with_a_reason_and_no_stroke
         assert!(!s.doc.has_active_stroke());
         assert!(s.sel.stroke_symmetry.is_none());
     }
+}
+
+/// 左半分が白、右半分が黒の画像（ステンシルは量として読み、左半分だけが通る）。
+fn half_open_png(dir: &std::path::Path) -> std::path::PathBuf {
+    let img = image::RgbaImage::from_fn(64, 64, |x, _| {
+        let v = if x < 32 { 255 } else { 0 };
+        image::Rgba([v, v, v, 255])
+    });
+    let path = dir.join("half.png");
+    img.save(&path).unwrap();
+    path
+}
+
+/// 選択範囲とステンシルが別々の所で塞がり、対称の映しがその画素の選択範囲とステンシルを読むことを確かめる。
+/// 選択範囲は x ∈ [16, 56)、ステンシルは x < 32 だけが開く。x < 16 は選択だけが塞ぎ、32 ≤ x < 56 はステンシルだけが塞ぐ。
+/// 対称は縦の軸 x = 32 で、映した先は 64 - x（主の側が塞がれていても映した側だけが通る・その逆）。
+#[test]
+fn headless_a_canvas_stroke_obeys_the_selection_the_stencil_and_the_symmetry_together() {
+    use yolu_app::engine::composite_pixel;
+    use yolu_app::stencil::StencilOp;
+    let dir = temp_dir("stencil-seam");
+    let mut s = doc_state(64);
+    s.brush.radius = 3.0;
+    s.brush.hardness = 1.0;
+    s.m2.random_seed = false;
+    s.stencil.size = 1.0;
+    s.apply(Action::Stencil(StencilOp::Load(half_open_png(&dir))));
+    assert!(s.stencil.image.is_some(), "{}", s.message);
+    run(&mut s, rect(SelectionCombine::Replace, 16, 0, 56, 64));
+    let layer = s.selected_layer.unwrap();
+    let canvas = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(64.0, 64.0));
+    assert!(s.canvas_stencil(canvas).unwrap().is_some());
+    // x0 から x1 まで y の高さを 2 画素おきに 1 本のストロークで描く（今の対称・選択範囲・ステンシルのまま）
+    let line = |s: &mut AppState, y: f64, x0: f64, x1: f64| {
+        let stencil = s.canvas_stencil(canvas).unwrap();
+        let mut stroke = s.begin_canvas_stroke(layer, false, stencil).unwrap();
+        let mut x = x0;
+        while x <= x1 {
+            stroke
+                .add_point(&mut s.doc, x, y, 1.0, Default::default())
+                .unwrap();
+            x += 2.0;
+        }
+        s.doc.end_stroke(stroke).unwrap();
+    };
+    let alpha = |s: &AppState, x, y| composite_pixel(&s.doc, x, y)[3];
+
+    // 対称なし: 選択だけが塞ぐ所・両方が通す所・ステンシルだけが塞ぐ所・両方が塞ぐ所を 1 本で通る
+    line(&mut s, 20.0, 4.0, 60.0);
+    assert_eq!(
+        alpha(&s, 8, 20),
+        0,
+        "ステンシルが開いていても、選択の外（x < 16）は塗れない"
+    );
+    assert_eq!(alpha(&s, 15, 20), 0, "選択の縁の外の 1 画素");
+    assert_eq!(alpha(&s, 16, 20), 255, "選択の縁の内の 1 画素");
+    assert_eq!(alpha(&s, 24, 20), 255, "選択もステンシルも開いた所は塗れる");
+    assert_eq!(
+        alpha(&s, 40, 20),
+        0,
+        "選択の内側でも、ステンシルの閉じた所は塗れない"
+    );
+    assert_eq!(alpha(&s, 60, 20), 0, "選択もステンシルも閉じた所");
+    s.apply(Action::Undo);
+    assert_eq!(alpha(&s, 24, 20), 0);
+
+    // 対称（縦の軸 x = 32）: 3 本の別々のストローク。主・映しの片方だけが通る
+    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
+        SymmetryMode::Vertical,
+    ))));
+    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Center(0.5, 0.5))));
+    // 主（x = 40〜44）はステンシルが塞ぎ、映し（x = 24〜20）は選択もステンシルも開いて塗れる
+    line(&mut s, 12.0, 40.0, 44.0);
+    assert_eq!(alpha(&s, 42, 12), 0, "主の側はステンシルが塞ぐ");
+    assert_eq!(
+        alpha(&s, 22, 12),
+        255,
+        "主が塞がれても、映した先で選択もステンシルも開いていれば塗れる"
+    );
+    // 主（x = 50〜54）は選択の内側でステンシルが塞ぎ、映し（x = 14〜10）はステンシルが開いても選択の外
+    line(&mut s, 28.0, 50.0, 54.0);
+    assert_eq!(alpha(&s, 52, 28), 0, "主の側はステンシルが塞ぐ");
+    assert_eq!(
+        alpha(&s, 16, 28),
+        255,
+        "映した先の選択の縁の内の 1 画素は塗れる"
+    );
+    assert_eq!(
+        alpha(&s, 15, 28),
+        0,
+        "映した先の選択の縁の外の 1 画素は、主の側の選択が開いていても塗れない"
+    );
+    assert_eq!(
+        alpha(&s, 12, 28),
+        0,
+        "映した先の選択の外は、ステンシルが開いていても塗れない"
+    );
+    // 主（x = 24〜28）は両方が開いて塗れ、映し（x = 40〜36）は選択の内側でステンシルだけが塞ぐ
+    line(&mut s, 44.0, 24.0, 28.0);
+    assert_eq!(alpha(&s, 26, 44), 255, "主の側は塗れる");
+    assert_eq!(
+        alpha(&s, 38, 44),
+        0,
+        "映した先は選択の内側でも、そこのステンシルが閉じていれば塗れない"
+    );
+    // ストロークは 1 本ずつ 1 回の Undo。選択範囲は消えない
+    s.apply(Action::Undo);
+    assert_eq!(alpha(&s, 26, 44), 0);
+    assert_eq!(alpha(&s, 22, 12), 255, "前のストロークは残る");
+    s.apply(Action::Undo);
+    s.apply(Action::Undo);
+    assert_eq!(alpha(&s, 22, 12), 0);
+    assert_eq!(alpha(&s, 16, 28), 0);
+    assert!(
+        s.doc.selection().is_some(),
+        "ストロークの Undo は選択範囲を消さない"
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 // ───────── .ylp の保存と読み込み ─────────

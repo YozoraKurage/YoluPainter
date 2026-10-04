@@ -463,6 +463,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             let usable = !blocked
                 && !app.canvas.rotate_key_held
                 && !app.canvas.space_held
+                && !app.stencil.handling()
                 && (app.sel.pen_down.is_some() || on_top(ui, rect, p));
             if usable || !s.contact {
                 crate::selection::canvas::pen_sample(

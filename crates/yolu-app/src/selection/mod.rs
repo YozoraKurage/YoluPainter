@@ -395,14 +395,16 @@ impl AppState {
     ) -> Result<String, String> {
         let lang = self.lang;
         let next = match self.doc.selection() {
-            Some(current) if mode != SelectionCombine::Replace => {
-                Some(current.combine(&shape, mode).map_err(|e| e.to_string())?)
-            }
+            Some(current) if mode != SelectionCombine::Replace => Some(
+                current
+                    .combine(&shape, mode)
+                    .map_err(|e| lang.core_error(&e))?,
+            ),
             _ => (mode != SelectionCombine::Subtract).then_some(shape),
         };
         let changed = self
             .set_selection_if_changed(next)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| lang.core_error(&e))?;
         Ok(if self.doc.selection().is_none() {
             lang.pick("何も選ばれていません。", "Nothing is selected.")
                 .into()
@@ -437,7 +439,7 @@ impl AppState {
                 let all = SelectionMask::all(&self.doc);
                 let changed = self
                     .set_selection_if_changed(Some(all))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| lang.core_error(&e))?;
                 Ok(if changed {
                     lang.pick("すべてを選択しました。", "Selected all.").into()
                 } else {
@@ -449,7 +451,9 @@ impl AppState {
                 if self.doc.selection().is_none() {
                     return Ok(none());
                 }
-                self.doc.clear_selection().map_err(|e| e.to_string())?;
+                self.doc
+                    .clear_selection()
+                    .map_err(|e| lang.core_error(&e))?;
                 Ok(lang.pick("選択を解除しました。", "Deselected.").into())
             }
             SelEdit::Invert => {
@@ -457,7 +461,7 @@ impl AppState {
                     return Ok(none());
                 };
                 self.set_selection_if_changed(Some(current.invert()))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| lang.core_error(&e))?;
                 Ok(if self.doc.selection().is_none() {
                     lang.pick("反転して、何も残りません。", "Nothing is left selected.")
                         .into()
@@ -483,10 +487,10 @@ impl AppState {
                     ModifyKind::Feather => current.feather(r as f64, edge_lock, budget),
                     ModifyKind::Sharpen => Ok(current.sharpen()),
                 }
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| lang.core_error(&e))?;
                 let changed = self
                     .set_selection_if_changed(Some(next))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| lang.core_error(&e))?;
                 let name = kind.name(lang);
                 Ok(if self.doc.selection().is_none() {
                     format!(
@@ -518,13 +522,13 @@ impl AppState {
                 ry,
                 mode,
             } => {
-                let shape =
-                    SelectionMask::ellipse(&self.doc, cx, cy, rx, ry).map_err(|e| e.to_string())?;
+                let shape = SelectionMask::ellipse(&self.doc, cx, cy, rx, ry)
+                    .map_err(|e| lang.core_error(&e))?;
                 self.combine_shape(shape, mode)
             }
             SelEdit::Polygon { points, mode } => {
-                let shape =
-                    SelectionMask::polygon(&self.doc, &dvec(&points)).map_err(|e| e.to_string())?;
+                let shape = SelectionMask::polygon(&self.doc, &dvec(&points))
+                    .map_err(|e| lang.core_error(&e))?;
                 self.combine_shape(shape, mode)
             }
             SelEdit::Wand { x, y, mode } => {
@@ -538,7 +542,7 @@ impl AppState {
                     self.sel.contiguous,
                     DEFAULT_WORKING_BUDGET_BYTES,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| lang.core_error(&e))?;
                 self.combine_shape(shape, mode)
             }
         }

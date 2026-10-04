@@ -18,14 +18,16 @@ pub fn restore_into(
     };
     let mask = selection.to_core().map_err(|e| {
         format!(
-            "{}: {e}",
-            lang.pick("選択範囲を読めません", "Cannot read the selection")
+            "{}: {}",
+            lang.pick("選択範囲を読めません", "Cannot read the selection"),
+            lang.io_error(&e)
         )
     })?;
     doc.restore_selection(Some(mask)).map_err(|e| {
         format!(
-            "{}: {e}",
-            lang.pick("選択範囲を戻せません", "Cannot restore the selection")
+            "{}: {}",
+            lang.pick("選択範囲を戻せません", "Cannot restore the selection"),
+            lang.core_error(&e)
         )
     })
 }
@@ -40,11 +42,12 @@ pub fn write_into(
     for (id, mask) in selections {
         let next = mask.map(Selection::from_core).transpose().map_err(|e| {
             format!(
-                "{}: {e}",
+                "{}: {}",
                 lang.pick(
                     "選択範囲を正本にできません",
                     "Cannot turn the selection into the document"
-                )
+                ),
+                lang.io_error(&e)
             )
         })?;
         let stored = project
@@ -57,8 +60,9 @@ pub fn write_into(
         }
         project = project.with_selection(id, next.as_ref()).map_err(|e| {
             format!(
-                "{}: {e}",
-                lang.pick("選択範囲を書けません", "Cannot write the selection")
+                "{}: {}",
+                lang.pick("選択範囲を書けません", "Cannot write the selection"),
+                lang.io_error(&e)
             )
         })?;
     }
