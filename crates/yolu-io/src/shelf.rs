@@ -6,6 +6,13 @@ use crate::{
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
+/// 棚へ足せない理由の文言。アプリが文言から「置けない理由」を見分けるので、文言はここにだけ書く。
+pub const REFUSAL_MEMORY_BUDGET: &str = "素材のメモリ予算超過です";
+pub const REFUSAL_ARCHIVE_BUDGET: &str = "素材のアーカイブ予算超過です";
+pub const REFUSAL_RESOURCE_COUNT: &str = "素材の個数が上限（256 個）です";
+/// 棚（resources.json）に置ける素材の個数。読み込みも追加も同じ上限で断る（入れ子のスマート素材の索引も同じ）。
+pub const MAX_RESOURCES: usize = 256;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     Image,
@@ -106,6 +113,8 @@ impl Shelf {
         {
             return Ok(old.id.clone());
         }
+        // 同じ中身が既にあれば上で返したので、ここへ来るのは本当に増えるときだけ。個数の上限は予算と別の断り（棚を変えない）
+        check_budget(self.resources.len() < MAX_RESOURCES, REFUSAL_RESOURCE_COUNT)?;
         check(
             !self.resources.iter().any(|r| r.id == item.id),
             "リソースのIDが重複しています",
@@ -116,10 +125,10 @@ impl Shelf {
         files.insert(item.entry.clone(), Arc::from(bytes));
         files.insert("resources.json".into(), Arc::from(write_index(&resources)?));
         let next = Self::read(&files, self.budget)?;
-        check_budget(next.used <= self.budget, "素材のメモリ予算超過です")?;
+        check_budget(next.used <= self.budget, REFUSAL_MEMORY_BUDGET)?;
         check_budget(
             files.values().map(|b| b.len()).sum::<usize>() <= MAX_TOTAL_BYTES,
-            "素材のアーカイブ予算超過です",
+            REFUSAL_ARCHIVE_BUDGET,
         )?;
         let id = item.id.clone();
         *self = next;
@@ -336,5 +345,15 @@ impl Shelf {
             "画像は素材のファイルとして追加できません",
         )?;
         self.add(json!({"id":id,"kind":kind.as_str(),"name":name,"content":crate::hash(bytes),"length":bytes.len(),"origin":origin}),bytes)
+    }
+    /// 出どころの記録を持たない素材（アプリの中で作った・外のファイルから読んだもの）を追加する。外のパスを .ylp に書き込まない。
+    pub fn add_file_without_origin(
+        &mut self,
+        id: &str,
+        name: &str,
+        kind: ResourceKind,
+        bytes: &[u8],
+    ) -> Result<String> {
+        self.add_file(id, name, kind, bytes, json!({"type":"none"}))
     }
 }

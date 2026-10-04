@@ -420,7 +420,12 @@ fn color_panel_picks_hex_swap_and_wheel() {
     let c = h.state().state.color.main;
     assert!(c[1] > 0.95 && c[0] < 0.05, "{c:?}");
     // 16 進
-    let field = h.get_by_role(egui::accesskit::Role::TextInput).rect();
+    // 16 進の欄（アセットの検索の欄も文字の入力なので、カラーのパネルの中のものを選ぶ）
+    let field = h
+        .get_all_by_role(egui::accesskit::Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| r.top() > 300.0)
+        .expect("16 進の欄");
     click(&mut h, field.center());
     key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("#3366cc".into()));

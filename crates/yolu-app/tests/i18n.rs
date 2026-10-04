@@ -56,7 +56,7 @@ fn panels_draw_in_both_languages_without_clipped_text() {
                     match panel {
                         0 => color::show(ui, state, &mut textures),
                         1 => texture_sets::show(ui, state),
-                        _ => assets::show(ui, state.lang),
+                        _ => assets::show(ui, state),
                     }
                 }, state);
             h.run();
@@ -65,7 +65,7 @@ fn panels_draw_in_both_languages_without_clipped_text() {
             let expected = match panel {
                 0 => lang.pick("メイン  #", "Foreground  #"),
                 1 => "Sample",
-                _ => lang.pick("準備中", "Coming soon"),
+                _ => lang.pick("なし", "Empty"),
             };
             assert!(labels.iter().any(|s| s.contains(expected)), "{labels:?}");
             if panel == 0 {

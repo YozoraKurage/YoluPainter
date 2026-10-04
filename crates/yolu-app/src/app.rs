@@ -152,7 +152,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
-            Tab::Assets => assets::show(ui, self.app.lang),
+            Tab::Assets => assets::show(ui, self.app),
         }
     }
 
@@ -341,6 +341,11 @@ impl YoluApp {
                     crate::view3d::pose::open_file(&mut self.state, &path);
                 }
             }
+            Some(
+                request @ (DialogRequest::ShelfImport
+                | DialogRequest::ShelfExport
+                | DialogRequest::ShelfRemove),
+            ) => assets::run_dialog(&mut self.state, request),
             Some(DialogRequest::ExportFolder(id)) => {
                 let lang = self.state.lang;
                 if let Some(dir) = rfd::FileDialog::new()
@@ -514,6 +519,7 @@ impl YoluApp {
         shell::handle_shortcuts(&ctx, &mut self.state);
         crate::stencil::update_keys(&ctx, &mut self.state);
         self.open_dropped(&ctx);
+        assets::frame(&ctx, &mut self.state);
         self.handle_requests(&ctx);
         self.link.poll(&mut self.state);
         self.state.link = self.link.view();

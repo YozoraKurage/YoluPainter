@@ -11,6 +11,10 @@ use yolu_core::{
     smart::{SmartKind, SmartMaterial},
     Document,
 };
+/// 編集用に開けない・保存できない理由の文言。アプリが文言から「置けない理由」を見分けるので、文言はここにだけ書く。
+pub const REFUSAL_IMAGES: &str = "画像を含む素材は編集用に開けません";
+pub const REFUSAL_GENERATORS: &str = "Generator の再固定を持つ素材は編集用に開けません";
+pub const REFUSAL_USER_CHANNELS: &str = ".ylsmart 形式1は標準チャンネルだけです";
 const MIME: &str = "application/x-yolupainter-smart";
 const PREFIX: &str = "YOLUPAINTER-SMART-";
 #[derive(Clone, Debug)]
@@ -88,11 +92,11 @@ impl SmartFile {
                         .and_then(|v| v["resources"].as_array().map(Vec::is_empty))
                         .unwrap_or(false)
                 }),
-            "画像を含む素材は編集用に開けません",
+            REFUSAL_IMAGES,
         )?;
         check(
             self.info["repin"].as_array().is_none_or(|a| a.is_empty()),
-            "Generator の再固定を持つ素材は編集用に開けません",
+            REFUSAL_GENERATORS,
         )?;
         let doc = self.fragment.to_core_within(Some(budget))?;
         Ok(doc.into_smart_material(self.kind(), self.info["name"].as_str().expect("検証済み"))?)
@@ -102,7 +106,7 @@ impl SmartFile {
         // 断片が持つチャンネル定義は、層が何かを持つものだけ。ユーザーチャンネルを使う素材は、Unity 版が読めない版で書くことになる
         check(
             doc.channels().iter().all(|c| c.is_standard()),
-            ".ylsmart 形式1は標準チャンネルだけです",
+            REFUSAL_USER_CHANNELS,
         )?;
         let native = NativeDocument::from_core(&doc)?;
         let names = [

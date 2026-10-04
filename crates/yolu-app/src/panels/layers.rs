@@ -310,6 +310,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         layer_row(ui, app, thumbs, &ctx, list, rect, *row, &rows);
     }
     follow_drag(ui, app, list, &rows);
+    crate::panels::assets::layer_list_drop(ui, app, list, &rows);
     // ドラッグの落とす先（線か、グループの枠）
     if let Some(LayerDrag {
         target: Some(target),

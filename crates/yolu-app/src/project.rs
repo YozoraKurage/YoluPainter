@@ -21,8 +21,9 @@ use yolu_io::{composite_pngs, NativeDocument, Project, SaveTarget, SetSpec, Writ
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
 use crate::engine::{Channel, Document, TileCoord};
-use crate::sets::TextureSets;
 use crate::lang::Lang;
+use crate::sets::TextureSets;
+use crate::shelf::ShelfState;
 use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
 
 /// 開いた・保存した .ylp。
@@ -83,7 +84,7 @@ fn to_core(native: &NativeDocument, lang: Lang) -> Result<Document, String> {
 }
 
 /// 保存した合成の PNG から、見せるだけの文書（1 枚のレイヤー）を作る。大きさが正本と違えば使わない。
-fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang: Lang) -> (Document, Option<String>) {
+pub(crate) fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang: Lang) -> (Document, Option<String>) {
     let blank = || {
         let mut doc = Document::new(width, height).expect("正本の大きさは検証済み");
         let _ = doc.add_layer(lang.pick("保存した合成（読むだけ）", "Saved composite (read-only)"));
@@ -224,6 +225,7 @@ pub fn open_into(state: &mut AppState, path: &Path) {
         }
     }
     state.replace_sets(sets, doc);
+    state.shelf = ShelfState::from_project(&project).inherit_running_from(&state.shelf);
     state.project_name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -251,6 +253,9 @@ pub fn open_into(state: &mut AppState, path: &Path) {
     }
     if !selection_issues.is_empty() {
         text += &format!(" {}", selection_issues.join(" "));
+    }
+    if let Some(notice) = unreadable_shelf_notice(state) {
+        text += &notice;
     }
     if map_count > 0 {
         text += &state.lang.pick(format!(" メッシュマップ {map_count} 枚。"), format!(" {map_count} mesh map(s)."));
@@ -280,11 +285,21 @@ pub fn open_into(state: &mut AppState, path: &Path) {
     });
 }
 
+/// 開いたときの知らせのうち、棚を読めなかった分（読めた棚には None。先頭に空白を置いて、知らせの文へ続ける）。
+pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
+    let reason = state.shelf.unavailable.as_ref()?.reason(state.lang);
+    Some(state.lang.pick(
+        format!(" アセットの棚を読めません（{reason}）。"),
+        format!(" The asset shelf cannot be read ({reason})."),
+    ))
+}
+
 /// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。
 pub fn new_into(state: &mut AppState) {
     let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
     let sets = TextureSets::first_in(&doc, state.lang);
     state.replace_sets(sets, doc);
+    state.shelf = ShelfState::default().inherit_running_from(&state.shelf);
     state.project = None;
     state.project_name = state.lang.pick("名称未設定", "Untitled").into();
     state.modified = false;
@@ -396,6 +411,8 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             maps_written.push((i, unsaved));
         }
     }
+    // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
+    let project = state.shelf.write_into(project, state.lang)?;
     let overwrite = path.exists();
     let reuse = state
         .project
@@ -438,6 +455,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         }
     }
     state.modified = false;
+    state.shelf.changed = false;
     state.project_name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())

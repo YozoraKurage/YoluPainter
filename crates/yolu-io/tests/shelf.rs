@@ -490,6 +490,103 @@ fn an_emptied_shelf_leaves_no_resources_json_in_the_project() {
         .all(|name| !name.starts_with("resources/")));
 }
 
+/// 1×1 の画像を足す（中身は `i` ごとに別）。
+fn add_pixel(shelf: &mut Shelf, i: usize) -> yolu_io::Result<String> {
+    shelf.add_image(
+        &format!("30000000-0000-0000-0000-{i:012}"),
+        &format!("画像 {i}"),
+        &[(i % 256) as u8, (i / 256) as u8, 9, 255],
+        1,
+        1,
+        "srgb",
+        json!({"type":"none"}),
+    )
+}
+#[test]
+fn the_shelf_holds_256_resources_and_the_257th_is_refused_as_a_limit_not_as_corruption() {
+    use yolu_io::{
+        shelf::{MAX_RESOURCES, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT},
+        Error,
+    };
+    assert_eq!(MAX_RESOURCES, 256);
+    assert!(REFUSAL_RESOURCE_COUNT.contains("256"));
+    let mut shelf = Shelf::new(1 << 30);
+    for i in 0..MAX_RESOURCES {
+        add_pixel(&mut shelf, i).unwrap();
+    }
+    assert_eq!(shelf.resources().len(), 256);
+    // 257 個目: 予算とは別の断り（壊れたファイルの InvalidData でもない）。棚は 1 バイトも変わらない
+    let (entries, used) = (shelf.entries().clone(), shelf.used_bytes());
+    match add_pixel(&mut shelf, 256).unwrap_err() {
+        Error::Budget(why) => {
+            assert_eq!(why, REFUSAL_RESOURCE_COUNT);
+            assert_ne!(why, REFUSAL_MEMORY_BUDGET);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(shelf.entries(), &entries);
+    assert_eq!((shelf.resources().len(), shelf.used_bytes()), (256, used));
+    // 同じ中身は個数を増やさないので、いっぱいでも既存の ID を返す
+    let first = shelf.resources()[0].id.clone();
+    let again = shelf
+        .add_image(
+            "30000000-0000-0000-0000-00000000ffff",
+            "同じ中身",
+            &[0, 0, 9, 255],
+            1,
+            1,
+            "srgb",
+            json!({"type":"none"}),
+        )
+        .unwrap();
+    assert_eq!(again, first);
+    assert_eq!(shelf.entries(), &entries);
+    // 1 つ消せば、また 1 つ入る
+    assert!(shelf.remove(&first).unwrap());
+    add_pixel(&mut shelf, 256).unwrap();
+    assert_eq!(shelf.resources().len(), 256);
+    // 読み込み: 256 個は読める。足した棚を読み直した結果も同じ（足すときの検証と読み込みの検証が同じ上限）
+    let reread = Shelf::read(shelf.entries(), 1 << 30).unwrap();
+    assert_eq!(reread.resources().len(), 256);
+    assert_eq!(reread.used_bytes(), shelf.used_bytes());
+    // 1 つ多い索引は、棚（Shelf::read）も、それを持つ .ylp（Project::read）も、個数の上限として断る
+    let mut index: Value = serde_json::from_slice(&shelf.canonical_index().unwrap()).unwrap();
+    let mut extra = index["resources"][0].clone();
+    extra["id"] = json!("30000000-0000-0000-0000-00000000fffe");
+    index["resources"].as_array_mut().unwrap().push(extra);
+    let mut files = shelf.entries().clone();
+    files.insert(
+        "resources.json".into(),
+        Arc::from(serde_json::to_vec(&index).unwrap()),
+    );
+    match Shelf::read(&files, 1 << 30).unwrap_err() {
+        Error::Budget(why) => assert_eq!(why, REFUSAL_RESOURCE_COUNT),
+        other => panic!("{other:?}"),
+    }
+    let p = Project::read(
+        &std::fs::read(format!(
+            "{}/tests/fixtures/format4.ylp",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let saved = p.with_shelf(&shelf, writer()).unwrap().to_bytes().unwrap();
+    let ok = Project::read(&saved).unwrap();
+    assert_eq!(ok.shelf(1 << 30).unwrap().resources().len(), 256);
+    let mut entries: BTreeMap<String, Vec<u8>> = Archive::read(&saved)
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|(name, bytes)| (name.clone(), bytes.to_vec()))
+        .collect();
+    entries.insert("resources.json".into(), serde_json::to_vec(&index).unwrap());
+    let bytes = Archive::from_entries(entries).unwrap().to_bytes().unwrap();
+    match Project::read(&bytes).unwrap_err() {
+        Error::Budget(why) => assert_eq!(why, REFUSAL_RESOURCE_COUNT),
+        other => panic!("{other:?}"),
+    }
+}
 // ───────── .ylsmart と core の境 ─────────
 
 fn user(name: &str) -> ChannelInfo {
@@ -634,4 +731,47 @@ fn a_fragment_over_the_default_pixel_budget_opens_and_is_refused_only_where_it_i
         .place_smart_material(&opened, &SmartPlacement::default())
         .unwrap();
     assert_eq!(target.allocated_bytes(), 257 * MIB);
+}
+#[test]
+fn files_without_an_origin_record_none_and_deduplicate() {
+    use yolu_io::shelf::ResourceKind;
+    let bytes = std::fs::read(root().join("raster.ylsmart")).unwrap();
+    let mut shelf = Shelf::new(1 << 20);
+    let id = "30000000-0000-0000-0000-000000000009";
+    assert_eq!(
+        shelf
+            .add_file_without_origin(id, "素材", ResourceKind::SmartMaterial, &bytes)
+            .unwrap(),
+        id
+    );
+    assert_eq!(shelf.resources()[0].metadata["origin"]["type"], "none");
+    // 同じ中身は新しい ID を付けず、既存の素材を返す
+    let again = shelf
+        .add_file_without_origin(
+            "30000000-0000-0000-0000-00000000000a",
+            "別名",
+            ResourceKind::SmartMaterial,
+            &bytes,
+        )
+        .unwrap();
+    assert_eq!((again.as_str(), shelf.resources().len()), (id, 1));
+    // 画像はファイルとして足せない・種類と中身が合わない素材は断る
+    assert!(shelf
+        .add_file_without_origin(id, "x", ResourceKind::Image, &bytes)
+        .is_err());
+    assert!(shelf
+        .add_file_without_origin(
+            "30000000-0000-0000-0000-00000000000b",
+            "x",
+            ResourceKind::SmartMask,
+            &bytes
+        )
+        .is_err());
+    assert_eq!(shelf.resources().len(), 1);
+    // 索引は C# と同じ書式で、読み直せる
+    let index = shelf.canonical_index().unwrap();
+    assert!(std::str::from_utf8(&index).unwrap().contains("\"type\": \"none\""));
+    let mut files = shelf.entries().clone();
+    files.insert("resources.json".into(), Arc::from(index));
+    assert_eq!(Shelf::read(&files, 1 << 20).unwrap().resources().len(), 1);
 }

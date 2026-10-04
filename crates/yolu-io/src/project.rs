@@ -771,7 +771,12 @@ pub(crate) fn load_resources(
         return Ok(Vec::new());
     };
     let root = json(b, 1024 * 1024)?;
-    let list = array(&root, "resources", 0, 256)?;
+    // 個数の上限は予算と同じ種類の断り（壊れたファイルとは別に、棚がいっぱいだと言い分けられる）
+    let list = array(&root, "resources", 0, usize::MAX)?;
+    check_budget(
+        list.len() <= crate::shelf::MAX_RESOURCES,
+        crate::shelf::REFUSAL_RESOURCE_COUNT,
+    )?;
     let mut ids = HashSet::new();
     let mut decoded = HashSet::new();
     let mut result = Vec::new();

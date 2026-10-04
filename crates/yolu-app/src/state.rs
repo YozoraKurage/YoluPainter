@@ -14,6 +14,7 @@ use crate::m2::{Edit, LayerDrag, M2State, UiOp};
 use crate::model::SceneModel;
 use crate::project::ProjectFile;
 use crate::sets::TextureSets;
+use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
@@ -390,6 +391,8 @@ pub enum PopupKind {
     M2(crate::m2_menu::Popup),
     /// テクスチャセットの右クリック（セットの番号 uid）。
     SetContext(u32),
+    /// アセットの棚の素材の右クリック（選んでいる素材）。
+    Shelf,
     /// オプションバーの対称のモード（▾）。
     Symmetry,
 }
@@ -410,6 +413,8 @@ pub enum Action {
     /// マテリアルで塗る（組・値）と、範囲の道具（範囲の種類・許容・塗る/消す・手動の ID の色）の操作。
     Mat(crate::matpaint::MatAction),
     Region(crate::region::RegionAction),
+    /// アセットの棚の操作（層からの保存・文書へ置く・消す・.ylsmart の読み書き。置くのだけが文書を変え、1 回の Undo）。
+    Shelf(ShelfOp),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
@@ -478,6 +483,7 @@ impl Action {
             self,
             Action::M2(_)
                 | Action::Region(crate::region::RegionAction::IdColor(_))
+                | Action::Shelf(ShelfOp::Place { .. })
                 | Action::Sel(crate::selection::SelAction::Edit(_))
                 | Action::Undo
                 | Action::Redo
@@ -551,6 +557,8 @@ pub struct AppState {
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+    /// アセットの棚（.ylp の resources）。
+    pub shelf: ShelfState,
     /// 選択範囲と 2D の対称の画面の状態（選択範囲そのものは文書が持つ）。
     pub sel: crate::selection::SelState,
     /// メッシュマップのベイク（設定・窓・走っている仕事）。
@@ -571,6 +579,12 @@ pub enum DialogRequest {
     SaveAs,
     /// 3D ビューに開くモデル（FBX）を選ぶ。
     OpenModel,
+    /// 棚へ読み込む .ylsmart を選ぶ。
+    ShelfImport,
+    /// 棚の素材（`shelf.export_id`）を書き出す先を選ぶ。
+    ShelfExport,
+    /// 棚の素材（`shelf.pending_remove`）を消してよいか確かめる。
+    ShelfRemove,
     /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
     ExportFolder(String),
     /// 読み込む PSD を選ぶ。
@@ -669,6 +683,7 @@ impl AppState {
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
+            shelf: ShelfState::default(),
             sel: crate::selection::SelState::default(),
             bake: Default::default(),
             export: Default::default(),
@@ -755,6 +770,7 @@ impl AppState {
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
             Action::Region(a) => self.region_apply(a),
+            Action::Shelf(op) => self.shelf_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Sel(action) => self.sel_action(action),
             Action::Quit => self.quit = true,

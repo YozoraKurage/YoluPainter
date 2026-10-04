@@ -62,6 +62,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "ink_stroke",
     "grid_dots",
     "save",
+    "search",
+    "import",
     "accessibility",
     "tools/brush",
     "tools/brush_selected",

@@ -12,6 +12,7 @@ use crate::livelink::{LinkStatus, NoticeLevel};
 use crate::m2::{Edit, UiOp};
 use crate::psd::{PsdAction, PsdTarget};
 use crate::selection::{SelAction, SelEdit};
+use crate::shelf::ShelfOp;
 use crate::state::{Action, AppState, PopupKind, Tool};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
@@ -302,6 +303,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
+        PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
     }
 }
@@ -366,6 +368,26 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
                 Action::M2(Edit::GroupSelected),
             )
             .enabled(free && app.selected_layer == Some(id)),
+        );
+    }
+    // アセットの棚へ（層のまとまり・マスク）
+    v.push(
+        Entry::item(
+            lang.pick("スマートマテリアルとして保存", "Save as Smart Material"),
+            Action::Shelf(ShelfOp::SaveMaterial(id)),
+        )
+        .enabled(free),
+    );
+    if has_mask {
+        v.push(
+            Entry::item(
+                lang.pick(
+                    "マスクをスマートマスクとして保存",
+                    "Save Mask as Smart Mask",
+                ),
+                Action::Shelf(ShelfOp::SaveMask(id)),
+            )
+            .enabled(free),
         );
     }
     v.push(

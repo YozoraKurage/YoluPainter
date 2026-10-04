@@ -23,6 +23,7 @@ pub mod region;
 pub mod selection;
 pub mod sets;
 mod settings;
+pub mod shelf;
 pub mod shell;
 pub mod state;
 pub mod stencil;
