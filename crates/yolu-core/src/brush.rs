@@ -14,8 +14,9 @@
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、一致を確かめたのは同じ libm（Linux の glibc）の上。
 //!
 //! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
-//! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。C# の
-//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。透明部分のロック・クローンの合成の読み元はまだ無い。
+//! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。透明部分の
+//! ロックは `keep_alpha`（ストロークを作るときに必ず決める）で、描く画素のアルファと透明画素の RGB を守る。C# の
+//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンの合成の読み元はまだ無い。
 //!
 //! ```
 //! use yolu_core::{builtin_tip, Brush, BrushSettings, Document, DualBrush, PaperTexture, Rgba8};
@@ -286,6 +287,8 @@ struct EffectState {
 
 /// 進行中のストロークの中身（文書が持つ）。
 pub(crate) struct StrokeState {
+    /// 透明部分のロック: 描く画素のアルファと透明画素の RGB を守る。作るときに必ず決める（[`StrokeState::new`]）。
+    keep_alpha: bool,
     pub id: u64,
     pub layer: LayerId,
     pub layer_index: usize,
@@ -370,6 +373,7 @@ impl StrokeState {
         brush: Brush,
         budgets: Budgets,
         size: (u32, u32, u32),
+        keep_alpha: bool,
     ) -> Self {
         let mut stroke_color = brush.base.color;
         let mut color_random = None;
@@ -394,6 +398,7 @@ impl StrokeState {
             })
             .map(|_| kind);
         StrokeState {
+            keep_alpha,
             id,
             layer,
             layer_index,
@@ -1210,6 +1215,7 @@ impl StrokeState {
             BrushEffect::Clone { .. } => EffectKind::Clone,
         };
         Paint {
+            keep_alpha: self.keep_alpha,
             s: &brush.base,
             effect,
             stroke_color: self.stroke_color,
@@ -1773,6 +1779,7 @@ enum EffectKind {
 
 /// 画素の処理が読む、ストロークとダブの値（ワーカーからも読む）。
 struct Paint<'a> {
+    keep_alpha: bool,
     s: &'a BrushSettings,
     effect: EffectKind,
     stroke_color: Rgba8,
@@ -2002,7 +2009,8 @@ fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
     Ok(changed)
 }
 
-/// 1 画素（C# の ApplyPixelAt の、透明部分のロックの無い 1 チャンネルの経路。選択範囲の量はここだけで掛ける）。SIMPLE は色を塗るだけ
+/// 1 画素（C# の ApplyPixelAt の 1 チャンネルの経路。選択範囲の量と、透明部分のロックの `keep_alpha`（アルファと透明画素の RGB を
+/// 守る）はここだけで掛ける）。SIMPLE は色を塗るだけ
 /// （ダブごとの色・効果なし）と分かっているとき（分岐を除いた同じ式）。paper は乗算以外の紙の質感（拡張）: 合わせ方・質感の値・深さ。
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -2024,7 +2032,7 @@ fn apply_at<const SIMPLE: bool>(
     let ts = cx.tile_size;
     // 選択範囲: 選ばれていない画素は何もしない（写しも取らない）。半分選ばれた画素は、描く前の画素から半分までしか変わらない
     let selected = cx.selected.amount(local);
-    if selected <= 0.0 {
+    if selected <= 0.0 || p.keep_alpha && live.get(local * 4).a == 0 {
         return Ok(false);
     }
     let mut opacity_scale = opacity_scale;
@@ -2191,11 +2199,17 @@ fn apply_at<const SIMPLE: bool>(
                 } else {
                     Rgba8::new(start.r, start.g, start.b, alpha)
                 }
+            } else if p.keep_alpha {
+                crate::document::locks::paint_keeping_alpha(
+                    start,
+                    color,
+                    f64_min(1.0, accumulated) * selected,
+                )
             } else {
                 blend(start, color, f64_min(1.0, accumulated), BlendMode::Normal)
             };
             // 選択範囲の量だけ、描く前の画素から寄せる（塗りも消しゴムも。C# の Fade(start, next, selected)）
-            if selected < 1.0 {
+            if selected < 1.0 && !p.keep_alpha {
                 fade(start, next, selected)
             } else {
                 next
@@ -2226,7 +2240,17 @@ fn apply_at<const SIMPLE: bool>(
             }
             // 選択範囲の量も寄せ方に入れる（クローンは塗りと同じく Fade で）
             let amount = f64_min(1.0, accumulated) * selected;
-            let mut next = if effect == EffectKind::Clone {
+            let mut next = if p.keep_alpha {
+                if effect == EffectKind::Clone {
+                    crate::document::locks::paint_keeping_alpha(start, sampled, amount)
+                } else {
+                    crate::document::locks::paint_keeping_alpha(
+                        start,
+                        Rgba8::new(sampled.r, sampled.g, sampled.b, 255),
+                        amount * sampled.a as f64 / 255.0,
+                    )
+                }
+            } else if effect == EffectKind::Clone {
                 fade(
                     start,
                     blend(start, sampled, f64_min(1.0, accumulated), BlendMode::Normal),

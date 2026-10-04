@@ -61,17 +61,33 @@ impl Document {
     /// タイルを 6 チャンネルで塗ると 6 倍（既定の予算 64 MiB・タイル 128² で 1 回のストロークが通るタイルは 170 枚、C# は 1023 枚）、
     /// 全チャンネルに画素のあるタイルなら約 1.7 倍（85 枚と 146 枚）。1 チャンネルは C# と同じ。数は tests/material_golden.rs が
     /// C# の測った値と照らして固定している。
+    ///
+    /// 画像・すべてのロックと、消すときの透明部分のロックで断る。何も変えない（無効のチャンネルを有効にするのも、断るより後）。
+    /// 透明部分のロックでは、全チャンネルがアルファと透明画素の RGB を守る。
     pub fn begin_material_brush_stroke(
         &mut self,
         layer: LayerId,
         channels: &[ChannelPaint],
         brush: &Brush,
     ) -> Result<Stroke, CoreError> {
+        self.begin_guarded_material_stroke(layer, channels, brush)
+            .map(|(stroke, _)| stroke)
+    }
+    /// [`Document::begin_material_brush_stroke`] と、書き込みの関門が決めた透明部分のロック（`keep_alpha`）。三角形の塗りは
+    /// ストロークの札を借りるだけで画素は自分の式で塗るので、その式へこの値を渡す。
+    pub(super) fn begin_guarded_material_stroke(
+        &mut self,
+        layer: LayerId,
+        channels: &[ChannelPaint],
+        brush: &Brush,
+    ) -> Result<(Stroke, bool), CoreError> {
         self.ensure_no_stroke()?;
         brush.validate()?;
         self.validate_material(channels)?;
         let index = self.index_of(layer)?;
         self.ensure_raster(index)?;
+        // 無効のチャンネルを有効にする前に断る（断ったストロークが何も残さない）
+        let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
         let mut enabled = Vec::new();
         let id = self.next_stroke;
         self.next_stroke += 1;
@@ -103,6 +119,7 @@ impl Document {
                         stroke: self.stroke_budget,
                     },
                     (self.width, self.height, self.tile_size),
+                    keep_alpha,
                 )
                 .with_selection(self.selection.clone()),
             );
@@ -114,7 +131,7 @@ impl Document {
             extra: states,
             enabled,
         };
-        Ok(Stroke { id })
+        Ok((Stroke { id }, keep_alpha))
     }
     pub(super) fn validate_material(&self, channels: &[ChannelPaint]) -> Result<(), CoreError> {
         if channels.is_empty() {

@@ -46,6 +46,8 @@ pub(super) struct TriangleState {
     selection: Option<SelectionMask>,
     opacity: f64,
     erase: bool,
+    /// 透明部分のロックでアルファを守る塗り（書き込みの関門が決めた値。マスクは常に false）。
+    keep_alpha: bool,
     targets: Vec<(Target, Rgba8, BTreeMap<TileCoord, Option<Tile>>)>,
 }
 impl TriangleState {
@@ -61,14 +63,15 @@ impl Document {
         opacity: f64,
         erase: bool,
     ) -> Result<TriangleFill, CoreError> {
-        let stroke = self.begin_material_stroke(
+        // ストロークの札は借りるだけ（画素は和集合から自分の式で塗る）。ロックの検査はこの入口の中で済み、返る keep_alpha を式へ渡す。
+        let (stroke, keep_alpha) = self.begin_guarded_material_stroke(
             layer,
             channels,
-            &BrushSettings {
+            &Brush::from(BrushSettings {
                 opacity,
                 erase,
                 ..Default::default()
-            },
+            }),
         )?;
         self.start_triangles(
             stroke,
@@ -79,6 +82,7 @@ impl Document {
                 .collect(),
             opacity,
             erase,
+            keep_alpha,
         )
     }
     pub fn begin_triangle_fill(
@@ -111,6 +115,7 @@ impl Document {
         amount: f64,
         reveal: bool,
     ) -> Result<TriangleFill, CoreError> {
+        // すべてのロックだけで断る（begin_brush_mask_stroke の中）。マスクは透明部分のロックの対象外
         let stroke = self.begin_mask_stroke(
             layer,
             &BrushSettings {
@@ -125,6 +130,7 @@ impl Document {
             vec![(Target::Mask, Rgba8::new(0, 0, 0, 255), BTreeMap::new())],
             amount,
             reveal,
+            false,
         )
     }
     fn start_triangles(
@@ -134,6 +140,7 @@ impl Document {
         targets: Vec<(Target, Rgba8, BTreeMap<TileCoord, Option<Tile>>)>,
         opacity: f64,
         erase: bool,
+        keep_alpha: bool,
     ) -> Result<TriangleFill, CoreError> {
         let id = stroke.id;
         self.triangle_fill = Some(TriangleState {
@@ -142,6 +149,7 @@ impl Document {
             targets,
             opacity,
             erase,
+            keep_alpha,
             selection: self.selection.clone(),
             samples: Samples::new(),
             count: 0,
@@ -194,8 +202,13 @@ impl Document {
             for chunk in coords.chunks(batch) {
                 let computed: Vec<Option<Option<Tile>>> = {
                     let surface = self.target_surface(index, target).unwrap();
-                    let (samples, selection, opacity, erase) =
-                        (&state.samples, &state.selection, state.opacity, state.erase);
+                    let (samples, selection, opacity, erase, keep_alpha) = (
+                        &state.samples,
+                        &state.selection,
+                        state.opacity,
+                        state.erase,
+                        state.keep_alpha,
+                    );
                     let originals = &*originals;
                     let color = *color;
                     chunk
@@ -249,6 +262,7 @@ impl Document {
                                                 opacity,
                                                 amount as f64 / 255.0,
                                                 erase,
+                                                keep_alpha,
                                             )
                                         };
                                         bytes[i * 4..i * 4 + 4].copy_from_slice(&next.to_array());

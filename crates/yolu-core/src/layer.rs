@@ -113,6 +113,7 @@ impl RasterMask {
 /// 層。種類ごとに中身が違う（ラスターは面、塗りつぶしは値、調整は設定、グループは何も持たない）。
 #[derive(Clone, Debug)]
 pub struct Layer {
+    pub(crate) locks: crate::LayerLocks,
     pub(crate) id: LayerId,
     pub(crate) name: String,
     pub(crate) visible: bool,
@@ -138,6 +139,7 @@ pub struct Layer {
 impl Layer {
     pub(crate) fn new(id: LayerId, name: &str, kind: LayerKind) -> Layer {
         Layer {
+            locks: crate::LayerLocks::NONE,
             id,
             name: name.to_string(),
             visible: true,
@@ -159,6 +161,9 @@ impl Layer {
         }
     }
 
+    pub fn locks(&self) -> crate::LayerLocks {
+        self.locks
+    }
     pub fn id(&self) -> LayerId {
         self.id
     }

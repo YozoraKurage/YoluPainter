@@ -70,7 +70,10 @@ pub use brush::{
     ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping, StencilMode, StencilPoint,
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
-pub use document::{Document, Stroke, StrokeResult, StrokeStats, TriangleFill};
+pub use document::{
+    Affine2D, CanvasResampling, Document, LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal,
+    Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
+};
 pub use error::CoreError;
 pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};

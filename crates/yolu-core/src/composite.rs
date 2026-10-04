@@ -208,7 +208,13 @@ fn mask_factor_at(layer: &Layer, x: u32, y: u32) -> f64 {
     }
 }
 
-fn evaluate_pixel(stack: &Stack<'_>, plan: &[Entry], backdrop: Rgba8, x: u32, y: u32) -> Rgba8 {
+pub(crate) fn evaluate_pixel(
+    stack: &Stack<'_>,
+    plan: &[Entry],
+    backdrop: Rgba8,
+    x: u32,
+    y: u32,
+) -> Rgba8 {
     let layers = stack.layers;
     let normal = stack.kind == ChannelKind::Normal;
     let mut result = backdrop;

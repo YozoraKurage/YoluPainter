@@ -114,12 +114,13 @@ impl Document {
         if !self.layers[index].is_channel_enabled(channel) {
             return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
         }
+        let keep_alpha = self.pixel_write_guard(layer, erase)?;
         let created = self.ensure_surface(index, channel);
         let r = self.edit_region(
             index,
             Target::Channel(channel),
             region,
-            move |start, amount| fill_pixel(start, color, opacity, amount, erase),
+            move |start, amount| fill_pixel(start, color, opacity, amount, erase, keep_alpha),
         );
         if !matches!(r, Ok(true)) {
             self.drop_created_surface(index, channel, created);
@@ -142,9 +143,11 @@ impl Document {
         }
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
+        // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
         }
+        self.refuse_lock(layer, super::LayerLocks::ALL)?;
         self.edit_region(index, Target::Mask, region, move |start, coverage| {
             mask_fill_pixel(start, amount, coverage, reveal)
         })
@@ -331,14 +334,25 @@ pub(super) fn mask_fill_pixel(start: Rgba8, amount: f64, coverage: f64, reveal: 
     }
 }
 
-/// 塗りつぶしの画素の式（C# の FillRule の、透明部分のロックの無い形）。amount は範囲の量（0〜1）。
+/// 塗りつぶしの画素の式（C# の FillRule）。amount は範囲の量（0〜1）。`keep_alpha` は書き込みの関門（`pixel_write_guard`）が返した
+/// 透明部分のロックで、必須の引数（塗りつぶし・グラデーション・三角形の塗りがこの式を通るので、呼び出し側に値を決めさせる。渡し忘れは
+/// コンパイルで落ちるが、false を書く・クロージャで引数を無視する入口は通る。関門を通すのは入口の責任）。守るときはアルファを変えず、
+/// 消す指定は関門が断っているのでここへは来ない（debug_assert で確かめる）。
 pub(super) fn fill_pixel(
     start: Rgba8,
     color: Rgba8,
     opacity: f64,
     amount: f64,
     erase: bool,
+    keep_alpha: bool,
 ) -> Rgba8 {
+    debug_assert!(
+        !(erase && keep_alpha),
+        "消す書き込みは透明部分のロックの関門が断っている"
+    );
+    if keep_alpha {
+        return super::locks::paint_keeping_alpha(start, color, opacity * amount);
+    }
     if !erase {
         return blend(start, color, opacity * amount, BlendMode::Normal);
     }

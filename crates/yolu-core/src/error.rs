@@ -4,6 +4,14 @@ use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CoreError {
+    MergeRefused(crate::MergeRefusal),
+    MergeAppearance(Box<crate::LayerMergeReport>),
+    Cancelled,
+    LayerLocked {
+        layer: crate::LayerId,
+        holder: crate::LayerId,
+        lock: crate::LayerLocks,
+    },
     /// 引数が範囲外・有限でない など。中身は何の値か。
     InvalidArgument(&'static str),
     /// その ID のレイヤーが文書に無い。
@@ -27,6 +35,14 @@ pub enum CoreError {
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CoreError::MergeRefused(reason) => write!(f, "結合できない: {reason}"),
+            CoreError::MergeAppearance(report) => write!(
+                f,
+                "結合による見た目の変化が許容差を超える: {}",
+                report.max_visible_difference
+            ),
+            CoreError::Cancelled => write!(f, "操作を取り消した"),
+            CoreError::LayerLocked { .. } => write!(f, "層または親グループがロックされている"),
             CoreError::InvalidArgument(what) => write!(f, "値が範囲外: {what}"),
             CoreError::LayerNotFound => write!(f, "レイヤーが無い"),
             CoreError::ChannelNotFound => write!(f, "チャンネルが無い"),

@@ -1,6 +1,6 @@
 //! ブラシの振る舞い（Unity 版の C# の Core の試験 BrushTests・BrushDynamicsTests・StrokeAssistTests・StrokeCurveTests・
 //! BrushEffectTests のうち、1 つの面へ描くストロークの範囲を移したもの。値は C# の試験の期待値そのもの）と、C# に無い拡張
-//! （筆先の反転・紙の質感のモード）の試験。選択範囲・透明部分のロック・マスク・マテリアルで塗る・保存の部分はまだ無いので移していない。
+//! （筆先の反転・紙の質感のモード）の試験。マスク・マテリアルで塗る・保存の部分はまだ無いので移していない（選択範囲は selection.rs、透明部分のロックは docops.rs の試験）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::HashSet;

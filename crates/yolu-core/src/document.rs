@@ -9,9 +9,18 @@
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
 mod edits;
+pub(crate) mod locks;
 mod material;
+mod merge;
+mod operations;
 mod regions;
+mod resize;
+mod transform;
 mod triangle_fill;
+pub use locks::LayerLocks;
+pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
+pub use resize::{CanvasResampling, ResizeReport};
+pub use transform::{Affine2D, Resampling};
 pub use triangle_fill::TriangleFill;
 mod selection;
 mod smart;
@@ -188,6 +197,7 @@ pub(crate) struct TileChange {
 /// 層の属性（Undo の前後の値）。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Property {
+    Locks(LayerLocks),
     Visible(bool),
     Opacity(f64),
     Mode(BlendMode),
@@ -210,6 +220,7 @@ pub(crate) enum Command {
         old: crate::mesh_maps::IdColorAssignments,
         new: crate::mesh_maps::IdColorAssignments,
     },
+    Swap(Box<operations::State>),
     Stroke {
         layer: LayerId,
         target: Target,
@@ -662,7 +673,21 @@ impl Document {
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let layer = &self.layers[self.index_of(id)?];
+        // マスクの設定はマスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）
+        if matches!(
+            new,
+            Property::MaskEnabled(_) | Property::MaskInverted(_) | Property::MaskDensity(_)
+        ) {
+            Self::mask_of(layer)?;
+        }
+        if !matches!(
+            new,
+            Property::Visible(_) | Property::Name(_) | Property::Locks(_)
+        ) {
+            self.refuse_lock(id, LayerLocks::ALL)?;
+        }
         let old = match &new {
+            Property::Locks(_) => Property::Locks(layer.locks),
             Property::Visible(_) => Property::Visible(layer.visible),
             Property::Opacity(_) => Property::Opacity(layer.opacity),
             Property::Mode(_) => Property::Mode(layer.blend_mode),
@@ -1150,6 +1175,7 @@ impl Document {
                 self.id_colors = if backwards { old.clone() } else { new.clone() };
                 Ok(())
             }
+            Command::Swap(state) => self.swap_state(state),
             Command::Stroke {
                 layer,
                 target,
@@ -1296,8 +1322,9 @@ impl Document {
         let index = self.index_of(id)?;
         let layer = &mut self.layers[index];
         let mut channel = None;
-        let marks = !matches!(value, Property::Name(_)); // 名前は合成を変えない
+        let marks = !matches!(value, Property::Name(_) | Property::Locks(_)); // 名前は合成を変えない
         match value {
+            Property::Locks(v) => layer.locks = v,
             Property::Visible(v) => layer.visible = v,
             Property::Opacity(v) => layer.opacity = v,
             Property::Mode(v) => layer.blend_mode = v,
@@ -1353,7 +1380,11 @@ impl Document {
         object: Option<&Layer>,
         channel: Option<Channel>,
     ) {
-        let layer = object.unwrap_or(&self.layers[index]);
+        // 文書の外の層を渡すとき、文書の層が 1 枚も無くても番号は引かない（全部の層を外す交換のとき）
+        let layer = match object {
+            Some(layer) => layer,
+            None => &self.layers[index],
+        };
         if layer.kind != LayerKind::Raster {
             // 塗りつぶし・調整は画布全体に効く。値が今消えたかもしれないので、今の中身ではなく全タイルを
             let tiles: Vec<TileCoord> = self.canvas_tiles().collect();
@@ -1560,6 +1591,12 @@ impl Document {
         brush.validate()?;
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
+        // 型とロックの順は C# の BeginStroke と同じ: 塗りつぶしの層だけ型が先で、調整・グループの層はロックが先
+        // （面を取る GetChannel が型で断るのは、ロックの検査のあと）。そのほかの入口は、ラスターの層かどうかが先
+        if self.layers[index].kind == LayerKind::Fill {
+            self.ensure_raster(index)?;
+        }
+        let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
         self.ensure_raster(index)?;
         self.ensure_surface(index, channel);
         if !self.layers[index].is_channel_enabled(channel) {
@@ -1580,8 +1617,10 @@ impl Document {
         };
         let size = (self.width, self.height, self.tile_size);
         self.active = Some(
-            StrokeState::new(id, layer, index, channel, kind, brush, budgets, size)
-                .with_selection(self.selection.clone()),
+            StrokeState::new(
+                id, layer, index, channel, kind, brush, budgets, size, keep_alpha,
+            )
+            .with_selection(self.selection.clone()),
         );
         self.active_target = target;
         Ok(Stroke { id })
@@ -1607,9 +1646,11 @@ impl Document {
         self.ensure_no_stroke()?;
         brush.validate()?;
         let index = self.index_of(layer)?;
+        // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無い層は、ロックの有無に関わらず同じ理由で断る
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
         }
+        self.refuse_lock(layer, LayerLocks::ALL)?;
         let mut brush = brush.without_color_dynamics();
         brush.base.color = Rgba8::new(0, 0, 0, 255);
         let budgets = Budgets {
@@ -1630,6 +1671,7 @@ impl Document {
                 brush,
                 budgets,
                 size,
+                false, // マスクは透明部分のロックの対象外（すべてのロックだけで断る。上の refuse_lock）
             )
             .without_stencil_colour()
             .with_selection(self.selection.clone()),

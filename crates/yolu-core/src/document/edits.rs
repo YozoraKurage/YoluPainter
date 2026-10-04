@@ -17,9 +17,11 @@ impl Document {
     pub fn add_layer_mask(&mut self, id: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(id)?;
+        // マスクの有無がロックより先（C# の AddLayerMask）
         if self.layers[index].mask.is_some() {
             return Err(CoreError::Unsupported("層はもうマスクを持っている"));
         }
+        self.refuse_lock(id, super::LayerLocks::ALL)?;
         let mask = RasterMask::new(Surface::new(self.width, self.height, self.tile_size));
         self.execute(
             Command::AddMask {
@@ -34,9 +36,11 @@ impl Document {
     pub fn remove_layer_mask(&mut self, id: LayerId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(id)?;
+        // マスクの有無がロックより先（C# の RemoveLayerMask）
         let bytes = Self::mask_of(&self.layers[index])?
             .surface
             .allocated_bytes();
+        self.refuse_lock(id, super::LayerLocks::ALL)?;
         self.execute(Command::RemoveMask { id, mask: None }, 64 + bytes)
     }
 
@@ -81,6 +85,7 @@ impl Document {
         coalesce: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
+        self.ensure_pixels_editable(id, false)?;
         self.require_channel(channel)?;
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
@@ -88,6 +93,9 @@ impl Document {
             return Err(CoreError::Unsupported("塗りつぶしの層だけが値を持つ"));
         }
         let old = layer.fill_value(channel);
+        if old.map_or(0, |v| v.a) != value.map_or(0, |v| v.a) {
+            self.refuse_lock(id, super::LayerLocks::TRANSPARENCY)?;
+        }
         let was_enabled = layer.is_channel_enabled(channel);
         if old == value && (value.is_none() || was_enabled) {
             return Ok(());
@@ -143,6 +151,7 @@ impl Document {
         enabled: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
+        self.refuse_lock(id, super::LayerLocks::ALL)?;
         let kind = self.channel_kind(channel)?;
         let index = self.index_of(id)?;
         let layer = &self.layers[index];

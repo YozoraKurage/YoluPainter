@@ -5,7 +5,8 @@ use crate::material::{ChannelPaint, GradientSettings};
 use crate::SelectionMask;
 
 impl Document {
-    /// 全チャンネルを同じ範囲へ塗る。無効のチャンネルは有効にし、取消・失敗・変更なしなら戻す。
+    /// 全チャンネルを同じ範囲へ塗る。無効のチャンネルは有効にし、取消・失敗・変更なしなら戻す。画像・すべてのロックと、消すときの
+    /// 透明部分のロックで断る（何も変えない）。透明部分のロックでは全チャンネルがアルファを守る。
     pub fn fill_material(
         &mut self,
         layer: LayerId,
@@ -17,9 +18,15 @@ impl Document {
         if !(0.0..=1.0).contains(&opacity) {
             return Err(CoreError::InvalidArgument("opacity"));
         }
-        self.edit_material_region(layer, channels, region, |m, _, _, start, amount| {
-            fill_pixel(start, m.value, opacity, amount, erase)
-        })
+        self.edit_material_region(
+            layer,
+            channels,
+            region,
+            erase,
+            |m, _, _, start, amount, keep_alpha| {
+                fill_pixel(start, m.value, opacity, amount, erase, keep_alpha)
+            },
+        )
     }
     /// 各チャンネルの値から透明へ。同じチャンネルの終点値を渡すと二つのマテリアルを補間する。
     pub fn gradient_material(
@@ -43,22 +50,29 @@ impl Document {
                 return Err(CoreError::InvalidArgument("グラデーション両端のチャンネル"));
             }
         }
-        self.edit_material_region(layer, channels, region, |m, x, y, start, amount| {
-            let g = GradientSettings {
-                from: m.value,
-                to: to
-                    .and_then(|t| t.iter().find(|t| t.channel == m.channel))
-                    .map_or(Rgba8::TRANSPARENT, |m| m.value),
-                ..*gradient
-            };
-            fill_pixel(
-                start,
-                g.color_at(x as f64 + 0.5, y as f64 + 0.5),
-                g.opacity,
-                amount,
-                erase,
-            )
-        })
+        self.edit_material_region(
+            layer,
+            channels,
+            region,
+            erase,
+            |m, x, y, start, amount, keep_alpha| {
+                let g = GradientSettings {
+                    from: m.value,
+                    to: to
+                        .and_then(|t| t.iter().find(|t| t.channel == m.channel))
+                        .map_or(Rgba8::TRANSPARENT, |m| m.value),
+                    ..*gradient
+                };
+                fill_pixel(
+                    start,
+                    g.color_at(x as f64 + 0.5, y as f64 + 0.5),
+                    g.opacity,
+                    amount,
+                    erase,
+                    keep_alpha,
+                )
+            },
+        )
     }
     #[allow(clippy::too_many_arguments)]
     pub fn gradient(
@@ -83,7 +97,7 @@ impl Document {
             erase,
         )
     }
-    /// マスクの隠す量をグラデーションのアルファで増減する。
+    /// マスクの隠す量をグラデーションのアルファで増減する。すべてのロックだけで断る（画像・透明部分のロックはマスクを妨げない）。
     pub fn gradient_mask(
         &mut self,
         layer: LayerId,
@@ -97,6 +111,7 @@ impl Document {
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));
         }
+        self.refuse_lock(layer, LayerLocks::ALL)?;
         let effective = self.effective_region(region)?;
         let coords: Vec<_> = effective
             .as_ref()
@@ -127,20 +142,24 @@ impl Document {
         });
         Ok(true)
     }
+    /// pixel の最後の引数は書き込みの関門が決めた透明部分のロック（`keep_alpha`）で、`fill_pixel` へそのまま渡す。
     fn edit_material_region<F>(
         &mut self,
         layer: LayerId,
         channels: &[ChannelPaint],
         region: Option<&SelectionMask>,
+        erase: bool,
         pixel: F,
     ) -> Result<bool, CoreError>
     where
-        F: Fn(&ChannelPaint, u32, u32, Rgba8, f64) -> Rgba8 + Sync,
+        F: Fn(&ChannelPaint, u32, u32, Rgba8, f64, bool) -> Rgba8 + Sync,
     {
         self.ensure_no_stroke()?;
         self.validate_material(channels)?;
         let index = self.index_of(layer)?;
         self.ensure_raster(index)?;
+        // 無効のチャンネルを有効にする前に断る（断った塗りが何も残さない）
+        let keep_alpha = self.pixel_write_guard(layer, erase)?;
         let effective = self.effective_region(region)?;
         let coords: Vec<_> = effective
             .as_ref()
@@ -167,7 +186,7 @@ impl Document {
                 effective.as_ref(),
                 &coords,
                 &mut rollback,
-                |x, y, start, amount| pixel(c, x, y, start, amount),
+                |x, y, start, amount| pixel(c, x, y, start, amount, keep_alpha),
             ) {
                 Ok(changes) => {
                     if !changes.is_empty() {

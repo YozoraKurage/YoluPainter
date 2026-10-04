@@ -1438,7 +1438,36 @@ fn manual_id_colors_are_refused_instead_of_dropped() {
     )
     .unwrap();
     doc.set_id_colors(colors).unwrap();
-    let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err().to_string();
+    let err = yolu_io::NativeDocument::from_core(&doc)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("ID の色"), "{err}");
     assert_eq!(doc.id_colors().colors().len(), 1);
+}
+
+/// 層のロックもまだ正本に書けないので、黙って落とさずに保存を断る。親のグループだけに掛けた場合も、どの種類のロックも断る
+/// （文書は変えない）。ロックを外せば書ける。
+#[test]
+fn layer_locks_are_refused_instead_of_dropped() {
+    use yolu_core::LayerLocks;
+    let mut doc = yolu_core::Document::new(16, 16).unwrap();
+    let id = doc.add_layer("層").unwrap();
+    let group = doc.add_group("g", None).unwrap();
+    for lock in [
+        LayerLocks::TRANSPARENCY,
+        LayerLocks::PIXELS,
+        LayerLocks::POSITION,
+        LayerLocks::ALL,
+    ] {
+        for target in [id, group] {
+            doc.set_layer_locks(target, lock).unwrap();
+            let err = yolu_io::NativeDocument::from_core(&doc)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("ロック"), "{lock:?} {err}");
+            assert_eq!(doc.layer(target).unwrap().locks(), lock);
+            doc.set_layer_locks(target, LayerLocks::NONE).unwrap();
+        }
+    }
+    yolu_io::NativeDocument::from_core(&doc).unwrap();
 }

@@ -235,6 +235,8 @@ impl Document {
             ));
         }
         let i = self.index_of(id)?;
+        // マスクを変えるのは、すべてのロックでだけ断る（add_layer_mask と同じ。C# の ApplySmartMask の RefuseLockedAttributes）
+        self.refuse_lock(id, super::LayerLocks::ALL)?;
         let old = self.layers[i]
             .mask
             .as_ref()

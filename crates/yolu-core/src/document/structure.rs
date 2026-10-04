@@ -20,7 +20,7 @@ pub(crate) struct Tree {
 }
 
 impl Tree {
-    fn index(&self, id: LayerId) -> usize {
+    pub(super) fn index(&self, id: LayerId) -> usize {
         self.order
             .iter()
             .position(|e| e.0 == id)
@@ -49,7 +49,7 @@ impl Tree {
         false
     }
     /// まとまり（top の層と、グループなら中身）の一番下の位置。
-    fn subtree_start(&self, top: usize) -> usize {
+    pub(super) fn subtree_start(&self, top: usize) -> usize {
         let mut start = top;
         if self.is_group(self.order[top].0) {
             let id = self.order[top].0;
@@ -60,7 +60,7 @@ impl Tree {
         start
     }
     /// まとまりの ID（下から上）。
-    fn block(&self, id: LayerId) -> Vec<LayerId> {
+    pub(super) fn block(&self, id: LayerId) -> Vec<LayerId> {
         let top = self.index(id);
         let start = self.subtree_start(top);
         self.order[start..=top].iter().map(|e| e.0).collect()

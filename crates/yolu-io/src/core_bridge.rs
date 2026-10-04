@@ -314,7 +314,7 @@ impl NativeDocument {
     }
 
     /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
-    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストロークは断る。値の無い塗りつぶしのチャンネルと
+    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色と層のロックは断る。値の無い塗りつぶしのチャンネルと
     /// グループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
     pub fn from_core(doc: &Document) -> Result<Self> {
         check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
@@ -322,6 +322,13 @@ impl NativeDocument {
         check(
             doc.id_colors().colors().is_empty(),
             "手動の ID の色はまだ .ylp に書けません",
+        )?;
+        // 層のロック（正本の版 12）もまだ書けない。読み込み側は native の locks を core に無い項目として断るので、書き出しも断って対にする
+        check(
+            doc.layers()
+                .iter()
+                .all(|l| l.locks() == yolu_core::LayerLocks::NONE),
+            "層のロックはまだ .ylp に書けません",
         )?;
         check(
             doc.width() <= 8192 && doc.height() <= 8192,

@@ -278,6 +278,9 @@ fn golden_covers_exactly_the_documented_cases() {
         ("tri", 11),
         ("rollback", 8),
         ("rollback-fill", 4),
+        ("lock", 1024),
+        ("lockmask", 512),
+        ("locknr", 576),
     ] {
         assert_eq!(keys_with(&g, prefix), n, "{prefix}");
     }
@@ -312,10 +315,452 @@ fn golden_covers_exactly_the_documented_cases() {
             expected.push(format!("rollback-fill {selected} {channels}"));
         }
     }
+    for degree in [1, 4] {
+        for (prefix, kinds) in [("lock", 8), ("lockmask", 4)] {
+            for kind in 0..kinds {
+                for lock_case in 0..LOCK_CASES {
+                    for v in 0..8 {
+                        expected.push(format!("{prefix} {degree} {kind} {lock_case} {v}"));
+                    }
+                }
+            }
+        }
+    }
+    for entry in 0..12 {
+        for target in 0..3 {
+            for lock_case in 0..LOCK_CASES {
+                for v in 0..2 {
+                    expected.push(format!("locknr {entry} {target} {lock_case} {v}"));
+                }
+            }
+        }
+    }
     for key in &expected {
         assert!(g.contains_key(key), "正解に無い事例: {key}");
     }
     assert_eq!(expected.len(), g.len());
+}
+/// ロックの場面の数（MaterialGolden.cs の LockDoc の lockCase）: 0 なし・1 透明部分・2 画像・3 すべて・4 位置（塗りは通る）、
+/// 5〜7 は層を 1 つだけ含むグループに 透明部分・画像・すべて。
+const LOCK_CASES: u32 = 8;
+const LOCK_BITS: [LayerLocks; 8] = [
+    LayerLocks::NONE,
+    LayerLocks::TRANSPARENCY,
+    LayerLocks::PIXELS,
+    LayerLocks::ALL,
+    LayerLocks::POSITION,
+    LayerLocks::TRANSPARENCY,
+    LayerLocks::PIXELS,
+    LayerLocks::ALL,
+];
+/// ロックの場面（edge の画布）。層は 6 チャンネルとも画素あり。透明な画素はチャンネルごとに違う（アルファの式にチャンネル番号が入る）。
+/// off は 2 つのチャンネルを無効にしておく。selected は文書の選択範囲（楕円）を立てる。
+fn lock_doc(
+    lock_case: u32,
+    off: bool,
+    with_mask: bool,
+    selected: bool,
+) -> (Document, LayerId, Option<LayerId>, Scene) {
+    let sc = scenes().into_iter().nth(1).unwrap();
+    let mut d = Document::with_tile_size(sc.w, sc.h, 8).unwrap();
+    let l = d.add_layer("paint").unwrap();
+    for (c, ch) in Channel::ALL.iter().enumerate() {
+        for y in 0..sc.h {
+            for x in 0..sc.w {
+                let a = if (x + y + c as u32).is_multiple_of(5) {
+                    0
+                } else {
+                    (((x + y) * 19 + c as u32 * 23) % 256) as u8
+                };
+                let p = Rgba8::new(
+                    ((x * 17 + c as u32 * 31) % 256) as u8,
+                    ((y * 23 + c as u32 * 11) % 256) as u8,
+                    ((x * 7 + y * 13) % 256) as u8,
+                    a,
+                );
+                d.set_channel_pixel(l, *ch, x, y, p).unwrap();
+            }
+        }
+    }
+    if with_mask {
+        d.add_layer_mask(l).unwrap();
+        for y in 0..sc.h {
+            for x in 0..sc.w {
+                let hide = if (x * 29 + y * 41) % 7 == 0 {
+                    0
+                } else {
+                    ((x * 11 + y * 17 + 40) % 256) as u8
+                };
+                d.set_mask_pixel(l, x, y, hide).unwrap();
+            }
+        }
+    }
+    if selected {
+        d.set_selection(Some(selection_of(&d, &sc))).unwrap();
+    }
+    if off {
+        d.set_channel_enabled(l, Channel::ALL[2], false).unwrap();
+        d.set_channel_enabled(l, Channel::ALL[4], false).unwrap();
+    }
+    let group = (lock_case >= 5).then(|| d.group_layers(&[l], "g").unwrap());
+    d.set_layer_locks(group.unwrap_or(l), LOCK_BITS[lock_case as usize])
+        .unwrap();
+    d.clear_history().unwrap();
+    (d, l, group, sc)
+}
+/// 層の全チャンネル（有効か・面があるか・画素）か、マスクの隠す量だけ（MaterialGolden.cs の LockState）。
+fn lock_state(out: &mut Vec<u8>, d: &Document, l: LayerId, mask_only: bool) {
+    let layer = d.layer(l).unwrap();
+    if mask_only {
+        out.push(u8::from(layer.mask().is_some()));
+        if let Some(m) = layer.mask() {
+            out.extend(m.surface().to_canvas_bytes().chunks_exact(4).map(|p| p[3]));
+        }
+        return;
+    }
+    for c in Channel::ALL {
+        out.push(u8::from(layer.is_channel_enabled(c)));
+        let surface = layer.surface(c);
+        out.push(u8::from(surface.is_some()));
+        if let Some(s) = surface {
+            out.extend(s.to_canvas_bytes());
+        }
+    }
+}
+/// 書いた結果の先頭: 0 通った・1 ロックで断った（層・持ち主の並びの位置とロック）・2 そのほかの拒否。
+fn lock_outcome(out: &mut Vec<u8>, d: &Document, result: Result<(), CoreError>) -> bool {
+    match result {
+        Ok(()) => {
+            out.push(0);
+            true
+        }
+        Err(CoreError::LayerLocked {
+            layer,
+            holder,
+            lock,
+        }) => {
+            let at = |id: LayerId| d.layers().iter().position(|l| l.id() == id).unwrap() as i32;
+            out.push(1);
+            out.extend(at(layer).to_le_bytes());
+            out.extend(at(holder).to_le_bytes());
+            out.extend(i32::from(lock.bits()).to_le_bytes());
+            false
+        }
+        Err(_) => {
+            out.push(2);
+            false
+        }
+    }
+}
+/// 断ったか通ったかのあとの文書（Undo/Redo の可否と、通って履歴ができたときは Undo の後と Redo の後も）。
+fn lock_after(out: &mut Vec<u8>, d: &mut Document, l: LayerId, ok: bool, mask_only: bool) {
+    let flags = |out: &mut Vec<u8>, d: &Document| {
+        out.push(u8::from(d.can_undo()));
+        out.push(u8::from(d.can_redo()));
+        lock_state(out, d, l, mask_only);
+    };
+    flags(out, d);
+    if ok && d.can_undo() {
+        d.undo().unwrap();
+        flags(out, d);
+        d.redo().unwrap();
+        flags(out, d);
+    }
+}
+/// 層へ書く入口（ピクセルのチャンネルへ）。MaterialGolden.cs の RunLock・RunLockKind が呼ぶ書き込みと同じ。
+#[derive(Clone, Copy)]
+enum PixelWrite {
+    Stroke,
+    MaterialStroke,
+    FillMaterial,
+    GradientMaterial,
+    GradientMaterialEnds,
+    MaterialTriangles,
+    Fill,
+    Gradient,
+    Triangles,
+}
+/// 層のマスクへ書く入口。
+#[derive(Clone, Copy)]
+enum MaskWrite {
+    Gradient,
+    Triangles,
+    Fill,
+    Stroke,
+}
+fn lock_material() -> Vec<ChannelPaint> {
+    Channel::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, c)| ChannelPaint::new(*c, Rgba8::new(31 + i as u8 * 32, 79, 133, 211)))
+        .collect()
+}
+fn lock_gradient(sc: &Scene) -> GradientSettings {
+    GradientSettings {
+        start: sc.gradient.0,
+        end: sc.gradient.1,
+        from: Rgba8::new(31, 79, 133, 200),
+        to: Rgba8::new(213, 47, 13, 40),
+        opacity: 0.73,
+        shape: GradientShape::Linear,
+    }
+}
+fn lock_brush(erase: bool) -> Brush {
+    let mut b = Brush::from(BrushSettings {
+        color: Rgba8::new(213, 47, 13, 211),
+        radius: 5.0,
+        hardness: 0.4,
+        spacing: 0.2,
+        opacity: 0.85,
+        flow: 0.45,
+        erase,
+        ..Default::default()
+    });
+    b.seed = 1234;
+    b
+}
+/// channel は単チャンネルの入口（Stroke・Fill・Gradient・Triangles）が書くチャンネル。erase は消す書き込みか。
+fn write_pixels(
+    d: &mut Document,
+    l: LayerId,
+    sc: &Scene,
+    write: PixelWrite,
+    channel: Channel,
+    erase: bool,
+) -> Result<(), CoreError> {
+    let material = lock_material();
+    let t = sc.triangles;
+    let region = SelectionMask::from_triangles(d, &t).unwrap();
+    let g = lock_gradient(sc);
+    let ends: Vec<_> = material
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(c, m)| ChannelPaint::new(m.channel, Rgba8::new(213, 47, 13 + c as u8 * 27, 83)))
+        .collect();
+    match write {
+        PixelWrite::Stroke => {
+            let mut s = d.begin_brush_stroke_in(l, channel, &lock_brush(erase))?;
+            for (x, y, p, t) in sc.points {
+                s.add_sample(d, BrushSample::new(x, y, p, t, DVec2::ZERO).unwrap())?;
+            }
+            d.end_stroke(s)?;
+        }
+        PixelWrite::MaterialStroke => {
+            let mut s = d.begin_material_brush_stroke(l, &material, &lock_brush(erase))?;
+            for (x, y, p, t) in sc.points {
+                s.add_sample(d, BrushSample::new(x, y, p, t, DVec2::ZERO).unwrap())?;
+            }
+            d.end_stroke(s)?;
+        }
+        PixelWrite::FillMaterial => {
+            d.fill_material(l, &material, 0.63, Some(&region), erase)?;
+        }
+        PixelWrite::GradientMaterial => {
+            d.gradient_material(l, &material, None, &g, Some(&region), erase)?;
+        }
+        PixelWrite::GradientMaterialEnds => {
+            d.gradient_material(l, &material, Some(&ends), &g, Some(&region), erase)?;
+        }
+        PixelWrite::MaterialTriangles => {
+            let mut f = d.begin_material_triangle_fill(l, &material, 0.63, erase)?;
+            f.add(d, &[t[1]])?;
+            f.add(d, &[t[0], t[1]])?;
+            f.add(d, &[t[2]])?;
+            f.commit(d)?;
+        }
+        PixelWrite::Fill => {
+            d.fill(
+                l,
+                channel,
+                Rgba8::new(213, 47, 13, 211),
+                0.63,
+                Some(&region),
+                erase,
+            )?;
+        }
+        PixelWrite::Gradient => {
+            d.gradient(l, channel, &g, Some(&region), erase)?;
+        }
+        PixelWrite::Triangles => {
+            let mut f =
+                d.begin_triangle_fill(l, channel, Rgba8::new(213, 47, 13, 211), 0.63, erase)?;
+            f.add(d, &[t[1]])?;
+            f.add(d, &[t[0], t[1]])?;
+            f.add(d, &[t[2]])?;
+            f.commit(d)?;
+        }
+    }
+    Ok(())
+}
+fn write_mask(
+    d: &mut Document,
+    l: LayerId,
+    sc: &Scene,
+    write: MaskWrite,
+    reveal: bool,
+) -> Result<(), CoreError> {
+    let t = sc.triangles;
+    let region = SelectionMask::from_triangles(d, &t).unwrap();
+    match write {
+        MaskWrite::Gradient => {
+            d.gradient_mask(l, &lock_gradient(sc), Some(&region), reveal)?;
+        }
+        MaskWrite::Triangles => {
+            let mut f = d.begin_mask_triangle_fill(l, 0.63, reveal)?;
+            f.add(d, &[t[1]])?;
+            f.add(d, &[t[0], t[1]])?;
+            f.add(d, &[t[2]])?;
+            f.commit(d)?;
+        }
+        MaskWrite::Fill => {
+            d.fill_mask(l, 0.63, Some(&region), reveal)?;
+        }
+        MaskWrite::Stroke => {
+            let mut s = d.begin_brush_mask_stroke(l, &lock_brush(reveal))?;
+            for (x, y, p, t) in sc.points {
+                s.add_sample(d, BrushSample::new(x, y, p, t, DVec2::ZERO).unwrap())?;
+            }
+            d.end_stroke(s)?;
+        }
+    }
+    Ok(())
+}
+/// ロックを立てた層への書き込み（MaterialGolden.cs の RunLock）: kind 0 マテリアルのストローク・1 範囲の塗り・2 グラデーション・
+/// 3 二つのマテリアルのグラデーション・4 マテリアルの三角形の塗り・5 単チャンネルのグラデーション・6 単チャンネルの三角形の塗り・
+/// 7 単チャンネルのストローク。v のビット 0 は消す・ビット 1 は 2 つのチャンネルを無効にしておく（単チャンネルの入口はその無効のチャンネルへ書く）・
+/// ビット 2 は文書の選択範囲。
+fn run_lock(kind: u32, lock_case: u32, v: u32) -> Vec<u8> {
+    const KINDS: [PixelWrite; 8] = [
+        PixelWrite::MaterialStroke,
+        PixelWrite::FillMaterial,
+        PixelWrite::GradientMaterial,
+        PixelWrite::GradientMaterialEnds,
+        PixelWrite::MaterialTriangles,
+        PixelWrite::Gradient,
+        PixelWrite::Triangles,
+        PixelWrite::Stroke,
+    ];
+    let (erase, off) = (v & 1 != 0, v & 2 != 0);
+    let (mut d, l, _, sc) = lock_doc(lock_case, off, false, v & 4 != 0);
+    let channel = Channel::ALL[if off { 2 } else { 0 }];
+    let result = write_pixels(&mut d, l, &sc, KINDS[kind as usize], channel, erase);
+    let mut out = Vec::new();
+    let ok = lock_outcome(&mut out, &d, result);
+    lock_after(&mut out, &mut d, l, ok, false);
+    out
+}
+/// ロックを立てた層のマスクへの書き込み（MaterialGolden.cs の RunLockMask）: kind 0 グラデーション・1 三角形の塗り・2 範囲の塗り・
+/// 3 ブラシのストローク。v のビット 0 は見せる側・ビット 1 は層にマスクが無い・ビット 2 は文書の選択範囲。
+fn run_lock_mask(kind: u32, lock_case: u32, v: u32) -> Vec<u8> {
+    const KINDS: [MaskWrite; 4] = [
+        MaskWrite::Gradient,
+        MaskWrite::Triangles,
+        MaskWrite::Fill,
+        MaskWrite::Stroke,
+    ];
+    let (mut d, l, _, sc) = lock_doc(lock_case, false, v & 2 == 0, v & 4 != 0);
+    let result = write_mask(&mut d, l, &sc, KINDS[kind as usize], v & 1 != 0);
+    let mut out = Vec::new();
+    let ok = lock_outcome(&mut out, &d, result);
+    lock_after(&mut out, &mut d, l, ok, true);
+    out
+}
+/// 塗りつぶし・調整・グループの層の場面（MaterialGolden.cs の LockKindDoc）。層に全体のマスクを付け、ロックの置き方は `lock_doc` と同じ。
+/// target: 0 塗りつぶし（Color と Emission の値）・1 調整（反転）・2 グループ。
+fn lock_kind_doc(target: u32, lock_case: u32) -> (Document, LayerId, Scene) {
+    let sc = scenes().into_iter().nth(1).unwrap();
+    let mut d = Document::with_tile_size(sc.w, sc.h, 8).unwrap();
+    let l = match target {
+        0 => d.add_fill_layer(
+            "n",
+            &[
+                (Channel::Color, Rgba8::new(10, 20, 30, 255)),
+                (Channel::Emission, Rgba8::new(40, 50, 60, 255)),
+            ],
+            None,
+        ),
+        1 => d.add_adjustment_layer("n", AdjustmentSettings::invert(), None, None),
+        _ => d.add_group("n", None),
+    }
+    .unwrap();
+    d.add_layer_mask(l).unwrap();
+    for y in 0..sc.h {
+        for x in 0..sc.w {
+            let hide = if (x * 29 + y * 41) % 7 == 0 {
+                0
+            } else {
+                ((x * 11 + y * 17 + 40) % 256) as u8
+            };
+            d.set_mask_pixel(l, x, y, hide).unwrap();
+        }
+    }
+    let group = (lock_case >= 5).then(|| d.group_layers(&[l], "g").unwrap());
+    d.set_layer_locks(group.unwrap_or(l), LOCK_BITS[lock_case as usize])
+        .unwrap();
+    d.clear_history().unwrap();
+    (d, l, sc)
+}
+/// 各チャンネルの有効とマスクの隠す量（MaterialGolden.cs の LockKindState）。
+fn lock_kind_state(out: &mut Vec<u8>, d: &Document, l: LayerId) {
+    let layer = d.layer(l).unwrap();
+    for c in Channel::ALL {
+        out.push(u8::from(layer.is_channel_enabled(c)));
+    }
+    out.extend(
+        layer
+            .mask()
+            .unwrap()
+            .surface()
+            .to_canvas_bytes()
+            .chunks_exact(4)
+            .map(|p| p[3]),
+    );
+}
+/// 塗りつぶし・調整・グループの層への書き込みの、型の拒否とロックの拒否の順（MaterialGolden.cs の RunLockKind）: entry 0 begin_stroke・
+/// 1 begin_material_stroke・2 fill_material・3 gradient_material・4 begin_material_triangle_fill・5 fill・6 gradient・7 begin_triangle_fill
+/// （5〜7 は Color）・8 gradient_mask・9 begin_mask_triangle_fill・10 fill_mask・11 begin_mask_stroke。v のビット 0 は消す（マスクでは見せる）。
+fn run_lock_kind(entry: u32, target: u32, lock_case: u32, v: u32) -> Vec<u8> {
+    const PIXELS: [PixelWrite; 8] = [
+        PixelWrite::Stroke,
+        PixelWrite::MaterialStroke,
+        PixelWrite::FillMaterial,
+        PixelWrite::GradientMaterial,
+        PixelWrite::MaterialTriangles,
+        PixelWrite::Fill,
+        PixelWrite::Gradient,
+        PixelWrite::Triangles,
+    ];
+    const MASKS: [MaskWrite; 4] = [
+        MaskWrite::Gradient,
+        MaskWrite::Triangles,
+        MaskWrite::Fill,
+        MaskWrite::Stroke,
+    ];
+    let (mut d, l, sc) = lock_kind_doc(target, lock_case);
+    let flag = v & 1 != 0;
+    let result = match entry {
+        0..=7 => write_pixels(&mut d, l, &sc, PIXELS[entry as usize], Channel::Color, flag),
+        _ => write_mask(&mut d, l, &sc, MASKS[entry as usize - 8], flag),
+    };
+    let mut out = Vec::new();
+    let ok = lock_outcome(&mut out, &d, result);
+    out.push(u8::from(d.can_undo()));
+    out.push(u8::from(d.can_redo()));
+    lock_kind_state(&mut out, &d, l);
+    if ok && d.can_undo() {
+        for step in 0..2 {
+            if step == 0 {
+                d.undo().unwrap();
+            } else {
+                d.redo().unwrap();
+            }
+            out.push(u8::from(d.can_undo()));
+            out.push(u8::from(d.can_redo()));
+            lock_kind_state(&mut out, &d, l);
+        }
+    }
+    out
 }
 fn pool(degree: usize) -> rayon::ThreadPool {
     rayon::ThreadPoolBuilder::new()
@@ -720,4 +1165,192 @@ fn triangle_fill_rollback_bytes_equal_csharp() {
             assert_eq!(bytes.to_string(), g[&key], "{key}");
         }
     }
+}
+/// ロックを立てた層への書き込み（マテリアルのストローク・範囲の塗り・グラデーション 2 種・三角形の塗り・単チャンネルのグラデーション・
+/// 三角形の塗り・ストローク）が、C# と全バイト一致する: 断った層・持ち主・ロック、断ったあとの文書（Undo/Redo の可否と全チャンネルの有効・画素）、
+/// 通ったときの画素と Undo/Redo。透明部分のロックでは全チャンネルがアルファと透明画素の RGB を守る。透明な画素はチャンネルごとに違い、
+/// 文書の選択範囲を立てた事例と、無効にしたチャンネルへ書く単チャンネルの事例を含む。
+#[test]
+fn csharp_locked_layer_writes_all_bytes_at_both_parallel_degrees() {
+    let g = golden();
+    let mut checked = 0;
+    for degree in [1, 4] {
+        for kind in 0..8 {
+            for lock_case in 0..LOCK_CASES {
+                for v in 0..8 {
+                    let bytes = pool(degree).install(|| run_lock(kind, lock_case, v));
+                    let key = format!("lock {degree} {kind} {lock_case} {v}");
+                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 1024);
+}
+/// ロックを立てた層のマスクへの書き込みも同じ。画像・透明部分のロックでは通り、すべてのロック（層か親のグループ）でだけ断る。
+/// マスクの無い層は、どのロックでも「マスクが無い」で断る（ロックの拒否より先）。文書の選択範囲を立てた事例を含む。
+#[test]
+fn csharp_locked_layer_mask_writes_all_bytes_at_both_parallel_degrees() {
+    let g = golden();
+    let mut checked = 0;
+    for degree in [1, 4] {
+        for kind in 0..4 {
+            for lock_case in 0..LOCK_CASES {
+                for v in 0..8 {
+                    let bytes = pool(degree).install(|| run_lock_mask(kind, lock_case, v));
+                    let key = format!("lockmask {degree} {kind} {lock_case} {v}");
+                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 512);
+}
+/// 塗りつぶし・調整・グループの層への書き込みで、型の拒否とロックの拒否のどちらが先かも C# と一致する（拒否の層・持ち主・ロック、断ったあとの
+/// 各チャンネルの有効とマスク、マスクへの書き込みが通るときの Undo/Redo まで）。拒否だけの事例が主なので並列度は 1 だけ。
+#[test]
+fn csharp_non_raster_layer_writes_order_type_and_lock_refusals_the_same() {
+    let g = golden();
+    let mut checked = 0;
+    for entry in 0..12 {
+        for target in 0..3 {
+            for lock_case in 0..LOCK_CASES {
+                for v in 0..2 {
+                    let bytes = pool(1).install(|| run_lock_kind(entry, target, lock_case, v));
+                    let key = format!("locknr {entry} {target} {lock_case} {v}");
+                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 576);
+}
+/// 書いた結果の先頭の 1 バイト（と、ロックで断ったときの層・持ち主・ロック）を読み直したもの。
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum Outcome {
+    Written,
+    /// 層・持ち主の並びの位置とロックの番号
+    Locked(i32, i32, i32),
+    /// ロック以外の理由（型・無効のチャンネル・マスクが無い）で断った
+    Other,
+}
+fn outcome_of(out: &[u8]) -> Outcome {
+    let int = |at: usize| i32::from_le_bytes(out[at..at + 4].try_into().unwrap());
+    match out[0] {
+        0 => Outcome::Written,
+        1 => Outcome::Locked(int(1), int(5), int(9)),
+        _ => Outcome::Other,
+    }
+}
+/// ロックの規則だけから決めた、書き込みを断るロック（層は 0 番。グループに掛けたロックの持ち主は 1 番）。
+/// 画像・すべては断り、消すときだけ透明部分でも断る。位置のロックは塗りを妨げない。マスクはすべてのロックだけで断る（erase は無視）。
+fn locking(lock_case: u32, erase: bool, mask: bool) -> Option<Outcome> {
+    let lock = match (LOCK_BITS[lock_case as usize], erase) {
+        (LayerLocks::ALL, _) => LayerLocks::ALL,
+        (LayerLocks::PIXELS, _) if !mask => LayerLocks::PIXELS,
+        (LayerLocks::TRANSPARENCY, true) if !mask => LayerLocks::TRANSPARENCY,
+        _ => return None,
+    };
+    Some(Outcome::Locked(
+        0,
+        i32::from(lock_case >= 5),
+        i32::from(lock.bits()),
+    ))
+}
+/// 正解と一致するだけでは、双方が同じ誤りでも通る。どの組合せがどう終わるべきかを、ロックの規則と「どの拒否が先か」の順（C# の検査の順）から
+/// 独立に決めて、全事例で確かめる。事例の数は規則から数えた値で固定する（規則が崩れて数がずれたら落ちる）。
+#[test]
+fn locked_layer_outcomes_follow_the_lock_rules() {
+    let mut tally = [0u32; 3]; // 断った（ロック）・断った（そのほか）・通った
+    let mut count = |actual: Outcome, expected: Outcome, context: &dyn Fn() -> String| {
+        assert_eq!(actual, expected, "{}", context());
+        tally[match actual {
+            Outcome::Locked(..) => 0,
+            Outcome::Other => 1,
+            Outcome::Written => 2,
+        }] += 1;
+    };
+    // 画素の書き込み: 8 種 × ロックの場面 8 × 変種 8
+    for kind in 0..8 {
+        for lock_case in 0..LOCK_CASES {
+            for v in 0..8 {
+                let (erase, off) = (v & 1 != 0, v & 2 != 0);
+                let expected = match kind {
+                    // 単チャンネルの範囲の塗りは、無効のチャンネルを先に断る（ロックの前）
+                    5 | 6 if off => Outcome::Other,
+                    // 単チャンネルのストロークはロックが先で、無効のチャンネルはそのあと
+                    7 => locking(lock_case, erase, false).unwrap_or(if off {
+                        Outcome::Other
+                    } else {
+                        Outcome::Written
+                    }),
+                    _ => locking(lock_case, erase, false).unwrap_or(Outcome::Written),
+                };
+                let out = run_lock(kind, lock_case, v);
+                count(outcome_of(&out), expected, &|| {
+                    format!("kind {kind} lock {lock_case} v {v}")
+                });
+            }
+        }
+    }
+    // マスクの書き込み: 4 種 × ロックの場面 8 × 変種 8（ビット 1 がマスク無し: ロックより先に「マスクが無い」で断る）
+    for kind in 0..4 {
+        for lock_case in 0..LOCK_CASES {
+            for v in 0..8 {
+                let expected = if v & 2 != 0 {
+                    Outcome::Other
+                } else {
+                    locking(lock_case, false, true).unwrap_or(Outcome::Written)
+                };
+                let out = run_lock_mask(kind, lock_case, v);
+                count(outcome_of(&out), expected, &|| {
+                    format!("mask kind {kind} lock {lock_case} v {v}")
+                });
+            }
+        }
+    }
+    // 画素 512 事例: ロックで断る 280（マテリアル 5 種は各 40、単チャンネルの塗り 2 種は無効にしない半分の 20 ずつ、ストロークは 40）・
+    // ほかの理由で断る 76（無効のチャンネルへの単チャンネル 3 種）・通る 156。マスク 256 事例: ロックで 32（4 種 × すべての 2 場面 × 4 変種）・
+    // マスク無しで 128・通る 96。
+    assert_eq!(tally, [280 + 32, 76 + 128, 156 + 96]);
+}
+/// 塗りつぶし・調整・グループの層への書き込み。型で断る入口は、ロックの有無に関わらず型で断る（ロックの名指しは出ない）。ただし単チャンネルの
+/// ストローク（begin_stroke）は、調整・グループではロックが先（C# は GetChannel が型で断るのをロックの後に置く）で、塗りつぶしだけ型が先。
+/// マスクへの書き込みはどの種類の層にも通り、すべてのロックでだけ断る。
+#[test]
+fn non_raster_layer_writes_refuse_by_type_before_the_lock_except_the_single_channel_stroke() {
+    let mut tally = [0u32; 3];
+    for entry in 0..12 {
+        for target in 0..3 {
+            for lock_case in 0..LOCK_CASES {
+                for v in 0..2 {
+                    let erase = v & 1 != 0;
+                    let expected = if entry >= 8 {
+                        locking(lock_case, erase, true).unwrap_or(Outcome::Written)
+                    } else if entry == 0 && target != 0 {
+                        locking(lock_case, erase, false).unwrap_or(Outcome::Other)
+                    } else {
+                        Outcome::Other
+                    };
+                    let out = run_lock_kind(entry, target, lock_case, v);
+                    let actual = outcome_of(&out);
+                    assert_eq!(
+                        actual, expected,
+                        "entry {entry} target {target} lock {lock_case} v {v}"
+                    );
+                    tally[match actual {
+                        Outcome::Locked(..) => 0,
+                        Outcome::Other => 1,
+                        Outcome::Written => 2,
+                    }] += 1;
+                }
+            }
+        }
+    }
+    // ロックで断る 68（begin_stroke の調整・グループ 2 × 10 と、マスクの 4 入口 × 3 種 × すべての 2 場面 × 2 変種 = 48）・
+    // 型で断る 364（画素 8 入口 × 3 種 × 16 から 20 を除いた数）・通る 144（マスク 4 入口 × 3 種 × ロックの 6 場面 × 2 変種）
+    assert_eq!(tally, [20 + 48, 364, 144]);
 }

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Unity 版の C# の Core から yolu-core の正解のファイルを作る・C# の速さを測る。
 #   run.sh [golden]            台本（crates/yolu-core/tests/golden/cases.txt）を走らせ、同じフォルダへ index.txt と .rgba を書く
+#   run.sh docops-bench       人工二層・512² と 1024² の変形・面積縮小・結合を各 3 回計測
+#   run.sh docops             層のロック・結合・複数操作・変形・画像サイズ変更の正解を生成
 #   run.sh bench [回数]         4096² の合成と半径 40・200 のストローク、M2 のブラシ（ゆらぎ・筆先・質感・デュアル・色・全部・
 #                               ぼかし・指先）の時間（Mono。BENCH_ONLY=種類 で M2 の 1 種類だけ）
 #   run.sh selection-bench [回数]  選択範囲（4096²・楕円を作る・拡張・縮小・境界・ぼかし・鋭く）の時間（Mono。BENCH_THREADS=並列数）
@@ -31,7 +33,7 @@ while [[ $# -gt 0 ]]; do
     --source) source_dir="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --release) optimize="-optimize+"; flavor="release"; shift ;;
-    golden|bench|selection-bench|selbin|surface|surface-bench|filter|filter-bench|export|export-bench) mode="$1"; shift ;;
+    golden|bench|selection-bench|selbin|surface|surface-bench|filter|filter-bench|export|export-bench|docops|docops-bench) mode="$1"; shift ;;
     -h|--help) sed -n "2,$(awk 'NR>1 && !/^#/ {print NR-1; exit}' "$0")p" "$0"; exit 0 ;;
     *) extra+=("$1"); shift ;;
   esac
@@ -41,6 +43,7 @@ cases="$repo/crates/yolu-core/tests/golden/cases.txt"
 [[ "$mode" == selbin && -z "$out" ]] && out="$repo/crates/yolu-io/tests/fixtures/selection"
 [[ "$mode" == filter* ]] && cases="$repo/crates/yolu-core/tests/golden/filter/cases.txt"
 [[ "$mode" == export* ]] && cases="$repo/crates/yolu-core/tests/golden/export/cases.txt"
+[[ "$mode" == docops* ]] && cases="$repo/crates/yolu-core/tests/golden/docops/cases.txt"
 [[ -n "$out" ]] || out="$(dirname "$cases")"
 core="$source_dir/Runtime/Core"
 [[ -d "$core" ]] || { echo "Core のソースが無い: $core" >&2; exit 3; }
@@ -105,6 +108,7 @@ if [[ "$mode" == surface* ]]; then
 fi
 
 program="Golden.cs"
+[[ "$mode" == docops* ]] && program="DocOpsGolden.cs"
 [[ "$mode" == filter* ]] && program="FilterGolden.cs"
 build="$repo/target/csharp-golden/${program%.cs}-$flavor"
 mkdir -p "$build"
@@ -118,6 +122,9 @@ rsp="$build/build.rsp"
 } > "$rsp"
 "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
 
+if [[ "$mode" == "docops-bench" ]]; then
+  exec "$mono" "$build/golden.exe" bench
+fi
 if [[ "$mode" == "filter-bench" ]]; then
   exec "$mono" "$build/golden.exe" filter-bench "${extra[@]}"
 fi
@@ -136,4 +143,4 @@ dirty="$(git -C "$source_dir" status --porcelain -- Runtime/Core 2>/dev/null | h
 fingerprint="$(cd "$core" && find . -name '*.cs' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-16)"
 export GOLDEN_SOURCE="YoluPainter $commit${dirty:+（Runtime/Core に未コミットの変更あり）} Runtime/Core=$fingerprint $flavor"
 "$mono" "$build/golden.exe" golden "$cases" "$out"
-echo "書いた: $out（$(ls "$out"/*.rgba | wc -l) 個の .rgba、$(du -sh "$out" | cut -f1)）"
+echo "書いた: $out（$(du -sh "$out" | cut -f1)）"
