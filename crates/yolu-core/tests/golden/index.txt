@@ -1,5 +1,5 @@
 # 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。
-# source: YoluPainter b12afc184b73 Runtime/Core=d901f5199148cd68 debug
+# source: YoluPainter cc8eacfa7800 Runtime/Core=1582c88a9f0607c1 debug
 case blend_Normal params=1f4737c237f3eab9
 out 0 composite 24x20
 case blend_Multiply params=1f4737c237f3eab9
@@ -201,6 +201,169 @@ case brush_parallel params=a41d5832b94f8f8a
 commit stamps=20 samples=30 changed=1
 commit stamps=10 samples=20 changed=1
 out 0 layer 0 144x120
+case dyn_angled params=1de2f74bc95a7973
+commit stamps=35 samples=24 changed=1
+commit stamps=32 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_tip params=85ac664849c19aa2
+commit stamps=14 samples=20 changed=1
+commit stamps=37 samples=3 changed=1
+commit stamps=2 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_jitter params=52139fcd22565ff0
+commit stamps=16 samples=24 changed=1
+commit stamps=26 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_tips params=2b361d5d96045d78
+commit stamps=15 samples=20 changed=1
+commit stamps=9 samples=20 changed=1
+commit stamps=12 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_texture params=aca97a7cb1c09f7f
+commit stamps=29 samples=25 changed=1
+commit stamps=26 samples=20 changed=1
+commit stamps=49 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_assist params=c2f89c90ed31fd70
+commit stamps=17 samples=12 changed=1
+commit stamps=109 samples=4 changed=1
+commit stamps=26 samples=9 changed=1
+out 0 layer 0 96x64
+cancel
+out 1 layer 0 96x64
+case dyn_curve params=e4fb7fdfb33e94eb
+commit stamps=153 samples=7 changed=1
+commit stamps=101 samples=19 changed=1
+commit stamps=9 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_dual params=1da7dd8634c8f756
+commit stamps=19 samples=20 changed=1
+commit stamps=14 samples=20 changed=1
+commit stamps=54 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_dual_modes params=5e238787dcf71d2c
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+commit stamps=48 samples=2 changed=1
+out 0 layer 0 96x128
+case dyn_color params=c7c95a095316937f
+commit stamps=21 samples=30 changed=1
+commit stamps=31 samples=25 changed=1
+commit stamps=57 samples=2 changed=1
+out 0 layer 0 96x64
+undo 1
+out 1 layer 0 96x64
+case dyn_color_channels params=32746422b8386698
+commit stamps=15 samples=15 changed=1
+commit stamps=15 samples=15 changed=1
+out 0 channel 0 Roughness 64x48
+out 1 channel 0 Emission 64x48
+undo 1
+out 2 channel 0 Emission 64x48
+case dyn_fade params=f7bcfa0f3683b774
+commit stamps=27 samples=2 changed=1
+commit stamps=27 samples=2 changed=1
+out 0 layer 0 96x64
+case dyn_tilt params=473e903b35ca31c8
+commit stamps=20 samples=25 changed=1
+commit stamps=29 samples=3 changed=1
+out 0 layer 0 96x64
+case dyn_erase params=19817590e16ffb2a
+commit stamps=31 samples=30 changed=1
+out 0 layer 0 96x64
+case fx_blur params=92e5870b92088eba
+commit stamps=18 samples=20 changed=1
+commit stamps=56 samples=2 changed=1
+commit stamps=2 samples=2 changed=1
+out 0 layer 0 96x64
+case fx_smudge params=7fbdc535386e160b
+commit stamps=35 samples=25 changed=1
+commit stamps=27 samples=3 changed=1
+out 0 layer 0 96x64
+case fx_clone params=61813667b3e7cb58
+commit stamps=24 samples=20 changed=1
+commit stamps=51 samples=2 changed=1
+commit stamps=16 samples=2 changed=1
+out 0 layer 0 96x64
+case fx_dab params=796b581606ff6b0f
+commit stamps=0 samples=0 changed=1
+commit stamps=0 samples=0 changed=1
+commit stamps=0 samples=0 changed=1
+commit stamps=0 samples=0 changed=1
+out 0 layer 0 64x48
+case dyn_budget params=0bad7370155cd8b3
+stats stamps=11 samples=10 tiles=3 rollback=16580
+commit stamps=11 samples=10 changed=1
+stats stamps=15 samples=10 tiles=4 rollback=12800
+commit stamps=15 samples=10 changed=1
+stats stamps=11 samples=10 tiles=4 rollback=8448
+commit stamps=11 samples=10 changed=1
+error walk
+error commit
+error walk
+error commit
+error walk
+error commit
+commit stamps=11 samples=10 changed=1
+out 0 layer 0 64x48
+case dyn_parallel params=ac85d62cb40da56b
+commit stamps=7 samples=12 changed=1
+commit stamps=4 samples=10 changed=1
+commit stamps=2 samples=6 changed=1
+out 0 layer 0 160x144
+case dyn_refuse params=393533b17c514e1b
+error point
+error point
+commit stamps=48 samples=2 changed=1
+out 0 layer 0 64x48
+case stencil_mask params=95a5cf7a3da91d10
+commit stamps=1 samples=1 changed=1
+commit stamps=40 samples=30 changed=1
+commit stamps=28 samples=25 changed=1
+out 0 layer 0 64x48
+case stencil_color params=d5a841b2b279adca
+commit stamps=1 samples=1 changed=1
+commit stamps=38 samples=25 changed=1
+out 0 layer 0 64x48
+case stencil_channels params=6e29a274d1e2c771
+commit stamps=1 samples=1 changed=1
+commit stamps=1 samples=1 changed=1
+commit stamps=1 samples=1 changed=1
+out 0 layer 0 32x24
+out 1 channel 0 Emission 32x24
+out 2 channel 0 Roughness 32x24
+case stencil_tiling params=4e1aa39dd4c86bf1
+commit stamps=1 samples=1 changed=1
+commit stamps=1 samples=1 changed=1
+commit stamps=10 samples=12 changed=1
+commit stamps=9 samples=12 changed=1
+out 0 layer 0 64x48
+case stencil_mesh params=a449aa10f16cc703
+commit stamps=0 samples=0 changed=1
+commit stamps=0 samples=0 changed=0
+out 0 layer 0 64x48
+case stencil_parallel params=d69d296b770f55c9
+commit stamps=11 samples=3 changed=1
+commit stamps=3 samples=6 changed=1
+out 0 layer 0 192x128
+case stencil_refuse params=dd0471461cc5a9c5
+commit stamps=1 samples=1 changed=1
+error point
+error pixel
+stats stamps=1 samples=1 tiles=12 rollback=13056
+commit stamps=1 samples=1 changed=1
+undo 1
+error point
+error commit
+stats stamps=1 samples=1 tiles=6 rollback=24960
+commit stamps=1 samples=1 changed=1
+out 0 layer 0 64x48
+out 1 layer 1 64x48
 case sweeps params=cbf29ce484222325
 sweep blend_Normal 741d1e44ad7f5f2a
 sweep clip_Normal 9e7a4cc8277a1b38
@@ -255,3 +418,23 @@ sweep clip_DarkerColor 251b4ce5adf68eb1
 sweep blend_LighterColor 2479eede4569a488
 sweep clip_LighterColor e63d3cd6a3056626
 sweep fade 8d080e66d3040121
+case brush_sweeps params=cbf29ce484222325
+sweep random 0325972785f5ab38
+sweep tip_grain a3cf161f1fc4bae4
+sweep tip_noisy-disc 91782b240ab2d70e
+sweep tip_charcoal 590d27cec4370136
+sweep tip_bristles ddcce91627124227
+sweep tip_dots 50a6644e34183766
+sweep tip_rim f152ea2a0a60a803
+sweep tip_rounded-square bfe3bb8c76c5aa75
+sweep tip_sample 7d6b9b994b6fb2a0
+sweep color_dynamics b64354534f7cd7f5
+sweep dual_combine 659be80e45401b6b
+sweep pen_tilt cc53e097fe13acfe
+sweep curve 9b4636393ad4cba9
+sweep hsv 21f9cdffef61eee3
+sweep srgb_luminance 4d1efba2d40f7b86
+sweep stencil_grey_41_37_23 4d64a636e0eb9669
+sweep stencil_color_42_64_48 b8dc4107c8fb7f65
+sweep stencil_color_43_1_7 e27d3cbc0d4cc0f5
+sweep stencil_half_5_5 480a74f9002e595a

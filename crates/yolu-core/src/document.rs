@@ -12,7 +12,9 @@ use std::hash::{BuildHasher, Hasher};
 
 use glam::DVec2;
 
-use crate::brush::{BrushSample, BrushSettings, Budgets, StrokeState};
+use crate::brush::{
+    Brush, BrushPixel, BrushSample, BrushSettings, Budgets, StencilPoint, StrokeState,
+};
 use crate::composite;
 use crate::error::CoreError;
 use crate::math::require_finite;
@@ -145,6 +147,58 @@ impl Stroke {
         pressure: f64,
     ) -> Result<bool, CoreError> {
         doc.stroke_apply_pixel(self.id, x, y, coverage, pressure)
+    }
+    /// 面のダブを丸ごと塗る（3D の面のブラシ。C# の ApplyDab）: ダブの中で重なりをまとめた画素と被覆率を、渡した順に塗る。
+    /// 効果のブラシ（ぼかし・指先・クローン）は、どの画素を書くより前に読み元を凍結する。center は指先の中心（画布の画素の座標）。
+    /// 画布の外の画素は飛ばす。失敗したら、このストロークは取り消してから返す。
+    pub fn apply_dab(
+        &mut self,
+        doc: &mut Document,
+        pixels: &[BrushPixel],
+        center: DVec2,
+        pressure: f64,
+    ) -> Result<bool, CoreError> {
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.apply_dab(surface, pixels, center, pressure, None, changed)
+        })
+    }
+    /// 面のダブを、画素ごとのステンシルの上の点（pixels と同じ数・同じ順）で塗る（3D のビューが模型の上の点を画面へ写して渡す）。
+    /// ステンシルの無いストロークでは点は使わない。
+    pub fn apply_dab_at(
+        &mut self,
+        doc: &mut Document,
+        pixels: &[BrushPixel],
+        center: DVec2,
+        pressure: f64,
+        points: &[StencilPoint],
+    ) -> Result<bool, CoreError> {
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.apply_dab(surface, pixels, center, pressure, Some(points), changed)
+        })
+    }
+    /// 1 画素を、ステンシルの上の点 at で読んで塗る（[`Stroke::apply_pixel`] のステンシルの点つき）。
+    pub fn apply_pixel_at(
+        &mut self,
+        doc: &mut Document,
+        x: i64,
+        y: i64,
+        coverage: f64,
+        pressure: f64,
+        at: StencilPoint,
+    ) -> Result<bool, CoreError> {
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.apply_pixel(surface, x, y, coverage, pressure, Some(at), changed)
+        })
+    }
+    /// 指先の前の位置を忘れる（3D の面で UV の継ぎ目をまたぐとき。次のダブは位置を覚えるだけ）。
+    pub fn reset_effect_direction(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        match doc.active.as_mut() {
+            Some(a) if a.id == self.id => {
+                a.reset_effect_direction();
+                Ok(())
+            }
+            _ => Err(CoreError::NoActiveStroke),
+        }
     }
     /// この札の番号。
     pub fn id(&self) -> u64 {
@@ -411,7 +465,7 @@ impl Document {
             stamps: a.stamp_count,
             samples: a.sample_count,
             tiles: a.tiles.len(),
-            rollback_bytes: a.rollback_bytes,
+            rollback_bytes: a.rollback_total(),
             parallel_dabs: a.parallel_dabs,
         })
     }
@@ -1042,6 +1096,27 @@ impl Document {
         channel: Channel,
         brush: &BrushSettings,
     ) -> Result<Stroke, CoreError> {
+        self.begin_brush_stroke_in(layer, channel, &Brush::from(*brush))
+    }
+
+    /// 全部入りのブラシ（筆先・ゆらぎ・質感・デュアル・色の変化・フェードと傾き・手ぶれ補正・入り抜き・曲線・効果）で
+    /// Color のチャンネルへのストロークを始める。設定はここで写して固定する。
+    pub fn begin_brush_stroke(
+        &mut self,
+        layer: LayerId,
+        brush: &Brush,
+    ) -> Result<Stroke, CoreError> {
+        self.begin_brush_stroke_in(layer, Channel::Color, brush)
+    }
+
+    /// 全部入りのブラシで、チャンネルを選んでストロークを始める。色の変化は Color と Emission にだけ効く（ほかのチャンネルは
+    /// 値のデータなので、色相などで揺らすと壊すだけ。C# の ForChannel と同じ）。
+    pub fn begin_brush_stroke_in(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        brush: &Brush,
+    ) -> Result<Stroke, CoreError> {
         self.ensure_no_stroke()?;
         brush.validate()?;
         if channel == Channel::Normal {
@@ -1063,7 +1138,20 @@ impl Document {
         };
         let id = self.next_stroke;
         self.next_stroke += 1;
-        self.active = Some(StrokeState::new(id, layer, index, channel, *brush, budgets));
+        let brush = if crate::brush::carries_color(channel) {
+            brush.clone()
+        } else {
+            brush.without_color_dynamics()
+        };
+        self.active = Some(StrokeState::new(
+            id,
+            layer,
+            index,
+            channel,
+            brush,
+            budgets,
+            (w, h, ts),
+        ));
         Ok(Stroke { id })
     }
 
@@ -1083,7 +1171,7 @@ impl Document {
         pressure: f64,
     ) -> Result<bool, CoreError> {
         self.with_stroke(id, |state, surface, changed| {
-            state.apply_pixel(surface, x, y, coverage, pressure, changed)
+            state.apply_pixel(surface, x, y, coverage, pressure, None, changed)
         })
     }
 
@@ -1119,12 +1207,16 @@ impl Document {
         }
     }
 
-    /// ストロークを確定する: 変わったタイルの前後を 1 回の Undo として積む。何も変わらなければ積まない（Redo も残す）。
+    /// ストロークを確定する: 待たせていた入力（手ぶれ補正の糸の先・曲線の最後の区間・抜きのダブ）を描き、変わったタイルの前後を
+    /// 1 回の Undo として積む。何も変わらなければ積まない（Redo も残す）。待たせていた入力が予算などで断られたら、取り消して返す。
     pub fn end_stroke(&mut self, stroke: Stroke) -> Result<StrokeResult, CoreError> {
         match &self.active {
             Some(a) if a.id == stroke.id => {}
             _ => return Err(CoreError::NoActiveStroke),
         }
+        self.with_stroke(stroke.id, |state, surface, changed| {
+            state.finish_input(surface, changed)
+        })?;
         let state = self.active.take().expect("確かめた");
         let surface = self.layers[state.layer_index].surfaces[state.channel as usize]
             .as_mut()

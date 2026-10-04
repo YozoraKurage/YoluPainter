@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Unity 版の C# の Core から yolu-core の正解のファイルを作る・C# の速さを測る。
 #   run.sh [golden]            台本（crates/yolu-core/tests/golden/cases.txt）を走らせ、同じフォルダへ index.txt と .rgba を書く
-#   run.sh bench [回数]         4096² の合成と半径 40 のストロークの時間（Mono）
+#   run.sh bench [回数]         4096² の合成と半径 40・200 のストローク、M2 のブラシ（ゆらぎ・筆先・質感・デュアル・色・全部・
+#                               ぼかし・指先）の時間（Mono。BENCH_ONLY=種類 で M2 の 1 種類だけ）
 #   run.sh surface             面の計算の台本（crates/yolu-core/tests/golden/surface/cases.txt）を Unity 版の SurfaceGeometry に通し、
 #                              同じフォルダへ index.txt を書く（Editor/Preview の原文を、本物の UnityEngine.CoreModule.dll と組む。
 #                              ネイティブの Bounds.SqrDistance の呼び出しだけを SurfaceGolden.cs の写しに置き換える）

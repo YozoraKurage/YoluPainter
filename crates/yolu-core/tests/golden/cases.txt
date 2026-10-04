@@ -6,12 +6,33 @@
 #                                    層の行は準備なので、行ごとに履歴を消す
 #   stroke 層 キー=値…              Color へのストロークを始める（radius hardness spacing opacity flow color=R,G,B,A
 #                                    psize popacity pflow erase。書かないキーは C# の BrushSettings の既定値）
+#                                    M2: channel=名前 seed tip=筆先 tips=筆先,… tipsel=random|seq angle roundness follow
+#                                    sizejit anglejit roundjit opjit flowjit scatter count texture=筆先 tdepth tscale
+#                                    stabilizer taperin taperout curve secondary=R,G,B,A fbj huejit satjit brightjit purity
+#                                    pertip fadesize fadeop fadeflow tiltsize tiltop tiltflow tiltangle
+#                                    effect=Blur|Smudge|Clone blur=半径 smudge=強さ clone=X,Y
+#                                    dual=round|筆先 と、その後に dradius dhard dspacing dangle dround dscatter dcount dmode
+#                                    （筆先は組み込みの名前。1 か 0 の旗は 1 で入）
 #   point X Y 筆圧                  入力の点（時刻 0）
+#   tpoint X Y 筆圧 時刻 傾きX 傾きY  時刻と傾きの付いた入力の点
 #   walk 種 個数 X0 Y0 歩幅          乱数の歩みの点（筆圧 0.1 + 0.9·u、次に x、y を ±歩幅·(2u − 1) 動かす）
+#   twalk 種 個数 X0 Y0 歩幅         傾きも動く歩み（筆圧、傾き X・Y を ±1.5·(2u − 1)、次に x、y。時刻 0）
 #   pixel X Y 覆い 筆圧              ApplyPixel（メッシュのダブ）
+#   dab 中心X 中心Y 筆圧 X:Y:覆い…   ApplyDab（面のダブ。効果は読み元を凍結）
+#   dabdisc 中心X 中心Y 半径 筆圧     円板の面のダブ（中心が円の中の画素、覆い 1 − 距離/半径、下の行から）
+#   resetdir                         ResetEffectDirection（指先の前の位置を忘れる）
+#   stats                            進行中のストロークのダブ・点・タイルの数と巻き戻しのバイト数を出来事に書く
+#   budget バイト                     ストロークの予算（ActiveStrokeBudgetBytes）
+#   enable 層 チャンネル              チャンネルを有効にして履歴を消す（Rust は面をストロークで作るので履歴だけ消す）
+#   stencil モード 繰り返し 反転 写し 画像 色空間 チャンネル
+#                                    今のステンシルを作る（stroke の stencil=1 で付ける）。モード Auto|Mask|Color、繰り返し
+#                                    None|Horizontal|Vertical|Both、写しは none か xx,xy,x0,yx,yy,y0、画像は grey:種:W:H・
+#                                    color:種:W:H・varied:W:H・half:W:H、色空間 Unspecified|Srgb|Linear、チャンネルは - か名前,…
+#   pixelat X Y 覆い 筆圧 SX SY 幅     ステンシルの上の点つきの ApplyPixel
+#   dabdiscat 中心X 中心Y 半径 筆圧 写し  円板の面のダブを、画素の中心を写しで写した点で（ApplyDab の点つき）
 #   commit | cancel | undo | redo
 #   visible 層 0|1  /  opacity 層 値  /  mode 層 モード  /  clip 層 0|1  /  move 層 新しい位置  /  remove 層  /  add 名前
-#   out composite  /  out layer 層  /  out region X Y W H
+#   out composite  /  out layer 層  /  out region X Y W H  /  out channel 層 チャンネル
 # 乱数は splitmix64。色の成分は 1/8 で 0、1/8 で 255、ほかは一様。アルファは 1/4 で 0、1/4 で 255、ほかは一様。
 # 層の番号は今の並び（下から 0）。小数は 2 進で割り切れるか短い 10 進だけ（読み方の違いは params の指紋で見張る）。
 
@@ -649,3 +670,534 @@ stroke 0 radius=70 hardness=0.2 spacing=0.1 flow=0.5 color=0,0,0,200 erase=1 psi
 walk 14 20 70 62 8
 commit
 out layer 0
+
+# ───── M2 のブラシ（筆先・ゆらぎ・質感・デュアル・色の変化・フェード・傾き・手ぶれ補正・入り抜き・曲線・効果） ─────
+# 筆先の名前は組み込みの筆先（C# の BuiltInBrushes。Rust は同じ式で作る）。dual= の後の d で始まるキーは 2 つ目の筆先。
+
+# 回して潰した丸、線の向きに沿わせる
+case dyn_angled
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=9 hardness=0.3 spacing=0.1 color=200,60,30,255 angle=30 roundness=0.5 follow=1 pflow=1
+walk 21 24 10 30 4
+commit
+stroke 0 radius=6 hardness=0.9 spacing=0.2 color=30,90,220,200 angle=-75 roundness=0.2
+point 10 55 1
+point 85 50 0.5
+commit
+out layer 0
+
+# 筆先の画像（横長・縦長）、回転
+case dyn_tip
+canvas 96 64 32
+layer base Normal 1 sparse:71
+stroke 0 radius=11 spacing=0.25 color=20,20,20,255 tip=charcoal angle=45
+walk 22 20 15 20 5
+commit
+stroke 0 radius=8 spacing=0.15 color=240,200,40,220 tip=bristles follow=1 popacity=0
+point 8 50 0.4
+point 50 58 1
+point 90 40 0.7
+commit
+stroke 0 radius=14 spacing=0.6 color=90,200,120,255 tip=rounded-square roundness=0.6 angle=10
+point 60 10 1
+point 90 25 1
+commit
+out layer 0
+
+# ゆらぎ・散布・数（C# の BrushGolden の tip-jitter と同じ設定）
+case dyn_jitter
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=8 spacing=0.25 color=200,60,30,255 tip=charcoal sizejit=0.5 anglejit=0.3 scatter=0.5 count=3 opjit=0.2 flowjit=0.3 roundjit=0.4 seed=7
+walk 23 24 10 32 4
+commit
+stroke 0 radius=5 spacing=0.4 color=10,10,160,255 sizejit=1 scatter=2 count=5 seed=-12345 hardness=0.5
+point 5 5 1
+point 90 60 1
+commit
+out layer 0
+
+# 複数の筆先: 順に・乱数で
+case dyn_tips
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=7 spacing=0.3 color=200,60,30,255 tips=dots,noisy-disc tipsel=seq
+walk 24 20 10 15 4
+commit
+stroke 0 radius=9 spacing=0.35 color=40,120,40,230 tips=dots,rim,bristles,grain tipsel=random seed=11 anglejit=1
+walk 25 20 50 45 4
+commit
+stroke 0 radius=6 spacing=0.5 color=0,0,0,255 tips=rim seed=3 sizejit=0.2
+point 20 60 1
+point 90 58 1
+commit
+out layer 0
+
+# 紙の質感（深さ・大きさ）
+case dyn_texture
+canvas 96 64 32
+layer base Normal 1 random:72
+stroke 0 radius=10 spacing=0.15 color=200,60,30,255 texture=grain tdepth=0.7 tscale=2
+walk 26 25 20 30 4
+commit
+stroke 0 radius=12 spacing=0.1 color=255,255,255,255 tip=noisy-disc texture=grain tdepth=1 tscale=0.5 opacity=0.8 flow=0.4
+walk 27 20 70 30 4
+commit
+stroke 0 radius=6 color=0,0,255,255 texture=dots tdepth=0.5 tscale=3.25
+point 4 60 1
+point 92 60 1
+commit
+out layer 0
+
+# 手ぶれ補正・入り抜き（C# の BrushGolden の assist と同じ設定）、抜きだけ・入りだけ
+case dyn_assist
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=5 hardness=0.6 spacing=0.1 color=200,60,30,255 taperin=10 taperout=15 stabilizer=4
+walk 28 40 10 32 3
+commit
+stroke 0 radius=4 spacing=0.1 color=30,30,200,255 taperout=40
+point 5 55 1
+point 30 58 1
+point 60 50 1
+point 90 56 1
+commit
+stroke 0 radius=4 spacing=0.1 color=30,200,30,255 taperin=25 stabilizer=12
+walk 29 30 10 10 5
+commit
+out layer 0
+stroke 0 radius=4 color=0,0,0,255 taperout=20 stabilizer=6
+walk 30 10 50 30 4
+cancel
+out layer 0
+
+# 曲線の補間（まばらな点・重なる点・待たせた区間を確定で描く）
+case dyn_curve
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=3 hardness=0.8 spacing=0.2 color=200,60,30,255 curve=1
+point 48 8 1
+point 76 20 0.8
+point 76 20 0.5
+point 80 44 0.6
+point 48 56 1
+point 16 44 0.4
+point 16 44 0.4
+point 20 20 0.9
+point 48 8 1
+commit
+stroke 0 radius=2.5 spacing=0.1 color=20,20,200,255 curve=1 taperin=8 taperout=12 stabilizer=3
+walk 31 18 20 32 7
+commit
+stroke 0 radius=4 spacing=0.15 color=20,160,20,255 curve=1
+point 60 30 1
+point 70 32 1
+commit
+out layer 0
+
+# デュアルブラシ（丸・筆先、散布・数・モード）
+case dyn_dual
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=10 hardness=0.6 spacing=0.15 color=200,60,30,255 dual=round dradius=4 dspacing=0.5 dscatter=1 dcount=2 seed=5
+walk 32 20 15 15 4
+commit
+stroke 0 radius=12 spacing=0.2 color=30,60,200,255 dual=dots dradius=9 dspacing=0.3 dangle=30 dround=0.7 dmode=ColorBurn seed=9
+walk 33 20 60 45 4
+commit
+stroke 0 radius=8 spacing=0.1 color=0,0,0,255 tip=noisy-disc dual=charcoal dradius=6 dspacing=0.2 dhard=0.5 dmode=Overlay
+point 5 60 0.5
+point 90 58 1
+commit
+out layer 0
+
+# デュアルブラシのモードごと（同じ線を行を変えて）
+case dyn_dual_modes
+canvas 96 128 32
+layer paint Normal 1 empty
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=Multiply seed=1
+point 5 8 1
+point 90 8 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=Darken seed=1
+point 5 23 1
+point 90 23 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=Overlay seed=1
+point 5 38 1
+point 90 38 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=ColorDodge seed=1
+point 5 53 1
+point 90 53 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=ColorBurn seed=1
+point 5 68 1
+point 90 68 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=LinearBurn seed=1
+point 5 83 1
+point 90 83 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=HardMix seed=1
+point 5 98 1
+point 90 98 0.6
+commit
+stroke 0 radius=6 spacing=0.15 color=200,60,30,255 dual=round dradius=3 dhard=0.4 dspacing=0.7 dscatter=0.5 dmode=Subtract seed=1
+point 5 113 1
+point 90 113 0.6
+commit
+out layer 0
+
+# 色の変化: ダブごと（描画色/背景色・純度・色相・彩度・明るさ）、ストロークに 1 色、消しゴムでは効かない
+case dyn_color
+canvas 96 64 32
+layer base Normal 1 sparse:73
+stroke 0 radius=7 spacing=0.2 color=200,60,30,255 huejit=0.5 satjit=0.3 brightjit=0.2 fbj=0.4 secondary=20,40,250,128 purity=0.3 seed=5 flow=0.6
+walk 34 30 15 20 3
+commit
+stroke 0 radius=6 spacing=0.15 color=60,180,90,255 huejit=1 pertip=0 seed=8 purity=-0.6
+walk 35 25 60 45 3
+commit
+stroke 0 radius=6 spacing=0.15 color=0,0,0,200 huejit=1 brightjit=1 erase=1 seed=8
+point 5 60 1
+point 90 5 1
+commit
+out layer 0
+undo
+out layer 0
+
+# 色の変化はデータのチャンネルには効かない（Roughness は変化なしと同じ）、Emission には効く
+case dyn_color_channels
+canvas 64 48 16
+layer paint Normal 1 empty
+enable 0 Roughness
+enable 0 Emission
+stroke 0 channel=Roughness radius=6 spacing=0.2 color=128,128,128,255 huejit=1 brightjit=1 fbj=1 seed=4
+walk 36 15 20 20 3
+commit
+stroke 0 channel=Emission radius=6 spacing=0.2 color=128,128,128,255 huejit=1 brightjit=1 fbj=1 seed=4
+walk 36 15 20 20 3
+commit
+out channel 0 Roughness
+out channel 0 Emission
+undo
+out channel 0 Emission
+
+# フェード（大きさ・不透明度・流量）
+case dyn_fade
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=8 spacing=0.2 color=200,60,30,255 fadesize=10 psize=0
+point 5 15 1
+point 90 15 1
+commit
+stroke 0 radius=8 spacing=0.2 color=30,60,200,255 fadeop=20 fadeflow=15 popacity=0
+point 5 45 1
+point 90 45 1
+commit
+out layer 0
+
+# ペンの傾き（大きさ・不透明度・流量・向き）
+case dyn_tilt
+canvas 96 64 32
+layer paint Normal 1 empty
+stroke 0 radius=9 spacing=0.2 color=200,60,30,255 tip=charcoal tiltsize=1 tiltop=1 tiltflow=1 tiltangle=1
+twalk 37 25 15 32 4
+commit
+stroke 0 radius=7 spacing=0.15 color=30,60,200,255 roundness=0.3 tiltangle=1
+tpoint 50 10 1 0 0.6 0.2
+tpoint 70 30 0.8 1 -0.4 0.9
+tpoint 90 55 0.6 2 1.5707963267948966 0
+commit
+out layer 0
+
+# 消しゴムに筆先とゆらぎ
+case dyn_erase
+canvas 96 64 32
+layer base Normal 1 random:74
+stroke 0 radius=9 spacing=0.2 color=0,0,0,200 erase=1 tip=dots sizejit=0.4 scatter=0.3 count=2 seed=6 texture=grain tdepth=0.6
+walk 38 30 48 32 5
+commit
+out layer 0
+
+# ぼかし（半径 1・3・8）
+case fx_blur
+canvas 96 64 16
+layer base Normal 1 random:75
+stroke 0 effect=Blur blur=3 radius=8 spacing=0.2 hardness=0.5
+walk 39 20 30 30 4
+commit
+stroke 0 effect=Blur blur=1 radius=5 spacing=0.1 opacity=0.6
+point 60 5 1
+point 60 60 0.5
+commit
+stroke 0 effect=Blur blur=8 radius=14 spacing=0.3 flow=0.5
+point 80 30 1
+point 90 40 1
+commit
+out layer 0
+
+# 指先（強さ）、止まったままの点・継ぎ目の印
+case fx_smudge
+canvas 96 64 16
+layer base Normal 1 sparse:76
+stroke 0 effect=Smudge smudge=0.7 radius=7 spacing=0.15
+walk 40 25 20 30 4
+commit
+stroke 0 effect=Smudge smudge=1 radius=10 spacing=0.1 hardness=0.2 tip=noisy-disc
+point 50 10 1
+point 50 10 1
+point 85 50 0.7
+commit
+out layer 0
+
+# クローン（今の層、ストロークの前の画素）。読み元が描いている所に重なる・画布の外へ出る
+case fx_clone
+canvas 96 64 16
+layer base Normal 1 sparse:77
+stroke 0 effect=Clone clone=10.5,-6 radius=6 spacing=0.2
+walk 41 20 30 30 4
+commit
+stroke 0 effect=Clone clone=3,0 radius=8 spacing=0.1
+point 10 50 1
+point 90 50 1
+commit
+stroke 0 effect=Clone clone=-80.25,30 radius=9 spacing=0.25
+point 20 10 1
+point 90 20 1
+commit
+out layer 0
+
+# 効果の面のダブ（ApplyDab）: 読み元は全画素の前に凍結。指先の最初のダブは位置を覚えるだけ、resetdir で忘れる
+case fx_dab
+canvas 64 48 16
+layer base Normal 1 random:78
+stroke 0 effect=Blur blur=2 radius=4
+dabdisc 20 20 6 1
+dabdisc 24 22 6 0.5
+commit
+stroke 0 effect=Smudge smudge=0.8 radius=4
+dabdisc 40 30 5 1
+dabdisc 44 31 5 1
+resetdir
+dabdisc 50 33 5 1
+dabdisc 53 30 5 1
+commit
+stroke 0 effect=Clone clone=-15,4 radius=4
+dabdisc 30 10 7 1
+dab 30 10 1 29:10:1 30:10:0.5 -1:3:1 63:47:0.25
+commit
+stroke 0 radius=4 color=255,0,0,255 huejit=1 seed=3
+dabdisc 10 40 4 1
+commit
+out layer 0
+
+# 予算: ダブごとの色・デュアルの溜まり・効果の枠も数える（足りなければストロークを取り消す）。stats は巻き戻しのバイト数
+case dyn_budget
+canvas 64 48 16
+layer base Normal 1 sparse:79
+stroke 0 radius=6 color=255,0,0,255 huejit=1 seed=2
+walk 42 10 20 20 3
+stats
+commit
+stroke 0 radius=6 color=0,255,0,255 dual=round dradius=3 seed=2
+walk 43 10 30 20 3
+stats
+commit
+stroke 0 radius=6 effect=Blur blur=4
+walk 44 10 30 30 3
+stats
+commit
+budget 9000
+stroke 0 radius=6 color=255,0,0,255 huejit=1 seed=2
+walk 42 10 20 20 3
+commit
+budget 6000
+stroke 0 radius=6 color=0,255,0,255 dual=round dradius=3
+walk 43 10 30 20 3
+commit
+budget 2000
+stroke 0 radius=6 effect=Blur blur=4
+walk 44 10 30 30 3
+commit
+budget 67108864
+stroke 0 radius=6 color=0,0,255,255 huejit=0.5 seed=1
+walk 45 10 40 30 3
+commit
+out layer 0
+
+# 大きなダブ（ワーカーの経路）に質感・デュアル・ダブごとの色・筆先
+case dyn_parallel
+canvas 160 144 32
+layer base Normal 1 sparse:80
+stroke 0 radius=70 hardness=0.4 spacing=0.08 flow=0.3 psize=0 color=20,180,160,230 texture=grain tdepth=0.5 tscale=1.5 dual=round dradius=12 dspacing=0.4 dscatter=0.8 seed=3 huejit=0.3 pflow=1
+walk 46 12 80 72 8
+commit
+stroke 0 radius=75 spacing=0.12 color=200,40,40,255 tip=noisy-disc psize=0 anglejit=0.5 sizejit=0.2 seed=12
+walk 47 10 70 60 10
+commit
+stroke 0 effect=Blur blur=2 radius=72 spacing=0.2 psize=0
+walk 48 6 80 70 10
+commit
+out layer 0
+
+# 1 区間のダブが百万を超える入力は断る（曲線とデュアルも）
+case dyn_refuse
+canvas 64 48 16
+layer paint Normal 1 empty
+stroke 0 radius=0.5 spacing=0.01 curve=1
+point 1 1 1
+point 9000000 1 1
+point 9000000 9000000 1
+stroke 0 radius=4 dual=round dradius=0.5 dspacing=0.01
+point 1 1 1
+point 20001 1 1
+stroke 0 radius=4 color=10,20,30,255
+point 5 5 1
+point 50 40 1
+commit
+out layer 0
+
+# ───── ステンシル（C# の BrushStencil。画像を通して塗る。量は天井に掛け、画素ごとに初めの 1 回だけ読む） ─────
+# stencil モード 繰り返し 反転 写し 画像 色空間 チャンネル で今のステンシルを作り、stroke の stencil=1 で付ける。
+
+# 量: 左が白・右が黒。灰色の量は重なっても越えない。反転
+case stencil_mask
+canvas 64 48 16
+layer paint Normal 1 empty
+stencil Mask None 0 1,0,0,0,1,0 half:64:48 Srgb -
+stroke 0 stencil=1 radius=200 hardness=1 opacity=0.8 psize=0 popacity=0 color=30,200,90,255
+point 32 24 1
+commit
+stencil Mask None 0 1,0,0,0,1,0 grey:51:64:48 Srgb -
+stroke 0 stencil=1 radius=12 hardness=0.5 spacing=0.05 flow=0.25 psize=0 popacity=0 color=200,60,30,255
+walk 52 30 30 24 2
+commit
+stencil Mask None 1 0.5,0.1,3,-0.2,0.7,9 grey:53:32:32 Srgb -
+stroke 0 stencil=1 radius=9 spacing=0.1 color=0,0,200,255
+walk 54 25 20 10 3
+commit
+out layer 0
+
+# 色: 画像の画素がちょうど重なる写し、画像の外は塗らない。描画色のアルファはそのまま
+case stencil_color
+canvas 64 48 16
+layer paint Normal 1 empty
+stencil Color None 0 1,0,-8,0,1,-4 varied:40:30 Srgb Color
+stroke 0 stencil=1 radius=200 hardness=1 psize=0 popacity=0 color=1,2,3,102
+point 32 24 1
+commit
+stencil Auto Both 0 0.37,0.05,1.5,-0.04,0.41,2.25 color:55:24:20 Srgb Color
+stroke 0 stencil=1 radius=10 spacing=0.1 flow=0.4 color=0,0,0,255
+walk 56 25 30 24 4
+commit
+out layer 0
+
+# 色空間とチャンネル: リニアの画像は色のチャンネルで sRGB に、スカラーのチャンネルは輝度
+case stencil_channels
+canvas 32 24 16
+layer paint Normal 1 empty
+enable 0 Emission
+enable 0 Roughness
+stencil Color None 0 1,0,0,0,1,0 color:57:32:24 Linear Color,Emission,Roughness
+stroke 0 stencil=1 radius=100 hardness=1 psize=0 popacity=0 color=9,9,9,255
+point 16 12 1
+commit
+stroke 0 channel=Emission stencil=1 radius=100 hardness=1 psize=0 popacity=0 color=9,9,9,255
+point 16 12 1
+commit
+stroke 0 channel=Roughness stencil=1 radius=100 hardness=1 psize=0 popacity=0 color=9,9,9,255
+point 16 12 1
+commit
+out layer 0
+out channel 0 Emission
+out channel 0 Roughness
+
+# 繰り返し（なし・横・縦・両方）と、ミップマップ（縮める写し・拡げる写し）
+case stencil_tiling
+canvas 64 48 16
+layer paint Normal 1 empty
+stencil Mask Horizontal 0 1,0,0,0,1,0 grey:58:8:8 Srgb -
+stroke 0 stencil=1 radius=200 hardness=1 psize=0 popacity=0 color=255,0,0,255
+point 32 24 1
+commit
+stencil Mask Vertical 0 1,0,0,0,1,0 grey:59:8:8 Srgb -
+stroke 0 stencil=1 radius=200 hardness=1 psize=0 popacity=0 color=0,0,255,128
+point 32 24 1
+commit
+stencil Color Both 0 3.1,0.4,2,-0.3,2.7,5 color:60:16:16 Srgb Color
+stroke 0 stencil=1 radius=12 spacing=0.15 color=0,0,0,255
+walk 61 12 20 30 4
+commit
+stencil Color Both 0 0.2,0.03,1,0.01,0.25,3 color:62:16:16 Srgb Color
+stroke 0 stencil=1 radius=12 spacing=0.15 color=0,0,0,255
+walk 63 12 45 15 4
+commit
+out layer 0
+
+# 3D のダブ: 画素ごとの点で読む（ApplyPixel・ApplyDab）。遠すぎる点は読まない
+case stencil_mesh
+canvas 64 48 16
+layer paint Normal 1 empty
+stencil Color None 0 none varied:64:48 Srgb Color
+stroke 0 stencil=1 radius=4 opacity=0.9 psize=0 popacity=0 color=0,0,0,255
+pixelat 10 10 1 1 10.5 10.5 1
+pixelat 11 10 0.5 0.7 40.25 3.5 1.5
+pixelat 12 10 1 1 -100000000 -100000000 1
+dabdiscat 30 30 8 0.8 0.9,0.1,2.5,-0.15,1.05,1.25
+commit
+stencil Mask Both 0 none grey:64:4:4 Srgb -
+stroke 0 stencil=1 radius=4 effect=Blur blur=2
+dabdiscat 45 15 6 1 1,0,0,0,1,0
+commit
+out layer 0
+
+# 大きなダブ（ワーカーの経路）にステンシルの色、繰り返し、ダブごとの色・質感と一緒に
+case stencil_parallel
+canvas 192 128 32
+layer base Normal 1 sparse:64
+stencil Color Both 0 0.4,0.1,3,-0.05,0.45,7 varied:97:61 Srgb Color
+stroke 0 stencil=1 radius=75 hardness=0.5 spacing=0.1 opacity=0.8 flow=0.3 seed=5 psize=0
+point 30 30 0.5
+point 100 55 1
+point 165 95 0.7
+commit
+stencil Mask None 0 1,0,0,0,1,0 grey:65:192:128 Srgb -
+stroke 0 stencil=1 radius=70 spacing=0.12 psize=0 huejit=0.4 seed=6 texture=grain tdepth=0.5 color=200,30,30,255
+walk 66 6 96 64 12
+commit
+out layer 0
+
+# 消しゴムは量だけ（色のモードでも）。写しの無いステンシルは 2D のダブで断る。ステンシルの画素ごとの値も予算に入る
+case stencil_refuse
+canvas 64 48 16
+layer base Normal 1 solid:1,2,3,255
+stencil Color None 0 1,0,0,0,1,0 color:67:64:48 Srgb Color
+stroke 0 stencil=1 radius=200 hardness=1 erase=1 psize=0 popacity=0 color=0,0,0,255
+point 32 24 1
+commit
+stencil Mask None 0 none half:64:48 Srgb -
+stroke 0 stencil=1 radius=8 color=255,0,0,255
+point 10 10 1
+stroke 0 stencil=1 radius=8 color=255,0,0,255
+pixel 3 3 1 1
+add empty
+budget 20000
+stroke 1 radius=200 hardness=1 psize=0 color=255,0,0,255
+point 32 24 1
+stats
+commit
+undo
+stencil Mask Both 0 1,0,0,0,1,0 half:64:48 Srgb -
+stroke 1 stencil=1 radius=200 hardness=1 psize=0 color=255,0,0,255
+point 32 24 1
+commit
+budget 67108864
+stroke 1 stencil=1 radius=200 hardness=1 psize=0 color=255,0,0,255
+point 32 24 1
+stats
+commit
+out layer 0
+out layer 1

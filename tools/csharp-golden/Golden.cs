@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Yozolab.YoluPainter.Core;
+using Yozolab.YoluPainter.Core.Shelf;
 
 namespace YoluPainterRs.Golden
 {
@@ -77,7 +78,7 @@ namespace YoluPainterRs.Golden
 
         sealed class CaseState
         {
-            public string Name; public PaintDocument Doc; public BrushStroke Stroke; public int Outputs;
+            public string Name; public PaintDocument Doc; public BrushStroke Stroke; public int Outputs; public BrushStencil Stencil;
             public readonly Fnv Params = new Fnv(); public readonly List<string> Events = new List<string>();
         }
 
@@ -107,6 +108,7 @@ namespace YoluPainterRs.Golden
             }
             Finish(c, index);
             Sweeps(index);
+            BrushSweeps(index);
             var header = new List<string> { "# 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。" };
             header.AddRange(SourceLines());
             File.WriteAllText(Path.Combine(outDir, "index.txt"), string.Join("\n", header.Concat(index)) + "\n", new UTF8Encoding(false));
@@ -141,6 +143,109 @@ namespace YoluPainterRs.Golden
             return m;
         }
         static Guid LayerAt(CaseState c, string s) { return c.Doc.Layers[Int(s)].Id; }
+        static PaintChannel Channel(string s)
+        {
+            PaintChannel m;
+            if (!Enum.TryParse(s, false, out m) || !Enum.IsDefined(typeof(PaintChannel), m)) throw new FormatException("チャンネル: " + s);
+            return m;
+        }
+        static BrushTip Tip(string id) { var tip = BuiltInBrushes.Tip(id); if (tip == null) throw new FormatException("筆先: " + id); return tip; }
+        static bool Flag(string v) { return v == "1"; }
+
+        /// <summary>ブラシの M1 より後のキー（Rust の golden.rs の brush_key と同じ並び・同じ読み方）。dual の後の d で始まるキーは
+        /// 2 つ目の筆先の値。小数は Num（params の指紋に入る）、整数は Int。</summary>
+        static bool BrushKey(CaseState c, BrushSettings s, string k, string v)
+        {
+            switch (k)
+            {
+                case "seed": s.Seed = Int(v); return true;
+                case "tip": s.Tip = Tip(v); return true;
+                case "tips": s.Tips = v.Split(',').Select(Tip).ToArray(); return true;
+                case "tipsel": s.TipSelection = v == "seq" ? TipSelection.Sequential : v == "random" ? TipSelection.Random : throw new FormatException("tipsel: " + v); return true;
+                case "angle": s.Angle = Num(c, v); return true;
+                case "roundness": s.Roundness = Num(c, v); return true;
+                case "follow": s.FollowDirection = Flag(v); return true;
+                case "sizejit": s.SizeJitter = Num(c, v); return true;
+                case "anglejit": s.AngleJitter = Num(c, v); return true;
+                case "roundjit": s.RoundnessJitter = Num(c, v); return true;
+                case "opjit": s.OpacityJitter = Num(c, v); return true;
+                case "flowjit": s.FlowJitter = Num(c, v); return true;
+                case "scatter": s.Scatter = Num(c, v); return true;
+                case "count": s.Count = Int(v); return true;
+                case "texture": s.Texture = Tip(v); return true;
+                case "tdepth": s.TextureDepth = Num(c, v); return true;
+                case "tscale": s.TextureScale = Num(c, v); return true;
+                case "stabilizer": s.Stabilizer = Num(c, v); return true;
+                case "taperin": s.TaperIn = Num(c, v); return true;
+                case "taperout": s.TaperOut = Num(c, v); return true;
+                case "curve": s.CurveInterpolation = Flag(v); return true;
+                case "secondary": s.SecondaryColor = Color(v); return true;
+                case "fbj": s.ForegroundBackgroundJitter = Num(c, v); return true;
+                case "huejit": s.HueJitter = Num(c, v); return true;
+                case "satjit": s.SaturationJitter = Num(c, v); return true;
+                case "brightjit": s.BrightnessJitter = Num(c, v); return true;
+                case "purity": s.Purity = Num(c, v); return true;
+                case "pertip": s.ColorPerTip = Flag(v); return true;
+                case "fadesize": s.FadeSize = Int(v); return true;
+                case "fadeop": s.FadeOpacity = Int(v); return true;
+                case "fadeflow": s.FadeFlow = Int(v); return true;
+                case "tiltsize": s.TiltSize = Flag(v); return true;
+                case "tiltop": s.TiltOpacity = Flag(v); return true;
+                case "tiltflow": s.TiltFlow = Flag(v); return true;
+                case "tiltangle": s.TiltAngle = Flag(v); return true;
+                case "effect":
+                {
+                    BrushEffect e;
+                    if (!Enum.TryParse(v, false, out e) || !Enum.IsDefined(typeof(BrushEffect), e)) throw new FormatException("effect: " + v);
+                    s.Effect = e; return true;
+                }
+                case "blur": s.BlurRadius = Int(v); return true;
+                case "smudge": s.SmudgeStrength = Num(c, v); return true;
+                case "clone": { var q = v.Split(','); s.CloneOffsetX = Num(c, q[0]); s.CloneOffsetY = Num(c, q[1]); return true; }
+                case "stencil": if (Flag(v)) { if (c.Stencil == null) throw new FormatException("stencil= の前に stencil 命令"); s.Stencil = c.Stencil; } return true;
+                case "dual": s.Dual = new DualBrush { Tip = v == "round" ? null : Tip(v) }; return true;
+                case "dradius": Dual(s).Radius = Num(c, v); return true;
+                case "dhard": Dual(s).Hardness = Num(c, v); return true;
+                case "dspacing": Dual(s).Spacing = Num(c, v); return true;
+                case "dangle": Dual(s).Angle = Num(c, v); return true;
+                case "dround": Dual(s).Roundness = Num(c, v); return true;
+                case "dscatter": Dual(s).Scatter = Num(c, v); return true;
+                case "dcount": Dual(s).Count = Int(v); return true;
+                case "dmode":
+                {
+                    DualBrushMode m;
+                    if (!Enum.TryParse(v, false, out m) || !Enum.IsDefined(typeof(DualBrushMode), m)) throw new FormatException("dmode: " + v);
+                    Dual(s).Mode = m; return true;
+                }
+                default: return false;
+            }
+        }
+        /// <summary>ステンシルの画像（straight RGBA8、下の行から）: grey:種:W:H（R = G = B と α が乱数）、color:種:W:H、varied:W:H
+        /// （C# の StencilTests の Varied）、half:W:H（左が白・右が黒）。</summary>
+        static byte[] StencilPixels(string spec, out int w, out int h)
+        {
+            var q = spec.Split(':');
+            bool seeded = q[0] == "grey" || q[0] == "color";
+            w = Int(q[seeded ? 2 : 1]); h = Int(q[seeded ? 3 : 2]);
+            var rgba = new byte[w * h * 4];
+            var rng = seeded ? new SplitMix(ulong.Parse(q[1])) : null;
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+            {
+                Rgba32 p;
+                switch (q[0])
+                {
+                    case "grey": { byte v = rng.Channel(); p = new Rgba32(v, v, v, rng.Alpha()); break; }
+                    case "color": p = rng.Rgba(); break;
+                    case "varied": p = new Rgba32((byte)(x * 13 % 256), (byte)(y * 29 % 256), (byte)((x * y + 7) % 256), 255); break;
+                    case "half": p = x < w / 2 ? new Rgba32(255, 255, 255, 255) : new Rgba32(0, 0, 0, 255); break;
+                    default: throw new FormatException("ステンシルの画像: " + spec);
+                }
+                int o = (y * w + x) * 4; rgba[o] = p.R; rgba[o + 1] = p.G; rgba[o + 2] = p.B; rgba[o + 3] = p.A;
+            }
+            return rgba;
+        }
+
+        static DualBrush Dual(BrushSettings s) { if (s.Dual == null) throw new FormatException("dual= の前に d のキー"); return s.Dual; }
 
         static void Command(CaseState c, string[] t, string outDir)
         {
@@ -169,7 +274,7 @@ namespace YoluPainterRs.Golden
                 case "add": doc.AddLayer(t[1]); return;
                 case "stroke":
                 {
-                    var s = new BrushSettings();
+                    var s = new BrushSettings(); var channel = PaintChannel.Color;
                     for (int i = 2; i < t.Length; i++)
                     {
                         int eq = t[i].IndexOf('='); string k = t[i].Substring(0, eq), v = t[i].Substring(eq + 1);
@@ -185,13 +290,96 @@ namespace YoluPainterRs.Golden
                             case "popacity": s.PressureOpacity = v == "1"; break;
                             case "pflow": s.PressureFlow = v == "1"; break;
                             case "erase": s.Erase = v == "1"; break;
-                            default: throw new FormatException("stroke のキー: " + k);
+                            case "channel": channel = Channel(v); break;
+                            default: if (!BrushKey(c, s, k, v)) throw new FormatException("stroke のキー: " + k); break;
                         }
                     }
                     if (c.Stroke != null) throw new FormatException("ストロークが重なっている");
-                    c.Stroke = doc.BeginStroke(LayerAt(c, t[1]), PaintChannel.Color, s);
+                    c.Stroke = doc.BeginStroke(LayerAt(c, t[1]), channel, s);
                     return;
                 }
+                case "tpoint":
+                {
+                    double x = Num(c, t[1]), y = Num(c, t[2]), p = Num(c, t[3]), time = Num(c, t[4]), tx = Num(c, t[5]), ty = Num(c, t[6]);
+                    c.Stroke.Add(new BrushSample(x, y, p, time, tx, ty)); return;
+                }
+                case "twalk":
+                {
+                    // 乱数の歩み（筆圧 0.1 + 0.9·u、傾き X・Y を ±1.5·(2u − 1)、次に x、y を ±歩幅·(2u − 1) 動かす。時刻 0）
+                    var rng = new SplitMix((ulong)Int(t[1])); int count = Int(t[2]);
+                    double x = Num(c, t[3]), y = Num(c, t[4]), step = Num(c, t[5]);
+                    for (int i = 0; i < count; i++)
+                    {
+                        double p = 0.1 + 0.9 * rng.U01(), tx = (rng.U01() * 2 - 1) * 1.5, ty = (rng.U01() * 2 - 1) * 1.5;
+                        c.Stroke.Add(new BrushSample(x, y, p, 0, tx, ty));
+                        x += (rng.U01() * 2 - 1) * step;
+                        y += (rng.U01() * 2 - 1) * step;
+                    }
+                    return;
+                }
+                case "dab":
+                {
+                    // 面のダブ: dab 中心X 中心Y 筆圧 X:Y:覆い …
+                    double cx = Num(c, t[1]), cy = Num(c, t[2]), p = Num(c, t[3]);
+                    var pixels = new List<BrushPixel>();
+                    for (int i = 4; i < t.Length; i++) { var q = t[i].Split(':'); pixels.Add(new BrushPixel(Int(q[0]), Int(q[1]), Num(c, q[2]))); }
+                    c.Stroke.ApplyDab(pixels, cx, cy, p); return;
+                }
+                case "dabdisc":
+                {
+                    // 面のダブ（円板）: dabdisc 中心X 中心Y 半径 筆圧。画素の中心が円の中なら、縁へ線形に落ちる覆い。下の行から
+                    double cx = Num(c, t[1]), cy = Num(c, t[2]), r = Num(c, t[3]), p = Num(c, t[4]);
+                    var pixels = new List<BrushPixel>();
+                    for (int y = (int)Math.Floor(cy - r); y <= (int)Math.Ceiling(cy + r); y++)
+                        for (int x = (int)Math.Floor(cx - r); x <= (int)Math.Ceiling(cx + r); x++)
+                        {
+                            double dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.Sqrt(dx * dx + dy * dy) / r;
+                            if (d < 1) pixels.Add(new BrushPixel(x, y, 1 - d));
+                        }
+                    c.Stroke.ApplyDab(pixels, cx, cy, p); return;
+                }
+                case "resetdir": c.Stroke.ResetEffectDirection(); return;
+                case "stencil":
+                {
+                    // stencil モード 繰り返し 反転 写し 画像 色空間 チャンネル（写しは none か xx,xy,x0,yx,yy,y0、チャンネルは - か名前,…）
+                    StencilMode mode; StencilTiling tiling; ResourceColorSpace space;
+                    if (!Enum.TryParse(t[1], false, out mode)) throw new FormatException("ステンシルのモード: " + t[1]);
+                    if (!Enum.TryParse(t[2], false, out tiling)) throw new FormatException("ステンシルの繰り返し: " + t[2]);
+                    bool invert = Flag(t[3]);
+                    StencilMapping? mapping = null;
+                    if (t[4] != "none") { var q = t[4].Split(','); mapping = new StencilMapping(Num(c, q[0]), Num(c, q[1]), Num(c, q[2]), Num(c, q[3]), Num(c, q[4]), Num(c, q[5])); }
+                    var image = StencilPixels(t[5], out int iw, out int ih);
+                    if (!Enum.TryParse(t[6], false, out space)) throw new FormatException("色空間: " + t[6]);
+                    var channels = t[7] == "-" ? new PaintChannel[0] : t[7].Split(',').Select(Channel).ToArray();
+                    c.Stencil = new BrushStencil(new StencilImage(ImageContent.FromPixels(image, iw, ih), space), mode, tiling, invert, mapping, channels);
+                    return;
+                }
+                case "pixelat":
+                {
+                    int x = Int(t[1]), y = Int(t[2]); double cov = Num(c, t[3]), p = Num(c, t[4]), sx = Num(c, t[5]), sy = Num(c, t[6]), foot = Num(c, t[7]);
+                    c.Stroke.ApplyPixel(x, y, cov, p, new StencilPoint(sx, sy, foot)); return;
+                }
+                case "dabdiscat":
+                {
+                    // 円板の面のダブを、画素ごとのステンシルの上の点（写し xx,xy,x0,yx,yy,y0 で画素の中心を写した点）で
+                    double cx = Num(c, t[1]), cy = Num(c, t[2]), r = Num(c, t[3]), p = Num(c, t[4]);
+                    var q = t[5].Split(','); var m = new StencilMapping(Num(c, q[0]), Num(c, q[1]), Num(c, q[2]), Num(c, q[3]), Num(c, q[4]), Num(c, q[5]));
+                    var pixels = new List<BrushPixel>(); var points = new List<StencilPoint>();
+                    for (int y = (int)Math.Floor(cy - r); y <= (int)Math.Ceiling(cy + r); y++)
+                        for (int x = (int)Math.Floor(cx - r); x <= (int)Math.Ceiling(cx + r); x++)
+                        {
+                            double dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.Sqrt(dx * dx + dy * dy) / r;
+                            if (d >= 1) continue;
+                            pixels.Add(new BrushPixel(x, y, 1 - d));
+                            m.Map(x, y, out double ix, out double iy); points.Add(new StencilPoint(ix, iy, m.Footprint));
+                        }
+                    c.Stroke.ApplyDab(pixels, cx, cy, p, points); return;
+                }
+                case "stats":
+                    c.Events.Add("stats stamps=" + c.Stroke.StampCount + " samples=" + c.Stroke.SampleCount + " tiles=" + c.Stroke.ChangedTileCount + " rollback=" + c.Stroke.RollbackBytes);
+                    return;
+                case "budget": doc.ActiveStrokeBudgetBytes = Int(t[1]); return;
+                case "enable": doc.SetChannelEnabled(LayerAt(c, t[1]), Channel(t[2]), true); doc.ClearHistory(); return;
                 case "point": { double x = Num(c, t[1]), y = Num(c, t[2]), p = Num(c, t[3]); c.Stroke.Add(new BrushSample(x, y, p)); return; }
                 case "walk":
                 {
@@ -228,6 +416,7 @@ namespace YoluPainterRs.Golden
                     byte[] bytes; string what;
                     if (t[1] == "composite") { bytes = CpuCompositor.Composite(doc, PaintChannel.Color); what = "composite " + doc.Width + "x" + doc.Height; }
                     else if (t[1] == "layer") { bytes = LayerBytes(doc, Int(t[2])); what = "layer " + t[2] + " " + doc.Width + "x" + doc.Height; }
+                    else if (t[1] == "channel") { bytes = LayerBytes(doc, Int(t[2]), Channel(t[3])); what = "channel " + t[2] + " " + t[3] + " " + doc.Width + "x" + doc.Height; }
                     else if (t[1] == "region")
                     {
                         int x = Int(t[2]), y = Int(t[3]), w = Int(t[4]), h = Int(t[5]);
@@ -294,10 +483,10 @@ namespace YoluPainterRs.Golden
             throw new FormatException("中身: " + fill);
         }
 
-        static byte[] LayerBytes(PaintDocument doc, int index)
+        static byte[] LayerBytes(PaintDocument doc, int index, PaintChannel channel = PaintChannel.Color)
         {
             int w = doc.Width, h = doc.Height, ts = doc.TileSize;
-            var surface = doc.Layers[index].Channels[PaintChannel.Color];
+            var surface = doc.Layers[index].Channels[channel];
             var result = new byte[w * h * 4]; var tile = new byte[ts * ts * 4];
             for (int ty = 0; ty * ts < h; ty++) for (int tx = 0; tx * ts < w; tx++)
             {
@@ -329,6 +518,121 @@ namespace YoluPainterRs.Golden
             var fr = new SplitMix(2000); var fade = new Fnv();
             for (int i = 0; i < 65536; i++) { var d = fr.Rgba(); var s = fr.Rgba(); double op = fr.Opacity(); fade.Add(CpuCompositor.Fade(d, s, op)); }
             index.Add("sweep fade " + fade.Hex);
+        }
+
+        /// <summary>ブラシの式の掃引（出力の指紋だけ）: System.Random の列、組み込みの筆先の画素、筆先の双線形、色の変化、デュアルの合わせ方、
+        /// ペンの傾き、曲線の点。</summary>
+        static void BrushSweeps(List<string> index)
+        {
+            index.Add("case brush_sweeps params=" + new Fnv().Hex);
+            {
+                var f = new Fnv();
+                foreach (int seed in new[] { 0, 1, -1, 7, int.MinValue, int.MaxValue, 0x2545F491, 0x5DEECE6, 123456789 })
+                {
+                    var r = new Random(seed);
+                    for (int i = 0; i < 4096; i++) f.Add(r.NextDouble());
+                    for (int i = 1; i < 300; i++) f.Add((double)r.Next(i));
+                }
+                index.Add("sweep random " + f.Hex);
+            }
+            foreach (var id in new[] { "grain", "noisy-disc", "charcoal", "bristles", "dots", "rim", "rounded-square" })
+            {
+                var tip = BuiltInBrushes.Tip(id); var f = new Fnv();
+                f.Add((byte)tip.Width); f.Add((byte)(tip.Width >> 8)); f.Add((byte)tip.Height); f.Add((byte)(tip.Height >> 8));
+                foreach (byte b in tip.CopyAlpha()) f.Add(b);
+                index.Add("sweep tip_" + id + " " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3000); var f = new Fnv(); var tip = BuiltInBrushes.Tip("charcoal"); var grain = BuiltInBrushes.Tip("grain");
+                for (int i = 0; i < 65536; i++)
+                {
+                    double u = rng.U01() * 1.2 - 0.1, v = rng.U01() * 1.2 - 0.1;
+                    f.Add(tip.Sample(u, v)); f.Add(grain.SampleTiled((rng.U01() - 0.5) * 1000, (rng.U01() - 0.5) * 1000));
+                }
+                index.Add("sweep tip_sample " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3001); var f = new Fnv();
+                for (int i = 0; i < 4096; i++)
+                {
+                    var s = new BrushSettings
+                    {
+                        Color = rng.Rgba(), SecondaryColor = rng.Rgba(),
+                        ForegroundBackgroundJitter = (rng.Next() & 1) == 0 ? 0 : rng.U01(), HueJitter = (rng.Next() & 1) == 0 ? 0 : rng.U01(),
+                        SaturationJitter = (rng.Next() & 1) == 0 ? 0 : rng.U01(), BrightnessJitter = (rng.Next() & 1) == 0 ? 0 : rng.U01(),
+                        Purity = (rng.Next() % 3) == 0 ? 0 : rng.U01() * 2 - 1,
+                    };
+                    var r = new Random((int)(rng.Next() & 0x7fffffff));
+                    for (int k = 0; k < 8; k++) f.Add(ColorDynamics.Next(s, r));
+                }
+                index.Add("sweep color_dynamics " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3002); var f = new Fnv();
+                foreach (DualBrushMode mode in Enum.GetValues(typeof(DualBrushMode)))
+                    for (int i = 0; i < 16384; i++)
+                    {
+                        double a = (rng.Next() % 5) == 0 ? (rng.Next() % 3) * 0.5 : rng.U01(), b = (rng.Next() % 5) == 0 ? (rng.Next() % 3) * 0.5 : rng.U01();
+                        f.Add(DualBrush.Combine(mode, a, b));
+                    }
+                index.Add("sweep dual_combine " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3003); var f = new Fnv();
+                for (int i = 0; i < 65536; i++)
+                {
+                    double tx = (rng.Next() % 7) == 0 ? 0 : (rng.U01() * 2 - 1) * PenTilt.MaxAngle, ty = (rng.Next() % 7) == 0 ? 0 : (rng.U01() * 2 - 1) * PenTilt.MaxAngle;
+                    f.Add(PenTilt.Amount(tx, ty)); f.Add(PenTilt.Azimuth(tx, ty));
+                }
+                index.Add("sweep pen_tilt " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3004); var f = new Fnv();
+                for (int i = 0; i < 65536; i++)
+                {
+                    var q = new double[8]; for (int k = 0; k < 8; k++) q[k] = (rng.U01() - 0.5) * 200;
+                    if ((rng.Next() % 9) == 0) { q[0] = q[2]; q[1] = q[3]; }
+                    StrokeCurve.Point(q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], rng.U01(), out double x, out double y);
+                    f.Add(x); f.Add(y);
+                }
+                index.Add("sweep curve " + f.Hex);
+            }
+            {
+                var rng = new SplitMix(3005); var f = new Fnv();
+                for (int i = 0; i < 65536; i++)
+                {
+                    ColorDynamics.RgbToHsv(rng.U01(), rng.U01(), rng.U01(), out double h, out double sat, out double val);
+                    f.Add(h); f.Add(sat); f.Add(val);
+                    ColorDynamics.HsvToRgb(rng.U01() * 3 - 1, rng.U01(), rng.U01(), out double r, out double g, out double b);
+                    f.Add(r); f.Add(g); f.Add(b);
+                }
+                index.Add("sweep hsv " + f.Hex);
+            }
+            {
+                // sRGB の表と輝度
+                var f = new Fnv();
+                for (int i = 0; i < 256; i++) f.Add(FillImageColor.Convert(FillImageConversion.LinearToSrgb, (byte)i));
+                var rng = new SplitMix(3006);
+                for (int i = 0; i < 65536; i++) f.Add(FillImageColor.Luminance(rng.Channel(), rng.Channel(), rng.Channel()));
+                index.Add("sweep srgb_luminance " + f.Hex);
+            }
+            foreach (var spec in new[] { "grey:41:37:23", "color:42:64:48", "color:43:1:7", "half:5:5" })
+            {
+                // ステンシルの画像の読み（双線形・三線形・繰り返し・画像の外）
+                var pixels = StencilPixels(spec, out int w, out int h);
+                var image = new StencilImage(ImageContent.FromPixels(pixels, w, h), ResourceColorSpace.Srgb);
+                var rng = new SplitMix(3007); var f = new Fnv();
+                var footprints = new[] { 0.0, 0.5, 1.0, 1.7, 3.0, 9.0, 100.0, 1e6 };
+                for (int i = 0; i < 16384; i++)
+                {
+                    double x = (rng.U01() * 2 - 0.5) * w, y = (rng.U01() * 2 - 0.5) * h, foot = footprints[rng.Next() % 8];
+                    var tiling = (StencilTiling)(rng.Next() % 4);
+                    var t = image.Read(x, y, foot, tiling);
+                    f.Add((byte)(t.Inside ? 1 : 0)); f.Add(t.Alpha); f.Add(t.LumaAlpha); f.Add(t.Color);
+                }
+                f.Add((double)image.MipBytes);
+                index.Add("sweep stencil_" + spec.Replace(':', '_') + " " + f.Hex);
+            }
         }
 
         // ───────── 計測 ─────────
@@ -383,6 +687,50 @@ namespace YoluPainterRs.Golden
                 }
                 Console.WriteLine("ストローク 半径 " + radius + "・101 点・" + stamps + " ダブ（" + (over ? "乱数の画素の上" : "空の層") + "）: " + Stats(ms));
             }
+            // M2 のブラシ（crates/yolu-core/examples/bench.rs の dynamic_brush と同じ設定）
+            string only = Environment.GetEnvironmentVariable("BENCH_ONLY");
+            foreach (double radius in new[] { 40.0, 200.0 })
+                foreach (var kind in new[] { "round", "jitter", "tip", "texture", "dual", "color", "all", "blur", "smudge" })
+                {
+                    if (!string.IsNullOrEmpty(only) && only != kind) continue;
+                    bool over = kind == "blur" || kind == "smudge";
+                    var ms = new List<double>(); long stamps = 0;
+                    for (int i = 0; i < runs + 2; i++)
+                    {
+                        var doc = new PaintDocument(4096, 4096, 128); var l = doc.AddLayer("a");
+                        if (over) FillRandom(doc, l, 3);
+                        var brush = DynamicBrush(kind, radius);
+                        var sw = Stopwatch.StartNew();
+                        var s = doc.BeginStroke(l.Id, PaintChannel.Color, brush);
+                        for (int k = 0; k <= 100; k++) s.Add(new BrushSample(200 + 36 * k, 2048 + 600 * Math.Sin(k * 0.1), 0.5 + 0.5 * (k % 10) / 9.0));
+                        s.Commit();
+                        if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds);
+                        stamps = s.StampCount;
+                    }
+                    Console.WriteLine("M2 " + kind + " 半径 " + radius + "・" + stamps + " ダブ" + (over ? "・乱数の画素の上" : "") + ": " + Stats(ms));
+                }
+        }
+
+        static BrushSettings DynamicBrush(string kind, double radius)
+        {
+            var b = new BrushSettings { Radius = radius, Hardness = 0.8, Spacing = 0.15, Color = new Rgba32(200, 60, 30, 255) };
+            void Jitter() { b.Seed = 7; b.SizeJitter = 0.3; b.AngleJitter = 0.5; b.RoundnessJitter = 0.3; b.Scatter = 0.3; b.OpacityJitter = 0.2; b.FlowJitter = 0.2; }
+            void Tip() { b.Tip = BuiltInBrushes.Tip("charcoal"); b.FollowDirection = true; }
+            void Texture() { b.Texture = BuiltInBrushes.Tip("grain"); b.TextureDepth = 0.6; b.TextureScale = 2; }
+            void Dual() { b.Dual = new DualBrush { Radius = radius / 4, Spacing = 0.25, Scatter = 0.5, Count = 2, Hardness = 0.5 }; }
+            void Colour() { b.Seed = 3; b.HueJitter = 0.3; b.BrightnessJitter = 0.2; }
+            switch (kind)
+            {
+                case "jitter": Jitter(); break;
+                case "tip": Tip(); break;
+                case "texture": Texture(); break;
+                case "dual": Dual(); break;
+                case "color": Colour(); break;
+                case "all": Jitter(); Tip(); Texture(); Dual(); Colour(); break;
+                case "blur": b.Effect = BrushEffect.Blur; b.BlurRadius = 3; break;
+                case "smudge": b.Effect = BrushEffect.Smudge; b.SmudgeStrength = 0.5; break;
+            }
+            return b;
         }
     }
 }

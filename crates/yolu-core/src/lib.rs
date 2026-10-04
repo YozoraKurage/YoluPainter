@@ -23,7 +23,7 @@
 #![allow(clippy::chunks_exact_to_as_chunks, clippy::manual_clamp)]
 
 pub mod blend;
-mod brush;
+pub mod brush;
 mod composite;
 mod document;
 mod error;
@@ -32,7 +32,12 @@ mod math;
 mod surface;
 mod types;
 
-pub use brush::{BrushSample, BrushSettings};
+pub use brush::{
+    builtin_presets, builtin_tip, Brush, BrushEffect, BrushPixel, BrushPreset, BrushSample,
+    BrushSettings, BrushStencil, BrushTip, ColorDynamics, Controls, DualBrush, DualBrushMode,
+    ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping, StencilMode, StencilPoint,
+    StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
+};
 pub use document::{Document, Layer, LayerId, Stroke, StrokeResult, StrokeStats};
 pub use error::CoreError;
 pub use glam;
