@@ -31,6 +31,7 @@ pub use transform::{Affine2D, Resampling};
 pub use triangle_fill::TriangleFill;
 mod selection;
 mod smart;
+mod snapshot;
 mod smart_resample;
 mod structure;
 

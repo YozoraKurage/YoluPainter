@@ -488,6 +488,8 @@ pub enum Action {
     Update(crate::update::UpdateAction),
     /// 設定の窓と、退避を残す数。
     Prefs(crate::prefs::PrefsAction),
+    /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
+    Recovery(crate::recovery::RecoveryAction),
 }
 
 impl Action {
@@ -601,6 +603,8 @@ pub struct AppState {
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
     pub brushes: crate::brushes::BrushesState,
+    /// 復旧用の世代の書き置きと復旧の窓（`recovery`。動かすまでは何もしない）。
+    pub recovery: crate::recovery::RecoveryState,
 }
 
 /// ファイルの窓の頼み。
@@ -644,7 +648,7 @@ pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Opti
 pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
-    /// 表示の言語を替える。既定の名前のまま（利用者が付けていない）のプロジェクト名・最初のテクスチャセット・
+    /// 表示の言語を替える。既定の名前のまま（利用者が付けていない。復旧から開いて、まだ保存していない名前を含む）のプロジェクト名・最初のテクスチャセット・
     /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
     pub fn set_language(&mut self, lang: Lang) {
         let old = self.lang;
@@ -655,6 +659,12 @@ impl AppState {
         let untitled = |l: Lang| l.pick("名称未設定", "Untitled");
         if self.project.is_none() && self.project_name == untitled(old) {
             self.project_name = untitled(lang).into();
+        }
+        // 復旧から開いた文書（保存先がまだ無い）の既定の名前も、言語に追従する
+        if self.project.as_ref().is_some_and(|p| !p.is_file())
+            && self.project_name == crate::recovery::recovered_name(old)
+        {
+            self.project_name = crate::recovery::recovered_name(lang).into();
         }
         self.sets.retitle_defaults(old, lang);
         let first_layer = |l: Lang| format!("{} 1", l.pick("レイヤー", "Layer"));
@@ -728,6 +738,7 @@ impl AppState {
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
+            recovery: Default::default(),
         }
     }
 
@@ -1083,7 +1094,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                match self.project.as_ref().map(|p| p.path().to_path_buf()) {
+                match self.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf()) {
                     Some(path) => crate::project::save_from(self, &path),
                     None => self.dialog_request = Some(DialogRequest::SaveAs),
                 }
@@ -1099,6 +1110,7 @@ impl AppState {
             Action::Psd(a) => self.psd_apply(a),
             Action::Update(a) => self.update_apply(a),
             Action::Prefs(a) => self.prefs_apply(a),
+            Action::Recovery(a) => self.recovery_apply(a),
         }
     }
 }

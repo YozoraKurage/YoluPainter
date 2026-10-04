@@ -1120,3 +1120,17 @@ fn cutting_pixels_from_a_path_layer_is_refused_and_changes_nothing() {
         .copy_pixels(path_layer, Channel::Color, false, u64::MAX)
         .is_ok());
 }
+
+#[test]
+fn a_recovery_snapshot_keeps_the_effects_and_composites_the_same() {
+    // 復旧の書き置きの写し（capture_snapshot）は効果の入力と予算を写し、評価のキャッシュは写さない。写しの合成は元と同じ
+    let Rig { doc, .. } = rig();
+    let copy = doc.capture_snapshot().unwrap();
+    assert_eq!(
+        copy.composite(copy.bounds()).unwrap(),
+        doc.composite(doc.bounds()).unwrap()
+    );
+    for channel in [Channel::Color, Channel::Height] {
+        assert_eq!(whole(&copy, channel), whole(&doc, channel), "{channel:?}");
+    }
+}

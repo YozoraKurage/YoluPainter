@@ -29,11 +29,13 @@ use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
 
 /// 開いた・保存した .ylp。
 pub struct ProjectFile {
+    /// ファイルの場所。復旧から開いたもの（まだファイルが無い）は空。
     path: PathBuf,
-    /// 開いた・保存した時の印（保存で、外から書き換えられていないかを見る）。
-    target: SaveTarget,
-    /// 開いた・保存した時の中身（次の保存で、描いていないセット・読むだけのセット・知らないエントリをそのまま残す）。
-    original: Project,
+    /// 開いた・保存した時の印（保存で、外から書き換えられていないかを見る）。復旧から開いたものは無い。
+    target: Option<SaveTarget>,
+    /// 開いた・保存した時の中身（次の保存で、描いていないセット・読むだけのセット・知らないエントリをそのまま残す）。`Arc` なのは、
+    /// 復旧の書き置きが主のスレッドで毎回 `Project` を複製せず、共有して別のスレッドへ渡すため。
+    original: std::sync::Arc<Project>,
 }
 
 impl std::fmt::Debug for ProjectFile {
@@ -50,6 +52,10 @@ impl ProjectFile {
     pub fn path(&self) -> &Path {
         &self.path
     }
+    /// ファイルがあるか（復旧から開いたものは、保存先を利用者が選ぶまで無い。元の .ylp には書かない）。
+    pub fn is_file(&self) -> bool {
+        self.target.is_some()
+    }
     /// ファイルの .ylp の形式（開いた古い形式は、保存するまでそのまま）。
     pub fn format(&self) -> i32 {
         self.original.info().format
@@ -61,6 +67,10 @@ impl ProjectFile {
     /// 開いた・保存した時の中身。
     pub fn project(&self) -> &Project {
         &self.original
+    }
+    /// 開いた・保存した時の中身の共有（複製しない）。
+    pub fn project_shared(&self) -> std::sync::Arc<Project> {
+        self.original.clone()
     }
 }
 
@@ -166,6 +176,17 @@ pub fn open_into(state: &mut AppState, path: &Path) {
             return;
         }
     };
+    open_project(state, project, Some((path.to_path_buf(), target)));
+}
+
+/// 復旧の世代から読んだプロジェクトで今の状態を置き換える。保存していない「名称未設定（復旧）」として開き、元の .ylp には
+/// つながない（保存先は利用者が選ぶ）。どのセットも、次の保存で正本と合成の PNG を書き直す。
+pub fn open_recovered(state: &mut AppState, project: Project) {
+    open_project(state, project, None);
+}
+
+/// 開いた中身（ファイルなら保存先と印つき）で今の状態を置き換える。
+fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, SaveTarget)>) {
     let entries = project.migrated_entries();
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
@@ -234,20 +255,38 @@ pub fn open_into(state: &mut AppState, path: &Path) {
     }
     state.replace_sets(sets, doc);
     state.shelf = ShelfState::from_project(&project).inherit_running_from(&state.shelf);
-    state.project_name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
-    state.modified = false;
-    let mut text = state.lang.pick(format!(
-        "開きました: {}（形式 {}・テクスチャセット {count}）。",
-        path.display(),
-        project.info().format
-    ), format!(
-        "Opened: {} (format {} · {count} texture sets).",
-        path.display(),
-        project.info().format
-    ));
+    let mut text = match &file {
+        Some((path, _)) => {
+            state.project_name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
+            state.modified = false;
+            state.lang.pick(format!(
+                "開きました: {}（形式 {}・テクスチャセット {count}）。",
+                path.display(),
+                project.info().format
+            ), format!(
+                "Opened: {} (format {} · {count} texture sets).",
+                path.display(),
+                project.info().format
+            ))
+        }
+        None => {
+            state.project_name = crate::recovery::recovered_name(state.lang).into();
+            // 書き置きの正本から開いた文書は、保存した .ylp とは別物（保存していない）。合成の PNG も無いので、全セットを書き直す
+            state.modified = true;
+            for i in 0..state.sets.len() {
+                if let Some(set) = state.sets.get_mut(i) {
+                    set.saved = None;
+                }
+            }
+            state.lang.pick(
+                format!("復旧しました（テクスチャセット {count}）。"),
+                format!("Recovered ({count} texture sets)."),
+            )
+        }
+    };
     if !read_only.is_empty() {
         text += &state.lang.pick(format!(
             " 読むだけのセット {}: {}。",
@@ -286,10 +325,14 @@ pub fn open_into(state: &mut AppState, path: &Path) {
         text += &state.lang.pick(format!(" {}", notes.join(" ")), format!(" {}.", notes.join("; ")));
     }
     state.message = text;
+    let (path, target) = match file {
+        Some((path, target)) => (path, Some(target)),
+        None => (PathBuf::new(), None),
+    };
     state.project = Some(ProjectFile {
-        path: path.to_path_buf(),
+        path,
         target,
-        original: project,
+        original: std::sync::Arc::new(project),
     });
 }
 
@@ -339,7 +382,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     if state.is_stroking() {
         return Err(state.lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
     }
-    let base = state.project.as_ref().map(|p| &p.original);
+    let base = state.project.as_ref().map(|p| &*p.original);
     let mut specs = Vec::with_capacity(state.sets.len());
     let mut written = Vec::new();
     for (i, set) in state.sets.iter().enumerate() {
@@ -421,15 +464,17 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     }
     // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
     let project = state.shelf.write_into(project, state.lang)?;
+    let project = std::sync::Arc::new(project);
     let overwrite = path.exists();
     let reuse = state
         .project
         .as_ref()
-        .is_some_and(|p| same_file(&p.path, path));
+        .is_some_and(|p| p.is_file() && same_file(&p.path, path));
     let keep = state.prefs.backups;
     let report = if reuse {
         let file = state.project.as_mut().expect("上で確かめた");
-        file.target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?
+        let target = file.target.as_mut().expect("ファイルのあるプロジェクトは印を持つ");
+        target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?
     } else {
         // 別の場所: あれば .ylp として読めるものだけを上書きする（読めないファイルを黙って潰さない）
         let mut target = if overwrite {
@@ -442,7 +487,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         let report = target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?;
         state.project = Some(ProjectFile {
             path: path.to_path_buf(),
-            target,
+            target: Some(target),
             original: project.clone(),
         });
         report

@@ -75,3 +75,5 @@ jobs:
         run: cargo test -p yolu-app --test update --locked headless_ -- --test-threads=1
       - name: ブラシの一覧の統合試験（画面なし。保存と読み戻し・壊れたファイル）
         run: cargo test -p yolu-app --test brush_list --locked headless_ -- --test-threads=1
+      - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
+        run: cargo test -p yolu-app --test recovery --locked headless_ -- --test-threads=1

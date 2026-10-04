@@ -17,6 +17,8 @@ parser.add_argument('--user-channels', action='store_true',
                     help='Rustが書いた版22の正本（user-channels-v22.utpaint）をUnity版の読み手に読ませた結果を記録')
 parser.add_argument('--rust-written', action='store_true',
                     help='Rustが書いた版21の正本（rust-written-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致と合成を記録')
+parser.add_argument('--generation', action='store_true',
+                    help='復旧用の世代の置き場を Unity 版の GenerationStore で書き（unity-generation/）、Rust が書いた置き場を Unity 版に読ませた結果を記録（rust-generation.unity.txt）')
 parser.add_argument('--source', type=Path, required=True, help='Unity 版ソース（読むだけ）')
 parser.add_argument('--unity-data', type=Path, default=Path('/opt/unity/Editor/Data'))
 args = parser.parse_args()
@@ -71,5 +73,14 @@ elif args.rust_written:
     subprocess.run(mono + ['--rust-written', str(fixtures / 'rust-written-v21.utpaint'),
                            str(fixtures / 'rust-written-v21.unity.txt'),
                            str(fixtures / 'rust-written-v21.composite')], check=True)
+elif args.generation:
+    subprocess.run(mono + ['--generation', str(fixtures / 'unity-generation')], check=True)
+    cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')
+    subprocess.run([cargo, 'build', '-p', 'yolu-io', '--example', 'write_generation'], cwd=root, check=True)
+    rust_stores = out / 'rust-generation'
+    shutil.rmtree(rust_stores, ignore_errors=True)  # この道具が作った出力だけを再生成する。
+    subprocess.run([str(root / 'target/debug/examples/write_generation'), str(fixtures / 'format6.ylp'), str(rust_stores)],
+                   cwd=root, check=True)
+    subprocess.run(mono + ['--generation-reads', str(rust_stores), str(fixtures / 'rust-generation.unity.txt')], check=True)
 else:
     subprocess.run(mono + (['--m1'] if args.m1 else []) + [str(fixtures)], check=True)

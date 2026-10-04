@@ -199,6 +199,8 @@ pub struct YoluApp {
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
     settings: Option<(std::path::PathBuf, Settings)>,
+    /// 前のフレームでウィンドウにフォーカスがあったか（失ったら復旧の書き置きを待たずに書く）。
+    was_focused: Option<bool>,
 }
 
 impl YoluApp {
@@ -220,11 +222,33 @@ impl YoluApp {
         app.state.clip.use_system();
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
+        // 落ちた前の実行があれば復旧の窓を開く（起動の引数のプロジェクトより先に。どちらも開ける）
+        app.start_recovery();
         // 関連付け（.ylp のダブルクリック）で起動されたら、そのプロジェクトを開く
         app.open_startup_project(std::env::args_os());
         // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際の窓だけ。試験は呼ばない）
         app.state.update_startup();
         app
+    }
+
+    /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧の窓が開く）。始められなければ使わず、理由を状態の帯に出す。
+    pub fn start_recovery(&mut self) {
+        self.start_recovery_with(crate::recovery::RecoverySettings::path());
+    }
+
+    /// `start_recovery` の、復旧の設定のファイル（`recovery.conf`）の場所を渡せる形。
+    pub fn start_recovery_with(&mut self, conf: Option<std::path::PathBuf>) {
+        let lang = self.state.lang;
+        let note = match self.state.recovery.start_from(conf) {
+            Ok(problems) => problems.first().map(|p| lang.recovery_settings_problem(p)),
+            Err(e) => Some(lang.recovery_unavailable(&e)),
+        };
+        if let Some(note) = note {
+            if !self.state.message.is_empty() {
+                self.state.message.push(' ');
+            }
+            self.state.message.push_str(&note);
+        }
     }
 
     /// 起動の引数（実行ファイルの名前のあと）に .ylp があれば開く。開けないときは、`OpenProject` が message に理由を書く。
@@ -310,6 +334,7 @@ impl YoluApp {
             dialogs: false,
             closing: false,
             settings: None,
+            was_focused: None,
         }
     }
 
@@ -327,6 +352,12 @@ impl YoluApp {
         if let Some(request) = self.state.link_request.take() {
             self.link.request(request, ctx, &mut self.state);
             self.state.link = self.link.view();
+        }
+        // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。窓を開かない試験では聞かない）
+        if let Some(open) = self.state.recovery.take_open_request() {
+            if self.confirm_discard() {
+                self.state.recovery_open(open);
+            }
         }
         if !self.dialogs {
             return;
@@ -624,6 +655,15 @@ impl YoluApp {
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();
         self.state.poll_clipboard();
+        // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
+        let focused = ctx.input(|i| i.viewport().focused);
+        if self.was_focused == Some(true) && focused == Some(false) {
+            self.state.recovery_request_flush();
+        }
+        self.was_focused = focused.or(self.was_focused);
+        if let Some(wait) = self.state.recovery_tick() {
+            ctx.request_repaint_after(wait);
+        }
         // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
         self.state.sync_view3d();
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
@@ -774,6 +814,7 @@ impl YoluApp {
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
+        crate::recovery::window::show(&ctx, &mut self.state);
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す
@@ -891,6 +932,11 @@ impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.frame(ui);
         self.persist_settings();
+    }
+
+    /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
+    fn on_exit(&mut self) {
+        self.state.recovery_shutdown();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

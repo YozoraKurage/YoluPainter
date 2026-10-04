@@ -1,0 +1,2 @@
+as-opened: 断られた（InvalidDataException）: Unsafe generation filename.
+flat-names: 読めた（13 エントリ）: brush.json, project.json, resources.json, resources/6f7d974ca5931289d3d8a681468dc5d5d03479b1f97410129c5ea6edb9e2dca2.ylbrush, sets/<ID>/document.utpaint, sets/<ID>/meshmap-Position.bin, sets/<ID>/document.utpaint, sets/<ID>/meshmap-Position.bin, sets/<ID>/document.utpaint, sets/<ID>/meshmap-Position.bin, thumbnail.png, view.json, ylp.json

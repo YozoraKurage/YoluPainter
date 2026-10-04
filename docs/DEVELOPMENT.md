@@ -17,7 +17,7 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 `.github/workflows/ci.yml` は `pull_request` と `workflow_dispatch` だけで起動します。非公開の間は Actions の実行時間を抑えるため、`main` への push では起動しません。**リポジトリを公開したら `push: { branches: [main] }` も `on` に追加してください。** 初回の実行は管理者の了承後に行います。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
-- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`・`--test brush_list headless_`・`--test update headless_`。GPU・画面の統合試験は対象外です。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`・`--test brush_list headless_`・`--test update headless_`・`--test recovery headless_`（復旧の OS のロックと置換）。GPU・画面の統合試験は対象外です。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 `cargo fmt --check` は既存の `crates/yolu-core/src/geometry/query.rs` に整形差分があるため、まだ必須検査にしていません。コードの整形を別途済ませてから追加してください。

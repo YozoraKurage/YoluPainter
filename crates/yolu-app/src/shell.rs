@@ -94,6 +94,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
                     .shortcut("Ctrl+O")
                     .enabled(free),
+                Entry::item(
+                    l.pick("復旧…", "Recovery…"),
+                    Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
+                )
+                .enabled(free && app.recovery.is_enabled()),
                 Entry::Separator,
                 Entry::item(l.pick("保存", "Save"), Action::SaveProject)
                     .shortcut("Ctrl+S")

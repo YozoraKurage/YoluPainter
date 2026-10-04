@@ -199,6 +199,16 @@ impl Project {
     pub fn read(bytes: &[u8]) -> Result<Self> {
         Self::from_archive(Archive::read(bytes)?)
     }
+    /// 全エントリ（`.ylp` のエントリ名 → 中身。`ylp.json` を含み、`mimetype` と manifest は含まない）から開く。復旧の世代
+    /// （`GenerationStore`）から読んだエントリを、ZIP に詰め直さずに `Project` にする。検証は `read` と同じ。
+    pub fn from_entries(entries: Files) -> Result<Self> {
+        Self::from_archive(Archive::build(
+            entries,
+            3,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
     pub fn info(&self) -> &FormatInfo {
         &self.info
     }

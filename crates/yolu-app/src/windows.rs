@@ -252,7 +252,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
 /// 確かめの窓や結果の窓が開いている（キーの割り当てを止める）。
 pub fn modal_open(app: &AppState) -> bool {
-    app.export.confirm.is_some() || app.psd.confirm.is_some() || app.update.window_open()
+    app.export.confirm.is_some()
+        || app.psd.confirm.is_some()
+        || app.update.window_open()
+        || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
 }
 
 fn export_confirm(ctx: &egui::Context, app: &mut AppState) {

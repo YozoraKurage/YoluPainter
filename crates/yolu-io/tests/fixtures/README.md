@@ -16,6 +16,8 @@
 | `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
 | `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
 | `rust-written-v21.unity.txt`・`rust-written-v21.composite` | 上の版21をUnity 0.2.0の `DocumentBinary.ReadId` / `Read` に読ませ、`Write` で書き直したバイト列が元と同じか、層の数を記録したものと、C#の全チャンネルの合成（`m2-*.composite` と同じ並び） |
+| `unity-generation/` | Unity 0.2.0 の `GenerationStore.Commit`（`Runtime/Core` をそのままコンパイル）が書いた復旧用の置き場。確定 2 回（正本・選択範囲・resources・`recovery.json`。変わらない中身は共有）。Rust の `GenerationStore` が読めること・一覧に出せること・続けて確定できることの正解 |
+| `rust-generation.unity.txt` | 開いた `format6.ylp` のエントリをそのまま世代にした置き場（`as-opened`）と、`sets/<ID>/` の下の入れ子の名前を除いたもの（`flat-names`）を、Unity 0.2.0 の `GenerationStore.Load` に読ませた結果。前者は「Unsafe generation filename」で断られ、後者は読める（Rust の世代の名前の範囲が Unity 版より広い記録） |
 | `selection/selection-*.bin` と `.amounts` | 70×50画素・タイル16の文書で作った選択範囲（矩形・楕円・多角形の組み合わせ、ぼかし、全選択、反転、何も選ばない）のC#の `SelectionBinary.Write` の出力と、画布の量の生の並び（下の行から）。Rustで同じ選択範囲を作り、書いたバイト列が全バイト一致することと、読んで同じ量に戻ることを確かめる |
 
 旧正本のデータは各版の基礎配置を表す人工データであり、全版と全属性の組合せを網羅するものではない。
@@ -31,6 +33,12 @@ python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE"
 `UNITY_SOURCE` はUnity版のソース。読み取りだけ行う。Unity同梱のRoslynとMonoを使い、エディタやテストデーモンは起動しない。ビルド結果はRust側の `target/io-fixtures/`、生成物はこのフォルダ。`DocumentBinary.CurrentVersion` が21でなければ生成を断る。
 
 元の形式1〜6のZIPはこのツールでは作り直さない。新しい試験データを追加するときも、原本のファイルを上書きして互換性の基準を置き換えない。
+
+復旧用の世代（`unity-generation/` と `rust-generation.unity.txt`。書くたびに世代の名前の時刻が変わる）の再生成:
+
+```sh
+python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --generation
+```
 
 層の種類・チャンネルの正本5件と全チャンネルの合成の再生成（出力は同じバイト列になる）:
 

@@ -3,6 +3,7 @@ mod archive;
 mod composite_png;
 mod core_bridge;
 pub mod export;
+mod generation;
 mod native;
 mod project;
 mod selection;
@@ -16,6 +17,10 @@ pub use native::{
 };
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
+};
+pub use generation::{
+    generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Generation,
+    GenerationInfo, GenerationStore, RecoveryInfo, StoreError, INFO_LIMIT, INFO_NAME,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;

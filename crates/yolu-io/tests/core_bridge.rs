@@ -247,3 +247,71 @@ fn csharp_compressible_pattern_matches_png_and_native_bytes() {
     assert!(png.len() < 65 * 33);
     assert_eq!(png, include_bytes!("fixtures/m1-pattern.png"));
 }
+
+/// 文書を写してから正本にしたものが、元の文書から作った正本と全バイト同じ（復旧の書き置きは写しから正本を作る）。
+fn assert_snapshot_writes_the_same_bytes(doc: &Document, what: &str) {
+    let snapshot = doc.capture_snapshot().unwrap();
+    let source = NativeDocument::from_core(doc).unwrap().to_bytes();
+    let from_snapshot = NativeDocument::from_core(&snapshot).unwrap().to_bytes();
+    assert!(source == from_snapshot, "{what}: 写しから作った正本が、元から作った正本と違う");
+    match (snapshot.selection(), doc.selection()) {
+        (Some(a), Some(b)) => assert!(a.same_as(b), "{what}: 選択範囲"),
+        (None, None) => {}
+        _ => panic!("{what}: 選択範囲の有無が違う"),
+    }
+    // 写しを正本から読み直しても同じ
+    let reread = NativeDocument::read(&from_snapshot).unwrap().to_core().unwrap();
+    assert_eq!(NativeDocument::from_core(&reread).unwrap().to_bytes(), source, "{what}: 往復");
+}
+
+#[test]
+fn a_snapshot_writes_the_same_native_bytes_as_its_source() {
+    use yolu_core::{ChannelInfo, ChannelKind, ColorSpace, SelectionMask};
+    // 層の属性・マスク・チャンネルごとの不透明度・グループ・塗りつぶし・ユーザーチャンネル・選択範囲を持つ文書
+    let mut doc = Document::with_tile_size(32, 32, 16).unwrap();
+    let paint = doc.add_layer("絵").unwrap();
+    let brush = BrushSettings {
+        color: Rgba8::new(20, 30, 40, 255),
+        radius: 6.0,
+        ..BrushSettings::default()
+    };
+    let mut stroke = doc.begin_stroke(paint, &brush).unwrap();
+    stroke.add_point(&mut doc, 10.0, 10.0, 1.0, Default::default()).unwrap();
+    doc.end_stroke(stroke).unwrap();
+    doc.set_layer_opacity(paint, 0.7, false).unwrap();
+    doc.set_layer_clipping(paint, true).unwrap();
+    doc.set_layer_visible(paint, false).unwrap();
+    doc.set_layer_blend_mode(paint, yolu_core::BlendMode::Multiply).unwrap();
+    doc.set_channel_opacity(paint, Channel::Color, Some(0.4), false).unwrap();
+    doc.add_layer_mask(paint).unwrap();
+    doc.set_mask_pixel(paint, 1, 2, 200).unwrap();
+    doc.set_layer_mask_density(paint, 0.3, false).unwrap();
+    doc.set_layer_mask_inverted(paint, true).unwrap();
+    let fill = doc
+        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 8, 7, 255))], None)
+        .unwrap();
+    doc.group_layers(&[fill], "組").unwrap();
+    doc.add_channel(ChannelInfo {
+        name: "Extra".into(),
+        kind: ChannelKind::Scalar,
+        color_space: ColorSpace::Linear,
+        default: Rgba8::new(5, 5, 5, 255),
+    })
+    .unwrap();
+    doc.set_selection(Some(SelectionMask::rectangle(&doc, 0, 0, 9, 10))).unwrap();
+    // 手動の ID の色は、まだ正本に書けない（`Unwritable`）ので、写しが保つこと自体は core の試験で確かめる
+    assert_snapshot_writes_the_same_bytes(&doc, "層・マスク・チャンネル・選択範囲");
+    // Unity 版・Rust 版が書いた正本（マスク・グループ・クリッピング・ユーザーチャンネルなど）を開いたもの
+    let mut converted = 0;
+    for name in [
+        "m2-groups", "m2-masks", "m2-channels", "m2-clipping", "m2-tiny", "rust-written-v21", "user-channels-v22",
+    ] {
+        let bytes = std::fs::read(format!("{}/tests/fixtures/{name}.utpaint", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let native = NativeDocument::read(&bytes).unwrap();
+        if native.core_issues().is_empty() {
+            assert_snapshot_writes_the_same_bytes(&native.to_core().unwrap(), name);
+            converted += 1;
+        }
+    }
+    assert!(converted >= 5, "写せる正本の数が減った: {converted}");
+}

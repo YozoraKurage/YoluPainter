@@ -5,6 +5,7 @@
 //! スレッドで走らせ（進み具合と取消つき）、終わったとき状態が変わっていないか確かめてから結果を入れる。浮いた窓は `windows`・`ui::window`。
 //! ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本のストローク・保存）は `brushes`、その画面は左のドックの `panels::brushes` と
 //! 詳細の窓 `panels::brush_detail`（欄は `panels::brush_props`）。
+//! 落ちても失わない書き置き（変更があると裏のスレッドで復旧用の世代を書き、落ちた次の起動で復旧の窓から開く）は `recovery`。
 
 pub mod app;
 pub mod bake;
@@ -24,6 +25,7 @@ pub mod pen;
 pub mod prefs;
 pub mod project;
 pub mod psd;
+pub mod recovery;
 pub mod region;
 pub mod selection;
 pub mod sets;
