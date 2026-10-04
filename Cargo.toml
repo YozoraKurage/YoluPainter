@@ -15,8 +15,10 @@ yolu-protocol = { path = "crates/yolu-protocol" }
 
 [profile.dev]
 opt-level = 1            # 画素の処理は最適化なしだと遅すぎるので、開発でも少し最適化する
+debug = "line-tables-only"  # 行番号だけ（全部のデバッグ情報だと試験の実行ファイルが 1 本 500 MB を超え、作業コピーごとに積み上がる）
 [profile.dev.package."*"]
 opt-level = 3            # 依存のクレートは最適化して組む（初回だけ時間がかかる）
+debug = false
 
 # Unity へ入れるブリッジの DLL（cargo build -p yolu-bridge --profile bridge）。小さく、記号を除く。パニックは関数ごとに受け止めるので unwind のまま
 [profile.bridge]
