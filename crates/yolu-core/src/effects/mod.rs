@@ -228,6 +228,8 @@ pub fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::ShapeGradient => "形のグラデーション",
         generator::Kind::IdColor => "ID の色",
         generator::Kind::Anchor => "Anchor",
+        generator::Kind::Noise => "ノイズ",
+        generator::Kind::Grunge => "グランジ",
     }
 }
 
@@ -480,6 +482,33 @@ impl fmt::Display for InactiveEffect {
                 write!(f, "「{name}」（{c:?}）: 画像を投影していません。{why}")
             }
         }
+    }
+}
+
+/// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件（[`crate::Document::fallback_effect_list`]）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FallbackEffect {
+    pub layer: crate::layer::LayerId,
+    /// 層の名前（利用者が付けた文字列）。
+    pub layer_name: String,
+    /// マスクのスタックの段か。
+    pub mask: bool,
+    pub kind: generator::Kind,
+    /// 位置のマップが使えない理由。
+    pub reason: InactiveReason,
+}
+
+impl fmt::Display for FallbackEffect {
+    /// 日本語の 1 行。
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "「{}」{}: {} は UV の空間で評価しています。{}",
+            self.layer_name,
+            if self.mask { "（マスク）" } else { "" },
+            generator_kind_name(self.kind),
+            self.reason,
+        )
     }
 }
 

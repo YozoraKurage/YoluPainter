@@ -1,0 +1,6 @@
+DocumentBinary.CurrentVersion: 21
+YlpFormat.Current: 7
+DocumentBinary.Read: InvalidDataException: Unsupported archive version; source retained unchanged.
+DocumentBinary.ReadId: InvalidDataException: Unsupported archive version; source retained unchanged.
+YlpFormat.Open: OK
+TexturePaintWindow.ReadTextureSets（文を組み立てたもの。ウィンドウは未実行）: InvalidDataException: Texture set "ユーザーチャンネルのセット": Unsupported archive version; source retained unchanged.

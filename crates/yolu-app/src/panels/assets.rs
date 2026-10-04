@@ -14,7 +14,7 @@ use crate::engine::Document;
 use crate::lang::Lang;
 use crate::m2::{DropTarget, Row};
 use crate::panels::layers::ROW_HEIGHT;
-use crate::shelf::{ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
+use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, Entry, PopupState};
 use crate::ui::theme as t;
@@ -39,6 +39,8 @@ struct Card {
     block: Option<String>,
     /// 素材の中身のせいで置けない（印を付ける）。
     warn: bool,
+    /// 同梱の素材（棚に入っていない。消せない・書き出せない）。
+    builtin: bool,
     thumb: Option<TextureHandle>,
 }
 
@@ -47,6 +49,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
     let lang = app.lang;
+    app.shelf.use_language(lang);
     // 見える項目のサムネイルと説明は 1 フレームに数個ずつ作る（大きな素材が一度に並んでも固まらない）
     if app.shelf.inspect_pending(2) {
         ctx.request_repaint();
@@ -314,6 +317,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
         let block = app.shelf.block_of(&id).map(|b| b.reason(lang));
         let warn = app.shelf.warns(&id);
         let thumb = app.shelf.texture(ctx, &id);
+        let builtin = shelf::is_builtin(&id);
         list.push(Card {
             id,
             name,
@@ -321,6 +325,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
             detail,
             block,
             warn,
+            builtin,
             thumb,
         });
     }
@@ -432,6 +437,12 @@ fn card_cell(
         w::rounded(painter, badge, t::PANEL_BG, 7.0);
         w::icon(painter, badge, "warning", t::WARNING, 11.0);
     }
+    if card.builtin {
+        // 組み込みの印（左上。消せない・書き出せない元）
+        let badge = Rect::from_min_size(pos2(thumb.left() + 2.0, thumb.top() + 2.0), vec2(14.0, 14.0));
+        w::rounded(painter, badge, t::PANEL_BG, 7.0);
+        w::icon(painter, badge, "lock", t::TEXT_DIM, 11.0);
+    }
     if card.kind != ItemKind::Image {
         let mark = Rect::from_min_size(
             pos2(thumb.left() + 2.0, thumb.bottom() - 16.0),
@@ -483,6 +494,9 @@ fn card_cell(
     }
     if let Some(reason) = &card.block {
         tip += &format!("\n{reason}");
+    }
+    if card.builtin {
+        tip += &format!("\n{}", app.lang.pick("組み込み", "Built-in"));
     }
     let name = card.name.clone();
     response
@@ -592,7 +606,7 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "save",
         lang.pick("書き出す…（.ylsmart）", "Export… (.ylsmart)"),
         false,
-        id.is_some() && kind.is_some_and(ItemKind::is_smart),
+        id.as_deref().is_some_and(|i| !shelf::is_builtin(i)) && kind.is_some_and(ItemKind::is_smart),
         16.0,
     )
     .clicked()
@@ -615,7 +629,9 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
             "Remove from the shelf (placed layers stay)",
         ),
         false,
-        id.is_some() && !app.is_stroking() && app.shelf.unavailable.is_none(),
+        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+            && !app.is_stroking()
+            && app.shelf.unavailable.is_none(),
         16.0,
     )
     .clicked()
@@ -784,6 +800,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let id = res.id.clone();
     let free = !app.is_stroking();
     let blocked = app.shelf.block_of(&id).is_some();
+    let builtin = shelf::is_builtin(&id);
     let label = if kind == Some(ItemKind::SmartMask) {
         lang.pick("マスクに適用", "Apply to Mask")
     } else {
@@ -803,12 +820,12 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
             lang.pick("書き出す…", "Export…"),
             Action::Shelf(ShelfOp::ExportDialog(id.clone())),
         )
-        .enabled(kind.is_some_and(ItemKind::is_smart)),
+        .enabled(kind.is_some_and(ItemKind::is_smart) && !builtin),
         Entry::item(
             lang.pick("棚から消す…", "Remove from the shelf…"),
             Action::Shelf(ShelfOp::AskRemove(id)),
         )
-        .enabled(free && app.shelf.unavailable.is_none()),
+        .enabled(free && app.shelf.unavailable.is_none() && !builtin),
     ]
 }
 

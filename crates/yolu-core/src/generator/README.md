@@ -4,7 +4,7 @@
 `Image` は連続した画像用。タイル入力は `Source` を実装してキャンバス座標で画素を返す。領域の切り方・Rayon のプールの並列度で計算結果は変わらない。
 入力と設定は借用するため、評価中のスナップショットは変更できない。成功した画像だけを呼び出し側で採用する。
 
-対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor。
+対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor に、Rust 版だけの Noise（64）・Grunge（65）。
 ノイズは各種類に重ねる4オクターブの値ノイズで、UV またはモデル空間を使う。ShapeGradient は箱・球・平面、ルートの位置と回転、形の中心・回転・大きさ・減衰を持つ。
 `Ramp` は独立した RGB と不透明度の分岐点、中点、PCHIP の値カーブ、5種類のプリセットを持つ。色は保存された sRGB 値のまま補間し、透明な画素の RGB を保つ。
 色の分岐点の α は評価に使わず、C# の `GradientStop` と同じく `Ramp::new` が 255 にそろえる（不透明度は独立した分岐点が持つ）。α の違う入力から作ったランプは `==` で等しい。
@@ -46,3 +46,17 @@ C# FilterEngine はブロック用の作業バッファを数えるため、同�
 `cargo run --release -p yolu-core --example generator_bench` は4096²、ウォームアップ1回・計測1回。入力画像と設定の作成は時間に含めず、束縛と返却画像の確保は含める。
 
 `YOLU_GENERATOR_GOLDEN` に生成先を指定して試験を実行すると、338事例を C# 出力の各バイトとも直接比較する。
+
+## ノイズ・グランジ（Rust 版だけの種類）
+
+`Kind::Noise`（64）と `Kind::Grunge`（65）は C# に対応が無く、マップを読まずに位置・向き・UV から値を作る（設定は `Settings::procedural`）。C# の種類（0〜7）と重ならない 64 から振り、
+`.ylp` の保存は正本の版 23（`crates/yolu-io/README.md` の「手続き型の Generator」）。レベル（low・high・softness・invert）がしきい値・コントラストで、blend・強さ・マスクの対象は他の種類と同じ。
+
+- ノイズ: 基底は値・Perlin（勾配）・Worley（セル。F1・F2・F2−F1）、重ね方は fBm・ridged・turbulence、オクターブ 1〜8・ラクナリティ 1〜4・ゲイン 0〜1・大きさ・シード・回転・にじみ（座標のゆがみ）。
+- グランジ: プリセットは汚れの斑・錆の斑・傷の筋・ほこり・指紋・布目・ひび・飛沫・塗装の剥げ・木目・革のしぼ（`GrungePreset`）。ノイズの層（`Layer`）としきい値・三角波の組み合わせで、値は 1 が「ある」。
+  `GrungePreset::default_scale` が選んだときの模様の大きさ、`Settings::grunge(preset)` が既定の設定。`preview(&settings, w, h)` は UV 空間の見本（灰色の RGBA8。画面のサムネイル用）。
+- 空間: 位置（Position のマップで 3D。UV の島の継ぎ目で模様がずれない）・トライプラナー（Position と WorldNormal。塗りつぶしの投影と同じ重み）・UV（x・y の格子を周期で巻き、端で継ぎ目が出ない）。
+  2D の模様のプリセット（傷の筋・指紋・布目）は、位置の空間では自動でトライプラナー。位置のマップが使えないときは入力のまま通さず UV に落とし、`BoundGenerator::fallback` が理由を返す
+  （`Document::generator_fallback`・`fallback_effect_list`。`inactive` とは別）。`used_maps` は設定だけで決まる（使えるかは見ない）。
+- 決定性: 式は + − × ÷ sqrt floor と整数だけ（libm を使わない。回転は多項式の sin・cos）。画素ごとに位置・座標だけから決まるので、スレッド数・領域の切り方・評価ブロックの大きさで結果は変わらない。
+  取消は他の種類と同じく行の境界、予算は返す RGBA8 の大きさ。実装を固定するハッシュは `tests/procedural-index.txt`（回帰の固定で、外部の正解ではない）。

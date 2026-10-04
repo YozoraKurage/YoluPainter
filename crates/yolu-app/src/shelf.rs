@@ -2,6 +2,8 @@
 //! スマートマテリアル・スマートマスクを並べる。画面（`panels::assets`）は絞り込み・探す・選ぶだけを直に持ち、棚の中身と文書を変える
 //! 操作は `Action::Shelf(ShelfOp)` を通す。
 //!
+//! - 組み込み: 同梱のスマートマテリアル（`yolu_core::smart_library`）は、棚の項目の後ろに「組み込み」として並ぶ。プロジェクトの棚には入らず
+//!   （保存・書き出し・消すの対象外）、置くと文書へ写る。ID は `builtin:` で始まり、素材は項目を見るとき・置くときにコードから組む。
 //! - 層からの保存: 選んだ層（グループなら中身ごと）・層のマスクを core で捕まえ、.ylsmart（`SmartFile::from_core`）にして棚へ入れる。
 //!   文書は変えない。棚の変更は文書の Undo の履歴に入らず、未保存にはなる（Unity 版と同じ）。
 //! - 置く: 棚の .ylsmart を core の素材へ戻し、`place_smart_material`（層の組。1 回の Undo）・`apply_smart_mask`（マスクの入れ替え。
@@ -24,11 +26,14 @@ use std::sync::Arc;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use yolu_core::smart::{SmartKind, SmartMaterial, SmartPlacement};
+use yolu_core::smart_library;
 use yolu_io::shelf::{
     ResourceKind, Shelf, MAX_RESOURCES, REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET,
     REFUSAL_RESOURCE_COUNT,
 };
-use yolu_io::smart::{SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_USER_CHANNELS};
+use yolu_io::smart::{
+    SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+};
 use yolu_io::{NativeValue, Project, Resource};
 
 use crate::engine::{Channel, CoreError, Document, LayerId};
@@ -45,6 +50,14 @@ pub const THUMB: u32 = 64;
 pub const PREVIEW_BUDGET: u64 = 128 * 1024 * 1024;
 /// 画像のサムネイルを作る画素数の上限（これを超える画像は種類のアイコンで見せる）。
 pub const IMAGE_THUMB_PIXELS: u64 = 4096 * 4096;
+
+/// 同梱の素材の項目の ID の前置き（プロジェクトの棚の ID は UUID なので重ならない）。
+pub const BUILTIN_PREFIX: &str = "builtin:";
+
+/// 同梱の素材の項目か。
+pub fn is_builtin(id: &str) -> bool {
+    id.starts_with(BUILTIN_PREFIX)
+}
 
 /// 棚の素材の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -253,6 +266,11 @@ pub struct ShelfState {
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ。
     hold: Arc<AtomicBool>,
     inspected: HashMap<String, Inspected>,
+    /// 同梱の素材の項目（今の言語の名前。`use_language` で作り直す）。
+    builtin: Vec<Resource>,
+    builtin_lang: Option<Lang>,
+    /// 同梱の素材を一覧に出すか（既定は出す。プロジェクトの棚だけの並びを調べる試験が false にする）。
+    pub show_builtin: bool,
 }
 
 /// 別のスレッドで書き出している素材。
@@ -355,7 +373,44 @@ impl ShelfState {
             context: None,
             hold: Default::default(),
             inspected: HashMap::new(),
+            builtin: Vec::new(),
+            builtin_lang: None,
+            show_builtin: true,
         }
+    }
+
+    /// 同梱の素材の項目の名前を言語に合わせる（変わったときだけ作り直す。サムネイルは言語に依らないので捨てない）。
+    pub fn use_language(&mut self, lang: Lang) {
+        if self.builtin_lang == Some(lang) {
+            return;
+        }
+        let japanese = lang == Lang::Ja;
+        self.builtin = smart_library::entries()
+            .iter()
+            .map(|e| {
+                let id = format!("{BUILTIN_PREFIX}{}", e.id);
+                let name = e.name(japanese).to_owned();
+                Resource {
+                    // 棚のファイルの索引の項目ではない（読む所は `metadata` の寸法だけで、無ければ 0）
+                    metadata: Default::default(),
+                    id,
+                    kind: "smartMaterial".into(),
+                    name,
+                    content: String::new(),
+                    entry: String::new(),
+                }
+            })
+            .collect();
+        self.builtin_lang = Some(lang);
+    }
+
+    /// 同梱の素材を今の言語で組む（棚に無い ID・組めないときは None）。
+    pub fn build_builtin(&self, id: &str, lang: Lang) -> Option<SmartMaterial> {
+        let entry = smart_library::entries()
+            .iter()
+            .find(|e| format!("{BUILTIN_PREFIX}{}", e.id) == id)?;
+        let japanese = lang == Lang::Ja;
+        entry.build(entry.name(japanese), japanese).ok()
     }
 
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ（途中の画面・取り消しを確かめるため）。
@@ -477,7 +532,20 @@ impl ShelfState {
     }
 
     pub fn get(&self, id: &str) -> Option<&Resource> {
-        self.shelf.resources().iter().find(|r| r.id == id)
+        self.shelf
+            .resources()
+            .iter()
+            .chain(self.builtin_items())
+            .find(|r| r.id == id)
+    }
+
+    /// 一覧に出す同梱の素材の項目。
+    fn builtin_items(&self) -> &[Resource] {
+        if self.show_builtin {
+            &self.builtin
+        } else {
+            &[]
+        }
     }
 
     pub fn selected_resource(&self) -> Option<&Resource> {
@@ -490,6 +558,7 @@ impl ShelfState {
         self.shelf
             .resources()
             .iter()
+            .chain(self.builtin_items())
             .filter(|r| self.filter.is_none_or(|f| ItemKind::of(&r.kind) == Some(f)))
             .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
             .collect()
@@ -509,6 +578,10 @@ impl ShelfState {
             return;
         };
         let info = match kind {
+            _ if is_builtin(id) => match self.builtin_lang.and_then(|l| self.build_builtin(id, l)) {
+                Some(material) => inspect_builtin(&material),
+                None => Inspected::bare(Some(Block::Unreadable(Unreadable::same("?")))),
+            },
             ItemKind::Image => {
                 inspect_image(r, self.shelf.content_bytes(id), self.image_thumb_pixels)
             }
@@ -561,11 +634,14 @@ impl ShelfState {
             ),
             (ItemKind::SmartMaterial, Some(i)) if i.width > 0 => {
                 let mut text = format!(
-                    "{} {} · {}",
+                    "{} {}",
                     i.layers,
                     lang.pick("層", if i.layers == 1 { "layer" } else { "layers" }),
-                    size(i.width, i.height)
                 );
+                // 同梱の素材は大きさに依らない（値と Generator だけ）ので、大きさを出さない
+                if !is_builtin(&r.id) {
+                    text += &format!(" · {}", size(i.width, i.height));
+                }
                 if !i.channels.is_empty() {
                     let names: Vec<_> =
                         i.channels.iter().map(|c| channel_label(lang, *c)).collect();
@@ -751,6 +827,42 @@ fn encode_material(
         bytes: file.file_bytes().to_vec(),
         info: (!cancelled()).then(|| inspect_material(material)),
     })
+}
+
+/// 同梱の素材の情報。サムネイルは文書全体を 1 回合成して標本化する（画素を持たない小さな文書なので軽い。
+/// `smart_thumbnail` は 1 点ずつ合成するので、Generator の入った文書では遅い）。
+fn inspect_builtin(material: &SmartMaterial) -> Inspected {
+    let mut out = Inspected::bare(None);
+    out.width = material.width();
+    out.height = material.height();
+    out.layers = material.layers().len();
+    out.channels = material.channels();
+    out.thumb = builtin_thumbnail(material)
+        .map(Thumb::Pending)
+        .unwrap_or(Thumb::None);
+    out
+}
+
+fn builtin_thumbnail(material: &SmartMaterial) -> Option<ColorImage> {
+    let (w, h) = (material.width(), material.height());
+    let doc = material.fragment_document().ok()?;
+    let all = doc
+        .composite_channel(Channel::Color, yolu_core::Rect::new(0, 0, w, h))
+        .ok()?;
+    let (tw, th) = fit_size(w, h);
+    let mut pixels = Vec::with_capacity((tw * th) as usize);
+    for ty in 0..th {
+        for tx in 0..tw {
+            let x = (((tx as f32 + 0.5) * w as f32 / tw as f32) as u32).min(w - 1);
+            // 画像は上の行から、文書は下の行から
+            let y = h - 1 - (((ty as f32 + 0.5) * h as f32 / th as f32) as u32).min(h - 1);
+            let p = &all[(y as usize * w as usize + x as usize) * 4..][..4];
+            pixels.push(egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]));
+        }
+    }
+    let mut image = ColorImage::new([tw as usize, th as usize], pixels);
+    image.source_size = egui::vec2(tw as f32, th as f32);
+    Some(image)
 }
 
 /// 保存したばかりの素材の情報（読み直さない）。
@@ -1005,6 +1117,12 @@ pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
             "User channels cannot be saved",
         )
         .into()
+    } else if m.contains(REFUSAL_RUST_GENERATORS) {
+        lang.pick(
+            "ノイズ・グランジは保存できません",
+            "Noise and Grunge cannot be saved",
+        )
+        .into()
     } else {
         lang.io_error(e)
     }
@@ -1030,6 +1148,25 @@ impl AppState {
                 .pick("描いている間はできません。", "Not while drawing.")
                 .into();
             return;
+        }
+        self.shelf.use_language(self.lang);
+        // 同梱の素材は棚に入っていない: 消す・書き出すは断る（置くだけ）
+        if let ShelfOp::Remove(id)
+        | ShelfOp::AskRemove(id)
+        | ShelfOp::ExportDialog(id)
+        | ShelfOp::ExportFile { id, .. } = &op
+        {
+            if is_builtin(id) {
+                let reason = match op {
+                    ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => self
+                        .lang
+                        .pick("組み込みは消せません", "Built-in items cannot be removed"),
+                    _ => self
+                        .lang
+                        .pick("組み込みは書き出せません", "Built-in items cannot be exported"),
+                };
+                return self.shelf_refusal(reason.into());
+            }
         }
         match op {
             ShelfOp::SaveMaterial(id) => self.shelf_save(id, false),
@@ -1312,10 +1449,22 @@ impl AppState {
             let block = Block::Kind(kind.unwrap_or(ItemKind::Brush));
             return self.shelf_refusal(block.reason(lang));
         }
-        let Some(bytes) = self.shelf.shelf.content_bytes(id) else {
-            return;
+        let builtin = is_builtin(id);
+        let bytes = if builtin {
+            &[][..]
+        } else {
+            let Some(bytes) = self.shelf.shelf.content_bytes(id) else {
+                return;
+            };
+            bytes
         };
-        let made = if kind == Some(ItemKind::Image) {
+        let made = if builtin {
+            // 同梱の素材はコードから組む（ファイルも棚の中身も無い）
+            self.shelf.build_builtin(id, lang).ok_or_else(|| {
+                lang.pick("組み込みの素材を組めません", "Cannot build the built-in item")
+                    .to_owned()
+            })
+        } else if kind == Some(ItemKind::Image) {
             image_as_material(lang, bytes, width, height, &name)
         } else {
             match SmartFile::read(bytes) {
@@ -1387,7 +1536,8 @@ impl AppState {
                     lang.pick("置きました", "Placed"),
                     lang.pick("層", if n == 1 { "layer" } else { "layers" })
                 );
-                text += &resized_note(lang, &material, result.resampled);
+                // 同梱の素材は大きさに依らない（画素が無い）ので、変えたとは言わない
+                text += &resized_note(lang, &material, result.resampled && !builtin);
                 text += "）";
                 self.message = text;
             }

@@ -18,6 +18,8 @@ parser.add_argument('--rust-written-effects', action='store_true',
                     help='Rustが編集APIで作って書いた効果入りの版21の正本（rust-written-effects-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致・全チャンネルの合成・層ごとの出力を記録')
 parser.add_argument('--user-channels', action='store_true',
                     help='Rustが書いた版22の正本（user-channels-v22.utpaint）をUnity版の読み手に読ませた結果を記録')
+parser.add_argument('--procedural', action='store_true',
+                    help='Rustが書いた版23の正本（procedural-v23.utpaint。ノイズ・グランジ入り）をUnity版の読み手に読ませた結果を記録')
 parser.add_argument('--rust-written', action='store_true',
                     help='Rustが書いた版21の正本（rust-written-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致と合成を記録')
 parser.add_argument('--generation', action='store_true',
@@ -78,6 +80,9 @@ elif args.rust_written_effects:
 elif args.user_channels:
     subprocess.run(mono + ['--unity-reads', str(fixtures / 'user-channels-v22.utpaint'),
                            str(fixtures / 'user-channels-v22.unity.txt')], check=True)
+elif args.procedural:
+    subprocess.run(mono + ['--unity-reads', str(fixtures / 'procedural-v23.utpaint'),
+                           str(fixtures / 'procedural-v23.unity.txt')], check=True)
 elif args.rust_written:
     subprocess.run(mono + ['--rust-written', str(fixtures / 'rust-written-v21.utpaint'),
                            str(fixtures / 'rust-written-v21.unity.txt'),

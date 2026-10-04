@@ -59,6 +59,7 @@ pub mod paths;
 pub mod selection;
 pub mod skin;
 pub mod smart;
+pub mod smart_library;
 mod surface;
 mod symmetry;
 mod types;
@@ -79,8 +80,8 @@ pub use document::{
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,
-    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId, ImageInput,
-    InactiveEffect, InactiveReason, InactiveTarget, LayerPath, MapInput, ModelFrame,
+    EffectSettings, FallbackEffect, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId,
+    ImageInput, InactiveEffect, InactiveReason, InactiveTarget, LayerPath, MapInput, ModelFrame,
 };
 pub use error::CoreError;
 pub use glam;

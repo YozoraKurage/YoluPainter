@@ -49,6 +49,8 @@ fn panels_draw_in_both_languages_without_clipped_text() {
                 state.apply(Action::ToggleSetVisible(uid));
             }
             state.sets.get_mut(0).unwrap().name = "Sample".into();
+            // 同梱の素材は行がパネルの下からはみ出して（スクロールで見る）、途中で切れた文字になるので、別の試験で背の高い窓に出す
+            state.shelf.show_builtin = false;
             let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
             let mut textures = color::ColorTextures::default();
@@ -935,6 +937,47 @@ fn walk_states(lang: Lang, width: f32, height: f32, mut visit: impl FnMut(&mut H
         }
         visit(&mut h, title);
     }
+}
+
+/// 同梱のスマートマテリアルの名前は、棚の格子の 1 枚に収まる（「…」に詰められず、パネルからはみ出さない）。日英の両方。
+#[test]
+fn bundled_card_names_fit_in_both_languages() {
+    let truncations = Truncations::start();
+    for lang in Lang::ALL {
+        let mut state = AppState::new(64, 64);
+        state.lang = lang;
+        let mut ready = false;
+        let mut h = Harness::builder()
+            .with_size(vec2(300.0, 1100.0))
+            .with_render_options(common::render_options())
+            .wgpu()
+            .build_ui_state(
+                move |ui, state| {
+                    if !ready {
+                        YoluApp::setup(ui.ctx());
+                        ready = true;
+                        ui.ctx().request_repaint();
+                        return;
+                    }
+                    assets::show(ui, state)
+                },
+                state,
+            );
+        h.run();
+        widgets::take_truncations();
+        h.step();
+        let truncated = widgets::take_truncations();
+        assert!(truncated.is_empty(), "{lang:?}: 「…」に詰められた名前 {truncated:#?}");
+        let mut labels = Vec::new();
+        for shape in &h.output().shapes {
+            text_shapes(&shape.shape, shape.clip_rect, &mut labels);
+        }
+        for entry in yolu_core::smart_library::entries() {
+            let name = entry.name(lang == Lang::Ja);
+            assert!(labels.iter().any(|l| l == name), "{lang:?} {name}: {labels:?}");
+        }
+    }
+    drop(truncations);
 }
 
 /// 固定の文字（部品が幅に合わせて「…」に詰める `w::fit` の文字）が詰められた記録を、落ち着いた 1 フレームだけから集める。

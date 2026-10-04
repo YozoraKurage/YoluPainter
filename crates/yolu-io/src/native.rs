@@ -9,8 +9,12 @@ pub const UNITY_NATIVE_VERSION: i32 = 21;
 /// 文書のユーザーチャンネル（core の 6〜63）の一覧を足した版。ユーザーチャンネルのある文書だけがこの版になり、
 /// Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「ユーザーチャンネル（正本の版 22）」）。
 pub const USER_CHANNELS_VERSION: i32 = 22;
+/// Rust 版だけの Generator の種類（ノイズ 64・グランジ 65）を足した版。版 22 の中身（ユーザーチャンネルの一覧。この版では 0 個も書く）に、
+/// Generator の種類 64・65 とその欄が加わる。これを使う文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る
+/// （形式と決めは README の「手続き型の Generator（正本の版 23）」）。
+pub const PROCEDURAL_VERSION: i32 = 23;
 /// この読み手が読める一番新しい版。
-pub const MAX_NATIVE_VERSION: i32 = USER_CHANNELS_VERSION;
+pub const MAX_NATIVE_VERSION: i32 = PROCEDURAL_VERSION;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
 /// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
@@ -144,7 +148,7 @@ impl NativeDocument {
             })?;
         }
         let user = if version >= USER_CHANNELS_VERSION {
-            user_channels(&mut r)?
+            user_channels(&mut r, version)?
         } else {
             UserChannels::new()
         };
@@ -337,10 +341,14 @@ struct Layer {
     anchors: Vec<[u8; 16]>,
     references: Vec<[u8; 16]>,
 }
-/// 版 22 のユーザーチャンネルの一覧: 数（1〜58。0 の一覧は書かない）、番号の昇順に番号（6〜63）・名前（1〜128 文字、制御文字なし、
-/// 標準の名前とも重ならない）・種類・色空間・既定の RGBA。
-fn user_channels(r: &mut Reader<'_>) -> Result<UserChannels> {
-    let n = r.int("user_channel_count", 1, 64 - STANDARD_CHANNELS)?;
+/// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
+/// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。
+fn user_channels(r: &mut Reader<'_>, version: i32) -> Result<UserChannels> {
+    let n = r.int(
+        "user_channel_count",
+        i32::from(version < PROCEDURAL_VERSION),
+        64 - STANDARD_CHANNELS,
+    )?;
     let mut names: HashSet<String> = [
         "Color",
         "Roughness",
@@ -710,7 +718,9 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     let t = r.int(
         "type",
         0,
-        if v >= 20 {
+        if v >= PROCEDURAL_VERSION {
+            PROCEDURAL_KIND_MAX
+        } else if v >= 20 {
             7
         } else if v >= 15 {
             6
@@ -719,6 +729,11 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         } else {
             4
         },
+    )?;
+    // 8〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
+    check(
+        !(8..PROCEDURAL_KIND_MIN).contains(&t),
+        "未知のGeneratorの種類です",
     )?;
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
     let low = r.unit("low")?;
@@ -757,6 +772,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         2 | 5 | 7 => &[1],
         3 => &[4, 1],
         6 => &[7, 1],
+        PROCEDURAL_KIND_MIN.. => &[1, 0],
         _ => &[0, 8, 1],
     };
     for i in 0..n {
@@ -801,7 +817,37 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         )?;
         r.int("anchor_read", 0, 1)?;
     }
+    if t >= PROCEDURAL_KIND_MIN {
+        r.block("procedural", |r| procedural(r, t))?;
+    }
     Ok(t)
+}
+/// Rust 版だけの Generator の種類の番号（ノイズ 64・グランジ 65）。
+const PROCEDURAL_KIND_MIN: i32 = 64;
+const PROCEDURAL_KIND_MAX: i32 = 65;
+/// ノイズ・グランジの欄: 空間・模様の大きさ・シード・回転・にじみ・トライプラナーの幅に、ノイズ（64）は基底・セルの出力・重ね方・
+/// オクターブ・ラクナリティ・ゲイン、グランジ（65）はプリセット。
+fn procedural(r: &mut Reader<'_>, t: i32) -> Result<()> {
+    r.int("space", 0, 2)?;
+    r.float("scale", 0.001, 1.)?;
+    r.int("seed", i32::MIN, i32::MAX)?;
+    for axis in ["rotation_x", "rotation_y", "rotation_z"] {
+        r.float(axis, -360., 360.)?;
+    }
+    r.unit("bleed")?;
+    r.unit("blend_width")?;
+    if t == PROCEDURAL_KIND_MIN {
+        let basis = r.int("basis", 0, 2)?;
+        let cell = r.int("cell_output", 0, 2)?;
+        check(basis == 2 || cell == 0, "セルの出力はWorley専用です")?;
+        r.int("fractal", 0, 2)?;
+        r.int("octaves", 1, 8)?;
+        r.float("lacunarity", 1., 4.)?;
+        r.unit("gain")?;
+    } else {
+        r.int("preset", 0, 10)?;
+    }
+    Ok(())
 }
 fn ramp(r: &mut Reader<'_>) -> Result<()> {
     for (kind, max) in [("colors", 32), ("opacities", 32), ("curve", 16)] {

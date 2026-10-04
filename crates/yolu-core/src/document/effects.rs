@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use super::{CoalesceKey, Command, Document};
 use crate::effects::{
     require_standard, value_type_of, Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind,
-    AnchorPlacement, EffectInputs, EffectSettings, FilterEffect, FilterId, FilterSpec,
-    FilterTarget, ImageId, InactiveEffect, InactiveReason, InactiveTarget, MAX_FILTERS_PER_STACK,
-    MAX_FILTER_STACK_HALO,
+    AnchorPlacement, EffectInputs, EffectSettings, FallbackEffect, FilterEffect, FilterId,
+    FilterSpec, FilterTarget, ImageId, InactiveEffect, InactiveReason, InactiveTarget,
+    MAX_FILTERS_PER_STACK, MAX_FILTER_STACK_HALO,
 };
 use crate::error::CoreError;
 use crate::fill_image::{ImageMipChain, Projection, ProjectionMode};
@@ -1542,6 +1542,21 @@ impl Document {
         Ok(self.generator_reason(g, index))
     }
 
+    /// ノイズ・グランジの段が、位置のマップが使えなくて UV の空間で評価しているなら、その理由（値は出ている。入力のまま通す
+    /// [`Self::generator_inactive`] とは別）。位置で評価できる・ほかの種類なら None。
+    pub fn generator_fallback(
+        &self,
+        layer: LayerId,
+        filter: FilterId,
+    ) -> Result<Option<generator::Inactive>, CoreError> {
+        let index = self.index_of(layer)?;
+        let (_, target, at) = self.locate_filter(layer, filter)?;
+        let EffectSettings::Generator(g) = &self.stack_ref(index, target)?[at].settings else {
+            return Err(CoreError::Unsupported("Generator ではない"));
+        };
+        Ok(self.generator_status(g, index).1)
+    }
+
     /// 塗りつぶしのチャンネルのグラデーションが今は値を見せているなら、その理由。
     pub fn fill_gradient_inactive(
         &self,
@@ -1565,6 +1580,39 @@ impl Document {
             .iter()
             .map(ToString::to_string)
             .collect()
+    }
+
+    /// 位置のマップが使えなくて UV の空間で評価している、有効なノイズ・グランジの段の一覧（効いてはいる。位置の継ぎ目の無さと回転が効かない）。
+    pub fn fallback_effect_list(&self) -> Vec<FallbackEffect> {
+        let mut out = Vec::new();
+        for (i, l) in self.layers.iter().enumerate() {
+            let stacks = [
+                (false, l.filters.as_slice()),
+                (
+                    true,
+                    l.mask.as_ref().map_or(&[][..], |m| m.filters.as_slice()),
+                ),
+            ];
+            for (mask, stack) in stacks {
+                for e in stack {
+                    if let (EffectSettings::Generator(g), true) = (&e.settings, e.is_active()) {
+                        if !g.kind.is_procedural() {
+                            continue;
+                        }
+                        if let Some(why) = self.generator_status(g, i).1 {
+                            out.push(FallbackEffect {
+                                layer: l.id,
+                                layer_name: l.name.clone(),
+                                mask,
+                                kind: g.kind,
+                                reason: InactiveReason::Generator(why),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// 効かない効果（有効な Generator の段で使えるマップ・Anchor が無いもの・値を見せているグラデーションと画像・出ていないデカール）の一覧。

@@ -3,7 +3,7 @@
 //! チャンネルごとの有効と合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
-use crate::native::{UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
+use crate::native::{PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
 };
@@ -356,7 +356,10 @@ impl NativeDocument {
             .into_iter()
             .filter(|c| !c.is_standard())
             .collect();
-        let version = if user.is_empty() {
+        // 版は使う機能で決まる: Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どちらも無ければ Unity 版と同じ 21
+        let version = if uses_rust_only_generators(doc) {
+            PROCEDURAL_VERSION
+        } else if user.is_empty() {
             UNITY_NATIVE_VERSION
         } else {
             USER_CHANNELS_VERSION
@@ -374,7 +377,7 @@ impl NativeDocument {
         w.float(normal.strength())?;
         w.int(normal.edges() as i32)?;
         w.int(normal.file_direction() as i32)?;
-        if !user.is_empty() {
+        if version >= USER_CHANNELS_VERSION {
             w.int(user.len() as i32)?;
             for c in &user {
                 let info = doc.channel_info(*c).expect("一覧にある");
@@ -400,6 +403,20 @@ impl NativeDocument {
     }
 }
 
+/// 文書が Rust 版だけの Generator の種類（ノイズ・グランジ）の段を持つか（層の内容とマスクのスタック。無効な段も数える。
+/// 持っていれば正本の版は 23 になり、Unity 版は開けない）。
+pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.filters()
+            .iter()
+            .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+            .any(|e| {
+                e.settings()
+                    .generator_settings()
+                    .is_some_and(|g| g.kind.is_procedural())
+            })
+    })
+}
 /// 1 つの層を core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
 /// 付けるロック（属性の印のビット 1 が立っていれば、直後の int）。
 fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
@@ -785,6 +802,8 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
         4 => generator::Kind::Direction,
         5 => generator::Kind::ShapeGradient,
         6 => generator::Kind::IdColor,
+        64 => generator::Kind::Noise,
+        65 => generator::Kind::Grunge,
         _ => generator::Kind::Anchor,
     };
     let mut g = generator::Settings::new(kind);
@@ -863,9 +882,50 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
             g.anchor.id = 0;
         }
     }
+    if kind.is_procedural() {
+        g.procedural = read_procedural(f, &format!("{p}.procedural"), kind)?;
+    }
     Ok(g)
 }
 
+/// ノイズ・グランジの欄（正本の版 23。`write_generator` の末尾と対）。
+fn read_procedural(
+    f: &Fields<'_>,
+    p: &str,
+    kind: generator::Kind,
+) -> Result<generator::Procedural> {
+    use generator::{CellOutput, FractalMode, GrungePreset, NoiseBasis, ProceduralSpace};
+    let int = |name: &str| f.int(&format!("{p}.{name}"));
+    let float = |name: &str| f.float(&format!("{p}.{name}"));
+    let bad = |name: &str| Error::InvalidData(format!("{p}.{name} は範囲外です"));
+    let mut out = generator::Procedural {
+        space: ProceduralSpace::from_index(i64::from(int("space")?)).ok_or_else(|| bad("space"))?,
+        scale: float("scale")?,
+        seed: int("seed")?,
+        rotation: [
+            float("rotation_x")?,
+            float("rotation_y")?,
+            float("rotation_z")?,
+        ],
+        bleed: float("bleed")?,
+        blend_width: float("blend_width")?,
+        ..generator::Procedural::default()
+    };
+    if kind == generator::Kind::Noise {
+        out.basis = NoiseBasis::from_index(i64::from(int("basis")?)).ok_or_else(|| bad("basis"))?;
+        out.cell_output = CellOutput::from_index(i64::from(int("cell_output")?))
+            .ok_or_else(|| bad("cell_output"))?;
+        out.fractal =
+            FractalMode::from_index(i64::from(int("fractal")?)).ok_or_else(|| bad("fractal"))?;
+        out.octaves = u32::try_from(int("octaves")?).map_err(|_| bad("octaves"))?;
+        out.lacunarity = float("lacunarity")?;
+        out.gain = float("gain")?;
+    } else {
+        out.preset =
+            GrungePreset::from_index(i64::from(int("preset")?)).ok_or_else(|| bad("preset"))?;
+    }
+    Ok(out)
+}
 fn map_kind(index: i32) -> Option<MapKind> {
     use MapKind::*;
     [
@@ -1261,6 +1321,28 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
         w.raw(&native_id(g.anchor.id))?;
         w.int(g.anchor.channel.index() as i32)?;
         w.int(g.anchor.read as i32)?;
+    }
+    if g.kind.is_procedural() {
+        // ノイズ・グランジの欄（正本の版 23。`read_procedural` と対）
+        let p = &g.procedural;
+        w.int(p.space as i32)?;
+        w.float(p.scale)?;
+        w.int(p.seed)?;
+        for r in p.rotation {
+            w.float(r)?;
+        }
+        w.float(p.bleed)?;
+        w.float(p.blend_width)?;
+        if g.kind == generator::Kind::Noise {
+            w.int(p.basis as i32)?;
+            w.int(p.cell_output as i32)?;
+            w.int(p.fractal as i32)?;
+            w.int(p.octaves as i32)?;
+            w.float(p.lacunarity)?;
+            w.float(p.gain)?;
+        } else {
+            w.int(p.preset as i32)?;
+        }
     }
     Ok(())
 }

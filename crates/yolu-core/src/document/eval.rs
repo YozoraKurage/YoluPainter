@@ -1954,6 +1954,15 @@ impl Document {
         g: &generator::Settings,
         reader: usize,
     ) -> Option<InactiveReason> {
+        self.generator_status(g, reader).0
+    }
+
+    /// [`Self::generator_reason`] と、ノイズ・グランジが位置のマップの代わりに UV で評価している理由（値は出ている）。
+    pub(super) fn generator_status(
+        &self,
+        g: &generator::Settings,
+        reader: usize,
+    ) -> (Option<InactiveReason>, Option<generator::Inactive>) {
         let inputs = &self.effects.inputs;
         let maps: Vec<generator::Map<'_>> = inputs.maps.iter().map(|m| m.as_generator()).collect();
         let frame = inputs.frame.and_then(|f| f.for_generator().ok());
@@ -1978,8 +1987,11 @@ impl Document {
             None => Err(anchor::Issue::NotChosen),
         };
         match BoundGenerator::bind(g, &maps, frame, dims, value_source) {
-            Ok(b) => b.inactive().cloned().map(InactiveReason::Generator),
-            Err(e) => Some(InactiveReason::Rejected(e.to_string())),
+            Ok(b) => (
+                b.inactive().cloned().map(InactiveReason::Generator),
+                b.fallback().cloned(),
+            ),
+            Err(e) => (Some(InactiveReason::Rejected(e.to_string())), None),
         }
     }
 

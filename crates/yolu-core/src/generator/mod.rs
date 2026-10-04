@@ -1,10 +1,18 @@
 //! 文書非依存の Generator。マップは焼いた u16 画像、Anchor は評価済みのスナップショットを読む。
 pub mod anchor;
 mod evaluate;
+mod grunge;
 mod noise;
+mod noisefn;
+mod preview;
+mod procedural;
 mod ramp;
 mod shape;
 pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target};
+pub use preview::preview;
+pub use procedural::{
+    CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
+};
 pub use ramp::{ColorStop, CurvePoint, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
 use std::{collections::BTreeMap, fmt};
@@ -44,6 +52,33 @@ pub enum Kind {
     ShapeGradient = 5,
     IdColor = 6,
     Anchor = 7,
+    /// ノイズ（値・Perlin・Worley の基底と fBm・ridged・turbulence の重ね）。**Rust 版だけの種類**。C# の種類（0〜7）と重ならない
+    /// 64 から振る。Unity 版は読めない（正本の版 23 で断る）。
+    Noise = 64,
+    /// グランジ（ノイズの組み合わせのプリセット）。Rust 版だけの種類。
+    Grunge = 65,
+}
+impl Kind {
+    /// 正本の種類の番号から。知らない番号は None。
+    pub fn from_index(i: i64) -> Option<Self> {
+        Some(match i {
+            0 => Self::EdgeWear,
+            1 => Self::Dirt,
+            2 => Self::PositionGradient,
+            3 => Self::Thickness,
+            4 => Self::Direction,
+            5 => Self::ShapeGradient,
+            6 => Self::IdColor,
+            7 => Self::Anchor,
+            64 => Self::Noise,
+            65 => Self::Grunge,
+            _ => return None,
+        })
+    }
+    /// Rust 版だけの種類か（マップを読まず位置・UV から値を作る。Unity 版は読めない）。
+    pub fn is_procedural(self) -> bool {
+        matches!(self, Self::Noise | Self::Grunge)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -154,6 +189,8 @@ pub struct Settings {
     /// Anchor の参照。Anchor 以外の種類は既定値のまま（[`anchor::Reference`]）。
     pub anchor: anchor::Reference,
     pub pins: BTreeMap<MapKind, String>,
+    /// ノイズ・グランジの設定（[`Procedural`]）。Noise・Grunge 以外の種類は既定のまま。
+    pub procedural: Procedural,
 }
 impl Settings {
     pub fn new(kind: Kind) -> Self {
@@ -178,6 +215,7 @@ impl Settings {
             id_tolerance: 8,
             anchor: anchor::Reference::default_for(kind),
             pins: BTreeMap::new(),
+            procedural: Procedural::default(),
         };
         match kind {
             Kind::EdgeWear => {
@@ -198,9 +236,22 @@ impl Settings {
                 g.softness = 0.5;
                 g.noise_amount = 0.3;
             }
+            Kind::Grunge => g.procedural = Procedural::for_preset(GrungePreset::Stain),
             _ => {}
         }
         g
+    }
+    /// 指定のプリセットのグランジ（模様の大きさ・レベルはプリセットの既定）。
+    pub fn grunge(preset: GrungePreset) -> Self {
+        let mut g = Self::new(Kind::Grunge);
+        g.set_preset(preset);
+        g
+    }
+    /// グランジのプリセットを選び直す（模様の大きさ・レベルをプリセットの既定にする。ほかの設定は残す）。
+    pub fn set_preset(&mut self, preset: GrungePreset) {
+        self.procedural.preset = preset;
+        self.procedural.scale = preset.default_scale();
+        (self.low, self.high) = preset.default_levels();
     }
     pub fn algorithm_version(&self) -> u32 {
         if self.ramp.is_some() {
@@ -266,6 +317,22 @@ impl Settings {
         } else if self.anchor != anchor::Reference::default_for(self.kind) {
             return Err(Error::Invalid("Anchor の参照は Anchor 専用です"));
         }
+        if self.kind.is_procedural() {
+            self.procedural.validate(self.kind)?;
+            if self.noise_amount != 0.
+                || self.noise_scale != 0.05
+                || self.noise_seed != 0
+                || self.noise_space != NoiseSpace::Model
+            {
+                return Err(Error::Invalid(
+                    "ノイズ・グランジは重ねるノイズを持たず、大きさ・シードは自身の設定で決めます",
+                ));
+            }
+        } else if self.procedural != Procedural::default() {
+            return Err(Error::Invalid(
+                "ノイズ・グランジの設定はノイズ・グランジ専用です",
+            ));
+        }
         for (kind, key) in &self.pins {
             if !self.candidate_maps().contains(kind) || !key_valid(key) {
                 return Err(Error::Invalid(
@@ -284,6 +351,7 @@ impl Settings {
             Kind::Thickness => vec![Thickness, Position],
             Kind::Direction => vec![WorldNormal, BentNormal, Position],
             Kind::IdColor => vec![Id, Position],
+            Kind::Noise | Kind::Grunge => vec![Position, WorldNormal],
         }
     }
     pub fn used_maps(&self) -> Vec<MapKind> {
@@ -309,6 +377,8 @@ impl Settings {
             }],
             Kind::IdColor => vec![Id],
             Kind::Anchor => vec![],
+            // 位置のマップが使えないときは UV に落とす（入力のまま通さない）ので、読むマップは設定だけで決まる
+            Kind::Noise | Kind::Grunge => return self.procedural.maps(self.kind),
         };
         if self.noise_amount > 0. && self.noise_space == NoiseSpace::Model && !v.contains(&Position)
         {

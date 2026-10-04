@@ -5,7 +5,7 @@ use crate::view3d::model::ViewError;
 use yolu_core::generator::{self, anchor};
 use yolu_core::geometry::GeometryError;
 use yolu_core::skin::RigError;
-use yolu_core::{CoreError, InactiveEffect, InactiveReason, InactiveTarget};
+use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
 use yolu_model::ModelError;
 
 impl Lang {
@@ -172,6 +172,20 @@ impl Lang {
         format!("\"{}\" {what}: {}", effect.layer_name, self.inactive_reason(&effect.reason))
     }
 
+    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件の 1 行（日本語は core の文、英語は層の名前・種類・理由）。
+    pub fn fallback_effect(self, effect: &FallbackEffect) -> String {
+        if self == Self::Ja {
+            return effect.to_string();
+        }
+        format!(
+            "\"{}\" {}{}: evaluated in UV space. {}",
+            effect.layer_name,
+            generator_kind_name(effect.kind),
+            if effect.mask { " (mask)" } else { "" },
+            self.inactive_reason(&effect.reason)
+        )
+    }
+
     /// 効かない効果があって編集できない理由の文（初めの 3 つと数）。
     pub fn inactive_effects(self, effects: &[InactiveEffect]) -> String {
         let shown = effects.iter().take(3).map(|e| self.inactive_effect(e)).collect::<Vec<_>>();
@@ -248,6 +262,8 @@ fn generator_kind_name(kind: generator::Kind) -> &'static str {
         generator::Kind::ShapeGradient => "Shape gradient",
         generator::Kind::IdColor => "ID color",
         generator::Kind::Anchor => "Anchor",
+        generator::Kind::Noise => "Noise",
+        generator::Kind::Grunge => "Grunge",
     }
 }
 
@@ -811,6 +827,40 @@ mod tests {
         assert!(ja.contains("「Skin」") && ja.contains("5 件") && ja.contains("合成の PNG に入っていません") && ja.contains(&effects[0].to_string()), "{ja}");
         let en = Lang::En.inactive_effects_not_in_composite("Skin", &effects);
         assert_eq!(en, format!(" 5 inactive effect(s) in \"Skin\" are not in the composite PNG: {}.", lines[0]));
+    }
+
+    /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの 1 行が、画面の言語で出る（層の名前はそのまま）。
+    #[test]
+    fn fallback_effects_are_told_in_both_languages() {
+        use yolu_core::generator::{Inactive as I, Kind, MapKind};
+        use yolu_core::LayerId;
+        let effects = [
+            FallbackEffect {
+                layer: LayerId(1),
+                layer_name: "Top".into(),
+                mask: false,
+                kind: Kind::Noise,
+                reason: InactiveReason::Generator(I::MissingMap(MapKind::Position)),
+            },
+            FallbackEffect {
+                layer: LayerId(1),
+                layer_name: "Top".into(),
+                mask: true,
+                kind: Kind::Grunge,
+                reason: InactiveReason::Generator(I::StaleMap(MapKind::Position)),
+            },
+        ];
+        let lines: Vec<String> = effects.iter().map(|e| Lang::En.fallback_effect(e)).collect();
+        for (i, (effect, line)) in effects.iter().zip(&lines).enumerate() {
+            let ja = Lang::Ja.fallback_effect(effect);
+            assert_eq!(ja, effect.to_string());
+            assert!(ja.contains("UV の空間") && ja.contains("「Top」"), "{ja}");
+            assert!(line.is_ascii() && line.contains("\"Top\"") && line.contains("UV space"), "{line}");
+            assert!(lines[i + 1..].iter().all(|other| other != line), "{line}");
+        }
+        assert!(lines[0].contains("Noise") && !lines[0].contains("(mask)") && lines[0].contains("No Position map"), "{}", lines[0]);
+        assert!(lines[1].contains("Grunge (mask)") && lines[1].contains("baked with other settings"), "{}", lines[1]);
+        assert!(Lang::Ja.fallback_effect(&effects[1]).contains("（マスク）"));
     }
 
     #[test]

@@ -15,6 +15,8 @@ use yolu_core::{
 pub const REFUSAL_IMAGES: &str = "画像を含む素材は編集用に開けません";
 pub const REFUSAL_GENERATORS: &str = "Generator の再固定を持つ素材は編集用に開けません";
 pub const REFUSAL_USER_CHANNELS: &str = ".ylsmart 形式1は標準チャンネルだけです";
+pub const REFUSAL_RUST_GENERATORS: &str =
+    ".ylsmart 形式1は Unity 版にもある Generator の種類だけです（ノイズ・グランジは入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
 const PREFIX: &str = "YOLUPAINTER-SMART-";
 #[derive(Clone, Debug)]
@@ -107,6 +109,11 @@ impl SmartFile {
         check(
             doc.channels().iter().all(|c| c.is_standard()),
             REFUSAL_USER_CHANNELS,
+        )?;
+        // ノイズ・グランジ（Rust 版だけの種類）は正本の版 23 になり、Unity 版が読めない
+        check(
+            !crate::core_bridge::uses_rust_only_generators(&doc),
+            REFUSAL_RUST_GENERATORS,
         )?;
         let native = NativeDocument::from_core(&doc)?;
         let names = [

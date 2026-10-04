@@ -1492,7 +1492,9 @@ fn headless_every_core_refusal_the_shelf_words_comes_from_a_real_core_call() {
 fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_languages() {
     use yolu_app::shelf::io_reason;
     use yolu_io::shelf::{REFUSAL_ARCHIVE_BUDGET, REFUSAL_MEMORY_BUDGET, REFUSAL_RESOURCE_COUNT};
-    use yolu_io::smart::{REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_USER_CHANNELS};
+    use yolu_io::smart::{
+        REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+    };
     let cases = [
         (REFUSAL_IMAGES, "画像入りは置けません", "Contains images"),
         (
@@ -1515,6 +1517,11 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
             REFUSAL_USER_CHANNELS,
             "ユーザーチャンネルは保存できません",
             "User channels cannot be saved",
+        ),
+        (
+            REFUSAL_RUST_GENERATORS,
+            "ノイズ・グランジは保存できません",
+            "Noise and Grunge cannot be saved",
         ),
     ];
     for (message, ja, en) in cases {
@@ -1610,6 +1617,31 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
         file.to_core().unwrap().layers()[0].locks(),
         yolu_core::LayerLocks::ALL
     );
+}
+
+/// 同梱の素材はどれもノイズ・グランジを使う。置いたグループを「層を保存」しても、日英の短い理由で断られ（yolu-io の長い診断も
+/// 「Invalid or unsupported project data」も出さない）、棚にも文書の保存状態にも触れない。
+#[test]
+fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both_languages() {
+    for (lang, want) in [
+        (Lang::Ja, "できません: ノイズ・グランジは保存できません"),
+        (Lang::En, "Cannot: Noise and Grunge cannot be saved"),
+    ] {
+        for id in ["builtin:rusty-iron", "builtin:wood"] {
+            let mut s = AppState::new(64, 64);
+            s.lang = lang;
+            place(&mut s, id);
+            let group = s.selected_layer.unwrap();
+            assert!(s.doc.layer(group).unwrap().is_group(), "{id}: {}", s.message);
+            s.modified = false;
+            let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
+            s.apply(Action::Shelf(ShelfOp::SaveMaterial(group)));
+            assert_eq!(s.message, want, "{id}");
+            assert!(s.shelf.resources().is_empty() && !s.shelf.changed, "{id}");
+            assert!(!s.modified && s.shelf.saving_name().is_none(), "{id}");
+            assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
+        }
+    }
 }
 
 #[test]
@@ -2311,6 +2343,8 @@ mod ui {
             h.step();
         }
         h.state_mut().state.shelf = ShelfState::with_shelf(fixture_shelf());
+        // プロジェクトの棚だけの並びを調べる試験の窓（同梱の素材は別の試験で見る）
+        h.state_mut().state.shelf.show_builtin = false;
         h.run();
         h
     }
@@ -2441,6 +2475,119 @@ mod ui {
         );
         undo(&mut h);
         assert_eq!(layers(&h), before);
+    }
+
+    /// 既定の棚（プロジェクトの棚は空）の窓。同梱の素材が並ぶ。
+    fn window_with_bundled() -> Harness<'static, YoluApp> {
+        let mut h = app(1280.0, 1000.0, 64);
+        click_tab(&mut h, yolu_app::Tab::Assets);
+        for _ in 0..30 {
+            h.step();
+        }
+        h.run();
+        h
+    }
+
+    #[test]
+    fn a_bundled_card_places_from_the_footer_but_is_not_removed_or_exported() {
+        let mut h = window_with_bundled();
+        let before = layers(&h);
+        let at = card(&h, "錆びた鉄").center();
+        click(&mut h, at);
+        assert_eq!(
+            st(&h).shelf.selected.as_deref(),
+            Some("builtin:rusty-iron")
+        );
+        assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
+        // 組み込みは棚に入っていないので、書き出せず消せない（ボタンが効かない）
+        assert!(h
+            .get_by_label("書き出す…（.ylsmart）")
+            .accesskit_node()
+            .is_disabled());
+        assert!(h
+            .get_by_label("棚から消す（置いた層はそのまま）")
+            .accesskit_node()
+            .is_disabled());
+        h.get_by_label("置く").click();
+        h.run();
+        assert!(st(&h).doc.layers().len() > before.len() + 3, "{}", st(&h).message);
+        assert!(st(&h).message.starts_with("置きました: 錆びた鉄"), "{}", st(&h).message);
+        undo(&mut h);
+        assert_eq!(layers(&h), before);
+        // 右クリックのメニューでも、書き出す・消すは効かない（置くだけが効く）
+        assert_eq!(
+            menu_enabled(&h),
+            [
+                ("置く".to_owned(), true),
+                ("書き出す…".to_owned(), false),
+                ("棚から消す…".to_owned(), false),
+            ]
+        );
+    }
+
+    /// 比べる相手: 棚に入っている素材は、右クリックのメニューで 3 つとも効く。
+    #[test]
+    fn a_shelf_card_has_every_context_menu_entry_enabled() {
+        let mut h = window();
+        let at = card(&h, "raster").center();
+        click(&mut h, at);
+        assert_eq!(
+            menu_enabled(&h),
+            [
+                ("置く".to_owned(), true),
+                ("書き出す…".to_owned(), true),
+                ("棚から消す…".to_owned(), true),
+            ]
+        );
+    }
+
+    /// 選んでいる素材の右クリックのメニューの項目（名前と、効くか）。
+    fn menu_enabled(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+        use yolu_app::ui::menu::Entry;
+        yolu_app::panels::assets::menu_entries(st(h))
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Item { label, enabled, .. } => Some((label, enabled)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dragging_a_bundled_card_onto_the_layer_list_places_it_between_rows() {
+        let mut h = window_with_bundled();
+        three_layers(&mut h);
+        let from = card(&h, "錆びた鉄").center();
+        let r2 = row(&h, "レイヤー 2");
+        let to = pos2(r2.left() + 120.0, r2.top() + r2.height() * 0.8);
+        press(&h, from, PointerButton::Primary);
+        h.step();
+        for p in [offset(from, 30.0, 10.0), offset(to, 0.0, -60.0), to] {
+            move_to(&h, p);
+            h.step();
+        }
+        h.run();
+        release(&h, to, PointerButton::Primary);
+        h.run();
+        assert!(st(&h).doc.layers().len() > 3 + 4, "{}", st(&h).message);
+        let names = layers(&h);
+        let group = names.iter().position(|n| n == "錆びた鉄").expect("グループが置かれる");
+        // レイヤー 2 の行の下の隙間に落としたので、レイヤー 1 の上・レイヤー 2 の下に置かれる
+        assert!(names[..group].contains(&"レイヤー 1".to_owned()), "{names:?}");
+        assert!(names[group..].contains(&"レイヤー 2".to_owned()), "{names:?}");
+        assert!(names[group..].contains(&"レイヤー 3".to_owned()), "{names:?}");
+    }
+
+    #[test]
+    fn snapshot_shelf_bundled() {
+        let mut h = window_with_bundled();
+        h.snapshot("assets_shelf_bundled");
+        h.state_mut().state.lang = Lang::En;
+        h.state_mut().state.shelf.filter = Some(ItemKind::SmartMaterial);
+        h.run();
+        let at = card(&h, "Rusty Iron").center();
+        click(&mut h, at);
+        h.snapshot("assets_shelf_bundled_english");
     }
 
     #[test]
@@ -2881,6 +3028,7 @@ mod ui {
         let mut h = app(1280.0, 800.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
         h.state_mut().state.shelf = ShelfState::unreadable("試験の理由");
+        h.state_mut().state.shelf.show_builtin = false;
         h.run();
         assert!(h.get_by_label("層を保存").accesskit_node().is_disabled());
         assert!(h
@@ -2961,6 +3109,8 @@ mod ui {
     fn snapshot_shelf_blocked_and_empty() {
         let mut h = app(1280.0, 800.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
+        h.state_mut().state.shelf.show_builtin = false;
+        h.run();
         h.snapshot("assets_shelf_empty");
         apply(
             &mut h,

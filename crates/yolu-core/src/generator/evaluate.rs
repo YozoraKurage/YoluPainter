@@ -57,6 +57,8 @@ pub struct BoundGenerator<'a> {
     seeds: [u32; 4],
     matrix: [f64; 9],
     offset: [f64; 3],
+    /// ノイズ・グランジの評価の計画（それ以外の種類は None）。
+    plan: Option<procedural::Plan>,
 }
 impl<'a> BoundGenerator<'a> {
     pub fn bind(
@@ -79,7 +81,18 @@ impl<'a> BoundGenerator<'a> {
             }
         }
         let mut inactive = None;
-        for kind in g.used_maps() {
+        // ノイズ・グランジはマップが使えなくても UV に落として評価する（入力のまま通さない。理由は `fallback`）
+        let plan = g
+            .kind
+            .is_procedural()
+            .then(|| procedural::Plan::new(g, &table, (width, height)))
+            .transpose()?;
+        let wanted = if plan.is_some() {
+            vec![]
+        } else {
+            g.used_maps()
+        };
+        for kind in wanted {
             let why = match table[kind as usize] {
                 None => Some(Inactive::MissingMap(kind)),
                 Some(m) => {
@@ -130,6 +143,7 @@ impl<'a> BoundGenerator<'a> {
             seeds: noise::seeds(g.noise_seed),
             matrix: [0.; 9],
             offset: [0.; 3],
+            plan,
         };
         if b.inactive.is_some() {
             return Ok(b);
@@ -188,6 +202,11 @@ impl<'a> BoundGenerator<'a> {
     }
     pub fn inactive(&self) -> Option<&Inactive> {
         self.inactive.as_ref()
+    }
+    /// ノイズ・グランジが、位置のマップが使えなくて UV 空間に落としている理由。マップが使えている・ほかの種類なら None。
+    /// 入力のまま通す `inactive` とは別で、値は出ている（UV では周期を巻き、位置の継ぎ目の無さと回転は効かない）。
+    pub fn fallback(&self) -> Option<&Inactive> {
+        self.plan.as_ref().and_then(|p| p.fallback.as_ref())
     }
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
@@ -266,6 +285,20 @@ impl<'a> BoundGenerator<'a> {
                 }
             }
             Kind::Anchor => self.anchor?.value(x, y)?,
+            Kind::Noise | Kind::Grunge => {
+                let plan = self.plan.as_ref().expect("束縛済み");
+                let position = if plan.needs_position() {
+                    Some(vector(MapKind::Position)?)
+                } else {
+                    None
+                };
+                let normal = if plan.mode == procedural::Mode::Triplanar {
+                    Some(vector(MapKind::WorldNormal)?)
+                } else {
+                    None
+                };
+                plan.value(x, y, (self.width, self.height), position, normal)?
+            }
             Kind::ShapeGradient => {
                 let [x, y, z] = vector(MapKind::Position)?;
                 let m = self.matrix;
