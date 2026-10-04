@@ -42,6 +42,7 @@ mod composite;
 mod document;
 mod error;
 pub mod filter;
+pub mod generator;
 pub mod geometry;
 mod layer;
 mod math;
