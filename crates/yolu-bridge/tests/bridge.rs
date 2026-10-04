@@ -191,7 +191,7 @@ fn sets(h: u64) -> Vec<YlbSetInfo> {
 
 #[test]
 fn the_version_is_asked_first() {
-    assert_eq!(ylb_abi_version(), 2);
+    assert_eq!(ylb_abi_version(), 3);
     assert_eq!(ylb_protocol_versions(), (1 << 16) | 1);
 }
 
@@ -740,4 +740,259 @@ fn a_bridge_with_a_key_the_standalone_does_not_know_is_rejected_with_the_reason(
         Err(yolu_protocol::LinkError::Rejected(r)) if r.code == yolu_protocol::RejectCode::Unauthorized
     ));
     assert_eq!(ylb_disconnect(h), 0);
+}
+
+// ───────── 互いの版と機能の印 ─────────
+
+fn pack(v: Option<yolu_protocol::AppVersion>) -> u64 {
+    yolu_protocol::compat::pack_version(v)
+}
+
+fn v(major: u16, minor: u16, patch: u16) -> Option<yolu_protocol::AppVersion> {
+    Some(yolu_protocol::AppVersion::new(major, minor, patch))
+}
+
+/// 版を名乗って（ylb_connect_with）、設定した名乗りの自己診断のスタンドアロンにつなぎ、つながった後の様子を返す。
+fn report_against(
+    tag: &str,
+    own_version: &str,
+    server_version: Option<yolu_protocol::AppVersion>,
+    server_min_peer: Option<yolu_protocol::AppVersion>,
+    server_features: u64,
+) -> (u64, YlbLinkReport) {
+    let name = unique_name(tag);
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(server_version), pack(server_min_peer), server_features),
+        0
+    );
+    let agent = "試験";
+    let h = unsafe {
+        ylb_connect_with(
+            name.as_ptr(),
+            name.len() as i32,
+            agent.as_ptr(),
+            agent.len() as i32,
+            own_version.as_ptr(),
+            own_version.len() as i32,
+        )
+    };
+    assert_ne!(h, 0);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 1);
+    (h, report)
+}
+
+#[test]
+fn the_peer_version_and_the_marks_are_asked_through_the_c_functions() {
+    use yolu_protocol::feature;
+    let none = yolu_protocol::AppVersion::NONE_PACKED;
+    // 版が合っていて印も同じ（スタンドアロンの役はこのブリッジと同じ印を出す。印を立てる機能が増えても変わらない）: ずれなし
+    let (h, r) = report_against("clean", "0.3.0", v(0, 1, 0), v(0, 3, 0), BRIDGE_FEATURES);
+    assert_eq!(r.state, 1);
+    assert_eq!(r.protocol, 1);
+    assert_eq!(r.peer_version, pack(v(0, 1, 0)));
+    assert_eq!(ylb_peer_app_version(h), pack(v(0, 1, 0)));
+    assert_eq!((r.update_peer, r.update_self), (none, none));
+    assert_eq!(r.peer_min_peer, pack(v(0, 3, 0)));
+    assert_eq!(
+        (r.missing_on_peer, r.missing_here, r.common_features),
+        (0, 0, BRIDGE_FEATURES)
+    );
+    assert_eq!(ylb_common_features(h), BRIDGE_FEATURES);
+    assert_eq!(ylb_disconnect(h), 0);
+
+    // スタンドアロンが求める Unity の版（0.4.0）に、名乗った 0.3.0 は足りない: 自分を上げる
+    let (h, r) = report_against("oldunity", "0.3.0", v(0, 1, 0), v(0, 4, 0), 0);
+    assert_eq!(r.update_self, pack(v(0, 4, 0)));
+    assert_eq!(r.update_peer, none);
+    assert_eq!(ylb_disconnect(h), 0);
+
+    // 版を名乗らなかったブリッジ（ylb_connect）は、スタンドアロンから見て古い。ここでは名乗りを読めない文字列で試す
+    let (h, r) = report_against("nover", "未定", v(0, 1, 0), v(0, 4, 0), 0);
+    assert_eq!(r.state, 1, "名乗らなくてもつながる");
+    assert_eq!(ylb_disconnect(h), 0);
+
+    // 版を名乗らない古いスタンドアロン: 相手の版は不明で、相手を上げるのを勧める（版の指定なしは 0）
+    let (h, r) = report_against("oldstandalone", "0.3.0", None, None, 0);
+    assert_eq!(r.peer_version, none);
+    assert_eq!(ylb_peer_app_version(h), none);
+    assert_eq!(r.update_peer, 0);
+    assert_eq!(r.update_self, none);
+    assert_eq!(ylb_disconnect(h), 0);
+
+    // 機能の印: スタンドアロンが持つ印をこのブリッジは出さないので、共通は無く、自分を上げれば使える機能として出る
+    let (h, r) = report_against("marks", "0.3.0", v(0, 1, 0), v(0, 0, 0), feature::MATERIAL_VALUES | feature::ANIMATION);
+    assert_eq!(r.peer_features, feature::MATERIAL_VALUES | feature::ANIMATION);
+    assert_eq!(r.own_features, BRIDGE_FEATURES);
+    assert_eq!(r.common_features, BRIDGE_FEATURES & r.peer_features);
+    assert_eq!(r.missing_here, r.peer_features & !BRIDGE_FEATURES);
+    assert_eq!(r.missing_on_peer, BRIDGE_FEATURES & !r.peer_features);
+    assert_eq!(ylb_common_features(h), r.common_features);
+    assert_eq!(ylb_disconnect(h), 0);
+
+    // 不明なつながり
+    assert_eq!(ylb_common_features(987654321), 0);
+    assert_eq!(ylb_peer_app_version(987654321), none);
+    let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { ylb_link_report(987654321, &mut report) }, YLB_E_HANDLE);
+}
+
+#[test]
+fn the_answers_about_the_peer_end_with_the_link() {
+    // 版も機能もずれたスタンドアロンにつなぎ、そのスタンドアロンが終わる（自己診断のサーバーを止める）
+    let name = unique_name("ends");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    let unknown = 1u64 << 50;
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(v(9, 0, 0)), BRIDGE_FEATURES | unknown),
+        0
+    );
+    let agent = "試験";
+    let version = "0.3.0";
+    let h = unsafe {
+        ylb_connect_with(
+            name.as_ptr(),
+            name.len() as i32,
+            agent.as_ptr(),
+            agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
+        )
+    };
+    assert_ne!(h, 0);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 1);
+    assert_eq!(report.update_self, pack(v(9, 0, 0)), "つながっている間は、ずれが見える");
+    assert_eq!(report.missing_here, unknown);
+    assert_eq!(ylb_peer_app_version(h), pack(v(0, 1, 0)));
+    assert_eq!(ylb_common_features(h), BRIDGE_FEATURES);
+
+    assert_eq!(ylb_test_server_stop(server), 0);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while ylb_status(h) == 1 {
+        assert!(Instant::now() < deadline, "スタンドアロンが終わったのに、つながったまま");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // 終わったつながりの版・使える機能は答えない（閉じたあとも版のずれの印を残さない）
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 0);
+    assert_eq!(report.state, 0);
+    assert_eq!(
+        (report.update_self, report.update_peer, report.missing_here, report.common_features),
+        (yolu_protocol::AppVersion::NONE_PACKED, yolu_protocol::AppVersion::NONE_PACKED, 0, 0)
+    );
+    assert_eq!(ylb_peer_app_version(h), yolu_protocol::AppVersion::NONE_PACKED);
+    assert_eq!(ylb_common_features(h), 0);
+    assert_eq!(ylb_disconnect(h), 0);
+}
+
+#[test]
+fn a_refusal_for_the_protocol_range_comes_with_which_side_to_update() {
+    use yolu_protocol::frame::FrameReader;
+    use yolu_protocol::{encode_message, Message, RejectCode, RejectDetail};
+    let name = unique_name("refused");
+    let server = yolu_protocol::Server::bind(&name, false).unwrap();
+    let handle = std::thread::spawn(move || {
+        use std::io::Write;
+        let stream = server.accept().unwrap();
+        let mut s = &stream;
+        let mut frames = FrameReader::new();
+        let hello = frames.read_frame(&mut s).unwrap().unwrap().decode().unwrap();
+        assert!(matches!(hello, Message::Hello(_)));
+        // 新しいスタンドアロン（読めるのは版 2 から。Unity のパッケージを 0.6.0 以上に求める）の断り
+        let reject = yolu_protocol::Reject {
+            code: RejectCode::VersionMismatch,
+            text: "断り".into(),
+            detail: Some(RejectDetail {
+                min_version: 2,
+                max_version: 3,
+                min_peer: yolu_protocol::AppVersion::new(0, 6, 0),
+                peer_min_version: 1,
+                peer_max_version: 1,
+                peer_min_peer: yolu_protocol::AppVersion::new(0, 1, 0),
+            }),
+        };
+        s.write_all(&encode_message(&Message::Reject(reject))).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        server
+    });
+    let agent = "試験";
+    let version = "0.3.0";
+    let h = unsafe {
+        ylb_connect_with(
+            name.as_ptr(),
+            name.len() as i32,
+            agent.as_ptr(),
+            agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
+        )
+    };
+    wait_for(h, "失敗", || ylb_status(h) == 3);
+    let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
+    assert_eq!(report.refused_update, 1, "Unity のパッケージを上げる");
+    assert_eq!(report.refused_to, pack(v(0, 6, 0)));
+    assert_eq!((report.unity_min_protocol, report.unity_max_protocol), (1, 1));
+    assert_eq!((report.standalone_min_protocol, report.standalone_max_protocol), (2, 3));
+    let ev = events(h);
+    assert!(ev.iter().any(|e| e.0 == 2), "断りの知らせが来る: {ev:?}");
+    assert_eq!(ylb_disconnect(h), 0);
+    drop(handle.join().unwrap());
+}
+
+#[test]
+fn the_test_server_with_another_protocol_range_refuses_and_the_report_names_the_side_to_update() {
+    let name = unique_name("range");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    // スタンドアロンの役が、先の版（2〜3）だけを読み、Unity のパッケージを 0.6.0 以上に求める
+    assert_eq!(ylb_test_server_set_protocol(server, 2, 3), 0);
+    assert_eq!(ylb_test_server_set_protocol(server, 3, 2), YLB_E_ARGUMENT);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 9, 0)), pack(v(0, 6, 0)), 0),
+        0
+    );
+    let agent = "試験";
+    let version = "0.3.0";
+    let h = unsafe {
+        ylb_connect_with(
+            name.as_ptr(),
+            name.len() as i32,
+            agent.as_ptr(),
+            agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
+        )
+    };
+    wait_for(h, "失敗", || ylb_status(h) == 3);
+    let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
+    assert_eq!(report.refused_update, 1, "Unity のパッケージを上げる");
+    assert_eq!(report.refused_to, pack(v(0, 6, 0)));
+    assert_eq!((report.unity_min_protocol, report.unity_max_protocol), (1, 1));
+    assert_eq!((report.standalone_min_protocol, report.standalone_max_protocol), (2, 3));
+    assert_eq!(ylb_disconnect(h), 0);
+    // 古い範囲（0〜0）だけを読むスタンドアロンの役なら、スタンドアロンを上げる（ブリッジの求める版へ。今は要求がないので版の指定なし）
+    assert_eq!(ylb_test_server_set_protocol(server, 0, 0), 0);
+    let h = unsafe {
+        ylb_connect_with(
+            name.as_ptr(),
+            name.len() as i32,
+            agent.as_ptr(),
+            agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
+        )
+    };
+    wait_for(h, "失敗", || ylb_status(h) == 3);
+    assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
+    assert_eq!(report.refused_update, 2, "スタンドアロンを上げる");
+    assert_eq!(report.refused_to, yolu_protocol::AppVersion::NONE_PACKED);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
 }

@@ -27,7 +27,11 @@ use crate::testserver::{TestServer, YlbTestServerStats};
 /// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、再起動の案内を出す）。
 /// 2: マテリアルの更新（ylb_materials_*）・全面の写し直し（ylb_channel_mark_all_dirty）・帯だけの写し（ylb_copy_dirty の image が null）・
 /// 自己診断のサーバーの鍵の差し替えと統計の欄の追加。
-pub const ABI_VERSION: u32 = 2;
+/// 3: 互いの版と機能の印（ylb_connect_with・ylb_common_features・ylb_peer_app_version・ylb_link_report・ylb_test_server_configure）。
+pub const ABI_VERSION: u32 = 3;
+
+/// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能（マテリアルの値など）を足すときは、ここに `feature` のビットを足す。
+pub const BRIDGE_FEATURES: u64 = 0;
 
 pub const YLB_E_HANDLE: i32 = -1;
 pub const YLB_E_ARGUMENT: i32 = -2;
@@ -104,6 +108,19 @@ pub unsafe extern "C" fn ylb_connect(
     agent: *const u8,
     agent_len: i32,
 ) -> u64 {
+    ylb_connect_with(name, name_len, agent, agent_len, std::ptr::null(), 0)
+}
+
+/// `ylb_connect`（自分のアプリの版を挨拶で名乗る。Unity のパッケージの版の文字列「0.3.0」など。読めない・空なら名乗らない）。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_connect_with(
+    name: *const u8,
+    name_len: i32,
+    agent: *const u8,
+    agent_len: i32,
+    app_version: *const u8,
+    app_version_len: i32,
+) -> u64 {
     guard(0, || {
         let Some(name) = text(name, name_len) else {
             return 0;
@@ -111,15 +128,17 @@ pub unsafe extern "C" fn ylb_connect(
         let Some(agent) = text(agent, agent_len) else {
             return 0;
         };
+        let Some(version) = text(app_version, app_version_len) else {
+            return 0;
+        };
         if !yolu_protocol::link::valid_link_name(name) {
             return 0;
         }
+        let identity = Identity::unity(&format!("{agent} (yolu-bridge abi {ABI_VERSION})"))
+            .with_version(AppVersion::parse(version))
+            .with_features(BRIDGE_FEATURES);
         let id = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-        let s = Session::start(
-            id,
-            name.to_owned(),
-            format!("{agent} (yolu-bridge abi {ABI_VERSION})"),
-        );
+        let s = Session::start(id, name.to_owned(), identity);
         SESSIONS
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -182,6 +201,121 @@ pub unsafe extern "C" fn ylb_status_text(handle: u64, buf: *mut u8, cap: i32) ->
 #[no_mangle]
 pub extern "C" fn ylb_serial(handle: u64) -> u64 {
     guard(0, || session(handle).map(|s| s.state().serial).unwrap_or(0))
+}
+
+/// このつながりで使える機能の印（双方が出した印の共通部分。つながるまでは 0）。印の要る新しい命令は、ここに立っているときだけ送る。
+#[no_mangle]
+pub extern "C" fn ylb_common_features(handle: u64) -> u64 {
+    guard(0, || {
+        session(handle).map_or(0, |s| s.common_features())
+    })
+}
+
+/// 相手（スタンドアロン）のアプリの版（`major << 32 | minor << 16 | patch`）。つながっていない・版を名乗らない古い相手は `u64::MAX`。
+#[no_mangle]
+pub extern "C" fn ylb_peer_app_version(handle: u64) -> u64 {
+    guard(AppVersion::NONE_PACKED, || {
+        session(handle)
+            .and_then(|s| s.state().link.as_ref().map(|l| l.peer.app_version()))
+            .map_or(AppVersion::NONE_PACKED, compat::pack_version)
+    })
+}
+
+/// 版のずれと機能の印の様子（`ylb_link_report`）。版は `major << 32 | minor << 16 | patch`、不明は `u64::MAX`。
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct YlbLinkReport {
+    /// 相手のアプリの版。
+    pub peer_version: u64,
+    /// 相手が自分に求める版（相手が宣言していなければ不明）。
+    pub peer_min_peer: u64,
+    /// 相手を上げるべきなら、求める版（`0` は版の指定なし）。上げなくてよければ不明。版を名乗らない古い相手は上げるべき。
+    pub update_peer: u64,
+    /// 自分（Unity のパッケージ）を上げるべきなら、求める版。上げなくてよければ不明。
+    pub update_self: u64,
+    /// 自分が出した機能の印・相手が出した印・共通部分（使える機能）。
+    pub own_features: u64,
+    pub peer_features: u64,
+    pub common_features: u64,
+    /// 自分にあって相手に無い機能（相手を上げれば使える）・相手にあって自分に無い機能（自分を上げれば使える）。
+    pub missing_on_peer: u64,
+    pub missing_here: u64,
+    /// 断られたとき（state 2）、上げるべき製品: 1 = Unity のパッケージ、2 = スタンドアロン。それ以外は 0。
+    pub refused_update: i32,
+    /// 断られたときの、上げるべき製品の求める版（求める版が決まっていなければ不明）。
+    pub refused_to: u64,
+    /// 断られたときの、Unity 側・スタンドアロンの読めるプロトコルの版の範囲。
+    pub unity_min_protocol: u32,
+    pub unity_max_protocol: u32,
+    pub standalone_min_protocol: u32,
+    pub standalone_max_protocol: u32,
+    /// 0 = まだ無い（つないでいる・つなげなかった）、1 = つながった（上の欄を決めた）、2 = プロトコルの版の範囲が合わず断られた。
+    pub state: i32,
+    /// つながったときの、決まったプロトコルの版。
+    pub protocol: u32,
+}
+
+/// 版のずれと機能の印の様子を取り出す。返すのは `state`（0 = まだ無い、1 = つながった、2 = 版の範囲が合わず断られた）、負は失敗。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_link_report(handle: u64, report: *mut YlbLinkReport) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        if report.is_null() {
+            return YLB_E_ARGUMENT;
+        }
+        let none = AppVersion::NONE_PACKED;
+        let mut r = YlbLinkReport {
+            peer_version: none,
+            peer_min_peer: none,
+            update_peer: none,
+            update_self: none,
+            own_features: 0,
+            peer_features: 0,
+            common_features: 0,
+            missing_on_peer: 0,
+            missing_here: 0,
+            refused_update: 0,
+            refused_to: none,
+            unity_min_protocol: 0,
+            unity_max_protocol: 0,
+            standalone_min_protocol: 0,
+            standalone_max_protocol: 0,
+            state: 0,
+            protocol: 0,
+        };
+        {
+            let st = s.state();
+            if let Some(info) = &st.link {
+                let skew = info.skew();
+                r.state = 1;
+                r.protocol = info.protocol as u32;
+                r.peer_version = compat::pack_version(info.peer.app_version());
+                r.peer_min_peer = compat::pack_version(info.peer.versions.map(|v| v.min_peer));
+                r.update_peer = compat::pack_version(skew.update_peer);
+                r.update_self = compat::pack_version(skew.update_self);
+                r.own_features = info.own.features;
+                r.peer_features = info.peer.features;
+                r.common_features = info.common_features();
+                r.missing_on_peer = skew.missing_on_peer;
+                r.missing_here = skew.missing_here;
+            } else if let Some(refusal) = &st.refusal {
+                r.state = 2;
+                r.refused_update = match refusal.update {
+                    Product::Unity => 1,
+                    Product::Standalone => 2,
+                };
+                r.refused_to = compat::pack_version(refusal.to);
+                r.unity_min_protocol = refusal.unity_range.0 as u32;
+                r.unity_max_protocol = refusal.unity_range.1 as u32;
+                r.standalone_min_protocol = refusal.standalone_range.0 as u32;
+                r.standalone_max_protocol = refusal.standalone_range.1 as u32;
+            }
+        }
+        *report = r;
+        r.state
+    })
 }
 
 /// 知らせ 1 つ。
@@ -1103,6 +1237,47 @@ pub extern "C" fn ylb_test_server_replace_key(server: u64) -> i32 {
         let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
         match servers.get(&server) {
             Some(s) => s.replace_key(),
+            None => YLB_E_HANDLE,
+        }
+    })
+}
+
+/// 自己診断のスタンドアロンの名乗りを決める（次につなぐブリッジから効く）。`app_version`・`min_peer` は `major << 32 | minor << 16 | patch`
+/// （`u64::MAX` は版を名乗らない古いスタンドアロンの役）、`features` は出す機能の印。既定はこの DLL の版・要求なし・印なし。
+#[no_mangle]
+pub extern "C" fn ylb_test_server_configure(
+    server: u64,
+    app_version: u64,
+    min_peer: u64,
+    features: u64,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        match servers.get(&server) {
+            Some(s) => {
+                s.configure(
+                    AppVersion::unpack(app_version),
+                    AppVersion::unpack(min_peer).unwrap_or(AppVersion::ZERO),
+                    features,
+                );
+                0
+            }
+            None => YLB_E_HANDLE,
+        }
+    })
+}
+
+/// 自己診断のスタンドアロンの読めるプロトコルの版の範囲を決める（次につなぐブリッジから効く。ブリッジの範囲と重ならなければ、版の範囲の断りを返す）。
+#[no_mangle]
+pub extern "C" fn ylb_test_server_set_protocol(server: u64, min: u32, max: u32) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        match servers.get(&server) {
+            Some(s) if min <= max && max <= u16::MAX as u32 => {
+                s.set_protocol_range(min as u16, max as u16);
+                0
+            }
+            Some(_) => YLB_E_ARGUMENT,
             None => YLB_E_HANDLE,
         }
     })

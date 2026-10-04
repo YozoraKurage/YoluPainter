@@ -3,6 +3,8 @@
 //! 版の決まり:
 //! - つないだら Unity 側（ブリッジ）が `Hello` で読める版の範囲を言い、スタンドアロンが両方の読める一番新しい版を `Welcome` で返す。
 //!   重ならなければ `Reject`（理由 `VersionMismatch`）を返して閉じる。
+//! - プロトコルの版が重なる相手とは、アプリの版や機能の印がずれていてもつなぐ（つないだまま警告する。`compat`）。挨拶（`Hello`・`Welcome`）の
+//!   後ろに足した版の欄・機能の印の共通部分で、新しい命令を送ってよいかを決める（`Kind::required_feature`）。
 //! - 同じ版の中で変えてよいのは、命令の中身の**後ろに欄を足す**ことだけ（古い読み手は残りを読み飛ばす）。欄の意味を変える・途中に
 //!   足す・消すときは、新しい種類の命令にするか版を上げる。
 //! - 知らない種類の命令は、受けた側が `Error`（`UnknownCommand`、その種類の番号）を返して捨て、つながりは保つ。読めない中身
@@ -12,6 +14,7 @@
 //! 数はリトルエンディアン、文字列は長さ（u32）と UTF-8。位置は Unity の座標（左手系、メートル）で、読み込んだモデルの根の
 //! ゲームオブジェクトのローカルの空間。三角形の巻きは、鏡に映した（行列式が負の）レンダラーでも表を同じ向きにそろえて送る。
 
+use crate::compat::{AppVersion, RejectDetail, VersionInfo};
 use crate::wire::{DecodeError, Reader, Writer};
 
 /// この版のプロトコル。
@@ -76,6 +79,23 @@ impl Kind {
             _ => return None,
         })
     }
+    /// この命令を送るのに要る機能の印（相手にも立っているときだけ送る。要らなければ 0）。新しい命令を足すときは、ここに行を足す。
+    pub fn required_feature(self) -> u64 {
+        match self {
+            Kind::Hello
+            | Kind::Bye
+            | Kind::Model
+            | Kind::Pose
+            | Kind::Materials
+            | Kind::ModelClosed
+            | Kind::Welcome
+            | Kind::Reject
+            | Kind::TextureSet
+            | Kind::TextureSetRemoved
+            | Kind::TilesChanged
+            | Kind::Error => 0,
+        }
+    }
     /// 誰が送る命令か。
     pub fn direction(self) -> Direction {
         match self {
@@ -129,10 +149,12 @@ pub struct Hello {
     pub max_version: u16,
     /// 送り手の名前と版（ログ用。例: "YoluPainter Unity bridge abi 1"）。
     pub agent: String,
-    /// 機能の印（今は 0）。
+    /// 機能の印（`compat::feature`。双方の共通部分がそのつながりで使える機能）。
     pub features: u64,
     /// 鍵を知っている証し（後ろに足した欄。無いのは鍵を知らない古いブリッジで、スタンドアロンは断る）。
     pub auth: Option<HelloAuth>,
+    /// 自分のアプリの版と、求める相手の版（鍵の欄のさらに後ろに足した欄。無いのは版を名乗らない古いブリッジ。鍵の欄が無ければ書かない）。
+    pub versions: Option<VersionInfo>,
 }
 
 /// 挨拶への返事（スタンドアロン → Unity）。
@@ -146,6 +168,8 @@ pub struct Welcome {
     pub features: u64,
     /// スタンドアロンも鍵を知っている証し（後ろに足した欄。無いのは鍵を確かめない古いスタンドアロンで、ブリッジは使わない）。
     pub proof: Option<[u8; crate::auth::PROOF_BYTES]>,
+    /// 自分のアプリの版と、求める相手の版（証しの欄のさらに後ろに足した欄。無いのは版を名乗らない古いスタンドアロン。証しが無ければ書かない）。
+    pub versions: Option<VersionInfo>,
 }
 
 /// 断りの理由。
@@ -178,6 +202,20 @@ impl RejectCode {
 pub struct Reject {
     pub code: RejectCode,
     pub text: String,
+    /// 版の範囲が重ならない断り（`VersionMismatch`）の構造。理由の文の後ろに足した欄で、相手が自分の言語で文を作る材料
+    /// （断る側の読める範囲と、断る側が求める相手の版）。無いのは古い相手か、版の断りでないもの。
+    pub detail: Option<RejectDetail>,
+}
+
+impl Reject {
+    /// 版の断り以外の断り（詳しい欄なし）。
+    pub fn plain(code: RejectCode, text: impl Into<String>) -> Reject {
+        Reject {
+            code,
+            text: text.into(),
+            detail: None,
+        }
+    }
 }
 
 /// モデルのマテリアルの組を指す鍵（Unity 版の .ylp の形式 7 の `material` と同じ考え方）。
@@ -401,6 +439,10 @@ impl Message {
                 if let Some(a) = &h.auth {
                     w.raw(&a.nonce);
                     w.raw(&a.proof);
+                    // 版の欄は鍵の欄の後ろの位置で決まる。鍵の欄が無ければ書かない（古い読み手が版の欄を鍵の欄と読み違えないように）
+                    if let Some(v) = &h.versions {
+                        write_versions(&mut w, v);
+                    }
                 }
             }
             Message::Bye => {}
@@ -446,11 +488,22 @@ impl Message {
                 w.u64(x.features);
                 if let Some(p) = &x.proof {
                     w.raw(p);
+                    if let Some(v) = &x.versions {
+                        write_versions(&mut w, v);
+                    }
                 }
             }
             Message::Reject(x) => {
                 w.u16(x.code as u16);
                 w.str(&x.text);
+                if let Some(d) = &x.detail {
+                    w.u16(d.min_version);
+                    w.u16(d.max_version);
+                    write_version(&mut w, d.min_peer);
+                    w.u16(d.peer_min_version);
+                    w.u16(d.peer_max_version);
+                    write_version(&mut w, d.peer_min_peer);
+                }
             }
             Message::TextureSet(s) => {
                 w.u32(s.set);
@@ -511,12 +564,19 @@ impl Message {
                 } else {
                     None
                 };
+                // 版の欄は鍵の欄の後ろ。足りなければ版を名乗らない古い相手（欄の後ろは、さらに新しい版の欄として読み飛ばす）
+                let versions = if auth.is_some() {
+                    read_versions(r)?
+                } else {
+                    None
+                };
                 Message::Hello(Hello {
                     min_version,
                     max_version,
                     agent,
                     features,
                     auth,
+                    versions,
                 })
             }
             Kind::Bye => Message::Bye,
@@ -598,22 +658,57 @@ impl Message {
             Kind::ModelClosed => Message::ModelClosed {
                 generation: r.u32()?,
             },
-            Kind::Welcome => Message::Welcome(Welcome {
-                version: r.u16()?,
-                agent: r.str(MAX_NAME_BYTES, "送り手の名前")?,
-                session: r.u64()?,
-                features: r.u64()?,
+            Kind::Welcome => {
+                let version = r.u16()?;
+                let agent = r.str(MAX_NAME_BYTES, "送り手の名前")?;
+                let session = r.u64()?;
+                let features = r.u64()?;
                 // 証しの欄は後ろに足したもの（足りなければ鍵を確かめない古いスタンドアロン）
-                proof: if r.remaining() >= crate::auth::PROOF_BYTES {
+                let proof = if r.remaining() >= crate::auth::PROOF_BYTES {
                     Some(r.array()?)
                 } else {
                     None
-                },
-            }),
-            Kind::Reject => Message::Reject(Reject {
-                code: RejectCode::from_u16(r.u16()?),
-                text: r.str(MAX_PATH_BYTES, "理由")?,
-            }),
+                };
+                let versions = if proof.is_some() {
+                    read_versions(r)?
+                } else {
+                    None
+                };
+                Message::Welcome(Welcome {
+                    version,
+                    agent,
+                    session,
+                    features,
+                    proof,
+                    versions,
+                })
+            }
+            Kind::Reject => {
+                let code = RejectCode::from_u16(r.u16()?);
+                let text = r.str(MAX_PATH_BYTES, "理由")?;
+                // 詳しい欄は後ろに足したもの（足りなければ古い相手の断り）
+                let detail = if r.remaining() >= (4 + VERSION_BYTES) * 2 {
+                    let min_version = r.u16()?;
+                    let max_version = r.u16()?;
+                    let min_peer = read_version(r)?;
+                    let peer_min_version = r.u16()?;
+                    let peer_max_version = r.u16()?;
+                    let peer_min_peer = read_version(r)?;
+                    (min_version <= max_version && peer_min_version <= peer_max_version).then_some(
+                        RejectDetail {
+                            min_version,
+                            max_version,
+                            min_peer,
+                            peer_min_version,
+                            peer_max_version,
+                            peer_min_peer,
+                        },
+                    )
+                } else {
+                    None
+                };
+                Message::Reject(Reject { code, text, detail })
+            }
             Kind::TextureSet => {
                 let set = r.u32()?;
                 let generation = r.u32()?;
@@ -685,6 +780,35 @@ impl Message {
             }),
         })
     }
+}
+
+/// アプリの版の欄の長さ（major・minor・patch の u16 が 3 つ）。
+const VERSION_BYTES: usize = 6;
+
+fn write_version(w: &mut Writer, v: AppVersion) {
+    w.u16(v.major);
+    w.u16(v.minor);
+    w.u16(v.patch);
+}
+
+fn read_version(r: &mut Reader<'_>) -> Result<AppVersion, DecodeError> {
+    Ok(AppVersion::new(r.u16()?, r.u16()?, r.u16()?))
+}
+
+fn write_versions(w: &mut Writer, v: &VersionInfo) {
+    write_version(w, v.app);
+    write_version(w, v.min_peer);
+}
+
+/// 版の欄（自分の版と求める相手の版）。足りなければ None（版を名乗らない古い相手）。
+fn read_versions(r: &mut Reader<'_>) -> Result<Option<VersionInfo>, DecodeError> {
+    if r.remaining() < VERSION_BYTES * 2 {
+        return Ok(None);
+    }
+    Ok(Some(VersionInfo {
+        app: read_version(r)?,
+        min_peer: read_version(r)?,
+    }))
 }
 
 fn write_materials(w: &mut Writer, materials: &[MaterialInfo]) {

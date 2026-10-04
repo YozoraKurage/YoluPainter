@@ -817,7 +817,7 @@ pub fn link_indicator_color(indicator: LinkIndicator) -> egui::Color32 {
         LinkIndicator::Off => t::TEXT_DISABLED,
         LinkIndicator::Waiting => t::ACCENT_DIM,
         LinkIndicator::Connected => t::OK,
-        LinkIndicator::Mismatch => t::WARNING,
+        LinkIndicator::Mismatch | LinkIndicator::Skewed => t::WARNING,
         LinkIndicator::Failed => t::ERROR,
     }
 }

@@ -12,6 +12,7 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub mod auth;
+pub mod compat;
 pub mod frame;
 pub mod host;
 pub mod link;
@@ -21,6 +22,10 @@ pub mod shm;
 pub mod wire;
 
 pub use auth::{HelloCheck, LinkKey, ServerKey};
+pub use compat::{
+    feature, AppVersion, Identity, LinkInfo, PeerInfo, Product, RejectDetail, SkewReport, VersionInfo,
+    VersionRefusal, MIN_STANDALONE, MIN_UNITY_PACKAGE,
+};
 pub use frame::{encode_message, Frame, FrameError, FrameReader};
 pub use link::{Connection, ConnectionReader, LinkError, Received, Server, DEFAULT_LINK_NAME};
 pub use message::*;

@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use yolu_protocol::host::PublishedSet;
-use yolu_protocol::link::{accept, error_message, wrong_direction};
+use yolu_protocol::link::{accept_as, error_message, wrong_direction, HANDSHAKE_TIMEOUT};
 use yolu_protocol::*;
 
 /// 自己診断のスタンドアロンが受けたものの数。
@@ -61,6 +61,8 @@ pub fn pattern(material: u32, tile_x: u32, tile_y: u32) -> [u8; 4] {
 }
 
 struct Shared {
+    /// 挨拶で名乗る内容（`configure` で替える。次につなぐブリッジから効く）。
+    identity: Identity,
     conn: Option<Connection>,
     session: u64,
     generation: u32,
@@ -86,6 +88,8 @@ impl TestServer {
         let key = listener.key();
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(Shared {
+            identity: Identity::standalone("YoluPainter bridge test server")
+                .with_version(AppVersion::parse(env!("CARGO_PKG_VERSION"))),
             conn: None,
             session: 0,
             generation: 0,
@@ -109,15 +113,20 @@ impl TestServer {
                             continue;
                         }
                     };
-                    let session = {
+                    let (session, identity) = {
                         let mut g = lock(&sh);
                         g.stats.connections += 1;
                         g.session += 1;
-                        g.session
+                        (g.session, g.identity.clone())
                     };
-                    let Ok((conn, mut reader, _)) =
-                        accept(stream, "YoluPainter bridge test server", session, &key)
-                    else {
+                    let Ok((conn, mut reader, _)) = accept_as(
+                        stream,
+                        &identity,
+                        session,
+                        &key,
+                        HANDSHAKE_TIMEOUT,
+                        &|_| Ok(()),
+                    ) else {
                         continue;
                     };
                     lock(&sh).conn = Some(conn.clone());
@@ -172,6 +181,23 @@ impl TestServer {
         } else {
             crate::ffi::YLB_E_STATE
         }
+    }
+
+    /// 挨拶で名乗る版・求める相手の版・機能の印を決める（版が None なら版を名乗らない古い役）。読めるプロトコルの版の範囲は変えない。
+    pub fn configure(&self, app_version: Option<AppVersion>, min_peer: AppVersion, features: u64) {
+        let mut g = lock(&self.shared);
+        let (min, max) = g.identity.protocol_range();
+        g.identity = Identity::standalone("YoluPainter bridge test server")
+            .with_version(app_version)
+            .with_min_peer(min_peer)
+            .with_features(features)
+            .with_protocol_range(min, max);
+    }
+
+    /// 読めるプロトコルの版の範囲を決める（つなぐブリッジの範囲と重ならなければ、版の範囲の断りを返す）。
+    pub fn set_protocol_range(&self, min: u16, max: u16) {
+        let mut g = lock(&self.shared);
+        g.identity = g.identity.clone().with_protocol_range(min, max);
     }
 
     pub fn stats(&self) -> YlbTestServerStats {

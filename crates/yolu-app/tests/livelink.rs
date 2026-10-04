@@ -18,7 +18,7 @@ use yolu_app::engine::composite_pixel;
 use yolu_app::livelink::LinkStatus;
 use yolu_app::state::Action;
 use yolu_app::YoluApp;
-use yolu_protocol::link::{connect_and_greet, LinkError};
+use yolu_protocol::link::{connect_and_greet, connect_and_greet_as, LinkError};
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
@@ -127,7 +127,12 @@ struct FakeUnity {
 
 impl FakeUnity {
     fn connect(name: &str) -> FakeUnity {
-        let (conn, mut reader, welcome) = connect_and_greet(name, "試験の Unity").unwrap();
+        // 版を名乗る Unity（名乗らない古いブリッジだと、入口の印は版のずれの警告の色になる。link_version.rs）
+        // 機能の印はスタンドアロンと同じ（印のずれも警告になるので、印を立てる機能が増えても色は変わらない）
+        let identity = Identity::unity("試験の Unity")
+            .with_version(Some(AppVersion::new(0, 3, 0)))
+            .with_features(yolu_app::livelink::FEATURES);
+        let (conn, mut reader, welcome) = connect_and_greet_as(name, &identity).unwrap();
         assert_eq!(welcome.version, PROTOCOL_VERSION);
         assert!(welcome.agent.starts_with("YoluPainter"));
         let (tx, rx) = mpsc::channel();
@@ -440,6 +445,7 @@ fn a_connection_without_the_right_key_is_refused_and_noted_while_the_link_stays_
             agent: "知らない相手".into(),
             features: 0,
             auth,
+            versions: None,
         })))
         .unwrap();
         let mut frames = FrameReader::new();
@@ -492,6 +498,7 @@ fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
         agent: "未来の Unity".into(),
         features: 0,
         auth: Some(hello_auth(&yolu_protocol::LinkKey::load(&name).unwrap())),
+        versions: None,
     })))
     .unwrap();
     let mut frames = FrameReader::new();
@@ -594,13 +601,17 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 2);
+        assert_eq!(ylb_abi_version(), 3);
         let agent = "子の Unity";
-        let h = ylb_connect(
+        // 本物の C の口で、Unity のパッケージの版を名乗る
+        let version = "0.3.0";
+        let h = ylb_connect_with(
             name.as_ptr(),
             name.len() as i32,
             agent.as_ptr(),
             agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
         );
         assert_ne!(h, 0);
         poll(h, "つながる", Box::new(|| ylb_status(h) == 1));
@@ -787,6 +798,16 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
         next_child_line(&mut h, &rx, &mut child, "接続完了"),
         "connected"
     );
+    // 本物の C の口（ylb_connect_with）で名乗った Unity のパッケージの版が、挨拶でスタンドアロンに届く
+    let peer = h.state().state.link.link.as_ref().map(|l| l.peer.app_version());
+    assert_eq!(peer, Some(Some(AppVersion::new(0, 3, 0))));
+    // 版は揃っている（子のブリッジの機能の印は、ブリッジが出す印で、スタンドアロンの印とは別に決まる）
+    assert!(h
+        .state()
+        .state
+        .link
+        .skew()
+        .is_none_or(|s| s.update_peer.is_none() && s.update_self.is_none()));
     let body = next_child_line(&mut h, &rx, &mut child, "Bodyの初回セット");
     let hair = next_child_line(&mut h, &rx, &mut child, "Hairの初回セット");
     let s = &h.state().state;

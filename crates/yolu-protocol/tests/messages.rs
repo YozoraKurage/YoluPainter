@@ -69,6 +69,21 @@ fn all_messages() -> Vec<Message> {
                 nonce: [7; 32],
                 proof: [9; 32],
             }),
+            versions: Some(VersionInfo {
+                app: AppVersion::new(0, 3, 1),
+                min_peer: AppVersion::new(0, 1, 0),
+            }),
+        }),
+        Message::Hello(Hello {
+            min_version: 1,
+            max_version: 1,
+            agent: "版の欄の無いブリッジ".into(),
+            features: 0,
+            auth: Some(HelloAuth {
+                nonce: [1; 32],
+                proof: [2; 32],
+            }),
+            versions: None,
         }),
         Message::Hello(Hello {
             min_version: 1,
@@ -76,6 +91,7 @@ fn all_messages() -> Vec<Message> {
             agent: "鍵の欄の無い古いブリッジ".into(),
             features: 0,
             auth: None,
+            versions: None,
         }),
         Message::Bye,
         Message::Model(sample_model()),
@@ -98,6 +114,18 @@ fn all_messages() -> Vec<Message> {
             session: 99,
             features: 0,
             proof: Some([3; 32]),
+            versions: Some(VersionInfo {
+                app: AppVersion::new(0, 1, 0),
+                min_peer: AppVersion::new(0, 3, 0),
+            }),
+        }),
+        Message::Welcome(Welcome {
+            version: 1,
+            agent: "版の欄の無いスタンドアロン".into(),
+            session: 2,
+            features: 3,
+            proof: Some([4; 32]),
+            versions: None,
         }),
         Message::Welcome(Welcome {
             version: 1,
@@ -105,14 +133,29 @@ fn all_messages() -> Vec<Message> {
             session: 1,
             features: 0,
             proof: None,
+            versions: None,
         }),
         Message::Reject(Reject {
             code: RejectCode::VersionMismatch,
             text: "版".into(),
+            detail: None,
+        }),
+        Message::Reject(Reject {
+            code: RejectCode::VersionMismatch,
+            text: "版（詳しい欄つき）".into(),
+            detail: Some(RejectDetail {
+                min_version: 2,
+                max_version: 5,
+                min_peer: AppVersion::new(1, 2, 3),
+                peer_min_version: 1,
+                peer_max_version: 1,
+                peer_min_peer: AppVersion::new(0, 3, 0),
+            }),
         }),
         Message::Reject(Reject {
             code: RejectCode::Unauthorized,
             text: "鍵".into(),
+            detail: None,
         }),
         Message::TextureSet(TextureSet {
             set: 4,
@@ -183,15 +226,38 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
             continue;
         }
         // 挨拶の鍵の欄・返事の証しは後ろに足した欄。途中で切れていれば欄が無いものとして読む（受け手が鍵無しとして断る）
+        // 版の欄はさらに後ろに足した欄。途中で切れていれば版を名乗らない古い相手として読む（鍵の欄は残る）
         match &m {
+            Message::Hello(h) if h.versions.is_some() => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
+                assert!(matches!(
+                    cut,
+                    Message::Hello(Hello { auth: Some(_), versions: None, .. })
+                ));
+                continue;
+            }
             Message::Hello(h) if h.auth.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
-                assert!(matches!(cut, Message::Hello(Hello { auth: None, .. })));
+                assert!(matches!(cut, Message::Hello(Hello { auth: None, versions: None, .. })));
+                continue;
+            }
+            Message::Welcome(w) if w.versions.is_some() => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
+                assert!(matches!(
+                    cut,
+                    Message::Welcome(Welcome { proof: Some(_), versions: None, .. })
+                ));
                 continue;
             }
             Message::Welcome(w) if w.proof.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
-                assert!(matches!(cut, Message::Welcome(Welcome { proof: None, .. })));
+                assert!(matches!(cut, Message::Welcome(Welcome { proof: None, versions: None, .. })));
+                continue;
+            }
+            // 断りの詳しい欄も後ろに足した欄（途中で切れていれば古い相手の断り）
+            Message::Reject(r) if r.detail.is_some() => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
+                assert!(matches!(cut, Message::Reject(Reject { detail: None, .. })));
                 continue;
             }
             _ => {}
@@ -269,8 +335,64 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
         agent: String::new(),
         features: 0,
         auth: None,
+        versions: None,
     });
     assert!(Message::decode(Kind::Hello as u16, &hello.encode_payload()).is_err());
     // 枠の頭は種類を問わず作れる（知らない種類は読む側で断る）
     assert_eq!(encode_frame(0x7777, 0, &[1, 2]).len(), 14);
+}
+
+/// 版の欄は鍵・証しの欄の後ろの位置で決まるので、鍵・証しの欄が無ければ書かない（古い読み手が版の欄を鍵の欄と読み違えない）。
+#[test]
+fn the_version_fields_are_not_written_without_the_key_fields() {
+    let versions = Some(VersionInfo {
+        app: AppVersion::new(1, 0, 0),
+        min_peer: AppVersion::new(0, 1, 0),
+    });
+    let hello = Hello {
+        min_version: 1,
+        max_version: 1,
+        agent: "x".into(),
+        features: 0,
+        auth: None,
+        versions,
+    };
+    let bare = Message::Hello(Hello { versions: None, ..hello.clone() }).encode_payload();
+    assert_eq!(Message::Hello(hello).encode_payload(), bare);
+    let welcome = Welcome {
+        version: 1,
+        agent: "x".into(),
+        session: 1,
+        features: 0,
+        proof: None,
+        versions,
+    };
+    let bare = Message::Welcome(Welcome { versions: None, ..welcome.clone() }).encode_payload();
+    assert_eq!(Message::Welcome(welcome).encode_payload(), bare);
+}
+
+/// 版の欄・機能の印を持つ新しい挨拶は、後ろの欄を知らない古い読み手にも同じ前半として読める（後ろを読み飛ばす）。
+#[test]
+fn an_old_reader_reads_the_front_of_a_greeting_with_the_new_fields() {
+    let new = Message::Hello(Hello {
+        min_version: 1,
+        max_version: 1,
+        agent: "新しいブリッジ".into(),
+        features: feature::MATERIAL_VALUES,
+        auth: Some(HelloAuth { nonce: [5; 32], proof: [6; 32] }),
+        versions: Some(VersionInfo {
+            app: AppVersion::new(0, 3, 0),
+            min_peer: AppVersion::new(0, 1, 0),
+        }),
+    });
+    let payload = new.encode_payload();
+    // 古い読み手 = 鍵の欄まで読んで、残りを読み飛ばす読み手。ここでは版の欄の 12 バイトを切り落として読んで、前半が同じことを見る
+    let old = Message::decode(Kind::Hello as u16, &payload[..payload.len() - 12]).unwrap();
+    match (new, old) {
+        (Message::Hello(n), Message::Hello(o)) => {
+            assert_eq!((n.min_version, n.max_version, &n.agent, n.features, &n.auth), (o.min_version, o.max_version, &o.agent, o.features, &o.auth));
+            assert_eq!(o.versions, None);
+        }
+        other => panic!("{other:?}"),
+    }
 }

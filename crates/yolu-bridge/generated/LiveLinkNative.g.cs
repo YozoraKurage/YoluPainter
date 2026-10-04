@@ -37,6 +37,12 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern ulong ylb_connect(byte* name, int name_len, byte* agent, int agent_len);
 
         /// <summary>
+        ///  `ylb_connect`（自分のアプリの版を挨拶で名乗る。Unity のパッケージの版の文字列「0.3.0」など。読めない・空なら名乗らない）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_connect_with", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_connect_with(byte* name, int name_len, byte* agent, int agent_len, byte* app_version, int app_version_len);
+
+        /// <summary>
         ///  切る（Bye を送る。共有メモリの写像を手放す）。番号はもう使えない。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_disconnect", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -65,6 +71,24 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_serial", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern ulong ylb_serial(ulong handle);
+
+        /// <summary>
+        ///  このつながりで使える機能の印（双方が出した印の共通部分。つながるまでは 0）。印の要る新しい命令は、ここに立っているときだけ送る。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_common_features", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_common_features(ulong handle);
+
+        /// <summary>
+        ///  相手（スタンドアロン）のアプリの版（`major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`）。つながっていない・版を名乗らない古い相手は `u64::MAX`。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_peer_app_version", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_peer_app_version(ulong handle);
+
+        /// <summary>
+        ///  版のずれと機能の印の様子を取り出す。返すのは `state`（0 = まだ無い、1 = つながった、2 = 版の範囲が合わず断られた）、負は失敗。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_link_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_link_report(ulong handle, YlbLinkReport* report);
 
         /// <summary>
         ///  知らせを 1 つ取り出す。取り出せば 1、無ければ 0。
@@ -247,12 +271,83 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_test_server_replace_key(ulong server);
 
         /// <summary>
+        ///  自己診断のスタンドアロンの名乗りを決める（次につなぐブリッジから効く）。`app_version`・`min_peer` は `major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`
+        ///  （`u64::MAX` は版を名乗らない古いスタンドアロンの役）、`features` は出す機能の印。既定はこの DLL の版・要求なし・印なし。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_configure", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_configure(ulong server, ulong app_version, ulong min_peer, ulong features);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンの読めるプロトコルの版の範囲を決める（次につなぐブリッジから効く。ブリッジの範囲と重ならなければ、版の範囲の断りを返す）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_set_protocol", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_set_protocol(ulong server, uint min, uint max);
+
+        /// <summary>
         ///  自己診断のスタンドアロンが受けたものの数。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_stats", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_test_server_stats(ulong server, YlbTestServerStats* stats);
 
 
+    }
+
+    /// <summary>
+    ///  版のずれと機能の印の様子（`ylb_link_report`）。版は `major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`、不明は `u64::MAX`。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbLinkReport
+    {
+        /// <summary>
+        ///  相手のアプリの版。
+        /// </summary>
+        public ulong peer_version;
+        /// <summary>
+        ///  相手が自分に求める版（相手が宣言していなければ不明）。
+        /// </summary>
+        public ulong peer_min_peer;
+        /// <summary>
+        ///  相手を上げるべきなら、求める版（`0` は版の指定なし）。上げなくてよければ不明。版を名乗らない古い相手は上げるべき。
+        /// </summary>
+        public ulong update_peer;
+        /// <summary>
+        ///  自分（Unity のパッケージ）を上げるべきなら、求める版。上げなくてよければ不明。
+        /// </summary>
+        public ulong update_self;
+        /// <summary>
+        ///  自分が出した機能の印・相手が出した印・共通部分（使える機能）。
+        /// </summary>
+        public ulong own_features;
+        public ulong peer_features;
+        public ulong common_features;
+        /// <summary>
+        ///  自分にあって相手に無い機能（相手を上げれば使える）・相手にあって自分に無い機能（自分を上げれば使える）。
+        /// </summary>
+        public ulong missing_on_peer;
+        public ulong missing_here;
+        /// <summary>
+        ///  断られたとき（state 2）、上げるべき製品: 1 = Unity のパッケージ、2 = スタンドアロン。それ以外は 0。
+        /// </summary>
+        public int refused_update;
+        /// <summary>
+        ///  断られたときの、上げるべき製品の求める版（求める版が決まっていなければ不明）。
+        /// </summary>
+        public ulong refused_to;
+        /// <summary>
+        ///  断られたときの、Unity 側・スタンドアロンの読めるプロトコルの版の範囲。
+        /// </summary>
+        public uint unity_min_protocol;
+        public uint unity_max_protocol;
+        public uint standalone_min_protocol;
+        public uint standalone_max_protocol;
+        /// <summary>
+        ///  0 = まだ無い（つないでいる・つなげなかった）、1 = つながった（上の欄を決めた）、2 = プロトコルの版の範囲が合わず断られた。
+        /// </summary>
+        public int state;
+        /// <summary>
+        ///  つながったときの、決まったプロトコルの版。
+        /// </summary>
+        public uint protocol;
     }
 
     /// <summary>

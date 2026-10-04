@@ -21,12 +21,14 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use yolu_protocol::host::PublishedSet;
+use yolu_protocol::compat::{accepts_with, refusal_from_reject};
 use yolu_protocol::link::{
-    self, accept_with, error_message, negotiate, wrong_direction, LinkError,
+    self, accept_as, error_message, negotiate, wrong_direction, LinkError,
 };
 use yolu_protocol::{
-    channel, shm::valid_tile_size, Connection, ErrorCode, Hello, Message, Received, Reject,
-    RejectCode, ServerKey, Tile, DEFAULT_LINK_NAME, MAX_TEXTURE_SIZE,
+    channel, feature, shm::valid_tile_size, AppVersion, Connection, ErrorCode, Hello, Identity,
+    Kind, LinkInfo, Message, Product, Received, Reject, RejectCode, ServerKey, SkewReport, Tile,
+    VersionRefusal, DEFAULT_LINK_NAME, MAX_TEXTURE_SIZE,
 };
 
 use crate::engine::{Channel, Document, RowOrder, TileCoord};
@@ -37,6 +39,17 @@ use crate::view3d::model::ViewError;
 
 /// 挨拶で名乗る名前。
 pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
+
+/// このスタンドアロンが挨拶で出す機能の印（`yolu_protocol::feature`。双方の共通部分がそのつながりで使える機能）。
+/// 印を立てる機能（マテリアルの値など）を足すときは、ここに `feature` のビットを足す（ビットの割り当ては `yolu_protocol::feature`）。
+pub const FEATURES: u64 = 0;
+
+/// 挨拶の名乗り（名乗りの文字列・Cargo の版・出す機能の印）。
+pub fn identity() -> Identity {
+    Identity::standalone(AGENT)
+        .with_version(AppVersion::parse(env!("CARGO_PKG_VERSION")))
+        .with_features(FEATURES)
+}
 
 /// 2 つ目の Unity を断る理由。
 const BUSY_TEXT: &str =
@@ -76,8 +89,12 @@ pub struct LinkView {
     pub published: Vec<u32>,
     /// これまでに知らせたタイルの数（作り直しの全部を含む）。
     pub tiles_sent: u64,
-    /// 最後に版が合わずに断った理由（つながる・やめるまで出す）。
+    /// 最後に版が合わずに断った理由（つながる・やめるまで出す。プロトコルの版が重ならないときだけ）。
     pub mismatch: Option<String>,
+    /// 断った理由の構造（どちらを何版以上に上げるか。画面の言語で文を作る）。
+    pub refusal: Option<VersionRefusal>,
+    /// つながっているあいだの、両側の名乗りと決まった版（版のずれ・使える機能を調べる）。
+    pub link: Option<LinkInfo>,
 }
 
 impl Default for LinkView {
@@ -89,6 +106,8 @@ impl Default for LinkView {
             published: Vec::new(),
             tiles_sent: 0,
             mismatch: None,
+            refusal: None,
+            link: None,
         }
     }
 }
@@ -158,8 +177,28 @@ impl LinkView {
             LinkStatus::Listening => LinkIndicator::Waiting,
             LinkStatus::Connected { .. } => match self.notice {
                 Some((NoticeLevel::Error, _)) => LinkIndicator::Mismatch,
+                _ if self.skew().is_some() => LinkIndicator::Skewed,
                 _ => LinkIndicator::Connected,
             },
+        }
+    }
+
+    /// つながっているあいだの版のずれ（警告に値するずれがあるときだけ）。
+    pub fn skew(&self) -> Option<SkewReport> {
+        if !matches!(self.status, LinkStatus::Connected { .. }) {
+            return None;
+        }
+        self.link
+            .as_ref()
+            .map(LinkInfo::skew)
+            .filter(SkewReport::is_skewed)
+    }
+
+    /// このつながりで使える機能の印（つながっていなければ 0）。
+    pub fn common_features(&self) -> u64 {
+        match self.status {
+            LinkStatus::Connected { .. } => self.link.as_ref().map_or(0, LinkInfo::common_features),
+            _ => 0,
         }
     }
 
@@ -183,21 +222,117 @@ impl LinkView {
         let summary = self.summary_in(lang);
         match (&self.status, &self.mismatch, &self.notice) {
             (LinkStatus::Failed(e), _, _) => format!("{summary}\n{e}"),
-            (_, Some(m), _) => format!("{summary}\n{m}"),
+            (_, Some(m), _) => match &self.refusal {
+                Some(refusal) => format!("{summary}\n{}", refusal_tooltip(lang, refusal)),
+                None => format!("{summary}\n{m}"),
+            },
             (_, _, Some((NoticeLevel::Error, n))) => format!("{summary}\n{n}"),
-            _ => summary,
+            _ => match self.skew() {
+                Some(skew) => format!("{summary}\n{}", skew_tooltip(lang, &skew)),
+                None => summary,
+            },
         }
     }
 }
 
-/// 入口のアイコンの印の様子（切断は灰・待機中は薄い色・接続は緑・版の不一致は警告の色・待ち受けられないは赤）。
+/// 入口のアイコンの印の様子（切断は灰・待機中は薄い色・接続は緑・版の不一致と、つないだままの版のずれは警告の色・待ち受けられないは赤）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkIndicator {
     Off,
     Waiting,
     Connected,
     Mismatch,
+    /// つながっているが、版か機能の印がずれている（警告の色。ツールチップに両方の版と、どちらを上げるか）。
+    Skewed,
     Failed,
+}
+
+fn product_name(lang: Lang, product: Product) -> &'static str {
+    match product {
+        Product::Unity => lang.pick("Unity のパッケージ", "Unity package"),
+        Product::Standalone => lang.pick("スタンドアロン", "standalone"),
+    }
+}
+
+/// 機能の印の名前（名前を知らない印は「新しい機能」にまとめる）。
+fn feature_names(lang: Lang, mask: u64) -> String {
+    let mut names: Vec<&str> = feature::known_bits(mask)
+        .into_iter()
+        .map(|bit| match bit {
+            feature::MATERIAL_VALUES => lang.pick("マテリアルの値", "Material values"),
+            feature::ASSETS => lang.pick("アセット", "Assets"),
+            feature::PROJECT_TRANSFER => lang.pick("プロジェクトの転送", "Project transfer"),
+            _ => lang.pick("アニメーション", "Animation"),
+        })
+        .collect();
+    if mask & !feature::KNOWN != 0 {
+        names.push(lang.pick("新しい機能", "Newer features"));
+    }
+    names.join(lang.pick("・", ", "))
+}
+
+/// 上げる製品と求める版の 1 行（「○○を 0.4.0 以上に上げる必要があります」。版の指定が無ければ「○○を更新する必要があります」）。
+fn update_line(lang: Lang, product: Product, to: Option<AppVersion>) -> String {
+    let what = product_name(lang, product);
+    match to.filter(|v| !v.is_zero()) {
+        Some(v) => lang.pick(
+            format!("{what}を {v} 以上に上げる必要があります"),
+            format!("The {what} must be {v} or newer"),
+        ),
+        None => lang.pick(
+            format!("{what}を更新する必要があります"),
+            format!("The {what} must be updated"),
+        ),
+    }
+}
+
+/// プロトコルの版が重ならず断ったときの、ツールチップの文（範囲と、どちらを何版以上に上げるか）。
+fn refusal_tooltip(lang: Lang, refusal: &VersionRefusal) -> String {
+    let (u, s) = (refusal.unity_range, refusal.standalone_range);
+    format!(
+        "{}\n{}",
+        lang.pick(
+            format!(
+                "プロトコルの版が合いません（Unity 側 {}〜{}、スタンドアロン {}〜{}）",
+                u.0, u.1, s.0, s.1
+            ),
+            format!(
+                "Protocol versions do not match (Unity {}–{}, standalone {}–{})",
+                u.0, u.1, s.0, s.1
+            ),
+        ),
+        update_line(lang, refusal.update, refusal.to)
+    )
+}
+
+/// つないだままの版のずれのツールチップの文: 両方の版・どちらを上げればよいか・使えない機能の名前。
+fn skew_tooltip(lang: Lang, skew: &SkewReport) -> String {
+    let own = skew
+        .own_version
+        .map_or_else(|| lang.pick("不明", "unknown").to_owned(), |v| v.to_string());
+    let peer = skew
+        .peer_version
+        .map_or_else(|| lang.pick("不明", "unknown").to_owned(), |v| v.to_string());
+    let mut lines = vec![lang.pick(
+        format!("スタンドアロン {own}・Unity のパッケージ {peer}"),
+        format!("Standalone {own} · Unity package {peer}"),
+    )];
+    // 自分はスタンドアロン、相手は Unity のパッケージ
+    if skew.peer_should_update() {
+        lines.push(update_line(lang, Product::Unity, skew.update_peer));
+    }
+    if skew.own_should_update() {
+        lines.push(update_line(lang, Product::Standalone, skew.update_self));
+    }
+    let apart = skew.missing_on_peer | skew.missing_here;
+    if apart != 0 {
+        lines.push(format!(
+            "{}: {}",
+            lang.pick("使えない機能", "Unavailable"),
+            feature_names(lang, apart)
+        ));
+    }
+    lines.join("\n")
 }
 
 /// 始める・やめるの頼み（メニューから。`YoluApp` が当てる）。
@@ -214,10 +349,13 @@ enum Event {
         hello: Hello,
         version: u16,
         out: Sender<Out>,
+        /// 両側の名乗りと決まった版（使える機能・版のずれ）。
+        link: Option<LinkInfo>,
     },
     /// 版が合わないので断った。
     Refused {
         text: String,
+        refusal: Option<VersionRefusal>,
     },
     /// ほかの Unity とつながっているので断った。
     Busy {
@@ -272,11 +410,22 @@ impl Drop for Listening {
 struct Active {
     session: u64,
     out: Sender<Out>,
+    /// このつながりで使える機能の印（双方の共通部分）。
+    common_features: u64,
 }
 
 impl Active {
+    /// 送る。印の要る命令（`Kind::required_feature`）は、相手に印があるときだけ。
     fn send(&self, message: Message) {
-        let _ = self.out.send(Out::Message(message));
+        self.send_with(message, Kind::required_feature);
+    }
+
+    /// `send` の、命令の種類ごとに要る印の決め方を選べる形（試験が印の要る表を差し込む）。送ったら true。
+    fn send_with(&self, message: Message, need_of: impl Fn(Kind) -> u64) -> bool {
+        if !accepts_with(self.common_features, &message, need_of) {
+            return false;
+        }
+        self.out.send(Out::Message(message)).is_ok()
     }
 }
 
@@ -295,6 +444,9 @@ pub struct LiveLink {
     status: LinkStatus,
     notice: Option<(NoticeLevel, String)>,
     mismatch: Option<String>,
+    refusal: Option<VersionRefusal>,
+    /// つながっているあいだの、両側の名乗りと決まった版。
+    link_info: Option<LinkInfo>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
     listening: Option<Listening>,
@@ -335,6 +487,8 @@ impl LiveLink {
             status: LinkStatus::Off,
             notice: None,
             mismatch: None,
+            refusal: None,
+            link_info: None,
             tx,
             rx,
             listening: None,
@@ -373,6 +527,8 @@ impl LiveLink {
             published: self.published.keys().copied().collect(),
             tiles_sent: self.tiles_sent,
             mismatch: self.mismatch.clone(),
+            refusal: self.refusal,
+            link: self.link_info.clone(),
         }
     }
 
@@ -449,6 +605,7 @@ impl LiveLink {
         self.disconnect(state);
         self.status = LinkStatus::Off;
         self.mismatch = None;
+        self.refusal = None;
         let text = if was_connected {
             state.lang.pick("Live Link を切りました。", "Live Link disconnected.")
         } else {
@@ -474,6 +631,7 @@ impl LiveLink {
         }
         self.published.clear();
         self.failed.clear();
+        self.link_info = None;
     }
 
     fn current_session(&self) -> Option<u64> {
@@ -489,19 +647,26 @@ impl LiveLink {
                     hello,
                     version,
                     out,
+                    link,
                 } => {
                     if self.listening.is_none() || self.active.is_some() {
                         // やめた後・つながっている間に来た（待ち受けのスレッドは 2 つ目を断るので、普通は来ない）
                         let _ = out.send(Out::Bye);
                         continue;
                     }
-                    self.active = Some(Active { session, out });
+                    self.active = Some(Active {
+                        session,
+                        out,
+                        common_features: link.as_ref().map_or(0, LinkInfo::common_features),
+                    });
+                    self.link_info = link;
                     self.status = LinkStatus::Connected {
                         agent: hello.agent.clone(),
                         version,
                         session,
                     };
                     self.mismatch = None;
+                    self.refusal = None;
                     let text = state.lang.pick(format!(
                         "Live Link: Unity とつながりました（{}・プロトコルの版 {version}）。",
                         hello.agent
@@ -511,9 +676,10 @@ impl LiveLink {
                     ));
                     self.notify(NoticeLevel::Info, text, state);
                 }
-                Event::Refused { text } => {
-                    // 理由の全文（版の範囲）は状態の帯のツールチップに出す
+                Event::Refused { text, refusal } => {
+                    // 理由の全文（版の範囲と、どちらを上げるか）は入口の印のツールチップに出す
                     self.mismatch = Some(text);
+                    self.refusal = refusal;
                     self.notify(
                         NoticeLevel::Error,
                         state.lang.pick("Live Link: 版の合わない Unity を断りました。", "Live Link: Version mismatch.").into(),
@@ -945,15 +1111,12 @@ fn serve(
             .map(|_| ())
             .map_err(|_| {
                 *busy_agent.borrow_mut() = hello.agent.clone();
-                Reject {
-                    code: RejectCode::Busy,
-                    text: BUSY_TEXT.to_owned(),
-                }
+                Reject::plain(RejectCode::Busy, BUSY_TEXT)
             })
     };
-    let (conn, mut reader, hello) = match accept_with(
+    let (conn, mut reader, hello) = match accept_as(
         stream,
-        AGENT,
+        &identity(),
         session,
         &key,
         link::HANDSHAKE_TIMEOUT,
@@ -973,7 +1136,11 @@ fn serve(
         }
         Err(LinkError::Rejected(r)) => {
             release();
-            wake(Event::Refused { text: r.text });
+            let refusal = refusal_from_reject(Product::Standalone, &r);
+            wake(Event::Refused {
+                text: r.text,
+                refusal,
+            });
             return;
         }
         Err(e) => {
@@ -988,11 +1155,13 @@ fn serve(
     let _ = thread::Builder::new()
         .name(format!("yolu-livelink-{session}-write"))
         .spawn(move || write_loop(writer, out_rx));
+    let link = conn.link_info().cloned();
     wake(Event::Connected {
         session,
         hello,
         version,
         out: out_tx,
+        link,
     });
     loop {
         match reader.next(&conn) {
@@ -1038,5 +1207,70 @@ fn write_loop(conn: Connection, rx: Receiver<Out>) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MARK_A: u64 = 1 << 40;
+    const MARK_B: u64 = 1 << 41;
+
+    /// 試験用の印の要る表（今の命令は印を要らないので、試験が差し込む）: テクスチャセットを消すのは A、モデルを閉じるのは A と B。
+    fn need_of(kind: Kind) -> u64 {
+        match kind {
+            Kind::TextureSetRemoved => MARK_A,
+            Kind::ModelClosed => MARK_A | MARK_B,
+            _ => 0,
+        }
+    }
+
+    fn active(common_features: u64) -> (Active, Receiver<Out>) {
+        let (out, rx) = mpsc::channel();
+        (
+            Active {
+                session: 1,
+                out,
+                common_features,
+            },
+            rx,
+        )
+    }
+
+    fn sent(rx: &Receiver<Out>) -> Vec<Kind> {
+        rx.try_iter()
+            .filter_map(|o| match o {
+                Out::Message(m) => Some(m.kind()),
+                Out::Bye => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_message_that_needs_a_mark_is_sent_only_when_the_link_has_it() {
+        let removed = || Message::TextureSetRemoved { set: 1 };
+        let closed = || Message::ModelClosed { generation: 1 };
+        let bye = || Message::Bye;
+        // 共通が A だけ: A を要るものは送る。A と B を要るものは送らない。印の要らないものは送る
+        let (a, rx) = active(MARK_A);
+        assert!(a.send_with(removed(), need_of));
+        assert!(!a.send_with(closed(), need_of));
+        assert!(a.send_with(bye(), need_of));
+        assert_eq!(sent(&rx), vec![Kind::TextureSetRemoved, Kind::Bye]);
+        // 共通が空: 印の要らないものだけ
+        let (a, rx) = active(0);
+        assert!(!a.send_with(removed(), need_of));
+        assert!(!a.send_with(closed(), need_of));
+        assert!(a.send_with(bye(), need_of));
+        assert_eq!(sent(&rx), vec![Kind::Bye]);
+        // 共通が A と B: 全部送る
+        let (a, rx) = active(MARK_A | MARK_B);
+        assert!(a.send_with(removed(), need_of) && a.send_with(closed(), need_of));
+        assert_eq!(sent(&rx), vec![Kind::TextureSetRemoved, Kind::ModelClosed]);
+        // 今の表（印の要らない）では、共通が空でも送る（今までどおり）
+        let (a, rx) = active(0);
+        a.send(closed());
+        assert_eq!(sent(&rx), vec![Kind::ModelClosed]);
     }
 }

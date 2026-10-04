@@ -230,6 +230,7 @@ mod tests {
             agent: "試験".into(),
             features: 0,
             auth: None,
+            versions: None,
         });
         let mut data = encode_message(&a);
         data.extend(encode_message(&Message::Bye));
