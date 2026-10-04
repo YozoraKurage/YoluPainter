@@ -224,6 +224,9 @@ pub struct YoluApp {
     /// 表示の合成の設定で、キャンバスの表示に入れた値（変わったときだけ入れ直す。試験や環境変数で決めた方針を、設定が変わらないうちは
     /// 上書きしない）。
     compositing_applied: crate::settings::Compositing,
+    /// GPU のメモリの設定から配った予算で、3D の絵・キャンバスの合成・棚へ入れた値（変わったときだけ入れ直す。試験が決めた予算を、
+    /// 設定とアダプターが変わらないうちは上書きしない）。
+    gpu_budgets_applied: crate::gpu_memory::Budgets,
 }
 
 impl YoluApp {
@@ -358,6 +361,24 @@ impl YoluApp {
         }
     }
 
+    /// GPU のメモリの設定（と、アダプターから分かった量）が配る予算が変わっていれば、3D の絵・キャンバスの合成・棚へ入れる（次のフレームから効く）。
+    /// スライダーをドラッグしている間は入れず、離したフレームで入れる（キャンバスの合成は、入れ直すたびに GPU の資源を手放す）。
+    fn apply_gpu_memory(&mut self) {
+        if self.state.prefs.dragging {
+            return;
+        }
+        let budgets = self.state.gpu_budgets();
+        if budgets == self.gpu_budgets_applied {
+            return;
+        }
+        self.gpu_budgets_applied = budgets;
+        if let Some(r) = &mut self.renderer3d {
+            r.set_paint_budget(budgets.paint);
+        }
+        self.display.set_gpu_budget(budgets.canvas);
+        self.state.shelf.set_preview_budget(budgets.shelf_preview);
+    }
+
     /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
     pub fn for_context_with_settings(ctx: &egui::Context, settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
         Self::setup(ctx);
@@ -376,6 +397,7 @@ impl YoluApp {
         if self.state.prefs.dragging {
             now.backups = saved.backups;
             now.uv_wireframe_color = saved.uv_wireframe_color;
+            now.gpu_memory = saved.gpu_memory;
         }
         if self.state.pressure.dragging {
             now.pressure = saved.pressure.clone();
@@ -414,6 +436,7 @@ impl YoluApp {
             settings: None,
             was_focused: None,
             compositing_applied: crate::settings::Compositing::Auto,
+            gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
         }
     }
 
@@ -725,6 +748,9 @@ impl YoluApp {
         self.renderer3d = rs.map(View3dRenderer::new);
         // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
         self.display.attach_render_state(rs.cloned());
+        // アダプターから GPU のメモリの量が分かれば、設定が配る予算に使う（設定のファイルを読んだあとなので、ここで入れる）
+        self.state.prefs.gpu = rs.map_or_else(Default::default, |rs| crate::gpu_memory::Adapter::detect(&rs.adapter.get_info()));
+        self.apply_gpu_memory();
         self
     }
 
@@ -746,6 +772,21 @@ impl YoluApp {
     /// キャンバスの GPU の常駐の予算（試験・計測用。既定は `canvas::gpu::RESIDENT_BUDGET`）。
     pub fn set_canvas_gpu_budget(&mut self, bytes: u64) {
         self.display.set_gpu_budget(bytes);
+    }
+
+    /// GPU のメモリの設定から配って、3D の絵・キャンバスの合成・棚へ入れた予算（試験・計測用）。
+    pub fn gpu_budgets_applied(&self) -> crate::gpu_memory::Budgets {
+        self.gpu_budgets_applied
+    }
+
+    /// キャンバスの GPU の常駐の予算（試験・計測用）。
+    pub fn canvas_gpu_budget(&self) -> u64 {
+        self.display.gpu().budget()
+    }
+
+    /// 3D の絵の全体の予算（試験・計測用。wgpu が無ければ None）。
+    pub fn view3d_paint_budget(&self) -> Option<u64> {
+        self.renderer3d.as_ref().map(|r| r.paint_budget())
     }
 
     /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。
@@ -1229,6 +1270,7 @@ impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         crate::screen_pick::frame(&mut self.state, _frame);
         self.apply_compositing();
+        self.apply_gpu_memory();
         self.frame(ui);
         self.persist_settings();
     }

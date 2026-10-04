@@ -1375,7 +1375,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
         if f.path.contains(".filters.items[") && f.path.ends_with(".generator.pin_count") {
             check(
                 f.value == NativeValue::Int(0),
-                "スマートリソースのGeneratorにベイクの固定があります",
+                "スマートリソースのジェネレーターにベイクの固定があります",
             )?;
             let p = f.path.strip_suffix(".generator.pin_count").unwrap();
             if let Some(NativeValue::Guid(id)) = d.field(&format!("{p}.id")) {
@@ -1415,7 +1415,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
                 .ok_or_else(|| Error::InvalidData("repinのIDが文字列ではありません".into()))?;
             check(
                 valid_id(id) && seen.insert(id) && stages.contains(id),
-                "repinは正本のGenerator IDを重複なく指定する必要があります",
+                "repinは正本のジェネレーターIDを重複なく指定する必要があります",
             )?;
         }
     }

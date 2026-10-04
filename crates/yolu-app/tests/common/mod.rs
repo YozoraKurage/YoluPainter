@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod fbx;
+pub mod gpu_thread;
 
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
@@ -32,7 +33,7 @@ pub fn with_render_state_cpu_canvas(
 
 /// 窓の全体（eframe の App として）。文書は size × size。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = gpu_thread::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0) // 実際の窓に近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）

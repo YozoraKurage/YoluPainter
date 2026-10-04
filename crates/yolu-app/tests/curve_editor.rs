@@ -1,5 +1,6 @@
 //! 値のカーブの編集の部品（`ui::curve::curve_editor`。ランプの値のカーブ・トーンカーブ・筆圧のカーブが共通で使う）: 点の無い所を押すと足して動かせ、
 //! 点をドラッグで動かし、右クリックか枠の外へ離すと消す。ドラッグは離すまで値を返さず（1 回の変更）、Esc で元へ戻る。
+mod common;
 use egui::{pos2, vec2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
 use yolu_app::ui::curve::{curve_editor, HEIGHT};
@@ -18,7 +19,7 @@ const RECT: Rect = Rect {
 };
 
 fn harness(curve: Curve) -> Harness<'static, State> {
-    Harness::builder()
+    common::gpu_thread::builder()
         .with_size(vec2(240.0, 160.0))
         .build_ui_state(
             |ui, state: &mut State| {

@@ -110,7 +110,7 @@ pub fn merge_notes_text(lang: Lang, notes: u8) -> String {
     let mut parts: Vec<&str> = Vec::new();
     if notes & 1 != 0 {
         parts.push(lang.pick(
-            "フィルター・Generator を画素に焼いた",
+            "フィルター・ジェネレーターを画素に焼いた",
             "Filters and generators baked into pixels",
         ));
     }

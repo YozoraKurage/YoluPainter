@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 
 use crate::engine::DEFAULT_SOURCE_BUDGET_BYTES;
+use crate::gpu_memory::GpuMemory;
 use crate::lang::Lang;
 use crate::pen::adjust::{PressureAdjust, MIN_SPAN};
 
@@ -160,6 +161,8 @@ pub struct Settings {
     pub livelink_on_startup: bool,
     /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
     pub color_wheel: bool,
+    /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
+    pub gpu_memory: GpuMemory,
 }
 
 impl Default for Settings {
@@ -182,6 +185,7 @@ impl Default for Settings {
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             color_wheel: true,
+            gpu_memory: GpuMemory::Auto,
         }
     }
 }
@@ -340,6 +344,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "compositing" => lang.pick("表示の合成", "Display compositing"),
         "library_folder" => lang.pick("棚の場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
+        "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
@@ -433,6 +438,10 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             "color_wheel" => settings.color_wheel = value != "off",
+            "gpu_memory" => match GpuMemory::parse(value) {
+                Some(v) => settings.gpu_memory = v,
+                None => invalid("gpu_memory"),
+            },
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -551,6 +560,9 @@ fn render(settings: &Settings) -> String {
     if !settings.color_wheel {
         text += "color_wheel=off\n";
     }
+    if settings.gpu_memory != default.gpu_memory {
+        text += &format!("gpu_memory={}\n", settings.gpu_memory.key());
+    }
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -634,6 +646,7 @@ mod tests {
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             color_wheel: true,
+            gpu_memory: GpuMemory::Mib(1536),
         }
     }
 
@@ -732,6 +745,7 @@ mod tests {
             "cpu_threads=4",
             "compositing=cpu",
             "backups=7",
+            "gpu_memory=1536",
             "pressure_low=0.125",
             "pressure_high=0.875",
             "pressure_curve=0:0,0.4:0.6,1:1",
@@ -750,6 +764,7 @@ mod tests {
         back.compositing = Compositing::Auto;
         back.library_folder = None;
         back.backups = BackupKeep::All;
+        back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
@@ -1000,5 +1015,58 @@ mod tests {
         let chosen = std::env::current_dir().unwrap().join("mine");
         s.library_folder = Some(chosen.clone());
         assert_eq!(s.library_folder(), Some(chosen));
+    }
+
+    #[test]
+    fn the_gpu_memory_survives_a_restart_and_the_default_is_not_written() {
+        let dir = temp_dir("gpu-memory");
+        let path = dir.join("settings.conf");
+        assert_eq!(load(&path).0.gpu_memory, GpuMemory::Auto, "ファイルが無ければ自動");
+        for choice in [GpuMemory::Low, GpuMemory::Standard, GpuMemory::High, GpuMemory::Mib(256), GpuMemory::Mib(1536), GpuMemory::Mib(crate::gpu_memory::MAX_TOTAL_MIB)] {
+            let settings = Settings { gpu_memory: choice, ..Settings::default() };
+            save(&path, &settings).unwrap();
+            assert_eq!(load(&path), (settings, vec![]), "{choice:?}");
+            assert!(std::fs::read_to_string(&path).unwrap().lines().any(|l| l == format!("gpu_memory={}", choice.key())));
+        }
+        // 自動へ戻すと行が消え、今までと同じ中身になる
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("gpu_memory"));
+        assert_eq!(load(&path), (Settings::default(), vec![]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_gpu_memory_reads_as_automatic_without_a_reason() {
+        let (read, problems) = parse("language=en\nundo_budget_mib=512\ncompositing=cpu\n");
+        assert_eq!((read.gpu_memory, problems), (GpuMemory::Auto, vec![]));
+        assert_eq!(read.undo_budget, Budget::Mib(512), "ほかの項目は今までどおり");
+        // 値の無い行・空の値は壊れた値の扱い
+        let (read, problems) = parse("gpu_memory=\n");
+        assert_eq!(read.gpu_memory, GpuMemory::Auto);
+        assert_eq!(problems, vec![Problem::Invalid { key: "gpu_memory", value: String::new() }]);
+    }
+
+    #[test]
+    fn a_broken_gpu_memory_falls_back_to_automatic_with_a_reason_and_keeps_the_rest() {
+        for bad in ["medium", "AUTO", "255", "32769", "-1", "1e3", "12.5", "99999999999999999999", "1024MiB"] {
+            let (read, problems) = parse(&format!("language=en\ngpu_memory={bad}\nbackups=3\n"));
+            assert_eq!(read.gpu_memory, GpuMemory::Auto, "{bad}");
+            assert_eq!(problems, vec![Problem::Invalid { key: "gpu_memory", value: bad.to_owned() }], "{bad}");
+            assert_eq!((read.lang, read.backups), (Lang::En, BackupKeep::Count(3)), "ほかの項目は生かす: {bad}");
+            // 理由は短い文で、設定の名前を言う
+            let ja = problems[0].text(Lang::Ja);
+            let en = problems[0].text(Lang::En);
+            assert!(ja.contains("GPU のメモリ") && en.contains("GPU memory"), "{ja} / {en}");
+        }
+        // 読み直して書き直すと、壊れた行は消える（直前まで読めた値は残る）
+        let dir = temp_dir("gpu-memory-broken");
+        let path = dir.join("settings.conf");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "language=en\ngpu_memory=lots\nbackups=3\n").unwrap();
+        let (read, problems) = load(&path);
+        assert_eq!(problems.len(), 1);
+        save(&path, &read).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=3\n");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -27,7 +27,7 @@ use yolu_gpu::Unsupported;
 
 /// 1280 × 800 の窓に、doc_w × doc_h の文書。
 fn canvas_app(doc_w: u32, doc_h: u32, policy: CanvasBackend) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

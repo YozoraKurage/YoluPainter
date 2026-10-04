@@ -31,10 +31,10 @@ impl fmt::Display for Error {
             Self::Invalid(s) => f.write_str(s),
             Self::Budget { needed, budget } => write!(
                 f,
-                "Generator の作業メモリが予算を超えます: {needed} > {budget} バイト"
+                "ジェネレーターの作業メモリが予算を超えます: {needed} > {budget} バイト"
             ),
-            Self::Cancelled => f.write_str("Generator の評価を取り消しました"),
-            Self::Allocation => f.write_str("Generator の作業メモリを確保できません"),
+            Self::Cancelled => f.write_str("ジェネレーターの評価を取り消しました"),
+            Self::Allocation => f.write_str("ジェネレーターの作業メモリを確保できません"),
         }
     }
 }
@@ -271,7 +271,7 @@ impl Settings {
             || !(0.001..=1.).contains(&self.noise_scale)
         {
             return Err(Error::Invalid(
-                "Generator のレベル・減衰・ノイズが範囲外です",
+                "ジェネレーターのレベル・減衰・ノイズが範囲外です",
             ));
         }
         if !unit(self.balance)
@@ -279,7 +279,7 @@ impl Settings {
             || self.axis > 2
             || (self.kind != Kind::PositionGradient && self.axis != 1)
         {
-            return Err(Error::Invalid("Generator の種類に対して割合・軸が不正です"));
+            return Err(Error::Invalid("ジェネレーターの種類に対して割合・軸が不正です"));
         }
         let [x, y, z] = self.direction;
         if self
@@ -290,7 +290,7 @@ impl Settings {
             || (self.kind != Kind::Direction
                 && (self.direction != [0., 1., 0.] || self.use_bent_normal))
         {
-            return Err(Error::Invalid("Generator の方向が不正です"));
+            return Err(Error::Invalid("ジェネレーターの方向が不正です"));
         }
         self.volume.validate()?;
         if self.kind != Kind::ShapeGradient

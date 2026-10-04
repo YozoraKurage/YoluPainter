@@ -944,10 +944,10 @@ impl Document {
         let (index, target, at) = self.locate_filter(layer, filter)?;
         let effect = &self.stack_ref(index, target)?[at];
         let EffectSettings::Generator(g) = &effect.settings else {
-            return Err(CoreError::Unsupported("Anchor の Generator ではない"));
+            return Err(CoreError::Unsupported("Anchor のジェネレーターではない"));
         };
         if g.kind != generator::Kind::Anchor {
-            return Err(CoreError::Unsupported("Anchor の Generator ではない"));
+            return Err(CoreError::Unsupported("Anchor のジェネレーターではない"));
         }
         require_standard(channel)?;
         if channel == Channel::Normal {
@@ -1089,7 +1089,7 @@ impl Document {
                             if let Some(p) = points.iter().find(|p| p.id == g.anchor.id) {
                                 if p.host == i && g.anchor.id != 0 {
                                     return Err(CoreError::InvalidArgument(
-                                        "自分の層の Anchor を読む Generator（値が自分に戻る）",
+                                        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）",
                                     ));
                                 }
                             }
@@ -1545,7 +1545,7 @@ impl Document {
         let index = self.index_of(layer)?;
         let (_, target, at) = self.locate_filter(layer, filter)?;
         let EffectSettings::Generator(g) = &self.stack_ref(index, target)?[at].settings else {
-            return Err(CoreError::Unsupported("Generator ではない"));
+            return Err(CoreError::Unsupported("ジェネレーターではない"));
         };
         Ok(self.generator_reason(g, index))
     }
@@ -1560,7 +1560,7 @@ impl Document {
         let index = self.index_of(layer)?;
         let (_, target, at) = self.locate_filter(layer, filter)?;
         let EffectSettings::Generator(g) = &self.stack_ref(index, target)?[at].settings else {
-            return Err(CoreError::Unsupported("Generator ではない"));
+            return Err(CoreError::Unsupported("ジェネレーターではない"));
         };
         Ok(self.generator_status(g, index).1)
     }

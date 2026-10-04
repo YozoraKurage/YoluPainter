@@ -405,7 +405,7 @@ fn drafting_options_and_ruler_overlays_in_both_languages() {
         let mut s = state();
         s.lang = lang;
         s.tool = Tool::Ruler;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(920.0, 300.0))
             .with_render_options(common::render_options())
             .wgpu()

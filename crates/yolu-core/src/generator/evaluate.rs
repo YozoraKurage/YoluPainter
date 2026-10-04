@@ -71,7 +71,7 @@ impl<'a> BoundGenerator<'a> {
         g.validate()?;
         let (width, height) = dimensions;
         if width == 0 || height == 0 {
-            return Err(Error::Invalid("Generator の大きさは正数が必要です"));
+            return Err(Error::Invalid("ジェネレーターの大きさは正数が必要です"));
         }
         let mut table = [None; 10];
         for map in maps {
@@ -125,7 +125,7 @@ impl<'a> BoundGenerator<'a> {
         if g.kind == Kind::Anchor {
             if let Ok(a) = anchor {
                 if a.dimensions() != (width, height) {
-                    return Err(Error::Invalid("Anchor と Generator の画像サイズが違います"));
+                    return Err(Error::Invalid("Anchor とジェネレーターの画像サイズが違います"));
                 }
             }
         }
@@ -436,7 +436,7 @@ pub fn evaluate(
 ) -> Result<Output, Error> {
     if !unit(strength) || source.dimensions() != g.dimensions() {
         return Err(Error::Invalid(
-            "Generator の強さまたは画像の大きさが不正です",
+            "ジェネレーターの強さまたは画像の大きさが不正です",
         ));
     }
     let mut pixels = allocate(region, source.dimensions(), options)?;

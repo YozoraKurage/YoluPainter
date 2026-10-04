@@ -1078,6 +1078,54 @@ fn a_picture_that_cannot_be_copied_down_is_rebuilt_at_once_instead_of_staying_fu
 }
 
 #[test]
+fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_building_it_again() {
+    // セット 0 は Color + Normal + Emission（12 B/テクセル。512² で 4,194,300 B）で、予算 3,000,000 B には入らず 256²（1,048,572 B）へ縮む。
+    // そのあと Normal と Emission の層を消すと Color だけ（512² で 1,398,100 B）になるが、縮めは上げるだけなので 256² のまま。
+    // 今のセットを 1 に替えるとき、前の絵は縮めたまま持ち越す。ほかのセットへ回すときの `u64::MAX` の入れ直しを「予算を上げた」と
+    // 数えると、替えるたびに 512² へ作り直す（新しい絵を作る前に前の絵を縮める、が逆になる）。予算を上げたときだけ戻る
+    // （`lowering_the_memory_shrinks_the_current_sets_picture_and_raising_it_restores_the_size`）
+    const BUDGET: u64 = 3_000_000;
+    let mut h = scene(2, 512);
+    paint(&mut h, 0, COLORS[0]);
+    paint(&mut h, 1, COLORS[1]);
+    let extra = h
+        .state_mut()
+        .state
+        .set_doc_mut(0)
+        .add_fill_layer(
+            "余分",
+            &[
+                (Channel::Normal, Rgba8::new(128, 128, 255, 255)),
+                (Channel::Emission, Rgba8::new(10, 20, 30, 255)),
+            ],
+            None,
+        )
+        .unwrap();
+    h.run();
+    h.state_mut().view3d_set_paint_budget(BUDGET);
+    h.run();
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.paint_level, s.paint_by_budget), (1, true), "{s:?}");
+    assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
+    h.state_mut().state.set_doc_mut(0).remove_layer(extra).unwrap();
+    h.run();
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!(s.paint_level, 1, "縮めは上げるだけ: {s:?}");
+    // 替える: 前の絵（セット 0）は縮めたまま。作り直さない
+    switch(&mut h, 1);
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.paint_level, s.other_sets, s.other_skipped), (0, 1, 0), "{s:?}");
+    assert_eq!((s.other_level, s.other_bytes), (1, 349_524), "縮めたまま持ち越す: {s:?}");
+    let (_, size, level) = h.state().view3d_read_other_level(0, Slot::Color, 0).unwrap();
+    assert_eq!((size, level), ([256, 256], 1));
+    assert_close(face(&mut h, 0, 2), COLORS[0], 2, "縮めたままの絵");
+    // 前の絵が今のセットへ戻ると、文書の大きさで作る（下げるのは文書が替わるとき）
+    switch(&mut h, 0);
+    let s = h.state().view3d_stats().unwrap();
+    assert_eq!((s.paint_level, s.paint_by_budget), (0, false), "{s:?}");
+}
+
+#[test]
 fn a_material_with_every_face_hidden_by_the_pose_is_not_held_and_comes_back_with_its_faces() {
     use std::sync::Arc;
     use yolu_app::view3d::pose::hide::FaceMask;

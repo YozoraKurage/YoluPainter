@@ -378,7 +378,7 @@ impl Blocker {
             Refusal::ToneCurveBetweenSteps => format!("調整「{name}」のトーンカーブの点は PSD の刻み（入力・出力とも 0〜255 の整数）の間にあります。丸めて書かず断ります"),
             Refusal::ColorBalanceBetweenSteps => format!("調整「{name}」のカラーバランスは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
             Refusal::BrightnessContrastBetweenSteps => format!("調整「{name}」の明るさ・コントラストは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
-            Refusal::Effects => format!("層「{name}」にフィルターか Generator があります。効果は PSD に書けません"),
+            Refusal::Effects => format!("層「{name}」にフィルターかジェネレーターがあります。効果は PSD に書けません"),
             Refusal::Anchor => format!("層「{name}」に Anchor があります。Anchor は PSD に書けません"),
             Refusal::Path => format!("層「{name}」にパスがあります。パスは PSD に書けません"),
             Refusal::NormalLevels => format!("調整「{name}」のレベル補正は、ファイルの向きが DirectX の Normal の PSD に書けません。緑だけ別の曲線になります"),

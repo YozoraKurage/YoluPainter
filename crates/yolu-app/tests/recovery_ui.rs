@@ -83,7 +83,7 @@ fn crashed_root(dir: &TempDir, count: usize, saved_as: Option<&Path>) {
 }
 
 fn app_with(state: AppState) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -499,7 +499,7 @@ fn an_unreadable_recovery_setting_is_reported_in_the_status_band_when_the_app_st
         let dir = TempDir::new("conf-band");
         let conf = dir.0.join("recovery.conf");
         std::fs::write(&conf, vec![b'a'; 5000]).unwrap();
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(1280.0, 800.0))
             .with_pixels_per_point(1.0)
             .with_render_options(render_options())

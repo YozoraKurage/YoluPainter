@@ -532,7 +532,7 @@ fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_edi
         .unwrap()
         .read_only
         .as_deref()
-        .expect("入力がそろわない Generator があるので読むだけ");
+        .expect("入力がそろわないジェネレーターがあるので読むだけ");
     assert!(reason.contains("効果の入力がそろっていない"), "{reason}");
     assert!(reason.contains("マップがありません"), "{reason}");
     assert!(
@@ -611,7 +611,7 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
         .unwrap()
         .read_only
         .clone()
-        .expect("効かない Generator が正本に残っている");
+        .expect("効かないジェネレーターが正本に残っている");
     assert!(reason.contains("厚み"), "{reason}");
 }
 

@@ -177,7 +177,7 @@ impl Block {
             ),
             Block::Images => lang.pick("画像入りは置けません", "Contains images").into(),
             Block::Generators => lang
-                .pick("Generator 付きは置けません", "Has pinned generators")
+                .pick("ジェネレーター付きは置けません", "Has pinned generators")
                 .into(),
             Block::Unsupported(e) => e.reason(lang).to_owned(),
             Block::Unreadable(e) => format!(
@@ -223,6 +223,9 @@ pub struct Inspected {
     pub channels: Vec<Channel>,
     pub block: Option<Block>,
     thumb: Thumb,
+    /// サムネイルのために展開してよい量（`preview_budget`）が足りずに、アイコンで見せている。量を上げたときの見直しの印で、
+    /// ほかの理由でサムネイルが無い素材（画像が大きい・マスクに画素が無い など）には立てない。
+    budget_skipped: bool,
 }
 
 impl Inspected {
@@ -273,6 +276,7 @@ impl Inspected {
             channels: Vec::new(),
             block,
             thumb: Thumb::None,
+            budget_skipped: false,
         }
     }
 }
@@ -927,6 +931,15 @@ impl ShelfState {
         self.inspected.get(id)
     }
 
+    /// 素材のサムネイルのために展開してよい量を替える（設定の GPU のメモリ）。上げたときは、量が足りずにアイコンのままの素材を見直す
+    /// （次の `inspect` が、新しい量で作る）。下げても、作ってあるサムネイルは残す。
+    pub fn set_preview_budget(&mut self, bytes: u64) {
+        if bytes > self.preview_budget {
+            self.inspected.retain(|_, info| !info.budget_skipped);
+        }
+        self.preview_budget = bytes;
+    }
+
     /// 項目を見るのに要るものを集める（無い項目・知らない種類は None）。
     fn input_of(&self, id: &str) -> Option<Input> {
         let r = self.get(id)?;
@@ -1284,7 +1297,7 @@ pub(crate) fn inspect_smart_kind(
                 .unwrap_or(Thumb::None)
         }
         // 展開の予算を超えただけの素材は、アイコンで見せて置ける（置くときの展開に上限は無い）。io が予算の種類で返す
-        Err(yolu_io::Error::Budget(_) | yolu_io::Error::Core(CoreError::SourceBudgetExceeded)) => {}
+        Err(yolu_io::Error::Budget(_) | yolu_io::Error::Core(CoreError::SourceBudgetExceeded)) => out.budget_skipped = true,
         Err(e) => out.block = Some(smart_block(&file, &e)),
     }
     (out, Some(file.kind()))

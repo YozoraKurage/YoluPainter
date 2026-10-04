@@ -4,7 +4,6 @@
 mod common;
 
 use egui::{pos2, vec2, Color32, Rect};
-use egui_kittest::Harness;
 use yolu_app::ui::theme::{self as t, TextStyle};
 use yolu_app::ui::widgets::{self as w, Align};
 use yolu_app::YoluApp;
@@ -39,7 +38,7 @@ fn center_offsets(texts: &[&str], style: TextStyle, ppp: f32) -> Vec<f32> {
         rows: rows.clone(),
         style,
     };
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(220.0, height))
         .with_pixels_per_point(ppp)
         .with_render_options(common::render_options())
@@ -166,7 +165,7 @@ fn japanese_and_english_text_share_one_line_height() {
         en: f32,
         mixed: f32,
     }
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(100.0, 40.0))
         .with_render_options(common::render_options())
         .wgpu()

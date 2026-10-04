@@ -1290,7 +1290,7 @@ fn color_panel(width: f32, height: f32, wheel: bool, lang: Lang) -> Harness<'sta
     state.color.wheel = wheel;
     let mut textures = yolu_app::panels::color::ColorTextures::default();
     let mut ready = false;
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, height))
         .with_render_options(common::render_options())
         .wgpu()

@@ -1507,7 +1507,7 @@ fn headless_every_io_refusal_the_shelf_words_has_a_short_sentence_in_both_langua
         (REFUSAL_IMAGES, "画像入りは置けません", "Contains images"),
         (
             REFUSAL_GENERATORS,
-            "Generator 付きは置けません",
+            "ジェネレーター付きは置けません",
             "Has pinned generators",
         ),
         (
@@ -1571,7 +1571,7 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     assert_eq!(io_reason(Lang::En, &error), "Contains images");
     // Generator の再固定（実物: フィルターを Generator に書き換え、索引の repin に入れた素材）
     let error = to_core(&generator_pinned_bytes());
-    assert_eq!(io_reason(Lang::Ja, &error), "Generator 付きは置けません");
+    assert_eq!(io_reason(Lang::Ja, &error), "ジェネレーター付きは置けません");
     assert_eq!(io_reason(Lang::En, &error), "Has pinned generators");
     // 棚の予算
     let mut tiny = Shelf::new(1);
@@ -1918,7 +1918,7 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
         (
             pinned.clone(),
             "generators",
-            "Generator 付きは置けません",
+            "ジェネレーター付きは置けません",
             "Has pinned generators",
         ),
     ] {

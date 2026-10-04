@@ -1,3 +1,4 @@
+mod common;
 use egui::{vec2, Event, Modifiers, PointerButton, Pos2};
 use egui_kittest::{kittest::Queryable, Harness};
 use yolu_app::{
@@ -12,7 +13,7 @@ fn panel(width: f32, lang: Lang) -> Harness<'static, AppState> {
     let mut ready = false;
     let mut state = AppState::new(16, 16);
     state.lang = lang;
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, 740.0))
         .build_ui_state(
             move |ui, state| {
@@ -244,7 +245,7 @@ fn app_persists_history_with_the_color_sets_tab_closed() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("settings.conf");
     let create = |path: std::path::PathBuf| {
-        Harness::builder()
+        common::gpu_thread::builder()
             .with_size(vec2(1000.0, 800.0))
             .build_eframe(move |cc| {
                 YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())

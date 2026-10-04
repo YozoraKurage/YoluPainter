@@ -926,10 +926,17 @@ impl View3dRenderer {
         }
     }
 
-    /// 塗った絵のバイトの予算を決める（試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、ほかのセットの絵が入る。
+    /// 塗った絵のバイトの予算を決める（設定の GPU のメモリ・試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、
+    /// ほかのセットの絵が入る。上げたときは、予算で縮めていた今のセットの絵を元の大きさへ戻す（ほかのセットは、替わるたびに
+    /// 上限だけで決め直すので、ここでは触らない）。
     pub fn set_paint_budget(&mut self, bytes: u64) {
         self.total_budget = bytes;
-        self.paint.set_budget(bytes);
+        self.paint.set_budget_and_regrow(bytes);
+    }
+
+    /// 塗った絵の全体のバイトの予算（今のセットとほかのセットの合計）。
+    pub fn paint_budget(&self) -> u64 {
+        self.total_budget
     }
 
     /// ほかのセットの絵を新しく作り始めてよい 1 フレームの時間を決める（試験が 0 にして、1 フレームに 1 つずつの道を通す）。

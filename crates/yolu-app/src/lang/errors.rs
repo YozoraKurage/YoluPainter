@@ -469,17 +469,17 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "未知のロック" => "Unknown lock",
         "結合は 2 層以上" => "Merging requires at least two layers",
         "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
-        "Anchor の Generator ではない" => "Not an anchor generator",
+        "Anchor のジェネレーターではない" => "Not an anchor generator",
         "Anchor の ID が空" => "Anchor ID is empty",
         "Anchor の ID が空か重なっている" => "Anchor ID is empty or duplicated",
         "Anchor の ID が重なっている" => "Anchor ID is duplicated",
         "Anchor の名前が空" => "Anchor name is empty",
         "Anchor の名前が長すぎる" => "Anchor name is too long",
         "Anchor は Normal を読めない" => "An anchor cannot read Normal",
-        "Generator ではない" => "Not a generator",
-        "Generator の設定" => "Generator settings",
-        "Generator は 1 画素に 1 つの値を作るので、接空間の法線には置けない" => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
-        "Generator は generator の設定で置く" => "A generator is placed with generator settings",
+        "ジェネレーターではない" => "Not a generator",
+        "ジェネレーターの設定" => "Generator settings",
+        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない" => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
+        "ジェネレーターはジェネレーターの設定で置く" => "A generator is placed with generator settings",
         "グラデーションの設定" => "Gradient settings",
         "グループの合成へのフィルターは無い" => "Groups have no filters on their composite",
         "このマスクにはもう Anchor がある" => "This mask already has an anchor",
@@ -535,7 +535,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "画像の ID が空" => "Image ID is empty",
         "画像の大きさ" => "Image size",
         "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
-        "自分の層の Anchor を読む Generator（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
+        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
         "調整の層には画素が無い" => "Adjustment layers have no pixels",
         "面のダブを拒否した" => "The surface dab was refused",
         "見た目の設定の復元は読み込み直後だけ" => "Look settings can only be restored right after loading",
@@ -1201,7 +1201,7 @@ mod tests {
             Note::Migrated { format: 2 },
             Note::MaterialRefsMigrated { format: 3 },
             Note::UnknownEntryKept("future.bin".into()),
-            Note::SetNotConvertible { set: "Skin".into(), issue: "layers[2].filters（フィルター・Generator）".into() },
+            Note::SetNotConvertible { set: "Skin".into(), issue: "layers[2].filters（フィルター・ジェネレーター）".into() },
             Note::SmartResourceKept("Rust".into()),
             Note::BrushKept,
         ];
@@ -1214,9 +1214,9 @@ mod tests {
         // 件数だけでなく、名前・形式・項目のキーが読める
         assert!(english[1].contains('2') && english[2].contains('3'));
         assert!(english[3].contains("future.bin") && english[5].contains("Rust"));
-        assert!(english[4].contains("Skin") && english[4].contains("layers[2].filters") && !english[4].contains("Generator"));
+        assert!(english[4].contains("Skin") && english[4].contains("layers[2].filters") && !english[4].contains("ジェネレーター"));
 
-        let issues: Vec<String> = ["layers[0].locks（ロック）", "manual_id_colors（手動の ID 色）", "layers[1].filters（フィルター・Generator）", "layers[2].anchor（Anchor）", "layers[3].anchor（Anchor）"]
+        let issues: Vec<String> = ["layers[0].locks（ロック）", "manual_id_colors（手動の ID 色）", "layers[1].filters（フィルター・ジェネレーター）", "layers[2].anchor（Anchor）", "layers[3].anchor（Anchor）"]
             .into_iter()
             .map(String::from)
             .collect();

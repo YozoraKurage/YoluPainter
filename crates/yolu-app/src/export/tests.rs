@@ -602,7 +602,7 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     assert!(s.doc.inactive_effect_list().is_empty());
     let screen = s.doc.composite(s.doc.bounds()).unwrap();
     let hidden = screen.iter().skip(3).step_by(4).filter(|a| **a != 255).count();
-    assert!(hidden > 0, "焼いたマップの Generator が見える所を絞る");
+    assert!(hidden > 0, "焼いたマップのジェネレーターが見える所を絞る");
     let after = Dir::new("generator-after");
     export(&mut s, "unity-standard", &after.0);
     s.wait_export();

@@ -27,7 +27,7 @@ pub fn renderer() -> WgpuTestRenderer {
 
 /// common::app と同じ窓・文書・CPU キャンバスを、共用の GPU 接続に載せる。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = crate::common::gpu_thread::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

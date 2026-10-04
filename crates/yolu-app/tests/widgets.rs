@@ -239,7 +239,7 @@ fn gallery() -> Harness<'static, Gallery> {
         text: "レイヤー 1".into(),
         ..Default::default()
     };
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(420.0, 520.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

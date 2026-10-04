@@ -2316,7 +2316,7 @@ fn clipped_texts(h: &Harness<'_, YoluApp>) -> Vec<String> {
 }
 
 fn sized_app(width: f32, height: f32, lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

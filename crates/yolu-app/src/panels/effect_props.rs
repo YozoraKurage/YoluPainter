@@ -954,7 +954,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
         name_rect,
         (key, "anchor.name", id.0),
         name,
-        Some(lang.pick("アンカーの名前（上の層の Generator はこの名前で選びます）", "The anchor's name: generators above list it by this name")),
+        Some(lang.pick("アンカーの名前（上の層のジェネレーターはこの名前で選びます）", "The anchor's name: generators above list it by this name")),
         false,
     );
     if let Some(next) = out.committed {
@@ -965,7 +965,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
     let count_rect = Rect::from_min_max(pos2(name_rect.right() + 4.0, row.top()), pos2(row.right() - 26.0, row.bottom()));
     w::text(ui.painter(), count_rect, &count, t::LABEL_DIM.with_color(t::TEXT_DIM), w::Align::Left);
     let tip = if readers.is_empty() {
-        lang.pick("読んでいる Generator はありません", "No generator reads this anchor.").to_owned()
+        lang.pick("読んでいるジェネレーターはありません", "No generator reads this anchor.").to_owned()
     } else {
         let names: Vec<String> = readers
             .iter()
@@ -989,7 +989,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
         (key, "anchor.remove", id.0),
         "delete",
         lang.pick(
-            "アンカーを外す（読んでいる Generator は、取り消すまで入力をそのまま通します）",
+            "アンカーを外す（読んでいるジェネレーターは、取り消すまで入力をそのまま通します）",
             "Remove the anchor (generators that read it pass their input through until you undo)",
         ),
         false,
@@ -1012,7 +1012,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             "fx.add",
             lang.pick("フィルターを足す", "Add Filter"),
             lang.pick(
-                "画素にフィルターか Generator（焼いたメッシュマップから値を作る）を足す",
+                "画素にフィルターかジェネレーター（焼いたメッシュマップから値を作る）を足す",
                 "Add a filter or a generator (values from the baked mesh maps) on the pixels",
             ),
         ),
@@ -1020,7 +1020,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             "fx.add.mask",
             lang.pick("マスクにフィルターを足す", "Add Filter to Mask"),
             lang.pick(
-                "マスクにフィルターか Generator（レイヤーの見える所を、焼いたメッシュマップから作る）を足す",
+                "マスクにフィルターかジェネレーター（レイヤーの見える所を、焼いたメッシュマップから作る）を足す",
                 "Add a filter or a generator on the mask (where the layer shows, from the baked mesh maps)",
             ),
         ),
@@ -1046,14 +1046,14 @@ pub fn anchor_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, layer: Layer
                 AnchorPlacement::Layer => (
                     lang.pick("アンカーを置く", "Add Anchor"),
                     lang.pick(
-                        "この層までの合成の結果に名前を付けて、上の層の Generator が読めるようにします（下の層の Height で上の層の摩耗を決める、など）",
+                        "この層までの合成の結果に名前を付けて、上の層のジェネレーターが読めるようにします（下の層の Height で上の層の摩耗を決める、など）",
                         "Name the stack's result up to this layer, so generators on the layers above can read it (a lower layer's Height can drive an upper layer's wear, for example)",
                     ),
                 ),
                 AnchorPlacement::Mask => (
                     lang.pick("マスクにアンカーを置く", "Add Anchor to Mask"),
                     lang.pick(
-                        "このマスクに名前を付けて、上の層の Generator が「この層がどれだけ見えるか」を読めるようにします",
+                        "このマスクに名前を付けて、上の層のジェネレーターが「この層がどれだけ見えるか」を読めるようにします",
                         "Name this mask, so generators on the layers above can read how much this layer shows",
                     ),
                 ),

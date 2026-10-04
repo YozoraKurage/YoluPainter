@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use egui::{pos2, vec2, Id, Rect, Vec2};
 use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 
+use crate::gpu_memory::{self, GpuMemory};
 use crate::lang::Lang;
 use crate::m2::UiOp;
 use crate::settings::{
@@ -57,6 +58,8 @@ pub enum Pref {
     /// None は自動。
     CpuThreads(Option<u32>),
     Compositing(Compositing),
+    /// GPU のメモリ（自動・低・標準・高、詳しくで指定した合計）。
+    GpuMemory(GpuMemory),
     /// None は既定。
     LibraryFolder(Option<PathBuf>),
 }
@@ -69,6 +72,7 @@ pub enum PrefChoice {
     Budget(BudgetKind),
     CpuThreads,
     Compositing,
+    GpuMemory,
 }
 
 /// 設定の窓の操作（`Action::Prefs`）。
@@ -81,6 +85,8 @@ pub enum PrefsAction {
     SetBackups(BackupKeep),
     /// 棚の場所のフォルダを選ぶ窓を頼む。
     ChooseLibraryFolder,
+    /// GPU のメモリの「詳しく」を開く・閉じる（窓の中だけの状態。設定には書かない）。
+    GpuDetails(bool),
 }
 
 /// 設定の窓の状態と、いま選んでいる設定。
@@ -105,6 +111,13 @@ pub struct PrefsState {
     managed: bool,
     /// 画素がすでに予算を超えていると知らせた文書（通し番号）と、そのとき入れた予算（同じ状況で知らせ直さない）。
     over: Option<(u128, u64)>,
+    /// アダプターから分かった GPU のメモリ（自動・低・標準・高の元。`YoluApp::with_render_state` が入れる。試験は差し替える）。
+    pub gpu: gpu_memory::Adapter,
+    /// GPU のメモリの「詳しく」を開いているか（窓の中だけの状態）。
+    pub gpu_details: bool,
+    /// 合計のスライダーを押し始めたときの「GPU のメモリ」の選び（自動・段・指定）。Esc で止めたとき、押し始めの量ではなく
+    /// この選びへ戻す（量へ戻すと、自動・段が「指定」に置き換わる）。押していないあいだは None。
+    gpu_memory_before_drag: Option<GpuMemory>,
 }
 
 impl Default for PrefsState {
@@ -120,6 +133,9 @@ impl Default for PrefsState {
             cores: std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
             managed: false,
             over: None,
+            gpu: gpu_memory::Adapter::default(),
+            gpu_details: false,
+            gpu_memory_before_drag: None,
         }
     }
 }
@@ -164,6 +180,7 @@ impl AppState {
             PrefsAction::Close => {
                 self.prefs.open = false;
                 self.prefs.dragging = false;
+                self.prefs.gpu_memory_before_drag = None;
             }
             PrefsAction::SetBackups(keep) => {
                 let keep = match keep {
@@ -176,6 +193,7 @@ impl AppState {
                 self.prefs.settings.backups = keep;
             }
             PrefsAction::ChooseLibraryFolder => self.dialog_request = Some(DialogRequest::PrefsLibraryFolder),
+            PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::ExportPadding(v) => {
@@ -205,6 +223,12 @@ impl AppState {
                     self.prefs.settings.cpu_threads = n.map(|n| n.clamp(1, MAX_CPU_THREADS));
                 }
                 Pref::Compositing(c) => self.prefs.settings.compositing = c,
+                Pref::GpuMemory(choice) => {
+                    self.prefs.settings.gpu_memory = match choice {
+                        GpuMemory::Mib(n) => GpuMemory::Mib(n.clamp(gpu_memory::MIN_TOTAL_MIB, gpu_memory::MAX_TOTAL_MIB)),
+                        level => level,
+                    };
+                }
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
                         self.message = lang
@@ -269,6 +293,16 @@ impl AppState {
     /// 読み込み（.ylp を開く・書き出しが写した文書を戻す）で 1 つの文書に許す層の画素のバイト数。
     pub fn load_source_bytes(&self) -> u64 {
         self.prefs.settings.load_source_bytes(self.prefs.ram_mib)
+    }
+
+    /// GPU のメモリの設定とアダプターから配った 3 つの予算（3D の絵・キャンバスの合成・棚のサムネイル。`YoluApp` が変わったときに入れる）。
+    pub fn gpu_budgets(&self) -> gpu_memory::Budgets {
+        gpu_memory::budgets(self.prefs.settings.gpu_memory, &self.prefs.gpu)
+    }
+
+    /// 今の GPU のメモリの合計（MiB。「詳しく」のスライダーに見せる。選んだ段・自動もこの数になる）。
+    pub fn gpu_total_mib(&self) -> u32 {
+        (gpu_memory::total_bytes(self.prefs.settings.gpu_memory, &self.prefs.gpu) / gpu_memory::MIB) as u32
     }
 }
 
@@ -366,6 +400,17 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
             .into_iter()
             .map(|c| Entry::item(compositing_name(lang, c), set(Pref::Compositing(c))).radio(s.compositing == c))
             .collect(),
+        PrefChoice::GpuMemory => {
+            let mut entries: Vec<Entry<Action>> = GpuMemory::LEVELS
+                .into_iter()
+                .map(|g| Entry::item(g.name(lang), set(Pref::GpuMemory(g))).radio(s.gpu_memory == g))
+                .collect();
+            // 詳しくで量を指定しているときは、その印を末尾に（数は出さない。選び直すと段に戻る）
+            if matches!(s.gpu_memory, GpuMemory::Mib(_)) {
+                entries.push(Entry::item(s.gpu_memory.name(lang), set(Pref::GpuMemory(s.gpu_memory))).radio(true));
+            }
+            entries
+        }
     }
 }
 
@@ -378,7 +423,7 @@ enum Request {
 }
 
 /// 窓の高さ（見出し・行・区切り）。
-fn window_height() -> f32 {
+fn window_height(gpu_details: bool) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     window::HEADER_HEIGHT
         + 8.0
@@ -388,7 +433,9 @@ fn window_height() -> f32 {
         + t::SLIDER_ROW_HEIGHT
         + GAP // 最小の取り消し段数
         + SEPARATOR
-        + dropdown * 2.0 // スレッド・合成
+        + dropdown * 3.0 // スレッド・合成・GPU のメモリ
+        + dropdown // 詳しく
+        + if gpu_details { t::SLIDER_ROW_HEIGHT + GAP } else { 0.0 } // GPU のメモリの合計
         + SEPARATOR
         + dropdown * 2.0 // 棚の場所（パスとボタン）
         + SEPARATOR
@@ -403,13 +450,14 @@ fn window_height() -> f32 {
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.prefs.open {
         app.prefs.dragging = false;
+        app.prefs.gpu_memory_before_drag = None;
         return;
     }
     let lang = app.lang;
     let spec = Spec {
         title: lang.pick("設定", "Settings"),
         icon: Some("tune"),
-        size: vec2(WIDTH, window_height()),
+        size: vec2(WIDTH, window_height(app.prefs.gpu_details)),
         modal: false,
         close_label: lang.pick("閉じる", "Close"),
     };
@@ -424,7 +472,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let library = s.library_folder();
     let keep_all = s.backups == BackupKeep::All;
     let backup_count = app.prefs.shown_backups();
+    let (gpu_details, gpu_total) = (app.prefs.gpu_details, app.gpu_total_mib());
     let mut dragging = false;
+    let mut gpu_dragging = false;
     let closed = window::show(ctx, id, &spec, &mut offset, false, |ui, frame| {
         let mut rows = w::Rows::new(frame.body, 8.0);
         let choice = |ui: &mut egui::Ui, rows: &mut w::Rows, key: &str, label: &str, value: &str, tip: &str, which: PrefChoice| {
@@ -549,6 +599,60 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
             PrefChoice::Compositing,
         ));
+        requests.extend(choice(
+            ui,
+            &mut rows,
+            "gpu-memory",
+            crate::settings::setting_name(lang, "gpu_memory"),
+            s.gpu_memory.name(lang),
+            lang.pick(
+                "3D ビュー・キャンバスの GPU の合成・棚のサムネイルが使ってよい GPU のメモリの量。足りないと、3D ビューはほかのテクスチャセットの絵を減らし、今のセットの絵を小さくして見せます（テクスチャと書き出しは変わりません）。自動は GPU のメモリの量が分かるときだけ、それに合わせます（少なければ低に、多ければ標準の量を増やします）。分からないときは標準です",
+                "How much GPU memory the 3D view, the canvas compositing and the shelf previews may use. When it runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard",
+            ),
+            PrefChoice::GpuMemory,
+        ));
+        let open = w::subsection_header(ui, rows.row(t::ROW_HEIGHT, GAP), ("prefs", "gpu-details"), lang.pick("詳しく", "Details"), gpu_details);
+        if open != gpu_details {
+            requests.push(Request::Do(PrefsAction::GpuDetails(open)));
+        }
+        if gpu_details {
+            let out = w::slider(
+                ui,
+                rows.row(t::SLIDER_ROW_HEIGHT, GAP),
+                ("prefs", "gpu-total"),
+                gpu_total as f32,
+                &SliderSpec::new(
+                    lang.pick("合計", "Total"),
+                    gpu_memory::MIN_TOTAL_MIB as f32,
+                    gpu_memory::MAX_TOTAL_MIB as f32,
+                    NumberFormat::int(" MiB"),
+                )
+                .tooltip(lang.pick(
+                    "GPU のメモリの合計。3D の絵・キャンバスの合成・棚のサムネイルへ 4 : 4 : 1 に配ります。動かすと、段の選びを置き換えた量の指定になります",
+                    "The total GPU memory, split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the shelf previews. Moving it replaces the level with a custom amount",
+                )),
+            );
+            gpu_dragging = out.active;
+            // 押し始めの選びを覚える（この枠の `s` は、押した枠の変更を入れる前の設定）
+            if out.active && app.prefs.gpu_memory_before_drag.is_none() {
+                app.prefs.gpu_memory_before_drag = Some(s.gpu_memory);
+            }
+            if out.changed {
+                if !out.active && !out.released {
+                    // Esc でドラッグを止めた（スライダーは押し始めの量を返す）。量ではなく、押す前の選びへ戻す
+                    if let Some(before) = app.prefs.gpu_memory_before_drag {
+                        requests.push(Request::Do(PrefsAction::Set(Pref::GpuMemory(before))));
+                    }
+                } else {
+                    let step = gpu_memory::TOTAL_STEP_MIB as f32;
+                    let mib = ((out.value / step).round() * step) as u32;
+                    requests.push(Request::Do(PrefsAction::Set(Pref::GpuMemory(GpuMemory::Mib(mib)))));
+                }
+            }
+            if !out.active {
+                app.prefs.gpu_memory_before_drag = None;
+            }
+        }
         separator(ui, &mut rows);
         // 棚の場所: ラベルとパス、その下にボタン
         let row = rows.row(t::ROW_HEIGHT, GAP);
@@ -653,7 +757,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         }
     });
     app.prefs.offset = offset;
-    app.prefs.dragging = dragging;
+    app.prefs.dragging = dragging || gpu_dragging;
     for request in requests {
         match request {
             Request::Open(which, anchor) => {

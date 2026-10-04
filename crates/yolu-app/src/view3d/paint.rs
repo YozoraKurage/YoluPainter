@@ -552,8 +552,17 @@ impl Paint {
         true
     }
 
-    /// バイトの予算を決める（試験が小さくして、縮めの道を通す）。決め直したあと、次の同期で必要なら全部を作り直す。
+    /// バイトの予算を決める（試験が小さくして、縮めの道を通す。ほかのセットは `u64::MAX` にして、辺の上限だけで縮める）。決め直したあと、
+    /// 次の同期で必要なら全部を作り直す。上げても、予算で縮めていた絵は戻らない（縮めは上げるだけ。戻るのは文書が替わるとき）。
+    /// セットを替えるたびに呼ぶ口なので、ここでは戻さない（戻すと、替えるたびに縮めていた絵を作り直す）。
     pub fn set_budget(&mut self, bytes: u64) {
+        self.budget = bytes;
+    }
+
+    /// 利用者が決めた予算（設定の GPU のメモリ）を、今のセットの絵に入れる。`set_budget` と違い、上げたときは予算で縮めていた絵を
+    /// 元の大きさへ戻す（`uncapped`。次の同期が作り直す）。設定の予算を入れる口（`View3dRenderer::set_paint_budget`）だけが使う。
+    pub fn set_budget_and_regrow(&mut self, bytes: u64) {
+        self.uncapped |= bytes > self.budget;
         self.budget = bytes;
     }
 

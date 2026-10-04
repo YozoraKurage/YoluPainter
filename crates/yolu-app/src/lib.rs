@@ -50,6 +50,7 @@ pub mod region;
 pub mod selection;
 pub mod sets;
 pub mod settings;
+pub mod gpu_memory;
 pub mod colorsets;
 pub mod shelf;
 pub mod shell;

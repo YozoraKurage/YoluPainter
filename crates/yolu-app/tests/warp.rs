@@ -129,7 +129,7 @@ fn snapshot_warp_grid_and_options_both_languages() {
         s.lang = lang;
         s.transform.advanced.kind = Kind::Mesh;
         let mut ready = false;
-        let mut h = egui_kittest::Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(800., 500.))
             .with_render_options(common::render_options())
             .wgpu()

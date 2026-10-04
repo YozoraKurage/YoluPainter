@@ -982,7 +982,7 @@ fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
     assert_eq!(
         edited.inactive_effects().len(),
         1,
-        "入力のまま通す効果は、参照が未選択の Anchor Generator だけ: {:?}",
+        "入力のまま通す効果は、参照が未選択の Anchor ジェネレーターだけ: {:?}",
         edited.inactive_effects()
     );
     let native = NativeDocument::from_core(&edited).unwrap();

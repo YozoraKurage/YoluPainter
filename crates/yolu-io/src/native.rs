@@ -505,7 +505,7 @@ fn layer(
                 )?;
                 check(
                     generator(r, v, &mut references)? == 5,
-                    "塗りつぶしグラデーションは形状Generatorが必要です",
+                    "塗りつぶしグラデーションは形状ジェネレーターが必要です",
                 )?;
                 Ok(())
             })?;
@@ -760,12 +760,12 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     // 8〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
     check(
         !(8..PROCEDURAL_KIND_MIN).contains(&t),
-        "未知のGeneratorの種類です",
+        "未知のジェネレーターの種類です",
     )?;
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
     let low = r.unit("low")?;
     let high = r.unit("high")?;
-    check(high - low >= 0.001, "Generatorのレベル幅が不足しています")?;
+    check(high - low >= 0.001, "ジェネレーターのレベル幅が不足しています")?;
     r.unit("softness")?;
     r.boolean("invert")?;
     r.unit("noise_amount")?;
@@ -781,7 +781,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     let bent = r.boolean("bent_normal")?;
     check(
         (t == 1 || balance == 0.5) && (t == 2 || axis == 1),
-        "Generator固有でない属性が変更されています",
+        "ジェネレーター固有でない属性が変更されています",
     )?;
     check(
         if t == 4 {
@@ -789,7 +789,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         } else {
             x == 0. && y == 1. && z == 0. && !bent
         },
-        "Generatorの方向が不正です",
+        "ジェネレーターの方向が不正です",
     )?;
     let n = r.int("pin_count", 0, 8)?;
     let mut seen = HashSet::new();
@@ -807,7 +807,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
             let k = r.int("kind", 0, 9)?;
             check(
                 seen.insert(k) && candidates.contains(&k),
-                "Generatorが使わないか重複したメッシュマップです",
+                "ジェネレーターが使わないか重複したメッシュマップです",
             )?;
             check(
                 is_hash(&r.string("key")?),
@@ -832,7 +832,7 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
         for i in 0..n {
             check(
                 seen.insert(r.int(&format!("colors[{i}]"), 0, 0xffffff)?),
-                "GeneratorのID色が重複しています",
+                "ジェネレーターのID色が重複しています",
             )?;
         }
     }

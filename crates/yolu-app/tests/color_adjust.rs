@@ -59,7 +59,7 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
 }
 
 fn panel(value: ColorAdjust, lang: Lang) -> Harness<'static, Panel> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(WIDTH, HEIGHT))
         .build_ui_state(
             draw,

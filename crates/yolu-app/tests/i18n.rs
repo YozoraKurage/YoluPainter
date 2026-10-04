@@ -1,7 +1,5 @@
 //! 日英の対象パネル・通知・失敗時の保存契約。
 mod common;
-#[path = "common/gpu_thread.rs"]
-mod gpu_thread;
 use egui::{epaint::Shape, vec2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
 use common::*;
@@ -60,7 +58,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
             let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
             let mut textures = color::ColorTextures::default();
-            let mut h = Harness::builder().with_size(vec2(300.0, 360.0))
+            let mut h = common::gpu_thread::builder().with_size(vec2(300.0, 360.0))
                 .with_render_options(common::render_options()).wgpu()
                 .build_ui_state(move |ui, state| {
                     if !ready {
@@ -241,7 +239,7 @@ fn english_app() -> Harness<'static, YoluApp> {
 }
 
 fn english_app_sized(width: f32, height: f32, lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -467,7 +465,7 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
 /// 設定のファイルを使うアプリ（`settings` は設定のファイルの場所）。
 fn app_with_settings(settings: &std::path::Path) -> Harness<'static, YoluApp> {
     let settings = settings.to_path_buf();
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -1010,7 +1008,7 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
         let mut state = AppState::new(64, 64);
         state.lang = lang;
         let mut ready = false;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(300.0, 1100.0))
             .with_render_options(common::render_options())
             .wgpu()

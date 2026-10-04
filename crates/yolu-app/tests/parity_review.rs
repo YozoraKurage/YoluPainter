@@ -112,7 +112,7 @@ fn settings(lang: Lang) -> Harness<'static, AppState> {
     app.lang = lang;
     app.prefs.open = true;
     let mut ready = false;
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(900.0, 950.0))
         .build_ui_state(
             move |ui, app| {
@@ -576,7 +576,7 @@ fn shift_snaps_the_stencil_rotation_to_the_listed_step() {
 
 fn app_with_settings(path: &std::path::Path) -> Harness<'static, YoluApp> {
     let path = path.to_path_buf();
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

@@ -1,7 +1,54 @@
-//! 描画試験の窓の生成・使用・破棄を、プロセス中で生き続ける同じスレッドへ集める。
+//! 描画試験の窓（wgpu の Instance・Device）の作成・使用・破棄を、同時に 1 つの試験だけに絞る。
+//!
+//! Vulkan（lavapipe）は、別々のスレッドで窓を同時に作ると中（create_bind_group）で落ちることがあった。窓を持つ試験どうしを
+//! 重ねないために、2 つの口がある。どちらも同じ貸し出し（`WINDOWS`）を取るので、混ぜて使っても重ならない。
+//!
+//! - [`builder`]（kittest の harness を作る入口）: 試験のスレッドが、最初の harness を作る前に貸し出しを取る。持ったまま試験が終わる
+//!   （スレッドが終わる）と放す。`.wgpu()` を呼ばない harness も取る: kittest の既定の描画器は、最初の `render()`（画像の比べ・
+//!   `image_snapshot`）で wgpu の装置を遅れて作るので、描くかどうかは builder の形では見分けられない。したがって、画面を描かない
+//!   harness（CPU だけの部品の試験）も窓を持つ試験と同時には走らない。貸し出しを取らずに並列のままなのは、kittest の harness を
+//!   作らない試験（画面を作らない `headless_` の試験など）だけ。
+//! - [`run`]（試験の本体を常駐の 1 本のスレッドへ送る）: 窓の作成・使用・破棄を同じスレッドで行う。送っている間だけ貸し出しを持つ。
 use std::any::Any;
 use std::cell::RefCell;
-use std::sync::{mpsc, Once, OnceLock};
+use std::sync::{mpsc, Mutex, MutexGuard, Once, OnceLock, PoisonError};
+
+/// 窓を持っている試験の貸し出し（同時に 1 つ）。
+static WINDOWS: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    /// このスレッドが持っている貸し出し（試験のスレッドは終わるときに放す。常駐のスレッドはジョブごとに放す）。
+    static LEASE: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
+}
+
+/// 窓を作る前に呼ぶ。ほかのスレッドが窓を持っていれば、その試験が終わるまで待つ。同じスレッドで何度呼んでも 1 回分。
+/// 放すのは、スレッドが終わるとき（libtest は試験ごとにスレッドを分ける）か、`run` に送るとき。
+pub fn lease() {
+    LEASE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(WINDOWS.lock().unwrap_or_else(PoisonError::into_inner));
+        }
+    });
+}
+
+/// このスレッドの貸し出しを放す（持っていなければ何もしない）。
+fn release() {
+    let _ = LEASE.try_with(|slot| slot.borrow_mut().take());
+}
+
+/// 誰も窓を持っていないか（試験が貸し出しの放し忘れを確かめる）。自分が持っていれば false。
+pub fn is_free() -> bool {
+    WINDOWS.try_lock().is_ok()
+}
+
+/// kittest の harness の builder。harness を作る試験は `Harness::builder()` の代わりにこれを使う（ほかの口で作ると、
+/// `window_lease` の試験が落ちる）。`.wgpu()` を呼ぶかどうかによらず取る（上の説明）。貸し出しは最初の harness の前に取るので、
+/// `.wgpu()` で装置を作る前に重ならない。
+pub fn builder<State>() -> egui_kittest::HarnessBuilder<State> {
+    lease();
+    egui_kittest::Harness::<State>::builder()
+}
 
 thread_local! {
     /// このスレッドで最後に起きた panic の場所。ワーカーの出力捕捉先は最初の呼び手に属するので、
@@ -68,14 +115,19 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
         sender
     });
     let (sender, receiver) = mpsc::sync_channel(1);
+    // 呼び手が窓を持っていれば先に放す（常駐のスレッドが貸し出しを待って、呼び手が結果を待つ行き止まりを避ける）
+    release();
     worker
         .send(Box::new(move || {
             LAST_PANIC_AT.with(|slot| slot.borrow_mut().take());
+            lease();
             // 失敗を呼び出した libtest の試験へ戻し、後続の試験も実行できるようにする。
             let result = std::panic::catch_unwind(test).map_err(|payload| Failure {
                 payload,
                 location: LAST_PANIC_AT.with(|slot| slot.borrow_mut().take()),
             });
+            // 常駐のスレッドは終わらないので、ジョブごとに放す（ほかの試験の窓を止めない）
+            release();
             let _ = sender.send(result);
         }))
         .expect("描画試験スレッドが生きている");
@@ -87,51 +139,5 @@ pub fn run(test: fn()) {
         // ワーカーの出力捕捉先は最初の呼び手に属するので、失敗の本文と場所は今の試験にも残す。
         eprintln!("描画試験に失敗: {}", failure.describe());
         std::panic::resume_unwind(failure.payload);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn callers_use_the_same_thread() {
-        static THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                scope.spawn(|| {
-                    let caller = std::thread::current().id();
-                    run(|| {
-                        let current = std::thread::current().id();
-                        assert_eq!(*THREAD.get_or_init(|| current), current);
-                    });
-                    assert_ne!(*THREAD.get().unwrap(), caller);
-                });
-            }
-        });
-    }
-
-    #[test]
-    fn a_failure_returns_to_the_caller_and_the_next_test_runs() {
-        let failure = std::panic::catch_unwind(|| run(|| panic!("試験の失敗")));
-        let payload = failure.expect_err("失敗を成功として扱わない");
-        assert_eq!(payload.downcast_ref::<&str>(), Some(&"試験の失敗"));
-        run(|| {});
-    }
-
-    #[test]
-    fn a_failure_carries_the_place_it_panicked_at() {
-        let line = line!() + 1;
-        let failure = run_checked(|| panic!("場所を見る")).expect_err("失敗を成功として扱わない");
-        let at = failure.location.as_deref().expect("落ちた場所が残る");
-        assert!(at.contains("gpu_thread.rs"), "ファイル名: {at}");
-        assert!(at.contains(&format!(":{line}:")), "行 {line}: {at}");
-        let described = failure.describe();
-        assert!(described.contains("場所を見る") && described.contains(at), "{described}");
-        // 次の試験の場所に前の失敗が混ざらない。
-        assert!(run_checked(|| {}).is_ok());
-        let line = line!() + 1;
-        let second = run_checked(|| panic!("二度目")).expect_err("失敗");
-        assert!(second.location.unwrap().contains(&format!(":{line}:")));
     }
 }

@@ -18,7 +18,7 @@ fn harness(lang: Lang) -> Harness<'static, AppState> {
     app.view.zoom = 3.0;
     app.view.angle = 30.0;
     let mut ready = false;
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(300.0, 350.0))
         .with_render_options(common::render_options())
         .wgpu()
@@ -143,7 +143,7 @@ fn navigator_panel_snapshot_english() {
 fn navigator_thumbnail_matches_gpu_canvas_composite() {
     use yolu_app::canvas::{display::CanvasDisplay, gpu::CanvasBackend};
     use yolu_app::engine::{Channel, Rect as DocRect, Rgba8};
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(960.0, 720.0))
         .with_render_options(common::render_options())
         .wgpu()

@@ -191,7 +191,7 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
 fn mode_tooltip(lang: Lang, mode: ExportMode) -> &'static str {
     match mode {
         ExportMode::Bake => lang.pick(
-            "層を残し、PSD に形の無いフィルター・Generator・画像・パスなどは、評価した画素にして書きます。書く前に、焼くものを一覧で確かめます",
+            "層を残し、PSD に形の無いフィルター・ジェネレーター・画像・パスなどは、評価した画素にして書きます。書く前に、焼くものを一覧で確かめます",
             "Keeps the layers. Filters, generators, images, paths and other features PSD has no form for are written as evaluated pixels. What changes is listed before writing",
         ),
         ExportMode::Flat => lang.pick(
@@ -656,7 +656,7 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
             format!("\"{name}\" has brightness/contrast between PSD's steps"),
         ),
         Refusal::Effects => lang.pick(
-            format!("「{name}」にフィルターか Generator があります"),
+            format!("「{name}」にフィルターかジェネレーターがあります"),
             format!("\"{name}\" has filters or generators"),
         ),
         Refusal::Anchor => lang.pick(

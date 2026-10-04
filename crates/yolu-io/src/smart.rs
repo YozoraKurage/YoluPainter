@@ -13,10 +13,10 @@ use yolu_core::{
 };
 /// 編集用に開けない・保存できない理由の文言。アプリが文言から「置けない理由」を見分けるので、文言はここにだけ書く。
 pub const REFUSAL_IMAGES: &str = "画像を含む素材は編集用に開けません";
-pub const REFUSAL_GENERATORS: &str = "Generator の再固定を持つ素材は編集用に開けません";
+pub const REFUSAL_GENERATORS: &str = "ジェネレーターの再固定を持つ素材は編集用に開けません";
 pub const REFUSAL_USER_CHANNELS: &str = ".ylsmart 形式1は標準チャンネルだけです";
 pub const REFUSAL_RUST_GENERATORS: &str =
-    ".ylsmart 形式1は Unity 版にもある Generator の種類だけです（ノイズ・グランジは入れられません）";
+    ".ylsmart 形式1は Unity 版にもあるジェネレーターの種類だけです（ノイズ・グランジは入れられません）";
 pub const REFUSAL_RUST_ADJUSTMENTS: &str =
     ".ylsmart 形式1は Unity 版にもある調整・フィルターの種類だけです（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーションは入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
