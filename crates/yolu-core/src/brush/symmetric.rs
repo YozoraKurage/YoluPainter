@@ -133,6 +133,9 @@ impl StrokeState {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         let w = self.width;
+        if self.mix_on {
+            return self.symmetric_mix_dab(surface, brush, s, &pixels, changed);
+        }
         let (mut x0, mut y0, mut x1, mut y1) = (w, self.height, -1i64, -1i64);
         for &(key, _) in &pixels {
             let (px, py) = (key % w, key / w);
@@ -141,7 +144,16 @@ impl StrokeState {
             y0 = y0.min(py);
             y1 = y1.max(py);
         }
-        let frame = match self.prepare_effect_dab(surface, brush, (x0, x1), (y0, y1), s.x, s.y)? {
+        let frame = match self.prepare_dab(
+            surface,
+            brush,
+            (x0, x1),
+            (y0, y1),
+            s.x,
+            s.y,
+            s.pressure,
+            true,
+        )? {
             Prepared::Skip => return Ok(false),
             Prepared::Paint => None,
             Prepared::Effect(f) => Some(f),
@@ -150,6 +162,31 @@ impl StrokeState {
         self.effect.scratch = 0;
         self.frame_cache = frame;
         result
+    }
+
+    /// 色の混ぜの対称のダブ: 写し全部の画素を、下地を読む範囲が離れた塊（離れた写しは別の塊）へ分け、塊ごとに枠を凍結して塗る。
+    /// 写しは動きの向きが写しごとに違うので、伸ばすは動きの向きを使わず、同じ画素の周りの箱だけを読む（[`StrokeState::begin_mix_regions`]）。
+    fn symmetric_mix_dab(
+        &mut self,
+        surface: &mut Surface,
+        brush: &Brush,
+        s: &DabShape<'_>,
+        pixels: &[(i64, f64)],
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let w = self.width;
+        let cells: Vec<(i64, i64)> = pixels.iter().map(|&(key, _)| (key % w, key / w)).collect();
+        let regions = self.begin_mix_regions(&cells, s.pressure);
+        let mut any = false;
+        for region in regions {
+            let frame = self.freeze_mix_region(surface, &region)?;
+            let part: Vec<(i64, f64)> = region.members.iter().map(|&k| pixels[k]).collect();
+            let result = self.symmetric_paint(surface, brush, s, Some(&frame), &part, changed);
+            self.effect.scratch = 0;
+            self.frame_cache = Some(frame);
+            any |= result?;
+        }
+        Ok(any)
     }
 
     /// 集めた画素をタイルごとにまとめて塗る。

@@ -654,14 +654,21 @@ fn brush_from_row(
     {
         notes.push(Unrepresented::ClipStudio(SutNote::Direction));
     }
-    // 色の混ぜ: 絵の具量（BrushMixColor）・絵の具濃度（BrushMixAlpha）・色延び（BrushMixColorExtension）。core に色の混ぜの設定が
-    // 入ったら、ここで 0〜100 を 0〜1 にして写す（今は値を注記に残す）。
+    // 色の混ぜ: 絵の具量（BrushMixColor）・絵の具濃度（BrushMixAlpha）・色延び（BrushMixColorExtension）を、0〜100 から 0〜1 にして
+    // 「絵の具で混ぜる」へ写す（CLIP STUDIO の絵の具量 100 は下の色を拾わない＝こちらの量 1 と同じ向き）。値が無く混色の旗だけが
+    // 立っているものは、写せる値が無いので知らせる。
     let (paint, density, stretch) = (
         row.first_number(MIX_PAINT).unwrap_or(0.0),
         row.first_number(MIX_DENSITY).unwrap_or(0.0),
         row.first_number(MIX_STRETCH).unwrap_or(0.0),
     );
-    if row.on(WATER_COLOR) || paint > 0.0 || density > 0.0 || stretch > 0.0 {
+    if paint > 0.0 || density > 0.0 || stretch > 0.0 {
+        let unit = |v: f64| (v / 100.0).clamp(0.0, 1.0);
+        brush.mix.mode = yolu_core::brush::MixMode::Mix;
+        brush.mix.paint = unit(paint);
+        brush.mix.density = unit(density);
+        brush.mix.stretch = unit(stretch);
+    } else if row.on(WATER_COLOR) {
         notes.push(Unrepresented::ClipStudio(SutNote::ColorMixing {
             paint,
             density,

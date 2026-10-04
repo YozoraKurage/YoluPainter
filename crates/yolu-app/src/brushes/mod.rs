@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use egui::{Rect, Vec2};
 
-use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, StrokeAssist};
+use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist};
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
@@ -180,6 +180,12 @@ pub fn canonical(brush: &Brush) -> Brush {
         },
         seed: 0,
         pressure: brush.pressure.rounded_to_f32(),
+        // 混ぜ方が切のブラシは、混ぜの値を持たない（書かないので、読み戻しても同じ形）
+        mix: if brush.mix.is_active() {
+            brush.mix.rounded_to_f32()
+        } else {
+            ColorMix::default()
+        },
         color: ColorDynamics {
             secondary: ColorDynamics::default().secondary,
             ..brush.color
@@ -476,7 +482,7 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 10 に分ける）。
+/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     Shape,
@@ -489,12 +495,14 @@ pub enum Category {
     Texture,
     Dual,
     Color,
+    /// 色の混ぜ（厚塗り。混ぜ方・絵の具の量と濃さ・色延び・下地・筆圧）。
+    Mix,
     Effect,
     Symmetry,
 }
 
 impl Category {
-    pub const ALL: [Category; 10] = [
+    pub const ALL: [Category; 11] = [
         Category::Shape,
         Category::Stroke,
         Category::Pressure,
@@ -503,6 +511,7 @@ impl Category {
         Category::Texture,
         Category::Dual,
         Category::Color,
+        Category::Mix,
         Category::Effect,
         Category::Symmetry,
     ];
@@ -517,6 +526,7 @@ impl Category {
             Category::Texture => lang.pick("テクスチャ", "Texture"),
             Category::Dual => lang.pick("デュアルブラシ", "Dual Brush"),
             Category::Color => lang.pick("色の揺らぎ", "Color Dynamics"),
+            Category::Mix => lang.pick("色の混ぜ", "Color Mixing"),
             Category::Effect => lang.pick("効果", "Effect"),
             Category::Symmetry => lang.pick("対称", "Symmetry"),
         }
@@ -532,6 +542,7 @@ impl Category {
             Category::Texture => "texture",
             Category::Dual => "content_copy",
             Category::Color => "palette",
+            Category::Mix => "paint_brush",
             Category::Effect => "blur_on",
             Category::Symmetry => "flip",
         }

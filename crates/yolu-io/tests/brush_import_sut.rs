@@ -873,13 +873,12 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
         )
         .build();
     let b = &ok(&file).brushes[0];
+    // 色の混ぜの値は、絵の具で混ぜるブラシとして写る（知らせない）
+    let mix = &b.brush.mix;
+    assert_eq!(mix.mode, yolu_core::brush::MixMode::Mix);
+    assert_eq!((mix.paint, mix.density, mix.stretch), (0.3, 0.2, 0.1));
     for n in [
         SutNote::Direction,
-        SutNote::ColorMixing {
-            paint: 30.0,
-            density: 20.0,
-            stretch: 10.0,
-        },
         SutNote::Spray,
         SutNote::DualBrush,
         SutNote::StartEnd,
@@ -893,7 +892,7 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
         b.unrepresented.contains(&Unrepresented::WetEdges),
         "ウェットエッジは ABR と同じ注記"
     );
-    assert_eq!(b.unrepresented.len(), 9);
+    assert_eq!(b.unrepresented.len(), 8);
     // 注記の文は両方の言語で空でなく、制御文字を含まない
     for n in &b.unrepresented {
         let (ja, en) = (n.to_string(), n.english());

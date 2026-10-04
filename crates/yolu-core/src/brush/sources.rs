@@ -147,11 +147,17 @@ impl MappedColors {
 impl StrokeState {
     /// 合成の参照元を受けられるか: クローンで、最初のダブの前（入力も効果のダブも、手を付けたタイルも無く、まだ参照元も無い）。
     pub(crate) fn can_take_source(&self) -> bool {
-        matches!(self.brush.effect, BrushEffect::Clone { .. })
+        (matches!(self.brush.effect, BrushEffect::Clone { .. }) || self.mixes_from_composite())
             && !self.has_sample
             && !self.effect.started
             && self.tiles.is_empty()
             && self.source.is_none()
+    }
+
+    /// 色の混ぜが見えているレイヤーの重なりを下地にするブラシか（色を塗るブラシだけ。複数チャンネルのストロークでは、混ぜが効かない
+    /// データのチャンネルの面も、同じ参照元を受けるものとして数える）。
+    fn mixes_from_composite(&self) -> bool {
+        self.brush.mix.wants_composite() && self.brush.effect.is_paint() && !self.brush.base.erase
     }
 
     pub(crate) fn set_source(&mut self, source: CloneSource) {
@@ -229,11 +235,25 @@ impl StrokeState {
         targets: usize,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        if !matches!(
-            self.brush.effect,
-            BrushEffect::Clone { .. } | BrushEffect::Smudge { .. }
-        ) {
-            return Err(CoreError::Unsupported("写像されたダブはクローンか指先だけ"));
+        // 色の混ぜを頼まれたが、このチャンネルでは効かない（複数チャンネルのストロークのデータのチャンネル）: 同じダブを混ぜずに塗る
+        if !self.mix_on
+            && self.brush.mix.is_active()
+            && self.brush.effect.is_paint()
+            && !self.brush.base.erase
+        {
+            let plain: Vec<BrushPixel> = pixels.iter().map(|p| p.pixel).collect();
+            return self.apply_dab(surface, &plain, DVec2::ZERO, pressure, points, changed);
+        }
+        let smears = self.mix_on && self.brush.mix.mode == MixMode::Smear;
+        if !smears
+            && !matches!(
+                self.brush.effect,
+                BrushEffect::Clone { .. } | BrushEffect::Smudge { .. }
+            )
+        {
+            return Err(CoreError::Unsupported(
+                "写像されたダブはクローン・指先・色の混ぜの伸ばすだけ",
+            ));
         }
         if points.is_some_and(|p| p.len() != pixels.len()) {
             return Err(CoreError::InvalidArgument(
@@ -262,6 +282,9 @@ impl StrokeState {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         self.effect.scratch = bytes;
+        if smears {
+            self.begin_mapped_mix_dab(self.brush.pressure_scale(pressure));
+        }
         let result = self.apply_mapped(surface, pixels, pressure, points, changed);
         self.effect.scratch = 0;
         result

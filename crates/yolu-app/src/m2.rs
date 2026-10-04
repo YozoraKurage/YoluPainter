@@ -1291,6 +1291,19 @@ impl AppState {
         if self.view3d.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
             stroke.use_composite_clone_source(&mut self.doc)?;
         }
+        // 色の混ぜが「全レイヤーから」拾うブラシも、同じ参照元（見えているレイヤーの重なり）を最初のダブの前に凍結する
+        // （色のチャンネルを塗らない間は、混ぜが効かないので凍結しない）
+        if brush.mix.wants_composite()
+            && brush.effect.is_paint()
+            && !brush.base.erase
+            && self.paint_channels().iter().any(|p| {
+                self.doc
+                    .channel_info(p.channel)
+                    .is_some_and(|i| yolu_core::brush::carries_color(i.kind))
+            })
+        {
+            stroke.use_composite_clone_source(&mut self.doc)?;
+        }
         Ok(stroke)
     }
 

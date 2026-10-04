@@ -294,10 +294,19 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "マスクへのストロークはチャンネルの合成を読めない" => {
             "A mask stroke cannot read the channel composite"
         }
-        "合成の参照元はクローンの最初のダブの前にだけ決められる" => {
-            "The composite clone source can only be set before the first clone dab"
+        "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる" => {
+            "The composite source can only be set before the first dab of a clone or color mixing"
         }
         "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
+        "写像されたダブはクローン・指先・色の混ぜの伸ばすだけ" => {
+            "Mapped dabs need clone, smudge or the smear of color mixing"
+        }
+        "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）" => {
+            "A mixing brush cannot paint pixel by pixel"
+        }
+        "絵の具の量（0〜1）" => "Paint amount (0–1)",
+        "絵の具の濃さ（0〜1）" => "Paint density (0–1)",
+        "色延び（0〜1）" => "Color stretch (0–1)",
         "写像されたダブの画素" => "Mapped dab pixel",
         "写像されたダブの参照" => "Mapped dab source",
         "写像された画素に参照が無い" => "A mapped pixel needs a source",

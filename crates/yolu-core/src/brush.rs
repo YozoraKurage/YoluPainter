@@ -10,6 +10,8 @@
 //!   流量の割合だけ寄せる。デュアルブラシは同じ道筋に自分のダブを先に並べ、主のダブは自分の線の長さまでのものを使う。
 //!   色とデュアルの乱数は位置のゆらぎと別の列なので、足してもダブの位置は動かない。
 //! - 効果（ぼかし・指先・クローン）は、ダブの前に読む範囲を凍結し（[`effects`]）、覆いの割合でその色へ寄せる。
+//! - 色の混ぜ（厚塗り。拡張: C# に無い）は、効果と同じくダブの前に下地を凍結し、画素ごとに下の色と筆の荷を混ぜた色を、ダブごとの色と同じ道
+//!   （画素ごとの色の積み）で置く（`mix`・`mix_stroke`）。混ぜ方が切のブラシの画素は混ぜを足す前とバイト単位で同じ。
 //! - 覆いは C# と同じく float（単精度）で持つ。計算は倍精度で、演算の順も C# と同じ（画素の結果は C# とバイト一致）。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、一致を確かめたのは同じ libm（Linux の glibc）の上。
 //!
@@ -44,6 +46,8 @@
 pub mod curve;
 mod dynamics;
 mod effects;
+mod mix;
+mod mix_stroke;
 mod presets;
 mod pressure;
 pub mod random;
@@ -61,6 +65,7 @@ use glam::DVec2;
 use rayon::prelude::*;
 
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
+pub use mix::{ColorMix, MixGround, MixMode};
 pub use presets::{builtin_presets, BrushPreset};
 pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub(crate) use pressure::PressureScale;
@@ -85,6 +90,7 @@ use crate::types::{BlendMode, Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
 use dynamics::{f64_max, f64_min};
 use effects::{mix_effect, EffectFrame};
+use mix::{MixDab, MixRun, MixTally};
 use random::NetRandom;
 
 /// ブラシの基本の設定（M1）。ストロークを始めたときに写して固定する（途中で変えても、そのストロークには効かない）。
@@ -350,6 +356,10 @@ pub(crate) struct StrokeState {
     frame_cache: Option<EffectFrame>,
     /// 画素ごとに筆圧を渡す呼び出し（3D の面）で、同じ筆圧の応えを何度も計算しないための、直前の筆圧とその係数。
     pressure_memo: Option<(f64, PressureScale)>,
+    /// 色の混ぜが効くか（混ぜ方が切でなく、色のチャンネルを色で塗る: 消しゴム・効果のブラシ・データのチャンネル・マスクでは効かない）。
+    mix_on: bool,
+    /// 混ぜの状態（筆の荷・今の打点の値と下地の合計）。
+    mix_run: MixRun,
     pub stamp_count: u64,
     pub sample_count: u64,
     /// 安全なタイルをワーカーで描いたダブの数。
@@ -410,6 +420,10 @@ impl StrokeState {
                 brush.effect.is_paint() && !brush.base.erase && st.paints_color_into(channel)
             })
             .map(|_| kind);
+        let mix_on = brush.mix.is_active()
+            && brush.effect.is_paint()
+            && !brush.base.erase
+            && carries_color(kind);
         StrokeState {
             keep_alpha,
             id,
@@ -451,6 +465,8 @@ impl StrokeState {
             source: None,
             frame_cache: None,
             pressure_memo: None,
+            mix_on,
+            mix_run: MixRun::default(),
             stamp_count: 0,
             sample_count: 0,
             parallel_dabs: 0,
@@ -1179,12 +1195,20 @@ impl StrokeState {
                 "ステンシルに画布からの写しが無いので、2D のダブは読めない",
             ));
         }
-        let frame =
-            match self.prepare_effect_dab(surface, brush, (min_x, max_x), (min_y, max_y), x, y)? {
-                Prepared::Skip => return Ok(false),
-                Prepared::Paint => None,
-                Prepared::Effect(f) => Some(f),
-            };
+        let frame = match self.prepare_dab(
+            surface,
+            brush,
+            (min_x, max_x),
+            (min_y, max_y),
+            x,
+            y,
+            shape.pressure,
+            true,
+        )? {
+            Prepared::Skip => return Ok(false),
+            Prepared::Paint => None,
+            Prepared::Effect(f) => Some(f),
+        };
         let result = self.dab_pixels(
             surface,
             brush,
@@ -1256,14 +1280,17 @@ impl StrokeState {
             BrushEffect::Smudge { strength } => EffectKind::Smudge(strength),
             BrushEffect::Clone { .. } => EffectKind::Clone,
         };
+        let mix = if self.mix_on { self.mix_run.dab } else { None };
         Paint {
             keep_alpha: self.keep_alpha,
             s: &brush.base,
             effect,
             stroke_color: self.stroke_color,
             dab_color: self.dab_color,
-            tip_colors: self.tip_colors,
-            stop_at_ceiling: !self.tip_colors && brush.effect.is_paint(),
+            // 画素ごとの色（ダブごとの色か、色の混ぜ）。天井に届いた画素も、色は寄せ続ける
+            tip_colors: self.tip_colors || mix.is_some(),
+            stop_at_ceiling: !(self.tip_colors || mix.is_some()) && brush.effect.is_paint(),
+            mix,
             stencil: brush.stencil.as_deref(),
             stencil_kind: self.stencil_kind,
             frame,
@@ -1463,7 +1490,7 @@ impl StrokeState {
             },
             stroke: u64::MAX,
         };
-        let results: Vec<(bool, u64, u64)> = work
+        let results: Vec<(bool, u64, u64, MixTally)> = work
             .par_iter_mut()
             .map(|((coord, xs, ys), held, live)| {
                 let (mut rollback, mut allocated) = (0u64, 0u64);
@@ -1474,17 +1501,21 @@ impl StrokeState {
                     allocated: &mut allocated,
                     tile_size: ts,
                     selected: Selected::of(selection, *coord),
+                    tally: MixTally::default(),
                 };
                 let cells = dual.get(coord).map(|v| &v[..]);
                 let painted = dab_tile(&mut cx, held, live, cells, shape, *coord, *xs, *ys)
                     .expect("予算は確かめ済みなので失敗しない");
-                (painted, rollback, allocated)
+                let tally = cx.tally;
+                (painted, rollback, allocated, tally)
             })
             .collect();
         let mut any = false;
-        for (((coord, _, _), held, live), (painted, rollback, allocated)) in
+        for (((coord, _, _), held, live), (painted, rollback, allocated, tally)) in
             work.into_iter().zip(results)
         {
+            // 下地の合計は、順に描くときと同じくタイルの順に足す（どの経路も同じ足し算の列）
+            self.mix_run.tally.merge(tally);
             if let Some(h) = held {
                 self.tiles.insert(coord, h);
             }
@@ -1537,6 +1568,11 @@ impl StrokeState {
         if !self.brush.effect.is_paint() {
             return Err(CoreError::Unsupported(
                 "効果のブラシは画素ごとには塗れない（apply_dab で読み元を凍結する）",
+            ));
+        }
+        if self.mix_on {
+            return Err(CoreError::Unsupported(
+                "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）",
             ));
         }
         let brush = self.brush.clone();
@@ -1600,25 +1636,59 @@ impl StrokeState {
             return Ok(false);
         }
         let brush = self.brush.clone();
-        let frame = match self.prepare_effect_dab(
+        let pressure = brush.pressure_scale(pressure);
+        if self.mix_on {
+            // 色の混ぜ: ダブの画素を、下地を読む範囲が離れた塊へ分け、塊ごとに枠を凍結して塗る
+            return self.apply_mix_dab(surface, &brush, pixels, pressure, points, changed);
+        }
+        // 面のダブの中心は UV の継ぎ目で飛ぶので、伸ばすの動きの向きは使わない（canvas_shift = false）
+        let frame = match self.prepare_dab(
             surface,
             &brush,
             (x0, x1),
             (y0, y1),
             center.x,
             center.y,
+            pressure,
+            false,
         )? {
             Prepared::Skip => return Ok(false),
             Prepared::Paint => None,
             Prepared::Effect(f) => Some(f),
         };
         let paint = self.paint(&brush, frame.as_ref());
-        let pressure = brush.pressure_scale(pressure);
+        let result = self.paint_listed_pixels(
+            surface,
+            &paint,
+            pressure,
+            pixels,
+            points,
+            0..pixels.len(),
+            changed,
+        );
+        self.effect.scratch = 0;
+        self.frame_cache = frame;
+        result
+    }
+
+    /// 面のダブの画素のうち `order` の番号のものを、この順に塗る（画布の外は飛ばす）。
+    #[allow(clippy::too_many_arguments)]
+    fn paint_listed_pixels(
+        &mut self,
+        surface: &mut Surface,
+        paint: &Paint<'_>,
+        pressure: PressureScale,
+        pixels: &[BrushPixel],
+        points: Option<&[StencilPoint]>,
+        order: impl Iterator<Item = usize>,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
         let ts = surface.tile_size() as i64;
         let mut cursor = TileCursor::default();
         let mut any = false;
         let mut result = Ok(());
-        for (i, p) in pixels.iter().enumerate() {
+        for i in order {
+            let p = &pixels[i];
             if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
                 continue;
             }
@@ -1626,7 +1696,7 @@ impl StrokeState {
             let coord = TileCoord::new((p.x / ts) as u32, (p.y / ts) as u32);
             let local = ((p.y % ts) * ts + p.x % ts) as usize;
             cursor.move_to(self, surface, coord);
-            let r = cursor.with(self, surface, &paint, |cx, held, live| {
+            let r = cursor.with(self, surface, paint, |cx, held, live| {
                 apply_at::<false>(
                     cx, held, live, coord, local, p.coverage, pressure, 1.0, 1.0, None, point,
                 )
@@ -1646,8 +1716,6 @@ impl StrokeState {
             }
         }
         cursor.release(self, surface);
-        self.effect.scratch = 0;
-        self.frame_cache = frame;
         result.map(|_| any)
     }
 
@@ -1682,8 +1750,11 @@ impl StrokeState {
             allocated: &mut surface.allocated,
             tile_size: ts,
             selected: Selected::of(self.selection.as_ref(), coord),
+            tally: MixTally::default(),
         };
         let result = f(&mut cx, &mut held, &mut live);
+        let tally = cx.tally;
+        self.mix_run.tally.merge(tally);
         if let Some(h) = held {
             self.tiles.insert(coord, h);
         }
@@ -1736,12 +1807,16 @@ impl TileCursor {
             allocated: &mut surface.allocated,
             tile_size: ts,
             selected: Selected::of(state.selection.as_ref(), coord),
+            tally: MixTally::default(),
         };
-        f(
+        let result = f(
             &mut cx,
             &mut self.held,
             self.live.as_mut().expect("move_to の後"),
-        )
+        );
+        let tally = cx.tally;
+        state.mix_run.tally.merge(tally);
+        result
     }
 
     fn release(&mut self, state: &mut StrokeState, surface: &mut Surface) {
@@ -1870,6 +1945,8 @@ struct Paint<'a> {
     stencil: Option<&'a BrushStencil>,
     stencil_kind: Option<ChannelKind>,
     frame: Option<&'a EffectFrame>,
+    /// 色の混ぜの今の打点の値（読む下地は `frame`）。あれば画素の色はここから決まる。
+    mix: Option<MixDab>,
     /// 面のダブ（[`StrokeState::apply_mapped_dab`]）が先に読んで混ぜた参照の色（画素ごと）。あれば `frame` の代わりに読む。
     mapped: Option<&'a sources::MappedColors>,
     offset_x: f64,
@@ -1889,6 +1966,8 @@ pub(crate) struct PixelContext<'a> {
     tile_size: usize,
     /// このタイルの選択範囲の量。
     selected: Selected<'a>,
+    /// 色の混ぜ: このタイルの打点の下地の合計（呼び手が打点のタイルの順に足す）。
+    tally: MixTally,
 }
 
 /// ストロークの選択範囲の、1 枚のタイルの量（C# の ApplyPixelAt の selected）。
@@ -2169,7 +2248,31 @@ fn apply_at<const SIMPLE: bool>(
             opacity_scale *= through.amount;
         }
     }
+    // 色の混ぜ: 打点の前に凍結した下地の色を読み、荷と混ぜた色をこの画素の色にする。下地の合計（荷の更新の元）はここで足す
+    let mut mixed = None;
+    if !SIMPLE {
+        if let Some(mix) = p.mix {
+            let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
+            let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
+            let ground = match p.mapped {
+                // 面のダブの伸ばし: 参照は書く前にまとめて読んである（指先と同じ）
+                Some(mapped) => mapped.get(p.width, px, py),
+                None => mix.ground_at(p.frame.expect("混ぜの下地"), px, py, p.width, p.height),
+            };
+            cx.tally.add(coverage, ground);
+            match mix.pixel_color(ground) {
+                Some(color) => mixed = Some(color),
+                None => return Ok(false),
+            }
+        }
+    }
     let mut ceiling = s.opacity * opacity_scale * pressure.opacity;
+    if !SIMPLE {
+        // SIMPLE（色を塗るだけの丸いブラシ）は、混ぜがあれば画素ごとの色を持つので選ばれない（混ぜの分岐を持ち込まない）
+        if let Some(mix) = p.mix {
+            ceiling *= mix.density;
+        }
+    }
     if let Some((mode, grain, depth)) = paper {
         ceiling += (mode.combine(ceiling, grain) - ceiling) * depth;
     }
@@ -2237,7 +2340,7 @@ fn apply_at<const SIMPLE: bool>(
         let pc = st.paint.as_mut().expect("ダブごとの色");
         let o = local * 4;
         let w = f64_min(1.0, flow);
-        let d = p.dab_color;
+        let d = mixed.unwrap_or(p.dab_color);
         if previous <= 0.0 {
             pc[o] = d.r as f32 / 255.0;
             pc[o + 1] = d.g as f32 / 255.0;

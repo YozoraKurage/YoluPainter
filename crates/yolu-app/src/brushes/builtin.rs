@@ -1,11 +1,14 @@
-//! 組み込みのブラシ（消せない元）。core の組み込み 13 個（`m2::presets()`）に、各道具の「標準」と効果のブラシ 3 つを足し、
+//! 組み込みのブラシ（消せない元）。core の組み込み 13 個（`m2::presets()`）に、各道具の「標準」と効果のブラシ 3 つと、
+//! 厚塗りの筆 3 つ（下の色を拾って混ぜる。`oil`・`gouache`・`mixer`）を足し、
 //! グループ（ペン・筆・エアブラシ・消しゴム・効果・特殊）に分けたもの。ここに無い id の組み込みは作らない（保存した並びの
 //! 読み戻しは、ここに載っている id だけを組み込みと見る）。
 
 use std::sync::OnceLock;
 
 use super::{canonical, Group};
-use crate::engine::{Brush, BrushEffect, BrushSettings, DVec2};
+use crate::engine::{
+    Brush, BrushEffect, BrushSettings, ColorMix, DVec2, MixMode, PressureResponse,
+};
 use crate::lang::Lang;
 use crate::m2;
 
@@ -57,6 +60,69 @@ pub fn all() -> &'static [Builtin] {
                 })
             })
         };
+        // 厚塗りの筆（色の混ぜ。筆のグループ）
+        let thick = |radius: f64, hardness: f64, spacing: f64, flow: f64, mix: ColorMix| {
+            canonical(&Brush {
+                mix,
+                ..Brush::from(BrushSettings {
+                    radius,
+                    hardness,
+                    spacing,
+                    flow,
+                    // 置いた絵の具は筆圧で薄くならない（量・濃さのほうを筆圧に従わせる）
+                    pressure_opacity: false,
+                    ..BrushSettings::default()
+                })
+            })
+        };
+        let mut oil = thick(
+            20.0,
+            0.7,
+            0.05,
+            1.0,
+            ColorMix {
+                mode: MixMode::Mix,
+                paint: 0.65,
+                density: 1.0,
+                stretch: 0.6,
+                pressure_paint: true,
+                response_paint: PressureResponse::new(0.3, Vec::new())
+                    .expect("最小値だけの筆圧の応え"),
+                ..ColorMix::default()
+            },
+        );
+        oil.tip.image = yolu_core::builtin_tip("bristles");
+        oil.tip.follow_direction = true;
+        let oil = canonical(&oil);
+        let gouache = thick(
+            24.0,
+            0.85,
+            0.1,
+            0.9,
+            ColorMix {
+                mode: MixMode::Mix,
+                paint: 0.85,
+                density: 0.95,
+                stretch: 0.25,
+                ..ColorMix::default()
+            },
+        );
+        let mixer = thick(
+            26.0,
+            0.4,
+            0.06,
+            0.7,
+            ColorMix {
+                mode: MixMode::Smear,
+                paint: 0.2,
+                density: 0.85,
+                stretch: 0.7,
+                pressure_density: true,
+                response_density: PressureResponse::new(0.25, Vec::new())
+                    .expect("最小値だけの筆圧の応え"),
+                ..ColorMix::default()
+            },
+        );
         let mut v = Vec::new();
         let mut add =
             |id: &'static str, group: Group, brush: Brush| v.push(Builtin { id, group, brush });
@@ -67,6 +133,9 @@ pub fn all() -> &'static [Builtin] {
         for id in ["dry-brush", "watercolor", "chalk", "charcoal"] {
             add(id, preset_group(id), preset(id));
         }
+        add("oil", Group::Brush, oil);
+        add("gouache", Group::Brush, gouache);
+        add("mixer", Group::Brush, mixer);
         for id in ["soft-round", "airbrush"] {
             add(id, preset_group(id), preset(id));
         }
@@ -113,6 +182,9 @@ pub fn name(lang: Lang, id: &str) -> String {
         "blur" => Some(lang.pick("ぼかし", "Blur")),
         "smudge" => Some(lang.pick("指先", "Smudge")),
         "clone" => Some(lang.pick("クローン", "Clone")),
+        "oil" => Some(lang.pick("油彩", "Oil paint")),
+        "gouache" => Some(lang.pick("ガッシュ", "Gouache")),
+        "mixer" => Some(lang.pick("混色", "Mixer")),
         _ => None,
     };
     match own {

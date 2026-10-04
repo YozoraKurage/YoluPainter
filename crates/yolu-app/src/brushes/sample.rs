@@ -6,7 +6,7 @@
 //! 見本は実寸の関係を保ったまま、画像に収まるよう縮める（直径が画像の高さの 62% を超えるブラシは縮め、細すぎるものは 3 画素まで
 //! 太らせる。質感の大きさ・入り抜き・デュアルの半径・ぼかしの半径・クローンのずれ・筆の速さも同じ倍率）。手ぶれ補正は糸の遅れで
 //! 線を短くするだけなので見本では 0、描く色は黒、背景色は白、乱数の種は 0（同じブラシは同じ絵）、対称とステンシルは無し。
-//! 消しゴムは灰色を一面に敷いて消し、効果のブラシ（ぼかし・指先・クローン）は縦の帯を並べた絵の上に描く。
+//! 消しゴムは灰色を一面に敷いて消し、効果のブラシ（ぼかし・指先・クローン）と色を混ぜるブラシは縦の帯を並べた絵の上に描く。
 //!
 //! 描く場所は 2 通り。既定は画面のスレッドで 1 フレームに数枚まで描く（試験・画面を持たない使い方）。`render_in_background` を呼ぶと、
 //! 描くのを別のスレッド（rayon の池）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の見本で画面が止まらない）。
@@ -235,7 +235,7 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
             None,
             false,
         )?;
-    } else if !b.effect.is_paint() {
+    } else if !b.effect.is_paint() || b.mix.is_active() {
         doc.fill(
             layer,
             Channel::Color,
@@ -548,7 +548,7 @@ mod tests {
             assert_eq!(a.rgba.len(), 340 * 60 * 4);
             assert!(ink(&a) > 0, "{}: 何か描く", b.id);
             // 端の列には描かない（S 字は端から離す）。消しゴムの灰色の地は全面にある
-            if !eraser && b.brush.effect.is_paint() {
+            if !eraser && b.brush.effect.is_paint() && !b.brush.mix.is_active() {
                 for y in 0..60usize {
                     assert_eq!(a.rgba[(y * 340) * 4 + 3], 0, "{}: 左端", b.id);
                     assert_eq!(a.rgba[(y * 340 + 339) * 4 + 3], 0, "{}: 右端", b.id);

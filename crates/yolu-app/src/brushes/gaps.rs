@@ -31,6 +31,7 @@ pub enum Gap {
     CountJitter,
     Noise,
     WetEdges,
+    MixerBrush,
     TexturePattern,
     TextureScale,
     TextureMode,
@@ -60,7 +61,7 @@ pub enum Gap {
 }
 
 impl Gap {
-    pub const ALL: [Gap; 45] = [
+    pub const ALL: [Gap; 46] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -80,6 +81,7 @@ impl Gap {
         Gap::CountJitter,
         Gap::Noise,
         Gap::WetEdges,
+        Gap::MixerBrush,
         Gap::TexturePattern,
         Gap::TextureScale,
         Gap::TextureMode,
@@ -130,6 +132,7 @@ impl Gap {
             Gap::CountJitter => "count-jitter",
             Gap::Noise => "noise",
             Gap::WetEdges => "wet-edges",
+            Gap::MixerBrush => "mixer-brush",
             Gap::TexturePattern => "texture-pattern",
             Gap::TextureScale => "texture-scale",
             Gap::TextureMode => "texture-mode",
@@ -188,6 +191,7 @@ impl Gap {
             Gap::CountJitter => lang.pick("数のゆらぎ", "Count jitter"),
             Gap::Noise => lang.pick("ノイズ", "Noise"),
             Gap::WetEdges => lang.pick("ウェットエッジ", "Wet edges"),
+            Gap::MixerBrush => lang.pick("混合ブラシ", "Mixer brush"),
             Gap::TexturePattern => lang.pick("質感の模様", "Texture pattern"),
             Gap::TextureScale => lang.pick("質感の拡大", "Texture scale"),
             Gap::TextureMode => lang.pick("質感の合わせ方", "Texture mode"),
@@ -242,6 +246,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
         U::CountJitter => Gap::CountJitter,
         U::Noise => Gap::Noise,
         U::WetEdges => Gap::WetEdges,
+        U::MixerBrush => Gap::MixerBrush,
         U::Texture(note) => match note {
             TextureNote::PatternMissing { .. } | TextureNote::PatternRefused { .. } => {
                 Gap::TexturePattern

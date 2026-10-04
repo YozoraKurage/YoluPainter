@@ -73,10 +73,10 @@ pub use adjust::{
 };
 pub use brush::{
     builtin_presets, builtin_tip, Brush, BrushEffect, BrushMappedPixel, BrushPixel, BrushPreset,
-    BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics, Controls,
-    DualBrush, DualBrushMode, ImageColorSpace, Jitter, PaperTexture, PressureResponse,
-    PressureResponses, StencilImage, StencilMapping, StencilMode, StencilPoint, StencilTiling,
-    StrokeAssist, TextureMode, TipSelection, TipShape,
+    BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics, ColorMix,
+    Controls, DualBrush, DualBrushMode, ImageColorSpace, Jitter, MixGround, MixMode, PaperTexture,
+    PressureResponse, PressureResponses, StencilImage, StencilMapping, StencilMode, StencilPoint,
+    StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
     Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint,

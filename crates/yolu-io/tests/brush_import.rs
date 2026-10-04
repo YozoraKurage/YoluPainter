@@ -579,6 +579,55 @@ fn version6_tips_with_preset_dynamics() {
     );
 }
 
+/// 混合ブラシのウェット・混合のゆらぎ（`wetnessControl`・`mixControl`）を持つプリセットは「表せなかった項目」に載り、持たない・ゆらぎもコントロールも
+/// 無いプリセットには載らない。
+#[test]
+fn a_mixer_brush_preset_notes_wetness_and_mix_jitter_and_others_do_not() {
+    let preset_with = |wet: Option<Vec<u8>>, mix: Option<Vec<u8>>, paint_dynamics: bool| {
+        let mut items = vec![
+            ("Nm  ", text("Mixer")),
+            (
+                "Brsh",
+                obj(
+                    "computedBrush",
+                    &[
+                        ("Dmtr", unit("#Pxl", 40.0)),
+                        ("Hrdn", unit("#Prc", 50.0)),
+                        ("Spcn", unit("#Prc", 25.0)),
+                    ],
+                ),
+            ),
+            ("usePaintDynamics", boolean(paint_dynamics)),
+            ("opVr", dynamics(2, 0.0)),
+        ];
+        if let Some(w) = wet {
+            items.push(("wetnessControl", w));
+        }
+        if let Some(m) = mix {
+            items.push(("mixControl", m));
+        }
+        let file = abr_v6(&[
+            section("desc", &desc_body(&[brush_list(&[preset(&items)])])),
+            section("patt", &[0; 8]),
+        ]);
+        let set = read(FileKind::Abr, &file).unwrap();
+        assert_eq!(set.brushes.len(), 1);
+        set.brushes[0].unrepresented.clone()
+    };
+    let noted = |n: &Vec<Unrepresented>| n.contains(&Unrepresented::MixerBrush);
+    assert!(noted(&preset_with(Some(dynamics(0, 40.0)), None, true)), "ウェットのゆらぎ");
+    assert!(noted(&preset_with(None, Some(dynamics(2, 0.0)), true)), "混合のコントロール（筆圧）");
+    assert!(!noted(&preset_with(Some(dynamics(0, 0.0)), Some(dynamics(0, 0.0)), true)), "ゆらぎもコントロールも無い");
+    assert!(!noted(&preset_with(None, None, true)));
+    // 「トランスファー」を使っていないプリセットの値は効いていないので載せない
+    assert!(!noted(&preset_with(Some(dynamics(0, 40.0)), None, false)));
+    assert_eq!(Unrepresented::MixerBrush.to_string(), "混合ブラシのウェット・混合のゆらぎは未対応");
+    assert_eq!(
+        Unrepresented::MixerBrush.english(),
+        "Mixer brush wetness and mix jitter are not supported."
+    );
+}
+
 #[test]
 fn version6_subversion2_tips_without_presets_still_import() {
     let mut samples = samp_record(2, "a", true);

@@ -489,6 +489,9 @@ pub enum Unrepresented {
     Noise,
     /// ウェットエッジは無い。
     WetEdges,
+    /// 混合ブラシのウェット・混合のゆらぎ（`wetnessControl`・`mixControl`）は無く、外した。混合ブラシの基本の値（ウェット・負荷・混合）は
+    /// ブラシの記述に入らない（ツールのオプション側）ので、写せない。キー名は実物の ABR では確かめていない（合成のデータの試験だけ）。
+    MixerBrush,
     /// 質感の読み替え。
     Texture(TextureNote),
     /// 質感の模様の読み替え。
@@ -604,6 +607,10 @@ impl Unrepresented {
             CountJitter => ("数のゆらぎは未対応".into(), "Count jitter is not supported.".into()),
             Noise => ("ノイズは未対応".into(), "Noise is not supported.".into()),
             WetEdges => ("ウェットエッジは未対応".into(), "Wet edges is not supported.".into()),
+            MixerBrush => (
+                "混合ブラシのウェット・混合のゆらぎは未対応".into(),
+                "Mixer brush wetness and mix jitter are not supported.".into(),
+            ),
             Texture(note) => match note {
                 TextureNote::PatternMissing { name } => (
                     format!("質感: 模様 '{name}' がファイルに無い（Photoshop は自分の模様の一覧から取る）ので、質感なし"),
