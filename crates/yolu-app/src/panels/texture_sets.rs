@@ -1,6 +1,7 @@
 //! テクスチャセットのパネル（Substance Painter の Texture Set List の並び）: 行は目・名前・状態のアイコン・解像度。押すと今のセットを
 //! 替え、ダブルクリックで名前を変え、右クリックでメニュー。マテリアルの名前や付いていない状態を書く帯は置かない（名前は行に出ている。
 //! 付いていない状態は行のアイコン、理由と詳しいマテリアルはツールチップ）。
+//! 下に、足す・消す・プロジェクトの構成のボタン（足す・消すは `newproject`）。
 //!
 //! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖（薄い）= 今のモデルのマテリアルに付いていない、
 //! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）。画面にはアイコンだけを
@@ -14,6 +15,8 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
 pub const ROW_HEIGHT: f32 = 28.0;
+/// 足す・消す・プロジェクトの構成のボタンの行の高さ。
+pub const TOOLBAR_HEIGHT: f32 = 28.0;
 
 /// セットの見え方: アイコンと色、ツールチップの説明（状態を文字では出さない）。
 #[derive(Clone, Debug, PartialEq)]
@@ -91,7 +94,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
-    let list = r;
+    let toolbar = Rect::from_min_max(
+        pos2(r.left(), (r.bottom() - TOOLBAR_HEIGHT).max(r.top())),
+        r.max,
+    );
+    let list = Rect::from_min_max(r.min, pos2(r.right(), toolbar.top()));
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let n = app.sets.len();
     let content = n as f32 * ROW_HEIGHT;
@@ -123,6 +130,79 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             t::CONTROL_ACTIVE,
             2.0,
         );
+    }
+
+    // 足す・消す・プロジェクトの構成（今のセットのマテリアルや見え方を文字の行で繰り返さない。状態は行の印とツールチップ）
+    toolbar_buttons(ui, app, toolbar);
+}
+
+/// 一覧の下のボタンの行: 空のセットを足す・今のセットを消す（確かめる）・プロジェクト設定を開く。
+fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
+    let p = ui.painter().clone();
+    w::fill(&p, bar, t::PANEL_HEADER);
+    w::hline(&p, bar.left(), bar.right(), bar.top(), t::BORDER);
+    let lang = app.lang;
+    let free = !app.is_stroking();
+    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
+    let mut action = None;
+    if w::icon_button(
+        ui,
+        button(bar.left() + 4.0),
+        "set.add",
+        "add",
+        lang.pick(
+            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "Add an empty texture set (same size and channels as this one)",
+        ),
+        false,
+        free && app.sets.len() < crate::newproject::MAX_SETS,
+        16.0,
+    )
+    .clicked()
+    {
+        action = Some(crate::newproject::NpAction::AddSet);
+    }
+    let only = app.sets.len() <= 1;
+    if w::icon_button(
+        ui,
+        button(bar.left() + 34.0),
+        "set.remove",
+        "delete",
+        if only {
+            lang.pick(
+                "プロジェクトには少なくとも 1 つのテクスチャセットが要ります",
+                "A project keeps at least one texture set",
+            )
+        } else {
+            lang.pick(
+                "今のテクスチャセットを消す（確かめます。その作業は消えます）",
+                "Remove this texture set (asked first; its work is lost)",
+            )
+        },
+        false,
+        free && !only,
+        16.0,
+    )
+    .clicked()
+    {
+        action = Some(crate::newproject::NpAction::RemoveSets(vec![app.sets.current().uid]));
+    }
+    if w::icon_button(
+        ui,
+        button(bar.right() - 30.0),
+        "set.configure",
+        "tune",
+        lang.pick("プロジェクト設定…", "Project Configuration…"),
+        false,
+        free,
+        16.0,
+    )
+    .clicked()
+    {
+        action = Some(crate::newproject::NpAction::OpenConfigure);
+    }
+    if let Some(a) = action {
+        app.apply(Action::Project(a));
     }
 }
 

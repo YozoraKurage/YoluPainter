@@ -18,6 +18,7 @@ pub use native::{
 };
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
+    MODEL_PATH_MAX,
 };
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Generation,

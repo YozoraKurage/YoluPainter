@@ -387,6 +387,107 @@ fn resize_budget_and_cancel_do_not_change_document() {
     assert_eq!(pixels(&d, id), old);
     assert_eq!(d.undo_count(), 0);
 }
+/// 大きさを変えた段を、やり直しに残さず捨てて元へ戻せる（複数の文書の大きさを順に変える途中で 1 つが断られたとき、先の文書を戻す）。
+/// 前からある履歴は残る（捨てるのは直前の段だけ）。
+#[test]
+fn discarding_the_last_step_restores_the_size_and_leaves_no_redo() {
+    let (mut d, id) = patterned();
+    let before = pixels(&d, id);
+    // 前の履歴（1 段）は残る
+    d.set_layer_name(id, "名前").unwrap();
+    let kept = d.history_bytes();
+    d.resize_image(18, 14, CanvasResampling::Bilinear).unwrap();
+    assert_eq!(d.undo_count(), 2);
+    assert_eq!(d.discard_last_step(), Ok(true));
+    assert_eq!((d.width(), d.height()), (9, 7));
+    assert_eq!(pixels(&d, id), before, "大きさと画素が元のまま");
+    assert_eq!(d.undo_count(), 1, "前の段は残る");
+    assert!(!d.can_redo(), "やり直しには残らない");
+    assert_eq!(d.history_bytes(), kept, "捨てた段の費用は引いてある");
+    d.undo().unwrap();
+    assert_eq!(d.discard_last_step(), Ok(false), "戻す段が無ければ何もしない");
+}
+/// 大きさの変更を「準備」と「入れる」に分けて使える: 準備は文書も履歴（Undo・Redo）も変えず、予算で断られても何も残らない。入れると
+/// `resize_image` と同じ結果の 1 段になる。準備のあとに文書が変わった・別の文書へ入れるのは、何も変えずに断る。
+#[test]
+fn a_prepared_resize_changes_nothing_until_committed_and_then_is_one_step() {
+    let (mut d, id) = patterned();
+    let (mut reference, reference_id) = patterned();
+    reference
+        .resize_image(18, 14, CanvasResampling::Bilinear)
+        .unwrap();
+    // Undo が 1 段・Redo が 1 段ある文書
+    d.set_layer_name(id, "一").unwrap();
+    d.set_layer_name(id, "二").unwrap();
+    d.undo().unwrap();
+    let (undo, redo, revision, bytes) = (
+        d.undo_count(),
+        d.redo_count(),
+        d.revision(),
+        d.history_bytes(),
+    );
+    let before = pixels(&d, id);
+    // 同じ大きさなら準備は要らない
+    assert!(d
+        .prepare_resize_image(9, 7, CanvasResampling::Area, &mut || false)
+        .unwrap()
+        .is_none());
+    let prepared = d
+        .prepare_resize_image(18, 14, CanvasResampling::Bilinear, &mut || false)
+        .unwrap()
+        .expect("大きさが違う");
+    assert_eq!((d.width(), d.height()), (9, 7));
+    assert_eq!(pixels(&d, id), before);
+    assert_eq!(
+        (d.undo_count(), d.redo_count(), d.revision(), d.history_bytes()),
+        (undo, redo, revision, bytes),
+        "準備は文書も履歴も変えない"
+    );
+    let report = d.commit_prepared_resize(prepared).unwrap();
+    assert_eq!((d.width(), d.height()), (18, 14));
+    assert_eq!(pixels(&d, id), pixels(&reference, reference_id));
+    assert_eq!(d.undo_count(), undo + 1, "1 回の Undo の段");
+    assert_eq!(d.redo_count(), 0, "新しい操作なので Redo は消える");
+    assert_eq!(report, yolu_core::ResizeReport::default());
+    d.undo().unwrap();
+    assert_eq!(pixels(&d, id), before);
+    // 予算で断られる準備は、何も残さない
+    d.set_source_budget_bytes(d.allocated_bytes()).unwrap();
+    let (undo, redo, revision) = (d.undo_count(), d.redo_count(), d.revision());
+    assert!(matches!(
+        d.prepare_resize_image(18, 14, CanvasResampling::Bilinear, &mut || false),
+        Err(CoreError::SourceBudgetExceeded)
+    ));
+    assert_eq!(
+        (d.undo_count(), d.redo_count(), d.revision()),
+        (undo, redo, revision)
+    );
+    d.set_source_budget_bytes(1 << 20).unwrap();
+    // 準備のあとに文書が変わった: 断る
+    let stale = d
+        .prepare_resize_image(18, 14, CanvasResampling::Bilinear, &mut || false)
+        .unwrap()
+        .unwrap();
+    d.set_layer_name(id, "三").unwrap();
+    assert!(matches!(
+        d.commit_prepared_resize(stale),
+        Err(CoreError::InvalidArgument(_))
+    ));
+    assert_eq!((d.width(), d.height()), (9, 7));
+    // 別の文書へは入れない
+    let (mut other, other_id) = patterned();
+    let foreign = d
+        .prepare_resize_image(18, 14, CanvasResampling::Bilinear, &mut || false)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        other.commit_prepared_resize(foreign),
+        Err(CoreError::InvalidArgument(_))
+    ));
+    assert_eq!((other.width(), other.height()), (9, 7));
+    assert_eq!(other.undo_count(), 0);
+    let _ = other_id;
+}
 #[test]
 fn clipped_merge_preserves_base_attributes_and_locks() {
     let (mut d, base) = patterned();

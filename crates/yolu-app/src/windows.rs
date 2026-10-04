@@ -235,12 +235,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.bake.is_probing_gpu()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.np_is_busy()
         || app.update.is_busy()
     {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     bake::window::show(ctx, app);
     crate::panels::brush_detail::show(ctx, app);
+    crate::newproject::window::show(ctx, app);
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);
@@ -256,6 +258,8 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.psd.confirm.is_some()
         || app.update.window_open()
         || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
+        || app.np.window.is_some()
+        || app.np.remove_confirm.is_some()
 }
 
 fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
@@ -550,6 +554,15 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             fraction: None,
             cancel: Action::Psd(PsdAction::Cancel),
             canceling: p.canceling,
+        });
+    }
+    if let Some(r) = &app.np.reopening {
+        entries.push(Entry {
+            id: "model",
+            text: format!("{} — {}", lang.pick("モデルを読み込み中", "Loading the model"), r.file_name()),
+            fraction: None,
+            cancel: Action::Project(crate::newproject::NpAction::CancelReopen),
+            canceling: false,
         });
     }
     if let Some(p) = app.update.progress() {

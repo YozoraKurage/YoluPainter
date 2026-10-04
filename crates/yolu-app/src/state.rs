@@ -484,6 +484,8 @@ pub enum Action {
     Export(crate::export::ExportAction),
     /// PSD の読み込みと書き出し。
     Psd(crate::psd::PsdAction),
+    /// 新規プロジェクトの窓・プロジェクトの構成・テクスチャセットの足す・消す。
+    Project(crate::newproject::NpAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
     Update(crate::update::UpdateAction),
     /// 設定の窓と、退避を残す数。
@@ -595,6 +597,8 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
+    /// 新規プロジェクトの窓・プロジェクトの構成の窓と、プロジェクトのモデルのファイル。
+    pub np: crate::newproject::NpState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（退避を残す数）と設定の窓。
@@ -629,6 +633,8 @@ pub enum DialogRequest {
     PsdExport,
     /// ステンシルの画像（PNG）を選ぶ。
     OpenStencil,
+    /// 新規プロジェクト・プロジェクトの構成の窓で、モデル（FBX）を選ぶ。
+    ProjectModel,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -734,6 +740,7 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             stencil: crate::stencil::StencilState::default(),
+            np: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
@@ -1004,6 +1011,8 @@ impl AppState {
                     return refuse(self);
                 }
                 self.view3d.load_demo();
+                // 試しの立方体はファイルのモデルではない（プロジェクトのモデルの参照は外す）
+                self.np.model_file = None;
                 self.message = self
                     .lang
                     .pick(
@@ -1108,6 +1117,7 @@ impl AppState {
             Action::Bake(a) => self.bake_apply(a),
             Action::Export(a) => self.export_apply(a),
             Action::Psd(a) => self.psd_apply(a),
+            Action::Project(a) => self.np_apply(a),
             Action::Update(a) => self.update_apply(a),
             Action::Prefs(a) => self.prefs_apply(a),
             Action::Recovery(a) => self.recovery_apply(a),

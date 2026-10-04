@@ -6,6 +6,7 @@
 //! ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本のストローク・保存）は `brushes`、その画面は左のドックの `panels::brushes` と
 //! 詳細の窓 `panels::brush_detail`（欄は `panels::brush_props`）。
 //! 落ちても失わない書き置き（変更があると裏のスレッドで復旧用の世代を書き、落ちた次の起動で復旧の窓から開く）は `recovery`。
+//! プロジェクトの構成（`newproject`。モデルは別のスレッドで読み、決めたとき 3D ビューに入れる）も画面の状態との受け渡しだけ。
 
 pub mod app;
 pub mod bake;
@@ -20,6 +21,7 @@ pub mod m2;
 pub mod m2_menu;
 pub mod matpaint;
 pub mod model;
+pub mod newproject;
 pub mod panels;
 pub mod pen;
 pub mod prefs;

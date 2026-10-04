@@ -26,7 +26,7 @@ mod triangle_fill;
 pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;
 pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
-pub use resize::{CanvasResampling, ResizeReport};
+pub use resize::{CanvasResampling, PreparedResize, ResizeReport};
 pub use transform::{Affine2D, Resampling};
 pub use triangle_fill::TriangleFill;
 mod selection;
@@ -900,6 +900,25 @@ impl Document {
         self.history_bytes -= top.cost;
         self.revision += 1;
         self.end_coalescing();
+        Ok(true)
+    }
+
+    /// 直前の段を取り消し、やり直しにも残さず捨てる（呼び手が積んだ段を、あとの失敗で無かったことにするため）。ただし、積んだ段が押し
+    /// 出した古い Undo の段と、消えた Redo は戻らない。複数の文書の大きさを変えるときは、先に `prepare_resize_image` で全部を準備して
+    /// から入れれば、これを使わずに済む。`undo` と違い、戻した段を `redo` に積まないので、
+    /// 利用者のやり直しで取り消した操作が復活しない。戻す段が無ければ false。
+    pub fn discard_last_step(&mut self) -> Result<bool, CoreError> {
+        self.ensure_no_stroke()?;
+        let Some(mut entry) = self.undo.pop() else {
+            return Ok(false);
+        };
+        self.end_coalescing();
+        if let Err(e) = self.revert(&mut entry.command) {
+            self.undo.push(entry);
+            return Err(e);
+        }
+        self.history_bytes -= entry.cost;
+        self.revision += 1;
         Ok(true)
     }
 

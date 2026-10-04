@@ -326,6 +326,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "ステンシルのミップマップが予算を超える（小さい画像にする）" => "Stencil mipmap budget exceeded",
         "ステンシルの点は画素ごとに 1 つ" => "Stencil point count must match pixel count",
         "ステンシルの画像の画素 / 点" => "Stencil image pixels / points",
+        "大きさの変更の準備のあとに文書が変わった" => "The document changed after the resize was prepared",
         "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
         "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => "Stencil buffer size must be width × height × 4 bytes",
         "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",

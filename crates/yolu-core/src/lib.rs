@@ -73,8 +73,8 @@ pub use brush::{
 };
 pub use document::{
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
-    LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, Resampling,
-    ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
+    LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
+    PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,

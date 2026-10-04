@@ -334,10 +334,23 @@ impl Project {
         )?)
     }
     /// 形式7のセットの並び・名前・マテリアル参照・現在のセットを置き換え、正本と合成を差し替える。旧形式は先にupgradedで
-    /// 明示的に移行する。元のセットは全部が並びに要る（セットを消すのは別の口で、黙って消さない）。並びに無かったIDは新しい
-    /// セットで、正本が要る。各セットの知らないJSONキー、選択範囲・メッシュマップ・PSD原本、根のほかのエントリは残す。
-    /// `savedBy` は writer にする。
+    /// 明示的に移行する。元のセットは全部が並びに要る（セットを消すのは [`Project::with_sets_dropping`] で、黙って消さない）。
+    /// 並びに無かったIDは新しいセットで、正本が要る。各セットの知らないJSONキー、選択範囲・メッシュマップ・PSD原本、根のほかの
+    /// エントリは残す。`savedBy` は writer にする。
     pub fn with_sets(&self, writer: WriterInfo, sets: &[SetSpec], current: &str) -> Result<Self> {
+        self.with_sets_dropping(writer, sets, current, &[])
+    }
+    /// [`Project::with_sets`] に加えて、`dropped`（元のセットのID）のセットを消す: project.json の並びから外し、`sets/<ID>/` の下の
+    /// エントリ（正本・選択範囲・合成・メッシュマップ・PSD原本）を全部消す。元のセットは、並び（`sets`）か `dropped` のどちらか
+    /// 一方に要る（どちらにも無いセットは黙って消さず、両方にあるのも断る）。`dropped` にはファイルに無いIDを入れられない。
+    /// 呼び手が利用者に確かめた消去だけをここへ渡す（消したセットの作業は、直前の版の退避以外には残らない）。
+    pub fn with_sets_dropping(
+        &self,
+        writer: WriterInfo,
+        sets: &[SetSpec],
+        current: &str,
+        dropped: &[&str],
+    ) -> Result<Self> {
         check(
             self.info.format == 7,
             "セットを並べ直す前にupgradedで形式7へ移行してください",
@@ -345,14 +358,28 @@ impl Project {
         let mut files = self.original.files.clone();
         let mut project = json(required(&files, "project.json")?, 65536)?;
         let old: Vec<Value> = project["sets"].as_array().cloned().unwrap_or_default();
+        for id in dropped {
+            check(
+                self.sets.iter().any(|s| s.id == *id),
+                format!("消すセットがファイルにありません: {id}"),
+            )?;
+            check(
+                !sets.iter().any(|s| s.id == *id),
+                format!("消すセットが並びにもあります: {id}"),
+            )?;
+        }
         for set in &self.sets {
             check(
-                sets.iter().any(|s| s.id == set.id),
+                sets.iter().any(|s| s.id == set.id) || dropped.contains(&set.id.as_str()),
                 format!(
-                    "セット「{}」が並びにありません（消すのは別の口です）",
+                    "セット「{}」が並びにありません（消すなら消すセットに入れてください）",
                     set.name
                 ),
             )?;
+        }
+        for id in dropped {
+            let prefix = format!("sets/{id}/");
+            files.retain(|n, _| !n.starts_with(&prefix));
         }
         let mut list = Vec::with_capacity(sets.len());
         for spec in sets {
@@ -514,6 +541,74 @@ impl Project {
         files.insert(
             "project.json".into(),
             Arc::from(serde_json::to_vec(&project)?),
+        );
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    /// スタンドアロン版が view.json（状態のエントリ）に残した、開いたモデルのファイルの参照（`standaloneModel.path`。呼び手が決めた文字列
+    /// のまま。.ylp からの相対か絶対のパス）。無ければ None。読めない view.json・形の違う参照は断る（正本ではないので、呼び手は
+    /// モデルなしで開いて知らせればよい）。Unity 版が書いたモデルの GUID・選んだチャンネル・表示の状態には触れない。
+    pub fn view_model(&self) -> Result<Option<String>> {
+        let Some(bytes) = self.files.get("view.json") else {
+            return Ok(None);
+        };
+        let view = read_view(bytes)?;
+        match view.get("standaloneModel") {
+            None | Some(Value::Null) => Ok(None),
+            Some(model) => {
+                check(
+                    model.is_object(),
+                    "standaloneModel がオブジェクトではありません",
+                )?;
+                let path = text(model, "path", 1, MODEL_PATH_MAX)?;
+                check(
+                    !path.chars().any(|c| c < ' ' || c == '\x7f'),
+                    "モデルのパスに制御文字があります",
+                )?;
+                Ok(Some(path.to_owned()))
+            }
+        }
+    }
+    /// view.json にモデルのファイルの参照を書く（None なら参照を外す）。形式7だけ。view.json が無い・読めなければ Unity 版の読み手が受け入れる
+    /// 最小の形（モデルの GUID は空・選んだチャンネルは Color）で作り、読めればその知らないキーも含めて残し、`standaloneModel` だけを置き換える。
+    /// 状態のエントリの任意の項目を足すだけなので、形式も正本の版も変えない（Unity 版は知らない項目を読み飛ばし、次の保存で
+    /// 参照を落とす。そのとき失うのはモデルの場所だけで、作業の中身は失わない）。
+    pub fn with_view_model(&self, path: Option<&str>) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "モデルの参照を書く前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        let minimal = || serde_json::json!({"modelAssetGuid": "", "selectedChannel": 0});
+        let mut view = match (files.get("view.json").map(|b| read_view(b)), path) {
+            (Some(Ok(view)), _) => view,
+            // 読めない view.json は状態（正本ではない）なので、参照を書くときは最小の形に作り直す（Unity 版も、読めない状態は
+            // 既定に戻して開く）。参照を外すだけなら、読めないものには触らない
+            (Some(Err(_)) | None, Some(_)) => minimal(),
+            (Some(Err(_)), None) | (None, None) => return Ok(self.clone()),
+        };
+        match path {
+            Some(path) => {
+                check(
+                    (1..=MODEL_PATH_MAX).contains(&path.encode_utf16().count())
+                        && !path.chars().any(|c| c < ' ' || c == '\x7f'),
+                    "モデルのパスの長さ・文字が範囲外です",
+                )?;
+                view["standaloneModel"] = serde_json::json!({ "path": path });
+            }
+            None => {
+                view.as_object_mut()
+                    .expect("read_view が確かめた")
+                    .remove("standaloneModel");
+            }
+        }
+        files.insert(
+            "view.json".into(),
+            Arc::from(serde_json::to_vec_pretty(&view)?),
         );
         Self::from_archive(Archive::build(
             files,
@@ -687,6 +782,16 @@ impl Project {
             unknown,
         })
     }
+}
+/// view.json に残すモデルのパスの長さの上限（UTF-16 の数。ファイルのパスの実用の上限に合わせる）。
+pub const MODEL_PATH_MAX: usize = 1024;
+/// view.json の読み込み（Unity 版の予算 256 KiB と同じ。オブジェクトでなければ断る）。ここは状態のエントリなので、正本の
+/// JSON の厳しい検査（`json`。文字列は 1024 文字まで）は使わない: Unity 版の表示の状態は長い鍵を持てる。
+fn read_view(bytes: &[u8]) -> Result<Value> {
+    check_budget(bytes.len() <= 262_144, "view.json のバイト予算超過です")?;
+    let view: Value = serde_json::from_slice(bytes)?;
+    check(view.is_object(), "view.json がオブジェクトではありません")?;
+    Ok(view)
 }
 /// project.json のセット 1 つ。前のオブジェクトがあれば、知らないキーを残して名前とマテリアル参照の既知の鍵だけを置き換える。
 fn set_json(previous: Option<&Value>, spec: &SetSpec) -> Value {

@@ -7,11 +7,12 @@ pub use yolu_core::glam::DVec2;
 pub use yolu_core::selection::{DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS};
 pub use yolu_core::{
     AdjustmentSettings, AdjustmentType, BlendMode, Brush, BrushEffect, BrushPreset, BrushSample,
-    BrushSettings, BrushTip, CanvasSymmetry, Channel, ChannelBlend, ChannelInfo, ChannelKind,
-    ClipboardRefusal, ClipboardSource, ColorDynamics, ColorSpace, Controls, CoreError, Document,
-    DualBrush, DualBrushMode, Jitter, Layer, LayerId, LayerKind, PaperTexture, PixelClipboard,
-    Rect, Rgba8, RowOrder, SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode,
-    TextureMode, TileCoord, TipShape,
+    BrushSettings, BrushTip, CanvasResampling, CanvasSymmetry, Channel, ChannelBlend, ChannelInfo,
+    ChannelKind, ClipboardRefusal, ClipboardSource, ColorDynamics, ColorSpace, Controls, CoreError,
+    Document, DualBrush, DualBrushMode, Jitter, Layer, LayerId, LayerKind, NormalSettings,
+    NormalYDirection, PaperTexture, PixelClipboard, PreparedResize, Rect, Rgba8, RowOrder,
+    SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, TileCoord,
+    TipShape,
 };
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。

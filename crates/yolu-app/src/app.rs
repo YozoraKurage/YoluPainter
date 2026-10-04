@@ -364,8 +364,20 @@ impl YoluApp {
         }
         match self.state.dialog_request.take() {
             Some(DialogRequest::New) => {
+                // 保存していない変更は先に聞く（窓を開いてから聞くと、作業を捨てる前に窓の設定が無駄になる）
                 if self.confirm_discard() {
-                    self.state.apply(Action::NewProject);
+                    self.state.apply(Action::Project(crate::newproject::NpAction::OpenNew));
+                }
+            }
+            Some(DialogRequest::ProjectModel) => {
+                let lang = self.state.lang;
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(lang.pick("モデルを選ぶ", "Choose a model"))
+                    .add_filter("FBX", &["fbx", "FBX"])
+                    .pick_file()
+                {
+                    self.state
+                        .apply(Action::Project(crate::newproject::NpAction::ChooseModel(path)));
                 }
             }
             Some(DialogRequest::Open) => {
@@ -652,6 +664,7 @@ impl YoluApp {
         self.state.poll_bake();
         self.state.poll_export();
         self.state.poll_psd();
+        self.state.poll_newproject();
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();
         self.state.poll_clipboard();

@@ -309,6 +309,59 @@ impl TextureSets {
         (sets, current_doc.expect("今のセットの文書"))
     }
 
+    /// 新しく作ったセットを並べる（id・名前・名前をマテリアルから付けたままか・鍵・文書）。`from_parts` と違い、どのセットも「保存した時のまま」の印を付けない
+    /// （ファイルに無いセットなので、保存は正本を書く）。返すのは並びと、最初のセットの文書（今のセット）。
+    pub fn from_new_parts(
+        parts: Vec<(String, String, bool, MaterialRef, Document)>,
+    ) -> (TextureSets, Document) {
+        assert!(!parts.is_empty(), "セットが 1 つは要る");
+        let mut sets = TextureSets {
+            list: Vec::with_capacity(parts.len()),
+            current: 0,
+        };
+        for (id, name, auto_name, material, doc) in parts {
+            sets.push(id, name, auto_name, material, None, doc);
+        }
+        let first = sets.list[0].stash.take().map(|s| s.doc);
+        (sets, first.expect("最初のセットの文書"))
+    }
+
+    /// 今のセットでないセットを外す（uid。文書ごと捨てる。今のセットは呼ぶ側が先に替える）。外したセットを返す。
+    pub(crate) fn take_other(&mut self, uid: u32) -> Option<TextureSet> {
+        let index = self.index_of(uid)?;
+        if index == self.current {
+            return None;
+        }
+        let set = self.list.remove(index);
+        if index < self.current {
+            self.current -= 1;
+        }
+        Some(set)
+    }
+
+    /// 並びを替える（uid の並び。全部のセットを 1 回ずつ含むときだけ。今のセットは今のまま）。
+    pub(crate) fn reorder(&mut self, order: &[u32]) -> bool {
+        if order.len() != self.list.len() {
+            return false;
+        }
+        let mut next = Vec::with_capacity(order.len());
+        let mut rest = std::mem::take(&mut self.list);
+        for uid in order {
+            match rest.iter().position(|s| s.uid == *uid) {
+                Some(i) => next.push(rest.remove(i)),
+                None => {
+                    // 足りない・重なる並びは受けない（元に戻す）
+                    next.extend(rest);
+                    self.list = next;
+                    return false;
+                }
+            }
+        }
+        self.current = next.iter().position(|s| s.stash.is_none()).unwrap_or(0);
+        self.list = next;
+        true
+    }
+
     /// セットを後ろに足す（文書はしまう）。返すのは位置。
     #[allow(clippy::too_many_arguments)]
     pub fn push(
@@ -335,6 +388,16 @@ impl TextureSets {
             stash: Some(Stash::new(doc)),
         });
         self.list.len() - 1
+    }
+}
+
+/// 鍵の排他の識別（同じ識別の鍵を 2 つのセットが持てない。名前だけの鍵は重なってよい）。
+pub(crate) fn exclusive_key(material: &MaterialRef) -> Option<String> {
+    match material {
+        MaterialRef::Unassigned => Some("unassigned".into()),
+        MaterialRef::PendingSlot(n) => Some(format!("slot:{n}")),
+        MaterialRef::Material { asset: Some(a), .. } => Some(format!("asset:{}:{}", a.guid, a.file_id)),
+        MaterialRef::Material { asset: None, .. } => None,
     }
 }
 
@@ -515,6 +578,12 @@ impl AppState {
 
     /// セットの並びを丸ごと置き換える（開いたとき）。`current` の文書が `self.doc` になる。
     pub fn replace_sets(&mut self, sets: TextureSets, doc: Document) {
+        self.replace_sets_with(sets, doc, true);
+    }
+
+    /// `replace_sets` の、今のモデルのマテリアルのうちセットの無いものにセットを作るか選べるもの（新規プロジェクトは、利用者が
+    /// 選んだマテリアルだけをセットにする）。
+    pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
         self.doc = doc;
         self.document_replaced();
@@ -527,18 +596,30 @@ impl AppState {
         self.popup = None;
         self.sel_doc_changed();
         self.ensure_selection();
-        self.bind_model();
+        if create_missing {
+            self.bind_model();
+        } else {
+            self.bind_model_only();
+        }
     }
 
     /// 今のモデル（無ければどれにも付けない）のマテリアルにセットを結び付け、セットの無いマテリアルにはセットを作る。
     /// 3D ビューで描くマテリアル・隠すマテリアルも合わせる。
     pub fn bind_model(&mut self) -> BindReport {
-        let report = self.bind_model_to_sets();
+        let report = self.bind_model_to_sets(true);
         self.sync_view3d();
         report
     }
 
-    fn bind_model_to_sets(&mut self) -> BindReport {
+    /// 今のモデルのマテリアルにセットを結び付けるだけ（セットは作らない）。新規プロジェクトで選んだマテリアルだけをセットにしたとき・
+    /// 開いたプロジェクトに、読み直したモデルを付けるときは、モデルの残りのマテリアルにセットを増やさない。
+    pub fn bind_model_only(&mut self) -> BindReport {
+        let report = self.bind_model_to_sets(false);
+        self.sync_view3d();
+        report
+    }
+
+    fn bind_model_to_sets(&mut self, create: bool) -> BindReport {
         let mut report = BindReport::default();
         for s in &mut self.sets.list {
             s.bound = None;
@@ -572,7 +653,7 @@ impl AppState {
             }
         }
         for (mi, si) in matched.iter().enumerate() {
-            if si.is_some() {
+            if si.is_some() || !create {
                 continue;
             }
             let size = size_for(&infos[mi]);
@@ -632,6 +713,161 @@ impl AppState {
             self.modified = true;
         }
         Ok(())
+    }
+
+    /// 空のテクスチャセットを足して今のセットにする（テクスチャセットのパネルの足すボタン）: 今のセットと同じ大きさ・使うチャンネル・
+    /// Normal の設定の、空の層 1 枚。モデルにセットの無いマテリアルがあれば最初のそれに付け、無ければモデルのどのマテリアルにも付けない
+    /// （鍵は空いている仮のスロットの番号。プロジェクトの構成でマテリアルを選ぶ）。足したセットの uid を返す。
+    pub fn add_texture_set(&mut self) -> Result<u32, String> {
+        let lang = self.lang;
+        if self.is_stroking() {
+            return Err(lang.pick("描いている間はできません。", "Not while drawing.").into());
+        }
+        if self.sets.len() >= crate::newproject::MAX_SETS {
+            return Err(lang.pick(
+                format!("1 つのプロジェクトのテクスチャセットは {} までです。", crate::newproject::MAX_SETS),
+                format!("A project has at most {} texture sets.", crate::newproject::MAX_SETS),
+            ));
+        }
+        let groups = self.model.as_ref().map(crate::newproject::groups_of).unwrap_or_default();
+        let free = groups
+            .iter()
+            .find(|g| self.sets.iter().all(|s| s.bound != Some(g.index as u32)));
+        let doc = {
+            let like = &self.doc;
+            crate::newproject::new_set_document(
+                like.width(),
+                like.height(),
+                like.tile_size(),
+                lang,
+                &crate::newproject::used_channels(like),
+                like.normal_settings(),
+            )?
+        };
+        let base = match free {
+            Some(g) => g.name.clone(),
+            None => format!("{} {}", lang.pick("テクスチャセット", "Texture Set"), self.sets.len() + 1),
+        };
+        let name = unique_name(&base, self.sets.iter().map(|s| s.name.as_str()));
+        let key = match free {
+            Some(g) => g.key.clone(),
+            None => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
+        };
+        let uid_index = self.sets.push(guid_string(doc.id()), name.clone(), true, key, None, doc);
+        let uid = self.sets.get(uid_index).expect("足した").uid;
+        if let Some(set) = self.sets.get_mut(uid_index) {
+            set.bound = free.map(|g| g.index as u32);
+        }
+        self.modified = true;
+        self.switch_set(uid_index)?;
+        self.message = lang.pick(
+            format!("テクスチャセット {name} を足しました。"),
+            format!("Added the texture set {name}."),
+        );
+        Ok(uid)
+    }
+
+    /// 仮のスロットの番号のうち、どのセットも使っておらず、モデルのスロットの数より後のもの（マテリアルに結び付けないセットの仮の鍵）。
+    /// `also` は、まだセットに入れていない鍵（構成の下書き）。
+    pub fn unbound_pending_slot(&self, also: &[&MaterialRef]) -> u16 {
+        let used = |n: u16| {
+            self.sets
+                .iter()
+                .any(|s| s.material == MaterialRef::PendingSlot(n))
+                || also.iter().any(|k| **k == MaterialRef::PendingSlot(n))
+        };
+        let mut slot = self.model.as_ref().map_or(0, |m| m.slots.len().min(u16::MAX as usize) as u16);
+        while used(slot) && slot < u16::MAX {
+            slot += 1;
+        }
+        slot
+    }
+
+    /// セットを消す（uid。その作業・履歴・焼いたメッシュマップも消え、取り消せない。確かめは呼ぶ側）。全部は消せない。今のセットを消すなら、
+    /// 並びの次（無ければ前）のセットが今のセットになる。消したセットの名前を返す。
+    pub fn remove_sets(&mut self, uids: &[u32]) -> Result<Vec<String>, String> {
+        let lang = self.lang;
+        if self.is_stroking() {
+            return Err(lang.pick("描いている間はできません。", "Not while drawing.").into());
+        }
+        let mut gone: Vec<u32> = uids
+            .iter()
+            .copied()
+            .filter(|u| self.sets.index_of(*u).is_some())
+            .collect();
+        gone.sort_unstable();
+        gone.dedup();
+        if gone.is_empty() {
+            return Ok(Vec::new());
+        }
+        if gone.len() >= self.sets.len() {
+            return Err(lang
+                .pick(
+                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
+                    "A project keeps at least one texture set.",
+                )
+                .into());
+        }
+        let current = self.sets.current_index();
+        if gone.contains(&self.sets.current().uid) {
+            // 並びの次、無ければ前のセットを今のセットにする
+            let n = self.sets.len();
+            let next = (current + 1..n)
+                .chain((0..current).rev())
+                .find(|i| self.sets.get(*i).is_some_and(|s| !gone.contains(&s.uid)))
+                .expect("全部は消さない");
+            self.switch_set(next)?;
+        }
+        let mut names = Vec::new();
+        for uid in &gone {
+            if let Some(set) = self.sets.take_other(*uid) {
+                names.push(set.name.clone());
+                self.bake.skipped.remove(uid);
+                if self.renaming_set == Some(*uid) {
+                    self.renaming_set = None;
+                }
+            }
+        }
+        self.set_scroll = 0.0;
+        self.sync_mesh_map_view();
+        self.sync_view3d();
+        self.modified = true;
+        Ok(names)
+    }
+
+    /// 2 つのセットが同じ排他の鍵（アセット・Unassigned・仮のスロットの番号）を持たないようにする（保存は重なりを断るので）。
+    /// マテリアルに付いたセットの鍵を残し、ほかのセットの鍵は、Unassigned は名前に、仮のスロットの番号はモデルの外の番号に、
+    /// アセットは名前だけに替える。
+    pub fn dedupe_set_keys(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let order: Vec<usize> = (0..self.sets.len())
+            .filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_some()))
+            .chain((0..self.sets.len()).filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_none())))
+            .collect();
+        for i in order {
+            let Some(key) = self.sets.get(i).and_then(|s| exclusive_key(&s.material)) else {
+                continue;
+            };
+            if seen.insert(key) {
+                continue;
+            }
+            let (material, name) = {
+                let set = self.sets.get(i).expect("範囲内");
+                (set.material.clone(), set.name.clone())
+            };
+            let next = match material {
+                MaterialRef::PendingSlot(_) => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
+                MaterialRef::Unassigned | MaterialRef::Material { .. } => {
+                    MaterialRef::Material { name, asset: None }
+                }
+            };
+            if let Some(key) = exclusive_key(&next) {
+                seen.insert(key);
+            }
+            if let Some(set) = self.sets.get_mut(i) {
+                set.material = next;
+            }
+        }
     }
 
     /// セットの目を切り替える（3D ビューではそのマテリアルの面を隠す・見せる。Live Link では Unity に出す・外す）。

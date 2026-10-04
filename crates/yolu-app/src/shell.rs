@@ -110,6 +110,12 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .shortcut("Ctrl+Shift+S")
                 .enabled(free),
                 Entry::Separator,
+                Entry::item(
+                    l.pick("プロジェクト設定…", "Project Configuration…"),
+                    Action::Project(crate::newproject::NpAction::OpenConfigure),
+                )
+                .enabled(free),
+                Entry::Separator,
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
                 Entry::item(l.pick("終了", "Quit"), Action::Quit).shortcut("Ctrl+Q"),
@@ -356,6 +362,12 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     },
                     Action::ToggleSetVisible(uid),
                 ),
+                Entry::Separator,
+                Entry::item(
+                    l.pick("消す…", "Remove…"),
+                    Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
+                )
+                .enabled(!app.is_stroking() && app.sets.len() > 1),
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),

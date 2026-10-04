@@ -223,6 +223,101 @@ pub fn load_figure(view3d: &mut View3dState) -> Result<(), ViewError> {
     load_rig(view3d, demo_figure(FigureDetail::SMALL))
 }
 
+/// FBX を読んで休みの形まで組む（呼んだスレッドで。取消の旗は読んだあとと、組む途中で見る）。
+fn load_blocking(
+    path: &Path,
+    limits: &ModelLimits,
+    revision: u32,
+    cancel: &AtomicBool,
+) -> Result<Loaded, ViewError> {
+    let model = load_fbx(path, limits)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(ViewError::Cancelled);
+    }
+    let (meshes, rest) = build_rest(&model.rig, revision, Some(cancel))?;
+    Ok(Loaded {
+        rig: model.rig,
+        rest,
+        meshes,
+        warnings: model.report.warnings,
+    })
+}
+
+/// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成の窓が持ち、決めたときに
+/// `install_prepared` で入れる。窓を閉じれば、入れずに捨てる）。
+pub struct PreparedModel(Loaded);
+
+impl PreparedModel {
+    /// 読んだスキン（マテリアルの組・メッシュの名前を窓が読む）。
+    pub fn rig(&self) -> &Rig {
+        &self.0.rig
+    }
+    /// 読み込みの知らせ（近似したもの・飛ばしたもの）。
+    pub fn warnings(&self) -> &[String] {
+        &self.0.warnings
+    }
+    /// 休みの形の三角形のスナップショット（3D のパスの指紋を、入れる前のモデルと比べるために読む）。
+    pub fn geometry(&self) -> &SurfaceGeometry {
+        &self.0.rest
+    }
+}
+
+/// 読み込みの結果を受ける口（裏のスレッドと、取消の旗）。
+pub struct PrepareJob {
+    rx: Receiver<Result<PreparedModel, ViewError>>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl PrepareJob {
+    /// 読み終わっていれば結果（まだなら None。スレッドが落ちたら読み込みが止まったとして返す）。
+    pub fn poll(&self) -> Option<Result<PreparedModel, ViewError>> {
+        match self.rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Err(ViewError::LoadStopped)),
+        }
+    }
+    /// 取り消す（読み込みは次の区切りで止まり、結果は捨てる）。
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+    /// 終わらない読み込み（試験用）。返す送り口を持っているあいだは読み込み中のまま、送れば（失敗で）終わる。
+    #[doc(hidden)]
+    pub fn parked() -> (PrepareJob, std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>) {
+        let (tx, rx) = channel();
+        (
+            PrepareJob {
+                rx,
+                cancel: Arc::new(AtomicBool::new(false)),
+            },
+            tx,
+        )
+    }
+}
+
+/// FBX を別のスレッドで読み始める（3D ビューには入れない）。`view3d` は世代の番号を取るためだけに借りる。
+pub fn prepare_fbx(view3d: &mut View3dState, path: &Path, limits: ModelLimits) -> PrepareJob {
+    let revision = view3d.next_revision();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = channel();
+    let path: PathBuf = path.to_path_buf();
+    let flag = cancel.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(load_blocking(&path, &limits, revision, &flag).map(PreparedModel));
+    });
+    PrepareJob { rx, cancel }
+}
+
+/// 読み終えたモデルを 3D ビューに入れる（ポーズのセッションも始まる。描いている最中なら、形はストロークが終わってから入れ替わる）。
+pub fn install_prepared(view3d: &mut View3dState, prepared: PreparedModel) {
+    install(view3d, prepared.0);
+}
+
+/// 次のフレームで 3D ビューのタブを前に出す。
+pub fn request_focus(view3d: &mut View3dState) {
+    view3d.pose.focus = true;
+}
+
 /// FBX を別のスレッドで読み始める（読んでいる途中のものは取り消す）。終わったら `poll` が入れる。
 pub fn open_fbx(view3d: &mut View3dState, path: &Path) {
     open_fbx_with(view3d, path, ModelLimits::default());
@@ -242,20 +337,7 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
         .unwrap_or_default();
     let flag = cancel.clone();
     std::thread::spawn(move || {
-        let result = (|| {
-            let model = load_fbx(&path, &limits)?;
-            if flag.load(Ordering::Relaxed) {
-                return Err(ViewError::Cancelled);
-            }
-            let (meshes, rest) = build_rest(&model.rig, revision, Some(&flag))?;
-            Ok(Loaded {
-                rig: model.rig,
-                rest,
-                meshes,
-                warnings: model.report.warnings,
-            })
-        })();
-        let _ = tx.send(result);
+        let _ = tx.send(load_blocking(&path, &limits, revision, &flag));
     });
     view3d.pose.loading = Some(Loading {
         name,
@@ -508,21 +590,12 @@ pub fn reset(view3d: &mut View3dState) -> Result<(), ViewError> {
     set_pose(view3d, rest)
 }
 
-/// 決まったパスの FBX を開く（別のスレッドで読む。描いている最中なら断る）。ファイルを選ぶ窓は `YoluApp` が開く
-/// （`DialogRequest::OpenModel`。窓に落としたファイルもここへ来る）ので、ここは OS の窓に頼らない。
+/// 決まったパスの FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作る窓、作業のあるプロジェクトなら、
+/// プロジェクトの構成の窓でそのモデルに替える下書き（どのマテリアルをテクスチャセットにするか・大きさ・照合を、決めてから入れる）。
+/// 別のスレッドで読む。ファイルを選ぶ窓は `YoluApp` が開く（`DialogRequest::OpenModel`。窓に落としたファイルもここへ来る）ので、
+/// ここは OS の窓に頼らない。描いている最中は断る。
 pub fn open_file(app: &mut AppState, path: &Path) {
-    if app.is_stroking() {
-        app.message = app.lang.view_error(&ViewError::Stroking);
-        return;
-    }
-    open_fbx(&mut app.view3d, path);
-    app.message = format!(
-        "{}: {}",
-        app.lang.pick("読み込み中", "Loading"),
-        path.file_name()
-            .map(|s| s.to_string_lossy())
-            .unwrap_or_default()
-    );
+    app.np_apply(crate::newproject::NpAction::OpenModel(path.to_path_buf()));
 }
 
 /// 操作を当てる（`Action::Pose`）。描いている最中は、モードを切ることのほかは断る。
@@ -539,6 +612,8 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         }
         PoseAction::LoadFigure => load_figure(&mut app.view3d).map(|()| {
             app.view3d.pose.focus = true;
+            // 試しの人形はファイルのモデルではない（プロジェクトのモデルの参照は外す）
+            app.np.model_file = None;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
                 app.message = app.lang.pick(
@@ -897,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn open_file_reads_the_given_path_and_the_menu_only_asks_for_the_window() {
+    fn open_file_goes_through_the_new_project_window_and_the_menu_only_asks_for_the_dialog() {
         let dir = std::env::temp_dir().join(format!("yolu-app-pose-open-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("三角.fbx");
@@ -907,13 +982,12 @@ mod tests {
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(app.dialog_request, Some(DialogRequest::OpenModel));
         assert!(!app.view3d.pose.is_loading());
-        // 選ばれたパス（窓に落としたものも）は open_file が読む
+        // 選ばれたパス（窓に落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトの窓で読む（3D ビューには、
+        // 決めるまで入れない）
         open_file(&mut app, &path);
-        assert!(app.view3d.pose.is_loading());
-        assert_eq!(app.message, "読み込み中: 三角.fbx");
-        let (_, installed) = wait(&mut app);
-        assert!(installed);
-        assert_eq!(app.view3d.model.as_ref().unwrap().triangle_count(), 1);
+        let win = app.np.window.as_ref().expect("新規プロジェクトの窓");
+        assert!(!win.configure && win.is_loading());
+        assert!(!app.view3d.pose.is_loading() && app.view3d.pose.session.is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

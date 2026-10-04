@@ -236,6 +236,9 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
         .position(|s| s.id == project.current_set())
         .unwrap_or(0);
     let count = parts.len();
+    // 前のプロジェクトのモデル（FBX・試しの人形）は引きずらない（このプロジェクトのモデルは、参照があれば読み直す）
+    state.np_project_replaced();
+    state.drop_project_model();
     let (mut sets, doc) = TextureSets::from_parts(parts, current);
     // メッシュマップ（セットごとの派生物）。壊れていれば読まずに知らせる（ファイルのエントリはそのまま残る）
     let (mut map_count, mut map_problems) = (0usize, Vec::new());
@@ -324,16 +327,33 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
     if !notes.is_empty() {
         text += &state.lang.pick(format!(" {}", notes.join(" ")), format!(" {}.", notes.join("; ")));
     }
+    let view_model = project.view_model();
     state.message = text;
     let (path, target) = match file {
         Some((path, target)) => (path, Some(target)),
         None => (PathBuf::new(), None),
     };
+    let file_path = path.clone();
     state.project = Some(ProjectFile {
         path,
         target,
         original: std::sync::Arc::new(project),
     });
+    // モデルのファイルの参照（view.json）があれば、別のスレッドで読み直す（読み終えたら結び付ける）。参照は .ylp からの相対の
+    // パスなので、ファイルの無いプロジェクト（復旧した世代）では読み直さない（保存し直した後に開けば読む）
+    let base = state.message.clone();
+    let note = match view_model {
+        Ok(Some(_)) if file_path.as_os_str().is_empty() => None,
+        Ok(Some(stored)) => crate::newproject::reopen::start(state, &file_path, &stored, &base),
+        Ok(None) => None,
+        Err(e) => Some(state.lang.pick(
+            format!("モデルの参照を読めません（{}）。", state.lang.io_error(&e)),
+            format!("Cannot read the model reference ({}).", state.lang.io_error(&e)),
+        )),
+    };
+    if let Some(note) = note {
+        state.message += &format!(" {note}");
+    }
 }
 
 /// 開いたときの知らせのうち、棚を読めなかった分（読めた棚には None。先頭に空白を置いて、知らせの文へ続ける）。
@@ -345,8 +365,11 @@ pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
     ))
 }
 
-/// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。
+/// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。前のプロジェクトの
+/// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶ窓は `newproject`。
 pub fn new_into(state: &mut AppState) {
+    state.np_project_replaced();
+    state.drop_project_model();
     let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
     let sets = TextureSets::first_in(&doc, state.lang);
     state.replace_sets(sets, doc);
@@ -431,7 +454,14 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             } else {
                 b
             };
-            b.with_sets(writer(), &specs, &current)
+            // 開いたあとに消したセット（プロジェクトの構成・テクスチャセットのパネルで確かめて消したもの）は、ファイルからも消す
+            let dropped: Vec<&str> = b
+                .sets()
+                .iter()
+                .map(|s| s.id.as_str())
+                .filter(|id| !state.sets.iter().any(|set| set.id == *id))
+                .collect();
+            b.with_sets_dropping(writer(), &specs, &current, &dropped)
         }
         None => Project::create(writer(), &specs, &current),
     }
@@ -464,6 +494,20 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     }
     // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
     let project = state.shelf.write_into(project, state.lang)?;
+    // モデルのファイル（FBX）の参照: 保存先の .ylp からの相対のパスで view.json に残す。変わっていなければ view.json に触らない
+    // （Unity 版が書いたものはそのまま）
+    let wanted = state
+        .np
+        .model_file
+        .as_ref()
+        .map(|m| crate::newproject::relative_model_path(m, path));
+    let project = if project.view_model().ok().flatten() == wanted {
+        project
+    } else {
+        project
+            .with_view_model(wanted.as_deref())
+            .map_err(|e| state.lang.io_error(&e))?
+    };
     let project = std::sync::Arc::new(project);
     let overwrite = path.exists();
     let reuse = state

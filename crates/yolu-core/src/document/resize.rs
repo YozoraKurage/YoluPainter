@@ -27,6 +27,19 @@ pub struct ResizeReport {
     /// この変更の履歴の費用（前後の格納量）が履歴の予算を超えた。Undo はこの 1 段だけ残し、次の編集の整理で落ち得る。
     pub history_over_budget: bool,
 }
+/// [`Document::prepare_resize_image`] が作る、大きさを変えた文書の写し（まだ文書に入っていない）。
+pub struct PreparedResize {
+    copy: Document,
+    report: ResizeReport,
+    id: u128,
+    revision: u64,
+}
+impl PreparedResize {
+    /// 入れたときに返す報告（準備の段階で分かっている分）。
+    pub fn report(&self) -> &ResizeReport {
+        &self.report
+    }
+}
 struct Axis(Vec<Vec<(u32, f64)>>);
 impl Axis {
     fn new(source: u32, target: u32, method: CanvasResampling) -> Self {
@@ -376,10 +389,25 @@ impl Document {
         method: CanvasResampling,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<ResizeReport, CoreError> {
+        match self.prepare_resize_image(width, height, method, cancelled)? {
+            Some(prepared) => self.commit_prepared_resize(prepared),
+            None => Ok(ResizeReport::default()),
+        }
+    }
+    /// [`Document::resize_image`] の失敗しうる前半だけ（結果の写しを作る。文書も履歴も変えない）。大きさが今と同じなら `None`。
+    /// 複数の文書を「全部変えるか、1 つも変えない」で変えるとき、先に全部を準備してから [`Document::commit_prepared_resize`] で入れる
+    /// （途中の文書が予算で断られても、先の文書の履歴を積んで落とすことがない）。
+    pub fn prepare_resize_image(
+        &self,
+        width: u32,
+        height: u32,
+        method: CanvasResampling,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<PreparedResize>, CoreError> {
         self.ensure_no_stroke()?;
         Self::check_resize(width, height)?;
         if width == self.width && height == self.height {
-            return Ok(ResizeReport::default());
+            return Ok(None);
         }
         let map = Resampled {
             xs: Axis::new(self.width, width, method),
@@ -402,6 +430,31 @@ impl Document {
             report
                 .notes
                 .push("Height → Normal の強さを上限に制限した".into());
+        }
+        Ok(Some(PreparedResize {
+            copy,
+            report,
+            id: self.id,
+            revision: self.revision,
+        }))
+    }
+    /// [`Document::prepare_resize_image`] の結果を 1 回の Undo の段として入れる（`resize_image` の後半）。準備のあとに文書が変わって
+    /// いた・別の文書のものなら、何も変えずに断る。履歴の予算は `resize_image` と同じ（超えてもこの 1 段は残す）。
+    pub fn commit_prepared_resize(
+        &mut self,
+        prepared: PreparedResize,
+    ) -> Result<ResizeReport, CoreError> {
+        self.ensure_no_stroke()?;
+        let PreparedResize {
+            copy,
+            mut report,
+            id,
+            revision,
+        } = prepared;
+        if id != self.id || revision != self.revision {
+            return Err(CoreError::InvalidArgument(
+                "大きさの変更の準備のあとに文書が変わった",
+            ));
         }
         self.commit_resized(copy, &mut report)?;
         Ok(report)

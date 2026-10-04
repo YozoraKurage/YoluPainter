@@ -1,6 +1,8 @@
 //! 画面の試験の共通の道具（egui_kittest。描画は wgpu のソフトの描画で、コンテナでも回る）。
 #![allow(dead_code)]
 
+pub mod fbx;
+
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
 use yolu_app::pen::PenInput;

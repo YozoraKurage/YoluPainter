@@ -43,6 +43,9 @@ pub struct SceneModel {
     /// スロット（メッシュ × サブメッシュを並びの順に平らにしたもの）ごとのマテリアルの番号。Unity 版の `{"slot": n}` の鍵を読み替える。
     pub slots: Vec<u32>,
     pub meshes: usize,
+    /// マテリアルごとの、それを使うメッシュの名前（メッシュの並びの順。同じ名前は 1 回）。新規プロジェクト・プロジェクトの構成の窓が
+    /// マテリアルの一覧に添える。
+    pub material_meshes: Vec<Vec<String>>,
     pub vertices: usize,
     pub triangles: usize,
     /// モデルを受け直すたびに増える（プロセスの中で一意）。
@@ -55,6 +58,18 @@ static REVISION: AtomicU64 = AtomicU64::new(1);
 
 /// FBX でマテリアルの無い面につく名前（yolu-model が付ける）。未割り当ての鍵にする。
 const NO_MATERIAL: &str = "マテリアルなし";
+
+/// 鍵に入れるマテリアルの名前（制御文字を除き、256 文字（UTF-16）まで。.ylp が受ける形で、Unity 版の `KeyName` と同じ）。照合も同じ形で比べる。
+pub fn key_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars().filter(|c| !c.is_control()) {
+        if out.encode_utf16().count() + c.len_utf16() > 256 {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
 
 impl SceneModel {
     /// Live Link で受けたモデルから作る。
@@ -70,6 +85,19 @@ impl SceneModel {
                 .flat_map(|m| m.submeshes.iter().map(|s| s.material))
                 .collect(),
             meshes: model.meshes.len(),
+            material_meshes: {
+                let mut names = vec![Vec::new(); model.materials.len()];
+                for mesh in &model.meshes {
+                    for sub in &mesh.submeshes {
+                        if let Some(list) = names.get_mut(sub.material as usize) {
+                            if !list.contains(&mesh.name) {
+                                list.push(mesh.name.clone());
+                            }
+                        }
+                    }
+                }
+                names
+            },
             vertices: model.meshes.iter().map(|m| m.positions.len()).sum(),
             triangles: model
                 .meshes
@@ -90,10 +118,14 @@ impl SceneModel {
     /// ポーズを付けられるモデルから作る。マテリアルは名前だけを鍵にし（名前の無いスロットは未割り当て）、スロットはメッシュ × サブメッシュの
     /// 並びの順（3D ビューの形と同じ）。
     pub fn from_rig(rig: &Arc<Rig>) -> SceneModel {
+        Self::from_rig_as(rig, Self::rig_id(rig))
+    }
+
+    /// `from_rig` の、モデルの同一性（`rig_id`）を呼び手が決めるもの。まだ 3D ビューに入れていないモデル（`Arc` にする前）の
+    /// マテリアルの組を窓が読むとき、同一性は要らないので 0 を渡す。
+    pub fn from_rig_as(rig: &Rig, id: usize) -> SceneModel {
         SceneModel {
-            source: ModelSource::Rig {
-                rig: Self::rig_id(rig),
-            },
+            source: ModelSource::Rig { rig: id },
             name: rig.name().to_owned(),
             generation: 0,
             materials: rig
@@ -104,7 +136,7 @@ impl SceneModel {
                         MaterialKey::Unassigned
                     } else {
                         MaterialKey::Material {
-                            name: name.clone(),
+                            name: key_name(name),
                             asset: None,
                         }
                     },
@@ -120,6 +152,19 @@ impl SceneModel {
                 .map(|s| s.material.max(0) as u32)
                 .collect(),
             meshes: rig.meshes().len(),
+            material_meshes: {
+                let mut names = vec![Vec::new(); rig.materials().len()];
+                for mesh in rig.meshes() {
+                    for sub in &mesh.mesh.submeshes {
+                        if let Some(list) = names.get_mut(sub.material.max(0) as usize) {
+                            if !list.contains(&mesh.mesh.name) {
+                                list.push(mesh.mesh.name.clone());
+                            }
+                        }
+                    }
+                }
+                names
+            },
             vertices: rig.vertex_count(),
             triangles: rig.triangle_count(),
             revision: REVISION.fetch_add(1, Ordering::Relaxed),
@@ -353,6 +398,17 @@ mod tests {
             materials: vec![info(None), info(Some("Skin"))],
             meshes: vec![quad(0.0), quad(2.0)],
         }
+    }
+
+    #[test]
+    fn key_names_lose_control_characters_and_stop_at_256_units() {
+        assert_eq!(key_name("Skin\n\t 2"), "Skin 2");
+        assert_eq!(key_name("肌"), "肌");
+        let long = "あ".repeat(300);
+        assert_eq!(key_name(&long).encode_utf16().count(), 256);
+        // 絵文字（UTF-16 で 2 つ分）を 256 の境で割らない
+        let tricky = format!("{}😀", "x".repeat(255));
+        assert_eq!(key_name(&tricky), "x".repeat(255));
     }
 
     #[test]

@@ -258,3 +258,166 @@ fn with_sets_keeps_keys_it_does_not_know() {
     );
     assert_eq!(json["sets"][0]["name"], serde_json::json!("Skin 改"));
 }
+
+#[test]
+fn with_sets_dropping_removes_the_set_with_every_entry_and_keeps_the_rest_byte_for_byte() {
+    let p = fixture("format6.ylp").upgraded(writer()).unwrap();
+    let ids: Vec<String> = p.sets().iter().map(|s| s.id.clone()).collect();
+    assert_eq!(ids.len(), 3);
+    let before = p.migrated_entries().clone();
+    let keep: Vec<SetSpec> = [0usize, 2]
+        .iter()
+        .map(|&i| spec(&ids[i], &p.sets()[i].name, p.sets()[i].material.clone(), None))
+        .collect();
+    let dropped = [ids[1].as_str()];
+    let q = p
+        .with_sets_dropping(writer(), &keep, &ids[0], &dropped)
+        .unwrap();
+    assert_eq!(q.sets().len(), 2);
+    assert_eq!(q.current_set(), ids[0]);
+    let after = q.migrated_entries();
+    let gone = format!("sets/{}/", ids[1]);
+    assert!(
+        !after.keys().any(|n| n.starts_with(&gone)),
+        "消したセットのエントリ（正本・合成・メッシュマップ）は全部消える: {:?}",
+        after.keys().collect::<Vec<_>>()
+    );
+    assert!(q.unknown_entries().is_empty(), "取り残したエントリが知らないエントリにならない");
+    for n in before.keys().filter(|n| !n.starts_with(&gone)) {
+        if n == "project.json" || n == "ylp.json" {
+            continue;
+        }
+        assert_eq!(after[n], before[n], "ほかのエントリはそのまま: {n}");
+    }
+    // 保存して読み直しても同じ
+    let again = Project::read(&q.to_bytes().unwrap()).unwrap();
+    assert_eq!(again.sets().len(), 2);
+    assert!(again.unknown_entries().is_empty());
+}
+
+#[test]
+fn with_sets_dropping_refuses_what_would_lose_a_set_silently() {
+    let p = fixture("format6.ylp").upgraded(writer()).unwrap();
+    let ids: Vec<String> = p.sets().iter().map(|s| s.id.clone()).collect();
+    let all: Vec<SetSpec> = p
+        .sets()
+        .iter()
+        .map(|s| spec(&s.id, &s.name, s.material.clone(), None))
+        .collect();
+    // どちらにも無いセットは黙って消さない
+    let lost = p.with_sets_dropping(writer(), &all[..2], &ids[0], &[]);
+    assert!(lost.unwrap_err().to_string().contains("並びにありません"));
+    // 並びにも消すセットにもあるのは断る
+    let both = p.with_sets_dropping(writer(), &all, &ids[0], &[ids[2].as_str()]);
+    assert!(both.unwrap_err().to_string().contains("並びにもあります"));
+    // ファイルに無い ID は消せない
+    let unknown = p.with_sets_dropping(writer(), &all, &ids[0], &[C]);
+    assert!(unknown.unwrap_err().to_string().contains("ファイルにありません"));
+    // 全部は消せない（セットは 1 つは要る）
+    let everything: Vec<&str> = ids.iter().map(String::as_str).collect();
+    assert!(p.with_sets_dropping(writer(), &[], &ids[0], &everything).is_err());
+    // 今のセットを消して、今のセットを並びの外に残すのも断る
+    let current_gone = p.with_sets_dropping(writer(), &all[1..], &ids[0], &[ids[0].as_str()]);
+    assert!(current_gone.is_err());
+    // 旧形式は先に上げる
+    let old = fixture("format6.ylp");
+    assert!(old
+        .with_sets_dropping(writer(), &all[1..], &ids[1], &[ids[0].as_str()])
+        .is_err());
+}
+
+#[test]
+fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
+    // Unity 版が書いた view.json（モデルの GUID と選んだチャンネル）に、参照を足しても元の項目はそのまま
+    let p = fixture("format6.ylp").upgraded(writer()).unwrap();
+    assert_eq!(p.view_model().unwrap(), None);
+    let q = p.with_view_model(Some("../models/body.fbx")).unwrap();
+    assert_eq!(q.view_model().unwrap().as_deref(), Some("../models/body.fbx"));
+    let view: serde_json::Value =
+        serde_json::from_slice(&q.migrated_entries()["view.json"]).unwrap();
+    assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
+    assert_eq!(view["selectedChannel"], 0);
+    assert_eq!(view["standaloneModel"]["path"], "../models/body.fbx");
+    // 正本・セット・ほかのエントリは 1 バイトも変わらない（形式も変えない）
+    for (name, bytes) in p.migrated_entries() {
+        if name != "view.json" && name != "ylp.json" {
+            assert_eq!(q.migrated_entries()[name], *bytes, "{name}");
+        }
+    }
+    assert_eq!(q.info().format, 7);
+    // 書き換える・外す
+    let r = q.with_view_model(Some("C:/models/other.fbx")).unwrap();
+    assert_eq!(r.view_model().unwrap().as_deref(), Some("C:/models/other.fbx"));
+    let s = r.with_view_model(None).unwrap();
+    assert_eq!(s.view_model().unwrap(), None);
+    let view: serde_json::Value =
+        serde_json::from_slice(&s.migrated_entries()["view.json"]).unwrap();
+    assert!(view.get("standaloneModel").is_none());
+    assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
+    // 保存して読み直しても残る
+    let again = Project::read(&q.to_bytes().unwrap()).unwrap();
+    assert_eq!(again.view_model().unwrap().as_deref(), Some("../models/body.fbx"));
+}
+
+#[test]
+fn a_project_without_view_json_gets_the_smallest_state_unity_accepts() {
+    let doc = painted(16, Rgba8::new(1, 2, 3, 255));
+    let p = Project::create(
+        writer(),
+        &[spec(A, "a", MaterialRef::PendingSlot(0), Some(&doc))],
+        A,
+    )
+    .unwrap();
+    assert_eq!(p.view_model().unwrap(), None);
+    assert!(
+        !p.with_view_model(None).unwrap().migrated_entries().contains_key("view.json"),
+        "外すだけなら view.json を作らない"
+    );
+    let q = p.with_view_model(Some("model.fbx")).unwrap();
+    let view: serde_json::Value =
+        serde_json::from_slice(&q.migrated_entries()["view.json"]).unwrap();
+    // Unity 版の ViewState（モデルの GUID・選んだチャンネル）の形で、モデルは無し・Color
+    assert_eq!(view["modelAssetGuid"], "");
+    assert_eq!(view["selectedChannel"], 0);
+    assert_eq!(q.view_model().unwrap().as_deref(), Some("model.fbx"));
+}
+
+#[test]
+fn the_model_reference_refuses_what_it_cannot_keep() {
+    let doc = painted(16, Rgba8::new(1, 2, 3, 255));
+    let p = Project::create(
+        writer(),
+        &[spec(A, "a", MaterialRef::PendingSlot(0), Some(&doc))],
+        A,
+    )
+    .unwrap();
+    assert!(p.with_view_model(Some("")).is_err());
+    assert!(p.with_view_model(Some("a\nb.fbx")).is_err());
+    assert!(p
+        .with_view_model(Some(&"x".repeat(yolu_io::MODEL_PATH_MAX + 1)))
+        .is_err());
+    assert!(p
+        .with_view_model(Some(&"x".repeat(yolu_io::MODEL_PATH_MAX)))
+        .is_ok());
+    // 読めない view.json は、読むとき断る。参照を外すだけなら触らず、参照を書くときは最小の形に作り直す（状態であって正本ではない）
+    let mut files: BTreeMap<String, Vec<u8>> = p
+        .original_archive()
+        .entries()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.to_vec()))
+        .collect();
+    files.insert("view.json".into(), b"not json".to_vec());
+    let broken = Project::read(&Archive::from_entries(files.clone()).unwrap().to_bytes().unwrap()).unwrap();
+    assert!(broken.view_model().is_err());
+    let untouched = broken.with_view_model(None).unwrap();
+    assert_eq!(untouched.migrated_entries()["view.json"][..], b"not json"[..]);
+    let rebuilt = broken.with_view_model(Some("a.fbx")).unwrap();
+    assert_eq!(rebuilt.view_model().unwrap().as_deref(), Some("a.fbx"));
+    // 形の違う参照
+    files.insert(
+        "view.json".into(),
+        br#"{"standaloneModel": {"path": 3}}"#.to_vec(),
+    );
+    let odd = Project::read(&Archive::from_entries(files).unwrap().to_bytes().unwrap()).unwrap();
+    assert!(odd.view_model().is_err());
+}
