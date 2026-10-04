@@ -40,6 +40,9 @@ const WAIT: Duration = Duration::from_secs(30);
 const GROUP: u32 = 64;
 /// 1 回の dispatch のテクセル数の上限の最大値（1 次元のワークグループ数の上限 65535 × `GROUP`）。65535 は WebGPU が保証する
 /// 値で、デバイスの上限がもっと小さければ `dispatch_limit` がそれに合わせる。2 のべきの `1 << 22` は 65536 グループになり超える。
+/// GPU で焼く座標の絶対値の上限。三角形の面積・三重積（座標の 3 乗）が f32 の上限（約 3.4e38）を超えない大きさ（1e9 の 3 乗 = 1e27）。
+/// 実際のモデル（メートルでもミリメートルでも）はこれより遥かに小さい。
+pub const MAX_GPU_COORDINATE: f64 = 1.0e9;
 const MAX_DISPATCH_TEXELS: u32 = 65535 * GROUP;
 /// 1 回の dispatch のレイの数の上限（u32 のカウンターが桁あふれしない大きさ）。
 const MAX_RAYS_PER_DISPATCH: u64 = 1 << 28;
@@ -260,6 +263,8 @@ impl BakeGpu {
         pollster::block_on(Self::create(options))
     }
     async fn create(options: GpuBakeOptions) -> Result<Self, GpuBakeError> {
+        // Instance はデバイスごとに作る。プロセスで共有すると、GL（EGL）では別のデバイスが 1 つの GL のコンテキストを分け合い、
+        // 別のスレッドから同時に使うと make_current が失敗して落ちる（ベイクの裏のスレッドとキャンバスの合成が同時に動く）
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let mut adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
@@ -467,6 +472,16 @@ impl BakeGpu {
             return Err(GpuBakeError::Failed(format!(
                 "GPU は作り直しが必要です: {reason}"
             )));
+        }
+        // f32 で計算する GPU は、座標が大きすぎると積が桁あふれする。NaN・無限大の検出は GPU が作った場合だけで（WGSL は作らない
+        // 前提の最適化を許す）、コンテナの実 GPU では黙って誤った値になった。焼く前に座標の大きさで決め打ちに断り、CPU（f64）に任せる
+        for m in std::iter::once(input).chain(reference) {
+            let (min, max) = m.bounds();
+            if min.iter().chain(&max).any(|v| !v.is_finite() || v.abs() > MAX_GPU_COORDINATE) {
+                return Err(GpuBakeError::Failed(format!(
+                    "座標が大きすぎて GPU の f32 では焼けません（絶対値 {MAX_GPU_COORDINATE:e} まで）。NaN・無限大を避けて CPU で焼きます"
+                )));
+            }
         }
         let progress: &mut dyn FnMut(f64, &str) -> bool = &mut progress;
         let plan = match MeshBakePlan::prepare(input, settings, budget, cancel, reference, progress)

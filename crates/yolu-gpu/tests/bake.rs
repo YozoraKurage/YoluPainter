@@ -819,14 +819,11 @@ fn a_nan_or_infinite_value_fails_the_gpu_run_instead_of_being_stored_as_zero() {
     // CPU は f64 なので焼ける（値は 0〜1 に収まる）
     let cpu = bake(&input, &s, &budget, None, None, |_, _| true).unwrap();
     assert_eq!(cpu.status, MeshBakeStatus::Completed);
+    // 座標が大きすぎるモデルは、GPU が NaN・無限大を作るかどうか（GPU ごとに違う）に頼らず、焼く前に断る
     match g.bake(&input, &s, &budget, None, None, |_, _| true) {
-        Err(GpuBakeError::Failed(why)) => {
-            eprintln!("GPU の失敗: {why}");
-            assert!(why.contains("NaN"), "{why}");
-        }
-        other => panic!("NaN・無限大で失敗するはず: {:?}", other.map(|b| b.stats)),
+        Err(GpuBakeError::Failed(why)) => assert!(why.contains("NaN"), "{why}"),
+        other => panic!("座標が大きすぎるので断るはず: {:?}", other.map(|b| b.stats)),
     }
-    assert!(g.failure().is_some(), "以後は作り直す");
     // 使う側（自動）は理由つきで CPU に戻り、結果は CPU の bake と同じ
     let slot = GpuBakeSlot::new(GpuBakeOptions {
         ray_query: false,
