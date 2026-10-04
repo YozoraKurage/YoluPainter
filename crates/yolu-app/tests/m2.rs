@@ -1375,7 +1375,7 @@ fn headless_saveable_documents_survive_save_and_reopen() {
 
 /// 今の yolu-io が書けない M2 の中身は、黙って捨てずに保存を断る: 断った理由が出る・文書も印も変わらない・ファイルを作らない。
 #[test]
-fn headless_save_refuses_content_the_ylp_cannot_hold() {
+fn headless_each_m2_content_saves_and_reopens() {
     use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
     let user_channel = || ChannelInfo {
         name: "AO2".into(),
@@ -1440,38 +1440,24 @@ fn headless_save_refuses_content_the_ylp_cannot_hold() {
             }),
         ),
     ];
-    let dir = temp_dir("refuse");
+    let dir = temp_dir("each");
     for (name, make) in &cases {
-        for lang in Lang::ALL {
-            let path = dir.join(format!("{name}-{lang:?}.ylp"));
-            let mut s = AppState::new(64, 64);
-            s.lang = lang;
-            make(&mut s);
-            let (revision, modified, before) = (s.doc.revision(), s.modified, content(&s));
-            s.apply(Action::SaveProjectAs(path.clone()));
-            let prefix = lang.pick("保存できません", "Cannot save");
-            assert!(
-                s.message.starts_with(prefix)
-                    && s.message.len() > prefix.len() + path.as_os_str().len(),
-                "{name}: {}",
-                s.message
-            );
-            assert_eq!(
-                (s.doc.revision(), s.modified),
-                (revision, modified),
-                "{name}"
-            );
-            assert_eq!(content(&s), before, "{name}: 断っても文書は変わらない");
-            assert!(!path.exists(), "{name}: 断ったときはファイルを作らない");
-            assert!(s.project.is_none(), "{name}: 保存先も覚えない");
-        }
+        let path = dir.join(format!("{name}.ylp"));
+        let mut s = AppState::new(64, 64);
+        make(&mut s);
+        s.apply(Action::SaveProjectAs(path.clone()));
+        assert!(s.message.starts_with("保存しました"), "{name}: {}", s.message);
+        assert!(!s.modified, "{name}: 保存したら変更の印は下りる");
+        let mut again = AppState::new(64, 64);
+        again.apply(Action::OpenProject(path));
+        assert_eq!(content(&again), content(&s), "{name}: {}", again.message);
     }
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// すでにある .ylp への上書きを断ったとき、元のファイルは 1 バイトも変わらず、前の版の置き場（-backups~）も作らない。
+/// M2 の中身（マスク）を足して同じファイルへ上書き保存すると、前の版は -backups~ に残り、開き直すとマスクまで戻る。
 #[test]
-fn headless_refused_overwrite_leaves_the_existing_file_untouched() {
+fn headless_overwriting_with_m2_content_keeps_the_previous_version() {
     let dir = temp_dir("overwrite");
     let path = dir.join("keep.ylp");
     let mut s = AppState::new(64, 64);
@@ -1479,31 +1465,24 @@ fn headless_refused_overwrite_leaves_the_existing_file_untouched() {
     put_tile(&mut s, base, Channel::Color, [1, 2, 3, 255]);
     s.apply(Action::SaveProjectAs(path.clone()));
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    let saved = std::fs::read(&path).unwrap();
-    let entries = std::fs::read_dir(&dir).unwrap().count();
-    // マスクを足して、同じファイルへ上書き（保存）と、別名の既存ファイルへの上書き（別名で保存）の両方を断る
+    let first = std::fs::read(&path).unwrap();
     s.apply(Action::M2(Edit::AddMask(base)));
-    let other = dir.join("other.ylp");
-    std::fs::copy(&path, &other).unwrap();
     s.apply(Action::SaveProject);
-    assert!(s.message.starts_with("保存できません"), "{}", s.message);
-    s.apply(Action::SaveProjectAs(other.clone()));
-    assert!(s.message.starts_with("保存できません"), "{}", s.message);
-    assert_eq!(std::fs::read(&path).unwrap(), saved);
-    assert_eq!(std::fs::read(&other).unwrap(), saved);
-    assert_eq!(
-        std::fs::read_dir(&dir).unwrap().count(),
-        entries + 1,
-        "増えたのは自分で写した 1 つだけ（-backups~ を作らない）"
-    );
-    assert!(s.modified, "保存できていないので、変更の印は残る");
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(!s.modified);
+    assert_ne!(std::fs::read(&path).unwrap(), first);
+    let backups = dir.join("keep.ylp-backups~");
+    let kept: Vec<_> = std::fs::read_dir(&backups).unwrap().map(|e| std::fs::read(e.unwrap().path()).unwrap()).collect();
+    assert!(kept.contains(&first), "前の版は -backups~ に残る");
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path));
+    assert_eq!(content(&again), content(&s), "{}", again.message);
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// yolu-io が M2 の中身（グループ・マスク・塗りつぶし・調整・ユーザーチャンネル・チャンネルごとの合成）を書けるようになったら、
-/// `#[ignore]` を外す。今は保存を断るので、ここは通らない（断る側は上の試験）。比較は `content` の全部。
+/// M2 の中身（グループ・マスク・塗りつぶし・調整・ユーザーチャンネル・チャンネルごとの合成）を全部入れた文書を保存して開き直す。
+/// 比較は `content` の全部。
 #[test]
-#[ignore = "yolu-io がまだ M2 の層を書けない（保存は断る）"]
 fn headless_m2_documents_survive_save_and_reopen() {
     use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
     let dir = temp_dir("m2");
