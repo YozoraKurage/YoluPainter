@@ -703,7 +703,7 @@ fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             NumberFormat::int("%"),
         )
         .tooltip(lang.pick(
-            "丸い先端の縁の硬さ（画像の先端は画像の縁のまま）",
+            "丸い筆先の縁の硬さ（画像の筆先は画像の縁のまま）",
             "Edge hardness of the round tip (an image keeps its own edge)",
         )),
         b.hardness * 100.0,

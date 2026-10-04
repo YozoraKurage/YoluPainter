@@ -12,10 +12,12 @@
 //! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
 //! ブラシへ写して固める（途中で変えても、そのストロークには効かない）。
 
+pub mod bar;
 pub mod canvas;
 pub mod dialog;
 pub mod io;
 pub mod menu;
+mod ops;
 pub mod outline;
 pub mod props;
 pub mod symmetry;
@@ -138,6 +140,14 @@ pub enum SelEdit {
         y: u32,
         mode: SelectionCombine,
     },
+    /// 選択範囲を描画色で塗りつぶす（選んでいる層。マスクを描いているならマスク）。
+    Fill,
+    /// 選択範囲の画素を消す（アルファを減らす。マスクなら隠す）。
+    Erase,
+    /// 選択範囲の画素を新しいレイヤーとして元の位置にコピーする（クリップボードは変えない）。
+    ToNewLayer,
+    /// 選択範囲を選んでいる層のマスクにする（外を隠す）。
+    ToMask,
 }
 
 /// 画面だけの選択の操作（Undo に入らない）。
@@ -150,6 +160,8 @@ pub enum SelUiOp {
     /// 窓の値で適用して閉じる。
     ApplyAmount,
     CancelAmount,
+    /// 選択範囲の下のボタンの帯を出す・出さない。
+    Bar(bool),
 }
 
 /// 2D の対称の設定の操作（画面だけ）。
@@ -242,9 +254,18 @@ pub struct SelState {
     pub stroke_symmetry: Option<CanvasSymmetry>,
     /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
     pub animate: bool,
+    /// 帯をドラッグでずらした量（初めの位置から。選択範囲を外すと戻る）。
+    pub bar_offset: egui::Vec2,
     /// 最後に描いたとき、縁を一部しか描かなかったか（縁が多すぎて打ち切った・1 画面の上限を超えた）。
     pub edge_partial: bool,
     outline: Option<OutlineCache>,
+    bounds: Option<BoundsCache>,
+}
+
+/// 選択範囲を囲む画素の矩形（選択範囲が変わったときだけ求め直す）。
+struct BoundsCache {
+    mask: SelectionMask,
+    bounds: Option<(u32, u32, u32, u32)>,
 }
 
 struct OutlineCache {
@@ -272,8 +293,10 @@ impl Default for SelState {
             symmetry: SymmetryState::default(),
             stroke_symmetry: None,
             animate: true,
+            bar_offset: egui::Vec2::ZERO,
             edge_partial: false,
             outline: None,
+            bounds: None,
         }
     }
 }
@@ -290,6 +313,19 @@ impl SelState {
         any
     }
 
+    /// 選択範囲に量のある画素を全部含む矩形（x0, y0, x1, y1。半開区間、画布の画素の座標）。何も選んでいなければ None。
+    /// 選択範囲が変わったときだけ求め直す（タイル 1 枚ずつ量を見て、量のある画素の端まで詰める）。
+    pub fn bounds_of(&mut self, mask: &SelectionMask) -> Option<(u32, u32, u32, u32)> {
+        let fresh = self.bounds.as_ref().is_some_and(|c| c.mask.same_as(mask));
+        if !fresh {
+            self.bounds = Some(BoundsCache {
+                mask: mask.clone(),
+                bounds: exact_bounds(mask),
+            });
+        }
+        self.bounds.as_ref().and_then(|c| c.bounds)
+    }
+
     /// 選択範囲の縁の線分（選択範囲が変わったときだけ求め直す）。打ち切ったかも返す。
     pub fn outline_of(&mut self, mask: &SelectionMask) -> (&[outline::Run], bool) {
         let fresh = self.outline.as_ref().is_some_and(|c| c.mask.same_as(mask));
@@ -304,6 +340,35 @@ impl SelState {
         let cache = self.outline.as_ref().expect("上で入れた");
         (&cache.runs, cache.truncated)
     }
+}
+
+fn exact_bounds(mask: &SelectionMask) -> Option<(u32, u32, u32, u32)> {
+    let ts = mask.tile_size();
+    let mut tile = vec![0u8; (ts * ts) as usize];
+    let mut found: Option<(u32, u32, u32, u32)> = None;
+    for coord in mask.tile_coords() {
+        if mask.copy_tile(coord, &mut tile).is_err() {
+            continue;
+        }
+        let (ox, oy) = (coord.x * ts, coord.y * ts);
+        for y in 0..ts {
+            if oy + y >= mask.height() {
+                break;
+            }
+            let row = &tile[(y * ts) as usize..((y + 1) * ts) as usize];
+            let first = row.iter().position(|&a| a > 0);
+            let last = row.iter().rposition(|&a| a > 0);
+            if let (Some(first), Some(last)) = (first, last) {
+                let (x0, x1) = (ox + first as u32, ox + last as u32 + 1);
+                let (y0, y1) = (oy + y, oy + y + 1);
+                found = Some(match found {
+                    None => (x0, y0, x1, y1),
+                    Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+                });
+            }
+        }
+    }
+    found
 }
 
 impl Tool {
@@ -547,6 +612,10 @@ impl AppState {
                     .map_err(|e| lang.core_error(&e))?;
                 self.combine_shape(shape, mode)
             }
+            SelEdit::Fill => self.sel_fill(false),
+            SelEdit::Erase => self.sel_fill(true),
+            SelEdit::ToNewLayer => self.sel_to_new_layer(),
+            SelEdit::ToMask => self.sel_to_mask(),
             SelEdit::Wand { x, y, mode } => {
                 let shape = SelectionMask::magic_wand(
                     &self.doc,
@@ -606,6 +675,7 @@ impl AppState {
                 }
             }
             SelUiOp::CancelAmount => self.sel.dialog = None,
+            SelUiOp::Bar(on) => self.prefs.settings.selection_bar = on,
         }
     }
 

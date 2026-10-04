@@ -529,12 +529,17 @@ fn option_bar_select_all_deselect_and_invert_buttons() {
     h.get_by_label("すべてを選択（Ctrl+A）").click();
     h.run();
     assert!(selected(&h, at(&h, 0.0, 0.0)));
-    h.get_by_label("選択を解除（Ctrl+D）").click();
-    h.run();
+    // 選択範囲があるあいだは、キャンバスの上の帯にも同じ名前のボタンがある（ここはプロパティの欄のボタン）
+    let canvas = canvas_rect(&h);
+    let beside = |h: &Harness<'_, YoluApp>, label: &str| {
+        rect_of(h, label, |r| !canvas.contains_rect(r)).center()
+    };
+    let deselect = beside(&h, "選択を解除（Ctrl+D）");
+    click(&mut h, deselect);
     assert!(st(&h).doc.selection().is_none());
     drag_rect(&mut h, (-50.0, -50.0), (50.0, 50.0));
-    h.get_by_label("選択範囲を反転（Ctrl+Shift+I）").click();
-    h.run();
+    let invert = beside(&h, "選択範囲を反転（Ctrl+Shift+I）");
+    click(&mut h, invert);
     assert_eq!(amount_at(&h, at(&h, 0.0, 0.0)), 0);
     assert!(selected(&h, at(&h, 100.0, 0.0)));
     undo(&mut h);

@@ -172,7 +172,7 @@ impl AppState {
     }
 
     /// 写す先の層とチャンネル、マスクを写すか。
-    fn clip_target(&self) -> Result<(crate::engine::LayerId, Channel, bool), String> {
+    pub(crate) fn clip_target(&self) -> Result<(crate::engine::LayerId, Channel, bool), String> {
         let id = self
             .selected_layer
             .filter(|id| self.doc.layer(*id).is_some())

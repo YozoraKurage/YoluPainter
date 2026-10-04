@@ -464,14 +464,17 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
         );
     }
     v.push(Entry::Separator);
-    v.push(
-        Entry::item(
-            lang.pick("複製", "Duplicate"),
-            Action::M2(Edit::DuplicateSelected),
-        )
-        .shortcut("Ctrl+J")
-        .enabled(free),
-    );
+    let duplicate = Entry::item(
+        lang.pick("複製", "Duplicate"),
+        Action::M2(Edit::DuplicateSelected),
+    )
+    .enabled(free);
+    // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」（選択範囲のメニューと帯）。複製のキーは、選択範囲が無いときだけ出す
+    v.push(if app.doc.selection().is_some() {
+        duplicate
+    } else {
+        duplicate.shortcut("Ctrl+J")
+    });
     if group && !multi {
         v.push(
             Entry::item(
@@ -692,6 +695,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+    let has_selection = app.doc.selection().is_some();
     let mut actions = Vec::new();
     // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
@@ -729,12 +733,20 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         key(cmd_shift, Key::E, Action::M2(Edit::MergeVisible));
         key(cmd_shift, Key::G, Action::M2(Edit::UngroupSelected));
         key(Modifiers::COMMAND, Key::E, Action::M2(Edit::MergeDown));
+        // Ctrl+J: 選択範囲があれば、その画素を新しいレイヤーへ（Photoshop の「コピーしたレイヤー」）。無ければレイヤーの複製
+        if has_selection {
+            key(Modifiers::COMMAND, Key::J, sel_edit(SelEdit::ToNewLayer));
+        }
         key(Modifiers::COMMAND, Key::J, Action::M2(Edit::DuplicateSelected));
         key(Modifiers::COMMAND, Key::G, Action::M2(Edit::GroupSelected));
         key(cmd_shift, Key::I, sel_edit(SelEdit::Invert));
         key(cmd_shift, Key::Z, Action::Redo);
         key(Modifiers::COMMAND, Key::A, sel_edit(SelEdit::All));
         key(Modifiers::COMMAND, Key::D, sel_edit(SelEdit::Clear));
+        // 選択範囲があるときだけ: 消去（Delete）
+        if has_selection {
+            key(Modifiers::NONE, Key::Delete, sel_edit(SelEdit::Erase));
+        }
         key(Modifiers::COMMAND, Key::Z, Action::Undo);
         key(Modifiers::COMMAND, Key::Y, Action::Redo);
         key(cmd_shift, Key::N, Action::NewLayer);

@@ -1,5 +1,5 @@
 //! ブラシの欄。詳細の窓（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧と入り抜き・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
-//! 効果・対称）ごとにここの欄を出す。プロパティの欄のアルファのタブ（先端の画像・硬さ・真円率・反転）もここ。
+//! 効果・対称）ごとにここの欄を出す。筆先の形（画像・硬さ・真円率・角度・反転・組み込みの一覧）は「形状」の欄。
 //! 値は全部入りのブラシ（`AppState::m2.brush`）と基本の値（`AppState::brush`）を直に変え、ストロークを始めたときに写して固定する
 //! （途中で変えても、そのストロークには効かない）。3D のビューが出ているあいだ面のダブが使わない欄は、注記を出さずに無効にして、
 //! ツールチップに理由を出す（3D のストロークは基本の値＝直径・硬さ・流量・不透明度・筆圧と、色・色の変化・消しゴムだけを使う）。
@@ -11,7 +11,7 @@ use egui::{
 };
 
 use super::properties::{
-    choice_row, group_label, open_popup, percent_row, section, slider_row, toggle_row,
+    choice_row, group_label, open_popup, percent_row, slider_row, toggle_row,
 };
 
 /// まとまりの小見出し（前の行との間を少し空ける）。
@@ -44,8 +44,8 @@ fn off_in_3d(app: &AppState, lang: Lang) -> Option<&'static str> {
         .then(|| lang.pick("3D では効きません", "No effect in 3D"))
 }
 
-/// 硬さが効くか。丸い先端の縁の硬さなので、画像の先端では効かない（画像の縁のまま）。3D の面のダブは画像を使わずいつも丸いので、
-/// 3D では画像の先端でも効く。ツールプロパティと形状の欄が同じ判定を使う。
+/// 硬さが効くか。丸い筆先の縁の硬さなので、画像の筆先では効かない（画像の縁のまま）。3D の面のダブは画像を使わずいつも丸いので、
+/// 3D では画像の筆先でも効く。ツールプロパティと形状の欄が同じ判定を使う。
 pub fn hardness_applies(app: &AppState) -> bool {
     let tip = &app.m2.brush.tip;
     app.view3d.paintable_on_screen() || (tip.image.is_none() && tip.images.is_empty())
@@ -108,7 +108,7 @@ pub fn category_body(
     let lang = app.lang;
     rows.indent = 0.0;
     match category {
-        Category::Shape => tip_fields(ui, app, rows, ctx, lang, true),
+        Category::Shape => tip_fields(ui, app, rows, ctx, lang),
         Category::Stroke => stroke_fields(ui, app, rows, lang),
         Category::Dynamics => dynamics_fields(ui, app, rows, lang),
         Category::Jitter => jitter_fields(ui, app, rows, lang),
@@ -404,7 +404,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         Some((
             lang.pick("角度", "Angle"),
             off.unwrap_or(lang.pick(
-                "倒れた向きを先端の角度に足す",
+                "倒れた向きを筆先の角度に足す",
                 "Adds the lean direction to the tip angle",
             )),
             k.tilt_angle,
@@ -426,7 +426,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         tip(
             off,
             lang.pick(
-                "ペンの軸の回転を先端の角度に足す（2D のキャンバスだけ）。回転を送れないペンとマウスでは 0",
+                "ペンの軸の回転を筆先の角度に足す（2D のキャンバスだけ）。回転を送れないペンとマウスでは 0",
                 "Adds the pen's barrel rotation to the tip angle (2D canvas only); 0 for a mouse or a pen without rotation",
             ),
         ),
@@ -690,7 +690,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
         ui,
         rows,
         "dual.tip",
-        lang.pick("先端", "Tip"),
+        lang.pick("筆先", "Tip"),
         &tip_name,
         off,
         free,
@@ -1110,13 +1110,13 @@ fn effect_fields(
     }
 }
 
-// ───────── 形状・アルファ（先端の画像） ─────────
+// ───────── 形状（筆先） ─────────
 
 /// 一覧の 1 マス（見本の大きさは `brushes::krita::THUMB`）。
 const CELL: f32 = 40.0;
 const CELL_GAP: f32 = 4.0;
 
-/// 先端の画像の見本（白地に黒。丸い先端は縁がやわらかい円）。
+/// 筆先の画像の見本（白地に黒。丸い筆先は縁がやわらかい円）。
 fn tip_image(id: Option<&str>) -> ColorImage {
     crate::brushes::krita::thumbnail(id.and_then(yolu_core::builtin_tip).as_deref())
 }
@@ -1124,7 +1124,7 @@ fn tip_image(id: Option<&str>) -> ColorImage {
 #[derive(Clone, Default)]
 struct TipThumbs(HashMap<&'static str, TextureHandle>);
 
-/// 先端の見本の絵（初めて出すときに作って、文脈に覚えておく）。None は丸。
+/// 筆先の見本の絵（初めて出すときに作って、文脈に覚えておく）。None は丸。
 fn tip_texture(ctx: &egui::Context, id: Option<&'static str>) -> TextureId {
     let cache_id = Id::new("yolu.tip-thumbs");
     let mut cache: TipThumbs = ctx.data(|d| d.get_temp(cache_id)).unwrap_or_default();
@@ -1162,20 +1162,13 @@ fn tip_cell(ui: &mut Ui, r: Rect, id: Option<&'static str>, selected: bool, tool
     clicked
 }
 
-/// 先端の欄: 今の先端の見本と名前・硬さ・真円率・（角度と線の向きは `with_angle`）・反転・組み込みの先端の一覧。
-fn tip_fields(
-    ui: &mut Ui,
-    app: &mut AppState,
-    rows: &mut Rows,
-    ctx: &egui::Context,
-    lang: Lang,
-    with_angle: bool,
-) {
+/// 筆先の欄: 今の筆先の見本と名前・硬さ・真円率・角度・線の向き・反転・組み込みの筆先の一覧。
+fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context, lang: Lang) {
     let off = off_in_3d(app, lang);
     let free = off.is_none();
     let kind = tip_library::current(&app.m2.brush.tip);
     let hardness_on = hardness_applies(app);
-    // 今の先端: 見本と名前
+    // 今の筆先: 見本と名前
     let head = rows.row(48.0, 6.0);
     let swatch = Rect::from_min_size(head.min, vec2(48.0, 48.0));
     let swatch_texture = match &kind {
@@ -1206,7 +1199,7 @@ fn tip_fields(
         tip_library::Current::Image(tip) => m2::tip_display(lang, tip),
     };
     let from = match &kind {
-        tip_library::Current::Round => lang.pick("先端の形", "Tip shape"),
+        tip_library::Current::Round => lang.pick("筆先", "Tip"),
         tip_library::Current::Builtin(_) => lang.pick("組み込みの画像", "Built-in image"),
         tip_library::Current::Krita(_) => "Krita",
         tip_library::Current::Image(_) => lang.pick("取り込んだ画像", "Imported image"),
@@ -1238,7 +1231,7 @@ fn tip_fields(
         app.brush.hardness as f64,
         (0.0, 1.0),
         Some(lang.pick(
-            "丸い先端の縁の硬さ（画像の先端は画像の縁のまま）",
+            "丸い筆先の縁の硬さ（画像の筆先は画像の縁のまま）",
             "Edge hardness of the round tip (an image keeps its own edge)",
         )),
         hardness_on,
@@ -1254,48 +1247,46 @@ fn tip_fields(
         tip.roundness,
         (0.01, 1.0),
         Some(off.unwrap_or(lang.pick(
-            "先端の角度に沿って潰す（100% で潰さない）",
+            "筆先の角度に沿って潰す（100% で潰さない）",
             "Squashes the tip along its angle (100% keeps its shape)",
         ))),
         free,
     ) {
         tip.roundness = v;
     }
-    if with_angle {
-        if let Some(v) = slider_row(
-            ui,
-            rows,
-            "brush.angle",
-            lang.pick("角度", "Angle"),
-            tip.angle as f32,
-            (-180.0, 180.0),
-            NumberFormat::int("°"),
-            Some(off.unwrap_or(lang.pick(
-                "先端の回転（反時計回り）",
-                "Tip rotation (counterclockwise)",
-            ))),
-            free,
-        ) {
-            tip.angle = v as f64;
-        }
-        if let Some(v) = toggle_row(
-            ui,
-            rows,
-            "brush.follow",
-            lang.pick("線の向きに従う", "Follow direction"),
-            tip.follow_direction,
-            Some(off.unwrap_or(lang.pick(
-                "線の向きを先端の角度に足す",
-                "Adds the stroke direction to the tip angle",
-            ))),
-            free,
-        ) {
-            tip.follow_direction = v;
-        }
+    if let Some(v) = slider_row(
+        ui,
+        rows,
+        "brush.angle",
+        lang.pick("角度", "Angle"),
+        tip.angle as f32,
+        (-180.0, 180.0),
+        NumberFormat::int("°"),
+        Some(off.unwrap_or(lang.pick(
+            "筆先の回転（反時計回り）",
+            "Tip rotation (counterclockwise)",
+        ))),
+        free,
+    ) {
+        tip.angle = v as f64;
+    }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "brush.follow",
+        lang.pick("線の向きに従う", "Follow direction"),
+        tip.follow_direction,
+        Some(off.unwrap_or(lang.pick(
+            "線の向きを筆先の角度に足す",
+            "Adds the stroke direction to the tip angle",
+        ))),
+        free,
+    ) {
+        tip.follow_direction = v;
     }
     // ホース（images が複数）にも反転は掛かる
     let image = tip.image.is_some() || !tip.images.is_empty();
-    let flip_tip = off.unwrap_or(lang.pick("画像の先端を反転する", "Mirrors an image tip"));
+    let flip_tip = off.unwrap_or(lang.pick("画像の筆先を反転する", "Mirrors an image tip"));
     let (a, b) = toggle_pair(
         ui,
         rows,
@@ -1312,7 +1303,7 @@ fn tip_fields(
             tip.flip_y = v;
         }
     }
-    // 先端の一覧（丸と組み込みの画像）
+    // 筆先の一覧（丸と組み込みの画像）
     group(ui, rows, lang.pick("組み込み", "Built-in"));
     let ids: Vec<Option<&'static str>> = std::iter::once(None)
         .chain(yolu_core::brush::BUILTIN_TIPS.into_iter().map(Some))
@@ -1339,37 +1330,8 @@ fn tip_fields(
             }
         }
     }
-    // 同梱の Krita の筆先（詳細の窓の「形状」。プロパティの欄のアルファのタブには出さない）
-    if with_angle {
-        tip_library::krita_section(ui, app, rows, ctx);
-    }
-}
-
-/// アルファのタブ（プロパティの欄）。
-pub fn alpha_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
-    let lang = app.lang;
-    let (open, reset) = section(
-        ui,
-        app,
-        rows,
-        "alpha",
-        lang.pick("アルファ", "Alpha"),
-        "shapes",
-        Some(lang.pick("先端の形を既定に戻す", "Reset the tip shape")),
-    );
-    if reset {
-        app.brush.hardness = BrushState::default().hardness;
-        let (angle, follow) = (app.m2.brush.tip.angle, app.m2.brush.tip.follow_direction);
-        app.m2.brush.tip = TipShape {
-            angle,
-            follow_direction: follow,
-            ..TipShape::default()
-        };
-    }
-    if !open {
-        return;
-    }
-    tip_fields(ui, app, rows, ctx, lang, false);
+    // 同梱の Krita の筆先
+    tip_library::krita_section(ui, app, rows, ctx);
 }
 
 /// ステンシルのタブ（中身は `stencil_props`）。

@@ -130,7 +130,7 @@ impl Tool {
         matches!(self, Tool::Fill | Tool::PolygonFill | Tool::IdSelect)
     }
     /// 押した瞬間に終わるツール（バケツ・ID の色で選択・スポイト）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
-    /// 押し直さないよう、入力の側が押している間の印（`pen_once`）を持つ。
+    /// 押し直さないよう、入力の側が押している間の印（`pen_press`）を持つ。
     pub fn is_one_shot(self) -> bool {
         matches!(self, Tool::Fill | Tool::IdSelect | Tool::Eyedropper)
     }
@@ -387,9 +387,12 @@ pub struct RotateDrag {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasInput {
     pub stroke: Option<StrokeSource>,
-    /// 押した瞬間に終わるツール（バケツ・ID の色で選択）をペンで押している間の印（ペンの番号）。ペンの `contact` は押している間ずっと
-    /// 続くので、印がなければ次の点でまた押したことになる。離した点・窓がフォーカスを失ったときに下ろす。
-    pub pen_once: Option<u32>,
+    /// ペンの今の押し（触れてから離すまで。行き先は触れた最初の点で決める）。ペンの `contact` は押している間ずっと続くので、これが
+    /// 押し直さない印も兼ねる（押した瞬間に終わるバケツ・ID の色で選択を、押しっぱなしの次の点でまた押さない）。離した点・窓が
+    /// フォーカスを失ったときに下ろす。
+    pub pen_press: Option<crate::pen::PenPress>,
+    /// Ctrl+Space の拡縮のドラッグ（押した点が中心）。
+    pub zooming: Option<crate::gesture::ZoomDrag>,
     /// egui の Touch の筆圧（winit が出したとき）。
     pub touch_pressure: Option<f32>,
     pub panning: bool,
@@ -576,7 +579,7 @@ pub struct AppState {
     pub view: ViewState,
     /// ステータスバーの知らせ。
     pub message: String,
-    /// プロパティの欄のタブ（アルファ・ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
+    /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
@@ -601,6 +604,9 @@ pub struct AppState {
     /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
     pub canvas_visible: bool,
     pub canvas_drawn: bool,
+    /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
+    /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
+    pub dock_grab: [bool; 2],
     /// 最後にキャンバスのタブを描いたフレームの番号（`Context::cumulative_frame_nr`）。タブが後ろにあるあいだは進まない。
     pub canvas_frame: Option<u64>,
     /// テクスチャセット（今のセットの文書は `doc`）。
@@ -782,6 +788,7 @@ impl AppState {
             canvas_rect: None,
             canvas_visible: false,
             canvas_drawn: false,
+            dock_grab: [false; 2],
             canvas_frame: None,
             sets,
             renaming_set: None,
@@ -820,6 +827,11 @@ impl AppState {
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
             || self.path.drag.is_some()
+    }
+
+    /// ドックのタブの見出しをつかんでいる最中か、離した直後のフレームか（このあいだ、ビューは描き始め・回し始めない）。
+    pub fn dock_grabbed(&self) -> bool {
+        self.dock_grab[0] || self.dock_grab[1]
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、

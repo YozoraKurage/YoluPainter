@@ -126,6 +126,8 @@ struct Tabs<'a> {
     renderer3d: &'a mut Option<View3dRenderer>,
     pen: &'a [PenSample],
     tab_rects: HashMap<Tab, Rect>,
+    /// このフレームにタブの見出しをつかんでいる（押している・動かしている・離した）か。
+    grabbed: bool,
 }
 
 impl TabViewer for Tabs<'_> {
@@ -169,6 +171,8 @@ impl TabViewer for Tabs<'_> {
 
     fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
         self.tab_rects.insert(*tab, response.rect);
+        self.grabbed |=
+            response.is_pointer_button_down_on() || response.dragged() || response.drag_stopped();
     }
 
     fn is_closeable(&self, _tab: &Tab) -> bool {
@@ -188,6 +192,8 @@ pub struct YoluApp {
     thumbs: Thumbnails,
     colors: ColorTextures,
     pen: PenInput,
+    /// サイドボタンを押したペンの接触を、egui の部品にも右ボタンとして届ける。
+    pen_buttons: crate::pen::ButtonMap,
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
@@ -314,7 +320,7 @@ impl YoluApp {
         YoluApp::with_settings(settings, pen)
     }
 
-    /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数）の選択が変わっていれば、設定のファイルに書く。
+    /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
     /// 退避の数は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
@@ -349,6 +355,7 @@ impl YoluApp {
             thumbs: Thumbnails::default(),
             colors: ColorTextures::default(),
             pen,
+            pen_buttons: crate::pen::ButtonMap::default(),
             view3d: View3dSlot::default(),
             renderer3d: None,
             tab_rects: HashMap::new(),
@@ -750,6 +757,12 @@ impl YoluApp {
         &self.pen
     }
 
+    /// egui が受けるポインタの入力のうち、サイドボタンを押したペンの接触を右ボタンに直す（`eframe::App::raw_input_hook` が毎フレーム
+    /// 呼ぶ。winit はペンを左ボタンの押しにしか変えないので、これが無いと、ペンではどの部品の右クリックのメニューも開かない）。
+    pub fn remap_pen_buttons(&mut self, events: &mut [egui::Event]) {
+        self.pen_buttons.remap(&self.pen.peek(), events);
+    }
+
     pub fn display(&self) -> &CanvasDisplay {
         &self.display
     }
@@ -925,6 +938,7 @@ impl YoluApp {
                     renderer3d: &mut self.renderer3d,
                     pen: &pen,
                     tab_rects: HashMap::new(),
+                    grabbed: false,
                 };
                 area(&mut self.dock)
                     .id(Id::new("yolu.dock"))
@@ -934,11 +948,22 @@ impl YoluApp {
                     .show_leaf_collapse_buttons(false)
                     .show_leaf_close_all_buttons(false)
                     .show_inside(ui, &mut tabs);
+                let grabbed = tabs.grabbed;
                 self.tab_rects = tabs.tab_rects;
+                self.state.dock_grab = [grabbed, self.state.dock_grab[0]];
             });
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
         self.state.canvas_visible = std::mem::take(&mut self.state.canvas_drawn);
+        // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
+        // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
+        if !self.state.canvas_visible {
+            self.state.canvas.pen_press = None;
+            crate::canvas::nav::cancel(&mut self.state);
+        }
+        if !self.state.view3d.visible {
+            self.state.view3d.input.drop_presses();
+        }
 
         let bar = bar.unwrap_or(menu::BarOutcome {
             rects: Vec::new(),
@@ -1084,6 +1109,10 @@ impl eframe::App for YoluApp {
         self.apply_compositing();
         self.frame(ui);
         self.persist_settings();
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.remap_pen_buttons(&mut raw_input.events);
     }
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。

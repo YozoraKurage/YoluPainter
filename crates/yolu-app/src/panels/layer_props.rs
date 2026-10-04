@@ -1,4 +1,4 @@
-//! プロパティの欄のレイヤーの中身（Unity 版の LayerPanels と同じ並び）: 選んでいるレイヤーの名前の見出しの下に、クリッピング・グループの
+//! プロパティの欄のレイヤーの中身（Unity 版の LayerPanels と同じ並び）: 選んでいるレイヤーの名前の見出しの下に、グループの
 //! 通過、塗りつぶしのチャンネルごとの値、調整の設定、チャンネルごとの有効と自分の合成、レイヤーマスク。値は `Action::M2` を通る
 //! （1 回の Undo。スライダーのドラッグは離したところで区切る）。描いている間・読むだけのセットでは触れない。
 
@@ -86,7 +86,7 @@ fn layer_section(
     let Some(layer) = app.doc.layer(id) else {
         return;
     };
-    let (group, clipping, blend) = (layer.is_group(), layer.clipping(), layer.blend_mode());
+    let (group, blend) = (layer.is_group(), layer.blend_mode());
     if group {
         if let Some(on) = toggle_row(
             ui,
@@ -113,20 +113,6 @@ fn layer_section(
                 },
             );
         }
-    }
-    if let Some(on) = toggle_row(
-        ui,
-        rows,
-        "layer.clipping",
-        lang.pick("クリッピング", "Clipping"),
-        clipping,
-        Some(lang.pick(
-            "すぐ下のレイヤーの中にだけ描く（下地の透明な所には出ない）",
-            "Shows only where the layer just below has content",
-        )),
-        enabled,
-    ) {
-        edit(app, Edit::Clipping(id, on));
     }
 }
 

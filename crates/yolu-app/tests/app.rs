@@ -462,24 +462,17 @@ fn properties_tabs_and_pen_toggles() {
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
-    // 右のプロパティはアルファのタブから始まる（ブラシのタブは無い）
+    // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細の窓の「形状」）
     assert_eq!(h.state().state.property_tab, 0);
-    h.get_by_label("ステンシル").click();
+    assert!(h.query_all_by_label("アルファ").next().is_none());
+    h.get_by_label("マテリアル").click();
     h.run();
     assert_eq!(h.state().state.property_tab, 1);
-    h.get_by_label("アルファ").click(); // タブ（見出しはまだ無い）
+    h.snapshot("properties_material_tab");
+    h.get_by_label("ステンシル").click();
     h.run();
     assert_eq!(h.state().state.property_tab, 0);
-    let side = |r: egui::Rect| r.left() > 1300.0;
-    let hardness = rect_of(&h, "硬さ", side);
-    click(&mut h, pos2(hardness.left() + 2.0, hardness.bottom() - 4.0));
-    assert!(h.state().state.brush.hardness < 0.05);
-    h.snapshot("properties_alpha");
-    // 見出しを畳む（同じ名前のタブより下）
-    let tab = rect_of(&h, "アルファ", |_| true);
-    let header = rect_of(&h, "アルファ", |r| r.top() > tab.bottom());
-    click(&mut h, header.center());
-    assert!(!h.state().state.section_open("alpha", true));
+    h.snapshot("properties_stencil_tab");
 }
 
 #[test]

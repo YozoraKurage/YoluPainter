@@ -7,6 +7,10 @@ each name to its source icon.
 - Microsoft Fluent UI System Icons — https://github.com/microsoft/fluentui-system-icons
 - Phosphor Icons — https://github.com/phosphor-icons/core (tools/brush, tools/gradient, tools/select-polygon)
 
+Icons added for the standalone app (also from Fluent UI System Icons, regular weight, rendered the same way as the Unity package's
+`Documentation~/tools/fetch-icons.sh`: the SVG recoloured white, `rsvg-convert` at 48 px): `arrow_maximize` (arrow_maximize),
+`arrow_minimize` (arrow_minimize), `copy_add` (copy_add).
+
 ## Fluent UI System Icons
 
 ```

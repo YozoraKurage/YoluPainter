@@ -148,6 +148,8 @@ pub struct Settings {
     pub library_folder: Option<PathBuf>,
     /// 上書き保存で置き換えた前の版（退避）をいくつ残すか。
     pub backups: BackupKeep,
+    /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定の窓には無い）。
+    pub selection_bar: bool,
 }
 
 impl Default for Settings {
@@ -163,6 +165,7 @@ impl Default for Settings {
             compositing: Compositing::Auto,
             library_folder: None,
             backups: BackupKeep::All,
+            selection_bar: true,
         }
     }
 }
@@ -385,6 +388,8 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 Some(keep) => settings.backups = keep,
                 None => problems.push(Problem::Backups(value.to_owned())),
             },
+            // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
+            "selection_bar" => settings.selection_bar = value != "off",
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -473,6 +478,9 @@ fn render(settings: &Settings) -> String {
     if let BackupKeep::Count(n) = settings.backups {
         text += &format!("backups={}\n", n.min(MAX_BACKUPS_TO_KEEP));
     }
+    if !settings.selection_bar {
+        text += "selection_bar=off\n";
+    }
     // 改行を含むパスは書かない（読めなくなる）
     if let Some(folder) = settings.library_folder.as_ref().filter(|p| p.is_absolute()) {
         let shown = folder.to_string_lossy();
@@ -540,6 +548,7 @@ mod tests {
             compositing: Compositing::Cpu,
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
+            selection_bar: true,
         }
     }
 
@@ -708,6 +717,22 @@ mod tests {
         // 上限を超えて渡されても、書くのは上限
         save(&path, &with(Lang::Ja, BackupKeep::Count(5000))).unwrap();
         assert_eq!(load(&path).0.backups, BackupKeep::Count(MAX_BACKUPS_TO_KEEP));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_selection_bar_is_written_only_when_it_is_off_and_restored() {
+        let dir = temp_dir("selection-bar");
+        let path = dir.join("settings.conf");
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n", "出す（既定）は書かない");
+        let off = Settings { selection_bar: false, backups: BackupKeep::Count(3), ..with_lang(Lang::En) };
+        save(&path, &off).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=3\nselection_bar=off\n");
+        assert_eq!(load(&path), (off, vec![]));
+        // 知らない値は既定（出す）。理由は出さない
+        assert_eq!(parse("selection_bar=maybe\n"), (Settings::default(), vec![]));
+        assert_eq!(parse("selection_bar=on\n"), (Settings::default(), vec![]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -112,20 +112,25 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
         tab.left() < h.state().tab_rects[&Tab::Assets].left(),
         "アセットより前"
     );
-    // 右のプロパティのタブはアルファ・ステンシル・マテリアル・レイヤー（ブラシは無い）
+    // 右のプロパティのタブはステンシル・マテリアル・レイヤー（ブラシも、筆先の形のアルファも無い）
     let side = |r: Rect| r.left() > 1300.0 && r.top() > 560.0 && r.top() < 600.0;
-    for label in ["アルファ", "ステンシル", "マテリアル", "レイヤー"] {
+    for label in ["ステンシル", "マテリアル", "レイヤー"] {
         rect_of(&h, label, side);
     }
     assert!(
         h.query_all_by_label("ブラシ").all(|n| !side(n.rect())),
         "プロパティにブラシのタブは無い"
     );
+    assert!(
+        h.query_all_by_label("アルファ").next().is_none(),
+        "筆先の形は詳細の窓の「形状」にあり、プロパティにアルファのタブは無い"
+    );
     assert_eq!(st(&h).property_tab, 0);
     // 英語
     language(&mut h, Lang::En);
     assert!(h.query_by_label("Tool Properties").is_some());
     assert!(h.query_by_label("Brush Size").is_some());
+    assert!(h.query_all_by_label("Alpha").next().is_none());
     click_tab(&mut h, Tab::Assets);
     click_tab(&mut h, Tab::Brushes);
     assert!(h.query_by_label("Tool Properties").is_some());
@@ -638,7 +643,7 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
 #[test]
 fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     let mut h = app(1600.0, 1000.0, 128);
-    // 形状: 先端の画像を選ぶ・丸へ戻す
+    // 形状: 筆先の画像を選ぶ・丸へ戻す
     open_detail(&mut h, Category::Shape);
     let window = detail_rect(&h);
     let dots = rect_of(&h, "ドット", |r| window.contains(r.center()));
@@ -652,7 +657,7 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     });
     click(&mut h, round.center());
     assert!(st(&h).m2.brush.tip.image.is_none());
-    // 角度と線の向き（アルファのタブには無い）
+    // 角度と線の向き
     let angle = in_pane(&h, "角度");
     click(&mut h, pos2(angle.right() - 1.0, angle.center().y));
     assert!(st(&h).m2.brush.tip.angle > 170.0);
@@ -665,8 +670,9 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     })
     .center();
     click(&mut h, at);
-    h.get_by_label("画像: なし").click();
-    h.run();
+    // 同じ名前の箱は、右のプロパティのステンシルのタブにもある（窓の中の箱を押す）
+    let image = rect_of(&h, "画像: なし", |r| window.contains(r.center()));
+    click(&mut h, image.center());
     let at = popup_item(&h, "粒子").center();
     click(&mut h, at);
     assert!(st(&h).m2.brush.texture.is_some());

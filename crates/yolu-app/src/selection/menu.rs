@@ -55,6 +55,58 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         v.push(item.enabled(free && any));
     }
     v.push(Entry::Separator);
+    // 選択範囲を使う操作（選択範囲の下のボタンの帯と同じ。塗る・コピーできる層でなければ押せない）
+    let paintable = free && any && app.paint_blocker().is_none();
+    let copyable = free
+        && any
+        && app
+            .selected_layer
+            .and_then(|id| app.doc.layer(id))
+            .is_some_and(|layer| {
+                (app.m2.edit_mask && layer.mask().is_some())
+                    || matches!(
+                        layer.kind(),
+                        crate::engine::LayerKind::Raster | crate::engine::LayerKind::Fill
+                    )
+            });
+    v.push(
+        Entry::item(
+            l.pick("描画色で塗りつぶす", "Fill with the Paint Color"),
+            edit(SelEdit::Fill),
+        )
+        .enabled(paintable),
+    );
+    v.push(
+        Entry::item(
+            l.pick("選択範囲を消去", "Erase Selection"),
+            edit(SelEdit::Erase),
+        )
+        .shortcut("Delete")
+        .enabled(paintable),
+    );
+    v.push(
+        Entry::item(
+            l.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
+            edit(SelEdit::ToNewLayer),
+        )
+        .shortcut("Ctrl+J")
+        .enabled(copyable),
+    );
+    v.push(
+        Entry::item(
+            l.pick("選択範囲をレイヤーマスクにする", "Make the Selection a Layer Mask"),
+            edit(SelEdit::ToMask),
+        )
+        .enabled(free && any && app.selected_layer.is_some()),
+    );
+    v.push(
+        Entry::item(
+            l.pick("選択範囲のボタンの帯を表示", "Show the Selection Button Bar"),
+            Action::Sel(SelAction::Ui(SelUiOp::Bar(!app.prefs.settings.selection_bar))),
+        )
+        .checked(app.prefs.settings.selection_bar),
+    );
+    v.push(Entry::Separator);
     for tool in SELECT_TOOLS {
         v.push(
             Entry::item(tool.name_in(l), Action::SelectTool(tool))

@@ -26,14 +26,18 @@ use crate::state::StrokeSource;
 pub enum Nav {
     Orbit,
     Pan,
+    /// Ctrl+Space（寄る・引く）。
+    Zoom,
 }
 
 /// 3D ビューの入力の途中の状態。
 #[derive(Default)]
 pub struct SurfaceInput {
     pub stroke: Option<StrokeSource>,
-    /// 押した瞬間に終わるツール（バケツ・ID の色で選択）をペンで押している間の印（ペンの番号。2D の `CanvasInput::pen_once` と同じ）。
-    pub pen_once: Option<u32>,
+    /// ペンの今の押し（2D の `CanvasInput::pen_press` と同じ。押した瞬間に終わるバケツ・ID の色で選択を押し直さない印も兼ねる）。
+    pub pen_press: Option<crate::pen::PenPress>,
+    /// Ctrl+Space の拡縮のドラッグ（`nav` が `Nav::Zoom` のあいだ）。
+    pub zoom: Option<crate::gesture::ZoomDrag>,
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
     pub nav: Option<(Nav, egui::PointerButton)>,
@@ -44,6 +48,17 @@ pub struct SurfaceInput {
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
     /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
     pub clone_press: Option<egui::Pos2>,
+}
+
+impl SurfaceInput {
+    /// 押しの印と、回し・パン・拡縮の途中を全部捨てる（ビューが隠れて、ペンの離れ・ボタンの離れを受け取れなかったとき。印が残ると、次の押しを
+    /// 前の押しの続きとして扱い、Alt で押した点の近くで離せばクローンの元を決めてしまう）。描いているストロークは別の持ち主が終える。
+    pub fn drop_presses(&mut self) {
+        self.pen_press = None;
+        self.nav = None;
+        self.zoom = None;
+        self.clone_press = None;
+    }
 }
 
 /// 3D ビューの状態（モデル・カメラ・描くテクスチャセット）。

@@ -739,7 +739,7 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
 // ───────── プロパティのタブ ─────────
 
 fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
-    h.state_mut().state.property_tab = 1;
+    h.state_mut().state.property_tab = 0;
     h.run();
 }
 

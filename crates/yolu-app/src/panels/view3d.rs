@@ -123,7 +123,13 @@ impl View3dSlot {
         let (pose_panel, content) = crate::panels::pose::split(app, full);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         let ppp = ui.ctx().pixels_per_point();
-        input::handle(ui, app, content, pen);
+        input::handle(
+            ui,
+            app,
+            content,
+            pen,
+            crate::gesture::foreign_press(ui.ctx(), &response),
+        );
 
         let p = ui.painter().clone();
         // 焼いたメッシュマップだけを見せているのに、今のセットにそのマップが無ければ（セットを替えた・焼き直して消えた）マテリアルへ戻す
@@ -259,8 +265,14 @@ impl View3dSlot {
         } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             // ブラシのカーソル（回している・パンしているあいだは出さない）
             if response.contains_pointer() && content.contains(pointer) {
-                if app.view3d.input.nav.is_some() {
+                if let Some(zoom) = app.view3d.input.zoom {
+                    ui.ctx()
+                        .set_cursor_icon(crate::canvas::zoom_cursor(zoom.out));
+                } else if app.view3d.input.nav.is_some() {
                     ui.ctx().set_cursor_icon(CursorIcon::Move);
+                } else if let Some(out) = zoom_chord_held(ui) {
+                    // Ctrl+Space を押している: 虫めがね（Alt も押していれば縮小）
+                    ui.ctx().set_cursor_icon(crate::canvas::zoom_cursor(out));
                 } else if let Some(icon) = crate::stencil::cursor_icon(&app.stencil) {
                     ui.ctx().set_cursor_icon(icon);
                 } else if input::draw_cursor(ui, app, content, pointer) {
@@ -447,6 +459,16 @@ impl View3dSlot {
             self.emit(View3dEvent::Covered(covered));
         }
     }
+}
+
+/// Ctrl+Space を押している（キーを打っているときを除く）なら、縮小（Alt も押している）かどうか。
+fn zoom_chord_held(ui: &Ui) -> Option<bool> {
+    if ui.ctx().egui_wants_keyboard_input() {
+        return None;
+    }
+    ui.input(|i| {
+        crate::gesture::zoom_chord(&i.modifiers, i.key_down(egui::Key::Space)).then_some(i.modifiers.alt)
+    })
 }
 
 /// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で

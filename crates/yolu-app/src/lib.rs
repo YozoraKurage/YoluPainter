@@ -20,6 +20,7 @@ pub mod export;
 pub mod eyedrop;
 pub mod fillfx;
 pub mod gradient;
+pub mod gesture;
 pub mod lang;
 pub mod layerops;
 pub mod livelink;

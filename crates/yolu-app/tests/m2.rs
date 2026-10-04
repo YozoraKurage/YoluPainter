@@ -1796,27 +1796,3 @@ fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
     );
 }
 
-#[test]
-fn the_alpha_tab_picks_a_tip_image() {
-    let mut h = app(1280.0, 1000.0, 128);
-    // アルファのタブ（先頭。右のプロパティの欄の既定のタブ）
-    h.state_mut().state.property_tab = 0;
-    h.run();
-    assert!(h.state().state.m2.brush.tip.image.is_none());
-    h.get_by_label("ドット").click();
-    h.run();
-    assert_eq!(
-        h.state()
-            .state
-            .m2
-            .brush
-            .tip
-            .image
-            .as_ref()
-            .map(|t| t.name()),
-        Some("dots")
-    );
-    h.get_by_label("丸（硬さ）").click();
-    h.run();
-    assert!(h.state().state.m2.brush.tip.image.is_none());
-}

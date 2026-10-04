@@ -393,6 +393,57 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     toolbar(ui, app, &ctx, r, list, enabled);
 }
 
+/// 下の操作の帯のボタンの数（左 6 つ・右 3 つ）。
+const TOOLBAR_BUTTONS: usize = 9;
+
+/// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
+pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
+    lang.pick("下のレイヤーでクリッピング", "Clip to the Layer Below")
+}
+
+/// クリッピングのボタンのツールチップ（押せないときは名前に理由を添える。試験・読み上げの名前も同じ）。
+pub fn clipping_tooltip(lang: crate::lang::Lang, reason: Option<&str>) -> String {
+    match reason {
+        Some(reason) => {
+            let (open, close) = lang.pick(("（", "）"), (" (", ")"));
+            format!("{}{open}{reason}{close}", clipping_name(lang))
+        }
+        None => clipping_name(lang).to_owned(),
+    }
+}
+
+/// 選んでいるレイヤーのクリッピング: (入っているか, 押せない理由)。入れるには同じグループの中にすぐ下のレイヤーが要る（一番下は
+/// 何にもクリッピングできない）。すでに入っているレイヤーは、下が無くても外せる。レイヤーが選ばれていなければ (切, None)。
+pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
+    let lang = app.lang;
+    let Some(layer) = app.selected_layer.and_then(|id| app.doc.layer(id)) else {
+        return (false, None);
+    };
+    if layer.clipping() {
+        return (true, None);
+    }
+    let Some(index) = app.doc.layer_index(layer.id()) else {
+        return (false, None);
+    };
+    let parent = layer.parent();
+    if app.doc.layers()[..index].iter().any(|l| l.parent() == parent) {
+        (false, None)
+    } else if parent.is_some() {
+        (
+            false,
+            Some(lang.pick(
+                "グループの中で一番下のレイヤーです",
+                "Bottom layer of its group",
+            )),
+        )
+    } else {
+        (
+            false,
+            Some(lang.pick("一番下のレイヤーです", "Bottom layer")),
+        )
+    }
+}
+
 /// 下の操作の帯。
 fn toolbar(
     ui: &mut Ui,
@@ -408,7 +459,10 @@ fn toolbar(
         vec2(r.width(), TOOLBAR_HEIGHT),
     );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
-    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(26.0, 24.0));
+    // ボタンは左に 6 つ（新規・塗りつぶし・調整・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
+    // 重ならないよう間隔を詰める
+    let pitch = ((bar.width() - 8.0) / TOOLBAR_BUTTONS as f32).min(27.0);
+    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
     let selected = app.selected_layer.and_then(|id| app.doc.layer(id));
     let has = selected.is_some() && enabled;
     let has_mask = selected.is_some_and(|l| l.mask().is_some());
@@ -424,7 +478,7 @@ fn toolbar(
     let mut x = bar.left() + 4.0;
     let mut next = || {
         let b = button(x);
-        x += 27.0;
+        x += pitch;
         b
     };
     if w::icon_button(
@@ -508,7 +562,26 @@ fn toolbar(
             }
         }
     }
-    let x = bar.right() - 4.0 - 27.0 * 3.0;
+    // クリッピング（すぐ下のレイヤーの中にだけ描く。CLIP STUDIO と同じ、押している状態が分かる切り替え）
+    let (clipping, clip_reason) = clipping_state(app);
+    let clip_tip = clipping_tooltip(lang, clip_reason);
+    if w::icon_button(
+        ui,
+        next(),
+        "layers.clipping",
+        "keyboard_arrow_down",
+        &clip_tip,
+        clipping,
+        has && clip_reason.is_none(),
+        17.0,
+    )
+    .clicked()
+    {
+        if let Some(id) = app.selected_layer {
+            app.apply(Action::M2(Edit::Clipping(id, !clipping)));
+        }
+    }
+    let x = bar.right() - 4.0 - pitch * 3.0;
     if w::icon_button(
         ui,
         button(x),
@@ -525,7 +598,7 @@ fn toolbar(
     }
     if w::icon_button(
         ui,
-        button(x + 27.0),
+        button(x + pitch),
         "layers.down",
         "expand_more",
         lang.pick("レイヤーを下へ", "Move Layer Down"),
@@ -539,7 +612,7 @@ fn toolbar(
     }
     if w::icon_button(
         ui,
-        button(x + 54.0),
+        button(x + pitch * 2.0),
         "layers.delete",
         "delete",
         lang.pick("レイヤーを削除", "Delete Layer"),

@@ -202,20 +202,17 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
         pos2(thumb.right() + 6.0, box_rect.top()),
         pos2(box_rect.right() - 22.0, box_rect.bottom()),
     );
-    let shown = w::fit(p, &name, label.width(), t::LABEL);
-    w::text(
-        p,
-        label,
-        &shown,
-        t::LABEL.with_color(if !enabled {
-            t::TEXT_DISABLED
-        } else if has_image {
-            t::TEXT
-        } else {
-            t::TEXT_DIM
-        }),
-        w::Align::Left,
-    );
+    // 画像が無いときは名前（「なし」）を書かない（空の欄の状態は印。名前は読み上げとツールチップ）。窓が最小のときも詰まらない
+    if has_image {
+        let shown = w::fit(p, &name, label.width(), t::LABEL);
+        w::text(
+            p,
+            label,
+            &shown,
+            t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED }),
+            w::Align::Left,
+        );
+    }
     w::icon(
         p,
         Rect::from_min_size(

@@ -139,7 +139,7 @@ pub(super) fn read_only_message(app: &AppState) -> Option<String> {
 }
 
 /// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗る層。
-fn paint_gate(app: &AppState) -> Result<LayerId, String> {
+pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
     let lang = app.lang;
     if let Some(message) = read_only_message(app) {
         return Err(message);
@@ -156,7 +156,7 @@ fn paint_gate(app: &AppState) -> Result<LayerId, String> {
 }
 
 /// マスクの「塗る」は白（見せる）、「消す」は黒（隠す）。白・黒はマスクのサムネイルの色なので、反転したマスクでは書く値を逆にする。
-fn mask_reveals(app: &AppState, layer: LayerId, erase: bool) -> bool {
+pub(crate) fn mask_reveals(app: &AppState, layer: LayerId, erase: bool) -> bool {
     let inverted = app
         .doc
         .layer(layer)

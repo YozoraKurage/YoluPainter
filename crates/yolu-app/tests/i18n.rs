@@ -985,8 +985,8 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
     ];
     // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。ブラシの 2 つ（「効かない」注記と
     // 「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき（注記は欄を無効にしてツールチップへ）一覧から消える
-    const KNOWN_EN: [&str; 8] = [
-        "Emission", "Height", "Metallic", "Normal", "Roughness", "Round (hardness)", "Texture Set 1", "Watercolor Edge",
+    const KNOWN_EN: [&str; 7] = [
+        "Emission", "Height", "Metallic", "Normal", "Roughness", "Texture Set 1", "Watercolor Edge",
     ];
     let truncations = Truncations::start();
     for lang in Lang::ALL {

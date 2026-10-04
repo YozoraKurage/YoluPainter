@@ -1353,7 +1353,7 @@ fn the_tools_have_buttons_keys_and_menu_entries() {
 #[test]
 fn material_tab_toggle_chips_and_values_change_the_state() {
     let mut h = app_with_model(1280.0, 800.0, 128);
-    // 4 つ目のタブ「マテリアル」
+    // 2 つ目のタブ「マテリアル」
     let tab = rect_of(&h, "マテリアル", |r| r.left() > 900.0);
     click(&mut h, tab.center());
     assert!(!h.state().state.mat.enabled);

@@ -2,6 +2,11 @@
 //! 履歴の点ごとに読む（winit も WM_POINTER を受けて egui の Touch に変えるが、筆圧だけで、履歴の点にも最新の筆圧を付ける）。
 //! 読んだあとは winit にそのまま渡すので、ペンでボタンを押すなどの画面の操作はいつもどおり egui に届く。
 //! ほかの OS では何も入らず、キャンバスはマウスと egui の Touch の筆圧（winit が出せば）で描く。
+//!
+//! ペンの押し（触れてから離すまで）の行き先は、触れた最初の点で決めて離すまで変えない（`PenPress`）: 描く道具の押し・ビューを動かす操作
+//! （回す・パン・拡縮。サイドボタン・Alt・Space・Ctrl+Space・R）・何もしない（押した所がビューの外や別の部品）。描くのは、修飾もサイドボタンも
+//! 無いペン先の接触だけ。winit はペンを egui のポインタ（左ボタン）にも変えて同じ押しを二重に届けるので、ペンの点が持つ押しの間は、
+//! egui のポインタの押しをビューが使わない。サイドボタンを押した接触は、egui の部品にも右ボタンとして届ける（`ButtonMap`）。
 
 #[cfg(windows)]
 mod win_ink;
@@ -9,6 +14,26 @@ mod win_ink;
 use std::sync::{Arc, Mutex};
 
 use crate::engine::Tilt;
+
+/// ペンの押しの行き先。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PressKind {
+    /// 道具の押し（ブラシ・消しゴム・範囲の道具・選択の道具）。始められなかった押し（読むだけ・Alt の予約など）も、離すまでここに留まる。
+    Tool,
+    /// ビューを動かす操作（2D は回す・パン・拡縮、3D は回す・パン・拡縮・クローンの元）。
+    View,
+    /// 何もしない（押した所がビューの外・別の部品の上・ポップアップの下、サイドボタンの 2D、修飾を押した描く道具）。
+    Ignored,
+}
+
+/// ビューが持つ、ペンの今の押し（触れてから離すまで）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PenPress {
+    pub id: u32,
+    pub kind: PressKind,
+    /// このペンの前の点（ビューを動かす量を求める）。
+    pub last: egui::Pos2,
+}
 
 /// ペンの 1 点（位置は窓のクライアント領域の物理の画素、左上が原点）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,11 +107,58 @@ impl PenInput {
         std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
+    /// 溜まった点を取り出さずに見る（古い順。egui の入力を直す `ButtonMap` が、このフレームのサイドボタンを読む）。
+    pub fn peek(&self) -> Vec<PenSample> {
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// 点を足す（試験が Windows の窓の代わりに使う）。
     pub fn push(&self, sample: PenSample) {
         self.queue
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(sample);
+    }
+}
+
+/// egui のポインタ（winit がペンの Touch から作る左ボタンの代わりの入力）のうち、サイドボタンを押したペンの接触を右ボタンに直す。
+/// 押しの始めのサイドボタンの状態で、離すまで決める（途中でサイドボタンを離しても、押した右ボタンを右ボタンのまま離す）。
+/// ペンの点が来ていないフレームのポインタ（マウス・指）は直さない。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ButtonMap {
+    secondary: bool,
+}
+
+impl ButtonMap {
+    /// events を直す。`samples` は同じフレームに届いたペンの点（古い順）。
+    pub fn remap(&mut self, samples: &[PenSample], events: &mut [egui::Event]) {
+        for event in events {
+            let egui::Event::PointerButton {
+                button,
+                pressed,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if *button != egui::PointerButton::Primary {
+                continue;
+            }
+            if *pressed {
+                // 押しの始めの点のサイドボタン（最初の接触の点。無ければペンの押しではない）
+                self.secondary = samples.iter().find(|s| s.contact).is_some_and(|s| s.barrel);
+            }
+            if self.secondary {
+                *button = egui::PointerButton::Secondary;
+            }
+            if !*pressed {
+                self.secondary = false;
+            }
+        }
+    }
+
+    /// 右ボタンの押しの途中か（試験用）。
+    pub fn is_secondary(&self) -> bool {
+        self.secondary
     }
 }
