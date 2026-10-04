@@ -1427,3 +1427,18 @@ fn an_active_stroke_blocks_saving_a_document_with_layers_of_every_kind() {
         read("m2-masks.utpaint")
     );
 }
+
+/// 手動の ID の色はまだ正本に書けないので、黙って落とさずに保存を断る（文書は変えない）。
+#[test]
+fn manual_id_colors_are_refused_instead_of_dropped() {
+    let mut doc = yolu_core::Document::new(16, 16).unwrap();
+    let colors = yolu_core::mesh_maps::IdColorAssignments::new(
+        "0".repeat(64),
+        std::collections::BTreeMap::from([(0usize, 0xff0000u32)]),
+    )
+    .unwrap();
+    doc.set_id_colors(colors).unwrap();
+    let err = yolu_io::NativeDocument::from_core(&doc).unwrap_err().to_string();
+    assert!(err.contains("ID の色"), "{err}");
+    assert_eq!(doc.id_colors().colors().len(), 1);
+}
