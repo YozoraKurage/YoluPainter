@@ -841,6 +841,9 @@ fn the_peer_version_and_the_marks_are_asked_through_the_c_functions() {
 }
 
 #[test]
+// 試験のスタンドアロンは、Windows では止めても受けた接続を閉じない（名前付きパイプの読みの待ちを外から切れないので、待たずに手放す）。
+// 相手の終わりを作れないので Windows では回さない。終わったつながりが版と機能を答えない仕組み（Session の fail・close）は OS に依らず、Linux で確かめる。
+#[cfg_attr(windows, ignore = "試験のスタンドアロンが Windows では接続を閉じず、相手の終わりを作れない")]
 fn the_answers_about_the_peer_end_with_the_link() {
     // 版も機能もずれたスタンドアロンにつなぎ、そのスタンドアロンが終わる（自己診断のサーバーを止める）
     let name = unique_name("ends");
