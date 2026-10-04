@@ -14,7 +14,7 @@ use crate::panels::{
     view3d::View3dHost, view3d::View3dSlot,
 };
 use crate::pen::{PenInput, PenSample};
-use crate::shell::{self, MENU_TITLES};
+use crate::shell;
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
 use crate::ui::fonts::{self, FontReport};
 use crate::ui::menu::{self, PopupOutcome, PopupState};
@@ -32,18 +32,25 @@ pub enum Tab {
     TextureSets,
     Layers,
     Properties,
+    Channels,
 }
 
 impl Tab {
     pub fn title(self) -> &'static str {
+        self.title_in(crate::lang::Lang::Ja)
+    }
+
+    /// 言語ごとのタブの名前。
+    pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            Tab::Assets => "アセット",
-            Tab::Color => "カラー",
-            Tab::Canvas => "キャンバス",
-            Tab::View3d => "3D ビュー",
-            Tab::TextureSets => "テクスチャセット",
-            Tab::Layers => "レイヤー",
-            Tab::Properties => "プロパティ",
+            Tab::Assets => lang.pick("アセット", "Assets"),
+            Tab::Color => lang.pick("カラー", "Color"),
+            Tab::Canvas => lang.pick("キャンバス", "Canvas"),
+            Tab::View3d => lang.pick("3D ビュー", "3D View"),
+            Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
+            Tab::Layers => lang.pick("レイヤー", "Layers"),
+            Tab::Properties => lang.pick("プロパティ", "Properties"),
+            Tab::Channels => lang.pick("チャンネル", "Channels"),
         }
     }
 }
@@ -53,7 +60,8 @@ impl Tab {
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
-    let [center, left] = surface.split_left(NodeIndex::root(), 0.19, vec![Tab::Assets]);
+    let [center, left] =
+        surface.split_left(NodeIndex::root(), 0.19, vec![Tab::Assets, Tab::Channels]);
     let [_, right] = surface.split_right(center, 0.77, vec![Tab::TextureSets]);
     surface.split_below(left, 0.48, vec![Tab::Color]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
@@ -118,7 +126,9 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn title(&mut self, tab: &mut Tab) -> WidgetText {
-        RichText::new(tab.title()).font(t::HEADER.font()).into()
+        RichText::new(tab.title_in(self.app.lang))
+            .font(t::HEADER.font())
+            .into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
@@ -138,6 +148,7 @@ impl TabViewer for Tabs<'_> {
                 .view3d
                 .show(ui, self.app, self.renderer3d.as_mut(), self.pen),
             Tab::TextureSets => texture_sets::show(ui, self.app),
+            Tab::Channels => crate::panels::channels::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
@@ -421,7 +432,12 @@ impl YoluApp {
                     Some(PopupKind::MenuBar(i)) => Some(i),
                     _ => None,
                 };
-                bar = Some(menu::menu_bar(ui, r, &MENU_TITLES, open));
+                bar = Some(menu::menu_bar(
+                    ui,
+                    r,
+                    &shell::menu_titles(self.state.lang),
+                    open,
+                ));
                 // 右端: プロジェクトの名前と保存の状態
                 let name = format!(
                     "{}{}",
@@ -506,6 +522,11 @@ impl YoluApp {
             pressed: None,
             hovered: None,
         });
+        // スライダーのドラッグを押したまま Esc で止めた: スライダーは押し始めの値へ戻して残りのドラッグを受けないので、
+        // ここで（全部のスライダーが動いたあとに）まとめていた変更を段ごと捨てる
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
+            self.state.m2_cancel_drag();
+        }
         self.popups(&ctx, &bar);
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
@@ -573,7 +594,7 @@ impl YoluApp {
             PopupOutcome::Chosen(action) => self.state.apply(action),
             PopupOutcome::Step(d) => {
                 if let PopupKind::MenuBar(i) = open.kind {
-                    let n = MENU_TITLES.len() as i32;
+                    let n = shell::MENU_TITLES.len() as i32;
                     self.open_bar_menu(ctx, bar, (i as i32 + d).rem_euclid(n) as usize);
                 } else {
                     self.state.popup = Some(open);

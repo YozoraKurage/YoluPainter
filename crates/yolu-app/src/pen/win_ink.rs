@@ -13,9 +13,9 @@ use windows::Win32::UI::Input::Pointer::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, PEN_FLAG_BARREL,
-    PEN_FLAG_ERASER, PEN_FLAG_INVERTED, PEN_MASK_PRESSURE, PEN_MASK_TILT_X, PEN_MASK_TILT_Y,
-    POINTER_INPUT_TYPE, PT_PEN, WM_NCDESTROY, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE,
-    WNDPROC,
+    PEN_FLAG_ERASER, PEN_FLAG_INVERTED, PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X,
+    PEN_MASK_TILT_Y, POINTER_INPUT_TYPE, PT_PEN, WM_NCDESTROY, WM_POINTERDOWN, WM_POINTERUP,
+    WM_POINTERUPDATE, WNDPROC,
 };
 
 use super::PenSample;
@@ -154,6 +154,7 @@ unsafe fn read_pen(hwnd: HWND, id: u32) -> Vec<PenSample> {
             ],
             pressure,
             tilt,
+            rotation: (info.penMask & PEN_MASK_ROTATION != 0).then(|| (info.rotation % 360) as f32),
             contact: p.pointerFlags.0 & POINTER_FLAG_INCONTACT.0 != 0,
             eraser: info.penFlags & (PEN_FLAG_ERASER | PEN_FLAG_INVERTED) != 0,
             barrel: info.penFlags & PEN_FLAG_BARREL != 0,

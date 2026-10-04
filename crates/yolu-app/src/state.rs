@@ -8,7 +8,9 @@ use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::{BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
+use crate::m2::{Edit, LayerDrag, M2State, UiOp};
 use crate::model::SceneModel;
 use crate::project::ProjectFile;
 use crate::sets::TextureSets;
@@ -37,6 +39,13 @@ impl Tool {
         match self {
             Tool::Brush => "ブラシ",
             Tool::Eraser => "消しゴム",
+        }
+    }
+    /// 言語ごとの名前。
+    pub fn name_in(self, lang: Lang) -> &'static str {
+        match self {
+            Tool::Brush => lang.pick("ブラシ", "Brush"),
+            Tool::Eraser => lang.pick("消しゴム", "Eraser"),
         }
     }
     pub fn key(self) -> &'static str {
@@ -309,6 +318,8 @@ pub struct CanvasInput {
     pub last_pointer: Option<Pos2>,
     /// 最後のストロークの点の数（試験用）。
     pub stroke_points: usize,
+    /// ストロークの最後の入力の時刻（秒。戻さない）。
+    pub stroke_time: Option<f64>,
 }
 
 /// 開いているポップアップの種類。
@@ -317,6 +328,8 @@ pub enum PopupKind {
     MenuBar(usize),
     BlendMode(LayerId),
     LayerContext(LayerId),
+    /// M2 のポップアップ（調整レイヤーの種類・ブラシの選択肢・チャンネルの種類など）。
+    M2(crate::m2_menu::Popup),
     /// テクスチャセットの右クリック（セットの番号 uid）。
     SetContext(u32),
 }
@@ -330,6 +343,10 @@ pub struct OpenPopup {
 /// 操作（メニュー・キー・ボタンから）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    /// 文書を変える M2 の操作（層の種類・マスク・チャンネルごとの合成・文書のチャンネル。1 つが 1 回の Undo）。
+    M2(Edit),
+    /// 画面だけの M2 の操作（描くチャンネル・表示・ブラシの選択・言語）。
+    M2Ui(UiOp),
     Quit,
     Undo,
     Redo,
@@ -386,7 +403,8 @@ impl Action {
     pub fn edits_document(&self) -> bool {
         matches!(
             self,
-            Action::Undo
+            Action::M2(_)
+                | Action::Undo
                 | Action::Redo
                 | Action::NewLayer
                 | Action::DeleteLayer
@@ -401,6 +419,10 @@ impl Action {
 
 /// 画面の状態の全部。
 pub struct AppState {
+    /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
+    pub lang: Lang,
+    /// M2 の画面の状態（層の種類・チャンネル・全部入りのブラシ）。
+    pub m2: M2State,
     pub doc: Document,
     /// 描いているストロークの札（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
     pub stroke: Option<Stroke>,
@@ -411,7 +433,7 @@ pub struct AppState {
     pub view: ViewState,
     /// ステータスバーの知らせ。
     pub message: String,
-    /// プロパティの欄のタブ（ブラシ・アルファ・ステンシル・マテリアル）。
+    /// プロパティの欄のタブ（ブラシ・アルファ・ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
@@ -429,7 +451,7 @@ pub struct AppState {
     pub reset_layout: bool,
     pub quit: bool,
     /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
-    pub layer_drag: Option<(LayerId, usize)>,
+    pub layer_drag: Option<LayerDrag>,
     /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
     pub canvas_rect: Option<egui::Rect>,
     /// テクスチャセット（今のセットの文書は `doc`）。
@@ -478,6 +500,8 @@ impl AppState {
         let (doc, first) = blank_document(width, height);
         let sets = TextureSets::first(&doc);
         AppState {
+            lang: Lang::default(),
+            m2: M2State::default(),
             doc,
             stroke: None,
             selected_layer: first,
@@ -538,6 +562,7 @@ impl AppState {
 
     /// 選んでいるレイヤー（消えていれば一番上を選び直す）。
     pub fn ensure_selection(&mut self) {
+        self.ensure_m2_selection();
         let alive = self
             .selected_layer
             .is_some_and(|id| self.doc.layer(id).is_some());
@@ -547,7 +572,11 @@ impl AppState {
     }
 
     pub fn layer_name_for_new(&self) -> String {
-        format!("レイヤー {}", self.doc.layers().len() + 1)
+        format!(
+            "{} {}",
+            self.lang.pick("レイヤー", "Layer"),
+            self.doc.layers().len() + 1
+        )
     }
 
     /// 今のツールで描くブラシの設定（ペンの消しゴムの端なら消す）。
@@ -559,17 +588,28 @@ impl AppState {
     /// 操作を当てる。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
         let stroking = self.is_stroking();
-        let refuse = |s: &mut AppState| s.message = "描いている間はできません。".into();
+        let refuse = |s: &mut AppState| {
+            s.message = s
+                .lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into()
+        };
         // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
         let pose_undo =
             matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
         if action.edits_document() && !stroking && !pose_undo {
             if let Some(reason) = self.read_only_reason() {
-                self.message = format!("読むだけのテクスチャセットです: {reason}");
+                self.message = format!(
+                    "{}: {reason}",
+                    self.lang
+                        .pick("読むだけのテクスチャセットです", "Read-only texture set")
+                );
                 return;
             }
         }
         match action {
+            Action::M2(edit) => self.m2_edit(edit),
+            Action::M2Ui(op) => self.m2_ui(op),
             Action::Quit => self.quit = true,
             Action::Undo => {
                 if stroking {
@@ -580,7 +620,7 @@ impl AppState {
                 }
                 match self.doc.undo() {
                     Ok(true) => {
-                        self.message = "取り消しました。".into();
+                        self.message = self.lang.pick("取り消しました。", "Undone.").into();
                         self.modified = true;
                     }
                     Ok(false) => {}
@@ -597,7 +637,7 @@ impl AppState {
                 }
                 match self.doc.redo() {
                     Ok(true) => {
-                        self.message = "やり直しました。".into();
+                        self.message = self.lang.pick("やり直しました。", "Redone.").into();
                         self.modified = true;
                     }
                     Ok(false) => {}
@@ -620,16 +660,28 @@ impl AppState {
                     return refuse(self);
                 }
                 if let Some(id) = self.selected_layer {
-                    if self.doc.layers().len() <= 1 {
-                        self.message = "最後のレイヤーは消せません。".into();
+                    // グループは中身ごと消える。何も残らなくなる削除は断る
+                    let size = crate::m2::subtree_len(&self.doc, id);
+                    if self.doc.layers().len() <= size {
+                        self.message = self
+                            .lang
+                            .pick(
+                                "最後のレイヤーは消せません。",
+                                "Cannot delete the last layer.",
+                            )
+                            .into();
                         return;
                     }
-                    let index = self.doc.layer_index(id);
+                    let start = self
+                        .doc
+                        .layer_index(id)
+                        .map(|i| (i + 1).saturating_sub(size));
                     match self.doc.remove_layer(id) {
                         Ok(()) => {
                             let layers = self.doc.layers();
-                            self.selected_layer = index
+                            self.selected_layer = start
                                 .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
+                            self.set_edit_mask(false);
                             self.modified = true;
                         }
                         Err(e) => self.message = e.to_string(),
@@ -641,10 +693,13 @@ impl AppState {
                     return refuse(self);
                 }
                 if let Some(id) = self.selected_layer {
-                    if let Some(i) = self.doc.layer_index(id) {
+                    // 同じグループの兄弟の中で動かす（グループの外へは出さない）
+                    let parent = self.doc.layer(id).and_then(|l| l.parent());
+                    let siblings = self.doc.children_of(parent).unwrap_or_default();
+                    if let Some(i) = siblings.iter().position(|v| *v == id) {
                         let up = action == Action::LayerUp;
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };
-                        if to < self.doc.layers().len() {
+                        if to < siblings.len() {
                             let _ = self.doc.move_layer(id, to);
                             self.modified = true;
                         }

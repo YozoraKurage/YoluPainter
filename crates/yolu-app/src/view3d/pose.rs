@@ -519,6 +519,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         }
         PoseAction::LoadFigure => load_figure(&mut app.view3d).map(|()| {
             app.view3d.pose.focus = true;
+            let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
                 app.message = format!(
                     "{}: 三角形 {}・骨 {}",
@@ -526,6 +527,9 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
                     s.rig.triangle_count(),
                     s.rig.bones().len()
                 );
+                if let Some(note) = note {
+                    app.message += &format!(" {note}");
+                }
             }
         }),
         PoseAction::ToggleMode => {
@@ -574,7 +578,17 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
         open_file(app, &path);
     }
     let (message, installed) = poll(&mut app.view3d);
-    if let Some(m) = message {
+    // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
+    app.sync_rig_model();
+    let note = if installed {
+        app.bind_rig_model()
+    } else {
+        None
+    };
+    if let Some(mut m) = message {
+        if let Some(note) = note {
+            m += &format!(" {note}");
+        }
         app.message = m;
     }
     if app.view3d.pose.is_loading() {

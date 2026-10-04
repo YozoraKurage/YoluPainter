@@ -5,6 +5,8 @@
 
 use egui::{pos2, vec2, Pos2, Rect, Vec2};
 
+use crate::engine::{DVec2, Tilt};
+
 pub const ROTATE_STEP: f32 = 15.0;
 pub const MIN_ZOOM: f32 = 0.2;
 pub const MAX_ZOOM: f32 = 16.0;
@@ -122,6 +124,31 @@ impl CanvasView {
             (self.cx + self.cos * ux - self.sin * uy) as f32,
             (self.cy + self.sin * ux + self.cos * uy) as f32,
         )
+    }
+
+    /// 画面の向き（y は下向き）をキャンバスの向き（y は上向き）に。回転・反転・y の向きを直し、長さは保つ（拡大は掛けない）。
+    pub fn direction_to_canvas(&self, dx: f64, dy: f64) -> (f64, f64) {
+        let ux = self.cos * dx + self.sin * dy;
+        let uy = -self.sin * dx + self.cos * dy;
+        (if self.flip { -ux } else { ux }, -uy)
+    }
+
+    /// ペンの傾き（度。画面の右・下へ倒れる向きが正）を、キャンバスの軸ごとの直立からの角度（ラジアン）に。倒れた量は変わらず、
+    /// 向きだけ表示の回転・反転とキャンバスの y の向きに合わせて直す（倒れた向きの傾き (tan θx, tan θy) を回してから角度に戻す）。
+    pub fn tilt_to_canvas(&self, tilt: Tilt) -> DVec2 {
+        const MAX: f64 = std::f64::consts::FRAC_PI_2 - 1e-6;
+        let tx = (tilt.x as f64).to_radians().clamp(-MAX, MAX).tan();
+        let ty = (tilt.y as f64).to_radians().clamp(-MAX, MAX).tan();
+        let (cx, cy) = self.direction_to_canvas(tx, ty);
+        DVec2::new(cx.atan(), cy.atan())
+    }
+
+    /// ペンの軸まわりの回転（画面で時計回りの度）を、キャンバスで反時計回りのラジアンに。表示を回している・反転しているときは
+    /// 0 度も 0 にならない（向きが変わるので）。回転の情報が無い入力は、これを呼ばずに core へ回転を渡さない。
+    pub fn rotation_to_canvas(&self, degrees: f32) -> f64 {
+        let a = -(degrees as f64).to_radians(); // 画面で反時計回り
+        let (cx, cy) = self.direction_to_canvas(a.cos(), -a.sin());
+        cy.atan2(cx)
     }
 
     /// 画面の座標をキャンバスの画素の座標（左下が原点、範囲外も返す）に。ストロークの点はこれ。
@@ -317,6 +344,38 @@ mod tests {
         assert!(close(before, s.view(rect, 256, 256).to_canvas(at)));
         s.zoom_to(100.0, None, rect);
         assert_eq!(s.zoom, MAX_ZOOM);
+    }
+
+    #[test]
+    fn tilt_and_rotation_follow_the_view() {
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 200.0));
+        let plain = CanvasView::new(rect, 100, 100, 1.0, Vec2::ZERO, 0.0, false);
+        // 画面の下へ 30° 倒すと、キャンバス（y が上向き）では −y へ
+        let t = plain.tilt_to_canvas(Tilt { x: 0.0, y: 30.0 });
+        assert!(
+            t.x.abs() < 1e-9 && (t.y + 30f64.to_radians()).abs() < 1e-9,
+            "{t:?}"
+        );
+        let t = plain.tilt_to_canvas(Tilt { x: 20.0, y: 0.0 });
+        assert!((t.x - 20f64.to_radians()).abs() < 1e-9 && t.y.abs() < 1e-9);
+        assert_eq!(plain.tilt_to_canvas(Tilt::default()), DVec2::ZERO);
+        // 画面を時計回りに 90° 回している: キャンバスの上が画面の右になるので、画面の右へ倒すとキャンバスでは上（+y）へ
+        let rotated = CanvasView::new(rect, 100, 100, 1.0, Vec2::ZERO, 90.0, false);
+        let t = rotated.tilt_to_canvas(Tilt { x: 25.0, y: 0.0 });
+        assert!(
+            t.x.abs() < 1e-9 && (t.y - 25f64.to_radians()).abs() < 1e-9,
+            "{t:?}"
+        );
+        // 左右反転では x の向きが替わる
+        let flipped = CanvasView::new(rect, 100, 100, 1.0, Vec2::ZERO, 0.0, true);
+        let t = flipped.tilt_to_canvas(Tilt { x: 25.0, y: 0.0 });
+        assert!((t.x + 25f64.to_radians()).abs() < 1e-9);
+        // 回転: 画面で時計回りの 90° は、キャンバスで反時計回りの −90°
+        assert_eq!(plain.rotation_to_canvas(0.0), 0.0);
+        assert!((plain.rotation_to_canvas(90.0) + std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        // 表示を時計回りに 90° 回していると、同じ向きの軸はキャンバスの上では 90° 戻った向きになる
+        let r = rotated.rotation_to_canvas(90.0);
+        assert!(r.abs() < 1e-9, "{r}");
     }
 
     #[test]

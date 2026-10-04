@@ -418,8 +418,8 @@ pub fn subsection_header(
     }
 }
 
-/// アイコンと名前のタブの帯（プロパティの欄の頭）。押されたタブの番号を返す（押されなければ active）。幅が足りなければ名前を詰め、
-/// さらに狭ければアイコンだけ。
+/// アイコンと名前のタブの帯（プロパティの欄の頭）。押されたタブの番号を返す（押されなければ active）。幅が足りなければ名前だけ、
+/// 名前が全部は入らなければアイコンだけ（どのタブも同じ見せ方。名前はツールチップ）。
 pub fn tab_strip(
     ui: &mut Ui,
     r: Rect,
@@ -439,6 +439,13 @@ pub fn tab_strip(
     }
     let base = ui.make_persistent_id(id_salt);
     let w = (r.width() - 4.0) / n as f32;
+    let widest = labels
+        .iter()
+        .map(|l| text_width(ui.painter(), l, t::HEADER))
+        .fold(0.0f32, f32::max);
+    // 全部のタブが同じ見せ方になるよう、一番長い名前で決める
+    let with_icon = w.round() - 1.0 >= widest + 34.0;
+    let text_only = w.round() - 1.0 >= widest + 8.0;
     let mut result = active;
     for i in 0..n {
         let tr = Rect::from_min_size(
@@ -466,7 +473,7 @@ pub fn tab_strip(
         }
         let color = if on { Color32::WHITE } else { t::TEXT_DIM };
         let label_width = text_width(p, labels[i], t::HEADER);
-        if tr.width() >= label_width + 34.0 {
+        if with_icon {
             let x = tr.center().x - (label_width + 20.0) / 2.0;
             icon(
                 p,
@@ -485,7 +492,7 @@ pub fn tab_strip(
                 t::HEADER.with_color(color),
                 Align::Left,
             );
-        } else if tr.width() >= 40.0 {
+        } else if text_only {
             let shown = fit(p, labels[i], tr.width() - 6.0, t::HEADER);
             text(p, tr, &shown, t::HEADER.with_color(color), Align::Center);
         } else {
@@ -602,7 +609,7 @@ pub struct SliderOutcome {
     pub changed: bool,
     /// ドラッグ（押している）の最中。
     pub active: bool,
-    /// 押していたのを離した（打った値を決めたときも）。
+    /// 押していたのを離した（打った値を決めたときも。Esc で止めたドラッグは含まない）。
     pub released: bool,
 }
 
@@ -753,6 +760,7 @@ pub fn slider(
         .or(response.interact_pointer_pos());
     let on_box = two && press_origin.is_some_and(|o| box_rect.contains(o));
     let in_inset = two && press_origin.is_some_and(|o| o.x > track.right() && o.y > track.top());
+    let (start_id, cancel_id) = (id.with("start"), id.with("cancelled"));
     let start_edit =
         enabled && ((two && on_box && response.clicked()) || (!two && response.double_clicked()));
     if start_edit {
@@ -768,17 +776,51 @@ pub fn slider(
         });
         ui.ctx().request_repaint();
     } else if enabled && response.is_pointer_button_down_on() && !on_box && !in_inset {
-        if let Some(pointer) = response.interact_pointer_pos() {
-            let next = spec.min
-                + range * ((pointer.x - track.left()) / track.width().max(1.0)).clamp(0.0, 1.0);
-            if next != value {
-                out.value = next;
+        let cancelled = ui.data(|d| d.get_temp::<bool>(cancel_id)).unwrap_or(false);
+        if !cancelled {
+            // 押し始めの値を覚える（Esc で戻す先）
+            if ui.data(|d| d.get_temp::<f32>(start_id)).is_none() {
+                ui.data_mut(|d| d.insert_temp(start_id, value));
+            }
+            if let Some(pointer) = response.interact_pointer_pos() {
+                let next = spec.min
+                    + range * ((pointer.x - track.left()) / track.width().max(1.0)).clamp(0.0, 1.0);
+                if next != value {
+                    out.value = next;
+                    out.changed = true;
+                }
+            }
+            out.active = true;
+        }
+    }
+    // Esc でドラッグを止めた: egui は Esc でドラッグを中断して押下を手放す（応答からは分からない）ので、押しているあいだに覚えた
+    // 押し始めの値へ戻し、ボタンを離すまで残りのドラッグは受けない
+    let mut escaped = false;
+    if enabled && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if let Some(start) = ui.data(|d| d.get_temp::<f32>(start_id)) {
+            escaped = true;
+            ui.data_mut(|d| {
+                d.remove::<f32>(start_id);
+                d.insert_temp(cancel_id, true);
+            });
+            if start != out.value {
+                out.value = start;
                 out.changed = true;
             }
+            out.active = false;
         }
-        out.active = true;
     }
-    if enabled && ((response.drag_stopped() || response.clicked()) && !on_box && !in_inset) {
+    if !ui.input(|i| i.pointer.primary_down()) {
+        ui.data_mut(|d| {
+            d.remove::<f32>(start_id);
+            d.remove::<bool>(cancel_id);
+        });
+    }
+    // Esc で止めたドラッグは「決めた」ではない（呼び手が、まとめていた変更を確定せずに捨てられるように released にしない）
+    if enabled
+        && !escaped
+        && ((response.drag_stopped() || response.clicked()) && !on_box && !in_inset)
+    {
         out.released = true;
     }
     let active = out.active;

@@ -1,0 +1,1914 @@
+//! M2 の画面の操作（egui_kittest）: レイヤーのパネル（グループ・マスク・塗りつぶし・調整・ドラッグ）、チャンネルのパネル、
+//! プロパティの欄（ブラシの M2 の設定・レイヤーの欄）、ペンの時刻と回転。どれも「パネルの操作 → 文書が変わる → Undo で戻る」。
+//! `headless_` で始まる試験は画面を描かず、Wine でも回る。
+mod common;
+
+use common::*;
+use egui::{pos2, Key, Modifiers, PointerButton};
+use egui_kittest::kittest::Queryable;
+use egui_kittest::Harness;
+use yolu_app::engine::{BlendMode, Channel, LayerKind};
+use yolu_app::lang::Lang;
+use yolu_app::m2::{Edit, UiOp};
+use yolu_app::state::{Action, AppState, PopupKind};
+use yolu_app::{Tab, YoluApp};
+
+fn undo(h: &mut Harness<'_, YoluApp>) {
+    key(h, Key::Z, Modifiers::COMMAND);
+    h.run();
+}
+
+fn doc_layers(h: &Harness<'_, YoluApp>) -> usize {
+    h.state().state.doc.layers().len()
+}
+
+fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
+    h.state().state.popup.as_ref().map(|p| p.kind)
+}
+
+fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
+    h.state_mut().state.apply(action);
+    h.run();
+}
+
+/// 描いた線（キャンバスの中央を横切る）。
+fn stroke_across(h: &mut Harness<'_, YoluApp>, dy: f32) {
+    let c = canvas_rect(h).center();
+    drag(
+        h,
+        &[
+            offset(c, -60.0, dy),
+            offset(c, -20.0, dy),
+            offset(c, 20.0, dy),
+            offset(c, 60.0, dy),
+        ],
+    );
+}
+
+#[test]
+fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
+    let mut h = app(1280.0, 800.0, 128);
+    let first = h.state().state.selected_layer.unwrap();
+    // グループ化: 選んでいるレイヤーが新しいグループに入る
+    h.get_by_label("レイヤーをグループ化").click();
+    h.run();
+    let group = h.state().state.selected_layer.unwrap();
+    assert!(h.state().state.doc.layer(group).unwrap().is_group());
+    assert_eq!(
+        h.state().state.doc.layer(first).unwrap().parent(),
+        Some(group)
+    );
+    undo(&mut h);
+    assert_eq!(doc_layers(&h), 1, "グループ化は 1 回の取り消しで戻る");
+    // 塗りつぶし
+    h.get_by_label("新規塗りつぶしレイヤー").click();
+    h.run();
+    let fill = h.state().state.selected_layer.unwrap();
+    assert_eq!(
+        h.state().state.doc.layer(fill).unwrap().kind(),
+        LayerKind::Fill
+    );
+    undo(&mut h);
+    assert_eq!(doc_layers(&h), 1);
+    // 調整（自前のメニュー）
+    h.get_by_label("新規調整レイヤー").click();
+    h.run();
+    assert_eq!(
+        popup_kind(&h),
+        Some(PopupKind::M2(yolu_app::m2_menu::Popup::NewAdjustment))
+    );
+    let at = popup_item(&h, "レベル補正").center();
+    click(&mut h, at);
+    let adj = h.state().state.selected_layer.unwrap();
+    assert_eq!(
+        h.state().state.doc.layer(adj).unwrap().kind(),
+        LayerKind::Adjustment
+    );
+    undo(&mut h);
+    assert_eq!(doc_layers(&h), 1);
+    // マスク: 足すと描く先がマスクになり、もう一度押すと層へ戻る
+    h.get_by_label("レイヤーマスクを追加").click();
+    h.run();
+    assert!(h.state().state.doc.layer(first).unwrap().mask().is_some());
+    assert!(h.state().state.m2.edit_mask);
+    h.get_by_label("レイヤーマスクを編集").click();
+    h.run();
+    assert!(!h.state().state.m2.edit_mask);
+    undo(&mut h);
+    assert!(h.state().state.doc.layer(first).unwrap().mask().is_none());
+}
+
+#[test]
+fn layer_tree_collapses_and_drag_moves_a_layer_into_a_group() {
+    let mut h = app(1280.0, 800.0, 128);
+    apply(&mut h, Action::M2(Edit::GroupSelected)); // グループ 1 の中にレイヤー 1
+    apply(&mut h, Action::NewLayer); // グループの上にレイヤー 2
+    let group = h
+        .state()
+        .state
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.is_group())
+        .unwrap()
+        .id();
+    let top = h.state().state.selected_layer.unwrap();
+    assert_eq!(h.state().state.doc.layer(top).unwrap().parent(), None);
+    // 開閉
+    assert!(h.query_by_label("レイヤー 1").is_some());
+    h.get_by_label("グループを閉じる").click();
+    h.run();
+    assert!(h.state().state.m2.collapsed.contains(&group));
+    assert!(
+        h.query_by_label("レイヤー 1").is_none(),
+        "閉じたグループの中身は出ない"
+    );
+    h.get_by_label("グループを開く").click();
+    h.run();
+    assert!(h.query_by_label("レイヤー 1").is_some());
+    // 一番上の行を、グループの行の中ほどへドラッグ → グループの中へ
+    let top_name = h.state().state.doc.layer(top).unwrap().name().to_owned();
+    let from = rect_of(&h, &top_name, |_| true);
+    let into = rect_of(&h, "グループ 1", |_| true);
+    let start = pos2(from.left() + 90.0, from.center().y);
+    drag(
+        &mut h,
+        &[
+            start,
+            offset(start, 0.0, 12.0),
+            pos2(start.x, into.center().y + 1.0),
+        ],
+    );
+    assert_eq!(
+        h.state().state.doc.layer(top).unwrap().parent(),
+        Some(group)
+    );
+    undo(&mut h);
+    assert_eq!(h.state().state.doc.layer(top).unwrap().parent(), None);
+}
+
+/// ドラッグしている行がホイールで一覧の外へ出ても、ボタンを離せばドラッグは終わり、落とす先の線は残らず、落とす操作は起きる。
+#[test]
+fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
+    let mut h = app(1280.0, 800.0, 128);
+    for _ in 0..30 {
+        apply(&mut h, Action::NewLayer);
+    }
+    let top = h.state().state.selected_layer.unwrap();
+    let name = h.state().state.doc.layer(top).unwrap().name().to_owned();
+    let before = h.state().state.doc.layers().len();
+    let from = rect_of(&h, &name, |_| true);
+    let start = pos2(from.left() + 90.0, from.center().y);
+    press(&h, start, PointerButton::Primary);
+    h.step();
+    for dy in [12.0, 40.0] {
+        move_to(&h, offset(start, 0.0, dy));
+        h.step();
+    }
+    assert!(h.state().state.layer_drag.is_some(), "ドラッグが始まった");
+    // ホイールで一覧を送る（最後まで）。ドラッグしている行は見えなくなる
+    h.state_mut().state.layer_scroll = 100_000.0;
+    h.step();
+    h.step();
+    assert!(h.query_by_label(&name).is_none(), "行は一覧の外");
+    assert!(
+        h.state()
+            .state
+            .layer_drag
+            .is_some_and(|d| d.target.is_some()),
+        "ボタンを押しているあいだは、落とす先をポインタに追わせる"
+    );
+    release(&h, offset(start, 0.0, 40.0), PointerButton::Primary);
+    h.step();
+    h.step();
+    assert!(
+        h.state().state.layer_drag.is_none(),
+        "離したらドラッグを手放す（線が残り続けない）"
+    );
+    assert_eq!(h.state().state.doc.layers().len(), before);
+    assert!(
+        h.state().state.doc.layers().last().map(|l| l.id()) != Some(top),
+        "落とす操作は起きる（一番上にいた層が動いた）"
+    );
+    undo(&mut h);
+    assert_eq!(
+        h.state().state.doc.layers().last().map(|l| l.id()),
+        Some(top),
+        "1 回の取り消しで戻る"
+    );
+}
+
+/// スライダーのドラッグを押したまま Esc で止めると、値は押し始めに戻り、Undo の段は残らず、そのドラッグの残りは受けない。
+/// 離したあとの次のドラッグは普通に 1 回の Undo になる。
+#[test]
+fn escape_during_a_slider_drag_restores_the_value_and_leaves_no_undo_step() {
+    let mut h = app(1280.0, 800.0, 128);
+    let id = h.state().state.selected_layer.unwrap();
+    let opacity = |h: &Harness<'_, YoluApp>| h.state().state.doc.layer(id).unwrap().opacity();
+    let steps = h.state().state.doc.undo_count();
+    // レイヤーの欄の不透明度（オプションバーの同じ名前より右）
+    let slider = rect_of(&h, "不透明度", |r| r.left() > 900.0);
+    let at = |f: f32| pos2(slider.left() + slider.width() * f, slider.center().y);
+    press(&h, at(0.7), PointerButton::Primary);
+    h.step();
+    move_to(&h, at(0.4));
+    h.step();
+    assert!(
+        (opacity(&h) - 0.4).abs() < 0.05,
+        "動いている: {}",
+        opacity(&h)
+    );
+    assert!(h.state().state.doc.undo_count() > steps);
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.step();
+    h.step();
+    assert_eq!(opacity(&h), 1.0, "押し始めの値へ戻る");
+    assert_eq!(h.state().state.doc.undo_count(), steps, "段を残さない");
+    move_to(&h, at(0.2));
+    h.step();
+    assert_eq!(opacity(&h), 1.0, "そのドラッグの残りは受けない");
+    release(&h, at(0.2), PointerButton::Primary);
+    h.step();
+    h.run();
+    assert_eq!(opacity(&h), 1.0);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    // 次のドラッグは普通に効き、1 回の取り消しで戻る
+    drag(&mut h, &[at(0.7), at(0.5)]);
+    assert!((opacity(&h) - 0.5).abs() < 0.05, "{}", opacity(&h));
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    undo(&mut h);
+    assert_eq!(opacity(&h), 1.0);
+    // 文書に触らないスライダー（オプションバーの直径）も、押し始めの値へ戻る
+    let radius = h.state().state.brush.radius;
+    let bar = rect_of(&h, "直径", |r| r.top() < 60.0);
+    let at = |f: f32| pos2(bar.left() + bar.width() * f, bar.center().y);
+    press(&h, at(0.8), PointerButton::Primary);
+    h.step();
+    move_to(&h, at(0.6));
+    h.step();
+    assert!(h.state().state.brush.radius != radius);
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.step();
+    h.step();
+    assert_eq!(h.state().state.brush.radius, radius);
+    release(&h, at(0.6), PointerButton::Primary);
+    h.step();
+    h.run();
+    assert_eq!(h.state().state.brush.radius, radius);
+}
+
+#[test]
+fn channels_panel_adds_renames_changes_kind_and_deletes() {
+    let mut h = app(1280.0, 800.0, 128);
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    assert_eq!(h.state().state.doc.channels().len(), 6);
+    h.get_by_label("チャンネルを追加").click();
+    h.run();
+    let at = popup_item(&h, "スカラー").center();
+    click(&mut h, at);
+    let ao = h.state().state.m2.paint_channel;
+    assert!(!ao.is_standard(), "足したチャンネルを描く先にする");
+    assert_eq!(h.state().state.m2.display_channel, ao);
+    assert_eq!(
+        h.state().state.doc.channel_info(ao).unwrap().name,
+        "スカラー 1"
+    );
+    // 名前（ダブルクリックで変える）
+    let row = rect_of(&h, "スカラー 1", |r| r.height() < 40.0);
+    let name_at = pos2(row.left() + 100.0, row.center().y);
+
+    for _ in 0..2 {
+        press(&h, name_at, egui::PointerButton::Primary);
+        release(&h, name_at, egui::PointerButton::Primary);
+        h.step();
+    }
+    h.run();
+    assert_eq!(h.state().state.m2.renaming_channel, Some(ao));
+    key(&h, Key::A, Modifiers::COMMAND);
+    h.event(egui::Event::Text("AO".into()));
+    key(&h, Key::Enter, Modifiers::NONE);
+    h.run();
+    assert_eq!(h.state().state.doc.channel_info(ao).unwrap().name, "AO");
+    undo(&mut h);
+    assert_eq!(
+        h.state().state.doc.channel_info(ao).unwrap().name,
+        "スカラー 1",
+        "名前の変更も 1 回の取り消し"
+    );
+    // 種類（行の右端の箱）
+    h.get_by_label("スカラー").click();
+    h.run();
+    let at = popup_item(&h, "ノーマル").center();
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.doc.channel_info(ao).unwrap().kind,
+        yolu_app::engine::ChannelKind::Normal
+    );
+    // 目で 2D の表示を替える
+    h.get_by_label("カラー をキャンバスに出す").click();
+    h.run();
+    assert_eq!(h.state().state.m2.display_channel, Channel::Color);
+    assert_eq!(
+        h.state().state.m2.paint_channel,
+        ao,
+        "表示は描く先を変えない"
+    );
+    // 消す（標準のチャンネルは消せない）
+    h.get_by_label("チャンネルを削除").click();
+    h.run();
+    assert!(h.state().state.doc.channel_info(ao).is_none());
+    assert_eq!(h.state().state.m2.paint_channel, Channel::Color);
+    undo(&mut h);
+    assert!(h.state().state.doc.channel_info(ao).is_some());
+}
+
+#[test]
+fn per_channel_blend_leaves_the_layer_value_alone() {
+    let mut h = app(1280.0, 800.0, 128);
+    let id = h.state().state.selected_layer.unwrap();
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    h.get_by_label("ラフネス を描くチャンネルにする").click();
+    h.run();
+    assert_eq!(h.state().state.m2.paint_channel, Channel::Roughness);
+    // そのチャンネル専用の合成にして、合成モードを替える
+    h.get_by_label_contains("専用にする").click();
+    h.run();
+    assert!(!h
+        .state()
+        .state
+        .doc
+        .layer(id)
+        .unwrap()
+        .channel_blend(Channel::Roughness)
+        .is_empty());
+    h.get_by_label("通常").click();
+    h.run();
+    let at = popup_item(&h, "乗算").center();
+    click(&mut h, at);
+    let layer = h.state().state.doc.layer(id).unwrap();
+    assert_eq!(layer.blend_mode_in(Channel::Roughness), BlendMode::Multiply);
+    assert_eq!(layer.blend_mode(), BlendMode::Normal, "層の値は変わらない");
+    undo(&mut h);
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .blend_mode_in(Channel::Roughness),
+        BlendMode::Normal
+    );
+}
+
+#[test]
+fn painting_goes_to_the_paint_channel_and_the_canvas_shows_the_display_channel() {
+    let mut h = app(1280.0, 800.0, 128);
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
+    apply(&mut h, Action::M2Ui(UiOp::DisplayChannel(Channel::Color)));
+    stroke_across(&mut h, 0.0);
+    let c = canvas_rect(&h).center();
+    assert_eq!(canvas_pixel(&h, c)[3], 0, "カラーには描いていない");
+    let doc = &h.state().state.doc;
+    let (x, y) = {
+        let r = canvas_rect(&h);
+        h.state().state.view.view(r, 128, 128).to_canvas(c)
+    };
+    let rough = doc
+        .composite_pixel(Channel::Roughness, x as u32, y as u32)
+        .unwrap();
+    assert_eq!(rough.a, 255, "描くチャンネルに描いた");
+    let before = h.state().display().stats.total_tiles;
+    apply(
+        &mut h,
+        Action::M2Ui(UiOp::DisplayChannel(Channel::Roughness)),
+    );
+    assert!(
+        h.state().display().stats.total_tiles > before,
+        "表示するチャンネルを替えると全部を作り直す"
+    );
+    undo(&mut h);
+    assert!(h.state().state.doc.layers().iter().all(|l| l
+        .surface(Channel::Roughness)
+        .is_none_or(|s| s.tile_count() == 0)));
+}
+
+#[test]
+fn a_layer_that_cannot_be_painted_says_why() {
+    let mut h = app(1280.0, 800.0, 128);
+    h.get_by_label("新規塗りつぶしレイヤー").click();
+    h.run();
+    stroke_across(&mut h, 0.0);
+    let undo_steps = h.state().state.doc.undo_count();
+    stroke_across(&mut h, 0.0);
+    let state = &h.state().state;
+    assert!(state.message.contains("塗りつぶし"), "{}", state.message);
+    assert_eq!(state.doc.undo_count(), undo_steps, "何も描いていない");
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    stroke_across(&mut h, 0.0);
+    assert!(
+        h.state().state.message.contains("Fill"),
+        "{}",
+        h.state().state.message
+    );
+}
+
+#[test]
+fn headless_m2_edits_are_one_undo_each() {
+    use yolu_app::state::AppState;
+    let mut s = AppState::new(64, 64);
+    let id = s.selected_layer.unwrap();
+    for edit in [
+        Edit::AddMask(id),
+        Edit::Clipping(id, true),
+        Edit::Duplicate(id),
+    ] {
+        let before = s.doc.undo_count();
+        s.apply(Action::M2(edit));
+        assert_eq!(s.doc.undo_count(), before + 1);
+    }
+}
+
+/// マスクに描くあいだだけ 4 つ目のタブはマスク。やめたときにマスクのタブにいたなら、使えないタブ（マテリアル。準備中）に
+/// 落とさずブラシへ戻す。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+#[test]
+fn headless_leaving_the_mask_returns_the_properties_tab_to_the_brush() {
+    use yolu_app::m2::MASK_TAB;
+    let mut s = AppState::new(64, 64);
+    let id = s.selected_layer.unwrap();
+    assert_eq!(s.property_tab, 0);
+    // マスクを足す → マスクのタブ。編集をやめる → ブラシ。もう一度 → マスク
+    s.apply(Action::M2(Edit::AddMask(id)));
+    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    s.apply(Action::M2Ui(UiOp::EditMask(false)));
+    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    s.apply(Action::M2Ui(UiOp::EditMask(true)));
+    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    // マスクを消す
+    s.apply(Action::M2(Edit::RemoveMask(id)));
+    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    // マスクを足したあとの取り消し
+    s.apply(Action::M2(Edit::AddMask(id)));
+    s.apply(Action::Undo);
+    s.apply(Action::Undo);
+    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "足す前に戻る");
+    // マスクの編集中に新しいレイヤーを足す・マスクのあるレイヤーを消す
+    s.apply(Action::M2(Edit::AddMask(id)));
+    s.apply(Action::NewLayer);
+    assert_eq!(
+        (s.m2.edit_mask, s.property_tab),
+        (false, 0),
+        "新しい層を選ぶ"
+    );
+    s.selected_layer = Some(id);
+    s.apply(Action::M2Ui(UiOp::EditMask(true)));
+    assert_eq!(s.property_tab, MASK_TAB);
+    let other = s
+        .doc
+        .layers()
+        .iter()
+        .map(|l| l.id())
+        .find(|l| *l != id)
+        .unwrap();
+    s.apply(Action::DeleteLayer); // マスクの層を消す（選んでいるのは id）
+    assert!(s.doc.layer(id).is_none() && s.doc.layer(other).is_some());
+    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "消した");
+    // マテリアルのタブを自分で選んでいるだけなら、そのまま
+    s.property_tab = MASK_TAB;
+    s.ensure_m2_selection();
+    s.apply(Action::M2Ui(UiOp::EditMask(false)));
+    assert_eq!(s.property_tab, MASK_TAB, "マスクを描いていなければ触らない");
+}
+
+#[test]
+fn selecting_another_layer_row_leaves_the_mask_tab() {
+    let mut h = app(1280.0, 800.0, 128);
+    let first = h.state().state.selected_layer.unwrap();
+    apply(&mut h, Action::NewLayer);
+    let top = h.state().state.selected_layer.unwrap();
+    apply(&mut h, Action::M2(Edit::AddMask(top)));
+    assert_eq!(h.state().state.property_tab, yolu_app::m2::MASK_TAB);
+    let name = h.state().state.doc.layer(first).unwrap().name().to_owned();
+    let row = rect_of(&h, &name, |_| true);
+    click(&mut h, pos2(row.left() + 90.0, row.center().y));
+    assert_eq!(h.state().state.selected_layer, Some(first));
+    assert!(!h.state().state.m2.edit_mask);
+    assert_eq!(h.state().state.property_tab, 0, "使えないタブに落とさない");
+}
+
+// ───────── グループを含む削除と上へ・下へ ─────────
+
+use yolu_app::engine::LayerId;
+
+/// 入れ子のグループの文書。下から `G1 { G2 { A }, C }`、その上に `B`（一番上の段は G1 と B）。
+struct Nest {
+    a: LayerId,
+    g2: LayerId,
+    c: LayerId,
+    g1: LayerId,
+    b: LayerId,
+}
+
+fn nest(s: &mut AppState) -> Nest {
+    let a = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::NewGroup));
+    let g2 = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::Move {
+        id: a,
+        parent: Some(g2),
+        position: 0,
+    }));
+    s.apply(Action::M2(Edit::NewGroup));
+    let g1 = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::Move {
+        id: g2,
+        parent: Some(g1),
+        position: 0,
+    }));
+    s.apply(Action::NewLayer);
+    let b = s.selected_layer.unwrap();
+    s.apply(Action::NewLayer);
+    let c = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::Move {
+        id: c,
+        parent: Some(g1),
+        position: 1,
+    }));
+    Nest { a, g2, c, g1, b }
+}
+
+/// 層の並び（下から）と、それぞれの親。
+fn structure(s: &AppState) -> Vec<(LayerId, Option<LayerId>)> {
+    s.doc
+        .layers()
+        .iter()
+        .map(|l| (l.id(), l.parent()))
+        .collect()
+}
+
+#[test]
+fn headless_nest_is_built_as_documented() {
+    let mut s = AppState::new(64, 64);
+    let n = nest(&mut s);
+    assert_eq!(
+        structure(&s),
+        [
+            (n.a, Some(n.g2)),
+            (n.g2, Some(n.g1)),
+            (n.c, Some(n.g1)),
+            (n.g1, None),
+            (n.b, None)
+        ]
+    );
+}
+
+#[test]
+fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
+    let mut s = AppState::new(64, 64);
+    let n = nest(&mut s);
+    // 一番下に別の層 D（G1 の塊の下）
+    s.apply(Action::NewLayer);
+    let d = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::Move {
+        id: d,
+        parent: None,
+        position: 0,
+    }));
+    let before = structure(&s);
+    assert_eq!(before.len(), 6);
+    let steps = s.doc.undo_count();
+    s.selected_layer = Some(n.g1);
+    s.apply(Action::DeleteLayer);
+    assert_eq!(
+        structure(&s),
+        [(d, None), (n.b, None)],
+        "入れ子の中身ごと消える"
+    );
+    assert_eq!(s.doc.undo_count(), steps + 1, "1 回の取り消し");
+    assert_eq!(s.selected_layer, Some(d), "消えた塊のすぐ下の層を選ぶ");
+    s.apply(Action::Undo);
+    assert_eq!(structure(&s), before, "中身も入れ子も元どおり");
+    assert!(s.selected_layer.is_some_and(|id| s.doc.layer(id).is_some()));
+    // グループの中の一番上の層を消すと、すぐ下を選ぶ。グループは残る
+    s.selected_layer = Some(n.c);
+    s.apply(Action::DeleteLayer);
+    assert_eq!(s.selected_layer, Some(n.g2));
+    assert!(s.doc.layer(n.c).is_none() && s.doc.layer(n.g1).is_some());
+}
+
+#[test]
+fn headless_a_document_that_is_only_one_group_cannot_lose_it() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let a = s.selected_layer.unwrap();
+        s.apply(Action::M2(Edit::NewGroup));
+        let g2 = s.selected_layer.unwrap();
+        s.apply(Action::M2(Edit::Move {
+            id: a,
+            parent: Some(g2),
+            position: 0,
+        }));
+        s.apply(Action::M2(Edit::NewGroup));
+        let g1 = s.selected_layer.unwrap();
+        s.apply(Action::M2(Edit::Move {
+            id: g2,
+            parent: Some(g1),
+            position: 0,
+        }));
+        assert_eq!(s.doc.layers().len(), 3);
+        let (before, steps) = (structure(&s), s.doc.undo_count());
+        s.selected_layer = Some(g1);
+        s.message.clear();
+        s.apply(Action::DeleteLayer);
+        assert_eq!(
+            s.message,
+            lang.pick(
+                "最後のレイヤーは消せません。",
+                "Cannot delete the last layer."
+            )
+        );
+        assert_eq!((structure(&s), s.doc.undo_count()), (before, steps));
+        // 中のグループを消すと、外のグループは残る（空のグループになる）
+        s.selected_layer = Some(g2);
+        s.apply(Action::DeleteLayer);
+        assert_eq!(structure(&s), [(g1, None)]);
+        s.apply(Action::Undo);
+        assert_eq!(s.doc.layers().len(), 3);
+    }
+}
+
+#[test]
+fn headless_layer_up_and_down_stop_at_the_group_edge_and_move_a_group_whole() {
+    let mut s = AppState::new(64, 64);
+    let n = nest(&mut s);
+    let before = structure(&s);
+    let steps = s.doc.undo_count();
+    // G1 の中の一番上（C）は上へ動かない・一番下（G2）は下へ動かない（外へ出ない）
+    s.selected_layer = Some(n.c);
+    s.apply(Action::LayerUp);
+    s.selected_layer = Some(n.g2);
+    s.apply(Action::LayerDown);
+    assert_eq!((structure(&s), s.doc.undo_count()), (before.clone(), steps));
+    // 兄弟の中では動く（G2 が C の上へ。親は G1 のまま）
+    s.apply(Action::LayerUp);
+    assert_eq!(s.doc.children_of(Some(n.g1)).unwrap(), [n.c, n.g2]);
+    assert_eq!(s.doc.layer(n.g2).unwrap().parent(), Some(n.g1));
+    assert_eq!(
+        s.doc.layer(n.a).unwrap().parent(),
+        Some(n.g2),
+        "中身は付いていく"
+    );
+    assert_eq!(s.doc.undo_count(), steps + 1, "1 回の取り消し");
+    s.apply(Action::Undo);
+    assert_eq!(structure(&s), before);
+    // 一番上の段では G1 ごと B の上へ（中身は G1 の中のまま）。一番上の B はそれ以上上がらない
+    s.selected_layer = Some(n.g1);
+    s.apply(Action::LayerUp);
+    assert_eq!(s.doc.children_of(None).unwrap(), [n.b, n.g1]);
+    assert_eq!(s.doc.children_of(Some(n.g1)).unwrap(), [n.g2, n.c]);
+    let steps = s.doc.undo_count();
+    s.apply(Action::LayerUp);
+    assert_eq!(s.doc.undo_count(), steps, "一番上の段の一番上は動かない");
+    s.apply(Action::Undo);
+    assert_eq!(structure(&s), before);
+}
+
+/// 木・マスク・塗りつぶし・調整の行を並べた文書。
+fn tree_document(h: &mut Harness<'_, YoluApp>) {
+    apply(h, Action::M2(Edit::GroupSelected));
+    apply(h, Action::NewLayer);
+    let layer = h.state().state.selected_layer.unwrap();
+    apply(h, Action::M2(Edit::AddMask(layer)));
+    apply(h, Action::M2Ui(UiOp::EditMask(false)));
+    apply(h, Action::M2(Edit::NewFill));
+    apply(
+        h,
+        Action::M2(Edit::NewAdjustment(yolu_app::m2::AdjustmentKind::Invert)),
+    );
+}
+
+#[test]
+fn snapshot_layers_tree() {
+    let mut h = app(1280.0, 800.0, 256);
+    stroke_across(&mut h, 0.0);
+    tree_document(&mut h);
+    h.snapshot("m2_layers_tree");
+}
+
+#[test]
+fn snapshot_channels_panel() {
+    let mut h = app(1280.0, 800.0, 256);
+    click_tab(&mut h, Tab::Channels);
+    apply(
+        &mut h,
+        Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+            "AO".into(),
+            yolu_app::engine::ChannelKind::Scalar,
+        ))),
+    );
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
+    h.snapshot("m2_channels_panel");
+}
+
+#[test]
+fn snapshot_properties_brush_sections() {
+    // 小見出しを全部開いて、欄を送りながら撮る（中ほどと、終わり）
+    let mut h = app(1280.0, 1000.0, 256);
+    {
+        let s = &mut h.state_mut().state;
+        for key in [
+            "brush-jitter",
+            "brush-texture",
+            "brush-dual",
+            "brush-color",
+            "brush-fade",
+            "brush-assist",
+        ] {
+            s.sections.insert(key, true);
+        }
+    }
+    let chalk = yolu_app::m2::presets()
+        .iter()
+        .position(|p| p.id == "chalk")
+        .unwrap();
+    apply(&mut h, Action::M2Ui(UiOp::Preset(chalk)));
+    apply(
+        &mut h,
+        Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::DualEnabled(true))),
+    );
+    h.state_mut().state.m2.props_scroll = 330.0;
+    h.run();
+    h.snapshot("m2_properties_brush_middle");
+    h.state_mut().state.m2.props_scroll = 100_000.0;
+    h.run();
+    h.snapshot("m2_properties_brush_end");
+}
+
+#[test]
+fn snapshot_properties_layer_kinds() {
+    let mut h = app(1280.0, 1000.0, 256);
+    apply(&mut h, Action::M2(Edit::NewFill));
+    h.snapshot("m2_properties_fill");
+    apply(
+        &mut h,
+        Action::M2(Edit::NewAdjustment(yolu_app::m2::AdjustmentKind::Levels)),
+    );
+    h.snapshot("m2_properties_levels");
+    apply(&mut h, Action::M2(Edit::NewGroup));
+    h.snapshot("m2_properties_group");
+}
+
+#[test]
+fn snapshot_properties_mask_and_english() {
+    let mut h = app(1280.0, 1000.0, 256);
+    let id = h.state().state.selected_layer.unwrap();
+    apply(&mut h, Action::M2(Edit::AddMask(id)));
+    h.snapshot("m2_properties_mask");
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    h.snapshot("m2_properties_mask_english");
+}
+
+fn canvas_alpha(h: &Harness<'_, YoluApp>, dx: f32) -> u8 {
+    let c = canvas_rect(h).center();
+    canvas_pixel(h, offset(c, dx, 0.0))[3]
+}
+
+#[test]
+fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
+    let mut h = app(1280.0, 800.0, 128);
+    {
+        let b = &mut h.state_mut().state.brush;
+        b.radius = 3.0;
+        b.hardness = 1.0;
+    }
+    stroke_across(&mut h, 0.0); // 層に長い線
+    assert_eq!(canvas_alpha(&h, 0.0), 255);
+    assert_eq!(canvas_alpha(&h, 50.0), 255);
+    h.get_by_label("レイヤーマスクを追加").click();
+    h.run();
+    // マスクに短く描く（塗ると隠す）
+    let c = canvas_rect(&h).center();
+    drag(&mut h, &[offset(c, -10.0, 0.0), offset(c, 10.0, 0.0)]);
+    let id = h.state().state.selected_layer.unwrap();
+    assert!(
+        h.state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .tile_count()
+            > 0
+    );
+    assert_eq!(canvas_alpha(&h, 0.0), 0, "マスクを塗った所は隠れる");
+    assert_eq!(canvas_alpha(&h, 50.0), 255, "ほかは見えたまま");
+    // プロパティの欄のマスク（4 つ目のタブ）の反転・有効
+    h.get_by_label("反転").click();
+    h.run();
+    assert_eq!(canvas_alpha(&h, 0.0), 255, "反転すると塗った所だけが見える");
+    assert_eq!(canvas_alpha(&h, 50.0), 0);
+    h.get_by_label("有効").click();
+    h.run();
+    assert_eq!(canvas_alpha(&h, 50.0), 255, "切るとマスクなしと同じ");
+    undo(&mut h);
+    assert_eq!(canvas_alpha(&h, 50.0), 0, "有効の切り替えは 1 回の取り消し");
+    undo(&mut h);
+    assert_eq!(canvas_alpha(&h, 0.0), 0, "反転も 1 回の取り消し");
+    // マスクを消すと見える
+    h.get_by_label("レイヤーマスクを削除").click();
+    h.run();
+    assert!(h.state().state.doc.layer(id).unwrap().mask().is_none());
+    assert_eq!(canvas_alpha(&h, 0.0), 255);
+    undo(&mut h);
+    assert!(h.state().state.doc.layer(id).unwrap().mask().is_some());
+}
+
+#[test]
+fn fill_and_adjustment_properties_edit_and_undo() {
+    let mut h = app(1280.0, 1000.0, 128);
+    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.get_by_label("新規塗りつぶしレイヤー").click();
+    h.run();
+    let fill = h.state().state.selected_layer.unwrap();
+    // 作ったときは描画色
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(fill)
+            .unwrap()
+            .fill_value(Channel::Color),
+        Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
+    );
+    // 描画色を替えて、値の見本を押すと値が描画色になる
+    h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
+    h.get_by_label_contains("押すと描画色にする").click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(fill)
+            .unwrap()
+            .fill_value(Channel::Color),
+        Some(yolu_app::engine::Rgba8::new(0, 0, 255, 255))
+    );
+    undo(&mut h);
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(fill)
+            .unwrap()
+            .fill_value(Channel::Color),
+        Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
+    );
+    // ほかのチャンネルの値を足す・外す
+    h.get_by_label_contains("ラフネス の値を足す").click();
+    h.run();
+    assert!(h
+        .state()
+        .state
+        .doc
+        .layer(fill)
+        .unwrap()
+        .fill_value(Channel::Roughness)
+        .is_some());
+    h.get_by_label_contains("ラフネス の値を外す").click();
+    h.run();
+    assert!(h
+        .state()
+        .state
+        .doc
+        .layer(fill)
+        .unwrap()
+        .fill_value(Channel::Roughness)
+        .is_none());
+    // 調整: ガンマのドラッグは 1 回の取り消しにまとまる
+    h.get_by_label("新規調整レイヤー").click();
+    h.run();
+    let at = popup_item(&h, "レベル補正").center();
+    click(&mut h, at);
+    let adj = h.state().state.selected_layer.unwrap();
+    let slider = h.get_by_label("ガンマ").rect();
+    drag(
+        &mut h,
+        &[
+            pos2(slider.left() + slider.width() * 0.2, slider.center().y),
+            pos2(slider.left() + slider.width() * 0.5, slider.center().y),
+            pos2(slider.left() + slider.width() * 0.8, slider.center().y),
+        ],
+    );
+    let gamma = h
+        .state()
+        .state
+        .doc
+        .layer(adj)
+        .unwrap()
+        .adjustment()
+        .unwrap()
+        .gamma();
+    assert!(gamma > 2.0, "{gamma}");
+    undo(&mut h);
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(adj)
+            .unwrap()
+            .adjustment()
+            .unwrap()
+            .gamma(),
+        1.0
+    );
+}
+
+#[test]
+fn the_ui_stroke_is_the_core_stroke_with_the_same_brush() {
+    use yolu_app::engine::{BrushSample, DVec2, Document};
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.m2.random_seed = false;
+    let chalk = yolu_app::m2::presets()
+        .iter()
+        .position(|p| p.id == "chalk")
+        .unwrap();
+    apply(&mut h, Action::M2Ui(UiOp::Preset(chalk)));
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.brush.jitter.scatter = 0.5;
+        s.m2.brush.assist.stabilizer = 6.0;
+        s.m2.brush.assist.curve = true;
+        s.color.set_main([0.2, 0.6, 0.3, 1.0]);
+    }
+    let brush = h.state_mut().state.stroke_brush(false);
+    let r = canvas_rect(&h);
+    let c = r.center();
+    let points = [
+        offset(c, -50.0, -10.0),
+        offset(c, -20.0, 15.0),
+        offset(c, 10.0, -12.0),
+        offset(c, 45.0, 8.0),
+    ];
+    drag(&mut h, &points);
+    let view = h.state().state.view.view(r, 128, 128);
+    let mut doc = Document::new(128, 128).unwrap();
+    let id = doc.add_layer("x").unwrap();
+    let mut stroke = doc.begin_brush_stroke(id, &brush).unwrap();
+    for p in points {
+        let (x, y) = view.to_canvas(p);
+        stroke
+            .add_sample(
+                &mut doc,
+                BrushSample::new(x, y, 1.0, 0.0, DVec2::ZERO).unwrap(),
+            )
+            .unwrap();
+    }
+    doc.end_stroke(stroke).unwrap();
+    let want = doc.composite(doc.bounds()).unwrap();
+    let got = h.state().state.doc.composite(doc.bounds()).unwrap();
+    assert!(want.chunks(4).any(|p| p[3] > 0), "何か描けている");
+    assert!(
+        want == got,
+        "画面から描いた線は、同じブラシを core へ直に渡した線と同じ"
+    );
+    // プリセットを替えれば線も替わる（照合が空でない）
+    h.state_mut().state.apply(Action::Undo);
+    apply(&mut h, Action::M2Ui(UiOp::Preset(0)));
+    drag(&mut h, &points);
+    assert!(h.state().state.doc.composite(doc.bounds()).unwrap() != want);
+}
+
+fn pen(
+    pos: egui::Pos2,
+    contact: bool,
+    rotation: Option<f32>,
+    time_ms: u32,
+) -> yolu_app::pen::PenSample {
+    yolu_app::pen::PenSample {
+        pos: [pos.x, pos.y],
+        pressure: 1.0,
+        tilt: yolu_app::engine::Tilt::default(),
+        rotation,
+        contact,
+        eraser: false,
+        barrel: false,
+        pointer_id: 9,
+        time_ms,
+    }
+}
+
+#[test]
+fn the_pens_rotation_and_time_reach_the_brush() {
+    use yolu_app::engine::{BrushSample, DVec2, Document};
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.m2.random_seed = false;
+    {
+        let s = &mut h.state_mut().state;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 10.0;
+        s.m2.brush.tip.roundness = 0.25;
+        s.m2.brush.controls.rotation_angle = true;
+        s.m2.brush.controls.speed_size = true;
+        s.m2.brush.controls.speed_max = 400.0;
+    }
+    let brush = h.state_mut().state.stroke_brush(false);
+    let r = canvas_rect(&h);
+    let view = h.state().state.view.view(r, 128, 128);
+    let c = r.center();
+    let line = [
+        offset(c, -40.0, 0.0),
+        offset(c, 0.0, 0.0),
+        offset(c, 40.0, 0.0),
+    ];
+    let reference = |rotation: f64, times: [f64; 3]| {
+        let mut doc = Document::new(128, 128).unwrap();
+        let id = doc.add_layer("x").unwrap();
+        let mut stroke = doc.begin_brush_stroke(id, &brush).unwrap();
+        for (p, t) in line.iter().zip(times) {
+            let (x, y) = view.to_canvas(*p);
+            let sample = BrushSample::new(x, y, 1.0, t, DVec2::ZERO)
+                .unwrap()
+                .with_rotation(rotation)
+                .unwrap();
+            stroke.add_sample(&mut doc, sample).unwrap();
+        }
+        doc.end_stroke(stroke).unwrap();
+        doc.composite(doc.bounds()).unwrap()
+    };
+    let paint = |h: &mut Harness<'_, YoluApp>, rotation: Option<f32>, times: [u32; 3]| {
+        for (i, p) in line.iter().enumerate() {
+            h.state().pen().push(pen(*p, true, rotation, times[i]));
+        }
+        h.state()
+            .pen()
+            .push(pen(line[2], false, rotation, times[2]));
+        h.run();
+        let bounds = h.state().state.doc.bounds();
+        let pixels = h.state().state.doc.composite(bounds).unwrap();
+        h.state_mut().state.apply(Action::Undo);
+        h.run();
+        pixels
+    };
+    // ペンの軸の回転は、画面で時計回りの度 → キャンバスで反時計回りのラジアン（−π/4）で core へ渡る
+    let rotated = paint(&mut h, Some(45.0), [0, 100, 200]);
+    assert!(
+        rotated == reference(-std::f64::consts::FRAC_PI_4, [0.0, 0.1, 0.2]),
+        "時計回り 45° は反時計回り −45°"
+    );
+    assert!(
+        rotated != paint(&mut h, None, [0, 100, 200]),
+        "回転で絵が変わる"
+    );
+    // 時刻（ミリ秒 → 秒）で筆の速さが決まる: 速く動かすと小さく
+    let slow = paint(&mut h, None, [0, 2000, 4000]);
+    let fast = paint(&mut h, None, [0, 20, 40]);
+    assert!(fast == reference(0.0, [0.0, 0.02, 0.04]));
+    let ink = |p: &[u8]| p.chunks(4).map(|c| c[3] as u64).sum::<u64>();
+    assert!(ink(&fast) < ink(&slow), "{} < {}", ink(&fast), ink(&slow));
+}
+
+/// 1 本の線を core へ直に渡した絵（画面の点を `view` でキャンバスへ。回転は Some のときだけ付ける。時刻は秒）。
+fn core_line(
+    brush: &yolu_app::engine::Brush,
+    view: &yolu_app::canvas::view::CanvasView,
+    points: &[egui::Pos2],
+    rotation: Option<f64>,
+    times: &[f64],
+) -> Vec<u8> {
+    use yolu_app::engine::{BrushSample, DVec2, Document};
+    let mut doc = Document::new(128, 128).unwrap();
+    let id = doc.add_layer("x").unwrap();
+    let mut stroke = doc.begin_brush_stroke(id, brush).unwrap();
+    for (p, t) in points.iter().zip(times) {
+        let (x, y) = view.to_canvas(*p);
+        let mut sample = BrushSample::new(x, y, 1.0, *t, DVec2::ZERO).unwrap();
+        if let Some(r) = rotation {
+            sample = sample.with_rotation(r).unwrap();
+        }
+        stroke.add_sample(&mut doc, sample).unwrap();
+    }
+    doc.end_stroke(stroke).unwrap();
+    doc.composite(doc.bounds()).unwrap()
+}
+
+/// 回転の情報が無い入力（マウス・回転を送れないペン）は、表示を回していても反転していても、core へ回転を渡さない。
+/// 回転を送るペンの 0° は、表示の向きに合わせて直した角度で渡る。
+#[test]
+fn input_without_rotation_gets_none_on_a_rotated_flipped_view() {
+    let mut h = app(1280.0, 800.0, 128);
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.random_seed = false;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 10.0;
+        s.m2.brush.tip.roundness = 0.25;
+        s.m2.brush.controls.rotation_angle = true;
+        s.view.angle = 90.0;
+        s.view.flip = true;
+    }
+    h.run();
+    let brush = h.state_mut().state.stroke_brush(false);
+    let r = canvas_rect(&h);
+    let view = h.state().state.view.view(r, 128, 128);
+    let c = r.center();
+    let line = [
+        offset(c, -40.0, -10.0),
+        offset(c, 0.0, 0.0),
+        offset(c, 40.0, 10.0),
+    ];
+    let canvas_zero = view.rotation_to_canvas(0.0);
+    assert!(
+        canvas_zero.abs() > 0.1,
+        "この表示では 0° が 0 にならない: {canvas_zero}"
+    );
+    let want_none = core_line(&brush, &view, &line, None, &[0.0; 3]);
+    let want_zero = core_line(&brush, &view, &line, Some(canvas_zero), &[0.0; 3]);
+    assert!(want_none != want_zero, "回転が絵に出る（照合が空でない）");
+    let pixels = |h: &Harness<'_, YoluApp>| {
+        let bounds = h.state().state.doc.bounds();
+        h.state().state.doc.composite(bounds).unwrap()
+    };
+    // マウス
+    drag(&mut h, &line);
+    assert!(pixels(&h) == want_none, "マウスは回転を渡さない");
+    undo(&mut h);
+    // 回転を送れないペン
+    for (i, p) in line.iter().enumerate() {
+        h.state().pen().push(pen(*p, true, None, i as u32));
+    }
+    h.state().pen().push(pen(line[2], false, None, 3));
+    h.run();
+    assert!(
+        pixels(&h) == want_none,
+        "回転を送れないペンは回転を渡さない"
+    );
+    undo(&mut h);
+    // 回転を送るペンの 0°（情報あり）
+    for (i, p) in line.iter().enumerate() {
+        h.state().pen().push(pen(*p, true, Some(0.0), i as u32));
+    }
+    h.state().pen().push(pen(line[2], false, Some(0.0), 3));
+    h.run();
+    assert!(
+        pixels(&h) == want_zero,
+        "回転を送るペンの 0° は、表示の向きを直した角度で渡る"
+    );
+}
+
+/// マウスの速さの制御: 同じ速さで動かしたなら、1 フレームに来るイベントの数（マウスの報告の頻度）によらず同じ絵になる
+/// （イベントごとの時刻はフレームの間を等分する）。
+#[test]
+fn mouse_speed_does_not_depend_on_how_many_events_arrive_per_frame() {
+    let mut h = app(1280.0, 800.0, 128);
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.random_seed = false;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 8.0;
+        s.m2.brush.controls.speed_size = true;
+        s.m2.brush.controls.speed_max = 150.0;
+    }
+    let r = canvas_rect(&h);
+    let c = r.center();
+    let ink = |h: &Harness<'_, YoluApp>| {
+        let bounds = h.state().state.doc.bounds();
+        h.state()
+            .state
+            .doc
+            .composite(bounds)
+            .unwrap()
+            .chunks(4)
+            .map(|p| p[3] as u64)
+            .sum::<u64>()
+    };
+    // 1 フレームに 8 点（画面の点）ずつ進む線を、1 フレーム 1 イベント・2 イベント・4 イベントで
+    let frames = 14;
+    let per_frame = 8.0;
+    let run = |h: &mut Harness<'_, YoluApp>, events: usize| {
+        let at = |i: usize| offset(c, -60.0 + per_frame * i as f32 / events as f32, 0.0);
+        press(h, at(0), PointerButton::Primary);
+        h.step();
+        for frame in 0..frames {
+            // 1 フレームに複数のイベント（ハーネスの step は、待たせたイベントを 1 つずつ別のフレームにするので、直に入れる）
+            for e in 1..=events {
+                h.input_mut()
+                    .events
+                    .push(egui::Event::PointerMoved(at(frame * events + e)));
+            }
+            h.step();
+        }
+        release(h, at(frames * events), PointerButton::Primary);
+        h.step();
+        h.run();
+        let v = ink(h);
+        undo(h);
+        v
+    };
+    let one = run(&mut h, 1);
+    let two = run(&mut h, 2);
+    let four = run(&mut h, 4);
+    assert!(one > 0);
+    for (name, v) in [("2", two), ("4", four)] {
+        let diff = (v as f64 - one as f64).abs() / one as f64;
+        assert!(
+            diff < 0.08,
+            "1 フレーム {name} イベントでも同じ速さ: {v} と {one}（{diff:.3}）"
+        );
+    }
+    // 速さは実際に効いている: 倍の速さで動かすと絵が変わる
+    let at = |i: usize| offset(c, -60.0 + 2.0 * per_frame * i as f32, 0.0);
+    press(&h, at(0), PointerButton::Primary);
+    h.step();
+    for frame in 1..=frames / 2 {
+        move_to(&h, at(frame));
+        h.step();
+    }
+    release(&h, at(frames / 2), PointerButton::Primary);
+    h.step();
+    h.run();
+    let fast = ink(&h);
+    assert!(fast != one, "{fast} != {one}");
+}
+
+#[test]
+fn the_two_languages_name_the_panels() {
+    let mut h = app(1280.0, 800.0, 128);
+    assert!(h.query_by_label("新規レイヤー").is_some());
+    assert!(h.query_by_label("レイヤーをグループ化").is_some());
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    assert!(h.query_by_label("New Layer").is_some());
+    assert!(h.query_by_label("Group Layers").is_some());
+    assert!(h.query_by_label("Add Layer Mask").is_some());
+    assert!(h.query_by_label("新規レイヤー").is_none());
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    assert!(h.query_by_label("Add Channel").is_some());
+    assert!(h.query_by_label("Roughness").is_some());
+}
+
+#[test]
+fn properties_sections_open_and_their_sliders_change_the_brush() {
+    let mut h = app(1280.0, 1500.0, 256);
+    // ゆらぎの小見出しを開く（ブラシの欄を少し送って見える所へ）
+    h.state_mut().state.m2.props_scroll = 120.0;
+    h.run();
+    h.get_by_label("ゆらぎ").click();
+    h.run();
+    assert!(h.state().state.section_open("brush-jitter", false));
+    h.state_mut().state.m2.props_scroll = 220.0;
+    h.run();
+    let slider = h.get_by_label("サイズ").rect();
+    drag(
+        &mut h,
+        &[
+            pos2(slider.left() + 2.0, slider.center().y),
+            pos2(slider.left() + slider.width() * 0.6, slider.center().y),
+        ],
+    );
+    let size = h.state().state.m2.brush.jitter.size;
+    assert!((0.5..0.7).contains(&size), "{size}");
+    // 既定に戻す（ゆらぎの見出しの右端）
+    h.get_by_label("ゆらぎを既定に戻す").click();
+    h.run();
+    assert_eq!(h.state().state.m2.brush.jitter.size, 0.0);
+}
+
+// ───────── 保存（.ylp） ─────────
+
+/// 保存と読み直しで変わってはいけない中身の全部（層ごとの id・種類・親・名前・表示・不透明度・合成・クリッピング・
+/// 有効なチャンネル・面の画素・塗りつぶしの値・調整・マスクの状態と画素・チャンネルごとの合成、文書のチャンネルの一覧）。
+fn content(s: &AppState) -> Vec<String> {
+    use std::hash::{Hash, Hasher};
+    let doc = &s.doc;
+    let pixels = |surface: &yolu_core::Surface| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for y in 0..doc.height() {
+            for x in 0..doc.width() {
+                surface.pixel(x, y).unwrap().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    };
+    let mut out = vec![format!("channels {:?}", doc.channels())];
+    for c in doc.channels() {
+        out.push(format!("channel {c:?} {:?}", doc.channel_info(c)));
+    }
+    out.push(format!("normal {:?}", doc.normal_settings()));
+    for l in doc.layers() {
+        let surfaces: Vec<_> = l
+            .surface_channels()
+            .into_iter()
+            .map(|c| (c, pixels(l.surface(c).unwrap())))
+            .collect();
+        let mask = l
+            .mask()
+            .map(|m| (m.enabled(), m.inverted(), m.density(), pixels(m.surface())));
+        out.push(format!(
+            "{:?} {:?} {:?} {:?} visible={} opacity={} blend={:?} clip={} enabled={:?} surfaces={surfaces:?} fills={:?} adjustment={:?} mask={mask:?} blends={:?}",
+            l.id(),
+            l.kind(),
+            l.parent(),
+            l.name(),
+            l.visible(),
+            l.opacity(),
+            l.blend_mode(),
+            l.clipping(),
+            l.enabled_channels(),
+            l.fill_values().collect::<Vec<_>>(),
+            l.adjustment(),
+            l.channel_blends().collect::<Vec<_>>(),
+        ));
+    }
+    out
+}
+
+/// 左下のタイル（0, 0）の、画布の中の画素を単色にして層のチャンネルへ入れる（透明の画素の RGB も保つ読み込み。画布の外は 0）。
+fn put_tile(s: &mut AppState, id: yolu_app::engine::LayerId, channel: Channel, rgba: [u8; 4]) {
+    let ts = s.doc.tile_size() as usize;
+    let (w, h) = (s.doc.width() as usize, s.doc.height() as usize);
+    let mut bytes = vec![0u8; ts * ts * 4];
+    for y in 0..h.min(ts) {
+        for x in 0..w.min(ts) {
+            bytes[(y * ts + x) * 4..][..4].copy_from_slice(&rgba);
+        }
+    }
+    s.doc
+        .import_tile(id, channel, yolu_app::engine::TileCoord::new(0, 0), &bytes)
+        .unwrap();
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("yolu-m2-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// 保存の往復で、今の yolu-io が書ける範囲（ラスターの層・Color だけ）の中身がそのまま戻る。比較は `content` の全部。
+#[test]
+fn headless_saveable_documents_survive_save_and_reopen() {
+    let dir = temp_dir("plain");
+    let path = dir.join("plain.ylp");
+    let mut s = AppState::new(64, 64);
+    let base = s.selected_layer.unwrap();
+    put_tile(&mut s, base, Channel::Color, [200, 40, 30, 255]);
+    s.apply(Action::NewLayer);
+    let top = s.selected_layer.unwrap();
+    put_tile(&mut s, top, Channel::Color, [10, 20, 30, 0]);
+    s.doc.set_layer_opacity(top, 0.5, false).unwrap();
+    s.doc
+        .set_layer_blend_mode(top, BlendMode::Multiply)
+        .unwrap();
+    s.doc.set_layer_clipping(top, true).unwrap();
+    s.doc.set_layer_visible(base, false).unwrap();
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path));
+    assert_eq!(content(&again), content(&s), "{}", again.message);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 今の yolu-io が書けない M2 の中身は、黙って捨てずに保存を断る: 断った理由が出る・文書も印も変わらない・ファイルを作らない。
+#[test]
+fn headless_save_refuses_content_the_ylp_cannot_hold() {
+    use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
+    let user_channel = || ChannelInfo {
+        name: "AO2".into(),
+        kind: ChannelKind::Scalar,
+        color_space: ColorSpace::Linear,
+        default: Rgba8::new(255, 255, 255, 255),
+    };
+    type Make = Box<dyn Fn(&mut AppState)>;
+    let cases: Vec<(&str, Make)> = vec![
+        (
+            "マスクだけ",
+            Box::new(|s| {
+                let id = s.selected_layer.unwrap();
+                s.apply(Action::M2(Edit::AddMask(id)));
+            }),
+        ),
+        (
+            "空のユーザーチャンネルだけ",
+            Box::new(move |s| s.apply(Action::M2(Edit::AddChannel(user_channel())))),
+        ),
+        (
+            "画素のあるユーザーチャンネル",
+            Box::new(move |s| {
+                s.apply(Action::M2(Edit::AddChannel(user_channel())));
+                let channel = *s.doc.channels().last().unwrap();
+                let id = s.selected_layer.unwrap();
+                put_tile(s, id, channel, [90, 90, 90, 255]);
+            }),
+        ),
+        (
+            "Color の層ごとの合成だけ",
+            Box::new(|s| {
+                let id = s.selected_layer.unwrap();
+                s.apply(Action::M2(Edit::OwnBlend {
+                    id,
+                    channel: Channel::Color,
+                    own: true,
+                }));
+            }),
+        ),
+        (
+            "グループだけ",
+            Box::new(|s| s.apply(Action::M2(Edit::GroupSelected))),
+        ),
+        (
+            "塗りつぶしだけ",
+            Box::new(|s| s.apply(Action::M2(Edit::NewFill))),
+        ),
+        (
+            "調整だけ",
+            Box::new(|s| {
+                s.apply(Action::M2(Edit::NewAdjustment(
+                    yolu_app::m2::AdjustmentKind::Levels,
+                )))
+            }),
+        ),
+        (
+            "Normal の出力の設定だけ",
+            Box::new(|s| {
+                let settings = yolu_core::NormalSettings::DEFAULT.with_derive(true);
+                s.doc.set_normal_settings(settings, false).unwrap();
+            }),
+        ),
+    ];
+    let dir = temp_dir("refuse");
+    for (name, make) in &cases {
+        for lang in Lang::ALL {
+            let path = dir.join(format!("{name}-{lang:?}.ylp"));
+            let mut s = AppState::new(64, 64);
+            s.lang = lang;
+            make(&mut s);
+            let (revision, modified, before) = (s.doc.revision(), s.modified, content(&s));
+            s.apply(Action::SaveProjectAs(path.clone()));
+            let prefix = lang.pick("保存できません", "Cannot save");
+            assert!(
+                s.message.starts_with(prefix)
+                    && s.message.len() > prefix.len() + path.as_os_str().len(),
+                "{name}: {}",
+                s.message
+            );
+            assert_eq!(
+                (s.doc.revision(), s.modified),
+                (revision, modified),
+                "{name}"
+            );
+            assert_eq!(content(&s), before, "{name}: 断っても文書は変わらない");
+            assert!(!path.exists(), "{name}: 断ったときはファイルを作らない");
+            assert!(s.project.is_none(), "{name}: 保存先も覚えない");
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// すでにある .ylp への上書きを断ったとき、元のファイルは 1 バイトも変わらず、前の版の置き場（-backups~）も作らない。
+#[test]
+fn headless_refused_overwrite_leaves_the_existing_file_untouched() {
+    let dir = temp_dir("overwrite");
+    let path = dir.join("keep.ylp");
+    let mut s = AppState::new(64, 64);
+    let base = s.selected_layer.unwrap();
+    put_tile(&mut s, base, Channel::Color, [1, 2, 3, 255]);
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let saved = std::fs::read(&path).unwrap();
+    let entries = std::fs::read_dir(&dir).unwrap().count();
+    // マスクを足して、同じファイルへ上書き（保存）と、別名の既存ファイルへの上書き（別名で保存）の両方を断る
+    s.apply(Action::M2(Edit::AddMask(base)));
+    let other = dir.join("other.ylp");
+    std::fs::copy(&path, &other).unwrap();
+    s.apply(Action::SaveProject);
+    assert!(s.message.starts_with("保存できません"), "{}", s.message);
+    s.apply(Action::SaveProjectAs(other.clone()));
+    assert!(s.message.starts_with("保存できません"), "{}", s.message);
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    assert_eq!(std::fs::read(&other).unwrap(), saved);
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        entries + 1,
+        "増えたのは自分で写した 1 つだけ（-backups~ を作らない）"
+    );
+    assert!(s.modified, "保存できていないので、変更の印は残る");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// yolu-io が M2 の中身（グループ・マスク・塗りつぶし・調整・ユーザーチャンネル・チャンネルごとの合成）を書けるようになったら、
+/// `#[ignore]` を外す。今は保存を断るので、ここは通らない（断る側は上の試験）。比較は `content` の全部。
+#[test]
+#[ignore = "yolu-io がまだ M2 の層を書けない（保存は断る）"]
+fn headless_m2_documents_survive_save_and_reopen() {
+    use yolu_app::engine::{ChannelInfo, ChannelKind, ColorSpace, Rgba8};
+    let dir = temp_dir("m2");
+    let path = dir.join("m2.ylp");
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::M2(Edit::GroupSelected));
+    s.apply(Action::NewLayer);
+    let top = s.selected_layer.unwrap();
+    s.apply(Action::M2(Edit::AddMask(top)));
+    s.apply(Action::M2(Edit::MaskDensity(top, 0.5)));
+    s.apply(Action::M2(Edit::MaskInverted(top, true)));
+    s.apply(Action::M2(Edit::NewFill));
+    s.apply(Action::M2(Edit::NewAdjustment(
+        yolu_app::m2::AdjustmentKind::Levels,
+    )));
+    s.apply(Action::M2(Edit::AddChannel(ChannelInfo {
+        name: "AO2".into(),
+        kind: ChannelKind::Scalar,
+        color_space: ColorSpace::Linear,
+        default: Rgba8::new(255, 255, 255, 255),
+    })));
+    s.apply(Action::M2(Edit::OwnBlend {
+        id: top,
+        channel: Channel::Roughness,
+        own: true,
+    }));
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let mut again = AppState::new(64, 64);
+    again.apply(Action::OpenProject(path));
+    assert_eq!(content(&again), content(&s), "{}", again.message);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ───────── 3D ビュー ─────────
+
+/// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
+fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, egui::Rect) {
+    let mut h = app(1100.0, 760.0, doc);
+    h.state_mut().state.view3d.load_demo();
+    h.state_mut().state.view3d.camera.yaw = -40.0;
+    h.state_mut().state.view3d.camera.pitch = 15.0;
+    click_tab(&mut h, Tab::View3d);
+    h.run();
+    let rect = h.state().view3d_rect().expect("3D のタブを描いた");
+    (h, rect)
+}
+
+fn cube_stroke(h: &mut Harness<'_, YoluApp>, rect: egui::Rect) {
+    use yolu_core::glam::Vec3;
+    let view = h
+        .state()
+        .state
+        .view3d
+        .camera
+        .view(rect.width(), rect.height());
+    let at = |p: Vec3| {
+        let s = view.to_screen(p).expect("カメラの前");
+        pos2(rect.left() + s.x, rect.top() + s.y)
+    };
+    let (from, to) = (
+        at(Vec3::new(0.15, 0.1, -0.5)),
+        at(Vec3::new(0.45, 0.1, -0.5)),
+    );
+    let points: Vec<egui::Pos2> = (0..=8)
+        .map(|i| from + (to - from) * (i as f32 / 8.0))
+        .collect();
+    drag(h, &points);
+}
+
+#[test]
+fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
+    let (mut h, rect) = cube_view(256);
+    h.state_mut().state.m2.random_seed = false;
+    h.state_mut().state.color.set_main([0.9, 0.2, 0.1, 1.0]);
+    let composite = |h: &Harness<'_, YoluApp>| {
+        h.state()
+            .state
+            .doc
+            .composite(h.state().state.doc.bounds())
+            .unwrap()
+    };
+    // 描くチャンネル（Roughness）へ
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
+    cube_stroke(&mut h, rect);
+    let id = h.state().state.selected_layer.unwrap();
+    let layer = h.state().state.doc.layer(id).unwrap();
+    assert!(layer.surface(Channel::Roughness).unwrap().tile_count() > 0);
+    assert_eq!(layer.surface(Channel::Color).unwrap().tile_count(), 0);
+    undo(&mut h);
+    apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
+    cube_stroke(&mut h, rect);
+    let plain = composite(&h);
+    undo(&mut h);
+    // プリセット（チョーク）は基本の値（直径・流量・不透明度・間隔・硬さ）を替える。基本の値は 3D でも効く
+    let chalk = yolu_app::m2::presets()
+        .iter()
+        .position(|p| p.id == "chalk")
+        .unwrap();
+    apply(&mut h, Action::M2Ui(UiOp::Preset(chalk)));
+    cube_stroke(&mut h, rect);
+    let chalky = composite(&h);
+    assert!(plain.chunks(4).any(|p| p[3] > 0) && chalky.chunks(4).any(|p| p[3] > 0));
+    assert!(plain != chalky, "基本の値は 3D でも効く");
+    undo(&mut h);
+    // 筆先の画像と質感だけを外しても、3D の絵は 1 画素も変わらない（面のダブは受け取らない。プロパティの欄はそう出す）
+    {
+        let brush = &mut h.state_mut().state.m2.brush;
+        assert!(brush.tip.image.is_some() && brush.texture.is_some());
+        brush.tip.image = None;
+        brush.texture = None;
+    }
+    cube_stroke(&mut h, rect);
+    assert!(
+        composite(&h) == chalky,
+        "3D では筆先・質感は効かない（効くようになったら、プロパティの欄の「3D では効きません」も外す）"
+    );
+    undo(&mut h);
+    // 色の変化は 3D でも効く
+    apply(&mut h, Action::M2Ui(UiOp::Preset(0)));
+    h.state_mut().state.m2.brush.color.hue = 0.5;
+    cube_stroke(&mut h, rect);
+    assert!(composite(&h) != plain, "色の変化は 3D でも効く");
+    undo(&mut h);
+    h.state_mut().state.m2.brush.color.hue = 0.0;
+    // マスクを選んでいれば、面に描いたものはマスクへ
+    apply(&mut h, Action::M2(Edit::AddMask(id)));
+    cube_stroke(&mut h, rect);
+    let layer = h.state().state.doc.layer(id).unwrap();
+    assert!(layer.mask().unwrap().surface().tile_count() > 0);
+    assert_eq!(layer.surface(Channel::Color).unwrap().tile_count(), 0);
+    undo(&mut h);
+    assert_eq!(
+        h.state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .tile_count(),
+        0
+    );
+}
+
+#[test]
+fn the_cube_refuses_effect_brushes_before_they_start_and_the_eraser_still_works() {
+    use yolu_app::engine::BrushEffect;
+    use yolu_app::state::Tool;
+    let (mut h, rect) = cube_view(256);
+    h.state_mut().state.m2.random_seed = false;
+    let ink = |h: &Harness<'_, YoluApp>| {
+        h.state()
+            .state
+            .doc
+            .composite(h.state().state.doc.bounds())
+            .unwrap()
+            .chunks(4)
+            .filter(|p| p[3] > 0)
+            .count()
+    };
+    cube_stroke(&mut h, rect);
+    let painted = ink(&h);
+    assert!(painted > 0);
+    for (effect, name) in [
+        (BrushEffect::BLUR, "ぼかし"),
+        (BrushEffect::SMUDGE, "指先"),
+        (
+            BrushEffect::Clone {
+                offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+            },
+            "クローン",
+        ),
+    ] {
+        h.state_mut().state.m2.brush.effect = effect;
+        h.state_mut().state.message.clear();
+        let (steps, revision) = (
+            h.state().state.doc.undo_count(),
+            h.state().state.doc.revision(),
+        );
+        cube_stroke(&mut h, rect);
+        let state = &h.state().state;
+        assert!(
+            state.message.contains("効果のブラシ") && !state.message.contains("できない"),
+            "{name}: 内部の文言ではなく短い理由: {}",
+            state.message
+        );
+        assert!(!state.is_stroking(), "{name}: ストロークを始めない");
+        assert_eq!(
+            (state.doc.undo_count(), state.doc.revision()),
+            (steps, revision),
+            "{name}: 文書は変わらない"
+        );
+        assert_eq!(ink(&h), painted);
+    }
+    // 英語でも短い理由
+    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
+    h.state_mut().state.message.clear();
+    cube_stroke(&mut h, rect);
+    assert!(
+        h.state().state.message.contains("Effect brushes"),
+        "{}",
+        h.state().state.message
+    );
+    // 消しゴムは効果を使わない（ペイントとして消す）ので、効果が選ばれたままでも 3D で消せる
+    h.state_mut().state.tool = Tool::Eraser;
+    h.state_mut().state.message.clear();
+    cube_stroke(&mut h, rect);
+    assert!(
+        h.state().state.message.is_empty(),
+        "{}",
+        h.state().state.message
+    );
+    assert!(ink(&h) < painted, "消しゴムは消す: {} < {painted}", ink(&h));
+}
+
+#[test]
+fn the_3d_notes_follow_the_tab_that_is_on_screen() {
+    let (mut h, _) = cube_view(256);
+    assert!(
+        h.state().state.view3d.paintable_on_screen(),
+        "モデルがあり 3D のタブが出ている"
+    );
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    assert!(
+        !h.state().state.view3d.paintable_on_screen(),
+        "キャンバスの裏では出さない"
+    );
+    click_tab(&mut h, Tab::View3d);
+    h.run();
+    assert!(h.state().state.view3d.paintable_on_screen());
+    let mut empty = app(1100.0, 760.0, 128);
+    click_tab(&mut empty, Tab::View3d);
+    empty.run();
+    assert!(
+        !empty.state().state.view3d.paintable_on_screen(),
+        "モデルが無ければ描けないので出さない"
+    );
+}
+
+/// 試しの人形（マテリアル 2 つ）を読んだ窓と 3D の表示域。
+fn figure_window() -> (Harness<'static, YoluApp>, egui::Rect) {
+    let mut h = app(1280.0, 860.0, 128);
+    h.state_mut()
+        .state
+        .apply(Action::Pose(yolu_app::view3d::pose::PoseAction::LoadFigure));
+    h.run();
+    let rect = h.state().view3d_rect().expect("3D のタブが前に出た");
+    (h, rect)
+}
+
+/// マテリアル material の三角形のうち、カメラにまっすぐ向いたものの真ん中の画面の点。
+fn point_on_material(h: &Harness<'_, YoluApp>, rect: egui::Rect, material: i32) -> egui::Pos2 {
+    let app = &h.state().state;
+    let model = app.view3d.model.as_ref().unwrap();
+    let cam = app.view3d.camera.position();
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    model
+        .geometry
+        .triangles()
+        .iter()
+        .filter(|t| t.material == material)
+        .find_map(|t| {
+            let c = (t.a + t.b + t.c) / 3.0;
+            if t.normal().dot((cam - c).normalize()) > 0.8 {
+                let s = view.to_screen(c)?;
+                Some(pos2(rect.left() + s.x, rect.top() + s.y))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| panic!("マテリアル {material} のカメラに向いた三角形が無い"))
+}
+
+/// FBX・試しの人形のモデルはマテリアルごとにテクスチャセットが付き、今のセットのマテリアルにだけ描け、セットを替えれば別のマテリアルに描ける
+/// （前はいつも 1 つ目のマテリアルだけで、2 つ目以降の面は断られていた）。
+#[test]
+fn a_rig_model_paints_each_material_into_its_own_texture_set() {
+    let (mut h, rect) = figure_window();
+    h.state_mut().state.color.set_main([0.9, 0.1, 0.1, 1.0]);
+    h.state_mut().state.brush.radius = 3.0;
+    assert_eq!(h.state().state.sets.len(), 2, "{}", h.state().state.message);
+    let current = h.state().state.sets.current_index();
+    let a = h.state().state.sets.current().bound.unwrap() as i32;
+    let b = 1 - a;
+    let other = (0..2).find(|i| *i != current).unwrap();
+    assert_eq!(
+        h.state().state.sets.get(other).unwrap().bound,
+        Some(b as u32)
+    );
+    let tiles = |h: &Harness<'_, YoluApp>, set: usize| {
+        let app = &h.state().state;
+        app.set_doc(set)
+            .layers()
+            .iter()
+            .map(|l| l.surface(Channel::Color).map_or(0, |s| s.tile_count()))
+            .sum::<usize>()
+    };
+    // 今のセットのマテリアルには描ける
+    let at = point_on_material(&h, rect, a);
+    click(&mut h, at);
+    assert!(tiles(&h, current) > 0, "{}", h.state().state.message);
+    assert_eq!(tiles(&h, other), 0);
+    // ほかのセットのマテリアルの面は断る（文書は変わらない）
+    let steps = h.state().state.doc.undo_count();
+    let at = point_on_material(&h, rect, b);
+    click(&mut h, at);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert!(
+        h.state().state.message.contains("ほかのテクスチャセット"),
+        "{}",
+        h.state().state.message
+    );
+    // セットを替えると、描く先のマテリアルも替わり、そちらの文書へ描く
+    h.state_mut().state.switch_set(other).unwrap();
+    h.run();
+    assert_eq!(h.state().state.view3d.material, b);
+    let at = point_on_material(&h, rect, b);
+    click(&mut h, at);
+    assert!(tiles(&h, other) > 0, "{}", h.state().state.message);
+    let first_tiles = tiles(&h, current);
+    assert!(first_tiles > 0, "最初のセットはそのまま");
+    // 最初のセットの目を閉じると、そのマテリアルの面は 3D から消える
+    let uid = h.state().state.sets.get(current).unwrap().uid;
+    h.state_mut().state.toggle_set_visible(uid);
+    h.run();
+    let shown = h.state().state.view3d.model.clone().unwrap();
+    assert!(shown.geometry.triangles().iter().all(|t| t.material == b));
+}
+
+#[test]
+fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
+    let (mut h, rect) = cube_view(256);
+    apply(&mut h, Action::M2(Edit::NewGroup));
+    let steps = h.state().state.doc.undo_count();
+    cube_stroke(&mut h, rect);
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert!(
+        h.state().state.message.contains("グループ"),
+        "{}",
+        h.state().state.message
+    );
+}
+
+#[test]
+fn the_brush_panel_picks_presets_tips_and_effects_from_its_own_menus() {
+    let mut h = app(1280.0, 1000.0, 128);
+    // 組み込みのブラシ
+    h.get_by_label("プリセット: カスタム").click();
+    h.run();
+    let at = popup_item(&h, "チョーク").center();
+    click(&mut h, at);
+    let state = &h.state().state;
+    assert!(state.m2.brush.tip.image.is_some() && state.m2.brush.texture.is_some());
+    assert_eq!(state.brush.radius, 18.0);
+    assert_eq!(popup_kind(&h), None, "選んだら閉じる");
+    h.get_by_label("プリセット: チョーク").click();
+    h.run();
+    let at = popup_item(&h, "ソフト消しゴム").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Eraser);
+    // 効果（ぼかし）: 消しゴムはツールごと描くほうへ戻る。選ぶとストロークは効果のブラシで始まる
+    assert_eq!(popup_kind(&h), None);
+    h.state_mut().state.m2.props_scroll = 100_000.0;
+    h.run();
+    h.get_by_label("種類: ペイント").click();
+    h.run();
+    let at = popup_item(&h, "ぼかし").center();
+    click(&mut h, at);
+    assert!(matches!(
+        h.state().state.m2.brush.effect,
+        yolu_app::engine::BrushEffect::Blur { .. }
+    ));
+    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Brush);
+    stroke_across(&mut h, 0.0);
+    assert!(
+        h.state().state.message.is_empty(),
+        "{}",
+        h.state().state.message
+    );
+}
+
+#[test]
+fn the_alpha_tab_picks_a_tip_image() {
+    let mut h = app(1280.0, 1000.0, 128);
+    // アルファのタブ（2 つ目）
+    h.state_mut().state.property_tab = 1;
+    h.run();
+    assert!(h.state().state.m2.brush.tip.image.is_none());
+    h.get_by_label("ドット").click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .state
+            .m2
+            .brush
+            .tip
+            .image
+            .as_ref()
+            .map(|t| t.name()),
+        Some("dots")
+    );
+    h.get_by_label("丸（硬さ）").click();
+    h.run();
+    assert!(h.state().state.m2.brush.tip.image.is_none());
+}

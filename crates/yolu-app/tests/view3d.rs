@@ -351,6 +351,7 @@ fn pen(pos: Pos2, pressure: f32, contact: bool, eraser: bool) -> yolu_app::pen::
         pos: [pos.x, pos.y],
         pressure,
         tilt: yolu_app::engine::Tilt::default(),
+        rotation: None,
         contact,
         eraser,
         barrel: false,

@@ -5,8 +5,11 @@
 
 pub use yolu_core::glam::DVec2;
 pub use yolu_core::{
-    BlendMode, BrushSettings, Channel, CoreError, Document, Layer, LayerId, Rect, Rgba8, RowOrder,
-    Stroke, TileCoord,
+    AdjustmentSettings, AdjustmentType, BlendMode, Brush, BrushEffect, BrushPreset, BrushSample,
+    BrushSettings, BrushTip, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorDynamics,
+    ColorSpace, Controls, CoreError, Document, DualBrush, DualBrushMode, Jitter, Layer, LayerId,
+    LayerKind, PaperTexture, Rect, Rgba8, RowOrder, Stroke, StrokeAssist, TextureMode, TileCoord,
+    TipShape,
 };
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。

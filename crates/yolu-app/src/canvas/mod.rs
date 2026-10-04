@@ -12,7 +12,7 @@ use egui::{
 
 use self::display::CanvasDisplay;
 use self::view::{angle_label, CanvasView, ROTATE_STEP};
-use crate::engine::Tilt;
+use crate::engine::{BrushSample, Tilt};
 use crate::pen::PenSample;
 use crate::state::{AppState, RotateDrag, StrokeSource};
 use crate::ui::theme as t;
@@ -32,7 +32,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     app.canvas_rect = Some(rect);
     ui.advance_cursor_after_rect(full);
     handle_input(ui, app, rect, pen);
-    display.sync(ui.ctx(), &app.doc);
+    display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
 
     let (w_px, h_px) = (app.doc.width(), app.doc.height());
     let view = app.view.view(rect, w_px, h_px);
@@ -72,8 +72,9 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
     let left = bar.left() + 8.0;
     let label = format!(
-        "2D · {} · カラー  {}%",
+        "2D · {} · {}  {}%",
         app.sets.current().name,
+        crate::m2::channel_name(app.lang, &app.doc, app.m2.display_channel),
         (app.view.zoom * 100.0).round() as i32
     );
     let width = w::text_width(&p, &label, t::LABEL_DIM).min((bar.width() - 16.0).max(0.0));
@@ -188,12 +189,17 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool 
         app.message = "描くレイヤーがありません。".into();
         return false;
     };
+    if let Some(reason) = app.paint_blocker() {
+        app.message = reason;
+        return false;
+    }
     let settings = app.stroke_settings(eraser);
-    match app.doc.begin_stroke(layer, &settings) {
+    match app.begin_paint_stroke(layer, eraser) {
         Ok(stroke) => {
             app.stroke = Some(stroke);
             app.canvas.stroke = Some(source);
             app.canvas.stroke_points = 0;
+            app.canvas.stroke_time = None;
             if !settings.erase {
                 app.color.remember();
             }
@@ -201,25 +207,51 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool 
             true
         }
         Err(e) => {
-            app.message = format!("描けません: {e}");
+            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
             false
         }
     }
 }
 
-fn add_point(app: &mut AppState, view: &CanvasView, p: Pos2, pressure: f32, tilt: Tilt) {
+/// ペン・マウスの 1 点（時刻は秒。速さの制御に使う。戻さない）。傾きとペンの回転は表示の回転・反転を直してキャンバスの向きで渡す。
+/// 回転の情報が無い入力（マウス・タッチ・回転を送れないペン）は None で、core にも回転を渡さない（表示の向きで 0 でなくならない）。
+fn add_point(
+    app: &mut AppState,
+    view: &CanvasView,
+    p: Pos2,
+    pressure: f32,
+    tilt: Tilt,
+    rotation: Option<f32>,
+    time: f64,
+) {
     let (x, y) = view.to_canvas(p);
     let Some(stroke) = app.stroke.as_mut() else {
         return;
     };
-    match stroke.add_point(
-        &mut app.doc,
+    let time = time.max(app.canvas.stroke_time.unwrap_or(f64::NEG_INFINITY));
+    let sample = BrushSample::new(
         x,
         y,
         pressure.clamp(0.0, 1.0) as f64,
-        tilt.radians(),
-    ) {
-        Ok(()) => app.canvas.stroke_points += 1,
+        time,
+        view.tilt_to_canvas(tilt),
+    )
+    .and_then(|s| match rotation {
+        Some(degrees) => s.with_rotation(view.rotation_to_canvas(degrees)),
+        None => Ok(s),
+    });
+    let result = match sample {
+        Ok(s) => stroke.add_sample(&mut app.doc, s),
+        Err(e) => {
+            app.doc.cancel_active_stroke();
+            Err(e)
+        }
+    };
+    match result {
+        Ok(()) => {
+            app.canvas.stroke_time = Some(time);
+            app.canvas.stroke_points += 1;
+        }
         Err(e) => {
             // core は失敗したストロークを取り消してから返す（予算を超えたなど）。札を手放して知らせる
             app.stroke = None;
@@ -245,11 +277,55 @@ pub fn finish_stroke(app: &mut AppState, cancel: bool) {
     }
 }
 
+/// マウスで描く点になりうるイベント（押す・動く）。
+fn is_mouse_sample_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::PointerMoved(_)
+            | Event::PointerButton {
+                button: PointerButton::Primary,
+                pressed: true,
+                ..
+            }
+    )
+}
+
+/// マウスの点の時刻。egui のイベントには時刻が無く、1 フレームの全イベントに `now` を付けると、時刻が進まない点では core が速さを
+/// 前の値のままにするので、1 フレームに N 個のイベントがあれば速さが本当の約 1/N になる。そこで前のフレームから `now` までを
+/// そのフレームのイベントの数で等分し、単調に増える時刻を付ける（最後のイベントが `now`）。長く止まったあとの最初のフレームで
+/// 速さが極端に遅く見えないよう、間隔は `MAX_FRAME_GAP` までに抑える。
+struct MouseClock {
+    now: f64,
+    start: f64,
+    step: f64,
+    index: usize,
+}
+
+impl MouseClock {
+    const MAX_FRAME_GAP: f64 = 0.1;
+
+    fn new(now: f64, frame_dt: f64, events: usize) -> MouseClock {
+        let dt = frame_dt.clamp(0.0, Self::MAX_FRAME_GAP);
+        MouseClock {
+            now,
+            start: now - dt,
+            step: dt / events.max(1) as f64,
+            index: 0,
+        }
+    }
+
+    fn next(&mut self) -> f64 {
+        self.index += 1;
+        (self.start + self.step * self.index as f64).min(self.now)
+    }
+}
+
 fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     let (w_px, h_px) = (app.doc.width(), app.doc.height());
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let typing = ctx.egui_wants_keyboard_input();
+    let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
     let blocked = app.popup.is_some() || app.popup_was_open;
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
@@ -259,6 +335,11 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
             i.key_down(Key::Space),
         )
     });
+    let mut clock = MouseClock::new(
+        now,
+        frame_dt,
+        events.iter().filter(|e| is_mouse_sample_event(e)).count(),
+    );
     app.canvas.rotate_key_held = r_down && !typing && !modifiers.any() && !blocked;
     app.canvas.space_held = space_down && !typing && !blocked;
 
@@ -275,12 +356,26 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                 && !app.canvas.space_held =>
             {
                 if begin_stroke(app, StrokeSource::Pen(s.pointer_id), s.eraser) {
-                    add_point(app, &view, p, s.pressure, s.tilt);
+                    add_point(
+                        app,
+                        &view,
+                        p,
+                        s.pressure,
+                        s.tilt,
+                        s.rotation,
+                        s.time_ms as f64 / 1000.0,
+                    );
                 }
             }
-            Some(StrokeSource::Pen(id)) if id == s.pointer_id && s.contact => {
-                add_point(app, &view, p, s.pressure, s.tilt)
-            }
+            Some(StrokeSource::Pen(id)) if id == s.pointer_id && s.contact => add_point(
+                app,
+                &view,
+                p,
+                s.pressure,
+                s.tilt,
+                s.rotation,
+                s.time_ms as f64 / 1000.0,
+            ),
             Some(StrokeSource::Pen(id)) if id == s.pointer_id && !s.contact => {
                 finish_stroke(app, false)
             }
@@ -289,6 +384,12 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     }
 
     for event in &events {
+        // 描く点になりうるイベントごとに 1 つずつ進める（描かなくても進める。数えたときと同じ数になる）
+        let time = if is_mouse_sample_event(event) {
+            clock.next()
+        } else {
+            now
+        };
         match event {
             Event::Touch { force, phase, .. } => {
                 if let Some(f) = force {
@@ -330,6 +431,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                                 pos,
                                 app.canvas.touch_pressure.unwrap_or(1.0),
                                 Tilt::default(),
+                                None,
+                                time,
                             );
                         }
                     }
@@ -370,6 +473,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
                         pos,
                         app.canvas.touch_pressure.unwrap_or(1.0),
                         Tilt::default(),
+                        None,
+                        time,
                     );
                 }
                 if let Some(mut drag) = app.canvas.rotating {
@@ -451,5 +556,34 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) 
     }
     if !ui.input(|i| i.pointer.primary_down()) {
         app.canvas.rotating = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_times_spread_over_the_frame_and_end_at_now() {
+        let mut clock = MouseClock::new(10.0, 0.016, 4);
+        let times: Vec<f64> = (0..4).map(|_| clock.next()).collect();
+        assert!(times.windows(2).all(|w| w[1] > w[0]), "{times:?}");
+        assert!((times[0] - 9.988).abs() < 1e-9, "{times:?}");
+        assert!((times[3] - 10.0).abs() < 1e-9, "{times:?}");
+    }
+
+    #[test]
+    fn a_long_pause_does_not_make_the_first_frame_look_slow() {
+        let mut clock = MouseClock::new(100.0, 30.0, 2);
+        let (a, b) = (clock.next(), clock.next());
+        assert!(b - a <= MouseClock::MAX_FRAME_GAP, "{a} {b}");
+        assert!((b - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn no_events_or_a_negative_gap_stay_at_now() {
+        let mut clock = MouseClock::new(5.0, -1.0, 0);
+        assert_eq!(clock.next(), 5.0);
+        assert_eq!(clock.next(), 5.0, "数えた数より多く呼んでも now を越えない");
     }
 }

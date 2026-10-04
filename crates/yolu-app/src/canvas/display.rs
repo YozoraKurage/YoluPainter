@@ -57,6 +57,8 @@ pub struct UploadStats {
 pub struct CanvasDisplay {
     /// 最後に読んだ文書（テクスチャセットを替える・開き直すと別の文書になる。通し番号は文書ごとなので、替わったら全部を作り直す）。
     doc_id: u128,
+    /// 最後に読んだチャンネル（替わったら全部を作り直す）。
+    channel: Option<Channel>,
     /// 最後に読んだ core の変化の通し番号（次はこれより後の変化だけを読む）。
     serial: u64,
     /// 合成の受け皿（毎回の確保を避ける）。
@@ -88,17 +90,24 @@ impl CanvasDisplay {
 
     /// 文書の変わった所をテクスチャに上げる。上げたタイルの数を返す。
     pub fn sync(&mut self, ctx: &egui::Context, doc: &Document) -> usize {
+        self.sync_channel(ctx, doc, Channel::Color)
+    }
+
+    /// 文書の変わった所をテクスチャに上げる（`channel` の合成を出す）。上げたタイルの数を返す。
+    pub fn sync_channel(&mut self, ctx: &egui::Context, doc: &Document, channel: Channel) -> usize {
         let (w, h) = (doc.width(), doc.height());
-        let changed = doc.changed_tiles(Channel::Color, self.serial);
+        let changed = doc.changed_tiles(channel, self.serial);
         let serial = doc.change_serial();
         if self.size != (w, h)
             || self.pages.is_empty()
             || self.nearest != self.want_nearest
             || self.doc_id != doc.id()
+            || self.channel != Some(channel)
             || changed.is_none()
         {
             self.nearest = self.want_nearest;
             self.doc_id = doc.id();
+            self.channel = Some(channel);
             self.serial = serial;
             self.pages.clear();
             let mut y = 0;
@@ -109,7 +118,7 @@ impl CanvasDisplay {
                     let rect = DocRect::new(x, y, pw, ph);
                     self.buffer.resize((pw * ph * 4) as usize, 0);
                     let image = match doc.composite_into(
-                        Channel::Color,
+                        channel,
                         rect,
                         &mut self.buffer,
                         RowOrder::BottomUp,
@@ -157,7 +166,7 @@ impl CanvasDisplay {
             self.buffer
                 .resize((region.width * region.height * 4) as usize, 0);
             if doc
-                .composite_into(Channel::Color, region, &mut self.buffer, RowOrder::BottomUp)
+                .composite_into(channel, region, &mut self.buffer, RowOrder::BottomUp)
                 .is_err()
             {
                 continue;

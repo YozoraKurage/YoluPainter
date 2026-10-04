@@ -71,11 +71,28 @@ fn begin(
         app.message = "描くレイヤーがありません。".into();
         return;
     };
+    if let Some(reason) = app.paint_blocker() {
+        app.message = reason;
+        return;
+    }
     let settings = app.stroke_settings(eraser);
-    let mut stroke = match app.doc.begin_stroke(layer, &settings) {
+    // 面のダブは各画素を apply_pixel で塗るので、読み元を凍結する効果のブラシ（ぼかし・指先・クローン）は始める前に断る
+    if !settings.erase && !app.m2.brush.effect.is_paint() {
+        app.message = app
+            .lang
+            .pick(
+                "3D では効果のブラシ（ぼかし・指先・クローン）は使えません",
+                "Effect brushes (blur, smudge, clone) are not available in 3D",
+            )
+            .into();
+        return;
+    }
+    // 全部入りのブラシ。面のダブは筆先・ゆらぎ・質感・デュアル・フェード・傾き・回転・速さ・手ぶれ補正を受け取らず（効くのは基本の値・色・
+    // 色の変化・消しゴム・筆圧）、効果のブラシも塗れない
+    let mut stroke = match app.begin_paint_stroke(layer, eraser) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!("描けません: {e}");
+            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
             return;
         }
     };

@@ -60,11 +60,13 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
                 .into(),
         );
     };
-    let routed = model.materials.get(material as usize).is_some_and(|m| {
-        m.routes
-            .iter()
-            .any(|r| r.channel == yolu_protocol::channel::COLOR)
-    });
+    // 流し込み先は Live Link のモデルだけの話（FBX・試しの人形は Unity に出さないので、無くても警告しない）
+    let routed = !model.is_link()
+        || model.materials.get(material as usize).is_some_and(|m| {
+            m.routes
+                .iter()
+                .any(|r| r.channel == yolu_protocol::channel::COLOR)
+        });
     if !set.visible {
         return look(
             "visibility_off",

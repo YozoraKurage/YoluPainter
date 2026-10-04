@@ -6,7 +6,10 @@
 pub mod app;
 pub mod canvas;
 pub mod engine;
+pub mod lang;
 pub mod livelink;
+pub mod m2;
+pub mod m2_menu;
 pub mod model;
 pub mod panels;
 pub mod pen;

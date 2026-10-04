@@ -17,6 +17,9 @@ pub struct PenSample {
     /// 0〜1。
     pub pressure: f32,
     pub tilt: Tilt,
+    /// ペンの軸まわりの回転（度、時計回り 0〜360）。回転を送れないペンは None（0° を送るペンの Some(0.0) とは別。
+    /// core は回転が 0 でないときだけ「情報あり」と見なすので、None は core へ回転を渡さない）。
+    pub rotation: Option<f32>,
     /// 紙に触れている。
     pub contact: bool,
     /// 消しゴムの端（裏返して近づけている、または触れている）。

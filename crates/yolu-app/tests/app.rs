@@ -266,6 +266,7 @@ fn pen(pos: egui::Pos2, pressure: f32, contact: bool, eraser: bool) -> PenSample
         pos: [pos.x, pos.y],
         pressure,
         tilt: Tilt { x: 10.0, y: -5.0 },
+        rotation: None,
         contact,
         eraser,
         barrel: false,

@@ -1,19 +1,73 @@
-//! プロパティの欄（Substance Painter の並び）: 頭にタブ（ブラシ｜アルファ｜ステンシル｜マテリアル）、選んだタブの中身だけを出す。
-//! ブラシのタブは直径・流量・不透明度（2 行のスライダーの右にペンのボタン = 筆圧で変えるか）と間隔、アルファのタブは硬さ
-//! （Unity 版と同じく、硬さは先端の形の側）。ステンシルとマテリアルは M2 以降。
+//! プロパティの欄（Substance Painter の並び）: 選んでいる物の中身だけを出す。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
+//! 頭にタブ（ブラシ｜アルファ｜ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈は
+//! レイヤーの欄だけ。中身は縦に積み、はみ出したらスクロールする（ブラシの欄は `brush_props`、レイヤーの欄は `layer_props`）。
+//! 値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
-use egui::{pos2, vec2, Color32, Rect, Ui};
+use egui::{pos2, vec2, Rect, Ui};
 
-use crate::state::{AppState, BrushState};
+use crate::engine::LayerKind;
+use crate::m2_menu::Popup;
+use crate::state::{AppState, OpenPopup, PopupKind};
+use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
-pub const TABS: [&str; 4] = ["ブラシ", "アルファ", "ステンシル", "マテリアル"];
-pub const TAB_ICONS: [&str; 4] = ["paint_brush", "shapes", "square", "layers"];
+pub const TAB_ICONS: [&str; 5] = ["paint_brush", "shapes", "square", "layers", "tune"];
+
+/// 欄の文脈。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Context {
+    /// ブラシ・消しゴムで描く（ペイントのレイヤーか、マスク）。
+    Paint,
+    /// 塗りつぶし・調整・グループの中身（これらには描けない）。
+    Layer,
+}
+
+/// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
+pub fn context(app: &AppState) -> Context {
+    let kind = app
+        .selected_layer
+        .and_then(|id| app.doc.layer(id))
+        .map(|l| l.kind());
+    match kind {
+        Some(LayerKind::Raster) | None => Context::Paint,
+        Some(_) if app.m2.edit_mask => Context::Paint,
+        Some(_) => Context::Layer,
+    }
+}
+
+/// タブの名前（4 つ目はマスクに描くあいだだけマスク）。
+pub fn tab_labels(app: &AppState) -> [&'static str; 5] {
+    let l = app.lang;
+    [
+        l.pick("ブラシ", "Brush"),
+        l.pick("アルファ", "Alpha"),
+        l.pick("ステンシル", "Stencil"),
+        if app.m2.edit_mask {
+            l.pick("マスク", "Mask")
+        } else {
+            l.pick("マテリアル", "Material")
+        },
+        l.pick("レイヤー", "Layer"),
+    ]
+}
+
+pub fn open_popup(
+    app: &mut AppState,
+    ctx: &egui::Context,
+    popup: Popup,
+    anchor: Rect,
+    min_width: f32,
+) {
+    app.popup = Some(OpenPopup {
+        kind: PopupKind::M2(popup),
+        state: PopupState::new(ctx, anchor).with_min_width(min_width),
+    });
+}
 
 /// 筆圧に従わせられるスライダー（2 行目の右にペンのボタン）。
 #[allow(clippy::too_many_arguments)]
-fn pen_slider(
+pub fn pen_slider(
     ui: &mut Ui,
     rows: &mut Rows,
     id: &str,
@@ -46,7 +100,8 @@ fn pen_slider(
     out.changed.then_some(out.value)
 }
 
-fn section(
+/// 大見出し（開閉を覚える）。返すのは (開いているか, 既定に戻す頼み)。
+pub fn section(
     ui: &mut Ui,
     app: &mut AppState,
     rows: &mut Rows,
@@ -56,174 +111,216 @@ fn section(
     reset: Option<&str>,
 ) -> (bool, bool) {
     let open = app.section_open(key, true);
+    rows.indent = 0.0;
     let header = rows.full_row(t::PANEL_HEADER_HEIGHT, 5.0);
     let out = w::section_header(ui, header, ("section", key), title, open, Some(icon), reset);
     if out.open != open {
         app.sections.insert(key, out.open);
     }
+    if out.open {
+        rows.indent = t::SECTION_INDENT;
+    }
     (out.open, out.reset)
 }
 
-fn placeholder(ui: &mut Ui, rows: &mut Rows, text: &str) {
-    let r = rows.row(48.0, 4.0);
-    w::wrapped_text(ui.painter(), r, text, t::LABEL_DIM);
+/// 大見出しの中の小見出し（初めは閉じている）。reset を渡すと右端に「既定に戻す」。返すのは (開いているか, 既定に戻す頼み)。
+pub fn subsection(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    key: &'static str,
+    title: &str,
+    reset: Option<&str>,
+) -> (bool, bool) {
+    let open = app.section_open(key, false);
+    rows.indent = t::SECTION_INDENT;
+    let header = rows.row(20.0, 3.0);
+    let next = w::subsection_header(ui, header, ("subsection", key), title, open);
+    let mut reset_clicked = false;
+    if let Some(tip) = reset {
+        let b = Rect::from_min_size(
+            pos2(header.right() - 22.0, header.top() - 1.0),
+            vec2(22.0, header.height() + 2.0),
+        );
+        reset_clicked = w::icon_button(
+            ui,
+            b,
+            ("subsection.reset", key),
+            "restart_alt",
+            tip,
+            false,
+            true,
+            13.0,
+        )
+        .clicked();
+    }
+    if next != open {
+        app.sections.insert(key, next);
+    }
+    rows.indent = t::SECTION_INDENT + 10.0;
+    (next, reset_clicked)
+}
+
+/// スライダーの 1 行（2 行の形）。値が替わったら新しい値を返す。
+#[allow(clippy::too_many_arguments)]
+pub fn slider_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: f32,
+    range: (f32, f32),
+    format: NumberFormat,
+    tooltip: Option<&str>,
+    enabled: bool,
+) -> Option<f32> {
+    let mut spec = SliderSpec::new(label, range.0, range.1, format).enabled(enabled);
+    if let Some(tip) = tooltip {
+        spec = spec.tooltip(tip);
+    }
+    let out = w::slider(ui, rows.slider_row(), id, value, &spec);
+    out.changed.then_some(out.value)
+}
+
+/// 0〜1 の値を % で出すスライダー（値は 0〜1 のまま受け渡す。range も 0〜1 の側）。
+#[allow(clippy::too_many_arguments)]
+pub fn percent_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: f64,
+    range: (f64, f64),
+    tooltip: Option<&str>,
+    enabled: bool,
+) -> Option<f64> {
+    slider_row(
+        ui,
+        rows,
+        id,
+        label,
+        (value * 100.0) as f32,
+        ((range.0 * 100.0) as f32, (range.1 * 100.0) as f32),
+        NumberFormat::int("%"),
+        tooltip,
+        enabled,
+    )
+    .map(|v| (v as f64 / 100.0).clamp(range.0, range.1))
+}
+
+/// チェックの 1 行。
+pub fn toggle_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: bool,
+    tooltip: Option<&str>,
+    enabled: bool,
+) -> Option<bool> {
+    let r = rows.row(t::ROW_HEIGHT, 2.0);
+    let next = w::toggle(ui, r, id, label, value, tooltip, enabled);
+    (next != value).then_some(next)
+}
+
+/// 名前と値の箱（押すとポップアップ）の 1 行。押されたら箱の矩形を返す。
+pub fn choice_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: &str,
+    tooltip: Option<&str>,
+    enabled: bool,
+) -> Option<Rect> {
+    let r = rows.row(t::ROW_HEIGHT, 4.0);
+    let (response, b) = w::dropdown(ui, r, id, Some(label), value, tooltip, enabled, 92.0);
+    response.clicked().then_some(b)
+}
+
+/// 小さな見出しの 1 行（まとまりの名前）。
+pub fn group_label(ui: &mut Ui, rows: &mut Rows, text: &str) {
+    let r = rows.row(16.0, 1.0);
+    w::text(
+        ui.painter(),
+        r,
+        text,
+        t::LABEL_BOLD.with_color(t::TEXT_DIM),
+        w::Align::Left,
+    );
+}
+
+/// 短い状態の行（名前だけ。説明の文は置かない）。
+pub fn status_row(ui: &mut Ui, rows: &mut Rows, text: &str) {
+    let r = rows.row(t::ROW_HEIGHT, 2.0);
+    let shown = w::fit(ui.painter(), text, r.width(), t::LABEL_DIM);
+    w::text(ui.painter(), r, &shown, t::LABEL_DIM, w::Align::Left);
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
-    let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
-    app.property_tab = w::tab_strip(
-        ui,
-        strip,
-        "props.tabs",
-        &TABS,
-        &TAB_ICONS,
-        app.property_tab.min(TABS.len() - 1),
-    );
-    let body = Rect::from_min_max(pos2(r.left(), strip.bottom()), r.max);
-    let mut rows = Rows::new(body, 0.0);
-    match app.property_tab {
-        0 => {
-            let (open, reset) = section(
-                ui,
-                app,
-                &mut rows,
-                "brush",
-                "ブラシ",
-                "paint_brush",
-                Some("ブラシの既定の値に戻す"),
-            );
-            if reset {
-                let hardness = app.brush.hardness;
-                app.brush = BrushState {
-                    hardness,
-                    ..BrushState::default()
-                };
-            }
-            if open {
-                rows.indent = t::SECTION_INDENT;
-                let b = &mut app.brush;
-                let spec = SliderSpec::new("直径", 1.0, 256.0, NumberFormat::int(" px"))
-                    .tooltip("ブラシの直径（[ と ]）");
-                if let Some(v) = pen_slider(
-                    ui,
-                    &mut rows,
-                    "brush.size",
-                    spec,
-                    b.radius * 2.0,
-                    &mut b.pressure_size,
-                    "筆圧で直径を変える",
-                ) {
-                    b.radius = (v / 2.0).max(0.5);
-                }
-                let spec = SliderSpec::new("流量", 0.0, 100.0, NumberFormat::int("%"))
-                    .tooltip("ダブ 1 つが足す量");
-                if let Some(v) = pen_slider(
-                    ui,
-                    &mut rows,
-                    "brush.flow",
-                    spec,
-                    b.flow * 100.0,
-                    &mut b.pressure_flow,
-                    "筆圧で流量を変える",
-                ) {
-                    b.flow = v / 100.0;
-                }
-                let spec = SliderSpec::new("不透明度", 0.0, 100.0, NumberFormat::int("%"))
-                    .tooltip("1 本のストロークが覆える上限");
-                if let Some(v) = pen_slider(
-                    ui,
-                    &mut rows,
-                    "brush.opacity",
-                    spec,
-                    b.opacity * 100.0,
-                    &mut b.pressure_opacity,
-                    "筆圧で不透明度を変える",
-                ) {
-                    b.opacity = v / 100.0;
-                }
-                let spec = SliderSpec::new("間隔", 1.0, 100.0, NumberFormat::int("%"))
-                    .tooltip("ダブの間隔（直径に対する割合）");
-                let out = w::slider(
-                    ui,
-                    rows.slider_row(),
-                    "brush.spacing",
-                    b.spacing * 100.0,
-                    &spec,
-                );
-                if out.changed {
-                    b.spacing = out.value / 100.0;
-                }
-            }
+    let ctx = ui.ctx().clone();
+    let context = context(app);
+    let mut top = r.top();
+    let mut tab = app.property_tab.min(TAB_ICONS.len() - 1);
+    if context == Context::Paint {
+        let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
+        let labels = tab_labels(app);
+        let chosen = w::tab_strip(ui, strip, "props.tabs", &labels, &TAB_ICONS, tab);
+        if chosen != tab {
+            app.m2.props_scroll = 0.0;
         }
-        1 => {
-            let (open, reset) = section(
-                ui,
-                app,
-                &mut rows,
-                "alpha",
-                "アルファ",
-                "shapes",
-                Some("先端の形の既定の値に戻す"),
-            );
-            if reset {
-                app.brush.hardness = BrushState::default().hardness;
-            }
-            if open {
-                rows.indent = t::SECTION_INDENT;
-                let spec = SliderSpec::new("硬さ", 0.0, 100.0, NumberFormat::int("%"))
-                    .tooltip("丸い先端の縁の硬さ");
-                let out = w::slider(
-                    ui,
-                    rows.slider_row(),
-                    "brush.hardness",
-                    app.brush.hardness * 100.0,
-                    &spec,
-                );
-                if out.changed {
-                    app.brush.hardness = out.value / 100.0;
-                }
-                // 先端の形の見本（中心から縁へ、硬さのとおりに薄くなる）
-                let preview = rows.row(72.0, 4.0);
-                tip_preview(ui, preview, app.brush.hardness);
-            }
-        }
-        2 => {
-            let _ = section(ui, app, &mut rows, "stencil", "ステンシル", "square", None);
-            placeholder(ui, &mut rows, "準備中");
-        }
-        _ => {
-            let _ = section(ui, app, &mut rows, "material", "マテリアル", "layers", None);
-            placeholder(ui, &mut rows, "準備中");
-        }
+        tab = chosen;
+        app.property_tab = tab;
+        top = strip.bottom();
     }
-}
+    let body = Rect::from_min_max(pos2(r.left(), top), r.max);
 
-/// 丸い先端の覆いの見本（仮の core と同じ形: 半径の硬さ倍までは 1、そこから縁へなめらかに 0）。
-fn tip_preview(ui: &mut Ui, r: Rect, hardness: f32) {
-    let p = ui.painter();
-    w::rounded(p, r, t::CONTROL_BG, 3.0);
-    w::outline(p, r, t::BORDER, 1.0, 3.0);
-    let radius = r.height() * 0.5 - 6.0;
-    let center = r.center();
-    const STEPS: usize = 24;
-    let mut previous = 0.0;
-    for i in (1..=STEPS).rev() {
-        let d = i as f32 / STEPS as f32;
-        let coverage = if d <= hardness || hardness >= 1.0 {
-            1.0
-        } else {
-            let t = ((d - hardness) / (1.0 - hardness)).clamp(0.0, 1.0);
-            1.0 - t * t * (3.0 - 2.0 * t)
-        };
-        // 外の輪から順に重ねるので、その輪の覆いになるように足りない分だけ足す
-        let add = ((coverage - previous) / (1.0 - previous).max(1e-3)).clamp(0.0, 1.0);
-        previous = previous + (1.0 - previous) * add;
-        p.circle_filled(
-            center,
-            radius * d,
-            Color32::from_white_alpha(w::to_byte(add)),
+    // スクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
+    let max_scroll = (app.m2.props_content - body.height()).max(0.0);
+    if ui.rect_contains_pointer(body) {
+        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
+        app.m2.props_scroll -= wheel;
+    }
+    app.m2.props_scroll = app.m2.props_scroll.clamp(0.0, max_scroll);
+    let scroll = app.m2.props_scroll;
+    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
+    let area = Rect::from_min_max(
+        pos2(body.left(), body.top() - scroll),
+        pos2(body.right() - bar, body.bottom()),
+    );
+    let outer_clip = ui.clip_rect();
+    ui.set_clip_rect(body.intersect(outer_clip));
+    let mut rows = Rows::new(area, 0.0);
+    match context {
+        Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
+        Context::Paint => match tab {
+            0 => super::brush_props::brush_tab(ui, app, &mut rows, &ctx),
+            1 => super::brush_props::alpha_tab(ui, app, &mut rows, &ctx),
+            2 => super::brush_props::stencil_tab(ui, app, &mut rows),
+            3 if app.m2.edit_mask => super::layer_props::mask_tab(ui, app, &mut rows),
+            3 => super::brush_props::material_tab(ui, app, &mut rows),
+            _ => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
+        },
+    }
+    rows.indent = 0.0;
+    rows.space(8.0);
+    app.m2.props_content = rows.used();
+    ui.set_clip_rect(outer_clip);
+    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする
+    if !ui.input(|i| i.pointer.primary_down()) {
+        app.m2_end_drag();
+    }
+    if max_scroll > 0.0 {
+        let track = body.height();
+        let bar_h = (track * track / app.m2.props_content).max(16.0);
+        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
+        w::rounded(
+            ui.painter(),
+            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
+            t::CONTROL_ACTIVE,
+            2.0,
         );
     }
 }

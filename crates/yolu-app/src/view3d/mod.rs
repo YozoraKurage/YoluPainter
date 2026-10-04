@@ -64,6 +64,12 @@ pub struct View3dState {
 }
 
 impl View3dState {
+    /// 3D のタブが見えていて、描けるモデルがあるか（`visible` は前のフレームの結果。プロパティの欄が、3D では効かない設定に
+    /// 短い理由を出す）。
+    pub fn paintable_on_screen(&self) -> bool {
+        self.visible && self.model.is_some()
+    }
+
     /// 次のスナップショットの世代（モデルを作るときに使う）。
     pub fn next_revision(&mut self) -> u32 {
         self.revision += 1;

@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 
 use yolu_io::{composite_png, NativeDocument, Project, SaveTarget, SetSpec, WriterInfo};
 
-use crate::engine::{Channel, Document, TileCoord};
+use yolu_core::NormalSettings;
+
+use crate::engine::{Channel, Document, LayerKind, TileCoord};
+use crate::lang::Lang;
 use crate::sets::TextureSets;
 use crate::state::{blank_document, AppState, DEFAULT_DOCUMENT_SIZE};
 
@@ -261,8 +264,76 @@ fn same_file(a: &Path, b: &Path) -> bool {
 pub fn save_from(state: &mut AppState, path: &Path) {
     match save(state, path) {
         Ok(text) => state.message = text,
-        Err(e) => state.message = format!("保存できません: {}: {e}", path.display()),
+        Err(e) => {
+            state.message = format!(
+                "{}: {}: {e}",
+                state.lang.pick("保存できません", "Cannot save"),
+                path.display()
+            )
+        }
     }
+}
+
+/// .ylp の形式 7 の正本（今は M1 の範囲: ラスターの層・Color・文書のチャンネルは標準の 6 つ）に載らない中身の、最初の 1 つの理由。
+/// yolu-io の `from_core` は標準の面と Color の有効しか調べず、マスク・ユーザーチャンネル・チャンネルごとの合成は黙って落とすので、
+/// 書く前にここで断る（保存でマスクや AO の中身が消えたのに「保存しました」と出さない）。
+fn ylp_unsupported(doc: &Document, lang: Lang) -> Option<String> {
+    let channels = doc.channels();
+    if channels != Channel::ALL {
+        return Some(
+            lang.pick(
+                "ユーザーチャンネルがあります",
+                "The document has user channels",
+            )
+            .into(),
+        );
+    }
+    if doc.normal_settings() != NormalSettings::DEFAULT {
+        return Some(
+            lang.pick(
+                "Normal の出力の設定が初期値ではありません",
+                "The Normal output settings are not the defaults",
+            )
+            .into(),
+        );
+    }
+    for layer in doc.layers() {
+        let name = layer.name();
+        let why = if layer.kind() != LayerKind::Raster {
+            Some(lang.pick(
+                "ラスターではない層（グループ・塗りつぶし・調整）",
+                "not a raster layer (group, fill or adjustment)",
+            ))
+        } else if layer.parent().is_some() {
+            Some(lang.pick("グループの中の層", "inside a group"))
+        } else if layer.mask().is_some() {
+            Some(lang.pick("レイヤーマスク", "has a layer mask"))
+        } else if layer.channel_blends().next().is_some() {
+            Some(lang.pick(
+                "チャンネルごとの合成の設定",
+                "has per-channel blend settings",
+            ))
+        } else if layer.enabled_channels() != [Channel::Color]
+            || layer
+                .surface_channels()
+                .iter()
+                .any(|c| *c != Channel::Color)
+        {
+            Some(lang.pick(
+                "Color 以外のチャンネルの中身",
+                "has content in channels other than Color",
+            ))
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return Some(match lang {
+                Lang::Ja => format!("層「{name}」: {why}"),
+                Lang::En => format!("Layer \"{name}\": {why}"),
+            });
+        }
+    }
+    None
 }
 
 fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
@@ -285,6 +356,18 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         let (document, composite_color) = if in_base && (set.read_only.is_some() || unchanged) {
             (None, None)
         } else {
+            if let Some(why) = ylp_unsupported(doc, state.lang) {
+                return Err(match state.lang {
+                    Lang::Ja => format!(
+                        "セット「{}」に .ylp へ保存できない中身があります（{why}）",
+                        set.name
+                    ),
+                    Lang::En => format!(
+                        "Set \"{}\" has content a .ylp cannot hold ({why})",
+                        set.name
+                    ),
+                });
+            }
             let native = NativeDocument::from_core(doc)
                 .map_err(|e| format!("セット「{}」を正本にできません: {e}", set.name))?;
             let png = composite_png(doc)
