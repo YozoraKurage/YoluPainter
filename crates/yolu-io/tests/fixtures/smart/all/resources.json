@@ -1,0 +1,16 @@
+{
+  "resources": [
+    { "id": "10000000-0000-0000-0000-000000000001", "kind": "image", "name": "透明画像", "content": "94b1239912ad75394f444ea3a76061d59a85e09a40160448fdc3f4c5f6c5e403", "width": 2, "height": 1, "colorSpace": "srgb",
+      "origin": { "type": "library", "file": "test.png", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "length": 12 } },
+    { "id": "10000000-0000-0000-0000-000000000002", "kind": "image", "name": "参照", "content": "3fcb40264043a21cd06a5493244d8c2f8cf81615dee6e76530808e5237f46393", "width": 1, "height": 1, "colorSpace": "linear",
+      "origin": { "type": "unityAsset", "guid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "localFileID": 123, "path": "Assets/Test.png", "stamp": "stamp", "readThroughGpu": false } },
+    { "id": "20000000-0000-0000-0000-000000000001", "kind": "smartMaterial", "name": "raster", "content": "99e60b8cb7dddc29536cb16535e6268f20363b49df62cc7b977fd7b22b870de9", "length": 892,
+      "origin": { "type": "builtIn", "key": "test", "version": 1 } },
+    { "id": "20000000-0000-0000-0000-000000000002", "kind": "smartMask", "name": "mask", "content": "b1fffe409d1d79a422c42fc747dfd1ec2f0dea8f937464ffded6d894b9aebd4d", "length": 867,
+      "origin": { "type": "builtIn", "key": "test", "version": 1 } },
+    { "id": "20000000-0000-0000-0000-000000000004", "kind": "material", "name": "multi", "content": "9f5de45638af12fdc1e4da764e20baca6f7b5f12e95628d4ba741b8409ca3c07", "length": 959,
+      "origin": { "type": "builtIn", "key": "test", "version": 1 } },
+    { "id": "30000000-0000-0000-0000-000000000001", "kind": "brush", "name": "ブラシ", "content": "9f7a6d99d937e43dc349d68094b705b5390ca43674bc52f9aa40b49d7a2910e4", "length": 675,
+      "origin": { "type": "file", "path": "/synthetic/brush.ylbrush", "sha256": "9f7a6d99d937e43dc349d68094b705b5390ca43674bc52f9aa40b49d7a2910e4", "length": 675 } }
+  ]
+}

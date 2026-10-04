@@ -427,7 +427,7 @@ impl Project {
             "YOLUPAINTER-YLP-",
         )?)
     }
-    fn from_archive(original: Archive) -> Result<Self> {
+    pub(crate) fn from_archive(original: Archive) -> Result<Self> {
         let info = if let Some(b) = original.files.get("ylp.json") {
             let root = json(b, 65536)?;
             let format = number(&root, "format", 2, i32::MAX as i64)? as i32;
@@ -663,19 +663,19 @@ fn moves_into_set(n: &str) -> bool {
 fn writer_json(w: &WriterInfo) -> Value {
     serde_json::json!({"app":w.app,"version":w.version,"unity":w.unity})
 }
-fn writer(v: &Value) -> Result<WriterInfo> {
+pub(crate) fn writer(v: &Value) -> Result<WriterInfo> {
     Ok(WriterInfo {
         app: text(v, "app", 1, 256)?.into(),
         version: text(v, "version", 1, 256)?.into(),
         unity: text(v, "unity", 1, 256)?.into(),
     })
 }
-fn required<'a>(f: &'a Files, n: &str) -> Result<&'a [u8]> {
+pub(crate) fn required<'a>(f: &'a Files, n: &str) -> Result<&'a [u8]> {
     f.get(n)
         .map(|b| b.as_ref())
         .ok_or_else(|| Error(format!("エントリがありません: {n}")))
 }
-fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
+pub(crate) fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
     let s = v
         .get(k)
         .and_then(Value::as_str)
@@ -686,7 +686,7 @@ fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
     )?;
     Ok(s)
 }
-fn label<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
+pub(crate) fn label<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     let s = text(v, k, 1, 256)?;
     check(
         !s.trim().is_empty() && !s.chars().any(|c| c < ' ' || c == '\x7f'),
@@ -694,7 +694,7 @@ fn label<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     )?;
     Ok(s)
 }
-fn number(v: &Value, k: &str, min: i64, max: i64) -> Result<i64> {
+pub(crate) fn number(v: &Value, k: &str, min: i64, max: i64) -> Result<i64> {
     let n = v
         .get(k)
         .and_then(Value::as_i64)
@@ -721,7 +721,7 @@ fn array<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a Vec<Va
     )?;
     Ok(a)
 }
-fn load_resources(
+pub(crate) fn load_resources(
     files: &Files,
     budget: &mut usize,
     depth: usize,
@@ -1040,7 +1040,7 @@ impl<'de> Deserialize<'de> for Strict {
         d.deserialize_any(V)
     }
 }
-fn json(b: &[u8], max: usize) -> Result<Value> {
+pub(crate) fn json(b: &[u8], max: usize) -> Result<Value> {
     check(b.len() <= max, "JSONのバイト予算超過です")?;
     let Strict(v) = serde_json::from_slice(b)?;
     fn bounds(v: &Value, d: usize) -> bool {
@@ -1061,7 +1061,7 @@ fn json(b: &[u8], max: usize) -> Result<Value> {
     Ok(v)
 }
 
-fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
+pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
     let names = [
         "Color",
         "Roughness",

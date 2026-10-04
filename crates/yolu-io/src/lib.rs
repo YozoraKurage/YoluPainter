@@ -6,6 +6,8 @@ pub mod export;
 mod native;
 mod project;
 mod selection;
+pub mod shelf;
+pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use native::{

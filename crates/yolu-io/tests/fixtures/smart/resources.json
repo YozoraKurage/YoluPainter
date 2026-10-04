@@ -1,0 +1,8 @@
+{
+  "resources": [
+    { "id": "10000000-0000-0000-0000-000000000001", "kind": "image", "name": "透明画像", "content": "94b1239912ad75394f444ea3a76061d59a85e09a40160448fdc3f4c5f6c5e403", "width": 2, "height": 1, "colorSpace": "srgb",
+      "origin": { "type": "library", "file": "test.png", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "length": 12 } },
+    { "id": "10000000-0000-0000-0000-000000000002", "kind": "image", "name": "参照", "content": "3fcb40264043a21cd06a5493244d8c2f8cf81615dee6e76530808e5237f46393", "width": 1, "height": 1, "colorSpace": "linear",
+      "origin": { "type": "unityAsset", "guid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "localFileID": 123, "path": "Assets/Test.png", "stamp": "stamp", "readThroughGpu": false } }
+  ]
+}

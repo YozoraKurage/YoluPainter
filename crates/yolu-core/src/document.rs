@@ -10,6 +10,8 @@
 
 mod edits;
 mod selection;
+mod smart;
+mod smart_resample;
 mod structure;
 
 use std::collections::hash_map::RandomState;
@@ -250,6 +252,10 @@ pub(crate) enum Command {
     },
     /// マスクを外す（apply で外して持ち、revert で付け直す）。
     RemoveMask {
+        id: LayerId,
+        mask: Option<Box<RasterMask>>,
+    },
+    SwapSmartMask {
         id: LayerId,
         mask: Option<Box<RasterMask>>,
     },
@@ -1171,6 +1177,21 @@ impl Document {
                 };
                 layer.set_enabled(*channel, *enabled);
                 self.mark_layer(index, Some(*channel));
+                self.mark_clipped_layers();
+                Ok(())
+            }
+            Command::SwapSmartMask { id, mask } => {
+                let i = self.index_of(*id)?;
+                let old = self.layers[i]
+                    .mask
+                    .as_ref()
+                    .map_or(0, |m| m.surface.allocated_bytes());
+                let next = mask.as_ref().map_or(0, |m| m.surface.allocated_bytes());
+                self.ensure_source_growth(next.saturating_sub(old))?;
+                let previous = self.layers[i].mask.take();
+                self.layers[i].mask = mask.take().map(|m| *m);
+                *mask = previous.map(Box::new);
+                self.mark_layer(i, None);
                 self.mark_clipped_layers();
                 Ok(())
             }

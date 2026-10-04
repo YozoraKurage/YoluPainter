@@ -53,6 +53,7 @@ pub mod normal;
 pub mod padding;
 pub mod selection;
 pub mod skin;
+pub mod smart;
 mod surface;
 mod symmetry;
 mod types;

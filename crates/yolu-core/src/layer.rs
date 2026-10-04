@@ -282,6 +282,15 @@ impl Layer {
         }
     }
 
+    /// そのチャンネルについて何かを持つか: 有効の印・面・塗りつぶしの値・チャンネルごとの合成のどれか。無効にしても面・値・合成は
+    /// 残るので、有効かどうかでは決まらない（`has_content` は合成に出せるかで、これは保存や移すときに落としてはいけないかの問い）。
+    pub(crate) fn has_channel_data(&self, channel: Channel) -> bool {
+        self.is_channel_enabled(channel)
+            || self.surface(channel).is_some()
+            || self.fill.contains_key(&channel)
+            || self.blends.contains_key(&channel)
+    }
+
     /// そのチャンネルに何かを出せるか: 面・塗りつぶしの値・そのチャンネルに使える有効な調整（C# の HasContent）。
     /// グループは中身が決める（ここでは false）。
     pub(crate) fn has_content(&self, channel: Channel, applies: bool) -> bool {
