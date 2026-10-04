@@ -783,7 +783,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
         match event {
             Event::Touch { force, phase, .. } => {
                 if let Some(f) = force {
-                    app.canvas.touch_pressure = Some(f.clamp(0.0, 1.0));
+                    // 指・ペンの Touch の力も、ペンの点と同じ全体の調整を通す（マウスは 1 のまま）
+                    app.canvas.touch_pressure = Some(app.adjust_pressure(f.clamp(0.0, 1.0)));
                 }
                 if matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel) {
                     app.canvas.touch_pressure = None;

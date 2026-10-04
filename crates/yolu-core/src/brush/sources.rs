@@ -313,6 +313,7 @@ impl StrokeState {
             mapped.colors.push(self.sample_mapped(surface, p));
         }
         let brush = self.brush.clone();
+        let pressure = brush.pressure_scale(pressure);
         let mut paint = self.paint(&brush, None);
         paint.mapped = Some(&mapped);
         let ts = surface.tile_size() as i64;

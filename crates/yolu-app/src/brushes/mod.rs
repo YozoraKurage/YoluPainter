@@ -179,6 +179,7 @@ pub fn canonical(brush: &Brush) -> Brush {
             ..base
         },
         seed: 0,
+        pressure: brush.pressure.rounded_to_f32(),
         color: ColorDynamics {
             secondary: ColorDynamics::default().secondary,
             ..brush.color
@@ -475,11 +476,14 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 9 つに分ける）。
+/// 詳細の窓のカテゴリ（今の `brush_props` の全部の欄をこの 10 に分ける）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     Shape,
     Stroke,
+    /// 筆圧（大きさ・不透明度・流量・硬さの、切り替え・最小値・曲線）。
+    Pressure,
+    /// 入り抜き・フェード・ペンの傾き・回転・速さ。
     Dynamics,
     Jitter,
     Texture,
@@ -490,9 +494,10 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Category; 9] = [
+    pub const ALL: [Category; 10] = [
         Category::Shape,
         Category::Stroke,
+        Category::Pressure,
         Category::Dynamics,
         Category::Jitter,
         Category::Texture,
@@ -506,7 +511,8 @@ impl Category {
         match self {
             Category::Shape => lang.pick("形状", "Shape"),
             Category::Stroke => lang.pick("ストローク", "Stroke"),
-            Category::Dynamics => lang.pick("筆圧と入り抜き", "Pressure & Taper"),
+            Category::Pressure => lang.pick("筆圧", "Pen Pressure"),
+            Category::Dynamics => lang.pick("入り抜きとペン", "Taper & Pen"),
             Category::Jitter => lang.pick("ゆらぎ", "Jitter"),
             Category::Texture => lang.pick("テクスチャ", "Texture"),
             Category::Dual => lang.pick("デュアルブラシ", "Dual Brush"),
@@ -520,7 +526,8 @@ impl Category {
         match self {
             Category::Shape => "shapes",
             Category::Stroke => "ink_stroke",
-            Category::Dynamics => "stylus",
+            Category::Pressure => "stylus",
+            Category::Dynamics => "tune",
             Category::Jitter => "data_scatter",
             Category::Texture => "texture",
             Category::Dual => "content_copy",

@@ -12,8 +12,9 @@ pub use yolu_core::{
     ChannelKind, ClipboardRefusal, ClipboardSource, ColorAdjust, ColorBalance, ColorDynamics,
     ColorSpace, Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode,
     Jitter, Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
-    Posterize, PreparedResize, Rect, Rgba8, RowOrder, SelectionCombine, SelectionMask, Stroke,
-    StrokeAssist, SymmetryMode, TextureMode, Threshold, TileCoord, TipShape, ToneChannel, ToneCurves,
+    Posterize, PreparedResize, PressureResponse, PressureResponses, Rect, Rgba8, RowOrder,
+    SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, Threshold,
+    TileCoord, TipShape, ToneChannel, ToneCurves,
 };
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。

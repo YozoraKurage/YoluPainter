@@ -5,7 +5,9 @@ mod common;
 use common::*;
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
-use yolu_app::engine::{composite_pixel, BrushEffect, Rgba8};
+use yolu_app::engine::{composite_pixel, BrushEffect, Rgba8, Tilt};
+use yolu_app::pen::adjust::PressureAdjust;
+use yolu_app::pen::PenSample;
 use yolu_app::YoluApp;
 use yolu_core::geometry::SymmetryAxis;
 use yolu_core::glam::Vec3;
@@ -565,4 +567,49 @@ fn open_detail(h: &mut Harness<'_, YoluApp>, category: yolu_app::brushes::Catego
     ui.detail.category = category;
     ui.detail.scroll = 0.0;
     h.run();
+}
+
+/// 世界の 2 点の間を、ペンの筆圧 pressure（線の間ずっと同じ）で引く（触れる → 動く → 離す。1 点ごとに 1 フレーム）。
+fn pen_world(h: &mut Harness<'_, YoluApp>, rect: Rect, from: Vec3, to: Vec3, pressure: f32) {
+    let (a, b) = (screen_of(h, rect, from), screen_of(h, rect, to));
+    let sample = |at: Pos2, pressure: f32, contact: bool, time_ms: u32| PenSample {
+        pos: [at.x, at.y],
+        pressure,
+        tilt: Tilt::default(),
+        rotation: None,
+        contact,
+        eraser: false,
+        barrel: false,
+        pointer_id: 5,
+        time_ms,
+    };
+    for i in 0..=8u32 {
+        let at = a + (b - a) * (i as f32 / 8.0);
+        h.state().pen().push(sample(at, pressure, true, i * 10));
+        h.step();
+    }
+    h.state().pen().push(sample(b, 0.0, false, 100));
+    h.step();
+    h.run();
+}
+
+/// 全体の筆圧の調整は、3D ビューのペンの線にも効く: 下限 0.25・上限 0.75 の調整を入れたペンの 0.375 は、調整しないペンの 0.25 と同じ線
+/// （2 の冪の値なので丸めが無い）。調整しないペンの 0.375 は別の線。
+#[test]
+fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
+    let (from, to) = (Vec3::new(-0.2, 0.0, -0.5), Vec3::new(0.2, 0.0, -0.5));
+    let painted = |adjust: PressureAdjust, pressure: f32| {
+        let (mut h, rect) = cube_view();
+        h.state_mut().state.prefs.settings.pressure = adjust;
+        pen_world(&mut h, rect, from, to, pressure);
+        assert!(message(&h).is_empty(), "{}", message(&h));
+        assert_eq!(h.state().state.doc.undo_count(), 1, "3D の線が 1 本入った");
+        snapshot(&h)
+    };
+    let adjusted = painted(PressureAdjust::new(0.25, 0.75, vec![]).unwrap(), 0.375);
+    let plain = painted(PressureAdjust::default(), 0.25);
+    assert!(plain.iter().skip(3).step_by(4).any(|a| *a != 0), "3D に描けている");
+    assert_eq!(adjusted, plain);
+    let unadjusted = painted(PressureAdjust::default(), 0.375);
+    assert_ne!(unadjusted, plain, "調整が無ければ、ペンの 0.375 は 0.25 と別の線");
 }

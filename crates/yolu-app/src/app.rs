@@ -362,7 +362,7 @@ impl YoluApp {
 
     /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
-    /// 退避の数と UV ワイヤーフレームの色は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    /// 退避の数・UV ワイヤーフレームの色・筆圧の調整は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
         crate::colorsets::persist(&mut self.state);
         let Some((path, saved)) = &mut self.settings else {
@@ -372,6 +372,9 @@ impl YoluApp {
         if self.state.prefs.dragging {
             now.backups = saved.backups;
             now.uv_wireframe_color = saved.uv_wireframe_color;
+        }
+        if self.state.pressure.dragging {
+            now.pressure = saved.pressure.clone();
         }
         if *saved == now {
             return;
@@ -828,7 +831,16 @@ impl YoluApp {
         let ctx = ui.ctx().clone();
         self.state.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
-        let pen = self.pen.drain();
+        let mut pen = self.pen.drain();
+        // 筆圧の調整の窓: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
+        self.state.pressure_observe(ctx.pixels_per_point(), &pen);
+        // 窓が開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
+        if self.state.pressure.open && !self.pen.is_hooked() {
+            ctx.input(|i| self.state.pressure_observe_touch(&i.events));
+        }
+        for sample in &mut pen {
+            sample.pressure = self.state.adjust_pressure(sample.pressure);
+        }
         shell::handle_shortcuts(&ctx, &mut self.state);
         crate::stencil::update_keys(&ctx, &mut self.state);
         self.open_dropped(&ctx);
@@ -1030,6 +1042,7 @@ impl YoluApp {
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
+        crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
         self.state.crash.show(&ctx, self.state.lang);
         crate::crash::message(&self.state.message);

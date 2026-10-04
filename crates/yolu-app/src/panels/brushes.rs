@@ -709,7 +709,10 @@ fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             "Edge hardness of the round tip (an image keeps its own edge)",
         )),
         b.hardness * 100.0,
-        None,
+        Some((
+            &mut app.m2.brush.controls.pressure_hardness,
+            lang.pick("筆圧で硬さを変える", "Pen pressure changes the hardness"),
+        )),
         editable && hardness_applies,
     ) {
         b.hardness = v / 100.0;

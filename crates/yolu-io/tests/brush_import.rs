@@ -1062,6 +1062,55 @@ fn presets_that_cannot_be_imported_are_reported_not_dropped() {
 }
 
 #[test]
+fn the_minimum_diameter_becomes_the_size_minimum_only_when_pressure_drives_the_size() {
+    let with_control = |name: &str, control: i32, min: f64| {
+        preset(&[
+            ("Nm  ", text(name)),
+            ("Brsh", obj("computedBrush", &[])),
+            ("useTipDynamics", boolean(true)),
+            ("minimumDiameter", unit("#Prc", min)),
+            ("szVr", dynamics(control, 0.0)),
+        ])
+    };
+    let file = abr_v6(&[section(
+        "desc",
+        &desc_body(&[brush_list(&[
+            with_control("Pressure", 2, 25.0),
+            with_control("Fade", 1, 25.0),
+            with_control("Off", 0, 25.0),
+            with_control("Zero", 2, 0.0),
+            with_control("Full", 2, 100.0),
+        ])]),
+    )]);
+    let set = read(FileKind::Abr, &file).unwrap();
+    let by = |name: &str| set.brushes.iter().find(|b| b.name == name).unwrap();
+    // 筆圧で大きさを変える: 最小の直径が応えの最小値になり、表せなかった項目に残らない
+    let pressure = by("Pressure");
+    assert!(pressure.brush.base.pressure_size);
+    assert_eq!(pressure.brush.pressure.size.min(), 0.25);
+    assert!(pressure.brush.pressure.size.curve().is_empty());
+    assert!(!pressure
+        .unrepresented
+        .iter()
+        .any(|n| matches!(n, Unrepresented::MinimumDiameter(_))));
+    assert!(pressure.brush.pressure.opacity.is_identity());
+    assert!(pressure.brush.pressure.flow.is_identity());
+    // フェード・切の最小は表せない（今までどおり知らせる）
+    for name in ["Fade", "Off"] {
+        let b = by(name);
+        assert!(b.brush.pressure.is_identity(), "{name}");
+        assert!(
+            b.unrepresented.contains(&Unrepresented::MinimumDiameter(25.0)),
+            "{name}"
+        );
+    }
+    // 最小 0 は何も変えない・100% は筆圧を無視して 1
+    assert!(by("Zero").brush.pressure.is_identity());
+    assert_eq!(by("Full").brush.pressure.size.min(), 1.0);
+    assert_eq!(by("Full").brush.pressure.size.apply(0.0), 1.0);
+}
+
+#[test]
 fn fade_and_dual_notes_are_reported() {
     let weird = preset(&[
         ("Nm  ", text("Odd")),

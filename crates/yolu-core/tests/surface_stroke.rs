@@ -1193,3 +1193,69 @@ fn a_closed_stencil_leaves_blur_smudge_and_clone_untouched() {
         assert_ne!(bytes(&r.d, r.layer), r.before, "{effect:?}");
     }
 }
+
+// ───────── 筆圧の応え（大きさ・硬さ・不透明度）─────────
+
+/// 筆圧 pressure で 1 つだけ面にダブを置いた層の画素（板の左の中ほど）。
+fn one_dab(brush_value: &Brush, pressure: f32) -> (Vec<u8>, usize) {
+    let g = plane();
+    let view = front(&g);
+    let (mut d, layer) = document();
+    let at = screen(&view, Vec3::new(0.5, 0.5, 0.0));
+    let mut stroke = d.begin_brush_stroke(layer, brush_value).unwrap();
+    let mut s = SurfaceStroke::begin_with_options(
+        &mut d,
+        &mut stroke,
+        g.clone(),
+        view,
+        &brush_value.base,
+        Some(0),
+        at,
+        pressure,
+        SurfaceStrokeOptions::default(),
+    )
+    .unwrap();
+    s.finish(&mut d, &mut stroke).unwrap();
+    d.end_stroke(stroke).unwrap();
+    let pixels = bytes(&d, layer);
+    let painted = pixels.chunks_exact(4).filter(|p| p[3] != 0).count();
+    (pixels, painted)
+}
+
+#[test]
+fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() {
+    use yolu_core::PressureResponse;
+    let mut b = brush(BrushEffect::Paint);
+    b.base.radius = 4.0;
+    b.base.pressure_size = true;
+    // 既定の応え: 筆圧 0 は点を置かない（今までと同じ）
+    assert_eq!(one_dab(&b, 0.0).1, 0);
+    // 最小値: 筆圧 0 でも、最小値の大きさの点が置かれる
+    b.pressure.size = PressureResponse::new(0.5, vec![]).unwrap();
+    let lifted = one_dab(&b, 0.0);
+    let full = one_dab(&b, 1.0);
+    assert!(lifted.1 > 0 && lifted.1 < full.1, "{} {}", lifted.1, full.1);
+    // 応えは文書のストロークのブラシのもの: 切ると 3D の大きさも筆圧そのものに戻る
+    b.base.pressure_size = false;
+    assert_eq!(one_dab(&b, 0.0).0, full.0);
+
+    // 硬さ: 筆圧が低いほど縁が柔らかい（縁の画素のアルファが減る）
+    let mut soft = brush(BrushEffect::Paint);
+    soft.base.radius = 5.0;
+    soft.controls.pressure_hardness = true;
+    soft.pressure.hardness = PressureResponse::new(0.0, vec![]).unwrap();
+    let light = one_dab(&soft, 0.2).0;
+    let firm = one_dab(&soft, 1.0).0;
+    let sum = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u32::from(p[3])).sum::<u32>();
+    assert!(sum(&light) < sum(&firm), "{} {}", sum(&light), sum(&firm));
+
+    // 不透明度: 画素ごとの塗りも、ストロークと同じ応えを通す
+    let mut o = brush(BrushEffect::Paint);
+    o.base.pressure_opacity = true;
+    o.pressure.opacity = PressureResponse::new(0.5, vec![]).unwrap();
+    let faint = one_dab(&o, 0.0).0;
+    let strong = one_dab(&o, 1.0).0;
+    let max_alpha = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| p[3]).max().unwrap();
+    assert!((i32::from(max_alpha(&faint)) - 128).abs() <= 1, "{}", max_alpha(&faint));
+    assert_eq!(max_alpha(&strong), 255);
+}

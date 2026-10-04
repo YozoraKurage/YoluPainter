@@ -315,6 +315,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "texture scale（0.05〜64）" => "Texture scale (0.05–64)",
         "その番号のチャンネルはもうある" => "Channel ID already exists",
         "ぼかしの半径（1〜64）" => "Blur radius (1–64)",
+        "筆圧の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）" => {
+            "Pen pressure curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)"
+        }
+        "筆圧の最小値（0〜1）" => "Pen pressure minimum (0–1)",
         "まとめる層が無い" => "No layers to merge",
         "ガンマ（0.1〜9.99）" => "Gamma (0.1–9.99)",
         "クローンの位置（±1e7）" => "Clone position (±1e7)",

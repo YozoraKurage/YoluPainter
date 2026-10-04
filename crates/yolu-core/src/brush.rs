@@ -45,6 +45,7 @@ pub mod curve;
 mod dynamics;
 mod effects;
 mod presets;
+mod pressure;
 pub mod random;
 mod settings;
 mod sources;
@@ -61,6 +62,8 @@ use rayon::prelude::*;
 
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use presets::{builtin_presets, BrushPreset};
+pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
+pub(crate) use pressure::PressureScale;
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
@@ -345,6 +348,8 @@ pub(crate) struct StrokeState {
     source: Option<sources::CloneSource>,
     /// 効果の読み元の枠の領域（ダブの間で使い回す。予算に数えるのはダブの間だけ、C# と同じ）。
     frame_cache: Option<EffectFrame>,
+    /// 画素ごとに筆圧を渡す呼び出し（3D の面）で、同じ筆圧の応えを何度も計算しないための、直前の筆圧とその係数。
+    pressure_memo: Option<(f64, PressureScale)>,
     pub stamp_count: u64,
     pub sample_count: u64,
     /// 安全なタイルをワーカーで描いたダブの数。
@@ -445,6 +450,7 @@ impl StrokeState {
             effect: EffectState::default(),
             source: None,
             frame_cache: None,
+            pressure_memo: None,
             stamp_count: 0,
             sample_count: 0,
             parallel_dabs: 0,
@@ -470,6 +476,11 @@ impl StrokeState {
 
     pub(crate) fn set_budgets(&mut self, budgets: Budgets) {
         self.budgets = budgets;
+    }
+
+    /// このストロークが使うブラシ（始めたときに写して固定したもの）。
+    pub(crate) fn brush(&self) -> &Arc<Brush> {
+        &self.brush
     }
 
     pub(crate) fn last_time(&self) -> f64 {
@@ -905,14 +916,25 @@ impl StrokeState {
         };
         let s = &brush.base;
         let j = &brush.jitter;
+        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、切っている項目は掛けない
+        let size_pressure = if s.pressure_size {
+            brush.pressure.size.apply(dab.pressure)
+        } else {
+            1.0
+        };
+        let pressure = brush.pressure_scale(dab.pressure);
+        let hardness = if c.pressure_hardness {
+            s.hardness * brush.pressure.hardness.apply(dab.pressure)
+        } else {
+            s.hardness
+        };
         let mut any = false;
         for _ in 0..j.count {
             if self.tip_colors {
                 let r = self.color_random.as_mut().expect("色の乱数");
                 self.dab_color = brush.color.next(s.color, r);
             }
-            let mut radius =
-                s.radius * (if s.pressure_size { dab.pressure } else { 1.0 }) * size_factor;
+            let mut radius = s.radius * size_pressure * size_factor;
             if size_control != 1.0 {
                 radius *= size_control;
             }
@@ -989,8 +1011,8 @@ impl StrokeState {
                 roundness,
                 aspect_x: 1.0,
                 aspect_y: 1.0,
-                hardness: s.hardness,
-                pressure: dab.pressure,
+                hardness,
+                pressure,
                 opacity_scale,
                 flow_scale,
                 tip,
@@ -1479,6 +1501,18 @@ impl StrokeState {
         any
     }
 
+    /// 画素ごとに筆圧を渡す呼び出し用: 筆圧を応えに通した係数。同じ筆圧が続く間（1 つのダブの画素）は直前の結果を使う。
+    fn shaped_pressure(&mut self, brush: &Brush, pressure: f64) -> PressureScale {
+        match self.pressure_memo {
+            Some((raw, scale)) if raw == pressure => scale,
+            _ => {
+                let scale = brush.pressure_scale(pressure);
+                self.pressure_memo = Some((pressure, scale));
+                scale
+            }
+        }
+    }
+
     /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。ストロークに 1 色）。
     /// 画布の外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
     #[allow(clippy::too_many_arguments)]
@@ -1506,6 +1540,7 @@ impl StrokeState {
             ));
         }
         let brush = self.brush.clone();
+        let pressure = self.shaped_pressure(&brush, pressure);
         let paint = self.paint(&brush, None);
         let ts = surface.tile_size() as i64;
         let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
@@ -1578,6 +1613,7 @@ impl StrokeState {
             Prepared::Effect(f) => Some(f),
         };
         let paint = self.paint(&brush, frame.as_ref());
+        let pressure = brush.pressure_scale(pressure);
         let ts = surface.tile_size() as i64;
         let mut cursor = TileCursor::default();
         let mut any = false;
@@ -1787,7 +1823,7 @@ struct DabShape<'a> {
     aspect_x: f64,
     aspect_y: f64,
     hardness: f64,
-    pressure: f64,
+    pressure: PressureScale,
     opacity_scale: f64,
     flow_scale: f64,
     tip: Option<&'a BrushTip>,
@@ -2067,7 +2103,7 @@ fn apply_at<const SIMPLE: bool>(
     coord: TileCoord,
     local: usize,
     coverage: f64,
-    pressure: f64,
+    pressure: PressureScale,
     opacity_scale: f64,
     flow_scale: f64,
     paper: Option<(DualBrushMode, f64, f64)>,
@@ -2133,11 +2169,11 @@ fn apply_at<const SIMPLE: bool>(
             opacity_scale *= through.amount;
         }
     }
-    let mut ceiling = s.opacity * opacity_scale * (if s.pressure_opacity { pressure } else { 1.0 });
+    let mut ceiling = s.opacity * opacity_scale * pressure.opacity;
     if let Some((mode, grain, depth)) = paper {
         ceiling += (mode.combine(ceiling, grain) - ceiling) * depth;
     }
-    let mut flow = coverage * s.flow * flow_scale * (if s.pressure_flow { pressure } else { 1.0 });
+    let mut flow = coverage * s.flow * flow_scale * pressure.flow;
     if !SIMPLE {
         if let EffectKind::Smudge(strength) = p.effect {
             flow *= strength;

@@ -101,6 +101,14 @@ impl Stroke {
     pub fn add_sample(&mut self, doc: &mut Document, sample: BrushSample) -> Result<(), CoreError> {
         doc.stroke_add(self.id, sample)
     }
+    /// このストロークが使うブラシ（始めたときに写して固定したもの）。3D の面のダブが、大きさと硬さの筆圧をストロークと同じ応え
+    /// （最小値と曲線）で決めるのに使う。終わったストロークは断る。
+    pub fn brush(&self, doc: &Document) -> Result<std::sync::Arc<Brush>, CoreError> {
+        match &doc.active {
+            Some(a) if a.id == self.id => Ok(a.brush().clone()),
+            _ => Err(CoreError::NoActiveStroke),
+        }
+    }
     /// 与えた覆い（0〜1）で 1 画素を塗る（メッシュのダブ。重なる三角形の覆いは呼び手が 1 つにまとめてから）。画布の外は何もしない。
     pub fn apply_pixel(
         &mut self,

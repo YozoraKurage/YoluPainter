@@ -318,6 +318,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .radio(l == Lang::En),
             Entry::Separator,
             Entry::item(
+                l.pick("筆圧の調整…", "Pen Pressure…"),
+                Action::Pressure(crate::pen::window::PressureAction::Open),
+            ),
+            Entry::item(
                 l.pick("設定…", "Settings…"),
                 Action::Prefs(crate::prefs::PrefsAction::Open),
             ),

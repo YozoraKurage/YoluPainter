@@ -568,6 +568,8 @@ pub enum Action {
     Update(crate::update::UpdateAction),
     /// 設定の窓と、設定の値の選び。
     Prefs(crate::prefs::PrefsAction),
+    /// 筆圧の調整の窓（全体の筆圧の下限・上限・曲線）。
+    Pressure(crate::pen::window::PressureAction),
     /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
 }
@@ -640,6 +642,7 @@ impl Action {
             Self::Project(..) => "Project",
             Self::Update(..) => "Update",
             Self::Prefs(..) => "Prefs",
+            Self::Pressure(..) => "Pressure",
             Self::Recovery(..) => "Recovery",
         }
     }
@@ -782,6 +785,8 @@ pub struct AppState {
     pub prefs: crate::prefs::PrefsState,
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
     pub shortcuts: crate::shortcuts::ShortcutWindow,
+    /// 筆圧の調整の窓（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
+    pub pressure: crate::pen::window::PressureWindow,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
@@ -946,6 +951,7 @@ impl AppState {
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
             shortcuts: crate::shortcuts::ShortcutWindow::default(),
+            pressure: crate::pen::window::PressureWindow::default(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
             crash: Default::default(),
@@ -1380,6 +1386,7 @@ impl AppState {
             Action::Project(a) => self.np_apply(a),
             Action::Update(a) => self.update_apply(a),
             Action::Prefs(a) => self.prefs_apply(a),
+            Action::Pressure(a) => self.pressure_apply(a),
             Action::Recovery(a) => self.recovery_apply(a),
         }
     }

@@ -1,7 +1,7 @@
 //! 3D ビューのストローク（Unity 版の TexturePaintWindow の PaintAt の面の部分）: 画面の点で当て、ブラシの半径をモデルの大きさに
 //! 合わせ、面の上のダブの画素を文書のストロークへ `apply_pixel` で塗る。
 //!
-//! - ブラシの半径（文書の画素）をモデルの単位に直す式は Unity 版と同じ: max(1e-6, 箱の対角線) × 半径 / 文書の幅（× 筆圧）。
+//! - ブラシの半径（文書の画素）をモデルの単位に直す式は Unity 版と同じ: max(1e-6, 箱の対角線) × 半径 / 文書の幅（× 筆圧の応え）。
 //! - ストロークの間はカメラもモデルも動かない前提（遮蔽の結果を覚えて、重なる次のダブで撃ち直さない）。
 //! - ほかのテクスチャセット（マテリアルの組）の面に当たった点は塗らない。面に当たらない点も塗らない。
 //! - ダブが予算を超えた・1 回の入力のダブが多すぎるときは `Err` を返す（呼ぶ側がストロークを取り消す。途中まで塗った画素も戻る）。
@@ -27,7 +27,9 @@ use super::stroke::{ScreenStrokeSampler, TooManyDabs};
 use super::symmetry::{build_expanded, MirrorOutcome, MirrorPlane, RadialSymmetry};
 use super::unity::{dot, fmax, magnitude, sqr_magnitude};
 use super::{SurfaceGeometry, SurfaceHit};
-use crate::{BrushPixel, BrushSettings, CoreError, Document, StencilPoint, Stroke};
+use crate::{
+    BrushPixel, BrushSettings, CoreError, Document, PressureResponse, StencilPoint, Stroke,
+};
 
 /// 3D のストロークを止めた理由（どれもストロークを取り消す）。
 #[derive(Clone, Debug, PartialEq)]
@@ -156,6 +158,10 @@ pub struct SurfaceStroke {
     hardness: f32,
     spacing: f32,
     pressure_size: bool,
+    /// 筆圧の応え（ストロークのブラシと同じもの）。大きさは、切っていない・応えが既定（筆圧そのもの）のとき None。硬さは切っているとき
+    /// だけ持つ（既定の応えでも、硬さ × 筆圧になる）。
+    size_response: Option<PressureResponse>,
+    hardness_response: Option<PressureResponse>,
     width: i32,
     height: i32,
     /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
@@ -266,6 +272,14 @@ impl SurfaceStroke {
             _ => None,
         };
         let world_radius = world_radius(&geometry, brush.radius, doc.width());
+        // 筆圧の応えは、文書のストロークのブラシ（始めたときに固定したもの）から取る。切り替えは渡された設定のもの
+        let stroke_brush = stroke.brush(doc)?;
+        let size_response = (brush.pressure_size && !stroke_brush.pressure.size.is_identity())
+            .then(|| stroke_brush.pressure.size.clone());
+        let hardness_response = stroke_brush
+            .controls
+            .pressure_hardness
+            .then(|| stroke_brush.pressure.hardness.clone());
         let mut s = SurfaceStroke {
             geometry,
             view,
@@ -277,6 +291,8 @@ impl SurfaceStroke {
             hardness: brush.hardness as f32,
             spacing: brush.spacing as f32,
             pressure_size: brush.pressure_size,
+            size_response,
+            hardness_response,
             width: doc.width() as i32,
             height: doc.height() as i32,
             stencil: options.stencil,
@@ -371,7 +387,12 @@ impl SurfaceStroke {
         at: Vec2,
         pressure: f32,
     ) -> Result<(), SurfaceStrokeError> {
-        if self.pressure_size && pressure <= 0.0 {
+        // 筆圧を応えに通した大きさの係数（既定の応えは筆圧そのもの）
+        let size_pressure = match &self.size_response {
+            Some(r) => r.apply(pressure as f64) as f32,
+            None => pressure,
+        };
+        if self.pressure_size && size_pressure <= 0.0 {
             return Ok(());
         }
         let Some(hit) = pick(&self.geometry, &self.view, at) else {
@@ -384,11 +405,15 @@ impl SurfaceStroke {
         }
         let radius = self.world_radius
             * if self.pressure_size {
-                fmax(0.001, pressure)
+                fmax(0.001, size_pressure)
             } else {
                 1.0
             };
-        let dab = self.build_dab(&hit, radius);
+        let hardness = match &self.hardness_response {
+            Some(r) => (self.hardness as f64 * r.apply(pressure as f64)) as f32,
+            None => self.hardness,
+        };
+        let dab = self.build_dab(&hit, radius, hardness);
         if let Some(why) = dab.refusal {
             if why.cancels_stroke() {
                 return Err(SurfaceStrokeError::Dab(why));
@@ -473,7 +498,7 @@ impl SurfaceStroke {
     }
 
     /// ダブの画素（元と写しを 1 つにしたもの）を作る。対称があれば、写しも面へ投げ直して合わせる。
-    fn build_dab(&mut self, hit: &SurfaceHit, radius: f32) -> SurfaceDabResult {
+    fn build_dab(&mut self, hit: &SurfaceHit, radius: f32, hardness: f32) -> SurfaceDabResult {
         let Some(sym) = self.symmetry else {
             return self.geometry.build_surface_dabs(
                 hit,
@@ -481,7 +506,7 @@ impl SurfaceStroke {
                 self.width,
                 self.height,
                 self.view.position,
-                self.hardness,
+                hardness,
                 &self.budget,
                 Some(&mut self.cache),
                 false,
@@ -497,7 +522,7 @@ impl SurfaceStroke {
             self.width,
             self.height,
             self.view.position,
-            self.hardness,
+            hardness,
             &self.budget,
             Some(&mut self.cache),
         );

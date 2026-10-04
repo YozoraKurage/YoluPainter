@@ -1,6 +1,7 @@
 //! 利用者のブラシの保存（設定のフォルダの `brushes/`）。ブラシ 1 つが 1 ファイル（`brush-<番号>.ylbrush`）、並びは `order.conf`。
 //!
-//! 形式は 1 行目が `yolupainter-brush 1`、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 形式は 1 行目が `yolupainter-brush 1`（筆圧の応えを使うブラシだけ `yolupainter-brush 2`。最小値・曲線に加え、硬さを筆圧で変える切り替えだけでも 2 になる。
+//! 版 2 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -18,14 +19,19 @@ use super::gaps::Gap;
 use super::images;
 use super::{canonical, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
-    Brush, BrushEffect, CoreError, DVec2, DualBrush, DualBrushMode, PaperTexture, TextureMode,
+    Brush, BrushEffect, CoreError, DVec2, DualBrush, DualBrushMode, PaperTexture, PressureResponse,
+    TextureMode,
 };
 use crate::lang::Lang;
-use yolu_core::brush::{builtin_tip, TipSelection};
+use yolu_core::brush::{builtin_tip, TipSelection, MAX_CURVE_POINTS};
+use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
 use yolu_io::brushes::bundled;
 
 pub const HEADER: &str = "yolupainter-brush 1";
+/// 筆圧の応え（最小値・曲線・硬さの切り替え）を使うブラシの版。使わないブラシは版 1 のままで、今までと同じバイト。版 1 しか読めない
+/// 古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V2: &str = "yolupainter-brush 2";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -285,7 +291,12 @@ pub struct Encoded {
 pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let mut pending = Pending::default();
-    let mut w = Writer(format!("{HEADER}\n"));
+    let header = if uses_pressure_response(&b) {
+        HEADER_V2
+    } else {
+        HEADER
+    };
+    let mut w = Writer(format!("{header}\n"));
     let name: String = user.name.chars().take(MAX_NAME_CHARS).collect();
     w.line("name", name.replace(['\n', '\r'], " "));
     w.line("group", user.group.id());
@@ -368,6 +379,18 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.bool("controls.speed_opacity", k.speed_opacity);
     w.bool("controls.speed_flow", k.speed_flow);
     w.line("controls.speed_max", k.speed_max);
+    // 筆圧の応え（版 2。既定の項目は書かない）
+    if k.pressure_hardness {
+        w.bool("controls.pressure_hardness", true);
+    }
+    for (name, r) in pressure_items(&b) {
+        if r.min() != 0.0 {
+            w.single(&format!("pressure.{name}.min"), r.min());
+        }
+        if !r.curve().is_empty() {
+            w.line(&format!("pressure.{name}.curve"), curve_text(r.curve()));
+        }
+    }
     match b.effect {
         BrushEffect::Paint => w.line("effect", "paint"),
         BrushEffect::Blur { radius } => {
@@ -461,6 +484,47 @@ impl Reader {
     }
 }
 
+/// 筆圧の応えの項目（ファイルの名前と応え）。
+fn pressure_items(b: &Brush) -> [(&'static str, &PressureResponse); 4] {
+    [
+        ("size", &b.pressure.size),
+        ("opacity", &b.pressure.opacity),
+        ("flow", &b.pressure.flow),
+        ("hardness", &b.pressure.hardness),
+    ]
+}
+
+/// 筆圧の応え（最小値・曲線・硬さの切り替え）を 1 つでも使うか（使えば版 2 で書く）。
+fn uses_pressure_response(b: &Brush) -> bool {
+    b.controls.pressure_hardness || !b.pressure.is_identity()
+}
+
+/// 曲線の点を `x:y,x:y,…`（画面の精度 f32 の最短の表記）にする。
+pub(crate) fn curve_text(points: &[CurvePoint]) -> String {
+    let parts: Vec<String> = points
+        .iter()
+        .map(|p| format!("{}:{}", p.x as f32, p.y as f32))
+        .collect();
+    parts.join(",")
+}
+
+/// `x:y,x:y,…` を読む（f32 で書いた値。形が違えば None）。点の数は上限（16）の 1 つ上まで数え、多すぎる曲線は呼び手の検査が断る。
+pub(crate) fn parse_curve(text: &str) -> Option<Vec<CurvePoint>> {
+    let mut points = Vec::new();
+    for part in text.split(',').take(MAX_CURVE_POINTS + 1) {
+        let (x, y) = part.split_once(':')?;
+        let (x, y): (f32, f32) = (x.parse().ok()?, y.parse().ok()?);
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        points.push(CurvePoint {
+            x: x as f64,
+            y: y as f64,
+        });
+    }
+    Some(points)
+}
+
 fn texture_mode(id: &str) -> Option<TextureMode> {
     TextureMode::ALL.into_iter().find(|m| mode_id(*m) == id)
 }
@@ -494,13 +558,14 @@ pub fn decode_user(
     load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
 ) -> Result<Decoded, StoreError> {
     let mut lines = text.lines();
-    match lines.next() {
-        Some(HEADER) => {}
+    let version = match lines.next() {
+        Some(HEADER) => 1,
+        Some(HEADER_V2) => 2,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
         _ => return Err(StoreError::NotABrush),
-    }
+    };
     let mut map = HashMap::new();
     for (i, line) in lines.enumerate() {
         if line.trim().is_empty() {
@@ -596,6 +661,25 @@ pub fn decode_user(
     k.speed_opacity = r.bool("controls.speed_opacity", k.speed_opacity)?;
     k.speed_flow = r.bool("controls.speed_flow", k.speed_flow)?;
     k.speed_max = r.float("controls.speed_max", k.speed_max)?;
+    // 筆圧の応えは版 2 の項目（版 1 のファイルにあれば、知らない項目として断る）
+    if version >= 2 {
+        b.controls.pressure_hardness = r.bool("controls.pressure_hardness", false)?;
+        for (name, _) in pressure_items(&Brush::default()) {
+            let min = r.single(&format!("pressure.{name}.min"), 0.0)?;
+            let curve_key = format!("pressure.{name}.curve");
+            let curve = match r.take(&curve_key) {
+                Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
+                None => Vec::new(),
+            };
+            let response = PressureResponse::new(min, curve).map_err(StoreError::Invalid)?;
+            match name {
+                "size" => b.pressure.size = response,
+                "opacity" => b.pressure.opacity = response,
+                "flow" => b.pressure.flow = response,
+                _ => b.pressure.hardness = response,
+            }
+        }
+    }
     b.effect = match r.take("effect").as_deref() {
         None | Some("paint") => BrushEffect::Paint,
         Some("blur") => BrushEffect::Blur {
@@ -1101,6 +1185,142 @@ mod tests {
         assert!(text.starts_with("yolupainter-brush 1\n"), "{text}");
     }
 
+    use yolu_core::generator::CurvePoint;
+
+    fn pt(x: f64, y: f64) -> CurvePoint {
+        CurvePoint { x, y }
+    }
+
+    /// 筆圧の応えを全項目に入れたブラシ。
+    fn pressure_brush() -> Brush {
+        let mut b = Brush::default();
+        b.base.pressure_flow = true;
+        b.controls.pressure_hardness = true;
+        b.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
+        b.pressure.opacity = PressureResponse::new(
+            0.1,
+            vec![pt(0.0, 0.0), pt(0.4, 0.7), pt(0.75, 0.8), pt(1.0, 1.0)],
+        )
+        .unwrap();
+        b.pressure.flow = PressureResponse::new(0.0, vec![pt(0.0, 1.0), pt(1.0, 0.2)]).unwrap();
+        b.pressure.hardness = PressureResponse::new(0.333, vec![]).unwrap();
+        b
+    }
+
+    #[test]
+    fn a_brush_with_a_pressure_response_is_version_two_and_round_trips() {
+        let u = user(5, pressure_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 2\n"), "{t}");
+        for key in [
+            "controls.pressure_hardness=1",
+            "pressure.size.min=0.25",
+            "pressure.opacity.min=0.1",
+            "pressure.opacity.curve=0:0,0.4:0.7,0.75:0.8,1:1",
+            "pressure.flow.curve=0:1,1:0.2",
+            "pressure.hardness.min=0.333",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        // 既定の項目（最小値 0・直線）は書かない
+        assert!(!t.contains("pressure.size.curve"), "{t}");
+        assert!(!t.contains("pressure.flow.min"), "{t}");
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        let again = text(&UserBrush { brush: back, ..u });
+        assert_eq!(again, t);
+    }
+
+    #[test]
+    fn a_curve_made_with_the_editor_keeps_its_shape_through_the_file() {
+        // 編集の部品が作る曲線は f64 の半端な値を持つ。ファイルは f32 で書くので、読み戻した値は画面の精度に丸めたものと同じで、何度書いても変わらない
+        use crate::ui::curve::ops;
+        use yolu_core::curve::Curve;
+        let (c, k) = ops::add_point(&Curve::identity(), 0.373_737_373_7, 0.616_161_616_1).unwrap();
+        let c = ops::move_point(&c, k, 0.412_345_678_91, 0.777_777_777_7).unwrap();
+        let mut b = Brush::default();
+        b.pressure.size = PressureResponse::new(0.123_456_789, vec![]).unwrap().with_curve_shape(c.clone()).unwrap();
+        let u = user(2, b);
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 2\n"), "{t}");
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, canonical(&u.brush));
+        assert_eq!(back.pressure.size.curve().len(), 3);
+        for (saved, made) in back.pressure.size.curve().iter().zip(c.points()) {
+            assert!((saved.x - made.x).abs() < 1e-6 && (saved.y - made.y).abs() < 1e-6, "{saved:?} {made:?}");
+        }
+        let again = text(&UserBrush { brush: back.clone(), ..u });
+        assert_eq!(again, t);
+        assert_eq!(decode(&again).unwrap().2, back);
+    }
+
+    #[test]
+    fn a_brush_without_a_pressure_response_keeps_version_one_and_its_bytes() {
+        // 筆圧の切り替えだけ（応えは既定）なら今までと同じ版と同じ行
+        let mut b = Brush::default();
+        b.base.pressure_flow = true;
+        let t = text(&user(1, b));
+        assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
+        assert!(!t.contains("pressure."), "{t}");
+        assert!(!t.contains("pressure_hardness"), "{t}");
+        // 直線の曲線を明示しても既定と同じ
+        let mut straight = Brush::default();
+        straight.pressure.size = PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(1.0, 1.0)]).unwrap();
+        assert_eq!(text(&user(1, straight)), text(&user(1, Brush::default())));
+    }
+
+    #[test]
+    fn pressure_items_belong_to_version_two_and_are_checked() {
+        let v2 = text(&user(1, pressure_brush()));
+        // 版 1 のファイルにあれば知らない項目
+        let as_v1 = v2.replacen("yolupainter-brush 2", "yolupainter-brush 1", 1);
+        assert!(matches!(
+            decode(&as_v1).unwrap_err(),
+            StoreError::UnknownKey(k) if k.starts_with("pressure.") || k.starts_with("controls.pressure")
+        ));
+        // 版 2 でも、項目が無ければ既定
+        let plain = text(&user(1, Brush::default())).replacen("yolupainter-brush 1", "yolupainter-brush 2", 1);
+        assert_eq!(decode(&plain).unwrap().2, canonical(&Brush::default()));
+        let bad = |from: &str, to: &str| decode(&v2.replace(from, to)).unwrap_err();
+        assert!(matches!(
+            bad("pressure.size.min=0.25", "pressure.size.min=lots"),
+            StoreError::BadValue(k) if k == "pressure.size.min"
+        ));
+        assert!(matches!(
+            bad("pressure.size.min=0.25", "pressure.size.min=1.5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1;1:0.2"),
+            StoreError::BadValue(k) if k == "pressure.flow.curve"
+        ));
+        assert!(matches!(
+            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1,0.5:2,1:0.2"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1,0.5:NaN,1:0.2"),
+            StoreError::BadValue(k) if k == "pressure.flow.curve"
+        ));
+        assert!(matches!(
+            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1,0.5:0.5"),
+            StoreError::Invalid(_)
+        ));
+        let many: Vec<String> = (0..40).map(|i| format!("{}:0.5", i as f64 / 39.0)).collect();
+        assert!(matches!(
+            bad("pressure.flow.curve=0:1,1:0.2", &format!("pressure.flow.curve={}", many.join(","))),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            decode(&format!("{v2}pressure.size.min=0.5\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+        assert!(matches!(
+            decode(&v2.replace("controls.pressure_hardness=1", "controls.pressure_hardness=maybe")).unwrap_err(),
+            StoreError::BadValue(_)
+        ));
+    }
+
     #[test]
     fn broken_files_are_refused_with_a_reason() {
         let ok = text(&user(1, Brush::default()));
@@ -1111,7 +1331,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 2\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 3\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(

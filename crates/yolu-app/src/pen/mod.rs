@@ -8,6 +8,8 @@
 //! 無いペン先の接触だけ。winit はペンを egui のポインタ（左ボタン）にも変えて同じ押しを二重に届けるので、ペンの点が持つ押しの間は、
 //! egui のポインタの押しをビューが使わない。サイドボタンを押した接触は、egui の部品にも右ボタンとして届ける（`ButtonMap`）。
 
+pub mod adjust;
+pub mod window;
 #[cfg(windows)]
 mod win_ink;
 

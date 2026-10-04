@@ -1,4 +1,4 @@
-//! ブラシの欄。詳細の窓（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧と入り抜き・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
+//! ブラシの欄。詳細の窓（`brush_detail`）が、左のカテゴリ（形状・ストローク・筆圧・入り抜きとペン・ゆらぎ・テクスチャ・デュアルブラシ・色の揺らぎ・
 //! 効果・対称）ごとにここの欄を出す。筆先の形（画像・硬さ・真円率・角度・反転・組み込みの一覧）は「形状」の欄。
 //! 値は全部入りのブラシ（`AppState::m2.brush`）と基本の値（`AppState::brush`）を直に変え、ストロークを始めたときに写して固定する
 //! （途中で変えても、そのストロークには効かない）。3D のビューが出ているあいだ面のダブが使わない欄は、注記を出さずに無効にして、
@@ -20,14 +20,19 @@ fn group(ui: &mut Ui, rows: &mut Rows, text: &str) {
     group_label(ui, rows, text);
 }
 use crate::brushes::Category;
-use crate::engine::{BrushEffect, ColorDynamics, Controls, DVec2, Jitter, TipShape};
+use crate::engine::{
+    BrushEffect, ColorDynamics, Controls, DVec2, Jitter, PressureResponse, PressureResponses,
+    TipShape,
+};
 use crate::lang::Lang;
 use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
 use super::tip_library;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, BrushState, Tool};
+use crate::ui::curve;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
+use yolu_core::curve::Curve;
 
 fn decimals(places: u8) -> NumberFormat<'static> {
     NumberFormat {
@@ -110,6 +115,7 @@ pub fn category_body(
     match category {
         Category::Shape => tip_fields(ui, app, rows, ctx, lang),
         Category::Stroke => stroke_fields(ui, app, rows, lang),
+        Category::Pressure => pressure_fields(ui, app, rows, lang),
         Category::Dynamics => dynamics_fields(ui, app, rows, lang),
         Category::Jitter => jitter_fields(ui, app, rows, lang),
         Category::Texture => texture_fields(ui, app, rows, ctx, lang),
@@ -137,11 +143,20 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             brush.assist.stabilizer = 0.0;
             brush.assist.curve = false;
         }
-        Category::Dynamics => {
+        Category::Pressure => {
             app.brush.pressure_size = defaults.pressure_size;
             app.brush.pressure_opacity = defaults.pressure_opacity;
             app.brush.pressure_flow = defaults.pressure_flow;
-            brush.controls = Controls::default();
+            brush.controls.pressure_hardness = false;
+            brush.pressure = PressureResponses::default();
+        }
+        Category::Dynamics => {
+            // 筆圧で硬さを変える切り替えは「筆圧」の側が持つ（ここでは残す）
+            let keep = brush.controls.pressure_hardness;
+            brush.controls = Controls {
+                pressure_hardness: keep,
+                ..Controls::default()
+            };
             brush.assist.taper_in = 0.0;
             brush.assist.taper_out = 0.0;
         }
@@ -262,50 +277,168 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     }
 }
 
-// ───────── 筆圧と入り抜き ─────────
+// ───────── 筆圧 ─────────
+
+/// 筆圧の項目（それぞれ、切り替え・最小値・曲線を持つ）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PressureItem {
+    Size,
+    Opacity,
+    Flow,
+    Hardness,
+}
+
+impl PressureItem {
+    const ALL: [PressureItem; 4] = [
+        PressureItem::Size,
+        PressureItem::Opacity,
+        PressureItem::Flow,
+        PressureItem::Hardness,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            PressureItem::Size => "size",
+            PressureItem::Opacity => "opacity",
+            PressureItem::Flow => "flow",
+            PressureItem::Hardness => "hardness",
+        }
+    }
+
+    fn name(self, lang: Lang) -> &'static str {
+        match self {
+            PressureItem::Size => lang.pick("サイズ", "Size"),
+            PressureItem::Opacity => lang.pick("不透明度", "Opacity"),
+            PressureItem::Flow => lang.pick("流量", "Flow"),
+            PressureItem::Hardness => lang.pick("硬さ", "Hardness"),
+        }
+    }
+
+    fn use_tip(self, lang: Lang) -> &'static str {
+        match self {
+            PressureItem::Size => lang.pick("筆圧で直径を変える", "Pen pressure changes the size"),
+            PressureItem::Opacity => {
+                lang.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity")
+            }
+            PressureItem::Flow => lang.pick("筆圧で流量を変える", "Pen pressure changes the flow"),
+            PressureItem::Hardness => lang.pick(
+                "筆圧で丸い筆先の縁の硬さを変える",
+                "Pen pressure changes the edge hardness of the round tip",
+            ),
+        }
+    }
+
+    fn on(self, app: &AppState) -> bool {
+        match self {
+            PressureItem::Size => app.brush.pressure_size,
+            PressureItem::Opacity => app.brush.pressure_opacity,
+            PressureItem::Flow => app.brush.pressure_flow,
+            PressureItem::Hardness => app.m2.brush.controls.pressure_hardness,
+        }
+    }
+
+    fn set_on(self, app: &mut AppState, on: bool) {
+        match self {
+            PressureItem::Size => app.brush.pressure_size = on,
+            PressureItem::Opacity => app.brush.pressure_opacity = on,
+            PressureItem::Flow => app.brush.pressure_flow = on,
+            PressureItem::Hardness => app.m2.brush.controls.pressure_hardness = on,
+        }
+    }
+
+    fn response(self, app: &mut AppState) -> &mut PressureResponse {
+        let p = &mut app.m2.brush.pressure;
+        match self {
+            PressureItem::Size => &mut p.size,
+            PressureItem::Opacity => &mut p.opacity,
+            PressureItem::Flow => &mut p.flow,
+            PressureItem::Hardness => &mut p.hardness,
+        }
+    }
+}
+
+/// 筆圧の曲線の行（`ui::curve::curve_editor`）。点を足す・動かす・消す操作が決まったとき（ドラッグは離したとき）だけ、新しい曲線を返す。
+/// 最小値はスライダーが持つので、枠が描くのは曲線そのもの。
+fn pressure_curve_row(ui: &mut Ui, rows: &mut Rows, id: &str, curve: &Curve, tooltip: &str, enabled: bool) -> Option<Curve> {
+    let rect = rows.row(curve::HEIGHT, 6.0);
+    curve::curve_editor(ui, rect, id.to_owned(), curve, tooltip, enabled)
+}
+
+fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    let hardness_on = hardness_applies(app);
+    for item in PressureItem::ALL {
+        let usable = item != PressureItem::Hardness || hardness_on;
+        let on = item.on(app);
+        let response = item.response(app).clone();
+        let key = item.key();
+        group(ui, rows, item.name(lang));
+        let tip_on = if usable {
+            item.use_tip(lang)
+        } else {
+            lang.pick("画像の筆先では効きません", "No effect on an image tip")
+        };
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            &format!("pressure.{key}.on"),
+            lang.pick("筆圧を使う", "Use pen pressure"),
+            on,
+            Some(tip_on),
+            usable,
+        ) {
+            item.set_on(app, v);
+        }
+        let used = usable && on;
+        let off_reason = lang.pick("筆圧を使っていません", "Pen pressure is not used");
+        if let Some(v) = percent_row(
+            ui,
+            rows,
+            &format!("pressure.{key}.min"),
+            lang.pick("最小", "Minimum"),
+            response.min(),
+            (0.0, 1.0),
+            Some(if used {
+                lang.pick(
+                    "筆圧 0 のときの値（元の値に対する割合）",
+                    "The value at zero pressure, as a share of the original",
+                )
+            } else {
+                off_reason
+            }),
+            used,
+        ) {
+            if let Ok(next) = response.with_min(v) {
+                *item.response(app) = next;
+            }
+        }
+        let curve_tip = if used {
+            lang.pick(
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
+            )
+        } else {
+            off_reason
+        };
+        if let Some(next) = pressure_curve_row(
+            ui,
+            rows,
+            &format!("pressure.{key}.curve"),
+            &response.curve_shape(),
+            curve_tip,
+            used,
+        ) {
+            if let Ok(next) = response.with_curve_shape(next) {
+                *item.response(app) = next;
+            }
+        }
+    }
+}
+
+// ───────── 入り抜きとペン ─────────
 
 fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     let off = off_in_3d(app, lang);
     let free = off.is_none();
-    group(ui, rows, lang.pick("筆圧", "Pen pressure"));
-    let b = &mut app.brush;
-    let (a, c) = toggle_pair(
-        ui,
-        rows,
-        "pressure.a",
-        true,
-        (
-            lang.pick("サイズ", "Size"),
-            lang.pick("筆圧で直径を変える", "Pen pressure changes the size"),
-            b.pressure_size,
-        ),
-        Some((
-            lang.pick("不透明度", "Opacity"),
-            lang.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity"),
-            b.pressure_opacity,
-        )),
-    );
-    if let Some(v) = a {
-        b.pressure_size = v;
-    }
-    if let Some(v) = c {
-        b.pressure_opacity = v;
-    }
-    let (a, _) = toggle_pair(
-        ui,
-        rows,
-        "pressure.b",
-        true,
-        (
-            lang.pick("流量", "Flow"),
-            lang.pick("筆圧で流量を変える", "Pen pressure changes the flow"),
-            b.pressure_flow,
-        ),
-        None,
-    );
-    if let Some(v) = a {
-        b.pressure_flow = v;
-    }
     group(ui, rows, lang.pick("入り抜き", "Taper"));
     let assist = &mut app.m2.brush.assist;
     if let Some(v) = slider_row(

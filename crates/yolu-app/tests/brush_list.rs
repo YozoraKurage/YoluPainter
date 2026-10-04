@@ -479,6 +479,87 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
 }
 
 #[test]
+fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_settings() {
+    use yolu_app::engine::PressureResponse;
+    use yolu_core::generator::CurvePoint;
+    let dir = temp_dir("pressure");
+    let mut s = AppState::new(64, 64);
+    s.attach_brush_store(dir.clone());
+    select(&mut s, b("chalk"));
+    // 応えは画面のスライダーと同じ場所（`m2.brush.pressure`）で変える。ドキュメントではないので Undo の段は作らない
+    let steps = s.doc.undo_count();
+    s.m2.brush.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
+    s.m2.brush.pressure.opacity = PressureResponse::new(
+        0.0,
+        vec![
+            CurvePoint { x: 0.0, y: 0.0 },
+            CurvePoint { x: 0.5, y: 0.75 },
+            CurvePoint { x: 1.0, y: 1.0 },
+        ],
+    )
+    .unwrap();
+    s.m2.brush.controls.pressure_hardness = true;
+    s.brush_sync();
+    assert!(s.brush_is_modified(b("chalk")), "応えを変えたら変更あり");
+    assert_eq!(s.doc.undo_count(), steps);
+    s.apply(Action::Brush(BrushAction::Add));
+    let key = s.brushes.lib.current();
+    // 書いたファイルは版 2。応えを使わないブラシは版 1 のまま
+    let files = store::BrushStore::new(dir.clone());
+    let text = std::fs::read_to_string(files.path_of(user_id(key))).unwrap();
+    assert!(text.starts_with("yolupainter-brush 2\n"), "{text}");
+    select(&mut s, b("blur"));
+    s.apply(Action::Brush(BrushAction::Add));
+    let plain = s.brushes.lib.current();
+    let text = std::fs::read_to_string(files.path_of(user_id(plain))).unwrap();
+    assert!(text.starts_with("yolupainter-brush 1\n"), "{text}");
+    // 起動し直すと、応えが戻り、選べば今の設定に入る。別のブラシへ替えると応えも替わる
+    let mut back = AppState::new(64, 64);
+    back.attach_brush_store(dir.clone());
+    assert!(back.brushes.problems.is_empty(), "{:?}", back.brushes.problems.len());
+    select(&mut back, key);
+    assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
+    assert_eq!(back.m2.brush.pressure.opacity.curve().len(), 3);
+    assert!(back.m2.brush.controls.pressure_hardness);
+    assert!(!back.brush_is_modified(key));
+    select(&mut back, plain);
+    assert!(back.m2.brush.pressure.is_identity());
+    assert!(!back.m2.brush.controls.pressure_hardness);
+    // 元の設定へ戻す: 応えも戻る
+    select(&mut back, key);
+    back.m2.brush.pressure.size = PressureResponse::new(0.9, vec![]).unwrap();
+    back.brush_sync();
+    assert!(back.brush_is_modified(key));
+    back.apply(Action::Brush(BrushAction::Revert(key)));
+    assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
+    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、版 3 を同じ形で確かめる）
+    let dir = temp_dir("future-version");
+    std::fs::write(
+        dir.join("brush-00000001.ylbrush"),
+        "yolupainter-brush 3\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+    )
+    .unwrap();
+    let mut s = AppState::new(64, 64);
+    s.attach_brush_store(dir.clone());
+    assert_eq!(s.brushes.problems.len(), 1);
+    assert!(matches!(
+        s.brushes.problems[0].reason,
+        store::StoreError::NewerVersion(_)
+    ));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
+        "yolupainter-brush 3\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "触らない"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_languages() {
     let dir = temp_dir("broken");
     let mut s = AppState::new(64, 64);

@@ -11,6 +11,7 @@ use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 
 use crate::engine::DEFAULT_SOURCE_BUDGET_BYTES;
 use crate::lang::Lang;
+use crate::pen::adjust::{PressureAdjust, MIN_SPAN};
 
 /// 設定のファイルの場所（設定のフォルダが分からなければ None）。
 pub fn path() -> Option<PathBuf> {
@@ -131,7 +132,7 @@ pub const MAX_MIN_UNDO_STEPS: u32 = 100;
 pub const DEFAULT_MIN_UNDO_STEPS: u32 = 5;
 
 /// 利用者ごとの設定。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub lang: Lang,
     /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は届くかぎり全部）。
@@ -150,6 +151,8 @@ pub struct Settings {
     pub backups: BackupKeep,
     /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定の窓には無い）。
     pub selection_bar: bool,
+    /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」の窓）。
+    pub pressure: PressureAdjust,
     pub navigation: crate::view3d::navigation::Preferences,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
@@ -171,6 +174,7 @@ impl Default for Settings {
             library_folder: None,
             backups: BackupKeep::All,
             selection_bar: true,
+            pressure: PressureAdjust::default(),
             navigation: crate::view3d::navigation::Preferences::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
@@ -334,6 +338,9 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "library_folder" => lang.pick("棚の場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
+        "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
+        "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
+        "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
         _ => lang.pick("設定", "Setting"),
     }
 }
@@ -364,6 +371,8 @@ const MAX_FILE_BYTES: u64 = 4096;
 fn parse(text: &str) -> (Settings, Vec<Problem>) {
     let mut settings = Settings::default();
     let mut problems = Vec::new();
+    // 筆圧の調整は 3 つの項目が組で意味を持つので、読み終えてからまとめて作る
+    let (mut low, mut high, mut curve) = (None, None, None);
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let Some((key, value)) = line.split_once('=') else {
             return (Settings::default(), vec![Problem::Unreadable]);
@@ -402,6 +411,20 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             },
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
+            "pressure_low" => match value.parse::<f32>().ok().filter(|v| (0.0..=1.0 - MIN_SPAN).contains(v)) {
+                Some(v) => low = Some(v),
+                None => invalid("pressure_low"),
+            },
+            "pressure_high" => match value.parse::<f32>().ok().filter(|v| (MIN_SPAN..=1.0).contains(v)) {
+                Some(v) => high = Some(v),
+                None => invalid("pressure_high"),
+            },
+            "pressure_curve" => match crate::brushes::store::parse_curve(value)
+                .filter(|points| PressureAdjust::new(0.0, 1.0, points.clone()).is_ok())
+            {
+                Some(points) => curve = Some(points),
+                None => invalid("pressure_curve"),
+            },
             "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
@@ -416,6 +439,15 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 // 知らないキーは読み飛ばす
             }
         }
+    }
+    let (low, high) = (low.unwrap_or(0.0), high.unwrap_or(1.0));
+    match PressureAdjust::new(low, high, curve.unwrap_or_default()) {
+        Ok(adjust) => settings.pressure = adjust,
+        // 下限と上限が近すぎる: 組として使えないので、筆圧の調整は全部既定に戻す
+        Err(_) => problems.push(Problem::Invalid {
+            key: "pressure_high",
+            value: format!("{high}"),
+        }),
     }
     (settings, problems)
 }
@@ -497,6 +529,16 @@ fn render(settings: &Settings) -> String {
     if !settings.selection_bar {
         text += "selection_bar=off\n";
     }
+    let pressure = &settings.pressure;
+    if pressure.low() != 0.0 {
+        text += &format!("pressure_low={}\n", pressure.low());
+    }
+    if pressure.high() != 1.0 {
+        text += &format!("pressure_high={}\n", pressure.high());
+    }
+    if !pressure.curve().is_empty() {
+        text += &format!("pressure_curve={}\n", crate::brushes::store::curve_text(pressure.curve()));
+    }
     settings.navigation.write(&mut text);
     crate::uv_wireframe::save_settings(&mut text, settings);
     if !settings.livelink_on_startup {
@@ -570,6 +612,16 @@ mod tests {
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
             selection_bar: true,
+            pressure: PressureAdjust::new(
+                0.125,
+                0.875,
+                vec![
+                    yolu_core::generator::CurvePoint { x: 0.0, y: 0.0 },
+                    yolu_core::generator::CurvePoint { x: 0.4, y: 0.6 },
+                    yolu_core::generator::CurvePoint { x: 1.0, y: 1.0 },
+                ],
+            )
+            .unwrap(),
             navigation: crate::view3d::navigation::Preferences::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
@@ -650,6 +702,9 @@ mod tests {
             "cpu_threads=4",
             "compositing=cpu",
             "backups=7",
+            "pressure_low=0.125",
+            "pressure_high=0.875",
+            "pressure_curve=0:0,0.4:0.6,1:1",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -665,6 +720,7 @@ mod tests {
         back.compositing = Compositing::Auto;
         back.library_folder = None;
         back.backups = BackupKeep::All;
+        back.pressure = PressureAdjust::default();
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値
@@ -694,7 +750,7 @@ mod tests {
         assert_eq!(read.undo_budget, Budget::Auto);
         assert_eq!(problems, [Problem::Invalid { key: "undo_budget_mib", value: "lots".into() }]);
         // 範囲の外・負・小数・空・大文字・16 進・桁あふれ
-        let cases: [(&'static str, &[&str]); 7] = [
+        let cases: [(&'static str, &[&str]); 10] = [
             ("undo_budget_mib", &["-1", "16385", "1.5", "", "AUTO", "0x10", "99999999999999999999"]),
             ("source_budget_mib", &["15", "32769", "0"]),
             ("stroke_budget_mib", &["7", "8193"]),
@@ -702,6 +758,9 @@ mod tests {
             ("cpu_threads", &["0", "1025", "-2", "many"]),
             ("export_padding", &["1", "3", "65", "-1", "-5", "Fill", ""]),
             ("compositing", &["both", "GPU", ""]),
+            ("pressure_low", &["-0.1", "0.95", "x", "", "NaN"]),
+            ("pressure_high", &["0.05", "1.5", "x", ""]),
+            ("pressure_curve", &["0:0", "0:0,1:2", "0:0,0.5:0.5", "0:0;1:1", "a:b", "", "0:0,0.001:0.5,1:1"]),
         ];
         for (key, values) in cases {
             for bad in values {
@@ -736,6 +795,38 @@ mod tests {
         assert!(problems.is_empty());
         // `キー=値` ではない行は、読めないファイル（全部既定）
         assert_eq!(parse("language=en\njunk\n"), (Settings::default(), vec![Problem::Unreadable]));
+        // 筆圧の下限と上限は組: 1 つずつは範囲内でも、近すぎれば調整は全部既定に戻して理由を出す。ほかの項目は生かす
+        let (read, problems) = parse("cpu_threads=2\npressure_low=0.5\npressure_high=0.55\npressure_curve=0:0,0.5:0.8,1:1\n");
+        assert_eq!(read.pressure, PressureAdjust::default());
+        assert_eq!(read.cpu_threads, Some(2));
+        assert_eq!(problems, [Problem::Invalid { key: "pressure_high", value: "0.55".into() }]);
+        // 片方だけ書いてあっても読める
+        let (read, problems) = parse("pressure_high=0.8\n");
+        assert_eq!((read.pressure.low(), read.pressure.high()), (0.0, 0.8));
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn a_pressure_curve_made_with_the_editor_is_restored_as_written() {
+        // 編集の部品が作る曲線の半端な値は、調整が f32 に丸めて持つので、保存して読み戻しても同じ値になる
+        use crate::ui::curve::ops;
+        use yolu_core::curve::Curve;
+        let dir = temp_dir("editor-curve");
+        let path = dir.join("settings.conf");
+        let (c, k) = ops::add_point(&Curve::identity(), 0.373_737_373_7, 0.616_161_616_1).unwrap();
+        let c = ops::move_point(&c, k, 0.412_345_678_91, 0.777_777_777_7).unwrap();
+        let pressure = PressureAdjust::new(0.1, 0.9, vec![]).unwrap().with_curve_shape(c).unwrap();
+        let settings = Settings { pressure, ..Settings::default() };
+        save(&path, &settings).unwrap();
+        assert_eq!(load(&path), (settings.clone(), vec![]));
+        // 直線へ戻すと、曲線の行は消える
+        let straight = Settings {
+            pressure: settings.pressure.with_curve_shape(Curve::identity()).unwrap(),
+            ..Settings::default()
+        };
+        save(&path, &straight).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("pressure_curve"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use yolu_core::{
     brush::MAX_FADE, Brush, BrushSettings, BrushTip, DualBrush, DualBrushMode, PaperTexture,
-    TextureMode,
+    PressureResponse, TextureMode,
 };
 
 use super::descriptor::{self, Object, Value};
@@ -486,7 +486,15 @@ fn preset(
         control(size, Setting::Size, &mut notes, &mut b, Target::Size);
         if let Some(min) = preset.number("minimumDiameter") {
             if min > 0.0 {
-                notes.push(Unrepresented::MinimumDiameter(min));
+                if b.base.pressure_size {
+                    // 筆圧で大きさを変えるなら、最小の直径は筆圧 0 のときの大きさの割合（Photoshop と同じ式: 最小 + (1 − 最小) × 筆圧）
+                    if let Ok(r) = PressureResponse::new(clamp01(min, 100.0), Vec::new()) {
+                        b.pressure.size = r;
+                    }
+                } else {
+                    // フェード・傾きなどの最小は表せない（効いていない設定の最小も知らせる）
+                    notes.push(Unrepresented::MinimumDiameter(min));
+                }
             }
         }
         let angle_dynamics = preset.object("angleDynamics");

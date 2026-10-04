@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use super::pressure::PressureResponses;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
 use super::BrushSettings;
@@ -33,6 +34,9 @@ pub struct Brush {
     pub dual: Option<DualBrush>,
     pub color: ColorDynamics,
     pub controls: Controls,
+    /// 筆圧の応え（項目ごとの最小値と曲線。拡張: C# に無い）。切り替えは [`BrushSettings`] の `pressure_*` と
+    /// [`Controls::pressure_hardness`]。既定（最小値 0・直線）は、切り替えが真なら筆圧をそのまま使う（C# と同じ）。
+    pub pressure: PressureResponses,
     pub assist: StrokeAssist,
     pub effect: BrushEffect,
     /// ステンシル（None は無し）。共有する（写さない）。
@@ -296,7 +300,7 @@ impl Default for ColorDynamics {
 }
 
 /// 筆圧のほかの操作: フェード（ストロークの何番目の描点か）とペンの傾き（Photoshop の「コントロール」）。
-/// 拡張（C# に無い）: ペンの軸の回転を角度へ、筆の速さを大きさ・不透明度・流量へ。
+/// 拡張（C# に無い）: ペンの軸の回転を角度へ、筆の速さを大きさ・不透明度・流量へ、筆圧を硬さへ。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Controls {
     /// 大きさ・不透明度・流量が、この数の描点（間隔の刻み）にわたって 1 から 0 へ下がる（0 は切、1〜10000）。
@@ -318,6 +322,9 @@ pub struct Controls {
     pub speed_flow: bool,
     /// 効きが一杯になる速さ（画素 / 時刻の単位。秒なら画素毎秒）。0 より大きい。
     pub speed_max: f64,
+    /// 拡張: 筆圧で硬さを変える（硬さ × 筆圧の応え [`Brush::pressure`] の硬さ）。大きさ・不透明度・流量の切り替えは
+    /// [`BrushSettings`] が持つ（C# と同じ）。
+    pub pressure_hardness: bool,
 }
 
 impl Default for Controls {
@@ -335,6 +342,7 @@ impl Default for Controls {
             speed_opacity: false,
             speed_flow: false,
             speed_max: 3000.0,
+            pressure_hardness: false,
         }
     }
 }
@@ -512,6 +520,22 @@ impl Brush {
         c.brightness = 0.0;
         c.purity = 0.0;
         b
+    }
+
+    /// 筆圧を、不透明度・流量の応え（最小値と曲線）に通した係数。切っている項目は 1。応えが既定なら筆圧そのもの（C# と同じ値）。
+    pub(crate) fn pressure_scale(&self, pressure: f64) -> super::PressureScale {
+        super::PressureScale {
+            opacity: if self.base.pressure_opacity {
+                self.pressure.opacity.apply(pressure)
+            } else {
+                1.0
+            },
+            flow: if self.base.pressure_flow {
+                self.pressure.flow.apply(pressure)
+            } else {
+                1.0
+            },
+        }
     }
 
     /// 今のダブで使う筆先の並び（`images` が空でなければそれ、空なら None）。
