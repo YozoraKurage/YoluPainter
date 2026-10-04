@@ -1,0 +1,70 @@
+//! 履歴の種類と、保持している段の読み取り。表示名は画面の側で決める。
+
+use super::{Command, Document};
+
+/// 取り消しの一段の種類。保存形式や履歴の予算には含めない。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryKind {
+    #[default]
+    Other,
+    Brush,
+    Pixels,
+    AddLayer,
+    RemoveLayer,
+    LayerOrder,
+    LayerProperties,
+    Channel,
+    Fill,
+    AddMask,
+    RemoveMask,
+    Mask,
+    Selection,
+    AddEffect,
+    RemoveEffect,
+    Effect,
+    Anchor,
+    Path,
+    Batch,
+}
+
+impl Document {
+    /// 保持している全段を古い順に読む。現在位置は `undo_count()`、後半はやり直しの段。
+    /// 予算で破棄された段は含まない。先頭の段の直前を位置 0 とする。
+    pub fn history(&self) -> impl DoubleEndedIterator<Item = HistoryKind> + '_ {
+        self.undo
+            .iter()
+            .chain(self.redo.iter().rev())
+            .map(|e| e.kind)
+    }
+}
+
+impl Command {
+    pub(super) fn history_kind(&self) -> HistoryKind {
+        match self {
+            Self::Stroke { .. } | Self::Material(_) => HistoryKind::Brush,
+            Self::Insert { .. } => HistoryKind::AddLayer,
+            Self::Remove { .. } => HistoryKind::RemoveLayer,
+            Self::Structure { .. } => HistoryKind::LayerOrder,
+            Self::Property { .. } => HistoryKind::LayerProperties,
+            Self::ChannelEnabled { .. } | Self::ChannelInfo { .. } => HistoryKind::Channel,
+            Self::FillValue { .. } | Self::FillChannel { .. } | Self::Projection { .. } => {
+                HistoryKind::Fill
+            }
+            Self::AddMask { .. } => HistoryKind::AddMask,
+            Self::RemoveMask { .. } => HistoryKind::RemoveMask,
+            Self::SwapSmartMask { .. } => HistoryKind::Mask,
+            Self::Selection { .. } => HistoryKind::Selection,
+            Self::Stack { before, after, .. } if after.len() > before.len() => {
+                HistoryKind::AddEffect
+            }
+            Self::Stack { before, after, .. } if after.len() < before.len() => {
+                HistoryKind::RemoveEffect
+            }
+            Self::Stack { .. } => HistoryKind::Effect,
+            Self::Anchor { .. } => HistoryKind::Anchor,
+            Self::Path(_) => HistoryKind::Path,
+            Self::Compound(_) => HistoryKind::Batch,
+            _ => HistoryKind::Other,
+        }
+    }
+}

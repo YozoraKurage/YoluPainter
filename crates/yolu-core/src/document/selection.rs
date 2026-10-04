@@ -226,6 +226,7 @@ impl Document {
                 .sum::<u64>();
         self.revision += 1;
         self.push(Entry {
+            kind: super::HistoryKind::Pixels,
             command: Command::Stroke {
                 layer,
                 target,

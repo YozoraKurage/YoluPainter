@@ -624,6 +624,7 @@ impl Document {
         layer.set_enabled(channel, true);
         layer.parent = parent;
         let mut steps = vec![Entry {
+            kind: super::HistoryKind::AddLayer,
             command: Command::Insert {
                 index,
                 len: 1,
@@ -633,6 +634,7 @@ impl Document {
         }];
         if self.selection.is_some() {
             steps.push(Entry {
+                kind: super::HistoryKind::Selection,
                 command: Command::Selection {
                     old: self.selection.clone(),
                     new: None,

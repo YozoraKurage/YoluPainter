@@ -36,6 +36,7 @@ pub enum Tab {
     Layers,
     Properties,
     Channels,
+    History,
 }
 
 impl Tab {
@@ -55,6 +56,7 @@ impl Tab {
             Tab::Layers => lang.pick("レイヤー", "Layers"),
             Tab::Properties => lang.pick("プロパティ", "Properties"),
             Tab::Channels => lang.pick("チャンネル", "Channels"),
+            Tab::History => lang.pick("ヒストリー", "History"),
         }
     }
 }
@@ -75,7 +77,7 @@ pub fn default_dock() -> DockState<Tab> {
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets]);
     surface.split_below(left, 0.66, vec![Tab::Color]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
-    surface.split_below(layers, 0.45, vec![Tab::Properties]);
+    surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
     dock
 }
 
@@ -164,6 +166,7 @@ impl TabViewer for Tabs<'_> {
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
+            Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
             Tab::Brushes => crate::panels::brushes::show(ui, self.app),
         }

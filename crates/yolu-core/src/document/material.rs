@@ -267,6 +267,7 @@ impl Document {
                 })
                 .sum::<u64>();
         self.push(Entry {
+            kind: super::HistoryKind::Brush,
             command: Command::Material(m),
             cost,
         });

@@ -9,6 +9,8 @@
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
 mod batch;
+mod history;
+pub use history::HistoryKind;
 mod clipboard;
 mod clone_source;
 mod edits;
@@ -380,6 +382,7 @@ pub(crate) enum Command {
 }
 
 pub(crate) struct Entry {
+    kind: HistoryKind,
     command: Command,
     cost: u64,
 }
@@ -1242,9 +1245,14 @@ impl Document {
 
     /// 段を当てて履歴へ積む（C# の Execute）。
     fn execute(&mut self, mut command: Command, cost: u64) -> Result<(), CoreError> {
+        let kind = command.history_kind();
         self.apply(&mut command)?;
         self.revision += 1;
-        self.push(Entry { command, cost });
+        self.push(Entry {
+            command,
+            cost,
+            kind,
+        });
         Ok(())
     }
 
@@ -2077,6 +2085,7 @@ impl Document {
                     })
                     .sum::<u64>();
             self.push(Entry {
+                kind: HistoryKind::Brush,
                 command: Command::Stroke {
                     layer: state.layer,
                     target,

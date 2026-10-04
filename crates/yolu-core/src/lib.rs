@@ -94,3 +94,5 @@ pub use types::{
     BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect, Rgba8, RowOrder,
     TileCoord,
 };
+
+pub use document::HistoryKind;

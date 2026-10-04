@@ -200,6 +200,7 @@ impl Document {
                 })
                 .sum::<u64>();
         self.push(Entry {
+            kind: super::HistoryKind::Path,
             command: Command::Path(PathCommand {
                 layer,
                 old: old_path,

@@ -56,6 +56,7 @@ impl Document {
             // 合計の大きさは同じなので history_bytes はそのまま
             let cost = steps.iter().map(|e| e.cost).sum();
             self.undo.push(Entry {
+                kind: super::HistoryKind::Batch,
                 command: Command::Compound(steps),
                 cost,
             });

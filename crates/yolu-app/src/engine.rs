@@ -52,3 +52,5 @@ pub fn layer_has_pixels(layer: &Layer) -> bool {
         .surface(Channel::Color)
         .is_some_and(|s| s.tile_count() > 0)
 }
+
+pub use yolu_core::HistoryKind;
