@@ -25,14 +25,31 @@ pub enum AdjustmentKind {
     Invert,
     Levels,
     HueSaturation,
+    GradientMap,
+    ToneCurve,
+    ColorBalance,
+    BrightnessContrast,
+    Threshold,
+    Posterize,
 }
 
 impl AdjustmentKind {
-    pub const ALL: [AdjustmentKind; 3] = [
+    pub const ALL: [AdjustmentKind; 9] = [
         AdjustmentKind::Invert,
         AdjustmentKind::Levels,
         AdjustmentKind::HueSaturation,
+        AdjustmentKind::GradientMap,
+        AdjustmentKind::ToneCurve,
+        AdjustmentKind::ColorBalance,
+        AdjustmentKind::BrightnessContrast,
+        AdjustmentKind::Threshold,
+        AdjustmentKind::Posterize,
     ];
+
+    /// 色調補正の 6 種（Rust 版だけの種類）か。
+    pub fn is_color_adjust(self) -> bool {
+        !matches!(self, Self::Invert | Self::Levels | Self::HueSaturation)
+    }
 
     /// 既定の値の設定。
     pub fn settings(self) -> AdjustmentSettings {
@@ -44,6 +61,25 @@ impl AdjustmentKind {
             AdjustmentKind::HueSaturation => {
                 AdjustmentSettings::hue_saturation(0.0, 0.0, 0.0).expect("色相・彩度の既定値")
             }
+            other => crate::engine::ColorAdjust::default_for(other.adjustment_type())
+                .expect("色調補正の既定値")
+                .into_settings(),
+        }
+    }
+
+    /// 保存形式の種類。
+    pub fn adjustment_type(self) -> crate::engine::AdjustmentType {
+        use crate::engine::AdjustmentType as T;
+        match self {
+            AdjustmentKind::Invert => T::Invert,
+            AdjustmentKind::Levels => T::Levels,
+            AdjustmentKind::HueSaturation => T::HueSaturation,
+            AdjustmentKind::GradientMap => T::GradientMap,
+            AdjustmentKind::ToneCurve => T::ToneCurve,
+            AdjustmentKind::ColorBalance => T::ColorBalance,
+            AdjustmentKind::BrightnessContrast => T::BrightnessContrast,
+            AdjustmentKind::Threshold => T::Threshold,
+            AdjustmentKind::Posterize => T::Posterize,
         }
     }
 
@@ -52,6 +88,14 @@ impl AdjustmentKind {
             AdjustmentKind::Invert => lang.pick("階調の反転", "Invert"),
             AdjustmentKind::Levels => lang.pick("レベル補正", "Levels"),
             AdjustmentKind::HueSaturation => lang.pick("色相・彩度", "Hue / Saturation"),
+            AdjustmentKind::GradientMap => lang.pick("グラデーションマップ", "Gradient Map"),
+            AdjustmentKind::ToneCurve => lang.pick("トーンカーブ", "Tone Curve"),
+            AdjustmentKind::ColorBalance => lang.pick("カラーバランス", "Color Balance"),
+            AdjustmentKind::BrightnessContrast => {
+                lang.pick("明るさ・コントラスト", "Brightness / Contrast")
+            }
+            AdjustmentKind::Threshold => lang.pick("2 値化", "Threshold"),
+            AdjustmentKind::Posterize => lang.pick("ポスタリゼーション", "Posterize"),
         }
     }
 
@@ -60,6 +104,12 @@ impl AdjustmentKind {
             AdjustmentKind::Invert => "invert_colors",
             AdjustmentKind::Levels => "contrast",
             AdjustmentKind::HueSaturation => "palette",
+            AdjustmentKind::GradientMap => "tools/gradient",
+            AdjustmentKind::ToneCurve => "ink_stroke",
+            AdjustmentKind::ColorBalance => "tune",
+            AdjustmentKind::BrightnessContrast => "light_mode",
+            AdjustmentKind::Threshold => "vignette",
+            AdjustmentKind::Posterize => "grid_dots",
         }
     }
 
@@ -69,6 +119,12 @@ impl AdjustmentKind {
             T::Invert => AdjustmentKind::Invert,
             T::Levels => AdjustmentKind::Levels,
             T::HueSaturation => AdjustmentKind::HueSaturation,
+            T::GradientMap => AdjustmentKind::GradientMap,
+            T::ToneCurve => AdjustmentKind::ToneCurve,
+            T::ColorBalance => AdjustmentKind::ColorBalance,
+            T::BrightnessContrast => AdjustmentKind::BrightnessContrast,
+            T::Threshold => AdjustmentKind::Threshold,
+            T::Posterize => AdjustmentKind::Posterize,
         }
     }
 }
@@ -1379,7 +1435,7 @@ mod tests {
         let levels = AdjustmentSettings::levels(0.1, 0.9, 1.5, 0.0, 1.0).unwrap();
         s.apply(Action::M2(Edit::Adjust {
             id: adj,
-            settings: levels,
+            settings: levels.clone(),
         }));
         s.m2_end_drag();
         assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
@@ -1388,7 +1444,7 @@ mod tests {
         let hue = AdjustmentSettings::hue_saturation(30.0, 0.0, 0.0).unwrap();
         s.apply(Action::M2(Edit::Adjust {
             id: adj,
-            settings: hue,
+            settings: hue.clone(),
         }));
         assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
         assert!(!s.message.is_empty());
@@ -1405,7 +1461,7 @@ mod tests {
             .is_channel_enabled(Channel::Roughness));
         s.apply(Action::M2(Edit::Adjust {
             id: hs,
-            settings: hue,
+            settings: hue.clone(),
         }));
         assert_eq!(s.doc.layer(hs).unwrap().adjustment(), Some(&hue));
     }

@@ -16,6 +16,8 @@
 | `rust-written-locks-v21.utpaint`・`.unity.txt`・`.composite` | `locks-v21` を編集してロックを付け外し・複製した版21をRustの `from_core` が書いたもの（固定のIDで、試験が同じバイト列を作ることを確かめる）と、それをUnity 0.2.0の `DocumentBinary` に読ませた記録（読めて、書き直すと同じバイト列、層ごとの自分のロックと効くロック）、C#の全チャンネルの合成 |
 | `user-channels-v22.utpaint` | Rustの `from_core` が書いた版22（ユーザーチャンネル3つ、番号6・8・9）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる） |
 | `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
+| `adjust-v24.utpaint` | Rustの `from_core` が書いた版24（色調補正の6種: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2値化・ポスタリゼーションを、調整の層6つと塗りつぶしの層のフィルターの段6つ・マスクの段1つに）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる）。作り直しは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test adjust_bridge version_24` |
+| `adjust-v24.unity.txt` | 上の版24を、Unity 0.2.0（タグ `0.2.0` の `Runtime/Core` をそのままコンパイル）の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open` に読ませた結果（`generate.py --adjust`）。版22・23と同じく「Unsupported archive version」で断る記録 |
 | `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
 | `rust-written-v21.unity.txt`・`rust-written-v21.composite` | 上の版21をUnity 0.2.0の `DocumentBinary.ReadId` / `Read` に読ませ、`Write` で書き直したバイト列が元と同じか、層の数を記録したものと、C#の全チャンネルの合成（`m2-*.composite` と同じ並び） |
 | `unity-generation/` | Unity 0.2.0 の `GenerationStore.Commit`（`Runtime/Core` をそのままコンパイル）が書いた復旧用の置き場。確定 2 回（正本・選択範囲・resources・`recovery.json`。変わらない中身は共有）。Rust の `GenerationStore` が読めること・一覧に出せること・続けて確定できることの正解 |

@@ -129,11 +129,28 @@ fn rectangle(x: i32, y: i32, w: u32, h: u32, l: &Limits) -> Result<()> {
         "PSD の矩形が不正、または予算超過です",
     )
 }
+/// 曲線の点が書ける形か（2〜19 点・入力は昇順）。
+fn curve_ok(points: &[[u8; 2]]) -> bool {
+    (2..=19).contains(&points.len()) && points.windows(2).all(|w| w[0][0] < w[1][0])
+}
+/// 分岐点の位置が昇順で、位置・中点が範囲に収まるか。
+fn stops_ok(count: usize, positions: impl Iterator<Item = (u16, u8)>) -> bool {
+    let mut last: Option<u16> = None;
+    let mut n = 0;
+    for (location, midpoint) in positions {
+        if location > 4096 || midpoint > 100 || last.is_some_and(|l| location <= l) {
+            return false;
+        }
+        last = Some(location);
+        n += 1;
+    }
+    n == count && (2..=32).contains(&n)
+}
 fn validate_adjustment(a: &Adjustment) -> Result<()> {
     check(
-        match *a {
+        match a {
             Adjustment::Invert => true,
-            Adjustment::Levels {
+            &Adjustment::Levels {
                 input_black: ib,
                 input_white: iw,
                 output_black: ob,
@@ -147,13 +164,47 @@ fn validate_adjustment(a: &Adjustment) -> Result<()> {
                     && ow <= 255
                     && (10..=999).contains(&g)
             }
-            Adjustment::HueSaturation {
+            &Adjustment::HueSaturation {
                 hue: h,
                 saturation: s,
                 lightness: l,
             } => {
                 (-180..=180).contains(&h) && (-100..=100).contains(&s) && (-100..=100).contains(&l)
             }
+            Adjustment::GradientMap {
+                colors, opacities, ..
+            } => {
+                stops_ok(
+                    colors.len(),
+                    colors.iter().map(|c| (c.location, c.midpoint)),
+                ) && stops_ok(
+                    opacities.len(),
+                    opacities.iter().map(|c| (c.location, c.midpoint)),
+                )
+            }
+            Adjustment::ToneCurve {
+                composite,
+                red,
+                green,
+                blue,
+            } => [composite, red, green, blue]
+                .into_iter()
+                .all(|c| curve_ok(c)),
+            Adjustment::ColorBalance {
+                shadows,
+                midtones,
+                highlights,
+                ..
+            } => [shadows, midtones, highlights]
+                .into_iter()
+                .flatten()
+                .all(|v| (-100..=100).contains(v)),
+            &Adjustment::BrightnessContrast {
+                brightness,
+                contrast,
+            } => (-150..=150).contains(&brightness) && (-100..=100).contains(&contrast),
+            &Adjustment::Threshold { level } => (1..=255).contains(&level),
+            &Adjustment::Posterize { levels } => (2..=255).contains(&levels),
         },
         "調整がPSDの刻み・範囲に収まりません",
     )
@@ -189,7 +240,10 @@ fn preflight<'a>(d: &'a Document, limits: &Limits) -> Result<(Vec<Record<'a>>, u
             match &r.layer.kind {
                 LayerKind::Raster => 0,
                 LayerKind::Group { .. } => 24,
-                LayerKind::Adjustment(a) => 12 + adjustment_block(a).1.len() as u64,
+                LayerKind::Adjustment(a) => adjustment_blocks(a)
+                    .iter()
+                    .map(|(_, body)| 12 + (body.len() + body.len() % 2) as u64)
+                    .sum(),
                 LayerKind::SolidColor(c) => 12 + solid_block(*c).len() as u64,
             }
         };
@@ -325,8 +379,9 @@ pub fn write(d: &Document, limits: &Limits) -> Result<Vec<u8>> {
                     e.tag(b"lsct", &body)
                 }
                 LayerKind::Adjustment(a) => {
-                    let (key, body) = adjustment_block(a);
-                    e.tag(&key, &body)
+                    for (key, body) in adjustment_blocks(a) {
+                        e.tag(&key, &body)
+                    }
                 }
                 LayerKind::SolidColor(c) => e.tag(b"SoCo", &solid_block(*c)),
             }
@@ -381,11 +436,60 @@ fn bounds(w: &mut Vec<u8>, x: i32, y: i32, width: u32, height: u32) {
     w.u32((i64::from(y) + i64::from(height)) as u32);
     w.u32((i64::from(x) + i64::from(width)) as u32)
 }
+/// 調整の記録（タグのキーと本体）。明るさ・コントラストだけは、旧式の `brit` と新しい式の `CgEd` の 2 つを書く。
+fn adjustment_blocks(a: &Adjustment) -> Vec<([u8; 4], Vec<u8>)> {
+    let mut blocks = vec![adjustment_block(a)];
+    if let &Adjustment::BrightnessContrast {
+        brightness,
+        contrast,
+    } = a
+    {
+        blocks.push((*b"CgEd", cged_block(brightness, contrast)))
+    }
+    blocks
+}
+/// 明るさ・コントラストの `CgEd`（版 16 の記述子: `Vrsn` 1・`Brgh`・`Cntr`・`means`・`Lab `・`useLegacy`・`auto`）。新しい式（旧式でない・自動でない）で書く。
+fn cged_block(brightness: i16, contrast: i16) -> Vec<u8> {
+    fn name(w: &mut Vec<u8>) {
+        w.u32(1);
+        w.u16(0)
+    }
+    fn key(w: &mut Vec<u8>, k: &[u8]) {
+        // 4 文字の ID は長さ 0 と 4 文字、それ以外は長さと文字
+        if k.len() == 4 {
+            w.u32(0)
+        } else {
+            w.u32(k.len() as u32)
+        }
+        w.extend(k)
+    }
+    let mut w = Vec::new();
+    w.u32(16);
+    name(&mut w);
+    key(&mut w, b"null");
+    w.u32(7);
+    for (k, v) in [
+        (b"Vrsn".as_slice(), 1i32),
+        (b"Brgh", i32::from(brightness)),
+        (b"Cntr", i32::from(contrast)),
+        (b"means", 127),
+    ] {
+        key(&mut w, k);
+        w.extend(b"long");
+        w.extend(v.to_be_bytes())
+    }
+    for k in [b"Lab ".as_slice(), b"useLegacy", b"auto"] {
+        key(&mut w, k);
+        w.extend(b"bool");
+        w.push(0)
+    }
+    w
+}
 fn adjustment_block(a: &Adjustment) -> ([u8; 4], Vec<u8>) {
     let mut b = Vec::new();
-    match *a {
+    match a {
         Adjustment::Invert => (*b"nvrt", b),
-        Adjustment::Levels {
+        &Adjustment::Levels {
             input_black: ib,
             input_white: iw,
             output_black: ob,
@@ -403,7 +507,7 @@ fn adjustment_block(a: &Adjustment) -> ([u8; 4], Vec<u8>) {
             }
             (*b"levl", b)
         }
-        Adjustment::HueSaturation {
+        &Adjustment::HueSaturation {
             hue,
             saturation,
             lightness,
@@ -425,6 +529,102 @@ fn adjustment_block(a: &Adjustment) -> ([u8; 4], Vec<u8>) {
                 }
             }
             (*b"hue2", b)
+        }
+        &Adjustment::Threshold { level } => {
+            b.u16(level);
+            b.extend([0; 2]);
+            (*b"thrs", b)
+        }
+        &Adjustment::Posterize { levels } => {
+            b.u16(levels);
+            b.extend([0; 2]);
+            (*b"post", b)
+        }
+        &Adjustment::BrightnessContrast {
+            brightness,
+            contrast,
+        } => {
+            // 平均値は 127（旧式の式の入力。この道具の式は使わない）、Lab だけの印は 0、余白 1 バイト
+            for v in [brightness, contrast, 127] {
+                b.u16(v as u16)
+            }
+            b.extend([0; 2]);
+            (*b"brit", b)
+        }
+        Adjustment::ColorBalance {
+            shadows,
+            midtones,
+            highlights,
+            preserve_luminosity,
+        } => {
+            for v in shadows.iter().chain(midtones).chain(highlights) {
+                b.u16(*v as u16)
+            }
+            b.extend([u8::from(*preserve_luminosity), 0]);
+            (*b"blnc", b)
+        }
+        Adjustment::ToneCurve {
+            composite,
+            red,
+            green,
+            blue,
+        } => {
+            // 画素の表ではない・版 1・4 本すべて（RGB 全体・R・G・B のビット）。点は 出力・入力 の順。余白を 4 の倍数まで
+            b.push(0);
+            b.u16(1);
+            b.u32(0xf);
+            for curve in [composite, red, green, blue] {
+                b.u16(curve.len() as u16);
+                for [input, output] in curve {
+                    b.u16(u16::from(*output));
+                    b.u16(u16::from(*input))
+                }
+            }
+            while b.len() % 4 != 0 {
+                b.push(0)
+            }
+            (*b"curv", b)
+        }
+        Adjustment::GradientMap {
+            reverse,
+            colors,
+            opacities,
+        } => {
+            b.u16(1);
+            b.extend([u8::from(*reverse), 0]);
+            b.u32(0); // 名前（空）
+            b.u16(colors.len() as u16);
+            for c in colors {
+                b.u32(u32::from(c.location));
+                b.u32(u32::from(c.midpoint));
+                b.u16(0); // RGB
+                for v in c.rgb {
+                    b.u16(u16::from(v) * 257)
+                }
+                b.extend([0; 4]); // 4 つ目の成分と余白
+            }
+            b.u16(opacities.len() as u16);
+            for o in opacities {
+                b.u32(u32::from(o.location));
+                b.u32(u32::from(o.midpoint));
+                b.u16(u16::from(o.opacity))
+            }
+            // 拡張 2・なめらかさ 4096（100%）・長さ 32・モード 0（色の分岐点）、乱数・透明の表示（1）・ベクトルの色（0）・粗さ・色モデル（3 = RGB）・
+            // 最小と最大の色・余白（ノイズ型の欄）
+            for v in [2, 4096, 32, 0] {
+                b.u16(v)
+            }
+            b.u32(0);
+            b.u16(1);
+            b.u16(0);
+            b.u32(0);
+            b.u16(3);
+            b.extend([0; 16]);
+            b.u16(0);
+            while b.len() % 4 != 0 {
+                b.push(0)
+            }
+            (*b"grdm", b)
         }
     }
 }

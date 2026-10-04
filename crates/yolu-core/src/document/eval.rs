@@ -1670,6 +1670,7 @@ impl Document {
                         LayerKind::Group => anchor::Content::Group,
                         LayerKind::Adjustment => anchor::Content::Adjustment(
                             l.adjustment
+                                .clone()
                                 .unwrap_or_else(crate::AdjustmentSettings::invert),
                         ),
                         LayerKind::Fill if views[i].is_none() => anchor::Content::Fill(

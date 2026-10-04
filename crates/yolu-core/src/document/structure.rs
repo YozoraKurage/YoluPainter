@@ -283,7 +283,7 @@ impl Document {
         settings.validate()?;
         let id = self.new_layer_id();
         let mut layer = Layer::new(id, name, LayerKind::Adjustment);
-        layer.adjustment = Some(settings);
+        layer.adjustment = Some(settings.clone());
         let all = self.channels();
         for &c in channels.unwrap_or(&all) {
             let kind = self.channel_kind(c)?;

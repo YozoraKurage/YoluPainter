@@ -83,13 +83,17 @@ fn vec3_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, value: [f64; 3]
     next
 }
 
-fn set_settings(app: &mut AppState, layer: LayerId, id: yolu_core::FilterId, settings: EffectSettings) {
+fn set_settings(app: &mut AppState, layer: LayerId, id: yolu_core::FilterId, settings: EffectSettings, coalesce: bool) {
     app.apply(Action::Fx(FxOp::SetSettings {
         layer,
         id,
         settings,
-        coalesce: true,
+        coalesce,
     }));
+    if !coalesce {
+        // 1 回の操作で決まる変更は、続く変更とまとめない
+        app.m2_end_drag();
+    }
 }
 
 // ───────── フィルター ─────────
@@ -116,6 +120,8 @@ fn filter_body(
         return;
     }
     let mut next: Option<EffectSettings> = None;
+    // 1 回の操作で決まる変更（曲線・分岐点・切り替え）は、まとめずに独立の 1 回の取り消しにする
+    let mut discrete = false;
     match effect.settings() {
         EffectSettings::Filter(Filter::GaussianBlur { radius }) => {
             if let Some(v) = slider_row(
@@ -244,7 +250,22 @@ fn filter_body(
                 next = Some(EffectSettings::levels(ib as f64, iw as f64, gm as f64, ob as f64, ow as f64));
             }
         }
-        EffectSettings::Filter(_) => {}
+        EffectSettings::Filter(_) => {
+            if let Some(value) = effect.settings().color_adjust() {
+                let params = super::color_adjust::Params {
+                    key: ("effect", id.0),
+                    enabled,
+                    why: None,
+                    paint: app.color.main,
+                    lang,
+                    histogram: None,
+                };
+                if let Some(change) = super::color_adjust::rows(ui, rows, &params, &value) {
+                    discrete = change.discrete;
+                    next = Some(EffectSettings::from_color_adjust(change.value));
+                }
+            }
+        }
         EffectSettings::Generator(g) => {
             if let Some(g) = generator_rows(ui, app, rows, ctx, layer, effect, g, target) {
                 next = Some(EffectSettings::generator(g));
@@ -253,7 +274,7 @@ fn filter_body(
     }
     if let Some(settings) = next {
         if settings != *effect.settings() {
-            set_settings(app, layer, id, settings);
+            set_settings(app, layer, id, settings, !discrete);
         }
     }
     if let Some(v) = percent_row(

@@ -94,12 +94,44 @@ struct Drag {
     draft: Curve,
 }
 
+/// 曲線の見た目の指定（操作は変わらない）。
+#[derive(Clone, Copy, Default)]
+pub struct CurveStyle<'a> {
+    /// 曲線の色（無ければ既定）。
+    pub line: Option<Color32>,
+    /// 後ろに薄く敷く分布（左から右へ並べた 0〜1 の高さ。数は出さない）。
+    pub backdrop: Option<&'a [f32]>,
+    /// 入力をそのまま返す斜めの線を薄く引くか。
+    pub diagonal: bool,
+}
+
 /// 値のカーブの編集（横が入力、縦が出力）。変更が決まったとき（足した・消した・ドラッグを離した）だけ新しいカーブを返す。
 pub fn curve_editor(
     ui: &mut Ui,
     r: egui::Rect,
     id_salt: impl egui::AsIdSalt,
     curve: &Curve,
+    tooltip: &str,
+    enabled: bool,
+) -> Option<Curve> {
+    curve_editor_with(
+        ui,
+        r,
+        id_salt,
+        curve,
+        &CurveStyle::default(),
+        tooltip,
+        enabled,
+    )
+}
+
+/// `curve_editor` の、見た目（曲線の色・後ろの分布・斜めの線）を指定する形。操作と返す値は同じ。
+pub fn curve_editor_with(
+    ui: &mut Ui,
+    r: egui::Rect,
+    id_salt: impl egui::AsIdSalt,
+    curve: &Curve,
+    style: &CurveStyle<'_>,
     tooltip: &str,
     enabled: bool,
 ) -> Option<Curve> {
@@ -207,6 +239,23 @@ pub fn curve_editor(
         let p = ui.painter();
         rounded(p, r, t::CONTROL_BG, 3.0);
         outline(p, r, t::BORDER, 1.0, 3.0);
+        if let Some(bins) = style.backdrop.filter(|b| b.len() >= 2) {
+            let step = g.width() / bins.len() as f32;
+            let faint = Color32::from_rgba_unmultiplied(160, 170, 190, 54);
+            for (i, v) in bins.iter().enumerate() {
+                let h = g.height() * v.clamp(0.0, 1.0);
+                if h >= 0.5 {
+                    p.rect_filled(
+                        egui::Rect::from_min_max(
+                            pos2(g.left() + step * i as f32, g.bottom() - h),
+                            pos2(g.left() + step * (i + 1) as f32 + 0.5, g.bottom()),
+                        ),
+                        0.0,
+                        faint,
+                    );
+                }
+            }
+        }
         for q in 1..4 {
             let f = q as f32 / 4.0;
             p.line_segment(
@@ -224,13 +273,22 @@ pub fn curve_editor(
                 egui::Stroke::new(1.0, t::SEPARATOR),
             );
         }
+        if style.diagonal {
+            p.line_segment(
+                [to_screen(0.0, 0.0), to_screen(1.0, 1.0)],
+                egui::Stroke::new(1.0, t::SEPARATOR),
+            );
+        }
         let line: Vec<egui::Pos2> = (0..=64)
             .map(|k| {
                 let x = k as f64 / 64.0;
                 to_screen(x, shown.value(x).unwrap_or(x))
             })
             .collect();
-        p.add(egui::Shape::line(line, egui::Stroke::new(1.5, t::ACCENT)));
+        p.add(egui::Shape::line(
+            line,
+            egui::Stroke::new(1.5, style.line.unwrap_or(t::ACCENT)),
+        ));
         let active = ui
             .data(|data| data.get_temp::<Drag>(drag_id))
             .map(|d| d.index);

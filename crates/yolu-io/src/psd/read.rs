@@ -357,6 +357,32 @@ struct Record {
     adjustment_seen: bool,
     fill_seen: bool,
     protection: u32,
+    /// 明るさ・コントラストの 2 つの記録（`brit` と `CgEd`）。層のタグを読み終えてから突き合わせる。
+    brightness: BrightnessRecords,
+}
+#[derive(Default)]
+struct BrightnessRecords {
+    brit: Option<BritRecord>,
+    cged: Option<CgedRecord>,
+    /// 読めなかった記録の理由（旧式・新しい式のどちらも）。
+    failed: Option<String>,
+    /// 初めの記録の位置と長さ（診断の場所）。
+    at: (usize, usize),
+}
+/// `brit`（旧式の記録）。
+struct BritRecord {
+    brightness: i16,
+    contrast: i16,
+    lab_only: bool,
+}
+/// `CgEd`（新しい式の記述子）。無い項目は既定値。
+struct CgedRecord {
+    version: i64,
+    brightness: i64,
+    contrast: i64,
+    lab: bool,
+    use_legacy: bool,
+    auto: bool,
 }
 fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     let offset = r.pos;
@@ -381,6 +407,7 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
         adjustment_seen: false,
         fill_seen: false,
         protection: 0,
+        brightness: BrightnessRecords::default(),
     };
     let n = r.u16()?;
     check((1..=56).contains(&n), "レイヤーチャンネル数が不正です")?;
@@ -439,6 +466,7 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     rec.layer.name = name.iter().map(|b| char::from(*b)).collect();
     extra.zeros((4 - (n + 1) % 4) % 4)?;
     let unicode = tags(extra, Some(&mut rec), s)?;
+    resolve_brightness_contrast(&mut rec, s);
     check_budget(
         rec.layer.name.encode_utf16().count() <= s.limits.max_name_code_units,
         "名前長の予算超過",
@@ -1038,6 +1066,27 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                     rec.subtype = b.i32()?
                 }
             }
+            b"brit" | b"CgEd" => {
+                if duplicate {
+                    s.preserve("Adjustment", "調整が重複しています", start, length);
+                    continue;
+                }
+                if rec.brightness.at == (0, 0) {
+                    rec.brightness.at = (start, length)
+                }
+                // 突き合わせは層のタグを読み終えてから（`resolve_brightness_contrast`）
+                if &key == b"brit" {
+                    match brit_record(b)? {
+                        Ok(v) => rec.brightness.brit = Some(v),
+                        Err(why) => rec.brightness.failed = Some(why),
+                    }
+                } else {
+                    match cged_record(b)? {
+                        Ok(v) => rec.brightness.cged = Some(v),
+                        Err(why) => rec.brightness.failed = Some(why),
+                    }
+                }
+            }
             b"nvrt" | b"levl" | b"hue2" => {
                 if rec.adjustment_seen {
                     s.preserve("Adjustment", "調整が重複しています", start, length);
@@ -1054,6 +1103,35 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                 };
                 if let Some(a) = a {
                     rec.layer.kind = LayerKind::Adjustment(a)
+                }
+            }
+            // 色調補正の 5 種（thrs・post・blnc・curv・grdm。brit/CgEd は下で突き合わせる）。表せない中身は、これまでと同じ未対応のタグとして原本を保つ（調整とは数えない）
+            b"thrs" | b"post" | b"blnc" | b"curv" | b"grdm" => {
+                if rec.adjustment_seen {
+                    s.preserve("Adjustment", "調整が重複しています", start, length);
+                    continue;
+                }
+                let parsed = match &key {
+                    b"thrs" => level_record(b, true)?,
+                    b"post" => level_record(b, false)?,
+                    b"blnc" => color_balance(b)?,
+                    b"curv" => curves(b)?,
+                    _ => gradient_map(b, s, start, length)?,
+                };
+                match parsed {
+                    Ok(a) => {
+                        rec.adjustment_seen = true;
+                        rec.layer.kind = LayerKind::Adjustment(a)
+                    }
+                    Err(why) => s.preserve(
+                        "TaggedBlock",
+                        format!(
+                            "未対応のレイヤータグ {}（{why}）",
+                            String::from_utf8_lossy(&key)
+                        ),
+                        start,
+                        length,
+                    ),
                 }
             }
             b"SoCo" => {
@@ -1211,6 +1289,387 @@ fn hue(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<
         lightness,
     }))
 }
+/// 色調補正の記録を読んだ結果: 調整にできたか、できないなら理由（できないものは、これまでと同じ「未対応のレイヤータグ」として原本を保つ）。
+type Parsed<T = Adjustment> = Result<std::result::Result<T, String>>;
+fn unsupported<T>(why: impl Into<String>) -> Parsed<T> {
+    Ok(Err(why.into()))
+}
+/// しきい値（`thrs`）・ポスタリゼーション（`post`）: 2 バイトの値と 2 バイトの余白。
+fn level_record(mut r: Reader, threshold: bool) -> Parsed {
+    if !matches!(r.remaining(), 2 | 4) {
+        return unsupported("大きさが不正です");
+    }
+    let v = r.u16()?;
+    if r.take(r.remaining())?.iter().any(|b| *b != 0) {
+        return unsupported("未知の末尾");
+    }
+    let range = if threshold { 1..=255 } else { 2..=255 };
+    if !range.contains(&v) {
+        return unsupported("値が対応範囲外です");
+    }
+    Ok(Ok(if threshold {
+        Adjustment::Threshold { level: v }
+    } else {
+        Adjustment::Posterize { levels: v }
+    }))
+}
+/// 明るさ・コントラストの旧式の記録（`brit`）: 明るさ・コントラスト・平均値（各 2 バイト、符号つき）、Lab だけの 1 バイト、余白 1 バイト。
+fn brit_record(mut r: Reader) -> Parsed<BritRecord> {
+    if !matches!(r.remaining(), 7 | 8) {
+        return unsupported("brit の大きさが不正です");
+    }
+    let brightness = r.i16()?;
+    let contrast = r.i16()?;
+    let _mean = r.i16()?;
+    let lab_only = r.u8()?;
+    if r.take(r.remaining())?.iter().any(|b| *b != 0) || lab_only > 1 {
+        return unsupported("未知の brit 末尾・Lab");
+    }
+    Ok(Ok(BritRecord {
+        brightness,
+        contrast,
+        lab_only: lab_only == 1,
+    }))
+}
+/// 明るさ・コントラストの新しい式の記録（`CgEd`: 版 16 と、明るさ `Brgh`・コントラスト `Cntr`・平均値 `means`・Lab `Lab `・旧式 `useLegacy`・
+/// 自動 `auto`・版 `Vrsn` だけの平らな記述子）。ほかの項目や入れ子を持つものは、この道具の知らない内容なので対応しない。
+fn cged_record(mut r: Reader) -> Parsed<CgedRecord> {
+    use super::descriptor::Scalar;
+    if r.remaining() < 4 || r.u32()? != 16 {
+        return unsupported("未知のCgEd版");
+    }
+    let items = match super::descriptor::flat(&mut r) {
+        Ok(Some(items)) => items,
+        Ok(None) => return unsupported("未対応のCgEd記述子（入れ子・文字列）"),
+        Err(e) => return unsupported(format!("未対応のCgEd記述子: {e}")),
+    };
+    let mut record = CgedRecord {
+        version: 1,
+        brightness: 0,
+        contrast: 0,
+        lab: false,
+        use_legacy: false,
+        auto: false,
+    };
+    let mut seen = Vec::new();
+    for (key, value) in items {
+        let number = |v: Scalar| match v {
+            Scalar::Number(n) if n.fract() == 0.0 && n.abs() < 1e9 => Some(n as i64),
+            _ => None,
+        };
+        let flag = |v: Scalar| match v {
+            Scalar::Bool(b) => Some(b),
+            _ => None,
+        };
+        let ok = !seen.contains(&key)
+            && match key.as_slice() {
+                b"Vrsn" => number(value).map(|v| record.version = v).is_some(),
+                b"Brgh" => number(value).map(|v| record.brightness = v).is_some(),
+                b"Cntr" => number(value).map(|v| record.contrast = v).is_some(),
+                b"means" => number(value).is_some(),
+                b"Lab " => flag(value).map(|v| record.lab = v).is_some(),
+                b"useLegacy" => flag(value).map(|v| record.use_legacy = v).is_some(),
+                b"auto" => flag(value).map(|v| record.auto = v).is_some(),
+                _ => false,
+            };
+        if !ok {
+            return unsupported(format!(
+                "未知・重複・型違いのCgEdの項目 {}",
+                String::from_utf8_lossy(&key)
+            ));
+        }
+        seen.push(key);
+    }
+    Ok(Ok(record))
+}
+/// 層のタグを読み終えてから、明るさ・コントラストの `brit` と `CgEd` を突き合わせて調整にする。編集できるのは、新しい式（`CgEd` があり、
+/// 旧式・自動・Lab でない）で、`brit` があれば同じ値のものだけ。`brit` だけ（旧式）・旧式の `CgEd`・範囲外・読めない記録は、この道具の式で
+/// 表せないので、ほかの対応しないタグと同じく原本を保つ。
+fn resolve_brightness_contrast(rec: &mut Record, s: &mut State) {
+    let BrightnessRecords {
+        brit,
+        cged,
+        failed,
+        at: (start, length),
+    } = std::mem::take(&mut rec.brightness);
+    if brit.is_none() && cged.is_none() && failed.is_none() {
+        return;
+    }
+    let mut refuse = |why: &str| {
+        s.preserve(
+            "TaggedBlock",
+            format!("未対応のレイヤータグ brit/CgEd（{why}）"),
+            start,
+            length,
+        )
+    };
+    if let Some(why) = failed {
+        return refuse(&why);
+    }
+    if rec.adjustment_seen {
+        return refuse("調整が重複しています");
+    }
+    let Some(cged) = cged else {
+        return refuse("旧式の brit だけの明るさ・コントラスト（新しい式の CgEd が無い）");
+    };
+    let bad = cged.version != 1
+        || cged.lab
+        || cged.use_legacy
+        || cged.auto
+        || brit.as_ref().is_some_and(|b| {
+            b.lab_only
+                || i64::from(b.brightness) != cged.brightness
+                || i64::from(b.contrast) != cged.contrast
+        });
+    // コントラストの下限は −50（この道具の範囲。Photoshop は −100〜100）
+    if bad || !(-150..=150).contains(&cged.brightness) || !(-50..=100).contains(&cged.contrast) {
+        return refuse("旧式・自動・Lab・範囲外・brit と CgEd の食い違い");
+    }
+    s.omitted(
+        "明るさ・コントラストの平均値（旧式の式の入力。この道具の式は使わない）",
+        start,
+        length,
+    );
+    rec.adjustment_seen = true;
+    rec.layer.kind = LayerKind::Adjustment(Adjustment::BrightnessContrast {
+        brightness: cged.brightness as i16,
+        contrast: cged.contrast as i16,
+    });
+}
+/// カラーバランス（`blnc`）: シャドウ・中間・ハイライトの各 3 つ（シアン/レッド・マゼンタ/グリーン・イエロー/ブルー、各 2 バイト符号つき）、
+/// 輝度を保つ 1 バイト、余白 1 バイト。
+fn color_balance(mut r: Reader) -> Parsed {
+    if !matches!(r.remaining(), 19 | 20) {
+        return unsupported("大きさが不正です");
+    }
+    let mut ranges = [[0i16; 3]; 3];
+    for range in &mut ranges {
+        for v in range.iter_mut() {
+            *v = r.i16()?;
+        }
+    }
+    let preserve = r.u8()?;
+    if r.take(r.remaining())?.iter().any(|b| *b != 0) || preserve > 1 {
+        return unsupported("未知の末尾・輝度の印");
+    }
+    if ranges.iter().flatten().any(|v| !(-100..=100).contains(v)) {
+        return unsupported("値が対応範囲外です");
+    }
+    Ok(Ok(Adjustment::ColorBalance {
+        shadows: ranges[0],
+        midtones: ranges[1],
+        highlights: ranges[2],
+        preserve_luminosity: preserve == 1,
+    }))
+}
+/// トーンカーブ（`curv`）: 0（画素の表ではない）・版 1・曲線のある チャンネルのビット（0:RGB 全体・1:R・2:G・3:B）、
+/// 各曲線は点の数（2〜19）と点（出力・入力の 2 バイトずつ）。版 1 のあとに続く拡張（`Crv `）は、基本の曲線と同じ点を持つときだけ受ける。
+fn curves(mut r: Reader) -> Parsed {
+    if r.remaining() < 7 {
+        return unsupported("短すぎます");
+    }
+    let is_map = r.u8()?;
+    let version = r.u16()?;
+    let channels = r.u32()?;
+    if is_map != 0 || version != 1 || channels & !0xf != 0 || channels == 0 {
+        return unsupported("表の形式・版・チャンネルが対応しません");
+    }
+    let mut curves: [Vec<[u8; 2]>; 4] = Default::default();
+    for (i, curve) in curves.iter_mut().enumerate() {
+        if channels & (1 << i) == 0 {
+            *curve = vec![[0, 0], [255, 255]];
+            continue;
+        }
+        if r.remaining() < 2 {
+            return unsupported("点の数が途切れています");
+        }
+        let n = r.u16()? as usize;
+        if !(2..=19).contains(&n) || r.remaining() < n * 4 {
+            return unsupported("点の数が不正か点が途切れています");
+        }
+        for _ in 0..n {
+            let (output, input) = (r.u16()?, r.u16()?);
+            if output > 255 || input > 255 {
+                return unsupported("点が 0〜255 の外です");
+            }
+            curve.push([input as u8, output as u8]);
+        }
+    }
+    // 拡張（`Crv `）: 基本と同じ点なら受け、違えば対応しない
+    let rest = r.take(r.remaining())?;
+    if rest.iter().any(|b| *b != 0) && !curves_extra_matches(rest, channels, &curves) {
+        return unsupported("拡張が基本の曲線と違います");
+    }
+    for curve in &curves {
+        if !curve.windows(2).all(|w| w[0][0] < w[1][0]) {
+            return unsupported("入力が昇順でありません");
+        }
+        // PSD として正しくても、この道具が表せる曲線（core の `Curve`: 点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）でなければ
+        // 編集できる層にしない（Photoshop の「自動」は両端を動かすので、よくある形）。原本を保つ
+        let points = curve
+            .iter()
+            .map(|p| yolu_core::curve::CurvePoint {
+                x: f64::from(p[0]) / 255.0,
+                y: f64::from(p[1]) / 255.0,
+            })
+            .collect();
+        if yolu_core::curve::Curve::new(points).is_err() {
+            return unsupported(
+                "この道具が表せない曲線です（点は 16 まで・両端の入力は 0 と 255・隣の点は 6 刻み以上）",
+            );
+        }
+    }
+    let [composite, red, green, blue] = curves;
+    Ok(Ok(Adjustment::ToneCurve {
+        composite,
+        red,
+        green,
+        blue,
+    }))
+}
+/// `curv` の末尾の拡張（`Crv `・版 3 か 4・項目数、項目は チャンネル番号・点の数・点）が、基本の曲線と同じ点か。余白（0）は許す。
+fn curves_extra_matches(rest: &[u8], channels: u32, base: &[Vec<[u8; 2]>; 4]) -> bool {
+    let mut r = Reader::new(rest);
+    let parse = |r: &mut Reader| -> Result<bool> {
+        if r.key()? != *b"Crv " {
+            return Ok(false);
+        }
+        let version = r.u16()?;
+        let count = r.u32()? as usize;
+        if !matches!(version, 3 | 4) || count > 4 {
+            return Ok(false);
+        }
+        for _ in 0..count {
+            let channel = r.u16()? as usize;
+            let n = r.u16()? as usize;
+            if channel > 3 || channels & (1 << channel) == 0 || n * 4 > r.remaining() {
+                return Ok(false);
+            }
+            let mut points = Vec::new();
+            for _ in 0..n {
+                let (output, input) = (r.u16()?, r.u16()?);
+                if output > 255 || input > 255 {
+                    return Ok(false);
+                }
+                points.push([input as u8, output as u8]);
+            }
+            if points != base[channel] {
+                return Ok(false);
+            }
+        }
+        Ok(r.remaining() < 4 && r.take(r.remaining())?.iter().all(|b| *b == 0))
+    };
+    parse(&mut r).unwrap_or(false)
+}
+/// グラデーションマップ（`grdm`。版 1）: 逆向き・ディザ・名前・色の分岐点（位置・中点・モード・16 bit の色・余白）・不透明度の分岐点
+/// （位置・中点・不透明度）・補間と乱数などの欄。ディザ・なめらかさが 100% でないもの・ノイズ型・RGB 以外の色・端の中点などは対応しない。
+fn gradient_map(mut r: Reader, s: &mut State, start: usize, len: usize) -> Parsed {
+    if r.remaining() < 10 {
+        return unsupported("短すぎます");
+    }
+    let version = r.u16()?;
+    let reverse = r.u8()?;
+    let dither = r.u8()?;
+    let name_len = r.u32()? as usize;
+    if name_len > s.limits.max_name_code_units || r.remaining() < name_len * 2 + 2 {
+        return unsupported("名前の長さが不正です");
+    }
+    let name = r.utf16(name_len)?;
+    if version != 1 || reverse > 1 || dither != 0 {
+        return unsupported("未知の版・ディザ・逆向きの印");
+    }
+    let count = r.u16()? as usize;
+    if !(1..=256).contains(&count) || r.remaining() < count * 20 + 2 {
+        return unsupported("色の分岐点の数が不正か途切れています");
+    }
+    let mut colors = Vec::new();
+    let mut bad = false;
+    let mut fractions = false;
+    for _ in 0..count {
+        let location = r.u32()?;
+        let midpoint = r.u32()?;
+        let mode = r.u16()?;
+        let mut rgb = [0u8; 3];
+        let components = [r.u16()?, r.u16()?, r.u16()?, r.u16()?];
+        let pad = r.u16()?;
+        for (out, v) in rgb.iter_mut().zip(components) {
+            let byte = (u32::from(v) + 128) / 257;
+            fractions |= byte * 257 != u32::from(v);
+            *out = byte as u8;
+        }
+        bad |= location > 4096
+            || !(1..=99).contains(&midpoint)
+            || mode != 0
+            || components[3] != 0
+            || pad != 0;
+        colors.push(GradientColorStop {
+            location: location.min(4096) as u16,
+            midpoint: midpoint.min(100) as u8,
+            rgb,
+        });
+    }
+    let count = r.u16()? as usize;
+    if !(1..=256).contains(&count) || r.remaining() < count * 10 + 8 + 32 {
+        return unsupported("不透明度の分岐点の数が不正か途切れています");
+    }
+    let mut opacities = Vec::new();
+    for _ in 0..count {
+        let location = r.u32()?;
+        let midpoint = r.u32()?;
+        let opacity = r.u16()?;
+        bad |= location > 4096 || !(1..=99).contains(&midpoint) || opacity > 255;
+        opacities.push(GradientOpacityStop {
+            location: location.min(4096) as u16,
+            midpoint: midpoint.min(100) as u8,
+            opacity: opacity.min(255) as u8,
+        });
+    }
+    // 補間（拡張 2・なめらかさ 4096 = 100%・長さ 32・モード 0 = 色の分岐点のグラデーション）。乱数・粗さ・色モデル・範囲はノイズ型の欄
+    let (expansion, smoothness, length, mode) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
+    bad |= expansion != 2 || smoothness != 4096 || length != 32 || mode != 0;
+    let seed = r.u32()?;
+    let show_transparency = r.u16()?;
+    let use_vector_color = r.u16()?;
+    let roughness = r.u32()?;
+    let color_model = r.u16()?;
+    let ranges_differ = r.take(16)?.iter().any(|b| *b != 0);
+    let dummy = r.u16()?;
+    bad |= use_vector_color != 0;
+    // ノイズ型の欄（乱数・透明の表示・粗さ・色モデル・色の範囲）は、書き戻すときの決まった値（`write.rs` の grdm）へ置き換わる。
+    // 値が違うなら、黙って変えず「編集後の書き出しには含まれない」と知らせる
+    let noise_fields_differ = seed != 0
+        || show_transparency != 1
+        || roughness != 0
+        || color_model != 3
+        || ranges_differ
+        || dummy != 0;
+    bad |= r.take(r.remaining())?.iter().any(|b| *b != 0);
+    bad |= !(2..=32).contains(&colors.len())
+        || !(2..=32).contains(&opacities.len())
+        || !colors.windows(2).all(|w| w[0].location < w[1].location)
+        || !opacities.windows(2).all(|w| w[0].location < w[1].location);
+    if bad {
+        return unsupported("ノイズ・補間・中点・色モード・分岐点の数と並びが対応しません");
+    }
+    if fractions {
+        s.omitted("grdm の色の 8bit 未満の端数（丸め）", start, len)
+    }
+    if noise_fields_differ {
+        s.omitted(
+            "grdm のノイズ型の欄（乱数・透明の表示・粗さ・色モデル・色の範囲）",
+            start,
+            len,
+        )
+    }
+    if !name.is_empty() {
+        s.omitted("グラデーションの名前", start, len)
+    }
+    Ok(Ok(Adjustment::GradientMap {
+        reverse: reverse == 1,
+        colors,
+        opacities,
+    }))
+}
 fn solid(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<[u8; 3]>> {
     if r.u32()? != 16 {
         s.preserve("FillLayer", "未知のSoCo版", start, len);
@@ -1239,5 +1698,165 @@ fn solid(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Optio
             s.preserve("FillLayer", format!("未対応のSoCo記述子: {e}"), start, len);
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(limits: &Limits) -> State<'_> {
+        State {
+            limits,
+            notes: Vec::new(),
+            unsupported: false,
+            metadata: 0,
+            pixels: 0,
+            omitted: Vec::new(),
+        }
+    }
+    fn record(brit: Option<(i16, i16, bool)>, cged: Option<CgedRecord>) -> Record {
+        Record {
+            layer: Layer::default(),
+            channels: Vec::new(),
+            section: -1,
+            section_key: None,
+            subtype: 0,
+            unknown_section: false,
+            adjustment_seen: false,
+            fill_seen: false,
+            protection: 0,
+            brightness: BrightnessRecords {
+                brit: brit.map(|(brightness, contrast, lab_only)| BritRecord {
+                    brightness,
+                    contrast,
+                    lab_only,
+                }),
+                cged,
+                failed: None,
+                at: (10, 20),
+            },
+        }
+    }
+    fn cged(brightness: i64, contrast: i64) -> CgedRecord {
+        CgedRecord {
+            version: 1,
+            brightness,
+            contrast,
+            lab: false,
+            use_legacy: false,
+            auto: false,
+        }
+    }
+    /// 解決した結果: 調整にできたか（できなければ保護の診断が付く）。
+    fn resolved(mut rec: Record) -> (Option<Adjustment>, bool) {
+        let limits = Limits::default();
+        let mut s = state(&limits);
+        resolve_brightness_contrast(&mut rec, &mut s);
+        match rec.layer.kind {
+            LayerKind::Adjustment(a) => (Some(a), s.unsupported),
+            _ => (None, s.unsupported),
+        }
+    }
+
+    #[test]
+    fn brightness_and_contrast_need_the_new_record_and_agree_with_the_old_one() {
+        // 新しい式の記録だけ（Photoshop の新しい書き方）・両方が同じ値（この道具の書き方）は調整になる
+        for brit in [None, Some((-37, 81, false))] {
+            let (a, unsupported) = resolved(record(brit, Some(cged(-37, 81))));
+            assert_eq!(
+                a,
+                Some(Adjustment::BrightnessContrast {
+                    brightness: -37,
+                    contrast: 81
+                })
+            );
+            assert!(!unsupported);
+        }
+        // 旧式の brit だけ・どちらも無い・読めなかった記録がある
+        assert_eq!(resolved(record(Some((10, 10, false)), None)), (None, true));
+        assert_eq!(resolved(record(None, None)), (None, false));
+        let mut broken = record(None, Some(cged(1, 1)));
+        broken.brightness.failed = Some("壊れている".into());
+        assert_eq!(resolved(broken), (None, true));
+        // 食い違い・Lab・旧式・自動・版・範囲外は保護する
+        assert_eq!(
+            resolved(record(Some((10, 10, false)), Some(cged(11, 10)))),
+            (None, true)
+        );
+        assert_eq!(
+            resolved(record(Some((10, 10, true)), Some(cged(10, 10)))),
+            (None, true)
+        );
+        for edit in [
+            |c: &mut CgedRecord| c.lab = true,
+            |c: &mut CgedRecord| c.use_legacy = true,
+            |c: &mut CgedRecord| c.auto = true,
+            |c: &mut CgedRecord| c.version = 2,
+        ] {
+            let mut c = cged(5, 5);
+            edit(&mut c);
+            assert_eq!(resolved(record(None, Some(c))), (None, true));
+        }
+        for (b, c) in [(151, 0), (-151, 0), (0, 101), (0, -51)] {
+            assert_eq!(
+                resolved(record(None, Some(cged(b, c)))),
+                (None, true),
+                "{b} {c}"
+            );
+        }
+        for (b, c) in [(150, 100), (-150, -50)] {
+            assert!(
+                resolved(record(None, Some(cged(b, c)))).0.is_some(),
+                "{b} {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_curves_extra_must_repeat_the_base_curves() {
+        let base: [Vec<[u8; 2]>; 4] = [
+            vec![[0, 0], [100, 120], [255, 255]],
+            vec![[0, 0], [255, 255]],
+            vec![[0, 0], [255, 255]],
+            vec![[0, 0], [255, 255]],
+        ];
+        // 項目は チャンネル番号・点の数・点（出力・入力）
+        let extra = |version: u16, items: &[(u16, &[[u8; 2]])]| {
+            let mut b = Vec::new();
+            b.extend(b"Crv ");
+            b.extend(version.to_be_bytes());
+            b.extend((items.len() as u32).to_be_bytes());
+            for (channel, points) in items {
+                b.extend(channel.to_be_bytes());
+                b.extend((points.len() as u16).to_be_bytes());
+                for [input, output] in *points {
+                    b.extend(u16::from(*output).to_be_bytes());
+                    b.extend(u16::from(*input).to_be_bytes());
+                }
+            }
+            b
+        };
+        let same = extra(4, &[(0, &base[0]), (1, &base[1])]);
+        assert!(curves_extra_matches(&same, 0xf, &base));
+        // 末尾の余白は許す
+        let mut padded = same.clone();
+        padded.extend([0, 0]);
+        assert!(curves_extra_matches(&padded, 0xf, &base));
+        // 点が違う・版が違う・チャンネルが無い・壊れている
+        let other = extra(4, &[(0, &[[0, 0], [100, 121], [255, 255]])]);
+        assert!(!curves_extra_matches(&other, 0xf, &base));
+        assert!(!curves_extra_matches(
+            &extra(5, &[(0, &base[0])]),
+            0xf,
+            &base
+        ));
+        assert!(!curves_extra_matches(
+            &extra(4, &[(0, &base[0])]),
+            0xe,
+            &base
+        ));
+        assert!(!curves_extra_matches(&same[..same.len() - 3], 0xf, &base));
+        assert!(!curves_extra_matches(b"XXXXrest", 0xf, &base));
     }
 }

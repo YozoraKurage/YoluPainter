@@ -331,7 +331,7 @@ fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refus
                 _ => None,
             })
             .collect();
-        assert_eq!(labels.len(), 7 + 10, "{lang:?}: {labels:?}");
+        assert_eq!(labels.len(), 13 + 10, "{lang:?}: {labels:?}");
         let layer = s.selected_layer.unwrap();
         s.apply(Action::M2(Edit::AddMask(layer)));
         for target in [FilterTarget::Content, FilterTarget::Mask] {

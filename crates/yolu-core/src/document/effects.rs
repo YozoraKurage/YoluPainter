@@ -683,10 +683,18 @@ impl Document {
         self.check_stack(&after, target)?;
         let before = self.stack_ref(index, target)?.clone();
         let ramp = |s: &[FilterEffect]| -> u64 {
-            s.iter()
+            let generators = s
+                .iter()
                 .filter(|e| matches!(&e.settings, EffectSettings::Generator(g) if g.ramp.is_some()))
                 .count() as u64
-                * 512
+                * 512;
+            // 色調補正の段（ランプ・曲線・表）は、その中身の大きさ
+            let adjustments: u64 = s
+                .iter()
+                .filter_map(|e| e.settings.color_adjust())
+                .map(|a| a.byte_size())
+                .sum();
+            generators + adjustments
         };
         let cost = 64 + 96 * (before.len() + after.len()) as u64 + ramp(&before) + ramp(&after);
         let id = self.layers[index].id;

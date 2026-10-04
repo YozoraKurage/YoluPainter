@@ -683,9 +683,9 @@ fn hue_saturation_cannot_target_scalar_channels() {
     let mut d = Document::with_tile_size(16, 16, 8).unwrap();
     let hs = AdjustmentSettings::hue_saturation(30.0, 0.0, 0.0).unwrap();
     assert!(d
-        .add_adjustment_layer("bad", hs, Some(&[Channel::Roughness]), None)
+        .add_adjustment_layer("bad", hs.clone(), Some(&[Channel::Roughness]), None)
         .is_err());
-    let hsl = d.add_adjustment_layer("hsl", hs, None, None).unwrap();
+    let hsl = d.add_adjustment_layer("hsl", hs.clone(), None, None).unwrap();
     assert_eq!(
         d.layer(hsl).unwrap().enabled_channels(),
         vec![Channel::Color, Channel::Emission]
@@ -698,7 +698,7 @@ fn hue_saturation_cannot_target_scalar_channels() {
     assert!(d.layer(lv).unwrap().is_channel_enabled(Channel::Roughness));
     let hs10 = AdjustmentSettings::hue_saturation(10.0, 0.0, 0.0).unwrap();
     assert!(
-        d.set_adjustment(lv, hs10, false).is_err(),
+        d.set_adjustment(lv, hs10.clone(), false).is_err(),
         "Roughness が有効"
     );
     for ch in [
@@ -709,7 +709,7 @@ fn hue_saturation_cannot_target_scalar_channels() {
     ] {
         d.set_channel_enabled(lv, ch, false).unwrap();
     }
-    d.set_adjustment(lv, hs10, false).unwrap();
+    d.set_adjustment(lv, hs10.clone(), false).unwrap();
     assert!(d.begin_stroke(lv, &BrushSettings::default()).is_err());
     assert!(
         d.set_adjustment(lv, hs10, false).is_ok(),

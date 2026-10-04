@@ -19,10 +19,16 @@ pub enum FilterKind {
     Levels,
     Invert,
     Normalize,
+    GradientMap,
+    ToneCurve,
+    ColorBalance,
+    BrightnessContrast,
+    Threshold,
+    Posterize,
 }
 
 impl FilterKind {
-    pub const ALL: [FilterKind; 7] = [
+    pub const ALL: [FilterKind; 13] = [
         FilterKind::Blur,
         FilterKind::Sharpen,
         FilterKind::NoiseMono,
@@ -30,7 +36,27 @@ impl FilterKind {
         FilterKind::Levels,
         FilterKind::Invert,
         FilterKind::Normalize,
+        FilterKind::GradientMap,
+        FilterKind::ToneCurve,
+        FilterKind::ColorBalance,
+        FilterKind::BrightnessContrast,
+        FilterKind::Threshold,
+        FilterKind::Posterize,
     ];
+
+    /// 色調補正の 6 種（調整の層と同じ値。Rust 版だけの種類）なら、その種類。
+    fn color_adjust(self) -> Option<yolu_core::AdjustmentType> {
+        use yolu_core::AdjustmentType as T;
+        Some(match self {
+            FilterKind::GradientMap => T::GradientMap,
+            FilterKind::ToneCurve => T::ToneCurve,
+            FilterKind::ColorBalance => T::ColorBalance,
+            FilterKind::BrightnessContrast => T::BrightnessContrast,
+            FilterKind::Threshold => T::Threshold,
+            FilterKind::Posterize => T::Posterize,
+            _ => return None,
+        })
+    }
 
     /// 足すときの設定（ぼかし 4 px・シャープ 2 px ×1・ノイズ 25 %・レベル補正は何も変えない値）。
     pub fn settings(self) -> EffectSettings {
@@ -42,6 +68,10 @@ impl FilterKind {
             FilterKind::Levels => EffectSettings::levels(0.0, 1.0, 1.0, 0.0, 1.0),
             FilterKind::Invert => EffectSettings::invert(),
             FilterKind::Normalize => EffectSettings::normalize(),
+            other => EffectSettings::from_color_adjust(
+                yolu_core::ColorAdjust::default_for(other.color_adjust().expect("色調補正の種類"))
+                    .expect("色調補正の既定値"),
+            ),
         }
     }
 
@@ -54,6 +84,14 @@ impl FilterKind {
             FilterKind::Levels => lang.pick("レベル補正", "Levels"),
             FilterKind::Invert => lang.pick("階調の反転", "Invert"),
             FilterKind::Normalize => lang.pick("正規化（レイヤー全体）", "Normalize (Layer)"),
+            FilterKind::GradientMap => lang.pick("グラデーションマップ", "Gradient Map"),
+            FilterKind::ToneCurve => lang.pick("トーンカーブ", "Tone Curve"),
+            FilterKind::ColorBalance => lang.pick("カラーバランス", "Color Balance"),
+            FilterKind::BrightnessContrast => {
+                lang.pick("明るさ・コントラスト", "Brightness / Contrast")
+            }
+            FilterKind::Threshold => lang.pick("2 値化", "Threshold"),
+            FilterKind::Posterize => lang.pick("ポスタリゼーション", "Posterize"),
         }
     }
 }
@@ -101,6 +139,12 @@ pub fn effect_name(lang: Lang, settings: &EffectSettings) -> &'static str {
             Filter::Levels { .. } => FilterKind::Levels.name(lang),
             Filter::Invert => FilterKind::Invert.name(lang),
             Filter::Normalize => FilterKind::Normalize.name(lang),
+            Filter::GradientMap(_) => FilterKind::GradientMap.name(lang),
+            Filter::ToneCurve(_) => FilterKind::ToneCurve.name(lang),
+            Filter::ColorBalance(_) => FilterKind::ColorBalance.name(lang),
+            Filter::BrightnessContrast(_) => FilterKind::BrightnessContrast.name(lang),
+            Filter::Threshold(_) => FilterKind::Threshold.name(lang),
+            Filter::Posterize(_) => FilterKind::Posterize.name(lang),
             Filter::Generator { .. } => generator_kind_name(Kind::EdgeWear), // 文書には置かれない形
         },
     }

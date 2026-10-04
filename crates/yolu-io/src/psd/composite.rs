@@ -14,6 +14,8 @@ struct Entry<'a> {
     layer: &'a Layer,
     children: Vec<Entry<'a>>,
     clips: Vec<Entry<'a>>,
+    /// 色調補正の 6 種の調整は、core の式（表を 1 回だけ作る）で当てる。ほかの調整と変換できない値は None。
+    core: Option<yolu_core::AdjustmentSettings>,
 }
 fn entry(l: &Layer) -> Option<Entry<'_>> {
     if !l.visible || l.opacity == 0 {
@@ -29,11 +31,23 @@ fn entry(l: &Layer) -> Option<Entry<'_>> {
         }
         _ => Vec::new(),
     };
+    let core = match &l.kind {
+        LayerKind::Adjustment(a) if is_core_only(a) => super::bridge::core_adjustment(a).ok(),
+        _ => None,
+    };
     Some(Entry {
         layer: l,
         children,
         clips: Vec::new(),
+        core,
     })
+}
+/// core の式で当てる調整（C# 由来でない 6 種）か。
+fn is_core_only(a: &Adjustment) -> bool {
+    !matches!(
+        a,
+        Adjustment::Invert | Adjustment::Levels { .. } | Adjustment::HueSaturation { .. }
+    )
 }
 fn plan(layers: &[Layer]) -> Vec<Entry<'_>> {
     let bottom: Vec<_> = layers.iter().rev().collect();
@@ -80,7 +94,7 @@ fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
         let l = e.layer;
         let a = amount(l, x, y);
         if let LayerKind::Adjustment(adj) = &l.kind {
-            below = adjust(adj, below, a, l.blend_mode);
+            below = adjust(adj, e.core.as_ref(), below, a, l.blend_mode);
             continue;
         }
         let group = matches!(l.kind, LayerKind::Group { .. });
@@ -96,7 +110,7 @@ fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
         for c in &e.clips {
             let l = c.layer;
             if let LayerKind::Adjustment(adj) = &l.kind {
-                g = adjust(adj, g, amount(l, x, y), l.blend_mode)
+                g = adjust(adj, c.core.as_ref(), g, amount(l, x, y), l.blend_mode)
             } else {
                 let px = if matches!(l.kind, LayerKind::Group { .. }) {
                     evaluate(&c.children, Rgba8::TRANSPARENT, x, y)
@@ -132,9 +146,19 @@ pub(super) fn matte(p: &mut [u8]) {
         }
     }
 }
-fn adjust(a: &Adjustment, c: Rgba8, amount: f64, m: BlendMode) -> Rgba8 {
+fn adjust(
+    a: &Adjustment,
+    core: Option<&yolu_core::AdjustmentSettings>,
+    c: Rgba8,
+    amount: f64,
+    m: BlendMode,
+) -> Rgba8 {
     if amount <= 0.0 || c.a == 0 {
         return c;
+    }
+    if is_core_only(a) {
+        // 色調補正の 6 種: core の調整の式で当て、合成モードと量は同じ式で混ぜる（変換できない値は何も変えない）
+        return core.map_or(c, |s| s.composite(c, amount, mode(m)));
     }
     let rgb = match *a {
         Adjustment::Invert => [255 - c.r, 255 - c.g, 255 - c.b],
@@ -220,6 +244,8 @@ fn adjust(a: &Adjustment, c: Rgba8, amount: f64, m: BlendMode) -> Rgba8 {
                 })
             }
         }
+        // 6 種は上で core の式に任せて戻っている
+        _ => [c.r, c.g, c.b],
     };
     let dr = f64::from(c.r) / 255.0;
     let dg = f64::from(c.g) / 255.0;

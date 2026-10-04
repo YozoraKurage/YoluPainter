@@ -254,6 +254,26 @@ fn blocker_text(lang: Lang, b: &psd::Blocker) -> String {
             format!("「{name}」の色相・彩度は PSD の刻みの間にあります"),
             format!("\"{name}\" has hue/saturation between PSD's steps"),
         ),
+        GradientMapBetweenSteps => lang.pick(
+            format!("「{name}」のグラデーションマップは PSD の刻みの間にあります"),
+            format!("\"{name}\" has a gradient map between PSD's steps"),
+        ),
+        GradientMapCurve => lang.pick(
+            format!("「{name}」のグラデーションマップに値のカーブがあります"),
+            format!("\"{name}\" has a gradient map with a value curve"),
+        ),
+        ToneCurveBetweenSteps => lang.pick(
+            format!("「{name}」のトーンカーブは PSD の刻みの間にあります"),
+            format!("\"{name}\" has a tone curve between PSD's steps"),
+        ),
+        ColorBalanceBetweenSteps => lang.pick(
+            format!("「{name}」のカラーバランスは PSD の刻みの間にあります"),
+            format!("\"{name}\" has color balance between PSD's steps"),
+        ),
+        BrightnessContrastBetweenSteps => lang.pick(
+            format!("「{name}」の明るさ・コントラストは PSD の刻みの間にあります"),
+            format!("\"{name}\" has brightness/contrast between PSD's steps"),
+        ),
         Effects => lang.pick(
             format!("「{name}」にフィルターか Generator があります"),
             format!("\"{name}\" has filters or generators"),

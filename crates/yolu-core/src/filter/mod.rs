@@ -8,7 +8,7 @@ mod pixels;
 mod tests;
 use crate::{
     math::{clamp01, to_byte},
-    Rect,
+    BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold, ToneCurves,
 };
 use rayon::prelude::*;
 use std::{
@@ -83,6 +83,16 @@ pub enum Settings {
         slot: u32,
         blend: GeneratorBlend,
     },
+    // 色調補正の 6 種（調整の層と同じ値と式。Rust 版だけの種類で、段の種類の番号は 64 から。画素ごとの点の処理で、強さは元との混ぜ）。
+    /// グラデーションマップ。色のチャンネルだけ。
+    GradientMap(GradientMap),
+    /// トーンカーブ。スカラーとマスクでは RGB 全体の曲線だけが効く。
+    ToneCurve(ToneCurves),
+    /// カラーバランス。色のチャンネルだけ。
+    ColorBalance(ColorBalance),
+    BrightnessContrast(BrightnessContrast),
+    Threshold(Threshold),
+    Posterize(Posterize),
 }
 impl Settings {
     pub const ALGORITHM_VERSION: u32 = 1;
@@ -150,6 +160,13 @@ impl Settings {
             )
         {
             return Err(Error::Invalid("スカラーとマスクは色ノイズを受け付けません"));
+        }
+        if matches!(value_type, ValueType::Scalar | ValueType::Mask)
+            && matches!(self, Self::GradientMap(_) | Self::ColorBalance(_))
+        {
+            return Err(Error::Invalid(
+                "グラデーションマップとカラーバランスは色のチャンネルだけに適用できます",
+            ));
         }
         Ok(())
     }
@@ -521,6 +538,21 @@ pub fn evaluate(
     }
     Ok(output)
 }
+/// 色調補正の段（調整の層と同じ式）の 1 画素の結果。トーンカーブはスカラーとマスクでは RGB 全体の曲線だけ。
+fn adjust_pixel(settings: &Settings, value_type: ValueType, c: Rgba8) -> Rgba8 {
+    match settings {
+        Settings::GradientMap(v) => v.apply(c),
+        Settings::ToneCurve(v) if matches!(value_type, ValueType::Scalar | ValueType::Mask) => {
+            v.apply_scalar(c)
+        }
+        Settings::ToneCurve(v) => v.apply(c),
+        Settings::ColorBalance(v) => v.apply(c),
+        Settings::BrightnessContrast(v) => v.apply(c),
+        Settings::Threshold(v) => v.apply(c),
+        Settings::Posterize(v) => v.apply(c),
+        _ => c,
+    }
+}
 struct Engine<'a> {
     source: &'a dyn Source,
     value_type: ValueType,
@@ -690,6 +722,17 @@ impl<'a> Engine<'a> {
                                 .floor()
                                 .clamp(0.0, 255.0) as u8;
                             *v = pixels::lerp(*v, n, s.strength);
+                        }
+                    }
+                    Settings::GradientMap(_)
+                    | Settings::ToneCurve(_)
+                    | Settings::ColorBalance(_)
+                    | Settings::BrightnessContrast(_)
+                    | Settings::Threshold(_)
+                    | Settings::Posterize(_) => {
+                        let out = adjust_pixel(&s.settings, self.value_type, Rgba8::from_slice(p));
+                        for (v, o) in p[..3].iter_mut().zip([out.r, out.g, out.b]) {
+                            *v = pixels::lerp(*v, o, s.strength);
                         }
                     }
                     Settings::Generator { slot, blend } => {

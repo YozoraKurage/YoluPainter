@@ -32,7 +32,8 @@ use yolu_io::shelf::{
     REFUSAL_RESOURCE_COUNT,
 };
 use yolu_io::smart::{
-    SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
+    SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES, REFUSAL_RUST_ADJUSTMENTS,
+    REFUSAL_RUST_GENERATORS, REFUSAL_USER_CHANNELS,
 };
 use yolu_io::{NativeValue, Project, Resource};
 
@@ -1121,6 +1122,12 @@ pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
         lang.pick(
             "ノイズ・グランジは保存できません",
             "Noise and Grunge cannot be saved",
+        )
+        .into()
+    } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
+        lang.pick(
+            "色調補正は保存できません",
+            "Colour adjustments cannot be saved",
         )
         .into()
     } else {

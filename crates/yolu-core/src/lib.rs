@@ -5,7 +5,8 @@
 //!
 //! 座標は左下原点（画素 (0, 0) が左下、その中心は (0.5, 0.5)）。画素の並びは行優先で、一番下の行が先。
 //!
-//! 層の種類（[`LayerKind`]）はラスター・塗りつぶし（チャンネルごとの値）・調整（反転・レベル補正・色相/彩度/明度）・グループ
+//! 層の種類（[`LayerKind`]）はラスター・塗りつぶし（チャンネルごとの値）・調整（反転・レベル補正・色相/彩度/明度と、Rust 版だけのグラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・
+//! ポスタリゼーション。`adjust`）・グループ
 //! （通過・分離、入れ子）。どの層もラスターマスク（[`RasterMask`]、全チャンネルで共有）とクリッピングを持てる。チャンネル
 //! （[`Channel`]）は文書の一覧の番号で、0〜5 は Unity 版と同じ標準の 6 つ、ユーザーチャンネルは [`Document::add_channel`] で足す。
 //! 層はチャンネルごとに有効と合成モード・不透明度（[`ChannelBlend`]）を持つ。Normal の種類のチャンネルは単位ベクトルとして
@@ -66,7 +67,10 @@ mod symmetry;
 mod types;
 pub mod uv_layout;
 
-pub use adjust::{AdjustmentSettings, AdjustmentType};
+pub use adjust::{
+    luminance, AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust,
+    ColorBalance, GradientMap, Posterize, Threshold, ToneChannel, ToneCurves,
+};
 pub use brush::{
     builtin_presets, builtin_tip, Brush, BrushEffect, BrushMappedPixel, BrushPixel, BrushPreset,
     BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics, Controls,

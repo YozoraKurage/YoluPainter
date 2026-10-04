@@ -220,7 +220,7 @@ fn adjustments() -> Document {
     let mut s = B::new();
     s.raster("bg", gradient);
     for (k, settings) in exact().into_iter().enumerate() {
-        let plain = s.adjust(&format!("plain{k}"), settings);
+        let plain = s.adjust(&format!("plain{k}"), settings.clone());
         s.opacity(plain, 160);
         s.hide_row(plain, 5, 200);
         s.raster(&format!("shape{k}"), soft);
@@ -237,13 +237,13 @@ fn groups() -> Document {
     let x = exact();
     s.raster("bg", gradient);
     let a = s.raster("a", soft);
-    let l2 = s.adjust("levels", x[1]);
+    let l2 = s.adjust("levels", x[1].clone());
     let pass = s.group("pass", &[a, l2]);
     s.opacity(pass, 190);
     s.hide_row(pass, 9, 90);
     let b = s.raster("b", soft);
-    let h = s.adjust("hue", x[2]);
-    let inv = s.adjust("invert", x[0]);
+    let h = s.adjust("hue", x[2].clone());
+    let inv = s.adjust("invert", x[0].clone());
     s.clip(inv);
     s.opacity(inv, 100);
     let iso = s.group("isolated", &[b, h, inv]);

@@ -251,7 +251,7 @@ pub(crate) fn evaluate_pixel(
         let amount = entry.opacity * stack.mask_factor(entry.layer, x, y);
         if layer.kind == LayerKind::Adjustment {
             let a = layer.adjustment.as_ref().expect("調整の層は設定を持つ");
-            result = a.composite(result, amount, entry.mode);
+            result = a.composite_in(stack.kind, result, amount, entry.mode);
             continue;
         }
         if entry.passes_through(layers) {
@@ -269,7 +269,7 @@ pub(crate) fn evaluate_pixel(
             let clip_amount = clip.opacity * stack.mask_factor(clip.layer, x, y);
             if c.kind == LayerKind::Adjustment {
                 let a = c.adjustment.as_ref().expect("調整の層は設定を持つ");
-                group = a.composite(group, clip_amount, clip.mode);
+                group = a.composite_in(stack.kind, group, clip_amount, clip.mode);
             } else {
                 let over = if c.is_group() {
                     evaluate_pixel(stack, &clip.children, Rgba8::TRANSPARENT, x, y)
@@ -603,7 +603,7 @@ impl<'a> Plan<'a> {
                     .adjustment
                     .as_ref()
                     .expect("調整の層は設定を持つ")
-                    .kernel(),
+                    .kernel(stack.kind),
             ),
             LayerKind::Group => Content::Group,
         };

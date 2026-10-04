@@ -111,8 +111,55 @@ impl EffectSettings {
     pub fn generator(settings: generator::Settings) -> Self {
         Self::Generator(Box::new(settings))
     }
+    /// 色調補正の 6 種のどれかの段（`ColorAdjust` から）。
+    pub fn from_color_adjust(value: crate::ColorAdjust) -> Self {
+        match value {
+            crate::ColorAdjust::GradientMap(v) => Self::gradient_map(v),
+            crate::ColorAdjust::ToneCurve(v) => Self::tone_curve(v),
+            crate::ColorAdjust::ColorBalance(v) => Self::color_balance(v),
+            crate::ColorAdjust::BrightnessContrast(v) => Self::brightness_contrast(v),
+            crate::ColorAdjust::Threshold(v) => Self::threshold(v),
+            crate::ColorAdjust::Posterize(v) => Self::posterize(v),
+        }
+    }
+    /// 色調補正の段なら、その値。ほかの段は None。
+    pub fn color_adjust(&self) -> Option<crate::ColorAdjust> {
+        use crate::ColorAdjust as C;
+        let Self::Filter(f) = self else { return None };
+        Some(match f {
+            filter::Settings::GradientMap(v) => C::GradientMap(v.clone()),
+            filter::Settings::ToneCurve(v) => C::ToneCurve(v.clone()),
+            filter::Settings::ColorBalance(v) => C::ColorBalance(*v),
+            filter::Settings::BrightnessContrast(v) => C::BrightnessContrast(v.clone()),
+            filter::Settings::Threshold(v) => C::Threshold(*v),
+            filter::Settings::Posterize(v) => C::Posterize(*v),
+            _ => return None,
+        })
+    }
+    /// グラデーションマップ（色のチャンネルだけ。Rust 版だけの種類）。
+    pub fn gradient_map(map: crate::GradientMap) -> Self {
+        Self::Filter(filter::Settings::GradientMap(map))
+    }
+    /// トーンカーブ（スカラーでは RGB 全体の曲線だけ。Rust 版だけの種類）。
+    pub fn tone_curve(curves: crate::ToneCurves) -> Self {
+        Self::Filter(filter::Settings::ToneCurve(curves))
+    }
+    /// カラーバランス（色のチャンネルだけ。Rust 版だけの種類）。
+    pub fn color_balance(balance: crate::ColorBalance) -> Self {
+        Self::Filter(filter::Settings::ColorBalance(balance))
+    }
+    pub fn brightness_contrast(value: crate::BrightnessContrast) -> Self {
+        Self::Filter(filter::Settings::BrightnessContrast(value))
+    }
+    pub fn threshold(value: crate::Threshold) -> Self {
+        Self::Filter(filter::Settings::Threshold(value))
+    }
+    pub fn posterize(value: crate::Posterize) -> Self {
+        Self::Filter(filter::Settings::Posterize(value))
+    }
 
-    /// 保存形式の段の種類の番号（ぼかし 0・シャープ 1・ノイズ 2・レベル補正 3・反転 4・正規化 5・Generator 6）。
+    /// 保存形式の段の種類の番号（ぼかし 0・シャープ 1・ノイズ 2・レベル補正 3・反転 4・正規化 5・Generator 6。Rust 版だけの種類は 64 から:
+    /// グラデーションマップ 64・トーンカーブ 65・カラーバランス 66・明るさ/コントラスト 67・2 値化 68・ポスタリゼーション 69）。
     pub fn type_index(&self) -> i32 {
         match self {
             Self::Filter(filter::Settings::GaussianBlur { .. }) => 0,
@@ -121,6 +168,12 @@ impl EffectSettings {
             Self::Filter(filter::Settings::Levels { .. }) => 3,
             Self::Filter(filter::Settings::Invert) => 4,
             Self::Filter(filter::Settings::Normalize) => 5,
+            Self::Filter(filter::Settings::GradientMap(_)) => 64,
+            Self::Filter(filter::Settings::ToneCurve(_)) => 65,
+            Self::Filter(filter::Settings::ColorBalance(_)) => 66,
+            Self::Filter(filter::Settings::BrightnessContrast(_)) => 67,
+            Self::Filter(filter::Settings::Threshold(_)) => 68,
+            Self::Filter(filter::Settings::Posterize(_)) => 69,
             // 評価器の中の Generator の段（slot と合成）は文書では Generator として持つので、ここへは来ない
             Self::Filter(filter::Settings::Generator { .. }) | Self::Generator(_) => 6,
         }
@@ -210,6 +263,12 @@ impl EffectSettings {
                 filter::Settings::Levels { .. } => "レベル補正",
                 filter::Settings::Invert => "反転",
                 filter::Settings::Normalize => "正規化",
+                filter::Settings::GradientMap(_) => "グラデーションマップ",
+                filter::Settings::ToneCurve(_) => "トーンカーブ",
+                filter::Settings::ColorBalance(_) => "カラーバランス",
+                filter::Settings::BrightnessContrast(_) => "明るさ・コントラスト",
+                filter::Settings::Threshold(_) => "2 値化",
+                filter::Settings::Posterize(_) => "ポスタリゼーション",
                 filter::Settings::Generator { .. } => "Generator",
             },
             Self::Generator(g) => generator_kind_name(g.kind),

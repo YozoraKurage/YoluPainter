@@ -229,6 +229,8 @@ pub struct Plan<'a> {
     layers: &'a [Layer<'a>],
     entries: Vec<Entry>,
     dimensions: (u32, u32),
+    /// 評価するチャンネルの種類（トーンカーブの調整が色とスカラーで変わる）。
+    kind: ChannelKind,
 }
 impl<'a> Plan<'a> {
     pub fn new(
@@ -275,6 +277,7 @@ impl<'a> Plan<'a> {
             layers,
             entries: vec![],
             dimensions,
+            kind,
         };
         let mut path = vec![host];
         let mut current = layers[host].parent;
@@ -309,7 +312,7 @@ impl<'a> Plan<'a> {
             if !l.enabled {
                 return None;
             }
-            if let Content::Adjustment(a) = l.content {
+            if let Content::Adjustment(a) = &l.content {
                 if !a.applies_to(kind) {
                     return None;
                 }
@@ -383,8 +386,8 @@ impl<'a> Plan<'a> {
         for e in entries {
             let l = &self.layers[e.layer];
             let amount = self.amount(e.layer, x, y);
-            if let Content::Adjustment(a) = l.content {
-                below = a.composite(below, amount, l.blend);
+            if let Content::Adjustment(a) = &l.content {
+                below = a.composite_in(self.kind, below, amount, l.blend);
                 continue;
             }
             if matches!(l.content, Content::Group)
@@ -398,8 +401,8 @@ impl<'a> Plan<'a> {
             for clip in &e.clips {
                 let l = &self.layers[clip.layer];
                 let a = self.amount(clip.layer, x, y);
-                group = if let Content::Adjustment(adj) = l.content {
-                    adj.composite(group, a, l.blend)
+                group = if let Content::Adjustment(adj) = &l.content {
+                    adj.composite_in(self.kind, group, a, l.blend)
                 } else {
                     blend::clip_onto(group, self.raw(clip, x, y), a, l.blend)
                 };

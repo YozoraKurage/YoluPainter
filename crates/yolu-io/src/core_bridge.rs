@@ -3,19 +3,24 @@
 //! チャンネルごとの有効と合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
-use crate::native::{PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
+use crate::native::{
+    ADJUST_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+};
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
 };
 use std::collections::HashMap;
+use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
-use yolu_core::generator::{self, anchor, ColorStop, CurvePoint, MapKind, OpacityStop, Ramp};
+use yolu_core::generator::{self, anchor, ColorStop, MapKind, OpacityStop, Ramp};
 use yolu_core::paths;
 use yolu_core::{
-    AdjustmentSettings, AnchorId, AnchorPlacement, BlendMode, BrushSettings, Channel, ChannelBlend,
-    ChannelInfo, ChannelKind, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
-    FilterSpec, FilterTarget, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks, LayerPath,
-    NormalSettings, NormalYDirection, Rgba8, TileCoord,
+    AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
+    BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
+    ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
+    FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks,
+    LayerPath, NormalSettings, NormalYDirection, Posterize, Rgba8, Threshold, TileCoord,
+    ToneChannel, ToneCurves,
 };
 
 fn core_id(mut guid: [u8; 16]) -> u128 {
@@ -356,8 +361,11 @@ impl NativeDocument {
             .into_iter()
             .filter(|c| !c.is_standard())
             .collect();
-        // 版は使う機能で決まる: Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どちらも無ければ Unity 版と同じ 21
-        let version = if uses_rust_only_generators(doc) {
+        // 版は使う機能で決まる: Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、
+        // ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21
+        let version = if uses_rust_only_adjustments(doc) {
+            ADJUST_VERSION
+        } else if uses_rust_only_generators(doc) {
             PROCEDURAL_VERSION
         } else if user.is_empty() {
             UNITY_NATIVE_VERSION
@@ -417,6 +425,17 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
             })
     })
 }
+/// 文書が Rust 版だけの色調補正（調整の層の種類 64〜69、層の内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
+/// 持っていれば正本の版は 24 になり、Unity 版は開けない。
+pub(crate) fn uses_rust_only_adjustments(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.adjustment().is_some_and(|a| a.kind().is_rust_only())
+            || l.filters()
+                .iter()
+                .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+                .any(|e| e.settings().color_adjust().is_some())
+    })
+}
 /// 1 つの層を core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
 /// 付けるロック（属性の印のビット 1 が立っていれば、直後の int）。
 fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
@@ -451,7 +470,8 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             let settings = match f.int(&format!("{a}.type"))? {
                 0 => AdjustmentSettings::invert(),
                 1 => AdjustmentSettings::levels(v(0)?, v(1)?, v(2)?, v(3)?, v(4)?)?,
-                _ => AdjustmentSettings::hue_saturation(v(5)?, v(6)?, v(7)?)?,
+                2 => AdjustmentSettings::hue_saturation(v(5)?, v(6)?, v(7)?)?,
+                t => read_color_adjust(f, &format!("{a}.detail"), t)?.into_settings(),
             };
             let targets = (0..f.int(&format!("{a}.channel_count"))?)
                 .map(|k| f.channel(&format!("{a}.channels[{k}].channel")))
@@ -944,6 +964,72 @@ fn map_kind(index: i32) -> Option<MapKind> {
     .copied()
 }
 
+/// 値のカーブ（`{p}_count` と `{p}[i].x・y`。`write_curve` と対）。
+fn read_curve(f: &Fields<'_>, p: &str) -> Result<Curve> {
+    let mut points = Vec::new();
+    for k in 0..f.int(&format!("{p}_count"))? {
+        let c = format!("{p}[{k}]");
+        points.push(CurvePoint {
+            x: f.float(&format!("{c}.x"))?,
+            y: f.float(&format!("{c}.y"))?,
+        });
+    }
+    Curve::new(points).map_err(|e| Error::InvalidData(e.to_string()))
+}
+
+/// 64 からの調整・フィルターの種類の欄（正本の版 24。`write_color_adjust` と対）。知らない種類は断る。
+fn read_color_adjust(f: &Fields<'_>, p: &str, kind: i32) -> Result<ColorAdjust> {
+    let invalid = |e: yolu_core::CoreError| Error::InvalidData(e.to_string());
+    let float = |name: &str| f.float(&format!("{p}.{name}"));
+    let int = |name: &str| f.int(&format!("{p}.{name}"));
+    Ok(match AdjustmentType::from_index(i64::from(kind)) {
+        Some(AdjustmentType::GradientMap) => ColorAdjust::GradientMap(GradientMap::new(
+            read_ramp(f, &format!("{p}.ramp"))?,
+            f.boolean(&format!("{p}.reverse"))?,
+        )),
+        Some(AdjustmentType::ToneCurve) => ColorAdjust::ToneCurve(ToneCurves::new(
+            read_curve(f, &format!("{p}.composite"))?,
+            read_curve(f, &format!("{p}.red"))?,
+            read_curve(f, &format!("{p}.green"))?,
+            read_curve(f, &format!("{p}.blue"))?,
+        )),
+        Some(AdjustmentType::ColorBalance) => {
+            let mut values = [[0.0; 3]; 3];
+            for (range, name) in ["shadows", "midtones", "highlights"].iter().enumerate() {
+                for (axis, label) in ["cyan_red", "magenta_green", "yellow_blue"]
+                    .iter()
+                    .enumerate()
+                {
+                    values[range][axis] = float(&format!("{name}_{label}"))?;
+                }
+            }
+            ColorAdjust::ColorBalance(
+                ColorBalance::new(
+                    values[0],
+                    values[1],
+                    values[2],
+                    f.boolean(&format!("{p}.preserve_luminosity"))?,
+                )
+                .map_err(invalid)?,
+            )
+        }
+        Some(AdjustmentType::BrightnessContrast) => ColorAdjust::BrightnessContrast(
+            BrightnessContrast::new(float("brightness")?, float("contrast")?).map_err(invalid)?,
+        ),
+        Some(AdjustmentType::Threshold) => ColorAdjust::Threshold(
+            Threshold::new(u32::try_from(int("level")?).unwrap_or(0)).map_err(invalid)?,
+        ),
+        Some(AdjustmentType::Posterize) => ColorAdjust::Posterize(
+            Posterize::new(u32::try_from(int("levels")?).unwrap_or(0)).map_err(invalid)?,
+        ),
+        _ => {
+            return Err(Error::InvalidData(format!(
+                "{p} の種類 {kind} は色調補正ではありません"
+            )))
+        }
+    })
+}
+
 fn read_ramp(f: &Fields<'_>, p: &str) -> Result<Ramp> {
     let mut colors = Vec::new();
     for k in 0..f.int(&format!("{p}.colors_count"))? {
@@ -1004,7 +1090,12 @@ fn read_filters(f: &Fields<'_>, p: &str, content: bool) -> Result<Vec<FilterSpec
             ),
             4 => EffectSettings::invert(),
             5 => EffectSettings::normalize(),
-            _ => EffectSettings::generator(read_generator(f, &format!("{item}.generator"))?),
+            6 => EffectSettings::generator(read_generator(f, &format!("{item}.generator"))?),
+            t => EffectSettings::from_color_adjust(read_color_adjust(
+                f,
+                &format!("{item}.adjust"),
+                t,
+            )?),
         };
         let channels = if content {
             let mut list = Vec::new();
@@ -1160,6 +1251,10 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
         ] {
             w.float(v)?;
         }
+        // 64 からの種類（正本の版 24）は、8 つの値を既定のまま書いたあとに種類ごとの欄が続く
+        if let Some(detail) = a.color_adjust() {
+            write_color_adjust(w, &detail)?;
+        }
         let enabled = layer.enabled_channels();
         w.int(enabled.len() as i32)?;
         for c in enabled {
@@ -1291,23 +1386,7 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
             w.float(v)?;
         }
         if let Some(r) = &g.ramp {
-            w.int(r.colors().len() as i32)?;
-            for c in r.colors() {
-                w.float(c.position)?;
-                w.raw(&[c.color.r, c.color.g, c.color.b])?;
-                w.float(c.midpoint)?;
-            }
-            w.int(r.opacities().len() as i32)?;
-            for o in r.opacities() {
-                w.float(o.position)?;
-                w.float(o.opacity)?;
-                w.float(o.midpoint)?;
-            }
-            w.int(r.curve().len() as i32)?;
-            for c in r.curve() {
-                w.float(c.x)?;
-                w.float(c.y)?;
-            }
+            write_ramp(w, r)?;
         }
     }
     if g.kind == generator::Kind::IdColor {
@@ -1343,6 +1422,70 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
         } else {
             w.int(p.preset as i32)?;
         }
+    }
+    Ok(())
+}
+
+/// ランプ（色の分岐点・不透明度の分岐点・値のカーブ。`read_ramp` と対）。
+fn write_ramp(w: &mut Out, r: &Ramp) -> Result<()> {
+    w.int(r.colors().len() as i32)?;
+    for c in r.colors() {
+        w.float(c.position)?;
+        w.raw(&[c.color.r, c.color.g, c.color.b])?;
+        w.float(c.midpoint)?;
+    }
+    w.int(r.opacities().len() as i32)?;
+    for o in r.opacities() {
+        w.float(o.position)?;
+        w.float(o.opacity)?;
+        w.float(o.midpoint)?;
+    }
+    write_curve(w, r.value_curve())
+}
+/// 値のカーブ（点の数と x・y。`read_curve` と対）。
+fn write_curve(w: &mut Out, curve: &Curve) -> Result<()> {
+    w.int(curve.points().len() as i32)?;
+    for c in curve.points() {
+        w.float(c.x)?;
+        w.float(c.y)?;
+    }
+    Ok(())
+}
+/// 64 からの調整・フィルターの種類の欄（正本の版 24。`read_color_adjust` と対）。
+fn write_color_adjust(w: &mut Out, value: &ColorAdjust) -> Result<()> {
+    match value {
+        ColorAdjust::GradientMap(v) => {
+            w.boolean(v.reverse())?;
+            write_ramp(w, v.ramp())?;
+        }
+        ColorAdjust::ToneCurve(v) => {
+            for channel in [
+                ToneChannel::Composite,
+                ToneChannel::Red,
+                ToneChannel::Green,
+                ToneChannel::Blue,
+            ] {
+                write_curve(w, v.curve(channel))?;
+            }
+        }
+        ColorAdjust::ColorBalance(v) => {
+            for range in [
+                BalanceRange::Shadows,
+                BalanceRange::Midtones,
+                BalanceRange::Highlights,
+            ] {
+                for value in v.values(range) {
+                    w.float(value)?;
+                }
+            }
+            w.boolean(v.preserve_luminosity())?;
+        }
+        ColorAdjust::BrightnessContrast(v) => {
+            w.float(v.brightness())?;
+            w.float(v.contrast())?;
+        }
+        ColorAdjust::Threshold(v) => w.int(v.level() as i32)?,
+        ColorAdjust::Posterize(v) => w.int(v.levels() as i32)?,
     }
     Ok(())
 }
@@ -1408,6 +1551,9 @@ fn write_filters(w: &mut Out, stack: &[FilterEffect], content: bool) -> Result<(
         }
         if let EffectSettings::Generator(g) = e.settings() {
             write_generator(w, g)?;
+        }
+        if let Some(detail) = e.settings().color_adjust() {
+            write_color_adjust(w, &detail)?;
         }
     }
     Ok(())

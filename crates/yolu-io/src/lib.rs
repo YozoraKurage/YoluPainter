@@ -13,8 +13,8 @@ pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use native::{
-    NativeDocument, NativeField, NativeValue, MAX_NATIVE_VERSION, PROCEDURAL_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION,
+    PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,

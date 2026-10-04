@@ -174,6 +174,53 @@ pub enum Adjustment {
         saturation: i16,
         lightness: i16,
     },
+    /// グラデーションマップ（`grdm`）。色の分岐点と不透明度の分岐点は位置の昇順で、それぞれ 2〜32 個。
+    GradientMap {
+        reverse: bool,
+        colors: Vec<GradientColorStop>,
+        opacities: Vec<GradientOpacityStop>,
+    },
+    /// トーンカーブ（`curv`）。合成（RGB 全体）と R・G・B の曲線で、点は [入力, 出力]（0〜255 の整数、入力は昇順、2〜19 点）。
+    ToneCurve {
+        composite: Vec<[u8; 2]>,
+        red: Vec<[u8; 2]>,
+        green: Vec<[u8; 2]>,
+        blue: Vec<[u8; 2]>,
+    },
+    /// カラーバランス（`blnc`）。範囲ごとの [シアン/レッド, マゼンタ/グリーン, イエロー/ブルー]（−100〜100）と輝度を保つ。
+    ColorBalance {
+        shadows: [i16; 3],
+        midtones: [i16; 3],
+        highlights: [i16; 3],
+        preserve_luminosity: bool,
+    },
+    /// 明るさ・コントラスト（`brit`。旧式の記録）。明るさ −150〜150・コントラスト −100〜100。
+    BrightnessContrast {
+        brightness: i16,
+        contrast: i16,
+    },
+    /// 2 値化（`thrs`）。しきい値 1〜255。
+    Threshold {
+        level: u16,
+    },
+    /// ポスタリゼーション（`post`）。階調 2〜255。
+    Posterize {
+        levels: u16,
+    },
+}
+/// グラデーションマップの色の分岐点（位置は 0〜4096、中点は % で 0〜100、色は 8 bit）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GradientColorStop {
+    pub location: u16,
+    pub midpoint: u8,
+    pub rgb: [u8; 3],
+}
+/// グラデーションマップの不透明度の分岐点（位置は 0〜4096、中点は % で 0〜100、不透明度は 0〜255）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GradientOpacityStop {
+    pub location: u16,
+    pub midpoint: u8,
+    pub opacity: u8,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mask {

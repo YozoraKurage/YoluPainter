@@ -813,10 +813,11 @@ impl Document {
             Property::MaskInverted(_) => Property::MaskInverted(Self::mask_of(layer)?.inverted),
             Property::MaskDensity(_) => Property::MaskDensity(Self::mask_of(layer)?.density),
             Property::Adjustment(_) => Property::Adjustment(
-                *layer
+                layer
                     .adjustment
                     .as_ref()
-                    .ok_or(CoreError::Unsupported("調整の層だけが調整の設定を持つ"))?,
+                    .ok_or(CoreError::Unsupported("調整の層だけが調整の設定を持つ"))?
+                    .clone(),
             ),
             Property::ChannelBlend(c, _) => Property::ChannelBlend(*c, layer.channel_blend(*c)),
         };
@@ -825,6 +826,7 @@ impl Document {
         }
         let cost = match (&old, &new) {
             (Property::Name(a), Property::Name(b)) => 64 + 2 * (utf16_len(a) + utf16_len(b)),
+            (Property::Adjustment(a), Property::Adjustment(b)) => a.byte_size() + b.byte_size(),
             (Property::Adjustment(_), _) => 128,
             _ => 64,
         };
@@ -2186,6 +2188,27 @@ impl Document {
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         composite::composite_into(&stack, self.tile_size, rect, out, order);
         Ok(())
+    }
+
+    /// 層 `id` より下の合成（その層と上の層は入れない。調整の層の入力の見積りに使う）。straight RGBA8、行は下から上。
+    /// 層の並びの前の部分だけで合成するので、入れ子の層は、親のグループがその層より前にある並びの範囲で合成する。
+    pub fn composite_below(
+        &self,
+        id: LayerId,
+        channel: Channel,
+        rect: Rect,
+    ) -> Result<Vec<u8>, CoreError> {
+        self.check_rect(rect)?;
+        let index = self.index_of(id)?;
+        let kind = self.channel_kind(channel)?;
+        let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
+        if rect.is_empty() {
+            return Ok(out);
+        }
+        let eval = self.evaluate_for_composite(channel, kind, rect, None)?;
+        let stack = Stack::new(&self.layers[..index], channel, kind, Some(&eval));
+        composite::composite_into(&stack, self.tile_size, rect, &mut out, RowOrder::BottomUp);
+        Ok(out)
     }
 
     /// 1 画素の合成（参照の式。画素ごとに層を引くので遅い。試験・スポイト向け）。

@@ -365,7 +365,7 @@ fn adjustment_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let Some(a) = app.doc.layer(id).and_then(|l| l.adjustment().copied()) else {
+    let Some(a) = app.doc.layer(id).and_then(|l| l.adjustment().cloned()) else {
         return;
     };
     let kind = AdjustmentKind::of(&a);
@@ -401,8 +401,34 @@ fn adjustment_section(
         });
     let why = reason.as_deref();
     let mut next: Option<Result<AdjustmentSettings, crate::engine::CoreError>> = None;
+    // 1 回の操作で決まる変更（曲線・分岐点・切り替え）は、まとめずに独立の 1 回の取り消しにする
+    let mut discrete = false;
     match a.kind() {
         AdjustmentType::Invert => {}
+        AdjustmentType::GradientMap
+        | AdjustmentType::ToneCurve
+        | AdjustmentType::ColorBalance
+        | AdjustmentType::BrightnessContrast
+        | AdjustmentType::Threshold
+        | AdjustmentType::Posterize => {
+            if let Some(value) = a.color_adjust() {
+                let histogram = (a.kind() == AdjustmentType::ToneCurve)
+                    .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
+                    .flatten();
+                let params = super::color_adjust::Params {
+                    key: ("adjustment", id.0),
+                    enabled,
+                    why,
+                    paint: app.color.main,
+                    lang,
+                    histogram: histogram.as_deref(),
+                };
+                if let Some(change) = super::color_adjust::rows(ui, rows, &params, &value) {
+                    discrete = change.discrete;
+                    next = Some(Ok(change.value.into_settings()));
+                }
+            }
+        }
         AdjustmentType::Levels => {
             let (mut ib, mut iw, mut gamma, mut ob, mut ow) = (
                 a.input_black() as f32,
@@ -552,7 +578,12 @@ fn adjustment_section(
         }
     }
     match next {
-        Some(Ok(settings)) if settings != a => edit(app, Edit::Adjust { id, settings }),
+        Some(Ok(settings)) if settings != a => {
+            edit(app, Edit::Adjust { id, settings });
+            if discrete {
+                app.m2_end_drag();
+            }
+        }
         Some(Err(e)) => app.message = app.lang.core_error(&e),
         _ => {}
     }

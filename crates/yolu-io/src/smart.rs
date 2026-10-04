@@ -17,6 +17,8 @@ pub const REFUSAL_GENERATORS: &str = "Generator の再固定を持つ素材は�
 pub const REFUSAL_USER_CHANNELS: &str = ".ylsmart 形式1は標準チャンネルだけです";
 pub const REFUSAL_RUST_GENERATORS: &str =
     ".ylsmart 形式1は Unity 版にもある Generator の種類だけです（ノイズ・グランジは入れられません）";
+pub const REFUSAL_RUST_ADJUSTMENTS: &str =
+    ".ylsmart 形式1は Unity 版にもある調整・フィルターの種類だけです（グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーションは入れられません）";
 const MIME: &str = "application/x-yolupainter-smart";
 const PREFIX: &str = "YOLUPAINTER-SMART-";
 #[derive(Clone, Debug)]
@@ -114,6 +116,11 @@ impl SmartFile {
         check(
             !crate::core_bridge::uses_rust_only_generators(&doc),
             REFUSAL_RUST_GENERATORS,
+        )?;
+        // 色調補正の 6 種（Rust 版だけの種類）は正本の版 24 になり、Unity 版が読めない
+        check(
+            !crate::core_bridge::uses_rust_only_adjustments(&doc),
+            REFUSAL_RUST_ADJUSTMENTS,
         )?;
         let native = NativeDocument::from_core(&doc)?;
         let names = [

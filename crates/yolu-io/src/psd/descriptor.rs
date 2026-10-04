@@ -4,7 +4,14 @@ use crate::{check, check_budget, Error, Result};
 enum Value {
     Object(Vec<u8>, Vec<(Vec<u8>, Value)>),
     Number(f64),
+    Bool(bool),
     Other,
+}
+/// 平らな記述子の 1 つの値（数か真偽）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Scalar {
+    Number(f64),
+    Bool(bool),
 }
 fn count(r: &mut Reader) -> Result<usize> {
     let n = r.u32()? as usize;
@@ -64,9 +71,7 @@ fn value(r: &mut Reader, t: [u8; 4], depth: usize) -> Result<Value> {
                 value(r, t, depth + 1)?;
             }
         }
-        b"bool" => {
-            r.u8()?;
-        }
+        b"bool" => return Ok(Value::Bool(r.u8()? != 0)),
         b"TEXT" => name(r)?,
         b"enum" => {
             key(r)?;
@@ -142,4 +147,23 @@ pub(super) fn color(r: &mut Reader) -> Result<[f64; 3]> {
         rgb[i] = *v
     }
     Ok(rgb)
+}
+/// 平らな記述子の項目の並び（キーと値）。
+pub(super) type FlatItems = Vec<(Vec<u8>, Scalar)>;
+/// 平らな ActionDescriptor（項目が数と真偽だけ）。項目の並びを返す。入れ子・文字列・列挙などを含むものは対応しないので None。
+/// 末尾の余白（0）以外が残っていれば壊れたデータとして断る。
+pub(super) fn flat(r: &mut Reader) -> Result<Option<FlatItems>> {
+    let root = object(r, 0)?;
+    r.zeros(r.remaining())?;
+    let Value::Object(_, items) = root else {
+        unreachable!()
+    };
+    Ok(items
+        .into_iter()
+        .map(|(k, v)| match v {
+            Value::Number(n) => Some((k, Scalar::Number(n))),
+            Value::Bool(b) => Some((k, Scalar::Bool(b))),
+            _ => None,
+        })
+        .collect())
 }

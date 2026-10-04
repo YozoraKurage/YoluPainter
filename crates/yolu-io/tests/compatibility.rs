@@ -259,12 +259,12 @@ fn fill_layers_with_a_disabled_channel_and_a_mask_survive_save_and_restore() {
 fn adjustments_survive_save_and_restore_and_version_3_reads() {
     let mut d = one_pixel("base", Rgba8::new(100, 100, 100, 255));
     let hsl = AdjustmentSettings::hue_saturation(-45.0, 0.3, -0.2).unwrap();
-    let hsl_layer = d.add_adjustment_layer("HSL", hsl, None, None).unwrap();
+    let hsl_layer = d.add_adjustment_layer("HSL", hsl.clone(), None, None).unwrap();
     d.set_channel_enabled(hsl_layer, Channel::Emission, false)
         .unwrap();
     let levels = AdjustmentSettings::levels(0.1, 0.9, 2.5, 0.2, 0.8).unwrap();
     let levels_layer = d
-        .add_adjustment_layer("Levels", levels, Some(&[Channel::Roughness]), None)
+        .add_adjustment_layer("Levels", levels.clone(), Some(&[Channel::Roughness]), None)
         .unwrap();
     let bytes = save(&d);
     let restored = restore(&bytes);

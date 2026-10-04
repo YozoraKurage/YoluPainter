@@ -9,9 +9,12 @@
 use super::*;
 use crate::{check, check_budget, Error, Result};
 use std::collections::{HashMap, HashSet};
+use yolu_core::curve::{Curve, CurvePoint};
+use yolu_core::generator::{ColorStop, OpacityStop, Ramp};
 use yolu_core::{
-    AdjustmentSettings, AdjustmentType, Channel, Document as CoreDocument, Layer as CoreLayer,
-    LayerId, LayerKind as CoreKind, LayerLocks, RasterMask, Rgba8, TileCoord,
+    AdjustmentSettings, AdjustmentType, BrightnessContrast, Channel, ColorBalance,
+    Document as CoreDocument, GradientMap, Layer as CoreLayer, LayerId, LayerKind as CoreKind,
+    LayerLocks, Posterize, RasterMask, Rgba8, Threshold, TileCoord, ToneChannel, ToneCurves,
 };
 
 /// PSD の画素の予算（C# と同じ。マスクは画布 1 枚ぶんを数える）。
@@ -100,13 +103,116 @@ fn psd_adjustment(s: &AdjustmentSettings) -> std::result::Result<Adjustment, Ref
                 lightness: lightness as i16,
             })
         }
+        AdjustmentType::GradientMap => psd_gradient_map(
+            s.gradient_map_value()
+                .expect("グラデーションマップは値を持つ"),
+        ),
+        AdjustmentType::ToneCurve => {
+            let curves = s.tone_curve_value().expect("トーンカーブは値を持つ");
+            let points = |channel: ToneChannel| -> std::result::Result<Vec<[u8; 2]>, Refusal> {
+                curves
+                    .curve(channel)
+                    .points()
+                    .iter()
+                    .map(|p| match (whole(p.x * 255.0), whole(p.y * 255.0)) {
+                        (Some(x), Some(y)) => Ok([x as u8, y as u8]),
+                        _ => Err(Refusal::ToneCurveBetweenSteps),
+                    })
+                    .collect()
+            };
+            Ok(Adjustment::ToneCurve {
+                composite: points(ToneChannel::Composite)?,
+                red: points(ToneChannel::Red)?,
+                green: points(ToneChannel::Green)?,
+                blue: points(ToneChannel::Blue)?,
+            })
+        }
+        AdjustmentType::ColorBalance => {
+            let v = s.color_balance_value().expect("カラーバランスは値を持つ");
+            let mut ranges = [[0i16; 3]; 3];
+            for (range, which) in yolu_core::BalanceRange::ALL.into_iter().enumerate() {
+                for (axis, value) in v.values(which).into_iter().enumerate() {
+                    ranges[range][axis] =
+                        whole(value).ok_or(Refusal::ColorBalanceBetweenSteps)? as i16;
+                }
+            }
+            Ok(Adjustment::ColorBalance {
+                shadows: ranges[0],
+                midtones: ranges[1],
+                highlights: ranges[2],
+                preserve_luminosity: v.preserve_luminosity(),
+            })
+        }
+        AdjustmentType::BrightnessContrast => {
+            let v = s
+                .brightness_contrast_value()
+                .expect("明るさ・コントラストは値を持つ");
+            let (Some(brightness), Some(contrast)) = (whole(v.brightness()), whole(v.contrast()))
+            else {
+                return Err(Refusal::BrightnessContrastBetweenSteps);
+            };
+            Ok(Adjustment::BrightnessContrast {
+                brightness: brightness as i16,
+                contrast: contrast as i16,
+            })
+        }
+        AdjustmentType::Threshold => Ok(Adjustment::Threshold {
+            level: s.threshold_value().expect("2 値化は値を持つ").level() as u16,
+        }),
+        AdjustmentType::Posterize => Ok(Adjustment::Posterize {
+            levels: s
+                .posterize_value()
+                .expect("ポスタリゼーションは値を持つ")
+                .levels() as u16,
+        }),
     }
 }
+/// グラデーションマップを PSD の刻み（位置 0〜4096・中点 %・不透明度 0〜255）へ。値のカーブが直線でないもの・刻みの間は断る。
+/// 最後の分岐点の中点は使われないので 50 で書く。
+fn psd_gradient_map(g: &GradientMap) -> std::result::Result<Adjustment, Refusal> {
+    let ramp = g.ramp();
+    if !ramp.value_curve().is_identity() {
+        return Err(Refusal::GradientMapCurve);
+    }
+    let step = |position: f64, midpoint: f64, last: bool| -> Option<(u16, u8)> {
+        let location = whole(position * 4096.0)?;
+        let mid = if last { 50 } else { whole(midpoint * 100.0)? };
+        ((0..=4096).contains(&location) && (1..=99).contains(&mid))
+            .then_some((location as u16, mid as u8))
+    };
+    let mut colors = Vec::new();
+    for (i, c) in ramp.colors().iter().enumerate() {
+        let (location, midpoint) = step(c.position, c.midpoint, i + 1 == ramp.colors().len())
+            .ok_or(Refusal::GradientMapBetweenSteps)?;
+        colors.push(GradientColorStop {
+            location,
+            midpoint,
+            rgb: [c.color.r, c.color.g, c.color.b],
+        });
+    }
+    let mut opacities = Vec::new();
+    for (i, o) in ramp.opacities().iter().enumerate() {
+        let (location, midpoint) = step(o.position, o.midpoint, i + 1 == ramp.opacities().len())
+            .ok_or(Refusal::GradientMapBetweenSteps)?;
+        let opacity = whole(o.opacity * 255.0).ok_or(Refusal::GradientMapBetweenSteps)?;
+        opacities.push(GradientOpacityStop {
+            location,
+            midpoint,
+            opacity: opacity as u8,
+        });
+    }
+    Ok(Adjustment::GradientMap {
+        reverse: g.reverse(),
+        colors,
+        opacities,
+    })
+}
 /// PSD の調整を core の設定へ（C# の取り込みと同じ割り算。刻みの整数をそのまま写す）。
-fn core_adjustment(a: &Adjustment) -> Result<AdjustmentSettings> {
-    Ok(match *a {
+pub(super) fn core_adjustment(a: &Adjustment) -> Result<AdjustmentSettings> {
+    let invalid = |e: yolu_core::CoreError| Error::InvalidData(e.to_string());
+    Ok(match a {
         Adjustment::Invert => AdjustmentSettings::invert(),
-        Adjustment::Levels {
+        &Adjustment::Levels {
             input_black,
             input_white,
             output_black,
@@ -119,7 +225,7 @@ fn core_adjustment(a: &Adjustment) -> Result<AdjustmentSettings> {
             f64::from(output_black) / 255.0,
             f64::from(output_white) / 255.0,
         )?,
-        Adjustment::HueSaturation {
+        &Adjustment::HueSaturation {
             hue,
             saturation,
             lightness,
@@ -128,6 +234,82 @@ fn core_adjustment(a: &Adjustment) -> Result<AdjustmentSettings> {
             f64::from(saturation) / 100.0,
             f64::from(lightness) / 100.0,
         )?,
+        Adjustment::GradientMap {
+            reverse,
+            colors,
+            opacities,
+        } => {
+            let ramp = Ramp::new(
+                colors
+                    .iter()
+                    .map(|c| ColorStop {
+                        position: f64::from(c.location) / 4096.0,
+                        color: Rgba8::new(c.rgb[0], c.rgb[1], c.rgb[2], 255),
+                        midpoint: f64::from(c.midpoint) / 100.0,
+                    })
+                    .collect(),
+                opacities
+                    .iter()
+                    .map(|o| OpacityStop {
+                        position: f64::from(o.location) / 4096.0,
+                        opacity: f64::from(o.opacity) / 255.0,
+                        midpoint: f64::from(o.midpoint) / 100.0,
+                    })
+                    .collect(),
+                None,
+            )
+            .map_err(|e| Error::InvalidData(e.to_string()))?;
+            AdjustmentSettings::gradient_map(GradientMap::new(ramp, *reverse))
+        }
+        Adjustment::ToneCurve {
+            composite,
+            red,
+            green,
+            blue,
+        } => {
+            let curve = |points: &Vec<[u8; 2]>| {
+                Curve::new(
+                    points
+                        .iter()
+                        .map(|p| CurvePoint {
+                            x: f64::from(p[0]) / 255.0,
+                            y: f64::from(p[1]) / 255.0,
+                        })
+                        .collect(),
+                )
+                .map_err(|e| Error::InvalidData(e.to_string()))
+            };
+            AdjustmentSettings::tone_curve(ToneCurves::new(
+                curve(composite)?,
+                curve(red)?,
+                curve(green)?,
+                curve(blue)?,
+            ))
+        }
+        Adjustment::ColorBalance {
+            shadows,
+            midtones,
+            highlights,
+            preserve_luminosity,
+        } => {
+            let f = |v: &[i16; 3]| v.map(f64::from);
+            AdjustmentSettings::color_balance(
+                ColorBalance::new(f(shadows), f(midtones), f(highlights), *preserve_luminosity)
+                    .map_err(invalid)?,
+            )
+        }
+        &Adjustment::BrightnessContrast {
+            brightness,
+            contrast,
+        } => AdjustmentSettings::brightness_contrast(
+            BrightnessContrast::new(f64::from(brightness), f64::from(contrast)).map_err(invalid)?,
+        ),
+        &Adjustment::Threshold { level } => {
+            AdjustmentSettings::threshold(Threshold::new(u32::from(level)).map_err(invalid)?)
+        }
+        &Adjustment::Posterize { levels } => {
+            AdjustmentSettings::posterize(Posterize::new(u32::from(levels)).map_err(invalid)?)
+        }
     })
 }
 /// 層の Color での合成モードと不透明度（チャンネルごとの設定があればそれ）。PSD の層は 1 組しか持てないので、これを書く。
@@ -163,6 +345,16 @@ pub enum Refusal {
     LevelsRange,
     /// 色相・彩度が PSD の刻み（1 度・1%）の間にある。
     HueSaturationBetweenSteps,
+    /// グラデーションマップの位置・中点・不透明度が PSD の刻み（位置 1/4096・中点 1%・不透明度 1/255）の間にある。
+    GradientMapBetweenSteps,
+    /// グラデーションマップのランプに値のカーブがある（PSD のグラデーションに形が無い）。
+    GradientMapCurve,
+    /// トーンカーブの点が PSD の刻み（入力・出力とも 1/255）の間にある。
+    ToneCurveBetweenSteps,
+    /// カラーバランスのスライダーが PSD の刻み（整数）の間にある。
+    ColorBalanceBetweenSteps,
+    /// 明るさ・コントラストが PSD の刻み（整数）の間にある。
+    BrightnessContrastBetweenSteps,
     /// 層かマスクのフィルター・Generator（効いていない段・無効の段も。設定が PSD に残らず、層の画素と統合画像が食い違う）。
     Effects,
     /// Anchor（PSD に形が無い）。
@@ -192,6 +384,11 @@ impl Blocker {
             Refusal::LevelsBetweenSteps => format!("調整「{name}」のレベル補正は PSD の刻み（0〜255 の整数・ガンマは 1/100）の間にあります。丸めて書かず断ります"),
             Refusal::LevelsRange => format!("調整「{name}」のレベル補正は PSD に書けません。入力の黒は 0〜253、入力の白はそれより上の 2〜255 です"),
             Refusal::HueSaturationBetweenSteps => format!("調整「{name}」の色相・彩度は PSD の刻み（1 度・1%）の間にあります。丸めて書かず断ります"),
+            Refusal::GradientMapBetweenSteps => format!("調整「{name}」のグラデーションマップは PSD の刻み（位置 1/4096・中点 1%・不透明度 1/255）の間にあります。丸めて書かず断ります"),
+            Refusal::GradientMapCurve => format!("調整「{name}」のグラデーションマップのランプに値のカーブがあります。PSD のグラデーションに値のカーブはないので、書かず断ります"),
+            Refusal::ToneCurveBetweenSteps => format!("調整「{name}」のトーンカーブの点は PSD の刻み（入力・出力とも 0〜255 の整数）の間にあります。丸めて書かず断ります"),
+            Refusal::ColorBalanceBetweenSteps => format!("調整「{name}」のカラーバランスは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
+            Refusal::BrightnessContrastBetweenSteps => format!("調整「{name}」の明るさ・コントラストは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
             Refusal::Effects => format!("層「{name}」にフィルターか Generator があります。効果は PSD に書けません"),
             Refusal::Anchor => format!("層「{name}」に Anchor があります。Anchor は PSD に書けません"),
             Refusal::Path => format!("層「{name}」にパスがあります。パスは PSD に書けません"),

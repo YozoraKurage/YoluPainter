@@ -13,8 +13,12 @@ pub const USER_CHANNELS_VERSION: i32 = 22;
 /// Generator の種類 64・65 とその欄が加わる。これを使う文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る
 /// （形式と決めは README の「手続き型の Generator（正本の版 23）」）。
 pub const PROCEDURAL_VERSION: i32 = 23;
+/// Rust 版だけの色調補正（調整の層とフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
+/// 2 値化・ポスタリゼーション）を足した版。版 23 の中身に、調整・フィルターの種類 64〜69 とその欄（`color_adjust` の並び）が加わる。これを使う
+/// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「色調補正（正本の版 24）」）。
+pub const ADJUST_VERSION: i32 = 24;
 /// この読み手が読める一番新しい版。
-pub const MAX_NATIVE_VERSION: i32 = PROCEDURAL_VERSION;
+pub const MAX_NATIVE_VERSION: i32 = ADJUST_VERSION;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
 /// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
@@ -509,7 +513,17 @@ fn layer(
     }
     if kind == 2 {
         r.block("adjustment", |r| {
-            let t = r.int("type", 0, 2)?;
+            let t = r.int(
+                "type",
+                0,
+                if v >= ADJUST_VERSION {
+                    ADJUST_KIND_MAX
+                } else {
+                    2
+                },
+            )?;
+            // 3〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
+            check(!(3..ADJUST_KIND_MIN).contains(&t), "未知の調整の種類です")?;
             r.int("algorithm", 1, 1)?;
             let mut p = Vec::new();
             for k in [
@@ -535,13 +549,26 @@ fn layer(
                     "色相・彩度・明度が範囲外です",
                 )?;
             }
+            if t >= ADJUST_KIND_MIN {
+                // 64 からの種類は 8 つの値を使わない（既定のまま）。値は種類ごとの欄に続く
+                check(
+                    p == [0., 1., 1., 0., 1., 0., 0., 0.],
+                    "未使用の調整の値が変更されています",
+                )?;
+                r.block("detail", |r| color_adjust(r, t))?;
+            }
             let n = r.int("channel_count", 0, channel_total)?;
             let mut seen = HashSet::new();
             for i in 0..n {
                 r.block(&format!("channels[{i}]"), |r| {
                     let c = layer_channel(r, &mut seen, user)?;
+                    // 色だけの種類（色相/彩度・グラデーションマップ・カラーバランス）は色のチャンネルだけ。
+                    // トーンカーブ・明るさ/コントラスト・2 値化・ポスタリゼーションは法線に当てない
+                    let colour_only = matches!(t, 2 | 64 | 66);
+                    let not_normal = matches!(t, 65 | 67..=69);
                     check(
-                        t != 2 || c == 0 || c == 5 || user.get(&c) == Some(&0),
+                        (!colour_only || c == 0 || c == 5 || user.get(&c) == Some(&0))
+                            && (!not_normal || (c != 4 && user.get(&c) != Some(&2))),
                         "調整対象のチャンネルが不正です",
                     )
                 })?;
@@ -849,38 +876,89 @@ fn procedural(r: &mut Reader<'_>, t: i32) -> Result<()> {
     }
     Ok(())
 }
+/// Rust 版だけの調整・フィルターの種類の番号（グラデーションマップ 64〜ポスタリゼーション 69）。
+const ADJUST_KIND_MIN: i32 = 64;
+const ADJUST_KIND_MAX: i32 = 69;
+/// 64 からの調整・フィルターの種類ごとの欄（調整の層は `detail`、フィルターの段は `adjust` のブロックの中）。
+/// 64: 逆向き・ランプ。65: 合成・R・G・B の 4 本のカーブ。66: 範囲ごとの 3 本のスライダーと輝度を保つ。
+/// 67: 明るさ・コントラスト。68: しきい値。69: 階調。
+fn color_adjust(r: &mut Reader<'_>, t: i32) -> Result<()> {
+    match t {
+        64 => {
+            r.boolean("reverse")?;
+            r.block("ramp", ramp)?;
+        }
+        65 => {
+            for name in ["composite", "red", "green", "blue"] {
+                curve_points(r, name)?;
+            }
+        }
+        66 => {
+            for range in ["shadows", "midtones", "highlights"] {
+                for axis in ["cyan_red", "magenta_green", "yellow_blue"] {
+                    r.float(&format!("{range}_{axis}"), -100., 100.)?;
+                }
+            }
+            r.boolean("preserve_luminosity")?;
+        }
+        67 => {
+            r.float("brightness", -150., 150.)?;
+            r.float("contrast", -50., 100.)?;
+        }
+        68 => {
+            r.int("level", 1, 255)?;
+        }
+        _ => {
+            r.int("levels", 2, 255)?;
+        }
+    }
+    Ok(())
+}
+/// 値のカーブの点（数 2〜16、x は 0 から 1 まで昇順で間隔 0.02 − 1e-6 以上、y は 0〜1）。欄の名前は `{name}_count`・`{name}[i].x`・`{name}[i].y`。
+fn curve_points(r: &mut Reader<'_>, name: &str) -> Result<()> {
+    let n = r.int(&format!("{name}_count"), 2, 16)?;
+    let mut previous = -1.;
+    for i in 0..n {
+        r.block(&format!("{name}[{i}]"), |r| {
+            let p = r.unit("x")?;
+            check(
+                i == 0 || p - previous >= 0.02 - 1e-6,
+                "ランプの点が昇順でないか近すぎます",
+            )?;
+            previous = p;
+            check(
+                (i != 0 || p == 0.) && (i != n - 1 || p == 1.),
+                "カーブは0から1まで必要です",
+            )?;
+            r.unit("y")?;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
 fn ramp(r: &mut Reader<'_>) -> Result<()> {
-    for (kind, max) in [("colors", 32), ("opacities", 32), ("curve", 16)] {
+    for (kind, max) in [("colors", 32), ("opacities", 32)] {
         let n = r.int(&format!("{kind}_count"), 2, max)?;
         let mut previous = -1.;
         for i in 0..n {
             r.block(&format!("{kind}[{i}]"), |r| {
-                let p = r.unit(if kind == "curve" { "x" } else { "position" })?;
-                let gap = if kind == "curve" { 0.02 - 1e-6 } else { 0.0001 };
+                let p = r.unit("position")?;
                 check(
-                    i == 0 || p - previous >= gap,
+                    i == 0 || p - previous >= 0.0001,
                     "ランプの点が昇順でないか近すぎます",
                 )?;
                 previous = p;
-                if kind == "curve" {
-                    check(
-                        (i != 0 || p == 0.) && (i != n - 1 || p == 1.),
-                        "カーブは0から1まで必要です",
-                    )?;
-                    r.unit("y")?;
+                if kind == "colors" {
+                    r.blob("rgb", 3)?;
                 } else {
-                    if kind == "colors" {
-                        r.blob("rgb", 3)?;
-                    } else {
-                        r.unit("opacity")?;
-                    }
-                    r.float("midpoint", 0.01, 0.99)?;
+                    r.unit("opacity")?;
                 }
+                r.float("midpoint", 0.01, 0.99)?;
                 Ok(())
             })?;
         }
     }
-    Ok(())
+    curve_points(r, "curve")
 }
 fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) -> Result<()> {
     let n = r.int("count", 0, 32)?;
@@ -892,7 +970,22 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
                 ids.insert(r.id("id", false)?),
                 "フィルターIDが重複しています",
             )?;
-            let t = r.int("type", 0, if v >= 11 { 6 } else { 5 })?;
+            let t = r.int(
+                "type",
+                0,
+                if v >= ADJUST_VERSION {
+                    ADJUST_KIND_MAX
+                } else if v >= 11 {
+                    6
+                } else {
+                    5
+                },
+            )?;
+            // 7〜63 は Unity 版の将来のために空けてある（Rust 版は使わない）
+            check(
+                !(7..ADJUST_KIND_MIN).contains(&t),
+                "未知のフィルターの種類です",
+            )?;
             r.int("algorithm", 1, 1)?;
             let active = r.boolean("enabled")?;
             let strength = r.unit("strength")?;
@@ -953,6 +1046,16 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
             }
             if t == 6 {
                 r.block("generator", |r| generator(r, v, refs))?;
+            }
+            if t >= ADJUST_KIND_MIN {
+                // グラデーションマップ・カラーバランスは色のチャンネルだけ（スカラーのチャンネルとマスクには置けない）
+                if matches!(t, 64 | 66) {
+                    check(
+                        content && !channels.iter().any(|c| [1, 2, 3].contains(c)),
+                        "スカラーチャンネルとマスクに色だけの調整を適用できません",
+                    )?;
+                }
+                r.block("adjust", |r| color_adjust(r, t))?;
             }
             if active && strength > 0. {
                 for (channel, halo) in halos.iter_mut().enumerate() {

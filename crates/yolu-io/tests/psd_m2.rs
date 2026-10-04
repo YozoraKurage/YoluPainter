@@ -205,7 +205,7 @@ fn groups_fills_adjustments_masks_and_clipping_round_trip_with_the_same_composit
         .unwrap();
     let shape = raster(&mut d, "shape", soft);
     let [invert, levels, hue] = exact_adjustments();
-    let clipped = adjust(&mut d, "clipped levels", levels);
+    let clipped = adjust(&mut d, "clipped levels", levels.clone());
     d.set_layer_clipping(clipped, true).unwrap();
     d.set_layer_blend_mode(clipped, CoreBlend::Overlay).unwrap();
     let b = raster(&mut d, "b", soft);
@@ -247,7 +247,7 @@ fn every_blend_mode_on_groups_and_fills_and_adjustments_round_trips() {
         raster(&mut d, "bg", gradient);
         let f = fill(&mut d, "fill", Rgba8::new(20, 180, 90, 255));
         d.set_layer_blend_mode(f, mode).unwrap();
-        let a = adjust(&mut d, "adjust", exact_adjustments()[2]);
+        let a = adjust(&mut d, "adjust", exact_adjustments()[2].clone());
         d.set_layer_blend_mode(a, mode).unwrap();
         opacity(&mut d, a, 150);
         let inner = raster(&mut d, "inner", soft);
@@ -273,11 +273,11 @@ fn each_adjustment_round_trips_with_opacity_mask_clipping_and_hidden() {
     for settings in exact_adjustments() {
         let mut d = new_doc();
         raster(&mut d, "bg", gradient);
-        let plain = adjust(&mut d, "plain", settings);
+        let plain = adjust(&mut d, "plain", settings.clone());
         opacity(&mut d, plain, 160);
         hide_row(&mut d, plain, 5, 200);
         raster(&mut d, "shape", soft);
-        let clipped = adjust(&mut d, "clipped", settings);
+        let clipped = adjust(&mut d, "clipped", settings.clone());
         d.set_layer_clipping(clipped, true).unwrap();
         d.set_layer_blend_mode(clipped, CoreBlend::Overlay).unwrap();
         let hidden = adjust(&mut d, "hidden", AdjustmentSettings::invert());
@@ -297,7 +297,7 @@ fn an_adjustment_as_a_clip_base_keeps_the_core_rule() {
     // 調整は下地にならず、その上のクリッピングは描かれない（core の合成と PSD の参照合成が同じ）
     let mut d = new_doc();
     raster(&mut d, "bg", gradient);
-    adjust(&mut d, "base", exact_adjustments()[2]);
+    adjust(&mut d, "base", exact_adjustments()[2].clone());
     let c = raster(&mut d, "clipped to an adjustment", |_, _| {
         Rgba8::new(255, 0, 0, 255)
     });

@@ -242,10 +242,10 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
         assert!(h.query_by_label(&reason).is_none(), "{lang:?}: 注記の行は出さない");
         // 直せる: 色相のスライダーの右の方を押すと、層の値が変わる
         let id = h.state().state.selected_layer.unwrap();
-        let before = h.state().state.doc.layer(id).unwrap().adjustment().copied().unwrap();
+        let before = h.state().state.doc.layer(id).unwrap().adjustment().cloned().unwrap();
         let row = rect_of_field(&h, lang.pick("色相", "Hue"));
         click(&mut h, egui::pos2(row.left() + row.width() * 0.8, row.bottom() - 3.0));
-        let after = h.state().state.doc.layer(id).unwrap().adjustment().copied().unwrap();
+        let after = h.state().state.doc.layer(id).unwrap().adjustment().cloned().unwrap();
         assert_ne!(after.hue(), before.hue(), "{lang:?}: 描くチャンネルが違っても直せる");
         // カラーのチャンネルに戻せば、理由は出ない
         apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
