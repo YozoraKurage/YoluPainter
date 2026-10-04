@@ -46,6 +46,18 @@ impl Lang {
                     Unwritable::LayerLocks => "Layer locks cannot be saved to .ylp yet".into(),
                 },
             ),
+            // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。
+            // 別の保存がロックを持っているのは待ち、前の版の置き場とロックの場所の不具合は保存先の周りの事情
+            Error::SaveConflict(text) if text.contains("進行中") => self.pick(text.clone(), "Another save is in progress".into()),
+            Error::SaveConflict(text) if text.contains("バックアップ先がフォルダーではありません") => {
+                self.pick(text.clone(), "Backup location is not a folder".into())
+            }
+            Error::SaveConflict(text) if text.contains("バックアップ先がシンボリックリンク") => {
+                self.pick(text.clone(), "Backup location is a link".into())
+            }
+            Error::SaveConflict(text) if text.contains("ロックのファイル") => {
+                self.pick(text.clone(), "Save lock file is a link".into())
+            }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
                 format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 7）"),
@@ -556,6 +568,10 @@ mod tests {
             Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
             Error::from(CoreError::StrokeActive),
             Error::from(CoreError::SourceBudgetExceeded),
+            Error::SaveConflict("別の保存が進行中です".into()),
+            Error::SaveConflict("バックアップ先がフォルダーではありません".into()),
+            Error::SaveConflict("バックアップ先がシンボリックリンクです".into()),
+            Error::SaveConflict("ロックのファイルがシンボリックリンクです".into()),
         ];
         for lang in Lang::ALL {
             let texts: Vec<String> = errors.iter().map(|e| lang.io_error(e)).collect();
@@ -575,6 +591,50 @@ mod tests {
         assert!(Lang::En.io_error(&errors[1]).contains("limit exceeded"));
         assert!(Lang::En.io_error(&errors[2]).contains("Manual ID colors"));
         assert!(Lang::En.io_error(&errors[3]).contains("Layer locks"));
+        // 別の保存が進行中の衝突は、外で変わった衝突と日英どちらでも言い分ける
+        assert_eq!(Lang::En.io_error(&errors[9]), "Another save is in progress");
+        assert!(Lang::En.io_error(&errors[4]).contains("changed"));
+        assert!(Lang::Ja.io_error(&errors[9]).contains("進行中"));
+        // 保存先の周りの不具合は、データの不正（InvalidData の汎用文）にも「外で変わった」にも見せず、場所が理由だと言う
+        for (i, key) in [(10, "Backup location is not a folder"), (11, "link"), (12, "Cannot lock"), (13, "lock file")] {
+            let en = Lang::En.io_error(&errors[i]);
+            assert!(en.contains(key) && !en.contains("changed") && !en.contains("Invalid"), "{en}");
+        }
+    }
+
+    /// 保存が実際に返す「置き場の不具合」の理由が、英語の窓でも言い分けられる（理由の文を書き換えて、表の対応が外れても気づく）。
+    #[test]
+    fn real_save_refusals_about_the_place_are_told_in_english() {
+        use yolu_io::{Error, SaveTarget};
+        let dir = std::env::temp_dir().join(format!("yolu-app-save-places-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sample = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../yolu-io/tests/fixtures/format1.ylp"));
+        let open = |name: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, sample).unwrap();
+            SaveTarget::open(&path).unwrap()
+        };
+        let refusal = |name: &str| {
+            let (project, mut target) = open(name);
+            let error = target.save(&project).unwrap_err();
+            assert!(matches!(error, Error::SaveConflict(_)), "{error:?}");
+            (Lang::Ja.io_error(&error), Lang::En.io_error(&error))
+        };
+        // 前の版の置き場が普通のファイルで塞がれている
+        std::fs::write(dir.join("a.ylp-backups~"), b"a file").unwrap();
+        let (ja, en) = refusal("a.ylp");
+        assert!(ja.contains("バックアップ先") && !ja.is_ascii(), "{ja}");
+        assert_eq!(en, "Backup location is not a folder");
+        #[cfg(unix)]
+        {
+            // 前の版の置き場・ロックの場所がシンボリックリンク
+            std::os::unix::fs::symlink(&dir, dir.join("b.ylp-backups~")).unwrap();
+            assert_eq!(refusal("b.ylp").1, "Backup location is a link");
+            std::os::unix::fs::symlink(&dir, dir.join(".c.ylp.save.lock~")).unwrap();
+            assert_eq!(refusal("c.ylp").1, "Save lock file is a link");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
