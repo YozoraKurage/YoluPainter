@@ -55,6 +55,7 @@ fn open_resampling(app: &mut AppState, ctx: &egui::Context, anchor: Rect) {
 
 /// オプションバー（`x` は左端）。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
+    x = super::advanced::options(ui, app, r, x);
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let enabled = usable(app);
     for (icon, tip, xform) in buttons(app) {

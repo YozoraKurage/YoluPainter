@@ -98,6 +98,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tools/magic-wand_selected",
     "tools/move",
     "tools/move_selected",
+    "tools/liquify",
+    "tools/liquify_selected",
     "lock_filled",
     "lock_transparency",
     "arrow_move",

@@ -73,6 +73,7 @@ pub use brush::{
     StencilMode, StencilPoint, StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
+    Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint,
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
     DEFAULT_SOURCE_BUDGET_BYTES,
     LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,

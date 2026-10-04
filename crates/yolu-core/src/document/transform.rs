@@ -118,7 +118,7 @@ pub(super) fn read(source: &Surface, x: i64, y: i64) -> Rgba8 {
         source.pixel(x as u32, y as u32).expect("範囲内")
     }
 }
-fn sample(
+pub(super) fn sample(
     source: &Surface,
     lifted: Option<&SelectionMask>,
     method: Resampling,
@@ -524,7 +524,7 @@ impl Document {
     }
 }
 
-fn selected_amount(lifted: Option<&SelectionMask>, x: i64, y: i64) -> u8 {
+pub(super) fn selected_amount(lifted: Option<&SelectionMask>, x: i64, y: i64) -> u8 {
     if x < 0 || y < 0 {
         return 0;
     }

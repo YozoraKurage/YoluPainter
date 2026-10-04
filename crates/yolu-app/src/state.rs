@@ -45,13 +45,14 @@ pub enum Tool {
     IdSelect,
     /// 移動・変形（選んでいる層をハンドルで移動・拡大縮小・回転。形は `transform`）。
     Move,
+    Liquify,
     /// パス（2D のキャンバスとモデルの面の上に引く、編集できる曲線。`pathtool`）。
     Path,
 }
 
 impl Tool {
     /// 並び順（ツールの帯）。描く道具（ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし）と選ぶ道具の間、選ぶ道具と移動・変形の間に区切りが入る。
-    pub const ALL: [Tool; 16] = [
+    pub const ALL: [Tool; 17] = [
         Tool::Brush,
         Tool::Eraser,
         Tool::Fill,
@@ -67,6 +68,7 @@ impl Tool {
         Tool::Wand,
         Tool::IdSelect,
         Tool::Move,
+        Tool::Liquify,
         Tool::Path,
     ];
     /// アイコンの名前（tools/<id>）。
@@ -87,6 +89,7 @@ impl Tool {
             Tool::Polygon => "select-polygon",
             Tool::Wand => "magic-wand",
             Tool::Move => "move",
+            Tool::Liquify => "liquify",
             Tool::Path => "path",
         }
     }
@@ -111,6 +114,7 @@ impl Tool {
             Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
             Tool::Wand => lang.pick("自動選択", "Magic Wand"),
             Tool::Move => lang.pick("移動・変形", "Move / Transform"),
+            Tool::Liquify => lang.pick("ゆがみ", "Liquify"),
             Tool::Path => lang.pick("パス", "Path"),
         }
     }
@@ -131,6 +135,7 @@ impl Tool {
             Tool::Polygon => "Shift+L",
             Tool::Wand => "W",
             Tool::Move => "V",
+            Tool::Liquify => "",
             Tool::Path => "P",
         }
     }

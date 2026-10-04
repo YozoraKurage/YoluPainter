@@ -24,6 +24,8 @@ mod operations;
 mod regions;
 mod resize;
 mod transform;
+mod warp;
+pub use warp::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint};
 mod triangle_fill;
 pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;

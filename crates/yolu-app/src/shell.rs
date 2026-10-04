@@ -862,6 +862,7 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
         crate::selection::props::select_options(ui, app, r, x + 4.0);
         return;
     }
+    if app.tool == Tool::Liquify { crate::transform::advanced::options(ui, app, r, x + 4.0); return; }
     if app.tool == Tool::Move {
         crate::transform::props::options(ui, app, r, x + 4.0);
         return;

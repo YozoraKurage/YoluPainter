@@ -26,6 +26,8 @@ impl AppState {
 
     /// 道具を替えたとき・窓がフォーカスを失ったとき: 途中のドラッグは何も変えずに捨てる。
     pub fn transform_cancel_drag(&mut self) -> bool {
+        self.transform.advanced.draft = None;
+        self.transform.advanced.session = None;
         self.transform.pen_down = None;
         self.transform.drag.take().is_some()
     }
@@ -39,7 +41,7 @@ pub fn press(
     source: StrokeSource,
     modifiers: Modifiers,
 ) {
-    if app.is_stroking() || app.tool != Tool::Move || app.transform.drag.is_some() {
+    if app.is_stroking() || !matches!(app.tool, Tool::Move | Tool::Liquify) || app.transform.drag.is_some() {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
@@ -50,7 +52,7 @@ pub fn press(
         );
         return;
     }
-    let Some(bounds) = app.transform_bounds_cached() else {
+    let Some(bounds) = super::advanced::interaction_bounds(app) else {
         app.message = if app.transform_targets().is_empty() {
             app.lang.pick(
                 "動かす画素のあるレイヤーがありません。",
@@ -68,6 +70,7 @@ pub fn press(
         .into();
         return;
     };
+    super::advanced::press(app, view, pos, bounds, modifiers);
     let canvas = view.to_canvas(pos);
     app.transform.drag = Some(Drag {
         mode: hit(view, bounds, pos),
@@ -81,6 +84,7 @@ pub fn press(
 
 /// ポインタが動いた。
 pub fn moved(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource, shift: bool) {
+    super::advanced::moved(app, view, pos, source);
     let canvas = view.to_canvas(pos);
     if let Some(drag) = app.transform.drag.as_mut() {
         if drag.source == source {
@@ -112,6 +116,7 @@ pub fn release(
 
 /// ドラッグを今の位置で確定する（離した・Enter）。動かしていない・何も変わらない変形は当てない。
 pub fn commit(app: &mut AppState) {
+    if super::advanced::commit(app) { return; }
     let Some(drag) = app.transform.drag.take() else {
         return;
     };
@@ -146,6 +151,7 @@ pub fn commit(app: &mut AppState) {
 
 /// Esc: ドラッグを何も変えずにやめる。何かあったか。ペンで押している間のペンの番号は残す（残りの動きを新しいドラッグにしない。離したら外れる）。
 pub fn cancel(app: &mut AppState) -> bool {
+    app.transform.advanced.draft = None;
     let any = app.transform.drag.take().is_some();
     if any {
         app.message = app
@@ -196,6 +202,7 @@ pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
 
 /// ポインタの下のカーソル（ドラッグ中はドラッグの種類）。
 pub fn cursor(app: &mut AppState, view: &CanvasView, hover: Option<Pos2>) -> CursorIcon {
+    if app.tool == Tool::Liquify { return CursorIcon::Crosshair; }
     let mode = match (&app.transform.drag, hover) {
         (Some(drag), _) => drag.mode,
         (None, Some(p)) => match app.transform_bounds_cached() {
@@ -222,7 +229,7 @@ pub fn cursor(app: &mut AppState, view: &CanvasView, hover: Option<Pos2>) -> Cur
 
 // ───────── 表示 ─────────
 
-fn outline(painter: &Painter, points: Vec<Pos2>) {
+pub(super) fn outline(painter: &Painter, points: Vec<Pos2>) {
     painter.add(Shape::line(
         points.clone(),
         Stroke::new(3.0, Color32::from_black_alpha(140)),
@@ -245,6 +252,7 @@ fn corners(view: &CanvasView, b: Bounds, map: impl Fn((f64, f64)) -> (f64, f64))
 
 /// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動の道具のときだけ。
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &mut AppState) {
+    if super::advanced::paint(painter, view, app) { return; }
     if app.tool != Tool::Move {
         return;
     }

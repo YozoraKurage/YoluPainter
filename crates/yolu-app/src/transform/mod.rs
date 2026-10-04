@@ -10,6 +10,7 @@
 
 pub mod canvas;
 pub mod props;
+pub mod advanced;
 
 use egui::Pos2;
 use yolu_core::{Affine2D, Resampling};
@@ -76,6 +77,7 @@ impl Default for Numeric {
 /// 道具の状態。
 #[derive(Debug)]
 pub struct TransformState {
+    pub advanced: advanced::State,
     pub drag: Option<Drag>,
     /// ペンで押している間のペンの番号。
     pub pen_down: Option<u32>,
@@ -88,6 +90,7 @@ pub struct TransformState {
 impl Default for TransformState {
     fn default() -> Self {
         TransformState {
+            advanced: advanced::State::default(),
             drag: None,
             pen_down: None,
             resampling: Resampling::Bilinear,

@@ -110,7 +110,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             || crate::eyedrop::picks(app, ui.input(|i| i.modifiers.alt))
         {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
-        } else if app.tool == crate::state::Tool::Move {
+        } else if matches!(app.tool, crate::state::Tool::Move | crate::state::Tool::Liquify) {
             let icon = crate::transform::canvas::cursor(app, &view, hover);
             ui.ctx().set_cursor_icon(icon);
         } else if app.tool.is_path() {
@@ -646,7 +646,7 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
 fn drives_pen(tool: Tool) -> bool {
     tool.is_select()
         || tool.is_path()
-        || tool == Tool::Move
+        || matches!(tool, Tool::Move | Tool::Liquify)
         || tool == Tool::Gradient
         || matches!(tool, Tool::Shape | Tool::Ruler)
 }
@@ -671,7 +671,7 @@ fn drive_pen(
     if app.sel.pen_down == Some(id) || (starting && app.tool.is_select()) {
         crate::selection::canvas::pen_sample(app, view, p, id, contact, frame.modifiers, frame.now);
     }
-    if app.transform.pen_down == Some(id) || (starting && app.tool == Tool::Move) {
+    if app.transform.pen_down == Some(id) || (starting && matches!(app.tool, Tool::Move | Tool::Liquify)) {
         crate::transform::canvas::pen_sample(app, view, p, id, contact, frame.modifiers);
     }
     if app.gradient.pen_down == Some(id) || (starting && app.tool == Tool::Gradient) {
@@ -796,7 +796,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         }
                         if !app.is_stroking() && nav::press(app, rect, pos, event_modifiers) {
                             // R・Space・Ctrl+Space を押しながらの左ドラッグ: 回す・パン・拡縮
-                        } else if app.tool == crate::state::Tool::Move {
+                        } else if matches!(app.tool, crate::state::Tool::Move | crate::state::Tool::Liquify) {
                             if !app.stencil.handling() {
                                 let view = app.view.view(rect, w_px, h_px);
                                 crate::transform::canvas::press(

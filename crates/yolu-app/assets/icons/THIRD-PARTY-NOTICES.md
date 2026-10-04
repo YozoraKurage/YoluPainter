@@ -103,6 +103,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `visibility_off` | fluent | `eye_off` | regular |
 | `warning` | fluent | `warning` | regular |
 
+`tools/liquify` and `tools/liquify_selected` reuse the existing Fluent UI `ink_stroke` PNG unchanged.
+
 ## Fluent UI System Icons
 
 ```
