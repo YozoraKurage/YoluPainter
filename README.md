@@ -1,3 +1,4 @@
+[English](README.en.md)
 # YoluPainter-rs
 
 YoluPainter のスタンドアロン版です。2D キャンバスと 3D モデルにテクスチャを描き、レイヤー（グループ・マスク・塗りつぶし・調整を含む）とチャンネルの作業を `.ylp` に保存できます。Unity 版 YoluPainter と Live Link でつなぐと、描いた色を Unity のシーンで実際のマテリアルに重ねて確認できます。

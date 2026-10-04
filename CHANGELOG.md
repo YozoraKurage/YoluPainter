@@ -1,0 +1,47 @@
+# Changelog
+
+## Unreleased
+
+### 日本語
+
+初回リリースに含まれる機能です。Windows を主な対象とし、Mac・Linux は試用向けです。
+
+- **2D・3D のペイント**: ブラシ、消しゴム、Windows Ink の筆圧、13 個の組み込みブラシ、ブラシの詳細設定と自分のブラシの保存。ぼかし・指先・クローン、対称、ステンシル、スポイト。3D では一部の筆先・動的設定に制限があります。
+- **ブラシの取り込み**: Photoshop の ABR・PAT、GIMP の GBR・GIH・VBR、PNG の筆先を取り込み。Krita 4 の既定の筆先 76 個（CC0）を同梱。
+- **レイヤーの編集**: グループ、マスク、塗りつぶし、調整（階調の反転・レベル補正・色相/彩度/明度）、クリッピング、26 種類の合成モード。複数選択、結合、4 種類のロック、移動・拡大縮小・回転・反転、取り消しとやり直し。
+- **選択と塗りつぶし**: 長方形・楕円形・なげなわ・多角形・自動選択、選択範囲の合成と加工。バケツ、ポリゴン塗りつぶし、ID の色で選択、2D のグラデーション。コピー・カット・結合してコピー・ペーストと OS の画像クリップボード。
+- **編集できるパス**: 2D の曲線と 3D の面に結び付くパス、点ごとの太さ、複数チャンネルの描画、ラスタライズ。モデルの差し替え時にパスを付け直し、付け直せない場合はロックに応じて画素を保持します。
+- **チャンネルとマテリアル**: Color・Roughness・Metallic・Height・Normal・Emission とユーザーチャンネル。複数チャンネルを 1 回のストロークで塗るマテリアル、チャンネルごとの合成、ハイト → ノーマルと OpenGL／DirectX の法線設定。
+- **プロジェクトとモデル**: 新規プロジェクトのモデル・テンプレート・解像度・法線形式・ベイクの設定、マテリアルごとのテクスチャセット、セットの追加・削除・大きさの変更、モデルの差し替えと読み直し。FBX の読み込み、骨と BlendShape によるポーズ上への描画（ポーズは保存しません）。
+- **3D プレビューとベイク**: PBR マテリアル・中立・チャンネルの表示、環境と光、トーンマッピング。メッシュマップの GPU／CPU ベイク、進捗と取消、GPU が使えない場合の CPU への切り替え。古いマップの識別。GPU と CPU のベイク結果は全バイト一致ではありません。
+- **非破壊の効果**: フィルター、メッシュマップを読む Generator、Anchor をレイヤーとマスクへ追加し、一覧とプロパティで編集。ノイズ・グランジ、塗りつぶしの画像と投影、デカール、ワールドスペースのグラデーション。
+- **アセットの棚**: スマートマテリアル・スマートマスクの保存と配置、`.ylsmart` の取り込みと書き出し、14 個の組み込みスマートマテリアル。対応しない素材は理由を表示して配置を断ります。
+- **保存と復旧**: `.ylp` の読み込み・保存、直前の版の退避と保持数の設定、別のアプリによる変更の検出。復旧用の世代を自動で書き、次回起動時に復旧できます。読み取り専用セットの元データや未知の追加エントリを保存時に保持します。
+- **画像の受け渡し**: RGB8 PSD のレイヤー・グループ・単色の塗りつぶし・対応する調整・マスク・クリッピング・ロックの取り込みと Color の写しの書き出し。対応しない内容は理由を表示して断ります。チャンネル別 PNG と全チャンネルの書き出し、Unity Standard／URP Lit・HDRP Lit・lilToon 向けのテンプレート、UV の余白と AO。
+- **Unity との Live Link**: 同じ PC・同じユーザーの Unity エディターからモデルを受け取り、描いた色を元アセットを変えずにマテリアルへ一時表示。接続時に双方が鍵を確認します。
+- **画面と設定**: 日本語・英語の表示、ドッキングするパネル、2D の拡大縮小・移動・回転・反転、対応する文書の GPU 合成と CPU への切り替え。メモリの予算・CPU のスレッド・書き出しの余白・棚の場所などを設定できます。
+- **配布と更新**: Windows の利用者ごとのインストーラーとポータブル ZIP。選択した場合だけ起動時に更新を確認し、インストーラー版は署名つきの更新情報でダウンロードを検証して更新します。実行ファイル・インストーラーのコード署名はまだありません。
+
+互換性: `.ylp` は形式 7 で保存し、編集したセットは通常は文書形式 21、ユーザーチャンネルを使う場合は 22、ノイズ・グランジを使う場合は 23 になります。文書形式 21 までの Unity 版（0.2.0 など）は 22・23 を含むファイルを開けません。手動の ID の色がある文書は保存できません。詳細と各機能の制限は [README](README.md) を参照してください。
+
+### English
+
+Features included in the first release. Windows is the primary platform; Mac and Linux support is experimental.
+
+- **2D and 3D painting**: brushes, erasing, Windows Ink pressure, 13 built-in brushes, Brush Details, and custom brush saving. Blur, Smudge, Clone, symmetry, stencils, and Eyedropper. Some brush tip and dynamics settings are limited in 3D.
+- **Brush import**: import Photoshop ABR/PAT, GIMP GBR/GIH/VBR, and PNG tips. Includes 76 default Krita 4 tips (CC0).
+- **Layer editing**: groups, masks, fills, adjustments (Invert, Levels, Hue/Saturation/Lightness), clipping, and 26 blend modes. Multiple selection, merging, four lock types, moving, scaling, rotation, flipping, undo, and redo.
+- **Selections and fills**: Rectangle Select, Ellipse Select, Lasso, Polygon Select, Magic Wand, selection combinations and modifications. Fill, Polygon Fill, ID Color Select, and 2D gradients. Copy, Cut, Copy Merged, Paste, and OS image clipboard support.
+- **Editable paths**: 2D curves and paths bound to 3D surfaces, per-point width, multichannel painting, and rasterization. Paths are rebound when replacing a model; failed rebindings preserve pixels according to the layer locks.
+- **Channels and materials**: Color, Roughness, Metallic, Height, Normal, Emission, and user channels. Paint multiple channels in one material stroke, use per-channel blending, and configure Height → Normal and OpenGL/DirectX normals.
+- **Projects and models**: new-project model, template, resolution, normal format, and baking settings; texture sets per material; adding, deleting, and resizing sets; replacing and reloading models. Import FBX and paint on poses made with bones and BlendShapes (poses are not saved).
+- **3D preview and baking**: PBR Material, Neutral, and Channel views, environments, lighting, and tone mapping. GPU/CPU mesh map baking with progress, cancellation, and CPU fallback when the GPU is unavailable. Stale maps are identified. GPU and CPU baking results are not byte-identical.
+- **Non-destructive effects**: add filters, mesh-map generators, and anchors to layers and masks, and edit them in the list and Properties. Noise/Grunge, fill images and projection, decals, and world-space gradients.
+- **Asset shelf**: save and place Smart Materials and Smart Masks, import/export `.ylsmart`, and use 14 built-in Smart Materials. Unsupported assets are refused for placement with a reason.
+- **Saving and recovery**: open/save `.ylp`, retain backups of previous versions with configurable retention, and detect changes made by another application. Automatically write recovery generations and recover them on the next launch. Preserve original read-only set data and unknown additional entries when saving.
+- **Image exchange**: import RGB8 PSD layers, groups, solid-color fills, supported adjustments, masks, clipping, and locks, and export a Color copy. Unsupported content is refused with a reason. Export individual or all channels as PNGs, use Unity Standard / URP Lit, HDRP Lit, and lilToon templates, and include UV padding and AO.
+- **Live Link with Unity**: receive models from a Unity Editor running as the same user on the same PC and temporarily display painted colors on materials without modifying original assets. Both ends verify the connection key.
+- **Interface and settings**: Japanese and English, dockable panels, 2D zoom/pan/rotation/flip, GPU compositing for supported documents with CPU fallback. Configure memory budgets, CPU threads, export padding, shelf location, and other settings.
+- **Distribution and updates**: per-user Windows installer and portable ZIP. Startup update checks are opt-in; the installer version verifies downloads using signed update metadata before updating. Executables and installers are not yet code-signed.
+
+Compatibility: `.ylp` files are saved in format 7. Edited sets normally use document format 21, format 22 with user channels, or format 23 with Noise/Grunge. Unity versions supporting document formats only up to 21 (such as 0.2.0) cannot open files containing formats 22 or 23. Documents with manual ID colors cannot be saved. See the [README](README.en.md) for details and feature limitations.
