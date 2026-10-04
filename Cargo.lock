@@ -4574,6 +4574,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "yolu-brush-sets"
+version = "0.0.1"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "yolu-core"
 version = "0.0.1"
 dependencies = [
@@ -4603,6 +4610,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "yolu-brush-sets",
  "yolu-core",
 ]
 

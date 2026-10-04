@@ -9,6 +9,7 @@ publish = false
 license = "MIT"
 
 [workspace.dependencies]
+yolu-brush-sets = { path = "crates/yolu-brush-sets" }
 yolu-core = { path = "crates/yolu-core" }
 yolu-gpu = { path = "crates/yolu-gpu" }
 yolu-io = { path = "crates/yolu-io" }

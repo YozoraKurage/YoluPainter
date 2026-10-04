@@ -102,6 +102,17 @@ Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原�
 Wine 用の `bcryptprimitives.dll` はこのリポジトリの小さな接続コードから試験時だけ作る。
 Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DLL をコピーして作るものではない。
 
+## 同梱の筆先とブラシ形式
+
+`crates/yolu-brush-sets/data/krita4/brushes/` は、Krita の `Krita_4_Default_Resources.bundle` の筆先 76 個（`.png`・`.gih`・`.gbr`）を
+1 バイトも変えずに持つ。束の `meta.xml`（許諾 **CC0 1.0** の宣言）、`SHA256SUMS`、出どころと束の SHA-256 を書いた `README.md` も原本のまま同じ場所にある。
+作者の表記（CC0 では不要）: David Revoy（Deevad）と、Ramon Miranda・Razvanc・Radian・Wolthera・Storm・Scottyp ほかの派生、Krita プロジェクト。
+Krita のプリセット（`.kpp`）・SVG の筆先・パターンは入れていない。このアプリでの設定（半径・間隔など）は独自のもの。
+
+ブラシ形式の読み手は公開された形式の説明から書いた。他のプロジェクトのコードは使っていない:
+GIMP の `gbr.txt`・`gih.txt`・`vbr.txt`（devel-docs）、Photoshop File Formats Specification（版 1・2 のブラシ、記述子、パターン）、
+版 6 以降の `samp`・`desc` の並びの公開された解説。CLIP STUDIO PAINT の `.sut` は、筆先が保護された入れ物に入っているので読まない。
+
 ## FBX の読み込み（ufbx）
 
 `yolu-model` が使う `ufbx 0.11.5` は `MIT OR Unlicense` から **MIT** を選ぶ。

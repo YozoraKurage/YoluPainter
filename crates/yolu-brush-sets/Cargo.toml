@@ -1,0 +1,12 @@
+[package]
+name = "yolu-brush-sets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "同梱の筆先（Krita 4 の既定の筆先、CC0）。データだけで、コードも依存も持たない。"
+
+[dependencies]
+
+[dev-dependencies]
+sha2 = "0.10"

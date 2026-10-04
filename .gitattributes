@@ -7,3 +7,4 @@ crates/*/tests/golden/** -text
 crates/*/tests/fixtures/** -text
 *.ttf binary
 crates/yolu-app/assets/fonts/OFL.txt -text
+crates/yolu-brush-sets/data/** -text

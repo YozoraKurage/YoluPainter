@@ -1,5 +1,6 @@
 //! Unity 版 .ylp の検証、損失のない正本の読み書き、メモリ上の旧形式移行。
 mod archive;
+pub mod brushes;
 mod composite_png;
 mod core_bridge;
 pub mod export;

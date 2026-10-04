@@ -19,6 +19,8 @@
 | `unity-generation/` | Unity 0.2.0 の `GenerationStore.Commit`（`Runtime/Core` をそのままコンパイル）が書いた復旧用の置き場。確定 2 回（正本・選択範囲・resources・`recovery.json`。変わらない中身は共有）。Rust の `GenerationStore` が読めること・一覧に出せること・続けて確定できることの正解 |
 | `rust-generation.unity.txt` | 開いた `format6.ylp` のエントリをそのまま世代にした置き場（`as-opened`）と、`sets/<ID>/` の下の入れ子の名前を除いたもの（`flat-names`）を、Unity 0.2.0 の `GenerationStore.Load` に読ませた結果。前者は「Unsafe generation filename」で断られ、後者は読める（Rust の世代の名前の範囲が Unity 版より広い記録） |
 | `selection/selection-*.bin` と `.amounts` | 70×50画素・タイル16の文書で作った選択範囲（矩形・楕円・多角形の組み合わせ、ぼかし、全選択、反転、何も選ばない）のC#の `SelectionBinary.Write` の出力と、画布の量の生の並び（下の行から）。Rustで同じ選択範囲を作り、書いたバイト列が全バイト一致することと、読んで同じ量に戻ることを確かめる |
+| `brushes/cases.txt`・`brushes/fuzz.txt`・`brushes/source.txt` | ブラシ形式の取り込み（`tests/brush_golden.rs`）。Rust の試験が組んだ入力（手で組んだ 88 事例と、同梱の Krita の GIMP 形式の実ファイル 37 個（`.gbr`・`.gih`）と、手で組んだ事例を壊した約 1.1 万の入力。`tests/brush_files/corpus.rs`）を、Unity 版の `GimpBrushReader`・`PhotoshopBrushReader`・`PhotoshopPatternReader`（`Runtime/Core` を原文のまま組む）に通した結果。`cases.txt` は事例ごとの取り込めたか・断ったかと設定の指紋、`fuzz.txt` は壊した入力ごとの結果と指紋の短縮、`source.txt` は C# の原文の指紋。`tools/csharp-golden/brushes.sh` で作り直す |
+| `brushes/png-tips.txt` | 同梱の Krita の PNG の筆先 39 個の被覆率（暗いほど塗り、白と透明は塗らない）の指紋。別の復号器（Pillow）で求める（`tools/brush-fixtures/png_tips.py`）。`tests/brush_bundled.rs` が Rust の読み手と比べる |
 
 旧正本のデータは各版の基礎配置を表す人工データであり、全版と全属性の組合せを網羅するものではない。
 
