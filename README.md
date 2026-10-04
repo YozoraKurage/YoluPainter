@@ -36,3 +36,40 @@ cargo test
 命令の書き方はその頭）。`run.sh bench` は C# の速さを、`cargo run --release -p yolu-core --example bench` は同じ中身の Rust の速さを測る。
 3D の面の計算（`yolu_core::geometry`）は、Unity 版の SurfaceGeometry とビットで一致を確かめている。正解（`crates/yolu-core/tests/golden/surface/`）は
 `tools/csharp-golden/run.sh surface` で作り直す（Unity 版の Editor/Preview の原文を、Unity に同梱の UnityEngine.CoreModule.dll と組む）。
+
+## 許諾の一覧と配布用の全文
+
+[THIRD_PARTY.md](THIRD_PARTY.md) に Windows GNU 向けの製品別一覧、フォント・アイコン、開発用の道具の許諾を記載している。
+Python 3.10 以降と Cargo が必要（追加の Python パッケージや cargo-about の導入は不要）。
+
+```sh
+python3 tools/third-party.py --bundle
+# ブリッジだけを作る場合
+python3 tools/third-party.py --package yolu-bridge --bundle
+```
+
+`target/third-party/<クレート>/` に一覧と、照合に成功した場合だけ `THIRD_PARTY_LICENSES.txt` ができる。
+全文を該当する配布物と一緒に入れる。初回はクレートと、同梱されていない原文の取得にネット接続が必要。
+取得後は `--offline` で再照合できる。原文は発行時コミットと SHA-256 で固定され、版の変更・原文の欠落・未承認の許諾では終了 1 になる。
+現状の app は BSL-1.0 と Hack 書体の Bitstream Vera 条件が未承認のため、全文束を生成しない。
+依存を更新したときは `tools/licenses-reviewed.json` の原文・条件を確認し、一覧も更新する。
+
+## Windows 向けの画面なし試験（Wine）
+
+Linux 上で Python 3.10 以降・Wine・MinGW-w64 を用意し、Rust の対象を追加する。
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+tools/wine-tests.sh
+# 古い Wine で bcryptprimitives.dll が不足する場合だけ
+tools/wine-tests.sh --compat-bcrypt
+```
+
+core・io・protocol・bridge の単体／結合試験と、app の単体試験・名前が `headless_` で始まる結合試験を実行する。
+ビルド結果から対象を選ぶので、以前の試験 exe を混ぜない。ログ・成功／失敗／無視の件数・除外した試験の名前は
+`target/wine-tests/summary.json` と同じディレクトリのログに残る。ビルド失敗・実行失敗・時間切れは終了 1。
+試験ごとの時間制限は `--timeout 180`（秒）で変更できる。専用 Wine 環境も `target/` 内に作る。
+
+wgpu／egui_kittest の画面の試験と `yolu-gpu` は Wine の描画バックエンドでの動作を検証できないため対象外。
+描画の検証はネイティブ環境の `cargo test` で別に行う。Wine の結果は Windows 実機、ペンタブ、Unity との接続確認の代わりにはならない。
+`--compat-bcrypt` の DLL は試験専用で、配布しない。
