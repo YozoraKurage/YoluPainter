@@ -3,6 +3,8 @@
 #   run.sh [golden]            台本（crates/yolu-core/tests/golden/cases.txt）を走らせ、同じフォルダへ index.txt と .rgba を書く
 #   run.sh bench [回数]         4096² の合成と半径 40・200 のストローク、M2 のブラシ（ゆらぎ・筆先・質感・デュアル・色・全部・
 #                               ぼかし・指先）の時間（Mono。BENCH_ONLY=種類 で M2 の 1 種類だけ）
+#   run.sh selection-bench [回数]  選択範囲（4096²・楕円を作る・拡張・縮小・境界・ぼかし・鋭く）の時間（Mono。BENCH_THREADS=並列数）
+#   run.sh selbin              yolu-io の試験の正解（selection.bin と量の生の並び）を crates/yolu-io/tests/fixtures/selection/ へ書く
 #   run.sh filter              非破壊フィルターの正解を生成（Generator の事例は、実 FilterEngine が解決した値も <名前>.s<段> へ書く）
 #   run.sh filter-bench        4096² のフィルターごとの時間（Mono）
 #   run.sh surface             面の計算の台本（crates/yolu-core/tests/golden/surface/cases.txt）を Unity 版の SurfaceGeometry に通し、
@@ -29,13 +31,14 @@ while [[ $# -gt 0 ]]; do
     --source) source_dir="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --release) optimize="-optimize+"; flavor="release"; shift ;;
-    golden|bench|surface|surface-bench|filter|filter-bench|export|export-bench) mode="$1"; shift ;;
+    golden|bench|selection-bench|selbin|surface|surface-bench|filter|filter-bench|export|export-bench) mode="$1"; shift ;;
     -h|--help) sed -n "2,$(awk 'NR>1 && !/^#/ {print NR-1; exit}' "$0")p" "$0"; exit 0 ;;
     *) extra+=("$1"); shift ;;
   esac
 done
 cases="$repo/crates/yolu-core/tests/golden/cases.txt"
 [[ "$mode" == surface* ]] && cases="$repo/crates/yolu-core/tests/golden/surface/cases.txt"
+[[ "$mode" == selbin && -z "$out" ]] && out="$repo/crates/yolu-io/tests/fixtures/selection"
 [[ "$mode" == filter* ]] && cases="$repo/crates/yolu-core/tests/golden/filter/cases.txt"
 [[ "$mode" == export* ]] && cases="$repo/crates/yolu-core/tests/golden/export/cases.txt"
 [[ -n "$out" ]] || out="$(dirname "$cases")"
@@ -120,6 +123,12 @@ if [[ "$mode" == "filter-bench" ]]; then
 fi
 if [[ "$mode" == "bench" ]]; then
   exec "$mono" "$build/golden.exe" bench "${extra[@]}"
+fi
+if [[ "$mode" == "selection-bench" ]]; then
+  exec "$mono" "$build/golden.exe" selbench "${extra[@]}"
+fi
+if [[ "$mode" == "selbin" ]]; then
+  exec "$mono" "$build/golden.exe" selbin "$out"
 fi
 # 出どころ: Unity 版のコミットと Runtime/Core の中身の指紋（手元の変更があれば印を付ける）
 commit="$(git -C "$source_dir" rev-parse --short=12 HEAD 2>/dev/null || echo 不明)"

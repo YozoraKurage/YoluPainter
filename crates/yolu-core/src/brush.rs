@@ -13,8 +13,9 @@
 //! - 覆いは C# と同じく float（単精度）で持つ。計算は倍精度で、演算の順も C# と同じ（画素の結果は C# とバイト一致）。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、一致を確かめたのは同じ libm（Linux の glibc）の上。
 //!
-//! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。C# の選択範囲・透明部分のロック・対称・複数のチャンネル
-//! （マテリアルで塗る）・クローンの合成の読み元はまだ無い。
+//! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
+//! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。C# の
+//! 透明部分のロック・複数のチャンネル（マテリアルで塗る）・クローンの合成の読み元はまだ無い。
 //!
 //! ```
 //! use yolu_core::{builtin_tip, Brush, BrushSettings, Document, DualBrush, PaperTexture, Rgba8};
@@ -45,6 +46,7 @@ mod presets;
 pub mod random;
 mod settings;
 mod stencil;
+mod symmetric;
 mod tip;
 
 use std::collections::{HashMap, VecDeque};
@@ -66,9 +68,10 @@ pub use stencil::{
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
 
-use crate::blend::blend;
+use crate::blend::{blend, fade};
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite, to_byte};
+use crate::selection::{Amounts, SelectionMask};
 use crate::surface::{Growth, LiveTile, Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
@@ -338,6 +341,8 @@ pub(crate) struct StrokeState {
     pub tiles: HashMap<TileCoord, StrokeTile>,
     /// 巻き戻しの写し・覆い・ダブごとの色・デュアルの溜まりのバイト数（C# の RollbackBytes の、効果の枠を除く分）。
     pub rollback_bytes: u64,
+    /// ストロークを始めたときの選択範囲（None は選択なし）。画素は選ばれた量の割合でだけ変わる（[`apply_at`]）。
+    selection: Option<SelectionMask>,
 }
 
 /// これを超える長さの区間（ダブの数）は断る（C# と同じ百万）。
@@ -431,8 +436,15 @@ impl StrokeState {
             parallel_dabs: 0,
             tiles: HashMap::new(),
             rollback_bytes: 0,
+            selection: None,
             brush: Arc::new(brush),
         }
+    }
+
+    /// 文書の今の選択範囲の内側だけに描く（C# の BrushStroke が始めに document.Selection を覚えるのと同じ）。
+    pub(crate) fn with_selection(mut self, selection: Option<SelectionMask>) -> Self {
+        self.selection = selection;
+        self
     }
 
     /// マスクへのストローク（色を持たない面）にする: ステンシルの色を受けない（C# の ForChannel(null) の PaintedChannel = null）。
@@ -1010,10 +1022,6 @@ impl StrokeState {
                 aspect_x = t.width() as f64 / t.height() as f64;
             }
         }
-        if min_x > max_x || min_y > max_y {
-            return Ok(());
-        }
-        let ts = self.tile_size_i64();
         let shape = DualShape {
             x,
             y,
@@ -1026,6 +1034,14 @@ impl StrokeState {
             aspect_y,
             tip: dual.tip.as_deref(),
         };
+        if self.brush.symmetry.enabled() {
+            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            return self.symmetric_dual_dab(&shape, extent);
+        }
+        if min_x > max_x || min_y > max_y {
+            return Ok(());
+        }
+        let ts = self.tile_size_i64();
         // タイルごとに 1 回だけ溜まりを引く（画素の順は C# の行の順と違うが、各画素は自分の値と最大を取るだけなので結果は同じ。
         // 新しいタイルの予算は足していく一方なので、超えるかどうかも順によらない。超えたらストロークごと取り消す）
         for ty in min_y / ts..=max_y / ts {
@@ -1096,6 +1112,10 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(w - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
+        if brush.symmetry.enabled() {
+            // 写しは元のダブが画布の外でも画布にかかり得る（C# も外接の箱を見る前に分ける）
+            return self.symmetric_dab(surface, brush, shape, extent, changed);
+        }
         if min_x > max_x || min_y > max_y {
             return Ok(false);
         }
@@ -1359,6 +1379,7 @@ impl StrokeState {
             })
             .collect();
         let dual = &self.dual_coverage;
+        let selection = self.selection.as_ref();
         let unlimited = Budgets {
             growth: Growth {
                 budget: u64::MAX,
@@ -1376,6 +1397,7 @@ impl StrokeState {
                     rollback_bytes: &mut rollback,
                     allocated: &mut allocated,
                     tile_size: ts,
+                    selected: Selected::of(selection, *coord),
                 };
                 let cells = dual.get(coord).map(|v| &v[..]);
                 let painted = dab_tile(&mut cx, held, live, cells, shape, *coord, *xs, *ys)
@@ -1569,6 +1591,7 @@ impl StrokeState {
             rollback_bytes: &mut self.rollback_bytes,
             allocated: &mut surface.allocated,
             tile_size: ts,
+            selected: Selected::of(self.selection.as_ref(), coord),
         };
         let result = f(&mut cx, &mut held, &mut live);
         if let Some(h) = held {
@@ -1615,12 +1638,14 @@ impl TileCursor {
         ) -> Result<bool, CoreError>,
     {
         let ts = surface.tile_size() as usize;
+        let coord = self.coord.expect("move_to の後");
         let mut cx = PixelContext {
             paint,
             budgets: state.budgets,
             rollback_bytes: &mut state.rollback_bytes,
             allocated: &mut surface.allocated,
             tile_size: ts,
+            selected: Selected::of(state.selection.as_ref(), coord),
         };
         f(
             &mut cx,
@@ -1659,8 +1684,12 @@ impl DualShape<'_> {
     /// 画素 (px, py) の被覆率（0 以下は塗らない）。
     #[inline(always)]
     fn coverage(&self, px: i64, py: i64) -> f64 {
-        let dx = px as f64 + 0.5 - self.x;
-        let dy = py as f64 + 0.5 - self.y;
+        self.coverage_at(px as f64 + 0.5 - self.x, py as f64 + 0.5 - self.y)
+    }
+
+    /// 中心からのずれ (dx, dy) の被覆率（対称の写しは、画素の中心を元へ戻した位置で測る）。
+    #[inline(always)]
+    fn coverage_at(&self, dx: f64, dy: f64) -> f64 {
         let u = (self.cos * dx + self.sin * dy) / self.radius;
         let v = (-self.sin * dx + self.cos * dy) / (self.radius * self.roundness);
         match self.tip {
@@ -1765,6 +1794,36 @@ pub(crate) struct PixelContext<'a> {
     rollback_bytes: &'a mut u64,
     allocated: &'a mut u64,
     tile_size: usize,
+    /// このタイルの選択範囲の量。
+    selected: Selected<'a>,
+}
+
+/// ストロークの選択範囲の、1 枚のタイルの量（C# の ApplyPixelAt の selected）。
+#[derive(Clone, Copy)]
+enum Selected<'a> {
+    /// 選択範囲が無い（どこでも 1）。
+    Everywhere,
+    /// 選択範囲はあるが、このタイルには何も選ばれていない（どこでも 0）。
+    Nothing,
+    Tile(&'a Amounts),
+}
+
+impl<'a> Selected<'a> {
+    fn of(selection: Option<&'a SelectionMask>, coord: TileCoord) -> Selected<'a> {
+        match selection {
+            None => Selected::Everywhere,
+            Some(s) => s.tile(coord).map_or(Selected::Nothing, Selected::Tile),
+        }
+    }
+    /// タイルの中の画素の番号の量（0〜1。C# と同じ量 / 255.0）。
+    #[inline(always)]
+    fn amount(&self, local: usize) -> f64 {
+        match self {
+            Selected::Everywhere => 1.0,
+            Selected::Nothing => 0.0,
+            Selected::Tile(t) => t.get(local) as f64 / 255.0,
+        }
+    }
 }
 
 /// 外接の箱がこれ以上（画素）のダブは、タイルごとにワーカーで描く（C# と同じ 128²）。小さいダブはワーカーを起こす費用が勝つ
@@ -1939,7 +1998,7 @@ fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
     Ok(changed)
 }
 
-/// 1 画素（C# の ApplyPixelAt の、選択・ステンシル・透明部分のロックの無い 1 チャンネルの経路）。SIMPLE は色を塗るだけ
+/// 1 画素（C# の ApplyPixelAt の、透明部分のロックの無い 1 チャンネルの経路。選択範囲の量はここだけで掛ける）。SIMPLE は色を塗るだけ
 /// （ダブごとの色・効果なし）と分かっているとき（分岐を除いた同じ式）。paper は乗算以外の紙の質感（拡張）: 合わせ方・質感の値・深さ。
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
@@ -1959,6 +2018,11 @@ fn apply_at<const SIMPLE: bool>(
     let p = cx.paint;
     let s = p.s;
     let ts = cx.tile_size;
+    // 選択範囲: 選ばれていない画素は何もしない（写しも取らない）。半分選ばれた画素は、描く前の画素から半分までしか変わらない
+    let selected = cx.selected.amount(local);
+    if selected <= 0.0 {
+        return Ok(false);
+    }
     let mut opacity_scale = opacity_scale;
     let mut through = StencilSample::default();
     let mut stencil_read = false;
@@ -2114,7 +2178,7 @@ fn apply_at<const SIMPLE: bool>(
     let effect = if SIMPLE { EffectKind::Paint } else { p.effect };
     let next = match effect {
         EffectKind::Paint => {
-            if s.erase {
+            let next = if s.erase {
                 let alpha = to_byte(
                     start.a as f64 / 255.0 * (1.0 - accumulated * s.color.a as f64 / 255.0),
                 );
@@ -2125,6 +2189,12 @@ fn apply_at<const SIMPLE: bool>(
                 }
             } else {
                 blend(start, color, f64_min(1.0, accumulated), BlendMode::Normal)
+            };
+            // 選択範囲の量だけ、描く前の画素から寄せる（塗りも消しゴムも。C# の Fade(start, next, selected)）
+            if selected < 1.0 {
+                fade(start, next, selected)
+            } else {
+                next
             }
         }
         effect => {
@@ -2150,9 +2220,14 @@ fn apply_at<const SIMPLE: bool>(
             if matches!(effect, EffectKind::Blur(_)) && start.a == 0 {
                 return Ok(false);
             }
-            let amount = f64_min(1.0, accumulated);
+            // 選択範囲の量も寄せ方に入れる（クローンは塗りと同じく Fade で）
+            let amount = f64_min(1.0, accumulated) * selected;
             let mut next = if effect == EffectKind::Clone {
-                blend(start, sampled, amount, BlendMode::Normal)
+                fade(
+                    start,
+                    blend(start, sampled, f64_min(1.0, accumulated), BlendMode::Normal),
+                    selected,
+                )
             } else {
                 mix_effect(start, sampled, amount)
             };

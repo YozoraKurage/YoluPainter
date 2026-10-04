@@ -307,6 +307,34 @@ impl Project {
             "YOLUPAINTER-YLP-",
         )?)
     }
+    /// 既存セットの選択範囲（`selection.bin`）だけを置き換える。None は選択なし（エントリを消す）。選択範囲と正本の大きさが
+    /// 違えば再検証で断る。ほかのエントリには触らない。
+    pub fn with_selection(&self, set_id: &str, selection: Option<&Selection>) -> Result<Self> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = if self.info.format < 3 {
+            "selection.bin".into()
+        } else {
+            format!("sets/{set_id}/selection.bin")
+        };
+        let mut files = self.original.files.clone();
+        match selection {
+            Some(s) => {
+                files.insert(name, Arc::from(s.to_bytes()));
+            }
+            None => {
+                files.remove(&name);
+            }
+        }
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
     /// セットの派生メッシュマップを読む。壊れた派生物はエラーを返し、元のエントリは保持する。
     pub fn mesh_map(
         &self,

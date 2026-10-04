@@ -27,6 +27,7 @@ target.save(&changed)?;
 - `upgraded(writer)` は明示的に形式7へ更新する。正本の版は変えない。未知のエントリ・JSONキーも保持する。知らないエントリは `unknown_entries()` と `notes()` で知らせる。
 - 形式7の `TextureSet::material` は `MaterialRef`（名前と任意のアセットGUID/符号付き64 bitの`fileId`、未割当、旧スロット参照）。名前だけなら重複可、アセット・未割当・スロットは排他的。旧 `materialSlot` はメモリ上で `material: {"slot": …}` へ移行する。`with_material` は形式7の参照を検証して変更する。
 - `Project::create(writer, sets, current)` は形式7の新しいプロジェクトを作る（各セットは `SetSpec` で、ID・名前・`MaterialRef`・正本・使っているチャンネルごとの合成PNG）。`with_sets(writer, sets, current)` は形式7のセットの並び・名前・マテリアル参照・現在のセットを置き換え、正本と合成を差し替える。元のセットは全部が並びに要る（セットを消す口は無い）。正本が `None` のセットはエントリをバイト列のまま残し、正本を替えたセットの `composite/` は消してから渡されたPNG（`composite_pngs` の出力。標準のチャンネルだけ、同じチャンネルは1回）を書く。各セットと根の知らないJSONキー、選択範囲・メッシュマップ・PSD原本・根のほかのエントリは残し、`savedBy` を書き手にする。どちらも書いたものを読み直して検証する。サムネイル（`thumbnail.png`）は作り直さない。
+- 選択範囲（`selection.bin`）は `Selection` で読み書きし、`Selection::from_core` / `to_core` でcoreの `SelectionMask` と行き来する。書くバイト列はC#の `SelectionBinary.Write` と同じ（量のあるタイルだけを (y, x) の順に並べる）。`Project::with_selection(set_id, Some(&selection))` はセットの選択範囲だけを差し替え、`None` は選択なし（エントリを消す）。正本と大きさが違う選択範囲は再検証で断り、ほかのエントリには触らない。読み込み直後の文書へは `Document::restore_selection` で戻す（Undoの段は増えない）。
 - `Project::mesh_map(set_id, kind, max_bytes)` はセットのメッシュマップ（`meshmap-<種類>.bin`、版1〜3）を予算付きで読む。形式1・2は根のエントリ、形式3以降はセットの下。`with_mesh_map(set_id, map)` は派生物だけを置き換えて版3で書き、文書と未知のエントリを保つ。書けるのは形式7だけで、旧形式は先に `upgraded` で移行する（形式5・6のメッシュマップは版2・スロット1つのまま移行で変わらず、置き換えたものから版3になる）。
 - `Archive` は外側だけを検証する低水準API。各正本やリソースの検証まで必要な場合は `Project` を使う。
 

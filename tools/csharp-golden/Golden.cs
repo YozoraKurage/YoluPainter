@@ -1,6 +1,8 @@
 // YoluPainter-rs の正解のファイルを、Unity 版の C# の Core に同じ入力を通して作る（Core と一緒に組んで Mono で走らせる）。
 //   golden <cases.txt> <出力のフォルダ>   台本の事例を走らせ、index.txt と <事例>.<番号>.rgba を書く
 //   bench                                 4096² の合成と半径 40 のストロークの時間を測る
+//   selbench [回数]                       選択範囲（楕円を作る・拡張・縮小・境界・ぼかし・鋭く）の時間を測る
+//   selbin <出力のフォルダ>               選択範囲をいくつか作り、selection.bin（SelectionBinary.Write）と量の生の並びを書く
 // 乱数・台本の読み方・出来事の書き方は crates/yolu-core/tests/golden.rs と揃えてある（片方を変えたら両方を変える）。
 using System;
 using System.Collections.Generic;
@@ -67,8 +69,10 @@ namespace YoluPainterRs.Golden
             try
             {
                 if (args.Length == 3 && args[0] == "golden") { RunCases(args[1], args[2]); return 0; }
+                if (args.Length >= 1 && args[0] == "selbench") { SelectionBench(args.Length > 1 ? int.Parse(args[1]) : 5); return 0; }
+                if (args.Length == 2 && args[0] == "selbin") { SelectionFixtures(args[1]); return 0; }
                 if (args.Length >= 1 && args[0] == "bench") { Bench(args.Length > 1 ? int.Parse(args[1]) : 7); return 0; }
-                Console.Error.WriteLine("使い方: golden <cases.txt> <出力> | bench [回数]");
+                Console.Error.WriteLine("使い方: golden <cases.txt> <出力> | selbin <出力> | selbench [回数] | bench [回数]");
                 return 2;
             }
             catch (Exception e) { Console.Error.WriteLine(e); return 1; }
@@ -112,6 +116,63 @@ namespace YoluPainterRs.Golden
             var header = new List<string> { "# 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。" };
             header.AddRange(SourceLines());
             File.WriteAllText(Path.Combine(outDir, "index.txt"), string.Join("\n", header.Concat(index)) + "\n", new UTF8Encoding(false));
+        }
+
+        /// <summary>yolu-io の試験の正解: 70×50・タイル 16 の文書の選択範囲を作り、selection-名前.bin（SelectionBinary.Write）と
+        /// selection-名前.amounts（画布の量、下の行から行優先）を書く。作り方は crates/yolu-io/tests/selection.rs と揃える。</summary>
+        static void SelectionFixtures(string outDir)
+        {
+            Directory.CreateDirectory(outDir);
+            var doc = new PaintDocument(70, 50, 16);
+            var shapes = new List<KeyValuePair<string, SelectionMask>>
+            {
+                new KeyValuePair<string, SelectionMask>("combine", SelectionMask.Ellipse(doc, 30.25, 20.75, 18.5, 11.5)
+                    .Combine(SelectionMask.Rectangle(doc, 50, 30, 80, 60), SelectionCombine.Add)
+                    .Combine(SelectionMask.Ellipse(doc, 40, 25, 8, 6), SelectionCombine.Subtract)),
+                new KeyValuePair<string, SelectionMask>("polygon", SelectionMask.Polygon(doc, new List<(double x, double y)> { (5.5, 4.25), (58, 9.75), (31.5, 44), (40, 20), (12, 38.5) })),
+                new KeyValuePair<string, SelectionMask>("feather", SelectionMask.Ellipse(doc, 35, 25, 20, 12).Feather(4)),
+                new KeyValuePair<string, SelectionMask>("all", SelectionMask.All(doc)),
+                new KeyValuePair<string, SelectionMask>("invert", SelectionMask.Ellipse(doc, 35, 25, 20, 12).Invert()),
+                new KeyValuePair<string, SelectionMask>("none", SelectionMask.None(doc)),
+            };
+            foreach (var shape in shapes)
+            {
+                var bytes = Yozolab.YoluPainter.Core.Persistence.SelectionBinary.Write(shape.Value);
+                File.WriteAllBytes(Path.Combine(outDir, "selection-" + shape.Key + ".bin"), bytes);
+                var amounts = new byte[doc.Width * doc.Height];
+                for (int y = 0; y < doc.Height; y++) for (int x = 0; x < doc.Width; x++) amounts[y * doc.Width + x] = shape.Value[x, y];
+                File.WriteAllBytes(Path.Combine(outDir, "selection-" + shape.Key + ".amounts"), amounts);
+                // 読み直して同じ量になることも確かめる（none は null になる）
+                var back = Yozolab.YoluPainter.Core.Persistence.SelectionBinary.Read(bytes, doc);
+                for (int y = 0; y < doc.Height; y++) for (int x = 0; x < doc.Width; x++)
+                    if ((back == null ? (byte)0 : back[x, y]) != amounts[y * doc.Width + x]) throw new InvalidOperationException(shape.Key + ": 読み直しが合わない");
+            }
+            Console.WriteLine("書いた: " + outDir + "（" + shapes.Count + " 個）");
+        }
+
+        /// <summary>crates/yolu-core/examples/selection_bench.rs と同じ操作・同じ入力（4096²・タイル 128、楕円は半径 900・750）。</summary>
+        static void SelectionBench(int runs)
+        {
+            string threads = Environment.GetEnvironmentVariable("BENCH_THREADS");
+            if (!string.IsNullOrEmpty(threads)) CoreParallelism.MaxDegreeOfParallelism = int.Parse(threads);
+            Console.WriteLine("C#（Mono " + Environment.Version + "）/ 論理プロセッサ " + Environment.ProcessorCount + " / CoreParallelism " + CoreParallelism.Degree);
+            var doc = new PaintDocument(4096, 4096, 128);
+            Action<string, Func<object>> time = (label, f) =>
+            {
+                var ms = new List<double>();
+                for (int i = 0; i < runs + 2; i++) { var sw = Stopwatch.StartNew(); f(); if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds); }
+                Console.WriteLine(label + ": " + Stats(ms));
+            };
+            time("選択範囲 4096² 楕円 1800×1500 を作る", () => SelectionMask.Ellipse(doc, 2048, 2048, 900, 750));
+            var big = SelectionMask.Ellipse(doc, 2048, 2048, 900, 750);
+            foreach (int r in new[] { 10, 50, 200 }) time("選択範囲 拡張 " + r + " px", () => big.Grow(r));
+            time("選択範囲 縮小 50 px", () => big.Shrink(50));
+            time("選択範囲 境界 20 px", () => big.Border(20));
+            foreach (int r in new[] { 5, 50, 200 }) time("選択範囲 ぼかし " + r + " px", () => big.Feather(r));
+            time("選択範囲 鋭く", () => big.Sharpen());
+            var small = SelectionMask.Ellipse(doc, 2048, 2048, 200, 200);
+            time("選択範囲 半径 200 px の楕円の拡張 50", () => small.Grow(50));
+            time("選択範囲 半径 200 px の楕円のぼかし 50", () => small.Feather(50));
         }
 
         static IEnumerable<string> SourceLines()
@@ -257,6 +318,15 @@ namespace YoluPainterRs.Golden
                 case "smudge": s.SmudgeStrength = Num(c, v); return true;
                 case "clone": { var q = v.Split(','); s.CloneOffsetX = Num(c, q[0]); s.CloneOffsetY = Num(c, q[1]); return true; }
                 case "stencil": if (Flag(v)) { if (c.Stencil == null) throw new FormatException("stencil= の前に stencil 命令"); s.Stencil = c.Stencil; } return true;
+                case "sym":
+                {
+                    // sym=モード:中心X,中心Y[,数]（CanvasSymmetryMode の名前）
+                    var q = v.Split(':'); var p = q[1].Split(',');
+                    CanvasSymmetryMode m;
+                    if (!Enum.TryParse(q[0], false, out m) || !Enum.IsDefined(typeof(CanvasSymmetryMode), m)) throw new FormatException("sym: " + v);
+                    s.CanvasSymmetry = new CanvasSymmetrySettings { Mode = m, CenterX = Num(c, p[0]), CenterY = Num(c, p[1]), Count = p.Length > 2 ? Int(p[2]) : 2 };
+                    return true;
+                }
                 case "dual": s.Dual = new DualBrush { Tip = v == "round" ? null : Tip(v) }; return true;
                 case "dradius": Dual(s).Radius = Num(c, v); return true;
                 case "dhard": Dual(s).Hardness = Num(c, v); return true;
@@ -570,6 +640,7 @@ namespace YoluPainterRs.Golden
                         bytes = SurfaceBytes(doc, doc.Layers[LayerIndex(c, t[2])].Channels[ch]); what = "layer " + t[2] + " " + ChannelWord(ch) + size;
                     }
                     else if (t[1] == "mask") { bytes = SurfaceBytes(doc, doc.Layers[LayerIndex(c, t[2])].Mask.Surface); what = "mask " + t[2] + " " + size; }
+                    else if (t[1] == "selection") { bytes = doc.Selection == null ? new byte[doc.Width * doc.Height * 4] : SurfaceBytes(doc, doc.Selection.Surface); what = "selection " + size; }
                     else if (t[1] == "normal") { bytes = NormalMaps.Output(doc); what = "normal " + size; }
                     else if (t[1] == "normalfile") { bytes = NormalMaps.FileOutput(doc); what = "normalfile " + size; }
                     else if (t[1] == "derive") { bytes = NormalMaps.DeriveFromHeight(doc, PaintChannel.Height, doc.NormalSettings); what = "derive " + size; }
@@ -586,9 +657,89 @@ namespace YoluPainterRs.Golden
                     c.Events.Add("out " + n + " " + what);
                     return;
                 }
+                // ───────── 選択範囲 ─────────
+                case "select":
+                {
+                    // select 組み合わせ 形…: 今の選択範囲（無ければ空）と形を組み合わせて選択範囲にする
+                    var mode = Combine(t[1]); var shape = Shape(c, doc, t, 2);
+                    var current = doc.Selection ?? SelectionMask.None(doc);
+                    doc.SetSelection(current.Combine(shape, mode)); return;
+                }
+                case "modify":
+                {
+                    var sel = doc.Selection; if (sel == null) throw new InvalidOperationException("選択範囲が無い");
+                    switch (t[1])
+                    {
+                        case "grow": doc.SetSelection(sel.Grow(Int(t[2]))); return;
+                        case "shrink": doc.SetSelection(sel.Shrink(Int(t[2]), Flag(t[3]))); return;
+                        case "border": doc.SetSelection(sel.Border(Int(t[2]), Flag(t[3]))); return;
+                        case "feather": doc.SetSelection(sel.Feather(Num(c, t[2]), Flag(t[3]))); return;
+                        case "sharpen": doc.SetSelection(sel.Sharpen()); return;
+                        case "invert": doc.SetSelection(sel.Invert()); return;
+                        default: throw new FormatException("modify: " + t[1]);
+                    }
+                }
+                case "deselect": doc.ClearSelection(); return;
+                case "selinfo":
+                {
+                    var sel = doc.Selection;
+                    c.Events.Add("selinfo " + (sel == null ? "none" : "tiles=" + sel.Surface.TileCount + " bytes=" + sel.AllocatedBytes)); return;
+                }
+                case "history": c.Events.Add("history undo=" + doc.UndoCount + " redo=" + doc.RedoCount + " bytes=" + doc.HistoryBytes); return;
+                case "srcbudget": doc.SourceBudgetBytes = long.Parse(t[1], CultureInfo.InvariantCulture); return;
+                case "regionfill":
+                {
+                    // regionfill 層 ch R,G,B,A 不透明度 消す [範囲]
+                    var region = t.Length > 6 ? Region(c, doc, t[6]) : null;
+                    bool changed = doc.Fill(LayerAt(c, t[1]), Chan(t[2]), Color(t[3]), Num(c, t[4]), region, Flag(t[5]));
+                    c.Events.Add("fill " + (changed ? 1 : 0)); return;
+                }
+                case "maskfill":
+                {
+                    // maskfill 層 量 見せる [範囲]
+                    var region = t.Length > 4 ? Region(c, doc, t[4]) : null;
+                    bool changed = doc.FillMask(LayerAt(c, t[1]), Num(c, t[2]), region, Flag(t[3]));
+                    c.Events.Add("fill " + (changed ? 1 : 0)); return;
+                }
                 default: throw new FormatException("命令: " + t[0]);
             }
         }
+
+        static SelectionCombine Combine(string s)
+        {
+            switch (s)
+            {
+                case "replace": return SelectionCombine.Replace;
+                case "add": return SelectionCombine.Add;
+                case "sub": return SelectionCombine.Subtract;
+                case "inter": return SelectionCombine.Intersect;
+                default: throw new FormatException("組み合わせ: " + s);
+            }
+        }
+
+        /// <summary>選択範囲の形: rect X0 Y0 X1 Y1 | ellipse CX CY RX RY | poly X,Y… | wand 層|* ch X Y 許し幅 つながり | all | none。</summary>
+        static SelectionMask Shape(CaseState c, PaintDocument doc, string[] t, int at)
+        {
+            switch (t[at])
+            {
+                case "rect": return SelectionMask.Rectangle(doc, Int(t[at + 1]), Int(t[at + 2]), Int(t[at + 3]), Int(t[at + 4]));
+                case "ellipse": return SelectionMask.Ellipse(doc, Num(c, t[at + 1]), Num(c, t[at + 2]), Num(c, t[at + 3]), Num(c, t[at + 4]));
+                case "poly":
+                {
+                    var points = new List<(double x, double y)>();
+                    for (int i = at + 1; i < t.Length; i++) { var q = t[i].Split(','); points.Add((Num(c, q[0]), Num(c, q[1]))); }
+                    return SelectionMask.Polygon(doc, points);
+                }
+                case "wand":
+                    return SelectionMask.MagicWand(doc, t[at + 1] == "*" ? (Guid?)null : LayerAt(c, t[at + 1]), Chan(t[at + 2]), Int(t[at + 3]), Int(t[at + 4]), Int(t[at + 5]), Flag(t[at + 6]));
+                case "all": return SelectionMask.All(doc);
+                case "none": return SelectionMask.None(doc);
+                default: throw new FormatException("形: " + t[at]);
+            }
+        }
+
+        /// <summary>塗りつぶしの範囲: 形を : と , で区切って 1 語に（rect:X0,Y0,X1,Y1、wand:層:ch:X:Y:許し幅:つながり など）。</summary>
+        static SelectionMask Region(CaseState c, PaintDocument doc, string spec) { return Shape(c, doc, spec.Split(':', ','), 0); }
 
         /// <summary>層の中身。random は画布の全画素を下の行から、sparse はタイルごとに 無し・一様・画素 を選ぶ。</summary>
         static void Fill(PaintDocument doc, SparseTileSurface surface, string fill)

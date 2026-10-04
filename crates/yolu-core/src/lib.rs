@@ -51,8 +51,10 @@ mod math;
 pub mod mesh_maps;
 pub mod normal;
 pub mod padding;
+pub mod selection;
 pub mod skin;
 mod surface;
+mod symmetry;
 mod types;
 
 pub use adjust::{AdjustmentSettings, AdjustmentType};
@@ -67,7 +69,9 @@ pub use error::CoreError;
 pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
+pub use selection::{SelectionCombine, SelectionMask};
 pub use surface::Surface;
+pub use symmetry::{CanvasSymmetry, SymmetryMode, SymmetryTransform};
 pub use types::{
     BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect, Rgba8, RowOrder,
     TileCoord,

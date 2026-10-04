@@ -9,6 +9,7 @@
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
 mod edits;
+mod selection;
 mod structure;
 
 use std::collections::hash_map::RandomState;
@@ -26,6 +27,7 @@ use crate::error::CoreError;
 use crate::layer::{ChannelBlend, RasterMask};
 use crate::math::require_finite;
 use crate::normal::NormalSettings;
+use crate::selection::SelectionMask;
 use crate::surface::{Growth, Surface, Tile};
 use crate::types::{
     BlendMode, Channel, ChannelInfo, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord,
@@ -262,6 +264,11 @@ pub(crate) enum Command {
         new: Option<ChannelInfo>,
         contents: Vec<(LayerId, structure::ChannelContents)>,
     },
+    /// 選択範囲の置き換え（画素は変えない）。
+    Selection {
+        old: Option<SelectionMask>,
+        new: Option<SelectionMask>,
+    },
 }
 
 struct Entry {
@@ -308,6 +315,8 @@ pub struct Document {
     /// チャンネルの一覧（番号ごと。None は空き）。0〜5 は標準で必ずある。
     channels: Vec<Option<ChannelInfo>>,
     pub(crate) normal_settings: NormalSettings,
+    /// 今の選択範囲（None は選択なし）。
+    selection: Option<SelectionMask>,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
     history_bytes: u64,
@@ -374,6 +383,7 @@ impl Document {
                 .map(|c| ChannelInfo::standard(*c))
                 .collect(),
             normal_settings: NormalSettings::DEFAULT,
+            selection: None,
             undo: Vec::new(),
             redo: Vec::new(),
             history_bytes: 0,
@@ -1077,7 +1087,7 @@ impl Document {
     fn switch(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
         if !matches!(
             command,
-            Command::Stroke { .. } | Command::NormalSettings { .. }
+            Command::Stroke { .. } | Command::NormalSettings { .. } | Command::Selection { .. }
         ) {
             // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
             self.mark_clip_bases();
@@ -1177,6 +1187,11 @@ impl Document {
                 new,
                 contents,
             } => self.switch_channel_info(*channel, old, new, contents, backwards),
+            Command::Selection { old, new } => {
+                // 合成は変えないので、タイルの変化は記録しない
+                self.selection = if backwards { old.clone() } else { new.clone() };
+                Ok(())
+            }
         }
     }
 
@@ -1492,9 +1507,10 @@ impl Document {
             brush.without_color_dynamics()
         };
         let size = (self.width, self.height, self.tile_size);
-        self.active = Some(StrokeState::new(
-            id, layer, index, channel, kind, brush, budgets, size,
-        ));
+        self.active = Some(
+            StrokeState::new(id, layer, index, channel, kind, brush, budgets, size)
+                .with_selection(self.selection.clone()),
+        );
         self.active_target = target;
         Ok(Stroke { id })
     }
@@ -1543,7 +1559,8 @@ impl Document {
                 budgets,
                 size,
             )
-            .without_stencil_colour(),
+            .without_stencil_colour()
+            .with_selection(self.selection.clone()),
         );
         self.active_target = Target::Mask;
         Ok(Stroke { id })

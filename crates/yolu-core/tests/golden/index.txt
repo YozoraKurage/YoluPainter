@@ -1,5 +1,5 @@
 # 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。
-# source: YoluPainter e689377af26e Runtime/Core=1582c88a9f0607c1 debug
+# source: YoluPainter 94c81415171f Runtime/Core=1582c88a9f0607c1 debug
 case blend_Normal params=1f4737c237f3eab9
 out 0 composite 24x20
 case blend_Multiply params=1f4737c237f3eab9
@@ -506,6 +506,219 @@ stats stamps=1 samples=1 tiles=6 rollback=24960
 commit stamps=1 samples=1 changed=1
 out 0 layer 0 64x48
 out 1 layer 1 64x48
+case sel_combine params=6745b2a4c601354b
+out 0 selection 70x50
+selinfo tiles=9 bytes=9216
+out 1 selection 70x50
+out 2 selection 70x50
+out 3 selection 70x50
+selinfo tiles=10 bytes=10240
+history undo=4 redo=0 bytes=48384
+undo 1
+out 4 selection 70x50
+redo 1
+out 5 selection 70x50
+selinfo none
+undo 1
+selinfo tiles=10 bytes=10240
+history undo=5 redo=0 bytes=58688
+case sel_polygon params=c3f90d8add939850
+out 0 selection 64x48
+out 1 selection 64x48
+out 2 selection 64x48
+selinfo none
+out 3 selection 64x48
+out 4 selection 64x48
+case sel_polygon_many params=aaf930be867b458e
+out 0 selection 160x120
+selinfo tiles=19 bytes=77824
+out 1 selection 160x120
+selinfo tiles=15 bytes=61440
+out 2 selection 160x120
+case sel_wand params=a216cd035744b835
+out 0 selection 40x30
+out 1 selection 40x30
+out 2 selection 40x30
+selinfo tiles=20 bytes=1340
+out 3 selection 40x30
+out 4 selection 40x30
+out 5 selection 40x30
+selinfo tiles=20 bytes=1340
+selinfo tiles=20 bytes=1340
+selinfo tiles=20 bytes=1340
+out 6 selection 40x30
+selinfo tiles=20 bytes=1340
+out 7 selection 40x30
+out 8 selection 40x30
+out 9 selection 40x30
+error select
+error select
+error select
+error select
+selinfo tiles=10 bytes=2560
+case sel_invert params=b473a8f1f02074ef
+selinfo tiles=15 bytes=1824
+out 0 selection 33x21
+selinfo none
+error modify
+out 1 selection 33x21
+selinfo tiles=15 bytes=3840
+selinfo none
+error modify
+history undo=5 redo=0 bytes=8544
+case sel_modify_small params=019940a3019951c4
+out 0 selection 40x40
+out 1 selection 40x40
+undo 1
+out 2 selection 40x40
+out 3 selection 40x40
+undo 1
+out 4 selection 40x40
+undo 1
+out 5 selection 40x40
+undo 1
+selinfo none
+out 6 selection 40x40
+undo 1
+out 7 selection 40x40
+history undo=8 redo=0 bytes=6408
+out 8 selection 40x40
+undo 1
+out 9 selection 40x40
+undo 1
+history undo=9 redo=1 bytes=14988
+out 10 selection 40x40
+undo 1
+out 11 selection 40x40
+out 12 selection 40x40
+out 13 selection 40x40
+selinfo none
+error modify
+error modify
+error modify
+error modify
+history undo=17 redo=0 bytes=14976
+case sel_modify_large params=6edf90183a1e6b32
+out 0 selection 300x200
+undo 1
+out 1 selection 300x200
+undo 1
+out 2 selection 300x200
+undo 1
+out 3 selection 300x200
+undo 1
+out 4 selection 300x200
+undo 1
+out 5 selection 300x200
+undo 1
+out 6 selection 300x200
+undo 1
+out 7 selection 300x200
+undo 1
+out 8 selection 300x200
+case sel_brush params=1365ebd4cc189b07
+commit stamps=57 samples=30 changed=1
+out 0 layer 1 64x48
+commit stamps=38 samples=25 changed=1
+out 1 layer 0 64x48
+commit stamps=44 samples=20 changed=1
+commit stamps=26 samples=20 changed=1
+commit stamps=17 samples=15 changed=1
+out 2 layer 0 64x48
+commit stamps=0 samples=0 changed=1
+out 3 layer 1 64x48
+cancel
+out 4 layer 1 64x48
+commit stamps=25 samples=15 changed=1
+out 5 mask 0 64x48
+commit stamps=1 samples=1 changed=1
+out 6 layer 1 64x48
+history undo=14 redo=0 bytes=69924
+case sel_dynamics params=da58c936549689aa
+commit stamps=28 samples=18 changed=1
+out 0 layer 0 72x56
+commit stamps=16 samples=10 changed=1
+out 1 layer 0 72x56
+case sel_parallel params=df53438068323a14
+commit stamps=10 samples=12 changed=1
+out 0 layer 0 300x240
+case sel_fill params=5ab9914d711307f7
+fill 1
+out 0 layer 1 50x40
+undo 1
+fill 1
+out 1 layer 1 50x40
+fill 1
+out 2 layer 0 50x40
+fill 1
+out 3 layer 0 50x40
+fill 1
+history undo=6 redo=0 bytes=49892
+undo 1
+undo 1
+out 4 layer 0 50x40
+redo 1
+out 5 layer 0 50x40
+fill 1
+out 6 mask 1 50x40
+fill 1
+out 7 mask 1 50x40
+fill 1
+out 8 mask 1 50x40
+history undo=10 redo=0 bytes=61588
+error regionfill
+error regionfill
+error regionfill
+error maskfill
+case sel_fill_budget params=ebae84101532ebbd
+error regionfill
+out 0 layer 0 64x64
+error regionfill
+out 1 layer 1 64x64
+fill 1
+out 2 layer 1 64x64
+history undo=1 redo=0 bytes=84
+case sym_modes params=ad3fa51edea304af
+commit stamps=18 samples=8 changed=1
+commit stamps=18 samples=8 changed=1
+commit stamps=23 samples=10 changed=1
+commit stamps=14 samples=8 changed=1
+commit stamps=18 samples=8 changed=1
+commit stamps=14 samples=6 changed=1
+out 0 layer @v 64x48
+out 1 layer @h 64x48
+out 2 layer @b 64x48
+out 3 layer @r3 64x48
+out 4 layer @r4 64x48
+out 5 layer @r16 64x48
+case sym_dynamics params=5c6a908cec6bb6fb
+commit stamps=9 samples=6 changed=1
+out 0 layer @top 64x64
+commit stamps=9 samples=6 changed=1
+out 1 layer @top 64x64
+commit stamps=13 samples=6 changed=1
+out 2 layer @base 64x64
+commit stamps=7 samples=5 changed=1
+out 3 layer @top 64x64
+commit stamps=11 samples=6 changed=1
+out 4 layer @top 64x64
+commit stamps=14 samples=2 changed=1
+out 5 layer @top 64x64
+commit stamps=0 samples=0 changed=1
+out 6 layer @top 64x64
+history undo=10 redo=0 bytes=77256
+case sym_refuse params=6869269d4cb8bfe3
+error stroke
+error stroke
+error stroke
+error stroke
+error stroke
+error point
+stats stamps=1 samples=1 tiles=28 rollback=1836800
+commit stamps=1 samples=1 changed=1
+error point
+out 0 region 300 300 64x48
+history undo=1 redo=0 bytes=1311264
 case sweeps params=cbf29ce484222325
 sweep blend_Normal 741d1e44ad7f5f2a
 sweep clip_Normal 9e7a4cc8277a1b38

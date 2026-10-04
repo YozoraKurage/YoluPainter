@@ -16,6 +16,7 @@
 | `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
 | `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
 | `rust-written-v21.unity.txt`・`rust-written-v21.composite` | 上の版21をUnity 0.2.0の `DocumentBinary.ReadId` / `Read` に読ませ、`Write` で書き直したバイト列が元と同じか、層の数を記録したものと、C#の全チャンネルの合成（`m2-*.composite` と同じ並び） |
+| `selection/selection-*.bin` と `.amounts` | 70×50画素・タイル16の文書で作った選択範囲（矩形・楕円・多角形の組み合わせ、ぼかし、全選択、反転、何も選ばない）のC#の `SelectionBinary.Write` の出力と、画布の量の生の並び（下の行から）。Rustで同じ選択範囲を作り、書いたバイト列が全バイト一致することと、読んで同じ量に戻ることを確かめる |
 
 旧正本のデータは各版の基礎配置を表す人工データであり、全版と全属性の組合せを網羅するものではない。
 
@@ -57,5 +58,11 @@ python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --verify
 ```
 
 検証の出力は `target/io-fixtures/comparison/`。既存の正解データは変更しない。C#出力が保存済みのPNGから変わった場合も検証を失敗させる。人工画像を使った比較であり、すべての画像サイズ・圧縮ランタイムでのバイト一致を保証するものではない。
+
+選択範囲の正解（`selection/`）の再生成（Unity同梱のRoslynとMonoを使う）:
+
+```sh
+tools/csharp-golden/run.sh selbin
+```
 
 PSDの入力・互換判定・書き戻し正解は [psd/README.md](psd/README.md) を参照。

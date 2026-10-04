@@ -15,6 +15,7 @@ use super::tip::BrushTip;
 use super::BrushSettings;
 use crate::error::CoreError;
 use crate::math::require_finite;
+use crate::symmetry::CanvasSymmetry;
 use crate::types::Rgba8;
 
 /// 全部入りのブラシ。ストロークを始めたときに写して固定する（筆先の画像は共有する。画像は変わらない）。
@@ -36,6 +37,8 @@ pub struct Brush {
     pub effect: BrushEffect,
     /// ステンシル（None は無し）。共有する（写さない）。
     pub stencil: Option<Arc<BrushStencil>>,
+    /// 2D の対称（既定は無し）。指先・クローンとは組めない（写しごとに読み元と動きが要る）。
+    pub symmetry: CanvasSymmetry,
 }
 
 impl From<BrushSettings> for Brush {
@@ -482,6 +485,17 @@ impl Brush {
         if !self.effect.is_paint() && self.base.erase {
             return Err(CoreError::InvalidArgument(
                 "効果のブラシは消しゴムにできない",
+            ));
+        }
+        self.symmetry.validate()?;
+        if self.symmetry.enabled()
+            && matches!(
+                self.effect,
+                BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
+            )
+        {
+            return Err(CoreError::Unsupported(
+                "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）",
             ));
         }
         Ok(())

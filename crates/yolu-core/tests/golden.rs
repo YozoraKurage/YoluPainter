@@ -1,6 +1,8 @@
 //! Unity 版の C# の Core の出力（tests/golden、tools/csharp-golden/run.sh で作る）とのバイト一致。
 //! 台本（golden/cases.txt）を C# と同じ規則で走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と出力の画素を比べる。
 //! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
+//! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
+//! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::HashMap;
@@ -23,6 +25,7 @@ use yolu_core::{
     NormalYDirection, PaperTexture, Rect, Rgba8, StencilImage, StencilMapping, StencilMode,
     StencilPoint, StencilTiling, Stroke, TileCoord, TipSelection,
 };
+use yolu_core::{CanvasSymmetry, CoreError, SelectionCombine, SelectionMask, SymmetryMode};
 
 struct SplitMix(u64);
 impl SplitMix {
@@ -294,6 +297,28 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
         "dround" => dual(b).roundness = num(c, v),
         "dscatter" => dual(b).scatter = num(c, v),
         "dcount" => dual(b).count = int(v) as u32,
+        "sym" => {
+            // sym=モード:中心X,中心Y[,数]
+            let (m, rest) = v.split_once(':').expect("sym=モード:X,Y");
+            let p: Vec<&str> = rest.split(',').collect();
+            let mode = match m {
+                "None" => SymmetryMode::None,
+                "Vertical" => SymmetryMode::Vertical,
+                "Horizontal" => SymmetryMode::Horizontal,
+                "Both" => SymmetryMode::Both,
+                "Radial" => SymmetryMode::Radial,
+                _ => panic!("sym: {v}"),
+            };
+            let center = DVec2::new(num(c, p[0]), num(c, p[1]));
+            let count = p
+                .get(2)
+                .map_or(2, |n| int(n).clamp(0, u32::MAX as i64) as u32);
+            br.symmetry = CanvasSymmetry {
+                mode,
+                center,
+                count,
+            };
+        }
         "dmode" => {
             dual(b).mode = *DualBrushMode::ALL
                 .iter()
@@ -970,6 +995,16 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                         format!("mask {} {size}", t[2]),
                     )
                 }
+                "selection" => {
+                    let n = doc.width() as usize * doc.height() as usize;
+                    let mut bytes = vec![0u8; n * 4];
+                    if let Some(sel) = doc.selection() {
+                        for (i, a) in sel.to_canvas_bytes().into_iter().enumerate() {
+                            bytes[i * 4 + 3] = a;
+                        }
+                    }
+                    (bytes, format!("selection {size}"))
+                }
                 "normal" => (
                     doc.normal_output(normal::DEFAULT_WORKING_BUDGET_BYTES)?,
                     format!("normal {size}"),
@@ -1008,9 +1043,151 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
             c.events.push(format!("out {} {}", c.outputs.len(), what));
             c.outputs.push(bytes);
         }
+        // ───────── 選択範囲 ─────────
+        "select" => {
+            let mode = combine_mode(t[1]);
+            let shape = shape(c, doc, &t[2..])?;
+            let current = doc
+                .selection()
+                .cloned()
+                .unwrap_or_else(|| SelectionMask::none(doc));
+            doc.set_selection(Some(current.combine(&shape, mode)?))?;
+        }
+        "modify" => {
+            let sel = doc
+                .selection()
+                .cloned()
+                .ok_or(CoreError::Unsupported("選択範囲が無い"))?;
+            let budget = yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES;
+            let next = match t[1] {
+                "grow" => sel.grow(radius(t[2])?, budget)?,
+                "shrink" => sel.shrink(radius(t[2])?, flag(t[3]), budget)?,
+                "border" => sel.border(radius(t[2])?, flag(t[3]), budget)?,
+                "feather" => {
+                    let r = num(c, t[2]);
+                    sel.feather(r, flag(t[3]), budget)?
+                }
+                "sharpen" => sel.sharpen(),
+                "invert" => sel.invert(),
+                m => panic!("modify: {m}"),
+            };
+            doc.set_selection(Some(next))?;
+        }
+        "deselect" => doc.clear_selection()?,
+        "selinfo" => {
+            let line = match doc.selection() {
+                None => "selinfo none".to_string(),
+                Some(s) => format!(
+                    "selinfo tiles={} bytes={}",
+                    s.tile_coords().len(),
+                    s.history_bytes()
+                ),
+            };
+            c.events.push(line);
+        }
+        "history" => c.events.push(format!(
+            "history undo={} redo={} bytes={}",
+            doc.undo_count(),
+            doc.redo_count(),
+            doc.history_bytes()
+        )),
+        "srcbudget" => doc.set_source_budget_bytes(int(t[1]) as u64)?,
+        "regionfill" => {
+            let region = match t.get(6) {
+                Some(spec) => Some(region(c, doc, spec)?),
+                None => None,
+            };
+            let opacity = num(c, t[4]);
+            let changed = doc.fill(
+                layer_at(doc, t[1]),
+                channel(t[2]),
+                color(t[3]),
+                opacity,
+                region.as_ref(),
+                flag(t[5]),
+            )?;
+            c.events.push(format!("fill {}", changed as u8));
+        }
+        "maskfill" => {
+            let region = match t.get(4) {
+                Some(spec) => Some(region(c, doc, spec)?),
+                None => None,
+            };
+            let amount = num(c, t[2]);
+            let changed =
+                doc.fill_mask(layer_at(doc, t[1]), amount, region.as_ref(), flag(t[3]))?;
+            c.events.push(format!("fill {}", changed as u8));
+        }
         other => panic!("命令: {other}"),
     }
     Ok(())
+}
+
+fn combine_mode(s: &str) -> SelectionCombine {
+    match s {
+        "replace" => SelectionCombine::Replace,
+        "add" => SelectionCombine::Add,
+        "sub" => SelectionCombine::Subtract,
+        "inter" => SelectionCombine::Intersect,
+        m => panic!("組み合わせ: {m}"),
+    }
+}
+
+/// 半径（C# は int を受けて負を断る）。
+fn radius(s: &str) -> Result<u32, CoreError> {
+    u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument("radius"))
+}
+
+/// 選択範囲の形（Golden.cs の Shape と同じ書き方）。
+fn shape(c: &mut CaseRun, doc: &Document, t: &[&str]) -> Result<SelectionMask, CoreError> {
+    Ok(match t[0] {
+        "rect" => SelectionMask::rectangle(doc, int(t[1]), int(t[2]), int(t[3]), int(t[4])),
+        "ellipse" => {
+            let (x, y, rx, ry) = (num(c, t[1]), num(c, t[2]), num(c, t[3]), num(c, t[4]));
+            SelectionMask::ellipse(doc, x, y, rx, ry)?
+        }
+        "poly" => {
+            let mut points = Vec::new();
+            for p in &t[1..] {
+                let (x, y) = p.split_once(',').expect("X,Y");
+                points.push(DVec2::new(num(c, x), num(c, y)));
+            }
+            SelectionMask::polygon(doc, &points)?
+        }
+        "wand" => {
+            let layer = if t[1] == "*" {
+                None
+            } else {
+                Some(layer_at(doc, t[1]))
+            };
+            // C# は int を受けて範囲の外を断る
+            let seed_x =
+                u32::try_from(int(t[3])).map_err(|_| CoreError::InvalidArgument("seed"))?;
+            let seed_y =
+                u32::try_from(int(t[4])).map_err(|_| CoreError::InvalidArgument("seed"))?;
+            let tolerance =
+                u8::try_from(int(t[5])).map_err(|_| CoreError::InvalidArgument("tolerance"))?;
+            SelectionMask::magic_wand(
+                doc,
+                layer,
+                channel(t[2]),
+                seed_x,
+                seed_y,
+                tolerance,
+                flag(t[6]),
+                yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES,
+            )?
+        }
+        "all" => SelectionMask::all(doc),
+        "none" => SelectionMask::none(doc),
+        s => panic!("形: {s}"),
+    })
+}
+
+/// 塗りつぶしの範囲（形を : と , で区切って 1 語に）。
+fn region(c: &mut CaseRun, doc: &Document, spec: &str) -> Result<SelectionMask, CoreError> {
+    let t: Vec<&str> = spec.split([':', ',']).collect();
+    shape(c, doc, &t)
 }
 
 fn run_script() -> Vec<(String, CaseRun)> {

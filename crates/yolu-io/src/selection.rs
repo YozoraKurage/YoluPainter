@@ -1,4 +1,5 @@
 use crate::{check, Error, NativeDocument, Result};
+use yolu_core::{SelectionMask, TileCoord};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionTile {
     pub x: i32,
@@ -13,8 +14,52 @@ pub struct Selection {
     tiles: Vec<SelectionTile>,
 }
 impl Selection {
+    pub fn width(&self) -> i32 {
+        self.width
+    }
+    pub fn height(&self) -> i32 {
+        self.height
+    }
+    pub fn tile_size(&self) -> i32 {
+        self.tile_size
+    }
     pub fn tiles(&self) -> &[SelectionTile] {
         &self.tiles
+    }
+    /// core の選択範囲から作る。C# の `SelectionBinary.Write` と同じに、量のあるタイルだけを (y, x) の順に並べる
+    /// （同じ選択範囲はいつも同じバイト列になる）。
+    pub fn from_core(mask: &SelectionMask) -> Result<Self> {
+        let n = mask.tile_size() as usize * mask.tile_size() as usize;
+        let mut tiles = Vec::new();
+        for coord in mask.tile_coords() {
+            let mut amounts = vec![0u8; n];
+            mask.copy_tile(coord, &mut amounts)?;
+            if amounts.iter().any(|a| *a != 0) {
+                tiles.push(SelectionTile {
+                    x: coord.x as i32,
+                    y: coord.y as i32,
+                    amounts,
+                });
+            }
+        }
+        Ok(Self {
+            width: mask.width() as i32,
+            height: mask.height() as i32,
+            tile_size: mask.tile_size() as i32,
+            tiles,
+        })
+    }
+    /// core の選択範囲へ。何も選んでいない（タイルが 0 枚の）選択範囲は空の選択範囲になる
+    /// （`Document::restore_selection` は空を選択なしにする）。
+    pub fn to_core(&self) -> Result<SelectionMask> {
+        Ok(SelectionMask::from_amount_tiles(
+            self.width as u32,
+            self.height as u32,
+            self.tile_size as u32,
+            self.tiles
+                .iter()
+                .map(|t| (TileCoord::new(t.x as u32, t.y as u32), t.amounts.clone())),
+        )?)
     }
     pub fn read(b: &[u8], doc: &NativeDocument) -> Result<Self> {
         check(b.get(..4) == Some(b"YLSL"), "選択範囲の識別子が不正です")?;
