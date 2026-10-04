@@ -423,12 +423,13 @@ pub(crate) fn uv_footprint_bounds(
     Some((v2max(Vec2::ZERO, min), v2min(Vec2::ONE, max)))
 }
 
-/// 被覆率（C# の式: 距離 ≤ 硬さ か 硬さ ≥ 0.9999 なら 1、ほかは 1 − SmoothStep((d − h) / (1 − h))）。
+/// 被覆率（C# の式: 距離 ≤ 硬さ か 硬さ ≥ 0.9999 なら 1、ほかは max(0, 1 − SmoothStep((d − h) / (1 − h)))）。
+/// 単精度の丸めで縁が −2.4e−7 ほどになるのを 0 で押さえる（Unity 版の SurfaceGeometry.EdgeCoverage と同じ）。
 #[inline]
 pub(crate) fn coverage(distance: f32, hardness: f32) -> f32 {
     if distance <= hardness || hardness >= 0.9999 {
         1.0
     } else {
-        1.0 - super::unity::smooth_step(0.0, 1.0, (distance - hardness) / (1.0 - hardness))
+        (1.0 - super::unity::smooth_step(0.0, 1.0, (distance - hardness) / (1.0 - hardness))).max(0.0)
     }
 }

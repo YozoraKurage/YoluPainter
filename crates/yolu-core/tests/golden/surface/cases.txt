@@ -192,8 +192,8 @@ region 200 Material
 closest 0 0 -1 2 0 0 0 100000 1
 
 case edge_coverage
-# ダブの縁のテクセルで 1 − SmoothStep が単精度の丸めで −2.4e−7 になる（C# も同じ値。ApplyPixel は負の覆いを断るので、
-# 塗る側（SurfaceStroke）は 0 以下の覆いを塗らない）
+# ダブの縁のテクセルで 1 − SmoothStep が単精度の丸めで −2.4e−7 になる所。C# も Rust も 0 で押さえる（ApplyPixel は負の覆いを断るため）。
+# 塗る側（SurfaceStroke）も 0 以下の覆いを塗らない
 cube 0 0 0
 build 1
 dab 1.6 0.4 -2 0.1 0.1 -0.5 0.022 2048 2048 0.8

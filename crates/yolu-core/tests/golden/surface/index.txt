@@ -1,5 +1,5 @@
 # 生成: tools/csharp-golden（手で書き換えない）。Unity 版の SurfaceGeometry（Editor/Preview の原文）の出力。
-# source: YoluPainter 4ba8d1fe30d4 Editor/Preview/Surface*=b1ca71763e1101b1 UnityEngine.CoreModule debug
+# source: YoluPainter e689377af26e Editor/Preview/Surface*=f222859638ee768d UnityEngine.CoreModule debug
 case cube_basics params=a5e8570898d27d6f
 out 0 structure tris=12 nonmanifold=0 center=00000000,00000000,00000000 extents=3f000000,3f000000,3f000000 eps=35e878d0 adj=818cab66fc437e15 nodes=3 bvh=8c2fefc6ccbdb0f9
 out 1 ray tri=1 r=0 s=0 m=0 dist=40200000 pos=3dcccccd,3e4ccccd,bf000000 n=00000000,00000000,bf800000 bary=3e99999b,3ecccccd,3e999999 uv=3e48b43b,3ead0e56
@@ -24,11 +24,11 @@ case cube_dabs params=0666deebdef3a77c
 out 0 dab tri=1 pixels=1196 hash=461d4712a42e7201 cand=1530 rays=1196 tests=13578 visited=6 visits=3588 mincov=34000000 clipped=0 why=-
 out 1 dab tri=0 pixels=700 hash=c6a5df1db1f31f86 cand=874 rays=700 tests=7968 visited=4 visits=2100 mincov=372e0000 clipped=0 why=-
 out 2 dab tri=3 pixels=718 hash=c066a3fcb65c72d5 cand=874 rays=718 tests=7902 visited=4 visits=2154 mincov=35b00000 clipped=0 why=-
-out 3 dab tri=1 pixels=6153 hash=a93bc008e3a551ae cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=b4000000 clipped=0 why=-
-out 4 dab tri=1 pixels=6153 hash=2d08ea0cb072818b cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=b4800000 clipped=0 why=-
+out 3 dab tri=1 pixels=6153 hash=dddda279b800dbba cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=00000000 clipped=0 why=-
+out 4 dab tri=1 pixels=6153 hash=4298be0956780517 cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=00000000 clipped=0 why=-
 out 5 dab tri=1 pixels=6153 hash=f488a95776fddb20 cand=11122 rays=6153 tests=70656 visited=8 visits=18459 mincov=3f800000 clipped=0 why=-
 out 6 dab tri=0 pixels=26576 hash=8ceab0cf374b86ba cand=67950 rays=26576 tests=305478 visited=6 visits=79728 mincov=00000000 clipped=0 why=-
-out 7 dab tri=8 pixels=43375 hash=abe0f5df462f7efb cand=70605 rays=43375 tests=520500 visited=8 visits=130125 mincov=b4000000 clipped=0 why=-
+out 7 dab tri=8 pixels=43375 hash=8348ce67d07e4057 cand=70605 rays=43375 tests=520500 visited=8 visits=130125 mincov=00000000 clipped=0 why=-
 out 8 dab tri=0 pixels=4 hash=29dde858638fb005 cand=8 rays=4 tests=48 visited=6 visits=12 mincov=3dfbf378 clipped=0 why=-
 out 9 dab tri=0 pixels=0 hash=cbf29ce484222325 cand=0 rays=0 tests=0 visited=6 visits=0 mincov=7f800000 clipped=0 why=-
 case cube_ignore_and_budgets params=2217a0bcea6aefd4
@@ -48,11 +48,11 @@ out 0 structure tris=3072 nonmanifold=0 center=00000000,00000000,00000000 extent
 out 1 rays n=300 hits=273 hash=02877245b2031617
 out 2 rays n=300 hits=271 hash=ab376746de82a17a
 out 3 dab tri=338 pixels=1476 hash=46a80444b41d1907 cand=3289 rays=1476 tests=12330 visited=20 visits=28830 mincov=37180000 clipped=0 why=-
-out 4 dab tri=338 pixels=14369 hash=40c33cb587882e78 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=b4800000 clipped=0 why=-
-out 5 dab tri=338 pixels=75298 hash=1552909359a75061 cand=174170 rays=75298 tests=802326 visited=334 visits=1636492 mincov=b4800000 clipped=0 why=-
+out 4 dab tri=338 pixels=14369 hash=a521c4e130ca0be8 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=00000000 clipped=0 why=-
+out 5 dab tri=338 pixels=75298 hash=dfe6d51209a2a479 cand=174170 rays=75298 tests=802326 visited=334 visits=1636492 mincov=00000000 clipped=0 why=-
 out 6 dab tri=2076 pixels=0 hash=cbf29ce484222325 cand=262032 rays=128299 tests=1660284 visited=214 visits=3273921 mincov=7f800000 clipped=1 why=pixels
 out 7 dab tri=1805 pixels=3594 hash=3cf80202e97f6c81 cand=8270 rays=3642 tests=55248 visited=76 visits=95672 mincov=35a00000 clipped=0 why=-
-out 8 dab tri=928 pixels=66340 hash=2cfdebe4067c69d2 cand=146127 rays=67475 tests=1255896 visited=277 visits=1959791 mincov=b4000000 clipped=0 why=-
+out 8 dab tri=928 pixels=66340 hash=fcec2bd47202cac2 cand=146127 rays=67475 tests=1255896 visited=277 visits=1959791 mincov=00000000 clipped=0 why=-
 out 9 closest tri=992 r=0 s=0 m=0 dist=3e4572b2 pos=3e93cd3a,3e93cd3a,3e93cd3a n=3f1369cc,3f0d49e2,3f1a694d bary=00000000,3f800000,00000000 uv=3eafc963,3efae147
 out 10 closest tri=2423 r=0 s=0 m=0 dist=3e823433 pos=3e44e7c8,3ed625ab,3e44e7c7 n=3eb9cfbd,3f5bb617,3eb9cfbd bary=3ea2a893,3ea2a888,3ebaaee7 uv=3f1275ed,3f5c47b7
 out 11 closest tri=2153 r=0 s=0 m=0 dist=3eed2f0e pos=be22d0d0,3ed9166b,be59166b n=beb9dde2,3f4ed074,beedb759 bary=00000000,00000000,3f800000 uv=3ee1eb85,3f2147ae
@@ -63,11 +63,11 @@ out 15 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=10440 rays=5001 tests=434
 out 16 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=19700 rays=9796 tests=84660 visited=33 visits=193194 mincov=7f800000 clipped=1 why=pixels
 out 17 dab tri=338 pixels=0 hash=cbf29ce484222325 cand=24620 rays=12313 tests=107520 visited=41 visits=247101 mincov=7f800000 clipped=1 why=triangles
 case sphere16_cache params=3653acc72aea1491
-out 0 dab tri=338 pixels=14369 hash=40c33cb587882e78 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=b4800000 clipped=0 why=- cachehits=0 cached=14369
+out 0 dab tri=338 pixels=14369 hash=a521c4e130ca0be8 cand=32634 rays=14369 tests=134964 visited=84 visits=290057 mincov=00000000 clipped=0 why=- cachehits=0 cached=14369
 out 1 dab tri=339 pixels=14779 hash=e899ddb568bc8aed cand=35132 rays=14779 tests=19566 visited=90 visits=43421 mincov=34000000 clipped=0 why=- cachehits=13006 cached=16142
 out 2 dab tri=340 pixels=15642 hash=8809a23d09030954 cand=38022 rays=15642 tests=24522 visited=92 visits=53272 mincov=00000000 clipped=0 why=- cachehits=26412 cached=18378
 out 3 dab tri=341 pixels=0 hash=cbf29ce484222325 cand=40028 rays=16732 tests=28404 visited=100 visits=60019 mincov=7f800000 clipped=1 why=bvh cachehits=40605 cached=20972
-out 4 dab tri=341 pixels=16787 hash=4e05d32a9a78d2a1 cand=40508 rays=16787 tests=0 visited=100 visits=0 mincov=b4800000 clipped=0 why=- cachehits=57392 cached=20972
+out 4 dab tri=341 pixels=16787 hash=157b2e6b53270951 cand=40508 rays=16787 tests=0 visited=100 visits=0 mincov=00000000 clipped=0 why=- cachehits=57392 cached=20972
 out 5 dab tri=341 pixels=16428 hash=ca90084f1e4a65e6 cand=39397 rays=16428 tests=171132 visited=100 visits=353166 mincov=00000000 clipped=0 why=- cachehits=57392 cached=16428
 out 6 dab tri=341 pixels=8214 hash=ba53c6c996bf0653 cand=19637 rays=8214 tests=85560 visited=100 visits=175844 mincov=00000000 clipped=0 why=- cachehits=57392 cached=8214
 out 7 dab tri=341 pixels=8214 hash=ba53c6c996bf0653 cand=19637 rays=8214 tests=85560 visited=100 visits=175844 mincov=00000000 clipped=0 why=-
@@ -75,8 +75,8 @@ case shell params=2eebe81603dd723c
 out 0 structure tris=2304 nonmanifold=0 center=3b23d700,b3c00000,bb23d700 extents=3f00a3d7,3efffffd,3f00a3d7 eps=35e93f59 adj=b42801fef0622e27 nodes=1023 bvh=2e13d487545afbaa
 out 1 dab tri=1909 pixels=26957 hash=3af80e0a4218aa69 cand=63733 rays=26957 tests=296402 visited=86 visits=715951 mincov=34000000 clipped=0 why=-
 out 2 dab tri=1251 pixels=23626 hash=b8e3cab84f25b00a cand=60535 rays=24676 tests=385036 visited=83 visits=883326 mincov=00000000 clipped=0 why=-
-out 3 dab tri=1896 pixels=13051 hash=1d01b650162f917e cand=33103 rays=13051 tests=171535 visited=42 visits=354995 mincov=b4000000 clipped=0 why=-
-out 4 dab tri=2199 pixels=27585 hash=ae4be70be3e93876 cand=65048 rays=27585 tests=289410 visited=88 visits=724543 mincov=b4800000 clipped=0 why=-
+out 3 dab tri=1896 pixels=13051 hash=37a61623262c603a cand=33103 rays=13051 tests=171535 visited=42 visits=354995 mincov=00000000 clipped=0 why=-
+out 4 dab tri=2199 pixels=27585 hash=c83128a9efbc0fb6 cand=65048 rays=27585 tests=289410 visited=88 visits=724543 mincov=00000000 clipped=0 why=-
 out 5 rays n=400 hits=367 hash=ae268748b83937dc
 out 6 closest tri=1909 r=1 s=1 m=1 dist=3e0a8f55 pos=3da1856b,3e21856b,bef24821 n=3d9fe237,3e72e1f1,bf77e3e8 bary=00000000,00000000,3f800000 uv=3e45678a,3ea8f5c2
 out 7 closest tri=181 r=0 s=0 m=0 dist=3e0fae0e pos=3d9fec05,3e1fec05,beefe207 n=3d9fe267,3e72e200,bf77e3e6 bary=00000000,00000000,3f800000 uv=3e45678a,3ea8f5c2
@@ -116,7 +116,7 @@ out 4 region n=204 hash=6f6d279af5cbbde5
 out 5 region n=204 hash=6f6d279af5cbbde5
 out 6 closest tri=215 r=2 s=2 m=1 dist=3f400000 pos=00000000,00000000,be800000 n=be654b06,be654b06,bf72d341 bary=00000000,00000000,3f800000 uv=3e2aaaab,3e800000
 case edge_coverage params=b10d81aca17fc4fe
-out 0 dab tri=1 pixels=829 hash=959e700503af1662 cand=1080 rays=829 tests=9606 visited=4 visits=2487 mincov=b4800000 clipped=0 why=-
+out 0 dab tri=1 pixels=829 hash=99318f4d2083222e cand=1080 rays=829 tests=9606 visited=4 visits=2487 mincov=00000000 clipped=0 why=-
 case big params=4ca1dc6d79aaf755
 out 0 structure tris=69312 nonmanifold=0 center=00000000,b4b00000,00000000 extents=3f000000,3efffff5,3f000000 eps=35e878cd adj=aa6cef9274dd5cf5 nodes=23935 bvh=29faed5d65c64fb8
 out 1 rays n=2000 hits=1789 hash=37d117b7972b174c
