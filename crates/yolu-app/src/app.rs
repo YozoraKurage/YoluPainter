@@ -222,11 +222,18 @@ impl YoluApp {
 
     /// eframe の窓から作る（Windows ではペンの入力を窓に繋ぐ）。
     pub fn new(cc: &eframe::CreationContext<'_>) -> YoluApp {
+        if let Some(rs) = &cc.wgpu_render_state {
+            let info = rs.adapter.get_info();
+            crate::crash::gpu(&info.name, &format!("{:?}", info.backend));
+        }
         Self::setup(&cc.egui_ctx);
         let pen = PenInput::attach(cc);
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.dialogs = true;
+        if let Some(dir) = crate::crash::directory() {
+            app.state.crash = crate::crash::window::Report::load(dir);
+        }
         // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験の窓は画面のスレッドで描く
         app.state.brushes.samples.render_in_background(&cc.egui_ctx);
         app.state.brushes.krita.load_in_background();
@@ -857,7 +864,7 @@ impl YoluApp {
                     .as_ref()
                     .and_then(|b| b.rects.last())
                     .map_or(r.left() + 6.0, |last| last.right());
-                let room = (r.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT)).clamp(0.0, 352.0);
+                let room = (r.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0)).clamp(0.0, 352.0);
                 let style = t::LABEL_DIM.with_color(if self.state.modified {
                     t::TEXT
                 } else {
@@ -887,6 +894,12 @@ impl YoluApp {
                     self.state.popup.as_ref().map(|p| p.kind),
                     Some(PopupKind::LiveLink)
                 );
+                let crash_rect = Rect::from_min_size(
+                    pos2(title.left() - shell::LINK_ICON_SLOT - 28.0, r.top()),
+                    vec2(26.0, r.height()),
+                );
+                let mut crash_ui = ui.new_child(egui::UiBuilder::new().max_rect(crash_rect));
+                self.state.crash.indicator(&mut crash_ui, self.state.lang);
                 link_icon = Some(shell::link_icon(
                     ui,
                     r,
@@ -979,6 +992,11 @@ impl YoluApp {
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
+        self.state.crash.show(&ctx, self.state.lang);
+        crate::crash::message(&self.state.message);
+        if self.dialogs {
+            self.state.crash.execute_request(self.state.lang);
+        }
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す

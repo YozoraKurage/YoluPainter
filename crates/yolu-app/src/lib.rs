@@ -15,6 +15,7 @@ pub mod bake;
 pub mod brushes;
 pub mod canvas;
 pub mod clipboard;
+pub mod crash;
 pub mod engine;
 pub mod export;
 pub mod fx;

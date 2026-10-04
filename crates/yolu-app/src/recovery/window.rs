@@ -291,6 +291,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
+        if !app.crash.text.is_empty() {
+            let report_rect = Rect::from_min_size(pos2(footer.left() + 14.0, footer.top() + 10.0), vec2(165.0, 28.0));
+            if w::button(ui, report_rect, id.with("crash-report"), lang.pick("クラッシュの報告", "Crash Report"), false, true, None, None).clicked() { app.crash.open = true; }
+        }
         let mut x = footer.right() - 14.0;
         let buttons: [(&str, bool, bool, &str, RecoveryAction); 3] = [
             (

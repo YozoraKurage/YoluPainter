@@ -462,6 +462,7 @@ pub enum Action {
     Gradient(crate::gradient::GradientOp),
     /// 層の画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
+    OpenLogFolder,
     Quit,
     Undo,
     Redo,
@@ -530,6 +531,73 @@ pub enum Action {
 }
 
 impl Action {
+    /// 診断履歴には種類名だけを渡す。値・名前・パスの整形はしない。
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::M2(..) => "M2",
+            Self::M2Ui(..) => "M2Ui",
+            Self::Mat(..) => "Mat",
+            Self::Region(..) => "Region",
+            Self::Shelf(..) => "Shelf",
+            Self::Fx(..) => "Fx",
+            Self::Stencil(..) => "Stencil",
+            Self::Brush(..) => "Brush",
+            Self::Sel(..) => "Sel",
+            Self::Path(..) => "Path",
+            Self::Fill(..) => "Fill",
+            Self::Gradient(..) => "Gradient",
+            Self::Clip(..) => "Clip",
+            Self::OpenLogFolder => "OpenLogFolder",
+            Self::Quit => "Quit",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::NewLayer => "NewLayer",
+            Self::DeleteLayer => "DeleteLayer",
+            Self::LayerUp => "LayerUp",
+            Self::LayerDown => "LayerDown",
+            Self::ToggleVisible(..) => "ToggleVisible",
+            Self::SetBlend(..) => "SetBlend",
+            Self::StartRename(..) => "StartRename",
+            Self::ZoomIn => "ZoomIn",
+            Self::ZoomOut => "ZoomOut",
+            Self::FitView => "FitView",
+            Self::RotateLeft => "RotateLeft",
+            Self::RotateRight => "RotateRight",
+            Self::ResetRotation => "ResetRotation",
+            Self::FlipView => "FlipView",
+            Self::ResetLayout => "ResetLayout",
+            Self::SelectTool(..) => "SelectTool",
+            Self::SwapColors => "SwapColors",
+            Self::DefaultColors => "DefaultColors",
+            Self::BrushSmaller => "BrushSmaller",
+            Self::BrushLarger => "BrushLarger",
+            Self::ToggleColorWheel => "ToggleColorWheel",
+            Self::LoadDemoModel => "LoadDemoModel",
+            Self::FrameModel => "FrameModel",
+            Self::View3d(..) => "View3d",
+            Self::Pose(..) => "Pose",
+            Self::About => "About",
+            Self::SelectSet(..) => "SelectSet",
+            Self::ToggleSetVisible(..) => "ToggleSetVisible",
+            Self::StartRenameSet(..) => "StartRenameSet",
+            Self::ToggleLiveLink => "ToggleLiveLink",
+            Self::NewProjectDialog => "NewProjectDialog",
+            Self::NewProject => "NewProject",
+            Self::OpenProjectDialog => "OpenProjectDialog",
+            Self::OpenProject(..) => "OpenProject",
+            Self::SaveProject => "SaveProject",
+            Self::SaveProjectAsDialog => "SaveProjectAsDialog",
+            Self::SaveProjectAs(..) => "SaveProjectAs",
+            Self::Bake(..) => "Bake",
+            Self::Export(..) => "Export",
+            Self::Psd(..) => "Psd",
+            Self::Project(..) => "Project",
+            Self::Update(..) => "Update",
+            Self::Prefs(..) => "Prefs",
+            Self::Recovery(..) => "Recovery",
+        }
+    }
+
     /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。クリップボードの操作は、コピーも読むだけのセットでは
     /// 断る（そのセットの文書は中身の代わりの空の文書で、写しても意味が無い）。
     pub fn edits_document(&self) -> bool {
@@ -669,6 +737,7 @@ pub struct AppState {
     /// ブラシの一覧（組み込みと利用者のブラシ・道具ごとの覚え・見本・詳細の窓）。アプリの状態で、.ylp には入れない。
     pub brushes: crate::brushes::BrushesState,
     /// 復旧用の世代の書き置きと復旧の窓（`recovery`。動かすまでは何もしない）。
+    pub crash: crate::crash::window::Report,
     pub recovery: crate::recovery::RecoveryState,
 }
 
@@ -825,6 +894,7 @@ impl AppState {
             prefs: crate::prefs::PrefsState::default(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
+            crash: Default::default(),
             recovery: Default::default(),
         }
     }
@@ -918,12 +988,14 @@ impl AppState {
 
     /// 操作を当てる。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
+        crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {
-            s.message = s
-                .lang
-                .pick("描いている間はできません。", "Not while drawing.")
-                .into()
+            s.message = crate::crash::problem(
+                s.lang
+                    .pick("描いている間はできません。", "Not while drawing."),
+            )
+            .into()
         };
         // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
         let pose_undo =
@@ -939,6 +1011,7 @@ impl AppState {
             }
         }
         match action {
+            Action::OpenLogFolder => self.crash.request = Some(crate::crash::window::Request::Folder),
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),

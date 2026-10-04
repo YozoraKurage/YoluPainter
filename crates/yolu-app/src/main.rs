@@ -2,6 +2,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> eframe::Result {
+    yolu_app::crash::install();
+    let result = yolu_app::crash::guard(start, yolu_app::crash::failure_dialog);
+    if let Err(error) = &result {
+        yolu_app::crash::startup_failure(&error.to_string());
+    }
+    yolu_app::crash::cleanup();
+    result
+}
+
+fn start() -> eframe::Result {
     // CPU のスレッドの設定は、最初の rayon の利用より前に入れる（変えた値は次の起動から効く）
     yolu_app::settings::apply_thread_setting();
     let options = eframe::NativeOptions {

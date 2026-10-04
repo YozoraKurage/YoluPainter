@@ -330,7 +330,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         Action::About,
     );
     if !app.update.enabled() {
-        return vec![about];
+        return vec![Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder), about];
     }
     let busy = app.update.is_busy();
     let mut entries = Vec::new();
@@ -357,6 +357,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         .checked(on),
     );
     entries.push(Entry::Separator);
+    entries.push(Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder));
     entries.push(about);
     entries
 }

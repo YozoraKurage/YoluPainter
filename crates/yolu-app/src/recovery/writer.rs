@@ -137,7 +137,7 @@ fn run(shared: Arc<(Mutex<Inner>, Condvar)>, fault: Option<Fault>, budget: Optio
         let fingerprint = request.capture.fingerprint.clone();
         let epoch = request.epoch;
         // 書き込みの中の失敗（パニック）で、書き手が「動いている」まま止まらないようにする（終わるときの待ちが固まる）
-        let (result, token) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (result, token) = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
             write(&request, token.clone(), fault.as_ref(), budget)
         }))
         .unwrap_or((Err(RecoveryError::Panicked), token));

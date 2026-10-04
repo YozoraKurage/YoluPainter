@@ -448,7 +448,7 @@ impl SampleCache {
             let (tx, ctx) = (background.tx.clone(), background.ctx.clone());
             rayon::spawn(move || {
                 // 池の仕事が落ちるとプロセスごと止まるので、描く途中で落ちても空の見本にする
-                let image = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let image = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
                     render(&brush, spec).ok()
                 }))
                 .unwrap_or(None);

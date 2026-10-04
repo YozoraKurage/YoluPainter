@@ -254,7 +254,11 @@ fn help_item(state: &AppState, label: &str) -> (bool, yolu_app::ui::menu::Check)
 fn headless_a_build_without_a_public_key_shows_nothing_and_sends_nothing() {
     let mut state = AppState::new(64, 64);
     assert!(!state.update.enabled());
-    assert_eq!(help_labels(&state), ["YoluPainter について"]);
+    // 更新の項目は出さず、ログのフォルダと「について」だけ（ログのフォルダは公開鍵の有無に関わらず出す）
+    assert_eq!(
+        help_labels(&state),
+        ["ログのフォルダを開く", "YoluPainter について"]
+    );
     state.update_startup();
     assert!(!state.update.is_asking() && !state.update.window_open());
     apply(&mut state, UpdateAction::Check);
@@ -401,6 +405,11 @@ fn headless_a_manual_check_needs_no_earlier_choice_and_tells_the_result() {
     settle(&mut state);
     assert_eq!(state.message, "YoluPainter 0.2.0 があります。");
     assert_eq!(help_labels(&state)[0], "YoluPainter 0.2.0 に更新");
+    // ログのフォルダは区切りの後・「について」の前
+    assert!(help_labels(&state).ends_with(&[
+        "ログのフォルダを開く".to_string(),
+        "YoluPainter について".to_string()
+    ]));
     // 英語
     state.lang = Lang::En;
     assert_eq!(help_labels(&state)[0], "Update to YoluPainter 0.2.0");

@@ -10,6 +10,9 @@ use yolu_model::ModelError;
 
 impl Lang {
     pub fn core_error(self, error: &CoreError) -> String {
+        crate::crash::problem(self.core_error_text(error))
+    }
+    fn core_error_text(self, error: &CoreError) -> String {
         if self == Self::Ja { return error.to_string(); }
         match error {
             CoreError::MergeRefused(reason) => format!("Cannot merge: {}", merge_refusal(*reason)),
@@ -39,6 +42,9 @@ impl Lang {
     /// .ylp・ファイルの失敗の文。日本語は診断（どの項目か）をそのまま出し、英語は種類ごとの短い文にする
     /// （診断の本文は日本語なので、英語の窓には出さない）。OS のエラーは番号を添える。
     pub fn io_error(self, error: &yolu_io::Error) -> String {
+        crate::crash::problem(self.io_error_text(error))
+    }
+    fn io_error_text(self, error: &yolu_io::Error) -> String {
         use yolu_io::{Error, Unwritable};
         match error {
             Error::Core(e) => self.core_error(e),
@@ -81,6 +87,9 @@ impl Lang {
 
     /// 読み書きの失敗の文。種類で言い分け、OS のエラー番号（共有違反・空き不足などの手掛かり）を添える。
     pub fn file_error(self, error: &std::io::Error) -> String {
+        crate::crash::problem(self.file_error_text(error))
+    }
+    fn file_error_text(self, error: &std::io::Error) -> String {
         use std::io::ErrorKind::*;
         let reason = match error.kind() {
             NotFound => self.pick("ファイルまたはフォルダーがありません", "File or folder not found"),
@@ -102,6 +111,9 @@ impl Lang {
 
     /// ステンシルの画像を読めない理由（core の断り・ファイルの失敗は他の窓と同じ文を通す）。
     pub fn stencil_error(self, error: &StencilError) -> String {
+        crate::crash::problem(self.stencil_error_text(error))
+    }
+    fn stencil_error_text(self, error: &StencilError) -> String {
         match error {
             StencilError::Core(e) => self.core_error(e),
             StencilError::File(e) => self.file_error(e),
@@ -508,6 +520,9 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
 
 impl Lang {
     pub fn surface_error(self, error: &yolu_core::geometry::SurfaceStrokeError) -> String {
+        crate::crash::problem(self.surface_error_text(error))
+    }
+    fn surface_error_text(self, error: &yolu_core::geometry::SurfaceStrokeError) -> String {
         use yolu_core::geometry::SurfaceStrokeError;
         match error {
             SurfaceStrokeError::Core(e) => self.core_error(e),
@@ -524,6 +539,9 @@ impl Lang {
     }
     /// 指先・クローンの読み元を決められなかった理由。
     pub fn sampling_error(self, error: yolu_core::geometry::SamplingError) -> &'static str {
+        crate::crash::problem(self.sampling_error_text(error))
+    }
+    fn sampling_error_text(self, error: yolu_core::geometry::SamplingError) -> &'static str {
         use yolu_core::geometry::SamplingError::*;
         match error {
             SnapshotChanged => self.pick(
@@ -579,6 +597,9 @@ impl Lang {
         )
     }
     pub fn dab_refusal(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
+        crate::crash::problem(self.dab_refusal_text(error))
+    }
+    fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
             SnapshotChanged => self.pick("モデルのスナップショットが変わりました", "Model snapshot changed"),
@@ -595,6 +616,9 @@ impl Lang {
 impl Lang {
     /// 3D ビュー・ポーズの失敗の文。
     pub fn view_error(self, error: &ViewError) -> String {
+        crate::crash::problem(self.view_error_text(error))
+    }
+    fn view_error_text(self, error: &ViewError) -> String {
         if self == Self::Ja {
             return error.to_string();
         }
@@ -623,6 +647,9 @@ impl Lang {
     }
 
     pub fn rig_error(self, error: &RigError) -> String {
+        crate::crash::problem(self.rig_error_text(error))
+    }
+    fn rig_error_text(self, error: &RigError) -> String {
         if self == Self::Ja {
             return error.to_string();
         }
@@ -642,6 +669,9 @@ impl Lang {
     }
 
     pub fn geometry_error(self, error: GeometryError) -> &'static str {
+        crate::crash::problem(self.geometry_error_text(error))
+    }
+    fn geometry_error_text(self, error: GeometryError) -> &'static str {
         match error {
             GeometryError::NonFinite => self.pick("メッシュの位置か UV に有限でない値があります", "Non-finite position or UV in the mesh"),
             GeometryError::BoundsOverflow => self.pick("メッシュの大きさが扱える範囲を超えています", "Mesh bounds exceed the supported range"),
@@ -653,6 +683,15 @@ impl Lang {
     }
 
     pub fn model_error(self, error: &ModelError) -> String {
+        let text = self.model_error_text(error);
+        // ufbx の文には制作物の中の名前が入りうるので、失敗の文として覚えない
+        if matches!(error, ModelError::Parse(_)) {
+            text
+        } else {
+            crate::crash::problem(text)
+        }
+    }
+    fn model_error_text(self, error: &ModelError) -> String {
         if self == Self::Ja {
             return error.to_string();
         }

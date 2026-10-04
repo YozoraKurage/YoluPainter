@@ -33,9 +33,12 @@ arboard = { version = "3.6", default-features = false, features = ["image-data",
 interprocess = "2.4"   # 0BSD OR Apache-2.0（Live Link の待ち受け）
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶ窓。Windows は OS の窓、Linux は xdg-desktop-portal）
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの記録。新しい crate ではなく、yolu-protocol も使う）
+
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }

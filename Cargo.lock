@@ -4549,6 +4549,7 @@ dependencies = [
  "hex",
  "image",
  "interprocess",
+ "libc",
  "png",
  "raw-window-handle",
  "rayon",
