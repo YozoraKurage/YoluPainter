@@ -21,3 +21,4 @@ pub mod texture_sets;
 pub mod tip_library;
 pub mod view3d;
 pub mod history;
+pub mod colorsets;

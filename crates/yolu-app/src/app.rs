@@ -37,6 +37,7 @@ pub enum Tab {
     Properties,
     Channels,
     History,
+    ColorSets,
 }
 
 impl Tab {
@@ -57,6 +58,7 @@ impl Tab {
             Tab::Properties => lang.pick("プロパティ", "Properties"),
             Tab::Channels => lang.pick("チャンネル", "Channels"),
             Tab::History => lang.pick("ヒストリー", "History"),
+            Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
         }
     }
 }
@@ -75,7 +77,7 @@ pub fn default_dock() -> DockState<Tab> {
         vec![Tab::Brushes, Tab::Assets, Tab::Channels],
     );
     let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets]);
-    surface.split_below(left, 0.66, vec![Tab::Color]);
+    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
     let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
     surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
     dock
@@ -169,6 +171,7 @@ impl TabViewer for Tabs<'_> {
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
             Tab::Brushes => crate::panels::brushes::show(ui, self.app),
+            Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
         }
     }
 
@@ -311,6 +314,7 @@ impl YoluApp {
         if loaded.compositing != crate::settings::Compositing::Auto {
             app.display.set_backend(canvas_backend(loaded.compositing));
         }
+        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) { crate::colorsets::attach(&mut app.state, dir.join("colorsets")); }
         app.settings = settings.map(|path| (path, loaded));
         app
     }
@@ -334,6 +338,7 @@ impl YoluApp {
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
     /// 退避の数は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
+        crate::colorsets::persist(&mut self.state);
         let Some((path, saved)) = &mut self.settings else {
             return;
         };

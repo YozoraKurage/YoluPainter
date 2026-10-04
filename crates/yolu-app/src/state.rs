@@ -291,7 +291,7 @@ pub struct ColorState {
     pub wheel: bool,
 }
 
-pub const MAX_RECENT_COLORS: usize = 16;
+pub const MAX_RECENT_COLORS: usize = 64;
 
 impl Default for ColorState {
     fn default() -> Self {
@@ -680,6 +680,7 @@ pub struct AppState {
     pub tool: Tool,
     pub brush: BrushState,
     pub color: ColorState,
+    pub colorsets: crate::colorsets::ColorSets,
     pub view: ViewState,
     /// ステータスバーの知らせ。
     pub message: String,
@@ -878,6 +879,7 @@ impl AppState {
             tool: Tool::Brush,
             brush: BrushState::default(),
             color: ColorState::default(),
+            colorsets: crate::colorsets::ColorSets::default(),
             view: ViewState::default(),
             message: String::new(),
             property_tab: 0,

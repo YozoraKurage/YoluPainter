@@ -44,6 +44,7 @@ pub mod region;
 pub mod selection;
 pub mod sets;
 pub mod settings;
+pub mod colorsets;
 pub mod shelf;
 pub mod shell;
 pub mod state;
