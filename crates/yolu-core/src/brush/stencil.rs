@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 use crate::error::CoreError;
 use crate::math::{require_finite, to_byte};
-use crate::types::{Channel, Rgba8};
+use crate::types::{Channel, ChannelKind, Rgba8};
 
 /// ステンシルの画素の効き方（C# の StencilMode）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -664,15 +664,15 @@ impl BrushStencil {
     }
 
     /// 色を塗るチャンネルが、ステンシルの色から塗る値（塗りつぶしの画像と同じ読み方。アルファはブラシの色のもの）。
-    pub(crate) fn paint_for(&self, channel: Channel, sampled: Rgba8, alpha: u8) -> Rgba8 {
+    pub(crate) fn paint_for(&self, kind: ChannelKind, sampled: Rgba8, alpha: u8) -> Rgba8 {
         let (mut r, mut g, mut b) = (sampled.r, sampled.g, sampled.b);
-        if self.image.color_space == ImageColorSpace::Linear && is_color_channel(channel) {
+        if self.image.color_space == ImageColorSpace::Linear && is_color_channel(kind) {
             let t = srgb_table();
             r = t[r as usize];
             g = t[g as usize];
             b = t[b as usize];
         }
-        if is_scalar_channel(channel) {
+        if is_scalar_channel(kind) {
             let l = luminance(r, g, b);
             r = l;
             g = l;
@@ -682,14 +682,14 @@ impl BrushStencil {
     }
 }
 
-/// 色のチャンネル（C# の FillImageColor.IsColorChannel）。チャンネルを種類で持つようになったら、種類が色かで決める。
-pub(crate) fn is_color_channel(channel: Channel) -> bool {
-    channel == Channel::Color || channel == Channel::Emission
+/// 色のチャンネル（C# の FillImageColor.IsColorChannel、標準では Color と Emission）。
+pub(crate) fn is_color_channel(kind: ChannelKind) -> bool {
+    kind == ChannelKind::Color
 }
 
-/// スカラーのチャンネル（輝度を読む。C# の FillImageColor.IsScalarChannel）。
-pub(crate) fn is_scalar_channel(channel: Channel) -> bool {
-    channel == Channel::Roughness || channel == Channel::Metallic || channel == Channel::Height
+/// スカラーのチャンネル（輝度を読む。C# の FillImageColor.IsScalarChannel、標準では Roughness・Metallic・Height）。
+pub(crate) fn is_scalar_channel(kind: ChannelKind) -> bool {
+    kind == ChannelKind::Scalar
 }
 
 /// 輝度（整数の Rec. 709 の重み、灰色ならその値。C# の FillImageColor.Luminance）。

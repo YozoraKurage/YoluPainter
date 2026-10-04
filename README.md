@@ -30,7 +30,9 @@ cargo test
 
 ## C# 版との照合（正解のファイル）
 
-`yolu-core` の合成・ブラシ・Undo は、Unity 版の C# の Core とバイト一致を確かめている。正解のファイル（`crates/yolu-core/tests/golden/`）は
-`tools/csharp-golden/run.sh` で作り直す（Unity 版のリポジトリと、Unity に同梱の .NET・Mono が要る。事例は両方が読む `cases.txt`）。
+`yolu-core` の合成（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・Normal のベクトルの合成と出力を含む）・
+ブラシ・Undo は、Unity 版の C# の Core とバイト一致を確かめている。正解のファイル（`crates/yolu-core/tests/golden/`）は
+`tools/csharp-golden/run.sh` で作り直す（Unity 版のリポジトリと、Unity に同梱の .NET・Mono が要る。事例は両方が読む `cases.txt`、
+命令の書き方はその頭）。`run.sh bench` は C# の速さを、`cargo run --release -p yolu-core --example bench` は同じ中身の Rust の速さを測る。
 3D の面の計算（`yolu_core::geometry`）は、Unity 版の SurfaceGeometry とビットで一致を確かめている。正解（`crates/yolu-core/tests/golden/surface/`）は
 `tools/csharp-golden/run.sh surface` で作り直す（Unity 版の Editor/Preview の原文を、Unity に同梱の UnityEngine.CoreModule.dll と組む）。

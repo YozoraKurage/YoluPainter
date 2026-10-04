@@ -458,6 +458,16 @@ fn rename_and_refusals() {
     assert!(Document::new(0, 10).is_err() && Document::new(40000, 10).is_err());
     assert!(Document::with_tile_size(10, 10, 2048).is_err());
     assert!(doc.composite(Rect::new(10, 10, 7, 1)).is_err());
+    // 文書に無いチャンネル（足していないユーザーチャンネル）は断る。Normal は M2 で合成できる
+    assert_eq!(
+        doc.composite_into(
+            Channel::from_index(9).unwrap(),
+            doc.bounds(),
+            &mut [0u8; 16 * 16 * 4],
+            RowOrder::BottomUp
+        ),
+        Err(CoreError::ChannelNotFound)
+    );
     assert!(doc
         .composite_into(
             Channel::Normal,
@@ -465,7 +475,7 @@ fn rename_and_refusals() {
             &mut [0u8; 16 * 16 * 4],
             RowOrder::BottomUp
         )
-        .is_err());
+        .is_ok());
 }
 
 #[test]

@@ -1,107 +1,37 @@
-//! 文書（C# の PaintDocument・PaintLayer の M1 の部分）。
+//! 文書（C# の PaintDocument）。
 //!
-//! - 層は下から上。どの編集も 1 回の Undo になり、断った編集は何も変えない。
-//! - 履歴はタイルの前後の状態そのもの（ブラシの再生や画布全体の写しではない）で、予算（既定 64 MiB）を超えた古い段から落とす。
+//! - 層は下から上の平らな並び。グループの中身はグループのすぐ下に続けて並ぶ（[`Layer::parent`]）。
+//! - どの編集も 1 回の Undo になり、断った編集は何も変えない。
+//! - 履歴はタイルの前後の状態そのもの（ブラシの再生や画布全体の写しではない）と、属性・構造の前後で、予算（既定 64 MiB）を
+//!   超えた古い段から落とす。
 //! - 進行中のストロークがある間は、ほかの編集・Undo・Redo を断る（ストロークは文書が持ち、[`Stroke`] はその札）。
 //! - 変化の記録（`change_serial` と `changed_tiles`）は、合成が変わり得るタイルをチャンネルごとに数で覚える。履歴や保存とは別。
+//! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
+
+mod edits;
+mod structure;
 
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
-use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
 use glam::DVec2;
 
+use crate::adjust::AdjustmentSettings;
 use crate::brush::{
     Brush, BrushPixel, BrushSample, BrushSettings, Budgets, StencilPoint, StrokeState,
 };
-use crate::composite;
+use crate::composite::{self, Stack};
 use crate::error::CoreError;
+use crate::layer::{ChannelBlend, RasterMask};
 use crate::math::require_finite;
+use crate::normal::NormalSettings;
 use crate::surface::{Growth, Surface, Tile};
-use crate::types::{BlendMode, Channel, Rect, Rgba8, RowOrder, TileCoord};
+use crate::types::{
+    BlendMode, Channel, ChannelInfo, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord,
+};
 
-/// レイヤーの ID（C# の Guid と同じ 128 bit。0 は使わない）。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct LayerId(pub u128);
-
-impl fmt::Debug for LayerId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "LayerId({:032x})", self.0)
-    }
-}
-impl fmt::Display for LayerId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:032x}", self.0)
-    }
-}
-
-/// 画素の層（M1 はラスターの層だけ。チャンネルごとに面を持つ）。
-#[derive(Clone, Debug)]
-pub struct Layer {
-    pub(crate) id: LayerId,
-    pub(crate) name: String,
-    pub(crate) visible: bool,
-    pub(crate) opacity: f64,
-    pub(crate) blend_mode: BlendMode,
-    pub(crate) clipping: bool,
-    /// チャンネルの番号ごとの面（無いチャンネルは None）。
-    pub(crate) surfaces: [Option<Surface>; 6],
-    /// 有効なチャンネルの印（bit = チャンネルの番号）。無効にしたチャンネルの画素は保つ。
-    pub(crate) enabled: u8,
-}
-
-impl Layer {
-    pub fn id(&self) -> LayerId {
-        self.id
-    }
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn visible(&self) -> bool {
-        self.visible
-    }
-    pub fn opacity(&self) -> f64 {
-        self.opacity
-    }
-    pub fn blend_mode(&self) -> BlendMode {
-        self.blend_mode
-    }
-    /// すぐ下の層（クリッピングの下地）の中にだけ描く印。一番下の層では効かない（印は保つ）。
-    pub fn clipping(&self) -> bool {
-        self.clipping
-    }
-    /// チャンネルの面（無ければ None）。
-    pub fn surface(&self, channel: Channel) -> Option<&Surface> {
-        self.surfaces[channel as usize].as_ref()
-    }
-    pub fn is_channel_enabled(&self, channel: Channel) -> bool {
-        self.enabled & (1 << channel as u8) != 0
-    }
-    /// 層そのものの画素（不透明度・合成の前）。面が無ければ透明。
-    pub fn pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
-        match self.surface(channel) {
-            Some(s) => s.pixel(x, y),
-            None => Ok(Rgba8::TRANSPARENT),
-        }
-    }
-    pub(crate) fn pixel_or_transparent(&self, channel: Channel, x: u32, y: u32) -> Rgba8 {
-        self.surface(channel)
-            .and_then(|s| s.pixel(x, y).ok())
-            .unwrap_or(Rgba8::TRANSPARENT)
-    }
-    /// 全チャンネルの画素のバイト数。
-    pub fn allocated_bytes(&self) -> u64 {
-        self.surfaces
-            .iter()
-            .flatten()
-            .map(|s| s.allocated_bytes())
-            .sum()
-    }
-    fn surface_mut(&mut self, channel: Channel) -> Option<&mut Surface> {
-        self.surfaces[channel as usize].as_mut()
-    }
-}
+pub use crate::layer::{Layer, LayerId};
 
 /// ストロークの札。文書を借りないので、フレームをまたいで持てる（中身は文書が持つ）。確定・取消で手放す。
 #[derive(Debug)]
@@ -230,6 +160,13 @@ pub struct StrokeStats {
     pub parallel_dabs: u64,
 }
 
+/// ストロークが描く面: 層のチャンネルか、層のマスク。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Target {
+    Channel(Channel),
+    Mask,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct TileChange {
     coord: TileCoord,
@@ -237,39 +174,93 @@ pub(crate) struct TileChange {
     after: Option<Tile>,
 }
 
-#[derive(Clone, Debug)]
-enum Property {
+/// 層の属性（Undo の前後の値）。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Property {
     Visible(bool),
     Opacity(f64),
     Mode(BlendMode),
     Clipping(bool),
     Name(String),
+    MaskEnabled(bool),
+    MaskInverted(bool),
+    MaskDensity(f64),
+    Adjustment(AdjustmentSettings),
+    ChannelBlend(Channel, ChannelBlend),
 }
 
-/// 履歴の 1 段。Insert・Remove の層は、文書に無い側の状態のときに段が持つ。
-enum Command {
+/// 層の並びと入れ子（下から上の ID と親）。
+type Order = Vec<(LayerId, Option<LayerId>)>;
+
+/// 履歴の 1 段。Insert・Remove・Structure の層は、文書に無い側の状態のときに段が持つ。
+pub(crate) enum Command {
     Stroke {
         layer: LayerId,
-        channel: Channel,
+        target: Target,
         changes: Vec<TileChange>,
     },
+    /// まとまり（層、またはグループと中身。len 枚）を index へ入れる。
     Insert {
         index: usize,
-        layer: Option<Box<Layer>>,
+        len: usize,
+        block: Option<Vec<Layer>>,
     },
+    /// まとまりを index から抜く。
     Remove {
         index: usize,
-        layer: Option<Box<Layer>>,
+        len: usize,
+        block: Option<Vec<Layer>>,
     },
-    Move {
-        id: LayerId,
-        from: usize,
-        to: usize,
+    /// 並び・入れ子の切り替え（移動・グループ化・解除）。spare は文書に無い側の層（グループの層）。
+    Structure {
+        before: Order,
+        after: Order,
+        moved: Vec<LayerId>,
+        spare: Vec<Layer>,
     },
     Property {
         id: LayerId,
         old: Property,
         new: Property,
+    },
+    /// チャンネルの有効・無効。有効にして初めて面ができたときは、取り消しで（空の）面を外し、やり直しで作り直す
+    /// （ストロークの段は面を層とチャンネルで引くので、作り直した面へ戻せる）。
+    ChannelEnabled {
+        id: LayerId,
+        channel: Channel,
+        enabled: bool,
+        had_surface: bool,
+    },
+    /// 塗りつぶしの値（値を置くとチャンネルを有効にする。取り消しで元の有効に戻す）。now_enabled は当てた後の有効
+    /// （まとめたドラッグでは最後の変更の後のもの。途中で値を置いて有効にした分も残る）。
+    FillValue {
+        id: LayerId,
+        channel: Channel,
+        old: Option<Rgba8>,
+        new: Option<Rgba8>,
+        was_enabled: bool,
+        now_enabled: bool,
+    },
+    /// マスクを足す（apply で付け、revert で外して持つ）。
+    AddMask {
+        id: LayerId,
+        mask: Option<Box<RasterMask>>,
+    },
+    /// マスクを外す（apply で外して持ち、revert で付け直す）。
+    RemoveMask {
+        id: LayerId,
+        mask: Option<Box<RasterMask>>,
+    },
+    NormalSettings {
+        old: NormalSettings,
+        new: NormalSettings,
+    },
+    /// チャンネルの一覧の 1 つを変える（足す・消す・変える）。消すときは層のそのチャンネルの中身を段が持つ。
+    ChannelInfo {
+        channel: Channel,
+        old: Option<ChannelInfo>,
+        new: Option<ChannelInfo>,
+        contents: Vec<(LayerId, structure::ChannelContents)>,
     },
 }
 
@@ -278,32 +269,32 @@ struct Entry {
     cost: u64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CoalesceKey {
+/// まとめる（スライダーのドラッグを 1 回の Undo にする）変更の鍵。
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum CoalesceKey {
     Opacity(LayerId),
+    MaskDensity(LayerId),
+    Adjustment(LayerId),
+    Fill(LayerId, Channel),
+    ChannelBlend(LayerId, Channel),
+    NormalSettings,
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
 #[derive(Default)]
 struct Journal {
     serial: u64,
-    tiles: [HashMap<TileCoord, u64>; 6],
+    tiles: Vec<HashMap<TileCoord, u64>>,
 }
 
 impl Journal {
     fn mark(&mut self, channel: Channel, coord: TileCoord) {
         self.serial += 1;
-        self.tiles[channel as usize].insert(coord, self.serial);
-    }
-    /// 層の持つタイル全部（全チャンネル）を変わったことにする（C# の MarkLayerChanged）。
-    fn mark_layer(&mut self, layer: &Layer) {
-        for channel in Channel::ALL {
-            if let Some(s) = layer.surface(channel) {
-                for coord in s.tile_coords() {
-                    self.mark(channel, coord);
-                }
-            }
+        let i = channel.index();
+        if self.tiles.len() <= i {
+            self.tiles.resize_with(i + 1, HashMap::new);
         }
+        self.tiles[i].insert(coord, self.serial);
     }
 }
 
@@ -314,6 +305,9 @@ pub struct Document {
     height: u32,
     tile_size: u32,
     layers: Vec<Layer>,
+    /// チャンネルの一覧（番号ごと。None は空き）。0〜5 は標準で必ずある。
+    channels: Vec<Option<ChannelInfo>>,
+    pub(crate) normal_settings: NormalSettings,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
     history_bytes: u64,
@@ -322,6 +316,8 @@ pub struct Document {
     source_budget: u64,
     stroke_budget: u64,
     active: Option<StrokeState>,
+    /// 進行中のストロークが描く面（active があるときだけ意味がある）。
+    active_target: Target,
     next_stroke: u64,
     revision: u64,
     journal: Journal,
@@ -373,6 +369,11 @@ impl Document {
             height,
             tile_size,
             layers: Vec::new(),
+            channels: Channel::ALL
+                .iter()
+                .map(|c| ChannelInfo::standard(*c))
+                .collect(),
+            normal_settings: NormalSettings::DEFAULT,
             undo: Vec::new(),
             redo: Vec::new(),
             history_bytes: 0,
@@ -381,6 +382,7 @@ impl Document {
             source_budget: 256 * 1024 * 1024,
             stroke_budget: 64 * 1024 * 1024,
             active: None,
+            active_target: Target::Channel(Channel::Color),
             next_stroke: 1,
             revision: 0,
             journal: Journal::default(),
@@ -408,8 +410,16 @@ impl Document {
             return Err(CoreError::InvalidArgument("persistent_ids"));
         }
         self.id = document_id;
+        // グループの中の層の親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
+        let map: HashMap<LayerId, LayerId> = self
+            .layers
+            .iter()
+            .zip(layer_ids)
+            .map(|(l, id)| (l.id, *id))
+            .collect();
         for (layer, id) in self.layers.iter_mut().zip(layer_ids) {
             layer.id = *id;
+            layer.parent = layer.parent.map(|p| map[&p]);
         }
         self.external_mutation();
         Ok(self)
@@ -448,11 +458,19 @@ impl Document {
             (self.height as u64 - y).min(ts) as u32,
         ))
     }
+    /// 画布のタイルの座標全部（Y、次に X）。
+    pub fn canvas_tiles(&self) -> impl Iterator<Item = TileCoord> {
+        let (cols, rows) = (
+            self.width.div_ceil(self.tile_size),
+            self.height.div_ceil(self.tile_size),
+        );
+        (0..rows).flat_map(move |y| (0..cols).map(move |x| TileCoord::new(x, y)))
+    }
     /// 編集のたびに増える（履歴の段・Undo・Redo・ストロークのダブ）。保存が要るかの目安。
     pub fn revision(&self) -> u64 {
         self.revision
     }
-    /// 層の画素の合計のバイト数。
+    /// 層の画素（チャンネルの面とマスク）の合計のバイト数。
     pub fn allocated_bytes(&self) -> u64 {
         self.layers.iter().map(|l| l.allocated_bytes()).sum()
     }
@@ -470,9 +488,31 @@ impl Document {
         })
     }
 
+    // ───────── チャンネルの一覧 ─────────
+
+    /// 文書のチャンネル（番号の順。標準の 6 つと、足したユーザーチャンネル）。
+    pub fn channels(&self) -> Vec<Channel> {
+        self.channels
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_some())
+            .map(|(i, _)| Channel::from_index(i).expect("64 未満"))
+            .collect()
+    }
+    /// チャンネルの情報（文書に無ければ None）。
+    pub fn channel_info(&self, channel: Channel) -> Option<&ChannelInfo> {
+        self.channels.get(channel.index()).and_then(|c| c.as_ref())
+    }
+    pub(crate) fn require_channel(&self, channel: Channel) -> Result<&ChannelInfo, CoreError> {
+        self.channel_info(channel).ok_or(CoreError::ChannelNotFound)
+    }
+    pub(crate) fn channel_kind(&self, channel: Channel) -> Result<ChannelKind, CoreError> {
+        Ok(self.require_channel(channel)?.kind)
+    }
+
     // ───────── 層 ─────────
 
-    /// 層（下から上）。
+    /// 層（下から上。グループの中身はグループのすぐ下）。
     pub fn layers(&self) -> &[Layer] {
         &self.layers
     }
@@ -502,74 +542,6 @@ impl Document {
         }
     }
 
-    /// 空の層を一番上に足す（Color のチャンネルを持つ）。1 回の Undo。
-    pub fn add_layer(&mut self, name: &str) -> Result<LayerId, CoreError> {
-        self.add_layer_above(name, None)
-    }
-
-    /// 空の層を above のすぐ上に足す（None なら一番上）。
-    pub fn add_layer_above(
-        &mut self,
-        name: &str,
-        above: Option<LayerId>,
-    ) -> Result<LayerId, CoreError> {
-        self.ensure_no_stroke()?;
-        let index = match above {
-            Some(id) => self.index_of(id)? + 1,
-            None => self.layers.len(),
-        };
-        let id = self.new_layer_id();
-        let mut surfaces: [Option<Surface>; 6] = Default::default();
-        surfaces[Channel::Color as usize] =
-            Some(Surface::new(self.width, self.height, self.tile_size));
-        let layer = Layer {
-            id,
-            name: name.to_string(),
-            visible: true,
-            opacity: 1.0,
-            blend_mode: BlendMode::Normal,
-            clipping: false,
-            surfaces,
-            enabled: 1 << Channel::Color as u8,
-        };
-        self.execute(
-            Command::Insert {
-                index,
-                layer: Some(Box::new(layer)),
-            },
-            128,
-        )?;
-        Ok(id)
-    }
-
-    /// 層を取り除く。1 回の Undo で、同じ層（ID・画素・属性）が同じ所へ戻る。
-    pub fn remove_layer(&mut self, id: LayerId) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
-        let index = self.index_of(id)?;
-        let bytes = self.layers[index].allocated_bytes();
-        self.execute(Command::Remove { index, layer: None }, 128 + bytes)
-    }
-
-    /// 層を並びの new_index（0 = 一番下）へ動かす。同じ位置なら何もしない。
-    pub fn move_layer(&mut self, id: LayerId, new_index: usize) -> Result<(), CoreError> {
-        self.ensure_no_stroke()?;
-        let from = self.index_of(id)?;
-        if new_index >= self.layers.len() {
-            return Err(CoreError::InvalidArgument("new_index"));
-        }
-        if new_index == from {
-            return Ok(());
-        }
-        self.execute(
-            Command::Move {
-                id,
-                from,
-                to: new_index,
-            },
-            64,
-        )
-    }
-
     pub fn set_layer_visible(&mut self, id: LayerId, visible: bool) -> Result<(), CoreError> {
         self.set_property(id, Property::Visible(visible), None)
     }
@@ -592,15 +564,16 @@ impl Document {
         )
     }
 
-    /// 合成モード（PassThrough はグループだけなので断る）。
+    /// 合成モード（PassThrough はグループだけ）。
     pub fn set_layer_blend_mode(&mut self, id: LayerId, mode: BlendMode) -> Result<(), CoreError> {
-        if mode == BlendMode::PassThrough {
+        if mode == BlendMode::PassThrough && !self.layer(id).is_some_and(|l| l.is_group()) {
+            self.index_of(id)?;
             return Err(CoreError::InvalidArgument("PassThrough はグループだけ"));
         }
         self.set_property(id, Property::Mode(mode), None)
     }
 
-    /// すぐ下の層へのクリッピング（とその解除）。
+    /// すぐ下の兄弟へのクリッピング（とその解除）。
     pub fn set_layer_clipping(&mut self, id: LayerId, clipping: bool) -> Result<(), CoreError> {
         self.set_property(id, Property::Clipping(clipping), None)
     }
@@ -609,11 +582,16 @@ impl Document {
         self.set_property(id, Property::Name(name.to_string()), None)
     }
 
-    /// 印が効いているか: 印があり、下に層がある（一番下の層は何にもクリッピングされない）。
+    /// 印が効いているか: 印があり、同じグループの中で下に兄弟がある（兄弟の一番下は何にもクリッピングされない）。
     pub fn is_effectively_clipped(&self, index: usize) -> bool {
-        index > 0 && index < self.layers.len() && self.layers[index].clipping
+        if index == 0 || index >= self.layers.len() || !self.layers[index].clipping {
+            return false;
+        }
+        let parent = self.layers[index].parent;
+        self.layers[..index].iter().any(|l| l.parent == parent)
     }
 
+    /// 属性の変更を 1 段として記録する（同じ値なら何もしない）。
     fn set_property(
         &mut self,
         id: LayerId,
@@ -628,39 +606,72 @@ impl Document {
             Property::Mode(_) => Property::Mode(layer.blend_mode),
             Property::Clipping(_) => Property::Clipping(layer.clipping),
             Property::Name(_) => Property::Name(layer.name.clone()),
+            Property::MaskEnabled(_) => Property::MaskEnabled(Self::mask_of(layer)?.enabled),
+            Property::MaskInverted(_) => Property::MaskInverted(Self::mask_of(layer)?.inverted),
+            Property::MaskDensity(_) => Property::MaskDensity(Self::mask_of(layer)?.density),
+            Property::Adjustment(_) => Property::Adjustment(
+                *layer
+                    .adjustment
+                    .as_ref()
+                    .ok_or(CoreError::Unsupported("調整の層だけが調整の設定を持つ"))?,
+            ),
+            Property::ChannelBlend(c, _) => Property::ChannelBlend(*c, layer.channel_blend(*c)),
         };
-        let same = match (&old, &new) {
-            (Property::Visible(a), Property::Visible(b)) => a == b,
-            (Property::Opacity(a), Property::Opacity(b)) => a == b,
-            (Property::Mode(a), Property::Mode(b)) => a == b,
-            (Property::Clipping(a), Property::Clipping(b)) => a == b,
-            (Property::Name(a), Property::Name(b)) => a == b,
-            _ => false,
-        };
-        if same {
+        if old == new {
             return Ok(());
         }
         let cost = match (&old, &new) {
             (Property::Name(a), Property::Name(b)) => 64 + 2 * (utf16_len(a) + utf16_len(b)),
+            (Property::Adjustment(_), _) => 128,
             _ => 64,
         };
-        // まとめ: 同じ鍵の直前の段（間に何も無い）へ
+        self.record(Command::Property { id, old, new }, cost, key)
+    }
+
+    fn mask_of(layer: &Layer) -> Result<&RasterMask, CoreError> {
+        layer
+            .mask
+            .as_ref()
+            .ok_or(CoreError::Unsupported("層にマスクが無い"))
+    }
+
+    /// 段を当てて積む。鍵があり、直前の段が同じ鍵のまとめなら、その段の「後」の値だけを新しくする（戻すと最初の変更の前へ）。
+    fn record(
+        &mut self,
+        mut command: Command,
+        cost: u64,
+        key: Option<CoalesceKey>,
+    ) -> Result<(), CoreError> {
         if let Some(k) = key {
             if self.coalesce == Some(k) && self.redo.is_empty() && !self.undo.is_empty() {
-                // 直前の段の「後」の値だけを新しくする（戻すと最初の変更の前の値へ）
-                self.set_property_value(id, new.clone())?;
-                if let Some(Entry {
-                    command: Command::Property { new: n, .. },
-                    ..
-                }) = self.undo.last_mut()
-                {
-                    *n = new;
+                self.apply(&mut command)?;
+                let top = &mut self.undo.last_mut().expect("空でない").command;
+                match (top, command) {
+                    (Command::Property { new: n, .. }, Command::Property { new, .. }) => *n = new,
+                    (
+                        Command::FillValue {
+                            new: n,
+                            now_enabled: e,
+                            ..
+                        },
+                        Command::FillValue {
+                            new, now_enabled, ..
+                        },
+                    ) => {
+                        *n = new;
+                        *e = now_enabled;
+                    }
+                    (
+                        Command::NormalSettings { new: n, .. },
+                        Command::NormalSettings { new, .. },
+                    ) => *n = new,
+                    _ => unreachable!("まとめる段は同じ種類"),
                 }
                 self.revision += 1;
                 return Ok(());
             }
         }
-        self.execute(Command::Property { id, old, new }, cost)?;
+        self.execute(command, cost)?;
         if let Some(k) = key {
             self.coalesce = Some(k);
         }
@@ -693,7 +704,7 @@ impl Document {
     // ───────── 直接の書き込み（読み込み・管理。履歴を消す） ─────────
 
     /// 1 タイルを丸ごと読み込む（TileSize² × 4、行優先・下の行から、画布の外の余白は 0）。読み込みなので履歴を消す。
-    /// 面の無いチャンネルは作って有効にする。変わったら true。
+    /// ラスターの層だけ。面の無いチャンネルは作って有効にする。変わったら true。
     pub fn import_tile(
         &mut self,
         id: LayerId,
@@ -702,23 +713,56 @@ impl Document {
         bytes: &[u8],
     ) -> Result<bool, CoreError> {
         self.ensure_no_stroke()?;
+        self.require_channel(channel)?;
         let index = self.index_of(id)?;
-        if channel == Channel::Normal {
-            return Err(CoreError::Unsupported("Normal のチャンネルはまだ無い"));
-        }
-        let growth = self.growth_for(index, channel);
-        let (w, h, ts) = (self.width, self.height, self.tile_size);
-        let layer = &mut self.layers[index];
-        if layer.surfaces[channel as usize].is_none() {
-            layer.surfaces[channel as usize] = Some(Surface::new(w, h, ts));
-            layer.enabled |= 1 << channel as u8;
-        }
-        let changed = layer
+        self.ensure_raster(index)?;
+        let growth = self.growth_for(index, Target::Channel(channel));
+        let created = self.ensure_surface(index, channel);
+        let changed = match self.layers[index]
             .surface_mut(channel)
             .expect("作った")
-            .import_tile(coord, bytes, growth)?;
+            .import_tile(coord, bytes, growth)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.drop_created_surface(index, channel, created);
+                return Err(e);
+            }
+        };
         if changed {
             self.journal.mark(channel, coord);
+            self.external_mutation();
+        }
+        Ok(changed)
+    }
+
+    /// マスクの 1 タイルを丸ごと読み込む（隠す量はアルファ、RGB は 0 でなければ断る）。読み込みなので履歴を消す。
+    pub fn import_mask_tile(
+        &mut self,
+        id: LayerId,
+        coord: TileCoord,
+        bytes: &[u8],
+    ) -> Result<bool, CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.index_of(id)?;
+        if self.layers[index].mask.is_none() {
+            return Err(CoreError::Unsupported("層にマスクが無い"));
+        }
+        if bytes
+            .chunks_exact(4)
+            .any(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
+        {
+            return Err(CoreError::InvalidArgument("マスクの画素の RGB は 0"));
+        }
+        let growth = self.growth_for(index, Target::Mask);
+        let changed = self.layers[index]
+            .mask
+            .as_mut()
+            .expect("確かめた")
+            .surface
+            .import_tile(coord, bytes, growth)?;
+        if changed {
+            self.mark_mask_tile(index, coord);
             self.external_mutation();
         }
         Ok(changed)
@@ -732,20 +776,99 @@ impl Document {
         y: u32,
         color: Rgba8,
     ) -> Result<bool, CoreError> {
+        self.set_channel_pixel(id, Channel::Color, x, y, color)
+    }
+
+    /// 1 画素を直接書く（ラスターの層のチャンネルへ。面が無ければ作って有効にする。履歴を消す）。
+    pub fn set_channel_pixel(
+        &mut self,
+        id: LayerId,
+        channel: Channel,
+        x: u32,
+        y: u32,
+        color: Rgba8,
+    ) -> Result<bool, CoreError> {
         self.ensure_no_stroke()?;
+        self.require_channel(channel)?;
         let index = self.index_of(id)?;
-        let growth = self.growth_for(index, Channel::Color);
+        self.ensure_raster(index)?;
+        let growth = self.growth_for(index, Target::Channel(channel));
+        let created = self.ensure_surface(index, channel);
         let ts = self.tile_size;
-        let surface = self.layers[index]
-            .surface_mut(Channel::Color)
-            .ok_or(CoreError::Unsupported("Color の面が無い"))?;
-        let changed = surface.set_pixel(x, y, color, growth)?;
+        let surface = self.layers[index].surface_mut(channel).expect("作った");
+        let changed = match surface.set_pixel(x, y, color, growth) {
+            Ok(c) => c,
+            Err(e) => {
+                self.drop_created_surface(index, channel, created);
+                return Err(e);
+            }
+        };
         if changed {
-            self.journal
-                .mark(Channel::Color, TileCoord::new(x / ts, y / ts));
+            self.journal.mark(channel, TileCoord::new(x / ts, y / ts));
             self.external_mutation();
         }
         Ok(changed)
+    }
+
+    /// マスクの 1 画素の隠す量を直接書く（履歴を消す）。
+    pub fn set_mask_pixel(
+        &mut self,
+        id: LayerId,
+        x: u32,
+        y: u32,
+        hide: u8,
+    ) -> Result<bool, CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.index_of(id)?;
+        if self.layers[index].mask.is_none() {
+            return Err(CoreError::Unsupported("層にマスクが無い"));
+        }
+        let growth = self.growth_for(index, Target::Mask);
+        let ts = self.tile_size;
+        let surface = &mut self.layers[index].mask.as_mut().expect("確かめた").surface;
+        let changed = surface.set_pixel(x, y, Rgba8::new(0, 0, 0, hide), growth)?;
+        if changed {
+            self.mark_mask_tile(index, TileCoord::new(x / ts, y / ts));
+            self.external_mutation();
+        }
+        Ok(changed)
+    }
+
+    fn ensure_raster(&self, index: usize) -> Result<(), CoreError> {
+        match self.layers[index].kind {
+            LayerKind::Raster => Ok(()),
+            LayerKind::Fill => Err(CoreError::Unsupported("塗りつぶしの層には描けない")),
+            LayerKind::Adjustment => Err(CoreError::Unsupported("調整の層には描けない")),
+            LayerKind::Group => Err(CoreError::Unsupported("グループには描けない")),
+        }
+    }
+
+    /// ラスターの層の面が無ければ作って有効にする（C# の GetChannel。履歴には入らない）。作ったら true。
+    fn ensure_surface(&mut self, index: usize, channel: Channel) -> bool {
+        let (w, h, ts) = (self.width, self.height, self.tile_size);
+        let layer = &mut self.layers[index];
+        if layer.surface(channel).is_some() {
+            return false;
+        }
+        layer.put_surface(channel, Some(Surface::new(w, h, ts)));
+        layer.set_enabled(channel, true);
+        // 空の面でもそのチャンネルで層が合成に入る（クリッピングの組が増えれば、下地のグループが分離になる）
+        if layer.clipping {
+            self.mark_clip_bases();
+        }
+        true
+    }
+
+    /// ensure_surface で作った面を、断ったときに外す（作る前と同じに）。
+    fn drop_created_surface(&mut self, index: usize, channel: Channel, created: bool) {
+        if created {
+            let layer = &mut self.layers[index];
+            layer.put_surface(channel, None);
+            layer.set_enabled(channel, false);
+            if layer.clipping {
+                self.mark_clip_bases();
+            }
+        }
     }
 
     fn external_mutation(&mut self) {
@@ -816,13 +939,25 @@ impl Document {
     pub fn history_trimmed(&self) -> (u64, u64) {
         (self.trim_count, self.trimmed_bytes)
     }
-    fn growth_for(&self, index: usize, channel: Channel) -> Growth {
-        let own = self.layers[index]
-            .surface(channel)
+    fn growth_for(&self, index: usize, target: Target) -> Growth {
+        let own = self
+            .target_surface(index, target)
             .map_or(0, |s| s.allocated_bytes());
         Growth {
             budget: self.source_budget,
             others: self.allocated_bytes() - own,
+        }
+    }
+    fn target_surface(&self, index: usize, target: Target) -> Option<&Surface> {
+        match target {
+            Target::Channel(c) => self.layers[index].surface(c),
+            Target::Mask => self.layers[index].mask.as_ref().map(|m| &m.surface),
+        }
+    }
+    fn target_surface_mut(&mut self, index: usize, target: Target) -> Option<&mut Surface> {
+        match target {
+            Target::Channel(c) => self.layers[index].surface_mut(c),
+            Target::Mask => self.layers[index].mask.as_mut().map(|m| &mut m.surface),
         }
     }
 
@@ -930,79 +1065,150 @@ impl Document {
 
     /// 段を当てる（やり直し・最初の実行）。
     fn apply(&mut self, command: &mut Command) -> Result<(), CoreError> {
-        match command {
-            Command::Stroke {
-                layer,
-                channel,
-                changes,
-            } => self.restore_tiles(*layer, *channel, changes, false),
-            Command::Insert { index, layer } => {
-                let l = layer.take().expect("段が層を持つ");
-                self.ensure_source_growth(l.allocated_bytes())?;
-                self.layers.insert(*index, *l);
-                self.journal.mark_layer(&self.layers[*index]);
-                self.mark_clipped_layers();
-                Ok(())
-            }
-            Command::Remove { index, layer } => {
-                self.journal.mark_layer(&self.layers[*index]);
-                *layer = Some(Box::new(self.layers.remove(*index)));
-                self.mark_clipped_layers();
-                Ok(())
-            }
-            Command::Move { id, from, to } => {
-                let l = self.layers.remove(*from);
-                debug_assert_eq!(l.id, *id);
-                self.layers.insert(*to, l);
-                self.journal.mark_layer(&self.layers[*to]);
-                self.mark_clipped_layers();
-                Ok(())
-            }
-            Command::Property { id, new, .. } => self.set_property_value(*id, new.clone()),
-        }
+        self.switch(command, false)
     }
 
     /// 段を戻す。
     fn revert(&mut self, command: &mut Command) -> Result<(), CoreError> {
+        self.switch(command, true)
+    }
+
+    /// 段を当てる（backwards なら戻す）。断ったら何も変えない（予算はまとめて先に確かめる）。
+    fn switch(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
+        if !matches!(
+            command,
+            Command::Stroke { .. } | Command::NormalSettings { .. }
+        ) {
+            // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
+            self.mark_clip_bases();
+        }
         match command {
             Command::Stroke {
                 layer,
-                channel,
+                target,
                 changes,
-            } => self.restore_tiles(*layer, *channel, changes, true),
-            Command::Insert { index, layer } => {
-                let l = self.layers.remove(*index);
-                self.journal.mark_layer(&l);
-                *layer = Some(Box::new(l));
-                self.mark_clipped_layers();
-                Ok(())
-            }
-            Command::Remove { index, layer } => {
-                let l = layer.take().expect("段が層を持つ");
-                if let Err(e) = self.ensure_source_growth(l.allocated_bytes()) {
-                    *layer = Some(l);
-                    return Err(e);
+            } => self.restore_tiles(*layer, *target, changes, backwards),
+            Command::Insert { index, len, block } => {
+                if backwards {
+                    self.take_block(*index, *len, block)
+                } else {
+                    self.put_block(*index, block)
                 }
-                self.layers.insert(*index, *l);
-                self.journal.mark_layer(&self.layers[*index]);
+            }
+            Command::Remove { index, len, block } => {
+                if backwards {
+                    self.put_block(*index, block)
+                } else {
+                    self.take_block(*index, *len, block)
+                }
+            }
+            Command::Structure {
+                before,
+                after,
+                moved,
+                spare,
+            } => {
+                let to = if backwards { before } else { after };
+                // 段が持っていた層（グループの層とマスク）が文書へ戻るなら、増える分を先に確かめる
+                let incoming: u64 = spare
+                    .iter()
+                    .filter(|l| to.iter().any(|e| e.0 == l.id))
+                    .map(|l| l.allocated_bytes())
+                    .sum();
+                let outgoing: u64 = self
+                    .layers
+                    .iter()
+                    .filter(|l| !to.iter().any(|e| e.0 == l.id))
+                    .map(|l| l.allocated_bytes())
+                    .sum();
+                if incoming > outgoing {
+                    self.ensure_source_growth(incoming - outgoing)?;
+                }
+                self.restore_structure(to, spare);
+                for id in moved.iter() {
+                    self.mark_layer_anywhere(*id, spare, None);
+                }
                 self.mark_clipped_layers();
                 Ok(())
             }
-            Command::Move { id, from, to } => {
-                let l = self.layers.remove(*to);
-                debug_assert_eq!(l.id, *id);
-                self.layers.insert(*from, l);
-                self.journal.mark_layer(&self.layers[*from]);
+            Command::Property { id, old, new } => {
+                self.set_property_value(*id, if backwards { old.clone() } else { new.clone() })
+            }
+            Command::ChannelEnabled {
+                id,
+                channel,
+                enabled,
+                had_surface,
+            } => self.switch_channel_enabled(*id, *channel, *enabled, *had_surface, backwards),
+            Command::FillValue {
+                id,
+                channel,
+                old,
+                new,
+                was_enabled,
+                now_enabled,
+            } => {
+                let index = self.index_of(*id)?;
+                let layer = &mut self.layers[index];
+                let (value, enabled) = if backwards {
+                    (old, was_enabled)
+                } else {
+                    (new, now_enabled)
+                };
+                match value {
+                    Some(v) => layer.fill.insert(*channel, *v),
+                    None => layer.fill.remove(channel),
+                };
+                layer.set_enabled(*channel, *enabled);
+                self.mark_layer(index, Some(*channel));
                 self.mark_clipped_layers();
                 Ok(())
             }
-            Command::Property { id, old, .. } => self.set_property_value(*id, old.clone()),
+            Command::AddMask { id, mask } => self.switch_mask(*id, mask, !backwards),
+            Command::RemoveMask { id, mask } => self.switch_mask(*id, mask, backwards),
+            Command::NormalSettings { old, new } => {
+                // 合成は変えない（出力だけ）ので、タイルの変化は記録しない
+                self.normal_settings = if backwards { *old } else { *new };
+                Ok(())
+            }
+            Command::ChannelInfo {
+                channel,
+                old,
+                new,
+                contents,
+            } => self.switch_channel_info(*channel, old, new, contents, backwards),
         }
+    }
+
+    /// マスクを付ける（attach）か外す。段が持つマスクを文書と入れ替える。
+    fn switch_mask(
+        &mut self,
+        id: LayerId,
+        held: &mut Option<Box<RasterMask>>,
+        attach: bool,
+    ) -> Result<(), CoreError> {
+        let index = self.index_of(id)?;
+        if attach {
+            let m = held.take().expect("段がマスクを持つ");
+            if let Err(e) = self.ensure_source_growth(m.surface.allocated_bytes()) {
+                *held = Some(m);
+                return Err(e);
+            }
+            self.layers[index].mask = Some(*m);
+        } else {
+            *held = Some(Box::new(
+                self.layers[index].mask.take().expect("層がマスクを持つ"),
+            ));
+        }
+        self.mark_layer(index, None);
+        self.mark_clipped_layers();
+        Ok(())
     }
 
     fn set_property_value(&mut self, id: LayerId, value: Property) -> Result<(), CoreError> {
         let index = self.index_of(id)?;
         let layer = &mut self.layers[index];
+        let mut channel = None;
         let marks = !matches!(value, Property::Name(_)); // 名前は合成を変えない
         match value {
             Property::Visible(v) => layer.visible = v,
@@ -1010,20 +1216,159 @@ impl Document {
             Property::Mode(v) => layer.blend_mode = v,
             Property::Clipping(v) => layer.clipping = v,
             Property::Name(v) => layer.name = v,
+            Property::MaskEnabled(v) => layer.mask.as_mut().expect("マスク").enabled = v,
+            Property::MaskInverted(v) => layer.mask.as_mut().expect("マスク").inverted = v,
+            Property::MaskDensity(v) => layer.mask.as_mut().expect("マスク").density = v,
+            Property::Adjustment(v) => layer.adjustment = Some(v),
+            Property::ChannelBlend(c, b) => {
+                layer.set_channel_blend(c, b);
+                channel = Some(c);
+            }
         }
         if marks {
-            self.journal.mark_layer(&self.layers[index]);
+            self.mark_layer(index, channel);
             self.mark_clipped_layers();
         }
         Ok(())
     }
 
-    /// クリッピングの印のある層（一番下も）を全部変わったことにする: 並べ替え・表示などで下地が変わると、見える所が変わる。
-    fn mark_clipped_layers(&mut self) {
-        for l in &self.layers {
-            if l.clipping {
-                self.journal.mark_layer(l);
+    // ───────── 変化の記録の印 ─────────
+
+    /// 層が変わったことにする（C# の MarkLayerChanged）: ラスターは面のあるタイル、塗りつぶし・調整は画布全体、グループは中身と
+    /// グループのマスクのタイル。channel が None なら全チャンネル。
+    fn mark_layer(&mut self, index: usize, channel: Option<Channel>) {
+        let layer = &self.layers[index];
+        if layer.is_group() {
+            let id = layer.id;
+            let descendants: Vec<usize> = (0..self.layers.len())
+                .filter(|&i| self.is_descendant(i, id))
+                .collect();
+            for i in descendants {
+                self.mark_layer(i, channel);
             }
+            if let Some(m) = &self.layers[index].mask {
+                let coords = m.surface.tile_coords();
+                for c in self.mark_targets(channel) {
+                    for coord in &coords {
+                        self.journal.mark(c, *coord);
+                    }
+                }
+            }
+            return;
+        }
+        self.mark_layer_object(index, None, channel);
+    }
+
+    /// グループでない層の印（層は文書の index か、文書の外の object）。
+    fn mark_layer_object(
+        &mut self,
+        index: usize,
+        object: Option<&Layer>,
+        channel: Option<Channel>,
+    ) {
+        let layer = object.unwrap_or(&self.layers[index]);
+        if layer.kind != LayerKind::Raster {
+            // 塗りつぶし・調整は画布全体に効く。値が今消えたかもしれないので、今の中身ではなく全タイルを
+            let tiles: Vec<TileCoord> = self.canvas_tiles().collect();
+            for c in self.mark_targets(channel) {
+                for coord in &tiles {
+                    self.journal.mark(c, *coord);
+                }
+            }
+            return;
+        }
+        let mut marks = Vec::new();
+        for c in layer.surface_channels() {
+            if channel.is_none() || channel == Some(c) {
+                for coord in layer.surface(c).expect("面").tile_coords() {
+                    marks.push((c, coord));
+                }
+            }
+        }
+        for (c, coord) in marks {
+            self.journal.mark(c, coord);
+        }
+    }
+
+    /// 層（文書の中か、段の持つ層）を変わったことにする。
+    fn mark_layer_anywhere(&mut self, id: LayerId, spare: &[Layer], channel: Option<Channel>) {
+        if let Some(i) = self.layer_index(id) {
+            self.mark_layer(i, channel);
+        } else if let Some(l) = spare.iter().find(|l| l.id == id) {
+            if l.is_group() {
+                // 文書の外のグループ: 中身はもう文書の中で（別に印を付ける）、マスクのタイルだけ
+                if let Some(m) = &l.mask {
+                    let coords = m.surface.tile_coords();
+                    for c in self.mark_targets(channel) {
+                        for coord in &coords {
+                            self.journal.mark(c, *coord);
+                        }
+                    }
+                }
+            } else {
+                self.mark_layer_object(0, Some(l), channel);
+            }
+        }
+    }
+
+    fn mark_targets(&self, channel: Option<Channel>) -> Vec<Channel> {
+        match channel {
+            Some(c) => vec![c],
+            None => self.channels(),
+        }
+    }
+
+    /// クリッピングの印のある層（兄弟の一番下も）を全部変わったことにする: 並べ替え・表示などで下地が変わると、見える所が変わる。
+    /// 下地がグループなら、その中身も（クリッピングの組の有無で通過と分離が入れ替わる）。
+    fn mark_clipped_layers(&mut self) {
+        for i in 0..self.layers.len() {
+            if self.layers[i].clipping {
+                self.mark_layer(i, None);
+            }
+        }
+        self.mark_clip_bases();
+    }
+
+    /// クリッピングの印のある層の下地（同じグループのすぐ下の、印の無い兄弟）のうち、グループのものの中身に印を付ける。
+    /// グループはクリッピングの組を持つと通過でも分離で合成するので、組の層が出入りする（印・表示・チャンネル・面・並び）と
+    /// 中身の合成が変わり得る（C# はここを記録しない）。
+    fn mark_clip_bases(&mut self) {
+        let mut bases = Vec::new();
+        for i in 0..self.layers.len() {
+            if !self.layers[i].clipping {
+                continue;
+            }
+            let parent = self.layers[i].parent;
+            let base = (0..i)
+                .rev()
+                .filter(|&j| self.layers[j].parent == parent)
+                .find(|&j| !self.layers[j].clipping);
+            if let Some(b) = base {
+                if self.layers[b].is_group() && !bases.contains(&b) {
+                    bases.push(b);
+                }
+            }
+        }
+        for b in bases {
+            self.mark_layer(b, None);
+        }
+    }
+
+    /// マスクのタイルは、層が覆うどのチャンネルの合成も変え得る（C# の MarkMaskTileChanged と CoveredChannels）。
+    fn mark_mask_tile(&mut self, index: usize, coord: TileCoord) {
+        for c in self.covered_channels(index) {
+            self.journal.mark(c, coord);
+        }
+    }
+
+    /// 層が合成を変え得るチャンネル: 塗りつぶしは値のあるもの、調整は有効なもの、グループは全部、ラスターは面のあるもの。
+    fn covered_channels(&self, index: usize) -> Vec<Channel> {
+        let l = &self.layers[index];
+        match l.kind {
+            LayerKind::Fill => l.fill.keys().copied().collect(),
+            LayerKind::Adjustment => l.enabled_channels(),
+            LayerKind::Group => self.channels(),
+            LayerKind::Raster => l.surface_channels(),
         }
     }
 
@@ -1039,14 +1384,14 @@ impl Document {
     fn restore_tiles(
         &mut self,
         layer: LayerId,
-        channel: Channel,
+        target: Target,
         changes: &[TileChange],
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(layer)?;
-        let growth = self.growth_for(index, channel);
-        let surface = self.layers[index]
-            .surface_mut(channel)
+        let growth = self.growth_for(index, target);
+        let surface = self
+            .target_surface_mut(index, target)
             .ok_or(CoreError::Unsupported("面が無い"))?;
         let delta: i64 = changes
             .iter()
@@ -1073,9 +1418,16 @@ impl Document {
             );
         }
         for c in changes {
-            self.journal.mark(channel, c.coord);
+            self.mark_target_tile(index, target, c.coord);
         }
         Ok(())
+    }
+
+    fn mark_target_tile(&mut self, index: usize, target: Target, coord: TileCoord) {
+        match target {
+            Target::Channel(c) => self.journal.mark(c, coord),
+            Target::Mask => self.mark_mask_tile(index, coord),
+        }
     }
 
     // ───────── ストローク ─────────
@@ -1089,7 +1441,7 @@ impl Document {
         self.begin_stroke_in(layer, Channel::Color, brush)
     }
 
-    /// チャンネルを選んでストロークを始める（面が無ければ作って有効にする。無効のチャンネルは断る）。
+    /// チャンネルを選んでストロークを始める（ラスターの層だけ。面が無ければ作って有効にする。無効のチャンネルは断る）。
     pub fn begin_stroke_in(
         &mut self,
         layer: LayerId,
@@ -1119,39 +1471,81 @@ impl Document {
     ) -> Result<Stroke, CoreError> {
         self.ensure_no_stroke()?;
         brush.validate()?;
-        if channel == Channel::Normal {
-            return Err(CoreError::Unsupported("Normal のチャンネルはまだ無い"));
-        }
+        self.require_channel(channel)?;
         let index = self.index_of(layer)?;
-        let (w, h, ts) = (self.width, self.height, self.tile_size);
-        let l = &mut self.layers[index];
-        if l.surfaces[channel as usize].is_none() {
-            l.surfaces[channel as usize] = Some(Surface::new(w, h, ts));
-            l.enabled |= 1 << channel as u8;
-        }
-        if !l.is_channel_enabled(channel) {
+        self.ensure_raster(index)?;
+        self.ensure_surface(index, channel);
+        if !self.layers[index].is_channel_enabled(channel) {
             return Err(CoreError::Unsupported("無効のチャンネルには描けない"));
         }
+        let target = Target::Channel(channel);
         let budgets = Budgets {
-            growth: self.growth_for(index, channel),
+            growth: self.growth_for(index, target),
             stroke: self.stroke_budget,
         };
         let id = self.next_stroke;
         self.next_stroke += 1;
-        let brush = if crate::brush::carries_color(channel) {
+        let kind = self.channel_kind(channel)?;
+        let brush = if crate::brush::carries_color(kind) {
             brush.clone()
         } else {
             brush.without_color_dynamics()
         };
+        let size = (self.width, self.height, self.tile_size);
         self.active = Some(StrokeState::new(
-            id,
-            layer,
-            index,
-            channel,
-            brush,
-            budgets,
-            (w, h, ts),
+            id, layer, index, channel, kind, brush, budgets, size,
         ));
+        self.active_target = target;
+        Ok(Stroke { id })
+    }
+
+    /// 層のマスクへのストロークを始める: 塗ると隠し、消しゴムで見せる。ブラシの色は使わない（マスクは隠す量だけを持つ）。
+    /// 不透明度・流量・硬さ・筆圧はふつうどおり。色の変化とステンシルの色は効かない（C# の ForChannel(null)）。どの種類の層
+    /// （グループも）のマスクにも描ける。
+    pub fn begin_mask_stroke(
+        &mut self,
+        layer: LayerId,
+        brush: &BrushSettings,
+    ) -> Result<Stroke, CoreError> {
+        self.begin_brush_mask_stroke(layer, &Brush::from(*brush))
+    }
+
+    /// 全部入りのブラシでマスクへのストロークを始める（[`Document::begin_mask_stroke`]）。
+    pub fn begin_brush_mask_stroke(
+        &mut self,
+        layer: LayerId,
+        brush: &Brush,
+    ) -> Result<Stroke, CoreError> {
+        self.ensure_no_stroke()?;
+        brush.validate()?;
+        let index = self.index_of(layer)?;
+        if self.layers[index].mask.is_none() {
+            return Err(CoreError::Unsupported("層にマスクが無い"));
+        }
+        let mut brush = brush.without_color_dynamics();
+        brush.base.color = Rgba8::new(0, 0, 0, 255);
+        let budgets = Budgets {
+            growth: self.growth_for(index, Target::Mask),
+            stroke: self.stroke_budget,
+        };
+        let id = self.next_stroke;
+        self.next_stroke += 1;
+        let size = (self.width, self.height, self.tile_size);
+        // StrokeState のチャンネルはマスクでは使わない（描く面は active_target が決める）
+        self.active = Some(
+            StrokeState::new(
+                id,
+                layer,
+                index,
+                Channel::Color,
+                ChannelKind::Scalar,
+                brush,
+                budgets,
+                size,
+            )
+            .without_stencil_colour(),
+        );
+        self.active_target = Target::Mask;
         Ok(Stroke { id })
     }
 
@@ -1180,18 +1574,22 @@ impl Document {
     where
         F: FnOnce(&mut StrokeState, &mut Surface, &mut Vec<TileCoord>) -> Result<bool, CoreError>,
     {
+        let target = self.active_target;
         let state = match self.active.as_mut() {
             Some(a) if a.id == id => a,
             _ => return Err(CoreError::NoActiveStroke),
         };
-        let channel = state.channel;
-        let surface = self.layers[state.layer_index].surfaces[channel as usize]
-            .as_mut()
-            .expect("ストロークの面");
+        let index = state.layer_index;
+        debug_assert!(target == Target::Mask || target == Target::Channel(state.channel));
+        let surface = match target {
+            Target::Channel(c) => self.layers[index].surface_mut(c),
+            Target::Mask => self.layers[index].mask.as_mut().map(|m| &mut m.surface),
+        }
+        .expect("ストロークの面");
         let mut changed = Vec::new();
         let result = f(state, surface, &mut changed);
         for coord in changed {
-            self.journal.mark(channel, coord);
+            self.mark_target_tile(index, target, coord);
         }
         match result {
             Ok(any) => {
@@ -1218,8 +1616,9 @@ impl Document {
             state.finish_input(surface, changed)
         })?;
         let state = self.active.take().expect("確かめた");
-        let surface = self.layers[state.layer_index].surfaces[state.channel as usize]
-            .as_mut()
+        let target = self.active_target;
+        let surface = self
+            .target_surface_mut(state.layer_index, target)
             .expect("ストロークの面");
         let mut coords: Vec<TileCoord> = state.tiles.keys().copied().collect();
         coords.sort();
@@ -1253,7 +1652,7 @@ impl Document {
             self.push(Entry {
                 command: Command::Stroke {
                     layer: state.layer,
-                    channel: state.channel,
+                    target,
                     changes,
                 },
                 cost,
@@ -1274,8 +1673,9 @@ impl Document {
         let Some(state) = self.active.take() else {
             return false;
         };
-        let surface = self.layers[state.layer_index].surfaces[state.channel as usize]
-            .as_mut()
+        let target = self.active_target;
+        let surface = self
+            .target_surface_mut(state.layer_index, target)
             .expect("ストロークの面");
         let mut restored = false;
         let mut coords: Vec<TileCoord> = state.tiles.keys().copied().collect();
@@ -1285,7 +1685,7 @@ impl Document {
             restored = true;
         }
         for coord in coords {
-            self.journal.mark(state.channel, coord);
+            self.mark_target_tile(state.layer_index, target, coord);
         }
         if restored {
             self.revision += 1;
@@ -1297,8 +1697,13 @@ impl Document {
 
     /// Color の合成（straight RGBA8、行は下から上）。
     pub fn composite(&self, rect: Rect) -> Result<Vec<u8>, CoreError> {
+        self.composite_channel(Channel::Color, rect)
+    }
+
+    /// チャンネルの合成（straight RGBA8、行は下から上）。
+    pub fn composite_channel(&self, channel: Channel, rect: Rect) -> Result<Vec<u8>, CoreError> {
         let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
-        self.composite_into(Channel::Color, rect, &mut out, RowOrder::BottomUp)?;
+        self.composite_into(channel, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
@@ -1311,15 +1716,12 @@ impl Document {
         order: RowOrder,
     ) -> Result<(), CoreError> {
         self.check_rect(rect)?;
-        if channel == Channel::Normal {
-            return Err(CoreError::Unsupported(
-                "Normal のチャンネルの合成はまだ無い",
-            ));
-        }
+        let kind = self.channel_kind(channel)?;
         if out.len() != rect.width as usize * rect.height as usize * 4 {
             return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
         }
-        composite::composite_into(&self.layers, self.tile_size, channel, rect, out, order);
+        let stack = Stack::new(&self.layers, channel, kind);
+        composite::composite_into(&stack, self.tile_size, rect, out, order);
         Ok(())
     }
 
@@ -1328,12 +1730,9 @@ impl Document {
         if x >= self.width || y >= self.height {
             return Err(CoreError::InvalidArgument("画素が画布の外"));
         }
-        if channel == Channel::Normal {
-            return Err(CoreError::Unsupported(
-                "Normal のチャンネルの合成はまだ無い",
-            ));
-        }
-        Ok(composite::composite_pixel(&self.layers, channel, x, y))
+        let kind = self.channel_kind(channel)?;
+        let stack = Stack::new(&self.layers, channel, kind);
+        Ok(composite::composite_pixel(&stack, x, y))
     }
 
     fn check_rect(&self, rect: Rect) -> Result<(), CoreError> {
@@ -1354,17 +1753,24 @@ impl Document {
     }
 
     /// since（`change_serial` の値）の後に合成が変わり得るタイル（Y、次に X の順）。画素の変化（ストローク・取消・Undo・Redo・
-    /// 読み込み）と、層の並び・表示・不透明度・モード・クリッピング・追加・削除のときはその層の持つタイル全部。
-    /// 元に戻った所を含むことがある。since がこの文書の番号でなければ None（全部を描き直す）。
+    /// 読み込み・マスク）と、層の並び・入れ子・表示・不透明度・モード・クリッピング・チャンネル・追加・削除のときはその層の持つ
+    /// タイル全部（塗りつぶし・調整は画布全体、グループは中身）。元に戻った所を含むことがある。since がこの文書の番号でなければ
+    /// None（全部を描き直す）。
     pub fn changed_tiles(&self, channel: Channel, since: u64) -> Option<Vec<TileCoord>> {
         if since > self.journal.serial {
             return None;
         }
-        let mut v: Vec<TileCoord> = self.journal.tiles[channel as usize]
-            .iter()
-            .filter(|(_, &s)| s > since)
-            .map(|(c, _)| *c)
-            .collect();
+        let mut v: Vec<TileCoord> = self
+            .journal
+            .tiles
+            .get(channel.index())
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, &s)| s > since)
+                    .map(|(c, _)| *c)
+                    .collect()
+            })
+            .unwrap_or_default();
         v.sort();
         Some(v)
     }

@@ -70,7 +70,7 @@ use crate::blend::blend;
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite, to_byte};
 use crate::surface::{Growth, LiveTile, Surface, Tile};
-use crate::types::{BlendMode, Channel, Rgba8, TileCoord};
+use crate::types::{BlendMode, Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
 use dynamics::{f64_max, f64_min};
 use effects::{mix_effect, EffectFrame};
@@ -213,10 +213,10 @@ fn lerp_angle(a: f64, b: f64, t: f64) -> f64 {
     a + d * t
 }
 
-/// 色の変化が意味を持つチャンネル（色を持つもの。C# の BrushSettings.CarriesColor）。Roughness・Metallic・Height はデータ、Normal は
-/// ベクトルなので、色相や描画色/背景色で値を揺らすとデータを壊すだけになる。チャンネルを種類で持つようになったら、種類が色かで決める。
-pub fn carries_color(channel: Channel) -> bool {
-    channel == Channel::Color || channel == Channel::Emission
+/// 色の変化が意味を持つチャンネル（色の種類のもの。C# の BrushSettings.CarriesColor、標準では Color と Emission）。スカラーはデータ、
+/// Normal はベクトルなので、色相や描画色/背景色で値を揺らすとデータを壊すだけになる。
+pub fn carries_color(kind: ChannelKind) -> bool {
+    kind == ChannelKind::Color
 }
 
 /// 3D の面などから渡す、ダブの中で重なりをまとめた画素と被覆率（C# の BrushPixel）。
@@ -314,7 +314,7 @@ pub(crate) struct StrokeState {
     color_random: Option<NetRandom>,
     tip_colors: bool,
     /// ステンシルの色を受けるチャンネル（色のモードで、ステンシルが名指すチャンネルへ色を塗るとき）。
-    stencil_channel: Option<Channel>,
+    stencil_kind: Option<ChannelKind>,
     // デュアルブラシ: 2 つ目の筆先のダブと、画素ごとの最大の被覆率
     dual_random: Option<NetRandom>,
     dual_pending: VecDeque<DualDab>,
@@ -355,11 +355,13 @@ const DUAL_STREAM: i32 = 0x5DEECE6;
 const SQRT_2: f64 = std::f64::consts::SQRT_2;
 
 impl StrokeState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: u64,
         layer: LayerId,
         layer_index: usize,
         channel: Channel,
+        kind: ChannelKind,
         brush: Brush,
         budgets: Budgets,
         size: (u32, u32, u32),
@@ -379,13 +381,13 @@ impl StrokeState {
             .as_ref()
             .map(|_| NetRandom::new(brush.seed ^ DUAL_STREAM));
         // ステンシルの色: 色のモードで、ステンシルが名指すチャンネルを塗る面だけ（消す・マスク・効果は量だけ）
-        let stencil_channel = brush
+        let stencil_kind = brush
             .stencil
             .as_ref()
             .filter(|st| {
                 brush.effect.is_paint() && !brush.base.erase && st.paints_color_into(channel)
             })
-            .map(|_| channel);
+            .map(|_| kind);
         StrokeState {
             id,
             layer,
@@ -411,7 +413,7 @@ impl StrokeState {
             dab_color: stroke_color,
             color_random,
             tip_colors,
-            stencil_channel,
+            stencil_kind,
             dual_random,
             dual_pending: VecDeque::new(),
             dual_coverage: HashMap::new(),
@@ -436,7 +438,7 @@ impl StrokeState {
     /// マスクへのストローク（色を持たない面）にする: ステンシルの色を受けない（C# の ForChannel(null) の PaintedChannel = null）。
     #[allow(dead_code)]
     pub(crate) fn without_stencil_colour(mut self) -> Self {
-        self.stencil_channel = None;
+        self.stencil_kind = None;
         self
     }
 
@@ -1191,7 +1193,7 @@ impl StrokeState {
             tip_colors: self.tip_colors,
             stop_at_ceiling: !self.tip_colors && brush.effect.is_paint(),
             stencil: brush.stencil.as_deref(),
-            stencil_channel: self.stencil_channel,
+            stencil_kind: self.stencil_kind,
             frame,
             offset_x: self.effect.offset_x,
             offset_y: self.effect.offset_y,
@@ -1746,7 +1748,7 @@ struct Paint<'a> {
     /// 天井に届いた画素は何もしない（ダブごとの色・効果では、天井でも色は寄せる）。
     stop_at_ceiling: bool,
     stencil: Option<&'a BrushStencil>,
-    stencil_channel: Option<Channel>,
+    stencil_kind: Option<ChannelKind>,
     frame: Option<&'a EffectFrame>,
     offset_x: f64,
     offset_y: f64,
@@ -2099,9 +2101,9 @@ fn apply_at<const SIMPLE: bool>(
     if !SIMPLE {
         // ステンシルの色（色のモード）: その画素のステンシルの色を、塗りつぶしの画像と同じ読み方でこのチャンネルの値にする
         // （アルファは描画色のもの）
-        if let (Some(channel), Some(stencil)) = (p.stencil_channel, p.stencil) {
+        if let (Some(kind), Some(stencil)) = (p.stencil_kind, p.stencil) {
             if through.has_color {
-                color = stencil.paint_for(channel, through.color, p.stroke_color.a);
+                color = stencil.paint_for(kind, through.color, p.stroke_color.a);
             }
         }
     }

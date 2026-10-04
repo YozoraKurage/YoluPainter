@@ -8,6 +8,8 @@ pub enum CoreError {
     InvalidArgument(&'static str),
     /// その ID のレイヤーが文書に無い。
     LayerNotFound,
+    /// そのチャンネルが文書に無い（消したユーザーチャンネルなど）。
+    ChannelNotFound,
     /// 進行中のストロークがあるので、ほかの編集・Undo・Redo はできない。
     StrokeActive,
     /// 札のストロークはもう終わっている（確定・取消、または途中の失敗で取り消された）。
@@ -18,24 +20,23 @@ pub enum CoreError {
     SourceBudgetExceeded,
     /// ストロークの巻き戻し用の写しの予算（ActiveStrokeBudgetBytes）を超える。ストロークは取り消した。
     StrokeBudgetExceeded,
+    /// 作業のメモリの上限（Normal の出力など）を超えるので、確保の前に断った。
+    WorkingBudgetExceeded,
 }
 
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CoreError::InvalidArgument(what) => write!(f, "値が範囲外です: {what}"),
-            CoreError::LayerNotFound => write!(f, "レイヤーが見つかりません"),
-            CoreError::StrokeActive => write!(
-                f,
-                "描いている途中のストロークを先に終えるか取り消してください"
-            ),
-            CoreError::NoActiveStroke => write!(f, "このストロークはもう終わっています"),
-            CoreError::Unsupported(what) => write!(f, "できない操作です: {what}"),
-            CoreError::SourceBudgetExceeded => {
-                write!(f, "画素の予算を超えるので取り消しました。予算を上げるか、文書の画素を減らしてください")
-            }
+            CoreError::InvalidArgument(what) => write!(f, "値が範囲外: {what}"),
+            CoreError::LayerNotFound => write!(f, "レイヤーが無い"),
+            CoreError::ChannelNotFound => write!(f, "チャンネルが無い"),
+            CoreError::StrokeActive => write!(f, "ストロークの途中"),
+            CoreError::NoActiveStroke => write!(f, "ストロークは終わっている"),
+            CoreError::Unsupported(what) => write!(f, "できない: {what}"),
+            CoreError::SourceBudgetExceeded => write!(f, "画素の予算を超える（取り消した）"),
+            CoreError::WorkingBudgetExceeded => write!(f, "作業のメモリの上限を超える"),
             CoreError::StrokeBudgetExceeded => {
-                write!(f, "ストロークの巻き戻し用の予算を超えるので取り消しました。短いストロークにするか、予算を上げてください")
+                write!(f, "ストロークの予算を超える（取り消した）")
             }
         }
     }

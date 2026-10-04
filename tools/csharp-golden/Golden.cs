@@ -142,7 +142,61 @@ namespace YoluPainterRs.Golden
             if (!Enum.TryParse(s, false, out m) || !Enum.IsDefined(typeof(LayerBlendMode), m)) throw new FormatException("モード: " + s);
             return m;
         }
-        static Guid LayerAt(CaseState c, string s) { return c.Doc.Layers[Int(s)].Id; }
+        /// <summary>層の番号（今の並び、下から 0）か、@名前（最初に見つかった同じ名前の層）。</summary>
+        static int LayerIndex(CaseState c, string s)
+        {
+            if (s.StartsWith("@"))
+            {
+                string name = s.Substring(1);
+                for (int i = 0; i < c.Doc.Layers.Count; i++) if (c.Doc.Layers[i].Name == name) return i;
+                throw new FormatException("層の名前: " + s);
+            }
+            return Int(s);
+        }
+        static Guid LayerAt(CaseState c, string s) { return c.Doc.Layers[LayerIndex(c, s)].Id; }
+        static PaintChannel Chan(string s)
+        {
+            PaintChannel ch;
+            if (!Enum.TryParse(s, false, out ch) || !Enum.IsDefined(typeof(PaintChannel), ch)) throw new FormatException("チャンネル: " + s);
+            return ch;
+        }
+        /// <summary>調整: invert | levels:入力の黒,入力の白,ガンマ,出力の黒,出力の白 | hsl:色相,彩度,明度。</summary>
+        static AdjustmentSettings Adjust(CaseState c, string s)
+        {
+            var parts = s.Split(':');
+            switch (parts[0])
+            {
+                case "invert": return AdjustmentSettings.Invert();
+                case "levels": { var v = parts[1].Split(','); return AdjustmentSettings.Levels(Num(c, v[0]), Num(c, v[1]), Num(c, v[2]), Num(c, v[3]), Num(c, v[4])); }
+                case "hsl": { var v = parts[1].Split(','); return AdjustmentSettings.HueSaturation(Num(c, v[0]), Num(c, v[1]), Num(c, v[2])); }
+                default: throw new FormatException("調整: " + s);
+            }
+        }
+        /// <summary>層の行の後ろの印（hidden・clip）を当てる。</summary>
+        static void Flags(PaintDocument doc, Guid id, string flag)
+        {
+            if (flag == "hidden") doc.SetLayerVisibility(id, false);
+            else if (flag == "clip") doc.SetLayerClipping(id, true);
+            else throw new FormatException("印: " + flag);
+        }
+        static void ModeOpacity(CaseState c, PaintDocument doc, Guid id, string mode, string opacity, LayerBlendMode initial)
+        {
+            var m = Mode(mode); double o = Num(c, opacity);
+            if (m != initial) doc.SetLayerBlendMode(id, m);
+            if (o != 1) doc.SetLayerOpacity(id, o);
+        }
+        static byte[] Pixels(PaintDocument doc, PaintChannel channel, bool reference)
+        {
+            if (!reference) return CpuCompositor.Composite(doc, channel);
+            var bytes = new byte[doc.Width * doc.Height * 4];
+            for (int y = 0; y < doc.Height; y++) for (int x = 0; x < doc.Width; x++)
+            {
+                var p = CpuCompositor.CompositePixel(doc, channel, x, y); int i = (y * doc.Width + x) * 4;
+                bytes[i] = p.R; bytes[i + 1] = p.G; bytes[i + 2] = p.B; bytes[i + 3] = p.A;
+            }
+            return bytes;
+        }
+        static string ChannelWord(PaintChannel ch) { return ch == PaintChannel.Color ? "" : ch + " "; }
         static PaintChannel Channel(string s)
         {
             PaintChannel m;
@@ -267,12 +321,103 @@ namespace YoluPainterRs.Golden
                         else fill = t[i];
                     }
                     if (fill == null) throw new FormatException("layer に中身が無い");
-                    Fill(doc, layer, fill);
+                    Fill(doc, layer.GetChannel(PaintChannel.Color), fill);
+                    doc.ClearHistory();
+                    return;
+                }
+                case "paint":
+                {
+                    var layer = doc.GetLayer(LayerAt(c, t[1]));
+                    Fill(doc, layer.GetChannel(Chan(t[2])), t[3]);
+                    doc.ClearHistory();
+                    return;
+                }
+                case "group":
+                {
+                    var g = doc.AddGroup(t[1]);
+                    ModeOpacity(c, doc, g.Id, t[2], t[3], LayerBlendMode.PassThrough);
+                    for (int i = 4; i < t.Length; i++) Flags(doc, g.Id, t[i]);
+                    doc.ClearHistory();
+                    return;
+                }
+                case "fill":
+                {
+                    var values = new Dictionary<PaintChannel, Rgba32>(); var flags = new List<string>();
+                    for (int i = 4; i < t.Length; i++)
+                    {
+                        int eq = t[i].IndexOf('=');
+                        if (eq < 0) flags.Add(t[i]); else values[Chan(t[i].Substring(0, eq))] = Color(t[i].Substring(eq + 1));
+                    }
+                    var f = doc.AddFillLayer(t[1], values);
+                    ModeOpacity(c, doc, f.Id, t[2], t[3], LayerBlendMode.Normal);
+                    foreach (var flag in flags) Flags(doc, f.Id, flag);
+                    doc.ClearHistory();
+                    return;
+                }
+                case "adjust":
+                {
+                    AdjustmentSettings settings = null; List<PaintChannel> only = null; var flags = new List<string>();
+                    for (int i = 4; i < t.Length; i++)
+                    {
+                        if (t[i] == "hidden" || t[i] == "clip") flags.Add(t[i]);
+                        else if (t[i].StartsWith("only=")) { only = new List<PaintChannel>(); foreach (var n in t[i].Substring(5).Split(',')) only.Add(Chan(n)); }
+                        else settings = Adjust(c, t[i]);
+                    }
+                    var a = doc.AddAdjustmentLayer(t[1], settings, only);
+                    ModeOpacity(c, doc, a.Id, t[2], t[3], LayerBlendMode.Normal);
+                    foreach (var flag in flags) Flags(doc, a.Id, flag);
+                    doc.ClearHistory();
+                    return;
+                }
+                case "mask":
+                {
+                    var id = LayerAt(c, t[1]); var m = doc.AddLayerMask(id);
+                    Fill(doc, m.Surface, t[2]);
+                    for (int i = 3; i < t.Length; i++)
+                    {
+                        if (t[i] == "inverted") doc.SetLayerMaskInverted(id, true);
+                        else if (t[i] == "off") doc.SetLayerMaskEnabled(id, false);
+                        else if (t[i].StartsWith("density=")) doc.SetLayerMaskDensity(id, Num(c, t[i].Substring(8)));
+                        else throw new FormatException("mask: " + t[i]);
+                    }
                     doc.ClearHistory();
                     return;
                 }
                 case "add": doc.AddLayer(t[1]); return;
+                case "groupof":
+                {
+                    var ids = new List<Guid>(); for (int i = 2; i < t.Length; i++) ids.Add(LayerAt(c, t[i]));
+                    doc.GroupLayers(ids, t[1]); return;
+                }
+                case "ungroup": doc.Ungroup(LayerAt(c, t[1])); return;
+                case "duplicate": doc.DuplicateLayer(LayerAt(c, t[1]), t.Length > 2 ? t[2] : null); return;
+                case "into": doc.MoveLayerTo(LayerAt(c, t[1]), t[2] == "top" ? Guid.Empty : LayerAt(c, t[2]), Int(t[3])); return;
+                case "addmask": doc.AddLayerMask(LayerAt(c, t[1])); return;
+                case "removemask": doc.RemoveLayerMask(LayerAt(c, t[1])); return;
+                case "maskprop":
+                {
+                    var id = LayerAt(c, t[1]);
+                    doc.SetLayerMaskEnabled(id, t[2] == "1"); doc.SetLayerMaskInverted(id, t[3] == "1"); doc.SetLayerMaskDensity(id, Num(c, t[4]));
+                    return;
+                }
+                case "chblend":
+                {
+                    LayerBlendMode? m = t[3] == "-" ? (LayerBlendMode?)null : Mode(t[3]);
+                    double? o = t[4] == "-" ? (double?)null : Num(c, t[4]);
+                    doc.SetChannelBlend(LayerAt(c, t[1]), Chan(t[2]), new ChannelBlend(m, o)); return;
+                }
+                case "chenable": doc.SetChannelEnabled(LayerAt(c, t[1]), Chan(t[2]), t[3] == "1"); return;
+                case "fillvalue": doc.SetFillValue(LayerAt(c, t[1]), Chan(t[2]), t[3] == "none" ? (Rgba32?)null : Color(t[3])); return;
+                case "setadjust": doc.SetAdjustment(LayerAt(c, t[1]), Adjust(c, t[2])); return;
+                case "normal":
+                {
+                    bool derive = t[1] == "1"; double strength = Num(c, t[2]);
+                    var edges = t[3] == "wrap" ? HeightEdgeMode.Wrap : t[3] == "clamp" ? HeightEdgeMode.Clamp : throw new FormatException("端: " + t[3]);
+                    var dir = t[4] == "dx" ? NormalYDirection.DirectX : t[4] == "gl" ? NormalYDirection.OpenGL : throw new FormatException("向き: " + t[4]);
+                    doc.SetNormalSettings(new NormalSettings(derive, strength, edges, dir)); return;
+                }
                 case "stroke":
+                case "maskstroke":
                 {
                     var s = new BrushSettings(); var channel = PaintChannel.Color;
                     for (int i = 2; i < t.Length; i++)
@@ -295,7 +440,7 @@ namespace YoluPainterRs.Golden
                         }
                     }
                     if (c.Stroke != null) throw new FormatException("ストロークが重なっている");
-                    c.Stroke = doc.BeginStroke(LayerAt(c, t[1]), channel, s);
+                    c.Stroke = t[0] == "maskstroke" ? doc.BeginMaskStroke(LayerAt(c, t[1]), s) : doc.BeginStroke(LayerAt(c, t[1]), channel, s);
                     return;
                 }
                 case "tpoint":
@@ -413,14 +558,27 @@ namespace YoluPainterRs.Golden
                 case "remove": doc.RemoveLayer(LayerAt(c, t[1])); return;
                 case "out":
                 {
-                    byte[] bytes; string what;
-                    if (t[1] == "composite") { bytes = CpuCompositor.Composite(doc, PaintChannel.Color); what = "composite " + doc.Width + "x" + doc.Height; }
-                    else if (t[1] == "layer") { bytes = LayerBytes(doc, Int(t[2])); what = "layer " + t[2] + " " + doc.Width + "x" + doc.Height; }
-                    else if (t[1] == "channel") { bytes = LayerBytes(doc, Int(t[2]), Channel(t[3])); what = "channel " + t[2] + " " + t[3] + " " + doc.Width + "x" + doc.Height; }
+                    byte[] bytes; string what; string size = doc.Width + "x" + doc.Height;
+                    if (t[1] == "composite" || t[1] == "reference")
+                    {
+                        var ch = t.Length > 2 ? Chan(t[2]) : PaintChannel.Color;
+                        bytes = Pixels(doc, ch, t[1] == "reference"); what = t[1] + " " + ChannelWord(ch) + size;
+                    }
+                    else if (t[1] == "layer")
+                    {
+                        var ch = t.Length > 3 ? Chan(t[3]) : PaintChannel.Color;
+                        bytes = SurfaceBytes(doc, doc.Layers[LayerIndex(c, t[2])].Channels[ch]); what = "layer " + t[2] + " " + ChannelWord(ch) + size;
+                    }
+                    else if (t[1] == "mask") { bytes = SurfaceBytes(doc, doc.Layers[LayerIndex(c, t[2])].Mask.Surface); what = "mask " + t[2] + " " + size; }
+                    else if (t[1] == "normal") { bytes = NormalMaps.Output(doc); what = "normal " + size; }
+                    else if (t[1] == "normalfile") { bytes = NormalMaps.FileOutput(doc); what = "normalfile " + size; }
+                    else if (t[1] == "derive") { bytes = NormalMaps.DeriveFromHeight(doc, PaintChannel.Height, doc.NormalSettings); what = "derive " + size; }
+                    else if (t[1] == "channel") { bytes = SurfaceBytes(doc, doc.Layers[Int(t[2])].Channels[Channel(t[3])]); what = "channel " + t[2] + " " + t[3] + " " + size; }
                     else if (t[1] == "region")
                     {
                         int x = Int(t[2]), y = Int(t[3]), w = Int(t[4]), h = Int(t[5]);
-                        bytes = CpuCompositor.CompositeRegion(doc, PaintChannel.Color, x, y, w, h); what = "region " + x + " " + y + " " + w + "x" + h;
+                        var ch = t.Length > 6 ? Chan(t[6]) : PaintChannel.Color;
+                        bytes = CpuCompositor.CompositeRegion(doc, ch, x, y, w, h); what = "region " + ChannelWord(ch) + x + " " + y + " " + w + "x" + h;
                     }
                     else throw new FormatException("out: " + t[1]);
                     int n = c.Outputs++;
@@ -433,12 +591,24 @@ namespace YoluPainterRs.Golden
         }
 
         /// <summary>層の中身。random は画布の全画素を下の行から、sparse はタイルごとに 無し・一様・画素 を選ぶ。</summary>
-        static void Fill(PaintDocument doc, PaintLayer layer, string fill)
+        static void Fill(PaintDocument doc, SparseTileSurface surface, string fill)
         {
             int w = doc.Width, h = doc.Height, ts = doc.TileSize;
-            var surface = layer.GetChannel(PaintChannel.Color);
             int columns = (w + ts - 1) / ts, rows = (h + ts - 1) / ts;
             if (fill == "empty") return;
+            if (fill.StartsWith("m"))
+            {
+                // マスク: 同じ乱数の中身のアルファだけ（RGB は 0）
+                Fill(doc, surface, fill.Substring(1));
+                var tile = new byte[ts * ts * 4];
+                for (int ty = 0; ty < rows; ty++) for (int tx = 0; tx < columns; tx++)
+                {
+                    if (!surface.CopyTile(new TileCoord(tx, ty), tile)) continue;
+                    for (int i = 0; i < tile.Length; i += 4) { tile[i] = 0; tile[i + 1] = 0; tile[i + 2] = 0; }
+                    surface.ImportTile(new TileCoord(tx, ty), tile);
+                }
+                return;
+            }
             if (fill.StartsWith("random:"))
             {
                 var rng = new SplitMix(ulong.Parse(fill.Substring(7)));
@@ -483,10 +653,11 @@ namespace YoluPainterRs.Golden
             throw new FormatException("中身: " + fill);
         }
 
-        static byte[] LayerBytes(PaintDocument doc, int index, PaintChannel channel = PaintChannel.Color)
+        static byte[] LayerBytes(PaintDocument doc, int index, PaintChannel channel = PaintChannel.Color) { return SurfaceBytes(doc, doc.Layers[index].Channels[channel]); }
+
+        static byte[] SurfaceBytes(PaintDocument doc, SparseTileSurface surface)
         {
             int w = doc.Width, h = doc.Height, ts = doc.TileSize;
-            var surface = doc.Layers[index].Channels[channel];
             var result = new byte[w * h * 4]; var tile = new byte[ts * ts * 4];
             for (int ty = 0; ty * ts < h; ty++) for (int tx = 0; tx * ts < w; tx++)
             {
@@ -518,6 +689,38 @@ namespace YoluPainterRs.Golden
             var fr = new SplitMix(2000); var fade = new Fnv();
             for (int i = 0; i < 65536; i++) { var d = fr.Rgba(); var s = fr.Rgba(); double op = fr.Opacity(); fade.Add(CpuCompositor.Fade(d, s, op)); }
             index.Add("sweep fade " + fade.Hex);
+            // Normal のチャンネルの式（単位ベクトルの重ね・クリッピング・フェード）
+            foreach (LayerBlendMode mode in Enum.GetValues(typeof(LayerBlendMode)))
+            {
+                if (mode == LayerBlendMode.PassThrough) continue;
+                var rng = new SplitMix(3000 + (ulong)mode);
+                Fnv blend = new Fnv(), clip = new Fnv();
+                for (int i = 0; i < 65536; i++)
+                {
+                    var d = rng.Rgba(); var s = rng.Rgba(); double op = rng.Opacity();
+                    blend.Add(NormalMaps.Blend(d, s, op, mode));
+                    clip.Add(NormalMaps.ClipOnto(d, s, op, mode));
+                }
+                index.Add("sweep nblend_" + mode + " " + blend.Hex);
+                index.Add("sweep nclip_" + mode + " " + clip.Hex);
+            }
+            var nr = new SplitMix(4000); var nfade = new Fnv();
+            for (int i = 0; i < 65536; i++) { var d = nr.Rgba(); var s = nr.Rgba(); double op = nr.Opacity(); nfade.Add(NormalMaps.Fade(d, s, op)); }
+            index.Add("sweep nfade " + nfade.Hex);
+            // 調整（設定 × モードごとに 4096 画素）
+            var adjustments = new[]
+            {
+                AdjustmentSettings.Invert(), AdjustmentSettings.Levels(.1, .9, 1.7, .05, .95), AdjustmentSettings.Levels(0, 1, .37, .2, .8),
+                AdjustmentSettings.HueSaturation(73, -.4, .2), AdjustmentSettings.HueSaturation(-150, .8, -.6),
+            };
+            for (int k = 0; k < adjustments.Length; k++)
+                foreach (LayerBlendMode mode in Enum.GetValues(typeof(LayerBlendMode)))
+                {
+                    if (mode == LayerBlendMode.PassThrough) continue;
+                    var rng = new SplitMix(5000 + 100 * (ulong)k + (ulong)mode); var adjusted = new Fnv();
+                    for (int i = 0; i < 4096; i++) { var d = rng.Rgba(); double op = rng.Opacity(); adjusted.Add(adjustments[k].Composite(d, op, mode)); }
+                    index.Add("sweep adjust" + k + "_" + mode + " " + adjusted.Hex);
+                }
         }
 
         /// <summary>ブラシの式の掃引（出力の指紋だけ）: System.Random の列、組み込みの筆先の画素、筆先の双線形、色の変化、デュアルの合わせ方、
@@ -637,13 +840,15 @@ namespace YoluPainterRs.Golden
 
         // ───────── 計測 ─────────
 
-        static void FillRandom(PaintDocument doc, PaintLayer layer, ulong seed)
+        static void FillRandom(PaintDocument doc, PaintLayer layer, ulong seed) { FillRandom(doc, layer.GetChannel(PaintChannel.Color), seed, false); }
+        /// <summary>全タイルを乱数で（alphaOnly ならマスク: アルファだけ）。</summary>
+        static void FillRandom(PaintDocument doc, SparseTileSurface surface, ulong seed, bool alphaOnly)
         {
-            int ts = doc.TileSize; var rng = new SplitMix(seed); var surface = layer.GetChannel(PaintChannel.Color);
+            int ts = doc.TileSize; var rng = new SplitMix(seed);
             for (int ty = 0; ty * ts < doc.Height; ty++) for (int tx = 0; tx * ts < doc.Width; tx++)
             {
                 var bytes = new byte[ts * ts * 4];
-                for (int i = 0; i < bytes.Length; i += 4) { var p = rng.Rgba(); bytes[i] = p.R; bytes[i + 1] = p.G; bytes[i + 2] = p.B; bytes[i + 3] = p.A; }
+                for (int i = 0; i < bytes.Length; i += 4) { var p = rng.Rgba(); if (!alphaOnly) { bytes[i] = p.R; bytes[i + 1] = p.G; bytes[i + 2] = p.B; } bytes[i + 3] = p.A; }
                 surface.ImportTile(new TileCoord(tx, ty), bytes);
             }
             doc.ClearHistory();
@@ -669,6 +874,35 @@ namespace YoluPainterRs.Golden
                 ms.Clear();
                 for (int i = 0; i < runs; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Color); ms.Add(sw.Elapsed.TotalMilliseconds); }
                 Console.WriteLine("合成 4096² 2 層（Normal + Multiply 0.7）: " + Stats(ms));
+                // M2: Rust の bench と同じ文書
+                doc.SourceBudgetBytes = 2L << 30;
+                var l3 = doc.AddLayer("c"); FillRandom(doc, l3, 3); doc.SetLayerBlendMode(l3.Id, LayerBlendMode.Screen); doc.SetLayerOpacity(l3.Id, 0.8);
+                FillRandom(doc, doc.AddLayerMask(l3.Id).Surface, 4, true); doc.ClearHistory();
+                var g = doc.GroupLayers(new[] { l2.Id, l3.Id }, "G"); doc.SetLayerOpacity(g.Id, 0.6);
+                var l4 = doc.AddLayer("d"); FillRandom(doc, l4, 5);
+                var inner = doc.GroupLayers(new[] { l4.Id }, "Inner"); doc.SetLayerBlendMode(inner.Id, LayerBlendMode.Overlay);
+                var lv = doc.AddAdjustmentLayer("lv", AdjustmentSettings.Levels(0.1, 0.9, 1.4, 0, 1)); doc.SetLayerOpacity(lv.Id, 0.8);
+                var f = doc.AddFillLayer("f", new Dictionary<PaintChannel, Rgba32> { { PaintChannel.Color, new Rgba32(30, 90, 200, 255) } });
+                doc.SetLayerBlendMode(f.Id, LayerBlendMode.Multiply); doc.SetLayerOpacity(f.Id, 0.25);
+                for (int i = 0; i < 2; i++) CpuCompositor.Composite(doc, PaintChannel.Color);
+                ms.Clear();
+                for (int i = 0; i < runs; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Color); ms.Add(sw.Elapsed.TotalMilliseconds); }
+                Console.WriteLine("合成 4096² グループの文書（通過 0.6 に Multiply・マスク付き Screen、分離の Overlay、レベル補正、塗りつぶし）: " + Stats(ms));
+            }
+            {
+                var doc = new PaintDocument(4096, 4096, 128); doc.SourceBudgetBytes = 2L << 30;
+                var a = doc.AddLayer("a"); FillRandom(doc, a.GetChannel(PaintChannel.Normal), 6, false);
+                var b = doc.AddLayer("b"); FillRandom(doc, b.GetChannel(PaintChannel.Normal), 7, false);
+                doc.SetLayerBlendMode(b.Id, LayerBlendMode.Overlay); doc.SetLayerOpacity(b.Id, 0.6);
+                var h = doc.AddLayer("h"); FillRandom(doc, h.GetChannel(PaintChannel.Height), 8, false);
+                doc.ClearHistory();
+                var ms = new List<double>();
+                for (int i = 0; i < runs + 2; i++) { var sw = Stopwatch.StartNew(); CpuCompositor.Composite(doc, PaintChannel.Normal); if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds); }
+                Console.WriteLine("合成 4096² Normal 2 層（Normal + Overlay 0.6、ベクトル）: " + Stats(ms));
+                doc.SetNormalSettings(new NormalSettings(true, 4, HeightEdgeMode.Clamp, NormalYDirection.OpenGL));
+                ms.Clear();
+                for (int i = 0; i < runs + 2; i++) { var sw = Stopwatch.StartNew(); NormalMaps.Output(doc, 1L << 30); if (i >= 2) ms.Add(sw.Elapsed.TotalMilliseconds); }
+                Console.WriteLine("Normal の出力 4096²（上の 2 層 + Height → Normal）: " + Stats(ms));
             }
             foreach (var (radius, over) in new[] { (40.0, false), (40.0, true), (200.0, false) })
             {

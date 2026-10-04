@@ -15,10 +15,12 @@ use yolu_core::brush::{
     curve, hsv_to_rgb, linear_to_srgb, luminance, pen_tilt, rgb_to_hsv, BUILTIN_TIPS,
 };
 use yolu_core::glam::DVec2;
+use yolu_core::normal;
 use yolu_core::{
-    builtin_tip, BlendMode, Brush, BrushEffect, BrushPixel, BrushSample, BrushSettings,
-    BrushStencil, BrushTip, Channel, ColorDynamics, Document, DualBrush, DualBrushMode,
-    ImageColorSpace, PaperTexture, Rect, Rgba8, StencilImage, StencilMapping, StencilMode,
+    builtin_tip, AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushPixel, BrushSample,
+    BrushSettings, BrushStencil, BrushTip, Channel, ChannelBlend, ColorDynamics, Document,
+    DualBrush, DualBrushMode, HeightEdgeMode, ImageColorSpace, LayerId, NormalSettings,
+    NormalYDirection, PaperTexture, Rect, Rgba8, StencilImage, StencilMapping, StencilMode,
     StencilPoint, StencilTiling, Stroke, TileCoord, TipSelection,
 };
 
@@ -154,11 +156,9 @@ fn color(s: &str) -> Rgba8 {
 fn mode(s: &str) -> BlendMode {
     BlendMode::from_name(s).unwrap_or_else(|| panic!("モード: {s}"))
 }
+/// 標準のチャンネルの名前（C# の PaintChannel の名前）から。
 fn channel(s: &str) -> Channel {
-    *Channel::ALL
-        .iter()
-        .find(|c| format!("{c:?}") == s)
-        .unwrap_or_else(|| panic!("チャンネル: {s}"))
+    Channel::from_standard_name(s).unwrap_or_else(|| panic!("チャンネル: {s}"))
 }
 fn tip(id: &str) -> Arc<BrushTip> {
     builtin_tip(id).unwrap_or_else(|| panic!("筆先: {id}"))
@@ -305,13 +305,25 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
     true
 }
 
-fn fill(doc: &mut Document, id: yolu_core::LayerId, spec: &str) {
+/// 中身を書く先: 層のチャンネルか、層のマスク（アルファだけ）。
+#[derive(Clone, Copy)]
+enum Into {
+    Channel(LayerId, Channel),
+    Mask(LayerId),
+}
+
+/// 中身（empty | random:種 | sparse:種 | solid:R,G,B,A、m で始まるとアルファだけ）でタイルを埋める（C# の Fill と同じ乱数の順）。
+fn fill(doc: &mut Document, into: Into, spec: &str) {
     let (w, h, ts) = (
         doc.width() as usize,
         doc.height() as usize,
         doc.tile_size() as usize,
     );
     let (columns, rows) = (w.div_ceil(ts), h.div_ceil(ts));
+    let (spec, alpha_only) = match spec.strip_prefix('m') {
+        Some(rest) => (rest, true),
+        None => (spec, false),
+    };
     let put =
         |doc: &mut Document, tx: usize, ty: usize, f: &mut dyn FnMut(usize, usize) -> Rgba8| {
             let mut bytes = vec![0u8; ts * ts * 4];
@@ -323,16 +335,18 @@ fn fill(doc: &mut Document, id: yolu_core::LayerId, spec: &str) {
                     if tx * ts + x >= w {
                         break;
                     }
-                    let p = f(tx * ts + x, ty * ts + y);
+                    let mut p = f(tx * ts + x, ty * ts + y);
+                    if alpha_only {
+                        p = Rgba8::new(0, 0, 0, p.a);
+                    }
                     bytes[(y * ts + x) * 4..][..4].copy_from_slice(&p.to_array());
                 }
             }
-            doc.import_tile(
-                id,
-                yolu_core::Channel::Color,
-                TileCoord::new(tx as u32, ty as u32),
-                &bytes,
-            )
+            let coord = TileCoord::new(tx as u32, ty as u32);
+            match into {
+                Into::Channel(id, channel) => doc.import_tile(id, channel, coord, &bytes),
+                Into::Mask(id) => doc.import_mask_tile(id, coord, &bytes),
+            }
             .expect("読み込み");
         };
     if spec == "empty" {
@@ -377,6 +391,87 @@ fn fill(doc: &mut Document, id: yolu_core::LayerId, spec: &str) {
         }
     } else {
         panic!("中身: {spec}");
+    }
+}
+
+fn surface_bytes(surface: &yolu_core::Surface) -> Vec<u8> {
+    surface.to_canvas_bytes()
+}
+
+/// 層の番号（今の並び、下から 0）か @名前。
+fn layer_index(doc: &Document, s: &str) -> usize {
+    match s.strip_prefix('@') {
+        Some(name) => doc
+            .layers()
+            .iter()
+            .position(|l| l.name() == name)
+            .unwrap_or_else(|| panic!("層の名前: {s}")),
+        None => int(s) as usize,
+    }
+}
+fn layer_at(doc: &Document, s: &str) -> LayerId {
+    doc.layers()[layer_index(doc, s)].id()
+}
+/// invert | levels:… | hsl:…（C# と同じ順に数を読む）。
+fn adjust(c: &mut CaseRun, s: &str) -> Result<AdjustmentSettings, yolu_core::CoreError> {
+    let (kind, rest) = s.split_once(':').unwrap_or((s, ""));
+    let v: Vec<&str> = rest.split(',').collect();
+    match kind {
+        "invert" => Ok(AdjustmentSettings::invert()),
+        "levels" => {
+            let n: Vec<f64> = v.iter().map(|x| num(c, x)).collect();
+            AdjustmentSettings::levels(n[0], n[1], n[2], n[3], n[4])
+        }
+        "hsl" => {
+            let n: Vec<f64> = v.iter().map(|x| num(c, x)).collect();
+            AdjustmentSettings::hue_saturation(n[0], n[1], n[2])
+        }
+        _ => panic!("調整: {s}"),
+    }
+}
+fn flags(doc: &mut Document, id: LayerId, flag: &str) -> Result<(), yolu_core::CoreError> {
+    match flag {
+        "hidden" => doc.set_layer_visible(id, false),
+        "clip" => doc.set_layer_clipping(id, true),
+        _ => panic!("印: {flag}"),
+    }
+}
+fn mode_opacity(
+    c: &mut CaseRun,
+    doc: &mut Document,
+    id: LayerId,
+    mode_s: &str,
+    opacity_s: &str,
+    initial: BlendMode,
+) -> Result<(), yolu_core::CoreError> {
+    let m = mode(mode_s);
+    let o = num(c, opacity_s);
+    if m != initial {
+        doc.set_layer_blend_mode(id, m)?;
+    }
+    if o != 1.0 {
+        doc.set_layer_opacity(id, o, false)?;
+    }
+    Ok(())
+}
+/// 合成（reference なら画素ごとの参照の式）。
+fn pixels(doc: &Document, channel: Channel, reference: bool) -> Vec<u8> {
+    if !reference {
+        return doc.composite_channel(channel, doc.bounds()).unwrap();
+    }
+    let mut out = Vec::with_capacity(doc.width() as usize * doc.height() as usize * 4);
+    for y in 0..doc.height() {
+        for x in 0..doc.width() {
+            out.extend_from_slice(&doc.composite_pixel(channel, x, y).unwrap().to_array());
+        }
+    }
+    out
+}
+fn channel_word(ch: Channel) -> String {
+    if ch == Channel::Color {
+        String::new()
+    } else {
+        format!("{ch:?} ")
     }
 }
 
@@ -439,13 +534,6 @@ fn channel_bytes(doc: &Document, index: usize, ch: Channel) -> Vec<u8> {
     }
 }
 
-fn layer_bytes(doc: &Document, index: usize) -> Vec<u8> {
-    doc.layers()[index]
-        .surface(yolu_core::Channel::Color)
-        .expect("Color の面")
-        .to_canvas_bytes()
-}
-
 /// 命令 1 つ。Err は「断られた」（C# の例外）。
 fn command(c: &mut CaseRun, t: &[&str]) -> Result<(), yolu_core::CoreError> {
     if t[0] == "canvas" {
@@ -463,7 +551,6 @@ fn command(c: &mut CaseRun, t: &[&str]) -> Result<(), yolu_core::CoreError> {
 }
 
 fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yolu_core::CoreError> {
-    let layer_at = |doc: &Document, s: &str| doc.layers()[int(s) as usize].id();
     match t[0] {
         "layer" => {
             let id = doc.add_layer(t[1])?;
@@ -483,13 +570,144 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                     other => spec = Some(other),
                 }
             }
-            fill(doc, id, spec.expect("layer の中身"));
+            fill(
+                doc,
+                Into::Channel(id, Channel::Color),
+                spec.expect("layer の中身"),
+            );
+            doc.clear_history()?;
+        }
+        "paint" => {
+            let id = layer_at(doc, t[1]);
+            let ch = channel(t[2]);
+            doc.set_channel_enabled(id, ch, true)?; // C# の GetChannel（面を作って有効に）
+            fill(doc, Into::Channel(id, ch), t[3]);
+            doc.clear_history()?;
+        }
+        "group" => {
+            let id = doc.add_group(t[1], None)?;
+            mode_opacity(c, doc, id, t[2], t[3], BlendMode::PassThrough)?;
+            for f in &t[4..] {
+                flags(doc, id, f)?;
+            }
+            doc.clear_history()?;
+        }
+        "fill" => {
+            let mut values = Vec::new();
+            let mut fl = Vec::new();
+            for tok in &t[4..] {
+                match tok.split_once('=') {
+                    Some((ch, v)) => values.push((channel(ch), color(v))),
+                    None => fl.push(*tok),
+                }
+            }
+            let id = doc.add_fill_layer(t[1], &values, None)?;
+            mode_opacity(c, doc, id, t[2], t[3], BlendMode::Normal)?;
+            for f in fl {
+                flags(doc, id, f)?;
+            }
+            doc.clear_history()?;
+        }
+        "adjust" => {
+            let mut settings = None;
+            let mut only: Option<Vec<Channel>> = None;
+            let mut fl = Vec::new();
+            for tok in &t[4..] {
+                if *tok == "hidden" || *tok == "clip" {
+                    fl.push(*tok);
+                } else if let Some(list) = tok.strip_prefix("only=") {
+                    only = Some(list.split(',').map(channel).collect());
+                } else {
+                    settings = Some(adjust(c, tok)?);
+                }
+            }
+            let id =
+                doc.add_adjustment_layer(t[1], settings.expect("調整"), only.as_deref(), None)?;
+            mode_opacity(c, doc, id, t[2], t[3], BlendMode::Normal)?;
+            for f in fl {
+                flags(doc, id, f)?;
+            }
+            doc.clear_history()?;
+        }
+        "mask" => {
+            let id = layer_at(doc, t[1]);
+            doc.add_layer_mask(id)?;
+            fill(doc, Into::Mask(id), t[2]);
+            for tok in &t[3..] {
+                if *tok == "inverted" {
+                    doc.set_layer_mask_inverted(id, true)?;
+                } else if *tok == "off" {
+                    doc.set_layer_mask_enabled(id, false)?;
+                } else if let Some(v) = tok.strip_prefix("density=") {
+                    let d = num(c, v);
+                    doc.set_layer_mask_density(id, d, false)?;
+                } else {
+                    panic!("mask: {tok}");
+                }
+            }
             doc.clear_history()?;
         }
         "add" => {
             doc.add_layer(t[1])?;
         }
-        "stroke" => {
+        "groupof" => {
+            let ids: Vec<LayerId> = t[2..].iter().map(|s| layer_at(doc, s)).collect();
+            doc.group_layers(&ids, t[1])?;
+        }
+        "ungroup" => doc.ungroup(layer_at(doc, t[1]))?,
+        "duplicate" => {
+            doc.duplicate_layer(layer_at(doc, t[1]), t.get(2).copied())?;
+        }
+        "into" => {
+            let id = layer_at(doc, t[1]);
+            let parent = (t[2] != "top").then(|| layer_at(doc, t[2]));
+            doc.move_layer_to(id, parent, int(t[3]) as usize)?
+        }
+        "addmask" => doc.add_layer_mask(layer_at(doc, t[1]))?,
+        "removemask" => doc.remove_layer_mask(layer_at(doc, t[1]))?,
+        "maskprop" => {
+            let id = layer_at(doc, t[1]);
+            doc.set_layer_mask_enabled(id, t[2] == "1")?;
+            doc.set_layer_mask_inverted(id, t[3] == "1")?;
+            let d = num(c, t[4]);
+            doc.set_layer_mask_density(id, d, false)?;
+        }
+        "chblend" => {
+            let m = (t[3] != "-").then(|| mode(t[3]));
+            let o = (t[4] != "-").then(|| num(c, t[4]));
+            doc.set_channel_blend(
+                layer_at(doc, t[1]),
+                channel(t[2]),
+                ChannelBlend::new(m, o),
+                false,
+            )?
+        }
+        "chenable" => doc.set_channel_enabled(layer_at(doc, t[1]), channel(t[2]), t[3] == "1")?,
+        "fillvalue" => {
+            let v = (t[3] != "none").then(|| color(t[3]));
+            doc.set_fill_value(layer_at(doc, t[1]), channel(t[2]), v, false)?
+        }
+        "setadjust" => {
+            let id = layer_at(doc, t[1]);
+            let a = adjust(c, t[2])?;
+            doc.set_adjustment(id, a, false)?
+        }
+        "normal" => {
+            let derive = t[1] == "1";
+            let strength = num(c, t[2]);
+            let edges = match t[3] {
+                "wrap" => HeightEdgeMode::Wrap,
+                "clamp" => HeightEdgeMode::Clamp,
+                e => panic!("端: {e}"),
+            };
+            let dir = match t[4] {
+                "dx" => NormalYDirection::DirectX,
+                "gl" => NormalYDirection::OpenGL,
+                d => panic!("向き: {d}"),
+            };
+            doc.set_normal_settings(NormalSettings::new(derive, strength, edges, dir)?, false)?
+        }
+        "stroke" | "maskstroke" => {
             let mut b = BrushBuild::new(BrushSettings::default());
             let mut ch = Channel::Color;
             for kv in &t[2..] {
@@ -516,7 +734,12 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
             }
             assert!(c.stroke.is_none(), "ストロークが重なっている");
             let brush = b.finish();
-            c.stroke = Some(doc.begin_brush_stroke_in(layer_at(doc, t[1]), ch, &brush)?);
+            let id = layer_at(doc, t[1]);
+            c.stroke = Some(if t[0] == "maskstroke" {
+                doc.begin_brush_mask_stroke(id, &brush)?
+            } else {
+                doc.begin_brush_stroke_in(id, ch, &brush)?
+            });
         }
         "tpoint" => {
             let (x, y, p) = (num(c, t[1]), num(c, t[2]), num(c, t[3]));
@@ -653,8 +876,7 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
         }
         "budget" => doc.set_stroke_budget_bytes(int(t[1]) as u64)?,
         "enable" => {
-            // C# は SetChannelEnabled（面ができる）と履歴の消去。Rust はストロークを始めるときに面を作るので、履歴だけ消す
-            let _ = channel(t[2]);
+            doc.set_channel_enabled(layer_at(doc, t[1]), channel(t[2]), true)?;
             doc.clear_history()?;
         }
         "point" => {
@@ -724,14 +946,45 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
         "move" => doc.move_layer(layer_at(doc, t[1]), int(t[2]) as usize)?,
         "remove" => doc.remove_layer(layer_at(doc, t[1]))?,
         "out" => {
+            let size = format!("{}x{}", doc.width(), doc.height());
             let (bytes, what) = match t[1] {
-                "composite" => (
-                    doc.composite(doc.bounds())?,
-                    format!("composite {}x{}", doc.width(), doc.height()),
+                "composite" | "reference" => {
+                    let ch = t.get(2).map_or(Channel::Color, |s| channel(s));
+                    (
+                        pixels(doc, ch, t[1] == "reference"),
+                        format!("{} {}{size}", t[1], channel_word(ch)),
+                    )
+                }
+                "layer" => {
+                    let ch = t.get(3).map_or(Channel::Color, |s| channel(s));
+                    let layer = &doc.layers()[layer_index(doc, t[2])];
+                    (
+                        surface_bytes(layer.surface(ch).expect("面")),
+                        format!("layer {} {}{size}", t[2], channel_word(ch)),
+                    )
+                }
+                "mask" => {
+                    let layer = &doc.layers()[layer_index(doc, t[2])];
+                    (
+                        surface_bytes(layer.mask().expect("マスク").surface()),
+                        format!("mask {} {size}", t[2]),
+                    )
+                }
+                "normal" => (
+                    doc.normal_output(normal::DEFAULT_WORKING_BUDGET_BYTES)?,
+                    format!("normal {size}"),
                 ),
-                "layer" => (
-                    layer_bytes(doc, int(t[2]) as usize),
-                    format!("layer {} {}x{}", t[2], doc.width(), doc.height()),
+                "normalfile" => (
+                    doc.normal_file_output(normal::DEFAULT_WORKING_BUDGET_BYTES)?,
+                    format!("normalfile {size}"),
+                ),
+                "derive" => (
+                    doc.derive_normal_from_height(
+                        Channel::Height,
+                        &doc.normal_settings(),
+                        normal::DEFAULT_WORKING_BUDGET_BYTES,
+                    )?,
+                    format!("derive {size}"),
                 ),
                 "channel" => (
                     channel_bytes(doc, int(t[2]) as usize, channel(t[3])),
@@ -744,9 +997,10 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                         int(t[4]) as u32,
                         int(t[5]) as u32,
                     );
+                    let ch = t.get(6).map_or(Channel::Color, |s| channel(s));
                     (
-                        doc.composite(Rect::new(x, y, w, h))?,
-                        format!("region {x} {y} {w}x{h}"),
+                        doc.composite_channel(ch, Rect::new(x, y, w, h))?,
+                        format!("region {}{x} {y} {w}x{h}", channel_word(ch)),
                     )
                 }
                 other => panic!("out: {other}"),
@@ -942,6 +1196,49 @@ fn pixel_formulas_match_the_csharp_core_on_random_sweeps() {
         f.rgba(fade(d, s, op));
     }
     mine.push(format!("sweep fade {}", f.hex()));
+    // Normal のチャンネルの式
+    for m in BlendMode::LAYER_MODES {
+        let mut rng = SplitMix(3000 + m as u64);
+        let (mut b, mut cl) = (Fnv::new(), Fnv::new());
+        for _ in 0..65536 {
+            let d = rng.rgba();
+            let s = rng.rgba();
+            let op = rng.opacity();
+            b.rgba(normal::blend(d, s, op, m));
+            cl.rgba(normal::clip_onto(d, s, op, m));
+        }
+        mine.push(format!("sweep nblend_{} {}", m.name(), b.hex()));
+        mine.push(format!("sweep nclip_{} {}", m.name(), cl.hex()));
+    }
+    let mut rng = SplitMix(4000);
+    let mut f = Fnv::new();
+    for _ in 0..65536 {
+        let d = rng.rgba();
+        let s = rng.rgba();
+        let op = rng.opacity();
+        f.rgba(normal::fade(d, s, op));
+    }
+    mine.push(format!("sweep nfade {}", f.hex()));
+    // 調整
+    let adjustments = [
+        AdjustmentSettings::invert(),
+        AdjustmentSettings::levels(0.1, 0.9, 1.7, 0.05, 0.95).unwrap(),
+        AdjustmentSettings::levels(0.0, 1.0, 0.37, 0.2, 0.8).unwrap(),
+        AdjustmentSettings::hue_saturation(73.0, -0.4, 0.2).unwrap(),
+        AdjustmentSettings::hue_saturation(-150.0, 0.8, -0.6).unwrap(),
+    ];
+    for (k, a) in adjustments.iter().enumerate() {
+        for m in BlendMode::LAYER_MODES {
+            let mut rng = SplitMix(5000 + 100 * k as u64 + m as u64);
+            let mut f = Fnv::new();
+            for _ in 0..4096 {
+                let d = rng.rgba();
+                let op = rng.opacity();
+                f.rgba(a.composite(d, op, m));
+            }
+            mine.push(format!("sweep adjust{k}_{} {}", m.name(), f.hex()));
+        }
+    }
     let wrong: Vec<_> = events
         .iter()
         .zip(&mine)
@@ -961,16 +1258,9 @@ fn pixel_formulas_match_the_csharp_core_on_random_sweeps() {
 fn region_composite_equals_the_per_pixel_reference() {
     for (name, c) in run_script() {
         let Some(doc) = c.doc else { continue };
-        let all = doc.composite(doc.bounds()).unwrap();
-        let w = doc.width() as usize;
-        for y in 0..doc.height() {
-            for x in 0..doc.width() {
-                let p = doc
-                    .composite_pixel(yolu_core::Channel::Color, x, y)
-                    .unwrap();
-                let i = (y as usize * w + x as usize) * 4;
-                assert_eq!(&all[i..i + 4], &p.to_array(), "{name} ({x},{y})");
-            }
+        for ch in Channel::ALL {
+            let all = doc.composite_channel(ch, doc.bounds()).unwrap();
+            assert_eq!(all, pixels(&doc, ch, true), "{name} {ch:?}");
         }
     }
 }

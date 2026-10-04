@@ -32,9 +32,23 @@
 #   dabdiscat 中心X 中心Y 半径 筆圧 写し  円板の面のダブを、画素の中心を写しで写した点で（ApplyDab の点つき）
 #   commit | cancel | undo | redo
 #   visible 層 0|1  /  opacity 層 値  /  mode 層 モード  /  clip 層 0|1  /  move 層 新しい位置  /  remove 層  /  add 名前
+#   out composite [ch]  /  out reference [ch]（画素ごとの参照の式）  /  out layer 層 [ch]  /  out region X Y W H [ch]
+#   out mask 層  /  out normal（Normal の出力）  /  out normalfile（ファイルの Y の向き）  /  out derive（Height → Normal だけ）
+# M2（層の種類とチャンネル）:
+#   paint 層 ch 中身                 ラスターの層のチャンネルを中身で埋める（面を作って有効にする。準備なので履歴を消す）
+#   group 名前 モード 不透明度 [hidden] [clip]      空のグループを一番上へ（準備）
+#   fill 名前 モード 不透明度 [hidden] [clip] ch=R,G,B,A…   塗りつぶしの層を一番上へ（準備）
+#   adjust 名前 モード 不透明度 [hidden] [clip] [only=ch,ch] 調整   調整の層（invert | levels:黒,白,ガンマ,出力の黒,出力の白 |
+#                                    hsl:色相,彩度,明度。only が無ければ使えるチャンネル全部）を一番上へ（準備）
+#   mask 層 中身 [inverted] [off] [density=v]       マスクを足して中身（m で始まる中身はアルファだけ）で埋める（準備）
+#   groupof 名前 層…  /  ungroup 層  /  into 層 グループ|top 位置  /  duplicate 層 [名前]   グループ化・解除・移動・複製（Undo できる）
+#   addmask 層  /  removemask 層  /  maskprop 層 有効 反転 濃度  /  maskstroke 層 キー=値…（マスクへのストローク）
+#   chblend 層 ch モード|- 不透明度|-  /  chenable 層 ch 0|1  /  fillvalue 層 ch R,G,B,A|none  /  setadjust 層 調整
+#   normal 作る(0|1) 強さ clamp|wrap gl|dx       Normal の出力の設定
+#   stroke の channel=ch でチャンネルを選ぶ。ch は C# の PaintChannel の名前。
 #   out composite  /  out layer 層  /  out region X Y W H  /  out channel 層 チャンネル
 # 乱数は splitmix64。色の成分は 1/8 で 0、1/8 で 255、ほかは一様。アルファは 1/4 で 0、1/4 で 255、ほかは一様。
-# 層の番号は今の並び（下から 0）。小数は 2 進で割り切れるか短い 10 進だけ（読み方の違いは params の指紋で見張る）。
+# 層は今の並びの番号（下から 0）か @名前。小数は 2 進で割り切れるか短い 10 進だけ（読み方の違いは params の指紋で見張る）。
 
 case blend_Normal
 canvas 24 20 8
@@ -671,6 +685,323 @@ walk 14 20 70 62 8
 commit
 out layer 0
 
+# ───────── M2: 層の種類とチャンネル ─────────
+
+# 通過のグループ: 不透明度 1 は下へそのまま、不透明度・マスクでフェード。中身の無いタイルは飛ばす
+case group_pass
+canvas 37 29 16
+layer ground Normal 1 random:101
+layer a Multiply 0.8 sparse:102
+layer b Screen 1 random:103
+layer c Overlay 0.6 sparse:104
+groupof G @a @b
+out composite
+out reference
+opacity @G 0.55
+out composite
+out reference
+out region 5 3 30 21
+mask @G msparse:105 density=0.8
+out composite
+out reference
+maskprop @G 1 1 0.6
+out composite
+out reference
+
+# 分離のグループ・入れ子・グループの中の調整とクリッピング（調整は下地にならない）・グループを下地にしたクリッピング・
+# クリッピングされたグループ・非表示や空のグループ
+case group_isolated
+canvas 41 33 8
+layer ground Normal 1 random:111
+layer p Normal 1 sparse:112
+layer q Multiply 0.7 random:113
+layer r SoftLight 1 sparse:114
+adjust inv Normal 0.8 invert
+layer s HardLight 0.9 clip random:115
+layer t Normal 1 sparse:116
+layer u Screen 0.5 clip random:117
+groupof Inner @q @r
+groupof Outer @p @Inner @inv @s
+out composite
+out reference
+mode @Inner Overlay
+out composite
+out reference
+mode @Outer Normal
+opacity @Outer 0.7
+out composite
+out reference
+clip @t 1
+out composite
+out reference
+layer v Normal 1 random:118
+layer w Difference 1 sparse:119
+groupof CG @v @w
+clip @CG 1
+out composite
+out reference
+mode @CG Screen
+opacity @CG 0.8
+out composite
+out reference
+group Empty PassThrough 1
+group Hidden Multiply 1 hidden
+visible @Inner 0
+out composite
+out reference
+into @t @Inner 0
+visible @Inner 1
+out composite
+out reference
+
+# 構造の Undo: グループへ入れる・出す・グループごと動かす・解除・グループごと消す
+case group_history
+canvas 32 24 8
+layer ground Normal 1 random:121
+layer a Normal 1 sparse:122
+layer b Multiply 1 sparse:123
+layer c Screen 0.7 sparse:124
+groupof G @a @c
+mode @G Normal
+out composite
+into @b @G 1
+out composite
+into @G top 0
+out composite
+ungroup @G
+out composite
+undo
+undo
+out composite
+undo
+undo
+undo
+undo
+out composite
+redo
+redo
+redo
+redo
+out composite
+remove @G
+out composite
+undo
+out composite
+
+# マスク: 濃度・反転・無効、マスクへのストローク（隠す・消しゴムで見せる）、外して戻す、どの層にも
+case mask_ops
+canvas 40 24 8
+layer ground Normal 1 random:131
+layer a Normal 1 random:132
+mask @a msparse:133
+out composite
+out reference
+maskprop @a 1 0 0.5
+out composite
+maskprop @a 1 1 0.5
+out composite
+out reference
+maskprop @a 0 1 0.5
+out composite
+undo
+undo
+undo
+out composite
+maskstroke @a radius=6 hardness=0.6 color=255,0,255,255
+walk 21 20 20 12 4
+commit
+out mask @a
+out composite
+maskstroke @a radius=4 erase=1 color=0,0,0,200
+walk 22 15 20 12 5
+commit
+out mask @a
+out composite
+undo
+out mask @a
+removemask @a
+out composite
+undo
+out composite
+addmask @ground
+maskstroke @ground radius=3 hardness=1 psize=0 popacity=0
+point 5 5 1
+point 30 18 1
+commit
+out composite
+maskstroke @ground radius=3 hardness=1
+point 10 10 1
+cancel
+out mask @ground
+
+# 塗りつぶし・調整（マスク・モード・不透明度）と、値・設定の変更の Undo
+case fill_adjust
+canvas 41 35 16
+layer r Normal 1 random:141
+adjust hsl Normal 0.8 hsl:73,-0.4,0.2
+mask @hsl msparse:142
+adjust lev Screen 1 levels:0.1,0.9,1.7,0.05,0.95
+fill f Normal 1 Color=30,60,90,40
+adjust inv Normal 1 invert
+adjust inv2 Normal 0.7 only=Color invert
+out composite
+out reference
+fillvalue @f Color 200,10,90,255
+opacity @f 0.4
+out composite
+setadjust @lev levels:0,1,0.5,0.2,0.8
+out composite
+setadjust @inv hsl:-120,0.5,-0.3      # Roughness なども有効なので断る
+setadjust @inv2 hsl:-120,0.5,-0.3
+out composite
+out reference
+undo
+undo
+undo
+undo
+undo
+out composite
+fillvalue @f Color none
+out composite
+
+# クリッピングされた調整・塗りつぶし（下地だけに効く）と、マスクのある下地
+case clipped_fill_adjust
+canvas 41 33 16
+layer ground Normal 1 random:151
+layer base Normal 0.9 sparse:152
+adjust hs Normal 1 clip hsl:40,0.2,-0.1
+fill tint Multiply 0.8 clip Color=10,200,90,120
+layer c Overlay 0.7 clip random:153
+mask @base msparse:154
+out composite
+out reference
+mask @tint mrandom:155
+out composite
+out reference
+
+# チャンネルごとの合成（モード・不透明度の置き換え）・チャンネルの有効・ほかのチャンネルの合成
+case channels
+canvas 40 32 16
+layer back Normal 1 random:161
+paint @back Roughness random:162
+paint @back Height random:163
+paint @back Normal random:164
+layer a Screen 0.9 sparse:165
+paint @a Roughness sparse:166
+paint @a Normal sparse:167
+layer b Normal 0.8 random:168
+paint @b Height random:169
+paint @b Normal random:170
+adjust lev Normal 0.7 levels:0.1,0.9,1.4,0,1
+groupof g @a @b
+chblend @g Roughness Screen 0.7
+chblend @g Height - 0.5
+chblend @a Color Multiply -
+chblend @a Normal Overlay -
+chblend @b Height Darken 1
+chblend @lev Height Overlay 0.6
+out composite Color
+out composite Roughness
+out composite Height
+out composite Normal
+out reference Normal
+out reference Height
+out composite Metallic
+chenable @b Height 0
+out composite Height
+undo
+undo
+out composite Height
+chblend @g Color Normal -
+out composite
+out reference
+
+# Normal のチャンネル: 単位ベクトルの重ね・Overlay の RNM・通過のグループのフェード・クリッピング・マスク・分離のグループ、出力
+case normal_stack
+canvas 37 29 8
+layer n0 Normal 0.3 empty
+paint @n0 Normal random:181
+layer n1 Overlay 0.44 empty
+paint @n1 Normal sparse:182
+layer n2 Multiply 0.58 empty
+paint @n2 Normal random:183
+layer n3 Normal 0.72 clip empty
+paint @n3 Normal sparse:184
+layer n4 Overlay 0.86 empty
+paint @n4 Normal random:185
+groupof G @n0 @n1
+opacity @G 0.6
+mask @n2 msparse:186
+groupof Iso @n4
+mode @Iso Overlay
+out composite Normal
+out reference Normal
+out normal
+normal 1 4 clamp gl
+out normal
+
+# Height → Normal: 強さ・端・ファイルの Y の向き、塗った法線を細部として
+case height_normal
+canvas 41 35 8
+layer h Normal 1 empty
+paint @h Height random:191
+layer n Normal 0.8 empty
+paint @n Normal random:192
+out normal
+normal 1 3.5 clamp gl
+out normal
+out derive
+normal 1 -40 wrap dx
+out normal
+out normalfile
+out derive
+normal 1 0 wrap gl
+out normal
+normal 1 127.5 clamp dx
+visible @n 0
+out normal
+out normalfile
+undo
+undo
+out normal
+
+# ほかのチャンネルへのストローク（Height・Normal）と Undo
+case stroke_channels
+canvas 48 32 16
+layer p Normal 1 random:201
+stroke @p channel=Height radius=6 color=200,0,0,255
+walk 23 20 24 16 3
+commit
+stroke @p channel=Normal radius=5 color=255,128,128,255 hardness=0.5
+walk 24 20 24 16 3
+commit
+out layer @p Height
+out layer @p Normal
+out composite Normal
+undo
+out layer @p Normal
+
+# 複製: グループは中身ごと元のすぐ上へ（マスク・チャンネルごとの合成も）。写しを動かして元と重ならない所で見る
+case duplicate
+canvas 36 28 8
+layer ground Normal 1 random:211
+layer a Multiply 0.8 sparse:212
+mask @a msparse:213
+layer b Screen 1 random:214
+chblend @b Color Overlay 0.5
+groupof G @a @b
+mode @G Normal
+opacity @G 0.7
+duplicate @G Gc
+out composite
+mode @Gc Difference
+out composite
+out reference
+undo
+undo
+out composite
+duplicate @b
+out composite
 # ───── M2 のブラシ（筆先・ゆらぎ・質感・デュアル・色の変化・フェード・傾き・手ぶれ補正・入り抜き・曲線・効果） ─────
 # 筆先の名前は組み込みの筆先（C# の BuiltInBrushes。Rust は同じ式で作る）。dual= の後の d で始まるキーは 2 つ目の筆先。
 

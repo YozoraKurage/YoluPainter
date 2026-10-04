@@ -1,14 +1,16 @@
 //! 速さの計測（tools/csharp-golden/run.sh bench の C# と同じ中身）。
 //!   cargo run --release -p yolu-core --example bench [回数] [M2 の種類だけ: round|jitter|tip|texture|dual|color|all|blur|smudge]
-//! 4096² の合成（全タイル乱数の 1 層、Normal + Multiply 0.7 の 2 層）と、101 点のストローク（半径 40 を空の層・乱数の画素の上、半径 200 を空の層）。
+//! 4096² の合成（全タイル乱数の 1 層、Normal + Multiply 0.7 の 2 層、グループ・マスク・調整・塗りつぶしの文書、Normal の合成と
+//! Height → Normal の出力）と、101 点のストローク（半径 40 を空の層・乱数の画素の上、半径 200 を空の層）。
 //! M2 のブラシ: 半径 40・200 で、ゆらぎ・筆先の画像・紙の質感・デュアル・ダブごとの色・全部・ぼかし・指先（効果は乱数の画素の上）。
 
 use std::time::Instant;
 
 use yolu_core::glam::DVec2;
 use yolu_core::{
-    builtin_tip, BlendMode, Brush, BrushEffect, BrushSettings, Channel, Document, DualBrush,
-    LayerId, PaperTexture, Rgba8, RowOrder, TileCoord,
+    builtin_tip, AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushSettings, Channel,
+    Document, DualBrush, HeightEdgeMode, LayerId, NormalSettings, NormalYDirection, PaperTexture,
+    Rgba8, RowOrder, TileCoord,
 };
 
 struct SplitMix(u64);
@@ -39,6 +41,11 @@ impl SplitMix {
 }
 
 fn fill_random(doc: &mut Document, layer: LayerId, seed: u64) {
+    fill_random_in(doc, layer, Some(Channel::Color), seed)
+}
+
+/// 全タイルを乱数で（channel が None ならマスクへ、アルファだけ）。
+fn fill_random_in(doc: &mut Document, layer: LayerId, channel: Option<Channel>, seed: u64) {
     let ts = doc.tile_size() as usize;
     let mut rng = SplitMix(seed);
     let mut bytes = vec![0u8; ts * ts * 4];
@@ -46,13 +53,33 @@ fn fill_random(doc: &mut Document, layer: LayerId, seed: u64) {
         for tx in 0..doc.width().div_ceil(ts as u32) {
             for p in bytes.as_chunks_mut::<4>().0 {
                 let (r, g, b, a) = (rng.channel(), rng.channel(), rng.channel(), rng.alpha());
-                p.copy_from_slice(&[r, g, b, a]);
+                if channel.is_some() {
+                    p.copy_from_slice(&[r, g, b, a]);
+                } else {
+                    p.copy_from_slice(&[0, 0, 0, a]);
+                }
             }
-            doc.import_tile(layer, Channel::Color, TileCoord::new(tx, ty), &bytes)
-                .unwrap();
+            let coord = TileCoord::new(tx, ty);
+            match channel {
+                Some(c) => doc.import_tile(layer, c, coord, &bytes),
+                None => doc.import_mask_tile(layer, coord, &bytes),
+            }
+            .unwrap();
         }
     }
     doc.clear_history().unwrap();
+}
+
+fn time_channel(doc: &Document, channel: Channel, runs: usize) -> String {
+    let mut ms: Vec<f64> = (0..runs + 2)
+        .map(|_| {
+            let t = Instant::now();
+            std::hint::black_box(doc.composite_channel(channel, doc.bounds()).unwrap());
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+        .skip(2)
+        .collect();
+    stats(&mut ms)
 }
 
 fn stats(ms: &mut [f64]) -> String {
@@ -178,6 +205,74 @@ fn main() {
         println!(
             "合成 4096² 2 層（Normal + Multiply 0.7）: {}",
             time_composite(&doc, runs)
+        );
+        // M2: 通過のグループ（不透明度 0.6 でフェード）の中に Multiply とマスク付きの Screen、分離のグループ（Overlay）、
+        // レベル補正、塗りつぶし（Multiply 0.25）
+        doc.set_source_budget_bytes(2 << 30).unwrap();
+        let c = doc.add_layer("c").unwrap();
+        fill_random(&mut doc, c, 3);
+        doc.set_layer_blend_mode(c, BlendMode::Screen).unwrap();
+        doc.set_layer_opacity(c, 0.8, false).unwrap();
+        doc.add_layer_mask(c).unwrap();
+        fill_random_in(&mut doc, c, None, 4);
+        let g = doc.group_layers(&[b, c], "G").unwrap();
+        doc.set_layer_opacity(g, 0.6, false).unwrap();
+        let d = doc.add_layer("d").unwrap();
+        fill_random(&mut doc, d, 5);
+        let inner = doc.group_layers(&[d], "Inner").unwrap();
+        doc.set_layer_blend_mode(inner, BlendMode::Overlay).unwrap();
+        let lv = doc
+            .add_adjustment_layer(
+                "lv",
+                AdjustmentSettings::levels(0.1, 0.9, 1.4, 0.0, 1.0).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
+        doc.set_layer_opacity(lv, 0.8, false).unwrap();
+        let f = doc
+            .add_fill_layer("f", &[(Channel::Color, Rgba8::new(30, 90, 200, 255))], None)
+            .unwrap();
+        doc.set_layer_blend_mode(f, BlendMode::Multiply).unwrap();
+        doc.set_layer_opacity(f, 0.25, false).unwrap();
+        println!(
+            "合成 4096² グループの文書（通過 0.6 に Multiply・マスク付き Screen、分離の Overlay、レベル補正、塗りつぶし）: {}",
+            time_composite(&doc, runs)
+        );
+    }
+    {
+        // M2: Normal の 2 層（Normal + Overlay 0.6）と Height 1 層
+        let mut doc = Document::new(4096, 4096).unwrap();
+        doc.set_source_budget_bytes(2 << 30).unwrap();
+        let a = doc.add_layer("a").unwrap();
+        fill_random_in(&mut doc, a, Some(Channel::Normal), 6);
+        let b = doc.add_layer("b").unwrap();
+        fill_random_in(&mut doc, b, Some(Channel::Normal), 7);
+        doc.set_layer_blend_mode(b, BlendMode::Overlay).unwrap();
+        doc.set_layer_opacity(b, 0.6, false).unwrap();
+        let h = doc.add_layer("h").unwrap();
+        fill_random_in(&mut doc, h, Some(Channel::Height), 8);
+        println!(
+            "合成 4096² Normal 2 層（Normal + Overlay 0.6、ベクトル）: {}",
+            time_channel(&doc, Channel::Normal, runs)
+        );
+        doc.set_normal_settings(
+            NormalSettings::new(true, 4.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
+                .unwrap(),
+            false,
+        )
+        .unwrap();
+        let mut ms: Vec<f64> = (0..runs + 2)
+            .map(|_| {
+                let t = Instant::now();
+                std::hint::black_box(doc.normal_output(1 << 30).unwrap());
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .skip(2)
+            .collect();
+        println!(
+            "Normal の出力 4096²（上の 2 層 + Height → Normal）: {}",
+            stats(&mut ms)
         );
     }
     for (radius, over) in [(40.0, false), (40.0, true), (200.0, false)] {

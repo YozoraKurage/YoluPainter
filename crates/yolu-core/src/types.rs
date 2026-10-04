@@ -133,7 +133,7 @@ pub enum BlendMode {
     Luminosity,
     DarkerColor,
     LighterColor,
-    /// グループだけ: 中身をグループでないかのように下へ重ねる。M1 にはグループが無いので、レイヤーには付けられない。
+    /// グループだけ: 中身をグループでないかのように下へ重ねる（通過）。グループでない層には付けられない。
     PassThrough,
 }
 
@@ -227,21 +227,24 @@ impl BlendMode {
     }
 }
 
-/// レイヤーの持つチャンネル（Substance Painter のチャンネル）。M1 で描けるのは Color だけだが、面はチャンネルごとに持つ形にしてある。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, PartialOrd, Ord)]
-#[repr(u8)]
-pub enum Channel {
-    #[default]
-    Color = 0,
-    Roughness,
-    Metallic,
-    Height,
-    /// 接空間の単位ベクトル。合成の式が色と違う（C# の NormalMaps）ので、M1 では合成しない。
-    Normal,
-    Emission,
-}
+/// チャンネル（Substance Painter のチャンネル）の ID。文書のチャンネルの一覧（[`ChannelInfo`]）の番号で、0〜5 は標準の 6 つ
+/// （番号は Unity 版の PaintChannel と同じで保存形式に入る）、6 以上はユーザーチャンネル（文書が番号を配る）。
+///
+/// 標準のチャンネルは列挙のときと同じ名前の定数（`Channel::Color` など）で、`match` の型にも使える。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct Channel(u8);
 
+#[allow(non_upper_case_globals)]
 impl Channel {
+    pub const Color: Channel = Channel(0);
+    pub const Roughness: Channel = Channel(1);
+    pub const Metallic: Channel = Channel(2);
+    pub const Height: Channel = Channel(3);
+    /// 接空間の単位ベクトル（OpenGL、Y+）。合成の式が色と違う（C# の NormalMaps）。
+    pub const Normal: Channel = Channel(4);
+    pub const Emission: Channel = Channel(5);
+
+    /// 標準の 6 つ（番号の順）。
     pub const ALL: [Channel; 6] = [
         Channel::Color,
         Channel::Roughness,
@@ -250,4 +253,180 @@ impl Channel {
         Channel::Normal,
         Channel::Emission,
     ];
+    /// 標準のチャンネルの数（ユーザーチャンネルはこの番号から）。
+    pub const STANDARD_COUNT: usize = 6;
+    /// 1 つの文書が持てるチャンネルの数（標準を含む）。層は有効なチャンネルを 64 bit の印で持つ。
+    pub const MAX: usize = 64;
+
+    /// 番号から（0〜63。文書にあるかは [`crate::Document::channel_info`] で確かめる）。
+    pub const fn from_index(index: usize) -> Option<Channel> {
+        if index < Self::MAX {
+            Some(Channel(index as u8))
+        } else {
+            None
+        }
+    }
+    /// 番号（保存形式・配列の添え字）。
+    #[inline]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+    /// 標準の 6 つのどれか。
+    pub const fn is_standard(self) -> bool {
+        (self.0 as usize) < Self::STANDARD_COUNT
+    }
+    /// 有効なチャンネルの印のビット。
+    #[inline]
+    pub(crate) const fn bit(self) -> u64 {
+        1u64 << self.0
+    }
+    /// 標準のチャンネルの名前（C# の列挙の名前と同じ綴り）。ユーザーチャンネルは None。
+    pub fn standard_name(self) -> Option<&'static str> {
+        Some(match self.0 {
+            0 => "Color",
+            1 => "Roughness",
+            2 => "Metallic",
+            3 => "Height",
+            4 => "Normal",
+            5 => "Emission",
+            _ => return None,
+        })
+    }
+    /// 標準のチャンネルを名前から。
+    pub fn from_standard_name(name: &str) -> Option<Channel> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|c| c.standard_name() == Some(name))
+    }
+}
+
+impl fmt::Debug for Channel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.standard_name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "User({})", self.0),
+        }
+    }
+}
+
+/// チャンネルの値の種類。合成の式と、調整・色の変化が使えるかを決める。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ChannelKind {
+    /// 色（RGB に意味がある。色相・彩度の調整や色の変化が使える）。Color・Emission。
+    Color,
+    /// スカラー（R に値。灰色で描く）。Roughness・Metallic・Height。
+    Scalar,
+    /// 接空間の法線（単位ベクトルとして合成する）。Normal。
+    Normal,
+}
+
+/// チャンネルの値の色空間（書き出しと Unity の取り込みの sRGB の印）。合成は保存したままの値で行い、変換しない。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ColorSpace {
+    Srgb,
+    Linear,
+}
+
+/// 文書のチャンネルの一覧の 1 つ。標準の 6 つは [`ChannelInfo::standard`]、ユーザーチャンネルは呼び手が決める。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChannelInfo {
+    /// 表示の名前（空でない、128 文字まで）。
+    pub name: String,
+    pub kind: ChannelKind,
+    pub color_space: ColorSpace,
+    /// 何も描いていない所の値（書き出しやマテリアルの既定に使う。合成は透明から始める）。
+    pub default: Rgba8,
+}
+
+impl ChannelInfo {
+    /// 標準のチャンネルの情報。既定の値は Unity 版の書き出しの既定に合わせる（Roughness は Standard の平滑度 0.5、法線は平ら）。
+    pub fn standard(channel: Channel) -> Option<ChannelInfo> {
+        let (kind, space, default) = match channel {
+            Channel::Color => (
+                ChannelKind::Color,
+                ColorSpace::Srgb,
+                Rgba8::new(255, 255, 255, 255),
+            ),
+            Channel::Roughness => (
+                ChannelKind::Scalar,
+                ColorSpace::Linear,
+                Rgba8::new(128, 128, 128, 255),
+            ),
+            Channel::Metallic => (
+                ChannelKind::Scalar,
+                ColorSpace::Linear,
+                Rgba8::new(0, 0, 0, 255),
+            ),
+            Channel::Height => (
+                ChannelKind::Scalar,
+                ColorSpace::Linear,
+                Rgba8::new(0, 0, 0, 255),
+            ),
+            Channel::Normal => (
+                ChannelKind::Normal,
+                ColorSpace::Linear,
+                Rgba8::new(128, 128, 255, 255),
+            ),
+            Channel::Emission => (
+                ChannelKind::Color,
+                ColorSpace::Srgb,
+                Rgba8::new(0, 0, 0, 255),
+            ),
+            _ => return None,
+        };
+        Some(ChannelInfo {
+            name: channel.standard_name()?.to_string(),
+            kind,
+            color_space: space,
+            default,
+        })
+    }
+    /// 名前の検査（空でない・128 文字まで・制御文字を含まない）。
+    pub(crate) fn validate(&self) -> Result<(), crate::CoreError> {
+        let chars = self.name.chars().count();
+        if chars == 0 || chars > 128 || self.name.chars().any(char::is_control) {
+            return Err(crate::CoreError::InvalidArgument("チャンネルの名前"));
+        }
+        Ok(())
+    }
+}
+
+/// 層の種類（値は保存形式に入る。C# の LayerKind と同じ）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[repr(u8)]
+pub enum LayerKind {
+    /// 画素を持つ層（チャンネルごとの面）。
+    #[default]
+    Raster = 0,
+    /// チャンネルごとの 1 つの値で画布全体を埋める層（画素は持たない）。
+    Fill = 1,
+    /// 下の合成を変える層（反転・レベル補正・色相/彩度/明度）。
+    Adjustment = 2,
+    /// グループ（中身は直下に並ぶ層）。
+    Group = 3,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 列挙だったときの書き方（定数の型の match・matches!・既定値・並び）がそのまま使える。
+    #[test]
+    fn channel_constants_work_like_the_old_enum() {
+        assert!(matches!(
+            Channel::Emission,
+            Channel::Color | Channel::Emission
+        ));
+        let name = match Channel::Height {
+            Channel::Color => "c",
+            Channel::Height => "h",
+            _ => "other",
+        };
+        assert_eq!(name, "h");
+        assert_eq!(Channel::default(), Channel::Color);
+        assert!(Channel::Color < Channel::Emission);
+        assert_eq!(Channel::from_index(64), None);
+        assert!(Channel::from_index(6).is_some_and(|c| !c.is_standard()));
+    }
 }

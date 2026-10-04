@@ -1,5 +1,5 @@
 # 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。
-# source: YoluPainter cc8eacfa7800 Runtime/Core=1582c88a9f0607c1 debug
+# source: YoluPainter e689377af26e Runtime/Core=1582c88a9f0607c1 debug
 case blend_Normal params=1f4737c237f3eab9
 out 0 composite 24x20
 case blend_Multiply params=1f4737c237f3eab9
@@ -201,6 +201,148 @@ case brush_parallel params=a41d5832b94f8f8a
 commit stamps=20 samples=30 changed=1
 commit stamps=10 samples=20 changed=1
 out 0 layer 0 144x120
+case group_pass params=a3d9399f8122b2f4
+out 0 composite 37x29
+out 1 reference 37x29
+out 2 composite 37x29
+out 3 reference 37x29
+out 4 region 5 3 30x21
+out 5 composite 37x29
+out 6 reference 37x29
+out 7 composite 37x29
+out 8 reference 37x29
+case group_isolated params=c048a26af813c6e0
+out 0 composite 41x33
+out 1 reference 41x33
+out 2 composite 41x33
+out 3 reference 41x33
+out 4 composite 41x33
+out 5 reference 41x33
+out 6 composite 41x33
+out 7 reference 41x33
+out 8 composite 41x33
+out 9 reference 41x33
+out 10 composite 41x33
+out 11 reference 41x33
+out 12 composite 41x33
+out 13 reference 41x33
+out 14 composite 41x33
+out 15 reference 41x33
+case group_history params=4c02cf5d8887bd33
+out 0 composite 32x24
+out 1 composite 32x24
+out 2 composite 32x24
+out 3 composite 32x24
+undo 1
+undo 1
+out 4 composite 32x24
+undo 1
+undo 1
+undo 1
+undo 0
+out 5 composite 32x24
+redo 1
+redo 1
+redo 1
+redo 1
+out 6 composite 32x24
+out 7 composite 32x24
+undo 1
+out 8 composite 32x24
+case mask_ops params=cf93557ddc3bd559
+out 0 composite 40x24
+out 1 reference 40x24
+out 2 composite 40x24
+out 3 composite 40x24
+out 4 reference 40x24
+out 5 composite 40x24
+undo 1
+undo 1
+undo 1
+out 6 composite 40x24
+commit stamps=30 samples=20 changed=1
+out 7 mask @a 40x24
+out 8 composite 40x24
+commit stamps=46 samples=15 changed=1
+out 9 mask @a 40x24
+out 10 composite 40x24
+undo 1
+out 11 mask @a 40x24
+out 12 composite 40x24
+undo 1
+out 13 composite 40x24
+commit stamps=32 samples=2 changed=1
+out 14 composite 40x24
+cancel
+out 15 mask @ground 40x24
+case fill_adjust params=34b3b82d64217c3b
+out 0 composite 41x35
+out 1 reference 41x35
+out 2 composite 41x35
+out 3 composite 41x35
+error setadjust
+out 4 composite 41x35
+out 5 reference 41x35
+undo 1
+undo 1
+undo 1
+undo 1
+undo 0
+out 6 composite 41x35
+out 7 composite 41x35
+case clipped_fill_adjust params=65a2c2c373a4d337
+out 0 composite 41x33
+out 1 reference 41x33
+out 2 composite 41x33
+out 3 reference 41x33
+case channels params=c4d393b5880e715a
+out 0 composite 40x32
+out 1 composite Roughness 40x32
+out 2 composite Height 40x32
+out 3 composite Normal 40x32
+out 4 reference Normal 40x32
+out 5 reference Height 40x32
+out 6 composite Metallic 40x32
+out 7 composite Height 40x32
+undo 1
+undo 1
+out 8 composite Height 40x32
+out 9 composite 40x32
+out 10 reference 40x32
+case normal_stack params=0b8b4004f2b9182c
+out 0 composite Normal 37x29
+out 1 reference Normal 37x29
+out 2 normal 37x29
+out 3 normal 37x29
+case height_normal params=2396b1e0aafdbc2a
+out 0 normal 41x35
+out 1 normal 41x35
+out 2 derive 41x35
+out 3 normal 41x35
+out 4 normalfile 41x35
+out 5 derive 41x35
+out 6 normal 41x35
+out 7 normal 41x35
+out 8 normalfile 41x35
+undo 1
+undo 1
+out 9 normal 41x35
+case stroke_channels params=75a98ffd6c9244f9
+commit stamps=23 samples=20 changed=1
+commit stamps=31 samples=20 changed=1
+out 0 layer @p Height 48x32
+out 1 layer @p Normal 48x32
+out 2 composite Normal 48x32
+undo 1
+out 3 layer @p Normal 48x32
+case duplicate params=7833f1b17211345a
+out 0 composite 36x28
+out 1 composite 36x28
+out 2 reference 36x28
+undo 1
+undo 1
+out 3 composite 36x28
+out 4 composite 36x28
 case dyn_angled params=1de2f74bc95a7973
 commit stamps=35 samples=24 changed=1
 commit stamps=32 samples=2 changed=1
@@ -418,6 +560,189 @@ sweep clip_DarkerColor 251b4ce5adf68eb1
 sweep blend_LighterColor 2479eede4569a488
 sweep clip_LighterColor e63d3cd6a3056626
 sweep fade 8d080e66d3040121
+sweep nblend_Normal b56dd56030b5fd5a
+sweep nclip_Normal c1075d5810db7f76
+sweep nblend_Multiply 245dd04b4077721c
+sweep nclip_Multiply f9aa928c48e17f7a
+sweep nblend_Screen 650ab3446caa7239
+sweep nclip_Screen 1d87645bfd5f14e0
+sweep nblend_Overlay 567e0814373f2b1b
+sweep nclip_Overlay f077e239f92847dd
+sweep nblend_Darken 912f8ad38da35702
+sweep nclip_Darken 6060db92b021d80a
+sweep nblend_Lighten 5a70c6c85fb2b459
+sweep nclip_Lighten 93461d2f6d119cf5
+sweep nblend_ColorDodge 4e14cff578c30041
+sweep nclip_ColorDodge 91aeb81b8da8a6b7
+sweep nblend_ColorBurn f15990bdda11244f
+sweep nclip_ColorBurn 69c3ca5461587c08
+sweep nblend_LinearDodge 9c46517a9f9a83b2
+sweep nclip_LinearDodge 0ed3479a6ea1941b
+sweep nblend_LinearBurn 355c9178801892bf
+sweep nclip_LinearBurn b2ea2e8bf3f69eb3
+sweep nblend_HardLight c3324c731f13b47a
+sweep nclip_HardLight f742226dcd43992c
+sweep nblend_SoftLight 8fe4e58afbf8bc7d
+sweep nclip_SoftLight a1c24b51673dc4ab
+sweep nblend_VividLight 235723acb8788cce
+sweep nclip_VividLight 14064dd87da8214a
+sweep nblend_LinearLight 5f4a7ba343eb613e
+sweep nclip_LinearLight c9874ca248e81807
+sweep nblend_PinLight 01cc82d225268b91
+sweep nclip_PinLight aa189bb808b57d11
+sweep nblend_HardMix b06a77537b675fb6
+sweep nclip_HardMix e3f9d3dc4eac4b86
+sweep nblend_Difference b16fe7f9dd0c662e
+sweep nclip_Difference 4583c0f9f1c170ce
+sweep nblend_Exclusion 0785f6449487175f
+sweep nclip_Exclusion 99343f7996e9aba9
+sweep nblend_Subtract 61bd34a8d373d183
+sweep nclip_Subtract 96855bac92efc4eb
+sweep nblend_Divide 29bc11957cb870f8
+sweep nclip_Divide 77ad111c41f4d321
+sweep nblend_Hue 86bae6993c85b35b
+sweep nclip_Hue ae661f964a222f10
+sweep nblend_Saturation 26bf6b8f6cff74e1
+sweep nclip_Saturation 2c7109464b58e079
+sweep nblend_Color 963336917600f6d5
+sweep nclip_Color 90f9d0a371cdaa97
+sweep nblend_Luminosity 193294f5ffbfa8d3
+sweep nclip_Luminosity 4f0daa7747d44769
+sweep nblend_DarkerColor fbba8f14ccfeabd4
+sweep nclip_DarkerColor 913e5c6a783ce25c
+sweep nblend_LighterColor 03720b1e2d23e332
+sweep nclip_LighterColor e7da96df2f7f267a
+sweep nfade b2fe7465147b3163
+sweep adjust0_Normal f1985532b5f45d16
+sweep adjust0_Multiply f977dbb46b9fba40
+sweep adjust0_Screen bff1e7703f028802
+sweep adjust0_Overlay 18cebcdf101ed7a3
+sweep adjust0_Darken 1ea8eacb785b4432
+sweep adjust0_Lighten de07da2e3eeb5651
+sweep adjust0_ColorDodge fac5750094d80b64
+sweep adjust0_ColorBurn d79f56b36c0f060c
+sweep adjust0_LinearDodge 2e099b0dd3edd105
+sweep adjust0_LinearBurn 029a937de03ccdde
+sweep adjust0_HardLight 3287394d7e8a3e89
+sweep adjust0_SoftLight 07a7af6b03657737
+sweep adjust0_VividLight f5c154bbcc3040eb
+sweep adjust0_LinearLight 9c776c90cdba7d80
+sweep adjust0_PinLight 76964c7f3d67a424
+sweep adjust0_HardMix c70328f7f04374ea
+sweep adjust0_Difference 87825d9b8b4c5b36
+sweep adjust0_Exclusion 9eb5f0e41d25f1b5
+sweep adjust0_Subtract d744c642297eb552
+sweep adjust0_Divide 02b27c1fbbc7d33a
+sweep adjust0_Hue b54acef4ff74f137
+sweep adjust0_Saturation 56fda426677651ef
+sweep adjust0_Color c3f523f01d177d8f
+sweep adjust0_Luminosity cf027a97cdfbf48c
+sweep adjust0_DarkerColor 1dbc51330847b480
+sweep adjust0_LighterColor ad3617c9480e60e3
+sweep adjust1_Normal 28046cc4c9b8b491
+sweep adjust1_Multiply 48a2ff25112fdd2c
+sweep adjust1_Screen 13c5b4f6f16a5aad
+sweep adjust1_Overlay 21ac90ccf07f1163
+sweep adjust1_Darken f95df546cdcdbfe6
+sweep adjust1_Lighten a4efacc5cbd63b2d
+sweep adjust1_ColorDodge cfd634991b3c5093
+sweep adjust1_ColorBurn b94b41b2ec81ce29
+sweep adjust1_LinearDodge 7a09be973365870a
+sweep adjust1_LinearBurn 657c78f5e3ba232c
+sweep adjust1_HardLight 33999c5bfc7ebe79
+sweep adjust1_SoftLight 2bf05af228a9a4c2
+sweep adjust1_VividLight 0f2cf98ee5ff6311
+sweep adjust1_LinearLight cfcbecf9675de259
+sweep adjust1_PinLight f82c56c9d5df9f71
+sweep adjust1_HardMix cdcdb9a47f5df490
+sweep adjust1_Difference 20c65fdf7cf836e9
+sweep adjust1_Exclusion 6a46a7f99247bb53
+sweep adjust1_Subtract 4a19ce0141445cf2
+sweep adjust1_Divide 340c840fa57c7d42
+sweep adjust1_Hue 40f2d59d5f811e65
+sweep adjust1_Saturation 82d8b28e1979d8c6
+sweep adjust1_Color 3e58231828e7f945
+sweep adjust1_Luminosity 259dff871bc01414
+sweep adjust1_DarkerColor 3bc6beab48ab8a2b
+sweep adjust1_LighterColor e982c63b58871fce
+sweep adjust2_Normal ab0552a327cf0bce
+sweep adjust2_Multiply 370b2b6a441c4568
+sweep adjust2_Screen b9d4daefa64750da
+sweep adjust2_Overlay caa1fb846884e2ff
+sweep adjust2_Darken e66ff17d5378ccf2
+sweep adjust2_Lighten 33e5c2756b836c62
+sweep adjust2_ColorDodge 6c9c08581d8fd06c
+sweep adjust2_ColorBurn 358ab72b428fd1d0
+sweep adjust2_LinearDodge 9ef4ef12ae7e154e
+sweep adjust2_LinearBurn d7565ff6e600180b
+sweep adjust2_HardLight b465a9c9b9f8941d
+sweep adjust2_SoftLight 6ad3847fc8a52390
+sweep adjust2_VividLight 587220d223b07fb8
+sweep adjust2_LinearLight 71b0cf473b031de2
+sweep adjust2_PinLight 5397398a578cc72d
+sweep adjust2_HardMix e52898e0668b411f
+sweep adjust2_Difference 96310218e3f0b05b
+sweep adjust2_Exclusion b5bef78da94de1b1
+sweep adjust2_Subtract 47e56a086cae22b3
+sweep adjust2_Divide 4cf4fcc65313fe67
+sweep adjust2_Hue f83fbbbd6f915713
+sweep adjust2_Saturation 6d676b4f4a1ec0bd
+sweep adjust2_Color e6722fb0476c4be0
+sweep adjust2_Luminosity 3b6a000c71c94541
+sweep adjust2_DarkerColor 2770be8d73ea1a15
+sweep adjust2_LighterColor 64b1432b0c3758ae
+sweep adjust3_Normal 6d48e49ea0bacd40
+sweep adjust3_Multiply 0453c3cac5fc5533
+sweep adjust3_Screen a6052ce8257158f4
+sweep adjust3_Overlay 6b63c64296bc9354
+sweep adjust3_Darken 832716bbdc75046a
+sweep adjust3_Lighten 21450dcf569f4fa1
+sweep adjust3_ColorDodge d74d2bc2bec82ca8
+sweep adjust3_ColorBurn 979c3f5a70dbb52c
+sweep adjust3_LinearDodge d6ac27379a4b61b4
+sweep adjust3_LinearBurn 3c1e56859aefb95e
+sweep adjust3_HardLight 46c0ea067d6eee3a
+sweep adjust3_SoftLight 64ce5acdf6900cbc
+sweep adjust3_VividLight aebbcf5bb3357fe5
+sweep adjust3_LinearLight 7d13ca4394eb6831
+sweep adjust3_PinLight 60320ada5ed351c8
+sweep adjust3_HardMix d200eb88ae4b6396
+sweep adjust3_Difference 52faee81c541ad32
+sweep adjust3_Exclusion f34cb6e7cd2275b7
+sweep adjust3_Subtract 4cf5be5a231ec5e3
+sweep adjust3_Divide 4c544ad9a7a38817
+sweep adjust3_Hue c0edb61c661c0126
+sweep adjust3_Saturation 826550dbb4f305d3
+sweep adjust3_Color 5ae4c1ba62a7238f
+sweep adjust3_Luminosity b253bc3288986c3c
+sweep adjust3_DarkerColor 9358af3c84de89d7
+sweep adjust3_LighterColor 9d056aaa8d2ac1b5
+sweep adjust4_Normal ae1e992b80f49584
+sweep adjust4_Multiply 307964740cc9829b
+sweep adjust4_Screen 5f2cfea663f705e4
+sweep adjust4_Overlay 8a349cbac01656bc
+sweep adjust4_Darken 12983de9ba89ecad
+sweep adjust4_Lighten 54c980246902a386
+sweep adjust4_ColorDodge 73d7190e03b09b3a
+sweep adjust4_ColorBurn 72140580ace66572
+sweep adjust4_LinearDodge 3e2a382da8fb4683
+sweep adjust4_LinearBurn 08a1a3da1aa01706
+sweep adjust4_HardLight c3be9613fc012e60
+sweep adjust4_SoftLight a36436e0631753ba
+sweep adjust4_VividLight 5f38d38f5432a856
+sweep adjust4_LinearLight 3c1bd5d4dab2bb5a
+sweep adjust4_PinLight c9583f45cc0a0017
+sweep adjust4_HardMix 531e4c6e2fbf001a
+sweep adjust4_Difference ec9c7763f6d33075
+sweep adjust4_Exclusion 02548292f2c6177b
+sweep adjust4_Subtract 0df0196f61a6a9b1
+sweep adjust4_Divide f0378c8face0df3d
+sweep adjust4_Hue 9cf04566bf64ea98
+sweep adjust4_Saturation bb76bef1bc3aedd4
+sweep adjust4_Color 2e7ea3fee50317e7
+sweep adjust4_Luminosity 8778304b3fd64daf
+sweep adjust4_DarkerColor 1e173b4772efdfde
+sweep adjust4_LighterColor 1be489f571149464
 case brush_sweeps params=cbf29ce484222325
 sweep random 0325972785f5ab38
 sweep tip_grain a3cf161f1fc4bae4

@@ -5,6 +5,12 @@
 //!
 //! 座標は左下原点（画素 (0, 0) が左下、その中心は (0.5, 0.5)）。画素の並びは行優先で、一番下の行が先。
 //!
+//! 層の種類（[`LayerKind`]）はラスター・塗りつぶし（チャンネルごとの値）・調整（反転・レベル補正・色相/彩度/明度）・グループ
+//! （通過・分離、入れ子）。どの層もラスターマスク（[`RasterMask`]、全チャンネルで共有）とクリッピングを持てる。チャンネル
+//! （[`Channel`]）は文書の一覧の番号で、0〜5 は Unity 版と同じ標準の 6 つ、ユーザーチャンネルは [`Document::add_channel`] で足す。
+//! 層はチャンネルごとに有効と合成モード・不透明度（[`ChannelBlend`]）を持つ。Normal の種類のチャンネルは単位ベクトルとして
+//! 合成し（[`normal`]）、文書の Normal の出力は Height から作った法線を土台にできる（[`NormalSettings`]）。
+//!
 //! ```
 //! use yolu_core::{Document, BrushSettings, Rgba8, glam::DVec2};
 //! let mut doc = Document::new(256, 256).unwrap();
@@ -17,29 +23,45 @@
 //! let pixels = doc.composite(doc.bounds()).unwrap();
 //! assert_eq!(pixels.len(), 256 * 256 * 4);
 //! doc.undo().unwrap();
+//!
+//! // グループとマスク
+//! let a = doc.add_layer("a").unwrap();
+//! let group = doc.group_layers(&[a], "グループ").unwrap();
+//! doc.set_layer_blend_mode(group, yolu_core::BlendMode::Multiply).unwrap(); // 分離
+//! doc.add_layer_mask(group).unwrap();
+//! doc.set_mask_pixel(group, 10, 10, 255).unwrap(); // (10, 10) を隠す
 //! ```
 
 // 画素（4 バイト）を chunks_exact(4) で回すのは読みやすさのため。0〜1 への切り詰めは C# と同じ比較の順で書く（f64::clamp にしない）。
 #![allow(clippy::chunks_exact_to_as_chunks, clippy::manual_clamp)]
 
+mod adjust;
 pub mod blend;
 pub mod brush;
 mod composite;
 mod document;
 mod error;
 pub mod geometry;
+mod layer;
 mod math;
+pub mod normal;
 mod surface;
 mod types;
 
+pub use adjust::{AdjustmentSettings, AdjustmentType};
 pub use brush::{
     builtin_presets, builtin_tip, Brush, BrushEffect, BrushPixel, BrushPreset, BrushSample,
     BrushSettings, BrushStencil, BrushTip, ColorDynamics, Controls, DualBrush, DualBrushMode,
     ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping, StencilMode, StencilPoint,
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
-pub use document::{Document, Layer, LayerId, Stroke, StrokeResult, StrokeStats};
+pub use document::{Document, Stroke, StrokeResult, StrokeStats};
 pub use error::CoreError;
 pub use glam;
+pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
+pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use surface::Surface;
-pub use types::{BlendMode, Channel, Rect, Rgba8, RowOrder, TileCoord};
+pub use types::{
+    BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect, Rgba8, RowOrder,
+    TileCoord,
+};
