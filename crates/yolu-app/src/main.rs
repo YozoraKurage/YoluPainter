@@ -6,7 +6,8 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("YoluPainter")
             .with_inner_size([1600.0, 960.0])
-            .with_min_inner_size([960.0, 640.0]),
+            .with_min_inner_size([960.0, 640.0])
+            .with_icon(icon()),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
@@ -15,4 +16,18 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| Ok(Box::new(yolu_app::YoluApp::new(cc)))),
     )
+}
+
+/// 窓とタスクバーのアイコン（ロゴ。exe とインストーラーのアイコンは assets/logo/yolupainter.ico）。
+fn icon() -> egui::IconData {
+    let png = include_bytes!("../assets/logo/yolupainter-256.png");
+    let image = image::load_from_memory(png)
+        .expect("同梱のロゴ")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    }
 }
