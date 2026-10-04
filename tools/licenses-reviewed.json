@@ -2458,6 +2458,10 @@
         {
           "path": "LICENSE",
           "sha256": "65fc947f4bac882a2cd104ef73c246b1b037059df9f2b3a58b7f77f0b9e56071"
+        },
+        {
+          "path": "src/backend/xdg_desktop_portal/window_identifier/LICENSE",
+          "sha256": "ae26bc7b1bc91fb8648f6a298decbb1a77090a56c9d04e2c23b8365e5f54acb5"
         }
       ]
     },
@@ -4038,6 +4042,23 @@
         {
           "path": "LICENSE",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "ufbx@0.11.5": {
+      "declared": "MIT OR Unlicense",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/ufbx/ufbx-rust/856c76840977cd504f053bf17ab4948b675b981a/LICENSE",
+          "sha256": "0dd48ebadf52273c736256325c8f078c03c8bb4facee22a4122de0ad3f615391"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/ufbx/ufbx/48d2bb4114905c51347a91b8b6a276563daaa3f1/LICENSE",
+          "sha256": "0dd48ebadf52273c736256325c8f078c03c8bb4facee22a4122de0ad3f615391"
         }
       ]
     }
