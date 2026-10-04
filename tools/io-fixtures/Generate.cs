@@ -38,6 +38,7 @@ static class Generate
     {
         if (CompositeFixture.Run(args)) return;
         if (M2Fixture.Run(args)) return;
+        if (EffectFixture.Run(args)) return;
         if (DocumentBinary.CurrentVersion != 21) throw new Exception("正本21の書き手が必要です");
         var root = args[0]; Directory.CreateDirectory(root);
         for (int v = 1; v <= 21; v++) { var b = Baseline(v); DocumentBinary.Read(b); File.WriteAllBytes(Path.Combine(root, "native-v" + v + ".utpaint"), b); }

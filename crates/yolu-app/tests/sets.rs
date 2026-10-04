@@ -435,10 +435,22 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
 #[test]
 fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
-    // format4.ylp の最初のセットはフィルターとマスクのフィルターを持つ（core に無い）。2 つ目の Trim は core が持つ中身だけ
+    // format4.ylp の最初のセットの文書を、ロックと手動の ID の色を持つ正本（core に無い）に差し替える。2 つ目の Trim は core が持つ中身だけ
     let dir = TempDir::new("readonly");
     let path = dir.0.join("format4.ylp");
-    std::fs::copy(fixture("format4.ylp"), &path).unwrap();
+    let base = read_project(&fixture("format4.ylp"));
+    let rich =
+        yolu_io::NativeDocument::read(&std::fs::read(fixture("native-rich-v21.utpaint")).unwrap())
+            .unwrap();
+    let first = base.sets()[0].id.clone();
+    std::fs::write(
+        &path,
+        base.with_document(&first, &rich)
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     let original = read_project(&path);
     let mut h = app(1280.0, 800.0, 256);
     h.state_mut().state.apply(Action::OpenProject(path.clone()));
@@ -451,9 +463,16 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         .unwrap()
         .read_only
         .as_deref()
-        .expect("フィルターがあるので読むだけ");
+        .expect("ロックと手動の ID の色があるので読むだけ");
     assert!(reason.contains("core で扱えない中身"), "{reason}");
-    assert!(reason.contains("フィルター"), "{reason}");
+    assert!(
+        reason.contains("ロック") && reason.contains("手動"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("フィルター"),
+        "フィルターは core が持つ: {reason}"
+    );
     assert!(
         s.sets.get(1).unwrap().read_only.is_none(),
         "Trim は core が持つ中身だけ"
@@ -480,6 +499,122 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         }
         assert_eq!(saved.migrated_entries().get(name), Some(bytes), "{name}");
     }
+}
+
+/// format4.ylp の 2 つのセットの文書を、効果のある C# の正本 2 つに差し替えた .ylp（評価の入力は app が渡さない）。
+fn effects_project(path: &std::path::Path, first: &str, second: &str) {
+    let base = read_project(&fixture("format4.ylp"));
+    let native = |n: &str| {
+        yolu_io::NativeDocument::read(&std::fs::read(fixture(&format!("{n}.utpaint"))).unwrap())
+            .unwrap()
+    };
+    let ids: Vec<String> = base.sets().iter().map(|s| s.id.clone()).collect();
+    let project = base
+        .with_document(&ids[0], &native(first))
+        .unwrap()
+        .with_document(&ids[1], &native(second))
+        .unwrap();
+    std::fs::write(path, project.to_bytes().unwrap()).unwrap();
+}
+
+#[test]
+fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_editable() {
+    // メッシュマップを使う Generator・画像の塗りつぶしは、app が入力を渡さないので効かない。フィルターだけの文書は評価されるので編集できる
+    let dir = TempDir::new("effects-readonly");
+    let path = dir.0.join("effects.ylp");
+    effects_project(&path, "effects-generators", "effects-filters");
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.run();
+    let s = &h.state().state;
+    assert_eq!(s.sets.len(), 2);
+    let reason = s
+        .sets
+        .get(0)
+        .unwrap()
+        .read_only
+        .as_deref()
+        .expect("効かない Generator があるので読むだけ");
+    assert!(reason.contains("効かない効果がある"), "{reason}");
+    assert!(reason.contains("マップがありません"), "{reason}");
+    assert!(
+        !reason.contains("焼いてください"),
+        "理由は状態だけで、手順を言わない: {reason}"
+    );
+    assert!(
+        s.sets.get(1).unwrap().read_only.is_none(),
+        "フィルターだけの文書は評価されるので編集できる"
+    );
+    assert!(s.message.contains("読むだけのセット 1"), "{}", s.message);
+    // 読むだけのセットは保存しても元の正本のまま、編集できるセットは書き直して効果を合成の PNG に入れる
+    let original = read_project(&path);
+    h.state_mut().state.apply(Action::SaveProject);
+    assert!(
+        h.state().state.message.starts_with("保存しました"),
+        "{}",
+        h.state().state.message
+    );
+    let saved = read_project(&path);
+    let id0 = &original.sets()[0].id;
+    for name in ["document.utpaint", "composite/Color.png"] {
+        let entry = format!("sets/{id0}/{name}");
+        assert_eq!(
+            saved.migrated_entries().get(&entry),
+            original.migrated_entries().get(&entry),
+            "{entry}: 読むだけのセットは元のバイト列のまま"
+        );
+    }
+}
+
+#[test]
+fn saving_names_the_effects_that_are_not_in_the_composite_png() {
+    // 編集できるセットへ、マップが無いので効かない Generator を足してから保存する: 正本には設定が残り、合成の PNG に入らないことを言う
+    let dir = TempDir::new("effects-note");
+    let path = dir.0.join("effects.ylp");
+    effects_project(&path, "effects-paths", "effects-filters");
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.run();
+    assert!(h.state().state.sets.get(0).unwrap().read_only.is_none());
+    {
+        use yolu_core::generator::{self, Settings};
+        use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+        let doc = h.state_mut().state.set_doc_mut(0);
+        let layer = doc.layers()[0].id();
+        let mut g = Settings::new(generator::Kind::Thickness);
+        g.blend = generator::Blend::Replace;
+        doc.add_filter(
+            layer,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::generator(g)).channels(&[yolu_core::Channel::Color]),
+        )
+        .unwrap();
+    }
+    h.state_mut().state.apply(Action::SaveProject);
+    let message = h.state().state.message.clone();
+    assert!(message.starts_with("保存しました"), "{message}");
+    assert!(
+        message.contains("効いていない効果 1 件は合成の PNG に入っていません"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Thickness のマップがありません"),
+        "{message}"
+    );
+    // 設定は正本に残る（開き直すと、効かない効果があるので読むだけで、理由に出る）
+    let mut again = app(1280.0, 800.0, 256);
+    again.state_mut().state.apply(Action::OpenProject(path));
+    again.run();
+    let reason = again
+        .state()
+        .state
+        .sets
+        .get(0)
+        .unwrap()
+        .read_only
+        .clone()
+        .expect("効かない Generator が正本に残っている");
+    assert!(reason.contains("厚み"), "{reason}");
 }
 
 /// C# が書いた M2 の文書（グループ・マスク・チャンネルごとの合成・調整・塗りつぶし）の 2 セットを入れた .ylp。

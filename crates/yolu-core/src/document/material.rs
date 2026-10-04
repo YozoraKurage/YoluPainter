@@ -88,6 +88,7 @@ impl Document {
         self.ensure_raster(index)?;
         // 無効のチャンネルを有効にする前に断る（断ったストロークが何も残さない）
         let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
+        self.refuse_path_layer(index)?;
         let mut enabled = Vec::new();
         let id = self.next_stroke;
         self.next_stroke += 1;

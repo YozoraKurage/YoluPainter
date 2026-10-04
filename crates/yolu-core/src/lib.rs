@@ -40,6 +40,7 @@ pub mod blend;
 pub mod brush;
 mod composite;
 mod document;
+pub mod effects;
 mod error;
 pub mod export;
 pub mod fill_image;
@@ -71,8 +72,14 @@ pub use brush::{
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
-    Affine2D, CanvasResampling, Document, LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal,
-    Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
+    Affine2D, CanvasResampling, Document, EffectCounters, LayerLocks, LayerMergeReport,
+    MergeMethod, MergeRefusal, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats,
+    TriangleFill,
+};
+pub use effects::{
+    Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,
+    EffectSettings, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId, ImageInput,
+    InactiveEffect, InactiveReason, InactiveTarget, LayerPath, MapInput, ModelFrame,
 };
 pub use error::CoreError;
 pub use glam;

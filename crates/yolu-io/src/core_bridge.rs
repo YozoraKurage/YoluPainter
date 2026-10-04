@@ -1,16 +1,21 @@
 //! 正本（`NativeDocument`）と core の文書の行き来。意味は Unity 版の `DocumentBinary.Read` / `Write` と同じにする（C# が書いた正本は
-//! core を通して書き戻すとバイト一致する）。範囲は M2: 層の種類（ラスター・塗りつぶし・調整・グループ）、入れ子と通過・分離、ラスターマスク、
-//! クリッピング、チャンネルごとの有効と合成（版 14）、Normal の出力の設定（版 7）、版 22 のユーザーチャンネル。core に無い項目は先に
-//! 検査して断り、部分変換を返さない。
+//! core を通して書き戻すとバイト一致する）。範囲は M2 の層（層の種類・入れ子と通過・分離・ラスターマスク・クリッピング・チャンネルごとの有効と
+//! 合成（版 14）・Normal の出力の設定（版 7）・版 22 のユーザーチャンネル）と、効果（フィルターのスタックと Generator の段（版 9・11・13・15）、
+//! Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス（版 8・10・18）。
+//! core に無い項目（ロック・手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION};
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
 };
 use std::collections::HashMap;
+use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
+use yolu_core::generator::{self, anchor, ColorStop, CurvePoint, MapKind, OpacityStop, Ramp};
+use yolu_core::paths;
 use yolu_core::{
-    AdjustmentSettings, BlendMode, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
-    Document, HeightEdgeMode, LayerId, LayerKind, NormalSettings, NormalYDirection, Rgba8,
-    TileCoord,
+    AdjustmentSettings, AnchorId, AnchorPlacement, BlendMode, BrushSettings, Channel, ChannelBlend,
+    ChannelInfo, ChannelKind, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
+    FilterSpec, FilterTarget, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerPath,
+    NormalSettings, NormalYDirection, Rgba8, TileCoord,
 };
 
 fn core_id(mut guid: [u8; 16]) -> u128 {
@@ -160,11 +165,21 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "has_mask"
         | "has_surface_path"
         | "has_filters"
-        | "has_canvas_path" => None,
+        | "has_canvas_path"
+        | "filters"
+        | "surface_path"
+        | "canvas_path"
+        | "anchor_flags"
+        | "anchor"
+        | "image_count"
+        | "images"
+        | "projection"
+        | "gradient_count"
+        | "gradients" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
-            Some("enabled" | "inverted" | "density" | "tile_count" | "tiles") => None,
-            Some("filters") => feature("mask.filters", "マスクのフィルター・Generator"),
-            Some("anchor") => feature("mask.anchor", "Anchor"),
+            Some(
+                "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
+            ) => None,
             _ => Some((path.into(), "core に無い項目")),
         },
         "adjustment" => {
@@ -182,12 +197,6 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
             unused_changed.then(|| (path.into(), "調整の種類が使わない値が既定ではない"))
         }
         "locks" => feature("locks", "ロック"),
-        "image_count" | "images" | "projection" => feature("images", "塗りつぶしの画像・投影"),
-        "gradient_count" | "gradients" => feature("gradients", "塗りつぶしのグラデーション"),
-        "surface_path" => feature("surface_path", "3D のパス"),
-        "canvas_path" => feature("canvas_path", "2D のパス"),
-        "filters" => feature("filters", "フィルター・Generator"),
-        "anchor_flags" | "anchor" => feature("anchor", "Anchor"),
         _ => Some((path.into(), "core に無い項目")),
     }
 }
@@ -502,7 +511,8 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         }
         doc.set_channel_enabled(id, c, f.boolean(&format!("{ch}.enabled"))?)?;
     }
-    if version >= 2 && f.boolean(&format!("{p}.has_mask"))? {
+    let has_mask = version >= 2 && f.boolean(&format!("{p}.has_mask"))?;
+    if has_mask {
         doc.add_layer_mask(id)?;
         doc.set_layer_mask_enabled(id, f.boolean(&format!("{p}.mask.enabled"))?)?;
         doc.set_layer_mask_inverted(id, f.boolean(&format!("{p}.mask.inverted"))?)?;
@@ -514,7 +524,433 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
                 .map_err(|e| Error::from(e).in_context(format!("{tile}を変換できません")))?;
         }
     }
+    // 効果（C# の読み手と同じ順: 塗りつぶしの画像と投影、グラデーション、フィルター（内容、次にマスク）、Anchor）
+    if attributes & 8 != 0 {
+        let n = f.int(&format!("{p}.image_count"))?;
+        let mut images = Vec::new();
+        for k in 0..n {
+            let image = format!("{p}.images[{k}]");
+            images.push((
+                f.channel(&format!("{image}.channel"))?,
+                ImageId(core_id(f.guid(&format!("{image}.resource_id"))?)),
+            ));
+        }
+        let projection = read_projection(f, &format!("{p}.projection"))?;
+        doc.set_fill_images_for_load(id, &images, projection)
+            .map_err(|e| Error::from(e).in_context("塗りつぶしの画像・投影をcoreにできません"))?;
+    }
+    if attributes & 32 != 0 {
+        let mut gradients = Vec::new();
+        for k in 0..f.int(&format!("{p}.gradient_count"))? {
+            let g = format!("{p}.gradients[{k}]");
+            gradients.push((f.channel(&format!("{g}.channel"))?, read_generator(f, &g)?));
+        }
+        doc.set_fill_gradients_for_load(id, gradients)
+            .map_err(|e| Error::from(e).in_context("塗りつぶしのグラデーションをcoreにできません"))?;
+    }
+    if version >= 8 && f.boolean(&format!("{p}.has_surface_path"))? {
+        let path = read_path(f, &format!("{p}.surface_path"), true, version)?;
+        doc.set_path_for_load(id, path)
+            .map_err(|e| Error::from(e).in_context("パスをcoreにできません"))?;
+    }
+    if version >= 9 && f.boolean(&format!("{p}.has_filters"))? {
+        let specs = read_filters(f, &format!("{p}.filters"), true)?;
+        doc.set_filters_for_load(id, FilterTarget::Content, specs)
+            .map_err(|e| Error::from(e).in_context("フィルターをcoreにできません"))?;
+        if has_mask {
+            let specs = read_filters(f, &format!("{p}.mask.filters"), false)?;
+            doc.set_filters_for_load(id, FilterTarget::Mask, specs)
+                .map_err(|e| Error::from(e).in_context("マスクのフィルターをcoreにできません"))?;
+        }
+    }
+    if version >= 10 && f.boolean(&format!("{p}.has_canvas_path"))? {
+        let path = read_path(f, &format!("{p}.canvas_path"), false, version)?;
+        doc.set_path_for_load(id, path)
+            .map_err(|e| Error::from(e).in_context("パスをcoreにできません"))?;
+    }
+    if attributes & 16 != 0 {
+        let flags = f.byte(&format!("{p}.anchor_flags"))?;
+        for (bit, path, placement) in [
+            (1, "anchor", AnchorPlacement::Layer),
+            (2, "mask.anchor", AnchorPlacement::Mask),
+        ] {
+            if flags & bit != 0 {
+                let a = format!("{p}.{path}");
+                doc.set_anchor_for_load(
+                    id,
+                    placement,
+                    AnchorId(core_id(f.guid(&format!("{a}.id"))?)),
+                    f.text(&format!("{a}.name"))?,
+                )
+                .map_err(|e| Error::from(e).in_context("Anchorをcoreにできません"))?;
+            }
+        }
+    }
     Ok(())
+}
+
+/// 2D・3D のパス（`{p}` の下の項目）。ブラシは丸いブラシの設定（半径は 2D では画素、3D ではモデルの空間）。
+fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<LayerPath> {
+    let id = core_id(f.guid(&format!("{p}.id"))?);
+    let channel = f.channel(&format!("{p}.channel"))?;
+    let b = |name: &str| f.float(&format!("{p}.brush.{name}"));
+    let flag = |name: &str| f.boolean(&format!("{p}.brush.{name}"));
+    let color = f.rgba(&format!("{p}.brush.rgba"))?;
+    let brush = paths::PathBrush(BrushSettings {
+        radius: b("radius")?,
+        hardness: b("hardness")?,
+        spacing: b("spacing")?,
+        opacity: b("opacity")?,
+        flow: b("flow")?,
+        color,
+        erase: flag("erase")?,
+        pressure_size: flag("pressure_size")?,
+        pressure_opacity: flag("pressure_opacity")?,
+        pressure_flow: flag("pressure_flow")?,
+    });
+    let count = f.int(&format!("{p}.point_count"))?;
+    let material = if version >= 18 {
+        let n = f.byte(&format!("{p}.material_count"))?;
+        (n > 0)
+            .then(|| {
+                (0..n)
+                    .map(|k| {
+                        Ok(paths::ChannelPaint {
+                            channel: f.channel(&format!("{p}.material[{k}].channel"))?,
+                            color: f.rgba(&format!("{p}.material[{k}].rgba"))?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let pressure = |k: i32| f.float(&format!("{p}.points[{k}].pressure"));
+    let bad = |e: paths::Error| Error::InvalidData(e.to_string());
+    Ok(if surface {
+        let mut points = Vec::new();
+        for k in 0..count {
+            points.push(paths::PathPoint {
+                triangle: u32::try_from(f.int(&format!("{p}.points[{k}].triangle"))?)
+                    .map_err(|_| Error::InvalidData("三角形の番号が負です".into()))?,
+                u: f.float(&format!("{p}.points[{k}].u"))?,
+                v: f.float(&format!("{p}.points[{k}].v"))?,
+                pressure: pressure(k)?,
+            });
+        }
+        let path = paths::SurfacePath {
+            id,
+            channel,
+            brush,
+            points,
+            model_fingerprint: f.text(&format!("{p}.model_fingerprint"))?.to_owned(),
+            material,
+        };
+        // 重心座標の -1e-9 以上 0 未満は 0 に丸める（C# の読み手は点を作るとき丸める）
+        let mut path = path;
+        for q in &mut path.points {
+            *q = paths::PathPoint::new(q.triangle, q.u, q.v, q.pressure).map_err(bad)?;
+        }
+        LayerPath::Surface(path)
+    } else {
+        let mut points = Vec::new();
+        for k in 0..count {
+            points.push(
+                paths::CanvasPoint::new(
+                    f.float(&format!("{p}.points[{k}].x"))?,
+                    f.float(&format!("{p}.points[{k}].y"))?,
+                    pressure(k)?,
+                )
+                .map_err(bad)?,
+            );
+        }
+        LayerPath::Canvas(paths::CanvasPath {
+            id,
+            channel,
+            brush,
+            points,
+            material,
+        })
+    })
+}
+
+/// 2D・3D のパス（C# の `WritePath`・`WriteCanvasPath`）。
+fn write_path(w: &mut Out, path: &LayerPath) -> Result<()> {
+    w.int(paths::ALGORITHM_VERSION as i32)?;
+    w.raw(&native_id(path.id()))?;
+    w.int(path.channel().index() as i32)?;
+    let (brush, material) = match path {
+        LayerPath::Surface(p) => {
+            w.text(&p.model_fingerprint)?;
+            (p.brush.0, p.material.as_deref())
+        }
+        LayerPath::Canvas(p) => (p.brush.0, p.material.as_deref()),
+    };
+    for v in [
+        brush.radius,
+        brush.hardness,
+        brush.spacing,
+        brush.opacity,
+        brush.flow,
+    ] {
+        w.float(v)?;
+    }
+    w.raw(&brush.color.to_array())?;
+    for v in [
+        brush.erase,
+        brush.pressure_size,
+        brush.pressure_opacity,
+        brush.pressure_flow,
+    ] {
+        w.boolean(v)?;
+    }
+    match path {
+        LayerPath::Surface(p) => {
+            w.int(p.points.len() as i32)?;
+            for q in &p.points {
+                w.int(q.triangle as i32)?;
+                w.float(q.u)?;
+                w.float(q.v)?;
+                w.float(q.pressure)?;
+            }
+        }
+        LayerPath::Canvas(p) => {
+            w.int(p.points.len() as i32)?;
+            for q in &p.points {
+                w.float(q.x)?;
+                w.float(q.y)?;
+                w.float(q.pressure)?;
+            }
+        }
+    }
+    let material = material.unwrap_or_default();
+    w.byte(material.len() as u8)?;
+    for m in material {
+        w.int(m.channel.index() as i32)?;
+        w.raw(&m.color.to_array())?;
+    }
+    Ok(())
+}
+
+/// 塗りつぶしの投影（`{p}` の下の項目。デカールだけが末尾に面の向きの項目を持つ）。
+fn read_projection(f: &Fields<'_>, p: &str) -> Result<Projection> {
+    let mode = f.int(&format!("{p}.mode"))?;
+    let wrap = f.int(&format!("{p}.wrap"))?;
+    let v = |name: &str| f.float(&format!("{p}.{name}"));
+    let q = |name: &str| f.float(&format!("{p}.placement.{name}"));
+    let mut projection = Projection {
+        mode: ProjectionMode::try_from(u8::try_from(mode).map_err(|_| Error::InvalidData("投影の種類".into()))?)
+            .map_err(|e| Error::InvalidData(e.to_string()))?,
+        wrap: Wrap::try_from(u8::try_from(wrap).map_err(|_| Error::InvalidData("投影の外側".into()))?)
+            .map_err(|e| Error::InvalidData(e.to_string()))?,
+        tiles: [v("tile_u")?, v("tile_v")?],
+        offset: [v("offset_u")?, v("offset_v")?],
+        rotation: v("rotation")?,
+        blend_width: v("blend_width")?,
+        placement: Placement {
+            center: [q("center_x")?, q("center_y")?, q("center_z")?],
+            rotation: [q("rotation_x")?, q("rotation_y")?, q("rotation_z")?],
+            size: [q("size_x")?, q("size_y")?, q("size_z")?],
+        },
+        ..Projection::default()
+    };
+    if projection.mode == ProjectionMode::Decal {
+        projection.depth_hardness = v("depth_hardness")?;
+        projection.backface_angle = v("backface_angle")?;
+        projection.backface_hardness = v("backface_hardness")?;
+    }
+    Ok(projection)
+}
+
+/// Generator の設定（`{p}` の下の項目。形のグラデーションは形とランプ、ID の色は許容と色、Anchor は参照が続く）。
+fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
+    let kind = match f.int(&format!("{p}.type"))? {
+        0 => generator::Kind::EdgeWear,
+        1 => generator::Kind::Dirt,
+        2 => generator::Kind::PositionGradient,
+        3 => generator::Kind::Thickness,
+        4 => generator::Kind::Direction,
+        5 => generator::Kind::ShapeGradient,
+        6 => generator::Kind::IdColor,
+        _ => generator::Kind::Anchor,
+    };
+    let mut g = generator::Settings::new(kind);
+    let v = |name: &str| f.float(&format!("{p}.{name}"));
+    g.low = v("low")?;
+    g.high = v("high")?;
+    g.softness = v("softness")?;
+    g.invert = f.boolean(&format!("{p}.invert"))?;
+    g.noise_amount = v("noise_amount")?;
+    g.noise_scale = v("noise_scale")?;
+    g.noise_seed = f.int(&format!("{p}.noise_seed"))?;
+    g.noise_space = if f.int(&format!("{p}.noise_space"))? == 0 {
+        generator::NoiseSpace::Model
+    } else {
+        generator::NoiseSpace::Uv
+    };
+    g.blend = match f.int(&format!("{p}.blend"))? {
+        0 => generator::Blend::Multiply,
+        1 => generator::Blend::Replace,
+        2 => generator::Blend::Screen,
+        3 => generator::Blend::Max,
+        4 => generator::Blend::Min,
+        5 => generator::Blend::Add,
+        _ => generator::Blend::Subtract,
+    };
+    g.balance = v("balance")?;
+    g.axis = usize::try_from(f.int(&format!("{p}.axis"))?).map_err(|_| Error::InvalidData("軸".into()))?;
+    g.direction = [v("direction_x")?, v("direction_y")?, v("direction_z")?];
+    g.use_bent_normal = f.boolean(&format!("{p}.bent_normal"))?;
+    for k in 0..f.int(&format!("{p}.pin_count"))? {
+        let pin = format!("{p}.pins[{k}]");
+        let map = f.int(&format!("{pin}.kind"))?;
+        let map = map_kind(map).ok_or_else(|| Error::InvalidData(format!("{pin}.kind {map} は範囲外です")))?;
+        g.pins
+            .insert(map, f.text(&format!("{pin}.key"))?.to_owned());
+    }
+    if kind == generator::Kind::ShapeGradient {
+        let q = |name: &str| f.float(&format!("{p}.volume.{name}"));
+        g.volume = generator::Volume {
+            shape: match f.int(&format!("{p}.volume.shape"))? {
+                0 => generator::Shape::Box,
+                1 => generator::Shape::Sphere,
+                _ => generator::Shape::Plane,
+            },
+            center: [q("center_x")?, q("center_y")?, q("center_z")?],
+            rotation: [q("rotation_x")?, q("rotation_y")?, q("rotation_z")?],
+            size: [q("size_x")?, q("size_y")?, q("size_z")?],
+            falloff: q("falloff")?,
+        };
+        if f.int(&format!("{p}.algorithm"))? == 2 {
+            g.ramp = Some(read_ramp(f, &format!("{p}.ramp"))?);
+        }
+    }
+    if kind == generator::Kind::IdColor {
+        g.id_tolerance = u8::try_from(f.int(&format!("{p}.tolerance"))?)
+            .map_err(|_| Error::InvalidData("ID の色の許容".into()))?;
+        for k in 0..f.int(&format!("{p}.color_count"))? {
+            g.id_colors.push(
+                u32::try_from(f.int(&format!("{p}.colors[{k}]"))?)
+                    .map_err(|_| Error::InvalidData("ID の色".into()))?,
+            );
+        }
+    }
+    if kind == generator::Kind::Anchor {
+        g.anchor = anchor::Reference {
+            id: core_id(f.guid(&format!("{p}.anchor_id"))?),
+            channel: f.channel(&format!("{p}.anchor_channel"))?,
+            read: if f.int(&format!("{p}.anchor_read"))? == 0 {
+                anchor::ReadMode::Value
+            } else {
+                anchor::ReadMode::Coverage
+            },
+        };
+        // 参照が空（まだ選んでいない）は ID 0
+        if f.guid(&format!("{p}.anchor_id"))? == [0; 16] {
+            g.anchor.id = 0;
+        }
+    }
+    Ok(g)
+}
+
+fn map_kind(index: i32) -> Option<MapKind> {
+    use MapKind::*;
+    [
+        WorldNormal,
+        Position,
+        AmbientOcclusion,
+        Curvature,
+        Thickness,
+        TangentNormal,
+        Height,
+        Id,
+        BentNormal,
+        Opacity,
+    ]
+    .get(usize::try_from(index).ok()?)
+    .copied()
+}
+
+fn read_ramp(f: &Fields<'_>, p: &str) -> Result<Ramp> {
+    let mut colors = Vec::new();
+    for k in 0..f.int(&format!("{p}.colors_count"))? {
+        let c = format!("{p}.colors[{k}]");
+        let rgb = f.bytes(&format!("{c}.rgb"))?;
+        check(rgb.len() == 3, format!("{c}.rgb は 3 バイトではありません"))?;
+        colors.push(ColorStop {
+            position: f.float(&format!("{c}.position"))?,
+            color: Rgba8::new(rgb[0], rgb[1], rgb[2], 255),
+            midpoint: f.float(&format!("{c}.midpoint"))?,
+        });
+    }
+    let mut opacities = Vec::new();
+    for k in 0..f.int(&format!("{p}.opacities_count"))? {
+        let o = format!("{p}.opacities[{k}]");
+        opacities.push(OpacityStop {
+            position: f.float(&format!("{o}.position"))?,
+            opacity: f.float(&format!("{o}.opacity"))?,
+            midpoint: f.float(&format!("{o}.midpoint"))?,
+        });
+    }
+    let mut curve = Vec::new();
+    for k in 0..f.int(&format!("{p}.curve_count"))? {
+        let c = format!("{p}.curve[{k}]");
+        curve.push(CurvePoint {
+            x: f.float(&format!("{c}.x"))?,
+            y: f.float(&format!("{c}.y"))?,
+        });
+    }
+    Ramp::new(colors, opacities, Some(curve)).map_err(|e| Error::InvalidData(e.to_string()))
+}
+
+/// 1 つのスタック（`{p}.count` と `{p}.items[i]`）。段の種類・設定・チャンネルを読む。
+fn read_filters(f: &Fields<'_>, p: &str, content: bool) -> Result<Vec<FilterSpec>> {
+    let mut specs = Vec::new();
+    for i in 0..f.int(&format!("{p}.count"))? {
+        let item = format!("{p}.items[{i}]");
+        let kind = f.int(&format!("{item}.type"))?;
+        let float = |name: &str| f.float(&format!("{item}.{name}"));
+        let uint = |name: &str| -> Result<u32> {
+            u32::try_from(f.int(&format!("{item}.{name}"))?)
+                .map_err(|_| Error::InvalidData(format!("{item}.{name} が負です")))
+        };
+        let settings = match kind {
+            0 => EffectSettings::blur(uint("radius")?),
+            1 => EffectSettings::sharpen(uint("radius")?, float("amount")?, uint("threshold")?),
+            2 => EffectSettings::noise(
+                float("amount")?,
+                f.int(&format!("{item}.seed"))?,
+                f.boolean(&format!("{item}.monochrome"))?,
+            ),
+            3 => EffectSettings::levels(
+                float("input_black")?,
+                float("input_white")?,
+                float("gamma")?,
+                float("output_black")?,
+                float("output_white")?,
+            ),
+            4 => EffectSettings::invert(),
+            5 => EffectSettings::normalize(),
+            _ => EffectSettings::generator(read_generator(f, &format!("{item}.generator"))?),
+        };
+        let channels = if content {
+            let mut list = Vec::new();
+            for k in 0..f.int(&format!("{item}.channel_count"))? {
+                list.push(f.channel(&format!("{item}.channels[{k}].channel"))?);
+            }
+            Some(list)
+        } else {
+            None
+        };
+        let mut spec = FilterSpec::new(settings)
+            .with_id(FilterId(core_id(f.guid(&format!("{item}.id"))?)))
+            .strength(f.float(&format!("{item}.strength"))?);
+        spec.enabled = f.boolean(&format!("{item}.enabled"))?;
+        spec.channels = channels;
+        specs.push(spec);
+    }
+    Ok(specs)
 }
 
 fn tile_coord(f: &Fields<'_>, tile: &str) -> Result<TileCoord> {
@@ -577,7 +1013,19 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     w.float(layer.opacity())?;
     w.int(layer.blend_mode() as i32)?;
     let blends: Vec<(Channel, ChannelBlend)> = layer.channel_blends().collect();
-    w.byte(u8::from(layer.clipping()) | if blends.is_empty() { 0 } else { 4 })?;
+    let images: Vec<(Channel, ImageId)> = layer.fill_images().collect();
+    let fill_images = layer.kind() == LayerKind::Fill
+        && (!images.is_empty() || *layer.projection() != Projection::default());
+    let mask_anchor = layer.mask().and_then(|m| m.anchor());
+    let anchors = layer.anchor().is_some() || mask_anchor.is_some();
+    let gradients: Vec<(Channel, &generator::Settings)> = layer.fill_gradients().collect();
+    w.byte(
+        u8::from(layer.clipping())
+            | if blends.is_empty() { 0 } else { 4 }
+            | if fill_images { 8 } else { 0 }
+            | if anchors { 16 } else { 0 }
+            | if gradients.is_empty() { 0 } else { 32 },
+    )?;
     if !blends.is_empty() {
         w.byte(blends.len() as u8)?;
         for (c, b) in &blends {
@@ -599,6 +1047,21 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
         w.int(c.index() as i32)?;
         w.boolean(layer.is_channel_enabled(c))?;
         w.raw(&v.to_array())?;
+    }
+    if fill_images {
+        w.int(images.len() as i32)?;
+        for (c, id) in &images {
+            w.int(c.index() as i32)?;
+            w.raw(&native_id(id.0))?;
+        }
+        write_projection(w, layer.projection())?;
+    }
+    if !gradients.is_empty() {
+        w.int(gradients.len() as i32)?;
+        for (c, g) in &gradients {
+            w.int(c.index() as i32)?;
+            write_generator(w, g)?;
+        }
     }
     if layer.kind() == LayerKind::Adjustment {
         let a = layer
@@ -653,9 +1116,198 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
         w.float(mask.density())?;
         w.tiles(mask.surface())?;
     }
-    // 3D のパス・フィルター・2D のパスは core に無い
-    for _ in 0..3 {
-        w.boolean(false)?;
+    let surface_path = layer.path().filter(|p| !p.is_canvas());
+    w.boolean(surface_path.is_some())?;
+    if let Some(path) = surface_path {
+        write_path(w, path)?;
+    }
+    let mask_filters = layer.mask().map_or(&[][..], |m| m.filters());
+    let filtered = !layer.filters().is_empty() || !mask_filters.is_empty();
+    w.boolean(filtered)?;
+    if filtered {
+        write_filters(w, layer.filters(), true)?;
+        if layer.mask().is_some() {
+            write_filters(w, mask_filters, false)?;
+        }
+    }
+    let canvas_path = layer.path().filter(|p| p.is_canvas());
+    w.boolean(canvas_path.is_some())?;
+    if let Some(path) = canvas_path {
+        write_path(w, path)?;
+    }
+    if anchors {
+        w.byte(u8::from(layer.anchor().is_some()) | if mask_anchor.is_some() { 2 } else { 0 })?;
+        for a in [layer.anchor(), mask_anchor].into_iter().flatten() {
+            w.raw(&native_id(a.id().0))?;
+            w.text(a.name())?;
+        }
+    }
+    Ok(())
+}
+
+fn write_projection(w: &mut Out, p: &Projection) -> Result<()> {
+    w.int(Projection::ALGORITHM_VERSION as i32)?;
+    w.int(p.mode as i32)?;
+    w.int(p.wrap as i32)?;
+    for v in [
+        p.tiles[0],
+        p.tiles[1],
+        p.offset[0],
+        p.offset[1],
+        p.rotation,
+        p.blend_width,
+        p.placement.center[0],
+        p.placement.center[1],
+        p.placement.center[2],
+        p.placement.rotation[0],
+        p.placement.rotation[1],
+        p.placement.rotation[2],
+        p.placement.size[0],
+        p.placement.size[1],
+        p.placement.size[2],
+    ] {
+        w.float(v)?;
+    }
+    if p.mode == ProjectionMode::Decal {
+        w.float(p.depth_hardness)?;
+        w.float(p.backface_angle)?;
+        w.float(p.backface_hardness)?;
+    }
+    Ok(())
+}
+
+fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
+    w.int(g.kind as i32)?;
+    w.int(g.algorithm_version() as i32)?;
+    for v in [g.low, g.high, g.softness] {
+        w.float(v)?;
+    }
+    w.boolean(g.invert)?;
+    w.float(g.noise_amount)?;
+    w.float(g.noise_scale)?;
+    w.int(g.noise_seed)?;
+    w.int(g.noise_space as i32)?;
+    w.int(g.blend as i32)?;
+    w.float(g.balance)?;
+    w.int(g.axis as i32)?;
+    for v in g.direction {
+        w.float(v)?;
+    }
+    w.boolean(g.use_bent_normal)?;
+    w.int(g.pins.len() as i32)?;
+    for (kind, key) in &g.pins {
+        w.int(*kind as i32)?;
+        w.text(key)?;
+    }
+    if g.kind == generator::Kind::ShapeGradient {
+        w.int(g.volume.shape as i32)?;
+        for v in g
+            .volume
+            .center
+            .into_iter()
+            .chain(g.volume.rotation)
+            .chain(g.volume.size)
+            .chain([g.volume.falloff])
+        {
+            w.float(v)?;
+        }
+        if let Some(r) = &g.ramp {
+            w.int(r.colors().len() as i32)?;
+            for c in r.colors() {
+                w.float(c.position)?;
+                w.raw(&[c.color.r, c.color.g, c.color.b])?;
+                w.float(c.midpoint)?;
+            }
+            w.int(r.opacities().len() as i32)?;
+            for o in r.opacities() {
+                w.float(o.position)?;
+                w.float(o.opacity)?;
+                w.float(o.midpoint)?;
+            }
+            w.int(r.curve().len() as i32)?;
+            for c in r.curve() {
+                w.float(c.x)?;
+                w.float(c.y)?;
+            }
+        }
+    }
+    if g.kind == generator::Kind::IdColor {
+        w.int(i32::from(g.id_tolerance))?;
+        w.int(g.id_colors.len() as i32)?;
+        for c in &g.id_colors {
+            w.int(*c as i32)?;
+        }
+    }
+    if g.kind == generator::Kind::Anchor {
+        w.raw(&native_id(g.anchor.id))?;
+        w.int(g.anchor.channel.index() as i32)?;
+        w.int(g.anchor.read as i32)?;
+    }
+    Ok(())
+}
+
+/// 1 つのスタック（C# の `WriteFilters`）。Generator の段はフィルターの値を既定のまま書き、そのあとに Generator の欄が続く。
+fn write_filters(w: &mut Out, stack: &[FilterEffect], content: bool) -> Result<()> {
+    w.int(stack.len() as i32)?;
+    for e in stack {
+        w.raw(&native_id(e.id().0))?;
+        w.int(e.settings().type_index())?;
+        w.int(1)?; // アルゴリズムの版（段の種類ごと。どれも 1）
+        w.boolean(e.enabled())?;
+        w.float(e.strength())?;
+        if content {
+            w.int(e.channels().len() as i32)?;
+            for c in e.channels() {
+                w.int(c.index() as i32)?;
+            }
+        }
+        // radius, amount, threshold, seed, monochrome, 入力・出力の範囲（使わない値は既定）
+        let (mut radius, mut amount, mut threshold, mut seed, mut mono) =
+            (0u32, 0.0, 0u32, 0, false);
+        let mut levels = [0.0, 1.0, 1.0, 0.0, 1.0];
+        match e.settings() {
+            EffectSettings::Filter(f) => match *f {
+                yolu_core::filter::Settings::GaussianBlur { radius: r } => radius = r,
+                yolu_core::filter::Settings::Sharpen {
+                    radius: r,
+                    amount: a,
+                    threshold: t,
+                } => {
+                    radius = r;
+                    amount = a;
+                    threshold = t;
+                }
+                yolu_core::filter::Settings::Noise {
+                    amount: a,
+                    seed: s,
+                    monochrome: m,
+                } => {
+                    amount = a;
+                    seed = s;
+                    mono = m;
+                }
+                yolu_core::filter::Settings::Levels {
+                    input_black,
+                    input_white,
+                    gamma,
+                    output_black,
+                    output_white,
+                } => levels = [input_black, input_white, gamma, output_black, output_white],
+                _ => {}
+            },
+            EffectSettings::Generator(_) => {}
+        }
+        w.int(radius as i32)?;
+        w.float(amount)?;
+        w.int(threshold as i32)?;
+        w.int(seed)?;
+        w.boolean(mono)?;
+        for v in levels {
+            w.float(v)?;
+        }
+        if let EffectSettings::Generator(g) = e.settings() {
+            write_generator(w, g)?;
+        }
     }
     Ok(())
 }

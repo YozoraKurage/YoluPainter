@@ -184,10 +184,20 @@ impl Document {
     }
 
     /// 新しい層を above のすぐ上（同じグループの中）へ、なければ一番上へ入れる（1 回の Undo）。
-    fn insert_new(
+    pub(super) fn insert_new(
+        &mut self,
+        layer: Layer,
+        above: Option<LayerId>,
+    ) -> Result<LayerId, CoreError> {
+        self.insert_new_costed(layer, above, 128)
+    }
+
+    /// `insert_new` の、履歴の費用を指定する形（層が画素やパスを持って入るとき、その分も費用に数える）。
+    pub(super) fn insert_new_costed(
         &mut self,
         mut layer: Layer,
         above: Option<LayerId>,
+        cost: u64,
     ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
         let (index, parent) = match above {
@@ -205,7 +215,7 @@ impl Document {
                 len: 1,
                 block: Some(vec![layer]),
             },
-            128,
+            cost,
         )?;
         Ok(id)
     }
@@ -334,6 +344,8 @@ impl Document {
             }
             bytes += l.allocated_bytes();
         }
+        // 段・Anchor は新しい ID（写しの中の Anchor を読む段は写しの Anchor を読む）
+        self.renew_effect_ids(&mut copies);
         let copy_id = ids[&id];
         if let Some(n) = name {
             copies.last_mut().expect("空でない").name = n.to_string();
@@ -486,14 +498,15 @@ impl Document {
         )
     }
 
-    /// 全部の層がラスターで、グループ・マスク・チャンネルごとの合成が無いか（M1 の合成の形。これが偽なら、層の種類を知らない
-    /// 合成（GPU の M1 の経路など）では同じ絵にならない）。
+    /// 全部の層がラスターで、グループ・マスク・チャンネルごとの合成・結果を変えるフィルターが無いか（M1 の合成の形。これが偽なら、
+    /// 層の種類や評価済みの効果を知らない合成（GPU の M1 の経路など）では同じ絵にならない）。
     pub fn is_plain_stack(&self) -> bool {
         self.layers.iter().all(|l| {
             l.kind == LayerKind::Raster
                 && l.parent.is_none()
                 && l.mask.is_none()
                 && l.blends.is_empty()
+                && !l.filters.iter().any(|e| e.is_active())
         })
     }
 

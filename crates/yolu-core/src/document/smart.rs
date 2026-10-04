@@ -31,14 +31,25 @@ impl Document {
             .map(|(_, l)| l.clone())
             .collect();
         let held: HashSet<_> = layers.iter().map(|l| l.id).collect();
+        let mut notes = Vec::new();
         for l in &mut layers {
             if l.parent.is_some_and(|p| !held.contains(&p)) {
                 l.parent = None;
             }
+            // モデルの上のパスは、そのモデルの三角形に結び付いている: 画素だけが残る（C# の SmartMaterials と同じ）
+            if matches!(l.path, Some(crate::LayerPath::Surface(_))) {
+                l.path = None;
+                notes.push(format!(
+                    "「{}」のモデルの上のパスは画素だけになりました（パスはそのモデルの三角形に結び付く）",
+                    l.name
+                ));
+            }
         }
-        Ok(self
+        let mut material = self
             .smart_fragment(SmartKind::Material, name, layers)
-            .with_fresh_ids())
+            .with_fresh_ids();
+        material.notes = notes;
+        Ok(material)
     }
     pub fn capture_smart_mask(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
         self.ensure_no_stroke()?;
@@ -83,6 +94,7 @@ impl Document {
             tile_size: self.tile_size,
             layers,
             channel_info,
+            notes: Vec::new(),
         }
     }
     /// 保存された断片を検証して取り込む。渡した文書の履歴は保持しない。
@@ -152,13 +164,16 @@ impl Document {
                 .transpose()?
                 .unwrap_or(self.layers.len()),
         };
-        let mut copies = self.smart_layers_at_size(
+        let (mut copies, notes) = self.smart_layers_at_size(
             material,
             placement.resampling,
             self.source_budget.saturating_sub(self.allocated_bytes()),
         )?;
         let ids: HashMap<_, _> = copies.iter().map(|l| (l.id, self.new_layer_id())).collect();
         let group = wrap.then(|| self.new_layer_id());
+        // 配置のたびに、段・Anchor は新しい ID（写しの中の Anchor を読む段は写しの Anchor を読む）。置き先の決まりに収まらなければ断る
+        self.renew_effect_ids(&mut copies);
+        self.check_layer_effects(&copies)?;
         let mut off = BTreeSet::new();
         for l in &mut copies {
             l.id = ids[&l.id];
@@ -193,6 +208,7 @@ impl Document {
             switched_off: off.into_iter().collect(),
             resampled: material.width != self.width || material.height != self.height,
             replaced_mask: false,
+            notes,
         };
         let cost = 128 + copies.iter().map(Layer::allocated_bytes).sum::<u64>();
         self.execute(
@@ -241,12 +257,15 @@ impl Document {
             .mask
             .as_ref()
             .map_or(0, |m| m.surface.allocated_bytes());
-        let mut copies = self.smart_layers_at_size(
+        let (mut copies, notes) = self.smart_layers_at_size(
             material,
             resampling,
             self.source_budget
                 .saturating_sub(self.allocated_bytes() - old),
         )?;
+        // 置くたびに、段・Anchor は新しい ID（同じスマートマスクを何度置いても、元の層へ戻しても、文書の中で ID が重ならない）
+        self.renew_effect_ids(&mut copies);
+        self.check_layer_effects(&copies)?;
         let mask = copies[0].mask.take().expect("検証済みのマスク");
         let result = SmartPlaceResult {
             layer_id: id,
@@ -254,6 +273,7 @@ impl Document {
             switched_off: vec![],
             resampled: material.width != self.width || material.height != self.height,
             replaced_mask: self.layers[i].mask.is_some(),
+            notes,
         };
         let cost = 64 + mask.surface.allocated_bytes();
         self.execute(
@@ -270,14 +290,31 @@ impl Document {
         material: &SmartMaterial,
         how: Option<SmartResampling>,
         room: u64,
-    ) -> Result<Vec<Layer>, CoreError> {
+    ) -> Result<(Vec<Layer>, Vec<String>), CoreError> {
         let mut layers = material.layers.clone();
+        let mut notes = Vec::new();
         let same = material.width == self.width && material.height == self.height;
+        if !same {
+            // 画素で測るもの（ぼかし・シャープの半径）は倍率に合わせる。縦横の倍率が違うときは幾何平均
+            let scale = (f64::from(self.width) / f64::from(material.width)
+                * (f64::from(self.height) / f64::from(material.height)))
+            .sqrt();
+            notes = Document::scale_effect_radii(&mut layers, scale);
+            // 大きさの違う画布のキャンバスのパスは、点が元の大きさのもの: 画素だけが残る
+            for l in &mut layers {
+                if l.path.take().is_some() {
+                    notes.push(format!(
+                        "「{}」のパスは画素だけになりました（点は元の画布の大きさのもの）",
+                        l.name
+                    ));
+                }
+            }
+        }
         if same && material.tile_size == self.tile_size {
             if material.pixel_bytes() > room {
                 return Err(CoreError::SourceBudgetExceeded);
             }
-            return Ok(layers);
+            return Ok((layers, notes));
         }
         let how = if same {
             SmartResampling::Nearest
@@ -328,7 +365,7 @@ impl Document {
                     .ok_or(CoreError::SourceBudgetExceeded)?;
             }
         }
-        Ok(layers)
+        Ok((layers, notes))
     }
 }
 impl SmartMaterial {

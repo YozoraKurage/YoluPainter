@@ -208,6 +208,44 @@ impl Project {
     pub fn current_set(&self) -> &str {
         &self.current
     }
+    /// プロジェクトの画像リソースを、効果の入力（`yolu_core::EffectInputs::with_image`）にする。画素は下の行が先（文書と同じ向き）で、
+    /// `ImageInput::hash` は索引の `content` と同じ値になる。画像の ID は、正本の塗りつぶしの画像が指す ID（`yolu_core::ImageId`）と同じ。
+    /// PNG が壊れていれば、どのリソースかを添えて断る。
+    pub fn image_inputs(&self) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
+        let mut budget = 0usize;
+        let mut inputs = Vec::new();
+        for r in self.resources.iter().filter(|r| r.kind == "image") {
+            let name = &r.name;
+            let bytes = self
+                .files
+                .get(&r.entry)
+                .ok_or_else(|| Error::InvalidData(format!("画像「{name}」のPNGがありません")))?;
+            let (w, h) = (
+                number(&r.metadata, "width", 1, 8192)? as u32,
+                number(&r.metadata, "height", 1, 8192)? as u32,
+            );
+            let top_down = png_pixels(bytes, w, h, &mut budget)
+                .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
+            let mut pixels = Vec::with_capacity(top_down.len());
+            for row in top_down.chunks_exact(w as usize * 4).rev() {
+                pixels.extend_from_slice(row);
+            }
+            let space = match r.metadata.get("colorSpace").and_then(Value::as_str) {
+                Some("srgb") => yolu_core::ImageColorSpace::Srgb,
+                Some("linear") => yolu_core::ImageColorSpace::Linear,
+                _ => yolu_core::ImageColorSpace::Unspecified,
+            };
+            let image = yolu_core::ImageInput::new(w, h, pixels, space)?;
+            check(
+                image.hash == r.content,
+                format!("画像「{name}」の画素のハッシュが索引と一致しません"),
+            )?;
+            let id = u128::from_str_radix(&r.id.replace('-', ""), 16)
+                .map_err(|_| Error::InvalidData(format!("画像「{name}」のIDが不正です")))?;
+            inputs.push((yolu_core::ImageId(id), image));
+        }
+        Ok(inputs)
+    }
     pub fn resources(&self) -> &[Resource] {
         &self.resources
     }

@@ -196,8 +196,9 @@ fn diagnostic_lines(lang: Lang, diagnostics: &[Diagnostic]) -> Vec<Line> {
 }
 
 /// 書き出せない理由（PSD に書けるのは Color のラスターの層だけ。書けない中身は平らにせず断る）。`psd::Document::from_core` も
-/// 同じものを機能ごとの理由で断る（日本語だけ）ので、これは何の層・何の中身かを画面の言語で先に言う場所。層のロックは PSD の
-/// lspf に書けるので断らない。
+/// 同じものを機能ごとの理由で断る（日本語だけ）ので、これは何の層・何の中身かを画面の言語で先に言う場所。マスク・チャンネルごとの合成・
+/// フィルターと Generator・Anchor・パスは、断らなければ書けてしまう（`from_core` は層ごとに保存している元の画素を書き、効果入りの
+/// 合成は統合画像だけに入る。効果とパスの設定は PSD に残らず、層の画素と統合画像も食い違う）。層のロックは PSD の lspf に書けるので断らない。
 pub fn export_blockers(lang: Lang, doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     for layer in doc.layers() {
@@ -225,6 +226,25 @@ pub fn export_blockers(lang: Lang, doc: &Document) -> Vec<String> {
             out.push(lang.pick(
                 format!("「{name}」にチャンネルごとの合成があります"),
                 format!("\"{name}\" has per-channel blending"),
+            ));
+        }
+        // 効果（効いていない段・無効の段も、設定が PSD に残らないので断る）。マスクの段はマスクがあるので上で断っている
+        if !layer.filters().is_empty() {
+            out.push(lang.pick(
+                format!("「{name}」にフィルターか Generator があります"),
+                format!("\"{name}\" has filters or generators"),
+            ));
+        }
+        if layer.anchor().is_some() {
+            out.push(lang.pick(
+                format!("「{name}」に Anchor があります"),
+                format!("\"{name}\" has an anchor"),
+            ));
+        }
+        if layer.path().is_some() {
+            out.push(lang.pick(
+                format!("「{name}」にパスがあります"),
+                format!("\"{name}\" has a path"),
             ));
         }
         let mut channels = layer.surface_channels();
@@ -1173,6 +1193,64 @@ mod tests {
             .unwrap();
         let why = export_blockers(Lang::Ja, &u.doc);
         assert!(why[0].contains("Color 以外"), "{why:?}");
+        // 効果（Color のぼかし）: from_core は元の画素を書き、効果入りの合成と食い違うので断る。何も書かない
+        let mut w = painted();
+        let layer = w.selected_layer.unwrap();
+        w.doc
+            .add_filter(
+                layer,
+                yolu_core::FilterTarget::Content,
+                yolu_core::FilterSpec::new(yolu_core::EffectSettings::blur(3))
+                    .channels(&[Channel::Color]),
+            )
+            .unwrap();
+        let why = export_blockers(Lang::Ja, &w.doc);
+        assert_eq!(why.len(), 1, "{why:?}");
+        assert!(why[0].contains("フィルター"), "{why:?}");
+        assert!(export_blockers(Lang::En, &w.doc)[0].contains("filters"));
+        w.apply(Action::Psd(PsdAction::Export(path.clone())));
+        assert!(!w.psd.is_busy());
+        assert!(w.message.contains("書き出せません"), "{}", w.message);
+        assert!(w.psd.report.take().unwrap().lines[0]
+            .text
+            .contains("フィルター"));
+        assert!(dir.files().is_empty(), "何も書かない");
+        // 効果を外せば書き出せる（無効の段も断るので、外すまで断る）
+        let filter = w.doc.layer(layer).unwrap().filters()[0].id();
+        w.doc.set_filter_enabled(layer, filter, false).unwrap();
+        assert_eq!(
+            export_blockers(Lang::Ja, &w.doc).len(),
+            1,
+            "無効の段も設定が PSD に残らない"
+        );
+        w.doc.remove_filter(layer, filter).unwrap();
+        assert!(export_blockers(Lang::Ja, &w.doc).is_empty());
+        // Anchor
+        let mut x = painted();
+        let layer = x.selected_layer.unwrap();
+        x.doc
+            .add_anchor(layer, yolu_core::AnchorPlacement::Layer, Some("a"), None)
+            .unwrap();
+        let why = export_blockers(Lang::Ja, &x.doc);
+        assert!(why.len() == 1 && why[0].contains("Anchor"), "{why:?}");
+        // パス（2D）
+        let mut y = painted();
+        let layer = y.selected_layer.unwrap();
+        y.doc
+            .set_canvas_path(
+                layer,
+                yolu_core::paths::CanvasPath {
+                    id: 1,
+                    channel: Channel::Color,
+                    brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings::default()),
+                    points: vec![yolu_core::paths::CanvasPoint::new(4.0, 4.0, 1.0).unwrap()],
+                    material: None,
+                },
+            )
+            .unwrap();
+        let why = export_blockers(Lang::Ja, &y.doc);
+        assert!(why.len() == 1 && why[0].contains("パス"), "{why:?}");
+        assert!(export_blockers(Lang::En, &y.doc)[0].contains("path"));
         // 読むだけのセット
         let mut v = painted();
         v.sets.get_mut(0).unwrap().read_only = Some("試験".into());
@@ -1212,6 +1290,45 @@ mod tests {
             why.iter().any(|w| w.contains("チャンネルごとの合成")),
             "{why:?}"
         );
+        // 効果（Color のぼかし）・Anchor・パス: 書けば元の画素だけが層に入り、効果の設定は PSD に残らない。from_core も機能ごとの理由で断る
+        let mut f = painted();
+        let layer = f.selected_layer.unwrap();
+        f.doc
+            .add_filter(
+                layer,
+                yolu_core::FilterTarget::Content,
+                yolu_core::FilterSpec::new(yolu_core::EffectSettings::blur(3))
+                    .channels(&[Channel::Color]),
+            )
+            .unwrap();
+        let err = psd::Document::from_core(&f.doc).unwrap_err().to_string();
+        assert!(err.contains("フィルター"), "{err}");
+        assert_eq!(export_blockers(Lang::Ja, &f.doc).len(), 1);
+        let mut x = painted();
+        let layer = x.selected_layer.unwrap();
+        x.doc
+            .add_anchor(layer, yolu_core::AnchorPlacement::Layer, Some("a"), None)
+            .unwrap();
+        let err = psd::Document::from_core(&x.doc).unwrap_err().to_string();
+        assert!(err.contains("Anchor"), "{err}");
+        assert_eq!(export_blockers(Lang::Ja, &x.doc).len(), 1);
+        let mut y = painted();
+        let layer = y.selected_layer.unwrap();
+        y.doc
+            .set_canvas_path(
+                layer,
+                yolu_core::paths::CanvasPath {
+                    id: 1,
+                    channel: Channel::Color,
+                    brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings::default()),
+                    points: vec![yolu_core::paths::CanvasPoint::new(4.0, 4.0, 1.0).unwrap()],
+                    material: None,
+                },
+            )
+            .unwrap();
+        let err = psd::Document::from_core(&y.doc).unwrap_err().to_string();
+        assert!(err.contains("パス"), "{err}");
+        assert_eq!(export_blockers(Lang::Ja, &y.doc).len(), 1);
         // グループ・塗りつぶし: from_core も、何の層かを言って断る。先の断りは層の名前と種類を画面の言語で出す
         let mut u = painted();
         u.apply(Action::M2(crate::m2::Edit::NewGroup));

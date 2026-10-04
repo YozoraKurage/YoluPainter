@@ -336,7 +336,10 @@ impl Document {
             return Err(CoreError::Unsupported("動かすラスター層が無い"));
         }
         for &id in ids {
-            self.ensure_raster(self.index_of(id)?)?;
+            let index = self.index_of(id)?;
+            self.ensure_raster(index)?;
+            // パスで描かれた層を動かすと次の描き直しで元に戻るので断る（C# の RequireTransformable。ロックの検査より先）
+            self.refuse_path_layer(index)?;
         }
         if transform == Affine2D::IDENTITY {
             return Ok(false);

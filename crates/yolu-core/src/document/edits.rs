@@ -85,7 +85,6 @@ impl Document {
         coalesce: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        self.ensure_pixels_editable(id, false)?;
         self.require_channel(channel)?;
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
@@ -93,12 +92,40 @@ impl Document {
             return Err(CoreError::Unsupported("塗りつぶしの層だけが値を持つ"));
         }
         let old = layer.fill_value(channel);
-        if old.map_or(0, |v| v.a) != value.map_or(0, |v| v.a) {
-            self.refuse_lock(id, super::LayerLocks::TRANSPARENCY)?;
-        }
         let was_enabled = layer.is_channel_enabled(channel);
+        // 何も変わらない設定は、ロックで断らない（C# の SetFillValue は、変わらないなら先に戻る）
         if old == value && (value.is_none() || was_enabled) {
             return Ok(());
+        }
+        // 塗りつぶしの値は層の中身: 画像・すべてのロックで断る。アルファが変わるときと、画像のあるチャンネルの値を消す（画像も外れて
+        // アルファが変わる）ときは、透明部分のロックでも断る（C# は画像だけを見る。グラデーションを外す側は、値が消える側のアルファの
+        // 変化として数える）
+        self.ensure_pixels_editable(id, false)?;
+        if old.map_or(0, |v| v.a) != value.map_or(0, |v| v.a)
+            || value.is_none() && layer.fill_images.contains_key(&channel)
+        {
+            self.refuse_lock(id, super::LayerLocks::TRANSPARENCY)?;
+        }
+        // 画像・グラデーションのあるチャンネルの値を消すと、画像・グラデーションも一緒に外れる（1 回の Undo で一緒に戻る）
+        if value.is_none()
+            && (layer.fill_images.contains_key(&channel)
+                || layer.fill_gradients.contains_key(&channel))
+        {
+            let before = super::effects::FillChannelState::of(layer, channel);
+            let mut after = before.clone();
+            after.value = None;
+            after.image = None;
+            after.gradient = None;
+            return self.execute(
+                Command::FillChannel {
+                    id,
+                    channel,
+                    old: Box::new(before),
+                    new: Box::new(after),
+                },
+                // 費用は値だけを置くときと同じ 64（C# の SetFillValue は、画像・グラデーションが外れても 64）
+                64,
+            );
         }
         self.record(
             Command::FillValue {
@@ -151,13 +178,14 @@ impl Document {
         enabled: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        self.refuse_lock(id, super::LayerLocks::ALL)?;
         let kind = self.channel_kind(channel)?;
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
+        // 何も変わらない設定は、ロックで断らない（C# の SetChannelEnabled は、変わらないなら先に戻る）
         if layer.is_channel_enabled(channel) == enabled {
             return Ok(());
         }
+        self.refuse_lock(id, super::LayerLocks::ALL)?;
         if enabled && layer.kind == LayerKind::Adjustment {
             let applies = layer
                 .adjustment
@@ -166,6 +194,18 @@ impl Document {
             if !applies {
                 return Err(CoreError::Unsupported("色相/彩度は色のチャンネルだけ"));
             }
+        }
+        // 組（material）を持たないパスだけ、描くチャンネルを無効にできない（C# の `Path.Material == null`。組を持つパスは基準の
+        // チャンネルも組のチャンネルも無効にできる。validate_path_target も組があれば基準の有効を要らないとする）
+        if !enabled
+            && layer
+                .path
+                .as_ref()
+                .is_some_and(|p| p.material().is_none() && p.channel() == channel)
+        {
+            return Err(CoreError::Unsupported(
+                "パスで描かれたチャンネルは無効にできない",
+            ));
         }
         let had_surface = layer.surface(channel).is_some();
         self.execute(

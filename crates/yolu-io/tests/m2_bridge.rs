@@ -950,17 +950,8 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
 fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() {
     let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues();
-    for (feature, reason) in [
-        (".filters", "フィルター・Generator"),
-        (".surface_path", "3D のパス"),
-        (".canvas_path", "2D のパス"),
-        ("manual_id_colors", "手動の ID 色"),
-        (".images", "塗りつぶしの画像・投影"),
-        (".gradients", "塗りつぶしのグラデーション"),
-        (".locks", "ロック"),
-        (".anchor", "Anchor"),
-        (".mask.filters", "マスクのフィルター・Generator"),
-    ] {
+    // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）は core にあるので断らない
+    for (feature, reason) in [("manual_id_colors", "手動の ID 色"), (".locks", "ロック")] {
         assert!(
             issues
                 .iter()
@@ -970,7 +961,21 @@ fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() 
     }
     let message = rich.to_core().err().unwrap().to_string();
     assert!(message.contains("coreへの変換を拒否しました"), "{message}");
-    assert!(message.contains(".filters"), "{message}");
+    assert!(message.contains(".locks"), "{message}");
+    for effect in [
+        ".filters",
+        ".images",
+        ".gradients",
+        ".anchor",
+        ".mask.filters",
+        ".surface_path",
+        ".canvas_path",
+    ] {
+        assert!(
+            !issues.iter().any(|i| i.contains(effect)),
+            "{effect}: {issues:?}"
+        );
+    }
     // 非表示の層・無効にしたマスクの中身でも断る（黙って捨てない）。元の正本はそのまま書ける
     assert_eq!(
         NativeDocument::read(&rich.to_bytes()).unwrap().to_bytes(),
@@ -1005,7 +1010,7 @@ fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() 
         .filter(|i| i.contains(".mask."))
         .map(|i| layer_of(i))
         .collect();
-    assert!(featured.len() >= 5 && !masked.is_empty(), "{issues:?}");
+    assert!(!featured.is_empty() && masked.is_empty(), "{issues:?}");
     assert!(
         featured.iter().all(|i| hidden.contains(i)),
         "{featured:?} / {hidden:?}"
@@ -1016,7 +1021,7 @@ fn features_core_lacks_are_refused_with_a_reason_even_when_hidden_or_disabled() 
     );
     assert_eq!(changed.core_issues(), issues);
     let message = changed.to_core().err().unwrap().to_string();
-    assert!(message.contains(".filters"), "{message}");
+    assert!(message.contains(".locks"), "{message}");
 }
 
 #[test]

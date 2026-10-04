@@ -160,6 +160,7 @@ impl Document {
         self.ensure_raster(index)?;
         // 無効のチャンネルを有効にする前に断る（断った塗りが何も残さない）
         let keep_alpha = self.pixel_write_guard(layer, erase)?;
+        self.refuse_path_layer(index)?;
         let effective = self.effective_region(region)?;
         let coords: Vec<_> = effective
             .as_ref()

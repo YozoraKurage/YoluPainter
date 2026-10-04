@@ -199,6 +199,12 @@ impl std::error::Error for Error {}
 pub trait Source: Sync {
     fn dimensions(&self) -> (u32, u32);
     fn pixel(&self, x: u32, y: u32) -> [u8; 4];
+    /// 行の一部（x から `out.len() / 4` 画素）をまとめて読む。既定は 1 画素ずつ。タイルの面など、まとめて写せる読み元は置き換える。
+    fn read_row(&self, x: u32, y: u32, out: &mut [u8]) {
+        for (i, p) in out.chunks_exact_mut(4).enumerate() {
+            p.copy_from_slice(&self.pixel(x + i as u32, y));
+        }
+    }
 }
 pub struct Image<'a> {
     data: &'a [u8],
@@ -598,15 +604,15 @@ impl<'a> Engine<'a> {
         let mut after = self.chain[..count].iter().map(|s| s.settings.halo()).sum();
         let mut cur = grow(target, after, self.width, self.height);
         let mut buf = zeros::<u8>(area(cur) * 4)?;
+        let row_bytes = cur.width as usize * 4;
         for y in 0..cur.height {
             self.options.check()?;
-            for x in 0..cur.width {
-                let mut p = self.source.pixel(cur.x + x, cur.y + y);
-                if self.value_type == ValueType::Mask {
-                    p = [p[3], p[3], p[3], 255];
+            let row = &mut buf[y as usize * row_bytes..(y as usize + 1) * row_bytes];
+            self.source.read_row(cur.x, cur.y + y, row);
+            if self.value_type == ValueType::Mask {
+                for p in row.chunks_exact_mut(4) {
+                    p.copy_from_slice(&[p[3], p[3], p[3], 255]);
                 }
-                let i = (y as usize * cur.width as usize + x as usize) * 4;
-                buf[i..i + 4].copy_from_slice(&p);
             }
         }
         for (k, s) in self.chain[..count].iter().enumerate() {

@@ -31,6 +31,12 @@ pub struct Ramp {
     curve: Vec<CurvePoint>,
     tangents: Vec<f64>,
 }
+impl Ramp {
+    /// 履歴に積む大きさ（C# の `GradientRamp.ByteSize`: 64 + 色・不透明度・カーブの点の数 × 24）。
+    pub fn byte_size(&self) -> u64 {
+        64 + 24 * (self.colors.len() + self.opacities.len() + self.curve.len()) as u64
+    }
+}
 impl Default for Ramp {
     fn default() -> Self {
         Self::new(

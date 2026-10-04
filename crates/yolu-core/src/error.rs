@@ -6,11 +6,19 @@ use std::fmt;
 pub enum CoreError {
     MergeRefused(crate::MergeRefusal),
     MergeAppearance(Box<crate::LayerMergeReport>),
+    /// 取り消しの旗が立ったので、操作・効果の評価を止めた（途中の結果は公開しない）。
     Cancelled,
     LayerLocked {
         layer: crate::LayerId,
         holder: crate::LayerId,
         lock: crate::LayerLocks,
+    },
+    /// 入力のまま通している効果（使えるマップが無い Generator・出ていないデカール）を焼き込む操作（結合）は、効果を落とすので断る。
+    /// `mask` は層のマスクのスタックの効果か。
+    InactiveEffect {
+        layer: crate::LayerId,
+        mask: bool,
+        reason: Box<crate::InactiveReason>,
     },
     /// 引数が範囲外・有限でない など。中身は何の値か。
     InvalidArgument(&'static str),
@@ -43,6 +51,9 @@ impl fmt::Display for CoreError {
             ),
             CoreError::Cancelled => write!(f, "操作を取り消した"),
             CoreError::LayerLocked { .. } => write!(f, "層または親グループがロックされている"),
+            CoreError::InactiveEffect { reason, .. } => {
+                write!(f, "効いていない効果は焼き込めない: {reason}")
+            }
             CoreError::InvalidArgument(what) => write!(f, "値が範囲外: {what}"),
             CoreError::LayerNotFound => write!(f, "レイヤーが無い"),
             CoreError::ChannelNotFound => write!(f, "チャンネルが無い"),

@@ -115,6 +115,8 @@ impl Document {
             return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
         }
         let keep_alpha = self.pixel_write_guard(layer, erase)?;
+        // パスの層の断りはロックのあと（C# の PaintableSurface は RefuseLockedPixels → RefusePathLayer の順）
+        self.refuse_path_layer(index)?;
         let created = self.ensure_surface(index, channel);
         let r = self.edit_region(
             index,

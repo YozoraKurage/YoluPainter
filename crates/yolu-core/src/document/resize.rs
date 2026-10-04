@@ -4,9 +4,11 @@
 //! 一様なタイルなら計算せずその色で埋める（どちらも画素ごとに計算した結果と同じバイトで、疎な層の費用が内容に比例する）。
 use super::operations::Dirty;
 use super::{Document, Target};
+use crate::effects::LayerPath;
 use crate::math::to_byte;
+use crate::paths::{render_canvas, CanvasPath, CanvasPoint, Options};
 use crate::surface::Tile;
-use crate::{ChannelKind, CoreError, NormalSettings, Rgba8, Surface, TileCoord};
+use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +20,10 @@ pub enum CanvasResampling {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ResizeReport {
     pub notes: Vec<String>,
+    /// モデルの上のパスで描かれた層。UV に結び付いたパスは残り、パスのチャンネルの画素は画素として写した（resize_image は補間、
+    /// resize_canvas はずらし）だけなので、呼び手がモデルでパスから描き直すか、写した画素のままにして知らせる（C# の
+    /// `ResampledDocument.SurfacePathLayers`）。
+    pub surface_path_layers: Vec<LayerId>,
     /// この変更の履歴の費用（前後の格納量）が履歴の予算を超えた。Undo はこの 1 段だけ残し、次の編集の整理で落ち得る。
     pub history_over_budget: bool,
 }
@@ -379,13 +385,16 @@ impl Document {
             xs: Axis::new(self.width, width, method),
             ys: Axis::new(self.height, height, method),
         };
-        let mut copy = self.resize_surfaces(width, height, &map, cancelled)?;
-        let scale =
-            ((width as f64 / self.width as f64) * (height as f64 / self.height as f64)).sqrt();
+        let (sx, sy) = (
+            width as f64 / self.width as f64,
+            height as f64 / self.height as f64,
+        );
+        let scale = (sx * sy).sqrt();
+        let (mut copy, mut report) =
+            self.resize_surfaces(width, height, &map, Fit::Scale { sx, sy, scale }, cancelled)?;
         let wanted = self.normal_settings.strength() * scale;
         let strength = wanted.clamp(-NormalSettings::MAX_STRENGTH, NormalSettings::MAX_STRENGTH);
         copy.normal_settings = self.normal_settings.with_strength(strength)?;
-        let mut report = ResizeReport::default();
         if self.selection.is_some() && copy.selection.is_none() {
             report.notes.push("縮小で選択範囲が消えた".into());
         }
@@ -414,8 +423,8 @@ impl Document {
             offset,
             source: (self.width, self.height),
         };
-        let copy = self.resize_surfaces(width, height, &map, &mut || false)?;
-        let mut report = ResizeReport::default();
+        let (copy, mut report) =
+            self.resize_surfaces(width, height, &map, Fit::Shift(offset), &mut || false)?;
         self.commit_resized(copy, &mut report)?;
         Ok(report)
     }
@@ -452,19 +461,28 @@ impl Document {
         width: u32,
         height: u32,
         map: &dyn Mapping,
+        fit: Fit,
         cancelled: &mut dyn FnMut() -> bool,
-    ) -> Result<Document, CoreError> {
+    ) -> Result<(Document, ResizeReport), CoreError> {
         let mut copy = self.edit_copy()?;
         copy.width = width;
         copy.height = height;
+        let mut report = ResizeReport::default();
         let mut budget = Budget {
             used: 0,
             limit: Some(self.source_budget),
         };
         for i in 0..self.layers.len() {
+            // 2D のパスで描かれたチャンネルは写さない（下で、大きさに合わせたパスから描き直す）。resize_image（Fit::Scale）は C# の
+            // Resampled と同じ。resize_canvas（Fit::Shift: 点をずらして描き直す）に当たる C# の操作は無く、Rust 独自の決め
+            let redrawn: Vec<Channel> = match &self.layers[i].path {
+                Some(p) if p.is_canvas() => p.channels(),
+                _ => Vec::new(),
+            };
             let mut surfaces: Vec<_> = self.layers[i]
                 .surface_channels()
                 .into_iter()
+                .filter(|c| !redrawn.contains(c))
                 .map(Target::Channel)
                 .collect();
             if self.layers[i].mask.is_some() {
@@ -505,10 +523,114 @@ impl Document {
                 crate::SelectionMask::from_amount_tiles(width, height, self.tile_size, tiles)?;
             copy.selection = (!mask.is_empty()).then_some(mask);
         }
+        // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled が層ごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
+        // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（層ごと複製済み）
+        for i in 0..self.layers.len() {
+            match &self.layers[i].path {
+                Some(LayerPath::Canvas(path)) => {
+                    if cancelled() {
+                        return Err(CoreError::Cancelled);
+                    }
+                    let fitted = fit.canvas_path(path, &self.layers[i].name, &mut report.notes);
+                    let rendered = render_canvas(
+                        &fitted,
+                        &Options {
+                            width,
+                            height,
+                            tile_size: self.tile_size,
+                            source_budget_bytes: self.source_budget,
+                            stroke_budget_bytes: self.stroke_budget,
+                            ..Options::default()
+                        },
+                    )
+                    .map_err(crate::effects::paths_error)?;
+                    let layer = &mut copy.layers[i];
+                    // パスのチャンネルは写していないので、古い大きさの面のまま残らないよう、空の面へ置き換えてから描いた結果を入れる
+                    for c in LayerPath::Canvas(fitted.clone()).channels() {
+                        layer.put_surface(c, Some(Surface::new(width, height, self.tile_size)));
+                    }
+                    for (c, surface) in rendered.channels {
+                        budget.used += surface.allocated_bytes();
+                        if budget.limit.is_some_and(|limit| budget.used > limit) {
+                            return Err(CoreError::SourceBudgetExceeded);
+                        }
+                        layer.put_surface(c, Some(surface));
+                    }
+                    layer.path = Some(LayerPath::Canvas(fitted));
+                }
+                Some(LayerPath::Surface(_)) => report.surface_path_layers.push(self.layers[i].id),
+                None => {}
+            }
+        }
+        if let Fit::Scale { scale, .. } = fit {
+            report
+                .notes
+                .extend(Document::scale_effect_radii(&mut copy.layers, scale));
+        }
+        // 新しい大きさでも段の到達半径・作業メモリが上限に収まるか（収まらなければ、何も変えずに断る）
+        copy.check_layer_stacks(&copy.layers)?;
         if cancelled() {
             return Err(CoreError::Cancelled);
         }
-        Ok(copy)
+        Ok((copy, report))
+    }
+}
+
+/// 大きさの変更が、画素の外の設定（効果の半径・2D のパス）をどう動かすか。
+#[derive(Clone, Copy)]
+enum Fit {
+    /// 拡大・縮小（resize_image）: 半径・パスの点と太さを倍率に合わせる。`scale` は縦横の倍率の幾何平均（C# の Resampled）。
+    Scale { sx: f64, sy: f64, scale: f64 },
+    /// 画布だけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
+    /// （C# と照らしていない。試験は seam_ops の resizing_the_canvas_moves_2d_path_points_and_redraws）。
+    Shift((i32, i32)),
+}
+impl Fit {
+    /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点は縦横の倍率かずらしで、ブラシの半径は縦横の倍率の幾何平均で
+    /// 動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
+    fn canvas_path(self, path: &CanvasPath, owner: &str, notes: &mut Vec<String>) -> CanvasPath {
+        const LIMIT: f64 = 1e6;
+        let mut next = path.clone();
+        let mut clamped = false;
+        let mut place = |p: &CanvasPoint, x: f64, y: f64| {
+            let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
+            clamped |= cx != x || cy != y;
+            CanvasPoint {
+                x: cx,
+                y: cy,
+                pressure: p.pressure,
+            }
+        };
+        match self {
+            Fit::Scale { sx, sy, scale } => {
+                let wanted = path.brush.0.radius * scale;
+                next.brush.0.radius = wanted.min(4096.0);
+                if next.brush.0.radius != wanted {
+                    notes.push(format!(
+                        "「{owner}」のパス: ブラシの半径 {:.1} → 4096 画素（最大。見た目を保つには {wanted:.1} 画素）",
+                        path.brush.0.radius
+                    ));
+                }
+                next.points = path
+                    .points
+                    .iter()
+                    .map(|p| place(p, p.x * sx, p.y * sy))
+                    .collect();
+            }
+            Fit::Shift((dx, dy)) => {
+                next.points = path
+                    .points
+                    .iter()
+                    .map(|p| place(p, p.x + dx as f64, p.y + dy as f64))
+                    .collect();
+            }
+        }
+        if clamped {
+            notes.push(format!(
+                "「{owner}」のパス: 画布から遠く外れた点を ±1000000 画素の内へ寄せた"
+            ));
+        }
+        next
     }
 }
 

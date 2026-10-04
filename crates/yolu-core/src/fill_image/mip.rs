@@ -3,6 +3,21 @@ use crate::math::to_byte;
 use crate::Rgba8;
 use rayon::prelude::*;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+/// 0 段の画素: 借用か、共有して持つか（文書が画像のミップマップを持ち続けるときは共有）。
+enum Original<'a> {
+    Borrowed(&'a [u8]),
+    Shared(Arc<[u8]>),
+}
+impl Original<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Original::Borrowed(b) => b,
+            Original::Shared(a) => a,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Conversion {
@@ -13,7 +28,7 @@ pub enum Conversion {
 
 /// 段 0 は借用、追加段だけを所有。予算は C# 同様、追加段の RGBA8 の総バイト数。
 pub struct ImageMipChain<'a> {
-    original: &'a [u8],
+    original: Original<'a>,
     levels: Vec<(usize, usize, Vec<u8>)>,
     lut: Option<[u8; 256]>,
     luminance: bool,
@@ -40,8 +55,48 @@ impl<'a> ImageMipChain<'a> {
         limit: u64,
         cancel: Option<&AtomicBool>,
     ) -> Result<Self, FillError> {
+        Self::build_from(
+            Original::Borrowed(pixels),
+            width,
+            height,
+            conversion,
+            luminance,
+            limit,
+            cancel,
+        )
+    }
+    /// 0 段の画素を共有して持つ形（文書が使い回すミップマップ）。借用の `build` と同じ値になる。
+    pub fn build_shared(
+        pixels: Arc<[u8]>,
+        width: u32,
+        height: u32,
+        conversion: Conversion,
+        luminance: bool,
+        limit: u64,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<ImageMipChain<'static>, FillError> {
+        ImageMipChain::build_from(
+            Original::Shared(pixels),
+            width,
+            height,
+            conversion,
+            luminance,
+            limit,
+            cancel,
+        )
+    }
+    fn build_from(
+        original: Original<'a>,
+        width: u32,
+        height: u32,
+        conversion: Conversion,
+        luminance: bool,
+        limit: u64,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Self, FillError> {
+        let pixels_len = original.bytes().len();
         let n = dimensions(width, height)?;
-        if pixels.len() != n * 4 {
+        if pixels_len != n * 4 {
             return Err(FillError::Invalid("画像のバイト数"));
         }
         let bytes = Self::extra_bytes(width, height)?;
@@ -58,7 +113,7 @@ impl<'a> ImageMipChain<'a> {
             })
         });
         let mut chain = Self {
-            original: pixels,
+            original,
             levels: vec![(width as usize, height as usize, Vec::new())],
             lut,
             luminance,
@@ -110,7 +165,7 @@ impl<'a> ImageMipChain<'a> {
     }
     pub(crate) fn read(&self, k: usize, x: usize, y: usize) -> Rgba8 {
         let d = if k == 0 {
-            self.original
+            self.original.bytes()
         } else {
             &self.levels[k].2
         };

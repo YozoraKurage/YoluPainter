@@ -9,6 +9,9 @@
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
 mod edits;
+mod effects;
+mod eval;
+mod layer_path;
 pub(crate) mod locks;
 mod material;
 mod merge;
@@ -38,7 +41,9 @@ use crate::brush::{
     Brush, BrushPixel, BrushSample, BrushSettings, Budgets, StencilPoint, StrokeState,
 };
 use crate::composite::{self, Stack};
+use crate::effects::{Anchor, AnchorPlacement, FilterEffect, FilterId, FilterTarget};
 use crate::error::CoreError;
+use crate::fill_image::Projection;
 use crate::layer::{ChannelBlend, RasterMask};
 use crate::math::require_finite;
 use crate::normal::NormalSettings;
@@ -49,6 +54,8 @@ use crate::types::{
 };
 
 pub use crate::layer::{Layer, LayerId};
+pub use eval::EffectCounters;
+pub(crate) use eval::EvalSet;
 
 /// ストロークの札。文書を借りないので、フレームをまたいで持てる（中身は文書が持つ）。確定・取消で手放す。
 #[derive(Debug)]
@@ -298,6 +305,35 @@ pub(crate) enum Command {
         old: Option<SelectionMask>,
         new: Option<SelectionMask>,
     },
+    /// 層（内容）またはマスクのフィルターのスタックの入れ替え。
+    Stack {
+        id: LayerId,
+        target: FilterTarget,
+        before: Vec<FilterEffect>,
+        after: Vec<FilterEffect>,
+    },
+    /// Anchor を置く・外す・名前を変える。
+    Anchor {
+        id: LayerId,
+        placement: AnchorPlacement,
+        old: Option<Anchor>,
+        new: Option<Anchor>,
+    },
+    /// 塗りつぶしのチャンネルの値・有効・画像・グラデーションの組。
+    FillChannel {
+        id: LayerId,
+        channel: Channel,
+        old: Box<effects::FillChannelState>,
+        new: Box<effects::FillChannelState>,
+    },
+    /// 塗りつぶしの投影。
+    Projection {
+        id: LayerId,
+        old: Projection,
+        new: Projection,
+    },
+    /// 層のパスを付ける・差し替える・外す（画素の入れ替えを伴うことがある）。
+    Path(layer_path::PathCommand),
 }
 
 struct Entry {
@@ -314,6 +350,10 @@ pub(crate) enum CoalesceKey {
     Fill(LayerId, Channel),
     ChannelBlend(LayerId, Channel),
     NormalSettings,
+    FilterStrength(FilterId),
+    FilterSettings(FilterId),
+    Projection(LayerId),
+    FillGradient(LayerId, Channel),
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
@@ -366,6 +406,8 @@ pub struct Document {
     trim_count: u64,
     trimmed_bytes: u64,
     id_counter: u64,
+    /// 効果（フィルター・Generator・Anchor・画像・グラデーション）の評価と、外から渡す入力。保存も Undo もしない。
+    effects: eval::EffectState,
 }
 
 /// 128 bit の新しい ID（std の RandomState の鍵と通し番号から）。
@@ -435,6 +477,7 @@ impl Document {
             trim_count: 0,
             trimmed_bytes: 0,
             id_counter: 0,
+            effects: eval::EffectState::default(),
         })
     }
 
@@ -752,6 +795,13 @@ impl Document {
                         Command::NormalSettings { new: n, .. },
                         Command::NormalSettings { new, .. },
                     ) => *n = new,
+                    (Command::Stack { after: n, .. }, Command::Stack { after, .. }) => *n = after,
+                    (Command::Projection { new: n, .. }, Command::Projection { new, .. }) => {
+                        *n = new
+                    }
+                    (Command::FillChannel { new: n, .. }, Command::FillChannel { new, .. }) => {
+                        *n = new
+                    }
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
                 self.revision += 1;
@@ -817,7 +867,7 @@ impl Document {
             }
         };
         if changed {
-            self.journal.mark(channel, coord);
+            self.mark_target_tile(index, Target::Channel(channel), coord);
             self.external_mutation();
         }
         Ok(changed)
@@ -849,7 +899,7 @@ impl Document {
             .surface
             .import_tile(coord, bytes, growth)?;
         if changed {
-            self.mark_mask_tile(index, coord);
+            self.mark_target_tile(index, Target::Mask, coord);
             self.external_mutation();
         }
         Ok(changed)
@@ -891,7 +941,11 @@ impl Document {
             }
         };
         if changed {
-            self.journal.mark(channel, TileCoord::new(x / ts, y / ts));
+            self.mark_target_tile(
+                index,
+                Target::Channel(channel),
+                TileCoord::new(x / ts, y / ts),
+            );
             self.external_mutation();
         }
         Ok(changed)
@@ -915,7 +969,7 @@ impl Document {
         let surface = &mut self.layers[index].mask.as_mut().expect("確かめた").surface;
         let changed = surface.set_pixel(x, y, Rgba8::new(0, 0, 0, hide), growth)?;
         if changed {
-            self.mark_mask_tile(index, TileCoord::new(x / ts, y / ts));
+            self.mark_target_tile(index, Target::Mask, TileCoord::new(x / ts, y / ts));
             self.external_mutation();
         }
         Ok(changed)
@@ -961,6 +1015,10 @@ impl Document {
     fn external_mutation(&mut self) {
         self.clear_history_unchecked();
         self.revision += 1;
+        // 直接の書き込み（読み込み・管理）は、層の元画素の変化の記録を通らないことがある: 評価済みのものは全部作り直す
+        self.effects.generation += 1;
+        self.release_effect_cache();
+        self.refresh_anchor_readers();
     }
 
     /// 履歴（Undo・Redo）を消す。
@@ -1160,8 +1218,22 @@ impl Document {
         self.switch(command, true)
     }
 
-    /// 段を当てる（backwards なら戻す）。断ったら何も変えない（予算はまとめて先に確かめる）。
+    /// 段を当てる（backwards なら戻す）。断ったら何も変えない（予算はまとめて先に確かめる）。当てた後で、Anchor を読む段の解決が
+    /// 変わっていれば読む層を全部変わったことにする。
     fn switch(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
+        let result = self.switch_command(command, backwards);
+        if result.is_ok()
+            && !matches!(
+                command,
+                Command::Stroke { .. } | Command::NormalSettings { .. } | Command::Selection { .. }
+            )
+        {
+            self.refresh_anchor_readers();
+        }
+        result
+    }
+
+    fn switch_command(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
         if !matches!(
             command,
             Command::Stroke { .. } | Command::NormalSettings { .. } | Command::Selection { .. }
@@ -1268,6 +1340,17 @@ impl Document {
                 let previous = self.layers[i].mask.take();
                 self.layers[i].mask = mask.take().map(|m| *m);
                 *mask = previous.map(Box::new);
+                // 入れ替わったマスクの画素は、評価のキャッシュの鍵（元画素の通し番号）の外で変わる: 同じ ID・設定のフィルターを持つマスクへ
+                // 画素だけが替わっても、古い結果を返さないよう、どちらのマスクのタイルも変わったことにする
+                let coords: std::collections::BTreeSet<TileCoord> =
+                    [self.layers[i].mask.as_ref(), mask.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|m| m.surface.tile_coords())
+                        .collect();
+                for coord in coords {
+                    self.note_source(i, Target::Mask, coord);
+                }
                 self.mark_layer(i, None);
                 self.mark_clipped_layers();
                 Ok(())
@@ -1290,6 +1373,36 @@ impl Document {
                 self.selection = if backwards { old.clone() } else { new.clone() };
                 Ok(())
             }
+            Command::Stack {
+                id,
+                target,
+                before,
+                after,
+            } => self.switch_stack(*id, *target, if backwards { before } else { after }),
+            Command::Anchor {
+                id,
+                placement,
+                old,
+                new,
+            } => self.switch_anchor(
+                *id,
+                *placement,
+                if backwards {
+                    old.as_ref()
+                } else {
+                    new.as_ref()
+                },
+            ),
+            Command::FillChannel {
+                id,
+                channel,
+                old,
+                new,
+            } => self.switch_fill_channel(*id, *channel, if backwards { old } else { new }),
+            Command::Projection { id, old, new } => {
+                self.switch_projection(*id, if backwards { *old } else { *new })
+            }
+            Command::Path(m) => self.switch_path(m, backwards),
         }
     }
 
@@ -1351,6 +1464,7 @@ impl Document {
     /// 層が変わったことにする（C# の MarkLayerChanged）: ラスターは面のあるタイル、塗りつぶし・調整は画布全体、グループは中身と
     /// グループのマスクのタイル。channel が None なら全チャンネル。
     fn mark_layer(&mut self, index: usize, channel: Option<Channel>) {
+        self.note_mask_output(index);
         let layer = &self.layers[index];
         if layer.is_group() {
             let id = layer.id;
@@ -1395,11 +1509,31 @@ impl Document {
             }
             return;
         }
+        let (cols, rows) = (
+            self.width.div_ceil(self.tile_size),
+            self.height.div_ceil(self.tile_size),
+        );
         let mut marks = Vec::new();
         for c in layer.surface_channels() {
             if channel.is_none() || channel == Some(c) {
+                // フィルターのある層は、ぼかしが透明へ広げる分のタイルにも出力がある
+                let expansion: u32 = layer
+                    .active_chain(c)
+                    .iter()
+                    .filter(|e| e.settings.expands_coverage())
+                    .map(|e| e.settings.halo())
+                    .sum();
+                let m = expansion.div_ceil(self.tile_size);
                 for coord in layer.surface(c).expect("面").tile_coords() {
-                    marks.push((c, coord));
+                    if m == 0 {
+                        marks.push((c, coord));
+                        continue;
+                    }
+                    for y in coord.y.saturating_sub(m)..=(coord.y + m).min(rows - 1) {
+                        for x in coord.x.saturating_sub(m)..=(coord.x + m).min(cols - 1) {
+                            marks.push((c, TileCoord::new(x, y)));
+                        }
+                    }
                 }
             }
         }
@@ -1474,8 +1608,18 @@ impl Document {
 
     /// マスクのタイルは、層が覆うどのチャンネルの合成も変え得る（C# の MarkMaskTileChanged と CoveredChannels）。
     fn mark_mask_tile(&mut self, index: usize, coord: TileCoord) {
-        for c in self.covered_channels(index) {
+        let channels = self.covered_channels(index);
+        for &c in &channels {
             self.journal.mark(c, coord);
+        }
+        // マスクのフィルターがあれば、隠す量の変化はその広がりの分だけ出力へ届く
+        if let Some(m) = &self.layers[index].mask {
+            let chain: Vec<&FilterEffect> = m.filters.iter().filter(|e| e.is_active()).collect();
+            if !chain.is_empty() {
+                let global = chain.iter().any(|e| e.settings.is_global());
+                let halo: u32 = chain.iter().map(|e| e.settings.halo()).sum();
+                self.mark_reach(&channels, coord, halo, global);
+            }
         }
     }
 
@@ -1541,10 +1685,50 @@ impl Document {
         Ok(())
     }
 
+    /// 層の元画素（チャンネルの面かマスク）のタイルが変わった。元画素の変化の記録（評価のキャッシュの鍵）と、合成が変わり得るタイル
+    /// （フィルターがあれば、その広がりの分も）を記録する。
     fn mark_target_tile(&mut self, index: usize, target: Target, coord: TileCoord) {
+        self.note_source(index, target, coord);
         match target {
-            Target::Channel(c) => self.journal.mark(c, coord),
+            Target::Channel(c) => {
+                self.journal.mark(c, coord);
+                let chain = self.layers[index].active_chain(c);
+                if !chain.is_empty() {
+                    let global = chain.iter().any(|e| e.settings.is_global());
+                    let halo: u32 = chain.iter().map(|e| e.settings.halo()).sum();
+                    self.mark_reach(&[c], coord, halo, global);
+                }
+            }
             Target::Mask => self.mark_mask_tile(index, coord),
+        }
+    }
+
+    /// タイルの変化が出力へ届く範囲（半径 halo の分のタイル。全域の段があれば画布全体）を、チャンネルに記録する。
+    fn mark_reach(&mut self, channels: &[Channel], coord: TileCoord, halo: u32, global: bool) {
+        let (cols, rows) = (
+            self.width.div_ceil(self.tile_size),
+            self.height.div_ceil(self.tile_size),
+        );
+        if global {
+            for &c in channels {
+                for y in 0..rows {
+                    for x in 0..cols {
+                        self.journal.mark(c, TileCoord::new(x, y));
+                    }
+                }
+            }
+            return;
+        }
+        let m = halo.div_ceil(self.tile_size);
+        if m == 0 {
+            return;
+        }
+        for &c in channels {
+            for y in coord.y.saturating_sub(m)..=(coord.y + m).min(rows - 1) {
+                for x in coord.x.saturating_sub(m)..=(coord.x + m).min(cols - 1) {
+                    self.journal.mark(c, TileCoord::new(x, y));
+                }
+            }
         }
     }
 
@@ -1598,6 +1782,7 @@ impl Document {
         }
         let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
         self.ensure_raster(index)?;
+        self.refuse_path_layer(index)?;
         self.ensure_surface(index, channel);
         if !self.layers[index].is_channel_enabled(channel) {
             return Err(CoreError::Unsupported("無効のチャンネルには描けない"));
@@ -1862,12 +2047,30 @@ impl Document {
         out: &mut [u8],
         order: RowOrder,
     ) -> Result<(), CoreError> {
+        self.composite_into_cancellable(channel, rect, out, order, None)
+    }
+
+    /// `composite_into` の、効果の評価（フィルター・Generator・画像・Anchor）を取り消せる形。cancel が立つと `Cancelled` で戻り、
+    /// 出力は書き換えない。評価し終えたブロックはキャッシュに残る（途中の画素は持たない）。
+    pub fn composite_into_cancellable(
+        &self,
+        channel: Channel,
+        rect: Rect,
+        out: &mut [u8],
+        order: RowOrder,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(), CoreError> {
         self.check_rect(rect)?;
         let kind = self.channel_kind(channel)?;
         if out.len() != rect.width as usize * rect.height as usize * 4 {
             return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
         }
-        let stack = Stack::new(&self.layers, channel, kind);
+        let eval = if rect.is_empty() {
+            eval::EvalSet::default()
+        } else {
+            self.evaluate_for_composite(channel, kind, rect, cancel)?
+        };
+        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         composite::composite_into(&stack, self.tile_size, rect, out, order);
         Ok(())
     }
@@ -1878,7 +2081,14 @@ impl Document {
             return Err(CoreError::InvalidArgument("画素が画布の外"));
         }
         let kind = self.channel_kind(channel)?;
-        let stack = Stack::new(&self.layers, channel, kind);
+        let ts = self.tile_size;
+        let eval = self.evaluate_for_composite(
+            channel,
+            kind,
+            Rect::new(x / ts * ts, y / ts * ts, 1, 1),
+            None,
+        )?;
+        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         Ok(composite::composite_pixel(&stack, x, y))
     }
 
@@ -1907,17 +2117,32 @@ impl Document {
         if since > self.journal.serial {
             return None;
         }
-        let mut v: Vec<TileCoord> = self
-            .journal
-            .tiles
-            .get(channel.index())
-            .map(|m| {
-                m.iter()
-                    .filter(|(_, &s)| s > since)
-                    .map(|(c, _)| *c)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let raw = |c: Channel| -> Vec<TileCoord> {
+            self.journal
+                .tiles
+                .get(c.index())
+                .map(|m| {
+                    m.iter()
+                        .filter(|(_, &s)| s > since)
+                        .map(|(c, _)| *c)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut v = if self.has_anchor_readers() {
+            // Anchor を読む段の出力は、読む Anchor が変わった所（段より後の半径の分だけ広げて）も変わる
+            let mut sets: HashMap<Channel, std::collections::HashSet<TileCoord>> = self
+                .channels()
+                .into_iter()
+                .map(|c| (c, raw(c).into_iter().collect()))
+                .collect();
+            self.close_over_anchor_readers(since, &mut sets);
+            sets.remove(&channel)
+                .map(|s| s.into_iter().collect())
+                .unwrap_or_default()
+        } else {
+            raw(channel)
+        };
         v.sort();
         Some(v)
     }

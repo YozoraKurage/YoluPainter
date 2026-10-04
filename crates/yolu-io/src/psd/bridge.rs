@@ -50,6 +50,20 @@ fn refuse_what_psd_cannot_hold(d: &CoreDocument, l: &CoreLayer) -> Result<()> {
         l.channel_blends().next().is_none(),
         format!("層「{name}」にチャンネルごとの合成があります。PSD の層は合成モードと不透明度を 1 組しか持てません"),
     )?;
+    // 効果（効いていない段・無効の段も）・Anchor・パス。`from_core` は層ごとに保存している元の画素を書き、効果入りの合成は統合画像
+    // だけに入るので、書けば層の画素と統合画像が食い違い、設定は PSD に残らない（マスクの段はマスクで断っている）
+    check(
+        l.filters().is_empty(),
+        format!("層「{name}」にフィルターか Generator があります。効果はまだ PSD に書けません"),
+    )?;
+    check(
+        l.anchor().is_none(),
+        format!("層「{name}」に Anchor があります。Anchor は PSD に書けません"),
+    )?;
+    check(
+        l.path().is_none(),
+        format!("層「{name}」にパスがあります。パスは PSD に書けません"),
+    )?;
     // 標準の 6 つだけでなくユーザーチャンネル（番号 6 以降）も、面・有効の印・塗りつぶしの値のどれかがあれば断る
     let mut others = l.surface_channels();
     others.extend(l.enabled_channels());

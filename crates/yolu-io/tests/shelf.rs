@@ -426,13 +426,16 @@ fn embedded_images_add_atomically_and_remap_colliding_ids() {
     assert_eq!(shelf.used_bytes(), bytes);
 }
 #[test]
-fn unsupported_filter_keeps_original_and_refuses_core_conversion() {
+fn filtered_smart_file_keeps_original_and_converts_with_its_filters() {
+    // 効果（フィルター・Generator）は core が持つので、断らずに断片へ変える。元のバイト列はそのまま持つ
     let bytes = std::fs::read(root().join("filtered.ylsmart")).unwrap();
     let file = SmartFile::read(&bytes).unwrap();
     assert_eq!(file.file_bytes(), bytes);
-    let refusal = file.to_core().unwrap_err().to_string();
-    assert!(refusal.contains("フィルター・Generator"), "{refusal}");
-    assert!(refusal.contains("layers[0].filters"), "{refusal}");
+    let material = file.to_core().unwrap();
+    assert!(
+        material.layers().iter().any(|l| !l.filters().is_empty()),
+        "フィルターを持つ層が断片に残る"
+    );
 }
 
 #[test]

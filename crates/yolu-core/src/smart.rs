@@ -23,6 +23,8 @@ pub struct SmartMaterial {
     pub(crate) tile_size: u32,
     pub(crate) layers: Vec<Layer>,
     pub(crate) channel_info: Vec<Option<ChannelInfo>>,
+    /// 捕まえるときに変わったことの知らせ（モデルの上のパスを画素だけにした、など。保存はしない）。
+    pub(crate) notes: Vec<String>,
 }
 impl SmartMaterial {
     pub fn kind(&self) -> SmartKind {
@@ -45,6 +47,10 @@ impl SmartMaterial {
     }
     pub fn pixel_bytes(&self) -> u64 {
         self.layers.iter().map(Layer::allocated_bytes).sum()
+    }
+    /// 捕まえるときに変わったことの知らせ。
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
     pub fn channels(&self) -> Vec<Channel> {
         if self.kind == SmartKind::Mask {
@@ -91,4 +97,6 @@ pub struct SmartPlaceResult {
     pub switched_off: Vec<Channel>,
     pub resampled: bool,
     pub replaced_mask: bool,
+    /// 置くときに変わったことの知らせ（ぼかし・シャープの半径を倍率に合わせた・丸めた、キャンバスのパスを画素だけにした）。
+    pub notes: Vec<String>,
 }

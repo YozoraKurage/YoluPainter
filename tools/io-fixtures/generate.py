@@ -10,6 +10,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--verify', action='store_true', help='既存の27件の.ylpをC#とRustの例で合成しPNG全バイトを比較')
 parser.add_argument('--m1', action='store_true', help='形式7とM1合成の正解データを生成')
 parser.add_argument('--m2', action='store_true', help='M2の層の正本5件と全チャンネルの合成を生成')
+parser.add_argument('--effects', action='store_true', help='効果（フィルター・Generator・Anchor・塗りつぶしの画像と投影・グラデーション・パス）の正本5件と、版9〜20の旧い正本12件、合成・層の出力・入力を生成')
+parser.add_argument('--rust-written-effects', action='store_true',
+                    help='Rustが編集APIで作って書いた効果入りの版21の正本（rust-written-effects-v21.utpaint）をUnity版の読み手に読ませ、書き直しの一致・全チャンネルの合成・層ごとの出力を記録')
 parser.add_argument('--user-channels', action='store_true',
                     help='Rustが書いた版22の正本（user-channels-v22.utpaint）をUnity版の読み手に読ませた結果を記録')
 parser.add_argument('--rust-written', action='store_true',
@@ -54,6 +57,13 @@ if args.verify:
     print('同じ.ylp 27件のC#・Rust合成PNGは、全ファイルで全バイト一致しました')
 elif args.m2:
     subprocess.run(mono + ['--m2', str(fixtures)], check=True)
+elif args.effects:
+    subprocess.run(mono + ['--effects', str(fixtures)], check=True)
+elif args.rust_written_effects:
+    subprocess.run(mono + ['--rust-written-effects', str(fixtures / 'rust-written-effects-v21.utpaint'),
+                           str(fixtures / 'rust-written-effects-v21.unity.txt'),
+                           str(fixtures / 'rust-written-effects-v21.composite'),
+                           str(fixtures / 'rust-written-effects-v21.layers')], check=True)
 elif args.user_channels:
     subprocess.run(mono + ['--unity-reads', str(fixtures / 'user-channels-v22.utpaint'),
                            str(fixtures / 'user-channels-v22.unity.txt')], check=True)

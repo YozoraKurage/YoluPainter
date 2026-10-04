@@ -2,8 +2,9 @@
 //!
 //! - 開く: yolu-io の `SaveTarget::open`（ZIP・manifest・正本を検証し、保存で外からの書き換えを見張る印を取る）で読み、セットごとに
 //!   正本（`NativeDocument`）を core の文書へ変える（`to_core`。透明の画素の RGB・文書とレイヤーの ID を保つ）。core で扱えない中身
-//!   （フィルター・Generator・パス・Anchor・塗りつぶしの画像など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
-//!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルは core が持つので描ける。
+//!   （ロック・手動の ID の色。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
+//!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルと、効果（フィルター・Generator・Anchor・
+//!   塗りつぶしの画像・グラデーション・パス）は core が持つので、描けて保存で保たれる。
 //!   読むだけのセットは、保存した合成の PNG（`composite/Color.png`）を 1 枚のレイヤーにして見せる（描けない。Live Link でも Unity に
 //!   見せる）。
 //! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書を
@@ -78,9 +79,16 @@ fn to_core(native: &NativeDocument, lang: Lang) -> Result<Document, String> {
     if !issues.is_empty() {
         return Err(lang.unsupported_features(&issues));
     }
-    native.to_core().map_err(|e| {
+    let doc = native.to_core().map_err(|e| {
         format!("{}: {}", lang.pick("core の文書にできません", "Cannot convert to a core document"), lang.io_error(&e))
-    })
+    })?;
+    // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）はまだ app から文書へ渡していない。効果が効かない（入力のまま通る）文書は、
+    // 画面にも保存した合成にも効果が出ないので、編集させず保存済みの合成を見せる（効く効果だけの文書は評価されるので編集できる）
+    let inactive = doc.inactive_effect_list();
+    if !inactive.is_empty() {
+        return Err(lang.inactive_effects(&inactive));
+    }
+    Ok(doc)
 }
 
 /// 保存した合成の PNG から、見せるだけの文書（1 枚のレイヤー）を作る。大きさが正本と違えば使わない。
@@ -476,6 +484,14 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             format!(" メッシュマップ {map_total} 枚を書きました。"),
             format!(" Wrote {map_total} mesh map(s)."),
         );
+    }
+    // 書き直したセットに入力のまま通る効果があれば、合成の PNG に入っていないことを言う（正本には設定が残る）
+    for (i, _, _) in &written {
+        let inactive = state.set_doc(*i).inactive_effect_list();
+        if !inactive.is_empty() {
+            let set = state.sets.get(*i).map_or("", |s| s.name.as_str());
+            text += &state.lang.inactive_effects_not_in_composite(set, &inactive);
+        }
     }
     if overwrite {
         let name = path

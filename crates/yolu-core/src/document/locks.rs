@@ -96,15 +96,44 @@ impl Document {
         Ok(self.effective_locks(id)?.contains(LayerLocks::TRANSPARENCY))
     }
     pub(super) fn refuse_lock(&self, id: LayerId, flag: LayerLocks) -> Result<(), CoreError> {
-        if !self.effective_locks(id)?.contains(flag) {
+        self.refuse_lock_from(id, id, flag)
+    }
+    /// 画素の中身を評価で決め直す編集（画像・グラデーション・パスの付け外し）の関門。決め直すと画素もアルファも変わるので、画像・
+    /// すべてのロックに加えて、透明部分のロックでも断る（C# の RefuseLockedPixels → RefuseLockedTransparency の順。名指しもその順）。
+    pub(super) fn ensure_pixels_rewritable(&self, id: LayerId) -> Result<(), CoreError> {
+        self.ensure_pixels_editable(id, false)?;
+        self.refuse_lock(id, LayerLocks::TRANSPARENCY)
+    }
+    /// [`Document::ensure_pixels_rewritable`] の、まだ文書に無い層（これから親 `parent` の中へ入る。自分のロックは無い）の分。
+    /// 断るときの名指しは `layer`（入る層の ID）。親のグループのロックだけが効く。
+    pub(super) fn ensure_new_layer_rewritable(
+        &self,
+        layer: LayerId,
+        parent: Option<LayerId>,
+    ) -> Result<(), CoreError> {
+        let Some(parent) = parent else {
+            return Ok(());
+        };
+        self.refuse_lock_from(layer, parent, LayerLocks::ALL)?;
+        self.refuse_lock_from(layer, parent, LayerLocks::PIXELS)?;
+        self.refuse_lock_from(layer, parent, LayerLocks::TRANSPARENCY)
+    }
+    /// `start`（層自身かその祖先）から見て `flag` が掛かっていれば断る。名指しは `named`、持ち主は `start` から祖先へ探した最初の層。
+    fn refuse_lock_from(
+        &self,
+        named: LayerId,
+        start: LayerId,
+        flag: LayerLocks,
+    ) -> Result<(), CoreError> {
+        if !self.effective_locks(start)?.contains(flag) {
             return Ok(());
         }
-        let mut holder = id;
+        let mut holder = start;
         loop {
             let l = self.layer(holder).ok_or(CoreError::LayerNotFound)?;
             if l.locks.0 & (flag.0 | 8) != 0 {
                 return Err(CoreError::LayerLocked {
-                    layer: id,
+                    layer: named,
                     holder,
                     lock: if l.locks.contains(LayerLocks::ALL) {
                         LayerLocks::ALL

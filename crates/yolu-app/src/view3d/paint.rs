@@ -936,11 +936,15 @@ fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
     )
 }
 
-/// 全部を作るときに合成するタイル: 画布全体に効く層（塗りつぶし・調整）があれば全タイル、無ければどれかの層が面を持つタイル。
+/// 全部を作るときに合成するタイル: 画布全体に効く層（塗りつぶし・調整）か、元の画素の無いタイルへ出力が広がる効果（そのチャンネルに当たる
+/// フィルター・Generator、層のマスクのフィルター。ぼかしの広がり・画素の無い層の Generator）があれば全タイル、無ければどれかの層が
+/// 面を持つタイル。全タイルを合成するのは 2D の表示と同じ見た目にするためで、透明のままのタイルも上げる（段 0 の作った直後の値と同じ）。
 fn full_rects(doc: &Document, slot: Slot, shift: u32) -> Vec<(DocRect, usize)> {
     let channel = slot.channel();
     let whole = doc.layers().iter().any(|l| {
-        matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment) && l.is_channel_enabled(channel)
+        (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment) && l.is_channel_enabled(channel))
+            || l.has_active_filters(channel)
+            || l.mask().is_some_and(|m| m.has_active_filters())
     });
     let mut coords: Vec<TileCoord> = if whole || slot == Slot::Normal && doc.derives_normal() {
         doc.canvas_tiles().collect()

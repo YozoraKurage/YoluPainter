@@ -86,20 +86,11 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
 }
 #[test]
 fn unsupported_fields_are_reported_and_original_stays_writable() {
-    // M2 で扱えるようになった項目（Normal の設定・属性・マスク・チャンネル・種類）は、もう断る項目に出ない。
-    // 断るのは core に無い機能（フィルター・パス・手動ID色・塗りつぶしの画像・グラデーション・ロック・Anchor）
+    // M2 の層と効果（フィルター・Generator・Anchor・塗りつぶしの画像・投影・グラデーション）は、もう断る項目に出ない。
+    // 断るのは core に無い機能（手動ID色・ロック）。パスも core にある
     let rich = NativeDocument::read(include_bytes!("fixtures/native-rich-v21.utpaint")).unwrap();
     let issues = rich.core_issues().join("\n");
-    for what in [
-        "filters",
-        "surface_path",
-        "canvas_path",
-        "manual_id_colors",
-        "images",
-        "gradients",
-        "locks",
-        "anchor",
-    ] {
+    for what in ["manual_id_colors", "locks"] {
         assert!(issues.contains(what), "{what}: {issues}");
     }
     for what in [
@@ -109,6 +100,12 @@ fn unsupported_fields_are_reported_and_original_stays_writable() {
         "channels[",
         "kind",
         "parent",
+        "filters",
+        "images",
+        "gradients",
+        "anchor",
+        "surface_path",
+        "canvas_path",
     ] {
         assert!(!issues.contains(what), "{what}: {issues}");
     }

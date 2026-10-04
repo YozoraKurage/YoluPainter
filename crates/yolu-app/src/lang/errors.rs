@@ -2,9 +2,10 @@
 use super::Lang;
 use crate::stencil::StencilError;
 use crate::view3d::model::ViewError;
+use yolu_core::generator::{self, anchor};
 use yolu_core::geometry::GeometryError;
 use yolu_core::skin::RigError;
-use yolu_core::CoreError;
+use yolu_core::{CoreError, InactiveEffect, InactiveReason, InactiveTarget};
 use yolu_model::ModelError;
 
 impl Lang {
@@ -18,6 +19,9 @@ impl Lang {
             ),
             CoreError::Cancelled => "Cancelled".into(),
             CoreError::LayerLocked { .. } => "Layer or parent group is locked".into(),
+            CoreError::InactiveEffect { reason, .. } => {
+                format!("Cannot bake an inactive effect: {}", self.inactive_reason(reason))
+            }
             CoreError::InvalidArgument(what) => format!("Invalid value: {}", core_reason(what)),
             CoreError::Unsupported(what) => format!("Unsupported: {}", core_reason(what)),
             CoreError::LayerNotFound => "Layer not found".into(),
@@ -121,6 +125,82 @@ impl Lang {
         }
     }
 
+    /// 効果が入力のまま通している理由（日本語は core の文、英語は種類ごとの短い文。core が理由の文だけを持つ設定の不備は一般の文）。
+    pub fn inactive_reason(self, reason: &InactiveReason) -> String {
+        use generator::Inactive as I;
+        if self == Self::Ja {
+            return reason.to_string();
+        }
+        match reason {
+            InactiveReason::Generator(I::MissingMap(k)) => format!("No {k:?} map"),
+            InactiveReason::Generator(I::StaleMap(k)) => format!("The {k:?} map was baked with other settings"),
+            InactiveReason::Generator(I::UnverifiedMap(k)) => format!("The {k:?} map cannot be verified"),
+            InactiveReason::Generator(I::MapSize(k)) => format!("The {k:?} map size differs from the texture set"),
+            InactiveReason::Generator(I::PinMismatch(k)) => format!("The {k:?} map differs from the pinned bake"),
+            InactiveReason::Generator(I::MissingFrame) => "Model root position is unknown".into(),
+            InactiveReason::Generator(I::EmptyBounds) => "Position bounds have zero size".into(),
+            InactiveReason::Generator(I::NoIdColors) => "No ID colors selected".into(),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::NotChosen)) => "No anchor chosen".into(),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::Missing)) => "The anchor to read is gone".into(),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::NotBelow)) => "The anchor is not below its layer".into(),
+            InactiveReason::Rejected(why) if why.is_ascii() => why.clone(),
+            InactiveReason::Rejected(_) => "Settings cannot be used".into(),
+        }
+    }
+
+    /// 効かない効果 1 件の 1 行（日本語は core の文、英語は層の名前・種類・理由）。
+    pub fn inactive_effect(self, effect: &InactiveEffect) -> String {
+        if self == Self::Ja {
+            return effect.to_string();
+        }
+        let what = match effect.target {
+            InactiveTarget::Generator { mask, kind } => {
+                format!("{}{}", generator_kind_name(kind), if mask { " (mask)" } else { "" })
+            }
+            InactiveTarget::FillGradient(c) => format!("gradient ({c:?})"),
+            InactiveTarget::Decal => "decal".into(),
+            InactiveTarget::FillImage(c) => format!("image ({c:?})"),
+        };
+        format!("\"{}\" {what}: {}", effect.layer_name, self.inactive_reason(&effect.reason))
+    }
+
+    /// 効かない効果があって編集できない理由の文（初めの 3 つと数）。
+    pub fn inactive_effects(self, effects: &[InactiveEffect]) -> String {
+        let shown = effects.iter().take(3).map(|e| self.inactive_effect(e)).collect::<Vec<_>>();
+        let more = effects.len().saturating_sub(3);
+        match self {
+            Self::Ja => {
+                let mut text = shown.join("、");
+                if more > 0 {
+                    text += &format!(" ほか {more} 件");
+                }
+                format!("効かない効果がある（{text}）")
+            }
+            Self::En => {
+                let mut text = shown.join("; ");
+                if more > 0 {
+                    text += &format!(" and {more} more");
+                }
+                format!("Inactive effects ({text})")
+            }
+        }
+    }
+
+    /// 保存で書き直したセットの効かない効果が、合成の PNG に入っていないことの知らせ（正本には設定が残る）。初めの 1 件の理由を添える。
+    pub fn inactive_effects_not_in_composite(self, set: &str, effects: &[InactiveEffect]) -> String {
+        let first = effects.first().map(|e| self.inactive_effect(e)).unwrap_or_default();
+        match self {
+            Self::Ja => format!(
+                " 「{set}」の効いていない効果 {} 件は合成の PNG に入っていません: {first}。",
+                effects.len()
+            ),
+            Self::En => format!(
+                " {} inactive effect(s) in \"{set}\" are not in the composite PNG: {first}.",
+                effects.len()
+            ),
+        }
+    }
+
     /// 文書を core へ変換できない項目の一覧の文（初めの 3 つと数）。項目のキーは英数字なので、英語の窓にもそのまま出す。
     pub fn unsupported_features(self, issues: &[String]) -> String {
         let shown = issues.iter().take(3).map(|i| self.pick(i.as_str(), issue_key(i))).collect::<Vec<_>>();
@@ -147,6 +227,20 @@ impl Lang {
 /// 項目の説明（`layers[2].filters（フィルター・Generator）`）から、英数字のキーだけ。
 fn issue_key(issue: &str) -> &str {
     issue.split('（').next().unwrap_or(issue)
+}
+
+/// Generator の種類の英語の名前（日本語は core の `generator_kind_name`）。
+fn generator_kind_name(kind: generator::Kind) -> &'static str {
+    match kind {
+        generator::Kind::EdgeWear => "Edge wear",
+        generator::Kind::Dirt => "Dirt",
+        generator::Kind::PositionGradient => "Position gradient",
+        generator::Kind::Thickness => "Thickness",
+        generator::Kind::Direction => "Direction",
+        generator::Kind::ShapeGradient => "Shape gradient",
+        generator::Kind::IdColor => "ID color",
+        generator::Kind::Anchor => "Anchor",
+    }
 }
 
 fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
@@ -303,6 +397,76 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "移動先のグループ" => "Destination group",
         "未知のロック" => "Unknown lock",
         "結合は 2 層以上" => "Merging requires at least two layers",
+        "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
+        "Anchor の Generator ではない" => "Not an anchor generator",
+        "Anchor の ID が空" => "Anchor ID is empty",
+        "Anchor の ID が空か重なっている" => "Anchor ID is empty or duplicated",
+        "Anchor の ID が重なっている" => "Anchor ID is duplicated",
+        "Anchor の名前が空" => "Anchor name is empty",
+        "Anchor の名前が長すぎる" => "Anchor name is too long",
+        "Anchor は Normal を読めない" => "An anchor cannot read Normal",
+        "Generator ではない" => "Not a generator",
+        "Generator の設定" => "Generator settings",
+        "Generator は 1 画素に 1 つの値を作るので、接空間の法線には置けない" => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
+        "Generator は generator の設定で置く" => "A generator is placed with generator settings",
+        "グラデーションの設定" => "Gradient settings",
+        "グループの合成へのフィルターは無い" => "Groups have no filters on their composite",
+        "このマスクにはもう Anchor がある" => "This mask already has an anchor",
+        "この層にはもう Anchor がある" => "This layer already has an anchor",
+        "スタックの到達半径の合計が 512 画素を超える" => "Total reach of the stack exceeds 512 pixels",
+        "その Anchor が無い" => "Anchor not found",
+        "そのチャンネルにグラデーションが無い" => "The channel has no gradient",
+        "その層にそのフィルターが無い" => "The layer has no such filter",
+        "パスが参照する三角形が無い" => "The path refers to a missing triangle",
+        "パスで描かれたチャンネルは無効にできない" => "Cannot disable a channel drawn by a path",
+        "パスで描かれた層には手で描けない" => "Cannot paint by hand on a path layer",
+        "パスで描けるのはラスターの層だけ" => "Paths require a raster layer",
+        "パスのチャンネルが層で有効でない" => "The path channel is not enabled on the layer",
+        "パスのチャンネルの面が層に無い" => "The layer has no surface for the path channel",
+        "パスを付けられるのはパスの無いラスターの層だけ" => "A path needs a raster layer without a path",
+        "フィルターの ID" => "Filter ID",
+        "フィルターの ID が空" => "Filter ID is empty",
+        "フィルターの ID が空か重なっている" => "Filter ID is empty or duplicated",
+        "フィルターの ID が重なっている" => "Filter ID is duplicated",
+        "フィルターのチャンネル" => "Filter channels",
+        "フィルターのチャンネルが選ばれていない" => "No filter channel selected",
+        "フィルターのチャンネルが重なっている" => "Filter channels are duplicated",
+        "フィルターの設定" => "Filter settings",
+        "ブラシの間隔に対してパスが長すぎる" => "The path is too long for the brush spacing",
+        "プロジェクトにその画像が無い" => "The project has no such image",
+        "マスクが無い" => "No mask",
+        "マスクのフィルターのチャンネル" => "Mask filter channels",
+        "マスクのフィルターはチャンネルを持たない" => "Mask filters have no channels",
+        "マスクのフィルターはチャンネルを持たない（マスクは全チャンネルで共有）" => "Mask filters have no channels (a mask is shared by all channels)",
+        "マスクの無い層のマスクには Anchor を置けない" => "Cannot place a mask anchor on a layer without a mask",
+        "マップの境界箱" => "Map bounding box",
+        "マップの大きさと長さが合わない" => "Map size and length do not match",
+        "マップの幅" => "Map width",
+        "マップの条件の鍵" => "Map condition key",
+        "マップの高さ" => "Map height",
+        "メッシュマップの種類" => "Mesh map kind",
+        "モデルの位置・回転" => "Model position and rotation",
+        "モデルの指紋がパスを作ったときと違う" => "The model fingerprint differs from when the path was made",
+        "予算が今のフィルターの要る量より小さい" => "Budget is smaller than the current filters need",
+        "効果（フィルター・画像・グラデーション）は標準のチャンネルだけに置ける" => "Effects (filters, images, gradients) can only be placed on standard channels",
+        "塗りつぶしのグラデーションのチャンネル" => "Fill gradient channel",
+        "塗りつぶしのグラデーションはランプ付きの形のグラデーション" => "A fill gradient is a shape gradient with a ramp",
+        "塗りつぶしのグラデーションは置き換え" => "A fill gradient replaces",
+        "塗りつぶしの入力" => "Fill input",
+        "塗りつぶしの層だけが持つ" => "Only fill layers have this",
+        "塗りつぶしの画像のチャンネルか ID" => "Fill image channel or ID",
+        "層のパスはチャンネルを変えない" => "A layer path does not change its channel",
+        "層のパスは種類（モデルの上かキャンバスの上か）を変えない" => "A layer path does not change its kind (model or canvas)",
+        "形のグラデーションは色かスカラーで、法線ではない" => "A shape gradient is a color or scalar, not a normal",
+        "投影の値" => "Projection values",
+        "描いた面のチャンネルが重なっている" => "Painted surface channels are duplicated",
+        "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ" => "One painted surface per path channel, at the document size",
+        "画像の ID が空" => "Image ID is empty",
+        "画像の大きさ" => "Image size",
+        "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
+        "自分の層の Anchor を読む Generator（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
+        "調整の層には画素が無い" => "Adjustment layers have no pixels",
+        "面のダブを拒否した" => "The surface dab was refused",
         _ => return None,
     })
 }
@@ -457,6 +621,92 @@ mod tests {
             assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
         }
         assert!(english.last().unwrap().contains('7'));
+    }
+
+    /// 効かない効果の理由（どの種類のマップ・Anchor が使えないか）と 1 行の文・知らせが、画面の言語で出る。
+    #[test]
+    fn inactive_effects_are_told_in_both_languages() {
+        use yolu_core::generator::{Inactive as I, Kind, MapKind};
+        use yolu_core::{Channel, LayerId};
+        let reasons = [
+            InactiveReason::Generator(I::MissingMap(MapKind::Thickness)),
+            InactiveReason::Generator(I::StaleMap(MapKind::Position)),
+            InactiveReason::Generator(I::UnverifiedMap(MapKind::WorldNormal)),
+            InactiveReason::Generator(I::MapSize(MapKind::Curvature)),
+            InactiveReason::Generator(I::PinMismatch(MapKind::Curvature)),
+            InactiveReason::Generator(I::MissingFrame),
+            InactiveReason::Generator(I::EmptyBounds),
+            InactiveReason::Generator(I::NoIdColors),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::NotChosen)),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::Missing)),
+            InactiveReason::Generator(I::Anchor(anchor::Issue::NotBelow)),
+            InactiveReason::Rejected("ASCII reason".into()),
+            InactiveReason::Rejected("範囲外の値".into()),
+        ];
+        let english: Vec<String> = reasons.iter().map(|r| Lang::En.inactive_reason(r)).collect();
+        for (i, (reason, en)) in reasons.iter().zip(&english).enumerate() {
+            assert_eq!(Lang::Ja.inactive_reason(reason), reason.to_string());
+            assert!(en.is_ascii() && !en.is_empty(), "{en}");
+            assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
+        }
+        assert!(english[0].contains("Thickness") && english[4].contains("pinned"));
+        // 結合の断りの文は、断った理由を言語ごとに運ぶ
+        let refused = CoreError::InactiveEffect { layer: LayerId(1), mask: false, reason: Box::new(reasons[0].clone()) };
+        assert_eq!(Lang::Ja.core_error(&refused), refused.to_string());
+        assert_eq!(Lang::En.core_error(&refused), "Cannot bake an inactive effect: No Thickness map");
+        // 1 行の文: 層の名前は利用者の文字列なのでそのまま、種類と理由は英語
+        let effects = [
+            InactiveEffect {
+                layer: LayerId(1),
+                layer_name: "Top".into(),
+                target: InactiveTarget::Generator { mask: false, kind: Kind::EdgeWear },
+                reason: reasons[0].clone(),
+            },
+            InactiveEffect {
+                layer: LayerId(1),
+                layer_name: "Top".into(),
+                target: InactiveTarget::Generator { mask: true, kind: Kind::Anchor },
+                reason: reasons[8].clone(),
+            },
+            InactiveEffect {
+                layer: LayerId(2),
+                layer_name: "Fill".into(),
+                target: InactiveTarget::FillGradient(Channel::Color),
+                reason: reasons[1].clone(),
+            },
+            InactiveEffect {
+                layer: LayerId(2),
+                layer_name: "Fill".into(),
+                target: InactiveTarget::Decal,
+                reason: reasons[5].clone(),
+            },
+            InactiveEffect {
+                layer: LayerId(2),
+                layer_name: "Fill".into(),
+                target: InactiveTarget::FillImage(Channel::Roughness),
+                reason: reasons[3].clone(),
+            },
+        ];
+        let lines: Vec<String> = effects.iter().map(|e| Lang::En.inactive_effect(e)).collect();
+        for (i, (effect, line)) in effects.iter().zip(&lines).enumerate() {
+            assert_eq!(Lang::Ja.inactive_effect(effect), effect.to_string());
+            assert!(line.is_ascii() && line.contains(&effect.layer_name), "{line}");
+            assert!(lines[i + 1..].iter().all(|other| other != line), "{line}");
+        }
+        assert_eq!(lines[0], "\"Top\" Edge wear: No Thickness map");
+        assert_eq!(lines[1], "\"Top\" Anchor (mask): No anchor chosen");
+        assert!(lines[2].contains("gradient (Color)") && lines[3].contains("decal") && lines[4].contains("image (Roughness)"));
+        // 編集できない理由は初めの 3 つと数。日本語は core の文をそのまま並べる
+        let ja = Lang::Ja.inactive_effects(&effects);
+        assert!(ja.starts_with("効かない効果がある（") && ja.contains(&effects[0].to_string()) && ja.ends_with("ほか 2 件）"), "{ja}");
+        let en = Lang::En.inactive_effects(&effects);
+        assert_eq!(en, format!("Inactive effects ({}; {}; {} and 2 more)", lines[0], lines[1], lines[2]));
+        assert_eq!(Lang::En.inactive_effects(&effects[..1]), format!("Inactive effects ({})", lines[0]));
+        // 保存の知らせは、書き直したセットの名前と件数と初めの理由
+        let ja = Lang::Ja.inactive_effects_not_in_composite("Skin", &effects);
+        assert!(ja.contains("「Skin」") && ja.contains("5 件") && ja.contains("合成の PNG に入っていません") && ja.contains(&effects[0].to_string()), "{ja}");
+        let en = Lang::En.inactive_effects_not_in_composite("Skin", &effects);
+        assert_eq!(en, format!(" 5 inactive effect(s) in \"Skin\" are not in the composite PNG: {}.", lines[0]));
     }
 
     #[test]

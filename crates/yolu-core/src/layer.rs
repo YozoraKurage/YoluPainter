@@ -9,7 +9,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::adjust::AdjustmentSettings;
+use crate::effects::{Anchor, FilterEffect, ImageId, LayerPath};
 use crate::error::CoreError;
+use crate::fill_image::Projection;
+use crate::generator;
 use crate::math::UNIT;
 use crate::surface::Surface;
 use crate::types::{BlendMode, Channel, LayerKind, Rgba8};
@@ -54,6 +57,10 @@ pub struct RasterMask {
     pub(crate) enabled: bool,
     pub(crate) inverted: bool,
     pub(crate) density: f64,
+    /// マスクのフィルターのスタック（隠す量にかける。下から上の順に当たる。全チャンネルで共有し、層の画素のスタックとは別）。
+    pub(crate) filters: Vec<FilterEffect>,
+    /// このマスクにある Anchor（マスクを外すと一緒に無くなる）。
+    pub(crate) anchor: Option<Anchor>,
 }
 
 impl RasterMask {
@@ -63,7 +70,21 @@ impl RasterMask {
             enabled: true,
             inverted: false,
             density: 1.0,
+            filters: Vec::new(),
+            anchor: None,
         }
+    }
+    /// マスクのフィルターのスタック（下から上。最初が先に当たる）。
+    pub fn filters(&self) -> &[FilterEffect] {
+        &self.filters
+    }
+    /// マスクの Anchor（マスクが層を見せる量。上の層の Generator が読む）。
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
+    }
+    /// 結果を変えるフィルターの段（有効で強さが 0 より大きい）があるか。
+    pub fn has_active_filters(&self) -> bool {
+        self.filters.iter().any(FilterEffect::is_active)
     }
     /// 隠す量の面（アルファ = 隠す量 0〜255、RGB は 0）。
     pub fn surface(&self) -> &Surface {
@@ -96,9 +117,12 @@ impl RasterMask {
     pub fn factor_at(&self, x: u32, y: u32) -> Result<f64, CoreError> {
         Ok(self.factor(self.surface.pixel(x, y)?.a))
     }
-    /// どの画素も変えないか: 無効・濃度 0・または何も隠さず反転もしない（このときの値はちょうど 1）。
+    /// どの画素も変えないか: 無効・濃度 0・または何も隠さず反転もしない（このときの値はちょうど 1）。有効なフィルターの段があれば、
+    /// 空のマスクからも値ができる（反転・ノイズなど）ので、変えないとは言えない。
     pub fn is_neutral(&self) -> bool {
-        !self.enabled || self.density == 0.0 || (!self.inverted && self.surface.tile_count() == 0)
+        !self.enabled
+            || self.density == 0.0
+            || (!self.inverted && self.surface.tile_count() == 0 && !self.has_active_filters())
     }
     /// 隠す量の 256 の表（`factor` そのものの値）。
     pub(crate) fn factor_table(&self) -> [f64; 256] {
@@ -134,6 +158,18 @@ pub struct Layer {
     pub(crate) mask: Option<RasterMask>,
     /// チャンネルごとの合成（空の設定は持たない）。
     pub(crate) blends: BTreeMap<Channel, ChannelBlend>,
+    /// 層の画素のフィルターのスタック（下から上。各段が適用するチャンネルを持つ。ラスターと塗りつぶしだけ）。
+    pub(crate) filters: Vec<FilterEffect>,
+    /// この層にある Anchor（その層までのスタックの結果）。
+    pub(crate) anchor: Option<Anchor>,
+    /// 塗りつぶしのチャンネルごとの画像（プロジェクトの画像リソースの ID。そのチャンネルの値は画像が使えない所に出る）。
+    pub(crate) fill_images: BTreeMap<Channel, ImageId>,
+    /// 塗りつぶしの画像の投影（層で 1 つ。画像が無くてもデカールは投影を使う）。
+    pub(crate) projection: Projection,
+    /// 塗りつぶしのチャンネルごとのグラデーション（ランプ付きの形のグラデーションの Generator。置き換え）。
+    pub(crate) fill_gradients: BTreeMap<Channel, generator::Settings>,
+    /// 層の画素を描くパス（ラスターだけ。対象のチャンネルの画素はパスから描いた結果）。
+    pub(crate) path: Option<LayerPath>,
 }
 
 impl Layer {
@@ -158,6 +194,12 @@ impl Layer {
             adjustment: None,
             mask: None,
             blends: BTreeMap::new(),
+            filters: Vec::new(),
+            anchor: None,
+            fill_images: BTreeMap::new(),
+            projection: Projection::default(),
+            fill_gradients: BTreeMap::new(),
+            path: None,
         }
     }
 
@@ -285,6 +327,73 @@ impl Layer {
         } else {
             self.blends.insert(channel, blend);
         }
+    }
+
+    /// 層の画素のフィルターのスタック（下から上。最初が先に当たる）。
+    pub fn filters(&self) -> &[FilterEffect] {
+        &self.filters
+    }
+    /// そのチャンネルに当たる有効な段（スタックの順）。
+    pub(crate) fn active_chain(&self, channel: Channel) -> Vec<&FilterEffect> {
+        self.filters
+            .iter()
+            .filter(|e| e.is_active() && e.applies_to(channel))
+            .collect()
+    }
+    pub fn has_active_filters(&self, channel: Channel) -> bool {
+        self.filters
+            .iter()
+            .any(|e| e.is_active() && e.applies_to(channel))
+    }
+    /// 層の画素を描いているパス（無ければ None）。
+    pub fn path(&self) -> Option<&LayerPath> {
+        self.path.as_ref()
+    }
+    /// この層の Anchor（その層までのスタックの結果）。
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
+    }
+    /// 塗りつぶしのチャンネルが読む画像（無ければ None）。
+    pub fn fill_image(&self, channel: Channel) -> Option<ImageId> {
+        self.fill_images.get(&channel).copied()
+    }
+    /// 画像を持つチャンネルと画像（番号の順）。
+    pub fn fill_images(&self) -> impl Iterator<Item = (Channel, ImageId)> + '_ {
+        self.fill_images.iter().map(|(c, i)| (*c, *i))
+    }
+    /// 塗りつぶしの画像の投影。
+    pub fn projection(&self) -> &Projection {
+        &self.projection
+    }
+    /// 塗りつぶしのチャンネルのグラデーション。
+    pub fn fill_gradient(&self, channel: Channel) -> Option<&generator::Settings> {
+        self.fill_gradients.get(&channel)
+    }
+    /// グラデーションを持つチャンネルと設定（番号の順）。
+    pub fn fill_gradients(&self) -> impl Iterator<Item = (Channel, &generator::Settings)> + '_ {
+        self.fill_gradients.iter().map(|(c, g)| (*c, g))
+    }
+    /// 投影がデカールの塗りつぶしか。
+    pub fn is_decal(&self) -> bool {
+        self.kind == LayerKind::Fill
+            && self.projection.mode == crate::fill_image::ProjectionMode::Decal
+    }
+    /// 画素が投影から来る塗りつぶしのチャンネルか: 画像のあるチャンネルと、デカールの値のある全チャンネル（C# の `IsProjectedFill`）。
+    pub(crate) fn is_projected_fill(&self, channel: Channel) -> bool {
+        self.kind == LayerKind::Fill
+            && (self.fill_images.contains_key(&channel)
+                || self.is_decal() && self.fill.contains_key(&channel))
+    }
+    /// 層のそのチャンネルの画素が、保存した値でなく評価で決まるか（有効なフィルター・グラデーション・投影。C# の `HasEvaluatedOutput`）。
+    pub fn has_evaluated_output(&self, channel: Channel) -> bool {
+        self.has_active_filters(channel)
+            || self.kind == LayerKind::Fill && self.fill_gradients.contains_key(&channel)
+            || self.is_projected_fill(channel)
+    }
+    /// 塗りつぶしが焼いたメッシュマップ・画像を読むか（C# の `ReadsMeshMapsForFill` と、画像の層）。
+    pub(crate) fn reads_inputs_for_fill(&self) -> bool {
+        self.kind == LayerKind::Fill
+            && (!self.fill_gradients.is_empty() || !self.fill_images.is_empty() || self.is_decal())
     }
 
     /// そのチャンネルについて何かを持つか: 有効の印・面・塗りつぶしの値・チャンネルごとの合成のどれか。無効にしても面・値・合成は

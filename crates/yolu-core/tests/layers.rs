@@ -1378,3 +1378,30 @@ fn a_plain_stack_is_raster_layers_without_groups_masks_or_channel_blends() {
     d.add_fill_layer("f", &[], None).unwrap();
     assert!(!d.is_plain_stack());
 }
+
+#[test]
+fn a_raster_layer_with_an_active_filter_is_not_a_plain_stack() {
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let mut d = Document::with_tile_size(8, 8, 8).unwrap();
+    let a = d.add_layer("a").unwrap();
+    let f = d
+        .add_filter(
+            a,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::blur(2)),
+        )
+        .unwrap();
+    assert!(
+        !d.is_plain_stack(),
+        "評価済みの効果を読まない合成では同じ絵にならない"
+    );
+    d.set_filter_enabled(a, f, false).unwrap();
+    assert!(d.is_plain_stack(), "無効なフィルターは結果を変えない");
+    d.set_filter_enabled(a, f, true).unwrap();
+    d.set_filter_strength(a, f, 0.0, false).unwrap();
+    assert!(d.is_plain_stack(), "強さ 0 のフィルターは結果を変えない");
+    d.set_filter_strength(a, f, 0.5, false).unwrap();
+    assert!(!d.is_plain_stack());
+    d.remove_filter(a, f).unwrap();
+    assert!(d.is_plain_stack());
+}

@@ -16,6 +16,7 @@ use rayon::prelude::*;
 
 use crate::adjust::AdjustKernel;
 use crate::blend::{blend, blend_rgb, clip_onto, fade, separable_table, MIN_SHORTCUT_ALPHA};
+use crate::document::EvalSet;
 use crate::layer::{Layer, LayerId};
 use crate::math::{to_byte, UNIT};
 use crate::normal;
@@ -57,10 +58,17 @@ pub(crate) struct Stack<'a> {
     children: std::collections::HashMap<Option<LayerId>, Vec<usize>>,
     channel: Channel,
     kind: ChannelKind,
+    /// 評価した層の出力（フィルター・Generator・画像・グラデーションを通したもの）。あれば、元の画素の代わりに読む。
+    eval: Option<&'a EvalSet>,
 }
 
 impl<'a> Stack<'a> {
-    pub(crate) fn new(layers: &'a [Layer], channel: Channel, kind: ChannelKind) -> Self {
+    pub(crate) fn new(
+        layers: &'a [Layer],
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a EvalSet>,
+    ) -> Self {
         let mut children: std::collections::HashMap<Option<LayerId>, Vec<usize>> =
             std::collections::HashMap::new();
         for (i, l) in layers.iter().enumerate() {
@@ -71,6 +79,33 @@ impl<'a> Stack<'a> {
             children,
             channel,
             kind,
+            eval,
+        }
+    }
+
+    /// 層（番号）の評価済みの出力の面（評価が要らない層は None）。
+    fn evaluated_content(&self, layer: usize) -> Option<&'a Surface> {
+        self.eval.and_then(|e| e.content.get(&layer))
+    }
+    /// 層のマスクの評価済みの隠す量の面（マスクにフィルターが無ければ None）。
+    fn evaluated_mask(&self, layer: usize) -> Option<&'a Surface> {
+        self.eval.and_then(|e| e.masks.get(&layer))
+    }
+    /// 層の画素（マスク・不透明度・合成の前。評価した出力があればそれ）。
+    pub(crate) fn layer_pixel(&self, layer: usize, x: u32, y: u32) -> Rgba8 {
+        match self.evaluated_content(layer) {
+            Some(s) => s.pixel(x, y).unwrap_or(Rgba8::TRANSPARENT),
+            None => self.layers[layer].pixel_or_transparent(self.channel, x, y),
+        }
+    }
+    /// 層のマスクが層のアルファに掛ける値。
+    pub(crate) fn mask_factor(&self, layer: usize, x: u32, y: u32) -> f64 {
+        match &self.layers[layer].mask {
+            None => 1.0,
+            Some(m) => {
+                let surface = self.evaluated_mask(layer).unwrap_or(&m.surface);
+                m.factor(surface.pixel(x, y).map_or(0, |p| p.a))
+            }
         }
     }
 
@@ -201,13 +236,6 @@ fn stack_fade(normal: bool, backdrop: Rgba8, inner: Rgba8, amount: f64) -> Rgba8
     }
 }
 
-fn mask_factor_at(layer: &Layer, x: u32, y: u32) -> f64 {
-    match &layer.mask {
-        None => 1.0,
-        Some(m) => m.factor(m.surface.pixel(x, y).map_or(0, |p| p.a)),
-    }
-}
-
 pub(crate) fn evaluate_pixel(
     stack: &Stack<'_>,
     plan: &[Entry],
@@ -220,7 +248,7 @@ pub(crate) fn evaluate_pixel(
     let mut result = backdrop;
     for entry in plan {
         let layer = &layers[entry.layer];
-        let amount = entry.opacity * mask_factor_at(layer, x, y);
+        let amount = entry.opacity * stack.mask_factor(entry.layer, x, y);
         if layer.kind == LayerKind::Adjustment {
             let a = layer.adjustment.as_ref().expect("調整の層は設定を持つ");
             result = a.composite(result, amount, entry.mode);
@@ -234,11 +262,11 @@ pub(crate) fn evaluate_pixel(
         let mut group = if layer.is_group() {
             evaluate_pixel(stack, &entry.children, Rgba8::TRANSPARENT, x, y)
         } else {
-            layer.pixel_or_transparent(stack.channel, x, y)
+            stack.layer_pixel(entry.layer, x, y)
         };
         for clip in &entry.clips {
             let c = &layers[clip.layer];
-            let clip_amount = clip.opacity * mask_factor_at(c, x, y);
+            let clip_amount = clip.opacity * stack.mask_factor(clip.layer, x, y);
             if c.kind == LayerKind::Adjustment {
                 let a = c.adjustment.as_ref().expect("調整の層は設定を持つ");
                 group = a.composite(group, clip_amount, clip.mode);
@@ -246,7 +274,7 @@ pub(crate) fn evaluate_pixel(
                 let over = if c.is_group() {
                     evaluate_pixel(stack, &clip.children, Rgba8::TRANSPARENT, x, y)
                 } else {
-                    c.pixel_or_transparent(stack.channel, x, y)
+                    stack.layer_pixel(clip.layer, x, y)
                 };
                 group = stack_clip(normal, group, over, clip_amount, clip.blend_mode());
             }
@@ -557,14 +585,19 @@ impl<'a> Plan<'a> {
         let layers: &'a [Layer] = stack.layers;
         let layer: &'a Layer = &layers[e.layer];
         let content = match layer.kind {
-            LayerKind::Raster => {
-                Content::Raster(layer.surface(stack.channel).expect("計画の層は面を持つ"))
-            }
-            LayerKind::Fill => Content::Fill(
-                layer
-                    .fill_value(stack.channel)
-                    .filter(|c| *c != Rgba8::TRANSPARENT),
+            LayerKind::Raster => Content::Raster(
+                stack
+                    .evaluated_content(e.layer)
+                    .unwrap_or_else(|| layer.surface(stack.channel).expect("計画の層は面を持つ")),
             ),
+            LayerKind::Fill => match stack.evaluated_content(e.layer) {
+                Some(surface) => Content::Raster(surface),
+                None => Content::Fill(
+                    layer
+                        .fill_value(stack.channel)
+                        .filter(|c| *c != Rgba8::TRANSPARENT),
+                ),
+            },
             LayerKind::Adjustment => Content::Adjust(
                 layer
                     .adjustment
@@ -575,11 +608,12 @@ impl<'a> Plan<'a> {
             LayerKind::Group => Content::Group,
         };
         let mode = e.blend_mode();
-        let mask = layer
-            .mask
-            .as_ref()
-            .filter(|m| !m.is_neutral())
-            .map(|m| (&m.surface, Box::new(m.factor_table())));
+        let mask = layer.mask.as_ref().filter(|m| !m.is_neutral()).map(|m| {
+            (
+                stack.evaluated_mask(e.layer).unwrap_or(&m.surface),
+                Box::new(m.factor_table()),
+            )
+        });
         let id = self.nodes.len();
         self.nodes.push(Node {
             content,

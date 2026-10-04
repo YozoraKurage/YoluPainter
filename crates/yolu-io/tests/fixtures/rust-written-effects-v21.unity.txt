@@ -1,0 +1,5 @@
+DocumentBinary.CurrentVersion: 21
+DocumentBinary.ReadId: OK
+DocumentBinary.Read: OK
+DocumentBinary.Write(Read) == input: True
+Layers: 10

@@ -1869,14 +1869,16 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
     let dir = temp_dir("unsupported");
     let pinned = dir.join("pinned.ylsmart");
     std::fs::write(&pinned, generator_pinned_bytes()).unwrap();
-    // 本物の入力: フィルター（Unity 版で作れて core に無い中身）と、Generator の再固定
+    // フィルター入りの素材は、効果の層が core に入ってから置ける（前は core で扱えない中身として断っていた）
+    {
+        let mut s = AppState::new(16, 16);
+        s.apply(Action::Shelf(ShelfOp::ImportFile(fixtures().join("filtered.ylsmart"))));
+        let id = ids(&s, "smartMaterial").pop().expect(&s.message);
+        s.shelf.inspect_pending(10);
+        assert_eq!(s.shelf.block_of(&id), None, "フィルター入りは置ける");
+    }
+    // 本物の入力: Generator の再固定
     for (file, block, ja, en) in [
-        (
-            fixtures().join("filtered.ylsmart"),
-            "unsupported",
-            "core で扱えない中身（layers[0].filters（フィルター・Generator））",
-            "Unsupported document features (layers[0].filters)",
-        ),
         (
             pinned.clone(),
             "generators",
@@ -2684,7 +2686,7 @@ mod ui {
     }
 
     #[test]
-    fn a_smart_asset_core_cannot_hold_is_marked_and_cannot_be_placed_from_the_panel() {
+    fn a_smart_asset_with_filters_can_be_placed_from_the_panel() {
         let mut h = window();
         apply(
             &mut h,
@@ -2693,23 +2695,10 @@ mod ui {
         h.run();
         h.run();
         let id = st(&h).shelf.selected.clone().unwrap();
-        // 一覧に警告の印がつく（棚が持つ判断。画面はこれで印を描く）。理由は「読めません」ではなく、core が持てない中身
-        assert!(matches!(
-            st(&h).shelf.block_of(&id),
-            Some(Block::Unsupported(_))
-        ));
-        assert!(st(&h).shelf.warns(&id));
-        assert!(h.get_by_label("置く").accesskit_node().is_disabled());
-        // 置けず、文書は変わらない（ダブルクリックでも）
-        let layers = st(&h).doc.layers().len();
-        h.get_by_label("スマートマテリアル").click();
-        h.run();
-        let at = card(&h, "フィルター付き").center();
-        double_click(&mut h, at);
-        assert_eq!(st(&h).doc.layers().len(), layers);
-        // 理由は名前の帯とツールチップに出る（置く操作そのものは始めない）
-        let reason = st(&h).shelf.block_of(&id).unwrap().reason(Lang::Ja);
-        assert!(reason.contains("core で扱えない中身"), "{reason}");
+        // 効果の層が core に入ったので、フィルター入りの素材は印なしで置ける
+        assert_eq!(st(&h).shelf.block_of(&id), None);
+        assert!(!st(&h).shelf.warns(&id));
+        assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
         // 種類で置けないブラシには印を付けない（名前の帯に理由を出す）
         let brush = st(&h)
             .shelf

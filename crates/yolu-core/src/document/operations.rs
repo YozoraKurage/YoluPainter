@@ -1,6 +1,7 @@
 //! 複数操作を準備用の文書で実行し、成功した状態だけを 1 段で交換する。
 use super::{Command, Document};
-use crate::{CoreError, Layer, LayerId, NormalSettings};
+use crate::surface::{Surface, Tile};
+use crate::{CoreError, Layer, LayerId, NormalSettings, TileCoord};
 
 /// 交換が合成を変え得る範囲。変化の記録（`changed_tiles`）の印を、交換の前後の両方で付ける範囲を決める。
 #[derive(Clone, Debug)]
@@ -48,6 +49,9 @@ impl State {
             // 交換しない: 手動の ID 色（塊の番号と色の結び付け）は画素でも層でもなく、層の操作・変形・サイズ変更では変わらない
             // （C# の Resampled は別の文書を返すので持ち越さないが、Rust は同じ文書の中で交換するので値がそのまま残る）
             id_colors: _,
+            // 交換しない: 効果の入力・予算・評価のキャッシュ・元画素の時計は本物の文書のもの。交換で入る層の出力は、`swap_state` が前後の
+            // 両方で層に印を付けて作り直させる（準備用の文書の時計は本物と別の数え方なので、持ち込むと別の内容に同じ鍵が付き得る）
+            effects: _,
             // 交換しない: 準備用の文書の履歴・進行中のストローク・変化の記録・予算は本物の文書のもの
             undo: _,
             redo: _,
@@ -92,6 +96,10 @@ impl Document {
             source_budget,
             stroke_budget,
             id_counter,
+            // 効果は入力と予算・ブロックの大きさだけ写す（下で）。写さない: 評価のキャッシュ・元画素の時計・Anchor の解決の署名。準備用の
+            // 文書は使い捨てで、時計は 0 から数え直す。本物のキャッシュや時計を共有すると、準備の中で進んだ時計の値が本物の別の編集と
+            // 重なったとき、別の内容に同じ鍵が付いて古い出力を新しいものと取り違える
+            effects,
             // 写さない: 進行中のマテリアルのストロークと三角形の塗り（準備の中では始めない）、手動の ID 色（準備の操作は読まず、
             // 交換もしない）
             material: _,
@@ -123,6 +131,15 @@ impl Document {
         d.stroke_budget = *stroke_budget;
         d.undo_budget = u64::MAX;
         d.id_counter = *id_counter;
+        // 準備の中で段を足す・合成して前後を比べる（結合・変形・大きさの変更）ので、画像・メッシュマップ・モデルのルートが無いと、
+        // 本物では効く Generator や画像が入力のまま通り、本物と違う見た目で比べてしまう。予算は、準備の中の段の検査（到達半径・
+        // 作業メモリ）を本物と同じ決まりにする
+        d.effects.inputs = effects.inputs.clone();
+        d.effects.inputs_revision = effects.inputs_revision;
+        d.effects.working_budget = effects.working_budget;
+        d.effects.cache_budget = effects.cache_budget;
+        d.effects.image_cache_budget = effects.image_cache_budget;
+        d.effects.block_pixels = effects.block_pixels;
         Ok(d)
     }
     pub(super) fn commit_copy(
@@ -155,16 +172,106 @@ impl Document {
         // 交換の前は文書にある側と段が持つ側（これから文書へ入る層）、後は入れ替わった側に印を付ける。どちらかの時点で
         // 文書の中にある層は、グループの中身も含めて印が付く。
         self.mark_dirty(&state.dirty, &state.layers);
+        let resized = self.width != state.width || self.height != state.height;
         std::mem::swap(&mut self.layers, &mut state.layers);
         std::mem::swap(&mut self.width, &mut state.width);
         std::mem::swap(&mut self.height, &mut state.height);
+        if resized {
+            // 画布の大きさが変わると、元の画素の無い層（Generator・塗りつぶし）の出力の鍵（時計）は変わらないまま内容が変わる:
+            // 評価済みのものを全部捨てる
+            self.effects.generation += 1;
+            self.release_effect_cache();
+        }
         std::mem::swap(&mut self.normal_settings, &mut state.normal);
         std::mem::swap(&mut self.selection, &mut state.selection);
         self.mark_dirty(&state.dirty, &state.layers);
+        self.note_swapped_sources(&state.dirty, &state.layers);
         if matches!(&state.dirty, Dirty::Layers(ids) if !ids.is_empty()) {
             self.mark_clipped_layers();
         }
         Ok(())
+    }
+    /// 交換で画素が変わった層の、元画素の変化を覚える（評価のキャッシュの鍵）。`mark_dirty` の印は合成が変わり得るタイルの記録
+    /// （`changed_tiles`）で、キャッシュの鍵（元画素のタイルごとの時計）は画素の変化の道（`mark_target_tile`）でしか進まない。変形や
+    /// 結合のように、同じ ID の層の画素が交換で入れ替わると、時計が進まず古い評価の出力を新しい画素のものとして返してしまう。
+    /// 交換の前後（`spare` は交換で外へ出た側の層）で同じ ID の層のタイルを比べ、**中身が違うタイルだけ**進める。複数選択の表示の
+    /// 切り替え・並べ替え・複製・削除のように画素を変えない交換では進まず、評価したぼかしなどのキャッシュが生き残る（共有している
+    /// タイルは `Tile::same` が安く同じと答える）。文書から無くなった層には何も足さない（戻すときは、前に層が無い側として全部進む）。
+    fn note_swapped_sources(&mut self, dirty: &Dirty, spare: &[Layer]) {
+        let parents: Vec<(LayerId, Option<LayerId>)> = self
+            .layers
+            .iter()
+            .chain(spare)
+            .map(|l| (l.id, l.parent))
+            .collect();
+        let mut wanted: std::collections::HashSet<LayerId> = match dirty {
+            Dirty::All => parents.iter().map(|(id, _)| *id).collect(),
+            Dirty::Layers(ids) => ids.iter().copied().collect(),
+        };
+        // グループは中身ごと（ID から親をたどって、増えなくなるまで）
+        loop {
+            let before = wanted.len();
+            for (id, parent) in &parents {
+                if parent.is_some_and(|p| wanted.contains(&p)) {
+                    wanted.insert(*id);
+                }
+            }
+            if wanted.len() == before {
+                break;
+            }
+        }
+        let was_by_id: std::collections::HashMap<LayerId, &Layer> =
+            spare.iter().map(|l| (l.id, l)).collect();
+        let mut changed: Vec<(LayerId, super::eval::SourceKey, TileCoord)> = Vec::new();
+        for l in self.layers.iter().filter(|l| wanted.contains(&l.id)) {
+            let was = was_by_id.get(&l.id).copied();
+            let channels: std::collections::BTreeSet<crate::Channel> = l
+                .surface_channels()
+                .into_iter()
+                .chain(was.into_iter().flat_map(Layer::surface_channels))
+                .collect();
+            let mut pairs: Vec<(super::eval::SourceKey, Option<&Surface>, Option<&Surface>)> =
+                channels
+                    .into_iter()
+                    .map(|c| {
+                        (
+                            super::eval::SourceKey::Channel(c),
+                            l.surface(c),
+                            was.and_then(|w| w.surface(c)),
+                        )
+                    })
+                    .collect();
+            pairs.push((
+                super::eval::SourceKey::Mask,
+                l.mask.as_ref().map(|m| &m.surface),
+                was.and_then(|w| w.mask.as_ref().map(|m| &m.surface)),
+            ));
+            for (key, now, before) in pairs {
+                let coords: std::collections::BTreeSet<TileCoord> = now
+                    .into_iter()
+                    .chain(before)
+                    .flat_map(Surface::tile_coords)
+                    .collect();
+                for coord in coords {
+                    let same = Tile::same(
+                        now.and_then(|s| s.tile(coord)),
+                        before.and_then(|s| s.tile(coord)),
+                    );
+                    if !same {
+                        changed.push((l.id, key, coord));
+                    }
+                }
+            }
+        }
+        for (id, key, coord) in changed {
+            self.effects.clock += 1;
+            let serial = self.effects.clock;
+            self.effects
+                .source
+                .entry((id, key))
+                .or_default()
+                .insert(coord, serial);
+        }
     }
     fn mark_dirty(&mut self, dirty: &Dirty, spare: &[Layer]) {
         match dirty {
