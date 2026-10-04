@@ -282,6 +282,67 @@ fn image_hash_matches_csharp_and_transparent_rgb_is_significant() {
         expected.content
     );
 }
+/// 棚の画像は、効果の入力（`Project::image_inputs` と同じ形: ID・向き・色空間・ハッシュ）になる。必要な ID だけを復号できる。
+#[test]
+fn shelf_images_become_effect_inputs_like_project_images_and_only_the_wanted_ones_are_decoded() {
+    let mut shelf = Shelf::new(1 << 20);
+    let a = [10u8, 20, 30, 255, 40, 50, 60, 128, 1, 2, 3, 0, 7, 8, 9, 255];
+    let b = [200u8, 100, 50, 255];
+    let id_a = "0a0b0c0d-0000-4000-8000-00000000000a";
+    let id_b = "0a0b0c0d-0000-4000-8000-00000000000b";
+    shelf.add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null).unwrap();
+    shelf.add_image(id_b, "b", &b, 1, 1, "linear", Value::Null).unwrap();
+    // 全部
+    let all = shelf.image_inputs(None).unwrap();
+    assert_eq!(all.len(), 2);
+    let (got_a, image_a) = &all[0];
+    assert_eq!(got_a.0, 0x0a0b0c0d_0000_4000_8000_00000000000a);
+    assert_eq!((image_a.width, image_a.height), (2, 2));
+    assert_eq!(&image_a.pixels[..], &a[..], "文書と同じ向き（下の行が先）で、透明の画素の RGB も保つ");
+    assert_eq!(image_a.hash, yolu_io::shelf::image_hash(&a, 2, 2).unwrap());
+    assert_eq!(all[1].1.color_space, yolu_core::ImageColorSpace::Linear);
+    // 必要な ID だけ
+    let only = shelf.image_inputs(Some(&[id_b])).unwrap();
+    assert_eq!(only.len(), 1);
+    assert_eq!(only[0].0 .0, 0x0a0b0c0d_0000_4000_8000_00000000000b);
+    assert!(shelf.image_inputs(Some(&[])).unwrap().is_empty());
+    assert!(shelf.image_inputs(Some(&["ffffffff-0000-4000-8000-000000000000"])).unwrap().is_empty());
+    // プロジェクトの画像（`Project::image_inputs`）と同じ結果
+    let bytes = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/format5.ylp")).unwrap();
+    let project = Project::read(&bytes).unwrap();
+    let from_project = project.image_inputs().unwrap();
+    let from_shelf = project.shelf(1 << 30).unwrap().image_inputs(None).unwrap();
+    assert!(!from_project.is_empty());
+    assert_eq!(from_project.len(), from_shelf.len());
+    for ((ida, a), (idb, b)) in from_project.iter().zip(&from_shelf) {
+        assert_eq!((ida, &a.hash, a.width, a.height), (idb, &b.hash, b.width, b.height));
+        assert_eq!(a.pixels, b.pixels);
+    }
+}
+/// 1 枚ずつ復号する呼び出しでも、持っている画素の合計（`used`）を渡せば、合計の上限を超える画像は確保の前に予算として断る
+/// （上限は `MAX_TOTAL_BYTES` までで、広げられない）。
+#[test]
+fn shelf_image_decode_budget_is_carried_across_one_by_one_calls() {
+    let mut shelf = Shelf::new(1 << 20);
+    let a = [10u8; 16]; // 2 × 2 = 16 バイト
+    let b = [200u8, 100, 50, 255]; // 1 × 1 = 4 バイト
+    let id_a = "0a0b0c0d-0000-4000-8000-00000000000a";
+    let id_b = "0a0b0c0d-0000-4000-8000-00000000000b";
+    shelf.add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null).unwrap();
+    shelf.add_image(id_b, "b", &b, 1, 1, "srgb", Value::Null).unwrap();
+    // 上限 20 バイト: 16 + 4 はちょうど入り、もう 1 枚は入らない
+    assert_eq!(shelf.image_inputs_within(Some(&[id_a]), 0, 20).unwrap().len(), 1);
+    assert_eq!(shelf.image_inputs_within(Some(&[id_b]), 16, 20).unwrap().len(), 1);
+    let refused = shelf.image_inputs_within(Some(&[id_a]), 16, 20).unwrap_err();
+    assert!(matches!(refused, yolu_io::Error::Budget(_)), "{refused:?}");
+    assert!(refused.to_string().contains("予算超過") && refused.to_string().contains('a'), "{refused}");
+    // 渡さない形（`image_inputs`）は今までと同じ（0 から数える）
+    assert_eq!(shelf.image_inputs(Some(&[id_a])).unwrap().len(), 1);
+    // 上限は 768 MiB より広げられない
+    let max = yolu_io::MAX_TOTAL_BYTES;
+    assert!(shelf.image_inputs_within(Some(&[id_b]), max - 3, usize::MAX).is_err());
+    assert!(shelf.image_inputs_within(Some(&[id_b]), max - 4, usize::MAX).is_ok());
+}
 #[test]
 fn mask_and_group_smart_core_roundtrip_keeps_layers_and_pixels() {
     for name in ["mask", "multi"] {

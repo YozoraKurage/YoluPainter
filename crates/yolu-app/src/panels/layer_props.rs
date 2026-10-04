@@ -114,6 +114,12 @@ fn layer_section(
             );
         }
     }
+    // この層までの合成に名前を付ける（上の層の Generator が読む）
+    super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
+    // 画素へのフィルター（調整・グループの層には画素が無い）
+    if matches!(app.doc.layer(id).map(|l| l.kind()), Some(LayerKind::Raster | LayerKind::Fill)) {
+        super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
+    }
 }
 
 /// ロックの 4 種（選んでいる層の全部に効く）。持っているロックはチェック。グループやすべてのロックから効いているだけのものは
@@ -787,5 +793,9 @@ fn mask_section(
     .clicked()
     {
         edit(app, Edit::RemoveMask(id));
+        return;
     }
+    // このマスクに名前を付ける（上の層の Generator が、この層の見える度合いを読む）
+    super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Mask);
+    super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Mask);
 }

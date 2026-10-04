@@ -552,6 +552,73 @@ fn the_set_materials_uv_triangles_scale_to_the_document() {
     assert!(uv_triangles(&model, 5, 64, 32).is_empty());
 }
 
+/// 書き出した画像にも、画面と同じ効果が入る（正本は効果の入力を持たないので、写した文書へ入力を渡し直す）。読むマップが無くて効いていない効果は、
+/// 黙って入力のまま書かず、書き出した画像に入っていないことを注意に出す。
+#[test]
+fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_named_in_the_notes() {
+    use crate::fx::FxOp;
+    use yolu_core::generator::Kind;
+    use yolu_core::FilterTarget;
+
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
+    s.apply(Action::LoadDemoModel);
+    s.bake.settings.maps = vec![
+        MeshMapKind::WorldNormal,
+        MeshMapKind::Position,
+        MeshMapKind::AmbientOcclusion,
+        MeshMapKind::Curvature,
+    ];
+    s.bake.settings.ao_samples = 8;
+    s.bake.settings.padding = 4;
+    s.export.padding = 0; // 塗り広げの覆い（モデルの UV）を使わない
+    // 黒の塗りつぶしの層のマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
+    s.apply(Action::M2(crate::m2::Edit::NewFill));
+    let layer = s.selected_layer.unwrap();
+    s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
+    s.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Mask,
+        kind: Kind::EdgeWear,
+    }));
+
+    // 焼く前: 効かないので、書いた画像は全面が見え、効かない効果を注意に出す
+    let before = Dir::new("generator-before");
+    export(&mut s, "unity-standard", &before.0);
+    s.wait_export();
+    let report = s.export.report.as_ref().expect("書き出した");
+    assert!(
+        report.notes.iter().any(|n| matches!(n, Note::InactiveEffects(_, effects) if effects.len() == 1)),
+        "{:?}",
+        report.notes
+    );
+    assert!(s.message.contains("効いていない効果 1 件は書き出しに入っていません"), "{}", s.message);
+    let png = load_png(&before.0.join("Texture_Albedo.png"));
+    assert!((0..64).all(|y| (0..64).all(|x| px(&png, x, y)[3] == 255)), "入力のまま通る");
+
+    // 焼いた後: 書いた画像の透明（マスクが隠した所）が、画面の合成と同じ
+    s.apply(Action::Bake(BakeAction::Start));
+    s.wait_bake();
+    s.sync_effects();
+    assert!(s.doc.inactive_effect_list().is_empty());
+    let screen = s.doc.composite(s.doc.bounds()).unwrap();
+    let hidden = screen.iter().skip(3).step_by(4).filter(|a| **a != 255).count();
+    assert!(hidden > 0, "焼いたマップの Generator が見える所を絞る");
+    let after = Dir::new("generator-after");
+    export(&mut s, "unity-standard", &after.0);
+    s.wait_export();
+    assert!(
+        !s.export.report.as_ref().unwrap().notes.iter().any(|n| matches!(n, Note::InactiveEffects(..))),
+        "効く効果は注意に出さない"
+    );
+    let png = load_png(&after.0.join("Texture_Albedo.png"));
+    for y in 0..64u32 {
+        for x in 0..64u32 {
+            let expected = screen[((y * 64 + x) * 4 + 3) as usize];
+            assert_eq!(px(&png, x, y)[3], expected, "({x}, {y}): 画面の合成と同じ");
+        }
+    }
+}
+
 // ───────── チャンネルの画像（描くチャンネルの PNG・全チャンネル） ─────────
 
 fn export_channels(s: &mut AppState, dir: &Path) {

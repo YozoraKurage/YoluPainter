@@ -446,6 +446,8 @@ pub enum Action {
     Region(crate::region::RegionAction),
     /// アセットの棚の操作（層からの保存・文書へ置く・消す・.ylsmart の読み書き。置くのだけが文書を変え、1 回の Undo）。
     Shelf(ShelfOp),
+    /// 効果の層（フィルター・Generator・Anchor）の操作（文書を変える操作は 1 つが 1 回の Undo。行を選ぶ操作は文書を変えない）。
+    Fx(crate::fx::FxOp),
     /// ステンシル（画像・読み方・繰り返し・反転・置き場。文書は変えない）。
     Stencil(crate::stencil::StencilOp),
     /// ブラシの一覧（替える・追加・複製・削除・名前・並べ替え・元に戻す。文書は変えない）。
@@ -531,6 +533,9 @@ impl Action {
     /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。クリップボードの操作は、コピーも読むだけのセットでは
     /// 断る（そのセットの文書は中身の代わりの空の文書で、写しても意味が無い）。
     pub fn edits_document(&self) -> bool {
+        if let Action::Fx(op) = self {
+            return op.edits_document();
+        }
         if let Action::Path(a) = self {
             return a.edits_document();
         }
@@ -639,6 +644,8 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
+    /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
+    pub fx: crate::fx::FxState,
     /// 新規プロジェクトの窓・プロジェクトの構成の窓と、プロジェクトのモデルのファイル。
     pub np: crate::newproject::NpState,
     /// 層の複数選択と、見た目が変わる結合の確かめ。
@@ -806,6 +813,7 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             stencil: crate::stencil::StencilState::default(),
+            fx: crate::fx::FxState::default(),
             np: Default::default(),
             layer_ops: Default::default(),
             transform: Default::default(),
@@ -832,6 +840,27 @@ impl AppState {
     /// ドックのタブの見出しをつかんでいる最中か、離した直後のフレームか（このあいだ、ビューは描き始め・回し始めない）。
     pub fn dock_grabbed(&self) -> bool {
         self.dock_grab[0] || self.dock_grab[1]
+    }
+
+    /// 道具を替える（どの経路も通る 1 つの口）。ブラシと消しゴムは道具ごとに最後のブラシへ（ストロークの最中に替わるなら断って false）。
+    /// 替わるときは、途中の選択の形・移動と変形のドラッグ・パスの途中のドラッグと選んだ点を捨てる。`keep_effect` なら、選んでいる効果の行と
+    /// 「ID の色」を選んでいる状態は残す（効果の欄から ID マップを読む道具へ移るとき。そうでなければ道具の欄へ戻す）。
+    pub(crate) fn switch_tool(&mut self, tool: Tool, keep_effect: bool) -> bool {
+        if tool != self.tool && !self.brush_for_tool(tool) {
+            return false;
+        }
+        if tool != self.tool {
+            self.sel_tool_changed();
+            if !keep_effect {
+                self.fx.selected = None; // 選んだ効果の欄は道具を替えたら閉じる
+                self.fx.id_pick = None;
+            }
+            self.transform_cancel_drag();
+            self.path_tool_changed();
+            self.gradient_cancel_drag();
+        }
+        self.tool = tool;
+        true
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
@@ -915,6 +944,7 @@ impl AppState {
             Action::Mat(a) => self.mat_apply(a),
             Action::Region(a) => self.region_apply(a),
             Action::Shelf(op) => self.shelf_apply(op),
+            Action::Fx(op) => self.fx_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Brush(action) => self.brush_action(action),
             Action::Sel(action) => self.sel_action(action),
@@ -1095,17 +1125,7 @@ impl AppState {
             }
             Action::ResetLayout => self.reset_layout = true,
             Action::SelectTool(tool) => {
-                // ブラシと消しゴムは道具ごとに最後のブラシへ（ストロークの最中に替わるなら断る）
-                if tool != self.tool && !self.brush_for_tool(tool) {
-                    return;
-                }
-                if tool != self.tool {
-                    self.sel_tool_changed();
-                    self.transform_cancel_drag();
-                    self.path_tool_changed();
-                    self.gradient_cancel_drag();
-                }
-                self.tool = tool;
+                self.switch_tool(tool, false);
             }
             Action::SwapColors => self.color.swap(),
             Action::DefaultColors => self.color.defaults(),

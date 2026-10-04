@@ -186,28 +186,6 @@ impl Lang {
         )
     }
 
-    /// 効かない効果があって編集できない理由の文（初めの 3 つと数）。
-    pub fn inactive_effects(self, effects: &[InactiveEffect]) -> String {
-        let shown = effects.iter().take(3).map(|e| self.inactive_effect(e)).collect::<Vec<_>>();
-        let more = effects.len().saturating_sub(3);
-        match self {
-            Self::Ja => {
-                let mut text = shown.join("、");
-                if more > 0 {
-                    text += &format!(" ほか {more} 件");
-                }
-                format!("効かない効果がある（{text}）")
-            }
-            Self::En => {
-                let mut text = shown.join("; ");
-                if more > 0 {
-                    text += &format!(" and {more} more");
-                }
-                format!("Inactive effects ({text})")
-            }
-        }
-    }
-
     /// 保存で書き直したセットの効かない効果が、合成の PNG に入っていないことの知らせ（正本には設定が残る）。初めの 1 件の理由を添える。
     pub fn inactive_effects_not_in_composite(self, set: &str, effects: &[InactiveEffect]) -> String {
         let first = effects.first().map(|e| self.inactive_effect(e)).unwrap_or_default();
@@ -816,12 +794,6 @@ mod tests {
         assert_eq!(lines[0], "\"Top\" Edge wear: No Thickness map");
         assert_eq!(lines[1], "\"Top\" Anchor (mask): No anchor chosen");
         assert!(lines[2].contains("gradient (Color)") && lines[3].contains("decal") && lines[4].contains("image (Roughness)"));
-        // 編集できない理由は初めの 3 つと数。日本語は core の文をそのまま並べる
-        let ja = Lang::Ja.inactive_effects(&effects);
-        assert!(ja.starts_with("効かない効果がある（") && ja.contains(&effects[0].to_string()) && ja.ends_with("ほか 2 件）"), "{ja}");
-        let en = Lang::En.inactive_effects(&effects);
-        assert_eq!(en, format!("Inactive effects ({}; {}; {} and 2 more)", lines[0], lines[1], lines[2]));
-        assert_eq!(Lang::En.inactive_effects(&effects[..1]), format!("Inactive effects ({})", lines[0]));
         // 保存の知らせは、書き直したセットの名前と件数と初めの理由
         let ja = Lang::Ja.inactive_effects_not_in_composite("Skin", &effects);
         assert!(ja.contains("「Skin」") && ja.contains("5 件") && ja.contains("合成の PNG に入っていません") && ja.contains(&effects[0].to_string()), "{ja}");

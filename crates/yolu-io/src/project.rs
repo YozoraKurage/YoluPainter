@@ -222,39 +222,7 @@ impl Project {
     /// `ImageInput::hash` は索引の `content` と同じ値になる。画像の ID は、正本の塗りつぶしの画像が指す ID（`yolu_core::ImageId`）と同じ。
     /// PNG が壊れていれば、どのリソースかを添えて断る。
     pub fn image_inputs(&self) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
-        let mut budget = 0usize;
-        let mut inputs = Vec::new();
-        for r in self.resources.iter().filter(|r| r.kind == "image") {
-            let name = &r.name;
-            let bytes = self
-                .files
-                .get(&r.entry)
-                .ok_or_else(|| Error::InvalidData(format!("画像「{name}」のPNGがありません")))?;
-            let (w, h) = (
-                number(&r.metadata, "width", 1, 8192)? as u32,
-                number(&r.metadata, "height", 1, 8192)? as u32,
-            );
-            let top_down = png_pixels(bytes, w, h, &mut budget)
-                .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
-            let mut pixels = Vec::with_capacity(top_down.len());
-            for row in top_down.chunks_exact(w as usize * 4).rev() {
-                pixels.extend_from_slice(row);
-            }
-            let space = match r.metadata.get("colorSpace").and_then(Value::as_str) {
-                Some("srgb") => yolu_core::ImageColorSpace::Srgb,
-                Some("linear") => yolu_core::ImageColorSpace::Linear,
-                _ => yolu_core::ImageColorSpace::Unspecified,
-            };
-            let image = yolu_core::ImageInput::new(w, h, pixels, space)?;
-            check(
-                image.hash == r.content,
-                format!("画像「{name}」の画素のハッシュが索引と一致しません"),
-            )?;
-            let id = u128::from_str_radix(&r.id.replace('-', ""), 16)
-                .map_err(|_| Error::InvalidData(format!("画像「{name}」のIDが不正です")))?;
-            inputs.push((yolu_core::ImageId(id), image));
-        }
-        Ok(inputs)
+        image_inputs_of(self.resources.iter(), &self.files, 0, MAX_TOTAL_BYTES)
     }
     pub fn resources(&self) -> &[Resource] {
         &self.resources
@@ -1100,6 +1068,56 @@ fn add_budget(b: &mut usize, n: usize) -> Result<()> {
         .checked_add(n)
         .ok_or_else(|| Error::Budget("リソース予算超過です".into()))?;
     check_budget(*b <= MAX_TOTAL_BYTES, "復号リソースの768 MiB予算超過です")
+}
+/// 画像リソース（`kind == "image"` のもの）を効果の入力にする。プロジェクトと棚が同じ道を使う（読み込みの検査と同じ: 寸法・ハッシュ・予算）。
+/// `used` は、すでに復号して持っている画素のバイト数（呼び出しをまたいで通算するとき。この呼び出しの分と合わせて `limit` 以下）。
+/// `limit` は復号した画素の合計に許すバイト数（`MAX_TOTAL_BYTES` を超えて広げられない）。
+pub(crate) fn image_inputs_of<'a>(
+    resources: impl Iterator<Item = &'a Resource>,
+    files: &Files,
+    used: usize,
+    limit: usize,
+) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
+    let limit = limit.min(MAX_TOTAL_BYTES);
+    let mut budget = used;
+    let mut inputs = Vec::new();
+    for r in resources.filter(|r| r.kind == "image") {
+        let name = &r.name;
+        let bytes = files
+            .get(&r.entry)
+            .ok_or_else(|| Error::InvalidData(format!("画像「{name}」のPNGがありません")))?;
+        let (w, h) = (
+            number(&r.metadata, "width", 1, 8192)? as u32,
+            number(&r.metadata, "height", 1, 8192)? as u32,
+        );
+        // 復号の前に、通算の予算で断る（確保する前に。寸法は索引の値で、PNG の寸法との一致は復号の中で確かめる）
+        check_budget(
+            budget
+                .checked_add(w as usize * h as usize * 4)
+                .is_some_and(|total| total <= limit),
+            format!("画像「{name}」: 復号した画像の{} MiB予算超過です", limit >> 20),
+        )?;
+        let top_down = png_pixels(bytes, w, h, &mut budget)
+            .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
+        let mut pixels = Vec::with_capacity(top_down.len());
+        for row in top_down.chunks_exact(w as usize * 4).rev() {
+            pixels.extend_from_slice(row);
+        }
+        let space = match r.metadata.get("colorSpace").and_then(Value::as_str) {
+            Some("srgb") => yolu_core::ImageColorSpace::Srgb,
+            Some("linear") => yolu_core::ImageColorSpace::Linear,
+            _ => yolu_core::ImageColorSpace::Unspecified,
+        };
+        let image = yolu_core::ImageInput::new(w, h, pixels, space)?;
+        check(
+            image.hash == r.content,
+            format!("画像「{name}」の画素のハッシュが索引と一致しません"),
+        )?;
+        let id = u128::from_str_radix(&r.id.replace('-', ""), 16)
+            .map_err(|_| Error::InvalidData(format!("画像「{name}」のIDが不正です")))?;
+        inputs.push((yolu_core::ImageId(id), image));
+    }
+    Ok(inputs)
 }
 fn png_pixels(bytes: &[u8], w: u32, h: u32, budget: &mut usize) -> Result<Vec<u8>> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));

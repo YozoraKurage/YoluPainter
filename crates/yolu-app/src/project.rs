@@ -90,16 +90,11 @@ pub(crate) fn to_core(native: &NativeDocument, lang: Lang, source_budget: u64) -
     if !issues.is_empty() {
         return Err(lang.unsupported_features(&issues));
     }
-    let doc = native.to_core_within(Some(source_budget)).map_err(|e| {
+    // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）は開いたあとに文書へ渡す（`fx::inputs`）。入力がそろわない効果を持つセットは、
+    // そのとき読むだけにして足りない入力を言う（`AppState::lock_sets_missing_inputs`）。入力がそろえば編集できる
+    native.to_core_within(Some(source_budget)).map_err(|e| {
         format!("{}: {}", lang.pick("core の文書にできません", "Cannot convert to a core document"), lang.io_error(&e))
-    })?;
-    // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）はまだ app から文書へ渡していない。効果が効かない（入力のまま通る）文書は、
-    // 画面にも保存した合成にも効果が出ないので、編集させず保存済みの合成を見せる（効く効果だけの文書は評価されるので編集できる）
-    let inactive = doc.inactive_effect_list();
-    if !inactive.is_empty() {
-        return Err(lang.inactive_effects(&inactive));
-    }
-    Ok(doc)
+    })
 }
 
 /// 保存した合成の PNG から、見せるだけの文書（1 枚のレイヤー）を作る。大きさが正本と違えば使わない。
@@ -250,11 +245,16 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
     let (mut sets, doc) = TextureSets::from_parts(parts, current);
     // メッシュマップ（セットごとの派生物）。壊れていれば読まずに知らせる（ファイルのエントリはそのまま残る）
     let (mut map_count, mut map_problems) = (0usize, Vec::new());
+    let mut adopted_before = false;
     for (i, set) in project.sets().iter().enumerate() {
+        let mut loaded_kinds = Vec::new();
         for kind in MeshMapKind::ALL {
             match project.mesh_map(&set.id, kind, MESH_MAP_LIMIT_BYTES) {
                 Ok(Some(map)) => {
                     if let Some(target) = sets.get_mut(i) {
+                        // 焼く設定は 1 つなので、保存したマップの条件にそろえる（開いただけで古くならない）
+                        crate::bake::adopt::adopt(&mut state.bake.settings, &map);
+                        loaded_kinds.push(kind);
                         target.mesh_maps.load(map);
                         map_count += 1;
                     }
@@ -262,6 +262,10 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 Ok(None) => {}
                 Err(e) => map_problems.push(format!("{} {}: {e}", set.name, kind.name())),
             }
+        }
+        if !loaded_kinds.is_empty() {
+            crate::bake::adopt::adopt_kinds(&mut state.bake.settings, &loaded_kinds, adopted_before);
+            adopted_before = true;
         }
     }
     state.replace_sets(sets, doc);
@@ -347,6 +351,14 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
         target,
         original: std::sync::Arc::new(project),
     });
+    // 効果の入力（焼いたマップ・モデル・棚の画像）を渡し、入力がそろわない効果を持つセットは読むだけにする
+    let waiting = state.lock_sets_missing_inputs();
+    if !waiting.is_empty() {
+        state.message += &state.lang.pick(
+            format!(" 効果の入力がそろわない読むだけのセット {}: {}。", waiting.len(), waiting.join("・")),
+            format!(" Read-only texture sets with missing effect inputs ({}): {}.", waiting.len(), waiting.join(", ")),
+        );
+    }
     // モデルのファイルの参照（view.json）があれば、別のスレッドで読み直す（読み終えたら結び付ける）。参照は .ylp からの相対の
     // パスなので、ファイルの無いプロジェクト（復旧した世代）では読み直さない（保存し直した後に開けば読む）
     let base = state.message.clone();

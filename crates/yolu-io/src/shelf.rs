@@ -81,6 +81,32 @@ impl Shelf {
     pub fn entries(&self) -> &Files {
         &self.files
     }
+    /// 棚の画像を、効果の入力（`yolu_core::EffectInputs::with_image`）にする（`Project::image_inputs` と同じ検査）。`only` を渡すと、
+    /// その ID（リソースの ID）の画像だけを復号する（大きな画像を全部は開かない）。
+    pub fn image_inputs(
+        &self,
+        only: Option<&[&str]>,
+    ) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
+        self.image_inputs_within(only, 0, MAX_TOTAL_BYTES)
+    }
+    /// `image_inputs` の、呼び出しをまたいで予算を通算する形。`used` は、すでに復号して持っている画素のバイト数で、
+    /// この呼び出しで復号する分と合わせて `limit`（`MAX_TOTAL_BYTES` が上限）を超えるなら、確保の前に断る。
+    /// 1 枚ずつ呼ぶ側が、持っている画像の合計を `used` に渡して、`Project::image_inputs` と同じ合計の上限を守る。
+    pub fn image_inputs_within(
+        &self,
+        only: Option<&[&str]>,
+        used: usize,
+        limit: usize,
+    ) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
+        project::image_inputs_of(
+            self.resources
+                .iter()
+                .filter(|r| only.is_none_or(|ids| ids.contains(&r.id.as_str()))),
+            &self.files,
+            used,
+            limit,
+        )
+    }
     pub fn content_bytes(&self, id: &str) -> Option<&[u8]> {
         self.resources
             .iter()

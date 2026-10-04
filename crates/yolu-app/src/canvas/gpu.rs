@@ -59,6 +59,14 @@ impl CanvasBackend {
     }
 }
 
+/// そのチャンネルの合成に、評価で決まる画素（効果）が入るか: 有効なフィルター・塗りつぶしのグラデーションと画像の投影・マスクのフィルター。
+/// 層の画素・塗りつぶしの値を読む GPU の合成には、これが入らない。
+pub fn has_effects(doc: &Document, channel: Channel) -> bool {
+    doc.layers()
+        .iter()
+        .any(|l| l.has_evaluated_output(channel) || l.mask().is_some_and(|m| m.has_active_filters()))
+}
+
 /// 今、表示の合成がどちらか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shown {
@@ -77,6 +85,9 @@ pub enum Fallback {
     SoftwareAdapter,
     /// この文書の中身を GPU で合成できない（調整の層・独立のグループ・法線の種類のチャンネル）。
     Unsupported(Unsupported),
+    /// 評価で決まる画素（有効なフィルター・Generator・塗りつぶしのグラデーションと投影・マスクの効果）がある。GPU の合成は層の保存した
+    /// 画素と塗りつぶしの値を読むので、効果が入らない。効果の評価は CPU（core）で行う。
+    Effects,
     /// 描いたタイルを全部常駐させると GPU のメモリの予算を超える（文書が小さくなれば戻る）。
     OverBudget,
     /// GPU の初期化・実行の失敗（デバイスの上限の超過を含む）。
@@ -159,6 +170,12 @@ impl Fallback {
                     )
                     .into(),
             },
+            Fallback::Effects => lang
+                .pick(
+                    "効果のある文書は GPU で合成できません",
+                    "Documents with effects are composited on the CPU",
+                )
+                .into(),
             Fallback::OverBudget => lang
                 .pick("GPU のメモリの予算を超えます", "Over the GPU memory budget")
                 .into(),
@@ -200,6 +217,8 @@ impl FailureKey {
 #[derive(Clone, Copy, Debug)]
 struct Checked {
     supported: Result<(), Unsupported>,
+    /// そのチャンネルに、評価で決まる画素（効果）があるか。
+    effects: bool,
     /// 全部を常駐させるのに要る量（見積もれなければ None。デバイスの上限を超える文書は GPU を試して失敗を覚える）。
     needed: Option<u64>,
 }
@@ -314,6 +333,7 @@ impl GpuCanvas {
                 let options = Self::options(self.budget);
                 let c = Checked {
                     supported: yolu_gpu::supports(doc, channel),
+                    effects: has_effects(doc, channel),
                     needed: resident_requirements(doc, channel, &options, &rs.device.limits())
                         .ok()
                         .map(|r| r.total_bytes()),
@@ -324,6 +344,9 @@ impl GpuCanvas {
         };
         if let Err(u) = checked.supported {
             return Some(Fallback::Unsupported(u));
+        }
+        if checked.effects {
+            return Some(Fallback::Effects);
         }
         if policy == CanvasBackend::Auto
             && rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu
@@ -562,12 +585,42 @@ mod tests {
             .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
     }
 
+    /// 効果のある文書は GPU の合成に任せない（GPU は層の保存した画素を読むので、フィルター・Generator が入らない）。
+    #[test]
+    fn documents_with_effects_are_not_left_to_the_gpu_composite() {
+        use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+        let mut doc = Document::with_tile_size(32, 32, 16).unwrap();
+        let layer = doc.add_layer("a").unwrap();
+        assert!(!has_effects(&doc, Channel::Color));
+        // 無効・強さ 0 の段は結果を変えないので、効果ではない
+        let id = doc
+            .add_filter(
+                layer,
+                FilterTarget::Content,
+                FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]).disabled(),
+            )
+            .unwrap();
+        assert!(!has_effects(&doc, Channel::Color));
+        doc.set_filter_enabled(layer, id, true).unwrap();
+        assert!(has_effects(&doc, Channel::Color));
+        // 描くチャンネルでなければ（そのチャンネルに掛からない段なら）GPU でよい
+        assert!(!has_effects(&doc, Channel::Roughness));
+        doc.remove_filter(layer, id).unwrap();
+        assert!(!has_effects(&doc, Channel::Color));
+        // マスクの効果
+        doc.add_layer_mask(layer).unwrap();
+        doc.add_filter(layer, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2))).unwrap();
+        assert!(has_effects(&doc, Channel::Color));
+        assert!(has_effects(&doc, Channel::Roughness), "マスクは全チャンネルで共有");
+    }
+
     #[test]
     fn every_reason_reads_in_both_languages() {
         let reasons = [
             Fallback::Policy,
             Fallback::NoDevice,
             Fallback::SoftwareAdapter,
+            Fallback::Effects,
             Fallback::Unsupported(Unsupported::UnknownChannel),
             Fallback::Unsupported(Unsupported::NormalChannel),
             Fallback::Unsupported(Unsupported::AdjustmentLayer),

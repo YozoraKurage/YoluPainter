@@ -40,6 +40,12 @@ pub enum Popup {
     StencilImage,
     StencilMode,
     StencilTiling,
+    /// プロパティの欄の「フィルターを足す」（画素かマスクへ、フィルターと Generator を足す）。
+    AddEffect(yolu_core::FilterTarget),
+    /// 選んでいる効果の欄のドロップダウン（合成・軸・向き・置き場・形・アンカーなど）。
+    Fx(crate::fx::menu::FxChoice),
+    /// 効果の行の右クリック（選んでいる段・アンカーの操作）。
+    EffectContext,
     /// 移動・変形の補間。
     Resampling,
     /// Normal の設定の端（Clamp・Wrap）。
@@ -382,6 +388,9 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         | Popup::GradientShape(..)
         | Popup::RampPresets(..)
         | Popup::CurvePresets(..) => crate::panels::fill_props::entries(app, popup),
+        Popup::AddEffect(target) => crate::fx::menu::add_entries(app, target),
+        Popup::Fx(choice) => crate::fx::menu::choice_entries(app, choice),
+        Popup::EffectContext => crate::fx::menu::context_entries(app),
         Popup::StencilImage => crate::panels::stencil_props::image_entries(app),
         Popup::StencilMode => crate::panels::stencil_props::mode_entries(app),
         Popup::StencilTiling => crate::panels::stencil_props::tiling_entries(app),

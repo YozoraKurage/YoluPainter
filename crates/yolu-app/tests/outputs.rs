@@ -949,13 +949,14 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
         again.sets.current().mesh_maps.unsaved().is_empty(),
         "開いたものは保存済み"
     );
-    // モデルが無いあいだは照合できない（設定が同じなら「未確認」、違えば古い）
+    // 開いただけでは古くならない: 焼く設定は保存したマップの条件にそろう（モデルが無いあいだは照合できないので「未確認」）
+    assert_eq!((again.bake.settings.padding, again.bake.settings.ao_samples), (4, 8));
+    let check = again.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
+    assert_eq!(check.state, MeshMapState::Unverified);
+    // 設定を変えれば、前のマップは古い（照合できなくても、条件の違いは分かる）
+    again.bake.settings.padding = 12;
     let stale = again.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
-    assert_eq!(
-        stale.state,
-        MeshMapState::Stale,
-        "既定の設定は焼いたときと違う"
-    );
+    assert_eq!(stale.state, MeshMapState::Stale, "設定が焼いたときと違う");
     quick(&mut again);
     let check = again.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
     assert_eq!(check.state, MeshMapState::Unverified);

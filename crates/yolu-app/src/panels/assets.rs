@@ -733,7 +733,10 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
         return;
     };
     let released = ui.input(|i| i.pointer.any_released());
-    let position = (p.y - list.top() + app.layer_scroll) / ROW_HEIGHT;
+    // 一覧の行の高さは層と効果で違うので、行の数え方は効果の行の配置から（層の行の単位に直す）
+    let layout = crate::panels::effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
+    let at = p.y - list.top() + app.layer_scroll;
+    let position = layout.position_at(at);
     let painter = ui.painter_at(list);
     let frame = |y: f32| {
         Rect::from_min_size(
@@ -743,9 +746,9 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
     };
     let place = match drag.kind {
         ItemKind::SmartMask => {
-            let index = position.floor().max(0.0) as usize;
+            let index = layout.row_at(at).unwrap_or(rows.len());
             rows.get(index).map(|row| {
-                let y = list.top() + index as f32 * ROW_HEIGHT - app.layer_scroll;
+                let y = list.top() + layout.layer_y(index) - app.layer_scroll;
                 w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                 PlaceTarget::Mask(row.id)
             })
@@ -755,7 +758,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
             let target = gap_or_group(rows, position);
             match target {
                 DropTarget::Gap(gap) => {
-                    let y = list.top() + gap as f32 * ROW_HEIGHT - app.layer_scroll;
+                    let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
                     painter.rect_filled(
                         Rect::from_min_size(
                             pos2(list.left() + 4.0, y - 1.0),
@@ -767,7 +770,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
                 }
                 DropTarget::Into(group) => {
                     if let Some(i) = rows.iter().position(|r| r.id == group) {
-                        let y = list.top() + i as f32 * ROW_HEIGHT - app.layer_scroll;
+                        let y = list.top() + layout.layer_y(i) - app.layer_scroll;
                         w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                     }
                 }

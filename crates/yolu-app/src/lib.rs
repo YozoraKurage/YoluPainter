@@ -17,6 +17,7 @@ pub mod canvas;
 pub mod clipboard;
 pub mod engine;
 pub mod export;
+pub mod fx;
 pub mod eyedrop;
 pub mod fillfx;
 pub mod gradient;

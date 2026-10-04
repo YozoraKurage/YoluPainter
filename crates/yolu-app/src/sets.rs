@@ -171,8 +171,11 @@ pub struct TextureSet {
     pub visible: bool,
     /// 今のモデルの、このセットが受け持つマテリアルの番号（モデルが無い・合わなければ None）。
     pub bound: Option<u32>,
-    /// 読むだけの理由（core で扱えない中身がある）。あれば描く・レイヤーを変える・名前を変えるを断る。
+    /// 読むだけの理由（core で扱えない中身がある・効果の入力がそろわない）。あれば描く・レイヤーを変える・名前を変えるを断る。
     pub read_only: Option<String>,
+    /// 読むだけの理由が、効果の入力（メッシュマップ・モデルのルート・画像）がそろわないこと。入力がそろったら編集できるようになる
+    /// （core で扱えない中身が理由のときは false で、入力が替わっても読むだけのまま）。
+    pub waiting_inputs: bool,
     /// 最後に開いた・保存した時の文書（id と版）。今の文書と同じなら、保存で正本を書き直さない（開いたファイルのバイト列のまま）。
     pub saved: Option<(u128, u64)>,
     /// 焼いたメッシュマップ（種類ごとに最後の 1 枚。文書の外の派生物で、Undo に入らない。.ylp にセットごとに保存する）。
@@ -241,6 +244,7 @@ impl TextureSets {
                 visible: true,
                 bound: None,
                 read_only: None,
+                waiting_inputs: false,
                 saved: None,
                 mesh_maps: Default::default(),
                 stash: None,
@@ -283,6 +287,14 @@ impl TextureSets {
     }
     pub fn stashed_doc_mut(&mut self, index: usize) -> Option<&mut Document> {
         self.list.get_mut(index)?.stash.as_mut().map(|s| &mut s.doc)
+    }
+
+    /// 今でないセットの文書を入れ替える（選んでいる層は新しい文書の一番上にする）。
+    pub fn replace_stashed_doc(&mut self, index: usize, doc: Document) {
+        if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
+            stash.selected_layer = doc.layers().last().map(|l| l.id());
+            stash.doc = doc;
+        }
     }
 
     /// 開いたセットを並べる（id・名前・鍵・読むだけの理由・文書）。返すのは並びと、今のセット（current）の文書。どのセットも
@@ -383,6 +395,7 @@ impl TextureSets {
             visible: true,
             bound: None,
             read_only,
+            waiting_inputs: false,
             saved: None,
             mesh_maps: Default::default(),
             stash: Some(Stash::new(doc)),
@@ -564,6 +577,7 @@ impl AppState {
         self.renaming = None;
         self.layer_drag = None;
         self.popup = None;
+        self.fx.selected = None;
         self.sel_doc_changed();
         self.ensure_selection();
         self.sync_view3d();
@@ -588,6 +602,10 @@ impl AppState {
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
         self.doc = doc;
+        // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
+        let image_limit = self.fx.inputs.image_limit;
+        self.fx = Default::default();
+        self.fx.inputs.image_limit = image_limit;
         self.document_replaced();
         self.selected_layer = None;
         self.view = ViewState::default();

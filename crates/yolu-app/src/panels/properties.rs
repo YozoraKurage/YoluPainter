@@ -26,6 +26,8 @@ pub enum Context {
     Tool,
     /// 選択の道具（選択範囲を変更。どの層を選んでいても）。
     Selection,
+    /// 層の下の効果の行（フィルター・Generator・アンカー）を選んでいる。タブは出さず、その行の設定だけ。
+    Effect,
     /// 移動・変形の道具（変形の数値・補間と、選んでいる層のロック。どの層を選んでいても）。
     Transform,
     /// パスの道具（パスの状態・ブラシ・組。どの層を選んでいても）。
@@ -34,6 +36,9 @@ pub enum Context {
 
 /// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
 pub fn context(app: &AppState) -> Context {
+    if crate::fx::props_visible(app) {
+        return Context::Effect;
+    }
     if app.tool.is_select() {
         return Context::Selection;
     }
@@ -316,6 +321,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     ui.set_clip_rect(body.intersect(outer_clip));
     let mut rows = Rows::new(area, 0.0);
     match context {
+        Context::Effect => super::effect_props::effect_body(ui, app, &mut rows, &ctx),
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         Context::Tool => super::region_props::body(ui, app, &mut rows, &ctx),
         Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),

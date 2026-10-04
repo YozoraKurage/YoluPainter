@@ -90,6 +90,8 @@ pub enum Note {
     WhiteOcclusion,
     /// 読むだけのセットを書き出さなかった。
     ReadOnly(String),
+    /// 効いていない効果（読むマップ・画像が使えない）があり、書き出した画像には入っていない（セット・効果）。
+    InactiveEffects(String, Vec<yolu_core::InactiveEffect>),
 }
 
 /// もうあるファイルの確かめ（置き換えるか）。
@@ -206,12 +208,21 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
             format!("読むだけのセット「{set}」は書き出しません"),
             format!("Read-only set \"{set}\" was not exported"),
         ),
+        Note::InactiveEffects(set, effects) => {
+            let first = effects.first().map(|e| lang.inactive_effect(e)).unwrap_or_default();
+            lang.pick(
+                format!("「{set}」の効いていない効果 {} 件は書き出しに入っていません: {first}", effects.len()),
+                format!("{} inactive effect(s) of \"{set}\" are not in the exported images: {first}", effects.len()),
+            )
+        }
     }
 }
 
 /// 1 セットぶんの書き出しの入力（始めるときに写す）。
 struct SetInput {
     native: NativeDocument,
+    /// 効果の入力（焼いたマップ・モデルのルート・画像。正本には入らないので、写した文書へ渡し直す）。
+    inputs: yolu_core::EffectInputs,
     occlusion: Option<Vec<u8>>,
     /// UV の三角形（画素の座標）。塗り広げないなら None。
     uv: Option<Vec<[DVec2; 3]>>,
@@ -379,6 +390,12 @@ impl AppState {
                 )
             })?;
             let name = self.sets.get(index).expect("範囲内").name.clone();
+            // 効かない効果は黙って入力のまま書かず、書き出した画像に入っていないことを言う
+            let inactive = self.set_doc(index).inactive_effect_list();
+            if !inactive.is_empty() {
+                notes.push(Note::InactiveEffects(name.clone(), inactive));
+            }
+            let inputs = self.set_doc(index).effect_inputs().clone();
             let uv = if !padding_on {
                 None
             } else {
@@ -404,6 +421,7 @@ impl AppState {
             };
             sets.push(SetInput {
                 native,
+                inputs,
                 occlusion: occlusions[p].clone(),
                 uv,
             });
@@ -1011,9 +1029,14 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
     let docs = sets
         .iter()
         .map(|s| {
-            s.native
+            let mut doc = s
+                .native
                 .to_core_within(Some(source_bytes))
-                .map_err(|e| ExportError::Io(format!("写した文書を戻せません: {e}")))
+                .map_err(|e| ExportError::Io(format!("写した文書を戻せません: {e}")))?;
+            // 正本は効果の入力を持たないので、写す前の文書に渡していた入力を渡し直す（渡さないと、Generator・画像が入力のまま通る）
+            doc.set_effect_inputs(s.inputs.clone())
+                .map_err(|e| ExportError::Io(format!("効果の入力を渡せません: {e}")))?;
+            Ok::<_, ExportError>(doc)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut coverage: Vec<Option<Vec<bool>>> = Vec::with_capacity(sets.len());

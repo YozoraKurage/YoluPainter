@@ -1769,9 +1769,8 @@ fn headless_syncing_images_each_frame_decodes_once_and_the_cache_stays_inside_it
 }
 
 #[test]
-fn headless_a_project_with_an_image_layer_opens_read_only_with_a_reason_and_keeps_the_original() {
-    // 画像を使う層は、開く前の判定で読むだけになる（入力のつなぎは開いたあとの編集の経路にだけある）。この挙動を固定する。
-    // 開いたあとも編集できるようにするときは、この試験を「編集できて、画像が棚から戻る」へ更新する
+fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_image_is_passed() {
+    // 画像を使う層は、開いたあと棚の画像を効果の入力へ渡すと（毎フレームの sync_effects）編集できる。画像は棚から戻る
     let dir = temp_dir("reopen-image");
     let path = dir.join("image.ylp");
     let again = dir.join("image-again.ylp");
@@ -1791,35 +1790,39 @@ fn headless_a_project_with_an_image_layer_opens_read_only_with_a_reason_and_keep
     let mut t = AppState::new(8, 8);
     t.apply(Action::OpenProject(path.clone()));
     assert!(t.message.starts_with("開きました"), "{}", t.message);
-    let why = t
-        .read_only_reason()
-        .expect("画像を使う層を含むセットは読むだけ")
-        .to_owned();
-    assert!(why.contains("効かない効果"), "{why}");
-    assert!(
-        t.doc.layers().len() == 1 && t.doc.layers()[0].kind() != yolu_app::engine::LayerKind::Fill,
-        "見せるのは保存した合成の 1 枚"
-    );
-    // 画像は棚に残る（層が読むものは棚から消せない）
+    t.sync_effects();
+    assert_eq!(t.read_only_reason(), None);
+    let layer = t
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Fill)
+        .expect("塗りつぶしの層が戻る")
+        .id();
+    assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image));
+    assert!(t.doc.effect_inputs().image(image).is_some(), "棚の画像が入力に戻る");
     assert!(t.shelf.get(&rid).is_some());
-    // 編集の操作は断られ、文書は変わらない
+    // 編集できる: 画像を外すのは 1 回の Undo
     let steps = t.doc.undo_count();
-    let shown = t.doc.layers()[0].id();
     fill(
         &mut t,
         FillOp::Image {
-            layer: shown,
+            layer,
             channel: Channel::Color,
             image: None,
         },
     );
-    assert_eq!(t.doc.undo_count(), steps);
-    // 保存し直しても、元の編集情報（画像を読む層）を保つ: 開き直しても同じ理由で読むだけ
+    assert_eq!(t.doc.undo_count(), steps + 1);
+    assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), None);
+    t.apply(Action::Undo);
+    assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image));
+    // 保存し直して開き直しても、同じく編集できる
     t.apply(Action::SaveProjectAs(again.clone()));
     assert!(t.message.starts_with("保存しました"), "{}", t.message);
     let mut u = AppState::new(8, 8);
     u.apply(Action::OpenProject(again));
-    assert_eq!(u.read_only_reason(), Some(why.as_str()));
+    u.sync_effects();
+    assert_eq!(u.read_only_reason(), None);
     assert!(u.shelf.get(&rid).is_some());
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -801,6 +801,8 @@ impl YoluApp {
         self.state.sync_budgets();
         self.state.poll_psd();
         self.state.poll_brush_import();
+        // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
+        self.state.sync_effects();
         self.state.poll_newproject();
         // 更新の確かめ・ダウンロードの終わり（準備の窓は、描いている最中は開かない）
         self.state.poll_update();

@@ -849,6 +849,7 @@ impl AppState {
         let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
         if on {
+            self.fx.selected = None; // マスクの欄へ移る（選んだ効果の欄は閉じる）
             self.property_tab = MASK_TAB;
         } else if was && self.property_tab == MASK_TAB {
             self.property_tab = 0;

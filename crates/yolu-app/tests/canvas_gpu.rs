@@ -231,6 +231,61 @@ fn dab_color(image: &image::RgbaImage, at: Pos2) -> [u8; 4] {
     image.get_pixel(at.x.round() as u32, at.y.round() as u32).0
 }
 
+/// 効果（フィルター・Generator・塗りつぶしのグラデーションと投影・マスクの効果）のある文書は、GPU の合成に任せない
+/// （GPU は層の保存した画素と塗りつぶしの値を読むので、効果が入らない）。CPU の表示で効果が見え、効果を外すと GPU に戻る。
+#[test]
+fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back_without_them() {
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
+    let base = h.state().state.doc.layers()[0].id();
+    for y in 0..128 {
+        for x in 0..128 {
+            h.state_mut().state.doc.set_pixel(base, x, y, Rgba8::new(200, 30, 60, 255)).unwrap();
+        }
+    }
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu);
+    let at = canvas_rect(&h).center();
+    // 反転のフィルターを足すと、GPU は断り、CPU の表示（反転した色）になる
+    let filter = h
+        .state_mut()
+        .state
+        .doc
+        .add_filter(
+            base,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::invert()).channels(&[Channel::Color]),
+        )
+        .unwrap();
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Cpu);
+    assert_eq!(h.state().display().fallback(), Some(&Fallback::Effects));
+    let image = h.render().unwrap();
+    assert_eq!(&dab_color(&image, at)[..3], &[55, 225, 195], "フィルターが表示に入る");
+    for lang in Lang::ALL {
+        let text = Fallback::Effects.describe(lang);
+        assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
+    }
+    // 無効にする・外すと、GPU に戻る
+    h.state_mut().state.doc.set_filter_enabled(base, filter, false).unwrap();
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu);
+    assert_eq!(h.state().display().fallback(), None);
+    let image = h.render().unwrap();
+    assert_eq!(&dab_color(&image, at)[..3], &[200, 30, 60]);
+    // マスクの効果も同じ（マスクの値が評価で決まる）
+    h.state_mut().state.doc.add_layer_mask(base).unwrap();
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "効果の無いマスクは GPU のまま");
+    h.state_mut()
+        .state
+        .doc
+        .add_filter(base, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2)))
+        .unwrap();
+    h.run();
+    assert_eq!(h.state().display().fallback(), Some(&Fallback::Effects));
+}
+
 #[test]
 fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);

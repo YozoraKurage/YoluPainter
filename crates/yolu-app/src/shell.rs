@@ -23,18 +23,27 @@ use crate::update::UpdateAction;
 use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
-pub const MENU_TITLES: [&str; 6] = ["ファイル", "編集", "レイヤー", "選択範囲", "表示", "ヘルプ"];
+pub const MENU_TITLES: [&str; 7] = [
+    "ファイル",
+    "編集",
+    "レイヤー",
+    "選択範囲",
+    "フィルター",
+    "表示",
+    "ヘルプ",
+];
 
 /// ヘルプの見出しの番号。
-pub const HELP_MENU: usize = 5;
+pub const HELP_MENU: usize = 6;
 
 /// 言語ごとのメニューバーの見出し。
-pub fn menu_titles(lang: Lang) -> [&'static str; 6] {
+pub fn menu_titles(lang: Lang) -> [&'static str; 7] {
     [
         lang.pick("ファイル", "File"),
         lang.pick("編集", "Edit"),
         lang.pick("レイヤー", "Layer"),
         lang.pick("選択範囲", "Select"),
+        lang.pick("フィルター", "Filter"),
         lang.pick("表示", "View"),
         lang.pick("ヘルプ", "Help"),
     ]
@@ -223,7 +232,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             ],
         },
         3 => crate::selection::menu::select_menu(app),
-        4 => vec![
+        4 => crate::fx::menu::menu_entries(app),
+        5 => vec![
             Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
             Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
@@ -594,6 +604,9 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
             .enabled(free),
         );
     }
+    // アンカー（この層までの合成・マスクに名前を付けて、上の層の Generator が読めるようにする）
+    v.push(Entry::Separator);
+    v.extend(crate::fx::menu::anchor_entries_for(app, id));
     // ロック（選んでいる層の全部に効く。持っているロックにチェック）
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);

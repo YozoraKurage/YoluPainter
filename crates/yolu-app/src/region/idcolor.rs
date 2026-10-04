@@ -317,6 +317,10 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
     };
+    // Generator「ID の色」の色を選んでいる間は、押した所の ID の色をその段に足す（選択範囲は作らない）
+    if app.pick_id_color(rgb) {
+        return;
+    }
     let tolerance = app.region.id_tolerance;
     // 組み合わせ方は選択の道具と同じ（キーの修飾が無ければ、オプションバーで選んだ方）
     let mode = combine_of(app.sel.combine, app.region.modifiers);

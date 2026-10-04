@@ -517,7 +517,7 @@ fn effects_project(path: &std::path::Path, first: &str, second: &str) {
 
 #[test]
 fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_editable() {
-    // メッシュマップを使う Generator・画像の塗りつぶしは、app が入力を渡さないので効かない。フィルターだけの文書は評価されるので編集できる
+    // メッシュマップ・画像を使う Generator・画像の塗りつぶしは、入力がそろわないあいだは効かない。入力のいらないフィルターだけの文書は編集できる
     let dir = TempDir::new("effects-readonly");
     let path = dir.0.join("effects.ylp");
     effects_project(&path, "effects-generators", "effects-filters");
@@ -532,8 +532,8 @@ fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_edi
         .unwrap()
         .read_only
         .as_deref()
-        .expect("効かない Generator があるので読むだけ");
-    assert!(reason.contains("効かない効果がある"), "{reason}");
+        .expect("入力がそろわない Generator があるので読むだけ");
+    assert!(reason.contains("効果の入力がそろっていない"), "{reason}");
     assert!(reason.contains("マップがありません"), "{reason}");
     assert!(
         !reason.contains("焼いてください"),

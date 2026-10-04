@@ -13,6 +13,7 @@ use egui::{
 use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
 use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
+use crate::panels::effect_rows;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
@@ -294,8 +295,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let rows = m2::visible_rows(&app.doc, &app.m2.collapsed);
-    let n = rows.len();
-    let content = n as f32 * ROW_HEIGHT;
+    // 層の行の下に効果の行（高さが違う）が続くので、行の位置は配置を数えて決める
+    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT);
+    let content = layout.height;
     let max_scroll = (content - list.height()).max(0.0);
     if ui.rect_contains_pointer(list) {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
@@ -328,18 +330,22 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
 
     let chosen = app.selected_layers();
-    for (row_index, row) in rows.iter().enumerate() {
+    for entry in &layout.entries {
         let rect = Rect::from_min_size(
-            pos2(
-                list.left(),
-                list.top() + row_index as f32 * ROW_HEIGHT - app.layer_scroll,
-            ),
-            vec2(row_width, ROW_HEIGHT),
+            pos2(list.left(), list.top() + entry.y - app.layer_scroll),
+            vec2(row_width, entry.height),
         );
         if rect.bottom() < list.top() || rect.top() > list.bottom() {
             continue;
         }
-        layer_row(ui, app, thumbs, &ctx, list, rect, *row, &rows, &chosen);
+        match entry.kind {
+            effect_rows::Kind::Layer(row_index) => {
+                layer_row(ui, app, thumbs, &ctx, list, rect, rows[row_index], &rows, &chosen)
+            }
+            effect_rows::Kind::Child(child) => {
+                effect_rows::child_row(ui, app, list, rect, entry, child)
+            }
+        }
     }
     follow_drag(ui, app, list, &rows);
     crate::panels::assets::layer_list_drop(ui, app, list, &rows);
@@ -352,7 +358,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         let painter = ui.painter_at(list);
         match target {
             DropTarget::Gap(gap) => {
-                let y = list.top() + gap as f32 * ROW_HEIGHT - app.layer_scroll;
+                let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
                 painter.rect_filled(
                     Rect::from_min_size(
                         pos2(list.left() + 4.0, y - 1.0),
@@ -364,7 +370,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
             DropTarget::Into(group) => {
                 if let Some(i) = rows.iter().position(|r| r.id == group) {
-                    let y = list.top() + i as f32 * ROW_HEIGHT - app.layer_scroll;
+                    let y = list.top() + layout.layer_y(i) - app.layer_scroll;
                     w::outline(
                         &painter,
                         Rect::from_min_size(
@@ -718,7 +724,8 @@ fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
 /// ポインタの位置から、いまの落とす先を決める。
 fn update_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row], id: LayerId) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
-        let position = (p.y - list.top() + app.layer_scroll) / ROW_HEIGHT;
+        let layout = effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
+        let position = layout.position_at(p.y - list.top() + app.layer_scroll);
         let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
         app.layer_drag = Some(LayerDrag { id, target });
     }
@@ -944,6 +951,7 @@ fn layer_row(
     // 選ぶ（Ctrl・Cmd で足し引き、Shift で範囲、Ctrl + Shift で範囲を足す。選んだ行を押してそのままドラッグすれば選んだ全部を運ぶ）・
     // ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
     if response.clicked() {
+        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
         let modifiers = click_modifiers(ui);
         if modifiers.command || modifiers.shift {
             let ids: Vec<LayerId> = rows.iter().map(|r| r.id).collect();
@@ -962,6 +970,7 @@ fn layer_row(
         if !in_selection {
             app.select_single_layer(id);
         }
+        app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
         if app.renaming != Some(id) {
             app.renaming = None;
         }

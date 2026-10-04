@@ -18,6 +18,7 @@
 //!
 //! 高ポリからの投影（参照）は、窓で選べるようになるまで使わない（参照なしで焼く）。
 
+pub mod adopt;
 pub mod input;
 pub mod maps;
 pub mod overlay;
@@ -599,6 +600,17 @@ impl AppState {
             }
             Err(e) => Some(self.cache_input(&model, Err(e.to_string()))),
         }
+    }
+
+    /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクの窓が入力を作っている
+    /// あいだ、効果の入力が毎フレーム横から見る）。
+    pub(crate) fn bake_input_ready(&self) -> Option<Result<Arc<MeshBakeInput>, String>> {
+        let model = self.view3d.full_model()?;
+        self.bake
+            .input
+            .as_ref()
+            .filter(|c| c.model.is(model))
+            .map(|c| c.input.clone())
     }
 
     fn cache_input(
