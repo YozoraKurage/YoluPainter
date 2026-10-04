@@ -1,0 +1,63 @@
+# 名前 型 幅 高さ 強さ 種類 引数（; で次の段。各段は強さ 種類 引数）
+blur1 color 137 139 1 blur 1
+blur17 color 137 139 0.37 blur 17
+blur256 color 9 7 1 blur 256
+blur_line color 1 19 0.5 blur 8
+blur_row color 23 1 1 blur 9
+blur_normal normal 137 139 1 blur 7
+blur_normal_partial normal 137 139 0.41 blur 5
+sharpen color 137 139 1 sharpen 3 1.7 12
+sharpen64 color 17 13 0.51 sharpen 64 5 0
+noise_mono color 137 139 1 noise 0.47 -2147483648 1
+noise_color color 137 139 0.37 noise 0.83 2147483647 0
+levels color 137 139 1 levels 0.1 0.91 1.7 0.05 0.93
+levels_reverse scalar 137 139 0.5 levels 0 1 0.1 1 0
+invert color 137 139 1 invert
+invert_partial color 137 139 0.37 invert
+normalize color 137 139 1 normalize
+normalize_partial color 137 139 0.41 normalize
+mask_blur mask 137 139 0.71 blur 13
+mask_sharpen mask 137 139 0.51 sharpen 2 2.7 31
+mask_noise mask 137 139 0.71 noise 0.73 -39 1
+mask_levels mask 137 139 0.29 levels 0.2 0.83 2.3 0.1 0.99
+mask_invert mask 137 139 0.9 invert
+mask_normalize mask 137 139 1 normalize
+stack color 137 139 0.7 blur 4 ; 0.6 noise 0.3 92 0 ; 0.8 levels 0.1 0.9 1.3 0.2 0.7 ; 0.4 sharpen 2 1.7 6 ; 0.9 normalize ; 0.3 invert
+stack_mask mask 137 139 0.6 blur 3 ; 0.5 invert ; 0.7 normalize ; 0.2 noise 0.3 1 1
+stack_global color 137 139 1 levels 0 1 1 0.2 0.7 ; 1 normalize ; 1 blur 4 ; 0.73 normalize
+stack_order color 137 139 0.5 invert ; 0.8 levels 0.1 0.9 1.3 0.2 0.7 ; 0.7 blur 4
+
+# Generator（実 FilterEngine が解決した値を <名前>.s<段> へ書く。段は 強さ generator ブレンド thick|shape ramp|none。ramp は shape だけ）
+# 色の ramp はランプ適用後の RGBA（RGB と α の掛け合わせ）、マスクの thick は値そのもの、マスクの ramp は R×A の可視度の経路
+gen_multiply_color_ramp color 45 47 0.6 generator multiply shape ramp
+gen_multiply_mask_thick mask 45 47 0.45 generator multiply thick none
+gen_multiply_mask_ramp mask 45 47 0.8 generator multiply shape ramp
+gen_replace_color_ramp color 45 47 0.6 generator replace shape ramp
+gen_replace_mask_thick mask 45 47 0.45 generator replace thick none
+gen_replace_mask_ramp mask 45 47 0.8 generator replace shape ramp
+gen_screen_color_ramp color 45 47 0.6 generator screen shape ramp
+gen_screen_mask_thick mask 45 47 0.45 generator screen thick none
+gen_screen_mask_ramp mask 45 47 0.8 generator screen shape ramp
+gen_max_color_ramp color 45 47 0.6 generator max shape ramp
+gen_max_mask_thick mask 45 47 0.45 generator max thick none
+gen_max_mask_ramp mask 45 47 0.8 generator max shape ramp
+gen_min_color_ramp color 45 47 0.6 generator min shape ramp
+gen_min_mask_thick mask 45 47 0.45 generator min thick none
+gen_min_mask_ramp mask 45 47 0.8 generator min shape ramp
+gen_add_color_ramp color 45 47 0.6 generator add shape ramp
+gen_add_mask_thick mask 45 47 0.45 generator add thick none
+gen_add_mask_ramp mask 45 47 0.8 generator add shape ramp
+gen_subtract_color_ramp color 45 47 0.6 generator subtract shape ramp
+gen_subtract_mask_thick mask 45 47 0.45 generator subtract thick none
+gen_subtract_mask_ramp mask 45 47 0.8 generator subtract shape ramp
+gen_scalar_thick scalar 45 47 1 generator replace thick none
+gen_scalar_ramp scalar 45 47 0.8 generator add shape ramp
+gen_scalar_shape_none scalar 45 47 0.5 generator multiply shape none
+gen_color_thick color 45 47 1 generator multiply thick none
+gen_color_thick_weak color 45 47 0.01 generator screen thick none
+gen_color_shape_none color 45 47 0.37 generator replace shape none
+gen_stack_color color 45 47 0.7 blur 3 ; 0.8 generator multiply thick none ; 0.5 invert
+gen_stack_color_ramp color 45 47 0.9 generator replace shape ramp ; 1 blur 4 ; 0.6 sharpen 2 1.5 3
+gen_stack_mask mask 45 47 0.6 generator replace shape ramp ; 1 blur 2 ; 0.5 generator screen thick none
+gen_stack_global color 45 47 1 generator add thick none ; 1 normalize ; 0.8 generator multiply shape ramp ; 1 normalize
+gen_stack_global_mask mask 45 47 1 generator subtract shape ramp ; 1 normalize ; 0.7 blur 3

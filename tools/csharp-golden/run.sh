@@ -3,6 +3,8 @@
 #   run.sh [golden]            台本（crates/yolu-core/tests/golden/cases.txt）を走らせ、同じフォルダへ index.txt と .rgba を書く
 #   run.sh bench [回数]         4096² の合成と半径 40・200 のストローク、M2 のブラシ（ゆらぎ・筆先・質感・デュアル・色・全部・
 #                               ぼかし・指先）の時間（Mono。BENCH_ONLY=種類 で M2 の 1 種類だけ）
+#   run.sh filter              非破壊フィルターの正解を生成（Generator の事例は、実 FilterEngine が解決した値も <名前>.s<段> へ書く）
+#   run.sh filter-bench        4096² のフィルターごとの時間（Mono）
 #   run.sh surface             面の計算の台本（crates/yolu-core/tests/golden/surface/cases.txt）を Unity 版の SurfaceGeometry に通し、
 #                              同じフォルダへ index.txt を書く（Editor/Preview の原文を、本物の UnityEngine.CoreModule.dll と組む。
 #                              ネイティブの Bounds.SqrDistance の呼び出しだけを SurfaceGolden.cs の写しに置き換える）
@@ -24,13 +26,14 @@ while [[ $# -gt 0 ]]; do
     --source) source_dir="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --release) optimize="-optimize+"; flavor="release"; shift ;;
-    golden|bench|surface|surface-bench) mode="$1"; shift ;;
+    golden|bench|surface|surface-bench|filter|filter-bench) mode="$1"; shift ;;
     -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) extra+=("$1"); shift ;;
   esac
 done
 cases="$repo/crates/yolu-core/tests/golden/cases.txt"
 [[ "$mode" == surface* ]] && cases="$repo/crates/yolu-core/tests/golden/surface/cases.txt"
+[[ "$mode" == filter* ]] && cases="$repo/crates/yolu-core/tests/golden/filter/cases.txt"
 [[ -n "$out" ]] || out="$(dirname "$cases")"
 core="$source_dir/Runtime/Core"
 [[ -d "$core" ]] || { echo "Core のソースが無い: $core" >&2; exit 3; }
@@ -72,7 +75,9 @@ if [[ "$mode" == surface* ]]; then
   exit 0
 fi
 
-build="$repo/target/csharp-golden/$flavor"
+program="Golden.cs"
+[[ "$mode" == filter* ]] && program="FilterGolden.cs"
+build="$repo/target/csharp-golden/${program%.cs}-$flavor"
 mkdir -p "$build"
 rsp="$build/build.rsp"
 {
@@ -80,10 +85,13 @@ rsp="$build/build.rsp"
   echo "-out:\"$build/golden.exe\""
   for f in "$api"/*.dll "$api"/Facades/*.dll; do echo "-r:\"$f\""; done
   find "$core" -name '*.cs' | LC_ALL=C sort | sed 's/.*/"&"/'
-  echo "\"$here/Golden.cs\""
+  echo "\"$here/$program\""
 } > "$rsp"
 "$dotnet" exec "$csc" /noconfig "@$rsp" > "$build/build.log" 2>&1 || { cat "$build/build.log" >&2; echo "組めなかった" >&2; exit 3; }
 
+if [[ "$mode" == "filter-bench" ]]; then
+  exec "$mono" "$build/golden.exe" filter-bench "${extra[@]}"
+fi
 if [[ "$mode" == "bench" ]]; then
   exec "$mono" "$build/golden.exe" bench "${extra[@]}"
 fi
