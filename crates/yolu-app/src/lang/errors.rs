@@ -1,5 +1,6 @@
 //! core の型と io の分類から、画面用の短い理由を作る。
 use super::Lang;
+use crate::stencil::StencilError;
 use crate::view3d::model::ViewError;
 use yolu_core::geometry::GeometryError;
 use yolu_core::skin::RigError;
@@ -84,6 +85,20 @@ impl Lang {
         match error.raw_os_error() {
             Some(code) => self.pick(format!("{reason}（OS エラー {code}）"), format!("{reason} (OS error {code})")),
             None => reason.into(),
+        }
+    }
+
+    /// ステンシルの画像を読めない理由（core の断り・ファイルの失敗は他の窓と同じ文を通す）。
+    pub fn stencil_error(self, error: &StencilError) -> String {
+        match error {
+            StencilError::Core(e) => self.core_error(e),
+            StencilError::File(e) => self.file_error(e),
+            StencilError::NotPng => self.pick("PNG として読めません", "Not a readable PNG").into(),
+            StencilError::TooLarge { width, height, side } => self.pick(
+                format!("画像が大きすぎます（{width} × {height}、1 辺は {side} まで）"),
+                format!("Image too large ({width} × {height}; maximum side {side})"),
+            ),
+            StencilError::Limits => self.pick("画像が大きすぎます（メモリの上限）", "Image too large (memory limit)").into(),
         }
     }
 

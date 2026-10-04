@@ -21,7 +21,7 @@ use std::sync::Arc;
 use egui::{Pos2, Rect};
 use yolu_core::geometry::SurfaceStencil;
 use yolu_core::{
-    BrushStencil, Channel, ImageColorSpace, StencilImage, StencilMapping, StencilMode,
+    BrushStencil, Channel, CoreError, ImageColorSpace, StencilImage, StencilMapping, StencilMode,
     StencilTiling,
 };
 
@@ -120,6 +120,37 @@ impl Preview {
     }
 }
 
+/// ステンシルを読む・使う失敗。文はここでは作らず、表示のところで言語ごとに作る（`Lang::stencil_error`）。
+#[derive(Debug)]
+pub enum StencilError {
+    /// core の断り（大きさ・ミップマップの予算・写しが有限でない、など）。
+    Core(CoreError),
+    /// ファイルを開けない・読めない。
+    File(std::io::Error),
+    /// PNG として読めない（デコーダーの診断は英語の文なので、画面には出さない）。
+    NotPng,
+    /// 1 辺が上限を超える（画素を読む前に断る）。
+    TooLarge { width: u32, height: u32, side: u32 },
+    /// デコーダーの確保の上限を超える。
+    Limits,
+}
+
+impl From<CoreError> for StencilError {
+    fn from(e: CoreError) -> Self {
+        Self::Core(e)
+    }
+}
+
+impl From<image::ImageError> for StencilError {
+    fn from(e: image::ImageError) -> Self {
+        match e {
+            image::ImageError::IoError(e) => Self::File(e),
+            image::ImageError::Limits(_) => Self::Limits,
+            _ => Self::NotPng,
+        }
+    }
+}
+
 /// 読んだステンシルの画像。
 pub struct LoadedStencil {
     /// 読むたびに増える番号（重ね表示と見本の絵を作り直す鍵）。
@@ -144,16 +175,17 @@ impl LoadedStencil {
         height: usize,
         rgba: &[u8],
         mip_budget: u64,
-    ) -> Result<LoadedStencil, String> {
+    ) -> Result<LoadedStencil, CoreError> {
         if width < 1 || height < 1 || rgba.len() != width * height * 4 {
-            return Err("ステンシルの画像のバイト数が幅 × 高さ × 4 でない".into());
+            return Err(CoreError::InvalidArgument(
+                "ステンシルの画像のバイト数が幅 × 高さ × 4 でない",
+            ));
         }
         let mut flipped = Vec::with_capacity(rgba.len());
         for row in rgba.chunks_exact(width * 4).rev() {
             flipped.extend_from_slice(row);
         }
-        let image = StencilImage::new(width, height, flipped, ImageColorSpace::Srgb, mip_budget)
-            .map_err(|e| e.to_string())?;
+        let image = StencilImage::new(width, height, flipped, ImageColorSpace::Srgb, mip_budget)?;
         let preview = Preview::shrink(rgba, width, height, OVERLAY_SIDE);
         let thumb = Preview::shrink(&preview.rgba, preview.size[0], preview.size[1], THUMB_SIDE);
         Ok(LoadedStencil {
@@ -178,24 +210,25 @@ impl LoadedStencil {
 }
 
 /// PNG のファイルを straight RGBA8（行は上から）に読む。1 辺が 8192 を超える画像は、画素を読む前に断る。
-pub fn read_png(path: &Path) -> Result<(usize, usize, Vec<u8>), String> {
+pub fn read_png(path: &Path) -> Result<(usize, usize, Vec<u8>), StencilError> {
     use image::ImageDecoder;
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))
-        .map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(path).map_err(StencilError::File)?;
+    let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))?;
     let (w, h) = decoder.dimensions();
     let side = StencilImage::MAX_SIDE as u32;
     if w > side || h > side {
-        return Err(format!("{w} × {h} > {side}"));
+        return Err(StencilError::TooLarge {
+            width: w,
+            height: h,
+            side,
+        });
     }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(side);
     limits.max_image_height = Some(side);
     limits.max_alloc = Some(1 << 30);
-    decoder.set_limits(limits).map_err(|e| e.to_string())?;
-    let img = image::DynamicImage::from_decoder(decoder)
-        .map_err(|e| e.to_string())?
-        .into_rgba8();
+    decoder.set_limits(limits)?;
+    let img = image::DynamicImage::from_decoder(decoder)?.into_rgba8();
     let (w, h) = (img.width() as usize, img.height() as usize);
     Ok((w, h, img.into_raw()))
 }
@@ -333,7 +366,7 @@ impl StencilState {
         width: usize,
         height: usize,
         rgba: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<(), CoreError> {
         self.set_loaded(name, None, width, height, rgba)
     }
 
@@ -344,7 +377,7 @@ impl StencilState {
         width: usize,
         height: usize,
         rgba: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<(), CoreError> {
         let loaded = LoadedStencil::from_top_down(
             self.next_id + 1,
             name.to_owned(),
@@ -444,8 +477,9 @@ impl AppState {
         let lang = self.lang;
         let name = file_name(path);
         let result = read_png(path).and_then(|(w, h, rgba)| {
-            self.stencil
-                .set_loaded(&name, Some(path.to_path_buf()), w, h, &rgba)
+            Ok(self
+                .stencil
+                .set_loaded(&name, Some(path.to_path_buf()), w, h, &rgba)?)
         });
         match result {
             Ok(()) => {
@@ -455,8 +489,9 @@ impl AppState {
             Err(e) => {
                 self.stencil.recent.retain(|r| r.path != path);
                 self.message = format!(
-                    "{}: {name}: {e}",
-                    lang.pick("ステンシルを読めません", "Cannot load the stencil")
+                    "{}: {name}: {}",
+                    lang.pick("ステンシルを読めません", "Cannot load the stencil"),
+                    lang.stencil_error(&e)
                 );
             }
         }
@@ -473,7 +508,7 @@ impl AppState {
 
     /// 次の 2D のストロークが通すステンシル（使わなければ None）: キャンバスの画素 → 画面 → 画像の写しを 1 つにして渡す。
     /// rect は今のキャンバスの表示域。
-    pub fn canvas_stencil(&self, rect: Rect) -> Result<Option<Arc<BrushStencil>>, String> {
+    pub fn canvas_stencil(&self, rect: Rect) -> Result<Option<Arc<BrushStencil>>, CoreError> {
         let st = &self.stencil;
         let Some(image) = st.image.as_ref().filter(|_| st.applies()) else {
             return Ok(None);
@@ -491,8 +526,7 @@ impl AppState {
             s * a + t * d,
             s * b + t * e,
             s * c + t * g + u,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         Ok(Some(Arc::new(BrushStencil::new(
             image.image.clone(),
             st.mode,
@@ -508,7 +542,7 @@ impl AppState {
     pub fn surface_stencil(
         &self,
         rect: Rect,
-    ) -> Result<Option<(Arc<BrushStencil>, SurfaceStencil)>, String> {
+    ) -> Result<Option<(Arc<BrushStencil>, SurfaceStencil)>, CoreError> {
         let st = &self.stencil;
         let Some(image) = st.image.as_ref().filter(|_| st.applies()) else {
             return Ok(None);
@@ -518,9 +552,8 @@ impl AppState {
             return Ok(None);
         };
         let [xx, xy, x0, yx, yy, y0] = frame.image_affine();
-        let to_image = StencilMapping::new(xx, xy, x0, yx, yy, y0).map_err(|e| e.to_string())?;
-        let surface =
-            SurfaceStencil::new(to_image, frame.image_per_point()).map_err(|e| e.to_string())?;
+        let to_image = StencilMapping::new(xx, xy, x0, yx, yy, y0)?;
+        let surface = SurfaceStencil::new(to_image, frame.image_per_point())?;
         let brush = BrushStencil::new(
             image.image.clone(),
             st.mode,

@@ -492,6 +492,54 @@ mod stencil {
         SurfaceStencil::new(to_image, 64.0 / VIEW as f64).unwrap()
     }
 
+    /// 上半分が白（`top_white` でなければ下半分が白）で、残りが黒の 8 × 64 の画像（行は下から。量のモードで、白い側だけが通る）。
+    fn top_bottom_image(top_white: bool) -> Arc<StencilImage> {
+        let mut rgba = Vec::new();
+        for row in 0..64 {
+            let v = if (row >= 32) == top_white { 255 } else { 0 };
+            for _ in 0..8 {
+                rgba.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        Arc::new(
+            StencilImage::new(
+                8,
+                64,
+                rgba,
+                ImageColorSpace::Srgb,
+                StencilImage::DEFAULT_MIP_BUDGET_BYTES,
+            )
+            .unwrap(),
+        )
+    }
+
+    /// `top_bottom_image` を表示域いっぱいに貼る写し。
+    fn fill_view_tall() -> SurfaceStencil {
+        let to_image =
+            StencilMapping::new(8.0 / VIEW as f64, 0.0, 0.0, 0.0, -64.0 / VIEW as f64, 64.0)
+                .unwrap();
+        SurfaceStencil::new(to_image, 64.0 / VIEW as f64).unwrap()
+    }
+
+    /// 試験のカメラ（立方体を斜めから見る）。
+    fn test_view() -> CameraView {
+        let g = cube();
+        let mut cam = OrbitCamera::framing(&g.bounds());
+        cam.yaw = -40.0;
+        cam.pitch = 15.0;
+        cam.view(VIEW, VIEW)
+    }
+
+    /// 既定の線（手前の面から右の面へ、横に渡る）。
+    fn across() -> (Vec3, Vec3) {
+        (Vec3::new(-0.45, 0.0, -0.5), Vec3::new(0.5, 0.0, -0.25))
+    }
+
+    /// 手前の面を縦に渡る線（画面の上から下へ）。
+    fn down() -> (Vec3, Vec3) {
+        (Vec3::new(0.0, 0.45, -0.5), Vec3::new(0.0, -0.45, -0.5))
+    }
+
     fn paint(
         image: Option<Arc<StencilImage>>,
         surface: Option<SurfaceStencil>,
@@ -504,14 +552,35 @@ mod stencil {
         image: Option<Arc<StencilImage>>,
         surface: Option<SurfaceStencil>,
     ) -> Result<std::collections::BTreeMap<(u32, u32), u8>, SurfaceStrokeError> {
+        paint_line(image, surface, across(), 0.0, 1.0)
+    }
+
+    /// 線（モデルの 2 点）の `t0` から `t1`（0〜1。画面の点で内分）までを塗った画素の組。
+    fn paint_part(
+        image: Option<Arc<StencilImage>>,
+        surface: Option<SurfaceStencil>,
+        line: (Vec3, Vec3),
+        t0: f32,
+        t1: f32,
+    ) -> std::collections::BTreeSet<(u32, u32)> {
+        paint_line(image, surface, line, t0, t1)
+            .unwrap()
+            .into_keys()
+            .collect()
+    }
+
+    fn paint_line(
+        image: Option<Arc<StencilImage>>,
+        surface: Option<SurfaceStencil>,
+        line: (Vec3, Vec3),
+        t0: f32,
+        t1: f32,
+    ) -> Result<std::collections::BTreeMap<(u32, u32), u8>, SurfaceStrokeError> {
         let mut doc = Document::new(256, 256).unwrap();
         let layer = doc.add_layer("1").unwrap();
         doc.clear_history().unwrap();
         let g = Arc::new(cube());
-        let mut cam = OrbitCamera::framing(&g.bounds());
-        cam.yaw = -40.0;
-        cam.pitch = 15.0;
-        let view = cam.view(VIEW, VIEW);
+        let view = test_view();
         let settings = BrushSettings {
             radius: 16.0,
             color: Rgba8::new(220, 40, 30, 255),
@@ -529,8 +598,11 @@ mod stencil {
             ))
         });
         let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
-        let from = view.to_screen(Vec3::new(-0.45, 0.0, -0.5)).unwrap();
-        let to = view.to_screen(Vec3::new(0.5, 0.0, -0.25)).unwrap();
+        let (a, b) = (
+            view.to_screen(line.0).unwrap(),
+            view.to_screen(line.1).unwrap(),
+        );
+        let (from, to) = (a + (b - a) * t0, a + (b - a) * t1);
         let begun = SurfaceStroke::begin_with_stencil(
             &mut doc,
             &mut stroke,
@@ -585,6 +657,115 @@ mod stencil {
             half.len()
         );
         assert!(half.is_subset(&plain));
+    }
+
+    /// 線（画面へ写した 2 点）の `axis`（x が 0、y が 1）の座標が `at` になる所の `t`（0〜1）。
+    fn t_at(line: (Vec3, Vec3), axis: usize, at: f32) -> f32 {
+        let view = test_view();
+        let (a, b) = (
+            view.to_screen(line.0).unwrap(),
+            view.to_screen(line.1).unwrap(),
+        );
+        (at - a[axis]) / (b[axis] - a[axis])
+    }
+
+    /// 通した画素が、画面の白い側の画素だけであること（黒い側の画素は 1 つも塗られず、白い側は大半が塗られる）。
+    fn assert_only_the_white_side(
+        through: &std::collections::BTreeSet<(u32, u32)>,
+        white: &std::collections::BTreeSet<(u32, u32)>,
+        black: &std::collections::BTreeSet<(u32, u32)>,
+        what: &str,
+    ) {
+        assert!(
+            white.len() > 50 && black.len() > 50,
+            "{what}: {} / {}",
+            white.len(),
+            black.len()
+        );
+        assert!(
+            white.is_disjoint(black),
+            "{what}: 試験の線が境をまたいでいる"
+        );
+        assert_eq!(
+            through.intersection(black).count(),
+            0,
+            "{what}: 黒い側が塗られた"
+        );
+        assert!(
+            through.intersection(white).count() * 10 >= white.len() * 9,
+            "{what}: 白い側が塗られない {} / {}",
+            through.intersection(white).count(),
+            white.len()
+        );
+    }
+
+    #[test]
+    fn the_open_side_of_the_stencil_is_the_side_of_the_screen_it_covers() {
+        // 画像の白い左半分は画面の左半分に貼られる。線の画面の x が境（200）から 40 以上離れた左の部分と右の部分で、塗られる画素を
+        // ステンシル無しで測っておき、通した結果はその左の画素だけ（右の画素が 1 つも無い）になる。左右が入れ替わる実装は落ちる
+        let line = across();
+        let view = test_view();
+        let (a, b) = (
+            view.to_screen(line.0).unwrap(),
+            view.to_screen(line.1).unwrap(),
+        );
+        assert!(a.x < 160.0 && b.x > 240.0, "{a} {b}");
+        let (t_left, t_right) = (t_at(line, 0, 160.0), t_at(line, 0, 240.0));
+        let left = paint_part(None, None, line, 0.0, t_left);
+        let right = paint_part(None, None, line, t_right, 1.0);
+        let white_left = paint_part(
+            Some(half_image(true, true)),
+            Some(fill_view()),
+            line,
+            0.0,
+            1.0,
+        );
+        assert_only_the_white_side(&white_left, &left, &right, "白が左");
+        // 白と黒を入れ替えた画像（白が右）は、逆の側だけを通す
+        let white_right = paint_part(
+            Some(half_image(false, false)),
+            Some(fill_view()),
+            line,
+            0.0,
+            1.0,
+        );
+        assert_only_the_white_side(&white_right, &right, &left, "白が右");
+        assert!(
+            white_left.is_disjoint(&white_right)
+                || white_left.intersection(&white_right).count() < white_left.len() / 4
+        );
+    }
+
+    #[test]
+    fn the_top_of_the_image_is_the_top_of_the_screen_in_3d() {
+        // 8 × 64 の画像の上半分（画像の行は下から数えるので、後ろの行）が白。縦に渡る線の画面の y が境（200）から 40 以上離れた
+        // 上の部分と下の部分で、通した画素が上だけ・（白と黒を替えると）下だけになる
+        let line = down();
+        let view = test_view();
+        let (a, b) = (
+            view.to_screen(line.0).unwrap(),
+            view.to_screen(line.1).unwrap(),
+        );
+        assert!(a.y < 160.0 && b.y > 240.0, "{a} {b}");
+        let (t_top, t_bottom) = (t_at(line, 1, 160.0), t_at(line, 1, 240.0));
+        let top = paint_part(None, None, line, 0.0, t_top);
+        let bottom = paint_part(None, None, line, t_bottom, 1.0);
+        let white_top = paint_part(
+            Some(top_bottom_image(true)),
+            Some(fill_view_tall()),
+            line,
+            0.0,
+            1.0,
+        );
+        assert_only_the_white_side(&white_top, &top, &bottom, "白が上");
+        let white_bottom = paint_part(
+            Some(top_bottom_image(false)),
+            Some(fill_view_tall()),
+            line,
+            0.0,
+            1.0,
+        );
+        assert_only_the_white_side(&white_bottom, &bottom, &top, "白が下");
     }
 
     #[test]

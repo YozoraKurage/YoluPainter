@@ -236,8 +236,61 @@ fn headless_a_too_big_mip_chain_is_refused_and_the_old_stencil_stays() {
     s.stencil.mip_budget = 10; // ミップマップの予算を下げる
     let big = ring_png(&dir, "ring.png");
     s.apply(Action::Stencil(StencilOp::Load(big)));
-    assert!(s.message.contains("ring.png"), "{}", s.message);
+    assert!(
+        s.message.contains("ring.png") && s.message.contains("ミップマップ"),
+        "{}",
+        s.message
+    );
     assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn headless_load_failures_are_told_in_the_selected_language_with_no_japanese_in_english() {
+    let dir = temp_dir("errlang");
+    let mut s = AppState::new(64, 64);
+    s.apply(Action::Stencil(StencilOp::Load(half_png(&dir, "half.png"))));
+    s.lang = Lang::En;
+    let bad = dir.join("bad.png");
+    std::fs::write(&bad, b"not a png at all").unwrap();
+    let wide = write_png(&dir, "wide.png", 8193, 1, |_, _| [255; 4]);
+    let ring = ring_png(&dir, "ring.png");
+    // ミップマップが予算を超える画像（core の InvalidArgument）は、core の英訳の表を通る
+    s.stencil.mip_budget = 10;
+    let cases = [
+        (ring.clone(), "Stencil mipmap budget exceeded"),
+        (dir.join("missing.png"), "File or folder not found"),
+        (bad, "Not a readable PNG"),
+        (wide, "Image too large (8193 × 1; maximum side 8192)"),
+    ];
+    for (path, reason) in cases {
+        s.message.clear();
+        s.apply(Action::Stencil(StencilOp::Load(path.clone())));
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            s.message.starts_with("Cannot load the stencil")
+                && s.message.contains(&name)
+                && s.message.contains(reason),
+            "{}",
+            s.message
+        );
+        // 「×」だけは英語の文にも出る。かなと漢字は混ざらない
+        assert!(
+            s.message.chars().all(|c| c.is_ascii() || c == '×'),
+            "{}",
+            s.message
+        );
+        assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
+    }
+    // 同じ失敗を日本語で
+    s.lang = Lang::Ja;
+    s.message.clear();
+    s.apply(Action::Stencil(StencilOp::Load(ring)));
+    assert!(
+        s.message.contains("ステンシルのミップマップが予算を超える"),
+        "{}",
+        s.message
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1105,26 +1158,40 @@ fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     (h, rect)
 }
 
-/// 手前の面を、画面の中心をまたいで横に描く点（画面の点）。
-fn cube_points(h: &Harness<'_, YoluApp>, rect: Rect) -> Vec<Pos2> {
-    use yolu_core::glam::Vec3;
+/// モデルの空間の点の、ウィンドウの画面の点。
+fn cube_screen(h: &Harness<'_, YoluApp>, rect: Rect, p: yolu_core::glam::Vec3) -> Pos2 {
     let view = h
         .state()
         .state
         .view3d
         .camera
         .view(rect.width(), rect.height());
-    let at = |p: Vec3| {
-        let s = view.to_screen(p).expect("カメラの前");
-        pos2(rect.left() + s.x, rect.top() + s.y)
-    };
-    let (from, to) = (
-        at(Vec3::new(-0.45, 0.1, -0.5)),
-        at(Vec3::new(0.45, 0.1, -0.5)),
-    );
+    let s = view.to_screen(p).expect("カメラの前");
+    pos2(rect.left() + s.x, rect.top() + s.y)
+}
+
+/// モデルの空間の 2 点の間を、画面の上で等間隔に結ぶ点（画面の点）。
+fn cube_segment(
+    h: &Harness<'_, YoluApp>,
+    rect: Rect,
+    a: yolu_core::glam::Vec3,
+    b: yolu_core::glam::Vec3,
+) -> Vec<Pos2> {
+    let (from, to) = (cube_screen(h, rect, a), cube_screen(h, rect, b));
     (0..=16)
         .map(|i| from + (to - from) * (i as f32 / 16.0))
         .collect()
+}
+
+/// 手前の面を、画面の中心をまたいで横に描く点（画面の点）。
+fn cube_points(h: &Harness<'_, YoluApp>, rect: Rect) -> Vec<Pos2> {
+    use yolu_core::glam::Vec3;
+    cube_segment(
+        h,
+        rect,
+        Vec3::new(-0.45, 0.1, -0.5),
+        Vec3::new(0.45, 0.1, -0.5),
+    )
 }
 
 /// 手前の面を、画面の中心をまたいで横に描く。
@@ -1220,6 +1287,115 @@ fn a_3d_stroke_goes_through_the_stencil_laid_over_the_view_and_undoes_in_one_ste
         inverted.union(&through).count() * 100 >= n * 95,
         "合わせて全部"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// ステンシルを通した結果が、画面の白い側の画素だけであること（黒い側の画素は 1 つも無く、白い側の画素は 9 割以上ある）。
+/// 白い側・黒い側の画素は、ステンシル無しで画面の境から離れた線を描いて測る。
+fn assert_only_the_white_side(
+    through: &BTreeSet<(u32, u32)>,
+    white: &BTreeSet<(u32, u32)>,
+    black: &BTreeSet<(u32, u32)>,
+    what: &str,
+) {
+    assert!(
+        white.len() > 40 && black.len() > 40,
+        "{what}: 測った画素が少ない {} / {}",
+        white.len(),
+        black.len()
+    );
+    assert!(
+        white.is_disjoint(black),
+        "{what}: 測った線が境をまたいでいる"
+    );
+    assert!(!through.is_empty(), "{what}: 何も塗られない");
+    assert_eq!(
+        through.intersection(black).count(),
+        0,
+        "{what}: 黒い側が塗られた"
+    );
+    let hit = through.intersection(white).count();
+    assert!(
+        hit * 10 >= white.len() * 9,
+        "{what}: 白い側が塗られない {hit} / {}",
+        white.len()
+    );
+}
+
+/// 描いて、塗られた画素を取り、1 回の Undo で戻す。
+fn stroke_and_undo(h: &mut Harness<'_, YoluApp>, points: &[Pos2]) -> BTreeSet<(u32, u32)> {
+    drag(h, points);
+    let out = painted(h);
+    key(h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert!(painted(h).is_empty(), "1 回の Undo で戻る");
+    out
+}
+
+#[test]
+fn a_3d_stencil_opens_the_side_of_the_screen_it_covers_left_right_and_top_bottom() {
+    use yolu_core::glam::Vec3;
+    let dir = temp_dir("cube-orient");
+    let left_white = half_png(&dir, "left.png");
+    let top_white = write_png(&dir, "top.png", 64, 64, |_, y| {
+        if y < 32 {
+            [255; 4]
+        } else {
+            [0, 0, 0, 255]
+        }
+    });
+    let (mut h, rect) = cube_view(256);
+    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    small_brush(&mut h);
+    let v = |x: f32, y: f32| Vec3::new(x, y, -0.5);
+    // 画像の真ん中（左右・上下の境）を、手前の面の中心に置く。画像は表示域の高さの 0.9 倍の正方形
+    let center = cube_screen(&h, rect, v(0.0, 0.0));
+    // 前提: 線の左・右・上・下の端は、境（中心）からそれぞれ離れた側にある
+    let reach = |dx: f32, dy: f32| cube_screen(&h, rect, v(dx, dy)) - center;
+    assert!(reach(-0.2, 0.0).x < -20.0 && reach(0.2, 0.0).x > 20.0);
+    assert!(reach(0.0, 0.2).y < -20.0 && reach(0.0, -0.2).y > 20.0);
+    // ステンシル無しで、境から離れた 4 本の線が塗る画素を測る
+    let seg = |h: &Harness<'_, YoluApp>, a: Vec3, b: Vec3| cube_segment(h, rect, a, b);
+    let (p, q) = (
+        seg(&h, v(-0.45, 0.0), v(-0.2, 0.0)),
+        seg(&h, v(0.2, 0.0), v(0.45, 0.0)),
+    );
+    let (left, right) = (stroke_and_undo(&mut h, &p), stroke_and_undo(&mut h, &q));
+    let (p, q) = (
+        seg(&h, v(0.0, 0.4), v(0.0, 0.2)),
+        seg(&h, v(0.0, -0.2), v(0.0, -0.4)),
+    );
+    let (top, bottom) = (stroke_and_undo(&mut h, &p), stroke_and_undo(&mut h, &q));
+    // 左右: 白い左半分を通すと左の画素だけ、反転すると右の画素だけ
+    load(&mut h, &left_white);
+    h.state_mut().state.stencil.size = 0.9;
+    h.state_mut().state.stencil.set_center(
+        (center.x - rect.left()) / rect.width(),
+        (center.y - rect.top()) / rect.height(),
+    );
+    h.run();
+    let across = seg(&h, v(-0.45, 0.0), v(0.45, 0.0));
+    let through = stroke_and_undo(&mut h, &across);
+    assert_only_the_white_side(&through, &left, &right, "白が左");
+    h.state_mut()
+        .state
+        .apply(Action::Stencil(StencilOp::Invert(true)));
+    let through = stroke_and_undo(&mut h, &across);
+    assert_only_the_white_side(&through, &right, &left, "白が左を反転");
+    // 上下: 白い上半分を通すと上の画素だけ、反転すると下の画素だけ
+    h.state_mut()
+        .state
+        .apply(Action::Stencil(StencilOp::Invert(false)));
+    load(&mut h, &top_white);
+    h.run();
+    let down = seg(&h, v(0.0, 0.4), v(0.0, -0.4));
+    let through = stroke_and_undo(&mut h, &down);
+    assert_only_the_white_side(&through, &top, &bottom, "白が上");
+    h.state_mut()
+        .state
+        .apply(Action::Stencil(StencilOp::Invert(true)));
+    let through = stroke_and_undo(&mut h, &down);
+    assert_only_the_white_side(&through, &bottom, &top, "白が上を反転");
     let _ = std::fs::remove_dir_all(dir);
 }
 

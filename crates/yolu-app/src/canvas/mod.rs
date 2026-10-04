@@ -278,7 +278,7 @@ fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool, rect: Re
     let stencil = match app.canvas_stencil(rect) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
             return false;
         }
     };

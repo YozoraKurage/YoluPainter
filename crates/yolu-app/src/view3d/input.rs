@@ -113,7 +113,7 @@ fn begin(
         Ok(Some((brush, surface))) => (Some(brush), Some(surface)),
         Ok(None) => (None, None),
         Err(e) => {
-            app.message = format!("{}: {e}", app.lang.pick("描けません", "Cannot paint"));
+            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
             return;
         }
     };
