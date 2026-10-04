@@ -671,8 +671,13 @@ mod windows_tests {
             1,
             "{what}: 拒否などが混ざる {sddl}"
         );
+        // SDDL は既知の SID を短い別名で書く。組み込みの Administrator（RID 500。CI の Windows の実行ユーザー）は「LA」
+        let alias = sid.ends_with("-500").then_some("LA");
         assert!(
-            sddl.contains(&format!(";;;{sid})")),
+            [Some(sid.as_str()), alias]
+                .into_iter()
+                .flatten()
+                .any(|me| sddl.contains(&format!(";;;{me})"))),
             "{what}: 自分でない {sddl}"
         );
     }

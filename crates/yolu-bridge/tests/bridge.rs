@@ -163,14 +163,30 @@ fn send_quad_model(h: u64) -> i32 {
     }
 }
 
+/// セットの一覧。数えてから 1 つずつ読む間に受信側がモデルを入れ替えると、読む番号が範囲外（YLB_E_ARGUMENT）になる。
+/// 一覧が替わった読みは捨てて、揃って読めるまで数え直す。試験の補助だけがやり直す: Unity 側の SyncSets（Editor/LiveLink/LiveLinkDisplay.cs）は
+/// 読めなかった番号を飛ばして続け、読めなかったセットを「見えた」に入れないまま、見えなかったセットを解放する（同じ競合が製品側にある）。
 fn sets(h: u64) -> Vec<YlbSetInfo> {
-    (0..ylb_set_count(h).max(0))
-        .map(|i| {
+    for _ in 0..100 {
+        let mut all = Vec::new();
+        let mut torn = false;
+        for i in 0..ylb_set_count(h).max(0) {
             let mut info = YlbSetInfo::default();
-            assert_eq!(unsafe { ylb_set_info(h, i, &mut info) }, 0);
-            info
-        })
-        .collect()
+            match unsafe { ylb_set_info(h, i, &mut info) } {
+                0 => all.push(info),
+                YLB_E_ARGUMENT => {
+                    torn = true;
+                    break;
+                }
+                other => panic!("ylb_set_info({i}) が {other}"),
+            }
+        }
+        if !torn {
+            return all;
+        }
+        std::thread::yield_now();
+    }
+    panic!("セットの一覧が読む間に替わり続ける");
 }
 
 #[test]

@@ -760,6 +760,13 @@ impl SaveLock {
                 // （本当のアクセス拒否・場所の不具合とは違うので、ここだけを「進行中」にする）
                 #[cfg(windows)]
                 Err(e) if e.raw_os_error() == Some(32) => return Err(in_progress()),
+                // Windows: 消している途中（削除の保留）のファイルを開くと ERROR_ACCESS_DENIED（5）になる。消し終わるまでの
+                // 短い間だけなので、少し待ってやり直す。何度でも拒否されるなら本当のアクセス拒否として返す
+                #[cfg(windows)]
+                Err(e) if e.raw_os_error() == Some(5) && attempt + 1 < LOCK_ATTEMPTS => {
+                    std::thread::sleep(std::time::Duration::from_millis(1 << attempt.min(4)));
+                    continue;
+                }
                 Err(e) => return Err(e.into()),
             };
             match try_lock(&file) {

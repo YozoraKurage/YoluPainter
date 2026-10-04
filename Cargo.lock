@@ -4626,6 +4626,7 @@ name = "yolu-core"
 version = "0.0.1"
 dependencies = [
  "glam",
+ "libm",
  "rayon",
  "sha2",
 ]
