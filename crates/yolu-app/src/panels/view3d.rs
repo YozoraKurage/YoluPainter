@@ -178,6 +178,8 @@ impl View3dSlot {
         // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
         if drawn && !app.view3d.pose.mode {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
+            // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
+            input::draw_overlays(ui, app, content);
         }
         if let (true, Some((level, by_budget))) = (drawn, reduced) {
             reduced_badge(ui, app.lang, content, level, by_budget);

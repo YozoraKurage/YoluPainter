@@ -1,18 +1,24 @@
 //! 3D ビューの入力（Unity 版の 3D ビューの操作と同じ）:
 //! - 左ドラッグで面に描く（ブラシ・消しゴム。ペンの筆圧も）。ほかのテクスチャセットの面からは描き始めない。
-//! - 右ドラッグか Alt + 左ドラッグで回す、中ドラッグか Shift を足したドラッグでパン、ホイールで寄る・引く。
+//! - 右ドラッグか Alt + 左ドラッグで回す、中ドラッグか Shift を足したドラッグでパン、ホイールで寄る・引く。クローンのブラシでは、Alt + 左を
+//!   動かさずに離すと、そこがクローンの元（動かせば回す）。
+//! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）は、面のストロークに通す（core の `SurfaceStrokeOptions`）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
 //!   ストロークの間はカメラもモデルも動かさない（遮蔽の結果を覚えて使うので）。
 //!
 //! 画面の点はタブの中身の左上からの egui の点。core のカメラも同じ点の大きさで作る（ストロークの間隔は Unity 版と同じく画面の点）。
 
 use egui::{Color32, Event, Key, PointerButton, Pos2, Rect, Stroke, Ui};
-use yolu_core::geometry::{pick, world_radius, CameraView, SurfaceStroke};
+use yolu_core::geometry::{
+    copy_hits, pick, world_radius, CameraView, Ray, SurfaceCloneSource, SurfaceEffect,
+    SurfaceGeometry, SurfaceHit, SurfaceStroke, SurfaceStrokeOptions, SurfaceSymmetrySetup,
+};
 use yolu_core::glam::{Vec2, Vec3};
 
 use super::{gizmo, Nav};
+use crate::engine::BrushEffect;
 use crate::pen::PenSample;
-use crate::state::{AppState, StrokeSource};
+use crate::state::{AppState, StrokeSource, Tool};
 
 fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
     rect.contains(p)
@@ -29,6 +35,42 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 /// 今のカメラを表示域の大きさ（点）で見たもの。
 pub fn camera_view(app: &AppState, rect: Rect) -> CameraView {
     app.view3d.camera.view(rect.width(), rect.height())
+}
+
+/// クリックとみなす、押してから離すまでに動いてよい距離（画面の点）。
+const CLICK_DISTANCE: f32 = 4.0;
+
+/// 今の道具がクローンのブラシか（元を決められる）。
+fn clone_active(app: &AppState) -> bool {
+    app.tool.paints()
+        && app.tool != Tool::Eraser
+        && matches!(app.m2.brush.effect, BrushEffect::Clone { .. })
+}
+
+/// 画面の点の下の面を、クローンの元にする（描くテクスチャセットの面だけ）。
+fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
+    let Some(model) = app.view3d.model.clone() else {
+        return;
+    };
+    let view = camera_view(app, rect);
+    match pick(&model.geometry, &view, local(rect, at)) {
+        Some(hit) if hit.material == app.view3d.material => {
+            app.view3d.clone.set_source(hit);
+            app.message = app
+                .lang
+                .pick("クローンの元を決めました。", "Clone source set.")
+                .into();
+        }
+        _ => {
+            app.message = app
+                .lang
+                .pick(
+                    "今のテクスチャセットの面ではありません。",
+                    "Not a surface of the active texture set.",
+                )
+                .into();
+        }
+    }
 }
 
 fn begin(
@@ -97,13 +139,37 @@ fn begin(
         return;
     }
     let settings = app.stroke_settings(eraser);
-    // 面のダブは各画素を apply_pixel で塗るので、読み元を凍結する効果のブラシ（ぼかし・指先・クローン）は始める前に断る
-    if !settings.erase && !app.m2.brush.effect.is_paint() {
+    // 効果のブラシ（消しゴムは色を塗る側）。クローンは元の面の点が要る
+    let effect = if settings.erase {
+        SurfaceEffect::Paint
+    } else {
+        match app.m2.brush.effect {
+            BrushEffect::Paint => SurfaceEffect::Paint,
+            BrushEffect::Blur { .. } => SurfaceEffect::Blur,
+            BrushEffect::Smudge { .. } => SurfaceEffect::Smudge,
+            BrushEffect::Clone { .. } => match app.view3d.clone.source_for(&model.geometry) {
+                Some(source) => SurfaceEffect::Clone(SurfaceCloneSource {
+                    source,
+                    destination: app.view3d.clone.destination_for(&model.geometry),
+                }),
+                None => {
+                    app.message = app
+                        .lang
+                        .pick("クローンの元がありません", "No clone source")
+                        .into();
+                    return;
+                }
+            },
+        }
+    };
+    // 3D の対称。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
+    let symmetry = app.sel.symmetry.surface.setup();
+    if symmetry.is_some() && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_)) {
         app.message = app
             .lang
             .pick(
-                "3D では効果のブラシ（ぼかし・指先・クローン）は使えません",
-                "Effect brushes (blur, smudge, clone) are not available in 3D",
+                "指先・クローンでは対称を使えません",
+                "Smudge and clone do not work with symmetry",
             )
             .into();
         return;
@@ -117,8 +183,8 @@ fn begin(
             return;
         }
     };
-    // 全部入りのブラシ。面のダブは筆先・ゆらぎ・質感・デュアル・フェード・傾き・回転・速さ・手ぶれ補正を受け取らず（効くのは基本の値・色・
-    // 色の変化・消しゴム・筆圧・ステンシル）、効果のブラシも塗れない
+    // 全部入りのブラシ。面のダブは筆先・ゆらぎ・質感・デュアル・フェード・傾き・回転・速さ・手ぶれ補正を受け取らない（効くのは基本の値・色・
+    // 色の変化・消しゴム・筆圧・ステンシルと、効果のブラシ・3D の対称）
     let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
         Ok(s) => s,
         Err(e) => {
@@ -126,7 +192,7 @@ fn begin(
             return;
         }
     };
-    match SurfaceStroke::begin_with_stencil(
+    match SurfaceStroke::begin_with_options(
         &mut app.doc,
         &mut stroke,
         model.geometry.clone(),
@@ -135,11 +201,17 @@ fn begin(
         Some(material),
         p,
         pressure.clamp(0.0, 1.0),
-        surface_stencil,
+        SurfaceStrokeOptions {
+            stencil: surface_stencil,
+            symmetry,
+            effect,
+        },
     ) {
         Ok(s) => {
             app.stroke = Some(stroke);
             app.view3d.input.stroke = Some(source);
+            app.view3d.input.symmetry = symmetry;
+            note_symmetry(app, &s);
             app.view3d.input.surface = Some(s);
             app.view3d.input.stroke_points = 1;
             if !settings.erase {
@@ -151,6 +223,13 @@ fn begin(
             app.doc.cancel_stroke(stroke);
             app.message = app.lang.surface_error(&e);
         }
+    }
+}
+
+/// 対称の写しが塗られなかった理由を知らせる（全部塗れていれば何もしない）。
+fn note_symmetry(app: &mut AppState, s: &SurfaceStroke) {
+    if let Some(outcome) = s.symmetry_note() {
+        app.message = app.lang.mirror_note(outcome).into();
     }
 }
 
@@ -170,7 +249,12 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
         local(rect, at),
         pressure.clamp(0.0, 1.0),
     ) {
-        Ok(()) => app.view3d.input.stroke_points += 1,
+        Ok(()) => {
+            app.view3d.input.stroke_points += 1;
+            if let Some(outcome) = surface.symmetry_note() {
+                app.message = app.lang.mirror_note(outcome).into();
+            }
+        }
         Err(e) => {
             // 予算を超えた・1 回の入力のダブが多すぎる: 途中まで塗った画素も戻す
             if let Some(stroke) = app.stroke.take() {
@@ -214,8 +298,21 @@ pub fn finish(app: &mut AppState, cancel: bool) {
                 if let Some(note) = surface.as_ref().and_then(|s| s.note) {
                     app.message = app.lang.dab_refusal(note).into();
                 }
-                if let Err(e) = app.doc.end_stroke(stroke) {
-                    app.message = app.lang.core_error(&e);
+                if let Some(s) = surface.as_ref() {
+                    note_symmetry(app, s);
+                    if s.stats.lost > 0 {
+                        app.message = app.lang.smudge_lost().into();
+                    }
+                }
+                // 揃えるクローンは、変わったストロークの先の基準を次のストロークへ渡す
+                let destination = surface.as_ref().and_then(|s| s.clone_destination());
+                match app.doc.end_stroke(stroke) {
+                    Ok(result) => {
+                        if let (true, Some(d)) = (result.changed, destination) {
+                            app.view3d.clone.destination = Some(d);
+                        }
+                    }
+                    Err(e) => app.message = app.lang.core_error(&e),
                 }
             }
         }
@@ -332,6 +429,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                     };
                     if let Some(nav) = nav {
                         app.view3d.input.nav = Some((nav, *button));
+                        // クローンのブラシでは、Alt + 左を動かさずに離すと元を決める（動かせば、そのまま回す）
+                        if *button == PointerButton::Primary
+                            && m.alt
+                            && !m.shift
+                            && clone_active(app)
+                        {
+                            app.view3d.input.clone_press = Some(pos);
+                        }
                     } else if *button == PointerButton::Primary
                         && !pen_frame
                         && app.view3d.input.nav.is_none()
@@ -354,6 +459,13 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
                         finish(app, false);
                     }
                     if *button == PointerButton::Primary {
+                        if let Some(start) = app.view3d.input.clone_press.take() {
+                            if start.distance(pos) <= CLICK_DISTANCE {
+                                set_clone_source(app, rect, start);
+                            }
+                        }
+                    }
+                    if *button == PointerButton::Primary {
                         flush(app, &mut drag_at);
                         gizmo::release(app, true);
                     }
@@ -363,6 +475,14 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
             Event::PointerMoved(pos) => {
                 let pos = *pos;
                 let previous = app.view3d.input.last_pointer.unwrap_or(pos);
+                if app
+                    .view3d
+                    .input
+                    .clone_press
+                    .is_some_and(|start| start.distance(pos) > CLICK_DISTANCE)
+                {
+                    app.view3d.input.clone_press = None; // 動かした: 回すだけ
+                }
                 if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
                     add(app, rect, pos, 1.0);
                 }
@@ -441,8 +561,73 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample]) {
     crate::stencil::settle(app, any_down);
 }
 
-/// ブラシのカーソル: ポインタの下の面の、ブラシの半径の円（面の接平面の円を画面へ写した楕円）。白と黒の二重の線。
-/// 面に当たらなければ描かずに false。
+/// 面の点のまわりの、ブラシの半径の円（面の接平面の円を画面へ写した楕円）の頂点。画面の外・カメラの後ろにかかれば None。
+fn ring_points(
+    view: &CameraView,
+    rect: Rect,
+    position: Vec3,
+    normal: Vec3,
+    radius: f32,
+) -> Option<Vec<Pos2>> {
+    // 接平面の 2 つの軸
+    let helper = if normal.y.abs() < 0.9 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    let u = normal.cross(helper).normalize_or_zero();
+    let v = normal.cross(u);
+    let screen_radius = view.world_radius_to_screen(position, radius);
+    let segments = ((screen_radius * 0.8).ceil() as usize).clamp(24, 96);
+    let mut points = Vec::with_capacity(segments + 1);
+    for i in 0..=segments {
+        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
+        let p = position + (u * a.cos() + v * a.sin()) * radius;
+        let s = view.to_screen(p)?;
+        points.push(Pos2::new(rect.left() + s.x, rect.top() + s.y));
+    }
+    Some(points)
+}
+
+/// 二重の線の円（外が黒、中が色）。
+fn draw_ring(painter: &egui::Painter, points: Vec<Pos2>, color: Color32, black_alpha: u8) {
+    painter.add(egui::Shape::line(
+        points.clone(),
+        Stroke::new(3.0, Color32::from_black_alpha(black_alpha)),
+    ));
+    painter.add(egui::Shape::line(points, Stroke::new(1.2, color)));
+}
+
+/// 対称の線の色（2D の軸と同じ水色）。
+fn symmetry_color(alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(115, 209, 255, alpha)
+}
+
+/// 面の上の点がカメラから見えるか（表向きで、手前に別の面が無い）。
+fn seen_from_camera(geometry: &SurfaceGeometry, camera: Vec3, point: &SurfaceHit) -> bool {
+    let to = point.position - camera;
+    let distance = to.length();
+    if distance <= 0.0 || point.normal.dot(-to) <= 0.0 {
+        return false;
+    }
+    let epsilon = (geometry.bounds().size().length() * 1e-5).max(1e-7);
+    match geometry.raycast(Ray::new(camera, to / distance), false, distance + epsilon) {
+        None => true,
+        Some(first) => first.triangle == point.triangle || first.distance >= distance - epsilon,
+    }
+}
+
+/// 今効く 3D の対称（描いているあいだはそのストロークに固めたもの）。
+fn active_symmetry(app: &AppState) -> Option<SurfaceSymmetrySetup> {
+    if app.view3d.input.stroke.is_some() {
+        app.view3d.input.symmetry
+    } else {
+        app.sel.symmetry.surface.setup()
+    }
+}
+
+/// ブラシのカーソル: ポインタの下の面の、ブラシの半径の円（面の接平面の円を画面へ写した楕円）。白と黒の二重の線。対称の写しの
+/// 面の上にも水色の円を出す（カメラから見えない所は薄く）。面に当たらなければ描かずに false。
 pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
     let Some(model) = &app.view3d.model else {
         return false;
@@ -452,30 +637,109 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         return false;
     };
     let radius = world_radius(&model.geometry, app.brush.radius as f64, app.doc.width());
-    // 接平面の 2 つの軸
-    let n = hit.normal;
-    let helper = if n.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
-    let u = n.cross(helper).normalize_or_zero();
-    let v = n.cross(u);
-    let screen_radius = view.world_radius_to_screen(hit.position, radius);
-    let segments = ((screen_radius * 0.8).ceil() as usize).clamp(24, 96);
-    let mut points = Vec::with_capacity(segments + 1);
-    for i in 0..=segments {
-        let a = i as f32 / segments as f32 * std::f32::consts::TAU;
-        let p = hit.position + (u * a.cos() + v * a.sin()) * radius;
-        match view.to_screen(p) {
-            Some(s) => points.push(Pos2::new(rect.left() + s.x, rect.top() + s.y)),
-            None => return false,
+    let Some(points) = ring_points(&view, rect, hit.position, hit.normal, radius) else {
+        return false;
+    };
+    let painter = ui.painter_at(rect);
+    draw_ring(&painter, points, Color32::from_white_alpha(230), 140);
+    // 写しのカーソル（描いている最中は、3D のストローク以外では出さない）
+    let Some(sym) = active_symmetry(app) else {
+        return true;
+    };
+    if app.view3d.material != hit.material {
+        return true;
+    }
+    for copy in copy_hits(
+        &model.geometry,
+        &hit,
+        sym.mirror.as_ref(),
+        sym.radial.as_ref(),
+        radius,
+    ) {
+        let alpha = if seen_from_camera(&model.geometry, view.position, &copy) {
+            242
+        } else {
+            100
+        };
+        if let Some(points) = ring_points(&view, rect, copy.position, copy.normal, radius) {
+            draw_ring(&painter, points, symmetry_color(alpha), alpha / 2);
         }
     }
-    let painter = ui.painter_at(rect);
-    painter.add(egui::Shape::line(
-        points.clone(),
-        Stroke::new(3.0, Color32::from_black_alpha(140)),
-    ));
-    painter.add(egui::Shape::line(
-        points,
-        Stroke::new(1.2, Color32::from_white_alpha(230)),
-    ));
     true
+}
+
+/// 線 1 本（外が黒の細い影、中が水色）。画面の外の端点は、点どうしを結ぶだけ（クリップは painter が行う）。
+fn draw_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
+    painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(90)));
+    painter.line_segment([a, b], Stroke::new(1.5, symmetry_color(204)));
+}
+
+/// 3D ビューの上に、対称の面（ミラーの四角）と放射状の軸、クローンの元の印を描く（絵の上、カーソルの下）。
+pub fn draw_overlays(ui: &Ui, app: &AppState, rect: Rect) {
+    let Some(model) = &app.view3d.model else {
+        return;
+    };
+    let painter = ui.painter_at(rect);
+    let view = camera_view(app, rect);
+    let to_screen = |p: Vec3| {
+        view.to_screen(p)
+            .map(|s| Pos2::new(rect.left() + s.x, rect.top() + s.y))
+    };
+    if app.sel.symmetry.surface.show_plane {
+        if let Some(sym) = active_symmetry(app) {
+            let bounds = model.geometry.bounds();
+            let reach = (bounds.extents.max_element() * 1.25).max(1e-4);
+            if let Some(plane) = sym.mirror {
+                // 箱の中心を面へ落とした点のまわりの四角
+                let center = bounds.center - plane.normal * plane.signed_distance(bounds.center);
+                let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(a, b)| {
+                    to_screen(center + plane.axis_u * (a * reach) + plane.axis_v * (b * reach))
+                });
+                if corners.iter().all(|c| c.is_some()) {
+                    let c: Vec<Pos2> = corners.iter().flatten().copied().collect();
+                    painter.add(egui::Shape::convex_polygon(
+                        c.clone(),
+                        symmetry_color(26),
+                        Stroke::NONE,
+                    ));
+                    for i in 0..4 {
+                        draw_line(&painter, c[i], c[(i + 1) % 4]);
+                    }
+                }
+            }
+            if let Some(radial) = sym.radial {
+                let along = radial.axis * reach;
+                if let (Some(a), Some(b)) = (
+                    to_screen(radial.origin - along),
+                    to_screen(radial.origin + along),
+                ) {
+                    draw_line(&painter, a, b);
+                }
+            }
+        }
+    }
+    // クローンの元（十字）
+    if clone_active(app) {
+        if let Some(source) = app.view3d.clone.source_for(&model.geometry) {
+            if let Some(p) = to_screen(source.position) {
+                let accent = crate::ui::theme::ACCENT;
+                painter.line_segment(
+                    [p - egui::vec2(7.0, 0.0), p + egui::vec2(7.0, 0.0)],
+                    Stroke::new(3.0, Color32::from_black_alpha(160)),
+                );
+                painter.line_segment(
+                    [p - egui::vec2(0.0, 7.0), p + egui::vec2(0.0, 7.0)],
+                    Stroke::new(3.0, Color32::from_black_alpha(160)),
+                );
+                painter.line_segment(
+                    [p - egui::vec2(6.0, 0.0), p + egui::vec2(6.0, 0.0)],
+                    Stroke::new(1.5, accent),
+                );
+                painter.line_segment(
+                    [p - egui::vec2(0.0, 6.0), p + egui::vec2(0.0, 6.0)],
+                    Stroke::new(1.5, accent),
+                );
+            }
+        }
+    }
 }

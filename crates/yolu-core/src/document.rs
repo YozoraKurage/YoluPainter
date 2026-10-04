@@ -10,6 +10,7 @@
 
 mod batch;
 mod clipboard;
+mod clone_source;
 mod edits;
 mod effects;
 mod eval;
@@ -41,7 +42,8 @@ use glam::DVec2;
 
 use crate::adjust::AdjustmentSettings;
 use crate::brush::{
-    Brush, BrushPixel, BrushSample, BrushSettings, Budgets, StencilPoint, StrokeState,
+    Brush, BrushMappedPixel, BrushPixel, BrushSample, BrushSettings, Budgets, StencilPoint,
+    StrokeState,
 };
 use crate::composite::{self, Stack};
 use crate::effects::{Anchor, AnchorPlacement, FilterEffect, FilterId, FilterTarget};
@@ -147,6 +149,39 @@ impl Stroke {
             state.apply_pixel(surface, x, y, coverage, pressure, Some(at), changed)
         })
     }
+    /// クローンが読む元を、描く層ではなく見えている層の重なり（チャンネルごとの合成）にする（C# の UseCompositeCloneSource）。
+    /// 最初のダブの前に、層が画素を持ち得るタイルだけを合成して凍結する（書き込みの途中で合成を読み返さない）。複数チャンネルの
+    /// ストロークは、チャンネルごとにそのチャンネルの合成を凍結する。タイルの写しと索引はストロークの予算に数える。
+    /// クローン以外・マスクへのストローク・最初のダブより後・予算を超える、のどれも、このストロークを取り消してから返す。
+    pub fn use_composite_clone_source(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.use_composite_clone_source(self.id)
+    }
+    /// 写像された面のダブ（3D の面のクローン・指先。C# の ApplyMappedDab）: 画素ごとに、読む場所（画素中心の最大 4 点と重み。UV の島の
+    /// 継ぎ目の向こうも）を呼び手が決めて渡す。全ての読みをどの画素を書くより前に済ませるので、同じダブの中で先に変えた画素を読まない。
+    /// 指先の最初の拾いと面の方向は呼び手が決める。points はステンシルの画素ごとの点（pixels と同じ数）、sampling_bytes は呼び手の
+    /// 参照の計画（展開の図）の名目のバイトで、ダブの間だけ予算に数える。同じ画素の重複・範囲外・参照の無い画素・クローンでも指先でも
+    /// ないブラシ・予算超過は、このストロークを取り消してから返す。
+    pub fn apply_mapped_dab(
+        &mut self,
+        doc: &mut Document,
+        pixels: &[BrushMappedPixel],
+        pressure: f64,
+        sampling_bytes: u64,
+        points: Option<&[StencilPoint]>,
+    ) -> Result<bool, CoreError> {
+        let targets = 1 + doc.material.extra.len();
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.apply_mapped_dab(
+                surface,
+                pixels,
+                pressure,
+                sampling_bytes,
+                points,
+                targets,
+                changed,
+            )
+        })
+    }
     /// 指先の前の位置を忘れる（3D の面で UV の継ぎ目をまたぐとき。次のダブは位置を覚えるだけ）。
     pub fn reset_effect_direction(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         match doc.active.as_mut() {
@@ -188,6 +223,8 @@ pub struct StrokeStats {
     pub rollback_bytes: u64,
     /// 大きなダブのうち、ストロークが持つタイルをワーカーで描いたものの数。
     pub parallel_dabs: u64,
+    /// 同じ入力を受けるチャンネル（面）の数（複数チャンネルのストロークは 2 以上）。
+    pub targets: usize,
 }
 
 /// ストロークが描く面: 層のチャンネルか、層のマスク。
@@ -609,6 +646,7 @@ impl Document {
                     .iter()
                     .map(|s| s.parallel_dabs)
                     .sum::<u64>(),
+            targets: 1 + self.material.extra.len(),
         })
     }
 

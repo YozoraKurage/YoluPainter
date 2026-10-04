@@ -6,18 +6,28 @@
 //! - ほかのテクスチャセット（マテリアルの組）の面に当たった点は塗らない。面に当たらない点も塗らない。
 //! - ダブが予算を超えた・1 回の入力のダブが多すぎるときは `Err` を返す（呼ぶ側がストロークを取り消す。途中まで塗った画素も戻る）。
 //! - ダブの縁の丸めで 0 以下になった覆いは塗らない（Unity 版はそれを ApplyPixel に渡して断られ、ストロークごと取り消していた）。
+//! - 3D の対称（[`SurfaceSymmetrySetup`]）は、ダブの中心を面の上で映す・回すダブへ置き換え（`symmetry`）、全ての写しを画素ごとに
+//!   大きい方の覆いで 1 つにして塗る。ぼかしは写しも含めて 1 つのダブとして読み元を凍結する。指先・クローンは写しごとの読み元と
+//!   動きが要るので対称とは組めない（C# と同じ。ストロークの始めに断る）。
+//! - 効果のブラシ（[`SurfaceEffect`]）: ぼかしは面のダブを `apply_dab` へ。指先は直前のダブの面の点から今の点へ引きずり、クローンは
+//!   固定した元の面の点から、ストロークの最初の面の点に対応させて写す。どちらも展開の図（[`super::SamplingChart`]）で UV の島の
+//!   継ぎ目をまたいで読み元の画素を決め、全ての読みを書く前に凍結する（`Stroke::apply_mapped_dab`）。
 
 use std::sync::Arc;
 
 use glam::Vec2;
 
+use glam::{DVec2, Quat, Vec3};
+
 use super::camera::CameraView;
-use super::dab::{DabRefusal, SurfaceBrushBudget, SurfaceVisibilityCache};
+use super::dab::{DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfaceVisibilityCache};
+use super::sampling::SamplingError;
 use super::stencil::SurfaceStencil;
 use super::stroke::{ScreenStrokeSampler, TooManyDabs};
-use super::unity::fmax;
+use super::symmetry::{build_expanded, MirrorOutcome, MirrorPlane, RadialSymmetry};
+use super::unity::{dot, fmax, magnitude, sqr_magnitude};
 use super::{SurfaceGeometry, SurfaceHit};
-use crate::{BrushSettings, CoreError, Document, Stroke};
+use crate::{BrushPixel, BrushSettings, CoreError, Document, StencilPoint, Stroke};
 
 /// 3D のストロークを止めた理由（どれもストロークを取り消す）。
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +38,12 @@ pub enum SurfaceStrokeError {
     TooManyDabs,
     /// 文書が断った（core はストロークを取り消してから返す）。
     Core(CoreError),
+    /// 指先・クローンの読み元の画素を決められなかった（予算・探索の上限・図に入らない画素）。
+    Sampling(SamplingError),
+    /// 指先・クローンは 3D の対称と組めない。
+    EffectWithSymmetry,
+    /// クローンの元の面の点が、今のモデルの面ではない（モデルが替わった・別のテクスチャセット）。
+    CloneSource,
 }
 
 impl std::fmt::Display for SurfaceStrokeError {
@@ -36,6 +52,13 @@ impl std::fmt::Display for SurfaceStrokeError {
             SurfaceStrokeError::Dab(r) => r.fmt(f),
             SurfaceStrokeError::TooManyDabs => TooManyDabs.fmt(f),
             SurfaceStrokeError::Core(e) => e.fmt(f),
+            SurfaceStrokeError::Sampling(e) => e.fmt(f),
+            SurfaceStrokeError::EffectWithSymmetry => {
+                f.write_str("指先・クローンは対称と一緒に使えません")
+            }
+            SurfaceStrokeError::CloneSource => {
+                f.write_str("クローンの元が今のモデルの面ではありません")
+            }
         }
     }
 }
@@ -46,6 +69,61 @@ impl From<CoreError> for SurfaceStrokeError {
     fn from(e: CoreError) -> Self {
         SurfaceStrokeError::Core(e)
     }
+}
+
+impl From<SamplingError> for SurfaceStrokeError {
+    fn from(e: SamplingError) -> Self {
+        SurfaceStrokeError::Sampling(e)
+    }
+}
+
+/// 3D の対称（ストロークの始めに固める。ストロークの間はモデルも設定も動かない）。ミラーと放射状は一緒に使え（鏡映を先に、回転を
+/// 後に当てる）、どちらも無ければ対称なし。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceSymmetrySetup {
+    pub mirror: Option<MirrorPlane>,
+    pub radial: Option<RadialSymmetry>,
+    /// 写しの側は、カメラから見えない面にも塗る（元の側はいつも見える面だけ）。
+    pub ignore_visibility: bool,
+}
+
+impl SurfaceSymmetrySetup {
+    /// 写しがあるか。
+    pub fn enabled(&self) -> bool {
+        self.mirror.is_some() || self.radial.is_some()
+    }
+}
+
+/// クローンの元（モデルの面の上の点）と、先の基準の点。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceCloneSource {
+    /// 写し元の面の点（Alt を押して決めた点）。
+    pub source: SurfaceHit,
+    /// 先の基準の点。None ならこのストロークの最初のダブの面の点（「揃える」ときは前のストロークの先をそのまま渡す）。
+    pub destination: Option<SurfaceHit>,
+}
+
+/// 面のダブの効果。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SurfaceEffect {
+    /// 色を塗る（消しゴムもこちら）。
+    #[default]
+    Paint,
+    /// ぼかし（ストロークの `Brush` の効果も `Blur` にする）。
+    Blur,
+    /// 指先（直前のダブの面の点から今の点へ引きずる）。
+    Smudge,
+    /// クローン。
+    Clone(SurfaceCloneSource),
+}
+
+/// 面のストロークの追加の設定（既定は、ステンシルも対称も効果も無し）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SurfaceStrokeOptions {
+    /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対）。
+    pub stencil: Option<SurfaceStencil>,
+    pub symmetry: Option<SurfaceSymmetrySetup>,
+    pub effect: SurfaceEffect,
 }
 
 /// ストロークの数（試験・知らせ用）。
@@ -59,6 +137,10 @@ pub struct SurfaceStrokeStats {
     pub missed: usize,
     /// 世代違いなどで作らなかったダブ（予算以外の理由）。
     pub refused: usize,
+    /// 対称の写しを塗ったダブの数のべ（元を除く）。
+    pub copies: usize,
+    /// 指先が、直前の点から読めず（つながらない面）に飛ばしたダブ。
+    pub lost: usize,
 }
 
 /// 進行中の 3D のストローク（文書のストロークの札と一緒に持つ）。
@@ -78,6 +160,14 @@ pub struct SurfaceStroke {
     height: i32,
     /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
     stencil: Option<SurfaceStencil>,
+    symmetry: Option<SurfaceSymmetrySetup>,
+    effect: SurfaceEffect,
+    /// 指先: 直前のダブの面の点。
+    previous_hit: Option<SurfaceHit>,
+    /// クローン: 先の基準の点（最初のダブの面の点か、揃えるなら前のストロークの先）。
+    clone_destination: Option<SurfaceHit>,
+    /// 対称の写しが塗られなかった理由の最後のもの（塗れた写しだけなら None。Painted は入れない）。
+    symmetry_note: Option<MirrorOutcome>,
     pub stats: SurfaceStrokeStats,
     /// 最後に知らせたい理由（予算以外で作らなかったダブ）。
     pub note: Option<DabRefusal>,
@@ -96,8 +186,16 @@ impl SurfaceStroke {
         at: Vec2,
         pressure: f32,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
-        Self::begin_with_stencil(
-            doc, stroke, geometry, view, brush, material, at, pressure, None,
+        Self::begin_with_options(
+            doc,
+            stroke,
+            geometry,
+            view,
+            brush,
+            material,
+            at,
+            pressure,
+            SurfaceStrokeOptions::default(),
         )
     }
 
@@ -115,6 +213,58 @@ impl SurfaceStroke {
         pressure: f32,
         stencil: Option<SurfaceStencil>,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
+        Self::begin_with_options(
+            doc,
+            stroke,
+            geometry,
+            view,
+            brush,
+            material,
+            at,
+            pressure,
+            SurfaceStrokeOptions {
+                stencil,
+                ..SurfaceStrokeOptions::default()
+            },
+        )
+    }
+
+    /// [`SurfaceStroke::begin`] に、ステンシル・3D の対称・効果を足したもの。効果を使うときは、文書のストロークも同じ効果の `Brush` で
+    /// 始めておく（クローンの合成の参照元は、最初のダブの前に `Stroke::use_composite_clone_source` で決める）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_with_options(
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        geometry: Arc<SurfaceGeometry>,
+        view: CameraView,
+        brush: &BrushSettings,
+        material: Option<i32>,
+        at: Vec2,
+        pressure: f32,
+        options: SurfaceStrokeOptions,
+    ) -> Result<SurfaceStroke, SurfaceStrokeError> {
+        let symmetry = options.symmetry.filter(|s| s.enabled());
+        if symmetry.is_some()
+            && matches!(
+                options.effect,
+                SurfaceEffect::Smudge | SurfaceEffect::Clone(_)
+            )
+        {
+            return Err(SurfaceStrokeError::EffectWithSymmetry);
+        }
+        let clone_destination = match options.effect {
+            SurfaceEffect::Clone(c) => {
+                // 元が今のモデルの面でなければ、先に断る（世代違いの当たりで、ダブごとに断られ続けるのを避ける）
+                let t = geometry.triangles().get(c.source.triangle as usize);
+                if c.source.revision != geometry.revision()
+                    || t.is_none_or(|t| material.is_some_and(|m| m != t.material))
+                {
+                    return Err(SurfaceStrokeError::CloneSource);
+                }
+                c.destination
+            }
+            _ => None,
+        };
         let world_radius = world_radius(&geometry, brush.radius, doc.width());
         let mut s = SurfaceStroke {
             geometry,
@@ -129,7 +279,12 @@ impl SurfaceStroke {
             pressure_size: brush.pressure_size,
             width: doc.width() as i32,
             height: doc.height() as i32,
-            stencil,
+            stencil: options.stencil,
+            symmetry,
+            effect: options.effect,
+            previous_hit: None,
+            clone_destination,
+            symmetry_note: None,
             stats: SurfaceStrokeStats::default(),
             note: None,
         };
@@ -145,6 +300,16 @@ impl SurfaceStroke {
     /// 遮蔽の結果を覚えた数・使った数（試験用）。
     pub fn cache(&self) -> &SurfaceVisibilityCache {
         &self.cache
+    }
+
+    /// クローンの先の基準の点（最初のダブで決まる。「揃える」ときは、ストロークが確定したらこれを次のストロークへ渡す）。
+    pub fn clone_destination(&self) -> Option<SurfaceHit> {
+        self.clone_destination
+    }
+
+    /// 対称の写しが塗られなかった最後の理由（知らせる文にする。全部塗れていれば None）。
+    pub fn symmetry_note(&self) -> Option<MirrorOutcome> {
+        self.symmetry_note
     }
 
     /// 新しい入力の点（画面の座標。区間を描けるようになった分だけダブを置く）。
@@ -223,17 +388,7 @@ impl SurfaceStroke {
             } else {
                 1.0
             };
-        let dab = self.geometry.build_surface_dabs(
-            &hit,
-            radius,
-            self.width,
-            self.height,
-            self.view.position,
-            self.hardness,
-            &self.budget,
-            Some(&mut self.cache),
-            false,
-        );
+        let dab = self.build_dab(&hit, radius);
         if let Some(why) = dab.refusal {
             if why.cancels_stroke() {
                 return Err(SurfaceStrokeError::Dab(why));
@@ -246,28 +401,248 @@ impl SurfaceStroke {
         let footprint = self
             .stencil
             .map(|st| st.footprint(&self.geometry, &self.view, &hit, self.width, self.height));
-        for p in &dab.pixels {
-            // ダブの縁では 1 − SmoothStep が単精度の丸めで −2.4e−7 などになる（C# の BuildSurfaceDabs も同じ値）。apply_pixel は
-            // 0〜1 の外を断ってストロークを取り消すので、0 以下は塗らない（覆い 0 は何も変えないので、0 に丸めるのと同じ）
-            if p.coverage <= 0.0 {
-                continue;
+        // ダブの縁では 1 − SmoothStep が単精度の丸めで −2.4e−7 などになる（C# の BuildSurfaceDabs も同じ値）。apply_pixel は
+        // 0〜1 の外を断ってストロークを取り消すので、0 以下は塗らない（覆い 0 は何も変えないので、0 に丸めるのと同じ）
+        let painted: Vec<&super::SurfacePixel> =
+            dab.pixels.iter().filter(|p| p.coverage > 0.0).collect();
+        let point_of = |this: &SurfaceStroke, p: &super::SurfacePixel| -> Option<StencilPoint> {
+            match (this.stencil, footprint) {
+                (Some(st), Some(footprint)) => Some(st.point(&this.view, p.position, footprint)),
+                _ => None,
             }
-            let coverage = p.coverage.min(1.0) as f64;
-            match (self.stencil, footprint) {
-                (Some(st), Some(footprint)) => stroke.apply_pixel_at(
-                    doc,
-                    p.x as i64,
-                    p.y as i64,
-                    coverage,
-                    pressure as f64,
-                    st.point(&self.view, p.position, footprint),
-                )?,
-                _ => stroke.apply_pixel(doc, p.x as i64, p.y as i64, coverage, pressure as f64)?,
-            };
+        };
+        match self.effect {
+            SurfaceEffect::Paint => {
+                for p in &painted {
+                    let coverage = p.coverage.min(1.0) as f64;
+                    match point_of(self, p) {
+                        Some(at) => stroke.apply_pixel_at(
+                            doc,
+                            p.x as i64,
+                            p.y as i64,
+                            coverage,
+                            pressure as f64,
+                            at,
+                        )?,
+                        None => stroke.apply_pixel(
+                            doc,
+                            p.x as i64,
+                            p.y as i64,
+                            coverage,
+                            pressure as f64,
+                        )?,
+                    };
+                }
+            }
+            SurfaceEffect::Blur => {
+                let pixels: Vec<BrushPixel> = painted
+                    .iter()
+                    .map(|p| BrushPixel {
+                        x: p.x as i64,
+                        y: p.y as i64,
+                        coverage: p.coverage.min(1.0) as f64,
+                    })
+                    .collect();
+                let center = DVec2::new(
+                    hit.uv.x as f64 * self.width as f64,
+                    hit.uv.y as f64 * self.height as f64,
+                );
+                let points: Option<Vec<StencilPoint>> = painted
+                    .iter()
+                    .map(|p| point_of(self, p))
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|v| !v.is_empty());
+                match &points {
+                    Some(points) => {
+                        stroke.apply_dab_at(doc, &pixels, center, pressure as f64, points)?
+                    }
+                    None => stroke.apply_dab(doc, &pixels, center, pressure as f64)?,
+                };
+            }
+            SurfaceEffect::Smudge | SurfaceEffect::Clone(_) => {
+                let points: Option<Vec<StencilPoint>> = painted
+                    .iter()
+                    .map(|p| point_of(self, p))
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|v| !v.is_empty());
+                self.mapped_dab(doc, stroke, &hit, pressure, &painted, points)?;
+            }
         }
         self.stats.pixels += dab.pixels.len();
         Ok(())
     }
+
+    /// ダブの画素（元と写しを 1 つにしたもの）を作る。対称があれば、写しも面へ投げ直して合わせる。
+    fn build_dab(&mut self, hit: &SurfaceHit, radius: f32) -> SurfaceDabResult {
+        let Some(sym) = self.symmetry else {
+            return self.geometry.build_surface_dabs(
+                hit,
+                radius,
+                self.width,
+                self.height,
+                self.view.position,
+                self.hardness,
+                &self.budget,
+                Some(&mut self.cache),
+                false,
+            );
+        };
+        let expanded = build_expanded(
+            &self.geometry,
+            hit,
+            sym.mirror.as_ref(),
+            sym.radial.as_ref(),
+            sym.ignore_visibility,
+            radius,
+            self.width,
+            self.height,
+            self.view.position,
+            self.hardness,
+            &self.budget,
+            Some(&mut self.cache),
+        );
+        self.stats.copies += expanded.copies.len();
+        if matches!(
+            expanded.outcome,
+            MirrorOutcome::NoSurface | MirrorOutcome::OtherSlot | MirrorOutcome::Hidden
+        ) {
+            self.symmetry_note = Some(expanded.outcome);
+        }
+        expanded.result
+    }
+
+    /// 指先・クローンの 1 つのダブ（C# の ApplySurfaceEffectCore）: 先の面の点の展開の図と、元の面の点の展開の図で、ダブの画素ごとの
+    /// 読み元を決め、全ての読みを凍結して塗る。
+    fn mapped_dab(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        hit: &SurfaceHit,
+        pressure: f32,
+        pixels: &[&super::SurfacePixel],
+        points: Option<Vec<StencilPoint>>,
+    ) -> Result<(), SurfaceStrokeError> {
+        let smudge = matches!(self.effect, SurfaceEffect::Smudge);
+        let (destination, source) = match self.effect {
+            SurfaceEffect::Smudge => {
+                // 最初のダブは位置を覚えるだけ。動いていなければ、覚え直すだけで塗らない
+                let Some(previous) = self.previous_hit.replace(*hit) else {
+                    return Ok(());
+                };
+                if sqr_magnitude(previous.position - hit.position) < 1e-20 {
+                    return Ok(());
+                }
+                (*hit, previous)
+            }
+            SurfaceEffect::Clone(c) => {
+                let destination = *self.clone_destination.get_or_insert(*hit);
+                (destination, c.source)
+            }
+            _ => return Ok(()),
+        };
+        // 面の来歴と全画素の参照を予算に数え、書く前にまとめて凍結する
+        let targets = doc.active_stroke_stats().map_or(1, |s| s.targets.max(1)) as i64;
+        let per_pixel = 160 + targets * 4 + if points.is_some() { 24 } else { 0 };
+        let mut bytes = pixels.len() as i64 * 28;
+        let rollback = doc.active_stroke_stats().map_or(0, |s| s.rollback_bytes) as i64;
+        let mut available = doc.stroke_budget_bytes().min(i64::MAX as u64) as i64
+            - rollback
+            - bytes
+            - pixels.len() as i64 * per_pixel;
+        if available <= 0 {
+            return Err(SamplingError::ChartBudget.into());
+        }
+        let radius = self.world_radius;
+        let reach = radius * 2.0
+            + magnitude(source.position - destination.position) * if smudge { 2.0 } else { 0.0 }
+            + magnitude(hit.position - destination.position) * 2.0;
+        let geometry = self.geometry.clone();
+        let mut dest_chart = geometry.build_sampling_chart(
+            &destination,
+            reach,
+            Vec3::ZERO,
+            self.budget.max_triangles,
+            available,
+        )?;
+        bytes += dest_chart.nominal_bytes();
+        available -= dest_chart.nominal_bytes();
+        let mut source_chart = None;
+        let mut offset = glam::Vec2::ZERO;
+        if smudge {
+            match dest_chart.coordinates(&source) {
+                Some(o) => offset = o,
+                None => {
+                    // 直前の点が展開の図に入らない（つながらない面に移った）: このダブは塗らず、今の点から拾い直す
+                    self.stats.lost += 1;
+                    return Ok(());
+                }
+            }
+        } else {
+            let mut tangent = project_on_plane(Vec3::X, destination.normal);
+            if sqr_magnitude(tangent) < 1e-12 {
+                tangent = project_on_plane(Vec3::Y, destination.normal);
+            }
+            if let (Some(from), Some(to)) = (
+                destination.normal.try_normalize(),
+                source.normal.try_normalize(),
+            ) {
+                tangent = Quat::from_rotation_arc(from, to) * tangent;
+            }
+            let chart = geometry.build_sampling_chart(
+                &source,
+                reach,
+                tangent,
+                self.budget.max_triangles,
+                available,
+            )?;
+            bytes += chart.nominal_bytes();
+            source_chart = Some(chart);
+        }
+        let mut plan = Vec::with_capacity(pixels.len());
+        let mut kept = Vec::new();
+        for (i, p) in pixels.iter().enumerate() {
+            let point = dest_chart
+                .pixel_coordinates(p)
+                .ok_or(SamplingError::Unreachable)?;
+            let pixel = BrushPixel {
+                x: p.x as i64,
+                y: p.y as i64,
+                coverage: p.coverage.min(1.0) as f64,
+            };
+            let mapped = match source_chart.as_mut() {
+                Some(chart) => chart.try_sample(point + offset, pixel, self.width, self.height)?,
+                None => dest_chart.try_sample(point + offset, pixel, self.width, self.height)?,
+            };
+            if let Some(mapped) = mapped {
+                plan.push(mapped);
+                kept.push(i);
+            }
+        }
+        let kept_points: Option<Vec<StencilPoint>> =
+            points.map(|v| kept.iter().map(|&i| v[i]).collect());
+        stroke.apply_mapped_dab(
+            doc,
+            &plan,
+            pressure as f64,
+            bytes.max(0) as u64,
+            kept_points.as_deref(),
+        )?;
+        Ok(())
+    }
+}
+
+/// Unity の `Vector3.ProjectOnPlane`。
+fn project_on_plane(v: Vec3, normal: Vec3) -> Vec3 {
+    let sqr = dot(normal, normal);
+    if sqr < f32::MIN_POSITIVE {
+        return v;
+    }
+    let d = dot(v, normal);
+    Vec3::new(
+        v.x - normal.x * d / sqr,
+        v.y - normal.y * d / sqr,
+        v.z - normal.z * d / sqr,
+    )
 }
 
 /// 画面の点の下の面（表の面だけ。表示域の外は None。Unity 版の TryPick）。

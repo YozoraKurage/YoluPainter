@@ -1,5 +1,11 @@
-//! 2D の対称の設定（縦・横・両方・放射状 2〜16）。文書に入れない画面の設定で、ストロークを始めるときに core のブラシへ写す。
-//! 中心は文書の大きさに対する 0〜1 の割合で持つ（セットを替えて大きさが違っても、中央は中央のまま）。軸の線分も、ここで求める。
+//! 対称の設定。文書に入れない画面の設定で、ストロークを始めるときに core へ写す。
+//! - 2D（縦・横・両方・放射状 2〜16）: 中心は文書の大きさに対する 0〜1 の割合で持つ（セットを替えて大きさが違っても、中央は中央の
+//!   まま）。軸の線分も、ここで求める。
+//! - 3D（[`Symmetry3d`]）: モデルの空間でのミラー（X・Y・Z に直交する面。中心はモデルの原点からのずれ）と、軸のまわりの放射状
+//!   （2〜16）。2D とは独立に切り替える（3D のビューと 2D のキャンバスを並べて見ていても、それぞれ別に効く）。
+
+use yolu_core::geometry::{MirrorPlane, RadialSymmetry, SurfaceSymmetrySetup, SymmetryAxis};
+use yolu_core::glam::{Quat, Vec3};
 
 use crate::engine::{CanvasSymmetry, DVec2, SymmetryMode};
 use crate::lang::Lang;
@@ -50,7 +56,106 @@ pub fn mode_tooltip(lang: Lang, mode: SymmetryMode) -> &'static str {
     }
 }
 
-/// 2D の対称の画面の設定。
+/// 3D の面の対称の面（ミラー）のずれの範囲（モデルの単位。C# と同じ ±1000）。
+pub const MAX_OFFSET_3D: f32 = 1000.0;
+
+pub const AXES_3D: [SymmetryAxis; 3] = [SymmetryAxis::X, SymmetryAxis::Y, SymmetryAxis::Z];
+
+pub fn axis_name(axis: SymmetryAxis) -> &'static str {
+    match axis {
+        SymmetryAxis::X => "X",
+        SymmetryAxis::Y => "Y",
+        SymmetryAxis::Z => "Z",
+    }
+}
+
+/// 3D の対称の画面の設定（2D の [`SymmetryState`] とは独立）。モデルの空間のまま持ち、ストロークを始めるときに固める。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Symmetry3d {
+    /// ミラー（軸に直交する面で左右に写す）。
+    pub mirror: bool,
+    pub axis: SymmetryAxis,
+    /// 面のずれ（モデルの原点から、軸の向きに。モデルの単位）。
+    pub offset: f32,
+    /// 放射状（軸のまわりに回して写す）。ミラーと一緒に使える（鏡映を先に、回転を後に当てる）。
+    pub radial: bool,
+    pub radial_axis: SymmetryAxis,
+    /// 放射状の写しの数（2〜16）。
+    pub radial_count: u32,
+    /// 写しの側は、カメラから見えない面にも塗る（元の側はいつも見える面だけ）。
+    pub ignore_visibility: bool,
+    /// 3D ビューに対称の面と軸を出す。
+    pub show_plane: bool,
+}
+
+impl Default for Symmetry3d {
+    fn default() -> Self {
+        Symmetry3d {
+            mirror: false,
+            axis: SymmetryAxis::X,
+            offset: 0.0,
+            radial: false,
+            radial_axis: SymmetryAxis::Y,
+            radial_count: 2,
+            ignore_visibility: false,
+            show_plane: true,
+        }
+    }
+}
+
+impl Symmetry3d {
+    /// 3D の写しが効くか（ミラーか放射状のどちらか）。
+    pub fn enabled(&self) -> bool {
+        self.mirror || self.radial
+    }
+
+    /// 面のずれを ±1000 に丸めて置く（有限でない値は無視する）。
+    pub fn set_offset(&mut self, offset: f32) {
+        if offset.is_finite() {
+            self.offset = offset.clamp(-MAX_OFFSET_3D, MAX_OFFSET_3D);
+        }
+    }
+
+    pub fn set_radial_count(&mut self, count: u32) {
+        self.radial_count = count.clamp(MIN_COUNT, MAX_COUNT);
+    }
+
+    /// 今の設定のミラーの面（モデルの空間。ルートは原点・回転なし）。
+    pub fn plane(&self) -> MirrorPlane {
+        MirrorPlane::from_model(Vec3::ZERO, Quat::IDENTITY, self.axis, self.offset)
+    }
+
+    /// 今の設定の放射状（モデルの原点を通る軸のまわり）。
+    pub fn radial_symmetry(&self) -> Option<RadialSymmetry> {
+        RadialSymmetry::from_model(
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            self.radial_axis,
+            self.radial_count,
+        )
+        .ok()
+    }
+
+    /// core に渡す設定（どちらも切っていれば None）。
+    pub fn setup(&self) -> Option<SurfaceSymmetrySetup> {
+        self.enabled().then(|| SurfaceSymmetrySetup {
+            mirror: self.mirror.then(|| self.plane()),
+            radial: if self.radial {
+                self.radial_symmetry()
+            } else {
+                None
+            },
+            ignore_visibility: self.ignore_visibility,
+        })
+    }
+
+    /// 面の中心をモデルの境界の中央にするずれ（今の軸で）。
+    pub fn bounds_center_offset(&self, center: Vec3) -> f32 {
+        MirrorPlane::from_model(Vec3::ZERO, Quat::IDENTITY, self.axis, 0.0).signed_distance(center)
+    }
+}
+
+/// 対称の画面の設定。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SymmetryState {
     pub mode: SymmetryMode,
@@ -62,6 +167,8 @@ pub struct SymmetryState {
     pub show_axes: bool,
     /// 切る前のモード（切り替えで入れ直す。覚えが無ければ縦）。
     pub last_mode: SymmetryMode,
+    /// 3D の面の対称。
+    pub surface: Symmetry3d,
 }
 
 impl Default for SymmetryState {
@@ -72,6 +179,7 @@ impl Default for SymmetryState {
             count: 2,
             show_axes: true,
             last_mode: SymmetryMode::Vertical,
+            surface: Symmetry3d::default(),
         }
     }
 }
@@ -224,6 +332,58 @@ mod tests {
                 || (b.1 - 40.0).abs() < 1e-9;
             assert!(on_edge, "{b:?}");
         }
+    }
+
+    #[test]
+    fn the_3d_symmetry_is_off_until_mirror_or_radial_and_builds_the_core_setup() {
+        let mut s = Symmetry3d::default();
+        assert!(!s.enabled() && s.setup().is_none());
+        s.mirror = true;
+        s.axis = SymmetryAxis::Y;
+        s.set_offset(0.25);
+        let setup = s.setup().expect("ミラーが入った");
+        let plane = setup.mirror.expect("面");
+        assert_eq!(plane.normal, Vec3::Y);
+        assert!((plane.signed_distance(Vec3::new(5.0, 0.25, -3.0))).abs() < 1e-6);
+        assert!(setup.radial.is_none() && !setup.ignore_visibility);
+        s.radial = true;
+        s.radial_axis = SymmetryAxis::Z;
+        s.set_radial_count(6);
+        s.ignore_visibility = true;
+        let setup = s.setup().unwrap();
+        let radial = setup.radial.expect("放射状");
+        assert_eq!((radial.axis, radial.count), (Vec3::Z, 6));
+        assert!(setup.ignore_visibility && setup.mirror.is_some());
+        s.mirror = false;
+        assert!(s.setup().unwrap().mirror.is_none(), "放射状だけ");
+    }
+
+    #[test]
+    fn the_3d_offset_and_count_are_clamped_and_bounds_center_follows_the_axis() {
+        let mut s = Symmetry3d::default();
+        s.set_offset(5000.0);
+        assert_eq!(s.offset, MAX_OFFSET_3D);
+        s.set_offset(-5000.0);
+        assert_eq!(s.offset, -MAX_OFFSET_3D);
+        s.set_offset(f32::NAN);
+        assert_eq!(s.offset, -MAX_OFFSET_3D, "有限でない値は無視する");
+        s.set_radial_count(99);
+        assert_eq!(s.radial_count, MAX_COUNT);
+        s.set_radial_count(0);
+        assert_eq!(s.radial_count, MIN_COUNT);
+        let center = Vec3::new(1.0, 2.0, 3.0);
+        for (axis, expected) in [
+            (SymmetryAxis::X, 1.0),
+            (SymmetryAxis::Y, 2.0),
+            (SymmetryAxis::Z, 3.0),
+        ] {
+            s.axis = axis;
+            assert_eq!(s.bounds_center_offset(center), expected);
+        }
+        // 置いた面は境界の中央を通る
+        s.axis = SymmetryAxis::Y;
+        s.set_offset(s.bounds_center_offset(center));
+        assert!(s.plane().signed_distance(center).abs() < 1e-6);
     }
 
     #[test]

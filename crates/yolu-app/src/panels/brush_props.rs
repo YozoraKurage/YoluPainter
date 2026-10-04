@@ -982,13 +982,6 @@ fn effect(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context,
     }
     let kind = EffectKind::of(&app.m2.brush.effect);
     let usable = app.tool != Tool::Eraser;
-    if app.view3d.paintable_on_screen() && kind != EffectKind::Paint {
-        status_row(
-            ui,
-            rows,
-            lang.pick("3D では使えません", "Not available in 3D"),
-        );
-    }
     if let Some(b) = choice_row(
         ui,
         rows,
@@ -1069,6 +1062,63 @@ fn effect(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context,
                 next.y = v as f64;
             }
             *offset = DVec2::new(next.x, next.y);
+            // 見えているレイヤーの重なりを読む・3D の面のクローンの揃え方（3D のビューを出しているとき）。
+            // マスクを描くあいだは描いているマスクだけを読むので、入れても効かない切り替えは薄くして切った表示にする
+            let masked = app.m2.edit_mask;
+            let clone = &mut app.view3d.clone;
+            if let Some(v) = toggle_row(
+                ui,
+                rows,
+                "effect.clone.all-layers",
+                lang.pick("全レイヤーから", "All layers"),
+                clone.all_layers && !masked,
+                Some(lang.pick(
+                    if masked {
+                        "マスクを描くあいだは、描いているマスクだけを読む"
+                    } else {
+                        "描くレイヤーだけでなく、見えているレイヤーの重なりを読む"
+                    },
+                    if masked {
+                        "While painting a mask, only that mask is read"
+                    } else {
+                        "Read the visible layers together, not only the layer being painted"
+                    },
+                )),
+                usable && !masked,
+            ) {
+                clone.all_layers = v;
+            }
+            if app.view3d.paintable_on_screen() {
+                // 元の有無は文では言わず、揃えるの薄さで示す（元は 3D ビューの十字で見える。決めるのは Alt クリック）
+                let has_source = app
+                    .view3d
+                    .model
+                    .as_ref()
+                    .is_some_and(|m| app.view3d.clone.source_for(&m.geometry).is_some());
+                let clone = &mut app.view3d.clone;
+                if let Some(v) = toggle_row(
+                    ui,
+                    rows,
+                    "effect.clone.aligned",
+                    lang.pick("揃える", "Aligned"),
+                    clone.aligned,
+                    Some(lang.pick(
+                        if has_source {
+                            "3D: 前のストロークと同じ位置関係で続ける。切ると、ストロークごとに最初の点が元に重なる"
+                        } else {
+                            "3D: 元を決めると使える（Alt を押しながらクリック）"
+                        },
+                        if has_source {
+                            "3D: Keep the offset from the previous stroke. Off: every stroke starts on the source"
+                        } else {
+                            "3D: Available once a source is set (Alt+click)"
+                        },
+                    )),
+                    usable && has_source,
+                ) {
+                    clone.set_aligned(v);
+                }
+            }
         }
     }
 }

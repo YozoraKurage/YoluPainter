@@ -129,7 +129,7 @@ impl StrokeState {
             return Ok(false);
         }
         let scratch = 256 + pixels.len() as u64 * 96;
-        if self.rollback_bytes + self.effect.scratch + scratch > self.budgets.stroke {
+        if self.rollback_bytes + self.held_bytes() + scratch > self.budgets.stroke {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         let w = self.width;

@@ -1039,13 +1039,19 @@ impl AppState {
         if self.m2.edit_mask {
             return self.doc.begin_brush_mask_stroke(id, brush);
         }
-        if self.paints_material() {
+        let mut stroke = if self.paints_material() {
             // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（層で無効のチャンネルは有効にする）
             let channels = self.paint_channels();
-            return self.doc.begin_material_brush_stroke(id, &channels, brush);
+            self.doc.begin_material_brush_stroke(id, &channels, brush)?
+        } else {
+            self.doc
+                .begin_brush_stroke_in(id, self.m2.paint_channel, brush)?
+        };
+        // クローンが、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごと）を読む（最初のダブの前に凍結する。マスクには使えない）
+        if self.view3d.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
+            stroke.use_composite_clone_source(&mut self.doc)?;
         }
-        self.doc
-            .begin_brush_stroke_in(id, self.m2.paint_channel, brush)
+        Ok(stroke)
     }
 
     /// 選んでいるレイヤー・チャンネルが消えていれば選び直す。

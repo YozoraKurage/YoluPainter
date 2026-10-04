@@ -2,6 +2,9 @@
 //! 隣り合わせ・BVH・レイの当たり（重心座標・UV）・最近点・ブラシの半径の中の面のテクセル（面の上のダブ）・範囲（UV アイランドなど）・
 //! 3D ビューのカメラ・画面のストロークの点の並べ方。
 //!
+//! - 参照の写像（`sampling`）: クローン・指先が読む画素を、辺でつながった三角形の局所の展開（UV の島の継ぎ目をまたぐ）で決める。
+//!   対称（`symmetry`）: ダブの中心をモデルの軸に直交する面で映す・軸のまわりに回して面へ投げ直し、写しの画素を大きい方の覆いで 1 つに
+//!   する。`SurfaceStroke` の options（`paint`）が、ぼかし・指先・クローンと 3D の対称をストロークに通す。
 //! - 位置・UV は Unity と同じ単精度で、式の順も同じにする（`unity` の写し）。C# の SurfaceGeometry に同じ入力を通した結果と、
 //!   当たり・隣り合わせ・BVH・ダブの画素と覆いまでビットで一致することを `tests/surface_golden.rs` で確かめる。
 //! - 座標は Unity と同じ左手系（Y が上）。UV (0, 0) がテクスチャの左下（文書の画素 (0, 0)）。
@@ -16,8 +19,10 @@ mod paint;
 mod query;
 mod refit;
 mod regions;
+mod sampling;
 mod stencil;
 mod stroke;
+mod symmetry;
 pub(crate) mod unity;
 
 use std::sync::atomic::AtomicBool;
@@ -29,14 +34,26 @@ pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
-pub use paint::{pick, world_radius, SurfaceStroke, SurfaceStrokeError, SurfaceStrokeStats};
+pub use paint::{
+    pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceStroke, SurfaceStrokeError,
+    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup,
+};
 pub use query::{
     barycentric, closest_point, intersect_triangle, uv_barycentric, NodeBudgetExceeded,
 };
 pub use refit::BvhUpdate;
 pub use regions::{region, SurfaceRegionKind};
+pub use sampling::{
+    SamplingChart, SamplingError, SAMPLING_CHART_MAX_TRIANGLES, SAMPLING_CHART_TRIANGLE_BYTES,
+};
 pub use stencil::SurfaceStencil;
 pub use stroke::{ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT};
+pub use symmetry::{
+    build_expanded, build_mirrored, copy_count, copy_hits, find_copy, search_distance, union_dabs,
+    CopyHit, DabSide, ExpandedSurfaceDab, MirrorOutcome, MirrorPlane, RadialSymmetry,
+    SymmetricSurfaceDab, SymmetryAxis, SymmetryError, MAX_CLOSEST_POINT_NODE_VISITS,
+    ON_PLANE_FRACTION,
+};
 pub use unity::{Bounds, Ray};
 
 /// スナップショットの三角形 1 つ（位置はモデルの空間、UV は 0 番）。

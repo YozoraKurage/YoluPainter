@@ -16,7 +16,8 @@
 //! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
 //! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。透明部分の
 //! ロックは `keep_alpha`（ストロークを作るときに必ず決める）で、描く画素のアルファと透明画素の RGB を守る。C# の
-//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンの合成の読み元はまだ無い。
+//! マテリアルは文書がチャンネルごとの状態へ同じ入力を渡す。クローンは、見えている層の重なりを凍結した参照元（`sources`）も読め、
+//! 3D の面のクローン・指先は、画素ごとの参照を呼び手が決める写像されたダブ（`sources`）で塗る。
 //!
 //! ```
 //! use yolu_core::{builtin_tip, Brush, BrushSettings, Document, DualBrush, PaperTexture, Rgba8};
@@ -46,6 +47,7 @@ mod effects;
 mod presets;
 pub mod random;
 mod settings;
+mod sources;
 mod stencil;
 mod symmetric;
 mod tip;
@@ -63,6 +65,8 @@ pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
 };
+pub use sources::{BrushMappedPixel, BrushSourceTap};
+pub(crate) use sources::{CloneSource, CompositeTile};
 pub use stencil::{
     linear_to_srgb, luminance, BrushStencil, ImageColorSpace, StencilImage, StencilMapping,
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
@@ -283,6 +287,8 @@ struct EffectState {
     offset_y: f64,
     /// 今のダブの読み元の枠のバイト（ダブの間だけ予算に数える。C# の effectScratchBytes）。
     scratch: u64,
+    /// 効果のダブを 1 つでも始めたか（合成の参照元は最初のダブの前にしか決められない。C# の effectDabStarted）。
+    started: bool,
 }
 
 /// 進行中のストロークの中身（文書が持つ）。
@@ -335,6 +341,8 @@ pub(crate) struct StrokeState {
     curve_from: BrushSample,
     curve_to: BrushSample,
     effect: EffectState,
+    /// クローンが読む合成（見えている層の重なりを、最初のダブの前に凍結したもの。None は今の層から読む）。
+    source: Option<sources::CloneSource>,
     /// 効果の読み元の枠の領域（ダブの間で使い回す。予算に数えるのはダブの間だけ、C# と同じ）。
     frame_cache: Option<EffectFrame>,
     pub stamp_count: u64,
@@ -435,6 +443,7 @@ impl StrokeState {
             curve_from: BrushSample::ZERO,
             curve_to: BrushSample::ZERO,
             effect: EffectState::default(),
+            source: None,
             frame_cache: None,
             stamp_count: 0,
             sample_count: 0,
@@ -473,12 +482,23 @@ impl StrokeState {
 
     /// 進行中の巻き戻しのバイト数（写し・覆い・ダブごとの色・デュアルの溜まり。C# の RollbackBytes）。
     pub(crate) fn rollback_total(&self) -> u64 {
-        self.rollback_bytes + self.effect.scratch
+        self.rollback_bytes + self.held_bytes()
+    }
+
+    /// 巻き戻しの外でストロークが持っているバイト: 今の効果のダブの枠と、凍結した合成の参照元（C# の effectScratchBytes と
+    /// cloneSourceBytes）。タイルの写しなどを数える予算の確かめは、これも足す。
+    fn held_bytes(&self) -> u64 {
+        self.effect.scratch + self.source_bytes()
+    }
+
+    /// 凍結した合成の参照元のバイト（無ければ 0）。
+    fn source_bytes(&self) -> u64 {
+        self.source.as_ref().map_or(0, |s| s.bytes())
     }
 
     /// ストロークの予算（C# の EnsureEffectBudget: 見込みのバイトと今の効果の枠の和が予算を超えたら断る）。
     fn ensure_budget(&self, bytes: u64) -> Result<(), CoreError> {
-        if bytes.saturating_add(self.effect.scratch) > self.budgets.stroke {
+        if bytes.saturating_add(self.held_bytes()) > self.budgets.stroke {
             Err(CoreError::StrokeBudgetExceeded)
         } else {
             Ok(())
@@ -1225,11 +1245,12 @@ impl StrokeState {
             stencil: brush.stencil.as_deref(),
             stencil_kind: self.stencil_kind,
             frame,
+            mapped: None,
             offset_x: self.effect.offset_x,
             offset_y: self.effect.offset_y,
             width: self.width,
             height: self.height,
-            scratch: self.effect.scratch,
+            scratch: self.held_bytes(),
         }
     }
 
@@ -1250,6 +1271,7 @@ impl StrokeState {
             BrushEffect::Clone { .. } => (0, true),
         };
         self.effect.scratch = 0;
+        self.effect.started = true;
         match brush.effect {
             BrushEffect::Smudge { .. } => {
                 let (dx, dy) = (self.effect.x - x, self.effect.y - y);
@@ -1292,7 +1314,12 @@ impl StrokeState {
             } else {
                 0
             };
-        if self.rollback_bytes.saturating_add(bytes) > self.budgets.stroke {
+        if self
+            .rollback_bytes
+            .saturating_add(self.source_bytes())
+            .saturating_add(bytes)
+            > self.budgets.stroke
+        {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         self.effect.scratch = bytes;
@@ -1302,6 +1329,23 @@ impl StrokeState {
             Some(f) => f.reset(x0, y0, fw, fh),
             None => EffectFrame::new(x0, y0, fw, fh),
         };
+        // 合成の参照元があれば、凍結した合成を読む（書き込み中の面は読まない）
+        if let Some(source) = &self.source {
+            for py in y0..=y1 {
+                let mut px = x0;
+                while px <= x1 {
+                    let tx = px / ts;
+                    let end = x1.min(tx * ts + ts - 1);
+                    let out = frame.row_mut(py, px, (end - px + 1) as usize);
+                    source.read_row(py, px, out);
+                    px = end + 1;
+                }
+            }
+            if radius > 0 {
+                frame.build_integral();
+            }
+            return Ok(Prepared::Effect(frame));
+        }
         // タイルは読む行の区間ごとに引く。クローンは既に触ったタイルだけ巻き戻しの写し（ストロークの前）を読む
         for py in y0..=y1 {
             let ty = py / ts;
@@ -1358,7 +1402,7 @@ impl StrokeState {
                 Some(Tile::Data(_)) => 0,
             };
         }
-        self.rollback_bytes + capture + self.effect.scratch <= self.budgets.stroke
+        self.rollback_bytes + capture + self.held_bytes() <= self.budgets.stroke
             && self
                 .budgets
                 .growth
@@ -1790,6 +1834,8 @@ struct Paint<'a> {
     stencil: Option<&'a BrushStencil>,
     stencil_kind: Option<ChannelKind>,
     frame: Option<&'a EffectFrame>,
+    /// 面のダブ（[`StrokeState::apply_mapped_dab`]）が先に読んで混ぜた参照の色（画素ごと）。あれば `frame` の代わりに読む。
+    mapped: Option<&'a sources::MappedColors>,
     offset_x: f64,
     offset_y: f64,
     width: i64,
@@ -2218,10 +2264,15 @@ fn apply_at<const SIMPLE: bool>(
         effect => {
             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
-            let frame = p.frame.expect("効果の読み元");
-            let sampled = match effect {
-                EffectKind::Blur(radius) => frame.blur(px, py, radius, p.width, p.height),
+            let sampled = match (effect, p.mapped) {
+                // 面のダブ: 参照は書く前にまとめて読んで混ぜてある（画布の外の判定も、そのとき済んでいる）
+                (_, Some(mapped)) => mapped.get(p.width, px, py),
+                (EffectKind::Blur(radius), None) => p
+                    .frame
+                    .expect("効果の読み元")
+                    .blur(px, py, radius, p.width, p.height),
                 _ => {
+                    let frame = p.frame.expect("効果の読み元");
                     let sx = px as f64 + p.offset_x;
                     let sy = py as f64 + p.offset_y;
                     if sx < 0.0

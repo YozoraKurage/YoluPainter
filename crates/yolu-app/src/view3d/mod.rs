@@ -2,6 +2,7 @@
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
 pub mod brdf;
+pub mod clone_source;
 pub mod display;
 pub mod environment;
 pub mod gizmo;
@@ -38,6 +39,10 @@ pub struct SurfaceInput {
     pub last_pointer: Option<egui::Pos2>,
     /// 最後のストロークで受けた点の数（試験用）。
     pub stroke_points: usize,
+    /// 描いているストロークに固めた 3D の対称（対称の面の表示と、写しのカーソルはこれを読む）。
+    pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
+    /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
+    pub clone_press: Option<egui::Pos2>,
 }
 
 /// 3D ビューの状態（モデル・カメラ・描くテクスチャセット）。
@@ -67,6 +72,8 @@ pub struct View3dState {
     pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
+    /// クローンの元と設定。
+    pub clone: clone_source::CloneState,
     /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
     /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,
@@ -224,6 +231,7 @@ impl View3dState {
     pub(crate) fn stroke_ended(&mut self) {
         self.input.stroke = None;
         self.input.surface = None;
+        self.input.symmetry = None;
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;

@@ -4,12 +4,12 @@
 //!
 //! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
 //! - `outline`: 選択範囲の縁の線分（点線の元）
-//! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸
+//! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸、3D の面の対称（ミラー・放射状）
 //! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さな窓
 //! - `io`: .ylp の `selection.bin` との受け渡し
 //!
 //! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
-//! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定で、ストロークを始めるときに
+//! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
 //! ブラシへ写して固める（途中で変えても、そのストロークには効かない）。
 
 pub mod canvas;
@@ -165,6 +165,22 @@ pub enum SymOp {
     /// 中心をキャンバスの中央に戻す。
     CenterCanvas,
     ShowAxes(bool),
+    /// 3D の面のミラー（軸に直交する面で左右に写す）。
+    Mirror3d(bool),
+    Axis3d(yolu_core::geometry::SymmetryAxis),
+    /// 面のずれ（モデルの原点から、軸の向きに。モデルの単位）。
+    Offset3d(f32),
+    /// 面をモデルの原点・境界の中央に置く。
+    OffsetOrigin3d,
+    OffsetBounds3d,
+    /// 3D の面の放射状（軸のまわりに回して写す）。
+    Radial3d(bool),
+    RadialAxis3d(yolu_core::geometry::SymmetryAxis),
+    RadialCount3d(u32),
+    /// 写しの側は見えない面にも塗る。
+    IgnoreVisibility3d(bool),
+    /// 3D ビューに対称の面を出す。
+    ShowPlane3d(bool),
 }
 
 /// `Action::Sel` の中身。
@@ -595,13 +611,19 @@ impl AppState {
 
     /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
     pub fn sel_symmetry(&mut self, op: SymOp) {
-        if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_)) {
+        if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_) | SymOp::ShowPlane3d(_)) {
             self.message = self
                 .lang
                 .pick("描いている間はできません。", "Not while drawing.")
                 .into();
             return;
         }
+        // 境界の中央は、モデルの今の形から（モデルが無ければ何もしない）
+        let bounds_center = self
+            .view3d
+            .model
+            .as_ref()
+            .map(|m| m.geometry.bounds().center);
         let s = &mut self.sel.symmetry;
         match op {
             SymOp::Mode(mode) => s.set_mode(mode),
@@ -610,6 +632,21 @@ impl AppState {
             SymOp::Center(x, y) => s.set_center(x, y),
             SymOp::CenterCanvas => s.center = (0.5, 0.5),
             SymOp::ShowAxes(on) => s.show_axes = on,
+            SymOp::Mirror3d(on) => s.surface.mirror = on,
+            SymOp::Axis3d(axis) => s.surface.axis = axis,
+            SymOp::Offset3d(v) => s.surface.set_offset(v),
+            SymOp::OffsetOrigin3d => s.surface.offset = 0.0,
+            SymOp::OffsetBounds3d => {
+                if let Some(center) = bounds_center {
+                    let offset = s.surface.bounds_center_offset(center);
+                    s.surface.set_offset(offset);
+                }
+            }
+            SymOp::Radial3d(on) => s.surface.radial = on,
+            SymOp::RadialAxis3d(axis) => s.surface.radial_axis = axis,
+            SymOp::RadialCount3d(n) => s.surface.set_radial_count(n),
+            SymOp::IgnoreVisibility3d(on) => s.surface.ignore_visibility = on,
+            SymOp::ShowPlane3d(on) => s.surface.show_plane = on,
         }
     }
 

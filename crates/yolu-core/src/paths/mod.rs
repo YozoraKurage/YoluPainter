@@ -1,10 +1,15 @@
 //! 編集できる 2D/3D の筆跡。評価は独立した面を返し、文書・選択・履歴を変更しない。
 #[cfg(test)]
 mod cancellation_tests;
+mod rebind;
 mod render;
 mod surface;
 use crate::geometry::DabRefusal;
 use crate::{BrushSettings, Channel, CoreError, Rgba8};
+pub use rebind::{
+    point_of, point_position, rebind_surface_path, rebind_tolerance, RebindError,
+    REBIND_MAX_NODE_VISITS, REBIND_TOLERANCE_FRACTION,
+};
 pub use render::{render_canvas, Options, Rendered};
 pub use surface::{fingerprint, render_surface};
 

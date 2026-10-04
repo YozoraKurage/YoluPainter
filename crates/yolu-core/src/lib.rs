@@ -66,10 +66,10 @@ pub mod uv_layout;
 
 pub use adjust::{AdjustmentSettings, AdjustmentType};
 pub use brush::{
-    builtin_presets, builtin_tip, Brush, BrushEffect, BrushPixel, BrushPreset, BrushSample,
-    BrushSettings, BrushStencil, BrushTip, ColorDynamics, Controls, DualBrush, DualBrushMode,
-    ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping, StencilMode, StencilPoint,
-    StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
+    builtin_presets, builtin_tip, Brush, BrushEffect, BrushMappedPixel, BrushPixel, BrushPreset,
+    BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics, Controls,
+    DualBrush, DualBrushMode, ImageColorSpace, Jitter, PaperTexture, StencilImage, StencilMapping,
+    StencilMode, StencilPoint, StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,

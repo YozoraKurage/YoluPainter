@@ -129,7 +129,7 @@ impl SurfaceDabResult {
     pub fn was_clipped(&self) -> bool {
         self.refusal.is_some_and(|r| r.cancels_stroke())
     }
-    fn reject(mut self, why: DabRefusal) -> SurfaceDabResult {
+    pub(crate) fn reject(mut self, why: DabRefusal) -> SurfaceDabResult {
         self.pixels.clear();
         self.refusal = Some(why);
         self

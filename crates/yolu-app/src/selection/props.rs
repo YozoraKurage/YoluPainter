@@ -7,15 +7,16 @@
 
 use egui::{pos2, vec2, Rect, Ui};
 
-use super::symmetry::{mode_name, mode_tooltip, MODES};
+use super::symmetry::{axis_name, mode_name, mode_tooltip, AXES_3D, MODES};
 use super::{combine_name, combine_tooltip, ModifyKind, SelAction, SelEdit, SymOp};
 use crate::engine::{BrushEffect, SelectionCombine, SymmetryMode, MAX_MODIFY_RADIUS};
 use crate::lang::Lang;
-use crate::panels::properties::{section, slider_row, status_row, toggle_row};
+use crate::panels::properties::{group_label, section, slider_row, status_row, toggle_row};
 use crate::state::{Action, AppState, OpenPopup, PopupKind, Tool};
 use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
+use yolu_core::geometry::SymmetryAxis;
 
 /// ボタンの列の 1 つ: 名前・選んでいる（青）か・押せるか・ツールチップ。
 struct FlowButton<'a> {
@@ -368,7 +369,7 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// プロパティの欄の「対称」（描く道具のタブの末尾）。
+/// プロパティの欄の「対称」（描く道具のタブの末尾）。2D のキャンバスの対称と、3D の面の対称（3D のビューを出しているとき）。
 pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     rows.indent = 0.0;
     let (open, reset) = section(
@@ -387,6 +388,19 @@ pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: 
         return;
     }
     let free = !app.is_stroking();
+    // 2D のキャンバスと 3D のビューを並べて見ているときは、どちらの設定も出す（別々に効く）
+    let both = app.view3d.paintable_on_screen();
+    if both {
+        group_label(ui, rows, "2D");
+    }
+    symmetry_2d(ui, app, rows, lang, free);
+    if both {
+        group_label(ui, rows, "3D");
+        symmetry_3d(ui, app, rows, lang, free);
+    }
+}
+
+fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: bool) {
     let current = app.sel.symmetry.mode;
     // モードのボタン
     let items: Vec<FlowButton> = MODES
@@ -403,10 +417,6 @@ pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: 
     }
     if current == SymmetryMode::None {
         return;
-    }
-    // 3D の面のストロークは対称を見ない（core に 3D の対称は無い）
-    if app.view3d.paintable_on_screen() {
-        status_row(ui, rows, lang.pick("3D では効きません", "No effect in 3D"));
     }
     let (width, height) = (app.doc.width() as f64, app.doc.height() as f64);
     let (cx, cy) = app.sel.symmetry.center;
@@ -498,5 +508,207 @@ pub fn symmetry_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: 
             rows,
             lang.pick("指先・クローンでは使えません", "Not with smudge or clone"),
         );
+    }
+}
+
+/// 軸のボタンのツールチップ（ミラーは面の向き、放射状は回す軸）。
+fn axis_tooltip(lang: Lang, axis: SymmetryAxis, radial: bool) -> String {
+    let name = axis_name(axis);
+    if radial {
+        lang.pick(
+            format!("モデルの {name} 軸のまわりに回して写す"),
+            format!("Rotate copies around the model's {name} axis"),
+        )
+    } else {
+        lang.pick(
+            format!("面はモデルの {name} 軸に直交する"),
+            format!("The plane is perpendicular to the model's {name} axis"),
+        )
+    }
+}
+
+/// 軸の選びのボタンの列（選んでいる軸を返す）。
+fn axis_buttons(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    lang: Lang,
+    salt: &str,
+    current: SymmetryAxis,
+    radial: bool,
+    enabled: bool,
+) -> Option<SymmetryAxis> {
+    let tips: Vec<String> = AXES_3D
+        .iter()
+        .map(|a| axis_tooltip(lang, *a, radial))
+        .collect();
+    let items: Vec<FlowButton> = AXES_3D
+        .iter()
+        .zip(&tips)
+        .map(|(a, tip)| FlowButton {
+            label: axis_name(*a),
+            primary: current == *a,
+            enabled,
+            tooltip: tip,
+        })
+        .collect();
+    flow_buttons(ui, rows, salt, &items).map(|i| AXES_3D[i])
+}
+
+fn symmetry_3d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: bool) {
+    let s = app.sel.symmetry.surface.clone();
+    let send = |app: &mut AppState, op: SymOp| app.apply(Action::Sel(SelAction::Symmetry(op)));
+    // ミラー
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "symmetry3d.mirror",
+        lang.pick("ミラー", "Mirror"),
+        s.mirror,
+        Some(lang.pick(
+            "モデルの軸に直交する面で左右に写す（今のテクスチャセットの面だけ）",
+            "Reflect dabs across a plane perpendicular to a model axis, within the active texture set",
+        )),
+        free,
+    ) {
+        send(app, SymOp::Mirror3d(v));
+    }
+    if s.mirror {
+        if let Some(axis) = axis_buttons(ui, rows, lang, "symmetry3d.axis", s.axis, false, free) {
+            send(app, SymOp::Axis3d(axis));
+        }
+        // ずれの範囲はモデルの大きさに合わせる（±1000 のままではスライダーが使えない）
+        let reach = app
+            .view3d
+            .model
+            .as_ref()
+            .map_or(1.0, |m| m.geometry.bounds().size().length().max(1e-3))
+            .max(s.offset.abs());
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "symmetry3d.offset",
+            lang.pick("中心", "Center"),
+            s.offset,
+            (-reach, reach),
+            NumberFormat {
+                decimals: 3,
+                trim: true,
+                suffix: "",
+            },
+            Some(lang.pick(
+                "モデルの原点から軸の向きの距離（モデルの単位）",
+                "Distance from the model origin along the axis (model units)",
+            )),
+            free,
+        ) {
+            send(app, SymOp::Offset3d(v));
+        }
+        let has_model = app.view3d.model.is_some();
+        let items = [
+            FlowButton {
+                label: lang.pick("原点", "Origin"),
+                primary: false,
+                enabled: free && s.offset != 0.0,
+                tooltip: lang.pick(
+                    "面をモデルの原点に置く",
+                    "Put the plane through the model origin",
+                ),
+            },
+            FlowButton {
+                label: lang.pick("境界の中心", "Bounds center"),
+                primary: false,
+                enabled: free && has_model,
+                tooltip: lang.pick(
+                    "面をモデルの境界の中央に置く",
+                    "Put the plane through the middle of the model's bounds",
+                ),
+            },
+        ];
+        match flow_buttons(ui, rows, "symmetry3d.center", &items) {
+            Some(0) => send(app, SymOp::OffsetOrigin3d),
+            Some(_) => send(app, SymOp::OffsetBounds3d),
+            None => {}
+        }
+    }
+    // 放射状
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "symmetry3d.radial",
+        lang.pick("放射状", "Radial"),
+        s.radial,
+        Some(lang.pick(
+            "モデルの軸のまわりに回して写す（ミラーと一緒に使える）",
+            "Rotate copies around a model axis (can be combined with the mirror)",
+        )),
+        free,
+    ) {
+        send(app, SymOp::Radial3d(v));
+    }
+    if s.radial {
+        if let Some(axis) = axis_buttons(
+            ui,
+            rows,
+            lang,
+            "symmetry3d.radial-axis",
+            s.radial_axis,
+            true,
+            free,
+        ) {
+            send(app, SymOp::RadialAxis3d(axis));
+        }
+        if let Some(v) = slider_row(
+            ui,
+            rows,
+            "symmetry3d.count",
+            lang.pick("写しの数", "Copies"),
+            s.radial_count as f32,
+            (2.0, 16.0),
+            NumberFormat::int(""),
+            Some(lang.pick("軸のまわりの写しの数", "Copies around the axis")),
+            free,
+        ) {
+            send(app, SymOp::RadialCount3d(v.round() as u32));
+        }
+    }
+    if s.enabled() {
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            "symmetry3d.visibility",
+            lang.pick("見えない面にも", "Ignore visibility"),
+            s.ignore_visibility,
+            Some(lang.pick(
+                "写しは、カメラから見えない面・裏の面にも塗る。元のダブは見える面だけ",
+                "Copies also paint back-facing and hidden surfaces. The original dab paints visible surfaces only",
+            )),
+            free,
+        ) {
+            send(app, SymOp::IgnoreVisibility3d(v));
+        }
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            "symmetry3d.plane",
+            lang.pick("面を表示", "Show plane"),
+            s.show_plane,
+            Some(lang.pick(
+                "3D ビューに対称の面と軸を出す",
+                "Show the symmetry plane and axis in the 3D view",
+            )),
+            true,
+        ) {
+            send(app, SymOp::ShowPlane3d(v));
+        }
+        if matches!(
+            app.m2.brush.effect,
+            BrushEffect::Smudge { .. } | BrushEffect::Clone { .. }
+        ) {
+            status_row(
+                ui,
+                rows,
+                lang.pick("指先・クローンでは使えません", "Not with smudge or clone"),
+            );
+        }
     }
 }

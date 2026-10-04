@@ -286,6 +286,17 @@ fn core_reason(reason: &str) -> &str {
 
 fn known_core_reason(reason: &str) -> Option<&'static str> {
     Some(match reason {
+        "マスクへのストロークはチャンネルの合成を読めない" => {
+            "A mask stroke cannot read the channel composite"
+        }
+        "合成の参照元はクローンの最初のダブの前にだけ決められる" => {
+            "The composite clone source can only be set before the first clone dab"
+        }
+        "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
+        "写像されたダブの画素" => "Mapped dab pixel",
+        "写像されたダブの参照" => "Mapped dab source",
+        "写像された画素に参照が無い" => "A mapped pixel needs a source",
+        "写像されたダブの画素が重複" => "Duplicate mapped dab pixel",
         "1 区間のダブが百万を超える" => "More than one million dabs per segment",
         "1 区間のデュアルブラシのダブが百万を超える" => "More than one million dual brush dabs per segment",
         "Height → Normal が読むのは Height のチャンネルだけ" => "Height to Normal requires the Height channel",
@@ -508,7 +519,70 @@ impl Lang {
             SurfaceStrokeError::Core(e) => self.core_error(e),
             SurfaceStrokeError::Dab(e) => self.dab_refusal(*e).into(),
             SurfaceStrokeError::TooManyDabs => self.pick("ダブの上限を超えました（取り消した）", "Dab limit exceeded (cancelled)").into(),
+            SurfaceStrokeError::Sampling(e) => self.sampling_error(*e).into(),
+            SurfaceStrokeError::EffectWithSymmetry => self
+                .pick("指先・クローンでは対称を使えません", "Smudge and clone do not work with symmetry")
+                .into(),
+            SurfaceStrokeError::CloneSource => self
+                .pick("クローンの元が今のモデルの面ではありません", "The clone source is not on this model")
+                .into(),
         }
+    }
+    /// 指先・クローンの読み元を決められなかった理由。
+    pub fn sampling_error(self, error: yolu_core::geometry::SamplingError) -> &'static str {
+        use yolu_core::geometry::SamplingError::*;
+        match error {
+            SnapshotChanged => self.pick(
+                "モデルのスナップショットが変わりました",
+                "Model snapshot changed",
+            ),
+            BindingMismatch => self.pick(
+                "面がスナップショットと合いません",
+                "Surface binding mismatch",
+            ),
+            InvalidArguments => self.pick(
+                "参照の半径か位置が範囲外です",
+                "Invalid sampling radius or position",
+            ),
+            ChartBudget => self.pick(
+                "参照を読む面の予算を超えました（取り消した）",
+                "Sampling surface budget exceeded (cancelled)",
+            ),
+            LookupBudget => self.pick(
+                "参照を探す回数の予算を超えました（取り消した）",
+                "Sampling lookup budget exceeded (cancelled)",
+            ),
+            Unreachable => self.pick(
+                "このダブの画素が参照の図に入りません（取り消した）",
+                "A dab pixel is outside the sampling chart (cancelled)",
+            ),
+        }
+    }
+    /// 対称の写しが塗られなかった理由（短い状態）。
+    pub fn mirror_note(self, outcome: yolu_core::geometry::MirrorOutcome) -> &'static str {
+        use yolu_core::geometry::MirrorOutcome::*;
+        match outcome {
+            NoSurface => self.pick(
+                "対称: 近くに面が無い写しは飛ばしました",
+                "Symmetry: copies with no surface nearby were skipped",
+            ),
+            OtherSlot => self.pick(
+                "対称: 別のテクスチャセットの写しは飛ばしました",
+                "Symmetry: copies on another texture set were skipped",
+            ),
+            Hidden => self.pick(
+                "対称: 見えない写しは飛ばしました",
+                "Symmetry: copies that cannot be seen were skipped",
+            ),
+            Painted | OnPlane => "",
+        }
+    }
+    /// 指先が、つながらない面で拾い直したときの状態。
+    pub fn smudge_lost(self) -> &'static str {
+        self.pick(
+            "指先: つながらない面で拾い直しました",
+            "Smudge picked up again on a disconnected surface",
+        )
     }
     pub fn dab_refusal(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
@@ -856,7 +930,23 @@ mod tests {
             assert_ne!(ja, en);
         }
         assert_eq!(Lang::En.view_error(&ViewError::Model(ModelError::Rig(RigError::TooLarge { what: "骨", value: 2, limit: 1 }))), "Too many bones (2, maximum 1)");
-        let mut dabs = vec![SurfaceStrokeError::TooManyDabs, SurfaceStrokeError::Core(CoreError::StrokeActive)];
+        use yolu_core::geometry::SamplingError;
+        let mut dabs = vec![
+            SurfaceStrokeError::TooManyDabs,
+            SurfaceStrokeError::Core(CoreError::StrokeActive),
+            SurfaceStrokeError::EffectWithSymmetry,
+            SurfaceStrokeError::CloneSource,
+        ];
+        for e in [
+            SamplingError::SnapshotChanged,
+            SamplingError::BindingMismatch,
+            SamplingError::InvalidArguments,
+            SamplingError::ChartBudget,
+            SamplingError::LookupBudget,
+            SamplingError::Unreachable,
+        ] {
+            dabs.push(SurfaceStrokeError::Sampling(e));
+        }
         for d in [
             DabRefusal::SnapshotChanged,
             DabRefusal::InvalidArguments,

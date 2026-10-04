@@ -1630,7 +1630,7 @@ fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
 }
 
 #[test]
-fn the_cube_refuses_effect_brushes_before_they_start_and_the_eraser_still_works() {
+fn the_cube_runs_effect_brushes_asks_for_a_clone_source_and_the_eraser_still_works() {
     use yolu_app::engine::BrushEffect;
     use yolu_app::state::Tool;
     let (mut h, rect) = cube_view(256);
@@ -1646,49 +1646,44 @@ fn the_cube_refuses_effect_brushes_before_they_start_and_the_eraser_still_works(
             .count()
     };
     cube_stroke(&mut h, rect);
-    let painted = ink(&h);
-    assert!(painted > 0);
-    for (effect, name) in [
-        (BrushEffect::BLUR, "ぼかし"),
-        (BrushEffect::SMUDGE, "指先"),
-        (
-            BrushEffect::Clone {
-                offset: yolu_app::engine::DVec2::new(8.0, 0.0),
-            },
-            "クローン",
-        ),
-    ] {
+    assert!(ink(&h) > 0);
+    // ぼかしと指先は 3D の面でも走る（始める前に断らない。ストロークは終わっている）
+    for (effect, name) in [(BrushEffect::BLUR, "ぼかし"), (BrushEffect::SMUDGE, "指先")] {
         h.state_mut().state.m2.brush.effect = effect;
         h.state_mut().state.message.clear();
-        let (steps, revision) = (
-            h.state().state.doc.undo_count(),
-            h.state().state.doc.revision(),
-        );
         cube_stroke(&mut h, rect);
         let state = &h.state().state;
         assert!(
-            state.message.contains("効果のブラシ") && !state.message.contains("できない"),
-            "{name}: 内部の文言ではなく短い理由: {}",
+            !state.message.contains("効果のブラシ") && !state.is_stroking(),
+            "{name}: 断らずに走る: {}",
             state.message
         );
-        assert!(!state.is_stroking(), "{name}: ストロークを始めない");
-        assert_eq!(
-            (state.doc.undo_count(), state.doc.revision()),
-            (steps, revision),
-            "{name}: 文書は変わらない"
-        );
-        assert_eq!(ink(&h), painted);
     }
-    // 英語でも短い理由
+    // クローンは元（Alt を押したクリック）が要る。無ければ始めず、短い状態を出す
+    h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+        offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+    };
+    h.state_mut().state.message.clear();
+    let (steps, revision) = (
+        h.state().state.doc.undo_count(),
+        h.state().state.doc.revision(),
+    );
+    cube_stroke(&mut h, rect);
+    let state = &h.state().state;
+    assert_eq!(state.message, "クローンの元がありません");
+    assert!(!state.is_stroking(), "ストロークを始めない");
+    assert_eq!(
+        (state.doc.undo_count(), state.doc.revision()),
+        (steps, revision),
+        "文書は変わらない"
+    );
+    // 英語でも短い状態
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
     h.state_mut().state.message.clear();
     cube_stroke(&mut h, rect);
-    assert!(
-        h.state().state.message.contains("Effect brushes"),
-        "{}",
-        h.state().state.message
-    );
+    assert_eq!(h.state().state.message, "No clone source");
     // 消しゴムは効果を使わない（ペイントとして消す）ので、効果が選ばれたままでも 3D で消せる
+    let painted = ink(&h);
     h.state_mut().state.tool = Tool::Eraser;
     h.state_mut().state.message.clear();
     cube_stroke(&mut h, rect);

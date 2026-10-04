@@ -54,7 +54,7 @@ pub(crate) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<MixHasher>>;
 
 /// 溶接の鍵（C# の PositionKey: 座標 ÷ 許し（倍精度）を偶数への丸めで整数に）。
 #[inline]
-fn position_key(p: Vec3, tolerance: f64) -> (i64, i64, i64) {
+pub(super) fn position_key(p: Vec3, tolerance: f64) -> (i64, i64, i64) {
     (
         (p.x as f64 / tolerance).round_ties_even() as i64,
         (p.y as f64 / tolerance).round_ties_even() as i64,
