@@ -114,6 +114,18 @@ pub struct TextureSet {
     pub document: NativeDocument,
     pub selection: Option<Selection>,
 }
+/// 書き手が作る・並べ直すセット（`Project::create`・`Project::with_sets`）。
+#[derive(Clone, Debug)]
+pub struct SetSpec {
+    pub id: String,
+    pub name: String,
+    pub material: MaterialRef,
+    /// 新しい正本。None なら元のプロジェクトの同じ ID のセットのエントリをバイト列のまま残す（新しいセットには要る）。
+    pub document: Option<NativeDocument>,
+    /// 新しい正本の Color の合成の PNG（`composite/Color.png`）。正本を替えたセットの `composite/` の下は、中身と合わない
+    /// 派生を残さないよう全部を消してから、これがあれば書く。
+    pub composite_color: Option<Vec<u8>>,
+}
 #[derive(Clone, Debug)]
 pub struct Resource {
     pub id: String,
@@ -194,6 +206,82 @@ impl Project {
         Self::from_archive(Archive::build(
             files,
             3,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    /// 形式7の新しいプロジェクトを作る（セットは1〜64、どれも正本が要る）。書いたものは読み直して検証する。
+    pub fn create(writer: WriterInfo, sets: &[SetSpec], current: &str) -> Result<Self> {
+        let w = writer_json(&writer);
+        let info = serde_json::json!({"format": 7, "savedBy": w, "createdBy": w});
+        let mut files = Files::new();
+        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
+        let mut list = Vec::with_capacity(sets.len());
+        for spec in sets {
+            check(
+                spec.document.is_some(),
+                format!("新しいセット「{}」に正本がありません", spec.name),
+            )?;
+            list.push(set_json(None, spec));
+            put_set_entries(&mut files, spec);
+        }
+        let project = serde_json::json!({"sets": list, "current": current});
+        files.insert(
+            "project.json".into(),
+            Arc::from(serde_json::to_vec(&project)?),
+        );
+        Self::from_archive(Archive::build(
+            files,
+            3,
+            "application/x-yolupainter",
+            "YOLUPAINTER-YLP-",
+        )?)
+    }
+    /// 形式7のセットの並び・名前・マテリアル参照・現在のセットを置き換え、正本と合成を差し替える。旧形式は先にupgradedで
+    /// 明示的に移行する。元のセットは全部が並びに要る（セットを消すのは別の口で、黙って消さない）。並びに無かったIDは新しい
+    /// セットで、正本が要る。各セットの知らないJSONキー、選択範囲・メッシュマップ・PSD原本、根のほかのエントリは残す。
+    /// `savedBy` は writer にする。
+    pub fn with_sets(&self, writer: WriterInfo, sets: &[SetSpec], current: &str) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "セットを並べ直す前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        let mut project = json(required(&files, "project.json")?, 65536)?;
+        let old: Vec<Value> = project["sets"].as_array().cloned().unwrap_or_default();
+        for set in &self.sets {
+            check(
+                sets.iter().any(|s| s.id == set.id),
+                format!(
+                    "セット「{}」が並びにありません（消すのは別の口です）",
+                    set.name
+                ),
+            )?;
+        }
+        let mut list = Vec::with_capacity(sets.len());
+        for spec in sets {
+            let previous = old
+                .iter()
+                .find(|v| v["id"].as_str() == Some(spec.id.as_str()));
+            check(
+                previous.is_some() || spec.document.is_some(),
+                format!("新しいセット「{}」に正本がありません", spec.name),
+            )?;
+            list.push(set_json(previous, spec));
+            put_set_entries(&mut files, spec);
+        }
+        project["sets"] = Value::Array(list);
+        project["current"] = Value::from(current);
+        files.insert(
+            "project.json".into(),
+            Arc::from(serde_json::to_vec(&project)?),
+        );
+        let mut info = json(required(&files, "ylp.json")?, 65536)?;
+        info["savedBy"] = writer_json(&writer);
+        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
+        Self::from_archive(Archive::build(
+            files,
+            self.original.level,
             "application/x-yolupainter",
             "YOLUPAINTER-YLP-",
         )?)
@@ -424,6 +512,45 @@ impl Project {
             notes,
             unknown,
         })
+    }
+}
+/// project.json のセット 1 つ。前のオブジェクトがあれば、知らないキーを残して名前とマテリアル参照の既知の鍵だけを置き換える。
+fn set_json(previous: Option<&Value>, spec: &SetSpec) -> Value {
+    let mut set = previous
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    set["id"] = Value::from(spec.id.as_str());
+    set["name"] = Value::from(spec.name.as_str());
+    if !set["material"].is_object() {
+        set["material"] = serde_json::json!({});
+    }
+    let reference = set["material"].as_object_mut().unwrap();
+    for key in ["name", "guid", "fileId", "unassigned", "slot"] {
+        reference.remove(key);
+    }
+    let Value::Object(replacement) = spec.material.to_json() else {
+        unreachable!()
+    };
+    reference.extend(replacement);
+    set
+}
+/// セットの正本と合成を置く（正本が無ければ何もしない）。
+fn put_set_entries(files: &mut Files, spec: &SetSpec) {
+    let Some(doc) = &spec.document else {
+        return;
+    };
+    let prefix = format!("sets/{}/", spec.id);
+    files.retain(|n, _| !n.starts_with(&format!("{prefix}composite/")));
+    files.insert(
+        format!("{prefix}document.utpaint"),
+        Arc::from(doc.to_bytes()),
+    );
+    if let Some(png) = &spec.composite_color {
+        files.insert(
+            format!("{prefix}composite/Color.png"),
+            Arc::from(png.as_slice()),
+        );
     }
 }
 fn moves_into_set(n: &str) -> bool {

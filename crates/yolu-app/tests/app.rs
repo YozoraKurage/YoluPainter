@@ -70,12 +70,12 @@ fn menu_item_runs_its_action() {
     let at = popup_item(&h, "新規レイヤー").center();
     click(&mut h, at);
     assert_eq!(h.state().state.doc.layers().len(), 2);
-    // 無効の項目は押しても閉じない・何もしない
-    let at = menu_title(&h, "ファイル").center();
+    // 無効の項目は押しても閉じない・何もしない（やり直すものが無いときのやり直し）
+    let at = menu_title(&h, "編集").center();
     click(&mut h, at);
-    let at = popup_item(&h, "保存").center();
+    let at = popup_item(&h, "やり直し").center();
     click(&mut h, at);
-    assert_eq!(popup_kind(&h), Some(PopupKind::MenuBar(0)));
+    assert_eq!(popup_kind(&h), Some(PopupKind::MenuBar(1)));
 }
 
 #[test]
@@ -180,7 +180,10 @@ fn view_keys_rotate_and_flip_and_the_header_resets_them() {
         ],
     );
     // 回転した頁のテクスチャの補間は、GPU のドライバの層で数画素ゆれる（同じ木で 0〜13 画素）。それ以外の差は落とす
-    h.snapshot_options("canvas_rotated_flipped", &egui_kittest::SnapshotOptions::new().max_failed_pixels(32));
+    h.snapshot_options(
+        "canvas_rotated_flipped",
+        &egui_kittest::SnapshotOptions::new().max_failed_pixels(32),
+    );
     use egui_kittest::kittest::Queryable;
     h.get_by_label("-15°").click();
     h.run();
@@ -326,8 +329,12 @@ fn layer_panel_add_hide_blend_and_opacity() {
         h.state().state.doc.layer(top).unwrap().blend_mode(),
         BlendMode::Multiply
     );
-    // 不透明度のドラッグは 1 回の取り消しにまとまる
-    let slider = rect_of(&h, "不透明度", |r| r.left() > 1000.0 && r.top() < 130.0);
+    // 不透明度のドラッグは 1 回の取り消しにまとまる（レイヤーのパネルの中の不透明度。オプションバーとプロパティにも同じ名前がある）
+    let layers_tab = h.state().tab_rects[&yolu_app::Tab::Layers];
+    let properties_tab = h.state().tab_rects[&yolu_app::Tab::Properties];
+    let slider = rect_of(&h, "不透明度", |r| {
+        r.left() > 1000.0 && r.top() > layers_tab.bottom() && r.top() < properties_tab.top()
+    });
     drag(
         &mut h,
         &[

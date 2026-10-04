@@ -71,17 +71,48 @@ fn draw_header(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     w::fill(&p, bar, t::PANEL_HEADER);
     w::hline(&p, bar.left(), bar.right(), bar.bottom() - 1.0, t::BORDER);
     let left = bar.left() + 8.0;
-    let label = format!("2D · カラー  {}%", (app.view.zoom * 100.0).round() as i32);
+    let label = format!(
+        "2D · {} · カラー  {}%",
+        app.sets.current().name,
+        (app.view.zoom * 100.0).round() as i32
+    );
     let width = w::text_width(&p, &label, t::LABEL_DIM).min((bar.width() - 16.0).max(0.0));
+    let shown = w::fit(&p, &label, width, t::LABEL_DIM);
     w::text(
         &p,
         Rect::from_min_size(pos2(left, bar.top()), vec2(width, bar.height())),
-        &label,
+        &shown,
         t::LABEL_DIM,
         Align::Left,
     );
     let mut x = left + width + 8.0;
     let enabled = !app.is_stroking();
+    // 読むだけのセット: 鍵と「読むだけ」（理由はツールチップ）
+    if let Some(reason) = app.read_only_reason().map(str::to_owned) {
+        let text = "読むだけ";
+        let bw = 20.0 + w::text_width(&p, text, t::LABEL_DIM) + 8.0;
+        if x + bw <= bar.right() {
+            let r = Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(bw, 22.0));
+            w::rounded(&p, r, t::CONTROL_BG, 3.0);
+            w::icon(
+                &p,
+                Rect::from_min_size(r.min, vec2(20.0, r.height())),
+                "lock",
+                t::WARNING,
+                14.0,
+            );
+            w::text(
+                &p,
+                Rect::from_min_max(pos2(r.left() + 20.0, r.top()), r.max),
+                text,
+                t::LABEL_DIM.with_color(t::WARNING),
+                Align::Left,
+            );
+            ui.interact(r, ui.id().with("canvas.readonly"), egui::Sense::hover())
+                .on_hover_text(reason);
+            x += bw + 4.0;
+        }
+    }
     if app.view.angle != 0.0 {
         let text = angle_label(app.view.angle);
         let bw = 20.0 + w::text_width(&p, &text, t::LABEL_DIM) + 6.0;
@@ -149,6 +180,10 @@ fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
 }
 
 fn begin_stroke(app: &mut AppState, source: StrokeSource, eraser: bool) -> bool {
+    if let Some(reason) = app.read_only_reason() {
+        app.message = format!("読むだけのテクスチャセットには描けません: {reason}");
+        return false;
+    }
     let Some(layer) = app.selected_layer else {
         app.message = "描くレイヤーがありません。".into();
         return false;

@@ -93,7 +93,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
-    let enabled = !app.is_stroking();
+    let enabled = app.can_edit();
     let selected = app
         .selected_layer
         .and_then(|id| app.doc.layer(id).map(|l| (id, l.blend_mode(), l.opacity())));
@@ -281,7 +281,7 @@ fn layer_row(
     };
     let (name, visible) = (layer.name().to_owned(), layer.visible());
     let selected = app.selected_layer == Some(id);
-    let enabled = !app.is_stroking();
+    let enabled = app.can_edit();
     let hit = row.intersect(list);
     let response = ui.interact(
         hit,

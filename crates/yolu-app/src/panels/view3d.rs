@@ -230,16 +230,14 @@ impl View3dSlot {
         let p = ui.painter().clone();
         w::fill(&p, content, t::CANVAS_BG);
         let text = Rect::from_center_size(content.center(), vec2(content.width().min(360.0), 88.0));
-        let (title, detail) = if app.view3d.model.is_none() {
-            (
-                "モデルがありません",
-                "Unity からモデルを送るか（Live Link）、試しの立方体を読んでください。",
-            )
+        // 名前・状態だけ（使い方の説明は置かない）
+        let all_hidden = app.view3d.model.is_none() && app.view3d.full_model().is_some();
+        let title = if all_hidden {
+            "すべて隠しています"
+        } else if app.view3d.model.is_none() {
+            "モデルなし"
         } else {
-            (
-                "3D を描けません",
-                "この環境では GPU（wgpu）を使えませんでした。",
-            )
+            "3D を描けません（GPU なし）"
         };
         w::text(
             &p,
@@ -248,17 +246,7 @@ impl View3dSlot {
             t::LABEL.with_color(t::TEXT_DIM),
             Align::Center,
         );
-        w::text(
-            &p,
-            Rect::from_min_size(
-                pos2(text.left(), text.top() + 24.0),
-                vec2(text.width(), 18.0),
-            ),
-            detail,
-            t::LABEL_SMALL,
-            Align::Center,
-        );
-        if app.view3d.model.is_none() {
+        if app.view3d.full_model().is_none() {
             let r =
                 Rect::from_center_size(pos2(text.center().x, text.top() + 64.0), vec2(160.0, 24.0));
             if w::button(

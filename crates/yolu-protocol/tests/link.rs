@@ -180,6 +180,27 @@ fn a_bridge_from_another_version_is_rejected() {
     server.join().unwrap();
 }
 
+#[test]
+fn a_busy_standalone_refuses_after_reading_the_hello() {
+    let name = unique_name("busy");
+    let listener = link::listen(&name).unwrap();
+    let server = thread::spawn(move || {
+        use interprocess::local_socket::traits::Listener as _;
+        let stream = listener.accept().unwrap();
+        link::refuse(stream, RejectCode::Busy, "ほかの Unity とつながっています").unwrap()
+    });
+    match connect_and_greet(&name, "2 つ目のブリッジ") {
+        Err(LinkError::Rejected(r)) => {
+            assert_eq!(r.code, RejectCode::Busy);
+            assert_eq!(r.text, "ほかの Unity とつながっています");
+        }
+        Err(e) => panic!("{e}"),
+        Ok(_) => panic!("断られるはず"),
+    }
+    let hello = server.join().unwrap();
+    assert_eq!(hello.agent, "2 つ目のブリッジ");
+}
+
 /// 子のプロセス（同じ試験の実行ファイル）で動かすスタンドアロン役。YLP_LINK_CHILD が無ければ何もしない。
 #[test]
 fn child_standalone() {

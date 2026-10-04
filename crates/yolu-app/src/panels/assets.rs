@@ -10,10 +10,5 @@ pub fn show(ui: &mut Ui) {
     ui.advance_cursor_after_rect(r);
     let mut rows = Rows::new(r, 8.0);
     let row = rows.row(60.0, 0.0);
-    w::wrapped_text(
-        ui.painter(),
-        row,
-        "アセット（準備中）\nブラシ・マテリアル・スマートマテリアルの置き場をここに出します。",
-        t::LABEL_DIM,
-    );
+    w::wrapped_text(ui.painter(), row, "準備中", t::LABEL_DIM);
 }

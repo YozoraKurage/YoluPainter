@@ -17,8 +17,11 @@ eframe = { version = "0.36", default-features = false, features = ["wgpu", "defa
 egui = "0.36"
 egui_dock = "0.21"
 yolu-core.workspace = true
+yolu-io.workspace = true
 yolu-protocol.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+interprocess = "2.4"   # 0BSD OR Apache-2.0（Live Link の待ち受け）
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶ窓。Windows は OS の窓、Linux は xdg-desktop-portal）
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
@@ -26,3 +29,4 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
+yolu-bridge = { path = "../yolu-bridge" }   # 試験で Unity の役（本物のブリッジの C の口）を別のプロセスで動かす

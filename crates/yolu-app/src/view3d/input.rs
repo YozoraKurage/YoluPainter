@@ -45,6 +45,17 @@ fn begin(
     let view = camera_view(app, rect);
     let p = local(rect, at);
     let material = app.view3d.material;
+    if material < 0 {
+        app.message = format!(
+            "今のテクスチャセット「{}」はこのモデルにありません。",
+            app.sets.current().name
+        );
+        return;
+    }
+    if let Some(reason) = app.read_only_reason() {
+        app.message = format!("読むだけのテクスチャセットには描けません: {reason}");
+        return;
+    }
     if let Some(hit) = pick(&model.geometry, &view, p) {
         if hit.material != material {
             let name = model
@@ -52,7 +63,7 @@ fn begin(
                 .get(hit.material as usize)
                 .cloned()
                 .unwrap_or_else(|| format!("{}", hit.material));
-            app.message = format!("ほかのテクスチャセット（{name}）の面です。今のテクスチャセットの面に描いてください。");
+            app.message = format!("ほかのテクスチャセット（{name}）の面です。");
             return;
         }
     }

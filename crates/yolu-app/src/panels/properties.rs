@@ -191,11 +191,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
         2 => {
             let _ = section(ui, app, &mut rows, "stencil", "ステンシル", "square", None);
-            placeholder(ui, &mut rows, "ステンシルは準備中です（M2 以降）。");
+            placeholder(ui, &mut rows, "準備中");
         }
         _ => {
             let _ = section(ui, app, &mut rows, "material", "マテリアル", "layers", None);
-            placeholder(ui, &mut rows, "マテリアルで塗るのは準備中です（M2 以降）。");
+            placeholder(ui, &mut rows, "準備中");
         }
     }
 }

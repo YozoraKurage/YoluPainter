@@ -1,5 +1,6 @@
 //! アプリの本体: 外枠（メニューバー・オプションバー・ツールの帯・ステータスバー）と、egui_dock のドッキング（Substance の並び。
-//! 左: アセットとカラー、中央: キャンバスと 3D ビュー、右: レイヤーとプロパティ）、ポップアップ、3D ビューの知らせ。
+//! 左: アセットとカラー、中央: キャンバスと 3D ビュー、右: テクスチャセットとレイヤーとプロパティ）、ポップアップ、3D ビューの知らせ、
+//! Live Link（フレームの頭で受け、終わりに変わったタイルを出す）、ファイルの窓。
 
 use std::collections::HashMap;
 
@@ -7,13 +8,14 @@ use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Ui, WidgetText};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
+use crate::livelink::LiveLink;
 use crate::panels::{
-    assets, color::ColorTextures, layers, layers::Thumbnails, properties, view3d::View3dHost,
-    view3d::View3dSlot,
+    assets, color::ColorTextures, layers, layers::Thumbnails, properties, texture_sets,
+    view3d::View3dHost, view3d::View3dSlot,
 };
 use crate::pen::{PenInput, PenSample};
 use crate::shell::{self, MENU_TITLES};
-use crate::state::{Action, AppState, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
+use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
 use crate::ui::fonts::{self, FontReport};
 use crate::ui::menu::{self, PopupOutcome, PopupState};
 use crate::ui::theme as t;
@@ -27,6 +29,7 @@ pub enum Tab {
     Color,
     Canvas,
     View3d,
+    TextureSets,
     Layers,
     Properties,
 }
@@ -38,21 +41,23 @@ impl Tab {
             Tab::Color => "カラー",
             Tab::Canvas => "キャンバス",
             Tab::View3d => "3D ビュー",
+            Tab::TextureSets => "テクスチャセット",
             Tab::Layers => "レイヤー",
             Tab::Properties => "プロパティ",
         }
     }
 }
 
-/// Substance Painter の並び（左: アセットとカラー、中央: キャンバスと 3D ビュー、右: レイヤーとプロパティ）。左右の列は
-/// 1600 点の幅の窓で 300 点になる割合。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+/// Substance Painter の並び（左: アセットとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・プロパティ）。
+/// 左右の列は 1600 点の幅の窓で 300 点になる割合。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
     let [center, left] = surface.split_left(NodeIndex::root(), 0.19, vec![Tab::Assets]);
-    let [_, right] = surface.split_right(center, 0.77, vec![Tab::Layers]);
+    let [_, right] = surface.split_right(center, 0.77, vec![Tab::TextureSets]);
     surface.split_below(left, 0.48, vec![Tab::Color]);
-    surface.split_below(right, 0.45, vec![Tab::Properties]);
+    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers]);
+    surface.split_below(layers, 0.45, vec![Tab::Properties]);
     dock
 }
 
@@ -132,6 +137,7 @@ impl TabViewer for Tabs<'_> {
             Tab::View3d => self
                 .view3d
                 .show(ui, self.app, self.renderer3d.as_mut(), self.pen),
+            Tab::TextureSets => texture_sets::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Properties => properties::show(ui, self.app),
@@ -166,6 +172,11 @@ pub struct YoluApp {
     pub fonts: FontReport,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
+    link: LiveLink,
+    /// ファイルの窓・確かめの窓を開くか（eframe の窓だけ。試験では開かず、頼みを `state.dialog_request` に残す）。
+    dialogs: bool,
+    /// 終わると決めた（閉じる頼みを二度聞かない）。
+    closing: bool,
 }
 
 impl YoluApp {
@@ -187,11 +198,11 @@ impl YoluApp {
         )
         .with_render_state(cc.wgpu_render_state.as_ref());
         app.fonts = fonts;
+        app.dialogs = true;
         // 3D ビューには、まず試しの立方体を出しておく（Live Link のモデルが来たら入れ替わる）
         app.state.view3d.load_demo();
         if app.pen.is_hooked() {
-            app.state.message =
-                "Windows Ink のペンを受けています（筆圧・傾き・消しゴムの端）。".into();
+            app.state.message = "Windows Ink のペンを受けています。".into();
         }
         app
     }
@@ -217,6 +228,105 @@ impl YoluApp {
             renderer3d: None,
             fonts: FontReport::default(),
             tab_rects: HashMap::new(),
+            link: LiveLink::new(),
+            dialogs: false,
+            closing: false,
+        }
+    }
+
+    pub fn link(&self) -> &LiveLink {
+        &self.link
+    }
+
+    /// Live Link（試験でつなぎ先の名前を替える）。
+    pub fn link_mut(&mut self) -> &mut LiveLink {
+        &mut self.link
+    }
+
+    /// Live Link を始める・やめるの頼みと、ファイルの窓の頼みを当てる。
+    fn handle_requests(&mut self, ctx: &egui::Context) {
+        if let Some(request) = self.state.link_request.take() {
+            self.link.request(request, ctx, &mut self.state);
+            self.state.link = self.link.view();
+        }
+        if !self.dialogs {
+            return;
+        }
+        match self.state.dialog_request.take() {
+            Some(DialogRequest::New) => {
+                if self.confirm_discard() {
+                    self.state.apply(Action::NewProject);
+                }
+            }
+            Some(DialogRequest::Open) => {
+                if self.confirm_discard() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("プロジェクトを開く")
+                        .add_filter("YoluPainter プロジェクト", &["ylp"])
+                        .pick_file()
+                    {
+                        self.state.apply(Action::OpenProject(path));
+                    }
+                }
+            }
+            Some(DialogRequest::SaveAs) => {
+                let name = format!("{}.ylp", self.state.project_name);
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("別名で保存")
+                    .add_filter("YoluPainter プロジェクト", &["ylp"])
+                    .set_file_name(name)
+                    .save_file()
+                {
+                    self.state.apply(Action::SaveProjectAs(path));
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。
+    fn confirm_close(&self) -> bool {
+        if !self.state.modified || !self.dialogs {
+            return true;
+        }
+        rfd::MessageDialog::new()
+            .set_title("YoluPainter")
+            .set_description("保存していない変更があります。変更を捨てて終わりますか？")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Warning)
+            .show()
+            == rfd::MessageDialogResult::Yes
+    }
+
+    /// 保存していない変更を捨ててよいか（窓を開かない試験では、聞かずに捨てる）。
+    fn confirm_discard(&self) -> bool {
+        if !self.state.modified || !self.dialogs {
+            return true;
+        }
+        rfd::MessageDialog::new()
+            .set_title("YoluPainter")
+            .set_description("保存していない変更があります。変更を捨てますか？")
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .set_level(rfd::MessageLevel::Warning)
+            .show()
+            == rfd::MessageDialogResult::Yes
+    }
+
+    /// 窓に落としたファイル（.ylp なら開く）。
+    fn open_dropped(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")))
+        });
+        if let Some(path) = dropped {
+            if self.state.is_stroking() {
+                self.state.message = "描いている間は開きません。".into();
+            } else if self.confirm_discard() {
+                self.state.apply(Action::OpenProject(path));
+            }
         }
     }
 
@@ -236,14 +346,15 @@ impl YoluApp {
         self.renderer3d.as_ref().map(|r| r.stats)
     }
 
-    /// Live Link で受けたモデルを 3D ビューに読む（描いている最中なら、終わってから入れ替わる）。
+    /// Live Link と同じ形のモデルを読む（Live Link が受けたときと同じ道: 記録・テクスチャセットの結び付け・3D の形。描いている
+    /// 最中なら、3D の形は終わってから入れ替わる）。つながりの外から読んだものなので Unity には出さない。
     pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
-        self.state.view3d.load_live_link(model)
+        self.state.receive_link_model(model, 0).1
     }
 
-    /// Live Link で受けたポーズを 3D ビューのモデルに当てる（描いている最中なら、終わってから）。
+    /// Live Link と同じ形のポーズを当てる（描いている最中なら、終わってから）。
     pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), String> {
-        self.state.view3d.apply_live_link_pose(pose)
+        self.state.receive_link_pose(pose)
     }
 
     pub fn pen(&self) -> &PenInput {
@@ -274,6 +385,12 @@ impl YoluApp {
         self.state.popup_was_open = self.state.popup.is_some();
         let pen = self.pen.drain();
         shell::handle_shortcuts(&ctx, &mut self.state);
+        self.open_dropped(&ctx);
+        self.handle_requests(&ctx);
+        self.link.poll(&mut self.state);
+        self.state.link = self.link.view();
+        // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
+        self.state.sync_view3d();
         if self.state.reset_layout {
             self.dock = default_dock();
             self.state.reset_layout = false;
@@ -375,8 +492,24 @@ impl YoluApp {
         self.popups(&ctx, &bar);
         let popup_rect = self.state.popup.as_ref().map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
-        if self.state.quit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当て、描いた所を Unity へ出す
+        self.handle_requests(&ctx);
+        self.link.publish(&mut self.state);
+        self.state.link = self.link.view();
+        // 終了・窓を閉じる: 保存していない変更があれば聞く（窓を開かない試験では聞かない）
+        let close_requested = ctx.input(|i| i.viewport().close_requested());
+        if (self.state.quit || close_requested) && !self.closing {
+            if self.confirm_close() {
+                self.closing = true;
+                if self.state.quit {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            } else {
+                if close_requested {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                }
+                self.state.quit = false;
+            }
         }
     }
 

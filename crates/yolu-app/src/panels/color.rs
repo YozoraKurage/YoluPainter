@@ -384,15 +384,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     let recent = rows.row(16.0, 6.0);
     let size = recent.height();
     let columns = ((recent.width() + 3.0) / (size + 3.0)).floor().max(1.0) as usize;
-    if app.color.recent.is_empty() {
-        w::text(
-            ui.painter(),
-            recent,
-            "描いた色がここに並びます。",
-            t::LABEL_SMALL,
-            w::Align::Left,
-        );
-    }
     let recent_colors = app.color.recent.clone();
     for (i, c) in recent_colors.iter().take(columns).enumerate() {
         let cell = Rect::from_min_size(

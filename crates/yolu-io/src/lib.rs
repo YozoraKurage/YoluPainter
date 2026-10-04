@@ -9,7 +9,7 @@ mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use native::{NativeDocument, NativeField, NativeValue};
 pub use project::{
-    FormatInfo, MaterialAsset, MaterialRef, Project, Resource, TextureSet, WriterInfo,
+    FormatInfo, MaterialAsset, MaterialRef, Project, Resource, SetSpec, TextureSet, WriterInfo,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;

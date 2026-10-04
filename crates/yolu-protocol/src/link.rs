@@ -280,6 +280,27 @@ pub fn accept(
     }
 }
 
+/// スタンドアロン: 来たつながりの挨拶を受けてから断る（ほかの Unity とつながっている など。`accept` と違い版は見ない）。断ったら閉じる。
+/// 返すのは相手の挨拶（ログ用）。
+pub fn refuse(stream: Stream, code: RejectCode, text: &str) -> Result<Hello, LinkError> {
+    let (conn, mut reader) = Connection::new(stream);
+    reader.set_timeout(Some(Duration::from_secs(10)));
+    let hello = match reader.next(&conn)? {
+        Received::Message(Message::Hello(h)) => h,
+        Received::Idle => return Err(LinkError::Protocol("挨拶が来ません".into())),
+        other => {
+            return Err(LinkError::Protocol(format!(
+                "挨拶の代わりに {other:?} が来ました"
+            )))
+        }
+    };
+    conn.send(&Message::Reject(Reject {
+        code,
+        text: text.to_owned(),
+    }))?;
+    Ok(hello)
+}
+
 /// ブリッジ: つないで挨拶し、返事を待つ。
 pub fn connect_and_greet(
     name: &str,

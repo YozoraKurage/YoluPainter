@@ -55,6 +55,8 @@ pub struct UploadStats {
 
 #[derive(Default)]
 pub struct CanvasDisplay {
+    /// 最後に読んだ文書（テクスチャセットを替える・開き直すと別の文書になる。通し番号は文書ごとなので、替わったら全部を作り直す）。
+    doc_id: u128,
     /// 最後に読んだ core の変化の通し番号（次はこれより後の変化だけを読む）。
     serial: u64,
     /// 合成の受け皿（毎回の確保を避ける）。
@@ -92,9 +94,11 @@ impl CanvasDisplay {
         if self.size != (w, h)
             || self.pages.is_empty()
             || self.nearest != self.want_nearest
+            || self.doc_id != doc.id()
             || changed.is_none()
         {
             self.nearest = self.want_nearest;
+            self.doc_id = doc.id();
             self.serial = serial;
             self.pages.clear();
             let mut y = 0;

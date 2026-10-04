@@ -2,11 +2,16 @@
 //! 通す（試験も同じ道で叩く）。計算は core（`engine`）に任せ、ここは選ぶ・渡す・覚えるだけ。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::{BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::livelink::{LinkRequest, LinkView};
+use crate::model::SceneModel;
+use crate::project::ProjectFile;
+use crate::sets::TextureSets;
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
@@ -312,6 +317,8 @@ pub enum PopupKind {
     MenuBar(usize),
     BlendMode(LayerId),
     LayerContext(LayerId),
+    /// テクスチャセットの右クリック（セットの番号 uid）。
+    SetContext(u32),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -352,6 +359,42 @@ pub enum Action {
     /// 3D ビューのカメラをモデル全体が見える位置へ。
     FrameModel,
     About,
+    /// テクスチャセットを選ぶ（uid）。
+    SelectSet(u32),
+    /// テクスチャセットの目（uid）。
+    ToggleSetVisible(u32),
+    /// テクスチャセットの名前を変え始める（uid）。
+    StartRenameSet(u32),
+    /// Live Link で待ち受ける・やめる。
+    ToggleLiveLink,
+    /// 新しいプロジェクトにする（保存していない変更があれば聞く）。
+    NewProjectDialog,
+    NewProject,
+    /// .ylp を選んで開く（ファイルの窓）。
+    OpenProjectDialog,
+    OpenProject(PathBuf),
+    /// 開いた .ylp に上書きで保存する（まだ無ければ別名で）。
+    SaveProject,
+    SaveProjectAsDialog,
+    SaveProjectAs(PathBuf),
+}
+
+impl Action {
+    /// 今の文書（レイヤー・画素）を変える操作か（読むだけのセットでは断る）。
+    pub fn edits_document(&self) -> bool {
+        matches!(
+            self,
+            Action::Undo
+                | Action::Redo
+                | Action::NewLayer
+                | Action::DeleteLayer
+                | Action::LayerUp
+                | Action::LayerDown
+                | Action::ToggleVisible(_)
+                | Action::SetBlend(..)
+                | Action::StartRename(_)
+        )
+    }
 }
 
 /// 画面の状態の全部。
@@ -379,7 +422,7 @@ pub struct AppState {
     /// 前のフレームでポップアップが開いていた（このフレームの押下はキャンバスへ渡さない）。
     pub popup_was_open: bool,
     pub project_name: String,
-    /// 保存してから変えたか（M1 は保存が無いので、描いたら立つだけ）。
+    /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
     pub reset_layout: bool,
     pub quit: bool,
@@ -387,8 +430,40 @@ pub struct AppState {
     pub layer_drag: Option<(LayerId, usize)>,
     /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
     pub canvas_rect: Option<egui::Rect>,
+    /// テクスチャセット（今のセットの文書は `doc`）。
+    pub sets: TextureSets,
+    /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
+    pub renaming_set: Option<u32>,
+    pub rename_set_started: bool,
+    pub set_scroll: f32,
+    /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
+    pub model: Option<SceneModel>,
+    /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
+    pub link: LinkView,
+    /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
+    pub link_request: Option<LinkRequest>,
+    /// 開いた .ylp（保存先と、保存で残す元の中身）。
+    pub project: Option<ProjectFile>,
+    /// ファイルの窓を開く頼み（`YoluApp` が開く。試験では開かない）。
+    pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+}
+
+/// ファイルの窓の頼み。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogRequest {
+    New,
+    Open,
+    SaveAs,
+}
+
+/// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
+pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
+    let mut doc = Document::new(width, height).expect("文書の大きさ");
+    let first = doc.add_layer("レイヤー 1").ok();
+    let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
+    (doc, first)
 }
 
 /// 新しい文書の既定の大きさ。
@@ -396,9 +471,8 @@ pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
     pub fn new(width: u32, height: u32) -> AppState {
-        let mut doc = Document::new(width, height).expect("文書の大きさ");
-        let first = doc.add_layer("レイヤー 1").ok();
-        let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
+        let (doc, first) = blank_document(width, height);
+        let sets = TextureSets::first(&doc);
         AppState {
             doc,
             stroke: None,
@@ -422,6 +496,15 @@ impl AppState {
             quit: false,
             layer_drag: None,
             canvas_rect: None,
+            sets,
+            renaming_set: None,
+            rename_set_started: false,
+            set_scroll: 0.0,
+            model: None,
+            link: LinkView::default(),
+            link_request: None,
+            project: None,
+            dialog_request: None,
             view3d: View3dState::default(),
         }
     }
@@ -458,6 +541,12 @@ impl AppState {
     pub fn apply(&mut self, action: Action) {
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| s.message = "描いている間はできません。".into();
+        if action.edits_document() && !stroking {
+            if let Some(reason) = self.read_only_reason() {
+                self.message = format!("読むだけのテクスチャセットです: {reason}");
+                return;
+            }
+        }
         match action {
             Action::Quit => self.quit = true,
             Action::Undo => {
@@ -569,8 +658,7 @@ impl AppState {
             | Action::ResetRotation
             | Action::FlipView => {
                 if stroking || self.canvas.rotating.is_some() {
-                    self.message =
-                        "描いている間とドラッグの間は、表示を回したり反転したりしません。".into();
+                    self.message = "描いている間・ドラッグの間は回せません。".into();
                     return;
                 }
                 match action {
@@ -603,9 +691,79 @@ impl AppState {
             }
             Action::About => {
                 self.message = format!(
-                    "YoluPainter（Rust 版）{} — M1 の試作",
+                    "YoluPainter（Rust 版）{} — M2 の試作",
                     env!("CARGO_PKG_VERSION")
                 )
+            }
+            Action::SelectSet(uid) => {
+                if let Some(i) = self.sets.index_of(uid) {
+                    if let Err(e) = self.switch_set(i) {
+                        self.message = e;
+                    }
+                }
+            }
+            Action::ToggleSetVisible(uid) => self.toggle_set_visible(uid),
+            Action::StartRenameSet(uid) => match self.sets.by_uid(uid) {
+                Some(set) if set.read_only.is_some() => {
+                    self.message = "読むだけのテクスチャセットです。".into()
+                }
+                Some(_) => {
+                    self.renaming_set = Some(uid);
+                    self.rename_set_started = false;
+                }
+                None => {}
+            },
+            Action::ToggleLiveLink => {
+                self.link_request = Some(if self.link.is_on() {
+                    LinkRequest::Stop
+                } else {
+                    LinkRequest::Start
+                })
+            }
+            Action::NewProjectDialog => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.dialog_request = Some(DialogRequest::New)
+            }
+            Action::NewProject => {
+                if stroking {
+                    return refuse(self);
+                }
+                crate::project::new_into(self);
+            }
+            Action::OpenProjectDialog => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.dialog_request = Some(DialogRequest::Open)
+            }
+            Action::SaveProjectAsDialog => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.dialog_request = Some(DialogRequest::SaveAs)
+            }
+            Action::OpenProject(path) => {
+                if stroking {
+                    return refuse(self);
+                }
+                crate::project::open_into(self, &path);
+            }
+            Action::SaveProject => {
+                if stroking {
+                    return refuse(self);
+                }
+                match self.project.as_ref().map(|p| p.path().to_path_buf()) {
+                    Some(path) => crate::project::save_from(self, &path),
+                    None => self.dialog_request = Some(DialogRequest::SaveAs),
+                }
+            }
+            Action::SaveProjectAs(path) => {
+                if stroking {
+                    return refuse(self);
+                }
+                crate::project::save_from(self, &path);
             }
         }
     }
