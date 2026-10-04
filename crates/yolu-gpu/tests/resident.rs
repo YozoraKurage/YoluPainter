@@ -98,6 +98,7 @@ fn lru_evicts_oldest_and_remains_inside_budget() {
         resident_budget_bytes: 9344,
         readback_budget_bytes: 8192,
         batch_tiles: 1,
+        ..Default::default()
     };
     let Some(mut g) = gpu(options) else { return };
     let mut d = Document::with_tile_size(48, 16, 16).unwrap();

@@ -503,7 +503,24 @@ impl YoluApp {
     /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
     pub fn with_render_state(mut self, rs: Option<&eframe::egui_wgpu::RenderState>) -> YoluApp {
         self.renderer3d = rs.map(View3dRenderer::new);
+        // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
+        self.display.attach_render_state(rs.cloned());
         self
+    }
+
+    /// キャンバスの表示の合成の方針（自動・GPU・CPU）。既定は環境変数 `YOLUPAINTER_CANVAS`、無ければ自動。
+    pub fn set_canvas_backend(&mut self, policy: crate::canvas::gpu::CanvasBackend) {
+        self.display.set_backend(policy);
+    }
+
+    /// キャンバスの GPU の表示のテクスチャを読み戻す（試験・計測用。乗算済みの RGBA8、行は文書の下から上）。
+    pub fn read_canvas_gpu_display(&mut self, rect: crate::engine::Rect) -> Result<Vec<u8>, String> {
+        self.display.read_gpu_display(rect)
+    }
+
+    /// キャンバスの GPU の常駐の予算（試験・計測用。既定は `canvas::gpu::RESIDENT_BUDGET`）。
+    pub fn set_canvas_gpu_budget(&mut self, bytes: u64) {
+        self.display.set_gpu_budget(bytes);
     }
 
     /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。

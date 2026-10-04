@@ -523,6 +523,10 @@ pub struct AppState {
     /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
     pub region: crate::region::RegionState,
     pub doc: Document,
+    /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
+    /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
+    /// 置き換える口は [`AppState::document_replaced`] を呼ぶこと。
+    pub(crate) doc_epoch: u64,
     /// 描いているストロークの札（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
     pub stroke: Option<Stroke>,
     pub selected_layer: Option<LayerId>,
@@ -674,6 +678,7 @@ impl AppState {
             mat: Default::default(),
             region: Default::default(),
             doc,
+            doc_epoch: 0,
             stroke: None,
             selected_layer: first,
             tool: Tool::Brush,

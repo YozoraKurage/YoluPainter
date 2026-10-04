@@ -656,6 +656,7 @@ impl AppState {
             }
             PsdTarget::CurrentSet => {
                 self.doc = doc;
+                self.document_replaced();
                 self.selected_layer = None;
                 self.layer_scroll = 0.0;
                 self.renaming = None;

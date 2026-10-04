@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             resident_budget_bytes: 3u64 << 30,
             readback_budget_bytes: 256 << 20,
             batch_tiles: 16,
+            ..Default::default()
         })?;
         println!("{layer_count}層 GPU: {:?}", g.adapter_info());
         if g.adapter_info().device_type == wgpu::DeviceType::Cpu {

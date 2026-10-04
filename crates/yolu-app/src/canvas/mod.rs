@@ -4,6 +4,7 @@
 //! ストロークを取り残さない: ボタンを離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）で必ず終える。
 
 pub mod display;
+pub mod gpu;
 pub mod view;
 
 use egui::{
@@ -32,6 +33,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     app.canvas_rect = Some(rect);
     ui.advance_cursor_after_rect(full);
     handle_input(ui, app, rect, pen);
+    display.set_document_epoch(app.doc_epoch);
     display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
 
     let (w_px, h_px) = (app.doc.width(), app.doc.height());

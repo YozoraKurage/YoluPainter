@@ -17,6 +17,17 @@ pub fn render_options() -> eframe::egui_wgpu::RendererOptions {
     }
 }
 
+/// 描画の状態をつなぐ（3D ビューを wgpu で描く）。キャンバスは CPU の表示に固定する（実 GPU の機材でも同じ絵・同じ頁の数に
+/// なるように）。窓を作る試験の builder は、`with_render_state` を直に呼ばずにこれを通すこと。GPU の表示は canvas_gpu.rs が確かめる。
+pub fn with_render_state_cpu_canvas(
+    app: YoluApp,
+    rs: Option<&eframe::egui_wgpu::RenderState>,
+) -> YoluApp {
+    let mut app = app.with_render_state(rs);
+    app.set_canvas_backend(yolu_app::canvas::gpu::CanvasBackend::Cpu);
+    app
+}
+
 /// 窓の全体（eframe の App として）。文書は size × size。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
     let mut h = Harness::builder()
@@ -27,12 +38,14 @@ pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
         .with_render_options(render_options())
         .wgpu()
         .build_eframe(move |cc| {
-            YoluApp::for_context(
-                &cc.egui_ctx,
-                AppState::new(size, size),
-                PenInput::detached(),
+            with_render_state_cpu_canvas(
+                YoluApp::for_context(
+                    &cc.egui_ctx,
+                    AppState::new(size, size),
+                    PenInput::detached(),
+                ),
+                cc.wgpu_render_state.as_ref(),
             )
-            .with_render_state(cc.wgpu_render_state.as_ref())
         });
     // 焼く場所は CPU に固定（ハードウェアの GPU がある機械でも、試験の結果と画面を揺らさない）。GPU の試験は自分で選ぶ。
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;

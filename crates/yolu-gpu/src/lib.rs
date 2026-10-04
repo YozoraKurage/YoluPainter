@@ -5,6 +5,10 @@ use std::{fmt, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 use yolu_core::{BrushSettings, Channel, Document, Rect, TileCoord};
 
+mod plan;
+use plan::Plan;
+pub use plan::{supports, Unsupported};
+
 #[derive(Debug)]
 pub struct GpuError(pub String);
 impl fmt::Display for GpuError {
@@ -65,13 +69,26 @@ pub struct Dab {
     pub y: f64,
     pub pressure: f64,
 }
+/// 合成の 1 段の設定（シェーダーの `Layer` と同じ並び・32 バイト）。描かない層は計画に入れない。
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
 struct LayerData {
+    /// そのチャンネルでの不透明度。
     opacity: f32,
+    /// 合成モードの番号（`BlendMode as u32`）。
     mode: u32,
+    /// 1 なら、すぐ下の組（クリッピングされていない層から続く）の下地の中にだけ描く。
     clip: u32,
-    active: u32,
+    /// 上げた面の番号（NONE は塗りつぶし）。
+    slot: u32,
+    /// マスクの面の番号（NONE はマスク無し）。アルファが隠す量。
+    mask: u32,
+    /// 塗りつぶしの色（RGBA8 をリトルエンディアンで）。
+    fill: u32,
+    /// マスクを反転するか。
+    mask_invert: u32,
+    /// マスクの濃度。
+    mask_density: f32,
 }
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -119,6 +136,25 @@ impl GpuPainter {
             })
             .await
             .map_err(|e| error(format!("GPU 利用不可: {e}")))?;
+        Self::from_parts(info, device, queue, options).await
+    }
+    /// 呼び手が持つデバイスで作る（アプリの表示と同じデバイスを渡すと、表示のテクスチャをそのまま見せられる）。
+    /// デバイスとキューは呼び手のもので、ここでは作り直さない。パイプラインが作れなければ（compute や storage の上限が
+    /// 足りないデバイスなど）理由を返す。
+    pub fn from_device(
+        info: wgpu::AdapterInfo,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        options: Options,
+    ) -> Result<Self, GpuError> {
+        pollster::block_on(Self::from_parts(info, device, queue, options))
+    }
+    async fn from_parts(
+        info: wgpu::AdapterInfo,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        options: Options,
+    ) -> Result<Self, GpuError> {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -204,33 +240,20 @@ impl GpuPainter {
                 return Err(error("タイルが画布の外"));
             }
         }
+        let plan = Plan::build(doc, channel).map_err(error)?;
         let ts = doc.tile_size() as usize;
         let tile_bytes = ts * ts * 4;
-        let metadata: Vec<_> = doc
-            .layers()
-            .iter()
-            .enumerate()
-            .map(|(i, l)| LayerData {
-                opacity: l.opacity() as f32,
-                mode: l.blend_mode() as u32,
-                clip: u32::from(i > 0 && l.clipping()),
-                active: u32::from(
-                    l.visible()
-                        && l.opacity() > 0.0
-                        && l.is_channel_enabled(channel)
-                        && l.surface(channel).is_some(),
-                ),
-            })
-            .collect();
+        let metadata = plan.metadata();
         let layer_count = metadata.len();
-        let overhead = (metadata.len().max(1) * 16 + 48) as u64 * 2;
+        let slot_count = plan.slots.len();
+        let overhead = (metadata.len().max(1) * std::mem::size_of::<LayerData>() + 48) as u64 * 2;
         let per_tile = (tile_bytes as u64)
-            .checked_mul((layer_count.max(1) as u64 + 2) * 2)
+            .checked_mul((slot_count.max(1) as u64 + 2) * 2)
             .ok_or_else(|| error("予算の計算が範囲外"))?;
         let limit = self.device.limits();
         let batch = self.options.budget_bytes.saturating_sub(overhead) / per_tile;
         let batch = batch
-            .min(limit.max_storage_buffer_binding_size / (tile_bytes * layer_count.max(1)) as u64)
+            .min(limit.max_storage_buffer_binding_size / (tile_bytes * slot_count.max(1)) as u64)
             .min(u64::from(limit.max_compute_workgroups_per_dimension) * 64 / (ts * ts) as u64)
             .min(64) as usize;
         if batch == 0 && !coords.is_empty() {
@@ -238,9 +261,15 @@ impl GpuPainter {
         }
         let mut tiles = Vec::new();
         for chunk in coords.chunks(batch.max(1)) {
-            let mut input = vec![0u8; chunk.len() * tile_bytes * layer_count.max(1)];
-            for (k, l) in doc.layers().iter().enumerate() {
-                if let Some(s) = l.surface(channel) {
+            let mut input = vec![0u8; chunk.len() * tile_bytes * slot_count.max(1)];
+            for (k, slot) in plan.slots.iter().enumerate() {
+                let layer = &doc.layers()[slot.layer];
+                let surface = if slot.mask {
+                    layer.mask().map(|m| m.surface())
+                } else {
+                    layer.surface(channel)
+                };
+                if let Some(s) = surface {
                     for (j, &coord) in chunk.iter().enumerate() {
                         let offset = (k * chunk.len() + j) * tile_bytes;
                         s.copy_tile(coord, &mut input[offset..offset + tile_bytes])?;
@@ -346,7 +375,7 @@ impl GpuPainter {
         let empty = [DabData::zeroed()];
         self.run(
             start,
-            &[0; 16],
+            &[0; 32],
             bytemuck::cast_slice(if data.is_empty() { &empty } else { &data }),
             [count as u32, 0, width, dabs.len() as u32],
             true,
@@ -497,7 +526,9 @@ impl Compositor {
         channel: Channel,
         coords: &[TileCoord],
     ) -> Result<CompositeResult, GpuError> {
-        if let Some(gpu) = &mut self.gpu {
+        // GPU が扱えない文書は、この呼び出しだけ CPU で合成する（GPU は使い続ける。文書が変われば扱えることもある）。
+        let supported = supports(doc, channel).is_ok();
+        if let (true, Some(gpu)) = (supported, &mut self.gpu) {
             match gpu.composite_tiles(doc, channel, coords) {
                 Ok(r) => return Ok(r),
                 Err(e) => {
@@ -534,4 +565,7 @@ pub use bake::{
     GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
 };
 mod resident;
-pub use resident::{Display, Readback, ResidentCompositor, ResidentOptions, UpdateStats};
+pub use resident::{
+    resident_requirements, Display, Readback, Requirements, ResidentCompositor, ResidentOptions,
+    UpdateStats,
+};

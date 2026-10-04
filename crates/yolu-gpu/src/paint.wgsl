@@ -1,6 +1,9 @@
 // yolu-core::blend と brush の式。各層で半段切り上げの RGBA8 に戻す。
 struct Params { count: u32, layers: u32, size: u32, dabs: u32 }
-struct Layer { opacity: f32, mode: u32, clip: u32, enabled: u32 }
+// 合成の 1 段。slot は source の面の番号（NONE なら塗りつぶしの色 fill）、mask はマスクの面の番号（NONE ならマスク無し。アルファが隠す量）。
+// 描かない層は並びに入れない（呼び手の計画が落とす）。
+struct Layer { opacity: f32, mode: u32, clip: u32, slot: u32, mask: u32, fill: u32, mask_invert: u32, mask_density: f32 }
+const NONE: u32 = 0xffffffffu;
 struct Dab { x: f32, y: f32, radius: f32, hardness: f32, ceiling: f32, flow: f32, color: u32, erase: u32 }
 @group(0) @binding(0) var<storage, read> source: array<u32>;
 @group(0) @binding(1) var<storage, read> layers: array<Layer>;
@@ -60,17 +63,30 @@ fn blend(d:vec4f,s:vec4f,o:f32,m:u32)->vec4f {
  let a=sa+d.a*(1-sa); let b=rgb(m,d.rgb,s.rgb);
  return quant(vec4f(((1-sa)*d.a*d.rgb+(1-d.a)*sa*s.rgb+d.a*sa*b)/a,a));
 }
+// 層の画素（面の画素か塗りつぶしの色）。
+fn layer_pixel(l: Layer, i: u32) -> vec4f {
+ if l.slot == NONE {return unpack(l.fill);}
+ return unpack(source[l.slot*p.count+i]);
+}
+// 不透明度 × マスクの値（core の RasterMask::factor と同じ式。隠す量 = マスクのアルファ）。
+fn layer_amount(l: Layer, i: u32) -> f32 {
+ if l.mask == NONE {return l.opacity;}
+ let hide=f32(source[l.mask*p.count+i]>>24u)/255.0;
+ var factor=1.0-l.mask_density*hide;
+ if l.mask_invert!=0u {factor=1.0-l.mask_density*(1.0-hide);}
+ return l.opacity*factor;
+}
 fn evaluate(i:u32) -> vec4f {
  var result=vec4f(0); var k=0u;
  loop {
  if k>=p.layers {break;}
- let base=layers[k]; var g=unpack(source[k*p.count+i]); k+=1u;
+ let base=layers[k]; var g=layer_pixel(base,i); k+=1u;
  loop {if k>=p.layers {break;} if layers[k].clip==0u {break;}
- let l=layers[k]; let s=unpack(source[k*p.count+i]); let t=s.a*l.opacity;
- if l.enabled!=0u && t>0 && g.a>0 {g=quant(vec4f(g.rgb+(rgb(l.mode,g.rgb,s.rgb)-g.rgb)*t,g.a));}
+ let l=layers[k]; let s=layer_pixel(l,i); let t=s.a*layer_amount(l,i);
+ if t>0 && g.a>0 {g=quant(vec4f(g.rgb+(rgb(l.mode,g.rgb,s.rgb)-g.rgb)*t,g.a));}
  k+=1u;
  }
- if base.enabled!=0u {result=blend(result,g,base.opacity,base.mode);}
+ result=blend(result,g,layer_amount(base,i),base.mode);
  }
  return result;
 }
@@ -108,4 +124,21 @@ fn display(@builtin(global_invocation_id) id:vec3u) {
  let area=p.size*p.size; let local=i%area;
  let xy=tile_coords[i/area]*p.size+vec2u(local%p.size,local/p.size);
  if all(xy<textureDimensions(display_image)) {textureStore(display_image,xy,evaluate(i));}
+}
+
+// 乗算済みの表示（egui のテクスチャと同じ）。Color32::from_rgba_unmultiplied と同じ整数の式で、CPU の表示とバイトまで一致する。
+fn premultiply_byte(v: u32, a: u32) -> u32 { let q = v*a + 128u; return (q + (q >> 8u)) >> 8u; }
+@compute @workgroup_size(64)
+fn display_premultiplied(@builtin(global_invocation_id) id:vec3u) {
+ let i=id.x; if i>=p.count {return;}
+ let area=p.size*p.size; let local=i%area;
+ let xy=tile_coords[i/area]*p.size+vec2u(local%p.size,local/p.size);
+ if all(xy<textureDimensions(display_image)) {
+ let c=pack(evaluate(i));
+ let a=c>>24u;
+ var rgba=vec4u(c&255u,(c>>8u)&255u,(c>>16u)&255u,a);
+ if a==0u {rgba=vec4u(0u);}
+ else if a<255u {rgba=vec4u(premultiply_byte(rgba.x,a),premultiply_byte(rgba.y,a),premultiply_byte(rgba.z,a),a);}
+ textureStore(display_image,xy,vec4f(rgba)/255.0);
+ }
 }

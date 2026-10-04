@@ -479,6 +479,7 @@ impl AppState {
         let previous = self.sets.current;
         self.sets.list[previous].stash = Some(outgoing);
         self.sets.current = index;
+        self.document_replaced();
         self.selected_layer = incoming.selected_layer;
         self.layer_scroll = incoming.layer_scroll;
         // 前の文書のレイヤーを指す途中の操作は捨てる
@@ -491,10 +492,17 @@ impl AppState {
         Ok(())
     }
 
+    /// 今の文書を別のものに替えた（`doc` に別の `Document` を入れた）ことを知らせる。同じ文書 ID の別の中身（保存した ID が戻る
+    /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。
+    pub(crate) fn document_replaced(&mut self) {
+        self.doc_epoch = self.doc_epoch.wrapping_add(1);
+    }
+
     /// セットの並びを丸ごと置き換える（開いたとき）。`current` の文書が `self.doc` になる。
     pub fn replace_sets(&mut self, sets: TextureSets, doc: Document) {
         self.sets = sets;
         self.doc = doc;
+        self.document_replaced();
         self.selected_layer = None;
         self.view = ViewState::default();
         self.layer_scroll = 0.0;

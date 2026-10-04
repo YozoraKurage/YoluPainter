@@ -1,7 +1,7 @@
 //! 正本のタイルの常駐コピーと、読み戻しを伴わない表示更新。
-use super::{error, GpuError, GpuPainter, LayerData, Options};
+use super::{error, plan::Plan, GpuError, GpuPainter, LayerData, Options};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc,
@@ -17,6 +17,10 @@ pub struct ResidentOptions {
     /// 未完了・取得前の読み戻しバッファを合計した別予算。
     pub readback_budget_bytes: u64,
     pub batch_tiles: u32,
+    /// 表示テクスチャを乗算済みのアルファで書く（egui などの乗算済みのテクスチャとして見せるとき）。
+    /// 式は `Color32::from_rgba_unmultiplied` と同じ整数で、同じ合成結果から CPU で変換した値とバイトまで一致する。
+    /// 読み戻しも乗算済みの値になる。false なら straight RGBA8。
+    pub premultiplied_display: bool,
 }
 impl Default for ResidentOptions {
     fn default() -> Self {
@@ -24,6 +28,7 @@ impl Default for ResidentOptions {
             resident_budget_bytes: 768 << 20,
             readback_budget_bytes: 64 << 20,
             batch_tiles: 16,
+            premultiplied_display: false,
         }
     }
 }
@@ -49,6 +54,8 @@ pub struct Display<'a> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct Key {
     layer: LayerId,
+    /// マスクの面か（false はチャンネルの面）。
+    mask: bool,
     coord: TileCoord,
 }
 struct Cached {
@@ -65,7 +72,6 @@ struct Binding {
     ts: u32,
     serial: u64,
     revision: u64,
-    layers: Vec<LayerId>,
 }
 struct Work {
     input: wgpu::Buffer,
@@ -73,7 +79,10 @@ struct Work {
     params: wgpu::Buffer,
     coords: wgpu::Buffer,
     capacity: usize,
-    layer_count: usize,
+    /// 上げる面の数（作業域の入力の大きさ）。
+    slot_count: usize,
+    /// 段の数（設定の大きさ）。
+    entry_count: usize,
     fixed_bytes: u64,
 }
 struct Lease {
@@ -113,6 +122,112 @@ impl Drop for Readback {
     fn drop(&mut self) {
         self.buffer.unmap();
     }
+}
+
+/// 常駐の入れ物の大きさ（予算とデバイスの上限から決まる）。`prepare` と [`resident_requirements`] が同じ式を使う。
+struct Layout {
+    /// 1 タイルのバイト数。
+    tile: u64,
+    /// 1 束に要る入力（面の数 × タイル）。
+    per_batch: u64,
+    /// 層の設定のバイト数。
+    meta: u64,
+    /// 1 束のタイル数。
+    capacity: usize,
+    /// 表示・作業域・転送の余裕（常駐のタイルを除く固定の量）。
+    fixed: u64,
+}
+
+/// デバイスの上限に収まらなければ Err、予算が表示と 1 束を保持できなければ None。
+fn layout(
+    options: &ResidentOptions,
+    limits: &wgpu::Limits,
+    doc: &Document,
+    slots: usize,
+    entries: usize,
+) -> Result<Option<Layout>, GpuError> {
+    let ts = u64::from(doc.tile_size());
+    let tile = ts * ts * 4;
+    let frame = u64::from(doc.width()) * u64::from(doc.height()) * 4;
+    if doc.width() > limits.max_texture_dimension_2d
+        || doc.height() > limits.max_texture_dimension_2d
+    {
+        return Err(error("表示テクスチャがデバイス上限を超える"));
+    }
+    let meta = entries.max(1) as u64 * std::mem::size_of::<LayerData>() as u64;
+    // 作業入力と転送ステージング、座標・定数を先に予約。束の全入力を常駐できる最小量も確保。
+    let per_batch = tile * slots.max(1) as u64;
+    let available = options
+        .resident_budget_bytes
+        .saturating_sub(frame + meta * 2 + 32);
+    let capacity = u64::from(options.batch_tiles)
+        .min(available / (per_batch * 4 + 16))
+        .min(limits.max_storage_buffer_binding_size / per_batch)
+        .min(u64::from(limits.max_compute_workgroups_per_dimension) * 64 / (ts * ts))
+        as usize;
+    if capacity == 0 || meta > limits.max_storage_buffer_binding_size {
+        return Ok(None);
+    }
+    let fixed = frame + 2 * (per_batch * capacity as u64 + meta + 16 + capacity as u64 * 8);
+    Ok(Some(Layout {
+        tile,
+        per_batch,
+        meta,
+        capacity,
+        fixed,
+    }))
+}
+
+/// 文書のこのチャンネルを全部常駐させるのに要る量（予算に数える量と同じ数え方）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Requirements {
+    /// 表示のテクスチャ・作業域・転送の余裕。予算が表示と 1 束を保持できないなら `u64::MAX`。
+    pub fixed_bytes: u64,
+    /// 描いたタイル（層とマスクの、無いタイルを除く）の GPU コピーと同量の CPU コピー。
+    pub tile_bytes: u64,
+}
+
+impl Requirements {
+    /// 合計。これが `ResidentOptions::resident_budget_bytes` 以内なら、追い出しなしで全部が常駐する。
+    pub fn total_bytes(&self) -> u64 {
+        self.fixed_bytes.saturating_add(self.tile_bytes)
+    }
+}
+
+/// 全部を常駐させるのに要る量を、GPU に触れずに見積もる。層の並びだけを見る軽い計算で、`update` が実際に数える
+/// `UpdateStats::resident_bytes` と同じ式（全タイルが常駐したとき一致する）。予算を超える文書は、追い出しながら合成すると
+/// 全面の変更のたびにタイルを上げ直すので、呼び手は CPU の合成を選べる。デバイスの上限（表示のテクスチャの大きさ）を超える・
+/// GPU が扱えない文書は Err。
+pub fn resident_requirements(
+    doc: &Document,
+    channel: Channel,
+    options: &ResidentOptions,
+    limits: &wgpu::Limits,
+) -> Result<Requirements, GpuError> {
+    let plan = Plan::build(doc, channel).map_err(error)?;
+    let Some(l) = layout(options, limits, doc, plan.slots.len(), plan.entries.len())? else {
+        return Ok(Requirements {
+            fixed_bytes: u64::MAX,
+            tile_bytes: 0,
+        });
+    };
+    let tiles: u64 = plan
+        .slots
+        .iter()
+        .filter_map(|slot| {
+            let layer = &doc.layers()[slot.layer];
+            if slot.mask {
+                layer.mask().map(|m| m.surface().tile_count())
+            } else {
+                layer.surface(channel).map(|s| s.tile_count())
+            }
+        })
+        .map(|n| n as u64)
+        .sum();
+    Ok(Requirements {
+        fixed_bytes: l.fixed,
+        tile_bytes: tiles * l.tile * 2,
+    })
 }
 
 pub struct ResidentCompositor {
@@ -194,7 +309,11 @@ impl ResidentCompositor {
                 label: Some("常駐表示"),
                 layout: Some(&pl),
                 module: &shader,
-                entry_point: Some("display"),
+                entry_point: Some(if options.premultiplied_display {
+                    "display_premultiplied"
+                } else {
+                    "display"
+                }),
                 compilation_options: Default::default(),
                 cache: None,
             });
@@ -281,31 +400,21 @@ impl ResidentCompositor {
             mapped_at_creation: false,
         })
     }
-    fn prepare(&mut self, doc: &Document, layers: usize) -> Result<(), GpuError> {
-        let ts = u64::from(doc.tile_size());
-        let tile = ts * ts * 4;
-        let frame = u64::from(doc.width()) * u64::from(doc.height()) * 4;
-        let limits = self.gpu.device.limits();
-        if doc.width() > limits.max_texture_dimension_2d
-            || doc.height() > limits.max_texture_dimension_2d
-        {
-            return Err(error("表示テクスチャがデバイス上限を超える"));
-        }
-        let meta = layers.max(1) as u64 * 16;
-        // 作業入力と転送ステージング、座標・定数を先に予約。束の全入力を常駐できる最小量も確保。
-        let per_batch = tile * layers.max(1) as u64;
-        let available = self
-            .options
-            .resident_budget_bytes
-            .saturating_sub(frame + meta * 2 + 32);
-        let capacity = u64::from(self.options.batch_tiles)
-            .min(available / (per_batch * 4 + 16))
-            .min(limits.max_storage_buffer_binding_size / per_batch)
-            .min(u64::from(limits.max_compute_workgroups_per_dimension) * 64 / (ts * ts))
-            as usize;
-        if capacity == 0 || meta > limits.max_storage_buffer_binding_size {
-            return Err(error("常駐予算では表示と1束を保持できない"));
-        }
+    fn prepare(&mut self, doc: &Document, slots: usize, entries: usize) -> Result<(), GpuError> {
+        let Layout {
+            tile,
+            per_batch,
+            meta,
+            capacity,
+            fixed,
+        } = layout(
+            &self.options,
+            &self.gpu.device.limits(),
+            doc,
+            slots,
+            entries,
+        )?
+        .ok_or_else(|| error("常駐予算では表示と1束を保持できない"))?;
         if self.texture.is_none() {
             let texture = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("合成表示"),
@@ -326,13 +435,10 @@ impl ResidentCompositor {
             self.view = Some(texture.create_view(&Default::default()));
             self.texture = Some(texture);
         }
-        if self
-            .work
-            .as_ref()
-            .is_none_or(|w| w.layer_count != layers || w.capacity != capacity)
-        {
+        if self.work.as_ref().is_none_or(|w| {
+            w.slot_count != slots || w.entry_count != entries || w.capacity != capacity
+        }) {
             self.work = None;
-            let fixed = frame + 2 * (per_batch * capacity as u64 + meta + 16 + capacity as u64 * 8);
             while fixed + self.cache.len() as u64 * tile * 2 > self.options.resident_budget_bytes {
                 self.evict();
             }
@@ -354,7 +460,8 @@ impl ResidentCompositor {
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ),
                 capacity,
-                layer_count: layers,
+                slot_count: slots,
+                entry_count: entries,
                 fixed_bytes: fixed,
             });
         }
@@ -384,6 +491,8 @@ impl ResidentCompositor {
         if channel == Channel::Normal {
             return Err(error("Normal の合成は core が未対応"));
         }
+        // GPU が扱えない文書は、状態を変えず（GPU を失敗扱いにせず）断る。呼び手は CPU の合成を使う。
+        let plan = Plan::build(doc, channel).map_err(error)?;
         let validation = self
             .gpu
             .device
@@ -396,7 +505,7 @@ impl ResidentCompositor {
             .gpu
             .device
             .push_error_scope(wgpu::ErrorFilter::Internal);
-        let result = self.update_inner(doc, channel);
+        let result = self.update_inner(doc, channel, &plan);
         let mut failure = None;
         for scope in [internal, memory, validation] {
             if let Some(e) = pollster::block_on(scope.pop()) {
@@ -414,7 +523,12 @@ impl ResidentCompositor {
         }
         result
     }
-    fn update_inner(&mut self, doc: &Document, channel: Channel) -> Result<UpdateStats, GpuError> {
+    fn update_inner(
+        &mut self,
+        doc: &Document,
+        channel: Channel,
+        plan: &Plan,
+    ) -> Result<UpdateStats, GpuError> {
         let switched = self.binding.as_ref().is_none_or(|b| {
             b.id != doc.id()
                 || b.channel != channel
@@ -426,9 +540,10 @@ impl ResidentCompositor {
             self.reset()?;
         }
         self.stats = UpdateStats::default();
-        let ids: Vec<_> = doc.layers().iter().map(|l| l.id()).collect();
-        let structure = self.binding.as_ref().is_none_or(|b| b.layers != ids);
-        let coords = if structure {
+        // 層の追加・削除・並べ替え・入れ子・表示・マスクなどの変更も、core の変更記録がその層のタイルとして持つ。
+        // 全部の合成し直しは、初めて・文書やチャンネルが替わったとき（binding が無いとき）だけ。
+        let first = self.binding.is_none();
+        let coords = if first {
             (0..doc.height().div_ceil(doc.tile_size()))
                 .flat_map(|y| {
                     (0..doc.width().div_ceil(doc.tile_size())).map(move |x| TileCoord::new(x, y))
@@ -442,15 +557,24 @@ impl ResidentCompositor {
             .binding
             .as_ref()
             .is_some_and(|b| b.revision == doc.revision())
-            && !structure
+            && !first
         {
             return Ok(self.account());
         }
         self.generation += 1;
+        // 今の計画が読む面（層・マスク）だけを常駐に残す。消えた層に加えて、隠した層・不透明度 0・チャンネルが無効・外した
+        // マスクなど計画から外れた面のタイルも手放す（GPU バッファと同量の CPU のコピーを抱え続けて予算に数えられ、LRU の
+        // 追い出しで生きているタイルを押し出さないように）。戻したとき（表示・不透明度など）は core の変更記録がその層の
+        // タイルを返すので、そこで上げ直す。
+        let wanted: HashSet<(LayerId, bool)> = plan
+            .slots
+            .iter()
+            .map(|slot| (doc.layers()[slot.layer].id(), slot.mask))
+            .collect();
         let dead: Vec<_> = self
             .cache
             .keys()
-            .filter(|k| !ids.contains(&k.layer))
+            .filter(|k| !wanted.contains(&(k.layer, k.mask)))
             .copied()
             .collect();
         for k in dead {
@@ -458,38 +582,39 @@ impl ResidentCompositor {
                 self.lru.remove(&(v.touched, k));
             }
         }
-        self.prepare(doc, ids.len())?;
-        let metadata: Vec<_> = doc
-            .layers()
-            .iter()
-            .enumerate()
-            .map(|(i, l)| LayerData {
-                opacity: l.opacity() as f32,
-                mode: l.blend_mode() as u32,
-                clip: u32::from(i > 0 && l.clipping()),
-                active: u32::from(
-                    l.visible()
-                        && l.opacity() > 0.0
-                        && l.is_channel_enabled(channel)
-                        && l.surface(channel).is_some(),
-                ),
-            })
-            .collect();
+        self.prepare(doc, plan.slots.len(), plan.entries.len())?;
+        let metadata = plan.metadata();
         let tile = doc.tile_size() as usize * doc.tile_size() as usize * 4;
         let capacity = self.work.as_ref().expect("準備済み").capacity;
         let mut bytes = vec![0u8; tile];
+        // 面の置き場（平らな計画の面の番号の順）。
+        let sources: Vec<(LayerId, bool, &yolu_core::Surface)> = plan
+            .slots
+            .iter()
+            .filter_map(|slot| {
+                let layer = &doc.layers()[slot.layer];
+                let surface = if slot.mask {
+                    layer.mask().map(|m| m.surface())
+                } else {
+                    layer.surface(channel)
+                };
+                surface.map(|s| (layer.id(), slot.mask, s))
+            })
+            .collect();
+        debug_assert_eq!(sources.len(), plan.slots.len());
         for chunk in coords.chunks(capacity) {
             // この束の全タイルを触ってからコピーを記録。予算はこの束を保持できる量以上。
             for &coord in chunk {
-                for l in doc.layers() {
-                    bytes.fill(0);
-                    if let Some(s) = l.surface(channel) {
-                        s.copy_tile(coord, &mut bytes)?;
+                for &(layer, mask, surface) in &sources {
+                    let key = Key { layer, mask, coord };
+                    // 無いタイルは全画素 0。常駐させず、作業域を 0 で埋める（予算と転送を使わない）。
+                    if !surface.has_tile(coord) {
+                        if let Some(v) = self.cache.remove(&key) {
+                            self.lru.remove(&(v.touched, key));
+                        }
+                        continue;
                     }
-                    let key = Key {
-                        layer: l.id(),
-                        coord,
-                    };
+                    surface.copy_tile(coord, &mut bytes)?;
                     self.clock += 1;
                     if let Some(v) = self.cache.get_mut(&key) {
                         self.lru.remove(&(v.touched, key));
@@ -546,7 +671,7 @@ impl ResidentCompositor {
                 0,
                 bytemuck::cast_slice(&[
                     (chunk.len() * tile / 4) as u32,
-                    ids.len() as u32,
+                    metadata.len() as u32,
                     doc.tile_size(),
                     0,
                 ]),
@@ -583,19 +708,15 @@ impl ResidentCompositor {
                     ],
                 });
             let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-            for (k, l) in doc.layers().iter().enumerate() {
+            for (k, &(layer, mask, _)) in sources.iter().enumerate() {
                 for (j, &coord) in chunk.iter().enumerate() {
-                    let v = &self.cache[&Key {
-                        layer: l.id(),
-                        coord,
-                    }];
-                    encoder.copy_buffer_to_buffer(
-                        &v.gpu,
-                        0,
-                        &w.input,
-                        ((k * chunk.len() + j) * tile) as u64,
-                        tile as u64,
-                    );
+                    let offset = ((k * chunk.len() + j) * tile) as u64;
+                    match self.cache.get(&Key { layer, mask, coord }) {
+                        Some(v) => {
+                            encoder.copy_buffer_to_buffer(&v.gpu, 0, &w.input, offset, tile as u64)
+                        }
+                        None => encoder.clear_buffer(&w.input, offset, Some(tile as u64)),
+                    }
                 }
             }
             {
@@ -615,7 +736,6 @@ impl ResidentCompositor {
             ts: doc.tile_size(),
             serial: doc.change_serial(),
             revision: doc.revision(),
-            layers: ids,
         });
         Ok(self.account())
     }

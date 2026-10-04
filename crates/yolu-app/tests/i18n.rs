@@ -213,8 +213,10 @@ fn english_app_sized(width: f32, height: f32, lang: Lang) -> Harness<'static, Yo
         .with_render_options(render_options())
         .wgpu()
         .build_eframe(move |cc| {
-            YoluApp::for_context(&cc.egui_ctx, AppState::new_in(64, 64, lang), PenInput::detached())
-                .with_render_state(cc.wgpu_render_state.as_ref())
+            with_render_state_cpu_canvas(
+                YoluApp::for_context(&cc.egui_ctx, AppState::new_in(64, 64, lang), PenInput::detached()),
+                cc.wgpu_render_state.as_ref(),
+            )
         });
     h.run();
     h
@@ -429,8 +431,10 @@ fn app_with_settings(settings: &std::path::Path) -> Harness<'static, YoluApp> {
         .with_render_options(render_options())
         .wgpu()
         .build_eframe(move |cc| {
-            YoluApp::for_context_with_settings(&cc.egui_ctx, Some(settings), PenInput::detached())
-                .with_render_state(cc.wgpu_render_state.as_ref())
+            with_render_state_cpu_canvas(
+                YoluApp::for_context_with_settings(&cc.egui_ctx, Some(settings), PenInput::detached()),
+                cc.wgpu_render_state.as_ref(),
+            )
         });
     h.run();
     h
