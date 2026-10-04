@@ -1,6 +1,8 @@
 //! マテリアルで塗る・範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）・手動の ID の色の画面の振る舞いと見た目。
 //! どれも「操作 → 文書が変わる → Undo で戻る」と、日本語と英語、断られた理由。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 mod common;
+#[path = "common/shared_gpu.rs"]
+mod shared_gpu;
 
 
 use common::*;
@@ -1296,7 +1298,10 @@ fn headless_id_hover_is_not_reused_after_another_tool_replaced_it() {
 // ───────── 画面（egui_kittest） ─────────
 
 fn app_with_model(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
-    let mut h = app(width, height, size);
+    model_app_from(app(width, height, size))
+}
+
+fn model_app_from(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp> {
     {
         let s = &mut h.state_mut().state;
         s.view3d.set_model(two_parts_model());
@@ -1615,6 +1620,13 @@ fn assert_polygon_idle(h: &Harness<'_, YoluApp>, undo: usize, what: &str) {
 
 #[test]
 fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d_view() {
+    let polygon_app = || {
+        let mut h = model_app_from(shared_gpu::app(1280.0, 800.0, 256));
+        key(&h, Key::Num4, Modifiers::NONE);
+        h.run();
+        assert_eq!(h.state().state.tool, Tool::PolygonFill);
+        h
+    };
     for in_3d in [false, true] {
         for source in [Source::Mouse, Source::Pen] {
             let what = format!("{} {source:?}", if in_3d { "3D" } else { "2D" });

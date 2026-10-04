@@ -776,7 +776,11 @@ fn flipped_plate() -> ViewModel {
 }
 
 fn state3d(model: ViewModel) -> (AppState, Rect) {
-    let mut s = state(256);
+    state3d_sized(model, 256)
+}
+
+fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
+    let mut s = state(size);
     s.view3d.set_model(model);
     s.view3d.material = 0;
     s.view3d.camera.yaw = 0.0;
@@ -1736,10 +1740,12 @@ fn plate_behind_blocker(front: f32) -> ViewModel {
 
 /// 正面から見て、奥の板の右側が手前の板に隠れる状態。
 fn occlusion_state() -> (AppState, Rect) {
-    let (probe, rect) = state3d(two_material_plate());
+    // 遮蔽と点の印はモデル・カメラ・点数で決まる。画素への再描画は小さい文書で行う。
+    let size = 32;
+    let (probe, rect) = state3d_sized(two_material_plate(), size);
     let camera = probe.view3d.camera.view(rect.width(), rect.height());
     let front = if camera.position.z >= 0.0 { 0.5 } else { -0.5 };
-    state3d(plate_behind_blocker(front))
+    state3d_sized(plate_behind_blocker(front), size)
 }
 
 /// 重ね表示が描いた点の印（中心と塗りの色）。

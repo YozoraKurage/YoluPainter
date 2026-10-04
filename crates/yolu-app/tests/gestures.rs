@@ -3,6 +3,8 @@
 //! 効かないこと、サイドボタンの接触を egui の部品に右ボタンとして届けること。実機のペンは無いので、`PenSample` を差し込む
 //! （Windows Ink の窓が詰める点の代わり）。egui の側の代わりの入力（winit の Touch とポインタ）は、`Emulate::Yes` で同じ形に作る。
 mod common;
+#[path = "common/shared_gpu.rs"]
+mod shared_gpu;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -430,7 +432,7 @@ fn the_pen_side_button_alt_and_ctrl_never_paint_on_the_canvas() {
     ];
     for (name, pen, m) in cases {
         for emulate in [Emulate::No, Emulate::Yes] {
-            let mut h = app(1280.0, 800.0, 256);
+            let mut h = shared_gpu::app(1280.0, 800.0, 256);
             let c = c0(&h);
             hold(&mut h, m);
             let pen = Pen { emulate, ..pen_copy(&pen) };
@@ -669,7 +671,10 @@ fn alt_does_not_start_a_stroke_for_the_mouse_either_and_selection_keeps_its_modi
 // ───────── 3. ペンの 3D ─────────
 
 fn cube_view() -> (H, Rect) {
-    let mut h = app(1100.0, 760.0, 256);
+    cube_view_from(app(1100.0, 760.0, 256))
+}
+
+fn cube_view_from(mut h: H) -> (H, Rect) {
     h.state_mut().state.view3d.load_demo();
     h.state_mut().state.view3d.camera.yaw = -40.0;
     h.state_mut().state.view3d.camera.pitch = 15.0;
@@ -1010,7 +1015,7 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
 #[test]
 fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clone_source() {
     for emulate in [Emulate::No, Emulate::Yes] {
-        let (mut h, rect) = cube_view();
+        let (mut h, rect) = cube_view_from(shared_gpu::app(1100.0, 760.0, 256));
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
         let pen = Pen {
             emulate,
@@ -1127,7 +1132,7 @@ fn while_t_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         ("space", false, Modifiers::NONE, true),
     ];
     for (name, barrel, mods, space) in cases {
-        let (mut h, rect) = cube_view();
+        let (mut h, rect) = cube_view_from(shared_gpu::app(1100.0, 760.0, 256));
         stencil_ready(&mut h);
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
         let before = camera(&h);
