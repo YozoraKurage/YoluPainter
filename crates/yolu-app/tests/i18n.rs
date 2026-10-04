@@ -1,5 +1,7 @@
 //! 日英の対象パネル・通知・失敗時の保存契約。
 mod common;
+#[path = "common/gpu_thread.rs"]
+mod gpu_thread;
 use egui::{epaint::Shape, vec2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
 use common::*;
@@ -37,6 +39,10 @@ fn text_shapes(shape: &Shape, clip: Rect, labels: &mut Vec<String>) {
 
 #[test]
 fn panels_draw_in_both_languages_without_clipped_text() {
+    gpu_thread::run(panels_draw_in_both_languages_without_clipped_text_gpu);
+}
+
+fn panels_draw_in_both_languages_without_clipped_text_gpu() {
     let mut snapshots = SnapshotResults::new();
     for lang in Lang::ALL {
         for panel in 0..3 {
@@ -332,6 +338,10 @@ fn assert_english(h: &Harness<'_, YoluApp>, what: &str, data: &[String]) {
 
 #[test]
 fn english_docks_menus_and_layer_kinds_have_no_japanese() {
+    gpu_thread::run(english_docks_menus_and_layer_kinds_have_no_japanese_gpu);
+}
+
+fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     let mut h = english_app();
     assert_english(&h, "default", &[]);
     // 見張りが働いていること: 同じ画面を日本語にすると日本語が見つかり、英語の文字が描かれている
@@ -408,6 +418,10 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese() {
 /// 英語になる。利用者が付けた名前・編集した文書は変えない。
 #[test]
 fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names() {
+    gpu_thread::run(switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gpu);
+}
+
+fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gpu() {
     let mut h = english_app_sized(1280.0, 800.0, Lang::Ja);
     let names = |h: &Harness<'_, YoluApp>| {
         let s = &h.state().state;
@@ -475,6 +489,10 @@ fn settings_dir(tag: &str) -> std::path::PathBuf {
 
 #[test]
 fn language_choice_is_written_when_changed_and_restored_at_startup() {
+    gpu_thread::run(language_choice_is_written_when_changed_and_restored_at_startup_gpu);
+}
+
+fn language_choice_is_written_when_changed_and_restored_at_startup_gpu() {
     let dir = settings_dir("restore");
     let path = dir.join("YoluPainter").join("settings.conf");
     // 設定が無い初回は日本語。選ぶと、そのフレームのうちに書く
@@ -506,6 +524,10 @@ fn language_choice_is_written_when_changed_and_restored_at_startup() {
 
 #[test]
 fn unwritable_settings_report_once_and_do_not_break_the_app() {
+    gpu_thread::run(unwritable_settings_report_once_and_do_not_break_the_app_gpu);
+}
+
+fn unwritable_settings_report_once_and_do_not_break_the_app_gpu() {
     let dir = settings_dir("unwritable");
     let path = dir.join("settings.conf");
     // 書く途中のファイルが残っていて書けない（settings.rs の試験と同じ手）
@@ -534,6 +556,10 @@ fn unwritable_settings_report_once_and_do_not_break_the_app() {
 
 #[test]
 fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing() {
+    gpu_thread::run(broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing_gpu);
+}
+
+fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing_gpu() {
     let dir = settings_dir("broken");
     let path = dir.join("settings.conf");
     std::fs::write(&path, "language=unknown").unwrap();
@@ -553,6 +579,10 @@ fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing() {
 
 #[test]
 fn backups_to_keep_is_written_when_changed_and_restored_at_startup() {
+    gpu_thread::run(backups_to_keep_is_written_when_changed_and_restored_at_startup_gpu);
+}
+
+fn backups_to_keep_is_written_when_changed_and_restored_at_startup_gpu() {
     use yolu_app::prefs::PrefsAction;
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups");
@@ -587,6 +617,10 @@ fn backups_to_keep_is_written_when_changed_and_restored_at_startup() {
 
 #[test]
 fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_language() {
+    gpu_thread::run(a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_language_gpu);
+}
+
+fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_language_gpu() {
     use yolu_app::prefs::PrefsAction;
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-broken");
@@ -612,6 +646,10 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
 
 #[test]
 fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages() {
+    gpu_thread::run(the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu);
+}
+
+fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu() {
     use egui_kittest::kittest::NodeT;
     use yolu_app::prefs;
     use yolu_io::BackupKeep;
@@ -678,6 +716,10 @@ fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_
 /// 押す前の数が残り何も書かない。
 #[test]
 fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count() {
+    gpu_thread::run(dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count_gpu);
+}
+
+fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count_gpu() {
     use yolu_app::prefs::PrefsAction;
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-drag");
@@ -772,6 +814,10 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
 /// 前の起動で選んだ数が、「すべて残す」を外したときに戻る数になる（起動時に読んだ数を、最後に選んだ数として覚える）。
 #[test]
 fn the_saved_count_is_what_keep_all_returns_to_after_a_restart() {
+    gpu_thread::run(the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu);
+}
+
+fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
     use yolu_app::prefs::PrefsAction;
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-remembered");
@@ -797,6 +843,10 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart() {
 
 #[test]
 fn english_3d_view_and_pose_panel_have_no_japanese() {
+    gpu_thread::run(english_3d_view_and_pose_panel_have_no_japanese_gpu);
+}
+
+fn english_3d_view_and_pose_panel_have_no_japanese_gpu() {
     let mut h = english_app();
     click_tab(&mut h, Tab::View3d);
     assert_english(&h, "no model", &[]);
@@ -873,6 +923,10 @@ fn three_material_model() -> yolu_protocol::Model {
 
 #[test]
 fn english_texture_set_states_have_no_japanese() {
+    gpu_thread::run(english_texture_set_states_have_no_japanese_gpu);
+}
+
+fn english_texture_set_states_have_no_japanese_gpu() {
     let model = three_material_model();
     let mut h = english_app();
     h.state_mut().load_live_link_model(&model).unwrap();
@@ -943,6 +997,10 @@ fn walk_states(lang: Lang, width: f32, height: f32, mut visit: impl FnMut(&mut H
 /// 同梱のスマートマテリアルの名前は、棚の格子の 1 枚に収まる（「…」に詰められず、パネルからはみ出さない）。日英の両方。
 #[test]
 fn bundled_card_names_fit_in_both_languages() {
+    gpu_thread::run(bundled_card_names_fit_in_both_languages_gpu);
+}
+
+fn bundled_card_names_fit_in_both_languages_gpu() {
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut state = AppState::new(64, 64);
@@ -1004,6 +1062,10 @@ impl Drop for Truncations {
 
 #[test]
 fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages() {
+    gpu_thread::run(fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages_gpu);
+}
+
+fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages_gpu() {
     let truncations = Truncations::start();
     // 既定の窓（main.rs の with_inner_size）と、ふつうのノート PC の大きさ
     for (width, height) in [(1600.0, 960.0), (1280.0, 800.0)] {
@@ -1022,6 +1084,10 @@ fn fixed_text_is_not_truncated_at_ordinary_window_sizes_in_both_languages() {
 /// プリセットなど。言語に依らない配置の積み残し）。`KNOWN` が詰まる文字の全部で、増えれば落ち、直せば一覧から消す。
 #[test]
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
+    gpu_thread::run(fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu);
+}
+
+fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu() {
     // チャンネルの名前（チャンネルのパネルの行）、プリセット・効果・合成モードの箱の値、テクスチャセットの名前。
     // （レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
     const KNOWN_JA: [&str; 5] = [

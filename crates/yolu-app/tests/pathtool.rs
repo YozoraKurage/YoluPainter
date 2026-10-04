@@ -2262,7 +2262,11 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
         yolu_app::panels::path_props::status_text(&h.state().state).unwrap(),
         "3D · 3 点 · カラー"
     );
-    h.snapshot("path_view3d_points");
+    // GL と Vulkan の市松の境界で 1 画素だけ標本位置が変わる。点の印は上で直接確かめる。
+    // 通常の色差の閾値は変えず、この画像だけ 1 画素を許す（基準画像は撮り直さない）。
+    let mut options = egui_kittest::SnapshotOptions::new();
+    options.max_failed_pixels = options.max_failed_pixels.max(1);
+    h.snapshot_options("path_view3d_points", &options);
     // 1 回の Undo ずつ戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();

@@ -1,8 +1,16 @@
 //! キャンバスの表示の合成を GPU（yolu-gpu の常駐の合成）にした道の試験: CPU の表示と同じ絵になること（層・マスク・合成モード・
 //! クリッピング・グループ）、描いたタイルだけを更新すること、使えない文書・予算・上限を超えるときに理由を覚えて CPU へ落ちて
-//! 毎フレームは試し直さないこと、戻ること。描画は egui_kittest の wgpu（コンテナでは llvmpipe のソフトの GPU）で、ここでは
-//! 方針を `Gpu` にして GPU の道を強制する（`Auto` はソフトウェアのアダプターでは CPU）。コンテナの実 GPU や Windows の結果ではない。
+//! 毎フレームは試し直さないこと、戻ること。ここでは方針を `Gpu` にして GPU の道を強制する（`Auto` はソフトウェアのアダプター
+//! では CPU）。コンテナの実 GPU や Windows の結果ではない。
+//!
+//! 描画器は egui_kittest の wgpu で、`canvas_device` が Vulkan・Metal・DX12・GL の順に、製品の egui デバイスと同じ上限で動く
+//! アダプターだけを選ぶ（コンテナでは Vulkan の lavapipe。GL の egui デバイスは WebGL2 相当の上限で compute/storage が足りず
+//! 選ばれない）。環境変数 `WGPU_BACKEND` があればその範囲だけを調べる。使える描画器が 1 つもなければ、各試験は理由と未検証
+//! 事項を標準エラーへ「省略」として出して成功のまま抜ける（15 件すべてが省略になる。GPU 合成の保証はその環境では確かめて
+//! いない）。選んだデバイスは試験どうしで共有するため、窓を捨てるまで試験は直列になる。
 mod common;
+#[path = "common/canvas_device.rs"]
+mod canvas_device;
 
 use common::*;
 use egui::{vec2, Pos2, Rect};
@@ -25,7 +33,7 @@ fn canvas_app(doc_w: u32, doc_h: u32, policy: CanvasBackend) -> Harness<'static,
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(120)
         .with_render_options(render_options())
-        .wgpu()
+        .renderer(canvas_device::renderer())
         .build_eframe(move |cc| {
             let mut app = YoluApp::for_context(
                 &cc.egui_ctx,
@@ -150,6 +158,7 @@ fn screen_pixel(h: &Harness<'_, YoluApp>, image: &image::RgbaImage, x: f64, y: f
 
 #[test]
 fn gpu_display_is_the_same_picture_as_the_cpu_display() {
+    let Some(_gpu) = canvas_device::begin("gpu_display_is_the_same_picture_as_the_cpu_display") else { return; };
     let mut cpu = canvas_app(256, 256, CanvasBackend::Cpu);
     let mut gpu = canvas_app(256, 256, CanvasBackend::Gpu);
     rich_document(&mut cpu.state_mut().state.doc);
@@ -191,6 +200,7 @@ fn gpu_display_is_the_same_picture_as_the_cpu_display() {
 
 #[test]
 fn stroke_updates_only_the_changed_tiles_on_gpu() {
+    let Some(_gpu) = canvas_device::begin("stroke_updates_only_the_changed_tiles_on_gpu") else { return; };
     let mut h = canvas_app(1024, 1024, CanvasBackend::Gpu); // 8 × 8 = 64 タイル
     assert_eq!(h.state().display().shown(), Shown::Gpu);
     let first = h.state().display().stats;
@@ -235,6 +245,7 @@ fn dab_color(image: &image::RgbaImage, at: Pos2) -> [u8; 4] {
 /// （GPU は層の保存した画素と塗りつぶしの値を読むので、効果が入らない）。CPU の表示で効果が見え、効果を外すと GPU に戻る。
 #[test]
 fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back_without_them() {
+    let Some(_gpu) = canvas_device::begin("documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back_without_them") else { return; };
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
@@ -288,6 +299,7 @@ fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back
 
 #[test]
 fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
+    let Some(_gpu) = canvas_device::begin("unsupported_documents_fall_back_with_a_reason_and_come_back") else { return; };
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
     for y in 0..128 {
@@ -420,6 +432,7 @@ fn put_tile(h: &mut Harness<'_, YoluApp>, layer: LayerId, index: u32, filled: bo
 
 #[test]
 fn documents_over_the_budget_use_the_cpu_and_come_back_with_a_margin() {
+    let Some(_gpu) = canvas_device::begin("documents_over_the_budget_use_the_cpu_and_come_back_with_a_margin") else { return; };
     let mut h = canvas_app(512, 512, CanvasBackend::Cpu);
     let layer = h.state().state.doc.layers()[0].id();
     h.state_mut().set_canvas_gpu_budget(3 << 20);
@@ -501,6 +514,7 @@ fn documents_over_the_budget_use_the_cpu_and_come_back_with_a_margin() {
 
 #[test]
 fn a_budget_too_small_for_the_display_falls_back_without_trying_the_gpu() {
+    let Some(_gpu) = canvas_device::begin("a_budget_too_small_for_the_display_falls_back_without_trying_the_gpu") else { return; };
     let mut h = canvas_app(1024, 1024, CanvasBackend::Cpu);
     h.state_mut().set_canvas_gpu_budget(1 << 20); // 表示のテクスチャ（4 MiB）が入らない
     h.state_mut().set_canvas_backend(CanvasBackend::Gpu);
@@ -519,6 +533,7 @@ fn a_budget_too_small_for_the_display_falls_back_without_trying_the_gpu() {
 
 #[test]
 fn texture_limits_fall_back_after_one_failed_try_and_retry_only_when_the_document_changes() {
+    let Some(_gpu) = canvas_device::begin("texture_limits_fall_back_after_one_failed_try_and_retry_only_when_the_document_changes") else { return; };
     // 表示のテクスチャがデバイスの上限（既定 8192）を超える文書は、CPU の頁（2048 ごと）で見せる
     let mut wide = canvas_app(9000, 64, CanvasBackend::Gpu);
     // 実際の yolu-gpu の失敗（日本語の文）を、種類で受ける。英語の画面には日本語を出さない
@@ -564,6 +579,7 @@ fn texture_limits_fall_back_after_one_failed_try_and_retry_only_when_the_documen
 
 #[test]
 fn auto_uses_the_gpu_except_on_software_adapters() {
+    let Some(_gpu) = canvas_device::begin("auto_uses_the_gpu_except_on_software_adapters") else { return; };
     let h = canvas_app(128, 128, CanvasBackend::Auto);
     let info = h
         .state()
@@ -595,6 +611,7 @@ fn wgpu_device_type_cpu() -> eframe::egui_wgpu::wgpu::DeviceType {
 
 #[test]
 fn zoom_switches_the_sampler_without_rebuilding() {
+    let Some(_gpu) = canvas_device::begin("zoom_switches_the_sampler_without_rebuilding") else { return; };
     // 1024² は窓に収めると画素が 1 点より小さい（補間する）。拡大して 1 画素が 2 点を超えると画素の角を見せる。
     let mut h = canvas_app(1024, 1024, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
@@ -647,6 +664,7 @@ fn zoom_switches_the_sampler_without_rebuilding() {
 
 #[test]
 fn replacing_the_document_rebuilds_the_gpu_display() {
+    let Some(_gpu) = canvas_device::begin("replacing_the_document_rebuilds_the_gpu_display") else { return; };
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
     let before = h.state().display().stats;
     let mut doc = Document::new(96, 64).unwrap();
@@ -682,6 +700,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// ときと同じ正本から作られる。
 #[test]
 fn the_gpu_display_never_writes_the_document_and_saving_is_the_same_as_on_the_cpu() {
+    let Some(_gpu) = canvas_device::begin("the_gpu_display_never_writes_the_document_and_saving_is_the_same_as_on_the_cpu") else { return; };
     let mut h = canvas_app(256, 256, CanvasBackend::Gpu);
     rich_document(&mut h.state_mut().state.doc);
     // 描いた 1 本のストロークも、取消の履歴に 1 つ残す
@@ -916,17 +935,20 @@ fn same_id_reload(policy: CanvasBackend) {
 
 #[test]
 fn reloading_a_document_with_the_same_id_rebuilds_the_gpu_display() {
+    let Some(_gpu) = canvas_device::begin("reloading_a_document_with_the_same_id_rebuilds_the_gpu_display") else { return; };
     same_id_reload(CanvasBackend::Gpu);
 }
 
 #[test]
 fn reloading_a_document_with_the_same_id_rebuilds_the_cpu_display() {
+    let Some(_gpu) = canvas_device::begin("reloading_a_document_with_the_same_id_rebuilds_the_cpu_display") else { return; };
     same_id_reload(CanvasBackend::Cpu);
 }
 
 /// 文書を直に入れ替えても（`replace_sets` を通さない）、変更記録の通し番号が戻っていれば、GPU の失敗にせず作り直す。
 #[test]
 fn a_rolled_back_change_record_rebuilds_instead_of_failing() {
+    let Some(_gpu) = canvas_device::begin("a_rolled_back_change_record_rebuilds_instead_of_failing") else { return; };
     let mut h = canvas_app(256, 256, CanvasBackend::Gpu);
     let id = h.state().state.doc.id();
     let base = h.state().state.doc.layers()[0].id();
@@ -963,6 +985,7 @@ fn a_rolled_back_change_record_rebuilds_instead_of_failing() {
 /// 値 256 × アルファ 256 の全組合せでバイトまで一致する。1 層の通常の合成は、透明の上ではそのままの画素になる。
 #[test]
 fn the_gpu_display_texture_matches_egui_premultiplication_for_every_value_and_alpha() {
+    let Some(_gpu) = canvas_device::begin("the_gpu_display_texture_matches_egui_premultiplication_for_every_value_and_alpha") else { return; };
     let mut h = canvas_app(256, 256, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
     // 横が値、縦がアルファ。3 つのチャンネルがそれぞれ 0〜255 の全部を通る

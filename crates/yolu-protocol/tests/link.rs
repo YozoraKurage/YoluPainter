@@ -687,6 +687,90 @@ fn a_crashed_standalone_leaves_a_stale_name_that_a_new_one_takes_over() {
     handle.join().unwrap();
 }
 
+/// 落ちたスタンドアロンの跡（古い鍵と、待ち受けのないソケット）を、新しいスタンドアロンが引き継ぐ間にも、つなぎ続けるブリッジは
+/// 鍵の断りを受けない。ブリッジが鍵を読んでからつなぐまでの隙に引き継ぎが入る機会を増やすため、引き継ぎをいくつものスレッドで重ねて
+/// 繰り返す（1 回の引き継ぎで隙に入る確率は小さく、1 本の試験では負荷の高い全件の中で 1 度落ちる程度だった）。
+#[cfg(unix)]
+#[test]
+fn a_takeover_never_makes_the_bridge_greet_with_a_key_older_than_the_listener() {
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    fn takeover() -> Result<(), String> {
+        let name = unique_name("takeover");
+        let key_path = yolu_protocol::auth::key_path(&name).unwrap();
+        let socket = link::socket_path(&name).unwrap();
+        // 落ちたプロセスが残すもの: ファイルだけが残ったソケットと、その時の鍵
+        LinkKey::generate().unwrap().write_file(&key_path).unwrap();
+        drop(UnixListener::bind(&socket).unwrap());
+        let reached_stale = Arc::new(AtomicBool::new(false));
+        let bridge = {
+            let (name, reached_stale) = (name.clone(), reached_stale.clone());
+            thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while Instant::now() < deadline {
+                    match connect_and_greet(&name, "試験のブリッジ") {
+                        Ok((_, _, welcome)) => return Ok(welcome.session),
+                        Err(link::LinkError::Rejected(r)) if r.code == RejectCode::Unauthorized => {
+                            return Err(r.text)
+                        }
+                        Err(_) => {
+                            reached_stale.store(true, Ordering::Release);
+                            thread::yield_now();
+                        }
+                    }
+                }
+                Err("つなげない".to_owned())
+            })
+        };
+        // ブリッジが古い跡に当たり始めてから引き継ぐ
+        while !reached_stale.load(Ordering::Acquire) {
+            thread::yield_now();
+        }
+        let server = Server::bind(&name, false).expect("落ちた後は同じ名前を使える");
+        let accepted = thread::spawn(move || loop {
+            let stream = server.accept().unwrap();
+            if accept(stream, "新しいスタンドアロン", 3, &server.key()).is_ok() {
+                return;
+            }
+        });
+        let result = bridge.join().unwrap();
+        if result.is_ok() {
+            accepted.join().unwrap();
+        }
+        // 断られたときは、受け付けのスレッドが次のつながりを待ち続ける。試験は落ちるので、そのままにする
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_file(socket.with_extension("lock"));
+        result.map(|_| ())
+    }
+
+    const THREADS: usize = 16;
+    const TAKEOVERS: usize = 100;
+    let failures: Vec<String> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..TAKEOVERS)
+                        .filter_map(|_| takeover().err())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
+    });
+    assert!(
+        failures.is_empty(),
+        "{} / {} 回の引き継ぎで鍵の断りを受けた: {:?}",
+        failures.len(),
+        THREADS * TAKEOVERS,
+        failures.first()
+    );
+}
+
 /// 待ち受けのソケットが現れた時には、鍵はもう新しい（古い鍵 + 新しいソケットの組をブリッジに見せない）。
 #[cfg(unix)]
 #[test]

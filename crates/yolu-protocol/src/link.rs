@@ -631,13 +631,17 @@ pub fn accept_with(
     Ok((conn, reader, hello))
 }
 
-/// ブリッジ: 鍵を読み、つないで挨拶し、返事を待つ。返事の証し（スタンドアロンも同じ鍵を知っている）が合わなければ、モデルを渡さずに失敗する。
+/// ブリッジ: つないで鍵を読み、挨拶して、返事を待つ。返事の証し（スタンドアロンも同じ鍵を知っている）が合わなければ、モデルを渡さずに失敗する。
 pub fn connect_and_greet(
     name: &str,
     agent: &str,
 ) -> Result<(Connection, ConnectionReader, Welcome), LinkError> {
-    let key = LinkKey::load(name)?;
+    // 待ち受けていなければ、鍵のファイルが無いという分かりやすい理由で失敗する（この読みは挨拶には使わない）
+    LinkKey::load(name)?;
     let stream = connect(name)?;
+    // 挨拶の鍵はつないだ後に読む。スタンドアロンは鍵を置き換えてからソケットを作るので、つなげた相手の鍵は、この時点のファイルの鍵かそれより新しい。
+    // つなぐ前に読んだ鍵では、読んでからつなぐまでの間に引き継ぎが入ると、古い鍵で新しい相手に挨拶して断られる。
+    let key = LinkKey::load(name)?;
     let (conn, mut reader) = Connection::new(stream);
     let nonce = random_bytes()?;
     conn.send(&Message::Hello(Hello {

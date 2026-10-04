@@ -4551,6 +4551,7 @@ dependencies = [
  "interprocess",
  "libc",
  "png",
+ "pollster 1.0.1",
  "raw-window-handle",
  "rayon",
  "rfd",
