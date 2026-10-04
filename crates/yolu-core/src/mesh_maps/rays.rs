@@ -32,7 +32,38 @@ fn hash(mut x: u32) -> u32 {
     x ^= x >> 16;
     x
 }
+/// レイの方向列と設定（GPU へ渡す形。`Rays::trace` と同じ値）。
+#[derive(Clone, Debug)]
+pub struct MeshRayScene {
+    /// 方向の列: [(i + 0.5) / n, cos φ, sin φ]。
+    pub ao: Vec<[f64; 3]>,
+    pub thickness: Vec<[f64; 3]>,
+    pub ao_cos2: f64,
+    pub thickness_cos2: f64,
+    pub offset: f64,
+    pub ao_max: f64,
+    pub thickness_max: f64,
+    pub want_ao: bool,
+    pub want_thickness: bool,
+    pub any_hit: bool,
+    pub ignore_backfaces: bool,
+}
 impl Rays {
+    pub fn scene(&self) -> MeshRayScene {
+        MeshRayScene {
+            ao: self.ao.clone(),
+            thickness: self.th.clone(),
+            ao_cos2: self.ao_cos2,
+            thickness_cos2: self.th_cos2,
+            offset: self.offset,
+            ao_max: self.ao_max,
+            thickness_max: self.th_max,
+            want_ao: self.want_ao,
+            want_thickness: self.want_th,
+            any_hit: self.any,
+            ignore_backfaces: self.back,
+        }
+    }
     pub fn new(s: &MeshBakeSettings, diagonal: f64) -> Self {
         let cos2 = |spread: f64| {
             let half = spread * 0.5 * PI / 180.;

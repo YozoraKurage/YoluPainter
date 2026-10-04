@@ -197,6 +197,10 @@ impl Frames {
         }
         out
     }
+    /// 三角形ごとの接線・従接線・法線（角ごとに 3 つ、9 個）。受け手でない三角形は 0。
+    pub fn arrays(&self) -> (&[f32], &[f32], &[f32]) {
+        (&self.t, &self.b, &self.n)
+    }
     pub fn tangent_space(&self, t: usize, u: f64, v: f64, m: [f64; 3]) -> [f64; 3] {
         let tv = interpolate(&self.t, t, u, v);
         let b = interpolate(&self.b, t, u, v);

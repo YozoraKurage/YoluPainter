@@ -13,6 +13,7 @@ fn bake(a: BakeAction) -> Action {
 /// 試しの立方体を読んだ 64 × 64 の状態。速く焼けるように設定を小さくする。
 fn cube() -> AppState {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     s.apply(Action::LoadDemoModel);
     quick(&mut s);
     s
@@ -81,6 +82,7 @@ fn kinds(s: &AppState, index: usize) -> Vec<MeshMapKind> {
 fn refusals_come_in_the_order_the_window_shows_them() {
     let lang_ja = |s: &mut AppState| s.bake_refusal().unwrap();
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     assert_eq!(lang_ja(&mut s), "モデルがありません");
     s.apply(Action::LoadDemoModel);
     assert_eq!(s.bake_refusal(), None);
@@ -206,6 +208,10 @@ fn a_result_is_discarded_when_the_model_changed_while_baking() {
     s.apply(Action::LoadDemoModel);
     s.wait_bake();
     assert!(s.sets.current().mesh_maps.is_empty(), "捨てる");
+    assert!(
+        s.sets.current().mesh_maps.report().is_none() && s.sets.current().mesh_maps.run().is_none(),
+        "捨てた結果の記録と場所は残さない"
+    );
     assert!(s.message.contains("捨てました"), "{}", s.message);
     assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
     assert!(!s.modified);
@@ -286,6 +292,7 @@ fn checks_keep_one_map_and_one_set() {
 #[test]
 fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let (report, shape) = s.receive_link_model(&two_quads(1, 0.0), 0);
     assert_eq!(shape, Ok(()));
     assert_eq!(report.created, ["Hair"]);
@@ -344,6 +351,7 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
 #[test]
 fn a_moved_vertex_or_a_new_model_makes_the_maps_stale_for_their_reason() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
     quick(&mut s);
     s.apply(bake(BakeAction::Start));
@@ -421,6 +429,7 @@ fn corner_model() -> Model {
 #[test]
 fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&corner_model(), 0);
     quick(&mut s);
     s.bake.settings.ao_samples = 32;
@@ -495,6 +504,7 @@ fn a_figure_bakes_each_set_and_a_new_pose_makes_the_maps_stale() {
     use crate::view3d::pose::{set_pose, PoseAction};
     use yolu_core::glam::Quat;
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     s.apply(Action::Pose(PoseAction::LoadFigure));
     assert!(s.view3d.pose.session.is_some(), "{}", s.message);
     quick(&mut s);
@@ -547,6 +557,7 @@ fn a_figure_bakes_each_set_and_a_new_pose_makes_the_maps_stale() {
 fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_reason() {
     // 8192 × 8192 に 10 種類は、メモリ予算（512 MiB）を超える
     let mut s = AppState::new(8192, 8192);
+    s.bake.backend = BakeBackend::Cpu;
     s.apply(Action::LoadDemoModel);
     s.bake.settings.maps = MeshMapKind::ALL.to_vec();
     s.apply(bake(BakeAction::Start));
@@ -559,6 +570,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     let mut model = two_quads(1, 0.0);
     model.meshes[0].uv0[3] = [1.5, 1.0];
     let mut t = AppState::new(64, 64);
+    t.bake.backend = BakeBackend::Cpu;
     t.receive_link_model(&model, 0).1.unwrap();
     quick(&mut t);
     t.apply(bake(BakeAction::Start));
@@ -574,6 +586,38 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
         "{}",
         t.message
     );
+}
+
+#[test]
+fn a_refusal_is_the_same_whichever_place_is_chosen_and_the_cpu_is_not_retried() {
+    for backend in [BakeBackend::Gpu, BakeBackend::Auto] {
+        // メモリ予算を超える（準備で断る。GPU に渡す前）
+        let mut s = AppState::new(8192, 8192);
+        s.bake.backend = backend;
+        s.apply(Action::LoadDemoModel);
+        s.bake.settings.maps = MeshMapKind::ALL.to_vec();
+        s.apply(bake(BakeAction::Start));
+        s.wait_bake();
+        assert!(s.message.contains("予算"), "{backend:?}: {}", s.message);
+        assert!(s.sets.current().mesh_maps.is_empty());
+        assert!(
+            s.sets.current().mesh_maps.run().is_none(),
+            "断ったので記録は残さない"
+        );
+        assert!(!s.modified);
+        assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
+        // UV が 0〜1 の外
+        let mut model = two_quads(1, 0.0);
+        model.meshes[0].uv0[3] = [1.5, 1.0];
+        let mut t = AppState::new(64, 64);
+        t.bake.backend = backend;
+        t.receive_link_model(&model, 0).1.unwrap();
+        quick(&mut t);
+        t.apply(bake(BakeAction::Start));
+        t.wait_bake();
+        assert!(t.message.contains("UV"), "{backend:?}: {}", t.message);
+        assert!(t.sets.iter().all(|x| x.mesh_maps.is_empty()));
+    }
 }
 
 #[test]
@@ -636,6 +680,7 @@ fn fresh_hash(s: &AppState) -> String {
 #[test]
 fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
     for round in 0..60 {
         let z = 0.001 * (3 * round + 1) as f32;
@@ -658,6 +703,7 @@ fn the_cached_input_follows_the_model_after_it_was_replaced_twice_unnoticed() {
 #[test]
 fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
     quick(&mut s);
     for round in 0..12 {
@@ -686,6 +732,7 @@ fn the_maps_are_stale_when_the_model_was_replaced_twice_without_anyone_asking() 
 fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
     for round in 0..20 {
         let mut s = AppState::new(64, 64);
+        s.bake.backend = BakeBackend::Cpu;
         let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
         quick(&mut s);
         s.apply(bake(BakeAction::Start));
@@ -706,6 +753,7 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
 #[test]
 fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model() {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     let _ = s.receive_link_model(&two_quads(1, 0.0), 0);
     quick(&mut s);
     // 作っている最中は None（窓は「確認中」）。入力の理由で断らない
@@ -759,6 +807,7 @@ fn a_failed_input_is_remembered_and_shown_as_the_reason() {
         valid.geometry.clone(),
     );
     let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
     s.view3d.set_model(broken);
     quick(&mut s);
     let failed = wait_input(&mut s);
@@ -799,6 +848,7 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     );
     // 2 枚の板（同じマテリアルでも別のスロット）: 高ポリが無くても板ごとに別の色。1 色とは言わない
     let mut t = AppState::new(64, 64);
+    t.bake.backend = BakeBackend::Cpu;
     let _ = t.receive_link_model(&corner_model(), 0);
     quick(&mut t);
     t.bake.settings.maps = vec![MeshMapKind::Id];
@@ -812,5 +862,436 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
             "{source:?}"
         );
         assert_eq!(status(&t, MeshMapKind::Id), None, "{source:?}");
+    }
+}
+
+// ───────── 焼く場所（自動・GPU・CPU） ─────────
+
+/// GPU の確認（別のスレッド）が終わるまで待つ。
+fn wait_probe(s: &AppState) -> Result<BakeAdapter, String> {
+    let start = Instant::now();
+    loop {
+        if let GpuProbe::Done { result, .. } = s.bake.gpu_probe() {
+            return result;
+        }
+        assert!(
+            start.elapsed().as_secs() < 120,
+            "GPU の確認が終わらない（ハング検出上限）"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+fn has_japanese(s: &str) -> bool {
+    s.chars().any(|c| {
+        matches!(c as u32, 0x3040..=0x30ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xff00..=0xffef)
+    })
+}
+
+fn adapter(software: bool, ray_query: bool) -> BakeAdapter {
+    BakeAdapter {
+        name: "試験のアダプター".into(),
+        backend: "Vulkan".into(),
+        device_type: "DiscreteGpu".into(),
+        software,
+        ray_query,
+    }
+}
+
+fn stats(method: GpuBakeMethod) -> yolu_gpu::GpuBakeStats {
+    yolu_gpu::GpuBakeStats {
+        method,
+        dispatches: 3,
+        max_dispatch_ms: 1.0,
+        max_dispatch_texels: 256,
+        bands: 1,
+        input_bytes: 0,
+        band_bytes: 0,
+        ray_query_note: None,
+    }
+}
+
+#[test]
+fn the_default_is_auto_and_choosing_cpu_never_probes_the_gpu() {
+    let mut s = AppState::new(64, 64);
+    assert_eq!(s.bake.backend, BakeBackend::Auto, "既定は自動");
+    s.apply(bake(BakeAction::Backend(BakeBackend::Cpu)));
+    assert_eq!(s.bake.backend, BakeBackend::Cpu);
+    assert!(matches!(s.bake.gpu_probe(), GpuProbe::Unknown));
+    assert!(!s.bake.is_probing_gpu());
+    assert!(probe_line(Lang::Ja, BakeBackend::Cpu, &s.bake.gpu_probe()).is_none());
+}
+
+#[test]
+fn choosing_a_backend_probes_the_gpu_in_another_thread_and_a_different_choice_probes_again() {
+    let mut s = AppState::new(64, 64);
+    s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
+    let first = wait_probe(&s);
+    match s.bake.gpu_probe() {
+        GpuProbe::Done { allow_software, .. } => assert!(
+            allow_software,
+            "「GPU」はソフトウェアの描画も許して確かめる"
+        ),
+        other => panic!("{other:?}"),
+    }
+    if let Ok(a) = &first {
+        assert!(!a.name.is_empty());
+    }
+    // 自動へ変えると、ソフトウェアを許さない条件でもう一度確かめる
+    s.apply(bake(BakeAction::Backend(BakeBackend::Auto)));
+    let second = wait_probe(&s);
+    match s.bake.gpu_probe() {
+        GpuProbe::Done { allow_software, .. } => assert!(!allow_software),
+        other => panic!("{other:?}"),
+    }
+    if let Ok(a) = &second {
+        assert!(!a.software, "自動はソフトウェアの描画を使わない: {a:?}");
+    }
+    // 窓の一行は確かめた結果を言う
+    let line = probe_line(Lang::Ja, BakeBackend::Auto, &s.bake.gpu_probe()).unwrap();
+    assert_eq!(line.warn, second.is_err());
+    assert_eq!(line.detail.is_some(), second.is_err());
+    assert!(
+        line.text.starts_with(if second.is_ok() {
+            "GPU:"
+        } else {
+            "CPU で焼く"
+        }),
+        "{}",
+        line.text
+    );
+}
+
+#[test]
+fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_and_says_where_it_ran(
+) {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let cpu_run = s
+        .sets
+        .current()
+        .mesh_maps
+        .run()
+        .cloned()
+        .expect("記録がある");
+    assert!(
+        !cpu_run.used_gpu()
+            && cpu_run.fallback_kind.is_none()
+            && cpu_run.requested == BakeBackend::Cpu
+    );
+    assert!(s.message.contains("CPU）"), "{}", s.message);
+    let cpu_cover: Vec<_> = s
+        .sets
+        .current()
+        .mesh_maps
+        .iter()
+        .map(|m| (m.kind(), m.coverage().to_vec()))
+        .collect();
+    let cpu_values: Vec<_> = s
+        .sets
+        .current()
+        .mesh_maps
+        .iter()
+        .map(|m| (m.kind(), m.data().to_vec()))
+        .collect();
+    let cpu_line = run_line(Lang::Ja, &cpu_run);
+    assert_eq!(
+        (cpu_line.text.as_str(), cpu_line.warn, cpu_line.detail),
+        ("CPU", false, None),
+        "CPU を選んだ CPU は注意にしない"
+    );
+
+    s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
+    let probe = wait_probe(&s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let run = s
+        .sets
+        .current()
+        .mesh_maps
+        .run()
+        .cloned()
+        .expect("記録がある");
+    assert_eq!(run.requested, BakeBackend::Gpu);
+    let line = run_line(Lang::Ja, &run);
+    match probe {
+        Ok(a) => {
+            let (used, _) = run.gpu.as_ref().expect("確かめて使えたので GPU で焼く");
+            assert_eq!(used.name, a.name);
+            assert!(run.fallback_kind.is_none(), "{:?}", run.fallback_reason);
+            assert!(s.message.contains("GPU "), "{}", s.message);
+            assert!(line.text.starts_with("GPU ") && !line.warn, "{}", line.text);
+            // どこで焼いても、テクセルの由来（UV の覆い）は同じ
+            for (kind, cover) in &cpu_cover {
+                let map = s.sets.current().mesh_maps.get(*kind).unwrap();
+                assert_eq!(
+                    map.coverage(),
+                    cover.as_slice(),
+                    "{kind:?}: 覆いは CPU と同じ"
+                );
+            }
+            // 値は全バイト一致ではなく許し幅の内（根拠は yolu-gpu の README の「CPU との差」）: 光線を飛ばさないマップは 16 bit の
+            // 値で最大 8、AO は光線 8 本なので 1 本の当たり外れで 12.5% 動くため、5% を超えるテクセルの割合と平均で見る
+            for (kind, cpu) in &cpu_values {
+                let map = s.sets.current().mesh_maps.get(*kind).unwrap();
+                let diffs: Vec<u32> = cpu
+                    .iter()
+                    .zip(map.data())
+                    .map(|(a, b)| u32::from(a.abs_diff(*b)))
+                    .collect();
+                let max = diffs.iter().copied().max().unwrap_or(0);
+                let mean = diffs.iter().map(|d| f64::from(*d)).sum::<f64>() / diffs.len() as f64;
+                let over = diffs.iter().filter(|d| **d > 3277).count() as f64 / diffs.len() as f64;
+                if *kind == MeshMapKind::AmbientOcclusion {
+                    assert!(mean < 655.0 && over < 0.01, "AO: 平均 {mean}、5% 超 {over}");
+                } else {
+                    assert!(max <= 8, "{kind:?}: 最大差 {max}");
+                }
+                // 試しの立方体は凸なので AO はどこも 1。そのほかは値が一様でない（比べる相手も自分も一様な試験にしない）
+                if *kind != MeshMapKind::AmbientOcclusion {
+                    assert!(
+                        map.data().iter().any(|v| *v != map.data()[0]),
+                        "{kind:?}: 値が一様でない"
+                    );
+                }
+            }
+        }
+        Err(reason) => {
+            assert!(!run.used_gpu());
+            assert_eq!(run.fallback_kind, Some(FallbackKind::Unavailable));
+            assert!(
+                run.fallback_reason
+                    .as_deref()
+                    .is_some_and(|r| !r.is_empty()),
+                "{reason}"
+            );
+            assert!(s.message.contains("GPU を使えません"), "{}", s.message);
+            assert!(line.warn && line.detail.is_some());
+        }
+    }
+    // どちらで焼いても、今の条件で焼いたものなので Current
+    for kind in kinds(&s, 0) {
+        let check = s.mesh_map_check(0, kind).unwrap();
+        assert_eq!(
+            check.state,
+            MeshMapState::Current,
+            "{kind:?}: {:?}",
+            check.reasons
+        );
+    }
+    assert!(!s.doc.can_undo(), "文書は変わらない");
+}
+
+#[test]
+fn a_broken_gpu_falls_back_to_the_cpu_with_the_reason_and_still_bakes() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
+    if wait_probe(&s).is_err() {
+        eprintln!("GPU を作れない環境なので、壊れた GPU の試験は省く");
+        return;
+    }
+    s.bake.gpu.fail_for_test("試験の故障");
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let run = s.sets.current().mesh_maps.run().cloned().unwrap();
+    assert!(!run.used_gpu());
+    assert_eq!(run.fallback_kind, Some(FallbackKind::Failed));
+    assert!(run
+        .fallback_reason
+        .as_deref()
+        .unwrap()
+        .contains("試験の故障"));
+    assert_eq!(kinds(&s, 0).len(), 3, "CPU で焼き直して、マップは入る");
+    assert!(
+        s.message.contains("GPU の処理に失敗しました"),
+        "{}",
+        s.message
+    );
+    assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| *ok));
+    // 次のベイクは壊れた GPU を作り直して GPU に戻る
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let run = s.sets.current().mesh_maps.run().cloned().unwrap();
+    assert!(
+        run.used_gpu(),
+        "作り直して GPU に戻る: {:?}",
+        run.fallback_reason
+    );
+}
+
+/// 今のマップとその記録・場所（取消のあとも前のままであることを比べる）。
+fn snapshot(
+    s: &AppState,
+) -> (
+    Vec<std::sync::Arc<yolu_core::mesh_maps::BakedMeshMap>>,
+    String,
+    String,
+) {
+    let set = &s.sets.current().mesh_maps;
+    (
+        set.iter().cloned().collect(),
+        format!("{:?}", set.report()),
+        format!("{:?}", set.run()),
+    )
+}
+fn assert_unchanged(
+    before: &(
+        Vec<std::sync::Arc<yolu_core::mesh_maps::BakedMeshMap>>,
+        String,
+        String,
+    ),
+    now: &AppState,
+) {
+    let after = snapshot(now);
+    assert!(
+        after.0.len() == before.0.len()
+            && after
+                .0
+                .iter()
+                .zip(&before.0)
+                .all(|(a, b)| std::sync::Arc::ptr_eq(a, b)),
+        "取り消したら前のマップのまま"
+    );
+    assert_eq!(after.1, before.1, "記録は前のマップのまま");
+    assert_eq!(after.2, before.2, "場所も前のマップのまま");
+}
+
+/// 準備を終えて、焼き始めた（"Baking"）ところまで待つ。
+fn wait_until_baking(s: &AppState) {
+    let start = Instant::now();
+    while s.bake.progress().is_some_and(|p| p.phase != "Baking") {
+        assert!(start.elapsed().as_secs() < 60, "準備が終わらない");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// CPU で焼いたマップのあとに、GPU を選んだベイクを始め（`park` で止めてから）取り消す。
+fn cancel_a_gpu_bake_after_a_cpu_bake(park_mid_bake: bool) {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let before = snapshot(&s);
+    let run = s.sets.current().mesh_maps.run().expect("前の場所");
+    assert!(!run.used_gpu() && run.requested == BakeBackend::Cpu);
+    s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
+    if wait_probe(&s).is_err() {
+        eprintln!("GPU を作れない環境なので、GPU の取消の試験は省く");
+        return;
+    }
+    s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];
+    // 準備の途中（GPU はまだ動かない）か、GPU が最初の dispatch を終えたあと（焼いている途中）で止めておいて取り消す
+    if park_mid_bake {
+        s.bake.park_mid_bake = true;
+    } else {
+        s.bake.park_next = true;
+    }
+    s.apply(bake(BakeAction::Start));
+    assert!(s.bake.is_baking());
+    if park_mid_bake {
+        wait_until_baking(&s);
+    }
+    s.apply(bake(BakeAction::Cancel));
+    s.wait_bake();
+    assert!(s.message.contains("取り消しました"), "{}", s.message);
+    // 取り消した試み（準備の途中でも、GPU が動いている途中でも）は、前のマップ・記録・場所を変えない
+    assert_unchanged(&before, &s);
+    assert!(!s.sets.current().mesh_maps.run().unwrap().used_gpu());
+}
+
+#[test]
+fn canceling_a_gpu_bake_while_preparing_keeps_the_previous_maps_and_where_they_were_baked() {
+    cancel_a_gpu_bake_after_a_cpu_bake(false);
+}
+
+#[test]
+fn canceling_a_gpu_bake_while_the_gpu_runs_keeps_the_previous_maps_and_where_they_were_baked() {
+    cancel_a_gpu_bake_after_a_cpu_bake(true);
+}
+
+#[test]
+fn canceling_a_cpu_bake_while_it_runs_leaves_the_record_of_the_maps_that_stay() {
+    let mut s = cube();
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let before = snapshot(&s);
+    s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];
+    s.bake.park_mid_bake = true;
+    s.apply(bake(BakeAction::Start));
+    wait_until_baking(&s);
+    s.apply(bake(BakeAction::Cancel));
+    s.wait_bake();
+    assert!(s.message.contains("取り消しました"), "{}", s.message);
+    assert_unchanged(&before, &s);
+}
+
+#[test]
+fn where_it_baked_reads_in_both_languages_without_mixing_them() {
+    let hw = adapter(false, true);
+    let rq = BakeRun {
+        requested: BakeBackend::Auto,
+        gpu: Some((hw.clone(), stats(GpuBakeMethod::RayQuery))),
+        fallback_kind: None,
+        fallback_reason: None,
+    };
+    let compute = BakeRun {
+        gpu: Some((adapter(true, false), stats(GpuBakeMethod::Compute))),
+        ..rq.clone()
+    };
+    assert!(run_line(Lang::Ja, &rq).text.contains("ray query"));
+    assert!(run_line(Lang::Ja, &compute).text.contains("ソフトウェア"));
+    assert!(run_line(Lang::En, &compute).text.contains("software"));
+    assert!(run_line(Lang::En, &compute).text.contains("compute"));
+    for kind in [
+        FallbackKind::Unavailable,
+        FallbackKind::Budget,
+        FallbackKind::Failed,
+    ] {
+        let run = BakeRun {
+            requested: BakeBackend::Gpu,
+            gpu: None,
+            fallback_kind: Some(kind),
+            fallback_reason: Some("詳細の文".into()),
+        };
+        let ja = run_line(Lang::Ja, &run);
+        let en = run_line(Lang::En, &run);
+        assert!(ja.warn && en.warn);
+        assert!(
+            ja.text.starts_with("CPU（") && en.text.starts_with("CPU ("),
+            "{} / {}",
+            ja.text,
+            en.text
+        );
+        assert!(
+            !has_japanese(&en.text),
+            "英語の画面に日本語を混ぜない: {}",
+            en.text
+        );
+        assert_eq!(
+            en.detail.as_deref(),
+            Some("詳細の文"),
+            "詳細はツールチップへ"
+        );
+        assert_ne!(fallback_text(Lang::Ja, kind), fallback_text(Lang::En, kind));
+    }
+    // 確かめの一行
+    let none: Result<BakeAdapter, String> = Err("アダプターがありません".into());
+    let done = |allow_software, result| GpuProbe::Done {
+        allow_software,
+        result,
+    };
+    let en = probe_line(Lang::En, BakeBackend::Auto, &done(false, none.clone())).unwrap();
+    assert!(en.warn && !has_japanese(&en.text), "{}", en.text);
+    let ok = probe_line(Lang::En, BakeBackend::Gpu, &done(true, Ok(hw))).unwrap();
+    assert!(!ok.warn && ok.text.contains("ray query"), "{}", ok.text);
+    // 選びを変えた直後（違う条件の結果しかない）は確認中
+    let waiting = probe_line(Lang::Ja, BakeBackend::Gpu, &done(false, none)).unwrap();
+    assert_eq!(waiting.text, "GPU を確認中");
+    for lang in Lang::ALL {
+        for backend in [BakeBackend::Auto, BakeBackend::Gpu, BakeBackend::Cpu] {
+            assert!(
+                !backend_label(lang, backend).is_empty() && !backend_help(lang, backend).is_empty()
+            );
+        }
     }
 }

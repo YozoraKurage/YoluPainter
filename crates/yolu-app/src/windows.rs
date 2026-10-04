@@ -232,6 +232,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
     if app.bake.is_baking()
         || app.bake.is_checking()
+        || app.bake.is_probing_gpu()
         || app.export.is_exporting()
         || app.psd.is_busy()
     {

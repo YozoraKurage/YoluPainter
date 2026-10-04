@@ -34,6 +34,8 @@ pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
             )
             .with_render_state(cc.wgpu_render_state.as_ref())
         });
+    // 焼く場所は CPU に固定（ハードウェアの GPU がある機械でも、試験の結果と画面を揺らさない）。GPU の試験は自分で選ぶ。
+    h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
     h
 }

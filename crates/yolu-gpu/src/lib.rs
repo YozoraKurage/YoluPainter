@@ -528,5 +528,10 @@ impl Compositor {
     }
 }
 
+mod bake;
+pub use bake::{
+    bake_mesh_maps, BakeAdapter, BakeBackend, BakeGpu, BakeRun, FallbackKind, GpuBakeError,
+    GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
+};
 mod resident;
 pub use resident::{Display, Readback, ResidentCompositor, ResidentOptions, UpdateStats};

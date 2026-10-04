@@ -21,6 +21,22 @@ struct Segment {
     phi: f64,
     component: usize,
 }
+/// 平らにした曲率（`Curvature::flatten`）。評価は `Curvature::evaluate` と同じ式。
+#[derive(Clone, Debug)]
+pub struct FlatCurvature {
+    pub radius: f64,
+    pub cell: f64,
+    pub norm: f64,
+    pub min: [f64; 3],
+    /// 線分ごとの a（3）・b（3）・phi（f32 × 7）。
+    pub segments: Vec<f32>,
+    /// 線分ごとの連結成分。
+    pub segment_component: Vec<u32>,
+    /// セルごとの [x, y, z の添字, segments の先頭, 本数]（x, y, z の昇順）。
+    pub cells: Vec<[u32; 5]>,
+    /// 三角形ごとの連結成分。
+    pub components: Vec<u32>,
+}
 pub(crate) struct Curvature {
     radius: f64,
     cell: f64,
@@ -182,6 +198,51 @@ impl Curvature {
     }
     pub fn segment_count(&self) -> usize {
         self.segments.len()
+    }
+    /// 試験用: 番号が `index` のセルに、先頭の線分 1 本を入れる（負の番号のセルを `flatten` が落とすことを確かめる）。
+    #[cfg(test)]
+    pub(crate) fn add_cell_for_test(&mut self, index: [i64; 3]) {
+        self.cells.insert(cell_key(index), (0, 1));
+    }
+    /// 別の実行場所（GPU）へ渡す平らな形。セルは番号の順（HashMap の並びに頼らない）。
+    pub fn flatten(&self) -> FlatCurvature {
+        let mut segments = Vec::with_capacity(self.segments.len() * 7);
+        let mut segment_component = Vec::with_capacity(self.segments.len());
+        for s in &self.segments {
+            segments.extend(s.a.iter().map(|v| *v as f32));
+            segments.extend(s.b.iter().map(|v| *v as f32));
+            segments.push(s.phi as f32);
+            segment_component.push(s.component as u32);
+        }
+        const AXIS: i64 = 1 << 21;
+        let mut cells: Vec<[u32; 5]> = self
+            .cells
+            .iter()
+            .filter_map(|(&key, &(start, count))| {
+                // 負の番号のセルは、評価が 0 以上の番号しか引かないので届かない。
+                let x = key.div_euclid(AXIS * AXIS);
+                (x >= 0).then(|| {
+                    [
+                        x as u32,
+                        key.div_euclid(AXIS).rem_euclid(AXIS) as u32,
+                        key.rem_euclid(AXIS) as u32,
+                        start as u32,
+                        count as u32,
+                    ]
+                })
+            })
+            .collect();
+        cells.sort_unstable();
+        FlatCurvature {
+            radius: self.radius,
+            cell: self.cell,
+            norm: self.norm,
+            min: self.min,
+            segments,
+            segment_component,
+            cells,
+            components: self.components.iter().map(|c| *c as u32).collect(),
+        }
     }
     pub fn evaluate(&self, p: [f64; 3], component: usize) -> f64 {
         if self.cells.is_empty() {

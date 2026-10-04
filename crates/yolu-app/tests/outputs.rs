@@ -11,7 +11,7 @@ use egui::{pos2, vec2, Key};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::bake::window::Page;
-use yolu_app::bake::{BakeAction, MeshMapView};
+use yolu_app::bake::{BakeAction, BakeAdapter, BakeBackend, BakeRun, MeshMapView};
 use yolu_app::engine::Channel;
 use yolu_app::export::ExportAction;
 use yolu_app::lang::Lang;
@@ -531,6 +531,102 @@ fn the_bake_window_refuses_with_a_short_reason_and_speaks_english() {
     assert!(h.state().state.bake.window.is_none());
 }
 
+/// 窓の中の、名前のボタンの矩形（同じ名前の部品と区別するため、窓の中で探す）。
+fn bake_button(h: &Harness<'_, YoluApp>, label: &str) -> egui::Rect {
+    let win = yolu_app::windows::window_rect(&h.ctx, "bake").expect("窓");
+    rect_of(h, label, |r| win.contains(r.center()))
+}
+
+#[test]
+fn the_bake_window_switches_where_to_bake_and_shows_the_adapter_or_why_it_fell_back() {
+    let mut h = cube_app(64);
+    open_bake_window(&mut h);
+    assert_eq!(
+        h.state().state.bake.backend,
+        BakeBackend::Cpu,
+        "試験の台は CPU に固定"
+    );
+    assert!(
+        yolu_app::bake::probe_line(
+            Lang::Ja,
+            BakeBackend::Cpu,
+            &h.state().state.bake.gpu_probe()
+        )
+        .is_none(),
+        "CPU を選んでいれば GPU の確認の行は無い"
+    );
+    // 自動: GPU の確認の結果は決めておく（別のスレッドで確かめない）
+    h.state()
+        .state
+        .bake
+        .fix_gpu_probe(false, Err("使えるハードウェアの GPU がありません".into()));
+    let at = bake_button(&h, "自動").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.bake.backend, BakeBackend::Auto);
+    let line = yolu_app::bake::probe_line(
+        Lang::Ja,
+        BakeBackend::Auto,
+        &h.state().state.bake.gpu_probe(),
+    )
+    .unwrap();
+    assert!(
+        line.warn && line.text == "CPU で焼く（GPU を使えません）",
+        "{line:?}"
+    );
+    shot(&mut h, "bake", "bake_window_cpu_fallback");
+    // GPU: アダプターの名前・種別・ray query。最後のベイクを行った場所も出る。英語。
+    // 確認の結果は、選ぶ前（今は CPU を選んで確かめに行かない間）に決めておく。選んだ後の毎フレームは決めた結果を使う
+    let at = bake_button(&h, "CPU").center();
+    click(&mut h, at);
+    let adapter = BakeAdapter {
+        name: "Test Adapter".into(),
+        backend: "Vulkan".into(),
+        device_type: "DiscreteGpu".into(),
+        software: false,
+        ray_query: true,
+    };
+    h.state()
+        .state
+        .bake
+        .fix_gpu_probe(true, Ok(adapter.clone()));
+    h.state_mut().state.lang = Lang::En;
+    h.run();
+    let at = bake_button(&h, "GPU").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.bake.backend, BakeBackend::Gpu);
+    let run = BakeRun {
+        requested: BakeBackend::Gpu,
+        gpu: Some((
+            adapter,
+            yolu_gpu::GpuBakeStats {
+                method: yolu_app::bake::GpuBakeMethod::RayQuery,
+                dispatches: 4,
+                max_dispatch_ms: 1.0,
+                max_dispatch_texels: 256,
+                bands: 1,
+                input_bytes: 0,
+                band_bytes: 0,
+                ray_query_note: None,
+            },
+        )),
+        fallback_kind: None,
+        fallback_reason: None,
+    };
+    h.state_mut()
+        .state
+        .sets
+        .get_mut(0)
+        .unwrap()
+        .mesh_maps
+        .set_run(run);
+    h.run();
+    shot(&mut h, "bake", "bake_window_gpu");
+    // CPU へ戻すと GPU の確認の行は消える
+    let at = bake_button(&h, "CPU").center();
+    click(&mut h, at);
+    assert_eq!(h.state().state.bake.backend, BakeBackend::Cpu);
+}
+
 // ───────── 書き出し ─────────
 
 fn paint_left_half(doc: &mut yolu_core::Document, layer: LayerId, rgba: [u8; 4]) {
@@ -717,6 +813,7 @@ fn the_export_job_card_cancels_and_leaves_the_folder_untouched() {
 
 fn write_psd(path: &Path) -> Vec<u8> {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     let layer = s.selected_layer.unwrap();
     paint_left_half(&mut s.doc, layer, [255, 0, 0, 255]);
     s.apply(Action::Psd(PsdAction::Export(path.to_path_buf())));
@@ -808,6 +905,7 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
         s.bake.settings.padding = 4;
     };
     let mut s = AppState::new(64, 64);
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     s.apply(Action::LoadDemoModel);
     quick(&mut s);
     s.apply(Action::Bake(BakeAction::Start));
@@ -825,6 +923,7 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
 
     // 開き直す: 同じ中身（16 bit の正本そのまま）
     let mut again = AppState::new(64, 64);
+    again.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     again.apply(Action::OpenProject(path.clone()));
     assert!(
         again.message.contains("メッシュマップ 2 枚"),
@@ -906,12 +1005,93 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
     assert_eq!(ao.provenance().padding, 4, "焼き直していない種類はそのまま");
 }
 
+/// GPU で焼いたメッシュマップも、.ylp に保存して開き直すと 16 bit の値・覆い・由来がそのまま戻り、今の条件と合えば最新になる
+/// （焼いた場所は保存しない。GPU を使えない環境では省く）。
+#[test]
+fn headless_gpu_baked_mesh_maps_survive_save_and_reopen() {
+    let dir = TempDir::new("hgpu");
+    let path = dir.0.join("gpu.ylp");
+    let quick = |s: &mut AppState| {
+        s.bake.settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::AmbientOcclusion];
+        s.bake.settings.ao_samples = 8;
+        s.bake.settings.padding = 4;
+    };
+    let mut s = AppState::new(64, 64);
+    // 「GPU」はソフトウェアの描画も許す。使えるか確かめる（別のスレッド）
+    s.apply(Action::Bake(BakeAction::Backend(BakeBackend::Gpu)));
+    let start = Instant::now();
+    let probe = loop {
+        if let yolu_app::bake::GpuProbe::Done { result, .. } = s.bake.gpu_probe() {
+            break result;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(120),
+            "GPU の確認が終わらない"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    if let Err(why) = probe {
+        eprintln!("GPU を使えない環境なので、GPU で焼いた結果の保存と復元の試験は省く: {why}");
+        return;
+    }
+    s.apply(Action::LoadDemoModel);
+    quick(&mut s);
+    s.apply(Action::Bake(BakeAction::Start));
+    s.wait_bake();
+    let run = s
+        .sets
+        .current()
+        .mesh_maps
+        .run()
+        .cloned()
+        .expect("記録がある");
+    assert!(run.used_gpu(), "GPU で焼いた: {:?}", run.fallback_reason);
+    assert_eq!(s.sets.current().mesh_maps.unsaved().len(), 2);
+    let maps: Vec<_> = s.sets.current().mesh_maps.iter().cloned().collect();
+    let normal = &maps[0];
+    assert!(
+        normal.data().iter().any(|v| *v != normal.data()[0]) && normal.coverage().contains(&1),
+        "値も覆いも空でない"
+    );
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.contains("メッシュマップ 2 枚"), "{}", s.message);
+    assert!(s.sets.current().mesh_maps.unsaved().is_empty());
+
+    // 開き直す: GPU で焼いた 16 bit の値・覆い・由来がそのまま（保存で丸めたり、CPU で焼き直したりしない）
+    let mut again = AppState::new(64, 64);
+    again.bake.backend = BakeBackend::Cpu;
+    again.apply(Action::OpenProject(path));
+    let loaded: Vec<_> = again.sets.current().mesh_maps.iter().cloned().collect();
+    assert_eq!(loaded.len(), 2);
+    for (a, b) in maps.iter().zip(&loaded) {
+        assert_eq!(a.provenance(), b.provenance());
+        assert!(a.data() == b.data(), "{:?} の値", a.kind());
+        assert!(a.coverage() == b.coverage(), "{:?} の覆い", a.kind());
+    }
+    assert!(again.sets.current().mesh_maps.unsaved().is_empty());
+    // 焼いた場所は保存していない（開いたものには場所の記録が無い）
+    assert!(again.sets.current().mesh_maps.run().is_none());
+    // 同じモデル・同じ設定なら、GPU で焼いたものも今の条件に合う（由来は CPU と区別しない）
+    quick(&mut again);
+    again.apply(Action::LoadDemoModel);
+    for kind in [MeshMapKind::WorldNormal, MeshMapKind::AmbientOcclusion] {
+        let check = again.mesh_map_check(0, kind).unwrap();
+        assert_eq!(
+            check.state,
+            MeshMapState::Current,
+            "{kind:?}: {:?}",
+            check.reasons
+        );
+    }
+}
+
 /// 2 つのセットのメッシュマップはセットごとに保存され、新しいプロジェクトの最初の保存でも書かれる。
 #[test]
 fn headless_each_sets_mesh_maps_are_saved_under_its_own_set() {
     let dir = TempDir::new("hsets");
     let path = dir.0.join("two.ylp");
     let mut s = AppState::new(64, 64);
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     s.receive_link_model(&two_quads(), 0).1.unwrap();
     s.bake.settings.maps = vec![MeshMapKind::Position];
     s.bake.settings.padding = 2;
@@ -945,6 +1125,7 @@ fn headless_an_imported_psd_survives_save_and_reopen_and_exports_again() {
     let psd = dir.0.join("Cloth.psd");
     write_psd(&psd);
     let mut s = AppState::new(32, 32);
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     s.apply(Action::Psd(PsdAction::Import {
         path: psd.clone(),
         target: PsdTarget::NewSet,
@@ -959,6 +1140,8 @@ fn headless_an_imported_psd_survives_save_and_reopen_and_exports_again() {
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
 
     let mut again = AppState::new(32, 32);
+
+    again.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     again.apply(Action::OpenProject(project));
     assert_eq!(again.sets.len(), 2);
     let index = again

@@ -50,7 +50,7 @@ fn ordinal_ignore_case(name: &str) -> String {
         })
         .collect()
 }
-fn wants_rays(s: &MeshBakeSettings) -> bool {
+pub(crate) fn wants_rays(s: &MeshBakeSettings) -> bool {
     s.maps.iter().any(|k| {
         matches!(
             k,
@@ -152,13 +152,13 @@ pub fn estimate_bytes(
     bytes += threads(b) as u64 * s.width as u64 * n * n * 22 + threads(b) as u64 * 2048;
     Ok(bytes)
 }
-struct Control<'a> {
-    cancel: Option<&'a AtomicBool>,
-    start: Instant,
-    max_seconds: f64,
+pub(crate) struct Control<'a> {
+    pub cancel: Option<&'a AtomicBool>,
+    pub start: Instant,
+    pub max_seconds: f64,
 }
 impl Control<'_> {
-    fn status(&self) -> MeshBakeStatus {
+    pub fn status(&self) -> MeshBakeStatus {
         if self.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             MeshBakeStatus::Canceled
         } else if self.max_seconds > 0. && self.start.elapsed().as_secs_f64() > self.max_seconds {
@@ -167,11 +167,34 @@ impl Control<'_> {
             MeshBakeStatus::Completed
         }
     }
+    /// 取消・時間切れ・進捗コールバックの false のとき、空の結果（既存の正本を変えない）を返す。続けてよければ None。
+    pub fn checkpoint(
+        &self,
+        report: &mut MeshBakeReport,
+        progress: &mut dyn FnMut(f64, &str) -> bool,
+        fraction: f64,
+        phase: &str,
+    ) -> Option<MeshBakeResult> {
+        let status = self.status();
+        if status == MeshBakeStatus::Completed && progress(fraction, phase) {
+            return None;
+        }
+        report.total_seconds = self.start.elapsed().as_secs_f64();
+        Some(MeshBakeResult {
+            status: if status == MeshBakeStatus::Completed {
+                MeshBakeStatus::Canceled
+            } else {
+                status
+            },
+            maps: vec![],
+            report: std::mem::take(report),
+        })
+    }
 }
-struct Projection {
-    cage: Vec<f32>,
-    groups: Vec<MeshRayBvh>,
-    target: Vec<Option<usize>>,
+pub(crate) struct Projection {
+    pub cage: Vec<f32>,
+    pub groups: Vec<MeshRayBvh>,
+    pub target: Vec<Option<usize>>,
 }
 impl Projection {
     fn new(
@@ -226,23 +249,55 @@ impl Projection {
         })
     }
 }
-/// CPUベイク。進捗コールバックは呼び出したスレッドで実行し、falseで取り消す。
-/// 取消と時間切れではマップを返さず、既存の正本を変更しない。
-pub fn bake(
-    input: &MeshBakeInput,
-    settings: &MeshBakeSettings,
+/// 準備まで済んだベイク。CPU の `bake` も、別の実行場所（`MeshBakePlan` 経由の GPU）も、同じ準備から始める
+/// （受け手の選別・BVH・曲率・投影・接空間・ID・UV の行帯・レイの方向列）。式は CPU の `cpu_rows` が正本。
+pub(crate) struct Prepared<'a> {
+    pub input: &'a MeshBakeInput,
+    pub reference: Option<&'a MeshBakeInput>,
+    pub s: &'a MeshBakeSettings,
+    pub receivers: Vec<usize>,
+    pub low: Surface<'a>,
+    pub low_bvh: MeshRayBvh,
+    pub high: Option<Surface<'a>>,
+    pub high_bvh: Option<MeshRayBvh>,
+    pub curvature: Option<Curvature>,
+    pub high_curvature: Option<Curvature>,
+    pub projection: Option<Projection>,
+    pub frames: Option<Frames>,
+    pub ids: Option<IdTable>,
+    pub raster: Raster,
+    pub rays: Rays,
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    pub scale: [f64; 3],
+    pub threads: usize,
+    pub report: MeshBakeReport,
+}
+/// 1 回のベイクに 1 度だけ作る値なので、`Stopped` の大きさの差（空の結果）は気にしない。
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Prep<'a> {
+    Ready(Box<Prepared<'a>>),
+    /// 準備の途中で取消・時間切れ・進捗コールバックの false があった。
+    Stopped(MeshBakeResult),
+}
+/// 焼いた画素（16 bit の正本、余白の前）とレイ・投影の数。`outputs` は設定のマップの並びで、1 枚は行優先・左下原点・
+/// テクセルごとにチャンネル数（`MeshMapKind::channels`）の値。`coverage` は 0（なし）・1（覆う）・2（UV が重なる）。
+pub struct MeshBakeRaw {
+    pub outputs: Vec<Vec<u16>>,
+    pub coverage: Vec<u8>,
+    pub rays: u64,
+    pub projected: u64,
+    pub missed: u64,
+}
+pub(crate) fn prepare<'a>(
+    input: &'a MeshBakeInput,
+    s: &'a MeshBakeSettings,
     budget: &MeshBakeBudget,
-    cancel: Option<&AtomicBool>,
-    reference: Option<&MeshBakeInput>,
-    mut progress: impl FnMut(f64, &str) -> bool,
-) -> Result<MeshBakeResult> {
-    settings.validate()?;
-    let s = settings;
-    let control = Control {
-        cancel,
-        start: Instant::now(),
-        max_seconds: budget.max_seconds,
-    };
+    control: &Control,
+    reference: Option<&'a MeshBakeInput>,
+    progress: &mut dyn FnMut(f64, &str) -> bool,
+) -> Result<Prep<'a>> {
+    s.validate()?;
     let mut report = MeshBakeReport::default();
     let mut receivers = vec![];
     for t in 0..input.triangle_count() {
@@ -278,18 +333,8 @@ pub fn bake(
     report.receiving_triangles = receivers.len();
     macro_rules! checkpoint {
         ($fraction:expr,$phase:expr) => {{
-            let status = control.status();
-            if status != MeshBakeStatus::Completed || !progress($fraction, $phase) {
-                report.total_seconds = control.start.elapsed().as_secs_f64();
-                return Ok(MeshBakeResult {
-                    status: if status == MeshBakeStatus::Completed {
-                        MeshBakeStatus::Canceled
-                    } else {
-                        status
-                    },
-                    maps: vec![],
-                    report,
-                });
+            if let Some(stopped) = control.checkpoint(&mut report, progress, $fraction, $phase) {
+                return Ok(Prep::Stopped(stopped));
             }
         }};
     }
@@ -359,9 +404,6 @@ pub fn bake(
     };
     let raster = Raster::new(input, s, &receivers, remaining)?;
     let rays = Rays::new(s, input.diagonal);
-    let width = s.width as usize;
-    let height = s.height as usize;
-    let samples = s.antialiasing as usize;
     let mut min = input.min;
     let mut max = input.max;
     if let Some(r) = reference {
@@ -377,10 +419,50 @@ pub fn bake(
             0.
         }
     });
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads(budget))
-        .build()
-        .map_err(|e| MeshMapError(e.to_string()))?;
+    report.prepare_seconds = control.start.elapsed().as_secs_f64();
+    Ok(Prep::Ready(Box::new(Prepared {
+        input,
+        reference,
+        s,
+        receivers,
+        low,
+        low_bvh,
+        high,
+        high_bvh,
+        curvature,
+        high_curvature,
+        projection,
+        frames,
+        ids,
+        raster,
+        rays,
+        min,
+        max,
+        scale,
+        threads: threads(budget),
+        report,
+    })))
+}
+
+/// CPU で行ごとに焼く（式の正本）。取消・時間切れ・進捗コールバックの false は空の結果を `Err` で返す（1 回のベイクに 1 度だけ）。
+#[allow(clippy::result_large_err)]
+pub(crate) fn cpu_rows(
+    prep: &mut Prepared,
+    control: &Control,
+    pool: &rayon::ThreadPool,
+    progress: &mut dyn FnMut(f64, &str) -> bool,
+) -> std::result::Result<MeshBakeRaw, MeshBakeResult> {
+    let s = prep.s;
+    let input = prep.input;
+    let (low, high, low_bvh, high_bvh) = (&prep.low, &prep.high, &prep.low_bvh, &prep.high_bvh);
+    let (curvature, high_curvature) = (&prep.curvature, &prep.high_curvature);
+    let (projection, frames, ids) = (&prep.projection, &prep.frames, &prep.ids);
+    let (raster, rays) = (&prep.raster, &prep.rays);
+    let (min, scale) = (prep.min, prep.scale);
+    let report = &mut prep.report;
+    let width = s.width as usize;
+    let height = s.height as usize;
+    let samples = s.antialiasing as usize;
     let mut coverage = vec![0u8; width * height];
     let mut outputs: Vec<Vec<u16>> = s
         .maps
@@ -390,9 +472,10 @@ pub fn bake(
     let ray_count = AtomicU64::new(0);
     let projected = AtomicU64::new(0);
     let missed = AtomicU64::new(0);
-    report.prepare_seconds = control.start.elapsed().as_secs_f64();
-    checkpoint!(0.05, "Baking");
-    let batch = (threads(budget) * 4).clamp(16, 256);
+    if let Some(stopped) = control.checkpoint(report, progress, 0.05, "Baking") {
+        return Err(stopped);
+    }
+    let batch = (prep.threads * 4).clamp(16, 256);
     for y0 in (0..height).step_by(batch) {
         let y1 = (y0 + batch).min(height);
         let mut rows: Vec<Vec<&mut [u16]>> = (y0..y1).map(|_| vec![]).collect();
@@ -502,7 +585,7 @@ pub fn bake(
                                         if hit {
                                             high_bvh.as_ref().unwrap()
                                         } else {
-                                            &low_bvh
+                                            low_bvh
                                         },
                                         point,
                                         normal,
@@ -585,11 +668,54 @@ pub fn bake(
                     missed.fetch_add(local_missed, Ordering::Relaxed);
                 })
         });
-        checkpoint!(0.05 + 0.85 * y1 as f64 / height as f64, "Baking");
+        if let Some(stopped) = control.checkpoint(
+            report,
+            progress,
+            0.05 + 0.85 * y1 as f64 / height as f64,
+            "Baking",
+        ) {
+            return Err(stopped);
+        }
     }
-    report.rays = ray_count.load(Ordering::Relaxed);
-    report.projected_samples = projected.load(Ordering::Relaxed);
-    report.missed_samples = missed.load(Ordering::Relaxed);
+    Ok(MeshBakeRaw {
+        outputs,
+        coverage,
+        rays: ray_count.load(Ordering::Relaxed),
+        projected: projected.load(Ordering::Relaxed),
+        missed: missed.load(Ordering::Relaxed),
+    })
+}
+
+/// 焼いた画素から余白・記録・由来を作って結果にする（CPU も GPU も同じ後始末）。
+pub(crate) fn finish(
+    prep: Prepared,
+    raw: MeshBakeRaw,
+    control: &Control,
+    pool: &rayon::ThreadPool,
+    progress: &mut dyn FnMut(f64, &str) -> bool,
+) -> Result<MeshBakeResult> {
+    let Prepared {
+        input,
+        reference,
+        s,
+        frames,
+        ids,
+        min,
+        max,
+        mut report,
+        ..
+    } = prep;
+    let MeshBakeRaw {
+        mut outputs,
+        mut coverage,
+        rays,
+        projected,
+        missed,
+    } = raw;
+    let width = s.width as usize;
+    report.rays = rays;
+    report.projected_samples = projected;
+    report.missed_samples = missed;
     report.raster_seconds = control.start.elapsed().as_secs_f64() - report.prepare_seconds;
     if s.padding > 0 {
         let source: Vec<AtomicI32> = coverage
@@ -647,7 +773,14 @@ pub fn bake(
                     })
                     .sum::<usize>()
             });
-            checkpoint!(0.9 + 0.1 * p as f64 / s.padding as f64, "Padding");
+            if let Some(stopped) = control.checkpoint(
+                &mut report,
+                progress,
+                0.9 + 0.1 * p as f64 / s.padding as f64,
+                "Padding",
+            ) {
+                return Ok(stopped);
+            }
             if changed == 0 {
                 break;
             }
@@ -769,6 +902,38 @@ pub fn bake(
         report,
     })
 }
+
+/// CPUベイク。進捗コールバックは呼び出したスレッドで実行し、falseで取り消す。
+/// 取消と時間切れではマップを返さず、既存の正本を変更しない。
+pub fn bake(
+    input: &MeshBakeInput,
+    settings: &MeshBakeSettings,
+    budget: &MeshBakeBudget,
+    cancel: Option<&AtomicBool>,
+    reference: Option<&MeshBakeInput>,
+    mut progress: impl FnMut(f64, &str) -> bool,
+) -> Result<MeshBakeResult> {
+    settings.validate()?;
+    let control = Control {
+        cancel,
+        start: Instant::now(),
+        max_seconds: budget.max_seconds,
+    };
+    let mut prep = match prepare(input, settings, budget, &control, reference, &mut progress)? {
+        Prep::Ready(prep) => prep,
+        Prep::Stopped(result) => return Ok(result),
+    };
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(prep.threads)
+        .build()
+        .map_err(|e| MeshMapError(e.to_string()))?;
+    let raw = match cpu_rows(&mut prep, &control, &pool, &mut progress) {
+        Ok(raw) => raw,
+        Err(stopped) => return Ok(stopped),
+    };
+    finish(*prep, raw, &control, &pool, &mut progress)
+}
+
 fn quantize(v: f64) -> u16 {
     if v <= 0. {
         0

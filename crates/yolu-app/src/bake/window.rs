@@ -10,8 +10,9 @@ use yolu_core::mesh_maps::{
 };
 
 use super::{
-    id_source_label, kind_label, kind_short, needs_reference, phase_label, slot_list,
-    stale_reasons, state_label, BakeAction, MeshMapView, ID_SOURCES,
+    backend_help, backend_label, id_source_label, kind_label, kind_short, needs_reference,
+    phase_label, probe_line, run_line, slot_list, stale_reasons, state_label, BakeAction,
+    BakeBackend, MeshMapView, PlaceLine, ID_SOURCES,
 };
 use crate::lang::Lang;
 use crate::state::AppState;
@@ -66,12 +67,23 @@ struct MapRow {
     reasons: String,
 }
 
+/// 焼く場所の欄に出すもの（選び・GPU の確認・最後のベイクを行った場所）。
+struct Place {
+    backend: BakeBackend,
+    probe: Option<PlaceLine>,
+    last: Option<PlaceLine>,
+}
+
+/// 焼く場所の選びの並び。
+const BACKENDS: [BakeBackend; 3] = [BakeBackend::Auto, BakeBackend::Gpu, BakeBackend::Cpu];
+
 /// 窓を描く（開いていなければ何もしない）。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let Some(mut win) = app.bake.window.take() else {
         return;
     };
     let lang = app.lang;
+    app.bake.ensure_gpu_probe();
     // 表示データ（モデルの入力は別のスレッドで作る。できるまで状態は「確認中」）
     let input = app.bake_input_nowait();
     let checking = input.is_none();
@@ -131,6 +143,15 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         .and_then(|s| s.mesh_maps.report())
         .cloned();
     let showing = app.bake.view;
+    let place = Place {
+        backend: app.bake.backend,
+        probe: probe_line(lang, app.bake.backend, &app.bake.gpu_probe()),
+        last: app
+            .sets
+            .get(current)
+            .and_then(|s| s.mesh_maps.run())
+            .map(|r| run_line(lang, r)),
+    };
 
     let mut actions: Vec<BakeAction> = Vec::new();
     let mut close = false;
@@ -169,6 +190,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             progress.as_ref(),
             app.bake.outcome.clone(),
             report.as_ref(),
+            &place,
             &mut actions,
             &mut app.bake.settings,
         );
@@ -198,6 +220,7 @@ fn draw(
     progress: Option<&super::Progress>,
     outcome: Option<(String, bool)>,
     report: Option<&MeshBakeReport>,
+    place: &Place,
     actions: &mut Vec<BakeAction>,
     settings: &mut yolu_core::mesh_maps::MeshBakeSettings,
 ) {
@@ -312,7 +335,7 @@ fn draw(
     w::fill(&p, list, t::MENU_BG);
     w::vline(&p, list.right(), top, footer.top(), t::BORDER);
     draw_list(ui, list, win, lang, maps, showing, actions, settings);
-    draw_page(ui, page, win, lang, maps, report, settings);
+    draw_page(ui, page, win, lang, maps, report, place, actions, settings);
     draw_footer(ui, footer, lang, refusal, progress, outcome, actions);
 }
 
@@ -645,6 +668,7 @@ fn id_hash(id: &impl std::hash::Hash) -> u64 {
 }
 
 /// 右の項目。
+#[allow(clippy::too_many_arguments)]
 fn draw_page(
     ui: &mut Ui,
     page: Rect,
@@ -652,6 +676,8 @@ fn draw_page(
     lang: Lang,
     maps: &[MapRow],
     report: Option<&MeshBakeReport>,
+    place: &Place,
+    actions: &mut Vec<BakeAction>,
     settings: &mut yolu_core::mesh_maps::MeshBakeSettings,
 ) {
     let mut child = ui.new_child(UiBuilder::new().max_rect(page));
@@ -733,10 +759,52 @@ fn draw_page(
             w::text(
                 &p,
                 r,
+                lang.pick("焼く場所", "Bake On"),
+                t::HEADER.with_color(t::TEXT_DIM),
+                Align::Left,
+            );
+            let r = row(24.0, 4.0, &mut y);
+            let parts = w::Rows::split(r, BACKENDS.len() + 1, 4.0);
+            w::text(
+                &p,
+                parts[0],
+                lang.pick("場所", "Run on"),
+                t::LABEL,
+                Align::Left,
+            );
+            for (i, backend) in BACKENDS.iter().enumerate() {
+                if w::button(
+                    &mut child,
+                    parts[i + 1],
+                    ("bake.backend", i),
+                    backend_label(lang, *backend),
+                    place.backend == *backend,
+                    true,
+                    Some(backend_help(lang, *backend)),
+                    None,
+                )
+                .clicked()
+                {
+                    actions.push(BakeAction::Backend(*backend));
+                }
+            }
+            if let Some(line) = &place.probe {
+                let r = row(18.0, 2.0, &mut y);
+                place_line(&mut child, &p, r, "bake.backend.probe", line);
+            }
+            y += 6.0;
+            let r = row(16.0, 4.0, &mut y);
+            w::text(
+                &p,
+                r,
                 lang.pick("最後のベイク", "Last Bake"),
                 t::HEADER.with_color(t::TEXT_DIM),
                 Align::Left,
             );
+            if let Some(line) = &place.last {
+                let r = row(18.0, 2.0, &mut y);
+                place_line(&mut child, &p, r, "bake.backend.last", line);
+            }
             match report {
                 None => {
                     let r = row(18.0, 2.0, &mut y);
@@ -1090,6 +1158,28 @@ pub fn id_status(lang: Lang, kind: MeshMapKind, report: Option<&MeshBakeReport>)
         )
         .to_owned()
     })
+}
+
+/// 焼く場所の一行（長ければ … で切り、全文と詳しい理由はツールチップ）。
+fn place_line(ui: &mut Ui, p: &egui::Painter, r: Rect, id: &str, line: &PlaceLine) {
+    let shown = w::fit(p, &line.text, r.width(), t::LABEL_DIM);
+    w::text(
+        p,
+        r,
+        &shown,
+        t::LABEL_DIM.with_color(if line.warn { t::WARNING } else { t::TEXT_DIM }),
+        Align::Left,
+    );
+    let tip = match (&line.detail, shown != line.text) {
+        (Some(d), true) => Some(format!("{}\n{d}", line.text)),
+        (Some(d), false) => Some(d.clone()),
+        (None, true) => Some(line.text.clone()),
+        (None, false) => None,
+    };
+    if let Some(tip) = tip {
+        ui.interact(r, Id::new(id), egui::Sense::hover())
+            .on_hover_text(tip);
+    }
 }
 
 /// 最後のベイクの記録の行（文と、注意か）。

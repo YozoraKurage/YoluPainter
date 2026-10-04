@@ -1,8 +1,10 @@
 //! メッシュマップのベイク（Unity 版の `TexturePaintWindow.MeshBake` と同じ決まり）。3D ビューのモデルから、テクスチャセットの
 //! マテリアルを使うスロットと文書の大きさで、法線・位置・AO・曲率・厚みなどを焼き、セットのメッシュマップ（`MeshMapSet`）に入れる。
 //!
-//! - **別のスレッドで焼く**: 始めるときに入力（モデルの写し）・設定・スロット・文書の ID と大きさを固定し、焼くのは `yolu_core::mesh_maps::bake`
-//!   （rayon で並列。進み具合は共有の値、取消は `AtomicBool`）。画面は毎フレーム `poll_bake` で終わりを見る。
+//! - **別のスレッドで焼く**: 始めるときに入力（モデルの写し）・設定・スロット・文書の ID と大きさを固定し、焼くのは `yolu_gpu::bake_mesh_maps`
+//!   （窓で選んだ「自動・GPU・CPU」。自動は使えるハードウェアの GPU があれば GPU、なければ CPU。GPU が使えない・壊れた・予算を超えたときは
+//!   理由つきで CPU の `yolu_core::mesh_maps::bake`（rayon で並列）に戻る。進み具合は共有の値、取消は `AtomicBool`）。画面は毎フレーム
+//!   `poll_bake` で終わりを見る。使った場所と戻った理由はセットの記録（`MeshMapSet::run`）と結果の一文に出る。
 //! - **結果を使う前に確かめる**: 終わったとき、セット・文書（ID と大きさ）・スロット・モデルの形（ポーズを含む）が始めたときと同じなら
 //!   マップを入れ、違えば捨てる。取消・時間切れ・拒否・捨てた結果では、前のマップは変えない。残りのセットも焼かない。
 //! - **セットごとに焼く**: 窓でチェックしたセットを並びの順に 1 つずつ。モデルに無いマテリアルのセットは焼かない。
@@ -27,11 +29,14 @@ use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
+use yolu_gpu::{bake_mesh_maps, GpuBakeSlot};
+pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMethod};
+
 pub use maps::MeshMapSet;
 pub use overlay::{MeshMapView, Overlay};
 use yolu_core::export::occlusion_byte;
 use yolu_core::mesh_maps::{
-    bake, material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeResult, MeshBakeSettings,
+    material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeResult, MeshBakeSettings,
     MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind, MeshMapState,
 };
 
@@ -54,6 +59,8 @@ pub enum BakeAction {
     Set(u32, bool),
     /// 2D のキャンバスに重ねて見るもの。
     View(MeshMapView),
+    /// 焼く場所（自動・GPU・CPU）。次のベイクから効く。
+    Backend(BakeBackend),
 }
 
 /// 焼いている 1 回の仕事（1 つのテクスチャセット）。始めたときの条件を持つ。
@@ -63,12 +70,28 @@ struct Job {
     settings: MeshBakeSettings,
     cancel: Arc<AtomicBool>,
     progress: Arc<Mutex<(f64, String)>>,
-    rx: Receiver<Result<MeshBakeResult, String>>,
+    rx: Receiver<Result<(MeshBakeResult, BakeRun), String>>,
     doc_id: u128,
     size: (u32, u32),
     slots: Vec<i32>,
     /// 始めたときのモデル。
     model: ModelId,
+}
+
+/// GPU が使えるかの確認（窓の状態表示のために、別のスレッドで 1 回だけ作ってみる）。
+#[derive(Clone, Debug, Default)]
+pub enum GpuProbe {
+    /// まだ確かめていない。
+    #[default]
+    Unknown,
+    Probing {
+        allow_software: bool,
+    },
+    Done {
+        /// ソフトウェアの描画を許して確かめたか（「GPU」を選んだとき）。
+        allow_software: bool,
+        result: Result<BakeAdapter, String>,
+    },
 }
 
 /// モデル（`Arc<ViewModel>`）の同一性の控え。弱い参照で持つので、旧モデルが解放されても割り当ては残り、別のモデルが同じ
@@ -113,6 +136,11 @@ pub struct BakeState {
     pub overlay: Overlay,
     /// 最後のベイクの結果の一文と、成功か（窓の下に出す）。
     pub outcome: Option<(String, bool)>,
+    /// 焼く場所（既定は自動）。
+    pub backend: BakeBackend,
+    /// GPU のデバイスとシェーダー（焼くたびに作り直さない。別のスレッドから共有する）。
+    gpu: Arc<GpuBakeSlot>,
+    probe: Arc<Mutex<GpuProbe>>,
     job: Option<Job>,
     queue: VecDeque<u32>,
     total: usize,
@@ -122,6 +150,10 @@ pub struct BakeState {
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
     pub park_next: bool,
+    /// 試験用: 次の仕事を、焼き始めて最初の確認（GPU なら 1 回目の dispatch のあと、CPU なら最初の行のあと）で、取消が来るまで
+    /// 止めておく。取消が準備の中でなく、焼いている間に効くことを確かめる（始めるときに下ろす）。
+    #[doc(hidden)]
+    pub park_mid_bake: bool,
 }
 
 /// 進み具合（窓・仕事の札が出す）。
@@ -140,6 +172,65 @@ pub struct Progress {
 impl BakeState {
     pub fn is_baking(&self) -> bool {
         self.job.is_some()
+    }
+
+    /// 焼く場所の選びに合わせた、GPU が使えるかの確認の今の状態。
+    pub fn gpu_probe(&self) -> GpuProbe {
+        self.probe.lock().map(|p| p.clone()).unwrap_or_default()
+    }
+
+    /// 選んだ場所で GPU を使うはずなのに、確かめていなければ別のスレッドで確かめ始める（毎フレーム呼んでよい）。
+    pub fn ensure_gpu_probe(&self) {
+        let allow_software = match self.backend {
+            BakeBackend::Cpu => return,
+            BakeBackend::Auto => false,
+            BakeBackend::Gpu => true,
+        };
+        let Ok(mut state) = self.probe.lock() else {
+            return;
+        };
+        match &*state {
+            GpuProbe::Probing { allow_software: a } if *a == allow_software => return,
+            GpuProbe::Done {
+                allow_software: a, ..
+            } if *a == allow_software => return,
+            _ => {}
+        }
+        *state = GpuProbe::Probing { allow_software };
+        let (slot, shared) = (self.gpu.clone(), self.probe.clone());
+        let spawned = std::thread::Builder::new()
+            .name("yolu-gpu-probe".into())
+            .spawn(move || {
+                let result = slot.probe(allow_software);
+                if let Ok(mut p) = shared.lock() {
+                    *p = GpuProbe::Done {
+                        allow_software,
+                        result,
+                    };
+                }
+            });
+        if let Err(e) = spawned {
+            *state = GpuProbe::Done {
+                allow_software,
+                result: Err(e.to_string()),
+            };
+        }
+    }
+
+    /// 試験用: GPU の確認の結果を決めておく（別のスレッドで確かめない。画面の見た目を揺らさないため）。
+    #[doc(hidden)]
+    pub fn fix_gpu_probe(&self, allow_software: bool, result: Result<BakeAdapter, String>) {
+        if let Ok(mut p) = self.probe.lock() {
+            *p = GpuProbe::Done {
+                allow_software,
+                result,
+            };
+        }
+    }
+
+    /// GPU が使えるかを別のスレッドで確かめている最中。
+    pub fn is_probing_gpu(&self) -> bool {
+        matches!(self.gpu_probe(), GpuProbe::Probing { .. })
     }
 
     /// 窓の状態表示のために、モデルの入力を別のスレッドで作っている。
@@ -194,6 +285,141 @@ pub fn needs_reference(kind: MeshMapKind) -> bool {
         kind,
         MeshMapKind::TangentNormal | MeshMapKind::Height | MeshMapKind::Opacity
     )
+}
+
+/// 焼く場所の名前（切り替えのボタン）。
+pub fn backend_label(lang: Lang, backend: BakeBackend) -> &'static str {
+    match backend {
+        BakeBackend::Auto => lang.pick("自動", "Auto"),
+        BakeBackend::Gpu => "GPU",
+        BakeBackend::Cpu => "CPU",
+    }
+}
+
+/// 焼く場所の意味（ツールチップ）。
+pub fn backend_help(lang: Lang, backend: BakeBackend) -> &'static str {
+    match backend {
+        BakeBackend::Auto => lang.pick(
+            "使えるハードウェアの GPU があれば GPU、なければ CPU で焼く",
+            "Bake on a hardware GPU when there is one, otherwise on the CPU",
+        ),
+        BakeBackend::Gpu => lang.pick(
+            "GPU で焼く（ソフトウェアの描画も使う）。使えなければ理由つきで CPU",
+            "Bake on the GPU (software rendering counts too); falls back to the CPU with a reason",
+        ),
+        BakeBackend::Cpu => lang.pick("CPU で焼く", "Bake on the CPU"),
+    }
+}
+
+/// アダプターの名前（窓の状態・結果の一文）。
+fn adapter_text(lang: Lang, a: &BakeAdapter) -> String {
+    let software = if a.software {
+        lang.pick("ソフトウェア", "software")
+    } else {
+        ""
+    };
+    let ray = if a.ray_query { "ray query" } else { "" };
+    let extra = [a.backend.as_str(), software, ray]
+        .iter()
+        .filter(|s| !s.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(lang.pick("・", " · "));
+    format!("{}{}", a.name, paren(lang, &extra))
+}
+
+/// 補足のかっこ（日本語は全角で詰め、英語は半角で前に空白）。
+fn paren(lang: Lang, inner: &str) -> String {
+    lang.pick(format!("（{inner}）"), format!(" ({inner})"))
+}
+
+/// GPU で焼けなかった理由の短い文（詳細の文はツールチップに出す）。
+pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
+    match kind {
+        FallbackKind::Unavailable => lang.pick("GPU を使えません", "No usable GPU"),
+        FallbackKind::Budget => lang.pick("GPU の予算を超えました", "Over the GPU budget"),
+        FallbackKind::Failed => lang.pick("GPU の処理に失敗しました", "The GPU run failed"),
+    }
+}
+
+/// 焼く場所の一行（窓の状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlaceLine {
+    pub text: String,
+    pub warn: bool,
+    pub detail: Option<String>,
+}
+
+/// GPU の確認の状態の一行（`Cpu` を選んでいるときは無し）。
+pub fn probe_line(lang: Lang, backend: BakeBackend, probe: &GpuProbe) -> Option<PlaceLine> {
+    if backend == BakeBackend::Cpu {
+        return None;
+    }
+    let want_software = backend == BakeBackend::Gpu;
+    Some(match probe {
+        GpuProbe::Done {
+            allow_software,
+            result,
+        } if *allow_software == want_software => match result {
+            Ok(a) => PlaceLine {
+                text: format!("GPU: {}", adapter_text(lang, a)),
+                warn: false,
+                detail: None,
+            },
+            Err(detail) => PlaceLine {
+                text: format!(
+                    "{}{}",
+                    lang.pick("CPU で焼く", "Bakes on the CPU"),
+                    paren(lang, fallback_text(lang, FallbackKind::Unavailable))
+                ),
+                warn: true,
+                detail: Some(detail.clone()),
+            },
+        },
+        _ => PlaceLine {
+            text: lang.pick("GPU を確認中", "Checking the GPU").to_owned(),
+            warn: false,
+            detail: None,
+        },
+    })
+}
+
+/// 最後のベイクを行った場所の一行（結果の一文・記録の行）。`Cpu` を選んだときの CPU は注意にしない。
+pub fn run_line(lang: Lang, run: &BakeRun) -> PlaceLine {
+    match &run.gpu {
+        Some((adapter, stats)) => {
+            let method = match stats.method {
+                GpuBakeMethod::Compute => "compute",
+                GpuBakeMethod::RayQuery => "ray query",
+            };
+            let software = if adapter.software {
+                lang.pick("ソフトウェア・", "software · ")
+            } else {
+                ""
+            };
+            PlaceLine {
+                text: format!(
+                    "GPU {}{}",
+                    adapter.name,
+                    paren(lang, &format!("{software}{method}"))
+                ),
+                warn: false,
+                detail: None,
+            }
+        }
+        None => match run.fallback_kind {
+            Some(kind) => PlaceLine {
+                text: format!("CPU{}", paren(lang, fallback_text(lang, kind))),
+                warn: true,
+                detail: run.fallback_reason.clone(),
+            },
+            None => PlaceLine {
+                text: "CPU".to_owned(),
+                warn: false,
+                detail: None,
+            },
+        },
+    }
 }
 
 pub fn phase_label(lang: Lang, phase: &str) -> String {
@@ -620,6 +846,11 @@ impl AppState {
                 if self.bake.window.is_none() {
                     self.bake.window = Some(window::BakeWindow::default());
                 }
+                self.bake.ensure_gpu_probe();
+            }
+            BakeAction::Backend(backend) => {
+                self.bake.backend = backend;
+                self.bake.ensure_gpu_probe();
             }
             BakeAction::CloseWindow => self.bake.window = None,
             BakeAction::Start => self.start_bake(),
@@ -749,19 +980,32 @@ impl AppState {
         let (tx, rx) = channel();
         let (flag, shared, run_settings) = (cancel.clone(), progress.clone(), settings.clone());
         let park = std::mem::take(&mut self.bake.park_next);
+        let park_mid = std::mem::take(&mut self.bake.park_mid_bake);
+        let backend = self.bake.backend;
+        let gpu = self.bake.gpu.clone();
         std::thread::Builder::new()
             .name("yolu-bake".into())
             .spawn(move || {
                 if park {
                     crate::windows::park_until_canceled(&flag);
                 }
-                let result = bake(
+                let mut baking = 0;
+                let result = bake_mesh_maps(
+                    backend,
+                    &gpu,
                     &input,
                     &run_settings,
                     &MeshBakeBudget::default(),
                     Some(&flag),
                     None,
                     |fraction, phase| {
+                        if park_mid && phase == "Baking" {
+                            // 1 回目は焼き始めの通知。2 回目が、最初の dispatch（行）を終えたあと
+                            baking += 1;
+                            if baking == 2 {
+                                crate::windows::park_until_canceled(&flag);
+                            }
+                        }
                         if let Ok(mut p) = shared.lock() {
                             *p = (fraction, phase.to_owned());
                         }
@@ -837,10 +1081,10 @@ impl AppState {
         None
     }
 
-    fn finish_bake(&mut self, job: Job, result: Result<MeshBakeResult, String>) {
+    fn finish_bake(&mut self, job: Job, result: Result<(MeshBakeResult, BakeRun), String>) {
         let lang = self.lang;
         self.bake.finished += 1;
-        let result = match result {
+        let (result, run) = match result {
             Ok(r) => r,
             Err(e) => {
                 self.bake.queue.clear();
@@ -853,11 +1097,6 @@ impl AppState {
                 );
             }
         };
-        if let Some(i) = self.sets.index_of(job.uid) {
-            if let Some(set) = self.sets.get_mut(i) {
-                set.mesh_maps.set_report(result.report.clone());
-            }
-        }
         match result.status {
             MeshBakeStatus::Canceled | MeshBakeStatus::TimedOut => {
                 self.bake.queue.clear();
@@ -895,6 +1134,10 @@ impl AppState {
             .join(lang.pick("・", ", "));
         let count = result.maps.len();
         if let Some(set) = self.sets.get_mut(index) {
+            // 記録と場所は、今のマップを焼いたベイクのもの。取消・時間切れ・捨てた結果では変えない（前のマップが残るので、それを
+            // 焼いた記録も残す。準備の途中で止めた GPU を「GPU で焼いた」と見せない）
+            set.mesh_maps.set_report(result.report.clone());
+            set.mesh_maps.set_run(run.clone());
             set.mesh_maps.put(result.maps);
         }
         self.modified = true;
@@ -902,16 +1145,17 @@ impl AppState {
             self.bake.view = MeshMapView::Coverage;
         }
         let secs = result.report.total_seconds;
+        let place = run_line(lang, &run).text;
         let mut text = lang.pick(
             format!(
-                "{}: {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}）。",
+                "{}: {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
                 job.name,
                 job.settings.width,
                 job.settings.height,
                 slot_list(&job.slots)
             ),
             format!(
-                "{}: baked {count} map(s) at {}×{} ({kinds}) in {secs:.2} s (slot {}).",
+                "{}: baked {count} map(s) at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
                 job.name,
                 job.settings.width,
                 job.settings.height,

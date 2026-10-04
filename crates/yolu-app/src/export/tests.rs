@@ -104,6 +104,7 @@ fn two_quads() -> Model {
 /// 2 つのセット（Skin・Hair）を持つ 64 × 64 の状態。Skin の左半分は赤、Hair の左半分は緑で塗ってある。
 fn two_sets() -> AppState {
     let mut s = AppState::new(64, 64);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     let (_, shape) = s.receive_link_model(&two_quads(), 0);
     assert_eq!(shape, Ok(()));
     assert_eq!(s.sets.len(), 2);
@@ -220,6 +221,7 @@ fn padding_off_leaves_the_outside_of_the_uvs_empty_and_no_model_says_so() {
 fn a_single_set_has_no_set_name_in_the_file_names() {
     let dir = Dir::new("single");
     let mut s = AppState::new(64, 64);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     let layer = s.selected_layer.unwrap();
     paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
     // 金属度を塗ると MetallicSmoothness も書く
@@ -316,6 +318,7 @@ fn existing_files_are_asked_about_first_and_cancel_keeps_them() {
 fn cancel_writes_nothing_and_leaves_no_temp_files() {
     let dir = Dir::new("cancel");
     let mut s = AppState::new(256, 256);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     let layer = s.selected_layer.unwrap();
     paint_left_half(&mut s.doc, layer, Channel::Color, [1, 2, 3, 255]);
     paint_left_half(&mut s.doc, layer, Channel::Emission, [9, 9, 9, 255]);
@@ -344,6 +347,7 @@ fn an_export_the_working_budget_cannot_hold_is_refused_with_the_reason_and_write
     // 画像そのもの（4 バイト × 画素）は 8192 × 8192 でも予算（512 MiB）に収まるが、塗り広げは 1 画素に 12 バイト要る。
     // 7000 × 7000 は 588 MB で、予算を超える（塗り広げの前に断る。文書は空なので文書の側の確保は小さい）
     let mut s = AppState::new(7000, 7000);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     s.apply(Action::LoadDemoModel);
     s.modified = false;
     export(&mut s, "unity-standard", &dir.0);
@@ -408,6 +412,7 @@ fn corner_model(lean: f32) -> Model {
 fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_note() {
     let dir = Dir::new("ao");
     let mut s = AppState::new(64, 64);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     let (_, shape) = s.receive_link_model(&corner_model(0.0), 0);
     assert_eq!(shape, Ok(()));
     let layer = s.selected_layer.unwrap();
@@ -473,6 +478,7 @@ fn a_read_only_set_is_not_exported_and_nothing_to_write_is_said() {
     // どのレイヤーも読むチャンネルを使っていなければ、書くものが無い
     let dir = Dir::new("nothing");
     let mut s = AppState::new(64, 64);
+    s.bake.backend = crate::bake::BakeBackend::Cpu;
     let layer = s.selected_layer.unwrap();
     s.doc
         .set_channel_enabled(layer, Channel::Color, false)

@@ -10,3 +10,6 @@ yolu-core.workspace = true
 wgpu = "30.0.1"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in", "spv-out"] }   # MIT OR Apache-2.0（wgpu と同じ版。WGSL の Params の並びを Rust の構造体と照合する試験用）

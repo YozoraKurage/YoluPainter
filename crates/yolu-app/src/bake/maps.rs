@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use yolu_core::mesh_maps::{BakedMeshMap, MeshBakeReport, MeshMapKind};
+use yolu_gpu::BakeRun;
 
 #[derive(Clone, Debug, Default)]
 pub struct MeshMapSet {
@@ -16,6 +17,7 @@ pub struct MeshMapSet {
     dirty: Vec<MeshMapKind>,
     revision: u64,
     report: Option<MeshBakeReport>,
+    run: Option<BakeRun>,
 }
 
 impl MeshMapSet {
@@ -41,13 +43,22 @@ impl MeshMapSet {
         self.revision
     }
 
-    /// 最後のベイクの記録。
+    /// 今のマップを焼いたベイクの記録（入れたときだけ変わる。取消・時間切れ・捨てた結果では前のまま）。
     pub fn report(&self) -> Option<&MeshBakeReport> {
         self.report.as_ref()
     }
 
     pub fn set_report(&mut self, report: MeshBakeReport) {
         self.report = Some(report);
+    }
+
+    /// 今のマップを焼いた場所（GPU か CPU か、CPU に戻った理由。`report` と同じ入れ方）。
+    pub fn run(&self) -> Option<&BakeRun> {
+        self.run.as_ref()
+    }
+
+    pub fn set_run(&mut self, run: BakeRun) {
+        self.run = Some(run);
     }
 
     fn insert(&mut self, map: BakedMeshMap) {

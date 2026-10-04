@@ -25,6 +25,27 @@ pub struct MeshRayHit {
     pub u: f64,
     pub v: f64,
 }
+/// 平らにした BVH（`MeshRayBvh::flatten`）。
+#[derive(Clone, Debug, Default)]
+pub struct FlatBvh {
+    /// 節ごとの最小 xyz・最大 xyz（f32 × 6）。
+    pub bounds: Vec<f32>,
+    /// 節ごと。葉（`count > 0`）は `tris` の先頭の面の番号、内部の節は左の子の節の番号（右の子は +1）。
+    pub first: Vec<u32>,
+    pub count: Vec<u32>,
+    /// 面ごとの始点・辺 1・辺 2（f32 × 9）と平行の判定の許容幅（f32）。
+    pub tris: Vec<f32>,
+    /// 面ごとの、元の三角形の番号。
+    pub original: Vec<u32>,
+}
+impl FlatBvh {
+    pub fn node_count(&self) -> usize {
+        self.first.len()
+    }
+    pub fn triangle_count(&self) -> usize {
+        self.original.len()
+    }
+}
 const EMPTY: [f32; 6] = [f32::MAX, f32::MAX, f32::MAX, f32::MIN, f32::MIN, f32::MIN];
 fn grow(a: &mut [f32; 6], b: &[f32; 6]) {
     if b[0] > b[3] {
@@ -100,6 +121,32 @@ impl MeshRayBvh {
     }
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+    /// 別の実行場所（GPU）へ渡す平らな配列。節と面の並び・値は `visit` と同じ（f32 に丸めた CPU の BVH そのもの）。
+    pub fn flatten(&self) -> FlatBvh {
+        let mut flat = FlatBvh {
+            bounds: Vec::with_capacity(self.nodes.len() * 6),
+            first: Vec::with_capacity(self.nodes.len()),
+            count: Vec::with_capacity(self.nodes.len()),
+            tris: Vec::with_capacity(self.tris.len() * 10),
+            original: Vec::with_capacity(self.tris.len()),
+        };
+        for n in &self.nodes {
+            flat.bounds.extend_from_slice(&n.bounds);
+            flat.first.push(n.first as u32);
+            flat.count.push(n.count as u32);
+        }
+        for t in &self.tris {
+            flat.tris.extend(t.a.iter().map(|v| *v as f32));
+            flat.tris.extend(t.e1.iter().map(|v| *v as f32));
+            flat.tris.extend(t.e2.iter().map(|v| *v as f32));
+            flat.tris.push(t.epsilon as f32);
+            flat.original.push(t.original as u32);
+        }
+        flat
+    }
+    pub fn triangle_count(&self) -> usize {
+        self.tris.len()
     }
     /// 節点と面の並びを C# Flatten と照合するための読み取り口。
     pub fn visit(

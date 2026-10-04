@@ -245,7 +245,7 @@ impl BakedMeshMap {
 mod input;
 pub use input::{MeshBakeAttributes, MeshBakeInput};
 mod bvh;
-pub use bvh::{MeshRayBvh, MeshRayHit};
+pub use bvh::{FlatBvh, MeshRayBvh, MeshRayHit};
 mod settings;
 pub use settings::*;
 mod ids;
@@ -257,11 +257,17 @@ mod surface;
 pub use surface::reconstruct_normals;
 mod bake;
 mod curvature;
+mod plan;
 mod raster;
 mod rays;
 pub use bake::{
-    bake, base_name, condition_key, estimate_bytes, material_identity, ENGINE_VERSION,
+    bake, base_name, condition_key, estimate_bytes, material_identity, MeshBakeRaw, ENGINE_VERSION,
     MAX_PARALLELISM,
 };
+pub use curvature::FlatCurvature;
+pub use plan::{
+    MeshBakeIds, MeshBakePlan, MeshBakePlanOutcome, MeshBakeProjection, MeshBakeScene, SCENE_NONE,
+};
+pub use rays::MeshRayScene;
 mod freshness;
 pub use freshness::{MeshMapCheck, MeshMapExpectation, MeshMapStaleReason, MeshMapState};

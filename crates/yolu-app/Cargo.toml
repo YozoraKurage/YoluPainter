@@ -18,6 +18,7 @@ eframe = { version = "0.36", default-features = false, features = ["wgpu", "defa
 egui = "0.36"
 egui_dock = "0.21"
 yolu-core.workspace = true
+yolu-gpu.workspace = true
 yolu-io.workspace = true
 yolu-model.workspace = true
 yolu-protocol.workspace = true
