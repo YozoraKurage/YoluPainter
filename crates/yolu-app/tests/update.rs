@@ -713,22 +713,14 @@ fn headless_saving_a_named_project_then_updating_and_updating_without_saving() {
     find_update(&mut state);
     apply(&mut state, UpdateAction::Install);
     settle(&mut state);
-    // 保存して更新: その場で保存され、そのまま入れる
+    // 保存して更新: その場で保存され、そのまま入れる。保存したことは中身で確かめる（更新時刻の比べは、時計の補正や
+    // 時刻の細かさで前後しうるので使わない）
+    let before = std::fs::read(dir.0.join("a.ylp")).unwrap();
+    state.doc.add_layer("保存して更新").unwrap();
     state.modified = true;
-    let before = std::fs::metadata(dir.0.join("a.ylp"))
-        .unwrap()
-        .modified()
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(20));
     apply(&mut state, UpdateAction::Run { save: true });
     assert!(!state.modified);
-    assert!(
-        std::fs::metadata(dir.0.join("a.ylp"))
-            .unwrap()
-            .modified()
-            .unwrap()
-            >= before
-    );
+    assert_ne!(std::fs::read(dir.0.join("a.ylp")).unwrap(), before, "保存し直した");
     assert_eq!(rig.launched().len(), 1);
     assert!(state.quit && state.update.is_quitting());
 }
