@@ -860,6 +860,9 @@ fn same_id_reload(policy: CanvasBackend) {
         0,
         "世代の巻き戻りを GPU の失敗にしない"
     );
+    // 「開きました」の知らせがキャンバスの左下の隅に重なるので、読む前に消す
+    h.state_mut().state.clear_message();
+    h.run();
     let image = h.render().unwrap();
     assert_eq!(
         &screen_pixel(&h, &image, 7.0, 5.0)[..3],

@@ -341,6 +341,8 @@ fn screen_pixel(h: &mut Harness<'_, YoluApp>, x: u32, y: u32) -> [u8; 4] {
     let doc = &h.state().state.doc;
     let view = h.state().state.view.view(rect, doc.width(), doc.height());
     let at = view.to_screen(x as f64 + 0.5, y as f64 + 0.5);
+    // 左下の知らせがキャンバスの隅に重なるので、読む前に消す
+    h.state_mut().state.clear_message();
     h.event(egui::Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");
