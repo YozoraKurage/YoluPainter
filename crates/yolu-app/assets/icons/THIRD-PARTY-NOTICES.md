@@ -112,6 +112,9 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `visibility` | fluent | `eye` | regular |
 | `visibility_off` | fluent | `eye_off` | regular |
 | `warning` | fluent | `warning` | regular |
+| `window_maximize` | fluent | `maximize` | regular |
+| `window_minimize` | fluent | `subtract` | regular |
+| `window_restore` | fluent | `square_multiple` | regular |
 
 `tools/liquify` and `tools/liquify_selected` reuse the existing Fluent UI `ink_stroke` PNG unchanged.
 
@@ -123,6 +126,8 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `uv_wireframe` is copied unchanged from the Unity package: Phosphor `polygon` (MIT).
 
 `local_fire_department` is copied unchanged from the Unity package: Fluent UI `fire` regular (MIT). It marks the Bake Mesh Maps button.
+
+`window_minimize`・`window_maximize`・`window_restore` are the standalone app's window buttons on Windows (Fluent regular; the close button is the existing `close`). They were rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

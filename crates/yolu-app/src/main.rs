@@ -19,6 +19,10 @@ fn start() -> eframe::Result {
         .with_inner_size([1600.0, 960.0])
         .with_min_inner_size(yolu_app::layout::MIN_SIZE)
         .with_icon(icon());
+    // Windows だけ OS のタイトルバーを外す（最小化・最大化・閉じるは、メニューの帯の右端に自前で置く）
+    if yolu_app::titlebar::CUSTOM_FRAME {
+        viewport = viewport.with_decorations(false);
+    }
     // 前に終わったときの窓の大きさと位置（設定のフォルダの layout.json）。位置が今のどの画面にも見えなければ、位置は戻さず大きさだけ戻す
     if let Some(window) = yolu_app::layout::saved_window() {
         viewport = viewport.with_inner_size(window.size);

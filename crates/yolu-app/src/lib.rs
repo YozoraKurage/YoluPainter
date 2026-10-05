@@ -64,6 +64,7 @@ pub mod stencil;
 pub mod subtool;
 pub mod transform;
 pub mod ui;
+pub mod titlebar;
 pub mod toast;
 pub mod update;
 pub mod usage;

@@ -17,6 +17,7 @@ use crate::pen::{PenInput, PenSample};
 use crate::settings::{Problem, Settings};
 use crate::shell;
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
+use crate::titlebar;
 use crate::ui::fonts;
 use crate::ui::menu::{self, PopupOutcome, PopupState};
 use crate::ui::theme as t;
@@ -274,6 +275,12 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
+    /// OS の枠を外した窓か（Windows の実際の窓だけ true。帯の右端に最小化・最大化・閉じるを置き、窓の縁で大きさを変える）。
+    /// 設定には出さない。試験は `set_custom_frame` で選ぶ。
+    custom_frame: bool,
+    /// 前のフレームの帯で、egui の押しを持たずに生の押しで動く部品（Live Link の印）の矩形。窓の縁は、この上の押しを譲る
+    /// （egui の当たり判定には出ないので、縁の側へ矩形で渡す）。
+    bar_press_rects: Vec<Rect>,
     settings: Option<(std::path::PathBuf, Settings)>,
     /// 前のフレームでウィンドウにフォーカスがあったか（失ったら復旧の書き置きを待たずに書く）。
     was_focused: Option<bool>,
@@ -321,6 +328,8 @@ impl YoluApp {
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.dialogs = true;
         app.fit_window = true;
+        // Windows は OS の枠を外している（main.rs）ので、帯と縁は自前
+        app.custom_frame = titlebar::CUSTOM_FRAME;
         // 状態の帯の右端に版とビルドを出す（実際の窓だけ。試験の画像がコミットごとに変わらないように）
         app.state.usage.build = Some(crate::usage::build_label());
         if let Some(dir) = crate::crash::directory() {
@@ -604,6 +613,8 @@ impl YoluApp {
             link: LiveLink::new(),
             dialogs: false,
             closing: false,
+            custom_frame: false,
+            bar_press_rects: Vec::new(),
             settings: None,
             was_focused: None,
             compositing_applied: crate::settings::Compositing::Auto,
@@ -623,6 +634,11 @@ impl YoluApp {
     pub fn fit_to_screen(mut self, on: bool) -> YoluApp {
         self.fit_window = on;
         self
+    }
+
+    /// 帯の右端のボタンと窓の縁を自前にするか（Windows の実際の窓は true。試験は Linux でも Windows の帯を描いて確かめる）。
+    pub fn set_custom_frame(&mut self, on: bool) {
+        self.custom_frame = on;
     }
 
     pub fn link(&self) -> &LiveLink {
@@ -1131,6 +1147,15 @@ impl YoluApp {
         self.state.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
         let mut pen = self.pen.drain();
+        // 窓の縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
+        // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
+        let edge = self.custom_frame.then(|| {
+            titlebar::edges(
+                &ctx,
+                self.state.is_stroking() || pen.iter().any(|s| s.contact),
+                &self.bar_press_rects,
+            )
+        });
         // 筆圧の調整の窓: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
         self.state.pressure_observe(ctx.pixels_per_point(), &pen);
         // 窓が開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
@@ -1198,11 +1223,18 @@ impl YoluApp {
         }
         let mut bar = None;
         let mut link_icon = None;
+        let custom_frame = self.custom_frame;
+        let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        let mut frame_commands = Vec::new();
+        let mut caption = None;
         egui::Panel::top("yolu.menubar")
             .exact_size(t::MENU_BAR_HEIGHT)
             .frame(Frame::NONE)
             .show(ui, |ui| {
                 let r = ui.max_rect();
+                // 自前の枠: 右端の 3 つのボタンの左までが帯の中身。何も無い所は、窓を動かす・最大化する部品（メニューの見出しなどより先に作る）
+                let content = titlebar::content_rect(r, custom_frame);
+                let drag = custom_frame.then(|| titlebar::drag_zone(ui, content));
                 let open_menu = match self.state.popup.as_ref().map(|p| p.kind) {
                     Some(PopupKind::MenuBar(i)) => Some(i),
                     _ => None,
@@ -1224,7 +1256,7 @@ impl YoluApp {
                     .as_ref()
                     .and_then(|b| b.rects.last())
                     .map_or(r.left() + 6.0, |last| last.right());
-                let room = (r.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0)).clamp(0.0, 352.0);
+                let room = (content.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0)).clamp(0.0, 352.0);
                 let style = t::LABEL_DIM.with_color(if self.state.modified {
                     t::TEXT
                 } else {
@@ -1240,8 +1272,8 @@ impl YoluApp {
                 );
                 let name_width = w::text_width(ui.painter(), &format!("{shown} •"), style);
                 let title = Rect::from_min_max(
-                    pos2(r.right() - 8.0 - name_width, r.top()),
-                    pos2(r.right() - 8.0, r.bottom()),
+                    pos2(content.right() - 8.0 - name_width, r.top()),
+                    pos2(content.right() - 8.0, r.bottom()),
                 );
                 let name = format!("{shown}{}", if self.state.modified { " •" } else { "" });
                 w::text(ui.painter(), title, &name, style, w::Align::Right);
@@ -1263,11 +1295,33 @@ impl YoluApp {
                 link_icon = Some(shell::link_icon(
                     ui,
                     r,
-                    r.right() - 8.0 - name_width,
+                    content.right() - 8.0 - name_width,
                     &self.state,
                     link_open,
                 ));
+                if let Some(drag) = drag {
+                    // 自分の押しを持つ部品（メニューの見出し・クラッシュと Live Link の印）の上の押しは、帯の操作にしない
+                    let mut blockers = bar.as_ref().map(|b| b.rects.clone()).unwrap_or_default();
+                    blockers.push(crash_rect);
+                    blockers.extend(link_icon.map(|i| i.rect));
+                    self.bar_press_rects = link_icon.map(|i| i.rect).into_iter().collect();
+                    frame_commands = titlebar::drag_commands(&drag, &blockers, maximized);
+                    caption = titlebar::buttons(ui, r, maximized, self.state.lang);
+                }
             });
+        for command in frame_commands {
+            ctx.send_viewport_cmd(command);
+        }
+        match caption {
+            // 閉じるは、メニューの「終了」と同じ道（保存していない変更の確かめ。下の終了の処理が受ける）
+            Some(titlebar::Button::Close) => self.state.apply(Action::Quit),
+            Some(button) => {
+                if let Some(command) = button.command(maximized) {
+                    ctx.send_viewport_cmd(command);
+                }
+            }
+            None => {}
+        }
         egui::Panel::top("yolu.options")
             .exact_size(t::OPTIONS_BAR_HEIGHT)
             .frame(Frame::NONE)
@@ -1350,6 +1404,10 @@ impl YoluApp {
             self.state.m2_cancel_drag();
         }
         self.popups(&ctx, &bar, link_icon);
+        // 窓の縁の上のポインタの形（キャンバスなどが決めた形を上書きする）
+        if let Some(direction) = edge.flatten() {
+            titlebar::edge_cursor(&ctx, direction);
+        }
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
