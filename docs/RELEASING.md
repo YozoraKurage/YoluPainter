@@ -48,8 +48,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 Windows の zip があるのにインストーラーが無い版も拒否します（インストーラーで入れたアプリは、更新にインストーラーを使うので、並べて出します）。
 更新情報（schema 1）には、zip・tar.gz を対象の三つ組み（`x86_64-pc-windows-msvc` など）で、インストーラーを別の鍵 `x86_64-pc-windows-msvc-setup` で載せます。
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
-URL は `https://github.com/YozoraKurage/YoluPainter-rs/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
-`https://github.com/YozoraKurage/YoluPainter-rs/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
+URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
+`https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
 フォークから配る場合は、更新クレートの `RELEASE_BASE`・`UPDATER_URL` も変更してビルドします。
 署名なしの JSON は検査専用で、更新クレートは受理しません。
 

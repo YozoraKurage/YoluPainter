@@ -4,7 +4,7 @@
 読める形式は GIMP の `.gbr`・`.gih`・`.vbr`、Photoshop の `.abr`・`.pat`、PNG の筆先、CLIP STUDIO PAINT の `.sut`。Krita のプリセット（`.kpp`）は理由を
 示して断ります。このアプリで表せない設定は黙って捨てず、ブラシの行の印とツールチップに**表せなかった項目の名前**で出します。
 読み込みは裏のスレッドで行い、読めなかったファイルは理由を状態の帯に出します。形式ごとの細かい扱い（上限・壊れたファイルの扱い）は
-[`crates/yolu-io/README.md`](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/crates/yolu-io/README.md) の「ブラシ形式の取り込み」を参照してください。
+[`crates/yolu-io/README.md`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/README.md) の「ブラシ形式の取り込み」を参照してください。
 
 ## CLIP STUDIO PAINT のブラシ（`.sut`）
 

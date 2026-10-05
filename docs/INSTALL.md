@@ -2,7 +2,7 @@
 
 [English](en/INSTALL.md)
 
-[Releases](https://github.com/YozoraKurage/YoluPainter-rs/releases) から入手します。Windows（64 ビット）には 2 つの形があります。
+[Releases](https://github.com/YozoraKurage/YoluPainter/releases) から入手します。Windows（64 ビット）には 2 つの形があります。
 
 - `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラー）: 利用者ごとにインストールします。管理者権限は要りません。入れ先は `%LOCALAPPDATA%\Programs\YoluPainter`（変えられます）で、スタートメニューに登録し、`.ylp` をこのアプリで開く関連付けは選べます。アンインストールは「設定 → アプリ」から行い、設定・ブラシ・復旧用のデータも消すかを聞かれます（聞かれなければ残ります）。画面を出さずに入れるときは `/S`、関連付けは `/ASSOC=1`（付けない `/ASSOC=0`）、入れ終わったあとにアプリを起動するときは `/RUN` を付けます。
 - `yolupainter-<版>-x86_64-pc-windows-msvc.zip`: 展開して `yolupainter.exe` を実行します（インストール不要）。

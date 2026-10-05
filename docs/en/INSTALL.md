@@ -2,7 +2,7 @@
 
 [日本語](../INSTALL.md)
 
-Download from [Releases](https://github.com/YozoraKurage/YoluPainter-rs/releases). Windows (64-bit) has two distribution formats.
+Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats.
 
 - `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. Uninstall through Settings → Apps; you will be asked whether to remove settings, brushes, and recovery data as well (they remain if no prompt is shown). Use `/S` for silent installation, `/ASSOC=1` to enable file association (`/ASSOC=0` to disable it), and `/RUN` to launch the application after installation.
 - `yolupainter-<version>-x86_64-pc-windows-msvc.zip`: extract and run `yolupainter.exe`; no installation is needed.

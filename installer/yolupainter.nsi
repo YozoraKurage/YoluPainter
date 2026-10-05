@@ -49,7 +49,7 @@ CRCCheck on
 
 !define PRODUCT "YoluPainter"
 !define PUBLISHER "Yozolab"
-!define HOMEPAGE "https://github.com/YozoraKurage/YoluPainter-rs"
+!define HOMEPAGE "https://github.com/YozoraKurage/YoluPainter"
 !define EXE "yolupainter.exe"
 !define UNINSTALLER "uninstall.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"

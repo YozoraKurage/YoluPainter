@@ -2,7 +2,7 @@
 
 # YoluPainter
 
-[![CI](https://github.com/YozoraKurage/YoluPainter-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YozoraKurage/YoluPainter-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/YozoraKurage/YoluPainter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YozoraKurage/YoluPainter/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 YoluPainter は、2D のキャンバスと 3D のモデルにテクスチャを描くペイントアプリです。
@@ -24,7 +24,7 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 
 ## ダウンロード
 
-Windows（64 ビット）のインストーラーと zip は [Releases](https://github.com/YozoraKurage/YoluPainter-rs/releases) にあります。
+Windows（64 ビット）のインストーラーと zip は [Releases](https://github.com/YozoraKurage/YoluPainter/releases) にあります。
 インストールの選択肢と更新は [docs/INSTALL.md](docs/INSTALL.md) を見てください。
 
 ## ソースからのビルド
@@ -35,14 +35,14 @@ Rust の stable と C/C++ のビルド環境が要ります。
 cargo build --release -p yolu-app --locked
 ```
 
-OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/docs/DEVELOPMENT.md) にあります。
+OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
 
 ## 文書
 
 - [機能と操作](docs/GUIDE.md)
 - [Unity との連携](docs/UNITY.md)（Live Link・Unity 版との `.ylp` の受け渡し）
 - [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)
-- [変更の記録](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/CHANGELOG.md)
+- [変更の記録](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 
 ## プライバシー
 
