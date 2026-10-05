@@ -1,5 +1,7 @@
 //! 復旧の窓: 世代の一覧（名前・セットの数・経過時間）から、開く・捨てる。起動したとき前回が正しく閉じていなければ自動で出し、
 //! ファイル ▸ 復旧… からも開く。書き置きの間隔と残す世代の数もここで選ぶ（設定のファイルに書く）。
+//! 使うディスクの量（自動・少なめ・標準・多め。数は「詳しく」の中のスライダー）も選べ、下の帯の左に、いま使っている量を短く出す
+//! （内訳はツールチップ）。
 //! 画面には名前・状態・短い理由だけを出し、説明はツールチップに置く。世代が 1 つも無いときは何も書かない（一覧の場所が空くだけ。
 //! 状態の行は、開く・捨てるが断られた理由があるときだけ出す）。
 
@@ -7,11 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{pos2, vec2, Id, Key, Rect, Sense, Vec2};
 
-use super::{pool::Row, text, RecoveryAction, INTERVAL_RANGE, KEEP_RANGE};
+use super::{pool::Row, text, DiskBudget, RecoveryAction, Usage, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE};
 use crate::lang::Lang;
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align};
+use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::ui::window::{self, Spec};
 
 /// 書き置きの間隔（秒）・残す世代の数の選択肢。
@@ -22,6 +24,9 @@ const ROW_HEIGHT: f32 = 26.0;
 const MAX_ROWS: usize = 8;
 const SETTINGS_ROW: f32 = 28.0;
 const FOOTER: f32 = 48.0;
+/// 「詳しく」の見出しの行と、開いたときのスライダーの行。
+const DETAILS_ROW: f32 = 24.0;
+const GIB: u64 = 1 << 30;
 
 /// 窓の状態。
 #[derive(Debug, Default)]
@@ -34,9 +39,23 @@ pub struct WindowState {
     pub error: Option<String>,
     pub offset: Vec2,
     pub scroll: f32,
+    /// 復旧が使っている量・上限（バイト）・ディスクの空き（分からなければ None）。一覧を読み直すたびに数え直す。
+    pub usage: Usage,
+    pub cap: u64,
+    pub free: Option<u64>,
+    /// 「詳しく」を開いているか（窓の中だけの状態）。
+    pub details: bool,
+    /// スライダーを動かしている最中の量（GB）。離したときに選びとして当てる（動かしている途中の量で世代を消さない）。
+    pub drag_gib: Option<u32>,
 }
 
 impl WindowState {
+    /// 使っている量・上限・空きを入れ替える。
+    pub fn set_usage(&mut self, usage: Usage, cap: u64, free: Option<u64>) {
+        self.usage = usage;
+        self.cap = cap;
+        self.free = free;
+    }
     /// 一覧を入れ替える。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
     pub fn set_rows(&mut self, rows: Vec<Row>) {
         let keep = self
@@ -92,9 +111,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let lang = app.lang;
-    let (interval, keep) = (
+    let (interval, keep, disk) = (
         app.recovery.settings().interval_seconds,
         app.recovery.settings().generations_to_keep,
+        app.recovery.settings().disk,
     );
     let Some(state) = app.recovery.window.as_ref() else {
         return;
@@ -105,6 +125,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let confirm = state.confirm.clone();
     let mut offset = state.offset;
     let mut scroll = state.scroll;
+    let (usage, cap, free) = (state.usage, state.cap, state.free);
+    let details = state.details;
+    let mut drag_gib = state.drag_gib;
     let visible = rows.len().clamp(1, MAX_ROWS);
     // 状態の 1 行（断られた理由）があるときだけ場所を取る
     let summary_h = if error.is_some() { 26.0 } else { 6.0 };
@@ -112,7 +135,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         + summary_h
         + visible as f32 * ROW_HEIGHT
         + 10.0
-        + 2.0 * SETTINGS_ROW
+        + 3.0 * SETTINGS_ROW
+        + DETAILS_ROW
+        + if details { t::SLIDER_ROW_HEIGHT + 4.0 } else { 0.0 }
         + FOOTER;
     let spec = Spec {
         title: lang.pick("復旧", "Recovery"),
@@ -252,7 +277,16 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             keep_values.sort_unstable();
         }
         let keep_labels: Vec<String> = keep_values.iter().map(|n| n.to_string()).collect();
-        let settings_rows: [(&str, &[String], usize, &str); 2] = [
+        // 使う量: 段の名前（数は出さない）。詳しくで量を指定しているときは、その印を末尾に
+        let mut disk_labels: Vec<String> = DiskBudget::LEVELS.iter().map(|d| d.name(lang).to_owned()).collect();
+        let disk_active = match DiskBudget::LEVELS.iter().position(|d| *d == disk) {
+            Some(i) => i,
+            None => {
+                disk_labels.push(disk.name(lang).to_owned());
+                disk_labels.len() - 1
+            }
+        };
+        let settings_rows: [(&str, &[String], usize, &str); 3] = [
             (
                 lang.pick("書き置きの間隔", "Checkpoint interval"),
                 &interval_labels,
@@ -265,6 +299,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 keep_values.iter().position(|n| *n == keep).unwrap_or(0),
                 "keep",
             ),
+            (lang.pick("使う量", "Disk space"), &disk_labels, disk_active, "disk"),
         ];
         let label_w = settings_rows
             .iter()
@@ -279,13 +314,59 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 .on_hover_text(text::settings_tip(lang, key));
             let strip = Rect::from_min_max(pos2(r.left() + label_w, r.top() + 2.0), pos2(r.right(), r.bottom() - 2.0));
             if let Some(picked) = segmented(ui, strip, id.with(key), options, active) {
-                actions.push(if key == "interval" {
-                    RecoveryAction::SetInterval(interval_values[picked])
-                } else {
-                    RecoveryAction::SetKeep(keep_values[picked])
-                });
+                match key {
+                    "interval" => actions.push(RecoveryAction::SetInterval(interval_values[picked])),
+                    "keep" => actions.push(RecoveryAction::SetKeep(keep_values[picked])),
+                    _ => {
+                        if let Some(level) = DiskBudget::LEVELS.get(picked) {
+                            drag_gib = None;
+                            actions.push(RecoveryAction::SetDisk(*level));
+                        }
+                    }
+                }
             }
             y += SETTINGS_ROW;
+        }
+        // 詳しく: 上限の量（GB）。動かしている間は選びを変えず、離したときに当てる
+        let header = Rect::from_min_size(pos2(body.left() + 14.0, y + 2.0), vec2(body.width() - 28.0, DETAILS_ROW - 4.0));
+        let open = w::subsection_header(ui, header, ("recovery", "disk-details"), lang.pick("詳しく", "Details"), details);
+        if open != details {
+            actions.push(RecoveryAction::DiskDetails(open));
+        }
+        y += DETAILS_ROW;
+        if details {
+            let r = Rect::from_min_size(pos2(body.left() + 14.0, y), vec2(body.width() - 28.0, t::SLIDER_ROW_HEIGHT));
+            let cap_gib = ((cap as f64 / GIB as f64).round() as u32).clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1);
+            let shown = drag_gib.unwrap_or(cap_gib);
+            let tip = lang.pick(
+                "復旧の世代が使ってよいディスクの量（1 GB = 1024 MB）。動かして離すと、段の選びを置き換えた量の指定になり、超えていれば古い世代から消します",
+                "The disk space the recovery generations may use (1 GB = 1024 MB). Releasing it replaces the level with a custom amount and removes the oldest generations if the limit is exceeded",
+            );
+            let out = w::slider(
+                ui,
+                r,
+                id.with("disk-total"),
+                shown as f32,
+                &SliderSpec::new(
+                    lang.pick("上限", "Limit"),
+                    DISK_GIB_RANGE.0 as f32,
+                    DISK_GIB_RANGE.1 as f32,
+                    NumberFormat::int(" GB"),
+                )
+                .tooltip(tip),
+            );
+            let value = (out.value.round() as u32).clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1);
+            if out.active {
+                drag_gib = Some(value);
+            } else if out.released {
+                drag_gib = None;
+                actions.push(RecoveryAction::SetDisk(DiskBudget::Gib(value)));
+            } else {
+                // Esc で止めた・動かしていない: 選びのまま
+                drag_gib = None;
+            }
+        } else {
+            drag_gib = None;
         }
         // 下の帯
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
@@ -294,6 +375,16 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         if !app.crash.text.is_empty() {
             let report_rect = Rect::from_min_size(pos2(footer.left() + 14.0, footer.top() + 10.0), vec2(165.0, 28.0));
             if w::button(ui, report_rect, id.with("crash-report"), lang.pick("クラッシュの報告", "Crash Report"), false, true, None, None).clicked() { app.crash.open = true; }
+        }
+        // 使っている量（短く。内訳はツールチップ）
+        {
+            let left = footer.left() + 14.0 + if app.crash.text.is_empty() { 0.0 } else { 165.0 + 12.0 };
+            let label = lang.recovery_usage_text(&usage);
+            let width = w::text_width(&p, &label, t::LABEL_DIM) + 4.0;
+            let r = Rect::from_min_size(pos2(left, footer.top() + 10.0), vec2(width, 28.0));
+            w::text(&p, r, &label, t::LABEL_DIM, Align::Left);
+            ui.interact(r, id.with("usage"), Sense::hover())
+                .on_hover_text(lang.recovery_usage_tip(&usage, cap, free));
         }
         let mut x = footer.right() - 14.0;
         let buttons: [(&str, bool, bool, &str, RecoveryAction); 3] = [
@@ -332,6 +423,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if let Some(state) = app.recovery.window.as_mut() {
         state.offset = offset;
         state.scroll = scroll;
+        state.drag_gib = drag_gib;
     }
     if closed || esc {
         actions.push(RecoveryAction::CloseWindow);
@@ -389,7 +481,7 @@ fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
 /// 選択肢の帯（1 つを選ぶ）。押された選択肢の番号を返す（今のものを押しても返さない）。名前は選択肢の文字。
 fn segmented(ui: &mut egui::Ui, r: Rect, id: Id, options: &[String], active: usize) -> Option<usize> {
     let n = options.len().max(1);
-    let seg_w = (r.width() / n as f32).min(86.0);
+    let seg_w = ((r.width() - 4.0 * (n as f32 - 1.0)) / n as f32).min(86.0);
     let mut picked = None;
     for (i, label) in options.iter().enumerate() {
         let sr = Rect::from_min_size(pos2(r.left() + i as f32 * (seg_w + 4.0), r.top()), vec2(seg_w, r.height()));

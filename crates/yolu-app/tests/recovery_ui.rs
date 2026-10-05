@@ -4,6 +4,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::*;
@@ -13,7 +14,7 @@ use egui_kittest::Harness;
 use yolu_app::engine::DVec2;
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
-use yolu_app::recovery::{RecoveryAction, RecoverySettings, Row};
+use yolu_app::recovery::{DiskBudget, DiskSpace, RecoveryAction, RecoverySettings, Row, SpaceProbe, Usage};
 use yolu_app::state::{Action, AppState};
 use yolu_app::YoluApp;
 
@@ -45,7 +46,12 @@ fn settings() -> RecoverySettings {
         strokes_between: 0,
         generations_to_keep: 3,
         directory: None,
+        ..RecoverySettings::default()
     }
+}
+/// 空きがたっぷりあるディスク（置き場のあるディスクの本当の空きに、試験が左右されないように）。
+fn plenty() -> SpaceProbe {
+    Arc::new(|_| Some(DiskSpace { total: 1000 << 30, available: 900 << 30 }))
 }
 fn paint(s: &mut AppState, x: f64) {
     let layer = s.selected_layer.unwrap();
@@ -66,6 +72,7 @@ fn write_after(s: &mut AppState, from: Instant) -> Instant {
 /// 落ちた実行を作る（世代が `count` 個の置き場を残して、終わらずに捨てる）。
 fn crashed_root(dir: &TempDir, count: usize, saved_as: Option<&Path>) {
     let mut s = AppState::new(64, 64);
+    s.recovery.set_space_probe(Some(plenty()));
     s.recovery.enable(dir.root(), settings()).unwrap();
     let mut t = Instant::now();
     for i in 0..count {
@@ -102,6 +109,7 @@ fn started(dir: &TempDir, lang: Lang) -> Harness<'static, YoluApp> {
 }
 fn started_with(dir: &TempDir, lang: Lang, settings: RecoverySettings) -> Harness<'static, YoluApp> {
     let mut state = AppState::new_in(64, 64, lang);
+    state.recovery.set_space_probe(Some(plenty()));
     state.recovery.enable(dir.root(), settings).unwrap();
     app_with(state)
 }
@@ -266,11 +274,25 @@ fn an_empty_window_writes_nothing_where_the_list_would_be_in_either_language() {
         assert_eq!(rows(&h), 0);
         let texts = window_texts(&h, window(&h));
         let known: Vec<&str> = match lang {
-            Lang::Ja => vec!["復旧", "restart_alt", "書き置きの間隔", "残す世代", "開く", "捨てる", "閉じる"],
-            Lang::En => vec!["Recovery", "restart_alt", "Checkpoint interval", "Generations kept", "Open", "Discard", "Close"],
+            Lang::Ja => vec![
+                "復旧", "restart_alt", "書き置きの間隔", "残す世代", "使う量", "自動", "少なめ", "標準", "多め", "詳しく", "開く", "捨てる", "閉じる",
+            ],
+            Lang::En => vec![
+                "Recovery", "restart_alt", "Checkpoint interval", "Generations kept", "Disk space", "Automatic", "Low", "Standard", "High",
+                "Details", "Open", "Discard", "Close",
+            ],
         };
         for text in &texts {
-            let is_value = text.ends_with('秒') || text.ends_with(" s") || text.ends_with('分') || text.ends_with(" min") || text.parse::<u32>().is_ok();
+            let is_value = text.ends_with('秒')
+                || text.ends_with(" s")
+                || text.ends_with('分')
+                || text.ends_with(" min")
+                || text.parse::<u32>().is_ok()
+                // 使っている量（短く）
+                || text.starts_with("使用中 ")
+                || text.ends_with(" in use")
+                // 詳しくの見出しの印（▸）
+                || text == "chevron_right";
             assert!(known.contains(&text.as_str()) || is_value, "名前・値のほかに文字が出ている: {text:?} in {texts:?}");
         }
     }
@@ -561,8 +583,123 @@ fn the_window_looks_the_same_in_both_languages() {
             row("", 4_000_000, 1, None),
             row("壊れた作品.ylp", 90_000_000, 3, Some("世代の長さが合いません")),
         ]);
+        window.set_usage(
+            Usage { own: 3 << 20, crashed: (6 << 30) / 5, closed: 40 << 20, others: 0 },
+            2 << 30,
+            Some(180 << 30),
+        );
         state.recovery.window = Some(window);
         let mut h = app_with(state);
         shot(&mut h, &format!("recovery_window_{}", lang.pick("ja", "en")));
+    }
+}
+
+#[test]
+fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut state = AppState::new_in(64, 64, lang);
+        let mut window = yolu_app::recovery::window::WindowState::default();
+        window.set_rows(vec![row("作品.ylp", 150_000, 2, None)]);
+        window.set_usage(
+            Usage { own: 3 << 20, crashed: (6 << 30) / 5, closed: 40 << 20, others: 0 },
+            12 << 30,
+            Some(180 << 30),
+        );
+        window.details = true;
+        state.recovery.window = Some(window);
+        state.recovery.set_space_probe(Some(plenty()));
+        let dir = TempDir::new("details-shot");
+        state
+            .recovery
+            .enable(dir.root(), RecoverySettings { disk: DiskBudget::Gib(12), ..settings() })
+            .unwrap();
+        // `enable` は窓を作り直さない（落ちた実行が無いので）。上で入れた窓がそのまま出る
+        let mut h = app_with(state);
+        shot(&mut h, &format!("recovery_window_details_{}", lang.pick("ja", "en")));
+    }
+}
+
+#[test]
+fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a_custom_amount() {
+    for lang in Lang::ALL {
+        let dir = TempDir::new("disk");
+        crashed_root(&dir, 1, None);
+        let mut h = started(&dir, lang);
+        let file = dir.0.join("recovery.conf");
+        h.state_mut().state.recovery.set_settings_path(Some(file.clone()));
+        let area = window(&h);
+        let disk = |h: &Harness<'_, YoluApp>| h.state().state.recovery.settings().disk;
+        assert_eq!(disk(&h), DiskBudget::Auto);
+        for choice in [DiskBudget::High, DiskBudget::Low, DiskBudget::Standard, DiskBudget::Auto] {
+            let at = button_in(&h, choice.name(lang), area).center();
+            click(&mut h, at);
+            assert_eq!(disk(&h), choice, "{}", choice.name(lang));
+            assert_eq!(RecoverySettings::load(&file).unwrap().0.disk, choice, "設定のファイルにも書く");
+        }
+        assert!(h.query_by_label(lang.pick("指定", "Custom")).is_none(), "指定した量でなければ、指定の印は出ない");
+        // 詳しく: 開くと窓が高くなり、上限のスライダーが出る（まだ設定は変わらない）
+        assert!(h.query_by_label(lang.pick("上限", "Limit")).is_none());
+        let details = rect_of(&h, lang.pick("詳しく", "Details"), |r| area.contains(r.center())).center();
+        click(&mut h, details);
+        assert!(h.state().state.recovery.window.as_ref().unwrap().details);
+        assert!(window(&h).height() > area.height());
+        assert_eq!(disk(&h), DiskBudget::Auto);
+        // スライダーを動かしている間は選びを変えず（世代を消さない）、離したときに指定した量にする
+        let slider = h.get_by_label(lang.pick("上限", "Limit")).rect();
+        let (from, to) = (
+            egui::pos2(slider.left() + slider.width() * 0.5, slider.bottom() - 4.0),
+            egui::pos2(slider.right() - 2.0, slider.bottom() - 4.0),
+        );
+        press(&h, from, egui::PointerButton::Primary);
+        h.step();
+        move_to(&h, to);
+        h.step();
+        h.step();
+        assert_eq!(disk(&h), DiskBudget::Auto, "動かしている途中は当てない");
+        assert!(h.state().state.recovery.window.as_ref().unwrap().drag_gib.is_some());
+        release(&h, to, egui::PointerButton::Primary);
+        h.run();
+        let DiskBudget::Gib(n) = disk(&h) else {
+            panic!("指定した量のはず: {:?}", disk(&h));
+        };
+        assert!(n > 128, "右へ動かした: {n}");
+        assert_eq!(RecoverySettings::load(&file).unwrap().0.disk, DiskBudget::Gib(n));
+        assert!(h.state().state.recovery.window.as_ref().unwrap().drag_gib.is_none());
+        assert!(h.query_by_label(lang.pick("指定", "Custom")).is_some(), "指定した量の印が選択肢の末尾に出る");
+        // 段を選び直すと、指定の印は消える
+        let area = window(&h);
+        let at = button_in(&h, DiskBudget::Standard.name(lang), area).center();
+        click(&mut h, at);
+        assert_eq!(disk(&h), DiskBudget::Standard);
+        assert!(h.query_by_label(lang.pick("指定", "Custom")).is_none());
+    }
+}
+
+#[test]
+fn the_used_amount_is_one_short_text_and_its_tooltip_breaks_it_down() {
+    for lang in Lang::ALL {
+        let dir = TempDir::new("usage");
+        crashed_root(&dir, 2, None);
+        let mut h = started(&dir, lang);
+        let area = window(&h);
+        let (usage, cap, free) = {
+            let w = h.state().state.recovery.window.as_ref().unwrap();
+            (w.usage, w.cap, w.free)
+        };
+        assert!(usage.crashed > 0 && usage.own < usage.total(), "{usage:?}");
+        assert_eq!(free, Some(900 << 30), "偽のディスクの空き");
+        let texts = window_texts(&h, area);
+        let shown = lang.recovery_usage_text(&usage);
+        assert!(texts.contains(&shown), "{shown}: {texts:?}");
+        assert!(shown.chars().count() <= 24 && has_japanese(&shown) == (lang == Lang::Ja), "{shown}");
+        // ツールチップに内訳（この実行・落ちた実行・閉じた実行・上限・空き）
+        let at = egui::pos2(area.left() + 14.0 + 20.0, area.bottom() - 26.0);
+        hover_and_wait(&mut h, at);
+        let tip = lang.recovery_usage_tip(&usage, cap, free);
+        assert!(h.query_by_label_contains(lang.pick("この実行", "This session")).is_some(), "内訳のツールチップ");
+        assert!(h.query_by_label(&tip).is_some(), "内訳は 1 つのツールチップに、上の文のとおり出る");
+        for part in [lang.pick("落ちた実行", "Crashed sessions"), lang.pick("上限", "Limit"), lang.pick("ディスクの空き", "Free on disk")] {
+            assert!(tip.contains(part), "{part}: {tip}");
+        }
     }
 }

@@ -10,7 +10,7 @@
 //! <root>/generations/<世代>/<名前>      （manifest の見出しが -1 の世代だけ。中身を世代の中に持つ）
 //! <root>/contents/<SHA-256>.bin   （見出しが -2 の世代の中身。同じ中身は世代をまたいで 1 つを共有する）
 //! <root>/.save.lock               書き込みの排他（OS のロック。落ちて残っても邪魔にならない）
-//! <root>/.staging-<世代>/         作っている途中の世代
+//! <root>/.staging-<世代>/         作っている途中の世代（落ちて残ったものは `reclaim_abandoned` が片付ける）
 //! ```
 //!
 //! 世代の名前は `yyyyMMddTHHmmssfff-<乱数 32 桁>`（UTC）で、名前の順が時刻の順。manifest は `DOTPAINT-MANIFEST-1|2` の見出しと
@@ -46,6 +46,22 @@ const MANIFEST_LIMIT: u64 = 1024 * 1024;
 /// 世代の全エントリ（`.ylp` のエントリ名 → 中身）。
 pub type Files = BTreeMap<String, Arc<[u8]>>;
 
+/// 書く前の空きの確かめ。これから**新しく**書くバイト数（共有の中身で置き場にもうあるものは含めない。manifest・ポインタの小さな
+/// ものも含めない）を渡され、書けないなら `LowSpace` を返す。確定の前、中身を書き始める前に 1 回だけ呼ばれ、Err なら何も
+/// 書かずに `StoreError::LowSpace` で断る（`current` は前のまま）。
+pub type SpaceGuard = Arc<dyn Fn(u64) -> Result<(), LowSpace> + Send + Sync>;
+
+/// 空きが足りなくて書かなかった理由（バイト数）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LowSpace {
+    /// 置き場のあるボリュームの空き。
+    pub available: u64,
+    /// 今回新しく書くバイト数。
+    pub needed: u64,
+    /// 書いたあとも空けておく量。
+    pub reserve: u64,
+}
+
 /// 試験用の障害注入。段の名前（`file:<名前>`・`verified`・`generation-renamed`・`before-pointer`・`after-pointer`・
 /// `prune-generation:<世代>`・`prune-content:<札>`）で呼ばれ、Err を返すとその段で失敗する。整理の段の失敗は確定した保存を
 /// 取り消さず、握りつぶす。
@@ -68,6 +84,8 @@ pub enum StoreError {
     Budget(String),
     /// 呼び出しの誤り（保持数・空の世代など）。
     InvalidArgument(&'static str),
+    /// ディスクの空きが少なく、書かなかった（`SpaceGuard` の断り）。
+    LowSpace(LowSpace),
     Io(io::Error),
 }
 impl std::fmt::Display for StoreError {
@@ -81,6 +99,11 @@ impl std::fmt::Display for StoreError {
             Self::Busy => f.write_str("別の書き込みが置き場を使っています"),
             Self::Corrupt(why) | Self::Budget(why) => f.write_str(why),
             Self::InvalidArgument(what) => write!(f, "不正な指定です: {what}"),
+            Self::LowSpace(low) => write!(
+                f,
+                "ディスクの空きが少ないので書きませんでした（空き {} バイト、新しく書く量 {}、残す量 {}）",
+                low.available, low.needed, low.reserve
+            ),
             Self::Io(e) => e.fmt(f),
         }
     }
@@ -151,6 +174,29 @@ pub struct GenerationInfo {
     pub problem: Option<String>,
 }
 
+/// 世代 1 つがディスクで占めるもの（`GenerationStore::footprint`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerationFootprint {
+    pub id: String,
+    /// 世代の名前から読んだ作った時刻（UTC の Unix ミリ秒）。
+    pub time_ms: Option<u64>,
+    /// 世代のフォルダの中のバイト数。中身を世代の中に持つ世代（見出し -1）は中身ぜんぶ、共有の世代（見出し -2）は manifest だけ。
+    pub own_bytes: u64,
+    /// 共有の中身（札と長さ。同じ札は 1 つにまとめる）。この世代を消しても、ほかの世代が使う中身は消えない。
+    pub contents: Vec<(String, u64)>,
+    /// 読めない・壊れている理由。manifest を読めない世代は、使う中身が分からないので `contents` は空。
+    pub problem: Option<String>,
+}
+
+/// 置き場がディスクで占めるもの。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Footprint {
+    /// 世代（新しい順）。
+    pub generations: Vec<GenerationFootprint>,
+    /// 置き場のフォルダ全体のバイト数（作りかけ・どの世代も使わない中身・manifest・ポインタ・ロックのファイルを含む）。
+    pub total_bytes: u64,
+}
+
 /// 復旧用の世代の置き場。
 #[derive(Clone)]
 pub struct GenerationStore {
@@ -158,6 +204,8 @@ pub struct GenerationStore {
     fault: Option<Fault>,
     /// 書き込みの予算（1 エントリ・合計の上限バイト数）。`None` は既定（`MAX_ENTRY_BYTES`・`MAX_TOTAL_BYTES`）。
     budget: Option<(u64, u64)>,
+    /// 書く前の空きの確かめ。`None` は確かめない。
+    space: Option<SpaceGuard>,
 }
 impl std::fmt::Debug for GenerationStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -165,6 +213,7 @@ impl std::fmt::Debug for GenerationStore {
             .field("root", &self.root)
             .field("fault", &self.fault.is_some())
             .field("budget", &self.budget)
+            .field("space_guard", &self.space.is_some())
             .finish()
     }
 }
@@ -188,7 +237,14 @@ impl GenerationStore {
             root: root.into(),
             fault: None,
             budget: None,
+            space: None,
         }
+    }
+    /// 書く前の空きの確かめを付ける（`SpaceGuard`）。確かめは新しく書くバイト数を見るので、前の世代と同じ中身だけの確定は
+    /// 0 バイトで確かめる。
+    pub fn with_space_guard(mut self, guard: SpaceGuard) -> Self {
+        self.space = Some(guard);
+        self
     }
     /// 書き込みの予算を小さくする（1 エントリの上限・合計の上限、バイト数）。既定の上限より大きくはできない。試験が、大きな領域を
     /// 確保せずに予算の断りを確かめるための口。
@@ -404,10 +460,29 @@ impl GenerationStore {
         let mut written = 0u64;
         let mut reused = 0usize;
         let mut verified: HashSet<String> = HashSet::new();
+        // 札は 1 度だけ計算する（空きの確かめも、書く段も、同じ札を使う）
+        let digests: Vec<String> = files.values().map(|d| hash(d)).collect();
+        if let Some(guard) = &self.space {
+            let mut needed = 0u64;
+            let mut counted: HashSet<&str> = HashSet::new();
+            for (data, digest) in files.values().zip(&digests) {
+                let is_new = if share {
+                    // 同じ中身が 2 つの名前にあっても 1 度しか書かない。置き場にあるものは書かない
+                    counted.insert(digest.as_str())
+                        && fs::symlink_metadata(self.content_path(digest))
+                            .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+                } else {
+                    true
+                };
+                if is_new {
+                    needed += data.len() as u64;
+                }
+            }
+            guard(needed).map_err(StoreError::LowSpace)?;
+        }
         let mut manifest = String::from(if share { SHARED } else { FLAT });
         manifest.push('\n');
-        for (name, data) in files {
-            let digest = hash(data);
+        for ((name, data), digest) in files.iter().zip(digests) {
             if share {
                 let path = self.content_path(&digest);
                 fs::create_dir_all(path.parent().expect("contents の下"))?;
@@ -620,6 +695,69 @@ impl GenerationStore {
         Ok(())
     }
 
+    /// 置き場のフォルダ全体のバイト数（ファイルの長さの合計。作りかけ・どの世代も使わない中身・ポインタ・ロックのファイルを含む。
+    /// シンボリックリンクは辿らない）。
+    pub fn disk_bytes(&self) -> u64 {
+        tree_bytes(&self.root)
+    }
+
+    /// 置き場がディスクで占めるものを数える（中身のハッシュは読まない。manifest とファイルの長さだけ）。置き場がまだ無ければ空。
+    /// 消す順を決める側が、世代ごとの「消すと空く量」（自分だけが使う中身）を出せるよう、共有の中身の札と長さを世代ごとに返す。
+    pub fn footprint(&self) -> R<Footprint> {
+        let dir = self.generations_dir();
+        let mut names = Vec::new();
+        match fs::read_dir(&dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    let entry = entry?;
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if validate_generation(&name).is_ok()
+                        && entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    {
+                        names.push(name);
+                    }
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        names.sort_by(|a, b| b.cmp(a));
+        let generations = names
+            .into_iter()
+            .map(|id| {
+                let own_bytes = tree_bytes(&dir.join(&id));
+                let parsed = self
+                    .read_manifest_bytes(&id)
+                    .and_then(|bytes| parse_manifest(&bytes));
+                let (contents, problem) = match parsed {
+                    Ok(manifest) if manifest.shared => {
+                        let mut seen = HashSet::new();
+                        let contents = manifest
+                            .entries
+                            .iter()
+                            .filter(|e| seen.insert(e.hash.clone()))
+                            .map(|e| (e.hash.clone(), e.len))
+                            .collect();
+                        (contents, None)
+                    }
+                    Ok(_) => (Vec::new(), None),
+                    Err(e) => (Vec::new(), Some(e.to_string())),
+                };
+                GenerationFootprint {
+                    time_ms: generation_time_ms(&id),
+                    own_bytes,
+                    contents,
+                    problem,
+                    id,
+                }
+            })
+            .collect();
+        Ok(Footprint {
+            generations,
+            total_bytes: tree_bytes(&self.root),
+        })
+    }
+
     /// 世代を 1 つ捨てる。`current`・`previous` がその世代を指していれば、残った一番新しい世代へ付け替えてから消す（残りが
     /// 無ければポインタも消す）。共有の中身は、どの世代も使わなくなったものだけ消す。
     pub fn remove_generation(&self, id: &str) -> R<()> {
@@ -671,6 +809,45 @@ impl GenerationStore {
         fs::remove_dir_all(dir)?;
         let _ = self.prune_contents();
         Ok(())
+    }
+
+    /// 落ちた書き込みの残りを片付ける。`.save.lock` を取れたとき（この置き場へ書いている道具が今は無いとき）だけ、世代にならなかった
+    /// `.staging-*` フォルダ（作りかけの世代。`<札>.pending` を含む）を消し、そのあと、どの世代も使わない共有の中身を消す。
+    /// 書き込みは確定の間ずっとロックを持つので、ロックが取れて残っている `.staging-*` は、落ちた・パニックした書き込みの残り。
+    /// 世代（`current`・`previous` が指すものを含む）には触れない。ロックを持たれていれば `Busy`。返すのは減ったバイト数。
+    /// 残りが 1 つでもあると `prune_contents` は何も消せないので、世代を消して量を減らす側は、先にこれを呼ぶ。
+    pub fn reclaim_abandoned(&self) -> R<u64> {
+        if !self.root.is_dir() {
+            return Ok(0);
+        }
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.root.join(".save.lock"))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Err(StoreError::Busy),
+            Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+        }
+        let before = self.disk_bytes();
+        let result = self.reclaim_locked();
+        let _ = lock.unlock();
+        result?;
+        Ok(before.saturating_sub(self.disk_bytes()))
+    }
+    fn reclaim_locked(&self) -> R<()> {
+        for entry in fs::read_dir(&self.root)?.filter_map(|e| e.ok()) {
+            if !entry.file_name().to_string_lossy().starts_with(".staging-") {
+                continue;
+            }
+            // 本物のフォルダだけ（シンボリックリンクは辿らない）
+            if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.is_dir()) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+        self.prune_contents()
     }
 
     /// 超えた分の古い世代を消す。守るのは `current`・`previous` と、新しい順に数が `keep` になるまで。
@@ -762,6 +939,28 @@ impl GenerationStore {
         }
         Ok(())
     }
+}
+
+/// フォルダの中のファイルの長さの合計（シンボリックリンクは辿らず、読めないものは数えない）。
+fn tree_bytes(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 fn token_of(id: &str, manifest: &[u8]) -> String {

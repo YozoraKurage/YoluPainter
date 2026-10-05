@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use yolu_io::StoreError;
 
-use super::RecoveryError;
+use super::{RecoveryError, Usage};
 use crate::lang::Lang;
 
 /// 復旧から開いたプロジェクトの名前（保存していない）。
@@ -32,6 +32,7 @@ impl Lang {
     pub fn store_error(self, error: &StoreError) -> String {
         match error {
             StoreError::Io(e) => self.file_error(e),
+            StoreError::LowSpace(_) => self.pick("ディスクの空きが少ない", "Low disk space").into(),
             _ if self == Self::Ja => error.to_string(),
             StoreError::NoGeneration => "No generation".into(),
             StoreError::AlreadyExists => "The folder already has a generation".into(),
@@ -43,8 +44,15 @@ impl Lang {
         }
     }
 
-    /// 書き置きに失敗したときの状態の帯の文。
+    /// 書き置きに失敗したときの状態の帯の文。空きが少なくて書かなかったときは、失敗ではなく見送り。
     pub fn recovery_failed(self, error: &RecoveryError) -> String {
+        if matches!(error, RecoveryError::Store(StoreError::LowSpace(_))) {
+            return format!(
+                "{}: {}",
+                self.pick("復旧用の書き置きを見送りました", "Recovery checkpoint skipped"),
+                self.recovery_error(error)
+            );
+        }
         format!(
             "{}: {}",
             self.pick("復旧用の書き置きに失敗", "Recovery checkpoint failed"),
@@ -104,6 +112,30 @@ impl Lang {
         )
     }
 
+    /// 窓の下の帯に出す、復旧が使っている量（短く。内訳はツールチップ）。
+    pub fn recovery_usage_text(self, usage: &Usage) -> String {
+        let used = bytes_text(usage.total());
+        self.pick(format!("使用中 {used}"), format!("{used} in use"))
+    }
+
+    /// 使っている量の内訳（ツールチップ）。`cap` は上限、`free` はディスクの空き（分からなければ None）。
+    pub fn recovery_usage_tip(self, usage: &Usage, cap: u64, free: Option<u64>) -> String {
+        let mut lines = vec![
+            self.pick("復旧が使っているディスクの量", "Disk space used by recovery").to_owned(),
+            format!("{}  {}", self.pick("この実行", "This session"), bytes_text(usage.own)),
+            format!("{}  {}", self.pick("落ちた実行", "Crashed sessions"), bytes_text(usage.crashed)),
+            format!("{}  {}", self.pick("閉じた実行", "Closed sessions"), bytes_text(usage.closed)),
+        ];
+        if usage.others > 0 {
+            lines.push(format!("{}  {}", self.pick("ほかのウィンドウ", "Other windows"), bytes_text(usage.others)));
+        }
+        lines.push(format!("{}  {}", self.pick("上限", "Limit"), bytes_text(cap)));
+        if let Some(free) = free {
+            lines.push(format!("{}  {}", self.pick("ディスクの空き", "Free on disk"), bytes_text(free)));
+        }
+        lines.join("\n")
+    }
+
     /// 世代の経過時間（一覧の右の列）。
     pub fn age_text(self, age: Duration) -> String {
         let s = age.as_secs();
@@ -124,12 +156,35 @@ impl Lang {
     }
 }
 
-/// 設定の名前のツールチップ（`key` は "interval"・"keep"）。いま選んでいる値は帯に出ているので、繰り返さない。
+/// バイト数を短く（GB は 10 未満で小数 1 桁。1 GB = 1024 MB）。
+pub fn bytes_text(bytes: u64) -> String {
+    const KIB: u64 = 1 << 10;
+    const MIB: u64 = 1 << 20;
+    const GIB: u64 = 1 << 30;
+    if bytes >= GIB {
+        let gb = bytes as f64 / GIB as f64;
+        if gb < 10.0 {
+            format!("{gb:.1} GB")
+        } else {
+            format!("{gb:.0} GB")
+        }
+    } else if bytes >= MIB {
+        format!("{} MB", (bytes + MIB / 2) / MIB)
+    } else {
+        format!("{} KB", bytes / KIB)
+    }
+}
+
+/// 設定の名前のツールチップ（`key` は "interval"・"keep"・"disk"）。いま選んでいる値は帯に出ているので、繰り返さない。
 pub fn settings_tip(lang: Lang, key: &str) -> &'static str {
     match key {
         "interval" => lang.pick(
             "変更があってから書き置くまでの時間",
             "Time from a change to its checkpoint",
+        ),
+        "disk" => lang.pick(
+            "復旧の世代がディスクに使ってよい量。超えたぶんは古い世代から消します（この実行の最新と、落ちた実行ごとの最新は残します）。自動は 2 GB と、復旧が使えるディスクの 10% の小さいほうです。空きが少ないときは、量に関わらず書き置きを見送ります",
+            "How much disk space the recovery generations may use. Beyond it, the oldest generations are removed (the newest of this session and of each crashed session stay). Automatic is 2 GB or 10% of the disk recovery can use, whichever is smaller. When the disk is nearly full, checkpoints are skipped whatever the limit",
         ),
         _ => lang.pick(
             "残しておく世代の数（超えた分は古いものから整理）",
@@ -165,6 +220,51 @@ mod tests {
                 assert!(!text.chars().any(|c| c.is_ascii_digit()), "いま選んでいる値は帯に出ている。繰り返さない: {text}");
             }
             assert_eq!(interval.is_ascii() && keep.is_ascii(), lang == Lang::En);
+        }
+    }
+
+    #[test]
+    fn byte_amounts_are_short_and_use_the_units_people_see_in_the_file_manager() {
+        assert_eq!(bytes_text(0), "0 KB");
+        assert_eq!(bytes_text(300 * 1024), "300 KB");
+        assert_eq!(bytes_text(5 * (1 << 20)), "5 MB");
+        assert_eq!(bytes_text((1 << 30) - 1), "1024 MB", "GB の手前は MB のまま（丸めて 1.0 GB にしない）");
+        assert_eq!(bytes_text(1 << 30), "1.0 GB");
+        assert_eq!(bytes_text(3 * (1 << 29)), "1.5 GB");
+        assert_eq!(bytes_text(12 * (1 << 30)), "12 GB");
+    }
+
+    #[test]
+    fn the_usage_reads_short_in_both_languages_and_the_tooltip_breaks_it_down() {
+        let usage = Usage { own: 3 << 20, crashed: 2 << 30, closed: 1 << 20, others: 0 };
+        assert_eq!(Lang::Ja.recovery_usage_text(&usage), "使用中 2.0 GB");
+        assert_eq!(Lang::En.recovery_usage_text(&usage), "2.0 GB in use");
+        let tip = Lang::En.recovery_usage_tip(&usage, 2 << 30, Some(50 << 30));
+        for line in ["This session  3 MB", "Crashed sessions  2.0 GB", "Closed sessions  1 MB", "Limit  2.0 GB", "Free on disk  50 GB"] {
+            assert!(tip.contains(line), "{line}: {tip}");
+        }
+        assert!(!tip.contains("Other windows"), "別のウィンドウが無ければ出さない");
+        assert!(!Lang::En.recovery_usage_tip(&usage, 1, None).contains("Free on disk"), "空きが分からなければ出さない");
+        let other = Usage { others: 5 << 20, ..usage };
+        assert!(Lang::Ja.recovery_usage_tip(&other, 1, None).contains("ほかのウィンドウ  5 MB"));
+        for lang in Lang::ALL {
+            let tip = lang.recovery_usage_tip(&other, 2 << 30, Some(1 << 30));
+            assert_eq!(has_japanese(&tip), lang == Lang::Ja, "{tip}");
+        }
+    }
+
+    fn has_japanese(text: &str) -> bool {
+        text.chars().any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
+    }
+
+    #[test]
+    fn a_skipped_checkpoint_is_a_short_reason_without_numbers_not_a_failure() {
+        let low = RecoveryError::Store(StoreError::LowSpace(yolu_io::LowSpace { available: 5, needed: 9, reserve: 7 }));
+        for lang in Lang::ALL {
+            let text = lang.recovery_failed(&low);
+            assert!(!text.chars().any(|c| c.is_ascii_digit()), "状態の帯に数を出さない: {text}");
+            assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
+            assert!(!text.contains(lang.pick("失敗", "failed")), "見送りであって失敗ではない: {text}");
         }
     }
 }

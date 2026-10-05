@@ -23,8 +23,9 @@ pub use project::{
     MODEL_PATH_MAX,
 };
 pub use generation::{
-    generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Generation,
-    GenerationInfo, GenerationStore, RecoveryInfo, StoreError, INFO_LIMIT, INFO_NAME,
+    generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
+    GenerationFootprint, GenerationInfo, GenerationStore, LowSpace, RecoveryInfo, SpaceGuard,
+    StoreError, INFO_LIMIT, INFO_NAME,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;

@@ -21,6 +21,7 @@ use yolu_io::{
     INFO_NAME,
 };
 
+use super::quota::{self, Limits};
 use super::RecoveryError;
 
 pub(crate) const LOCK: &str = "session.lock";
@@ -82,7 +83,7 @@ pub struct Started {
     pub skipped: Option<io::Error>,
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -112,7 +113,7 @@ fn is_real_dir(path: &Path) -> bool {
 }
 
 /// 根の下の、プールとして扱うフォルダ（名前の形が合い、印か世代の置き場を持つ。シンボリックリンクは除く）。
-fn pools(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn pools(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
@@ -218,8 +219,8 @@ fn settle(pool: &Path) -> Settled {
 
 /// 前の実行の後片付けをして、この実行のプールを作る。落ちた実行のプール（印が残っている）は `crashed` に替え、保存して
 /// いない作業の世代があるものを返す。閉じたプールは `keep` の数に整理する（`None` は整理しない: 利用者が選んだ数が分からない
-/// とき）。
-pub fn start(root: &Path, keep: Option<usize>) -> Result<Started, RecoveryError> {
+/// とき）。続けて、ディスクの上限（`limits`。`None` は整理しない: 利用者が選んだ量が分からないとき）を超えていれば古い世代から消す。
+pub fn start(root: &Path, keep: Option<usize>, limits: Option<&Limits>) -> Result<Started, RecoveryError> {
     fs::create_dir_all(root)?;
     let mut crashed = Vec::new();
     let mut skipped: Option<io::Error> = None;
@@ -250,6 +251,9 @@ pub fn start(root: &Path, keep: Option<usize>) -> Result<Started, RecoveryError>
     }
     if let Some(keep) = keep {
         let _ = sweep(root, keep, None);
+    }
+    if let Some(limits) = limits {
+        quota::enforce(root, limits, None, now_ms());
     }
     let dir = root.join(format!("{}-{}", utc_stamp(now_ms()), unique()));
     fs::create_dir(&dir)?;
@@ -301,7 +305,8 @@ impl Session {
         Ok(())
     }
     /// 正しく閉じる: 印を消す（世代は残す。無ければプールごと消す）。閉じたプールを `keep` の数に整理する（`None` は整理しない）。
-    pub fn close_clean(mut self, root: &Path, keep: Option<usize>) {
+    /// ディスクの上限（`limits`）の整理では、この実行の最新の世代を守る（閉じたあとの最初の起動から、ほかの閉じた世代と同じ扱い）。
+    pub fn close_clean(mut self, root: &Path, keep: Option<usize>, limits: Option<&Limits>) {
         drop(self.lock.take());
         let _ = fs::remove_file(self.dir.join(LOCK));
         let empty = GenerationStore::new(&self.dir)
@@ -313,6 +318,9 @@ impl Session {
         }
         if let Some(keep) = keep {
             let _ = sweep(root, keep, None);
+        }
+        if let Some(limits) = limits {
+            quota::enforce(root, limits, Some(&self.dir), now_ms());
         }
     }
 }

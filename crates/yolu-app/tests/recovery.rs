@@ -4,13 +4,13 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use yolu_app::engine::{composite_pixel, DVec2, Document, SelectionMask};
 use yolu_app::lang::Lang;
-use yolu_app::recovery::{Problem, RecoveryAction, RecoverySettings};
+use yolu_app::recovery::{DiskBudget, DiskSpace, Problem, RecoveryAction, RecoverySettings, SpaceProbe};
 use yolu_app::state::{Action, AppState, DialogRequest};
 use yolu_io::{Fault, GenerationStore, Project, INFO_NAME};
 
@@ -42,10 +42,17 @@ fn settings(interval: u32, keep: u32, strokes: u32) -> RecoverySettings {
         strokes_between: strokes,
         generations_to_keep: keep,
         directory: None,
+        ..RecoverySettings::default()
     }
 }
+/// 空きがたっぷりあるディスク（試験が、置き場のあるディスクの本当の空きに左右されないように）。
+fn plenty() -> SpaceProbe {
+    Arc::new(|_| Some(DiskSpace { total: 1000 * GIB, available: 900 * GIB }))
+}
+const GIB: u64 = 1 << 30;
 fn session_with(root: &Path, s: RecoverySettings, lang: Lang) -> AppState {
     let mut state = AppState::new_in(64, 64, lang);
+    state.recovery.set_space_probe(Some(plenty()));
     state.recovery.enable(root.to_path_buf(), s).unwrap();
     state
 }
@@ -931,6 +938,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
     for (size, layers) in [(2048u32, 2usize), (4096, 2), (4096, 6)] {
         let dir = TempDir::new("measure");
         let mut s = AppState::new(size, size);
+        s.recovery.set_space_probe(Some(plenty()));
         s.recovery.enable(dir.root(), settings(15, 3, 0)).unwrap();
         let (mut doc, _) = yolu_app::state::blank_document(size, size);
         doc.set_source_budget_bytes(2 << 30).unwrap();
@@ -1264,6 +1272,7 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
         std::fs::write(&conf, vec![b'a'; 5000]).unwrap();
         let bytes_before = std::fs::read(&conf).unwrap();
         let mut s = AppState::new_in(64, 64, lang);
+        s.recovery.set_space_probe(Some(plenty()));
         let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
         assert!(matches!(problems.first(), Some(Problem::Unreadable(_))), "{problems:?}");
         let reason = lang.recovery_settings_problem(&problems[0]);
@@ -1305,6 +1314,7 @@ fn headless_a_number_chosen_in_the_window_while_the_settings_are_unreadable_appl
     let conf = dir.0.join("recovery.conf");
     std::fs::write(&conf, [0xff, 0xfe, 0xfd]).unwrap(); // UTF-8 ではない
     let mut s = AppState::new_in(64, 64, Lang::En);
+    s.recovery.set_space_probe(Some(plenty()));
     let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
     assert!(matches!(problems[0], Problem::Unreadable(_)));
     s.recovery_apply(RecoveryAction::SetKeep(2));
@@ -1320,6 +1330,7 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     let elsewhere = dir.0.join("別の置き場");
     std::fs::write(&conf, format!("interval=20\ngenerations=4\ndirectory={}\n", elsewhere.display())).unwrap();
     let mut s = AppState::new_in(64, 64, Lang::Ja);
+    s.recovery.set_space_probe(Some(plenty()));
     let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!((s.recovery.settings().interval_seconds, s.recovery.settings().generations_to_keep), (20, 4));
@@ -1330,6 +1341,7 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     // 設定のファイルが無ければ、同じフォルダの recovery が置き場（既定）
     let fresh = TempDir::new("conf-none");
     let mut s = AppState::new_in(64, 64, Lang::Ja);
+    s.recovery.set_space_probe(Some(plenty()));
     assert!(s.recovery.start_from(Some(fresh.0.join("recovery.conf"))).unwrap().is_empty());
     assert!(s.recovery.session_dir().unwrap().starts_with(fresh.root()));
 }
@@ -1346,6 +1358,7 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     assert!(pool.join("session.lock").is_file());
     std::fs::create_dir(pool.join("crashed")).unwrap();
     let mut s2 = AppState::new_in(64, 64, Lang::Ja);
+    s2.recovery.set_space_probe(Some(plenty()));
     let problems = s2.recovery.enable(dir.root(), settings(15, 3, 0)).unwrap();
     assert!(matches!(problems.first(), Some(Problem::PreviousRun(_))), "{problems:?}");
     let text = Lang::Ja.recovery_settings_problem(&problems[0]);
@@ -1518,4 +1531,353 @@ fn headless_the_recovered_name_follows_the_screen_language_until_it_is_saved() {
     let mut fresh = AppState::new_in(64, 64, Lang::Ja);
     fresh.set_language(Lang::En);
     assert_eq!(fresh.project_name, "Untitled");
+}
+
+// ───────── ディスクの使いすぎを防ぐ（使う量の上限・空きの守り・落ちた実行の最新） ─────────
+
+/// 空きを後から変えられる、偽のディスク（容量 1000 GiB。空けておく量は 10 GiB）。
+fn disk_with_free(available: Arc<AtomicU64>) -> SpaceProbe {
+    Arc::new(move |_| {
+        Some(DiskSpace {
+            total: 1000 * GIB,
+            available: available.load(Ordering::SeqCst),
+        })
+    })
+}
+fn used(root: &Path) -> u64 {
+    yolu_app::recovery::usage(root, None).total()
+}
+/// 落ちた実行を作る: 世代を `count` 個書いて、閉じずに捨てる。
+fn crashed_run(root: &Path, count: usize) {
+    let mut s = session_with(root, settings(15, 20, 0), Lang::Ja);
+    let mut t = Instant::now();
+    for i in 0..count {
+        paint(&mut s, 8.0 + 4.0 * i as f64);
+        t = write_after(&mut s, t + Duration::from_secs(100));
+    }
+    crash(s);
+}
+fn rows_of(root: &Path) -> Vec<yolu_app::recovery::Row> {
+    let mut s = session_with(root, settings(15, 1000, 0), Lang::Ja);
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    let rows = s.recovery.window.as_ref().unwrap().rows.clone();
+    s.recovery_shutdown();
+    rows
+}
+
+#[test]
+fn headless_a_nearly_full_disk_skips_the_checkpoint_with_a_short_reason_and_it_resumes_when_space_returns() {
+    for lang in Lang::ALL {
+        let dir = TempDir::new("lowdisk");
+        let mut s = session_with(&dir.root(), settings(15, 3, 0), lang);
+        let free = Arc::new(AtomicU64::new(10 * GIB - 1));
+        s.recovery.set_space_probe(Some(disk_with_free(free.clone())));
+        paint(&mut s, 10.0);
+        let t = write_after(&mut s, Instant::now());
+        // 空けておく量（10 GiB）を割っている: 書かず、短い理由を帯に出す（数は出さない）。失敗ではなく見送り
+        assert_eq!((s.recovery.checkpoints(), generations(&s)), (0, 0), "{}", s.message);
+        assert_eq!(
+            s.message,
+            lang.pick(
+                "復旧用の書き置きを見送りました: ディスクの空きが少ない",
+                "Recovery checkpoint skipped: Low disk space"
+            )
+        );
+        assert!(!s.recovery.is_marked_dirty(), "書いていないので、保存していない作業の世代の印は立てない");
+        let session = s.recovery.session_dir().unwrap().to_path_buf();
+        assert_eq!(
+            std::fs::read_dir(&session).unwrap().filter(|e| {
+                let name = e.as_ref().unwrap().file_name().to_string_lossy().into_owned();
+                name.starts_with(".staging-") || name == "contents"
+            }).count(),
+            0,
+            "作りかけも中身も置かない"
+        );
+        // 描くのは止まらない
+        paint(&mut s, 20.0);
+        assert!(s.doc.can_undo());
+        // 空けておく量は割らないが、新しく書く量を足すと割る: これも書かない（書く量を見ている）
+        free.store(10 * GIB + 10, Ordering::SeqCst);
+        let t = write_after(&mut s, t + Duration::from_secs(100));
+        assert_eq!(s.recovery.checkpoints(), 0, "10 バイトの余裕では、世代の中身が入らない");
+        // 空きが戻れば、次の頼みで書く。戻ったことを知らせる
+        free.store(900 * GIB, Ordering::SeqCst);
+        write_after(&mut s, t + Duration::from_secs(100));
+        assert_eq!(s.recovery.checkpoints(), 1);
+        assert_eq!(s.message, lang.recovery_working_again());
+        assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(&s.doc, 20));
+    }
+}
+
+#[test]
+fn headless_a_checkpoint_refused_for_low_space_does_nothing_but_look_at_the_free_space() {
+    let dir = TempDir::new("lowdisk-cheap");
+    let mut s = session_with(&dir.root(), settings(15, 3, 0), Lang::Ja);
+    let free = Arc::new(AtomicU64::new(900 * GIB));
+    s.recovery.set_space_probe(Some(disk_with_free(free.clone())));
+    paint(&mut s, 10.0);
+    let mut t = write_after(&mut s, Instant::now());
+    assert_eq!(s.recovery.checkpoints(), 1);
+    // 書き込みの段（組み立ての前の `snapshot` から、確定の前の読み直しの `verified` まで）を数える
+    let stages = Arc::new(AtomicUsize::new(0));
+    let seen = stages.clone();
+    s.recovery.set_fault(Some(fault(move |_| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    })));
+    // 直前の世代の中身が外で変わっていて、読み直せば「外で変わった」になる置き場でも、空きが少ないあいだは、それを読みに行かず
+    // 空きの断りを答える（毎回の間隔で来る断るほうの道が、組み立てもハッシュも読み直しもしない）
+    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let newest = GenerationStore::new(&pool).list().unwrap().remove(0);
+    let manifest = std::fs::read_to_string(pool.join("generations").join(&newest.id).join("manifest.sha256")).unwrap();
+    let native = manifest.lines().find(|l| l.ends_with("document.utpaint")).and_then(|l| l.split(' ').next()).unwrap().to_owned();
+    let content = pool.join("contents").join(format!("{native}.bin"));
+    let mut bytes = std::fs::read(&content).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    std::fs::write(&content, bytes).unwrap();
+    free.store(10 * GIB - 1, Ordering::SeqCst);
+    for round in 0..3 {
+        paint(&mut s, 20.0 + 5.0 * round as f64);
+        t = write_after(&mut s, t + Duration::from_secs(100));
+        assert_eq!(
+            s.message, "復旧用の書き置きを見送りました: ディスクの空きが少ない",
+            "{round}: 外で変わったという失敗ではなく、空きの断り"
+        );
+        assert_eq!(stages.load(Ordering::SeqCst), 0, "{round}: 断る回は書き込みの段に入らない");
+    }
+    assert_eq!(s.recovery.checkpoints(), 1);
+    // 空きが戻れば書き込みの段に入る（ここでは、変えた中身が見つかって失敗する）
+    free.store(900 * GIB, Ordering::SeqCst);
+    paint(&mut s, 50.0);
+    write_after(&mut s, t + Duration::from_secs(100));
+    assert!(stages.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn headless_the_disk_guard_also_stops_a_clean_close_from_writing_and_the_last_generation_stays() {
+    let dir = TempDir::new("lowdisk-close");
+    let mut s = session_with(&dir.root(), settings(15, 3, 0), Lang::Ja);
+    let free = Arc::new(AtomicU64::new(900 * GIB));
+    s.recovery.set_space_probe(Some(disk_with_free(free.clone())));
+    paint(&mut s, 10.0);
+    let t = write_after(&mut s, Instant::now());
+    assert_eq!(s.recovery.checkpoints(), 1);
+    paint(&mut s, 20.0);
+    free.store(GIB, Ordering::SeqCst);
+    let _ = t;
+    // 終わるときの最後の書き置きも、空きが少なければ書かない（前の世代は残り、終了は固まらない）
+    s.recovery_shutdown();
+    let rows = rows_of(&dir.root());
+    assert_eq!(rows.len(), 1, "前の世代は残る");
+}
+
+#[test]
+fn headless_after_each_checkpoint_the_oldest_generations_beyond_the_disk_limit_go_and_the_newest_stays() {
+    let dir = TempDir::new("limit-own");
+    let root = dir.root();
+    // 数の整理（20）には掛からない設定で、上限だけを効かせる
+    let mut s = session_with(&root, settings(15, 20, 0), Lang::Ja);
+    let mut t = Instant::now();
+    paint(&mut s, 10.0);
+    t = write_after(&mut s, t + Duration::from_secs(100));
+    let one = s.recovery.usage().unwrap().own;
+    assert!(one > 0);
+    // 世代 2 つぶんの少し上（世代ごとに正本を新しく書くので、3 つ目で超える）
+    s.recovery.set_disk_cap(Some(one * 5 / 2));
+    for i in 1..6 {
+        paint(&mut s, 10.0 + 5.0 * i as f64);
+        t = write_after(&mut s, t + Duration::from_secs(100));
+        assert!(s.recovery.usage().unwrap().total() <= one * 5 / 2 + one / 4, "{i}: 上限のあたりに収まる");
+    }
+    let kept = generations(&s);
+    assert!((1..=2).contains(&kept), "上限に収まるぶんだけ残る: {kept}");
+    assert!(s.recovery.trimmed_generations() >= 3, "{}", s.recovery.trimmed_generations());
+    assert_eq!(pixel_in(&newest_doc(&s), 35), pixel_in(&s.doc, 35), "最新は読めて、いまの絵と同じ");
+    // 上限がどれだけ小さくても、この実行の最新の世代は残る（超えたままだと知らせる）
+    s.recovery.set_disk_cap(Some(1));
+    paint(&mut s, 50.0);
+    write_after(&mut s, t + Duration::from_secs(100));
+    assert_eq!(generations(&s), 1);
+    assert!(s.recovery.last_trimmed().over);
+    assert_eq!(pixel_in(&newest_doc(&s), 50), pixel_in(&s.doc, 50));
+}
+
+#[test]
+fn headless_a_crashed_writes_leftover_is_cleared_before_the_limit_removes_any_generation() {
+    let dir = TempDir::new("limit-leftover");
+    let mut s = session_with(&dir.root(), settings(15, 20, 0), Lang::Ja);
+    paint(&mut s, 10.0);
+    let mut t = write_after(&mut s, Instant::now());
+    let one = s.recovery.usage().unwrap().own;
+    // 落ちた書き込みの残り（manifest の無い作りかけ。大きい）。世代の整理はこれを数えるが、世代を消しても減らない
+    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let stale = pool.join(".staging-20200101T000000000-leftover");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("y.pending"), vec![9u8; 10 * one as usize]).unwrap();
+    let base = s.recovery.usage().unwrap().own - 10 * one;
+    // 世代 3 つぶんの余裕: 残りを片付ければ、次の世代を足しても収まる
+    s.recovery.set_disk_cap(Some(base + 3 * one));
+    for i in 1..3 {
+        paint(&mut s, 10.0 + 5.0 * i as f64);
+        t = write_after(&mut s, t + Duration::from_secs(100));
+    }
+    assert!(!stale.exists(), "残りは片付いた");
+    assert_eq!(generations(&s), 3, "世代は 1 つも消さない");
+    assert_eq!(s.recovery.trimmed_generations(), 0);
+    assert!(s.recovery.usage().unwrap().total() <= base + 3 * one + one / 2);
+    assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(&s.doc, 20));
+    let _ = t;
+}
+
+#[test]
+fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_each_crashs_newest_stays() {
+    let dir = TempDir::new("limit-choose");
+    let root = dir.root();
+    seed_closed_generations(&root, 3);
+    crashed_run(&root, 3);
+    crashed_run(&root, 2);
+    let before = rows_of(&root);
+    assert_eq!(before.len(), 3 + 3 + 2, "上限を選ぶ前は、数の整理に掛かるぶんだけ");
+    let crashed_newest: Vec<(std::path::PathBuf, String)> = {
+        let mut newest: Vec<(std::path::PathBuf, String)> = Vec::new();
+        for pool in before.iter().filter(|r| r.crashed).map(|r| r.pool.clone()).collect::<std::collections::BTreeSet<_>>() {
+            let id = before.iter().filter(|r| r.pool == pool).map(|r| r.id.clone()).max().unwrap();
+            newest.push((pool, id));
+        }
+        newest
+    };
+    assert_eq!(crashed_newest.len(), 2);
+    let conf = dir.0.join("recovery.conf");
+    let mut s = session_with(&root, settings(15, 20, 0), Lang::Ja);
+    s.recovery.set_settings_path(Some(conf.clone()));
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    // 試験では、本当の量（最低 1 GB）ではなく、小さな上限に置き換える
+    s.recovery.set_disk_cap(Some(1));
+    s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Low));
+    let after: Vec<(std::path::PathBuf, String)> = s
+        .recovery
+        .window
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|r| (r.pool.clone(), r.id.clone()))
+        .collect();
+    assert_eq!(after.len(), 2, "閉じた実行の世代と、落ちた実行の古い世代が消え、落ちた実行ごとの最新が残る");
+    for newest in &crashed_newest {
+        assert!(after.contains(newest), "{newest:?}");
+    }
+    // 選んだ量は設定のファイルに書かれ、窓の表示が数え直される
+    assert_eq!(RecoverySettings::load(&conf).unwrap().0.disk, DiskBudget::Low);
+    assert_eq!(s.recovery.window.as_ref().unwrap().cap, 1);
+    assert_eq!(s.recovery.window.as_ref().unwrap().usage.total(), used(&root));
+    // 残った世代は、共有の中身ごと開ける
+    s.recovery_apply(RecoveryAction::Select(0));
+    s.recovery_apply(RecoveryAction::Open);
+    assert!(s.message.is_empty() || !s.message.contains("開けません"), "{}", s.message);
+    assert_eq!(s.project_name, "名称未設定（復旧）");
+}
+
+#[test]
+fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_the_settings_are_unreadable() {
+    // 設定を読める: 起動で、上限を超えた古い世代を消す
+    let dir = TempDir::new("limit-start");
+    let root = dir.root();
+    seed_closed_generations(&root, 4);
+    crashed_run(&root, 3);
+    let mut s = AppState::new_in(64, 64, Lang::Ja);
+    s.recovery.set_space_probe(Some(plenty()));
+    s.recovery.set_disk_cap(Some(1));
+    let conf = dir.0.join("recovery.conf");
+    assert!(s.recovery.start_from(Some(conf)).unwrap().is_empty());
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    let rows = &s.recovery.window.as_ref().unwrap().rows;
+    assert_eq!(rows.len(), 1, "落ちた実行の最新だけが残る");
+    assert!(rows[0].crashed);
+    s.recovery_shutdown();
+    // 設定を読めない: 利用者が選んだ量が分からないので、上限では消さない。窓で量を選べば、その量で整理する
+    let dir = TempDir::new("limit-unreadable");
+    let root = dir.root();
+    seed_closed_generations(&root, 4);
+    let conf = dir.0.join("recovery.conf");
+    std::fs::write(&conf, vec![b'a'; 5000]).unwrap();
+    let mut s = AppState::new_in(64, 64, Lang::Ja);
+    s.recovery.set_space_probe(Some(plenty()));
+    s.recovery.set_disk_cap(Some(1));
+    let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
+    assert!(matches!(problems.first(), Some(Problem::Unreadable(_))));
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    assert_eq!(s.recovery.window.as_ref().unwrap().rows.len(), 4, "起動で消さない");
+    let mut t = Instant::now();
+    paint(&mut s, 10.0);
+    t = write_after(&mut s, t + Duration::from_secs(100));
+    paint(&mut s, 20.0);
+    write_after(&mut s, t + Duration::from_secs(100));
+    assert_eq!(s.recovery.trimmed_generations(), 0, "書き置きのあとも消さない");
+    assert_eq!(generations(&s), 2);
+    s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Standard));
+    assert!(s.recovery.window.as_ref().unwrap().rows.len() <= 2, "選んだ量で、この実行のあいだ整理する");
+    assert_eq!(std::fs::read(&conf).unwrap(), vec![b'a'; 5000], "読めない設定のファイルは書き換えない");
+    s.recovery_shutdown();
+}
+
+#[test]
+fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
+    let dir = TempDir::new("disk-settings");
+    let file = dir.0.join("recovery.conf");
+    let mut s = session(&dir.root());
+    s.recovery.set_settings_path(Some(file.clone()));
+    assert_eq!(s.recovery.settings().disk, DiskBudget::Auto);
+    for (choice, read) in [
+        (DiskBudget::High, DiskBudget::High),
+        (DiskBudget::Low, DiskBudget::Low),
+        (DiskBudget::Gib(40), DiskBudget::Gib(40)),
+        (DiskBudget::Gib(9999), DiskBudget::Gib(256)),
+        (DiskBudget::Gib(0), DiskBudget::Gib(1)),
+        (DiskBudget::Auto, DiskBudget::Auto),
+    ] {
+        s.recovery_apply(RecoveryAction::SetDisk(choice));
+        assert_eq!(s.recovery.settings().disk, read);
+        let (loaded, problems) = RecoverySettings::load(&file).unwrap();
+        assert!(problems.is_empty());
+        assert_eq!(loaded.disk, read, "書いた量は読み戻せる");
+        assert_eq!((loaded.interval_seconds, loaded.generations_to_keep), (15, 3), "ほかの設定は変わらない");
+    }
+    // 「詳しく」の開け閉めは設定に書かない（窓の中だけ）
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    s.recovery_apply(RecoveryAction::DiskDetails(true));
+    assert!(s.recovery.window.as_ref().unwrap().details);
+    let before = std::fs::read(&file).unwrap();
+    s.recovery_apply(RecoveryAction::DiskDetails(false));
+    assert!(!s.recovery.window.as_ref().unwrap().details);
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    // 自動の上限は、空きに合わせて小さくなる（空き 4 GiB なら、復旧が使える量の 10%）
+    let mut s = session(&dir.root());
+    s.recovery.set_space_probe(Some(disk_with_free(Arc::new(AtomicU64::new(4 * GIB)))));
+    let cap = s.recovery.disk_cap().unwrap();
+    assert!((GIB / 4..=GIB / 2).contains(&cap), "{cap}");
+}
+
+#[test]
+fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
+    let dir = TempDir::new("usage");
+    let root = dir.root();
+    seed_closed_generations(&root, 2);
+    crashed_run(&root, 2);
+    let mut s = session_with(&root, settings(15, 3, 0), Lang::Ja);
+    paint(&mut s, 10.0);
+    write_after(&mut s, Instant::now());
+    s.recovery_apply(RecoveryAction::OpenWindow);
+    let window = s.recovery.window.as_ref().unwrap();
+    let usage = window.usage;
+    assert!(usage.own > 0 && usage.crashed > 0 && usage.closed > 0, "{usage:?}");
+    assert_eq!(usage.others, 0);
+    assert_eq!(usage.total(), used(&root), "窓の数と、置き場のファイルの合計は同じ");
+    assert!(window.free.is_some() && window.cap > 0);
+    // 書き置きが増えれば、窓の数も増える（開いたまま）
+    let before = usage.total();
+    paint(&mut s, 30.0);
+    write_after(&mut s, Instant::now() + Duration::from_secs(1000));
+    assert!(s.recovery.window.as_ref().unwrap().usage.total() > before);
 }

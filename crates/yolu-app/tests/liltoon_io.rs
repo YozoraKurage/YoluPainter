@@ -210,6 +210,7 @@ fn settings() -> RecoverySettings {
         strokes_between: 0,
         generations_to_keep: 3,
         directory: None,
+        ..RecoverySettings::default()
     }
 }
 
