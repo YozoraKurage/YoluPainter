@@ -1358,7 +1358,7 @@ mod tests {
 
     #[test]
     fn values_fit_a_full_queue_only_by_replacing_the_pictures_of_their_own_material() {
-        // 満杯の列にある物が、同じ世代・マテリアルの送っていない絵なら、新しい値（「値なし」も）は、その絵を外した分で収まって積まれる
+        // 新しい値（「値なし」も）は、同じ世代・マテリアルの送っていない絵を外した分で収まるときだけ、満杯の列に積まれる
         // （受け手は、値が「来る」と言った絵だけを値のあとに受ける。値で知らせていない絵は、値のあとでは断られる）。元の絵・別のマテリアルの絵は、
         // 値に置き換えられないので、値は断られ、前に積んだ物は変わらない
         let none = |material: u32| {
@@ -1373,21 +1373,43 @@ mod tests {
                 slots: Vec::new(),
             })
         };
+        // 同じマテリアルの絵（外れる）の前に、置き換えられない小さな物（別のマテリアルの元の絵）を積む。外しても残る量が 0 にならないので、
+        // 「空の列ならどんな大きさも入る」の例外に頼らず、差し引きで上限に収まるかが試される。積んだあとで上限を決める
+        let keep = original(1, 1, "_keep", OriginalState::Image, 100, 1);
+        let fill = texture(1, 0, "_fill", 1000, 1);
+        let value = none(0);
+        assert!(frame_len(&value) < frame_len(&fill), "外す絵の方が、値より大きい（外せば収まる）");
+        let stacked = |limit: usize| {
+            let s = open();
+            s.set_outbox_limit(frame_len(&keep) + frame_len(&fill));
+            assert!(s.try_enqueue(&keep).unwrap());
+            assert!(s.try_enqueue(&fill).unwrap());
+            s.set_outbox_limit(limit);
+            s
+        };
+        // 残る物 + 値の枠ちょうど: 絵を外して、値が積まれる
+        let exact = frame_len(&keep) + frame_len(&value);
+        let s = stacked(exact);
+        assert!(s.try_enqueue(&value).unwrap(), "外した分で収まる");
+        assert_eq!(kinds(&s), vec![Kind::MaterialOriginal, Kind::MaterialValues]);
+        assert_eq!(s.pending_bytes() as usize, exact);
+        // 1 小さい上限: 絵を外しても収まらないので断る。前に積んだ物（外すはずだった絵も）は残り、量は変わらない
+        let s = stacked(exact - 1);
+        let held = s.pending_bytes();
+        assert!(busy(s.try_enqueue(&value)), "外しても 1 足りない");
+        assert_eq!(kinds(&s), vec![Kind::MaterialOriginal, Kind::MaterialTexture], "断られても、外さない");
+        assert_eq!(s.pending_bytes(), held);
+        // 別のマテリアルの絵・同じマテリアルの元の絵だけで満杯: 外せないので断る
         let full_of = |ballast: &Message| {
             let s = open();
             s.set_outbox_limit(frame_len(ballast) + 1);
             assert!(s.try_enqueue(ballast).unwrap());
             s
         };
-        // 同じマテリアルの絵: 外して、値が積まれる
-        let s = full_of(&texture(1, 0, "_fill", 1000, 1));
-        assert!(s.try_enqueue(&none(0)).unwrap(), "置き換えて空いた分で収まる");
-        assert_eq!(kinds(&s), vec![Kind::MaterialValues]);
-        // 別のマテリアルの絵・同じマテリアルの元の絵: 置き換えられないので断る
         for ballast in [texture(1, 1, "_fill", 1000, 1), original(1, 0, "_fill", OriginalState::Image, 1000, 1)] {
             let s = full_of(&ballast);
             let held = s.pending_bytes();
-            assert!(busy(s.try_enqueue(&none(0))), "{:?} は値に置き換えられない", ballast.kind());
+            assert!(busy(s.try_enqueue(&value)), "{:?} は値に置き換えられない", ballast.kind());
             assert_eq!(kinds(&s), vec![ballast.kind()], "断られても、前に積んだ物は残る");
             assert_eq!(s.pending_bytes(), held);
         }
