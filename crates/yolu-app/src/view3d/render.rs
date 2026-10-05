@@ -1706,7 +1706,8 @@ impl View3dRenderer {
         }
         let rgba = source.map.to_rgba8(false);
         let size = [source.map.width() as u32, source.map.height() as u32];
-        match self.paint.create_image(&rgba, size, encoder) {
+        // メッシュマップはガンマの値のまま見せる（光なしの表示）ので、リニアにしない形式で
+        match self.paint.create_image(&rgba, size, false, encoder) {
             Some(texture) => {
                 self.map = Some((source.key, texture));
                 self.map_failed = None;
@@ -2049,10 +2050,11 @@ impl View3dRenderer {
         f.extend_from_slice(&[p.x, p.y, p.z, 0.0]);
         let l = display.light_direction();
         f.extend_from_slice(&[l.x, l.y, l.z, 0.0]);
-        // マテリアル表示の光（Unity 版: 色 × 0.769 × 強さ をリニアへ）と、環境が無いときの一様な環境光（色 × 0.4 をリニアへ）
+        // マテリアル表示の光（Unity 版: 色 × 0.769 × 強さ をリニアへ。Unity の `_LightColor0` と同じ GammaToLinearSpace で、
+        // 1 を超える光は pow 2.2）と、環境が無いときの一様な環境光（色 × 0.4 をリニアへ）
         let direct = display
             .light_color
-            .map(|c| brdf::srgb_to_linear(c * 0.769 * display.light_intensity));
+            .map(|c| brdf::unity_gamma_to_linear(c * 0.769 * display.light_intensity));
         f.extend_from_slice(&[direct[0], direct[1], direct[2], 0.0]);
         let flat = display.ambient.map(|c| brdf::srgb_to_linear(c * 0.4));
         f.extend_from_slice(&[flat[0], flat[1], flat[2], 0.0]);

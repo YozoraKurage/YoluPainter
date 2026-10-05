@@ -10,7 +10,8 @@ using UnityEngine.Rendering;
 // 読むものと同じ。プロパティ・キーワード・描いた絵を見せるプロパティ・描いていないスロットの絵）も link_<名前>.txt と
 // link_<名前>_<スロット>.rgba に書く（`liltoon_reference.rs` の compare_through_live_link が、その値だけで 3D ビューを描いて比べる）。
 //
-// 撮る間だけ、プロジェクトの色空間をリニアにし（VRChat と同じ。lilToon の式はリニアで比べる）、lilToon のシェーダー設定の機能を
+// 撮る間だけ、プロジェクトの色空間をリニアにし（VRChat と同じ。lilToon の式はリニアで比べる。替わったことを確かめてから撮る。
+// テストプロジェクトはガンマのままにしておく）、lilToon のシェーダー設定の機能を
 // 全部入れる（テクスチャを読む機能は、使うマテリアルがあるときに lilToon が自分で入れるのと同じ）。終わったら両方を元に戻す。
 // lilToon の設定のファイル（ProjectSettings/lilToonSetting.json）が無いプロジェクトでは何も変えずに断る（撮る間に lilToon が
 // ファイルを作り、元の「ファイルが無い」状態へは戻せないため）。
@@ -71,6 +72,10 @@ var others = Object.FindObjectsOfType<Light>().Where(l => l.enabled).ToList();
 foreach (var l in others) l.enabled = false;
 try
 {
+    // 色空間はその場で替わる（QualitySettings.activeColorSpace。2026-10-05 に Unity 2022.3 で確かめた）。替わらなければ撮らない
+    if (QualitySettings.activeColorSpace != ColorSpace.Linear)
+        throw new System.InvalidOperationException("リニアの色空間にならない: " + QualitySettings.activeColorSpace);
+    log.AppendLine("色空間: " + QualitySettings.activeColorSpace);
     var lines = File.ReadAllLines(Path.Combine(dir, "scenes.txt"));
     int at = 0;
     while (at < lines.Length)

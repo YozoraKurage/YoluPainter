@@ -27,6 +27,18 @@ pub fn srgb_to_linear(v: f32) -> f32 {
     }
 }
 
+/// Unity の `Mathf.GammaToLinearSpace`: リニアの色空間の Unity が、色のプロパティ（`[HDR]` でない色）・`[Gamma]` の数・光の色
+/// （`_LightColor0`。光の強さをリニアにしない既定）に当てる変換。1 未満は sRGB の式で、1 以上は `pow(v, 2.2)`（Unity 2022.3 で
+/// 測った値と同じ: 1.5 → 2.440、2.119 → 5.218、16.948 → 505.9）。sRGB の式を 1 の先へ延ばす [`srgb_to_linear`] は 1 を超える所で
+/// 明るすぎる（16.948 → 約 790）。
+pub fn unity_gamma_to_linear(v: f32) -> f32 {
+    if v < 1.0 {
+        srgb_to_linear(v)
+    } else {
+        v.powf(2.2)
+    }
+}
+
 /// リニア → sRGB（ガンマ。負は 0 として扱う。1 を超える値はそのまま超える）。
 pub fn linear_to_srgb(v: f32) -> f32 {
     let v = v.max(0.0);
@@ -299,6 +311,13 @@ mod tests {
         assert!(close(srgb_to_linear(1.0), 1.0, 1e-6));
         // sRGB 0.5 → リニア 0.21404
         assert!(close(srgb_to_linear(0.5), 0.214_041, 1e-5));
+        // Unity の GammaToLinearSpace（Unity 2022.3 のリニアの色空間で、色のプロパティ・光の色を float の描き先へ書いて測った値）
+        for (v, unity) in [(0.02, 0.001_547_987_6), (0.5, 0.214_041_14), (1.0, 1.0), (1.5, 2.440_061_6), (2.119, 5.217_808), (16.948, 505.895_33)] {
+            assert!(close(unity_gamma_to_linear(v), unity, unity * 1e-5), "{v}");
+        }
+        // 1 未満は sRGB の式と同じ、1 を超えると sRGB の式を延ばしたものより暗い
+        assert_eq!(unity_gamma_to_linear(0.7), srgb_to_linear(0.7));
+        assert!(srgb_to_linear(16.948) > 780.0);
         for i in 0..=255 {
             let v = i as f32 / 255.0;
             assert!(close(linear_to_srgb(srgb_to_linear(v)), v, 1e-5), "{i}");

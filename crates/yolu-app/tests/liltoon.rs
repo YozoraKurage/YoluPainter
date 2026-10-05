@@ -15,7 +15,7 @@ use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::look::{
     LookKind, LookValue, MaterialLook, PlaneSource, ReceivedImage, ReceivedLook, TextureSource,
 };
-use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, Rgba8};
+use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, ImageColorSpace, ImageInput, Rgba8};
 
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
@@ -358,6 +358,110 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
         3,
         "遠くのマスク 1",
     );
+}
+
+#[test]
+fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
+    // 詰め合わせ（成分ごと）で Color・Emission を読むスロットは、書き出しの「lilToon の詰め方」と同じくチャンネルの値のまま読む。
+    // この 2 つは sRGB の形式のテクスチャで GPU がリニアにして読むので、ガンマの値へ戻さないと 128 が 0.216（= 55 を塗った
+    // スカラー）になる。同じ 128 を塗ったスカラーのユーザーチャンネルを読んだときと同じ見た目
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 0.0, 0.0); // 後ろから: 全部が影（影の強さのマスクが見た目を決める）
+    let doc = &mut h.state_mut().state.doc;
+    doc.add_fill_layer(
+        "色",
+        &[
+            (Channel::Color, Rgba8::new(128, 200, 180, 255)),
+            (Channel::Emission, Rgba8::new(128, 0, 0, 255)),
+        ],
+        None,
+    )
+    .unwrap();
+    let mask = doc
+        .add_channel(ChannelInfo {
+            name: "影の強さ".into(),
+            kind: ChannelKind::Scalar,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(255, 255, 255, 255),
+        })
+        .unwrap();
+    h.run();
+    let at = middle(&h);
+    let shadow_with = |h: &mut Harness<'_, YoluApp>, strength: TextureSource| {
+        let mut look = lil();
+        look.properties.insert("_UseShadow".into(), LookValue::Float(1.0));
+        look.textures.insert("_ShadowStrengthMask".into(), strength);
+        set_look(h, look);
+        px(&h.render().expect("描ける"), at)
+    };
+    let packed = |channel: Channel| {
+        TextureSource::Packed([
+            PlaneSource::Channel { channel, component: 0 },
+            PlaneSource::One,
+            PlaneSource::One,
+            PlaneSource::One,
+        ])
+    };
+    let from_color = shadow_with(&mut h, packed(Channel::Color));
+    let from_emission = shadow_with(&mut h, packed(Channel::Emission));
+    let mut user = Vec::new();
+    for v in [128u8, 55] {
+        let doc = &mut h.state_mut().state.doc;
+        doc.add_fill_layer("マスク", &[(mask, Rgba8::new(v, v, v, 255))], None)
+            .unwrap();
+        user.push(shadow_with(&mut h, TextureSource::Channel(mask)));
+    }
+    assert!(
+        (0..3).any(|k| user[0][k].abs_diff(user[1][k]) >= 4),
+        "マスク 128 と 55 で見た目が違う（試験が値の違いを見分けられる）: {user:?}"
+    );
+    assert_close(from_color, user[0], 1, "詰め合わせで読んだ Color の R（128）");
+    assert_close(from_emission, user[0], 1, "詰め合わせで読んだ Emission の R（128）");
+}
+
+#[test]
+fn a_matcap_image_is_decoded_only_when_it_is_srgb() {
+    // マットキャップの画像は、色空間が sRGB（と未指定）なら sRGB の形式で持ち GPU がリニアにして読み、リニア（データ）なら値のまま
+    // 読む（リニアの形式）。一様な 128 の画像を、マットキャップだけの色（ライト・メインカラーの影響なし、通常の合成・強さ 1）で見る:
+    // sRGB ならリニア 0.216 → 画面の 128、リニアなら 0.502 → 画面の 188
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    fill_color(&mut h, [200, 120, 60, 255]);
+    let id = yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0002);
+    let mut look = lil();
+    for (name, v) in [
+        ("_UseMatCap", 1.0),
+        ("_MatCapBlend", 1.0),
+        ("_MatCapBlendMode", 0.0),
+        ("_MatCapEnableLighting", 0.0),
+        ("_MatCapMainStrength", 0.0),
+    ] {
+        look.properties.insert(name.into(), LookValue::Float(v));
+    }
+    look.properties
+        .insert("_MatCapColor".into(), LookValue::Color([1.0; 4]));
+    look.textures
+        .insert("_MatCapTex".into(), TextureSource::Image(id));
+    set_look(&mut h, look);
+    let at = middle(&h);
+    for (space, expected) in [
+        (ImageColorSpace::Srgb, 128u8),
+        (ImageColorSpace::Linear, 188),
+        (ImageColorSpace::Unspecified, 128),
+    ] {
+        let pixels = [128u8, 128, 128, 255].repeat(16);
+        let image = ImageInput::new(4, 4, pixels, space).unwrap();
+        let doc = &mut h.state_mut().state.doc;
+        let inputs = doc.effect_inputs().clone().with_image(id, image);
+        doc.set_effect_inputs(inputs).unwrap();
+        h.run();
+        let c = px(&h.render().expect("描ける"), at);
+        assert_close(c, [expected; 3], 2, &format!("{space:?} の画像"));
+    }
 }
 
 #[test]

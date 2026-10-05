@@ -278,13 +278,19 @@ pub fn planned_user_bytes(doc: &Document, paint_shift: u32, limit: u32, budget: 
     super::user_layers::plan([doc.width(), doc.height()], count, paint_shift, limit, budget).1
 }
 
+/// 色のプロパティをリニアへ（Unity と同じ `GammaToLinearSpace`。1 を超える色は pow 2.2）。
 fn linear_color(c: [f32; 4]) -> [f32; 4] {
     [
-        brdf::srgb_to_linear(c[0]),
-        brdf::srgb_to_linear(c[1]),
-        brdf::srgb_to_linear(c[2]),
+        brdf::unity_gamma_to_linear(c[0]),
+        brdf::unity_gamma_to_linear(c[1]),
+        brdf::unity_gamma_to_linear(c[2]),
         c[3],
     ]
+}
+
+/// GPU が読むときにリニアへ直すチャンネル（sRGB の形式で持つ Color・Emission。`paint`）。
+fn decoded_by_gpu(channel: Channel) -> bool {
+    matches!(channel, Channel::Color | Channel::Emission)
 }
 
 /// 標準のチャンネルの元の番号（3D ビューの絵の束ねの番号）。
@@ -515,8 +521,8 @@ pub fn params_with(
     ];
     p[87] = [x("_BacklightViewStrength"), 0.0, 0.0, 0.0];
     p[88] = v("_BacklightColorTex_ST");
-    // [Gamma] の数（金属度・反射率）は、Unity と同じく sRGB → リニア
-    let gamma = |name: &str| brdf::srgb_to_linear(x(name));
+    // [Gamma] の数（金属度・反射率）は、Unity と同じく sRGB → リニア（GammaToLinearSpace）
+    let gamma = |name: &str| brdf::unity_gamma_to_linear(x(name));
     p[89] = [x("_UseReflection"), x("_Smoothness"), gamma("_Metallic"), gamma("_Reflectance")];
     p[90] = color("_ReflectionColor");
     p[91] = [
@@ -643,7 +649,8 @@ pub fn params_with(
                     flags[i][1] = 1.0;
                     flags[i][2] = s as f32;
                 }
-                flags[i][0] = f32::from(srgb(*c));
+                // Color・Emission は sRGB の形式のテクスチャで、GPU が読むときにリニアにしてある（`paint`）
+                flags[i][0] = f32::from(srgb(*c) && !decoded_by_gpu(*c));
             }
             TextureSource::Packed(planes) => {
                 for (k, plane) in planes.iter().enumerate() {
@@ -665,12 +672,13 @@ pub fn params_with(
                     "_MatCap2ndTex" => 1,
                     _ => continue,
                 };
-                let Some(space) = images[which] else {
+                if images[which].is_none() {
                     continue;
-                };
+                }
+                // sRGB の画像は sRGB の形式で持ち、GPU が読むときにリニアにしてある（直さない）。リニアの画像はそのまま
                 let s = IMAGE_SOURCES[which];
                 src[i] = [s * 4, s * 4 + 1, s * 4 + 2, s * 4 + 3];
-                flags[i] = [f32::from(space != ImageColorSpace::Linear), 1.0, s as f32, 0.0];
+                flags[i] = [0.0, 1.0, s as f32, 0.0];
             }
         }
         debug_assert!(slot.usage != SlotUse::Image || i == 14 || i == 16);
@@ -1001,8 +1009,9 @@ impl LookGpu {
                         .as_ref()
                         .is_some_and(|h| h.id == id && h.hash == input.hash && h.space == input.color_space);
                     if !same {
+                        let srgb = input.color_space != ImageColorSpace::Linear;
                         self.images[which] = paint
-                            .create_image(&input.pixels, [input.width, input.height], encoder)
+                            .create_image(&input.pixels, [input.width, input.height], srgb, encoder)
                             .map(|texture| HeldImage {
                                 id,
                                 hash: input.hash.clone(),
@@ -1113,6 +1122,31 @@ mod tests {
     }
 
     #[test]
+    fn colors_above_one_follow_unity_and_hdr_colors_stay_linear() {
+        // lilToon の欄で 1 を超えて選べる色（[lilHDR]。Unity の [HDR] ではない）は、リニアの Unity と同じ GammaToLinearSpace
+        // （1 以上は pow 2.2）。Unity 2022.3 で測った値: 16.948 → 505.9、2.119 → 5.218。[HDR] の発光の色はそのまま
+        let doc = Document::new(8, 8).unwrap();
+        let mut look = lil();
+        look.properties
+            .insert("_BacklightColor".into(), LookValue::Color([16.948, 2.119, 0.5, 1.0]));
+        look.properties
+            .insert("_MatCapColor".into(), LookValue::Color([2.119, 1.895, 1.789, 1.0]));
+        look.properties
+            .insert("_EmissionColor".into(), LookValue::Color([2.5, 0.5, 16.948, 1.0]));
+        let v = params(&doc, &look, &[], [None, None]);
+        let at = |i: usize| &v[i * 4..i * 4 + 4];
+        // P_BACKLIGHT_COLOR は 85 番、P_MATCAP_COLOR は 34 番、P_EMISSION_COLOR は 22 番
+        let bl = at(85);
+        assert!((bl[0] - 505.895_33).abs() < 0.01, "{bl:?}");
+        assert!((bl[1] - 5.217_808).abs() < 1e-4, "{bl:?}");
+        assert!((bl[2] - brdf::srgb_to_linear(0.5)).abs() < 1e-6);
+        assert_eq!(bl[3], 1.0);
+        let mc = at(34);
+        assert!((mc[0] - 2.119f32.powf(2.2)).abs() < 1e-4, "{mc:?}");
+        assert_eq!(at(22), &[2.5, 0.5, 16.948, 1.0]);
+    }
+
+    #[test]
     fn slots_encode_channels_packing_and_defaults() {
         let mut doc = Document::new(8, 8).unwrap();
         let mask = doc
@@ -1156,9 +1190,9 @@ mod tests {
         let users = wanted_users(&doc, &look);
         assert_eq!(users, vec![mask, tint], "スロットの並びで最初に出てきた順");
         let v = params(&doc, &look, &users, [None, None]);
-        // _MainTex: Color（絵の束ね 0）を全部、sRGB
+        // _MainTex: Color（絵の束ね 0）を全部。sRGB の形式のテクスチャで GPU がリニアにして読むので、シェーダーでは直さない
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
-        assert_eq!(slot_flags(&v, 0), [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
         // スカラーのユーザーチャンネル（層 0 = 元 6）は値を RGB に
         assert_eq!(slot_src(&v, 4), [24, 24, 24, -3]);
         // 色のユーザーチャンネル（層 1 = 元 7）は全部、sRGB
@@ -1233,9 +1267,9 @@ mod tests {
             .map(|(k, (slot, image))| (slot.as_str(), k, image.srgb))
             .collect();
         let v = params_with(&doc, &drawn, &[], [None, None], &layers);
-        // 流し込み先は 3D ビューの絵（Color）
+        // 流し込み先は 3D ビューの絵（Color。GPU がリニアにして読む）
         assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
-        assert_eq!(slot_flags(&v, 0), [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
         // 色調補正マスク（層 0 = 元 40）: 1 つの元をそのまま読み、リニアのまま
         assert_eq!(slot_src(&v, 1), [160, 161, 162, 163]);
         assert_eq!(slot_flags(&v, 1), [0.0, 1.0, 40.0, 0.0]);
@@ -1277,7 +1311,7 @@ mod tests {
             .collect();
         let v = params_with(&doc, &drawn, &[], [None, None], &layers);
         assert_eq!(slot_src(&v, 7), [0, 1, 2, 3], "割り当てたチャンネル");
-        assert_eq!(slot_flags(&v, 7), [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(slot_flags(&v, 7), [0.0, 1.0, 0.0, 0.0]);
         // 標準の見た目を選ぶと、受けた絵は読まない
         let mut standard = doc.look().clone();
         standard.kind = LookKind::Standard;

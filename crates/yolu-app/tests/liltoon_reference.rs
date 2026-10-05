@@ -1150,7 +1150,121 @@ fn scenes() -> Vec<Scene> {
                 t
             },
         },
+        // 1 を超える色（lilToon の欄では HDR で選べる色。Unity の [HDR] ではない）のマットキャップ: リニアの色空間の Unity は
+        // GammaToLinearSpace（1 以上は pow(x, 2.2)）で直す。暗いマットキャップで、飽和しない所の明るさを比べる
+        Scene {
+            name: "matcap_hdr",
+            meshes: sphere(),
+            camera: camera(3.0, Vec3::ZERO),
+            paint: |d| fill(d, [110, 80, 70, 255]),
+            look: |_| {
+                let mut l = lil("lilToon");
+                set(&mut l, "_UseShadow", 1.0);
+                set(&mut l, "_UseMatCap", 1.0);
+                l.textures.insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
+                set(&mut l, "_MatCapBlend", 1.0);
+                color(&mut l, "_MatCapColor", [2.119, 1.895, 1.789, 1.0]);
+                l
+            },
+            textures: band_matcap_textures,
+        },
+        // 髪のマテリアルの値（Live Link で受けた実物の値。逆光ライトの色は 16.948 の HDR・指向性 10、マットキャップの色も 1 を
+        // 超える）を、光の向き 3 つ（前・横・後ろ。`scene_light`）で
+        bright_backlight_scene("bright_backlight_front"),
+        bright_backlight_scene("bright_backlight_side"),
+        bright_backlight_scene("bright_backlight_back"),
     ]
+}
+
+/// 髪の場面のマットキャップの絵（自作の画像の番号）。
+const BAND_MATCAP: yolu_core::ImageId = yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0002);
+
+/// 髪の場面（光の向きは名前で `scene_light` が決める）。
+fn bright_backlight_scene(name: &'static str) -> Scene {
+    Scene {
+        name,
+        meshes: sphere(),
+        camera: camera(3.0, Vec3::ZERO),
+        paint: |d| fill(d, [110, 80, 70, 255]),
+        look: |_| {
+            let mut l = lil("lilToon");
+            set(&mut l, "_UseShadow", 1.0);
+            set(&mut l, "_UseBacklight", 1.0);
+            color(&mut l, "_BacklightColor", [16.948, 16.948, 16.948, 1.0]);
+            set(&mut l, "_BacklightMainStrength", 0.5);
+            set(&mut l, "_BacklightNormalStrength", 0.7);
+            set(&mut l, "_BacklightBorder", 0.6);
+            set(&mut l, "_BacklightBlur", 0.2);
+            set(&mut l, "_BacklightDirectivity", 10.0);
+            set(&mut l, "_BacklightViewStrength", 1.0);
+            set(&mut l, "_BacklightReceiveShadow", 1.0);
+            set(&mut l, "_BacklightBackfaceMask", 1.0);
+            set(&mut l, "_UseRim", 1.0);
+            color(&mut l, "_RimColor", [0.749, 0.749, 0.749, 1.0]);
+            set(&mut l, "_UseMatCap", 1.0);
+            l.textures.insert("_MatCapTex".into(), TextureSource::Image(BAND_MATCAP));
+            set(&mut l, "_MatCapBlend", 1.0);
+            color(&mut l, "_MatCapColor", [2.119, 1.895, 1.789, 1.0]);
+            set(&mut l, "_UseReflection", 0.0);
+            l
+        },
+        textures: band_matcap_textures,
+    }
+}
+
+fn band_matcap_textures(d: &Document) -> Vec<(String, Texture)> {
+    let mut t = main_texture(d);
+    let (n, rgba) = band_matcap_image();
+    t.push((
+        "_MatCapTex".into(),
+        Texture {
+            width: n,
+            height: n,
+            rgba,
+            srgb: true,
+        },
+    ));
+    t
+}
+
+/// 髪のマットキャップの絵（暗い地に、上寄りの横の明るい帯。天使の輪の形。自作の絵）。行は下から。
+fn band_matcap_image() -> (u32, Vec<u8>) {
+    let n = 128u32;
+    let mut out = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let u = (x as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+            let v = (y as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+            let band = (-((v - 0.35) / 0.12).powi(2)).exp() * (1.0 - u * u).max(0.0);
+            let c = [0.02 + 0.4 * band, 0.02 + 0.38 * band, 0.03 + 0.36 * band];
+            for k in c {
+                out.push((k.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+            out.push(255);
+        }
+    }
+    (n, out)
+}
+
+/// 場面の光（来る向きの yaw・pitch、度）。髪の場面はカメラ（−Z から +Z を見る）に対して前・横・後ろ。
+fn scene_light(name: &str) -> (f32, f32) {
+    match name {
+        "bright_backlight_front" => (-150.0, 30.0),
+        "bright_backlight_side" => (-90.0, 20.0),
+        "bright_backlight_back" => (15.0, 25.0),
+        _ => LIGHT,
+    }
+}
+
+/// 場面がマットキャップに使う画像（文書の効果の入力の画像として渡す。棚の画像と同じ道）。
+fn scene_image(name: &str) -> Option<(yolu_core::ImageId, (u32, Vec<u8>))> {
+    if name.starts_with("bright_backlight") || name == "matcap_hdr" {
+        Some((BAND_MATCAP, band_matcap_image()))
+    } else if name.starts_with("matcap") {
+        Some((yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001), matcap_image()))
+    } else {
+        None
+    }
 }
 
 /// デカールのタイリング・オフセット（lilToon の欄の換算: 位置 (x, y)・大きさ `size` から）。
@@ -1310,8 +1424,9 @@ fn render_as(
         state.view3d.camera = scene.camera;
     }
     h.run();
-    h.state_mut().apply(Action::View3d(Op::LightYaw(LIGHT.0)));
-    h.state_mut().apply(Action::View3d(Op::LightPitch(LIGHT.1)));
+    let light = scene_light(scene.name);
+    h.state_mut().apply(Action::View3d(Op::LightYaw(light.0)));
+    h.state_mut().apply(Action::View3d(Op::LightPitch(light.1)));
     if uniform_env(scene.name) {
         h.state_mut().state.view3d.display.ambient = [1.0; 3];
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::None)));
@@ -1324,14 +1439,10 @@ fn render_as(
         setup(doc);
     }
     // マットキャップの絵は文書の効果の入力の画像として渡す（棚の画像と同じ道）
-    if scene.name.starts_with("matcap") {
-        let (n, rgba) = matcap_image();
+    if let Some((id, (n, rgba))) = scene_image(scene.name) {
         let image = ImageInput::new(n, n, rgba, ImageColorSpace::Srgb).unwrap();
         let doc = &mut h.state_mut().state.doc;
-        let inputs = doc
-            .effect_inputs()
-            .clone()
-            .with_image(yolu_core::ImageId(0xA11C_A900_0000_0000_0000_0000_0000_0001), image);
+        let inputs = doc.effect_inputs().clone().with_image(id, image);
         doc.set_effect_inputs(inputs).unwrap();
     }
     h.run();
@@ -1615,46 +1726,60 @@ fn unity_image(name: &str) -> image::RgbaImage {
         .to_rgba8()
 }
 
-/// 場面ごとの差の上限: 平均・95 % の値（0〜255）と、片方だけに物が写っている画素の数。測った値（llvmpipe の Vulkan と GL）に余裕を
-/// 足したもの。`transparent` は、描き先の sRGB の見え方を作れない機材（GL）ではガンマの値のまま重ねるので別の上限（GL の llvmpipe で
-/// 平均 28.13・95 % 42・片方だけ 5,135）。
-const BOUNDS: &[(&str, f64, f64, usize)] = &[
-    ("shadow", 0.5, 2.0, 2_600),
-    ("shadow_3rd", 0.5, 2.0, 2_600),
-    ("shadow_mask", 0.6, 2.0, 2_600),
-    ("rim", 0.5, 2.0, 2_600),
-    ("matcap", 0.8, 2.0, 2_600),
-    ("outline", 0.6, 2.0, 2_600),
-    ("emission", 0.8, 2.0, 2_600),
-    ("figure", 1.3, 2.0, 2_600),
-    ("cutout", 1.5, 2.0, 3_100),
-    ("transparent", 1.6, 3.0, 3_600),
-    ("backface", 0.5, 1.0, 2_600),
-    ("normal", 0.8, 2.0, 2_600),
-    ("tone", 0.5, 1.0, 2_600),
-    ("sdf", 1.0, 2.0, 2_600),
-    ("ao_flat", 0.6, 2.0, 2_600),
-    ("emission_rim", 9.5, 62.0, 2_600),
-    ("matcap2", 0.9, 2.0, 2_600),
-    ("outline_mask", 0.5, 2.0, 2_600),
-    ("rim_shade", 0.6, 2.0, 2_600),
-    ("backlight", 0.5, 2.0, 2_600),
-    ("specular_toon", 0.4, 2.0, 2_600),
-    ("specular_real", 0.5, 2.0, 2_600),
-    ("main2nd_decal", 1.4, 2.0, 2_600),
-    ("main3rd_matcap", 0.8, 2.0, 2_600),
-    ("normal2nd", 0.5, 2.0, 2_600),
-    ("glitter", 0.4, 2.0, 2_600),
-    ("anisotropy", 0.4, 2.0, 2_600),
-    ("distance_fade", 0.5, 2.0, 2_600),
-    ("outline_tex", 0.5, 2.0, 2_600),
-    ("uv", 3.0, 24.0, 2_600),
-    ("reflection_env", 0.5, 2.0, 2_600),
-    ("decal_mirror", 1.4, 2.0, 2_600),
-    ("distance_fade_object", 0.5, 2.0, 2_600),
-    ("matcap_normal", 0.7, 2.0, 2_600),
+/// 場面ごとの差の上限: 平均（実 GPU）・平均（ソフトの描画）・95 % の値（0〜255）と、片方だけに物が写っている画素の数。
+/// - 平均（実 GPU）: コンテナの実 GPU（wgpu の GL を Mesa d3d12 へ）で測った値に 0.3 ほどの余裕を足したもの（ソフトの描画より大きくしない）。
+///   Windows の D3D12・macOS の Metal では測っていない。`transparent` は実 GPU ではガンマで重ねる道（GL）しか測れていないので、リニアで
+///   重ねる道の上限はソフトの描画と同じ。
+/// - 平均（ソフトの描画）: llvmpipe（Vulkan と GL）だけに許す上限。塗った絵（Color・Emission）とマットキャップの sRGB の画像は sRGB の
+///   形式で GPU がリニアに直して読み、llvmpipe のその直し方は近似で、一様な色の所でも Unity（実 GPU）と 1 ずれる（平均が 1 近くまで上がる
+///   場面がある。実 GPU では同じ場面の平均が rim 0.06・backface 0.00・anisotropy 0.03・emission 0.31）。llvmpipe の Vulkan と GL で測った値に余裕を足したもの。
+/// - 95 %・片方だけ: 両方で同じ上限（llvmpipe の Vulkan・GL と実 GPU の GL で測った値に余裕を足したもの）。
+///
+/// `transparent` は、描き先の sRGB の見え方を作れない機材（GL）ではガンマの値のまま重ねるので別の上限（`TRANSPARENT_GAMMA`）。
+const BOUNDS: &[(&str, f64, f64, f64, usize)] = &[
+    ("shadow", 0.4, 0.5, 2.0, 2_600),
+    ("shadow_3rd", 0.4, 0.6, 2.0, 2_600),
+    ("shadow_mask", 0.4, 0.6, 2.0, 2_600),
+    ("rim", 0.4, 1.3, 2.0, 2_600),
+    ("matcap", 0.5, 0.8, 2.0, 2_600),
+    ("outline", 0.4, 0.6, 2.0, 2_600),
+    ("emission", 0.7, 1.4, 2.0, 2_600),
+    ("figure", 0.4, 1.3, 2.0, 2_600),
+    ("cutout", 0.9, 1.4, 2.0, 2_600),
+    ("transparent", 1.4, 1.4, 2.0, 2_600),
+    ("backface", 0.3, 1.3, 1.0, 2_600),
+    ("normal", 0.7, 0.8, 2.0, 2_600),
+    ("tone", 0.4, 0.5, 1.0, 2_600),
+    ("sdf", 0.8, 1.0, 2.0, 2_600),
+    ("ao_flat", 0.4, 0.6, 2.0, 2_600),
+    ("emission_rim", 4.0, 4.5, 30.0, 2_600),
+    ("matcap2", 0.6, 1.1, 2.0, 2_600),
+    ("outline_mask", 0.4, 0.5, 2.0, 2_600),
+    ("rim_shade", 0.6, 0.8, 2.0, 2_600),
+    ("backlight", 0.4, 0.7, 2.0, 2_600),
+    ("specular_toon", 0.4, 0.4, 2.0, 2_600),
+    ("specular_real", 0.5, 0.6, 2.0, 2_600),
+    ("main2nd_decal", 0.6, 0.9, 2.0, 2_600),
+    ("main3rd_matcap", 0.5, 1.1, 2.0, 2_600),
+    ("normal2nd", 0.5, 0.5, 2.0, 2_600),
+    ("glitter", 0.4, 0.6, 2.0, 2_600),
+    ("anisotropy", 0.4, 1.3, 2.0, 2_600),
+    ("distance_fade", 0.5, 0.8, 2.0, 2_600),
+    ("outline_tex", 0.5, 0.5, 2.0, 2_600),
+    ("uv", 1.1, 1.2, 7.0, 2_600),
+    ("reflection_env", 0.5, 1.0, 2.0, 2_600),
+    ("decal_mirror", 0.5, 0.6, 2.0, 2_600),
+    ("distance_fade_object", 0.4, 1.1, 2.0, 2_600),
+    ("matcap_normal", 0.5, 0.7, 2.0, 2_600),
+    ("matcap_hdr", 0.4, 1.1, 2.0, 2_600),
+    ("bright_backlight_front", 0.5, 1.1, 2.0, 2_600),
+    ("bright_backlight_side", 0.5, 1.1, 2.0, 2_600),
+    ("bright_backlight_back", 0.5, 0.9, 2.0, 2_600),
 ];
-const TRANSPARENT_GAMMA: (f64, f64, usize) = (30.0, 45.0, 5_600);
+/// GL（ガンマの値のまま重ねる）の `transparent` の上限。llvmpipe と実 GPU の GL で同じ値（平均 28.16〜28.19・95 % 42・片方だけ 5,623）。
+/// 片方だけの画素は、Rust 版のビューの隅のボタン（2,207）と、アルファが 0 に近い薄い縁の帯（llvmpipe の GL で 3,416 = 7 列 × 488 行）: ガンマで重ねると
+/// リニアで重ねる Unity より薄い縁が暗く、背景から 3 以内（背景とみなす）になる。余裕は 1 列（488）ほど。
+const TRANSPARENT_GAMMA: (f64, f64, usize) = (30.0, 45.0, 6_100);
 
 #[test]
 fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
@@ -1666,10 +1791,17 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
         let unity = unity_image(scene.name);
         let (h, ours) = render(scene, Some(unity.dimensions()));
         let linear = h.state().view3d_stats().unwrap().linear_transparent;
+        // ソフトの描画（llvmpipe）か（GPU の名前の最後の「(API, 種類)」の種類が Cpu）
+        let adapter = h.state().view3d_adapter().expect("wgpu の 3D");
+        let software = adapter.ends_with("Cpu)");
+        if scene.name == scenes[0].name {
+            println!("{adapter}");
+        }
         let (mean, p95, max, n, only) = diff(&ours, &unity, background).unwrap_or_else(|| {
             panic!("{}: 大きさが違う（{:?} と Unity の {:?}）", scene.name, ours.dimensions(), unity.dimensions())
         });
-        let (_, bm, bp, bo) = *BOUNDS.iter().find(|b| b.0 == scene.name).expect("上限がある");
+        let (_, gpu_mean, software_mean, bp, bo) = *BOUNDS.iter().find(|b| b.0 == scene.name).expect("上限がある");
+        let bm = if software { software_mean } else { gpu_mean };
         let (bm, bp, bo) = if scene.name == "transparent" && !linear { TRANSPARENT_GAMMA } else { (bm, bp, bo) };
         println!("| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |", scene.name);
         if mean > bm || p95 > bp || only > bo {

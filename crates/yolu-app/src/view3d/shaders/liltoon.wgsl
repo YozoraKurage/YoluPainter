@@ -319,6 +319,15 @@ fn fetch_level(src: i32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// 詰め合わせ（成分ごと）で読む値: 書き出しの「lilToon の詰め方」と同じく、チャンネルの値のまま。Color・Emission は sRGB の形式で
+// GPU がリニアにして読むので、ガンマの値へ戻す
+fn raw_value(src: i32, v: vec4<f32>) -> vec4<f32> {
+    if (src == 0 || src == 4) {
+        return vec4<f32>(linear_to_srgb(v.rgb), v.a);
+    }
+    return v;
+}
+
 fn component(v: vec4<f32>, k: i32) -> f32 {
     if (k == 0) {
         return v.x;
@@ -349,7 +358,7 @@ fn slot_grad(i: i32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec4<f32> {
         for (var k = 0; k < 4; k = k + 1) {
             let code = src[k];
             if (code >= 0) {
-                out[k] = component(fetch_grad(code / 4, uv, gx, gy), code % 4);
+                out[k] = component(raw_value(code / 4, fetch_grad(code / 4, uv, gx, gy)), code % 4);
             } else if (code == -2) {
                 out[k] = 0.0;
             } else if (code == -3) {
@@ -372,7 +381,7 @@ fn slot_level(i: i32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
         for (var k = 0; k < 4; k = k + 1) {
             let code = src[k];
             if (code >= 0) {
-                out[k] = component(fetch_level(code / 4, uv, lod), code % 4);
+                out[k] = component(raw_value(code / 4, fetch_level(code / 4, uv, lod)), code % 4);
             } else if (code == -2) {
                 out[k] = 0.0;
             } else if (code == -3) {
@@ -799,7 +808,7 @@ fn lil_shade(f: VsOut, front: bool) -> vec4<f32> {
     var col = slot_grad(SLOT_MAIN, uv_main, gx, gy);
     if (mode == 0 && lil.slot_flags[SLOT_MAIN].y > 0.5 && i32(lil.slot_flags[SLOT_MAIN].z + 0.5) == 0) {
         let p = textureSampleGrad(color_tex, paint_sampler, uv_main, gx, gy);
-        let g = checker_gamma(uv0) * (1.0 - p.a) + p.rgb;
+        let g = checker_gamma(uv0) * (1.0 - p.a) + premultiplied_gamma(p);
         col = vec4<f32>(srgb_to_linear(g), 1.0);
     }
     // 色調補正
