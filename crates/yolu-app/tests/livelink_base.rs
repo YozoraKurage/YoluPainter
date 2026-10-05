@@ -287,6 +287,7 @@ fn original(generation: u32, material: u32, size: u32, read: OriginalRead, compr
         height: size,
         srgb: true,
         pixels: picture(size),
+        stamp: 0,
     }
 }
 
@@ -302,6 +303,7 @@ fn declined(generation: u32, material: u32, state: OriginalState) -> MaterialOri
         height: 16384,
         srgb: true,
         pixels: Vec::new(),
+        stamp: 0,
     }
 }
 

@@ -26,25 +26,31 @@ use crate::testserver::{
 };
 
 /// この口の版。関数の意味・引数・構造体を変えたら、または C# が新しく足した関数・欄に頼るようになったら上げる（Unity は読んだ DLL を
-/// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、再起動の案内を出す）。
+/// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、理由を出す）。
 /// 2: マテリアルの更新（ylb_materials_*）・全面の写し直し（ylb_channel_mark_all_dirty）・帯だけの写し（ylb_copy_dirty の image が null）・
 /// 自己診断のサーバーの鍵の差し替えと統計の欄の追加。
 /// 3: 互いの版と機能の印（ylb_connect_with・ylb_common_features・ylb_peer_app_version・ylb_link_report・ylb_test_server_configure）。
 /// 4: マテリアルの値（ylb_values_*・ylb_texture_send）、自己診断のサーバーの値の引き出し（ylb_test_server_value・_slot・_texture）と
 /// 統計の欄の追加。
 /// 5: 元の絵（ylb_original_send・ylb_pending_bytes）、自己診断のサーバーの元の絵の引き出し（ylb_test_server_original）と統計の欄の追加。
-pub const ABI_VERSION: u32 = 5;
+/// 6: スタンドアロンからの頼み（ylb_next_request）、元の絵の印と「持っている絵を使う」様子（ylb_original_send に stamp を足し、state に 4）、
+/// 巨大なモデルの断り（YLB_E_TOO_LARGE）、自己診断のサーバーの頼みの送り出し（ylb_test_server_request）と元の絵の印・統計の欄の追加。
+pub const ABI_VERSION: u32 = 6;
 
 /// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能を足すときは、ここに `feature` のビットを足す。
 /// 元のテクスチャ（ORIGINAL_TEXTURES）: スタンドアロンが新しく作ったテクスチャセットの一番下に入れる、元の絵を送る。
-pub const BRIDGE_FEATURES: u64 =
-    yolu_protocol::feature::MATERIAL_VALUES | yolu_protocol::feature::ORIGINAL_TEXTURES;
+/// マテリアルの頼み（MATERIAL_REQUEST）: スタンドアロンの頼み（`ylb_next_request`）に答える。印が双方にあるとき、C# は元の絵を自分から押し出さない。
+pub const BRIDGE_FEATURES: u64 = yolu_protocol::feature::MATERIAL_VALUES
+    | yolu_protocol::feature::ORIGINAL_TEXTURES
+    | yolu_protocol::feature::MATERIAL_REQUEST;
 
 pub const YLB_E_HANDLE: i32 = -1;
 pub const YLB_E_ARGUMENT: i32 = -2;
 pub const YLB_E_STATE: i32 = -3;
 pub const YLB_E_PANIC: i32 = -5;
 pub const YLB_E_SHM: i32 = -6;
+/// 命令が枠の上限（512 MiB）を超えるので送れない（巨大なモデル）。
+pub const YLB_E_TOO_LARGE: i32 = -7;
 
 static SESSIONS: Mutex<BTreeMap<u64, Arc<Session>>> = Mutex::new(BTreeMap::new());
 static SERVERS: Mutex<BTreeMap<u64, TestServer>> = Mutex::new(BTreeMap::new());
@@ -699,12 +705,18 @@ pub extern "C" fn ylb_model_send(handle: u64) -> i32 {
         let Some(mut m) = b.model.take() else {
             return YLB_E_STATE;
         };
+        // 枠の上限を超えるモデルは、書き出す前に断る（枠にしようとして領域を取り、相手の読み手につながりを閉じさせない）
+        if m.payload_len() > s.payload_limit() as u64 {
+            return YLB_E_TOO_LARGE;
+        }
         let generation = b.sent_generation.wrapping_add(1).max(1);
         m.generation = generation;
         let vertices: Vec<usize> = m.meshes.iter().map(|x| x.positions.len()).collect();
         let material_count = m.materials.len();
-        if !s.enqueue(&Message::Model(m)) {
-            return YLB_E_STATE;
+        match s.try_enqueue(&Message::Model(m)) {
+            Ok(true) => {}
+            Ok(false) => return YLB_E_STATE,
+            Err(_) => return YLB_E_TOO_LARGE,
         }
         b.sent_generation = generation;
         b.sent_vertices = vertices;
@@ -1244,6 +1256,8 @@ pub unsafe extern "C" fn ylb_texture_send(
 /// テクスチャの大きさ）、`read` は 0 = 原本のファイル・1 = 取り込んだ絵の CPU の値・2 = GPU を通して、`flags` の bit0 は圧縮された
 /// テクスチャから読んだ。`pixels` は RGBA8（straight）で行は下から、`pixel_len` は幅 × 高さ × 4（辺は MAX_ORIGINAL_SIZE まで）。
 /// `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
+/// `stamp` はこの絵の印（Unity が決める 64 ビット。0 は印なし）。`state` が 4（スタンドアロンが頼みで持つと言った絵と印が同じ。画素なし）のときは
+/// 0 以外が要る（`width`・`height` は Unity のテクスチャの大きさ）。
 /// 返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
 #[no_mangle]
 pub unsafe extern "C" fn ylb_original_send(
@@ -1257,6 +1271,7 @@ pub unsafe extern "C" fn ylb_original_send(
     width: u32,
     height: u32,
     srgb: i32,
+    stamp: u64,
     pixels: *const u8,
     pixel_len: i32,
 ) -> i32 {
@@ -1267,7 +1282,10 @@ pub unsafe extern "C" fn ylb_original_send(
         let Some(slot) = value_name(slot, slot_len) else {
             return YLB_E_ARGUMENT;
         };
-        if !(0..=3).contains(&state) || !(0..=2).contains(&read) {
+        if !(0..=4).contains(&state) || !(0..=2).contains(&read) {
+            return YLB_E_ARGUMENT;
+        }
+        if state == OriginalState::Cached as i32 && stamp == 0 {
             return YLB_E_ARGUMENT;
         }
         let state = OriginalState::from_u8(state as u8);
@@ -1313,10 +1331,75 @@ pub unsafe extern "C" fn ylb_original_send(
             height,
             srgb: srgb != 0,
             pixels: pixels.to_vec(),
+            stamp,
         });
         if !s.enqueue(&message) {
             return YLB_E_STATE;
         }
+        1
+    })
+}
+
+/// 試験用: 1 つの命令の中身の上限（バイト）を狭める（`MAX_PAYLOAD` より大きくはならない）。巨大なモデルを作らずに、上限を超える
+/// モデルの断り（YLB_E_TOO_LARGE）を確かめる。
+#[no_mangle]
+pub extern "C" fn ylb_test_set_payload_limit(handle: u64, bytes: u64) -> i32 {
+    guard(YLB_E_PANIC, || match session(handle) {
+        Some(s) => {
+            s.set_payload_limit(usize::try_from(bytes).unwrap_or(usize::MAX));
+            0
+        }
+        None => YLB_E_HANDLE,
+    })
+}
+
+/// スタンドアロンからの頼み 1 つ（`ylb_next_request`）。
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct YlbRequest {
+    /// 頼みの世代（`ylb_model_send` の返した値。今のモデルの世代と違う頼みは、古いモデルのもの）。
+    pub generation: u32,
+    /// モデルのマテリアルの番号。
+    pub material: u32,
+    /// 頼むもの（bit0 値・bit1 元の絵。知らない bit は無視する）。
+    pub wants: u32,
+    /// スロットの名前の長さ（バイト。入りきらなければ要る長さ。元の絵でなければ 0）。
+    pub slot_len: i32,
+    /// スタンドアロンが手元に持つ元の絵の印（0 は持たない）。
+    pub have: u64,
+}
+
+/// スタンドアロンからの頼みを 1 つ取り出す（待たない）。1 = 取り出した（`request` と、スロットの名前を `slot` へ UTF-8 で。入りきらなければ
+/// 文字の途中で切って、`slot_len` に要る長さ）、0 = 頼みは無い、負は失敗。頼みはスタンドアロンが印（MATERIAL_REQUEST）を名乗り、こちらも
+/// 名乗っているときだけ来る。同じマテリアルの同じ頼みは 1 つにまとまる。
+///
+/// # Safety
+/// `request` は 1 つ分の領域、`slot` は `slot_cap` バイトの書ける領域（または null）を指すこと。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_next_request(
+    handle: u64,
+    request: *mut YlbRequest,
+    slot: *mut u8,
+    slot_cap: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        if request.is_null() {
+            return YLB_E_ARGUMENT;
+        }
+        let Some(r) = s.state().requests.pop_front() else {
+            return 0;
+        };
+        put_text_written(&r.item.slot, slot, slot_cap);
+        *request = YlbRequest {
+            generation: r.generation,
+            material: r.item.material,
+            wants: r.item.wants as u32,
+            slot_len: r.item.slot.len() as i32,
+            have: r.item.have,
+        };
         1
     })
 }
@@ -1779,6 +1862,34 @@ pub unsafe extern "C" fn ylb_test_server_original(
             }
             None => YLB_E_ARGUMENT,
         }
+    })
+}
+
+/// 自己診断のスタンドアロンから、つながっているブリッジへ頼みを 1 つ送る（スタンドアロンが頼む役）。`generation` が 0 なら今のモデルの世代、
+/// `wants` は bit0 値・bit1 元の絵、`slot` は元の絵のスロット（値だけなら空でよい）、`have` は手元の絵の印（0 は持たない）。
+/// 相手に印（MATERIAL_REQUEST）が無い・つながっていなければ YLB_E_STATE。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_test_server_request(
+    server: u64,
+    generation: u32,
+    material: u32,
+    wants: i32,
+    slot: *const u8,
+    slot_len: i32,
+    have: u64,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = servers.get(&server) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(slot) = (if slot_len == 0 { Some("") } else { text(slot, slot_len) }) else {
+            return YLB_E_ARGUMENT;
+        };
+        if !(1..=255).contains(&wants) {
+            return YLB_E_ARGUMENT;
+        }
+        s.request(generation, material, wants as u8, slot, have)
     })
 }
 

@@ -17,7 +17,8 @@ out="$here/target/bridge-out"
 mkdir -p "$out"
 cp target/bridge/libyolu_bridge.so "$out/"
 cp target/x86_64-pc-windows-gnu/bridge/yolu_bridge.dll "$out/"
-cp crates/yolu-bridge/generated/LiveLinkNative.g.cs "$out/"
+# csbindgen の宣言（[DllImport]）を、C# がライブラリをコピーから読む形（関数ポインター）に書き換える
+python3 tools/gen-livelink-native.py crates/yolu-bridge/generated/LiveLinkNative.g.cs "$out/LiveLinkNative.g.cs"
 if grep -a -q -e "$HOME" -e "$here" "$out/libyolu_bridge.so" "$out/yolu_bridge.dll"; then
   echo "手元のパスが DLL に残っている" >&2; exit 1
 fi

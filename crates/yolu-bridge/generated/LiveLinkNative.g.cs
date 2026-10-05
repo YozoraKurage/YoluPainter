@@ -257,10 +257,30 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         ///  テクスチャの大きさ）、`read` は 0 = 原本のファイル・1 = 取り込んだ絵の CPU の値・2 = GPU を通して、`flags` の bit0 は圧縮された
         ///  テクスチャから読んだ。`pixels` は RGBA8（straight）で行は下から、`pixel_len` は幅 × 高さ × 4（辺は MAX_ORIGINAL_SIZE まで）。
         ///  `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
+        ///  `stamp` はこの絵の印（Unity が決める 64 ビット。0 は印なし）。`state` が 4（スタンドアロンが頼みで持つと言った絵と印が同じ。画素なし）のときは
+        ///  0 以外が要る（`width`・`height` は Unity のテクスチャの大きさ）。
         ///  返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_original_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-        internal static extern int ylb_original_send(ulong handle, int material, byte* slot, int slot_len, int state, int read, int flags, uint width, uint height, int srgb, byte* pixels, int pixel_len);
+        internal static extern int ylb_original_send(ulong handle, int material, byte* slot, int slot_len, int state, int read, int flags, uint width, uint height, int srgb, ulong stamp, byte* pixels, int pixel_len);
+
+        /// <summary>
+        ///  試験用: 1 つの命令の中身の上限（バイト）を狭める（`MAX_PAYLOAD` より大きくはならない）。巨大なモデルを作らずに、上限を超える
+        ///  モデルの断り（YLB_E_TOO_LARGE）を確かめる。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_set_payload_limit", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_set_payload_limit(ulong handle, ulong bytes);
+
+        /// <summary>
+        ///  スタンドアロンからの頼みを 1 つ取り出す（待たない）。1 = 取り出した（`request` と、スロットの名前を `slot` へ UTF-8 で。入りきらなければ
+        ///  文字の途中で切って、`slot_len` に要る長さ）、0 = 頼みは無い、負は失敗。頼みはスタンドアロンが印（MATERIAL_REQUEST）を名乗り、こちらも
+        ///  名乗っているときだけ来る。同じマテリアルの同じ頼みは 1 つにまとまる。
+        ///
+        ///  # Safety
+        ///  `request` は 1 つ分の領域、`slot` は `slot_cap` バイトの書ける領域（または null）を指すこと。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_next_request", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_next_request(ulong handle, YlbRequest* request, byte* slot, int slot_cap);
 
         /// <summary>
         ///  まだ送り終えていない（順番待ちに積んだ）命令のバイトの合計。大きな絵を続けて送るとき、これが小さくなるまで次を積まないための目安。
@@ -385,6 +405,14 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_test_server_original(ulong server, uint material, byte* slot, int slot_len, YlbTestServerOriginal* @out);
 
         /// <summary>
+        ///  自己診断のスタンドアロンから、つながっているブリッジへ頼みを 1 つ送る（スタンドアロンが頼む役）。`generation` が 0 なら今のモデルの世代、
+        ///  `wants` は bit0 値・bit1 元の絵、`slot` は元の絵のスロット（値だけなら空でよい）、`have` は手元の絵の印（0 は持たない）。
+        ///  相手に印（MATERIAL_REQUEST）が無い・つながっていなければ YLB_E_STATE。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_request", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_request(ulong server, uint generation, uint material, int wants, byte* slot, int slot_len, ulong have);
+
+        /// <summary>
         ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。無ければ YLB_E_ARGUMENT。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_texture", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -467,6 +495,34 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         ///  説明の UTF-8 の長さ（領域が足りなければ切ってある）。
         /// </summary>
         public int text_len;
+    }
+
+    /// <summary>
+    ///  スタンドアロンからの頼み 1 つ（`ylb_next_request`）。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbRequest
+    {
+        /// <summary>
+        ///  頼みの世代（`ylb_model_send` の返した値。今のモデルの世代と違う頼みは、古いモデルのもの）。
+        /// </summary>
+        public uint generation;
+        /// <summary>
+        ///  モデルのマテリアルの番号。
+        /// </summary>
+        public uint material;
+        /// <summary>
+        ///  頼むもの（bit0 値・bit1 元の絵。知らない bit は無視する）。
+        /// </summary>
+        public uint wants;
+        /// <summary>
+        ///  スロットの名前の長さ（バイト。入りきらなければ要る長さ。元の絵でなければ 0）。
+        /// </summary>
+        public int slot_len;
+        /// <summary>
+        ///  スタンドアロンが手元に持つ元の絵の印（0 は持たない）。
+        /// </summary>
+        public ulong have;
     }
 
     /// <summary>
@@ -590,6 +646,25 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         ///  元の絵が揃うまで出さずに待たせているセットの数（機能の印 ORIGINAL_TEXTURES を名乗っているときだけ待たせる）。
         /// </summary>
         public uint held_sets;
+        /// <summary>
+        ///  送った頼み（MaterialRequest。印 MATERIAL_REQUEST が双方にあるとき、待たせたセットの元の絵を自分から頼む分と、試験が頼ませた分）の数。
+        /// </summary>
+        public uint requests;
+        /// <summary>
+        ///  手元の絵を使った数（Cached の印が手元の絵と合った）と、使えなかった数（手元に無い・印か大きさが違う。頼み直す）。
+        /// </summary>
+        public uint cached_used;
+        public uint cached_missed;
+        /// <summary>
+        ///  最後に送った頼みの、項目の数。
+        /// </summary>
+        public uint last_request_items;
+        /// <summary>
+        ///  最後に受けた元の絵（線の上で受けた様子。手元の絵に置き換える前）の様子（0 絵が付く・1 読めない・2 大きすぎる・3 予算・4 手元の絵を使う）と
+        ///  マテリアルの番号。
+        /// </summary>
+        public uint last_original_state;
+        public uint last_original_material;
     }
 
     /// <summary>
@@ -599,7 +674,7 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
     internal unsafe partial struct YlbTestServerOriginal
     {
         /// <summary>
-        ///  0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える。
+        ///  0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える・4 手元の絵を使う（画素なし）。
         /// </summary>
         public uint state;
         /// <summary>
@@ -621,6 +696,10 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         public uint center;
         public uint corner;
+        /// <summary>
+        ///  絵の印（0 は印なし）。
+        /// </summary>
+        public ulong stamp;
     }
 
     /// <summary>

@@ -173,6 +173,7 @@ impl FakeUnity {
                             height: 0,
                             srgb: true,
                             pixels: Vec::new(),
+                            stamp: 0,
                         }))
                         .unwrap();
                 }
@@ -623,7 +624,7 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 5);
+        assert_eq!(ylb_abi_version(), 6);
         let agent = "子の Unity";
         // 本物の C の口で、Unity のパッケージの版を名乗る
         let version = "0.3.0";
@@ -683,6 +684,40 @@ fn child_unity() {
         assert_eq!(ylb_model_submesh(h, 0, 0, [0, 2, 1].as_ptr(), 3), 0);
         assert_eq!(ylb_model_submesh(h, 0, 1, [1, 2, 3].as_ptr(), 3), 0);
         assert_eq!(ylb_model_send(h), 1);
+        // スタンドアロンは、元の絵を待たせたセットのマテリアルを頼む（C の口の頼みの取り出しまで届く。世代 1・元の絵・手元の印なし）。
+        // Unity は元の絵を自分から押し出さず、頼まれた分を送る
+        let mut asked: Vec<(u32, u32, u32, u64, String)> = Vec::new();
+        poll(
+            h,
+            "頼み",
+            Box::new(|| {
+                loop {
+                    let mut r = YlbRequest::default();
+                    let mut slot = [0u8; 64];
+                    if ylb_next_request(h, &mut r, slot.as_mut_ptr(), slot.len() as i32) != 1 {
+                        break;
+                    }
+                    if r.wants & 2 != 0 {
+                        asked.push((
+                            r.generation,
+                            r.material,
+                            r.wants,
+                            r.have,
+                            String::from_utf8(slot[..r.slot_len as usize].to_vec()).unwrap(),
+                        ));
+                    }
+                }
+                asked.len() >= 2
+            }),
+        );
+        asked.sort();
+        assert_eq!(
+            asked,
+            vec![
+                (1, 0, 2, 0, "_MainTex".to_owned()),
+                (1, 1, 2, 0, "_MainTex".to_owned())
+            ]
+        );
         // 元の絵（原本のファイルから読んだ、同じ大きさの平らな絵）。揃うまで、スタンドアロンはセットを出さない
         for (i, (size, color)) in [(256u32, [200u8, 100, 50, 255]), (512, [10, 200, 90, 255])]
             .iter()
@@ -701,6 +736,7 @@ fn child_unity() {
                     *size,
                     *size,
                     1,
+                    0xA0 + i as u64,
                     pixels.as_ptr(),
                     pixels.len() as i32,
                 ),
@@ -708,6 +744,7 @@ fn child_unity() {
             );
         }
         poll(h, "2 つのセット", Box::new(|| ylb_set_count(h) == 2));
+
         let mut infos = Vec::new();
         for i in 0..2 {
             let mut info = YlbSetInfo::default();

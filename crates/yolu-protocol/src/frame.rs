@@ -40,7 +40,12 @@ impl std::fmt::Display for FrameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FrameError::BadMagic => write!(f, "枠の頭が YLNK ではありません"),
-            FrameError::TooLarge(n) => write!(f, "枠の中身が大きすぎます（{n} バイト）"),
+            FrameError::TooLarge(n) => write!(
+                f,
+                "枠の中身が大きすぎます（{} MiB。上限 {} MiB）",
+                n.div_ceil(1 << 20),
+                MAX_PAYLOAD >> 20
+            ),
             FrameError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -54,27 +59,58 @@ impl From<io::Error> for FrameError {
     }
 }
 
-/// 命令を 1 つの枠（頭と中身）にする。
+/// 命令を 1 つの枠（頭と中身）にする。中身が上限（`MAX_PAYLOAD`）を超えないと分かっている小さな命令（挨拶・断り・誤り・Bye・
+/// タイルの知らせなど）と試験のための口で、超えるとパニックする。モデル・ポーズ・画素を運ぶ命令を送る口は `try_encode_message` を使う。
 pub fn encode_message(message: &Message) -> Vec<u8> {
-    let payload = message.encode_payload();
-    encode_frame(message.kind() as u16, 0, &payload)
+    try_encode_message(message).expect("枠の中身が上限を超えます")
 }
 
-/// 枠を作る（知らない種類の命令を試すときにも使う）。
+/// 命令を 1 つの枠にする。中身が上限（`MAX_PAYLOAD`）を超えるなら `FrameError::TooLarge`（相手の読み手は、上限を超える枠で区切りを失って
+/// つながりを閉じるので、送る前に断る）。パニックしない。
+pub fn try_encode_message(message: &Message) -> Result<Vec<u8>, FrameError> {
+    try_encode_message_within(message, MAX_PAYLOAD)
+}
+
+/// `try_encode_message` の、中身の上限を（`MAX_PAYLOAD` 以下に）狭められる形。送り口が、相手に渡す量をもっと小さく絞るときと、試験が
+/// 巨大な命令を作らずに断りの流れを確かめるときに使う。
+pub fn try_encode_message_within(message: &Message, limit: usize) -> Result<Vec<u8>, FrameError> {
+    let payload = message.encode_payload();
+    if payload.len() > limit.min(MAX_PAYLOAD) {
+        return Err(FrameError::TooLarge(payload.len()));
+    }
+    try_encode_frame(message.kind() as u16, 0, &payload)
+}
+
+/// 枠を作る（知らない種類の命令を試すときにも使う）。中身が上限を超えるとパニックする（`try_encode_frame`）。
 pub fn encode_frame(kind: u16, flags: u16, payload: &[u8]) -> Vec<u8> {
-    assert!(payload.len() <= MAX_PAYLOAD, "枠の中身が上限を超えます");
+    try_encode_frame(kind, flags, payload).expect("枠の中身が上限を超えます")
+}
+
+/// 枠を作る。中身が上限を超えるなら、中身を写す前に `FrameError::TooLarge`。
+pub fn try_encode_frame(kind: u16, flags: u16, payload: &[u8]) -> Result<Vec<u8>, FrameError> {
+    if payload.len() > MAX_PAYLOAD {
+        return Err(FrameError::TooLarge(payload.len()));
+    }
     let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
     out.extend_from_slice(&MAGIC);
     out.extend_from_slice(&kind.to_le_bytes());
     out.extend_from_slice(&flags.to_le_bytes());
     out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     out.extend_from_slice(payload);
-    out
+    Ok(out)
 }
 
-/// 命令を書く（書き終えるまで待つ）。
+/// 命令を書く（書き終えるまで待つ）。中身が上限を超えるなら、何も書かずに `InvalidInput`。
 pub fn write_message(w: &mut impl Write, message: &Message) -> io::Result<()> {
-    w.write_all(&encode_message(message))?;
+    write_message_within(w, message, MAX_PAYLOAD)
+}
+
+/// `write_message` の、中身の上限を（`MAX_PAYLOAD` 以下に）狭められる形（`try_encode_message_within`）。上限を超えるなら、何も書かずに `InvalidInput`。
+/// 試験が、512 MiB の命令を作らずに、書く口の断りを確かめるのに使う。
+pub fn write_message_within(w: &mut impl Write, message: &Message, limit: usize) -> io::Result<()> {
+    let frame = try_encode_message_within(message, limit)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+    w.write_all(&frame)?;
     w.flush()
 }
 
@@ -200,6 +236,41 @@ impl FrameReader {
 mod tests {
     use super::*;
     use crate::message::{Hello, Message};
+
+    #[test]
+    fn a_payload_over_the_limit_is_refused_without_panicking() {
+        // 上限を 1 バイト超えると、中身を写す前に断る（相手の読み手は上限を超える枠でつながりを閉じる）。
+        // 上限ちょうどの枠は 512 MiB を写すので、ここでは作らない（0 で埋めた領域はまだ物理メモリを使わない）
+        let over = vec![0u8; MAX_PAYLOAD + 1];
+        let e = try_encode_frame(0x7fff, 0, &over).unwrap_err();
+        assert!(matches!(e, FrameError::TooLarge(n) if n == MAX_PAYLOAD + 1), "{e}");
+        assert!(e.to_string().contains("512 MiB"), "理由に上限が入る: {e}");
+        // 書く口は、何も書かずに InvalidInput（パニックしない）。512 MiB の命令は作らず、上限を狭めて同じ道を通す
+        let hello = Message::Hello(Hello {
+            min_version: 1,
+            max_version: 1,
+            agent: "試験".into(),
+            features: 0,
+            auth: None,
+            versions: None,
+        });
+        let size = hello.encode_payload().len();
+        let mut sink = Vec::new();
+        let e = write_message_within(&mut sink, &hello, size - 1).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{e}");
+        assert!(e.to_string().contains("512 MiB"), "理由に上限が入る: {e}");
+        assert!(sink.is_empty(), "何も書かない");
+        // 上限ちょうどは書く。上限を省いた口（既定は 512 MiB）も、小さな命令は書く
+        write_message_within(&mut sink, &hello, size).unwrap();
+        assert_eq!(sink.len(), HEADER_LEN + size);
+        let mut plain = Vec::new();
+        write_message(&mut plain, &hello).unwrap();
+        assert_eq!(plain, sink);
+        // 上限 0 でも、中身の無い命令は書ける（Bye の中身は空）
+        let mut bye = Vec::new();
+        write_message_within(&mut bye, &Message::Bye, 0).unwrap();
+        assert_eq!(bye.len(), HEADER_LEN);
+    }
 
     /// 1 バイトずつ・時間切れを挟みながら返す読み手。
     struct Trickle {

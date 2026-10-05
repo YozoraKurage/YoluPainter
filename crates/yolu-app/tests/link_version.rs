@@ -252,6 +252,8 @@ fn names_of(lang: Lang, mask: u64) -> String {
         (feature::ASSETS, "アセット", "Assets"),
         (feature::PROJECT_TRANSFER, "プロジェクトの転送", "Project transfer"),
         (feature::ANIMATION, "アニメーション", "Animation"),
+        (feature::ORIGINAL_TEXTURES, "元のテクスチャ", "Original textures"),
+        (feature::MATERIAL_REQUEST, "マテリアルの頼み", "Material requests"),
     ];
     let mut names: Vec<&str> = table
         .iter()

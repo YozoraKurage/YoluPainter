@@ -22,11 +22,14 @@
 //!   入らず、開き直すと印は無くなる。層は普通のピクセルレイヤー）。
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
-use yolu_protocol::{channel, MaterialInfo, MaterialOriginal, Model, OriginalRead, OriginalState};
+use yolu_protocol::{
+    channel, MaterialInfo, MaterialKey, MaterialOriginal, MaterialWant, Model, OriginalRead,
+    OriginalState,
+};
 
 use crate::engine::{Channel, Document, LayerId, PixelClipboard};
 use crate::lang::Lang;
@@ -39,6 +42,127 @@ pub const STALL: Duration = Duration::from_secs(30);
 
 /// 届いたが、まだ文書に入れていない元の絵の画素のバイトの合計の上限（描いている最中などで入れるのを待つあいだ）。
 pub const MAX_PENDING_BYTES: u64 = 512 << 20;
+
+/// 手元に残す元の絵（印の付いたもの）の画素のバイトの合計の上限。超えたら、使っていない順に捨てる。1 枚でこの上限を超える絵は残さない。
+pub const MAX_CACHED_BYTES: u64 = 192 << 20;
+
+/// 手元に残した元の絵 1 つ。
+struct Cached {
+    /// Unity が付けた絵の印（0 でない）。
+    stamp: u64,
+    /// 絵そのもの（世代とマテリアルの番号は、使うときに今のものへ替える）。
+    original: MaterialOriginal,
+    /// 最後に残した・使った順（大きいほど新しい）。
+    used: u64,
+}
+
+/// 手元に残した元の絵（Unity が印を付けて送ってきたもの）。マテリアルの鍵（名前と GUID）とスロットで引く。モデルが替わっても・つなぎ直しても
+/// 残す。Unity が頼みの `have` に付けた印と今の印が同じと答えたときだけ使い、印が違う・手元に無い・大きさが違うときは使わない
+/// （古い絵を使う側には倒さない）。上限は [`MAX_CACHED_BYTES`]。
+pub struct OriginalCache {
+    entries: HashMap<(MaterialKey, String), Cached>,
+    bytes: u64,
+    limit: u64,
+    tick: u64,
+}
+
+impl Default for OriginalCache {
+    fn default() -> Self {
+        OriginalCache::with_limit(MAX_CACHED_BYTES)
+    }
+}
+
+impl OriginalCache {
+    pub fn with_limit(limit: u64) -> OriginalCache {
+        OriginalCache {
+            entries: HashMap::new(),
+            bytes: 0,
+            limit,
+            tick: 0,
+        }
+    }
+
+    /// 手元の絵の印（頼みの `have`。無ければ 0）。
+    pub fn have(&self, key: &MaterialKey, slot: &str) -> u64 {
+        self.entries
+            .get(&(key.clone(), slot.to_owned()))
+            .map_or(0, |c| c.stamp)
+    }
+
+    /// 印の付いた、画素のある絵を手元に残す（同じ鍵・スロットの前の絵は置き換える）。印が 0・画素なしは残さず、前の絵も捨てる
+    /// （印の無い新しい絵が来た以上、前の絵は今の絵ではない）。
+    pub fn remember(&mut self, key: &MaterialKey, original: &MaterialOriginal) {
+        let id = (key.clone(), original.slot.clone());
+        if let Some(old) = self.entries.remove(&id) {
+            self.bytes -= old.original.pixels.len() as u64;
+        }
+        let size = original.pixels.len() as u64;
+        if original.state != OriginalState::Image || original.stamp == 0 || size > self.limit {
+            return;
+        }
+        while self.bytes + size > self.limit {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, c)| c.used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&oldest) {
+                self.bytes -= old.original.pixels.len() as u64;
+            }
+        }
+        self.tick += 1;
+        self.bytes += size;
+        self.entries.insert(
+            id,
+            Cached {
+                stamp: original.stamp,
+                original: original.clone(),
+                used: self.tick,
+            },
+        );
+    }
+
+    /// Unity が「印が同じ」と答えた絵を引く。印と大きさが手元の絵と合うときだけ（絵を使ったことにして、捨てる順を新しくする）。
+    pub fn use_cached(
+        &mut self,
+        key: &MaterialKey,
+        slot: &str,
+        stamp: u64,
+        size: (u32, u32),
+    ) -> Option<MaterialOriginal> {
+        let tick = self.tick + 1;
+        let cached = self.entries.get_mut(&(key.clone(), slot.to_owned()))?;
+        if stamp == 0 || cached.stamp != stamp || (cached.original.width, cached.original.height) != size {
+            return None;
+        }
+        self.tick = tick;
+        cached.used = tick;
+        Some(cached.original.clone())
+    }
+
+    /// 手元の絵の数。
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 手元の絵の画素のバイトの合計。
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// 手元の絵を全部捨てる。
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+}
 
 /// 層の欄に出す印 1 つ（入れた「元の絵」の層ごと。セッションの中だけで、保存しない）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,8 +248,12 @@ impl OriginalMarks {
 /// 元の絵を待たせているセット 1 つ。
 struct Wait {
     material: u32,
+    /// マテリアルの鍵（手元の絵を引く）。
+    key: MaterialKey,
     /// 来るはずのスロット（Color の流し込み先のプロパティ）。
     slot: String,
+    /// Unity に頼んだ（頼みを出せるつながりで、頼んだ後。頼みは 1 度だけ。答えが無ければ [`STALL`] であきらめる）。
+    requested: bool,
     /// 待たせ始めたときの文書の ID と版（変わっていたら入れない）。
     doc_id: u128,
     revision: u64,
@@ -152,6 +280,10 @@ pub struct LiveBase {
     progress: Instant,
     /// 入れるのを待っている元の絵の画素のバイトの合計の上限（既定は [`MAX_PENDING_BYTES`]）。
     pending_limit: u64,
+    /// 手元に残した元の絵（印の付いたもの）。つなぎ直しても残す。
+    cache: OriginalCache,
+    /// 次の `take_requests` で頼む、頼み直し（Unity の「印が同じ」の答えが手元の絵と合わなかったとき。印なしで頼む）。
+    again: Vec<MaterialWant>,
 }
 
 impl Default for LiveBase {
@@ -161,6 +293,8 @@ impl Default for LiveBase {
             waits: BTreeMap::new(),
             progress: Instant::now(),
             pending_limit: MAX_PENDING_BYTES,
+            cache: OriginalCache::default(),
+            again: Vec::new(),
         }
     }
 }
@@ -235,6 +369,9 @@ impl LiveBase {
                 uid,
                 Wait {
                     material,
+                    key: info.key.clone(),
+                    // 前のモデルから持ち越した待ちの頼みは、頼み直す（世代が替わったので、前の頼みへの答えは来ない）
+                    requested: false,
                     slot,
                     doc_id,
                     revision,
@@ -245,6 +382,30 @@ impl LiveBase {
         }
         self.waits = next;
         self.progress = now;
+    }
+
+    /// Unity に頼む、元の絵（頼みを出せるつながりのときだけ呼ぶ）。元の絵を待たせているセットのマテリアルのうち、まだ頼んでいないもの
+    /// （手元に印の付いた絵があれば `have` に付ける）と、手元の絵が合わなかったための頼み直し（印なし）。頼んだ待ちは頼み済みにする。
+    /// 絵の無いマテリアル（白で始める）は、来る絵が無いので頼まない。
+    pub fn take_requests(&mut self) -> Vec<MaterialWant> {
+        let mut out = std::mem::take(&mut self.again);
+        for wait in self.waits.values_mut() {
+            if wait.requested || wait.arrival.is_some() {
+                continue;
+            }
+            wait.requested = true;
+            let have = self.cache.have(&wait.key, &wait.slot);
+            out.push(MaterialWant::original(wait.material, wait.slot.clone(), have));
+        }
+        // 同じマテリアル・スロットは 1 つ（先の頼み。頼み直し（印なし）が先に並ぶ）
+        let mut seen = std::collections::BTreeSet::new();
+        out.retain(|w| seen.insert((w.material, w.slot.clone())));
+        out
+    }
+
+    /// 手元に残した元の絵（試験・診断用）。
+    pub fn cache(&self) -> &OriginalCache {
+        &self.cache
     }
 
     /// このセットは、元の絵が入るまで Unity に出さない。
@@ -270,6 +431,39 @@ impl LiveBase {
                 "元の絵の世代 {} は今のモデルの世代 {} と違います",
                 original.generation, self.generation
             ));
+        }
+        // 「印が同じ」の答え（画素なし）は、手元の絵と印・大きさが合えば、その絵が届いたものとして扱う。合わなければ使わず、
+        // 印なしで頼み直す（手元の絵が無い・古い・別の大きさ。古い絵は使わない）
+        let mut original = original;
+        if original.state == OriginalState::Cached {
+            let Some(key) = self
+                .waits
+                .values()
+                .find(|w| w.material == original.material)
+                .map(|w| w.key.clone())
+            else {
+                return Ok(());
+            };
+            match self.cache.use_cached(
+                &key,
+                &original.slot,
+                original.stamp,
+                (original.width, original.height),
+            ) {
+                Some(hit) => {
+                    original = MaterialOriginal {
+                        generation: original.generation,
+                        material: original.material,
+                        ..hit
+                    }
+                }
+                None => {
+                    self.again
+                        .push(MaterialWant::original(original.material, original.slot, 0));
+                    self.progress = now;
+                    return Ok(());
+                }
+            }
         }
         let pending: u64 = self
             .waits
@@ -300,6 +494,9 @@ impl LiveBase {
         wait.arrival = Some(if pending + original.pixels.len() as u64 > self.pending_limit {
             Arrival::TooMany
         } else {
+            // 印の付いた絵は手元に残す（次に Unity が「印が同じ」と答えたとき使う）。印の無い絵は残さず、前の絵も捨てる
+            let key = wait.key.clone();
+            self.cache.remember(&key, &original);
             Arrival::Unity(original)
         });
         Ok(())
@@ -381,7 +578,7 @@ fn settle(state: &mut AppState, uid: u32, wait: Wait, lang: Lang) -> Result<(), 
     let source = match wait.arrival {
         Some(Arrival::Unity(o)) => match o.state {
             OriginalState::Image => Source::Original(o),
-            OriginalState::Unreadable => {
+            OriginalState::Unreadable | OriginalState::Cached => {
                 return Err(lang
                     .pick("Unity が読めませんでした", "Unity could not read it")
                     .to_owned())
@@ -752,6 +949,7 @@ mod tests {
             height: bytes as u32 / 4,
             srgb: true,
             pixels: vec![255; bytes],
+            stamp: 0,
         }
     }
 
@@ -1024,5 +1222,168 @@ mod tests {
         assert_eq!(tip.lines().count(), 3);
         assert!(tip.contains("4096×2048") && tip.contains("2048×2048"));
         assert!(!tip.chars().any(|c| ('\u{3040}'..='\u{9fff}').contains(&c)));
+    }
+
+    fn key(name: &str) -> MaterialKey {
+        MaterialKey::Material {
+            name: name.into(),
+            asset: None,
+        }
+    }
+
+    fn stamped(generation: u32, material: u32, bytes: usize, stamp: u64) -> MaterialOriginal {
+        MaterialOriginal {
+            stamp,
+            ..image(generation, material, bytes)
+        }
+    }
+
+    fn cached_answer(generation: u32, material: u32, bytes: usize, stamp: u64) -> MaterialOriginal {
+        MaterialOriginal {
+            state: OriginalState::Cached,
+            pixels: Vec::new(),
+            stamp,
+            ..image(generation, material, bytes)
+        }
+    }
+
+    #[test]
+    fn the_cache_keeps_stamped_pictures_and_uses_one_only_when_the_stamp_and_size_agree() {
+        let mut cache = OriginalCache::default();
+        assert!(cache.is_empty());
+        let body = stamped(1, 0, 16, 11);
+        cache.remember(&key("Body"), &body);
+        assert_eq!((cache.len(), cache.bytes(), cache.have(&key("Body"), "_MainTex")), (1, 16, 11));
+        assert_eq!(cache.have(&key("Hair"), "_MainTex"), 0, "別のマテリアルの絵は持たない");
+        assert_eq!(cache.have(&key("Body"), "_BaseMap"), 0, "別のスロットの絵は持たない");
+        // 印と大きさが合えば使える（画素はそのまま）。1 つでも違えば使えない
+        let hit = cache.use_cached(&key("Body"), "_MainTex", 11, (1, 4)).unwrap();
+        assert_eq!(hit.pixels, body.pixels);
+        assert!(cache.use_cached(&key("Body"), "_MainTex", 12, (1, 4)).is_none(), "印が違う");
+        assert!(cache.use_cached(&key("Body"), "_MainTex", 0, (1, 4)).is_none(), "印なしは使わない");
+        assert!(cache.use_cached(&key("Body"), "_MainTex", 11, (2, 2)).is_none(), "大きさが違う");
+        assert!(cache.use_cached(&key("Hair"), "_MainTex", 11, (1, 4)).is_none());
+        // 印の無い絵・絵の付かない様子は残さず、前の絵も捨てる（印の無い新しい絵が来た以上、前の絵は今の絵ではない）
+        cache.remember(&key("Body"), &stamped(1, 0, 16, 0));
+        assert!(cache.is_empty());
+        assert_eq!(cache.bytes(), 0);
+        cache.remember(&key("Body"), &body);
+        let mut declined = cached_answer(1, 0, 16, 5);
+        declined.state = OriginalState::Unreadable;
+        cache.remember(&key("Body"), &declined);
+        assert!(cache.is_empty(), "読めなかった絵の後に、前の絵を使わない");
+        // 同じ鍵・スロットは置き換える
+        cache.remember(&key("Body"), &stamped(1, 0, 16, 1));
+        cache.remember(&key("Body"), &stamped(1, 0, 8, 2));
+        assert_eq!((cache.len(), cache.bytes(), cache.have(&key("Body"), "_MainTex")), (1, 8, 2));
+    }
+
+    #[test]
+    fn the_cache_is_bounded_and_drops_the_least_recently_used_picture() {
+        let mut cache = OriginalCache::with_limit(40);
+        cache.remember(&key("A"), &stamped(1, 0, 16, 1));
+        cache.remember(&key("B"), &stamped(1, 0, 16, 2));
+        // A を使うと、捨てる順は B が先になる
+        assert!(cache.use_cached(&key("A"), "_MainTex", 1, (1, 4)).is_some());
+        cache.remember(&key("C"), &stamped(1, 0, 16, 3));
+        assert_eq!(cache.bytes(), 32);
+        assert_eq!(cache.have(&key("A"), "_MainTex"), 1);
+        assert_eq!(cache.have(&key("B"), "_MainTex"), 0, "使っていない B を捨てた");
+        assert_eq!(cache.have(&key("C"), "_MainTex"), 3);
+        // 1 枚で上限を超える絵は残さない（ほかの絵も追い出さない）
+        cache.remember(&key("D"), &stamped(1, 0, 44, 4));
+        assert_eq!((cache.len(), cache.bytes()), (2, 32));
+        assert_eq!(cache.have(&key("D"), "_MainTex"), 0);
+        cache.clear();
+        assert!(cache.is_empty() && cache.bytes() == 0);
+    }
+
+    #[test]
+    fn the_sets_that_wait_are_asked_for_once_with_the_stamp_the_standalone_holds() {
+        let (_, mut base, _, _) = waiting();
+        // 最初は手元に何も無い: 待たせた 2 つ（絵の無い Plain は頼まない）を、印なしで頼む
+        let asked = base.take_requests();
+        assert_eq!(
+            asked,
+            vec![MaterialWant::original(0, "_MainTex", 0), MaterialWant::original(1, "_MainTex", 0)]
+        );
+        assert!(base.take_requests().is_empty(), "頼んだものは、もう頼まない");
+        // 手元に Body の絵がある状態で、モデルを送り直された: Body の頼みには印が付き、Hair は印なし
+        let (state, mut base, m, t0) = waiting();
+        base.cache.remember(&key("Body"), &stamped(1, 0, 16, 0xABCD));
+        let uids: Vec<u32> = state.sets.iter().map(|s| s.uid).collect();
+        base.model(&state, &m, &uids[..2], None, t0);
+        let asked = base.take_requests();
+        assert_eq!(
+            asked,
+            vec![
+                MaterialWant::original(0, "_MainTex", 0xABCD),
+                MaterialWant::original(1, "_MainTex", 0)
+            ]
+        );
+        // 次のモデルの送り直しでは、持ち越した待ちも頼み直す（世代が替わって、前の頼みへの答えは来ない）
+        base.model(&state, &m, &[], None, t0);
+        assert_eq!(base.take_requests().len(), 2);
+    }
+
+    #[test]
+    fn a_cached_answer_with_the_same_stamp_uses_the_picture_in_hand() {
+        let (mut state, mut base, _, t0) = waiting();
+        base.cache.remember(&key("Body"), &stamped(1, 0, 16, 7));
+        let hand = base.cache.use_cached(&key("Body"), "_MainTex", 7, (1, 4)).unwrap().pixels;
+        base.take_requests();
+        // Unity の答え: 印が同じ（画素なし）。手元の絵が届いたものとして扱い、セットに入る
+        base.receive(cached_answer(1, 0, 16, 7), t0).unwrap();
+        assert!(base.take_requests().is_empty(), "頼み直さない");
+        base.receive(image(1, 1, 4), t0).unwrap();
+        assert!(base.poll(&mut state, 7, t0).is_none());
+        assert_eq!(base.waiting_count(), 0, "手元の絵で、待ちが終わった");
+        let doc = state.set_doc(0);
+        assert_eq!(doc.layers().iter().map(|l| l.name()).collect::<Vec<_>>(), ["元の絵", "レイヤー 1"]);
+        // 入った画素は手元の絵の画素（1 × 4 の絵を 64 の文書の大きさへ拡大したもの。端は元の画素）
+        let bottom = crate::engine::layer_pixel(&doc.layers()[0], 0, 0);
+        assert_eq!(bottom, [hand[0], hand[1], hand[2], hand[3]]);
+    }
+
+    #[test]
+    fn a_cached_answer_that_does_not_match_is_not_used_and_the_picture_is_asked_for_again() {
+        for (stamp, size_bytes) in [(8u64, 16usize), (7, 32)] {
+            let (mut state, mut base, _, t0) = waiting();
+            base.cache.remember(&key("Body"), &stamped(1, 0, 16, 7));
+            base.take_requests();
+            // 印が違う（Unity の絵が変わった）・大きさが違う: 手元の絵は使わない
+            base.receive(cached_answer(1, 0, size_bytes, stamp), t0 + Duration::from_secs(1)).unwrap();
+            assert!(base.poll(&mut state, 7, t0 + Duration::from_secs(1)).is_none());
+            assert_eq!(base.waiting_count(), 2, "古い絵で入れず、待ち続ける（stamp {stamp}）");
+            assert_eq!(
+                base.take_requests(),
+                vec![MaterialWant::original(0, "_MainTex", 0)],
+                "印なしで頼み直す（stamp {stamp}）"
+            );
+            assert!(base.take_requests().is_empty());
+            // 頼み直しの答え（画素つき・新しい印）で入り、手元の絵も新しくなる
+            base.receive(stamped(1, 0, 32, 99), t0 + Duration::from_secs(2)).unwrap();
+            assert_eq!(base.cache().have(&key("Body"), "_MainTex"), 99);
+        }
+        // 手元に何も無いのに「印が同じ」と言われても、使わず頼み直す
+        let (_, mut base, _, t0) = waiting();
+        base.take_requests();
+        base.receive(cached_answer(1, 1, 16, 5), t0).unwrap();
+        assert_eq!(base.take_requests(), vec![MaterialWant::original(1, "_MainTex", 0)]);
+        // 待たせていないマテリアルの答えは、受けて捨てる（頼み直さない）
+        base.receive(cached_answer(1, 2, 16, 5), t0).unwrap();
+        assert!(base.take_requests().is_empty());
+    }
+
+    #[test]
+    fn a_picture_without_a_stamp_is_never_kept_and_a_stamped_one_is_kept_once_it_arrives() {
+        let (_, mut base, _, t0) = waiting();
+        base.receive(image(1, 0, 16), t0).unwrap();
+        assert!(base.cache().is_empty(), "印の無い絵は手元に残さない");
+        base.receive(stamped(1, 1, 16, 3), t0).unwrap();
+        assert_eq!(base.cache().have(&key("Hair"), "_MainTex"), 3);
+        // つなぎが終わっても手元の絵は残る（つなぎ直しで使う）
+        base.clear();
+        assert_eq!(base.cache().len(), 1);
     }
 }

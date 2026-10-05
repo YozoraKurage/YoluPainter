@@ -21,13 +21,17 @@ pub mod message;
 pub mod private;
 pub mod shm;
 pub mod wire;
+#[cfg(windows)]
+pub(crate) mod winpipe;
 
 pub use auth::{HelloCheck, LinkKey, ServerKey};
 pub use compat::{
-    feature, AppVersion, Identity, LinkInfo, PeerInfo, Product, RejectDetail, SkewReport, VersionInfo,
-    VersionRefusal, MIN_STANDALONE, MIN_UNITY_PACKAGE,
+    feature, AppVersion, Identity, LinkInfo, PeerInfo, Product, RejectDetail, RequestUnavailable,
+    SkewReport, VersionInfo, VersionRefusal, MIN_STANDALONE, MIN_UNITY_PACKAGE, REQUEST_SINCE,
 };
-pub use frame::{encode_message, Frame, FrameError, FrameReader};
+pub use frame::{
+    encode_message, try_encode_message, try_encode_message_within, Frame, FrameError, FrameReader,
+};
 pub use link::{Connection, ConnectionReader, LinkError, Received, Server, DEFAULT_LINK_NAME};
 pub use message::*;
 pub use shm::{ImageLayout, SharedImageReader, SharedImageWriter, ShmError, TileRead};

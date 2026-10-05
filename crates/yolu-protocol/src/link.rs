@@ -24,7 +24,9 @@ use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Name, St
 
 use crate::auth::{random_bytes, same_bytes, HelloCheck, LinkKey, ServerKey};
 use crate::compat::{self, judge_ranges, Identity, LinkInfo, PeerInfo, RejectDetail};
-use crate::frame::{encode_frame, encode_message, FrameError, FrameReader};
+use crate::frame::{
+    encode_frame, try_encode_message_within, FrameError, FrameReader, MAX_PAYLOAD,
+};
 use crate::message::{
     ErrorCode, ErrorMessage, Hello, HelloAuth, Kind, Message, Reject, RejectCode, Welcome,
     PROTOCOL_VERSION,
@@ -324,13 +326,32 @@ pub fn connect(name: &str) -> io::Result<Stream> {
             ));
         }
     }
-    let stream = Stream::connect(client_name(name)?)?;
+    let stream = open_stream(name)?;
+    // 何も送る前に、つないだ相手のプロセスの持ち主を確かめる（別のユーザーの偽の待ち受けに、挨拶も鍵の証しも渡さない）
     check_peer(&stream)?;
     Ok(stream)
 }
 
-/// つないだ相手のプロセスが自分と同じユーザーか（Unix。分からない OS では確かめない。Windows はパイプの DACL が守る）。
+/// 口を開く。Windows は、なりすましの段（SQOS）を匿名にして開く（`winpipe`）。包めなかったときだけ、今までのつなぎ方に戻る。
+fn open_stream(name: &str) -> io::Result<Stream> {
+    #[cfg(windows)]
+    {
+        match crate::winpipe::connect_anonymous(&pipe_name(name)?) {
+            Ok(stream) => return Ok(stream),
+            Err(crate::winpipe::Connect::Os(e)) => return Err(e),
+            Err(crate::winpipe::Connect::Wrap) => {}
+        }
+    }
+    Stream::connect(client_name(name)?)
+}
+
+/// つないだ相手のプロセスが自分と同じユーザーか。Unix は実効 UID（分からない OS では確かめない）。Windows はパイプの相手のプロセスの持ち主の
+/// アカウント（`winpipe::check_owner`。確かめられない相手は断る。パイプの DACL は、つなげる側を絞るだけで、つないだ先が誰かは教えない）。
 fn check_peer(stream: &Stream) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        crate::winpipe::check_owner(stream)?;
+    }
     #[cfg(unix)]
     {
         if let Ok(creds) = stream.peer_creds() {
@@ -346,6 +367,57 @@ fn check_peer(stream: &Stream) -> io::Result<()> {
     }
     let _ = stream;
     Ok(())
+}
+
+/// 挨拶の読みの見張り。Unix は読みの時間切れ（`ConnectionReader::next_within`）で足りるので何もしない。Windows の名前付きパイプには読みの時間切れが
+/// 無いので、時間が来たら待っている読みを取り消す（挨拶を送らない相手のスレッドを、いつまでも止めない）。`Connection::new` の後に作り、
+/// 挨拶の読みが済んだらすぐ `finish` する（口を閉じた後・挨拶の後の読み書きを取り消さない）。
+struct HandshakeGuard {
+    #[cfg(windows)]
+    watchdog: crate::winpipe::Watchdog,
+}
+
+/// 見張りが取り消す先（Windows は口の番号。ほかは無し）。`Connection::new` が口を取る前に控える。
+#[derive(Clone, Copy)]
+struct RawStream {
+    #[cfg(windows)]
+    id: usize,
+}
+
+fn raw_of(stream: &Stream) -> RawStream {
+    #[cfg(windows)]
+    {
+        RawStream {
+            id: crate::winpipe::raw_of(stream),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = stream;
+        RawStream {}
+    }
+}
+
+impl HandshakeGuard {
+    #[allow(unused_variables)]
+    fn start(raw: RawStream, timeout: Duration) -> HandshakeGuard {
+        HandshakeGuard {
+            #[cfg(windows)]
+            watchdog: crate::winpipe::Watchdog::start(raw.id, timeout),
+        }
+    }
+
+    /// 見張りを止める。時間が来て読みを取り消したなら true。
+    fn finish(self) -> bool {
+        #[cfg(windows)]
+        {
+            self.watchdog.finish()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
 }
 
 /// つながりの失敗。
@@ -413,9 +485,18 @@ impl Connection {
         )
     }
 
-    /// 命令を送る（書き終えるまで待つ）。相手の機能の印は確かめない（印の要る新しい命令は `send_gated`）。
+    /// 命令を送る（書き終えるまで待つ）。相手の機能の印は確かめない（印の要る新しい命令は `send_gated`）。中身が枠の上限を超える命令は、
+    /// 何も送らずに `InvalidInput`（パニックしない）。
     pub fn send(&self, message: &Message) -> io::Result<()> {
-        self.send_frame(&encode_message(message))
+        self.send_within(message, MAX_PAYLOAD)
+    }
+
+    /// `send` の、中身の上限を（`MAX_PAYLOAD` 以下に）狭められる形。上限を超える命令は、何も送らずに `InvalidInput`（つながりは保つ）。
+    /// 試験が、512 MiB の命令を作らずに、送り口の断りを確かめるのに使う。
+    pub fn send_within(&self, message: &Message, limit: usize) -> io::Result<()> {
+        let frame = try_encode_message_within(message, limit)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+        self.send_frame(&frame)
     }
 
     /// 挨拶が済んだ後の、両側の名乗りと決まった版（挨拶の前・失敗した後は None）。
@@ -672,8 +753,19 @@ pub fn accept_as(
     claim: Claim<'_>,
 ) -> Result<(Connection, ConnectionReader, Hello), LinkError> {
     check_peer(&stream)?;
+    let raw = raw_of(&stream);
     let (conn, mut reader) = Connection::new(stream);
-    let hello = read_hello(&conn, &mut reader, timeout)?;
+    let hello = {
+        let guard = HandshakeGuard::start(raw, timeout);
+        let read = read_hello(&conn, &mut reader, timeout);
+        let timed_out = guard.finish();
+        match read {
+            Ok(hello) => hello,
+            // 時間が来て読みを取り消した（Windows）。Unix の時間切れと同じ理由にする
+            Err(_) if timed_out => return Err(LinkError::Protocol("挨拶が来ません".into())),
+            Err(e) => return Err(e),
+        }
+    };
     if let Some(reject) = auth_reject(key, &hello) {
         let _ = conn.send(&Message::Reject(reject.clone()));
         return Err(LinkError::Rejected(reject));
@@ -724,12 +816,22 @@ pub fn connect_and_greet_as(
     name: &str,
     own: &Identity,
 ) -> Result<(Connection, ConnectionReader, Welcome), LinkError> {
+    connect_and_greet_within(name, own, HANDSHAKE_TIMEOUT)
+}
+
+/// `connect_and_greet_as`（返事を待つ時間 `timeout` を選べる。つないだ相手が何も返さなければ、その時間で失敗する）。
+pub fn connect_and_greet_within(
+    name: &str,
+    own: &Identity,
+    timeout: Duration,
+) -> Result<(Connection, ConnectionReader, Welcome), LinkError> {
     // 待ち受けていなければ、鍵のファイルが無いという分かりやすい理由で失敗する（この読みは挨拶には使わない）
     LinkKey::load(name)?;
     let stream = connect(name)?;
     // 挨拶の鍵はつないだ後に読む。スタンドアロンは鍵を置き換えてからソケットを作るので、つなげた相手の鍵は、この時点のファイルの鍵かそれより新しい。
     // つなぐ前に読んだ鍵では、読んでからつなぐまでの間に引き継ぎが入ると、古い鍵で新しい相手に挨拶して断られる。
     let key = LinkKey::load(name)?;
+    let raw = raw_of(&stream);
     let (conn, mut reader) = Connection::new(stream);
     let nonce = random_bytes()?;
     let (own_min, own_max) = own.protocol_range();
@@ -744,7 +846,18 @@ pub fn connect_and_greet_as(
         }),
         versions: own.version_info(),
     }))?;
-    let welcome = match reader.next_within(&conn, HANDSHAKE_TIMEOUT)? {
+    let waited = {
+        let guard = HandshakeGuard::start(raw, timeout);
+        let read = reader.next_within(&conn, timeout);
+        let timed_out = guard.finish();
+        match read {
+            Ok(received) => received,
+            // 時間が来て読みを取り消した（Windows）。Unix の時間切れと同じ理由にする
+            Err(_) if timed_out => return Err(LinkError::Protocol("挨拶の返事が来ません".into())),
+            Err(e) => return Err(e),
+        }
+    };
+    let welcome = match waited {
         Received::Message(Message::Welcome(w)) => w,
         Received::Message(Message::Reject(r)) => return Err(LinkError::Rejected(r)),
         Received::Idle => return Err(LinkError::Protocol("挨拶の返事が来ません".into())),

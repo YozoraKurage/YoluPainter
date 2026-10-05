@@ -54,6 +54,14 @@ pub const MAX_VALUE_NAME_BYTES: usize = 512;
 pub const MAX_SLOT_TEXTURE_SIZE: u32 = 2048;
 /// 元の絵（MaterialOriginal）の辺の上限（Unity 版の画像の上限 `ImageContent.MaxSide` と同じ。送る側はこれを超える絵を縮めずに断る）。
 pub const MAX_ORIGINAL_SIZE: u32 = 8192;
+/// 1 つの頼み（MaterialRequest）の項目の数の上限（マテリアルの数の上限と同じ。1 つのマテリアルを値と元の絵で 1 項目にまとめる）。
+pub const MAX_REQUEST_ITEMS: usize = MAX_MATERIALS;
+/// 頼みの項目 `wants` の bit: マテリアルの値（と、描いていないスロットの絵）を送り直してほしい。
+pub const WANT_VALUES: u8 = 1;
+/// 頼みの項目 `wants` の bit: 元の絵（`slot` の元のテクスチャ）がほしい。
+pub const WANT_ORIGINAL: u8 = 2;
+/// この版が知っている頼みの bit の全部（これ以外の bit は新しい相手が足した、名前を知らない頼み）。
+pub const WANT_KNOWN: u8 = WANT_VALUES | WANT_ORIGINAL;
 
 /// 命令の種類（枠の頭に入る番号）。番号は変えない。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -73,6 +81,7 @@ pub enum Kind {
     TextureSet = 0x0110,
     TextureSetRemoved = 0x0111,
     TilesChanged = 0x0112,
+    MaterialRequest = 0x0113,
     Error = 0x0200,
 }
 
@@ -93,6 +102,7 @@ impl Kind {
             0x0110 => Kind::TextureSet,
             0x0111 => Kind::TextureSetRemoved,
             0x0112 => Kind::TilesChanged,
+            0x0113 => Kind::MaterialRequest,
             0x0200 => Kind::Error,
             _ => return None,
         })
@@ -114,6 +124,7 @@ impl Kind {
             | Kind::Error => 0,
             Kind::MaterialValues | Kind::MaterialTexture => crate::compat::feature::MATERIAL_VALUES,
             Kind::MaterialOriginal => crate::compat::feature::ORIGINAL_TEXTURES,
+            Kind::MaterialRequest => crate::compat::feature::MATERIAL_REQUEST,
         }
     }
     /// 誰が送る命令か。
@@ -131,7 +142,8 @@ impl Kind {
             | Kind::Reject
             | Kind::TextureSet
             | Kind::TextureSetRemoved
-            | Kind::TilesChanged => Direction::ToUnity,
+            | Kind::TilesChanged
+            | Kind::MaterialRequest => Direction::ToUnity,
             Kind::Bye | Kind::Error => Direction::Both,
         }
     }
@@ -314,6 +326,45 @@ pub struct Model {
     pub name: String,
     pub materials: Vec<MaterialInfo>,
     pub meshes: Vec<MeshData>,
+}
+
+impl Model {
+    /// 命令の中身（枠の頭を除く）のバイト数。`encode_payload` の長さと同じ（試験が確かめる）で、巨大なモデルを書き出す前に、枠の上限
+    /// （`frame::MAX_PAYLOAD`）を超えるかを決めるために使う。
+    pub fn payload_len(&self) -> u64 {
+        let text = |s: &str| 4 + s.len() as u64;
+        let mut n = 4 + text(&self.name) + 4;
+        for m in &self.materials {
+            n += match &m.key {
+                MaterialKey::Unassigned => 1,
+                MaterialKey::Material { name, asset } => {
+                    1 + text(name)
+                        + 1
+                        + asset
+                            .as_ref()
+                            .map_or(0, |(guid, _)| text(guid) + 8)
+                }
+            };
+            n += text(&m.shader) + 4;
+            n += m.textures.iter().map(|t| text(&t.name) + 8).sum::<u64>();
+            n += 4;
+            n += m.routes.iter().map(|r| 1 + text(&r.property)).sum::<u64>();
+        }
+        n += 4;
+        for mesh in &self.meshes {
+            n += text(&mesh.key) + text(&mesh.name) + 1;
+            n += 4 + mesh.positions.len() as u64 * 12;
+            n += 4 + mesh.normals.len() as u64 * 12;
+            n += 4 + mesh.uv0.len() as u64 * 8;
+            n += 4;
+            n += mesh
+                .submeshes
+                .iter()
+                .map(|s| 4 + 4 + s.indices.len() as u64 * 4)
+                .sum::<u64>();
+        }
+        n
+    }
 }
 
 /// 1 つのメッシュの新しい形。
@@ -500,6 +551,10 @@ pub enum OriginalState {
     TooLarge = 2,
     /// この送りの全部の絵の予算を超えたので送らない。
     OverBudget = 3,
+    /// 画素を付けない: 頼み（`MaterialWant::have`）で受け手が持つと言った絵の印が、Unity の今の印と同じ（`stamp` に同じ値）。受け手は
+    /// 持っている絵を使う。受け手が頼みの印を付けなかった・印が合わなかった・印を取れなかったときは、Unity はこの様子を送らず画素を送る。
+    /// 印の無い（頼みを知らない）古い受け手には送らない（古い受け手は知らない番号を「読めない」と読む）。
+    Cached = 4,
 }
 
 impl OriginalState {
@@ -509,6 +564,7 @@ impl OriginalState {
             0 => OriginalState::Image,
             2 => OriginalState::TooLarge,
             3 => OriginalState::OverBudget,
+            4 => OriginalState::Cached,
             _ => OriginalState::Unreadable,
         }
     }
@@ -561,6 +617,59 @@ pub struct MaterialOriginal {
     pub srgb: bool,
     /// RGBA8（straight）、行は下から。幅 × 高さ × 4 バイト（`Image` のときだけ。ほかは空）。
     pub pixels: Vec<u8>,
+    /// この絵の印（Unity が決める不透明な 64 ビット。中身・取り込み設定・読み方が変われば変わる）。0 は「印なし」（アセットでない絵・
+    /// 印を取れなかった絵。受け手は手元に残さず、頼みでも印を付けない）。`Cached` は 0 以外。後ろに足した欄で、無いのは印を付けない古い送り手（0）。
+    pub stamp: u64,
+}
+
+/// 頼みの項目 1 つ（スタンドアロン → Unity）。1 つのマテリアルについて、値・元の絵のどちらか（または両方）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MaterialWant {
+    /// モデルのマテリアルの並びの番号。
+    pub material: u32,
+    /// 頼むもの（`WANT_VALUES`・`WANT_ORIGINAL` の bit。知らない bit は読み飛ばす。知っている bit が 1 つも無い項目は Unity が答えない）。
+    pub wants: u8,
+    /// 元の絵のスロット（`WANT_ORIGINAL` のとき。Color の流し込み先のプロパティ。値だけなら空）。
+    pub slot: String,
+    /// スタンドアロンが手元に持つ、この元の絵の印（`MaterialOriginal::stamp`）。0 は持たない。同じ印なら Unity は画素を送らず `Cached` で答える。
+    pub have: u64,
+}
+
+impl MaterialWant {
+    pub fn values(material: u32) -> MaterialWant {
+        MaterialWant {
+            material,
+            wants: WANT_VALUES,
+            slot: String::new(),
+            have: 0,
+        }
+    }
+
+    pub fn original(material: u32, slot: impl Into<String>, have: u64) -> MaterialWant {
+        MaterialWant {
+            material,
+            wants: WANT_ORIGINAL,
+            slot: slot.into(),
+            have,
+        }
+    }
+
+    pub fn wants_values(&self) -> bool {
+        self.wants & WANT_VALUES != 0
+    }
+
+    pub fn wants_original(&self) -> bool {
+        self.wants & WANT_ORIGINAL != 0
+    }
+}
+
+/// マテリアルの値・元の絵の頼み（スタンドアロン → Unity。機能の印 MATERIAL_REQUEST）。Unity は、頼まれたものを今の状態から読み直して送る
+/// （値はスロットの絵も含めて送り直し、元の絵は印が合えば画素なしの `Cached`）。世代が今のモデルと違う頼みは答えない（古いモデルの頼み）。
+/// 頼みは「ほしい」の知らせで、答えが来る保証ではない（Unity が読めない・予算を超える・モデルが替わった）ので、受け手は時間切れを持つ。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MaterialRequest {
+    pub generation: u32,
+    pub items: Vec<MaterialWant>,
 }
 
 /// 誤りの種類。
@@ -616,6 +725,7 @@ pub enum Message {
     TextureSet(TextureSet),
     TextureSetRemoved { set: u32 },
     TilesChanged(TilesChanged),
+    MaterialRequest(MaterialRequest),
     Error(ErrorMessage),
 }
 
@@ -636,6 +746,7 @@ impl Message {
             Message::TextureSet(_) => Kind::TextureSet,
             Message::TextureSetRemoved { .. } => Kind::TextureSetRemoved,
             Message::TilesChanged(_) => Kind::TilesChanged,
+            Message::MaterialRequest(_) => Kind::MaterialRequest,
             Message::Error(_) => Kind::Error,
         }
     }
@@ -757,6 +868,7 @@ impl Message {
                 w.u32(o.height);
                 w.bool(o.srgb);
                 w.bytes(&o.pixels);
+                w.u64(o.stamp);
             }
             Message::Welcome(x) => {
                 w.u16(x.version);
@@ -806,6 +918,16 @@ impl Message {
                 for tile in &t.tiles {
                     w.u16(tile.x);
                     w.u16(tile.y);
+                }
+            }
+            Message::MaterialRequest(r) => {
+                w.u32(r.generation);
+                w.u32(r.items.len() as u32);
+                for item in &r.items {
+                    w.u32(item.material);
+                    w.u8(item.wants);
+                    w.str(&item.slot);
+                    w.u64(item.have);
                 }
             }
             Message::Error(e) => {
@@ -1032,6 +1154,11 @@ impl Message {
                 let srgb = r.bool()?;
                 let max = (MAX_ORIGINAL_SIZE as usize).pow(2) * 4;
                 let pixels = r.bytes(max, "元の絵の画素")?;
+                // 印は後ろに足した欄（足りなければ印を付けない古い送り手。欄の後ろは、さらに新しい版の欄として読み飛ばす）
+                let stamp = if r.remaining() >= 8 { r.u64()? } else { 0 };
+                if state == OriginalState::Cached && stamp == 0 {
+                    return Err(DecodeError::Invalid("元の絵の印"));
+                }
                 if state == OriginalState::Image {
                     if width == 0
                         || height == 0
@@ -1057,6 +1184,7 @@ impl Message {
                     height,
                     srgb,
                     pixels: pixels.to_vec(),
+                    stamp,
                 })
             }
             Kind::Welcome => {
@@ -1173,6 +1301,28 @@ impl Message {
                     stamp_us,
                     tiles,
                 })
+            }
+            Kind::MaterialRequest => {
+                let generation = r.u32()?;
+                // 番号（4）・頼むもの（1）・スロットの名前（4 以上）・印（8）
+                let count = r.count(MAX_REQUEST_ITEMS, 17, "頼みの項目の数")?;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let material = r.u32()?;
+                    let wants = r.u8()?;
+                    if wants == 0 {
+                        return Err(DecodeError::Invalid("頼むもの"));
+                    }
+                    let slot = r.str(MAX_VALUE_NAME_BYTES, "スロットの名前")?;
+                    let have = r.u64()?;
+                    items.push(MaterialWant {
+                        material,
+                        wants,
+                        slot,
+                        have,
+                    });
+                }
+                Message::MaterialRequest(MaterialRequest { generation, items })
             }
             Kind::Error => Message::Error(ErrorMessage {
                 code: ErrorCode::from_u16(r.u16()?),

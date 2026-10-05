@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use yolu_core::look::{
     LookKind, LookValue, MaterialLook, MissingImage, ReceivedImage, ReceivedLook, TextureSource,
@@ -35,6 +36,23 @@ use crate::state::AppState;
 
 /// 受けた絵の画素のバイトの合計の上限（全部のマテリアル。超える絵は持たず、スロットは「読めない」）。
 pub const MAX_RECEIVED_IMAGE_BYTES: u64 = 256 << 20;
+
+/// 値が来ない・絵が揃わないマテリアルを、Unity に頼むまでの猶予（Unity はモデルの直後に値を送るので、それを待つ。絵が 1 枚届くたびに数え直す）。
+pub const ASK_AFTER: Duration = Duration::from_secs(2);
+/// 同じマテリアルを頼み直す間隔。
+pub const ASK_AGAIN: Duration = Duration::from_secs(6);
+/// 同じマテリアルを頼む回数の上限（Unity が答えない・答えられないとき、頼み続けない）。
+pub const MAX_ASKS: u8 = 3;
+
+/// 値の頼みの様子（マテリアルごと）。
+struct Ask {
+    /// 値が欠けている（絵が揃わない）と気づいた時刻。受けた内容が変わると数え直す。
+    since: Instant,
+    /// そのときの受けた内容の通し番号（変わったら進んでいる）。
+    serial: Option<u64>,
+    asked: u8,
+    last: Option<Instant>,
+}
 
 /// マテリアル 1 つの受けたもの。
 #[derive(Default)]
@@ -77,6 +95,10 @@ pub struct LinkValues {
     entries: BTreeMap<u32, Entry>,
     applied: BTreeMap<u32, Applied>,
     next_serial: u64,
+    /// 値を頼んだ様子（マテリアルの番号ごと）。
+    asks: BTreeMap<u32, Ask>,
+    /// 猶予と頼み直しの間隔（`None` は既定の [`ASK_AFTER`]・[`ASK_AGAIN`]。試験が短くする）。
+    ask_timing: Option<(Duration, Duration)>,
 }
 
 impl LinkValues {
@@ -90,11 +112,71 @@ impl LinkValues {
         if generation != self.generation {
             self.entries.clear();
             self.applied.clear();
+            self.asks.clear();
             self.generation = generation;
         }
         self.materials = materials;
         // マテリアルが減った（同じ世代の送り直し）なら、無くなった番号の値も捨てる
         self.entries.retain(|m, _| *m < materials);
+    }
+
+    /// Unity に値を頼むマテリアル（頼みを出せるつながりのとき、毎フレーム呼ぶ。頼んだものは頼んだことにする）。`materials` は、テクスチャセットが
+    /// 付いていて、値が来るはずのマテリアルの番号（マテリアルの無い組は、値が無いので呼び手が外す）。頼むのは次の 2 つで、どちらも猶予
+    /// ([`ASK_AFTER`]) のあとに頼み、[`ASK_AGAIN`] の間隔で [`MAX_ASKS`] 回まで:
+    /// - このつながり・このモデルで、値（「値なし」の知らせを含む）がまだ 1 つも来ていない（開いたセットの見た目が前のつながりのままのとき、
+    ///   送り直しで値が欠けたとき）。
+    /// - 値は来たが、来ると言われた絵が揃わない（絵が 1 枚届くたびに猶予は数え直す）。
+    pub fn wanted(&mut self, materials: impl IntoIterator<Item = u32>, now: Instant) -> Vec<u32> {
+        let (after, again) = self.ask_timing.unwrap_or((ASK_AFTER, ASK_AGAIN));
+        let mut out = Vec::new();
+        let mut live = BTreeSet::new();
+        for material in materials {
+            if material >= self.materials || !live.insert(material) {
+                continue;
+            }
+            let entry = self.entries.get(&material);
+            let missing = match entry {
+                None => true,
+                Some(e) => e.values.is_some() && !e.awaiting.is_empty(),
+            };
+            if !missing {
+                self.asks.remove(&material);
+                continue;
+            }
+            let serial = entry.map(|e| e.serial);
+            let ask = self.asks.entry(material).or_insert(Ask {
+                since: now,
+                serial,
+                asked: 0,
+                last: None,
+            });
+            if ask.serial != serial {
+                ask.serial = serial;
+                ask.since = now;
+            }
+            if now.saturating_duration_since(ask.since) < after || ask.asked >= MAX_ASKS {
+                continue;
+            }
+            if ask.last.is_some_and(|t| now.saturating_duration_since(t) < again) {
+                continue;
+            }
+            ask.asked += 1;
+            ask.last = Some(now);
+            out.push(material);
+        }
+        // マテリアルから外れたセット（もう気にしない）の頼みの様子は捨てる
+        self.asks.retain(|m, _| live.contains(m));
+        out
+    }
+
+    /// 猶予と頼み直しの間隔を決める（試験用）。
+    pub fn set_ask_timing(&mut self, after: Duration, again: Duration) {
+        self.ask_timing = Some((after, again));
+    }
+
+    /// 値を頼んだ回数（試験・診断用）。
+    pub fn asked(&self, material: u32) -> u8 {
+        self.asks.get(&material).map_or(0, |a| a.asked)
     }
 
     fn bump(&mut self) -> u64 {
@@ -604,5 +686,103 @@ mod tests {
         // 同じ世代でマテリアルが減ったら、無くなった番号の値も捨てる
         link.model(2, 1);
         assert!(link.entries.is_empty());
+    }
+
+    fn secs(t0: Instant, s: f32) -> Instant {
+        t0 + Duration::from_secs_f32(s)
+    }
+
+    #[test]
+    fn a_material_without_values_is_asked_for_after_the_grace_a_few_times() {
+        let mut link = LinkValues::default();
+        link.model(1, 3);
+        let t0 = Instant::now();
+        // 値が来るのを待つ猶予（Unity はモデルの直後に値を送る）
+        assert!(link.wanted([0, 1], t0).is_empty());
+        assert!(link.wanted([0, 1], secs(t0, 1.9)).is_empty());
+        assert_eq!(link.wanted([0, 1], secs(t0, 2.0)), vec![0, 1]);
+        assert_eq!((link.asked(0), link.asked(1)), (1, 1));
+        // 頼んだ直後は頼まない。間隔をあけて頼み直す。回数には上限がある
+        assert!(link.wanted([0, 1], secs(t0, 2.5)).is_empty());
+        assert!(link.wanted([0, 1], secs(t0, 7.9)).is_empty());
+        assert_eq!(link.wanted([0, 1], secs(t0, 8.0)), vec![0, 1]);
+        assert_eq!(link.wanted([0, 1], secs(t0, 14.0)), vec![0, 1]);
+        assert_eq!(link.asked(0), MAX_ASKS);
+        assert!(link.wanted([0, 1], secs(t0, 60.0)).is_empty(), "答えない Unity に頼み続けない");
+        // 同じ番号を重ねて渡しても 1 つ。モデルに無い番号・どのセットにも付いていないマテリアルは頼まない
+        let mut link = LinkValues::default();
+        link.model(1, 3);
+        let _ = link.wanted([2, 2, 7], t0);
+        assert_eq!(link.wanted([2, 2, 7], secs(t0, 2.0)), vec![2]);
+    }
+
+    #[test]
+    fn a_material_whose_values_arrived_is_not_asked_even_if_they_say_no_values() {
+        let mut link = LinkValues::default();
+        link.model(4, 2);
+        let t0 = Instant::now();
+        let _ = link.wanted([0, 1], t0);
+        // マテリアル 0 は lilToon でない（値なし）、マテリアル 1 は絵の来ない値: どちらも「来た」ので頼まない
+        let none = MaterialValues {
+            kind: ValuesKind::None,
+            properties: vec![],
+            keywords: vec![],
+            slots: vec![],
+            ..values(4)
+        };
+        link.receive_values(none).unwrap();
+        let mut plain = values(4);
+        plain.material = 1;
+        plain.slots.clear();
+        link.receive_values(plain).unwrap();
+        assert!(link.wanted([0, 1], secs(t0, 3.0)).is_empty());
+        assert_eq!((link.asked(0), link.asked(1)), (0, 0));
+    }
+
+    #[test]
+    fn a_material_whose_pictures_do_not_arrive_is_asked_for_after_the_grace_counted_again_at_each_picture() {
+        let mut link = LinkValues::default();
+        link.model(4, 1);
+        let t0 = Instant::now();
+        // 値は来たが、絵（_MatCapTex と _MainTex）が来ない
+        link.receive_values(values(4)).unwrap();
+        assert!(link.wanted([0], t0).is_empty());
+        // 絵が 1 枚届くたびに猶予を数え直す（大きな絵が続いて届いているあいだは、頼まない）
+        link.receive_texture(texture(4, "_MatCapTex", 16), Lang::Ja).unwrap();
+        assert!(link.wanted([0], secs(t0, 1.5)).is_empty());
+        assert!(link.wanted([0], secs(t0, 3.4)).is_empty(), "数え直した 1.5 秒から 2 秒たっていない");
+        assert_eq!(link.wanted([0], secs(t0, 3.6)), vec![0]);
+        // 揃ったら頼まない（頼みの様子も捨てる）
+        link.receive_texture(texture(4, "_MainTex", 16), Lang::Ja).unwrap();
+        assert!(link.wanted([0], secs(t0, 20.0)).is_empty());
+        assert_eq!(link.asked(0), 0);
+    }
+
+    #[test]
+    fn a_new_model_and_an_unbound_material_forget_the_asking() {
+        let mut link = LinkValues::default();
+        link.model(1, 2);
+        let t0 = Instant::now();
+        let _ = link.wanted([0, 1], t0);
+        assert_eq!(link.wanted([0, 1], secs(t0, 2.0)), vec![0, 1]);
+        // セットが外れたマテリアル（もう渡されない）の様子は捨てる
+        assert!(link.wanted([0], secs(t0, 2.1)).is_empty());
+        assert_eq!(link.asked(1), 0);
+        assert_eq!(link.asked(0), 1);
+        // 新しいモデル（別の世代）: 頼む回数は数え直し
+        link.model(2, 2);
+        assert_eq!(link.asked(0), 0);
+        let _ = link.wanted([0], secs(t0, 3.0));
+        assert_eq!(link.wanted([0], secs(t0, 5.0)), vec![0]);
+        // 同じ世代の送り直し（マテリアルの数だけ変わる）では、頼む回数を引き継ぐ
+        link.model(2, 3);
+        assert_eq!(link.asked(0), 1);
+        // 猶予・間隔は試験が短くできる
+        let mut quick = LinkValues::default();
+        quick.model(1, 1);
+        quick.set_ask_timing(Duration::ZERO, Duration::from_millis(10));
+        assert_eq!(quick.wanted([0], t0), vec![0]);
+        assert!(quick.wanted([0], t0).is_empty());
+        assert_eq!(quick.wanted([0], secs(t0, 0.02)), vec![0]);
     }
 }

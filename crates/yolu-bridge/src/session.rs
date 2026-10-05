@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
@@ -85,13 +85,40 @@ pub struct State {
     /// プロトコルの版の範囲が合わずに断られたときの、どちらを何版以上にするか（それ以外は None）。
     pub refusal: Option<VersionRefusal>,
     pub events: VecDeque<Event>,
+    /// スタンドアロンからの頼み（まだ C# が取り出していないもの。`take_request`）。
+    pub requests: VecDeque<Request>,
     pub sets: Vec<SetState>,
     /// 何かが変わるたびに増える（C# は変わっていなければ何もしない）。
     pub serial: u64,
     pub set_revision: u32,
 }
 
+/// スタンドアロンからの頼みの項目 1 つ（`MaterialRequest` の項目に、頼みの世代を付けたもの）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Request {
+    pub generation: u32,
+    pub item: MaterialWant,
+}
+
+/// 取り出されない頼みで膨らまない上限（古いものから捨てる。同じマテリアル・同じ頼みは 1 つにまとめる）。
+pub const MAX_PENDING_REQUESTS: usize = 4096;
+
 impl State {
+    /// 頼みを積む。同じ世代・マテリアル・頼むもの・スロットの前の頼みは置き換える（新しい `have` の印で答える）。
+    pub fn push_request(&mut self, generation: u32, item: MaterialWant) {
+        self.requests.retain(|r| {
+            !(r.generation == generation
+                && r.item.material == item.material
+                && r.item.wants == item.wants
+                && r.item.slot == item.slot)
+        });
+        if self.requests.len() >= MAX_PENDING_REQUESTS {
+            self.requests.pop_front();
+        }
+        self.requests.push_back(Request { generation, item });
+        self.serial += 1;
+    }
+
     fn push(&mut self, kind: EventKind, set: u32, code: i32, text: String) {
         // 読まれない知らせで膨らまない
         if self.events.len() >= 256 {
@@ -141,6 +168,8 @@ pub struct Session {
     outbox_cv: Condvar,
     pub builder: Mutex<Builder>,
     stop: AtomicBool,
+    /// 1 つの命令の中身の上限（バイト。既定は枠の上限 `MAX_PAYLOAD`。試験が小さくして、巨大な命令を作らずに断りの流れを確かめる）。
+    payload_limit: AtomicUsize,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -170,6 +199,7 @@ impl Session {
                 link: None,
                 refusal: None,
                 events: VecDeque::new(),
+                requests: VecDeque::new(),
                 sets: Vec::new(),
                 serial: 1,
                 set_revision: 0,
@@ -178,7 +208,19 @@ impl Session {
             outbox_cv: Condvar::new(),
             builder: Mutex::new(Builder::default()),
             stop: AtomicBool::new(false),
+            payload_limit: AtomicUsize::new(frame::MAX_PAYLOAD),
         })
+    }
+
+    /// 1 つの命令の中身の上限（バイト）。
+    pub fn payload_limit(&self) -> usize {
+        self.payload_limit.load(Ordering::Relaxed)
+    }
+
+    /// 上限を狭める（`MAX_PAYLOAD` を超えては広げない。試験用）。
+    pub fn set_payload_limit(&self, limit: usize) {
+        self.payload_limit
+            .store(limit.min(frame::MAX_PAYLOAD), Ordering::Relaxed);
     }
 
     pub fn state(&self) -> MutexGuard<'_, State> {
@@ -201,26 +243,42 @@ impl Session {
         yolu_protocol::compat::accepts_with(self.common_features(), message, need_of)
     }
 
-    /// 送る（順番待ちに積むだけ）。印の要る命令で、相手に印が無ければ積まない（false）。
+    /// 送る（順番待ちに積むだけ）。印の要る命令で、相手に印が無ければ積まない（false）。枠の上限を超える命令も積まない（false。
+    /// 理由を知りたい口は `try_enqueue`）。
     pub fn enqueue(&self, message: &Message) -> bool {
         self.enqueue_with(message, Kind::required_feature)
     }
 
     fn enqueue_with(&self, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
+        matches!(self.try_enqueue_with(message, need_of), Ok(true))
+    }
+
+    /// `enqueue` の、枠の上限を超えて積めない理由を返す形（`Ok(false)` は印が無い・閉じている）。
+    pub fn try_enqueue(&self, message: &Message) -> Result<bool, FrameError> {
+        self.try_enqueue_with(message, Kind::required_feature)
+    }
+
+    fn try_enqueue_with(
+        &self,
+        message: &Message,
+        need_of: impl Fn(Kind) -> u64,
+    ) -> Result<bool, FrameError> {
         if !self.accepts_with(message, need_of) {
-            return false;
+            return Ok(false);
         }
+        // 枠にしてから錠を取る（大きな命令を書く間、送り口の錠を持たない）
+        let frame = try_encode_message_within(message, self.payload_limit())?;
         let mut o = lock(&self.outbox);
         if o.closing || o.dead {
-            return false;
+            return Ok(false);
         }
         if let Message::Model(m) = message {
             o.pose.clear();
             o.pose_generation = m.generation;
         }
-        o.frames.push_back(encode_message(message));
+        o.frames.push_back(frame);
         self.outbox_cv.notify_all();
-        true
+        Ok(true)
     }
 
     /// ポーズを積む（同じメッシュの古い未送信のポーズは置き換える）。ポーズの命令が印を要るなら、相手に印が無ければ積まない（false）。
@@ -416,10 +474,22 @@ impl Session {
                     if !o.pose.is_empty() {
                         let meshes: Vec<MeshPose> =
                             std::mem::take(&mut o.pose).into_values().collect();
-                        break encode_message(&Message::Pose(Pose {
-                            generation: o.pose_generation,
-                            meshes,
-                        }));
+                        match try_encode_message_within(
+                            &Message::Pose(Pose {
+                                generation: o.pose_generation,
+                                meshes,
+                            }),
+                            self.payload_limit(),
+                        ) {
+                            Ok(frame) => break frame,
+                            // 枠の上限を超えるポーズは送らない（つながりは保つ。次の変化で新しいポーズを送る）
+                            Err(e) => {
+                                drop(o);
+                                self.note(format!("ポーズを送れません: {e}"));
+                                o = lock(&self.outbox);
+                                continue;
+                            }
+                        }
                     }
                     if o.closing {
                         return;
@@ -533,6 +603,11 @@ impl Session {
                 c.stamp_us = t.stamp_us;
                 c.received_us = received;
                 st.serial += 1;
+            }
+            Message::MaterialRequest(r) => {
+                for item in r.items {
+                    st.push_request(r.generation, item);
+                }
             }
             Message::Error(e) => {
                 let text = format!(
@@ -672,6 +747,54 @@ mod tests {
         assert!(!s.enqueue_with(&materials(), need_of));
         assert!(!s.enqueue_pose_with(1, poses(), need_of));
         assert!(s.enqueue_with(&Message::TextureSetRemoved { set: 1 }, need_of));
+    }
+
+    #[test]
+    fn a_command_over_the_payload_limit_is_not_queued_and_says_why() {
+        let s = linked(0, 0);
+        assert_eq!(s.payload_limit(), frame::MAX_PAYLOAD);
+        s.set_payload_limit(usize::MAX);
+        assert_eq!(s.payload_limit(), frame::MAX_PAYLOAD, "枠の上限より広げない");
+        s.set_payload_limit(64);
+        let big = Message::Error(ErrorMessage {
+            code: ErrorCode::Other,
+            kind: 0,
+            text: "x".repeat(200),
+        });
+        // 積めない理由が分かる（パニックしない）。印の無い・閉じているときの false とは別
+        assert!(matches!(s.try_enqueue(&big), Err(FrameError::TooLarge(n)) if n > 200));
+        assert!(!s.enqueue(&big));
+        assert_eq!(queued(&s), (0, 0));
+        // 上限に収まる命令は積める
+        assert!(s.try_enqueue(&Message::TextureSetRemoved { set: 1 }).unwrap());
+        assert_eq!(queued(&s), (1, 0));
+        // 上限を戻せば同じ命令を積める
+        s.set_payload_limit(frame::MAX_PAYLOAD);
+        assert!(s.enqueue(&big));
+    }
+
+    #[test]
+    fn requests_from_the_standalone_are_merged_and_bounded() {
+        let s = linked(0, 0);
+        let mut st = s.state();
+        let before = st.serial;
+        st.push_request(3, MaterialWant::original(1, "_MainTex", 7));
+        st.push_request(3, MaterialWant::values(1));
+        // 同じ世代・マテリアル・頼むもの・スロットは 1 つにまとまり、あとの印が残る（順番はあとへ）
+        st.push_request(3, MaterialWant::original(1, "_MainTex", 9));
+        assert_eq!(st.requests.len(), 2);
+        assert_eq!(st.requests.back().unwrap().item.have, 9);
+        // 世代が違えば別の頼み
+        st.push_request(4, MaterialWant::original(1, "_MainTex", 9));
+        assert_eq!(st.requests.len(), 3);
+        assert!(st.serial > before, "C# が気づく");
+        // 取り出されない頼みで膨らまない（古いものから捨てる）
+        for m in 0..(MAX_PENDING_REQUESTS as u32 + 10) {
+            st.push_request(5, MaterialWant::values(m + 100));
+        }
+        assert_eq!(st.requests.len(), MAX_PENDING_REQUESTS);
+        assert_eq!(st.requests.back().unwrap().item.material, MAX_PENDING_REQUESTS as u32 + 109);
+        assert_eq!(st.requests.front().unwrap().item.material, 110);
     }
 
     #[test]

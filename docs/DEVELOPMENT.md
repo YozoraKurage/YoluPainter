@@ -29,9 +29,9 @@ CI の定義は `actionlint .github/workflows/ci.yml` で実行せずに検査�
 
 ## Unity 用ブリッジ
 
-Linux 上で Bash、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意します。`tools/build-bridge.sh` を引数なしで実行すると、Linux と Windows のブリッジと C# 宣言を `target/bridge-out/` に作ります。Mac 用は生成しません。
+Linux 上で Bash、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意します。`tools/build-bridge.sh` を引数なしで実行すると、Linux と Windows のブリッジと C# 宣言を `target/bridge-out/` に作ります。C# 宣言は、csbindgen の出力（`crates/yolu-bridge/generated/`）を `tools/gen-livelink-native.py` で関数ポインターの形に書き換えたもので、Unity 版はライブラリをパッケージの中のファイルでなく、そのコピーから読みます（読み込み中のファイルを差し替えられない Windows でも、パッケージを更新できるように）。Mac 用は生成しません。
 
-Unity 版へ組み込む場合は、対応する Unity パッケージのルートをスクリプトの引数に指定します。`Plugins/LiveLink/` と `Editor/LiveLink/Native/` の既存の配置先へコピーするので、変更先を確認してから実行してください。読み込み済みのネイティブライブラリを更新した後は Unity を再起動します。ブリッジの ABI を変えるときは Rust の `ABI_VERSION` と Unity の `LiveLinkBridge.ExpectedAbi` を合わせます。
+Unity 版へ組み込む場合は、対応する Unity パッケージのルートをスクリプトの引数に指定します。`Plugins/LiveLink/` と `Editor/LiveLink/Native/` の既存の配置先へコピーするので、変更先を確認してから実行してください。Unity 版は、更新されたライブラリを次のドメインの読み直しで新しいコピーから読み、前のコピーのつながりを切るので、Unity の再起動は要りません。ブリッジの ABI を変えるときは Rust の `ABI_VERSION` と Unity の `LiveLinkBridge.ExpectedAbi` を合わせます。
 
 ## Windows 向けの画面なし試験（Wine）
 
@@ -41,7 +41,7 @@ core・io・protocol・bridge と app の画面なし試験が対象です。`--
 
 Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 
-Wine は DACL（Live Link の鍵・名前付きパイプ・共有メモリのファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。別のユーザーとして開けないことを確かめる試験（`another_user_can_neither_connect_nor_read_the_files`）は、Linux で `sudo -n -u nobody` が使えるときだけ走ります。
+Wine は DACL（Live Link の鍵・名前付きパイプ・共有メモリのファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。別のユーザーとして開けないことを確かめる試験（`another_user_can_neither_connect_nor_read_the_files`）は、Linux で `sudo -n -u nobody` が使えるときだけ走ります。同じく、つないだ先がなりすませない（パイプを匿名の段で開く）ことを調べる試験（`windows_pipe::the_server_cannot_impersonate_the_bridge_after_reading`）も、Wine はなりすましの段を保存しないので呼び出しが通るまでで、中身は本物の Windows で確かめます。
 
 ## 配布用の許諾全文
 

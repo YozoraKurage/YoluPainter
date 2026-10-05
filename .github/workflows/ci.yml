@@ -51,7 +51,9 @@ jobs:
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
       - name: 配る物の道具の試験（tools/dist.py・tools/check-workflows.py）
         if: ${{ !cancelled() }}
-        run: python3 tools/test-dist.py
+        run: |
+          python3 tools/test-dist.py
+          python3 tools/test-gen-livelink-native.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
