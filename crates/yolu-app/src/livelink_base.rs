@@ -7,6 +7,13 @@
 //! - 来るはずの元の絵は、モデルのマテリアルの情報から決める: Color の流し込み先のプロパティに絵が入っているマテリアル。Unity は、
 //!   そのスロットの元の絵を（絵が付かないときも様子だけ）必ず送る。そのセットは、元の絵が入るまで Unity に出さない（つないだ瞬間に、
 //!   空の透明な絵で元の見た目を置き換えて、アバターを真っ黒にしない）。Unity から 30 秒届かなければ、元の絵なしで出す。
+//! - 何も触っていない最初のセットは、元の絵の大きさ（新しく作るセットと同じ辺の丸め・上限。`sets::fit_side`）で作り直した文書へ入れる
+//!   （4096 の絵が 2048 の最初のセットに縮まない）。作り直した文書に入らないとき（予算）は、今の文書へ縮めて入れる（印は拡大縮小）。
+//!   新しく作ったセットは、作るときに Model の情報の大きさで作ってあるので作り直さない。新規プロジェクトの窓で解像度を選んで作った
+//!   プロジェクト（`AppState::resolution_chosen`）の最初のセットも作り直さない（選んだ大きさのまま、元の絵を拡大縮小して入れる）。
+//! - 絵の無いマテリアル（Model の情報に、Color の流し込み先のテクスチャの項目があり大きさが 0）は、不透明な白（Unity が絵の無いスロットを
+//!   描く既定の白）の「元の絵」を入れる。Unity が絵を付けられなかったとき（読めない・大きすぎる・予算を超える）は白で埋めない
+//!   （元の絵なしで出し、理由を知らせる）。層の欄の印は出さない（Unity が描くのと同じ値）。
 //! - 絵の大きさがセットと違うときは、セットの大きさへ拡大縮小する（縮めは箱の平均、広げは双線形。アルファで重みを付け、透明な画素の
 //!   RGB を混ぜない）。大きさが同じなら画素をそのまま入れる（透明な画素の RGB も）。リニアのテクスチャ（sRGB でない）は、Color の
 //!   チャンネルが sRGB の画素を持つので、sRGB の画素へ直して入れる（見た目を変えない）。
@@ -14,15 +21,17 @@
 //! - 層の欄の印: GPU を通して・圧縮から読んだ・リニアから直した・拡大縮小した絵のとき、理由をツールチップに出す（保存した .ylp には
 //!   入らず、開き直すと印は無くなる。層は普通のピクセルレイヤー）。
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use yolu_protocol::{channel, MaterialInfo, MaterialOriginal, Model, OriginalRead, OriginalState};
 
-use crate::engine::{Channel, LayerId, PixelClipboard};
+use crate::engine::{Channel, Document, LayerId, PixelClipboard};
 use crate::lang::Lang;
 use crate::model::ModelSource;
+use crate::sets::fit_side;
 use crate::state::AppState;
 
 /// 元の絵が届く進みが止まってから、待つのをやめるまでの時間。
@@ -120,6 +129,8 @@ struct Wait {
     /// 待たせ始めたときの文書の ID と版（変わっていたら入れない）。
     doc_id: u128,
     revision: u64,
+    /// 何も触っていない最初のセット（元の絵の大きさで作り直してから入れてよい）。
+    refit: bool,
     arrival: Option<Arrival>,
 }
 
@@ -128,6 +139,8 @@ enum Arrival {
     Unity(MaterialOriginal),
     /// 届いたが、持てる量を超えるので持たなかった。
     TooMany,
+    /// 絵の無いマテリアル: 来る絵は無く、白い絵で始める。
+    White,
 }
 
 /// 受けた元の絵と、待たせているセット（`LiveLink` が持つ）。
@@ -161,11 +174,33 @@ pub fn expected_slot(info: &MaterialInfo) -> Option<String> {
         .then(|| route.property.clone())
 }
 
+/// Color の流し込み先のプロパティに絵が無いと Unity が知らせているなら、そのプロパティ（白い元の絵のスロット）。Unity は、シェーダーの
+/// テクスチャのプロパティを全部（絵が無ければ大きさ 0 で）知らせるので、項目があって大きさが 0 のときだけ。項目が無い・流し込み先が無い・
+/// Color 以外のときは、絵が無いと言い切れないので白にしない。Unity が読めない・大きすぎる絵は、項目に大きさがあるので入らない。
+pub fn white_slot(info: &MaterialInfo) -> Option<String> {
+    let route = info.routes.iter().find(|r| r.channel == channel::COLOR)?;
+    info.textures
+        .iter()
+        .any(|t| t.name == route.property && (t.width == 0 || t.height == 0))
+        .then(|| route.property.clone())
+}
+
 impl LiveBase {
     /// モデルを受けた（セットの結び付けのあと）。`fresh` は、入れてよいセット（今回新しく作ったセットと、何も触っていない最初のセット）の
-    /// uid。前のモデルから待たせているセットのうち、文書が変わっていないものは持ち越す。来る元の絵があるセットを待たせる。
-    pub fn model(&mut self, state: &AppState, model: &Model, fresh: &[u32], now: Instant) {
+    /// uid で、`first` はそのうち何も触っていない最初のセット（元の絵の大きさで作り直してよい。ただし新規プロジェクトの窓で解像度を選んで
+    /// 作ったプロジェクトは、選んだ大きさのまま元の絵を縮めて入れる）。前のモデルから待たせているセットのうち、
+    /// 文書が変わっていないものは持ち越す。来る元の絵があるセットを待たせ、絵の無いマテリアルのセットは白い絵を入れるものとして待たせる
+    /// （次の `poll` で入れて出す）。
+    pub fn model(
+        &mut self,
+        state: &AppState,
+        model: &Model,
+        fresh: &[u32],
+        first: Option<u32>,
+        now: Instant,
+    ) {
         self.generation = model.generation;
+        let first = first.filter(|_| !state.resolution_chosen);
         let mut candidates: Vec<u32> = fresh.to_vec();
         candidates.extend(self.waits.keys().copied());
         candidates.sort_unstable();
@@ -179,15 +214,17 @@ impl LiveBase {
             let Some(material) = set.bound else {
                 continue;
             };
-            let Some(slot) = model
-                .materials
-                .get(material as usize)
-                .and_then(expected_slot)
-            else {
+            let Some(info) = model.materials.get(material as usize) else {
                 continue;
             };
+            let (slot, arrival) = match (expected_slot(info), white_slot(info)) {
+                (Some(slot), _) => (slot, None),
+                (None, Some(slot)) => (slot, Some(Arrival::White)),
+                (None, None) => continue,
+            };
             let doc = state.set_doc(index);
-            let (doc_id, revision) = match self.waits.get(&uid) {
+            let carried = self.waits.get(&uid);
+            let (doc_id, revision) = match carried {
                 Some(w) => (w.doc_id, w.revision),
                 None => (doc.id(), doc.revision()),
             };
@@ -201,7 +238,8 @@ impl LiveBase {
                     slot,
                     doc_id,
                     revision,
-                    arrival: None,
+                    refit: first == Some(uid) || carried.is_some_and(|w| w.refit),
+                    arrival,
                 },
             );
         }
@@ -248,6 +286,10 @@ impl LiveBase {
         else {
             return Ok(());
         };
+        if matches!(wait.arrival, Some(Arrival::White)) {
+            // 絵が無いと知らせたマテリアルの元の絵は要らない（白で始める）
+            return Ok(());
+        }
         if wait.slot != original.slot {
             return Err(format!(
                 "知らせていないスロットの元の絵です（マテリアル {}・{}）",
@@ -334,10 +376,32 @@ fn set_name(state: &AppState, uid: u32) -> String {
         .unwrap_or_default()
 }
 
-/// 揃ったセットの結果を決める: 絵が付いていれば文書の一番下に入れ、付いていなければ理由を返す。
+/// 揃ったセットの結果を決める: 絵が付いていれば（絵の無いマテリアルなら白を）文書の一番下に入れ、付いていなければ理由を返す。
 fn settle(state: &mut AppState, uid: u32, wait: Wait, lang: Lang) -> Result<(), String> {
-    let original = match wait.arrival {
-        Some(Arrival::Unity(o)) => o,
+    let source = match wait.arrival {
+        Some(Arrival::Unity(o)) => match o.state {
+            OriginalState::Image => Source::Original(o),
+            OriginalState::Unreadable => {
+                return Err(lang
+                    .pick("Unity が読めませんでした", "Unity could not read it")
+                    .to_owned())
+            }
+            OriginalState::TooLarge => {
+                return Err(lang.pick(
+                    format!("大きすぎます（{}×{}）", o.width, o.height),
+                    format!("Too large ({}×{})", o.width, o.height),
+                ))
+            }
+            OriginalState::OverBudget => {
+                return Err(lang
+                    .pick(
+                        "Unity が一度に送れる量を超えました",
+                        "Over the amount Unity sends at once",
+                    )
+                    .to_owned())
+            }
+        },
+        Some(Arrival::White) => Source::White,
         Some(Arrival::TooMany) => {
             return Err(lang
                 .pick("受けた元の絵が多すぎます", "Too many received originals")
@@ -345,28 +409,6 @@ fn settle(state: &mut AppState, uid: u32, wait: Wait, lang: Lang) -> Result<(), 
         }
         None => return Ok(()),
     };
-    match original.state {
-        OriginalState::Image => {}
-        OriginalState::Unreadable => {
-            return Err(lang
-                .pick("Unity が読めませんでした", "Unity could not read it")
-                .to_owned())
-        }
-        OriginalState::TooLarge => {
-            return Err(lang.pick(
-                format!("大きすぎます（{}×{}）", original.width, original.height),
-                format!("Too large ({}×{})", original.width, original.height),
-            ))
-        }
-        OriginalState::OverBudget => {
-            return Err(lang
-                .pick(
-                    "Unity が一度に送れる量を超えました",
-                    "Over the amount Unity sends at once",
-                )
-                .to_owned())
-        }
-    }
     let Some(index) = state.sets.iter().position(|s| s.uid == uid) else {
         return Ok(());
     };
@@ -385,34 +427,37 @@ fn settle(state: &mut AppState, uid: u32, wait: Wait, lang: Lang) -> Result<(), 
             .pick("すでに編集されています", "Already edited")
             .to_owned());
     }
-    install(state, index, original, lang)
+    match source {
+        Source::Original(original) => install(state, index, original, wait.refit, lang),
+        Source::White => install_white(state, index, lang),
+    }
 }
 
-/// 元の絵を、セットの文書の一番下のレイヤーとして入れる（履歴には入れない）。
-fn install(
-    state: &mut AppState,
-    index: usize,
-    original: MaterialOriginal,
-    lang: Lang,
-) -> Result<(), String> {
-    let (width, height) = {
-        let doc = state.set_doc(index);
-        (doc.width(), doc.height())
+/// 入れるもの。
+enum Source {
+    Original(MaterialOriginal),
+    White,
+}
+
+/// 元の絵の画素を `size` の大きさの sRGB の画素にする（大きさが違えば拡大縮小、リニアなら sRGB へ）。借りた画素は、大きさが同じときだけ写す
+/// （大きな絵を、拡大縮小の前に丸ごと写さない）。
+fn prepare(pixels: Cow<'_, [u8]>, from: (u32, u32), srgb: bool, size: (u32, u32)) -> Vec<u8> {
+    let mut out = if from != size {
+        resample(&pixels, [from.0, from.1], [size.0, size.1])
+    } else {
+        pixels.into_owned()
     };
-    let (source_w, source_h) = (original.width, original.height);
-    let resized = (source_w, source_h) != (width, height);
-    let converted = !original.srgb;
-    let (read, compressed) = (original.read, original.compressed);
-    let mut pixels = original.pixels;
-    if resized {
-        pixels = resample(&pixels, [source_w, source_h], [width, height]);
+    if !srgb {
+        linear_to_srgb(&mut out);
     }
-    if converted {
-        linear_to_srgb(&mut pixels);
-    }
-    let clip = PixelClipboard::from_image(width, height, pixels, Channel::Color)
+    out
+}
+
+/// 文書の大きさの画素を、一番下のレイヤー「元の絵」として入れる（履歴には入れない: 作った直後の初期化）。入れた層を返す。
+/// 入らなければ文書は変えない。
+fn add_bottom_layer(doc: &mut Document, pixels: Vec<u8>, lang: Lang) -> Result<LayerId, String> {
+    let clip = PixelClipboard::from_image(doc.width(), doc.height(), pixels, Channel::Color)
         .map_err(|e| lang.core_error(&e))?;
-    let doc = state.set_doc_mut(index);
     let name = lang.pick("元の絵", "Original");
     let pasted = doc
         .paste_as_layer(&clip, Channel::Color, Some(name), None)
@@ -421,18 +466,84 @@ fn install(
         let _ = doc.undo();
         return Err(lang.core_error(&e));
     }
-    // 初期化: 作った直後の文書に入れたものなので、Undo の段にしない（履歴は空のまま）
     let _ = doc.clear_history();
-    let id = doc.id();
-    state.link_originals.push(OriginalMark {
-        doc: id,
-        layer: pasted.layer,
+    Ok(pasted.layer)
+}
+
+/// 元の絵を、セットの文書の一番下のレイヤーとして入れる（履歴には入れない）。`refit` は何も触っていない最初のセットで、元の絵の大きさで
+/// 作り直した文書へ入れる（入らなければ今の文書へ、セットの大きさに縮めて入れる）。
+fn install(
+    state: &mut AppState,
+    index: usize,
+    original: MaterialOriginal,
+    refit: bool,
+    lang: Lang,
+) -> Result<(), String> {
+    let source = (original.width, original.height);
+    let converted = !original.srgb;
+    let (read, compressed) = (original.read, original.compressed);
+    let mark = |doc: &Document, layer: LayerId| OriginalMark {
+        doc: doc.id(),
+        layer,
         gpu: read == OriginalRead::Gpu,
         compressed,
         converted,
-        resized_from: resized.then_some((source_w, source_h)),
-    });
+        resized_from: (source != (doc.width(), doc.height())).then_some(source),
+    };
+    if refit {
+        if let Some((doc, layer)) = rebuilt_with(state.set_doc(index), &original, lang) {
+            let mark = mark(&doc, layer);
+            state.swap_untouched_set_document(index, doc);
+            state.link_originals.push(mark);
+            return Ok(());
+        }
+    }
+    let doc = state.set_doc_mut(index);
+    let size = (doc.width(), doc.height());
+    let pixels = prepare(Cow::Owned(original.pixels), source, original.srgb, size);
+    let layer = add_bottom_layer(doc, pixels, lang)?;
+    let mark = mark(state.set_doc(index), layer);
+    state.link_originals.push(mark);
     Ok(())
+}
+
+/// `like`（何も触っていない最初のセットの文書）の代わりに、元の絵の大きさ（新しく作るセットと同じ辺の丸め・上限）で作り直した文書へ
+/// 元の絵を入れたもの。大きさが同じなら作り直さず、作り直した文書に入らない（予算）ときも None（今の文書へ縮めて入れる）。
+fn rebuilt_with(like: &Document, original: &MaterialOriginal, lang: Lang) -> Option<(Document, LayerId)> {
+    let side = fit_side(original.width.max(original.height));
+    if (side, side) == (like.width(), like.height()) {
+        return None;
+    }
+    let mut doc = crate::newproject::new_set_document(
+        side,
+        side,
+        like.tile_size(),
+        lang,
+        &crate::newproject::used_channels(like),
+        like.normal_settings(),
+    )
+    .ok()?;
+    // 予算は今の文書と同じ（入らなければ今の文書へ戻る）
+    doc.set_minimum_undo_steps(like.minimum_undo_steps()).ok()?;
+    doc.set_undo_budget_bytes(like.undo_budget_bytes()).ok()?;
+    doc.set_stroke_budget_bytes(like.stroke_budget_bytes()).ok()?;
+    doc.set_source_budget_bytes(like.source_budget_bytes()).ok()?;
+    // 入らなかったときに今の文書へ入れ直せるよう、元の画素は手放さない（借りる）
+    let pixels = prepare(
+        Cow::Borrowed(&original.pixels),
+        (original.width, original.height),
+        original.srgb,
+        (side, side),
+    );
+    let layer = add_bottom_layer(&mut doc, pixels, lang).ok()?;
+    Some((doc, layer))
+}
+
+/// 絵の無いマテリアルのセットに、不透明な白の「元の絵」を入れる（Unity は絵の無いスロットを既定の白で描く。層の欄の印は付けない）。
+fn install_white(state: &mut AppState, index: usize, lang: Lang) -> Result<(), String> {
+    let doc = state.set_doc_mut(index);
+    let pixels = vec![255u8; doc.width() as usize * doc.height() as usize * 4];
+    add_bottom_layer(doc, pixels, lang).map(|_| ())
 }
 
 /// 軸 1 本の、出力の位置ごとの元の画素（先頭の位置と重み）。縮めは箱の平均、広げは双線形、同じ大きさは 1 対 1。
@@ -644,17 +755,29 @@ mod tests {
         }
     }
 
+    /// 絵が無いと知らせるマテリアル（Color の流し込み先のテクスチャの項目があり、大きさが 0）。
+    fn empty(name: &str) -> MaterialInfo {
+        let mut info = info(name, true);
+        info.textures[0].width = 0;
+        info.textures[0].height = 0;
+        info
+    }
+
     /// Live Link のモデルを受けた状態の AppState（セットは Body = 最初のセット・Hair = 新しいセット）と、待たせ始めた LiveBase。
     fn waiting() -> (AppState, LiveBase, Model, Instant) {
+        waiting_with(vec![info("Body", true), info("Hair", true), info("Plain", false)])
+    }
+
+    fn waiting_with(materials: Vec<MaterialInfo>) -> (AppState, LiveBase, Model, Instant) {
         let mut state = AppState::new(64, 64);
-        let m = model(1, vec![info("Body", true), info("Hair", true), info("Plain", false)]);
+        let m = model(1, materials);
         let untouched = state.is_pristine().then(|| state.sets.current().uid);
         let (report, _) = state.receive_link_model(&m, 7);
         let mut fresh = report.created_sets.clone();
         fresh.extend(untouched);
         let mut base = LiveBase::default();
         let t0 = Instant::now();
-        base.model(&state, &m, &fresh, t0);
+        base.model(&state, &m, &fresh, untouched, t0);
         (state, base, m, t0)
     }
 
@@ -675,6 +798,70 @@ mod tests {
         assert_eq!(base.waiting_count(), 2, "絵の無い Plain は待たせない");
         let uids: Vec<u32> = state.sets.iter().map(|s| s.uid).collect();
         assert!(base.holds(uids[0]) && base.holds(uids[1]) && !base.holds(uids[2]));
+    }
+
+    #[test]
+    fn only_a_color_slot_that_unity_says_is_empty_gets_a_white_original() {
+        assert_eq!(white_slot(&empty("A")).as_deref(), Some("_MainTex"));
+        assert_eq!(white_slot(&info("A", true)), None, "絵があれば白にしない");
+        assert_eq!(white_slot(&info("A", false)), None, "項目が無ければ、絵が無いと言い切れない");
+        let mut no_route = empty("A");
+        no_route.routes.clear();
+        assert_eq!(white_slot(&no_route), None, "Color の流し込み先が無ければ、描いた絵を見せない");
+        let mut other = empty("A");
+        other.routes[0].channel = channel::EMISSION;
+        assert_eq!(white_slot(&other), None, "Color 以外は触らない");
+        // Unity は、幅か高さが 0 以下のテクスチャを絵が無いものとして元の絵を送らない
+        let mut flat = info("A", true);
+        flat.textures[0].height = 0;
+        assert_eq!(white_slot(&flat).as_deref(), Some("_MainTex"));
+        // 元の絵が来るものと白は重ならない
+        assert_eq!(expected_slot(&empty("A")), None);
+        assert_eq!(expected_slot(&flat), None);
+    }
+
+    #[test]
+    fn a_set_gets_the_side_of_a_new_set_from_the_longest_side_of_the_picture() {
+        for (longest, side) in [(1, 256), (100, 256), (256, 256), (257, 512), (600, 1024), (2048, 2048), (3000, 4096), (4096, 4096), (8192, 4096)] {
+            assert_eq!(fit_side(longest), side, "{longest}");
+        }
+        let mut material = info("A", true);
+        material.textures[0].width = 600;
+        material.textures[0].height = 300;
+        assert_eq!(crate::sets::size_for(&material), fit_side(600), "新しいセットの大きさと同じ決め方");
+    }
+
+    #[test]
+    fn a_white_wait_needs_no_arrival_and_the_white_layer_goes_in_at_the_next_poll() {
+        let (mut state, mut base, _, t0) = waiting_with(vec![empty("Body"), info("Hair", true)]);
+        let uids: Vec<u32> = state.sets.iter().map(|s| s.uid).collect();
+        assert_eq!(base.waiting_count(), 2);
+        assert!(base.holds(uids[0]), "白が入るまで、空の絵で Unity に出さない");
+        // 絵が無いと知らせたマテリアルの元の絵が届いても、受けて捨てる（誤りにしない・白を置き換えない）
+        let mut stray = image(1, 0, 4);
+        stray.pixels = vec![1, 2, 3, 255];
+        assert!(base.receive(stray, t0).is_ok());
+        assert!(base.poll(&mut state, 7, t0).is_none());
+        assert_eq!(base.waiting_count(), 1, "白は入れた。Hair は元の絵を待つ");
+        assert!(!base.holds(uids[0]));
+        let doc = state.set_doc(0);
+        let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
+        assert_eq!(names, ["元の絵", "レイヤー 1"]);
+        assert_eq!(crate::engine::layer_pixel(&doc.layers()[0], 0, 0), [255, 255, 255, 255]);
+        assert_eq!(crate::engine::layer_pixel(&doc.layers()[0], 63, 63), [255, 255, 255, 255]);
+        assert!(!doc.can_undo(), "初期化は履歴に入らない");
+        assert_eq!((doc.width(), doc.height()), (64, 64), "白は大きさを変えない");
+        assert!(state.link_originals.is_empty(), "層の欄の印は付けない");
+    }
+
+    #[test]
+    fn a_white_original_that_does_not_fit_the_budget_is_declined_with_the_reason() {
+        let (mut state, mut base, _, t0) = waiting_with(vec![empty("Body")]);
+        state.doc.set_stroke_budget_bytes(10).unwrap();
+        let text = base.poll(&mut state, 7, t0).unwrap();
+        assert!(text.contains("元の絵を入れませんでした") && text.contains("予算"), "{text}");
+        assert!(!base.waiting(), "入れられなくても待ちは終わる（空のまま出す）");
+        assert_eq!(state.doc.layers().len(), 1);
     }
 
     #[test]

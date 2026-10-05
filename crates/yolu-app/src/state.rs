@@ -711,6 +711,9 @@ pub struct AppState {
     pub link_request: Option<LinkRequest>,
     /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
     pub link_originals: crate::livelink_base::OriginalMarks,
+    /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
+    /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
+    pub resolution_chosen: bool,
     /// 開いた .ylp（保存先と、保存で残す元の中身）。
     pub project: Option<ProjectFile>,
     /// ファイルの窓を開く頼み（`YoluApp` が開く。試験では開かない）。
@@ -916,6 +919,7 @@ impl AppState {
             link: LinkView::default(),
             link_request: None,
             link_originals: Default::default(),
+            resolution_chosen: false,
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),

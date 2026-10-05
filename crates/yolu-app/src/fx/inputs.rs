@@ -122,6 +122,12 @@ pub struct InputsState {
 }
 
 impl InputsState {
+    /// セット（uid）の文書へ渡した入力の覚えを捨てる（文書を別のものに替えたとき。次の同期で、新しい文書へ入力を渡し直す）。
+    pub(crate) fn forget_set(&mut self, uid: u32) {
+        self.keys.remove(&uid);
+        self.attempts.remove(&uid);
+    }
+
     /// 復号できなかった画像の理由。
     pub fn image_error(&self, id: ImageId) -> Option<&str> {
         self.image_errors.get(&id).map(|f| f.reason.as_str())

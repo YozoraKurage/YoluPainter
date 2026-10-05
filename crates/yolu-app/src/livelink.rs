@@ -43,7 +43,8 @@ pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
 /// このスタンドアロンが挨拶で出す機能の印（`yolu_protocol::feature`。双方の共通部分がそのつながりで使える機能）。
 /// 印を立てる機能を足すときは、ここに `feature` のビットを足す（ビットの割り当ては `yolu_protocol::feature`）。
 /// マテリアルの値（MATERIAL_VALUES）: Unity の本物の lilToon のマテリアルの値と描いていないスロットの絵を受けて描く（`look::link`）。
-/// 元のテクスチャ（ORIGINAL_TEXTURES）: Unity が送る元の絵を、新しく作ったセットの一番下のレイヤーに入れる（`livelink_base`）。
+/// 元のテクスチャ（ORIGINAL_TEXTURES）: Unity が送る元の絵を、新しく作ったセット・何も触っていない最初のセットの一番下のレイヤーに入れる
+/// （絵の無いマテリアルは白）（`livelink_base`）。
 pub const FEATURES: u64 = feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES;
 
 /// Unity に出すチャンネル（セットの共有メモリ。今は Color だけ）。Unity はここにあるチャンネルの流し込み先だけを描いた絵で見せ、ほかの
@@ -842,7 +843,7 @@ impl LiveLink {
                 if common & feature::ORIGINAL_TEXTURES != 0 {
                     let mut fresh = report.created_sets.clone();
                     fresh.extend(untouched);
-                    self.base.model(state, &model, &fresh, Instant::now());
+                    self.base.model(state, &model, &fresh, untouched, Instant::now());
                 }
                 let mut text = state.lang.pick(
                     format!("Live Link: モデル「{}」を受けました。", model.name),

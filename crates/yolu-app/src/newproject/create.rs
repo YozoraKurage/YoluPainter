@@ -127,6 +127,8 @@ fn install(
     }
     let (sets, doc) = TextureSets::from_new_parts(parts);
     app.replace_sets_with(sets, doc, false);
+    // 窓で選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
+    app.resolution_chosen = true;
     app.shelf = ShelfState::default().inherit_running_from(&app.shelf);
     app.project = None;
     app.project_name = lang.pick("名称未設定", "Untitled").into();

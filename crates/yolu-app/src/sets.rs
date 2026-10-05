@@ -120,8 +120,14 @@ pub fn size_for(info: &MaterialInfo) -> u32 {
         .find(|t| Some(t.name.as_str()) == property)
         .map(|t| t.width.max(t.height))
         .filter(|&w| w > 0)
-        .map(|w| w.clamp(256, 4096).next_power_of_two().min(4096))
+        .map(fit_side)
         .unwrap_or(DEFAULT_DOCUMENT_SIZE)
+}
+
+/// 絵の長い辺 `longest` から作るセットの辺: 256〜4096 の 2 の冪に丸めたもの（`size_for` と、何も触っていない最初のセットを元の絵の
+/// 大きさで作り直すときが、同じ決め方を使う）。
+pub fn fit_side(longest: u32) -> u32 {
+    longest.clamp(256, 4096).next_power_of_two().min(4096)
 }
 
 /// 今のセットでないあいだにしまっておく文書と表示の状態。
@@ -294,6 +300,13 @@ impl TextureSets {
         if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
             stash.selected_layer = doc.layers().last().map(|l| l.id());
             stash.doc = doc;
+        }
+    }
+
+    /// 何も触っていない、今でないセットの文書を、同じセットのまま別の文書（別の大きさ）に替える（表示と選んでいる層は新しい文書に合わせて既定へ）。
+    pub(crate) fn replace_untouched_stashed_doc(&mut self, index: usize, doc: Document) {
+        if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
+            *stash = Stash::new(doc);
         }
     }
 
@@ -600,6 +613,36 @@ impl AppState {
         self.drafting.pen_down = None;
     }
 
+    /// 何も触っていないセット（`index`）の文書を、同じセット（uid・名前・鍵はそのまま）のまま別の文書に替える。履歴は持ち越さない。
+    /// 表示（拡大・位置）と選んでいる層は、新しい文書の大きさに合わせて既定に戻す。Live Link が、何も触っていない最初のセットを元の絵の
+    /// 大きさで作り直すときに使う（触っていないことは呼ぶ側が確かめる）。
+    pub(crate) fn swap_untouched_set_document(&mut self, index: usize, doc: Document) {
+        if let Some(set) = self.sets.get_mut(index) {
+            // 新しく作るセットと同じく、セットの ID は文書の ID と同じ値
+            set.id = guid_string(doc.id());
+            set.saved = None;
+            // 効果の入力の覚えは前の文書へ渡したもの（鍵はセットの uid に付き、文書の ID を含まない）。新しい文書へ渡し直させる
+            self.fx.inputs.forget_set(set.uid);
+        }
+        if index == self.sets.current_index() {
+            self.doc = doc;
+            self.document_replaced();
+            self.view = ViewState::default();
+            self.layer_scroll = 0.0;
+            self.selected_layer = None;
+            self.renaming = None;
+            self.layer_drag = None;
+            self.popup = None;
+            self.fx.selected = None;
+            self.sel_doc_changed();
+            self.ensure_selection();
+        } else {
+            self.sets.replace_untouched_stashed_doc(index, doc);
+        }
+        self.sync_view3d();
+        self.sync_budgets();
+    }
+
     /// セットの並びを丸ごと置き換える（開いたとき）。`current` の文書が `self.doc` になる。
     pub fn replace_sets(&mut self, sets: TextureSets, doc: Document) {
         self.replace_sets_with(sets, doc, true);
@@ -615,6 +658,8 @@ impl AppState {
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();
         self.fx.inputs.image_limit = image_limit;
+        // 新規プロジェクトの窓で作ったときだけ、作ったあとで立てる（窓で選んだ解像度）
+        self.resolution_chosen = false;
         self.document_replaced();
         self.selected_layer = None;
         self.view = ViewState::default();
