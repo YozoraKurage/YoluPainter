@@ -192,7 +192,7 @@ fn the_set_limit_of_the_app_is_the_one_the_ylp_reader_enforces() {
 // ───────── キーボードでの画面全体の拡大縮小 ─────────
 
 fn zoom_after_keys(setup: bool) -> f32 {
-    let mut h = egui_kittest::Harness::new_ui(move |ui| {
+    let mut h = common::gpu_thread::builder().build_ui(move |ui| {
         if setup {
             YoluApp::setup(ui.ctx());
         }
