@@ -11,9 +11,15 @@ use yolu_model::ModelError;
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
 pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
     if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A document exceeds the Layer pixels budget")
+        Some("A document exceeds the Layer memory budget")
     } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
-        Some("The whole exceeds the Layer pixels budget")
+        Some("The whole exceeds the Layer memory budget")
+    } else if text.contains("グループの入れ子の上限") {
+        Some("Groups are nested too deeply")
+    } else if text.contains("キャンバスの辺の上限") {
+        Some("The canvas edge exceeds the limit (8192)")
+    } else if text.contains("レイヤーの数の上限") {
+        Some("Too many layers (limit 2048)")
     } else {
         None
     }
@@ -90,9 +96,13 @@ impl Lang {
             Error::SaveConflict(text) if text.contains("外部で作られました") => {
                 self.pick(text.clone(), "A file appeared at the save target; not overwritten".into())
             }
-            // 開いた .ylp（変えていないセットの中身を写す元）が外で消された・動かされた
-            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_MISSING) => {
-                self.pick(text.clone(), "The opened .ylp was deleted or moved outside".into())
+            // 保存先が、開いたあとで外で消された・動かされた（変わったのとは言い分ける）
+            Error::SaveConflict(text) if text.contains("外部で消されています") => {
+                self.pick(text.clone(), "The save target was deleted or moved outside; not overwritten".into())
+            }
+            // 開いた .ylp の古い版の写し（置換の規則が POSIX でないファイルシステムで、保存が置き換えるために手放した）
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => {
+                self.pick(text.clone(), "The opened .ylp was replaced by a save; this copy can no longer be read".into())
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
@@ -240,7 +250,7 @@ impl Lang {
                 if more > 0 {
                     text += &format!(" ほか {more} 件");
                 }
-                format!("core で扱えない中身（{text}）")
+                format!("編集に対応していない中身（{text}）")
             }
             Self::En => {
                 let mut text = shown.join(", ");
@@ -357,9 +367,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "グループには描けない" => "Cannot paint a group",
         "グループの中身が続いていない" => "Group children are not contiguous",
         "グループの入れ子が輪になっている" => "Cyclic group hierarchy",
+        "グループの入れ子が深すぎる" => "Group nesting is too deep",
         "グループを自分の中へは入れられない" => "Cannot move a group into itself",
-        "ステンシルに画布からの写しが無いので、2D のダブは読めない" => "Missing canvas-to-stencil transform for 2D dabs",
-        "ステンシルに画布からの写しが無い（画素ごとにステンシルの上の点を渡す）" => "Missing canvas-to-stencil transform",
+        "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない" => "Missing canvas-to-stencil transform for 2D dabs",
+        "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）" => "Missing canvas-to-stencil transform",
         "ステンシルの footprint" => "Stencil footprint",
         "ステンシルのミップマップが予算を超える（小さい画像にする）" => "Stencil mipmap budget exceeded",
         "ステンシルの点は画素ごとに 1 つ" => "Stencil point count must match pixel count",
@@ -368,9 +379,9 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
         "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => "Stencil buffer size must be width × height × 4 bytes",
         "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
-        "タイルが画布の外" => "Tile outside canvas",
+        "タイルがキャンバスの外" => "Tile outside canvas",
         "タイルのバイト数が違う" => "Invalid tile byte count",
-        "タイルの座標が画布の外" => "Tile coordinates outside canvas",
+        "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
         "タイルの長さ" => "Tile length",
         "チャンネルの名前" => "Channel name",
         "チャンネルは 64 まで" => "Maximum 64 channels",
@@ -422,10 +433,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "無いグループに入っている" => "Parent group not found",
         "無効のチャンネルには塗れない" => "Cannot fill a disabled channel",
         "無効のチャンネルには描けない" => "Cannot paint a disabled channel",
-        "画布の外の余白は 0 でなければならない" => "Padding outside canvas must be zero",
-        "画素が画布の外" => "Pixel outside canvas",
-        "矩形が画布の外" => "Rectangle outside canvas",
-        "種が画布の外" => "Seed outside canvas",
+        "キャンバスの外の余白は 0 でなければならない" => "Padding outside canvas must be zero",
+        "画素がキャンバスの外" => "Pixel outside canvas",
+        "矩形がキャンバスの外" => "Rectangle outside canvas",
+        "種がキャンバスの外" => "Seed outside canvas",
         "筆先の並び（1〜256 枚）" => "Brush tip sequence (1–256)",
         "筆先の大きさ（1〜2048）" => "Brush tip size (1–2048)",
         "筆先の覆いの長さが幅 × 高さでない" => "Brush tip coverage size must be width × height",
@@ -783,7 +794,7 @@ impl Lang {
             GeometryError::InvalidTolerance => self.pick("溶接の許しは正の値でなければなりません", "Weld tolerance must be positive"),
             GeometryError::TooManyTriangles => self.pick("三角形が多すぎます", "Too many triangles"),
             GeometryError::Canceled => self.pick("取り消しました", "Cancelled"),
-            GeometryError::Mismatch => self.pick("三角形の並びが元のスナップショットと違います", "Triangle order differs from the snapshot"),
+            GeometryError::Mismatch => self.pick("三角形の並びが元のモデルと違います", "Triangle order differs from the original model"),
         }
     }
 
@@ -836,6 +847,14 @@ fn rig_what(what: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 開いた .ylp の古い版の写し（保存が置き換えるために手放した）を読もうとした理由は、どちらの言語でも言う。
+    #[test]
+    fn a_released_open_file_is_told_in_both_languages() {
+        let error = yolu_io::Error::SaveConflict(yolu_io::SOURCE_RELEASED.into());
+        let (ja, en) = (Lang::Ja.io_error(&error), Lang::En.io_error(&error));
+        assert!(ja.contains("置き換えられた"), "{ja}");
+        assert!(en.is_ascii() && en.contains("replaced"), "{en}");
+    }
     #[test]
     fn merge_and_lock_errors_use_the_selected_language() {
         use yolu_core::MergeRefusal::*;
@@ -1232,6 +1251,7 @@ mod tests {
             Error::SaveConflict("バックアップ先がフォルダーではありません".into()),
             Error::SaveConflict("バックアップ先がシンボリックリンクです".into()),
             Error::SaveConflict("ロックのファイルがシンボリックリンクです".into()),
+            Error::SaveConflict("保存先が外部で消されています。上書きしません".into()),
         ];
         for lang in Lang::ALL {
             let texts: Vec<String> = errors.iter().map(|e| lang.io_error(e)).collect();
@@ -1253,6 +1273,9 @@ mod tests {
         assert_eq!(Lang::En.io_error(&errors[8]), "Another save is in progress");
         assert!(Lang::En.io_error(&errors[3]).contains("changed"));
         assert!(Lang::Ja.io_error(&errors[8]).contains("進行中"));
+        // 保存先が外で消された衝突は、変わった衝突とも言い分ける
+        assert!(Lang::En.io_error(&errors[12]).contains("deleted or moved"));
+        assert!(Lang::Ja.io_error(&errors[12]).contains("消されています"));
         // 保存先の周りの不具合は、データの不正（InvalidData の汎用文）にも「外で変わった」にも見せず、場所が理由だと言う
         for (i, key) in [(9, "Backup location is not a folder"), (10, "link"), (11, "lock file")] {
             let en = Lang::En.io_error(&errors[i]);

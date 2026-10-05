@@ -426,6 +426,40 @@ fn a_unity_texture_past_sixteen_says_it_is_not_drawn() {
 }
 
 #[test]
+fn an_emission_texture_unity_left_empty_shows_the_default_texture_like_the_view_draws() {
+    for lang in Lang::ALL {
+        let mut h = harness_sized(lang, 2400.0);
+        // 新しいセットの既定の割り当て（発光 → Emission）は、どのレイヤーも使っていない。Unity の値では発光が入で、発光のテクスチャは空
+        let mut r = received_from_unity();
+        r.missing.clear();
+        r.images.clear();
+        r.look.properties.insert("_UseEmission".into(), LookValue::Float(1.0));
+        h.state_mut().state.doc.set_received_look(Some(r.clone())).unwrap();
+        h.run();
+        click_label(&mut h, lang.pick("発光設定", "Emission"));
+        let row = |h: &Harness<'_, YoluApp>, value: &str| {
+            h.query_by_label(&format!("{}: {value}", lang.pick("色 / マスク", "Color / Mask"))).is_some()
+        };
+        // 3D ビューは使っていないチャンネル（黒）ではなく Unity と同じ既定の白で読むので、欄もチャンネルの名前でなく既定を見せる
+        assert!(row(&h, lang.pick("白", "White")), "{lang:?}");
+        // 絵が届けば Unity のテクスチャ
+        r.images.insert(
+            "_EmissionMap".into(),
+            std::sync::Arc::new(yolu_core::look::ReceivedImage { width: 2, height: 2, srgb: true, pixels: vec![255; 16].into() }),
+        );
+        h.state_mut().state.doc.set_received_look(Some(r)).unwrap();
+        h.run();
+        assert!(row(&h, lang.pick("Unity のテクスチャ", "Unity texture")), "{lang:?}");
+        // Live Link でつないでいない（受けた見た目が無い）セットは今までどおり、割り当てたチャンネルの名前
+        h.state_mut().state.doc.set_received_look(None).unwrap();
+        h.state_mut().apply(Action::Look(LookOp::Value { name: "_UseEmission", value: LookValue::Float(1.0), drag: false }));
+        h.run();
+        assert!(!row(&h, lang.pick("白", "White")), "{lang:?}");
+        assert!(row(&h, lang.pick("エミッション", "Emission")), "{lang:?}");
+    }
+}
+
+#[test]
 fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_section_resets_follow_unity() {
     for lang in Lang::ALL {
         let mut h = harness_sized(lang, 3200.0);
@@ -623,6 +657,153 @@ fn the_paint_button_makes_assigns_and_switches_to_the_slot_channel_in_one_undo()
     };
     let info = doc.channel_info(c).unwrap();
     assert_eq!((info.kind, info.color_space, info.default), (ChannelKind::Color, ColorSpace::Srgb, Rgba8::new(0, 0, 0, 0)));
+}
+
+#[test]
+fn the_slot_menu_ends_its_channels_with_a_new_channel_assigned_and_painted_in_one_undo() {
+    let mut h = harness_sized(Lang::Ja, 2400.0);
+    h.state_mut().apply(Action::Look(LookOp::Template));
+    h.run();
+    click_label(&mut h, "影設定");
+    let users = |h: &Harness<'_, YoluApp>| -> Vec<Channel> {
+        h.state().state.doc.channels().into_iter().filter(|c| !c.is_standard()).collect()
+    };
+    let before = users(&h);
+    let old = h.state().state.doc.look().textures["_ShadowStrengthMask"];
+    assert_eq!(old, TextureSource::Channel(before[0]));
+    let steps = h.state().state.doc.undo_count();
+    // 割り当てがあっても、スロットの名前で新しく作って割り当て、描くチャンネルにする（1 回の Undo）
+    click_label(&mut h, "マスクと強度: 影の強度");
+    pick(&mut h, "新しいチャンネル");
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.undo_count(), steps + 1);
+    let after = users(&h);
+    assert_eq!(after.len(), before.len() + 1);
+    let made = *after.last().unwrap();
+    assert_eq!(doc.look().textures["_ShadowStrengthMask"], TextureSource::Channel(made));
+    let info = doc.channel_info(made).unwrap();
+    assert_eq!((info.name.as_str(), info.kind), ("影の強度 2", ChannelKind::Scalar), "同じ名前があれば番号を足す");
+    assert_eq!(info.default, Rgba8::new(255, 255, 255, 255));
+    assert_eq!(h.state().state.m2.paint_channel, made);
+    assert!(yolu_app::look::panel::painting_slot(&h.state().state, "_ShadowStrengthMask"));
+    assert!(h.state().state.modified);
+    // 古いチャンネルは消さない（ほかのスロットが読んでいるかもしれない）。Undo 1 回で、割り当てもチャンネルも元に戻る
+    assert!(doc.channel_info(before[0]).is_some());
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    let doc = &h.state().state.doc;
+    assert_eq!(users(&h), before);
+    assert_eq!(doc.look().textures["_ShadowStrengthMask"], old);
+    assert!(doc.channel_info(h.state().state.m2.paint_channel).is_some(), "描くチャンネルは消えたチャンネルのままにならない");
+    // 標準のチャンネルを読むスロットも同じ（メインカラーは sRGB の色のチャンネル）
+    h.state_mut().apply(Action::Look(LookOp::NewChannel { slot: "_MainTex", plane: None }));
+    let doc = &h.state().state.doc;
+    let TextureSource::Channel(c) = doc.look().textures["_MainTex"] else {
+        panic!("チャンネルを割り当てる");
+    };
+    assert!(!c.is_standard());
+    let info = doc.channel_info(c).unwrap();
+    assert_eq!((info.kind, info.color_space, info.default), (ChannelKind::Color, ColorSpace::Srgb, Rgba8::new(255, 255, 255, 255)));
+    assert_eq!(h.state().state.m2.paint_channel, c);
+    // 英語
+    h.state_mut().state.lang = Lang::En;
+    h.run();
+    click_label(&mut h, "Mask & Strength: 影の強度");
+    assert!(h.query_by_label("New Channel").is_some());
+}
+
+#[test]
+fn a_new_channel_for_a_component_assigns_one_scalar_channel_to_that_plane_in_one_undo() {
+    let mut h = harness_sized(Lang::Ja, 2400.0);
+    h.state_mut().apply(Action::Look(LookOp::Template));
+    h.run();
+    let Some(TextureSource::Channel(first)) = h.state().state.doc.look().textures.get("_ShadowStrengthMask").copied() else {
+        panic!("ひな形が割り当てる");
+    };
+    let planes = [
+        PlaneSource::Channel { channel: first, component: 0 },
+        PlaneSource::Zero,
+        PlaneSource::One,
+        PlaneSource::Zero,
+    ];
+    h.state_mut().apply(Action::Look(LookOp::Texture {
+        slot: "_ShadowStrengthMask",
+        source: Some(TextureSource::Packed(planes)),
+    }));
+    h.run();
+    click_label(&mut h, "影設定");
+    let channels = h.state().state.doc.channels().len();
+    let steps = h.state().state.doc.undo_count();
+    // 成分ごとの行（G）の選択肢の最後に「新しいチャンネル」
+    click_label(&mut h, "G: 0");
+    pick(&mut h, "新しいチャンネル");
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.undo_count(), steps + 1);
+    assert_eq!(doc.channels().len(), channels + 1);
+    let TextureSource::Packed(now) = doc.look().textures["_ShadowStrengthMask"] else {
+        panic!("成分ごとのまま");
+    };
+    let PlaneSource::Channel { channel: made, component: 0 } = now[1] else {
+        panic!("G にチャンネルを割り当てる: {now:?}");
+    };
+    assert_eq!((now[0], now[2], now[3]), (planes[0], planes[2], planes[3]), "ほかの成分はそのまま");
+    let info = doc.channel_info(made).unwrap();
+    assert_eq!((info.name.as_str(), info.kind, info.color_space), ("影の強度 G", ChannelKind::Scalar, ColorSpace::Linear));
+    assert_eq!(info.default, Rgba8::new(0, 0, 0, 255), "何も描いていない所は、置き換えた成分（0）のまま");
+    assert_eq!(h.state().state.m2.paint_channel, made);
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.channels().len(), channels);
+    assert_eq!(doc.look().textures["_ShadowStrengthMask"], TextureSource::Packed(planes));
+    // 1 の成分を置き換えるなら白、チャンネルの成分を置き換えるならスロットの既定（白）から始まる
+    for k in [2u8, 0] {
+        h.state_mut().apply(Action::Look(LookOp::NewChannel { slot: "_ShadowStrengthMask", plane: Some(k) }));
+        let doc = &h.state().state.doc;
+        let TextureSource::Packed(now) = doc.look().textures["_ShadowStrengthMask"] else {
+            panic!("成分ごとのまま");
+        };
+        let PlaneSource::Channel { channel, .. } = now[k as usize] else {
+            panic!("{now:?}");
+        };
+        assert_eq!(doc.channel_info(channel).unwrap().default, Rgba8::new(255, 255, 255, 255), "成分 {k}");
+        h.state_mut().apply(Action::Undo);
+    }
+    h.run();
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.look().textures["_ShadowStrengthMask"], TextureSource::Packed(planes));
+    // 成分ごとでないスロットに成分の新しいチャンネルは作れない（何も変えない）
+    let steps = doc.undo_count();
+    h.state_mut().apply(Action::Look(LookOp::NewChannel { slot: "_MainTex", plane: Some(0) }));
+    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert_eq!(h.state().state.doc.channels().len(), channels);
+}
+
+#[test]
+fn a_new_channel_is_not_offered_for_a_slot_that_reads_an_image_and_past_sixteen_user_channels_it_is_marked_not_drawn() {
+    let mut h = harness_sized(Lang::Ja, 2400.0);
+    // マットキャップの絵のスロット（プロジェクトの画像を読む）には描く口が無く、新しいチャンネルも無い
+    let steps = h.state().state.doc.undo_count();
+    h.state_mut().apply(Action::Look(LookOp::NewChannel { slot: "_MatCapTex", plane: None }));
+    assert_eq!(h.state().state.doc.undo_count(), steps, "何も変えない");
+    // ユーザーチャンネルが 16 を超えると、3D ビューは配列に入る先の 16 個（スロットの並びの順）だけを描く（今までの印）
+    let paintable: Vec<&str> = yolu_app::look::liltoon::SLOTS
+        .iter()
+        .filter(|s| s.usage != yolu_app::look::liltoon::SlotUse::Image)
+        .map(|s| s.name)
+        .take(17)
+        .collect();
+    for slot in &paintable[..16] {
+        h.state_mut().apply(Action::Look(LookOp::NewChannel { slot, plane: None }));
+    }
+    let users = |h: &Harness<'_, YoluApp>| h.state().state.doc.channels().iter().filter(|c| !c.is_standard()).count();
+    assert_eq!(users(&h), 16);
+    assert!(paintable[..16].iter().all(|s| !yolu_app::look::panel::slot_over_layer_limit(&h.state().state.doc, s)));
+    h.state_mut().apply(Action::Look(LookOp::NewChannel { slot: paintable[16], plane: None }));
+    assert_eq!(users(&h), 17, "作れる。上限は表示の側");
+    let doc = &h.state().state.doc;
+    assert!(yolu_app::look::panel::slot_over_layer_limit(doc, paintable[16]), "17 個目は描かない印");
+    assert!(!yolu_app::look::panel::slot_over_layer_limit(doc, paintable[0]));
 }
 
 #[test]

@@ -44,7 +44,7 @@ pub fn write_into(
             format!(
                 "{}: {}",
                 lang.pick(
-                    "選択範囲を正本にできません",
+                    "選択範囲を文書にできません",
                     "Cannot turn the selection into the document"
                 ),
                 lang.io_error(&e)

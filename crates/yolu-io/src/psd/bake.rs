@@ -83,7 +83,7 @@ impl ExportOptions {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExportControl<'a> {
     pub cancel: Option<&'a AtomicBool>,
-    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーの画素」。取り込みの `CopyOptions::source_budget` と同じ値）。層の記録の数（予算 1 MiB につき 1 件）・
+    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーのメモリ」。取り込みの `CopyOptions::source_budget` と同じ値）。層の記録の数（予算 1 MiB につき 1 件）・
     /// キャンバス・層 1 枚の画素の上限をここから決める（[`Limits::for_export`]）。`None` は C# の書き手と対の固定の上限（画素の合計 128 MiB と既定の
     /// [`Limits`]。厳密な書き出し `from_core` はいつもこれ）。
     pub source_budget: Option<u64>,

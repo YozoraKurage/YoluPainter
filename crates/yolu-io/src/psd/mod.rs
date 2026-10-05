@@ -96,7 +96,7 @@ impl Default for Limits {
     }
 }
 impl Limits {
-    /// 書き出しの上限。設定の「レイヤーの画素」の予算 `budget`（バイト）から決める（取り込みの `CopyOptions` と同じ考え方）:
+    /// 書き出しの上限。設定の「レイヤーのメモリ」の予算 `budget`（バイト）から決める（取り込みの `CopyOptions` と同じ考え方）:
     /// 層の記録の数は予算 1 MiB につき 1 件（256〜32767 件。グループの区切りも数える）、キャンバス・層 1 枚の画素は予算以内（辺は PSD の上限 30000）、
     /// ファイルは PSD の上限 2 GiB。全層の画素の合計には上限が無い（流して書くので、メモリには層 1 枚ぶんしか持たない）。メモリに全層を組む書き出し
     /// （Normal の焼き込み・平らの 1 枚）の合計だけは、書き出しの側が予算で止める。
@@ -111,7 +111,8 @@ impl Limits {
             max_metadata_bytes: usize::try_from(budget).unwrap_or(usize::MAX),
             max_name_code_units: 4096,
             max_diagnostics: 128,
-            max_group_depth: 128,
+            // 文書の入れ子の上限（core の編集・読み込みが守る）と同じ。これより深い文書は作れない
+            max_group_depth: yolu_core::MAX_GROUP_DEPTH,
         }
     }
     fn validate(&self) -> Result<()> {

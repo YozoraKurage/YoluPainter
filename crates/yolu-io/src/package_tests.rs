@@ -104,7 +104,7 @@ fn deflating_a_streamed_entry_gives_the_same_bytes_as_one_write() {
     let path = dir.join("a.ylp");
     std::fs::write(&path, &bytes).unwrap();
     // 全部をファイルの位置で持つ（メモリに残さない）
-    let p = read(&Source::Path(Arc::new(path.clone())), &Limits::default(), 0).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
     assert!(p.files.values().filter(|b| !b.is_empty()).all(|b| b.in_memory().is_none()));
     assert_eq!(p.to_bytes().unwrap(), bytes);
 }
@@ -191,7 +191,7 @@ fn ylp_4_limits_come_from_the_layer_pixel_budget() {
     };
     let e = Package::read_bytes(&bytes, &tight).unwrap_err();
     assert!(matches!(e, Error::Budget(_)), "{e:?}");
-    assert!(e.to_string().contains("レイヤーの画素"), "{e}");
+    assert!(e.to_string().contains("レイヤーのメモリ"), "{e}");
     let enough = Limits {
         document_bytes: 7000,
         other_bytes: OTHER_BYTES,
@@ -218,6 +218,24 @@ fn ylp_4_limits_come_from_the_layer_pixel_budget() {
 }
 
 #[test]
+fn ylp_4_limits_hold_at_the_largest_layer_memory_without_overflow() {
+    // 設定の最大（レイヤーのメモリ 65536 MiB = 64 GiB）でも、4 倍は桁あふれせず、境目の 1 バイトで断る
+    let top = Limits::from_layer_pixels(65536 << 20);
+    assert_eq!(top.document_bytes, 4 * (65536u64 << 20));
+    let document = format!("{SET}/document.utpaint");
+    top.check([(document.as_str(), top.document_bytes)]).unwrap();
+    let e = top.check([(document.as_str(), top.document_bytes + 1)]).unwrap_err();
+    assert!(matches!(e, Error::Budget(_)), "{e:?}");
+    // 全体はセットの数 × 正本の上限（2 つ目のセットも同じだけ読める）＋ほか
+    let other = "sets/1a8fad5b-d9cb-469f-a165-70867728950f/document.utpaint".to_owned();
+    top.check([(document.as_str(), top.document_bytes), (other.as_str(), top.document_bytes)]).unwrap();
+    // 予算が u64 の端でも掛け算で壊れない（飽和して、断る理由が出る代わりに何でも通る）
+    let huge = Limits::from_layer_pixels(u64::MAX);
+    assert_eq!(huge.document_bytes, u64::MAX);
+    huge.check([(document.as_str(), u64::MAX), (other.as_str(), u64::MAX)]).unwrap();
+}
+
+#[test]
 fn part_names_follow_the_rules() {
     for (name, n) in [
         ("document.utpaint.1", Some(1)),
@@ -241,7 +259,7 @@ fn a_damaged_entry_is_found_when_streamed_after_opening() {
     let bytes = package_of(&files, 3).to_bytes().unwrap();
     let path = dir.join("b.ylp");
     std::fs::write(&path, &bytes).unwrap();
-    let p = read(&Source::Path(Arc::new(path.clone())), &Limits::default(), 0).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
     // 開いた後に外で中身を壊す（無圧縮の PNG の中の 1 バイト）
     let png = bytes.windows(8).position(|w| w == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
     let mut damaged = bytes.clone();
@@ -250,16 +268,119 @@ fn a_damaged_entry_is_found_when_streamed_after_opening() {
     let blob = &p.files[&format!("{SET}/composite/Color.png")];
     let e = blob.bytes().unwrap_err();
     assert!(matches!(e, Error::InvalidData(_)), "{e:?}");
-    // 向け直し（保存で置き換えた後のファイル）は同じ位置を読む
-    std::fs::write(dir.join("c.ylp"), &bytes).unwrap();
-    let mut moves = Moves::default();
-    let moved = p.with_source(&Source::Path(Arc::new(dir.join("c.ylp"))), &mut moves);
+}
+
+/// 開いたファイルのハンドルは、外で改名・削除・別のファイルへの置き換えをされても、開いたときの中身を読む。置き場の名前の付け替え
+/// （保存で置き換えた後の名前）は、エントリを作り直さない（同じエントリのまま）。
+#[test]
+fn an_opened_file_is_read_through_its_handle_not_its_name() {
+    let dir = tempdir();
+    let files = sample();
+    let bytes = package_of(&files, 3).to_bytes().unwrap();
+    let path = dir.join("h.ylp");
+    std::fs::write(&path, &bytes).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
     let name = format!("{SET}/composite/Color.png");
-    assert_eq!(&moved.files[&name].bytes().unwrap()[..], &files[&name][..]);
-    // 同じエントリを 2 度向け直しても、同じ向け直したエントリ（外側・移行後のエントリ・正本が同じものを持ち続ける）
-    let again = p.files[&name].with_source(&Source::Path(Arc::new(dir.join("c.ylp"))), &mut moves);
-    assert!(again.same(&moved.files[&name]));
-    assert!(!again.same(&p.files[&name]));
+    let blob = &p.files[&name];
+    assert!(blob.in_memory().is_none());
+    // 動かす・別のファイルを同じ名前へ置き換える・消す（どれも、開いたときの中身を読む）
+    let moved = dir.join("moved.ylp");
+    std::fs::rename(&path, &moved).unwrap();
+    assert_eq!(&blob.bytes().unwrap()[..], &files[&name][..]);
+    std::fs::write(dir.join("other.ylp"), b"not a ylp at all").unwrap();
+    std::fs::rename(dir.join("other.ylp"), &path).unwrap();
+    assert_eq!(&blob.bytes().unwrap()[..], &files[&name][..]);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&moved).unwrap();
+    assert_eq!(&blob.bytes().unwrap()[..], &files[&name][..]);
+    assert_eq!(p.to_bytes().unwrap(), bytes, "消えたあとでも、全部を同じバイト列で書き直せる");
+    // 置き場の名前の付け替えは、エントリを作り直さない
+    let before = p.files[&name].clone();
+    p.note_path(&dir.join("c.ylp"));
+    assert!(p.files[&name].same(&before));
+    assert_eq!(&p.files[&name].bytes().unwrap()[..], &files[&name][..]);
+}
+
+/// 全部のエントリが小さい .ylp は、開いたあとファイルを持たない（Windows で、開いている間の改名・削除・上書きを妨げない。ハンドルを
+/// 持つのは、メモリに残さない大きなエントリがあるときだけ）。
+#[test]
+fn a_package_of_only_small_entries_does_not_keep_its_file_open() {
+    use crate::package::release_at;
+    let dir = tempdir();
+    let files = sample();
+    let path = dir.join("small.ylp");
+    std::fs::write(&path, package_of(&files, 3).to_bytes().unwrap()).unwrap();
+    // 全部が小さい: 全部メモリに残り、手放す相手（開いたままのハンドル）がいない
+    let p = Package::open(&path, &Limits::default()).unwrap();
+    assert!(p.files.values().all(|b| b.in_memory().is_some()));
+    assert!(release_at(&path).is_empty(), "全部が小さい .ylp はハンドルを持たない");
+    // 比べる相手: 大きなエントリがあれば（メモリに残す大きさを下げて）、ハンドルを持つ
+    let big = Thresholds { keep_in_memory: 1000, ..Thresholds::REAL }
+        .scoped(|| Package::open(&path, &Limits::default()).unwrap());
+    assert!(big.files.values().any(|b| b.in_memory().is_none()));
+    let released = release_at(&path);
+    assert!(!released.is_empty(), "大きなエントリを持つ .ylp は開いたハンドルを持つ");
+    released.reacquire();
+    drop(big);
+    assert!(release_at(&path).is_empty(), "持ち主が手放せば、ハンドルも閉じる");
+}
+
+/// 同じファイルを何本が同時に読んでも、互いの読む位置を動かさない（ファイルのカーソルを使わず、位置を指定して読む）。
+#[test]
+fn readers_of_one_handle_do_not_move_each_other() {
+    let dir = tempdir();
+    let mut files = sample();
+    files.insert("a.bin".into(), noise(300_000, 21));
+    files.insert("b.bin".into(), noise(300_000, 22));
+    let bytes = package_of(&files, 3).to_bytes().unwrap();
+    let path = dir.join("two.ylp");
+    std::fs::write(&path, &bytes).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
+    let mut a = p.files["a.bin"].reader().unwrap();
+    let mut b = p.files["b.bin"].reader().unwrap();
+    let (mut got_a, mut got_b) = (Vec::<u8>::new(), Vec::<u8>::new());
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = a.read(&mut chunk).unwrap();
+        got_a.extend(&chunk[..n]);
+        let m = b.read(&mut chunk).unwrap();
+        got_b.extend(&chunk[..m]);
+        if n == 0 && m == 0 {
+            break;
+        }
+    }
+    assert_eq!(got_a, files["a.bin"]);
+    assert_eq!(got_b, files["b.bin"]);
+}
+
+/// 置換のために手放した（置換の規則が POSIX でないファイルシステム）ハンドルは、置換に失敗したら掴み直し、置換できたら断る。
+#[test]
+fn a_released_handle_is_taken_again_if_the_replace_fails_and_refused_if_it_succeeds() {
+    use crate::package::release_at;
+    let dir = tempdir();
+    let files = sample();
+    let bytes = package_of(&files, 3).to_bytes().unwrap();
+    let path = dir.join("r.ylp");
+    std::fs::write(&path, &bytes).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
+    let name = format!("{SET}/composite/Color.png");
+    // 関係の無い名前は手放さない
+    assert!(release_at(&dir.join("elsewhere.ylp")).is_empty());
+    assert!(p.files[&name].bytes().is_ok());
+    // 手放すと読めない（読もうとすると、手放したと断る）。置換に失敗したら元のファイルが残っているので、掴み直して読める
+    let released = release_at(&path);
+    assert!(!released.is_empty());
+    let refused = p.files[&name].bytes().unwrap_err();
+    assert!(refused.to_string().contains(crate::SOURCE_RELEASED), "{refused:?}");
+    released.reacquire();
+    assert_eq!(&p.files[&name].bytes().unwrap()[..], &files[&name][..]);
+    // 置換できた（別のファイルが同じ名前にある）なら、掴み直さない
+    let released = release_at(&path);
+    std::fs::write(dir.join("new.ylp"), b"replaced").unwrap();
+    std::fs::rename(dir.join("new.ylp"), &path).unwrap();
+    released.reacquire();
+    let refused = p.files[&name].bytes().unwrap_err();
+    assert!(refused.to_string().contains(crate::SOURCE_RELEASED), "{refused:?}");
 }
 
 #[test]
@@ -275,7 +396,7 @@ fn a_held_entry_outlives_its_old_file_and_its_folder_goes_with_the_last_holder()
     let bytes = package_of(&files, 3).to_bytes().unwrap();
     let path = dir.join("held.ylp");
     std::fs::write(&path, &bytes).unwrap();
-    let p = read(&Source::Path(Arc::new(path.clone())), &Limits::default(), 0).unwrap();
+    let p = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
     // 置き場の中身のファイル（復旧の世代）は、ハードリンクで置く
     let store = dir.join("contents");
     std::fs::create_dir_all(&store).unwrap();
@@ -384,7 +505,7 @@ fn ylp_4_copies_compressed_bytes_of_unchanged_entries_and_stores_incompressible_
     // ファイルから開いて書き直すと、全部のエントリの圧縮したバイト列をそのまま写す（同じ形なら同じバイト列）
     let path = dir.join("raw.ylp");
     std::fs::write(&path, &bytes).unwrap();
-    let opened = read(&Source::Path(Arc::new(path.clone())), &Limits::default(), 0).unwrap();
+    let opened = read(&Source::open_file(&path).unwrap(), &Limits::default(), 0).unwrap();
     let again = small(1000).scoped(|| opened.to_bytes().unwrap());
     assert_eq!(again, bytes);
     // 中身が同じなら、エントリでない元（外したエントリ）からも写す

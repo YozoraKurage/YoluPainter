@@ -434,6 +434,7 @@ impl Document {
         if before == tree.order {
             return Ok(());
         }
+        Self::check_nesting(&tree)?;
         self.execute(
             Command::Structure {
                 before,

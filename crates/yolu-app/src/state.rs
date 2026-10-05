@@ -476,7 +476,7 @@ pub enum Action {
     BrushSmaller,
     BrushLarger,
     ToggleColorWheel,
-    /// 3D ビューに試しの立方体を読む。
+    /// 3D ビューに試しの立方体を読む（3D ビューの空の状態のボタンと試験の口。メニューには置かない）。
     LoadDemoModel,
     /// 3D ビューのカメラをモデル全体が見える位置へ。
     FrameModel,
@@ -682,6 +682,9 @@ pub struct AppState {
     pub project_name: String,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
+    /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
+    #[doc(hidden)]
+    pub rewritten_sets: usize,
     pub reset_layout: bool,
     pub quit: bool,
     /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
@@ -903,6 +906,7 @@ impl AppState {
             popup_was_open: false,
             project_name: lang.pick("名称未設定", "Untitled").into(),
             modified: false,
+            rewritten_sets: 0,
             reset_layout: false,
             quit: false,
             layer_drag: None,
@@ -1317,16 +1321,7 @@ impl AppState {
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::View3d(op) => self.view3d.display.apply(op),
             Action::About => {
-                self.message = self.lang.pick(
-                    format!(
-                        "YoluPainter（Rust 版）{} — M2 の試作",
-                        env!("CARGO_PKG_VERSION")
-                    ),
-                    format!(
-                        "YoluPainter (Rust) {} — M2 prototype",
-                        env!("CARGO_PKG_VERSION")
-                    ),
-                )
+                self.message = format!("YoluPainter {}", env!("CARGO_PKG_VERSION"));
             }
             Action::SelectSet(uid) => {
                 if let Some(i) = self.sets.index_of(uid) {

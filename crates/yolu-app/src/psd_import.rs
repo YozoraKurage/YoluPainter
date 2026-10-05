@@ -268,7 +268,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             let why = match why {
                 Unchecked::NoComposite => lang.pick("統合画像なし", "no merged image"),
                 Unchecked::Unreadable => lang.pick("統合画像を読めない", "merged image unreadable"),
-                Unchecked::Budget => lang.pick("画布が大きい", "canvas too large"),
+                Unchecked::Budget => lang.pick("キャンバスが大きい", "canvas too large"),
             };
             lang.pick(
                 format!("統合画像との照合を省略（{why}）"),
@@ -466,12 +466,24 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
             format!("\"{layer}\" has too many pixels"),
         ),
         CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーの画素の予算を超えました"),
-            format!("Layer pixel budget exceeded at \"{layer}\""),
+            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
+            format!("Layer memory budget exceeded at \"{layer}\""),
         ),
         CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
             format!("「{layer}」の付加情報が大きすぎます"),
             format!("\"{layer}\" has too much extra data"),
+        ),
+        CopyRefusal::EdgeOverLimit { width, height, limit } => lang.pick(
+            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
+            format!("Canvas too large ({width}×{height}; limit {limit})"),
+        ),
+        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
+            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
+            format!("Too many layers ({count}; limit {limit})"),
+        ),
+        CopyRefusal::NestingTooDeep { limit } => lang.pick(
+            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
+            format!("Groups are nested too deeply (limit {limit})"),
         ),
     }
 }
@@ -480,8 +492,8 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
 pub fn refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
     why.raised_by_budget().then(|| {
         lang.pick(
-            "上限は設定の「レイヤーの画素」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer pixels in Settings. Raising it may let this import",
+            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
+            "The limit follows Layer memory in Settings. Raising it may let this import",
         )
         .into()
     })
@@ -703,6 +715,9 @@ mod tests {
             CopyRefusal::LayerTooLarge { layer: "L".into() },
             CopyRefusal::BudgetExceeded { layer: "L".into() },
             CopyRefusal::LayerDataTooLarge { layer: "L".into() },
+            CopyRefusal::EdgeOverLimit { width: 9000, height: 9000, limit: 8192 },
+            CopyRefusal::LayerCountOverLimit { count: 2100, limit: 2048 },
+            CopyRefusal::NestingTooDeep { limit: 64 },
         ];
         for why in &reasons {
             let en = refusal_text(Lang::En, why);
@@ -714,7 +729,7 @@ mod tests {
                 "{why:?}"
             );
             if let Some(h) = refusal_tooltip(Lang::En, why) {
-                assert!(!has_japanese(&h) && h.contains("Layer pixels"));
+                assert!(!has_japanese(&h) && h.contains("Layer memory"));
             }
         }
         // 利用者の名前（層の名前）だけは、英語の画面でもそのまま

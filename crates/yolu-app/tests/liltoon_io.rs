@@ -14,7 +14,7 @@ use yolu_app::look::LookOp;
 use yolu_app::m2::Edit;
 use yolu_app::recovery::{RecoveryAction, RecoverySettings};
 use yolu_app::state::{Action, AppState};
-use yolu_core::look::{LookKind, LookValue, MissingImage, ReceivedImage, ReceivedLook, TextureSource};
+use yolu_core::look::{LookKind, LookValue, MissingImage, PlaneSource, ReceivedImage, ReceivedLook, TextureSource};
 use yolu_core::mesh_maps::MeshMapKind;
 use yolu_core::{Channel, ChannelInfo, ChannelKind, ColorSpace, FilterTarget, Rgba8};
 
@@ -393,7 +393,7 @@ fn a_read_only_set_says_why_its_look_cannot_be_read() {
     let mut s = AppState::new(64, 64);
     s.apply(Action::OpenProject(path));
     let reason = s.sets.get(0).unwrap().read_only.clone().expect("core で扱えない中身なので読むだけ");
-    assert!(reason.contains("core で扱えない中身"), "{reason}");
+    assert!(reason.contains("編集に対応していない中身"), "{reason}");
     assert!(reason.contains("見た目の設定を読めません"), "読むだけの理由にも: {reason}");
     assert!(s.message.contains("見た目の設定を読めません"), "状態の帯にも（通常のセットと同じ）: {}", s.message);
     assert!(s.set_doc(0).look().is_default());
@@ -550,6 +550,120 @@ fn painting_a_slot_that_cannot_get_its_channel_changes_nothing() {
     }
 }
 
+/// チャンネルの空きを無くす（チャンネルは 64 まで）。
+fn fill_channels(s: &mut AppState) {
+    let mut n = 0;
+    while s.doc.channels().len() < 64 {
+        s.doc
+            .add_channel(ChannelInfo {
+                name: format!("埋め {n}"),
+                kind: ChannelKind::Scalar,
+                color_space: ColorSpace::Linear,
+                default: Rgba8::new(0, 0, 0, 255),
+            })
+            .unwrap();
+        n += 1;
+    }
+}
+
+/// ひな形のあと、`_ShadowStrengthMask` を成分ごとの詰め合わせ（R はひな形のチャンネル、G・A は 0、B は 1）にする。詰め合わせの元を返す。
+fn pack_shadow_strength(s: &mut AppState) -> [PlaneSource; 4] {
+    s.apply(Action::Look(LookOp::Template));
+    let Some(TextureSource::Channel(first)) = s.doc.look().textures.get("_ShadowStrengthMask").copied() else {
+        panic!("ひな形が割り当てる: {}", s.message);
+    };
+    let planes = [
+        PlaneSource::Channel { channel: first, component: 0 },
+        PlaneSource::Zero,
+        PlaneSource::One,
+        PlaneSource::Zero,
+    ];
+    s.apply(Action::Look(LookOp::Texture {
+        slot: "_ShadowStrengthMask",
+        source: Some(TextureSource::Packed(planes)),
+    }));
+    assert_eq!(s.doc.look().textures["_ShadowStrengthMask"], TextureSource::Packed(planes), "{}", s.message);
+    planes
+}
+
+#[test]
+fn a_new_slot_channel_that_cannot_get_its_channel_changes_nothing() {
+    // スロット全体の新しいチャンネル（lilToon の文書と標準の見た目の文書。失敗したら lilToon にもしない）と、成分ごとの新しいチャンネル
+    for (standard, plane) in [(false, None), (true, None), (false, Some(1u8))] {
+        let mut s = AppState::new(16, 16);
+        if plane.is_some() {
+            pack_shadow_strength(&mut s);
+        }
+        if standard {
+            s.doc.restore_look(yolu_core::look::MaterialLook::default()).unwrap();
+        }
+        fill_channels(&mut s);
+        let what = format!("標準 {standard}・成分 {plane:?}");
+        let look = s.doc.look().clone();
+        let drawn = s.doc.drawn_look().kind;
+        s.doc.clear_history().unwrap();
+        s.modified = false;
+        let steps = s.doc.undo_count();
+        let paint = s.m2.paint_channel;
+        s.message.clear();
+        s.apply(Action::Look(LookOp::NewChannel { slot: if plane.is_some() { "_ShadowStrengthMask" } else { "_RimShadeMask" }, plane }));
+        assert!(s.message.contains("64"), "{what}: {}", s.message);
+        assert_eq!(s.doc.channels().len(), 64, "{what}: 作りかけのチャンネルを残さない");
+        assert_eq!(s.doc.look(), &look, "{what}: 割り当てを変えない");
+        assert_eq!(s.doc.drawn_look().kind, drawn, "{what}: 描き方も変えない");
+        assert_eq!(s.doc.undo_count(), steps, "{what}: 段を積まない");
+        assert_eq!(s.m2.paint_channel, paint, "{what}: 描くチャンネルも変えない");
+        assert!(!s.modified, "{what}");
+    }
+}
+
+#[test]
+fn new_slot_channels_survive_save_and_open_with_their_assignments_and_pixels() {
+    let dir = Dir::new("new-channel");
+    let path = dir.0.join("new-channel.ylp");
+    let mut s = AppState::new(32, 32);
+    let planes = pack_shadow_strength(&mut s);
+    // 成分ごとの新しいチャンネル（G）と、スロット全体の新しいスカラーのチャンネル
+    s.apply(Action::Look(LookOp::NewChannel { slot: "_ShadowStrengthMask", plane: Some(1) }));
+    let TextureSource::Packed(now) = s.doc.look().textures["_ShadowStrengthMask"] else {
+        panic!("成分ごとのまま: {}", s.message);
+    };
+    let PlaneSource::Channel { channel: plane_made, component: 0 } = now[1] else {
+        panic!("G にチャンネルを割り当てる: {now:?}");
+    };
+    assert_eq!((now[0], now[2], now[3]), (planes[0], planes[2], planes[3]), "ほかの成分はそのまま");
+    s.apply(Action::Look(LookOp::NewChannel { slot: "_RimShadeMask", plane: None }));
+    let TextureSource::Channel(slot_made) = s.doc.look().textures["_RimShadeMask"] else {
+        panic!("チャンネルを割り当てる: {}", s.message);
+    };
+    assert_ne!(plane_made, slot_made);
+    // 作ったチャンネルへ描いた画素
+    let layer = s.doc.layers()[0].id();
+    s.doc.set_channel_pixel(layer, plane_made, 3, 4, Rgba8::new(200, 200, 200, 255)).unwrap();
+    s.doc.set_channel_pixel(layer, slot_made, 5, 6, Rgba8::new(90, 90, 90, 255)).unwrap();
+    let saved = s.doc.look().clone();
+    let infos = |d: &yolu_app::engine::Document| {
+        d.channels()
+            .iter()
+            .map(|c| {
+                let i = d.channel_info(*c).unwrap();
+                (i.name.clone(), i.kind, i.color_space, i.default)
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = infos(&s.doc);
+    yolu_app::project::save_from(&mut s, &path);
+    assert!(s.message.contains("保存しました") || s.message.contains("Saved"), "{}", s.message);
+    let mut t = AppState::new(8, 8);
+    yolu_app::project::open_into(&mut t, &path);
+    assert_eq!(t.doc.look(), &saved, "{}", t.message);
+    assert_eq!(infos(&t.doc), before, "チャンネルの名前・種類・色空間・既定");
+    let layer = t.doc.layers()[0].id();
+    assert_eq!(t.doc.layer(layer).unwrap().pixel(plane_made, 3, 4).unwrap(), Rgba8::new(200, 200, 200, 255));
+    assert_eq!(t.doc.layer(layer).unwrap().pixel(slot_made, 5, 6).unwrap(), Rgba8::new(90, 90, 90, 255));
+    assert_eq!(t.doc.undo_count(), 0, "開いただけで Undo の段は増えない");
+}
+
 #[test]
 fn look_changes_are_refused_while_drawing() {
     let mut s = AppState::new(32, 32);
@@ -563,6 +677,8 @@ fn look_changes_are_refused_while_drawing() {
     for op in [
         LookOp::Kind(LookKind::Standard),
         LookOp::PaintSlot("_RimShadeMask"),
+        LookOp::NewChannel { slot: "_RimShadeMask", plane: None },
+        LookOp::NewChannel { slot: "_ShadowStrengthMask", plane: Some(0) },
         LookOp::Template,
         LookOp::Value {
             name: "_ShadowBorder",

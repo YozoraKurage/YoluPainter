@@ -1,7 +1,7 @@
 //! .ylp（Unity 版と同じ作業ファイル）の開く・保存・新規。読み書きと検証は yolu-io、ここは画面の状態（テクスチャセット）との受け渡しだけ。
 //!
 //! - 開く: yolu-io の `SaveTarget::open_within`（ZIP・manifest・正本を流して検証し、保存で外からの書き換えを見張る印を取る。上限は設定の
-//!   「レイヤーの画素」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
+//!   「レイヤーのメモリ」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
 //!   RGB・文書とレイヤーの ID を保つ。ファイル全体・正本全体をメモリに組まない）。core で扱えない中身
 //!   （手動の ID の色など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
 //!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルと、効果（フィルター・Generator・Anchor・
@@ -78,10 +78,12 @@ impl ProjectFile {
     }
 }
 
-/// .ylp の ylp.json に書く書き手（Unity の版の欄はスタンドアロンなので "standalone"）。
+/// .ylp の ylp.json に書く書き手（Unity の版の欄はスタンドアロンなので "standalone"）。名前は Unity 版と同じ "YoluPainter"
+/// （読み手は名前を見ない。Unity 版は 1〜256 文字の文字列として読み、版の新しさを断るときの文に書き手として出すだけ。
+/// Unity 版かスタンドアロン版かは Unity の版の欄で分かる）。以前の版は内部の名前 "YoluPainter-rs" を書いていたが、読み手はどちらも受ける。
 pub fn writer() -> WriterInfo {
     WriterInfo {
-        app: "YoluPainter-rs".into(),
+        app: "YoluPainter".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         unity: "standalone".into(),
     }
@@ -97,7 +99,7 @@ pub(crate) fn to_core(native: &SetDocument, lang: Lang, source_budget: u64) -> R
     // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）は開いたあとに文書へ渡す（`fx::inputs`）。入力がそろわない効果を持つセットは、
     // そのとき読むだけにして足りない入力を言う（`AppState::lock_sets_missing_inputs`）。入力がそろえば編集できる
     native.to_core_within(Some(source_budget)).map_err(|e| {
-        format!("{}: {}", lang.pick("core の文書にできません", "Cannot convert to a core document"), lang.io_error(&e))
+        format!("{}: {}", lang.pick("編集用に開けません", "Cannot open for editing"), lang.io_error(&e))
     })
 }
 
@@ -125,7 +127,7 @@ pub(crate) fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang
         return (
             blank(),
             Some(lang.pick(format!(
-                "保存した合成の絵の大きさ {}×{} が正本の {width}×{height} と違う",
+                "保存した合成の絵の大きさ {}×{} が文書の {width}×{height} と違う",
                 image.width(),
                 image.height()
             ), format!(
@@ -175,7 +177,7 @@ pub fn open_into(state: &mut AppState, path: &Path) {
 
 /// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
-    // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーの画素」の予算から（`Limits`）
+    // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーのメモリ」の予算から（`Limits`）
     let limits = yolu_io::Limits::from_layer_pixels(budget);
     let (project, target) = match SaveTarget::open_within(path, &limits) {
         Ok(x) => x,
@@ -212,7 +214,7 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
             .into_iter()
             .map(|h| {
                 h.join()
-                    .unwrap_or_else(|_| Err(lang.pick("正本を読む途中で止まりました", "Reading the document stopped").into()))
+                    .unwrap_or_else(|_| Err(lang.pick("文書を読む途中で止まりました", "Reading the document stopped").into()))
             })
             .collect()
     });
@@ -314,15 +316,11 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
             state.modified = false;
-            state.lang.pick(format!(
-                "開きました: {}（形式 {}・テクスチャセット {count}）。",
-                path.display(),
-                project.info().format
-            ), format!(
-                "Opened: {} (format {} · {count} texture sets).",
-                path.display(),
-                project.info().format
-            ))
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            state.lang.pick(format!("開きました: {name}。"), format!("Opened: {name}."))
         }
         None => {
             state.project_name = crate::recovery::recovered_name(state.lang).into();
@@ -477,16 +475,19 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     if state.is_stroking() {
         return Err(state.lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
     }
-    // 配布用に保存の写し（準備した写し・書いている途中）は、開いた .ylp の位置から読む。保存でそのファイルを置き換えると、写しが新しい
-    // ファイルの古い位置を読んで失敗する（Windows では、読んでいるハンドルが置き換えを妨げうる）ので、その間は保存しない
+    // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
+    // そのファイルを置き換えても、ハンドルは置き換える前のファイルを読み続ける。しかし、置換の規則が POSIX でないファイルシステム
+    // （FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、保存が置換のためにそのハンドルを手放し、写しの読みは
+    // 断られる。その間は保存しない
     if state.distribute.is_busy() || state.distribute.is_open() {
         return Err(state
             .lang
             .pick("配布用に保存の途中は保存しません", "Cannot save while saving for distribution")
             .into());
     }
-    // 復旧の書き置きのスレッドも、開いた .ylp の位置から読む。そのファイルを置き換える保存は、今の書き込みと待っている頼みが終わるのを
-    // 待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果もここで受ける）
+    // 復旧の書き置きのスレッドも、開いた .ylp のハンドルから読む（上と同じ事情）。そのファイルを置き換える保存は、今の書き込みと待っている
+    // 頼みが終わるのを待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果も
+    // ここで受ける）
     if state.project.as_ref().is_some_and(|p| p.is_file() && same_file(&p.path, path)) {
         state.recovery_wait();
     }
@@ -499,7 +500,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         let unchanged = set.saved == Some((doc.id(), doc.revision()));
         if set.read_only.is_some() && !in_base {
             return Err(state.lang.pick(format!(
-                "読むだけのセット「{}」の元の正本がありません",
+                "読むだけのセット「{}」の元の文書がありません",
                 set.name
             ), format!(
                 "Original document missing for read-only set “{}”",
@@ -515,7 +516,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
                 .map_err(yolu_io::Error::from)
                 .and_then(|snapshot| DocumentSource::from_core(std::sync::Arc::new(snapshot)))
                 .map_err(|e| {
-                    let what = state.lang.pick(format!("セット「{}」を正本にできません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
+                    let what = state.lang.pick(format!("セット「{}」の文書を作れません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
                     format!("{what}: {}", state.lang.io_error(&e))
                 })?;
             let pngs = composite_pngs(doc).map_err(|e| {
@@ -645,7 +646,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     // 次の保存・書き置きの元は、書いたファイルを指すプロジェクト（変わらないエントリはそのファイルから写す。保存に使った core の文書の
     // 写しは手放す）
     let saved = report.project.take().map(std::sync::Arc::new).unwrap_or(project);
-    // 書いた .ylp を、今の「レイヤーの画素」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
+    // 書いた .ylp を、今の「レイヤーのメモリ」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
     // 小さいまま正本だけが大きくなる。保存は止めず、開き直すのに予算が要ることをここで言う）
     let reopen = reopen_note(state.lang, &saved, &yolu_io::Limits::from_layer_pixels(state.load_source_bytes()));
     if let Some(file) = state.project.as_mut() {
@@ -669,17 +670,12 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
-    let mut text = state.lang.pick(format!(
-        "保存しました: {}（形式 7・テクスチャセット {}・書き直した正本 {}）。",
-        path.display(),
-        state.sets.len(),
-        written.len()
-    ), format!(
-        "Saved: {} (format 7 · {} texture sets · {} updated documents).",
-        path.display(),
-        state.sets.len(),
-        written.len()
-    ));
+    state.rewritten_sets = written.len();
+    let file = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let mut text = state.lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
     if map_total > 0 {
         text += &state.lang.pick(
             format!(" メッシュマップ {map_total} 枚を書きました。"),
@@ -712,7 +708,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// 保存した .ylp が、`limits`（今の「レイヤーの画素」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
+/// 保存した .ylp が、`limits`（今の「レイヤーのメモリ」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
 /// かかる（今の形は今の上限に収まるときだけ書く）。
 pub(crate) fn reopen_note(lang: Lang, project: &Project, limits: &yolu_io::Limits) -> Option<String> {
     let archive = project.original_archive();
@@ -724,8 +720,8 @@ pub(crate) fn reopen_note(lang: Lang, project: &Project, limits: &yolu_io::Limit
         .err()?;
     Some(
         lang.pick(
-            " 今の「レイヤーの画素」の予算では開き直せません。",
-            " Too large to reopen within the current Layer pixels budget.",
+            " 今の「レイヤーのメモリ」の予算では開き直せません。",
+            " Too large to reopen within the current Layer memory budget.",
         )
         .into(),
     )
@@ -792,8 +788,8 @@ mod tests {
         assert!(document > 4 * 1000 * s.doc.allocated_bytes(), "{document}");
         let tight = yolu_io::Limits { document_bytes: document - 1, other_bytes: yolu_io::Limits::default().other_bytes };
         let note = reopen_note(Lang::Ja, saved, &tight).expect("開き直せないと言う");
-        assert!(note.contains("「レイヤーの画素」の予算") && !note.contains("MiB"), "{note}");
-        assert!(reopen_note(Lang::En, saved, &tight).unwrap().contains("Layer pixels budget"));
+        assert!(note.contains("「レイヤーのメモリ」の予算") && !note.contains("MiB"), "{note}");
+        assert!(reopen_note(Lang::En, saved, &tight).unwrap().contains("Layer memory budget"));
         // 言ったとおり、その上限の読み手は断る
         assert!(matches!(yolu_io::Package::open(&path, &tight), Err(yolu_io::Error::Budget(_))));
         let enough = yolu_io::Limits { document_bytes: document, ..tight };
@@ -861,9 +857,9 @@ mod tests {
         assert_eq!(to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes).unwrap().allocated_bytes(), bytes);
         // 1 バイト足りなければ、壊れたファイルではなく予算として断る（日英）
         let ja = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes - 1).err().expect("断る");
-        assert!(ja.starts_with("core の文書にできません") && ja.contains("予算"), "{ja}");
+        assert!(ja.starts_with("編集用に開けません") && ja.contains("予算"), "{ja}");
         let en = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::En, bytes - 1).err().expect("断る");
-        assert_eq!(en, "Cannot convert to a core document: Size, count or memory limit exceeded");
+        assert_eq!(en, "Cannot open for editing: Size, count or memory limit exceeded");
         // 開く: 予算に収まれば編集できるセット、収まらなければ読むだけのセット（理由つき）。どちらも元のファイルは変えない
         let mut opened = AppState::new(64, 64);
         open_within(&mut opened, &path, bytes);

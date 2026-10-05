@@ -234,6 +234,12 @@ impl AppState {
                 format!("Sets not in the model: {names}."),
             );
         }
+        if let Some(limit) = report.limit_text(lang) {
+            if !note.is_empty() {
+                note.push(' ');
+            }
+            note += &limit;
+        }
         (!note.is_empty()).then_some(note)
     }
 

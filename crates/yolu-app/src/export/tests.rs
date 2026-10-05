@@ -348,8 +348,8 @@ fn an_export_the_working_budget_cannot_hold_is_refused_with_the_reason_and_write
     // 7000 × 7000 は 588 MB で、予算を超える（塗り広げの前に断る。文書は空なので文書の側の確保は小さい）
     let mut s = AppState::new(7000, 7000);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    // 自動の予算は物理メモリから決まる（16 GB で 512 MiB）。機械によらないように 16 GB とする
-    s.prefs.ram_mib = 16384;
+    // 自動の予算は物理メモリから決まる（8 GB で 512 MiB。1/16）。機械によらないように 8 GB とする
+    s.prefs.ram_mib = 8192;
     assert_eq!(s.export_working_bytes(), 512 * 1024 * 1024);
     s.apply(Action::LoadDemoModel);
     s.modified = false;

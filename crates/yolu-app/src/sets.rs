@@ -521,6 +521,21 @@ pub struct BindReport {
     pub created_sets: Vec<u32>,
     /// モデルに合わなかったセットの名前（残してある）。
     pub unmatched: Vec<String>,
+    /// セットの数の上限（`newproject::MAX_SETS`）に当たって、セットを作らなかったマテリアルの数。
+    pub skipped: usize,
+}
+
+impl BindReport {
+    /// セットを作れなかったマテリアルがあるときの知らせ（無ければ None）。
+    pub fn limit_text(&self, lang: crate::lang::Lang) -> Option<String> {
+        let limit = crate::newproject::MAX_SETS;
+        (self.skipped > 0).then(|| {
+            lang.pick(
+                format!("テクスチャセットが上限（{limit}）に達したため、{} 個のマテリアルにはセットを作っていません。", self.skipped),
+                format!("Texture set limit ({limit}) reached: {} material(s) have no set.", self.skipped),
+            )
+        })
+    }
 }
 
 impl AppState {
@@ -729,6 +744,11 @@ impl AppState {
         }
         for (mi, si) in matched.iter().enumerate() {
             if si.is_some() || !create {
+                continue;
+            }
+            // .ylp は 64 セットまで。超えるマテリアルにはセットを作らず、数だけ知らせる（新規プロジェクトの窓と同じ扱い）
+            if self.sets.list.len() >= crate::newproject::MAX_SETS {
+                report.skipped += 1;
                 continue;
             }
             let size = size_for(&infos[mi]);

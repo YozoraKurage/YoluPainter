@@ -513,6 +513,8 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
         w::corner_bottom(content, 3) + 4.0,
     );
     let panel = Rect::from_min_size(pos, vec2(width, PANEL_HEIGHT));
+    // Esc で閉じる浮いた部品として覚える（閉じたフレームも開いている扱い。キャンバスの Esc が先に選択を外さない）
+    crate::ui::window::note_open(&ctx);
     egui::Area::new(egui::Id::new("view3d.settings.area"))
         .order(Order::Foreground)
         .fixed_pos(pos)

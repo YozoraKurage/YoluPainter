@@ -1590,7 +1590,7 @@ mod tests {
         assert_eq!(
             align(DocRect::new(297, 197, 3, 3), 2, bounds),
             DocRect::new(296, 196, 4, 4),
-            "画布の端では端で切る"
+            "キャンバスの端では端で切る"
         );
         assert_eq!(
             align(DocRect::new(5, 6, 7, 8), 0, bounds),

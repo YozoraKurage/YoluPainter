@@ -50,12 +50,12 @@ fn headless_an_unmanaged_state_keeps_the_core_budgets_until_settings_are_loaded(
         before,
         "設定を読んでいない状態は、core の既定のまま"
     );
-    // 設定を読むと自動の予算（16 GB: 取り消し 1024・画素 2048・1 回の操作 512）
+    // 設定を読むと自動の予算（16 GB: 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024）
     s.load_settings(Settings::default());
     s.sync_budgets();
-    assert_eq!(s.doc.undo_budget_bytes(), 1024 * MIB);
-    assert_eq!(s.doc.source_budget_bytes(), 2048 * MIB);
-    assert_eq!(s.doc.stroke_budget_bytes(), 512 * MIB);
+    assert_eq!(s.doc.undo_budget_bytes(), 2048 * MIB);
+    assert_eq!(s.doc.source_budget_bytes(), 8192 * MIB);
+    assert_eq!(s.doc.stroke_budget_bytes(), 1024 * MIB);
     assert_eq!(s.doc.minimum_undo_steps(), 5);
 }
 
@@ -82,7 +82,7 @@ fn headless_choosing_a_budget_changes_the_current_document_and_new_documents_fol
     assert_eq!(s.prefs.settings.min_undo_steps, 100);
     // 自動に戻すと、メモリから
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Auto));
-    assert_eq!(s.doc.undo_budget_bytes(), 1024 * MIB);
+    assert_eq!(s.doc.undo_budget_bytes(), 2048 * MIB);
     // 新しいプロジェクト（新しい文書）にも、次の同期で入る
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(1024)));
     s.apply(Action::NewProject);
@@ -149,9 +149,42 @@ fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_t
     assert_eq!(s.doc.source_budget_bytes(), 64 * MIB - s.set_doc(second).allocated_bytes());
     s.switch_set(second).unwrap();
     assert_eq!(s.doc.source_budget_bytes(), 64 * MIB - s.set_doc(first).allocated_bytes());
-    // 自動の予算でも同じ（16 GB: 画素 2048 MiB）
+    // 自動の予算でも同じ（16 GB: 画素 8192 MiB）
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Auto));
-    assert_eq!(s.doc.source_budget_bytes(), 2048 * MIB - s.set_doc(first).allocated_bytes());
+    assert_eq!(s.doc.source_budget_bytes(), 8192 * MIB - s.set_doc(first).allocated_bytes());
+}
+
+#[test]
+fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
+    // 自動の最大（物理メモリが十分にあるとき）: レイヤーのメモリ 64 GiB・取り消し 16 GiB・1 回の操作 4 GiB
+    let mut s = AppState::new(2048, 2048);
+    s.prefs.ram_mib = 1 << 20;
+    let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
+    shape.expect("3D に読める");
+    s.load_settings(Settings::default());
+    s.sync_budgets();
+    let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
+    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB);
+    assert_eq!(s.doc.undo_budget_bytes(), 16384 * MIB);
+    assert_eq!(s.doc.stroke_budget_bytes(), 4096 * MIB);
+    // 予約ではない: 予算が大きくても、使っていない間の画素は増えない
+    assert!(s.doc.allocated_bytes() < 64 * MIB, "{}", s.doc.allocated_bytes());
+    // 使った分だけ、ほかのセットの予算から引かれる（全体が最大でも引き算が合う）
+    let layer = s.selected_layer.unwrap();
+    fill_tiles(&mut s.doc, layer, 100).unwrap();
+    let used = s.doc.allocated_bytes();
+    s.switch_set(second).unwrap();
+    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB - used);
+    assert_eq!(s.doc.undo_budget_bytes(), 16384 * MIB - s.set_doc(first).history_bytes());
+    assert_eq!(s.doc.stroke_budget_bytes(), 4096 * MIB);
+    // 設定の最大の値を選んでも同じ（範囲の上限）。1 つ上へは指定できない（範囲に丸める）
+    set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(65536)));
+    assert_eq!(s.prefs.settings.source_budget, Budget::Mib(65536));
+    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB - used);
+    set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(65537)));
+    assert_eq!(s.prefs.settings.source_budget, Budget::Mib(65536), "上限に丸める");
+    // 読み込みの上限（.ylp を開く）も、桁あふれせず予算の値まで広がる
+    assert_eq!(s.load_source_bytes(), 65536 * MIB);
 }
 
 #[test]
@@ -171,7 +204,7 @@ fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so
     s.message.clear();
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(s.doc.source_budget_bytes(), s.doc.allocated_bytes(), "画素は捨てず、予算を今の量まで広げる");
-    assert_eq!(s.message, "レイヤーの画素がすでに予算を超えているので、予算を上げるまで足せません。");
+    assert_eq!(s.message, "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。");
     // 同じ状況では知らせ直さない
     s.message.clear();
     s.sync_budgets();
@@ -190,7 +223,7 @@ fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so
     s.switch_set(first).unwrap();
     s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
-    assert_eq!(s.message, "The layer pixels are already over the budget; nothing can be added until it is raised.");
+    assert_eq!(s.message, "The layer memory is already over the budget; nothing can be added until it is raised.");
 }
 
 fn two_sets_model() -> yolu_protocol::Model {
@@ -242,7 +275,7 @@ fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_w
     s.message.clear();
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(s.doc.source_budget_bytes(), s.doc.allocated_bytes(), "予算を今の量まで広げた（足せない）");
-    assert_eq!(s.message, "レイヤーの画素がすでに予算を超えているので、予算を上げるまで足せません。");
+    assert_eq!(s.message, "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。");
     // 選んだ値は設定に残る（画素の少ない文書なら効く）。何度も知らせ直さない
     assert_eq!(s.prefs.settings.source_budget, Budget::Mib(16));
     s.message.clear();
@@ -252,7 +285,7 @@ fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_w
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(64)));
     assert_eq!(s.doc.source_budget_bytes(), 64 * MIB);
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
-    assert_eq!(s.message, "The layer pixels are already over the budget; nothing can be added until it is raised.");
+    assert_eq!(s.message, "The layer memory is already over the budget; nothing can be added until it is raised.");
 }
 
 #[test]
@@ -303,9 +336,9 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     let mut s = state();
     s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
     let ja = labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)));
-    assert_eq!(ja[0], "自動（1024 MiB）", "{ja:?}");
+    assert_eq!(ja[0], "自動（2048 MiB）", "{ja:?}");
     assert!(ja.contains(&"0 MiB".to_string()) && ja.contains(&"8192 MiB".to_string()));
-    assert_eq!(labels(&entries(&s, PrefChoice::Budget(BudgetKind::Stroke)))[0], "自動（512 MiB）");
+    assert_eq!(labels(&entries(&s, PrefChoice::Budget(BudgetKind::Stroke)))[0], "自動（1024 MiB）");
     assert_eq!(
         labels(&entries(&s, PrefChoice::CpuThreads)),
         ["自動（8）", "1（並列にしない）", "2", "4", "8"]
@@ -323,7 +356,7 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     assert_eq!(labels(&entries(&s, PrefChoice::CpuThreads)).last().unwrap(), "3");
     // 英語
     s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
-    assert_eq!(labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)))[0], "Auto (1024 MiB)");
+    assert_eq!(labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)))[0], "Auto (2048 MiB)");
     assert_eq!(labels(&entries(&s, PrefChoice::CpuThreads))[0], "Automatic (8)");
     assert_eq!(labels(&entries(&s, PrefChoice::ExportPadding))[0], "Off");
     assert_eq!(labels(&entries(&s, PrefChoice::ExportPadding))[7], "Fill (all the way)");
@@ -417,11 +450,11 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     };
     pick(&mut h, "書き出しの余白: 届くかぎり", "8 テクセル");
     assert_eq!(h.state().state.export.padding, 8);
-    pick(&mut h, "取り消し履歴: 自動（1024 MiB）", "512 MiB");
+    pick(&mut h, "取り消し履歴: 自動（2048 MiB）", "512 MiB");
     assert_eq!(h.state().state.doc.undo_budget_bytes(), 512 * MIB);
-    pick(&mut h, "レイヤーの画素: 自動（2048 MiB）", "4096 MiB");
+    pick(&mut h, "レイヤーのメモリ: 自動（8192 MiB）", "4096 MiB");
     assert_eq!(h.state().state.doc.source_budget_bytes(), 4096 * MIB);
-    pick(&mut h, "1 回の操作: 自動（512 MiB）", "256 MiB");
+    pick(&mut h, "1 回の操作: 自動（1024 MiB）", "256 MiB");
     assert_eq!(h.state().state.doc.stroke_budget_bytes(), 256 * MIB);
     pick(&mut h, "表示の合成: 自動", "CPU");
     assert_eq!(h.state().state.prefs.settings.compositing, Compositing::Cpu);
@@ -578,14 +611,14 @@ fn the_compositing_setting_reaches_the_canvas_display_at_startup_and_when_chosen
 fn headless_loading_allows_the_set_budget_but_never_less_than_the_core_default() {
     // 読み込み（.ylp を開く・書き出しが文書を戻す）は、設定の画素の予算まで読める。下げても、今まで読めた大きさは読める
     let mut s = Settings::default();
-    assert_eq!(s.load_source_bytes(16384), 2048 * MIB, "自動（16 GB）");
+    assert_eq!(s.load_source_bytes(16384), 8192 * MIB, "自動（16 GB）");
     s.source_budget = Budget::Mib(8192);
     assert_eq!(s.load_source_bytes(16384), 8192 * MIB);
     s.source_budget = Budget::Mib(64);
     assert_eq!(s.load_source_bytes(16384), yolu_app::engine::DEFAULT_SOURCE_BUDGET_BYTES, "256 MiB を下回らない");
     // 状態からも同じ値（設定の窓で選ぶと変わる）
     let mut state = state();
-    assert_eq!(state.load_source_bytes(), 2048 * MIB);
+    assert_eq!(state.load_source_bytes(), 8192 * MIB);
     set(&mut state, Pref::Budget(BudgetKind::Source, Budget::Mib(4096)));
     assert_eq!(state.load_source_bytes(), 4096 * MIB);
 }

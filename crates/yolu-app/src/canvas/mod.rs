@@ -704,10 +704,38 @@ fn press_kind(
     PressKind::Tool
 }
 
+/// 文字の入力欄が前のフレームにあったかを覚える場所。
+fn typing_id() -> egui::Id {
+    egui::Id::new("yolu.canvas.typing")
+}
+
+/// 選択範囲を持っていて、Esc を使うものが無いか（Esc で選択を解除してよいか）。Esc を自分の操作に使うものを優先する: メニューなどの
+/// ポップアップ・確かめの窓・開いている浮いた窓・つまみやドラッグの途中（ボタンを押している間）・塗りつぶしの仕事・色の名前の変更。
+/// キャンバスより前に描く部品やフレームの頭の処理が、このフレームの Esc でもうやめた（状態がもう空になっている）ものは、
+/// `note_escape_taken` の印で見る。
+/// 文字の入力中と、描く・形を作る・移動と変形・グラデーション・図形・パスなどの途中は、呼ぶ側が先に見る（やめるものがあればそちらが先）。
+fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
+    app.doc.selection().is_some()
+        && app.popup.is_none()
+        && !app.popup_was_open
+        && app.sel.dialog.is_none()
+        && !crate::windows::modal_open(app)
+        && !crate::ui::window::any_open(ctx)
+        && !crate::ui::window::escape_taken(ctx)
+        && !ctx.input(|i| i.pointer.any_down())
+        && app.region.job.is_none()
+        && app.colorsets.rename.is_none()
+        && app.colorsets.dragging.is_none()
+        && app.brushes.ui.drag.is_none()
+}
+
 fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {
     let (w_px, h_px) = (app.doc.width(), app.doc.height());
     let ctx = ui.ctx().clone();
     let typing = ctx.egui_wants_keyboard_input();
+    // 文字の入力欄は Esc を、入力をやめるのに使う。欄がこのフレームのこれより前に Esc で手放したときも、1 つ前のフレームで入力中だったかで分かる
+    let typed_last = ctx.data_mut(|d| d.get_temp::<bool>(typing_id()).unwrap_or(false));
+    ctx.data_mut(|d| d.insert_temp(typing_id(), typing));
     let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
     let blocked = app.popup.is_some() || app.popup_was_open || app.sel.dialog.is_some();
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
@@ -943,8 +971,11 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 } else if let Some(drag) = app.canvas.rotating.take() {
                     app.view.angle = drag.start_angle;
                     app.view.pan = drag.start_pan;
-                } else {
-                    cancelled(app, false);
+                } else if !cancelled(app, false) && !typing && !typed_last && escape_is_free(app, ui.ctx()) {
+                    // やめるものが無かった: 選択範囲があれば解除（Ctrl+D と同じ。1 回の取り消し）
+                    app.apply(crate::state::Action::Sel(crate::selection::SelAction::Edit(
+                        crate::selection::SelEdit::Clear,
+                    )));
                 }
             }
             Event::Key {

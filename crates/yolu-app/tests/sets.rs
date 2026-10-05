@@ -630,13 +630,13 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     h.run();
     let s = &h.state().state;
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert!(s.message.contains("書き直した正本 1"), "{}", s.message);
+    assert_eq!(s.rewritten_sets, 1, "{}", s.message);
     assert!(!s.modified);
     let saved = read_project(&path);
     assert_eq!(saved.info().format, 7);
     assert_eq!(
         saved.info().saved_by.as_ref().unwrap().app,
-        "YoluPainter-rs"
+        "YoluPainter"
     );
     assert_eq!(saved.info().created_by, original.info().created_by);
     let doc = saved.sets()[0].document.to_core().unwrap();
@@ -671,8 +671,9 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     );
     // 2 回目の保存は描いていなければ正本を書き直さない
     h.state_mut().state.apply(Action::SaveProject);
-    assert!(
-        h.state().state.message.contains("書き直した正本 0"),
+    assert_eq!(
+        h.state().state.rewritten_sets,
+        0,
         "{}",
         h.state().state.message
     );
@@ -709,7 +710,7 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         .read_only
         .as_deref()
         .expect("手動の ID の色があるので読むだけ");
-    assert!(reason.contains("core で扱えない中身"), "{reason}");
+    assert!(reason.contains("編集に対応していない中身"), "{reason}");
     assert!(reason.contains("手動"), "{reason}");
     assert!(!reason.contains("ロック"), "ロックは core が持つ: {reason}");
     assert!(
@@ -914,8 +915,9 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     }
     // 描かずに保存しても正本は書き直さない（バイト列のまま）
     h.state_mut().state.apply(Action::SaveProject);
-    assert!(
-        h.state().state.message.contains("書き直した正本 0"),
+    assert_eq!(
+        h.state().state.rewritten_sets,
+        0,
         "{}",
         h.state().state.message
     );
@@ -936,7 +938,7 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     h.state_mut().state.apply(Action::SaveProject);
     let message = h.state().state.message.clone();
     assert!(message.starts_with("保存しました"), "{message}");
-    assert!(message.contains("書き直した正本 1"), "{message}");
+    assert_eq!(h.state().state.rewritten_sets, 1, "{message}");
     let saved = read_project(&path);
     assert_eq!(
         saved.sets()[0].document.to_bytes().unwrap(),

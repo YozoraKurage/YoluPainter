@@ -317,7 +317,7 @@ impl Document {
                 .map(|&coord| {
                     let rect = self
                         .tile_rect(coord)
-                        .ok_or(CoreError::InvalidArgument("タイルが画布の外"))?;
+                        .ok_or(CoreError::InvalidArgument("タイルがキャンバスの外"))?;
                     let mut rows = vec![0u8; rect.width as usize * rect.height as usize * 4];
                     self.composite_into(channel, rect, &mut rows, RowOrder::BottomUp)?;
                     // タイルの大きさの領域へ（画布の外の余白は 0）
@@ -357,7 +357,7 @@ impl Document {
                 };
                 let rect = self
                     .tile_rect(coord)
-                    .ok_or(CoreError::InvalidArgument("タイルが画布の外"))?;
+                    .ok_or(CoreError::InvalidArgument("タイルがキャンバスの外"))?;
                 let ts = self.tile_size as usize;
                 for y in 0..rect.height as usize {
                     for x in 0..rect.width as usize {
