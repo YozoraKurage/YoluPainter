@@ -156,6 +156,8 @@ struct Held {
 pub struct TestServer {
     name: String,
     stop: Arc<AtomicBool>,
+    /// 読むのを止めている間は、つながりから何も読まない（試験用。相手が読まないときのブリッジの送りの列を確かめる）。
+    paused: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -185,7 +187,8 @@ impl TestServer {
             names: Vec::new(),
             cache: Default::default(),
         }));
-        let (s, sh) = (stop.clone(), shared.clone());
+        let paused = Arc::new(AtomicBool::new(false));
+        let (s, sh, pause) = (stop.clone(), shared.clone(), paused.clone());
         let thread = thread::Builder::new()
             .name("yolu-bridge-testserver".into())
             .spawn(move || {
@@ -220,6 +223,10 @@ impl TestServer {
                     lock(&sh).conn = Some(conn.clone());
                     reader.set_timeout(Some(Duration::from_millis(100)));
                     while !s.load(Ordering::Relaxed) {
+                        if pause.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
                         match reader.next(&conn) {
                             Ok(Received::Idle) => continue,
                             Ok(Received::Message(Message::Bye)) | Err(_) => break,
@@ -246,9 +253,15 @@ impl TestServer {
         Ok(TestServer {
             name: name.to_owned(),
             stop,
+            paused,
             shared,
             thread: Some(thread),
         })
+    }
+
+    /// つながりから読むのを止める・再開する（止めている間も、止める合図には応える）。
+    pub fn pause_reading(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn stop(mut self) {

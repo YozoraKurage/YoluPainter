@@ -627,7 +627,7 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 6);
+        assert_eq!(ylb_abi_version(), 7);
         let agent = "子の Unity";
         // 本物の C の口で、Unity のパッケージの版を名乗る
         let version = "0.3.0";

@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use yolu_protocol::*;
 
 use crate::copy::{copy_dirty, Strip};
-use crate::session::{Session, Status};
+use crate::session::{EnqueueError, Session, Status};
 use crate::testserver::{
     TestServer, YlbTestServerOriginal, YlbTestServerStats, YlbTestServerTexture,
 };
@@ -35,7 +35,9 @@ use crate::testserver::{
 /// 5: 元の絵（ylb_original_send・ylb_pending_bytes）、自己診断のサーバーの元の絵の引き出し（ylb_test_server_original）と統計の欄の追加。
 /// 6: スタンドアロンからの頼み（ylb_next_request）、元の絵の印と「持っている絵を使う」様子（ylb_original_send に stamp を足し、state に 4）、
 /// 巨大なモデルの断り（YLB_E_TOO_LARGE）、自己診断のサーバーの頼みの送り出し（ylb_test_server_request）と元の絵の印・統計の欄の追加。
-pub const ABI_VERSION: u32 = 6;
+/// 7: 送りの列の上限と「混んでいる」（YLB_E_BUSY。送る関数が返す。送り直せる）、いま積める大きさ（ylb_send_room）、ylb_pending_bytes が書いている途中の枠も
+/// 数えること、試験用の上限の変更（ylb_test_set_outbox_limit）と自己診断のサーバーの読みの停止（ylb_test_server_pause_reading）。
+pub const ABI_VERSION: u32 = 7;
 
 /// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能を足すときは、ここに `feature` のビットを足す。
 /// 元のテクスチャ（ORIGINAL_TEXTURES）: スタンドアロンが新しく作ったテクスチャセットの一番下に入れる、元の絵を送る。
@@ -51,6 +53,10 @@ pub const YLB_E_PANIC: i32 = -5;
 pub const YLB_E_SHM: i32 = -6;
 /// 命令が枠の上限（512 MiB）を超えるので送れない（巨大なモデル）。
 pub const YLB_E_TOO_LARGE: i32 = -7;
+/// 送りの列が混んでいる（相手が読むのを待っていて、積んである量が上限 `MAX_OUTBOX_BYTES` に近い）ので積まなかった。何も変えていないので、少し後に
+/// 同じ物を送り直せる（`ylb_model_send`・`ylb_materials_send`・`ylb_values_send` は組み立てを残すので、組み立て直さず同じ関数をもう一度呼べる）。
+/// `ylb_send_room` で、積める大きさを先に確かめられる。
+pub const YLB_E_BUSY: i32 = -8;
 
 static SESSIONS: Mutex<BTreeMap<u64, Arc<Session>>> = Mutex::new(BTreeMap::new());
 static SERVERS: Mutex<BTreeMap<u64, TestServer>> = Mutex::new(BTreeMap::new());
@@ -66,6 +72,17 @@ fn session(handle: u64) -> Option<Arc<Session>> {
         .unwrap_or_else(|e| e.into_inner())
         .get(&handle)
         .cloned()
+}
+
+/// 命令を積んだ結果を C の返す値にする: 積めたら `queued`（関数ごとの成功の値）、印が無い・閉じていれば YLB_E_STATE、枠の上限を超えれば
+/// YLB_E_TOO_LARGE、列が混んでいれば YLB_E_BUSY。
+fn queued_code(session: &Session, message: &Message, queued: i32) -> i32 {
+    match session.try_enqueue(message) {
+        Ok(true) => queued,
+        Ok(false) => YLB_E_STATE,
+        Err(EnqueueError::TooLarge(_)) => YLB_E_TOO_LARGE,
+        Err(EnqueueError::Busy) => YLB_E_BUSY,
+    }
 }
 
 unsafe fn bytes<'a, T>(ptr: *const T, len: i32) -> Option<&'a [T]> {
@@ -691,7 +708,7 @@ pub unsafe extern "C" fn ylb_model_submesh(
     })
 }
 
-/// 組み立てたモデルを送る（積むだけ）。返すのはモデルの世代（1 から）。
+/// 組み立てたモデルを送る（積むだけ）。返すのはモデルの世代（1 から）。送りの列が混んでいれば YLB_E_BUSY（組み立てを残すので、少し後にもう一度呼べる。断るときはモデルを枠にしないので、呼び直しは安い）。
 #[no_mangle]
 pub extern "C" fn ylb_model_send(handle: u64) -> i32 {
     guard(YLB_E_PANIC, || {
@@ -713,10 +730,18 @@ pub extern "C" fn ylb_model_send(handle: u64) -> i32 {
         m.generation = generation;
         let vertices: Vec<usize> = m.meshes.iter().map(|x| x.positions.len()).collect();
         let material_count = m.materials.len();
-        match s.try_enqueue(&Message::Model(m)) {
+        let message = Message::Model(m);
+        match s.try_enqueue(&message) {
             Ok(true) => {}
             Ok(false) => return YLB_E_STATE,
-            Err(_) => return YLB_E_TOO_LARGE,
+            Err(EnqueueError::TooLarge(_)) => return YLB_E_TOO_LARGE,
+            // 混んでいる: 組み立てたモデルを残す（読み直さずに、少し後に ylb_model_send だけをもう一度呼べる）
+            Err(EnqueueError::Busy) => {
+                if let Message::Model(m) = message {
+                    b.model = Some(m);
+                }
+                return YLB_E_BUSY;
+            }
         }
         b.sent_generation = generation;
         b.sent_vertices = vertices;
@@ -841,6 +866,7 @@ pub unsafe extern "C" fn ylb_materials_route(
 }
 
 /// 組み立てたマテリアルの更新を送る（積むだけ）。マテリアルの数は送ったモデルと同じでなければならない（違えば YLB_E_ARGUMENT）。返すのはマテリアルの数。
+/// 送りの列が混んでいれば YLB_E_BUSY（組み立てを残すので、少し後にもう一度呼べる）。同じ世代の送っていない古い更新は置き換わる。
 #[no_mangle]
 pub extern "C" fn ylb_materials_send(handle: u64) -> i32 {
     guard(YLB_E_PANIC, || {
@@ -859,13 +885,18 @@ pub extern "C" fn ylb_materials_send(handle: u64) -> i32 {
         }
         let n = materials.len() as i32;
         let generation = b.sent_generation;
-        if !s.enqueue(&Message::Materials(MaterialsUpdate {
+        let message = Message::Materials(MaterialsUpdate {
             generation,
             materials,
-        })) {
-            return YLB_E_STATE;
+        });
+        let code = queued_code(&s, &message, n);
+        if code == YLB_E_BUSY {
+            // 混んでいる: 組み立てを残す（少し後にもう一度呼べる）
+            if let Message::Materials(u) = message {
+                b.materials = Some(u.materials);
+            }
         }
-        n
+        code
     })
 }
 
@@ -1157,6 +1188,8 @@ pub unsafe extern "C" fn ylb_values_slot(
 }
 
 /// 組み立てた値を送る（積むだけ）。返すのは 1 = 積んだ、0 = スタンドアロンに印（MATERIAL_VALUES）が無いので送らない（組み立ては捨てる）。
+/// 送りの列が混んでいれば YLB_E_BUSY（組み立てを残すので、少し後にもう一度呼べる）。同じマテリアルの送っていない古い値と絵は置き換わる
+/// （新しい値が「前と同じ」と言う絵が列の中にあるときを除く）。
 #[no_mangle]
 pub extern "C" fn ylb_values_send(handle: u64) -> i32 {
     guard(YLB_E_PANIC, || {
@@ -1179,16 +1212,21 @@ pub extern "C" fn ylb_values_send(handle: u64) -> i32 {
         if !compat::accepts(s.common_features(), &message) {
             return 0;
         }
-        if !s.enqueue(&message) {
-            return YLB_E_STATE;
+        let code = queued_code(&s, &message, 1);
+        if code == YLB_E_BUSY {
+            // 混んでいる: 組み立てを残す（少し後にもう一度呼べる）
+            if let Message::MaterialValues(v) = message {
+                s.builder.lock().unwrap_or_else(|e| e.into_inner()).values = Some(v);
+            }
         }
-        1
+        code
     })
 }
 
 /// 描いていないスロットの絵を送る（積むだけ。直前の値で状態 1 と言ったスロット）。`pixels` は RGBA8（straight）で行は下から、
 /// `pixel_len` は幅 × 高さ × 4。辺は MAX_SLOT_TEXTURE_SIZE まで（送る側が縮める）。`srgb` が 0 でなければ Unity はこの絵を sRGB として
 /// 読む。返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+/// 送りの列が混んでいれば YLB_E_BUSY（呼び手が画素を持っていて、少し後に送り直す。同じ世代・マテリアル・スロットの送っていない古い絵は置き換わる）。
 #[no_mangle]
 pub unsafe extern "C" fn ylb_texture_send(
     handle: u64,
@@ -1244,10 +1282,7 @@ pub unsafe extern "C" fn ylb_texture_send(
             srgb: srgb != 0,
             pixels: pixels.to_vec(),
         });
-        if !s.enqueue(&message) {
-            return YLB_E_STATE;
-        }
-        1
+        queued_code(&s, &message, 1)
     })
 }
 
@@ -1258,7 +1293,8 @@ pub unsafe extern "C" fn ylb_texture_send(
 /// `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
 /// `stamp` はこの絵の印（Unity が決める 64 ビット。0 は印なし）。`state` が 4（スタンドアロンが頼みで持つと言った絵と印が同じ。画素なし）のときは
 /// 0 以外が要る（`width`・`height` は Unity のテクスチャの大きさ）。
-/// 返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+/// 返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。送りの列が混んでいれば YLB_E_BUSY（呼び手が画素を持っていて、少し後に送り直す。
+/// 画素の付いた元の絵は、同じ世代・マテリアル・スロットの送っていない古い元の絵を置き換える）。大きな絵は、読む前に `ylb_send_room` で入るかを確かめる。
 #[no_mangle]
 pub unsafe extern "C" fn ylb_original_send(
     handle: u64,
@@ -1333,10 +1369,7 @@ pub unsafe extern "C" fn ylb_original_send(
             pixels: pixels.to_vec(),
             stamp,
         });
-        if !s.enqueue(&message) {
-            return YLB_E_STATE;
-        }
-        1
+        queued_code(&s, &message, 1)
     })
 }
 
@@ -1347,6 +1380,18 @@ pub extern "C" fn ylb_test_set_payload_limit(handle: u64, bytes: u64) -> i32 {
     guard(YLB_E_PANIC, || match session(handle) {
         Some(s) => {
             s.set_payload_limit(usize::try_from(bytes).unwrap_or(usize::MAX));
+            0
+        }
+        None => YLB_E_HANDLE,
+    })
+}
+
+/// 試験用: 送りの列の上限（バイト）を決める（既定は 256 MiB）。小さい量で「混んでいる」（YLB_E_BUSY）を確かめる。
+#[no_mangle]
+pub extern "C" fn ylb_test_set_outbox_limit(handle: u64, bytes: u64) -> i32 {
+    guard(YLB_E_PANIC, || match session(handle) {
+        Some(s) => {
+            s.set_outbox_limit(usize::try_from(bytes).unwrap_or(usize::MAX));
             0
         }
         None => YLB_E_HANDLE,
@@ -1404,11 +1449,23 @@ pub unsafe extern "C" fn ylb_next_request(
     })
 }
 
-/// まだ送り終えていない（順番待ちに積んだ）命令のバイトの合計。大きな絵を続けて送るとき、これが小さくなるまで次を積まないための目安。
+/// まだ送り終えていない命令のバイトの合計（順番待ちに積んだものと、いま書いている途中のもの）。大きな絵を続けて送るとき、これが小さくなるまで
+/// 次を積まないための目安。
 #[no_mangle]
 pub extern "C" fn ylb_pending_bytes(handle: u64) -> u64 {
     guard(0, || match session(handle) {
         Some(s) => s.pending_bytes(),
+        None => 0,
+    })
+}
+
+/// いま積める大きさの目安（バイト）。送りの列の上限（256 MiB）から、積んである量を引いたもの。何も積んでいなければ、1 つの命令が上限より大きくても
+/// 入るので `u64::MAX`。数が合わないハンドルは 0。C# は、大きな絵を読む前にこれで足りるかを見て、足りなければ読まずに待つ（Unity の主のスレッドは
+/// 待たない）。置き換えで空く分は数えないので、足りなくても `ylb_*_send` が積めることはある。
+#[no_mangle]
+pub extern "C" fn ylb_send_room(handle: u64) -> u64 {
+    guard(0, || match session(handle) {
+        Some(s) => s.send_room(),
         None => 0,
     })
 }
@@ -1654,6 +1711,25 @@ pub unsafe extern "C" fn ylb_test_server_start(
                 id
             }
             Err(_) => 0,
+        }
+    })
+}
+
+/// 自己診断のスタンドアロンが、つながりから読むのを止める（`paused` が 0 以外）か、再び読む（0）。止めている間、相手の書く枠は溜まり、ブリッジの
+/// 送りの列は読まれない相手の様子になる（上限と「混んでいる」の確かめ用）。
+#[no_mangle]
+pub extern "C" fn ylb_test_server_pause_reading(server: u64, paused: i32) -> i32 {
+    guard(YLB_E_PANIC, || {
+        match SERVERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&server)
+        {
+            Some(s) => {
+                s.pause_reading(paused != 0);
+                0
+            }
+            None => YLB_E_HANDLE,
         }
     })
 }
