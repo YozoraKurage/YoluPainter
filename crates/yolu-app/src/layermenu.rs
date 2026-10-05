@@ -1,16 +1,19 @@
 //! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリック・
 //! レイヤーのパネルの下の帯のボタンが同じものを使う）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
 //!
-//! 塗りつぶしの種類は単色・グラデーション・画像・デカール。画像とデカールは棚の画像の一覧（その下に「ファイルから取り込む…」）を
-//! もう 1 段の入れ子に開き、選んだ画像で新しい塗りつぶしの層を作る（デカールは投影を Decal に）。選ばずに閉じれば何も作らず、Undo の
-//! 段も増えない。層の作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしの層の画像・投影・グラデーション）。
+//! 塗りつぶしの種類は単色・ワールドスペースのグラデーション・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
+//! 入れ子に開き、選んだ形で新しい塗りつぶしの層を作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
+//! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしの層を作る（デカールは投影を Decal に）。選ばずに閉じれば
+//! 何も作らず、Undo の段も増えない。層の作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしの層の画像・投影・グラデーション）。
 
 use std::path::PathBuf;
 
 use yolu_core::fill_image::ProjectionMode;
+use yolu_core::generator::Shape;
 use yolu_core::{Channel, ChannelKind, ImageId, LayerKind};
 
 use crate::fillfx::{default_fallback, inputs, placement, FillOp};
+use crate::fx::names;
 use crate::m2::{AdjustmentKind, Edit};
 use crate::matpaint::refusal_text;
 use crate::state::{Action, AppState, DialogRequest};
@@ -28,8 +31,8 @@ pub enum Op {
     FillImageDialog(ProjectionMode),
     /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしの層を作る（窓の結果）。
     FillImageFile { path: PathBuf, mode: ProjectionMode },
-    /// 形のグラデーション（モデルの外形に合わせた箱）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
-    FillGradient,
+    /// ワールドスペースのグラデーション（モデルの外形に合わせた、その形の置き場）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
+    FillGradient(Shape),
 }
 
 /// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
@@ -60,16 +63,20 @@ pub fn adjustment_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 塗りつぶしの種類: 単色・グラデーション・画像 ▸・デカール ▸。
+/// 塗りつぶしの種類: 単色・ワールドスペースのグラデーション ▸・画像 ▸・デカール ▸。
 pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
         Entry::item(lang.pick("単色", "Solid Color"), Action::M2(Edit::NewFill)).enabled(free),
-        Entry::item(
-            lang.pick("グラデーション", "Gradient"),
-            Action::LayerMenu(Op::FillGradient),
+        Entry::submenu(
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            gradient_entries(app),
         )
+        .tooltip(lang.pick(
+            "3D ビューの箱・球・平面の範囲で、値を塗り分ける",
+            "Paints values over a box, sphere or plane in the 3D view",
+        ))
         .enabled(free),
         Entry::submenu(
             lang.pick("画像", "Image"),
@@ -82,6 +89,23 @@ pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(free),
     ]
+}
+
+/// ワールドスペースのグラデーションの形の一覧（選ぶと、その形の塗りつぶしの層を作る）。名前と順は塗りつぶしの欄の「形」と同じ。
+fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = !app.is_stroking();
+    names::SHAPES
+        .iter()
+        .map(|shape| {
+            Entry::item(
+                names::shape_name(lang, *shape),
+                Action::LayerMenu(Op::FillGradient(*shape)),
+            )
+            .tooltip(names::shape_hint(lang, *shape))
+            .enabled(free)
+        })
+        .collect()
 }
 
 /// 棚の画像の一覧（選ぶと、その画像と投影 `mode` の塗りつぶしの層を作る）と、「ファイルから取り込む…」。
@@ -153,7 +177,7 @@ impl AppState {
                     None => self.shelf.selected = before,
                 }
             }
-            Op::FillGradient => self.new_gradient_fill(),
+            Op::FillGradient(shape) => self.new_gradient_fill(shape),
         }
     }
 
@@ -253,8 +277,8 @@ impl AppState {
         }
     }
 
-    /// 形のグラデーションの新しい塗りつぶしの層（モデルの外形に合わせた箱）を作り、3D ビューでその形を編集できるようにする。
-    fn new_gradient_fill(&mut self) {
+    /// ワールドスペースのグラデーションの新しい塗りつぶしの層（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
+    fn new_gradient_fill(&mut self, shape: Shape) {
         let lang = self.lang;
         if self.is_stroking() {
             self.message = lang
@@ -263,7 +287,7 @@ impl AppState {
             return;
         }
         let name = self.new_layer_name(LayerKind::Fill);
-        let settings = placement::new_shape_gradient(self.model_bounds().as_ref());
+        let settings = placement::new_shape_gradient_of(shape, self.model_bounds().as_ref());
         self.doc.end_coalescing();
         let created = self.add_fill_layer_with(&name, |d, id, channel| {
             d.set_fill_gradient(id, channel, Some(settings), false)
@@ -275,8 +299,8 @@ impl AppState {
             self.message = format!(
                 "{}: {name}",
                 lang.pick(
-                    "グラデーションの塗りつぶしを足しました",
-                    "Gradient fill added"
+                    "ワールドスペースのグラデーションを足しました",
+                    "World space gradient added"
                 )
             );
         }

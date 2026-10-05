@@ -13,6 +13,8 @@ use crate::view3d::shape_gizmo::{euler_degrees, MAX_SIZE, MIN_SIZE};
 pub const DECAL_VIEW_FRACTION: f32 = 0.3;
 /// デカールの奥行き（箱の Z）の、長い辺に対する割合（面から手前と奥へ半分ずつ）。
 pub const DECAL_DEPTH_FRACTION: f32 = 0.5;
+/// 新しい平面（線形）のグラデーションで、高さがこの割合（一番長い辺に対して）より小さい外形は「薄い」として、高さではなく水平の長い辺に沿わせる。
+pub const THIN_HEIGHT_FRACTION: f32 = 0.01;
 
 fn size(s: f32) -> f64 {
     f64::from(s.abs() * 1.02).clamp(MIN_SIZE, MAX_SIZE)
@@ -171,6 +173,48 @@ pub fn new_shape_gradient(bounds: Option<&Bounds>) -> Settings {
     g
 }
 
+/// 形を選んで作る新しいワールドスペースのグラデーション（新規塗りつぶしレイヤーのメニュー）。ランプと置き換えの合成は `new_shape_gradient` と
+/// 同じで、置き場は形ごとにモデルの外形から決める（モデルが無ければ形の既定の置き場）:
+/// ボックスは `new_shape_gradient` のまま、球は外形の中央に一番長い辺の 4 分の 3 の直径（どこに効くかすぐ見えるように）、
+/// 平面（線形）は外形の中央で、下の端が 0・上の端が 1 になる幅（モデルの高さ）。高さが一番長い辺の `THIN_HEIGHT_FRACTION` 未満の外形
+/// （地面のような平らなモデル）では、高さに沿うと面の値が 0.5 のまま分かれないので、平面を横へ回して、水平の長い方の辺に沿わせる
+/// （長いのが X なら Z のまわりに −90°、Z なら X のまわりに 90°。平面の局所の Y がその軸を向く）。
+pub fn new_shape_gradient_of(shape: Shape, bounds: Option<&Bounds>) -> Settings {
+    let mut g = new_shape_gradient(bounds);
+    g.volume.shape = shape;
+    let Some(b) = bounds else {
+        return g;
+    };
+    let full = b.extents * 2.0;
+    let clamp = |s: f32| f64::from(s.abs()).clamp(MIN_SIZE, MAX_SIZE);
+    match shape {
+        Shape::Box => {}
+        Shape::Sphere => {
+            let diameter = clamp(full.x.abs().max(full.y.abs()).max(full.z.abs()) * 0.75);
+            g.volume.size = [diameter; 3];
+        }
+        Shape::Plane => {
+            let longest = full.x.abs().max(full.y.abs()).max(full.z.abs());
+            if full.y.abs() < longest * THIN_HEIGHT_FRACTION {
+                if full.x.abs() >= full.z.abs() {
+                    // 局所の Y = ワールドの X。局所の X・Z は、ワールドの Y（薄い）ではなく短い水平の辺で見せる
+                    g.volume.rotation = [0.0, 0.0, -90.0];
+                    let lateral = clamp(full.z * 1.05);
+                    g.volume.size = [lateral, clamp(full.x), lateral];
+                } else {
+                    // 局所の Y = ワールドの Z
+                    g.volume.rotation = [90.0, 0.0, 0.0];
+                    let lateral = clamp(full.x * 1.05);
+                    g.volume.size = [lateral, clamp(full.z), lateral];
+                }
+            } else {
+                g.volume.size = [clamp(full.x * 1.05), clamp(full.y), clamp(full.z * 1.05)];
+            }
+        }
+    }
+    g
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +349,122 @@ mod tests {
         let bare = new_shape_gradient(None);
         assert_eq!(bare.volume, Volume::default());
         assert!(bare.validate().is_ok());
+    }
+
+    #[test]
+    fn a_new_gradient_of_each_shape_fits_the_model_and_is_valid() {
+        let b = bounds();
+        // ボックスは今までと同じ
+        assert_eq!(
+            new_shape_gradient_of(Shape::Box, Some(&b)),
+            new_shape_gradient(Some(&b))
+        );
+        // 球: 一番長い辺（高さ 4）の 4 分の 3 を直径に、外形の中央へ
+        let sphere = new_shape_gradient_of(Shape::Sphere, Some(&b));
+        assert_eq!(sphere.volume.shape, Shape::Sphere);
+        assert_eq!(sphere.volume.center, [0.5, 1.0, 0.0]);
+        assert!(sphere.volume.size.iter().all(|s| (s - 3.0).abs() < 1e-5));
+        // 平面: 幅は外形の高さ（4）。下の端（-2）が 0・上の端（+2）が 1
+        let plane = new_shape_gradient_of(Shape::Plane, Some(&b));
+        assert_eq!(plane.volume.shape, Shape::Plane);
+        assert!((plane.volume.size[1] - 4.0).abs() < 1e-5);
+        let at = |y: f64| plane.volume.value_at([0.5, 1.0 + y, 0.0]).unwrap();
+        assert!(
+            at(-2.0).abs() < 1e-9 && (at(2.0) - 1.0).abs() < 1e-9 && (at(0.0) - 0.5).abs() < 1e-9
+        );
+        assert_eq!(plane.volume.rotation, [0.0; 3], "ふつうの高さの外形は回さない");
+        for g in [&sphere, &plane] {
+            assert!(g.ramp.is_some());
+            assert_eq!(g.blend, yolu_core::generator::Blend::Replace);
+            assert!(g.validate().is_ok());
+        }
+        // モデルが無ければ、形だけ替えた既定の置き場
+        for shape in [Shape::Box, Shape::Sphere, Shape::Plane] {
+            let bare = new_shape_gradient_of(shape, None);
+            assert_eq!(
+                bare.volume,
+                Volume {
+                    shape,
+                    ..Volume::default()
+                }
+            );
+            assert!(bare.validate().is_ok());
+        }
+    }
+
+    /// 面の上（外形の中心の高さ）の、中心から (dx, dz) の点の値。
+    fn on_surface(g: &Settings, b: &Bounds, dx: f64, dz: f64) -> f64 {
+        let c = b.center;
+        g.volume
+            .value_at([f64::from(c.x) + dx, f64::from(c.y), f64::from(c.z) + dz])
+            .unwrap()
+    }
+
+    #[test]
+    fn a_new_plane_gradient_on_a_flat_model_runs_along_its_longest_horizontal_side() {
+        // 地面のような高さ 0 のモデル。X が長い（4）と Z が長い（6）の両方
+        for (size, along_x) in [(Vec3::new(4.0, 0.0, 2.0), true), (Vec3::new(2.0, 0.0, 6.0), false)] {
+            let b = Bounds::new(Vec3::new(0.5, 1.0, 0.0), size);
+            let plane = new_shape_gradient_of(Shape::Plane, Some(&b));
+            assert!(plane.validate().is_ok(), "{size:?}");
+            assert_eq!(plane.volume.shape, Shape::Plane);
+            assert_eq!(plane.volume.center, [0.5, 1.0, 0.0]);
+            let long = f64::from(size.x.max(size.z));
+            assert!((plane.volume.size[1] - long).abs() < 1e-5, "{size:?}: {:?}", plane.volume.size);
+            let at = |t: f64| {
+                if along_x {
+                    on_surface(&plane, &b, t * long / 2.0, 0.0)
+                } else {
+                    on_surface(&plane, &b, 0.0, t * long / 2.0)
+                }
+            };
+            // 面の値が 0.5 の一定ではなく、片端が 0・もう片端が 1 に分かれる
+            assert!(at(-1.0).abs() < 1e-9, "{size:?}: {}", at(-1.0));
+            assert!((at(1.0) - 1.0).abs() < 1e-9, "{size:?}: {}", at(1.0));
+            assert!((at(0.0) - 0.5).abs() < 1e-9);
+            assert!(at(-0.5) > at(-1.0) && at(0.5) > at(0.0), "途中の値は段階的に");
+            // 平面の欄で見せる大きさは、薄いワールドの Y ではなく短い水平の辺
+            assert!(plane.volume.size[0] > 1.0 && plane.volume.size[2] > 1.0, "{:?}", plane.volume.size);
+        }
+    }
+
+    #[test]
+    fn the_plane_turns_only_when_the_height_is_thin_against_the_longest_side() {
+        // 一番長い辺 4、高さが 1 % 未満（0.039）と 1 % 以上（0.041）
+        let thin = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 0.039, 2.0));
+        let thick = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 0.041, 2.0));
+        let p = new_shape_gradient_of(Shape::Plane, Some(&thin));
+        assert_eq!(p.volume.rotation, [0.0, 0.0, -90.0]);
+        assert!((p.volume.size[1] - 4.0).abs() < 1e-5);
+        let p = new_shape_gradient_of(Shape::Plane, Some(&thick));
+        assert_eq!(p.volume.rotation, [0.0; 3]);
+        assert!((p.volume.size[1] - 0.041).abs() < 1e-5, "高さに沿う: {:?}", p.volume.size);
+        // ごく薄いが 0 ではない外形でも、面の上の値は分かれる
+        let sheet = Bounds::new(Vec3::ZERO, Vec3::new(4.0, 1e-4, 4.0));
+        let p = new_shape_gradient_of(Shape::Plane, Some(&sheet));
+        assert!(on_surface(&p, &sheet, -2.0, 0.0) < 0.01 && on_surface(&p, &sheet, 2.0, 0.0) > 0.99);
+        // 一番長い辺が高さのとき（背の高い外形）は今までどおり回さない
+        let tall = Bounds::new(Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0));
+        let p = new_shape_gradient_of(Shape::Plane, Some(&tall));
+        assert_eq!(p.volume.rotation, [0.0; 3]);
+        assert!((p.volume.size[1] - 4.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_flat_or_point_model_gets_valid_gradients_of_every_shape() {
+        let flat = Bounds::new(Vec3::new(0.0, 2.0, 0.0), Vec3::new(4.0, 0.0, 4.0));
+        let point = Bounds::new(Vec3::ONE, Vec3::ZERO);
+        for b in [&flat, &point] {
+            for shape in [Shape::Box, Shape::Sphere, Shape::Plane] {
+                let g = new_shape_gradient_of(shape, Some(b));
+                assert!(g.validate().is_ok(), "{shape:?} {b:?}");
+                assert!(g.volume.value_at(v3(b.center)).is_ok());
+            }
+        }
+        // 球は平らな外形でも一番長い辺から直径を決めるので、面の上で 1（中心）から 0（縁）へ分かれる
+        let sphere = new_shape_gradient_of(Shape::Sphere, Some(&flat));
+        assert!((sphere.volume.size[0] - 3.0).abs() < 1e-5);
+        assert!(on_surface(&sphere, &flat, 0.0, 0.0) > 0.99);
+        assert!(on_surface(&sphere, &flat, 2.0, 0.0) < 1e-9);
     }
 }

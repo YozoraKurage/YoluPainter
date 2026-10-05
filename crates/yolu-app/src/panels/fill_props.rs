@@ -10,6 +10,7 @@ use yolu_core::{Channel, ChannelKind, ImageId, InactiveEffect, InactiveTarget, L
 
 use super::properties::{group_label, percent_row, section, slider_row, toggle_row};
 use crate::fillfx::{inputs, FillOp};
+use crate::fx::names::{shape_tooltip, SHAPES};
 use crate::lang::Lang;
 use crate::m2::{self};
 use crate::m2_menu::Popup;
@@ -968,15 +969,10 @@ fn handle_buttons(
 
 // ───────── ワールドスペースのグラデーション ─────────
 
+/// 形の名前。新規塗りつぶしレイヤーのメニュー・効果の欄と同じもの（`fx::names`）。
 pub fn shape_name(lang: Lang, shape: Shape) -> &'static str {
-    match shape {
-        Shape::Box => lang.pick("ボックス", "Box"),
-        Shape::Sphere => lang.pick("球", "Sphere"),
-        Shape::Plane => lang.pick("平面", "Plane"),
-    }
+    crate::fx::names::shape_name(lang, shape)
 }
-
-const SHAPES: [Shape; 3] = [Shape::Box, Shape::Sphere, Shape::Plane];
 
 fn set_gradient(
     app: &mut AppState,
@@ -1072,7 +1068,8 @@ fn gradient_section(
         return;
     }
     let mut next = g.clone();
-    // 形
+    // 形（説明は新規塗りつぶしレイヤーのメニューの項目と同じ文）
+    let shape_tip = shape_tooltip(lang);
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let (response, anchor) = w::dropdown(
         ui,
@@ -1080,10 +1077,7 @@ fn gradient_section(
         "fill.gradient.shape",
         Some(lang.pick("形", "Shape")),
         shape_name(lang, g.volume.shape),
-        Some(lang.pick(
-            "ボックス: 中は 1、面へ向かって 0 に消える。球: 表面へ向かって同じ。平面: 後ろが 0、前が 1",
-            "Box: 1 inside, fading to 0 at its faces. Sphere: the same toward its surface. Plane: 0 behind it to 1 in front of it",
-        )),
+        Some(shape_tip.as_str()),
         enabled,
         LABEL_W + 22.0,
     );

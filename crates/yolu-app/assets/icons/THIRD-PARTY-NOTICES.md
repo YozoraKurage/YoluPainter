@@ -50,6 +50,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `library` | fluent | `library` | regular |
 | `light_mode` | fluent | `weather_sunny` | regular |
 | `link_off` | fluent | `link_dismiss` | regular |
+| `local_fire_department` | fluent | `fire` | regular |
 | `lock` | fluent | `lock_closed` | regular |
 | `lock_filled` | fluent | `lock_closed` | filled |
 | `lock_transparency` | fluent | `transparency_square` | regular |
@@ -120,6 +121,8 @@ Icons added for the selection tools (same process; Fluent regular unless noted):
 tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Phosphor selection regular and bold.
 
 `uv_wireframe` is copied unchanged from the Unity package: Phosphor `polygon` (MIT).
+
+`local_fire_department` is copied unchanged from the Unity package: Fluent UI `fire` regular (MIT). It marks the Bake Mesh Maps button.
 
 ## Fluent UI System Icons
 

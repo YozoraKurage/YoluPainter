@@ -1,7 +1,8 @@
 //! テクスチャセットのパネル（Substance Painter の Texture Set List の並び）: 行は目・名前・状態のアイコン・解像度。押すと今のセットを
 //! 替え、ダブルクリックで名前を変え、右クリックでメニュー。マテリアルの名前や付いていない状態を書く帯は置かない（名前は行に出ている。
 //! 付いていない状態は行のアイコン、理由と詳しいマテリアルはツールチップ）。
-//! 下に、足す・消す・プロジェクトの構成のボタン（足す・消すは `newproject`）。
+//! 下の帯に、足す・消す（`newproject`）・メッシュマップをベイク（炎のアイコン。ベイクの窓を開く）・プロジェクトの構成のボタン。
+//! ベイクのボタンは、今のセットにまだ焼いたメッシュマップが無いあいだ、アイコンの角に印を付ける（理由はツールチップ）。
 //!
 //! 状態のアイコン: 鍵 = 読むだけ（core で扱えない中身がある）、切れた鎖（薄い）= 今のモデルのマテリアルに付いていない、
 //! 同期 = Unity に見せている、注意 = Unity 側に Color の流し込み先が無い（描いても Unity には見えない）・3D ビューのメモリの予算で
@@ -18,6 +19,8 @@ use crate::ui::widgets::{self as w, Align};
 pub const ROW_HEIGHT: f32 = 28.0;
 /// 足す・消す・プロジェクトの構成のボタンの行の高さ。
 pub const TOOLBAR_HEIGHT: f32 = 28.0;
+/// 下の帯にベイクのボタンも並べられる幅（足す・消す・ベイク・設定の 4 つ、26 px ずつと間）。
+const BAKE_BUTTON_MIN_BAR_WIDTH: f32 = 128.0;
 
 /// セットの見え方: アイコンと色、ツールチップの説明（状態を文字では出さない）。
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +107,38 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
     None
 }
 
+/// ベイクのボタンの見え方: 今のセットがまだ焼かれていないときの印と、ツールチップ（名前の行、あれば理由の行）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct BakeEntrance {
+    pub marked: bool,
+    pub tooltip: String,
+}
+
+/// 今のセットのベイクのボタンの見え方。印はそのセットに焼いたメッシュマップが 1 枚も無いあいだ（ほかのセットが焼けていても付く）。
+/// 理由は、焼いている最中ならそれ、そうでなければ「まだ焼いていない」。窓はどちらでも開ける（押せるのは描いていないときだけ）。
+pub fn bake_entrance(app: &AppState) -> BakeEntrance {
+    let lang = app.lang;
+    let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
+    let marked = app.sets.current().mesh_maps.is_empty();
+    let reason = if app.bake.is_baking() {
+        Some(lang.pick("ベイク中", "Baking"))
+    } else if marked {
+        Some(lang.pick(
+            "このテクスチャセットはまだベイクしていません",
+            "This texture set has not been baked yet",
+        ))
+    } else {
+        None
+    };
+    BakeEntrance {
+        marked,
+        tooltip: match reason {
+            Some(reason) => format!("{name}\n{reason}"),
+            None => name.to_owned(),
+        },
+    }
+}
+
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
@@ -150,7 +185,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     toolbar_buttons(ui, app, toolbar);
 }
 
-/// 一覧の下のボタンの行: 空のセットを足す・今のセットを消す（確かめる）・プロジェクト設定を開く。
+/// 一覧の下のボタンの行: 空のセットを足す・今のセットを消す（確かめる）、右にメッシュマップをベイク（窓を開く）・プロジェクト設定を開く。
 fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, bar, t::PANEL_HEADER);
@@ -159,6 +194,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     let free = !app.is_stroking();
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
     let mut action = None;
+    let mut action_bake = false;
     if w::icon_button(
         ui,
         button(bar.left() + 4.0),
@@ -201,6 +237,33 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     {
         action = Some(crate::newproject::NpAction::RemoveSets(vec![app.sets.current().uid]));
     }
+    // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクはメニューから）
+    if bar.width() >= BAKE_BUTTON_MIN_BAR_WIDTH {
+        let bake = bake_entrance(app);
+        let bake_button = button(bar.right() - 60.0);
+        let clicked = w::icon_button(
+            ui,
+            bake_button,
+            "set.bake",
+            "local_fire_department",
+            &bake.tooltip,
+            false,
+            free,
+            16.0,
+        )
+        .clicked();
+        if bake.marked {
+            // 印: アイコンの右上の角の小さな点（ボタンの押す・乗せる・使えないの見た目の上に重ねる）
+            ui.painter().circle_filled(
+                pos2(bake_button.center().x + 8.0, bake_button.center().y - 8.0),
+                3.0,
+                t::ACCENT,
+            );
+        }
+        if clicked {
+            action_bake = true;
+        }
+    }
     if w::icon_button(
         ui,
         button(bar.right() - 30.0),
@@ -217,6 +280,9 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     }
     if let Some(a) = action {
         app.apply(Action::Project(a));
+    }
+    if action_bake {
+        app.apply(Action::Bake(crate::bake::BakeAction::OpenWindow));
     }
 }
 

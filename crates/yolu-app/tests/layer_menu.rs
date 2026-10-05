@@ -8,7 +8,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{app, click, menu_title, popup_item};
+use common::{app, assert_plain, click, menu_title, popup_item};
 use egui::{pos2, vec2, Event, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
@@ -21,6 +21,7 @@ use yolu_app::state::{Action, AppState, DialogRequest, PopupKind, Tool};
 use yolu_app::ui::menu::{leaves, Entry};
 use yolu_app::{shell, YoluApp};
 use yolu_core::fill_image::{Placement, ProjectionMode, Wrap};
+use yolu_core::generator::Shape;
 use yolu_core::{FilterTarget, ImageId};
 
 const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
@@ -321,7 +322,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             names(fills),
             [
                 ja_en("単色", "Solid Color"),
-                ja_en("グラデーション", "Gradient"),
+                ja_en("ワールドスペースのグラデーション", "World Space Gradient"),
                 ja_en("画像", "Image"),
                 ja_en("デカール", "Decal"),
             ]
@@ -493,7 +494,7 @@ fn a_menu_decal_is_a_fill_layer_with_the_decal_projection_fitted_to_the_model() 
 fn a_menu_gradient_fill_is_one_undo_and_opens_the_shape_for_editing() {
     let mut s = AppState::new(64, 64);
     let steps = s.doc.undo_count();
-    s.apply(Action::LayerMenu(Op::FillGradient));
+    s.apply(Action::LayerMenu(Op::FillGradient(Shape::Box)));
     let id = s.selected_layer.unwrap();
     let layer = s.doc.layer(id).unwrap();
     assert_eq!(layer.kind(), LayerKind::Fill);
@@ -507,6 +508,189 @@ fn a_menu_gradient_fill_is_one_undo_and_opens_the_shape_for_editing() {
     s.apply(Action::Undo);
     assert!(s.doc.layer(id).is_none());
     assert_eq!(layer_count(&s), 1);
+}
+
+#[test]
+fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
+    use yolu_app::panels::fill_props::shape_name;
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let fills = submenu(
+            &shell::menu_entries(&s, 2),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        )
+        .to_vec();
+        let gradient = submenu(
+            &fills,
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        );
+        // 形の名前と順は、塗りつぶしの欄の「形」の選びと同じ
+        let shapes = [Shape::Box, Shape::Sphere, Shape::Plane];
+        assert_eq!(
+            names(gradient),
+            shapes.map(|shape| Some(shape_name(lang, shape).to_owned()))
+        );
+        for (entry, shape) in gradient.iter().zip(shapes) {
+            assert!(
+                matches!(entry, Entry::Item { action: Action::LayerMenu(Op::FillGradient(got)), enabled: true, tooltip: Some(_), .. } if *got == shape),
+                "{lang:?} {shape:?}: {entry:?}"
+            );
+        }
+        // 日本語の画面に英語、英語の画面に日本語を出さない。名前・ツールチップは短く、使い方の文を置かない
+        for entry in fills.iter().chain(gradient) {
+            if let Entry::Item { label, tooltip, .. } | Entry::Submenu { label, tooltip, .. } = entry
+            {
+                for text in std::iter::once(label).chain(tooltip) {
+                    assert_plain(&format!("{lang:?} {text}"), text);
+                }
+                assert_eq!(has_japanese(label), lang == Lang::Ja, "{label}");
+                if let Some(tip) = tooltip {
+                    assert_eq!(has_japanese(tip), lang == Lang::Ja, "{tip}");
+                }
+            }
+        }
+        // 描いている間は選べない
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let layer = s.selected_layer.unwrap();
+        let brush = s.stroke_settings(false);
+        let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+        let fills = submenu(
+            &shell::menu_entries(&s, 2),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        )
+        .to_vec();
+        let gradient = submenu(
+            &fills,
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        );
+        assert!(leaves(gradient)
+            .iter()
+            .all(|e| matches!(e, Entry::Item { enabled: false, .. })));
+        s.doc.cancel_stroke(stroke);
+    }
+}
+
+#[test]
+fn the_fill_panels_shape_choice_lists_the_same_names_in_the_same_order_as_the_menu() {
+    for lang in Lang::ALL {
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        s.apply(Action::LayerMenu(Op::FillGradient(Shape::Sphere)));
+        let id = s.selected_layer.unwrap();
+        let panel = yolu_app::panels::fill_props::entries(
+            &s,
+            yolu_app::m2_menu::Popup::GradientShape(id, Channel::Color),
+        );
+        let fills = submenu(
+            &shell::menu_entries(&s, 2),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        )
+        .to_vec();
+        let menu = submenu(
+            &fills,
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        );
+        assert_eq!(names(&panel), names(menu), "{lang:?}");
+        assert_eq!(names(&panel).len(), 3);
+    }
+}
+
+#[test]
+fn each_shape_makes_one_fill_layer_of_that_shape_fitted_to_the_model_with_one_undo() {
+    for shape in [Shape::Box, Shape::Sphere, Shape::Plane] {
+        let mut s = AppState::new(64, 64);
+        s.apply(Action::LoadDemoModel);
+        let b = s.model_bounds().expect("試しの立方体の外形");
+        let full = b.extents * 2.0;
+        let center = [
+            f64::from(b.center.x),
+            f64::from(b.center.y),
+            f64::from(b.center.z),
+        ];
+        let layers = layer_count(&s);
+        let steps = s.doc.undo_count();
+        s.apply(Action::LayerMenu(Op::FillGradient(shape)));
+        let id = s.selected_layer.unwrap();
+        let g = s
+            .doc
+            .layer(id)
+            .unwrap()
+            .fill_gradient(Channel::Color)
+            .unwrap()
+            .clone();
+        assert_eq!(g.volume.shape, shape, "{shape:?}: {}", s.message);
+        assert_eq!(g.volume.center, center, "{shape:?}: 外形の中央");
+        assert!(g.ramp.is_some() && g.validate().is_ok());
+        let near = |a: f64, b: f32| (a - f64::from(b)).abs() < 1e-5;
+        match shape {
+            Shape::Box => assert!(near(g.volume.size[1], full.y * 0.5), "高さは外形の半分"),
+            Shape::Sphere => assert!(
+                g.volume
+                    .size
+                    .iter()
+                    .all(|d| near(*d, full.x.max(full.y).max(full.z) * 0.75)),
+                "直径は一番長い辺の 4 分の 3"
+            ),
+            Shape::Plane => assert!(near(g.volume.size[1], full.y), "幅は外形の高さ（下が 0・上が 1）"),
+        }
+        assert_eq!(s.fillfx.edit_gradient, Some((id, Channel::Color)), "{shape:?}");
+        assert_eq!(layer_count(&s), layers + 1);
+        assert_eq!(s.doc.undo_count(), steps + 1, "{shape:?}: 1 回の Undo");
+        assert!(
+            s.message.contains("ワールドスペースのグラデーション"),
+            "{}",
+            s.message
+        );
+        assert_plain(&format!("{shape:?} 知らせ"), &s.message);
+        s.apply(Action::Undo);
+        assert!(s.doc.layer(id).is_none(), "{shape:?}");
+        assert_eq!(layer_count(&s), layers);
+        // 英語の画面の知らせ
+        s.lang = Lang::En;
+        s.apply(Action::LayerMenu(Op::FillGradient(shape)));
+        assert!(!has_japanese(&s.message), "英語の画面に日本語: {}", s.message);
+        assert!(
+            s.message.starts_with("World space gradient added"),
+            "{}",
+            s.message
+        );
+        assert_plain(&format!("{shape:?} message"), &s.message);
+    }
+}
+
+#[test]
+fn a_shape_gradient_from_the_menu_is_saved_with_its_shape_and_placement() {
+    // アプリで開く道は位置のマップが無いと読むだけになるので、保存した正本を core の文書へ戻して見る（デカールの試験と同じ）
+    for shape in [Shape::Box, Shape::Sphere, Shape::Plane] {
+        let mut s = AppState::new(64, 64);
+        s.apply(Action::LoadDemoModel);
+        s.apply(Action::LayerMenu(Op::FillGradient(shape)));
+        let id = s.selected_layer.unwrap();
+        let settings = s
+            .doc
+            .layer(id)
+            .unwrap()
+            .fill_gradient(Channel::Color)
+            .cloned()
+            .unwrap();
+        let dir = temp_dir(&format!("gradient-shape-{shape:?}"));
+        let path = dir.join("g.ylp");
+        s.apply(Action::SaveProjectAs(path.clone()));
+        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).expect("読める");
+        let restored = project.sets()[0].document.to_core().expect("core の文書");
+        let g = restored
+            .layers()
+            .iter()
+            .find(|l| l.id() == id)
+            .and_then(|l| l.fill_gradient(Channel::Color))
+            .unwrap_or_else(|| panic!("{shape:?}: 保存した層に無い"));
+        assert_eq!(g.volume.shape, shape);
+        assert_eq!(g, &settings, "{shape:?}: 置き場も同じ");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[test]
@@ -657,7 +841,7 @@ fn nothing_is_made_while_drawing() {
             image,
             mode: ProjectionMode::Decal,
         },
-        Op::FillGradient,
+        Op::FillGradient(Shape::Box),
         // ファイルの取り込みも、描いている間は棚へ入れず、層も作らない
         Op::FillImageFile {
             path: file.clone(),
@@ -704,7 +888,7 @@ fn nothing_is_made_inside_a_locked_group_and_the_image_is_let_go() {
                 image,
                 mode: ProjectionMode::Decal,
             },
-            Op::FillGradient,
+            Op::FillGradient(Shape::Box),
             Op::FillImageFile {
                 path: file.clone(),
                 mode: ProjectionMode::Uv,
@@ -736,14 +920,14 @@ fn a_gradient_fill_on_the_normal_channel_makes_no_layer_and_says_why() {
     let mut s = AppState::new(64, 64);
     s.m2.paint_channel = Channel::Normal;
     let (layers, steps) = (layer_count(&s), s.doc.undo_count());
-    s.apply(Action::LayerMenu(Op::FillGradient));
+    s.apply(Action::LayerMenu(Op::FillGradient(Shape::Box)));
     assert_eq!(layer_count(&s), layers, "{}", s.message);
     assert_eq!(s.doc.undo_count(), steps, "層は 1 回の Undo の中で戻る");
     assert!(!s.modified, "変更の印を付けない");
     assert!(s.message.contains("法線"), "{}", s.message);
     assert!(s.fillfx.edit_gradient.is_none(), "形の編集を始めない");
     s.lang = Lang::En;
-    s.apply(Action::LayerMenu(Op::FillGradient));
+    s.apply(Action::LayerMenu(Op::FillGradient(Shape::Box)));
     assert!(
         !has_japanese(&s.message),
         "英語の画面に日本語を出さない: {}",
@@ -892,7 +1076,7 @@ fn image_and_decal_fills_survive_saving_and_opening_and_stay_editable() {
     }));
     let decal = s.selected_layer.unwrap();
     let decal_projection = *s.doc.layer(decal).unwrap().projection();
-    s.apply(Action::LayerMenu(Op::FillGradient));
+    s.apply(Action::LayerMenu(Op::FillGradient(Shape::Box)));
     let gradient = s.selected_layer.unwrap();
     let settings = s
         .doc
@@ -979,6 +1163,50 @@ fn the_menu_bar_opens_the_fill_submenu_on_hover_and_a_click_in_it_makes_the_laye
         1,
         "1 回の取り消しで戻る"
     );
+}
+
+#[test]
+fn the_menu_bar_opens_the_gradient_shapes_two_levels_down_and_a_click_makes_that_shape() {
+    for (lang, shape) in [(Lang::Ja, Shape::Sphere), (Lang::En, Shape::Plane)] {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        hover(&mut h, pos2(640.0, 400.0));
+        let fill = popup_item(&h, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
+        hover(&mut h, fill.center());
+        let gradient = popup_item(
+            &h,
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        );
+        hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
+        hover(&mut h, gradient.center());
+        assert_eq!(depth(&h), 2, "{lang:?}: 形の一覧がもう 1 段右に開く");
+        let item = popup_item(&h, yolu_app::panels::fill_props::shape_name(lang, shape));
+        assert!(item.left() > gradient.right(), "{item:?} {gradient:?}");
+        hover(&mut h, pos2(gradient.right() - 2.0, gradient.center().y));
+        hover(&mut h, item.center());
+        click(&mut h, item.center());
+        assert!(h.state().state.popup.is_none(), "選んだら閉じる");
+        let id = h.state().state.selected_layer.unwrap();
+        let g = h
+            .state()
+            .state
+            .doc
+            .layer(id)
+            .and_then(|l| l.fill_gradient(Channel::Color))
+            .cloned()
+            .unwrap_or_else(|| panic!("{lang:?}: {}", h.state().state.message));
+        assert_eq!(g.volume.shape, shape);
+        assert_eq!(h.state().state.doc.layers().len(), 2);
+        h.state_mut().state.apply(Action::Undo);
+        assert_eq!(
+            h.state().state.doc.layers().len(),
+            1,
+            "1 回の取り消しで戻る"
+        );
+    }
 }
 
 #[test]
@@ -1421,6 +1649,31 @@ fn snapshot_the_layer_menu_with_the_image_submenu_open_in_both_languages() {
         snapshot_open_menu(
             &mut h,
             &format!("menus_layer_fill_image_{}", lang.pick("ja", "en")),
+        );
+    }
+}
+
+#[test]
+fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        hover(&mut h, pos2(640.0, 400.0));
+        let fill = popup_item(&h, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
+        hover(&mut h, fill.center());
+        let gradient = popup_item(
+            &h,
+            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        );
+        hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
+        hover(&mut h, gradient.center());
+        assert_eq!(depth(&h), 2, "{lang:?}");
+        snapshot_open_menu(
+            &mut h,
+            &format!("menus_layer_fill_gradient_{}", lang.pick("ja", "en")),
         );
     }
 }

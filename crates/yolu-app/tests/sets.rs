@@ -5,6 +5,8 @@ use common::*;
 use egui::Key;
 use egui_kittest::kittest::{NodeT, Queryable};
 use yolu_app::engine::{composite_pixel, layer_has_pixels};
+use yolu_app::lang::Lang;
+use yolu_app::panels::texture_sets::bake_entrance;
 use yolu_app::sets::{MaterialRef, TextureSets};
 use yolu_app::state::{blank_document, Action, DialogRequest};
 use yolu_protocol::{
@@ -285,6 +287,249 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
         .get_by_label("新規レイヤー")
         .accesskit_node()
         .is_disabled());
+}
+
+// ───────── 下の帯のベイクのボタン ─────────
+
+/// 試しの立方体のセットを、位置のマップ 1 枚だけ CPU で焼いた状態にする（窓の外の、最小のベイク）。
+fn bake_current_set(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>) {
+    let s = &mut h.state_mut().state;
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    s.bake.settings.maps = vec![yolu_core::mesh_maps::MeshMapKind::Position];
+    s.bake.settings.padding = 4;
+    s.apply(Action::Bake(yolu_app::bake::BakeAction::Start));
+    s.wait_bake();
+    h.run();
+}
+
+#[test]
+fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_opens_the_window() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 256);
+        h.state_mut().state.lang = lang;
+        h.run();
+        let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
+        let entrance = bake_entrance(&h.state().state);
+        // まだ焼いていないセット: 印と、理由（ツールチップの 2 行目。名前の行の後）
+        assert!(entrance.marked, "{lang:?}");
+        let lines: Vec<&str> = entrance.tooltip.lines().collect();
+        assert_eq!(lines.len(), 2, "{lang:?}: {lines:?}");
+        assert_eq!(lines[0], name);
+        assert_eq!(has_japanese(lines[1]), lang == Lang::Ja, "{}", lines[1]);
+        assert_plain(&format!("{lang:?} ベイクのボタン"), &entrance.tooltip);
+        // 帯の中: 足す・消すと同じ行で、プロジェクト設定のすぐ左
+        let bake = h.get_by_label(&entrance.tooltip).rect();
+        let configure = h
+            .get_by_label(lang.pick("プロジェクト設定…", "Project Configuration…"))
+            .rect();
+        assert_eq!(bake.center().y, configure.center().y, "{lang:?}");
+        assert!(bake.right() <= configure.left(), "{bake:?} {configure:?}");
+        assert!(configure.left() - bake.right() < 12.0, "{bake:?} {configure:?}");
+        // 押すとベイクの窓が開く（メニューの項目と同じ操作）
+        assert!(h.state().state.bake.window.is_none());
+        click(&mut h, bake.center());
+        assert!(h.state().state.bake.window.is_some(), "{lang:?}");
+    }
+}
+
+/// テクスチャセットのパネルだけを `width` の幅で描く。
+fn set_panel(width: f32, lang: Lang) -> egui_kittest::Harness<'static, yolu_app::state::AppState> {
+    let mut state = yolu_app::state::AppState::new(64, 64);
+    state.lang = lang;
+    let mut ready = false;
+    let mut h = gpu_thread::builder()
+        .with_size(egui::vec2(width, 200.0))
+        .with_render_options(render_options())
+        .wgpu()
+        .build_ui_state(
+            move |ui, state| {
+                if !ready {
+                    yolu_app::YoluApp::setup(ui.ctx());
+                    ready = true;
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                yolu_app::panels::texture_sets::show(ui, state)
+            },
+            state,
+        );
+    h.run();
+    h
+}
+
+#[test]
+fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_too_narrow() {
+    /// ベイクのボタンを出す、帯の幅の境（足す・消す・ベイク・設定の 4 つが並ぶ幅）。
+    const BAKE_MIN_BAR_WIDTH: f32 = 128.0;
+    for lang in Lang::ALL {
+        let configure = lang.pick("プロジェクト設定…", "Project Configuration…");
+        let add = lang.pick(
+            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "Add an empty texture set (same size and channels as this one)",
+        );
+        let remove_label = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
+            h.get_all_by_label_contains(lang.pick("プロジェクトには少なくとも", "A project keeps at least"))
+                .next()
+                .expect("消すボタン")
+                .rect()
+        };
+        // 帯の幅: 足すボタンは左端から 4、設定のボタンは右端の 4 手前に終わる（パネルの縁の分だけ窓の幅より狭い）
+        let bar_width = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
+            h.get_by_label(configure).rect().right() - h.get_by_label(add).rect().left() + 8.0
+        };
+        let edge = 400.0 - bar_width(&set_panel(400.0, lang));
+        assert!(edge >= 0.0, "{lang:?}: 帯が窓より広い");
+        for bar in [
+            90.0_f32, 110.0, 120.0, 126.0, 127.0, 127.5, 128.0, 128.5, 129.0, 135.0, 160.0, 235.0, 400.0,
+        ] {
+            let h = set_panel(bar + edge, lang);
+            assert!((bar_width(&h) - bar).abs() < 0.01, "{lang:?} 帯 {bar}: {}", bar_width(&h));
+            let bake = h
+                .query_all_by_label_contains(lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…"))
+                .next()
+                .map(|n| n.rect());
+            // 境は 128 px ちょうど: 127.5 までは出さず、128 からは出す
+            assert_eq!(bake.is_some(), bar >= BAKE_MIN_BAR_WIDTH, "{lang:?} 帯 {bar}");
+            let mut rects = vec![
+                h.get_by_label(add).rect(),
+                remove_label(&h),
+                h.get_by_label(configure).rect(),
+            ];
+            rects.extend(bake);
+            // 出ているとき（出ていないときも、残りの 3 つが）重ならない（縁が接するのは重なりではない）
+            let overlap = |a: &egui::Rect, b: &egui::Rect| {
+                a.min.x < b.max.x && b.min.x < a.max.x && a.min.y < b.max.y && b.min.y < a.max.y
+            };
+            for (i, a) in rects.iter().enumerate() {
+                for b in &rects[i + 1..] {
+                    assert!(!overlap(a, b), "{lang:?} 帯 {bar}: {a:?} {b:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.run();
+    let marked = |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>| {
+        bake_entrance(&h.state().state).marked
+    };
+    assert!(marked(&h), "焼く前");
+    bake_current_set(&mut h);
+    let baked = bake_entrance(&h.state().state);
+    assert!(!baked.marked, "焼いたセットに印は無い");
+    assert_eq!(baked.tooltip, "メッシュマップをベイク…", "理由の行も無い");
+    // ボタンは焼いたあとも窓を開く
+    let at = h.get_by_label(&baked.tooltip).rect().center();
+    click(&mut h, at);
+    assert!(h.state().state.bake.window.is_some());
+    h.state_mut().state.apply(Action::Bake(yolu_app::bake::BakeAction::CloseWindow));
+    // 足した空のセットは、ほかのセットが焼けていても印が付く。戻せば消える
+    let first = h.state().state.sets.current().uid;
+    h.state_mut()
+        .state
+        .apply(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    let second = h.state().state.sets.iter().last().unwrap().uid;
+    assert_ne!(first, second);
+    h.state_mut().state.apply(Action::SelectSet(second));
+    h.run();
+    assert!(marked(&h), "足したセット");
+    h.state_mut().state.apply(Action::SelectSet(first));
+    h.run();
+    assert!(!marked(&h), "焼いたセットへ戻る");
+}
+
+/// テクスチャセットの一覧と下の帯（と、その下に出るツールチップ）を切り出して撮る。
+fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: Lang, name: &str) {
+    let add = h
+        .get_by_label(lang.pick(
+            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "Add an empty texture set (same size and channels as this one)",
+        ))
+        .rect();
+    let configure = h
+        .get_by_label(lang.pick("プロジェクト設定…", "Project Configuration…"))
+        .rect();
+    let image = h.render().expect("描画");
+    // 左へは、帯の左端より広く（右に寄った帯のボタンのツールチップは左へ伸びる）
+    let (left, top) = ((configure.right() - 330.0).max(0.0) as u32, (add.top() - 100.0).max(0.0) as u32);
+    let right = ((configure.right() + 8.0) as u32).min(image.width());
+    let bottom = ((add.bottom() + 70.0) as u32).min(image.height());
+    let cropped =
+        image::imageops::crop_imm(&image, left, top, right - left, bottom - top).to_image();
+    egui_kittest::image_snapshot(&cropped, name);
+}
+
+#[test]
+fn snapshot_the_bake_button_marked_with_its_reason_and_unmarked_once_baked() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 128);
+        h.state_mut().state.lang = lang;
+        h.state_mut().state.apply(Action::LoadDemoModel);
+        h.run();
+        let at = h
+            .get_by_label(&bake_entrance(&h.state().state).tooltip)
+            .rect()
+            .center();
+        hover_and_wait(&mut h, at);
+        snapshot_set_bar(
+            &mut h,
+            lang,
+            &format!("texture_sets_bake_button_{}", lang.pick("ja", "en")),
+        );
+    }
+    // ポインタを乗せない 2 枚（印の有る・無い）。アイコンと印がポインタに隠れない
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.run();
+    snapshot_set_bar(&mut h, Lang::Ja, "texture_sets_bake_button_marked");
+    bake_current_set(&mut h);
+    snapshot_set_bar(&mut h, Lang::Ja, "texture_sets_bake_button_baked");
+}
+
+#[test]
+fn the_bake_button_cannot_be_pressed_while_drawing() {
+    let mut h = app(1280.0, 800.0, 128);
+    let entrance = bake_entrance(&h.state().state);
+    assert!(!h
+        .get_by_label(&entrance.tooltip)
+        .accesskit_node()
+        .is_disabled());
+    let layer = h.state().state.selected_layer.unwrap();
+    let brush = h.state().state.stroke_settings(false);
+    let stroke = h.state_mut().state.doc.begin_stroke(layer, &brush).unwrap();
+    h.run();
+    assert!(h
+        .get_by_label(&entrance.tooltip)
+        .accesskit_node()
+        .is_disabled());
+    h.state_mut().state.doc.cancel_stroke(stroke);
+}
+
+#[test]
+fn the_fire_icon_is_loaded_and_listed_in_the_licence_tables() {
+    use sha2::{Digest, Sha256};
+    let ctx = egui::Context::default();
+    assert!(yolu_app::ui::icons::Icons::load(&ctx).has("local_fire_department"));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let png = std::fs::read(root.join("assets/icons/local_fire_department.png")).unwrap();
+    let digest: String = Sha256::digest(&png).iter().map(|b| format!("{b:02x}")).collect();
+    // 許諾の表: 確認済みの PNG の SHA-256 と、元の名前の対応（JSON として読む。改行や字下げに頼らない）
+    let reviewed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("../../tools/licenses-reviewed.json")).unwrap()).unwrap();
+    let listed = reviewed["bundled"]["yolu-app"]
+        .as_array()
+        .expect("bundled の yolu-app の配列")
+        .iter()
+        .flat_map(|entry| entry["files"].as_array().into_iter().flatten())
+        .find(|file| file["path"] == "crates/yolu-app/assets/icons/local_fire_department.png")
+        .expect("licenses-reviewed.json に載っていない");
+    assert_eq!(listed["sha256"], digest.as_str(), "載っている SHA-256 と PNG が違う");
+    let notices = std::fs::read_to_string(root.join("assets/icons/THIRD-PARTY-NOTICES.md")).unwrap();
+    assert!(notices.contains("| `local_fire_department` | fluent | `fire` | regular |"));
 }
 
 fn fixture(name: &str) -> std::path::PathBuf {

@@ -756,16 +756,15 @@ fn shape_rows(
 ) {
     let lang = app.lang;
     let v = g.volume;
+    // 形の説明は新規塗りつぶしレイヤーのメニュー・塗りつぶしの欄と同じ文
+    let shape_tip = names::shape_tooltip(lang);
     if let Some(rect) = choice_row(
         ui,
         rows,
         "fx.shape",
         lang.pick("形", "Shape"),
         names::shape_name(lang, v.shape),
-        Some(lang.pick(
-            "ボックス: 中が 1 で、面に向かって 0 へ。球: 表面に向かって同じく。平面: 後ろが 0、前が 1（幅の間で）。",
-            "Box: 1 inside, fading to 0 at its faces. Sphere: the same toward its surface. Plane: 0 behind it to 1 in front of it, across its width.",
-        )),
+        Some(shape_tip.as_str()),
         enabled,
     ) {
         open_popup(app, ctx, Popup::Fx(FxChoice::Shape), rect, rect.width());

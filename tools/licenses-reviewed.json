@@ -4644,6 +4644,10 @@
             "sha256": "33dbc32f7ecdfea775246ac07cf2b1e047dc0116ae9d6e19e47ed0090ec8de19"
           },
           {
+            "path": "crates/yolu-app/assets/icons/local_fire_department.png",
+            "sha256": "3db6794b50efb6a0369573f7af9be7996d25351325035bb6ea392ab2da0e0986"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/lock.png",
             "sha256": "18c7b7ae09e8d0e9e69d220efb6d585f033549023e483dee961ccc95254e5539"
           },
@@ -4897,7 +4901,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "a6517de71131e1d5d8f86229ed57abe809ce0bacc72369eefa11dd2a2aaf3fa5"
+          "sha256": "85bc41e92a3cdd2ddfd627db61a152064bb6b689248f82f11cef612ff500fdff"
         }
       },
       {
