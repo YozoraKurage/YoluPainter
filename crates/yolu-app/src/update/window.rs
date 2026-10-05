@@ -83,6 +83,7 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
     };
     let version = ready.version.clone();
     let modified = app.modified;
+    let blocked = app.update.ready_blocked;
     let button = |label: &str, primary: bool, tooltip: Option<&str>| Button {
         label: label.into(),
         primary,
@@ -129,13 +130,18 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
             ),
             false,
         )),
-        rows: if modified {
-            vec![Row::text(
-                lang.pick("保存していない変更があります", "Unsaved changes"),
-                true,
-            )]
-        } else {
-            Vec::new()
+        rows: {
+            let mut rows = Vec::new();
+            if modified {
+                rows.push(Row::text(
+                    lang.pick("保存していない変更があります", "Unsaved changes"),
+                    true,
+                ));
+            }
+            if blocked {
+                rows.push(Row::text(super::blocked_text(lang), true));
+            }
+            rows
         },
         buttons,
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),

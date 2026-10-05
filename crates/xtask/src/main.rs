@@ -18,7 +18,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: build --target T --release [--require-update-key] / bundle --target T / installer --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -69,7 +69,12 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     let mut require_update_key = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--target" if matches!(command.as_str(), "build" | "bundle" | "installer") => {
+            "--target"
+                if matches!(
+                    command.as_str(),
+                    "build" | "bundle" | "installer" | "symbols"
+                ) =>
+            {
                 target = Some(value(&mut args)?)
             }
             "--version" if matches!(command.as_str(), "updater-json" | "verify") => {
@@ -90,7 +95,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
         }
     }
     match command.as_str() {
-        "build" | "bundle" | "installer" => {
+        "build" | "bundle" | "installer" | "symbols" => {
             let target = target.ok_or("--target が必要です")?;
             if !is_archive_target(&target) {
                 return Err("未対応の配布ターゲットです".into());
@@ -103,6 +108,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
                     build(&target, require_update_key)
                 }
                 "bundle" => bundle(&target),
+                "symbols" => symbols(&target),
                 _ => installer(&target),
             }
         }
@@ -365,6 +371,52 @@ fn bundle(target: &str) -> Result<()> {
     println!("配布物: {}", destination.display());
     Ok(())
 }
+/// Windows の配布物の PDB を入れる付属物の名前（Release にだけ載せる）。クラッシュの記録の各フレームの番地から `Image base` を引いた
+/// 相対の番地を、同じ版の関数名・行へ引くための物で、配布物（zip・インストーラー）には入れない（利用者に配る必要が無く、大きい）。
+/// 更新の対象ではない: 署名つきの更新情報には載せず（アプリは取りに行かない）、`updater-json` はこの名前だけを知って読み飛ばし、
+/// `verify` は中身の形だけを見る。
+fn symbols_name(version: &Version) -> String {
+    format!("yolupainter-{version}-{WINDOWS_ARCHIVE}-pdb.zip")
+}
+/// PDB の、付属物の zip の中での名前。実行ファイルが指す名前と同じ（デバッガーが探す名前）。
+const PDB_FILE: &str = "yolupainter.pdb";
+/// 配布物のビルド（`build`）が作った PDB を、`target/dist` の付属物にする。
+fn symbols(target: &str) -> Result<()> {
+    if target != WINDOWS_ARCHIVE {
+        return Err("PDB は Windows（x86_64-pc-windows-msvc）だけです".into());
+    }
+    let root = root();
+    let version = workspace_version()?;
+    let pdb = root
+        .join("target")
+        .join(target)
+        .join("release")
+        .join(PDB_FILE);
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out)?;
+    let destination = out.join(symbols_name(&version));
+    symbols_archive(&pdb, &destination)?;
+    println!("付属物: {}", destination.display());
+    Ok(())
+}
+/// `pdb` を、PDB 1 つだけの zip にして `destination` へ置く（ファイルが無い・空・大きすぎるときは、何も置かずに断る）。
+/// 前回の付属物は、PDB を調べる前に消す（`bundle` と同じ。組み直しに失敗したあとで、前のビルドの PDB が今回の付属物として
+/// `updater-json`・`verify` を通らないように）。
+fn symbols_archive(pdb: &Path, destination: &Path) -> Result<()> {
+    remove_if_present(destination)?;
+    let size = fs::metadata(pdb)
+        .map_err(|_| {
+            format!(
+                "PDB がありません: {}（配布用に `cargo xtask build` で組んだあとに作る。PDB を作る設定は release.yml の「PDB の設定」）",
+                pdb.display()
+            )
+        })?
+        .len();
+    if size == 0 || size > MAX_ASSET {
+        return Err("PDB の大きさが不正です".into());
+    }
+    write_archive(destination, &[(PDB_FILE.to_owned(), pdb.to_owned())], true)
+}
 /// NSIS が数字 4 つの版（各 0〜65535）しか受けないので、プレリリース識別子は落とす（文字列の版は別に渡す）。
 fn numeric_version(version: &Version) -> Result<String> {
     let part = |n: u64| {
@@ -559,11 +611,20 @@ fn updater(
         });
     }
     // 無関係なファイルを黙って除外しない。入力は配布物専用フォルダにする。
+    // 例外は PDB の付属物 1 つ（`symbols_name`）だけ。更新の対象ではないので、更新情報には載せない。
+    let symbols = symbols_name(&version);
     for entry in fs::read_dir(directory)? {
         let name = entry?
             .file_name()
             .into_string()
             .map_err(|_| "配布物名が UTF-8 ではありません")?;
+        if name == symbols {
+            let meta = fs::symlink_metadata(directory.join(&name))?;
+            if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_ASSET {
+                return Err("PDB の付属物の種類または大きさが不正です".into());
+            }
+            continue;
+        }
         if name != format!("{UPDATER_FILE}.tmp") && !assets.iter().any(|a| a.name == name) {
             return Err(format!(
                 "予期しない配布物: {name}（この版の配布物だけを置いたフォルダが必要です）"
@@ -682,6 +743,24 @@ fn check_archive_contents(target: &str, bytes: &[u8]) -> Result<()> {
     )
     .into())
 }
+/// PDB の付属物の zip が、通常のファイルで、PDB だけを 1 つ持つこと。
+fn check_symbols_archive(path: &Path) -> Result<()> {
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(format!("{name}: 通常のファイルではありません").into());
+    }
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(MAX_ASSET + 1)
+        .read_to_end(&mut bytes)?;
+    let names = archive_names(WINDOWS_ARCHIVE, &bytes).map_err(|e| format!("{name}: {e}"))?;
+    if names != [PDB_FILE] {
+        return Err(format!("{name}: 中身が {PDB_FILE} だけではありません").into());
+    }
+    Ok(())
+}
 /// 公開鍵だけで、アプリと同じ検証（署名・版・大きさ・SHA-256）を通すか確かめる。
 /// 秘密の鍵を取り違えた署名や、配布物と更新情報の食い違いをここで落とす。
 fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<()> {
@@ -721,6 +800,11 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
                 .map_err(|error| format!("{name}: {error}"))?;
             archives += 1;
         }
+    }
+    // PDB の付属物があれば、PDB 1 つだけの zip であること（更新情報には載らないので、署名では守られない。形だけ確かめる）。
+    let symbols = directory.join(symbols_name(version));
+    if fs::symlink_metadata(&symbols).is_ok() {
+        check_symbols_archive(&symbols)?;
     }
     // 上で署名と本文が通っているので、ここで確かめるのは「ファイルが無いのに載っている」ことだけ。
     for (target, name) in &absent {
@@ -1041,6 +1125,10 @@ mod tests {
             vec!["build", "--target", "aarch64-apple-darwin", "--release"],
             vec!["bundle"],
             vec!["bundle", "--target", "aarch64-apple-darwin"],
+            // PDB の付属物は Windows だけ（組まずに断る）
+            vec!["symbols"],
+            vec!["symbols", "--target", LINUX_ARCHIVE],
+            vec!["symbols", "--target", "aarch64-apple-darwin"],
             vec!["verify", "--version", "1.0.0", "--assets", dir],
             vec!["verify", "--version", "1.0.0", "--public-key", "00"],
             vec!["pubkey"],
@@ -1051,6 +1139,138 @@ mod tests {
             assert!(exec(&list).is_err(), "{list:?}");
             assert_no_metadata(&d.0);
         }
+    }
+    /// 付属物の PDB の zip の組み立て: PDB だけを `yolupainter.pdb` の名前で持ち、無い・空・大きすぎる PDB は、何も置かずに断る。
+    #[test]
+    fn the_symbols_archive_holds_only_the_pdb_and_refuses_a_missing_or_empty_one() {
+        let d = Scratch::new();
+        let v = Version::new(0, 3, 1);
+        assert_eq!(
+            symbols_name(&v),
+            "yolupainter-0.3.1-x86_64-pc-windows-msvc-pdb.zip"
+        );
+        // 更新の対象の名前とは別（更新情報の鍵にも、更新の対象の配布物の名前にもならない）
+        assert!(TARGETS
+            .iter()
+            .all(|t| asset_name(&v, t).unwrap() != symbols_name(&v)));
+        let pdb = d.0.join("anything-built.pdb");
+        fs::write(&pdb, b"pdb-bytes").unwrap();
+        let destination = d.0.join(symbols_name(&v));
+        symbols_archive(&pdb, &destination).unwrap();
+        check_symbols_archive(&destination).unwrap();
+        let bytes = fs::read(&destination).unwrap();
+        assert_eq!(archive_names(WINDOWS_ARCHIVE, &bytes).unwrap(), [PDB_FILE]);
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut content = Vec::new();
+        zip.by_name(PDB_FILE)
+            .unwrap()
+            .read_to_end(&mut content)
+            .unwrap();
+        assert_eq!(content, b"pdb-bytes");
+        // 無い・空の PDB は断り、前回の付属物も一時ファイルも残さない（前のビルドの PDB を今回の物と取り違えない）
+        fs::write(d.0.join("empty.pdb"), b"").unwrap();
+        for bad in ["missing.pdb", "empty.pdb"] {
+            assert!(
+                destination.exists(),
+                "{bad}: 前回の付属物がある状態から始める"
+            );
+            let error = symbols_archive(&d.0.join(bad), &destination)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("PDB"), "{bad}: {error}");
+            assert!(
+                !destination.exists() && !destination.with_extension("tmp").exists(),
+                "{bad}: 前回の付属物が残った"
+            );
+            // 次の成功は、また前の物を置き換える
+            symbols_archive(&pdb, &destination).unwrap();
+            check_symbols_archive(&destination).unwrap();
+        }
+        // 前の付属物がある所へ成功の組み直しをしても、置き換わって 1 つだけ
+        symbols_archive(&pdb, &destination).unwrap();
+        check_symbols_archive(&destination).unwrap();
+        assert!(!destination.with_extension("tmp").exists());
+    }
+    /// 付属物の PDB は更新の対象ではない: 更新情報に載せず、ほかの見知らぬファイルは今までどおり断る。形のおかしい付属物は断る。
+    #[test]
+    fn updater_leaves_the_symbols_archive_out_of_the_manifest_and_still_refuses_strangers() {
+        let v = Version::new(1, 2, 3);
+        let d = Scratch::new();
+        fs::write(asset_path(&d.0, &v, 0), b"archive").unwrap();
+        fs::write(asset_path(&d.0, &v, 2), b"setup").unwrap();
+        let symbols = d.0.join(symbols_name(&v));
+        fs::write(&symbols, b"pdb zip").unwrap();
+        updater(v.clone(), &d.0, true, || Ok(disposable_key())).unwrap();
+        let envelope: Envelope =
+            serde_json::from_slice(&fs::read(d.0.join(UPDATER_FILE)).unwrap()).unwrap();
+        let manifest: Manifest = serde_json::from_str(&envelope.payload).unwrap();
+        let mut targets: Vec<_> = manifest.assets.iter().map(|a| a.target.as_str()).collect();
+        targets.sort();
+        assert_eq!(targets, [WINDOWS_ARCHIVE, WINDOWS_INSTALLER]);
+        assert!(manifest.assets.iter().all(|a| !a.name.contains("pdb")));
+        // 別の版の PDB・名前の違うファイルは、今までどおり「予期しない配布物」
+        for stranger in [
+            "yolupainter-9.9.9-x86_64-pc-windows-msvc-pdb.zip",
+            "yolupainter.pdb",
+            "notes.txt",
+        ] {
+            fs::write(d.0.join(stranger), b"x").unwrap();
+            assert!(
+                updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err(),
+                "{stranger}"
+            );
+            assert_no_metadata(&d.0);
+            fs::remove_file(d.0.join(stranger)).unwrap();
+        }
+        // 付属物が空・フォルダ・大きすぎるときは断る
+        fs::write(&symbols, b"").unwrap();
+        assert!(updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err());
+        fs::remove_file(&symbols).unwrap();
+        fs::create_dir(&symbols).unwrap();
+        assert!(updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err());
+        fs::remove_dir(&symbols).unwrap();
+        File::create(&symbols)
+            .unwrap()
+            .set_len(MAX_ASSET + 1)
+            .unwrap();
+        assert!(updater(v, &d.0, true, || Ok(disposable_key())).is_err());
+        assert_no_metadata(&d.0);
+    }
+    /// `verify` は、付属物があれば PDB 1 つだけの zip であることを見る（無くても通る。更新の確かめは今までどおり）。
+    #[test]
+    fn verify_checks_the_shape_of_the_symbols_archive_when_there_is_one() {
+        let v = Version::new(1, 2, 3);
+        let verify_with = |dir: &Path, public: &str| {
+            exec(&[
+                "verify",
+                "--version",
+                "1.2.3",
+                "--assets",
+                dir.to_str().unwrap(),
+                "--public-key",
+                public,
+            ])
+        };
+        // 付属物があっても、署名つきの更新情報を作り直さずに通る
+        let (d, public) = signed_dist(&v, &[0, 1]);
+        verify_with(&d.0, &public).unwrap();
+        let pdb = d.0.join("pdb-source");
+        fs::write(&pdb, b"pdb").unwrap();
+        symbols_archive(&pdb, &d.0.join(symbols_name(&v))).unwrap();
+        fs::remove_file(&pdb).unwrap();
+        verify_with(&d.0, &public).unwrap();
+        // zip でない・別のファイルが入っている・PDB の名前でない付属物は断る
+        fs::write(d.0.join(symbols_name(&v)), b"not a zip").unwrap();
+        assert!(verify_with(&d.0, &public).is_err());
+        let wrong = fake_archive(WINDOWS_ARCHIVE, &[], &[]);
+        fs::write(d.0.join(symbols_name(&v)), wrong).unwrap();
+        assert!(verify_with(&d.0, &public).is_err());
+        let mut zip = zip::ZipWriter::new(File::create(d.0.join(symbols_name(&v))).unwrap());
+        zip.start_file("other.pdb", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"pdb").unwrap();
+        zip.finish().unwrap();
+        assert!(verify_with(&d.0, &public).is_err());
     }
     #[test]
     fn archive_replaces_atomically_and_cleans_up_on_failure() {

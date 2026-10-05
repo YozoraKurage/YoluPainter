@@ -6,6 +6,8 @@
 //! - 新しい版が見つかっても、利用者が押すまでダウンロードしない。落としたファイルは、署名つきの更新情報の SHA-256・大きさで確かめた
 //!   ものだけを置き、走らせる直前にもう一度確かめる。
 //! - 描いている最中は入れない。保存していない変更があるときは、保存してから入れるか聞く。
+//! - 同じ実行ファイルの別の起動（別の窓）が動いているときは入れない。インストーラーは動いている exe を書き換えられず、閉じた窓だけが戻らないので、
+//!   始める前に断る。落としたインストーラーは残し、別の窓を閉じてからもう一度押せばすぐ入る。
 //! - インストールした Windows は、インストーラーを無音で走らせてアプリを閉じ、インストーラーが終わったらアプリを起こし直す。
 //!   それ以外（Linux・zip で展開した Windows）は、その版のリリースのページを開くだけ（自分で入れ替えない）。
 //!
@@ -66,6 +68,8 @@ type Factory = Arc<dyn Fn(Link) -> Box<dyn Transport + Send> + Send + Sync>;
 /// インストーラーを走らせる口と、ページを開く口（試験は記録するだけの物に差し替える）。
 type Launcher = Arc<dyn Fn(&Path) -> io::Result<()> + Send + Sync>;
 type Opener = Arc<dyn Fn(&str) -> io::Result<()> + Send + Sync>;
+/// 同じ実行ファイルの別の起動があるか（試験は、実際のプロセスの一覧を見ない物に差し替える）。
+type Peers = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// 見つかった新しい版（署名つきの更新情報で確かめ済み）。
 #[derive(Clone, Debug)]
@@ -135,12 +139,15 @@ pub struct UpdateState {
     staging: Option<PathBuf>,
     launcher: Launcher,
     opener: Opener,
+    other_instance: Peers,
     job: Option<Job>,
     offer: Option<Offer>,
     ready: Option<Ready>,
     /// 準備の窓を出したい（描いている最中は、描き終わるまで待つ）。
     ready_wanted: bool,
     ready_open: bool,
+    /// 別の起動が動いていて、更新を始められなかった（準備の窓が理由を出す。押し直すか「あとで」で消える）。
+    pub(crate) ready_blocked: bool,
     pub(crate) ready_offset: Vec2,
     /// 保存してから入れる、の保存の結果待ち。
     after_save: bool,
@@ -183,11 +190,13 @@ impl UpdateState {
             staging: launch::staging_dir(),
             launcher: Arc::new(launch::run_installer),
             opener: Arc::new(launch::open_page),
+            other_instance: Arc::new(launch::another_instance_running),
             job: None,
             offer: None,
             ready: None,
             ready_wanted: false,
             ready_open: false,
+            ready_blocked: false,
             ready_offset: Vec2::ZERO,
             after_save: false,
             quitting: false,
@@ -226,6 +235,11 @@ impl UpdateState {
 
     pub fn is_ready_open(&self) -> bool {
         self.ready_open
+    }
+
+    /// 別の起動が動いているので、更新を始められなかった（準備の窓が理由を出している）。
+    pub fn is_blocked(&self) -> bool {
+        self.ready_blocked
     }
 
     /// 更新の窓（初回の問い・準備）が開いている（キーの割り当てを止める）。
@@ -287,6 +301,12 @@ impl UpdateState {
         self.launcher = launcher;
         self.opener = opener;
         self.staging = Some(staging);
+    }
+
+    /// 試験用: 別の起動があるかの答えを差し替える。
+    #[doc(hidden)]
+    pub fn set_other_instance_for_test(&mut self, other_instance: Peers) {
+        self.other_instance = other_instance;
     }
 
     /// 試験用: 見つかった版を直接入れる（通信を通さずに窓・メニューを見る）。
@@ -465,6 +485,14 @@ fn staged_file_is_intact(ready: &Ready) -> bool {
     bytes.len() as u64 == ready.asset.size && sha256(&bytes) == ready.asset.sha256
 }
 
+/// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備の窓が同じ文を出す）。
+pub(crate) fn blocked_text(lang: Lang) -> &'static str {
+    lang.pick(
+        "ほかの YoluPainter が開いています",
+        "Another YoluPainter is running",
+    )
+}
+
 fn failure_text(lang: Lang, what: &'static str, failure: Failure) -> String {
     // what: "check" か "download"
     let head = match what {
@@ -525,6 +553,7 @@ impl AppState {
             UpdateAction::Later => {
                 self.update.ready_open = false;
                 self.update.ready_wanted = false;
+                self.update.ready_blocked = false;
             }
         }
     }
@@ -629,6 +658,7 @@ impl AppState {
                     }
                 }
                 self.update.ready = None;
+                self.update.ready_blocked = false;
                 if self.update.job.is_some() {
                     return;
                 }
@@ -736,6 +766,10 @@ impl AppState {
         if self.update.ready.is_none() {
             return;
         }
+        // 保存する前に断る（更新が始まらないのに、保存の窓を出さない）。落としたインストーラーは残す。
+        if self.update_blocked_by_another_instance() {
+            return;
+        }
         if save && self.modified {
             // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先の窓を取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
@@ -770,11 +804,26 @@ impl AppState {
         self.update_launch();
     }
 
+    /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備の窓も開いたまま。
+    /// 別の窓を閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
+    fn update_blocked_by_another_instance(&mut self) -> bool {
+        let blocked = (self.update.other_instance)();
+        self.update.ready_blocked = blocked;
+        if blocked {
+            self.message = blocked_text(self.lang).into();
+        }
+        blocked
+    }
+
     fn update_launch(&mut self) {
         let lang = self.lang;
         let Some(ready) = self.update.ready.clone() else {
             return;
         };
+        // 保存の窓を待つ間に別の窓が開いたかもしれないので、走らせる直前にもう一度確かめる。
+        if self.update_blocked_by_another_instance() {
+            return;
+        }
         if !staged_file_is_intact(&ready) {
             let _ = std::fs::remove_file(&ready.path);
             self.update.ready = None;

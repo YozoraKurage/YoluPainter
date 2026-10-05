@@ -4,8 +4,11 @@
 本物の yolupainter.exe の代わりに、起動した印を残すだけの小さな exe（mingw でこの場で作る）を入れる。
 確かめること: 無音のインストール（入れ先・ショートカット・アンインストールの登録）、.ylp の関連付けの
 有無と更新での引き継ぎ、上書きの更新、/RUN での起こし直し、exe を書き込みで開けない間は待ち、上限を超えたら
-何も変えずに終了コード 5 で終わること（待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる）、
-アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA で消す）。
+何も変えずに終了コード 5 で終わること（待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる。
+上限を超えたときは、/RUN が付いていれば今入っている exe を起こし直し、付いていなければ起こさない）、
+アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA では、アプリが作り直せるデータ（設定・窓の配置・復旧・
+クラッシュの記録・サムネイルのキャッシュ・落とした更新）だけを消し、利用者が作った物（個人のライブラリ・ブラシ・サブツール・
+グラデーション・カラーセット・表示のプリセット）と、知らないファイルは残す）。
 文書（docs\ と docs\en\）は、入れる・上書きで新しい版の中身になる・前の版にだけあった文書が更新で消える・利用者が docs\ に
 置いたファイルと、記録が書き換えられていても入れ先の外には触れない・アンインストールで空になったフォルダだけが消える、を確かめる。
 ショートカットの作業フォルダと、/RUN で起こしたアプリの作業フォルダが入れ先であること（文書を入れたあとで入れ先へ戻す SetOutPath の確かめ）も読む。
@@ -31,6 +34,16 @@ WORK = ROOT / 'target/test-installer'
 PRODUCT_KEY = r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\YoluPainter'
 SCRIPT = ROOT / 'installer/yolupainter.nsi'
 ROOT_FILES = ['LICENSE', 'README.md', 'README.en.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md', 'THIRD_PARTY_LICENSES.txt']
+# アプリが %APPDATA%\YoluPainter（設定のフォルダ）と %LOCALAPPDATA%\YoluPainter に作る物。どれがどちらかは docs/INSTALL.md の表と同じ。
+# 作り直せる物（/DELETEDATA で消える）
+REBUILDABLE_ROAMING = ['settings.conf', 'recovery.conf', 'update.conf', 'layout.json', 'settings.4242.pending', 'layout.json.4242.pending',
+                       'recovery/session-a/generation-1/data.bin', 'recovery/session.lock', 'logs/crash-1.log', 'logs/session-1.log']
+REBUILDABLE_LOCAL = ['thumbnails/ab/cd.png', 'LiveLink/link.sock']
+# 利用者が作った物と、知らないファイル（どちらの答えでも消えない）
+USER_MADE = ['Library/picture.png', 'Library/sub/material.ylsmart', 'brushes/mine.ylbrush', 'subtools/mine.ylsubtool',
+             'gradients/mine.ylgradients', 'hide_presets/mine.ylhide', 'colorsets/mine.ylcolors']
+UNKNOWN = ['future-folder/thing.bin', 'notes.txt']
+STAGED_UPDATE = 'updates/yolupainter-0.9.0-x86_64-pc-windows-msvc-setup.exe'
 FAKE_APP = r'''
 #include <stdio.h>
 #include <stdlib.h>
@@ -210,6 +223,21 @@ def wait_gone(path, seconds=30):
     return not path.exists()
 
 
+def lay_out_data(roaming, local, user_made=True):
+    """アプリが作る物（作り直せる物・利用者が作った物・知らないファイル・落とした更新）を、中身が自分の名前のファイルで置く。"""
+    names = {roaming: REBUILDABLE_ROAMING + ([*USER_MADE, *UNKNOWN] if user_made else []),
+             local: [*REBUILDABLE_LOCAL, STAGED_UPDATE]}
+    for base, files in names.items():
+        for name in files:
+            path = base / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+
+
+def all_exist(base, names):
+    return all((base / name).is_file() for name in names)
+
+
 def uninstall(install, *args):
     """実際と同じ流れ（アンインストーラーは自分を一時の場所へ写して動き、元を消す）で消し、終わるのを待つ。"""
     code, _ = run_silent(install / 'uninstall.exe', *args)
@@ -246,6 +274,7 @@ def run(args):
     docs = script_docs()
     wine('wineboot', '-u', timeout=300)
     appdata = expand('APPDATA')
+    localdata = expand('LOCALAPPDATA')
 
     def shortcut():
         # スタートメニューの場所は Windows と Wine で違うので、ユーザーの領域の中から探す
@@ -350,6 +379,8 @@ def run(args):
     version_before = registry(PRODUCT_KEY, 'DisplayVersion')
     ran = Path(str(exe) + '.ran')
     ran.unlink(missing_ok=True)
+    cwd_record = Path(str(exe) + '.cwd')
+    cwd_record.unlink(missing_ok=True)
     exe.chmod(0o444)
     try:
         locked = not os.access(exe, os.W_OK)
@@ -362,7 +393,22 @@ def run(args):
     check(all((install / name).read_bytes() == data for name, data in snapshot.items()),
           '上限を超えたら、exe・README・文書とその記録・アンインストーラーを何も変えない')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == version_before, '上限を超えたら、登録の版を変えない')
-    check(not ran.exists(), '上限を超えたら、/RUN でもアプリを起こさない')
+    # /RUN が付いていれば、利用者を窓の無い状態に置かないよう、今入っている（変わっていない）exe を起こし直す。
+    check(wait_for(ran), '上限を超えても、/RUN が付いていれば今入っている exe を起こし直す')
+    check(exe.read_bytes().endswith(b'build 0.1.0'), '起こし直すのは、置き換わっていない今の版')
+    started_in = cwd_record.read_text().strip() if cwd_record.exists() else None
+    check(bool(started_in) and bool(location) and started_in.rstrip('\\').lower() == location.lower(),
+          f'上限を超えて起こし直したアプリの作業フォルダは入れ先（{started_in}）')
+    # /RUN が付いていなければ、上限を超えても何も起こさない。
+    ran.unlink(missing_ok=True)
+    exe.chmod(0o444)
+    try:
+        code, _ = run_silent(v3)
+    finally:
+        exe.chmod(0o644)
+    check(code == 5, f'/RUN なしでも、待ちの上限を超えたら終了コード 5（終了コード {code}）')
+    time.sleep(2)
+    check(not ran.exists(), '/RUN が付いていなければ、上限を超えてもアプリを起こさない')
     code, _ = run_silent(v3)
     check(code == 0 and exe.read_bytes().endswith(b'build 0.3.0'), '開けるようになれば、同じインストーラーで入る')
     code, _ = run_silent(v1)
@@ -370,8 +416,8 @@ def run(args):
 
     # 5. アンインストール: 入れたファイルだけを消し、利用者のデータは残す
     data = appdata / 'YoluPainter'
-    data.mkdir(exist_ok=True)
-    (data / 'settings.conf').write_text('language=ja\n')
+    local = localdata / 'YoluPainter'
+    lay_out_data(data, local)
     (install / 'my-notes.txt').write_text('利用者のファイル')
     (install / 'docs/en/mine.txt').write_text('利用者のファイル')
     code, gone = uninstall(install)
@@ -385,7 +431,10 @@ def run(args):
     check(shortcut() is None, 'ショートカットが消える')
     check(registry(PRODUCT_KEY, 'DisplayName') is None, '登録が消える')
     check(registry(r'HKCU\Software\Classes\.ylp') is None, '自分が付けた関連付けが外れる')
-    check((data / 'settings.conf').exists(), '無音のアンインストールは利用者の設定を残す')
+    check(all_exist(data, [*REBUILDABLE_ROAMING, *USER_MADE, *UNKNOWN]) and all_exist(local, REBUILDABLE_LOCAL),
+          '無音のアンインストールは、設定・復旧・利用者が作った物・知らないファイルを全部残す')
+    check(not (local / STAGED_UPDATE).exists() and not (local / 'updates').exists(),
+          '落とした更新だけは、データを残す答えでも消える（利用者のデータではない）')
 
     # 6. /DELETEDATA で、設定などのデータも消える。他のアプリに替えられた関連付けには触らない
     (install / 'my-notes.txt').unlink()
@@ -396,9 +445,27 @@ def run(args):
     wine('reg', 'add', r'HKCU\Software\Classes\.ylp', '/ve', '/d', 'OtherApp.File', '/f')
     code, gone = uninstall(install, '/DELETEDATA')
     check(code == 0 and gone, '/DELETEDATA の無音のアンインストールが終わる')
-    check(not data.exists(), '/DELETEDATA で設定のフォルダが消える')
+    gone_roaming = [name for name in REBUILDABLE_ROAMING if (data / name).exists()]
+    check(not gone_roaming, f'/DELETEDATA で、作り直せる設定・窓の配置・復旧・クラッシュの記録・一時ファイルが消える（残り {gone_roaming}）')
+    for folder in ['recovery', 'logs']:
+        check(not (data / folder).exists(), f'/DELETEDATA で {folder} のフォルダごと消える')
+    check(not any((local / name).exists() for name in REBUILDABLE_LOCAL) and not (local / 'thumbnails').exists()
+          and not (local / 'LiveLink').exists(), '/DELETEDATA で、サムネイルのキャッシュと Live Link の置き場が消える')
+    check(not local.exists(), '/DELETEDATA で、%LOCALAPPDATA%\\YoluPainter は空になって消える')
+    # 利用者が作った物と知らないファイルは、/DELETEDATA でも消えない（持ち主のいるフォルダも残る）。
+    missing = [name for name in [*USER_MADE, *UNKNOWN] if not (data / name).is_file()]
+    check(not missing, f'/DELETEDATA でも、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットと、知らないファイルは残る（無い物 {missing}）')
+    check((data / 'brushes/mine.ylbrush').read_text() == 'brushes/mine.ylbrush', '残った利用者の物の中身が変わらない')
     check(registry(r'HKCU\Software\Classes\.ylp') == 'OtherApp.File', '他のアプリに替えられた関連付けには触らない')
     check(wait_gone(install), '入れ先が空になれば消える')
+
+    # 6b. 作り直せる物しか無ければ、/DELETEDATA でフォルダごと消える（空のフォルダを残さない）
+    shutil.rmtree(data)
+    lay_out_data(data, local, user_made=False)
+    code, _ = run_silent(v1)
+    code, gone = uninstall(install, '/DELETEDATA')
+    check(code == 0 and gone, '作り直せる物だけのとき、/DELETEDATA の無音のアンインストールが終わる')
+    check(not data.exists() and not local.exists(), '作り直せる物しか無ければ、設定のフォルダも %LOCALAPPDATA%\\YoluPainter も消える')
 
 
 if __name__ == '__main__':
