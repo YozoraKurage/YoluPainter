@@ -1,6 +1,9 @@
 use yolu_core::{BlendMode, Channel, Document, Rect, Rgba8, TileCoord};
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
 use yolu_gpu::{GpuPainter, Options, ResidentCompositor, ResidentOptions};
 fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
+    gpu_lease::lease();
     let g = match GpuPainter::new(Options::default()) {
         Ok(g) => g,
         Err(e) => {

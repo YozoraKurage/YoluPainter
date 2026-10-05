@@ -1,6 +1,8 @@
 //! GPU ベイクを CPU（`yolu_core::mesh_maps::bake`）と照らす。全バイト一致は求めない（f32 と f64、UV の覆いの境の判定、レイの当たり外れ）。
 //! アダプターが無いときは理由を標準エラーへ出して終わる（Rust の集計では passed なので `--nocapture` の出力を確かめる）。
 //! 環境変数 `YOLUPAINTER_REQUIRE_GPU` を設定すると、スキップせず失敗にする（アダプターのある環境で試験が実行されたことの確認用）。
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
 #[path = "support/meshes.rs"]
 mod meshes;
 use meshes::*;
@@ -21,6 +23,7 @@ fn skipped(why: &str) {
 }
 
 fn gpu() -> Option<BakeGpu> {
+    gpu_lease::lease();
     match BakeGpu::new(GpuBakeOptions {
         allow_software: true,
         ray_query: false,
@@ -407,6 +410,7 @@ fn maps_are_not_uniform() {
 }
 
 fn gpu_with(options: GpuBakeOptions) -> Option<BakeGpu> {
+    gpu_lease::lease();
     match BakeGpu::new(GpuBakeOptions {
         allow_software: true,
         ray_query: false,

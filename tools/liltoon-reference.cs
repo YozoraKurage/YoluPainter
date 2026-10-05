@@ -3,12 +3,12 @@ using System.Globalization;
 using UnityEngine.Rendering;
 // lilToon の再現を比べる正解の絵を、Unity の本物の lilToon で撮る（常駐の Unity の `unity-do.sh run` に渡すメソッドの本体）。
 //
-// 使い方: `crates/yolu-app/tests/liltoon_reference.rs` の export_and_render が書いたフォルダ（scenes.txt・*.mesh.txt・*.rgba）の
+// 使い方: `crates/yolu-app/tests/gui_view3d/liltoon_reference.rs` の export_and_render が書いたフォルダ（scenes.txt・*.mesh.txt・*.rgba）の
 // 場所を、下の __DIR__ に置き換えて渡す。
 //   sed "s#__DIR__#$DIR#" tools/liltoon-reference.cs > /tmp/snippet.cs && .devcontainer/unity/unity-do.sh run /tmp/snippet.cs
 // 場面ごとに unity_<名前>.png を同じフォルダに書く。Live Link が送るマテリアルの値（Unity のパッケージの LiveLinkMaterialValues が
 // 読むものと同じ。プロパティ・キーワード・描いた絵を見せるプロパティ・描いていないスロットの絵）も link_<名前>.txt と
-// link_<名前>_<スロット>.rgba に書く（`liltoon_reference.rs` の compare_through_live_link が、その値だけで 3D ビューを描いて比べる）。
+// link_<名前>_<スロット>.rgba に書く（`crates/yolu-app/tests/gui_view3d/liltoon_reference.rs` の compare_through_live_link が、その値だけで 3D ビューを描いて比べる）。
 //
 // 撮る間だけ、プロジェクトの色空間をリニアにし（VRChat と同じ。lilToon の式はリニアで比べる。替わったことを確かめてから撮る。
 // テストプロジェクトはガンマのままにしておく）、lilToon のシェーダー設定の機能を

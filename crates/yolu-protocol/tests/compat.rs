@@ -1,7 +1,9 @@
 //! 互いの版と機能の印の取り決め: 欄の無い古い挨拶ともつながる・版のずれの警告・機能の共通部分・印の無い相手へ新しい命令を送らない・
 //! 版の範囲が重ならない断りの文（日本語と英語）と、どちらを何版以上に上げるか。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#[path = "support/names.rs"]
+mod names;
+
 use std::thread;
 use std::time::Duration;
 
@@ -10,12 +12,7 @@ use yolu_protocol::link::{self, accept_as, connect_and_greet_as, negotiate_as};
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylp-compat-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylp-compat", tag)
 }
 
 const V: fn(u16, u16, u16) -> AppVersion = AppVersion::new;

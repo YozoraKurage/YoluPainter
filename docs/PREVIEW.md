@@ -112,7 +112,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
   （今のセットだけ別の解像度）ので大きさをそろえて作り直す手間と、層の数の上限が要り、得られるのは下の呼び出し数の分だけなので採りませんでした。
 - メッシュマップだけの表示は、今のセットの面だけに貼ります（ほかのセットの面は絵の無い描き方）。
 
-計測（2026-10-05、`cargo test -p yolu-app --test view3d_sets measure_frames -- --ignored --nocapture`。カメラを回すだけ・絵は同じ・影なし・マテリアル表示・環境はスタジオ。
+計測（2026-10-05、`cargo test -p yolu-app --test gui_view3d view3d_sets::measure_frames -- --ignored --nocapture`。カメラを回すだけ・絵は同じ・影なし・マテリアル表示・環境はスタジオ。
 球を n 個のマテリアルに分け、n 個のセットすべてに Color・Roughness の絵を置く。1 フレームを回して GPU の完了まで待った時間（全体）と `prepare` の CPU の時間、
 同じ実行の 40 フレームの平均、実行 2 回の範囲）。n = 1 は 1 回の描き（従来と同じ）です。セット 64 のときは今のセットのほかに 63 を持ちます（予算に収まる）。
 
@@ -133,7 +133,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
   全体の時間は三角形の数（ピクセルの描き）が決め、セットの数による差は実行ごとのばらつきの中です。
 - Windows の D3D12・Vulkan では呼び出し 1 回の手間はこれより小さいはずですが、未確認です。
 
-切り替えのフレーム（2026-10-05、`cargo test -p yolu-app --test view3d_sets measure_switching -- --ignored --nocapture`。4096² の 3 セット、Color・Roughness・Emission・Normal の
+切り替えのフレーム（2026-10-05、`cargo test -p yolu-app --test gui_view3d view3d_sets::measure_switching -- --ignored --nocapture`。4096² の 3 セット、Color・Roughness・Emission・Normal の
 4 チャンネル、各セットに絵のあるタイルも少し）。今のセットを 9 回替え（1・2・0・1・0・2・1・2・0 の順）、1 フレームを回して GPU の完了まで待った時間（全体）、そのうち絵の同期の時間、
 同期の途中で GPU に持っていた絵の最大。実行 2 回（1 回に 9 フレーム）の平均と、全フレームの最小〜最大。「ほかのセットを見せない」は今のセットの絵だけを同期する形で、
 同じ実行の中で同じ順に測ります。
@@ -153,7 +153,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 柔らかさや光の強さを変えるときは、できている深さをそのまま読みます。一度作ったマップは、影を切っても持ち続けます（入れ直すたびに作り直さない）。影を一度も入れていないあいだは
 1 × 1 の深さを束ねるだけで、16 MiB は要りません。
 
-計測（2026-10-04、71148 三角形の球、4096² の文書、6 チャンネルすべてを使う。`cargo test -p yolu-app --test view3d_look -- --ignored --nocapture measure`）。
+計測（2026-10-04、71148 三角形の球、4096² の文書、6 チャンネルすべてを使う。`cargo test -p yolu-app --test gui_view3d -- --ignored --nocapture view3d_look::measure`）。
 影なし・影ありは、同じ仕事・同じ量を、同じ実行の中で交互に 3 回ずつ測ります（1 回は 20 フレーム）。表は、実行 2 回（3 回ずつ）の平均と、その回ごとの平均の最小〜最大です。
 「全体」は 1 フレームを回して GPU の完了まで待った時間、「CPU」はそのうち `prepare` の CPU の時間（GPU の実行は含まない）です。
 
@@ -340,7 +340,7 @@ Live Link でつないだ Unity のマテリアルが確かめた lilToon（Unit
 Unity の値だけで描いた比べ（2026-10-05。下の「Unity の lilToon との比べ」と同じ場面・同じ Unity の絵・同じ数え方）: `tools/liltoon-reference.cs` は
 場面ごとに、Unity のパッケージの Live Link が送るもの（`LiveLinkMaterialValues` が読む値と、描いていないスロットの絵）を `link_<名前>.txt` にも書き、
 `compare_through_live_link`（手で回す試験）は、利用者の設定を既定（標準）のまま、その値だけからスタンドアロンが受けたときと同じ受けた見た目を作って
-描き、Unity の絵と比べます。通信の道（ブリッジの C の口 → 命令 → スタンドアロン）は、`livelink_values.rs` の試験が本物のブリッジで通します。
+描き、Unity の絵と比べます。通信の道（ブリッジの C の口 → 命令 → スタンドアロン）は、`tests/headless/livelink_values.rs` の試験が本物のブリッジで通します。
 
 | 場面 | 平均 | 95 % | 最大 | 受けた絵 |
 |---|---:|---:|---:|---:|
@@ -432,7 +432,7 @@ Unity のモデルを開くと、スタンドアロンはマテリアルごと�
 
 ### Unity の lilToon との比べ
 
-`crates/yolu-app/tests/liltoon_reference.rs` の手で回す試験が、合成の素材（球・板・試しの人形）の場面ごとに 3D ビューの絵と、Unity で同じ場面を組む記述
+`crates/yolu-app/tests/gui_view3d/liltoon_reference.rs` の手で回す試験が、合成の素材（球・板・試しの人形）の場面ごとに 3D ビューの絵と、Unity で同じ場面を組む記述
 （カメラ・光・環境光の SH・メッシュ・テクスチャ・プロパティ）を書き、`tools/liltoon-reference.cs` を Unity（2022.3.22f1・lilToon 2.3.4）で回して
 同じ場面を lilToon で描き、両方の差を数えます。`tools/liltoon-reference.cs` は回すあいだだけプロジェクトのカラースペースを Linear にし（VRChat と同じリニアの色空間。Unity はその場で
 リニアに替わり（`QualitySettings.activeColorSpace`）、2026-10-05 に撮り直した 34 場面の絵は前の絵と全画素が同じ。同じ道具でガンマのまま撮ると、
@@ -445,11 +445,11 @@ sRGB のテクスチャを読むときのリニアへの直し方が近似で、
 下の表の「実 GPU の GL」の値に余裕を足したもの）。GL の半透明はガンマで重ねるので別の上限です。
 
 ```sh
-LILTOON_REF_DIR=<フォルダ> [LILTOON_REF_ONLY=<場面,…>] cargo test -p yolu-app --test liltoon_reference export_and_render -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> [LILTOON_REF_ONLY=<場面,…>] cargo test -p yolu-app --test gui_view3d liltoon_reference::export_and_render -- --ignored --nocapture
 # Unity で tools/liltoon-reference.cs を回す（`__DIR__` をそのフォルダにする）
-LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference compare -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test gui_view3d liltoon_reference::compare -- --ignored --nocapture
 # Live Link の値だけで描いて比べる（上の Live Link の節の表）
-LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference compare_through_live_link -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test gui_view3d liltoon_reference::compare_through_live_link -- --ignored --nocapture
 ```
 
 結果（2026-10-05、リニアの色空間で撮り直した Unity の絵と比べて測り直した値。Rust 版は llvmpipe（Vulkan）、Unity は Linux 版のエディタの OpenGL
@@ -532,7 +532,7 @@ LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference c
 
 ### 速さ
 
-計測（2026-10-05、`cargo test -p yolu-app --test liltoon measure -- --ignored --nocapture`。1280 × 800 の窓、2048² の文書に Color・Roughness・Normal の塗りつぶし、
+計測（2026-10-05、`cargo test -p yolu-app --test gui_view3d liltoon::measure -- --ignored --nocapture`。1280 × 800 の窓、2048² の文書に Color・Roughness・Normal の塗りつぶし、
 球（三角形の数は表）、環境はスタジオ、影なし。カメラを回すだけの 1 フレームを回して GPU の完了まで待った時間。同じ実行の中で見た目を交互に 3 回ずつ（1 回は 20 フレーム）
 測り、表は llvmpipe は実行 3 回・実 GPU は実行 2 回の、回ごとの平均の範囲）。「lilToon（全部）」は影・ノーマルマップ・マットキャップ 2 つ・リム・発光 2 つ・輪郭線と、ひな形が作るマスクのユーザーチャンネル 9 枚。
 llvmpipe の「CPU 時間」は、プロセスの CPU 時間（全部のスレッドの合計）の 1 フレームあたりです（ソフトの描画は CPU の仕事なので、混んだ機械でも揺れの小さい比べになります）。
@@ -564,10 +564,10 @@ llvmpipe の「CPU 時間」は、プロセスの CPU 時間（全部のスレ�
 
 ```sh
 cargo test -p yolu-app --lib view3d::                 # 式・環境・接線・矩形の決め方（GPU なし）
-cargo test -p yolu-app --test view3d_look             # 見た目・上げ方・表示の切り替え（スナップショットは llvmpipe）
-cargo test -p yolu-app --test view3d_sets             # 全部のテクスチャセットの絵（切り替え・文書への追従・予算と切り替えの途中の最大・縮め・チャンネル・法線マップ・面隠し・マテリアルの付き直し・64 セット・一覧の印）
-cargo test -p yolu-app --test liltoon                 # lilToon の再現を CPU で書いた lilToon の式と照らす（光・影・ユーザーチャンネルのマスクとそのミップ・カットアウト・半透明・アルファマスク・輪郭線・Undo）、ソフトの描画のパイプラインの作り分けと持つ数、配列と予算、ほかのセットの lilToon
-cargo test -p yolu-app --test liltoon_reference       # Unity の lilToon の絵（tests/liltoon_unity/）との差を場面ごとの上限と照らす
-cargo test -p yolu-app --test liltoon_panel           # 見た目の欄（種類・節の並び・スライダーの Undo・ひな形・スロット・描く口・2 つの節の同じ値・PowerSlider・17 個目の印・全部の機能を入れた節、新しいセットの既定、日英のスナップショット）
-cargo test -p yolu-app --test liltoon_io              # 見た目の設定の保存と開き直し・look.json の無い文書は標準・読めない look.json（上書きの知らせ・読むだけのセット）・復旧・書き出しの lilToon の詰め方・ひな形の失敗・描いている間
+cargo test -p yolu-app --test gui_view3d view3d_look::  # 見た目・上げ方・表示の切り替え（スナップショットは llvmpipe）
+cargo test -p yolu-app --test gui_view3d view3d_sets::  # 全部のテクスチャセットの絵（切り替え・文書への追従・予算と切り替えの途中の最大・縮め・チャンネル・法線マップ・面隠し・マテリアルの付き直し・64 セット・一覧の印）
+cargo test -p yolu-app --test gui_view3d liltoon::  # lilToon の再現を CPU で書いた lilToon の式と照らす（光・影・ユーザーチャンネルのマスクとそのミップ・カットアウト・半透明・アルファマスク・輪郭線・Undo）、ソフトの描画のパイプラインの作り分けと持つ数、配列と予算、ほかのセットの lilToon
+cargo test -p yolu-app --test gui_view3d liltoon_reference::  # Unity の lilToon の絵（tests/liltoon_unity/）との差を場面ごとの上限と照らす
+cargo test -p yolu-app --test gui_view3d liltoon_panel::  # 見た目の欄（種類・節の並び・スライダーの Undo・ひな形・スロット・描く口・2 つの節の同じ値・PowerSlider・17 個目の印・全部の機能を入れた節、新しいセットの既定、日英のスナップショット）
+cargo test -p yolu-app --test headless liltoon_io::  # 見た目の設定の保存と開き直し・look.json の無い文書は標準・読めない look.json（上書きの知らせ・読むだけのセット）・復旧・書き出しの lilToon の詰め方・ひな形の失敗・描いている間
 ```

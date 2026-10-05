@@ -485,7 +485,9 @@ fn reading_a_file_leaves_it_unchanged() {
     let path = dir.join("腕.fbx");
     let text = arm_scene().to_ascii();
     std::fs::write(&path, &text).unwrap();
-    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    // 更新時刻を少し前にしておく（書き直されたら今の時刻になって食い違う。時刻の粒度で同じ値に見えて見逃さない）
+    let before = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(before).unwrap();
     let m = load_fbx(&path, &ModelLimits::default()).unwrap();
     assert_eq!(m.rig.name(), "腕", "名前はファイル名");
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());

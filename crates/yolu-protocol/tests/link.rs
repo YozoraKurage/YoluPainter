@@ -1,8 +1,11 @@
 //! 本物のソケット（Unix は自分だけのフォルダの Unix ソケット、Windows は名前付きパイプ）での往復・知らない命令を断る・版が合わないと断る・
 //! 鍵（無い・合わない・使い回し・返事の証しが合わない）・別のプロセスの共有メモリのタイルが届く。
 
+#[path = "support/names.rs"]
+mod names;
+
 use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 #[path = "support/wait.rs"]
@@ -15,12 +18,23 @@ use yolu_protocol::link::{self, accept, connect_and_greet, wrong_direction};
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylp-test-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylp-test", tag)
+}
+
+/// 前の待ち受けをやめた直後に、同じ名前で待ち受け直す。名前のロック（`flock`）は、ファイルを開いた「記述」ごとに持たれる。このプロセスの
+/// ほかの試験のスレッドが子のプロセスを起こしている最中（fork から exec まで）は、その子が開いているファイルの複製を一瞬持っていて、
+/// こちらが閉じてもロックはすぐには外れず、`AddrInUse` になる（4 本のスレッドが子を起こし続ける間に、待ち受け・やめる・同じ名前で待ち受けを
+/// 1000 回繰り返すと、675 回で当たった）。製品の動き（やめた直後の取り直しに、ほかのスレッドが子を起こしていない）の外の話なので、
+/// 外れるまで待つ。本当に外れないなら（上限はハング検出用）、その理由を出して落とす。
+fn bind_after_drop(name: &str) -> Server {
+    let deadline = Instant::now() + wait::WATCHDOG;
+    loop {
+        match Server::bind(name, false) {
+            Ok(server) => return server,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < deadline => thread::yield_now(),
+            Err(e) => panic!("{name}: 待ち受けをやめたあとも、同じ名前で待ち受けられない: {e}"),
+        }
+    }
 }
 
 /// 鍵を知っているブリッジの挨拶の鍵の欄（nonce は新しく作る）。
@@ -628,7 +642,7 @@ fn a_second_standalone_cannot_take_the_name_and_the_key_goes_with_the_first() {
     drop(first);
     assert!(!key_path.exists(), "待ち受けをやめたら鍵を消す");
     // 同じ名前でまた待ち受けられ、鍵は新しくなる
-    let again = Server::bind(&name, false).unwrap();
+    let again = bind_after_drop(&name);
     assert_ne!(std::fs::read(&key_path).unwrap(), before);
     drop(again);
 }

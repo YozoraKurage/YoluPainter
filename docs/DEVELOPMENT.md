@@ -12,12 +12,52 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果と層のロック・層の操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
+### yolu-app の結合試験の置き方
+
+`crates/yolu-app/tests/` の試験は、性質ごとに数本の実行ファイル（「束」）にまとめています。1 ファイルを 1 本の実行ファイルにすると、試験の数だけアプリ全体のリンクと共通部品の組み直しが増え、`target/` が試験の実行ファイルだけで 10 GB を超えるためです。
+
+| 束（`cargo test -p yolu-app --test <束>`） | 中身 |
+| --- | --- |
+| `headless` | 窓・GPU の装置を作らない試験（文書・保存（裏の保存・選択範囲・ポーズを含む）・取り込み・Live Link の通信と頼み・ソースの文言の検査）。同時に走る |
+| `gui_canvas` | キャンバス・ツール・ブラシ・選択・色・効果の画面（`egui_kittest`） |
+| `gui_shell` | 窓の全体・メニュー・設定・文書の出し入れ（PSD のドロップを含む）・閉じる流れと保存の途中の終了・GPU の装置の喪失・復旧・更新・Live Link の画面と受け取りの上限・言語・棚・ライブラリ |
+| `gui_view3d` | 3D ビュー（アンチエイリアス・ブルームを含む）・マテリアルの見た目（lilToon を含む）・ポーズ・テクスチャセット・出力 |
+| `threads`・`window_lease`・`windowpos`（直下の 1 ファイル 1 本） | プロセス全体の状態を持つ試験: rayon の全体のプール・窓の貸し出しの数え・覚えた窓の置き場所 |
+
+束の中のファイルは `tests/<束>/<名前>.rs`、束の入口は `tests/<束>/main.rs` の `mod` の並びです。試験の名前は `<ファイル名>::<試験名>` になるので、ファイルや試験名で絞れます。
+
+```sh
+cargo test -p yolu-app --test gui_shell                      # 1 つの束
+cargo test -p yolu-app --test gui_shell i18n::               # 束の中の 1 ファイル（以前の `--test i18n`）
+cargo test -p yolu-app --test headless no_instruction_text:: # 以前の `--test no_instruction_text`
+cargo test -p yolu-app --test gui_canvas layerops::undo      # ファイル名と試験名の一部
+cargo test -p yolu-app -- --list | grep layerops             # どの束にあるか（`Running tests/<束>/main.rs` の下）
+```
+
+- **新しい試験を足す**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行足します。足し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけでは組まれず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
+- 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を足し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
+- **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・窓の貸し出しの数え・覚えた窓の置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
+- **窓（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。窓を持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` は窓ごとに装置と 3D のパイプラインを組み直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵は窓ごとに作り直します。窓を作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
+- `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
+- **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。**Live Link の名前**は `common::names::unique_name(接頭辞, タグ)` で作ると、鍵・ソケット・ロックのファイルも試験の終わりに消えます（ロックのファイルは製品が消さないため）。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
+- 「書き直さない」を更新時刻で確かめるときは、`common::tmp::backdate(&path)` で更新時刻を少し前にしてから比べます（時刻の粒度より早い書き直しを見逃さず、`sleep` を待たない）。
+- 試験が自分の実行ファイルを子として起こすとき（`--exact` に試験名を渡す形）は、束の中では名前にモジュールの道筋（`livelink::child_unity`）が付きます。`module_path!()` から作ってください。
+
+同じ束・同じ試験を続けて回して揺れを調べるには `tools/repeat-tests.py` を使います（`--shuffle` で回ごとに試験の順を混ぜ、順序への依存も調べます）。
+
+```sh
+tools/repeat-tests.py --rounds 20 --out /tmp/repeat --test gui_canvas --test gui_shell --test gui_view3d
+tools/repeat-tests.py --rounds 20 --out /tmp/repeat --shuffle --test headless
+```
+
+組み直しの時間は、ほとんどが yolu-app のライブラリ 1 つの rustc です（葉の 1 ファイルを変えたあと: `cargo check` 約 6 秒、`cargo build` 約 20 秒、`cargo test -p yolu-app --test headless --no-run` 約 25 秒。リンクは 1 本 1 秒前後）。環境変数 `CARGO_INCREMENTAL=0` を付けていなければ、dev の組みは増分で、同じ変更の後の組み直しは 3〜5 秒になります（キャッシュは `target/debug/incremental` に約 1.4 GB。ディスクが厳しいときだけ 0 にします）。
+
 ## CI
 
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度組むだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物の組み（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物を組む場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
-- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`・`--test brush_list headless_`・`--test update headless_`・`--test recovery headless_`（復旧の OS のロックと置換）。GPU・画面の統合試験は対象外です。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - Windows の `target/` は、[samypr100/setup-dev-drive](https://github.com/samypr100/setup-dev-drive)（MIT）で作る Dev Drive（ReFS の VHDX）に載せています（試し。作れなければ通常のディスクで続けます。効果が無ければ外します）。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 

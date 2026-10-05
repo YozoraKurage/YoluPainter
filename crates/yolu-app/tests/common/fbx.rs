@@ -158,6 +158,7 @@ pub fn write_fbx(dir: &Path, file: &str, text: &str) -> PathBuf {
 pub fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("yolu-newproject-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

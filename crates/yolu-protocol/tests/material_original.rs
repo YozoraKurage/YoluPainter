@@ -1,6 +1,8 @@
 //! 元の絵の命令（MaterialOriginal）: 読み書きの上限・知らない番号の読み方・要る機能の印・印の無い相手へ送らない。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#[path = "support/names.rs"]
+mod names;
+
 use std::thread;
 use std::time::Duration;
 
@@ -9,12 +11,7 @@ use yolu_protocol::wire::DecodeError;
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylp-original-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylp-original", tag)
 }
 
 fn original(width: u32, height: u32, bytes: usize) -> MaterialOriginal {

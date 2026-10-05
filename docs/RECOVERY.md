@@ -105,8 +105,8 @@ Unity 版の復旧は、Unity プロジェクトの `Library/YoluPainter/recover
 ```text
 cargo test -p yolu-io --test generation        世代の置き場（量の数え方・書く前の空きの確かめ）
 cargo test -p yolu-app --lib recovery::        上限の消し方・空きの守り・設定
-cargo test -p yolu-app --test recovery         書き置きと上限・空きの守り・窓の数え直し
-cargo test -p yolu-app --test recovery_ui      窓（使う量・詳しく・使用中）
+cargo test -p yolu-app --test headless recovery::   書き置きと上限・空きの守り・窓の数え直し
+cargo test -p yolu-app --test gui_shell recovery_ui::   窓（使う量・詳しく・使用中）
 ```
 
 空きの守りは、試験では空きを偽って確かめます。実際のディスクを満杯にした試験はしていません。Windows の `GetDiskFreeSpaceExW` の呼び出しは、`x86_64-pc-windows-gnu` 向けにコンパイルが通ることまでで、実機では確かめていません。

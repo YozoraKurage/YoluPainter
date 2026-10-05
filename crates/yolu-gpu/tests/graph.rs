@@ -18,7 +18,11 @@ use yolu_gpu::{
 /// 表示の許し（1 画素の 1 バイトあたりの最大差）。
 const TOLERANCE: u8 = 2;
 
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
+
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
+    gpu_lease::lease();
     let g = match GpuPainter::new(Options::default()) {
         Ok(g) => g,
         Err(e) => {

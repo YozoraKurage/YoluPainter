@@ -1,8 +1,15 @@
 //! 画面の試験の共通の道具（egui_kittest。描画は wgpu のソフトの描画で、コンテナでも回る）。
 #![allow(dead_code)]
 
+pub mod canvas_device;
 pub mod fbx;
 pub mod gpu_thread;
+#[path = "../../../yolu-protocol/tests/support/names.rs"]
+pub mod names;
+pub mod shared_gpu;
+pub mod tmp;
+#[path = "../../../yolu-protocol/tests/support/wait.rs"]
+pub mod wait;
 
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
@@ -38,8 +45,7 @@ pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0) // 実際の窓に近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）
         .with_max_steps(120)
-        .with_render_options(render_options())
-        .wgpu()
+        .renderer(shared_gpu::renderer())
         .build_eframe(move |cc| {
             with_render_state_cpu_canvas(
                 YoluApp::for_context(

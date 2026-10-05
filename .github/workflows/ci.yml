@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 組み直しが長い（アプリの試験の実行形式が 70 本以上）ので、画面の試験は別のジョブに分けて並べて回す。
+  # 組み直しが長い（アプリの試験の実行形式は 9 本。結合試験は 4 本の束と直下の 3 本）ので、画面の試験は別のジョブに分けて並べて回す。
   #
   # runs-on は ubuntu-latest にしない。収録済みの正解は glibc と Mesa の版に結びつく（描画しないクレートの golden は glibc の tan・atan・
   # atan2 とビット一致、画面の正解は Mesa の lavapipe）。ubuntu-latest は 2026-10-19 から Ubuntu 26 に移るので、glibc・Mesa を測り直して
@@ -153,18 +153,22 @@ jobs:
       - name: アプリの単体試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
+      # 結合試験は束（tests/<束>/main.rs）の中にあり、試験の名前は `<ファイル名>::<試験名>`。画面なしの試験は名前が `headless_` で始まる
       - name: Live Link の統合試験（画面なし）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test livelink --locked headless_ -- --test-threads=1
+        run: cargo test -p yolu-app --test gui_shell --locked -- livelink::headless_ --test-threads=1
       - name: 自動更新の統合試験（画面なし）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test update --locked headless_ -- --test-threads=1
+        run: cargo test -p yolu-app --test gui_shell --locked -- update::headless_ --test-threads=1
       - name: ブラシの一覧の統合試験（画面なし。保存と読み戻し・壊れたファイル）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test brush_list --locked headless_ -- --test-threads=1
+        run: cargo test -p yolu-app --test headless --locked -- brush_list::headless_ --test-threads=1
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
         if: ${{ !cancelled() }}
-        run: cargo test -p yolu-app --test recovery --locked headless_ -- --test-threads=1
+        run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ --test-threads=1
+      - name: Live Link の頼みと .ylp の選択範囲・ポーズの試験（画面なし。名前付きパイプ・ファイルの置換）
+        if: ${{ !cancelled() }}
+        run: cargo test -p yolu-app --test headless --locked -- livelink_request::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
   # 配る物の組み。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
   # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、組み直さず受け取る。

@@ -1,6 +1,9 @@
 use yolu_core::{BlendMode, BrushSettings, Channel, Document, Rgba8, TileCoord};
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
 use yolu_gpu::{Compositor, Dab, GpuPainter, Options};
 fn gpu() -> Option<GpuPainter> {
+    gpu_lease::lease();
     match GpuPainter::new(Options::default()) {
         Ok(g) => {
             eprintln!("GPU 試験: {:?}", g.adapter_info());
@@ -249,6 +252,7 @@ fn invalid_input_budget_and_cpu_fallback() {
             }]
         )
         .is_err());
+    gpu_lease::lease();
     let mut small = GpuPainter::new(Options {
         budget_bytes: 1,
         ..Default::default()

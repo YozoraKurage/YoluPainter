@@ -1,6 +1,7 @@
 //! 窓の置き場所（`windowpos`）の試験。画面の拡大率が違う・画面が増減する・縮む場合の、画素での置き場所と、起動のあとの合わせ込み・
 //! 最大化の 1 画素。Windows の API に依らない純関数なので、Linux でも回る（Windows の画面の列挙・窓の手は `cargo check
 //! --target x86_64-pc-windows-gnu` で組めることと、実機の確かめで見る）。
+//! 覚えた置き場所（`windowpos::remember`）はプロセスで 1 つなので、これを使う試験があるこのファイルは束に入れず、直下に 1 本で置く。
 use egui::{pos2, vec2, ViewportCommand};
 use yolu_app::layout::WindowRecord;
 use yolu_app::windowpos::{

@@ -15,7 +15,11 @@ use yolu_gpu::{
 /// 表示の許し（1 画素の 1 バイトあたりの最大差）。多段の文書（マスク・塗りつぶし・グループ・チャンネルごとの合成）で 2 以内だった。
 const TOLERANCE: u8 = 2;
 
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
+
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
+    gpu_lease::lease();
     let g = match GpuPainter::new(Options::default()) {
         Ok(g) => g,
         Err(e) => {
@@ -764,6 +768,7 @@ fn premultiplied_display_is_the_cpu_conversion_of_the_straight_display() {
 
 #[test]
 fn shared_device_and_limited_devices() {
+    gpu_lease::lease();
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let Ok(adapter) =

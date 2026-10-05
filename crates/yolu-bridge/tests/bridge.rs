@@ -1,17 +1,14 @@
 //! C の口をそのまま呼ぶ試験（C# と同じ使い方）。相手は同じプロセスの中の自己診断のスタンドアロン（本物のソケットと共有メモリ）。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#[path = "../../yolu-protocol/tests/support/names.rs"]
+mod names;
+
 use std::time::{Duration, Instant};
 
 use yolu_bridge::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylb-test-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylb-test", tag)
 }
 
 fn wait_for(h: u64, what: &str, mut f: impl FnMut() -> bool) {
