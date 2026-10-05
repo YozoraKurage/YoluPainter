@@ -44,6 +44,10 @@ See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [d
 - In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md)
 - [Changelog](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 
+## Contact
+
+For questions, development discussion, and feature requests, join us on [Discord](https://discord.gg/c8NNfhJ94J).
+
 ## Privacy
 
 The application sends nothing over the network except a query to GitHub for the latest version when you choose to check for updates. Live Link only communicates within the same PC.

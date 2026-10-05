@@ -44,6 +44,10 @@ OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用
 - [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)
 - [変更の記録](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 
+## お問い合わせ
+
+お問い合わせ、開発に関する質問、機能の要望は [Discord](https://discord.gg/c8NNfhJ94J) へどうぞ。
+
 ## プライバシー
 
 更新の確認を選んだときに GitHub へ最新の版を問い合わせるほかは、ネットワークへ情報を送りません。Live Link は同じ PC の中だけで通信します。
