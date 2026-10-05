@@ -140,6 +140,7 @@ pub fn frame(app: &mut AppState, frame: &eframe::Frame) {
         return;
     };
     if app.is_stroking() {
+        app.eyedrop.ramp_stop_pending = false;
         return;
     }
     #[cfg(windows)]
@@ -150,9 +151,21 @@ pub fn frame(app: &mut AppState, frame: &eframe::Frame) {
         Err(Failure::Unsupported)
     };
     match result {
-        Ok(Some(rgb)) => apply_color(app, rgb),
-        Ok(None) => {}
-        Err(error) => app.message = error.text(app.lang).into(),
+        Ok(Some(rgb)) => deliver(app, rgb),
+        Ok(None) => app.eyedrop.ramp_stop_pending = false,
+        Err(error) => {
+            app.eyedrop.ramp_stop_pending = false;
+            app.message = error.text(app.lang).into();
+        }
+    }
+}
+
+/// 画面から取れた色の行き先: ランプの色の分岐点が待っていればそこへ（描画色は動かさない）、そうでなければ描画色へ。
+pub fn deliver(app: &mut AppState, rgb: [u8; 3]) {
+    if std::mem::take(&mut app.eyedrop.ramp_stop_pending) {
+        app.eyedrop.ramp_stop_pick = Some(rgb);
+    } else {
+        apply_color(app, rgb);
     }
 }
 

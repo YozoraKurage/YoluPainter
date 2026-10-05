@@ -11,7 +11,7 @@ mod write;
 use crate::{check, Result};
 pub use bake::{
     check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode, ExportNote, ExportOptions,
-    ExportPlan, Exported, FillSources, NoteAction, RoundedParameter, RoundedValue,
+    ExportPlan, Exported, FillSources, GradientExpansion, NoteAction, RoundedParameter, RoundedValue,
 };
 pub use bridge::{Blocker, Refusal};
 pub use import::{

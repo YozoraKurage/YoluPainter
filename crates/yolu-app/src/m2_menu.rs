@@ -63,7 +63,8 @@ pub enum Popup {
     /// 塗りつぶしの層の投影の種類・外側。
     ProjectionMode(crate::engine::LayerId),
     ProjectionWrap(crate::engine::LayerId),
-    /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。
+    /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。階調と値のカーブのプリセットは、欄では `ramp_rows` のグラデーションセットの
+    /// 一覧と値のカーブの欄へ移ったので、今は欄から開かない（項目の出し方と当て方を試験が確かめている）。
     GradientShape(crate::engine::LayerId, Channel),
     RampPresets(crate::engine::LayerId, Channel),
     CurvePresets(crate::engine::LayerId, Channel),

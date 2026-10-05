@@ -17,8 +17,12 @@ pub const PROCEDURAL_VERSION: i32 = 23;
 /// 2 値化・ポスタリゼーション）を足した版。版 23 の中身に、調整・フィルターの種類 64〜69 とその欄（`color_adjust` の並び）が加わる。これを使う
 /// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「色調補正（正本の版 24）」）。
 pub const ADJUST_VERSION: i32 = 24;
+/// グラデーションマップの混色（混色モード・輝度の補正）と区間ごとの混合率曲線を足した版。版 24 の中身に、種類 64（グラデーションマップ）の欄の
+/// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
+/// version」で断る（形式と決めは README の「グラデーションマップの混色（正本の版 25）」）。
+pub const MIXING_VERSION: i32 = 25;
 /// この読み手が読める一番新しい版。
-pub const MAX_NATIVE_VERSION: i32 = ADJUST_VERSION;
+pub const MAX_NATIVE_VERSION: i32 = MIXING_VERSION;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
 const STANDARD_CHANNELS: i32 = 6;
 /// 版 22 のユーザーチャンネル（番号 → 種類: 0 色・1 スカラー・2 法線）。版 21 までは空。
@@ -555,7 +559,7 @@ fn layer(
                     p == [0., 1., 1., 0., 1., 0., 0., 0.],
                     "未使用の調整の値が変更されています",
                 )?;
-                r.block("detail", |r| color_adjust(r, t))?;
+                r.block("detail", |r| color_adjust(r, v, t))?;
             }
             let n = r.int("channel_count", 0, channel_total)?;
             let mut seen = HashSet::new();
@@ -882,11 +886,17 @@ const ADJUST_KIND_MAX: i32 = 69;
 /// 64 からの調整・フィルターの種類ごとの欄（調整の層は `detail`、フィルターの段は `adjust` のブロックの中）。
 /// 64: 逆向き・ランプ。65: 合成・R・G・B の 4 本のカーブ。66: 範囲ごとの 3 本のスライダーと輝度を保つ。
 /// 67: 明るさ・コントラスト。68: しきい値。69: 階調。
-fn color_adjust(r: &mut Reader<'_>, t: i32) -> Result<()> {
+fn color_adjust(r: &mut Reader<'_>, v: i32, t: i32) -> Result<()> {
     match t {
         64 => {
             r.boolean("reverse")?;
-            r.block("ramp", ramp)?;
+            let colors = r.block("ramp", |r| {
+                let colors = ramp(r)?;
+                Ok(colors)
+            })?;
+            if v >= MIXING_VERSION {
+                gradient_mixing(r, colors)?;
+            }
         }
         65 => {
             for name in ["composite", "red", "green", "blue"] {
@@ -936,9 +946,38 @@ fn curve_points(r: &mut Reader<'_>, name: &str) -> Result<()> {
     }
     Ok(())
 }
-fn ramp(r: &mut Reader<'_>) -> Result<()> {
+/// グラデーションマップの混色の欄（正本の版 25。ランプのあと）: 混色モード（0 通常・1 知覚的・2 リニア）、輝度の補正（0〜4。知覚的でなければ
+/// 既定の 3）、区間の数（色の分岐点の数 − 1）と、区間ごとの `enabled` と、あれば混合率曲線 `curve`。
+fn gradient_mixing(r: &mut Reader<'_>, colors: i32) -> Result<()> {
+    let mode = r.int("mix", 0, 2)?;
+    let correction = r.int("luminance", 0, 4)?;
+    check(
+        mode == 1 || correction == 3,
+        "輝度の補正は知覚的な混色のときだけです",
+    )?;
+    let n = r.int("segment_count", 1, 31)?;
+    check(
+        n == colors - 1,
+        "混合率曲線の区間の数が色の分岐点と合いません",
+    )?;
+    for i in 0..n {
+        r.block(&format!("segments[{i}]"), |r| {
+            if r.boolean("enabled")? {
+                curve_points(r, "curve")?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+/// ランプ（色・不透明度の分岐点と値のカーブ）。色の分岐点の数を返す。
+fn ramp(r: &mut Reader<'_>) -> Result<i32> {
+    let mut colors = 0;
     for (kind, max) in [("colors", 32), ("opacities", 32)] {
         let n = r.int(&format!("{kind}_count"), 2, max)?;
+        if kind == "colors" {
+            colors = n;
+        }
         let mut previous = -1.;
         for i in 0..n {
             r.block(&format!("{kind}[{i}]"), |r| {
@@ -958,7 +997,8 @@ fn ramp(r: &mut Reader<'_>) -> Result<()> {
             })?;
         }
     }
-    curve_points(r, "curve")
+    curve_points(r, "curve")?;
+    Ok(colors)
 }
 fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) -> Result<()> {
     let n = r.int("count", 0, 32)?;
@@ -1055,7 +1095,7 @@ fn filters(r: &mut Reader<'_>, v: i32, content: bool, refs: &mut Vec<[u8; 16]>) 
                         "スカラーチャンネルとマスクに色だけの調整を適用できません",
                     )?;
                 }
-                r.block("adjust", |r| color_adjust(r, t))?;
+                r.block("adjust", |r| color_adjust(r, v, t))?;
             }
             if active && strength > 0. {
                 for (channel, halo) in halos.iter_mut().enumerate() {

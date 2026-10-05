@@ -643,6 +643,8 @@ pub struct AppState {
     pub region: crate::region::RegionState,
     /// サブツール（バケツ・グラデーション・図形などの設定の組のプリセット。ブラシと消しゴムは `brushes`）。アプリの状態で、.ylp には入れない。
     pub subtools: crate::subtool::SubToolState,
+    /// グラデーションセット（グラデーションマップ・塗りつぶしのグラデーションのランプの見本の一覧。利用者の組は設定のフォルダに保存。.ylp には入れない）。
+    pub ramp_sets: crate::rampsets::RampSets,
     pub doc: Document,
     /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
     /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
@@ -861,6 +863,7 @@ impl AppState {
             mat: Default::default(),
             region: Default::default(),
             subtools: Default::default(),
+            ramp_sets: Default::default(),
             doc,
             doc_epoch: 0,
             stroke: None,

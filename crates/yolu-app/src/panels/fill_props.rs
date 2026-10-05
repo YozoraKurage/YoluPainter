@@ -8,7 +8,7 @@ use yolu_core::fill_image::{Projection, ProjectionMode, Wrap};
 use yolu_core::generator::{Preset, Ramp, Settings, Shape};
 use yolu_core::{Channel, ChannelKind, ImageId, InactiveEffect, InactiveTarget, LayerId, Rgba8};
 
-use super::properties::{group_label, percent_row, section, slider_row, toggle_row};
+use super::properties::{percent_row, section, slider_row, toggle_row};
 use crate::fillfx::{inputs, FillOp};
 use crate::fx::names::{shape_tooltip, SHAPES};
 use crate::lang::Lang;
@@ -18,7 +18,7 @@ use crate::shelf::{ItemKind, ShelfDrag};
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{Entry, PopupState};
 use crate::ui::numfield::{number_field, NumSpec};
-use crate::ui::ramp::{self, ops as ramp_ops, Selection};
+use crate::ui::ramp::ops as ramp_ops;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
 use crate::view3d::shape_gizmo::{wrap_degrees, Mode, AXIS_X, AXIS_Y, AXIS_Z};
@@ -1280,8 +1280,9 @@ fn gradient_section(
     }
 }
 
-/// ランプの欄（Unity 版の `GradientRampRows`）: 階調のプリセット、分岐点の編集、選んだ分岐点の位置・不透明度・値（色）・中点、分岐点を消す、
-/// 値のカーブのプリセットと編集。変更が決まったときだけ新しいランプを返す。
+/// ランプの欄（Unity 版の `GradientRampRows` に、グラデーションセット・分岐点の色の選び・メインとサブに付いていく色を足したもの）。欄の中身は
+/// グラデーションマップと共通（`ramp_rows`）で、ここは値のカーブを持つ（混色は Unity 版と共有の並びに持てないので出さない）。変更が決まったときだけ
+/// 新しいランプを返す。
 #[allow(clippy::too_many_arguments)]
 fn ramp_rows(
     ui: &mut Ui,
@@ -1294,270 +1295,27 @@ fn ramp_rows(
     enabled: bool,
     lang: Lang,
 ) -> Option<(Ramp, bool)> {
-    let ctx = ui.ctx().clone();
-    // どのグラデーションの選びか（替わったら先頭の色の分岐点に戻す）
-    if app.fillfx.ramp_for != Some((id, channel)) {
-        app.fillfx.ramp_for = Some((id, channel));
-        app.fillfx.ramp_selection = Selection::default();
-    }
-    let mut result: Option<Ramp> = None;
-    // 1 回で決まる変更（分岐点・カーブの編集の確定・色・消す）か。スライダーのドラッグは離すまで 1 回の取り消しにまとめる
-    let mut discrete = false;
-    let mut working = ramp.clone();
-    // プリセット
-    let r = rows.row(24.0, 4.0);
-    if w::button(
-        ui,
-        r,
-        "gradient.presets",
-        lang.pick("階調のプリセット", "Gradient Presets"),
-        false,
+    // 層・チャンネルごとに、分岐点の選びなどを別に覚える
+    let key = (
+        "fill-gradient",
+        id.0 ^ (channel.index() as u128).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+    );
+    let mut params = super::ramp_rows::Params {
+        key,
         enabled,
-        None,
-        None,
-    )
-    .clicked()
-    {
-        open(app, &ctx, Popup::RampPresets(id, channel), r);
-    }
-    // 分岐点
-    let r = rows.row(ramp::STOPS_HEIGHT, 4.0);
-    let mut selection = app.fillfx.ramp_selection;
-    if let Some(next) = ramp::stops_editor(
-        ui,
-        r,
-        "gradient.stops",
-        &working,
-        &mut selection,
+        lang,
+        main: app.color.main,
+        sub: app.color.sub,
         scalar,
-        lang.pick(
-            "上: 不透明度の分岐点。下: 色（値）の分岐点。何も無い所を押すと足し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
-            "Top: opacity stops. Bottom: colour or value stops. Click to add, drag to move, right-click or drag outside to remove. Small diamonds move the midpoint. Escape cancels a drag",
-        ),
-        enabled,
-    ) {
-        result = Some(next.clone());
-        discrete = true;
-        working = next;
-    }
-    selection = ramp_ops::clamp_selection(&working, selection);
-    app.fillfx.ramp_selection = selection;
-    // 選んだ分岐点
-    let count = if selection.alpha {
-        working.opacities().len()
-    } else {
-        working.colors().len()
-    };
-    let (min, max) = ramp_ops::position_range(&working, selection.alpha, selection.index);
-    let position = ramp_ops::selected_position(&working, selection);
-    if let Some(v) = slider_row(
-        ui,
-        rows,
-        "gradient.position",
-        lang.pick("分岐点の位置", "Stop Position"),
-        (position * 100.0) as f32,
-        ((min * 100.0) as f32, (max * 100.0) as f32),
-        NumberFormat {
-            decimals: 2,
-            trim: true,
-            suffix: "%",
+        features: super::ramp_rows::Features {
+            mixing: false,
+            value_curve: true,
         },
-        None,
-        enabled,
-    ) {
-        if let Some(next) = ramp_ops::move_stop(
-            &working,
-            selection.alpha,
-            selection.index,
-            f64::from(v) / 100.0,
-        ) {
-            result = Some(next.clone());
-            working = next;
-        }
-    }
-    if selection.alpha {
-        let s = working.opacities()[selection.index];
-        if let Some(v) = percent_row(
-            ui,
-            rows,
-            "gradient.opacity",
-            lang.pick("分岐点の不透明度", "Stop Opacity"),
-            s.opacity,
-            (0.0, 1.0),
-            None,
-            enabled,
-        ) {
-            let mut list = working.opacities().to_vec();
-            list[selection.index].opacity = v;
-            if let Some(next) = ramp_ops::with_opacities(&working, list) {
-                result = Some(next.clone());
-                working = next;
-            }
-        }
-        if selection.index + 1 < count {
-            if let Some(v) = percent_row(
-                ui,
-                rows,
-                "gradient.midpoint",
-                lang.pick("区間の中点", "Segment Midpoint"),
-                s.midpoint,
-                (0.01, 0.99),
-                None,
-                enabled,
-            ) {
-                let mut list = working.opacities().to_vec();
-                list[selection.index].midpoint = v;
-                if let Some(next) = ramp_ops::with_opacities(&working, list) {
-                    result = Some(next.clone());
-                    working = next;
-                }
-            }
-        }
-    } else {
-        let s = working.colors()[selection.index];
-        let c = s.color;
-        if scalar {
-            let luminance =
-                ((0.2126 * f64::from(c.r) + 0.7152 * f64::from(c.g) + 0.0722 * f64::from(c.b))
-                    / 255.0) as f32;
-            if let Some(v) = slider_row(
-                ui,
-                rows,
-                "gradient.value",
-                lang.pick("分岐点の値", "Stop Value"),
-                luminance,
-                (0.0, 1.0),
-                NumberFormat {
-                    decimals: 3,
-                    trim: true,
-                    suffix: "",
-                },
-                None,
-                enabled,
-            ) {
-                let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-                let mut list = working.colors().to_vec();
-                list[selection.index].color = Rgba8::new(b, b, b, 255);
-                if let Some(next) = ramp_ops::with_colors(&working, list) {
-                    result = Some(next.clone());
-                    working = next;
-                }
-            }
-        } else {
-            let row = rows.row(t::ROW_HEIGHT, 4.0);
-            w::text(
-                ui.painter(),
-                Rect::from_min_size(row.min, vec2(LABEL_W + 22.0, row.height())),
-                lang.pick("分岐点の色", "Stop Color"),
-                t::LABEL,
-                w::Align::Left,
-            );
-            let swatch = Rect::from_min_max(
-                pos2(row.left() + LABEL_W + 22.0, row.top() + 1.0),
-                pos2(row.right(), row.bottom() - 1.0),
-            );
-            let color = [
-                f32::from(c.r) / 255.0,
-                f32::from(c.g) / 255.0,
-                f32::from(c.b) / 255.0,
-                1.0,
-            ];
-            if w::color_swatch(
-                ui,
-                swatch,
-                "gradient.color",
-                color,
-                lang.pick(
-                    "分岐点の色（押すと描画色にする）",
-                    "Colour of the stop (click to set it to the paint color)",
-                ),
-                enabled,
-            )
-            .clicked()
-            {
-                let m = app.color.main;
-                let mut list = working.colors().to_vec();
-                list[selection.index].color =
-                    Rgba8::new(w::to_byte(m[0]), w::to_byte(m[1]), w::to_byte(m[2]), 255);
-                if let Some(next) = ramp_ops::with_colors(&working, list) {
-                    result = Some(next.clone());
-                    discrete = true;
-                    working = next;
-                }
-            }
-        }
-        if selection.index + 1 < count {
-            if let Some(v) = percent_row(
-                ui,
-                rows,
-                "gradient.midpoint",
-                lang.pick("区間の中点", "Segment Midpoint"),
-                s.midpoint,
-                (0.01, 0.99),
-                None,
-                enabled,
-            ) {
-                let mut list = working.colors().to_vec();
-                list[selection.index].midpoint = v;
-                if let Some(next) = ramp_ops::with_colors(&working, list) {
-                    result = Some(next.clone());
-                    working = next;
-                }
-            }
-        }
-    }
-    let r = rows.row(24.0, 4.0);
-    if w::button(
-        ui,
-        r,
-        "gradient.remove",
-        lang.pick("分岐点を消す", "Remove Stop"),
-        false,
-        enabled && count > 2,
-        None,
-        None,
-    )
-    .clicked()
-    {
-        if let Some(next) = ramp_ops::remove(&working, selection.alpha, selection.index) {
-            result = Some(next.clone());
-            discrete = true;
-            working = next;
-        }
-    }
-    // 値のカーブ
-    group_label(ui, rows, lang.pick("値のカーブ", "Value Curve"));
-    let r = rows.row(24.0, 4.0);
-    if w::button(
-        ui,
-        r,
-        "gradient.curve.presets",
-        lang.pick("カーブのプリセット", "Curve Presets"),
-        false,
-        enabled,
-        None,
-        None,
-    )
-    .clicked()
-    {
-        open(app, &ctx, Popup::CurvePresets(id, channel), r);
-    }
-    let r = rows.row(ramp::CURVE_HEIGHT, 4.0);
-    if let Some(next) = ramp::curve_editor(
-        ui,
-        r,
-        "gradient.curve",
-        &working,
-        lang.pick(
-            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
-            "Shape value in (across), gradient position out (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
-        ),
-        enabled,
-    ) {
-        result = Some(next);
-        discrete = true;
-    }
-    result.map(|r| (r, discrete))
+        sets: &mut app.ramp_sets,
+        eyedrop: &mut app.eyedrop,
+        message: &mut app.message,
+    };
+    super::ramp_rows::rows(ui, rows, &mut params, ramp).map(|c| (c.ramp, c.discrete))
 }
 
 // ───────── ポップアップ ─────────

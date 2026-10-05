@@ -4,7 +4,8 @@
 use egui::{pos2, vec2, Id, Key, Rect, Sense, Ui};
 use yolu_core::{AdjustmentType, BalanceRange, Channel, Document, ToneChannel};
 use yolu_io::psd::{
-    Blocker, ExportMode, ExportNote, NoteAction, Refusal, RoundedParameter, RoundedValue,
+    Blocker, ExportMode, ExportNote, GradientExpansion, NoteAction, Refusal, RoundedParameter,
+    RoundedValue,
 };
 
 use crate::lang::Lang;
@@ -564,20 +565,29 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
             lang.pick("色の式で重なる", "As colors").into(),
         ),
         NoteAction::ExpandedGradientCurve {
+            cause,
             colors,
             opacities,
             max_diff,
-        } => (
-            format!(
-                "{}: {}",
-                adjustment_name(lang, AdjustmentType::GradientMap),
-                lang.pick(
-                    format!("カーブ → 停止点 色 {colors}・不透明度 {opacities}"),
-                    format!("Curve → stops: {colors} color, {opacities} opacity")
-                )
-            ),
-            lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
-        ),
+        } => {
+            // 展開した理由の語（使っていないものは出さない）
+            let (ja, en) = match cause {
+                GradientExpansion::Curve => ("カーブ", "Curve"),
+                GradientExpansion::Mixing => ("混色", "Mixing"),
+                GradientExpansion::CurveAndMixing => ("カーブ・混色", "Curve/mixing"),
+            };
+            (
+                format!(
+                    "{}: {}",
+                    adjustment_name(lang, AdjustmentType::GradientMap),
+                    lang.pick(
+                        format!("{ja} → 停止点 色 {colors}・不透明度 {opacities}"),
+                        format!("{en} → stops: {colors} color, {opacities} opacity")
+                    )
+                ),
+                lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
+            )
+        }
         NoteAction::Rounded {
             kind,
             changes,
@@ -639,6 +649,14 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
             format!("「{name}」のグラデーションマップの値のカーブは、PSD の停止点の上限の中で展開できません"),
             format!("\"{name}\" has a gradient map whose value curve does not fit PSD's stop limit"),
         ),
+        Refusal::GradientMapMixingStops => lang.pick(
+            format!("「{name}」のグラデーションマップの混色は、PSD の停止点の上限の中で展開できません"),
+            format!("\"{name}\" has a gradient map whose color mixing does not fit PSD's stop limit"),
+        ),
+        Refusal::GradientMapMixing => lang.pick(
+            format!("「{name}」のグラデーションマップに混色（混色モード・混合率曲線）があります"),
+            format!("\"{name}\" has a gradient map with color mixing (mode or mixing curves)"),
+        ),
         Refusal::GradientMapCurve => lang.pick(
             format!("「{name}」のグラデーションマップに値のカーブがあります"),
             format!("\"{name}\" has a gradient map with a value curve"),
@@ -671,5 +689,52 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
     match channel {
         Some(c) => format!("{}: {what}", channel_name(lang, doc, c)),
         None => what,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expanded(cause: GradientExpansion) -> ExportNote {
+        ExportNote {
+            layer: "マップ".into(),
+            action: NoteAction::ExpandedGradientCurve {
+                cause,
+                colors: 6,
+                opacities: 2,
+                max_diff: 3,
+            },
+        }
+    }
+
+    /// 展開した理由の語は、使っているものだけ（値のカーブだけなら混色の語を出さない。混色だけならカーブの語を出さない）。
+    #[test]
+    fn the_expansion_note_names_only_what_the_gradient_map_used() {
+        let cases = [
+            (
+                GradientExpansion::Curve,
+                "カーブ → 停止点 色 6・不透明度 2",
+                "Curve → stops: 6 color, 2 opacity",
+            ),
+            (
+                GradientExpansion::Mixing,
+                "混色 → 停止点 色 6・不透明度 2",
+                "Mixing → stops: 6 color, 2 opacity",
+            ),
+            (
+                GradientExpansion::CurveAndMixing,
+                "カーブ・混色 → 停止点 色 6・不透明度 2",
+                "Curve/mixing → stops: 6 color, 2 opacity",
+            ),
+        ];
+        for (cause, ja, en) in cases {
+            let (what, how) = note_columns(Lang::Ja, &expanded(cause));
+            assert!(what.ends_with(ja), "{what}");
+            assert_eq!(how, "最大差 3");
+            let (what, how) = note_columns(Lang::En, &expanded(cause));
+            assert!(what.ends_with(en), "{what}");
+            assert_eq!(how, "Max diff 3");
+        }
     }
 }

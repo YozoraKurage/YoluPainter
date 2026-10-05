@@ -56,6 +56,7 @@ impl Lang {
                 what.to_string(),
                 match what {
                     Unwritable::ManualIdColors => "Manual ID colors cannot be saved to .ylp yet".into(),
+                    Unwritable::GeneratorRampMixing => "Color mixing in a fill gradient cannot be saved to .ylp".into(),
                 },
             ),
             // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。

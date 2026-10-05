@@ -2,6 +2,7 @@
 pub mod anchor;
 mod evaluate;
 mod grunge;
+mod mixing;
 mod noise;
 mod noisefn;
 mod preview;
@@ -14,6 +15,7 @@ pub use procedural::{
     CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
 };
 pub use crate::curve::CurvePoint;
+pub use mixing::{LuminanceCorrection, MixMode};
 pub use ramp::{ColorStop, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
 use std::{collections::BTreeMap, fmt};

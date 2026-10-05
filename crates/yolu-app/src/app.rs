@@ -327,6 +327,7 @@ impl YoluApp {
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
             app.state.attach_brush_store(dir.join("brushes"));
             app.state.attach_subtool_store(dir.join("subtools"));
+            app.state.ramp_sets.attach(dir.join("gradients"));
             app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
         }
         // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
@@ -335,6 +336,12 @@ impl YoluApp {
         notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
         notices.extend(app.state.subtool_problem_message());
+        notices.extend(app.state.ramp_sets.problem().map(|e| {
+            lang.pick(
+                format!("グラデーションセットを読めません。{}", e.describe(lang)),
+                format!("Cannot read the gradient sets. {}", e.describe(lang)),
+            )
+        }));
         if !notices.is_empty() {
             app.state.message = notices.join(" ");
         }

@@ -4,7 +4,8 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
@@ -12,7 +13,9 @@ use crate::{
 use std::collections::HashMap;
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
-use yolu_core::generator::{self, anchor, ColorStop, MapKind, OpacityStop, Ramp};
+use yolu_core::generator::{
+    self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
+};
 use yolu_core::paths;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
@@ -73,6 +76,9 @@ impl<'a> Fields<'a> {
             .get(p)
             .copied()
             .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {p}")))
+    }
+    fn has(&self, p: &str) -> bool {
+        self.0.contains_key(p)
     }
     fn wrong(p: &str) -> Error {
         Error::InvalidData(format!("正本の項目の型が違います: {p}"))
@@ -361,9 +367,11 @@ impl NativeDocument {
             .into_iter()
             .filter(|c| !c.is_standard())
             .collect();
-        // 版は使う機能で決まる: Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、
-        // ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21
-        let version = if uses_rust_only_adjustments(doc) {
+        // 版は使う機能で決まる: グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正（種類 64〜69）があれば 24、
+        // Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21
+        let version = if uses_gradient_mixing(doc) {
+            MIXING_VERSION
+        } else if uses_rust_only_adjustments(doc) {
             ADJUST_VERSION
         } else if uses_rust_only_generators(doc) {
             PROCEDURAL_VERSION
@@ -372,7 +380,7 @@ impl NativeDocument {
         } else {
             USER_CHANNELS_VERSION
         };
-        let mut w = Out(Vec::new());
+        let mut w = Out(Vec::new(), version >= MIXING_VERSION);
         w.raw(b"DOTPAINT")?;
         w.int(version)?;
         w.raw(&native_id(doc.id()))?;
@@ -423,6 +431,20 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
                     .generator_settings()
                     .is_some_and(|g| g.kind.is_procedural())
             })
+    })
+}
+/// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整の層か、層の内容・マスクのフィルターの段。無効な段も数える）を
+/// 持つか。持っていれば正本の版は 25 になり、Unity 版は開けない。
+pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
+    let mixes = |c: Option<ColorAdjust>| {
+        matches!(c, Some(ColorAdjust::GradientMap(g)) if g.ramp().uses_mixing())
+    };
+    doc.layers().iter().any(|l| {
+        l.adjustment().is_some_and(|a| mixes(a.color_adjust()))
+            || l.filters()
+                .iter()
+                .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+                .any(|e| mixes(e.settings().color_adjust()))
     })
 }
 /// 文書が Rust 版だけの色調補正（調整の層の種類 64〜69、層の内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
@@ -983,10 +1005,14 @@ fn read_color_adjust(f: &Fields<'_>, p: &str, kind: i32) -> Result<ColorAdjust> 
     let float = |name: &str| f.float(&format!("{p}.{name}"));
     let int = |name: &str| f.int(&format!("{p}.{name}"));
     Ok(match AdjustmentType::from_index(i64::from(kind)) {
-        Some(AdjustmentType::GradientMap) => ColorAdjust::GradientMap(GradientMap::new(
-            read_ramp(f, &format!("{p}.ramp"))?,
-            f.boolean(&format!("{p}.reverse"))?,
-        )),
+        Some(AdjustmentType::GradientMap) => {
+            let mut ramp = read_ramp(f, &format!("{p}.ramp"))?;
+            // 混色の欄（正本の版 25）は、あるときだけ読む（版 24 までの文書には無い）
+            if f.has(&format!("{p}.mix")) {
+                ramp = read_gradient_mixing(f, p, &ramp)?;
+            }
+            ColorAdjust::GradientMap(GradientMap::new(ramp, f.boolean(&format!("{p}.reverse"))?))
+        }
         Some(AdjustmentType::ToneCurve) => ColorAdjust::ToneCurve(ToneCurves::new(
             read_curve(f, &format!("{p}.composite"))?,
             read_curve(f, &format!("{p}.red"))?,
@@ -1028,6 +1054,27 @@ fn read_color_adjust(f: &Fields<'_>, p: &str, kind: i32) -> Result<ColorAdjust> 
             )))
         }
     })
+}
+
+/// グラデーションマップの混色の欄（正本の版 25。`write_gradient_mixing` と対）を、ランプへ足す。
+fn read_gradient_mixing(f: &Fields<'_>, p: &str, ramp: &Ramp) -> Result<Ramp> {
+    let invalid = |what: &str| Error::InvalidData(format!("{p}.{what} が範囲外です"));
+    let mode = MixMode::from_index(i64::from(f.int(&format!("{p}.mix"))?))
+        .ok_or_else(|| invalid("mix"))?;
+    let correction = LuminanceCorrection::from_index(i64::from(f.int(&format!("{p}.luminance"))?))
+        .ok_or_else(|| invalid("luminance"))?;
+    let mut segments = Vec::new();
+    for k in 0..f.int(&format!("{p}.segment_count"))? {
+        let s = format!("{p}.segments[{k}]");
+        segments.push(if f.boolean(&format!("{s}.enabled"))? {
+            Some(read_curve(f, &format!("{s}.curve"))?)
+        } else {
+            None
+        });
+    }
+    ramp.with_mixing(mode, correction)
+        .with_segment_curves(segments)
+        .map_err(|e| Error::InvalidData(e.to_string()))
 }
 
 fn read_ramp(f: &Fields<'_>, p: &str) -> Result<Ramp> {
@@ -1126,7 +1173,8 @@ fn tile_coord(f: &Fields<'_>, tile: &str) -> Result<TileCoord> {
 }
 
 /// 正本のバイト列（512 MiB の予算を書くたびに確かめる）。
-struct Out(Vec<u8>);
+/// 正本の書き込み先。2 つ目は、混色の欄（正本の版 25）を書くか。
+struct Out(Vec<u8>, bool);
 impl Out {
     fn raw(&mut self, b: &[u8]) -> Result<()> {
         self.0.extend_from_slice(b);
@@ -1386,6 +1434,10 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
             w.float(v)?;
         }
         if let Some(r) = &g.ramp {
+            // Unity 版と共有の並び。混色・混合率曲線は書けないので、黙って落とさず断る（画面は塗りつぶしのグラデーションには出さない）
+            if r.uses_mixing() {
+                return Err(Error::Unwritable(Unwritable::GeneratorRampMixing));
+            }
             write_ramp(w, r)?;
         }
     }
@@ -1442,6 +1494,22 @@ fn write_ramp(w: &mut Out, r: &Ramp) -> Result<()> {
     }
     write_curve(w, r.value_curve())
 }
+/// グラデーションマップの混色の欄（正本の版 25。`read_gradient_mixing` と対）: 混色モード・輝度の補正・区間の数と、区間ごとの印と混合率曲線。
+fn write_gradient_mixing(w: &mut Out, r: &Ramp) -> Result<()> {
+    w.int(i32::from(r.mix_mode().index()))?;
+    w.int(i32::from(r.luminance_correction().index()))?;
+    w.int(r.colors().len() as i32 - 1)?;
+    for k in 0..r.colors().len() - 1 {
+        match r.segment_curve(k) {
+            Some(curve) => {
+                w.boolean(true)?;
+                write_curve(w, curve)?;
+            }
+            None => w.boolean(false)?,
+        }
+    }
+    Ok(())
+}
 /// 値のカーブ（点の数と x・y。`read_curve` と対）。
 fn write_curve(w: &mut Out, curve: &Curve) -> Result<()> {
     w.int(curve.points().len() as i32)?;
@@ -1457,6 +1525,9 @@ fn write_color_adjust(w: &mut Out, value: &ColorAdjust) -> Result<()> {
         ColorAdjust::GradientMap(v) => {
             w.boolean(v.reverse())?;
             write_ramp(w, v.ramp())?;
+            if w.1 {
+                write_gradient_mixing(w, v.ramp())?;
+            }
         }
         ColorAdjust::ToneCurve(v) => {
             for channel in [

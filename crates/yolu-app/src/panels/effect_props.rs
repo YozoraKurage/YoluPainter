@@ -252,15 +252,19 @@ fn filter_body(
         }
         EffectSettings::Filter(_) => {
             if let Some(value) = effect.settings().color_adjust() {
-                let params = super::color_adjust::Params {
+                let mut params = super::color_adjust::Params {
                     key: ("effect", id.0),
                     enabled,
                     why: None,
                     paint: app.color.main,
+                    sub: app.color.sub,
                     lang,
                     histogram: None,
+                    sets: &mut app.ramp_sets,
+                    eyedrop: &mut app.eyedrop,
+                    message: &mut app.message,
                 };
-                if let Some(change) = super::color_adjust::rows(ui, rows, &params, &value) {
+                if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(EffectSettings::from_color_adjust(change.value));
                 }

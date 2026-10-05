@@ -96,6 +96,12 @@ Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原�
 OpenLit Library 1.0.2（**CC0 1.0**）から移した。MIT の原文と出どころは [再現の第三者表記](crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
 にあり、`tools/licenses-reviewed.json` の `bundled` で照合して app の全文束に含める。クレートではないので、上の件数には含めない。
 
+## グラデーションの混色（Oklab）
+
+グラデーションマップの「知覚的」な混色（`crates/yolu-core/src/generator/mixing.rs`）は、色空間 Oklab（Björn Ottosson、2020）の sRGB との変換の式
+（<https://bottosson.github.io/posts/oklab/>。著者は式と参照コードを **MIT**（Copyright (c) 2020 Björn Ottosson）で公開している）の係数を使う。
+変換の行列の係数だけを使い、参照コードは移していない。クレートではないので、上の件数には含めない。輝度の補正の式（彩度の落ちた量に比例して明るさを持ち上げる）はこのアプリのもの。
+
 ## 生成・試験に使う道具
 
 許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。

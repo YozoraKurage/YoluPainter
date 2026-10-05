@@ -415,15 +415,19 @@ fn adjustment_section(
                 let histogram = (a.kind() == AdjustmentType::ToneCurve)
                     .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
                     .flatten();
-                let params = super::color_adjust::Params {
+                let mut params = super::color_adjust::Params {
                     key: ("adjustment", id.0),
                     enabled,
                     why,
                     paint: app.color.main,
+                    sub: app.color.sub,
                     lang,
                     histogram: histogram.as_deref(),
+                    sets: &mut app.ramp_sets,
+                    eyedrop: &mut app.eyedrop,
+                    message: &mut app.message,
                 };
-                if let Some(change) = super::color_adjust::rows(ui, rows, &params, &value) {
+                if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(Ok(change.value.into_settings()));
                 }

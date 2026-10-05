@@ -187,3 +187,53 @@ fn a_disabled_editor_ignores_the_pointer() {
     assert_eq!(h.state().changes, 0);
     assert_eq!(h.state().curve, three_points());
 }
+
+#[test]
+fn the_frame_the_drag_is_released_still_shows_the_moved_point_not_the_old_one() {
+    // 呼び手は返された値を、部品が描いたあとに当てる（実際の画面と同じ）。離したフレームに古い値を描くと、点が元の位置へ一瞬戻る。
+    use std::cell::RefCell;
+    thread_local! {
+        static PAINTED: RefCell<Vec<Curve>> = const { RefCell::new(Vec::new()) };
+    }
+    let mut h = common::gpu_thread::builder()
+        .with_size(vec2(240.0, 160.0))
+        .build_ui_state(
+            |ui, state: &mut State| {
+                if let Some(next) = curve_editor(ui, RECT, "c", &state.curve, "tip", state.enabled)
+                {
+                    state.curve = next;
+                    state.changes += 1;
+                }
+                if let Some(c) = yolu_app::ui::curve::last_painted(ui, "c") {
+                    PAINTED.with(|p| p.borrow_mut().push(c));
+                }
+            },
+            State {
+                curve: three_points(),
+                enabled: true,
+                changes: 0,
+            },
+        );
+    press(&mut h, at(0.5, 0.5));
+    move_to(&mut h, at(0.3, 0.7));
+    PAINTED.with(|p| p.borrow_mut().clear());
+    button(&h, at(0.3, 0.7), PointerButton::Primary, false);
+    h.step();
+    let moved = h.state().curve.points()[1];
+    assert!((moved.x - 0.3).abs() < 0.02, "{moved:?}");
+    PAINTED.with(|p| {
+        let painted = p.borrow();
+        let first = painted.first().expect("離したフレームを描いた");
+        assert!(
+            (first.points()[1].x - 0.3).abs() < 0.02,
+            "離したフレームに元の位置を描いた: {:?}",
+            first.points()[1]
+        );
+        assert!(
+            painted
+                .iter()
+                .all(|c| (c.points()[1].x - 0.3).abs() < 0.02),
+            "離したあとのどのフレームも動かした位置"
+        );
+    });
+}

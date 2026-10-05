@@ -17,8 +17,8 @@ use yolu_core::{
 };
 use yolu_io::psd::{
     self, Adjustment, BlendMode, CompatibilityMode as Mode, Document as Psd, ExportControl,
-    ExportMode, ExportNote, ExportOptions, Exported, Layer, LayerKind, Limits, NoteAction, Refusal,
-    RoundedParameter,
+    ExportMode, ExportNote, ExportOptions, Exported, GradientExpansion, Layer, LayerKind, Limits,
+    NoteAction, Refusal, RoundedParameter,
 };
 use yolu_io::NativeDocument;
 
@@ -1349,6 +1349,7 @@ fn check_expansion(label: &str, settings: AdjustmentSettings, allowed: u8) -> (u
     };
     assert_eq!(note.layer, "調整");
     let NoteAction::ExpandedGradientCurve {
+        cause,
         colors,
         opacities,
         max_diff,
@@ -1356,6 +1357,7 @@ fn check_expansion(label: &str, settings: AdjustmentSettings, allowed: u8) -> (u
     else {
         panic!("{label}: {:?}", note.action)
     };
+    assert_eq!(cause, GradientExpansion::Curve, "{label}: 値のカーブだけ");
     // 書いた調整は値のカーブを持たず、停止点の数は注記のとおり（PSD の上限 32 以下）
     let written = back
         .layers()
@@ -1532,12 +1534,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
     let (mut d, base, _, _) = three();
     paint(&mut d, base, Channel::Roughness, 5);
     let map = d
-        .add_adjustment_layer(
-            "調整",
-            unfit_gradient_map(),
-            Some(&[Channel::Color]),
-            None,
-        )
+        .add_adjustment_layer("調整", unfit_gradient_map(), Some(&[Channel::Color]), None)
         .unwrap();
     // Color の合成に出る: 断る（Color だけ。ほかのチャンネルは書ける）
     assert_eq!(
@@ -1549,6 +1546,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
     assert!(!find(&out.document.layers, "調整").visible);
     let note = out.notes.iter().find(|n| n.layer == "調整").unwrap();
     let NoteAction::ExpandedGradientCurve {
+        cause,
         colors,
         opacities,
         max_diff,
@@ -1556,6 +1554,7 @@ fn an_unfit_value_curve_is_refused_only_where_the_layer_shows_in_the_exported_ch
     else {
         panic!("{:?}", note.action)
     };
+    assert_eq!(cause, GradientExpansion::Curve);
     assert_eq!(max_diff, 0, "合成に出ないので差は無い");
     assert!((2..=32).contains(&colors) && (2..=32).contains(&opacities));
     let written = back
@@ -3026,4 +3025,206 @@ fn random_documents_bake_to_the_same_look_in_every_channel() {
         rounded > seeds as usize / 4,
         "刻みの間の調整が十分にある: {rounded}"
     );
+}
+
+/// 混色（混色モード・混合率曲線）を持つグラデーションマップ。
+fn mixing_map(
+    colors: Vec<ColorStop>,
+    mode: generator::MixMode,
+    correction: generator::LuminanceCorrection,
+    segment: Option<(usize, &[(f64, f64)])>,
+) -> AdjustmentSettings {
+    let mut ramp = Ramp::new(colors, flat_opacities(), None)
+        .unwrap()
+        .with_mixing(mode, correction);
+    if let Some((k, points)) = segment {
+        let curve = Curve::new(points.iter().map(|&(x, y)| CurvePoint { x, y }).collect()).unwrap();
+        ramp = ramp.with_segment_curve(k, Some(curve)).unwrap();
+    }
+    AdjustmentSettings::gradient_map(GradientMap::new(ramp, false))
+}
+
+#[test]
+fn a_gradient_maps_mixing_is_refused_strictly_and_expanded_into_stops_when_baking() {
+    use generator::{LuminanceCorrection, MixMode};
+    let three_colors = || {
+        vec![
+            color_stop(0.0, 0.5, [20, 10, 120]),
+            color_stop(0.5, 0.4, [220, 60, 30]),
+            color_stop(1.0, 0.5, [250, 240, 160]),
+        ]
+    };
+    let cases = [
+        (
+            "知覚的",
+            mixing_map(
+                three_colors(),
+                MixMode::Perceptual,
+                LuminanceCorrection::High,
+                None,
+            ),
+        ),
+        (
+            "リニア",
+            mixing_map(
+                three_colors(),
+                MixMode::Linear,
+                LuminanceCorrection::default(),
+                None,
+            ),
+        ),
+        (
+            "混合率曲線",
+            mixing_map(
+                three_colors(),
+                MixMode::Standard,
+                LuminanceCorrection::default(),
+                Some((0, &[(0.0, 0.0), (0.3, 0.8), (1.0, 1.0)])),
+            ),
+        ),
+    ];
+    for (label, settings) in cases {
+        let d = adjusted(settings);
+        // 厳密な書き出しは、混色があれば断る（PSD のグラデーションに形が無い）
+        assert!(
+            psd::export_blockers(&d)
+                .iter()
+                .any(|b| b.refusal == Refusal::GradientMapMixing),
+            "{label}"
+        );
+        // 焼き込みは停止点へ展開して書く
+        let (out, back) = round_trip(&d, Channel::Color);
+        let [note] = out.notes.as_slice() else {
+            panic!("{label}: {:?}", out.notes)
+        };
+        assert_eq!(note.layer, "調整");
+        let NoteAction::ExpandedGradientCurve {
+            cause,
+            colors,
+            opacities,
+            max_diff,
+        } = note.action
+        else {
+            panic!("{label}: {:?}", note.action)
+        };
+        assert_eq!(
+            cause,
+            GradientExpansion::Mixing,
+            "{label}: 混色だけ（値のカーブは無い）"
+        );
+        let written = back
+            .layers()
+            .iter()
+            .find(|l| l.name() == "調整")
+            .and_then(|l| l.adjustment())
+            .unwrap();
+        let ramp = written.gradient_map_value().unwrap().ramp();
+        assert!(
+            !ramp.uses_mixing(),
+            "{label}: 書いた調整は PSD の形（混色なし）"
+        );
+        assert!(ramp.value_curve().is_identity(), "{label}");
+        assert_eq!(
+            (ramp.colors().len(), ramp.opacities().len()),
+            (colors, opacities)
+        );
+        assert!(
+            colors > 3 && colors <= 32,
+            "{label}: 停止点が増える {colors}"
+        );
+        let truth = look(&d, Channel::Color)
+            .iter()
+            .zip(look(&back, Channel::Color))
+            .map(|(a, b)| a.abs_diff(b))
+            .max()
+            .unwrap();
+        assert_eq!(max_diff, truth, "{label}: 合成の最大の差は注記のとおり");
+        assert!(max_diff <= 4, "{label}: {max_diff}");
+    }
+}
+
+#[test]
+fn a_gradient_map_with_a_value_curve_and_mixing_says_both_in_the_note() {
+    use generator::{LuminanceCorrection, MixMode};
+    let bent = Curve::new(vec![
+        CurvePoint { x: 0.0, y: 0.0 },
+        CurvePoint { x: 0.5, y: 0.7 },
+        CurvePoint { x: 1.0, y: 1.0 },
+    ])
+    .unwrap();
+    let ramp = Ramp::new(
+        vec![
+            color_stop(0.0, 0.5, [20, 10, 120]),
+            color_stop(0.5, 0.4, [220, 60, 30]),
+            color_stop(1.0, 0.5, [250, 240, 160]),
+        ],
+        flat_opacities(),
+        None,
+    )
+    .unwrap()
+    .with_value_curve(bent)
+    .with_mixing(MixMode::Perceptual, LuminanceCorrection::default());
+    let d = adjusted(AdjustmentSettings::gradient_map(GradientMap::new(
+        ramp, false,
+    )));
+    // 厳密な書き出しは、値のカーブで断る（混色の断りより先）
+    assert!(psd::export_blockers(&d)
+        .iter()
+        .any(|b| b.refusal == Refusal::GradientMapCurve));
+    let (out, _) = round_trip(&d, Channel::Color);
+    let [note] = out.notes.as_slice() else {
+        panic!("{:?}", out.notes)
+    };
+    let NoteAction::ExpandedGradientCurve { cause, .. } = note.action else {
+        panic!("{:?}", note.action)
+    };
+    assert_eq!(cause, GradientExpansion::CurveAndMixing);
+    assert!(
+        note.message().contains("値のカーブと混色"),
+        "{}",
+        note.message()
+    );
+}
+
+/// 展開の注記の文は、使っているものだけを言う（値のカーブだけなら混色の語は出ない。混色だけならカーブの語は出ない）。
+#[test]
+fn the_expansion_note_names_only_what_the_gradient_map_used() {
+    let note = |cause| ExportNote {
+        layer: "調整".to_owned(),
+        action: NoteAction::ExpandedGradientCurve {
+            cause,
+            colors: 5,
+            opacities: 2,
+            max_diff: 1,
+        },
+    };
+    let curve = note(GradientExpansion::Curve).message();
+    assert!(
+        curve.contains("値のカーブを") && !curve.contains("混色"),
+        "{curve}"
+    );
+    let mixing = note(GradientExpansion::Mixing).message();
+    assert!(
+        mixing.contains("混色") && !mixing.contains("カーブ"),
+        "{mixing}"
+    );
+    let both = note(GradientExpansion::CurveAndMixing).message();
+    assert!(both.contains("値のカーブと混色"), "{both}");
+}
+
+#[test]
+fn a_gradient_map_without_mixing_is_written_as_before() {
+    // 混色を使わなければ、値のカーブも無い昔のグラデーションマップは展開せず、そのまま PSD の停止点にする
+    let d = adjusted(gradient_map(
+        vec![
+            color_stop(0.0, 0.5, [20, 10, 120]),
+            color_stop(1.0, 0.5, [250, 240, 160]),
+        ],
+        flat_opacities(),
+        None,
+        false,
+    ));
+    assert!(psd::export_blockers(&d).is_empty());
+    let (out, _) = round_trip(&d, Channel::Color);
+    assert!(out.notes.is_empty(), "{:?}", out.notes);
 }

@@ -562,12 +562,20 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
             .clone()
             .unwrap()
     };
-    // 分岐点の位置のスライダーが、欄の見える範囲の真ん中あたりに来るように送る
-    let found = rect_of(&h, "分岐点の位置", |r| r.left() > 1000.0);
+    // 分岐点の位置のスライダー（欄の下の方にある「位置」）が、欄の見える範囲の真ん中あたりに来るように送る
+    let position = |h: &Harness<'_, YoluApp>| {
+        use egui_kittest::kittest::Queryable;
+        h.get_all_by_label("位置")
+            .map(|n| n.rect())
+            .filter(|r| r.left() > 1000.0)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .expect("分岐点の位置")
+    };
+    let found = position(&h);
     let scroll = st(&h).m2.props_scroll + (found.top() - 760.0);
     h.state_mut().state.m2.props_scroll = scroll;
     h.run();
-    let slider = rect_of(&h, "分岐点の位置", |r| r.left() > 1000.0);
+    let slider = position(&h);
     assert!(
         slider.top() > 640.0 && slider.bottom() < 970.0,
         "{slider:?}"

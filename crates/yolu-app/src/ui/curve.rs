@@ -7,6 +7,7 @@
 use egui::{pos2, Color32, Sense, Ui};
 use yolu_core::curve::{Curve, CurvePoint};
 
+use super::settle;
 use super::theme as t;
 use super::widgets::{outline, rounded};
 
@@ -234,7 +235,13 @@ pub fn curve_editor_with(
     let live: Option<Curve> = ui
         .data(|data| data.get_temp::<Drag>(drag_id))
         .map(|d| d.draft);
-    let shown = live.as_ref().unwrap_or(curve);
+    // 離したフレームも、文書が追いつくまで離した値を見せる（元の位置へ一瞬戻らない）
+    if let Some(done) = &result {
+        settle::start(ui, id, curve, done);
+    }
+    let settled = result.clone().or_else(|| settle::shown(ui, id, curve));
+    let shown = live.as_ref().or(settled.as_ref()).unwrap_or(curve);
+    ui.data_mut(|d| d.insert_temp(id.with("painted"), shown.clone()));
     if ui.is_rect_visible(r) {
         let p = ui.painter();
         rounded(p, r, t::CONTROL_BG, 3.0);
@@ -308,6 +315,12 @@ pub fn curve_editor_with(
     }
     let _ = response.on_hover_text(tooltip);
     result
+}
+
+/// この部品が直前に描いたカーブ（ドラッグの下書き・離した直後の値を含む）。部品の外から「何が見えているか」を確かめる試験の口。
+pub fn last_painted(ui: &Ui, id_salt: impl egui::AsIdSalt) -> Option<Curve> {
+    let id = ui.make_persistent_id(id_salt);
+    ui.data(|d| d.get_temp(id.with("painted")))
 }
 
 #[cfg(test)]

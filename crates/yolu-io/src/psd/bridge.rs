@@ -175,6 +175,9 @@ fn psd_gradient_map(g: &GradientMap) -> std::result::Result<Adjustment, Refusal>
     if !ramp.value_curve().is_identity() {
         return Err(Refusal::GradientMapCurve);
     }
+    if ramp.uses_mixing() {
+        return Err(Refusal::GradientMapMixing);
+    }
     let step = |position: f64, midpoint: f64, last: bool| -> Option<(u16, u8)> {
         let location = whole(position * 4096.0)?;
         let mid = if last { 50 } else { whole(midpoint * 100.0)? };
@@ -340,6 +343,11 @@ pub enum Refusal {
     /// 展開できない。焼き込みの書き出しだけの断りで、合成に出る層にだけ付く（合成に出ない層は最良の展開を隠して書く）。厳密な書き出しは展開をしないので、
     /// 値のカーブがあれば収まる曲線も含めて `GradientMapCurve` で断る。
     GradientMapCurveStops,
+    /// グラデーションマップのランプが混色（混色モードが通常でない）か区間の混合率曲線を使っている（PSD のグラデーションに形が無い）。
+    GradientMapMixing,
+    /// グラデーションマップの混色・混合率曲線を、停止点の上限（32）の中で、層の出力の差 4 以下に展開できない。`GradientMapCurveStops` と同じ決めで、
+    /// 焼き込みの書き出しだけの断り（厳密な書き出しは混色があれば `GradientMapMixing` で断る）。
+    GradientMapMixingStops,
     /// トーンカーブの点が PSD の刻み（入力・出力とも 1/255）の間にある。
     ToneCurveBetweenSteps,
     /// カラーバランスのスライダーが PSD の刻み（整数）の間にある。
@@ -376,6 +384,8 @@ impl Blocker {
             Refusal::GradientMapBetweenSteps => format!("調整「{name}」のグラデーションマップは PSD の刻み（位置 1/4096・中点 1%・不透明度 1/255）の間にあります。丸めて書かず断ります"),
             Refusal::GradientMapCurve => format!("調整「{name}」のグラデーションマップのランプに値のカーブがあります。PSD のグラデーションに値のカーブはないので、書かず断ります"),
             Refusal::GradientMapCurveStops => format!("調整「{name}」のグラデーションマップの値のカーブを、PSD の停止点の上限（32 個）の中で、層の出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
+            Refusal::GradientMapMixing => format!("調整「{name}」のグラデーションマップのランプに混色（混色モード・混合率曲線）があります。PSD のグラデーションに形はないので、書かず断ります"),
+            Refusal::GradientMapMixingStops => format!("調整「{name}」のグラデーションマップの混色（混色モード・混合率曲線）を、PSD の停止点の上限（32 個）の中で、層の出力の差 4 以下（通常の合成・不透明度 100%）に展開できません。書かず断ります"),
             Refusal::ToneCurveBetweenSteps => format!("調整「{name}」のトーンカーブの点は PSD の刻み（入力・出力とも 0〜255 の整数）の間にあります。丸めて書かず断ります"),
             Refusal::ColorBalanceBetweenSteps => format!("調整「{name}」のカラーバランスは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),
             Refusal::BrightnessContrastBetweenSteps => format!("調整「{name}」の明るさ・コントラストは PSD の刻み（整数）の間にあります。丸めて書かず断ります"),

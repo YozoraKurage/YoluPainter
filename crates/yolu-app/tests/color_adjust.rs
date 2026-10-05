@@ -7,7 +7,9 @@ use common::*;
 use egui::{pos2, vec2, Rect, Ui};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotResults};
+use yolu_app::eyedrop::EyedropState;
 use yolu_app::lang::Lang;
+use yolu_app::rampsets::RampSets;
 use yolu_app::panels::color_adjust::{self, Change, Histogram, Params};
 use yolu_app::ui::theme as t;
 use yolu_app::ui::widgets::Rows;
@@ -20,6 +22,8 @@ use yolu_core::{
 
 const WIDTH: f32 = 320.0;
 const HEIGHT: f32 = 560.0;
+/// グラデーションマップの欄は縦に長い（混色・セット・分岐点・色・混合率曲線）。
+const TALL: f32 = 600.0;
 
 struct Panel {
     ready: bool,
@@ -29,6 +33,10 @@ struct Panel {
     histogram: Option<Histogram>,
     /// 返された変更（新しい値と discrete）。
     changes: Vec<Change>,
+    height: f32,
+    sets: RampSets,
+    eyedrop: EyedropState,
+    message: String,
 }
 
 fn draw(ui: &mut Ui, p: &mut Panel) {
@@ -39,28 +47,37 @@ fn draw(ui: &mut Ui, p: &mut Panel) {
         ui.ctx().request_repaint();
         return;
     }
-    let area = Rect::from_min_size(ui.max_rect().min, vec2(WIDTH, HEIGHT));
+    let area = Rect::from_min_size(ui.max_rect().min, vec2(WIDTH, p.height));
     ui.allocate_rect(area, egui::Sense::hover());
     ui.painter().rect_filled(area, 0.0, t::PANEL_BG);
     let mut rows = Rows::new(area, 0.0);
     rows.indent = t::SECTION_INDENT;
-    let params = Params {
+    let mut params = Params {
         key: ("test", 1),
         enabled: p.enabled,
         why: None,
         paint: [0.9, 0.2, 0.1, 1.0],
+        sub: [0.1, 0.2, 0.9, 1.0],
         lang: p.lang,
         histogram: p.histogram.as_ref(),
+        sets: &mut p.sets,
+        eyedrop: &mut p.eyedrop,
+        message: &mut p.message,
     };
-    if let Some(change) = color_adjust::rows(ui, &mut rows, &params, &p.value) {
+    if let Some(change) = color_adjust::rows(ui, &mut rows, &mut params, &p.value) {
         p.value = change.value.clone();
         p.changes.push(change);
     }
 }
 
 fn panel(value: ColorAdjust, lang: Lang) -> Harness<'static, Panel> {
+    let height = if matches!(value, ColorAdjust::GradientMap(_)) {
+        TALL
+    } else {
+        HEIGHT
+    };
     let mut h = common::gpu_thread::builder()
-        .with_size(vec2(WIDTH, HEIGHT))
+        .with_size(vec2(WIDTH, height))
         .build_ui_state(
             draw,
             Panel {
@@ -70,6 +87,10 @@ fn panel(value: ColorAdjust, lang: Lang) -> Harness<'static, Panel> {
                 enabled: true,
                 histogram: None,
                 changes: Vec::new(),
+                height,
+                sets: RampSets::default(),
+                eyedrop: EyedropState::default(),
+                message: String::new(),
             },
         );
     h.run();
@@ -286,6 +307,15 @@ fn tone_curve_edits_one_curve_at_a_time_and_presets_set_the_selected_one() {
     assert!(w.curve(ToneChannel::Blue).is_identity());
 }
 
+/// 分岐点の編集の部品の場所（「前の分岐点」のボタンの上。部品の高さは 76、行の間は 4）。
+fn stops_editor_rect(h: &Harness<'_, Panel>) -> Rect {
+    let prev = rect(h, "<");
+    Rect::from_min_size(
+        pos2(prev.left(), prev.top() - 4.0 - yolu_app::ui::ramp::STOPS_HEIGHT),
+        vec2(WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT, yolu_app::ui::ramp::STOPS_HEIGHT),
+    )
+}
+
 #[test]
 fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     let mut h = panel(default_value(AdjustmentType::GradientMap), Lang::Ja);
@@ -293,13 +323,15 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
         ColorAdjust::GradientMap(g) => g.clone(),
         other => panic!("{other:?}"),
     };
-    // プリセット（見本を押す。1 回で決まる変更）
+    // グラデーションセット: 組を替えて、見本を押す（1 回で決まる変更）
+    click_label(&mut h, "色味");
     click_label(&mut h, "セピア");
-    let sepia = color_adjust::gradient_presets()
+    let sepia = yolu_app::rampsets::builtin::groups([0.0; 4], [0.0; 4])
         .into_iter()
-        .find(|p| p.1 == "Sepia")
+        .flat_map(|g| g.items)
+        .find(|i| i.en == "Sepia")
         .unwrap()
-        .2;
+        .ramp;
     assert_eq!(ramp_of(&h).ramp(), &sepia);
     assert!(last(&h).discrete);
     // 逆向き
@@ -307,17 +339,8 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     click_check(&mut h, "逆向き");
     assert!(ramp_of(&h).reverse());
     assert_eq!(ramp_of(&h).ramp(), &sepia, "向きだけが替わる");
-    // 分岐点の編集: 色の行の何も無い所を押すと足す（見本の列・逆向きの行の下の部品）
-    let swatch = rect(&h, "セピア");
-    let top = swatch.bottom() + 4.0 + (t::ROW_HEIGHT + 2.0);
-    let stops = Rect::from_min_size(pos2(swatch.left() - 0.0, top), vec2(80.0, 76.0));
-    let _ = stops;
-    let first = rect(&h, "白黒");
-    let last_swatch = rect(&h, "氷");
-    let editor = Rect::from_min_max(
-        pos2(first.left(), top),
-        pos2(last_swatch.right(), top + 76.0),
-    );
+    // 分岐点の編集: 色の行の何も無い所を押すと足す
+    let editor = stops_editor_rect(&h);
     let bar_left = editor.left() + 7.0;
     let bar_width = editor.width() - 14.0;
     // 色の分岐点の行は枠の下の方（上から 67）。位置 0.25 は 2 つの端の間の何も無い所
@@ -330,8 +353,8 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     // 選んだ分岐点を消す
     click_label(&mut h, "分岐点を消す");
     assert_eq!(ramp_of(&h).ramp().colors().len(), 3);
-    // 色の見本を押すと描画色にする（1 回で決まる）
-    click_label(&mut h, "分岐点の色（押すと描画色にする）");
+    // 分岐点の色をメインの色にする（1 回で決まる）
+    click_label(&mut h, "メイン");
     assert!(last(&h).discrete);
     let g = ramp_of(&h);
     assert!(g
@@ -339,10 +362,20 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
         .colors()
         .iter()
         .any(|c| (c.color.r, c.color.g, c.color.b) == (230, 51, 26)));
+    // サブの色にもでき、指定へ戻すと今の色のまま
+    click_label(&mut h, "サブ");
+    assert!(ramp_of(&h)
+        .ramp()
+        .colors()
+        .iter()
+        .any(|c| (c.color.r, c.color.g, c.color.b) == (26, 51, 230)));
     // 分岐点の位置のスライダー（離すまでまとめる）
     let n = h.state().changes.len();
-    click_slider(&mut h, "分岐点の位置", 0.5);
-    assert!(h.state().changes.len() > n || ramp_of(&h) == g);
+    let before = ramp_of(&h);
+    click_slider(&mut h, "位置", 0.25);
+    assert!(h.state().changes.len() > n);
+    assert_ne!(ramp_of(&h), before);
+    assert!(!last(&h).discrete, "スライダーは離すまで 1 回の取り消しにまとめる");
 }
 
 #[test]
@@ -427,7 +460,12 @@ fn snapshot_the_six_panels() {
     .unwrap();
     let tone =
         ColorAdjust::ToneCurve(ToneCurves::identity().with_curve(ToneChannel::Composite, rb));
-    let sepia = color_adjust::gradient_presets().remove(1).2;
+    let sepia = yolu_app::rampsets::builtin::groups([0.0; 4], [0.0; 4])
+        .into_iter()
+        .flat_map(|g| g.items)
+        .find(|i| i.en == "Sepia")
+        .unwrap()
+        .ramp;
     let gradient = ColorAdjust::GradientMap(GradientMap::new(sepia, false));
     let balance = ColorAdjust::ColorBalance(
         ColorBalance::new(

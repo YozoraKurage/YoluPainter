@@ -2346,7 +2346,7 @@ mod tests {
             "{tone_what}"
         );
         assert!(
-            map_what.contains("カーブ → 停止点 色") && map_what.ends_with("不透明度 2"),
+            map_what.contains("カーブ → 停止点 色") && !map_what.contains("混色") && map_what.ends_with("不透明度 2"),
             "{map_what}"
         );
         assert!(tone_how.starts_with("最大差 ") && map_how.starts_with("最大差 "));
@@ -2357,7 +2357,7 @@ mod tests {
             "{}",
             en[1].1
         );
-        assert!(en[0].1.contains("Curve → stops: ") && en[0].2.starts_with("Max diff "));
+        assert!(en[0].1.contains("Curve → stops: ") && !en[0].1.contains("ixing") && en[0].2.starts_with("Max diff "));
         for (_, what, how) in &en {
             for text in [what, how] {
                 assert!(

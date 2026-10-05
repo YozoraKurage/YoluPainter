@@ -15,7 +15,7 @@ pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use native::{
-    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION,
+    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
     PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use project::{
@@ -58,11 +58,16 @@ pub enum Error {
 pub enum Unwritable {
     /// 手動の ID の色（正本の版 19）。
     ManualIdColors,
+    /// 塗りつぶしのグラデーションのランプの混色・混合率曲線（Unity 版と共有の並びに形が無い）。
+    GeneratorRampMixing,
 }
 impl fmt::Display for Unwritable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ManualIdColors => "手動の ID の色はまだ .ylp に書けません",
+            Self::GeneratorRampMixing => {
+                "塗りつぶしのグラデーションのランプの混色は .ylp に書けません"
+            }
         })
     }
 }

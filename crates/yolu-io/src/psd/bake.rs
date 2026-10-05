@@ -211,14 +211,26 @@ pub enum NoteAction {
         changes: Vec<RoundedValue>,
         max_diff: u8,
     },
-    /// グラデーションマップの値のカーブ（PSD のグラデーションに形が無い）を、カーブを通した色・不透明度の停止点の列へ展開した（近似）。
-    /// `colors`・`opacities` は停止点の数、`max_diff` は書き出したチャンネルの合成の最大の差（0〜255。隠した調整は 0）。`max_diff` は文書の合成の実測で、
-    /// 展開の基準（層 1 枚の出力の差 `EXPANSION_DIFFS`。通常の合成モード・不透明度 100% のとき）を超えることがある（超えても断らない）。
+    /// グラデーションマップの値のカーブか混色（混色モード・区間の混合率曲線。PSD のグラデーションに形が無い）を、それを通した色・不透明度の停止点の列へ展開した（近似）。
+    /// `cause` は展開した理由（どちらを使っていたか）、`colors`・`opacities` は停止点の数、`max_diff` は書き出したチャンネルの合成の最大の差（0〜255。隠した調整は 0）。
+    /// `max_diff` は文書の合成の実測で、展開の基準（層 1 枚の出力の差 `EXPANSION_DIFFS`。通常の合成モード・不透明度 100% のとき）を超えることがある（超えても断らない）。
     ExpandedGradientCurve {
+        cause: GradientExpansion,
         colors: usize,
         opacities: usize,
         max_diff: u8,
     },
+}
+
+/// グラデーションマップを停止点へ展開した理由（PSD のグラデーションに形が無いもののうち、使っていたもの）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientExpansion {
+    /// 値のカーブだけ。
+    Curve,
+    /// 混色（混色モード・区間の混合率曲線）だけ。
+    Mixing,
+    /// 値のカーブと混色の両方。
+    CurveAndMixing,
 }
 
 /// 層 1 枚の注記。
@@ -282,12 +294,20 @@ impl ExportNote {
                 format!("調整「{name}」を PSD の刻みへ丸めました（合成の最大の差 {max_diff}）")
             }
             NoteAction::ExpandedGradientCurve {
+                cause,
                 colors,
                 opacities,
                 max_diff,
-            } => format!(
-                "調整「{name}」のグラデーションマップの値のカーブを、色 {colors} 個・不透明度 {opacities} 個の停止点に展開しました（合成の最大の差 {max_diff}）"
-            ),
+            } => {
+                let what = match cause {
+                    GradientExpansion::Curve => "値のカーブ",
+                    GradientExpansion::Mixing => "混色（混色モード・混合率曲線）",
+                    GradientExpansion::CurveAndMixing => "値のカーブと混色（混色モード・混合率曲線）",
+                };
+                format!(
+                    "調整「{name}」のグラデーションマップの{what}を、色 {colors} 個・不透明度 {opacities} 個の停止点に展開しました（合成の最大の差 {max_diff}）"
+                )
+            }
         }
     }
 }
@@ -330,6 +350,7 @@ impl Need {
             Need::Round(r) => r.why.clone(),
             // 展開できない値のカーブ: 厳密な書き出しは展開をしないので、収まる曲線と同じ理由（C# の断りと対）で断る
             Need::Hard(Refusal::GradientMapCurveStops) => Refusal::GradientMapCurve,
+            Need::Hard(Refusal::GradientMapMixingStops) => Refusal::GradientMapMixing,
             Need::Hard(r) => r.clone(),
         }
     }
@@ -356,8 +377,8 @@ impl Need {
 pub(super) struct Rounding {
     pub kind: AdjustmentType,
     pub changes: Vec<RoundedValue>,
-    /// 値のカーブを展開したときの停止点の数（色・不透明度）。丸めではないので `changes` は空。
-    pub stops: Option<(usize, usize)>,
+    /// 値のカーブか混色を展開したときの、展開した理由と停止点の数（色・不透明度）。丸めではないので `changes` は空。
+    pub stops: Option<(GradientExpansion, usize, usize)>,
     /// 丸めた設定（PSD の刻みの値から取り込みと同じ割り算で作ったもの。読み戻した文書と同じ設定）。
     pub settings: AdjustmentSettings,
     pub psd: Adjustment,
@@ -721,12 +742,23 @@ fn rounding(
         }
         AdjustmentType::GradientMap => {
             let g = s.gradient_map_value().ok_or(why.clone())?;
-            if !g.ramp().value_curve().is_identity() {
-                // 値のカーブ: 停止点の列へ展開する（刻みの間の位置・中点・不透明度も、展開した停止点が刻みの上に作り直す）
+            let curved = !g.ramp().value_curve().is_identity();
+            if curved || g.ramp().uses_mixing() {
+                // 値のカーブ・混色（混色モード・混合率曲線）: 停止点の列へ展開する（刻みの間の位置・中点・不透明度も、展開した停止点が刻みの上に
+                // 作り直す）。PSD のグラデーションは sRGB の値の線形な補間（中点つき）だけなので、混ぜ方の違いは停止点を増やして近づける
                 let expansion = expand_curve(g)
                     .filter(|e| e.fits || !shown)
-                    .ok_or(Refusal::GradientMapCurveStops)?;
-                stops = Some((expansion.colors, expansion.opacities));
+                    .ok_or(if curved {
+                        Refusal::GradientMapCurveStops
+                    } else {
+                        Refusal::GradientMapMixingStops
+                    })?;
+                let cause = match (curved, g.ramp().uses_mixing()) {
+                    (true, true) => GradientExpansion::CurveAndMixing,
+                    (true, false) => GradientExpansion::Curve,
+                    _ => GradientExpansion::Mixing,
+                };
+                stops = Some((cause, expansion.colors, expansion.opacities));
                 (expansion.adjustment, Vec::new())
             } else {
                 let ramp = g.ramp();
@@ -1112,7 +1144,8 @@ pub fn plan_export(
                     Need::Round(r) => {
                         rounded.push((plan.notes.len(), l.id(), (*r).clone(), shown_in(d, l, c)));
                         match r.stops {
-                            Some((colors, opacities)) => NoteAction::ExpandedGradientCurve {
+                            Some((cause, colors, opacities)) => NoteAction::ExpandedGradientCurve {
+                                cause,
                                 colors,
                                 opacities,
                                 max_diff: 0,

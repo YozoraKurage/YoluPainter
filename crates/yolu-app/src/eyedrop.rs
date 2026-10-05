@@ -33,6 +33,10 @@ pub struct EyedropState {
     /// 選んでいる層でなく、全レイヤーの合成から取る。
     pub all_layers: bool,
     pub screen_request: Option<crate::screen_pick::Mode>,
+    /// ランプの色の分岐点のスポイトが、画面の色を待っている（`screen_pick` は取れた色を描画色でなく `ramp_stop_pick` へ入れる）。
+    pub ramp_stop_pending: bool,
+    /// 画面から取れた、ランプの色の分岐点へ当てる色（ランプの欄が 1 回だけ取り出す）。
+    pub ramp_stop_pick: Option<[u8; 3]>,
 }
 
 /// 押したときにスポイトとして働くか（スポイトの道具、または 2D でスポイトの修飾（`keymap::picks`。Alt）を押した描く道具）。
