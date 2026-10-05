@@ -56,7 +56,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "deselect",
                 icon: "deselect",
-                tooltip: lang.pick("選択を解除（Ctrl+D）", "Deselect (Ctrl+D)").into(),
+                tooltip: lang.pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)").into(),
                 enabled: free,
                 action: edit(SelEdit::Clear),
             },

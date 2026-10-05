@@ -223,6 +223,19 @@ pub fn yields_to_received(doc: &Document, source: Option<&TextureSource>) -> boo
     matches!(source, Some(TextureSource::Channel(c)) if c.is_standard() && !yolu_core::export::uses(doc, *c))
 }
 
+/// 受けた見た目があり、このスロットが Unity の流し込み先でない（Unity が元のテクスチャのまま見せる）か。流し込み先は、受けた見た目が
+/// スタンドアロンの出すチャンネル（今は Color）を自分で割り当てているスロットで、Unity はそこだけ描いた絵で見せる。
+pub fn follows_unity_texture(doc: &Document, slot: &str) -> bool {
+    doc.received_look().is_some_and(|r| !r.look.textures.contains_key(slot))
+}
+
+/// スロットの割り当てが、Unity の元のテクスチャに譲るものか: 受けた見た目があり、流し込み先でないスロットが、使っていない標準のチャンネルを
+/// 読むとき。Unity はそのスロットを元のテクスチャで、空なら既定のテクスチャで読むので、受けた絵が来ない間（空と知らせた・読めない・
+/// まだ届かない・層の上限を超えた）も、使っていないチャンネルの値（発光なら黒）ではなく、スロットの既定のテクスチャで描く。
+pub fn yields_to_unity_texture(doc: &Document, slot: &str, source: Option<&TextureSource>) -> bool {
+    yields_to_received(doc, source) && follows_unity_texture(doc, slot)
+}
+
 /// 描く見た目で割り当てていない（か、受けた絵に譲る割り当ての）スロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。
 /// 層の上限を超えたものも含む）。
 pub fn received_images(
@@ -623,11 +636,12 @@ pub fn params_with(
     };
     for (i, slot) in SLOTS.iter().enumerate() {
         def[i] = slot.default.rgba();
-        // 使っていない標準のチャンネルの割り当ては、Unity から受けた絵があればそれに譲る
-        let assigned = look
-            .textures
-            .get(slot.name)
-            .filter(|s| !(yields_to_received(doc, Some(s)) && received.iter().any(|r| r.0 == slot.name)));
+        // 使っていない標準のチャンネルの割り当ては、Unity の元のテクスチャに譲る: 受けた絵があればそれで、無ければスロットの既定で
+        // （Unity は空のテクスチャを既定で読む）。流し込み先と、受けた見た目の無いセットは割り当てのチャンネルを読む
+        let assigned = look.textures.get(slot.name).filter(|s| {
+            !(yields_to_received(doc, Some(s))
+                && (received.iter().any(|r| r.0 == slot.name) || follows_unity_texture(doc, slot.name)))
+        });
         let Some(source) = assigned else {
             if let Some((_, layer, srgb)) = received.iter().find(|r| r.0 == slot.name) {
                 let s = RECEIVED_SOURCE + *layer as i32;
@@ -1342,6 +1356,68 @@ mod tests {
         assert!(!received.iter().any(|s| s == "_BumpMap"));
         assert!(yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Emission))));
         assert!(!yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Normal))));
+    }
+
+    #[test]
+    fn an_unused_standard_channel_reads_the_slot_default_when_unity_sends_no_picture() {
+        // Unity が発光・ノーマルマップのテクスチャを空と知らせた（絵も理由も来ない）セット。新しいセットの既定の割り当て（発光 → Emission・
+        // ノーマルマップ → Normal）はどのレイヤーも使っていないので、使っていないチャンネルの値（発光なら黒）ではなく、Unity と同じに
+        // スロットの既定のテクスチャで読む
+        let (emission, bump) = (liltoon::slot_index("_EmissionMap").unwrap(), liltoon::slot_index("_BumpMap").unwrap());
+        let mut sink = lil();
+        sink.textures
+            .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+        let received = yolu_core::look::ReceivedLook {
+            look: sink,
+            ..Default::default()
+        };
+        let mut doc = Document::new(8, 8).unwrap();
+        let mut mine = lil();
+        crate::look::default_textures(&mut mine);
+        doc.set_look(mine, false).unwrap();
+        // 受けた見た目が無いとき（Live Link でつないでいない）は今までどおり、割り当てたチャンネルを読む
+        let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
+        assert_eq!(slot_src(&v, emission)[0] / 4, paint_source(Channel::Emission).unwrap());
+        assert_eq!(slot_src(&v, bump)[0] / 4, paint_source(Channel::Normal).unwrap());
+        doc.set_received_look(Some(received)).unwrap();
+        let drawn = doc.drawn_look().clone();
+        assert!(yields_to_unity_texture(&doc, "_EmissionMap", drawn.textures.get("_EmissionMap")));
+        assert!(received_images(&doc, &drawn).is_empty(), "来る絵は無い");
+        let v = params_with(&doc, &drawn, &[], [None, None], &[]);
+        for i in [emission, bump] {
+            assert_eq!(slot_src(&v, i), [-1; 4], "{}: 既定のテクスチャ", SLOTS[i].name);
+            assert_eq!(slot_flags(&v, i), [0.0; 4], "{}", SLOTS[i].name);
+        }
+        // 流し込み先（受けた見た目が Color を割り当てる _MainTex）は、Color を使うレイヤーが無くても描いた絵（3D ビューの Color）で読む
+        assert!(!yields_to_unity_texture(&doc, "_MainTex", drawn.textures.get("_MainTex")));
+        assert_eq!(slot_src(&v, 0), [0, 1, 2, 3]);
+        assert_eq!(slot_flags(&v, 0), [0.0, 1.0, 0.0, 0.0]);
+        // Normal を使い始めると、割り当てたチャンネルで描く（Emission は使っていないまま既定）
+        let layer = doc.add_layer("a").unwrap();
+        doc.set_channel_enabled(layer, Channel::Normal, true).unwrap();
+        let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
+        assert_eq!(slot_src(&v, bump)[0] / 4, paint_source(Channel::Normal).unwrap());
+        assert_eq!(slot_src(&v, emission), [-1; 4]);
+        // 受けた絵が来れば、その絵が勝つ（既定ではなく）
+        let mut received = doc.received_look().unwrap().clone();
+        received.images.insert("_EmissionMap".into(), received_image(true));
+        doc.set_received_look(Some(received)).unwrap();
+        let drawn = doc.drawn_look().clone();
+        let layered = received_layered(&doc, &drawn);
+        let layers: Vec<(&str, usize, bool)> = layered
+            .iter()
+            .enumerate()
+            .map(|(k, (slot, image))| (slot.as_str(), k, image.srgb))
+            .collect();
+        let v = params_with(&doc, &drawn, &[], [None, None], &layers);
+        assert_eq!(slot_flags(&v, emission), [1.0, 1.0, RECEIVED_SOURCE as f32, 0.0]);
+        // 読めない・まだ届かない理由（missing）が付いたスロットも、絵が来ない間は既定で描く
+        let mut pending = doc.received_look().unwrap().clone();
+        pending.images.clear();
+        pending.missing.insert("_EmissionMap".into(), yolu_core::look::MissingImage::Pending);
+        doc.set_received_look(Some(pending)).unwrap();
+        let v = params_with(&doc, &doc.drawn_look().clone(), &[], [None, None], &[]);
+        assert_eq!(slot_src(&v, emission), [-1; 4]);
     }
 
     #[test]

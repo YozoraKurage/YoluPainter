@@ -11,9 +11,9 @@ use yolu_model::ModelError;
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
 pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
     if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A document exceeds the Layer pixels budget")
+        Some("A document exceeds the Layer memory budget")
     } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
-        Some("The whole exceeds the Layer pixels budget")
+        Some("The whole exceeds the Layer memory budget")
     } else if text.contains("グループの入れ子の上限") {
         Some("Groups are nested too deeply")
     } else if text.contains("キャンバスの辺の上限") {

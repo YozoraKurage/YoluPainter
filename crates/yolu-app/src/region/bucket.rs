@@ -191,6 +191,8 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         return;
     }
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // この Esc は仕事の取消に使った（キャンバスが同じ Esc で選択範囲を解除しない）
+        crate::ui::window::note_escape_taken(ctx);
         app.region.job = None;
         app.message = app
             .lang

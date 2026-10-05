@@ -466,8 +466,8 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
             format!("\"{layer}\" has too many pixels"),
         ),
         CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーの画素の予算を超えました"),
-            format!("Layer pixel budget exceeded at \"{layer}\""),
+            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
+            format!("Layer memory budget exceeded at \"{layer}\""),
         ),
         CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
             format!("「{layer}」の付加情報が大きすぎます"),
@@ -492,8 +492,8 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
 pub fn refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
     why.raised_by_budget().then(|| {
         lang.pick(
-            "上限は設定の「レイヤーの画素」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer pixels in Settings. Raising it may let this import",
+            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
+            "The limit follows Layer memory in Settings. Raising it may let this import",
         )
         .into()
     })
@@ -729,7 +729,7 @@ mod tests {
                 "{why:?}"
             );
             if let Some(h) = refusal_tooltip(Lang::En, why) {
-                assert!(!has_japanese(&h) && h.contains("Layer pixels"));
+                assert!(!has_japanese(&h) && h.contains("Layer memory"));
             }
         }
         // 利用者の名前（層の名前）だけは、英語の画面でもそのまま

@@ -274,18 +274,18 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
         // 数は短い（1 項目 16 文字以内）。開発用の言葉（MiB・タイル・三角形…）は無い
         assert!(screen_texts(&h).iter().all(|t| !t.contains("MiB") && !t.contains("KiB")));
         assert_status_bar_left_is_empty(&mut h, &format!("{lang:?} 値あり"));
-        // ツールチップに内訳（アプリ全体・レイヤーの画素・取り消しの履歴・GPU）
+        // ツールチップに内訳（アプリ全体・レイヤーのメモリ・取り消しの履歴・GPU）
         let at = memory.center();
         hover_and_wait(&mut h, at);
         let tip = h
-            .query_all_by_label_contains(lang.pick("レイヤーの画素", "Layer pixels"))
+            .query_all_by_label_contains(lang.pick("レイヤーのメモリ", "Layer memory"))
             .next()
             .unwrap_or_else(|| panic!("{lang:?}: 内訳のツールチップが出ない"));
         // ツールチップの文字は、部品の値として出る
         let label = tip.accesskit_node().value().unwrap_or_default().to_string();
         for want in [
             format!("{}: 812 MB", lang.pick("アプリ全体（実メモリ）", "App (resident)")),
-            format!("{}: 120 MB", lang.pick("レイヤーの画素", "Layer pixels")),
+            format!("{}: 120 MB", lang.pick("レイヤーのメモリ", "Layer memory")),
             format!("{}: 64 MB", lang.pick("取り消しの履歴", "Undo history")),
             "GPU: 1.5 GB".to_owned(),
         ] {

@@ -37,7 +37,7 @@ pub const CLASSIC_ENTRIES: usize = 1000;
 pub const KEEP_IN_MEMORY: u64 = 1 << 20;
 /// 正本のほかのエントリの合計の上限（`YLP-3` の合計と同じ。正本でないエントリは今の上限のまま）。
 pub const OTHER_BYTES: u64 = 768 << 20;
-/// 正本の長さを「レイヤーの画素」の予算の何倍まで受けるか（一様なタイルは core では 4 バイトだが、正本では全画素を書くため）。
+/// 正本の長さを「レイヤーのメモリ」の予算の何倍まで受けるか（一様なタイルは core では 4 バイトだが、正本では全画素を書くため）。
 pub const DOCUMENT_FACTOR: u64 = 4;
 const MANIFEST: &str = "manifest.sha256";
 const YLP_MIME: &str = "application/x-yolupainter";
@@ -52,7 +52,7 @@ const MAX_CENTRAL: u64 = 32 << 20;
 /// 読むときの上限（設定の予算から決める）。
 ///
 /// - 1 エントリ: 正本の部分は [`MAX_PART_BYTES`]、ほかは [`MAX_ONE_ENTRY`]（どの予算にも依らない形の上限）。
-/// - セットごとの正本（`document.utpaint` と部分の長さの合計）: `document_bytes`。設定の「レイヤーの画素」の予算（`load_source_bytes`）の
+/// - セットごとの正本（`document.utpaint` と部分の長さの合計）: `document_bytes`。設定の「レイヤーのメモリ」の予算（`load_source_bytes`）の
 ///   [`DOCUMENT_FACTOR`] 倍。
 /// - 全体: 正本のあるセットの数 × `document_bytes` ＋ `other_bytes`（正本でないエントリは今の 768 MiB）。
 /// - エントリの数: [`MAX_ENTRIES`]。名前は今と同じ（96 文字・英数字と `. - _`）。
@@ -66,7 +66,7 @@ pub struct Limits {
     pub other_bytes: u64,
 }
 impl Limits {
-    /// 設定の「レイヤーの画素」の予算（1 つの文書の層の画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
+    /// 設定の「レイヤーのメモリ」の予算（1 つの文書の層の画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
     pub fn from_layer_pixels(layer_pixels: u64) -> Self {
         let pixels = layer_pixels.max(yolu_core::DEFAULT_SOURCE_BUDGET_BYTES);
         Self {
@@ -99,8 +99,8 @@ impl Limits {
     }
 }
 /// 予算で断る理由（画面の文）。どの予算かだけを言い、数・内部の識別子・上限の導き方は入れない（英語の画面はこの文で見分けて訳す）。
-pub const OVER_LAYER_PIXELS_DOCUMENT: &str = "正本が「レイヤーの画素」の予算を超えています";
-pub const OVER_LAYER_PIXELS_TOTAL: &str = "全体が「レイヤーの画素」の予算を超えています";
+pub const OVER_LAYER_PIXELS_DOCUMENT: &str = "正本が「レイヤーのメモリ」の予算を超えています";
+pub const OVER_LAYER_PIXELS_TOTAL: &str = "全体が「レイヤーのメモリ」の予算を超えています";
 /// 1 エントリの形の上限（正本の部分 256 MiB・ほか 512 MiB）を超えた。
 const ONE_ENTRY_OVER: &str = "1エントリの上限を超えています";
 /// 量の上限（[`Limits`]）の数え。.ylp の manifest・復旧の世代・保存の見積もりが同じ数え方を使う。

@@ -312,8 +312,8 @@ pub const CONTEXT_KEYS: [ContextKey; 9] = [
         scope: "canvas",
         key: Key::Escape,
         mouse: false,
-        ja: "操作をキャンセル",
-        en: "Cancel Operation",
+        ja: "操作をキャンセル / 選択を解除",
+        en: "Cancel Operation / Deselect",
     },
     ContextKey {
         scope: "canvas",

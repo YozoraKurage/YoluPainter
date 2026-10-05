@@ -191,7 +191,7 @@ fn ylp_4_limits_come_from_the_layer_pixel_budget() {
     };
     let e = Package::read_bytes(&bytes, &tight).unwrap_err();
     assert!(matches!(e, Error::Budget(_)), "{e:?}");
-    assert!(e.to_string().contains("レイヤーの画素"), "{e}");
+    assert!(e.to_string().contains("レイヤーのメモリ"), "{e}");
     let enough = Limits {
         document_bytes: 7000,
         other_bytes: OTHER_BYTES,
@@ -215,6 +215,24 @@ fn ylp_4_limits_come_from_the_layer_pixel_budget() {
     // 予算の 4 倍・既定の下限
     assert_eq!(Limits::from_layer_pixels(1).document_bytes, 4 * (256 << 20));
     assert_eq!(Limits::from_layer_pixels(2048 << 20).document_bytes, 4 * (2048 << 20));
+}
+
+#[test]
+fn ylp_4_limits_hold_at_the_largest_layer_memory_without_overflow() {
+    // 設定の最大（レイヤーのメモリ 65536 MiB = 64 GiB）でも、4 倍は桁あふれせず、境目の 1 バイトで断る
+    let top = Limits::from_layer_pixels(65536 << 20);
+    assert_eq!(top.document_bytes, 4 * (65536u64 << 20));
+    let document = format!("{SET}/document.utpaint");
+    top.check([(document.as_str(), top.document_bytes)]).unwrap();
+    let e = top.check([(document.as_str(), top.document_bytes + 1)]).unwrap_err();
+    assert!(matches!(e, Error::Budget(_)), "{e:?}");
+    // 全体はセットの数 × 正本の上限（2 つ目のセットも同じだけ読める）＋ほか
+    let other = "sets/1a8fad5b-d9cb-469f-a165-70867728950f/document.utpaint".to_owned();
+    top.check([(document.as_str(), top.document_bytes), (other.as_str(), top.document_bytes)]).unwrap();
+    // 予算が u64 の端でも掛け算で壊れない（飽和して、断る理由が出る代わりに何でも通る）
+    let huge = Limits::from_layer_pixels(u64::MAX);
+    assert_eq!(huge.document_bytes, u64::MAX);
+    huge.check([(document.as_str(), u64::MAX), (other.as_str(), u64::MAX)]).unwrap();
 }
 
 #[test]

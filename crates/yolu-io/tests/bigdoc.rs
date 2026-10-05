@@ -207,7 +207,7 @@ fn ylp_4_files_are_opened_within_the_layer_pixel_budget() {
     };
     let e = SaveTarget::open_within(&path, &tight).unwrap_err();
     assert!(matches!(e, yolu_io::Error::Budget(_)), "{e:?}");
-    assert!(e.to_string().contains("レイヤーの画素"), "{e}");
+    assert!(e.to_string().contains("レイヤーのメモリ"), "{e}");
     SaveTarget::open_within(&path, &Limits::from_layer_pixels(256 << 20)).unwrap();
 }
 

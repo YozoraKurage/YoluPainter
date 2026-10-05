@@ -1709,7 +1709,12 @@ fn compare_through_live_link() {
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} | {images} |",
                 scene.name
             ),
-            None => println!("| {} | （大きさが違う） | | | | | |", scene.name),
+            None => println!(
+                "| {} | （大きさが違う: {:?} と Unity の {:?}） | | | | | |",
+                scene.name,
+                ours.dimensions(),
+                unity.dimensions()
+            ),
         }
     }
 }

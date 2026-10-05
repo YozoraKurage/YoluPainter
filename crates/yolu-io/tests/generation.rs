@@ -583,7 +583,7 @@ fn manifests_with_unsafe_lines_are_refused() {
             store.load().err()
         );
     }
-    // 合計が予算（設定の「レイヤーの画素」の予算から: 正本の数 × 予算の 4 倍 ＋ 768 MiB）を超える manifest は、壊れたものとは別に
+    // 合計が予算（設定の「レイヤーのメモリ」の予算から: 正本の数 × 予算の 4 倍 ＋ 768 MiB）を超える manifest は、壊れたものとは別に
     // 予算の拒否（中身を読む前に）
     let limited = GenerationStore::new(&dir.0).with_limits(yolu_io::Limits::from_layer_pixels(256 << 20));
     let others: String = (0..4)
@@ -607,7 +607,7 @@ fn manifests_with_unsafe_lines_are_refused() {
     .unwrap();
     let refused = limited.load();
     assert!(
-        matches!(&refused, Err(StoreError::Budget(why)) if why.contains("レイヤーの画素")),
+        matches!(&refused, Err(StoreError::Budget(why)) if why.contains("レイヤーのメモリ")),
         "{:?}",
         refused.err()
     );

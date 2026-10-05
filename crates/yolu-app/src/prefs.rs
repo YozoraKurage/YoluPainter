@@ -1,8 +1,8 @@
-//! 設定の窓（編集 → 設定…、Ctrl+,）: 言語・書き出しの余白・メモリの予算（取り消し履歴・レイヤーの画素・1 回の操作・最小の取り消し段数）・
+//! 設定の窓（編集 → 設定…、Ctrl+,）: 言語・書き出しの余白・メモリの予算（取り消し履歴・レイヤーのメモリ・1 回の操作・最小の取り消し段数）・
 //! CPU のスレッド・表示の合成・棚の場所・退避を残す数。値は `AppState::prefs` に入り、設定のファイル（`settings`）へは次のフレームで書かれる。
 //! 窓は浮いた窓の骨組み（`ui::window`）で、見出しをドラッグして動かせる。選択肢はポップアップ（`m2_menu::Popup::Pref`）。
 //!
-//! - **メモリの予算**（取り消し履歴・レイヤーの画素）は**プロジェクト全体**の上限で、全テクスチャセットの合計が設定を超えない
+//! - **メモリの予算**（取り消し履歴・レイヤーのメモリ）は**プロジェクト全体**の上限で、全テクスチャセットの合計が設定を超えない
 //!   （`sync_budgets`）。描けるのは今のセットだけなので、今のセットの文書に「設定 − ほかのセットが使っている量（画素・履歴）」を入れ、
 //!   セットを切り替える・開くときに入れ直す。自動は物理メモリから（`settings::BudgetKind`）。描いている間は入れず、終わったフレームで
 //!   入れる。1 回の操作・最小の取り消し段数はセットごとの値のまま（1 回の操作は同時に 1 つしか走らない）。今の画素がすでに予算を
@@ -298,8 +298,8 @@ impl AppState {
             let lang = self.lang;
             self.message = lang
                 .pick(
-                    "レイヤーの画素がすでに予算を超えているので、予算を上げるまで足せません。",
-                    "The layer pixels are already over the budget; nothing can be added until it is raised.",
+                    "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。",
+                    "The layer memory is already over the budget; nothing can be added until it is raised.",
                 )
                 .into();
         }
@@ -605,8 +605,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 "Memory for the undo history, in total over all texture sets. The oldest steps beyond it are dropped (the minimum steps are kept). 0 keeps only those",
             ),
             lang.pick(
-                "全テクスチャセットの全レイヤーの画素の合計。超える操作は何も変えずに断ります",
-                "Total pixel data of all layers in all texture sets. An edit that would exceed it is refused without changing anything",
+                "全テクスチャセットの全レイヤーが画素に使うメモリの合計の上限。使う分だけ取り、先には確保しません。PSD の読み込み・書き出しや .ylp を開くときの大きさの上限もこれで決まります。超える操作は何も変えずに断ります",
+                "The most memory all layers in all texture sets may use for pixels, in total. Only what is used is taken, nothing is reserved up front. It also sets the size limit when importing or exporting a PSD or opening a .ylp. An edit that would exceed it is refused without changing anything",
             ),
             lang.pick(
                 "ストロークや塗りつぶし 1 回が巻き戻し用に持てるメモリ。書き出しの作業にも使います。超える操作は何も変えずに止めます",

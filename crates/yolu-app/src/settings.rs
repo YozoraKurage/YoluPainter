@@ -52,7 +52,7 @@ pub enum Budget {
 pub enum BudgetKind {
     /// 取り消し履歴。
     Undo,
-    /// 全レイヤーの画素の合計。
+    /// 全レイヤーの画素が使うメモリの合計（画面の名前は「レイヤーのメモリ」）。
     Source,
     /// 1 回の操作（ストローク・塗りつぶし）の巻き戻し用。
     Stroke,
@@ -70,22 +70,28 @@ impl BudgetKind {
         }
     }
 
-    /// 指定できる MiB の範囲（Unity 版と同じ）。取り消し履歴の 0 は、最小の段数だけを残す。
+    /// 指定できる MiB の範囲。取り消し履歴の 0 は、最小の段数だけを残す。上限は自動の最大（`automatic_mib` の上限）以上。
+    /// 古い版（上限 32768）が書いた値はすべてこの範囲に入るので、そのまま読める。
     pub fn range(self) -> (u32, u32) {
         match self {
             BudgetKind::Undo => (0, 16384),
-            BudgetKind::Source => (16, 32768),
+            BudgetKind::Source => (16, 65536),
             BudgetKind::Stroke => (8, 8192),
         }
     }
 
-    /// 自動のときの MiB: 物理メモリの一定の割合を、小さい機械でも作業できる下限と、ほかのアプリ・モデルの分を残す上限で挟む
-    /// （16 GB で 取り消し 1024・画素 2048・1 回の操作 512。Unity 版と同じ式）。
+    /// 自動のときの MiB: 物理メモリの一定の割合（レイヤーのメモリ 1/2・取り消し 1/8・1 回の操作 1/16）を、小さい機械でも作業できる
+    /// 下限と、メモリを積んだ機械でも頭打ちにする上限で挟む（16 GB で 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024。
+    /// 64 GB で 8192・32768・4096。上限は 16384・65536・4096）。
+    ///
+    /// 予算は使えるメモリの天井で、予約ではない: 文書が実際に使うときに取り、使っていない分は先に確保しない（予算の値で配列を作る所は
+    /// 無い）。大きな値を既定にしても、小さな文書を開いているアプリが使うメモリは変わらない。3 つの割合の合計（11/16）は 3 つが同時に天井まで
+    /// 使われる前提ではなく、超える操作を断る・古い履歴を捨てる境目の位置を決める。
     pub fn automatic_mib(self, ram_mib: u64) -> u32 {
         let (div, lo, hi) = match self {
-            BudgetKind::Undo => (16, 256, 2048),
-            BudgetKind::Source => (8, 256, 8192),
-            BudgetKind::Stroke => (32, 64, 1024),
+            BudgetKind::Undo => (8, 256, 16384),
+            BudgetKind::Source => (2, 256, 65536),
+            BudgetKind::Stroke => (16, 64, 4096),
         };
         (ram_mib / div).clamp(lo, hi) as u32
     }
@@ -93,9 +99,9 @@ impl BudgetKind {
     /// 予算の選択肢（自動のほかに並べる MiB）。
     pub fn choices(self) -> &'static [u32] {
         match self {
-            BudgetKind::Undo => &[0, 256, 512, 1024, 2048, 4096, 8192],
-            BudgetKind::Source => &[512, 1024, 2048, 4096, 8192, 16384],
-            BudgetKind::Stroke => &[64, 128, 256, 512, 1024, 2048],
+            BudgetKind::Undo => &[0, 256, 512, 1024, 2048, 4096, 8192, 16384],
+            BudgetKind::Source => &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
+            BudgetKind::Stroke => &[64, 128, 256, 512, 1024, 2048, 4096],
         }
     }
 }
@@ -340,7 +346,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
         "export_padding" => lang.pick("書き出しの余白", "Export padding"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
-        "source_budget_mib" => lang.pick("レイヤーの画素", "Layer pixels"),
+        "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
         "stroke_budget_mib" => lang.pick("1 回の操作", "One operation"),
         "min_undo_steps" => lang.pick("最小の取り消し段数", "Minimum undo steps"),
         "cpu_threads" => lang.pick("CPU のスレッド", "CPU threads"),
@@ -793,7 +799,7 @@ mod tests {
         let mut edge = Settings {
             export_padding: 0,
             undo_budget: Budget::Mib(0),
-            source_budget: Budget::Mib(32768),
+            source_budget: Budget::Mib(65536),
             stroke_budget: Budget::Mib(8),
             cpu_threads: Some(MAX_CPU_THREADS),
             min_undo_steps: 0,
@@ -818,7 +824,7 @@ mod tests {
         // 範囲の外・負・小数・空・大文字・16 進・桁あふれ
         let cases: [(&'static str, &[&str]); 10] = [
             ("undo_budget_mib", &["-1", "16385", "1.5", "", "AUTO", "0x10", "99999999999999999999"]),
-            ("source_budget_mib", &["15", "32769", "0"]),
+            ("source_budget_mib", &["15", "65537", "0"]),
             ("stroke_budget_mib", &["7", "8193"]),
             ("min_undo_steps", &["101", "-1", "auto", ""]),
             ("cpu_threads", &["0", "1025", "-2", "many"]),
@@ -987,18 +993,22 @@ mod tests {
     }
 
     #[test]
-    fn automatic_budgets_follow_the_memory_like_unity_does() {
-        // 16 GB: 取り消し 1024・画素 2048・1 回の操作 512
-        assert_eq!(BudgetKind::Undo.automatic_mib(16384), 1024);
-        assert_eq!(BudgetKind::Source.automatic_mib(16384), 2048);
-        assert_eq!(BudgetKind::Stroke.automatic_mib(16384), 512);
-        // 小さい機械の下限と、大きい機械の上限
-        assert_eq!(BudgetKind::Undo.automatic_mib(1024), 256);
-        assert_eq!(BudgetKind::Source.automatic_mib(1024), 256);
-        assert_eq!(BudgetKind::Stroke.automatic_mib(1024), 64);
-        assert_eq!(BudgetKind::Undo.automatic_mib(1 << 20), 2048);
-        assert_eq!(BudgetKind::Source.automatic_mib(1 << 20), 8192);
-        assert_eq!(BudgetKind::Stroke.automatic_mib(1 << 20), 1024);
+    fn automatic_budgets_follow_the_memory_in_the_share_each_one_needs() {
+        // (物理メモリ, 取り消し, レイヤーのメモリ, 1 回の操作) の MiB: 割合は 1/8・1/2・1/16。下限は小さい機械でも作業できる量、上限は大きい機械の値
+        for (ram, undo, source, stroke) in [
+            (512, 256, 256, 64),
+            (1024, 256, 512, 64),
+            (8192, 1024, 4096, 512),
+            (16384, 2048, 8192, 1024),
+            (32768, 4096, 16384, 2048),
+            (65536, 8192, 32768, 4096),
+            (131072, 16384, 65536, 4096),
+            (1 << 20, 16384, 65536, 4096),
+        ] {
+            assert_eq!(BudgetKind::Undo.automatic_mib(ram), undo, "取り消し @ {ram}");
+            assert_eq!(BudgetKind::Source.automatic_mib(ram), source, "レイヤーのメモリ @ {ram}");
+            assert_eq!(BudgetKind::Stroke.automatic_mib(ram), stroke, "1 回の操作 @ {ram}");
+        }
         // 設定からバイトへ: 自動はメモリから、数はそのまま
         let s = Settings {
             source_budget: Budget::Mib(100),
@@ -1007,8 +1017,19 @@ mod tests {
         };
         assert_eq!(
             s.budgets(16384),
-            Budgets { undo: 1024 << 20, source: 100 << 20, stroke: 512 << 20, min_undo_steps: 7 }
+            Budgets { undo: 2048 << 20, source: 100 << 20, stroke: 1024 << 20, min_undo_steps: 7 }
         );
+        // 自動の最大は範囲の中で、選択肢にもある（自動で出る値を、そのまま選び直せる）
+        for kind in BudgetKind::ALL {
+            let (lo, hi) = kind.range();
+            let top = kind.automatic_mib(1 << 24);
+            assert!((lo..=hi).contains(&top), "{kind:?}: 自動の最大 {top} は範囲 {lo}..={hi} の中");
+            assert!(kind.choices().contains(&top), "{kind:?}: 選択肢に {top}");
+        }
+        assert_eq!(BudgetKind::Source.range().1, 65536);
+        assert!(BudgetKind::Source.choices().ends_with(&[16384, 32768, 65536]));
+        assert!(BudgetKind::Undo.choices().ends_with(&[8192, 16384]));
+        assert!(BudgetKind::Stroke.choices().ends_with(&[2048, 4096]));
         // 選択肢は範囲の中で、昇順
         for kind in BudgetKind::ALL {
             let (lo, hi) = kind.range();
@@ -1016,6 +1037,28 @@ mod tests {
             assert!(choices.windows(2).all(|w| w[0] < w[1]), "{kind:?}");
             assert!(choices.iter().all(|c| (lo..=hi).contains(c)), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn budget_values_written_before_the_raise_still_read_and_the_new_top_is_accepted() {
+        // 古い設定ファイルの MiB の指定は、そのまま読める（自動へ直さない）
+        let (read, problems) = parse("source_budget_mib=8192\nundo_budget_mib=2048\nstroke_budget_mib=512\n");
+        assert_eq!(problems, vec![]);
+        assert_eq!(
+            (read.source_budget, read.undo_budget, read.stroke_budget),
+            (Budget::Mib(8192), Budget::Mib(2048), Budget::Mib(512))
+        );
+        // 新しい上限まで書けて、1 つ上は断る
+        let (read, problems) = parse("source_budget_mib=65536\nundo_budget_mib=16384\nstroke_budget_mib=4096\n");
+        assert_eq!(problems, vec![]);
+        assert_eq!(read.source_budget, Budget::Mib(65536));
+        let (read, problems) = parse("source_budget_mib=65537\n");
+        assert_eq!(read.source_budget, Budget::Auto);
+        assert_eq!(problems, [Problem::Invalid { key: "source_budget_mib", value: "65537".into() }]);
+        // 大きい予算も、設定から文書へ渡すバイトで桁あふれしない
+        let big = Settings { source_budget: Budget::Mib(65536), ..Settings::default() };
+        assert_eq!(big.budgets(1 << 20).source, 65536u64 << 20);
+        assert_eq!(big.load_source_bytes(1 << 20), 65536u64 << 20);
     }
 
     #[test]

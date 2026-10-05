@@ -15,7 +15,7 @@ use yolu_app::YoluApp;
 type H = Harness<'static, YoluApp>;
 
 // 日本語のツールチップ（読み上げの名前）。
-const DESELECT: &str = "選択を解除（Ctrl+D）";
+const DESELECT: &str = "選択を解除（Ctrl+D / Esc）";
 const INVERT: &str = "選択範囲を反転（Ctrl+Shift+I）";
 const GROW: &str = "選択範囲を拡張…";
 const SHRINK: &str = "選択範囲を縮小…";
@@ -233,6 +233,416 @@ fn the_bar_hides_while_painting_making_a_shape_or_moving_the_view() {
     });
     h.run();
     assert!(bar_shown(&h));
+}
+
+/// 選択の形のドラッグを、押す・動かす・離すで行う。
+fn drag_shape(h: &mut H, from: egui::Pos2, to: egui::Pos2) {
+    press(h, from, PointerButton::Primary);
+    h.step();
+    move_to(h, to);
+    h.step();
+    release(h, to, PointerButton::Primary);
+    h.run();
+}
+
+#[test]
+fn the_bar_appears_as_soon_as_any_selection_tool_finishes_the_selection() {
+    let mut h = app(1280.0, 800.0, 256);
+    let c = canvas_rect(&h).center();
+    let clear = |h: &mut H| {
+        h.state_mut().state.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+        h.run();
+        assert!(!bar_shown(h) && st(h).doc.selection().is_none());
+    };
+    for tool in [Tool::SelectRect, Tool::SelectEllipse] {
+        h.state_mut().state.apply(Action::SelectTool(tool));
+        drag_shape(&mut h, offset(c, -80.0, -60.0), offset(c, 80.0, 60.0));
+        assert!(st(&h).doc.selection().is_some(), "{tool:?}");
+        assert!(bar_shown(&h), "{tool:?}: 離したら帯が出る");
+        clear(&mut h);
+    }
+    // なげなわ: なぞって離す
+    h.state_mut().state.apply(Action::SelectTool(Tool::Lasso));
+    press(&h, offset(c, -80.0, -60.0), PointerButton::Primary);
+    h.step();
+    for p in [(80.0, -60.0), (80.0, 60.0), (-80.0, 60.0), (-80.0, -50.0)] {
+        move_to(&h, offset(c, p.0, p.1));
+        h.step();
+    }
+    release(&h, offset(c, -80.0, -50.0), PointerButton::Primary);
+    h.run();
+    assert!(st(&h).doc.selection().is_some());
+    assert!(bar_shown(&h), "なげなわ: 離したら帯が出る");
+    clear(&mut h);
+    // 多角形: Enter で閉じる・ダブルクリックで閉じる
+    h.state_mut().state.apply(Action::SelectTool(Tool::Polygon));
+    for p in [(-80.0, -60.0), (80.0, -60.0), (80.0, 60.0), (-80.0, 60.0)] {
+        click(&mut h, offset(c, p.0, p.1));
+    }
+    assert!(!bar_shown(&h), "点を打っている間は隠れる");
+    key(&h, Key::Enter, Modifiers::NONE);
+    h.run();
+    assert!(st(&h).doc.selection().is_some() && st(&h).sel.polygon.is_empty());
+    assert!(bar_shown(&h), "多角形: Enter で閉じたら帯が出る");
+    clear(&mut h);
+    for p in [(-80.0, -60.0), (80.0, -60.0), (80.0, 60.0)] {
+        click(&mut h, offset(c, p.0, p.1));
+    }
+    click(&mut h, offset(c, 80.0, 60.0));
+    h.run();
+    assert!(st(&h).doc.selection().is_some(), "ダブルクリックで閉じる");
+    assert!(bar_shown(&h), "多角形: ダブルクリックで閉じたら帯が出る");
+    clear(&mut h);
+    // 自動選択: クリック
+    h.state_mut().state.apply(Action::SelectTool(Tool::Wand));
+    click(&mut h, offset(c, 0.0, 0.0));
+    assert!(st(&h).doc.selection().is_some());
+    assert!(bar_shown(&h), "自動選択: クリックしたら帯が出る");
+    clear(&mut h);
+    // ペン（Windows Ink）: 触れて動かして離す。離したら帯が出る（押しの札が残らない）
+    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    for (p, contact) in [
+        (offset(c, -80.0, -60.0), true),
+        (offset(c, 0.0, 0.0), true),
+        (offset(c, 80.0, 60.0), true),
+        (offset(c, 80.0, 60.0), false),
+    ] {
+        h.state().pen().push(yolu_app::pen::PenSample {
+            pos: [p.x, p.y],
+            pressure: 0.5,
+            tilt: yolu_app::engine::Tilt::default(),
+            rotation: None,
+            contact,
+            eraser: false,
+            barrel: false,
+            pointer_id: 3,
+            time_ms: 0,
+        });
+        h.step();
+    }
+    h.run();
+    assert!(st(&h).doc.selection().is_some());
+    assert!(bar_shown(&h), "ペン: 離したら帯が出る");
+}
+
+#[test]
+fn escape_clears_a_finished_selection_like_ctrl_d_in_one_undo() {
+    let mut h = app(1280.0, 800.0, 256);
+    // 選択が無いときの Esc は何もしない（取り消しの段も、知らせも）
+    let steps = st(&h).doc.undo_count();
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert!(st(&h).message.is_empty(), "{}", st(&h).message);
+    // 選択を作り終えた後（点線と帯が出ている）の Esc: 解除。Ctrl+D と同じ 1 回の取り消し、同じ知らせ
+    select_rect(&mut h, 80, 80, 140, 120);
+    assert!(bar_shown(&h));
+    let steps = st(&h).doc.undo_count();
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert!(st(&h).doc.selection().is_none());
+    assert!(!bar_shown(&h));
+    assert_eq!(st(&h).doc.undo_count(), steps + 1);
+    let message = st(&h).message.clone();
+    assert_eq!(message, "選択を解除しました。");
+    key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert!(st(&h).doc.selection().is_some(), "Undo 1 回で選択が戻る");
+    assert_eq!(st(&h).doc.undo_count(), steps);
+    // Ctrl+D と同じ結果（選択も、段の数も、知らせも）
+    key(&h, Key::D, Modifiers::COMMAND);
+    h.run();
+    assert!(st(&h).doc.selection().is_none());
+    assert_eq!(st(&h).doc.undo_count(), steps + 1);
+    assert_eq!(st(&h).message, message);
+    // 描き終えたあとも、押し続けていない限り効く（描いたあとの Esc）
+    select_rect(&mut h, 80, 80, 140, 120);
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    let c = canvas_rect(&h).center();
+    drag_shape(&mut h, offset(c, 60.0, 60.0), offset(c, 90.0, 60.0));
+    assert!(st(&h).doc.selection().is_some());
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert!(st(&h).doc.selection().is_none(), "描き終えたあとの Esc で解除");
+}
+
+#[test]
+fn escape_goes_first_to_what_is_in_progress_text_fields_menus_and_windows() {
+    let mut h = app(1280.0, 800.0, 256);
+    let c = canvas_rect(&h).center();
+    select_rect(&mut h, 80, 80, 140, 120);
+    let esc = |h: &mut H| {
+        key(h, Key::Escape, Modifiers::NONE);
+        h.run();
+    };
+    // 選択の形を作っている途中（ドラッグ）: Esc はそれをやめるだけで、今の選択は残る
+    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    press(&h, offset(c, -100.0, -100.0), PointerButton::Primary);
+    h.step();
+    move_to(&h, offset(c, -60.0, -70.0));
+    h.step();
+    assert!(st(&h).sel.drag.is_some());
+    esc(&mut h);
+    assert!(st(&h).sel.drag.is_none(), "ドラッグをやめた");
+    assert!(st(&h).doc.selection().is_some(), "選択は残る");
+    release(&h, offset(c, -60.0, -70.0), PointerButton::Primary);
+    h.run();
+    assert!(st(&h).doc.selection().is_some(), "離した後も選択は残り、新しく作らない");
+    // 多角形の点を打っている途中: 1 回目の Esc は途中の形だけ、2 回目で選択を解除
+    h.state_mut().state.apply(Action::SelectTool(Tool::Polygon));
+    click(&mut h, offset(c, 100.0, -100.0));
+    assert!(!st(&h).sel.polygon.is_empty());
+    esc(&mut h);
+    assert!(st(&h).sel.polygon.is_empty());
+    assert!(st(&h).doc.selection().is_some());
+    // 描いている途中（押している）: Esc は描きをやめるだけ
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    press(&h, offset(c, 60.0, 60.0), PointerButton::Primary);
+    h.step();
+    move_to(&h, offset(c, 90.0, 60.0));
+    h.step();
+    assert!(st(&h).is_stroking());
+    esc(&mut h);
+    assert!(!st(&h).is_stroking());
+    assert!(st(&h).doc.selection().is_some(), "描きをやめただけ");
+    release(&h, offset(c, 90.0, 60.0), PointerButton::Primary);
+    h.run();
+    assert!(st(&h).doc.selection().is_some());
+    // 文字の入力欄（チャンネルの名前を変えている）: Esc は入力をやめるだけ
+    click_tab(&mut h, yolu_app::Tab::Channels);
+    h.get_by_label("チャンネルを追加").click();
+    h.run();
+    let at = popup_item(&h, "スカラー").center();
+    click(&mut h, at);
+    let row = rect_of(&h, "スカラー 1", |r| r.height() < 40.0);
+    let name_at = egui::pos2(row.left() + 100.0, row.center().y);
+    for _ in 0..2 {
+        press(&h, name_at, PointerButton::Primary);
+        release(&h, name_at, PointerButton::Primary);
+        h.step();
+    }
+    h.run();
+    assert!(st(&h).m2.renaming_channel.is_some(), "名前を変える入力欄が開いた");
+    esc(&mut h);
+    assert!(st(&h).m2.renaming_channel.is_none(), "入力をやめた");
+    assert!(st(&h).doc.selection().is_some(), "入力欄の Esc で選択を外さない");
+    // メニューを開いている間: Esc はメニューを閉じるだけ
+    let title = menu_title(&h, "選択範囲").center();
+    click(&mut h, title);
+    assert!(st(&h).popup.is_some());
+    esc(&mut h);
+    assert!(st(&h).popup.is_none(), "メニューが閉じた");
+    assert!(st(&h).doc.selection().is_some(), "メニューの Esc で選択を外さない");
+    // 浮いた窓が開いている間（設定の窓）: 窓を優先して、選択は残す
+    h.state_mut().state.apply(Action::Prefs(yolu_app::prefs::PrefsAction::Open));
+    h.run();
+    esc(&mut h);
+    assert!(st(&h).doc.selection().is_some(), "窓が開いている間の Esc で選択を外さない");
+    h.state_mut().state.apply(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
+    h.run();
+    h.run();
+    // 何も使わなくなったら、Esc で解除
+    esc(&mut h);
+    assert!(st(&h).doc.selection().is_none(), "Esc を使うものが無いので解除");
+}
+
+/// Esc を 1 回押して、選択がまだ残り、取り消しの段が増えていないこと（Esc は先に別の部品が使った）。
+fn esc_keeps_the_selection(h: &mut H, what: &str) {
+    let steps = st(h).doc.undo_count();
+    key(h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert!(st(h).doc.selection().is_some(), "{what}: Esc で選択を外さない");
+    assert_eq!(st(h).doc.undo_count(), steps, "{what}: 取り消しの段も積まない");
+}
+
+/// 何も Esc を使うものが無くなったら、次の 1 回で選択を解除する。
+fn esc_clears_the_selection(h: &mut H, what: &str) {
+    key(h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert!(st(h).doc.selection().is_none(), "{what}: 使うものが無いので Esc で解除");
+}
+
+#[test]
+fn escape_closes_the_3d_settings_panel_before_the_selection_with_the_canvas_beside_it() {
+    use egui_dock::{DockState, NodeIndex};
+    use yolu_app::view3d::display::Op;
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut().state.view3d.load_demo();
+    // キャンバスと 3D ビューを左右に並べる（既定のドックは同じ組のタブなので、並べたときだけ両方が同時に描かれる）
+    let mut dock = DockState::new(vec![yolu_app::Tab::Canvas]);
+    dock.main_surface_mut()
+        .split_right(NodeIndex::root(), 0.5, vec![yolu_app::Tab::View3d]);
+    h.state_mut().dock = dock;
+    h.run();
+    assert!(h.state().view3d_rect().is_some(), "3D も出ている");
+    select_rect(&mut h, 80, 80, 140, 120);
+    h.state_mut().state.apply(Action::View3d(Op::ToggleSettings));
+    h.run();
+    assert!(st(&h).view3d.display.settings_open, "設定のパネルが開いた");
+    // Esc はパネルを閉じるだけ
+    esc_keeps_the_selection(&mut h, "3D の設定のパネル");
+    assert!(!st(&h).view3d.display.settings_open, "パネルは閉じた");
+    h.run();
+    esc_clears_the_selection(&mut h, "パネルを閉じたあと");
+}
+
+#[test]
+fn escape_closes_the_color_picker_before_the_selection() {
+    use yolu_app::m2::{AdjustmentKind, Edit};
+    let mut h = app(1280.0, 1500.0, 64);
+    h.state_mut()
+        .state
+        .apply(Action::M2(Edit::NewAdjustment(AdjustmentKind::GradientMap)));
+    h.run();
+    let id = st(&h).selected_layer.expect("足した層を選ぶ");
+    select_rect(&mut h, 10, 10, 30, 30);
+    // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
+    let label = "分岐点の色（押すと色の選びを開く）";
+    let right = |r: Rect| r.left() > 1000.0;
+    let at = rect_of(&h, label, right).top();
+    let scroll = st(&h).m2.props_scroll + (at - 900.0);
+    h.state_mut().state.m2.props_scroll = scroll.max(0.0);
+    h.run();
+    let swatch = rect_of(&h, label, right);
+    click(&mut h, swatch.center());
+    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
+    assert!(yolu_app::panels::color_popup::is_open(&h.ctx, popup), "色の選びが開いた");
+    assert!(st(&h).doc.selection().is_some(), "開く押しで選択を外さない");
+    // Esc は色の選びを（元の色へ戻して）閉じるだけ
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    assert!(!yolu_app::panels::color_popup::is_open(&h.ctx, popup), "色の選びが閉じた");
+    assert!(st(&h).doc.selection().is_some(), "色の選びの Esc で選択を外さない");
+    h.run();
+    esc_clears_the_selection(&mut h, "色の選びを閉じたあと");
+}
+
+#[test]
+fn escape_answers_a_confirm_window_before_the_selection() {
+    use yolu_app::m2::Edit;
+    use yolu_core::Rgba8;
+    let mut h = app(1280.0, 800.0, 64);
+    let paint = |h: &mut H, rect: (u32, u32, u32, u32), color: Rgba8| {
+        let s = &mut h.state_mut().state;
+        let id = s.selected_layer.unwrap();
+        for y in rect.1..rect.3 {
+            for x in rect.0..rect.2 {
+                s.doc
+                    .set_channel_pixel(id, yolu_app::engine::Channel::Color, x, y, color)
+                    .unwrap();
+            }
+        }
+        id
+    };
+    // 下から 3 つの層。間をはさんだ 2 つを結合すると見た目が変わるので、確かめの窓が出る
+    let a = paint(&mut h, (2, 2, 12, 12), Rgba8::new(255, 0, 0, 255));
+    h.state_mut().state.apply(Action::NewLayer);
+    paint(&mut h, (6, 6, 16, 16), Rgba8::new(0, 255, 0, 255));
+    h.state_mut().state.apply(Action::NewLayer);
+    let c = paint(&mut h, (10, 10, 20, 20), Rgba8::new(0, 0, 255, 255));
+    h.run();
+    select_rect(&mut h, 30, 30, 50, 50);
+    h.state_mut().state.select_layers([a, c], c);
+    h.state_mut().state.apply(Action::M2(Edit::MergeDown));
+    h.run();
+    assert!(st(&h).layer_ops.merge_confirm.is_some(), "確かめの窓が出た");
+    let layers = st(&h).doc.layers().len();
+    // Esc は窓をやめるだけ
+    esc_keeps_the_selection(&mut h, "確かめの窓");
+    assert!(st(&h).layer_ops.merge_confirm.is_none(), "窓が閉じた");
+    assert_eq!(st(&h).doc.layers().len(), layers, "結合していない");
+    h.run();
+    esc_clears_the_selection(&mut h, "確かめの窓を閉じたあと");
+}
+
+#[test]
+fn escape_closes_a_color_set_rename_before_the_selection() {
+    let mut h = app(1280.0, 800.0, 256);
+    select_rect(&mut h, 80, 80, 140, 120);
+    click_tab(&mut h, yolu_app::Tab::ColorSets);
+    h.state_mut().state.colorsets.rename = Some("セット".into());
+    h.run();
+    assert!(st(&h).colorsets.rename.is_some());
+    esc_keeps_the_selection(&mut h, "色セットの名前の変更");
+    assert!(st(&h).colorsets.rename.is_none(), "名前の変更をやめた");
+    h.run();
+    esc_clears_the_selection(&mut h, "名前の変更をやめたあと");
+}
+
+#[test]
+fn escape_cancels_a_color_set_swatch_drag_before_the_selection() {
+    let mut h = app(1280.0, 800.0, 256);
+    select_rect(&mut h, 80, 80, 140, 120);
+    click_tab(&mut h, yolu_app::Tab::ColorSets);
+    let swatch_at = |h: &H, i: usize| {
+        let label = st(h).colorsets.palette().colors[i].label();
+        rect_of(h, &label, |r| r.width() < 40.0).center()
+    };
+    let before = st(&h).colorsets.palette().clone();
+    let from = swatch_at(&h, 0);
+    let to = swatch_at(&h, 2);
+    press(&h, from, PointerButton::Primary);
+    h.step();
+    move_to(&h, to);
+    h.step();
+    assert!(st(&h).colorsets.dragging.is_some(), "色見本を動かしている");
+    // ボタンを押したままの Esc: ドラッグをやめるだけ
+    esc_keeps_the_selection(&mut h, "色見本のドラッグ");
+    assert!(st(&h).colorsets.dragging.is_none(), "ドラッグをやめた");
+    release(&h, to, PointerButton::Primary);
+    h.run();
+    assert_eq!(st(&h).colorsets.palette(), &before, "落とさない");
+    assert!(st(&h).doc.selection().is_some());
+    esc_clears_the_selection(&mut h, "ドラッグをやめたあと");
+}
+
+#[test]
+fn escape_cancels_a_brush_row_drag_before_the_selection() {
+    let mut h = app(1600.0, 1200.0, 128);
+    select_rect(&mut h, 20, 20, 60, 50);
+    for _ in 0..2 {
+        h.get_by_label("今の設定を新しいブラシに").click();
+        h.run();
+    }
+    let row = |h: &H, name: &str| {
+        rect_of(h, name, |r| {
+            r.left() < 340.0 && r.top() > 100.0 && r.top() < 900.0 && r.width() > 200.0
+        })
+    };
+    let order = st(&h).brushes.lib.order();
+    let a = row(&h, "ブラシ");
+    let b = row(&h, "ブラシ 2");
+    let from = egui::pos2(b.left() + 30.0, b.center().y);
+    press(&h, from, PointerButton::Primary);
+    h.step();
+    move_to(&h, offset(from, 0.0, -8.0));
+    h.step();
+    let over = egui::pos2(a.left() + 30.0, a.top() + 4.0);
+    move_to(&h, over);
+    h.step();
+    assert!(st(&h).brushes.ui.drag.is_some(), "ブラシを動かしている");
+    esc_keeps_the_selection(&mut h, "ブラシの並べ替えのドラッグ");
+    assert!(st(&h).brushes.ui.drag.is_none(), "ドラッグをやめた");
+    release(&h, over, PointerButton::Primary);
+    h.run();
+    assert_eq!(st(&h).brushes.lib.order(), order, "落とさない");
+    esc_clears_the_selection(&mut h, "ドラッグをやめたあと");
+}
+
+#[test]
+fn escape_cancels_a_running_fill_before_the_selection() {
+    // 65536 画素を超える文書の塗りつぶしは別のスレッドの仕事になる
+    let mut h = app(1280.0, 800.0, 512);
+    select_rect(&mut h, 80, 80, 140, 120);
+    yolu_app::region::bucket::start(&mut h.state_mut().state, vec![(1.0, 1.0)]);
+    assert!(st(&h).region.job.is_some(), "塗りつぶしの仕事が走っている");
+    let steps = st(&h).doc.undo_count();
+    // Esc は仕事を取り消すだけ
+    esc_keeps_the_selection(&mut h, "塗りつぶしの仕事");
+    assert!(st(&h).region.job.is_none(), "仕事は取り消された");
+    assert_eq!(st(&h).doc.undo_count(), steps, "塗っていない");
+    h.run();
+    esc_clears_the_selection(&mut h, "仕事を取り消したあと");
 }
 
 #[test]
@@ -737,7 +1147,7 @@ fn the_bar_speaks_english_and_has_no_japanese_in_it() {
     h.state_mut().state.lang = Lang::En;
     select_rect(&mut h, 100, 100, 140, 140);
     for label in [
-        "Deselect (Ctrl+D)",
+        "Deselect (Ctrl+D / Esc)",
         "Invert Selection (Ctrl+Shift+I)",
         "Grow Selection…",
         "Shrink Selection…",

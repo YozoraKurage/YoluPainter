@@ -182,6 +182,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     }
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         finish = true;
+                        // この Esc は名前の変更をやめるのに使った（キャンバスが同じ Esc で選択範囲を解除しない）
+                        crate::ui::window::note_escape_taken(ui.ctx());
                     }
                 });
                 if !finish {

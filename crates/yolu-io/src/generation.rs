@@ -271,7 +271,7 @@ impl GenerationStore {
             }
         }
     }
-    /// 読み書きの量の上限を設定の予算から決める（`Limits`。セットごとの正本は「レイヤーの画素」の予算の 4 倍、全体は正本の数 ×
+    /// 読み書きの量の上限を設定の予算から決める（`Limits`。セットごとの正本は「レイヤーのメモリ」の予算の 4 倍、全体は正本の数 ×
     /// それ ＋ 768 MiB）。超える世代は書かず、読まない（理由に予算の名前を添える）。
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = Some(limits);

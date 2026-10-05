@@ -5,7 +5,7 @@
 //!   クリッピングは core の層になり、層のロック（lspf）は core の層のロックとして入る。合成に効かない情報は持たず、評価できない効果などは層の
 //!   画素のまま取り込み、**無視・落とす・変わるものは、取り込む前に確かめの窓へ層の名前と機能の名前で並べる**（0 件なら窓を出さない。「取り込む」を
 //!   押すまで何も入れない）。取り込めない（PSB・RGB8 以外・予算を超える・壊れている）ものだけ、何も変えずに理由を結果の窓で見せる。層の数・
-//!   画素の上限は設定の「レイヤーの画素」の予算（`load_source_bytes`）から決まる。層 ID は PSD のものを持つが、欠落・重複には新しい ID を振る
+//!   画素の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`）から決まる。層 ID は PSD のものを持つが、欠落・重複には新しい ID を振る
 //!   （名前では結び付けない）。PSD の原本は書き換えない（取り込んだファイルへ書き出すときは置き換える前に確かめ、書き出しはいつも新しい PSD）。
 //!   今のセットの文書を替える読み込みは、確かめを終えて入れるときに描いている最中か、読んでいる間に文書が変わっていれば入れない
 //!   （描きかけのストロークを取り残さず、描いたものを黙って捨てない）。
@@ -16,7 +16,7 @@
 //!   文書は 1 バイトも変えない（効果は文書に残る。書き出しは写し）。始めるときに文書の写し（履歴の無い、タイルを共有する写し）を取り、
 //!   計画・焼き込み・書き込みは別のスレッドで行う: 計画（何を焼くか）→ 確かめ → 層を 1 枚ずつ評価して RLE で圧縮し、一時ファイルへ流して書く →
 //!   一時ファイルを流して読み戻して確かめる（`psd::verify_stream`）→ 最後に置き換え。メモリには層 1 枚ぶんだけを持つので、実物の大きさ（4096²・
-//!   数十層）の文書を書ける。キャンバス・層の記録の数の上限は設定の「レイヤーの画素」の予算（`load_source_bytes`。取り込みと同じ）から決まり、
+//!   数十層）の文書を書ける。キャンバス・層の記録の数の上限は設定の「レイヤーのメモリ」の予算（`load_source_bytes`。取り込みと同じ）から決まり、
 //!   PSD の 2 GiB は圧縮したあとの大きさで書きながら見る。超えたら層の名前つきの理由（`Overrun`）で断り、一時ファイルは残さない。
 //!   取り込んだ PSD と同じファイル・複数のチャンネルで名前が重なるファイルは、置き換える前に確かめる。
 
@@ -231,8 +231,8 @@ fn overrun_text(lang: Lang, over: &Overrun) -> String {
             "Pixel budget exceeded".into(),
         ),
         Overrun::Memory { layer } => lang.pick(
-            format!("「{layer}」でレイヤーの画素の予算を超えました"),
-            format!("Layer pixel budget exceeded at \"{layer}\""),
+            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
+            format!("Layer memory budget exceeded at \"{layer}\""),
         ),
         Overrun::Extra => lang.pick(
             "レイヤーの付加情報が予算を超えました".into(),
@@ -261,12 +261,12 @@ fn overrun_tooltip(lang: Lang, over: &Overrun) -> &'static str {
             "A PSD side is limited to 30000 pixels",
         ),
         Overrun::Layers { .. } => lang.pick(
-            "上限は設定の「レイヤーの画素」から決まります（グループは区切りの記録も数えます）。上げると書き出せることがあります",
-            "The limit follows Layer pixels in Settings (each group also takes a divider record). Raising it may let this export succeed",
+            "上限は設定の「レイヤーのメモリ」から決まります（グループは区切りの記録も数えます）。上げると書き出せることがあります",
+            "The limit follows Layer memory in Settings (each group also takes a divider record). Raising it may let this export succeed",
         ),
         _ => lang.pick(
-            "上限は設定の「レイヤーの画素」から決まります。上げると書き出せることがあります",
-            "The limit follows Layer pixels in Settings. Raising it may let this export succeed",
+            "上限は設定の「レイヤーのメモリ」から決まります。上げると書き出せることがあります",
+            "The limit follows Layer memory in Settings. Raising it may let this export succeed",
         ),
     }
 }
@@ -322,7 +322,7 @@ pub struct Run {
     plans: Vec<ExportPlan>,
     /// 選んだファイルの名前（札・窓の見出しの下）。
     file: String,
-    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーの画素」。始めたときの値）。
+    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーのメモリ」。始めたときの値）。
     budget: u64,
 }
 
@@ -667,7 +667,7 @@ impl AppState {
         let (tx, rx) = channel();
         let (flag, path_owned) = (cancel.clone(), path.to_path_buf());
         let park = std::mem::take(&mut self.psd.park_next);
-        // 層の数・画素の上限は、設定の「レイヤーの画素」の予算から決める（.ylp を開くときと同じ）
+        // 層の数・画素の上限は、設定の「レイヤーのメモリ」の予算から決める（.ylp を開くときと同じ）
         let budget = self.load_source_bytes();
         let spawned = std::thread::Builder::new()
             .name("yolu-psd-import".into())
@@ -756,7 +756,7 @@ impl AppState {
                 return self.refuse_psd_export(&file, why);
             }
         };
-        // 文書そのものが書き出せるか（画布・層の数の予算。設定の「レイヤーの画素」から決まる）を、何も作らずに断る
+        // 文書そのものが書き出せるか（画布・層の数の予算。設定の「レイヤーのメモリ」から決まる）を、何も作らずに断る
         let budget = self.load_source_bytes();
         let ctl = ExportControl {
             source_budget: Some(budget),
@@ -1132,7 +1132,7 @@ impl AppState {
 }
 
 /// 別のスレッドの読み込み: ファイルを流して読み（原本は持たない）、core の文書にする。取り込めなければ理由を `Refused` で返す（何も変えない）。
-/// `budget` は、この文書の層の画素に許すバイト数（設定の「レイヤーの画素」）。層の数・画布・層の画素の上限はここから決まる。
+/// `budget` は、この文書の層の画素に許すバイト数（設定の「レイヤーのメモリ」）。層の数・画布・層の画素の上限はここから決まる。
 fn import_worker(path: &Path, budget: u64, cancel: &AtomicBool) -> Result<Output, Failure> {
     let file = std::fs::File::open(path).map_err(Failure::File)?;
     let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
@@ -2708,11 +2708,11 @@ mod tests {
             let (tj, te) = (failure.tooltip(Lang::Ja).unwrap(), failure.tooltip(Lang::En).unwrap());
             assert!(has_japanese(&tj) && !has_japanese(&te), "{tj} / {te}");
             if over.raised_by_budget() {
-                assert!(tj.contains("レイヤーの画素") && te.contains("Layer pixels"), "{tj} / {te}");
+                assert!(tj.contains("レイヤーのメモリ") && te.contains("Layer memory"), "{tj} / {te}");
                 assert!(te.ends_with("succeed"), "英語の文が終わっている: {te}");
             } else if matches!(over, Overrun::Side { .. }) {
                 assert!(tj.contains("30000") && te.contains("30000"), "辺の上限は予算を上げても書けない: {tj} / {te}");
-                assert!(!tj.contains("レイヤーの画素") && !te.contains("Layer pixels"), "{tj} / {te}");
+                assert!(!tj.contains("レイヤーのメモリ") && !te.contains("Layer memory"), "{tj} / {te}");
             } else {
                 assert!(tj.contains("2 GiB") && te.contains("2 GiB"), "{tj} / {te}");
             }
@@ -3173,7 +3173,7 @@ mod tests {
             report.lines[0]
                 .tooltip
                 .as_deref()
-                .is_some_and(|t| t.contains("レイヤーの画素") && t.contains("区切り")),
+                .is_some_and(|t| t.contains("レイヤーのメモリ") && t.contains("区切り")),
             "{:?}",
             report.lines[0].tooltip
         );
@@ -3183,7 +3183,7 @@ mod tests {
         s.wait_psd();
         assert!(s.message.contains("Too many layers (261; limit 256)"), "{}", s.message);
         let report = s.psd.report.take().unwrap();
-        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer pixels"));
+        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer memory"));
         assert!(dir.files().is_empty());
         // 予算を上げれば書ける
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(512);
@@ -3272,7 +3272,7 @@ mod tests {
     fn a_canvas_over_a_limit_is_refused_with_the_reason_and_the_hint_where_the_budget_helps_and_changes_nothing() {
         let dir = Dir::new("budget");
         let mut s = AppState::new(32, 32);
-        // 層の画素の予算（設定の「レイヤーの画素」）を下げる。読み込みは 256 MiB を下回らない
+        // 層の画素の予算（設定の「レイヤーのメモリ」）を下げる。読み込みは 256 MiB を下回らない
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(16);
         let before = (s.sets.len(), s.doc.id(), s.modified);
         // ファイルの大きさだけでは断らない（原本を保たないので、保持の上限は掛けない）。PSD でなければ、その理由で断る
@@ -3334,7 +3334,7 @@ mod tests {
             report.lines[0]
                 .tooltip
                 .as_deref()
-                .is_some_and(|t| t.contains("レイヤーの画素")),
+                .is_some_and(|t| t.contains("レイヤーのメモリ")),
             "{:?}",
             report.lines[0].tooltip
         );
@@ -3342,7 +3342,7 @@ mod tests {
         big.apply(Action::Psd(PsdAction::Export(dir.0.join("big.psd"))));
         assert!(big.message.contains("Canvas too large"), "{}", big.message);
         let report = big.psd.report.take().unwrap();
-        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer pixels"));
+        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer memory"));
         assert_eq!(dir.files(), ["huge.psd", "wide.psd"], "書いていない");
     }
 }

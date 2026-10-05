@@ -32,6 +32,42 @@ pub struct Frame {
     pub body: Rect,
 }
 
+/// 浮いた窓（や、浮いて Esc で閉じる部品）を描いた最後のフレームの番号を覚えておく場所。
+fn shown_id() -> Id {
+    Id::new("yolu.window.shown")
+}
+
+/// 浮いた窓を描いたことを覚える（`show` が呼ぶ。Esc で閉じる浮いた部品が自分で描くときも呼ぶ）。
+pub fn note_open(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(shown_id(), frame));
+}
+
+/// 浮いた窓が開いているか（今のフレームか、1 つ前のフレームで描いた）。窓が Esc で閉じたフレームも含むので、窓が使う Esc を、
+/// 窓より先に描くキャンバスなどが横取りしない（窓を優先する）ために使う。
+pub fn any_open(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(shown_id())).is_some_and(|at| now.saturating_sub(at) <= 1)
+}
+
+/// Esc を使い切ったフレームの番号を覚えておく場所。
+fn escape_taken_id() -> Id {
+    Id::new("yolu.window.escape-taken")
+}
+
+/// このフレームの Esc を、もう使ったことを覚える。キャンバスより前に描く部品（や、フレームの頭の処理）が Esc で何かをやめたとき、
+/// 同じ Esc でキャンバスが選択範囲まで解除しないために呼ぶ（キャンバスより後に描く部品は、`any_open` か自分の状態で足りる）。
+pub fn note_escape_taken(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(escape_taken_id(), frame));
+}
+
+/// このフレームの Esc を、キャンバスより前の部品がもう使ったか。
+pub fn escape_taken(ctx: &egui::Context) -> bool {
+    let now = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<u64>(escape_taken_id())) == Some(now)
+}
+
 /// 最後に描いた窓の矩形（画面の点。まだ描いていなければ None）。
 pub fn last_rect(ctx: &egui::Context, id: Id) -> Option<Rect> {
     ctx.data(|d| d.get_temp(id.with("rect")))
@@ -75,6 +111,7 @@ pub fn show(
     }
     // 最後に描いた窓の矩形（試験が窓の中だけを撮る・位置を知るために読む）
     ctx.data_mut(|d| d.insert_temp(id.with("rect"), rect));
+    note_open(ctx);
     let mut closed = esc;
     egui::Area::new(id)
         .order(if spec.modal {

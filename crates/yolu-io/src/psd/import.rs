@@ -14,7 +14,7 @@
 //! 取り込んだ文書の合成は、PSD の統合画像と照らして最大の差と差のある画素の数を知らせる。
 //!
 //! 読みは `Read + Seek` から流す。付加情報は層ごと・タグごとに読んで捨て、層の画素は 1 枚ずつ復号して core へ入れてすぐ捨てる
-//! （全層の復号を同時に持たない）。層の数・画素・層 1 枚の付加情報の予算は、呼び手が渡す「レイヤーの画素」の予算（`source_budget`）で決める。
+//! （全層の復号を同時に持たない）。層の数・画素・層 1 枚の付加情報の予算は、呼び手が渡す「レイヤーのメモリ」の予算（`source_budget`）で決める。
 use super::binary::Reader;
 use super::read::{self, State};
 use super::*;
@@ -228,7 +228,7 @@ impl CopyRefusal {
             }
         }
     }
-    /// 設定の「レイヤーの画素」の予算を上げると取り込めるようになる理由か。
+    /// 設定の「レイヤーのメモリ」の予算を上げると取り込めるようになる理由か。
     pub fn raised_by_budget(&self) -> bool {
         matches!(
             self,
@@ -244,7 +244,7 @@ impl CopyRefusal {
 /// 取り込みの設定。
 #[derive(Clone, Copy, Debug)]
 pub struct CopyOptions<'a> {
-    /// 文書の層の画素に許すバイト数（設定の「レイヤーの画素」）。層の数・画布・層の画素の上限をここから決める。
+    /// 文書の層の画素に許すバイト数（設定の「レイヤーのメモリ」）。層の数・画布・層の画素の上限をここから決める。
     pub source_budget: u64,
     /// 立てると、層の間・統合画像と照らす間に止めて `Error::Core(Cancelled)` で戻る。
     pub cancel: Option<&'a AtomicBool>,
@@ -883,7 +883,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         if tell(r)? + u64::from(extra) > info_end {
             return malformed("レイヤーの付加情報が区間を超えています");
         }
-        // 付加情報は層ごとに全部メモリへ読む。固定の上限でなく、層の画素と同じ予算（設定の「レイヤーの画素」）に合わせる
+        // 付加情報は層ごとに全部メモリへ読む。固定の上限でなく、層の画素と同じ予算（設定の「レイヤーのメモリ」）に合わせる
         if u64::from(extra) > o.source_budget {
             return Err(Stop::Refused(CopyRefusal::LayerDataTooLarge {
                 layer: format!("#{}", i + 1),

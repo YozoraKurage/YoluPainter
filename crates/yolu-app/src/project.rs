@@ -1,7 +1,7 @@
 //! .ylp（Unity 版と同じ作業ファイル）の開く・保存・新規。読み書きと検証は yolu-io、ここは画面の状態（テクスチャセット）との受け渡しだけ。
 //!
 //! - 開く: yolu-io の `SaveTarget::open_within`（ZIP・manifest・正本を流して検証し、保存で外からの書き換えを見張る印を取る。上限は設定の
-//!   「レイヤーの画素」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
+//!   「レイヤーのメモリ」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
 //!   RGB・文書とレイヤーの ID を保つ。ファイル全体・正本全体をメモリに組まない）。core で扱えない中身
 //!   （手動の ID の色など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
 //!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルと、効果（フィルター・Generator・Anchor・
@@ -177,7 +177,7 @@ pub fn open_into(state: &mut AppState, path: &Path) {
 
 /// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
-    // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーの画素」の予算から（`Limits`）
+    // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーのメモリ」の予算から（`Limits`）
     let limits = yolu_io::Limits::from_layer_pixels(budget);
     let (project, target) = match SaveTarget::open_within(path, &limits) {
         Ok(x) => x,
@@ -646,7 +646,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     // 次の保存・書き置きの元は、書いたファイルを指すプロジェクト（変わらないエントリはそのファイルから写す。保存に使った core の文書の
     // 写しは手放す）
     let saved = report.project.take().map(std::sync::Arc::new).unwrap_or(project);
-    // 書いた .ylp を、今の「レイヤーの画素」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
+    // 書いた .ylp を、今の「レイヤーのメモリ」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
     // 小さいまま正本だけが大きくなる。保存は止めず、開き直すのに予算が要ることをここで言う）
     let reopen = reopen_note(state.lang, &saved, &yolu_io::Limits::from_layer_pixels(state.load_source_bytes()));
     if let Some(file) = state.project.as_mut() {
@@ -708,7 +708,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// 保存した .ylp が、`limits`（今の「レイヤーの画素」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
+/// 保存した .ylp が、`limits`（今の「レイヤーのメモリ」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
 /// かかる（今の形は今の上限に収まるときだけ書く）。
 pub(crate) fn reopen_note(lang: Lang, project: &Project, limits: &yolu_io::Limits) -> Option<String> {
     let archive = project.original_archive();
@@ -720,8 +720,8 @@ pub(crate) fn reopen_note(lang: Lang, project: &Project, limits: &yolu_io::Limit
         .err()?;
     Some(
         lang.pick(
-            " 今の「レイヤーの画素」の予算では開き直せません。",
-            " Too large to reopen within the current Layer pixels budget.",
+            " 今の「レイヤーのメモリ」の予算では開き直せません。",
+            " Too large to reopen within the current Layer memory budget.",
         )
         .into(),
     )
@@ -788,8 +788,8 @@ mod tests {
         assert!(document > 4 * 1000 * s.doc.allocated_bytes(), "{document}");
         let tight = yolu_io::Limits { document_bytes: document - 1, other_bytes: yolu_io::Limits::default().other_bytes };
         let note = reopen_note(Lang::Ja, saved, &tight).expect("開き直せないと言う");
-        assert!(note.contains("「レイヤーの画素」の予算") && !note.contains("MiB"), "{note}");
-        assert!(reopen_note(Lang::En, saved, &tight).unwrap().contains("Layer pixels budget"));
+        assert!(note.contains("「レイヤーのメモリ」の予算") && !note.contains("MiB"), "{note}");
+        assert!(reopen_note(Lang::En, saved, &tight).unwrap().contains("Layer memory budget"));
         // 言ったとおり、その上限の読み手は断る
         assert!(matches!(yolu_io::Package::open(&path, &tight), Err(yolu_io::Error::Budget(_))));
         let enough = yolu_io::Limits { document_bytes: document, ..tight };
