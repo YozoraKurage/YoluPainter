@@ -40,13 +40,17 @@ pub fn path_for(settings: &Path) -> Option<PathBuf> {
 }
 
 /// 窓の大きさと位置（最大化していない状態のもの）と、最大化していたか。
+///
+/// 位置と大きさは点で、点 = 画素 / `pixels_per_point`（書いたときに窓がいた画面の拡大率。アプリは egui の拡大を使わないので OS の論理の点と
+/// 同じ）。画素 = 点 × `pixels_per_point` は仮想スクリーンの物理画素で、拡大率の違う画面をまたぐときは、点の座標を別の画面の拡大率で
+/// 読み替えない（`windowpos::plan` が画素に直してから、今の画面と突き合わせる）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WindowRecord {
     /// 外枠の左上（点）。
     pub position: [f32; 2],
     /// 内側の大きさ（点）。
     pub size: [f32; 2],
-    /// 書いたときの 1 点あたりの画素（位置が画面の中かを、画素で確かめるのに使う）。
+    /// 書いたときの 1 点あたりの画素（窓がいた画面の拡大率）。
     pub pixels_per_point: f32,
     pub maximized: bool,
 }
@@ -348,8 +352,9 @@ pub fn save(path: &Path, text: &str) -> io::Result<()> {
     result
 }
 
-/// 起動のときに窓へ戻す大きさと位置（設定のファイルから。無い・正しくないなら None）。位置が今の画面に見えているかは
-/// `is_visible_on_a_monitor` で確かめてから使う（見えなければ位置は戻さず、大きさだけ戻す）。
+/// 起動のときに窓へ戻す大きさと位置（設定のファイルから。無い・正しくないなら None）。置き場所は `windowpos::startup` が、画面ごとの
+/// 拡大率・作業領域と突き合わせて決める（画面を列挙できない OS だけ、位置が今の画面に見えているかを `is_visible_on_a_monitor` で
+/// 確かめてから、記録をそのまま使う）。
 pub fn saved_window() -> Option<WindowRecord> {
     saved_window_at(&path()?)
 }

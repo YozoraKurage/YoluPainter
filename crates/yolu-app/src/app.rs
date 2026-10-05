@@ -525,6 +525,10 @@ impl YoluApp {
     /// 1 秒おきに 1 回までなので、書き込みが続かない。タブの見出しをつかんでいる間は並びが変わらない）。窓の大きさと位置は、最大化していない
     /// 間の値を覚える（最大化したまま終わっても、戻したときの大きさを書く）。書けなくても動作は変えない（診断のログへ。同じ中身では書き直さない）。
     fn persist_layout(&mut self, ctx: &egui::Context) {
+        // 起動の窓の置き場所を合わせている間（最初の数フレーム）は、途中の位置を記録・保存しない
+        if crate::windowpos::settle(ctx) {
+            return;
+        }
         let info = ctx.input(|i| i.viewport().clone());
         let maximized = info.maximized.unwrap_or(false);
         if !maximized && !info.fullscreen.unwrap_or(false) && !info.minimized.unwrap_or(false) {
