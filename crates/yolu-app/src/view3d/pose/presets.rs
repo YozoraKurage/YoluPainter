@@ -600,7 +600,8 @@ mod tests {
         assert_eq!(app.view3d.pose.pose_presets.get(a).unwrap().name, "走り");
         assert!(!rename_preset(&mut app, a, "  "));
         assert!(app.message.contains("名前を変えられません"), "{}", app.message);
-        // 今のポーズ（休みの形）で上書き: 項目が 0 になり、名前はそのまま
+        // 今のポーズ（休みの形）で上書き: 項目が 0 になり、名前はそのまま（データとしては許す。ポーズの欄は休みの形では
+        // 上書きのボタンを押せなくする）
         pose::reset(&mut app.view3d).unwrap();
         assert!(overwrite_preset(&mut app, a));
         assert!(app.message.contains("走り"), "{}", app.message);

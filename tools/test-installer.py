@@ -8,7 +8,7 @@
 上限を超えたときは、/RUN が付いていれば今入っている exe を起こし直し、付いていなければ起こさない）、
 アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA では、アプリが作り直せるデータ（設定・窓の配置・復旧・
 クラッシュの記録・サムネイルのキャッシュ・落とした更新）だけを消し、利用者が作った物（個人のライブラリ・ブラシ・サブツール・
-グラデーション・カラーセット・表示のプリセット）と、知らないファイルは残す）。
+グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）と、知らないファイルは残す）。
 文書（docs\ と docs\en\）は、入れる・上書きで新しい版の中身になる・前の版にだけあった文書が更新で消える・利用者が docs\ に
 置いたファイルと、記録が書き換えられていても入れ先の外には触れない・アンインストールで空になったフォルダだけが消える、を確かめる。
 ショートカットの作業フォルダと、/RUN で起こしたアプリの作業フォルダが入れ先であること（文書を入れたあとで入れ先へ戻す SetOutPath の確かめ）も読む。
@@ -41,7 +41,7 @@ REBUILDABLE_ROAMING = ['settings.conf', 'recovery.conf', 'update.conf', 'layout.
 REBUILDABLE_LOCAL = ['thumbnails/ab/cd.png', 'LiveLink/link.sock']
 # 利用者が作った物と、知らないファイル（どちらの答えでも消えない）
 USER_MADE = ['Library/picture.png', 'Library/sub/material.ylsmart', 'brushes/mine.ylbrush', 'subtools/mine.ylsubtool',
-             'gradients/mine.ylgradients', 'hide_presets/mine.ylhide', 'colorsets/mine.ylcolors']
+             'gradients/mine.ylgradients', 'hide_presets/mine.ylhide', 'pose_presets/mine.ylpose', 'colorsets/mine.ylcolors']
 UNKNOWN = ['future-folder/thing.bin', 'notes.txt']
 STAGED_UPDATE = 'updates/yolupainter-0.9.0-x86_64-pc-windows-msvc-setup.exe'
 FAKE_APP = r'''
@@ -454,7 +454,7 @@ def run(args):
     check(not local.exists(), '/DELETEDATA で、%LOCALAPPDATA%\\YoluPainter は空になって消える')
     # 利用者が作った物と知らないファイルは、/DELETEDATA でも消えない（持ち主のいるフォルダも残る）。
     missing = [name for name in [*USER_MADE, *UNKNOWN] if not (data / name).is_file()]
-    check(not missing, f'/DELETEDATA でも、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットと、知らないファイルは残る（無い物 {missing}）')
+    check(not missing, f'/DELETEDATA でも、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセットと、知らないファイルは残る（無い物 {missing}）')
     check((data / 'brushes/mine.ylbrush').read_text() == 'brushes/mine.ylbrush', '残った利用者の物の中身が変わらない')
     check(registry(r'HKCU\Software\Classes\.ylp') == 'OtherApp.File', '他のアプリに替えられた関連付けには触らない')
     check(wait_gone(install), '入れ先が空になれば消える')

@@ -159,7 +159,8 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "save",
             lang.pick("今のポーズで上書き", "Overwrite with Current Pose"),
             false,
-            editable,
+            // 保存と同じ条件（休みの形のままでは、保存したポーズを空の項目で置き換えて元に戻せなくなる）
+            can_save,
             14.0,
         )
         .clicked()

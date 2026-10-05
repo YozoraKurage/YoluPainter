@@ -1105,6 +1105,18 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     h.get_by_label("ポーズを戻す（ファイルのポーズへ）").click();
     h.run();
     assert!(!session(&h).is_posed());
+    // 休みの形では上書きも押せない（保存したポーズが項目 0 の「休みの形」に置き換わって戻せなくなる）
+    let rest_overwrites: Vec<_> = h.get_all_by_label("今のポーズで上書き").collect();
+    assert_eq!(rest_overwrites.len(), 2, "プリセットの数だけ並ぶ");
+    assert!(rest_overwrites.iter().all(|n| n.accesskit_node().is_disabled()));
+    let at = rest_overwrites[0].rect().center();
+    drop(rest_overwrites);
+    click(&mut h, at);
+    {
+        let presets = &h.state().state.view3d.pose.pose_presets;
+        assert_eq!(presets.items()[0].entries.len(), 2, "押しても上書きされない");
+        assert_eq!(presets.items()[1].entries.len(), 2);
+    }
     let steps = undo_len(&h);
     h.get_by_label("構え").click();
     h.run();
@@ -1131,7 +1143,10 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     assert_eq!(session(&h).pose().locals[arm], session(&h).rig.bones()[arm].rest, "右腕は休みのまま");
     assert!(near(&session(&h).pose().locals[head], &bent.locals[head]), "対にならない頭はそのまま");
     assert!(h.state().state.message.contains("左右反転"), "{}", h.state().state.message);
-    // 今のポーズで上書き（名前はそのまま・ほかは変わらない）
+    // 今のポーズで上書き（名前はそのまま・ほかは変わらない）。左右を反転して当てたあとは休みの形と違うので押せる
+    assert!(h
+        .get_all_by_label("今のポーズで上書き")
+        .all(|n| !n.accesskit_node().is_disabled()));
     let overwrite = h
         .get_all_by_label("今のポーズで上書き")
         .map(|n| n.rect())
@@ -1216,14 +1231,10 @@ fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     let id = presets::save_preset(&mut h.state_mut().state, "構え").unwrap();
     pose::reset(&mut h.state_mut().state.view3d).unwrap();
     h.run();
-    for label in [
-        "左右を反転して当てる",
-        "今のポーズで上書き",
-        "名前を変える",
-        "このポーズを消す",
-    ] {
+    for label in ["左右を反転して当てる", "名前を変える", "このポーズを消す"] {
         assert!(!disabled(&h, label), "{label}");
     }
+    assert!(disabled(&h, "今のポーズで上書き"), "休みの形では上書きだけ押せない");
     // 描いている最中は、保存も当てるのも消すのも押せない
     {
         let app = &mut h.state_mut().state;
@@ -1234,9 +1245,7 @@ fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     h.run();
     assert!(h.state().state.is_stroking());
     for label in [
-        "ポーズを保存",
         "左右を反転して当てる",
-        "今のポーズで上書き",
         "名前を変える",
         "このポーズを消す",
     ] {
@@ -1263,6 +1272,24 @@ fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     h.get_by_label("構え").click();
     h.run();
     assert!(session(&h).is_posed());
+    // 休みの形と違うポーズなら上書きも押せるが、描いている最中は上書きも保存も押せない
+    h.run();
+    assert!(!disabled(&h, "今のポーズで上書き"));
+    assert!(!disabled(&h, "ポーズを保存"));
+    {
+        let app = &mut h.state_mut().state;
+        let layer = app.selected_layer.unwrap();
+        let settings = app.stroke_settings(false);
+        app.stroke = Some(app.doc.begin_stroke(layer, &settings).unwrap());
+    }
+    h.run();
+    assert!(disabled(&h, "今のポーズで上書き"));
+    assert!(disabled(&h, "ポーズを保存"));
+    {
+        let app = &mut h.state_mut().state;
+        let stroke = app.stroke.take().unwrap();
+        app.doc.cancel_stroke(stroke);
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }
 

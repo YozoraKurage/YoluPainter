@@ -13,7 +13,7 @@
 ;                   /D=PATH       入れ先（最後に置く。省略は前の入れ先、初めては %LOCALAPPDATA%\Programs\YoluPainter）
 ;   アンインストーラー  /S           無音
 ;                       /DELETEDATA  アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
-;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット）は、どちらでも消さない
+;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）は、どちらでも消さない
 ;
 ; 実行中のアプリは終了させない。exe が使われている間は待つ（無音は 60 秒まで。超えたら何も変えずに終わり、終了コード 5。/RUN が付いていれば今入っている exe を起こし直す）。
 ; 文書は DocFiles の一覧から $INSTDIR\docs・$INSTDIR\docs\en に入れ、入れた名前を docs\.installed に記録する。更新は、前の版の記録にある文書を先に消すので、
@@ -351,7 +351,7 @@ Section "Uninstall"
   RMDir "$LOCALAPPDATA\${PRODUCT}"
 
   ; アプリが作り直せるデータは、消すかを聞く（無音では /DELETEDATA のときだけ消す）。
-  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・colorsets）と、
+  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・pose_presets・colorsets）と、
   ; 後の版が足した知らないファイル・フォルダは、どちらの答えでも消さない（フォルダも、空になったときだけ消す）。
   ${un.GetParameters} $R0
   ClearErrors
