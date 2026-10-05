@@ -873,6 +873,30 @@ fn a_curve_with_too_many_points_is_resampled_and_unreadable_effectors_are_report
 // ---------------- 表せない設定 ----------------
 
 #[test]
+fn the_default_mixing_values_of_a_brush_with_mixing_off_do_not_turn_mixing_on() {
+    // CLIP STUDIO は混色が切のブラシ（G ペンなど）にも絵の具量・濃度・色延びの既定の値を書く
+    let file = SutBuilder::new()
+        .brush(
+            "Pen",
+            1,
+            &[
+                ("BrushUseWaterColor", int(0)),
+                ("BrushUseWaterColor2", int(0)),
+                ("BrushMixColor", int(50)),
+                ("BrushMixAlpha", int(50)),
+                ("BrushMixColorExtension", int(10)),
+            ],
+        )
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::default());
+    assert!(
+        !b.unrepresented.iter().any(|u| matches!(u, Unrepresented::ClipStudio(SutNote::ColorMixing { .. }))),
+        "混色が切なら知らせもしない"
+    );
+}
+
+#[test]
 fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
     let file = SutBuilder::new()
         .brush(
