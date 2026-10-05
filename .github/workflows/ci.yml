@@ -1,8 +1,7 @@
 name: CI
 
+# main は CI 必須の PR からしか変わらない（ruleset）。main への push では組み直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
