@@ -108,6 +108,11 @@ fn public_key() -> [u8; 32] {
 
 /// その版の、署名つきの更新情報（zip・インストーラー・tar.gz を載せる）。
 fn signed_metadata(version: &str, installer: &[u8]) -> Vec<u8> {
+    signed_metadata_without(version, installer, None)
+}
+
+/// `signed_metadata` から、`skip` の対象の配布物だけ載せない更新情報（署名は載せたものに対して正しい）。
+fn signed_metadata_without(version: &str, installer: &[u8], skip: Option<&str>) -> Vec<u8> {
     let v = Version::parse(version).unwrap();
     let asset = |target: &str, bytes: &[u8]| {
         let name = asset_name(&v, target).unwrap();
@@ -122,11 +127,15 @@ fn signed_metadata(version: &str, installer: &[u8]) -> Vec<u8> {
     let payload = serde_json::to_string(&Manifest {
         schema: UPDATER_SCHEMA,
         version: version.into(),
-        assets: vec![
-            asset(WINDOWS_ARCHIVE, b"zip"),
-            asset(LINUX_ARCHIVE, b"tar"),
-            asset(WINDOWS_INSTALLER, installer),
-        ],
+        assets: [
+            (WINDOWS_ARCHIVE, &b"zip"[..]),
+            (LINUX_ARCHIVE, &b"tar"[..]),
+            (WINDOWS_INSTALLER, installer),
+        ]
+        .into_iter()
+        .filter(|(target, _)| Some(*target) != skip)
+        .map(|(target, bytes)| asset(target, bytes))
+        .collect(),
     })
     .unwrap();
     let signature = Some(hex::encode(
@@ -566,6 +575,34 @@ fn headless_a_corrupt_or_cut_download_is_rejected_and_leaves_nothing_to_run() {
     apply(&mut state, UpdateAction::Install);
     settle(&mut state);
     assert!(state.update.is_ready_open());
+}
+
+#[test]
+fn headless_metadata_without_this_systems_download_says_so_and_a_broken_one_still_fails_verification() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    // 署名は正しいが、この環境の対象（インストーラー）が載っていない: 検証の失敗ではなく、配布物が無いと言う
+    *rig.server.metadata.lock().unwrap() = signed_metadata_without("0.2.0", INSTALLER, Some(WINDOWS_INSTALLER));
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert!(state.update.offer().is_none());
+    assert_eq!(state.message, "更新を確かめられません: この環境向けの配布物がありません");
+    state.lang = Lang::En;
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert_eq!(state.message, "Cannot check for updates: no download for this system");
+    // 署名の合わない（本文を書き換えた）更新情報は、今までどおり検証の失敗
+    let mut envelope: Envelope = serde_json::from_slice(&signed_metadata("0.2.0", INSTALLER)).unwrap();
+    envelope.payload = envelope.payload.replace("0.2.0", "0.9.0");
+    *rig.server.metadata.lock().unwrap() = serde_json::to_vec(&envelope).unwrap();
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert_eq!(state.message, "Cannot check for updates: verification failed");
+    // 通信の失敗は、通信できないまま
+    rig.server.fail_metadata.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert_eq!(state.message, "Cannot check for updates: connection failed");
 }
 
 #[test]

@@ -93,6 +93,8 @@ pub enum Failure {
     Network,
     /// 取れたが、検証を通らない（署名・形式・版・大きさ・SHA-256）。
     Verify,
+    /// 署名つきの更新情報は正しいが、この環境向けの配布物が載っていない。
+    NoAsset,
     /// インストーラーを置き場へ書けない。
     Disk,
     Canceled,
@@ -371,11 +373,13 @@ impl Worker {
         UpdateClient::with_public_key(transport, self.key).map_err(|_| Failure::Verify)
     }
 
-    fn failure(&self) -> Failure {
+    fn failure(&self, error: &Error) -> Failure {
         if self.link.is_canceled() {
             Failure::Canceled
         } else if self.failed.load(Ordering::Relaxed) {
             Failure::Network
+        } else if error.is_missing_target() {
+            Failure::NoAsset
         } else {
             Failure::Verify
         }
@@ -389,14 +393,14 @@ impl Worker {
     ) -> Result<Option<AvailableUpdate>, Failure> {
         self.client()?
             .check(UPDATER_URL, current, target, allow_prerelease)
-            .map_err(|_| self.failure())
+            .map_err(|e| self.failure(&e))
     }
 
     fn download(&self, update: AvailableUpdate, staging: Option<&Path>) -> Result<Ready, Failure> {
         let verified = self
             .client()?
             .download(update.approve_download())
-            .map_err(|_| self.failure())?;
+            .map_err(|e| self.failure(&e))?;
         let dir = staging.ok_or(Failure::Disk)?;
         let path =
             stage(dir, &verified.asset().name, verified.bytes()).map_err(|_| Failure::Disk)?;
@@ -502,6 +506,7 @@ fn failure_text(lang: Lang, what: &'static str, failure: Failure) -> String {
     let reason = match failure {
         Failure::Network => lang.pick("通信できません", "connection failed"),
         Failure::Verify => lang.pick("検証を通りません", "verification failed"),
+        Failure::NoAsset => lang.pick("この環境向けの配布物がありません", "no download for this system"),
         Failure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
         Failure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
         Failure::Canceled => {
@@ -1023,6 +1028,7 @@ mod tests {
             for failure in [
                 Failure::Network,
                 Failure::Verify,
+                Failure::NoAsset,
                 Failure::Disk,
                 Failure::Stopped,
             ] {
@@ -1036,6 +1042,15 @@ mod tests {
             .starts_with("Cannot check for updates"));
         assert!(failure_text(Lang::Ja, "download", Failure::Verify)
             .starts_with("更新をダウンロードできません"));
+        // 更新情報に対象の配布物が無いのは、検証の失敗とは別の理由で言う
+        assert_eq!(
+            failure_text(Lang::Ja, "check", Failure::NoAsset),
+            "更新を確かめられません: この環境向けの配布物がありません"
+        );
+        assert_eq!(
+            failure_text(Lang::En, "check", Failure::NoAsset),
+            "Cannot check for updates: no download for this system"
+        );
         assert_eq!(
             failure_text(Lang::En, "download", Failure::Canceled),
             "Download canceled."

@@ -32,8 +32,17 @@ pub fn is_archive_target(target: &str) -> bool {
     target == WINDOWS_ARCHIVE || target == LINUX_ARCHIVE
 }
 
+/// 更新情報に、この環境の対象の配布物が無いときの `Error` の文（署名・形式は通っている。`Error::is_missing_target` が見分ける）。
+const MISSING_TARGET: &str = "対象の配布物がありません";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
+impl Error {
+    /// 検証は通ったが、更新情報にこの環境の対象の配布物が無い（壊れた・改ざんされた更新情報ではない）。
+    pub fn is_missing_target(&self) -> bool {
+        self.0 == MISSING_TARGET
+    }
+}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -222,7 +231,7 @@ impl<T: Transport> UpdateClient<T> {
         let asset = assets
             .into_iter()
             .find(|a| a.target == target)
-            .ok_or_else(|| fail("対象の配布物がありません"))?;
+            .ok_or_else(|| fail(MISSING_TARGET))?;
         Ok(Some(AvailableUpdate { version, asset }))
     }
     pub fn download(&self, approved: ApprovedDownload) -> Result<VerifiedDownload, Error> {
@@ -473,9 +482,20 @@ mod tests {
     }
     #[test]
     fn missing_target_rejected() {
-        assert!(client(manifest(), |_| {})
+        let error = client(manifest(), |_| {})
             .check(URL, &Version::new(1, 0, 0), TARGETS[1], false)
-            .is_err());
+            .unwrap_err();
+        // 検証は通ったが対象が無いだけなので、壊れた更新情報とは見分けられる
+        assert!(error.is_missing_target(), "{error}");
+        // 署名が合わない・形式が不正・対象がある場合は、「対象が無い」ではない
+        let tampered = client(manifest(), |e| e.payload.push(' '))
+            .check(URL, &Version::new(1, 0, 0), TARGETS[0], false)
+            .unwrap_err();
+        assert!(!tampered.is_missing_target(), "{tampered}");
+        let malformed = client_payload("{".into(), |_| {})
+            .check(URL, &Version::new(1, 0, 0), TARGETS[0], false)
+            .unwrap_err();
+        assert!(!malformed.is_missing_target(), "{malformed}");
     }
     /// 署名つきの正しい更新情報の末尾に空白を足して大きさだけを変える。
     /// serde_json は末尾の空白を許すので、落とすのは大きさの検査だけになる。
