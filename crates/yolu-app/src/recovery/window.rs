@@ -12,6 +12,7 @@ use egui::{pos2, vec2, Id, Key, Rect, Sense, Vec2};
 use super::{pool::Row, text, DiskBudget, RecoveryAction, Usage, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE};
 use crate::lang::Lang;
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::ui::window::{self, Spec};
@@ -177,11 +178,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             vec2(body.width(), visible as f32 * ROW_HEIGHT),
         );
         let content = rows.len() as f32 * ROW_HEIGHT;
-        let max_scroll = (content - list.height()).max(0.0);
-        if ui.rect_contains_pointer(list) {
-            scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-        }
-        scroll = scroll.clamp(0.0, max_scroll);
+        let bar = Scroll::begin(ui, list, content, &mut scroll);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list));
         child.set_clip_rect(list.intersect(ui.clip_rect()));
         let cp = child.painter().clone();
@@ -196,7 +193,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         for (i, row) in rows.iter().enumerate() {
             let r = Rect::from_min_size(
                 pos2(list.left() + 8.0, list.top() + i as f32 * ROW_HEIGHT - scroll),
-                vec2(list.width() - 16.0 - if max_scroll > 0.0 { 8.0 } else { 0.0 }, ROW_HEIGHT),
+                vec2(list.width() - 16.0 - bar.reserved(), ROW_HEIGHT),
             );
             if r.bottom() < list.top() || r.top() > list.bottom() {
                 continue;
@@ -246,16 +243,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 response.on_hover_text(tooltip);
             }
         }
-        if max_scroll > 0.0 {
-            let bar_h = (list.height() * list.height() / content).max(16.0);
-            let bar_y = list.top() + (list.height() - bar_h) * scroll / max_scroll;
-            w::rounded(
-                &cp,
-                Rect::from_min_size(pos2(list.right() - 8.0, bar_y), vec2(4.0, bar_h)),
-                t::CONTROL_ACTIVE,
-                2.0,
-            );
-        }
+        bar.end(ui, id.with("list-scroll"), &mut scroll);
         // 設定（間隔・残す世代）
         let mut y = list.bottom() + 6.0;
         let seconds = |n: u32| -> String {

@@ -13,6 +13,7 @@ use crate::engine::{Brush, BrushEffect};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState};
 use crate::ui::menu::context_anchor;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 
@@ -221,7 +222,6 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
     app.brushes.ui.list_rect = Some(list);
     let content = rows.len() as f32 * ROW_HEIGHT;
     app.brushes.ui.list_content = content;
-    let max_scroll = (content - list.height()).max(0.0);
     // ブラシが替わったあとは、今のブラシの行が見えるところまで送る
     if std::mem::take(&mut app.brushes.ui.reveal) {
         if let Some(i) = keys.iter().position(|k| *k == current) {
@@ -234,7 +234,8 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
             }
         }
     }
-    app.brushes.ui.list_scroll = app.brushes.ui.list_scroll.clamp(0.0, max_scroll);
+    // ホイールは、このパネルを包む `subtools` が（全体のスクロールと分けて）受ける
+    let bar = Scroll::new(list, content, &mut app.brushes.ui.list_scroll);
     // ドラッグ: ボタンを押しているあいだは落とす先をポインタに追わせ、離したら落とす（行がスクロールで見えなくなっても）
     if let Some(drag) = app.brushes.ui.drag {
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -256,7 +257,7 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
         }
     }
     let scroll = app.brushes.ui.list_scroll;
-    let row_width = list.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 };
+    let row_width = list.width() - bar.reserved();
     let outer = ui.clip_rect();
     ui.set_clip_rect(list.intersect(outer));
     for (i, (key, name, modified, row_group)) in rows.iter().enumerate() {
@@ -292,16 +293,7 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, group: Grou
         );
     }
     ui.set_clip_rect(outer);
-    if max_scroll > 0.0 {
-        let bar_h = (list.height() * list.height() / content).max(16.0);
-        let bar_y = list.top() + (list.height() - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "brushes.list.scroll", &mut app.brushes.ui.list_scroll);
 }
 
 fn brush_row(

@@ -200,6 +200,13 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     Action::DefaultColors,
                 )
                 .shortcut("D"),
+                // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
+                Entry::Separator,
+                Entry::item(
+                    l.pick("設定…", "Settings…"),
+                    Action::Prefs(crate::prefs::PrefsAction::Open),
+                )
+                .shortcut("Ctrl+,"),
             ]);
             entries
         }
@@ -289,10 +296,6 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             Entry::item(
                 l.pick("筆圧の調整…", "Pen Pressure…"),
                 Action::Pressure(crate::pen::window::PressureAction::Open),
-            ),
-            Entry::item(
-                l.pick("設定…", "Settings…"),
-                Action::Prefs(crate::prefs::PrefsAction::Open),
             ),
             Entry::item(
                 l.pick("パネルの並びを戻す", "Reset Panel Layout"),
@@ -790,24 +793,25 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
 }
 
-/// 状態の帯が出す文字（直前の操作の結果と理由だけ。文書の大きさ・メモリ・上げたタイル・合成の方式・Live Link の様子は出さない。
-/// 画面のどこにも出さない開発用の数は、試験が `AppState` から読む）。
+/// 直前の操作の結果と理由（`message`）。状態の帯の左には出さず、小さな知らせ（`toast`）が短く出して消す。試験が読む口はここ。
 pub fn status_text(app: &AppState) -> &str {
     &app.message
 }
 
-/// ステータスバー: 直前の操作の結果と理由だけを左に出す。
+/// 状態の帯: 左は何も出さない。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。実際の窓だけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
-    let text = status_text(app);
-    let area = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), pos2(r.right() - 8.0, r.bottom()));
-    let shown = w::fit(&p, text, area.width(), t::LABEL_DIM);
-    w::text(&p, area, &shown, t::LABEL_DIM, Align::Left);
-    if shown != text {
-        ui.interact(area, ui.id().with("status.message"), Sense::hover())
-            .on_hover_text(text);
+    let mut right = r.right() - 10.0;
+    for item in app.usage.items(app.lang) {
+        let width = w::text_width(&p, &item.text, t::LABEL_DIM);
+        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
+        w::text(&p, at, &item.text, t::LABEL_DIM, Align::Right);
+        let response = ui.interact(at.expand2(vec2(4.0, 0.0)), ui.id().with(("status", item.key)), Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
+        response.on_hover_text(&item.tip);
+        right = at.left() - 16.0;
     }
 }
 

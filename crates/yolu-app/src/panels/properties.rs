@@ -12,6 +12,7 @@ use crate::engine::LayerKind;
 use crate::m2_menu::Popup;
 use crate::state::{AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
@@ -330,17 +331,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let body = Rect::from_min_max(pos2(r.left(), top), r.max);
 
     // スクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
-    let max_scroll = (app.m2.props_content - body.height()).max(0.0);
-    if ui.rect_contains_pointer(body) {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        app.m2.props_scroll -= wheel;
-    }
-    app.m2.props_scroll = app.m2.props_scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, body, app.m2.props_content, &mut app.m2.props_scroll);
     let scroll = app.m2.props_scroll;
-    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
     let area = Rect::from_min_max(
         pos2(body.left(), body.top() - scroll),
-        pos2(body.right() - bar, body.bottom()),
+        pos2(body.right() - bar.reserved(), body.bottom()),
     );
     let outer_clip = ui.clip_rect();
     ui.set_clip_rect(body.intersect(outer_clip));
@@ -365,15 +360,5 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::gizmo::dragging(app) {
         app.m2_end_drag();
     }
-    if max_scroll > 0.0 {
-        let track = body.height();
-        let bar_h = (track * track / app.m2.props_content).max(16.0);
-        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);
 }

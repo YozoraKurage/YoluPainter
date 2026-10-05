@@ -11,6 +11,7 @@ use egui::{pos2, vec2, Rect, Sense, Ui};
 use egui_dock::DockState;
 
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 use crate::view3d::pose::edit::{self, Reset};
@@ -86,13 +87,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     }
 
     // 縦のスクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
-    let max_scroll = (app.view3d.pose.panel_content - body.height()).max(0.0);
-    app.view3d.pose.panel_scroll = app.view3d.pose.panel_scroll.clamp(0.0, max_scroll);
+    let scroller = Scroll::new(body, app.view3d.pose.panel_content, &mut app.view3d.pose.panel_scroll);
     let scroll = app.view3d.pose.panel_scroll;
-    let bar_w = if max_scroll > 0.0 { 8.0 } else { 0.0 };
     let area = Rect::from_min_max(
         pos2(body.left(), body.top() - scroll),
-        pos2(body.right() - bar_w, body.bottom()),
+        pos2(body.right() - scroller.reserved(), body.bottom()),
     );
     let outer_clip = ui.clip_rect();
     ui.set_clip_rect(body.intersect(outer_clip));
@@ -106,22 +105,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if !wheel_used && ui.rect_contains_pointer(body) {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
         if wheel != 0.0 {
-            app.view3d.pose.panel_scroll = (scroll - wheel).clamp(0.0, max_scroll);
+            app.view3d.pose.panel_scroll = (scroll - wheel).clamp(0.0, scroller.max);
         }
     }
     // スライダー・数値の欄のドラッグを離したら、続けて変えていた操作を 1 つの取り消しの段にする
     edit::finish_live_edit(app, ui.input(|i| i.pointer.any_down()));
-    if max_scroll > 0.0 {
-        let track = body.height();
-        let bar_h = (track * track / app.view3d.pose.panel_content).max(16.0);
-        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    scroller.end(ui, "pose.panel.scroll", &mut app.view3d.pose.panel_scroll);
 }
 
 /// 頭のボタンの帯。
@@ -412,6 +401,7 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
     let rows = visible_bones(s);
     let content = rows.len() as f32 * BONE_ROW;
     let max_scroll = (content - list.height()).max(0.0);
+    let reserved = if max_scroll > 0.0 { crate::ui::scroll::BAR_WIDTH } else { 0.0 };
     if let Some(b) = s.reveal.take() {
         if let Some(i) = rows.iter().position(|(r, _)| *r == b) {
             let top = i as f32 * BONE_ROW;
@@ -430,17 +420,14 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
             wheel_used = true;
         }
     }
-    s.tree_scroll = s.tree_scroll.clamp(0.0, max_scroll);
+    let tree_bar = Scroll::new(list, content, &mut s.tree_scroll);
     let mut select = None;
     let mut toggle = None;
     for (i, &(b, depth)) in rows.iter().enumerate() {
         let top = list.top() + i as f32 * BONE_ROW - s.tree_scroll;
         let row = Rect::from_min_size(
             pos2(list.left(), top),
-            vec2(
-                list.width() - if max_scroll > 0.0 { 8.0 } else { 0.0 },
-                BONE_ROW,
-            ),
+            vec2(list.width() - reserved, BONE_ROW),
         );
         if row.bottom() < list.top() || row.top() > list.bottom() {
             continue;
@@ -522,22 +509,8 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
         // ボーンを選んだらポーズのモードへ（輪が出る）
         app.view3d.pose.mode = true;
     }
-    if max_scroll > 0.0 {
-        let scroll = app
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .map(|s| s.tree_scroll)
-            .unwrap_or(0.0);
-        let bar_h = (list.height() * list.height() / content).max(16.0);
-        let bar_y = list.top() + (list.height() - bar_h) * scroll / max_scroll;
-        w::rounded(
-            &painter,
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
+    if let Some(s) = app.view3d.pose.session.as_mut() {
+        tree_bar.end(ui, "pose.tree.scroll", &mut s.tree_scroll);
     }
     wheel_used
 }

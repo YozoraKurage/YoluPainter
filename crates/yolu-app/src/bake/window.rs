@@ -16,6 +16,7 @@ use super::{
 };
 use crate::lang::Lang;
 use crate::state::AppState;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 use crate::ui::window::{self, Frame, Spec};
@@ -44,6 +45,8 @@ pub struct BakeWindow {
     sets_scroll: f32,
     list_scroll: f32,
     page_scroll: f32,
+    /// 右の項目の中身の高さ（前のフレームに描いたもの。つまみの長さとずらせる範囲の元）。
+    page_content: f32,
     offset: Vec2,
 }
 
@@ -242,11 +245,7 @@ fn draw(
         vec2(body.width(), visible as f32 * SET_ROW),
     );
     let content = sets.len() as f32 * SET_ROW;
-    let max_scroll = (content - area.height()).max(0.0);
-    if ui.rect_contains_pointer(area) {
-        win.sets_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    win.sets_scroll = win.sets_scroll.clamp(0.0, max_scroll);
+    let sets_bar = Scroll::begin(ui, area, content, &mut win.sets_scroll);
     {
         let mut child = ui.new_child(UiBuilder::new().max_rect(area));
         child.set_clip_rect(area.intersect(ui.clip_rect()));
@@ -258,10 +257,7 @@ fn draw(
                     area.left() + 12.0,
                     area.top() + i as f32 * SET_ROW - win.sets_scroll,
                 ),
-                vec2(
-                    area.width() - 24.0 - if max_scroll > 0.0 { 8.0 } else { 0.0 },
-                    SET_ROW - 2.0,
-                ),
+                vec2(area.width() - 24.0 - sets_bar.reserved(), SET_ROW - 2.0),
             );
             if row.bottom() < area.top() || row.top() > area.bottom() {
                 continue;
@@ -309,17 +305,8 @@ fn draw(
                 Align::Left,
             );
         }
-        if max_scroll > 0.0 {
-            let bar_h = (area.height() * area.height() / content).max(16.0);
-            let bar_y = area.top() + (area.height() - bar_h) * win.sets_scroll / max_scroll;
-            w::rounded(
-                &cp,
-                Rect::from_min_size(pos2(area.right() - 8.0, bar_y), vec2(4.0, bar_h)),
-                t::CONTROL_ACTIVE,
-                2.0,
-            );
-        }
     }
+    sets_bar.end(ui, "bake.sets.scroll", &mut win.sets_scroll);
     let top = area.bottom() + 6.0;
     // 左の一覧・右の設定・下の帯
     let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER_HEIGHT), body.max);
@@ -352,18 +339,14 @@ fn draw_list(
 ) {
     let rows = maps.len() + 2; // 共通の設定・UV の範囲・マップ
     let content = rows as f32 * ROW + 8.0;
-    let max_scroll = (content - list.height()).max(0.0);
-    if ui.rect_contains_pointer(list) {
-        win.list_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    win.list_scroll = win.list_scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, list, content, &mut win.list_scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
     let p = child.painter().clone();
     let mut cursor = RowCursor {
         y: list.top() + 4.0 - win.list_scroll,
         x: list.left() + 4.0,
-        width: list.width() - 8.0 - if max_scroll > 0.0 { 6.0 } else { 0.0 },
+        width: list.width() - 8.0 - bar.reserved(),
     };
     // 共通の設定
     let common = cursor.next();
@@ -552,6 +535,7 @@ fn draw_list(
             }));
         }
     }
+    bar.end(ui, "bake.list.scroll", &mut win.list_scroll);
 }
 
 /// 一覧の右端の状態の名前（照合の最中は「確認中」）。
@@ -680,12 +664,14 @@ fn draw_page(
     actions: &mut Vec<BakeAction>,
     settings: &mut yolu_core::mesh_maps::MeshBakeSettings,
 ) {
+    // 中身の高さは前のフレームのもの（描き終えたあとに入れる）
+    let bar = Scroll::begin(ui, page, win.page_content, &mut win.page_scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(page));
     child.set_clip_rect(page.intersect(ui.clip_rect()));
     let p = child.painter().clone();
     w::fill(&p, page, t::PANEL_BG);
     let mut y = page.top() + 8.0 - win.page_scroll;
-    let width = page.width() - 24.0;
+    let width = page.width() - 24.0 - bar.reserved();
     let x = page.left() + 12.0;
     let row = |h: f32, gap: f32, y: &mut f32| {
         let r = Rect::from_min_size(pos2(x, *y), vec2(width, h));
@@ -989,12 +975,8 @@ fn draw_page(
             }
         }
     }
-    let content = y + win.page_scroll - page.top() + 8.0;
-    let max_scroll = (content - page.height()).max(0.0);
-    if ui.rect_contains_pointer(page) {
-        win.page_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    win.page_scroll = win.page_scroll.clamp(0.0, max_scroll);
+    win.page_content = y + win.page_scroll - page.top() + 8.0;
+    bar.end(ui, "bake.page.scroll", &mut win.page_scroll);
 }
 
 fn draw_footer(

@@ -15,6 +15,7 @@ use crate::clipboard::ClipAction;
 use crate::lang::Lang;
 use crate::m2::Edit;
 use crate::pathtool::PathAction;
+use crate::prefs::PrefsAction;
 use crate::selection::{SelAction, SelEdit, SelUiOp};
 use crate::state::{Action, AppState, Tool};
 
@@ -136,6 +137,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(cmd, Key::Equals, Action::ZoomIn),
         kb(cmd, Key::Minus, Action::ZoomOut),
         kb(cmd, Key::Q, Action::Quit),
+        kb(cmd, Key::Comma, Action::Prefs(PrefsAction::Open)),
         kb(shift, Key::R, Action::ResetRotation),
     ];
     // 道具のキー（道具の表のとおり。ツールの帯の並び）

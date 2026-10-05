@@ -21,6 +21,7 @@ use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, Entry, PopupState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
@@ -28,8 +29,8 @@ pub const CELL_W: f32 = 76.0;
 pub const CELL_H: f32 = 92.0;
 pub const GAP: f32 = 6.0;
 pub const THUMB_BOX: f32 = 64.0;
-/// 縦のスクロールバーに空ける幅。
-pub const BAR_W: f32 = 10.0;
+/// 縦のスクロールバーに空ける幅（共通のスクロールの部品の、掴める幅）。
+pub const BAR_W: f32 = crate::ui::scroll::BAR_WIDTH;
 /// 下の名前と操作の帯の高さ。
 pub const FOOTER_H: f32 = 62.0;
 /// 見えている行の上下に余分に頼む行の数（スクロールの先読み）。
@@ -594,12 +595,9 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
         columns,
         cell_w,
         content,
-        max_scroll,
+        ..
     } = grid_metrics(grid.width(), grid.height(), list.len());
-    if ui.rect_contains_pointer(grid) {
-        app.shelf.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    app.shelf.scroll = app.shelf.scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, grid, content, &mut app.shelf.scroll);
     // 見えている項目（と先読みの行）だけ、情報とサムネイルを別のスレッドへ頼む
     let near = wanted(&list, columns, app.shelf.scroll, grid.height());
     match source {
@@ -632,16 +630,7 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
         }
         card_cell(ui, app, &painter, grid, cell, card);
     }
-    if max_scroll > 0.0 {
-        let bar_h = grid.height() * grid.height() / content;
-        let bar_y = grid.top() + (grid.height() - bar_h) * app.shelf.scroll / max_scroll;
-        w::rounded(
-            &painter,
-            Rect::from_min_size(pos2(grid.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "assets.scroll", &mut app.shelf.scroll);
 }
 
 /// カードが選ばれているか（棚の項目は棚の選び、ライブラリの項目はライブラリの選び）。

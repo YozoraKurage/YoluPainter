@@ -14,6 +14,7 @@ use crate::state::{Action, AppState, Tool};
 use crate::subtool::{Key, SubToolAction};
 use crate::tools::SubTools;
 use crate::ui::menu::context_anchor;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, Rows};
 
@@ -299,16 +300,16 @@ fn rows_body(
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let content = count as f32 * ROW;
     app.subtools.ui.list_content = content;
-    let max_scroll = (content - list.height()).max(0.0);
     if std::mem::take(&mut app.subtools.ui.reveal) {
         if let Some(i) = current {
             app.subtools.ui.list_scroll =
                 scroll_to_show(app.subtools.ui.list_scroll, i, list.height());
         }
     }
-    app.subtools.ui.list_scroll = app.subtools.ui.list_scroll.clamp(0.0, max_scroll);
+    // ホイールは、このパネルを包む全体のスクロールが（一覧とどちらが受けるかを決めて）受ける
+    let bar = Scroll::new(list, content, &mut app.subtools.ui.list_scroll);
     let scroll = app.subtools.ui.list_scroll;
-    let row_width = list.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 };
+    let row_width = list.width() - bar.reserved();
     let outer = ui.clip_rect();
     ui.set_clip_rect(list.intersect(outer));
     for i in 0..count {
@@ -322,16 +323,7 @@ fn rows_body(
         draw(ui, app, row, i);
     }
     ui.set_clip_rect(outer);
-    if max_scroll > 0.0 {
-        let bar_h = (list.height() * list.height() / content).max(16.0);
-        let bar_y = list.top() + (list.height() - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "subtools.list.scroll", &mut app.subtools.ui.list_scroll);
 }
 
 /// プリセットの一覧の下の帯: 元に戻す・複製・追加・削除（右寄せ）。
@@ -539,7 +531,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     app.brushes.ui.panel_content = content;
 
     // 全体のスクロール（一覧の中でホイールを使い切れなければ、全体を送る）
-    let max_scroll = (content - r.height()).max(0.0);
     let (list_content, list_view) = match def.subtools {
         SubTools::Brushes | SubTools::Erasers => (
             app.brushes.ui.list_content,
@@ -565,12 +556,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             app.brushes.ui.panel_scroll -= wheel;
         }
     }
-    app.brushes.ui.panel_scroll = app.brushes.ui.panel_scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::new(r, content, &mut app.brushes.ui.panel_scroll);
     let scroll = app.brushes.ui.panel_scroll;
-    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
     let area = Rect::from_min_max(
         pos2(r.left(), r.top() - scroll),
-        pos2(r.right() - bar, r.bottom()),
+        pos2(r.right() - bar.reserved(), r.bottom()),
     );
     let outer = ui.clip_rect();
     ui.set_clip_rect(r.intersect(outer));
@@ -634,15 +624,5 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
     }
     ui.set_clip_rect(outer);
-    if max_scroll > 0.0 {
-        let track = r.height();
-        let bar_h = (track * track / content).max(16.0);
-        let bar_y = r.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(r.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "subtools.panel.scroll", &mut app.brushes.ui.panel_scroll);
 }

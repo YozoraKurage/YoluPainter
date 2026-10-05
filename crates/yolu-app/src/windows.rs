@@ -8,6 +8,7 @@ use crate::export::{self, ExportAction};
 use crate::lang::Lang;
 use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
@@ -103,6 +104,14 @@ pub fn show_list_with(
     };
     let mut reply = None;
     let id = Id::new(("yolu.window", spec.id));
+    // ずらした量は窓の id で覚える（呼ぶ側が毎回 0 から渡しても、ホイールとつまみが効く）。窓を出していなかった後は、渡された値から
+    let scroll_key = id.with("scroll");
+    let frame_now = ctx.cumulative_frame_nr();
+    if let Some((value, at)) = ctx.data(|d| d.get_temp::<(f32, u64)>(scroll_key)) {
+        if frame_now.saturating_sub(at) <= 1 {
+            *scroll = value;
+        }
+    }
     let mut esc = false;
     let closed = window::show(ctx, id, &window_spec, offset, false, |ui, frame| {
         esc = ui.input(|i| i.key_pressed(Key::Escape))
@@ -137,11 +146,7 @@ pub fn show_list_with(
             vec2(body.width(), visible as f32 * ROW_HEIGHT),
         );
         let content = spec.rows.len() as f32 * ROW_HEIGHT;
-        let max_scroll = (content - list.height()).max(0.0);
-        if ui.rect_contains_pointer(list) {
-            *scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-        }
-        *scroll = scroll.clamp(0.0, max_scroll);
+        let bar = Scroll::begin(ui, list, content, scroll);
         let mut child = ui.new_child(UiBuilder::new().max_rect(list));
         child.set_clip_rect(list.intersect(ui.clip_rect()));
         let cp = child.painter().clone();
@@ -161,10 +166,7 @@ pub fn show_list_with(
                     list.left() + 14.0,
                     list.top() + i as f32 * ROW_HEIGHT - *scroll,
                 ),
-                vec2(
-                    list.width() - 28.0 - if max_scroll > 0.0 { 8.0 } else { 0.0 },
-                    ROW_HEIGHT,
-                ),
+                vec2(list.width() - 28.0 - bar.reserved(), ROW_HEIGHT),
             );
             if r.bottom() < list.top() || r.top() > list.bottom() {
                 continue;
@@ -202,16 +204,7 @@ pub fn show_list_with(
                     .on_hover_text(tip);
             }
         }
-        if max_scroll > 0.0 {
-            let bar_h = (list.height() * list.height() / content).max(16.0);
-            let bar_y = list.top() + (list.height() - bar_h) * *scroll / max_scroll;
-            w::rounded(
-                &cp,
-                Rect::from_min_size(pos2(list.right() - 8.0, bar_y), vec2(4.0, bar_h)),
-                t::CONTROL_ACTIVE,
-                2.0,
-            );
-        }
+        bar.end(ui, id.with("list-scroll"), scroll);
         // 下の帯
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         w::fill(&p, footer, t::PANEL_HEADER);
@@ -237,6 +230,7 @@ pub fn show_list_with(
             }
         }
     });
+    ctx.data_mut(|d| d.insert_temp(scroll_key, (*scroll, frame_now)));
     if reply.is_none() && (closed || esc) {
         reply = Some(Reply::Closed);
     }

@@ -13,6 +13,7 @@ use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
@@ -151,12 +152,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let n = app.sets.len();
     let content = n as f32 * ROW_HEIGHT;
-    let max_scroll = (content - list.height()).max(0.0);
-    if ui.rect_contains_pointer(list) {
-        app.set_scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    app.set_scroll = app.set_scroll.clamp(0.0, max_scroll);
-    let row_width = list.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 };
+    let bar = Scroll::begin(ui, list, content, &mut app.set_scroll);
+    let row_width = list.width() - bar.reserved();
     for index in 0..n {
         let row = Rect::from_min_size(
             pos2(
@@ -170,16 +167,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
         set_row(ui, app, &ctx, list, row, index);
     }
-    if max_scroll > 0.0 {
-        let bar_h = list.height() * list.height() / content;
-        let bar_y = list.top() + (list.height() - bar_h) * app.set_scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "texture_sets.scroll", &mut app.set_scroll);
 
     // 足す・消す・プロジェクトの構成（今のセットのマテリアルや見え方を文字の行で繰り返さない。状態は行の印とツールチップ）
     toolbar_buttons(ui, app, toolbar);

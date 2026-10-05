@@ -44,6 +44,48 @@ pub enum Tab {
 }
 
 impl Tab {
+    /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
+    pub const ALL: [Tab; 13] = [
+        Tab::SubTools,
+        Tab::Assets,
+        Tab::Color,
+        Tab::Pose,
+        Tab::Canvas,
+        Tab::View3d,
+        Tab::TextureSets,
+        Tab::Layers,
+        Tab::Properties,
+        Tab::Channels,
+        Tab::History,
+        Tab::ColorSets,
+        Tab::Navigator,
+    ];
+
+    /// 保存する名前（並びのファイル `layout.json` に書く。Rust の名前を変えても変わらないよう、ここで決める。足すのは良いが、
+    /// 書き換えると保存済みの並びが「知らないタブ」で捨てられる）。
+    pub fn key(self) -> &'static str {
+        match self {
+            Tab::SubTools => "subtools",
+            Tab::Assets => "assets",
+            Tab::Color => "color",
+            Tab::Pose => "pose",
+            Tab::Canvas => "canvas",
+            Tab::View3d => "view3d",
+            Tab::TextureSets => "texture_sets",
+            Tab::Layers => "layers",
+            Tab::Properties => "properties",
+            Tab::Channels => "channels",
+            Tab::History => "history",
+            Tab::ColorSets => "color_sets",
+            Tab::Navigator => "navigator",
+        }
+    }
+
+    /// 保存した名前から。知らない名前は None。
+    pub fn from_key(key: &str) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.key() == key)
+    }
+
     pub fn title(self) -> &'static str {
         self.title_in(crate::lang::Lang::Ja)
     }
@@ -65,6 +107,20 @@ impl Tab {
             Tab::History => lang.pick("ヒストリー", "History"),
             Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
         }
+    }
+}
+
+impl serde::Serialize for Tab {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.key())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Tab {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Tab, D::Error> {
+        use serde::de::Error;
+        let key = String::deserialize(deserializer)?;
+        Tab::from_key(&key).ok_or_else(|| D::Error::custom(format!("知らないタブ「{key}」")))
     }
 }
 
@@ -227,6 +283,22 @@ pub struct YoluApp {
     /// GPU のメモリの設定から配った予算で、3D の絵・キャンバスの合成・棚へ入れた値（変わったときだけ入れ直す。試験が決めた予算を、
     /// 設定とアダプターが変わらないうちは上書きしない）。
     gpu_budgets_applied: crate::gpu_memory::Budgets,
+    /// GPU の確保済みのメモリを測る wgpu の装置（状態の帯の右端のメモリ。装置が無い試験は None）。
+    gpu_device: Option<eframe::egui_wgpu::wgpu::Device>,
+    /// ドックの並びと窓の大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
+    layout_path: Option<std::path::PathBuf>,
+    /// 最後に書いた（または読んだ）ファイルの中身。変わったときだけ書く。
+    layout_saved: String,
+    /// 最後に「書くか」を見た時刻（egui の時刻。1 秒おきに見る）。
+    layout_checked_at: f64,
+    /// 最後に見た、最大化していない窓の大きさと位置（終わるときに書く）。
+    window_record: Option<crate::layout::WindowRecord>,
+    /// 起動のあと、窓が画面より大きくないか確かめたか。
+    window_checked: bool,
+    /// 起動のあと、窓が画面より大きければ収めるか（実際の窓だけ。試験は `fit_to_screen` で選ぶ）。
+    fit_window: bool,
+    /// 浮かせた窓の今の位置と大きさ（保存に入れる。egui_dock は窓の矩形を自分では更新しない）。
+    float_rects: Vec<crate::layout::FloatRect>,
 }
 
 impl YoluApp {
@@ -248,6 +320,9 @@ impl YoluApp {
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.dialogs = true;
+        app.fit_window = true;
+        // 状態の帯の右端に版とビルドを出す（実際の窓だけ。試験の画像がコミットごとに変わらないように）
+        app.state.usage.build = Some(crate::usage::build_label());
         if let Some(dir) = crate::crash::directory() {
             app.state.crash = crate::crash::window::Report::load(dir);
         }
@@ -355,6 +430,22 @@ impl YoluApp {
             app.display.set_backend(canvas_backend(loaded.compositing));
         }
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) { crate::colorsets::attach(&mut app.state, dir.join("colorsets")); }
+        // ドックの並びと窓の大きさ・位置は、設定のフォルダの layout.json から戻す（読めない・古い・知らないタブは捨てて既定の並び。
+        // 理由は診断のログだけ）
+        if let Some(path) = settings.as_deref().and_then(crate::layout::path_for) {
+            let layout = crate::layout::load(&path);
+            for reason in &layout.problems {
+                crate::crash::problem(reason.clone());
+            }
+            if let Some(dock) = layout.dock {
+                app.dock = dock;
+            }
+            app.window_record = layout.window;
+            if path.exists() && layout.problems.is_empty() {
+                app.layout_saved = crate::layout::render(&app.dock, app.window_record.as_ref());
+            }
+            app.layout_path = Some(path);
+        }
         app.settings = settings.map(|path| (path, loaded));
         app
     }
@@ -418,6 +509,79 @@ impl YoluApp {
         }
     }
 
+    /// ドックの並びと窓の大きさ・位置を、変わっていれば `layout.json` へ書く（毎フレーム呼び、1 秒おきに見る。区切りを動かしている間も
+    /// 1 秒おきに 1 回までなので、書き込みが続かない。タブの見出しをつかんでいる間は並びが変わらない）。窓の大きさと位置は、最大化していない
+    /// 間の値を覚える（最大化したまま終わっても、戻したときの大きさを書く）。書けなくても動作は変えない（診断のログへ。同じ中身では書き直さない）。
+    fn persist_layout(&mut self, ctx: &egui::Context) {
+        let info = ctx.input(|i| i.viewport().clone());
+        let maximized = info.maximized.unwrap_or(false);
+        if !maximized && !info.fullscreen.unwrap_or(false) && !info.minimized.unwrap_or(false) {
+            if let (Some(outer), Some(inner)) = (info.outer_rect, info.inner_rect) {
+                self.window_record = Some(crate::layout::WindowRecord {
+                    position: [outer.min.x, outer.min.y],
+                    size: [inner.width(), inner.height()],
+                    pixels_per_point: info.native_pixels_per_point.unwrap_or(1.0),
+                    maximized: false,
+                });
+            }
+        }
+        if let Some(record) = &mut self.window_record {
+            record.maximized = maximized;
+        }
+        // 起動のあと 1 度、窓が画面より大きければ画面に収める（保存したあとで画面が小さくなったとき）
+        if self.fit_window && !self.window_checked {
+            if let (Some(monitor), Some(inner)) = (info.monitor_size, info.inner_rect) {
+                self.window_checked = true;
+                if !maximized && (inner.width() > monitor.x || inner.height() > monitor.y) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+                        inner.width().min(monitor.x),
+                        inner.height().min(monitor.y),
+                    )));
+                }
+            }
+        }
+        self.remember_floats(ctx);
+        let now = ctx.input(|i| i.time);
+        if now - self.layout_checked_at < 1.0 {
+            return;
+        }
+        self.layout_checked_at = now;
+        self.save_layout(false);
+    }
+
+    /// 浮かせた窓の今の位置と大きさを、egui が覚えている窓の矩形から控える（egui_dock が窓に命じる大きさは枠を含む外側の大きさなので、
+    /// 矩形をそのまま読み戻しに使える）。まだ描いていない窓は控えない（読んだ値か、最初に描くときの値がそのまま残る）。
+    fn remember_floats(&mut self, ctx: &egui::Context) {
+        self.float_rects.clear();
+        for (index, surface) in self.dock.iter_surfaces_indexed() {
+            if !matches!(surface, egui_dock::Surface::Window(..)) {
+                continue;
+            }
+            // egui_dock が窓に付ける名前（`window {面の番号}`）
+            let id = Id::new(format!("window {index:?}"));
+            if let Some(rect) = ctx.memory(|m| m.area_rect(id)) {
+                self.float_rects.push((index, rect));
+            }
+        }
+    }
+
+    /// 並びを書く。`force` でなければ、前に書いた中身と同じなら書かない。
+    fn save_layout(&mut self, force: bool) {
+        let Some(path) = &self.layout_path else {
+            return;
+        };
+        let window = self.window_record.and_then(crate::layout::WindowRecord::sanitized);
+        let text = crate::layout::render_with(&self.dock, window.as_ref(), &self.float_rects);
+        if !force && text == self.layout_saved {
+            return;
+        }
+        // 書けなくても、同じ中身では書き直さない（毎秒の入出力と、診断のログの繰り返しを避ける）
+        self.layout_saved = text.clone();
+        if let Err(e) = crate::layout::save(path, &text) {
+            crate::crash::problem(format!("画面の並びを保存できません（{e}）。"));
+        }
+    }
+
     /// 文脈と状態から作る（試験用。配色・書体・アイコンも入れる）。
     pub fn for_context(ctx: &egui::Context, state: AppState, pen: PenInput) -> YoluApp {
         Self::setup(ctx);
@@ -444,7 +608,21 @@ impl YoluApp {
             was_focused: None,
             compositing_applied: crate::settings::Compositing::Auto,
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
+            gpu_device: None,
+            layout_path: None,
+            layout_saved: String::new(),
+            layout_checked_at: f64::NEG_INFINITY,
+            window_record: None,
+            window_checked: false,
+            fit_window: false,
+            float_rects: Vec::new(),
         }
+    }
+
+    /// 起動のあと 1 度、窓が画面より大きければ画面に収める（実際の窓だけ。保存したあとで画面が小さくなったときのため）。
+    pub fn fit_to_screen(mut self, on: bool) -> YoluApp {
+        self.fit_window = on;
+        self
     }
 
     pub fn link(&self) -> &LiveLink {
@@ -753,6 +931,7 @@ impl YoluApp {
     /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
     pub fn with_render_state(mut self, rs: Option<&eframe::egui_wgpu::RenderState>) -> YoluApp {
         self.renderer3d = rs.map(View3dRenderer::new);
+        self.gpu_device = rs.map(|rs| rs.device.clone());
         // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
         self.display.attach_render_state(rs.cloned());
         // アダプターから GPU のメモリの量が分かれば、設定が配る予算に使う（設定のファイルを読んだあとなので、ここで入れる）
@@ -929,8 +1108,24 @@ impl YoluApp {
         self.view3d.set_host(host);
     }
 
-    /// 1 フレーム（eframe と試験の両方がここを呼ぶ）。
+    /// 1 フレーム（eframe と試験の両方がここを呼ぶ）。フレームの中で `message` に書かれた文（非同期の終わりなど、`apply` の外の書き込みも）は、
+    /// 前と同じ文でも新しい知らせとして出る。
     pub fn frame(&mut self, ui: &mut Ui) {
+        let prior = self.state.message_begin();
+        self.frame_body(ui);
+        self.state.message_end(prior);
+        self.finish_message(ui.ctx());
+    }
+
+    /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
+    fn finish_message(&mut self, ctx: &egui::Context) {
+        crate::crash::message(&self.state.message);
+        if self.state.toast.is_pending() {
+            ctx.request_repaint();
+        }
+    }
+
+    fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.state.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
@@ -988,6 +1183,17 @@ impl YoluApp {
             self.state.reset_layout = false;
         }
 
+        // 状態の帯の右端のメモリ（実際の窓だけ。1.5 秒おきに測り、止まっていても同じ間隔で描き直す）
+        if self.dialogs {
+            let now = ctx.input(|i| i.time);
+            let device = self.gpu_device.clone();
+            self.state.refresh_usage(now, || {
+                device
+                    .and_then(|d| d.generate_allocator_report())
+                    .map(|report| report.total_allocated_bytes)
+            });
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(crate::usage::INTERVAL));
+        }
         let mut bar = None;
         let mut link_icon = None;
         egui::Panel::top("yolu.menubar")
@@ -1148,7 +1354,8 @@ impl YoluApp {
         crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
         self.state.crash.show(&ctx, self.state.lang);
-        crate::crash::message(&self.state.message);
+        // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
+        crate::toast::show(&ctx, &mut self.state);
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }
@@ -1275,11 +1482,16 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<Stri
 
 impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        // フレームの外側（拾った色・合成・設定と並びの保存）が書いた文も、前と同じ文でも新しい知らせにする
+        let prior = self.state.message_begin();
         crate::screen_pick::frame(&mut self.state, _frame);
         self.apply_compositing();
         self.apply_gpu_memory();
         self.frame(ui);
         self.persist_settings();
+        self.persist_layout(ui.ctx());
+        self.state.message_end(prior);
+        self.finish_message(ui.ctx());
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
@@ -1289,6 +1501,8 @@ impl eframe::App for YoluApp {
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
     fn on_exit(&mut self) {
         self.state.recovery_shutdown();
+        // 並びと窓の大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
+        self.save_layout(false);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

@@ -17,6 +17,7 @@ use crate::panels::effect_rows;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 
@@ -298,13 +299,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     // 層の行の下に効果の行（高さが違う）が続くので、行の位置は配置を数えて決める
     let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT);
     let content = layout.height;
-    let max_scroll = (content - list.height()).max(0.0);
-    if ui.rect_contains_pointer(list) {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        app.layer_scroll -= wheel;
-    }
-    app.layer_scroll = app.layer_scroll.clamp(0.0, max_scroll);
-    let row_width = list.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 };
+    let bar = Scroll::begin(ui, list, content, &mut app.layer_scroll);
+    let row_width = list.width() - bar.reserved();
 
     // 空白の右クリック（行の下）
     let blank = Rect::from_min_max(
@@ -385,16 +381,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
         }
     }
-    if max_scroll > 0.0 {
-        let bar_h = list.height() * list.height() / content;
-        let bar_y = list.top() + (list.height() - bar_h) * app.layer_scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(list.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "layers.scroll", &mut app.layer_scroll);
 
     toolbar(ui, app, &ctx, r, list, enabled);
 }

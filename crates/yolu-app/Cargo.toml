@@ -16,13 +16,15 @@ path = "src/main.rs"
 [dependencies]
 eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "accesskit"] }
 egui = "0.36"
-egui_dock = "0.21"
+egui_dock = { version = "0.21", features = ["serde"] }   # ドックの並びの保存（`layout`。egui_dock が持つ serde の対応）
 yolu-core.workspace = true
 yolu-gpu.workspace = true
 yolu-io.workspace = true
 yolu-model.workspace = true
 yolu-protocol.workspace = true
 yolu-update.workspace = true   # 更新の確かめ（署名・版・SHA-256・大きさ）。通信は `update/http.rs`
+serde = "1"   # MIT OR Apache-2.0（ドックのタブの名前の保存。yolu-io・yolu-update が既に使っている）
+serde_json = "1"   # MIT OR Apache-2.0（ドックの並びと窓の位置の保存。yolu-io が既に使っている）
 half = "2.7"   # MIT OR Apache-2.0（環境のキューブを half float で上げる。wgpu の naga が既に使っている版）
 rayon = "1.12"   # MIT OR Apache-2.0（環境の畳み込みを並べる。yolu-core が既に使っている）
 bevy_mikktspace = "1.0"   # Zlib AND (MIT OR Apache-2.0)（接線。Unity の RecalculateTangents と同じ MikkTSpace。依存なし・unsafe なし）
@@ -38,14 +40,13 @@ libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの�
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dev-dependencies]
 pollster = "1"   # 既存の許諾確認済み依存。試験用の描画器選択で非同期の wgpu 初期化を待つ
 egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }
 ed25519-dalek = "2.2"   # 試験で、使い捨ての鍵で更新情報に署名する（本物の鍵は使わない）
 hex = "0.4"
-serde_json = "1"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "serialize"] }   # MIT。試験で、合成の CLIP STUDIO のブラシ（.sut。SQLite）を一から組む（yolu-io が読み取りに使う版と同じ）
 yolu-bridge = { path = "../yolu-bridge" }   # 試験で Unity の役（本物のブリッジの C の口）を別のプロセスで動かす
 

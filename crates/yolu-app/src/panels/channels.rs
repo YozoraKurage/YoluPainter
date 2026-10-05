@@ -10,6 +10,7 @@ use crate::m2::{self, direction_name, Edit, UiOp};
 use crate::m2_menu::{edges_name, Popup};
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows};
 
@@ -38,12 +39,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     );
     let channels = app.doc.channels();
     let list_height = channels.len() as f32 * ROW_HEIGHT;
-    let max_scroll = (app.m2.channels_content - body.height()).max(0.0);
-    if ui.rect_contains_pointer(body) {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        app.m2.channel_scroll -= wheel;
-    }
-    app.m2.channel_scroll = app.m2.channel_scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, body, app.m2.channels_content, &mut app.m2.channel_scroll);
     let scroll = app.m2.channel_scroll;
     w::fill(&ui.painter_at(body), body, t::PANEL_BG);
     let list = Rect::from_min_size(
@@ -51,7 +47,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         vec2(body.width(), list_height),
     );
     w::fill(&ui.painter_at(body), list, t::CONTROL_BG);
-    // スクロールの帯は行に重ねて出す（行の幅を狭めると、名前が切れる）
+    // つまみは行に重ねて出す（浮かぶつまみ。カラーセットの欄と同じ。行の幅を狭めると、名前が切れる）
     let row_width = list.width();
     for (i, channel) in channels.iter().enumerate() {
         let row = Rect::from_min_size(
@@ -69,7 +65,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let area = Rect::from_min_max(
         pos2(body.left(), list.bottom()),
         pos2(
-            body.right() - if max_scroll > 0.0 { 8.0 } else { 0.0 },
+            body.right() - bar.reserved(),
             body.bottom().max(list.bottom() + 1.0),
         ),
     );
@@ -83,17 +79,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if !ui.input(|i| i.pointer.primary_down()) {
         app.m2_end_drag();
     }
-    if max_scroll > 0.0 {
-        let track = body.height();
-        let bar_h = (track * track / app.m2.channels_content).max(16.0);
-        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "channels.scroll", &mut app.m2.channel_scroll);
 
     // 下: 足す・消す
     let bar = Rect::from_min_size(

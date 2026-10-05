@@ -1086,6 +1086,19 @@
         }
       ]
     },
+    "enumn@0.1.14": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
     "epaint@0.36.2": {
       "declared": "MIT OR Apache-2.0",
       "selected": [

@@ -739,7 +739,7 @@ impl AppState {
         if save && self.modified {
             // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先の窓を取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
-            self.message.clear();
+            self.clear_message();
             self.apply(crate::state::Action::SaveProject);
             self.update.after_save = true;
             self.update_finish_save();

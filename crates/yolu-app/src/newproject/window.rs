@@ -17,6 +17,7 @@ use crate::engine::{CanvasResampling, NormalYDirection};
 use crate::lang::Lang;
 use crate::state::AppState;
 use crate::ui::menu::{self, Entry, PopupOutcome, PopupState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Frame, Spec};
@@ -780,29 +781,13 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
     }
 }
 
-/// 窓の中の、スクロールする一覧の枠（`area` の中にだけ描く）。返すのは、一覧の中に描く Ui と、スクロールできる量。
-fn list_frame(ui: &mut Ui, area: Rect, scroll: &mut f32, content: f32) -> (Ui, f32) {
-    let max_scroll = (content - area.height()).max(0.0);
-    if ui.rect_contains_pointer(area) {
-        *scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    *scroll = scroll.clamp(0.0, max_scroll);
+/// 窓の中の、スクロールする一覧の枠（`area` の中にだけ描く）。返すのは、一覧の中に描く Ui と、スクロールの寸法（描き終えたあとの
+/// `Scroll::end` がつまみを出す）。
+fn list_frame(ui: &mut Ui, area: Rect, scroll: &mut f32, content: f32) -> (Ui, Scroll) {
+    let bar = Scroll::begin(ui, area, content, scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(area));
     child.set_clip_rect(area.intersect(ui.clip_rect()));
-    (child, max_scroll)
-}
-
-fn scroll_bar(p: &egui::Painter, area: Rect, scroll: f32, max_scroll: f32, content: f32) {
-    if max_scroll > 0.0 {
-        let bar_h = (area.height() * area.height() / content).max(16.0);
-        let bar_y = area.top() + (area.height() - bar_h) * scroll / max_scroll;
-        w::rounded(
-            p,
-            Rect::from_min_size(pos2(area.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    (child, bar)
 }
 
 /// 新規: テクスチャセットにするマテリアルのチェックの一覧（既定は全部。最後の 1 つは外せない）。使うメッシュの名前を右に添える。
@@ -831,7 +816,7 @@ fn draw_materials(
     let visible = v.groups.len().min(LIST_ROWS);
     let area = Rect::from_min_size(pos2(left, *y), vec2(width, visible as f32 * SET_ROW));
     let content = v.groups.len() as f32 * SET_ROW;
-    let (mut child, max_scroll) = list_frame(ui, area, &mut win.list_scroll, content);
+    let (mut child, bar) = list_frame(ui, area, &mut win.list_scroll, content);
     let cp = child.painter().clone();
     let chosen = win.chosen(v.groups.len());
     let capped = chosen.len() >= MAX_SETS;
@@ -841,10 +826,7 @@ fn draw_materials(
                 area.left(),
                 area.top() + i as f32 * SET_ROW - win.list_scroll,
             ),
-            vec2(
-                area.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 },
-                SET_ROW - 2.0,
-            ),
+            vec2(area.width() - bar.reserved(), SET_ROW - 2.0),
         );
         if row.bottom() < area.top() || row.top() > area.bottom() {
             continue;
@@ -891,7 +873,7 @@ fn draw_materials(
         let shown = w::fit(&cp, &meshes, at.width(), t::LABEL_SMALL);
         w::text(&cp, at, &shown, t::LABEL_SMALL, Align::Left);
     }
-    scroll_bar(&cp, area, win.list_scroll, max_scroll, content);
+    bar.end(ui, (id, "list-scroll"), &mut win.list_scroll);
     *y += area.height() + GAP;
 }
 
@@ -921,7 +903,7 @@ fn draw_drafts(
     let visible = list_rows(win, v);
     let area = Rect::from_min_size(pos2(left, *y), vec2(width, visible as f32 * SET_ROW));
     let content = win.drafts.len() as f32 * SET_ROW;
-    let (mut child, max_scroll) = list_frame(ui, area, &mut win.list_scroll, content);
+    let (mut child, bar) = list_frame(ui, area, &mut win.list_scroll, content);
     let cp = child.painter().clone();
     let count = win.drafts.len();
     let drafts = win.drafts.clone();
@@ -931,10 +913,7 @@ fn draw_drafts(
                 area.left(),
                 area.top() + i as f32 * SET_ROW - win.list_scroll,
             ),
-            vec2(
-                area.width() - if max_scroll > 0.0 { 10.0 } else { 0.0 },
-                SET_ROW - 2.0,
-            ),
+            vec2(area.width() - bar.reserved(), SET_ROW - 2.0),
         );
         if row.bottom() < area.top() || row.top() > area.bottom() {
             continue;
@@ -1092,7 +1071,7 @@ fn draw_drafts(
             actions.push(NpAction::Draft(i, DraftOp::Remove));
         }
     }
-    scroll_bar(&cp, area, win.list_scroll, max_scroll, content);
+    bar.end(ui, (id, "list-scroll"), &mut win.list_scroll);
     *y += area.height() + 4.0;
     let add = Rect::from_min_size(pos2(left, *y), vec2(width.min(240.0), ROW));
     let can_add = win.drafts.len() < super::MAX_SETS;

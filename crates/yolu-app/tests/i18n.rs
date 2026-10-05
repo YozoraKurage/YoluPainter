@@ -647,17 +647,17 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
 }
 
 #[test]
-fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages() {
-    gpu_thread::run(the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu);
+fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages() {
+    gpu_thread::run(the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu);
 }
 
-fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu() {
+fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu() {
     use egui_kittest::kittest::NodeT;
     use yolu_app::prefs;
     use yolu_io::BackupKeep;
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        let (view, item) = (lang.pick("表示", "View"), lang.pick("設定…", "Settings…"));
+        let (view, item) = (lang.pick("編集", "Edit"), lang.pick("設定…", "Settings…"));
         let (title, label, keep_all) =
             (lang.pick("設定", "Settings"), lang.pick("退避を残す数", "Backups to keep"), lang.pick("すべて残す", "Keep all"));
         assert!(prefs::last_rect(&h.ctx).is_none());

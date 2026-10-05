@@ -658,8 +658,12 @@ pub struct AppState {
     pub color: ColorState,
     pub colorsets: crate::colorsets::ColorSets,
     pub view: ViewState,
-    /// ステータスバーの知らせ。
+    /// 直前の操作の結果と理由（短い文）。状態の帯には出さず、小さな知らせ（`toast`）として短く出して消える。試験が読む。
     pub message: String,
+    /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
+    pub toast: crate::toast::Toast,
+    /// 状態の帯の右端の版・ビルドと使っているメモリ。
+    pub usage: crate::usage::Usage,
     /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
     /// 見出しの開閉（キー → 開いているか）。
@@ -874,6 +878,8 @@ impl AppState {
             colorsets: crate::colorsets::ColorSets::default(),
             view: ViewState::default(),
             message: String::new(),
+            toast: crate::toast::Toast::default(),
+            usage: crate::usage::Usage::default(),
             property_tab: 0,
             sections: HashMap::new(),
             renaming: None,
@@ -1023,8 +1029,30 @@ impl AppState {
             .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
-    /// 操作を当てる。描いている最中は、表示と色の操作のほかは断る。
+    /// `message` を書く操作の入口。前の文を預かって `message` を空にする（出口で、書かれたかを前と同じ文でも見分けて、知らせにする）。
+    /// 操作の中では、前の操作の文は見えない。
+    pub fn message_begin(&mut self) -> String {
+        self.toast.begin(&mut self.message)
+    }
+
+    /// `message_begin` の出口。書かれていれば新しい知らせとして出し、書かれていなければ前の文を戻す。
+    pub fn message_end(&mut self, prior: String) {
+        self.toast.end(&mut self.message, prior);
+    }
+
+    /// `message` を明示して空にする（操作の中では、空のまま終わっても前の文を戻さない。保存の結果が書かれたかを見分ける所が使う）。
+    pub fn clear_message(&mut self) {
+        self.toast.clear(&mut self.message);
+    }
+
+    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
+        let prior = self.message_begin();
+        self.apply_action(action);
+        self.message_end(prior);
+    }
+
+    fn apply_action(&mut self, action: Action) {
         crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {

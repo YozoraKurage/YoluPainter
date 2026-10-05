@@ -5,6 +5,7 @@ pub mod icons;
 pub mod menu;
 pub mod numfield;
 pub mod ramp;
+pub mod scroll;
 pub mod settle;
 pub mod theme;
 pub mod widgets;

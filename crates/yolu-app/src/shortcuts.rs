@@ -58,6 +58,7 @@ fn key_name(key: Key) -> &'static str {
         Key::ArrowRight => "→",
         Key::ArrowUp => "↑",
         Key::ArrowDown => "↓",
+        Key::Comma => ",",
         Key::Plus => "+",
         Key::Equals => "=",
         Key::Minus => "-",
