@@ -2,7 +2,7 @@
 
 # YoluPainter
 
-[![CI](https://github.com/YozoraKurage/YoluPainter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/YozoraKurage/YoluPainter/actions/workflows/ci.yml)
+[![CI](https://github.com/YozoraKurage/YoluPainter/actions/workflows/main-tested.yml/badge.svg?branch=main)](https://github.com/YozoraKurage/YoluPainter/actions/workflows/main-tested.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 YoluPainter is a painting application for textures on a 2D canvas and on 3D models.

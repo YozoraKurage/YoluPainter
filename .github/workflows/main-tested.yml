@@ -1,0 +1,48 @@
+name: main CI
+
+# main への push で、その中身（ファイルの木）が PR の CI（ci.yml）を通った中身と同じかだけを確かめる（組み直さない）。
+# main は CI 必須の PR からしか変わらないので、中身が PR の最後の head と同じで、その head の CI が成功していれば、main は試験済み。
+# 違うのは PR の枝が main より古いまま入ったとき。そのときは失敗にして、CI を手で回す（ci.yml の workflow_dispatch）。
+# README の CI の印はこのワークフローの結果を出す。
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  tested:
+    name: PR で試した中身か
+    runs-on: ubuntu-24.04
+    steps:
+      - name: main の木と、PR の CI を通った木を比べる
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tree=$(gh api "repos/$REPO/git/commits/$SHA" --jq .tree.sha)
+          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null)][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "::error::このコミットに結び付いた PR がありません（main への直接の push は ruleset で止まるはず）。CI を手で回してください"
+            exit 1
+          fi
+          head=$(gh api "repos/$REPO/pulls/$pr" --jq .head.sha)
+          head_tree=$(gh api "repos/$REPO/git/commits/$head" --jq .tree.sha)
+          if [ "$tree" != "$head_tree" ]; then
+            echo "::error::main の中身が PR #$pr で試した中身と違います（PR の枝が main より古かった）。ci.yml を手で回してください"
+            exit 1
+          fi
+          # PR の head の CI（ci.yml・pull_request）の最新の実行が成功しているか
+          conclusion=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$head&event=pull_request&per_page=1" --jq '.workflow_runs[0].conclusion // empty')
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::PR #$pr の head（${head:0:7}）の CI が成功していません（${conclusion:-見つからない}）"
+            exit 1
+          fi
+          echo "main（${SHA:0:7}）は PR #$pr の head（${head:0:7}）と同じ中身で、その CI は成功しています"
+          echo "main（${SHA:0:7}）= PR #$pr の head（${head:0:7}）の中身。CI は成功" >> "$GITHUB_STEP_SUMMARY"
