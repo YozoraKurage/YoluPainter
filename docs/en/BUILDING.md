@@ -30,9 +30,9 @@ There is no dedicated pen input handling equivalent to Windows Ink. Mouse operat
 
 ## Linux (experimental)
 
-Prepare a C/C++ compiler, `pkg-config`, an X11 or Wayland desktop, and a GPU driver. File dialogs require a D-Bus session, `xdg-desktop-portal`, and a portal backend for your desktop. The interface font (BIZ UDPGothic) is embedded in the executable, so a system Japanese font is not required.
+Prepare a C/C++ compiler, `pkg-config`, an X11 or Wayland desktop, and a GPU driver. File dialogs require a D-Bus session, `xdg-desktop-portal`, and a portal backend for your desktop. Yes/no confirmations (such as discarding unsaved changes) need `zenity`; without it, actions that need the confirmation are cancelled. The interface font (BIZ UDPGothic) is embedded in the executable, so a system Japanese font is not required.
 
-Example package names on Debian/Ubuntu are `build-essential`, `pkg-config`, `libxkbcommon-dev`, `libwayland-dev`, `libvulkan1`, `xdg-desktop-portal`, and `xdg-desktop-portal-gtk`. Use the appropriate GPU driver for your hardware.
+Example package names on Debian/Ubuntu are `build-essential`, `pkg-config`, `libxkbcommon-dev`, `libwayland-dev`, `libvulkan1`, `xdg-desktop-portal`, `xdg-desktop-portal-gtk`, and `zenity`. Use the appropriate GPU driver for your hardware.
 
 ```sh
 cargo build --release -p yolu-app --locked

@@ -49,11 +49,14 @@ pub struct Toast {
 }
 
 /// エラー（断りや失敗）の文か。日本語は「ません」「失敗」「できない」、英語は Cannot・Could not・Failed・Unable・Invalid・No …。
+/// 見るのは最初の文（「。」・". " の前）だけ: 済んだ知らせに添えた但し書き（「PSD 自体は書き換えません。」）でエラーにしない。
 pub fn is_error(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    text.contains("ません")
-        || text.contains("失敗")
-        || text.contains("できない")
+    let main = text.split('。').next().unwrap_or(text);
+    let main = main.split(". ").next().unwrap_or(main);
+    let lower = main.to_lowercase();
+    main.contains("ません")
+        || main.contains("失敗")
+        || main.contains("できない")
         || ["cannot", "can't", "could not", "couldn't", "failed", "unable", "invalid", "not supported", "no "]
             .iter()
             .any(|w| lower.starts_with(w) || lower.contains(&format!(" {w}")) || lower.contains(&format!("; {w}")))
@@ -269,9 +272,15 @@ mod tests {
             "Created a new project.",
             "Normal map baked",
             "Know more",
+            // 済んだ知らせの後ろの但し書きはエラーにしない
+            "PSD を読み込みました: a.psd（レイヤー 62）。PSD 自体は書き換えません。",
+            "Imported a.psd (62 layers). The PSD itself is never rewritten.",
         ] {
             assert!(!is_error(text), "{text}");
         }
+        // 最初の文の断りは、後ろに文が続いてもエラー
+        assert!(is_error("開けません。別のファイルを選んでください。"));
+        assert!(is_error("Cannot open the file. Choose another one."));
     }
 
     /// `message` を書く操作（`apply`・1 フレーム）の代わり: 入口で預かり、`text` を書いて（None なら書かずに）、出口で出す。
