@@ -916,7 +916,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ClipStudioFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = rfd::FileDialog::new().set_title(lang.pick(
+                let mut dialog = crate::dialog::file().set_title(lang.pick(
                     "CLIP STUDIO のサブツールのフォルダ",
                     "CLIP STUDIO sub tool folder",
                 ));
