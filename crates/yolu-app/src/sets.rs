@@ -504,6 +504,8 @@ pub struct BindReport {
     pub matched: usize,
     /// 新しく作ったセットの名前。
     pub created: Vec<String>,
+    /// 新しく作ったセットの uid（`created` と同じ並び）。
+    pub created_sets: Vec<u32>,
     /// モデルに合わなかったセットの名前（残してある）。
     pub unmatched: Vec<String>,
 }
@@ -699,6 +701,7 @@ impl AppState {
                 doc,
             );
             self.sets.list[index].bound = Some(mi as u32);
+            report.created_sets.push(self.sets.list[index].uid);
             report.created.push(name);
         }
         report.unmatched = self

@@ -947,10 +947,22 @@ fn layer_row(
     }
     let effective_locks = app.doc.effective_locks(id).unwrap_or_default();
     let locked = effective_locks != yolu_core::LayerLocks::NONE;
+    // Live Link で入れた「元の絵」が、GPU を通した・圧縮から読んだ・直した・拡大縮小した絵のとき、理由を出す印
+    let original_note = app
+        .link_originals
+        .get(app.doc.id(), id)
+        .filter(|m| m.is_noted())
+        .map(|m| m.tooltip(lang, (app.doc.width(), app.doc.height())));
     let name_rect = Rect::from_min_max(
         pos2(x + 2.0, row.top() + 4.0),
         pos2(
-            row.right() - name_right_inset(usize::from(locked) + usize::from(has_path) + usize::from(no_pixels)),
+            row.right()
+                - name_right_inset(
+                    usize::from(locked)
+                        + usize::from(has_path)
+                        + usize::from(no_pixels)
+                        + usize::from(original_note.is_some()),
+                ),
             row.bottom() - 4.0,
         ),
     );
@@ -1184,6 +1196,19 @@ fn layer_row(
             "パスで描かれたレイヤー（手では描けません。ラスタライズで普通のレイヤーになります）",
             "Drawn by a path (it cannot be painted by hand; Rasterize makes it a normal layer)",
         ));
+    }
+    // 右端の印: Live Link で入れた元の絵の読み方（理由はツールチップ）
+    if let Some(note) = original_note {
+        let at = row.right()
+            - mark_inset(usize::from(locked) + usize::from(no_pixels) + usize::from(has_path));
+        let mark = Rect::from_min_size(pos2(at, row.top()), vec2(MARK_WIDTH, row.height()));
+        w::icon(&painter, mark, "info", t::TEXT_DIM, 13.0);
+        ui.interact(
+            mark,
+            ui.make_persistent_id(("layer.original", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(note);
     }
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, enabled, selected, &name)

@@ -706,6 +706,8 @@ pub struct AppState {
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
     pub link_request: Option<LinkRequest>,
+    /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
+    pub link_originals: crate::livelink_base::OriginalMarks,
     /// 開いた .ylp（保存先と、保存で残す元の中身）。
     pub project: Option<ProjectFile>,
     /// ファイルの窓を開く頼み（`YoluApp` が開く。試験では開かない）。
@@ -905,6 +907,7 @@ impl AppState {
             model: None,
             link: LinkView::default(),
             link_request: None,
+            link_originals: Default::default(),
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),

@@ -52,6 +52,8 @@ pub const MAX_VALUE_SLOTS: usize = 256;
 pub const MAX_VALUE_NAME_BYTES: usize = 512;
 /// 描いていないスロットの絵（MaterialTexture）の辺の上限（送る側が縮めてから送る）。
 pub const MAX_SLOT_TEXTURE_SIZE: u32 = 2048;
+/// 元の絵（MaterialOriginal）の辺の上限（Unity 版の画像の上限 `ImageContent.MaxSide` と同じ。送る側はこれを超える絵を縮めずに断る）。
+pub const MAX_ORIGINAL_SIZE: u32 = 8192;
 
 /// 命令の種類（枠の頭に入る番号）。番号は変えない。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -65,6 +67,7 @@ pub enum Kind {
     ModelClosed = 0x0013,
     MaterialValues = 0x0014,
     MaterialTexture = 0x0015,
+    MaterialOriginal = 0x0016,
     Welcome = 0x0101,
     Reject = 0x0102,
     TextureSet = 0x0110,
@@ -84,6 +87,7 @@ impl Kind {
             0x0013 => Kind::ModelClosed,
             0x0014 => Kind::MaterialValues,
             0x0015 => Kind::MaterialTexture,
+            0x0016 => Kind::MaterialOriginal,
             0x0101 => Kind::Welcome,
             0x0102 => Kind::Reject,
             0x0110 => Kind::TextureSet,
@@ -109,6 +113,7 @@ impl Kind {
             | Kind::TilesChanged
             | Kind::Error => 0,
             Kind::MaterialValues | Kind::MaterialTexture => crate::compat::feature::MATERIAL_VALUES,
+            Kind::MaterialOriginal => crate::compat::feature::ORIGINAL_TEXTURES,
         }
     }
     /// 誰が送る命令か。
@@ -120,7 +125,8 @@ impl Kind {
             | Kind::Materials
             | Kind::ModelClosed
             | Kind::MaterialValues
-            | Kind::MaterialTexture => Direction::ToStandalone,
+            | Kind::MaterialTexture
+            | Kind::MaterialOriginal => Direction::ToStandalone,
             Kind::Welcome
             | Kind::Reject
             | Kind::TextureSet
@@ -482,6 +488,81 @@ pub struct MaterialTexture {
     pub pixels: Vec<u8>,
 }
 
+/// 元の絵（MaterialOriginal）の様子。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum OriginalState {
+    /// 絵が付いている（この命令の画素）。
+    Image = 0,
+    /// 読めない（送る側の理由。2D の絵でない・HDR・GPU が使えないなど）。
+    Unreadable = 1,
+    /// 辺が上限（`MAX_ORIGINAL_SIZE`）を超えるので送らない。
+    TooLarge = 2,
+    /// この送りの全部の絵の予算を超えたので送らない。
+    OverBudget = 3,
+}
+
+impl OriginalState {
+    /// 知らない番号は「読めない」として読む（絵は来ない）。
+    pub fn from_u8(v: u8) -> OriginalState {
+        match v {
+            0 => OriginalState::Image,
+            2 => OriginalState::TooLarge,
+            3 => OriginalState::OverBudget,
+            _ => OriginalState::Unreadable,
+        }
+    }
+}
+
+/// 元の絵を Unity がどう読んだか。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum OriginalRead {
+    /// 原本のファイル（PNG・TGA・JPG）から。圧縮が無く、透明な画素の RGB も原本のまま。
+    File = 0,
+    /// Unity が取り込んだ絵（CPU が読める値）から。
+    Imported = 1,
+    /// 取り込んだ絵を GPU に描いて読み戻した（読める形でない・取り込み設定が絵を変える・アセットでない）。
+    Gpu = 2,
+}
+
+impl OriginalRead {
+    /// 知らない番号は「GPU を通して」として読む（原本の確かな値と言わない）。
+    pub fn from_u8(v: u8) -> OriginalRead {
+        match v {
+            0 => OriginalRead::File,
+            1 => OriginalRead::Imported,
+            _ => OriginalRead::Gpu,
+        }
+    }
+}
+
+/// 元の絵の `flags` の bit: 圧縮されたテクスチャから読んだ（値は圧縮を解いたもので、原本のファイルのものではない）。
+pub const ORIGINAL_COMPRESSED: u8 = 1;
+
+/// 元の絵（Unity → スタンドアロン。機能の印 ORIGINAL_TEXTURES）。モデルのマテリアルの、YoluPainter が描くスロット（Color の流し込み先）に
+/// 入っている元のテクスチャ。スタンドアロンは新しく作ったテクスチャセットの一番下に入れる。モデルのマテリアルの情報（`TextureProperty`）に
+/// 絵の入っている、Color の流し込み先ごとに 1 つ送る（絵が付かないときも様子だけ送る。受け手は全部が揃うまで、そのセットを Unity に出さない）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MaterialOriginal {
+    pub generation: u32,
+    /// モデルのマテリアルの並びの番号。
+    pub material: u32,
+    /// スロット（シェーダーのプロパティの名前。Color の流し込み先）。
+    pub slot: String,
+    pub state: OriginalState,
+    pub read: OriginalRead,
+    /// 圧縮されたテクスチャから読んだ（`ORIGINAL_COMPRESSED`）。
+    pub compressed: bool,
+    /// 絵の大きさ（絵が付かない様子では、Unity のテクスチャの大きさ）。
+    pub width: u32,
+    pub height: u32,
+    /// Unity がこの絵を sRGB として読む（偽はリニアのデータ）。ガンマの色空間のプロジェクトは、画素をそのまま使うので真で送る。
+    pub srgb: bool,
+    /// RGBA8（straight）、行は下から。幅 × 高さ × 4 バイト（`Image` のときだけ。ほかは空）。
+    pub pixels: Vec<u8>,
+}
+
 /// 誤りの種類。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
@@ -529,6 +610,7 @@ pub enum Message {
     ModelClosed { generation: u32 },
     MaterialValues(MaterialValues),
     MaterialTexture(MaterialTexture),
+    MaterialOriginal(MaterialOriginal),
     Welcome(Welcome),
     Reject(Reject),
     TextureSet(TextureSet),
@@ -548,6 +630,7 @@ impl Message {
             Message::ModelClosed { .. } => Kind::ModelClosed,
             Message::MaterialValues(_) => Kind::MaterialValues,
             Message::MaterialTexture(_) => Kind::MaterialTexture,
+            Message::MaterialOriginal(_) => Kind::MaterialOriginal,
             Message::Welcome(_) => Kind::Welcome,
             Message::Reject(_) => Kind::Reject,
             Message::TextureSet(_) => Kind::TextureSet,
@@ -661,6 +744,19 @@ impl Message {
                 w.u32(t.height);
                 w.bool(t.srgb);
                 w.bytes(&t.pixels);
+            }
+            Message::MaterialOriginal(o) => {
+                w = Writer::with_capacity(64 + o.slot.len() + o.pixels.len());
+                w.u32(o.generation);
+                w.u32(o.material);
+                w.str(&o.slot);
+                w.u8(o.state as u8);
+                w.u8(o.read as u8);
+                w.u8(if o.compressed { ORIGINAL_COMPRESSED } else { 0 });
+                w.u32(o.width);
+                w.u32(o.height);
+                w.bool(o.srgb);
+                w.bytes(&o.pixels);
             }
             Message::Welcome(x) => {
                 w.u16(x.version);
@@ -917,6 +1013,46 @@ impl Message {
                     generation,
                     material,
                     slot,
+                    width,
+                    height,
+                    srgb,
+                    pixels: pixels.to_vec(),
+                })
+            }
+            Kind::MaterialOriginal => {
+                let generation = r.u32()?;
+                let material = r.u32()?;
+                let slot = r.str(MAX_VALUE_NAME_BYTES, "スロットの名前")?;
+                let state = OriginalState::from_u8(r.u8()?);
+                let read = OriginalRead::from_u8(r.u8()?);
+                // 知らない bit は読み飛ばす（新しい送り手が足した印）
+                let compressed = r.u8()? & ORIGINAL_COMPRESSED != 0;
+                let width = r.u32()?;
+                let height = r.u32()?;
+                let srgb = r.bool()?;
+                let max = (MAX_ORIGINAL_SIZE as usize).pow(2) * 4;
+                let pixels = r.bytes(max, "元の絵の画素")?;
+                if state == OriginalState::Image {
+                    if width == 0
+                        || height == 0
+                        || width > MAX_ORIGINAL_SIZE
+                        || height > MAX_ORIGINAL_SIZE
+                    {
+                        return Err(DecodeError::Invalid("元の絵の大きさ"));
+                    }
+                    if pixels.len() != width as usize * height as usize * 4 {
+                        return Err(DecodeError::Invalid("元の絵の画素の数"));
+                    }
+                } else if !pixels.is_empty() {
+                    return Err(DecodeError::Invalid("絵の付かない元の絵の画素"));
+                }
+                Message::MaterialOriginal(MaterialOriginal {
+                    generation,
+                    material,
+                    slot,
+                    state,
+                    read,
+                    compressed,
                     width,
                     height,
                     srgb,

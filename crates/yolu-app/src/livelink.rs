@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use yolu_protocol::host::PublishedSet;
 use yolu_protocol::compat::{accepts_with, refusal_from_reject};
@@ -43,7 +43,8 @@ pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
 /// このスタンドアロンが挨拶で出す機能の印（`yolu_protocol::feature`。双方の共通部分がそのつながりで使える機能）。
 /// 印を立てる機能を足すときは、ここに `feature` のビットを足す（ビットの割り当ては `yolu_protocol::feature`）。
 /// マテリアルの値（MATERIAL_VALUES）: Unity の本物の lilToon のマテリアルの値と描いていないスロットの絵を受けて描く（`look::link`）。
-pub const FEATURES: u64 = feature::MATERIAL_VALUES;
+/// 元のテクスチャ（ORIGINAL_TEXTURES）: Unity が送る元の絵を、新しく作ったセットの一番下のレイヤーに入れる（`livelink_base`）。
+pub const FEATURES: u64 = feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES;
 
 /// Unity に出すチャンネル（セットの共有メモリ。今は Color だけ）。Unity はここにあるチャンネルの流し込み先だけを描いた絵で見せ、ほかの
 /// 流し込み先は元のテクスチャのまま見せる（マテリアルの値で描くときも同じ決まり。`look::link`）。
@@ -267,6 +268,7 @@ fn feature_names(lang: Lang, mask: u64) -> String {
             feature::MATERIAL_VALUES => lang.pick("マテリアルの値", "Material values"),
             feature::ASSETS => lang.pick("アセット", "Assets"),
             feature::PROJECT_TRANSFER => lang.pick("プロジェクトの転送", "Project transfer"),
+            feature::ORIGINAL_TEXTURES => lang.pick("元のテクスチャ", "Original textures"),
             _ => lang.pick("アニメーション", "Animation"),
         })
         .collect();
@@ -466,6 +468,10 @@ pub struct LiveLink {
     tiles_sent: u64,
     /// 受けたマテリアルの値（Unity の lilToon。`look::link`）。
     values: crate::look::link::LinkValues,
+    /// 元の絵を待たせているセットと、受けた元の絵（`livelink_base`）。
+    base: crate::livelink_base::LiveBase,
+    /// 待ちの時間切れを見るため、待っているあいだ描き直しを頼む窓口（`start` で受け取る）。
+    ctx: Option<egui::Context>,
 }
 
 impl Default for LiveLink {
@@ -507,6 +513,8 @@ impl LiveLink {
             failed_for_model: 0,
             tiles_sent: 0,
             values: Default::default(),
+            base: Default::default(),
+            ctx: None,
         }
     }
 
@@ -524,6 +532,11 @@ impl LiveLink {
 
     pub fn status(&self) -> &LinkStatus {
         &self.status
+    }
+
+    /// 元の絵が入るまで Unity に出さずに待たせているセットの数（試験・診断用）。
+    pub fn originals_waiting(&self) -> usize {
+        self.base.waiting_count()
     }
 
     /// 画面に写す様子。
@@ -567,6 +580,7 @@ impl LiveLink {
                 return;
             }
         };
+        self.ctx = Some(ctx.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
             let stop = stop.clone();
@@ -646,6 +660,8 @@ impl LiveLink {
         self.link_info = None;
         // 受けた値は捨てる（セットの文書に当てた受けた見た目は、最後の値として残る）
         self.values.clear();
+        // 元の絵を待たせていたセットは出す（入れた元の絵の層は文書に残る）
+        self.base.clear();
     }
 
     fn current_session(&self) -> Option<u64> {
@@ -737,6 +753,10 @@ impl LiveLink {
                     text,
                 } => {
                     if Some(session) == self.current_session() {
+                        // 元の絵が読めなかったら、どの絵が欠けたか分からない: 待たせているセットを全部出す
+                        if kind == Kind::MaterialOriginal as u16 {
+                            self.base.release_all();
+                        }
                         let text = state.lang.pick(format!(
                             "Live Link: Unity からの命令（{}）を読めません: {text}",
                             link::kind_name(kind)
@@ -774,6 +794,16 @@ impl LiveLink {
         // 受けたマテリアルの値を、付いたテクスチャセットへ当てる（変わったセット・文書が替わったセットだけ）
         if let Some(session) = self.current_session() {
             self.values.apply(state, session);
+            // 揃った元の絵をセットの一番下へ入れる。入れられなかった理由は知らせる
+            if let Some(text) = self.base.poll(state, session, Instant::now()) {
+                self.notify(NoticeLevel::Warning, text, state);
+            }
+            // 届くのを待っているあいだは、時間切れを見るために描き直す
+            if self.base.waiting() {
+                if let Some(ctx) = &self.ctx {
+                    ctx.request_repaint_after(Duration::from_millis(500));
+                }
+            }
         }
     }
 
@@ -800,10 +830,20 @@ impl LiveLink {
             Message::Model(model) => {
                 // 同じつながりの 2 つ目以降のモデル（Unity が送り直した）は、3D ビューを前へ出し直さない
                 let first = !state.model.as_ref().is_some_and(ours);
+                // 何も触っていない最初のプロジェクトの最初のセットにも、元の絵を入れてよい（結び付ける前に見ておく）
+                let untouched = state.is_pristine().then(|| state.sets.current().uid);
                 let (report, shape) = state.receive_link_model(&model, session);
                 self.failed.clear();
                 self.values
                     .model(model.generation, model.materials.len() as u32);
+                // 元の絵を送る Unity なら、入れてよいセット（今回作った・何も触っていない）を、元の絵が入るまで Unity に出さない
+                // （前のモデルから待たせているセットのうち、文書が変わっていないものは持ち越す）
+                let common = self.active.as_ref().map_or(0, |a| a.common_features);
+                if common & feature::ORIGINAL_TEXTURES != 0 {
+                    let mut fresh = report.created_sets.clone();
+                    fresh.extend(untouched);
+                    self.base.model(state, &model, &fresh, Instant::now());
+                }
                 let mut text = state.lang.pick(
                     format!("Live Link: モデル「{}」を受けました。", model.name),
                     format!("Live Link: Received the model “{}”.", model.name),
@@ -878,6 +918,12 @@ impl LiveLink {
                     }
                 }
             }
+            Message::MaterialOriginal(original) => {
+                // 元の絵は今のモデルの世代のもの。待たせていないマテリアルの絵は要らない。合わない命令は Unity への返事だけ
+                if let Err(e) = self.base.receive(original, Instant::now()) {
+                    self.reply_error(ErrorCode::Refused, Kind::MaterialOriginal as u16, e);
+                }
+            }
             Message::ModelClosed { generation } => {
                 if state.model.as_ref().is_some_and(ours) && state.close_link_model(generation) {
                     self.notify(
@@ -940,8 +986,12 @@ impl LiveLink {
             .filter_map(|(i, s)| {
                 let m = s.bound?;
                 let info = model.materials.get(m as usize)?;
-                (s.visible && info.routes.iter().any(|r| r.channel == channel::COLOR))
-                    .then_some((i, s.uid, m))
+                // 元の絵が入るまで待たせているセットは、まだ Unity に出さない（出してあるものは、そのまま）
+                let held = self.base.holds(s.uid) && !self.published.contains_key(&s.uid);
+                (s.visible
+                    && !held
+                    && info.routes.iter().any(|r| r.channel == channel::COLOR))
+                .then_some((i, s.uid, m))
             })
             .collect();
         let gone: Vec<u32> = self

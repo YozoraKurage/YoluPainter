@@ -21,7 +21,9 @@ use yolu_protocol::*;
 
 use crate::copy::{copy_dirty, Strip};
 use crate::session::{Session, Status};
-use crate::testserver::{TestServer, YlbTestServerStats, YlbTestServerTexture};
+use crate::testserver::{
+    TestServer, YlbTestServerOriginal, YlbTestServerStats, YlbTestServerTexture,
+};
 
 /// この口の版。関数の意味・引数・構造体を変えたら、または C# が新しく足した関数・欄に頼るようになったら上げる（Unity は読んだ DLL を
 /// 手放さないので、古い DLL のまま新しい C# が動くと、足りない関数で空回りして理由も出ない。版が違えば C# は使わず、再起動の案内を出す）。
@@ -30,10 +32,13 @@ use crate::testserver::{TestServer, YlbTestServerStats, YlbTestServerTexture};
 /// 3: 互いの版と機能の印（ylb_connect_with・ylb_common_features・ylb_peer_app_version・ylb_link_report・ylb_test_server_configure）。
 /// 4: マテリアルの値（ylb_values_*・ylb_texture_send）、自己診断のサーバーの値の引き出し（ylb_test_server_value・_slot・_texture）と
 /// 統計の欄の追加。
-pub const ABI_VERSION: u32 = 4;
+/// 5: 元の絵（ylb_original_send・ylb_pending_bytes）、自己診断のサーバーの元の絵の引き出し（ylb_test_server_original）と統計の欄の追加。
+pub const ABI_VERSION: u32 = 5;
 
 /// このブリッジが挨拶で出す機能の印（`yolu_protocol::feature`）。印を立てる機能を足すときは、ここに `feature` のビットを足す。
-pub const BRIDGE_FEATURES: u64 = yolu_protocol::feature::MATERIAL_VALUES;
+/// 元のテクスチャ（ORIGINAL_TEXTURES）: スタンドアロンが新しく作ったテクスチャセットの一番下に入れる、元の絵を送る。
+pub const BRIDGE_FEATURES: u64 =
+    yolu_protocol::feature::MATERIAL_VALUES | yolu_protocol::feature::ORIGINAL_TEXTURES;
 
 pub const YLB_E_HANDLE: i32 = -1;
 pub const YLB_E_ARGUMENT: i32 = -2;
@@ -1234,6 +1239,97 @@ pub unsafe extern "C" fn ylb_texture_send(
     })
 }
 
+/// 元の絵を送る（積むだけ）。Color の流し込み先のスロットの元のテクスチャ 1 つ（直前のモデルのマテリアルで絵が入っているもの）。
+/// `state` は 0 = 絵が付く・1 = 読めない・2 = 辺が上限を超える・3 = 全部の絵の予算を超える（1〜3 は画素なし。`width`・`height` は元の
+/// テクスチャの大きさ）、`read` は 0 = 原本のファイル・1 = 取り込んだ絵の CPU の値・2 = GPU を通して、`flags` の bit0 は圧縮された
+/// テクスチャから読んだ。`pixels` は RGBA8（straight）で行は下から、`pixel_len` は幅 × 高さ × 4（辺は MAX_ORIGINAL_SIZE まで）。
+/// `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
+/// 返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_original_send(
+    handle: u64,
+    material: i32,
+    slot: *const u8,
+    slot_len: i32,
+    state: i32,
+    read: i32,
+    flags: i32,
+    width: u32,
+    height: u32,
+    srgb: i32,
+    pixels: *const u8,
+    pixel_len: i32,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let Some(s) = session(handle) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(slot) = value_name(slot, slot_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if !(0..=3).contains(&state) || !(0..=2).contains(&read) {
+            return YLB_E_ARGUMENT;
+        }
+        let state = OriginalState::from_u8(state as u8);
+        let size_ok = width > 0
+            && height > 0
+            && width <= MAX_ORIGINAL_SIZE
+            && height <= MAX_ORIGINAL_SIZE
+            && pixel_len as i64 == width as i64 * height as i64 * 4;
+        let ok = match state {
+            OriginalState::Image => size_ok,
+            _ => pixel_len == 0,
+        };
+        if !ok {
+            return YLB_E_ARGUMENT;
+        }
+        let Some(pixels) = bytes(pixels, pixel_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if s.status() != Status::Connected {
+            return YLB_E_STATE;
+        }
+        let (generation, materials) = {
+            let b = s.builder.lock().unwrap_or_else(|e| e.into_inner());
+            (b.sent_generation, b.sent_materials)
+        };
+        if generation == 0 {
+            return YLB_E_STATE;
+        }
+        if material < 0 || material as usize >= materials {
+            return YLB_E_ARGUMENT;
+        }
+        if !compat::satisfies(s.common_features(), Kind::MaterialOriginal.required_feature()) {
+            return 0;
+        }
+        let message = Message::MaterialOriginal(MaterialOriginal {
+            generation,
+            material: material as u32,
+            slot: slot.to_owned(),
+            state,
+            read: OriginalRead::from_u8(read as u8),
+            compressed: flags & ORIGINAL_COMPRESSED as i32 != 0,
+            width,
+            height,
+            srgb: srgb != 0,
+            pixels: pixels.to_vec(),
+        });
+        if !s.enqueue(&message) {
+            return YLB_E_STATE;
+        }
+        1
+    })
+}
+
+/// まだ送り終えていない（順番待ちに積んだ）命令のバイトの合計。大きな絵を続けて送るとき、これが小さくなるまで次を積まないための目安。
+#[no_mangle]
+pub extern "C" fn ylb_pending_bytes(handle: u64) -> u64 {
+    guard(0, || match session(handle) {
+        Some(s) => s.pending_bytes(),
+        None => 0,
+    })
+}
+
 // ───────── テクスチャセットを受ける ─────────
 
 /// テクスチャセット 1 つの情報。
@@ -1653,6 +1749,36 @@ pub unsafe extern "C" fn ylb_test_server_slot(
             return s.has_keyword(material, name) as i32;
         }
         s.slot(material, name).map_or(YLB_E_ARGUMENT, |st| st as i32)
+    })
+}
+
+/// 自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の元の絵の様子。無ければ YLB_E_ARGUMENT。
+#[no_mangle]
+pub unsafe extern "C" fn ylb_test_server_original(
+    server: u64,
+    material: u32,
+    slot: *const u8,
+    slot_len: i32,
+    out: *mut YlbTestServerOriginal,
+) -> i32 {
+    guard(YLB_E_PANIC, || {
+        let servers = SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = servers.get(&server) else {
+            return YLB_E_HANDLE;
+        };
+        let Some(slot) = text(slot, slot_len) else {
+            return YLB_E_ARGUMENT;
+        };
+        if out.is_null() {
+            return YLB_E_ARGUMENT;
+        }
+        match s.original(material, slot) {
+            Some(t) => {
+                *out = t;
+                0
+            }
+            None => YLB_E_ARGUMENT,
+        }
     })
 }
 

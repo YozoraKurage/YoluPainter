@@ -154,8 +154,30 @@ impl FakeUnity {
         FakeUnity { conn, rx }
     }
 
+    /// 送る。モデルのあとには、元の絵を送る Unity と同じに、来るはずの元の絵（Color の流し込み先に絵のあるマテリアル）の様子も送る
+    /// （この試験の Unity の役は元の絵を読めない: 画素なし。元の絵を待つセットが、いつまでも Unity に出ないままにならない）。
     fn send(&self, m: Message) {
         self.conn.send(&m).unwrap();
+        if let Message::Model(model) = &m {
+            for (i, info) in model.materials.iter().enumerate() {
+                if let Some(slot) = yolu_app::livelink_base::expected_slot(info) {
+                    self.conn
+                        .send(&Message::MaterialOriginal(MaterialOriginal {
+                            generation: model.generation,
+                            material: i as u32,
+                            slot,
+                            state: OriginalState::Unreadable,
+                            read: OriginalRead::File,
+                            compressed: false,
+                            width: 0,
+                            height: 0,
+                            srgb: true,
+                            pixels: Vec::new(),
+                        }))
+                        .unwrap();
+                }
+            }
+        }
     }
 
     /// フレームを進めながら、条件に合う命令が来るまで集める（集めた全部を返す）。
@@ -601,7 +623,7 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 4);
+        assert_eq!(ylb_abi_version(), 5);
         let agent = "子の Unity";
         // 本物の C の口で、Unity のパッケージの版を名乗る
         let version = "0.3.0";
@@ -661,6 +683,30 @@ fn child_unity() {
         assert_eq!(ylb_model_submesh(h, 0, 0, [0, 2, 1].as_ptr(), 3), 0);
         assert_eq!(ylb_model_submesh(h, 0, 1, [1, 2, 3].as_ptr(), 3), 0);
         assert_eq!(ylb_model_send(h), 1);
+        // 元の絵（原本のファイルから読んだ、同じ大きさの平らな絵）。揃うまで、スタンドアロンはセットを出さない
+        for (i, (size, color)) in [(256u32, [200u8, 100, 50, 255]), (512, [10, 200, 90, 255])]
+            .iter()
+            .enumerate()
+        {
+            let (slot, pixels) = ("_MainTex", color.repeat((size * size) as usize));
+            assert_eq!(
+                ylb_original_send(
+                    h,
+                    i as i32,
+                    slot.as_ptr(),
+                    slot.len() as i32,
+                    0,
+                    0,
+                    0,
+                    *size,
+                    *size,
+                    1,
+                    pixels.as_ptr(),
+                    pixels.len() as i32,
+                ),
+                1
+            );
+        }
         poll(h, "2 つのセット", Box::new(|| ylb_set_count(h) == 2));
         let mut infos = Vec::new();
         for i in 0..2 {

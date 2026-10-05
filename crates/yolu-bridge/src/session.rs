@@ -190,6 +190,11 @@ impl Session {
         lock(&self.state).link.as_ref().map_or(0, LinkInfo::common_features)
     }
 
+    /// まだ書き終えていない枠（順番待ちに積んだもの）のバイトの合計。
+    pub fn pending_bytes(&self) -> u64 {
+        lock(&self.outbox).frames.iter().map(|f| f.len() as u64).sum()
+    }
+
     /// 命令を送ってよいか（命令が要る機能の印が、相手にも立っているか。`need_of` は命令の種類ごとに要る印の決め方で、実際の送り口は
     /// `Kind::required_feature`、試験は印の要る表を差し込む）。積む口（`enqueue`・`enqueue_pose`）は、必ずこれで確かめてから積む。
     fn accepts_with(&self, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {

@@ -252,6 +252,23 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_texture_send(ulong handle, int material, byte* slot, int slot_len, uint width, uint height, int srgb, byte* pixels, int pixel_len);
 
         /// <summary>
+        ///  元の絵を送る（積むだけ）。Color の流し込み先のスロットの元のテクスチャ 1 つ（直前のモデルのマテリアルで絵が入っているもの）。
+        ///  `state` は 0 = 絵が付く・1 = 読めない・2 = 辺が上限を超える・3 = 全部の絵の予算を超える（1〜3 は画素なし。`width`・`height` は元の
+        ///  テクスチャの大きさ）、`read` は 0 = 原本のファイル・1 = 取り込んだ絵の CPU の値・2 = GPU を通して、`flags` の bit0 は圧縮された
+        ///  テクスチャから読んだ。`pixels` は RGBA8（straight）で行は下から、`pixel_len` は幅 × 高さ × 4（辺は MAX_ORIGINAL_SIZE まで）。
+        ///  `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
+        ///  返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_original_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_original_send(ulong handle, int material, byte* slot, int slot_len, int state, int read, int flags, uint width, uint height, int srgb, byte* pixels, int pixel_len);
+
+        /// <summary>
+        ///  まだ送り終えていない（順番待ちに積んだ）命令のバイトの合計。大きな絵を続けて送るとき、これが小さくなるまで次を積まないための目安。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_pending_bytes", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_pending_bytes(ulong handle);
+
+        /// <summary>
         ///  テクスチャセットの数。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_set_count", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -360,6 +377,12 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_slot", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_test_server_slot(ulong server, uint material, byte* name, int name_len, int keyword);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の元の絵の様子。無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_original", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_original(ulong server, uint material, byte* slot, int slot_len, YlbTestServerOriginal* @out);
 
         /// <summary>
         ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。無ければ YLB_E_ARGUMENT。
@@ -558,6 +581,46 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         public uint textures;
         public uint texture_kib;
+        /// <summary>
+        ///  受けた元の絵（MaterialOriginal）の数（絵の付かない様子も数える）と、絵の付いたものの画素のバイトの合計（KiB、切り上げ）。
+        /// </summary>
+        public uint originals;
+        public uint original_kib;
+        /// <summary>
+        ///  元の絵が揃うまで出さずに待たせているセットの数（機能の印 ORIGINAL_TEXTURES を名乗っているときだけ待たせる）。
+        /// </summary>
+        public uint held_sets;
+    }
+
+    /// <summary>
+    ///  自己診断のスタンドアロンが受けた、元の絵 1 つの様子（`ylb_test_server_original`）。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbTestServerOriginal
+    {
+        /// <summary>
+        ///  0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える。
+        /// </summary>
+        public uint state;
+        /// <summary>
+        ///  0 原本のファイル・1 取り込んだ絵・2 GPU を通して。
+        /// </summary>
+        public uint read;
+        /// <summary>
+        ///  0 でなければ圧縮されたテクスチャから読んだ。
+        /// </summary>
+        public uint compressed;
+        /// <summary>
+        ///  0 でなければ sRGB。
+        /// </summary>
+        public uint srgb;
+        public uint width;
+        public uint height;
+        /// <summary>
+        ///  真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）と、一番下の左の画素の RGBA を r | g &lt;&lt; 8 | b &lt;&lt; 16 | a &lt;&lt; 24 に詰めたもの（絵が付かなければ 0）。
+        /// </summary>
+        public uint center;
+        public uint corner;
     }
 
     /// <summary>

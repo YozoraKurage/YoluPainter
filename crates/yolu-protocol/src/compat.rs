@@ -97,8 +97,11 @@ pub mod feature {
     pub const PROJECT_TRANSFER: u64 = 1 << 2;
     /// アニメーション。
     pub const ANIMATION: u64 = 1 << 3;
+    /// 元のテクスチャの受け渡し（Unity が元の絵を送り、スタンドアロンが新しく作ったテクスチャセットの一番下に入れる）。
+    pub const ORIGINAL_TEXTURES: u64 = 1 << 4;
     /// この表にある印の全部（これ以外のビットは、新しい相手が足した、名前を知らない機能）。
-    pub const KNOWN: u64 = MATERIAL_VALUES | ASSETS | PROJECT_TRANSFER | ANIMATION;
+    pub const KNOWN: u64 =
+        MATERIAL_VALUES | ASSETS | PROJECT_TRANSFER | ANIMATION | ORIGINAL_TEXTURES;
     /// 名前を知っている印を、ビットの小さい順に取り出す。
     pub fn known_bits(mask: u64) -> Vec<u64> {
         (0..64)
@@ -297,7 +300,7 @@ pub fn accepts(common: u64, message: &Message) -> bool {
 }
 
 /// `accepts` の、命令の種類ごとに要る印の決め方を選べる形（`need_of`）。試験が印の要る表を差し込んで、「どの命令がどの印を要るか」から
-/// 送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す（今は MaterialValues・MaterialTexture が MATERIAL_VALUES を要る）。
+/// 送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す（今は MaterialValues・MaterialTexture が MATERIAL_VALUES を、MaterialOriginal が ORIGINAL_TEXTURES を要る）。
 pub fn accepts_with(common: u64, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
     satisfies(common, need_of(message.kind()))
 }

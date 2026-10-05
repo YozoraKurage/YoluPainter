@@ -191,7 +191,7 @@ fn sets(h: u64) -> Vec<YlbSetInfo> {
 
 #[test]
 fn the_version_is_asked_first() {
-    assert_eq!(ylb_abi_version(), 4);
+    assert_eq!(ylb_abi_version(), 5);
     assert_eq!(ylb_protocol_versions(), (1 << 16) | 1);
 }
 
@@ -1178,6 +1178,193 @@ fn material_values_are_not_sent_to_a_standalone_without_the_mark() {
     wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
     let st = stats(server);
     assert_eq!((st.values, st.textures, st.unknown), (0, 0, 0));
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+// ───────── 元の絵（機能の印 ORIGINAL_TEXTURES） ─────────
+
+#[allow(clippy::too_many_arguments)]
+fn send_original(
+    h: u64,
+    material: i32,
+    slot: &str,
+    state: i32,
+    read: i32,
+    flags: i32,
+    (width, height): (u32, u32),
+    srgb: i32,
+    pixels: &[u8],
+) -> i32 {
+    unsafe {
+        ylb_original_send(
+            h,
+            material,
+            slot.as_ptr(),
+            slot.len() as i32,
+            state,
+            read,
+            flags,
+            width,
+            height,
+            srgb,
+            pixels.as_ptr(),
+            pixels.len() as i32,
+        )
+    }
+}
+
+fn original_of(server: u64, material: u32, slot: &str) -> Option<YlbTestServerOriginal> {
+    let mut o = YlbTestServerOriginal::default();
+    (unsafe { ylb_test_server_original(server, material, slot.as_ptr(), slot.len() as i32, &mut o) } == 0)
+        .then_some(o)
+}
+
+/// 4 × 2 の絵（画素 (x, y) は [x * 40 + 10, y * 100 + 5, 7, 255]）。
+fn small_original() -> Vec<u8> {
+    let mut pixels = Vec::new();
+    for y in 0..2u8 {
+        for x in 0..4u8 {
+            pixels.extend_from_slice(&[x * 40 + 10, y * 100 + 5, 7, 255]);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_all_there() {
+    use yolu_protocol::{feature, MAX_ORIGINAL_SIZE};
+    assert_ne!(BRIDGE_FEATURES & feature::ORIGINAL_TEXTURES, 0, "ブリッジは元の絵の印を出す");
+    let name = unique_name("originals");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(
+        ylb_test_server_configure(
+            server,
+            pack(v(0, 1, 0)),
+            pack(None),
+            feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES
+        ),
+        0
+    );
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_ne!(ylb_common_features(h) & feature::ORIGINAL_TEXTURES, 0);
+    let px = small_original();
+    // モデルを送る前は送らない
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_STATE);
+    send_quad_model(h);
+    wait_for(h, "モデル", || stats(server).models == 1);
+    // 2 つのマテリアルの Color の流し込み先に絵が入っている: 元の絵が揃うまで、どのセットも出さない
+    assert_eq!(stats(server).held_sets, 2);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(ylb_set_count(h), 0, "揃うまでセットを出さない");
+
+    // 引数の確かめ: 画素の長さが合わない・辺 0・上限を超える辺・知らない様子と読み方・絵の付かない様子に画素・無いマテリアル・空の名前
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px[..31]), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 0), 1, &[]), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (0, 2), 1, &[]), YLB_E_ARGUMENT);
+    let over = vec![0u8; (MAX_ORIGINAL_SIZE as usize + 1) * 4];
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 0, 0, 0, (MAX_ORIGINAL_SIZE + 1, 1), 1, &over),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(send_original(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, &[]), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_MainTex", -1, 0, 0, (4, 2), 1, &[]), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 3, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_MainTex", 2, 0, 0, (16384, 16384), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 2, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, -1, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original(h, 0, "_A\n", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(stats(server).originals, 0, "断った絵は届かない");
+
+    // マテリアル 0 の元の絵（原本のファイルから）: そのセットだけが出る。マテリアル 1 は待たせたまま
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), 1);
+    wait_for(h, "マテリアル 0 のセット", || sets(h).len() == 1);
+    let st = stats(server);
+    assert_eq!((st.originals, st.held_sets), (1, 1));
+    // 辺が上限を超えるので送らない、と知らせる（画素なし）: マテリアル 1 のセットは試しの模様で出る
+    assert_eq!(
+        send_original(h, 1, "_MainTex", 2, 2, 1, (16384, 16384), 0, &[]),
+        1
+    );
+    wait_for(h, "マテリアル 1 のセット", || sets(h).len() == 2);
+    assert_eq!(stats(server).held_sets, 0);
+
+    // 出たセットの Color は元の絵（最近傍で 256 に合わせた）
+    let all = sets(h);
+    let zero = all.iter().find(|s| s.material == 0).unwrap();
+    wait_for(h, "汚れたタイル", || ylb_channel_dirty(h, zero.set, 0) == 4);
+    let mut image = vec![0u8; 256 * 256 * 4];
+    let mut r = YlbCopyResult::default();
+    let n = unsafe {
+        ylb_copy_dirty(
+            h,
+            zero.set,
+            0,
+            image.as_mut_ptr(),
+            image.len() as u64,
+            std::ptr::null_mut(),
+            0,
+            0,
+            std::ptr::null_mut(),
+            &mut r,
+        )
+    };
+    assert_eq!(n, 4);
+    let at = |x: usize, y: usize| ((y * 256 + x) * 4, (y * 256 + x) * 4 + 4);
+    for (x, y, expected) in [(5usize, 7usize, [10u8, 5, 7, 255]), (200, 200, [130, 105, 7, 255]), (70, 130, [50, 105, 7, 255])] {
+        let (a, b) = at(x, y);
+        assert_eq!(image[a..b], expected, "({x}, {y})");
+    }
+
+    // 受けた様子: 読み方・圧縮・sRGB・大きさ・画素
+    let first = original_of(server, 0, "_MainTex").unwrap();
+    assert_eq!((first.state, first.read, first.compressed, first.srgb), (0, 0, 0, 1));
+    assert_eq!((first.width, first.height), (4, 2));
+    assert_eq!(first.corner.to_le_bytes(), [10, 5, 7, 255]);
+    assert_eq!(first.center.to_le_bytes(), [90, 105, 7, 255]);
+    let declined = original_of(server, 1, "_MainTex").unwrap();
+    assert_eq!((declined.state, declined.read, declined.compressed, declined.srgb), (2, 2, 1, 0));
+    assert_eq!((declined.width, declined.height, declined.center), (16384, 16384, 0));
+    assert!(original_of(server, 0, "_Other").is_none());
+    // 同じスロットはあとの絵で置き換わる（GPU を通して・圧縮・リニア）
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 2, 1, (4, 2), 0, &px), 1);
+    wait_for(h, "置き換え", || stats(server).originals == 3);
+    let again = original_of(server, 0, "_MainTex").unwrap();
+    assert_eq!((again.read, again.compressed, again.srgb), (2, 1, 0));
+    wait_for(h, "積んだ命令が出ていく", || ylb_pending_bytes(h) == 0);
+    assert_eq!(stats(server).refused, 0);
+    assert_eq!(ylb_pending_bytes(0), 0, "知らないつながりは 0");
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn originals_are_not_sent_to_a_standalone_without_the_mark_and_nothing_waits() {
+    use yolu_protocol::feature;
+    // 値の印だけを出す（元の絵を知らない）スタンドアロン: 送らずに 0 を返し、セットは待たせずに出る
+    let name = unique_name("nooriginals");
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), feature::MATERIAL_VALUES),
+        0
+    );
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_eq!(ylb_common_features(h) & feature::ORIGINAL_TEXTURES, 0);
+    send_quad_model(h);
+    wait_for(h, "2 つのセット", || sets(h).len() == 2);
+    let px = small_original();
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), 0);
+    assert_eq!(send_original(h, 1, "_MainTex", 2, 2, 0, (16384, 16384), 1, &[]), 0);
+    // 後から送った印の要らない命令が届くまで待ち、その前に元の絵が届いていないことを見る
+    assert_eq!(ylb_model_close(h), 0);
+    wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
+    let st = stats(server);
+    assert_eq!((st.originals, st.held_sets, st.unknown), (0, 0, 0));
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
 }
