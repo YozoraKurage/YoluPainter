@@ -20,6 +20,30 @@ pub fn rounded(p: &Painter, r: Rect, c: Color32, radius: f32) {
     p.rect_filled(r, radius, c);
 }
 
+/// 進み具合の帯。割合が分かれば左から埋め、分からない仕事は往復する帯（`time` は秒。呼び手が再描画を頼む）。
+pub fn progress_bar(p: &Painter, r: Rect, fraction: Option<f32>, time: f64) {
+    rounded(p, r, t::CONTROL_BG, 3.0);
+    match fraction {
+        Some(f) => rounded(
+            p,
+            Rect::from_min_size(r.min, vec2(r.width() * f.clamp(0.0, 1.0), r.height())),
+            t::ACCENT,
+            3.0,
+        ),
+        None => {
+            let phase = (time * 1.2).fract() as f32;
+            let width = r.width() * 0.25;
+            let x = r.left() + (r.width() - width) * (1.0 - (phase * 2.0 - 1.0).abs());
+            rounded(
+                p,
+                Rect::from_min_size(pos2(x, r.top()), vec2(width, r.height())),
+                t::ACCENT,
+                3.0,
+            );
+        }
+    }
+}
+
 /// 内側に引く枠（Unity の `GUI.DrawTexture` の枠と同じく矩形の内側）。
 pub fn outline(p: &Painter, r: Rect, c: Color32, width: f32, radius: f32) {
     p.rect_stroke(r, radius, Stroke::new(width, c), StrokeKind::Inside);

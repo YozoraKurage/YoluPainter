@@ -268,3 +268,21 @@ fn a_library_import_is_listed_and_cancelled_and_waited_for_when_stopping_jobs() 
     assert!(s.shelf.resources().is_empty(), "取り消した取り込みは棚に入れない");
     assert!(!s.modified, "文書は変わらない");
 }
+
+/// FBX の読み込みは読むだけの仕事（何も書かない）なので、閉じる前の確かめには挙げない（保存していない変更が無ければ、聞かずに閉じる）。
+/// 終わるときの取り消し・止まるのを待つ試験は、読み込みのスレッドを止めておける `view3d::pose::loads` の中にある。
+#[test]
+fn a_model_load_is_not_asked_about_before_closing() {
+    use yolu_app::newproject::{NpAction, Prep};
+    let mut s = AppState::new_in(64, 64, Lang::Ja);
+    s.apply(Action::Project(NpAction::OpenNew));
+    let (job, _hold) = yolu_app::view3d::pose::PrepareJob::parked();
+    {
+        let win = s.np.window.as_mut().unwrap();
+        win.prep = Prep::Loading { path: PathBuf::from("m.fbx"), job };
+        assert!(win.is_loading());
+    }
+    assert!(close_jobs(&s).is_empty(), "{:?}", close_jobs(&s));
+    assert!(close_question(Lang::Ja, false, &close_jobs(&s)).is_empty());
+    assert!(close_question(Lang::En, true, &close_jobs(&s)).starts_with("There are unsaved changes."));
+}

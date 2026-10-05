@@ -74,16 +74,45 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     }
     if app.view3d.pose.session.is_none() {
         if let Some(name) = loading {
-            w::text(
-                ui.painter(),
-                Rect::from_min_size(
-                    pos2(body.left() + t::PADDING, body.top() + 4.0),
-                    vec2(body.width() - 2.0 * t::PADDING, BONE_ROW),
-                ),
-                &format!("{}: {name}", lang.pick("読み込み中", "Loading")),
-                t::LABEL_DIM,
-                Align::Left,
+            // 読み込み中: 名前・割合の帯・取り消しのボタン（取り消すと、読みかけは捨てる）
+            let fraction = app.view3d.pose.loading_fraction();
+            let row = Rect::from_min_size(
+                pos2(body.left() + t::PADDING, body.top() + 4.0),
+                vec2(body.width() - 2.0 * t::PADDING, BONE_ROW),
             );
+            let cancel = Rect::from_min_size(
+                pos2(row.right() - 24.0, row.top()),
+                vec2(24.0, BONE_ROW),
+            );
+            let shown = match fraction {
+                Some(f) => format!(
+                    "{}: {name} {}%",
+                    lang.pick("読み込み中", "Loading"),
+                    (f * 100.0).floor() as u32
+                ),
+                None => format!("{}: {name}", lang.pick("読み込み中", "Loading")),
+            };
+            let label = Rect::from_min_max(row.min, pos2(cancel.left() - 6.0, row.bottom()));
+            w::text(ui.painter(), label, &shown, t::LABEL_DIM, Align::Left);
+            let bar = Rect::from_min_max(
+                pos2(row.left(), row.bottom() + 2.0),
+                pos2(label.right(), row.bottom() + 7.0),
+            );
+            w::progress_bar(ui.painter(), bar, fraction, ui.input(|i| i.time));
+            if w::icon_button(
+                ui,
+                cancel,
+                "pose.cancel-load",
+                "close",
+                lang.pick("読み込みを取り消す", "Cancel loading"),
+                false,
+                true,
+                15.0,
+            )
+            .clicked()
+            {
+                app.apply(Action::Pose(PoseAction::CancelLoad));
+            }
         }
         return;
     }

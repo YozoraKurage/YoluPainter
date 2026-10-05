@@ -1721,3 +1721,47 @@ fn a_pose_edit_through_the_inspector_survives_the_undo_redo_buttons() {
     h.run();
     assert_eq!(undo_len(&h), steps + 1);
 }
+
+// ───────── 読み込み中の行 ─────────
+
+/// モデルが無くなったあとの欄（タブだけが残る）で、読み込み中は名前・割合・取り消しのボタンが出る。割合が分かるまでは割合を出さない。
+/// 取り消すと読み込み中でなくなる（ポーズのタブは残る）。説明の文は置かない（ボタンの説明はツールチップ）。
+#[test]
+fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
+    for lang in Lang::ALL {
+        let mut h = figure(64);
+        h.state_mut().state.lang = lang;
+        click_tab(&mut h, Tab::Pose);
+        h.state_mut().apply(Action::LoadDemoModel);
+        h.run();
+        h.run();
+        assert!(h.state().dock.find_tab(&Tab::Pose).is_some());
+        let (loading, cancel_label, done) = match lang {
+            Lang::Ja => ("読み込み中: 新.fbx", "読み込みを取り消す", "新.fbxの読み込みを取り消しました。"),
+            Lang::En => ("Loading: 新.fbx", "Cancel loading", "Cancelled loading 新.fbx."),
+        };
+        // 割合がまだ分からない間: 名前だけ
+        // 読み込み中は描き直しを頼み続けるので、`run` ではなく数フレームだけ回す
+        let hold = pose::park_loading(&mut h.state_mut().state.view3d, "新.fbx", None);
+        h.run_steps(3);
+        assert!(texts(&h).iter().any(|t| t == loading), "{lang:?}: {:?}", texts(&h));
+        assert!(h.query_by_label(cancel_label).is_some(), "{lang:?}");
+        // 割合が分かったら添える
+        drop(hold);
+        let _hold = pose::park_loading(&mut h.state_mut().state.view3d, "新.fbx", Some(0.42));
+        h.run_steps(3);
+        assert!(
+            texts(&h).iter().any(|t| *t == format!("{loading} 42%")),
+            "{lang:?}: {:?}",
+            texts(&h)
+        );
+        assert!(clipped_texts(&h).is_empty(), "{:?}", clipped_texts(&h));
+        // 取り消すと、読み込み中でなくなる
+        h.get_by_label(cancel_label).click();
+        h.run_steps(3);
+        assert!(!h.state().state.view3d.pose.is_loading(), "{lang:?}");
+        assert_eq!(h.state().state.message, done);
+        assert!(!texts(&h).iter().any(|t| t.starts_with(loading)), "{lang:?}");
+        assert!(h.state().dock.find_tab(&Tab::Pose).is_some(), "タブは残る");
+    }
+}

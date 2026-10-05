@@ -830,6 +830,7 @@ impl Lang {
             ),
             ModelError::Parse(e) => format!("Invalid FBX: {e}"),
             ModelError::NoMesh => "No triangle mesh".into(),
+            ModelError::Cancelled => "Cancelled".into(),
             ModelError::Rig(e) => self.rig_error(e),
         }
     }
@@ -1106,6 +1107,7 @@ mod tests {
             ViewError::Model(ModelError::FileTooLarge { bytes: 3 << 20, limit: 1 << 20 }),
             ViewError::Model(ModelError::Parse("bad".into())),
             ViewError::Model(ModelError::NoMesh),
+            ViewError::Model(ModelError::Cancelled),
             ViewError::Model(ModelError::Rig(rig)),
         ];
         for e in [

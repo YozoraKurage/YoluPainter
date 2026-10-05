@@ -56,6 +56,13 @@ impl Reopen {
     pub fn file_name(&self) -> String {
         file_name(&self.path)
     }
+    /// 読み込みの進み具合（ファイルを確かめている間・まだ知らせが無い間は None）。
+    pub fn fraction(&self) -> Option<f32> {
+        match &self.stage {
+            Stage::Loading(job) => job.fraction(),
+            Stage::Checking(_) => None,
+        }
+    }
 }
 
 impl Drop for Reopen {

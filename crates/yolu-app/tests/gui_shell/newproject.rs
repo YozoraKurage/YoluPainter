@@ -2582,6 +2582,46 @@ fn the_window_shows_preparing_canceled_and_failed_states_with_their_buttons() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// 準備の行: 割合がまだ分からない間はラベルだけ（往復する帯）、分かったら % を添えて帯を埋める。取り消しのボタンは常に出る。
+#[test]
+fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
+    let dir = temp_dir("gui-prepare-progress");
+    let path = character(&dir, "c.fbx");
+    for lang in Lang::ALL {
+        let mut h = gui();
+        h.state_mut().state.set_language(lang);
+        run_np(&mut h, NpAction::OpenNew);
+        let (job, _hold) = yolu_app::view3d::pose::PrepareJob::parked();
+        {
+            let win = h.state_mut().state.np.window.as_mut().unwrap();
+            win.model = Some(path.clone());
+            win.prep = Prep::Loading {
+                path: path.clone(),
+                job,
+            };
+        }
+        let (label, cancel) = match lang {
+            Lang::Ja => ("モデルを準備中", "準備を取り消す"),
+            Lang::En => ("Preparing the model", "Cancel preparation"),
+        };
+        h.run();
+        assert!(window_texts(&h).iter().any(|t| t == label), "{lang:?}: {:?}", window_texts(&h));
+        assert!(h.query_by_label(cancel).is_some(), "{lang:?}");
+        match &st(&h).np.window.as_ref().unwrap().prep {
+            Prep::Loading { job, .. } => job.report_progress(0.37),
+            _ => unreachable!(),
+        }
+        h.run();
+        assert!(
+            window_texts(&h).iter().any(|t| *t == format!("{label} 37%")),
+            "{lang:?}: {:?}",
+            window_texts(&h)
+        );
+        assert!(h.query_by_label(cancel).is_some(), "{lang:?}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn an_empty_model_box_says_nothing_and_a_model_called_none_is_shown_as_a_model() {
     let dir = temp_dir("gui-no-model");

@@ -9,7 +9,11 @@
 //! ウェイトの無い頂点はメッシュのノードに付いて動く（ufbx の fallback と同じ）。スキンが無ければメッシュのノードに固く付く。
 //! マテリアルはファイル全体で通し番号（最初に使われた順）にし、メッシュの中ではマテリアルごとにサブメッシュを分ける。
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::io::Read;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use yolu_core::geometry::{ModelMesh, Submesh};
@@ -55,6 +59,8 @@ pub enum ModelError {
     NoMesh,
     /// スキンの確かめ（予算を含む）で断った。
     Rig(RigError),
+    /// 読み込みの途中で取り消した（途中の物は捨てた）。
+    Cancelled,
 }
 
 impl std::fmt::Display for ModelError {
@@ -70,6 +76,7 @@ impl std::fmt::Display for ModelError {
             ModelError::Parse(e) => write!(f, "FBX として読めません: {e}"),
             ModelError::NoMesh => f.write_str("三角形のメッシュがありません"),
             ModelError::Rig(e) => e.fmt(f),
+            ModelError::Cancelled => f.write_str("取り消しました"),
         }
     }
 }
@@ -108,9 +115,82 @@ pub struct LoadedModel {
     pub report: LoadReport,
 }
 
+/// 読み込みを途中で止める旗と、進み具合の知らせ。どちらも読み込みを走らせているスレッドの中で見る・呼ぶ。
+///
+/// 旗が立つと、次の区切りで `ModelError::Cancelled` を返して止まる（読みかけのバイト列・ufbx のシーン・組みかけのメッシュは捨てる。
+/// 呼び手には何も残らない）。区切りは、ファイルの読み込み（8 MiB ごと）・ufbx の解析（入力 16 KiB ごと）・スキンへの変換（メッシュごと・
+/// 面とウェイトと BlendShape の差分の数千ごと）・最後の確かめの前後。解析のあとの ufbx の仕上げ（ufbx の中の後処理）と
+/// `Rig::new` の確かめは呼び返しが無い 1 つの塊で、その間に立てた旗は塊の終わりで効く（止まるのが遅れる範囲）。
+#[derive(Clone, Copy, Default)]
+pub struct LoadControl<'a> {
+    pub cancel: Option<&'a AtomicBool>,
+    /// 進み具合（0.0〜1.0。単調に増える）。細かすぎないように間引いて呼ぶ（始めの 0.0 と終わりの 1.0 は必ず呼ぶ）。
+    pub progress: Option<&'a dyn Fn(f32)>,
+}
+
+/// 進み具合の段の境（読み込み・解析・変換）。
+const READ_END: f32 = 0.05;
+const PARSE_END: f32 = 0.60;
+
+/// 区切りで旗を見て、進み具合を知らせる。
+struct Gate<'a> {
+    control: LoadControl<'a>,
+    last: Cell<f32>,
+}
+
+impl<'a> Gate<'a> {
+    fn new(control: LoadControl<'a>) -> Self {
+        Gate {
+            control,
+            last: Cell::new(-1.0),
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.control
+            .cancel
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+
+    fn check(&self) -> Result<(), ModelError> {
+        if self.cancelled() {
+            Err(ModelError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// 進み具合を知らせる（前より 0.2% 以上進んだときと、初めと終わり。戻らない）。
+    fn report(&self, fraction: f32) {
+        let Some(progress) = self.control.progress else {
+            return;
+        };
+        let f = fraction.clamp(0.0, 1.0);
+        let last = self.last.get();
+        if f > last && (last < 0.0 || f >= 1.0 || f - last >= 0.002) {
+            self.last.set(f);
+            progress(f);
+        }
+    }
+}
+
 /// ファイルから読む（名前はファイル名の拡張子の前）。
 pub fn load_fbx(path: &std::path::Path, limits: &ModelLimits) -> Result<LoadedModel, ModelError> {
-    let bytes = std::fs::metadata(path)
+    load_fbx_with(path, limits, LoadControl::default())
+}
+
+/// ファイルから、取り消しと進み具合の知らせつきで読む。
+pub fn load_fbx_with(
+    path: &std::path::Path,
+    limits: &ModelLimits,
+    control: LoadControl<'_>,
+) -> Result<LoadedModel, ModelError> {
+    let gate = Gate::new(control);
+    gate.check()?;
+    gate.report(0.0);
+    let mut file = std::fs::File::open(path).map_err(|e| ModelError::Io(e.to_string()))?;
+    let bytes = file
+        .metadata()
         .map_err(|e| ModelError::Io(e.to_string()))?
         .len();
     if bytes > limits.max_file_bytes {
@@ -119,12 +199,33 @@ pub fn load_fbx(path: &std::path::Path, limits: &ModelLimits) -> Result<LoadedMo
             limit: limits.max_file_bytes,
         });
     }
-    let data = std::fs::read(path).map_err(|e| ModelError::Io(e.to_string()))?;
+    // 大きなファイルでも、区切りごとに旗を見る（1 回で読み切らない）
+    const CHUNK: u64 = 8 << 20;
+    let mut data = Vec::with_capacity(bytes as usize);
+    loop {
+        let before = data.len();
+        (&mut file)
+            .take(CHUNK)
+            .read_to_end(&mut data)
+            .map_err(|e| ModelError::Io(e.to_string()))?;
+        gate.check()?;
+        if data.len() as u64 > limits.max_file_bytes {
+            // 読んでいる間に伸びたファイル
+            return Err(ModelError::FileTooLarge {
+                bytes: data.len() as u64,
+                limit: limits.max_file_bytes,
+            });
+        }
+        gate.report(READ_END * (data.len() as f32 / bytes.max(1) as f32).min(1.0));
+        if data.len() == before {
+            break;
+        }
+    }
     let name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "モデル".into());
-    load_fbx_bytes(&data, &name, limits)
+    load_with_gate(&data, &name, limits, &gate)
 }
 
 /// バイト列から読む。
@@ -133,6 +234,28 @@ pub fn load_fbx_bytes(
     name: &str,
     limits: &ModelLimits,
 ) -> Result<LoadedModel, ModelError> {
+    load_fbx_bytes_with(data, name, limits, LoadControl::default())
+}
+
+/// バイト列から、取り消しと進み具合の知らせつきで読む。
+pub fn load_fbx_bytes_with(
+    data: &[u8],
+    name: &str,
+    limits: &ModelLimits,
+    control: LoadControl<'_>,
+) -> Result<LoadedModel, ModelError> {
+    let gate = Gate::new(control);
+    gate.check()?;
+    gate.report(0.0);
+    load_with_gate(data, name, limits, &gate)
+}
+
+fn load_with_gate(
+    data: &[u8],
+    name: &str,
+    limits: &ModelLimits,
+    gate: &Gate<'_>,
+) -> Result<LoadedModel, ModelError> {
     if data.len() as u64 > limits.max_file_bytes {
         return Err(ModelError::FileTooLarge {
             bytes: data.len() as u64,
@@ -140,18 +263,45 @@ pub fn load_fbx_bytes(
         });
     }
     let clock = Instant::now();
-    let scene = ufbx::load_memory(data, load_options(limits))
-        .map_err(|e| ModelError::Parse(format!("{:?}: {}", e.type_, &*e.description)))?;
+    // ufbx の呼び返しは C の関数の中から呼ばれるので、中で起きた panic は外へ出さずに取っておき、解析が戻ってから投げ直す
+    let panicked: RefCell<Option<Box<dyn std::any::Any + Send>>> = RefCell::new(None);
+    let mut on_progress = |p: &ufbx::Progress| -> ufbx::ProgressResult {
+        let step = catch_unwind(AssertUnwindSafe(|| {
+            if gate.cancelled() {
+                return ufbx::ProgressResult::Cancel;
+            }
+            let done = p.bytes_read as f64 / p.bytes_total.max(1) as f64;
+            gate.report(READ_END + (PARSE_END - READ_END) * done.min(1.0) as f32);
+            ufbx::ProgressResult::Continue
+        }));
+        step.unwrap_or_else(|payload| {
+            *panicked.borrow_mut() = Some(payload);
+            ufbx::ProgressResult::Cancel
+        })
+    };
+    let mut options = load_options(limits);
+    options.progress_cb = ufbx::ProgressCb::Mut(&mut on_progress);
+    let loaded = ufbx::load_memory(data, options);
+    if let Some(payload) = panicked.take() {
+        resume_unwind(payload);
+    }
+    let scene = loaded.map_err(|e| match e.type_ {
+        ufbx::ErrorType::Cancelled => ModelError::Cancelled,
+        _ => ModelError::Parse(format!("{:?}: {}", e.type_, &*e.description)),
+    })?;
     let parse_ms = clock.elapsed().as_secs_f64() * 1000.0;
+    gate.check()?;
+    gate.report(PARSE_END);
     let clock = Instant::now();
-    let mut model = convert(&scene, name, limits)?;
+    let mut model = convert(&scene, name, limits, gate)?;
     model.report.parse_ms = parse_ms;
     model.report.convert_ms = clock.elapsed().as_secs_f64() * 1000.0;
+    gate.report(1.0);
     Ok(model)
 }
 
 /// ufbx の読み込みの設定（Unity の FBX の読み込みに合わせる。アニメーション・埋め込みの画像・外のファイルは読まない）。
-pub(crate) fn load_options(limits: &ModelLimits) -> ufbx::LoadOpts<'static> {
+pub(crate) fn load_options<'a>(limits: &ModelLimits) -> ufbx::LoadOpts<'a> {
     let memory = |limit: usize| ufbx::AllocatorOpts {
         memory_limit: limit,
         ..Default::default()
@@ -238,10 +388,14 @@ fn node_order(scene: &ufbx::Scene) -> Vec<&ufbx::Node> {
     out
 }
 
+/// 旗を見る間隔（面・頂点・差分の何個ごとか）。
+const CHECK_EVERY: usize = 2048;
+
 fn convert(
     scene: &ufbx::Scene,
     name: &str,
     limits: &ModelLimits,
+    gate: &Gate<'_>,
 ) -> Result<LoadedModel, ModelError> {
     let budget = &limits.rig;
     let mut report = LoadReport::default();
@@ -261,6 +415,19 @@ fn convert(
     if triangles > budget.max_triangles {
         return Err(too_large("三角形", triangles, budget.max_triangles));
     }
+
+    let total_faces: usize = scene
+        .nodes
+        .iter()
+        .filter_map(|n| n.mesh.as_ref())
+        .map(|m| m.num_faces)
+        .sum::<usize>()
+        .max(1);
+    // 変換の進み具合は、変換が終わるまでに見終えた面の数（最後の確かめ用に少し残す）
+    let convert_report = |faces_done: usize| {
+        gate.report(PARSE_END + (0.98 - PARSE_END) * (faces_done as f32 / total_faces as f32));
+    };
+    let mut faces_done = 0usize;
 
     let order = node_order(scene);
     let mut bone_of: HashMap<u32, u32> = HashMap::with_capacity(order.len());
@@ -301,6 +468,10 @@ fn convert(
         let Some(mesh) = n.mesh.as_ref() else {
             continue;
         };
+        gate.check()?;
+        // 飛ばすメッシュも、見終えた面に数える
+        let faces_before = faces_done;
+        faces_done += mesh.num_faces;
         let label = if n.element.name.is_empty() {
             mesh.element.name.to_string()
         } else {
@@ -411,6 +582,10 @@ fn convert(
             })
         };
         for (fi, face) in mesh.faces.iter().enumerate() {
+            if fi % CHECK_EVERY == 0 {
+                gate.check()?;
+                convert_report(faces_before + fi);
+            }
             if face.num_indices < 3 {
                 continue;
             }
@@ -530,7 +705,10 @@ fn convert(
                 let mut offsets = Vec::with_capacity(vertex_count + 1);
                 let mut influences = Vec::new();
                 offsets.push(0u32);
-                for &cp in &vertex_cp {
+                for (n_done, &cp) in vertex_cp.iter().enumerate() {
+                    if n_done % CHECK_EVERY == 0 {
+                        gate.check()?;
+                    }
                     if let Some(sv) = sd.vertices.get(cp as usize) {
                         let start = sv.weight_begin as usize;
                         let end = (start + sv.num_weights as usize).min(sd.weights.count);
@@ -576,6 +754,7 @@ fn convert(
                 let mut keys: Vec<&ufbx::BlendKeyframe> = ch.keyframes.iter().collect();
                 keys.sort_by(|a, b| a.target_weight.total_cmp(&b.target_weight));
                 for k in keys {
+                    gate.check()?;
                     let weight = (k.target_weight * 100.0) as f32;
                     if weight.is_nan() || weight <= frames.last().map_or(0.0, |f| f.weight) {
                         report.warnings.push(format!(
@@ -592,6 +771,9 @@ fn convert(
                     let with_normals = shape.normal_offsets.count == shape.num_offsets;
                     let mut out_of_range = false;
                     for i in 0..shape.num_offsets {
+                        if i % CHECK_EVERY == 0 {
+                            gate.check()?;
+                        }
                         let cp = shape.offset_vertices[i];
                         if cp as usize >= cp_count {
                             out_of_range = true;
@@ -655,11 +837,14 @@ fn convert(
         if meshes.len() > budget.max_meshes {
             return Err(too_large("メッシュ", meshes.len(), budget.max_meshes));
         }
+        convert_report(faces_done);
     }
     if meshes.is_empty() {
         return Err(ModelError::NoMesh);
     }
+    gate.check()?;
     let rig = Rig::new(name, bones, meshes, materials, rest_weights, budget)?;
+    gate.check()?;
     // 骨のワールドを 親 × ローカル で求め直し、ufbx と比べる（一様でない継承などが残っていないか）
     let world = rig.world_matrices(&rig.rest_pose())?;
     let mut worst = 0.0f64;

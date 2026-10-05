@@ -722,7 +722,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
         entries.push(Entry {
             id: "model",
             text: format!("{} — {}", lang.pick("モデルを読み込み中", "Loading the model"), r.file_name()),
-            fraction: None,
+            fraction: r.fraction(),
             cancel: Some(Action::Project(crate::newproject::NpAction::CancelReopen)),
             canceling: false,
         });
@@ -781,31 +781,8 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                     pos2(row.left(), row.top() + 22.0),
                     pos2(right, row.top() + 28.0),
                 );
-                w::rounded(&p, bar, t::CONTROL_BG, 3.0);
-                match e.fraction {
-                    Some(f) => w::rounded(
-                        &p,
-                        Rect::from_min_size(
-                            bar.min,
-                            vec2(bar.width() * f.clamp(0.0, 1.0), bar.height()),
-                        ),
-                        t::ACCENT,
-                        3.0,
-                    ),
-                    None => {
-                        // 終わりの分からない仕事: 往復する帯
-                        let phase = (ctx.input(|i| i.time) * 1.2).fract() as f32;
-                        let wdt = bar.width() * 0.25;
-                        let x =
-                            bar.left() + (bar.width() - wdt) * (1.0 - (phase * 2.0 - 1.0).abs());
-                        w::rounded(
-                            &p,
-                            Rect::from_min_size(pos2(x, bar.top()), vec2(wdt, bar.height())),
-                            t::ACCENT,
-                            3.0,
-                        );
-                    }
-                }
+                // 割合が分かる仕事は左から埋め、終わりの分からない仕事は往復する帯
+                w::progress_bar(&p, bar, e.fraction, ctx.input(|i| i.time));
                 let Some(action) = &e.cancel else {
                     continue;
                 };
@@ -999,8 +976,9 @@ pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
     }
 }
 
-/// 終わる前に、走っている仕事（ベイク・書き出し・PSD・配布用に保存・更新・ブラシの取り込み・ライブラリと素材の書き込み）を取り消して、
-/// 止まるのを少し待つ（書きかけの一時ファイルを残さないため。取消は次の区切りで効くので、待つのは `wait` まで）。
+/// 終わる前に、走っている仕事（ベイク・書き出し・PSD・配布用に保存・更新・ブラシの取り込み・ライブラリと素材の書き込み・FBX の読み込み）を
+/// 取り消して、止まるのを少し待つ（書きかけの一時ファイルを残さないため。取消は次の区切りで効くので、待つのは `wait` まで）。
+/// FBX の読み込みは読むだけの仕事（何も書かない）なので、閉じる前の確かめ（`close_jobs`）には入れない。ここで止めて、メモリを使い続けない。
 pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
@@ -1010,6 +988,9 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
     // ライブラリのフォルダへの書き込みと素材の保存・取り込み（やめても、スレッドは次の区切りまで走る）
     app.shelf_apply(crate::shelf::ShelfOp::CancelSave);
+    // FBX の読み込み（ポーズの欄・新規／構成の窓・.ylp を開いたとき）。登録した旗は、結果の受け口を捨てたあとのスレッドの分も持つ
+    app.view3d.pose.cancel_loading();
+    app.view3d.pose.cancel_loads();
     let start = std::time::Instant::now();
     while (app.bake.is_baking()
         || app.export.is_exporting()
@@ -1018,6 +999,7 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
         || app.update.is_busy()
         || app.brushes.import.is_busy()
         || app.shelf.saves_running() > 0
+        || app.view3d.pose.loads_running() > 0
         || app.library.busy_reason(app.lang).is_some())
         && start.elapsed() < wait
     {
