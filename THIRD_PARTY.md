@@ -96,7 +96,8 @@ Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原�
 3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）と、見た目の欄のプロパティの名前・既定値
 （`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
 シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
-OpenLit Library 1.0.2（**CC0 1.0**）から移した。MIT の原文と出どころは [再現の第三者表記](crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
+OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilToon の `lilHashRGB4` からで、その元は Shadertoy の
+「Simplest Fastest 2D Hash」（MdcfDj、**Unlicense**。原文の先頭の表記で確認）。MIT の原文と出どころは [再現の第三者表記](crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
 にあり、`tools/licenses-reviewed.json` の `bundled` で照合して app の全文束に含める。クレートではないので、上の件数には含めない。
 
 ## グラデーションの混色（Oklab）

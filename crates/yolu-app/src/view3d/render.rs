@@ -52,6 +52,8 @@ pub const BUILD_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_mi
 const UNIFORM_BYTES: u64 = 128 + 9 * 16 + 9 * 16 + 64 + 16 + 9 * 16;
 /// 影のマップの 1 辺（Depth32Float で 16 MiB。Unity 版と同じ 2048）。
 pub const SHADOW_SIZE: u32 = 2048;
+/// 持っておく lilToon のパイプラインの数の目安（超えたら、そのフレームで使わないものを捨てる）。
+const LIL_PIPELINES_KEPT: usize = 48;
 
 /// 上げた量・描いた回数（試験と状態の表示用）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -119,6 +121,9 @@ pub struct View3dStats {
     /// lilToon の半透明を、トーンマッピングなしの描き先でリニアに重ねられるか（描き先の sRGB の見え方を作れる機材。GL は作れないので
     /// ガンマの値のまま重ねる）。
     pub linear_transparent: bool,
+    /// 持っている lilToon のパイプラインの数と、これまでに作った数（ソフトの描画は使う機能とスロットの読み方ごとに作る）。
+    pub lil_pipelines: usize,
+    pub lil_pipeline_builds: usize,
 }
 
 impl From<PaintStats> for View3dStats {
@@ -232,6 +237,8 @@ struct LilPipe {
     cull: u8,
     transparent: bool,
     outline: bool,
+    /// パイプラインの定数（使う機能とスロットの読み方。実機は全部入り）。
+    spec: look_gpu::LilSpec,
 }
 
 /// 影のマップ（光から見た深さ。影を初めて使うときに作る）。
@@ -329,6 +336,7 @@ pub struct View3dRenderer {
     scene_module: wgpu::ShaderModule,
     scene_pipeline_layout: wgpu::PipelineLayout,
     lil_pipelines: std::collections::HashMap<LilPipe, wgpu::RenderPipeline>,
+    lil_pipeline_builds: usize,
     /// 今のセットの見た目の持ち物と、絵の無い面の見た目（標準）。
     current_look: LookGpu,
     _blank_look: LookGpu,
@@ -373,6 +381,8 @@ pub struct View3dRenderer {
     tangent_hook: Option<TangentHook>,
     /// 描き先のテクスチャに sRGB の見え方を作れるか（wgpu の `DownlevelFlags::VIEW_FORMATS`。GL には無い）。
     srgb_views: bool,
+    /// ソフトの描画（アダプタが CPU。llvmpipe）: lilToon のパイプラインを、使う機能とスロットの読み方だけで作る（`look_gpu::LilSpec`）。
+    software: bool,
     pub stats: View3dStats,
 }
 
@@ -889,6 +899,7 @@ impl View3dRenderer {
             scene_module,
             scene_pipeline_layout,
             lil_pipelines: std::collections::HashMap::new(),
+            lil_pipeline_builds: 0,
             current_look,
             _blank_look: blank_look,
             white_view,
@@ -935,6 +946,7 @@ impl View3dRenderer {
                 .get_downlevel_capabilities()
                 .flags
                 .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
+            software: rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu,
             stats: View3dStats::default(),
         }
     }
@@ -1156,6 +1168,8 @@ impl View3dRenderer {
             other_demotions: self.demotions,
             peak_bytes: self.peak_bytes,
             linear_transparent: self.srgb_views,
+            lil_pipelines: self.lil_pipelines.len(),
+            lil_pipeline_builds: self.lil_pipeline_builds,
             other_scratch_bytes: self
                 .held
                 .iter()
@@ -2143,13 +2157,22 @@ impl View3dRenderer {
             (true, false) => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             (true, true) => Some(wgpu::BlendState::ALPHA_BLENDING),
         };
+        // 全部入り（実機）は定数を渡さない（シェーダーの既定の全部入り）
+        let constants: Vec<(&str, f64)> = if key.spec == look_gpu::LilSpec::ALL {
+            Vec::new()
+        } else {
+            key.spec.constants().to_vec()
+        };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(if key.outline { "yolu-3d-liltoon-outline" } else { "yolu-3d-liltoon" }),
             layout: Some(&self.scene_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &self.scene_module,
                 entry_point: Some(if key.outline { "vs_outline" } else { "vs_main" }),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: (VERTEX_FLOATS * 4) as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -2182,7 +2205,10 @@ impl View3dRenderer {
                     (true, false) => "fs_outline",
                     (true, true) => "fs_outline_linear",
                 }),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
                 targets: &[Some(wgpu::ColorTargetState {
                     format: if key.srgb {
                         LDR_SRGB
@@ -2199,6 +2225,7 @@ impl View3dRenderer {
             cache: None,
         });
         self.lil_pipelines.insert(key, pipeline);
+        self.lil_pipeline_builds += 1;
     }
 
     fn draw_scene(
@@ -2230,7 +2257,11 @@ impl View3dRenderer {
                     end += mesh.ranges[i].count;
                     i += 1;
                 }
-                let draw = if lil_on { self.draw_of(pick) } else { SetDraw::STANDARD };
+                let mut draw = if lil_on { self.draw_of(pick) } else { SetDraw::STANDARD };
+                // 実機は全部入りの 1 本（入切のたびにパイプラインを作り直さない）。ソフトの描画だけ使う機能で作る
+                if !self.software {
+                    draw.spec = look_gpu::LilSpec::ALL;
+                }
                 if draw.lil && draw.invisible {
                     continue;
                 }
@@ -2250,10 +2281,14 @@ impl View3dRenderer {
             }
             let transparent = is_transparent(d);
             let srgb = transparent && linear_blend;
-            needed.push(LilPipe { hdr: tone, srgb, cull: d.cull, transparent, outline: false });
+            needed.push(LilPipe { hdr: tone, srgb, cull: d.cull, transparent, outline: false, spec: d.spec });
             if d.outline {
-                needed.push(LilPipe { hdr: tone, srgb, cull: 1, transparent, outline: true });
+                needed.push(LilPipe { hdr: tone, srgb, cull: 1, transparent, outline: true, spec: d.spec });
             }
+        }
+        // ソフトの描画は機能とスロットの読み方ごとに作るので、溜まりすぎたら今のフレームで使わないものを捨てる
+        if self.lil_pipelines.len() + needed.len() > LIL_PIPELINES_KEPT {
+            self.lil_pipelines.retain(|key, _| needed.contains(key));
         }
         for key in needed {
             self.ensure_lil_pipeline(key);
@@ -2323,10 +2358,10 @@ impl View3dRenderer {
                 for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| !is_transparent(d)) {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
                     if d.lil {
-                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: false, outline: false }));
+                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: false, outline: false, spec: d.spec }));
                         pass.draw(*start..*end, 0..1);
                         if d.outline {
-                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: false, outline: true }));
+                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: false, outline: true, spec: d.spec }));
                             pass.draw(*start..*end, 0..1);
                         }
                     } else {
@@ -2338,10 +2373,10 @@ impl View3dRenderer {
                 if !second_pass {
                     for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
                         pass.set_bind_group(1, set_bind(*pick), &[]);
-                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: true, outline: false }));
+                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: true, outline: false, spec: d.spec }));
                         pass.draw(*start..*end, 0..1);
                         if d.outline {
-                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: true, outline: true }));
+                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: true, outline: true, spec: d.spec }));
                             pass.draw(*start..*end, 0..1);
                         }
                     }
@@ -2377,10 +2412,10 @@ impl View3dRenderer {
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
                 for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
-                    pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: d.cull, transparent: true, outline: false }));
+                    pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: d.cull, transparent: true, outline: false, spec: d.spec }));
                     pass.draw(*start..*end, 0..1);
                     if d.outline {
-                        pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: 1, transparent: true, outline: true }));
+                        pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: 1, transparent: true, outline: true, spec: d.spec }));
                         pass.draw(*start..*end, 0..1);
                     }
                 }

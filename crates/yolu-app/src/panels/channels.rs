@@ -279,6 +279,8 @@ fn channel_row(
         pos2(icon_rect.right() + 4.0, row.top() + 3.0),
         pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
     );
+    // このチャンネルを読む lilToon のスロット（見た目が lilToon のとき）: チャンネルの印の右上に小さな点、スロットの名前はツールチップ
+    let reading = crate::look::slots_reading(&app.doc, channel);
 
     if response.clicked() {
         app.apply(Action::M2Ui(UiOp::PaintChannel(channel)));
@@ -393,6 +395,19 @@ fn channel_row(
             t::LABEL.with_color(if painting { Color32::WHITE } else { t::TEXT }),
             Align::Left,
         );
+    }
+
+    if !reading.is_empty() {
+        let painter = ui.painter_at(list);
+        let dot = pos2(icon_rect.right() - 1.0, row.top() + 7.0);
+        painter.circle_filled(dot, 3.0, t::ACCENT);
+        let names: Vec<&str> = reading.iter().map(|s| s.label(lang)).collect();
+        let tip = format!("lilToon: {}", names.join(lang.pick("、", ", ")));
+        let hit = icon_rect.intersect(list);
+        let response = ui.interact(hit, ui.make_persistent_id(("channel.look", channel.index())), Sense::hover());
+        let label = tip.clone();
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label));
+        response.on_hover_text(tip);
     }
 
     // 種類（ユーザーチャンネルは押すと替えられる）

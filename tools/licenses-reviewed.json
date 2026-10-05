@@ -5258,16 +5258,16 @@
         "selected": [
           "MIT"
         ],
-        "origin": "https://github.com/lilxyzw/lilToon ; OpenLit Library 1.0.2（CC0-1.0、lilToon に同梱）",
+        "origin": "https://github.com/lilxyzw/lilToon ; OpenLit Library 1.0.2（CC0-1.0、lilToon に同梱） ; Simplest Fastest 2D Hash https://www.shadertoy.com/view/MdcfDj（Unlicense、lilToon の lilHashRGB4 の元）",
         "files": [
           {
             "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-            "sha256": "ad1984ec1b15a74d1c0fedfdcb36129d29b2cd5bf8f6d31563c9d6997279d0cc"
+            "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-          "sha256": "ad1984ec1b15a74d1c0fedfdcb36129d29b2cd5bf8f6d31563c9d6997279d0cc"
+          "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
         }
       }
     ]

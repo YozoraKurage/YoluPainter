@@ -37,8 +37,30 @@ fn pick(h: &mut Harness<'_, YoluApp>, label: &str) {
 }
 
 #[test]
-fn switching_to_liltoon_assigns_the_standard_channels_and_undo_takes_it_back() {
+fn a_new_set_starts_as_liltoon_and_switching_the_kind_is_one_undo() {
     let mut h = harness(Lang::Ja);
+    // 新しいセットの既定は lilToon（メインカラー・ノーマルマップ・発光を同じ名前のチャンネルに）。履歴には入らない
+    let look = h.state().state.doc.look().clone();
+    assert_eq!(look.kind, LookKind::LilToon);
+    assert_eq!(look.textures["_MainTex"], TextureSource::Channel(Channel::Color));
+    assert_eq!(look.textures["_BumpMap"], TextureSource::Channel(Channel::Normal));
+    assert_eq!(look.textures["_EmissionMap"], TextureSource::Channel(Channel::Emission));
+    assert_eq!(h.state().state.doc.undo_count(), 0);
+    assert!(!h.state().state.modified);
+    click_label(&mut h, "種類: lilToon");
+    pick(&mut h, "標準（PBR）");
+    assert_eq!(h.state().state.doc.look().kind, LookKind::Standard);
+    assert!(h.state().state.modified);
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    assert_eq!(h.state().state.doc.look(), &look);
+}
+
+#[test]
+fn switching_a_standard_set_to_liltoon_assigns_the_standard_channels_and_undo_takes_it_back() {
+    let mut h = harness(Lang::Ja);
+    h.state_mut().state.doc.restore_look(MaterialLook::default()).unwrap();
+    h.run();
     click_label(&mut h, "種類: 標準（PBR）");
     pick(&mut h, "lilToon");
     let look = h.state().state.doc.look().clone();
@@ -102,9 +124,9 @@ fn the_template_button_makes_channels_in_one_undo() {
     );
     // 影の節のスロットの行に、割り当てたチャンネルの名前が出る
     click_label(&mut h, "影設定");
-    assert!(h.query_by_label("影の強度マスク: 影の強度").is_some());
+    assert!(h.query_by_label("マスクと強度: 影の強度").is_some());
     // スロットをほかのチャンネルへ
-    click_label(&mut h, "影の強度マスク: 影の強度");
+    click_label(&mut h, "マスクと強度: 影の強度");
     pick(&mut h, "ラフネス");
     assert_eq!(
         h.state().state.doc.look().textures["_ShadowStrengthMask"],
@@ -174,7 +196,7 @@ fn a_property_shown_in_two_sections_has_its_own_slider_in_each() {
     h.state_mut().apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
     set_value(&mut h, "_UseShadow", 1.0);
     h.run();
-    click_label(&mut h, "ライティング設定");
+    click_label(&mut h, "ライティング・明るさ設定");
     click_label(&mut h, "影設定");
     let sliders: Vec<egui::Rect> = h.get_all_by_label("影色への環境光影響度").map(|n| n.rect()).collect();
     assert_eq!(sliders.len(), 2, "{sliders:?}");
@@ -215,7 +237,7 @@ fn a_power_slider_spreads_the_small_values_like_unity() {
     assert_eq!(linear.fraction(0.5), 0.25);
     assert_eq!(linear.value_at(0.25), 0.5);
     // 欄のリムライトの細さ（_RimFresnelPower、0.01〜50、power 3）は、溝の真ん中を押すと約 7.4（線形なら 25）
-    let mut h = harness_sized(Lang::Ja, 2400.0);
+    let mut h = harness_sized(Lang::Ja, 3200.0);
     h.state_mut().apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
     set_value(&mut h, "_UseRim", 1.0);
     h.run();
@@ -259,14 +281,14 @@ fn a_slot_past_sixteen_user_channels_says_it_is_not_drawn() {
     assert!(!yolu_app::look::panel::slot_over_layer_limit(doc, "_ShadowColorTex"));
     assert!(yolu_app::look::panel::slot_over_layer_limit(doc, "_Shadow2ndColorTex"));
     click_label(&mut h, "影設定");
-    assert!(h.query_by_label("2影色: マスク 16（描かない）").is_some());
+    assert!(h.query_by_label("影色2: マスク 16（描かない）").is_some());
     assert_eq!(h.query_all_by_label_contains("描かない").count(), 1, "16 個までのスロットには出ない");
     // 先のスロットの割り当てを外すと、17 個目も描ける（印が消える）
     let mut look = h.state().state.doc.look().clone();
     look.textures.remove("_ShadowBlurMask");
     h.state_mut().state.doc.set_look(look, false).unwrap();
     h.run();
-    assert!(h.query_by_label("2影色: マスク 16").is_some());
+    assert!(h.query_by_label("影色2: マスク 16").is_some());
     assert_eq!(h.query_all_by_label_contains("描かない").count(), 0);
 }
 
@@ -332,7 +354,7 @@ fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
         // 受けた絵のスロットと、送られなかった絵のスロット
         let _ = h.get_by_label(&format!(
             "{}: {}",
-            lang.pick("影の強度マスク", "Shadow Strength Mask"),
+            lang.pick("マスクと強度", "Mask & Strength"),
             lang.pick("Unity のテクスチャ", "Unity texture")
         ));
         let header = h.get_by_label(lang.pick("見た目", "Look")).rect();
@@ -389,7 +411,7 @@ fn a_unity_texture_past_sixteen_says_it_is_not_drawn() {
     assert!(!yolu_app::look::panel::slot_over_received_limit(doc, "_ShadowColorTex"));
     click_label(&mut h, "リムライト設定");
     h.run();
-    assert!(h.query_by_label("リムライトの色: Unity のテクスチャ（描かない）").is_some());
+    assert!(h.query_by_label("色 / マスク: Unity のテクスチャ（描かない）").is_some());
     assert_eq!(h.query_all_by_label_contains("描かない").count(), 1, "開いた節の、16 枚を超えたスロットだけ");
     // 欄で前のスロットを割り当てると、その分だけ後ろのスロットが描ける（印が消える）
     let mut look = h.state().state.doc.look().clone();
@@ -399,14 +421,14 @@ fn a_unity_texture_past_sixteen_says_it_is_not_drawn() {
     h.state_mut().state.doc.set_look(look, false).unwrap();
     h.run();
     assert!(!yolu_app::look::panel::slot_over_received_limit(&h.state().state.doc, "_RimColorTex"));
-    assert!(h.query_by_label("リムライトの色: Unity のテクスチャ").is_some());
+    assert!(h.query_by_label("色 / マスク: Unity のテクスチャ").is_some());
     assert_eq!(h.query_all_by_label_contains("描かない").count(), 0);
 }
 
 #[test]
-fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_base_reset_follows_unity() {
+fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_section_resets_follow_unity() {
     for lang in Lang::ALL {
-        let mut h = harness(lang);
+        let mut h = harness_sized(lang, 3200.0);
         // Unity の値: 不透明・輪郭線あり（Hidden/lilToonOutline）
         h.state_mut()
             .state
@@ -414,7 +436,8 @@ fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_base_reset_fol
             .set_received_look(Some(received_from_unity()))
             .unwrap();
         h.run();
-        click_label(&mut h, lang.pick("基本設定", "Base Setting"));
+        // 輪郭線の入切は輪郭線設定の節の頭（基本設定には無い）
+        click_label(&mut h, lang.pick("輪郭線設定", "Outline"));
         h.run();
         let (mode, outline) = (lang.pick("描画モード", "Rendering Mode"), lang.pick("輪郭線", "Outline"));
         let marked = |h: &Harness<'_, YoluApp>, label: &str| h.query_all_by_label_contains(&format!("{label} •")).count() > 0;
@@ -427,11 +450,17 @@ fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_base_reset_fol
         h.state_mut().apply(Action::Look(LookOp::Outline(false)));
         h.run();
         assert!(marked(&h, mode) && marked(&h, outline));
-        // 基本設定の節を既定に戻すと、描画モードと輪郭線も Unity の値（1 回の Undo）
+        // 基本設定の節を既定に戻すと、描画モードが Unity の値（1 回の Undo）。輪郭線は欄の値のまま
         let steps = h.state().state.doc.undo_count();
         h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Base)));
         h.run();
         assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
+        assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, false));
+        assert!(!marked(&h, mode) && marked(&h, outline));
+        // 輪郭線設定の節を既定に戻すと、輪郭線も Unity の値。利用者の設定からシェーダーの名前が外れる
+        h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Outline)));
+        h.run();
         assert!(h.state().state.doc.look().shader.is_empty());
         let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
         assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, true));
@@ -443,6 +472,505 @@ fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_base_reset_fol
         h.state_mut().apply(Action::Look(LookOp::Outline(true)));
         h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Base)));
         let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
+        assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, true));
+        h.state_mut().apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Outline)));
+        let info = yolu_app::look::liltoon::shader_info(h.state().state.doc.drawn_look());
         assert_eq!((info.mode, info.outline), (yolu_app::look::liltoon::RenderMode::Opaque, false));
+        assert!(h.state().state.doc.look().shader.is_empty());
     }
+}
+
+/// 節の見出し（開け閉めの見出し）の上からの並び。
+fn headers_in_order(h: &Harness<'_, YoluApp>, names: &[&str]) -> Vec<f32> {
+    names
+        .iter()
+        .map(|n| {
+            h.get_all_by_label(n)
+                .map(|node| node.rect().top())
+                .min_by(|a, b| a.total_cmp(b))
+                .unwrap_or_else(|| panic!("見出し {n} が無い"))
+        })
+        .collect()
+}
+
+#[test]
+fn the_sections_follow_the_liltoon_inspector_and_the_outline_has_its_own_section() {
+    for lang in Lang::ALL {
+        let mut h = harness_sized(lang, 3200.0);
+        let names: Vec<&str> = [
+            ("描画モード: 不透明", "Rendering Mode: Opaque"),
+            ("基本設定", "Base Setting"),
+            ("ライティング・明るさ設定", "Lighting"),
+            ("UV設定", "UV Setting"),
+            ("メインカラー / 透過設定", "Main Color / Alpha"),
+            ("影設定", "Shadow"),
+            ("リムシェード", "RimShade"),
+            ("発光設定", "Emission"),
+            ("ノーマルマップ設定", "Normal Map"),
+            ("逆光ライト", "Backlight"),
+            ("光沢設定", "Reflections"),
+            ("マットキャップ設定", "MatCap"),
+            ("リムライト設定", "Rim Light"),
+            ("ラメ設定", "Glitter"),
+            ("輪郭線設定", "Outline"),
+            ("距離フェード", "Distance Fade"),
+        ]
+        .iter()
+        .map(|(ja, en)| lang.pick(*ja, *en))
+        .collect();
+        let tops = headers_in_order(&h, &names);
+        for k in 1..tops.len() {
+            assert!(tops[k] > tops[k - 1], "{} が {} より下: {tops:?}", names[k], names[k - 1]);
+        }
+        // 組の見出し（lilToon の太字の見出し）は、その組の最初の節のすぐ上
+        let mut all = Vec::new();
+        for shape in &h.output().shapes {
+            texts(&shape.shape, &mut all);
+        }
+        let look = h.get_by_label(lang.pick("見た目", "Look")).rect();
+        // 見た目の欄の中の、ある見出しより下のいちばん上のその文言
+        let label_below = |text: &str, after: f32| {
+            all.iter()
+                .filter(|(p, s)| s == text && p.x >= look.left() - 4.0 && p.y > after)
+                .map(|(p, _)| p.y)
+                .min_by(|a, b| a.total_cmp(b))
+                .unwrap_or_else(|| panic!("組の見出し {text} が無い"))
+        };
+        for (group, first, before) in [
+            (lang.pick("色設定", "Color"), 4, 3),
+            (lang.pick("ノーマルマップ・光沢設定", "Normal Map & Reflection"), 8, 7),
+            (lang.pick("拡張設定", "Advanced"), 14, 13),
+        ] {
+            let y = label_below(group, tops[before]);
+            assert!(y > tops[before] && y < tops[first], "{group}: {y} {tops:?}");
+        }
+        // 基本設定に輪郭線の入切は無い。輪郭線設定の節の頭にある
+        click_label(&mut h, lang.pick("基本設定", "Base Setting"));
+        let outline_toggle = lang.pick("輪郭線", "Outline");
+        let toggles = |h: &Harness<'_, YoluApp>| {
+            h.query_all_by_label(outline_toggle)
+                .filter(|n| n.accesskit_node().role() == egui::accesskit::Role::CheckBox)
+                .count()
+        };
+        assert_eq!(toggles(&h), 0, "基本設定を開いても輪郭線の入切は出ない");
+        click_label(&mut h, lang.pick("輪郭線設定", "Outline"));
+        assert_eq!(toggles(&h), 1);
+        let header = h
+            .get_all_by_label(lang.pick("輪郭線設定", "Outline"))
+            .find(|n| n.accesskit_node().role() != egui::accesskit::Role::CheckBox)
+            .unwrap()
+            .rect();
+        let toggle = h
+            .get_all_by_label(outline_toggle)
+            .find(|n| n.accesskit_node().role() == egui::accesskit::Role::CheckBox)
+            .unwrap()
+            .rect();
+        assert!(toggle.top() > header.top() && toggle.top() - header.bottom() < 12.0, "節の頭: {header:?} {toggle:?}");
+    }
+}
+
+#[test]
+fn the_paint_button_makes_assigns_and_switches_to_the_slot_channel_in_one_undo() {
+    let mut h = harness_sized(Lang::Ja, 2400.0);
+    set_value(&mut h, "_UseRimShade", 1.0);
+    h.run();
+    click_label(&mut h, "リムシェード");
+    let channels_before = h.state().state.doc.channels().len();
+    let steps = h.state().state.doc.undo_count();
+    // 割り当てが無いスロット: ひな形と同じ作りのチャンネルを作って割り当て、描くチャンネルにする（1 回の Undo）
+    click_label(&mut h, "リムシェードのマスクを描く（描くチャンネルを作って割り当てる）");
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.undo_count(), steps + 1);
+    assert_eq!(doc.channels().len(), channels_before + 1);
+    let TextureSource::Channel(c) = doc.look().textures["_RimShadeMask"] else {
+        panic!("チャンネルを割り当てる");
+    };
+    let info = doc.channel_info(c).unwrap();
+    assert_eq!((info.name.as_str(), info.kind), ("リムシェードのマスク", ChannelKind::Scalar));
+    assert_eq!(info.default, Rgba8::new(255, 255, 255, 255));
+    assert_eq!(h.state().state.m2.paint_channel, c);
+    assert!(yolu_app::look::panel::painting_slot(&h.state().state, "_RimShadeMask"));
+    // 今描いているスロットはボタンが押し込まれた見た目（読み上げの選択の印）
+    let button = h.get_by_label("リムシェードのマスクを描く");
+    assert_eq!(button.accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+    // チャンネルの欄の行に、そのチャンネルを読む lilToon のスロットの印
+    click_tab(&mut h, yolu_app::Tab::Channels);
+    assert!(h.query_by_label("lilToon: リムシェードのマスク").is_some());
+    assert!(h.query_by_label("lilToon: メインカラー").is_some(), "Color の行にはメインカラー");
+    // 割り当てのあるスロット: 描くチャンネルを切り替えるだけ（Undo に入らない）
+    h.state_mut().apply(Action::Look(LookOp::PaintSlot("_MainTex")));
+    h.run();
+    assert_eq!(h.state().state.m2.paint_channel, Channel::Color);
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(h.state().state.doc.channels().len(), channels_before + 1);
+    // Undo でチャンネルと割り当てが一緒に消え、描くチャンネルは標準に戻る
+    h.state_mut().apply(Action::Look(LookOp::PaintSlot("_RimShadeMask")));
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.channels().len(), channels_before);
+    assert!(!doc.look().textures.contains_key("_RimShadeMask"));
+    assert!(doc.channel_info(h.state().state.m2.paint_channel).is_some());
+    // 標準の見た目のセットで描く口を使うと、lilToon にもする（同じ 1 回の Undo）
+    h.state_mut().state.doc.set_look(MaterialLook::default(), false).unwrap();
+    let steps = h.state().state.doc.undo_count();
+    h.state_mut().apply(Action::Look(LookOp::PaintSlot("_ShadowColorTex")));
+    let doc = &h.state().state.doc;
+    assert_eq!(doc.undo_count(), steps + 1);
+    assert_eq!(doc.look().kind, LookKind::LilToon);
+    let TextureSource::Channel(c) = doc.look().textures["_ShadowColorTex"] else {
+        panic!("割り当てる");
+    };
+    let info = doc.channel_info(c).unwrap();
+    assert_eq!((info.kind, info.color_space, info.default), (ChannelKind::Color, ColorSpace::Srgb, Rgba8::new(0, 0, 0, 0)));
+}
+
+#[test]
+fn every_section_with_every_feature_on_shows_names_only_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut h = harness_sized(lang, 2400.0);
+        for toggle in [
+            "_UseMain2ndTex",
+            "_UseMain3rdTex",
+            "_UseShadow",
+            "_UseRimShade",
+            "_UseEmission",
+            "_UseEmission2nd",
+            "_UseBumpMap",
+            "_UseBump2ndMap",
+            "_UseAnisotropy",
+            "_Anisotropy2Reflection",
+            "_UseBacklight",
+            "_UseReflection",
+            "_ApplyReflection",
+            "_UseMatCap",
+            "_UseMatCap2nd",
+            "_MatCapCustomNormal",
+            "_UseRim",
+            "_UseGlitter",
+            "_Main2ndTexIsDecal",
+        ] {
+            set_value(&mut h, toggle, 1.0);
+        }
+        h.state_mut().apply(Action::Look(LookOp::Outline(true)));
+        h.state_mut().apply(Action::Look(LookOp::Mode(yolu_app::look::liltoon::RenderMode::Transparent)));
+        set_value(&mut h, "_AlphaMaskMode", 1.0);
+        h.run();
+        let sections: Vec<&str> = [
+            ("基本設定", "Base Setting"),
+            ("ライティング・明るさ設定", "Lighting"),
+            ("UV設定", "UV Setting"),
+            ("メインカラー / 透過設定", "Main Color / Alpha"),
+            ("影設定", "Shadow"),
+            ("リムシェード", "RimShade"),
+            ("発光設定", "Emission"),
+            ("ノーマルマップ設定", "Normal Map"),
+            ("逆光ライト", "Backlight"),
+            ("光沢設定", "Reflections"),
+            ("マットキャップ設定", "MatCap"),
+            ("リムライト設定", "Rim Light"),
+            ("ラメ設定", "Glitter"),
+            ("輪郭線設定", "Outline"),
+            ("距離フェード", "Distance Fade"),
+        ]
+        .iter()
+        .map(|(ja, en)| lang.pick(*ja, *en))
+        .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        // 1 つずつ開いて、その節の文言を見る（全部を開くと窓に入らない）
+        for name in &sections {
+            let header = h
+                .get_all_by_label(name)
+                .find(|n| n.accesskit_node().role() != egui::accesskit::Role::CheckBox)
+                .unwrap()
+                .rect();
+            click(&mut h, header.center());
+            h.run();
+            let look = h.get_by_label(lang.pick("見た目", "Look")).rect();
+            let mut all = Vec::new();
+            for shape in &h.output().shapes {
+                texts(&shape.shape, &mut all);
+            }
+            for (p, text) in all {
+                if p.x >= look.left() - 4.0 && p.x <= look.right() + 4.0 && p.y >= look.top() - 2.0 {
+                    assert_plain("見た目の欄（全部の機能）", &text);
+                    if lang == Lang::En {
+                        assert!(!has_japanese(&text), "{name}: {text}");
+                    }
+                    seen.insert(text);
+                }
+            }
+            // 閉じて次へ
+            let header = h
+                .get_all_by_label(name)
+                .find(|n| n.accesskit_node().role() != egui::accesskit::Role::CheckBox)
+                .unwrap()
+                .rect();
+            click(&mut h, header.center());
+            h.run();
+        }
+        // 足した機能の名前が欄に出る
+        for want in [
+            lang.pick("メインカラー2nd", "Main Color 2nd"),
+            lang.pick("ミラーモード", "Mirror Mode"),
+            lang.pick("ノーマルマップ2nd", "Normal Map 2nd"),
+            lang.pick("異方性反射", "Anisotropy"),
+            lang.pick("光沢のタイプ", "Specular Mode"),
+            lang.pick("指向性", "Directivity"),
+            lang.pick("パーティクルサイズ", "Particle Size"),
+            lang.pick("ハイライト", "Highlight"),
+            lang.pick("開始距離", "Start Distance"),
+            lang.pick("カスタムノーマルマップ", "Custom normal map"),
+        ] {
+            assert!(seen.iter().any(|s| s.contains(want)), "{want} が無い: {seen:?}");
+        }
+    }
+}
+
+/// 節の見出しを押す（同じ名前の機能の入切があれば、見出しのほう）。
+fn toggle_section(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let header = h
+        .get_all_by_label(name)
+        .find(|n| n.accesskit_node().role() != egui::accesskit::Role::CheckBox)
+        .unwrap_or_else(|| panic!("見出し {name}"))
+        .rect();
+    click(h, header.center());
+    h.run();
+}
+
+/// スライダーが見せている値。
+fn shown(h: &Harness<'_, YoluApp>, label: &str) -> f64 {
+    h.get_by_label(label)
+        .accesskit_node()
+        .numeric_value()
+        .unwrap_or_else(|| panic!("{label} の値"))
+}
+
+fn stored(h: &Harness<'_, YoluApp>, name: &str) -> Option<LookValue> {
+    h.state().state.doc.look().get(name)
+}
+
+#[test]
+fn turning_the_decal_off_clears_its_mirror_and_copy_modes_in_one_undo_like_liltoon() {
+    use yolu_app::look::fields;
+    let mut h = harness_sized(Lang::Ja, 3200.0);
+    set_value(&mut h, "_UseMain2ndTex", 1.0);
+    set_value(&mut h, "_Main2ndTexIsDecal", 1.0);
+    h.run();
+    toggle_section(&mut h, "メインカラー / 透過設定");
+    // 位置と大きさは lilToon の欄と同じ換算: 既定の (1, 1, 0, 0) は X・Y 座標 0.5、サイズ 1
+    for (label, v) in [("X座標", 0.5), ("Y座標", 0.5), ("X軸サイズ", 1.0), ("Y軸サイズ", 1.0)] {
+        assert!((shown(&h, label) - v).abs() < 1e-6, "{label}: {}", shown(&h, label));
+    }
+    // 欄の値 → 保存する値 → 欄の値（1 回の Undo）
+    let steps = h.state().state.doc.undo_count();
+    h.state_mut()
+        .apply(Action::Look(fields::decal_st_op("_Main2ndTex_ST", [0.3, 0.7, 0.25, 0.4], false)));
+    h.run();
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    let Some(LookValue::Vector(st)) = stored(&h, "_Main2ndTex_ST") else {
+        panic!("保存する値");
+    };
+    for (k, want) in [4.0f32, 2.5, -0.7, -1.25].into_iter().enumerate() {
+        assert!((st[k] - want).abs() < 1e-5, "{st:?}");
+    }
+    for (label, v) in [("X座標", 0.3), ("Y座標", 0.7), ("X軸サイズ", 0.25), ("Y軸サイズ", 0.4)] {
+        assert!((shown(&h, label) - v).abs() < 1e-5, "{label}: {}", shown(&h, label));
+    }
+    // ミラーモード「右のみ・反転」と複製モード「反転」（それぞれ 1 回の Undo）
+    let steps = h.state().state.doc.undo_count();
+    click_label(&mut h, "ミラーモード: 通常");
+    pick(&mut h, "右のみ・反転");
+    click_label(&mut h, "複製モード: 通常");
+    pick(&mut h, "反転");
+    assert_eq!(h.state().state.doc.undo_count(), steps + 2);
+    let on = |h: &Harness<'_, YoluApp>, n: &str| yolu_app::look::liltoon::on(h.state().state.doc.look(), n);
+    let flags = ["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror", "ShouldCopy", "ShouldFlipCopy"];
+    let set: Vec<bool> = flags.iter().map(|f| on(&h, &format!("_Main2ndTex{f}"))).collect();
+    assert_eq!(set, [false, true, true, true, true]);
+    // 複製モードの X 座標は右半分で見せる（0.3 は 0.7）
+    assert!((shown(&h, "X座標") - 0.7).abs() < 1e-5);
+    // デカールを切: ミラーと複製のフラグも 0（lilToon の UV4Decal と同じ）、1 回の Undo。欄にミラー・複製の行は出ない
+    let steps = h.state().state.doc.undo_count();
+    click_label(&mut h, "デカール化");
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1, "1 回の Undo");
+    assert!(!on(&h, "_Main2ndTexIsDecal"));
+    for f in flags {
+        assert!(!on(&h, &format!("_Main2ndTex{f}")), "{f}");
+    }
+    assert_eq!(h.query_all_by_label_contains("ミラーモード").count(), 0);
+    // 3D ビューへ渡す値にも、隠す・裏返すフラグは残らない
+    let values = yolu_app::view3d::look_gpu::params(&h.state().state.doc, h.state().state.doc.drawn_look(), &[], [None, None]);
+    let at = |i: usize, k: usize| values[i * 4 + k];
+    assert_eq!([at(65, 0), at(65, 1), at(65, 2), at(65, 3), at(66, 0), at(66, 1)], [0.0; 6]);
+    // Undo で入とフラグが一緒に戻る
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    assert!(on(&h, "_Main2ndTexIsDecal"));
+    let set: Vec<bool> = flags.iter().map(|f| on(&h, &format!("_Main2ndTex{f}"))).collect();
+    assert_eq!(set, [false, true, true, true, true]);
+    assert!(h.query_by_label("ミラーモード: 右のみ・反転").is_some());
+    // 入にするときはフラグを変えない（切のあとに入にしても、フラグは 0 のまま）
+    click_label(&mut h, "デカール化");
+    click_label(&mut h, "デカール化");
+    assert!(on(&h, "_Main2ndTexIsDecal"));
+    assert!(flags.iter().all(|f| !on(&h, &format!("_Main2ndTex{f}"))));
+}
+
+#[test]
+fn the_specular_mode_glitter_fields_and_lighting_presets_match_liltoon_and_are_one_undo() {
+    use yolu_app::look::{fields, liltoon, Section};
+    let mut h = harness_sized(Lang::Ja, 4400.0);
+    set_value(&mut h, "_UseReflection", 1.0);
+    set_value(&mut h, "_UseGlitter", 1.0);
+    h.run();
+    // 光沢のタイプ: 既定は lilToon と同じくトゥーン。リアルを選ぶと 2 つの値を 1 回の Undo で
+    toggle_section(&mut h, "光沢設定");
+    let steps = h.state().state.doc.undo_count();
+    click_label(&mut h, "光沢のタイプ: トゥーン");
+    pick(&mut h, "リアル");
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(stored(&h, "_ApplySpecular"), Some(LookValue::Float(1.0)));
+    assert_eq!(stored(&h, "_SpecularToon"), Some(LookValue::Float(0.0)));
+    assert!(h.query_by_label("光沢のタイプ: リアル").is_some());
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    assert_eq!(stored(&h, "_ApplySpecular"), None);
+    assert!(h.query_by_label("光沢のタイプ: トゥーン").is_some());
+    toggle_section(&mut h, "光沢設定");
+
+    // ラメ: 既定の値は lilToon の欄と同じ表示（サイズ 1・パーティクルサイズ 0.4・密度 √(1/50)/1.5・感度 0.25 / 密度）
+    toggle_section(&mut h, "ラメ設定");
+    let density = (1.0f64 / 50.0).sqrt() / 1.5;
+    for (label, v) in [
+        ("サイズ X", 1.0),
+        ("サイズ Y", 1.0),
+        ("パーティクルサイズ", 0.4),
+        ("密度", density),
+        ("感度", 0.25 / density),
+    ] {
+        assert!((shown(&h, label) - v).abs() < 1e-4, "{label}: {}", shown(&h, label));
+    }
+    // 欄の値 → 保存する 2 つの値（1 回の Undo）→ 欄の値
+    let steps = h.state().state.doc.undo_count();
+    h.state_mut().apply(Action::Look(fields::glitter_op([2.0, 0.5, 0.3, 0.2, 4.0], false)));
+    h.run();
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    let Some(LookValue::Vector(p)) = stored(&h, "_GlitterParams1") else {
+        panic!("保存する値");
+    };
+    for (k, want) in [128.0f32, 512.0, 0.09, 1.0 / (0.04 * 2.25)].into_iter().enumerate() {
+        assert!((p[k] - want).abs() < 1e-3 * want.abs().max(1.0), "{p:?}");
+    }
+    assert!(matches!(stored(&h, "_GlitterSensitivity"), Some(LookValue::Float(v)) if (v - 0.8).abs() < 1e-5));
+    for (label, v) in [("サイズ X", 2.0), ("サイズ Y", 0.5), ("パーティクルサイズ", 0.3), ("密度", 0.2), ("感度", 4.0)] {
+        assert!((shown(&h, label) - v).abs() < 1e-3, "{label}: {}", shown(&h, label));
+    }
+    toggle_section(&mut h, "ラメ設定");
+
+    // ライティングのプリセット: lilToon の ApplyLightingPreset と同じ値（欄の表にある 5 つ）を 1 回の Undo で
+    toggle_section(&mut h, "ライティング・明るさ設定");
+    let before: Vec<String> = h.state().state.doc.look().properties.keys().cloned().collect();
+    let steps = h.state().state.doc.undo_count();
+    click_label(&mut h, "半モノクロ");
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    let semi = [
+        ("_AsUnlit", 0.0),
+        ("_LightMinLimit", 0.05),
+        ("_LightMaxLimit", 1.0),
+        ("_MonochromeLighting", 0.5),
+        ("_ShadowEnvStrength", 0.0),
+    ];
+    for (name, v) in semi {
+        assert_eq!(stored(&h, name), Some(LookValue::Float(v)), "{name}");
+    }
+    let added: Vec<String> = h
+        .state()
+        .state
+        .doc
+        .look()
+        .properties
+        .keys()
+        .filter(|k| !before.contains(k))
+        .cloned()
+        .collect();
+    assert_eq!(added.len(), 5, "表に無い値（頂点ライトなど）は入れない: {added:?}");
+    assert!(added.iter().all(|k| liltoon::section_props(Section::Lighting).any(|n| n == k)));
+    // 「通常」はほかの欄にもあるので、「半モノクロ」と同じ行のボタン
+    let semi_row = h.get_by_label("半モノクロ").rect();
+    let default_button = h
+        .get_all_by_label("通常")
+        .map(|n| n.rect())
+        .find(|r| (r.center().y - semi_row.center().y).abs() < 2.0)
+        .expect("プリセットの通常");
+    click(&mut h, default_button.center());
+    assert_eq!(stored(&h, "_MonochromeLighting"), Some(LookValue::Float(0.0)));
+    // 節の「既定に戻す」で、プリセットの値は全部外れる
+    h.state_mut().apply(Action::Look(LookOp::Reset(Section::Lighting)));
+    for (name, _) in semi {
+        assert_eq!(stored(&h, name), None, "{name}");
+    }
+    // Undo は 1 段ずつ（既定に戻す → 通常 → 半モノクロ）
+    h.state_mut().apply(Action::Undo);
+    h.state_mut().apply(Action::Undo);
+    assert_eq!(stored(&h, "_MonochromeLighting"), Some(LookValue::Float(0.5)));
+    h.state_mut().apply(Action::Undo);
+    assert_eq!(stored(&h, "_MonochromeLighting"), None);
+}
+
+#[test]
+fn the_alpha_mask_and_outline_highlight_fields_match_liltoon_and_round_trip() {
+    use yolu_app::look::fields;
+    let mut h = harness_sized(Lang::Ja, 4400.0);
+    h.state_mut()
+        .apply(Action::Look(LookOp::Mode(yolu_app::look::liltoon::RenderMode::Transparent)));
+    set_value(&mut h, "_AlphaMaskMode", 1.0);
+    h.state_mut().apply(Action::Look(LookOp::Outline(true)));
+    h.state_mut().apply(Action::Look(LookOp::Value {
+        name: "_OutlineLitColor",
+        value: LookValue::Color([1.0, 0.2, 0.0, 1.0]),
+        drag: false,
+    }));
+    h.run();
+    // アルファマスク: 既定は反転なし・透明度 0（lilToon の欄の表示）
+    toggle_section(&mut h, "メインカラー / 透過設定");
+    let toggled = |h: &Harness<'_, YoluApp>| h.get_by_label("Invert").accesskit_node().toggled();
+    assert_eq!(toggled(&h), Some(egui::accesskit::Toggled::False));
+    assert_eq!(shown(&h, "Transparency"), 0.0);
+    // 反転を入: スケール −1・オフセット 1（透明度はそのまま 0）、1 回の Undo
+    let steps = h.state().state.doc.undo_count();
+    click_label(&mut h, "Invert");
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(stored(&h, "_AlphaMaskScale"), Some(LookValue::Float(-1.0)));
+    assert_eq!(stored(&h, "_AlphaMaskValue"), Some(LookValue::Float(1.0)));
+    assert_eq!(toggled(&h), Some(egui::accesskit::Toggled::True));
+    assert_eq!(shown(&h, "Transparency"), 0.0);
+    // 透明度 −0.4 → オフセット 0.6 → 欄は −0.4
+    h.state_mut().apply(Action::Look(fields::alpha_mask_op(true, -0.4, false)));
+    h.run();
+    assert!(matches!(stored(&h, "_AlphaMaskValue"), Some(LookValue::Float(v)) if (v - 0.6).abs() < 1e-6));
+    assert!((shown(&h, "Transparency") + 0.4).abs() < 1e-6);
+    h.state_mut().apply(Action::Undo);
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    assert_eq!(stored(&h, "_AlphaMaskScale"), None);
+    assert_eq!(toggled(&h), Some(egui::accesskit::Toggled::False));
+    toggle_section(&mut h, "メインカラー / 透過設定");
+
+    // 輪郭線のハイライト: 既定（スケール 10・オフセット −8）は lilToon の欄で Min 0.8・Max 0.9
+    toggle_section(&mut h, "輪郭線設定");
+    assert!((shown(&h, "Min") - 0.8).abs() < 1e-5, "{}", shown(&h, "Min"));
+    assert!((shown(&h, "Max") - 0.9).abs() < 1e-5, "{}", shown(&h, "Max"));
+    let steps = h.state().state.doc.undo_count();
+    h.state_mut().apply(Action::Look(fields::outline_lit_op(0.2, 0.6, false)));
+    h.run();
+    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert!(matches!(stored(&h, "_OutlineLitScale"), Some(LookValue::Float(v)) if (v - 2.5).abs() < 1e-5));
+    assert!(matches!(stored(&h, "_OutlineLitOffset"), Some(LookValue::Float(v)) if (v + 0.5).abs() < 1e-5));
+    assert!((shown(&h, "Min") - 0.2).abs() < 1e-5);
+    assert!((shown(&h, "Max") - 0.6).abs() < 1e-5);
+    h.state_mut().apply(Action::Undo);
+    h.run();
+    assert_eq!(stored(&h, "_OutlineLitScale"), None);
+    assert!((shown(&h, "Min") - 0.8).abs() < 1e-5);
 }

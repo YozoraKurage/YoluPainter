@@ -239,7 +239,8 @@ fn headless_unity_values_draw_the_set_as_liltoon_without_an_undo_step() {
         drawn.textures["_MainTex"],
         TextureSource::Channel(Channel::Color)
     );
-    assert!(a.state.doc.look().is_default());
+    // 利用者の設定は、新しいセットの既定（lilToon）のまま変わらない
+    assert_eq!(a.state.doc.look(), &yolu_app::look::new_set_look());
     assert_eq!(a.doc_steps(), steps, "受け取りは Undo に入らない");
     assert!(!a.state.modified, "受け取りは編集ではない");
     let r = received(&a.state).unwrap();
@@ -313,7 +314,8 @@ fn headless_a_material_that_is_no_longer_liltoon_drops_the_received_values() {
     none.kind = ValuesKind::None;
     unity.send(Message::MaterialValues(none));
     a.until("値を外す", |s| received(s).is_none());
-    assert_eq!(a.state.doc.drawn_look().kind, LookKind::Standard);
+    // 受けた値を外すと、利用者の設定（新しいセットの既定の lilToon）で描く
+    assert_eq!(a.state.doc.drawn_look(), &yolu_app::look::new_set_look());
     // 古い世代の値は使わない（新しいモデルを受けたあとに、前のモデルの値が遅れて着いた）
     unity.send(Message::Model(model(2)));
     a.until("新しいモデル", |s| {
@@ -367,6 +369,64 @@ fn headless_values_that_arrive_together_with_the_bye_are_kept() {
 }
 
 #[test]
+fn headless_main_2nd_is_not_drawn_over_everything_when_unity_does_not_list_its_texture() {
+    use yolu_app::view3d::look_gpu::{feature as bit, features_of};
+    let (mut a, name) = Headless::listen("later");
+    let unity = FakeUnity::connect(&name, feature::MATERIAL_VALUES);
+    a.until("つながり", |s| {
+        matches!(s.link.status, LinkStatus::Connected { .. })
+    });
+    unity.send(Message::Model(model(1)));
+    a.until("セットの結び付け", |s| {
+        s.sets.current().bound == Some(0)
+    });
+    // 送るスロットの一覧が古い Unity: メインカラー 2nd は入（色は既定の白・A=1）だが、そのテクスチャのスロットを知らせない
+    let mut old = values(1, 0.3, [0.4, 0.3, 0.5, 1.0]);
+    old.properties.push(PropertyEntry {
+        name: "_UseMain2ndTex".into(),
+        value: PropertyValue::Int(1),
+    });
+    unity.send(Message::MaterialValues(old.clone()));
+    a.until("値", |s| received(s).is_some());
+    // 白のテクスチャのまま全面に重ねない: 描く機能に入らない。欄のスロットの行は「読めない」
+    let drawn = a.state.doc.drawn_look().clone();
+    assert_eq!(drawn.kind, LookKind::LilToon);
+    assert_eq!(features_of(&drawn) & (1 << bit::MAIN2), 0);
+    assert_eq!(features_of(&drawn) & (1 << bit::SHADOW), 1 << bit::SHADOW, "ほかの機能は描く");
+    assert_eq!(received(&a.state).unwrap().missing["_Main2ndTex"], MissingImage::Unreadable);
+    // スロットを知らせる Unity（テクスチャの有り無しを言う）なら、Unity と同じく描く
+    let mut new = old;
+    new.slots.push(SlotTexture {
+        name: "_Main2ndTex".into(),
+        state: SlotState::Follows,
+        width: 2,
+        height: 2,
+    });
+    new.slots.push(SlotTexture {
+        name: "_Main2ndBlendMask".into(),
+        state: SlotState::Empty,
+        width: 0,
+        height: 0,
+    });
+    unity.send(Message::MaterialValues(new));
+    unity.send(Message::MaterialTexture(MaterialTexture {
+        generation: 1,
+        material: 0,
+        slot: "_Main2ndTex".into(),
+        width: 2,
+        height: 2,
+        srgb: true,
+        pixels: [[0, 0, 0, 0]; 4].concat(),
+    }));
+    a.until("2nd の絵", |s| {
+        received(s).is_some_and(|r| r.images.contains_key("_Main2ndTex"))
+    });
+    let drawn = a.state.doc.drawn_look().clone();
+    assert_ne!(features_of(&drawn) & (1 << bit::MAIN2), 0);
+    assert!(!received(&a.state).unwrap().missing.contains_key("_Main2ndTex"));
+}
+
+#[test]
 fn headless_an_older_unity_without_the_mark_gets_and_sends_no_values() {
     let (mut a, name) = Headless::listen("old");
     // 値の印を出さない Unity（この機能より古いパッケージ）: 共通の印が無く、値の命令は送られない
@@ -392,9 +452,9 @@ fn headless_an_older_unity_without_the_mark_gets_and_sends_no_values() {
     }
     assert!(received(&a.state).is_none());
     assert_eq!(
-        a.state.doc.drawn_look().kind,
-        LookKind::Standard,
-        "今までどおり（値が来ないだけ）"
+        a.state.doc.drawn_look(),
+        &yolu_app::look::new_set_look(),
+        "今までどおり（値が来ないだけ。見た目は新しいセットの既定）"
     );
 }
 

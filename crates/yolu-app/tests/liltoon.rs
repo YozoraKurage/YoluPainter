@@ -25,6 +25,17 @@ fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     h
 }
 
+/// 新しいセットの既定（lilToon）でなく、標準の見た目から始める（標準と lilToon を比べる試験・割り当ての無いスロットを見る試験）。
+/// 開いた古い .ylp（look.json が無い）と同じ始まり。
+fn start_standard(h: &mut Harness<'_, YoluApp>, set: usize) {
+    h.state_mut()
+        .state
+        .set_doc_mut(set)
+        .restore_look(MaterialLook::default())
+        .expect("作ったばかりの文書");
+    h.run();
+}
+
 /// カメラに向いた板（外向きの法線は −Z）。
 fn quad(size: f32) -> ModelMesh {
     let h = size * 0.5;
@@ -507,6 +518,7 @@ fn the_outline_draws_a_shell_outside_the_silhouette() {
 #[test]
 fn undo_takes_the_look_back_and_the_view_follows() {
     let mut h = view(900.0, 640.0, 64);
+    start_standard(&mut h, 0);
     set_model(&mut h, vec![quad(1.0)]);
     look_at(&mut h, 2.5);
     light(&mut h, 180.0, 0.0);
@@ -522,6 +534,58 @@ fn undo_takes_the_look_back_and_the_view_follows() {
     h.run();
     assert_eq!(px(&h.render().expect("描ける"), middle(&h)), toon);
 }
+
+/// ソフトの描画（アダプタが CPU）は使う機能ごとにパイプラインを作り、同じ組み合わせへ戻るときは作り直さない。組み合わせを次々に変えても、
+/// 持つ数は上限（48）で止まる。実機は全部入りの 1 本なので、機能を入切しても作らない。
+#[test]
+fn the_pipelines_per_feature_set_are_reused_and_kept_under_the_cap() {
+    let mut h = view(480.0, 360.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    set_look(&mut h, lil());
+    let software = h.state().view3d_adapter().unwrap_or_default().contains("Cpu");
+    let stats = |h: &Harness<'_, YoluApp>| h.state().view3d_stats().expect("3D ビュー");
+    let with = |on: &[&str]| {
+        let mut look = lil();
+        for name in on {
+            look.properties.insert((*name).into(), LookValue::Float(1.0));
+        }
+        look
+    };
+    let before = stats(&h).lil_pipeline_builds;
+    set_look(&mut h, with(&["_UseShadow"]));
+    let made = stats(&h).lil_pipeline_builds;
+    if software {
+        assert!(made > before, "影を入れた組み合わせを作る");
+    } else {
+        assert_eq!(made, before, "実機は全部入りの 1 本");
+    }
+    set_look(&mut h, lil());
+    set_look(&mut h, with(&["_UseShadow"]));
+    assert_eq!(stats(&h).lil_pipeline_builds, made, "同じ組み合わせへ戻るときは作り直さない");
+    let toggles = [
+        "_UseShadow",
+        "_UseRimShade",
+        "_UseBacklight",
+        "_UseReflection",
+        "_UseRim",
+        "_UseGlitter",
+    ];
+    for bits in 0..(1u32 << toggles.len()) {
+        let on: Vec<&str> = toggles
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| bits >> i & 1 == 1)
+            .map(|(_, name)| *name)
+            .collect();
+        set_look(&mut h, with(&on));
+        assert!(stats(&h).lil_pipelines <= 48, "持つ数: {}", stats(&h).lil_pipelines);
+    }
+    if software {
+        assert!(stats(&h).lil_pipeline_builds >= made + 60, "64 通りを作った");
+    } else {
+        assert_eq!(stats(&h).lil_pipelines, 1);
+    }}
 
 // ───────── ユーザーチャンネルの配列と 3D ビューの予算・ほかのセットの lilToon ─────────
 
@@ -817,6 +881,7 @@ fn lil_received() -> MaterialLook {
 #[test]
 fn a_texture_received_from_unity_draws_its_slot_and_a_channel_assigned_here_wins() {
     let mut h = view(900.0, 640.0, 64);
+    start_standard(&mut h, 0);
     set_model(&mut h, vec![quad(1.0)]);
     look_at(&mut h, 2.5);
     light(&mut h, 180.0, 0.0);
@@ -970,23 +1035,26 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
 #[test]
 fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     let mut h = two_sets(64);
+    start_standard(&mut h, 0);
+    start_standard(&mut h, 1);
     light(&mut h, 0.0, 0.0);
     for i in 0..2 {
         fill_set(&mut h, i, [230, 200, 180, 255]);
     }
     let builds = |h: &Harness<'_, YoluApp>| h.state().view3d_stats().unwrap().look_params_builds;
-    // 標準の見た目のセットだけなら、値を作らない（カメラを回しても）
+    // 標準の見た目のセットだけなら、値を作らない（カメラを回しても）。数は作った回数の合計なので、標準にした後からの増えを見る
+    let base = builds(&h);
     for yaw in [0.1f32, 0.2, 0.3] {
         h.state_mut().state.view3d.camera.yaw = yaw;
         h.run();
     }
-    assert_eq!(builds(&h), 0);
+    assert_eq!(builds(&h), base);
     // lilToon にすると作る。カメラを回すだけのフレームでは作り直さない
     let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
     h.state_mut().state.set_doc_mut(1).set_look(look.clone(), false).unwrap();
     h.run();
     let after = builds(&h);
-    assert!(after >= 1);
+    assert!(after > base);
     let renders = h.state().view3d_stats().unwrap().renders;
     for yaw in [0.4f32, 0.5, 0.6] {
         h.state_mut().state.view3d.camera.yaw = yaw;
@@ -1066,7 +1134,12 @@ fn measure_frames_standard_and_liltoon() {
         state.doc.look().clone()
     };
     let looks = [("標準", standard), ("lilToon（影）", simple), ("lilToon（全部・マスク 9）", full)];
-    for grid in [20u32, 77, 160] {
+    // 測る格子は `LIL_MEASURE_GRIDS`（例 `20,77`）で絞れる
+    let grids: Vec<u32> = std::env::var("LIL_MEASURE_GRIDS")
+        .ok()
+        .map(|g| g.split(',').filter_map(|v| v.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![20, 77, 160]);
+    for grid in grids {
         let mesh = cube_sphere(grid, 0.5);
         let triangles: usize = mesh.submeshes.iter().map(|s| s.indices.len() / 3).sum();
         set_model(&mut h, vec![mesh]);
@@ -1077,14 +1150,19 @@ fn measure_frames_standard_and_liltoon() {
             distance: 1.6,
             model_radius: 1.0,
         };
-        let mut sums = vec![(Vec::new(), Vec::new()); looks.len()];
+        let mut sums = vec![(Vec::new(), Vec::new(), Vec::new()); looks.len()];
+        // 見た目を切り替えたあと落ち着くまで（1 回目はソフトの描画ならパイプラインを作る。2 回目からは作ったものを使う）
+        let mut switches = vec![Vec::new(); looks.len()];
         for _round in 0..3 {
             for (k, (_, look)) in looks.iter().enumerate() {
+                let started = Instant::now();
                 h.state_mut().state.doc.set_look(look.clone(), false).unwrap();
                 h.state_mut().state.sync_view3d();
                 h.run();
                 h.state().view3d_wait_gpu();
+                switches[k].push(started.elapsed().as_micros() as f64 / 1000.0);
                 let (mut wall, mut cpu) = (Vec::new(), Vec::new());
+                let ticks_before = process_cpu_ms();
                 for frame in 0..24 {
                     h.state_mut().state.view3d.camera.yaw += 3.0 + frame as f32 * 0.01;
                     let started = Instant::now();
@@ -1096,10 +1174,11 @@ fn measure_frames_standard_and_liltoon() {
                 let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
                 sums[k].0.push(mean(&wall[4..]));
                 sums[k].1.push(mean(&cpu[4..]));
+                sums[k].2.push((process_cpu_ms() - ticks_before) / 24.0);
             }
         }
         for (k, (name, _)) in looks.iter().enumerate() {
-            let (wall, cpu) = &sums[k];
+            let (wall, cpu, process) = &sums[k];
             let fmt = |v: &[f64]| {
                 let mean = v.iter().sum::<f64>() / v.len() as f64;
                 let lo = v.iter().copied().fold(f64::MAX, f64::min);
@@ -1107,10 +1186,32 @@ fn measure_frames_standard_and_liltoon() {
                 format!("{mean:.2}（{lo:.2}〜{hi:.2}）")
             };
             println!(
-                "三角形 {triangles:>6}・{name}: 全体 {} ms、prepare の CPU {} ms",
+                "三角形 {triangles:>6}・{name}: 全体 {} ms、prepare の CPU {} ms、プロセスの CPU 時間 {} ms、切り替え 1 回目 {:.0} ms・2 回目から {} ms",
                 fmt(wall),
-                fmt(cpu)
+                fmt(cpu),
+                fmt(process),
+                switches[k][0],
+                fmt(&switches[k][1..])
             );
         }
+    }
+}
+
+/// プロセスの CPU 時間（ユーザーとシステムの合計、ms。Linux だけ。ほかは 0）。llvmpipe の描画は CPU の仕事なので、ほかの仕事で
+/// 混んだ機械でも、全体の時間より揺れの小さい比べになる。
+fn process_cpu_ms() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+        // 2 つ目の欄（名前）は括弧で囲まれ、空白を含みうる
+        let rest = stat.rsplit_once(')').map_or("", |(_, r)| r);
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        let ticks = |i: usize| fields.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        // utime・stime は 3 つ目の欄の後の 12・13 番目（0 始まりで 11・12）。1 秒は 100 ティック
+        (ticks(11) + ticks(12)) * 10.0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0.0
     }
 }

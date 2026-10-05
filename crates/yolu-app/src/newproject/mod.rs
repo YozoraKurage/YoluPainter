@@ -928,6 +928,7 @@ pub fn new_set_document(
         doc.set_normal_settings(normal, false).map_err(core)?;
     }
     doc.clear_history().map_err(core)?;
+    crate::look::apply_new_set_look(&mut doc);
     Ok(doc)
 }
 

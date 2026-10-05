@@ -3,6 +3,7 @@
 //! .ylp との受け渡し（`io`）。値は文書（`Document::look`）が持ち、変更は 1 回の Undo（スライダーのドラッグは 1 段にまとめる）。
 
 pub mod export;
+pub mod fields;
 pub mod io;
 pub mod liltoon;
 pub mod link;
@@ -20,142 +21,54 @@ use liltoon::RenderMode;
 pub enum Section {
     Base,
     Lighting,
+    Uv,
+    /// メインカラー / 透過設定（メインカラー・2nd・3rd・アルファマスク）。
     Main,
     Shadow,
+    RimShade,
     Emission,
+    /// ノーマルマップ設定（1st・2nd・異方性反射）。
     Normal,
+    Backlight,
+    /// 光沢設定。
+    Reflection,
     MatCap,
     Rim,
+    Glitter,
+    /// 輪郭線設定（節の頭の入切はシェーダーの名前）。
     Outline,
+    DistanceFade,
 }
 
 impl Section {
     /// 節の値（既定に戻すと設定から外す名前）。
-    pub fn props(self) -> &'static [&'static str] {
-        match self {
-            Section::Base => &["_Cutoff", "_Cull", "_FlipNormal", "_BackfaceForceShadow", "_BackfaceColor", "_Invisible"],
-            Section::Lighting => &[
-                "_LightMinLimit",
-                "_LightMaxLimit",
-                "_MonochromeLighting",
-                "_ShadowEnvStrength",
-                "_AsUnlit",
-                "_AAStrength",
-                "_LightDirectionOverride",
-            ],
-            Section::Main => &["_Color", "_MainTexHSVG", "_AlphaMaskMode", "_AlphaMaskScale", "_AlphaMaskValue"],
-            Section::Shadow => &[
-                "_UseShadow",
-                "_ShadowStrength",
-                "_ShadowStrengthMaskLOD",
-                "_ShadowBorderMaskLOD",
-                "_ShadowBlurMaskLOD",
-                "_ShadowAOShift",
-                "_ShadowAOShift2",
-                "_ShadowPostAO",
-                "_ShadowColorType",
-                "_ShadowColor",
-                "_ShadowNormalStrength",
-                "_ShadowBorder",
-                "_ShadowBlur",
-                "_ShadowReceive",
-                "_Shadow2ndColor",
-                "_Shadow2ndNormalStrength",
-                "_Shadow2ndBorder",
-                "_Shadow2ndBlur",
-                "_Shadow2ndReceive",
-                "_Shadow3rdColor",
-                "_Shadow3rdNormalStrength",
-                "_Shadow3rdBorder",
-                "_Shadow3rdBlur",
-                "_Shadow3rdReceive",
-                "_ShadowBorderColor",
-                "_ShadowBorderRange",
-                "_ShadowMainStrength",
-                "_ShadowMaskType",
-                "_ShadowFlatBorder",
-                "_ShadowFlatBlur",
-            ],
-            Section::Emission => &[
-                "_UseEmission",
-                "_EmissionColor",
-                "_EmissionMap_UVMode",
-                "_EmissionMainStrength",
-                "_EmissionBlend",
-                "_EmissionBlendMode",
-                "_EmissionFluorescence",
-                "_UseEmission2nd",
-                "_Emission2ndColor",
-                "_Emission2ndMap_UVMode",
-                "_Emission2ndMainStrength",
-                "_Emission2ndBlend",
-                "_Emission2ndBlendMode",
-                "_Emission2ndFluorescence",
-            ],
-            Section::Normal => &["_UseBumpMap", "_BumpScale"],
-            Section::MatCap => &[
-                "_UseMatCap",
-                "_MatCapColor",
-                "_MatCapMainStrength",
-                "_MatCapZRotCancel",
-                "_MatCapPerspective",
-                "_MatCapBlend",
-                "_MatCapEnableLighting",
-                "_MatCapShadowMask",
-                "_MatCapBackfaceMask",
-                "_MatCapLod",
-                "_MatCapBlendMode",
-                "_MatCapApplyTransparency",
-                "_MatCapNormalStrength",
-                "_UseMatCap2nd",
-                "_MatCap2ndColor",
-                "_MatCap2ndMainStrength",
-                "_MatCap2ndZRotCancel",
-                "_MatCap2ndPerspective",
-                "_MatCap2ndBlend",
-                "_MatCap2ndEnableLighting",
-                "_MatCap2ndShadowMask",
-                "_MatCap2ndBackfaceMask",
-                "_MatCap2ndLod",
-                "_MatCap2ndBlendMode",
-                "_MatCap2ndApplyTransparency",
-                "_MatCap2ndNormalStrength",
-            ],
-            Section::Rim => &[
-                "_UseRim",
-                "_RimColor",
-                "_RimMainStrength",
-                "_RimNormalStrength",
-                "_RimBorder",
-                "_RimBlur",
-                "_RimFresnelPower",
-                "_RimEnableLighting",
-                "_RimShadowMask",
-                "_RimBackfaceMask",
-                "_RimApplyTransparency",
-                "_RimDirStrength",
-                "_RimDirRange",
-                "_RimIndirRange",
-                "_RimIndirColor",
-                "_RimIndirBorder",
-                "_RimIndirBlur",
-                "_RimBlendMode",
-            ],
-            Section::Outline => &[
-                "_OutlineColor",
-                "_OutlineTexHSVG",
-                "_OutlineLitColor",
-                "_OutlineLitApplyTex",
-                "_OutlineLitScale",
-                "_OutlineLitOffset",
-                "_OutlineLitShadowReceive",
-                "_OutlineWidth",
-                "_OutlineFixWidth",
-                "_OutlineDeleteMesh",
-                "_OutlineEnableLighting",
-                "_OutlineZBias",
-            ],
-        }
+    pub fn props(self) -> impl Iterator<Item = &'static str> {
+        liltoon::section_props(self)
+    }
+}
+
+/// ライティングのプリセット（lilToon の `ApplyLightingPreset` と同じ値。シェーダーの設定の既定は lilToon の既定のまま）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightingPreset {
+    Default,
+    SemiMonochrome,
+}
+
+impl LightingPreset {
+    /// 入れる値: lilToon の `ApplyLightingPreset` が入れる 8 つのうち、欄の表にある（再現が描く）5 つ。頂点ライトの強さ・露出の上限・
+    /// ディレクショナルライトの強さは描かず欄にも無いので入れない（入れると節の「既定に戻す」で外れず、変えた値の数にだけ加わる）。
+    pub fn values(self) -> [(&'static str, f32); 5] {
+        let mono = match self {
+            LightingPreset::Default => 0.0,
+            LightingPreset::SemiMonochrome => 0.5,
+        };
+        [
+            ("_AsUnlit", 0.0),
+            ("_LightMinLimit", 0.05),
+            ("_LightMaxLimit", 1.0),
+            ("_MonochromeLighting", mono),
+            ("_ShadowEnvStrength", 0.0),
+        ]
     }
 }
 
@@ -180,13 +93,22 @@ pub enum LookOp {
         slot: &'static str,
         source: Option<TextureSource>,
     },
-    /// 節の値を既定へ（Unity から受けた値があれば、その節は Unity の値で描く）。基本設定の節は、その節の行の描画モードと輪郭線の入切
-    /// （シェーダーの名前）も戻す。
+    /// いくつかの値を 1 回で（光沢のタイプ・デカールのミラーモードのように、lilToon の欄の 1 つの項目が複数のプロパティを決めるもの）。
+    Values {
+        values: Vec<(&'static str, LookValue)>,
+        drag: bool,
+    },
+    /// 節の値を既定へ（Unity から受けた値があれば、その節は Unity の値で描く）。基本設定の節は描画モード（見出しのすぐ上の行）、
+    /// 輪郭線設定の節は節の頭の輪郭線の入切も戻す（どちらもシェーダーの名前の一部）。
     Reset(Section),
+    /// ライティングのプリセット（lilToon の「プリセットを適用」）。
+    LightingPreset(LightingPreset),
     /// Unity から受けた値に合わせる（欄で変えた値・描画モード・輪郭線・描き方の選びを外す。スロットの割り当ては残す）。
     FollowReceived,
     /// lilToon のひな形（lilToon にして、入にしている機能のマスクのユーザーチャンネルを作って割り当てる）。
     Template,
+    /// スロットを描く（割り当てが無ければチャンネルを作って割り当て、描くチャンネルをそれにする）。
+    PaintSlot(&'static str),
 }
 
 impl LookOp {
@@ -205,6 +127,26 @@ pub fn default_textures(look: &mut MaterialLook) {
         look.textures
             .entry(slot.into())
             .or_insert(TextureSource::Channel(channel));
+    }
+}
+
+/// 新しく作るテクスチャセットの見た目の既定: lilToon（シェーダーの既定の値。メインカラー・ノーマルマップ・発光は同じ名前の
+/// チャンネルに割り当てる。書き出しの lilToon の画像と同じ）。新しいプロジェクト・新しいテクスチャセット・モデルや Live Link の
+/// マテリアルから作るセットが使う。読み込んだ文書（`.ylp` の `look.json` が無い文書を含む）は読み込んだとおり（無ければ標準）で、
+/// ここを通らない。
+pub fn new_set_look() -> MaterialLook {
+    let mut look = MaterialLook {
+        kind: LookKind::LilToon,
+        ..MaterialLook::default()
+    };
+    default_textures(&mut look);
+    look
+}
+
+/// 作ったばかりの文書（履歴なし）に、新しいセットの見た目の既定を入れる（Undo に入らない）。履歴がある文書は変えない。
+pub fn apply_new_set_look(doc: &mut Document) {
+    if doc.undo_count() == 0 && doc.look().is_default() {
+        let _ = doc.restore_look(new_set_look());
     }
 }
 
@@ -236,7 +178,7 @@ pub fn remove_channel(doc: &mut Document, channel: Channel) -> Result<(), CoreEr
     })
 }
 
-/// ひな形で作るチャンネル 1 つ。
+/// ひな形で作るチャンネル 1 つ（スロットを描く口で作るチャンネルも、このスロットならこの作り）。
 struct TemplateMask {
     /// この機能が入のときに作る（"outline" は輪郭線のシェーダー）。
     toggle: &'static str,
@@ -249,90 +191,162 @@ struct TemplateMask {
 }
 
 const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
+const CLEAR: Rgba8 = Rgba8::new(0, 0, 0, 0);
 
-const TEMPLATE: &[TemplateMask] = &[
+const fn mask(toggle: &'static str, slot: &'static str, ja: &'static str, en: &'static str) -> TemplateMask {
     TemplateMask {
-        toggle: "_UseShadow",
-        slot: "_ShadowStrengthMask",
-        ja: "影の強度",
-        en: "Shadow Strength",
+        toggle,
+        slot,
+        ja,
+        en,
         kind: ChannelKind::Scalar,
         space: ColorSpace::Linear,
         default: WHITE,
-    },
+    }
+}
+
+const fn layer(toggle: &'static str, slot: &'static str, ja: &'static str, en: &'static str) -> TemplateMask {
     TemplateMask {
-        toggle: "_UseShadow",
-        slot: "_ShadowColorTex",
-        ja: "影色",
-        en: "Shadow Color",
+        toggle,
+        slot,
+        ja,
+        en,
         kind: ChannelKind::Color,
         space: ColorSpace::Srgb,
-        default: Rgba8::new(0, 0, 0, 0),
-    },
-    TemplateMask {
-        toggle: "_UseShadow",
-        slot: "_ShadowBorderMask",
-        ja: "AO",
-        en: "AO",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "_UseRim",
-        slot: "_RimColorTex",
-        ja: "リムライトのマスク",
-        en: "Rim Light Mask",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "_UseMatCap",
-        slot: "_MatCapBlendMask",
-        ja: "マットキャップのマスク",
-        en: "MatCap Mask",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "_UseMatCap2nd",
-        slot: "_MatCap2ndBlendMask",
-        ja: "マットキャップ 2nd のマスク",
-        en: "MatCap 2nd Mask",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "_UseEmission",
-        slot: "_EmissionBlendMask",
-        ja: "発光のマスク",
-        en: "Emission Mask",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "_UseEmission2nd",
-        slot: "_Emission2ndBlendMask",
-        ja: "発光 2nd のマスク",
-        en: "Emission 2nd Mask",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
-    TemplateMask {
-        toggle: "outline",
-        slot: "_OutlineWidthMask",
-        ja: "輪郭線の太さ",
-        en: "Outline Width",
-        kind: ChannelKind::Scalar,
-        space: ColorSpace::Linear,
-        default: WHITE,
-    },
+        default: CLEAR,
+    }
+}
+
+/// ひな形が作るチャンネル（インスペクターの節の並び）。色の層（影色・メインカラー 2nd・3rd）は何も描いていない所を透明にして、
+/// 描いた所だけが効くようにする（影色のテクスチャは A でメインカラーと混ぜる。2nd・3rd は A で重ねる）。
+const TEMPLATE: &[TemplateMask] = &[
+    layer("_UseMain2ndTex", "_Main2ndTex", "メインカラー2nd", "Main Color 2nd"),
+    layer("_UseMain3rdTex", "_Main3rdTex", "メインカラー3rd", "Main Color 3rd"),
+    mask("_UseShadow", "_ShadowStrengthMask", "影の強度", "Shadow Strength"),
+    layer("_UseShadow", "_ShadowColorTex", "影色", "Shadow Color"),
+    mask("_UseShadow", "_ShadowBorderMask", "AO", "AO"),
+    mask("_UseRimShade", "_RimShadeMask", "リムシェードのマスク", "RimShade Mask"),
+    mask("_UseEmission", "_EmissionBlendMask", "発光のマスク", "Emission Mask"),
+    mask("_UseEmission2nd", "_Emission2ndBlendMask", "発光2nd のマスク", "Emission 2nd Mask"),
+    mask("_UseAnisotropy", "_AnisotropyScaleMask", "異方性反射のマスク", "Anisotropy Mask"),
+    mask("_UseBacklight", "_BacklightColorTex", "逆光ライトのマスク", "Backlight Mask"),
+    mask("_UseReflection", "_ReflectionColorTex", "光沢のマスク", "Reflection Mask"),
+    mask("_UseMatCap", "_MatCapBlendMask", "マットキャップのマスク", "MatCap Mask"),
+    mask("_UseMatCap2nd", "_MatCap2ndBlendMask", "マットキャップ2nd のマスク", "MatCap 2nd Mask"),
+    mask("_UseRim", "_RimColorTex", "リムライトのマスク", "Rim Light Mask"),
+    mask("_UseGlitter", "_GlitterColorTex", "ラメのマスク", "Glitter Mask"),
+    mask("outline", "_OutlineWidthMask", "輪郭線の太さ", "Outline Width"),
 ];
+
+/// ひな形の機能の入切（"outline" は輪郭線のシェーダー）。
+const TEMPLATE_TOGGLES: &[&str] = &[
+    "_UseMain2ndTex",
+    "_UseMain3rdTex",
+    "_UseShadow",
+    "_UseRimShade",
+    "_UseEmission",
+    "_UseEmission2nd",
+    "_UseAnisotropy",
+    "_UseBacklight",
+    "_UseReflection",
+    "_UseMatCap",
+    "_UseMatCap2nd",
+    "_UseRim",
+    "_UseGlitter",
+];
+
+/// スロットを描くチャンネルを作るときの作り（名前・種類・色空間・何も描いていない所の値）。ひな形にあるスロットはひな形と同じ、
+/// ほかはスロットの読み方から: マスクはスカラー（既定の白・黒）、色は sRGB の色（既定の白・黒。黒のスロットは透明）、法線は平らな法線。
+/// マットキャップの絵（プロジェクトの画像）は描くものではないので None。
+pub fn paint_channel_spec(slot: &liltoon::Slot, lang: Lang) -> Option<ChannelInfo> {
+    if let Some(t) = TEMPLATE.iter().find(|t| t.slot == slot.name) {
+        return Some(ChannelInfo {
+            name: lang.pick(t.ja, t.en).to_owned(),
+            kind: t.kind,
+            color_space: t.space,
+            default: t.default,
+        });
+    }
+    let name = slot.label(lang).to_owned();
+    let white = slot.default != liltoon::SlotDefault::Black;
+    match slot.usage {
+        liltoon::SlotUse::Mask => Some(ChannelInfo {
+            name,
+            kind: ChannelKind::Scalar,
+            color_space: ColorSpace::Linear,
+            default: if white { WHITE } else { Rgba8::new(0, 0, 0, 255) },
+        }),
+        liltoon::SlotUse::Color => Some(ChannelInfo {
+            name,
+            kind: ChannelKind::Color,
+            color_space: ColorSpace::Srgb,
+            default: if white { WHITE } else { CLEAR },
+        }),
+        liltoon::SlotUse::Normal => Some(ChannelInfo {
+            name,
+            kind: ChannelKind::Normal,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(128, 128, 255, 255),
+        }),
+        liltoon::SlotUse::Image => None,
+    }
+}
+
+/// スロットを描くときに描くチャンネル（今の割り当てのチャンネル。詰め合わせは最初の成分のチャンネル）。割り当てが無いか、
+/// 無いチャンネルを指していれば None。
+pub fn slot_channel(doc: &Document, slot: &str) -> Option<Channel> {
+    let source = doc.drawn_look().textures.get(slot)?;
+    source
+        .channels()
+        .into_iter()
+        .find(|c| doc.channel_info(*c).is_some())
+}
+
+/// スロットを描く口: 割り当てがあればそのチャンネルを返す（文書を変えない）。無ければ、そのスロットを描くチャンネルを作って
+/// 割り当て（ひな形と同じ作り方。1 回の Undo）、そのチャンネルを返す。見た目が lilToon でなければ lilToon にもする（同じ 1 回）。
+pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel, CoreError> {
+    if let Some(c) = slot_channel(doc, slot) {
+        if doc.drawn_look().kind == LookKind::LilToon {
+            return Ok(c);
+        }
+    }
+    let Some(spec) = liltoon::slot(slot).and_then(|s| paint_channel_spec(s, lang)) else {
+        return Err(CoreError::InvalidArgument("描けないスロット"));
+    };
+    doc.batch(|d| {
+        let mut look = d.look().clone();
+        if d.drawn_look().kind != LookKind::LilToon {
+            look.kind = LookKind::LilToon;
+            look.kind_chosen = d.received_look().is_some();
+            if d.drawn_look().textures.is_empty() {
+                default_textures(&mut look);
+            }
+        }
+        let channel = match slot_channel(d, slot) {
+            Some(c) => c,
+            None => {
+                let name = free_name(d, &spec.name);
+                let c = d.add_channel(ChannelInfo { name, ..spec.clone() })?;
+                look.textures.insert(slot.into(), TextureSource::Channel(c));
+                c
+            }
+        };
+        d.set_look(look, false)?;
+        Ok(channel)
+    })
+}
+
+/// チャンネルを読んでいる lilToon のスロット（描く見た目の。スロットの並び）。チャンネルの欄の印に使う。
+pub fn slots_reading(doc: &Document, channel: Channel) -> Vec<&'static liltoon::Slot> {
+    let look = doc.drawn_look();
+    if look.kind != LookKind::LilToon {
+        return Vec::new();
+    }
+    liltoon::SLOTS
+        .iter()
+        .filter(|s| look.textures.get(s.name).is_some_and(|t| t.channels().contains(&channel)))
+        .collect()
+}
 
 /// 名前が文書のチャンネルと重ならないように（重なれば「 2」「 3」…）。
 fn free_name(doc: &Document, base: &str) -> String {
@@ -366,17 +380,9 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
                 look.textures.insert(slot.clone(), *source);
             }
         }
-        let toggles = [
-            "_UseShadow",
-            "_UseRim",
-            "_UseMatCap",
-            "_UseMatCap2nd",
-            "_UseEmission",
-            "_UseEmission2nd",
-        ];
         let outline = liltoon::shader_info(&drawn).outline;
         let mut on_now = drawn.clone();
-        if !outline && !toggles.iter().any(|t| liltoon::on(&drawn, t)) {
+        if !outline && !TEMPLATE_TOGGLES.iter().any(|t| liltoon::on(&drawn, t)) {
             look.properties
                 .insert("_UseShadow".into(), LookValue::Float(1.0));
             on_now.properties
@@ -458,6 +464,20 @@ impl AppState {
                 .into();
             return;
         }
+        if let LookOp::PaintSlot(slot) = op {
+            let lang = self.lang;
+            let before = self.doc.revision();
+            match paint_slot(&mut self.doc, slot, lang) {
+                Ok(channel) => {
+                    if self.doc.revision() != before {
+                        self.modified = true;
+                    }
+                    self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
+                }
+                Err(e) => self.message = self.lang.core_error(&e),
+            }
+            return;
+        }
         if op == LookOp::Template {
             let lang = self.lang;
             match apply_template(&mut self.doc, lang) {
@@ -521,16 +541,43 @@ impl AppState {
                     look.textures.remove(slot);
                 }
             },
+            LookOp::Values { values, drag } => {
+                for (name, value) in values {
+                    look.properties.insert(name.into(), value);
+                }
+                coalesce = drag;
+            }
             LookOp::Reset(section) => {
                 for name in section.props() {
-                    look.properties.remove(*name);
+                    look.properties.remove(name);
                 }
-                // 描画モードと輪郭線の入切は基本設定の節の行（輪郭線設定の節は、輪郭線が入のときに出る値だけ）
-                if section == Section::Base {
-                    look.shader.clear();
+                // シェーダーの名前の 2 つの部分: 描画モードは基本設定の節（その見出しのすぐ上の行）、輪郭線の入切は輪郭線設定の節の頭。
+                // 戻した名前が受けた値（無ければ既定）と同じなら、利用者の設定から外す
+                if matches!(section, Section::Base | Section::Outline) && !look.shader.is_empty() {
+                    let base = self
+                        .doc
+                        .received_look()
+                        .map(|r| liltoon::shader_info(&r.look))
+                        .unwrap_or(liltoon::shader_info(&MaterialLook::default()));
+                    let now = liltoon::shader_info(&drawn);
+                    let (mode, outline) = if section == Section::Base {
+                        (base.mode, now.outline)
+                    } else {
+                        (now.mode, base.outline)
+                    };
+                    look.shader = if (mode, outline) == (base.mode, base.outline) {
+                        String::new()
+                    } else {
+                        liltoon::shader_name(mode, outline)
+                    };
                 }
             }
-            LookOp::Template => unreachable!("上で扱った"),
+            LookOp::LightingPreset(preset) => {
+                for (name, value) in preset.values() {
+                    look.properties.insert(name.into(), LookValue::Float(value));
+                }
+            }
+            LookOp::Template | LookOp::PaintSlot(_) => unreachable!("上で扱った"),
         }
         let before = self.doc.revision();
         match self.doc.set_look(look, coalesce) {

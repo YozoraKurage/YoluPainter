@@ -13,6 +13,9 @@
 //!   Unity が描いた絵を見せるスロット（流し込み先のうち、スタンドアロンが Unity へ出すチャンネルのもの。今は Color だけ）は、絵ではなく
 //!   そのチャンネルで描く。ほかの流し込み先（Unity が元のテクスチャのまま見せる）は、ほかのスロットと同じく受けた絵で描く（Unity の
 //!   見え方と同じ）。
+//! - 後から足したスロット（メインカラー 2nd・リムシェードなど）を読む機能は、Unity がそのスロットを知らせたときだけ受けた見た目で
+//!   入にする（`liltoon::FEATURES_OF_LATER_SLOTS`）。送るスロットの一覧が古い Unity からは入切と値だけが届き、知らないテクスチャを
+//!   既定の白で読んで描くと Unity の見え方と大きく違う。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -348,7 +351,37 @@ pub fn received_look(
         };
         out.missing.insert(slot.name.clone(), missing);
     }
+    leave_out_unlisted_features(&mut out, values);
     out
+}
+
+/// 後から足したスロットを読む機能のうち、Unity がそのスロットを知らせなかったもの（送るスロットの一覧が古い Unity のパッケージ。
+/// 機能の入切と値だけが届く）を、受けた見た目では切る。知らされなかったスロットは「読めない」（欄の理由）。知らされたスロットは、
+/// テクスチャが無い（`Empty`）ものも含めて Unity と同じに描く（Unity も既定のテクスチャで読む）。欄で機能を入にすれば描く
+/// （利用者の設定が勝つ）。
+fn leave_out_unlisted_features(out: &mut ReceivedLook, values: &MaterialValues) {
+    let listed = |slot: &str| {
+        values.slots.iter().any(|s| s.name == slot) || out.look.textures.contains_key(slot)
+    };
+    for (toggle, slots) in crate::look::liltoon::FEATURES_OF_LATER_SLOTS {
+        if !crate::look::liltoon::on(&out.look, toggle) {
+            continue;
+        }
+        let unlisted: Vec<&str> = slots.iter().copied().filter(|s| !listed(s)).collect();
+        if unlisted.is_empty() {
+            continue;
+        }
+        let off = match out.look.properties.get(*toggle) {
+            Some(LookValue::Int(_)) => LookValue::Int(0),
+            _ => LookValue::Float(0.0),
+        };
+        out.look.properties.insert((*toggle).to_owned(), off);
+        for slot in unlisted {
+            if out.images.len() + out.missing.len() < MAX_TEXTURES {
+                out.missing.insert(slot.to_owned(), MissingImage::Unreadable);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -449,6 +482,50 @@ mod tests {
         assert!(!r.missing.contains_key("_MainTex"));
         assert_eq!(r.source, "lilToon 2.3.4 · Standard/Opaque+Outline");
         assert!(r.validate().is_ok());
+    }
+
+    #[test]
+    fn a_feature_whose_later_slot_unity_did_not_list_is_left_out() {
+        // 送るスロットの一覧が古い Unity: メインカラー 2nd とリムシェードは入だが、そのスロットを知らせない
+        let mut v = values(1);
+        v.properties.push(PropertyEntry {
+            name: "_UseMain2ndTex".into(),
+            value: PropertyValue::Int(1),
+        });
+        v.properties.push(PropertyEntry {
+            name: "_UseRimShade".into(),
+            value: PropertyValue::Float(1.0),
+        });
+        let r = received_look(&v, &routes(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(!crate::look::liltoon::on(&r.look, "_UseMain2ndTex"));
+        assert_eq!(r.look.properties["_UseMain2ndTex"], LookValue::Int(0), "型は Unity のまま");
+        assert!(!crate::look::liltoon::on(&r.look, "_UseRimShade"));
+        assert_eq!(r.missing["_Main2ndTex"], MissingImage::Unreadable);
+        assert_eq!(r.missing["_Main2ndBlendMask"], MissingImage::Unreadable);
+        assert_eq!(r.missing["_RimShadeMask"], MissingImage::Unreadable);
+        assert!(!r.missing.contains_key("_Main3rdTex"), "切の機能のスロットは理由を出さない");
+        assert!(r.validate().is_ok());
+        // スロットを知らせる Unity: テクスチャが無くても（Unity も既定のテクスチャで読む）入のまま
+        for name in ["_Main2ndTex", "_Main2ndBlendMask"] {
+            v.slots.push(SlotTexture {
+                name: name.into(),
+                state: SlotState::Empty,
+                width: 0,
+                height: 0,
+            });
+        }
+        let r = received_look(&v, &routes(), &BTreeMap::new(), &BTreeSet::new());
+        assert!(crate::look::liltoon::on(&r.look, "_UseMain2ndTex"));
+        assert!(!r.missing.contains_key("_Main2ndTex"));
+        assert!(!crate::look::liltoon::on(&r.look, "_UseRimShade"));
+        // 流し込み先（チャンネルで描くスロット）も知らされたスロット
+        let mut routed = routes();
+        routed.push(ChannelRoute {
+            channel: yolu_protocol::channel::COLOR,
+            property: "_RimShadeMask".into(),
+        });
+        let r = received_look(&v, &routed, &BTreeMap::new(), &BTreeSet::new());
+        assert!(crate::look::liltoon::on(&r.look, "_UseRimShade"));
     }
 
     #[test]

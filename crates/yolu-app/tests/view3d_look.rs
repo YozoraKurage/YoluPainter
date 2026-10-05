@@ -23,6 +23,12 @@ use yolu_core::{Channel, HeightEdgeMode, LayerId, NormalSettings, NormalYDirecti
 /// 3D のタブを出した窓（文書は doc × doc）。モデルは呼び手が入れる。
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
+    // この試験の場面は標準（PBR）の見た目を見る: 新しい文書の既定（lilToon）でなく標準を明示する
+    h.state_mut()
+        .state
+        .doc
+        .restore_look(yolu_core::look::MaterialLook::default())
+        .unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
     // マウスの矢印が 3D の表示域の上端に残ると、絵の測定（いちばん明るい画素など）に入る。見出しの帯が無いので、ポインタを外へ
     move_to(&h, egui::pos2(1.0, 1.0));

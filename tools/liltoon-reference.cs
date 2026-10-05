@@ -16,6 +16,7 @@ using UnityEngine.Rendering;
 // ファイルを作り、元の「ファイルが無い」状態へは戻せないため）。
 // 光は 1 つの平行光（白・強さ 0.769。ビルトインの既定の「リニアの強さを使わない」で _LightColor0 = sRGB→リニア(0.769)）、
 // 環境光は 3D ビューの空の SH（scenes.txt の sh。9 つの係数を Unity の SphericalHarmonicsL2 へ最小二乗で当てはめる）、影は落とさない。
+// cube の行は一様な色のキューブマップをそのスロットに入れる（環境光の反射の場面: マテリアルの反射の差し替えで一様な環境を映す）。
 var dir = "__DIR__";
 var log = new System.Text.StringBuilder();
 var inv = CultureInfo.InvariantCulture;
@@ -39,13 +40,23 @@ if (settingType != null)
     var args = new object[] { setting };
     load.Invoke(null, args);
     on.Invoke(null, args);
-    // テクスチャの数が限られる API（エディタの OpenGL）では TurnOnAll がテクスチャの機能を入れないので、再現が読むスロットだけを入れる
-    foreach (var tex in new[] {
-        "MainColorAdjustMask", "AlphaMask", "BumpMap", "ShadowBorderMask", "ShadowBlurMask", "ShadowStrengthMask",
-        "ShadowColorTex", "Shadow2ndColorTex", "Shadow3rdColorTex", "MatCapTex", "MatCapBlendMask", "MatCap2ndTex",
-        "MatCap2ndBlendMask", "RimColorTex", "EmissionMap", "EmissionBlendMask", "Emission2ndMap", "Emission2ndBlendMask",
-        "OutlineTex", "OutlineWidthMask" })
-        settingType.GetField("LIL_FEATURE_" + tex).SetValue(args[0], true);
+    // テクスチャの数が限られる API（エディタの OpenGL）では TurnOnAll がテクスチャの機能を入れないので、場面が使うテクスチャ
+    // （scenes.txt の texture）と、テクスチャを割り当てずに既定のテクスチャで読ませる機能（feature）だけを入れる（全部を入れると
+    // シェーダーのテクスチャの数の上限を超えて、シェーダーが壊れる）
+    var wanted = new System.Collections.Generic.HashSet<string>();
+    foreach (var line in File.ReadAllLines(Path.Combine(dir, "scenes.txt")))
+    {
+        var q = line.Split(' ');
+        if (q[0] == "texture") wanted.Add(q[1].TrimStart('_'));
+        if (q[0] == "feature") wanted.Add(q[1]);
+    }
+    foreach (var tex in wanted)
+    {
+        var field = settingType.GetField("LIL_FEATURE_" + tex);
+        // メインのテクスチャは機能の入切が無い（いつも読む）
+        if (field != null) field.SetValue(args[0], true);
+        else if (tex != "MainTex") log.AppendLine("lilToon の機能が無い: " + tex);
+    }
     apply.Invoke(null, new object[] { args[0], null });
     log.AppendLine("lilToon の機能を全部入れた");
 }
@@ -77,6 +88,7 @@ try
         var colors = new System.Collections.Generic.List<(string, Color)>();
         var vectors = new System.Collections.Generic.List<(string, Vector4)>();
         var textures = new System.Collections.Generic.List<(string, string, int, int, bool)>();
+        var cubes = new System.Collections.Generic.List<(string, Color)>();
         while (at < lines.Length)
         {
             var p = lines[at++].Split(' ');
@@ -94,6 +106,7 @@ try
                 case "color": colors.Add((p[1], new Color(F(p[2]), F(p[3]), F(p[4]), F(p[5])))); break;
                 case "vector": vectors.Add((p[1], new Vector4(F(p[2]), F(p[3]), F(p[4]), F(p[5])))); break;
                 case "texture": textures.Add((p[1], p[2], int.Parse(p[3]), int.Parse(p[4]), p[5] == "1")); break;
+                case "cube": cubes.Add((p[1], new Color(F(p[2]), F(p[3]), F(p[4]), 1))); break;
             }
         }
 
@@ -210,6 +223,17 @@ try
             tex.filterMode = FilterMode.Trilinear;
             made.Add(tex);
             mat.SetTexture(slot, tex);
+        }
+        // 一様な色のキューブマップ（リニアの半精度。環境光の反射を一様な環境で比べる場面の、反射の差し替え）
+        foreach (var (slot, c) in cubes)
+        {
+            var cube = new Cubemap(4, TextureFormat.RGBAHalf, false);
+            var face = Enumerable.Repeat(c, 16).ToArray();
+            foreach (CubemapFace f in new[] { CubemapFace.PositiveX, CubemapFace.NegativeX, CubemapFace.PositiveY, CubemapFace.NegativeY, CubemapFace.PositiveZ, CubemapFace.NegativeZ })
+                cube.SetPixels(face, f);
+            cube.Apply(false);
+            made.Add(cube);
+            mat.SetTexture(slot, cube);
         }
 
         // Live Link が送る値（読むだけ。マテリアルは変えない）

@@ -8,6 +8,12 @@
 ビルトインのレンダーパイプラインの光の式は、lilToon に同梱の OpenLit Library 1.0.2（`openlit_core.hlsl`）から移した。
 OpenLit の許諾は [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)（表記の義務は無い。出どころとして記す）。
 
+ラメの乱数（`hash_rgb`）は、lilToon の `lil_common_functions_thirdparty.hlsl` の `lilHashRGB4` から移した。lilToon はその出どころを
+Shadertoy の「Simplest Fastest 2D Hash」（James_Harnett、2018 年、https://www.shadertoy.com/view/MdcfDj）と記している（lilToon の
+`Third Party Notices.md` では参考の記事の欄）。その原文の先頭は `// LICENSE: http://unlicense.org/` で、許諾は
+[The Unlicense](https://unlicense.org/)（パブリックドメインへの献呈。表記の義務は無い。出どころとして記す。2026-10-05 に原文を確認）。
+3 つ目の定数（2912667907）と 4 点をまとめて作る形は lilToon のもの（MIT）。
+
 lilToon の許諾の原文（パッケージの `LICENSE`、SHA-256 `7ca2e241979e77241d90ce5c122dc2f5128881ed5af3538eb9aa1e61f35d2660`）:
 
 ```

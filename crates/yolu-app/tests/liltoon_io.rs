@@ -86,6 +86,29 @@ fn the_look_survives_save_and_open_and_is_not_an_unknown_entry() {
 }
 
 #[test]
+fn a_file_without_a_look_opens_standard_while_new_sets_start_as_liltoon() {
+    // 今までの .ylp（look.json が無い）は、開いただけで見た目を変えない（標準）。新しい文書と新しいセットの既定は lilToon
+    let dir = Dir::new("old");
+    let path = dir.0.join("old.ylp");
+    let mut s = AppState::new(32, 32);
+    assert_eq!(s.doc.look().kind, LookKind::LilToon, "新しい文書の既定");
+    s.doc.restore_look(Default::default()).unwrap();
+    yolu_app::project::save_from(&mut s, &path);
+    let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).unwrap();
+    let id = project.sets()[0].id.clone();
+    assert!(project.look(&id).unwrap().is_none(), "標準の設定は look.json を書かない（今までの .ylp と同じ形）");
+    let mut t = AppState::new(8, 8);
+    yolu_app::project::open_into(&mut t, &path);
+    assert_eq!(t.doc.look().kind, LookKind::Standard, "{}", t.message);
+    assert!(t.doc.look().is_default());
+    assert!(!t.modified, "開いただけで変えない");
+    // 開いたプロジェクトに足す新しいセットは lilToon
+    t.add_texture_set().unwrap();
+    assert_eq!(t.doc.look().kind, LookKind::LilToon);
+    assert_eq!(t.doc.undo_count(), 0, "既定は Undo に入らない");
+}
+
+#[test]
 fn an_unreadable_look_opens_standard_says_so_and_stays_in_the_file() {
     let dir = Dir::new("unreadable");
     let path = dir.0.join("broken.ylp");
@@ -478,14 +501,68 @@ fn a_template_that_cannot_make_its_channels_changes_nothing() {
 }
 
 #[test]
+fn painting_a_slot_that_cannot_get_its_channel_changes_nothing() {
+    // lilToon の文書と、標準の見た目の文書（描く口は lilToon にもする。失敗したら lilToon にもしない）
+    for standard in [false, true] {
+        let mut s = AppState::new(16, 16);
+        if standard {
+            s.doc.restore_look(yolu_core::look::MaterialLook::default()).unwrap();
+        }
+        // チャンネルの空きを無くす（チャンネルは 64 まで）
+        let mut n = 0;
+        while s.doc.channels().len() < 64 {
+            s.doc
+                .add_channel(ChannelInfo {
+                    name: format!("埋め {n}"),
+                    kind: ChannelKind::Scalar,
+                    color_space: ColorSpace::Linear,
+                    default: Rgba8::new(0, 0, 0, 255),
+                })
+                .unwrap();
+            n += 1;
+        }
+        let look = s.doc.look().clone();
+        let steps = s.doc.undo_count();
+        let paint = s.m2.paint_channel;
+        s.message.clear();
+        s.apply(Action::Look(LookOp::PaintSlot("_RimShadeMask")));
+        assert!(s.message.contains("64"), "{standard}: {}", s.message);
+        assert_eq!(s.doc.channels().len(), 64, "{standard}: 作りかけのチャンネルを残さない");
+        assert_eq!(s.doc.look(), &look, "{standard}: 割り当ても描き方も変えない");
+        assert_eq!(s.doc.drawn_look().kind, if standard { LookKind::Standard } else { LookKind::LilToon });
+        assert_eq!(s.doc.undo_count(), steps, "{standard}: 段を積まない");
+        assert_eq!(s.m2.paint_channel, paint, "{standard}: 描くチャンネルも変えない");
+        assert!(!s.modified, "{standard}");
+    }
+    // 描けないスロット（マットキャップの絵はプロジェクトの画像）と知らない名前も、何も変えずに理由を言う
+    let mut s = AppState::new(16, 16);
+    let look = s.doc.look().clone();
+    let channels = s.doc.channels().len();
+    let paint = s.m2.paint_channel;
+    for slot in ["_MatCapTex", "_NoSuchSlot"] {
+        s.message.clear();
+        s.apply(Action::Look(LookOp::PaintSlot(slot)));
+        assert!(!s.message.is_empty(), "{slot}");
+        assert_eq!(s.doc.look(), &look, "{slot}");
+        assert_eq!(s.doc.channels().len(), channels, "{slot}");
+        assert_eq!(s.doc.undo_count(), 0, "{slot}");
+        assert_eq!(s.m2.paint_channel, paint, "{slot}");
+    }
+}
+
+#[test]
 fn look_changes_are_refused_while_drawing() {
     let mut s = AppState::new(32, 32);
+    // 新しいセットの既定は lilToon。描いている間は、どの見た目の操作も設定を変えない
+    let before = s.doc.look().clone();
+    assert_eq!(before.kind, LookKind::LilToon);
     let layer = s.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
     let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
     stroke.add_point(&mut s.doc, 10.0, 10.0, 1.0, DVec2::ZERO).unwrap();
     for op in [
-        LookOp::Kind(LookKind::LilToon),
+        LookOp::Kind(LookKind::Standard),
+        LookOp::PaintSlot("_RimShadeMask"),
         LookOp::Template,
         LookOp::Value {
             name: "_ShadowBorder",
@@ -497,13 +574,14 @@ fn look_changes_are_refused_while_drawing() {
         let what = format!("{op:?}");
         s.apply(Action::Look(op));
         assert_eq!(s.message, "描いている間はできません。", "{what}");
-        assert!(s.doc.look().is_default(), "{what}");
+        assert_eq!(s.doc.look(), &before, "{what}");
     }
+    assert_eq!(s.doc.channels().len(), yolu_core::Channel::STANDARD_COUNT, "描く口もチャンネルを作らない");
     // core も断る（画面の外からの変更も同じ）
     let mut look = s.doc.look().clone();
-    look.kind = LookKind::LilToon;
+    look.kind = LookKind::Standard;
     assert!(s.doc.set_look(look, false).is_err());
     s.doc.end_stroke(stroke).unwrap();
-    s.apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
-    assert_eq!(s.doc.look().kind, LookKind::LilToon);
+    s.apply(Action::Look(LookOp::Kind(LookKind::Standard)));
+    assert_eq!(s.doc.look().kind, LookKind::Standard);
 }

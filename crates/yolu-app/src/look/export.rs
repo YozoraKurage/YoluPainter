@@ -309,4 +309,27 @@ mod tests {
         assert!(matches!(slot_image(&doc, "_ShadowBorderMask", 4 * n - 1), Err(ExportError::WorkingBudgetExceeded { .. })));
         assert_eq!(&slot_image(&doc, "_ShadowBorderMask", 4 * n).unwrap()[0..4], &[255, 0, 255, 0]);
     }
+
+    #[test]
+    fn the_slots_added_for_the_new_features_are_packed_too() {
+        // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色の層）も、書き出しの lilToon の詰め方に入る
+        let mut doc = Document::new(4, 2).unwrap();
+        crate::look::apply_new_set_look(&mut doc);
+        let layer = doc.add_layer("a").unwrap();
+        let rim = crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
+        let decal = crate::look::paint_slot(&mut doc, "_Main2ndTex", crate::lang::Lang::Ja).unwrap();
+        for c in [rim, decal] {
+            doc.set_channel_enabled(layer, c, true).unwrap();
+        }
+        doc.set_channel_pixel(layer, decal, 0, 0, Rgba8::new(255, 0, 0, 255)).unwrap();
+        let extra = extra_images(&doc);
+        let names: Vec<(&str, &str)> = extra.iter().map(|(s, i)| (*s, i.suffix())).collect();
+        assert_eq!(names, vec![("_Main2ndTex", "Main2nd"), ("_RimShadeMask", "RimShadeMask")]);
+        assert!(extra[0].1.srgb(), "色の層は sRGB");
+        assert!(!extra[1].1.srgb());
+        // 色の層は何も描いていない所が透明
+        let px = slot_image(&doc, "_Main2ndTex", u64::MAX).unwrap();
+        assert_eq!(&px[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&px[4..8], &[0, 0, 0, 0]);
+    }
 }

@@ -816,6 +816,7 @@ pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Opti
     let mut doc = Document::new(width, height).expect("文書の大きさ");
     let first = doc.add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
+    crate::look::apply_new_set_look(&mut doc);
     (doc, first)
 }
 

@@ -720,6 +720,14 @@ fn every_channel_of_another_set_looks_the_same_as_when_it_is_the_current_set() {
 #[test]
 fn a_normal_map_of_another_set_tilts_only_that_set() {
     let mut h = scene(3, 256);
+    // 標準（PBR）の法線マップを見る試験: 新しいセットの既定（lilToon。ノーマルマップは切）でなく標準を明示する
+    for set in 0..3 {
+        h.state_mut()
+            .state
+            .set_doc_mut(set)
+            .restore_look(yolu_core::look::MaterialLook::default())
+            .unwrap();
+    }
     op(&mut h, Op::Env(EnvKind::None));
     op(&mut h, Op::Shading(Shading::Material));
     // 灰色・粗い・金属でない 3 枚。真ん中のセットだけ右へ傾けた法線

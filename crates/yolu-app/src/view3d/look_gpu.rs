@@ -24,15 +24,121 @@ use crate::look::liltoon::{self, RenderMode, SlotUse, SLOTS};
 pub use crate::look::liltoon::RenderMode as RenderModeAlias;
 
 /// `Lil` の値の数（vec4 の数）。
-pub const NP: usize = 60;
+pub const NP: usize = 122;
 /// スロットの数。
-pub const NS: usize = 21;
+pub const NS: usize = 38;
 /// 一様バッファのバイト数（`p`・`slot_src`・`slot_def`・`slot_flags`・`user_default`）。
 pub const LIL_BYTES: u64 = ((NP + 3 * NS + MAX_LAYERS) * 16) as u64;
 
 const IMAGE_SOURCES: [i32; 2] = [32, 33];
 /// Unity から受けた絵の配列の元の番号の始まり（40〜55）。
 const RECEIVED_SOURCE: i32 = 40;
+
+/// lilToon のパイプラインの定数（`shaders/liltoon.wgsl` の `LIL_FEATURES`・`LIL_SINGLE*`・`LIL_LOOP*`）: 使う機能のビットと、スロットの
+/// 読み方（1 つの元をそのまま・成分ごと）のビット。ソフトの描画（llvmpipe）でだけパイプラインに入れ、使わない機能とスロットの読み方を
+/// 作らない（一様な分岐の先も全部実行するので）。実機は全部入り（[`LilSpec::ALL`]）の 1 本。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LilSpec {
+    pub features: u32,
+    pub single: u64,
+    pub looped: u64,
+}
+
+impl LilSpec {
+    pub const ALL: LilSpec = LilSpec {
+        features: u32::MAX,
+        single: u64::MAX,
+        looped: u64::MAX,
+    };
+
+    /// パイプラインの定数（名前と値）。
+    pub fn constants(&self) -> [(&'static str, f64); 5] {
+        [
+            ("LIL_FEATURES", f64::from(self.features)),
+            ("LIL_SINGLE0", f64::from(self.single as u32)),
+            ("LIL_SINGLE1", f64::from((self.single >> 32) as u32)),
+            ("LIL_LOOP0", f64::from(self.looped as u32)),
+            ("LIL_LOOP1", f64::from((self.looped >> 32) as u32)),
+        ]
+    }
+}
+
+/// `shaders/liltoon.wgsl` の機能のビット（`F_*`）。
+pub mod feature {
+    pub const SHADOW: u32 = 0;
+    pub const BUMP: u32 = 1;
+    pub const BUMP2: u32 = 2;
+    pub const MAIN2: u32 = 3;
+    pub const MAIN3: u32 = 4;
+    pub const ALPHA_MASK: u32 = 5;
+    pub const RIM_SHADE: u32 = 6;
+    pub const BACKLIGHT: u32 = 7;
+    pub const REFLECTION: u32 = 8;
+    pub const MATCAP: u32 = 9;
+    pub const MATCAP2: u32 = 10;
+    pub const RIM: u32 = 11;
+    pub const GLITTER: u32 = 12;
+    pub const EMISSION: u32 = 13;
+    pub const EMISSION2: u32 = 14;
+    pub const ANISO: u32 = 15;
+    pub const DISTANCE_FADE: u32 = 16;
+    pub const BACKFACE: u32 = 17;
+}
+
+/// 見た目の設定で使う機能のビット（入にしている機能。描画モード・Cull・距離フェードの強さで効かないものは外す）。
+pub fn features_of(look: &MaterialLook) -> u32 {
+    use feature::*;
+    let on = |name: &str| liltoon::on(look, name);
+    let info = liltoon::shader_info(look);
+    let mut bits = 0u32;
+    let mut set = |bit: u32, wanted: bool| {
+        if wanted {
+            bits |= 1 << bit;
+        }
+    };
+    set(SHADOW, on("_UseShadow"));
+    set(BUMP, on("_UseBumpMap"));
+    set(BUMP2, on("_UseBump2ndMap"));
+    set(MAIN2, on("_UseMain2ndTex"));
+    set(MAIN3, on("_UseMain3rdTex"));
+    set(
+        ALPHA_MASK,
+        info.mode != RenderMode::Opaque && liltoon::number(look, "_AlphaMaskMode").round() >= 1.0,
+    );
+    set(RIM_SHADE, on("_UseRimShade"));
+    set(BACKLIGHT, on("_UseBacklight"));
+    set(REFLECTION, on("_UseReflection"));
+    set(MATCAP, on("_UseMatCap"));
+    set(MATCAP2, on("_UseMatCap2nd"));
+    set(RIM, on("_UseRim"));
+    set(GLITTER, on("_UseGlitter"));
+    set(EMISSION, on("_UseEmission"));
+    set(EMISSION2, on("_UseEmission2nd"));
+    set(ANISO, on("_UseAnisotropy"));
+    set(DISTANCE_FADE, liltoon::value(look, "_DistanceFade")[2] != 0.0);
+    set(
+        BACKFACE,
+        liltoon::number(look, "_Cull").round() <= 1.0 && liltoon::value(look, "_BackfaceColor")[3] != 0.0,
+    );
+    bits
+}
+
+/// 値（[`params`] の中身）から、スロットの読み方のビット（1 つの元・成分ごと。どちらでもないスロットは既定の値）。
+pub fn slot_reads(values: &[f32]) -> (u64, u64) {
+    let (mut single, mut looped) = (0u64, 0u64);
+    for i in 0..NS {
+        let src_at = NP * 4 + i * 4;
+        let flags_at = (NP + 2 * NS) * 4 + i * 4;
+        let src: [i32; 4] = std::array::from_fn(|k| values[src_at + k].to_bits() as i32);
+        let one = values[flags_at + 1] > 0.5;
+        if one {
+            single |= 1 << i;
+        } else if src.iter().any(|c| *c != -1) {
+            looped |= 1 << i;
+        }
+    }
+    (single, looped)
+}
 
 /// セットの描き方（描くパイプラインの選び）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,6 +150,8 @@ pub struct SetDraw {
     /// Cull（0 Off・1 Front・2 Back）。
     pub cull: u8,
     pub invisible: bool,
+    /// 使う機能とスロットの読み方（ソフトの描画のパイプラインの定数）。
+    pub spec: LilSpec,
 }
 
 impl SetDraw {
@@ -53,6 +161,7 @@ impl SetDraw {
         outline: false,
         cull: 2,
         invisible: false,
+        spec: LilSpec::ALL,
     };
 
     pub fn of(look: &MaterialLook) -> SetDraw {
@@ -66,6 +175,11 @@ impl SetDraw {
             outline: info.outline,
             cull: (liltoon::number(look, "_Cull").round() as i32).clamp(0, 2) as u8,
             invisible: liltoon::on(look, "_Invisible"),
+            spec: LilSpec {
+                features: features_of(look),
+                single: 0,
+                looped: 0,
+            },
         }
     }
 }
@@ -102,7 +216,15 @@ fn all_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     out
 }
 
-/// 描く見た目で割り当てていないスロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。層の上限を超えたものも含む）。
+/// スロットの割り当てが、Unity から受けた絵に譲るものか: どのレイヤーも使っていない標準のチャンネル（新しいセットの既定の
+/// 割り当て。メインカラー → Color・ノーマルマップ → Normal・発光 → Emission）。書き出しもそのチャンネルの画像を書かない（使って
+/// いないチャンネルは既定の値）ので、Unity の元のテクスチャで描くのが Unity の見え方と同じ。
+pub fn yields_to_received(doc: &Document, source: Option<&TextureSource>) -> bool {
+    matches!(source, Some(TextureSource::Channel(c)) if c.is_standard() && !yolu_core::export::uses(doc, *c))
+}
+
+/// 描く見た目で割り当てていない（か、受けた絵に譲る割り当ての）スロットのうち、Unity から受けた絵のあるもの（スロットの並びの順。
+/// 層の上限を超えたものも含む）。
 pub fn received_images(
     doc: &Document,
     look: &MaterialLook,
@@ -115,7 +237,10 @@ pub fn received_images(
     }
     SLOTS
         .iter()
-        .filter(|s| !look.textures.contains_key(s.name))
+        .filter(|s| {
+            let source = look.textures.get(s.name);
+            source.is_none() || yields_to_received(doc, source)
+        })
         .filter_map(|s| received.images.get(s.name).map(|i| (s.name.to_owned(), i.clone())))
         .collect()
 }
@@ -268,7 +393,12 @@ pub fn params_with(
         p[base + 1] = color(&format!("{e}Color"));
         p[base + 2] = v(&format!("{e}Map_ST"));
         p[base + 3] = v(&format!("{e}BlendMask_ST"));
-        p[base + 4] = [x(&format!("{e}Fluorescence")), emission_uv(&format!("{e}Map_UVMode")), 0.0, 0.0];
+        p[base + 4] = [
+            x(&format!("{e}Fluorescence")),
+            emission_uv(&format!("{e}Map_UVMode")),
+            v(&format!("{e}Map_ScrollRotate"))[2],
+            v(&format!("{e}BlendMask_ScrollRotate"))[2],
+        ];
     }
     p[31] = [x("_UseBumpMap"), x("_BumpScale"), 0.0, 0.0];
     p[32] = v("_BumpMap_ST");
@@ -324,8 +454,148 @@ pub fn params_with(
         x("_OutlineLitApplyTex"),
         x("_OutlineLitShadowReceive"),
     ];
-    p[58] = [x("_OutlineZBias"), x("_OutlineDeleteMesh"), 0.0, 0.0];
+    p[58] = [x("_OutlineZBias"), x("_OutlineDeleteMesh"), v("_OutlineTex_ScrollRotate")[2], 0.0];
     p[59] = [1.0, f32::from(info.exact), 0.0, 0.0];
+    p[60] = [v("_MainTex_ScrollRotate")[2], x("_ShiftBackfaceUV"), 0.0, 0.0];
+    // メインカラー 2nd・3rd（liltoon.wgsl の L_*）
+    for (base, l, n) in [(61, "Main2nd", "2nd"), (70, "Main3rd", "3rd")] {
+        let uv_mode = if x(&format!("_{l}Tex_UVMode")).round() == 4.0 { 4.0 } else { 0.0 };
+        p[base] = [
+            x(&format!("_Use{l}Tex")),
+            x(&format!("_{l}EnableLighting")),
+            x(&format!("_{l}TexBlendMode")),
+            x(&format!("_{l}TexAlphaMode")),
+        ];
+        p[base + 1] = color(&format!("_Color{n}"));
+        p[base + 2] = v(&format!("_{l}Tex_ST"));
+        p[base + 3] = [
+            x(&format!("_{l}TexAngle")),
+            uv_mode,
+            x(&format!("_{l}Tex_Cull")),
+            x(&format!("_{l}TexIsMSDF")),
+        ];
+        p[base + 4] = [
+            x(&format!("_{l}TexIsDecal")),
+            x(&format!("_{l}TexIsLeftOnly")),
+            x(&format!("_{l}TexIsRightOnly")),
+            x(&format!("_{l}TexShouldCopy")),
+        ];
+        p[base + 5] = [
+            x(&format!("_{l}TexShouldFlipMirror")),
+            x(&format!("_{l}TexShouldFlipCopy")),
+            0.0,
+            0.0,
+        ];
+        p[base + 6] = v(&format!("_{l}TexDecalAnimation"));
+        p[base + 7] = v(&format!("_{l}TexDecalSubParam"));
+        p[base + 8] = v(&format!("_{l}DistanceFade"));
+    }
+    p[79] = [x("_UseBump2ndMap"), x("_Bump2ndScale"), 0.0, 0.0];
+    p[80] = v("_Bump2ndMap_ST");
+    p[81] = [
+        x("_UseRimShade"),
+        x("_RimShadeNormalStrength"),
+        x("_RimShadeBorder"),
+        x("_RimShadeBlur"),
+    ];
+    p[82] = color("_RimShadeColor");
+    p[83] = [x("_RimShadeFresnelPower"), 0.0, 0.0, 0.0];
+    p[84] = [
+        x("_UseBacklight"),
+        x("_BacklightMainStrength"),
+        x("_BacklightReceiveShadow"),
+        x("_BacklightBackfaceMask"),
+    ];
+    p[85] = color("_BacklightColor");
+    p[86] = [
+        x("_BacklightNormalStrength"),
+        x("_BacklightBorder"),
+        x("_BacklightBlur"),
+        x("_BacklightDirectivity"),
+    ];
+    p[87] = [x("_BacklightViewStrength"), 0.0, 0.0, 0.0];
+    p[88] = v("_BacklightColorTex_ST");
+    // [Gamma] の数（金属度・反射率）は、Unity と同じく sRGB → リニア
+    let gamma = |name: &str| brdf::srgb_to_linear(x(name));
+    p[89] = [x("_UseReflection"), x("_Smoothness"), gamma("_Metallic"), gamma("_Reflectance")];
+    p[90] = color("_ReflectionColor");
+    p[91] = [
+        x("_ApplySpecular"),
+        x("_SpecularToon"),
+        x("_SpecularNormalStrength"),
+        x("_SpecularBorder"),
+    ];
+    p[92] = [
+        x("_SpecularBlur"),
+        x("_ApplyReflection"),
+        x("_ReflectionNormalStrength"),
+        x("_ReflectionApplyTransparency"),
+    ];
+    p[93] = [x("_ReflectionBlendMode"), x("_GSAAStrength"), 0.0, 0.0];
+    p[94] = v("_SmoothnessTex_ST");
+    p[95] = v("_MetallicGlossMap_ST");
+    p[96] = v("_ReflectionColorTex_ST");
+    p[97] = [
+        x("_UseGlitter"),
+        x("_GlitterUVMode"),
+        x("_GlitterMainStrength"),
+        x("_GlitterEnableLighting"),
+    ];
+    p[98] = color("_GlitterColor");
+    p[99] = v("_GlitterColorTex_ST");
+    p[100] = v("_GlitterParams1");
+    p[101] = v("_GlitterParams2");
+    p[102] = [
+        x("_GlitterShadowMask"),
+        x("_GlitterBackfaceMask"),
+        x("_GlitterApplyTransparency"),
+        x("_GlitterNormalStrength"),
+    ];
+    p[103] = [
+        x("_GlitterPostContrast"),
+        x("_GlitterSensitivity"),
+        x("_GlitterScaleRandomize"),
+        0.0,
+    ];
+    p[104] = [
+        x("_UseAnisotropy"),
+        x("_AnisotropyScale"),
+        x("_Anisotropy2Reflection"),
+        x("_Anisotropy2MatCap"),
+    ];
+    p[105] = [x("_Anisotropy2MatCap2nd"), 0.0, 0.0, 0.0];
+    for (k, a) in ["_Anisotropy", "_Anisotropy2nd"].iter().enumerate() {
+        p[106 + k] = [
+            x(&format!("{a}TangentWidth")),
+            x(&format!("{a}BitangentWidth")),
+            x(&format!("{a}Shift")),
+            x(&format!("{a}ShiftNoiseScale")),
+        ];
+    }
+    p[108] = [
+        x("_AnisotropySpecularStrength"),
+        x("_Anisotropy2ndSpecularStrength"),
+        0.0,
+        0.0,
+    ];
+    p[109] = v("_AnisotropyTangentMap_ST");
+    p[110] = v("_AnisotropyScaleMask_ST");
+    p[111] = v("_AnisotropyShiftNoiseMask_ST");
+    p[112] = color("_DistanceFadeColor");
+    p[113] = v("_DistanceFade");
+    p[114] = color("_DistanceFadeRimColor");
+    p[115] = [x("_DistanceFadeMode"), x("_DistanceFadeRimFresnelPower"), 0.0, 0.0];
+    p[116] = [
+        x("_MatCapCustomNormal"),
+        x("_MatCapBumpScale"),
+        x("_MatCap2ndCustomNormal"),
+        x("_MatCap2ndBumpScale"),
+    ];
+    p[117] = v("_MatCapBumpMap_ST");
+    p[118] = v("_MatCap2ndBumpMap_ST");
+    p[119] = v("_AlphaMask_ST");
+    // 座標のモードの距離フェードの原点（モデルは世界の空間で、物の原点は世界の原点）
+    p[120] = [0.0, 0.0, 0.0, 1.0];
 
     let mut src: Vec<[i32; 4]> = vec![[-1; 4]; NS];
     let mut def: Vec<[f32; 4]> = vec![[0.0; 4]; NS];
@@ -347,7 +617,12 @@ pub fn params_with(
     };
     for (i, slot) in SLOTS.iter().enumerate() {
         def[i] = slot.default.rgba();
-        let Some(source) = look.textures.get(slot.name) else {
+        // 使っていない標準のチャンネルの割り当ては、Unity から受けた絵があればそれに譲る
+        let assigned = look
+            .textures
+            .get(slot.name)
+            .filter(|s| !(yields_to_received(doc, Some(s)) && received.iter().any(|r| r.0 == slot.name)));
+        let Some(source) = assigned else {
             if let Some((_, layer, srgb)) = received.iter().find(|r| r.0 == slot.name) {
                 let s = RECEIVED_SOURCE + *layer as i32;
                 src[i] = [s * 4, s * 4 + 1, s * 4 + 2, s * 4 + 3];
@@ -672,7 +947,10 @@ impl LookGpu {
         } = budget;
         // 描く見た目（Unity から受けた値があれば、その上に利用者の設定を重ねたもの）
         let look = doc.drawn_look();
-        let draw = SetDraw::of(look);
+        let mut draw = SetDraw::of(look);
+        // スロットの読み方は値を作ったときに決まる（下）。それまでは前の読み方
+        draw.spec.single = self.draw.spec.single;
+        draw.spec.looped = self.draw.spec.looped;
         if !draw.lil {
             if self.draw != draw {
                 self.draw = draw;
@@ -694,7 +972,20 @@ impl LookGpu {
             self.draw = draw;
             self.version += 1;
         }
-        self.wants_tangents = liltoon::on(look, "_UseBumpMap");
+        // 接線を使う機能（ノーマルマップ・2nd・異方性反射・マットキャップのカスタムノーマル・左右で分けるデカール（接線の向きで右手か））
+        let decal_sides = |l: &str| {
+            liltoon::on(look, &format!("_Use{l}Tex"))
+                && ["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror"]
+                    .iter()
+                    .any(|t| liltoon::on(look, &format!("_{l}Tex{t}")))
+        };
+        self.wants_tangents = ["_UseBumpMap", "_UseBump2ndMap", "_UseAnisotropy"]
+            .iter()
+            .any(|t| liltoon::on(look, t))
+            || (liltoon::on(look, "_UseMatCap") && liltoon::on(look, "_MatCapCustomNormal"))
+            || (liltoon::on(look, "_UseMatCap2nd") && liltoon::on(look, "_MatCap2ndCustomNormal"))
+            || decal_sides("Main2nd")
+            || decal_sides("Main3rd");
         let users = wanted_users(doc, look);
         self.users.sync(doc, &users, paint.level(), limit, budget, encoder);
         // マットキャップの絵（プロジェクトの画像。文書の効果の入力にある画像を使う）
@@ -764,6 +1055,11 @@ impl LookGpu {
                 .zip(&self.written)
                 .all(|(a, b)| a.to_bits() == b.to_bits());
         if !same {
+            let (single, looped) = slot_reads(&values);
+            if (single, looped) != (self.draw.spec.single, self.draw.spec.looped) {
+                self.draw.spec.single = single;
+                self.draw.spec.looped = looped;
+            }
             let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
             queue.write_buffer(&self.buffer, 0, &bytes);
             self.written = values;
@@ -962,7 +1258,8 @@ mod tests {
     fn a_slot_assigned_here_wins_over_the_received_image() {
         let mut doc = Document::new(8, 8).unwrap();
         received_everywhere(&mut doc);
-        // 利用者が影色を Color に割り当てる（受けた絵より勝つ）
+        // 使っている Color（レイヤーがある）を、利用者が影色に割り当てる（受けた絵より勝つ）
+        doc.add_layer("a").unwrap();
         let mut mine = lil();
         mine.textures
             .insert("_ShadowColorTex".into(), TextureSource::Channel(Channel::Color));
@@ -988,6 +1285,29 @@ mod tests {
         doc.set_look(standard, false).unwrap();
         assert!(received_images(&doc, doc.drawn_look()).is_empty());
         assert_eq!(planned_received_bytes(&doc, 1024, u64::MAX), 0);
+    }
+
+    #[test]
+    fn an_unused_standard_channel_yields_to_the_received_image() {
+        // 新しいセットの既定の割り当て（ノーマルマップ → Normal・発光 → Emission）は、どのレイヤーも使っていなければ Unity の絵に譲る
+        let mut doc = Document::new(8, 8).unwrap();
+        received_everywhere(&mut doc);
+        let layer = doc.add_layer("a").unwrap();
+        let mut mine = lil();
+        crate::look::default_textures(&mut mine);
+        doc.set_look(mine, false).unwrap();
+        let drawn = doc.drawn_look().clone();
+        let received: Vec<String> = received_images(&doc, &drawn).into_iter().map(|(s, _)| s).collect();
+        assert!(received.iter().any(|s| s == "_BumpMap"), "Normal は使っていない: {received:?}");
+        assert!(received.iter().any(|s| s == "_EmissionMap"));
+        assert!(!received.iter().any(|s| s == "_MainTex"), "Color はレイヤーが使う");
+        // Normal を使い始めると、割り当てたチャンネルで描く
+        doc.set_channel_enabled(layer, Channel::Normal, true).unwrap();
+        let drawn = doc.drawn_look().clone();
+        let received: Vec<String> = received_images(&doc, &drawn).into_iter().map(|(s, _)| s).collect();
+        assert!(!received.iter().any(|s| s == "_BumpMap"));
+        assert!(yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Emission))));
+        assert!(!yields_to_received(&doc, Some(&TextureSource::Channel(Channel::Normal))));
     }
 
     #[test]
