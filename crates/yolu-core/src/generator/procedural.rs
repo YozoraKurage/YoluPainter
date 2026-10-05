@@ -241,13 +241,13 @@ impl Procedural {
     }
     pub(super) fn validate(&self, kind: Kind) -> Result<(), Error> {
         let bad = |why| Err(Error::Invalid(why));
-        if !self.scale.is_finite() || !(0.001..=1.).contains(&self.scale) {
+        if !self.scale.is_finite() || !crate::ranges::NOISE_SCALE.contains(&self.scale) {
             return bad("ノイズの大きさが範囲外です");
         }
         if self
             .rotation
             .iter()
-            .any(|r| !r.is_finite() || r.abs() > 360.)
+            .any(|r| !r.is_finite() || !crate::ranges::PROCEDURAL_ROTATION.contains(r))
         {
             return bad("ノイズの回転が範囲外です");
         }
@@ -256,7 +256,7 @@ impl Procedural {
         }
         if !(1..=MAX_OCTAVES).contains(&self.octaves)
             || !self.lacunarity.is_finite()
-            || !(1. ..=4.).contains(&self.lacunarity)
+            || !crate::ranges::LACUNARITY.contains(&self.lacunarity)
             || !unit(self.gain)
         {
             return bad("ノイズのオクターブ・ラクナリティ・ゲインが範囲外です");

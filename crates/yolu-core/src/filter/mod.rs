@@ -9,6 +9,7 @@ mod rows;
 mod tests;
 use crate::{
     math::{clamp01, to_byte},
+    ranges,
     BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold, ToneCurves,
 };
 use rayon::prelude::*;
@@ -114,18 +115,18 @@ impl Settings {
     }
     pub fn validate(&self, value_type: ValueType) -> Result<(), Error> {
         let valid = match *self {
-            Self::GaussianBlur { radius } => (1..=256).contains(&radius),
+            Self::GaussianBlur { radius } => ranges::BLUR_RADIUS.contains(&radius),
             Self::Sharpen {
                 radius,
                 amount,
                 threshold,
             } => {
-                (1..=64).contains(&radius)
+                ranges::SHARPEN_RADIUS.contains(&radius)
                     && amount.is_finite()
-                    && (0.0..=5.0).contains(&amount)
-                    && threshold <= 255
+                    && ranges::SHARPEN_AMOUNT.contains(&amount)
+                    && ranges::SHARPEN_THRESHOLD.contains(&threshold)
             }
-            Self::Noise { amount, .. } => amount.is_finite() && (0.0..=1.0).contains(&amount),
+            Self::Noise { amount, .. } => amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount),
             Self::Levels {
                 input_black: b,
                 input_white: w,
@@ -134,12 +135,12 @@ impl Settings {
                 output_white: ow,
             } => {
                 [b, w, g, ob, ow].iter().all(|v| v.is_finite())
-                    && b >= 0.0
-                    && w <= 1.0
+                    && b >= *ranges::LEVELS_UNIT.start()
+                    && w <= *ranges::LEVELS_UNIT.end()
                     && w - b >= 1.0 / 255.0
-                    && (0.1..=9.99).contains(&g)
-                    && (0.0..=1.0).contains(&ob)
-                    && (0.0..=1.0).contains(&ow)
+                    && ranges::GAMMA.contains(&g)
+                    && ranges::LEVELS_UNIT.contains(&ob)
+                    && ranges::LEVELS_UNIT.contains(&ow)
             }
             _ => true,
         };

@@ -16,6 +16,7 @@ pub(crate) use rows::color_balance_rgba;
 use crate::blend::mix_rgb;
 use crate::error::CoreError;
 use crate::math::{require_finite, to_byte, UNIT};
+use crate::ranges;
 use crate::types::{BlendMode, ChannelKind, Rgba8};
 use std::sync::Arc;
 
@@ -379,28 +380,23 @@ impl AdjustmentSettings {
         ] {
             require_finite(v, "adjustment")?;
         }
-        if self.input_black < 0.0
-            || self.input_white > 1.0
+        if self.input_black < *ranges::LEVELS_UNIT.start()
+            || self.input_white > *ranges::LEVELS_UNIT.end()
             || self.input_white - self.input_black < 1.0 / 255.0
         {
             return Err(CoreError::InvalidArgument("レベル補正の入力の範囲"));
         }
-        if self.output_black < 0.0
-            || self.output_black > 1.0
-            || self.output_white < 0.0
-            || self.output_white > 1.0
+        if !ranges::LEVELS_UNIT.contains(&self.output_black)
+            || !ranges::LEVELS_UNIT.contains(&self.output_white)
         {
             return Err(CoreError::InvalidArgument("レベル補正の出力の範囲"));
         }
-        if self.gamma < 0.1 || self.gamma > 9.99 {
+        if !ranges::GAMMA.contains(&self.gamma) {
             return Err(CoreError::InvalidArgument("ガンマ（0.1〜9.99）"));
         }
-        if self.hue < -180.0
-            || self.hue > 180.0
-            || self.saturation < -1.0
-            || self.saturation > 1.0
-            || self.lightness < -1.0
-            || self.lightness > 1.0
+        if !ranges::HUE.contains(&self.hue)
+            || !ranges::SATURATION.contains(&self.saturation)
+            || !ranges::SATURATION.contains(&self.lightness)
         {
             return Err(CoreError::InvalidArgument("色相・彩度・明度"));
         }

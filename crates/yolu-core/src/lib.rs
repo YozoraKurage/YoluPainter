@@ -59,6 +59,7 @@ pub mod mesh_maps;
 pub mod normal;
 pub mod padding;
 pub mod paths;
+mod ranges;
 pub mod selection;
 pub mod skin;
 pub mod smart;

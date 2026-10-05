@@ -25,6 +25,7 @@ use crate::curve::Curve;
 use crate::error::CoreError;
 use crate::generator::Ramp;
 use crate::math::{clamp01, require_finite, to_byte, UNIT};
+use crate::ranges;
 use crate::types::Rgba8;
 use std::sync::Arc;
 
@@ -395,7 +396,7 @@ pub struct Threshold {
 
 impl Threshold {
     pub fn new(level: u32) -> Result<Self, CoreError> {
-        if !(1..=255).contains(&level) {
+        if !ranges::THRESHOLD_LEVEL.contains(&level) {
             return Err(CoreError::InvalidArgument("しきい値（1〜255）"));
         }
         Ok(Self { level: level as u8 })
@@ -423,7 +424,7 @@ pub struct Posterize {
 
 impl Posterize {
     pub fn new(levels: u32) -> Result<Self, CoreError> {
-        if !(2..=255).contains(&levels) {
+        if !ranges::POSTERIZE_LEVELS.contains(&levels) {
             return Err(CoreError::InvalidArgument("階調（2〜255）"));
         }
         Ok(Self {

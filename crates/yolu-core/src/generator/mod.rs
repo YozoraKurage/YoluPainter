@@ -18,6 +18,7 @@ pub use crate::curve::CurvePoint;
 pub use mixing::{LuminanceCorrection, MixMode};
 pub use ramp::{ColorStop, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
+pub(crate) use noisefn::MAX_OCTAVES;
 use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,7 +43,7 @@ impl fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 pub(super) fn unit(x: f64) -> bool {
-    x.is_finite() && (0. ..=1.).contains(&x)
+    x.is_finite() && crate::ranges::UNIT.contains(&x)
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -270,7 +271,7 @@ impl Settings {
             || !unit(self.softness)
             || !unit(self.noise_amount)
             || !self.noise_scale.is_finite()
-            || !(0.001..=1.).contains(&self.noise_scale)
+            || !crate::ranges::NOISE_SCALE.contains(&self.noise_scale)
         {
             return Err(Error::Invalid(
                 "ジェネレーターのレベル・減衰・ノイズが範囲外です",
@@ -287,7 +288,7 @@ impl Settings {
         if self
             .direction
             .iter()
-            .any(|x| !x.is_finite() || x.abs() > 1e6)
+            .any(|x| !x.is_finite() || !crate::ranges::DIRECTION_COMPONENT.contains(x))
             || x * x + y * y + z * z < 1e-12
             || (self.kind != Kind::Direction
                 && (self.direction != [0., 1., 0.] || self.use_bent_normal))
