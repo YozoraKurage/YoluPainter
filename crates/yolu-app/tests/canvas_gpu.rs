@@ -6,7 +6,7 @@
 //! 描画器は egui_kittest の wgpu で、`canvas_device` が Vulkan・Metal・DX12・GL の順に、製品の egui デバイスと同じ上限で動く
 //! アダプターだけを選ぶ（コンテナでは Vulkan の lavapipe。GL の egui デバイスは WebGL2 相当の上限で compute/storage が足りず
 //! 選ばれない）。環境変数 `WGPU_BACKEND` があればその範囲だけを調べる。使える描画器が 1 つもなければ、各試験は理由と未検証
-//! 事項を標準エラーへ「省略」として出して成功のまま抜ける（15 件すべてが省略になる。GPU 合成の保証はその環境では確かめて
+//! 事項を標準エラーへ「省略」として出して成功のまま抜ける（全部の試験が省略になる。GPU 合成の保証はその環境では確かめて
 //! いない）。選んだデバイスは試験どうしで共有するため、窓を捨てるまで試験は直列になる。
 mod common;
 #[path = "common/canvas_device.rs"]
@@ -241,11 +241,11 @@ fn dab_color(image: &image::RgbaImage, at: Pos2) -> [u8; 4] {
     image.get_pixel(at.x.round() as u32, at.y.round() as u32).0
 }
 
-/// 効果（フィルター・Generator・塗りつぶしのグラデーションと投影・マスクの効果）のある文書は、GPU の合成に任せない
-/// （GPU は層の保存した画素と塗りつぶしの値を読むので、効果が入らない）。CPU の表示で効果が見え、効果を外すと GPU に戻る。
+/// 効果（フィルター・Generator・塗りつぶしのグラデーションと投影・マスクの効果）のある文書も GPU で合成する。効果の出力は CPU（core）が
+/// 評価して、タイルとして GPU へ上げるので、窓の絵に効果が入る。効果を外すと、その絵に戻る。
 #[test]
-fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back_without_them() {
-    let Some(_gpu) = canvas_device::begin("documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back_without_them") else { return; };
+fn documents_with_effects_stay_on_the_gpu_and_show_the_effects() {
+    let Some(_gpu) = canvas_device::begin("documents_with_effects_stay_on_the_gpu_and_show_the_effects") else { return; };
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
@@ -257,7 +257,7 @@ fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back
     h.run();
     assert_eq!(h.state().display().shown(), Shown::Gpu);
     let at = canvas_rect(&h).center();
-    // 反転のフィルターを足すと、GPU は断り、CPU の表示（反転した色）になる
+    // 反転のフィルターを足しても GPU のまま、窓の絵は反転した色
     let filter = h
         .state_mut()
         .state
@@ -269,37 +269,138 @@ fn documents_with_effects_fall_back_to_the_cpu_so_the_effects_show_and_come_back
         )
         .unwrap();
     h.run();
-    assert_eq!(h.state().display().shown(), Shown::Cpu);
-    assert_eq!(h.state().display().fallback(), Some(&Fallback::Effects));
+    assert_eq!(
+        h.state().display().shown(),
+        Shown::Gpu,
+        "{:?}",
+        h.state().display().fallback()
+    );
+    assert_eq!(h.state().display().fallback(), None);
     let image = h.render().unwrap();
     assert_eq!(&dab_color(&image, at)[..3], &[55, 225, 195], "フィルターが表示に入る");
-    for lang in Lang::ALL {
-        let text = Fallback::Effects.describe(lang);
-        assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
-    }
-    // 無効にする・外すと、GPU に戻る
+    // 無効にする・有効に戻すと、その絵になる（GPU のまま、変わったタイルを上げ直す）
     h.state_mut().state.doc.set_filter_enabled(base, filter, false).unwrap();
     h.run();
     assert_eq!(h.state().display().shown(), Shown::Gpu);
-    assert_eq!(h.state().display().fallback(), None);
     let image = h.render().unwrap();
     assert_eq!(&dab_color(&image, at)[..3], &[200, 30, 60]);
+    h.state_mut().state.doc.set_filter_enabled(base, filter, true).unwrap();
+    h.run();
+    let image = h.render().unwrap();
+    assert_eq!(&dab_color(&image, at)[..3], &[55, 225, 195]);
     // マスクの効果も同じ（マスクの値が評価で決まる）
     h.state_mut().state.doc.add_layer_mask(base).unwrap();
-    h.run();
-    assert_eq!(h.state().display().shown(), Shown::Gpu, "効果の無いマスクは GPU のまま");
     h.state_mut()
         .state
         .doc
         .add_filter(base, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2)))
         .unwrap();
     h.run();
-    assert_eq!(h.state().display().fallback(), Some(&Fallback::Effects));
+    assert_eq!(h.state().display().shown(), Shown::Gpu);
+    assert_eq!(h.state().display().fallback(), None);
 }
 
+/// 窓の絵で、効果のある文書の GPU の表示が CPU の表示と同じ絵になる。
 #[test]
-fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
-    let Some(_gpu) = canvas_device::begin("unsupported_documents_fall_back_with_a_reason_and_come_back") else { return; };
+fn effects_adjustments_and_isolated_groups_show_the_same_picture_on_the_gpu_and_the_cpu() {
+    let Some(_gpu) = canvas_device::begin("effects_adjustments_and_isolated_groups_show_the_same_picture_on_the_gpu_and_the_cpu") else { return; };
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let mut cpu = canvas_app(256, 256, CanvasBackend::Cpu);
+    let mut gpu = canvas_app(256, 256, CanvasBackend::Gpu);
+    for h in [&mut cpu, &mut gpu] {
+        let d = &mut h.state_mut().state.doc;
+        rich_document(d);
+        // 効果のある層・調整の層・独立して合成するグループ・法線の種類のチャンネルを重ねる
+        let top = d.layers().last().unwrap().id();
+        let mut rng = Rng(77);
+        let blurred = d.add_layer("ぼかす").unwrap();
+        paint(d, blurred, &mut rng, &[255, 0, 0, 160]);
+        d.add_filter(
+            blurred,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::blur(3)).channels(&[Channel::Color]),
+        )
+        .unwrap();
+        let adj = d
+            .add_adjustment_layer(
+                "色相",
+                AdjustmentSettings::hue_saturation(50.0, 0.2, 0.0).unwrap(),
+                None,
+                None,
+            )
+            .unwrap();
+        d.set_layer_opacity(adj, 0.7, false).unwrap();
+        let inner = d.add_layer("組の中").unwrap();
+        paint(d, inner, &mut rng, &[255, 120]);
+        d.set_layer_blend_mode(inner, BlendMode::Multiply).unwrap();
+        let group = d.group_layers(&[inner], "独立の組").unwrap();
+        d.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
+        d.set_layer_opacity(group, 0.8, false).unwrap();
+        let _ = top;
+    }
+    cpu.run();
+    gpu.run();
+    assert_eq!(cpu.state().display().shown(), Shown::Cpu);
+    assert_eq!(
+        gpu.state().display().shown(),
+        Shown::Gpu,
+        "{:?}",
+        gpu.state().display().fallback()
+    );
+    let (a, rect) = canvas_image(&mut cpu);
+    let (b, _) = canvas_image(&mut gpu);
+    let max = max_image_diff(&a, &b, rect);
+    eprintln!("窓の絵の CPU と GPU の最大差（効果・調整・独立のグループ）: {max}");
+    // 多段の文書の許し（文書の説明と同じ 2）
+    assert!(max <= 2, "最大差 {max}");
+}
+
+/// 効果のある文書を、全タイルの上限の見積もりが予算を超えるとき CPU で表示し、収まれば GPU へ戻る（効果は CPU の表示でも見える）。
+#[test]
+fn effects_over_the_budget_use_the_cpu_and_come_back() {
+    let Some(_gpu) = canvas_device::begin("effects_over_the_budget_use_the_cpu_and_come_back") else { return; };
+    let mut h = canvas_app(512, 512, CanvasBackend::Cpu);
+    h.state_mut().set_canvas_gpu_budget(3 << 20);
+    h.state_mut().set_canvas_backend(CanvasBackend::Gpu);
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "空の文書は予算に収まる");
+    // ノイズのフィルターを掛けた塗りつぶし: 16 タイルがどれも評価の出力を持ち得るので、全部を常駐させると予算を超える
+    use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
+    let fill = h
+        .state_mut()
+        .state
+        .doc
+        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(128, 128, 128, 255))], None)
+        .unwrap();
+    let noise = h
+        .state_mut()
+        .state
+        .doc
+        .add_filter(
+            fill,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::noise(0.8, 3, false)).channels(&[Channel::Color]),
+        )
+        .unwrap();
+    h.run();
+    assert_eq!(h.state().display().fallback(), Some(&Fallback::OverBudget));
+    assert_eq!(h.state().display().shown(), Shown::Cpu);
+    assert_eq!(h.state().display().gpu().failures, 0, "GPU を試して落ちたのではなく、見積もりで選んだ");
+    // CPU の表示にもノイズが見える（2 点が同じ灰色でない絵）
+    let image = h.render().unwrap();
+    let (p, q) = (screen_pixel(&h, &image, 20.0, 20.0), screen_pixel(&h, &image, 490.0, 490.0));
+    assert_ne!(p, q, "単色でない");
+    // 効果を外すと、予算に収まって GPU へ戻る
+    h.state_mut().state.doc.remove_filter(fill, noise).unwrap();
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "{:?}", h.state().display().fallback());
+    assert_eq!(h.state().display().fallback(), None);
+}
+
+/// グループの入れ子が GPU の積みの深さを超える文書だけが、理由つきで CPU に落ちる。調整の層・独立のグループ・法線のチャンネルは GPU のまま。
+#[test]
+fn only_too_deep_groups_fall_back_with_a_reason_and_come_back() {
+    let Some(_gpu) = canvas_device::begin("only_too_deep_groups_fall_back_with_a_reason_and_come_back") else { return; };
     let mut h = canvas_app(128, 128, CanvasBackend::Gpu);
     let base = h.state().state.doc.layers()[0].id();
     for y in 0..128 {
@@ -316,8 +417,7 @@ fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
     let at = canvas_rect(&h).center();
     let image = h.render().unwrap();
     assert_eq!(&dab_color(&image, at)[..3], &[200, 30, 60]);
-    let transitions = h.state().display().stats.total_tiles;
-    // 調整の層を足す: GPU は断り、CPU の表示（反転した色）になる
+    // 調整の層は GPU で合成する（反転した色）
     let adj = h
         .state_mut()
         .state
@@ -325,49 +425,13 @@ fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
         .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
         .unwrap();
     h.run();
-    assert_eq!(h.state().display().shown(), Shown::Cpu);
-    assert_eq!(
-        h.state().display().fallback(),
-        Some(&Fallback::Unsupported(Unsupported::AdjustmentLayer))
-    );
-    assert!(h.state().display().page_count() > 0);
-    assert!(
-        !h.state().display().gpu().is_resident(),
-        "GPU の資源を手放す"
-    );
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "{:?}", h.state().display().fallback());
+    assert_eq!(h.state().display().fallback(), None);
+    assert_eq!(h.state().display().page_count(), 0);
     let image = h.render().unwrap();
     assert_eq!(&dab_color(&image, at)[..3], &[55, 225, 195]);
-    // 同じ文書のまま何フレームか回しても、GPU を試し直さない（断りは文書の版ごとの確認だけ）
-    let failures = h.state().display().gpu().failures;
-    for _ in 0..30 {
-        h.step();
-    }
-    assert_eq!(h.state().display().gpu().failures, failures);
-    assert_eq!(h.state().display().shown(), Shown::Cpu);
-    // 調整の層を隠す・消すと GPU に戻る
-    h.state_mut()
-        .state
-        .doc
-        .set_layer_visible(adj, false)
-        .unwrap();
-    h.run();
-    assert_eq!(h.state().display().shown(), Shown::Gpu);
-    assert_eq!(h.state().display().fallback(), None);
-    assert_eq!(h.state().display().page_count(), 0, "CPU の頁を手放す");
-    let image = h.render().unwrap();
-    assert_eq!(&dab_color(&image, at)[..3], &[200, 30, 60]);
-    h.state_mut()
-        .state
-        .doc
-        .set_layer_visible(adj, true)
-        .unwrap();
-    h.run();
-    assert_eq!(h.state().display().shown(), Shown::Cpu);
     h.state_mut().state.doc.remove_layer(adj).unwrap();
-    h.run();
-    assert_eq!(h.state().display().shown(), Shown::Gpu);
-    assert!(h.state().display().stats.total_tiles > transitions);
-    // 独立して合成するグループも同じ
+    // 独立して合成するグループも GPU
     let l2 = h.state_mut().state.doc.add_layer("上").unwrap();
     let group = h.state_mut().state.doc.group_layers(&[l2], "組").unwrap();
     h.state_mut()
@@ -376,38 +440,63 @@ fn unsupported_documents_fall_back_with_a_reason_and_come_back() {
         .set_layer_blend_mode(group, BlendMode::Multiply)
         .unwrap();
     h.run();
-    assert_eq!(
-        h.state().display().fallback(),
-        Some(&Fallback::Unsupported(Unsupported::IsolatedGroup))
-    );
-    // 法線のチャンネルを見ると CPU（法線は単位ベクトルの合成式）
-    h.state_mut()
-        .state
-        .doc
-        .set_layer_blend_mode(group, BlendMode::PassThrough)
-        .unwrap();
-    h.run();
-    assert_eq!(h.state().display().shown(), Shown::Gpu);
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "{:?}", h.state().display().fallback());
+    // 法線のチャンネルを見ても GPU（法線は単位ベクトルの合成式）
     h.state_mut().state.m2.display_channel = Channel::Normal;
     h.run();
-    assert_eq!(
-        h.state().display().fallback(),
-        Some(&Fallback::Unsupported(Unsupported::NormalChannel))
-    );
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "{:?}", h.state().display().fallback());
     let total = h.state().display().stats.total_tiles;
     h.state_mut().state.m2.display_channel = Channel::Roughness;
     h.step();
-    assert_eq!(
-        h.state().display().shown(),
-        Shown::Gpu,
-        "別のチャンネルは GPU で合成し直す"
-    );
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "別のチャンネルは GPU で合成し直す");
     // 替えた直後のフレームの記録（あとのフレームは「何も上げない」で上書きする）と、積み上がる数
-    assert!(
-        h.state().display().stats.last_rebuilt,
-        "チャンネルを替えると作り直す"
-    );
+    assert!(h.state().display().stats.last_rebuilt, "チャンネルを替えると作り直す");
     assert!(h.state().display().stats.total_tiles > total);
+    h.state_mut().state.m2.display_channel = Channel::Color;
+    h.run();
+    let transitions = h.state().display().stats.total_tiles;
+    // 入れ子を深くする（独立して合成するグループ 33 段）: GPU は断り、CPU の表示になる
+    let mut inner = h.state_mut().state.doc.add_layer("葉").unwrap();
+    for k in 0..33 {
+        let g = h
+            .state_mut()
+            .state
+            .doc
+            .group_layers(&[inner], &format!("段 {k}"))
+            .unwrap();
+        h.state_mut()
+            .state
+            .doc
+            .set_layer_blend_mode(g, BlendMode::Multiply)
+            .unwrap();
+        inner = g;
+    }
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Cpu);
+    assert_eq!(
+        h.state().display().fallback(),
+        Some(&Fallback::Unsupported(Unsupported::GroupDepth))
+    );
+    for lang in Lang::ALL {
+        let text = h.state().display().fallback().unwrap().describe(lang);
+        assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
+    }
+    assert!(h.state().display().page_count() > 0);
+    assert!(!h.state().display().gpu().is_resident(), "GPU の資源を手放す");
+    // 同じ文書のまま何フレームか回しても、GPU を試し直さない（断りは文書の版ごとの確認だけ）
+    let failures = h.state().display().gpu().failures;
+    for _ in 0..30 {
+        h.step();
+    }
+    assert_eq!(h.state().display().gpu().failures, failures);
+    assert_eq!(h.state().display().shown(), Shown::Cpu);
+    // 深いグループを隠すと GPU に戻る
+    h.state_mut().state.doc.set_layer_visible(inner, false).unwrap();
+    h.run();
+    assert_eq!(h.state().display().shown(), Shown::Gpu, "{:?}", h.state().display().fallback());
+    assert_eq!(h.state().display().fallback(), None);
+    assert_eq!(h.state().display().page_count(), 0, "CPU の頁を手放す");
+    assert!(h.state().display().stats.total_tiles > transitions);
 }
 
 /// 512² の文書に 128² のタイルを足していく。予算 3 MiB では、表示 1 MiB・作業域の分を除くと、描いたタイルは 8 枚ほどまで常駐できる。
