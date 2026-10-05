@@ -381,6 +381,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
         "タイルがキャンバスの外" => "Tile outside canvas",
         "タイルのバイト数が違う" => "Invalid tile byte count",
+        "歩幅がタイルの一辺の約数でない" => "The step does not divide the tile edge",
         "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
         "タイルの長さ" => "Tile length",
         "チャンネルの名前" => "Channel name",
