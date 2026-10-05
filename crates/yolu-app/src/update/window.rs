@@ -82,7 +82,8 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let version = ready.version.clone();
-    let modified = app.modified;
+    // 保存の途中は、保存の頼みが下ろした「変更あり」の印ではなく、頼む前の印で見せる（保存が失敗すれば変更は残る）
+    let modified = app.shows_modified();
     let blocked = app.update.ready_blocked;
     let button = |label: &str, primary: bool, tooltip: Option<&str>| Button {
         label: label.into(),

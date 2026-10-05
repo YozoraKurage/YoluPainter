@@ -38,6 +38,7 @@ pub use settings::{
 };
 pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
+pub(crate) use writer::Waiter;
 
 use crate::state::{Action, AppState};
 
@@ -390,6 +391,11 @@ impl AppState {
     pub fn recovery_tick_at(&mut self, now: Instant) -> Option<Duration> {
         self.recovery.active.as_ref()?;
         self.recovery_poll();
+        // 保存の間は見張りを止める。保存は開いた .ylp を置き換える（書き置きの読みと重ねない）うえ、「保存していない変更」の印
+        // （`modified`）は保存の結果が出るまで確かでない（保存の頼みが下ろして、保存の間の編集だけを立て直す）
+        if self.is_saving() {
+            return self.recovery.wakeup(now);
+        }
         let modified = self.modified;
         let stroking = self.is_stroking();
         let fingerprint = capture::fingerprint(self);
@@ -516,6 +522,12 @@ impl AppState {
         if let Some(a) = self.recovery.active.as_mut() {
             a.force = true;
         }
+    }
+
+    /// 動いている書き込みの終わりを、ほかのスレッドから待てる口（復旧が動いていなければ None）。保存が、開いた .ylp を置き換える前に、
+    /// 書き置きの読みが終わるのを待つために使う。
+    pub(crate) fn recovery_waiter(&self) -> Option<writer::Waiter> {
+        self.recovery.active.as_ref().map(|a| a.writer.waiter())
     }
 
     /// 動いている書き込みが終わるまで待って、結果を受ける（試験・終了前。描画の途中では使わない）。
@@ -688,6 +700,14 @@ impl AppState {
             return;
         };
         if self.is_stroking() {
+            return;
+        }
+        if self.is_saving() {
+            self.message = format!(
+                "{}: {}",
+                self.lang.pick("開けません", "Cannot open"),
+                crate::project::busy_reason(self.lang)
+            );
             return;
         }
         let limits = yolu_io::Limits::from_layer_pixels(self.load_source_bytes());

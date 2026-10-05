@@ -15,12 +15,17 @@
 //!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に、設定の「退避を残す数」
 //!   （既定はすべて）だけ残す。開いた後に外で書き換えられていたら断る）。PSD を「今のセットへ」取り込み直して文書を替えたセットは、古い
 //!   PSD の原本（Unity 版が持つ `imported-original.psd`）を持ち越さない（新しい文書の原本ではない。前の版は退避に残る）。
-//!   配布用に作品の写しを書く「配布用に保存」は `distribute`。
+//!   画面のスレッドは頼みの組み立て（文書の写し）と結果を受けるところまでで、重い所は裏のスレッド（`save`・`capture`）。
+//!   配布用に作品の写しを書く「配布用に保存」は `distribute`（材料と組み立ては `capture` を共有する）。
 
 use std::path::{Path, PathBuf};
 
 use yolu_core::mesh_maps::MeshMapKind;
-use yolu_io::{composite_pngs, DocumentSource, Project, SaveTarget, SetDocument, SetSpec, WriterInfo};
+use yolu_io::{Project, SaveTarget, SetDocument, WriterInfo};
+
+pub(crate) mod capture;
+mod save;
+pub use save::{busy_reason, save_from, SaveHold, SaveProgress, SaveState};
 
 /// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
@@ -177,6 +182,15 @@ pub fn open_into(state: &mut AppState, path: &Path) {
 
 /// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
+    if state.is_saving() {
+        state.message = format!(
+            "{}: {}: {}",
+            state.lang.pick("開けません", "Cannot open"),
+            path.display(),
+            busy_reason(state.lang)
+        );
+        return;
+    }
     // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーのメモリ」の予算から（`Limits`）
     let limits = yolu_io::Limits::from_layer_pixels(budget);
     let (project, target) = match SaveTarget::open_within(path, &limits) {
@@ -192,6 +206,10 @@ pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
 /// 復旧の世代から読んだプロジェクトで今の状態を置き換える。保存していない「名称未設定（復旧）」として開き、元の .ylp には
 /// つながない（保存先は利用者が選ぶ）。どのセットも、次の保存で正本と合成の PNG を書き直す。
 pub fn open_recovered(state: &mut AppState, project: Project) {
+    if state.is_saving() {
+        state.message = format!("{}: {}", state.lang.pick("開けません", "Cannot open"), busy_reason(state.lang));
+        return;
+    }
     let budget = state.load_source_bytes();
     open_project(state, project, None, budget);
 }
@@ -423,6 +441,14 @@ pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
 /// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。前のプロジェクトの
 /// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶ窓は `newproject`。
 pub fn new_into(state: &mut AppState) {
+    if state.is_saving() {
+        state.message = format!(
+            "{}: {}",
+            state.lang.pick("新しいプロジェクトを作れません", "Cannot create a new project"),
+            busy_reason(state.lang)
+        );
+        return;
+    }
     state.np_project_replaced();
     state.drop_project_model();
     let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
@@ -455,257 +481,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
-}
-
-/// 保存する。失敗したら何も変えずに理由を出す（ファイルは yolu-io の安全な保存なので、前の中身のまま）。
-pub fn save_from(state: &mut AppState, path: &Path) {
-    match save(state, path) {
-        Ok(text) => state.message = text,
-        Err(e) => {
-            state.message = format!(
-                "{}: {}: {e}",
-                state.lang.pick("保存できません", "Cannot save"),
-                path.display()
-            )
-        }
-    }
-}
-
-fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
-    if state.is_stroking() {
-        return Err(state.lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
-    }
-    // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
-    // そのファイルを置き換えても、ハンドルは置き換える前のファイルを読み続ける。しかし、置換の規則が POSIX でないファイルシステム
-    // （FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、保存が置換のためにそのハンドルを手放し、写しの読みは
-    // 断られる。その間は保存しない
-    if state.distribute.is_busy() || state.distribute.is_open() {
-        return Err(state
-            .lang
-            .pick("配布用に保存の途中は保存しません", "Cannot save while saving for distribution")
-            .into());
-    }
-    // 復旧の書き置きのスレッドも、開いた .ylp のハンドルから読む（上と同じ事情）。そのファイルを置き換える保存は、今の書き込みと待っている
-    // 頼みが終わるのを待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果も
-    // ここで受ける）
-    if state.project.as_ref().is_some_and(|p| p.is_file() && same_file(&p.path, path)) {
-        state.recovery_wait();
-    }
-    let base = state.project.as_ref().map(|p| &*p.original);
-    let mut specs = Vec::with_capacity(state.sets.len());
-    let mut written = Vec::new();
-    for (i, set) in state.sets.iter().enumerate() {
-        let doc = state.set_doc(i);
-        let in_base = base.is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
-        let unchanged = set.saved == Some((doc.id(), doc.revision()));
-        if set.read_only.is_some() && !in_base {
-            return Err(state.lang.pick(format!(
-                "読むだけのセット「{}」の元の文書がありません",
-                set.name
-            ), format!(
-                "Original document missing for read-only set “{}”",
-                set.name
-            )));
-        }
-        let (document, composites) = if in_base && (set.read_only.is_some() || unchanged) {
-            (None, Vec::new())
-        } else {
-            // 正本は全体をメモリに組まない: 写し（タイルは共有）を渡し、書くときに層ごとに流して作る（大きければ版 26 で分ける）
-            let native = doc
-                .capture_snapshot()
-                .map_err(yolu_io::Error::from)
-                .and_then(|snapshot| DocumentSource::from_core(std::sync::Arc::new(snapshot)))
-                .map_err(|e| {
-                    let what = state.lang.pick(format!("セット「{}」の文書を作れません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
-                    format!("{what}: {}", state.lang.io_error(&e))
-                })?;
-            let pngs = composite_pngs(doc).map_err(|e| {
-                let what = state.lang.pick(format!("セット「{}」の合成の PNG を作れません", set.name), format!("Cannot build the composite PNG of texture set “{}”", set.name));
-                format!("{what}: {}", state.lang.io_error(&e))
-            })?;
-            written.push((i, doc.id(), doc.revision()));
-            (Some(native), pngs)
-        };
-        specs.push(SetSpec {
-            id: set.id.clone(),
-            name: set.name.clone(),
-            material: set.material.clone(),
-            document,
-            composites,
-        });
-    }
-    let current = state.sets.current().id.clone();
-    let project = match base {
-        Some(b) => {
-            let upgraded;
-            let b = if b.info().format < 7 {
-                upgraded = b.upgraded(writer()).map_err(|e| state.lang.io_error(&e))?;
-                &upgraded
-            } else {
-                b
-            };
-            // 開いたあとに消したセット（プロジェクトの構成・テクスチャセットのパネルで確かめて消したもの）は、ファイルからも消す
-            let dropped: Vec<&str> = b
-                .sets()
-                .iter()
-                .map(|s| s.id.as_str())
-                .filter(|id| !state.sets.iter().any(|set| set.id == *id))
-                .collect();
-            b.with_sets_dropping(writer(), &specs, &current, &dropped)
-        }
-        None => Project::create(writer(), &specs, &current),
-    }
-    .map_err(|e| state.lang.io_error(&e))?;
-    // 文書を別の物に替えたセット（PSD を「今のセットへ」取り込み直した）は、古い PSD の原本を持ち越さない（新しい文書の原本ではない）
-    let mut project = project;
-    for id in replaced_sets(
-        base,
-        // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
-        state
-            .sets
-            .iter()
-            .enumerate()
-            .filter(|(_, set)| set.read_only.is_none())
-            .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
-    ) {
-        project = project.without_imported_original(&id).map_err(|e| state.lang.io_error(&e))?;
-    }
-    // 選択範囲（selection.bin）は正本と別のエントリ。読むだけのセットは元のまま、描けるセットは今の選択範囲と違えば書き換える
-    let selections: Vec<(&str, Option<&crate::engine::SelectionMask>)> = state
-        .sets
-        .iter()
-        .enumerate()
-        .filter(|(_, set)| set.read_only.is_none())
-        .map(|(i, set)| (set.id.as_str(), state.set_doc(i).selection()))
-        .collect();
-    let project = crate::selection::io::write_into(project, &selections, state.lang)?;
-    // 見た目の設定（look.json。正本と別のエントリ。違うセットだけ書き換える）
-    let (project, looks_overwritten) = crate::look::io::save_into(state, project)?;
-    // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
-    let mut project = project;
-    let mut maps_written = Vec::new();
-    for (i, set) in state.sets.iter().enumerate() {
-        let unsaved = set.mesh_maps.unsaved();
-        for map in &unsaved {
-            project = project.with_mesh_map(&set.id, map).map_err(|e| {
-                state.lang.pick(
-                    format!("セット「{}」のメッシュマップ: {}", set.name, state.lang.io_error(&e)),
-                    format!("Mesh maps of set \"{}\": {}", set.name, state.lang.io_error(&e)),
-                )
-            })?;
-        }
-        if !unsaved.is_empty() {
-            maps_written.push((i, unsaved));
-        }
-    }
-    // アセットの棚: 変えたときだけ resources を書き直す（変えていなければ開いたファイルのバイト列のまま）
-    let project = state.shelf.write_into(project, state.lang)?;
-    // モデルのファイル（FBX）の参照: 保存先の .ylp からの相対のパスで view.json に残す。変わっていなければ view.json に触らない
-    // （Unity 版が書いたものはそのまま）
-    let wanted = state
-        .np
-        .model_file
-        .as_ref()
-        .map(|m| crate::newproject::relative_model_path(m, path));
-    let project = if project.view_model().ok().flatten() == wanted {
-        project
-    } else {
-        project
-            .with_view_model(wanted.as_deref())
-            .map_err(|e| state.lang.io_error(&e))?
-    };
-    let project = std::sync::Arc::new(project);
-    let overwrite = path.exists();
-    let reuse = state
-        .project
-        .as_ref()
-        .is_some_and(|p| p.is_file() && same_file(&p.path, path));
-    let keep = state.prefs.settings.backups;
-    let mut report = if reuse {
-        let file = state.project.as_mut().expect("上で確かめた");
-        let target = file.target.as_mut().expect("ファイルのあるプロジェクトは印を持つ");
-        target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?
-    } else {
-        // 別の場所: あれば .ylp として読めるものだけを上書きする（読めないファイルを黙って潰さない）。中身は確かめるだけなので、
-        // 予算では断らない
-        let mut target = if overwrite {
-            SaveTarget::open_within(path, &yolu_io::Limits::unbounded())
-                .map_err(|e| format!("{}: {}", state.lang.pick("上書きする先を .ylp として読めません", "Invalid overwrite target"), state.lang.io_error(&e)))?
-                .1
-        } else {
-            SaveTarget::create(path).map_err(|e| state.lang.io_error(&e))?
-        };
-        let report = target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?;
-        state.project = Some(ProjectFile {
-            path: path.to_path_buf(),
-            target: Some(target),
-            original: project.clone(),
-        });
-        report
-    };
-    // 次の保存・書き置きの元は、書いたファイルを指すプロジェクト（変わらないエントリはそのファイルから写す。保存に使った core の文書の
-    // 写しは手放す）
-    let saved = report.project.take().map(std::sync::Arc::new).unwrap_or(project);
-    // 書いた .ylp を、今の「レイヤーのメモリ」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
-    // 小さいまま正本だけが大きくなる。保存は止めず、開き直すのに予算が要ることをここで言う）
-    let reopen = reopen_note(state.lang, &saved, &yolu_io::Limits::from_layer_pixels(state.load_source_bytes()));
-    if let Some(file) = state.project.as_mut() {
-        file.original = saved;
-        file.path = path.to_path_buf();
-    }
-    for (i, id, revision) in &written {
-        if let Some(set) = state.sets.get_mut(*i) {
-            set.saved = Some((*id, *revision));
-        }
-    }
-    let map_total: usize = maps_written.iter().map(|(_, m)| m.len()).sum();
-    for (i, maps) in &maps_written {
-        if let Some(set) = state.sets.get_mut(*i) {
-            set.mesh_maps.mark_saved(maps);
-        }
-    }
-    state.modified = false;
-    state.shelf.changed = false;
-    state.project_name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
-    state.rewritten_sets = written.len();
-    let file = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string());
-    let mut text = state.lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
-    if map_total > 0 {
-        text += &state.lang.pick(
-            format!(" メッシュマップ {map_total} 枚を書きました。"),
-            format!(" Wrote {map_total} mesh map(s)."),
-        );
-    }
-    // 開くときに読めなかった見た目の設定（新しい形式など）を、変えた見た目で上書きしたセット
-    if !looks_overwritten.is_empty() {
-        let names: Vec<&str> = looks_overwritten
-            .iter()
-            .filter_map(|id| state.sets.iter().find(|s| s.id == *id).map(|s| s.name.as_str()))
-            .collect();
-        text += &state.lang.pick(
-            format!(" 読めなかった見た目の設定を上書きしました: {}。", names.join("、")),
-            format!(" Overwrote unreadable look settings: {}.", names.join(", ")),
-        );
-    }
-    // 書き直したセットに入力のまま通る効果があれば、合成の PNG に入っていないことを言う（正本には設定が残る）
-    for (i, _, _) in &written {
-        let inactive = state.set_doc(*i).inactive_effect_list();
-        if !inactive.is_empty() {
-            let set = state.sets.get(*i).map_or("", |s| s.name.as_str());
-            text += &state.lang.inactive_effects_not_in_composite(set, &inactive);
-        }
-    }
-    if let Some(note) = reopen {
-        text += &note;
-    }
-    text += &backup_text(state.lang, path, &report);
-    Ok(text)
 }
 
 /// 保存した .ylp が、`limits`（今の「レイヤーのメモリ」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに

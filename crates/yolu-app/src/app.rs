@@ -255,6 +255,9 @@ impl TabViewer for Tabs<'_> {
     }
 }
 
+/// 終わってよいかの問いへの答え（試験が窓を開かずに答える口）。
+type CloseAnswer = Box<dyn FnMut(&AppState) -> bool>;
+
 /// アプリ。
 pub struct YoluApp {
     pub state: AppState,
@@ -275,6 +278,11 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
+    /// OS の終了を待たせる印（`session_end::set_saving`）に最後に伝えた「保存の間か」。窓が見えている間は `ui`、隠れている間は `logic` が
+    /// 保存の結果を受けるたびに合わせる。
+    saving_marked: bool,
+    /// 試験用: 保存していない変更のまま終わってよいかの問いに、窓を開かずに答える（窓を開かない試験が、保存の後に問われるかを見る）。
+    close_answer: Option<CloseAnswer>,
     /// OS の枠を外した窓か（Windows の実際の窓だけ true。帯の右端に最小化・最大化・閉じるを置き、窓の縁で大きさを変える）。
     /// 設定には出さない。試験は `set_custom_frame` で選ぶ。
     custom_frame: bool,
@@ -329,9 +337,13 @@ impl YoluApp {
         }
         Self::setup(&cc.egui_ctx);
         let pen = PenInput::attach(cc);
+        // OS の終了が保存の途中に来たら、保存が終わるまで待ってもらう（Windows だけ）
+        crate::session_end::attach(cc);
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
         app.dialogs = true;
+        // 保存は裏のスレッドで動かす（描ける・見られる。試験の状態は、保存の頼みの中で終える）
+        app.state.save.background = true;
         app.fit_window = true;
         // Windows は OS の枠を外している（main.rs）ので、帯と縁は自前
         app.custom_frame = titlebar::CUSTOM_FRAME;
@@ -627,6 +639,7 @@ impl YoluApp {
             link: LiveLink::new(),
             dialogs: false,
             closing: false,
+            close_answer: None,
             custom_frame: false,
             bar_press_rects: Vec::new(),
             settings: None,
@@ -642,6 +655,7 @@ impl YoluApp {
             window_checked: false,
             fit_window: false,
             float_rects: Vec::new(),
+            saving_marked: false,
         }
     }
 
@@ -649,6 +663,24 @@ impl YoluApp {
     pub fn fit_to_screen(mut self, on: bool) -> YoluApp {
         self.fit_window = on;
         self
+    }
+
+    /// 試験用: 保存していない変更のまま終わってよいかの問いに、窓を開かずに答える（問われるたびに呼ぶ。保存の後の状態で問われること・
+    /// 問われないことを確かめる）。
+    #[doc(hidden)]
+    pub fn answer_close_question(&mut self, answer: impl FnMut(&AppState) -> bool + 'static) {
+        self.close_answer = Some(Box::new(answer));
+    }
+
+    /// 終わると決めたか（保存の途中なら、保存が終わるまで決めない）。
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
+    /// 試験用: OS の終了を待たせる印に、最後に「保存の間」と伝えたか（Windows の実際の窓でなくても、伝える側の状態を確かめる）。
+    #[doc(hidden)]
+    pub fn saving_marked(&self) -> bool {
+        self.saving_marked
     }
 
     /// 帯の右端のボタンと窓の縁を自前にするか（Windows の実際の窓は true。試験は Linux でも Windows の帯を描いて確かめる）。
@@ -886,10 +918,18 @@ impl YoluApp {
         }
     }
 
-    /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。
-    fn confirm_close(&self) -> bool {
+    /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
+    /// 状態で聞く）。
+    fn confirm_close(&mut self) -> bool {
         // 更新のために終わるときは、保存するか捨てるかを更新の窓で選び済み
-        if !self.state.modified || !self.dialogs || self.state.update.is_quitting() {
+        if !self.state.modified || self.state.update.is_quitting() {
+            return true;
+        }
+        // 試験が、窓を開かずに答える口
+        if let Some(answer) = self.close_answer.as_mut() {
+            return answer(&self.state);
+        }
+        if !self.dialogs {
             return true;
         }
         crate::dialog::message()
@@ -904,9 +944,10 @@ impl YoluApp {
             == rfd::MessageDialogResult::Yes
     }
 
-    /// 保存していない変更を捨ててよいか（窓を開かない試験では、聞かずに捨てる）。
+    /// 保存していない変更を捨ててよいか（窓を開かない試験では、聞かずに捨てる）。保存の途中は、保存の結果が出るまで、頼む前の印のまま
+    /// 聞く（保存の頼みは「変更あり」を下ろすが、保存が失敗すれば戻る。その変更を黙って捨てない）。
     fn confirm_discard(&self) -> bool {
-        if !self.state.modified || !self.dialogs {
+        if !self.state.shows_modified() || !self.dialogs {
             return true;
         }
         crate::dialog::message()
@@ -1263,6 +1304,7 @@ impl YoluApp {
         self.state.poll_psd();
         self.note_dropped_psds();
         self.state.poll_distribute();
+        self.poll_saving();
         self.state.poll_brush_import();
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
         self.state.sync_effects();
@@ -1340,7 +1382,7 @@ impl YoluApp {
                     .and_then(|b| b.rects.last())
                     .map_or(r.left() + 6.0, |last| last.right());
                 let room = (content.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0)).clamp(0.0, 352.0);
-                let style = t::LABEL_DIM.with_color(if self.state.modified {
+                let style = t::LABEL_DIM.with_color(if self.state.shows_modified() {
                     t::TEXT
                 } else {
                     t::TEXT_DIM
@@ -1358,7 +1400,7 @@ impl YoluApp {
                     pos2(content.right() - 8.0 - name_width, r.top()),
                     pos2(content.right() - 8.0, r.bottom()),
                 );
-                let name = format!("{shown}{}", if self.state.modified { " •" } else { "" });
+                let name = format!("{shown}{}", if self.state.shows_modified() { " •" } else { "" });
                 w::text(ui.painter(), title, &name, style, w::Align::Right);
                 if shown != self.state.project_name {
                     // 詰めたときだけ、全体の名前をツールチップに
@@ -1512,19 +1554,50 @@ impl YoluApp {
         self.state.update_finish_save();
         // 終了・窓を閉じる: 保存していない変更があれば聞く（窓を開かない試験では聞かない）
         let close_requested = ctx.input(|i| i.viewport().close_requested());
-        if (self.state.quit || close_requested) && !self.closing {
-            if self.confirm_close() {
-                self.closing = true;
-                crate::windows::stop_jobs(&mut self.state, std::time::Duration::from_secs(3));
-                if self.state.quit {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            } else {
-                if close_requested {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                }
-                self.state.quit = false;
+        self.close_flow(&ctx, close_requested);
+    }
+
+    /// 保存の結果を受けて（フレームの初め）、OS の終了を待たせる印を今の保存の有無に合わせる。窓が見えている間（`ui`）も隠れている間
+    /// （`logic`）も、保存の結果を受ける所はこれを通す。
+    fn poll_saving(&mut self) {
+        self.state.poll_save();
+        self.mark_saving();
+    }
+
+    /// OS の終了を待たせる印を、今の保存の有無に合わせる（変わったときだけ OS へ伝わる）。
+    fn mark_saving(&mut self) {
+        let saving = self.state.is_saving();
+        self.saving_marked = saving;
+        crate::session_end::set_saving(
+            saving,
+            self.state.lang.pick("YoluPainter が保存しています", "YoluPainter is saving"),
+        );
+    }
+
+    /// 終了・窓を閉じる頼みを進める。保存の途中は閉じず（保存を捨てない）、終わるまで待つ。保存が終わったら、その結果の後の状態で、
+    /// 保存していない変更があれば聞き、走っている仕事の後始末をして閉じる。
+    fn close_flow(&mut self, ctx: &egui::Context, close_requested: bool) {
+        if (!self.state.quit && !close_requested) || self.closing {
+            return;
+        }
+        if self.state.is_saving() {
+            // 窓を閉じる頼みは止めて、終わるまで待つ（`quit` に覚える）。画面のスレッドは回し続ける（「応答なし」にならない）
+            if close_requested {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.state.quit = true;
             }
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        } else if self.confirm_close() {
+            self.closing = true;
+            crate::windows::stop_jobs(&mut self.state, std::time::Duration::from_secs(3));
+            if self.state.quit {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        } else {
+            if close_requested {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            self.state.quit = false;
         }
     }
 
@@ -1631,6 +1704,28 @@ impl YoluApp {
         self.link.publish(&mut self.state);
         self.state.link = self.link.view();
     }
+
+    /// 窓が隠れている間の 1 回（`eframe::App::logic` が、見えていないときに呼ぶ。試験は、`ui` を回さずにこれを呼んで、隠れた窓の道を
+    /// 通す）。
+    #[doc(hidden)]
+    pub fn tick_hidden(&mut self, ctx: &egui::Context) {
+        // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
+        // 見えない窓を知らせのために回し続けない）
+        let prior = self.state.message_begin();
+        self.tick_link();
+        // 保存の途中は、隠れていても保存を捨てて閉じない。窓を閉じる頼み（タスクバーの「閉じる」など）は止めて待ち、終わりを受け、
+        // 保存が終わって終了の頼みが残っていれば閉じる流れを進める（見えない窓の保存を、知らせのために回し続けはしない: 保存の間だけ）
+        if self.state.is_saving() {
+            let close_requested = ctx.input(|i| i.viewport().close_requested());
+            self.close_flow(ctx, close_requested);
+            self.poll_saving();
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        } else if self.state.quit {
+            self.close_flow(ctx, false);
+        }
+        self.state.message_end(prior);
+        crate::crash::message(&self.state.message);
+    }
 }
 
 impl eframe::App for YoluApp {
@@ -1642,12 +1737,7 @@ impl eframe::App for YoluApp {
         if ctx.input(|i| i.viewport().visible()) != Some(false) {
             return;
         }
-        // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
-        // 見えない窓を知らせのために回し続けない）
-        let prior = self.state.message_begin();
-        self.tick_link();
-        self.state.message_end(prior);
-        crate::crash::message(&self.state.message);
+        self.tick_hidden(ctx);
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
@@ -1657,6 +1747,8 @@ impl eframe::App for YoluApp {
         self.apply_compositing();
         self.apply_gpu_memory();
         self.frame(ui);
+        // このフレームの中で始めた保存も、次のフレームを待たずに OS の終了を待たせる印へ伝える
+        self.mark_saving();
         self.persist_settings();
         self.persist_layout(ui.ctx());
         self.state.message_end(prior);

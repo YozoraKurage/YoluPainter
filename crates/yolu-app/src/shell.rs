@@ -101,39 +101,46 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
 /// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
+    // 保存の間は、プロジェクトを入れ替える・もう 1 度保存する・配布用に保存するは断る（描く・見るは止めない）
+    let idle = free && !app.is_saving();
     let l = app.lang;
+    // 保存のために押せない項目は、理由をツールチップに出す
+    let why = |entry: Entry<Action>| match app.is_saving() {
+        true => entry.tooltip(crate::project::busy_reason(l)),
+        false => entry,
+    };
     match index {
         0 => {
             let mut entries = vec![
-                Entry::item(
+                why(Entry::item(
                     l.pick("新規プロジェクト…", "New Project…"),
                     Action::NewProjectDialog,
                 )
                 .shortcut("Ctrl+N")
-                .enabled(free),
-                Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
+                .enabled(idle)),
+                why(Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
                     .shortcut("Ctrl+O")
-                    .enabled(free),
-                Entry::item(
+                    .enabled(idle)),
+                why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
-                .enabled(free && app.recovery.is_enabled()),
+                .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
-                Entry::item(l.pick("保存", "Save"), Action::SaveProject)
+                why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
                     .shortcut("Ctrl+S")
-                    .enabled(free),
-                Entry::item(
+                    .enabled(idle)),
+                why(Entry::item(
                     l.pick("別名で保存…", "Save As…"),
                     Action::SaveProjectAsDialog,
                 )
                 .shortcut("Ctrl+Shift+S")
-                .enabled(free),
-                Entry::item(
+                .enabled(idle)),
+                why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
                 )
-                .enabled(free && !app.distribute.is_open() && !app.distribute.is_busy()),
+                .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
                 Entry::Separator,
                 Entry::item(
                     l.pick("プロジェクト設定…", "Project Configuration…"),

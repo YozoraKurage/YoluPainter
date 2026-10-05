@@ -40,7 +40,7 @@ libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの�
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Shutdown", "Win32_System_Threading"] }
 
 [dev-dependencies]
 pollster = "1"   # 既存の許諾確認済み依存。試験用の描画器選択で非同期の wgpu 初期化を待つ

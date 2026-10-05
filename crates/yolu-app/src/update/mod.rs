@@ -858,6 +858,16 @@ impl AppState {
         if self.update.ready.is_none() {
             return;
         }
+        // 保存の途中は入れ替えない（保存の頼みは「変更あり」を下ろすので、いま入れ替えると、保存が失敗して変更が残っても、更新のために
+        // 終わる流れは確認なしで閉じてしまう）。更新の窓と落としたインストーラーは残し、保存が終わってからやり直せる
+        if self.is_saving() {
+            self.message = format!(
+                "{}: {}",
+                lang.pick("更新できません", "Cannot update"),
+                crate::project::busy_reason(lang)
+            );
+            return;
+        }
         // 保存する前に断る（更新が始まらないのに、保存の窓を出さない）。落としたインストーラーは残す。
         if self.update_blocked_by_another_instance() {
             return;
@@ -877,7 +887,8 @@ impl AppState {
     /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶ窓が開いている間は待つ）。保存されていなければ入れない。
     /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先の窓を取り消したときだけ。
     pub fn update_finish_save(&mut self) {
-        if !self.update.after_save || self.dialog_request.is_some() {
+        // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
+        if !self.update.after_save || self.dialog_request.is_some() || self.is_saving() {
             return;
         }
         self.update.after_save = false;
@@ -912,6 +923,10 @@ impl AppState {
         let Some(ready) = self.update.ready.clone() else {
             return;
         };
+        // 入れ替えは、保存が終わって「変更あり」の印が確かなときだけ（ここへ来る道はどれも保存の途中を断るが、走らせる直前にも確かめる）
+        if self.is_saving() {
+            return;
+        }
         // 保存の窓を待つ間に別の窓が開いたかもしれないので、走らせる直前にもう一度確かめる。
         if self.update_blocked_by_another_instance() {
             return;

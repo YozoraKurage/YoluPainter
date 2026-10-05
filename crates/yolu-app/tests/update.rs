@@ -1265,6 +1265,88 @@ fn headless_a_failed_save_keeps_its_reason_and_stops_the_update() {
     assert!(state.quit);
 }
 
+/// 「保存して更新」は、裏のスレッドの保存が終わるまで入れず、終わって保存できていれば入れる。保存できなかったら、その理由を残して入れない。
+#[test]
+fn headless_save_and_update_waits_for_a_background_save() {
+    for fails in [false, true] {
+        let dir = TempDir::new("savebg");
+        let mut state = AppState::new(64, 64);
+        let rig = rig(&mut state, "0.2.0", Mode::Installer);
+        state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+        assert!(!state.modified);
+        find_update(&mut state);
+        apply(&mut state, UpdateAction::Install);
+        settle(&mut state);
+        state.save.background = true;
+        state.modified = true;
+        let hold = state.save.hold_next();
+        apply(&mut state, UpdateAction::Run { save: true });
+        assert!(state.is_saving(), "{}", state.message);
+        // 保存の間は、フレームの終わりごとに見ても入れない
+        for _ in 0..3 {
+            state.update_finish_save();
+        }
+        assert!(rig.launched().is_empty() && !state.quit, "保存の間は入れない");
+        if fails {
+            // 保存先が外から消えて、保存できない
+            std::fs::remove_dir_all(&dir.0).unwrap();
+        }
+        hold.release();
+        state.wait_save();
+        state.update_finish_save();
+        if fails {
+            assert!(state.message.starts_with("保存できません: "), "{}", state.message);
+            assert!(state.modified && !state.quit && rig.launched().is_empty());
+            assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
+        } else {
+            assert!(!state.modified, "{}", state.message);
+            assert_eq!(rig.launched().len(), 1);
+            assert!(state.quit && state.update.is_quitting());
+        }
+    }
+}
+
+/// 保存の途中は、更新の入れ替え（「保存せずに更新」「更新して再起動」でも「保存して更新」でも）を断り、インストーラーを起動しない。保存を頼むと
+/// 「変更あり」の印は下りて、保存が失敗するまで戻らない。その間に入れ替えを始めると、失敗して「変更あり」に戻っても、更新のために終わるので
+/// 確認なしで閉じて変更を失う。
+#[test]
+fn headless_installing_is_refused_while_a_save_is_running() {
+    for (save, english) in [(false, false), (true, false), (false, true)] {
+        let dir = TempDir::new("savebusy");
+        let mut state = AppState::new_in(64, 64, if english { Lang::En } else { Lang::Ja });
+        let rig = rig(&mut state, "0.2.0", Mode::Installer);
+        state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+        find_update(&mut state);
+        apply(&mut state, UpdateAction::Install);
+        settle(&mut state);
+        state.save.background = true;
+        state.modified = true;
+        let hold = state.save.hold_next();
+        state.apply(Action::SaveProject);
+        assert!(state.is_saving() && !state.modified, "{}", state.message);
+        assert!(state.shows_modified(), "保存の結果が出るまで、頼む前の印を見せる");
+        apply(&mut state, UpdateAction::Run { save });
+        assert!(rig.launched().is_empty(), "保存の間はインストーラーを起動しない");
+        assert!(!state.quit && !state.update.is_quitting());
+        assert!(state.update.is_ready_open(), "更新の窓は残り、保存の後にやり直せる");
+        assert!(
+            state.message.contains(if english { "A save is in progress" } else { "保存の途中です" }),
+            "{}",
+            state.message
+        );
+        // 保存の間は、フレームの終わりごとに見ても入れない
+        state.update_finish_save();
+        assert!(rig.launched().is_empty() && !state.quit);
+        hold.release();
+        state.wait_save();
+        assert!(!state.modified, "{}", state.message);
+        // 保存が終わってからなら入れる
+        apply(&mut state, UpdateAction::Run { save: false });
+        assert_eq!(rig.launched().len(), 1, "{}", state.message);
+        assert!(state.quit && state.update.is_quitting());
+    }
+}
+
 #[test]
 fn headless_a_failed_launch_keeps_the_app_open() {
     let mut state = AppState::new(64, 64);
@@ -1593,6 +1675,50 @@ fn the_ready_window_asks_to_save_first_when_there_are_unsaved_changes() {
     assert!(!h.state().state.modified, "先に保存する");
     assert_eq!(rig.launched().len(), 1);
     assert!(h.state().state.quit);
+}
+
+/// 窓が出そろうまで数フレーム進める（保存の途中は描き直しを頼み続けるので、`run` は使えない）。
+fn steps(h: &mut Harness<'_, YoluApp>, n: usize) {
+    for _ in 0..n {
+        h.step();
+    }
+}
+
+/// 保存の途中は、保存を頼んだ後の「変更あり」の印が下りているが、更新の窓は頼む前の印のまま（保存していない変更がある形）で見せる。
+/// 保存が終わるまで、どのボタンもインストーラーを起動しない。
+#[test]
+fn the_ready_window_keeps_the_unsaved_form_while_a_save_runs_and_launches_nothing() {
+    let dir = TempDir::new("readysaving");
+    let mut h = app(1280.0, 800.0, 64);
+    let rig = rig(&mut h.state_mut().state, "0.2.0", Mode::Installer);
+    let hold;
+    {
+        let state = &mut h.state_mut().state;
+        state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+        find_update(state);
+        apply(state, UpdateAction::Install);
+        settle(state);
+        state.save.background = true;
+        state.modified = true;
+        hold = state.save.hold_next();
+        state.apply(Action::SaveProject);
+        assert!(state.is_saving() && !state.modified, "{}", state.message);
+    }
+    steps(&mut h, 6);
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label("保存せずに更新");
+        h.get_by_label("保存して更新");
+        assert!(h.query_by_label("更新して再起動").is_none());
+    }
+    click_label(&mut h, "保存せずに更新");
+    steps(&mut h, 6);
+    assert!(rig.launched().is_empty() && !h.state().state.quit, "{}", h.state().state.message);
+    click_label(&mut h, "保存して更新");
+    steps(&mut h, 6);
+    assert!(rig.launched().is_empty() && !h.state().state.quit, "{}", h.state().state.message);
+    hold.release();
+    h.state_mut().state.wait_save();
 }
 
 #[test]

@@ -759,7 +759,12 @@ impl Package {
     }
     /// ファイルから流して読む（全エントリを確かめる。小さなものだけメモリに残す）。
     pub fn open(path: &Path, limits: &Limits) -> Result<Self> {
-        read(&Source::open_file(path)?, limits, Thresholds::current().keep_in_memory)
+        Self::open_keeping(path, limits, Thresholds::current().keep_in_memory)
+    }
+    /// `open` の、メモリに残すエントリの大きさ（[`Thresholds::keep_in_memory`]）を渡す形。別のスレッドから呼ぶ側が、そのスレッドで取った
+    /// 閾値を渡す（閾値はスレッドごとに変えられるので、別のスレッドの `open` は呼んだスレッドの閾値を見ない）。
+    pub(crate) fn open_keeping(path: &Path, limits: &Limits, keep: u64) -> Result<Self> {
+        read(&Source::open_file(path)?, limits, keep)
     }
     /// 保存で置き換えた後の名前へ、エントリの置き場の名前を付け替える（[`Blob::note_path`]）。
     pub(crate) fn note_path(&self, path: &Path) {
@@ -769,17 +774,25 @@ impl Package {
     }
 
     /// 書く形を決める（1 回目: 全エントリの長さと SHA-256 を数え、manifest を作る）。
+    ///
+    /// エントリごとの数え（作るエントリは作りながら数える）は互いに独立なので、エントリごとに並べて数える。結果は 1 つずつ数えるのと同じで、
+    /// 断る理由も同じ（名前の順に見て、はじめに断ったエントリの理由。それより後ろのエントリは、断ったあとに数えない）。同じ正本から作る
+    /// エントリ（版 26 のヘッダーと部分）は、正本の側が 1 回の流しでまとめて数える（`Made::sha256`）ので、その分は並ばない。
     pub(crate) fn plan(&self) -> Result<Plan> {
         let t = Thresholds::current();
+        let entries: Vec<(&String, &Blob)> = self.files.iter().collect();
+        let counted = first_failure_in_order(&entries, |(name, blob)| {
+            let len = blob.len();
+            check_budget(len <= entry_limit(name), ONE_ENTRY_OVER)?;
+            Ok((blob.sha256()?, len))
+        })?;
         let mut lines = Vec::with_capacity(self.files.len());
         let mut total = 0u64;
         let mut fits = self.files.len() <= t.classic_entries;
-        for (name, blob) in &self.files {
-            let len = blob.len();
-            check_budget(len <= entry_limit(name), ONE_ENTRY_OVER)?;
+        for ((name, _), (sha, len)) in entries.iter().zip(counted) {
             total = total.saturating_add(len);
             fits &= len <= t.classic_entry_bytes;
-            lines.push((blob.sha256()?, len, name.clone()));
+            lines.push((sha, len, (*name).clone()));
         }
         fits &= total <= t.classic_total_bytes;
         let level = if fits { self.level.min(3) } else { 4 };
@@ -843,6 +856,38 @@ impl Package {
         Ok(out.into_inner())
     }
 }
+/// `items` の各要素に `work` を、並べて（rayon）かける。どれかが断れば、並びの順にいちばん前の断りを返す（1 つずつかけたときと同じ理由）。
+/// 断ったより後ろの要素は、まだ始めていなければ始めない（断った前のものは、断りの理由の候補なので最後までかける）。
+/// 並べる仕事は別のスレッドで動くので、スレッドごとの閾値（[`Thresholds::scoped`]）は見えない。呼ぶ側が先に値を取っておく。
+pub(crate) fn first_failure_in_order<T: Sync, R: Send>(
+    items: &[T],
+    work: impl Fn(&T) -> Result<R> + Sync,
+) -> Result<Vec<R>> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let failed = AtomicUsize::new(usize::MAX);
+    let results: Vec<Option<Result<R>>> = items
+        .par_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            if index > failed.load(Ordering::Relaxed) {
+                return None;
+            }
+            let done = work(item);
+            if done.is_err() {
+                failed.fetch_min(index, Ordering::Relaxed);
+            }
+            Some(done)
+        })
+        .collect();
+    let mut out = Vec::with_capacity(items.len());
+    for done in results {
+        // 後ろのものを飛ばしたのは、それより前に断りがあったときだけ（先にその断りに行き着く）
+        out.push(done.expect("断りより前は飛ばさない")?);
+    }
+    Ok(out)
+}
+
 /// 書く形（1 回目の結果）。
 pub(crate) struct Plan {
     pub level: u32,
@@ -1692,9 +1737,10 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
             && entries.keys().all(|n| by_name.contains_key(n.as_str())),
         "manifestにないエントリがあります",
     )?;
-    let mut files = Files::new();
-    let mut skeletons = BTreeMap::new();
-    for (name, (len, digest)) in &entries {
+    // エントリごとの確かめ（流して長さ・CRC・SHA-256 を数える）は互いに独立なので、エントリごとに並べる。結果は 1 つずつ確かめるのと同じで、
+    // 断る理由も同じ（名前の順にいちばん前に断ったエントリの理由）
+    let items: Vec<(&String, &(u64, String))> = entries.iter().collect();
+    let verified = first_failure_in_order(&items, |&(name, (len, digest))| -> Result<Verified> {
         let l = by_name
             .get(name.as_str())
             .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {name}")))?;
@@ -1718,17 +1764,30 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
             };
             // 読み残し（骨組みの読みが途中で断ったとき）も終わりまで流して、長さ・CRC・SHA-256 を確かめる
             copy(&mut r, &mut io::sink())?;
-            skeletons.insert(name.clone(), parsed.map(Arc::new).map_err(|e| e.to_string()));
-            files.insert(name.clone(), blob);
+            Ok(Verified {
+                blob,
+                skeleton: Some(parsed.map(Arc::new).map_err(|e| e.to_string())),
+            })
         } else if *len <= keep {
             // 宣言の長さで先に確保しない（中身が宣言より短い壊れたファイルで大きく確保しない）
             let mut v = Vec::with_capacity((*len).min(1 << 16) as usize);
             copy(&mut r, &mut v)?;
-            files.insert(name.clone(), Blob::from(v));
+            Ok(Verified {
+                blob: Blob::from(v),
+                skeleton: None,
+            })
         } else {
             copy(&mut r, &mut io::sink())?;
-            files.insert(name.clone(), blob);
+            Ok(Verified { blob, skeleton: None })
         }
+    })?;
+    let mut files = Files::new();
+    let mut skeletons = BTreeMap::new();
+    for ((name, _), done) in items.iter().zip(verified) {
+        if let Some(skeleton) = done.skeleton {
+            skeletons.insert((*name).clone(), skeleton);
+        }
+        files.insert((*name).clone(), done.blob);
     }
     archive::complete_ylp(files.keys(), level.min(3))?;
     Ok(Package {
@@ -1738,6 +1797,11 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         skeletons,
         donors: Vec::new(),
     })
+}
+/// 1 エントリの確かめの結果（メモリに残す中身か位置、分けない大きな正本なら読んだ骨組み）。
+struct Verified {
+    blob: Blob,
+    skeleton: Option<std::result::Result<Arc<crate::NativeDocument>, String>>,
 }
 fn zip_blob(source: &Source, l: &Listed, sha: Option<String>) -> Blob {
     Blob(Repr::Zip(Arc::new(ZipRef {

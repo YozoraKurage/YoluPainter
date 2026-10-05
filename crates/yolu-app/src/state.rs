@@ -737,6 +737,8 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// 配布用に保存（準備した写し・窓の選び・走っている仕事）。
     pub distribute: crate::distribute::DistributeState,
+    /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
+    pub save: crate::project::SaveState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
@@ -934,6 +936,7 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             distribute: Default::default(),
+            save: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -954,6 +957,15 @@ impl AppState {
             crash: Default::default(),
             recovery: Default::default(),
         }
+    }
+
+    /// 保存の間なら、`what`（断る操作の言い方）と理由（`busy_reason`）を `message` に書いて true。選ぶ窓を開く前の操作が使う。
+    fn refuse_while_saving(&mut self, what: &str) -> bool {
+        if !self.is_saving() {
+            return false;
+        }
+        self.message = format!("{what}: {}", crate::project::busy_reason(self.lang));
+        true
     }
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
@@ -1355,6 +1367,10 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                // 保存の間は、選んでから断るのではなく、窓を開く前に断る
+                if self.refuse_while_saving(self.lang.pick("新しいプロジェクトを作れません", "Cannot create a new project")) {
+                    return;
+                }
                 self.dialog_request = Some(DialogRequest::New)
             }
             Action::NewProject => {
@@ -1367,11 +1383,17 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                if self.refuse_while_saving(self.lang.pick("開けません", "Cannot open")) {
+                    return;
+                }
                 self.dialog_request = Some(DialogRequest::Open)
             }
             Action::SaveProjectAsDialog => {
                 if stroking {
                     return refuse(self);
+                }
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                    return;
                 }
                 self.dialog_request = Some(DialogRequest::SaveAs)
             }
@@ -1384,6 +1406,10 @@ impl AppState {
             Action::SaveProject => {
                 if stroking {
                     return refuse(self);
+                }
+                // 保存の間は、保存先を選ぶ窓（まだファイルが無いプロジェクト）も開かずに断る
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                    return;
                 }
                 match self.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf()) {
                     Some(path) => crate::project::save_from(self, &path),

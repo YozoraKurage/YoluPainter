@@ -4673,6 +4673,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "png",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",

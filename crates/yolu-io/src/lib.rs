@@ -40,7 +40,7 @@ pub use generation::{
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
 pub use store::{
-    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveTarget,
+    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveStage, SaveTarget,
     MAX_BACKUPS_TO_KEEP,
 };
 

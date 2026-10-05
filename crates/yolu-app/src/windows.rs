@@ -250,6 +250,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.np_is_busy()
         || app.update.is_busy()
         || app.brushes.import.is_busy()
+        || app.is_saving()
     {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
@@ -268,6 +269,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     merge_confirm(ctx, app);
     crate::update::window::show(ctx, app);
     job_card(ctx, app);
+    saving_before_close(ctx, app);
     app.release_idle_bake_input();
 }
 
@@ -285,6 +287,12 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.np.window.is_some()
         || app.np.remove_confirm.is_some()
         || app.layer_ops.merge_confirm.is_some()
+        || waiting_to_close(app)
+}
+
+/// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。
+fn waiting_to_close(app: &AppState) -> bool {
+    app.quit && app.is_saving()
 }
 
 fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
@@ -593,7 +601,8 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
         id: &'static str,
         text: String,
         fraction: Option<f32>,
-        cancel: Action,
+        /// 取り消す操作（保存は取り消せない）。
+        cancel: Option<Action>,
         canceling: bool,
     }
     let lang: Lang = app.lang;
@@ -624,7 +633,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                     (p.fraction * 100.0) as i32
                 ),
                 fraction: Some(p.fraction as f32),
-                cancel: Action::Bake(BakeAction::Cancel),
+                cancel: Some(Action::Bake(BakeAction::Cancel)),
                 canceling: p.canceling,
             });
         }
@@ -640,7 +649,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 p.total
             ),
             fraction: Some((p.index.saturating_sub(1)) as f32 / p.total.max(1) as f32),
-            cancel: Action::Export(ExportAction::Cancel),
+            cancel: Some(Action::Export(ExportAction::Cancel)),
             canceling: p.canceling,
         });
     }
@@ -657,7 +666,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 p.file
             ),
             fraction: None,
-            cancel: Action::Psd(PsdAction::Cancel),
+            cancel: Some(Action::Psd(PsdAction::Cancel)),
             canceling: p.canceling,
         });
     }
@@ -674,7 +683,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 p.file
             ),
             fraction: None,
-            cancel: Action::Distribute(crate::distribute::DistributeAction::CancelJob),
+            cancel: Some(Action::Distribute(crate::distribute::DistributeAction::CancelJob)),
             canceling: p.canceling,
         });
     }
@@ -692,8 +701,18 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 }
             ),
             fraction: None,
-            cancel: Action::Brush(crate::brushes::BrushAction::ImportCancel),
+            cancel: Some(Action::Brush(crate::brushes::BrushAction::ImportCancel)),
             canceling: p.canceling,
+        });
+    }
+    if let Some(p) = app.save_progress() {
+        entries.push(Entry {
+            id: "save",
+            text: format!("{} — {}", lang.pick("保存しています", "Saving"), p.file),
+            fraction: Some(p.fraction),
+            // 保存は途中で止めない（検証した一時ファイルからの 1 回の置換で確定させる）
+            cancel: None,
+            canceling: false,
         });
     }
     if let Some(r) = &app.np.reopening {
@@ -701,7 +720,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             id: "model",
             text: format!("{} — {}", lang.pick("モデルを読み込み中", "Loading the model"), r.file_name()),
             fraction: None,
-            cancel: Action::Project(crate::newproject::NpAction::CancelReopen),
+            cancel: Some(Action::Project(crate::newproject::NpAction::CancelReopen)),
             canceling: false,
         });
     }
@@ -714,7 +733,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 p.version
             ),
             fraction: Some(p.fraction),
-            cancel: Action::Update(crate::update::UpdateAction::Cancel),
+            cancel: Some(Action::Update(crate::update::UpdateAction::Cancel)),
             canceling: p.canceling,
         });
     }
@@ -750,13 +769,14 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                     pos2(row.right() - 24.0, row.top() + 4.0),
                     vec2(24.0, 24.0),
                 );
-                let text_rect =
-                    Rect::from_min_max(row.min, pos2(button.left() - 6.0, row.top() + 18.0));
+                // 取り消せない仕事（保存）は、取消のボタンの場所まで使う
+                let right = if e.cancel.is_some() { button.left() - 6.0 } else { row.right() };
+                let text_rect = Rect::from_min_max(row.min, pos2(right, row.top() + 18.0));
                 let shown = w::fit(&p, &e.text, text_rect.width(), t::LABEL_DIM);
                 w::text(&p, text_rect, &shown, t::LABEL_DIM, Align::Left);
                 let bar = Rect::from_min_max(
                     pos2(row.left(), row.top() + 22.0),
-                    pos2(button.left() - 6.0, row.top() + 28.0),
+                    pos2(right, row.top() + 28.0),
                 );
                 w::rounded(&p, bar, t::CONTROL_BG, 3.0);
                 match e.fraction {
@@ -783,6 +803,9 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                         );
                     }
                 }
+                let Some(action) = &e.cancel else {
+                    continue;
+                };
                 if w::icon_button(
                     ui,
                     button,
@@ -799,13 +822,70 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 )
                 .clicked()
                 {
-                    cancel = Some(e.cancel.clone());
+                    cancel = Some(action.clone());
                 }
             }
         });
     if let Some(action) = cancel {
         app.apply(action);
     }
+}
+
+/// 終わる頼みを待たせているあいだの小さな窓（取り消しのボタンは無い）。保存が終わると消え、その結果の後の状態で終わる（保存していない
+/// 変更が残っていれば、そのとき聞く）。下の部品へは入力を渡さない。
+fn saving_before_close(ctx: &egui::Context, app: &AppState) {
+    if !waiting_to_close(app) {
+        return;
+    }
+    let Some(progress) = app.save_progress() else {
+        return;
+    };
+    let lang = app.lang;
+    let id = Id::new("yolu.window.saving-before-close");
+    let screen = ctx.content_rect();
+    egui::Area::new(id.with("blocker"))
+        .order(Order::Middle)
+        .fixed_pos(screen.min)
+        .constrain(false)
+        .interactable(true)
+        .show(ctx, |ui| {
+            ui.interact(screen, id.with("blocker-hit"), Sense::click_and_drag());
+            ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
+        });
+    let rect = Rect::from_center_size(screen.center(), vec2(320.0, 84.0));
+    // 最後に描いた窓の矩形（試験が位置を知るために読む。`window::last_rect`）
+    ctx.data_mut(|d| d.insert_temp(id.with("rect"), rect));
+    window::note_open(ctx);
+    egui::Area::new(id)
+        .order(Order::Foreground)
+        .fixed_pos(rect.min)
+        .constrain(false)
+        .show(ctx, |ui| {
+            ui.allocate_exact_size(rect.size(), Sense::click_and_drag());
+            let p = ui.painter().clone();
+            w::rounded(&p, rect, t::PANEL_BG, 6.0);
+            w::outline(&p, rect, t::SEPARATOR, 1.0, 6.0);
+            let inner = rect.shrink2(vec2(16.0, 12.0));
+            let title = lang.pick("保存しています", "Saving");
+            let head = Rect::from_min_size(inner.min, vec2(inner.width(), 22.0));
+            w::text(&p, head, title, t::HEADER, Align::Left);
+            let name = Rect::from_min_size(pos2(inner.left(), head.bottom()), vec2(inner.width(), 18.0));
+            let shown = w::fit(&p, &progress.file, name.width(), t::LABEL_DIM);
+            w::text(&p, name, &shown, t::LABEL_DIM, Align::Left);
+            let bar = Rect::from_min_size(pos2(inner.left(), name.bottom() + 6.0), vec2(inner.width(), 6.0));
+            w::rounded(&p, bar, t::CONTROL_BG, 3.0);
+            w::rounded(
+                &p,
+                Rect::from_min_size(bar.min, vec2(bar.width() * progress.fraction.clamp(0.0, 1.0), bar.height())),
+                t::ACCENT,
+                3.0,
+            );
+        });
+}
+
+/// 終わる頼みを待たせている小さな窓の、最後に描いた矩形（試験が読む）。
+pub fn saving_window_rect(ctx: &egui::Context) -> Option<Rect> {
+    window::last_rect(ctx, Id::new("yolu.window.saving-before-close"))
 }
 
 /// 試験用: 別のスレッドの仕事を、取消が来るまで始めずに止めておく（取消・終了前の取消が効いたことを、仕事の速さに頼らず

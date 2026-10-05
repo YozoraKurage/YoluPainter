@@ -43,6 +43,7 @@ pub mod newproject;
 pub mod panels;
 pub mod pathtool;
 pub mod pen;
+pub mod session_end;
 pub mod prefs;
 pub mod project;
 pub mod psd;
