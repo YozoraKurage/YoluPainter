@@ -54,3 +54,10 @@ python3 tools/third-party.py --package yolu-bridge --bundle --offline
 初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。
 
 `--target x86_64-pc-windows-msvc` または `--target x86_64-unknown-linux-gnu` を指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
+
+## CPU の速さをまとめて測る
+
+Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存の Rust と C# の合成・ブラシ・面のベンチを同じ回数・並列上限・CPU 割当で順に測り、
+`target/bench-all/summary.md` に比較表、同じ場所にログと実行条件を保存する。Python 3.10 以降・taskset・上記の C# 用の Unity 同梱ツールが必要。
+`--source DIR` で Unity 版の場所、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
+合成・ブラシは予熱 2 回を除き、面は予熱なしの中央値。フィルターはレベル補正・ブラシのぼかし／指先を含む。GPU と独立フィルター全種は対象外。

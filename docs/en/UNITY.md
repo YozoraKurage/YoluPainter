@@ -1,0 +1,42 @@
+# Working with Unity
+
+[日本語](../UNITY.md)
+
+## Live Link
+
+Connect to the Unity Editor running on the same PC. A Unity 2022.3 project needs **a Live Link-enabled version of YoluPainter for Unity (VPM package `net.yozolab.yolupainter`) and the native bridge for your OS**. Versions without `YozoLab → YoluPainter → Live Link` cannot use this connection. The bridge is `yolu_bridge.dll` on Windows and `libyolu_bridge.so` on Linux.
+
+1. In Unity, right-click the model's GameObject in the Hierarchy and choose Open in YoluPainter (the large button of the `YozoLab → YoluPainter → Live Link` window does the same). If the standalone application is not running, it is started; then Unity connects and sends the model. The standalone application installed by the installer is used (choose its location once if it is elsewhere).
+2. Select a material in the standalone application's Texture Sets panel and paint in the 2D or 3D view. The composite of the displayed set is sent to Unity when that set has a Color destination in Unity.
+3. Save your work as `.ylp`. After a script recompile or entering or leaving Play mode, Unity connects again by itself.
+
+The standalone application listens for Live Link when it starts, and the icon at the right end of the menu bar shows the state. Turn this off with "Start Live Link on launch" in Edit → Settings… (starting with `--livelink` always listens; File → Live Link starts it by hand). The link name, Connect, Send model and the rest are under Details in the Unity window.
+
+Unity temporarily displays painted colors on materials such as lilToon and Standard. This does not write to the original texture or material assets, and disconnecting removes the temporary display. Live Link does not save your working file; save it in the standalone application.
+
+Only programs running as the same user on the same PC can connect. Every time the standalone application starts listening, it creates a random key in a folder accessible only to that user: `%LOCALAPPDATA%\YoluPainter\LiveLink` on Windows; `$XDG_RUNTIME_DIR/yolupainter` or `/run/user/<UID>/yolupainter` on Linux, falling back to `/tmp/yolupainter-<UID>`; and `/tmp/yolupainter-<UID>` on Mac. The Unity bridge proves knowledge of the key during the handshake and sends the model only after verifying that the standalone application also knows it. The connection endpoint (socket or named pipe) and shared-memory files carrying pixels are also accessible only to that user. Older versions without key support are refused with a reason in the status area; use matching versions of the standalone application and Unity package. When listening starts, shared-memory files left by a crashed standalone application are cleaned up. Other programs running as the same user can read the key file and connect.
+
+Only one Unity instance can connect at a time. Version mismatches and listening failures appear in the status area. Restart Unity after updating the bridge. To change the connection name, set the `YOLUPAINTER_LINK_NAME` environment variable before launching the standalone application and use the same name in Unity.
+
+## Exchanging .ylp files with the Unity version
+
+| Content | Handling in the standalone application |
+|---|---|
+| `.ylp` formats 1–7, internal document formats 1–23 | Readable. Saving updates the file to `.ylp` format 7; document format depends on the features used (21, 22, or 23, as described in the user channel and Noise/Grunge rows) |
+| Raster layers (six standard channels), groups (pass-through/isolated), masks, fills, adjustments (Invert, Levels, Hue/Saturation/Lightness), clipping, layer locks (alpha, pixels, position, all), per-channel enable and blending, Normal settings | Editable and saveable. Document/layer IDs and RGB values of transparent pixels are preserved. Locks use the document format 12 attribute layout; documents without locks retain the same bytes as before |
+| User channels | Editable and saveable. Only sets with user channels are saved in document format 22. Unity versions supporting only document formats up to 21 (such as 0.2.0) cannot open that `.ylp` |
+| Noise/Grunge (generator types exclusive to the Rust version, including disabled stages) | Editable and saveable. Only sets containing these stages use document format 23. Unity versions supporting only document formats up to 21 (such as 0.2.0) cannot open that `.ylp`. Removing the stages and saving returns the set to format 21 (22 with user channels). They cannot be written to `.ylsmart` (format 1) |
+| Mesh maps (per-set `meshmap-<kind>.bin`) | Loaded and saved. Only newly baked, unsaved maps are written; maps present when opening are preserved as-is. Maps whose model or settings differ from the current ones are marked stale and not used |
+| Filters (layers/masks), Anchor, 2D/3D paths | Editable and saveable. Settings are preserved and evaluated during compositing, so effects appear on screen and in exported composite PNGs |
+| Generators using mesh maps or images; fill images, projections, gradients; decals | Editable and saveable. Evaluation receives mesh maps baked for the current conditions, the model root, and shelf images. On opening, sets with effects lacking inputs (missing, stale, or unverifiable maps, or images absent from the shelf) are read-only: the saved composite is displayed, the original document is preserved, and missing inputs are listed. Once inputs are available (by baking, loading a model, or adding shelf images), the same set becomes editable. Settings that can be fixed within the document, such as no selected anchor or no ID colors, do not make a set read-only |
+| Manual ID colors | Sets containing them are read-only, with a reason shown, and the original document is preserved. Manual ID colors can be assigned in the standalone application, but saving a document containing them is refused with a reason |
+| Appearance of read-only sets | Displays the saved Color composite. If it is missing or unreadable, an empty view and a reason are shown |
+| Asset shelf (`resources.json` and `resources/`: images, brushes, materials, Smart Materials, Smart Masks) | Loaded and saved. Rewritten only when the shelf changes, with YoluPainter-rs as the writer; otherwise the original bytes are preserved. Smart Materials and Smart Masks added by this application use `.ylsmart` (format 1), readable by Unity |
+| Unedited sets, embedded resources, unknown additional entries | Original data is preserved when saving |
+| Newer formats, unknown values, damaged files | Opening is refused with a reason |
+
+To return a file to Unity, use a version that reads `.ylp` format 7 and document format 21. If a `.ylp` contains sets with user channels or Noise/Grunge, remove those features and save again first. There is no conversion to formats for older Unity versions. Read-only sets retain their original editing data when saved instead of being replaced by flattened composites. However, saved images may not reflect a fresh evaluation of the latest effects.
+
+Edited sets are saved in document format 21 (22 with user channels, 23 with Noise/Grunge), along with composites of the standard channels in use. Undo history is not saved. Identical ZIP bytes for the entire `.ylp`, window layouts, and model connection state across the two applications are not guaranteed.
+
+The version immediately before an overwrite is kept in `<filename>-backups~/` beside the file. By default all backups are retained without automatic deletion. Backups to Keep in Edit → Settings… lets you retain the newest 0–1000 backups (0 keeps none); only older backups beyond that count are removed. The destination filename must end in `.ylp`; missing destination folders are created. If another application has changed the file since it was opened, overwriting is refused. Do not edit the same file simultaneously in both applications: save, then reopen it in the other application.
