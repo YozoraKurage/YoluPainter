@@ -18,8 +18,9 @@
 ; 文書は DocFiles の一覧から $INSTDIR\docs・$INSTDIR\docs\en に入れ、入れた名前を docs\.installed に記録する。更新は、前の版の記録にある文書を先に消すので、
 ; 前の版にだけあった文書が残らない。アンインストールは一覧の文書と記録を消し、フォルダは空のときだけ消す（利用者が docs に置いたファイルは消さない）。
 
-; アプリは 64 ビット（x86_64）だけなので、インストーラーも 64 ビット（Unicode）で作る。Wine でも 32 ビットの環境なしで試せる。
-Target amd64-unicode
+; インストーラーの外側は 32 ビット（Unicode）。公式の Windows 版 NSIS には 64 ビットの外側の部品が無いため。入れるアプリは 64 ビット（x86_64）。
+; 書くのは利用者の領域（HKCU・LocalAppData）だけで、32 ビットの外側でも WOW64 の向け替えを受けない。
+Target x86-unicode
 ManifestDPIAware true
 RequestExecutionLevel user
 SetCompressor /SOLID lzma

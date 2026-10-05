@@ -13,7 +13,7 @@
 出して通る。Windows の実機で確かめる）。画面を出す側（ページの並び・チェック・終了の確かめ）は確かめない。
 時間は monotonic で測る（WSL2 では壁時計が数秒戻ることがある）。
 
-必要: makensis・wine・x86_64-w64-mingw32-gcc。生成物と専用の Wine 環境は target/test-installer/ だけに置く。
+必要: makensis・wine（32 ビットの外側を動かすので wine32 も）・x86_64-w64-mingw32-gcc。生成物と専用の Wine 環境は target/test-installer/ だけに置く。
 使い方: python3 tools/test-installer.py [--keep]（--keep は終わっても target/test-installer/ を消さない）
 """
 import argparse
