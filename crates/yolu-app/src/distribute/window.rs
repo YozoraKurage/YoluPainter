@@ -32,6 +32,7 @@ pub fn label(lang: Lang, removal: Removal) -> &'static str {
         Removal::ModelReference => lang.pick("モデルの参照", "Model reference"),
         Removal::MeshMaps => lang.pick("メッシュマップ", "Mesh maps"),
         Removal::UnityValues => lang.pick("Unity のマテリアルの値", "Unity material values"),
+        Removal::SavedSelections => lang.pick("覚えた選択範囲", "Remembered selections"),
         Removal::StaleEntries => lang.pick("古いサムネイルなど", "Old thumbnail and state"),
         Removal::UnknownEntries => lang.pick("知らないエントリ", "Unknown entries"),
     }
@@ -53,8 +54,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "Where the assets were imported from. Assets in use stay; only their source is dropped",
         ),
         Removal::ModelReference => lang.pick(
-            "開いていたモデルの場所と Unity のモデルの GUID",
-            "The location of the model that was open and the Unity model GUID",
+            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ",
+            "The location of the model that was open, the Unity model GUID and the model's pose",
         ),
         Removal::MeshMaps => lang.pick(
             "モデルの形から焼いたマップ。Generator が使うマップは、開いたあとにモデルから焼き直します",
@@ -63,6 +64,10 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
         Removal::UnityValues => lang.pick(
             "Live Link で Unity のマテリアルから受けた値。見た目の設定は残ります",
             "Values received from Unity materials over Live Link. Look settings stay",
+        ),
+        Removal::SavedSelections => lang.pick(
+            "名前を付けて残した選択範囲。除くと、写しは Unity 版でも開ける形式になります（今の選択範囲は残ります）",
+            "Selections saved under a name. Without them the copy can be opened by the Unity version too (the current selection stays)",
         ),
         Removal::StaleEntries => lang.pick(
             "Unity 版が残したサムネイル・ブラシの設定など。スタンドアロン版は更新しません",

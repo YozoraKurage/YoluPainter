@@ -25,6 +25,8 @@ pub(crate) struct State {
     height: u32,
     normal: NormalSettings,
     selection: Option<crate::SelectionMask>,
+    /// 名前を付けて残した選択範囲（画布の大きさを変える操作が作り直す。ほかの操作は文書のものをそのまま写している）。
+    saved_selections: super::saved_selections::SavedList,
     dirty: Dirty,
 }
 impl State {
@@ -36,6 +38,7 @@ impl State {
             height,
             normal_settings,
             selection,
+            saved_selections,
             // 交換しない: 同じ文書の同じ値（準備用の文書は書き換えない）
             id: _,
             tile_size: _,
@@ -83,6 +86,7 @@ impl State {
             height: *height,
             normal: *normal_settings,
             selection: selection.take(),
+            saved_selections: std::mem::take(saved_selections),
             dirty,
         }
     }
@@ -101,6 +105,7 @@ impl Document {
             channels,
             normal_settings,
             selection,
+            saved_selections,
             source_budget,
             stroke_budget,
             id_counter,
@@ -143,6 +148,7 @@ impl Document {
         d.channels = channels.clone();
         d.normal_settings = *normal_settings;
         d.selection = selection.clone();
+        d.saved_selections = saved_selections.clone();
         d.source_budget = *source_budget;
         d.stroke_budget = *stroke_budget;
         d.undo_budget = u64::MAX;
@@ -200,6 +206,7 @@ impl Document {
         }
         std::mem::swap(&mut self.normal_settings, &mut state.normal);
         std::mem::swap(&mut self.selection, &mut state.selection);
+        std::mem::swap(&mut self.saved_selections, &mut state.saved_selections);
         self.mark_dirty(&state.dirty, &state.layers);
         self.note_swapped_sources(&state.dirty, &state.layers);
         if matches!(&state.dirty, Dirty::Layers(ids) if !ids.is_empty()) {

@@ -2,11 +2,12 @@
 //! 差し替えて（隣り合わせはそのまま、BVH は refit）3D ビューのモデルにする。計算は core の `skin` と `geometry`、読み込みは
 //! yolu-model。ここは状態（今のポーズ・選んだ骨・取り消しの並び）と、いつ組み直すかだけ。
 //!
-//! - ポーズの取り消しは画素の取り消しと別の並び（`undo`・`redo`）。ポーズはプロジェクトに入らない見せ方の状態で、画素の履歴は
+//! - ポーズの取り消しは画素の取り消しと別の並び（`undo`・`redo`）。ポーズは文書の画素と別の状態で、画素の履歴は
 //!   文書ごとにメモリの予算で古いものが消えるので、混ぜると片方の都合で片方が消える。ポーズのモードの間は Ctrl+Z がこちらへ来る。
 //! - ストロークの最中はポーズを変えない（描いている間の当たりと遮蔽の覚えは、そのスナップショットのもの）。断って知らせる。
 //! - FBX は別のスレッドで読む（読み込み・変換・休みの形の組み立て）。読み終わったらフレームの初めに入れ替える。
-//! - ポーズは `.ylp` に保存しない（保存するなら形式は後で決める）。名前を付けて残すのは個人の設定のフォルダのプリセット（`presets`）。
+//! - 今のポーズは、プロジェクトのモデル（FBX）のものだけ `.ylp` の根の `pose.json` に残り、同じモデルを開くと戻る（`stored`。形式は上げない状態の
+//!   エントリ）。変えると「変更あり」の印が付く（`sync_modified`）。名前を付けてモデルをまたいで使うのは個人の設定のフォルダのプリセット（`presets`）。
 //! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`、ポーズのプリセット（保存・当てる・左右反転）は
 //!   `presets`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・プリセットを当てるのは 1 つの取り消しの段、
 //!   隠すのは見せ方の状態で取り消しの対象ではない）。
@@ -14,6 +15,7 @@
 pub mod edit;
 pub mod hide;
 pub mod presets;
+pub mod stored;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -83,8 +85,10 @@ pub struct PoseSession {
     pub euler_hint: Option<edit::EulerHint>,
     /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
     pub hide: hide::HideState,
-    /// 最後にポーズのプリセットを当てたとき、このモデルの骨へ対応させられず飛ばした項目。
+    /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
     pub preset_notes: Vec<presets::Skipped>,
+    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。このセッションが始まってから）。「変更あり」の印と復旧の書き置きの鍵。
+    pub edits: u64,
 }
 
 impl PoseSession {
@@ -154,6 +158,8 @@ pub struct PoseEditor {
     /// 名前を変えているプリセットと、その欄に初めのフォーカスを渡したか。
     pub preset_rename: Option<u32>,
     pub preset_rename_started: bool,
+    /// 「変更あり」の印へ数え終えた、セッションの `edits`（フレームごとに、増えていれば印を付ける）。
+    pub seen_edits: u64,
 }
 
 impl PoseEditor {
@@ -222,7 +228,9 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         euler_hint: None,
         hide: hide::HideState::default(),
         preset_notes: Vec::new(),
+        edits: 0,
     });
+    view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
     // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）
     view3d.set_face_mask(None);
@@ -477,6 +485,7 @@ fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
         Arc::new(geometry),
     );
     s.pose = pose;
+    s.edits += 1;
     s.model_revision = revision;
     s.timings = PoseTimings {
         skin_ms,
@@ -514,6 +523,24 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     if let Some(s) = view3d.pose.session.as_mut() {
         push_undo(s, before);
     }
+    Ok(())
+}
+
+/// 開いた .ylp のポーズを戻す（取り消しの段にも「変更あり」の印にも数えない: 開いた直後の状態）。
+pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
+    let s = view3d
+        .pose
+        .session
+        .as_ref()
+        .ok_or(ViewError::NoPoseModel)?;
+    s.rig.check_pose(&pose)?;
+    apply(view3d, pose)?;
+    if let Some(s) = view3d.pose.session.as_mut() {
+        s.undo.clear();
+        s.redo.clear();
+        s.edits = 0;
+    }
+    view3d.pose.seen_edits = 0;
     Ok(())
 }
 
@@ -688,6 +715,20 @@ pub fn owns_undo(app: &AppState) -> bool {
     app.view3d.pose.mode && app.view3d.pose.session.is_some() && app.view3d.visible
 }
 
+/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデルが無い試しの人形のポーズは残らないので数えない）。
+/// 開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
+pub fn sync_modified(app: &mut AppState) {
+    let Some(edits) = app.view3d.pose.session.as_ref().map(|s| s.edits) else {
+        return;
+    };
+    if edits != app.view3d.pose.seen_edits {
+        app.view3d.pose.seen_edits = edits;
+        if app.np.model_file.is_some() {
+            app.modified = true;
+        }
+    }
+}
+
 /// フレームの初めに（app から）: 読み込みを見て、知らせを出す。3D ビューのタブを前に出すなら true。
 pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     // 窓に落とした FBX を開く
@@ -714,6 +755,7 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     });
     edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
+    sync_modified(app);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();
     let note = if installed {

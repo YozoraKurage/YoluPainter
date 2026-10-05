@@ -629,6 +629,7 @@ impl Action {
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
         ) || matches!(self, Action::Fill(op) if op.edits_document())
+            || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
     }

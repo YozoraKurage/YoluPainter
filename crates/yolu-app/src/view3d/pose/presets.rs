@@ -42,6 +42,10 @@ pub enum SkipReason {
     MirrorAsymmetric,
     /// 同じ骨へ当てる項目が 2 つ以上ある（先のものを当てた）。
     Overlap,
+    /// ファイルのポーズの BlendShape に、メッシュの名前と名前の組が合うものが無い。
+    ShapeNotFound,
+    /// ファイルのポーズの BlendShape に、メッシュの名前と名前の組が合うものが複数ある。
+    ShapeAmbiguous,
 }
 
 /// 飛ばした項目。
@@ -74,6 +78,13 @@ impl Skipped {
             SkipReason::Overlap => lang.pick(
                 "同じボーンへの項目が重なっています",
                 "Two entries target the same bone",
+            ),
+            SkipReason::ShapeNotFound => {
+                lang.pick("BlendShape がありません", "BlendShape not found")
+            }
+            SkipReason::ShapeAmbiguous => lang.pick(
+                "同じ名前の BlendShape が複数あります",
+                "Several BlendShapes share the name",
             ),
         };
         format!("{}: {} ({reason})", self.preset, self.path)

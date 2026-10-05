@@ -13,6 +13,11 @@ use serde::{
 use serde_json::{Map, Value};
 use std::{collections::HashSet, fmt, io::Cursor, sync::Arc};
 
+/// 読める .ylp の形式の上限（8 は、名前を付けて残した選択範囲を使うファイルだけ。ほかのファイルは 7 のまま）。
+pub const MAX_FORMAT: i32 = 8;
+/// 名前を付けて残した選択範囲を使うファイルの形式。
+pub const SAVED_SELECTIONS_FORMAT: i32 = 8;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WriterInfo {
     pub app: String,
@@ -267,7 +272,8 @@ impl Project {
         self.rebuild(files, 3, &[])
     }
     /// エントリを替えたプロジェクトを作り直す（変わっていない正本は、骨組みを読み直さずにそのまま使う）。
-    fn rebuild(&self, files: Files, level: u32, fresh: &[SetDocument]) -> Result<Self> {
+    fn rebuild(&self, mut files: Files, level: u32, fresh: &[SetDocument]) -> Result<Self> {
+        settle_format(&mut files)?;
         let known: Vec<SetDocument> = fresh
             .iter()
             .cloned()
@@ -284,6 +290,10 @@ impl Project {
             .collect();
         package.remember_donors(removed.into_iter());
         Self::from_package(package, &known)
+    }
+    /// 今の書き手が書く形式（7 か、名前を付けて残した選択範囲を使うファイルの 8）か。旧形式は先に `upgraded` で 7 にする。
+    pub(crate) fn is_current(&self) -> bool {
+        self.info.format >= 7
     }
     pub fn info(&self) -> &FormatInfo {
         &self.info
@@ -388,7 +398,7 @@ impl Project {
         dropped: &[&str],
     ) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "セットを並べ直す前にupgradedで形式7へ移行してください",
         )?;
         let mut files = self.original.files.clone();
@@ -481,6 +491,76 @@ impl Project {
         }
         self.rebuild(files, self.original.level, &[])
     }
+    /// セットの、名前を付けて残した選択範囲（`sets/<ID>/selections.json` と `selection-<SHA-256>.bin`。形式 8）。読めない項目は飛ばして
+    /// 理由を `skipped` に返し（ファイルにはバイト列のまま残る）、読める項目だけを `items` に返す。何も無ければ空。セットが無ければ断る。
+    pub fn saved_selections(&self, set_id: &str) -> Result<crate::saved_selections::SavedSelections> {
+        let set = self
+            .sets
+            .iter()
+            .find(|s| s.id == set_id)
+            .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
+        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        let prefix = format!("sets/{set_id}/");
+        Ok(crate::saved_selections::read(
+            &|leaf| self.files.get(&format!("{prefix}{leaf}")).map(Blob::bytes),
+            size,
+        ))
+    }
+    /// 既存セットの、名前を付けて残した選択範囲だけを置き換える（前の索引と中身は全部消してから書く）。空の並びは何も書かない
+    /// （エントリを消す）。ファイル全体で 1 つも使わなくなれば、形式は 7 に戻る（使うファイルだけが 8）。数・名前・重なり・文書との
+    /// 大きさが決まりに合わなければ断る。形式 7 以上だけ（旧形式は先に upgraded）。ほかのエントリには触らない。
+    pub fn with_saved_selections(
+        &self,
+        set_id: &str,
+        items: &[crate::saved_selections::SavedSelection],
+    ) -> Result<Self> {
+        check(
+            self.is_current(),
+            "残した選択範囲を書く前にupgradedで形式7へ移行してください",
+        )?;
+        let set = self
+            .sets
+            .iter()
+            .find(|s| s.id == set_id)
+            .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
+        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        crate::saved_selections::validate(items, size)?;
+        let prefix = format!("sets/{set_id}/");
+        let mut files = self.original.files.clone();
+        files.retain(|n, _| {
+            n.strip_prefix(&prefix)
+                .is_none_or(|leaf| leaf.contains('/') || !crate::saved_selections::is_entry_leaf(leaf))
+        });
+        for (leaf, blob) in crate::saved_selections::entries(items)? {
+            files.insert(format!("{prefix}{leaf}"), blob);
+        }
+        self.rebuild(files, self.original.level, &[])
+    }
+    /// モデルの今のポーズ（根の `pose.json`。状態のエントリ）。無ければ None。読めない（壊れた・新しい版・範囲外）ものはエラーを返し、
+    /// エントリはバイト列のまま残る（呼び手はポーズなしで開いて理由を知らせる）。
+    pub fn pose(&self) -> Result<Option<crate::pose::StoredPose>> {
+        self.files
+            .get(crate::pose::ENTRY)
+            .map(|b| crate::pose::read(&b.bytes()?))
+            .transpose()
+    }
+    /// 根の `pose.json` だけを置き換える（None はエントリを消す）。形式 7 以上だけ。形式も正本の版も変えない。
+    pub fn with_pose(&self, pose: Option<&crate::pose::StoredPose>) -> Result<Self> {
+        check(
+            self.is_current(),
+            "ポーズを書く前にupgradedで形式7へ移行してください",
+        )?;
+        let mut files = self.original.files.clone();
+        match pose {
+            Some(p) => {
+                files.insert(crate::pose::ENTRY.into(), Blob::from(crate::pose::write(p)?));
+            }
+            None => {
+                files.remove(crate::pose::ENTRY);
+            }
+        }
+        self.rebuild(files, self.original.level, &[])
+    }
     /// セットの見た目の設定（`sets/<ID>/look.json`）。無ければ None。読めない（壊れた・新しい形式の）ものはエラーを返し、元のエントリは
     /// バイト列のまま残る（呼び手は標準の見た目で開いて知らせる）。
     pub fn look(&self, set_id: &str) -> Result<Option<yolu_core::look::MaterialLook>> {
@@ -516,7 +596,7 @@ impl Project {
         received: Option<&yolu_core::look::ReceivedLook>,
     ) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "見た目の設定を書く前にupgradedで形式7へ移行してください",
         )?;
         check(
@@ -544,7 +624,7 @@ impl Project {
         look: Option<&yolu_core::look::MaterialLook>,
     ) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "見た目の設定を書く前にupgradedで形式7へ移行してください",
         )?;
         check(
@@ -607,7 +687,7 @@ impl Project {
         map: &yolu_core::mesh_maps::BakedMeshMap,
     ) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "メッシュマップを書く前にupgradedで形式7へ移行してください",
         )?;
         let name = self.mesh_map_entry(set_id, map.kind())?;
@@ -634,7 +714,7 @@ impl Project {
     /// 形式7のセットのマテリアル参照を置き換える。旧形式は先にupgradedで明示的に移行する。
     pub fn with_material(&self, set_id: &str, material: MaterialRef) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "マテリアル参照を変える前にupgradedで形式7へ移行してください",
         )?;
         let mut files = self.original.files.clone();
@@ -690,7 +770,7 @@ impl Project {
     /// 参照を落とす。そのとき失うのはモデルの場所だけで、作業の中身は失わない）。
     pub fn with_view_model(&self, path: Option<&str>) -> Result<Self> {
         check(
-            self.info.format == 7,
+            self.is_current(),
             "モデルの参照を書く前にupgradedで形式7へ移行してください",
         )?;
         let mut files = self.original.files.clone();
@@ -739,7 +819,7 @@ impl Project {
             } else {
                 None
             };
-            if format > 7 {
+            if format > MAX_FORMAT {
                 return Err(Error::UnsupportedFormat {
                     format,
                     app: saved.app,
@@ -854,7 +934,10 @@ impl Project {
         let mut unknown = Vec::new();
         for n in files.keys() {
             let known = if let Some((id, leaf)) = split_set(n) {
-                ids.contains(id) && (moves_into_set(leaf) || leaf == crate::look::ENTRY)
+                ids.contains(id)
+                    && (moves_into_set(leaf)
+                        || leaf == crate::look::ENTRY
+                        || crate::saved_selections::is_entry_leaf(leaf))
             } else if n.starts_with("resources/") {
                 resource_entries.contains(n.as_str())
             } else {
@@ -865,6 +948,7 @@ impl Project {
                     "brush.json",
                     "thumbnail.png",
                     "model.json",
+                    crate::pose::ENTRY,
                 ]
                 .contains(&n.as_str())
             };
@@ -1022,6 +1106,29 @@ fn moves_into_set(n: &str) -> bool {
         || part_number(n).is_some()
         || n.starts_with("composite/")
         || n.starts_with("meshmap-") && n.ends_with(".bin")
+}
+/// 形式 7 以上の `ylp.json` の形式を、使っている機能に合わせる: 名前を付けて残した選択範囲のエントリが 1 つでもあれば 8、無ければ 7
+/// （使うファイルだけが 8。旧形式は `upgraded` が 7 にする）。変わらなければ `ylp.json` のバイト列に触らない。
+fn settle_format(files: &mut Files) -> Result<()> {
+    let Some(blob) = files.get("ylp.json") else {
+        return Ok(());
+    };
+    let mut info = json(&blob.bytes()?, 65536)?;
+    let Some(format) = info.get("format").and_then(Value::as_i64) else {
+        return Ok(());
+    };
+    if !(7..=i64::from(MAX_FORMAT)).contains(&format) {
+        return Ok(());
+    }
+    let uses = files
+        .keys()
+        .any(|n| split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf)));
+    let want = if uses { i64::from(SAVED_SELECTIONS_FORMAT) } else { 7 };
+    if format != want {
+        info["format"] = Value::from(want);
+        files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
+    }
+    Ok(())
 }
 pub(crate) fn writer_json(w: &WriterInfo) -> Value {
     serde_json::json!({"app":w.app,"version":w.version,"unity":w.unity})

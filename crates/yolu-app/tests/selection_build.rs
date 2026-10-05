@@ -1031,6 +1031,12 @@ fn headless_saving_needs_a_selection_replaces_a_same_name_and_has_a_limit() {
     save(&mut s, "A");
     assert_eq!(s.saved_selections().len(), 1, "同じ名前は入れ替える");
     assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 255);
+    // 取り消すと、入れ替える前の選択範囲へ戻る（残すのは 1 回の Undo）
+    s.apply(Action::Undo);
+    assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 0);
+    assert_eq!(s.saved_selections()[0].mask.amount(10, 10), 255);
+    s.apply(Action::Redo);
+    assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 255);
     // 名前が空なら既定の名前（選択範囲 N）
     save(&mut s, "   ");
     assert_eq!(s.saved_selections().len(), 2);
@@ -1053,18 +1059,29 @@ fn headless_saving_needs_a_selection_replaces_a_same_name_and_has_a_limit() {
 }
 
 #[test]
-fn headless_a_saved_selection_is_refused_when_the_document_size_changed() {
+fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_it() {
     let mut s = AppState::new(64, 64);
-    run(&mut s, rect(SelectionCombine::Replace, 0, 0, 20, 20));
+    run(&mut s, rect(SelectionCombine::Replace, 0, 0, 32, 32));
     save(&mut s, "A");
-    s.doc = yolu_app::engine::Document::new(32, 32).unwrap();
-    let steps = s.doc.undo_count();
+    s.doc
+        .resize_image(32, 32, yolu_app::engine::CanvasResampling::Nearest)
+        .unwrap();
+    let saved = s.saved_selections()[0].clone();
+    assert_eq!((saved.mask.width(), saved.mask.height()), (32, 32), "文書の大きさに合わせて作り直す");
+    // 呼び出せる（大きさが合う）
+    s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     recall(&mut s, 0, SelectionCombine::Replace);
-    assert_eq!(s.doc.undo_count(), steps);
-    assert!(s.doc.selection().is_none());
-    assert!(!s.message.is_empty());
+    assert_eq!(bounds(s.doc.selection().unwrap()), Some((0, 0, 16, 16)));
+    // 大きさの変更を取り消すと、元の大きさの選択範囲へ戻る
+    s.doc.undo().unwrap();
+    s.doc.undo().unwrap();
+    s.doc.undo().unwrap();
+    assert_eq!((s.doc.width(), s.saved_selections()[0].mask.width()), (64, 64));
+    // 範囲外の番号は断る
+    let steps = s.doc.undo_count();
     recall(&mut s, 5, SelectionCombine::Replace);
-    assert!(!s.message.is_empty(), "無い番号も断る");
+    assert_eq!(s.doc.undo_count(), steps);
+    assert!(!s.message.is_empty(), "無い番号は断る");
 }
 
 fn saved_names(s: &AppState) -> Vec<&str> {
@@ -1075,14 +1092,16 @@ fn saved_names(s: &AppState) -> Vec<&str> {
 }
 
 #[test]
-fn headless_saved_selections_belong_to_the_texture_set_and_saving_does_not_edit_the_document() {
+fn headless_saved_selections_belong_to_the_texture_set_and_each_save_is_one_undo_step_of_it() {
     let mut s = AppState::new(64, 64);
     run(&mut s, SelEdit::All);
     let steps = s.doc.undo_count();
     let revision = s.doc.revision();
+    s.modified = false;
     save(&mut s, "A");
-    assert_eq!(s.doc.undo_count(), steps, "覚えるのは文書を変えない");
-    assert_eq!(s.doc.revision(), revision);
+    assert_eq!(s.doc.undo_count(), steps + 1, "覚えるのは文書の 1 回の取り消し");
+    assert!(s.doc.revision() > revision);
+    assert!(s.modified, "保存が要る変更として数える");
     // 描いている間は覚えない
     s.canvas.stroke = Some(StrokeSource::Mouse);
     save(&mut s, "B");
@@ -1096,6 +1115,7 @@ fn headless_saved_selections_belong_to_the_texture_set_and_saving_does_not_edit_
         s.saved_selections().is_empty(),
         "2 つ目のセットには何も無い"
     );
+    assert_eq!(s.doc.undo_count(), 0, "取り消しの履歴もセットごと");
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 16, 16));
     save(&mut s, "B");
     assert_eq!(saved_names(&s), ["B"]);
@@ -1114,7 +1134,7 @@ fn headless_saved_selections_belong_to_the_texture_set_and_saving_does_not_edit_
 }
 
 #[test]
-fn headless_saved_selections_of_removed_or_replaced_sets_are_dropped() {
+fn headless_saved_selections_go_with_their_set_and_are_not_carried_to_another_project() {
     let mut s = AppState::new(64, 64);
     run(&mut s, SelEdit::All);
     save(&mut s, "A");
@@ -1123,11 +1143,9 @@ fn headless_saved_selections_of_removed_or_replaced_sets_are_dropped() {
     let second = s.sets.current().uid;
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 16, 16));
     save(&mut s, "B");
-    assert_eq!(s.sel.saved.len(), 2);
     // 今のセットを消すと、そのセットの覚えた選択範囲も消える（今のセットは並びの前のセットに替わる）
     s.remove_sets(&[second]).unwrap();
     assert_eq!(s.sets.current().uid, first);
-    assert!(!s.sel.saved.contains_key(&second));
     assert_eq!(saved_names(&s), ["A"], "残ったセットのものは残る");
     // 今でないセットを消しても同じ
     s.add_texture_set().unwrap();
@@ -1135,19 +1153,92 @@ fn headless_saved_selections_of_removed_or_replaced_sets_are_dropped() {
     save(&mut s, "C");
     s.switch_set(0).unwrap();
     s.remove_sets(&[third]).unwrap();
-    assert!(!s.sel.saved.contains_key(&third));
-    assert_eq!(s.sel.saved.len(), 1);
-    // 別のプロジェクトを開く（セットの並びを丸ごと置き換える）と、前のセットの札は全部捨てる（uid は開くたびに新しくなる）
+    assert_eq!(saved_names(&s), ["A"]);
+    // 別のプロジェクトを開く（セットの並びを丸ごと置き換える）と、前のセットのものは持ち越さない（文書が新しい）
     let doc = Document::new(64, 64).unwrap();
     let sets = TextureSets::first_in(&doc, s.lang);
     s.replace_sets(sets, doc);
-    assert!(s.sel.saved.is_empty(), "呼び出せない札を持ち越さない");
-    assert!(s.saved_selections().is_empty());
-    // 消して空になった一覧は持たない
+    assert!(s.saved_selections().is_empty(), "新しい文書は何も持たない");
+    // 消して空になっても、段は取り消せる
     run(&mut s, SelEdit::All);
     save(&mut s, "D");
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
-    assert!(s.sel.saved.is_empty());
+    assert!(s.saved_selections().is_empty());
+    s.apply(Action::Undo);
+    assert_eq!(saved_names(&s), ["D"]);
+}
+
+#[test]
+fn headless_renaming_deleting_and_saving_each_undo_and_redo_and_refuse_what_they_must() {
+    let mut s = AppState::new(64, 64);
+    s.lang = Lang::Ja;
+    run(&mut s, rect(SelectionCombine::Replace, 0, 0, 20, 20));
+    save(&mut s, "A");
+    run(&mut s, rect(SelectionCombine::Replace, 30, 30, 50, 50));
+    save(&mut s, "B");
+    let rename = |s: &mut AppState, index: usize, name: &str| {
+        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index, name: name.into() })));
+    };
+    // 名前を変える: 1 回の取り消し（前後の空白は除く）
+    let steps = s.doc.undo_count();
+    s.modified = false;
+    rename(&mut s, 0, "  前髪 ");
+    assert_eq!(saved_names(&s), ["前髪", "B"]);
+    assert_eq!(s.doc.undo_count(), steps + 1);
+    assert!(s.modified);
+    s.apply(Action::Undo);
+    assert_eq!(saved_names(&s), ["A", "B"]);
+    s.apply(Action::Redo);
+    assert_eq!(saved_names(&s), ["前髪", "B"]);
+    // 同じ名前・今と同じ名前・範囲外・長すぎる名前・空の名前は断り、段を積まない（理由を言う）
+    let steps = s.doc.undo_count();
+    rename(&mut s, 0, "B");
+    assert_eq!(s.message, "同じ名前の選択範囲があります。");
+    rename(&mut s, 0, "前髪");
+    rename(&mut s, 9, "x");
+    rename(&mut s, 0, &"あ".repeat(yolu_core::MAX_SAVED_NAME_CHARS + 1));
+    assert!(s.message.contains("長すぎ"), "{}", s.message);
+    rename(&mut s, 0, "   ");
+    assert!(!s.message.is_empty());
+    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(saved_names(&s), ["前髪", "B"]);
+    s.lang = Lang::En;
+    rename(&mut s, 0, "B");
+    assert_eq!(s.message, "A saved selection with that name exists.");
+    rename(&mut s, 0, &"x".repeat(yolu_core::MAX_SAVED_NAME_CHARS + 1));
+    assert!(s.message.contains("too long"), "{}", s.message);
+    // 描いている間は変えない
+    s.canvas.stroke = Some(StrokeSource::Mouse);
+    rename(&mut s, 0, "z");
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    s.canvas.stroke = None;
+    assert_eq!(saved_names(&s), ["前髪", "B"]);
+    // 消す: 取り消せる。呼び戻しは文書の今のものを見る
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(1))));
+    assert_eq!(saved_names(&s), ["前髪"]);
+    s.apply(Action::Undo);
+    assert_eq!(saved_names(&s), ["前髪", "B"]);
+    recall(&mut s, 1, SelectionCombine::Replace);
+    assert_eq!(bounds(s.doc.selection().unwrap()), Some((30, 30, 50, 50)));
+}
+
+#[test]
+fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
+    let mut s = AppState::new(64, 64);
+    run(&mut s, SelEdit::All);
+    save(&mut s, "A");
+    let uid = s.sets.current().uid;
+    let index = s.sets.index_of(uid).unwrap();
+    s.sets.get_mut(index).unwrap().read_only = Some("試験".into());
+    let steps = s.doc.undo_count();
+    save(&mut s, "B");
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "z".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    assert_eq!(saved_names(&s), ["A"]);
+    assert_eq!(s.doc.undo_count(), steps);
+    // 窓を開く・閉じるは、読むだけのセットでもできる
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
+    assert!(s.sel.saved_window.is_some());
 }
 
 #[test]
@@ -1172,7 +1263,6 @@ fn headless_saved_selections_past_the_budget_are_refused_across_all_sets_and_cha
     save(&mut s, "C");
     assert!(s.saved_selections().is_empty());
     assert_eq!(s.message, "覚えた選択範囲が大きすぎます。");
-    assert_eq!(s.sel.saved.len(), 1, "断ったときに空の一覧を作らない");
     // 予算を戻せば通る
     s.sel.saved_budget = SAVED_BUDGET_BYTES;
     save(&mut s, "C");
@@ -1220,6 +1310,32 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     h.run();
     assert_eq!(st(&h).saved_selections().len(), 1);
     assert_eq!(st(&h).saved_selections()[0].name, "選択範囲 2");
+    // 名前を変える: 編集のアイコンのボタンで名前の欄になり、Enter で決める（1 回の取り消し）。Esc・外を押すとやめる
+    let before = steps(&h);
+    h.get_by_label("名前を変える: 選択範囲 2").click();
+    h.run();
+    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, Some(0));
+    key(&h, Key::A, Modifiers::COMMAND);
+    h.step();
+    h.event(Event::Text("前髪".to_owned()));
+    h.step();
+    key(&h, Key::Enter, Modifiers::NONE);
+    h.run();
+    h.run();
+    assert_eq!(st(&h).saved_selections()[0].name, "前髪");
+    assert_eq!(steps(&h), before + 1);
+    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "決めたら元の表示へ");
+    assert!(h.query_by_label("名前を変える: 前髪").is_some(), "ボタンの名前も新しい名前");
+    // やめる: 欄を開いて何も打たずに Esc で、名前も段も変わらない
+    h.get_by_label("名前を変える: 前髪").click();
+    h.run();
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.run();
+    h.run();
+    assert!(st(&h).sel.saved_window.is_some(), "名前の欄の Esc では、窓は閉じない");
+    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "欄はやめて元の表示へ");
+    assert_eq!(st(&h).saved_selections()[0].name, "前髪");
+    assert_eq!(steps(&h), before + 1);
     // 閉じる
     h.get_by_label("閉じる").click();
     h.run();
@@ -1241,13 +1357,13 @@ fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
             .state
             .apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
         h.run();
-        // 覚えるのはこのセッションの間だけであることは、ボタンのツールチップに出る（画面に説明の文は置かない）
+        // 何をするかはボタンのツールチップに出る（画面に説明の文は置かない）
         let remember = h
             .get_by_label(lang.pick("覚える", "Remember"))
             .rect()
             .center();
         hover_and_wait(&mut h, remember);
-        h.get_by_label_contains(lang.pick("このセッションの間だけ", "this session only"));
+        h.get_by_label_contains(lang.pick("この名前で覚える", "under this name"));
         move_to(&h, egui::pos2(2.0, 2.0));
         h.run();
         h.get_by_label(&format!("{}: Alpha", lang.pick("共通", "Intersect")));

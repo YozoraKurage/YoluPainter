@@ -392,6 +392,25 @@ fn work(request: Request) -> Finished {
             format!(" Overwrote unreadable look settings: {}.", names.join(", ")),
         );
     }
+    // 開くときに読めなかった、名前を付けて残した選択範囲の項目を、変えた並びで置き換えたセット
+    if !built.saved_overwritten.is_empty() {
+        let names: Vec<&str> = built
+            .saved_overwritten
+            .iter()
+            .filter_map(|id| capture.sets.iter().find(|s| s.id == *id).map(|s| s.name.as_str()))
+            .collect();
+        text += &lang.pick(
+            format!(" 読めなかった覚えた選択範囲の項目を置き換えました: {}。", names.join("、")),
+            format!(" Replaced unreadable remembered selections: {}.", names.join(", ")),
+        );
+    }
+    if built.pose_overwritten {
+        text += &lang.pick(
+            " 読めなかったポーズを、今のポーズで置き換えました。".to_owned(),
+            " Replaced the unreadable pose with the current pose.".to_owned(),
+        );
+    }
+    text += &crate::view3d::pose::stored::unsaved_note(lang, &capture.pose_unsaved);
     text += &built.inactive_effects;
     if let Some(note) = reopen {
         text += &note;

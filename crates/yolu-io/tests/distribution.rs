@@ -239,6 +239,14 @@ fn unity_style() -> Project {
     reopened(files)
 }
 
+/// Unity 版が作った .ylp にある種類（名前を付けて残した選択範囲は、スタンドアロン版だけが書く形式 8 のエントリ）。
+fn unity_kinds() -> Vec<Removal> {
+    Removal::ALL
+        .into_iter()
+        .filter(|r| *r != Removal::SavedSelections)
+        .collect()
+}
+
 fn names(project: &Project, removal: Removal) -> Vec<String> {
     project
         .distribution_inventory(&Removal::ALL)
@@ -282,8 +290,8 @@ fn the_fixture_is_what_a_unity_made_project_leaves_behind() {
 fn the_inventory_lists_each_kind_with_names_and_leaves_out_empty_kinds() {
     let project = unity_style();
     let inventory = project.distribution_inventory(&Removal::ALL);
-    // 窓に並べる順
-    assert_eq!(inventory.kinds(), Removal::ALL.to_vec());
+    // 窓に並べる順（Unity 版が作った .ylp は、名前を付けて残した選択範囲を持たない）
+    assert_eq!(inventory.kinds(), unity_kinds());
     assert_eq!(names(&project, Removal::PsdOriginals), ["Body"]);
     assert_eq!(
         names(&project, Removal::UnusedShelf),
@@ -549,7 +557,7 @@ fn each_kind_removes_only_its_own_things_and_the_toggle_keeps_them() {
             vec![],
         ),
     ];
-    assert_eq!(cases.len(), Removal::ALL.len());
+    assert_eq!(cases.len(), unity_kinds().len());
     for (removal, removed, modified) in cases {
         let copy = project.for_distribution(writer(), &[removal]).unwrap();
         let (gone, replaced) = changed(&project, &copy);
@@ -842,4 +850,88 @@ fn only_a_format_7_project_can_be_copied() {
     assert!(old.for_distribution(writer(), &Removal::ALL).is_err());
     let upgraded = old.upgraded(writer()).unwrap();
     upgraded.for_distribution(writer(), &Removal::ALL).unwrap();
+}
+
+/// スタンドアロン版が書く、名前を付けて残した選択範囲とポーズを持つプロジェクト。
+fn with_remembered() -> Project {
+    let a = doc_reading(&[(1, Channel::Color)]);
+    let b = doc_reading(&[]);
+    let base = Project::create(
+        writer(),
+        &[spec(SET_A, "Body", &a), spec(SET_B, "Prop", &b)],
+        SET_A,
+    )
+    .unwrap();
+    let selection = |x1: i64| {
+        yolu_io::Selection::from_core(&yolu_core::SelectionMask::rectangle(&a, 0, 0, x1, 30)).unwrap()
+    };
+    let saved = |name: &str, x1| yolu_io::saved_selections::SavedSelection { name: name.into(), selection: selection(x1) };
+    let pose = yolu_io::pose::StoredPose {
+        bones: vec![yolu_io::pose::StoredBone {
+            path: vec!["Root".into()],
+            translation: [0.0, 1.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+        }],
+        shapes: Vec::new(),
+    };
+    base.with_selection(SET_A, Some(&selection(20)))
+        .unwrap()
+        .with_saved_selections(SET_A, &[saved("a", 10), saved("b", 30)])
+        .unwrap()
+        .with_saved_selections(SET_B, &[saved("c", 5)])
+        .unwrap()
+        .with_view_model(Some("models/Prop.fbx"))
+        .unwrap()
+        .with_pose(Some(&pose))
+        .unwrap()
+}
+
+#[test]
+fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy_back_to_format_7() {
+    let project = with_remembered();
+    assert_eq!(project.info().format, 8);
+    assert_eq!(names(&project, Removal::SavedSelections), ["Body", "Prop"]);
+    // 残す写し: 形式 8 のまま、残した選択範囲も今の選択範囲も元のとおり
+    let kept = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert_eq!(kept.info().format, 8);
+    assert_eq!(kept.saved_selections(SET_A).unwrap().items.len(), 2);
+    assert_eq!(kept.saved_selections(SET_B).unwrap().items.len(), 1);
+    // 除く写し: 残した選択範囲のエントリが全部無くなり、形式は 7。今の選択範囲（絵の一部）は残る
+    let copy = project
+        .for_distribution(writer(), &[Removal::SavedSelections])
+        .unwrap();
+    assert_eq!(copy.info().format, 7, "Unity 版が開ける形式に戻る");
+    assert!(copy.saved_selections(SET_A).unwrap().items.is_empty());
+    assert!(!entries(&copy).keys().any(|n| n.ends_with("selections.json") || n.contains("/selection-")));
+    assert!(copy.sets()[0].selection.is_some(), "今の選択範囲は絵の一部");
+    // 元は変わらない。写しに残る物と目録が一致する（除いた写しの目録に、この種類は出ない）
+    assert_eq!(project.info().format, 8);
+    assert!(copy
+        .distribution_inventory(&Removal::ALL)
+        .get(Removal::SavedSelections)
+        .is_none());
+    // 読み直せる
+    let again = Project::read(&copy.to_bytes().unwrap()).unwrap();
+    assert_eq!(again.info().format, 7);
+}
+
+#[test]
+fn the_pose_goes_with_the_model_reference_and_stays_otherwise() {
+    let project = with_remembered();
+    assert!(entries(&project).contains_key("pose.json"));
+    // モデルの参照を残すなら、ポーズも残る
+    let kept = project
+        .for_distribution(writer(), &[Removal::SavedSelections])
+        .unwrap();
+    assert!(entries(&kept).contains_key("pose.json"));
+    assert!(kept.view_model().unwrap().is_some());
+    // モデルの参照を除くなら、ポーズも除く（どのモデルのポーズか分からなくなる）
+    let copy = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert!(!entries(&copy).contains_key("pose.json"));
+    assert!(copy.view_model().unwrap().is_none());
 }

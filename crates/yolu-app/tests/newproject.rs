@@ -11,7 +11,7 @@ use common::{app, click, key, menu_title, popup_item, rect_of};
 use egui::{Key, Modifiers, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use yolu_app::engine::{CanvasResampling, Channel, Document, NormalYDirection, Rgba8};
+use yolu_app::engine::{CanvasResampling, Channel, Document, NormalYDirection, Rgba8, SelectionMask};
 use yolu_app::lang::Lang;
 use yolu_app::newproject::{DraftOp, NpAction, Prep, Template};
 use yolu_app::sets::MaterialRef;
@@ -579,6 +579,59 @@ fn resizing_resamples_the_set_clears_its_history_and_asks_first() {
     }
     assert_eq!(pixel_of(&s, 1, (22, 22)), Rgba8::new(0, 0, 0, 0));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_shrink_that_removes_remembered_selections_says_so_in_the_result_in_both_languages() {
+    for lang in Lang::ALL {
+        let mut s = S::new_in(64, 64, lang);
+        np(&mut s, NpAction::OpenNew);
+        np(&mut s, NpAction::Template(Template::ColorOnly));
+        np(&mut s, NpAction::Resolution(1024));
+        np(&mut s, NpAction::Submit);
+        // 偶数の列の 1 画素幅の線は、2 分の 1 の最近傍で拾われず消える。大きな選択範囲は残る
+        let doc = s.set_doc_mut(0);
+        let thin = SelectionMask::rectangle(doc, 10, 10, 11, 200);
+        doc.set_selection(Some(thin)).unwrap();
+        doc.save_selection("thin").unwrap();
+        let wide = SelectionMask::rectangle(doc, 100, 100, 400, 400);
+        doc.set_selection(Some(wide)).unwrap();
+        doc.save_selection("wide").unwrap();
+        let set_name = s.sets.get(0).unwrap().name.clone();
+        np(&mut s, NpAction::OpenConfigure);
+        np(&mut s, NpAction::Draft(0, DraftOp::Size(512, 512)));
+        np(&mut s, NpAction::Resampling(Some(CanvasResampling::Nearest)));
+        np(&mut s, NpAction::Submit);
+        np(&mut s, NpAction::ConfirmApply);
+        assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+        assert_eq!(size_of(&s, 0), (512, 512));
+        let kept: Vec<&str> = s.set_doc(0).saved_selections().iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(kept, ["wide"], "{lang:?}");
+        assert!(!s.set_doc(0).can_undo(), "履歴は消える（取り消しでは戻らない）");
+        // 戻せないので、外れたことと数を、結果の文で言う
+        let want = lang.pick(
+            format!("縮小で消えた覚えた選択範囲: {set_name} 1 件"),
+            format!("Remembered selections lost to the shrink: {set_name} 1"),
+        );
+        assert!(s.message.contains(&want), "{lang:?}: {}", s.message);
+        assert_eq!(s.message.contains("縮小"), lang == Lang::Ja, "{lang:?}: {}", s.message);
+    }
+    // 縮小でも全部残るときは、何も言わない
+    let mut s = S::new(64, 64);
+    np(&mut s, NpAction::OpenNew);
+    np(&mut s, NpAction::Template(Template::ColorOnly));
+    np(&mut s, NpAction::Resolution(1024));
+    np(&mut s, NpAction::Submit);
+    let doc = s.set_doc_mut(0);
+    let wide = SelectionMask::rectangle(doc, 100, 100, 400, 400);
+    doc.set_selection(Some(wide)).unwrap();
+    doc.save_selection("wide").unwrap();
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(0, DraftOp::Size(512, 512)));
+    np(&mut s, NpAction::Submit);
+    np(&mut s, NpAction::ConfirmApply);
+    assert_eq!(s.set_doc(0).saved_selections().len(), 1);
+    assert!(!s.message.contains("消えた覚えた"), "{}", s.message);
 }
 
 #[test]
@@ -1516,6 +1569,133 @@ fn opening_an_fbx_picks_the_window_that_fits_the_project() {
 
 fn read_file(path: &Path) -> yolu_io::Project {
     yolu_io::SaveTarget::open(path).unwrap().0
+}
+
+#[test]
+fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_again() {
+    use yolu_core::glam::Quat;
+    let dir = temp_dir("reopen-pose");
+    let model = character(&dir.join("models"), "c.fbx");
+    let ylp = dir.join("p.ylp");
+    let mut s = project_from(&model, 256);
+    // モデルの骨を 1 本回す（読んだ FBX の骨のうち、最初のもの）
+    let posed = {
+        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        assert!(!session.rig.bones().is_empty());
+        let mut p = session.pose().clone();
+        p.locals[0].rotation = Quat::from_rotation_y(0.7);
+        p
+    };
+    yolu_app::view3d::pose::set_pose(&mut s.view3d, posed.clone()).unwrap();
+    yolu_app::view3d::pose::sync_modified(&mut s);
+    assert!(s.modified, "ポーズを変えると保存が要る");
+    s.apply(Action::SaveProjectAs(ylp.clone()));
+    assert!(s.message.contains("保存しました"), "{}", s.message);
+    assert!(read_file(&ylp).pose().unwrap().is_some());
+    assert_eq!(read_file(&ylp).info().format, 7, "ポーズは形式を上げない");
+    // 開き直すと、モデルを読み終えたところでポーズが戻る（取り消しの段にも変更の印にもならない）
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(ylp.clone()));
+    assert!(t.view3d.pose.session.is_none(), "読み終えるまでは無い");
+    wait_reopen(&mut t);
+    let session = t.view3d.pose.session.as_ref().unwrap();
+    assert!(session.is_posed(), "{}", t.message);
+    assert!(session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999);
+    assert!(!session.can_undo());
+    assert!(t.message.contains("ポーズを戻しました"), "{}", t.message);
+    yolu_app::view3d::pose::sync_modified(&mut t);
+    assert!(!t.modified, "{}", t.message);
+    // 別のモデル（骨の名前が違う）を指すように参照を替えたファイルでは、合わない項目を飛ばして理由を残し、ポーズは変えない
+    let other = write_fbx(
+        &dir.join("other"),
+        "o.fbx",
+        &ascii_fbx(&["Cloth"], &[mesh("Wing", &[Some(0)]), mesh("Tail", &[Some(0)])]),
+    );
+    let swapped = read_file(&ylp)
+        .with_view_model(Some(&yolu_app::newproject::relative_model_path(&other, &ylp)))
+        .unwrap();
+    std::fs::write(&ylp, swapped.to_bytes().unwrap()).unwrap();
+    let mut u = S::new(64, 64);
+    u.apply(Action::OpenProject(ylp.clone()));
+    wait_reopen(&mut u);
+    let session = u.view3d.pose.session.as_ref().unwrap();
+    assert!(!session.is_posed(), "合わないポーズは当てない: {}", u.message);
+    assert!(!session.preset_notes.is_empty(), "飛ばした項目の理由が残る");
+    assert!(u.message.contains("合わない") || u.message.contains("合うボーンがありません"), "{}", u.message);
+}
+
+/// プロジェクトの構成の窓で、モデルを選び直す（`reload` なら読み直す）。確かめが出たら適用する。
+fn configure_model(s: &mut S, choose: Option<&Path>) {
+    np(s, NpAction::OpenConfigure);
+    match choose {
+        Some(path) => np(s, NpAction::ChooseModel(path.to_path_buf())),
+        None => np(s, NpAction::Reload),
+    }
+    wait_model(s);
+    np(s, NpAction::Submit);
+    if s.np.window.as_ref().is_some_and(|w| w.confirm.is_some()) {
+        np(s, NpAction::ConfirmApply);
+    }
+    assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+}
+
+#[test]
+fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configuration_and_is_not_lost_on_save() {
+    use yolu_core::glam::Quat;
+    let dir = temp_dir("configure-pose");
+    let model = character(&dir.join("models"), "c.fbx");
+    let ylp = dir.join("p.ylp");
+    let mut s = project_from(&model, 256);
+    let posed = {
+        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        let mut p = session.pose().clone();
+        p.locals[0].rotation = Quat::from_rotation_y(0.7);
+        p
+    };
+    yolu_app::view3d::pose::set_pose(&mut s.view3d, posed.clone()).unwrap();
+    s.apply(Action::SaveProjectAs(ylp.clone()));
+    assert!(s.message.contains("保存しました"), "{}", s.message);
+    let stored = read_file(&ylp).pose().unwrap().expect("保存したポーズ");
+    let rotated = |t: &S| {
+        let session = t.view3d.pose.session.as_ref().expect("ポーズのセッション");
+        session.is_posed() && session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999
+    };
+    // モデルのファイルを動かしてから開く: 見つからず、ポーズのセッションは無い
+    let moved = dir.join("moved");
+    std::fs::rename(dir.join("models"), &moved).unwrap();
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(ylp.clone()));
+    wait_reopen(&mut t);
+    assert!(t.message.contains("モデルが見つかりません"), "{}", t.message);
+    assert!(t.view3d.pose.session.is_none());
+    // 構成の窓で動かした先のモデルを選び直すと、ファイルのポーズが戻り、そのことが結果の文に出る
+    configure_model(&mut t, Some(&moved.join("c.fbx")));
+    assert!(rotated(&t), "{}", t.message);
+    assert!(t.message.contains("ポーズを戻しました"), "{}", t.message);
+    // そのまま保存しても pose.json は消えず、同じ中身
+    t.apply(Action::SaveProject);
+    assert!(t.message.contains("保存しました"), "{}", t.message);
+    assert_eq!(read_file(&ylp).pose().unwrap().as_ref(), Some(&stored), "ファイルのポーズが残る");
+    // 読み直しでも戻る（ポーズのセッションは新しい休みの形から始まる）
+    let mut u = S::new(64, 64);
+    u.apply(Action::OpenProject(ylp.clone()));
+    wait_reopen(&mut u);
+    assert!(rotated(&u), "{}", u.message);
+    configure_model(&mut u, None);
+    assert!(rotated(&u), "読み直したモデルにも戻す: {}", u.message);
+    assert!(u.message.contains("ポーズを戻しました"), "{}", u.message);
+    u.apply(Action::SaveProject);
+    assert_eq!(read_file(&ylp).pose().unwrap().as_ref(), Some(&stored));
+    // ファイルにポーズが無いプロジェクトでは、何も言わない
+    let plain = dir.join("plain.ylp");
+    let mut v = project_from(&moved.join("c.fbx"), 256);
+    v.apply(Action::SaveProjectAs(plain.clone()));
+    let mut w = S::new(64, 64);
+    w.apply(Action::OpenProject(plain));
+    wait_reopen(&mut w);
+    configure_model(&mut w, None);
+    assert!(!w.message.contains("ポーズ"), "{}", w.message);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

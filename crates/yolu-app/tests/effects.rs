@@ -743,6 +743,68 @@ fn a_set_with_generators_is_read_only_until_its_inputs_arrive_and_then_editable(
 }
 
 #[test]
+fn the_remembered_selections_come_back_when_a_read_only_set_becomes_editable_and_stay_in_the_file() {
+    use yolu_app::engine::SelectionCombine;
+    use yolu_app::selection::saved::SavedOp;
+    use yolu_app::selection::{SelAction, SelEdit};
+    let rect = |x0, y0, x1, y1| SelEdit::Rect { x0, y0, x1, y1, mode: SelectionCombine::Replace };
+    let on_disk = |path: &std::path::Path| {
+        let project = yolu_io::Project::read(&std::fs::read(path).unwrap()).unwrap();
+        let id = project.sets()[0].id.clone();
+        let read = project.saved_selections(&id).unwrap();
+        let names: Vec<String> = read.items.iter().map(|i| i.name.clone()).collect();
+        (project.info().format, names, read.skipped.len(), project.sets()[0].selection.is_some())
+    };
+    let dir = temp_dir("waiting-saved");
+    let path = dir.join("gen.ylp");
+    let mut s = cube();
+    masked_fill(&mut s, Kind::EdgeWear);
+    bake(&mut s);
+    s.apply(Action::Sel(SelAction::Edit(rect(2, 2, 20, 20))));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Save("髪".into()))));
+    s.apply(Action::Sel(SelAction::Edit(rect(30, 10, 60, 50))));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Save("服".into()))));
+    let current = s.doc.selection().cloned().expect("今の選択範囲");
+    let remembered: Vec<_> = s.saved_selections().iter().map(|x| (x.name.clone(), x.mask.clone())).collect();
+    assert_eq!(remembered.len(), 2);
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert_eq!(on_disk(&path), (8, vec!["髪".to_owned(), "服".to_owned()], 0, true));
+
+    // モデルの無い状態で開く: 読むだけ。保存しても、覚えた選択範囲と今の選択範囲はファイルに残る
+    let mut again = AppState::new(64, 64);
+    again.bake.backend = BakeBackend::Cpu;
+    again.apply(Action::OpenProject(path.clone()));
+    assert!(again.read_only_reason().is_some(), "{}", again.message);
+    again.modified = true;
+    again.apply(Action::SaveProject);
+    assert!(again.message.starts_with("保存しました"), "{}", again.message);
+    assert_eq!(on_disk(&path), (8, vec!["髪".to_owned(), "服".to_owned()], 0, true), "読むだけのセットの保存で消えない");
+
+    // 同じモデルを読むと入力がそろって編集できる: 覚えた選択範囲（名前・並び・中身）と今の選択範囲が戻り、理由の知らせは出ない
+    again.apply(Action::LoadDemoModel);
+    again.sync_effect_inputs_with(true);
+    assert!(again.read_only_reason().is_none(), "{:?} {}", again.read_only_reason(), again.message);
+    let restored: Vec<_> = again.saved_selections().iter().map(|x| (x.name.clone(), x.mask.clone())).collect();
+    assert_eq!(restored, remembered, "{}", again.message);
+    assert_eq!(again.doc.selection(), Some(&current), "{}", again.message);
+    assert!(!again.message.contains("読めない"), "{}", again.message);
+    assert!(!again.doc.can_undo(), "戻しただけでは取り消しの段にしない");
+    // 呼び戻しもできる
+    again.apply(Action::Sel(SelAction::Edit(SelEdit::Recall { index: 0, mode: SelectionCombine::Replace })));
+    assert_eq!(again.doc.selection().map(|m| m.amount(5, 5)), Some(255));
+    // 編集できるようになったあとの保存でも、エントリは残る（空の並びで置き換えない）。名前を変えれば書き換わる
+    again.modified = true;
+    again.apply(Action::SaveProject);
+    assert!(again.message.starts_with("保存しました"), "{}", again.message);
+    assert_eq!(on_disk(&path).1, ["髪", "服"], "{}", again.message);
+    again.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "前髪".into() })));
+    again.apply(Action::SaveProject);
+    assert_eq!(on_disk(&path), (8, vec!["前髪".to_owned(), "服".to_owned()], 0, true));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_generators_own_settings_problem_does_not_make_a_set_read_only() {
     // アンカーを選んでいない Anchor の Generator は、文書の中で直せる不備なので、編集できる
     let dir = temp_dir("anchorless");

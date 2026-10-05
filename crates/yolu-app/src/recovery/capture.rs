@@ -26,6 +26,8 @@ pub struct Fingerprint {
     title: String,
     /// アセットの棚の素材（ID と名前）。
     shelf: Vec<(String, String)>,
+    /// プロジェクトのモデルのポーズを変えた回数（ポーズだけの変更も書き置きになる。モデルが無ければ None）。
+    pose: Option<u64>,
 }
 
 /// 1 セット分の材料。
@@ -48,6 +50,8 @@ pub(crate) struct Capture {
     pub replaced: Vec<String>,
     /// アセットの棚（変えていて読めるときだけ。変えていなければ開いたファイルのバイト列のまま）。
     pub shelf: Option<yolu_io::shelf::Shelf>,
+    /// プロジェクトのモデルのポーズ（ファイルの `pose.json` へ書く材料。保存と同じ形）。
+    pub pose: crate::view3d::pose::stored::PoseCapture,
     pub lang: Lang,
     /// 一覧に出す名前（ファイルのあるプロジェクトの名前。無ければ空）と元の .ylp のパス（無ければ空）。
     pub title: String,
@@ -77,6 +81,11 @@ pub(crate) fn fingerprint(state: &AppState) -> Fingerprint {
             .iter()
             .map(|r| (r.id.clone(), r.name.clone()))
             .collect(),
+        pose: state
+            .np
+            .model_file
+            .as_ref()
+            .and_then(|_| state.view3d.pose.session.as_ref().map(|s| s.edits)),
     }
 }
 
@@ -143,6 +152,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         base,
         replaced,
         shelf,
+        pose: crate::view3d::pose::stored::capture(state).0,
         lang: state.lang,
         title,
         project_path,
@@ -179,11 +189,28 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         });
     }
     let writer = crate::project::writer();
+    // 大きさを変えた文書の、古い大きさの今の選択範囲は外す（新しい文書と合わず、書き直しの検証が断る。今の選択範囲はあとで書く）
+    let sizes: Vec<(&str, (u32, u32, u32))> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size()))))
+        .collect();
+    let resized = capture
+        .base
+        .as_ref()
+        .map(|base| crate::selection::io::resized_sets(base, &sizes))
+        .unwrap_or_default();
     let project = match &capture.base {
-        Some(base) if base.info().format < 7 => base
-            .upgraded(writer.clone())?
-            .with_sets(writer, &specs, &capture.current)?,
-        Some(base) => base.with_sets(writer, &specs, &capture.current)?,
+        Some(base) => {
+            let fitted = crate::selection::io::without_stale(base, &sizes, capture.lang).map_err(RecoveryError::Text)?;
+            if fitted.info().format < 7 {
+                fitted
+                    .upgraded(writer.clone())?
+                    .with_sets(writer, &specs, &capture.current)?
+            } else {
+                fitted.with_sets(writer, &specs, &capture.current)?
+            }
+        }
         None => Project::create(writer, &specs, &capture.current)?,
     };
     // 文書を替えたセットの古い PSD の原本は、保存（`project::save`）と同じく持ち越さない
@@ -198,6 +225,14 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.selection())))
         .collect();
     let project = crate::selection::io::write_into(project, &selections, capture.lang)
+        .map_err(RecoveryError::Text)?;
+    // 名前を付けて残した選択範囲も、取った写しのものを、違うセットだけ書き換える（読めなかった項目を置き換えたかは、保存のときに知らせる）
+    let saved: Vec<(&str, &[yolu_core::SavedSelection])> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.saved_selections())))
+        .collect();
+    let (project, _) = crate::selection::io::write_saved_into(project, &saved, &resized, capture.lang)
         .map_err(RecoveryError::Text)?;
     // 見た目の設定（look.json）も、取った写しのものを、違うセットだけ書き換える
     let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
@@ -215,6 +250,9 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.received_look())))
         .collect();
     let project = crate::look::io::write_received_into(project, &received, capture.lang)
+        .map_err(RecoveryError::Text)?;
+    // モデルのポーズ（pose.json。保存と同じく、違うときだけ書く。読めなかったエントリを上書きしたかは、保存のときに知らせる）
+    let (project, _) = crate::view3d::pose::stored::write_into(project, &capture.pose, capture.lang)
         .map_err(RecoveryError::Text)?;
     // アセットの棚（保存と同じく、変えたときだけ resources を書き直す）
     match &capture.shelf {

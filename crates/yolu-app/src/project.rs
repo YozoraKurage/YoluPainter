@@ -266,6 +266,11 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 if let Err(e) = crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang) {
                     selection_issues.push(format!("{}: {e}", set.name));
                 }
+                // 名前を付けて残した選択範囲（selections.json）。読めない項目は飛ばして理由を言う（ファイルには残る）
+                let saved = project.saved_selections(&set.id).map_err(|e| state.lang.io_error(&e));
+                if let Err(e) = saved.and_then(|read| crate::selection::io::restore_saved_into(&mut doc, read, state.lang)) {
+                    selection_issues.push(format!("{}: {e}", set.name));
+                }
                 parts.push((
                     set.id.clone(),
                     set.name.clone(),

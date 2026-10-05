@@ -1446,3 +1446,44 @@ fn the_replace_window_names_the_file_and_cancel_returns_to_the_list() {
     apply(&mut h, Action::Distribute(DistributeAction::CancelWindow));
     assert!(!h.state().state.distribute.is_open());
 }
+
+#[test]
+fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_format_7() {
+    use yolu_app::selection::saved::SavedOp;
+    use yolu_app::selection::{SelAction, SelEdit};
+    use yolu_core::SelectionCombine;
+    let dir = TempDir::new("remembered");
+    let (mut s, _path) = opened(&dir);
+    // 残した選択範囲を持つ（開いている文書の変更として）
+    s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect { x0: 2, y0: 2, x1: 20, y1: 20, mode: SelectionCombine::Replace })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Save("髪".into()))));
+    assert_eq!(s.saved_selections().len(), 1);
+    start(&mut s);
+    assert!(kinds(&s).contains(&Removal::SavedSelections), "{:?}", kinds(&s));
+    assert!(s.distribute.window().unwrap().selected().contains(&Removal::SavedSelections), "既定は除く");
+    // 既定（除く）: 写しは形式 7 で、残した選択範囲のエントリが無い。今の選択範囲は絵の一部として残る
+    let dest = dir.path("Dist.ylp");
+    s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
+    s.wait_distribute();
+    let copy = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
+    assert_eq!(copy.info().format, 7, "Unity 版が開ける形式");
+    let id = copy.sets()[0].id.clone();
+    assert!(copy.saved_selections(&id).unwrap().items.is_empty());
+    assert!(copy.sets()[0].selection.is_some());
+    // 切り替えを外すと残り、形式は 8
+    start(&mut s);
+    s.apply(Action::Distribute(DistributeAction::Toggle(Removal::SavedSelections)));
+    let kept = dir.path("Kept.ylp");
+    s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
+    s.wait_distribute();
+    let copy = Project::read(&std::fs::read(&kept).unwrap()).unwrap();
+    assert_eq!(copy.info().format, 8);
+    assert_eq!(copy.saved_selections(&id).unwrap().items.len(), 1);
+    // 開いているプロジェクトの残した選択範囲は、どちらでも変わらない
+    assert_eq!(s.saved_selections().len(), 1);
+    // 窓の種類の名前は日英で出る
+    for lang in Lang::ALL {
+        assert!(!yolu_app::distribute::window::label(lang, Removal::SavedSelections).is_empty());
+        assert!(!yolu_app::distribute::window::tooltip(lang, Removal::SavedSelections).is_empty());
+    }
+}

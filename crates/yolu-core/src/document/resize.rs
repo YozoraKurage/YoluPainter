@@ -26,6 +26,9 @@ pub struct ResizeReport {
     pub surface_path_layers: Vec<LayerId>,
     /// この変更の履歴の費用（前後の格納量）が履歴の予算を超えた。Undo はこの 1 段だけ残し、次の編集の整理で落ち得る。
     pub history_over_budget: bool,
+    /// 縮小で何も選んでいない所だけが残り、外した覚えた選択範囲（名前を付けて残したもの）の数。`notes` にも文で書く（日本語のみ）。
+    /// 取り消せば元の大きさのものへ戻る。呼び手が履歴を消すときは、戻せなくなる前にこの数を利用者へ知らせる。
+    pub dropped_saved_selections: usize,
 }
 /// [`Document::prepare_resize_image`] が作る、大きさを変えた文書の写し（まだ文書に入っていない）。
 pub struct PreparedResize {
@@ -491,13 +494,45 @@ impl Document {
             + self.allocated_bytes()
             + copy.allocated_bytes()
             + self.selection.as_ref().map_or(0, |s| s.history_bytes())
-            + copy.selection.as_ref().map_or(0, |s| s.history_bytes());
+            + copy.selection.as_ref().map_or(0, |s| s.history_bytes())
+            + self.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>()
+            + copy.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>();
         self.commit_copy_kept(copy, cost, Dirty::All)?;
         report.history_over_budget = cost > self.undo_budget;
         if report.history_over_budget {
             report.notes.push("履歴の予算を超えた".into());
         }
         Ok(())
+    }
+    /// 選択範囲を新しい大きさへ作り直す（A だけの RGBA の面として層と同じ道で）。
+    fn resample_mask(
+        &self,
+        selection: &crate::SelectionMask,
+        width: u32,
+        height: u32,
+        map: &dyn Mapping,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<crate::SelectionMask, CoreError> {
+        let source = super::transform::selection_surface(selection);
+        let resized = resample_surface(
+            &source,
+            width,
+            height,
+            map,
+            false,
+            cancelled,
+            &mut Budget {
+                used: 0,
+                limit: None,
+            },
+        )?;
+        let n = (self.tile_size * self.tile_size) as usize;
+        let tiles = resized.tile_coords().into_iter().filter_map(|coord| {
+            let tile = resized.tile(coord)?;
+            let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
+            amounts.iter().any(|&a| a != 0).then_some((coord, amounts))
+        });
+        crate::SelectionMask::from_amount_tiles(width, height, self.tile_size, tiles)
     }
     fn check_resize(width: u32, height: u32) -> Result<(), CoreError> {
         if width == 0
@@ -553,28 +588,32 @@ impl Document {
         }
         if let Some(selection) = &self.selection {
             // 選択範囲は A だけの RGBA の面として層と同じ道を通る（飛ばす・埋める・取消）。画素の予算には数えない
-            let source = super::transform::selection_surface(selection);
-            let resized = resample_surface(
-                &source,
-                width,
-                height,
-                map,
-                false,
-                cancelled,
-                &mut Budget {
-                    used: 0,
-                    limit: None,
-                },
-            )?;
-            let n = (self.tile_size * self.tile_size) as usize;
-            let tiles = resized.tile_coords().into_iter().filter_map(|coord| {
-                let tile = resized.tile(coord)?;
-                let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
-                amounts.iter().any(|&a| a != 0).then_some((coord, amounts))
-            });
-            let mask =
-                crate::SelectionMask::from_amount_tiles(width, height, self.tile_size, tiles)?;
+            let mask = self.resample_mask(selection, width, height, map, cancelled)?;
             copy.selection = (!mask.is_empty()).then_some(mask);
+        }
+        // 名前を付けて残した選択範囲も、今の選択範囲と同じ道で新しい大きさへ作り直す（大きさが文書と合わないものを残さない）。
+        // 縮小で何も選んでいない所だけが残るものは外し、報告に書く（取り消せば元の大きさのものへ戻る）
+        if !self.saved_selections.is_empty() {
+            let mut kept = Vec::with_capacity(self.saved_selections.len());
+            let mut dropped = 0usize;
+            for saved in self.saved_selections.iter() {
+                let mask = self.resample_mask(&saved.mask, width, height, map, cancelled)?;
+                if mask.is_empty() {
+                    dropped += 1;
+                } else {
+                    kept.push(super::SavedSelection {
+                        name: saved.name.clone(),
+                        mask,
+                    });
+                }
+            }
+            if dropped > 0 {
+                report.dropped_saved_selections = dropped;
+                report
+                    .notes
+                    .push(format!("縮小で残した選択範囲 {dropped} 件が消えた"));
+            }
+            copy.saved_selections = std::sync::Arc::new(kept);
         }
         // 画素の外の設定を大きさに合わせる（resize_image では C# の Resampled が層ごとにすること）: パス・フィルターの半径。Anchor・塗りつぶしの画像と
         // 投影・グラデーション・Generator は UV・モデルの空間・画素ごとの式で決まり、大きさによらないのでそのまま写る（層ごと複製済み）

@@ -106,8 +106,8 @@ impl Lang {
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
-                format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 7）"),
-                format!("Unsupported .ylp format: {format} (saved by {app} {version}; maximum 7)"),
+                format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 {}）", yolu_io::MAX_FORMAT),
+                format!("Unsupported .ylp format: {format} (saved by {app} {version}; maximum {})", yolu_io::MAX_FORMAT),
             ),
         }
     }
@@ -466,6 +466,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "選択範囲のタイルの長さ" => "Selection tile length",
         "選択範囲の大きさ" => "Selection size",
         "選択範囲の大きさが文書と違う" => "Selection size does not match document",
+        "選択範囲の名前が空" => "The selection name is empty",
+        "選択範囲の名前が長すぎる" => "The selection name is too long",
+        "選択範囲の名前に制御文字がある" => "The selection name has control characters",
+        "選択範囲の名前が整っていない" => "The selection name has leading or trailing spaces",
+        "選択範囲が無い" => "There is no selection",
+        "残せる選択範囲の数の上限" => "Too many saved selections",
+        "残した選択範囲の番号" => "No such saved selection",
+        "同じ名前の選択範囲がある" => "A saved selection with that name exists",
+        "残した選択範囲を戻せるのは読み込みの直後だけ" => "Saved selections can only be restored right after loading",
         "選択範囲の大きさが違う" => "Selection size mismatch",
         "選択範囲を戻せるのは読み込みの直後だけ" => "Selection restore requires a freshly loaded document",
         "面が無い" => "Surface not found",

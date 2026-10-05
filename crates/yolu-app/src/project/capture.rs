@@ -50,6 +50,9 @@ pub(crate) struct Capture {
     /// まだ .ylp に書いていないメッシュマップ（セットの ID・名前ごと）。
     pub maps: Vec<(String, String, Vec<Arc<BakedMeshMap>>)>,
     pub model: Option<PathBuf>,
+    /// プロジェクトのモデルのポーズ（`pose.json` へ書く材料）と、保存できなかった項目（骨・BlendShape の名前）。
+    pub pose: crate::view3d::pose::stored::PoseCapture,
+    pub pose_unsaved: Vec<String>,
     /// モデルの相対のパスの基準にする .ylp の場所。
     pub anchor: PathBuf,
     /// Unity から受けた値を書くか（設定。切っていれば外す）。
@@ -110,6 +113,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             mark: (doc.id(), doc.revision()),
         });
     }
+    let (pose, pose_unsaved) = crate::view3d::pose::stored::capture(state);
     let replaced = super::replaced_sets(
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
@@ -129,6 +133,8 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             .then(|| state.shelf.shelf().clone()),
         maps,
         model: state.np.model_file.clone(),
+        pose,
+        pose_unsaved,
         anchor,
         keep_received: state.prefs.settings.livelink_keep_values,
         lang,
@@ -152,6 +158,10 @@ pub(crate) struct Built {
     pub project: Project,
     /// 開くときに読めなかった見た目の設定を、変えた見た目で上書いたセットの ID。
     pub looks_overwritten: Vec<String>,
+    /// 開くときに読めなかった、名前を付けて残した選択範囲の項目を、変えた並びで置き換えたセットの ID。
+    pub saved_overwritten: Vec<String>,
+    /// 開くときに読めなかったポーズ（`pose.json`）を、今のポーズで上書きしたか。
+    pub pose_overwritten: bool,
     /// 書き直したセットの、効いていない効果が合成の PNG に入っていないことの知らせ（セットごとに 1 文。無ければ空）。
     pub inactive_effects: String,
 }
@@ -203,6 +213,18 @@ pub(crate) fn build(
         });
     }
     let writer = crate::project::writer();
+    // 書き直すセットの新しい大きさ。大きさを変えたセットは、古い大きさの選択範囲のエントリを正本の書き直しのあとに外す
+    let sizes: Vec<(&str, (u32, u32, u32))> = capture
+        .sets
+        .iter()
+        .filter(|s| s.rewrite)
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size()))))
+        .collect();
+    let resized = capture
+        .base
+        .as_ref()
+        .map(|base| crate::selection::io::resized_sets(base, &sizes))
+        .unwrap_or_default();
     let mut project = match &capture.base {
         Some(base) => {
             let upgraded;
@@ -212,6 +234,9 @@ pub(crate) fn build(
             } else {
                 base
             };
+            // 大きさを変えた文書の、古い大きさの今の選択範囲は外す（新しい文書と合わず、書き直しの検証が断る。今の選択範囲はあとで書く）
+            let fitted = crate::selection::io::without_stale(base, &sizes, lang).map_err(BuildError::Message)?;
+            let base: &Project = &fitted;
             // 開いたあとに消したセット（プロジェクトの構成・テクスチャセットのパネルで確かめて消したもの）は、ファイルからも消す
             let dropped: Vec<&str> = base
                 .sets()
@@ -236,6 +261,14 @@ pub(crate) fn build(
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.selection())))
         .collect();
     project = crate::selection::io::write_into(project, &selections, lang).map_err(text)?;
+    // 名前を付けて残した選択範囲（sets/<ID>/selections.json。使う文書だけが形式 8）。残した選択範囲を変えたセットだけ書き換える
+    let saved: Vec<(&str, &[yolu_core::SavedSelection])> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.saved_selections())))
+        .collect();
+    let (written, saved_overwritten) = crate::selection::io::write_saved_into(project, &saved, &resized, lang).map_err(text)?;
+    project = written;
     // 見た目の設定（look.json。正本と別のエントリ。違うセットだけ書き換える）。Unity から受けた値は、設定が入のときだけ書く
     let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
         .sets
@@ -254,6 +287,10 @@ pub(crate) fn build(
         })
         .collect();
     project = crate::look::io::write_received_into(project, &received, lang).map_err(text)?;
+    // モデルのポーズ（pose.json。状態のエントリで、形式は上げない。違うときだけ書く）
+    let (written, pose_overwritten) =
+        crate::view3d::pose::stored::write_into(project, &capture.pose, lang).map_err(text)?;
+    project = written;
     // 焼いてまだ書いていないメッシュマップ（開いた時のものは、ファイルのバイト列のまま残っている）
     for (id, name, maps) in &capture.maps {
         for map in maps {
@@ -297,7 +334,7 @@ pub(crate) fn build(
             }
         }
     }
-    Ok(Built { project, looks_overwritten, inactive_effects })
+    Ok(Built { project, looks_overwritten, saved_overwritten, pose_overwritten, inactive_effects })
 }
 
 /// 書き直すセットごとの（正本の元・合成の PNG）。並びはセットの並び。失敗したセットより後ろは作らず `None`（先に断りが見つかる）。

@@ -14,6 +14,8 @@ pub mod look;
 mod native;
 mod package;
 mod project;
+pub mod pose;
+pub mod saved_selections;
 mod selection;
 pub mod shelf;
 pub mod smart;
@@ -30,7 +32,7 @@ pub use native::{
 pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
-    MAX_PROJECT_SETS, MODEL_PATH_MAX,
+    MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, SAVED_SELECTIONS_FORMAT,
 };
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
@@ -108,7 +110,7 @@ impl fmt::Display for Error {
             Self::Core(e) => write!(f, "core: {e}"),
             Self::UnsupportedFormat { format, app, version } => write!(
                 f,
-                ".ylp形式{format}（{app} {version}で保存）は未対応です。対応上限は形式7です"
+                ".ylp形式{format}（{app} {version}で保存）は未対応です。対応上限は形式{MAX_FORMAT}です"
             ),
         }
     }

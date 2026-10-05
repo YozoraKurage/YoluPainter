@@ -23,7 +23,8 @@ const FILL: &str = "描画色で塗りつぶす";
 const ERASE: &str = "選択範囲を消去（Delete）";
 const COPY: &str = "コピーして新しいレイヤーに（Ctrl+J）";
 const MASK: &str = "選択範囲をレイヤーマスクにする";
-const ALL: [&str; 8] = [DESELECT, INVERT, GROW, SHRINK, FILL, ERASE, COPY, MASK];
+const REMEMBER: &str = "選択範囲を覚える…";
+const ALL: [&str; 9] = [DESELECT, INVERT, GROW, SHRINK, FILL, ERASE, COPY, MASK, REMEMBER];
 
 fn select_rect(h: &mut H, x0: i64, y0: i64, x1: i64, y1: i64) {
     h.state_mut()
@@ -109,7 +110,7 @@ fn the_bar_floats_below_the_selection_with_icons_only() {
     assert!(bar.top() - bounds.bottom() < 24.0, "すぐ下");
     assert!((bar.center().x - bounds.center().x).abs() < 2.0, "中央");
     assert!(canvas.contains_rect(bar), "表示域の中");
-    // ボタンの並びは左から右（解除・反転・拡張・縮小・塗りつぶし・消去・コピー・マスク）
+    // ボタンの並びは左から右（解除・反転・拡張・縮小・塗りつぶし・消去・コピー・マスク・覚える）
     let xs: Vec<f32> = ALL.iter().map(|l| in_canvas(&h, l).unwrap().center().x).collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
     // 文字のラベルは無い: 帯の中の読み上げの名前はボタンのツールチップだけ（描いた文字は無い）
@@ -1155,10 +1156,31 @@ fn the_bar_speaks_english_and_has_no_japanese_in_it() {
         "Erase Selection (Delete)",
         "Copy to a New Layer (Ctrl+J)",
         "Make the Selection a Layer Mask",
+        "Remember Selection…",
         "Move the Button Bar",
     ] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(h.query_by_label(DESELECT).is_none());
     h.snapshot("selection_bar_english");
+}
+
+#[test]
+fn the_remember_button_opens_the_remembered_selections_window_and_a_name_can_be_saved() {
+    let mut h = app(1280.0, 800.0, 256);
+    select_rect(&mut h, 80, 80, 140, 120);
+    assert!(st(&h).sel.saved_window.is_none());
+    click_label(&mut h, REMEMBER);
+    h.run();
+    assert!(st(&h).sel.saved_window.is_some(), "帯のボタンで窓が開く");
+    h.get_by_label("覚える").click();
+    h.run();
+    assert_eq!(st(&h).saved_selections().len(), 1);
+    assert_eq!(st(&h).saved_selections()[0].name, "選択範囲 1");
+    // 描いている間は押せない（帯ごと隠れる）。読むだけのセットでは押せない
+    h.state_mut().state.sel.saved_window = None;
+    let index = st(&h).sets.current_index();
+    h.state_mut().state.sets.get_mut(index).unwrap().read_only = Some("試験".into());
+    h.run();
+    assert!(!bar_shown(&h), "読むだけのセットでは帯を出さない");
 }

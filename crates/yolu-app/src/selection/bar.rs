@@ -1,13 +1,13 @@
 //! 選択範囲の下のボタンの帯（Photoshop のコンテキストタスクバー・CLIP STUDIO の選択範囲ランチャーと同じ）。選択範囲があるとき、その外接矩形の
 //! すぐ下（画面の外へはみ出すなら上、どちらも入らなければ内側の下）に、アイコンだけのボタンを小さな帯にして浮かべる。ボタン: 選択を解除・
-//! 反転・拡張・縮小・境界をぼかす（量を聞く窓）・塗りつぶし・消去・コピーして新しいレイヤー・マスクにする。文字のラベルは無く、名前とキーはツールチップ。
+//! 反転・拡張・縮小・境界をぼかす（量を聞く窓）・塗りつぶし・消去・コピーして新しいレイヤー・マスクにする・選択範囲を覚える（名前を付けて残す窓）。文字のラベルは無く、名前とキーはツールチップ。
 //! 表示の回転・拡大・パンに付いていく（外接矩形は画面の点へ写した 4 隅から求める）。描いている間・選択の形を作っている間・表示を動かして
 //! いる間は隠す。左端の持ち手をドラッグするとずらせる（選択範囲を外すと初めの位置へ戻る）。「選択範囲」メニューで出さないこともできる。
 //! 押した操作は `Action::Sel`（1 回の Undo）を通る。
 
 use egui::{pos2, vec2, Color32, Id, Order, Pos2, Rect, Sense, Ui, Vec2};
 
-use super::{ModifyKind, SelAction, SelEdit, SelUiOp};
+use super::{saved::SavedOp, ModifyKind, SelAction, SelEdit, SelUiOp};
 use crate::canvas::view::CanvasView;
 use crate::engine::LayerKind;
 use crate::lang::Lang;
@@ -36,7 +36,7 @@ struct Item {
     action: Action,
 }
 
-/// 区切りでグループに分けたボタン（解除・反転・拡張・縮小・ぼかし｜塗りつぶし・消去｜コピー・マスク）。
+/// 区切りでグループに分けたボタン（解除・反転・拡張・縮小・ぼかし｜塗りつぶし・消去｜コピー・マスク・覚える）。
 fn groups(app: &AppState) -> [Vec<Item>; 3] {
     let lang = app.lang;
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
@@ -142,6 +142,15 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 ),
                 enabled: free && mask_reason.is_none(),
                 action: edit(SelEdit::ToMask),
+            },
+            Item {
+                id: "remember",
+                icon: "save",
+                tooltip: lang
+                    .pick("選択範囲を覚える…", "Remember Selection…")
+                    .into(),
+                enabled: free,
+                action: Action::Sel(SelAction::Saved(SavedOp::OpenWindow)),
             },
         ],
     ]

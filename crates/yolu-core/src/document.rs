@@ -37,6 +37,10 @@ pub use resize::{CanvasResampling, PreparedResize, ResizeReport};
 pub use transform::{Affine2D, Resampling};
 pub use triangle_fill::TriangleFill;
 mod selection;
+mod saved_selections;
+pub use saved_selections::{
+    clean_saved_name, SavedSelection, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
+};
 mod smart;
 mod snapshot;
 mod smart_resample;
@@ -422,6 +426,11 @@ pub(crate) enum Command {
         old: crate::look::SharedLook,
         new: crate::look::SharedLook,
     },
+    /// 名前を付けて残した選択範囲の並びの入れ替え（残す・名前を変える・消す。画素も合成も変えない）。
+    SavedSelections {
+        old: saved_selections::SavedList,
+        new: saved_selections::SavedList,
+    },
 }
 
 pub(crate) struct Entry {
@@ -490,6 +499,8 @@ pub struct Document {
     pub(crate) normal_settings: NormalSettings,
     /// 今の選択範囲（None は選択なし）。
     selection: Option<SelectionMask>,
+    /// 名前を付けて残した選択範囲（`saved_selections`。履歴と写しが同じ並びを共有する）。
+    saved_selections: saved_selections::SavedList,
     undo: Vec<Entry>,
     redo: Vec<Entry>,
     history_bytes: u64,
@@ -572,6 +583,7 @@ impl Document {
                 .collect(),
             normal_settings: NormalSettings::DEFAULT,
             selection: None,
+            saved_selections: Default::default(),
             undo: Vec::new(),
             redo: Vec::new(),
             history_bytes: 0,
@@ -1400,6 +1412,7 @@ impl Document {
                     | Command::NormalSettings { .. }
                     | Command::Selection { .. }
                     | Command::Look { .. }
+                    | Command::SavedSelections { .. }
             )
         {
             self.refresh_anchor_readers();
@@ -1414,6 +1427,7 @@ impl Document {
                 | Command::NormalSettings { .. }
                 | Command::Selection { .. }
                 | Command::Look { .. }
+                | Command::SavedSelections { .. }
         ) {
             // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
             self.mark_clip_bases();
@@ -1428,6 +1442,10 @@ impl Document {
                 // 画素も合成も変えないので、タイルの変化は記録しない
                 self.look = if backwards { old.clone() } else { new.clone() };
                 self.refresh_drawn_look();
+                Ok(())
+            }
+            Command::SavedSelections { old, new } => {
+                self.switch_saved_selections(old, new, backwards);
                 Ok(())
             }
             Command::Swap(state) => self.swap_state(state),

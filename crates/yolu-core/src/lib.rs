@@ -84,6 +84,7 @@ pub use document::{
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, CompositedTile, Document, EffectCounters,
     DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
     LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
+    clean_saved_name, SavedSelection, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
     PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };
 pub use effects::{

@@ -4,7 +4,7 @@
 //! 場所・焼いたメッシュマップ・Unity のマテリアルの値・古い状態のエントリ・知らないエントリが残るので、写しを書くときに種類ごとに除く
 //! （[`Removal`]。目録は [`Project::distribution_inventory`]、写しは [`Project::for_distribution`]）。作業用のファイルは変えない。
 //!
-//! 写しは今と同じ形式（形式 7・正本の版も変えない）で、除くのは次の物だけ。除くものは、Unity 版（0.2.0）の読み手がどれも無くてよい（PSD の原本・
+//! 写しは今のファイルと同じ形式（形式 7。名前を付けて残した選択範囲を残す写しは 8。正本の版は変えない）で、除くのは次の物だけ。除くものは、Unity 版（0.2.0）の読み手がどれも無くてよい（PSD の原本・
 //! 状態のエントリ・派生のエントリ）か、索引と合わせて書き直す（棚）物だけで、`resources.json` の並びにある物は並びと中身が必ず揃う（並びが
 //! 空になれば `resources.json` を書かない）。ただし正本の版は変えないので、Unity 版 0.2.0 が開けるのは正本の版 21 のセットだけを含む写しで、
 //! 版 22 以上のセットを含む写しは Unity 版 0.2.0 では開けない（Unity 版の `Documentation~/YLP_FORMAT.md` の「スタンドアロン版が書く正本の版 22・23」の節）。
@@ -15,14 +15,17 @@
 //!   使っているかは [`Project::used_resource_ids`] の 1 か所で決める。
 //! - 出どころのパス: 棚の項目の `origin` のうち `file`（絶対のパス）・`unityAsset`（Assets の中のパス）・`library`（置き場の相対パス）を `none` に。
 //!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。
-//! - モデルの参照: `view.json` の `standaloneModel` と、モデルの GUID（空にする）、モデルの中のレンダラーの目（空にする）。
+//! - モデルの参照: `view.json` の `standaloneModel` と、モデルの GUID（空にする）、モデルの中のレンダラーの目（空にする）、根の `pose.json`
+//!   （モデルのポーズ。どのモデルのものか分からなくなる）。
 //! - メッシュマップ: `sets/<ID>/meshmap-*.bin`（モデルの形から焼いた派生物。焼き直せる）。
 //! - Unity の値: `look.json` の `received`（Live Link で Unity のマテリアルから受けた値）。利用者の設定は残る。
+//! - 名前を付けて残した選択範囲: `sets/<ID>/selections.json` と `selection-*.bin`。作業の補助で、絵ではない。形式 8 のエントリなので、残した写しは
+//!   Unity 版 0.2.0 以降が「新しい形式」として断る。除けば、写しの形式は 7 に戻る（今の選択範囲 `selection.bin` は絵の一部として残す）。
 //! - 古い状態: 根の `thumbnail.png`・`brush.json`・`model.json`（Unity 版が残したもの。スタンドアロン版は更新しない）。
 //! - 知らないエントリ: 今の形式のどの読み手も知らないエントリ（開くときに「保存すると残らない」と知らせるもの）。
 //!
 //! 保証しないこと: 棚の `.ylsmart`・`.ylbrush` の中身（ファイルごと残すか除くかで、中は書き換えない。中の画像の出どころは触れない）、層の名前・
-//! セットの名前・マテリアルの参照（作品の一部）、選択範囲・合成の PNG（絵そのもの）。
+//! セットの名前・マテリアルの参照（作品の一部）、今の選択範囲・合成の PNG（絵そのもの）。
 
 use crate::{
     archive::split_set,
@@ -50,6 +53,8 @@ pub enum Removal {
     MeshMaps,
     /// Unity のマテリアルの値（`look.json` の `received`）。
     UnityValues,
+    /// 名前を付けて残した選択範囲（`selections.json` と `selection-*.bin`。形式 8）。除くと、写しの形式は 7 に戻る。
+    SavedSelections,
     /// 古い状態のエントリ（サムネイル・ブラシの設定など）。
     StaleEntries,
     /// 知らないエントリ。
@@ -57,13 +62,14 @@ pub enum Removal {
 }
 impl Removal {
     /// 全部の種類（窓に並べる順）。
-    pub const ALL: [Removal; 8] = [
+    pub const ALL: [Removal; 9] = [
         Removal::PsdOriginals,
         Removal::UnusedShelf,
         Removal::SourcePaths,
         Removal::ModelReference,
         Removal::MeshMaps,
         Removal::UnityValues,
+        Removal::SavedSelections,
         Removal::StaleEntries,
         Removal::UnknownEntries,
     ];
@@ -289,6 +295,15 @@ impl Project {
         if !received.is_empty() {
             add(Removal::UnityValues, received);
         }
+        let remembered = sets_with(&|s| {
+            let prefix = set_entry(&s.id, "");
+            self.files
+                .keys()
+                .any(|n| n.strip_prefix(&prefix).is_some_and(crate::saved_selections::is_entry_leaf))
+        });
+        if !remembered.is_empty() {
+            add(Removal::SavedSelections, remembered);
+        }
         let stale: Vec<String> = STALE_ROOT
             .iter()
             .filter(|n| self.files.contains_key(**n))
@@ -336,7 +351,7 @@ impl Project {
     /// 取り込み直したなど）の保存に使う: 古い原本は新しい文書の原本ではない。無ければそのまま。形式 7 だけ（旧形式は先に upgraded）。
     pub fn without_imported_original(&self, set_id: &str) -> Result<Self> {
         check(
-            self.info().format == 7,
+            self.is_current(),
             "PSD の原本を除く前にupgradedで形式7へ移行してください",
         )?;
         check(
@@ -356,7 +371,7 @@ impl Project {
     /// 検証する（索引にある物は中身が揃う）。形式 7 だけ（旧形式は先に upgraded）。
     pub fn for_distribution(&self, writer: WriterInfo, remove: &[Removal]) -> Result<Self> {
         check(
-            self.info().format == 7,
+            self.is_current(),
             "配布用の写しを作る前にupgradedで形式7へ移行してください",
         )?;
         let on = |r: Removal| remove.contains(&r);
@@ -405,6 +420,11 @@ impl Project {
                 }
             }
         }
+        if on(Removal::SavedSelections) {
+            files.retain(|n, _| {
+                !split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf))
+            });
+        }
         if on(Removal::StaleEntries) {
             for name in STALE_ROOT {
                 files.remove(name);
@@ -416,6 +436,8 @@ impl Project {
             }
         }
         if on(Removal::ModelReference) {
+            // モデルのポーズ（pose.json）も、モデルの参照と一緒に除く（どのモデルのポーズか分からなくなる）
+            files.remove(crate::pose::ENTRY);
             if let Some(blob) = files.get("view.json").cloned() {
                 match blob.bytes().and_then(|b| read_view(&b)) {
                     Ok(mut view) => {
