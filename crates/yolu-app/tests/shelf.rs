@@ -632,7 +632,7 @@ fn headless_the_shelf_survives_save_and_reopen_in_every_kind() {
     assert_eq!(project.resources().len(), 8);
     assert_eq!(
         project.info().saved_by.as_ref().unwrap().app,
-        "YoluPainter-rs"
+        "YoluPainter"
     );
     let mut again = AppState::new(8, 8);
     again.apply(Action::OpenProject(path.clone()));

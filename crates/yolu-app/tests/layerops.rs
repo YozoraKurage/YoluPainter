@@ -406,6 +406,38 @@ fn headless_delete_group_duplicate_visibility_and_step_act_on_every_selected_lay
 }
 
 #[test]
+fn headless_a_new_group_next_to_a_layer_in_the_deepest_group_is_refused_with_a_short_reason() {
+    for lang in [Lang::Ja, Lang::En] {
+        let mut s = state(32);
+        s.lang = lang;
+        let mut top = s.selected_layer.unwrap();
+        let leaf = top;
+        for i in 0..yolu_core::MAX_GROUP_DEPTH {
+            top = s.doc.group_layers(&[top], &format!("g{i}")).unwrap();
+        }
+        settle(&mut s);
+        s.select_layers([leaf], leaf);
+        let (layers, revision) = (s.doc.layers().len(), s.doc.revision());
+        edit(&mut s, Edit::NewGroup);
+        assert_eq!(
+            (s.doc.layers().len(), s.doc.revision(), s.doc.undo_count()),
+            (layers, revision, 0),
+            "{lang:?}: 断ったら何も変えない"
+        );
+        s.doc.validate_structure().unwrap();
+        assert!(
+            s.message.contains(lang.pick("入れ子が深すぎる", "nesting is too deep")),
+            "{lang:?}: {}",
+            s.message
+        );
+        // 一番外側のグループの隣へなら足せる（鎖は増えない）
+        s.select_layers([top], top);
+        edit(&mut s, Edit::NewGroup);
+        assert_eq!(s.doc.layers().len(), layers + 1, "{lang:?}: {}", s.message);
+    }
+}
+
+#[test]
 fn headless_dragging_a_selection_of_layers_moves_them_together_around_the_layers_that_stay() {
     let mut s = state(32);
     let [a, b, c] = three(&mut s);

@@ -1222,3 +1222,110 @@ fn headless_new_document_gets_material_sets_and_painted_document_is_preserved() 
         app.until("切断", |s| s.link.status == LinkStatus::Listening);
     }
 }
+
+/// 窓の状態（隠れている・見えている）を持たせて、`App::logic` だけを 1 回呼ぶ（`ui` は回さない）。
+fn run_logic(h: &mut Harness<'_, YoluApp>, hidden: bool) {
+    let ctx = h.ctx.clone();
+    let mut input = egui::RawInput {
+        viewport_id: egui::ViewportId::ROOT,
+        ..Default::default()
+    };
+    input.viewports.insert(
+        egui::ViewportId::ROOT,
+        egui::ViewportInfo {
+            minimized: Some(hidden),
+            occluded: Some(false),
+            ..Default::default()
+        },
+    );
+    let mut frame = eframe::Frame::_new_kittest();
+    let app = h.state_mut();
+    let _ = ctx.run_logic(&input, |ctx| eframe::App::logic(app, ctx, &mut frame));
+}
+
+/// 最小化・隠れた窓を模す。本物の eframe は、窓が隠れている間（Windows の最小化・macOS の覆われた窓）は egui のパスを回さず、`App::ui` を
+/// 呼ばずに `Context::run_logic` で `App::logic` だけを呼ぶ。呼ぶのは**描き直しの頼みがあるときだけ**で（Live Link の裏のスレッドは知らせの
+/// たびに頼む）、頼みが無ければ何も回さない。ここでも同じにして、頼みの立て忘れ（裏のスレッドの知らせ・待ちの描き直し）が試験に出るようにする。
+/// `ui` は一度も呼ばない。
+struct Hidden<'a, 'b>(&'a mut Harness<'b, YoluApp>);
+
+impl Frames for Hidden<'_, '_> {
+    fn next_frame(&mut self) {
+        if self.0.ctx.has_requested_repaint() {
+            run_logic(self.0, true);
+        }
+    }
+}
+
+/// 最小化の間も Live Link が動く: つながる・モデルを受ける・セットを出す・描いたタイルを返す・切れるが、画面のフレームを 1 つも回さずに通る
+/// （Unity で Play に入る・スクリプトをリロードしたときの再接続が、最小化したままでも絵を出せる）。隠れた窓の `logic` は描き直しの頼みが
+/// あるときだけ回る形で（`Hidden`）、裏のスレッドの知らせが頼みを立てることも通る。窓が見えている間は、受け取り待ちの知らせも出す物も
+/// `logic` は扱わない（`ui` が扱う）。
+#[test]
+fn a_minimized_window_still_serves_the_live_link() {
+    let mut h = app(1280.0, 800.0, 256);
+    let name = listen(&mut h, "min");
+    // ここから画面のフレーム（`ui`）は回さない
+    let mut unity = FakeUnity::connect(&name);
+    // 窓が見えている間は、積まれた知らせ（Unity のつなぎ）を `logic` は読まない
+    for _ in 0..40 {
+        run_logic(&mut h, false);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(h.state().state.link.status, LinkStatus::Listening, "見えている間は読まない");
+    // 見えている間の `logic` が頼みを使い切ったので、窓が隠れたあとの次の頼み（積まれた知らせはそのまま残っている）で回る
+    h.ctx.request_repaint();
+    let deadline = Instant::now() + WATCHDOG;
+    while !matches!(h.state().state.link.status, LinkStatus::Connected { .. }) {
+        Hidden(&mut h).next_frame();
+        assert!(Instant::now() < deadline, "最小化の間につながらない: {:?}", h.state().state.link.status);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    unity.send(Message::Model(model(1, vec![material("Body", 512, true)])));
+    let got = unity.collect_until(&mut Hidden(&mut h), "テクスチャセット", |m| {
+        m.iter().any(|m| matches!(m, Message::TextureSet(_)))
+    });
+    let set = got
+        .iter()
+        .find_map(|m| match m {
+            Message::TextureSet(t) => Some(t.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!((set.material, set.width), (0, 256));
+    assert!(h.state().state.model.is_some(), "モデルは状態に入る");
+    assert_eq!(h.state().state.link.published.len(), 1);
+    // 描くと、変わったタイルが返る（描くのは状態を直に。最小化の間はペンも届かない。本物は描く操作が描き直しを頼む）
+    {
+        use yolu_app::engine::DVec2;
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        let brush = s.stroke_settings(false);
+        let doc = &mut s.doc;
+        let mut stroke = doc.begin_stroke(layer, &brush).unwrap();
+        stroke.add_point(doc, 100.0, 100.0, 1.0, DVec2::ZERO).unwrap();
+        stroke.add_point(doc, 110.0, 100.0, 1.0, DVec2::ZERO).unwrap();
+        doc.end_stroke(stroke).unwrap();
+    }
+    h.ctx.request_repaint();
+    // 窓が見えている間は、出す物（描いたタイル）があっても `logic` は出さない
+    for _ in 0..40 {
+        run_logic(&mut h, false);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    while let Ok(r) = unity.rx.try_recv() {
+        assert!(!matches!(r, Ok(Received::Message(Message::TilesChanged(_)))), "見えている間は出さない: {r:?}");
+    }
+    h.ctx.request_repaint();
+    let got = unity.collect_until(&mut Hidden(&mut h), "変わったタイル", |m| {
+        m.iter().any(|m| matches!(m, Message::TilesChanged(_)))
+    });
+    assert!(got.iter().any(|m| matches!(m, Message::TilesChanged(t) if t.set == set.set)));
+    // Unity が切ると、状態は待機に戻る
+    unity.send(Message::Bye);
+    while h.state().state.link.status != LinkStatus::Listening {
+        Hidden(&mut h).next_frame();
+        assert!(Instant::now() < deadline, "切れたのを受けない: {:?}", h.state().state.link.status);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

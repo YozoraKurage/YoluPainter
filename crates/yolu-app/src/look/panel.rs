@@ -749,16 +749,23 @@ fn slot_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, name: &'static str
         format!("{name}: 読むチャンネル（成分ごとに選ぶこともできる）。割り当てないと {} のテクスチャ", default_name(lang, slot.default)),
         format!("{name}: the channel it reads (or one per component). Unassigned reads a {} texture", default_name(lang, slot.default)),
     );
-    let yields = crate::view3d::look_gpu::yields_to_received(&app.doc, source.as_ref());
+    let yields = crate::view3d::look_gpu::yields_to_unity_texture(&app.doc, name, source.as_ref());
     if source.is_none() || yields {
-        // 割り当てていないスロット（と、使っていない標準のチャンネルの割り当て）は、Unity から受けた絵があればそれで描く
+        // 割り当てていないスロット（と、流し込み先でないスロットの、使っていない標準のチャンネルの割り当て）は、Unity から受けた絵が
+        // あればそれで、無ければスロットの既定のテクスチャで描く（Unity も空のテクスチャを既定で読む）
         if let Some(received) = app.doc.received_look() {
             if let Some(image) = received.images.get(name) {
                 value = lang.pick("Unity のテクスチャ", "Unity texture").into();
                 tip += &format!("\n{}×{}", image.width, image.height);
-            } else if let Some(why) = received.missing.get(name).filter(|_| source.is_none()) {
+            } else if let Some(why) = received.missing.get(name) {
                 value = missing_short(lang, *why).into();
                 tip += &format!("\n{}", missing_text(lang, *why));
+            } else if yields {
+                value = default_name(lang, slot.default).into();
+                tip += &lang.pick(
+                    format!("\nUnity ではテクスチャが空（{}で描く）", default_name(lang, slot.default)),
+                    format!("\nThe texture is empty in Unity (drawn {})", default_name(lang, slot.default).to_lowercase()),
+                );
             }
         }
     }
@@ -1889,6 +1896,11 @@ fn slot_entries(app: &AppState, index: usize, free: bool) -> Vec<Entry<Action>> 
                 .enabled(free),
         );
     }
+    // チャンネルの選択肢の最後: スロットの名前で新しいチャンネルを作って割り当てる（マットキャップの絵のスロットは描くものではない）
+    if let Some(spec) = super::paint_channel_spec(&slot, lang) {
+        let made = super::free_name(&app.doc, &spec.name);
+        v.push(new_channel_entry(lang, &made, LookOp::NewChannel { slot: name, plane: None }, free));
+    }
     v.push(Entry::Separator);
     let packed = match current {
         Some(TextureSource::Packed(p)) => p,
@@ -1964,5 +1976,21 @@ fn plane_entries(app: &AppState, index: usize, k: u8, free: bool) -> Vec<Entry<A
             v.push(Entry::item(label, set(p)).radio(current == p).enabled(free));
         }
     }
+    // 最後: この成分だけの新しいスカラーのチャンネル（名前は描く口と同じ名前に成分の文字）
+    if k < 4 {
+        let base = super::paint_channel_spec(&slot, lang).map_or_else(|| slot.label(lang).to_owned(), |spec| spec.name);
+        let made = super::free_name(&app.doc, &format!("{base} {}", ["R", "G", "B", "A"][k as usize]));
+        v.push(new_channel_entry(lang, &made, LookOp::NewChannel { slot: slot.name, plane: Some(k) }, free));
+    }
     v
+}
+
+/// 「新しいチャンネル」の項目（押すと `made` の名前でチャンネルを作って割り当て、描くチャンネルにする。何が起きるかはツールチップ）。
+fn new_channel_entry(lang: Lang, made: &str, op: LookOp, free: bool) -> Entry<Action> {
+    Entry::item(lang.pick("新しいチャンネル", "New Channel"), look_action(op))
+        .enabled(free)
+        .tooltip(lang.pick(
+            format!("「{made}」を作って割り当てる（描くチャンネルにもなる）"),
+            format!("Creates and assigns \"{made}\", and makes it the channel to paint"),
+        ))
 }

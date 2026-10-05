@@ -1,6 +1,44 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
+
+### 日本語
+
+- **保存**: 開いている .ylp を外で名前を変える・動かす・消す・置き換えても、別名で保存できます。保存の途中でアプリが落ちても、途中で切れた退避や一時ファイルが次の保存で片付きます。Windows で保存先がほかのアプリに一時的に掴まれていても、少し待ってやり直します。
+- **メモリ**: 自動の上限を物理メモリに見合う値に上げました（レイヤーのメモリは物理メモリの半分）。設定の「レイヤーの画素」は「レイヤーのメモリ」と呼びます。
+- **取り込みの上限**: .ylp に保存できない大きさ（1 辺 8192 を超える）・層の数（2048 を超える）・グループの入れ子（64 段を超える）の PSD は、取り込む前に理由を出して断ります。Live Link でマテリアルが 64 を超えるときは 64 までセットを作り、数を知らせます。
+- **Live Link**: スタンドアロンを最小化していても動きます。Unity で発光のテクスチャが空のマテリアルも、3D ビューで光ります。Unity の「Open in YoluPainter」が、変えた Link name で起動します。
+- **lilToon**: スロットの選択肢から「新しいチャンネル」を作って割り当てられます。
+- **選択**: 選択があるときの Esc で選択を解除します。
+- **そのほか**: ネットワーク上のモデルの参照は、開くときに自動で読みに行きません。Ctrl+- で画面全体が縮まなくなりました。「YoluPainter について」の表示と、画面の文の言葉を直しました。
+
+### English
+
+- **Saving**: You can save under another name even after the open .ylp was renamed, moved, deleted or replaced outside the app. Leftovers from a save interrupted by a crash are cleaned up by the next save. On Windows, saving retries briefly when another app holds the file.
+- **Memory**: Automatic limits now follow physical memory (layer memory is half of it). "Layer pixels" is now called "Layer memory".
+- **Import limits**: PSDs that cannot be saved as .ylp (edge over 8192, more than 2048 layers, groups nested over 64 levels) are refused before import. Live Link creates at most 64 sets and tells you how many were left out.
+- **Live Link**: Works while the standalone is minimized. Materials whose emission texture is empty in Unity now glow in the 3D view. "Open in YoluPainter" in Unity starts the standalone with the changed Link name.
+- **lilToon**: Slots can create and assign a new channel.
+- **Selection**: Esc deselects when there is a selection.
+- **Other**: Network paths to models are not read automatically when opening. Ctrl+- no longer shrinks the whole UI. Fixed the About text and wording in messages.
+
+## 0.3.1
+
+### 日本語
+
+- **アンインストール**: 「設定と復旧のデータも削除」で、アプリが作り直せる物（設定・窓の配置・復旧・クラッシュの記録・キャッシュ）だけを消し、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセットは残します（[詳しくは](docs/INSTALL.md)）。
+- **更新**: ほかの YoluPainter の窓が開いているときは更新を断ります（閉じてからもう一度押せば、落とした更新がすぐ入ります）。インストーラーが待ちきれなかったときも、今のアプリを起こし直します。
+- **クラッシュの記録**: 呼び出しの履歴に番地と実行ファイルの基底を残し、Release に PDB を付けます。
+- **3D で描くときの知らせ**: 面が重なりすぎて取り消したときなどの文を、使う人の言葉にしました。
+
+### English
+
+- **Uninstall**: "Also delete settings and recovery data" now removes only what the app can recreate (settings, window layout, recovery, crash logs, caches) and keeps your library, brushes, sub tools, gradients and color sets ([details](docs/en/INSTALL.md)).
+- **Updates**: Updating is refused while another YoluPainter window is open (press again after closing it; the downloaded update installs right away). If the installer cannot wait for the app to close, it restarts the current app.
+- **Crash logs**: Backtraces keep frame addresses and the image base, and releases include the PDB.
+- **3D painting messages**: Messages such as a stroke cancelled for too many overlapping faces now use plain words.
+
+## 0.3.0
 
 ### 日本語
 

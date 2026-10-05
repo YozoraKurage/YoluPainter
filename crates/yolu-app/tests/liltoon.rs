@@ -1014,6 +1014,39 @@ fn a_texture_received_from_unity_draws_its_slot_and_a_channel_assigned_here_wins
 }
 
 #[test]
+fn an_emission_texture_unity_left_empty_glows_from_the_default_white_not_the_unused_channel() {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    fill_color(&mut h, [0, 0, 0, 255]);
+    // 新しいセットの既定の割り当て（発光 → Emission）。どのレイヤーも Emission を使っていない。発光の色はオレンジ
+    let mut look = lil();
+    yolu_app::look::default_textures(&mut look);
+    look.properties.insert("_UseEmission".into(), LookValue::Float(1.0));
+    look.properties.insert("_EmissionColor".into(), LookValue::Color([1.0, 0.5, 0.2, 1.0]));
+    set_look(&mut h, look);
+    // Live Link でつないでいない: 使っていないチャンネルの値（黒）を読むので光らない
+    let unconnected = px(&h.render().expect("描ける"), middle(&h));
+    assert!(unconnected[0] < 40, "{unconnected:?}");
+    // Unity が発光のテクスチャを空と知らせた（絵も理由も来ない）: Unity は空を既定の白で読むので、発光の色で光る
+    let mut received_look = lil_received();
+    received_look.textures.insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    set_received(&mut h, 0, Some(received_with(received_look.clone(), &[])));
+    let empty = px(&h.render().expect("描ける"), middle(&h));
+    assert!(empty[0] > 200 && empty[0] > empty[1] && empty[1] > empty[2], "発光の色（1, 0.5, 0.2）で光る: {empty:?}");
+    // まだ届いていない絵（理由つき）の間も同じ
+    let mut pending = received_with(received_look, &[]);
+    pending.missing.insert("_EmissionMap".into(), yolu_core::look::MissingImage::Pending);
+    set_received(&mut h, 0, Some(pending));
+    assert_close(px(&h.render().expect("描ける"), middle(&h)), empty, 1, "届くまで");
+    // 絵が届けば、その絵（黒）が勝つ
+    set_received(&mut h, 0, Some(received_with(lil_received(), &[("_EmissionMap", solid(4, [0, 0, 0, 255], true))])));
+    let black = px(&h.render().expect("描ける"), middle(&h));
+    assert!(black[0] < 40, "{black:?}");
+}
+
+#[test]
 fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alpha_is_zero() {
     let mut h = view(900.0, 640.0, 64);
     set_model(&mut h, vec![quad(1.0)]);

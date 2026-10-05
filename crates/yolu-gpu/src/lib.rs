@@ -237,7 +237,7 @@ impl GpuPainter {
         }
         for &coord in coords {
             if doc.tile_rect(coord).is_none() {
-                return Err(error("タイルが画布の外"));
+                return Err(error("タイルがキャンバスの外"));
             }
         }
         let plan = Plan::build(doc, channel).map_err(error)?;
@@ -541,7 +541,7 @@ impl Compositor {
         for &coord in coords {
             let rect = doc
                 .tile_rect(coord)
-                .ok_or_else(|| error("タイルが画布の外"))?;
+                .ok_or_else(|| error("タイルがキャンバスの外"))?;
             let mut pixels = vec![0; rect.width as usize * rect.height as usize * 4];
             doc.composite_into(channel, rect, &mut pixels, yolu_core::RowOrder::BottomUp)?;
             tiles.push(TileResult {

@@ -1432,3 +1432,92 @@ fn a_copy_exports_as_a_new_psd_and_the_imported_document_is_an_ordinary_one() {
     assert_eq!(back.mode(), CompatibilityMode::EditableRaster);
     assert_eq!(composite(&back.to_core().unwrap()), composite(&copy));
 }
+
+// ───────── .ylp に保存できない文書は、取り込む前に断る ─────────
+
+#[test]
+fn a_canvas_over_the_ylp_edge_limit_is_refused_even_with_a_huge_budget() {
+    // 辺 8192 ちょうどは取り込める（保存もできる）
+    let ok = Psd::new(8192, 1, vec![red("a", (0, 0, 1, 1)).id(1)]).build();
+    assert_eq!(imported(&ok).0.width(), 8192);
+    // 8193 は、取り込めても保存だけが止まる文書になる。予算を上げても取り込めない
+    for (w, h) in [(8193, 1), (1, 8193)] {
+        let bytes = Psd::new(w, h, vec![red("a", (0, 0, 1, 1)).id(1)]).build();
+        let why = refused(&bytes, 4096 * MIB);
+        assert_eq!(why, CopyRefusal::EdgeOverLimit { width: w, height: h, limit: 8192 });
+        assert!(!why.raised_by_budget(), "予算を上げても解けない理由");
+        assert!(why.message().contains("8192"), "{}", why.message());
+    }
+}
+
+#[test]
+fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
+    let leaf = |i: i32| L::new(&format!("L{i}"), (0, 0, 1, 1), [1, 2, 3, 255]).id(i + 1);
+    // 2048 枚は取り込める
+    let d = match run(&Psd::new(2, 2, (0..2048).map(leaf).collect()).build(), 4096 * MIB) {
+        CopyOutcome::Imported(i) => i.document,
+        CopyOutcome::Refused(why) => panic!("{}", why.message()),
+    };
+    assert_eq!(d.layers().len(), 2048);
+    // 2049 枚は、予算が足りていても断る（保存できない）
+    let why = refused(&Psd::new(2, 2, (0..2049).map(leaf).collect()).build(), 4096 * MIB);
+    assert_eq!(why, CopyRefusal::LayerCountOverLimit { count: 2049, limit: 2048 });
+    assert!(!why.raised_by_budget());
+    // グループは層に数える。区切りの記録は数えない: 1024 個のグループ（各 1 枚入り）は層 2048 枚（記録は 3072）で取り込め、
+    // 1 枚足すと断る
+    let groups = |extra: bool| {
+        let mut layers = Vec::new();
+        for k in 0..1024 {
+            layers.push(divider(100_000 + k));
+            layers.push(L::new(&format!("葉{k}"), (0, 0, 1, 1), [9, 9, 9, 255]).id(1 + k));
+            layers.push(group(&format!("組{k}"), 50_000 + k));
+        }
+        if extra {
+            layers.push(L::new("余り", (0, 0, 1, 1), [9, 9, 9, 255]).id(9000));
+        }
+        Psd::new(2, 2, layers).build()
+    };
+    match run(&groups(false), 4096 * MIB) {
+        CopyOutcome::Imported(i) => assert_eq!(i.document.layers().len(), 2048),
+        CopyOutcome::Refused(why) => panic!("{}", why.message()),
+    }
+    assert_eq!(
+        refused(&groups(true), 4096 * MIB),
+        CopyRefusal::LayerCountOverLimit { count: 2049, limit: 2048 }
+    );
+}
+
+/// `n` 個のグループを入れ子にして、一番内側に層 1 枚を置いた PSD。
+fn nested_groups(n: usize) -> Vec<u8> {
+    let mut layers = Vec::new();
+    for k in 0..n {
+        layers.push(divider(100_000 + k as i32));
+    }
+    layers.push(red("葉", (0, 0, 2, 2)).id(1));
+    for k in (0..n).rev() {
+        layers.push(group(&format!("組{k}"), 50_000 + k as i32));
+    }
+    Psd::new(2, 2, layers).build()
+}
+
+#[test]
+fn nested_groups_are_limited_so_the_composite_recursion_cannot_use_up_the_stack() {
+    let limit = yolu_core::MAX_GROUP_DEPTH;
+    // 上限ちょうどは取り込め、Windows の画面のスレッドと同じ 1MiB の別スレッドで合成できる
+    let (d, _) = imported(&nested_groups(limit));
+    assert_eq!(d.layers().len(), limit + 1);
+    let composed = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || composite(&d))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(composed.len(), 2 * 2 * 4);
+    // 1 段多いと、以前は 1000 段まで受けていたものも、予算を上げても取り込めない
+    for n in [limit + 1, 1000] {
+        let why = refused(&nested_groups(n), 4096 * MIB);
+        assert_eq!(why, CopyRefusal::NestingTooDeep { limit }, "{n} 段");
+        assert!(!why.raised_by_budget());
+        assert!(why.message().contains("入れ子"), "{}", why.message());
+    }
+}

@@ -1,6 +1,6 @@
 use crate::{
     check, is_hash,
-    package::{file_digest, Limits, Package},
+    package::{file_digest, release_at, Limits, Package},
     Error, Project, Result,
 };
 
@@ -17,7 +17,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
 /// 保存先の名前の終わり（大文字小文字は問わない）。
@@ -149,6 +149,9 @@ impl SaveTarget {
                 move_new: &mut move_without_replacing,
                 remove: &mut remove_file,
                 phase: &mut |_| Ok(()),
+                rename: &mut rename_file,
+                busy: &is_busy,
+                sleep: &mut std::thread::sleep,
             },
         )
     }
@@ -186,12 +189,17 @@ impl SaveTarget {
                 CreatedDirs::default()
             }
         };
-        let _lock = SaveLock::acquire_with(
+        let lock = SaveLock::acquire_with(
             parent.join(format!(".{name}.save.lock~")),
             &mut *seams.try_lock,
             |_| {},
         )?;
         self.check_expected()?;
+        // 排他ロックを持てたなら、この保存先へ保存している者は他にいない: 前の保存が強制終了などで残した一時ファイルは誰のものでも
+        // ないので、自分の一時ファイルを作る前に片付ける（退避の置き場の分は、退避を作るときに）
+        if lock.exclusive {
+            sweep_leftovers(parent, &name);
+        }
         let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
         let mut pending = Pending::create(
             parent.join(format!(".{name}.{}-{nonce}.pending~", std::process::id())),
@@ -221,6 +229,10 @@ impl SaveTarget {
             if keep != BackupKeep::Count(0) {
                 let folder = parent.join(format!("{name}-backups~"));
                 check_backup_folder(&folder)?;
+                // 退避の置き場に残った、強制終了された保存の一時ファイル。置き場に触れるのは、退避を作る保存だけ
+                if lock.exclusive {
+                    sweep_backup_leftovers(&folder, &name);
+                }
                 to_back_up = Some((folder, expected.clone()));
             }
         }
@@ -230,7 +242,7 @@ impl SaveTarget {
         let backup = match to_back_up {
             Some((folder, previous)) => {
                 present(&self.path)?;
-                Some(Backup::make(&folder, &stem, &self.path, &previous)?)
+                Some(Backup::make(&folder, &name, &stem, &self.path, &previous, seams)?)
             }
             None => {
                 self.check_expected()?;
@@ -238,18 +250,21 @@ impl SaveTarget {
             }
         };
         (seams.phase)("backed-up")?;
+        // 一時ファイルの隠し属性（Windows）を、移す直前に外す（付けたまま移すと、保存した .ylp が隠しファイルになる）
+        show(&pending.path)?;
         match &self.expected {
-            // 上書きが目的なので、置き換える移動。削除してから移動する代替手順は使わない。置換の失敗時は元を残す
-            Some(_) => fs::rename(&pending.path, &self.path)?,
+            // 上書きが目的なので、置き換える移動。削除してから移動する代替手順は使わない。置換の失敗時は元を残す。Windows では、同期・
+            // ウイルス対策・Unity の取り込みが保存先や一時ファイルを一時的に掴んでいると失敗するので、短くやり直す（`replace_file`）
+            Some(_) => replace_file(&pending.path, &self.path, seams)?,
             // 新規の保存先は、置き換えない移動。最後の確かめから移動までの間に外から作られたものを上書きしない
-            None => match (seams.move_new)(&pending.path, &self.path)? {
+            None => match retry_busy(seams.busy, &mut *seams.sleep, || (seams.move_new)(&pending.path, &self.path))? {
                 Moved::Done => {}
                 Moved::Occupied => return Err(occupied()),
                 // 置き換えない移動の使えないファイルシステム。確かめ直してから置き換える移動に落とす（その間に作られる競合は
                 // 防げない。ロックの使えない場所で排他なしに続けるのと同じ考え方）
                 Moved::Unsupported => {
                     conflict(absent(&self.path)?, occupied_reason())?;
-                    fs::rename(&pending.path, &self.path)?;
+                    retry_busy(seams.busy, &mut *seams.sleep, || (seams.rename)(&pending.path, &self.path))?;
                 }
             },
         }
@@ -290,9 +305,16 @@ impl SaveTarget {
 /// ファイルシステムと外から先に作られる競合・消せない退避・各段での失敗。
 struct Seams<'a> {
     try_lock: &'a mut dyn FnMut(&File) -> std::result::Result<(), TryLockError>,
+    /// 置き換えない移動（新規の保存先と、退避の最終の名前への移動）。
     move_new: &'a mut dyn FnMut(&Path, &Path) -> io::Result<Moved>,
     remove: &'a mut dyn FnMut(&Path) -> io::Result<()>,
     phase: &'a mut dyn FnMut(&str) -> Result<()>,
+    /// 置き換える移動（既にある保存先の上書き）。試験が、共有違反などの失敗を差し込む。
+    rename: &'a mut dyn FnMut(&Path, &Path) -> io::Result<()>,
+    /// 置き換えのやり直しに値する失敗か（本物は Windows の共有違反・アクセス拒否だけ）。
+    busy: &'a dyn Fn(&io::Error) -> bool,
+    /// やり直しの間の待ち（試験は待たずに記録する）。
+    sleep: &'a mut dyn FnMut(Duration),
 }
 fn occupied_reason() -> &'static str {
     "新規保存先が外部で作られました。上書きしません"
@@ -314,6 +336,142 @@ fn remove_file(path: &Path) -> io::Result<()> {
         // 先に消されていた（同じ目的の別の整理など）なら、消せたのと同じ
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         other => other,
+    }
+}
+/// 置き換える移動（保存先が既にあれば置き換える）。
+fn rename_file(from: &Path, to: &Path) -> io::Result<()> {
+    fs::rename(from, to)
+}
+/// 保存の一時ファイル・ロックを作る開き方に、隠し属性（Windows）を付ける。Windows は先頭の '.' では隠れない。付けたまま `rename` すると
+/// 保存した .ylp が隠しファイルになるので、移す前に [`show`] で外す。Unix は先頭の '.' で足りる。
+fn hide(options: &mut OpenOptions) -> &mut OpenOptions {
+    #[cfg(windows)]
+    {
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        std::os::windows::fs::OpenOptionsExt::attributes(options, FILE_ATTRIBUTE_HIDDEN);
+    }
+    options
+}
+/// [`hide`] で作った一時ファイルの隠し属性を外す（普通の新しいファイルと同じ、アーカイブの印だけにする。Windows のみ）。
+#[cfg(windows)]
+fn show(path: &Path) -> Result<()> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetFileAttributesW(file: *const u16, attributes: u32) -> i32;
+    }
+    const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x20;
+    let wide = wide(path)?;
+    // SAFETY: NUL で終わる UTF-16 で、呼び出しの間生きている
+    if unsafe { SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_ARCHIVE) } == 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+#[cfg(not(windows))]
+fn show(_: &Path) -> Result<()> {
+    Ok(())
+}
+/// 置き換えの失敗のうち、やり直しに値するもの。Windows の共有違反（32）・ロック違反（33）・アクセス拒否（5）: 同期の道具・ウイルス
+/// 対策・Unity の .ylp の取り込み（読む間は他の書き換えを許さない）などが一時的にファイルを掴んでいるとき。アクセス拒否は本当の
+/// 権限の不足でも出るが、そのときは待っても通らないだけ（待つのは [`BUSY_BUDGET`] まで）。Unix の `rename` は開いているファイルに
+/// 妨げられないので、やり直さない。
+#[cfg(windows)]
+fn is_busy(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5 | 32 | 33))
+}
+#[cfg(not(windows))]
+fn is_busy(_: &io::Error) -> bool {
+    false
+}
+/// やり直しの間に待つ合計の上限。保存は主のスレッドで回るので、長く待つと画面が固まって見える。掴んでいる側はたいてい 1 秒以内に手放す
+/// ので 1.5 秒で諦め、本当の失敗として返す（待ちは 10・20・40…ms と倍にし、300 ms で頭打ち）。
+const BUSY_BUDGET: Duration = Duration::from_millis(1500);
+/// `op` を、`busy` と言える失敗のあいだ、合計 [`BUSY_BUDGET`] まで待ちながらやり直す。ほかの失敗は待たずに返す。
+fn retry_busy<T>(
+    busy: &dyn Fn(&io::Error) -> bool,
+    sleep: &mut dyn FnMut(Duration),
+    op: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    retry_busy_within(BUSY_BUDGET, busy, sleep, op)
+}
+/// [`retry_busy`] の、待つ合計の上限を渡す形（待ちを 2 つに分ける置換が使う）。上限まで待って通らなければ、最後の失敗を返す。
+fn retry_busy_within<T>(
+    budget: Duration,
+    busy: &dyn Fn(&io::Error) -> bool,
+    sleep: &mut dyn FnMut(Duration),
+    mut op: impl FnMut() -> io::Result<T>,
+) -> io::Result<T> {
+    let mut waited = Duration::ZERO;
+    let mut next = Duration::from_millis(10);
+    loop {
+        match op() {
+            Err(e) if busy(&e) && waited < budget => {
+                let pause = next.min(budget - waited);
+                sleep(pause);
+                waited += pause;
+                next = (next * 2).min(Duration::from_millis(300));
+            }
+            other => return other,
+        }
+    }
+}
+/// 置換が共有違反のとき、自分のハンドルを手放す前に、手放さずに待つ合計（[`BUSY_BUDGET`] の内側）。NTFS では、外の道具（ウイルス対策・
+/// 同期の道具・Unity の取り込み）が掴んでいるのが普通の原因で、自分のハンドルは置換を妨げない。たいていはこの間に手放されるので、
+/// 手放さずに通れば、保存前のプロジェクトの写しは読めたまま残る。
+const RELEASE_AFTER: Duration = Duration::from_millis(300);
+/// 一時ファイルを保存先へ置き換えて移す。共有違反・アクセス拒否のあいだは短くやり直す（[`retry_busy`]）。[`RELEASE_AFTER`] たっても通ら
+/// ないときだけ、このプロセスが開いている保存先のハンドル（開いた .ylp の位置読み）を手放して、残りの待ちでやり直す: 置き換えの規則が
+/// POSIX でないファイルシステム（FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、自分のハンドルが原因の
+/// ことがある（NTFS と Unix は開いたままでも通る）。外の道具が長く掴んでいるだけのときも、手放してから通れば同じ結果になる（原因を
+/// 見分けられない）。置き換えられなければ掴み直す。置き換えられたら手放したまま（古い版の写しは、読もうとすると断る）。
+fn replace_file(from: &Path, to: &Path, seams: &mut Seams<'_>) -> io::Result<()> {
+    let busy = seams.busy;
+    let rename = &mut *seams.rename;
+    match retry_busy_within(RELEASE_AFTER, busy, &mut *seams.sleep, || rename(from, to)) {
+        Err(e) if busy(&e) => {
+            let released = release_at(to);
+            let result = retry_busy_within(BUSY_BUDGET - RELEASE_AFTER, busy, &mut *seams.sleep, || rename(from, to));
+            if result.is_err() {
+                released.reacquire();
+            }
+            result
+        }
+        other => other,
+    }
+}
+/// 保存の一時ファイル `.{名前}.{pid}-{通し番号}.pending~`（退避の一時ファイルも同じ形）の名前か。`name` はこの保存先のファイル名。
+/// 形が違うもの（別の保存先の一時ファイル・利用者のファイル）は含めない。
+fn is_leftover_name(name: &str, found: &str) -> bool {
+    let Some(rest) = found
+        .strip_prefix('.')
+        .and_then(|r| r.strip_prefix(name))
+        .and_then(|r| r.strip_prefix('.'))
+        .and_then(|r| r.strip_suffix(".pending~"))
+    else {
+        return false;
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+    rest.split_once('-').is_some_and(|(pid, nonce)| digits(pid) && digits(nonce))
+}
+/// `folder` の中の、この保存先の一時ファイルの残り（強制終了された保存が残したもの）を消す。誰も保存していないと確かめた（保存先の排他
+/// ロックを持っている）ときだけ呼ぶ。普通のファイルだけで、リンク・フォルダーには触らない。消せなくても無視する（次の保存でやり直す）。
+fn sweep_leftovers(folder: &Path, name: &str) {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let found = entry.file_name();
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+        if is_file && found.to_str().is_some_and(|f| is_leftover_name(name, f)) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+/// 退避の置き場の中の、この保存先の一時ファイルの残りを消す（[`sweep_leftovers`]）。置き場が本物のフォルダーのときだけ: リンクの先や
+/// 普通のファイルには触らない（`check_backup_folder` で断る形。確かめてから開くまでの間に差し替えられた場合も、ここで見直す）。
+fn sweep_backup_leftovers(folder: &Path, name: &str) {
+    if fs::symlink_metadata(folder).is_ok_and(|m| m.is_dir()) {
+        sweep_leftovers(folder, name);
     }
 }
 /// 新規の保存で作ったフォルダー（浅い方から）。保存が確定しなかったときは、空のまま残っているものだけを深い方から消す
@@ -370,57 +528,89 @@ fn check_backup_folder(folder: &Path) -> Result<()> {
     }
 }
 /// 作った退避。`keep` で確定するまでは、落ちた保存の分として（作ったフォルダーごと）消える。
+///
+/// 写しは一時の名前（`.{名前}.{pid}-{通し番号}.pending~`）へ書いて同期し、検証してから最終の名前へ移す（保存の一時ファイルと同じ形）。
+/// 保存が強制終了されて（`Drop` が走らない）切れた写しが残っても、一時の名前なので退避として数えられず（整理は名前の形だけで数える）、
+/// 次の保存の前に片付く（`sweep_backup_leftovers`）。退避は、保存先とは独立したバイト列の写し。
 struct Backup {
+    temp: Option<PathBuf>,
     path: Option<PathBuf>,
     created_folder: Option<PathBuf>,
 }
 impl Backup {
-    /// 前の版（`source` の今の中身。`expected` と同じ中身であること）を、新しい名前のファイルへ流して写す（同じ名前が先にあれば、
-    /// 別の名前でやり直す）。写しながら数えた中身が `expected` と違えば、外部の変更として断る（写しは消す）。
-    fn make(folder: &Path, stem: &str, source: &Path, expected: &FileStamp) -> Result<Self> {
+    /// 前の版（`source` の今の中身。`expected` と同じ中身であること）を、一時のファイルへ流して写し、新しい名前へ移す（同じ名前が先に
+    /// あれば、別の名前でやり直す）。写しながら数えた中身が `expected` と違えば、外部の変更として断る（写しは消す）。
+    fn make(
+        folder: &Path,
+        name: &str,
+        stem: &str,
+        source: &Path,
+        expected: &FileStamp,
+        seams: &mut Seams<'_>,
+    ) -> Result<Self> {
         let created = match fs::create_dir(folder) {
             Ok(()) => true,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => false,
             Err(e) => return Err(e.into()),
         };
         let mut backup = Self {
+            temp: None,
             path: None,
             created_folder: created.then(|| folder.to_path_buf()),
         };
         // 作る間に置き場がリンクやファイルに替えられていないか
         check_backup_folder(folder)?;
+        let temp = folder.join(format!(
+            ".{name}.{}-{}.pending~",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        let f = hide(&mut options).open(&temp)?;
+        backup.temp = Some(temp.clone());
+        let mut from = io::BufReader::with_capacity(1 << 20, File::open(source)?);
+        let mut to = io::BufWriter::with_capacity(1 << 20, f);
+        let mut sha = <sha2::Sha256 as sha2::Digest>::new();
+        let mut buf = vec![0u8; 1 << 20];
+        let mut length = 0u64;
+        loop {
+            let n = match from.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            sha2::Digest::update(&mut sha, &buf[..n]);
+            to.write_all(&buf[..n])?;
+            length += n as u64;
+        }
+        let f = to.into_inner().map_err(|e| e.into_error())?;
+        f.sync_all()?;
+        drop(f);
+        conflict(
+            length == expected.length && format!("{:x}", sha2::Digest::finalize(sha)) == expected.sha256,
+            "保存先が外部で変更されています",
+        )?;
+        (seams.phase)("backup-copied")?;
+        show(&temp)?;
         for _ in 0..BACKUP_NAME_ATTEMPTS {
             let path = folder.join(backup_name(folder, stem, SystemTime::now())?);
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(f) => {
-                    backup.path = Some(path);
-                    let mut from = io::BufReader::with_capacity(1 << 20, File::open(source)?);
-                    let mut to = io::BufWriter::with_capacity(1 << 20, f);
-                    let mut sha = <sha2::Sha256 as sha2::Digest>::new();
-                    let mut buf = vec![0u8; 1 << 20];
-                    let mut length = 0u64;
-                    loop {
-                        let n = match from.read(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                            Err(e) => return Err(e.into()),
-                        };
-                        sha2::Digest::update(&mut sha, &buf[..n]);
-                        to.write_all(&buf[..n])?;
-                        length += n as u64;
-                    }
-                    let f = to.into_inner().map_err(|e| e.into_error())?;
-                    f.sync_all()?;
-                    conflict(
-                        length == expected.length
-                            && format!("{:x}", sha2::Digest::finalize(sha)) == expected.sha256,
-                        "保存先が外部で変更されています",
-                    )?;
-                    return Ok(backup);
+            // 置き換えない移動: 同じ名前が先にあれば（別のプロセスが同じ時刻に作った）断られるので、別の名前でやり直す
+            let moved = retry_busy(seams.busy, &mut *seams.sleep, || (seams.move_new)(&temp, &path))?;
+            let done = match moved {
+                Moved::Done => true,
+                Moved::Occupied => false,
+                // 置き換えない移動の使えないファイルシステム。確かめ直してから移す
+                Moved::Unsupported if absent(&path)? => {
+                    retry_busy(seams.busy, &mut *seams.sleep, || (seams.rename)(&temp, &path))?;
+                    true
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(e.into()),
+                Moved::Unsupported => false,
+            };
+            if done {
+                backup.path = Some(path);
+                return Ok(backup);
             }
         }
         Err(Error::SaveConflict("退避の名前を決められません".into()))
@@ -432,6 +622,10 @@ impl Backup {
 }
 impl Drop for Backup {
     fn drop(&mut self) {
+        // 一時の名前は、移した後なら無い（リンクで移して元の名前を消せなかったときは、ここで消し直す）
+        if let Some(temp) = self.temp.take() {
+            let _ = fs::remove_file(temp);
+        }
         if let Some(path) = self.path.take() {
             let _ = fs::remove_file(path);
         }
@@ -758,10 +952,9 @@ struct Pending {
 }
 impl Pending {
     fn create(path: PathBuf) -> Result<Self> {
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)?;
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        let file = hide(&mut options).open(&path)?;
         Ok(Self {
             path,
             file: Some(file),
@@ -779,6 +972,8 @@ impl Drop for Pending {
 struct SaveLock {
     path: PathBuf,
     file: Option<File>,
+    /// OS の排他ロックを実際に持っている（ロックの使えないファイルシステムでは持たずに続けるので false）。
+    exclusive: bool,
 }
 /// 取る間に他の保存がロックのファイルを消して作り直した場合にやり直す回数（超えたら衝突として断る）。
 const LOCK_ATTEMPTS: usize = 8;
@@ -804,6 +999,8 @@ impl SaveLock {
             }
             let mut options = OpenOptions::new();
             options.read(true).write(true).truncate(false);
+            // Windows は先頭の '.' で隠れないので、隠し属性を付けて作る
+            hide(&mut options);
             // Windows は DELETE を共有しない: 開いている間は他から消せない（消すのは手放してから）
             #[cfg(windows)]
             std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0x1 | 0x2);
@@ -822,21 +1019,22 @@ impl SaveLock {
                 }
                 Err(e) => return Err(e.into()),
             };
-            match try_lock(&file) {
-                Ok(()) => {}
+            let exclusive = match try_lock(&file) {
+                Ok(()) => true,
                 // 持っているのは別の保存。そのファイルは消さずに断る
                 Err(TryLockError::WouldBlock) => return Err(in_progress()),
                 // ロックの使えない場所（ロックを取る操作そのものが失敗する FUSE・一部のネットワークのファイルシステム）。
                 // C#（.NET の FileShare.None）と同じく排他なしで続ける。断ると、その場所へは二度と保存できない。
                 // 置換の前の印の確かめは残る
-                Err(TryLockError::Error(_)) => {}
-            }
+                Err(TryLockError::Error(_)) => false,
+            };
             locked(attempt);
             // 取る間に消されて作り直されていたら、いま持っているのは誰も見ないファイル。手放してやり直す
             if names_the_same_file(&file, &path) {
                 return Ok(Self {
                     path,
                     file: Some(file),
+                    exclusive,
                 });
             }
         }
@@ -886,7 +1084,7 @@ fn names_the_same_file(_: &File, _: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hash;
+    use crate::{hash, Thresholds};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::AtomicUsize;
@@ -1010,6 +1208,9 @@ mod tests {
                     move_new: &mut move_without_replacing,
                     remove: &mut remove_file,
                     phase: &mut phase,
+                    rename: &mut rename_file,
+                    busy: &is_busy,
+                    sleep: &mut std::thread::sleep,
                 },
             )
             .map(|r| r.stamp)
@@ -1029,6 +1230,9 @@ mod tests {
                     move_new: &mut move_without_replacing,
                     remove: &mut remove_file,
                     phase: &mut phase,
+                    rename: &mut rename_file,
+                    busy: &is_busy,
+                    sleep: &mut std::thread::sleep,
                 },
             )
             .map(|r| r.stamp)
@@ -1048,9 +1252,66 @@ mod tests {
                     move_new: &mut move_new,
                     remove: &mut remove_file,
                     phase: &mut phase,
+                    rename: &mut rename_file,
+                    busy: &is_busy,
+                    sleep: &mut std::thread::sleep,
                 },
             )
             .map(|r| r.stamp)
+        }
+        /// 置き換える移動・やり直しに値する失敗の見分け・待ちを差し込む（Windows の共有違反を模す）。
+        fn save_replacing(
+            &mut self,
+            project: &Project,
+            rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+            busy: impl Fn(&io::Error) -> bool,
+            sleep: impl FnMut(Duration),
+        ) -> Result<FileStamp> {
+            self.save_replacing_report(project, rename, busy, sleep).map(|r| r.stamp)
+        }
+        /// `save_replacing` の、保存の報告（保存後のプロジェクト）を返す形。
+        fn save_replacing_report(
+            &mut self,
+            project: &Project,
+            mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+            busy: impl Fn(&io::Error) -> bool,
+            mut sleep: impl FnMut(Duration),
+        ) -> Result<SaveReport> {
+            self.save_core(
+                project,
+                BackupKeep::All,
+                &mut Seams {
+                    try_lock: &mut File::try_lock,
+                    move_new: &mut move_without_replacing,
+                    remove: &mut remove_file,
+                    phase: &mut |_| Ok(()),
+                    rename: &mut rename,
+                    busy: &busy,
+                    sleep: &mut sleep,
+                },
+            )
+        }
+        /// 置き換えない移動（新規の保存先と、退避の最終の名前への移動）・やり直しに値する失敗の見分け・待ちを差し込む。
+        fn save_moving_busy(
+            &mut self,
+            project: &Project,
+            mut move_new: impl FnMut(&Path, &Path) -> io::Result<Moved>,
+            busy: impl Fn(&io::Error) -> bool,
+            mut sleep: impl FnMut(Duration),
+        ) -> Result<SaveReport> {
+            self.save_core(
+                project,
+                BackupKeep::All,
+                &mut Seams {
+                    try_lock: &mut File::try_lock,
+                    move_new: &mut move_new,
+                    remove: &mut remove_file,
+                    phase: &mut |_| Ok(()),
+                    rename: &mut rename_file,
+                    busy: &busy,
+                    sleep: &mut sleep,
+                },
+            )
         }
         /// 退避を消す操作を差し込む（消せない退避）。
         fn save_removing(
@@ -1067,6 +1328,9 @@ mod tests {
                     move_new: &mut move_without_replacing,
                     remove: &mut remove,
                     phase: &mut |_| Ok(()),
+                    rename: &mut rename_file,
+                    busy: &is_busy,
+                    sleep: &mut std::thread::sleep,
                 },
             )
         }
@@ -1120,6 +1384,7 @@ mod tests {
             "flushed",
             "disk-verified",
             "before-replace",
+            "backup-copied",
             "backed-up",
         ] {
             let s = Scratch::new();
@@ -1154,6 +1419,7 @@ mod tests {
                 "flushed",
                 "disk-verified",
                 "before-replace",
+                "backup-copied",
                 "backed-up",
                 "after-replace"
             ]
@@ -1757,7 +2023,7 @@ mod tests {
             t.save(&changed(&p, &format!("版 {i}"))).unwrap();
         }
         let before = s.backup_dir_names();
-        for point in ["memory-verified", "flushed", "disk-verified", "before-replace", "backed-up"] {
+        for point in ["memory-verified", "flushed", "disk-verified", "before-replace", "backup-copied", "backed-up"] {
             let error = t.save_core(
                 &changed(&p, "止まる保存"),
                 BackupKeep::Count(1),
@@ -1766,6 +2032,9 @@ mod tests {
                     move_new: &mut move_without_replacing,
                     remove: &mut |_| panic!("置換の前に整理しない"),
                     phase: &mut fail_at(point),
+                    rename: &mut rename_file,
+                    busy: &is_busy,
+                    sleep: &mut std::thread::sleep,
                 },
             );
             assert!(error.is_err(), "{point}");
@@ -2205,13 +2474,17 @@ mod tests {
     }
     #[test]
     fn overwriting_an_existing_target_still_replaces() {
-        // 置き換えない移動は新規の保存先だけ。開いた保存先への上書きは、印を確かめた上で置き換える
+        // 置き換えない移動は、新規の保存先と退避の最終の名前だけ。開いた保存先への上書きは、印を確かめた上で置き換える
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         let next = changed(&p, "上書き");
+        let backups = s.backups();
         t.save_moving(
             &next,
-            |_, _| unreachable!("上書きは置き換えない移動を通らない"),
+            |from, to| {
+                assert_eq!(to.parent(), Some(backups.as_path()), "上書きは置き換えない移動を通らない: {to:?}");
+                move_without_replacing(from, to)
+            },
             |_| Ok(()),
         )
         .unwrap();
@@ -2364,5 +2637,557 @@ mod tests {
         // 開いたファイルの場所は作り直さない（外で消されたものを、無かったことにして書き始めない）
         assert!(matches!(&error, Error::SaveConflict(why) if why.contains("外部で消されています")), "{error:?}");
         assert!(!dir.exists());
+    }
+
+    // ───────── 強制終了された保存の残骸・Windows の置換の再試行 ─────────
+
+    /// 共有違反を模す失敗（本物の判定は Windows の OS のエラー番号。ここでは種類で見分ける）。
+    fn pretend_busy() -> io::Error {
+        io::Error::from(io::ErrorKind::PermissionDenied)
+    }
+    fn is_pretend_busy(e: &io::Error) -> bool {
+        e.kind() == io::ErrorKind::PermissionDenied
+    }
+    #[test]
+    fn retrying_waits_in_growing_steps_and_never_beyond_the_budget() {
+        // 4 回失敗してから通る: 待ちは 10・20・40・80 ms
+        let mut slept = Vec::new();
+        let mut left = 4;
+        let done = retry_busy(&is_pretend_busy, &mut |d| slept.push(d), || {
+            if left > 0 {
+                left -= 1;
+                Err(pretend_busy())
+            } else {
+                Ok("通った")
+            }
+        });
+        assert_eq!(done.unwrap(), "通った");
+        assert_eq!(slept, [10, 20, 40, 80].map(Duration::from_millis));
+        // ずっと失敗: 待ちの合計は予算ちょうどで、その失敗を返す（待ちの 1 回ごとは 300 ms まで）
+        let (mut slept, mut calls) = (Vec::new(), 0);
+        let error = retry_busy::<()>(&is_pretend_busy, &mut |d| slept.push(d), || {
+            calls += 1;
+            Err(pretend_busy())
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
+        assert!(slept.iter().all(|d| *d <= Duration::from_millis(300)), "{slept:?}");
+        assert_eq!(calls, slept.len() + 1);
+        // 別の失敗は待たずに返す
+        let (mut slept, mut calls) = (Vec::new(), 0);
+        let error = retry_busy::<()>(&is_pretend_busy, &mut |d| slept.push(d), || {
+            calls += 1;
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        })
+        .unwrap_err();
+        assert_eq!((error.kind(), slept.len(), calls), (io::ErrorKind::NotFound, 0, 1));
+        // 本物の判定は Windows の共有違反・ロック違反・アクセス拒否だけ（Unix の置換は開いているファイルに妨げられない）
+        let os = |code| io::Error::from_raw_os_error(code);
+        assert_eq!([os(5), os(32), os(33), os(2)].map(|e| is_busy(&e)), [cfg!(windows), cfg!(windows), cfg!(windows), false]);
+    }
+    #[test]
+    fn a_busy_replace_is_retried_until_it_goes_through() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let next = changed(&p, "共有違反のあと");
+        let (mut busy_left, mut slept) = (3, Vec::new());
+        let stamp = t
+            .save_replacing(
+                &next,
+                |from, to| {
+                    if busy_left > 0 {
+                        busy_left -= 1;
+                        return Err(pretend_busy());
+                    }
+                    fs::rename(from, to)
+                },
+                is_pretend_busy,
+                |d| slept.push(d),
+            )
+            .unwrap();
+        assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
+        assert_eq!(read_stamp(&s.file()).unwrap(), stamp);
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
+        assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
+    }
+    #[test]
+    fn a_replace_that_stays_busy_fails_cleanly_and_keeps_the_original() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let before = t.stamp().unwrap().clone();
+        let mut slept = Vec::new();
+        let error = t
+            .save_replacing(&changed(&p, "通らない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .unwrap_err();
+        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
+        assert_bytes(&fs::read(s.file()).unwrap(), ORIGINAL, "保存先");
+        assert_eq!(t.stamp().unwrap(), &before, "印は変えない（次の保存がそのまま通る）");
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
+        assert!(!s.backups().exists(), "置換に至らなかった保存は退避を残さない");
+        t.save(&changed(&p, "次の保存")).unwrap();
+    }
+    /// ファイルの位置で持つ形で開いたとき（`open_by_handle`）の閾値。保存のあとのプロジェクトも、同じ形で持たせる。
+    const BY_HANDLE: Thresholds = Thresholds { keep_in_memory: 0, ..Thresholds::REAL };
+    /// 開いたエントリをファイルの位置で持つ形（メモリに残さない）で開く。
+    fn open_by_handle(s: &Scratch) -> (Project, SaveTarget, String) {
+        fs::write(s.file(), ORIGINAL).unwrap();
+        let (p, t) = BY_HANDLE
+            .scoped(|| SaveTarget::open(s.file()).unwrap());
+        let name = p
+            .original_archive()
+            .entries()
+            .iter()
+            .find(|(_, b)| !b.is_empty() && b.in_memory().is_none())
+            .map(|(n, _)| n.clone())
+            .expect("ファイルの位置で持つエントリ");
+        (p, t, name)
+    }
+    #[test]
+    fn our_own_handles_are_let_go_only_after_a_wait_and_taken_again_when_the_replace_fails() {
+        // 置き換えの規則が POSIX でないファイルシステム（FAT など）は、開いているファイルを置き換えられない: 手放さずに待っても通らない
+        // ので、`RELEASE_AFTER` 待ったところで自分のハンドルを手放し、残りの待ちでやり直す。置き換えられたら、古い写しは読もうとすると
+        // 断る（保存した後のプロジェクトは新しいファイルを読める）
+        BY_HANDLE.scoped(|| {
+            let s = Scratch::new();
+            let (p, mut t, name) = open_by_handle(&s);
+            let blob = p.original_archive().entries()[&name].clone();
+            let want = blob.bytes().unwrap();
+            let mut slept = Vec::new();
+            let report = t
+                .save_replacing_report(
+                    &changed(&p, "手放す"),
+                    |from, to| {
+                        // 自分のハンドルが開いている間は、置き換えられない
+                        if blob.bytes().is_ok() {
+                            return Err(pretend_busy());
+                        }
+                        fs::rename(from, to)
+                    },
+                    is_pretend_busy,
+                    |d| slept.push(d),
+                )
+                .unwrap();
+            assert_eq!(slept.iter().sum::<Duration>(), RELEASE_AFTER, "手放す前に、手放さずに待った合計");
+            let refused = blob.bytes().unwrap_err();
+            assert!(refused.to_string().contains(crate::SOURCE_RELEASED), "{refused:?}");
+            let saved = report.project.unwrap();
+            let from_new = saved.original_archive().entries()[&name].bytes().unwrap();
+            assert_eq!(from_new, want, "保存した後のプロジェクトは新しいファイルから同じ中身を読む");
+            // 置き換えられなかったときは、全部の待ちを使い切って、掴み直して今までどおり読める
+            let s = Scratch::new();
+            let (p, mut t, name) = open_by_handle(&s);
+            let blob = p.original_archive().entries()[&name].clone();
+            let want = blob.bytes().unwrap();
+            let mut slept = Vec::new();
+            let error = t.save_replacing(&changed(&p, "通らない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d));
+            assert!(error.is_err());
+            assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
+            assert_eq!(blob.bytes().unwrap(), want, "掴み直して読める");
+            t.save(&changed(&p, "次の保存")).unwrap();
+        });
+    }
+    #[test]
+    fn a_replace_that_goes_through_within_the_wait_keeps_our_handles() {
+        // NTFS で外の道具（ウイルス対策・同期・Unity の取り込み）が一時的に掴んでいるだけなら、自分のハンドルは原因ではない: 手放さずに
+        // 待って通り、保存前のプロジェクトの写しも読めたまま
+        BY_HANDLE.scoped(|| {
+            let s = Scratch::new();
+            let (p, mut t, name) = open_by_handle(&s);
+            let blob = p.original_archive().entries()[&name].clone();
+            let want = blob.bytes().unwrap();
+            let (mut busy_left, mut slept, mut readable) = (3, Vec::new(), Vec::new());
+            let report = t
+                .save_replacing_report(
+                    &changed(&p, "外の道具が掴んでいた"),
+                    |from, to| {
+                        readable.push(blob.bytes().is_ok());
+                        if busy_left > 0 {
+                            busy_left -= 1;
+                            return Err(pretend_busy());
+                        }
+                        fs::rename(from, to)
+                    },
+                    is_pretend_busy,
+                    |d| slept.push(d),
+                )
+                .unwrap();
+            assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
+            assert_eq!(readable, [true; 4], "どの試みでも手放していない");
+            assert_eq!(blob.bytes().unwrap(), want, "保存前の写しも読める");
+            let saved = report.project.unwrap();
+            assert_eq!(saved.original_archive().entries()[&name].bytes().unwrap(), want);
+        });
+    }
+    #[test]
+    fn the_project_a_save_returns_is_found_again_by_the_next_busy_replace() {
+        // 保存後のプロジェクトのハンドルは、置き場の名前を保存先へ付け替えてある（`Project::moved_to`）。付け替えが落ちると、次の保存で、
+        // 置換の邪魔になっているこのハンドルを手放す相手として見つけられず、FAT・exFAT・SMB では 2 回目以降の上書き保存が待ちを使い切って
+        // 必ず失敗する（掴み直しも、もう無い一時ファイルの名前を開くので掴めない）
+        BY_HANDLE.scoped(|| {
+            for first_busy in [false, true] {
+                let s = Scratch::new();
+                let (p, mut t, name) = open_by_handle(&s);
+                let before = p.original_archive().entries()[&name].clone();
+                let want = before.bytes().unwrap();
+                // 1 回目の保存（普通の保存と、最初の置換が共有違反で手放した保存）
+                let first = if first_busy {
+                    t.save_replacing_report(
+                        &changed(&p, "1 回目"),
+                        |from, to| if before.bytes().is_ok() { Err(pretend_busy()) } else { fs::rename(from, to) },
+                        is_pretend_busy,
+                        |_| {},
+                    )
+                } else {
+                    t.save_with(&changed(&p, "1 回目"), BackupKeep::All)
+                }
+                .unwrap();
+                let saved = first.project.unwrap();
+                let entry = saved.original_archive().entries()[&name].clone();
+                assert!(entry.in_memory().is_none(), "ファイルの位置で持つ");
+                assert_eq!(entry.bytes().unwrap(), want, "first_busy={first_busy}");
+                // 2 回目の保存: 保存後のハンドルが開いている間は置き換えられない（FAT のように）。見つけて手放せば通る
+                let mut released_before_the_replace = false;
+                let second = t
+                    .save_replacing_report(
+                        &changed(&saved, "2 回目"),
+                        |from, to| {
+                            if entry.bytes().is_ok() {
+                                return Err(pretend_busy());
+                            }
+                            released_before_the_replace = true;
+                            fs::rename(from, to)
+                        },
+                        is_pretend_busy,
+                        |_| {},
+                    )
+                    .expect("保存後のハンドルを手放す相手として見つけられない（置き場の名前の付け替えが落ちている）");
+                assert!(released_before_the_replace, "first_busy={first_busy}");
+                let refused = entry.bytes().unwrap_err();
+                assert!(refused.to_string().contains(crate::SOURCE_RELEASED), "{refused:?}");
+                let latest = second.project.unwrap();
+                assert_eq!(latest.original_archive().entries()[&name].bytes().unwrap(), want, "first_busy={first_busy}");
+            }
+        });
+    }
+    #[test]
+    fn a_small_project_does_not_keep_its_file_open_but_a_big_one_does() {
+        // 小さなエントリだけの .ylp は、開いたあとファイルを持たない（Windows で外の改名・削除・上書きを妨げない）。大きなエントリが
+        // あるときだけ、開いたハンドルを持つ
+        let s = Scratch::new();
+        let (p, _t) = open_original(&s);
+        assert!(release_at(&s.file()).is_empty(), "小さなエントリだけ: ハンドルを持たない");
+        drop(p);
+        let s = Scratch::new();
+        let (p, _t, _) = open_by_handle(&s);
+        let released = release_at(&s.file());
+        assert!(!released.is_empty(), "大きなエントリがあれば、ハンドルを持つ");
+        released.reacquire();
+        drop(p);
+    }
+    #[test]
+    fn a_busy_move_of_a_new_target_is_retried_and_leaves_nothing() {
+        let s = Scratch::new();
+        let p = project();
+        let mut t = SaveTarget::create(s.file()).unwrap();
+        let (mut busy_left, mut slept) = (3, Vec::new());
+        t.save_moving_busy(
+            &p,
+            |from, to| {
+                if busy_left > 0 {
+                    busy_left -= 1;
+                    return Err(pretend_busy());
+                }
+                move_without_replacing(from, to)
+            },
+            is_pretend_busy,
+            |d| slept.push(d),
+        )
+        .unwrap();
+        assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
+        assert_bytes(&fs::read(s.file()).unwrap(), &p.to_bytes().unwrap(), "保存先");
+        assert_eq!(s.names(), ["sample.ylp"], "一時ファイルとロックは残らない");
+        // ずっと共有違反: 予算を使い切って、何も作らず失敗する
+        let s = Scratch::new();
+        let mut t = SaveTarget::create(s.file()).unwrap();
+        let mut slept = Vec::new();
+        let error = t
+            .save_moving_busy(&p, |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .unwrap_err();
+        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
+        assert!(s.names().is_empty(), "{:?}", s.names());
+    }
+    #[test]
+    fn a_busy_move_of_a_backup_is_retried_and_a_failure_leaves_no_backup() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let backups = s.backups();
+        let (mut busy_left, mut slept) = (3, Vec::new());
+        t.save_moving_busy(
+            &changed(&p, "退避の移動"),
+            |from, to| {
+                // 置き換える移動（保存先の上書き）は別の口。ここへ来るのは退避の最終の名前への移動だけ
+                assert_eq!(to.parent(), Some(backups.as_path()), "{to:?}");
+                if busy_left > 0 {
+                    busy_left -= 1;
+                    return Err(pretend_busy());
+                }
+                move_without_replacing(from, to)
+            },
+            is_pretend_busy,
+            |d| slept.push(d),
+        )
+        .unwrap();
+        assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
+        assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
+        assert_eq!(s.backup_dir_names(), s.kept_names(), "退避の一時ファイルは残らない");
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
+        // ずっと共有違反: 予算を使い切って失敗し、退避（作ったフォルダーごと）も保存先の変更も残さない
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let before = t.stamp().unwrap().clone();
+        let mut slept = Vec::new();
+        let error = t
+            .save_moving_busy(&changed(&p, "退避が移せない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .unwrap_err();
+        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
+        assert!(!s.backups().exists(), "{:?}", s.names());
+        assert_bytes(&fs::read(s.file()).unwrap(), ORIGINAL, "保存先");
+        assert_eq!(t.stamp().unwrap(), &before);
+        assert_eq!(s.names(), ["sample.ylp"]);
+        t.save(&changed(&p, "次の保存")).unwrap();
+    }
+    #[test]
+    fn leftover_names_are_only_this_targets_own_temporary_files() {
+        for (found, ours) in [
+            (".sample.ylp.123-4.pending~", true),
+            (".sample.ylp.1-0.pending~", true),
+            (".sample.ylp.123.pending~", false),
+            (".sample.ylp.a-4.pending~", false),
+            (".sample.ylp.123-.pending~", false),
+            ("sample.ylp.123-4.pending~", false),
+            (".other.ylp.123-4.pending~", false),
+            (".sample.ylp.123-4.pending", false),
+            (".sample.ylp.save.lock~", false),
+            (".sample.ylp.notes.pending~", false),
+            ("..sample.ylp.123-4.pending~", false),
+        ] {
+            assert_eq!(is_leftover_name("sample.ylp", found), ours, "{found}");
+        }
+    }
+    /// 前の保存の残骸（保存の一時ファイル・退避の一時ファイル）と、触ってはいけない似た名前のファイルを置く。
+    fn plant_leftovers(s: &Scratch) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        fs::create_dir_all(s.backups()).unwrap();
+        let stale = vec![s.0.join(".sample.ylp.4242-1.pending~"), s.backups().join(".sample.ylp.4242-2.pending~")];
+        let others = vec![
+            s.0.join(".other.ylp.4242-1.pending~"),
+            s.0.join(".sample.ylp.notes.pending~"),
+            s.0.join("sample.ylp.4242-1.pending~"),
+            s.backups().join(".other.ylp.4242-2.pending~"),
+        ];
+        for p in stale.iter().chain(&others) {
+            fs::write(p, b"cut off").unwrap();
+        }
+        (stale, others)
+    }
+    #[test]
+    fn the_next_save_clears_this_targets_leftovers_and_only_those() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let (stale, others) = plant_leftovers(&s);
+        t.save(&changed(&p, "残骸のあと")).unwrap();
+        assert!(stale.iter().all(|f| !f.exists()), "{:?}", s.names());
+        assert!(others.iter().all(|f| f.exists()), "別の保存先・別の形・利用者のファイルには触らない");
+        assert_eq!(fs::read(&others[0]).unwrap(), b"cut off");
+        assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
+    }
+    #[test]
+    fn leftovers_stay_while_someone_else_holds_the_lock_or_locks_are_unavailable() {
+        // 別の保存が進行中（ロックを持っている）: 断られ、その保存の一時ファイルかもしれないものには触らない
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let (stale, _) = plant_leftovers(&s);
+        let _held = hold(&s.lock());
+        assert!(matches!(t.save(&changed(&p, "断られる")), Err(Error::SaveConflict(_))));
+        assert!(stale.iter().all(|f| f.exists()));
+        drop(_held);
+        // ロックの使えないファイルシステム: 誰も保存していないと確かめられないので、触らない（保存は通る）
+        t.save_locking(&changed(&p, "ロックの無い場所"), unsupported_lock, |_| Ok(())).unwrap();
+        assert!(stale.iter().all(|f| f.exists()), "{:?}", s.names());
+        // ロックが取れれば片付く
+        t.save(&changed(&p, "取れる")).unwrap();
+        assert!(stale.iter().all(|f| !f.exists()), "{:?}", s.names());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_backup_folder_is_never_swept() {
+        // リンクの先は利用者のフォルダー: 保存は断り、退避しない設定で保存しても、中の一時ファイルの形のものを消さない
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let elsewhere = s.0.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        let theirs = elsewhere.join(".sample.ylp.4242-2.pending~");
+        fs::write(&theirs, b"someone else's").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, s.backups()).unwrap();
+        assert!(matches!(t.save(&changed(&p, "断られる")), Err(Error::SaveConflict(_))));
+        assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
+        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0)).unwrap();
+        assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
+        // 確かめたあとでリンクに替えられても、見直して触らない
+        sweep_backup_leftovers(&s.backups(), "sample.ylp");
+        assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
+        assert!(fs::symlink_metadata(s.backups()).unwrap().file_type().is_symlink());
+    }
+    #[test]
+    fn a_save_that_makes_no_backup_leaves_the_backup_place_alone() {
+        // 退避しない設定では置き場に触らない: 一時ファイルの形の残りも、退避を作る保存が来るまで置いたまま（保存先の隣の残りは片付く）
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let (stale, others) = plant_leftovers(&s);
+        let in_place = fs::read_dir(s.backups()).unwrap().count();
+        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0)).unwrap();
+        assert!(!stale[0].exists(), "保存先の隣の残りは片付く");
+        assert!(stale[1].exists() && others.iter().all(|f| f.exists()), "{:?}", s.backup_dir_names());
+        assert_eq!(fs::read_dir(s.backups()).unwrap().count(), in_place);
+        // 退避を作る保存になれば片付く
+        t.save(&changed(&p, "退避する")).unwrap();
+        assert!(!stale[1].exists(), "{:?}", s.backup_dir_names());
+        assert!(others.iter().all(|f| f.exists()));
+        // 新規の保存先には前の版が無く、置き場には触らない
+        let s = Scratch::new();
+        fs::create_dir(s.backups()).unwrap();
+        let theirs = s.backups().join(".sample.ylp.4242-2.pending~");
+        fs::write(&theirs, b"cut off").unwrap();
+        SaveTarget::create(s.file()).unwrap().save(&project()).unwrap();
+        assert!(theirs.exists());
+    }
+    #[test]
+    fn a_backup_is_written_under_a_temporary_name_and_only_the_finished_one_counts() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let mut at_copied = None;
+        t.save_inner(&changed(&p, "退避の途中"), |phase| {
+            if phase == "backup-copied" {
+                at_copied = Some((s.backup_dir_names(), s.kept_names()));
+            }
+            Ok(())
+        })
+        .unwrap();
+        // 写し終えた時点では、一時の名前（隠れる名前）だけがあり、退避としては数えられない
+        let (names, kept) = at_copied.expect("通った");
+        assert_eq!(names.len(), 1, "{names:?}");
+        assert!(names[0].starts_with(".sample.ylp.") && names[0].ends_with(".pending~"), "{names:?}");
+        assert!(kept.is_empty(), "{kept:?}");
+        // 終わると、最終の名前の退避が 1 つだけ（一時の名前は残らない）
+        assert_eq!(s.kept_names().len(), 1);
+        assert_eq!(s.backup_dir_names(), s.kept_names());
+        assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
+    }
+
+    const ABORT_AT: &str = "YOLU_STORE_ABORT_AT";
+    const ABORT_DIR: &str = "YOLU_STORE_ABORT_DIR";
+    /// 子プロセスの本体（次の試験が起こす。環境変数が無ければ何もしない）: 保存の途中で `abort` する（`Drop` は走らない）。
+    #[test]
+    fn killed_save_child() {
+        let (Ok(at), Ok(dir)) = (std::env::var(ABORT_AT), std::env::var(ABORT_DIR)) else {
+            return;
+        };
+        let (p, mut t) = SaveTarget::open(Path::new(&dir).join("sample.ylp")).unwrap();
+        let _ = t.save_inner(&changed(&p, "落ちる保存"), |phase| {
+            if phase == at {
+                std::process::abort();
+            }
+            Ok(())
+        });
+        // 途中で落ちなかった
+        std::process::exit(3);
+    }
+    #[test]
+    fn a_save_killed_midway_leaves_leftovers_that_the_next_save_clears() {
+        for at in ["flushed", "backup-copied"] {
+            let s = Scratch::new();
+            let (p, mut t) = open_original(&s);
+            // 退避を 1 つ作っておく（保持数の 1 枠。切れた写しがこの数を食わないこと）
+            t.save(&changed(&p, "1 回目")).unwrap();
+            let before = fs::read(s.file()).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "store::tests::killed_save_child", "--test-threads=1"])
+                .env(ABORT_AT, at)
+                .env(ABORT_DIR, &s.0)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(!status.success() && status.code() != Some(3), "{at}: 途中で落ちる子: {status:?}");
+            // 落ちた子の残骸: 保存先は前の版のまま、保存の一時ファイルとロックのファイルが残る
+            assert_eq!(fs::read(s.file()).unwrap(), before, "{at}");
+            let left = s.leftovers();
+            assert!(left.iter().any(|n| n.ends_with(".pending~")), "{at}: {left:?}");
+            assert!(left.iter().any(|n| n.ends_with(".save.lock~")), "{at}: {left:?}");
+            // 退避の一時ファイル（写し終えたあとで落ちた形）は退避として数えない
+            assert_eq!(s.kept_names().len(), 1, "{at}: {:?}", s.backup_dir_names());
+            if at == "backup-copied" {
+                assert!(s.backup_dir_names().iter().any(|n| n.ends_with(".pending~")), "{at}");
+            }
+            // 次の保存が、誰も保存していないと確かめて（ロックが取れる）片付ける
+            t.save(&changed(&p, "3 回目")).unwrap();
+            assert!(s.leftovers().is_empty(), "{at}: {:?}", s.names());
+            let mut kept = s.kept_names();
+            kept.sort();
+            assert_eq!(s.backup_dir_names(), kept, "{at}: 一時の名前は残らない");
+            assert_eq!(kept.len(), 2, "{at}");
+        }
+    }
+
+    /// （Windows でだけ回る。Linux では、`cargo check --target x86_64-pc-windows-gnu` で型まで確かめる）一時ファイルとロックは隠し属性つきで
+    /// 作り、保存した .ylp と退避は隠さない。
+    #[cfg(windows)]
+    #[test]
+    fn temporary_files_and_the_lock_are_hidden_and_the_saved_files_are_not() {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN: u32 = 0x2;
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let mut seen = Vec::new();
+        t.save_inner(&changed(&p, "隠し属性"), |phase| {
+            if phase == "backup-copied" {
+                for entry in fs::read_dir(&s.0).unwrap().chain(fs::read_dir(s.backups()).unwrap()) {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.ends_with(".pending~") || name.ends_with(".save.lock~") {
+                        seen.push((name, entry.metadata().unwrap().file_attributes() & HIDDEN != 0));
+                    }
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen.len(), 3, "保存の一時ファイル・ロック・退避の一時ファイル: {seen:?}");
+        assert!(seen.iter().all(|(_, hidden)| *hidden), "{seen:?}");
+        for path in std::iter::once(s.file()).chain(backups(&s.file()).unwrap()) {
+            assert_eq!(fs::metadata(&path).unwrap().file_attributes() & HIDDEN, 0, "{path:?}");
+        }
+    }
+    /// （Windows でだけ回る）外の道具が削除を共有せずに保存先を開いているあいだは置き換えが共有違反になる。手放されるまで待ってやり直し、通る。
+    #[cfg(windows)]
+    #[test]
+    fn a_real_sharing_violation_on_the_target_is_waited_out() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let holder = OpenOptions::new().read(true).share_mode(0x1 | 0x2).open(s.file()).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            drop(holder);
+        });
+        let started = std::time::Instant::now();
+        t.save(&changed(&p, "共有違反のあと")).unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(300), "手放されるまで待った: {:?}", started.elapsed());
+        release.join().unwrap();
+        assert_ne!(fs::read(s.file()).unwrap(), ORIGINAL);
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
     }
 }

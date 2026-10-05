@@ -238,7 +238,7 @@ impl StrokeState {
         let blur = self.mix_run.dab.map_or(0, |d| d.blur);
         Ok(self
             .freeze_mix_box(surface, region.xr, region.yr, (0, 0), blur)?
-            .expect("塊の画素は画布の中"))
+            .expect("塊の画素はキャンバスの中"))
     }
 
     /// 画素を、含むタイルがつながる塊へ分ける（タイルの 8 近傍と、平均の箱の半径が届くタイルまで）。塊は最初の画素が現れた順、塊の中の

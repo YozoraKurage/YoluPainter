@@ -21,7 +21,7 @@ pub struct Usage {
     pub process: Option<u64>,
     /// GPU の確保済みのメモリ（バイト。分からなければ None）。
     pub gpu: Option<u64>,
-    /// 全テクスチャセットのレイヤーの画素（バイト）。
+    /// 全テクスチャセットのレイヤーのメモリ（バイト）。
     pub layers: u64,
     /// 全テクスチャセットの取り消しの履歴（バイト）。
     pub history: u64,
@@ -167,7 +167,7 @@ pub fn tooltip(usage: &Usage, lang: Lang) -> String {
     if let Some(bytes) = usage.process {
         lines.push(format!("{}: {}", lang.pick("アプリ全体（実メモリ）", "App (resident)"), format_size(bytes)));
     }
-    lines.push(format!("{}: {}", lang.pick("レイヤーの画素", "Layer pixels"), format_size(usage.layers)));
+    lines.push(format!("{}: {}", lang.pick("レイヤーのメモリ", "Layer memory"), format_size(usage.layers)));
     lines.push(format!("{}: {}", lang.pick("取り消しの履歴", "Undo history"), format_size(usage.history)));
     if let Some(bytes) = usage.gpu {
         lines.push(format!("GPU: {}", format_size(bytes)));

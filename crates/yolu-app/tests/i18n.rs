@@ -212,7 +212,7 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// 設定の予算（「レイヤーの画素」から決まる上限）で断った理由は、どの予算かを日英それぞれで言う。開発用の数（MiB）・内部の識別子
+/// 設定の予算（「レイヤーのメモリ」から決まる上限）で断った理由は、どの予算かを日英それぞれで言う。開発用の数（MiB）・内部の識別子
 /// （セットの ID）・上限の導き方は出さない。.ylp（大きな形 `YLP-4`）と復旧の世代の両方。
 #[test]
 fn a_budget_refusal_names_the_budget_in_both_languages() {
@@ -248,8 +248,8 @@ fn a_budget_refusal_names_the_budget_in_both_languages() {
     for text in ja.iter().chain(&en) {
         assert!(!text.contains("MiB") && !text.contains(&id), "{text}");
     }
-    assert!(ja.iter().all(|t| t.contains("「レイヤーの画素」の予算")), "{ja:?}");
-    assert!(en.iter().all(|t| t.contains("Layer pixels budget") && !has_japanese(t)), "{en:?}");
+    assert!(ja.iter().all(|t| t.contains("「レイヤーのメモリ」の予算")), "{ja:?}");
+    assert!(en.iter().all(|t| t.contains("Layer memory budget") && !has_japanese(t)), "{en:?}");
     assert_ne!(en[0], en[1], "セットごとの正本と全体を言い分ける");
     // 復旧の世代も同じ数え方・同じ言い方
     let root = std::env::temp_dir().join(format!("yolu-i18n-budget-{}", std::process::id()));
@@ -263,9 +263,33 @@ fn a_budget_refusal_names_the_budget_in_both_languages() {
         .unwrap();
     let Err(refused) = store.clone().with_limits(per_document).load() else { panic!("予算で断らない") };
     let (ja, en) = (Lang::Ja.store_error(&refused), Lang::En.store_error(&refused));
-    assert!(ja.contains("「レイヤーの画素」の予算") && !ja.contains("MiB"), "{ja}");
-    assert!(en.contains("Layer pixels budget"), "{en}");
+    assert!(ja.contains("「レイヤーのメモリ」の予算") && !ja.contains("MiB"), "{ja}");
+    assert!(en.contains("Layer memory budget"), "{en}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 予算の呼び方は、設定の欄・設定のキーの名前・使用量の内訳・断りの文のどこでも「レイヤーのメモリ」（Layer memory）で、古い「レイヤーの画素」
+/// （Layer pixels）は画面のどこにも残らない。設定のキー（source_budget_mib）は変えない。
+#[test]
+fn the_layer_memory_budget_has_one_name_in_both_languages() {
+    use yolu_app::settings::{setting_name, BudgetKind};
+    assert_eq!(BudgetKind::Source.key(), "source_budget_mib", "設定ファイルのキーは変えない");
+    assert_eq!(setting_name(Lang::Ja, "source_budget_mib"), "レイヤーのメモリ");
+    assert_eq!(setting_name(Lang::En, "source_budget_mib"), "Layer memory");
+    for lang in Lang::ALL {
+        for key in ["undo_budget_mib", "source_budget_mib", "stroke_budget_mib"] {
+            let name = setting_name(lang, key);
+            assert!(!name.contains("画素") && !name.contains("pixels"), "{key}: {name}");
+        }
+    }
+    // 断りの文（.ylp・復旧の世代・PSD の取り込みと書き出し）も同じ名前
+    for (ja, en) in [
+        (yolu_io::OVER_LAYER_PIXELS_DOCUMENT, Lang::En.io_error(&yolu_io::Error::Budget(yolu_io::OVER_LAYER_PIXELS_DOCUMENT.into()))),
+        (yolu_io::OVER_LAYER_PIXELS_TOTAL, Lang::En.io_error(&yolu_io::Error::Budget(yolu_io::OVER_LAYER_PIXELS_TOTAL.into()))),
+    ] {
+        assert!(ja.contains("「レイヤーのメモリ」") && !ja.contains("画素"), "{ja}");
+        assert!(en.contains("Layer memory budget") && !en.contains("pixels"), "{en}");
+    }
 }
 
 /// 古い形式を開いたときの io の知らせは、件数ではなく内容を日英それぞれで読める。

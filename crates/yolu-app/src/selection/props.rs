@@ -495,7 +495,7 @@ fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app.sel.edge_lock,
         Some(if any {
             lang.pick(
-                "選択範囲が画布の外へ続くものとして扱う（縮小・境界線・ぼかしが画布の端から離れない）",
+                "選択範囲がキャンバスの外へ続くものとして扱う（縮小・境界線・ぼかしがキャンバスの端から離れない）",
                 "Treat the selection as continuing past the canvas edge (Shrink, Border and Feather do not pull away from it)",
             )
         } else {
@@ -747,7 +747,7 @@ fn symmetry_2d(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, fre
         suffix: " px",
     };
     let tip = reason.unwrap_or(lang.pick(
-        "軸の通る点（画布の座標）",
+        "軸の通る点（キャンバスの座標）",
         "Where the axes cross (canvas pixels)",
     ));
     let nx = slider_row(

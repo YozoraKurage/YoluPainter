@@ -328,6 +328,7 @@ pub fn show(
             }
         });
     let _ = area;
+    crate::ui::window::note_open(ctx);
     // Esc: 開いたときの色へ戻して閉じる（16 進の欄を打っている途中の Esc は、その欄のやめるだけにして、窓は閉じない）
     let typing = ctx.memory(|m| m.focused().is_some());
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !typing {

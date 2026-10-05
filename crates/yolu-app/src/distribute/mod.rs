@@ -600,7 +600,7 @@ fn capture(state: &AppState) -> Result<Capture, String> {
         let read_only = set.read_only.is_some();
         if read_only && !in_base {
             return Err(lang.pick(
-                format!("読むだけのセット「{}」の元の正本がありません", set.name),
+                format!("読むだけのセット「{}」の元の文書がありません", set.name),
                 format!("Original document missing for read-only set “{}”", set.name),
             ));
         }
@@ -675,7 +675,7 @@ fn build(capture: &Capture, cancel: &AtomicBool) -> Result<Prepared, Failure> {
                 Failure::Message(format!(
                     "{}: {}",
                     lang.pick(
-                        format!("セット「{}」を正本にできません", set.name),
+                        format!("セット「{}」の文書を作れません", set.name),
                         format!("Cannot convert texture set “{}” to a document", set.name)
                     ),
                     lang.io_error(&e)

@@ -331,7 +331,7 @@ pub enum Overrun {
     FileSize { layer: String },
 }
 impl Overrun {
-    /// 設定の「レイヤーの画素」の予算を上げると書けるようになる理由か（PSD の 2 GiB・辺 30000 は形式の上限なので、上げても書けない）。
+    /// 設定の「レイヤーのメモリ」の予算を上げると書けるようになる理由か（PSD の 2 GiB・辺 30000 は形式の上限なので、上げても書けない）。
     pub fn raised_by_budget(&self) -> bool {
         match self {
             Self::FileSize { .. } => false,

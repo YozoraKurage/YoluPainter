@@ -25,14 +25,15 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 cargo xtask build --target x86_64-pc-windows-msvc --release
 cargo xtask bundle --target x86_64-pc-windows-msvc
 cargo xtask installer --target x86_64-pc-windows-msvc
+cargo xtask symbols --target x86_64-pc-windows-msvc   # Windows だけ。PDB の付属物（下の「PDB の付属物」）
 # Linux では target を x86_64-unknown-linux-gnu に替える（installer は Windows だけ）
 cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 ```
 
 `bundle` と `installer` は直前に同じコミットからビルドした release 実行ファイルを使います。古いビルドを使わないでください。
 `bundle` と `installer` は `target/dist` に過去の版を残すので、手元で出すときは `target/dist` を空にしてから作ります。
-違う版や余分なファイルが残っていると `updater-json` が拒否します（CI は毎回まっさらです）。
-出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`。
+違う版や余分なファイルが残っていると `updater-json` が拒否します（PDB の付属物 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` の名前だけは例外。CI は毎回まっさらです）。
+出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物。
 実行ファイル、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
 同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
 開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
@@ -44,7 +45,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 更新クレート（`yolu-update`）はアプリに組み込まれているので、その依存の許諾全文も含めます。
 `xtask` 自体は配りません。独自の `CARGO_TARGET_DIR` は使わず、出力を `target/` に揃えてください。
 
-`updater-json` の入力は、その版の配布物だけを置いた専用フォルダです。違う版や余分なファイルは拒否します。
+`updater-json` の入力は、その版の配布物だけを置いた専用フォルダです。違う版や余分なファイルは拒否します
+（PDB の付属物は、名前が完全一致の 1 つだけ許し、更新情報には載せません）。
 Windows の zip があるのにインストーラーが無い版も拒否します（インストーラーで入れたアプリは、更新にインストーラーを使うので、並べて出します）。
 更新情報（schema 1）には、zip・tar.gz を対象の三つ組み（`x86_64-pc-windows-msvc` など）で、インストーラーを別の鍵 `x86_64-pc-windows-msvc-setup` で載せます。
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
@@ -52,6 +54,15 @@ URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<�
 `https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
 フォークから配る場合は、更新クレートの `RELEASE_BASE`・`UPDATER_URL` も変更してビルドします。
 署名なしの JSON は検査専用で、更新クレートは受理しません。
+
+### PDB の付属物
+
+クラッシュの記録は各フレームの番地と実行ファイルの基底の番地（`Image base`）を書くので、配布物の PDB があれば、同じ版の関数名・行へ引けます。
+`.github/workflows/release.yml` の Windows の組みは、`cargo xtask build` の前に `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`・`CARGO_PROFILE_RELEASE_STRIP=none` を環境に置き
+（命令は変えず、行番号つきの PDB を実行ファイルとは別に作る）、`cargo xtask installer` のあとに `cargo xtask symbols` で `yolupainter.pdb` だけを入れた
+`yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` を `target/dist` に作ります。Release の付属物としては載りますが、zip・インストーラーには入らず、
+更新の対象ではありません（署名つきの更新情報に載せず、アプリは取りに行きません）。`verify` は、通常のファイルで、空でなく、大きさの上限内で、中身が `yolupainter.pdb` だけであることを見ます。
+`symbols` は PDB を調べる前に前回の付属物を消すので、組み直しに失敗したあとで古い PDB が残りません。
 
 ### Windows のインストーラー
 
@@ -62,11 +73,11 @@ NSIS のスクリプトは `installer/yolupainter.nsi` です。利用者ごと�
 |---|---|
 | `/S` | 画面を出さない |
 | `/ASSOC=1` / `/ASSOC=0` | `.ylp` の関連付けを付ける・付けない（無音のとき。省略は今の状態のまま、初めてなら付けない） |
-| `/RUN` | 入れ終わったらアプリを起こす（アプリの更新が使います） |
+| `/RUN` | 入れ終わったらアプリを起こす（アプリの更新が使います）。待ちの上限で何も変えずに終わるときも、今入っているアプリを起こし直します |
 | `/D=<パス>` | 入れ先（最後に置く。省略は前の入れ先） |
-| アンインストーラーの `/S` `/DELETEDATA` | 無音。設定・ブラシ・復旧のデータ（`%APPDATA%\YoluPainter`・`%LOCALAPPDATA%\YoluPainter`）は、画面では消すかを聞き、無音では `/DELETEDATA` のときだけ消す |
+| アンインストーラーの `/S` `/DELETEDATA` | 無音。アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ。`%APPDATA%\YoluPainter` と `%LOCALAPPDATA%\YoluPainter` の名指しした物）は、画面では消すかを聞き、無音では `/DELETEDATA` のときだけ消す。個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットなど利用者が作った物と、知らないファイルは、どちらでも残す（表は `docs/INSTALL.md`） |
 
-実行中のアプリは終了させません。実行ファイルが使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5）、
+実行中のアプリは終了させません。実行ファイルが使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5。`/RUN` が付いていれば今入っている実行ファイルを起こし直します）、
 アンインストーラーは自分が入れたファイルだけを消します（入れ先に利用者のファイルがあれば、入れ先のフォルダは残ります）。
 
 文書は入れ先の `docs\`・`docs\en\` に入ります。入れた文書の名前は `docs\.installed` に記録し、更新（上書き）のとき、前の版の記録にある文書を先に消してから今の版の文書を入れるので、
@@ -80,7 +91,7 @@ NSIS は 3.x が要ります。ワークフローは、windows-latest のイメ�
 `cargo test -p xtask` は、`makensis` があればスクリプトを実際にコンパイルします（CI の Linux は `nsis` を入れて走らせます）。
 
 画面を出さない流れ（新規・更新・`/RUN`・関連付けの保持・アンインストール。文書の入れ方と、更新で前の版にだけあった文書が消えること・利用者のファイルが消えないことを含む）と、待ちの上限（書き込みで開けない実行ファイルが残っている間は待ち、
-上限を超えたら何も変えずに終了コード 5。試験用に上限を 3 秒へ縮めたインストーラー `-DWAIT_STEPS=6` を使います）は、Wine で通せます。
+上限を超えたら何も変えずに終了コード 5。`/RUN` の有無で今の実行ファイルを起こし直すかも確かめます。試験用に上限を 3 秒へ縮めたインストーラー `-DWAIT_STEPS=6` を使います）は、Wine で通せます。
 
 ```sh
 python3 tools/test-installer.py

@@ -1423,7 +1423,7 @@ fn headless_refusals_are_told_in_the_language_and_change_nothing() {
                 y: 0,
                 mode: SelectionCombine::Replace,
             },
-            "種が画布の外",
+            "種がキャンバスの外",
             "Seed outside canvas",
         ),
     ];

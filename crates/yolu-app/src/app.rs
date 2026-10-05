@@ -311,6 +311,9 @@ pub struct YoluApp {
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（窓を作るときに 1 度）。
     pub fn setup(ctx: &egui::Context) {
+        // egui の既定は、Ctrl+-・Ctrl++・Ctrl+0 で画面全体（文字も部品も）の拡大率を変える。アプリのキーはこの組み合わせを
+        // キャンバスの拡大・縮小に使うので、同じキーで画面全体まで縮んで戻せなくなる。画面全体の拡大縮小は切る
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         t::apply(ctx);
         fonts::install(ctx);
         icons::install(ctx);
@@ -1540,7 +1543,33 @@ fn startup_message(lang: crate::lang::Lang, problems: &[Problem]) -> Option<Stri
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
+impl YoluApp {
+    /// Live Link を 1 回まわす: Unity からの知らせを読んで状態に当て、変わったタイルを共有メモリへ出して知らせる。窓が見えている間は
+    /// フレームの中（`frame_body`）が同じことをするので、これを呼ぶのは窓が隠れている間だけ（`eframe::App::logic`）。
+    fn tick_link(&mut self) {
+        self.link.poll(&mut self.state);
+        self.link.publish(&mut self.state);
+        self.state.link = self.link.view();
+    }
+}
+
 impl eframe::App for YoluApp {
+    /// 窓が隠れている間（Windows の最小化・macOS の覆われた窓・隠した窓）は、eframe は egui のパスを回さず `ui` を呼ばない。代わりに、
+    /// 描き直しの頼みがあるときだけ（百ミリ秒より速くならない）この `logic` を呼ぶ（eframe 0.36 の `App::logic`）。Live Link の裏のスレッドは
+    /// Unity からの知らせのたびに描き直しを頼むので、ここで受け取り・返事をすれば、最小化したまま Unity で Play に入る・スクリプトを
+    /// リロードしても、再接続と絵の受け渡しが続く。画面に触れる処理（描く・並べる）は `ui` のまま。見えている間は `ui` がするので何もしない。
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().visible()) != Some(false) {
+            return;
+        }
+        // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
+        // 見えない窓を知らせのために回し続けない）
+        let prior = self.state.message_begin();
+        self.tick_link();
+        self.state.message_end(prior);
+        crate::crash::message(&self.state.message);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         // フレームの外側（拾った色・合成・設定と並びの保存）が書いた文も、前と同じ文でも新しい知らせにする
         let prior = self.state.message_begin();

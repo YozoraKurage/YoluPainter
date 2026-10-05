@@ -4,7 +4,7 @@
 //! 並びの計算は ID と親の列（[`Tree`]）の上で行い、結果の前後を 1 つの段（Structure）にする。グループの中身はいつもグループの
 //! すぐ下に続けて並ぶ。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{Command, Document, Order};
 use crate::adjust::AdjustmentSettings;
@@ -12,6 +12,16 @@ use crate::error::CoreError;
 use crate::layer::{ChannelBlend, Layer, LayerId};
 use crate::surface::Surface;
 use crate::types::{Channel, ChannelInfo, LayerKind, Rgba8};
+
+/// グループの入れ子の上限（1 本の鎖に重なるグループの数。層はこの数のグループの中まで入れられる）。
+///
+/// 合成・面の計算・書き出しはグループの入れ子を再帰でたどる。スタックの実測は合成だけ・Linux だけ（合成を別のスレッドで動かし、
+/// 足りる最小のスタックを 32KB 刻みで探した）: 64 段は dev（opt-level 1）も release も 288KB で溢れ 320KB で収まり、32 段は dev が
+/// 160KB で溢れ 192KB で収まり、release が 128KB で溢れ 160KB で収まる（1 段あたり約 4KB）。Windows の画面のスレッドは 1MiB で、
+/// 64 段はその約 3 分の 1 に収まるが、Windows での実測と、画面の枠組みが先に使う分は未確認。128 段（以前の PSD の書き出しの上限）は
+/// 測っていない。実際の絵は 10 段も重ねない。.ylp の読み手・PSD の取り込み・編集（まとめる・動かす・グループを足す・スマート素材を
+/// 置く）がこの値で断る。
+pub const MAX_GROUP_DEPTH: usize = 64;
 
 /// 並びと入れ子（ID と親、下から上）と、どれがグループか。
 pub(crate) struct Tree {
@@ -242,9 +252,15 @@ impl Document {
         self.insert_new(layer, above)
     }
 
-    /// 空のグループを足す（既定は通過。ほかのモードにすると分離）。
+    /// 空のグループを足す（既定は通過。ほかのモードにすると分離）。足し先（above と同じグループの中）の入れ子が上限を超えるなら
+    /// 断り、何も変えない。
     pub fn add_group(&mut self, name: &str, above: Option<LayerId>) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
+        let parent = match above {
+            Some(a) => self.layers[self.index_of(a)?].parent,
+            None => None,
+        };
+        self.ensure_nesting_room(parent, 1)?;
         let id = self.new_layer_id();
         self.insert_new(Layer::new(id, name, LayerKind::Group), above)
     }
@@ -408,6 +424,7 @@ impl Document {
         if tree.order == before {
             return Ok(());
         }
+        Self::check_nesting(&tree)?;
         self.execute(
             Command::Structure {
                 before,
@@ -456,6 +473,7 @@ impl Document {
         for (k, m) in member_ids.iter().enumerate() {
             tree.move_subtree(*m, Some(gid), k);
         }
+        Self::check_nesting(&tree)?;
         self.execute(
             Command::Structure {
                 before,
@@ -544,40 +562,85 @@ impl Document {
         Self::validate_order(&self.tree())
     }
 
+    /// 並びを 1 回なめて確かめる（上の層から下へ。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる）。
+    /// 親はあってグループ・親は子の上に並ぶ・閉じたグループへ戻らない（= 子が連続している）・グループの入れ子が上限以内。
+    /// 層の数 n に対して O(n)（親の鎖をたどる確かめを層ごとにしない）。
     fn validate_order(tree: &Tree) -> Result<(), CoreError> {
         let order = &tree.order;
-        let index_of = |id: LayerId| -> Option<usize> { order.iter().position(|e| e.0 == id) };
-        for i in 0..order.len() {
-            let mut hops = 0;
-            let mut parent = order[i].1;
-            while let Some(p) = parent {
-                let Some(pi) = index_of(p) else {
-                    return Err(CoreError::InvalidArgument("無いグループに入っている"));
-                };
-                if !tree.is_group(p) {
-                    return Err(CoreError::InvalidArgument(
-                        "グループでない層の中に入っている",
-                    ));
-                }
-                hops += 1;
-                if hops > order.len() {
-                    return Err(CoreError::InvalidArgument(
-                        "グループの入れ子が輪になっている",
-                    ));
-                }
-                parent = order[pi].1;
-            }
-            if let Some(p) = order[i].1 {
-                let pi = index_of(p).expect("確かめた");
-                if pi <= i {
-                    return Err(CoreError::InvalidArgument("層はグループの下に並ぶ"));
-                }
-                for j in i + 1..pi {
-                    if !tree.is_descendant(j, p) {
-                        return Err(CoreError::InvalidArgument("グループの中身が続いていない"));
+        let index_of: HashMap<LayerId, usize> =
+            order.iter().enumerate().map(|(i, e)| (e.0, i)).collect();
+        let mut open: Vec<LayerId> = Vec::new();
+        for i in (0..order.len()).rev() {
+            let (id, parent) = order[i];
+            match parent {
+                None => open.clear(),
+                Some(p) => {
+                    let Some(&pi) = index_of.get(&p) else {
+                        return Err(CoreError::InvalidArgument("無いグループに入っている"));
+                    };
+                    if !tree.is_group(p) {
+                        return Err(CoreError::InvalidArgument(
+                            "グループでない層の中に入っている",
+                        ));
+                    }
+                    if pi == i {
+                        return Err(CoreError::InvalidArgument(
+                            "グループの入れ子が輪になっている",
+                        ));
+                    }
+                    if pi < i {
+                        return Err(CoreError::InvalidArgument("層はグループの下に並ぶ"));
+                    }
+                    // p が開いていなければ、p の子が途切れてから戻ってきた（子が連続していない）
+                    while open.last() != Some(&p) {
+                        if open.pop().is_none() {
+                            return Err(CoreError::InvalidArgument(
+                                "グループの中身が続いていない",
+                            ));
+                        }
                     }
                 }
             }
+            if tree.is_group(id) {
+                if open.len() >= MAX_GROUP_DEPTH {
+                    return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
+                }
+                open.push(id);
+            }
+        }
+        Ok(())
+    }
+
+    /// 並び（親は子の上に並ぶ）の入れ子が上限以内か。層の動かし方・まとめ方を決めたあと、段にする前に確かめる。
+    pub(super) fn check_nesting(tree: &Tree) -> Result<(), CoreError> {
+        let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(tree.order.len());
+        for &(id, parent) in tree.order.iter().rev() {
+            let d = parent.map_or(0, |p| depth.get(&p).map_or(0, |d| d + 1));
+            if tree.is_group(id) && d >= MAX_GROUP_DEPTH {
+                return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
+            }
+            depth.insert(id, d);
+        }
+        Ok(())
+    }
+
+    /// 親 `parent`（None は一番上の段）の中に、`inner` 本のグループが重なる鎖を持つまとまりを置いても、入れ子が上限以内か。
+    pub(super) fn ensure_nesting_room(
+        &self,
+        parent: Option<LayerId>,
+        inner: usize,
+    ) -> Result<(), CoreError> {
+        let mut above = 0;
+        let mut cur = parent;
+        while let Some(p) = cur {
+            above += 1;
+            if above > MAX_GROUP_DEPTH {
+                break;
+            }
+            cur = self.layer(p).ok_or(CoreError::LayerNotFound)?.parent;
+        }
+        if above + inner > MAX_GROUP_DEPTH {
+            return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
         }
         Ok(())
     }
@@ -794,4 +857,18 @@ impl Document {
         }
         Ok(())
     }
+}
+
+/// 層の並び（親は子の上に並ぶ。スマート素材の断片など）の中で、グループが重なる鎖の一番長い数。
+pub(super) fn group_chain_height(layers: &[Layer]) -> usize {
+    let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(layers.len());
+    let mut height = 0;
+    for l in layers.iter().rev() {
+        let d = l.parent.map_or(0, |p| depth.get(&p).map_or(0, |d| d + 1));
+        if l.is_group() {
+            height = height.max(d + 1);
+        }
+        depth.insert(l.id, d);
+    }
+    height
 }

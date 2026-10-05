@@ -1140,7 +1140,7 @@ impl Document {
         let index = self.index_of(id)?;
         self.require_channel(channel)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が画布の外"));
+            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         let ts = self.tile_size;
         let coord = TileCoord::new(x / ts, y / ts);
@@ -1162,7 +1162,7 @@ impl Document {
     pub fn mask_output_hide(&self, id: LayerId, x: u32, y: u32) -> Result<u8, CoreError> {
         let index = self.index_of(id)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が画布の外"));
+            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         if self.layers[index].mask.is_none() {
             return Err(CoreError::Unsupported("層にマスクが無い"));

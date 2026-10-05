@@ -904,18 +904,51 @@ fn nested(depth: usize) -> Document {
     d
 }
 
+/// PSD 側の型で `depth` 段のグループを手で組む（core を通さないので、core が作らせない深さも組める）。
+fn psd_nested(depth: usize) -> Psd {
+    let mut inner = layer("葉", 1, 4, 4, |_, _| [1, 2, 3, 255]);
+    for n in 0..depth as i32 {
+        inner = Layer {
+            id: 2 + 2 * n,
+            name: format!("段{n}"),
+            kind: LayerKind::Group { children: vec![inner], divider_id: 3 + 2 * n },
+            ..Layer::default()
+        };
+    }
+    Psd { width: 16, height: 16, layers: vec![inner], composite_rgba: None }
+}
+
 #[test]
-fn nested_groups_stream_to_128_levels_without_overflowing_a_small_stack_and_no_further() {
-    // 書き出しの入れ子は 128 段まで（取り込みは 1000 段）。2 MiB のスタックのスレッドでも、再帰が溢れない
+fn the_exports_group_nesting_limit_follows_the_budget_and_equals_the_documents_limit() {
+    // 予算から決める書き出しの上限（設定の「レイヤーの画素」から。`for_export`）の入れ子は、文書の上限と同じ値（128 などへ戻すと落ちる）。
+    // 文書の入れ子はその値までしか作れないので、ここは PSD 側の型で組み、上限の段は書けて、1 段多いものは入れ子の予算で断る
+    let limit = yolu_core::MAX_GROUP_DEPTH;
+    for budget in [64 * MIB, 512 * MIB, 4096 * MIB] {
+        let limits = Limits::for_export(budget);
+        assert_eq!(limits.max_group_depth, limit, "{budget}");
+        psd::write_with(&psd_nested(limit), &limits, Compression::Rle).unwrap();
+        let err = psd::write_with(&psd_nested(limit + 1), &limits, Compression::Rle).unwrap_err();
+        assert!(matches!(err, yolu_io::Error::Budget(_)), "{budget}: {err:?}");
+    }
+}
+
+#[test]
+fn nested_groups_stream_to_the_document_limit_without_overflowing_a_small_stack_and_no_further() {
+    // 文書の入れ子は `MAX_GROUP_DEPTH` 段まで（core の編集と読み込みが守る。書き出しの上限も同じ値）。2 MiB のスタックのスレッドでも、
+    // 再帰が溢れない。予算を渡さない書き出しは、C# の書き手と対の固定の上限（32 段）で断る
     std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let d = nested(128);
+            let limit = yolu_core::MAX_GROUP_DEPTH;
+            let d = nested(limit);
             let (bytes, written) = stream(&d, &budget(512), Compression::Rle).unwrap();
-            assert_eq!(written.layers, 129);
-            assert_eq!(psd::verify_stream(&mut Cursor::new(&bytes), None).unwrap().layers, 129);
-            // 129 段目は、入れ子の予算で断る
-            let err = stream(&nested(129), &budget(512), Compression::Rle).unwrap_err();
+            assert_eq!(written.layers, limit + 1);
+            assert_eq!(psd::verify_stream(&mut Cursor::new(&bytes), None).unwrap().layers, limit + 1);
+            // 固定の上限を超える入れ子は、入れ子の予算で断る
+            let fixed = Limits::default().max_group_depth;
+            assert_eq!(fixed, 32);
+            stream(&nested(fixed), &ExportControl::default(), Compression::Rle).unwrap();
+            let err = stream(&nested(fixed + 1), &ExportControl::default(), Compression::Rle).unwrap_err();
             assert!(matches!(err, ExportError::Other(yolu_io::Error::Budget(_))), "{err:?}");
         })
         .unwrap()

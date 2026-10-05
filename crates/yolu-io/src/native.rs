@@ -443,8 +443,9 @@ impl<'a> Parse<'a> {
         };
         r.add("version", NativeValue::Int(version));
         let id = guid(&r.id("id", false)?);
-        let width = r.int("width", 1, 8192)?;
-        let height = r.int("height", 1, 8192)?;
+        let edge = crate::MAX_DOCUMENT_EDGE as i32;
+        let width = r.int("width", 1, edge)?;
+        let height = r.int("height", 1, edge)?;
         let ts = r.int("tile_size", 8, 512)?;
         check(ts & (ts - 1) == 0, "タイル寸法が2の累乗ではありません")?;
         if version >= 7 {
@@ -462,7 +463,7 @@ impl<'a> Parse<'a> {
         } else {
             UserChannels::new()
         };
-        let count = r.int("layer_count", 0, 2048)?;
+        let count = r.int("layer_count", 0, crate::MAX_DOCUMENT_LAYERS as i32)?;
         let layer_start = r.fields.len();
         Ok(Self {
             r,
@@ -556,27 +557,33 @@ impl<'a> Parse<'a> {
         }
         let layers = &self.layers;
         let by_id: HashMap<_, _> = layers.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
-        for (i, l) in layers.iter().enumerate() {
-            let mut parent = l.parent;
-            let mut ancestors = HashSet::new();
-            while parent != [0; 16] {
+        // 親子の確かめは上の層から下へ 1 回なめる（層の数 n に対して O(n)）。開いているグループの鎖を持ち、親でない所へ戻れば鎖を閉じる。
+        // 親は子の上にある（位置が増える向きなので循環は起きない）・グループである・子が連続している（閉じたグループへ戻らない）・
+        // 入れ子が上限以内。
+        let mut open: Vec<usize> = Vec::new();
+        for (i, l) in layers.iter().enumerate().rev() {
+            if l.parent == [0; 16] {
+                open.clear();
+            } else {
                 let p = *by_id
-                    .get(&parent)
+                    .get(&l.parent)
                     .ok_or_else(|| Error::InvalidData("親グループがありません".into()))?;
                 check(
-                    p > i && layers[p].kind == 3 && ancestors.insert(p),
+                    p > i && layers[p].kind == 3,
                     "親グループの位置・種類・循環が不正です",
                 )?;
-                for child in layers.iter().take(p).skip(i + 1) {
-                    let mut id = child.parent;
-                    let mut hops = 0;
-                    while id != parent && id != [0; 16] && hops < layers.len() {
-                        id = by_id.get(&id).map(|&k| layers[k].parent).unwrap_or([0; 16]);
-                        hops += 1;
-                    }
-                    check(id == parent, "グループの子が連続していません")?;
+                while open.last() != Some(&p) {
+                    check(open.pop().is_some(), "グループの子が連続していません")?;
                 }
-                parent = layers[p].parent;
+            }
+            if l.kind == 3 {
+                if open.len() >= yolu_core::MAX_GROUP_DEPTH {
+                    return Err(Error::Budget(format!(
+                        "グループの入れ子の上限は{}段です",
+                        yolu_core::MAX_GROUP_DEPTH
+                    )));
+                }
+                open.push(i);
             }
             for a in &l.references {
                 check(

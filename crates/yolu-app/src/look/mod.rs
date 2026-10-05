@@ -109,6 +109,9 @@ pub enum LookOp {
     Template,
     /// スロットを描く（割り当てが無ければチャンネルを作って割り当て、描くチャンネルをそれにする）。
     PaintSlot(&'static str),
+    /// スロットの読むチャンネルを新しいユーザーチャンネルにする（割り当てがあっても新しく作る）。`plane` が None ならスロットの
+    /// 割り当て全体を、Some なら成分ごとの詰め合わせのその成分（0〜3）だけを割り当てる。作ったチャンネルを描くチャンネルにする。
+    NewChannel { slot: &'static str, plane: Option<u8> },
 }
 
 impl LookOp {
@@ -315,13 +318,7 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
     };
     doc.batch(|d| {
         let mut look = d.look().clone();
-        if d.drawn_look().kind != LookKind::LilToon {
-            look.kind = LookKind::LilToon;
-            look.kind_chosen = d.received_look().is_some();
-            if d.drawn_look().textures.is_empty() {
-                default_textures(&mut look);
-            }
-        }
+        ensure_liltoon(d, &mut look);
         let channel = match slot_channel(d, slot) {
             Some(c) => c,
             None => {
@@ -331,6 +328,74 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
                 c
             }
         };
+        d.set_look(look, false)?;
+        Ok(channel)
+    })
+}
+
+/// 描く見た目が lilToon でなければ、設定（`look`）を lilToon にする（スロットが 1 つも無ければ既定の割り当ても足す）。
+fn ensure_liltoon(d: &Document, look: &mut MaterialLook) {
+    if d.drawn_look().kind != LookKind::LilToon {
+        look.kind = LookKind::LilToon;
+        look.kind_chosen = d.received_look().is_some();
+        if d.drawn_look().textures.is_empty() {
+            default_textures(look);
+        }
+    }
+}
+
+/// スロットの読むチャンネルを、新しいユーザーチャンネルにする（1 回の Undo。割り当てがあっても新しく作る。古いチャンネルは、
+/// ほかのスロットが読んでいるかもしれないので消さない）。見た目が lilToon でなければ lilToon にもする（同じ 1 回）。
+///
+/// - `plane` が None: スロット全体を新しいチャンネルの割り当てにする。作りは `paint_channel_spec`（描く口と同じ。マットキャップの絵の
+///   スロットは描くものではないので断る）。
+/// - `plane` が Some(k): 成分ごとの詰め合わせの k 番目の成分だけを、新しいスカラーのチャンネルにする（名前は「描く口と同じ名前 R/G/B/A」。
+///   何も描いていない所は、置き換える成分が 0・1 ならその値、チャンネルならスロットの既定のその成分）。詰め合わせでないスロットは断る。
+///
+/// 3D ビューが持つユーザーチャンネルの上限（16）は作る側では見ない（超えた分は、欄が「描かない」の印を出す）。作ったチャンネルを返す。
+pub fn new_slot_channel(doc: &mut Document, slot: &str, plane: Option<u8>, lang: Lang) -> Result<Channel, CoreError> {
+    let Some(info) = liltoon::slot(slot) else {
+        return Err(CoreError::InvalidArgument("知らないスロット"));
+    };
+    let planes = match plane {
+        None => None,
+        Some(_) => match doc.drawn_look().textures.get(slot) {
+            Some(TextureSource::Packed(p)) => Some(*p),
+            _ => return Err(CoreError::InvalidArgument("成分ごとの割り当てではない")),
+        },
+    };
+    let spec = match (plane, planes) {
+        (None, _) => paint_channel_spec(info, lang).ok_or(CoreError::InvalidArgument("描けないスロット"))?,
+        (Some(k), Some(planes)) if k < 4 => {
+            // 何も描いていない所は、置き換える成分が定数ならその値（見た目を変えない）、チャンネルならスロットの既定のその成分
+            let white = match planes[k as usize] {
+                PlaneSource::Zero => false,
+                PlaneSource::One => true,
+                PlaneSource::Channel { .. } => info.default.rgba()[k as usize] > 0.5,
+            };
+            let base = paint_channel_spec(info, lang).map_or_else(|| info.label(lang).to_owned(), |spec| spec.name);
+            ChannelInfo {
+                name: format!("{base} {}", ["R", "G", "B", "A"][k as usize]),
+                kind: ChannelKind::Scalar,
+                color_space: ColorSpace::Linear,
+                default: if white { WHITE } else { Rgba8::new(0, 0, 0, 255) },
+            }
+        }
+        _ => return Err(CoreError::InvalidArgument("成分は 0〜3")),
+    };
+    doc.batch(|d| {
+        let mut look = d.look().clone();
+        ensure_liltoon(d, &mut look);
+        let name = free_name(d, &spec.name);
+        let channel = d.add_channel(ChannelInfo { name, ..spec.clone() })?;
+        let source = match (plane, planes) {
+            (Some(k), Some(mut p)) => {
+                p[k as usize] = PlaneSource::Channel { channel, component: 0 };
+                TextureSource::Packed(p)
+            }
+            _ => TextureSource::Channel(channel),
+        };
+        look.textures.insert(slot.into(), source);
         d.set_look(look, false)?;
         Ok(channel)
     })
@@ -478,6 +543,17 @@ impl AppState {
             }
             return;
         }
+        if let LookOp::NewChannel { slot, plane } = op {
+            let lang = self.lang;
+            match new_slot_channel(&mut self.doc, slot, plane, lang) {
+                Ok(channel) => {
+                    self.modified = true;
+                    self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
+                }
+                Err(e) => self.message = self.lang.core_error(&e),
+            }
+            return;
+        }
         if op == LookOp::Template {
             let lang = self.lang;
             match apply_template(&mut self.doc, lang) {
@@ -577,7 +653,7 @@ impl AppState {
                     look.properties.insert(name.into(), LookValue::Float(value));
                 }
             }
-            LookOp::Template | LookOp::PaintSlot(_) => unreachable!("上で扱った"),
+            LookOp::Template | LookOp::PaintSlot(_) | LookOp::NewChannel { .. } => unreachable!("上で扱った"),
         }
         let before = self.doc.revision();
         match self.doc.set_look(look, coalesce) {

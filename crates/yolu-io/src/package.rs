@@ -2,7 +2,8 @@
 //!
 //! - 読む（[`Package::open`]）: 末尾の中央ディレクトリ（zip64 を含む）から目録を作り、manifest を読み、全エントリを 1 回流して
 //!   長さ・CRC-32・SHA-256 を確かめる。小さなエントリ（[`KEEP_IN_MEMORY`] 以下）はそのときメモリに残し、ほかはファイルの中の位置
-//!   （[`Blob`]）で持って、要るときに位置から流して読む（読むたびに長さと SHA-256 を確かめ直す）。
+//!   （[`Blob`]）で持って、要るときに位置から流して読む（読むたびに長さと SHA-256 を確かめ直す）。位置から読むために、開いたファイルの
+//!   ハンドルを持ち続ける（パスでは開き直さない。外で改名・移動・削除・別のファイルへの置き換えをされても、開いたときの中身を読む）。
 //! - 書く（[`Package::write_to`]）: 2 回に分ける。1 回目は各エントリの長さと SHA-256 を数え（作るエントリは作りながら数える）、manifest を
 //!   作る。2 回目に mimetype・manifest・名前の順に流して書く（ローカルヘッダーは中身を書いた後に戻って直す。`YLP-4` は同じ中身の圧縮した
 //!   バイト列を写し、大きなエントリは並べて圧縮する）。今の上限（`YLP-3`。
@@ -18,7 +19,7 @@ use std::{
     fs::File,
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 /// 正本の部分（`document.utpaint.<n>`。正本の版 26）の 1 エントリの上限。
@@ -36,7 +37,7 @@ pub const CLASSIC_ENTRIES: usize = 1000;
 pub const KEEP_IN_MEMORY: u64 = 1 << 20;
 /// 正本のほかのエントリの合計の上限（`YLP-3` の合計と同じ。正本でないエントリは今の上限のまま）。
 pub const OTHER_BYTES: u64 = 768 << 20;
-/// 正本の長さを「レイヤーの画素」の予算の何倍まで受けるか（一様なタイルは core では 4 バイトだが、正本では全画素を書くため）。
+/// 正本の長さを「レイヤーのメモリ」の予算の何倍まで受けるか（一様なタイルは core では 4 バイトだが、正本では全画素を書くため）。
 pub const DOCUMENT_FACTOR: u64 = 4;
 const MANIFEST: &str = "manifest.sha256";
 const YLP_MIME: &str = "application/x-yolupainter";
@@ -51,7 +52,7 @@ const MAX_CENTRAL: u64 = 32 << 20;
 /// 読むときの上限（設定の予算から決める）。
 ///
 /// - 1 エントリ: 正本の部分は [`MAX_PART_BYTES`]、ほかは [`MAX_ONE_ENTRY`]（どの予算にも依らない形の上限）。
-/// - セットごとの正本（`document.utpaint` と部分の長さの合計）: `document_bytes`。設定の「レイヤーの画素」の予算（`load_source_bytes`）の
+/// - セットごとの正本（`document.utpaint` と部分の長さの合計）: `document_bytes`。設定の「レイヤーのメモリ」の予算（`load_source_bytes`）の
 ///   [`DOCUMENT_FACTOR`] 倍。
 /// - 全体: 正本のあるセットの数 × `document_bytes` ＋ `other_bytes`（正本でないエントリは今の 768 MiB）。
 /// - エントリの数: [`MAX_ENTRIES`]。名前は今と同じ（96 文字・英数字と `. - _`）。
@@ -65,7 +66,7 @@ pub struct Limits {
     pub other_bytes: u64,
 }
 impl Limits {
-    /// 設定の「レイヤーの画素」の予算（1 つの文書の層の画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
+    /// 設定の「レイヤーのメモリ」の予算（1 つの文書の層の画素に許すバイト数）から。core の既定（256 MiB）を下回らない。
     pub fn from_layer_pixels(layer_pixels: u64) -> Self {
         let pixels = layer_pixels.max(yolu_core::DEFAULT_SOURCE_BUDGET_BYTES);
         Self {
@@ -98,8 +99,8 @@ impl Limits {
     }
 }
 /// 予算で断る理由（画面の文）。どの予算かだけを言い、数・内部の識別子・上限の導き方は入れない（英語の画面はこの文で見分けて訳す）。
-pub const OVER_LAYER_PIXELS_DOCUMENT: &str = "正本が「レイヤーの画素」の予算を超えています";
-pub const OVER_LAYER_PIXELS_TOTAL: &str = "全体が「レイヤーの画素」の予算を超えています";
+pub const OVER_LAYER_PIXELS_DOCUMENT: &str = "正本が「レイヤーのメモリ」の予算を超えています";
+pub const OVER_LAYER_PIXELS_TOTAL: &str = "全体が「レイヤーのメモリ」の予算を超えています";
 /// 1 エントリの形の上限（正本の部分 256 MiB・ほか 512 MiB）を超えた。
 const ONE_ENTRY_OVER: &str = "1エントリの上限を超えています";
 /// 量の上限（[`Limits`]）の数え。.ylp の manifest・復旧の世代・保存の見積もりが同じ数え方を使う。
@@ -178,24 +179,155 @@ pub(crate) trait Made: Send + Sync {
     fn write_to(&self, out: &mut dyn Write) -> Result<()>;
     fn describe(&self) -> String;
 }
-/// 向け直したエントリの表（元のエントリの `Arc` の位置 → 向け直したエントリ）。元のエントリが生きている間だけ使う。
-#[derive(Default)]
-pub(crate) struct Moves(std::collections::HashMap<usize, Blob>);
-/// .ylp の置き場（ファイルかメモリの中のバイト列）。
+/// .ylp の置き場（開いたファイルかメモリの中のバイト列）。
 #[derive(Clone)]
 pub(crate) enum Source {
-    Path(Arc<PathBuf>),
+    File(Arc<OpenFile>),
     Bytes(Arc<[u8]>),
 }
 trait ReadSeek: Read + Seek + Send {}
 impl<T: Read + Seek + Send> ReadSeek for T {}
 impl Source {
-    fn open(&self) -> io::Result<Box<dyn ReadSeek>> {
+    /// ファイルを開いて置き場にする（読むのはこのハンドルから、位置を指定して。パスは付け替えと手放しの目印で、読むときは使わない）。
+    pub(crate) fn open_file(path: &Path) -> io::Result<Self> {
+        Ok(Self::File(OpenFile::open(path)?))
+    }
+    fn open(&self) -> Result<Box<dyn ReadSeek>> {
         Ok(match self {
-            Self::Path(p) => Box::new(BufReader::with_capacity(1 << 16, File::open(p.as_ref())?)),
+            Self::File(f) => {
+                let file = f.handle()?;
+                let len = file.metadata()?.len();
+                Box::new(BufReader::with_capacity(1 << 16, At { file, pos: 0, len }))
+            }
             Self::Bytes(b) => Box::new(Cursor::new(b.clone())),
         })
     }
+    /// 保存で置き換えた後の名前へ付け替える（同じファイルのまま。ハンドルは置換のあとも同じファイルを指す）。
+    fn set_path(&self, path: &Path) {
+        if let Self::File(f) = self {
+            *lock(&f.path) = path.to_path_buf();
+        }
+    }
+}
+/// 開いた .ylp のハンドル。ファイルの中の位置から読む（`read_at` / `seek_read`。ファイルのカーソルは使わないので、同時に何本読んでも
+/// 互いに動かさない）。標準の開き方（Windows は読み・書き・削除を共有）なので、外の改名・移動・削除・POSIX の置換は妨げず、ハンドルは
+/// 開いたときの中身を読み続ける。
+pub(crate) struct OpenFile {
+    /// 今の名前（保存で置き換えた後は新しい名前へ付け替える）。手放す・掴み直す相手を探す目印で、読むときは使わない。
+    path: Mutex<PathBuf>,
+    /// ハンドル。`None` は、保存の置換のために手放した（置換できなかった形は掴み直す。置換できたなら、もう開いたときの中身ではない）。
+    handle: RwLock<Option<Arc<File>>>,
+    /// 開いたときのファイルの長さ（掴み直すとき、同じファイルか見分ける目安。更新時刻は見ない: 同期の道具が中身を変えずに更新時刻だけを
+    /// 変えることがある。違うファイルを掴んでも、読むたびの長さ・SHA-256・CRC の確かめで断る）。
+    opened: u64,
+}
+/// 開いているハンドルの一覧（手放す相手を、置換するパスから探す）。生きているものだけ。
+static OPEN_FILES: Mutex<Vec<Weak<OpenFile>>> = Mutex::new(Vec::new());
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+impl OpenFile {
+    fn open(path: &Path) -> io::Result<Arc<Self>> {
+        let file = File::open(path)?;
+        let m = file.metadata()?;
+        let me = Arc::new(Self {
+            path: Mutex::new(path.to_path_buf()),
+            handle: RwLock::new(Some(Arc::new(file))),
+            opened: m.len(),
+        });
+        let mut all = lock(&OPEN_FILES);
+        all.retain(|w| w.strong_count() > 0);
+        all.push(Arc::downgrade(&me));
+        Ok(me)
+    }
+    fn handle(&self) -> Result<Arc<File>> {
+        match &*self.handle.read().unwrap_or_else(|e| e.into_inner()) {
+            Some(file) => Ok(file.clone()),
+            None => Err(Error::SaveConflict(SOURCE_RELEASED.into())),
+        }
+    }
+}
+/// `path` を開いている（生きている）ハンドルを手放す。保存の置換が、自分たちの開いたハンドルのせいで通らないファイルシステム（置換の
+/// 規則が POSIX でない FAT・exFAT・一部のネットワーク）のための最後の手段。手放したものは、置換に失敗したら [`Released::reacquire`]
+/// で掴み直し、置換できたら手放したまま（もう開いたときの中身ではないので、読もうとすると [`SOURCE_RELEASED`] で断る）。
+pub(crate) fn release_at(path: &Path) -> Released {
+    let mut found = Vec::new();
+    for w in lock(&OPEN_FILES).iter() {
+        if let Some(f) = w.upgrade() {
+            if same_path(&lock(&f.path), path) {
+                *f.handle.write().unwrap_or_else(|e| e.into_inner()) = None;
+                found.push(f);
+            }
+        }
+    }
+    Released(found)
+}
+/// 手放したハンドル（[`release_at`]）。
+pub(crate) struct Released(Vec<Arc<OpenFile>>);
+impl Released {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// 置換に失敗して元のファイルが残ったとき、掴み直す（開いたときと長さが同じファイルだけ。違えば手放したまま）。
+    pub(crate) fn reacquire(self) {
+        for f in self.0 {
+            let path = lock(&f.path).clone();
+            let same = File::open(&path)
+                .ok()
+                .filter(|file| file.metadata().is_ok_and(|m| m.len() == f.opened));
+            if let Some(file) = same {
+                *f.handle.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(file));
+            }
+        }
+    }
+}
+/// 同じ名前か（Windows は大文字小文字を区別しない）。パスの書き方の違い（`.` や `..`）までは見ない。
+fn same_path(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
+    }
+}
+/// ファイルの中の位置から読む（`Read` + `Seek`）。
+struct At {
+    file: Arc<File>,
+    pos: u64,
+    len: u64,
+}
+impl Read for At {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            match read_at(&self.file, buf, self.pos) {
+                Ok(n) => {
+                    self.pos += n as u64;
+                    return Ok(n);
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+impl Seek for At {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        let pos = match to {
+            SeekFrom::Start(n) => Some(n),
+            SeekFrom::End(d) => self.len.checked_add_signed(d),
+            SeekFrom::Current(d) => self.pos.checked_add_signed(d),
+        };
+        self.pos = pos.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ファイルの先頭より前へは動かせません"))?;
+        Ok(self.pos)
+    }
+}
+#[cfg(unix)]
+fn read_at(file: &File, buf: &mut [u8], pos: u64) -> io::Result<usize> {
+    std::os::unix::fs::FileExt::read_at(file, buf, pos)
+}
+#[cfg(windows)]
+fn read_at(file: &File, buf: &mut [u8], pos: u64) -> io::Result<usize> {
+    std::os::windows::fs::FileExt::seek_read(file, buf, pos)
 }
 
 impl Blob {
@@ -349,47 +481,21 @@ impl Blob {
             }
         }
     }
-    /// .ylp の中の位置で持つエントリを、別のファイル（同じ中身を同じ位置に持つもの。保存で置き換えた後のファイル）へ向け直す。同じ
-    /// エントリ（同じ `Arc`）は `moves` で 1 度だけ向け直し、同じ向け直したエントリを返す（外側・移行後のエントリ・セットの正本が、
-    /// 向け直した後も同じエントリを持つ: `same` で変わっていないと見分けられ、正本の骨組みを読み直さない）。
-    pub(crate) fn with_source(&self, source: &Source, moves: &mut Moves) -> Self {
-        match &self.0 {
-            Repr::Zip(z) => moves
-                .0
-                .entry(Arc::as_ptr(z) as usize)
-                .or_insert_with(|| {
-                    let mut moved = (**z).clone();
-                    moved.source = source.clone();
-                    Self(Repr::Zip(Arc::new(moved)))
-                })
-                .clone(),
-            _ => self.clone(),
+    /// .ylp の中の位置で持つエントリの置き場の名前を、保存で置き換えた後の名前へ付け替える（同じファイルのまま。読むのは開いたハンドルで、
+    /// 置換のあとも同じファイルを指すので、向け直さない。エントリは同じ `Arc` のままなので、`same` で変わっていないと見分けられ、
+    /// 正本の骨組みを読み直さない）。
+    pub(crate) fn note_path(&self, path: &Path) {
+        if let Repr::Zip(z) = &self.0 {
+            z.source.set_path(path);
         }
     }
 }
-impl Clone for ZipRef {
-    fn clone(&self) -> Self {
-        Self {
-            source: self.source.clone(),
-            name: self.name.clone(),
-            sha: self.sha.clone(),
-            data: self.data,
-            packed: self.packed,
-            len: self.len,
-            method: self.method,
-            crc: self.crc,
-        }
-    }
-}
-/// 開いた .ylp（画素などを位置から読むファイル）が、外で消された・動かされた（変えていないセットの中身を読めない。保存・書き置きは
-/// その中身を写すので断る）。
-pub const SOURCE_MISSING: &str = "開いた .ylp が外で消されたか動かされました";
+/// 開いた .ylp が、保存の置換のために手放された（置換の規則が POSIX でないファイルシステムで、自分の保存が置き換えた。古い版の写しは
+/// もう読めない。保存した後のプロジェクトを使う）。
+pub const SOURCE_RELEASED: &str = "開いた .ylp は保存で置き換えられたため、この写しの中身はもう読めません";
 impl ZipRef {
     fn reader(&self) -> Result<Box<dyn Read + Send>> {
-        let mut f = self.source.open().map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => Error::SaveConflict(SOURCE_MISSING.into()),
-            _ => Error::Io(e),
-        })?;
+        let mut f = self.source.open()?;
         f.seek(SeekFrom::Start(self.data))?;
         let raw = f.take(self.packed);
         let crc = Some(self.crc);
@@ -653,20 +759,12 @@ impl Package {
     }
     /// ファイルから流して読む（全エントリを確かめる。小さなものだけメモリに残す）。
     pub fn open(path: &Path, limits: &Limits) -> Result<Self> {
-        read(
-            &Source::Path(Arc::new(path.to_path_buf())),
-            limits,
-            Thresholds::current().keep_in_memory,
-        )
+        read(&Source::open_file(path)?, limits, Thresholds::current().keep_in_memory)
     }
-    pub(crate) fn with_source(&self, source: &Source, moves: &mut Moves) -> Self {
-        Self {
-            files: self
-                .files
-                .iter()
-                .map(|(k, v)| (k.clone(), v.with_source(source, moves)))
-                .collect(),
-            ..self.clone()
+    /// 保存で置き換えた後の名前へ、エントリの置き場の名前を付け替える（[`Blob::note_path`]）。
+    pub(crate) fn note_path(&self, path: &Path) {
+        for blob in self.files.values() {
+            blob.note_path(path);
         }
     }
 

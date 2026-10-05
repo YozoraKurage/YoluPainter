@@ -215,7 +215,7 @@ pub fn path_error_text(lang: Lang, error: &paths::Error) -> String {
             .into(),
         Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
         Error::Core(e) => crate::matpaint::refusal_text(lang, e),
-        Error::Dab(d) => lang.dab_refusal(*d).into(),
+        Error::Dab(d) => lang.path_dab_refusal(*d).into(),
     }
 }
 

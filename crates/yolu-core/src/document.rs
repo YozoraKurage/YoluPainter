@@ -29,6 +29,7 @@ mod transform;
 mod warp;
 pub use warp::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint};
 mod triangle_fill;
+pub use structure::MAX_GROUP_DEPTH;
 pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;
 pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
@@ -2257,7 +2258,7 @@ impl Document {
     /// 1 画素の合成（参照の式。画素ごとに層を引くので遅い。試験・スポイト向け）。
     pub fn composite_pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が画布の外"));
+            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
@@ -2275,7 +2276,7 @@ impl Document {
         if rect.x as u64 + rect.width as u64 > self.width as u64
             || rect.y as u64 + rect.height as u64 > self.height as u64
         {
-            Err(CoreError::InvalidArgument("矩形が画布の外"))
+            Err(CoreError::InvalidArgument("矩形がキャンバスの外"))
         } else {
             Ok(())
         }
