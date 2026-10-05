@@ -26,7 +26,7 @@ use rusqlite::{Connection, Statement};
 
 use super::super::error::Fault;
 use super::super::short_text;
-use super::material;
+use super::{c2f, material};
 
 /// SQLite のファイルの先頭の署名。
 const SIGNATURE: &[u8] = b"SQLite format 3\0";
@@ -235,6 +235,8 @@ pub(super) struct Material {
     pub image: Option<material::Image>,
     /// 画像が CLIP STUDIO 独自の入れ物にだけあって読めない（使える PNG が無い）。
     pub proprietary: bool,
+    /// 筆先の素材か質感の素材か（素材の中の情報から分かるときだけ）。
+    pub kind: Option<material::Kind>,
 }
 
 pub(super) struct Database {
@@ -472,8 +474,13 @@ impl Database {
     }
 
     /// `MaterialFile` の素材（上限まで）。2 つ目は上限を超えて読まなかった行があるか。表が無ければ空。
-    /// 取り出した画像の合計は `png_budget` から引く（足りなければ `Fault::SutLimits`）。
-    pub fn materials(&self, png_budget: &mut u64) -> Result<(Vec<Material>, bool), Fault> {
+    /// 取り出した画像の合計は `png_budget` から引く（足りなければ `Fault::SutLimits`）。素材の C2F を読む仕事は `work`（取り込み全体で
+    /// 共有）から引き、使い切ったあとの素材は画像が無いものとして扱う。
+    pub fn materials(
+        &self,
+        png_budget: &mut u64,
+        work: &c2f::Work,
+    ) -> Result<(Vec<Material>, bool), Fault> {
         if !self.has_table("MaterialFile")? {
             return Ok((Vec::new(), false));
         }
@@ -538,14 +545,16 @@ impl Database {
             let mut texts = Vec::new();
             let mut image = None;
             let mut proprietary = false;
+            let mut kind = None;
             for (i, name) in names.iter().enumerate() {
                 let Ok(value) = row.get_ref(i) else {
                     continue;
                 };
                 match (name.as_str(), value) {
                     ("filedata", ValueRef::Blob(blob)) => {
-                        image = material::extract(blob);
+                        image = material::extract(blob, work);
                         proprietary = image.is_none() && material::has_proprietary_image(blob);
+                        kind = material::kind(blob);
                     }
                     ("_pw_id", ValueRef::Integer(id)) => order = id,
                     (_, ValueRef::Text(t)) if texts.len() < 8 => {
@@ -569,6 +578,7 @@ impl Database {
                 texts,
                 image,
                 proprietary,
+                kind,
             });
             index += 1;
         }

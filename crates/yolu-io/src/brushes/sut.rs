@@ -3,9 +3,10 @@
 //! 形式は公開されていないので、公開の解析（出どころと確かな所・推測の所は docs/BRUSH_IMPORT.md）で分かる範囲だけを読む:
 //! - ブラシの名前と、現在の設定・既定の設定の `Variant` の番号は `Node` から。設定は `Variant` の 1 行（1 列が 1 つの設定。列の
 //!   集合は CLIP STUDIO の版で違うので、決まった名前の列を「在れば」読む）。
-//! - 筆先・質感の画像は `MaterialFile.FileData`（無圧縮の tar の中のプレビューの PNG）。どの素材を使うかは `Variant` の参照の
-//!   BLOB の名前から決める。名前で当たらない参照は、残った素材と参照の数がちょうど合うときだけ並びで当て、そのときは推定として
-//!   [`SutNote`] で知らせる。決められない・取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
+//! - 筆先・質感の画像は `MaterialFile.FileData`（無圧縮の tar）。原寸の画像は tar の中の独自の入れ物 C2F（`c2f`）から、読めなければ
+//!   プレビューの PNG。どの素材を使うかは `Variant` の参照の BLOB の名前から決める。名前で当たらない参照は、残った素材（素材の種類が
+//!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
+//!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
 //! - 影響元設定（`*Effector`）は筆圧だけ（最小値と曲線）。傾き・速さ・ランダムは表せないので注記する。
 //! - 表せない設定（色の混ぜ・吹き付け・デュアルブラシ・入り抜き・手ぶれ補正・色の変化・合成モード・筆先の向きなど）は、旗が立って
 //!   いるものだけ [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る。
@@ -13,6 +14,7 @@
 //! 信頼できないファイルなので、データベースを開く・読む所は `db`（読み取り専用・メモリ上・上限つき）だけが触る。
 
 mod blob;
+mod c2f;
 mod db;
 mod material;
 mod tar;
@@ -30,6 +32,7 @@ use super::reader::Budget;
 use super::{short_text, ImportedBrush, ImportedSet, SkipReason, SkippedBrush};
 use blob::{parse_effector, parse_refs, Effector, Refs};
 use db::{Database, Material, Row, Variants};
+use material::Kind;
 
 /// 取り出した画像（PNG の元のバイト列）の合計の上限（バイト）。
 const MAX_PNG_TOTAL: u64 = 128 * 1024 * 1024;
@@ -49,6 +52,10 @@ const ROTATION: &[&str] = &["brushrotation"];
 const USE_PATTERN: &[&str] = &["brushusepatternimage"];
 const PATTERN_ARRAY: &[&str] = &["brushpatternimagearray"];
 const TEXTURE_IMAGE: &[&str] = &["textureimage"];
+// デュアルブラシの筆先・質感の参照（デュアルブラシ自体は表せないが、ファイルにはその素材も入るので、素材の数え合わせに使う）
+const DUAL_PATTERN_ARRAY: &[&str] = &["dualpatternimagearray"];
+const DUAL_USE_PATTERN: &[&str] = &["dualusepatternimage"];
+const DUAL_TEXTURE_IMAGE: &[&str] = &["dualtextureimage"];
 const TEXTURE_SCALE: &[&str] = &["texturescale2", "texturescale"];
 const TEXTURE_DENSITY: &[&str] = &["texturedensity"];
 const TEXTURE_REVERSE: &[&str] = &["texturereversedensity"];
@@ -90,6 +97,9 @@ const KNOWN: &[&[&str]] = &[
     USE_PATTERN,
     PATTERN_ARRAY,
     TEXTURE_IMAGE,
+    DUAL_PATTERN_ARRAY,
+    DUAL_USE_PATTERN,
+    DUAL_TEXTURE_IMAGE,
     TEXTURE_SCALE,
     TEXTURE_DENSITY,
     TEXTURE_REVERSE,
@@ -199,6 +209,72 @@ fn resolve(refs: &Refs, materials: &[Material], order_ok: bool) -> Resolved {
             })
             .collect(),
     }
+}
+
+/// 素材の種類（筆先・質感）が全部の素材で分かるファイルで、種類ごとに並びで当てる。
+///
+/// デュアルブラシを使う設定のファイルには、メインの筆先・質感の素材と、デュアルブラシの筆先・質感の素材が種類ごとにまとまって入る
+/// （本物の 1 つのファイルで、現在の設定が参照する 4 つの素材だけが入り、種類の中ではメインが先だった）。そこで、その種類の参照
+/// （メイン + デュアル）のうち名前で当たらなかったものの数と、まだ使われていないその種類の素材の数が**ちょうど同じ**ときに限って、
+/// 参照の順（メインが先）と素材の並びで当てる。返すのはメインの参照の分だけ。素材が多い・少ないとき（別のブラシの素材も入っている
+/// など）、種類の分からない素材があるときは決めない（None）。並びで当てたものは推定として知らせる。
+fn resolve_by_kind(
+    main: &Refs,
+    dual: Option<&Refs>,
+    materials: &[Material],
+    kind: Kind,
+) -> Option<Resolved> {
+    if main.items.is_empty() || !main.complete || materials.iter().any(|m| m.kind.is_none()) {
+        return None;
+    }
+    if dual.is_some_and(|d| !d.complete) {
+        return None;
+    }
+    let candidates: Vec<usize> = (0..materials.len())
+        .filter(|&i| materials[i].kind == Some(kind))
+        .collect();
+    let items: Vec<&blob::RefItem> = main
+        .items
+        .iter()
+        .chain(dual.map_or(&[][..], |d| &d.items[..]))
+        .collect();
+    let found: Vec<Option<usize>> = items
+        .iter()
+        .map(|item| {
+            candidates.iter().copied().find(|&i| {
+                item.names
+                    .iter()
+                    .any(|n| materials[i].texts.iter().any(|t| same_material(n, t)))
+            })
+        })
+        .collect();
+    let used: HashSet<usize> = found.iter().flatten().copied().collect();
+    let unused: Vec<usize> = candidates
+        .iter()
+        .copied()
+        .filter(|i| !used.contains(i))
+        .collect();
+    if found.iter().filter(|f| f.is_none()).count() != unused.len() {
+        return None;
+    }
+    let mut rest = unused.into_iter();
+    let picks = found
+        .into_iter()
+        .map(|f| match f {
+            Some(i) => Some((i, false)),
+            None => rest.next().map(|i| (i, true)),
+        })
+        .take(main.items.len())
+        .collect();
+    Some(Resolved { picks })
+}
+
+/// デュアルブラシを使う設定の、デュアルの素材の参照。使わない設定・参照の無い設定は None。
+fn dual_refs(row: &Row, column: &[&str], use_flag: Option<&[&str]>) -> Option<Refs> {
+    if !row.on(DUAL) || use_flag.is_some_and(|flag| !row.on(flag)) {
+        return None;
+    }
+    row.first_blob(column).map(parse_refs)
 }
 
 // ---------------- 影響元の曲線 ----------------
@@ -341,6 +417,8 @@ struct Library<'a> {
     db: &'a Database,
     materials: Option<(Vec<Material>, bool)>,
     png_budget: u64,
+    /// 素材の C2F を読む仕事の残り（全部の素材で共有）。
+    c2f_work: c2f::Work,
     tips: HashMap<usize, Option<Arc<BrushTip>>>,
     textures: HashMap<(usize, bool), Option<Arc<BrushTip>>>,
     /// 画像を取り出せなかった素材（使おうとしたもの）。
@@ -353,6 +431,7 @@ impl<'a> Library<'a> {
             db,
             materials: None,
             png_budget: MAX_PNG_TOTAL,
+            c2f_work: c2f::Work::new(),
             tips: HashMap::new(),
             textures: HashMap::new(),
             unreadable: HashSet::new(),
@@ -362,7 +441,7 @@ impl<'a> Library<'a> {
     /// 素材（`MaterialFile` の行の順）と、素材が上限を超えて読み切れていないか。
     fn materials(&mut self) -> Result<(&[Material], bool), Fault> {
         if self.materials.is_none() {
-            self.materials = Some(self.db.materials(&mut self.png_budget)?);
+            self.materials = Some(self.db.materials(&mut self.png_budget, &self.c2f_work)?);
         }
         let (materials, capped) = self.materials.as_ref().expect("読み込み済み");
         Ok((materials, *capped))
@@ -466,10 +545,18 @@ fn tips(
     let order_ok = !has_texture && !capped;
     // 参照ごとの素材と、参照を最後まで読めたか
     let (picks, complete) = match &refs {
-        Some(refs) if !refs.items.is_empty() => (
-            resolve(refs, library.materials()?.0, order_ok).picks,
-            refs.complete,
-        ),
+        Some(refs) if !refs.items.is_empty() => {
+            let materials = library.materials()?.0;
+            let mut resolved = resolve(refs, materials, order_ok);
+            // 名前でも並びでも決まらなかった参照は、素材の種類が分かれば種類ごとに当てる
+            if !capped && resolved.picks.iter().any(Option::is_none) {
+                let dual = dual_refs(row, DUAL_PATTERN_ARRAY, Some(DUAL_USE_PATTERN));
+                if let Some(by_kind) = resolve_by_kind(refs, dual.as_ref(), materials, Kind::Tip) {
+                    resolved = by_kind;
+                }
+            }
+            (resolved.picks, refs.complete)
+        }
         // 参照を読めない（形が違う）。素材の参照が筆先だけのブラシなら、素材はすべてそのブラシの筆先とみなす（推定）
         _ if order_ok => ((0..all).map(|i| Some((i, true))).collect(), true),
         _ => (Vec::new(), true),
@@ -534,11 +621,19 @@ fn texture(
         (!uses_pattern && materials.len() == 1).then_some((0, true))
     } else {
         let (materials, capped) = library.materials()?;
-        resolve(&refs, materials, !uses_pattern && !capped)
+        let named = resolve(&refs, materials, !uses_pattern && !capped)
             .picks
             .first()
             .copied()
-            .flatten()
+            .flatten();
+        if named.is_some() || capped {
+            named
+        } else {
+            // 名前でも並びでも決まらなければ、素材の種類が分かれば種類ごとに当てる
+            let dual = dual_refs(row, DUAL_TEXTURE_IMAGE, None);
+            resolve_by_kind(&refs, dual.as_ref(), materials, Kind::Texture)
+                .and_then(|r| r.picks.first().copied().flatten())
+        }
     };
     let invert = row.on(TEXTURE_REVERSE);
     let found = match pick {
@@ -911,6 +1006,7 @@ mod tests {
             texts: texts.iter().map(|s| s.to_string()).collect(),
             image: None,
             proprietary: false,
+            kind: None,
         }
     }
 
