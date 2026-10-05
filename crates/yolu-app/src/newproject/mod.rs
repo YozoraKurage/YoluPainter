@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 pub use configure::{resampling_name, unused_groups, ConfirmKind, Plan, PlanRow};
 use egui::Vec2;
-pub use reopen::{relative_model_path, resolve_model_path, Reopen};
+pub use reopen::{is_network_path, relative_model_path, resolve_model_path, Reopen};
 
 use crate::engine::{CanvasResampling, Channel, Document, NormalSettings, NormalYDirection};
 use crate::lang::Lang;
@@ -36,7 +36,7 @@ use yolu_protocol::MaterialKey as LinkKey;
 /// 解像度の選択肢（一辺。Unity 版と同じ）。
 pub const RESOLUTIONS: [u32; 5] = [512, 1024, 2048, 4096, 8192];
 /// 1 つのプロジェクトのテクスチャセットの上限（.ylp の決まり）。
-pub const MAX_SETS: usize = 64;
+pub const MAX_SETS: usize = yolu_io::MAX_PROJECT_SETS;
 /// セットの名前の長さ（UTF-16 の数。.ylp の決まり）。
 pub const MAX_NAME: usize = 256;
 /// 新規プロジェクトの解像度の初めの値。
@@ -715,8 +715,14 @@ impl AppState {
     }
 
     fn np_open_new(&mut self) {
-        // 今のモデルのファイルがあれば、新しいプロジェクトの初めのモデルにする（Unity 版と同じ。「×」で外せる）
-        let model = self.np.model_file.clone().filter(|p| p.is_file());
+        // 今のモデルのファイルがあれば、新しいプロジェクトの初めのモデルにする（Unity 版と同じ。「×」で外せる）。ネットワークのパスで
+        // 残っている参照（開くときに自動では触らなかったもの）は、利用者が選んだモデルではないので、確かめにも読み込みにも使わない
+        let model = self
+            .np
+            .model_file
+            .clone()
+            .filter(|p| !is_network_path(&p.to_string_lossy()))
+            .filter(|p| p.is_file());
         self.np_open_new_with(model);
     }
 

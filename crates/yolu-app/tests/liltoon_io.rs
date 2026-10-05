@@ -393,7 +393,7 @@ fn a_read_only_set_says_why_its_look_cannot_be_read() {
     let mut s = AppState::new(64, 64);
     s.apply(Action::OpenProject(path));
     let reason = s.sets.get(0).unwrap().read_only.clone().expect("core で扱えない中身なので読むだけ");
-    assert!(reason.contains("core で扱えない中身"), "{reason}");
+    assert!(reason.contains("編集に対応していない中身"), "{reason}");
     assert!(reason.contains("見た目の設定を読めません"), "読むだけの理由にも: {reason}");
     assert!(s.message.contains("見た目の設定を読めません"), "状態の帯にも（通常のセットと同じ）: {}", s.message);
     assert!(s.set_doc(0).look().is_default());

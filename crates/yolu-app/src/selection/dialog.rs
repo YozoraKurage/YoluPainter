@@ -92,7 +92,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 lang.pick("端を固定", "Edge lock"),
                 dialog.edge_lock,
                 Some(lang.pick(
-                    "選択範囲が画布の外へ続くものとして扱う（縮小・境界線・ぼかしが画布の端から離れない）",
+                    "選択範囲がキャンバスの外へ続くものとして扱う（縮小・境界線・ぼかしがキャンバスの端から離れない）",
                     "Treat the selection as continuing past the canvas edge (Shrink, Border and Feather do not pull away from it)",
                 )),
                 true,

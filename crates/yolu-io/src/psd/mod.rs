@@ -111,7 +111,8 @@ impl Limits {
             max_metadata_bytes: usize::try_from(budget).unwrap_or(usize::MAX),
             max_name_code_units: 4096,
             max_diagnostics: 128,
-            max_group_depth: 128,
+            // 文書の入れ子の上限（core の編集・読み込みが守る）と同じ。これより深い文書は作れない
+            max_group_depth: yolu_core::MAX_GROUP_DEPTH,
         }
     }
     fn validate(&self) -> Result<()> {

@@ -311,6 +311,9 @@ pub struct YoluApp {
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（窓を作るときに 1 度）。
     pub fn setup(ctx: &egui::Context) {
+        // egui の既定は、Ctrl+-・Ctrl++・Ctrl+0 で画面全体（文字も部品も）の拡大率を変える。アプリのキーはこの組み合わせを
+        // キャンバスの拡大・縮小に使うので、同じキーで画面全体まで縮んで戻せなくなる。画面全体の拡大縮小は切る
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         t::apply(ctx);
         fonts::install(ctx);
         icons::install(ctx);

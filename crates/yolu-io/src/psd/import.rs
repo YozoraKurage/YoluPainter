@@ -187,6 +187,12 @@ pub enum CopyRefusal {
     BudgetExceeded { layer: String },
     /// 層 1 枚の付加情報（効果・スマートオブジェクトの中身など）が予算を超える。層の名前は読む前なので `#番号`。
     LayerDataTooLarge { layer: String },
+    /// 辺が .ylp の上限（`MAX_DOCUMENT_EDGE`）を超える。取り込めても保存できない文書になるので、予算を上げても取り込めない。
+    EdgeOverLimit { width: u32, height: u32, limit: u32 },
+    /// 層（グループも数える。区切りの記録は数えない）が .ylp の上限（`MAX_DOCUMENT_LAYERS`）を超える。予算を上げても取り込めない。
+    LayerCountOverLimit { count: usize, limit: usize },
+    /// グループの入れ子が上限（`yolu_core::MAX_GROUP_DEPTH`）を超える。合成の再帰がスタックを使い切るので、予算を上げても取り込めない。
+    NestingTooDeep { limit: usize },
 }
 impl CopyRefusal {
     /// 日本語の診断（試験・ログ用）。
@@ -210,6 +216,15 @@ impl CopyRefusal {
             }
             Self::LayerDataTooLarge { layer } => {
                 format!("レイヤー「{layer}」の付加情報が大きすぎます")
+            }
+            Self::EdgeOverLimit { width, height, limit } => {
+                format!("キャンバスが大きすぎます（{width}×{height}、上限 {limit}）")
+            }
+            Self::LayerCountOverLimit { count, limit } => {
+                format!("レイヤーが多すぎます（{count} 枚、保存できるのは {limit} 枚まで）")
+            }
+            Self::NestingTooDeep { limit } => {
+                format!("グループの入れ子が深すぎます（上限 {limit} 段）")
             }
         }
     }
@@ -740,7 +755,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         max_metadata_bytes: usize::MAX,
         max_name_code_units: 4096,
         max_diagnostics: 128,
-        max_group_depth: 1000,
+        max_group_depth: yolu_core::MAX_GROUP_DEPTH,
     };
     let mut s = State {
         limits: &limits,
@@ -788,6 +803,14 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     // RGB 8 bit。アルファチャンネル（選択範囲など）で 4 チャンネルを超えるものも、統合画像の追加チャンネルとして読み飛ばして取り込む
     if depth != 8 || mode != 3 || channels < 3 {
         return Err(Stop::Refused(CopyRefusal::ColorFormat { depth, mode }));
+    }
+    // .ylp に保存できない大きさは、取り込んだあとで保存だけが止まる文書になる。予算とは別の上限なので、読む前に断る
+    if width > crate::MAX_DOCUMENT_EDGE || height > crate::MAX_DOCUMENT_EDGE {
+        return Err(Stop::Refused(CopyRefusal::EdgeOverLimit {
+            width,
+            height,
+            limit: crate::MAX_DOCUMENT_EDGE,
+        }));
     }
     let canvas_bytes = u64::from(width) * u64::from(height) * 4;
     if canvas_bytes > o.source_budget {
@@ -931,7 +954,9 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         match p.rec.section {
             3 => {
                 if open.len() >= limits.max_group_depth {
-                    return malformed("グループ深さの予算超過");
+                    return Err(Stop::Refused(CopyRefusal::NestingTooDeep {
+                        limit: limits.max_group_depth,
+                    }));
                 }
                 open.push((Vec::new(), p.rec.layer.id))
             }
@@ -966,6 +991,13 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     }
     if !open.is_empty() {
         return malformed("閉じていないグループ区切り");
+    }
+    // 文書の層の数（区切りの記録と、落とした層を除く）。.ylp に書ける数を超えれば、画素を読む前に断る
+    if items.len() > crate::MAX_DOCUMENT_LAYERS {
+        return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
+            count: items.len(),
+            limit: crate::MAX_DOCUMENT_LAYERS,
+        }));
     }
 
     // 層 ID: 欠落・重複・不正だけに新しい ID を振る（名前では補修しない）。

@@ -39,7 +39,7 @@ pub const MAX_POSE_HISTORY: usize = 256;
 pub enum PoseAction {
     /// ファイルを選ぶ窓を頼む（選ばれたら FBX を開く）。
     OpenFbx,
-    /// 試しの人形を読む。
+    /// 試しの人形を読む（試験の口。メニューには置かない）。
     LoadFigure,
     /// ポーズのモード（ギズモ）を入れる・切る。
     ToggleMode,

@@ -863,6 +863,9 @@ impl LiveLink {
                 if !report.unmatched.is_empty() {
                     text += &state.lang.pick(format!(" モデルに無いセット: {}。", report.unmatched.join("・")), format!(" Sets not in this model: {}.", report.unmatched.join(", ")));
                 }
+                if let Some(t) = report.limit_text(state.lang) {
+                    text += &format!(" {t}");
+                }
                 self.notify(NoticeLevel::Info, text, state);
             }
             Message::Pose(pose) => {

@@ -252,25 +252,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            Entry::item(
-                l.pick(
-                    "3D ビューに試しの立方体を読む",
-                    "Load a Test Cube in the 3D View",
-                ),
-                Action::LoadDemoModel,
-            )
-            .enabled(free),
+            // 試しの立方体・人形は試験の口（`Action::LoadDemoModel`・`PoseAction::LoadFigure`）で、メニューには置かない
             Entry::item(
                 l.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…"),
                 Action::Pose(PoseAction::OpenFbx),
-            )
-            .enabled(free),
-            Entry::item(
-                l.pick(
-                    "3D ビューに試しの人形を読む",
-                    "Load a Test Figure in the 3D View",
-                ),
-                Action::Pose(PoseAction::LoadFigure),
             )
             .enabled(free),
             Entry::item(

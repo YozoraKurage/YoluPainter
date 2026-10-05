@@ -14,6 +14,12 @@ pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
         Some("A document exceeds the Layer pixels budget")
     } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
         Some("The whole exceeds the Layer pixels budget")
+    } else if text.contains("グループの入れ子の上限") {
+        Some("Groups are nested too deeply")
+    } else if text.contains("キャンバスの辺の上限") {
+        Some("The canvas edge exceeds the limit (8192)")
+    } else if text.contains("レイヤーの数の上限") {
+        Some("Too many layers (limit 2048)")
     } else {
         None
     }
@@ -244,7 +250,7 @@ impl Lang {
                 if more > 0 {
                     text += &format!(" ほか {more} 件");
                 }
-                format!("core で扱えない中身（{text}）")
+                format!("編集に対応していない中身（{text}）")
             }
             Self::En => {
                 let mut text = shown.join(", ");
@@ -361,9 +367,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "グループには描けない" => "Cannot paint a group",
         "グループの中身が続いていない" => "Group children are not contiguous",
         "グループの入れ子が輪になっている" => "Cyclic group hierarchy",
+        "グループの入れ子が深すぎる" => "Group nesting is too deep",
         "グループを自分の中へは入れられない" => "Cannot move a group into itself",
-        "ステンシルに画布からの写しが無いので、2D のダブは読めない" => "Missing canvas-to-stencil transform for 2D dabs",
-        "ステンシルに画布からの写しが無い（画素ごとにステンシルの上の点を渡す）" => "Missing canvas-to-stencil transform",
+        "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない" => "Missing canvas-to-stencil transform for 2D dabs",
+        "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）" => "Missing canvas-to-stencil transform",
         "ステンシルの footprint" => "Stencil footprint",
         "ステンシルのミップマップが予算を超える（小さい画像にする）" => "Stencil mipmap budget exceeded",
         "ステンシルの点は画素ごとに 1 つ" => "Stencil point count must match pixel count",
@@ -372,9 +379,9 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
         "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => "Stencil buffer size must be width × height × 4 bytes",
         "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
-        "タイルが画布の外" => "Tile outside canvas",
+        "タイルがキャンバスの外" => "Tile outside canvas",
         "タイルのバイト数が違う" => "Invalid tile byte count",
-        "タイルの座標が画布の外" => "Tile coordinates outside canvas",
+        "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
         "タイルの長さ" => "Tile length",
         "チャンネルの名前" => "Channel name",
         "チャンネルは 64 まで" => "Maximum 64 channels",
@@ -426,10 +433,10 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "無いグループに入っている" => "Parent group not found",
         "無効のチャンネルには塗れない" => "Cannot fill a disabled channel",
         "無効のチャンネルには描けない" => "Cannot paint a disabled channel",
-        "画布の外の余白は 0 でなければならない" => "Padding outside canvas must be zero",
-        "画素が画布の外" => "Pixel outside canvas",
-        "矩形が画布の外" => "Rectangle outside canvas",
-        "種が画布の外" => "Seed outside canvas",
+        "キャンバスの外の余白は 0 でなければならない" => "Padding outside canvas must be zero",
+        "画素がキャンバスの外" => "Pixel outside canvas",
+        "矩形がキャンバスの外" => "Rectangle outside canvas",
+        "種がキャンバスの外" => "Seed outside canvas",
         "筆先の並び（1〜256 枚）" => "Brush tip sequence (1–256)",
         "筆先の大きさ（1〜2048）" => "Brush tip size (1–2048)",
         "筆先の覆いの長さが幅 × 高さでない" => "Brush tip coverage size must be width × height",
@@ -787,7 +794,7 @@ impl Lang {
             GeometryError::InvalidTolerance => self.pick("溶接の許しは正の値でなければなりません", "Weld tolerance must be positive"),
             GeometryError::TooManyTriangles => self.pick("三角形が多すぎます", "Too many triangles"),
             GeometryError::Canceled => self.pick("取り消しました", "Cancelled"),
-            GeometryError::Mismatch => self.pick("三角形の並びが元のスナップショットと違います", "Triangle order differs from the snapshot"),
+            GeometryError::Mismatch => self.pick("三角形の並びが元のモデルと違います", "Triangle order differs from the original model"),
         }
     }
 

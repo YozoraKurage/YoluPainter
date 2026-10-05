@@ -211,7 +211,7 @@ impl SelectionMask {
         };
         let (w, h, ts) = (doc.width(), doc.height(), doc.tile_size());
         if seed_x >= w || seed_y >= h {
-            return Err(CoreError::InvalidArgument("種が画布の外"));
+            return Err(CoreError::InvalidArgument("種がキャンバスの外"));
         }
         let reader = Reference {
             doc,
@@ -413,7 +413,7 @@ impl Reference<'_> {
         match self.layer {
             Some(l) => layer_tile(l, self.channel, w, h, ts, coord, out),
             None => {
-                let rect = self.doc.tile_rect(coord).expect("画布の中のタイル");
+                let rect = self.doc.tile_rect(coord).expect("キャンバスの中のタイル");
                 let mut region = vec![0u8; rect.width as usize * rect.height as usize * 4];
                 self.doc
                     .composite_into(self.channel, rect, &mut region, RowOrder::BottomUp)?;
@@ -450,7 +450,7 @@ fn layer_tile(
     match layer.kind() {
         LayerKind::Raster => {
             if let Some(s) = layer.surface(channel) {
-                s.copy_tile(coord, out).expect("画布の中のタイル");
+                s.copy_tile(coord, out).expect("キャンバスの中のタイル");
             }
         }
         LayerKind::Fill => {
@@ -491,7 +491,7 @@ where
             &mut band,
             RowOrder::BottomUp,
         )
-        .expect("画布の中の帯");
+        .expect("キャンバスの中の帯");
         let tiles: Vec<(TileCoord, Option<super::Amounts>)> = (0..w.div_ceil(ts))
             .into_par_iter()
             .map(|tx| {

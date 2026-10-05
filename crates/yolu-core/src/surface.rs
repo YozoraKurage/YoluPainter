@@ -209,7 +209,7 @@ impl Surface {
     /// 画素（画布の外は Err）。無いタイルは透明。
     pub fn pixel(&self, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が画布の外"));
+            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         let ts = self.tile_size;
         Ok(match self.tiles.get(&TileCoord::new(x / ts, y / ts)) {
@@ -266,7 +266,7 @@ impl Surface {
         if (coord.x as u64) * (self.tile_size as u64) >= self.width as u64
             || (coord.y as u64) * (self.tile_size as u64) >= self.height as u64
         {
-            Err(CoreError::InvalidArgument("タイルの座標が画布の外"))
+            Err(CoreError::InvalidArgument("タイルの座標がキャンバスの外"))
         } else {
             Ok(())
         }
@@ -328,7 +328,7 @@ impl Surface {
                 let p = (y * ts + x) * 4;
                 if bytes[p..p + 4] != [0, 0, 0, 0] {
                     return Err(CoreError::InvalidArgument(
-                        "画布の外の余白は 0 でなければならない",
+                        "キャンバスの外の余白は 0 でなければならない",
                     ));
                 }
             }
@@ -351,7 +351,7 @@ impl Surface {
         growth: Growth,
     ) -> Result<bool, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が画布の外"));
+            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         let ts = self.tile_size;
         let coord = TileCoord::new(x / ts, y / ts);

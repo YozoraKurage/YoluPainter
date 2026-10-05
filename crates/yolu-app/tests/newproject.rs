@@ -1589,11 +1589,15 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     std::fs::remove_file(&model).unwrap();
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp.clone()));
+    // ファイルがあるかの確かめも別のスレッド（画面のスレッドは、遅い共有でも固まらないよう、モデルのファイルに触らない）
+    assert!(t.np.reopening.is_some() && t.model.is_none());
+    wait_reopen(&mut t);
     assert!(
         t.message.contains("モデルが見つかりません: c.fbx"),
         "{}",
         t.message
     );
+    assert!(t.message.starts_with("開きました"), "開いた知らせの後ろに続く: {}", t.message);
     assert!(t.np.reopening.is_none() && t.model.is_none());
     assert!(t.np.model_file.is_some(), "参照は残す");
     // 別の場所へ保存しても、参照は（その場所からの相対で）残る
@@ -1621,11 +1625,112 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     std::fs::remove_file(dir.join("c.fbx")).unwrap();
     let mut f = S::new_in(64, 64, Lang::En);
     f.apply(Action::OpenProject(dir.join("p.ylp")));
+    wait_reopen(&mut f);
     assert!(
         f.message.contains("Model not found: c.fbx"),
         "{}",
         f.message
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 保存した .ylp の view.json のモデルのパスを `stored` に書き換えた .ylp（別の名前で書く）。
+fn project_with_stored_model(dir: &Path, stored: &str) -> PathBuf {
+    let model = character(dir, "c.fbx");
+    let ylp = dir.join("p.ylp");
+    let mut s = project_from(&model, 512);
+    s.apply(Action::SaveProjectAs(ylp.clone()));
+    let edited = read_file(&ylp).with_view_model(Some(stored)).unwrap();
+    let out = dir.join("edited.ylp");
+    std::fs::write(&out, edited.to_bytes().unwrap()).unwrap();
+    out
+}
+
+#[test]
+fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_project_opens() {
+    // 細工した .ylp のモデルのパスが UNC でも、開くだけで外のホストへ触らない（Windows の認証を送らない・応答しない共有で固まらない）。
+    // 参照だけ残し、読み込みの仕事も（ファイルの確かめも）始めない
+    let dir = temp_dir("unc-open");
+    let stored = "//nas.invalid/share/models/c.fbx";
+    let ylp = project_with_stored_model(&dir, stored);
+    for (lang, text) in [
+        (Lang::Ja, "ネットワーク上のモデルは自動では読みません: c.fbx"),
+        (Lang::En, "Not reading the model on the network automatically: c.fbx"),
+    ] {
+        let mut t = S::new_in(64, 64, lang);
+        t.apply(Action::OpenProject(ylp.clone()));
+        assert!(t.np.reopening.is_none(), "確かめも読み込みも始めない");
+        assert!(t.model.is_none() && t.view3d.pose.session.is_none());
+        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(stored)), "参照は残す");
+        assert!(t.message.contains(text), "{}", t.message);
+        assert!(t.message.starts_with(lang.pick("開きました", "Opened")), "{}", t.message);
+        assert_eq!(t.sets.len(), 3, "セットは開く");
+    }
+    // 書き直しても参照は消えない（保存し直すと、同じ文字列が残る。UNC を相対に直さない。どの OS でも）
+    {
+        let mut t = S::new(64, 64);
+        t.apply(Action::OpenProject(ylp));
+        t.apply(Action::SaveProjectAs(dir.join("again.ylp")));
+        assert_eq!(read_file(&dir.join("again.ylp")).view_model().unwrap().as_deref(), Some(stored));
+    }
+    // バックスラッシュで書かれた UNC も、'/' 区切りの同じ参照として残る（OS によらず、別の相対のファイル名にならない）
+    {
+        let back = project_with_stored_model(&dir, "\\\\nas.invalid\\share\\models\\c.fbx");
+        let mut t = S::new(64, 64);
+        t.apply(Action::OpenProject(back));
+        t.apply(Action::SaveProjectAs(dir.join("again2.ylp")));
+        assert_eq!(read_file(&dir.join("again2.ylp")).view_model().unwrap().as_deref(), Some(stored));
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_model_reference_on_the_network_is_not_touched_by_a_new_project_window_either() {
+    // 開くときに参照だけ残したネットワークのパスを、そのあと「新規プロジェクト」を選んだだけで確かめたり読み始めたりしない。
+    // Unix では先頭が `//` のパスが同じ場所のローカルのファイルを指すので、ファイルがあっても読み始めないことまで確かめられる
+    let dir = temp_dir("unc-new");
+    let local = character(&dir, "c.fbx");
+    let mut unc = vec![String::from("//nas.invalid/share/models/c.fbx")];
+    if cfg!(unix) {
+        unc.push(format!("/{}", local.display()));
+    }
+    for stored in unc {
+        let ylp = project_with_stored_model(&dir, &stored);
+        let mut t = S::new(64, 64);
+        t.apply(Action::OpenProject(ylp));
+        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は残る");
+        assert!(t.np.reopening.is_none(), "{stored}");
+        np(&mut t, NpAction::OpenNew);
+        let win = t.np.window.as_ref().expect("窓は開く");
+        assert!(
+            !win.is_loading() && win.model_path().is_none() && matches!(win.prep, Prep::Idle),
+            "{stored}: ネットワークの参照を初めのモデルにして読み始めた"
+        );
+        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は消えない");
+    }
+    // 対照: 同じファイルをローカルの絶対のパスで参照していれば、新規の窓の初めのモデルとして読む
+    let ylp = project_with_stored_model(&dir, &local.to_string_lossy());
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(ylp));
+    wait_reopen(&mut t);
+    np(&mut t, NpAction::OpenNew);
+    assert!(
+        t.np.window.as_ref().unwrap().model_path().is_some(),
+        "ローカルのモデルは初めのモデルになる"
+    );
+    wait_model(&mut t);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_relative_or_local_model_reference_is_still_read_when_the_project_opens() {
+    let dir = temp_dir("rel-open");
+    let ylp = project_with_stored_model(&dir, "c.fbx");
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(ylp));
+    assert!(t.np.reopening.is_some(), "相対のパスは確かめて読む");
+    wait_reopen(&mut t);
+    assert_eq!(t.model.as_ref().unwrap().name, "c");
     let _ = std::fs::remove_dir_all(dir);
 }
 

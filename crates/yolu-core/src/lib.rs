@@ -82,7 +82,7 @@ pub use brush::{
 pub use document::{
     Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint,
     Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
-    DEFAULT_SOURCE_BUDGET_BYTES,
+    DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
     LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
     PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };

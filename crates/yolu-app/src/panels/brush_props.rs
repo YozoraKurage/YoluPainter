@@ -765,7 +765,7 @@ fn texture_fields(
                 tip(
                     off,
                     lang.pick(
-                        "質感 1 画素あたりの画布の画素",
+                        "質感 1 画素あたりのキャンバスの画素",
                         "Canvas pixels per texture pixel",
                     ),
                 ),

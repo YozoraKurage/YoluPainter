@@ -331,7 +331,7 @@ pub fn compute(
         || sx >= w as f64
         || sy >= h as f64
     {
-        return Err(CoreError::InvalidArgument("種が画布の外"));
+        return Err(CoreError::InvalidArgument("種がキャンバスの外"));
     }
     let mut output = vec![0; n];
     let mut visited = vec![false; n];
@@ -510,7 +510,7 @@ mod review_tests {
         );
         assert!(
             comparisons <= 64 * 97 * 97,
-            "576 個の囲みで色比較 {comparisons} 回: 全画布の反復をしない"
+            "576 個の囲みで色比較 {comparisons} 回: 全キャンバスの反復をしない"
         );
     }
     #[test]

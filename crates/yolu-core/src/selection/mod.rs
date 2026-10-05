@@ -319,7 +319,7 @@ impl SelectionMask {
             return Err(CoreError::InvalidArgument("タイルの長さ"));
         }
         if coord.x >= self.0.width.div_ceil(ts) || coord.y >= self.0.height.div_ceil(ts) {
-            return Err(CoreError::InvalidArgument("タイルが画布の外"));
+            return Err(CoreError::InvalidArgument("タイルがキャンバスの外"));
         }
         Ok(self.copy_amounts(coord, out))
     }

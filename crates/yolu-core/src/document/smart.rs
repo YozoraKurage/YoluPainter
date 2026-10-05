@@ -143,6 +143,10 @@ impl Document {
         if self.layers.len() + material.layers.len() + usize::from(wrap) > 2048 {
             return Err(CoreError::InvalidArgument("層は2048個までです"));
         }
+        self.ensure_nesting_room(
+            placement.parent,
+            super::structure::group_chain_height(&material.layers) + usize::from(wrap),
+        )?;
         let siblings: Vec<_> = self
             .layers
             .iter()
@@ -304,7 +308,7 @@ impl Document {
             for l in &mut layers {
                 if l.path.take().is_some() {
                     notes.push(format!(
-                        "「{}」のパスは画素だけになりました（点は元の画布の大きさのもの）",
+                        "「{}」のパスは画素だけになりました（点は元のキャンバスの大きさのもの）",
                         l.name
                     ));
                 }

@@ -413,6 +413,25 @@ pub(crate) fn version_of(doc: &Document) -> i32 {
         USER_CHANNELS_VERSION
     }
 }
+/// .ylp の正本（テクスチャセット 1 枚の文書）の辺の上限（画素）。読み手も書き手も同じ値。PSD などの取り込みは、保存できない大きさの
+/// 文書を作らないよう、この値で断る。
+pub const MAX_DOCUMENT_EDGE: u32 = 8192;
+/// .ylp の正本の層の数の上限（グループも数える）。
+pub const MAX_DOCUMENT_LAYERS: usize = 2048;
+
+/// 層の入れ子が `yolu_core::MAX_GROUP_DEPTH` 以内か（1 回なめる）。
+fn nesting_within_limit(doc: &Document) -> bool {
+    let mut depth: HashMap<LayerId, usize> = HashMap::with_capacity(doc.layers().len());
+    for l in doc.layers().iter().rev() {
+        let d = l.parent().map_or(0, |p| depth.get(&p).map_or(0, |d| d + 1));
+        if l.is_group() && d >= yolu_core::MAX_GROUP_DEPTH {
+            return false;
+        }
+        depth.insert(l.id(), d);
+    }
+    true
+}
+
 /// 書く前の確かめ（`from_core` と、流して書く正本の両方）。
 pub(crate) fn check_writable(doc: &Document) -> Result<()> {
     check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
@@ -421,14 +440,21 @@ pub(crate) fn check_writable(doc: &Document) -> Result<()> {
         return Err(Error::Unwritable(Unwritable::ManualIdColors));
     }
     check_budget(
-        doc.width() <= 8192 && doc.height() <= 8192,
-        "正本の寸法の上限は8192です",
+        doc.width() <= MAX_DOCUMENT_EDGE && doc.height() <= MAX_DOCUMENT_EDGE,
+        "キャンバスの辺の上限は8192です",
     )?;
     check(
         (8..=512).contains(&doc.tile_size()) && doc.tile_size().is_power_of_two(),
         "正本のタイル寸法は8〜512の2の累乗です",
     )?;
-    check_budget(doc.layers().len() <= 2048, "正本の層数の上限は2048です")
+    check_budget(
+        doc.layers().len() <= MAX_DOCUMENT_LAYERS,
+        "レイヤーの数の上限は2048です",
+    )?;
+    check_budget(
+        nesting_within_limit(doc),
+        format!("グループの入れ子の上限は{}段です", yolu_core::MAX_GROUP_DEPTH),
+    )
 }
 /// 文書を正本の並び（中の版 `version`。C# の `DocumentBinary.Write` と同じ並び）で `sink` へ書く。層の始まりごとに `Sink::layer` を呼ぶ。
 pub(crate) fn write_document(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {

@@ -78,10 +78,12 @@ impl ProjectFile {
     }
 }
 
-/// .ylp の ylp.json に書く書き手（Unity の版の欄はスタンドアロンなので "standalone"）。
+/// .ylp の ylp.json に書く書き手（Unity の版の欄はスタンドアロンなので "standalone"）。名前は Unity 版と同じ "YoluPainter"
+/// （読み手は名前を見ない。Unity 版は 1〜256 文字の文字列として読み、版の新しさを断るときの文に書き手として出すだけ。
+/// Unity 版かスタンドアロン版かは Unity の版の欄で分かる）。以前の版は内部の名前 "YoluPainter-rs" を書いていたが、読み手はどちらも受ける。
 pub fn writer() -> WriterInfo {
     WriterInfo {
-        app: "YoluPainter-rs".into(),
+        app: "YoluPainter".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         unity: "standalone".into(),
     }
@@ -97,7 +99,7 @@ pub(crate) fn to_core(native: &SetDocument, lang: Lang, source_budget: u64) -> R
     // 効果の入力（焼いたメッシュマップ・モデルのルート・画像）は開いたあとに文書へ渡す（`fx::inputs`）。入力がそろわない効果を持つセットは、
     // そのとき読むだけにして足りない入力を言う（`AppState::lock_sets_missing_inputs`）。入力がそろえば編集できる
     native.to_core_within(Some(source_budget)).map_err(|e| {
-        format!("{}: {}", lang.pick("core の文書にできません", "Cannot convert to a core document"), lang.io_error(&e))
+        format!("{}: {}", lang.pick("編集用に開けません", "Cannot open for editing"), lang.io_error(&e))
     })
 }
 
@@ -125,7 +127,7 @@ pub(crate) fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang
         return (
             blank(),
             Some(lang.pick(format!(
-                "保存した合成の絵の大きさ {}×{} が正本の {width}×{height} と違う",
+                "保存した合成の絵の大きさ {}×{} が文書の {width}×{height} と違う",
                 image.width(),
                 image.height()
             ), format!(
@@ -212,7 +214,7 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
             .into_iter()
             .map(|h| {
                 h.join()
-                    .unwrap_or_else(|_| Err(lang.pick("正本を読む途中で止まりました", "Reading the document stopped").into()))
+                    .unwrap_or_else(|_| Err(lang.pick("文書を読む途中で止まりました", "Reading the document stopped").into()))
             })
             .collect()
     });
@@ -314,15 +316,11 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
             state.modified = false;
-            state.lang.pick(format!(
-                "開きました: {}（形式 {}・テクスチャセット {count}）。",
-                path.display(),
-                project.info().format
-            ), format!(
-                "Opened: {} (format {} · {count} texture sets).",
-                path.display(),
-                project.info().format
-            ))
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            state.lang.pick(format!("開きました: {name}。"), format!("Opened: {name}."))
         }
         None => {
             state.project_name = crate::recovery::recovered_name(state.lang).into();
@@ -502,7 +500,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         let unchanged = set.saved == Some((doc.id(), doc.revision()));
         if set.read_only.is_some() && !in_base {
             return Err(state.lang.pick(format!(
-                "読むだけのセット「{}」の元の正本がありません",
+                "読むだけのセット「{}」の元の文書がありません",
                 set.name
             ), format!(
                 "Original document missing for read-only set “{}”",
@@ -518,7 +516,7 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
                 .map_err(yolu_io::Error::from)
                 .and_then(|snapshot| DocumentSource::from_core(std::sync::Arc::new(snapshot)))
                 .map_err(|e| {
-                    let what = state.lang.pick(format!("セット「{}」を正本にできません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
+                    let what = state.lang.pick(format!("セット「{}」の文書を作れません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
                     format!("{what}: {}", state.lang.io_error(&e))
                 })?;
             let pngs = composite_pngs(doc).map_err(|e| {
@@ -672,17 +670,12 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
-    let mut text = state.lang.pick(format!(
-        "保存しました: {}（形式 7・テクスチャセット {}・書き直した正本 {}）。",
-        path.display(),
-        state.sets.len(),
-        written.len()
-    ), format!(
-        "Saved: {} (format 7 · {} texture sets · {} updated documents).",
-        path.display(),
-        state.sets.len(),
-        written.len()
-    ));
+    state.rewritten_sets = written.len();
+    let file = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let mut text = state.lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
     if map_total > 0 {
         text += &state.lang.pick(
             format!(" メッシュマップ {map_total} 枚を書きました。"),
@@ -864,9 +857,9 @@ mod tests {
         assert_eq!(to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes).unwrap().allocated_bytes(), bytes);
         // 1 バイト足りなければ、壊れたファイルではなく予算として断る（日英）
         let ja = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes - 1).err().expect("断る");
-        assert!(ja.starts_with("core の文書にできません") && ja.contains("予算"), "{ja}");
+        assert!(ja.starts_with("編集用に開けません") && ja.contains("予算"), "{ja}");
         let en = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::En, bytes - 1).err().expect("断る");
-        assert_eq!(en, "Cannot convert to a core document: Size, count or memory limit exceeded");
+        assert_eq!(en, "Cannot open for editing: Size, count or memory limit exceeded");
         // 開く: 予算に収まれば編集できるセット、収まらなければ読むだけのセット（理由つき）。どちらも元のファイルは変えない
         let mut opened = AppState::new(64, 64);
         open_within(&mut opened, &path, bytes);

@@ -817,7 +817,7 @@ impl Project {
             files.insert("project.json".into(), Blob::from(serde_json::to_vec(&root)?));
             notes.push(Note::MaterialRefsMigrated { format: info.format });
         }
-        let list = array(&root, "sets", 1, 64)?;
+        let list = array(&root, "sets", 1, MAX_PROJECT_SETS)?;
         let current = id_text(&root, "current")?.to_string();
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
@@ -897,6 +897,8 @@ impl Project {
 }
 /// view.json に残すモデルのパスの長さの上限（UTF-16 の数。ファイルのパスの実用の上限に合わせる）。
 pub const MODEL_PATH_MAX: usize = 1024;
+/// 1 つの .ylp に入れられるテクスチャセットの数の上限（読み手が断る数）。
+pub const MAX_PROJECT_SETS: usize = 64;
 /// view.json の読み込み（Unity 版の予算 256 KiB と同じ。オブジェクトでなければ断る）。ここは状態のエントリなので、正本の
 /// JSON の厳しい検査（`json`。文字列は 1024 文字まで）は使わない: Unity 版の表示の状態は長い鍵を持てる。
 pub(crate) fn read_view(bytes: &[u8]) -> Result<Value> {

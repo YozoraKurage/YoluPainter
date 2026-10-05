@@ -1192,7 +1192,7 @@ impl StrokeState {
             .is_some_and(|st| st.canvas_to_image().is_none())
         {
             return Err(CoreError::Unsupported(
-                "ステンシルに画布からの写しが無いので、2D のダブは読めない",
+                "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない",
             ));
         }
         let frame = match self.prepare_dab(
@@ -2227,7 +2227,7 @@ fn apply_at<const SIMPLE: bool>(
                             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
                             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
                             stencil.sample_canvas(px, py).ok_or(CoreError::Unsupported(
-                                "ステンシルに画布からの写しが無い（画素ごとにステンシルの上の点を渡す）",
+                                "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）",
                             ))?
                         }
                     };

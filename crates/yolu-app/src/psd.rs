@@ -39,7 +39,9 @@ use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
 use crate::state::{AppState, DialogRequest};
 
-/// 書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（書き出しは 128 段まで）の再帰に足りる大きさ。
+/// 取り込み・書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（文書は `MAX_GROUP_DEPTH` 段まで。取り込みは統合画像と
+/// 照らすために合成し、書き出しは計画で再帰する）の再帰に足りる大きさ（合成の実測は `MAX_GROUP_DEPTH` の説明: 64 段は Linux で 320KB。
+/// 計画・書き込みの再帰は測っていない。8MiB は標準の 2MiB より大きく取った余裕）。
 const PSD_THREAD_STACK: usize = 8 * 1024 * 1024;
 
 /// 読み込んだ PSD の行き先。
@@ -656,6 +658,11 @@ impl AppState {
                 return;
             }
         }
+        // 新しいセットとして足す PSD は、セットの数の上限に当たっているなら、読み始める前に断る
+        if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
+            self.message = crate::newproject::limit_error(lang);
+            return;
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
         let (flag, path_owned) = (cancel.clone(), path.to_path_buf());
@@ -664,6 +671,7 @@ impl AppState {
         let budget = self.load_source_bytes();
         let spawned = std::thread::Builder::new()
             .name("yolu-psd-import".into())
+            .stack_size(PSD_THREAD_STACK)
             .spawn(move || {
                 if park {
                     crate::windows::park_until_canceled(&flag);
@@ -1038,6 +1046,12 @@ impl AppState {
                 );
                 return;
             }
+        }
+        // 読んでいる間にセットが増えて上限に当たったら、入れない（読み始める前の確かめと同じ理由）
+        if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
+            self.psd.imported.pop();
+            self.message = crate::newproject::limit_error(lang);
+            return;
         }
         let layers = doc.layers().len();
         let switched = self.install_psd(doc, target, file);
@@ -3255,7 +3269,7 @@ mod tests {
     }
 
     #[test]
-    fn a_canvas_over_the_budget_is_refused_with_the_reason_and_the_hint_and_changes_nothing() {
+    fn a_canvas_over_a_limit_is_refused_with_the_reason_and_the_hint_where_the_budget_helps_and_changes_nothing() {
         let dir = Dir::new("budget");
         let mut s = AppState::new(32, 32);
         // 層の画素の予算（設定の「レイヤーの画素」）を下げる。読み込みは 256 MiB を下回らない
@@ -3275,7 +3289,7 @@ mod tests {
         s.wait_psd();
         assert!(!s.message.contains("MiB"), "{}", s.message);
         assert!(s.psd.report.take().is_some_and(|r| !r.ok));
-        // 読み込みのキャンバスが予算を超える（幅・高さを書き換えたファイル）
+        // 読み込みのキャンバスが .ylp の辺の上限を超える（幅・高さを書き換えたファイル）
         let mut wide = {
             let projected = psd::Document::from_core(&painted().doc).unwrap();
             psd::write(&projected, &Limits::default()).unwrap()
@@ -3292,14 +3306,9 @@ mod tests {
         let report = s.psd.report.take().expect("理由の窓");
         assert!(!report.ok && report.importing);
         assert!(report.lines[0].warning && report.lines[0].text.contains("9000×9000"));
-        assert!(
-            report.lines[0]
-                .tooltip
-                .as_deref()
-                .is_some_and(|t| t.contains("レイヤーの画素")),
-            "設定で上げられることはツールチップで: {:?}",
-            report.lines[0].tooltip
-        );
+        // 辺が .ylp の上限（8192）を超える: 設定の予算を上げても取り込めないので、予算の案内は出さない
+        assert!(report.lines[0].text.contains("8192"), "{}", report.lines[0].text);
+        assert!(report.lines[0].tooltip.is_none(), "{:?}", report.lines[0].tooltip);
         assert_eq!((s.sets.len(), s.doc.id(), s.modified), before);
         // 英語
         s.lang = Lang::En;
@@ -3310,7 +3319,8 @@ mod tests {
         s.wait_psd();
         assert!(s.message.contains("Canvas too large"), "{}", s.message);
         let report = s.psd.report.take().unwrap();
-        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer pixels"));
+        assert!(report.lines[0].text.contains("limit 8192"), "{}", report.lines[0].text);
+        assert!(report.lines[0].tooltip.is_none());
         // 書き出しのキャンバス（設定の予算 256 MiB に入らない 9000²）: 何も作らず、一時ファイルも作らない。理由は日英で、設定で上げられることはツールチップで
         let mut big = AppState::new(9000, 9000);
         big.prefs.settings.source_budget = crate::settings::Budget::Mib(256);

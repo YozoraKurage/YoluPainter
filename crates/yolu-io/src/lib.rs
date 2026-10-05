@@ -5,6 +5,7 @@ pub use bigdoc::{DocumentSource, SetDocument};
 pub mod brushes;
 mod composite_png;
 mod core_bridge;
+pub use core_bridge::{MAX_DOCUMENT_EDGE, MAX_DOCUMENT_LAYERS};
 mod distribution;
 pub mod export;
 mod generation;
@@ -29,7 +30,7 @@ pub use native::{
 pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
-    MODEL_PATH_MAX,
+    MAX_PROJECT_SETS, MODEL_PATH_MAX,
 };
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,

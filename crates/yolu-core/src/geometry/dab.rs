@@ -100,13 +100,13 @@ impl DabRefusal {
 impl std::fmt::Display for DabRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            DabRefusal::SnapshotChanged => "モデルのスナップショットが変わりました。描き直してください",
+            DabRefusal::SnapshotChanged => "モデルが変わりました。描き直してください",
             DabRefusal::InvalidArguments => "ブラシの大きさ・解像度・カメラが範囲外です",
-            DabRefusal::BindingMismatch => "当たった面がスナップショットと合いません",
-            DabRefusal::TriangleBudget => "ダブが辿る三角形の上限を超えたので、ストロークを取り消しました。ブラシを小さくしてください",
-            DabRefusal::PixelBudget => "ダブの画素の上限を超えたので、ストロークを取り消しました。ブラシを小さくするか、文書を小さくしてください",
-            DabRefusal::VisibilityBudget => "ダブの見え方を調べるレイの上限を超えたので、ストロークを取り消しました。ブラシを小さくしてください",
-            DabRefusal::BvhBudget => "見え方を調べる仕事の上限を超えたので、ストロークを取り消しました。ブラシを小さくするか、重なった面を減らしてください",
+            DabRefusal::BindingMismatch => "当たった面がモデルと合いません",
+            DabRefusal::TriangleBudget => "ブラシが広すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
+            DabRefusal::PixelBudget => "ブラシが大きすぎるので、ストロークを取り消しました。ブラシを小さくするか、文書を小さくしてください",
+            DabRefusal::VisibilityBudget => "見え方の確認が多すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
+            DabRefusal::BvhBudget => "見え方の確認が重すぎるので、ストロークを取り消しました。ブラシを小さくするか、重なった面を減らしてください",
         })
     }
 }

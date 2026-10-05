@@ -822,7 +822,7 @@ mod tests {
         let open_reason = refused.read_only_reason().expect("開くときも断る").to_owned();
         assert!(!a.unlock_set(0, None, false, bytes - 1));
         let reason = a.read_only_reason().expect("読むだけのまま").to_owned();
-        assert!(reason.starts_with("core の文書にできません") && reason.contains("予算"), "{reason}");
+        assert!(reason.starts_with("編集用に開けません") && reason.contains("予算"), "{reason}");
         assert!(open_reason.starts_with(&reason), "開くときと同じ断りの文: {open_reason}");
         assert!(a.message.contains("編集できません") && a.message.contains("予算"), "{}", a.message);
         assert!(a.sets.current().waiting_inputs, "予算を上げれば試せる");

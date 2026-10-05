@@ -958,7 +958,7 @@ fn headless_a_read_only_set_without_its_original_document_refuses_the_copy_in_bo
     s.apply(Action::Distribute(DistributeAction::Start));
     assert_eq!(
         s.message,
-        "配布用に保存できません: 読むだけのセット「Preview」の元の正本がありません"
+        "配布用に保存できません: 読むだけのセット「Preview」の元の文書がありません"
     );
     assert!(!s.distribute.is_open() && !s.distribute.is_busy());
     s.lang = Lang::En;

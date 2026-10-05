@@ -268,7 +268,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             let why = match why {
                 Unchecked::NoComposite => lang.pick("統合画像なし", "no merged image"),
                 Unchecked::Unreadable => lang.pick("統合画像を読めない", "merged image unreadable"),
-                Unchecked::Budget => lang.pick("画布が大きい", "canvas too large"),
+                Unchecked::Budget => lang.pick("キャンバスが大きい", "canvas too large"),
             };
             lang.pick(
                 format!("統合画像との照合を省略（{why}）"),
@@ -472,6 +472,18 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
         CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
             format!("「{layer}」の付加情報が大きすぎます"),
             format!("\"{layer}\" has too much extra data"),
+        ),
+        CopyRefusal::EdgeOverLimit { width, height, limit } => lang.pick(
+            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
+            format!("Canvas too large ({width}×{height}; limit {limit})"),
+        ),
+        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
+            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
+            format!("Too many layers ({count}; limit {limit})"),
+        ),
+        CopyRefusal::NestingTooDeep { limit } => lang.pick(
+            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
+            format!("Groups are nested too deeply (limit {limit})"),
         ),
     }
 }
@@ -703,6 +715,9 @@ mod tests {
             CopyRefusal::LayerTooLarge { layer: "L".into() },
             CopyRefusal::BudgetExceeded { layer: "L".into() },
             CopyRefusal::LayerDataTooLarge { layer: "L".into() },
+            CopyRefusal::EdgeOverLimit { width: 9000, height: 9000, limit: 8192 },
+            CopyRefusal::LayerCountOverLimit { count: 2100, limit: 2048 },
+            CopyRefusal::NestingTooDeep { limit: 64 },
         ];
         for why in &reasons {
             let en = refusal_text(Lang::En, why);
