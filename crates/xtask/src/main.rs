@@ -1,3 +1,5 @@
+mod preflight;
+
 use ed25519_dalek::{Signer, SigningKey};
 use semver::Version;
 use std::{
@@ -18,7 +20,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -58,6 +60,9 @@ fn main() {
 }
 fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     let command = value(&mut args)?;
+    if command == "preflight" {
+        return preflight::run(args);
+    }
     let mut target = None;
     let mut version = None;
     let mut assets = None;
@@ -337,10 +342,10 @@ fn require_sources(entries: &[(String, PathBuf)]) -> Result<()> {
     }
     Ok(())
 }
-/// アーカイブ・インストーラーに入れるファイル（名前 → 元）。許諾の全文の束もここで作る。
-fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
-    check_docs_listed(root)?;
-    run(python(root).args([
+/// 対象ごとの許諾の照合と全文の束の作成（`bundle`・`installer` と、事前確認 `preflight` が同じ命令を使う）。組まずに回る。
+fn third_party(root: &Path, target: &str) -> Command {
+    let mut command = python(root);
+    command.args([
         "tools/third-party.py",
         "--package",
         "yolu-app",
@@ -348,7 +353,13 @@ fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
         "--target",
         target,
         "--bundle",
-    ]))?;
+    ]);
+    command
+}
+/// アーカイブ・インストーラーに入れるファイル（名前 → 元）。許諾の全文の束もここで作る。
+fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
+    check_docs_listed(root)?;
+    run(&mut third_party(root, target))?;
     let license_dir = root
         .join("target/third-party")
         .join(target)

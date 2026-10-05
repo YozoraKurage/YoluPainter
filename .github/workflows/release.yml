@@ -19,6 +19,11 @@ on:
         required: true
         type: boolean
         default: false
+      rebuild:
+        description: CI の成果物を受け取らず、必ず組み直す
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: release
@@ -27,90 +32,88 @@ concurrency:
 permissions:
   contents: read
 
+# 配る物は、同じ木で全部のジョブが成功した main 向けの PR の CI（ci.yml）が組んだ成果物を受け取る（find）。受け取れなければ、同じ手順（dist-build.yml）で組む
+# （理由は実行の Summary に出る）。どちらの道でも、metadata 以降は同じ。docs/RELEASING.md に安全の筋と保証しないことを書く。
+# このワークフローはキャッシュを使わない（汚染されたキャッシュが配る物に入る道を作らない。tools/check-workflows.py が確かめる）。
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(inputs.linux && '[{"os":"windows-latest","target":"x86_64-pc-windows-msvc"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu"}]' || '[{"os":"windows-latest","target":"x86_64-pc-windows-msvc"}]') }}
-    runs-on: ${{ matrix.os }}
+  plan:
+    name: 対象と木
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      targets: ${{ steps.plan.outputs.targets }}
+      tree: ${{ steps.plan.outputs.tree }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - id: plan
+        run: python3 tools/dist.py plan --input linux=${{ inputs.linux }}
+
+  find:
+    name: CI の成果物を探す
+    needs: plan
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      promote: ${{ steps.find.outputs.promote }}
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          python-version: '3.12'
-      - name: Linux のビルド依存
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
-      - name: Rust を準備
-        run: rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
-      - run: rustup default stable
-      - name: NSIS を準備（Windows。runner に無ければ Chocolatey で 3.11.0 を入れ、どちらでも 3.11 であることを確かめる）
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $nsisDir = 'C:\Program Files (x86)\NSIS'
-          $found = Get-Command makensis -ErrorAction SilentlyContinue
-          if ($found) {
-            $makensis = $found.Source
-          } elseif (Test-Path "$nsisDir\makensis.exe") {
-            $makensis = "$nsisDir\makensis.exe"
-          } else {
-            choco install nsis --version=3.11.0 --no-progress -y
-            if ($LASTEXITCODE -ne 0) { throw 'NSIS 3.11.0 を入れられません' }
-            $makensis = "$nsisDir\makensis.exe"
-          }
-          # 配布物の作り方を変えないため、入っていた物でも入れた物でも、使うのは 3.11 だけ（版が違えば止める）
-          $version = (& $makensis /VERSION | Out-String).Trim()
-          Write-Host "makensis: ${makensis} (${version})"
-          if ($version -notmatch '^v3\.11(\.0)?$') { throw "NSIS は 3.11 が要ります（${makensis} は ${version}）" }
-          # 確かめた物を、あとの手順（cargo xtask installer）が使う
-          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: PDB の設定（Windows。クラッシュの記録の番地を、同じ版の関数名・行へ引くための付属物を作る）
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          # 行番号つきの PDB を、実行ファイルとは別のファイルに作る（命令は変えない）。PDB を確実に作るため、debug と strip を既定任せにしない
-          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
-      - name: ビルドと配布物の作成
+          persist-credentials: false
+      - id: find
         env:
-          PYTHON: python
-          # 公開鍵は秘密ではない。入っていればアプリに組み込まれ、更新の項目が出る
+          GH_TOKEN: ${{ github.token }}
           YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
-          REQUIRE_KEY: ${{ !inputs.dry-run && '--require-update-key' || '' }}
-        shell: bash
-        run: |
-          cargo xtask build --target ${{ matrix.target }} --release $REQUIRE_KEY
-          cargo xtask bundle --target ${{ matrix.target }}
-          if [ "$RUNNER_OS" = Windows ]; then
-            cargo xtask installer --target ${{ matrix.target }}
-            # PDB を Release の付属物（yolupainter-<版>-<対象>-pdb.zip）にする。更新の対象ではなく、署名つきの更新情報には載らない
-            cargo xtask symbols --target ${{ matrix.target }}
-          fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: bundle-${{ matrix.target }}
-          path: target/dist/*
-          if-no-files-found: error
-          retention-days: 7
+          TREE: ${{ needs.plan.outputs.tree }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
+          REBUILD: ${{ inputs.rebuild }}
+        run: >
+          python3 tools/dist.py find --repo "$GITHUB_REPOSITORY" --tree "$TREE" --targets "$TARGETS"
+          --work "$RUNNER_TEMP/found" --rebuild "$REBUILD"
+
+  build:
+    name: 組む
+    needs: [plan, find]
+    if: ${{ needs.find.outputs.promote != 'true' }}
+    uses: ./.github/workflows/dist-build.yml
+    with:
+      matrix: ${{ needs.plan.outputs.matrix }}
+      require-update-key: ${{ !inputs.dry-run }}
+      update-public-key: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+      retention-days: 7
 
   metadata:
-    needs: build
+    needs: [plan, find, build]
+    # 組みを飛ばした（受け取った）ときは build が skipped。組んで失敗したときは進めない。
+    if: ${{ !cancelled() && needs.find.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) }}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      # この実行で組んだ成果物
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: ${{ needs.find.outputs.promote != 'true' }}
         with:
-          pattern: bundle-*
-          path: target/dist
-          merge-multiple: true
+          pattern: dist-${{ needs.plan.outputs.tree }}-*
+          path: target/received
+      # CI から受け取る成果物（探す段が、同じ木・全部のジョブが成功・目録の SHA-256 を確かめた実行のもの）
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: ${{ needs.find.outputs.promote == 'true' }}
+        with:
+          pattern: dist-${{ needs.plan.outputs.tree }}-*
+          path: target/received
+          run-id: ${{ needs.find.outputs.run-id }}
+          github-token: ${{ github.token }}
       - run: rustup toolchain install stable --profile minimal --no-self-update
       - run: rustup default stable
       - name: 版の確認
@@ -130,6 +133,18 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('version=' + v + '\n')
           PY
+      # PR の CI の事前確認が見たのは、その PR の時点のタグ。CI から受け取る道でも、出す今、タグがまだ無いことと種類・版が合うことを確かめ直す。
+      - name: 版の事前確認（タグがまだ無い・種類と版が合う）
+        env:
+          RELEASE_KIND: ${{ inputs.kind }}
+        run: cargo xtask preflight --only version --kind "$RELEASE_KIND"
+      - name: 受け取った配る物の目録を確認して集める
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+          TARGETS: ${{ needs.plan.outputs.targets }}
+          VERSION: ${{ steps.version.outputs.version }}
+          YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+        run: python3 tools/dist.py install --received target/received --tree "$TREE" --targets "$TARGETS" --version "$VERSION" --out target/dist
       - name: 未署名の更新情報を確認
         env:
           VERSION: ${{ steps.version.outputs.version }}

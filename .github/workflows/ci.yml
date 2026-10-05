@@ -1,6 +1,7 @@
 name: CI
 
 # main は CI 必須の PR からしか変わらない（ruleset）。main への push では組み直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
+# 配る物は main 向けの PR の CI（下の dist）が組み、配布（release.yml）はその成果物を受け取る。
 on:
   pull_request:
   workflow_dispatch:
@@ -45,9 +46,12 @@ jobs:
             build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
-            xvfb xauth nsis
+            xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
+      - name: 配る物の道具の試験（tools/dist.py・tools/check-workflows.py）
+        if: ${{ !cancelled() }}
+        run: python3 tools/test-dist.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -120,6 +124,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      # 試し（Windows の runner ではまだ動かしていない）: target/ を Dev Drive（ReFS の VHDX。ウイルス対策の走査が非同期になる）に載せる。MIT。
+      # continue-on-error が守るのは、Dev Drive を作れなかったとき（通常のディスクで続ける）だけ。作れたあとに領域が足りなくなって試験の段が落ちるのは救わない。
+      # 大きさは action の README の推奨（公開 runner の空き約 15GB を下回らせる）に合わせた 12GB。VHDX は使った分だけ増える形（既定の Dynamic）。target/ の実測は無いので、
+      # 領域不足で落ちたら drive-path に空きの大きい C: の絶対パスを指定する。前後の実行時間を比べて、効かなければ外す。
+      # キャッシュより前に置く（キャッシュの復元と保存が Dev Drive の上で行われる）。
+      - name: Dev Drive を target/ に用意
+        continue-on-error: true
+        uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
+        with:
+          drive-size: 12GB
+          mount-path: target
       - name: Rust の準備
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
@@ -148,3 +163,30 @@ jobs:
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test recovery --locked headless_ -- --test-threads=1
+
+  # 配る物の組み。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
+  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、組み直さず受け取る。
+  dist-plan:
+    name: 配る物の組みの計画
+    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      # 対象は tools/dist-targets.json の「入力が要らない対象」だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
+      - id: plan
+        run: python3 tools/dist.py plan
+
+  dist:
+    name: 配る物の組み
+    needs: dist-plan
+    uses: ./.github/workflows/dist-build.yml
+    with:
+      matrix: ${{ needs.dist-plan.outputs.matrix }}
+      require-update-key: true
+      update-public-key: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+      retention-days: 14

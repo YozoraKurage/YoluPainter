@@ -14,10 +14,11 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 ## CI
 
-`.github/workflows/ci.yml` は `main` への push・`pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
+`.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度組むだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物の組み（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物を組む場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と `--test livelink headless_`・`--test brush_list headless_`・`--test update headless_`・`--test recovery headless_`（復旧の OS のロックと置換）。GPU・画面の統合試験は対象外です。
+- Windows の `target/` は、[samypr100/setup-dev-drive](https://github.com/samypr100/setup-dev-drive)（MIT）で作る Dev Drive（ReFS の VHDX）に載せています（試し。作れなければ通常のディスクで続けます。効果が無ければ外します）。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 `cargo fmt --check` は既存の `crates/yolu-core/src/geometry/query.rs` に整形差分があるため、まだ必須検査にしていません。コードの整形を別途済ませてから追加してください。
