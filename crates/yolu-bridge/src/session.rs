@@ -1357,6 +1357,43 @@ mod tests {
     }
 
     #[test]
+    fn values_fit_a_full_queue_only_by_replacing_the_pictures_of_their_own_material() {
+        // 満杯の列にある物が、同じ世代・マテリアルの送っていない絵なら、新しい値（「値なし」も）は、その絵を外した分で収まって積まれる
+        // （受け手は、値が「来る」と言った絵だけを値のあとに受ける。値で知らせていない絵は、値のあとでは断られる）。元の絵・別のマテリアルの絵は、
+        // 値に置き換えられないので、値は断られ、前に積んだ物は変わらない
+        let none = |material: u32| {
+            Message::MaterialValues(MaterialValues {
+                generation: 1,
+                material,
+                kind: ValuesKind::None,
+                shader: String::new(),
+                source: String::new(),
+                properties: Vec::new(),
+                keywords: Vec::new(),
+                slots: Vec::new(),
+            })
+        };
+        let full_of = |ballast: &Message| {
+            let s = open();
+            s.set_outbox_limit(frame_len(ballast) + 1);
+            assert!(s.try_enqueue(ballast).unwrap());
+            s
+        };
+        // 同じマテリアルの絵: 外して、値が積まれる
+        let s = full_of(&texture(1, 0, "_fill", 1000, 1));
+        assert!(s.try_enqueue(&none(0)).unwrap(), "置き換えて空いた分で収まる");
+        assert_eq!(kinds(&s), vec![Kind::MaterialValues]);
+        // 別のマテリアルの絵・同じマテリアルの元の絵: 置き換えられないので断る
+        for ballast in [texture(1, 1, "_fill", 1000, 1), original(1, 0, "_fill", OriginalState::Image, 1000, 1)] {
+            let s = full_of(&ballast);
+            let held = s.pending_bytes();
+            assert!(busy(s.try_enqueue(&none(0))), "{:?} は値に置き換えられない", ballast.kind());
+            assert_eq!(kinds(&s), vec![ballast.kind()], "断られても、前に積んだ物は残る");
+            assert_eq!(s.pending_bytes(), held);
+        }
+    }
+
+    #[test]
     fn an_original_with_pixels_replaces_older_originals_of_the_slot_but_a_status_does_not() {
         let s = open();
         assert!(s.try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 100, 1)).unwrap());
