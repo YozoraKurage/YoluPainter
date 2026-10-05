@@ -129,6 +129,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .shortcut("Ctrl+Shift+S")
                 .enabled(free),
+                Entry::item(
+                    l.pick("配布用に保存…", "Save for Distribution…"),
+                    Action::Distribute(crate::distribute::DistributeAction::Start),
+                )
+                .enabled(free && !app.distribute.is_open() && !app.distribute.is_busy()),
                 Entry::Separator,
                 Entry::item(
                     l.pick("プロジェクト設定…", "Project Configuration…"),

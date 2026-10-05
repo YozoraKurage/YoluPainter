@@ -509,6 +509,8 @@ pub enum Action {
     Export(crate::export::ExportAction),
     /// PSD の読み込みと書き出し。
     Psd(crate::psd::PsdAction),
+    /// 配布用に保存（除く物の窓・保存先・書き込み）。
+    Distribute(crate::distribute::DistributeAction),
     /// 新規プロジェクトの窓・プロジェクトの構成・テクスチャセットの足す・消す。
     Project(crate::newproject::NpAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
@@ -590,6 +592,7 @@ impl Action {
             Self::Bake(..) => "Bake",
             Self::Export(..) => "Export",
             Self::Psd(..) => "Psd",
+            Self::Distribute(..) => "Distribute",
             Self::Project(..) => "Project",
             Self::Update(..) => "Update",
             Self::Prefs(..) => "Prefs",
@@ -726,6 +729,8 @@ pub struct AppState {
     pub export: crate::export::ExportState,
     /// PSD の読み書き（結果・確かめ・走っている仕事）。
     pub psd: crate::psd::PsdState,
+    /// 配布用に保存（準備した写し・窓の選び・走っている仕事）。
+    pub distribute: crate::distribute::DistributeState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
@@ -794,6 +799,8 @@ pub enum DialogRequest {
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。
     PsdExport,
+    /// 配布用に保存の保存先を選ぶ。
+    DistributeSave,
     /// ステンシルの画像（PNG）を選ぶ。
     OpenStencil,
     /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT。複数）を選ぶ。
@@ -918,6 +925,7 @@ impl AppState {
             bake: Default::default(),
             export: Default::default(),
             psd: Default::default(),
+            distribute: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -1392,6 +1400,7 @@ impl AppState {
             Action::Bake(a) => self.bake_apply(a),
             Action::Export(a) => self.export_apply(a),
             Action::Psd(a) => self.psd_apply(a),
+            Action::Distribute(a) => self.distribute_apply(a),
             Action::Project(a) => self.np_apply(a),
             Action::Update(a) => self.update_apply(a),
             Action::Prefs(a) => self.prefs_apply(a),

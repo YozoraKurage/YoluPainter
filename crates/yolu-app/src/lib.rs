@@ -25,6 +25,7 @@ pub mod fillfx;
 pub mod gradient;
 pub mod keymap;
 pub mod layout;
+pub mod distribute;
 pub mod drafting;
 pub mod gesture;
 pub mod lang;

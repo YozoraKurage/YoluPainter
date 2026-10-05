@@ -262,7 +262,7 @@ fn origin(v: &Value) -> String {
         _=>"{ \"type\": \"none\" }".into()
     }
 }
-fn write_index(resources: &[Resource]) -> Result<Vec<u8>> {
+pub(crate) fn write_index(resources: &[Resource]) -> Result<Vec<u8>> {
     let mut s = String::from("{\n  \"resources\": [");
     for (i, r) in resources.iter().enumerate() {
         s.push_str(if i == 0 { "\n" } else { ",\n" });

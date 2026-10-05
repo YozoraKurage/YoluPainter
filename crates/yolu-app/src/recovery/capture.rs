@@ -43,6 +43,9 @@ pub(crate) struct Capture {
     pub current: String,
     /// 開いた・保存した時の中身（`ProjectFile` と共有する。複製しない）。無ければ新しいプロジェクト。
     pub base: Option<Arc<Project>>,
+    /// 開いたあとに文書を別の物に替えたセット（PSD を「今のセットへ」取り込み直した）。書き置きにも古い PSD の原本を持ち越さない
+    /// （復旧で開くと、書き置きが次の保存の元になるので、ここで除かないと保存で古い原本が戻る）。
+    pub replaced: Vec<String>,
     /// アセットの棚（変えていて読めるときだけ。変えていなければ開いたファイルのバイト列のまま）。
     pub shelf: Option<yolu_io::shelf::Shelf>,
     pub lang: Lang,
@@ -113,6 +116,16 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
             snapshot,
         });
     }
+    let replaced = crate::project::replaced_sets(
+        base.as_deref(),
+        // 読むだけのセットの文書は見せるだけの写しなので数えない（保存と同じ）
+        state
+            .sets
+            .iter()
+            .enumerate()
+            .filter(|(_, set)| set.read_only.is_none())
+            .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
+    );
     let project_path = match state.project.as_ref().filter(|p| p.is_file()) {
         Some(p) => p.path().display().to_string(),
         None => recovered_from.unwrap_or_default().to_owned(),
@@ -126,6 +139,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         sets,
         current: state.sets.current().id.clone(),
         base,
+        replaced,
         shelf,
         lang: state.lang,
         title,
@@ -168,6 +182,11 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         Some(base) => base.with_sets(writer, &specs, &capture.current)?,
         None => Project::create(writer, &specs, &capture.current)?,
     };
+    // 文書を替えたセットの古い PSD の原本は、保存（`project::save`）と同じく持ち越さない
+    let mut project = project;
+    for id in &capture.replaced {
+        project = project.without_imported_original(id)?;
+    }
     // 選択範囲（selection.bin）は正本と別のエントリ。取った写しのものを、違うセットだけ書き換える
     let selections: Vec<(&str, Option<&SelectionMask>)> = capture
         .sets

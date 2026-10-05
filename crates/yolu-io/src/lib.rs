@@ -3,6 +3,7 @@ mod archive;
 pub mod brushes;
 mod composite_png;
 mod core_bridge;
+mod distribution;
 pub mod export;
 mod generation;
 pub mod library;
@@ -18,6 +19,7 @@ pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
     PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
+pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
     MODEL_PATH_MAX,

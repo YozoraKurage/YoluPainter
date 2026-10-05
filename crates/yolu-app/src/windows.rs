@@ -246,6 +246,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.bake.is_probing_gpu()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.distribute.is_busy()
         || app.np_is_busy()
         || app.update.is_busy()
         || app.brushes.import.is_busy()
@@ -261,6 +262,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::psd_import::show_check(ctx, app);
     crate::psd_export::show_options(ctx, app);
     crate::psd_export::show_confirm(ctx, app);
+    crate::distribute::window::show(ctx, app);
+    crate::distribute::window::show_replace(ctx, app);
     psd_report(ctx, app);
     merge_confirm(ctx, app);
     crate::update::window::show(ctx, app);
@@ -275,6 +278,8 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.psd.options_open
         || app.psd.notes_confirm.is_some()
         || app.psd.import_check.is_some()
+        || app.distribute.window_visible()
+        || app.distribute.replace.is_some()
         || app.update.window_open()
         || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
         || app.np.window.is_some()
@@ -656,6 +661,23 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             canceling: p.canceling,
         });
     }
+    if let Some(p) = app.distribute.progress() {
+        entries.push(Entry {
+            id: "distribute",
+            text: format!(
+                "{} — {}",
+                if p.writing {
+                    lang.pick("配布用に保存中", "Saving for distribution")
+                } else {
+                    lang.pick("配布用の写しを準備中", "Preparing the copy for distribution")
+                },
+                p.file
+            ),
+            fraction: None,
+            cancel: Action::Distribute(crate::distribute::DistributeAction::CancelJob),
+            canceling: p.canceling,
+        });
+    }
     if let Some(p) = app.brushes.import.progress() {
         entries.push(Entry {
             id: "brush-import",
@@ -801,12 +823,14 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
     app.apply(Action::Psd(PsdAction::Cancel));
+    app.apply(Action::Distribute(crate::distribute::DistributeAction::CancelJob));
     app.apply(Action::Update(crate::update::UpdateAction::Cancel));
     app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
     let start = std::time::Instant::now();
     while (app.bake.is_baking()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.distribute.is_busy()
         || app.update.is_busy()
         || app.brushes.import.is_busy())
         && start.elapsed() < wait
@@ -814,6 +838,7 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
         app.poll_bake();
         app.poll_export();
         app.poll_psd();
+        app.poll_distribute();
         app.poll_update();
         app.poll_brush_import();
         std::thread::sleep(std::time::Duration::from_millis(10));

@@ -186,14 +186,14 @@ impl std::fmt::Display for Note {
 
 #[derive(Clone, Debug)]
 pub struct Project {
-    original: Archive,
-    files: Files,
+    pub(crate) original: Archive,
+    pub(crate) files: Files,
     info: FormatInfo,
-    sets: Vec<TextureSet>,
+    pub(crate) sets: Vec<TextureSet>,
     current: String,
-    resources: Vec<Resource>,
+    pub(crate) resources: Vec<Resource>,
     notes: Vec<Note>,
-    unknown: Vec<String>,
+    pub(crate) unknown: Vec<String>,
 }
 impl Project {
     pub fn read(bytes: &[u8]) -> Result<Self> {
@@ -856,7 +856,7 @@ impl Project {
 pub const MODEL_PATH_MAX: usize = 1024;
 /// view.json の読み込み（Unity 版の予算 256 KiB と同じ。オブジェクトでなければ断る）。ここは状態のエントリなので、正本の
 /// JSON の厳しい検査（`json`。文字列は 1024 文字まで）は使わない: Unity 版の表示の状態は長い鍵を持てる。
-fn read_view(bytes: &[u8]) -> Result<Value> {
+pub(crate) fn read_view(bytes: &[u8]) -> Result<Value> {
     check_budget(bytes.len() <= 262_144, "view.json のバイト予算超過です")?;
     let view: Value = serde_json::from_slice(bytes)?;
     check(view.is_object(), "view.json がオブジェクトではありません")?;
@@ -921,7 +921,7 @@ fn moves_into_set(n: &str) -> bool {
         || n.starts_with("composite/")
         || n.starts_with("meshmap-") && n.ends_with(".bin")
 }
-fn writer_json(w: &WriterInfo) -> Value {
+pub(crate) fn writer_json(w: &WriterInfo) -> Value {
     serde_json::json!({"app":w.app,"version":w.version,"unity":w.unity})
 }
 pub(crate) fn writer(v: &Value) -> Result<WriterInfo> {

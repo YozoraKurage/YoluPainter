@@ -799,6 +799,7 @@ impl YoluApp {
                         .apply(Action::Psd(crate::psd::PsdAction::Export(path)));
                 }
             }
+            Some(DialogRequest::DistributeSave) => crate::distribute::run_dialog(&mut self.state),
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
                 if let Some(path) = rfd::FileDialog::new()
@@ -1153,6 +1154,7 @@ impl YoluApp {
         self.state.poll_export();
         self.state.sync_budgets();
         self.state.poll_psd();
+        self.state.poll_distribute();
         self.state.poll_brush_import();
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
         self.state.sync_effects();

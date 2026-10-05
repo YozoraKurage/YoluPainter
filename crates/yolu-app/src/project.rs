@@ -11,7 +11,9 @@
 //!   正本に戻し（`from_core`。Color の合成の PNG も書く）、描いていないセット・読むだけのセット・知らないエントリは開いた時のバイト列の
 //!   まま残す。セットの並び・名前・マテリアルの鍵・今のセットは `with_sets`、ファイルが無かったプロジェクトは `create`。書くのは
 //!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に、設定の「退避を残す数」
-//!   （既定はすべて）だけ残す。開いた後に外で書き換えられていたら断る）。
+//!   （既定はすべて）だけ残す。開いた後に外で書き換えられていたら断る）。PSD を「今のセットへ」取り込み直して文書を替えたセットは、古い
+//!   PSD の原本（Unity 版が持つ `imported-original.psd`）を持ち越さない（新しい文書の原本ではない。前の版は退避に残る）。
+//!   配布用に作品の写しを書く「配布用に保存」は `distribute`。
 
 use std::path::{Path, PathBuf};
 
@@ -413,6 +415,21 @@ pub fn new_into(state: &mut AppState) {
     state.message = state.lang.pick("新しいプロジェクトを作りました。", "New project created.").into();
 }
 
+/// 開いた・保存した時のプロジェクト（`base`）から、文書を別の物に替えたセットの ID（セットの今の文書の ID が、`base` の同じセットの正本の
+/// 文書 ID と違うもの。PSD を「今のセットへ」取り込み直すと文書は新しい ID になる）。`sets` はセットの ID と今の文書の ID。保存と配布用の
+/// 写しが、古い PSD の原本（`imported-original.psd`）を持ち越さないために使う。
+pub(crate) fn replaced_sets<'a>(base: Option<&Project>, sets: impl Iterator<Item = (&'a str, u128)>) -> Vec<String> {
+    let Some(base) = base else { return Vec::new() };
+    sets.filter(|(id, doc)| {
+        base.sets()
+            .iter()
+            .find(|s| s.id == *id)
+            .is_some_and(|s| s.document.id() != crate::sets::guid_string(*doc))
+    })
+    .map(|(id, _)| id.to_owned())
+    .collect()
+}
+
 fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
@@ -499,6 +516,20 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         None => Project::create(writer(), &specs, &current),
     }
     .map_err(|e| state.lang.io_error(&e))?;
+    // 文書を別の物に替えたセット（PSD を「今のセットへ」取り込み直した）は、古い PSD の原本を持ち越さない（新しい文書の原本ではない）
+    let mut project = project;
+    for id in replaced_sets(
+        base,
+        // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
+        state
+            .sets
+            .iter()
+            .enumerate()
+            .filter(|(_, set)| set.read_only.is_none())
+            .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
+    ) {
+        project = project.without_imported_original(&id).map_err(|e| state.lang.io_error(&e))?;
+    }
     // 選択範囲（selection.bin）は正本と別のエントリ。読むだけのセットは元のまま、描けるセットは今の選択範囲と違えば書き換える
     let selections: Vec<(&str, Option<&crate::engine::SelectionMask>)> = state
         .sets
