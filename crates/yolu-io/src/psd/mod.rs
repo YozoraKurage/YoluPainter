@@ -15,11 +15,11 @@ pub use bake::{
 };
 pub use bridge::{Blocker, Refusal};
 pub use import::{
-    import_copy, CopyImport, CopyOptions, CopyOutcome, CopyRefusal, ImportAction, ImportDetail,
-    ImportFeature, ImportNote, Unchecked, ADJUSTMENT_TAG_KEYS,
+    import_copy, verify_stream, CopyImport, CopyOptions, CopyOutcome, CopyRefusal, ImportAction,
+    ImportDetail, ImportFeature, ImportNote, Unchecked, Verified, ADJUSTMENT_TAG_KEYS,
 };
 pub use read::{read, read_cancellable, read_stream};
-pub use write::{write, write_edited};
+pub use write::{write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompatibilityMode {
@@ -96,6 +96,24 @@ impl Default for Limits {
     }
 }
 impl Limits {
+    /// 書き出しの上限。設定の「レイヤーの画素」の予算 `budget`（バイト）から決める（取り込みの `CopyOptions` と同じ考え方）:
+    /// 層の記録の数は予算 1 MiB につき 1 件（256〜32767 件。グループの区切りも数える）、キャンバス・層 1 枚の画素は予算以内（辺は PSD の上限 30000）、
+    /// ファイルは PSD の上限 2 GiB。全層の画素の合計には上限が無い（流して書くので、メモリには層 1 枚ぶんしか持たない）。メモリに全層を組む書き出し
+    /// （Normal の焼き込み・平らの 1 枚）の合計だけは、書き出しの側が予算で止める。
+    pub fn for_export(budget: u64) -> Self {
+        Self {
+            max_source_bytes: i32::MAX as usize,
+            max_output_bytes: i32::MAX as usize,
+            max_dimension: write::MAX_SIDE,
+            max_canvas_pixels: (budget / 4).max(1),
+            max_layers: ((budget / (1024 * 1024)) as usize).clamp(256, 32767),
+            max_decoded_bytes: u64::MAX,
+            max_metadata_bytes: usize::try_from(budget).unwrap_or(usize::MAX),
+            max_name_code_units: 4096,
+            max_diagnostics: 128,
+            max_group_depth: 128,
+        }
+    }
     fn validate(&self) -> Result<()> {
         check(
             self.max_source_bytes >= 26

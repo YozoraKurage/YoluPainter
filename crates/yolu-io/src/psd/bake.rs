@@ -35,9 +35,14 @@ use super::bridge::{
     channel_label, core_adjustment, divider_part, layer_part, psd_adjustment, psd_locks, unique_id,
     Blocker, Refusal, PIXEL_BUDGET,
 };
+use super::write::{
+    MaskRegion, Region, StreamOptions, Supplied, XResult,
+};
 use super::*;
 use crate::{check, check_budget, Error, Result};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::io::{Seek, Write};
 use std::sync::atomic::AtomicBool;
 use yolu_core::curve::Curve;
 use yolu_core::generator::Ramp;
@@ -74,10 +79,28 @@ impl ExportOptions {
     }
 }
 
-/// 長い仕事の取消（立つと評価を止めて `Cancelled` で戻る。途中の結果は公開しない）。
+/// 書き出しを呼ぶ側の指定: 長い仕事の取消（立つと評価を止めて `Cancelled` で戻る。途中の結果は公開しない）と、書き出しに許す予算。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ExportControl<'a> {
     pub cancel: Option<&'a AtomicBool>,
+    /// 書き出しに許す層の画素のバイト数（設定の「レイヤーの画素」。取り込みの `CopyOptions::source_budget` と同じ値）。層の記録の数（予算 1 MiB につき 1 件）・
+    /// キャンバス・層 1 枚の画素の上限をここから決める（[`Limits::for_export`]）。`None` は C# の書き手と対の固定の上限（画素の合計 128 MiB と既定の
+    /// [`Limits`]。厳密な書き出し `from_core` はいつもこれ）。
+    pub source_budget: Option<u64>,
+    /// 書くファイルの大きさの上限（バイト）。既定と上限は PSD の 2 GiB で、それより小さい値だけ指定できる。
+    pub max_file_bytes: Option<u64>,
+}
+impl ExportControl<'_> {
+    pub(super) fn limits(&self) -> Limits {
+        match self.source_budget {
+            Some(budget) => Limits::for_export(budget),
+            None => Limits::default(),
+        }
+    }
+    /// 1 枚の作業の領域と、メモリに全層を組むときの画素の合計に許すバイト数。
+    pub(super) fn cap(&self) -> u64 {
+        self.source_budget.unwrap_or(PIXEL_BUDGET)
+    }
 }
 
 /// 塗りつぶしの画素が何から来るか（PSD の単色の塗りつぶしに形が無いもの）。
@@ -971,12 +994,16 @@ impl<'a> Tree<'a> {
 }
 
 /// 書き出しの前に、文書そのものが書き出せるか（ストロークの確定・チャンネルがある・画布・層の数の予算）を安く確かめる。計画・構築も同じ検査を
-/// 先頭で行う。
-pub fn check_exportable(d: &CoreDocument, channel: Channel) -> Result<()> {
-    precheck(d, channel)
+/// 先頭で行う。予算で断るときは `ExportError::Overrun`（画面が理由と、設定で上げられることを言う）。
+pub fn check_exportable(
+    d: &CoreDocument,
+    channel: Channel,
+    ctl: &ExportControl,
+) -> std::result::Result<(), ExportError> {
+    precheck(d, channel, &ctl.limits())
 }
 
-fn precheck(d: &CoreDocument, channel: Channel) -> Result<()> {
+fn precheck(d: &CoreDocument, channel: Channel, limits: &Limits) -> XResult<()> {
     check(
         !d.has_active_stroke(),
         "ストロークを確定・取消してからPSDを書き出してください",
@@ -985,17 +1012,30 @@ fn precheck(d: &CoreDocument, channel: Channel) -> Result<()> {
         d.channel_info(channel).is_some(),
         "書き出すチャンネルが文書にありません",
     )?;
-    let limits = Limits::default();
-    check_budget(
-        d.width() <= limits.max_dimension
-            && d.height() <= limits.max_dimension
-            && u64::from(d.width()) * u64::from(d.height()) <= limits.max_canvas_pixels,
-        "PSD キャンバス予算超過",
-    )?;
-    check_budget(
-        !d.layers().is_empty() && d.layers().len() <= limits.max_layers,
-        "PSD レイヤー数の予算超過",
-    )
+    if d.width() > limits.max_dimension || d.height() > limits.max_dimension {
+        return Err(Overrun::Side {
+            width: d.width(),
+            height: d.height(),
+            limit: limits.max_dimension,
+        }
+        .into());
+    }
+    if u64::from(d.width()) * u64::from(d.height()) > limits.max_canvas_pixels {
+        return Err(Overrun::Canvas {
+            width: d.width(),
+            height: d.height(),
+        }
+        .into());
+    }
+    check_budget(!d.layers().is_empty(), "PSD レイヤー数の予算超過")?;
+    if d.layers().len() > limits.max_layers {
+        return Err(Overrun::Layers {
+            count: d.layers().len(),
+            limit: limits.max_layers,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn max_diff(a: &[u8], b: &[u8]) -> u8 {
@@ -1019,7 +1059,7 @@ pub fn plan_export(
     options: &ExportOptions,
     ctl: &ExportControl,
 ) -> Result<ExportPlan> {
-    precheck(d, options.channel)?;
+    precheck(d, options.channel, &ctl.limits())?;
     if ctl
         .cancel
         .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
@@ -1148,25 +1188,44 @@ fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
 }
 
 impl ExportPlan {
-    /// 計画どおりに PSD の層を作る（画素を評価する）。断るものがあれば断る。取消・予算超過はエラー。
-    pub fn build(&self, d: &CoreDocument, ctl: &ExportControl) -> Result<Exported> {
+    /// 刻みへ丸める調整があれば、丸めた設定の写しから作る。Anchor のように合成を読んで焼く画素も、PSD に書く丸めた調整の上の見た目で焼くので、
+    /// 書いた PSD の合成は「丸めた設定の文書」の合成と同じになる（元の設定で焼くと、丸めた調整の上で画素がずれる）。
+    fn source(&self, d: &CoreDocument) -> Result<Option<CoreDocument>> {
         if let Some(b) = self.blockers.first() {
             return Err(Error::InvalidData(b.message()));
         }
-        // 刻みへ丸める調整があれば、丸めた設定の写しから作る。Anchor のように合成を読んで焼く画素も、PSD に書く丸めた調整の上の見た目で
-        // 焼くので、書いた PSD の合成は「丸めた設定の文書」の合成と同じになる（元の設定で焼くと、丸めた調整の上で画素がずれる）
-        let twin;
-        let source = if self.rounded.is_empty() {
-            d
+        if self.rounded.is_empty() {
+            Ok(None)
         } else {
-            twin = d.with_adjustments_replaced(&self.rounded)?;
-            &twin
-        };
-        let document = Builder::new(source, &self.options, ctl, false)?.run()?;
+            Ok(Some(d.with_adjustments_replaced(&self.rounded)?))
+        }
+    }
+
+    /// 計画どおりに PSD の層を作る（画素を評価する。全層の画素をメモリに組むので、画素の合計は予算に入る範囲だけ）。断るものがあれば断る。
+    /// 取消・予算超過はエラー。実物の大きさの文書は、層を 1 枚ずつ流して書く [`write_psd`](Self::write_psd) で書く。
+    pub fn build(&self, d: &CoreDocument, ctl: &ExportControl) -> Result<Exported> {
+        let twin = self.source(d)?;
+        let source = twin.as_ref().unwrap_or(d);
+        let document = Builder::new(source, &self.options, ctl, false)?.run(Compression::Raw)?;
         Ok(Exported {
             document,
             notes: self.notes.clone(),
         })
+    }
+
+    /// 計画どおりに、PSD を `out`（書き始めが先頭の、Seek できる出力）へ流して書く。層の画素は PSD の記録の順に 1 枚ずつ評価して、圧縮して書いたらすぐ
+    /// 捨てるので、メモリには層 1 枚ぶんと記録の表しか持たない（画素の合計に上限は無く、ファイルの 2 GiB が上限）。Normal の焼き込みと平らの 1 枚だけは、
+    /// 全層をメモリに組む（合計は予算で止める）。書きかけを消すのは呼び手の仕事（途中で失敗・取消すると、`out` には書きかけが残る）。
+    pub fn write_psd<W: Write + Seek>(
+        &self,
+        d: &CoreDocument,
+        ctl: &ExportControl,
+        out: &mut W,
+        compression: Compression,
+    ) -> std::result::Result<Written, ExportError> {
+        let twin = self.source(d)?;
+        let source = twin.as_ref().unwrap_or(d);
+        Builder::new(source, &self.options, ctl, false)?.write(out, compression)
     }
 }
 
@@ -1180,12 +1239,56 @@ pub fn export_core(
 }
 
 /// 焼いた画素の領域（PSD の座標: 上から下）。
-struct Region {
+struct Baked {
     left: i32,
     top: i32,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+}
+impl Baked {
+    fn into_region(self) -> Region<'static> {
+        Region {
+            left: self.left,
+            top: self.top,
+            width: self.width,
+            height: self.height,
+            rgba: Cow::Owned(self.pixels),
+        }
+    }
+}
+
+/// 層の画素の出どころ。層の構造（記録）を先に作り、画素は PSD の記録の順に 1 枚ずつ作る（流して書くときは、書いたらすぐ捨てる）。
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// 保存した画素（面のあるタイルの外接矩形）。
+    Stored(&'a CoreLayer),
+    /// 評価して焼く層（フィルター・塗りつぶしの画像など）。
+    Baked(&'a CoreLayer),
+    /// 評価して 1 枚にしたクリッピングされたグループ。
+    BakedGroup(&'a CoreLayer),
+}
+/// 層の構造を作ったあとの、画素の出どころの表（PSD の層 ID から）。
+#[derive(Default)]
+struct Slots<'a> {
+    content: HashMap<i32, Source<'a>>,
+    /// マスクのある層: (層, マスク, 評価して焼くか)。
+    masks: HashMap<i32, (&'a CoreLayer, &'a RasterMask, bool)>,
+}
+
+/// 書き出したチャンネルの合成（上の行から。ファイルの向きが DirectX の Normal は緑を反転）。統合画像になる。
+fn merged_composite(
+    d: &CoreDocument,
+    c: Channel,
+    flip: bool,
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<u8>> {
+    let mut merged = vec![0u8; d.width() as usize * d.height() as usize * 4];
+    d.composite_into_cancellable(c, d.bounds(), &mut merged, RowOrder::TopDown, cancel)?;
+    if flip {
+        yolu_core::normal::flip_green(&mut merged);
+    }
+    Ok(merged)
 }
 
 struct Builder<'a> {
@@ -1195,7 +1298,13 @@ struct Builder<'a> {
     flip: bool,
     tree: Tree<'a>,
     used: HashSet<i32>,
+    limits: Limits,
+    /// 1 枚の作業の領域と、メモリに全層を組むときの画素の合計に許すバイト数。
+    cap: u64,
+    /// 画素の合計を数えて `cap` で止めるか（メモリに全層を組む書き出し。流して書くときは層 1 枚ぶんしか持たないので数えない）。
+    accumulate: bool,
     budget: u64,
+    max_file_bytes: u64,
     cancel: Option<&'a AtomicBool>,
     /// そのままは書けないものが 1 つでもあれば断る（`from_core`）。
     strict: bool,
@@ -1207,8 +1316,13 @@ impl<'a> Builder<'a> {
         options: &ExportOptions,
         ctl: &ExportControl<'a>,
         strict: bool,
-    ) -> Result<Self> {
-        precheck(d, options.channel)?;
+    ) -> XResult<Self> {
+        let limits = ctl.limits();
+        precheck(d, options.channel, &limits)?;
+        let max_file_bytes = ctl
+            .max_file_bytes
+            .unwrap_or(limits.max_output_bytes as u64)
+            .min(limits.max_output_bytes as u64);
         Ok(Self {
             d,
             c: options.channel,
@@ -1216,16 +1330,27 @@ impl<'a> Builder<'a> {
             flip: flips_green(d, options.channel),
             tree: Tree::new(d),
             used: HashSet::new(),
+            limits,
+            cap: ctl.cap(),
+            accumulate: true,
             budget: 0,
+            max_file_bytes,
             cancel: ctl.cancel,
             strict,
         })
     }
 
-    pub(super) fn run(mut self) -> Result<Document> {
+    /// メモリに全層を組む。層の画素は PSD の記録の順に 1 枚ずつ作って層へ入れる。`compression` は、このあとの書き方（RLE は圧縮したあとの長さを書きながら
+    /// 上限と比べるので、無圧縮で書いたときの長さは確かめない。無圧縮はその長さも上限に入るか確かめる）。
+    pub(super) fn run(mut self, compression: Compression) -> XResult<Document> {
         let d = self.d;
         let layers = match self.mode {
-            ExportMode::Bake => self.level(None)?,
+            ExportMode::Bake => {
+                let mut slots = Slots::default();
+                let mut layers = self.level(None, &mut slots)?;
+                self.fill_pixels(&mut layers, &slots)?;
+                layers
+            }
             ExportMode::Flat => Vec::new(),
         };
         // Normal の層を重ねた統合画像は、書いた層を PSD と同じ色の式で重ねたもの（読み戻したとき、層と統合画像が食い違って編集できない PSD に
@@ -1239,25 +1364,14 @@ impl<'a> Builder<'a> {
             };
             self.check_cancel()?;
             out.composite_rgba = Some(super::composite::composite_cancellable(&out, self.cancel)?);
-            super::write::validate(&out, &Limits::default())?;
+            super::write::validate_for(&out, &self.limits, compression)?;
             return Ok(out);
         }
-        let mut merged = vec![0u8; d.width() as usize * d.height() as usize * 4];
-        d.composite_into_cancellable(
-            self.c,
-            d.bounds(),
-            &mut merged,
-            RowOrder::TopDown,
-            self.cancel,
-        )?;
-        if self.flip {
-            yolu_core::normal::flip_green(&mut merged);
-        }
+        let merged = merged_composite(d, self.c, self.flip, self.cancel)?;
         let layers = match self.mode {
             ExportMode::Bake => layers,
             ExportMode::Flat => {
-                self.budget += merged.len() as u64;
-                check_budget(self.budget <= PIXEL_BUDGET, "PSD 投影の128 MiB画素予算超過")?;
+                self.add("", merged.len() as u64)?;
                 vec![Layer {
                     id: 1,
                     name: channel_label(d, self.c),
@@ -1274,8 +1388,75 @@ impl<'a> Builder<'a> {
             layers,
             composite_rgba: Some(merged),
         };
-        super::write::validate(&out, &Limits::default())?;
+        super::write::validate_for(&out, &self.limits, compression)?;
         Ok(out)
+    }
+
+    /// 流して書く。層の画素は PSD の記録の順に 1 枚ずつ作り、圧縮して書いたらすぐ捨てる（メモリには層 1 枚ぶんと記録の表）。統合画像は層を書いたあとで
+    /// 作る。Normal の焼き込み（統合画像を書いた層から作る）と平らの 1 枚は、全層をメモリに組んでから書く（画素の合計は予算で止める）。
+    pub(super) fn write<W: Write + Seek>(
+        mut self,
+        out: &mut W,
+        compression: Compression,
+    ) -> XResult<Written> {
+        let d = self.d;
+        let streaming = self.mode == ExportMode::Bake && !is_normal(d, self.c);
+        if !streaming {
+            let (limits, cancel, max_file_bytes) =
+                (self.limits.clone(), self.cancel, self.max_file_bytes);
+            let document = self.run(compression)?;
+            return super::write::stream_document(
+                out,
+                &document,
+                &limits,
+                compression,
+                max_file_bytes,
+                cancel,
+            );
+        }
+        self.accumulate = false;
+        let mut slots = Slots::default();
+        let layers = self.level(None, &mut slots)?;
+        let skeleton = Document {
+            width: d.width(),
+            height: d.height(),
+            layers,
+            composite_rgba: None,
+        };
+        let count = skeleton_count(&skeleton.layers);
+        if count > self.limits.max_layers {
+            return Err(Overrun::Layers {
+                count,
+                limit: self.limits.max_layers,
+            }
+            .into());
+        }
+        let records = super::write::skeleton_records(&skeleton, &self.limits)?;
+        let limits = self.limits.clone();
+        let opts = StreamOptions {
+            compression,
+            limits: &limits,
+            max_file_bytes: self.max_file_bytes,
+            cancel: self.cancel,
+        };
+        let (c, flip, cancel) = (self.c, self.flip, self.cancel);
+        let (bytes, checksum) = super::write::stream(
+            out,
+            d.width(),
+            d.height(),
+            &records,
+            &opts,
+            |i| {
+                let r = &records[i];
+                self.supply(&slots, r.layer.id, r.raster(), r.mask().is_some())
+            },
+            move || Ok(Cow::Owned(merged_composite(d, c, flip, cancel)?)),
+        )?;
+        Ok(Written {
+            bytes,
+            layers: records.iter().filter(|r| !r.divider).count(),
+            checksum,
+        })
     }
 
     fn check_cancel(&self) -> Result<()> {
@@ -1289,13 +1470,38 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// 1 つの段（None は一番上）。上から下の並びで返す。
-    fn level(&mut self, parent: Option<LayerId>) -> Result<Vec<Layer>> {
-        self.tree
-            .level(parent)
-            .into_iter()
-            .map(|l| self.layer(l))
-            .collect()
+    /// 1 枚の作業の領域（`bytes`）が予算に入るか確かめる。
+    fn work(&self, layer: &str, bytes: u64) -> XResult<()> {
+        if bytes > self.cap {
+            return Err(Overrun::Memory {
+                layer: layer.to_owned(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+    /// メモリに組む画素に `bytes` を足す（全層をメモリに組むときだけ合計を数えて、予算で断る）。
+    fn add(&mut self, layer: &str, bytes: u64) -> XResult<()> {
+        self.work(layer, bytes)?;
+        if self.accumulate {
+            self.budget += bytes;
+            if self.budget > self.cap {
+                return Err(Overrun::Memory {
+                    layer: layer.to_owned(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 1 つの段（None は一番上）の層の構造。上から下の並びで返す（画素は作らない）。
+    fn level(&mut self, parent: Option<LayerId>, slots: &mut Slots<'a>) -> XResult<Vec<Layer>> {
+        let mut out = Vec::new();
+        for l in self.tree.level(parent) {
+            out.push(self.layer(l, slots)?)
+        }
+        Ok(out)
     }
 
     /// 層の PSD での合成モードと不透明度（書き出すチャンネルの値。PSD の層は 1 組しか持てない）。
@@ -1323,7 +1529,8 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn layer(&mut self, l: &'a CoreLayer) -> Result<Layer> {
+    /// 層の記録（画素を除く）。画素・マスクの値の出どころは `slots` に入れる。
+    fn layer(&mut self, l: &'a CoreLayer, slots: &mut Slots<'a>) -> XResult<Layer> {
         self.check_cancel()?;
         let needs = needs(self.d, l, self.c);
         let refused = if self.strict {
@@ -1342,13 +1549,24 @@ impl<'a> Builder<'a> {
                     },
                 }
                 .message(),
-            ));
+            )
+            .into());
         }
         let bake_content = needs.iter().any(Need::bakes_content);
         let bake_mask = needs.iter().any(Need::bakes_mask);
         let baked_group = needs.iter().any(|n| matches!(n, Need::ClippedGroup));
         let idle_mark = needs.iter().any(|n| matches!(n, Need::IdleClippingMark));
-        let mask = l.mask().map(|m| self.mask(l, m, bake_mask)).transpose()?;
+        // マスクの矩形・既定値・値は画素のときに決まる。ここでは有効と濃度だけ
+        let mask = l.mask().map(|m| Mask {
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 0,
+            default_color: 255,
+            enabled: m.enabled(),
+            density: (m.density() * 255.0).round_ties_even() as u8,
+            pixels: Vec::new(),
+        });
         let (blend_mode, opacity) = self.blend(l, baked_group);
         let id = unique_id(layer_part(l.id()), &mut self.used);
         let mut layer = Layer {
@@ -1362,9 +1580,21 @@ impl<'a> Builder<'a> {
             locks: psd_locks(l.locks()),
             ..Layer::default()
         };
+        if let Some(m) = l.mask() {
+            slots.masks.insert(id, (l, m, bake_mask));
+        }
         match l.kind() {
-            CoreKind::Raster => self.raster(l, &mut layer, bake_content)?,
-            CoreKind::Fill => self.fill(l, &mut layer, bake_content)?,
+            CoreKind::Raster => {
+                slots.content.insert(
+                    id,
+                    if bake_content {
+                        Source::Baked(l)
+                    } else {
+                        Source::Stored(l)
+                    },
+                );
+            }
+            CoreKind::Fill => self.fill(l, &mut layer, bake_content, slots),
             CoreKind::Adjustment => {
                 let settings = l.adjustment().expect("調整の層は設定を持つ");
                 let adjustment = needs
@@ -1380,18 +1610,12 @@ impl<'a> Builder<'a> {
                 layer.kind = LayerKind::Adjustment(adjustment)
             }
             CoreKind::Group if baked_group => {
-                let d = self.d;
-                let (id, c, cancel) = (l.id(), self.c, self.cancel);
-                let mut region = self.bake(|rect, out| {
-                    d.group_output_into(id, c, rect, out, RowOrder::TopDown, cancel)
-                })?;
-                self.flip_pixels(&mut region.pixels);
-                self.put(&mut layer, region)
+                slots.content.insert(id, Source::BakedGroup(l));
             }
             CoreKind::Group => {
                 let divider_id = unique_id(divider_part(l.id()), &mut self.used);
                 layer.kind = LayerKind::Group {
-                    children: self.level(Some(l.id()))?,
+                    children: self.level(Some(l.id()), slots)?,
                     divider_id,
                 }
             }
@@ -1399,28 +1623,101 @@ impl<'a> Builder<'a> {
         Ok(layer)
     }
 
-    /// 焼いた領域を PSD の層へ（画素の予算に数える）。
-    fn put(&mut self, layer: &mut Layer, region: Region) {
-        layer.left = region.left;
-        layer.top = region.top;
-        layer.width = region.width;
-        layer.height = region.height;
-        layer.pixels_rgba = region.pixels;
-        layer.kind = LayerKind::Raster;
+    /// 塗りつぶし: 値だけの不透明な塗りつぶしは単色の塗りつぶし。評価が要る・半透明のものは画素に焼く（画素は `slots` の出どころから）。値の無い
+    /// チャンネルは、隠した単色の塗りつぶし（チャンネルの既定の色）。
+    fn fill(&mut self, l: &'a CoreLayer, layer: &mut Layer, baked: bool, slots: &mut Slots<'a>) {
+        if baked {
+            slots.content.insert(layer.id, Source::Baked(l));
+            return;
+        }
+        let value = l
+            .fill_value(self.c)
+            .or_else(|| self.d.channel_info(self.c).map(|i| i.default))
+            .unwrap_or(yolu_core::Rgba8::new(0, 0, 0, 255));
+        let mut rgba = [value.r, value.g, value.b, 255];
+        self.flip_pixels(&mut rgba);
+        layer.kind = LayerKind::SolidColor([rgba[0], rgba[1], rgba[2]]);
+    }
+
+    /// 構造の層へ、PSD の記録の順（下から上。グループは中身のあとにグループ自身）に画素とマスクの値を 1 枚ずつ作って入れる。
+    fn fill_pixels(&mut self, layers: &mut [Layer], slots: &Slots<'a>) -> XResult<()> {
+        for l in layers.iter_mut().rev() {
+            if let LayerKind::Group { children, .. } = &mut l.kind {
+                self.fill_pixels(children, slots)?
+            }
+            let raster = matches!(l.kind, LayerKind::Raster);
+            let supplied = self.supply(slots, l.id, raster, l.mask.is_some())?;
+            if let Some(r) = supplied.raster {
+                l.left = r.left;
+                l.top = r.top;
+                l.width = r.width;
+                l.height = r.height;
+                l.pixels_rgba = r.rgba.into_owned();
+            }
+            if let (Some(m), Some(dto)) = (supplied.mask, l.mask.as_mut()) {
+                dto.left = m.left;
+                dto.top = m.top;
+                dto.width = m.width;
+                dto.height = m.height;
+                dto.default_color = m.default_color;
+                dto.pixels = m.values.into_owned();
+            }
+        }
+        Ok(())
+    }
+
+    /// 記録 1 つの画素とマスクの値を作る（`id` は PSD の層 ID）。
+    fn supply(
+        &mut self,
+        slots: &Slots<'a>,
+        id: i32,
+        raster: bool,
+        has_mask: bool,
+    ) -> XResult<Supplied<'static>> {
+        let mut supplied = Supplied::default();
+        if raster {
+            let source = *slots.content.get(&id).expect("ラスターの層には出どころがある");
+            supplied.raster = Some(self.content(source)?.into_region());
+        }
+        if has_mask {
+            let (l, m, baked) = *slots.masks.get(&id).expect("マスクのある層には出どころがある");
+            supplied.mask = Some(self.mask(l, m, baked)?);
+        }
+        Ok(supplied)
+    }
+
+    fn content(&mut self, source: Source<'a>) -> XResult<Baked> {
+        let d = self.d;
+        let (c, cancel) = (self.c, self.cancel);
+        let mut region = match source {
+            Source::Stored(l) => return self.stored(l),
+            Source::Baked(l) => {
+                let id = l.id();
+                self.bake(l.name(), |rect, out| {
+                    d.layer_output_into(id, c, rect, out, RowOrder::TopDown, cancel)
+                })?
+            }
+            Source::BakedGroup(l) => {
+                let id = l.id();
+                self.bake(l.name(), |rect, out| {
+                    d.group_output_into(id, c, rect, out, RowOrder::TopDown, cancel)
+                })?
+            }
+        };
+        self.flip_pixels(&mut region.pixels);
+        Ok(region)
     }
 
     /// 領域を帯ごとに評価して集め（上の帯から。各帯は上から下）、透明でない画素の外接矩形へ切り詰める（無ければ 1×1 の透明）。
     /// 作業のバッファは画布 1 枚ぶんで、予算を先に見る。
     fn bake(
         &mut self,
+        name: &str,
         produce: impl Fn(Rect, &mut [u8]) -> std::result::Result<(), CoreError>,
-    ) -> Result<Region> {
+    ) -> XResult<Baked> {
         let d = self.d;
         let (w, h) = (d.width() as usize, d.height() as usize);
-        check_budget(
-            (w * h * 4) as u64 <= PIXEL_BUDGET,
-            "PSD 投影の128 MiB画素予算超過",
-        )?;
+        self.work(name, (w * h * 4) as u64)?;
         let ts = d.tile_size();
         let band = (256 / ts).max(1) * ts;
         let mut pixels = vec![0u8; w * h * 4];
@@ -1431,7 +1728,7 @@ impl<'a> Builder<'a> {
             let y0 = (top - 1) / band * band;
             let rect = Rect::new(0, y0, d.width(), top - y0);
             let len = w * (top - y0) as usize * 4;
-            produce(rect, &mut pixels[at..at + len])?;
+            produce(rect, &mut pixels[at..at + len]).map_err(Error::from)?;
             at += len;
             top = y0;
         }
@@ -1449,7 +1746,7 @@ impl<'a> Builder<'a> {
             y1 = y1.max(row + 1);
         }
         let region = if x1 <= x0 || y1 <= y0 {
-            Region {
+            Baked {
                 left: 0,
                 top: 0,
                 width: 1,
@@ -1464,7 +1761,7 @@ impl<'a> Builder<'a> {
             }
             pixels.truncate(rw * rh * 4);
             pixels.shrink_to_fit();
-            Region {
+            Baked {
                 left: x0 as i32,
                 top: y0 as i32,
                 width: rw as u32,
@@ -1472,8 +1769,10 @@ impl<'a> Builder<'a> {
                 pixels,
             }
         };
-        self.budget += u64::from(region.width) * u64::from(region.height) * 4;
-        check_budget(self.budget <= PIXEL_BUDGET, "PSD 投影の128 MiB画素予算超過")?;
+        self.add(
+            name,
+            u64::from(region.width) * u64::from(region.height) * 4,
+        )?;
         Ok(region)
     }
 
@@ -1483,18 +1782,9 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn raster(&mut self, l: &CoreLayer, layer: &mut Layer, baked: bool) -> Result<()> {
+    /// 保存した画素: 面のあるタイルの外接矩形（面の無いチャンネルは 1×1 の透明）。
+    fn stored(&mut self, l: &CoreLayer) -> XResult<Baked> {
         let d = self.d;
-        if baked {
-            let (id, c, cancel) = (l.id(), self.c, self.cancel);
-            let mut region = self.bake(|rect, out| {
-                d.layer_output_into(id, c, rect, out, RowOrder::TopDown, cancel)
-            })?;
-            self.flip_pixels(&mut region.pixels);
-            self.put(layer, region);
-            return Ok(());
-        }
-        // 保存した画素: 面のあるタイルの外接矩形（面の無いチャンネルは 1×1 の透明）
         let (mut left, mut bottom, mut right, mut top) = (d.width(), d.height(), 0, 0);
         let surface = l.surface(self.c);
         for c in surface.map(|s| s.tile_coords()).unwrap_or_default() {
@@ -1511,62 +1801,51 @@ impl<'a> Builder<'a> {
         }
         let width = right - left;
         let height = top - bottom;
-        self.budget += u64::from(width) * u64::from(height) * 4;
-        check_budget(self.budget <= PIXEL_BUDGET, "PSD 投影の128 MiB画素予算超過")?;
+        self.add(l.name(), u64::from(width) * u64::from(height) * 4)?;
         let mut pixels = vec![0; width as usize * height as usize * 4];
         if let Some(surface) = surface {
-            for y in 0..height {
-                for x in 0..width {
-                    let p = (y as usize * width as usize + x as usize) * 4;
-                    pixels[p..p + 4]
-                        .copy_from_slice(&surface.pixel(left + x, top - 1 - y)?.to_array())
+            // タイルごとに行を写す（面の無いタイルは透明のまま）。1 画素ずつ引くと、全面の層でタイルの探索が画素の数だけ要る
+            let ts = d.tile_size() as usize;
+            let (canvas_w, canvas_h) = (d.width() as usize, d.height() as usize);
+            let mut tile = vec![0u8; surface.tile_bytes()];
+            for c in surface.tile_coords() {
+                self.check_cancel()?;
+                surface.copy_tile(c, &mut tile).map_err(Error::from)?;
+                let (x0, y0) = (c.x as usize * ts, c.y as usize * ts);
+                let n = ts.min(canvas_w - x0);
+                for row in 0..ts.min(canvas_h - y0) {
+                    // core の行（下から）を、層の行（上から）へ
+                    let at = (top as usize - 1 - (y0 + row)) * width as usize + (x0 - left as usize);
+                    pixels[at * 4..(at + n) * 4].copy_from_slice(&tile[row * ts * 4..(row * ts + n) * 4])
                 }
             }
         }
         self.flip_pixels(&mut pixels);
-        layer.left = left as i32;
-        layer.top = (d.height() - top) as i32;
-        layer.width = width;
-        layer.height = height;
-        layer.pixels_rgba = pixels;
-        Ok(())
-    }
-
-    /// 塗りつぶし: 値だけの不透明な塗りつぶしは単色の塗りつぶし。評価が要る・半透明のものは画素に焼く。値の無いチャンネルは、
-    /// 隠した単色の塗りつぶし（チャンネルの既定の色）。
-    fn fill(&mut self, l: &CoreLayer, layer: &mut Layer, baked: bool) -> Result<()> {
-        if baked {
-            let d = self.d;
-            let (id, c, cancel) = (l.id(), self.c, self.cancel);
-            let mut region = self.bake(|rect, out| {
-                d.layer_output_into(id, c, rect, out, RowOrder::TopDown, cancel)
-            })?;
-            self.flip_pixels(&mut region.pixels);
-            self.put(layer, region);
-            return Ok(());
-        }
-        let value = l
-            .fill_value(self.c)
-            .or_else(|| self.d.channel_info(self.c).map(|i| i.default))
-            .unwrap_or(yolu_core::Rgba8::new(0, 0, 0, 255));
-        let mut rgba = [value.r, value.g, value.b, 255];
-        self.flip_pixels(&mut rgba);
-        layer.kind = LayerKind::SolidColor([rgba[0], rgba[1], rgba[2]]);
-        Ok(())
+        Ok(Baked {
+            left: left as i32,
+            top: (d.height() - top) as i32,
+            width,
+            height,
+            pixels,
+        })
     }
 
     /// core のマスク（隠す量をアルファに持ち、左下原点）→ PSD のマスク（255 が見える、上から下）。焼くときは、フィルターを通した隠す量を
     /// 使い、反転は値を反転して画素にする（有効と濃度はそのまま）。矩形は既定の値と違う画素の外接矩形で、既定の値は 255 と 0 のうち
     /// 矩形が小さくなるほう（同じなら 255）。画布のどこでも同じ値になる。
-    fn mask(&mut self, l: &CoreLayer, m: &RasterMask, baked: bool) -> Result<Mask> {
+    fn mask(
+        &mut self,
+        l: &CoreLayer,
+        m: &RasterMask,
+        baked: bool,
+    ) -> XResult<MaskRegion<'static>> {
         let d = self.d;
         let (w, h, ts) = (
             d.width() as usize,
             d.height() as usize,
             d.tile_size() as usize,
         );
-        self.budget += (w * h) as u64;
-        check_budget(self.budget <= PIXEL_BUDGET, "PSD 投影の128 MiB画素予算超過")?;
+        self.add(l.name(), (w * h) as u64)?;
         let values = if baked {
             let mut hide = vec![0u8; w * h];
             d.mask_output_into(
@@ -1575,7 +1854,8 @@ impl<'a> Builder<'a> {
                 &mut hide,
                 RowOrder::TopDown,
                 self.cancel,
-            )?;
+            )
+            .map_err(Error::from)?;
             if !m.inverted() {
                 for v in &mut hide {
                     *v = 255 - *v
@@ -1588,7 +1868,7 @@ impl<'a> Builder<'a> {
             let surface = m.surface();
             let mut tile = vec![0u8; surface.tile_bytes()];
             for c in surface.tile_coords() {
-                surface.copy_tile(c, &mut tile)?;
+                surface.copy_tile(c, &mut tile).map_err(Error::from)?;
                 let (x0, y0) = (c.x as usize * ts, c.y as usize * ts);
                 for row in 0..ts.min(h - y0) {
                     let psd_row = (h - 1 - (y0 + row)) * w + x0;
@@ -1612,17 +1892,26 @@ impl<'a> Builder<'a> {
         for y in 0..rect.3 {
             pixels.extend_from_slice(&values[(rect.1 + y) * w + rect.0..][..rect.2])
         }
-        Ok(Mask {
+        Ok(MaskRegion {
             left: rect.0 as i32,
             top: rect.1 as i32,
             width: rect.2 as u32,
             height: rect.3 as u32,
             default_color: background,
-            enabled: m.enabled(),
-            density: (m.density() * 255.0).round_ties_even() as u8,
-            pixels,
+            values: Cow::Owned(pixels),
         })
     }
+}
+
+/// 構造の層の並びの記録の数（グループは区切りの記録も 1 つ要る）。
+fn skeleton_count(layers: &[Layer]) -> usize {
+    layers
+        .iter()
+        .map(|l| match &l.kind {
+            LayerKind::Group { children, .. } => 2 + skeleton_count(children),
+            _ => 1,
+        })
+        .sum()
 }
 
 /// 背景と違う値の外接矩形（左・上・幅・高さ。無ければ幅 0）。
@@ -1660,7 +1949,8 @@ pub fn export_blockers(d: &CoreDocument) -> Vec<Blocker> {
     out
 }
 
-/// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、層の名前と理由で断る。
-pub(super) fn from_core_strict(d: &CoreDocument) -> Result<Document> {
-    Builder::new(d, &ExportOptions::color(), &ExportControl::default(), true)?.run()
+/// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、層の名前と理由で断る。使う上限の値だけ `ctl` から
+/// （既定は C# と対の固定の上限）。振る舞い（何を断るか）は変わらない。
+pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<Document> {
+    Ok(Builder::new(d, &ExportOptions::color(), ctl, true)?.run(Compression::Raw)?)
 }

@@ -540,6 +540,189 @@ pub fn import_copy<R: Read + Seek>(reader: &mut R, options: &CopyOptions) -> Res
     }
 }
 
+/// 書いた PSD の読み戻しの確かめの結果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Verified {
+    /// 読み戻した層の数（グループの区切りの記録を除く。取り込んだ文書の層の数と同じ）。
+    pub layers: usize,
+    /// ファイルの大きさ。
+    pub bytes: u64,
+}
+
+/// 書いた PSD を、最後まで流して読み戻して確かめる。`import_copy` と同じ読み手（層の記録・チャンネルの復号・統合画像の読み）を通すが、core の文書は
+/// 作らない（層 1 枚ぶんのチャンネルしかメモリに持たず、焼いた画素が文書の予算を超えても確かめは止まらない）。全層・マスク・統合画像のすべての行を
+/// 復号し、記録の長さがデータの長さと一致し、ファイルの終わりが統合画像の終わりであることを確かめる。取り込みで落とす・変わるものがあれば、
+/// 自分の書き手が書いた PSD ではない（書き手の不具合）ので断る。壊れている・途中で切れているときは `Error::InvalidData`、取消は `Error::Core(Cancelled)`。
+pub fn verify_stream<R: Read + Seek>(
+    reader: &mut R,
+    cancel: Option<&AtomicBool>,
+) -> Result<Verified> {
+    match verify(reader, cancel) {
+        Ok(v) => Ok(v),
+        Err(Stop::Refused(why)) => Err(Error::InvalidData(why.message())),
+        Err(Stop::Error(Error::Io(io))) if io.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(Error::InvalidData("PSD が途中で切れています".into()))
+        }
+        Err(Stop::Error(e)) => Err(e),
+    }
+}
+
+fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verified> {
+    let limits = Limits {
+        max_source_bytes: i32::MAX as usize,
+        max_output_bytes: i32::MAX as usize,
+        max_dimension: 30000,
+        max_canvas_pixels: u64::MAX,
+        max_layers: 32767,
+        max_decoded_bytes: u64::MAX,
+        max_metadata_bytes: usize::MAX,
+        max_name_code_units: 4096,
+        max_diagnostics: 128,
+        max_group_depth: 1000,
+    };
+    let mut s = State {
+        limits: &limits,
+        cancel,
+        notes: Vec::new(),
+        unsupported: false,
+        metadata: 0,
+        pixels: 0,
+        omitted: Vec::new(),
+        key: [0; 4],
+        copy: Some(CopyState::new()),
+    };
+    let total = r.seek(SeekFrom::End(0))?;
+    r.seek(SeekFrom::Start(0))?;
+    let mut head = [0u8; 26];
+    r.read_exact(&mut head)?;
+    let mut h = Reader::new(&head);
+    if h.key()? != *b"8BPS" || h.u16()? != 1 {
+        return malformed("PSD シグネチャ・版が不正です");
+    }
+    h.zeros(6)?;
+    let channels = usize::from(h.u16()?);
+    let (height, width) = (h.u32()?, h.u32()?);
+    let (depth, mode) = (h.u16()?, h.u16()?);
+    if depth != 8 || mode != 3 || !(3..=56).contains(&channels) || width == 0 || height == 0 {
+        return malformed("PSD の寸法・色の形式が不正です");
+    }
+    for _ in 0..2 {
+        // 色モードデータ・画像リソース
+        let n = read_u32(r)?;
+        if tell(r)? + u64::from(n) > total {
+            return malformed("PSD が途中で切れています");
+        }
+        skip(r, u64::from(n))?;
+    }
+    let lm_len = read_u32(r)?;
+    let lm_end = tell(r)? + u64::from(lm_len);
+    let info_len = read_u32(r)?;
+    let info_end = tell(r)? + u64::from(info_len);
+    if lm_end > total || info_end > lm_end || info_len == 0 {
+        return malformed("レイヤー情報の区間が不正です");
+    }
+    let signed = read_u16(r)? as i16;
+    let count = i32::from(signed).unsigned_abs() as usize;
+    if count == 0 || count > limits.max_layers {
+        return malformed("層の数が不正です");
+    }
+    let mut records: Vec<read::Record> = Vec::with_capacity(count);
+    for i in 0..count {
+        cancelled(cancel)?;
+        let mut head = [0u8; 18];
+        r.read_exact(&mut head)?;
+        let n = u16::from_be_bytes([head[16], head[17]]) as usize;
+        if !(1..=56).contains(&n) {
+            return malformed("レイヤーチャンネル数が不正です");
+        }
+        let mut mid = vec![0u8; n * 6 + 16];
+        r.read_exact(&mut mid)?;
+        let extra = u32::from_be_bytes(mid[mid.len() - 4..].try_into().unwrap());
+        if tell(r)? + u64::from(extra) > info_end {
+            return malformed("レイヤーの付加情報が区間を超えています");
+        }
+        let mut buf = Vec::with_capacity(head.len() + mid.len() + extra as usize);
+        buf.extend(head);
+        buf.extend(&mid);
+        let at = buf.len();
+        buf.resize(at + extra as usize, 0);
+        r.read_exact(&mut buf[at..])?;
+        let c = s.copy.as_mut().unwrap();
+        c.in_layer = true;
+        c.drop_layer = false;
+        s.key = [0; 4];
+        let mut rd = Reader::new(&buf);
+        let rec = read::record(&mut rd, &mut s).map_err(|e| in_layer(e, i + 1))?;
+        let c = s.copy.as_mut().unwrap();
+        c.in_layer = false;
+        if let Some(why) = c.take_refusal() {
+            return Err(Stop::Refused(why));
+        }
+        // 層ごとの知らせは文書の知らせへ移す（取り込みで落とす・変わるものがあれば、最後に断る）。区切りは層ではない
+        if rec.section == 3 {
+            c.discard_layer();
+        } else {
+            c.flush_layer(&rec.layer.name);
+            c.drop_layer = false;
+        }
+        records.push(rec);
+    }
+    // 全層・マスクのチャンネルを、最後の行まで復号する（層 1 枚・チャンネル 1 本ぶんだけ持つ）
+    let mut plane: Vec<u8> = Vec::new();
+    let mut buf: Vec<u8> = Vec::new();
+    for (i, rec) in records.iter().enumerate() {
+        cancelled(cancel)?;
+        let (w, hh) = (rec.layer.width, rec.layer.height);
+        let (mw, mh) = rec.layer.mask.as_ref().map_or((0, 0), |m| (m.width, m.height));
+        for &(id, len) in &rec.channels {
+            let (cw, ch) = if id == -2 { (mw, mh) } else { (w, hh) };
+            let bound = u64::from(cw) * u64::from(ch) * 2 + u64::from(ch) * 4 + 1024;
+            if len < 2 || len as u64 > bound {
+                return malformed(format!("レイヤー #{}: チャンネルの長さが不正です", i + 1));
+            }
+            if tell(r)? + len as u64 > info_end {
+                return malformed("チャンネルが層の情報を超えています");
+            }
+            buf.resize(len, 0);
+            r.read_exact(&mut buf)?;
+            plane.clear();
+            plane.resize(cw as usize * ch as usize, 0);
+            read::decode(Reader::new(&buf), cw, ch, &mut plane, 0, 1, &mut s)
+                .map_err(|e| in_layer(e, i + 1))?;
+            if let Some(why) = s.copy.as_mut().unwrap().take_refusal() {
+                return Err(Stop::Refused(why));
+            }
+        }
+    }
+    drop((plane, buf));
+    let here = tell(r)?;
+    // レイヤー情報は偶数の長さにそろえる（1 バイトの余白だけ許す）
+    if here > info_end || info_end - here > 1 {
+        return malformed("チャンネルのデータの長さが記録と一致しません");
+    }
+    r.seek(SeekFrom::Start(info_end))?;
+    // 全体のレイヤーマスク情報（4 バイトの長さ）のあと、レイヤーとマスクの情報が終わる
+    let global = read_u32(r)?;
+    if tell(r)? + u64::from(global) != lm_end {
+        return malformed("レイヤーとマスクの情報の長さが一致しません");
+    }
+    r.seek(SeekFrom::Start(lm_end))?;
+    // 統合画像: 全チャンネルの全行を読み、ファイルの終わりで終わる
+    let (w, hh) = (width as usize, height as usize);
+    if read_merged(r, w, hh, channels, total, cancel)?.is_none() || tell(r)? != total {
+        return malformed("統合画像が不正です（読めない・長さが一致しない）");
+    }
+    let notes = s.copy.take().unwrap().into_notes();
+    // 画面の文にそのまま出るので、内部の種類の名前は入れない
+    if notes.iter().any(|n| n.action != ImportAction::Ignored) {
+        return malformed("読み戻した PSD に、取り込みで落とす・変わるものがあります");
+    }
+    Ok(Verified {
+        layers: records.iter().filter(|r| r.section != 3).count(),
+        bytes: total,
+    })
+}
+
 /// 層 1 枚の読み込みの途中の姿（記録と、層ごとの落とす印）。
 struct Parsed {
     rec: read::Record,

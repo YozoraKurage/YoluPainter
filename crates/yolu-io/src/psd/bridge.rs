@@ -17,7 +17,8 @@ use yolu_core::{
     TileCoord, ToneChannel, ToneCurves,
 };
 
-/// PSD の画素の予算（C# と同じ。マスクは画布 1 枚ぶんを数える）。
+/// PSD の画素の合計の予算（C# と同じ。マスクは画布 1 枚ぶんを数える）。厳密な書き出し（`from_core`）と、予算を決めない焼き込みの書き出し（`ExportControl::default()`）の上限。
+/// アプリの書き出しは、設定の「レイヤーの画素」から決まる予算（`ExportControl::source_budget`）で書く。
 pub(super) const PIXEL_BUDGET: u64 = 128 * 1024 * 1024;
 
 /// core の層のロック（1:透明部分・2:画素・4:位置・8:すべて）を PSD の lspf のビット（0:透明部分・1:画素・2:位置・31:すべて）へ。
@@ -679,6 +680,12 @@ impl Document {
     /// 厳密な新規投影（Color）。そのままは書けないもの（焼く・丸める・落とすが要るもの）が 1 つでもあれば、層の名前と理由で断る。
     /// 焼き込みで書くには [`export_core`](super::export_core)。インポート原本の編集保存には、この結果と `write_edited` を使う。
     pub fn from_core(d: &CoreDocument) -> Result<Self> {
-        super::bake::from_core_strict(d)
+        Self::from_core_with(d, &ExportControl::default())
+    }
+
+    /// [`from_core`](Self::from_core) の、上限の値を呼び手が決める形（`ctl.source_budget` は設定の「レイヤーの画素」。層の記録の数・キャンバス・
+    /// 全層の画素の合計がこの予算から決まる）。何を断るかは `from_core` と同じ。
+    pub fn from_core_with(d: &CoreDocument, ctl: &ExportControl) -> Result<Self> {
+        super::bake::from_core_strict(d, ctl)
     }
 }

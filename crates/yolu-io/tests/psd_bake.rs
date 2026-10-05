@@ -2331,6 +2331,7 @@ fn a_cancel_during_the_normal_composite_of_a_big_canvas_stops_it_without_a_resul
             let worker = scope.spawn(|| {
                 let ctl = ExportControl {
                     cancel: Some(&flag),
+                    ..ExportControl::default()
                 };
                 psd::plan_export(&d, &options(Channel::Normal), &ctl)?.build(&d, &ctl)
             });
@@ -2438,6 +2439,7 @@ fn a_cancel_flag_stops_planning_and_building_without_a_result() {
     let stop = AtomicBool::new(true);
     let ctl = ExportControl {
         cancel: Some(&stop),
+        ..ExportControl::default()
     };
     let is_cancelled =
         |e: yolu_io::Error| matches!(e, yolu_io::Error::Core(yolu_core::CoreError::Cancelled));
