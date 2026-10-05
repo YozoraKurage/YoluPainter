@@ -30,7 +30,7 @@ use std::sync::atomic::AtomicBool;
 
 use glam::{Vec2, Vec3};
 
-pub use camera::{CameraView, OrbitCamera};
+pub use camera::{CameraView, OrbitCamera, DEFAULT_PITCH, DEFAULT_YAW};
 pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };

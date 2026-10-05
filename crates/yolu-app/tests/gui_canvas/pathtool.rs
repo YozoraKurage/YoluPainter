@@ -1231,11 +1231,13 @@ fn link_plate(generation: u32, flip: bool) -> yolu_protocol::Model {
 #[test]
 fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set() {
     let mut s = state(256);
-    s.view3d.camera.yaw = 0.0;
-    s.view3d.camera.pitch = 0.0;
     let rect = Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0));
     let (_, shape) = s.receive_link_model(&link_plate(1, false), 0);
     shape.unwrap();
+    // 最初のモデルを受けるとカメラはそのモデルの既定の位置になるので、板（外向きの法線は −Z）を正面から見る向きは受けたあとに決める
+    // （同じ名前・同じ三角形のモデルを受け直してもカメラは動かない）
+    s.view3d.camera.yaw = 0.0;
+    s.view3d.camera.pitch = 0.0;
     assert_eq!(s.sets.len(), 2, "マテリアルごとにセット");
     // 左のセット（今のセット）と右のセットに、それぞれ 3D のパス
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));

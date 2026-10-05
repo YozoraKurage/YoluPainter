@@ -100,6 +100,15 @@ fn model(generation: u32, materials: Vec<MaterialInfo>) -> Model {
     }
 }
 
+/// 試験の四角（`model`）は Unity の Quad と同じく −Z 側が表。モデルを受けた直後の既定のカメラはモデルの前（+Z 側）から見るので、
+/// 裏から見て面が隠れる。四角の表を斜めに見る位置（これまでの既定と同じ yaw 25°・pitch 10°）へ明示する（カメラはモデルを替えるまで動かない）。
+fn look_at_the_quad_front(h: &mut Harness<'_, YoluApp>) {
+    let camera = &mut h.state_mut().state.view3d.camera;
+    camera.yaw = 25.0;
+    camera.pitch = 10.0;
+    h.run();
+}
+
 /// 1 フレーム進めるもの（画面ありの Harness と、画面なしの Headless）。
 trait Frames {
     fn next_frame(&mut self);
@@ -249,6 +258,7 @@ fn a_model_becomes_texture_sets_and_strokes_come_back_as_changed_tiles() {
     let got = unity.collect_until(&mut h, "テクスチャセット", |m| {
         m.iter().any(|m| matches!(m, Message::TextureSet(_)))
     });
+    look_at_the_quad_front(&mut h);
     let s = &h.state().state;
     let names: Vec<&str> = s.sets.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(
@@ -1188,6 +1198,7 @@ fn strokes_in_the_3d_view_paint_the_set_and_go_back_to_unity() {
     // 3D ビューは Live Link のモデルの形で、描くのは今のセット（Body = マテリアル 0）の面
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
+    look_at_the_quad_front(&mut h);
     let s = &h.state().state;
     assert_eq!(s.view3d.model.as_ref().unwrap().name, "試しの四角");
     assert_eq!(s.view3d.material, 0);

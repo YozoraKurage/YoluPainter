@@ -11,6 +11,13 @@ use super::unity::{Bounds, Ray};
 /// 縦の画角（度。Unity 版と同じ）。
 pub const FIELD_OF_VIEW: f32 = 30.0;
 
+/// 既定の yaw（度）。カメラは `target - rotation * Z * distance` の位置から +Z 方向を向くので、yaw 0° は -Z 側（モデルの背中）から見る。
+/// モデルは Unity の流儀で +Z を向くため、前（+Z 側）から見るには 180° 回す。斜めに振る 25° はそのまま足して、背中から見ていた
+/// ときと同じ角度のまま向きだけを前へ移す。
+pub const DEFAULT_YAW: f32 = 180.0 + 25.0;
+/// 既定の pitch（度。わずかに見下ろす）。
+pub const DEFAULT_PITCH: f32 = 10.0;
+
 /// 注視点のまわりを回るカメラ。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCamera {
@@ -28,8 +35,8 @@ impl Default for OrbitCamera {
     fn default() -> Self {
         OrbitCamera {
             target: Vec3::ZERO,
-            yaw: 25.0,
-            pitch: 10.0,
+            yaw: DEFAULT_YAW,
+            pitch: DEFAULT_PITCH,
             distance: 3.0,
             model_radius: 1.0,
         }
@@ -37,13 +44,14 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
-    /// モデル全体が入る位置（Unity 版の FrameModel: 中心を見て yaw 25°・pitch 10°、距離は半径 / sin 15° × 1.15）。
+    /// モデル全体が入る位置（Unity 版の FrameModel と同じ斜めの角度（yaw 25°・pitch 10°）で、モデルの前（+Z 側）から中心を見る。
+    /// 距離は半径 / sin 15° × 1.15）。開いた直後・モデルを替えたとき・「全体を表示」が同じ向きになる。
     pub fn framing(bounds: &Bounds) -> OrbitCamera {
         let radius = super::unity::fmax(0.0001, super::unity::magnitude(bounds.extents));
         OrbitCamera {
             target: bounds.center,
-            yaw: 25.0,
-            pitch: 10.0,
+            yaw: DEFAULT_YAW,
+            pitch: DEFAULT_PITCH,
             distance: radius / (15.0f32).to_radians().sin() * 1.15,
             model_radius: radius,
         }
@@ -227,7 +235,10 @@ mod tests {
         let v = c.view(400.0, 300.0);
         let r = v.ray(Vec2::new(200.0, 150.0));
         let to_target = (c.target - r.origin()).normalize();
-        assert!((to_target - r.direction()).length() < 1e-5);
+        // 近い面の距離（0.01）に対して座標（約 3）の f32 の丸め（約 2.4e-7）が効くので、向きは 1e-4 まで合えばよい
+        // （向きによって 1e-5 前後で出入りするため、どの既定の向きでも通る幅にしておく）
+        let error = (to_target - r.direction()).length();
+        assert!(error < 1e-4, "{error}");
         let p = v.to_screen(c.target).unwrap();
         assert!((p - Vec2::new(200.0, 150.0)).length() < 1e-3);
         // 画面の右の点は右へ、上の点は上へ
@@ -243,7 +254,8 @@ mod tests {
         for s in [Vec2::new(10.0, 20.0), Vec2::new(390.0, 290.0)] {
             let r = v.ray(s);
             let back = v.to_screen(r.point(2.0)).unwrap();
-            assert!((back - s).length() < 1e-2, "{s} → {back}");
+            // f32 の丸めで向きによって 0.01 画素前後ぶれる。画素の 1/20 に収まれば戻っている
+            assert!((back - s).length() < 5e-2, "{s} → {back}");
         }
     }
 
@@ -314,6 +326,41 @@ mod tests {
                             .unwrap();
                         assert!(p.x > 0.0 && p.x < w && p.y > 0.0 && p.y < h, "{p}");
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_view_looks_at_the_model_from_the_front() {
+        // モデルは +Z を向く（Unity の約束）。開いた直後・モデルを替えたとき・全体を表示する位置は同じ向きで、前（+Z 側）にある
+        let b = Bounds::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(2.0, 4.0, 1.0));
+        let framed = OrbitCamera::framing(&b);
+        let default = OrbitCamera::default();
+        assert_eq!((framed.yaw, framed.pitch), (DEFAULT_YAW, DEFAULT_PITCH));
+        assert_eq!((default.yaw, default.pitch), (framed.yaw, framed.pitch));
+        let offset = framed.position() - framed.target;
+        assert!(offset.z > 0.0, "カメラはモデルの前（+Z 側）: {offset}");
+        // 前から見ていても、背中から見ていたときと同じ 25°の斜め・10°の見下ろし
+        let azimuth = offset.x.atan2(offset.z).to_degrees();
+        assert!((azimuth - 25.0).abs() < 1e-3, "{azimuth}");
+        let elevation = (offset.y / offset.length()).asin().to_degrees();
+        assert!((elevation - 10.0).abs() < 1e-3, "{elevation}");
+        // 前を向く面（+Z の法線）がこちらを向き、モデルの前の面の中心が後ろの面の中心より近い
+        let view = framed.view(400.0, 300.0);
+        assert!(view.forward.dot(Vec3::Z) < -0.85, "{}", view.forward);
+        let front = b.center + Vec3::Z * b.extents.z;
+        let back = b.center - Vec3::Z * b.extents.z;
+        assert!(front.distance(framed.position()) < back.distance(framed.position()));
+        // 注視点は画面の中央、全体が入る
+        assert!((view.to_screen(b.center).unwrap() - Vec2::new(200.0, 150.0)).length() < 1e-2);
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 1.0] {
+                for z in [-1.0, 1.0] {
+                    let p = view
+                        .to_screen(b.center + b.extents * Vec3::new(x, y, z))
+                        .unwrap();
+                    assert!(p.x > 0.0 && p.x < 400.0 && p.y > 0.0 && p.y < 300.0, "{p}");
                 }
             }
         }

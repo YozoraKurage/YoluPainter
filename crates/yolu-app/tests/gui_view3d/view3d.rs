@@ -5,6 +5,7 @@ use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
 use yolu_app::engine::composite_pixel;
+use yolu_app::view3d::model::ViewModel;
 use yolu_app::view3d::paint::Slot;
 use yolu_app::YoluApp;
 use yolu_core::glam::Vec3;
@@ -302,7 +303,51 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     use egui_kittest::kittest::Queryable;
     h.get_by_label("モデル全体が見える位置へ戻す").click();
     h.run();
-    assert_eq!(h.state().state.view3d.camera.yaw, 25.0);
+    // 全体を表示する位置は、モデルを開いた直後と同じ向き（モデルの前、+Z 側から）
+    let camera = h.state().state.view3d.camera;
+    assert_eq!(camera.yaw, yolu_core::geometry::DEFAULT_YAW);
+    assert_eq!(camera.pitch, yolu_core::geometry::DEFAULT_PITCH);
+    assert!(camera.position().z > camera.target.z, "前から見る");
+}
+
+#[test]
+fn a_model_opens_seen_from_its_front() {
+    // モデルは +Z を向く。開いた直後（カメラを触らない）に、中央のレイが当たる面は +Z の面で、
+    // ほかのモデルへ替えても・全体を表示しても同じ向きになる
+    let mut h = app(1000.0, 700.0, 256);
+    h.state_mut().state.view3d.load_demo();
+    click_tab(&mut h, yolu_app::Tab::View3d);
+    h.run();
+    let rect = h.state().view3d_rect().expect("3D のタブを描いた");
+    let opened = h.state().state.view3d.camera;
+    let model = h.state().state.view3d.model.clone().expect("モデルを読んだ");
+    assert_eq!(
+        opened,
+        yolu_core::geometry::OrbitCamera::framing(&model.geometry.bounds())
+    );
+    let view = opened.view(rect.width(), rect.height());
+    let center = yolu_core::glam::Vec2::new(rect.width() * 0.5, rect.height() * 0.5);
+    let hit = yolu_core::geometry::pick(&model.geometry, &view, center).expect("中央にモデルがある");
+    assert!(hit.normal.z > 0.9, "前（+Z）の面が見える: {:?}", hit.normal);
+    // 手で回してから全体を表示すると、開いた直後の位置へ戻る
+    h.state_mut().state.view3d.camera.yaw = 100.0;
+    h.state_mut().state.view3d.frame_model();
+    assert_eq!(h.state().state.view3d.camera, opened);
+    // モデルを替えても（別の名前）同じ向き
+    h.state_mut().state.view3d.camera.yaw = 100.0;
+    let revision = h.state_mut().state.view3d.next_revision();
+    let other = ViewModel::new(
+        "別のモデル",
+        vec![yolu_core::geometry::cube_sphere(3, 0.5)],
+        vec![Some("別のモデル".to_string())],
+        revision,
+    )
+    .unwrap();
+    h.state_mut().state.view3d.set_model(other);
+    h.run();
+    let replaced = h.state().state.view3d.camera;
+    assert_eq!((replaced.yaw, replaced.pitch), (opened.yaw, opened.pitch));
+    assert!(replaced.position().z > replaced.target.z, "前から見る");
 }
 
 #[test]
