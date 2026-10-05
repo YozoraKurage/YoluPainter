@@ -884,7 +884,7 @@ impl YoluApp {
         if !self.state.modified || !self.dialogs || self.state.update.is_quitting() {
             return true;
         }
-        rfd::MessageDialog::new()
+        crate::dialog::message()
             .set_title("YoluPainter")
             .set_description(self.state.lang.pick(
                 "保存していない変更があります。変更を捨てて終わりますか？",

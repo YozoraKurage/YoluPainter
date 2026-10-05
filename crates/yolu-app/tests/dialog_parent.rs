@@ -1,8 +1,6 @@
 //! OS のファイルの窓・確かめの窓は、主の窓を親にして出す口（`dialog::file`・`dialog::message`）から作る。`rfd::FileDialog::new()`・
 //! `rfd::MessageDialog::new()` を直に呼ぶと、親の無い窓が主の窓の後ろに回る（Windows）。ソースの中で直に呼んでよいのは、
 //! 口そのもの（`dialog.rs`）と、窓の無い起動でも出すクラッシュの知らせ（`crash/`）だけ。
-//! 例外として、終了の確かめ（`app.rs` の `confirm_close`）はまだ直に呼んでいる。ここを `dialog::message()` へ置き換えれば例外は
-//! 要らなくなる（置き換えても、この試験は通る）。
 use std::path::{Path, PathBuf};
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -43,7 +41,6 @@ fn file_and_message_dialogs_come_from_the_parented_helpers() {
             }
         }
     }
-    let allowed = [("app.rs".to_owned(), "confirm_close".to_owned())];
-    let unexpected: Vec<_> = direct.iter().filter(|d| !allowed.contains(d)).collect();
+    let unexpected: Vec<_> = direct.iter().collect();
     assert!(unexpected.is_empty(), "親なしの窓を直に作っている（`crate::dialog::file()`・`message()` を使う）: {unexpected:?}");
 }
