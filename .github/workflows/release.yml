@@ -68,6 +68,13 @@ jobs:
           if ($version -notmatch '^v3\.11(\.0)?$') { throw "NSIS は 3.11 が要ります（${makensis} は ${version}）" }
           # 確かめた物を、あとの手順（cargo xtask installer）が使う
           "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: PDB の設定（Windows。クラッシュの記録の番地を、同じ版の関数名・行へ引くための付属物を作る）
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # 行番号つきの PDB を、実行ファイルとは別のファイルに作る（命令は変えない）。PDB を確実に作るため、debug と strip を既定任せにしない
+          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
       - name: ビルドと配布物の作成
         env:
           PYTHON: python
@@ -78,7 +85,11 @@ jobs:
         run: |
           cargo xtask build --target ${{ matrix.target }} --release $REQUIRE_KEY
           cargo xtask bundle --target ${{ matrix.target }}
-          if [ "$RUNNER_OS" = Windows ]; then cargo xtask installer --target ${{ matrix.target }}; fi
+          if [ "$RUNNER_OS" = Windows ]; then
+            cargo xtask installer --target ${{ matrix.target }}
+            # PDB を Release の付属物（yolupainter-<版>-<対象>-pdb.zip）にする。更新の対象ではなく、署名つきの更新情報には載らない
+            cargo xtask symbols --target ${{ matrix.target }}
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: bundle-${{ matrix.target }}

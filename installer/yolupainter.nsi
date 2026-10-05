@@ -9,12 +9,13 @@
 ; コマンドライン
 ;   インストーラー  /S            無音。画面を出さない
 ;                   /ASSOC=1|0    .ylp の関連付けを付ける・付けない（無音のとき。省略は今の状態のまま、初めてなら付けない）
-;                   /RUN          入れ終わったらアプリを起こす（アプリの更新が使う）
+;                   /RUN          入れ終わったらアプリを起こす（アプリの更新が使う）。待ちの上限で何も変えずに終わるときも、今入っているアプリを起こし直す
 ;                   /D=PATH       入れ先（最後に置く。省略は前の入れ先、初めては %LOCALAPPDATA%\Programs\YoluPainter）
 ;   アンインストーラー  /S           無音
-;                       /DELETEDATA  設定・ブラシ・復旧のデータも消す（無音のとき。省略は残す）
+;                       /DELETEDATA  アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
+;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット）は、どちらでも消さない
 ;
-; 実行中のアプリは終了させない。exe が使われている間は待つ（無音は 60 秒まで。超えたら何も変えずに終わり、終了コード 5）。
+; 実行中のアプリは終了させない。exe が使われている間は待つ（無音は 60 秒まで。超えたら何も変えずに終わり、終了コード 5。/RUN が付いていれば今入っている exe を起こし直す）。
 ; 文書は DocFiles の一覧から $INSTDIR\docs・$INSTDIR\docs\en に入れ、入れた名前を docs\.installed に記録する。更新は、前の版の記録にある文書を先に消すので、
 ; 前の版にだけあった文書が残らない。アンインストールは一覧の文書と記録を消し、フォルダは空のときだけ消す（利用者が docs に置いたファイルは消さない）。
 
@@ -101,8 +102,8 @@ LangString NAME_ASSOC ${LANG_JAPANESE} ".ylp ファイルを YoluPainter で開�
 LangString NAME_ASSOC ${LANG_ENGLISH} "Open .ylp files with YoluPainter"
 LangString CLOSE_APP ${LANG_JAPANESE} "YoluPainter を終了してから、再試行してください。"
 LangString CLOSE_APP ${LANG_ENGLISH} "Close YoluPainter, then retry."
-LangString DELETE_DATA ${LANG_JAPANESE} "設定・ブラシ・復旧のデータも削除しますか？"
-LangString DELETE_DATA ${LANG_ENGLISH} "Also delete settings, brushes and recovery data?"
+LangString DELETE_DATA ${LANG_JAPANESE} "設定と復旧のデータも削除しますか？"
+LangString DELETE_DATA ${LANG_ENGLISH} "Also delete settings and recovery data?"
 
 ; exe のバージョン情報（アプリの exe と同じ製品名・版。コード署名の条件）。
 VIProductVersion "${VERSION_NUMERIC}"
@@ -117,8 +118,22 @@ VIProductVersion "${VERSION_NUMERIC}"
 !insertmacro VersionKeys ${LANG_JAPANESE}
 !insertmacro VersionKeys ${LANG_ENGLISH}
 
+; /RUN が付いていれば、今入っている exe を起こす（入れ終わったとき、と、待ちの上限で何も変えずに終わるとき）。exe が無ければ何もしない。
+; 更新のアプリは、インストーラーを起こしたあと自分を閉じる。別の窓が exe を使い続けていてインストーラーが諦めても、利用者を窓の無い状態に置かない。
+Function RunIfRequested
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/RUN" $R1
+  ${IfNot} ${Errors}
+  ${AndIf} ${FileExists} "$INSTDIR\${EXE}"
+    SetOutPath "$INSTDIR"
+    Exec '"$INSTDIR\${EXE}"'
+  ${EndIf}
+FunctionEnd
+
 ; exe が使われている間は待つ（動いている exe は書き込みで開けない）。入れる・消すの前に呼ぶ。
-!macro DefineWaitUnlock PREFIX
+; ON_TIMEOUT は、待ちの上限を超えて終わる直前にする命令（入れるときだけ、/RUN があれば今の exe を起こす）。
+!macro DefineWaitUnlock PREFIX ON_TIMEOUT
 Function ${PREFIX}WaitUnlock
   StrCpy $R9 0
   ${Do}
@@ -134,6 +149,7 @@ Function ${PREFIX}WaitUnlock
     ${If} ${Silent}
       IntOp $R9 $R9 + 1
       ${If} $R9 >= ${WAIT_STEPS}
+        ${ON_TIMEOUT}
         SetErrorLevel 5
         Abort
       ${EndIf}
@@ -146,8 +162,8 @@ Function ${PREFIX}WaitUnlock
   ${Loop}
 FunctionEnd
 !macroend
-!insertmacro DefineWaitUnlock ""
-!insertmacro DefineWaitUnlock "un."
+!insertmacro DefineWaitUnlock "" "Call RunIfRequested"
+!insertmacro DefineWaitUnlock "un." "Nop"
 
 ; 入れる文書（STAGE\docs\…）の一覧。入れる・消す・記録の 3 つがこの 1 つの一覧を使う。
 ; xtask の BUNDLED_DOCS と同じ名前の集まりで、xtask の試験が突き合わせる（文書を足したら、両方に足す）。
@@ -300,12 +316,7 @@ Function .onInit
 FunctionEnd
 
 Function .onInstSuccess
-  ${GetParameters} $R0
-  ClearErrors
-  ${GetOptions} $R0 "/RUN" $R1
-  ${IfNot} ${Errors}
-    Exec '"$INSTDIR\${EXE}"'
-  ${EndIf}
+  Call RunIfRequested
 FunctionEnd
 
 ; アプリが入れたファイルだけを消す（入れ先の中を丸ごとは消さない）。入れ先は、空になったときだけ消える。
@@ -339,7 +350,9 @@ Section "Uninstall"
   RMDir /r "$LOCALAPPDATA\${PRODUCT}\updates"
   RMDir "$LOCALAPPDATA\${PRODUCT}"
 
-  ; 利用者の設定・ブラシ・復旧のデータは、消すかを聞く（無音では /DELETEDATA のときだけ消す）。
+  ; アプリが作り直せるデータは、消すかを聞く（無音では /DELETEDATA のときだけ消す）。
+  ; 消すのは名指しした物だけ。利用者が作った物（%APPDATA%\YoluPainter の Library・brushes・subtools・gradients・hide_presets・colorsets）と、
+  ; 後の版が足した知らないファイル・フォルダは、どちらの答えでも消さない（フォルダも、空になったときだけ消す）。
   ${un.GetParameters} $R0
   ClearErrors
   ${un.GetOptions} $R0 "/DELETEDATA" $R1
@@ -351,7 +364,18 @@ Section "Uninstall"
     Goto keep_data
   ${EndIf}
   delete_data:
-  RMDir /r "$APPDATA\${PRODUCT}"
-  RMDir /r "$LOCALAPPDATA\${PRODUCT}"
+  ; %APPDATA%\YoluPainter: 設定・窓の配置・復旧・クラッシュの記録（と、書き込み途中で残った一時ファイル）
+  Delete "$APPDATA\${PRODUCT}\settings.conf"
+  Delete "$APPDATA\${PRODUCT}\recovery.conf"
+  Delete "$APPDATA\${PRODUCT}\update.conf"
+  Delete "$APPDATA\${PRODUCT}\layout.json"
+  Delete "$APPDATA\${PRODUCT}\*.pending"
+  RMDir /r "$APPDATA\${PRODUCT}\recovery"
+  RMDir /r "$APPDATA\${PRODUCT}\logs"
+  RMDir "$APPDATA\${PRODUCT}"
+  ; %LOCALAPPDATA%\YoluPainter: 作り直せる写し（updates は上で消した）
+  RMDir /r "$LOCALAPPDATA\${PRODUCT}\thumbnails"
+  RMDir /r "$LOCALAPPDATA\${PRODUCT}\LiveLink"
+  RMDir "$LOCALAPPDATA\${PRODUCT}"
   keep_data:
 SectionEnd

@@ -37,6 +37,32 @@ fn redacts_case_slashes_unicode_and_filenames_with_spaces() {
     assert!(text.contains("[user]"));
 }
 
+/// 利用者名が a〜f と数字だけの短い名前でも、番地（0x…）は壊さない。名前は番地の外でだけ伏せる。
+#[test]
+fn a_hex_like_user_name_does_not_break_addresses() {
+    let r = Redactor {
+        homes: Vec::new(),
+        users: vec!["ed".into()],
+    };
+    let text = "Image base: 0x7ff6ed12ab34\n  3:     0x00007ff6a1ed34ed - ed::run\n 12: 0XED - x\n/home/ED/code.rs\ned0x1f\n0xed";
+    let redacted = r.redact(text);
+    let lines: Vec<&str> = redacted.lines().collect();
+    assert_eq!(lines[0], "Image base: 0x7ff6ed12ab34");
+    assert_eq!(lines[1], "  3:     0x00007ff6a1ed34ed - [user]::run");
+    assert_eq!(lines[2], " 12: 0XED - x");
+    assert_eq!(lines[3], "/home/[user]/code.rs");
+    // 語の途中の 0x は番地ではない（名前は伏せる）。番地そのものは 1 桁でも残す
+    assert_eq!(lines[4], "[user]0x1f");
+    assert_eq!(lines[5], "0xed");
+    // 名前と番地が重なって並ぶとき、番地の外の名前は伏せ、重なった一致を見落とさない
+    assert_eq!(
+        r.redact("eded 0xeded eded"),
+        "[user][user] 0xeded [user][user]"
+    );
+    // 番地とみなすのは、語の頭の 0x と 16 進の数字が 1 桁以上続くものだけ
+    assert_eq!(hex_words("a0x1 0x 0xg 0x1g _0x2 (0x3)"), [12..15, 23..26]);
+}
+
 #[test]
 fn crash_rotation_size_and_actions_only() {
     let dir = Temp::new();
@@ -212,11 +238,15 @@ fn child_crash() {
 }
 
 fn run_child_output(mode: &str) -> (Temp, std::process::Output) {
+    run_child_output_with(mode, &[])
+}
+fn run_child_output_with(mode: &str, envs: &[(&str, &str)]) -> (Temp, std::process::Output) {
     let dir = Temp::new();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "crash::tests::child_crash", "--nocapture"])
         .env("YOLU_TEST_CRASH_DIR", &dir.0)
         .env("YOLU_TEST_CRASH_MODE", mode)
+        .envs(envs.iter().copied())
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -238,6 +268,28 @@ fn session_text(dir: &Path) -> String {
         .collect()
 }
 
+/// 「  12: 0x7ff6a1b2c3d4 - 名前」の形の行から、命令の番地を取る。
+fn frame_address(line: &str) -> Option<usize> {
+    let (index, rest) = line.trim_start().split_once(": ")?;
+    index.parse::<u32>().ok()?;
+    // 番地は桁をそろえるために左に空白が付く
+    let hex = rest.trim_start().strip_prefix("0x")?.split(" - ").next()?;
+    usize::from_str_radix(hex, 16).ok()
+}
+
+/// 基底の番地は、実行ファイルの中の関数の番地より前にある（相対の番地が正しく取れる）。
+#[test]
+fn the_image_base_precedes_the_code_of_this_executable() {
+    let here = the_image_base_precedes_the_code_of_this_executable as fn() as usize;
+    let base = super::image_base();
+    if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
+        let base = base.expect("基底が分かる OS");
+        assert!(here > base && here - base < (1 << 31), "{here:#x} {base:#x}");
+    } else {
+        assert!(base.is_none());
+    }
+}
+
 #[test]
 fn real_panic_hook_records_backtrace_and_redacts_payload() {
     let dir = run_child("panic");
@@ -245,9 +297,71 @@ fn real_panic_hook_records_backtrace_and_redacts_payload() {
     assert!(report.unread);
     assert!(report.text.contains("test panic"));
     assert!(report.text.contains("Backtrace:"));
+    // 記号が解決できなくても、各フレームの番地が残る（番地 - 基底 を PDB で引く）。基底は頭の行に書く
+    let frames: Vec<&str> = report
+        .text
+        .lines()
+        .skip_while(|line| *line != "Backtrace:")
+        .skip(1)
+        .filter(|line| frame_address(line).is_some())
+        .collect();
+    assert!(frames.len() >= 3, "番地つきのフレームが無い: {}", report.text);
+    if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
+        let base = report
+            .text
+            .lines()
+            .find_map(|line| line.strip_prefix("Image base: 0x"))
+            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+            .unwrap_or_else(|| panic!("基底の行が無い: {}", report.text));
+        // 少なくとも 1 つのフレームは自分の実行ファイルの中（基底より後ろ）にある
+        assert!(
+            frames
+                .iter()
+                .filter_map(|line| frame_address(line))
+                .any(|ip| ip > base && ip - base < (1 << 31)),
+            "{}",
+            report.text
+        );
+    }
     assert!(report.text.contains("SaveProjectAs"));
     assert!(!report.text.contains("private image"));
     assert!(!report.text.contains("secret.ylp"));
+}
+/// 利用者名が 16 進の文字だけの環境（USER・USERNAME が `d`）でも、記録の番地は 1 つも壊れず、基底の行も読める。
+#[test]
+fn a_hex_like_user_name_keeps_every_frame_address_in_a_real_panic_report() {
+    let (dir, _) = run_child_output_with("panic", &[("USER", "d"), ("USERNAME", "d")]);
+    let report = window::Report::load(dir.0.clone());
+    let frames: Vec<&str> = report
+        .text
+        .lines()
+        .skip_while(|line| *line != "Backtrace:")
+        .skip(1)
+        .filter(|line| {
+            line.trim_start()
+                .split_once(": ")
+                .is_some_and(|(index, _)| index.parse::<u32>().is_ok())
+        })
+        .collect();
+    assert!(frames.len() >= 3, "{}", report.text);
+    for line in frames {
+        assert!(
+            frame_address(line).is_some(),
+            "番地が壊れた: {line}\n{}",
+            report.text
+        );
+    }
+    if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
+        assert!(
+            report
+                .text
+                .lines()
+                .find_map(|line| line.strip_prefix("Image base: 0x"))
+                .is_some_and(|hex| usize::from_str_radix(hex, 16).is_ok()),
+            "{}",
+            report.text
+        );
+    }
 }
 #[test]
 #[cfg(target_os = "linux")]

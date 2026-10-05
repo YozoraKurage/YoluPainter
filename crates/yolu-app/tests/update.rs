@@ -169,6 +169,8 @@ fn rig(state: &mut AppState, served: &str, mode: Mode) -> Rig {
             link,
         })
     }));
+    // 実際のプロセスの一覧は見ない（別の起動の試験だけが、自分で答えを決める）
+    state.update.set_other_instance_for_test(Arc::new(|| false));
     let (l, o) = (launched.clone(), opened.clone());
     state.update.set_actions_for_test(
         Arc::new(move |path| {
@@ -804,6 +806,134 @@ fn headless_a_failed_launch_keeps_the_app_open() {
     apply(&mut state, UpdateAction::Run { save: false });
     assert!(!state.quit && !state.update.is_quitting());
     assert_eq!(state.message, "インストーラーを起動できません。");
+}
+
+// ───────── 別の窓が開いている ─────────
+
+const BLOCKED_JA: &str = "ほかの YoluPainter が開いています";
+
+#[test]
+fn headless_another_running_window_stops_the_update_and_keeps_the_download() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    let other = Arc::new(AtomicBool::new(true));
+    let seen = other.clone();
+    state
+        .update
+        .set_other_instance_for_test(Arc::new(move || seen.load(Ordering::Relaxed)));
+    find_update(&mut state);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    let name = "yolupainter-0.2.0-x86_64-pc-windows-msvc-setup.exe";
+    let calls = rig.calls();
+    // 断る: 走らせず、アプリは閉じず、落としたインストーラーも準備の窓も残る（短い理由だけ。使い方の説明にしない）
+    apply(&mut state, UpdateAction::Run { save: false });
+    assert!(rig.launched().is_empty());
+    assert!(!state.quit && !state.update.is_quitting());
+    assert_eq!(state.message, BLOCKED_JA);
+    assert!(state.update.is_ready_open() && state.update.is_blocked());
+    assert_eq!(rig.staging.files(), [name]);
+    // 閉じてからもう一度押せば、落とし直さずにすぐ入る
+    other.store(false, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Run { save: false });
+    assert_eq!(rig.launched(), [rig.staging.0.join(name)]);
+    assert!(state.quit && state.update.is_quitting());
+    assert!(!state.update.is_blocked());
+    assert_eq!(rig.calls(), calls, "通信し直さない");
+}
+
+#[test]
+fn headless_the_refusal_comes_before_saving_and_is_told_in_english_too() {
+    let dir = TempDir::new("blocked-save");
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+    state.lang = Lang::En;
+    state.update.set_other_instance_for_test(Arc::new(|| true));
+    find_update(&mut state);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    state.modified = true;
+    let before = std::fs::metadata(dir.0.join("a.ylp")).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    // 更新が始まらないのに、保存はしない（保存先の窓も出さない）
+    apply(&mut state, UpdateAction::Run { save: true });
+    assert!(state.modified, "保存していない変更は、そのまま");
+    assert_eq!(
+        std::fs::metadata(dir.0.join("a.ylp")).unwrap().modified().unwrap(),
+        before
+    );
+    assert!(state.dialog_request.is_none() && rig.launched().is_empty() && !state.quit);
+    assert_eq!(state.message, "Another YoluPainter is running");
+    assert!(state.update.is_ready_open());
+    // 「あとで」で理由の表示も消える
+    apply(&mut state, UpdateAction::Later);
+    assert!(!state.update.is_blocked() && !state.update.is_ready_open());
+}
+
+#[test]
+fn headless_a_window_opened_while_the_save_dialog_was_up_is_caught_before_launching() {
+    let dir = TempDir::new("blocked-late");
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    let other = Arc::new(AtomicBool::new(false));
+    let seen = other.clone();
+    state
+        .update
+        .set_other_instance_for_test(Arc::new(move || seen.load(Ordering::Relaxed)));
+    find_update(&mut state);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    state.modified = true;
+    // 名前の無いプロジェクト: 保存先を選ぶ窓が開いている間に、別の窓が開く
+    apply(&mut state, UpdateAction::Run { save: true });
+    assert_eq!(state.dialog_request, Some(DialogRequest::SaveAs));
+    other.store(true, Ordering::Relaxed);
+    state.dialog_request = None;
+    state.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+    assert!(!state.modified);
+    state.update_finish_save();
+    // 保存は済んだが、走らせない。落としたインストーラーと準備の窓は残る
+    assert!(rig.launched().is_empty() && !state.quit);
+    assert_eq!(state.message, BLOCKED_JA);
+    assert!(state.update.is_ready_open() && state.update.is_blocked());
+    assert_eq!(rig.staging.files().len(), 1);
+    other.store(false, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Run { save: false });
+    assert_eq!(rig.launched().len(), 1);
+    assert!(state.quit);
+}
+
+#[test]
+fn the_ready_window_gives_the_reason_while_another_window_is_open() {
+    let mut h = app(1280.0, 800.0, 64);
+    let rig = rig(&mut h.state_mut().state, "0.2.0", Mode::Installer);
+    {
+        let state = &mut h.state_mut().state;
+        state.update.set_other_instance_for_test(Arc::new(|| true));
+        find_update(state);
+        apply(state, UpdateAction::Install);
+        settle(state);
+    }
+    h.run();
+    {
+        use egui_kittest::kittest::Queryable;
+        assert!(h.query_by_label(BLOCKED_JA).is_none(), "押すまでは出さない");
+    }
+    click_label(&mut h, "更新して再起動");
+    h.run();
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label(BLOCKED_JA);
+        h.get_by_label("更新して再起動");
+    }
+    assert!(rig.launched().is_empty() && !h.state().state.quit);
+    // 別の窓を閉じてからもう一度押すと入る
+    h.state_mut().state.update.set_other_instance_for_test(Arc::new(|| false));
+    click_label(&mut h, "更新して再起動");
+    h.run();
+    assert_eq!(rig.launched().len(), 1);
+    assert!(h.state().state.quit);
 }
 
 // ───────── ページを開くだけの環境 ─────────

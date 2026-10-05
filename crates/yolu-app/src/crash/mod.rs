@@ -81,7 +81,9 @@ impl Redactor {
             text = replace_case(&text, &home.replace('\\', "\\\\"), "~");
         }
         for user in &self.users {
-            text = replace_case(&text, user, "[user]");
+            // 利用者名が a〜f と数字だけの短い名前（ed・dad・123 など）でも、番地（0x…）の途中は伏せない。番地が壊れると PDB で引けない
+            let addresses = hex_words(&text);
+            text = replace_case_skipping(&text, user, "[user]", &addresses);
         }
         // 空白入り・引用符入りのファイル名も漏らさないため、対象拡張子がある行は全体を伏せる。
         text.lines()
@@ -106,6 +108,16 @@ impl Redactor {
 }
 
 fn replace_case(text: &str, needle: &str, replacement: &str) -> String {
+    replace_case_skipping(text, needle, replacement, &[])
+}
+
+/// `skip` の範囲（`text` のバイト位置）に 1 文字でも掛かる一致は、置き換えずに残す。
+fn replace_case_skipping(
+    text: &str,
+    needle: &str,
+    replacement: &str,
+    skip: &[std::ops::Range<usize>],
+) -> String {
     if needle.is_empty() {
         return text.into();
     }
@@ -116,12 +128,44 @@ fn replace_case(text: &str, needle: &str, replacement: &str) -> String {
     let mut start = 0;
     while let Some(at) = lower[start..].find(&needle) {
         let at = start + at;
+        let end = at + needle.len();
+        if skip.iter().any(|range| at < range.end && range.start < end) {
+            // 範囲に掛かる一致は残して、次の 1 文字から探し直す（重なった一致も見落とさない）
+            let step = text[at..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&text[start..at + step]);
+            start = at + step;
+            continue;
+        }
         out.push_str(&text[start..at]);
         out.push_str(replacement);
-        start = at + needle.len();
+        start = end;
     }
     out.push_str(&text[start..]);
     out
+}
+
+/// `0x` と 16 進の数字が続く語（番地・基底）の範囲。語の途中の `0x`（`a0x1` など）は数えない。
+fn hex_words(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut words = Vec::new();
+    let mut at = 0;
+    while at + 1 < bytes.len() {
+        let word_start =
+            at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+        if word_start && bytes[at] == b'0' && matches!(bytes[at + 1], b'x' | b'X') {
+            let digits = bytes[at + 2..]
+                .iter()
+                .take_while(|b| b.is_ascii_hexdigit())
+                .count();
+            if digits > 0 {
+                words.push(at..at + 2 + digits);
+                at += 2 + digits;
+                continue;
+            }
+        }
+        at += 1;
+    }
+    words
 }
 
 pub fn directory() -> Option<PathBuf> {
@@ -365,12 +409,63 @@ impl Recorder {
         self.record(
             "Rust panic",
             &format!(
-                "Thread: {}\n{summary}\nBacktrace:\n{}",
+                "Thread: {}\n{summary}\nImage base: {}\nBacktrace:\n{:#}",
                 thread.name().unwrap_or("unnamed"),
+                image_base_text(),
+                // `{:#}` は各フレームの命令の番地を書く形（`{}` の短い形は、記号が解決できないと `<unknown>` だけで番地が残らない）。
+                // 配布物には PDB が無いので、記号の解決は書いた側ではできない。番地から実行ファイルの基底（上の `Image base`）を引いた
+                // 相対の番地を、同じ版の PDB（リリースの付属物）で引く。
                 std::backtrace::Backtrace::force_capture()
             ),
         );
     }
+}
+
+/// 実行ファイルが読み込まれた基底の番地。落ちた記録の各フレームの番地から引くと、PDB・シンボルファイルの中の相対の番地になる
+/// （アドレス空間のランダム化で、起動のたびに基底が違う）。Windows は `GetModuleHandleW(NULL)`、Linux は主プログラムの読み込みの差分
+/// （`dl_iterate_phdr` の最初）、Mac は最初のイメージの先頭。分からなければ None。
+pub(crate) fn image_base() -> Option<usize> {
+    #[cfg(windows)]
+    {
+        // SAFETY: 引数 NULL は自分の実行ファイルのハンドルを返すだけ（参照は増やさない）。
+        unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }
+            .ok()
+            .map(|module| module.0 as usize)
+            .filter(|base| *base != 0)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" fn first(
+            info: *mut libc::dl_phdr_info,
+            _size: libc::size_t,
+            data: *mut libc::c_void,
+        ) -> libc::c_int {
+            // SAFETY: ローダーが渡す構造体と、呼び出し側が渡した usize の書き込み先。
+            unsafe { *data.cast::<usize>() = (*info).dlpi_addr as usize };
+            1 // 最初（主プログラム）だけで止める
+        }
+        let mut base = 0usize;
+        // SAFETY: コールバックはこの呼び出しの間だけ、base への書き込みに使う。
+        unsafe { libc::dl_iterate_phdr(Some(first), std::ptr::from_mut(&mut base).cast()) };
+        Some(base)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn _dyld_get_image_header(image_index: u32) -> *const std::ffi::c_void;
+        }
+        // SAFETY: 番号 0 は主の実行ファイル。ヘッダーの番地を返すだけで、読み書きはしない。
+        let header = unsafe { _dyld_get_image_header(0) } as usize;
+        (header != 0).then_some(header)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+fn image_base_text() -> String {
+    image_base().map_or_else(|| "unknown".to_owned(), |base| format!("0x{base:x}"))
 }
 
 /// main の最初で一度だけ呼ぶ。既存の hook（標準の表示を含む）は必ず引き継ぐ。

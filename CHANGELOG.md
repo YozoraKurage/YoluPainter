@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
+
+### 日本語
+
+- **アンインストール**: 「設定と復旧のデータも削除」で、アプリが作り直せる物（設定・窓の配置・復旧・クラッシュの記録・キャッシュ）だけを消し、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセットは残します（[詳しくは](docs/INSTALL.md)）。
+- **更新**: ほかの YoluPainter の窓が開いているときは更新を断ります（閉じてからもう一度押せば、落とした更新がすぐ入ります）。インストーラーが待ちきれなかったときも、今のアプリを起こし直します。
+- **クラッシュの記録**: 呼び出しの履歴に番地と実行ファイルの基底を残し、Release に PDB を付けます。
+- **3D で描くときの知らせ**: 面が重なりすぎて取り消したときなどの文を、使う人の言葉にしました。
+
+### English
+
+- **Uninstall**: "Also delete settings and recovery data" now removes only what the app can recreate (settings, window layout, recovery, crash logs, caches) and keeps your library, brushes, sub tools, gradients and color sets ([details](docs/en/INSTALL.md)).
+- **Updates**: Updating is refused while another YoluPainter window is open (press again after closing it; the downloaded update installs right away). If the installer cannot wait for the app to close, it restarts the current app.
+- **Crash logs**: Backtraces keep frame addresses and the image base, and releases include the PDB.
+- **3D painting messages**: Messages such as a stroke cancelled for too many overlapping faces now use plain words.
+
+## 0.3.0
 
 ### 日本語
 
