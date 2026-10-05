@@ -277,6 +277,47 @@ impl SutInput {
     }
 }
 
+/// CLIP STUDIO の `.sut` の設定のうち、このアプリの設定へ写せたもの（近似を含む。近似した中身は [`SutNote`] に別に載る）。
+/// 大きさ・不透明度・流量・硬さ・間隔・真円率は、どのブラシにも写すので載せない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SutMapped {
+    /// 筆先の画像（1 枚以上）。
+    TipImage,
+    /// 質感。
+    Texture,
+    /// 大きさ・不透明度・流量への筆圧の影響（最小値と曲線）。
+    Pressure,
+    /// 大きさ・不透明度・流量へのペンの傾きの影響。
+    Tilt,
+    /// 入り抜き（大きさへ。長さは画素）。
+    StartEnd,
+    /// 手ぶれ補正。
+    Stabilizer,
+    /// 筆先の向きの角度。
+    TipAngle,
+    /// 筆先の角度のランダム。
+    AngleRandom,
+    /// 色の混ぜ。
+    ColorMixing,
+}
+
+impl SutMapped {
+    /// 項目の名前（日本語・英語。短い名詞句）。
+    pub fn texts(self) -> (&'static str, &'static str) {
+        match self {
+            Self::TipImage => ("筆先の画像", "tip image"),
+            Self::Texture => ("質感", "texture"),
+            Self::Pressure => ("筆圧", "pen pressure"),
+            Self::Tilt => ("傾き", "pen tilt"),
+            Self::StartEnd => ("入り抜き", "start and end"),
+            Self::Stabilizer => ("手ぶれ補正", "stabilization"),
+            Self::TipAngle => ("筆先の角度", "tip angle"),
+            Self::AngleRandom => ("角度のランダム", "angle jitter"),
+            Self::ColorMixing => ("色の混ぜ", "color mixing"),
+        }
+    }
+}
+
 /// CLIP STUDIO の `.sut` の設定のうち、読めなかった・表せない・近似したもの。
 #[derive(Clone, Debug, PartialEq)]
 pub enum SutNote {
@@ -334,6 +375,12 @@ pub enum SutNote {
     ThicknessPressure,
     /// 筆圧の曲線の点が 16 を超え、16 点に取り直した。
     CurveSimplified(SutTarget),
+    /// 傾きの影響を、直立で 1・寝かせきって 0 の直線に近似した（このアプリの傾きの影響は曲線を持たない）。
+    TiltCurve(SutTarget),
+    /// 入り抜きの長さだけを写した。速さに応じた長さ・割合（`BrushInOutBySpeed`・`BrushInRatio`・`BrushOutRatio`）は読まない。
+    StartEndDetail,
+    /// 手ぶれ補正の強さ（段階）を、糸の長さ（画素）へ 1 対 1 で写した（換算は推定）。
+    StabilizerStrength,
     /// ブラシの設定の表（`Variant`）か、行の番号の列（`VariantID`）が無く、設定は既定のまま。
     SettingsMissing,
     /// 画像を取り出せなかった素材の数（ファイル全体）。
@@ -387,8 +434,8 @@ impl SutNote {
                 "Texture per dab is not supported; the texture is applied once per stroke.".into(),
             ),
             Self::Direction => (
-                "筆先の向き（角度と、向きに従う設定）は未対応".into(),
-                "Tip direction (angle and follow-direction) is not supported.".into(),
+                "筆先の向きの影響元（筆圧・傾き・速さ）は未対応".into(),
+                "Tip direction influences (pen pressure, tilt, speed) are not supported.".into(),
             ),
             Self::ColorMixing { paint, density, stretch } => (
                 format!("色の混ぜは未対応（絵の具量 {paint}・絵の具濃度 {density}・色延び {stretch}）"),
@@ -396,7 +443,10 @@ impl SutNote {
             ),
             Self::Spray => ("吹き付け効果は未対応".into(), "The spray effect is not supported.".into()),
             Self::DualBrush => ("デュアルブラシは未対応".into(), "Dual brush is not supported.".into()),
-            Self::StartEnd => ("入り抜きは未対応".into(), "Start and end taper is not supported.".into()),
+            Self::StartEnd => (
+                "入り抜き（大きさ以外への影響・画素以外の長さの単位）は未対応".into(),
+                "Start and end taper is not supported (effects other than size, length units other than pixels).".into(),
+            ),
             Self::Stabilizer => ("手ぶれ補正は未対応".into(), "Stabilization is not supported.".into()),
             Self::ColorChange => ("色の変化は未対応".into(), "Color change is not supported.".into()),
             Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
@@ -426,6 +476,21 @@ impl SutNote {
                     format!("The pen pressure curve for {ten} was resampled to 16 points (it had more)."),
                 )
             }
+            Self::TiltCurve(target) => {
+                let (tja, ten) = target.texts();
+                (
+                    format!("{tja}の傾きの影響は、直立で 1・寝かせきって 0 の直線に近似した（曲線の形は写せない）"),
+                    format!("The pen tilt influence on {ten} is approximated by a straight line from 1 (upright) to 0 (flat); the curve's shape is not kept."),
+                )
+            }
+            Self::StartEndDetail => (
+                "入り抜きは長さだけを写した（速さに応じた長さ・割合は読まない）".into(),
+                "Start and end taper keeps only the lengths (speed-dependent lengths and ratios are not read).".into(),
+            ),
+            Self::StabilizerStrength => (
+                "手ぶれ補正の強さは、段階 1 を糸の長さ 1 画素として写した（換算は推定）".into(),
+                "Stabilization strength maps one level to one pixel of string length (the conversion is an estimate).".into(),
+            ),
             Self::SettingsMissing => (
                 "ブラシの設定の表（Variant）か行の番号の列（VariantID）が無く、設定は既定のまま".into(),
                 "The settings table (Variant) or its row-number column (VariantID) is missing; settings are left at their defaults.".into(),

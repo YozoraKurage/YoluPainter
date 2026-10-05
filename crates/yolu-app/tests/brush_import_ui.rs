@@ -2,6 +2,10 @@
 //! 詳細の窓の Krita の格子と模様の選び・日英。試験のファイルは試験の中で組む（外のファイルは持ち込まない）。
 mod brush_import_files;
 mod common;
+/// 合成の .sut（SQLite）の組み立ては、読み手の試験（yolu-io）と同じものを使う。
+#[allow(dead_code)]
+#[path = "../../yolu-io/tests/brush_files/sut.rs"]
+mod sut_files;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -243,6 +247,91 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
     h.run();
     assert_eq!(st(&h).brushes.ui.group, Group::Pen);
     assert!(h.query_by_label("Imported").is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_brush_that_has_them_is_selected(
+) {
+    use sut_files::*;
+    use yolu_app::brushes::sample::{key_of, SampleSpec};
+    use yolu_app::engine::{Brush, StrokeAssist};
+    let dir = temp_dir("row-assist");
+    let mut h = app(1600.0, 960.0, 128);
+    with_store(&mut h, &dir);
+    let drawer = StrokeAssist {
+        stabilizer: 7.0,
+        taper_in: 3.0,
+        taper_out: 0.0,
+        curve: false,
+    };
+    h.state_mut().state.m2.brush.assist = drawer;
+    let taper = SutBuilder::new()
+        .brush(
+            "Taper",
+            1,
+            &[
+                ("BrushSize", real(30.0)),
+                ("BrushUseIn", int(1)),
+                ("BrushInLength", real(1130.0)),
+                ("BrushUseOut", int(1)),
+                ("BrushOutLength", real(14.0)),
+            ],
+        )
+        .build();
+    let files = vec![
+        write(&dir, "plain.gbr", &gbr_gray("Plain tip")),
+        write(&dir, "taper.sut", &taper),
+    ];
+    h.state_mut()
+        .state
+        .apply(Action::Brush(BrushAction::Import(files)));
+    wait_import(&mut h);
+    let find = |h: &H, name: &str| {
+        st(h)
+            .brushes
+            .lib
+            .in_group(Group::Imported)
+            .into_iter()
+            .find(|e| e.name == name)
+            .map(|e| e.key)
+            .expect("取り込んだブラシ")
+    };
+    let (plain, taper) = (find(&h, "Plain tip"), find(&h, "Taper"));
+    h.state_mut()
+        .state
+        .apply(Action::Brush(BrushAction::Select(taper)));
+    h.run();
+    // 持つブラシを選んでいる間、今の設定にはその値が重なっている
+    assert_eq!(st(&h).m2.brush.assist.taper_in, 1130.0);
+    assert_eq!(st(&h).brushes.drawer_assist, Some(drawer));
+    // 持たないブラシの行の見本は、描き手の設定で描かれる（重なった値で描かれない）
+    let effective = st(&h).brushes.lib.entry(plain).unwrap().effective().clone();
+    let key_for = |assist: StrokeAssist| {
+        key_of(
+            &Brush {
+                assist,
+                ..effective.clone()
+            },
+            SampleSpec::row(false),
+        )
+    };
+    let (right, wrong) = (key_for(drawer), key_for(st(&h).m2.brush.assist));
+    assert_ne!(right, wrong, "二つの見本は別の絵");
+    let start = Instant::now();
+    while st(&h).brushes.samples.image(right).is_none() && start.elapsed() < Duration::from_secs(30)
+    {
+        h.run();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        st(&h).brushes.samples.image(right).is_some(),
+        "描き手の設定の見本"
+    );
+    assert!(
+        st(&h).brushes.samples.image(wrong).is_none(),
+        "持つブラシの値で描いた見本は作られない"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -536,5 +625,219 @@ fn snapshot_the_imported_group_in_english() {
     let mut h = imported_panel(Lang::En, &dir);
     let rect = panel_rect(&h);
     shot(&mut h, rect, "brushes_panel_imported_english");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+// ---------------- 「CLIP STUDIO から」の窓 ----------------
+
+/// 試験用の CELSYS の設定のフォルダ: 筆先の画像を持つ .sut・丸い筆先の .sut・読めないファイル。
+fn celsys_places(dir: &Path) -> yolu_io::brushes::clipstudio::Places {
+    use sut_files::*;
+    let root = dir.join("AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen");
+    std::fs::create_dir_all(&root).unwrap();
+    let tip = png_gray(2, 2, &[0, 255, 255, 0]);
+    let stamp = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&tip))
+        .brush(
+            "Stamp",
+            1,
+            &[
+                ("BrushSize", real(40.0)),
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["x/tip_a.png", "cat/a", "tip_a"]])),
+                ),
+            ],
+        )
+        .build();
+    let ink = SutBuilder::new()
+        .brush(
+            "Ink",
+            1,
+            &[
+                ("BrushSize", real(24.0)),
+                ("BrushHardness", int(30)),
+                ("BrushUseIn", int(1)),
+                ("BrushInLength", real(20.0)),
+            ],
+        )
+        .build();
+    std::fs::write(root.join("a_stamp.sut"), stamp).unwrap();
+    std::fs::write(root.join("b_ink.sut"), ink).unwrap();
+    std::fs::write(root.join("c_broken.sut"), b"not a database at all").unwrap();
+    yolu_io::brushes::clipstudio::Places {
+        appdata: Some(dir.join("AppData/Roaming")),
+        profile: Some(dir.to_path_buf()),
+        onedrive: None,
+    }
+}
+
+fn csp_window(lang: Lang, dir: &Path) -> H {
+    let mut h = app(1600.0, 900.0, 128);
+    language(&mut h, lang);
+    with_store(&mut h, dir);
+    h.state_mut().state.brushes.csp.places = Some(celsys_places(dir));
+    let button = lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO");
+    h.get_by_label(button).click();
+    wait_csp(&mut h);
+    h
+}
+
+/// 探す・覗く仕事が終わるまでフレームを回す。
+fn wait_csp(h: &mut H) {
+    let start = Instant::now();
+    h.run();
+    while st(h).brushes.csp.is_busy() && start.elapsed() < Duration::from_secs(60) {
+        h.run();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!st(h).brushes.csp.is_busy(), "探す仕事が終わらない");
+    h.run();
+}
+
+#[test]
+fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
+    let dir = temp_dir("csp-ui");
+    let mut h = csp_window(Lang::Ja, &dir);
+    assert!(st(&h).brushes.csp.open);
+    // 見出し・状態の 1 行・名前（読めたもの）・ファイル名（読めなかったもの）・下の帯のボタン
+    for label in ["Stamp", "Ink", "c_broken", "フォルダ…", "探し直す", "すべて選ぶ"] {
+        assert!(h.query_by_label(label).is_some(), "{label}");
+    }
+    assert!(drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
+    assert!(
+        drawn_texts(&h).iter().any(|t| t == "サブツール 3 個"),
+        "{:?}",
+        drawn_texts(&h)
+    );
+    // 何も選んでいないので、取り込むは押せない
+    assert!(h.get_by_label("取り込む").accesskit_node().is_disabled());
+    assert_eq!(marked(&h, "Ink"), Some(false));
+    h.get_by_label("Ink").click();
+    h.run();
+    assert_eq!(marked(&h, "Ink"), Some(true));
+    assert_eq!(marked(&h, "Stamp"), Some(false));
+    h.get_by_label("取り込む（1）").click();
+    h.run();
+    wait_import(&mut h);
+    // 窓が閉じ、選んだものだけが取り込まれている
+    assert!(!st(&h).brushes.csp.open);
+    assert!(!drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
+    assert!(h.query_by_label("Ink").is_some() && h.query_by_label("Stamp").is_none());
+    assert_eq!(st(&h).brushes.ui.group, Group::Imported);
+    // 取り込んだブラシの行のツールチップに、写した項目（入り抜き）が並ぶ
+    let row = rect_of(&h, "Ink", |r| in_panel(r) && r.width() > 200.0);
+    move_to(&h, pos2(2.0, 2.0));
+    h.run();
+    hover_and_wait(&mut h, pos2(row.left() + 30.0, row.center().y));
+    let tip = tooltip_text(&h, "写した項目").expect("ツールチップ");
+    assert!(tip.contains("入り抜き") && tip.contains("CLIP STUDIO SUT"), "{tip}");
+    assert!(tip.contains("入り抜きの速さ・割合"), "近似した中身は表せなかった項目に: {tip}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_clip_studio_window_in_english_and_the_button_is_off_while_importing() {
+    let dir = temp_dir("csp-ui-en");
+    let mut h = csp_window(Lang::En, &dir);
+    for label in ["Stamp", "Ink", "c_broken", "Folder…", "Rescan", "Select All"] {
+        assert!(h.query_by_label(label).is_some(), "{label}");
+    }
+    assert!(drawn_texts(&h).iter().any(|t| t == "From CLIP STUDIO"));
+    assert!(drawn_texts(&h).iter().any(|t| t == "3 sub tools"), "{:?}", drawn_texts(&h));
+    assert!(
+        drawn_texts(&h).iter().all(|t| !has_japanese(t) || t.contains("Ink") || t.contains("Stamp")),
+        "英語の画面に日本語が混ざらない: {:?}",
+        drawn_texts(&h)
+    );
+    h.get_by_label("Select All").click();
+    h.run();
+    assert!(h.query_by_label("Clear").is_some());
+    assert!(h.query_by_label("Import (2)").is_some());
+    // 閉じる
+    h.get_by_label("Close").click();
+    h.run();
+    assert!(!st(&h).brushes.csp.open);
+    // 取り込み中は入口を押せない
+    h.state_mut().state.brushes.import.park_next = true;
+    h.state_mut()
+        .state
+        .apply(Action::Brush(BrushAction::Import(vec![dir.join(
+            "AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen/b_ink.sut",
+        )])));
+    h.run();
+    assert!(h
+        .get_by_label("Import from CLIP STUDIO")
+        .accesskit_node()
+        .is_disabled());
+    h.state_mut()
+        .state
+        .apply(Action::Brush(BrushAction::ImportCancel));
+    wait_import(&mut h);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
+    for (lang, expect) in [
+        (Lang::Ja, "サブツールのフォルダが見つかりません"),
+        (Lang::En, "Sub tool folder not found"),
+    ] {
+        let dir = temp_dir("csp-ui-none");
+        let mut h = app(1600.0, 900.0, 128);
+        language(&mut h, lang);
+        with_store(&mut h, &dir);
+        h.state_mut().state.brushes.csp.places = Some(yolu_io::brushes::clipstudio::Places {
+            appdata: Some(dir.join("AppData/Roaming")),
+            profile: Some(dir.clone()),
+            onedrive: None,
+        });
+        h.get_by_label(lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"))
+            .click();
+        wait_csp(&mut h);
+        assert!(drawn_texts(&h).iter().any(|t| t == expect), "{lang:?}: {:?}", drawn_texts(&h));
+        // 一覧が無いので、取り込むと全部選ぶは押せない
+        let import = lang.pick("取り込む", "Import");
+        assert!(h.get_by_label(import).accesskit_node().is_disabled());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// 窓の中だけを撮って、正解の絵と比べる。
+fn shot_window(h: &mut H, name: &str) {
+    let rect = yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
+        .expect("窓が開いている");
+    h.event(Event::PointerGone);
+    h.step();
+    let image = h.render().expect("描画");
+    let cropped = image::imageops::crop_imm(
+        &image,
+        rect.left().floor() as u32,
+        rect.top().floor() as u32,
+        rect.width().ceil() as u32,
+        rect.height().ceil() as u32,
+    )
+    .to_image();
+    egui_kittest::image_snapshot(&cropped, name);
+}
+
+#[test]
+fn snapshot_the_clip_studio_window() {
+    let dir = temp_dir("csp-shot");
+    let mut h = csp_window(Lang::Ja, &dir);
+    h.get_by_label("Ink").click();
+    h.run();
+    shot_window(&mut h, "brush_clipstudio_window");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn snapshot_the_clip_studio_window_in_english() {
+    let dir = temp_dir("csp-shot-en");
+    let mut h = csp_window(Lang::En, &dir);
+    h.get_by_label("Ink").click();
+    h.run();
+    shot_window(&mut h, "brush_clipstudio_window_english");
     std::fs::remove_dir_all(dir).unwrap();
 }

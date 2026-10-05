@@ -7,9 +7,12 @@
 //!   プレビューの PNG。どの素材を使うかは `Variant` の参照の BLOB の名前から決める。名前で当たらない参照は、残った素材（素材の種類が
 //!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
 //!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
-//! - 影響元設定（`*Effector`）は筆圧だけ（最小値と曲線）。傾き・速さ・ランダムは表せないので注記する。
-//! - 表せない設定（色の混ぜ・吹き付け・デュアルブラシ・入り抜き・手ぶれ補正・色の変化・合成モード・筆先の向きなど）は、旗が立って
-//!   いるものだけ [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る。
+//! - 影響元設定（`*Effector`）は筆圧（最小値と曲線）と、傾き（大きさ・不透明度・流量へ。曲線は直線に近似）。速さ・ランダムは表せない
+//!   ので注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正・筆先の角度・角度のランダムも写す。写せたものは [`SutMapped`]、
+//!   近似したものは [`SutNote`] にも載せる。
+//! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・色の変化・合成モードなど）は、旗が立っているものだけ
+//!   [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る（確かめた所と
+//!   推測の所は docs/BRUSH_IMPORT.md）。
 //!
 //! 信頼できないファイルなので、データベースを開く・読む所は `db`（読み取り専用・メモリ上・上限つき）だけが触る。
 
@@ -22,16 +25,17 @@ mod tar;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use yolu_core::brush::MAX_STROKE_ASSIST;
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::{Brush, BrushTip, PaperTexture, PressureResponse, TipSelection};
 
 use super::error::{BrushImportError, Fault};
-use super::notes::{Source, SutInput, SutNote, SutTarget, Unrepresented};
+use super::notes::{Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented};
 use super::png_tip;
 use super::reader::Budget;
 use super::{short_text, ImportedBrush, ImportedSet, SkipReason, SkippedBrush};
 use blob::{parse_effector, parse_refs, Effector, Refs};
-use db::{Database, Material, Row, Variants};
+use db::{Cell, Database, Material, Row, Variants};
 use material::Kind;
 
 /// 取り出した画像（PNG の元のバイト列）の合計の上限（バイト）。
@@ -75,8 +79,21 @@ const MIX_STRETCH: &[&str] = &["brushmixcolorextension"];
 const WATER_EDGE: &[&str] = &["brushusewateredge"];
 const SPRAY: &[&str] = &["brushusespray"];
 const DUAL: &[&str] = &["usedualbrush"];
-const START_END: &[&str] = &["brushusein", "brushuseout"];
-const STABILIZER: &[&str] = &["brushuserevision"];
+// 入り抜き: 入り・抜きそれぞれの旗・長さ・長さの単位（0 が画素）。影響先は `BrushInOutType`（0 が既定）と、`BrushInOutTarget`（BLOB）。
+const USE_IN: &[&str] = &["brushusein"];
+const USE_OUT: &[&str] = &["brushuseout"];
+const IN_LENGTH: &[&str] = &["brushinlength"];
+const OUT_LENGTH: &[&str] = &["brushoutlength"];
+const IN_UNIT: &[&str] = &["brushinlengthunit"];
+const OUT_UNIT: &[&str] = &["brushoutlengthunit"];
+const IN_OUT_TYPE: &[&str] = &["brushinouttype"];
+const IN_OUT_TARGET: &[&str] = &["brushinouttarget"];
+// 手ぶれ補正の旗と強さ（段階）
+const USE_REVISION: &[&str] = &["brushuserevision"];
+const REVISION: &[&str] = &["brushrevision"];
+// 筆先の向きの影響元（旗の整数。0x80 がランダム。0x10・0x20・0x40 は影響元の旗と同じ並び）と、ランダムの強さ（百分率の整数）
+const ROTATION_EFFECTOR: &[&str] = &["brushrotationeffector"];
+const ROTATION_RANDOM: &[&str] = &["brushrotationrandomscale"];
 const COLOR_CHANGE: &[&str] = &[
     "brushhuechange",
     "brushsaturationchange",
@@ -119,8 +136,18 @@ const KNOWN: &[&[&str]] = &[
     WATER_EDGE,
     SPRAY,
     DUAL,
-    START_END,
-    STABILIZER,
+    USE_IN,
+    USE_OUT,
+    IN_LENGTH,
+    OUT_LENGTH,
+    IN_UNIT,
+    OUT_UNIT,
+    IN_OUT_TYPE,
+    IN_OUT_TARGET,
+    USE_REVISION,
+    REVISION,
+    ROTATION_EFFECTOR,
+    ROTATION_RANDOM,
     COLOR_CHANGE,
     BLEND_MODE,
 ];
@@ -134,8 +161,15 @@ fn ratio(value: f64) -> f64 {
     }
 }
 
-fn fraction(value: f64) -> f64 {
-    ratio(value).clamp(0.0, 1.0)
+/// 割合の列を割合（0〜1 の外も許す）で。整数の列は、実物の .sut ではどれも 0〜100 の百分率（`Opacity`・`BrushFlow`・`BrushHardness`・
+/// `BrushThickness`・`TextureDensity` などが整数で宣言され、硬さの 1 は 1%）なので、いつも 100 で割る。実数の列は `ratio`
+/// （1 より大きければ百分率、以下なら割合）。
+fn percent(row: &Row, names: &[&str]) -> Option<f64> {
+    names.iter().find_map(|n| match row.get(n)? {
+        Cell::Int(i) => Some(*i as f64 / 100.0),
+        Cell::Real(r) if r.is_finite() => Some(ratio(*r)),
+        _ => None,
+    })
 }
 
 // ---------------- 素材の特定 ----------------
@@ -344,13 +378,90 @@ fn curve_points(raw: &[(f64, f64)]) -> (Vec<CurvePoint>, bool) {
     )
 }
 
-/// 影響元の列 1 つを読んで、筆圧は応えに、ほかの入力は注記にする。
+/// 傾きの影響の曲線が、直線（直立で 1・寝かせきって 0）から外れてよい最大の幅。これ以内なら近似の注記を付けない。
+const TILT_STRAIGHT: f64 = 0.1;
+
+/// 曲線（点を通る折れ線。x の昇順でなくてもよい）の x での値。点が 2 つに満たない・有限でない点だけなら None。
+fn curve_value(points: &[(f64, f64)], x: f64) -> Option<f64> {
+    let mut pts: Vec<(f64, f64)> = points
+        .iter()
+        .filter(|(px, py)| px.is_finite() && py.is_finite())
+        .map(|&(px, py)| (px.clamp(0.0, 1.0), py.clamp(0.0, 1.0)))
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if x <= pts[0].0 {
+        return Some(pts[0].1);
+    }
+    let last = pts[pts.len() - 1];
+    if x >= last.0 {
+        return Some(last.1);
+    }
+    let i = pts.windows(2).position(|w| x <= w[1].0)?;
+    let (a, b) = (pts[i], pts[i + 1]);
+    let t = if b.0 > a.0 {
+        (x - a.0) / (b.0 - a.0)
+    } else {
+        0.0
+    };
+    Some(a.1 + (b.1 - a.1) * t)
+}
+
+/// 傾きの曲線が「直立で 1・寝かせきって 0 へ下がる」形なら、直線 1 − x からの最大の外れ。そうでなければ（上がる・途中で止まる・
+/// 読めない）None。このアプリの傾きの影響は、大きさ・不透明度・流量へ 1 − 傾き（直立 0〜寝かせきって 1）を掛けるだけで、
+/// 曲線も最小値も持たないので、全幅で下がる曲線だけを近似する。
+fn tilt_fit(points: &[(f64, f64)]) -> Option<f64> {
+    let (top, bottom) = (curve_value(points, 0.0)?, curve_value(points, 1.0)?);
+    if top < 0.9 || bottom > 0.1 {
+        return None;
+    }
+    (0..=20)
+        .map(|i| {
+            let x = i as f64 / 20.0;
+            curve_value(points, x).map(|y| (y - (1.0 - x)).abs())
+        })
+        .try_fold(0.0f64, |worst, d| d.map(|d| worst.max(d)))
+}
+
+/// 傾きの影響を、大きさ・不透明度・流量の傾きの切り替えに写す。写せたら true（写せなければ呼び出し側が「表せない」と知らせる）。
+/// 速さも使う設定は、筆圧でない 2 つ目の曲線がどちらの入力のものか決められないので写さない。太さ（真円率）には傾きの影響が無い。
+fn map_tilt(
+    brush: &mut Brush,
+    e: &Effector,
+    target: SutTarget,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) -> bool {
+    if e.flags & Effector::SPEED != 0 {
+        return false;
+    }
+    let Some(deviation) = e.tilt_curve().and_then(tilt_fit) else {
+        return false;
+    };
+    let controls = &mut brush.controls;
+    match target {
+        SutTarget::Size => controls.tilt_size = true,
+        SutTarget::Opacity => controls.tilt_opacity = true,
+        SutTarget::Flow => controls.tilt_flow = true,
+        SutTarget::Thickness => return false,
+    }
+    mapped.push(SutMapped::Tilt);
+    if deviation > TILT_STRAIGHT {
+        notes.push(Unrepresented::ClipStudio(SutNote::TiltCurve(target)));
+    }
+    true
+}
+
+/// 影響元の列 1 つを読んで、筆圧は応えに、傾きは傾きの切り替えに、ほかの入力は注記にする。
 fn effector(
     brush: &mut Brush,
     row: &Row,
     target: SutTarget,
     columns: &[&str],
     notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
 ) {
     let Some(bytes) = row.first_blob(columns) else {
         if row.is_oversized(columns) {
@@ -371,20 +482,21 @@ fn effector(
         (Effector::SPEED, SutInput::Speed),
         (Effector::RANDOM, SutInput::Random),
     ] {
-        if e.flags & flag != 0 {
-            notes.push(Unrepresented::ClipStudio(SutNote::Influence {
-                target,
-                input,
-            }));
+        if e.flags & flag == 0 {
+            continue;
         }
+        if input == SutInput::Tilt && map_tilt(brush, &e, target, notes, mapped) {
+            continue;
+        }
+        notes.push(Unrepresented::ClipStudio(SutNote::Influence {
+            target,
+            input,
+        }));
     }
     if e.flags & Effector::PRESSURE == 0 {
         return;
     }
-    let (points, simplified) = e
-        .curves
-        .first()
-        .map_or((Vec::new(), false), |c| curve_points(c));
+    let (points, simplified) = e.pressure_curve().map_or((Vec::new(), false), curve_points);
     if simplified {
         notes.push(Unrepresented::ClipStudio(SutNote::CurveSimplified(target)));
     }
@@ -406,7 +518,138 @@ fn effector(
             brush.base.pressure_flow = true;
             brush.pressure.flow = response;
         }
-        SutTarget::Thickness => notes.push(Unrepresented::ClipStudio(SutNote::ThicknessPressure)),
+        SutTarget::Thickness => {
+            notes.push(Unrepresented::ClipStudio(SutNote::ThicknessPressure));
+            return;
+        }
+    }
+    mapped.push(SutMapped::Pressure);
+}
+
+/// 入り抜きの影響先が既定（大きさだけ）か。`BrushInOutType` が 0 で、`BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、
+/// 項目ごとに「項目の番号・旗・旗」）の旗がすべて 0 のとき。実物の .sut では、項目は 21 個で、旗はどれも 0 だった。読めない・形が違う・
+/// 旗が立っているものは、大きさへの入り抜きと決められないので false。影響先の列が無い版は既定（大きさ）として扱う。
+fn start_end_targets_size(row: &Row) -> bool {
+    if row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0) {
+        return false;
+    }
+    let Some(blob) = row.first_blob(IN_OUT_TARGET) else {
+        return !row.is_oversized(IN_OUT_TARGET);
+    };
+    let words: Vec<u32> = blob
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_be_bytes(*c))
+        .collect();
+    if blob.len() % 4 != 0 || words.len() < 3 || words[0] != 12 || words[2] != 12 {
+        return false;
+    }
+    let count = words[1] as usize;
+    words.len() == 3 + count * 3
+        && words[3..]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .all(|item| item[1] == 0 && item[2] == 0)
+}
+
+/// 入り抜き: 大きさにだけ効く、長さが画素のものを `assist.taper_in`・`taper_out` へ。影響先・長さの単位が合わないものは写さずに知らせる。
+/// 速さに応じた長さ・割合は読まず、写したときに知らせる。
+fn start_end(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    let sides = [
+        (USE_IN, IN_LENGTH, IN_UNIT, true),
+        (USE_OUT, OUT_LENGTH, OUT_UNIT, false),
+    ];
+    if !sides.iter().any(|(flag, ..)| row.on(flag)) {
+        return;
+    }
+    let mut refused = !start_end_targets_size(row);
+    let mut taken = false;
+    if !refused {
+        for (flag, length, unit, is_in) in sides {
+            if !row.on(flag) {
+                continue;
+            }
+            let pixels = row.first_number(length).filter(|l| *l >= 0.0);
+            let in_pixels = row.first_number(unit).is_none_or(|u| u == 0.0);
+            match pixels {
+                Some(0.0) => {}
+                Some(l) if in_pixels => {
+                    let l = l.min(MAX_STROKE_ASSIST);
+                    if is_in {
+                        brush.assist.taper_in = l;
+                    } else {
+                        brush.assist.taper_out = l;
+                    }
+                    taken = true;
+                }
+                _ => refused = true,
+            }
+        }
+    }
+    if refused {
+        notes.push(Unrepresented::ClipStudio(SutNote::StartEnd));
+    }
+    if taken {
+        mapped.push(SutMapped::StartEnd);
+        notes.push(Unrepresented::ClipStudio(SutNote::StartEndDetail));
+    }
+}
+
+/// 手ぶれ補正: 強さ（段階）を糸の長さ（画素）へ 1 対 1 で写す（換算は推定）。強さが読めなければ写さずに知らせる。
+fn stabilizer(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if !row.on(USE_REVISION) {
+        return;
+    }
+    match row.first_number(REVISION).filter(|l| *l > 0.0) {
+        Some(level) => {
+            brush.assist.stabilizer = level.min(MAX_STROKE_ASSIST);
+            mapped.push(SutMapped::Stabilizer);
+            notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
+        }
+        None => notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer)),
+    }
+}
+
+/// 筆先の向き: 角度（度）を `tip.angle` へ（向きの正負は確かめていないので、エンジンと同じ向きとして写す）、向きの影響元のランダム
+/// （旗 0x80 と強さ）を `jitter.angle` へ。筆圧・傾き・速さ（旗 0x10・0x20・0x40）と、読めない強さのランダムは表せないので知らせる。旗の下の 2 ビットは意味を
+/// 確かめられていない（実物ではどのブラシにも立っていた）ので読まない。
+fn tip_direction(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if let Some(angle) = row.first_number(ROTATION).filter(|a| *a != 0.0) {
+        brush.tip.angle = (angle + 180.0).rem_euclid(360.0) - 180.0;
+        mapped.push(SutMapped::TipAngle);
+    }
+    let influences = row.first_number(ROTATION_EFFECTOR).map_or(0, |v| v as i64);
+    let mut unmapped = influences & 0x70 != 0;
+    if influences & 0x80 != 0 {
+        // ランダムの強さが読めなければ写せない（強さ 0 は、ゆらがないので写すものが無い）
+        match percent(row, ROTATION_RANDOM).map(|r| r.clamp(0.0, 1.0)) {
+            Some(random) if random > 0.0 => {
+                brush.jitter.angle = random;
+                mapped.push(SutMapped::AngleRandom);
+            }
+            Some(_) => {}
+            None => unmapped = true,
+        }
+    }
+    if unmapped {
+        notes.push(Unrepresented::ClipStudio(SutNote::Direction));
     }
 }
 
@@ -605,6 +848,7 @@ fn texture(
     budget: &mut Budget,
     brush: &mut Brush,
     notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
 ) -> Result<(), Fault> {
     let Some(bytes) = row.first_blob(TEXTURE_IMAGE) else {
         return Ok(());
@@ -653,7 +897,7 @@ fn texture(
     if guessed {
         notes.push(Unrepresented::ClipStudio(SutNote::TextureGuessed));
     }
-    let depth = row.first_number(TEXTURE_DENSITY).map_or(1.0, fraction);
+    let depth = percent(row, TEXTURE_DENSITY).map_or(1.0, |d| d.clamp(0.0, 1.0));
     let scale = row
         .first_number(TEXTURE_SCALE)
         .map(ratio)
@@ -666,6 +910,7 @@ fn texture(
         scale,
         mode: yolu_core::TextureMode::Multiply,
     });
+    mapped.push(SutMapped::Texture);
     if preview && !notes.contains(&Unrepresented::ClipStudio(SutNote::PreviewImage)) {
         notes.push(Unrepresented::ClipStudio(SutNote::PreviewImage));
     }
@@ -683,14 +928,15 @@ fn texture(
     Ok(())
 }
 
-/// `Variant` の 1 行から core のブラシを作る。
+/// `Variant` の 1 行から core のブラシを作る。写せた設定の一覧と、表せなかった設定の一覧を添える。
 fn brush_from_row(
     row: &Row,
     name: &str,
     library: &mut Library<'_>,
     budget: &mut Budget,
-) -> Result<(Brush, Vec<Unrepresented>), Fault> {
+) -> Result<(Brush, Vec<Unrepresented>, Vec<SutMapped>), Fault> {
     let mut notes: Vec<Unrepresented> = Vec::new();
+    let mut mapped: Vec<SutMapped> = Vec::new();
     let mut brush = Brush::default();
     brush.base.pressure_size = false;
     brush.base.pressure_opacity = false;
@@ -700,22 +946,23 @@ fn brush_from_row(
     let mut tip_side = None;
     match images.len() {
         0 => {
-            if let Some(h) = row.first_number(HARDNESS) {
-                brush.base.hardness = fraction(h);
+            if let Some(h) = percent(row, HARDNESS) {
+                brush.base.hardness = h.clamp(0.0, 1.0);
             }
         }
         1 => {
             tip_side = Some(images[0].width().max(images[0].height()) as f64);
             brush.tip.image = Some(images[0].clone());
+            mapped.push(SutMapped::TipImage);
         }
-        n => {
+        _ => {
             tip_side = images
                 .iter()
                 .map(|t| t.width().max(t.height()) as f64)
                 .reduce(f64::max);
             brush.tip.images = images;
             brush.tip.selection = TipSelection::Random;
-            let _ = n;
+            mapped.push(SutMapped::TipImage);
             notes.push(Unrepresented::ClipStudio(SutNote::TipOrder));
         }
     }
@@ -723,44 +970,41 @@ fn brush_from_row(
     if let Some(diameter) = row.first_number(SIZE).filter(|v| *v > 0.0).or(tip_side) {
         brush.base.radius = (diameter.min(2000.0) / 2.0).max(0.5);
     }
-    if let Some(v) = row.first_number(OPACITY) {
-        brush.base.opacity = fraction(v);
+    if let Some(v) = percent(row, OPACITY) {
+        brush.base.opacity = v.clamp(0.0, 1.0);
     }
-    if let Some(v) = row.first_number(FLOW) {
-        brush.base.flow = fraction(v);
+    if let Some(v) = percent(row, FLOW) {
+        brush.base.flow = v.clamp(0.0, 1.0);
     }
     if let Some(v) = row.first_number(INTERVAL) {
         brush.base.spacing = ratio(v).clamp(0.01, 4.0);
     }
-    if let Some(v) = row.first_number(THICKNESS) {
-        brush.tip.roundness = fraction(v).max(0.01);
+    if let Some(v) = percent(row, THICKNESS) {
+        brush.tip.roundness = v.clamp(0.0, 1.0).max(0.01);
     }
 
-    effector(&mut brush, row, SutTarget::Size, SIZE_EFFECTOR, &mut notes);
-    effector(
-        &mut brush,
-        row,
-        SutTarget::Opacity,
-        OPACITY_EFFECTOR,
-        &mut notes,
-    );
-    effector(&mut brush, row, SutTarget::Flow, FLOW_EFFECTOR, &mut notes);
-    effector(
-        &mut brush,
-        row,
-        SutTarget::Thickness,
-        THICKNESS_EFFECTOR,
-        &mut notes,
-    );
-
-    texture(row, name, library, budget, &mut brush, &mut notes)?;
-
-    // 旗が立っている表せない設定
-    if row.first_number(ROTATION).is_some_and(|v| v != 0.0)
-        && (brush.tip.image.is_some() || !brush.tip.images.is_empty() || brush.tip.roundness < 1.0)
-    {
-        notes.push(Unrepresented::ClipStudio(SutNote::Direction));
+    for (target, columns) in [
+        (SutTarget::Size, SIZE_EFFECTOR),
+        (SutTarget::Opacity, OPACITY_EFFECTOR),
+        (SutTarget::Flow, FLOW_EFFECTOR),
+        (SutTarget::Thickness, THICKNESS_EFFECTOR),
+    ] {
+        effector(&mut brush, row, target, columns, &mut notes, &mut mapped);
     }
+
+    texture(
+        row,
+        name,
+        library,
+        budget,
+        &mut brush,
+        &mut notes,
+        &mut mapped,
+    )?;
+    tip_direction(row, &mut brush, &mut notes, &mut mapped);
+    start_end(row, &mut brush, &mut notes, &mut mapped);
+    stabilizer(row, &mut brush, &mut notes, &mut mapped);
+
     // 色の混ぜ: 混色の旗（BrushUseWaterColor）が立っているときだけ、絵の具量（BrushMixColor）・絵の具濃度（BrushMixAlpha）・色延び
     // （BrushMixColorExtension）を、0〜100 から 0〜1 にして「絵の具で混ぜる」へ写す（CLIP STUDIO の絵の具量 100 は下の色を拾わない＝
     // こちらの量 1 と同じ向き）。CLIP STUDIO は混色が切のブラシ（G ペンなど）にも既定の値（50 など）を書くので、値だけでは決めない。
@@ -777,6 +1021,7 @@ fn brush_from_row(
         brush.mix.paint = unit(paint);
         brush.mix.density = unit(density);
         brush.mix.stretch = unit(stretch);
+        mapped.push(SutMapped::ColorMixing);
     } else if mixing {
         notes.push(Unrepresented::ClipStudio(SutNote::ColorMixing {
             paint,
@@ -790,8 +1035,6 @@ fn brush_from_row(
     for (columns, note) in [
         (SPRAY, SutNote::Spray),
         (DUAL, SutNote::DualBrush),
-        (START_END, SutNote::StartEnd),
-        (STABILIZER, SutNote::Stabilizer),
         (COLOR_CHANGE, SutNote::ColorChange),
         (BLEND_MODE, SutNote::BlendMode),
     ] {
@@ -803,7 +1046,7 @@ fn brush_from_row(
             notes.push(Unrepresented::ClipStudio(note));
         }
     }
-    Ok((brush, notes))
+    Ok((brush, notes, mapped))
 }
 
 pub(crate) fn read_sut(
@@ -829,10 +1072,11 @@ pub(crate) fn read_sut(
         } else {
             node.name.clone()
         };
-        let (brush, notes) = match &mut variants {
+        let (brush, notes, mapped) = match &mut variants {
             None => (
                 Brush::default(),
                 vec![Unrepresented::ClipStudio(SutNote::SettingsMissing)],
+                Vec::new(),
             ),
             Some(variants) => {
                 let mut row = None;
@@ -854,12 +1098,9 @@ pub(crate) fn read_sut(
                 brush_from_row(&row, &name, &mut library, budget)?
             }
         };
-        set.brushes.push(ImportedBrush::new(
-            &name,
-            Source::ClipStudioSut,
-            brush,
-            notes,
-        )?);
+        set.brushes.push(
+            ImportedBrush::new(&name, Source::ClipStudioSut, brush, notes)?.with_mapped(mapped),
+        );
     }
     if set.brushes.is_empty() {
         return Err(Fault::SutNoBrushes.into());
@@ -886,14 +1127,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ratios_are_read_as_percent_when_above_one() {
-        assert_eq!(fraction(100.0), 1.0);
-        assert_eq!(fraction(25.0), 0.25);
-        assert_eq!(fraction(0.5), 0.5);
-        assert_eq!(fraction(1.0), 1.0);
-        assert_eq!(fraction(-3.0), 0.0);
-        assert_eq!(fraction(400.0), 1.0);
+    fn real_ratios_are_percent_when_above_one_and_integers_are_always_percent() {
+        assert_eq!(ratio(100.0), 100.0 / 100.0);
+        assert_eq!(ratio(25.0), 0.25);
+        assert_eq!(ratio(0.5), 0.5);
+        assert_eq!(ratio(1.0), 1.0);
         assert_eq!(ratio(400.0), 4.0);
+        let row = Row::default()
+            .with("realone", Cell::Real(1.0))
+            .with("intone", Cell::Int(1))
+            .with("realhalf", Cell::Real(0.5))
+            .with("intfull", Cell::Int(100))
+            .with("text", Cell::Text("x".into()));
+        // 実物の .sut の整数の列（硬さ 1 は 1%）。実数の 1 は割合の 1
+        assert_eq!(percent(&row, &["intone"]), Some(0.01));
+        assert_eq!(percent(&row, &["realone"]), Some(1.0));
+        assert_eq!(percent(&row, &["realhalf"]), Some(0.5));
+        assert_eq!(percent(&row, &["intfull"]), Some(1.0));
+        assert_eq!(percent(&row, &["text", "missing"]), None);
+        assert_eq!(
+            percent(&row, &["missing", "intone"]),
+            Some(0.01),
+            "先に書いた名前の、読める列"
+        );
+    }
+
+    #[test]
+    fn tilt_curves_are_fitted_only_when_they_fall_over_the_full_range() {
+        // 直線 1 − x: 外れ 0
+        let straight = tilt_fit(&[(0.0, 1.0), (1.0, 0.0)]).unwrap();
+        assert!(straight < 1e-9);
+        // 途中まで 1 のまま落ちる曲線は、直線から大きく外れる（近似の注記が付く幅）
+        let plateau = tilt_fit(&[(0.0, 1.0), (0.364, 1.0), (0.609, 0.0), (1.0, 0.0)]).unwrap();
+        assert!(plateau > TILT_STRAIGHT);
+        // 上がる・途中までしか下がらない・点が足りない・有限でない点だけは写さない
+        assert_eq!(tilt_fit(&[(0.0, 0.0), (1.0, 1.0)]), None);
+        assert_eq!(tilt_fit(&[(0.0, 1.0), (1.0, 0.5)]), None);
+        assert_eq!(tilt_fit(&[(0.0, 0.5), (1.0, 0.0)]), None);
+        assert_eq!(tilt_fit(&[(0.0, 1.0)]), None);
+        assert_eq!(tilt_fit(&[(f64::NAN, 1.0), (1.0, f64::INFINITY)]), None);
+        // x の昇順でない点・範囲外の値も読める
+        assert!(tilt_fit(&[(1.0, -3.0), (0.0, 4.0)]).unwrap() < 1e-9);
     }
 
     #[test]

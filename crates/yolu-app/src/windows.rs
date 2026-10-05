@@ -251,11 +251,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.update.is_busy()
         || app.brushes.import.is_busy()
         || app.is_saving()
+        || app.brushes.csp.is_busy()
     {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     bake::window::show(ctx, app);
     crate::panels::brush_detail::show(ctx, app);
+    crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);
     export_confirm(ctx, app);
     export_report(ctx, app);
@@ -287,6 +289,7 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.np.window.is_some()
         || app.np.remove_confirm.is_some()
         || app.layer_ops.merge_confirm.is_some()
+        || app.brushes.csp.open
         || waiting_to_close(app)
 }
 

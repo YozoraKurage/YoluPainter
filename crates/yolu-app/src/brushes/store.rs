@@ -2,7 +2,8 @@
 //!
 //! 形式は 1 行目が `yolupainter-brush 1`（筆圧の応えを使うブラシだけ `yolupainter-brush 2`。最小値・曲線に加え、硬さを筆圧で変える切り替えだけでも 2 になる。
 //! 色の混ぜ（厚塗り）を使うブラシだけ `yolupainter-brush 3`（筆圧の応えも使えば、その項目も同じファイルに書く）。
-//! 版 2・3 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 入り抜き・手ぶれ補正を持つブラシ（取り込んだブラシが持つ分）だけ `yolupainter-brush 4`（`assist.*`。ほかの版の項目も同じファイルに書く）。
+//! 版 2〜4 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -18,10 +19,10 @@ use std::sync::Arc;
 
 use super::gaps::Gap;
 use super::images;
-use super::{canonical, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
+use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
     Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, MixGround, MixMode,
-    PaperTexture, PressureResponse, TextureMode,
+    PaperTexture, PressureResponse, StrokeAssist, TextureMode,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, TipSelection, MAX_CURVE_POINTS};
@@ -36,6 +37,9 @@ pub const HEADER_V2: &str = "yolupainter-brush 2";
 /// 色の混ぜ（厚塗り）を使うブラシの版。使わないブラシは版 1・2 のままで、今までと同じバイト。版 2 までしか読めない古いアプリは、
 /// このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V3: &str = "yolupainter-brush 3";
+/// 入り抜き・手ぶれ補正を持つブラシの版（`assist.stabilizer`・`assist.taper_in`・`assist.taper_out`）。使わないブラシは版 1〜3 のままで、
+/// 今までと同じバイト。版 3 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V4: &str = "yolupainter-brush 4";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -294,8 +298,11 @@ pub struct Encoded {
 /// ブラシを書き出す（`brush` は正規の形でなくても、画面が持たない項目は書かない）。
 pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
+    let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let header = if uses_mix(&b) {
+    let header = if assist.is_some() {
+        HEADER_V4
+    } else if uses_mix(&b) {
         HEADER_V3
     } else if uses_pressure_response(&b) {
         HEADER_V2
@@ -417,6 +424,12 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
             }
         }
     }
+    // 入り抜き・手ぶれ補正（版 4。持たないブラシは書かない）
+    if let Some(a) = assist {
+        w.line("assist.stabilizer", a.stabilizer);
+        w.line("assist.taper_in", a.taper_in);
+        w.line("assist.taper_out", a.taper_out);
+    }
     match b.effect {
         BrushEffect::Paint => w.line("effect", "paint"),
         BrushEffect::Blur { radius } => {
@@ -441,6 +454,14 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         if !meta.gaps.is_empty() {
             let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
             w.line("import.gaps", ids.join(","));
+        }
+        if !meta.mapped.is_empty() {
+            let ids: Vec<&str> = meta
+                .mapped
+                .iter()
+                .map(|m| super::gaps::mapped_id(*m))
+                .collect();
+            w.line("import.mapped", ids.join(","));
         }
     }
     Ok(Encoded {
@@ -596,6 +617,8 @@ pub struct Decoded {
     pub group: Group,
     pub brush: Brush,
     pub import: Option<ImportMeta>,
+    /// 入り抜き・手ぶれ補正を持つブラシの値（版 4）。
+    pub assist: Option<StrokeAssist>,
 }
 
 /// ファイルの中身から、名前・グループ・ブラシ（正規の形）を読む。取り込んだ画像（`img:`）は読めない（`decode_user`）。
@@ -616,6 +639,7 @@ pub fn decode_user(
         Some(HEADER) => 1,
         Some(HEADER_V2) => 2,
         Some(HEADER_V3) => 3,
+        Some(HEADER_V4) => 4,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
@@ -739,6 +763,25 @@ pub fn decode_user(
     if version >= 3 {
         b.mix = read_mix(&mut r)?;
     }
+    // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
+    let assist = if version >= 4 {
+        let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
+        let present = keys.iter().any(|k| r.map.contains_key(*k));
+        let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
+        let (stabilizer, taper_in, taper_out) = (
+            value(&mut r, keys[0])?,
+            value(&mut r, keys[1])?,
+            value(&mut r, keys[2])?,
+        );
+        present.then_some(StrokeAssist {
+            stabilizer,
+            taper_in,
+            taper_out,
+            curve: false,
+        })
+    } else {
+        None
+    };
     b.effect = match r.take("effect").as_deref() {
         None | Some("paint") => BrushEffect::Paint,
         Some("blur") => BrushEffect::Blur {
@@ -756,7 +799,8 @@ pub fn decode_user(
         let source = r.take("import.source");
         let pattern = r.take("import.pattern");
         let gaps = r.take("import.gaps");
-        if source.is_none() && pattern.is_none() && gaps.is_none() {
+        let mapped = r.take("import.mapped");
+        if source.is_none() && pattern.is_none() && gaps.is_none() && mapped.is_none() {
             None
         } else {
             let source: String = source
@@ -779,11 +823,20 @@ pub fn decode_user(
                 .split(',')
                 .filter_map(Gap::from_id)
                 .collect();
-            Some(ImportMeta::new(source, pattern, gaps))
+            let mapped = mapped
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(super::gaps::mapped_from_id)
+                .collect();
+            Some(ImportMeta::new(source, pattern, gaps).with_mapped(mapped))
         }
     };
     if let Some(key) = r.map.keys().min() {
         return Err(StoreError::UnknownKey(key.clone()));
+    }
+    // 範囲（有限・0〜10000）は core の検査に任せる
+    if let Some(a) = assist {
+        b.assist = a;
     }
     b.validate().map_err(StoreError::Invalid)?;
     Ok(Decoded {
@@ -791,6 +844,7 @@ pub fn decode_user(
         group,
         brush: canonical(&b),
         import,
+        assist: carried_assist(assist),
     })
 }
 
@@ -1042,6 +1096,7 @@ impl BrushStore {
             group: user.group,
             brush: canonical(&user.brush),
             import: user.import.as_ref().map(ImportMeta::normalized),
+            assist: carried_assist(user.assist),
         };
         // 読み戻しの確かめでは、置いたばかりの画像は手元のものを使う（画像は置くときに読み戻して確かめ済み）
         let have: HashMap<&str, &Arc<BrushTip>> = encoded
@@ -1169,6 +1224,7 @@ pub fn load_all(dir: &Path) -> LoadReport {
                 group: d.group,
                 brush: d.brush,
                 import: d.import,
+                assist: d.assist,
             }),
             Err(reason) => report.problems.push(Problem { file: name, reason }),
         }
@@ -1206,6 +1262,7 @@ mod tests {
             group: Group::Pen,
             brush: canonical(&brush),
             import: None,
+            assist: None,
         }
     }
 
@@ -1225,6 +1282,7 @@ mod tests {
                 group: b.group,
                 brush: b.brush.clone(),
                 import: None,
+                assist: None,
             };
             let text = encode(&u)
                 .unwrap_or_else(|e| panic!("{}: {e:?}", b.id))
@@ -1515,6 +1573,7 @@ mod tests {
                 group: b.group,
                 brush: b.brush.clone(),
                 import: None,
+                assist: None,
             };
             let t = encode(&u).unwrap().text;
             assert_eq!(t.starts_with("yolupainter-brush 3\n"), b.brush.mix.is_active(), "{}", b.id);
@@ -1576,7 +1635,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 4\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 5\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -1632,6 +1691,119 @@ mod tests {
             .join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    fn carrying(assist: StrokeAssist) -> UserBrush {
+        UserBrush {
+            assist: Some(assist),
+            ..user(1, Brush::default())
+        }
+    }
+
+    #[test]
+    fn a_brush_that_carries_start_end_and_stabilization_is_version_four_and_round_trips() {
+        let assist = StrokeAssist {
+            stabilizer: 6.0,
+            taper_in: 1130.5,
+            taper_out: 14.0,
+            curve: false,
+        };
+        let u = carrying(assist);
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 4\n"), "{t}");
+        for line in ["assist.stabilizer=6\n", "assist.taper_in=1130.5\n", "assist.taper_out=14\n"] {
+            assert!(t.contains(line), "{t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.assist, Some(assist));
+        assert_eq!(d.brush, canonical(&Brush::default()), "ブラシの設定には手ぶれ補正・入り抜きを入れない");
+        // 持たないブラシ（全部 0 も持たない）は、今までと同じ版・同じ文
+        let plain = text(&user(1, Brush::default()));
+        assert!(plain.starts_with("yolupainter-brush 1\n") && !plain.contains("assist."), "{plain}");
+        assert_eq!(text(&carrying(StrokeAssist::default())), plain);
+        assert_eq!(decode_user(&plain, &mut |_| unreachable!()).unwrap().assist, None);
+        // 曲線の切り替えはブラシが持たない（描き手の設定）
+        let with_curve = StrokeAssist { curve: true, ..assist };
+        assert_eq!(text(&carrying(with_curve)), t);
+        // 版 4 は、ほかの版の項目（筆圧の応え・色の混ぜ）も同じファイルに書く
+        let both = UserBrush {
+            assist: Some(assist),
+            ..user(1, mixing_brush())
+        };
+        let t = text(&both);
+        assert!(t.starts_with("yolupainter-brush 4\n") && t.contains("mix.mode="), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!((d.assist, d.brush), (Some(assist), both.brush.clone()));
+    }
+
+    #[test]
+    fn the_assist_items_belong_to_version_four_and_are_checked() {
+        let t = text(&carrying(StrokeAssist {
+            stabilizer: 3.0,
+            taper_in: 20.0,
+            taper_out: 0.0,
+            curve: false,
+        }));
+        // 版 1〜3 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
+        for old in ["yolupainter-brush 1", "yolupainter-brush 2", "yolupainter-brush 3"] {
+            let as_old = t.replacen("yolupainter-brush 4", old, 1);
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("assist.")),
+                "{old}"
+            );
+        }
+        // 版 5 は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 5", 1);
+        assert!(matches!(decode(&newer).unwrap_err(), StoreError::NewerVersion(_)));
+        // 範囲の外・有限でない値は、そのファイルを断る
+        for bad in ["-1", "10001", "NaN", "inf", "x"] {
+            let broken = t.replace("assist.taper_in=20", &format!("assist.taper_in={bad}"));
+            assert!(
+                matches!(
+                    decode(&broken).unwrap_err(),
+                    StoreError::Invalid(_) | StoreError::BadValue(_)
+                ),
+                "{bad}"
+            );
+        }
+        // 項目が一部だけでも読める（無い項目は 0）。版 4 でも 1 つも無ければ持たない
+        let some = "yolupainter-brush 4\nname=a\ngroup=pen\nassist.taper_out=9\n";
+        let d = decode_user(some, &mut |_| unreachable!()).unwrap();
+        assert_eq!(
+            d.assist,
+            Some(StrokeAssist {
+                stabilizer: 0.0,
+                taper_in: 0.0,
+                taper_out: 9.0,
+                curve: false
+            })
+        );
+        let none = "yolupainter-brush 4\nname=a\ngroup=pen\n";
+        assert_eq!(decode_user(none, &mut |_| unreachable!()).unwrap().assist, None);
+    }
+
+    #[test]
+    fn a_carried_assist_is_saved_and_read_back_from_the_folder() {
+        let dir = temp("assist");
+        let store = BrushStore::new(dir.clone());
+        let assist = StrokeAssist {
+            stabilizer: 12.0,
+            taper_in: 25.0,
+            taper_out: 40.0,
+            curve: false,
+        };
+        let mut u = carrying(assist);
+        u.id = 3;
+        store.save_brush(&u).unwrap();
+        let mut plain = user(4, Brush::default());
+        plain.name = "plain".into();
+        store.save_brush(&plain).unwrap();
+        let report = load_all(&dir);
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        let by_id = |id| report.brushes.iter().find(|b| b.id == id).unwrap();
+        assert_eq!(by_id(3).assist, Some(assist));
+        assert_eq!(by_id(4).assist, None);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1791,6 +1963,58 @@ mod tests {
     }
 
     #[test]
+    fn carried_over_items_are_saved_by_name_and_unknown_names_are_skipped() {
+        use yolu_io::brushes::SutMapped;
+        let mapped_of = |text: &str| {
+            decode_user(text, &mut |_| unreachable!())
+                .unwrap()
+                .import
+                .unwrap()
+                .mapped
+        };
+        let meta = ImportMeta::new("CLIP STUDIO .sut".into(), false, vec![Gap::Spray])
+            .with_mapped(vec![SutMapped::Tilt, SutMapped::StartEnd, SutMapped::Tilt]);
+        assert_eq!(
+            meta.mapped,
+            [SutMapped::Tilt, SutMapped::StartEnd],
+            "並び順で重ならない"
+        );
+        let u = UserBrush {
+            import: Some(meta.clone()),
+            ..user(1, Brush::default())
+        };
+        let t = text(&u);
+        assert!(t.contains("import.mapped=tilt,start-end\n"), "{t}");
+        // 取り込みの項目は版を上げない（版は、描き方を変える項目を使うブラシだけが上げる）
+        assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
+        let back = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(back.import, Some(meta));
+        // 知らない名前（新しい版が足した項目）は読み飛ばす
+        let future = t.replace(
+            "import.mapped=tilt,start-end",
+            "import.mapped=tilt,from-the-future,start-end",
+        );
+        assert_eq!(mapped_of(&future), [SutMapped::Tilt, SutMapped::StartEnd]);
+        // 写した項目の欄が無い古いファイルは、空（今のブラシの設定から導いて足さない）
+        let old = t.replace("import.mapped=tilt,start-end\n", "");
+        assert_eq!(mapped_of(&old), []);
+        // 写した項目だけのファイルも、取り込みの印として読む
+        let only = format!(
+            "{}import.mapped=texture\n",
+            text(&user(2, Brush::default()))
+        );
+        assert_eq!(mapped_of(&only), [SutMapped::Texture]);
+        // 全項目が名前で往復する
+        let all = ImportMeta::new(String::new(), false, vec![])
+            .with_mapped(super::super::gaps::MAPPED_ALL.to_vec());
+        let u = UserBrush {
+            import: Some(all.clone()),
+            ..user(3, Brush::default())
+        };
+        assert_eq!(mapped_of(&text(&u)), all.mapped);
+    }
+
+    #[test]
     fn krita_tips_are_saved_by_id_once_the_set_is_loaded_and_read_back_equal() {
         let krita = krita();
         let single = krita
@@ -1926,7 +2150,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 4\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 5\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -1935,7 +2159,7 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 4\nname=future\n"
+            "yolupainter-brush 5\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

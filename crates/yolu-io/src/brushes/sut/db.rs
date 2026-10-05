@@ -217,6 +217,15 @@ impl Row {
     }
 }
 
+#[cfg(test)]
+impl Row {
+    /// 試験用: 列を 1 つ足した行。
+    pub fn with(mut self, name: &str, cell: Cell) -> Row {
+        self.cells.insert(name.to_string(), cell);
+        self
+    }
+}
+
 /// `Node` の 1 行。
 #[derive(Debug)]
 pub(super) struct Node {

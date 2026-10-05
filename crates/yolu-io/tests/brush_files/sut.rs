@@ -234,6 +234,56 @@ pub fn effector(
     out
 }
 
+/// 実物の .sut の形の影響元の BLOB: ヘッダー 44 バイトの 9・10 番目の整数に、筆圧の曲線と傾きの曲線のバイト数（曲線が無ければ 0）が入り、
+/// 曲線はその順に並ぶ。
+pub fn effector_slots(
+    flags: u32,
+    pressure_min: u32,
+    pressure: Option<&[(f64, f64)]>,
+    tilt: Option<&[(f64, f64)]>,
+) -> Vec<u8> {
+    let bytes = |c: Option<&[(f64, f64)]>| c.map_or(0, |c| 12 + 16 * c.len() as u32);
+    let mut out = Vec::new();
+    let mut ints = [0u32; 11];
+    ints[0] = 44;
+    ints[1] = 0x1f0;
+    ints[2] = flags;
+    ints[3] = pressure_min;
+    ints[4] = 100;
+    ints[8] = bytes(pressure);
+    ints[9] = bytes(tilt);
+    ints[10] = 100;
+    for i in ints {
+        out.extend_from_slice(&i.to_be_bytes());
+    }
+    for curve in [pressure, tilt].into_iter().flatten() {
+        for i in [12u32, curve.len() as u32, 16] {
+            out.extend_from_slice(&i.to_be_bytes());
+        }
+        for (x, y) in curve {
+            out.extend_from_slice(&x.to_be_bytes());
+            out.extend_from_slice(&y.to_be_bytes());
+        }
+    }
+    out
+}
+
+/// 入り抜きの影響先の BLOB（実物の .sut の形: 12・項目の数・12 と、項目ごとに「項目の番号・旗・旗」）。`flagged` の番号の項目は旗を立てる。
+pub fn in_out_targets(flagged: &[u32]) -> Vec<u8> {
+    let ids = [112u32, 1001, 1021, 1041, 1051, 1082, 51001, 51134];
+    let mut out = Vec::new();
+    for w in [12u32, ids.len() as u32, 12] {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    for id in ids {
+        let on = u32::from(flagged.contains(&id));
+        for w in [id, on, 0] {
+            out.extend_from_slice(&w.to_be_bytes());
+        }
+    }
+    out
+}
+
 fn utf16le(s: &str) -> Vec<u8> {
     s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
 }

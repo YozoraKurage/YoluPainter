@@ -914,6 +914,27 @@ impl YoluApp {
                         .apply(Action::Brush(crate::brushes::BrushAction::Import(paths)));
                 }
             }
+            Some(DialogRequest::ClipStudioFolder) => {
+                let lang = self.state.lang;
+                let mut dialog = rfd::FileDialog::new().set_title(lang.pick(
+                    "CLIP STUDIO のサブツールのフォルダ",
+                    "CLIP STUDIO sub tool folder",
+                ));
+                // 今探している場所（手で選んだフォルダか、既定の場所のうち開けたもの）から選び始める
+                let csp = &self.state.brushes.csp;
+                let start = csp.folder.clone().or_else(|| {
+                    csp.listing
+                        .as_ref()
+                        .and_then(|l| l.searched.first().cloned())
+                });
+                if let Some(dir) = start.filter(|d| d.is_dir()) {
+                    dialog = dialog.set_directory(dir);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    self.state
+                        .apply(Action::Brush(crate::brushes::BrushAction::ClipStudioFolder(dir)));
+                }
+            }
             None => {}
         }
     }
@@ -1306,6 +1327,7 @@ impl YoluApp {
         self.state.poll_distribute();
         self.poll_saving();
         self.state.poll_brush_import();
+        self.state.poll_brush_csp();
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
         self.state.sync_effects();
         self.state.poll_newproject();

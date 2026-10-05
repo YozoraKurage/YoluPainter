@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use brush_files::sut::*;
 use yolu_io::brushes::{
     import, import_bytes, BrushImportError, Fault, FileKind, ImportedBrush, ImportedSet,
-    SkipReason, Source, SutInput, SutNote, SutTarget, Unrepresented,
+    SkipReason, Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented,
 };
 
 fn read(bytes: &[u8]) -> Result<ImportedSet, BrushImportError> {
@@ -904,7 +904,9 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
             1,
             &[
                 ("BrushThickness", int(50)),
-                ("BrushRotation", int(30)),
+                ("BrushRotation", real(30.0)),
+                // 向きに筆圧を使う（旗 0x10。下の 2 ビットは読まない）
+                ("BrushRotationEffector", int(0x13)),
                 ("BrushUseWaterColor", int(1)),
                 ("BrushMixColor", int(30)),
                 ("BrushMixAlpha", int(20)),
@@ -925,6 +927,7 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
     let mix = &b.brush.mix;
     assert_eq!(mix.mode, yolu_core::brush::MixMode::Mix);
     assert_eq!((mix.paint, mix.density, mix.stretch), (0.3, 0.2, 0.1));
+    assert_eq!(b.brush.tip.angle, 30.0, "角度は写る");
     for n in [
         SutNote::Direction,
         SutNote::Spray,
@@ -990,6 +993,9 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::InfluenceUnreadable(SutTarget::Flow),
         SutNote::ThicknessPressure,
         SutNote::CurveSimplified(SutTarget::Opacity),
+        SutNote::TiltCurve(SutTarget::Flow),
+        SutNote::StartEndDetail,
+        SutNote::StabilizerStrength,
         SutNote::SettingsMissing,
         SutNote::MaterialsUnreadable(3),
         SutNote::BrushesCapped(7),
@@ -1014,7 +1020,7 @@ fn flags_that_are_off_report_nothing() {
             "Quiet",
             1,
             &[
-                ("BrushRotation", int(30)),
+                ("BrushRotation", real(0.0)),
                 ("BrushUseWaterColor", int(0)),
                 ("BrushMixColor", int(0)),
                 ("BrushUseWaterEdge", int(0)),
@@ -1028,11 +1034,9 @@ fn flags_that_are_off_report_nothing() {
             ],
         )
         .build();
-    assert_eq!(
-        ok(&file).brushes[0].unrepresented,
-        vec![],
-        "丸い筆先の向きは見えないので知らせない"
-    );
+    let b = &ok(&file).brushes[0];
+    assert_eq!(b.unrepresented, vec![]);
+    assert_eq!(b.mapped, vec![], "旗が切なら、写した項目も無い");
 }
 
 // ---------------- ノードと表 ----------------
@@ -1485,4 +1489,402 @@ fn text_from_the_file_cannot_put_control_characters_on_screen() {
     let b = &ok(&file).brushes[0];
     assert!(!b.name.chars().any(|c| c.is_control()));
     assert!(b.name.chars().count() <= 128);
+}
+
+// ---------------- 入り抜き・傾き・筆先の向き・手ぶれ補正 ----------------
+
+fn one(cells: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    ok(&SutBuilder::new().brush("B", 1, cells).build())
+        .brushes
+        .remove(0)
+}
+
+fn mapped(b: &ImportedBrush, item: SutMapped) -> bool {
+    b.mapped.contains(&item)
+}
+
+#[test]
+fn start_and_end_lengths_become_the_stroke_taper_in_pixels() {
+    let b = one(&[
+        ("BrushUseIn", int(1)),
+        ("BrushInLength", real(25.0)),
+        ("BrushInLengthUnit", int(0)),
+        ("BrushUseOut", int(1)),
+        ("BrushOutLength", real(12.5)),
+        ("BrushOutLengthUnit", int(0)),
+        ("BrushInOutBySpeed", int(1)),
+        ("BrushInRatio", real(30.0)),
+        ("BrushInOutTarget", blob(in_out_targets(&[]))),
+    ]);
+    assert_eq!(
+        (b.brush.assist.taper_in, b.brush.assist.taper_out),
+        (25.0, 12.5)
+    );
+    assert!(mapped(&b, SutMapped::StartEnd));
+    assert!(
+        has(&b, SutNote::StartEndDetail),
+        "速さ・割合を読まないことを知らせる"
+    );
+    assert!(
+        !has(&b, SutNote::StartEnd),
+        "写せたものを「未対応」とは言わない"
+    );
+    assert!(b.brush.validate().is_ok());
+}
+
+#[test]
+fn only_the_sides_that_are_on_are_mapped_and_a_zero_length_is_nothing_to_map() {
+    let b = one(&[
+        ("BrushUseIn", int(0)),
+        ("BrushInLength", real(25.0)),
+        ("BrushUseOut", int(1)),
+        ("BrushOutLength", real(40.0)),
+    ]);
+    assert_eq!(
+        (b.brush.assist.taper_in, b.brush.assist.taper_out),
+        (0.0, 40.0)
+    );
+    let b = one(&[("BrushUseIn", int(1)), ("BrushInLength", real(0.0))]);
+    assert_eq!(b.brush.assist.taper_in, 0.0);
+    assert!(
+        b.mapped.is_empty() && b.unrepresented.is_empty(),
+        "長さ 0 は入り抜きなし"
+    );
+    // 巨大な長さはエンジンの上限に収める
+    let b = one(&[("BrushUseIn", int(1)), ("BrushInLength", real(1e9))]);
+    assert_eq!(b.brush.assist.taper_in, yolu_core::brush::MAX_STROKE_ASSIST);
+    assert!(b.brush.validate().is_ok());
+}
+
+#[test]
+fn a_taper_that_is_not_about_pixels_of_size_is_reported_instead_of_mapped() {
+    let on = |extra: &[(&'static str, rusqlite::types::Value)]| {
+        let mut cells = vec![("BrushUseIn", int(1)), ("BrushInLength", real(20.0))];
+        cells.extend_from_slice(extra);
+        one(&cells)
+    };
+    // 単位が画素でない・影響先の種類が既定でない・影響先の旗が立っている・影響先の BLOB の形が違う・長さが負・長さの列が無い
+    let refused = [
+        on(&[("BrushInLengthUnit", int(1))]),
+        on(&[("BrushInOutType", int(1))]),
+        on(&[("BrushInOutTarget", blob(in_out_targets(&[1001])))]),
+        on(&[("BrushInOutTarget", blob(vec![0, 0, 0, 12, 1, 2, 3]))]),
+        on(&[("BrushInOutTarget", blob(vec![0; 40]))]),
+        one(&[("BrushUseIn", int(1)), ("BrushInLength", real(-5.0))]),
+        one(&[("BrushUseOut", int(1))]),
+    ];
+    for b in &refused {
+        assert!(has(b, SutNote::StartEnd), "{:?}", b.unrepresented);
+        assert_eq!(b.brush.assist.taper_in, 0.0);
+        assert!(!mapped(b, SutMapped::StartEnd));
+    }
+    // 片方だけ写せない: 入りは写り、抜き（単位が違う）は知らせる
+    let b = one(&[
+        ("BrushUseIn", int(1)),
+        ("BrushInLength", real(20.0)),
+        ("BrushUseOut", int(1)),
+        ("BrushOutLength", real(20.0)),
+        ("BrushOutLengthUnit", int(2)),
+    ]);
+    assert_eq!(
+        (b.brush.assist.taper_in, b.brush.assist.taper_out),
+        (20.0, 0.0)
+    );
+    assert!(has(&b, SutNote::StartEnd) && has(&b, SutNote::StartEndDetail));
+    assert!(mapped(&b, SutMapped::StartEnd));
+}
+
+fn falling() -> [(f64, f64); 2] {
+    [(0.0, 1.0), (1.0, 0.0)]
+}
+
+#[test]
+fn a_tilt_that_shrinks_size_opacity_or_flow_becomes_the_tilt_controls() {
+    let fall = falling();
+    let press = [(0.0, 0.0), (1.0, 1.0)];
+    let b = one(&[
+        (
+            "BrushSizeEffector",
+            blob(effector_slots(0x30, 10, Some(&press), Some(&fall))),
+        ),
+        (
+            "OpacityEffector",
+            blob(effector_slots(0x20, 0, None, Some(&fall))),
+        ),
+        (
+            "BrushFlowEffector",
+            blob(effector_slots(0x20, 0, None, Some(&fall))),
+        ),
+    ]);
+    let c = &b.brush.controls;
+    assert!(c.tilt_size && c.tilt_opacity && c.tilt_flow);
+    assert!(mapped(&b, SutMapped::Tilt) && mapped(&b, SutMapped::Pressure));
+    assert!(
+        !b.unrepresented.iter().any(|u| matches!(
+            u,
+            Unrepresented::ClipStudio(SutNote::TiltCurve(_) | SutNote::Influence { .. })
+        )),
+        "直線は近似の注記も要らない: {:?}",
+        b.unrepresented
+    );
+    // 傾きだけの設定の曲線を、筆圧の曲線に取り違えない（筆圧の旗が無い）
+    assert!(!b.brush.base.pressure_opacity && !b.brush.base.pressure_flow);
+    assert!(b.brush.base.pressure_size);
+    assert_eq!(b.brush.pressure.size.min(), 0.1);
+    assert!(b.brush.pressure.size.curve().is_empty(), "筆圧の曲線は直線");
+}
+
+#[test]
+fn a_tilt_curve_that_is_not_a_straight_line_is_mapped_and_reported_as_approximate() {
+    let plateau = [(0.0, 1.0), (0.364, 1.0), (0.609, 0.0), (1.0, 0.0)];
+    let b = one(&[(
+        "BrushSizeEffector",
+        blob(effector_slots(0x20, 0, None, Some(&plateau))),
+    )]);
+    assert!(b.brush.controls.tilt_size);
+    assert!(mapped(&b, SutMapped::Tilt));
+    assert!(has(&b, SutNote::TiltCurve(SutTarget::Size)));
+    assert!(!has(
+        &b,
+        SutNote::Influence {
+            target: SutTarget::Size,
+            input: SutInput::Tilt
+        }
+    ));
+}
+
+#[test]
+fn a_tilt_that_cannot_be_represented_stays_a_note_and_leaves_the_controls_off() {
+    let rising = [(0.0, 0.0), (1.0, 1.0)];
+    let half = [(0.0, 1.0), (1.0, 0.5)];
+    let fall = falling();
+    let tilt = |target: SutTarget| SutNote::Influence {
+        target,
+        input: SutInput::Tilt,
+    };
+    let b = one(&[
+        // 傾くほど大きくなる・半分までしか下がらない・太さ（真円率）には傾きの影響が無い
+        (
+            "BrushSizeEffector",
+            blob(effector_slots(0x20, 0, None, Some(&rising))),
+        ),
+        (
+            "OpacityEffector",
+            blob(effector_slots(0x20, 0, None, Some(&half))),
+        ),
+        (
+            "BrushThicknessEffector",
+            blob(effector_slots(0x20, 0, None, Some(&fall))),
+        ),
+        // 速さも使う設定は、2 つ目の曲線がどちらのものか決められない
+        (
+            "BrushFlowEffector",
+            blob(effector_slots(0x60, 0, None, Some(&fall))),
+        ),
+    ]);
+    let c = &b.brush.controls;
+    assert!(!c.tilt_size && !c.tilt_opacity && !c.tilt_flow);
+    for target in [
+        SutTarget::Size,
+        SutTarget::Opacity,
+        SutTarget::Thickness,
+        SutTarget::Flow,
+    ] {
+        assert!(has(&b, tilt(target)), "{target:?}");
+    }
+    assert!(has(
+        &b,
+        SutNote::Influence {
+            target: SutTarget::Flow,
+            input: SutInput::Speed
+        }
+    ));
+    assert!(!mapped(&b, SutMapped::Tilt));
+    // 曲線の枠が無い（旧形式のヘッダー）・曲線が枠の長さと合わない設定も、傾きは写さない
+    let b = one(&[("BrushSizeEffector", blob(effector(44, 0x20, 0, &[&fall])))]);
+    assert!(has(&b, tilt(SutTarget::Size)) && !b.brush.controls.tilt_size);
+    let mut wrong = effector_slots(0x20, 0, None, Some(&fall));
+    wrong[36..40].copy_from_slice(&999u32.to_be_bytes());
+    let b = one(&[("BrushSizeEffector", blob(wrong))]);
+    assert!(has(&b, tilt(SutTarget::Size)) && !b.brush.controls.tilt_size);
+}
+
+#[test]
+fn the_pressure_curve_follows_the_header_slots_not_just_the_first_curve() {
+    // 筆圧の曲線が無く（枠が 0）、最初の曲線が傾きのもの: 筆圧の旗が立っていても、傾きの曲線を筆圧に使わない
+    let fall = falling();
+    let b = one(&[(
+        "BrushSizeEffector",
+        blob(effector_slots(0x30, 20, None, Some(&fall))),
+    )]);
+    assert!(b.brush.base.pressure_size);
+    assert!(b.brush.pressure.size.curve().is_empty(), "直線のまま");
+    assert_eq!(b.brush.pressure.size.min(), 0.2);
+    assert!(b.brush.controls.tilt_size);
+    // 枠を読めない（旧形式の試験用ヘッダー）ときは、従来どおり最初の曲線が筆圧
+    let bend = [(0.0, 0.0), (0.5, 0.9), (1.0, 1.0)];
+    let b = one(&[("BrushSizeEffector", blob(effector(44, 0x10, 0, &[&bend])))]);
+    assert_eq!(b.brush.pressure.size.curve().len(), 3);
+}
+
+#[test]
+fn the_tip_angle_and_its_random_range_are_mapped() {
+    let b = one(&[
+        ("BrushRotation", real(30.0)),
+        ("BrushRotationEffector", int(0x83)),
+        ("BrushRotationRandomScale", int(40)),
+    ]);
+    assert_eq!(b.brush.tip.angle, 30.0);
+    assert_eq!(b.brush.jitter.angle, 0.4);
+    assert!(mapped(&b, SutMapped::TipAngle) && mapped(&b, SutMapped::AngleRandom));
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    // 角度は -180〜180 に巻く。0 は何もしない
+    for (given, wrapped) in [
+        (270.0, -90.0),
+        (180.0, -180.0),
+        (-190.0, 170.0),
+        (720.0, 0.0),
+    ] {
+        let b = one(&[("BrushRotation", real(given))]);
+        assert_eq!(b.brush.tip.angle, wrapped, "{given}");
+    }
+    let b = one(&[("BrushRotation", real(0.0))]);
+    assert!(!mapped(&b, SutMapped::TipAngle));
+    // ランダムの旗が無ければ、強さが入っていても使わない。強さ 0 も使わない
+    let b = one(&[
+        ("BrushRotationEffector", int(0x03)),
+        ("BrushRotationRandomScale", int(80)),
+    ]);
+    assert_eq!(b.brush.jitter.angle, 0.0);
+    assert!(b.mapped.is_empty() && b.unrepresented.is_empty());
+    let b = one(&[
+        ("BrushRotationEffector", int(0x83)),
+        ("BrushRotationRandomScale", int(0)),
+    ]);
+    assert!(!mapped(&b, SutMapped::AngleRandom));
+    // 範囲外の強さは収める。非有限の角度（実数の列の NaN は SQLite では NULL）は無い扱い
+    let b = one(&[
+        ("BrushRotationEffector", int(0x80)),
+        ("BrushRotationRandomScale", int(900)),
+    ]);
+    assert_eq!(b.brush.jitter.angle, 1.0);
+    assert!(b.brush.validate().is_ok());
+}
+
+#[test]
+fn a_direction_driven_by_pressure_tilt_or_speed_is_reported() {
+    for flag in [0x10, 0x20, 0x40] {
+        let b = one(&[("BrushRotationEffector", int(flag | 3))]);
+        assert!(has(&b, SutNote::Direction), "{flag:#x}");
+    }
+    // 旗の下の 2 ビット・強さの読めるランダムだけなら知らせない
+    let b = one(&[
+        ("BrushRotationEffector", int(0x83)),
+        ("BrushRotationRandomScale", int(50)),
+    ]);
+    assert!(!has(&b, SutNote::Direction));
+    // ランダムの旗があって強さの列が無い版は、写せないので知らせる（黙って捨てない）
+    let b = one(&[("BrushRotationEffector", int(0x83))]);
+    assert!(has(&b, SutNote::Direction));
+    assert_eq!(b.brush.jitter.angle, 0.0);
+}
+
+#[test]
+fn a_stabilizer_level_becomes_the_string_length_and_an_unreadable_level_is_reported() {
+    let b = one(&[("BrushUseRevision", int(1)), ("BrushRevision", int(6))]);
+    assert_eq!(b.brush.assist.stabilizer, 6.0);
+    assert!(mapped(&b, SutMapped::Stabilizer));
+    assert!(has(&b, SutNote::StabilizerStrength));
+    assert!(!has(&b, SutNote::Stabilizer));
+    let b = one(&[
+        ("BrushUseRevision", int(1)),
+        ("BrushRevision", int(1_000_000)),
+    ]);
+    assert_eq!(
+        b.brush.assist.stabilizer,
+        yolu_core::brush::MAX_STROKE_ASSIST
+    );
+    for cells in [
+        vec![("BrushUseRevision", int(1))],
+        vec![("BrushUseRevision", int(1)), ("BrushRevision", int(0))],
+    ] {
+        let b = one(&cells);
+        assert_eq!(b.brush.assist.stabilizer, 0.0);
+        assert!(has(&b, SutNote::Stabilizer) && !mapped(&b, SutMapped::Stabilizer));
+    }
+    let b = one(&[("BrushUseRevision", int(0)), ("BrushRevision", int(30))]);
+    assert_eq!(b.brush.assist.stabilizer, 0.0);
+    assert!(b.unrepresented.is_empty());
+}
+
+#[test]
+fn integer_columns_are_always_percent_so_a_hardness_of_one_is_one_percent() {
+    let b = one(&[
+        ("BrushHardness", int(1)),
+        ("Opacity", int(1)),
+        ("BrushFlow", int(1)),
+        ("BrushThickness", int(1)),
+    ]);
+    let s = &b.brush.base;
+    assert_eq!((s.hardness, s.opacity, s.flow), (0.01, 0.01, 0.01));
+    assert_eq!(b.brush.tip.roundness, 0.01);
+    // 実数の 1 は割合の 1（従来どおり）
+    let b = one(&[("BrushHardness", real(1.0)), ("Opacity", real(1.0))]);
+    assert_eq!((b.brush.base.hardness, b.brush.base.opacity), (1.0, 1.0));
+}
+
+#[test]
+fn what_was_mapped_is_listed_apart_from_what_was_not() {
+    let fall = falling();
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&tip_png()))
+        .brush(
+            "All",
+            1,
+            &[
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["C:\\mats\\tip_a.png", "cat/aaaa", "tip_a"]])),
+                ),
+                (
+                    "BrushSizeEffector",
+                    blob(effector_slots(
+                        0x30,
+                        0,
+                        Some(&[(0.0, 0.0), (1.0, 1.0)]),
+                        Some(&fall),
+                    )),
+                ),
+                ("BrushUseIn", int(1)),
+                ("BrushInLength", real(10.0)),
+                ("BrushUseRevision", int(1)),
+                ("BrushRevision", int(3)),
+                ("BrushRotation", real(15.0)),
+                ("BrushUseWaterColor", int(1)),
+                ("BrushMixColor", int(40)),
+                ("BrushUseSpray", int(1)),
+            ],
+        )
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert_eq!(
+        b.mapped,
+        vec![
+            SutMapped::TipImage,
+            SutMapped::Pressure,
+            SutMapped::Tilt,
+            SutMapped::StartEnd,
+            SutMapped::Stabilizer,
+            SutMapped::TipAngle,
+            SutMapped::ColorMixing,
+        ],
+        "SutMapped の並びで、重ならない"
+    );
+    assert!(has(b, SutNote::Spray), "写せなかったものは別に載る");
+    // 写せたものの名前は両方の言語で作れる
+    for m in &b.mapped {
+        let (ja, en) = m.texts();
+        assert!(!ja.is_empty() && en.is_ascii() && !ja.is_ascii(), "{m:?}");
+    }
 }
