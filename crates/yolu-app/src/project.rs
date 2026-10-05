@@ -477,16 +477,19 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     if state.is_stroking() {
         return Err(state.lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
     }
-    // 配布用に保存の写し（準備した写し・書いている途中）は、開いた .ylp の位置から読む。保存でそのファイルを置き換えると、写しが新しい
-    // ファイルの古い位置を読んで失敗する（Windows では、読んでいるハンドルが置き換えを妨げうる）ので、その間は保存しない
+    // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
+    // そのファイルを置き換えても、ハンドルは置き換える前のファイルを読み続ける。しかし、置換の規則が POSIX でないファイルシステム
+    // （FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、保存が置換のためにそのハンドルを手放し、写しの読みは
+    // 断られる。その間は保存しない
     if state.distribute.is_busy() || state.distribute.is_open() {
         return Err(state
             .lang
             .pick("配布用に保存の途中は保存しません", "Cannot save while saving for distribution")
             .into());
     }
-    // 復旧の書き置きのスレッドも、開いた .ylp の位置から読む。そのファイルを置き換える保存は、今の書き込みと待っている頼みが終わるのを
-    // 待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果もここで受ける）
+    // 復旧の書き置きのスレッドも、開いた .ylp のハンドルから読む（上と同じ事情）。そのファイルを置き換える保存は、今の書き込みと待っている
+    // 頼みが終わるのを待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果も
+    // ここで受ける）
     if state.project.as_ref().is_some_and(|p| p.is_file() && same_file(&p.path, path)) {
         state.recovery_wait();
     }

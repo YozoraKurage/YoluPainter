@@ -20,7 +20,7 @@ mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 pub use package::{
     Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
-    OVER_LAYER_PIXELS_DOCUMENT, OVER_LAYER_PIXELS_TOTAL, SOURCE_MISSING,
+    OVER_LAYER_PIXELS_DOCUMENT, OVER_LAYER_PIXELS_TOTAL, SOURCE_RELEASED,
 };
 pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,

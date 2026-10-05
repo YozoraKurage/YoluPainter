@@ -244,23 +244,19 @@ impl Project {
         }
         Self::from_package(package, &known)
     }
-    /// ファイルの位置で持つエントリを `path`（同じ中身を同じ位置に持つファイル。保存で置き換えた後）へ向け直す。外側・移行後の
-    /// エントリ・セットの正本の同じエントリは、向け直した後も同じエントリ（`Blob::same`）のまま（次の作り直しで、変わっていない正本の
-    /// 骨組みを読み直さない）。
-    pub(crate) fn moved_to(&self, path: &std::path::Path) -> Self {
-        let source = crate::package::Source::Path(Arc::new(path.to_path_buf()));
-        let mut moves = crate::package::Moves::default();
-        let mut p = self.clone();
-        p.original = self.original.with_source(&source, &mut moves);
-        p.files = self
-            .files
-            .iter()
-            .map(|(k, v)| (k.clone(), v.with_source(&source, &mut moves)))
-            .collect();
-        for set in &mut p.sets {
-            set.document = set.document.with_source(&source, &mut moves);
+    /// ファイルの位置で持つエントリの置き場の名前を `path`（保存で置き換えた後の名前）へ付け替える。読むのは開いたハンドルで、置換の
+    /// あとも同じファイルを指す（保存の確かめで開いた一時ファイルのハンドルがそのまま、置き換えた後のファイルになる）ので、エントリは
+    /// 向け直さない。外側・移行後のエントリ・セットの正本の同じエントリは、同じエントリ（`Blob::same`）のまま（次の作り直しで、変わって
+    /// いない正本の骨組みを読み直さない）。
+    pub(crate) fn moved_to(self, path: &std::path::Path) -> Self {
+        self.original.note_path(path);
+        for blob in self.files.values() {
+            blob.note_path(path);
         }
-        p
+        for set in &self.sets {
+            set.document.note_path(path);
+        }
+        self
     }
     /// エントリを替えたプロジェクトを、今の外側の版で作り直す（配布用の写しなど）。
     pub(crate) fn rebuild_at(&self, files: Files) -> Result<Self> {

@@ -90,9 +90,13 @@ impl Lang {
             Error::SaveConflict(text) if text.contains("外部で作られました") => {
                 self.pick(text.clone(), "A file appeared at the save target; not overwritten".into())
             }
-            // 開いた .ylp（変えていないセットの中身を写す元）が外で消された・動かされた
-            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_MISSING) => {
-                self.pick(text.clone(), "The opened .ylp was deleted or moved outside".into())
+            // 保存先が、開いたあとで外で消された・動かされた（変わったのとは言い分ける）
+            Error::SaveConflict(text) if text.contains("外部で消されています") => {
+                self.pick(text.clone(), "The save target was deleted or moved outside; not overwritten".into())
+            }
+            // 開いた .ylp の古い版の写し（置換の規則が POSIX でないファイルシステムで、保存が置き換えるために手放した）
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => {
+                self.pick(text.clone(), "The opened .ylp was replaced by a save; this copy can no longer be read".into())
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
@@ -836,6 +840,14 @@ fn rig_what(what: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// 開いた .ylp の古い版の写し（保存が置き換えるために手放した）を読もうとした理由は、どちらの言語でも言う。
+    #[test]
+    fn a_released_open_file_is_told_in_both_languages() {
+        let error = yolu_io::Error::SaveConflict(yolu_io::SOURCE_RELEASED.into());
+        let (ja, en) = (Lang::Ja.io_error(&error), Lang::En.io_error(&error));
+        assert!(ja.contains("置き換えられた"), "{ja}");
+        assert!(en.is_ascii() && en.contains("replaced"), "{en}");
+    }
     #[test]
     fn merge_and_lock_errors_use_the_selected_language() {
         use yolu_core::MergeRefusal::*;
@@ -1232,6 +1244,7 @@ mod tests {
             Error::SaveConflict("バックアップ先がフォルダーではありません".into()),
             Error::SaveConflict("バックアップ先がシンボリックリンクです".into()),
             Error::SaveConflict("ロックのファイルがシンボリックリンクです".into()),
+            Error::SaveConflict("保存先が外部で消されています。上書きしません".into()),
         ];
         for lang in Lang::ALL {
             let texts: Vec<String> = errors.iter().map(|e| lang.io_error(e)).collect();
@@ -1253,6 +1266,9 @@ mod tests {
         assert_eq!(Lang::En.io_error(&errors[8]), "Another save is in progress");
         assert!(Lang::En.io_error(&errors[3]).contains("changed"));
         assert!(Lang::Ja.io_error(&errors[8]).contains("進行中"));
+        // 保存先が外で消された衝突は、変わった衝突とも言い分ける
+        assert!(Lang::En.io_error(&errors[12]).contains("deleted or moved"));
+        assert!(Lang::Ja.io_error(&errors[12]).contains("消されています"));
         // 保存先の周りの不具合は、データの不正（InvalidData の汎用文）にも「外で変わった」にも見せず、場所が理由だと言う
         for (i, key) in [(9, "Backup location is not a folder"), (10, "link"), (11, "lock file")] {
             let en = Lang::En.io_error(&errors[i]);

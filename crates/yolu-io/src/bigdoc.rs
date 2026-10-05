@@ -888,18 +888,13 @@ impl SetDocument {
     pub fn with_value(&self, path: &str, value: NativeValue) -> Result<NativeDocument> {
         self.to_native()?.with_value(path, value)
     }
-    /// ファイルの位置で持つエントリを `source` へ向け直した正本（保存で置き換えた後のファイル）。
-    pub(crate) fn with_source(&self, source: &crate::package::Source, moves: &mut crate::package::Moves) -> Self {
-        let Origin::Stored(s) = &self.0.origin else {
-            return self.clone();
-        };
-        let stored = StoredDoc {
-            header: s.header.with_source(source, moves),
-            parts: s.parts.iter().map(|p| p.with_source(source, moves)).collect(),
-        };
-        match self.skeleton() {
-            Ok(skeleton) => Self::stored_with(stored, skeleton),
-            Err(_) => self.clone(),
+    /// ファイルの位置で持つエントリの置き場の名前を、保存で置き換えた後の名前へ付け替える（`Blob::note_path`）。
+    pub(crate) fn note_path(&self, path: &std::path::Path) {
+        if let Origin::Stored(s) = &self.0.origin {
+            s.header.note_path(path);
+            for p in &s.parts {
+                p.note_path(path);
+            }
         }
     }
     /// 同じ中身（エントリごとの長さと SHA-256）を、別の置き場のエントリ（保存で置き換えた後のファイル）から読む正本にする。中身が

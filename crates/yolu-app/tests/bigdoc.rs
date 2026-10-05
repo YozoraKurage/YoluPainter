@@ -220,47 +220,118 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
     });
 }
 
+/// 開いた .ylp を、外で動かす（`moved`）・消す（`deleted`）・別のファイルを同じ名前へ置き換える（`replaced`。同期の道具・もう 1 つの窓の
+/// 保存のように、同じ inode を書き換えるのではない）。そのあと外に残っているファイル（動かした先・置き換えたもの）を返す。
+fn change_outside(dir: &TempDir, path: &Path, how: &str) -> Option<PathBuf> {
+    match how {
+        "moved" => {
+            let moved = dir.0.join("動かした.ylp");
+            std::fs::rename(path, &moved).unwrap();
+            Some(moved)
+        }
+        "deleted" => {
+            std::fs::remove_file(path).unwrap();
+            None
+        }
+        _ => {
+            let mut other = AppState::new_in(SIZE, SIZE, Lang::Ja);
+            paint_layers(&mut other, 2, 9);
+            let theirs = dir.0.join("別の作品.ylp");
+            other.apply(Action::SaveProjectAs(theirs.clone()));
+            std::fs::rename(&theirs, path).unwrap();
+            Some(path.to_path_buf())
+        }
+    }
+}
+/// 保存先に残ってはいけないもの（保存の一時ファイル・ロック・退避の置き場）。
+fn save_leftovers(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("pending") || n.ends_with(".save.lock~") || n.ends_with("-backups~"))
+        .collect()
+}
+
+/// 開いた .ylp はファイルを持ち続けて読む: 外で動かされても・消されても・別のファイルに置き換えられても、別名の保存はできて、中身は
+/// 開いたときのまま。同じ名前への上書きは、保存先が外で消された・変わったと断り、何も作らない・残さない。
 #[test]
-fn a_moved_or_deleted_original_refuses_saving_and_leaves_nothing_behind() {
+fn a_moved_deleted_or_replaced_original_still_saves_under_another_name() {
     small().scoped(|| {
-        let dir = TempDir::new("gone");
-        let path = dir.0.join("元.ylp");
-        let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
-        paint_layers(&mut s, 4, 3);
-        s.apply(Action::SaveProjectAs(path.clone()));
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
-        let mut opened = AppState::new_in(64, 64, Lang::Ja);
-        opened.apply(Action::OpenProject(path.clone()));
-        assert!(opened.message.starts_with("開きました"), "{}", opened.message);
-        // 変えていないセットの中身は開いたファイルの位置から写す。外で動かすと、別名の保存は何も作らずに断る（動かしたファイルにも
-        // 触らない・一時ファイルを残さない）
-        let moved = dir.0.join("動かした.ylp");
-        std::fs::rename(&path, &moved).unwrap();
-        let before = std::fs::read(&moved).unwrap();
-        let other = dir.0.join("別のフォルダ").join("別名.ylp");
-        opened.apply(Action::SaveProjectAs(other.clone()));
-        assert!(opened.message.starts_with("保存できません"), "{}", opened.message);
-        assert!(opened.message.contains(yolu_io::SOURCE_MISSING), "{}", opened.message);
-        assert!(!other.exists() && !other.parent().unwrap().exists(), "作ったフォルダも残さない");
-        assert_eq!(std::fs::read(&moved).unwrap(), before);
-        let left: Vec<String> = std::fs::read_dir(&dir.0)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|n| n.contains("pending"))
-            .collect();
-        assert!(left.is_empty(), "{left:?}");
-        // 英語の画面でも理由を言う
-        opened.lang = Lang::En;
-        opened.apply(Action::SaveProjectAs(other.clone()));
-        assert!(opened.message.contains("deleted or moved"), "{}", opened.message);
-        opened.lang = Lang::Ja;
-        // 消した後の上書きの保存は、保存先が外で消されたと断る（新しく作らない）
-        std::fs::remove_file(&moved).unwrap();
-        opened.modified = true;
-        opened.apply(Action::SaveProject);
-        assert!(opened.message.starts_with("保存できません"), "{}", opened.message);
-        assert!(!path.exists());
-        assert!(opened.modified, "保存していない印のまま");
+        let mut painted = Vec::new();
+        for how in ["moved", "deleted", "replaced"] {
+            let dir = TempDir::new(how);
+            let path = dir.0.join("元.ylp");
+            let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
+            paint_layers(&mut s, 4, 3);
+            painted = bytes_of(&s.doc);
+            s.apply(Action::SaveProjectAs(path.clone()));
+            assert!(s.message.starts_with("保存しました"), "{}", s.message);
+            let mut opened = AppState::new_in(64, 64, Lang::Ja);
+            opened.apply(Action::OpenProject(path.clone()));
+            assert!(opened.message.starts_with("開きました"), "{}", opened.message);
+            // 外で: 動かす・消す・別のファイルを同じ名前へ置き換える。動かした・置き換えたファイルには、このあと触らない
+            let outside = change_outside(&dir, &path, how);
+            let before = outside.as_ref().map(|p| std::fs::read(p).unwrap());
+            // 変えていないセットの中身は、開いたファイルから写す。別名の保存はできて、開き直すと開いたときの中身のまま
+            let to = dir.0.join("別のフォルダ").join("別名.ylp");
+            opened.apply(Action::SaveProjectAs(to.clone()));
+            assert!(opened.message.starts_with("保存しました"), "{how}: {}", opened.message);
+            let mut check = AppState::new_in(64, 64, Lang::Ja);
+            check.apply(Action::OpenProject(to));
+            assert!(check.message.starts_with("開きました"), "{how}: {}", check.message);
+            assert_eq!(bytes_of(&check.doc), painted, "{how}: 開いたときの中身のまま");
+            if let (Some(p), Some(before)) = (&outside, &before) {
+                assert_eq!(&std::fs::read(p).unwrap(), before, "{how}");
+            }
+            let left: Vec<String> = std::fs::read_dir(&dir.0)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains("pending"))
+                .collect();
+            assert!(left.is_empty(), "{how}: {left:?}");
+        }
+        assert!(!painted.is_empty());
+    });
+}
+
+/// 開いたファイルが外で消された・変わったあとの、同じ名前への上書きの保存は、外の変更として断る（新しく作らない・外のファイルを潰さない）。
+/// 理由は、置き換えられた（変わった）のと消された（動かされた）のとで言い分け、英語の画面でも出す。
+#[test]
+fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
+    small().scoped(|| {
+        for (lang, changed, deleted, prefix) in [
+            (Lang::Ja, "外部で変更されています", "外部で消されています", "保存できません"),
+            (Lang::En, "Save target or backup changed", "The save target was deleted or moved outside", "Cannot save"),
+        ] {
+            let dir = TempDir::new("over");
+            // 英語の画面の文には、ファイル名の日本語が入らないよう、名前は ASCII にする
+            let path = dir.0.join("original.ylp");
+            let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
+            paint_layers(&mut s, 4, 3);
+            s.apply(Action::SaveProjectAs(path.clone()));
+            let mut opened = AppState::new_in(64, 64, lang);
+            opened.apply(Action::OpenProject(path.clone()));
+            // 別のファイルに置き換えられた後は、外の変更として断る
+            let outside = change_outside(&dir, &path, "replaced").unwrap();
+            let theirs = std::fs::read(&outside).unwrap();
+            opened.modified = true;
+            opened.apply(Action::SaveProject);
+            assert!(opened.message.starts_with(prefix), "{lang:?}: {}", opened.message);
+            assert!(opened.message.contains(changed), "{lang:?}: {}", opened.message);
+            assert!(!opened.message.contains(deleted), "{lang:?}: {}", opened.message);
+            assert!(opened.modified, "保存していない印のまま");
+            assert_eq!(std::fs::read(&path).unwrap(), theirs);
+            // 消された後は、保存先が外で消されたと断る（新しく作らない）
+            std::fs::remove_file(&path).unwrap();
+            opened.apply(Action::SaveProject);
+            assert!(opened.message.starts_with(prefix), "{lang:?}: {}", opened.message);
+            assert!(opened.message.contains(deleted), "{lang:?}: {}", opened.message);
+            assert!(!opened.message.contains(changed), "{lang:?}: {}", opened.message);
+            assert_eq!(lang == Lang::En, opened.message.is_ascii(), "{lang:?}: {}", opened.message);
+            assert!(!path.exists());
+            assert!(opened.modified, "保存していない印のまま");
+            assert!(save_leftovers(&dir.0).is_empty(), "{:?}", save_leftovers(&dir.0));
+        }
     });
 }
 
@@ -351,6 +422,99 @@ fn held_dirs(root: &Path) -> Vec<PathBuf> {
         .map(|e| e.unwrap().path())
         .filter(|p| p.to_string_lossy().ends_with(".held~"))
         .collect()
+}
+
+/// 2 つのセット（描く 0 番が名前の順で先）の .ylp。1 番のセットにも画素を入れる。返すのは、ファイルとセットの ID。
+fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
+    use yolu_io::{MaterialRef, SaveTarget, SetSpec, WriterInfo};
+    let mut docs: Vec<_> = (0..2).map(|_| yolu_app::state::blank_document(SIZE, SIZE).0).collect();
+    docs.sort_by_key(|d| yolu_app::sets::guid_string(d.id()));
+    fill_layers(&mut docs[1], 2, 9);
+    let ids: Vec<String> = docs.iter().map(|d| yolu_app::sets::guid_string(d.id())).collect();
+    let specs: Vec<SetSpec> = docs
+        .iter()
+        .enumerate()
+        .map(|(k, doc)| SetSpec {
+            id: ids[k].clone(),
+            name: format!("セット{k}"),
+            material: MaterialRef::PendingSlot(k as u16),
+            document: Some(NativeDocument::from_core(doc).unwrap().into()),
+            composites: vec![],
+        })
+        .collect();
+    let project = Project::create(
+        WriterInfo { app: "試験".into(), version: "0".into(), unity: "standalone".into() },
+        &specs,
+        &ids[0],
+    )
+    .unwrap();
+    let path = dir.0.join(name);
+    SaveTarget::create(&path).unwrap().save(&project).unwrap();
+    (path, ids)
+}
+/// `root` の下の全部のファイルとフォルダーの名前。
+fn names_under(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut todo = vec![root.to_path_buf()];
+    while let Some(dir) = todo.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            found.push(entry.file_name().to_string_lossy().into_owned());
+            if entry.file_type().unwrap().is_dir() {
+                todo.push(entry.path());
+            }
+        }
+    }
+    found
+}
+
+/// 復旧の書き置きも、開いた .ylp が外で動かされた・消された・別のファイルに置き換えられたあとで、描いていないセットの正本を開いたときの
+/// 中身のまま写し、書き置きの途中のものを残さない。落ちたあとの復旧で開いても、描いたとおりに戻る。
+#[test]
+fn a_checkpoint_is_written_from_the_opened_contents_after_the_file_moved_or_changed_outside() {
+    small().scoped(|| {
+        for how in ["moved", "deleted", "replaced"] {
+            let dir = TempDir::new(how);
+            let root = dir.0.join("recovery");
+            let (path, ids) = two_sets(&dir, "二つ.ylp");
+            let base = Project::read(&std::fs::read(&path).unwrap()).unwrap().original_archive().entries().clone();
+            let mut s = session(&root);
+            s.apply(Action::OpenProject(path.clone()));
+            assert!(s.message.starts_with("開きました"), "{how}: {}", s.message);
+            let outside = change_outside(&dir, &path, how);
+            let theirs = outside.as_ref().map(|p| std::fs::read(p).unwrap());
+            // 描くセット（0 番）だけを変える。描かないセット（1 番）の正本は、開いたファイルから写す
+            paint_layers(&mut s, 2, 6);
+            let painted = bytes_of(&s.doc);
+            write_after(&mut s, Instant::now());
+            assert_eq!(s.recovery.checkpoints(), 1, "{how}: {}", s.message);
+            let mut files = GenerationStore::new(s.recovery.session_dir().unwrap()).load().unwrap().files;
+            let prefix = format!("sets/{}/", ids[1]);
+            let untouched: Vec<&String> = base.keys().filter(|k| k.starts_with(&prefix)).collect();
+            assert!(untouched.iter().any(|k| k.contains("document.utpaint")), "{how}: {untouched:?}");
+            for name in untouched {
+                assert_eq!(files[name].bytes().unwrap(), base[name].bytes().unwrap(), "{how}: {name} は開いたときのまま");
+            }
+            files.remove(INFO_NAME);
+            let written = Project::from_entries(files).unwrap();
+            let drawn = written.sets().iter().find(|x| x.id == ids[0]).unwrap();
+            assert_eq!(bytes_of(&drawn.document.to_core().unwrap()), painted, "{how}");
+            // 外のファイルには触らず、書き置きの途中のものも、保存先の隣の残骸も残さない
+            if let (Some(p), Some(theirs)) = (&outside, &theirs) {
+                assert_eq!(&std::fs::read(p).unwrap(), theirs, "{how}");
+            }
+            let left: Vec<String> =
+                names_under(&root).into_iter().filter(|n| n.contains("pending") || n.contains("staging")).collect();
+            assert!(left.is_empty(), "{how}: {left:?}");
+            assert!(save_leftovers(&dir.0).is_empty(), "{how}: {:?}", save_leftovers(&dir.0));
+            // 落ちたあと、復旧で開くと描いたとおりに戻る
+            drop(s);
+            let mut s2 = session(&root);
+            s2.recovery_apply(RecoveryAction::Open);
+            assert!(s2.message.starts_with("復旧しました"), "{how}: {}", s2.message);
+            assert_eq!(bytes_of(&s2.doc), painted, "{how}");
+        }
+    });
 }
 
 /// 開いた .ylp を置き換える保存は、動いている書き置き（そのファイルの位置から読む）が終わるまで待つ: 書き置きは前のファイルを読み

@@ -372,6 +372,82 @@ fn saving_again_copies_unchanged_sets_from_the_file_and_drops_old_parts() {
     });
 }
 
+/// 開いた .ylp は、開いたときのファイルを持ち続けて読む（パスで開き直さない）: 外で動かされても・消されても・別のファイルに置き換え
+/// られても、変えていないセットの中身は開いたときのまま、別の名前の保存へ写せる。同じ名前への保存は、外の変更として断り、何も残さない。
+#[test]
+fn an_opened_file_moved_deleted_or_replaced_outside_still_saves_under_another_name() {
+    let a = painted(11, 7);
+    let b = painted(12, 7);
+    let other = painted(13, 6);
+    for how in ["moved", "deleted", "replaced"] {
+        let dir = Dir::new();
+        small().scoped(|| {
+            let p = project_of(&[(SET_A, &a), (SET_B, &b)]);
+            let path = dir.path("open.ylp");
+            SaveTarget::create(&path).unwrap().save(&p).unwrap();
+            let (opened, mut target) = SaveTarget::open(&path).unwrap();
+            // 開いたエントリはメモリに残さず、ファイルの位置で持つ
+            assert!(opened.original_archive().entries().values().any(|b| !b.is_empty() && b.in_memory().is_none()));
+            let mut kept = dir.path("kept.ylp");
+            let untouched = fs::read(&path).unwrap();
+            match how {
+                "moved" => {
+                    kept = dir.path("moved.ylp");
+                    fs::rename(&path, &kept).unwrap();
+                }
+                "deleted" => fs::remove_file(&path).unwrap(),
+                _ => {
+                    // 同期の道具のように、別のファイルを同じ名前へ置き換える（同じ inode を書き換えるのではない）
+                    let elsewhere = project_of(&[(SET_A, &other)]);
+                    let temp = dir.path("elsewhere.ylp");
+                    SaveTarget::create(&temp).unwrap().save(&elsewhere).unwrap();
+                    // 開いているファイルを置き換えられない OS（POSIX の置換の無い Windows・古い Wine）では、外の道具もこの置き換えができない:
+                    // 確かめることが無い（Unix は必ず通る）
+                    if let Err(e) = fs::rename(&temp, &path) {
+                        if cfg!(unix) {
+                            panic!("{e}");
+                        }
+                        return;
+                    }
+                    kept = path.clone();
+                }
+            }
+            let outside = if how == "deleted" { None } else { Some(fs::read(&kept).unwrap()) };
+            // 別の名前へ: 中身は開いたときのまま（外で何をされても）
+            let copy = dir.path(&format!("copy-{how}.ylp"));
+            SaveTarget::create(&copy).unwrap().save(&opened).unwrap_or_else(|e| panic!("{how}: {e}"));
+            let (again, _) = SaveTarget::open(&copy).unwrap();
+            let core = |p: &Project, id: &str| bytes_of(&p.sets().iter().find(|s| s.id == id).unwrap().document.to_core().unwrap());
+            assert_eq!(core(&again, SET_A), bytes_of(&a), "{how}");
+            assert_eq!(core(&again, SET_B), bytes_of(&b), "{how}");
+            // 外の変更は、書き換えも消しもしない
+            if let Some(outside) = outside {
+                assert_eq!(fs::read(&kept).unwrap(), outside, "{how}");
+            }
+            // 同じ名前への保存は断る（動かした・消した: 保存先が無い。置き換えた: 中身が違う）。一時ファイルも残さない。消したときは、名前がすぐ
+            // 消える OS（Unix・今の Windows の NTFS の POSIX の削除）だけを見る: 開いたままの削除で名前が残る OS（古い Wine など）では、
+            // OS が「まだある」と答えるので、保存先が消された判定そのものが働かない
+            if how != "deleted" || cfg!(unix) {
+                let refused = target
+                    .save(&opened)
+                    .expect_err(&format!("{how}: 外で変わったあとの同じ名前への保存が通った"));
+                assert!(matches!(refused, yolu_io::Error::SaveConflict(_)), "{how}: {refused:?}");
+                if how == "replaced" {
+                    assert_ne!(fs::read(&path).unwrap(), untouched);
+                } else {
+                    assert!(!path.exists(), "{how}: 新しく作らない");
+                }
+            }
+            let left: Vec<_> = fs::read_dir(&dir.0)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains("pending"))
+                .collect();
+            assert!(left.is_empty(), "{how}: {left:?}");
+        });
+    }
+}
+
 #[test]
 fn a_document_source_written_into_a_package_from_memory_round_trips() {
     // メモリの正本（`DocumentSource::Native`）も、閾値を超えれば同じ版 26 で分ける

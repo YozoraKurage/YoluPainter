@@ -25,7 +25,7 @@ use yolu_core::mesh_maps::MeshMapKind;
 use yolu_core::Rgba8;
 use yolu_io::{
     shelf::Shelf, Archive, GenerationStore, MaterialRef, NativeDocument, Project, Removal,
-    SaveTarget, SetSpec, WriterInfo, INFO_NAME,
+    SaveTarget, SetSpec, Thresholds, WriterInfo, INFO_NAME,
 };
 
 /// 試験ごとの一時フォルダ（終わったら消す）。
@@ -392,6 +392,64 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
     want.push("Work-dist.ylp".into());
     want.sort();
     assert_eq!(dir.files(), want);
+}
+
+/// 開いた .ylp が外で動かされた・消された・別のファイルに置き換えられたあとでも、配布用の写しは開いたときの中身から書ける（残す選びにした
+/// PSD の原本・メッシュマップ・知らないエントリは、開いたファイルのバイト列のまま）。開いているものも外のファイルも変えず、何も残さない。
+#[test]
+fn headless_the_copy_is_written_from_the_opened_contents_after_the_file_moved_or_changed_outside() {
+    // 開いたエントリはメモリに残さず、ファイルのハンドルで持つ（パスで開き直す形は、外で変わると読めなくなる）
+    Thresholds { keep_in_memory: 0, ..Thresholds::REAL }.scoped(|| {
+        for how in ["moved", "deleted", "replaced"] {
+            let dir = TempDir::new(how);
+            let (mut s, path) = opened(&dir);
+            let base = read_entries(&path);
+            let outside = match how {
+                "moved" => {
+                    let to = dir.path("Moved.ylp");
+                    std::fs::rename(&path, &to).unwrap();
+                    Some(to)
+                }
+                "deleted" => {
+                    std::fs::remove_file(&path).unwrap();
+                    None
+                }
+                _ => {
+                    plain_project(&dir, "Other.ylp");
+                    std::fs::rename(dir.path("Other.ylp"), &path).unwrap();
+                    Some(path.clone())
+                }
+            };
+            let theirs = outside.as_ref().map(|p| std::fs::read(p).unwrap());
+            let dir_before = dir.files();
+            let dest = dir.path("Copy.ylp");
+            write_copy(&mut s, &dest, &[Removal::PsdOriginals, Removal::MeshMaps, Removal::UnknownEntries]);
+            let copy = read_entries(&dest);
+            let kept: Vec<&String> = base
+                .keys()
+                .filter(|n| n.ends_with("/imported-original.psd") || n.contains("meshmap-") || *n == "extra.dat")
+                .collect();
+            assert_eq!(kept.len(), 3, "{how}: {kept:?}");
+            for name in kept {
+                assert!(copy.get(name) == Some(&base[name]), "{how}: {name} は開いたときのバイト列のまま");
+            }
+            let project = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
+            assert_eq!(
+                project.sets()[0].document.to_bytes().unwrap(),
+                NativeDocument::from_core(&s.doc).unwrap().to_bytes(),
+                "{how}: 保存していない変更も入る"
+            );
+            // 外のファイルには触らず、写しの隣に一時ファイル・ロック・退避の置き場を作らない
+            if let (Some(p), Some(theirs)) = (&outside, &theirs) {
+                assert_eq!(&std::fs::read(p).unwrap(), theirs, "{how}");
+            }
+            let mut want = dir_before;
+            want.push("Copy.ylp".into());
+            want.sort();
+            assert_eq!(dir.files(), want, "{how}");
+            assert!(s.modified, "{how}: 開いているものは変わらない");
+        }
+    });
 }
 
 #[test]
