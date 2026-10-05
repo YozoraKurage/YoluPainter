@@ -12,6 +12,7 @@ use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, V
 
 use crate::pen::PenSample;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
+use crate::tools::input::Surface;
 use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
@@ -229,7 +230,7 @@ impl View3dSlot {
         } else if let Some(icon) = gizmo_cursor {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
-        } else if app.tool.is_path() {
+        } else if app.tool.def().surface == Surface::Path {
             // パスの道具: 選んでいる層のパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
@@ -242,7 +243,7 @@ impl View3dSlot {
                     crate::pathtool::surface::cursor_icon(app, content, p)
                 });
             }
-        } else if app.tool.is_region() {
+        } else if app.tool.def().surface == Surface::Region {
             // 範囲の道具: ポインタの下の範囲の面を薄い色で重ねる（ブラシの円は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
@@ -256,7 +257,7 @@ impl View3dSlot {
                     CursorIcon::Crosshair
                 });
             }
-        } else if app.tool == crate::state::Tool::Eyedropper {
+        } else if app.tool.def().surface == Surface::Pick {
             // スポイト: ブラシの円は出さない
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
@@ -470,7 +471,7 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         return None;
     }
     ui.input(|i| {
-        crate::gesture::zoom_chord(&i.modifiers, i.key_down(egui::Key::Space)).then_some(i.modifiers.alt)
+        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN)).then_some(i.modifiers.alt)
     })
 }
 

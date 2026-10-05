@@ -9,6 +9,9 @@
 //! - 3D の対称（[`SurfaceSymmetrySetup`]）は、ダブの中心を面の上で映す・回すダブへ置き換え（`symmetry`）、全ての写しを画素ごとに
 //!   大きい方の覆いで 1 つにして塗る。ぼかしは写しも含めて 1 つのダブとして読み元を凍結する。指先・クローンは写しごとの読み元と
 //!   動きが要るので対称とは組めない（C# と同じ。ストロークの始めに断る）。
+//! - 色の混ぜ（ストロークの `Brush` の `mix`）は、混ぜるならぼかしと同じく面のダブを `apply_dab` へ（下地を書く前に、UV の離れた島ごとの塊に分けて凍結する）。伸ばす
+//!   （対称なし）は指先と同じ写像されたダブで、展開の図で UV の継ぎ目をまたいで前のダブの側を読む（最初のダブ・動いていないダブ・図に入らない
+//!   ダブも、ずれ 0 で塗る）。対称と組むときは、写しごとの読み元が要るので `apply_dab`（動きの向きなし）へ。
 //! - 効果のブラシ（[`SurfaceEffect`]）: ぼかしは面のダブを `apply_dab` へ。指先は直前のダブの面の点から今の点へ引きずり、クローンは
 //!   固定した元の面の点から、ストロークの最初の面の点に対応させて写す。どちらも展開の図（[`super::SamplingChart`]）で UV の島の
 //!   継ぎ目をまたいで読み元の画素を決め、全ての読みを書く前に凍結する（`Stroke::apply_mapped_dab`）。
@@ -28,7 +31,8 @@ use super::symmetry::{build_expanded, MirrorOutcome, MirrorPlane, RadialSymmetry
 use super::unity::{dot, fmax, magnitude, sqr_magnitude};
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::{
-    BrushPixel, BrushSettings, CoreError, Document, PressureResponse, StencilPoint, Stroke,
+    BrushPixel, BrushSettings, CoreError, Document, MixMode, PressureResponse, StencilPoint,
+    Stroke,
 };
 
 /// 3D のストロークを止めた理由（どれもストロークを取り消す）。
@@ -162,6 +166,12 @@ pub struct SurfaceStroke {
     /// だけ持つ（既定の応えでも、硬さ × 筆圧になる）。
     size_response: Option<PressureResponse>,
     hardness_response: Option<PressureResponse>,
+    /// 色の混ぜるブラシ（ストロークのブラシが混ぜ、色を塗る）: ダブの画素をまとめて渡し、下地を凍結して塗る（画素ごとには塗れない）。
+    mixes: bool,
+    /// 色の混ぜの伸ばす（対称なし）: 指先と同じく、直前のダブの面の点から今の点へ、展開の図で UV の継ぎ目をまたいで下地を読む。
+    smears: bool,
+    /// 色延び（伸ばすで、読む位置の遅れの長さに効く。1 + 2 × 色延び 倍）。
+    stretch: f32,
     width: i32,
     height: i32,
     /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
@@ -280,6 +290,10 @@ impl SurfaceStroke {
             .controls
             .pressure_hardness
             .then(|| stroke_brush.pressure.hardness.clone());
+        let mixes = stroke_brush.mix.is_active()
+            && stroke_brush.effect.is_paint()
+            && !stroke_brush.base.erase;
+        let smears = mixes && stroke_brush.mix.mode == MixMode::Smear && symmetry.is_none();
         let mut s = SurfaceStroke {
             geometry,
             view,
@@ -293,6 +307,9 @@ impl SurfaceStroke {
             pressure_size: brush.pressure_size,
             size_response,
             hardness_response,
+            mixes,
+            smears,
+            stretch: stroke_brush.mix.stretch as f32,
             width: doc.width() as i32,
             height: doc.height() as i32,
             stencil: options.stencil,
@@ -437,7 +454,15 @@ impl SurfaceStroke {
             }
         };
         match self.effect {
-            SurfaceEffect::Paint => {
+            SurfaceEffect::Paint if self.smears => {
+                let points: Option<Vec<StencilPoint>> = painted
+                    .iter()
+                    .map(|p| point_of(self, p))
+                    .collect::<Option<Vec<_>>>()
+                    .filter(|v| !v.is_empty());
+                self.mapped_dab(doc, stroke, &hit, pressure, &painted, points)?;
+            }
+            SurfaceEffect::Paint if !self.mixes => {
                 for p in &painted {
                     let coverage = p.coverage.min(1.0) as f64;
                     match point_of(self, p) {
@@ -459,7 +484,8 @@ impl SurfaceStroke {
                     };
                 }
             }
-            SurfaceEffect::Blur => {
+            // 色の混ぜ（ぼかしと同じく、ダブの画素をまとめて渡し、読み元を書く前に凍結する）
+            SurfaceEffect::Paint | SurfaceEffect::Blur => {
                 let pixels: Vec<BrushPixel> = painted
                     .iter()
                     .map(|p| BrushPixel {
@@ -547,7 +573,10 @@ impl SurfaceStroke {
         pixels: &[&super::SurfacePixel],
         points: Option<Vec<StencilPoint>>,
     ) -> Result<(), SurfaceStrokeError> {
-        let smudge = matches!(self.effect, SurfaceEffect::Smudge);
+        let smears = matches!(self.effect, SurfaceEffect::Paint);
+        let smudge = matches!(self.effect, SurfaceEffect::Smudge) || smears;
+        // 伸ばすは、前の打点への動きを (1 + 2 × 色延び) 倍だけ後ろを読む（長さは打点の直径まで）
+        let reach_scale = if smears { 1.0 + 2.0 * self.stretch } else { 1.0 };
         let (destination, source) = match self.effect {
             SurfaceEffect::Smudge => {
                 // 最初のダブは位置を覚えるだけ。動いていなければ、覚え直すだけで塗らない
@@ -559,6 +588,8 @@ impl SurfaceStroke {
                 }
                 (*hit, previous)
             }
+            // 色の混ぜの伸ばす: 指先と同じ読み方だが、塗るブラシなので、最初のダブ・動いていないダブも塗る（読む位置のずれは 0）
+            SurfaceEffect::Paint => (*hit, self.previous_hit.replace(*hit).unwrap_or(*hit)),
             SurfaceEffect::Clone(c) => {
                 let destination = *self.clone_destination.get_or_insert(*hit);
                 (destination, c.source)
@@ -579,7 +610,8 @@ impl SurfaceStroke {
         }
         let radius = self.world_radius;
         let reach = radius * 2.0
-            + magnitude(source.position - destination.position) * if smudge { 2.0 } else { 0.0 }
+            + magnitude(source.position - destination.position)
+                * if smudge { 2.0 * reach_scale } else { 0.0 }
             + magnitude(hit.position - destination.position) * 2.0;
         let geometry = self.geometry.clone();
         let mut dest_chart = geometry.build_sampling_chart(
@@ -596,10 +628,19 @@ impl SurfaceStroke {
         if smudge {
             match dest_chart.coordinates(&source) {
                 Some(o) => offset = o,
+                // 直前の点が展開の図に入らない（つながらない面に移った）: 指先はこのダブは塗らず、今の点から拾い直す。伸ばすは塗るブラシなので、
+                // ずれ 0（同じ画素を読む）で塗る
+                None if smears => offset = glam::Vec2::ZERO,
                 None => {
-                    // 直前の点が展開の図に入らない（つながらない面に移った）: このダブは塗らず、今の点から拾い直す
                     self.stats.lost += 1;
                     return Ok(());
+                }
+            }
+            if smears {
+                offset *= reach_scale;
+                let length = offset.length();
+                if length > radius * 2.0 {
+                    offset *= radius * 2.0 / length;
                 }
             }
         } else {

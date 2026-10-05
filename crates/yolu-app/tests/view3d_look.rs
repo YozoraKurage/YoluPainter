@@ -23,6 +23,12 @@ use yolu_core::{Channel, HeightEdgeMode, LayerId, NormalSettings, NormalYDirecti
 /// 3D のタブを出した窓（文書は doc × doc）。モデルは呼び手が入れる。
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
+    // この試験の場面は標準（PBR）の見た目を見る: 新しい文書の既定（lilToon）でなく標準を明示する
+    h.state_mut()
+        .state
+        .doc
+        .restore_look(yolu_core::look::MaterialLook::default())
+        .unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
     // マウスの矢印が 3D の表示域の上端に残ると、絵の測定（いちばん明るい画素など）に入る。見出しの帯が無いので、ポインタを外へ
     move_to(&h, egui::pos2(1.0, 1.0));
@@ -868,7 +874,8 @@ fn the_channel_textures_hold_the_same_texels_as_the_export() {
         "半透明の Metallic は値 × アルファ"
     );
     // Color: 不透明な画素は書き出しと同じ。半透明・透明は、書き出しが straight（透明の画素の RGB を保つ）のところを、3D は見せるために
-    // 乗算済みで上げる（RGB × アルファ、アルファは同じ）
+    // 乗算済みで上げる。sRGB の形式（GPU が読むときにリニアにして補間する）なので、乗算はリニアで（sRGB(リニア(RGB) × アルファ)、
+    // アルファは同じ。16 bit のリニアを経る丸めの 1 まで）
     let (gpu, out) = (level0(Slot::Color), export("Albedo"));
     let mut translucent = 0;
     for i in 0..texels {
@@ -876,17 +883,61 @@ fn the_channel_textures_hold_the_same_texels_as_the_export() {
         if o[3] == 255 {
             assert_eq!(g, o, "不透明な Color {i}");
         } else {
-            let a = o[3] as u32;
-            let premultiplied = [0, 1, 2].map(|k| ((o[k] as u32 * a + 127) / 255) as u8);
-            assert_eq!(g[..3], premultiplied, "Color {i}");
+            let a = o[3] as f32 / 255.0;
+            for k in 0..3 {
+                let linear = brdf::srgb_to_linear(o[k] as f32 / 255.0) * a;
+                let expected = (brdf::linear_to_srgb(linear) * 255.0).round() as i32;
+                assert!((g[k] as i32 - expected).abs() <= 1, "Color {i}: {g:?} と {expected}");
+            }
             assert_eq!(g[3], o[3]);
-            translucent += usize::from(a > 0 && g[..3] != o[..3]);
+            translucent += usize::from(o[3] > 0 && g[..3] != o[..3]);
         }
     }
     assert!(
         translucent > 0,
         "半透明の Color は書き出しと値が違う（乗算済み）"
     );
+}
+
+#[test]
+fn the_srgb_channels_average_their_mips_in_linear() {
+    // Color・Emission は sRGB の形式で持ち、GPU がミップを作るときもリニアで平均する（リニアの色空間の Unity が sRGB のテクスチャの
+    // ミップを作るのと同じ）。1 画素の白黒の市松を 1 段縮めると、リニアの平均 0.5 → sRGB の 188（ガンマの値のまま平均すると 128）。
+    // 値のチャンネル（Roughness。リニアの形式）は値のまま平均する
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    let layer = first_layer(&h);
+    {
+        let doc = &mut h.state_mut().state.doc;
+        for y in 0..64 {
+            for x in 0..64 {
+                let v = if (x + y) % 2 == 0 { 255 } else { 0 };
+                for channel in [Channel::Color, Channel::Emission, Channel::Roughness] {
+                    doc.set_channel_pixel(layer, channel, x, y, Rgba8::new(v, v, v, 255))
+                        .unwrap();
+                }
+            }
+        }
+    }
+    h.run();
+    for (slot, expected) in [(Slot::Color, 188u8), (Slot::Emission, 188), (Slot::Roughness, 128)] {
+        let (bytes, size) = h
+            .state()
+            .view3d_read_paint_level(slot, 1)
+            .expect("ミップの 1 段");
+        assert_eq!(size, [32, 32], "{slot:?}");
+        let per_texel = bytes.len() / (32 * 32);
+        for (i, texel) in bytes.chunks(per_texel).enumerate() {
+            let rgb = &texel[..per_texel.min(3)];
+            assert!(
+                rgb.iter().all(|v| v.abs_diff(expected) <= 2),
+                "{slot:?} の 1 段の {i}: {texel:?}（期待 {expected}）"
+            );
+            if per_texel == 4 {
+                assert_eq!(texel[3], 255, "{slot:?} の 1 段の {i}");
+            }
+        }
+    }
 }
 
 #[test]

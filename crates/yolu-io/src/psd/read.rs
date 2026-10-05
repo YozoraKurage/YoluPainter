@@ -1,18 +1,23 @@
+use super::import::{self, CopyState};
 use super::{binary::Reader, *};
 use crate::{check, check_budget, Error, Result};
 use std::collections::HashSet;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
 
-struct State<'a> {
-    limits: &'a Limits,
+pub(super) struct State<'a> {
+    pub(super) limits: &'a Limits,
     /// 参照合成との照合（時間のかかる所）が見る取消の旗。
-    cancel: Option<&'a AtomicBool>,
-    notes: Vec<Diagnostic>,
-    unsupported: bool,
-    metadata: usize,
-    pixels: u64,
-    omitted: Vec<(String, usize, usize, usize)>,
+    pub(super) cancel: Option<&'a AtomicBool>,
+    pub(super) notes: Vec<Diagnostic>,
+    pub(super) unsupported: bool,
+    pub(super) metadata: usize,
+    pub(super) pixels: u64,
+    pub(super) omitted: Vec<(String, usize, usize, usize)>,
+    /// いま読んでいるタグ・合成キーの 4 文字（写しとしての取り込みが、理由の仕分けに使う）。
+    pub(super) key: [u8; 4],
+    /// 写しとしての取り込み（`import_copy`）のときだけ。原本を保つ読みでは None で、これまでと同じ動き。
+    pub(super) copy: Option<CopyState>,
 }
 impl State<'_> {
     fn note(&mut self, code: &str, message: impl Into<String>, offset: usize, length: usize) {
@@ -25,11 +30,26 @@ impl State<'_> {
             })
         }
     }
-    fn preserve(&mut self, code: &str, message: impl Into<String>, offset: usize, length: usize) {
+    pub(super) fn preserve(
+        &mut self,
+        code: &str,
+        message: impl Into<String>,
+        offset: usize,
+        length: usize,
+    ) {
+        if self.copy.is_some() {
+            // 写しとしての取り込み: 原本を保たないので「保つだけ」にはせず、理由の表（`import::sort_preserve`）で仕分ける
+            return import::sort_preserve(self, code);
+        }
         self.unsupported = true;
         self.note(code, message, offset, length)
     }
+    /// 編集後の書き出しに含まれない情報（原本を保つ読みでの知らせ）。写しとしての取り込みでは何も知らせない
+    /// （知らせたいものは `omit_as` で機能の名前つきで知らせる）。
     fn omitted(&mut self, what: impl Into<String>, offset: usize, length: usize) {
+        if self.copy.is_some() {
+            return;
+        }
         let what = what.into();
         if let Some(x) = self.omitted.iter_mut().find(|x| x.0 == what) {
             x.3 += 1
@@ -37,7 +57,26 @@ impl State<'_> {
             self.omitted.push((what, offset, length, 1))
         }
     }
+    /// 写しとしての取り込みで、見え方に効かない情報を持たないことを機能の名前つきで知らせる。原本を保つ読みでは `omitted` と同じ。
+    fn omit_as(
+        &mut self,
+        feature: import::ImportFeature,
+        detail: Option<import::ImportDetail>,
+        what: impl Into<String>,
+        offset: usize,
+        length: usize,
+    ) {
+        if self.copy.is_some() {
+            self.copy_note(feature, import::ImportAction::Ignored, detail);
+        } else {
+            self.omitted(what, offset, length)
+        }
+    }
     fn metadata(&mut self, n: usize) -> Result<()> {
+        if self.copy.is_some() {
+            // 写しとしての取り込みは、付加情報を持ち続けない（層ごと・タグごとに読んで捨てる）ので、合計の予算は掛けない
+            return Ok(());
+        }
         self.metadata = self
             .metadata
             .checked_add(n)
@@ -119,6 +158,8 @@ fn read_owned(bytes: Vec<u8>, limits: &Limits, cancel: Option<&AtomicBool>) -> R
         metadata: 0,
         pixels: 0,
         omitted: Vec::new(),
+        key: [0; 4],
+        copy: None,
     };
     match parse(&bytes, &mut s) {
         // 取消は壊れた PSD ではない
@@ -361,18 +402,22 @@ fn rect(w: i64, h: i64, s: &State) -> Result<()> {
         "PSD の矩形が不正、または予算超過です",
     )
 }
-struct Record {
-    layer: Layer,
-    channels: Vec<(i16, usize)>,
-    section: i32,
+pub(super) struct Record {
+    pub(super) layer: Layer,
+    pub(super) channels: Vec<(i16, usize)>,
+    pub(super) section: i32,
     section_key: Option<[u8; 4]>,
     subtype: i32,
     unknown_section: bool,
-    adjustment_seen: bool,
-    fill_seen: bool,
+    pub(super) adjustment_seen: bool,
+    pub(super) fill_seen: bool,
     protection: u32,
     /// 明るさ・コントラストの 2 つの記録（`brit` と `CgEd`）。層のタグを読み終えてから突き合わせる。
     brightness: BrightnessRecords,
+    /// 塗りの不透明度（`iOpa`。既定は 255）。写しとしての取り込みが不透明度に掛ける。
+    pub(super) fill_opacity: u8,
+    /// ベクターマスク（`vmsk`・`vsms`）を持つ。
+    pub(super) vector_mask: bool,
 }
 #[derive(Default)]
 struct BrightnessRecords {
@@ -398,7 +443,7 @@ struct CgedRecord {
     use_legacy: bool,
     auto: bool,
 }
-fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
+pub(super) fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     let offset = r.pos;
     let top = r.i32()?;
     let left = r.i32()?;
@@ -422,6 +467,8 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
         fill_seen: false,
         protection: 0,
         brightness: BrightnessRecords::default(),
+        fill_opacity: 255,
+        vector_mask: false,
     };
     let n = r.u16()?;
     check((1..=56).contains(&n), "レイヤーチャンネル数が不正です")?;
@@ -457,15 +504,18 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     let mut extra = r.section()?;
     s.metadata(extra.remaining())?;
     rec.layer.mask = mask(extra.section()?, s)?;
-    check(
-        !ids.contains(&-2) || rec.layer.mask.is_some(),
-        "マスクチャンネルにマスク定義がありません",
-    )?;
-    if let Some(m) = &rec.layer.mask {
+    // 写しとしての取り込みは、定義とチャンネルが食い違うマスクを断らず、読める側だけ使う（呼び手が整える）
+    if s.copy.is_none() {
         check(
-            ids.contains(&-2) || m.width == 0 || m.height == 0,
-            "マスク定義にチャンネルがありません",
-        )?
+            !ids.contains(&-2) || rec.layer.mask.is_some(),
+            "マスクチャンネルにマスク定義がありません",
+        )?;
+        if let Some(m) = &rec.layer.mask {
+            check(
+                ids.contains(&-2) || m.width == 0 || m.height == 0,
+                "マスク定義にチャンネルがありません",
+            )?
+        }
     }
     let ranges = extra.section()?;
     let neutral = ranges.remaining() % 8 == 0
@@ -510,7 +560,13 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
     } else {
         rec.layer.locks = (rec.protection & 0x80000007) | u32::from(flags & 1);
         if rec.protection & !0x80000007 != 0 {
-            s.omitted("lspf の未対応ロックビット", offset, 0)
+            s.omit_as(
+                import::ImportFeature::LayerLockBits,
+                None,
+                "lspf の未対応ロックビット",
+                offset,
+                0,
+            )
         }
     }
     if !neutral {
@@ -539,6 +595,7 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
         } else {
             key
         };
+        s.key = mode;
         match BlendMode::from_key(mode) {
             Some(m) if folder || m != BlendMode::PassThrough => rec.layer.blend_mode = m,
             _ => s.preserve(
@@ -550,7 +607,13 @@ fn record(r: &mut Reader, s: &mut State) -> Result<Record> {
         }
         if folder {
             if rec.section == 2 {
-                s.omitted("閉じたグループ", offset, 0)
+                s.omit_as(
+                    import::ImportFeature::CollapsedGroup,
+                    None,
+                    "閉じたグループ",
+                    offset,
+                    0,
+                )
             }
             if rec.subtype != 0 {
                 s.omitted("シーングループ", offset, 0)
@@ -645,7 +708,12 @@ fn mask(mut r: Reader, s: &mut State) -> Result<Option<Mask>> {
     let h = i64::from(r.i32()?) - i64::from(top);
     let w = i64::from(r.i32()?) - i64::from(left);
     rect(w, h, s)?;
-    let color = r.u8()?;
+    let mut color = r.u8()?;
+    if s.copy.is_some() && !matches!(color, 0 | 255) {
+        // 写しとしての取り込み: 0・255 以外の既定値は、近いほうへ寄せる（矩形の外の見え方が変わるので知らせる）
+        color = if color >= 128 { 255 } else { 0 };
+        s.copy_note(import::ImportFeature::MaskDefault, import::ImportAction::Changed, None)
+    }
     check(matches!(color, 0 | 255), "マスク既定値は0または255です")?;
     let flags = r.u8()?;
     let mut density = 255;
@@ -704,7 +772,7 @@ fn mask(mut r: Reader, s: &mut State) -> Result<Option<Mask>> {
         pixels: Vec::new(),
     }))
 }
-fn decode(
+pub(super) fn decode(
     mut r: Reader,
     w: u32,
     h: u32,
@@ -737,6 +805,27 @@ fn decode(
                 )?
             }
             check(r.remaining() == 0, "RLE チャンネルに余分なデータ")?
+        }
+        // ZIP（2）と予測つき ZIP（3）。写しとしての取り込みだけが読む（原本を保つ読みは、これまでどおり未対応として原本を保つ）
+        2 | 3 if s.copy.is_some() => {
+            let (w, h) = (w as usize, h as usize);
+            if w > 0 && h > 0 {
+                let mut plane = vec![0u8; w * h];
+                flate2::read::ZlibDecoder::new(&r.data[r.pos..r.end])
+                    .read_exact(&mut plane)
+                    .map_err(|_| Error::InvalidData("ZIP チャンネルを展開できません".into()))?;
+                if compression == 3 {
+                    // 予測: 行の中で、左の画素との差で持っている
+                    for row in plane.chunks_exact_mut(w) {
+                        for x in 1..w {
+                            row[x] = row[x].wrapping_add(row[x - 1])
+                        }
+                    }
+                }
+                for (i, v) in plane.iter().enumerate() {
+                    out[i * stride + component] = *v
+                }
+            }
         }
         _ => s.preserve(
             "Compression",
@@ -875,7 +964,7 @@ fn resources(mut r: Reader, s: &mut State) -> Result<()> {
     }
     Ok(())
 }
-fn icc(r: &Reader) -> Option<String> {
+pub(super) fn icc(r: &Reader) -> Option<String> {
     fn parse(b: &[u8]) -> Option<String> {
         let u = |p: usize| {
             b.get(p..p + 4)
@@ -959,6 +1048,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
             "タグのシグネチャが不正です",
         )?;
         let key = r.key()?;
+        s.key = key;
         let mut b = r.section()?;
         let size = b.remaining();
         if record.is_none() {
@@ -1021,6 +1111,10 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                     b"knko" => (0, "Knockout"),
                     _ => (1, "TransparencyShapes"),
                 };
+                // 写しとしての取り込みは、塗りの不透明度を不透明度に掛ける（原本を保つ読みでは使わない）
+                if s.copy.is_some() && &key == b"iOpa" && !duplicate && size == 4 {
+                    rec.fill_opacity = b.data[b.pos]
+                }
                 if duplicate || b.data[b.pos..b.end] != [value, 0, 0, 0] {
                     s.preserve(
                         code,
@@ -1041,10 +1135,18 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                 if size != 8 {
                     s.preserve("SheetColor", "lclr の大きさが不正です", start, length)
                 } else if b.u32()? != 0 || b.u32()? != 0 {
-                    s.omitted("レイヤー色ラベル lclr", start, length)
+                    s.omit_as(
+                        import::ImportFeature::LayerColorLabel,
+                        None,
+                        "レイヤー色ラベル lclr",
+                        start,
+                        length,
+                    )
                 }
             }
-            b"lnsr" | b"shmd" | b"fxrp" | b"lyvr" => s.omitted(
+            b"lnsr" | b"shmd" | b"fxrp" | b"lyvr" => s.omit_as(
+                import::ImportFeature::LayerMetadata,
+                Some(import::ImportDetail::Key(key)),
                 format!("レイヤータグ {}", String::from_utf8_lossy(&key)),
                 start,
                 length,
@@ -1162,6 +1264,15 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                 if let Some(rgb) = solid(b, s, start, length)? {
                     rec.layer.kind = LayerKind::SolidColor(rgb)
                 }
+            }
+            b"vmsk" | b"vsms" if s.copy.is_some() => {
+                rec.vector_mask = true;
+                s.preserve(
+                    "TaggedBlock",
+                    format!("未対応のレイヤータグ {}", String::from_utf8_lossy(&key)),
+                    start,
+                    length,
+                )
             }
             _ => s.preserve(
                 "TaggedBlock",
@@ -1410,6 +1521,8 @@ fn resolve_brightness_contrast(rec: &mut Record, s: &mut State) {
         return;
     }
     let mut refuse = |why: &str| {
+        // 写しとしての取り込みが、この層を明るさ・コントラストの調整として仕分けられるように
+        s.key = *b"brit";
         s.preserve(
             "TaggedBlock",
             format!("未対応のレイヤータグ brit/CgEd（{why}）"),
@@ -1728,6 +1841,8 @@ mod tests {
             metadata: 0,
             pixels: 0,
             omitted: Vec::new(),
+            key: [0; 4],
+            copy: None,
         }
     }
     fn record(brit: Option<(i16, i16, bool)>, cged: Option<CgedRecord>) -> Record {
@@ -1741,6 +1856,8 @@ mod tests {
             adjustment_seen: false,
             fill_seen: false,
             protection: 0,
+            fill_opacity: 255,
+            vector_mask: false,
             brightness: BrightnessRecords {
                 brit: brit.map(|(brightness, contrast, lab_only)| BritRecord {
                     brightness,

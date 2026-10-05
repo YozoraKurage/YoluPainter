@@ -1568,13 +1568,32 @@ fn brush_formulas_match_the_csharp_core_on_sweeps() {
                 (rng.u01() * 2.0 - 1.0) * pen_tilt::MAX_ANGLE
             }
         };
+        // C# の正解は glibc の tan・atan・atan2 と同じ値（Linux の Mono）。glibc 以外（Windows の UCRT など）は最後の桁が違い得る
+        // （1 関数あたり最大 1 ulp、amount・azimuth で最大 3 ulp を測った）ので、そこではハッシュでなく、OS に依らない実装（libm。
+        // musl の移植）で同じ式を計算した値から 4 ulp 以内かを確かめる（式の誤りは捕まえ、OS の数学ライブラリの最後の桁の違いは許す）。
+        let bit_exact = cfg!(all(target_os = "linux", target_env = "gnu"));
+        let mut worst = 0u64;
         for _ in 0..65536 {
             let tx = value(&mut rng);
             let ty = value(&mut rng);
-            f.double(pen_tilt::amount(tx, ty));
-            f.double(pen_tilt::azimuth(tx, ty));
+            let (amount, azimuth) = (pen_tilt::amount(tx, ty), pen_tilt::azimuth(tx, ty));
+            f.double(amount);
+            f.double(azimuth);
+            if !bit_exact {
+                let (ra, rz) = portable_pen_tilt(tx, ty);
+                worst = worst.max(ulps(amount, ra)).max(ulps(azimuth, rz));
+            }
         }
-        mine.push(format!("sweep pen_tilt {}", f.hex()));
+        if bit_exact {
+            mine.push(format!("sweep pen_tilt {}", f.hex()));
+        } else {
+            assert!(worst <= 4, "ペンの傾きの式が OS に依らない実装から {worst} ulp 離れている");
+            let expected = events
+                .iter()
+                .find(|e| e.starts_with("sweep pen_tilt "))
+                .expect("正解に pen_tilt の掃引がある");
+            mine.push(expected.clone());
+        }
     }
     {
         let mut rng = SplitMix(3004);
@@ -1678,4 +1697,36 @@ fn brush_formulas_match_the_csharp_core_on_sweeps() {
         "ブラシの式が C# と違う:\n{}",
         wrong.join("\n")
     );
+}
+
+/// `pen_tilt::amount`・`azimuth` と同じ式を、OS に依らない数学の実装（libm）で計算する（glibc 以外での比べ用）。
+fn portable_pen_tilt(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
+    let max = pen_tilt::MAX_ANGLE;
+    let amount = {
+        let (ax, ay) = (tilt_x.abs(), tilt_y.abs());
+        if ax <= 0.0 && ay <= 0.0 {
+            0.0
+        } else if ax >= max - 1e-9 || ay >= max - 1e-9 {
+            1.0
+        } else {
+            let (tx, ty) = (libm::tan(ax), libm::tan(ay));
+            (libm::atan((tx * tx + ty * ty).sqrt()) / max).min(1.0)
+        }
+    };
+    let azimuth = if tilt_x == 0.0 && tilt_y == 0.0 {
+        0.0
+    } else {
+        let limit = |v: f64| v.min(max - 1e-9).max(-max + 1e-9);
+        libm::atan2(libm::tan(limit(tilt_y)), libm::tan(limit(tilt_x)))
+    };
+    (amount, azimuth)
+}
+
+/// 2 つの有限の値の間の ulp の数（符号が違えば 0 をまたいで数える）。
+fn ulps(a: f64, b: f64) -> u64 {
+    let key = |v: f64| {
+        let bits = v.to_bits() as i64;
+        if bits < 0 { i64::MIN - bits } else { bits }
+    };
+    key(a).abs_diff(key(b))
 }

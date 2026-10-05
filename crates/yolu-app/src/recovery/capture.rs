@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use yolu_core::SelectionMask;
-use yolu_io::{NativeDocument, Project, SetSpec};
+use yolu_io::{DocumentSource, Project, SetSpec};
 
 use crate::engine::Document;
 use crate::lang::Lang;
@@ -33,8 +33,8 @@ pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
     pub material: MaterialRef,
-    /// 文書の写し。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
-    pub snapshot: Option<Document>,
+    /// 文書の写し（タイルは共有）。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
+    pub snapshot: Option<Arc<Document>>,
 }
 
 /// 書き置き 1 回分の材料（別のスレッドへ渡す）。
@@ -43,6 +43,9 @@ pub(crate) struct Capture {
     pub current: String,
     /// 開いた・保存した時の中身（`ProjectFile` と共有する。複製しない）。無ければ新しいプロジェクト。
     pub base: Option<Arc<Project>>,
+    /// 開いたあとに文書を別の物に替えたセット（PSD を「今のセットへ」取り込み直した）。書き置きにも古い PSD の原本を持ち越さない
+    /// （復旧で開くと、書き置きが次の保存の元になるので、ここで除かないと保存で古い原本が戻る）。
+    pub replaced: Vec<String>,
     /// アセットの棚（変えていて読めるときだけ。変えていなければ開いたファイルのバイト列のまま）。
     pub shelf: Option<yolu_io::shelf::Shelf>,
     pub lang: Lang,
@@ -50,6 +53,8 @@ pub(crate) struct Capture {
     pub title: String,
     pub project_path: String,
     pub fingerprint: Fingerprint,
+    /// 書く形の閾値（取ったスレッドのもの。書き込みのスレッドも同じ形で書く。本物は既定の値で、試験だけが小さくする）。
+    pub thresholds: yolu_io::Thresholds,
 }
 
 /// いまの状態の札（文書の版が変わらない変更 = セットの名前・マテリアル・並び・今のセットを含む）。
@@ -104,7 +109,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         let snapshot = if read_only || unchanged {
             None
         } else {
-            Some(doc.capture_snapshot().map_err(|_| Refusal::Stroke)?)
+            Some(Arc::new(doc.capture_snapshot().map_err(|_| Refusal::Stroke)?))
         };
         sets.push(SetCapture {
             id: set.id.clone(),
@@ -113,6 +118,16 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
             snapshot,
         });
     }
+    let replaced = crate::project::replaced_sets(
+        base.as_deref(),
+        // 読むだけのセットの文書は見せるだけの写しなので数えない（保存と同じ）
+        state
+            .sets
+            .iter()
+            .enumerate()
+            .filter(|(_, set)| set.read_only.is_none())
+            .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
+    );
     let project_path = match state.project.as_ref().filter(|p| p.is_file()) {
         Some(p) => p.path().display().to_string(),
         None => recovered_from.unwrap_or_default().to_owned(),
@@ -126,11 +141,13 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         sets,
         current: state.sets.current().id.clone(),
         base,
+        replaced,
         shelf,
         lang: state.lang,
         title,
         project_path,
         fingerprint: fingerprint(state),
+        thresholds: yolu_io::Thresholds::current(),
     })
 }
 
@@ -142,8 +159,9 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
             .base
             .as_ref()
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
+        // 正本は全体をメモリに組まない: 写しを渡し、置き場へ書くときに層ごとに流して作る（変わらない層の部分は前の世代と共有）
         let document = match &set.snapshot {
-            Some(doc) => Some(NativeDocument::from_core(doc)?),
+            Some(doc) => Some(DocumentSource::from_core(doc.clone())?),
             None => None,
         };
         if document.is_none() && !in_base {
@@ -168,6 +186,11 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         Some(base) => base.with_sets(writer, &specs, &capture.current)?,
         None => Project::create(writer, &specs, &capture.current)?,
     };
+    // 文書を替えたセットの古い PSD の原本は、保存（`project::save`）と同じく持ち越さない
+    let mut project = project;
+    for id in &capture.replaced {
+        project = project.without_imported_original(id)?;
+    }
     // 選択範囲（selection.bin）は正本と別のエントリ。取った写しのものを、違うセットだけ書き換える
     let selections: Vec<(&str, Option<&SelectionMask>)> = capture
         .sets
@@ -175,6 +198,23 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.selection())))
         .collect();
     let project = crate::selection::io::write_into(project, &selections, capture.lang)
+        .map_err(RecoveryError::Text)?;
+    // 見た目の設定（look.json）も、取った写しのものを、違うセットだけ書き換える
+    let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
+        .collect();
+    // 読めなかったエントリを上書きしたかは、復旧の写しでは知らせない（開いた .ylp には手を付けない。保存のときに知らせる）
+    let (project, _) = crate::look::io::write_into(project, &looks, capture.lang)
+        .map_err(RecoveryError::Text)?;
+    // Unity から受けた値（復旧は、開いていた時の見た目に戻すために、保存の設定によらず書く）
+    let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
+        .sets
+        .iter()
+        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.received_look())))
+        .collect();
+    let project = crate::look::io::write_received_into(project, &received, capture.lang)
         .map_err(RecoveryError::Text)?;
     // アセットの棚（保存と同じく、変えたときだけ resources を書き直す）
     match &capture.shelf {

@@ -178,6 +178,14 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
     assert_eq!(undo_count(&h), steps + 2, "スライダーと切り替えは別の Undo");
 }
 
+/// 右の列を、その名前の部品が見える所（窓の中ほど）まで送る（欄は縦に長く、窓の外にはみ出す）。
+fn scroll_panel_to(h: &mut Harness<'_, YoluApp>, label: &str) {
+    let r = rect_of(h, label, |r| r.left() > 1000.0);
+    let scroll = h.state().state.m2.props_scroll + (r.top() - 900.0);
+    h.state_mut().state.m2.props_scroll = scroll.max(0.0);
+    h.run();
+}
+
 fn click_label_in_panel(h: &mut Harness<'_, YoluApp>, label: &str) {
     let r = rect_of(h, label, |r| r.left() > 1000.0);
     click(h, r.center());
@@ -190,10 +198,12 @@ fn click_check_in_panel(h: &mut Harness<'_, YoluApp>, label: &str) {
 
 #[test]
 fn the_gradient_map_panel_applies_a_preset_flips_and_undoes() {
-    let mut h = app(1280.0, 1000.0, 64);
+    let mut h = app(1280.0, 1500.0, 64);
     let id = new_adjustment(&mut h, AdjustmentKind::GradientMap);
     let first = value_of(&h, id);
     let steps = undo_count(&h);
+    // グラデーションセット: 組を替えて見本を押す
+    click_label_in_panel(&mut h, "色味");
     click_label_in_panel(&mut h, "セピア");
     assert_ne!(value_of(&h, id), first);
     click_check_in_panel(&mut h, "逆向き");
@@ -293,7 +303,7 @@ const FILTER_SIX: [FilterKind; 6] = [
 #[test]
 fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
     for kind in FILTER_SIX {
-        let mut h = app(1280.0, 1000.0, 64);
+        let mut h = app(1280.0, 1500.0, 64);
         let layer = fill_layer(&mut h);
         let steps = undo_count(&h);
         apply(
@@ -338,7 +348,10 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
         rect_of(&h, probe, |r| r.left() > 1000.0);
         // 値を 1 つ替える（段の設定が変わり、元に戻せる）
         match kind {
-            FilterKind::GradientMap => click_label_in_panel(&mut h, "セピア"),
+            FilterKind::GradientMap => {
+                click_label_in_panel(&mut h, "色味");
+                click_label_in_panel(&mut h, "セピア");
+            }
             FilterKind::ToneCurve => click_label_in_panel(&mut h, "S 字"),
             FilterKind::ColorBalance => click_panel_slider(&mut h, "シアン — レッド", 1.0),
             FilterKind::BrightnessContrast => click_panel_slider(&mut h, "明るさ", 1.0),
@@ -496,4 +509,98 @@ fn saving_a_smart_material_with_a_colour_adjustment_is_refused_with_a_short_reas
     let en = yolu_app::shelf::io_reason(Lang::En, &err);
     assert_eq!(en, "Colour adjustments cannot be saved");
     assert!(!has_japanese(&en));
+}
+
+#[test]
+fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_saving() {
+    use yolu_core::generator::{LuminanceCorrection, MixMode};
+    let mut h = app(1280.0, 1500.0, 64);
+    let id = new_adjustment(&mut h, AdjustmentKind::GradientMap);
+    let first = value_of(&h, id);
+    let steps = undo_count(&h);
+    let ramp_of = |h: &Harness<'_, YoluApp>| match value_of(h, id) {
+        ColorAdjust::GradientMap(g) => g.ramp().clone(),
+        other => panic!("{other:?}"),
+    };
+    // 混色モード（1 回の操作 = 1 回の取り消し）
+    click_label_in_panel(&mut h, "知覚的");
+    assert_eq!(ramp_of(&h).mix_mode(), MixMode::Perceptual);
+    assert_eq!(undo_count(&h), steps + 1);
+    click_label_in_panel(&mut h, "最大");
+    assert_eq!(ramp_of(&h).luminance_correction(), LuminanceCorrection::Max);
+    assert_eq!(undo_count(&h), steps + 2);
+    // 混合率曲線（最初の分岐点の区間）
+    scroll_panel_to(&mut h, "混合率曲線");
+    click_check_in_panel(&mut h, "混合率曲線");
+    assert!(ramp_of(&h).segment_curve(0).is_some());
+    assert_eq!(undo_count(&h), steps + 3);
+    let mixed = value_of(&h, id);
+    // 保存して開き直すと、混色も混合率曲線も戻る（正本の版 25）
+    let dir = std::env::temp_dir().join(format!("yolu-gradmap-save-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("mixing.ylp");
+    h.state_mut().state.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        h.state().state.message.starts_with("保存しました"),
+        "{}",
+        h.state().state.message
+    );
+    let mut opened = yolu_app::state::AppState::new(8, 8);
+    opened.apply(Action::OpenProject(path));
+    assert!(opened.message.starts_with("開きました"), "{}", opened.message);
+    let again = opened
+        .doc
+        .layers()
+        .iter()
+        .find_map(|l| l.adjustment().and_then(|a| a.color_adjust()))
+        .expect("調整の層");
+    assert_eq!(again, mixed);
+    let _ = std::fs::remove_dir_all(dir);
+    // 1 つずつ Undo で戻り、Redo で進む
+    for _ in 0..3 {
+        apply(&mut h, Action::Undo);
+    }
+    assert_eq!(value_of(&h, id), first);
+    assert_eq!(undo_count(&h), steps);
+    for _ in 0..3 {
+        apply(&mut h, Action::Redo);
+    }
+    assert_eq!(value_of(&h, id), mixed);
+}
+
+#[test]
+fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_first_colour() {
+    let mut h = app(1280.0, 1500.0, 64);
+    let id = new_adjustment(&mut h, AdjustmentKind::GradientMap);
+    let first = value_of(&h, id);
+    let steps = undo_count(&h);
+    // 色の見本を押して色の選びを開き、四角の中で何度か動かす（1 回のドラッグ）
+    scroll_panel_to(&mut h, "分岐点の色（押すと色の選びを開く）");
+    let swatch = rect_of(&h, "分岐点の色（押すと色の選びを開く）", |r| r.left() > 1000.0);
+    click(&mut h, swatch.center());
+    let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
+    let window = yolu_app::panels::color_popup::rect(&h.ctx, popup).expect("色の選びが開く");
+    let wheel = yolu_app::panels::color_popup::wheel_of(window);
+    let sq = yolu_app::panels::color::wheel_square(wheel);
+    drag(
+        &mut h,
+        &[
+            pos2(sq.left() + 8.0, sq.top() + 8.0),
+            pos2(sq.center().x, sq.center().y),
+            pos2(sq.right() - 8.0, sq.bottom() - 8.0),
+        ],
+    );
+    assert_ne!(value_of(&h, id), first, "その場で色が変わる");
+    assert_eq!(undo_count(&h), steps + 1, "ドラッグは離すまで 1 回の取り消し");
+    // Esc で最初の色へ戻る（戻す変更も 1 回の取り消しとして積む。Undo で選んだ色へ、もう 1 回で最初の色へ）
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(value_of(&h, id), first);
+    assert_eq!(undo_count(&h), steps + 2);
+    apply(&mut h, Action::Undo);
+    assert_ne!(value_of(&h, id), first);
+    apply(&mut h, Action::Undo);
+    assert_eq!(value_of(&h, id), first);
+    assert_eq!(undo_count(&h), steps);
 }

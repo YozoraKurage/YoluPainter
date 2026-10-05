@@ -1,4 +1,5 @@
-//! 移動・変形の道具の設定: オプションバー（反転・90° 回転・補間）と、プロパティの欄（同じボタン・数値の変形・補間・選んだ層のロック）。
+//! 移動・変形とゆがみの道具の設定: オプションバー（移動・変形は反転・90° 回転・補間、ゆがみは直径・強さ）と、左のドックのツールプロパティ（移動・変形は
+//! 同じボタン・数値の変形・補間・メッシュの分割、ゆがみは直径・強さ）。変形の種類とゆがみのモードはサブツールの一覧（`subtool`）で選ぶ。
 //! 操作は `Action::M2(Edit::Transform)` を通る（キー・メニュー・試験と同じ道。1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
@@ -7,12 +8,11 @@ use super::{resampling_name, Numeric};
 use crate::layerops::Xform;
 use crate::m2::Edit;
 use crate::m2_menu::Popup;
-use crate::panels::layer_props;
-use crate::panels::properties::{choice_row, group_label, open_popup, section, slider_row};
+use crate::panels::properties::{choice_row, group_label, open_popup, slider_row};
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, NumberFormat, Rows};
+use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
 /// 4 つの変形ボタン（反転 2・90° 回転 2）: (アイコン, 名前, 変形)。
 fn buttons(app: &AppState) -> [(&'static str, &'static str, Xform); 4] {
@@ -53,9 +53,9 @@ fn open_resampling(app: &mut AppState, ctx: &egui::Context, anchor: Rect) {
     });
 }
 
-/// オプションバー（`x` は左端）。
+/// オプションバー（移動・変形。`x` は左端）: 反転・90° 回転と補間。変形の種類と数値はサブツールとツールプロパティ。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
-    x = super::advanced::options(ui, app, r, x);
+    x += 4.0;
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let enabled = usable(app);
     for (icon, tip, xform) in buttons(app) {
@@ -109,20 +109,11 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     }
 }
 
-/// プロパティの欄（移動・変形の道具を選んでいるとき）。
+/// ツールプロパティ（移動・変形）: 変形のボタン・メッシュの分割・数値の変形・補間。
 pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
     let lang = app.lang;
     let enabled = usable(app);
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "transform",
-        lang.pick("移動・変形", "Move / Transform"),
-        "arrow_move",
-        None,
-    );
-    if open {
+    {
         let row = rows.row(24.0, 4.0);
         for (i, (icon, tip, xform)) in buttons(app).into_iter().enumerate() {
             let at = Rect::from_min_size(
@@ -142,6 +133,22 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             .clicked()
             {
                 app.apply(Action::M2(Edit::Transform(xform)));
+            }
+        }
+        if app.transform.advanced.kind == super::advanced::Kind::Mesh {
+            group_label(ui, rows, lang.pick("メッシュ", "Mesh"));
+            for (id, label, value) in [
+                ("transform.columns", lang.pick("列", "Columns"), app.transform.advanced.columns),
+                ("transform.rows", lang.pick("行", "Rows"), app.transform.advanced.rows),
+            ] {
+                if let Some(v) = slider_row(ui, rows, id, label, value as f32, (1.0, 32.0), NumberFormat::int(""), None, true) {
+                    let v = v.round().clamp(1.0, 32.0) as usize;
+                    if id == "transform.columns" {
+                        app.transform.advanced.columns = v;
+                    } else {
+                        app.transform.advanced.rows = v;
+                    }
+                }
             }
         }
         group_label(ui, rows, lang.pick("数値", "Numeric"));
@@ -288,5 +295,64 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             app.transform.numeric = Numeric::default();
         }
     }
-    layer_props::lock_section(ui, app, rows);
+}
+
+/// オプションバー（ゆがみ。`x` は左端）: 直径と強さ。モードはサブツール。
+pub fn liquify_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
+    let (y, h) = (r.top() + 6.0, r.height() - 12.0);
+    let mut x = x + 4.0;
+    let lang = app.lang;
+    let state = &mut app.transform.advanced;
+    let out = w::slider(
+        ui,
+        Rect::from_min_size(pos2(x, y), vec2(170.0, h)),
+        "options.liquify.diameter",
+        state.diameter as f32,
+        &liquify_diameter_spec(lang),
+    );
+    if out.changed {
+        state.diameter = out.value as f64;
+    }
+    x += 178.0;
+    let out = w::slider(
+        ui,
+        Rect::from_min_size(pos2(x, y), vec2(150.0, h)),
+        "options.liquify.strength",
+        state.strength as f32 * 100.0,
+        &liquify_strength_spec(lang),
+    );
+    if out.changed {
+        state.strength = (out.value / 100.0) as f64;
+    }
+}
+
+fn liquify_diameter_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
+    SliderSpec::new(lang.pick("直径", "Diameter"), 1.0, 2048.0, NumberFormat::int(" px"))
+}
+
+fn liquify_strength_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
+    SliderSpec::new(lang.pick("強さ", "Strength"), 0.0, 100.0, NumberFormat::int("%"))
+}
+
+/// ツールプロパティ（ゆがみ）: 直径と強さ。
+pub fn liquify_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    let lang = app.lang;
+    let state = &mut app.transform.advanced;
+    let out = w::slider(ui, rows.slider_row(), "props.liquify.diameter", state.diameter as f32, &liquify_diameter_spec(lang));
+    if out.changed {
+        state.diameter = out.value as f64;
+    }
+    let out = w::slider(
+        ui,
+        rows.slider_row(),
+        "props.liquify.strength",
+        state.strength as f32 * 100.0,
+        &liquify_strength_spec(lang).tooltip(lang.pick(
+            "戻す: このゆがみを始めた時の画素へ戻す強さ",
+            "Restore: how strongly pixels go back to the start of this liquify session",
+        )),
+    );
+    if out.changed {
+        state.strength = (out.value / 100.0) as f64;
+    }
 }

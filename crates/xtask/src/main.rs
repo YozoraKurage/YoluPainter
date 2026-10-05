@@ -198,8 +198,142 @@ fn build(target: &str, require_update_key: bool) -> Result<()> {
     };
     run(&mut command)
 }
+/// 配布物に入れる使う人向けの文書（リポジトリの根からの相対。配布物の中でも同じ場所に入るので、README からの相対のリンクがそのまま効く）。
+/// インストーラーの `installer/yolupainter.nsi` の `DocFiles` も同じ一覧で、試験が突き合わせる。
+const BUNDLED_DOCS: &[&str] = &[
+    "docs/GUIDE.md",
+    "docs/UNITY.md",
+    "docs/INSTALL.md",
+    "docs/BUILDING.md",
+    "docs/PSD.md",
+    "docs/BRUSH.md",
+    "docs/BRUSH_IMPORT.md",
+    "docs/SUBTOOLS.md",
+    "docs/GRADIENT_MAP.md",
+    "docs/PREVIEW.md",
+    "docs/RECOVERY.md",
+    "docs/WINDOW.md",
+    "docs/SAVE_FOR_DISTRIBUTION.md",
+    "docs/en/GUIDE.md",
+    "docs/en/UNITY.md",
+    "docs/en/INSTALL.md",
+    "docs/en/BUILDING.md",
+];
+/// docs/ にあって配布物へは入れないファイル（開発・リリースの手順）。docs/ に足したファイルは、入れるか外すかのどちらかに必ず載せる（試験が確かめる）。
+const LEFT_OUT_DOCS: &[&str] = &["docs/DEVELOPMENT.md", "docs/RELEASING.md"];
+/// 配布物の根に入れる、実行ファイルのほかのファイル。許諾の全文の束（`DEPENDENCIES.md`・`THIRD_PARTY_LICENSES.txt`）は
+/// 対象ごとに `tools/third-party.py` が作るので、元の場所が `payload_source` で違う。
+const ROOT_FILES: &[&str] = &[
+    "LICENSE",
+    "README.md",
+    "README.en.md",
+    "THIRD_PARTY.md",
+    "DEPENDENCIES.md",
+    "THIRD_PARTY_LICENSES.txt",
+];
+fn exe_name(target: &str) -> &'static str {
+    if target.contains("windows") {
+        "yolupainter.exe"
+    } else {
+        "yolupainter"
+    }
+}
+/// アーカイブ（zip・tar.gz）とインストーラーの段に入れるファイルの、配布物の中の名前（`/` 区切り）。ここが唯一の一覧。
+fn payload_names(target: &str) -> Vec<String> {
+    std::iter::once(exe_name(target))
+        .chain(ROOT_FILES.iter().copied())
+        .chain(BUNDLED_DOCS.iter().copied())
+        .map(str::to_owned)
+        .collect()
+}
+/// docs/ の下のファイルの、リポジトリの根からの相対の名前（`/` 区切り・並べ替え済み）。.md 以外（画像など）も数える。
+fn docs_files(root: &Path) -> Result<Vec<String>> {
+    fn walk(directory: &Path, prefix: &str, out: &mut Vec<String>) -> Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "docs/ のファイル名が UTF-8 ではありません")?;
+            let path = format!("{prefix}/{name}");
+            if entry.file_type()?.is_dir() {
+                walk(&entry.path(), &path, out)?;
+            } else {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(&root.join("docs"), "docs", &mut files)?;
+    files.sort();
+    Ok(files)
+}
+/// docs/ のファイルが全部「入れる」か「外す」のどちらかに（どちらか一方にだけ）載っていて、載せたファイルが全部あることを確かめる。
+/// docs/ に文書を足して、一覧に載せ忘れたまま配布物を作ることを断る。
+fn check_docs_listed(root: &Path) -> Result<()> {
+    let files = docs_files(root)?;
+    let listed: Vec<&str> = BUNDLED_DOCS.iter().chain(LEFT_OUT_DOCS).copied().collect();
+    let unlisted: Vec<&String> = files
+        .iter()
+        .filter(|file| !listed.contains(&file.as_str()))
+        .collect();
+    let missing: Vec<&str> = listed
+        .iter()
+        .copied()
+        .filter(|name| !files.iter().any(|file| file == name))
+        .collect();
+    let twice: Vec<&str> = BUNDLED_DOCS
+        .iter()
+        .copied()
+        .filter(|name| LEFT_OUT_DOCS.contains(name))
+        .collect();
+    if unlisted.is_empty() && missing.is_empty() && twice.is_empty() {
+        return Ok(());
+    }
+    let join = |names: Vec<&str>| names.join("、");
+    Err(format!(
+        "docs/ のファイルと配布物の一覧が合いません（どちらにも載っていない: {}／一覧にあるのに無い: {}／入れるにも外すにも載っている: {}）。\
+         crates/xtask/src/main.rs の BUNDLED_DOCS か LEFT_OUT_DOCS に載せてください",
+        join(unlisted.iter().map(|n| n.as_str()).collect()),
+        join(missing),
+        join(twice),
+    )
+    .into())
+}
+/// 配布物の中の名前に対する元のファイル。許諾の束だけは `tools/third-party.py` の出力、実行ファイルはビルドの出力で、
+/// それ以外は配布物の中と同じ相対の場所のリポジトリのファイル。
+fn payload_source(root: &Path, target: &str, license_dir: &Path, name: &str) -> PathBuf {
+    match name {
+        "DEPENDENCIES.md" => license_dir.join("THIRD_PARTY.md"),
+        "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
+        _ if name == exe_name(target) => {
+            root.join("target").join(target).join("release").join(name)
+        }
+        _ => root.join(name),
+    }
+}
+fn payload_entries(root: &Path, target: &str, license_dir: &Path) -> Vec<(String, PathBuf)> {
+    payload_names(target)
+        .into_iter()
+        .map(|name| {
+            let source = payload_source(root, target, license_dir, &name);
+            (name, source)
+        })
+        .collect()
+}
+/// 元のファイルが無い・通常のファイルでないまま梱包して、名前の無い失敗にしない（入れ忘れ・ビルドの忘れをここで名前つきで断る）。
+fn require_sources(entries: &[(String, PathBuf)]) -> Result<()> {
+    for (name, source) in entries {
+        if !fs::metadata(source).is_ok_and(|m| m.is_file()) {
+            return Err(format!("配布物に入れるファイルがありません: {name}").into());
+        }
+    }
+    Ok(())
+}
 /// アーカイブ・インストーラーに入れるファイル（名前 → 元）。許諾の全文の束もここで作る。
 fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
+    check_docs_listed(root)?;
     run(python(root).args([
         "tools/third-party.py",
         "--package",
@@ -213,25 +347,9 @@ fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
         .join("target/third-party")
         .join(target)
         .join("yolu-app");
-    let exe = if target.contains("windows") {
-        "yolupainter.exe"
-    } else {
-        "yolupainter"
-    };
-    Ok(vec![
-        (
-            exe.to_owned(),
-            root.join("target").join(target).join("release").join(exe),
-        ),
-        ("LICENSE".into(), root.join("LICENSE")),
-        ("README.md".into(), root.join("README.md")),
-        ("THIRD_PARTY.md".into(), root.join("THIRD_PARTY.md")),
-        ("DEPENDENCIES.md".into(), license_dir.join("THIRD_PARTY.md")),
-        (
-            "THIRD_PARTY_LICENSES.txt".into(),
-            license_dir.join("THIRD_PARTY_LICENSES.txt"),
-        ),
-    ])
+    let entries = payload_entries(root, target, &license_dir);
+    require_sources(&entries)?;
+    Ok(entries)
 }
 fn bundle(target: &str) -> Result<()> {
     let root = root();
@@ -287,6 +405,19 @@ fn nsis_args(
 fn makensis() -> Command {
     Command::new(env::var_os("MAKENSIS").unwrap_or_else(|| "makensis".into()))
 }
+/// インストーラーに渡す段取り用のフォルダを、前回のものを消して作り直す。名前の `/` はフォルダ（`docs/en/GUIDE.md`）なので、親を作ってから写す。
+fn stage_payload(entries: &[(String, PathBuf)], stage: &Path) -> Result<()> {
+    let _ = fs::remove_dir_all(stage);
+    fs::create_dir_all(stage)?;
+    for (name, source) in entries {
+        let destination = stage.join(name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+    }
+    Ok(())
+}
 /// Windows のインストーラー（NSIS）。zip と同じファイルを段取り用のフォルダ（target/ の中）に集めて渡す。
 /// 一時ファイルに作ってから最後に 1 回の rename で置くので、失敗した作りかけを配布物として見せない。
 fn installer(target: &str) -> Result<()> {
@@ -302,11 +433,7 @@ fn installer(target: &str) -> Result<()> {
     remove_if_present(&destination)?;
     let entries = payload(&root, target)?;
     let stage = root.join("target/installer").join(target);
-    let _ = fs::remove_dir_all(&stage);
-    fs::create_dir_all(&stage)?;
-    for (name, source) in &entries {
-        fs::copy(source, stage.join(name))?;
-    }
+    stage_payload(&entries, &stage)?;
     let temporary = out.join(format!("{name}.tmp"));
     let _ = fs::remove_file(&temporary);
     let built = nsis_args(&version, &stage, &temporary, &root.join(LOGO_ICON))
@@ -503,6 +630,58 @@ impl Transport for DirectoryTransport {
         Ok(bytes)
     }
 }
+/// アーカイブ（zip・tar.gz）の中のファイルの名前（フォルダの項目は数えない）。
+fn archive_names(target: &str, bytes: &[u8]) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    if target == WINDOWS_ARCHIVE {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+        for index in 0..zip.len() {
+            let file = zip.by_index(index)?;
+            if file.is_file() {
+                names.push(file.name().to_owned());
+            }
+        }
+    } else {
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+        for entry in tar.entries()? {
+            let entry = entry?;
+            if entry.header().entry_type().is_file() {
+                names.push(entry.path()?.to_string_lossy().into_owned());
+            }
+        }
+    }
+    Ok(names)
+}
+/// アーカイブの中身が `payload_names` と同じか照らす。欠けも、一覧に無いファイルも、同じ名前の重複も断る（名前を並べて知らせる）。
+fn check_archive_contents(target: &str, bytes: &[u8]) -> Result<()> {
+    let mut found = archive_names(target, bytes)?;
+    found.sort();
+    let expected = payload_names(target);
+    let missing: Vec<_> = expected.iter().filter(|n| !found.contains(n)).collect();
+    let mut extra: Vec<_> = found.iter().filter(|n| !expected.contains(n)).collect();
+    extra.extend(
+        found
+            .windows(2)
+            .filter(|pair| pair[0] == pair[1])
+            .map(|pair| &pair[0]),
+    );
+    if missing.is_empty() && extra.is_empty() {
+        return Ok(());
+    }
+    let list = |names: Vec<&String>| {
+        names
+            .iter()
+            .map(|n| n.as_str())
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    Err(format!(
+        "配布物の中身が一覧と違います（足りない: {}／余計または重複: {}）",
+        list(missing),
+        list(extra)
+    )
+    .into())
+}
 /// 公開鍵だけで、アプリと同じ検証（署名・版・大きさ・SHA-256）を通すか確かめる。
 /// 秘密の鍵を取り違えた署名や、配布物と更新情報の食い違いをここで落とす。
 fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<()> {
@@ -528,12 +707,20 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
     if present.is_empty() {
         return Err("確認できる配布物がありません".into());
     }
+    let mut archives = 0;
     for target in &present {
         let update = client
             .check(VERIFY_URL, &oldest, target, true)?
             .filter(|update| update.version() == version)
             .ok_or("更新情報の版が --version と一致しません")?;
-        client.download(update.approve_download())?;
+        let name = update.asset().name.clone();
+        let download = client.download(update.approve_download())?;
+        // インストーラーの中は見られない（その段は同じ一覧から作り、試験が NSIS の一覧と突き合わせる）。
+        if is_archive_target(target) {
+            check_archive_contents(target, download.bytes())
+                .map_err(|error| format!("{name}: {error}"))?;
+            archives += 1;
+        }
     }
     // 上で署名と本文が通っているので、ここで確かめるのは「ファイルが無いのに載っている」ことだけ。
     for (target, name) in &absent {
@@ -541,7 +728,10 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
             return Err(format!("更新情報にある配布物がありません: {name}").into());
         }
     }
-    println!("署名と {} 件の配布物を確認しました", present.len());
+    println!(
+        "署名と {} 件の配布物を確認しました（アーカイブ {archives} 件は中身も一覧と一致）",
+        present.len()
+    );
     Ok(())
 }
 fn keygen(output: &Path) -> Result<String> {
@@ -565,6 +755,7 @@ fn keygen(output: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use yolu_update::LINUX_ARCHIVE;
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     struct Scratch(PathBuf);
     impl Scratch {
@@ -583,24 +774,22 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+    /// 配布物の名前ごとに、名前そのものを中身にした試験用の元ファイル（`dir/src` の下。`docs/en/…` のフォルダも作る）。
+    fn fake_payload(dir: &Path, target: &str) -> Vec<(String, PathBuf)> {
+        payload_names(target)
+            .into_iter()
+            .map(|name| {
+                let source = dir.join("src").join(&name);
+                fs::create_dir_all(source.parent().unwrap()).unwrap();
+                fs::write(&source, &name).unwrap();
+                (name, source)
+            })
+            .collect()
+    }
     #[test]
     fn zip_preserves_files_and_contents() {
         let d = Scratch::new();
-        let entries: Vec<_> = [
-            "yolupainter.exe",
-            "LICENSE",
-            "README.md",
-            "THIRD_PARTY.md",
-            "DEPENDENCIES.md",
-            "THIRD_PARTY_LICENSES.txt",
-        ]
-        .into_iter()
-        .map(|name| {
-            let p = d.0.join(name);
-            fs::write(&p, name).unwrap();
-            (name.into(), p)
-        })
-        .collect();
+        let entries = fake_payload(&d.0, WINDOWS_ARCHIVE);
         let p = d.0.join("test.zip");
         archive(&p, &entries, true).unwrap();
         let mut zip = zip::ZipArchive::new(File::open(p).unwrap()).unwrap();
@@ -610,6 +799,9 @@ mod tests {
             zip.by_name(&name).unwrap().read_to_string(&mut s).unwrap();
             assert_eq!(s, name);
         }
+        // 文書はフォルダつきの名前で入る（README からの相対のリンクがそのまま効く）。
+        assert!(zip.by_name("docs/GUIDE.md").is_ok() && zip.by_name("docs/en/GUIDE.md").is_ok());
+        assert!(zip.by_name("README.en.md").is_ok());
     }
     #[test]
     fn tar_preserves_executable_mode() {
@@ -648,11 +840,37 @@ mod tests {
         assert!(!dir.join(UPDATER_FILE).exists());
         assert!(!dir.join(format!("{UPDATER_FILE}.tmp")).exists());
     }
+    /// 一覧どおりの中身の（`drop` を除き、`add` を足した）本物のアーカイブのバイト列。
+    fn fake_archive(target: &str, drop: &[&str], add: &[&str]) -> Vec<u8> {
+        let d = Scratch::new();
+        let mut entries = fake_payload(&d.0, target);
+        entries.retain(|(name, _)| !drop.contains(&name.as_str()));
+        for name in add {
+            let source = d.0.join("extra");
+            fs::write(&source, name).unwrap();
+            entries.push((name.to_string(), source));
+        }
+        let path = d.0.join("fake-archive");
+        archive(&path, &entries, target == WINDOWS_ARCHIVE).unwrap();
+        fs::read(path).unwrap()
+    }
     /// 使い捨ての鍵で署名した配布物の置き場。公開鍵の hex も返す。
     fn signed_dist(version: &Version, targets: &[usize]) -> (Scratch, String) {
+        signed_dist_with(version, targets, |_, bytes| bytes)
+    }
+    /// `alter` で、対象ごとのアーカイブのバイト列を（署名の前に）作り替えられる。
+    fn signed_dist_with(
+        version: &Version,
+        targets: &[usize],
+        alter: impl Fn(usize, Vec<u8>) -> Vec<u8>,
+    ) -> (Scratch, String) {
         let d = Scratch::new();
         for &t in targets {
-            fs::write(asset_path(&d.0, version, t), format!("archive-{t}")).unwrap();
+            fs::write(
+                asset_path(&d.0, version, t),
+                alter(t, fake_archive(TARGETS[t], &[], &[])),
+            )
+            .unwrap();
             if t == 0 {
                 // zip はインストーラーと並べて出す。
                 fs::write(asset_path(&d.0, version, 2), "installer").unwrap();
@@ -971,16 +1189,8 @@ mod tests {
         }
         let d = Scratch::new();
         let stage = d.0.join("stage");
-        fs::create_dir_all(&stage).unwrap();
-        for name in [
-            "yolupainter.exe",
-            "README.md",
-            "THIRD_PARTY.md",
-            "DEPENDENCIES.md",
-            "THIRD_PARTY_LICENSES.txt",
-        ] {
-            fs::write(stage.join(name), name).unwrap();
-        }
+        // xtask の一覧のとおりの段（スクリプトが一覧に無いファイルを入れようとすると、makensis が断る）。
+        stage_payload(&fake_payload(&d.0, WINDOWS_ARCHIVE), &stage).unwrap();
         fs::copy(root().join("LICENSE"), stage.join("LICENSE")).unwrap();
         let output = d.0.join("yolupainter-test.exe.tmp");
         let version = Version::parse("1.2.3-rc.1").unwrap();
@@ -1164,5 +1374,462 @@ mod tests {
             &public
         ])
         .is_err());
+    }
+    /// 配布物の文書の一覧と docs/ の中身が合う（`payload` も実行時に同じ確かめをする）。
+    #[test]
+    fn every_file_in_docs_is_bundled_or_deliberately_left_out() {
+        check_docs_listed(&root()).unwrap();
+        // 一覧そのものの整合: 重複なし・ASCII の名前（インストーラーの記録が ANSI のため）・docs/ の下。
+        let mut names: Vec<_> = BUNDLED_DOCS.iter().chain(LEFT_OUT_DOCS).collect();
+        let count = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), count, "同じ文書が二重に載っている");
+        for name in names {
+            assert!(name.is_ascii() && name.starts_with("docs/"), "{name}");
+        }
+        // 入れる文書は全部 .md。インストーラーの更新は、前の版にだけあった文書を .md の名前で消す（RemoveOldDocs）ので、
+        // .md でない物（画像など）を入れる必要が出たら、installer/yolupainter.nsi の掃除の絞り込みも直す。
+        for name in BUNDLED_DOCS {
+            assert!(
+                name.ends_with(".md"),
+                "{name}: .md 以外は installer/yolupainter.nsi の RemoveOldDocs も直してから入れる"
+            );
+        }
+        // 開発・リリースの手順は配布物に入れない。英語の文書（docs/en/ の .md）は全部入る。
+        assert!(
+            LEFT_OUT_DOCS.contains(&"docs/DEVELOPMENT.md")
+                && LEFT_OUT_DOCS.contains(&"docs/RELEASING.md")
+        );
+        let english: Vec<String> = docs_files(&root())
+            .unwrap()
+            .into_iter()
+            .filter(|file| file.starts_with("docs/en/") && file.ends_with(".md"))
+            .collect();
+        assert!(!english.is_empty(), "docs/en/ に文書が無い");
+        for file in english {
+            assert!(
+                BUNDLED_DOCS.contains(&file.as_str()),
+                "{file}: 英語の文書は配布物に入れる"
+            );
+        }
+    }
+    #[test]
+    fn unlisted_missing_and_doubly_listed_docs_are_refused() {
+        // 実際の一覧どおりの docs/ の写し。
+        let write_docs = |root: &Path| {
+            for name in BUNDLED_DOCS.iter().chain(LEFT_OUT_DOCS) {
+                let path = root.join(name);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, name).unwrap();
+            }
+        };
+        let d = Scratch::new();
+        write_docs(&d.0);
+        check_docs_listed(&d.0).unwrap();
+        // 載せ忘れ（.md でも画像でも）は名前つきで断る。
+        for stray in ["docs/NEW.md", "docs/en/NEW.md", "docs/images/screen.png"] {
+            let path = d.0.join(stray);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "x").unwrap();
+            let error = check_docs_listed(&d.0).unwrap_err().to_string();
+            assert!(error.contains(stray), "{stray}: {error}");
+            fs::remove_file(path).unwrap();
+        }
+        fs::remove_dir(d.0.join("docs/images")).unwrap();
+        check_docs_listed(&d.0).unwrap();
+        // 一覧にあるのに無い文書（消した・名前を変えた）も断る。
+        fs::remove_file(d.0.join("docs/PSD.md")).unwrap();
+        let error = check_docs_listed(&d.0).unwrap_err().to_string();
+        assert!(error.contains("docs/PSD.md"), "{error}");
+    }
+    #[test]
+    fn payload_lists_root_files_and_docs_for_each_target() {
+        for (target, exe) in [
+            (WINDOWS_ARCHIVE, "yolupainter.exe"),
+            (LINUX_ARCHIVE, "yolupainter"),
+        ] {
+            let names = payload_names(target);
+            let mut sorted = names.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), names.len(), "{target}: 名前が重複している");
+            assert!(names.iter().all(|n| !n.contains('\\')), "{target}");
+            for expected in [
+                exe,
+                "LICENSE",
+                "README.md",
+                "README.en.md",
+                "THIRD_PARTY.md",
+                "DEPENDENCIES.md",
+                "THIRD_PARTY_LICENSES.txt",
+                "docs/GUIDE.md",
+                "docs/BRUSH_IMPORT.md",
+                "docs/GRADIENT_MAP.md",
+                "docs/en/GUIDE.md",
+                "docs/en/BUILDING.md",
+            ] {
+                assert!(names.iter().any(|n| n == expected), "{target}: {expected}");
+            }
+            for left_out in ["docs/DEVELOPMENT.md", "docs/RELEASING.md"] {
+                assert!(!names.iter().any(|n| n == left_out), "{target}: {left_out}");
+            }
+        }
+    }
+    #[test]
+    fn payload_sources_are_the_repository_files_the_build_and_the_license_bundle() {
+        let root = root();
+        let license_dir = Path::new("/licenses");
+        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE] {
+            let entries = payload_entries(&root, target, license_dir);
+            let source = |name: &str| {
+                entries
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .unwrap_or_else(|| panic!("{name}"))
+                    .1
+                    .clone()
+            };
+            let exe = exe_name(target);
+            assert_eq!(
+                source(exe),
+                root.join("target").join(target).join("release").join(exe)
+            );
+            assert_eq!(
+                source("DEPENDENCIES.md"),
+                license_dir.join("THIRD_PARTY.md")
+            );
+            assert_eq!(
+                source("THIRD_PARTY_LICENSES.txt"),
+                license_dir.join("THIRD_PARTY_LICENSES.txt")
+            );
+            // 文書と README は、配布物の中と同じ相対の場所のリポジトリのファイル（建てなくても在る）。
+            for (name, path) in &entries {
+                if name == exe
+                    || name.starts_with("DEPENDENCIES")
+                    || name.starts_with("THIRD_PARTY_L")
+                {
+                    continue;
+                }
+                assert_eq!(path, &root.join(name));
+                assert!(path.is_file(), "{name} が無い");
+            }
+        }
+    }
+    #[test]
+    fn a_missing_source_is_refused_by_name() {
+        let d = Scratch::new();
+        let mut entries = fake_payload(&d.0, WINDOWS_ARCHIVE);
+        require_sources(&entries).unwrap();
+        fs::remove_file(&entries[9].1).unwrap();
+        let error = require_sources(&entries).unwrap_err().to_string();
+        assert!(error.contains(&entries[9].0), "{error}");
+        // フォルダは通常のファイルではない。
+        let folder = d.0.join("folder");
+        fs::create_dir_all(&folder).unwrap();
+        entries[9].1 = folder;
+        assert!(require_sources(&entries).is_err());
+    }
+    /// Markdown の中の、配布物の外へ出る・外にある物へのリンクの先（`](先)` と `[名]: 先`）。コードのかたまりと `コード` の中は読まない。
+    fn markdown_link_targets(text: &str) -> Vec<String> {
+        let mut targets = Vec::new();
+        let mut in_fence = false;
+        for line in text.lines() {
+            if line.trim_start().starts_with("```") {
+                in_fence = !in_fence;
+                continue;
+            }
+            if in_fence {
+                continue;
+            }
+            let mut plain = String::new();
+            let mut in_code = false;
+            for c in line.chars() {
+                if c == '`' {
+                    in_code = !in_code;
+                } else if !in_code {
+                    plain.push(c);
+                }
+            }
+            let mut rest = plain.as_str();
+            while let Some(at) = rest.find("](") {
+                let after = &rest[at + 2..];
+                let Some(end) = after.find(')') else { break };
+                targets.extend(after[..end].split_whitespace().next().map(str::to_owned));
+                rest = &after[end + 1..];
+            }
+            let trimmed = plain.trim_start();
+            if trimmed.starts_with('[') {
+                if let Some(at) = trimmed.find("]:") {
+                    targets.extend(
+                        trimmed[at + 2..]
+                            .split_whitespace()
+                            .next()
+                            .map(str::to_owned),
+                    );
+                }
+            }
+        }
+        targets
+    }
+    /// `from`（配布物の中の名前）から見た相対の `target` が指す、配布物の中の名前（`..` をたどる。根より上へ出れば None）。
+    fn resolve_in_bundle(from: &str, target: &str) -> Option<String> {
+        let mut parts: Vec<&str> = from.split('/').collect();
+        parts.pop();
+        for part in target.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                part => parts.push(part),
+            }
+        }
+        Some(parts.join("/"))
+    }
+    #[test]
+    fn markdown_link_scanner_and_resolver() {
+        let text = "[a](x.md) と [`b`](../y.md#h \"題\") と `[c](skip.md)` と ![i](img/p.png)\n\
+                    ```\n[d](skip2.md)\n```\n[ref]: docs/z.md\n[e](https://example.invalid/q) <https://x>";
+        assert_eq!(
+            markdown_link_targets(text),
+            [
+                "x.md",
+                "../y.md#h",
+                "img/p.png",
+                "docs/z.md",
+                "https://example.invalid/q"
+            ]
+        );
+        assert_eq!(
+            resolve_in_bundle("docs/en/GUIDE.md", "../../LICENSE").unwrap(),
+            "LICENSE"
+        );
+        assert_eq!(
+            resolve_in_bundle("docs/GUIDE.md", "en/GUIDE.md").unwrap(),
+            "docs/en/GUIDE.md"
+        );
+        assert_eq!(
+            resolve_in_bundle("README.md", "docs/./GUIDE.md").unwrap(),
+            "docs/GUIDE.md"
+        );
+        // 配布物の根より上へ出るリンクは、どこにも解決できない。
+        assert!(resolve_in_bundle("README.md", "../x.md").is_none());
+        assert!(resolve_in_bundle("docs/GUIDE.md", "../../x.md").is_none());
+    }
+    /// 配布物に入れる文書の相対のリンクが、配布物の中で切れない（開発の文書・crates/ の README などへは GitHub の URL で張る）。
+    #[test]
+    fn links_in_bundled_documents_resolve_inside_the_bundle() {
+        let names = payload_names(WINDOWS_ARCHIVE);
+        let mut broken = Vec::new();
+        let mut checked = 0;
+        for name in &names {
+            // 許諾の束は `tools/third-party.py` が作る（リポジトリには無い）。
+            if !name.ends_with(".md") || name == "DEPENDENCIES.md" {
+                continue;
+            }
+            let text = fs::read_to_string(root().join(name)).unwrap();
+            for target in markdown_link_targets(&text) {
+                if target.starts_with('#')
+                    || target.contains("://")
+                    || target.starts_with("mailto:")
+                {
+                    continue;
+                }
+                let path = target.split(['#', '?']).next().unwrap();
+                let resolved = resolve_in_bundle(name, path);
+                checked += 1;
+                if !resolved.is_some_and(|r| names.contains(&r)) {
+                    broken.push(format!("{name} -> {target}"));
+                }
+            }
+        }
+        assert!(checked > 40, "リンクの走査が空に近い: {checked}");
+        assert!(
+            broken.is_empty(),
+            "配布物の中で切れるリンク:\n{}",
+            broken.join("\n")
+        );
+    }
+    #[test]
+    fn stage_keeps_folders_and_drops_the_previous_stage() {
+        let d = Scratch::new();
+        let stage = d.0.join("stage");
+        fs::create_dir_all(stage.join("docs")).unwrap();
+        fs::write(stage.join("docs/OLD.md"), "old").unwrap();
+        let entries = fake_payload(&d.0, WINDOWS_ARCHIVE);
+        stage_payload(&entries, &stage).unwrap();
+        assert!(!stage.join("docs/OLD.md").exists(), "前回の段が残っている");
+        for name in payload_names(WINDOWS_ARCHIVE) {
+            assert_eq!(fs::read_to_string(stage.join(&name)).unwrap(), name);
+        }
+        assert!(stage.join("docs/en/GUIDE.md").is_file());
+        // 元が無ければ断る（中途半端な段を渡さない）。
+        let broken = vec![("docs/x/y.md".to_owned(), d.0.join("missing"))];
+        assert!(stage_payload(&broken, &stage).is_err());
+    }
+    #[test]
+    fn archive_contents_must_match_the_payload_list() {
+        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE] {
+            check_archive_contents(target, &fake_archive(target, &[], &[])).unwrap();
+            // 文書が 1 つ欠けても、README が欠けても断る（名前つきで）。
+            for missing in ["docs/en/GUIDE.md", "docs/PSD.md", "README.en.md"] {
+                let error = check_archive_contents(target, &fake_archive(target, &[missing], &[]))
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains("足りない") && error.contains(missing),
+                    "{target}: {error}"
+                );
+            }
+            // 入れない文書・一覧に無いファイルが紛れても断る。
+            for extra in [
+                "docs/DEVELOPMENT.md",
+                "docs/RELEASING.md",
+                "docs/NEW.md",
+                "stray.txt",
+            ] {
+                let error = check_archive_contents(target, &fake_archive(target, &[], &[extra]))
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    error.contains("余計") && error.contains(extra),
+                    "{target}: {error}"
+                );
+            }
+            // アーカイブでないものは中身を読めずに断る。
+            assert!(check_archive_contents(target, b"archive").is_err());
+        }
+        // 同じ名前が 2 回入っている tar.gz（zip は作る時点で断られる）。
+        let d = Scratch::new();
+        let mut entries = fake_payload(&d.0, LINUX_ARCHIVE);
+        entries.push(entries[3].clone());
+        let path = d.0.join("dup.tar.gz");
+        archive(&path, &entries, false).unwrap();
+        let error = check_archive_contents(LINUX_ARCHIVE, &fs::read(path).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("重複") && error.contains(&entries[3].0),
+            "{error}"
+        );
+    }
+    #[test]
+    fn verify_refuses_archives_whose_contents_differ_from_the_list() {
+        let v = Version::new(1, 2, 3);
+        let run = |dir: &Path, public: &str| {
+            exec(&[
+                "verify",
+                "--version",
+                "1.2.3",
+                "--assets",
+                dir.to_str().unwrap(),
+                "--public-key",
+                public,
+            ])
+        };
+        let (d, public) = signed_dist(&v, &[0, 1]);
+        run(&d.0, &public).unwrap();
+        // 署名も大きさも SHA-256 も正しいが、文書が欠けた配布物 / 余計なファイルのある配布物は断る。
+        for (target, name) in [(0, "docs/GUIDE.md"), (1, "docs/en/UNITY.md")] {
+            let d = Scratch::new();
+            fs::write(
+                asset_path(&d.0, &v, target),
+                fake_archive(TARGETS[target], &[name], &[]),
+            )
+            .unwrap();
+            if target == 0 {
+                fs::write(asset_path(&d.0, &v, 2), "installer").unwrap();
+            }
+            updater(v.clone(), &d.0, true, || Ok(disposable_key())).unwrap();
+            let public = hex::encode(disposable_key().verifying_key().to_bytes());
+            let error = run(&d.0, &public).unwrap_err().to_string();
+            assert!(
+                error.contains(name) && error.contains("足りない"),
+                "{error}"
+            );
+            assert!(
+                error.contains(&asset_name(&v, TARGETS[target]).unwrap()),
+                "{error}"
+            );
+        }
+        for target in [0, 1] {
+            let d = Scratch::new();
+            fs::write(
+                asset_path(&d.0, &v, target),
+                fake_archive(TARGETS[target], &[], &["docs/DEVELOPMENT.md"]),
+            )
+            .unwrap();
+            if target == 0 {
+                fs::write(asset_path(&d.0, &v, 2), "installer").unwrap();
+            }
+            updater(v.clone(), &d.0, true, || Ok(disposable_key())).unwrap();
+            let public = hex::encode(disposable_key().verifying_key().to_bytes());
+            let error = run(&d.0, &public).unwrap_err().to_string();
+            assert!(
+                error.contains("docs/DEVELOPMENT.md") && error.contains("余計"),
+                "{error}"
+            );
+        }
+    }
+    /// インストーラーのスクリプト（`File`・`Delete`・`RMDir` と `DocFiles`）が、xtask の配布物の一覧と同じファイルを入れて消す。
+    #[test]
+    fn installer_script_installs_and_removes_exactly_the_payload() {
+        use std::collections::BTreeSet;
+        let script = fs::read_to_string(root().join("installer/yolupainter.nsi")).unwrap();
+        let script = script.trim_start_matches('\u{feff}');
+        let (mut installed, mut deleted, mut docs, mut folders) = (
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeSet::new(),
+            BTreeSet::new(),
+        );
+        let name = |rest: &str| {
+            rest.trim_end_matches('"')
+                .replace("${EXE}", "yolupainter.exe")
+                .replace("${UNINSTALLER}", "uninstall.exe")
+        };
+        for line in script.lines().map(str::trim) {
+            if let Some(rest) = line.strip_prefix("File \"${STAGE}\\") {
+                installed.insert(name(rest));
+            } else if let Some(rest) = line.strip_prefix("Delete \"$INSTDIR\\") {
+                deleted.insert(name(rest));
+            } else if let Some(rest) = line.strip_prefix("RMDir \"$INSTDIR\\") {
+                folders.insert(name(rest));
+            } else if let Some(rest) = line.strip_prefix("!insertmacro ${ACTION} ") {
+                let quoted: Vec<_> = rest.split('"').skip(1).step_by(2).collect();
+                assert_eq!(quoted.len(), 2, "{line}");
+                docs.insert(format!("{}/{}", quoted[0].replace('\\', "/"), quoted[1]));
+            }
+        }
+        // マクロの本体（`${DIR}\${NAME}`・`$R1`）は一覧ではない。
+        installed.retain(|n| !n.contains('$'));
+        deleted.retain(|n| !n.contains('$'));
+        let names = payload_names(WINDOWS_ARCHIVE);
+        let root_files: BTreeSet<String> =
+            names.iter().filter(|n| !n.contains('/')).cloned().collect();
+        let doc_files: BTreeSet<String> =
+            names.iter().filter(|n| n.contains('/')).cloned().collect();
+        assert_eq!(installed, root_files, "File の一覧が配布物の一覧と違う");
+        assert_eq!(docs, doc_files, "DocFiles の一覧が配布物の一覧と違う");
+        let mut expected_deleted = root_files.clone();
+        expected_deleted.insert("uninstall.exe".into());
+        assert_eq!(
+            deleted, expected_deleted,
+            "アンインストールで消すファイルが入れるファイルと違う"
+        );
+        // 文書のフォルダは、空になったら消す（`RMDir` は空のときだけ消す。`/r` は使わない）。
+        let expected_folders: BTreeSet<String> = doc_files
+            .iter()
+            .flat_map(|n| {
+                let parts: Vec<_> = n.split('/').collect();
+                (1..parts.len()).map(move |i| parts[..i].join("\\"))
+            })
+            .collect();
+        assert_eq!(folders, expected_folders);
+        assert!(
+            !script.contains("RMDir /r \"$INSTDIR"),
+            "入れ先を丸ごとは消さない"
+        );
     }
 }

@@ -1,4 +1,5 @@
 //! 視点の中心を、実際の入力関数へのマウス・ペンの差し込みと投影座標で検証する。
+mod common;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::{kittest::Queryable, Harness};
 use yolu_app::{
@@ -35,7 +36,7 @@ fn harness(preferences: Preferences) -> Harness<'static, Fixture> {
         ..app.view3d.camera
     };
     app.prefs.settings.navigation = preferences;
-    let mut h = Harness::builder().with_size(rect().size()).build_ui_state(
+    let mut h = common::gpu_thread::builder().with_size(rect().size()).build_ui_state(
         |ui, f: &mut Fixture| {
             yolu_app::stencil::update_keys(ui.ctx(), &mut f.app);
             let samples = std::mem::take(&mut f.pen);
@@ -354,7 +355,7 @@ fn navigation_settings_work_in_japanese_and_english() {
         let mut app = AppState::new_in(32, 32, lang);
         app.view3d.load_demo();
         let mut ready = false;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(252.0, 464.0))
             .build_ui_state(
                 move |ui, app| {
@@ -502,7 +503,7 @@ fn view_settings_persist_through_the_real_window_and_restart() {
         .unwrap();
         let build = || {
             let path = path.clone();
-            let mut h = Harness::builder()
+            let mut h = common::gpu_thread::builder()
                 .with_size(vec2(1100.0, 760.0))
                 .with_render_options(eframe::egui_wgpu::RendererOptions {
                     predictable_texture_filtering: false,

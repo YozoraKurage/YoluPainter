@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod fbx;
+pub mod gpu_thread;
 
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
@@ -32,7 +33,7 @@ pub fn with_render_state_cpu_canvas(
 
 /// 窓の全体（eframe の App として）。文書は size × size。
 pub fn app(width: f32, height: f32, size: u32) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = gpu_thread::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0) // 実際の窓に近い間隔（既定の 0.25 秒ではダブルクリックの間に収まらない）
@@ -144,6 +145,18 @@ pub fn rect_of(h: &Harness<'_, YoluApp>, label: &str, pick: impl Fn(Rect) -> boo
         .iter()
         .find(|r| pick(**r))
         .unwrap_or_else(|| panic!("{label}: {rects:?}"))
+}
+
+/// オプションバー（メニューバーの下の帯）の部品。同じ値は左のドックのツールプロパティにも出るので、名前だけでは 2 つに当たる。
+pub fn bar_rect(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    rect_of(h, label, |r| r.top() > 24.0 && r.bottom() < 62.0)
+}
+
+/// 左のドックのサブツールのパネルの中（一覧・ツールプロパティ・ブラシサイズ）の部品。
+pub fn dock_rect(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    rect_of(h, label, |r| {
+        r.left() < 390.0 && r.top() > 62.0 && r.bottom() < 700.0
+    })
 }
 
 /// メニューバーの見出し（同じ名前のドックのタブより上にある）。

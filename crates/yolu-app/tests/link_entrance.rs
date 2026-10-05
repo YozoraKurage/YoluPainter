@@ -18,9 +18,10 @@ use yolu_app::livelink::{LinkIndicator, LinkStatus};
 use yolu_app::state::{Action, PopupKind};
 use yolu_app::ui::theme as t;
 use yolu_app::{shell, Tab, YoluApp};
-use yolu_protocol::link::connect_and_greet;
+use yolu_protocol::link::connect_and_greet_as;
 use yolu_protocol::{
-    channel, ChannelRoute, Connection, MaterialInfo, MaterialKey, Message, MeshData, Model, Received, Submesh, TextureProperty,
+    channel, AppVersion, ChannelRoute, Connection, Identity, MaterialInfo, MaterialKey, Message, MeshData, Model, Received, Submesh,
+    TextureProperty,
 };
 
 fn unique_name(tag: &str) -> String {
@@ -47,7 +48,12 @@ struct FakeUnity {
 
 impl FakeUnity {
     fn connect(name: &str, agent: &str) -> FakeUnity {
-        let (conn, mut reader, _) = connect_and_greet(name, agent).unwrap();
+        // 版を名乗る Unity（名乗らない古いブリッジだと、入口の印は版のずれの警告の色になる。link_version.rs）
+        // 機能の印もスタンドアロンと同じにする（印のずれも警告になる）
+        let identity = Identity::unity(agent)
+            .with_version(Some(AppVersion::new(0, 3, 0)))
+            .with_features(yolu_app::livelink::FEATURES);
+        let (conn, mut reader, _) = connect_and_greet_as(name, &identity).unwrap();
         let reply = conn.clone();
         // 来たものは読み捨てる（Unity の役は返事を見ない）。つながりが終われば止まる
         std::thread::spawn(move || {

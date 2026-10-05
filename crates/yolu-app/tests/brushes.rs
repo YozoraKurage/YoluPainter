@@ -32,7 +32,7 @@ fn language(h: &mut H, lang: Lang) {
 
 /// 左のドックの上の列（ブラシのパネルのある所）。
 fn in_panel(r: Rect) -> bool {
-    r.left() < 340.0 && r.top() > 80.0 && r.top() < 700.0
+    r.left() < 390.0 && r.top() > 80.0 && r.top() < 700.0
 }
 
 /// 一覧の行（名前で探す）の、押せる所。
@@ -93,7 +93,7 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
 
 /// ブラシのパネルの全体（タブの帯から、下のカラーのパネルの見出しの上まで）。
 fn panel_rect(h: &H) -> Rect {
-    let tab = h.state().tab_rects[&Tab::Brushes];
+    let tab = h.state().tab_rects[&Tab::SubTools];
     let color = h.state().tab_rects[&Tab::Color];
     Rect::from_min_max(
         pos2(tab.left() - 2.0, tab.top()),
@@ -106,7 +106,7 @@ fn panel_rect(h: &H) -> Rect {
 #[test]
 fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the_brush_tab() {
     let mut h = app(1600.0, 900.0, 128);
-    let tab = h.state().tab_rects[&Tab::Brushes];
+    let tab = h.state().tab_rects[&Tab::SubTools];
     assert!(tab.left() < 340.0 && tab.top() < 80.0);
     assert!(
         tab.left() < h.state().tab_rects[&Tab::Assets].left(),
@@ -132,7 +132,7 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
     assert!(h.query_by_label("Brush Size").is_some());
     assert!(h.query_all_by_label("Alpha").next().is_none());
     click_tab(&mut h, Tab::Assets);
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     assert!(h.query_by_label("Tool Properties").is_some());
 }
 
@@ -153,9 +153,18 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     click_row(&mut h, "チョーク");
     assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
     assert!(st(&h).m2.brush.texture.is_some());
-    // 消しゴムのグループの行は、道具も消しゴムにする
-    let tab = group_tab(&h, "消しゴム").center();
-    click(&mut h, tab);
+    // ブラシの道具の一覧に、消しゴムのグループのタブも行も無い（消しゴムは消しゴムの道具の一覧）
+    assert!(
+        h.query_all_by_label("消しゴム")
+            .all(|n| !(n.rect().left() < 340.0 && n.rect().top() > 80.0 && n.rect().top() < 120.0)),
+        "グループのタブに消しゴムは無い"
+    );
+    assert!(h.query_all_by_label("ソフト消しゴム").next().is_none());
+    // 消しゴムの道具に替えると、一覧は消しゴムだけになる（グループのタブも無い）。行を押しても道具は消しゴムのまま
+    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+    h.run();
+    assert!(h.query_all_by_label("ハード円").next().is_none(), "消しゴムの一覧にブラシは無い");
+    assert!(h.query_all_by_label("筆").next().is_none(), "グループのタブは出ない");
     click_row(&mut h, "ソフト消しゴム");
     assert_eq!(st(&h).tool, Tool::Eraser);
     assert_eq!(st(&h).brush.radius, 24.0);
@@ -205,9 +214,7 @@ fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     assert_eq!(st(&h).doc.undo_count(), steps + 1);
     assert!(canvas_pixel(&h, c)[3] < 255, "消しゴムで消えた");
     assert_eq!(canvas_pixel(&h, off)[3], 255, "細い消しゴムの外は残る");
-    // 消しゴムのグループのブラシを選び直す: ソフトな消しゴムは縁がなだらか
-    let tab = group_tab(&h, "消しゴム").center();
-    click(&mut h, tab);
+    // 消しゴムの一覧のブラシを選び直す: ソフトな消しゴムは縁がなだらか
     click_row(&mut h, "ソフト消しゴム");
     assert_eq!(st(&h).tool, Tool::Eraser);
     // B で描く道具へ戻ると、描く道具の最後のブラシ（変えた設定ごと）

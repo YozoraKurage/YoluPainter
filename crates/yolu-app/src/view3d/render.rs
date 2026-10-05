@@ -25,6 +25,9 @@ use yolu_core::Document;
 use super::brdf::{self, Curve};
 use super::display::{Display, EnvKind, Shading};
 use super::environment::{self, Baked, Source, FACE_SIZE, MIP_COUNT};
+use super::look_gpu::{self, LookBudget, LookGpu, SetDraw};
+use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
+use super::user_layers::USER_BUDGET_BYTES;
 use super::model::ViewModel;
 use super::other_sets::OtherSet;
 use super::paint::{ImageTexture, Paint, PaintStats, Slot};
@@ -33,6 +36,8 @@ use super::tangents::Tangent;
 /// 背景（Unity 版の 3D ビューのカメラの背景 (0.12, 0.13, 0.15)）。
 pub const BACKGROUND: [f64; 3] = [0.12, 0.13, 0.15];
 const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// 同じ描き先の sRGB の見え方（lilToon の半透明をリニアで重ねる）。
+const LDR_SRGB: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// 頂点 1 つ: 位置 3・法線 3・UV 2・接線 4（f32）。絵を貼るか・どの絵かは、マテリアルごとの描きで束ね（group 1）が決める。
@@ -44,9 +49,11 @@ pub const OTHER_SET_MAX_SIZE: u32 = 1024;
 /// 1 フレームに重なって止まらないように。小さな文書は 1 フレームで全部作る）。
 pub const BUILD_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(40);
 /// 一様バッファの大きさ（`shaders/scene.wgsl` の `Uniforms`）。
-const UNIFORM_BYTES: u64 = 128 + 9 * 16 + 9 * 16 + 64 + 16;
+const UNIFORM_BYTES: u64 = 128 + 9 * 16 + 9 * 16 + 64 + 16 + 9 * 16;
 /// 影のマップの 1 辺（Depth32Float で 16 MiB。Unity 版と同じ 2048）。
 pub const SHADOW_SIZE: u32 = 2048;
+/// 持っておく lilToon のパイプラインの数の目安（超えたら、そのフレームで使わないものを捨てる）。
+const LIL_PIPELINES_KEPT: usize = 48;
 
 /// 上げた量・描いた回数（試験と状態の表示用）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -93,16 +100,30 @@ pub struct View3dStats {
     pub other_skipped: usize,
     /// 持ちたいが、まだ作っていないセットの数（1 フレームに作る数を絞っているので、次のフレームから）。
     pub other_pending: usize,
-    /// ほかのセットの絵のバイト数（ミップ込み）と、いちばん縮めた段。
+    /// 今のセットの lilToon のスロットが読むユーザーチャンネルの配列のバイト数（ミップ込み）と、文書から縮めた段（持っていなければ 0）。
+    pub user_bytes: u64,
+    pub user_level: u32,
+    /// 今のセットの、Live Link で Unity から受けた絵の配列のバイト数（ミップ込み）と層の大きさ（持っていなければ 0）。
+    pub received_bytes: u64,
+    pub received_size: [u32; 2],
+    /// これまでに lilToon の値（一様バッファの中身）を作った回数（今のセットとほかのセット。値が変わらないフレームでは作らない）。
+    pub look_params_builds: u64,
+    /// ほかのセットの絵（ユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数（ミップ込み）と、いちばん縮めた段。
     pub other_bytes: u64,
     pub other_level: u32,
     /// 今のセットだった絵を、GPU の中のミップのコピーで縮めてほかのセットへ回した回数（文書を合成し直さなかった回数。これまでの合計）。
     pub other_demotions: usize,
-    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット。ミップ込み）のバイト数の最大。今のセットが替わるフレームでも、
+    /// 最後の同期の途中で GPU に持っていた絵（今のセットとほかのセット。ユーザーチャンネルの配列と受けた絵の配列を含む。ミップ込み）のバイト数の最大。今のセットが替わるフレームでも、
     /// 前の絵と新しい絵が満量で重なって予算を超えないことの記録（直前のフレームの終わりの分から数える）。
     pub peak_bytes: u64,
     /// ほかのセットの合成の作業用のバッファが抱えているバイト数（CPU。作り終えたら手放すので、普通は 0）。
     pub other_scratch_bytes: u64,
+    /// lilToon の半透明を、トーンマッピングなしの描き先でリニアに重ねられるか（描き先の sRGB の見え方を作れる機材。GL は作れないので
+    /// ガンマの値のまま重ねる）。
+    pub linear_transparent: bool,
+    /// 持っている lilToon のパイプラインの数と、これまでに作った数（ソフトの描画は使う機能とスロットの読み方ごとに作る）。
+    pub lil_pipelines: usize,
+    pub lil_pipeline_builds: usize,
 }
 
 impl From<PaintStats> for View3dStats {
@@ -123,6 +144,8 @@ impl From<PaintStats> for View3dStats {
 
 struct Target {
     view: wgpu::TextureView,
+    /// 同じ色のテクスチャの sRGB の見え方（lilToon の半透明をリニアで重ねる）。機材が見え方の替えを持たなければ無い。
+    srgb_view: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
     size: [u32; 2],
     id: egui::TextureId,
@@ -161,6 +184,8 @@ struct SetBind {
     bind: wgpu::BindGroup,
     uid: u64,
     layout_version: u64,
+    /// 見た目の持ち物の束ねの鍵（ユーザーチャンネルの配列・マットキャップの絵）。
+    look: (u64, u64, u64),
 }
 
 /// 今のセットでないセットの絵（文書の ID でセットを見分ける。マテリアルは今の割り当て）。
@@ -168,6 +193,8 @@ struct HeldSet {
     doc_id: u128,
     material: i32,
     paint: Paint,
+    /// 見た目の設定の持ち物（lilToon の値・ユーザーチャンネル・マットキャップの絵）。
+    look: LookGpu,
     bind: Option<SetBind>,
 }
 
@@ -192,11 +219,26 @@ struct SceneKey {
     env: u64,
     map: u64,
     display: [u32; 20],
+    /// 全部のセットの見た目の鍵。
+    looks: u64,
 }
 
 struct Pipelines {
     scene: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
+}
+
+/// lilToon の描き方のパイプラインの選び（描き先の形式・Cull・半透明・輪郭線）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct LilPipe {
+    hdr: bool,
+    /// 描き先の sRGB の見え方へ、リニアの値で描く（半透明をリニアで重ねる）。
+    srgb: bool,
+    cull: u8,
+    transparent: bool,
+    outline: bool,
+    /// パイプラインの定数（使う機能とスロットの読み方。実機は全部入り）。
+    spec: look_gpu::LilSpec,
 }
 
 /// 影のマップ（光から見た深さ。影を初めて使うときに作る）。
@@ -268,6 +310,10 @@ pub struct View3dRenderer {
     blank_bind: wgpu::BindGroup,
     /// メモリの予算の全体（今のセットの絵のバイト数を引いた残りに、ほかのセットが入る）。
     total_budget: u64,
+    /// 今のセットのユーザーチャンネルの配列に渡す予算（全体から今のセットの標準のチャンネルの絵を引いた残り。`sync_sets` が決める）。
+    user_budget: u64,
+    /// 今のセットの、Unity から受けた絵の配列に渡す予算（標準のチャンネルの絵とユーザーチャンネルの配列を引いた残り。`sync_sets` が決める）。
+    received_budget: u64,
     /// ほかのセットの絵の辺の上限。
     other_cap: u32,
     /// 予算が足りずに絵を持っていないセットのマテリアル。
@@ -286,6 +332,17 @@ pub struct View3dRenderer {
     set_layout: wgpu::BindGroupLayout,
     ldr: Pipelines,
     hdr: Pipelines,
+    /// 面のシェーダー（scene.wgsl と liltoon.wgsl）と、そのパイプラインの形（lilToon のパイプラインを使うときに作る）。
+    scene_module: wgpu::ShaderModule,
+    scene_pipeline_layout: wgpu::PipelineLayout,
+    lil_pipelines: std::collections::HashMap<LilPipe, wgpu::RenderPipeline>,
+    lil_pipeline_builds: usize,
+    /// 今のセットの見た目の持ち物と、絵の無い面の見た目（標準）。
+    current_look: LookGpu,
+    _blank_look: LookGpu,
+    /// 1 × 1 の白（マットキャップの絵が無いときに束ねる）。
+    white_view: wgpu::TextureView,
+    _white_texture: wgpu::Texture,
     tone: ToneMap,
     shadow_pipeline: wgpu::RenderPipeline,
     shadow_layout: wgpu::BindGroupLayout,
@@ -322,18 +379,25 @@ pub struct View3dRenderer {
     /// 接線を作るスレッドが接線を残さずに終わったモデルの世代（同じモデルで作り直さない。法線マップは読まない）。
     tangents_failed: Option<u32>,
     tangent_hook: Option<TangentHook>,
+    /// 描き先のテクスチャに sRGB の見え方を作れるか（wgpu の `DownlevelFlags::VIEW_FORMATS`。GL には無い）。
+    srgb_views: bool,
+    /// ソフトの描画（アダプタが CPU。llvmpipe）: lilToon のパイプラインを、使う機能とスロットの読み方だけで作る（`look_gpu::LilSpec`）。
+    software: bool,
     pub stats: View3dStats,
 }
 
 /// 1 つのセットの絵の束ね（group 1）。`painted` なら絵を貼り、そうでなければ市松（`paint` は既定の 1 × 1 を見せる持ち物でよい）。
 /// `current` は今のセット（焼いたメッシュマップはその面だけに見せる）。パラメータは束ねと同じ寿命で変わらない（Normal を使い始めた・
-/// やめたときは、束ねごと作り直す）。
+/// やめたときは、束ねごと作り直す）。見た目の設定（`look`）の値は別のバッファで、値が変わっても束ねは作り直さない（ユーザーチャンネルの
+/// 配列・マットキャップの絵が替わったときだけ）。
 fn make_set_bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     paint: &Paint,
     painted: bool,
     current: bool,
+    look: &LookGpu,
+    white: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     let flags = [
         f32::from(painted),
@@ -357,6 +421,24 @@ fn make_set_bind(
     entries.push(wgpu::BindGroupEntry {
         binding: 6,
         resource: params.as_entire_binding(),
+    });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 7,
+        resource: look.buffer.as_entire_binding(),
+    });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 8,
+        resource: wgpu::BindingResource::TextureView(look.users.view()),
+    });
+    for (binding, which) in [(9u32, 0usize), (10, 1)] {
+        entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(look.image_view(which).unwrap_or(white)),
+        });
+    }
+    entries.push(wgpu::BindGroupEntry {
+        binding: 11,
+        resource: wgpu::BindingResource::TextureView(look.received.view()),
     });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("yolu-3d-set"),
@@ -406,9 +488,15 @@ fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 impl View3dRenderer {
     pub fn new(rs: &egui_wgpu::RenderState) -> View3dRenderer {
         let device = &rs.device;
+        // 面のシェーダー: 標準（scene.wgsl）と lilToon の再現（liltoon.wgsl。scene.wgsl の一様バッファ・束ね・関数を使う）を 1 つのモジュールに
+        let scene_source = format!(
+            "{}\n{}",
+            include_str!("shaders/scene.wgsl"),
+            include_str!("shaders/liltoon.wgsl")
+        );
         let scene_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("yolu-3d-scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(scene_source.into()),
         });
         let tone_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("yolu-3d-tonemap"),
@@ -425,7 +513,10 @@ impl View3dRenderer {
             },
             count: None,
         }];
-        entries.push(sampler_entry(7));
+        // 塗った絵の標本器は、lilToon の輪郭線の頂点（太さのマスク）も読む
+        let mut paint_sampler_entry = sampler_entry(7);
+        paint_sampler_entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        entries.push(paint_sampler_entry);
         entries.push(texture_entry(8, wgpu::TextureViewDimension::Cube));
         entries.push(sampler_entry(9));
         entries.push(texture_entry(10, d2));
@@ -453,6 +544,26 @@ impl View3dRenderer {
             },
             count: None,
         });
+        // 7: lilToon の値、8: ユーザーチャンネルの配列、9・10: マットキャップの絵（look_gpu）
+        set_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 7,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+        set_entries.push(texture_entry(8, wgpu::TextureViewDimension::D2Array));
+        set_entries.push(texture_entry(9, d2));
+        set_entries.push(texture_entry(10, d2));
+        // 11: Unity から受けた、描いていないスロットの絵の配列（look_gpu・received_layers）
+        set_entries.push(texture_entry(11, wgpu::TextureViewDimension::D2Array));
+        // 輪郭線の頂点が太さのマスク（どのチャンネルのことも）と値を読む
+        for e in &mut set_entries {
+            e.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        }
         let set_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("yolu-3d-set"),
             entries: &set_entries,
@@ -734,7 +845,37 @@ impl View3dRenderer {
             ..Default::default()
         });
         let paint = Paint::new(rs);
-        let blank_bind = make_set_bind(device, &set_layout, &paint, false, false);
+        let white_texture = device.create_texture_with_data(
+            &rs.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("yolu-3d-white"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: LDR,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &[255u8; 4],
+        );
+        let white_view = white_texture.create_view(&Default::default());
+        let current_look = LookGpu::new(device, &rs.queue);
+        let blank_look = current_look.sibling(device);
+        let blank_bind = make_set_bind(
+            device,
+            &set_layout,
+            &paint,
+            false,
+            false,
+            &blank_look,
+            &white_view,
+        );
         View3dRenderer {
             rs: rs.clone(),
             paint,
@@ -742,6 +883,8 @@ impl View3dRenderer {
             held: Vec::new(),
             blank_bind,
             total_budget: super::paint::PAINT_BUDGET_BYTES,
+            user_budget: USER_BUDGET_BYTES,
+            received_budget: RECEIVED_BUDGET_BYTES,
             other_cap: OTHER_SET_MAX_SIZE,
             unpainted: Vec::new(),
             pending_builds: 0,
@@ -753,6 +896,14 @@ impl View3dRenderer {
             set_layout,
             ldr,
             hdr,
+            scene_module,
+            scene_pipeline_layout,
+            lil_pipelines: std::collections::HashMap::new(),
+            lil_pipeline_builds: 0,
+            current_look,
+            _blank_look: blank_look,
+            white_view,
+            _white_texture: white_texture,
             tone: ToneMap {
                 pipeline: tone_pipeline,
                 layout: tone_layout,
@@ -790,14 +941,27 @@ impl View3dRenderer {
             tangents_wanted: false,
             tangents_failed: None,
             tangent_hook: None,
+            srgb_views: rs
+                .adapter
+                .get_downlevel_capabilities()
+                .flags
+                .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
+            software: rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu,
             stats: View3dStats::default(),
         }
     }
 
-    /// 塗った絵のバイトの予算を決める（試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、ほかのセットの絵が入る。
+    /// 塗った絵のバイトの予算を決める（設定の GPU のメモリ・試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、
+    /// ほかのセットの絵が入る。上げたときは、予算で縮めていた今のセットの絵を元の大きさへ戻す（ほかのセットは、替わるたびに
+    /// 上限だけで決め直すので、ここでは触らない）。
     pub fn set_paint_budget(&mut self, bytes: u64) {
         self.total_budget = bytes;
-        self.paint.set_budget(bytes);
+        self.paint.set_budget_and_regrow(bytes);
+    }
+
+    /// 塗った絵の全体のバイトの予算（今のセットとほかのセットの合計）。
+    pub fn paint_budget(&self) -> u64 {
+        self.total_budget
     }
 
     /// ほかのセットの絵を新しく作り始めてよい 1 フレームの時間を決める（試験が 0 にして、1 フレームに 1 つずつの道を通す）。
@@ -920,10 +1084,12 @@ impl View3dRenderer {
                 label: Some("yolu-3d"),
             });
         self.sync_sets(doc, model, material, others, started, &mut encoder);
+        self.sync_looks(doc, others, &mut encoder);
         let sync_us = started.elapsed().as_micros() as u64;
         self.sync_environment(display);
         self.sync_map(display, map, &mut encoder);
-        let use_normal_map = self.any_normal_map() && !display.is_unlit();
+        let use_normal_map =
+            (self.any_normal_map() || self.looks_want_tangents()) && !display.is_unlit();
         self.ensure_mesh(model, use_normal_map);
         let resized = self.ensure_target(size);
         let tone = display.uses_tone_map();
@@ -950,6 +1116,7 @@ impl View3dRenderer {
             env: self.env.version,
             map: self.map_version,
             display: display.key_bits(),
+            looks: self.looks_key(),
         };
         // 絵が変わればミップも鍵の版も変わるので、描かないフレームは何も積んでいない（出さずに捨てる）
         if resized || self.last_key != Some(key) {
@@ -987,10 +1154,22 @@ impl View3dRenderer {
             other_sets: self.held.iter().filter(|h| h.paint.is_built()).count(),
             other_skipped: self.unpainted.len(),
             other_pending: self.pending_builds,
-            other_bytes: self.held.iter().map(|h| h.paint.bytes()).sum(),
+            user_bytes: self.current_look.users.bytes(),
+            received_bytes: self.current_look.received.bytes(),
+            received_size: self.current_look.received.size().unwrap_or_default(),
+            look_params_builds: self.current_look.params_builds(),
+            user_level: self.current_look.users.level(),
+            other_bytes: self
+                .held
+                .iter()
+                .map(|h| h.paint.bytes() + h.look.bytes())
+                .sum(),
             other_level: self.held.iter().map(|h| h.paint.level()).max().unwrap_or(0),
             other_demotions: self.demotions,
             peak_bytes: self.peak_bytes,
+            linear_transparent: self.srgb_views,
+            lil_pipelines: self.lil_pipelines.len(),
+            lil_pipeline_builds: self.lil_pipeline_builds,
             other_scratch_bytes: self
                 .held
                 .iter()
@@ -1011,6 +1190,10 @@ impl View3dRenderer {
     /// 残り）に収まる分だけ持つ。収まらない（遠い）セットは持たず、その面は絵の無い描き方で、マテリアルを `unpainted` に残す。モデルの面が
     /// 1 つも無いマテリアル（隠した・全部の面を隠した）のセットは持たない。持ち物は文書が変わったとき（版・変化の記録）だけ同期し、新しく
     /// 作り始めるのは 1 フレームの時間（`BUILD_FRAME_BUDGET`）に収まるあいだと、そのフレームの最初の 1 つだけ。
+    /// lilToon の見た目のセットが持つユーザーチャンネルの配列と、Live Link で Unity から受けた絵の配列も同じ予算に入る: 今のセットの配列は
+    /// 標準のチャンネルの絵の残りから（ユーザーチャンネルは `user_budget`、受けた絵はその残りの `received_budget`。ほかのセットより先）、
+    /// ほかのセットは標準のチャンネルの絵と 2 つの配列を合わせた分で持つ・持たないを決める。配列を作るのは `sync_looks`（今のセットが
+    /// 替わったら、前のセットの配列はここで手放す）。
     fn sync_sets(
         &mut self,
         doc: &Document,
@@ -1025,6 +1208,9 @@ impl View3dRenderer {
         self.peak_bytes = self.picture_bytes();
         let mut previous: Option<u128> = None;
         if self.paint.doc_id().is_some_and(|d| d != id) {
+            // 前のセットのユーザーチャンネルの配列は、新しい絵を作る前に手放す（前のセットをほかのセットとして持つなら、`sync_looks` が
+            // ほかのセットの大きさで作り直す）
+            self.current_look = self.current_look.sibling(&self.rs.device);
             let mut fresh = self.paint.sibling();
             fresh.set_budget(self.total_budget);
             fresh.stats = self.paint.stats;
@@ -1041,6 +1227,7 @@ impl View3dRenderer {
                     doc_id: old_id,
                     material: -1,
                     paint: old,
+                    look: self.current_look.sibling(&self.rs.device),
                     bind: None,
                 });
                 previous = Some(old_id);
@@ -1058,10 +1245,27 @@ impl View3dRenderer {
         let mut remaining = self
             .total_budget
             .saturating_sub(self.paint.planned_bytes(doc));
+        // 今のセットの lilToon のユーザーチャンネルの配列は、標準のチャンネルの絵の残りから（セットごとの上限まで）。ほかのセットより先
+        let limit = self.user_limit();
+        self.user_budget = remaining;
+        remaining = remaining.saturating_sub(look_gpu::planned_user_bytes(
+            doc,
+            self.paint.planned_level(doc),
+            limit,
+            self.user_budget,
+        ));
+        // Unity から受けた絵の配列も、その残りから（セットごとの上限まで）
+        self.received_budget = remaining;
+        remaining = remaining.saturating_sub(look_gpu::planned_received_bytes(doc, limit, self.received_budget));
         let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
         self.unpainted.clear();
         for o in want {
-            let need = self.paint.estimate_bytes(o.doc, self.other_cap);
+            // ほかのセットは、標準のチャンネルの絵とユーザーチャンネルの配列と受けた絵の配列を合わせて持つか持たないか（一部だけは持たない）
+            let (shift, bytes) = self.paint.estimate(o.doc, self.other_cap);
+            let other_limit = limit.min(self.other_cap);
+            let need = bytes
+                + look_gpu::planned_user_bytes(o.doc, shift, other_limit, USER_BUDGET_BYTES)
+                + look_gpu::planned_received_bytes(o.doc, other_limit, RECEIVED_BUDGET_BYTES);
             if need <= remaining {
                 remaining -= need;
                 keep.push(o);
@@ -1109,6 +1313,7 @@ impl View3dRenderer {
                         doc_id: o.doc.id(),
                         material: o.material,
                         paint,
+                        look: self.current_look.sibling(&self.rs.device),
                         bind: None,
                     });
                     self.held.len() - 1
@@ -1140,9 +1345,20 @@ impl View3dRenderer {
         }
     }
 
-    /// 今 GPU に持っている絵（今のセットとほかのセット）のバイト数。
+    /// 今 GPU に持っている絵（今のセットとほかのセット。lilToon のユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数。
     fn picture_bytes(&self) -> u64 {
-        self.paint.bytes() + self.held.iter().map(|h| h.paint.bytes()).sum::<u64>()
+        self.paint.bytes()
+            + self.current_look.bytes()
+            + self
+                .held
+                .iter()
+                .map(|h| h.paint.bytes() + h.look.bytes())
+                .sum::<u64>()
+    }
+
+    /// ユーザーチャンネルの配列の辺の上限（GPU の上限と 8192 の小さいほう）。
+    fn user_limit(&self) -> u32 {
+        self.rs.device.limits().max_texture_dimension_2d.min(8192)
     }
 
     /// 同期の途中で持っていた絵のバイト数の最大を更新する。
@@ -1184,25 +1400,95 @@ impl View3dRenderer {
     fn ensure_set_binds(&mut self) {
         let device = self.rs.device.clone();
         let layout = &self.set_layout;
-        let stale = |bind: &Option<SetBind>, paint: &Paint| {
-            bind.as_ref()
-                .is_none_or(|b| b.uid != paint.uid() || b.layout_version != paint.layout_version())
+        let white = &self.white_view;
+        let stale = |bind: &Option<SetBind>, paint: &Paint, look: &LookGpu| {
+            bind.as_ref().is_none_or(|b| {
+                b.uid != paint.uid()
+                    || b.layout_version != paint.layout_version()
+                    || b.look != look.bind_key()
+            })
         };
-        if stale(&self.current_bind, &self.paint) {
+        if stale(&self.current_bind, &self.paint, &self.current_look) {
             self.current_bind = Some(SetBind {
-                bind: make_set_bind(&device, layout, &self.paint, true, true),
+                bind: make_set_bind(&device, layout, &self.paint, true, true, &self.current_look, white),
                 uid: self.paint.uid(),
                 layout_version: self.paint.layout_version(),
+                look: self.current_look.bind_key(),
             });
         }
         for h in &mut self.held {
-            if h.paint.is_built() && stale(&h.bind, &h.paint) {
+            if h.paint.is_built() && stale(&h.bind, &h.paint, &h.look) {
                 h.bind = Some(SetBind {
-                    bind: make_set_bind(&device, layout, &h.paint, true, false),
+                    bind: make_set_bind(&device, layout, &h.paint, true, false, &h.look, white),
                     uid: h.paint.uid(),
                     layout_version: h.paint.layout_version(),
+                    look: h.look.bind_key(),
                 });
             }
+        }
+    }
+
+    /// 見た目の設定を GPU へ（今のセットとほかのセット。値・ユーザーチャンネルの配列・マットキャップの絵）。ほかのセットは、
+    /// 絵を持っているものだけ（`others` から文書を引く）。
+    fn sync_looks(
+        &mut self,
+        doc: &Document,
+        others: &[OtherSet<'_>],
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let queue = self.rs.queue.clone();
+        let limit = self.user_limit();
+        let budget = LookBudget {
+            limit,
+            users: self.user_budget,
+            received: self.received_budget,
+        };
+        self.current_look
+            .sync(doc, &self.paint, budget, &queue, encoder);
+        self.note_peak();
+        // ほかのセットの配列の大きさは、持つかどうかの計画（`sync_sets`）と同じ上限・予算で決まる
+        let other_limit = limit.min(self.other_cap);
+        for i in 0..self.held.len() {
+            let h = &mut self.held[i];
+            if !h.paint.is_built() {
+                continue;
+            }
+            if let Some(o) = others.iter().find(|o| o.doc.id() == h.doc_id) {
+                let budget = LookBudget {
+                    limit: other_limit,
+                    users: USER_BUDGET_BYTES,
+                    received: RECEIVED_BUDGET_BYTES,
+                };
+                h.look.sync(o.doc, &h.paint, budget, &queue, encoder);
+                self.note_peak();
+            }
+        }
+    }
+
+    /// 全部のセットの見た目の鍵（描き直しの鍵）。
+    fn looks_key(&self) -> u64 {
+        let mut key = self.current_look.key();
+        for h in &self.held {
+            key = (key ^ h.look.key() ^ h.material as u32 as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        key
+    }
+
+    /// どれかのセットが lilToon のノーマルマップを使うか（接線を作る）。
+    fn looks_want_tangents(&self) -> bool {
+        self.current_look.wants_tangents
+            || self
+                .held
+                .iter()
+                .any(|h| h.paint.is_built() && h.look.wants_tangents)
+    }
+
+    /// このマテリアルの面の描き方（今のセット・ほかのセット・絵の無い面は標準）。
+    fn draw_of(&self, pick: Pick) -> SetDraw {
+        match pick {
+            Pick::Current => self.current_look.draw,
+            Pick::Held(i) => self.held[i].look.draw,
+            Pick::Blank => SetDraw::STANDARD,
         }
     }
 
@@ -1240,7 +1526,7 @@ impl View3dRenderer {
             dimension: wgpu::TextureDimension::D2,
             format: LDR,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
+            view_formats: if self.srgb_views { &[LDR_SRGB] } else { &[] },
         });
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("yolu-3d-depth"),
@@ -1253,6 +1539,12 @@ impl View3dRenderer {
             view_formats: &[],
         });
         let view = color.create_view(&Default::default());
+        let srgb_view = self.srgb_views.then(|| {
+            color.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(LDR_SRGB),
+                ..Default::default()
+            })
+        });
         let depth = depth.create_view(&Default::default());
         let mut renderer = self.rs.renderer.write();
         // 表示域と描き先は同じ画素の数なので、補間しない
@@ -1271,6 +1563,7 @@ impl View3dRenderer {
         drop(renderer);
         self.target = Some(Target {
             view,
+            srgb_view,
             depth,
             size,
             id,
@@ -1413,7 +1706,8 @@ impl View3dRenderer {
         }
         let rgba = source.map.to_rgba8(false);
         let size = [source.map.width() as u32, source.map.height() as u32];
-        match self.paint.create_image(&rgba, size, encoder) {
+        // メッシュマップはガンマの値のまま見せる（光なしの表示）ので、リニアにしない形式で
+        match self.paint.create_image(&rgba, size, false, encoder) {
             Some(texture) => {
                 self.map = Some((source.key, texture));
                 self.map_failed = None;
@@ -1756,10 +2050,11 @@ impl View3dRenderer {
         f.extend_from_slice(&[p.x, p.y, p.z, 0.0]);
         let l = display.light_direction();
         f.extend_from_slice(&[l.x, l.y, l.z, 0.0]);
-        // マテリアル表示の光（Unity 版: 色 × 0.769 × 強さ をリニアへ）と、環境が無いときの一様な環境光（色 × 0.4 をリニアへ）
+        // マテリアル表示の光（Unity 版: 色 × 0.769 × 強さ をリニアへ。Unity の `_LightColor0` と同じ GammaToLinearSpace で、
+        // 1 を超える光は pow 2.2）と、環境が無いときの一様な環境光（色 × 0.4 をリニアへ）
         let direct = display
             .light_color
-            .map(|c| brdf::srgb_to_linear(c * 0.769 * display.light_intensity));
+            .map(|c| brdf::unity_gamma_to_linear(c * 0.769 * display.light_intensity));
         f.extend_from_slice(&[direct[0], direct[1], direct[2], 0.0]);
         let flat = display.ambient.map(|c| brdf::srgb_to_linear(c * 0.4));
         f.extend_from_slice(&[flat[0], flat[1], flat[2], 0.0]);
@@ -1822,8 +2117,117 @@ impl View3dRenderer {
         };
         f.extend_from_slice(&matrix.to_cols_array());
         f.extend_from_slice(&params);
+        // lilToon の光: 環境の SH（回転・明るさ込み）か一様な環境光を、Unity の unity_SH* の形で。カメラの上と手前への向き
+        let lil_sh = if env_on {
+            let baked = self.env.baked.as_ref().map_or([Vec3::ZERO; 9], |b| b.sh);
+            let rotated = super::look_gpu::rotate_sh_y(&baked, radians);
+            rotated.map(|c| c * display.env_intensity)
+        } else {
+            let mut flat_sh = [Vec3::ZERO; 9];
+            flat_sh[0] = Vec3::from(flat);
+            flat_sh
+        };
+        for c in super::look_gpu::unity_sh(&lil_sh) {
+            f.extend_from_slice(&c);
+        }
+        let up = view.rotation * Vec3::Y;
+        let front = -view.forward;
+        f.extend_from_slice(&[up.x, up.y, up.z, 0.0]);
+        f.extend_from_slice(&[front.x, front.y, front.z, 0.0]);
         debug_assert_eq!(f.len() * 4, UNIFORM_BYTES as usize);
         f.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    /// lilToon のパイプライン（無ければ作る）。輪郭線は前面を捨てる（lilToon の `_OutlineCull` の既定）・深さは Less（`_OutlineZTest` の既定）、
+    /// 半透明の面は乗算済みで重ね（`One`・`OneMinusSrcAlpha`）、半透明の輪郭線は `SrcAlpha`・`OneMinusSrcAlpha`（lilToon の設定の既定）。
+    /// どれも深さを書く（lilToon の半透明も `_ZWrite` は 1）。
+    fn ensure_lil_pipeline(&mut self, key: LilPipe) {
+        if self.lil_pipelines.contains_key(&key) {
+            return;
+        }
+        let device = &self.rs.device;
+        let attributes = wgpu::vertex_attr_array![
+            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4
+        ];
+        let cull = match key.cull {
+            0 => None,
+            1 => Some(wgpu::Face::Front),
+            _ => Some(wgpu::Face::Back),
+        };
+        let blend = match (key.transparent, key.outline) {
+            (false, _) => None,
+            (true, false) => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            (true, true) => Some(wgpu::BlendState::ALPHA_BLENDING),
+        };
+        // 全部入り（実機）は定数を渡さない（シェーダーの既定の全部入り）
+        let constants: Vec<(&str, f64)> = if key.spec == look_gpu::LilSpec::ALL {
+            Vec::new()
+        } else {
+            key.spec.constants().to_vec()
+        };
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(if key.outline { "yolu-3d-liltoon-outline" } else { "yolu-3d-liltoon" }),
+            layout: Some(&self.scene_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &self.scene_module,
+                entry_point: Some(if key.outline { "vs_outline" } else { "vs_main" }),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: (VERTEX_FLOATS * 4) as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: cull,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(if key.outline {
+                    wgpu::CompareFunction::Less
+                } else {
+                    wgpu::CompareFunction::LessEqual
+                }),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &self.scene_module,
+                entry_point: Some(match (key.outline, key.srgb) {
+                    (false, false) => "fs_liltoon",
+                    (false, true) => "fs_liltoon_linear",
+                    (true, false) => "fs_outline",
+                    (true, true) => "fs_outline_linear",
+                }),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: if key.srgb {
+                        LDR_SRGB
+                    } else if key.hdr {
+                        HDR
+                    } else {
+                        LDR
+                    },
+                    blend,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        self.lil_pipelines.insert(key, pipeline);
+        self.lil_pipeline_builds += 1;
     }
 
     fn draw_scene(
@@ -1838,6 +2242,60 @@ impl View3dRenderer {
         let bytes = self.uniform_bytes(camera, size, display, use_normal_map);
         self.rs.queue.write_buffer(&self.uniforms, 0, &bytes);
         let tone = display.uses_tone_map();
+        // マテリアルごとの描き（範囲・束ね・描き方）。隣り合うマテリアルが同じ束ね（絵の無いもの）なら 1 回にまとめる
+        let lil_on = display.shading == Shading::Material;
+        let mut draws: Vec<(u32, u32, Pick, SetDraw)> = Vec::new();
+        if let Some(mesh) = &self.mesh {
+            let mut i = 0;
+            while i < mesh.ranges.len() {
+                let pick = self.pick(mesh.ranges[i].material, current_material);
+                let start = mesh.ranges[i].start;
+                let mut end = start + mesh.ranges[i].count;
+                i += 1;
+                while i < mesh.ranges.len()
+                    && pick == Pick::Blank
+                    && self.pick(mesh.ranges[i].material, current_material) == pick
+                {
+                    end += mesh.ranges[i].count;
+                    i += 1;
+                }
+                let mut draw = if lil_on { self.draw_of(pick) } else { SetDraw::STANDARD };
+                // 実機は全部入りの 1 本（入切のたびにパイプラインを作り直さない）。ソフトの描画だけ使う機能で作る
+                if !self.software {
+                    draw.spec = look_gpu::LilSpec::ALL;
+                }
+                if draw.lil && draw.invisible {
+                    continue;
+                }
+                draws.push((start, end, pick, draw));
+            }
+        }
+        // 半透明はリニアで重ねる（Unity と同じ）。8 bit の描き先なら、2 つ目のパスで sRGB の見え方へ描く。HDR の描き先（トーンマッピング）と、
+        // sRGB の見え方を作れない機材（GL）は、ガンマの値のまま同じパスで重ねる
+        let is_transparent =
+            |d: &SetDraw| d.lil && d.mode == super::look_gpu::RenderModeAlias::Transparent;
+        let linear_blend = !tone && self.srgb_views;
+        // 要る lilToon のパイプラインを先に作る（描きのパスの中では作れない）
+        let mut needed: Vec<LilPipe> = Vec::new();
+        for (_, _, _, d) in &draws {
+            if !d.lil {
+                continue;
+            }
+            let transparent = is_transparent(d);
+            let srgb = transparent && linear_blend;
+            needed.push(LilPipe { hdr: tone, srgb, cull: d.cull, transparent, outline: false, spec: d.spec });
+            if d.outline {
+                needed.push(LilPipe { hdr: tone, srgb, cull: 1, transparent, outline: true, spec: d.spec });
+            }
+        }
+        // ソフトの描画は機能とスロットの読み方ごとに作るので、溜まりすぎたら今のフレームで使わないものを捨てる
+        if self.lil_pipelines.len() + needed.len() > LIL_PIPELINES_KEPT {
+            self.lil_pipelines.retain(|key, _| needed.contains(key));
+        }
+        for key in needed {
+            self.ensure_lil_pipeline(key);
+        }
+        let any_transparent = draws.iter().any(|(_, _, _, d)| is_transparent(d));
         let target = self.target.as_ref().expect("作った");
         let (color_view, pipelines) = if tone {
             let hdr = self.hdr_target.as_ref().expect("作った");
@@ -1846,6 +2304,17 @@ impl View3dRenderer {
             (&target.view, &self.ldr)
         };
         let bind = &self.bind.as_ref().expect("作った").0;
+        let set_bind = |pick: Pick| {
+            match pick {
+                Pick::Current => self.current_bind.as_ref().map(|b| &b.bind),
+                Pick::Held(at) => self.held[at].bind.as_ref().map(|b| &b.bind),
+                Pick::Blank => None,
+            }
+            .unwrap_or(&self.blank_bind)
+        };
+        let lil = |key: LilPipe| self.lil_pipelines.get(&key).expect("先に作った");
+        // 半透明を別のパスで描くときは、深さを残す
+        let second_pass = any_transparent && linear_blend;
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("yolu-3d-scene"),
@@ -1867,7 +2336,11 @@ impl View3dRenderer {
                     view: &target.depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: if second_pass {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -1881,31 +2354,72 @@ impl View3dRenderer {
                 pass.draw(0..3, 0..1);
             }
             if let Some(mesh) = &self.mesh {
-                pass.set_pipeline(&pipelines.scene);
                 pass.set_bind_group(0, bind, &[]);
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
-                // マテリアルごとに絵の束ねを替えて描く。隣り合うマテリアルが同じ束ね（絵の無いもの）なら 1 回にまとめる
-                let mut i = 0;
-                while i < mesh.ranges.len() {
-                    let pick = self.pick(mesh.ranges[i].material, current_material);
-                    let start = mesh.ranges[i].start;
-                    let mut end = start + mesh.ranges[i].count;
-                    i += 1;
-                    while i < mesh.ranges.len()
-                        && pick == Pick::Blank
-                        && self.pick(mesh.ranges[i].material, current_material) == pick
-                    {
-                        end += mesh.ranges[i].count;
-                        i += 1;
+                // 1. 不透明・カットアウト（Unity の描く順: 不透明 → アルファテスト → 半透明）。輪郭線はその面の後
+                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| !is_transparent(d)) {
+                    pass.set_bind_group(1, set_bind(*pick), &[]);
+                    if d.lil {
+                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: false, outline: false, spec: d.spec }));
+                        pass.draw(*start..*end, 0..1);
+                        if d.outline {
+                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: false, outline: true, spec: d.spec }));
+                            pass.draw(*start..*end, 0..1);
+                        }
+                    } else {
+                        pass.set_pipeline(&pipelines.scene);
+                        pass.draw(*start..*end, 0..1);
                     }
-                    let set_bind = match pick {
-                        Pick::Current => self.current_bind.as_ref().map(|b| &b.bind),
-                        Pick::Held(at) => self.held[at].bind.as_ref().map(|b| &b.bind),
-                        Pick::Blank => None,
+                }
+                // 2. 半透明（HDR の描き先なら同じパスで。モデルの並びの順。面ごとの並べ替えはしない）
+                if !second_pass {
+                    for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
+                        pass.set_bind_group(1, set_bind(*pick), &[]);
+                        pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: d.cull, transparent: true, outline: false, spec: d.spec }));
+                        pass.draw(*start..*end, 0..1);
+                        if d.outline {
+                            pass.set_pipeline(lil(LilPipe { hdr: tone, srgb: false, cull: 1, transparent: true, outline: true, spec: d.spec }));
+                            pass.draw(*start..*end, 0..1);
+                        }
                     }
-                    .unwrap_or(&self.blank_bind);
-                    pass.set_bind_group(1, set_bind, &[]);
-                    pass.draw(start..end, 0..1);
+                }
+            }
+        }
+        if second_pass {
+            if let Some(mesh) = &self.mesh {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("yolu-3d-transparent"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target.srgb_view.as_ref().expect("見え方を作れる機材だけ"),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &target.depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(0, bind, &[]);
+                pass.set_vertex_buffer(0, mesh.buffer.slice(..));
+                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
+                    pass.set_bind_group(1, set_bind(*pick), &[]);
+                    pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: d.cull, transparent: true, outline: false, spec: d.spec }));
+                    pass.draw(*start..*end, 0..1);
+                    if d.outline {
+                        pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: 1, transparent: true, outline: true, spec: d.spec }));
+                        pass.draw(*start..*end, 0..1);
+                    }
                 }
             }
         }

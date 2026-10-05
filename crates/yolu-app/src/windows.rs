@@ -8,6 +8,7 @@ use crate::export::{self, ExportAction};
 use crate::lang::Lang;
 use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
@@ -51,7 +52,7 @@ pub struct ListSpec {
     pub close_label: String,
 }
 
-/// 名前の窓（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験が窓の中だけを撮る）。
+/// 名前の窓（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験が窓の中だけを撮る）。
 pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     let id = if name == "bake" {
         Id::new("yolu.bake-window")
@@ -80,6 +81,17 @@ pub fn show_list(
     offset: &mut Vec2,
     scroll: &mut f32,
 ) -> Option<Reply> {
+    show_list_with(ctx, spec, &[], offset, scroll)
+}
+
+/// `show_list` の、行ごとのツールチップ（`tips[i]` が `Some` の行に載せる。説明はここに置く）を渡せる形。
+pub fn show_list_with(
+    ctx: &egui::Context,
+    spec: &ListSpec,
+    tips: &[Option<String>],
+    offset: &mut Vec2,
+    scroll: &mut f32,
+) -> Option<Reply> {
     let visible = spec.rows.len().min(MAX_ROWS);
     let summary_h = if spec.summary.is_some() { 30.0 } else { 6.0 };
     let height = window::HEADER_HEIGHT + summary_h + visible as f32 * ROW_HEIGHT + 10.0 + FOOTER;
@@ -92,6 +104,14 @@ pub fn show_list(
     };
     let mut reply = None;
     let id = Id::new(("yolu.window", spec.id));
+    // ずらした量は窓の id で覚える（呼ぶ側が毎回 0 から渡しても、ホイールとつまみが効く）。窓を出していなかった後は、渡された値から
+    let scroll_key = id.with("scroll");
+    let frame_now = ctx.cumulative_frame_nr();
+    if let Some((value, at)) = ctx.data(|d| d.get_temp::<(f32, u64)>(scroll_key)) {
+        if frame_now.saturating_sub(at) <= 1 {
+            *scroll = value;
+        }
+    }
     let mut esc = false;
     let closed = window::show(ctx, id, &window_spec, offset, false, |ui, frame| {
         esc = ui.input(|i| i.key_pressed(Key::Escape))
@@ -126,11 +146,7 @@ pub fn show_list(
             vec2(body.width(), visible as f32 * ROW_HEIGHT),
         );
         let content = spec.rows.len() as f32 * ROW_HEIGHT;
-        let max_scroll = (content - list.height()).max(0.0);
-        if ui.rect_contains_pointer(list) {
-            *scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-        }
-        *scroll = scroll.clamp(0.0, max_scroll);
+        let bar = Scroll::begin(ui, list, content, scroll);
         let mut child = ui.new_child(UiBuilder::new().max_rect(list));
         child.set_clip_rect(list.intersect(ui.clip_rect()));
         let cp = child.painter().clone();
@@ -150,10 +166,7 @@ pub fn show_list(
                     list.left() + 14.0,
                     list.top() + i as f32 * ROW_HEIGHT - *scroll,
                 ),
-                vec2(
-                    list.width() - 28.0 - if max_scroll > 0.0 { 8.0 } else { 0.0 },
-                    ROW_HEIGHT,
-                ),
+                vec2(list.width() - 28.0 - bar.reserved(), ROW_HEIGHT),
             );
             if r.bottom() < list.top() || r.top() > list.bottom() {
                 continue;
@@ -185,17 +198,13 @@ pub fn show_list(
             }
             w::text(&cp, middle, &row.middle, t::LABEL_DIM, Align::Left);
             w::text(&cp, right, &row.right, t::LABEL_DIM, Align::Right);
+            if let Some(Some(tip)) = tips.get(i) {
+                child
+                    .interact(r, id.with(("tip", i)), Sense::hover())
+                    .on_hover_text(tip);
+            }
         }
-        if max_scroll > 0.0 {
-            let bar_h = (list.height() * list.height() / content).max(16.0);
-            let bar_y = list.top() + (list.height() - bar_h) * *scroll / max_scroll;
-            w::rounded(
-                &cp,
-                Rect::from_min_size(pos2(list.right() - 8.0, bar_y), vec2(4.0, bar_h)),
-                t::CONTROL_ACTIVE,
-                2.0,
-            );
-        }
+        bar.end(ui, id.with("list-scroll"), scroll);
         // 下の帯
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         w::fill(&p, footer, t::PANEL_HEADER);
@@ -221,6 +230,7 @@ pub fn show_list(
             }
         }
     });
+    ctx.data_mut(|d| d.insert_temp(scroll_key, (*scroll, frame_now)));
     if reply.is_none() && (closed || esc) {
         reply = Some(Reply::Closed);
     }
@@ -236,6 +246,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         || app.bake.is_probing_gpu()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.distribute.is_busy()
         || app.np_is_busy()
         || app.update.is_busy()
         || app.brushes.import.is_busy()
@@ -248,8 +259,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);
+    crate::psd_import::show_check(ctx, app);
     crate::psd_export::show_options(ctx, app);
     crate::psd_export::show_confirm(ctx, app);
+    crate::distribute::window::show(ctx, app);
+    crate::distribute::window::show_replace(ctx, app);
     psd_report(ctx, app);
     merge_confirm(ctx, app);
     crate::update::window::show(ctx, app);
@@ -263,6 +277,9 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.psd.confirm.is_some()
         || app.psd.options_open
         || app.psd.notes_confirm.is_some()
+        || app.psd.import_check.is_some()
+        || app.distribute.window_visible()
+        || app.distribute.replace.is_some()
         || app.update.window_open()
         || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
         || app.np.window.is_some()
@@ -560,9 +577,10 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
         }],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
+    let tips: Vec<Option<String>> = report.lines.iter().map(|l| l.tooltip.clone()).collect();
     let mut offset = app.psd.report_offset;
     let mut scroll = 0.0;
-    let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
+    let reply = show_list_with(ctx, &spec, &tips, &mut offset, &mut scroll);
     app.psd.report_offset = offset;
     if reply.is_some() {
         app.apply(Action::Psd(PsdAction::DismissReport));
@@ -640,6 +658,23 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             ),
             fraction: None,
             cancel: Action::Psd(PsdAction::Cancel),
+            canceling: p.canceling,
+        });
+    }
+    if let Some(p) = app.distribute.progress() {
+        entries.push(Entry {
+            id: "distribute",
+            text: format!(
+                "{} — {}",
+                if p.writing {
+                    lang.pick("配布用に保存中", "Saving for distribution")
+                } else {
+                    lang.pick("配布用の写しを準備中", "Preparing the copy for distribution")
+                },
+                p.file
+            ),
+            fraction: None,
+            cancel: Action::Distribute(crate::distribute::DistributeAction::CancelJob),
             canceling: p.canceling,
         });
     }
@@ -788,12 +823,14 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
     app.apply(Action::Psd(PsdAction::Cancel));
+    app.apply(Action::Distribute(crate::distribute::DistributeAction::CancelJob));
     app.apply(Action::Update(crate::update::UpdateAction::Cancel));
     app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
     let start = std::time::Instant::now();
     while (app.bake.is_baking()
         || app.export.is_exporting()
         || app.psd.is_busy()
+        || app.distribute.is_busy()
         || app.update.is_busy()
         || app.brushes.import.is_busy())
         && start.elapsed() < wait
@@ -801,6 +838,7 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
         app.poll_bake();
         app.poll_export();
         app.poll_psd();
+        app.poll_distribute();
         app.poll_update();
         app.poll_brush_import();
         std::thread::sleep(std::time::Duration::from_millis(10));

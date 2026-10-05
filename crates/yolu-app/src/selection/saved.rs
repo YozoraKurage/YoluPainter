@@ -10,6 +10,7 @@ use egui::{pos2, vec2, Id, Key, Rect, Vec2};
 use super::{combine_name, SelAction, SelEdit};
 use crate::engine::{SelectionCombine, SelectionMask};
 use crate::state::{Action, AppState};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
@@ -316,11 +317,8 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             return;
         }
         let content_h = list.len() as f32 * ROW;
-        let max_scroll = (content_h - list_h).max(0.0);
-        if ui.rect_contains_pointer(list_rect) {
-            win.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-        }
-        win.scroll = win.scroll.clamp(0.0, max_scroll);
+        let bar = Scroll::begin(ui, list_rect, content_h, &mut win.scroll);
+        let width = width - bar.reserved();
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list_rect));
         child.set_clip_rect(list_rect.intersect(ui.clip_rect()));
         let ui = &mut child;
@@ -378,6 +376,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
                 actions.push(Action::Sel(SelAction::Saved(SavedOp::Delete(i))));
             }
         }
+        bar.end(ui, (id, "scroll"), &mut win.scroll);
     });
     win.offset = offset;
     // 動かした窓の状態を戻す（操作で閉じた・窓を替えたあとは上書きしない）

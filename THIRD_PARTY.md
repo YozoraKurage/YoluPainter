@@ -12,7 +12,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 クレートに原文が無い場合は、そのクレートの発行時コミットにある上流の原文を取得する。
 単に同じ種類の一般的な許諾文で代用せず、著作権表記と NOTICE も保持する。
 
-生成方法は [開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
+生成方法は [開発用の手順](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<target>/<クレート>/` にできる（`--target` を省くと Windows GNU 用を `target/third-party/<クレート>/` に出力）。
 生成物は Git に入れない。この文書は確認済みの依存構成の記録で、配布には生成した全文を同梱する。
 
@@ -27,6 +27,9 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
   （MIT OR Apache-2.0 から MIT）と、その依存の `os_pipe`・`tree_magic_mini`・`nom`（いずれも MIT）、`petgraph`・`fixedbitset`・
   `hashbrown 0.15.5`（MIT OR Apache-2.0 から MIT）、`foldhash 0.1.5`（Zlib）。Windows の依存は変わらない。`tree_magic_mini` の GPL のデータ
   （別クレート `tree_magic_db`、`with-gpl-data` 機能）は有効にしていない。有効にすると GPL が入るので、機能を足さないこと。
+- `yolu-app` は画面の並び（ドックのタブの組・分け方・窓の大きさ）の保存のために、`egui_dock` の `serde` 機能を有効にしている。
+  `egui`・`epaint`・`emath`・`ecolor`・`accesskit` などが既に使っている `serde` を使うだけで、増えるクレートは `accesskit` の `serde` 機能が引く
+  手続きマクロの `enumn 0.1.14`（MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の 1 件だけ。
 - egui の標準書体に含まれる Hack の原文には **Bitstream Vera** の条件もある。
   OFL-1.1・Ubuntu Font Licence とともに全文を保持する。
 - 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU は app・bridge ともクレート分の配布用全文束を生成できる**。
@@ -60,8 +63,8 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 標準書体の OFL-1.1 と Ubuntu Font Licence は、各書体の著作権・名称・条件を原文のまま全文束に含める。
 書体を変更して配る場合は、予約された書体名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
-[既存のアイコンの表記](crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
-アイコン 91 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
+[既存のアイコンの表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
+アイコン 102 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
 Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
 
 ### 同梱の画面の書体（BIZ UDPGothic）
@@ -71,7 +74,7 @@ Phosphor はブラシ・グラデーション・楕円選択・多角形選択�
 配布元は [googlefonts/morisawa-biz-ud-gothic](https://github.com/googlefonts/morisawa-biz-ud-gothic) のリリース v1.051
 （コミット `18934af56b9c003ca58c54bffbf226848cb11032`）の TTF で、加工せずに `crates/yolu-app/assets/fonts/` へ置く。
 許諾の全文は同じ場所の `OFL.txt`（配布元の同じコミットの原文）と
-[書体の第三者表記](crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
+[書体の第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
 （アイコンと同じ扱い）。
 
 | 同梱ファイル | SHA-256 |
@@ -87,6 +90,21 @@ Phosphor はブラシ・グラデーション・楕円選択・多角形選択�
 `unicode-ident` の Unicode-3.0、ビルド用 `regex-syntax` の Unicode データの Unicode-DFS-2016、
 `tracing-core` 内の spin の MIT 原文も収集する。未使用の zlib contrib・zlib-ng は対象外。
 Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原文も保持する（共通設定のため Windows の束にも保守的に含める）。
+
+## lilToon の再現（式の移植）
+
+3D ビューの lilToon の見た目（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）と、見た目の欄のプロパティの名前・既定値
+（`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
+シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
+OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilToon の `lilHashRGB4` からで、その元は Shadertoy の
+「Simplest Fastest 2D Hash」（MdcfDj、**Unlicense**。原文の先頭の表記で確認）。MIT の原文と出どころは [再現の第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
+にあり、`tools/licenses-reviewed.json` の `bundled` で照合して app の全文束に含める。クレートではないので、上の件数には含めない。
+
+## グラデーションの混色（Oklab）
+
+グラデーションマップの「知覚的」な混色（`crates/yolu-core/src/generator/mixing.rs`）は、色空間 Oklab（Björn Ottosson、2020）の sRGB との変換の式
+（<https://bottosson.github.io/posts/oklab/>。著者は式と参照コードを **MIT**（Copyright (c) 2020 Björn Ottosson）で公開している）の係数を使う。
+変換の行列の係数だけを使い、参照コードは移していない。クレートではないので、上の件数には含めない。輝度の補正の式（彩度の落ちた量に比例して明るさを持ち上げる）はこのアプリのもの。
 
 ## 生成・試験に使う道具
 
@@ -111,13 +129,32 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 `SHA256SUMS`・出どころと束の SHA-256 を書いた `README.md` は `crates/yolu-brush-sets/data/krita4/` にある。
 作者の表記（CC0 では不要）: David Revoy（Deevad）と、Ramon Miranda・Razvanc・Radian・Wolthera・Storm・Scottyp ほかの派生、Krita プロジェクト。
 Krita のプリセット（`.kpp`）・SVG の筆先・パターンは入れていない。このアプリでの設定（半径・間隔など）は独自のもの。
-[筆先の第三者表記](crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
+[筆先の第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
 `tools/licenses-reviewed.json` で筆先 76 個・元の宣言・取り込み記録・表記のハッシュを照合する。
 ロゴを除くアプリの同梱画像はこの筆先と前述のアイコンであり、試験の fixtures・snapshots は配布へ含めない。
 
 ブラシ形式の読み手は公開された形式の説明から書いた。他のプロジェクトのコードは使っていない:
 GIMP の `gbr.txt`・`gih.txt`・`vbr.txt`（devel-docs）、Photoshop File Formats Specification（版 1・2 のブラシ、記述子、パターン）、
-版 6 以降の `samp`・`desc` の並びの公開された解説。CLIP STUDIO PAINT の `.sut` は、筆先が保護された入れ物に入っているので読まない。
+版 6 以降の `samp`・`desc` の並びの公開された解説。
+
+CLIP STUDIO PAINT の `.sut`（SQLite）の読み手も、公開された解析から表・列・BLOB の形という事実だけを取って書いた（コードは移していない）:
+Kenneth Evans の VS-CSPBrushInfo（MIT。`Node`・`Variant`・影響元と素材の参照の BLOB）、Leon Schoenbrunn の CSP2PC（MIT。列の名前）、
+Mari Paint の取り込みの注釈つきソースと調査ノート（Apache-2.0。影響元のヘッダー・素材の PNG の場所・列の別名）、Brushfactory の公開の説明
+（`MaterialFile.FileData` が無圧縮 tar であること）。AGPL-3.0 の CSPBrushExtract、GPL-3.0 の変換器（Krita 向け）、許諾の無い実装は読んでいない。
+分かった形と、本物のファイルで確かめていない所は [ブラシの取り込み](docs/BRUSH_IMPORT.md) に書く。
+
+SQLite の読み取りには `rusqlite 0.40.2`（MIT）を `bundled`・`serialize`・`limits`・`hooks` で使う。`libsqlite3-sys 0.38.2`（MIT）が
+SQLite 3.53.2 の amalgamation（`sqlite3.c`・`sqlite3.h`）を同梱してコンパイルする。**SQLite はパブリックドメイン**（著作権の放棄と祝福の文が
+`sqlite3.c` の冒頭にあり、許諾の全文は無い）。このクレートには SQLCipher のソース（`sqlcipher/`）も入っているが、機能
+`bundled-sqlcipher` は有効にしておらず、組み込まない。SQLite の拡張の読み込み（`load_extension`）も有効にしていない。実行時の依存は
+`fallible-iterator 0.3.0`・`fallible-streaming-iterator 0.1.9`（どちらも MIT/Apache-2.0 から MIT）が増える。
+SQLite の C のコンパイルでクリーンビルドが重くなる: この環境（gcc、最適化 3、1 コア）で約 40 秒。2 回目以降は再利用される。
+
+| 確認したソース（`libsqlite3-sys 0.38.2` 同梱） | SHA-256 |
+|---|---|
+| `sqlite3/sqlite3.c`（SQLite 3.53.2） | `0a409f1633283fa31a9126b11fbfd64a1991c5d30defad07e5745d4667f5e23d` |
+| `sqlite3/sqlite3.h` | `9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e` |
+| `rusqlite`・`libsqlite3-sys` の `LICENSE`（同一の MIT） | `c10c1f27337546471e5f7e4e97fdd398b35b9d4e126115dcd22de8d8e65abf6f` |
 
 ## FBX の読み込み（ufbx）
 
@@ -159,15 +196,15 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 
 原文取得後は `--offline` でも同じ照合ができる。
 配布物には対象ごとの `THIRD_PARTY.md` を `DEPENDENCIES.md`、全文を `THIRD_PARTY_LICENSES.txt` として同梱する。
-`LICENSE`・この `THIRD_PARTY.md`・`README.md` も同梱する。zip・tar.gz とインストーラーは
-`xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](docs/RELEASING.md) と一致する。
+`LICENSE`・この `THIRD_PARTY.md`・`README.md`・`README.en.md` と、使う人向けの `docs/`（日英。開発とリリースの手順は入れない）も同梱する。
+zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/RELEASING.md) と一致する。
 別の対象の一覧を流用しない。結果は `target/third-party/<target>/<クレート>/` に出力する。
 
 | 対象 | app（更新依存込み） | bridge | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 200 | 27 | 31 | 49 | 生成成功 |
-| Windows GNU | 200 | 27 | 31 | 49 | 生成成功 |
-| Linux GNU | 274 | 24 | 31 | 54 | 判断待ち |
+| Windows MSVC | 205 | 27 | 31 | 49 | 生成成功 |
+| Windows GNU | 205 | 27 | 31 | 49 | 生成成功 |
+| Linux GNU | 279 | 24 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
@@ -184,11 +221,11 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。外部クレート 462 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。外部クレート 467 件の内訳は次のとおり。
 
 | 範囲（3 対象の和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 317 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
+| 通常・ビルド依存 | 322 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
 | 試験専用 | 13 | MIT 12 件は原文を照合。MPL-2.0 1 件は未承認 |
 | 対象外（他 OS・現在無効な機能） | 132 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
@@ -214,7 +251,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 `egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
 現在の製品の依存には含まれない。上記の lock 監査はこの 1 件と Linux の 2 件で終了 1 となる。
 
-全 462 件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した。Linux の既知の 2 件に加え、
+全 467 件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（`rusqlite` 系の 4 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
 対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
 現在の Windows・Linux の依存には含まれないが、このクレートを使う対象・機能を追加するときは判断が必要。
 `self_cell` の GPL は Apache-2.0 と選択できる条件、対象外の `r-efi 5.3.0`・`6.0.0` の LGPL は MIT・Apache-2.0 と選択できる条件。
@@ -229,9 +266,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
-外部クレート 200 件（同名の別版は別件）。実行時 164 件。
+外部クレート 205 件（同名の別版は別件）。実行時 168 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -243,7 +280,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 174 |
+| MIT | 179 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -302,11 +339,14 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | egui_dock | 0.21.1 | 実行時 | MIT | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| enumn | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | error-code | 3.4.0 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -338,6 +378,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | libloading | 0.8.9 | 実行時 | ISC | ISC | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
+| libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
 | linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | litrs | 1.0.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -377,6 +418,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
 | renderdoc-sys | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rfd | 0.17.2 | 実行時 | MIT | MIT | 確認済み |
+| rusqlite | 0.40.2 | 実行時 | MIT | MIT | 確認済み |
 | rustc-hash | 1.1.0 | 実行時 | Apache-2.0/MIT | MIT | 確認済み |
 | rustc-hash | 2.1.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | rustc_version | 0.4.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -456,7 +498,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
 外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
@@ -506,9 +548,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
-外部クレート 200 件（同名の別版は別件）。実行時 164 件。
+外部クレート 205 件（同名の別版は別件）。実行時 168 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -520,7 +562,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | BSD-3-Clause | 3 |
 | BSL-1.0 | 2 |
 | ISC | 1 |
-| MIT | 174 |
+| MIT | 179 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -579,11 +621,14 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | egui_dock | 0.21.1 | 実行時 | MIT | MIT | 確認済み |
 | either | 1.18.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | emath | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| enumn | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | error-code | 3.4.0 | 実行時 | BSL-1.0 | BSL-1.0 | 確認済み |
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | find-msvc-tools | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -615,6 +660,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | libloading | 0.8.9 | 実行時 | ISC | ISC | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
+| libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
 | linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | litrs | 1.0.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -654,6 +700,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | recvmsg | 1.0.0 | 実行時 | 0BSD | 0BSD | 確認済み |
 | renderdoc-sys | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rfd | 0.17.2 | 実行時 | MIT | MIT | 確認済み |
+| rusqlite | 0.40.2 | 実行時 | MIT | MIT | 確認済み |
 | rustc-hash | 1.1.0 | 実行時 | Apache-2.0/MIT | MIT | 確認済み |
 | rustc-hash | 2.1.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | rustc_version | 0.4.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -733,7 +780,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
 外部クレート 27 件（同名の別版は別件）。実行時 15 件。
 
@@ -783,9 +830,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
-外部クレート 274 件（同名の別版は別件）。実行時 231 件。
+外部クレート 279 件（同名の別版は別件）。実行時 235 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -796,7 +843,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | Apache-2.0 AND MIT | 1 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 252 |
+| MIT | 257 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -881,6 +928,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | endi | 1.1.1 | 実行時 | MIT | MIT | 確認済み |
 | enumflags2 | 0.7.12 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | enumflags2_derive | 0.7.12 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
+| enumn | 0.1.14 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint | 0.36.2 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | epaint_default_fonts | 0.36.2 | 実行時 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 確認済み |
 | equivalent | 1.0.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -888,6 +936,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | euclid | 0.22.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | event-listener-strategy | 0.5.4 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | event-listener | 5.4.2 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| fallible-iterator | 0.3.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
+| fallible-streaming-iterator | 0.1.9 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | fastrand | 2.5.0 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | fdeflate | 0.3.7 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | fearless_simd | 0.4.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
@@ -927,6 +977,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | libloading | 0.8.9 | 実行時 | ISC | ISC | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
+| libsqlite3-sys | 0.38.2 | 実行時 | MIT | MIT | 確認済み |
 | libz-sys | 1.1.29 | 実行時 | MIT OR Apache-2.0 | MIT AND Zlib | 確認済み |
 | linebender_resource_handle | 0.1.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | linux-raw-sys | 0.12.1 | 実行時 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | MIT | 確認済み |
@@ -981,6 +1032,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | read-fonts | 0.41.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | renderdoc-sys | 1.1.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | rfd | 0.17.2 | 実行時 | MIT | MIT | 確認済み |
+| rusqlite | 0.40.2 | 実行時 | MIT | MIT | 確認済み |
 | rustc-hash | 1.1.0 | 実行時 | Apache-2.0/MIT | MIT | 確認済み |
 | rustc-hash | 2.1.3 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
 | rustc_version | 0.4.1 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1083,7 +1135,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-bridge の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `3391ea73dbb2f09081c8558a80ff9b022a423ba7c8f3b6c66dd3a29cb2c3033f`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f6838569d80545d334fb001e135abcda559a4fc3f90d37c71ec66ee479a7b900`。
 
 外部クレート 24 件（同名の別版は別件）。実行時 12 件。
 

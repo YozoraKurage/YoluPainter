@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use super::mix::ColorMix;
 use super::pressure::PressureResponses;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
@@ -37,6 +38,8 @@ pub struct Brush {
     /// 筆圧の応え（項目ごとの最小値と曲線。拡張: C# に無い）。切り替えは [`BrushSettings`] の `pressure_*` と
     /// [`Controls::pressure_hardness`]。既定（最小値 0・直線）は、切り替えが真なら筆圧をそのまま使う（C# と同じ）。
     pub pressure: PressureResponses,
+    /// 色の混ぜ（厚塗り。拡張: C# に無い。既定は混ぜない）。色のチャンネルを色で塗るブラシだけに効く（[`ColorMix`]）。
+    pub mix: ColorMix,
     pub assist: StrokeAssist,
     pub effect: BrushEffect,
     /// ステンシル（None は無し）。共有する（写さない）。
@@ -468,6 +471,7 @@ impl Brush {
         if let Some(d) = &self.dual {
             d.validate()?;
         }
+        self.mix.validate()?;
         match self.effect {
             BrushEffect::Paint => {}
             BrushEffect::Blur { radius } => {
@@ -524,6 +528,7 @@ impl Brush {
 
     /// 筆圧を、不透明度・流量の応え（最小値と曲線）に通した係数。切っている項目は 1。応えが既定なら筆圧そのもの（C# と同じ値）。
     pub(crate) fn pressure_scale(&self, pressure: f64) -> super::PressureScale {
+        let (mix_paint, mix_density) = self.mix.pressure_factors(pressure);
         super::PressureScale {
             opacity: if self.base.pressure_opacity {
                 self.pressure.opacity.apply(pressure)
@@ -535,6 +540,8 @@ impl Brush {
             } else {
                 1.0
             },
+            mix_paint,
+            mix_density,
         }
     }
 

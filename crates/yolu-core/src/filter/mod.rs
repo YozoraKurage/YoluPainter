@@ -412,7 +412,7 @@ fn prepare(
             && matches!(s.settings, Settings::Generator { .. })
             && options.generators.is_none()
         {
-            return Err(Error::Invalid("Generator の入力解決器がありません"));
+            return Err(Error::Invalid("ジェネレーターの入力解決器がありません"));
         }
         let given = options.statistics.and_then(|all| all[i]);
         if let Some(st) = given {
@@ -748,7 +748,7 @@ impl<'a> Engine<'a> {
                         };
                         if matches!(g,Generated::Scalar(v) if !v.is_finite() || !(0.0..=1.0).contains(&v))
                         {
-                            return Err(Error::Invalid("Generator の値は有限の0..1です"));
+                            return Err(Error::Invalid("ジェネレーターの値は有限の0..1です"));
                         }
                         pixels::generate(
                             p,

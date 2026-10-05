@@ -268,3 +268,20 @@ fn escape_key_messages_cancel_and_restore_hidden_window() {
     }
     assert!(native_input::decode(0x0101, 0x1b, 0, &pointer).is_none());
 }
+
+#[test]
+fn a_picked_colour_goes_to_the_waiting_ramp_stop_or_else_to_the_main_colour() {
+    // 待っている色の分岐点があれば、そこへ（描画色は動かさない）。1 回で待ちは終わる
+    let mut app = AppState::new(8, 8);
+    app.color.set_main([0.0, 0.0, 0.0, 1.0]);
+    app.eyedrop.ramp_stop_pending = true;
+    deliver(&mut app, [10, 20, 30]);
+    assert_eq!(app.eyedrop.ramp_stop_pick, Some([10, 20, 30]));
+    assert!(!app.eyedrop.ramp_stop_pending);
+    assert_eq!(app.color.main, [0.0, 0.0, 0.0, 1.0], "描画色は動かさない");
+    // 待っていなければ、今までどおり描画色へ
+    app.eyedrop.ramp_stop_pick = None;
+    deliver(&mut app, [255, 0, 0]);
+    assert_eq!(app.eyedrop.ramp_stop_pick, None);
+    assert_eq!(app.color.main, [1.0, 0.0, 0.0, 1.0]);
+}

@@ -5,18 +5,19 @@
 
 use std::sync::Arc;
 
-use egui::{pos2, vec2, Color32, Rect, Ui};
+use egui::{Color32, Ui};
 use yolu_core::curve::{Curve, CurvePoint};
-use yolu_core::generator::{ColorStop, OpacityStop, Ramp};
 use yolu_core::{
     BalanceRange, BrightnessContrast, Channel, ChannelKind, ColorAdjust, ColorBalance, Document,
     GradientMap, LayerId, Posterize, Rect as CoreRect, Rgba8, Threshold, ToneChannel, ToneCurves,
 };
 
-use super::properties::{percent_row, slider_row, toggle_row};
+use super::properties::{slider_row, toggle_row};
+use super::ramp_rows;
+use crate::eyedrop::EyedropState;
+use crate::rampsets::RampSets;
 use crate::lang::Lang;
 use crate::ui::curve::{self, CurveStyle};
-use crate::ui::ramp::{self, ops as ramp_ops, Selection};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
 
@@ -35,15 +36,23 @@ pub struct Params<'a> {
     pub enabled: bool,
     /// 描くチャンネルに効かないときの理由（スライダーのツールチップに出す）。
     pub why: Option<&'a str>,
-    /// 描画色（分岐点の色の見本を押したときの色。0〜1 の RGBA）。
+    /// メインの色（描画色。分岐点の色をメインにしたときの色。0〜1 の RGBA）。
     pub paint: [f32; 4],
+    /// サブの色（背景色）。
+    pub sub: [f32; 4],
     pub lang: Lang,
     /// トーンカーブの後ろに薄く敷く分布（調整の層の下の合成）。
     pub histogram: Option<&'a Histogram>,
+    /// グラデーションセット（グラデーションマップの見本の一覧）。
+    pub sets: &'a mut RampSets,
+    /// 画面の色を取るスポイトの状態（グラデーションマップの色の分岐点のスポイトが使う）。
+    pub eyedrop: &'a mut EyedropState,
+    /// 状態の帯の知らせ（グラデーションセットの保存の失敗など）。
+    pub message: &'a mut String,
 }
 
 /// 6 種の欄の全部。
-pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &Params<'_>, value: &ColorAdjust) -> Option<Change> {
+pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, value: &ColorAdjust) -> Option<Change> {
     match value {
         ColorAdjust::GradientMap(v) => gradient_map_rows(ui, rows, p, v),
         ColorAdjust::ToneCurve(v) => tone_curve_rows(ui, rows, p, v),
@@ -103,128 +112,16 @@ fn choice_buttons(
 
 // ───────── グラデーションマップ ─────────
 
-/// ランプのプリセット（この道具で決めた数個。位置は 0・0.5・1、中点は 0.5、不透明度は 1 で、PSD の刻みに乗る）。
-pub fn gradient_presets() -> Vec<(&'static str, &'static str, Ramp)> {
-    let make = |colors: &[[u8; 3]]| -> Ramp {
-        let n = colors.len();
-        let stops = colors
-            .iter()
-            .enumerate()
-            .map(|(i, c)| ColorStop {
-                position: i as f64 / (n - 1) as f64,
-                color: Rgba8::new(c[0], c[1], c[2], 255),
-                midpoint: 0.5,
-            })
-            .collect();
-        let opacity = |position| OpacityStop {
-            position,
-            opacity: 1.0,
-            midpoint: 0.5,
-        };
-        Ramp::new(stops, vec![opacity(0.0), opacity(1.0)], None).expect("プリセットのランプ")
-    };
-    vec![
-        ("白黒", "Black and White", Ramp::default()),
-        (
-            "セピア",
-            "Sepia",
-            make(&[[36, 22, 10], [160, 110, 70], [255, 235, 200]]),
-        ),
-        (
-            "青と橙",
-            "Teal and Orange",
-            make(&[[16, 40, 84], [128, 120, 124], [255, 190, 110]]),
-        ),
-        (
-            "夕焼け",
-            "Sunset",
-            make(&[[30, 10, 60], [200, 40, 80], [255, 200, 80]]),
-        ),
-        (
-            "深緑",
-            "Forest",
-            make(&[[4, 20, 12], [40, 120, 70], [190, 255, 190]]),
-        ),
-        (
-            "氷",
-            "Ice",
-            make(&[[6, 12, 48], [90, 170, 230], [255, 255, 255]]),
-        ),
-    ]
-}
-
-/// プリセットの見本の列。押したプリセットのランプを返す。
-fn preset_row(ui: &mut Ui, rows: &mut Rows, p: &Params<'_>) -> Option<Ramp> {
-    let presets = gradient_presets();
-    let r = rows.row(22.0, 4.0);
-    let mut chosen = None;
-    for (i, cell) in Rows::split(r, presets.len(), 4.0).into_iter().enumerate() {
-        let (ja, en, ramp) = &presets[i];
-        let id = ui.make_persistent_id((p.key, "gradient.preset", i));
-        let response = ui.interact(
-            cell,
-            id,
-            if p.enabled {
-                egui::Sense::click()
-            } else {
-                egui::Sense::hover()
-            },
-        );
-        let painter = ui.painter();
-        const STEPS: usize = 16;
-        for k in 0..STEPS {
-            if let Ok(c) = ramp.sample_stops(k as f64 / (STEPS - 1) as f64, false) {
-                let x0 = cell.left() + cell.width() * k as f32 / STEPS as f32;
-                w::fill(
-                    painter,
-                    Rect::from_min_size(
-                        pos2(x0, cell.top()),
-                        vec2(cell.width() / STEPS as f32 + 1.0, cell.height()),
-                    ),
-                    Color32::from_rgb(c.r, c.g, c.b),
-                );
-            }
-        }
-        w::outline(
-            painter,
-            cell,
-            if p.enabled && response.hovered() {
-                t::ACCENT
-            } else {
-                t::BORDER
-            },
-            1.0,
-            2.0,
-        );
-        let name = p.lang.pick(*ja, *en);
-        let response = response.on_hover_text(name);
-        response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, p.enabled, name));
-        if p.enabled && response.clicked() {
-            chosen = Some(ramp.clone());
-        }
-    }
-    chosen
-}
-
+/// グラデーションマップの欄: 逆向きの切り替えと、共通のランプの欄（`ramp_rows`。混色・グラデーションセット・分岐点・混合率曲線）。
 fn gradient_map_rows(
     ui: &mut Ui,
     rows: &mut Rows,
-    p: &Params<'_>,
+    p: &mut Params<'_>,
     map: &GradientMap,
 ) -> Option<Change> {
     let lang = p.lang;
-    let mut ramp = map.ramp().clone();
     let mut reverse = map.reverse();
     let mut result: Option<Change> = None;
-    let finish = |ramp: &Ramp, reverse: bool, discrete: bool| Change {
-        value: ColorAdjust::GradientMap(GradientMap::new(ramp.clone(), reverse)),
-        discrete,
-    };
-    if let Some(preset) = preset_row(ui, rows, p) {
-        ramp = preset;
-        result = Some(finish(&ramp, reverse, true));
-    }
     if let Some(on) = toggle_row(
         ui,
         rows,
@@ -238,184 +135,31 @@ fn gradient_map_rows(
         p.enabled,
     ) {
         reverse = on;
-        result = Some(finish(&ramp, reverse, true));
+        result = Some(Change {
+            value: ColorAdjust::GradientMap(GradientMap::new(map.ramp().clone(), reverse)),
+            discrete: true,
+        });
     }
-    // 分岐点
-    let (selection_id, mut selection) = remembered(ui, p, "gm.selection", Selection::default());
-    let r = rows.row(ramp::STOPS_HEIGHT, 4.0);
-    if let Some(next) = ramp::stops_editor(
-        ui,
-        r,
-        (p.key, "gm.stops"),
-        &ramp,
-        &mut selection,
-        false,
-        lang.pick(
-            "上: 不透明度の分岐点。下: 色の分岐点。何も無い所を押すと足し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
-            "Top: opacity stops. Bottom: colour stops. Click to add, drag to move, right-click or drag outside to remove. Small diamonds move the midpoint. Escape cancels a drag",
-        ),
-        p.enabled,
-    ) {
-        ramp = next;
-        result = Some(finish(&ramp, reverse, true));
-    }
-    selection = ramp_ops::clamp_selection(&ramp, selection);
-    ui.data_mut(|d| d.insert_temp(selection_id, selection));
-    // 選んだ分岐点
-    let count = if selection.alpha {
-        ramp.opacities().len()
-    } else {
-        ramp.colors().len()
-    };
-    let (min, max) = ramp_ops::position_range(&ramp, selection.alpha, selection.index);
-    let position = ramp_ops::selected_position(&ramp, selection);
-    if let Some(v) = slider_row(
-        ui,
-        rows,
-        "ca.gm.position",
-        lang.pick("分岐点の位置", "Stop Position"),
-        (position * 100.0) as f32,
-        ((min * 100.0) as f32, (max * 100.0) as f32),
-        NumberFormat {
-            decimals: 2,
-            trim: true,
-            suffix: "%",
+    let mut params = ramp_rows::Params {
+        key: p.key,
+        enabled: p.enabled,
+        lang,
+        main: p.paint,
+        sub: p.sub,
+        scalar: false,
+        features: ramp_rows::Features {
+            mixing: true,
+            value_curve: false,
         },
-        None,
-        p.enabled,
-    ) {
-        if let Some(next) = ramp_ops::move_stop(
-            &ramp,
-            selection.alpha,
-            selection.index,
-            f64::from(v) / 100.0,
-        ) {
-            ramp = next;
-            result = Some(finish(&ramp, reverse, false));
-        }
-    }
-    if selection.alpha {
-        let s = ramp.opacities()[selection.index];
-        if let Some(v) = percent_row(
-            ui,
-            rows,
-            "ca.gm.opacity",
-            lang.pick("分岐点の不透明度", "Stop Opacity"),
-            s.opacity,
-            (0.0, 1.0),
-            Some(lang.pick(
-                "この位置でグラデーションの色をどれだけ見せるか（0% なら元の色のまま）",
-                "How much of the gradient colour shows here (0% keeps the original colour)",
-            )),
-            p.enabled,
-        ) {
-            let mut list = ramp.opacities().to_vec();
-            list[selection.index].opacity = v;
-            if let Some(next) = ramp_ops::with_opacities(&ramp, list) {
-                ramp = next;
-                result = Some(finish(&ramp, reverse, false));
-            }
-        }
-        if selection.index + 1 < count {
-            if let Some(v) = percent_row(
-                ui,
-                rows,
-                "ca.gm.midpoint",
-                lang.pick("区間の中点", "Segment Midpoint"),
-                s.midpoint,
-                (0.01, 0.99),
-                None,
-                p.enabled,
-            ) {
-                let mut list = ramp.opacities().to_vec();
-                list[selection.index].midpoint = v;
-                if let Some(next) = ramp_ops::with_opacities(&ramp, list) {
-                    ramp = next;
-                    result = Some(finish(&ramp, reverse, false));
-                }
-            }
-        }
-    } else {
-        let s = ramp.colors()[selection.index];
-        let c = s.color;
-        let row = rows.row(t::ROW_HEIGHT, 4.0);
-        const LABEL: f32 = 86.0;
-        w::text(
-            ui.painter(),
-            Rect::from_min_size(row.min, vec2(LABEL, row.height())),
-            lang.pick("分岐点の色", "Stop Color"),
-            t::LABEL,
-            w::Align::Left,
-        );
-        let swatch = Rect::from_min_max(
-            pos2(row.left() + LABEL, row.top() + 1.0),
-            pos2(row.right(), row.bottom() - 1.0),
-        );
-        let shown = [
-            f32::from(c.r) / 255.0,
-            f32::from(c.g) / 255.0,
-            f32::from(c.b) / 255.0,
-            1.0,
-        ];
-        if w::color_swatch(
-            ui,
-            swatch,
-            (p.key, "gm.color"),
-            shown,
-            lang.pick(
-                "分岐点の色（押すと描画色にする）",
-                "Colour of the stop (click to set it to the paint color)",
-            ),
-            p.enabled,
-        )
-        .clicked()
-        {
-            let m = p.paint;
-            let mut list = ramp.colors().to_vec();
-            list[selection.index].color =
-                Rgba8::new(w::to_byte(m[0]), w::to_byte(m[1]), w::to_byte(m[2]), 255);
-            if let Some(next) = ramp_ops::with_colors(&ramp, list) {
-                ramp = next;
-                result = Some(finish(&ramp, reverse, true));
-            }
-        }
-        if selection.index + 1 < count {
-            if let Some(v) = percent_row(
-                ui,
-                rows,
-                "ca.gm.midpoint",
-                lang.pick("区間の中点", "Segment Midpoint"),
-                s.midpoint,
-                (0.01, 0.99),
-                None,
-                p.enabled,
-            ) {
-                let mut list = ramp.colors().to_vec();
-                list[selection.index].midpoint = v;
-                if let Some(next) = ramp_ops::with_colors(&ramp, list) {
-                    ramp = next;
-                    result = Some(finish(&ramp, reverse, false));
-                }
-            }
-        }
-    }
-    let r = rows.row(24.0, 4.0);
-    if w::button(
-        ui,
-        r,
-        (p.key, "gm.remove"),
-        lang.pick("分岐点を消す", "Remove Stop"),
-        false,
-        p.enabled && count > 2,
-        None,
-        None,
-    )
-    .clicked()
-    {
-        if let Some(next) = ramp_ops::remove(&ramp, selection.alpha, selection.index) {
-            ramp = next;
-            result = Some(finish(&ramp, reverse, true));
-        }
+        sets: &mut *p.sets,
+        eyedrop: &mut *p.eyedrop,
+        message: &mut *p.message,
+    };
+    if let Some(change) = ramp_rows::rows(ui, rows, &mut params, map.ramp()) {
+        result = Some(Change {
+            value: ColorAdjust::GradientMap(GradientMap::new(change.ramp, reverse)),
+            discrete: change.discrete,
+        });
     }
     result
 }
@@ -877,29 +621,6 @@ pub fn cached_histogram(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_presets_are_valid_gradients_on_the_psd_steps() {
-        let presets = gradient_presets();
-        assert_eq!(presets.len(), 6);
-        assert_eq!(presets[0].2, Ramp::default());
-        for (ja, en, ramp) in &presets {
-            assert!(!ja.is_empty() && !en.is_empty());
-            assert!(ramp.value_curve().is_identity(), "{en}: 値のカーブは直線");
-            for c in ramp.colors() {
-                assert_eq!(c.midpoint, 0.5);
-                assert_eq!((c.position * 4096.0).fract(), 0.0, "{en}");
-            }
-            // PSD に書ける
-            let map = GradientMap::new(ramp.clone(), false);
-            assert_eq!(map.ramp(), ramp);
-        }
-        // 名前は重ならない
-        let mut names: Vec<_> = presets.iter().map(|p| p.1).collect();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), 6);
-    }
 
     #[test]
     fn the_histogram_is_a_normalised_shape_of_what_lies_below() {

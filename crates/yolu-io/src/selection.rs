@@ -62,6 +62,10 @@ impl Selection {
         )?)
     }
     pub fn read(b: &[u8], doc: &NativeDocument) -> Result<Self> {
+        Self::read_sized(b, (doc.width(), doc.height(), doc.tile_size()))
+    }
+    /// `read` の、正本の大きさ（幅・高さ・タイル寸法）だけを渡す形。
+    pub(crate) fn read_sized(b: &[u8], (dw, dh, dts): (i32, i32, i32)) -> Result<Self> {
         check(b.get(..4) == Some(b"YLSL"), "選択範囲の識別子が不正です")?;
         let mut at = 4;
         fn int(b: &[u8], at: &mut usize) -> Result<i32> {
@@ -77,7 +81,7 @@ impl Selection {
         let ts = int(b, &mut at)?;
         let n = int(b, &mut at)?;
         check(
-            w == doc.width() && h == doc.height() && ts == doc.tile_size(),
+            w == dw && h == dh && ts == dts,
             "選択範囲と正本の大きさが一致しません",
         )?;
         let cols = (w + ts - 1) / ts;

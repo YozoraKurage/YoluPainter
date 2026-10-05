@@ -8,8 +8,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+use yolu_protocol::compat::refusal_from_reject;
 use yolu_protocol::host::now_us;
-use yolu_protocol::link::{connect_and_greet, wrong_direction};
+use yolu_protocol::link::{connect_and_greet_as, wrong_direction};
 use yolu_protocol::*;
 
 /// つながりの状態（C の関数の返す番号）。
@@ -79,6 +80,10 @@ pub struct State {
     pub status: Status,
     pub status_text: String,
     pub welcome: Option<Welcome>,
+    /// 挨拶が済んだ後の、両側の名乗りと決まった版（つながるまでは None）。
+    pub link: Option<LinkInfo>,
+    /// プロトコルの版の範囲が合わずに断られたときの、どちらを何版以上にするか（それ以外は None）。
+    pub refusal: Option<VersionRefusal>,
     pub events: VecDeque<Event>,
     pub sets: Vec<SetState>,
     /// 何かが変わるたびに増える（C# は変わっていなければ何もしない）。
@@ -122,6 +127,8 @@ pub struct Builder {
     pub pose: Option<Vec<MeshPose>>,
     /// 組み立て中のマテリアルの更新。
     pub materials: Option<Vec<MaterialInfo>>,
+    /// 組み立て中のマテリアルの値（`ylb_values_*`）。
+    pub values: Option<MaterialValues>,
     /// 最後に送ったモデルの世代と、メッシュごとの頂点の数（ポーズの確かめ）・マテリアルの数（更新の確かめ）。
     pub sent_generation: u32,
     pub sent_vertices: Vec<usize>,
@@ -142,13 +149,26 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Session {
     /// 裏のスレッドでつなぎ始める（すぐに返る）。
-    pub fn start(id: u64, name: String, agent: String) -> Arc<Session> {
+    pub fn start(id: u64, name: String, identity: Identity) -> Arc<Session> {
         let _ = id;
-        let session = Arc::new(Session {
+        let session = Session::build(&name);
+        let s = session.clone();
+        thread::Builder::new()
+            .name("yolu-bridge-read".into())
+            .spawn(move || s.run(&name, &identity))
+            .expect("スレッドを作れない");
+        session
+    }
+
+    /// つなぎ始める前の器（つなぐスレッドは `start` が起こす。試験は、つながった状態を直接作るためにこれだけを使う）。
+    fn build(name: &str) -> Arc<Session> {
+        Arc::new(Session {
             state: Mutex::new(State {
                 status: Status::Connecting,
                 status_text: format!("{name} につないでいます"),
                 welcome: None,
+                link: None,
+                refusal: None,
                 events: VecDeque::new(),
                 sets: Vec::new(),
                 serial: 1,
@@ -158,21 +178,38 @@ impl Session {
             outbox_cv: Condvar::new(),
             builder: Mutex::new(Builder::default()),
             stop: AtomicBool::new(false),
-        });
-        let s = session.clone();
-        thread::Builder::new()
-            .name("yolu-bridge-read".into())
-            .spawn(move || s.run(&name, &agent))
-            .expect("スレッドを作れない");
-        session
+        })
     }
 
     pub fn state(&self) -> MutexGuard<'_, State> {
         lock(&self.state)
     }
 
-    /// 送る（順番待ちに積むだけ）。
+    /// このつながりで使える機能（双方の印の共通部分。つながるまでは 0）。
+    pub fn common_features(&self) -> u64 {
+        lock(&self.state).link.as_ref().map_or(0, LinkInfo::common_features)
+    }
+
+    /// まだ書き終えていない枠（順番待ちに積んだもの）のバイトの合計。
+    pub fn pending_bytes(&self) -> u64 {
+        lock(&self.outbox).frames.iter().map(|f| f.len() as u64).sum()
+    }
+
+    /// 命令を送ってよいか（命令が要る機能の印が、相手にも立っているか。`need_of` は命令の種類ごとに要る印の決め方で、実際の送り口は
+    /// `Kind::required_feature`、試験は印の要る表を差し込む）。積む口（`enqueue`・`enqueue_pose`）は、必ずこれで確かめてから積む。
+    fn accepts_with(&self, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
+        yolu_protocol::compat::accepts_with(self.common_features(), message, need_of)
+    }
+
+    /// 送る（順番待ちに積むだけ）。印の要る命令で、相手に印が無ければ積まない（false）。
     pub fn enqueue(&self, message: &Message) -> bool {
+        self.enqueue_with(message, Kind::required_feature)
+    }
+
+    fn enqueue_with(&self, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
+        if !self.accepts_with(message, need_of) {
+            return false;
+        }
         let mut o = lock(&self.outbox);
         if o.closing || o.dead {
             return false;
@@ -186,8 +223,20 @@ impl Session {
         true
     }
 
-    /// ポーズを積む（同じメッシュの古い未送信のポーズは置き換える）。
+    /// ポーズを積む（同じメッシュの古い未送信のポーズは置き換える）。ポーズの命令が印を要るなら、相手に印が無ければ積まない（false）。
     pub fn enqueue_pose(&self, generation: u32, meshes: Vec<MeshPose>) -> bool {
+        self.enqueue_pose_with(generation, meshes, Kind::required_feature)
+    }
+
+    fn enqueue_pose_with(
+        &self,
+        generation: u32,
+        meshes: Vec<MeshPose>,
+        need_of: impl Fn(Kind) -> u64,
+    ) -> bool {
+        if !yolu_protocol::compat::satisfies(self.common_features(), need_of(Kind::Pose)) {
+            return false;
+        }
         let mut o = lock(&self.outbox);
         if o.closing || o.dead {
             return false;
@@ -221,6 +270,8 @@ impl Session {
             st.status_text = "切りました".into();
             st.serial += 1;
         }
+        // つながりは終わった: 相手の版・使える機能は、つながっている間だけの答え
+        st.link = None;
         // 共有メモリの写像はここで手放す（テクスチャは C# が外す）
         st.sets.clear();
     }
@@ -239,13 +290,16 @@ impl Session {
         }
         st.status_text = text.clone();
         st.sets.clear();
+        // つながりは終わった: 相手の版・使える機能は、つながっている間だけの答え（閉じたあとも版のずれの印が残らない）
+        st.link = None;
         st.push(kind, 0, code, text);
     }
 
-    fn run(self: Arc<Self>, name: &str, agent: &str) {
-        let (conn, mut reader, welcome) = match connect_and_greet(name, agent) {
+    fn run(self: Arc<Self>, name: &str, identity: &Identity) {
+        let (conn, mut reader, welcome) = match connect_and_greet_as(name, identity) {
             Ok(x) => x,
             Err(LinkError::Rejected(r)) => {
+                self.state().refusal = refusal_from_reject(Product::Standalone, &r);
                 self.fail(
                     Status::Failed,
                     EventKind::Rejected,
@@ -276,6 +330,7 @@ impl Session {
                 welcome.agent, welcome.version
             );
             let text = st.status_text.clone();
+            st.link = conn.link_info().cloned();
             st.welcome = Some(welcome);
             st.push(EventKind::Connected, 0, 0, text);
         }
@@ -502,5 +557,139 @@ impl Session {
 
     pub fn status(&self) -> Status {
         self.state().status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yolu_protocol::compat::PeerInfo;
+
+    const MARK_A: u64 = 1 << 40;
+    const MARK_B: u64 = 1 << 41;
+
+    /// 試験用の印の要る表（今の命令は印を要らないので、試験が差し込む）: マテリアルは A、ポーズは B、モデルを閉じるのは A と B。
+    fn need_of(kind: Kind) -> u64 {
+        match kind {
+            Kind::Materials => MARK_A,
+            Kind::Pose => MARK_B,
+            Kind::ModelClosed => MARK_A | MARK_B,
+            _ => 0,
+        }
+    }
+
+    /// 挨拶が済んだ状態の器（双方の印だけを決める。ソケットは張らない）。
+    fn linked(own: u64, peer: u64) -> Arc<Session> {
+        let session = Session::build("試験");
+        {
+            let mut st = session.state();
+            st.status = Status::Connected;
+            st.link = Some(LinkInfo {
+                protocol: PROTOCOL_VERSION,
+                own: Identity::unity("試験のブリッジ").with_features(own),
+                peer: PeerInfo {
+                    agent: "試験のスタンドアロン".into(),
+                    versions: None,
+                    features: peer,
+                },
+            });
+        }
+        session
+    }
+
+    fn materials() -> Message {
+        Message::Materials(MaterialsUpdate {
+            generation: 1,
+            materials: Vec::new(),
+        })
+    }
+
+    fn poses() -> Vec<MeshPose> {
+        vec![MeshPose {
+            mesh: 0,
+            positions: vec![[0.0; 3]],
+            normals: Vec::new(),
+        }]
+    }
+
+    /// 積んだ枠の数とポーズのメッシュの数。
+    fn queued(session: &Session) -> (usize, usize) {
+        let o = lock(&session.outbox);
+        (o.frames.len(), o.pose.len())
+    }
+
+    #[test]
+    fn a_command_that_needs_a_mark_is_queued_only_when_both_sides_have_it() {
+        let closed = Message::ModelClosed { generation: 1 };
+        // 双方に A だけ: A を要るマテリアルは積む。A と B を要るものは積まない（B は相手に無い）
+        let s = linked(MARK_A | MARK_B, MARK_A | 1 << 50);
+        assert_eq!(s.common_features(), MARK_A);
+        assert!(s.accepts_with(&materials(), need_of));
+        assert!(!s.accepts_with(&closed, need_of));
+        assert!(s.enqueue_with(&materials(), need_of));
+        assert!(!s.enqueue_with(&closed, need_of));
+        // 印の要らない命令はいつも積む
+        assert!(s.enqueue_with(&Message::TextureSetRemoved { set: 1 }, need_of));
+        assert_eq!(queued(&s), (2, 0), "積んだのはマテリアルと印の要らない命令");
+
+        // 自分にだけ印がある（相手の印が無い）: 送らない
+        let s = linked(MARK_A | MARK_B, 0);
+        assert_eq!(s.common_features(), 0);
+        assert!(!s.enqueue_with(&materials(), need_of));
+        assert!(!s.enqueue_with(&closed, need_of));
+        assert_eq!(queued(&s), (0, 0));
+
+        // 双方に A と B: 全部積む
+        let s = linked(MARK_A | MARK_B, MARK_A | MARK_B);
+        assert!(s.enqueue_with(&materials(), need_of));
+        assert!(s.enqueue_with(&closed, need_of));
+        assert_eq!(queued(&s), (2, 0));
+    }
+
+    #[test]
+    fn a_pose_goes_through_the_same_gate() {
+        // ポーズは B を要る（試験の表）: 相手に B が無ければ積まず、世代も動かさない
+        let s = linked(MARK_A | MARK_B, MARK_A);
+        assert!(!s.enqueue_pose_with(3, poses(), need_of));
+        assert_eq!(queued(&s), (0, 0));
+        assert_eq!(lock(&s.outbox).pose_generation, 0);
+        // B があれば積む
+        let s = linked(MARK_B, MARK_B);
+        assert!(s.enqueue_pose_with(3, poses(), need_of));
+        assert_eq!(queued(&s), (0, 1));
+        // 今の命令の表（印の要らない）では、相手の印が無くても積む（今までどおり）
+        let s = linked(0, 0);
+        assert!(s.enqueue_pose(1, poses()));
+        assert!(s.enqueue(&materials()));
+        assert_eq!(queued(&s), (1, 1));
+    }
+
+    #[test]
+    fn nothing_is_queued_before_the_link_is_made() {
+        // 挨拶の前（link が無い）は共通の印が 0: 印を要る命令は積まない
+        let s = Session::build("試験");
+        assert_eq!(s.common_features(), 0);
+        assert!(!s.enqueue_with(&materials(), need_of));
+        assert!(!s.enqueue_pose_with(1, poses(), need_of));
+        assert!(s.enqueue_with(&Message::TextureSetRemoved { set: 1 }, need_of));
+    }
+
+    #[test]
+    fn the_link_answers_end_with_the_link() {
+        // つながりが終わる（相手が閉じた・失敗した）と、相手の版・使える機能の答えは消える
+        for (status, kind) in [
+            (Status::Closed, EventKind::Closed),
+            (Status::Failed, EventKind::Failed),
+        ] {
+            let s = linked(MARK_A, MARK_A);
+            assert_eq!(s.common_features(), MARK_A);
+            s.fail(status, kind, 0, "終わり".into());
+            assert!(s.state().link.is_none(), "{status:?}");
+            assert_eq!(s.common_features(), 0, "{status:?}");
+        }
+        let s = linked(MARK_A, MARK_A);
+        s.close();
+        assert!(s.state().link.is_none());
+        assert_eq!(s.status(), Status::Closed);
     }
 }

@@ -825,7 +825,7 @@ fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
     assert_eq!(yolu_io::UNITY_NATIVE_VERSION, 21);
     assert_eq!(yolu_io::USER_CHANNELS_VERSION, 22);
     // 版 23（Rust 版だけの Generator の種類）は procedural_bridge、版 24（色調補正の 6 種）は adjust_bridge の試験で固定する
-    assert_eq!(yolu_io::MAX_NATIVE_VERSION, 24);
+    assert_eq!(yolu_io::MAX_NATIVE_VERSION, 25);
 }
 
 /// Rust が書いた版 21 の正解の正本。m2-groups を編集して、塗りつぶし・調整・マスク・複製したグループを足したもの（固定の ID で作り、
@@ -900,7 +900,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
             name: name.into(),
             asset: None,
         },
-        document: Some(NativeDocument::from_core(doc).unwrap()),
+        document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: yolu_io::composite_pngs(doc).unwrap(),
     };
     let project = Project::create(
@@ -942,7 +942,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     );
     // 標準だけのセットは、版 21 の正本として Unity 0.2.0 の読み手がそのまま読める並び（C# の書き手の版 21 と同じ構造）
     assert_eq!(
-        reopened.sets()[1].document.to_bytes()[8..12],
+        reopened.sets()[1].document.to_bytes().unwrap()[8..12],
         21i32.to_le_bytes()
     );
 }
@@ -1287,7 +1287,7 @@ fn edits_to_a_loaded_m2_document_undo_back_to_the_original_bytes_and_save() {
                 id: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
                 name: "M2".into(),
                 material: yolu_io::MaterialRef::Unassigned,
-                document: Some(edited.clone()),
+                document: Some(edited.clone().into()),
                 composites: yolu_io::composite_pngs(&core).unwrap(),
             }],
             "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0",
@@ -1353,7 +1353,7 @@ fn a_saved_set_carries_a_composite_png_for_every_channel_in_use() {
         id: A.into(),
         name: "合成".into(),
         material: yolu_io::MaterialRef::Unassigned,
-        document: Some(NativeDocument::from_core(doc).unwrap()),
+        document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites,
     };
     // C# が書いた全チャンネルの文書。PNG は core の合成そのもの（Normal は Unity 向けの出力）で、使っているチャンネルだけ

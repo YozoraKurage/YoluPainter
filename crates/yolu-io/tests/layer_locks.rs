@@ -385,7 +385,7 @@ fn locks_survive_a_project_save_and_open() {
             id: SET.into(),
             name: "ロック".into(),
             material: yolu_io::MaterialRef::Unassigned,
-            document: Some(NativeDocument::from_core(&core).unwrap()),
+            document: Some(NativeDocument::from_core(&core).unwrap().into()),
             composites: yolu_io::composite_pngs(&core).unwrap(),
         }],
         SET,

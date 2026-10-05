@@ -17,7 +17,7 @@ struct Shown {
 
 fn harness(lang: Lang) -> Harness<'static, Shown> {
     let mut ready = false;
-    Harness::builder()
+    common::gpu_thread::builder()
         .with_size(vec2(240.0, 200.0))
         .with_render_options(render_options())
         .wgpu()

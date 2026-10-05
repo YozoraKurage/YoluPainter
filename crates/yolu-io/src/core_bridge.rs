@@ -4,7 +4,8 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
@@ -12,7 +13,9 @@ use crate::{
 use std::collections::HashMap;
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Placement, Projection, ProjectionMode, Wrap};
-use yolu_core::generator::{self, anchor, ColorStop, MapKind, OpacityStop, Ramp};
+use yolu_core::generator::{
+    self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
+};
 use yolu_core::paths;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
@@ -29,7 +32,7 @@ fn core_id(mut guid: [u8; 16]) -> u128 {
     guid[6..8].reverse();
     u128::from_be_bytes(guid)
 }
-fn native_id(id: u128) -> [u8; 16] {
+pub(crate) fn native_id(id: u128) -> [u8; 16] {
     let mut guid = id.to_be_bytes();
     guid[..4].reverse();
     guid[4..6].reverse();
@@ -58,21 +61,22 @@ fn adjustment_uses(kind: i32, param: usize) -> bool {
 }
 
 /// 検証済みの正本の項目をパスで引く。
-struct Fields<'a>(HashMap<&'a str, &'a V>);
+pub(crate) struct Fields<'a>(HashMap<&'a str, &'a V>);
 impl<'a> Fields<'a> {
     fn new(doc: &'a NativeDocument) -> Self {
-        Self(
-            doc.fields()
-                .iter()
-                .map(|f| (f.path.as_str(), &f.value))
-                .collect(),
-        )
+        Self::of(doc.fields())
+    }
+    pub(crate) fn of(fields: &'a [crate::NativeField]) -> Self {
+        Self(fields.iter().map(|f| (f.path.as_str(), &f.value)).collect())
     }
     fn get(&self, p: &str) -> Result<&'a V> {
         self.0
             .get(p)
             .copied()
             .ok_or_else(|| Error::InvalidData(format!("正本の項目がありません: {p}")))
+    }
+    fn has(&self, p: &str) -> bool {
+        self.0.contains_key(p)
     }
     fn wrong(p: &str) -> Error {
         Error::InvalidData(format!("正本の項目の型が違います: {p}"))
@@ -209,21 +213,7 @@ impl NativeDocument {
     /// core へ渡すと失われる項目（層の機能ごとに 1 つ、`layers[2].filters（フィルター・Generator）` の形）。空なら変換の対象
     /// （タイルの余白・画素の予算は変換時に検査する）。非表示・無効の層やマスクの中の項目も省略せずに断る。
     pub fn core_issues(&self) -> Vec<String> {
-        let fields: HashMap<&str, &V> = self
-            .fields()
-            .iter()
-            .map(|f| (f.path.as_str(), &f.value))
-            .collect();
-        let mut issues = Vec::new();
-        for f in self.fields() {
-            if let Some((key, why)) = unsupported(&f.path, &fields) {
-                let issue = format!("{key}（{why}）");
-                if !issues.contains(&issue) {
-                    issues.push(issue);
-                }
-            }
-        }
-        issues
+        core_issues_of(self.fields())
     }
 
     /// 編集用の core の文書にする（C# の `DocumentBinary.Read` と同じ意味）。文書と層の ID、透明の画素の RGB を保ち、読み込みを
@@ -235,18 +225,68 @@ impl NativeDocument {
     /// `to_core` の画素の予算を指定できる形（None は core の既定、`DEFAULT_SOURCE_BUDGET_BYTES`）。超えたら、どの層のどのタイルで
     /// 断ったかを添えて `Error::Budget` で断る（壊れたファイルとは区別できる）。
     pub fn to_core_within(&self, source_budget: Option<u64>) -> Result<Document> {
+        check(!self.is_skeleton(), "骨組みの正本は core にできません")?;
         let issues = self.core_issues();
         check(
             issues.is_empty(),
             format!("coreへの変換を拒否しました: {}", issues.join("、")),
         )?;
         let f = Fields::new(self);
-        let version = self.version();
-        let mut doc = Document::with_tile_size(
-            self.width() as u32,
-            self.height() as u32,
-            self.tile_size() as u32,
+        let mut load = CoreLoad::begin(
+            &f,
+            self.version(),
+            (self.width(), self.height(), self.tile_size()),
+            source_budget,
         )?;
+        for i in 0..self.layer_count() {
+            load.layer(&f, i)?;
+        }
+        load.finish(&f)
+    }
+
+    /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
+    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色は断る。値の無い塗りつぶしのチャンネルと
+    /// グループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
+    pub fn from_core(doc: &Document) -> Result<Self> {
+        check_writable(doc)?;
+        let mut sink = VecSink(Vec::new());
+        write_document(&mut sink, doc, version_of(doc))?;
+        Self::read(&sink.0)
+    }
+}
+
+/// core へ渡すと失われる項目（`NativeDocument::core_issues` と、骨組みの項目から）。
+pub(crate) fn core_issues_of(fields: &[crate::NativeField]) -> Vec<String> {
+    let map: HashMap<&str, &V> = fields.iter().map(|f| (f.path.as_str(), &f.value)).collect();
+    let mut issues = Vec::new();
+    for f in fields {
+        if let Some((key, why)) = unsupported(&f.path, &map) {
+            let issue = format!("{key}（{why}）");
+            if !issues.contains(&issue) {
+                issues.push(issue);
+            }
+        }
+    }
+    issues
+}
+
+/// 正本を core の文書へ層ごとに入れる（頭 → 層 → 終わり）。メモリの正本も、流して読む正本も同じ道を通る。
+pub(crate) struct CoreLoad {
+    doc: Document,
+    version: i32,
+    ids: Vec<LayerId>,
+    parents: Vec<[u8; 16]>,
+    locks: Vec<LayerLocks>,
+}
+impl CoreLoad {
+    /// 頭（寸法・Normal の設定・ユーザーチャンネル）から空の文書を作る。`f` は頭の項目を含む。
+    pub(crate) fn begin(
+        f: &Fields<'_>,
+        version: i32,
+        (width, height, tile_size): (i32, i32, i32),
+        source_budget: Option<u64>,
+    ) -> Result<Self> {
+        let mut doc = Document::with_tile_size(width as u32, height as u32, tile_size as u32)?;
         if let Some(bytes) = source_budget {
             doc.set_source_budget_bytes(bytes)?;
         }
@@ -288,22 +328,40 @@ impl NativeDocument {
                     .map_err(|e| Error::from(e).in_context(format!("{p}をcoreにできません")))?;
             }
         }
-        let mut ids = Vec::with_capacity(self.layer_count());
-        let mut parents = Vec::with_capacity(self.layer_count());
-        let mut locks = Vec::with_capacity(self.layer_count());
-        for i in 0..self.layer_count() {
-            let p = format!("layers[{i}]");
-            locks.push(load_layer(&mut doc, &f, &p, version).map_err(|e| {
-                let name = f.text(&format!("{p}.name")).unwrap_or_default();
-                e.in_context(format!("{p}「{name}」をcoreにできません"))
-            })?);
-            ids.push(LayerId(core_id(f.guid(&format!("{p}.id"))?)));
-            parents.push(if version >= 6 {
-                f.guid(&format!("{p}.parent"))?
-            } else {
-                [0; 16]
-            });
-        }
+        Ok(Self {
+            doc,
+            version,
+            ids: Vec::new(),
+            parents: Vec::new(),
+            locks: Vec::new(),
+        })
+    }
+    /// 層 `i` を足す（`f` はその層の項目を含む）。
+    pub(crate) fn layer(&mut self, f: &Fields<'_>, i: usize) -> Result<()> {
+        let p = format!("layers[{i}]");
+        let version = self.version;
+        self.locks.push(load_layer(&mut self.doc, f, &p, version).map_err(|e| {
+            let name = f.text(&format!("{p}.name")).unwrap_or_default();
+            e.in_context(format!("{p}「{name}」をcoreにできません"))
+        })?);
+        self.ids.push(LayerId(core_id(f.guid(&format!("{p}.id"))?)));
+        self.parents.push(if version >= 6 {
+            f.guid(&format!("{p}.parent"))?
+        } else {
+            [0; 16]
+        });
+        Ok(())
+    }
+    /// 親・保存した ID・ロックを付けて終える（`head` は文書の ID を含む頭の項目）。
+    pub(crate) fn finish(self, head: &Fields<'_>) -> Result<Document> {
+        let Self {
+            doc,
+            ids,
+            parents,
+            locks,
+            ..
+        } = self;
+        let mut doc = doc;
         // 親は読み込みの仮の ID で置き、最後に保存した ID へ付け替える（with_persistent_ids が親も写す）
         let temporary: Vec<LayerId> = doc.layers().iter().map(|l| l.id()).collect();
         let by_guid: HashMap<[u8; 16], LayerId> = ids
@@ -327,7 +385,7 @@ impl NativeDocument {
         if parents.iter().any(Option::is_some) {
             doc.set_structure_for_load(&parents)?;
         }
-        let mut doc = doc.with_persistent_ids(core_id(f.guid("id")?), &ids)?;
+        let mut doc = doc.with_persistent_ids(core_id(head.guid("id")?), &ids)?;
         // ロックは読み終えてから付ける（読み手自身の画素・属性の設定をロックが断らないように。C# の `SetLocksForLoad` と同じ）。
         // 付けるのは履歴を持たない読み込みの経路で、ロックは合成を変えない
         for (id, locks) in ids.iter().zip(locks) {
@@ -337,78 +395,104 @@ impl NativeDocument {
         }
         Ok(doc)
     }
+}
 
-    /// core の文書から正本を作る（C# の `DocumentBinary.Write` と同じ並び）。ユーザーチャンネルが無ければ Unity 版と同じ版 21、あれば
-    /// 版 22。履歴は保存しない。正本の範囲外の寸法・タイル寸法・層の数・名前、進行中のストローク、まだ書けない手動の ID 色は断る。値の無い塗りつぶしのチャンネルと
-    /// グループの有効の印は、合成に効かず C# の書き手も書かないので書かない。
-    pub fn from_core(doc: &Document) -> Result<Self> {
-        check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
-        // 手動の ID の色（正本の版 19）はまだ書けない。黙って落とさず、空でなければ断る
-        if !doc.id_colors().colors().is_empty() {
-            return Err(Error::Unwritable(Unwritable::ManualIdColors));
-        }
-        check_budget(
-            doc.width() <= 8192 && doc.height() <= 8192,
-            "正本の寸法の上限は8192です",
-        )?;
-        check(
-            (8..=512).contains(&doc.tile_size()) && doc.tile_size().is_power_of_two(),
-            "正本のタイル寸法は8〜512の2の累乗です",
-        )?;
-        check_budget(doc.layers().len() <= 2048, "正本の層数の上限は2048です")?;
-        let user: Vec<Channel> = doc
-            .channels()
-            .into_iter()
-            .filter(|c| !c.is_standard())
-            .collect();
-        // 版は使う機能で決まる: Rust 版だけの色調補正（種類 64〜69）があれば 24、Rust 版だけの Generator の種類があれば 23、
-        // ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21
-        let version = if uses_rust_only_adjustments(doc) {
-            ADJUST_VERSION
-        } else if uses_rust_only_generators(doc) {
-            PROCEDURAL_VERSION
-        } else if user.is_empty() {
-            UNITY_NATIVE_VERSION
-        } else {
-            USER_CHANNELS_VERSION
-        };
-        let mut w = Out(Vec::new());
-        w.raw(b"DOTPAINT")?;
-        w.int(version)?;
-        w.raw(&native_id(doc.id()))?;
-        for v in [doc.width(), doc.height(), doc.tile_size()] {
-            w.int(v as i32)?;
-        }
-        let normal = doc.normal_settings();
-        w.int(NormalSettings::ALGORITHM_VERSION)?;
-        w.boolean(normal.derive_from_height())?;
-        w.float(normal.strength())?;
-        w.int(normal.edges() as i32)?;
-        w.int(normal.file_direction() as i32)?;
-        if version >= USER_CHANNELS_VERSION {
-            w.int(user.len() as i32)?;
-            for c in &user {
-                let info = doc.channel_info(*c).expect("一覧にある");
-                w.int(c.index() as i32)?;
-                w.text(&info.name)?;
-                w.int(match info.kind {
-                    ChannelKind::Color => 0,
-                    ChannelKind::Scalar => 1,
-                    ChannelKind::Normal => 2,
-                })?;
-                w.int(match info.color_space {
-                    ColorSpace::Srgb => 0,
-                    ColorSpace::Linear => 1,
-                })?;
-                w.raw(&info.default.to_array())?;
-            }
-        }
-        w.int(doc.layers().len() as i32)?;
-        for layer in doc.layers() {
-            write_layer(&mut w, layer)?;
-        }
-        Self::read(&w.0)
+/// 文書の正本の版（使う機能で決まる）: グラデーションマップの混色（混色モード・混合率曲線）があれば 25、Rust 版だけの色調補正（種類 64〜69）が
+/// あれば 24、Rust 版だけの Generator の種類があれば 23、ユーザーチャンネルだけなら 22、どれも無ければ Unity 版と同じ 21。
+pub(crate) fn version_of(doc: &Document) -> i32 {
+    let user = doc.channels().into_iter().any(|c| !c.is_standard());
+    if uses_gradient_mixing(doc) {
+        MIXING_VERSION
+    } else if uses_rust_only_adjustments(doc) {
+        ADJUST_VERSION
+    } else if uses_rust_only_generators(doc) {
+        PROCEDURAL_VERSION
+    } else if !user {
+        UNITY_NATIVE_VERSION
+    } else {
+        USER_CHANNELS_VERSION
     }
+}
+/// 書く前の確かめ（`from_core` と、流して書く正本の両方）。
+pub(crate) fn check_writable(doc: &Document) -> Result<()> {
+    check(!doc.has_active_stroke(), "描画中のストロークがあります")?;
+    // 手動の ID の色（正本の版 19）はまだ書けない。黙って落とさず、空でなければ断る
+    if !doc.id_colors().colors().is_empty() {
+        return Err(Error::Unwritable(Unwritable::ManualIdColors));
+    }
+    check_budget(
+        doc.width() <= 8192 && doc.height() <= 8192,
+        "正本の寸法の上限は8192です",
+    )?;
+    check(
+        (8..=512).contains(&doc.tile_size()) && doc.tile_size().is_power_of_two(),
+        "正本のタイル寸法は8〜512の2の累乗です",
+    )?;
+    check_budget(doc.layers().len() <= 2048, "正本の層数の上限は2048です")
+}
+/// 文書を正本の並び（中の版 `version`。C# の `DocumentBinary.Write` と同じ並び）で `sink` へ書く。層の始まりごとに `Sink::layer` を呼ぶ。
+pub(crate) fn write_document(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
+    write_head(sink, doc, version)?;
+    for (i, layer) in doc.layers().iter().enumerate() {
+        sink.layer(i)?;
+        write_layer_to(sink, layer, version)?;
+    }
+    Ok(())
+}
+/// 識別子から層の数まで（層より前）。
+pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
+    let mut w = Out {
+        sink,
+        mixing: version >= MIXING_VERSION,
+    };
+    w.raw(b"DOTPAINT")?;
+    w.int(version)?;
+    write_head_after_version(&mut w, doc, version)
+}
+/// 1 つの層。
+pub(crate) fn write_layer_to(sink: &mut dyn Sink, layer: &yolu_core::Layer, version: i32) -> Result<()> {
+    let mut w = Out {
+        sink,
+        mixing: version >= MIXING_VERSION,
+    };
+    write_layer(&mut w, layer)
+}
+/// 版の後ろから層の数まで（ID・寸法・Normal の設定・ユーザーチャンネル・層の数）。
+fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Result<()> {
+    let user: Vec<Channel> = doc
+        .channels()
+        .into_iter()
+        .filter(|c| !c.is_standard())
+        .collect();
+    w.raw(&native_id(doc.id()))?;
+    for v in [doc.width(), doc.height(), doc.tile_size()] {
+        w.int(v as i32)?;
+    }
+    let normal = doc.normal_settings();
+    w.int(NormalSettings::ALGORITHM_VERSION)?;
+    w.boolean(normal.derive_from_height())?;
+    w.float(normal.strength())?;
+    w.int(normal.edges() as i32)?;
+    w.int(normal.file_direction() as i32)?;
+    if version >= USER_CHANNELS_VERSION {
+        w.int(user.len() as i32)?;
+        for c in &user {
+            let info = doc.channel_info(*c).expect("一覧にある");
+            w.int(c.index() as i32)?;
+            w.text(&info.name)?;
+            w.int(match info.kind {
+                ChannelKind::Color => 0,
+                ChannelKind::Scalar => 1,
+                ChannelKind::Normal => 2,
+            })?;
+            w.int(match info.color_space {
+                ColorSpace::Srgb => 0,
+                ColorSpace::Linear => 1,
+            })?;
+            w.value(&info.default.to_array())?;
+        }
+    }
+    w.int(doc.layers().len() as i32)
 }
 
 /// 文書が Rust 版だけの Generator の種類（ノイズ・グランジ）の段を持つか（層の内容とマスクのスタック。無効な段も数える。
@@ -423,6 +507,20 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
                     .generator_settings()
                     .is_some_and(|g| g.kind.is_procedural())
             })
+    })
+}
+/// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整の層か、層の内容・マスクのフィルターの段。無効な段も数える）を
+/// 持つか。持っていれば正本の版は 25 になり、Unity 版は開けない。
+pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
+    let mixes = |c: Option<ColorAdjust>| {
+        matches!(c, Some(ColorAdjust::GradientMap(g)) if g.ramp().uses_mixing())
+    };
+    doc.layers().iter().any(|l| {
+        l.adjustment().is_some_and(|a| mixes(a.color_adjust()))
+            || l.filters()
+                .iter()
+                .chain(l.mask().into_iter().flat_map(|m| m.filters().iter()))
+                .any(|e| mixes(e.settings().color_adjust()))
     })
 }
 /// 文書が Rust 版だけの色調補正（調整の層の種類 64〜69、層の内容とマスクのフィルターの段の種類 64〜69。無効な段も数える）を持つか。
@@ -725,7 +823,7 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
 }
 
 /// 2D・3D のパス（C# の `WritePath`・`WriteCanvasPath`）。
-fn write_path(w: &mut Out, path: &LayerPath) -> Result<()> {
+fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
     w.int(paths::ALGORITHM_VERSION as i32)?;
     w.raw(&native_id(path.id()))?;
     w.int(path.channel().index() as i32)?;
@@ -745,7 +843,7 @@ fn write_path(w: &mut Out, path: &LayerPath) -> Result<()> {
     ] {
         w.float(v)?;
     }
-    w.raw(&brush.color.to_array())?;
+    w.value(&brush.color.to_array())?;
     for v in [
         brush.erase,
         brush.pressure_size,
@@ -777,7 +875,7 @@ fn write_path(w: &mut Out, path: &LayerPath) -> Result<()> {
     w.byte(material.len() as u8)?;
     for m in material {
         w.int(m.channel.index() as i32)?;
-        w.raw(&m.color.to_array())?;
+        w.value(&m.color.to_array())?;
     }
     Ok(())
 }
@@ -983,10 +1081,14 @@ fn read_color_adjust(f: &Fields<'_>, p: &str, kind: i32) -> Result<ColorAdjust> 
     let float = |name: &str| f.float(&format!("{p}.{name}"));
     let int = |name: &str| f.int(&format!("{p}.{name}"));
     Ok(match AdjustmentType::from_index(i64::from(kind)) {
-        Some(AdjustmentType::GradientMap) => ColorAdjust::GradientMap(GradientMap::new(
-            read_ramp(f, &format!("{p}.ramp"))?,
-            f.boolean(&format!("{p}.reverse"))?,
-        )),
+        Some(AdjustmentType::GradientMap) => {
+            let mut ramp = read_ramp(f, &format!("{p}.ramp"))?;
+            // 混色の欄（正本の版 25）は、あるときだけ読む（版 24 までの文書には無い）
+            if f.has(&format!("{p}.mix")) {
+                ramp = read_gradient_mixing(f, p, &ramp)?;
+            }
+            ColorAdjust::GradientMap(GradientMap::new(ramp, f.boolean(&format!("{p}.reverse"))?))
+        }
         Some(AdjustmentType::ToneCurve) => ColorAdjust::ToneCurve(ToneCurves::new(
             read_curve(f, &format!("{p}.composite"))?,
             read_curve(f, &format!("{p}.red"))?,
@@ -1028,6 +1130,27 @@ fn read_color_adjust(f: &Fields<'_>, p: &str, kind: i32) -> Result<ColorAdjust> 
             )))
         }
     })
+}
+
+/// グラデーションマップの混色の欄（正本の版 25。`write_gradient_mixing` と対）を、ランプへ足す。
+fn read_gradient_mixing(f: &Fields<'_>, p: &str, ramp: &Ramp) -> Result<Ramp> {
+    let invalid = |what: &str| Error::InvalidData(format!("{p}.{what} が範囲外です"));
+    let mode = MixMode::from_index(i64::from(f.int(&format!("{p}.mix"))?))
+        .ok_or_else(|| invalid("mix"))?;
+    let correction = LuminanceCorrection::from_index(i64::from(f.int(&format!("{p}.luminance"))?))
+        .ok_or_else(|| invalid("luminance"))?;
+    let mut segments = Vec::new();
+    for k in 0..f.int(&format!("{p}.segment_count"))? {
+        let s = format!("{p}.segments[{k}]");
+        segments.push(if f.boolean(&format!("{s}.enabled"))? {
+            Some(read_curve(f, &format!("{s}.curve"))?)
+        } else {
+            None
+        });
+    }
+    ramp.with_mixing(mode, correction)
+        .with_segment_curves(segments)
+        .map_err(|e| Error::InvalidData(e.to_string()))
 }
 
 fn read_ramp(f: &Fields<'_>, p: &str) -> Result<Ramp> {
@@ -1126,14 +1249,55 @@ fn tile_coord(f: &Fields<'_>, tile: &str) -> Result<TileCoord> {
 }
 
 /// 正本のバイト列（512 MiB の予算を書くたびに確かめる）。
-struct Out(Vec<u8>);
-impl Out {
-    fn raw(&mut self, b: &[u8]) -> Result<()> {
-        self.0.extend_from_slice(b);
+/// 正本の書き込み先。2 つ目は、混色の欄（正本の版 25）を書くか。
+/// 正本の並びの書き先。平の値（整数・文字列・ID など）と `Bytes` の値（色・画素）を分けて受ける（版 26 は `Bytes` の値を部分へ書く）。
+pub(crate) trait Sink {
+    /// 平の値のバイト列。
+    fn plain(&mut self, b: &[u8]) -> Result<()>;
+    /// 小さな `Bytes` の値（色）。
+    fn value(&mut self, b: &[u8]) -> Result<()>;
+    /// タイル 1 枚の画素（`Bytes` の値。要るときだけ写す）。
+    fn tile(&mut self, surface: &yolu_core::Surface, coord: TileCoord) -> Result<()>;
+    /// `layers[i]` の始まり。
+    fn layer(&mut self, _i: usize) -> Result<()> {
+        Ok(())
+    }
+}
+/// メモリへ全部を並べる（`from_core`。512 MiB まで）。
+pub(crate) struct VecSink(pub Vec<u8>);
+impl VecSink {
+    fn grew(&self) -> Result<()> {
         check_budget(
             self.0.len() <= MAX_ENTRY_BYTES,
             "正本の512 MiB予算を超えています",
         )
+    }
+}
+impl Sink for VecSink {
+    fn plain(&mut self, b: &[u8]) -> Result<()> {
+        self.0.extend_from_slice(b);
+        self.grew()
+    }
+    fn value(&mut self, b: &[u8]) -> Result<()> {
+        self.plain(b)
+    }
+    fn tile(&mut self, surface: &yolu_core::Surface, coord: TileCoord) -> Result<()> {
+        let at = self.0.len();
+        self.0.resize(at + surface.tile_bytes(), 0);
+        surface.copy_tile(coord, &mut self.0[at..])?;
+        self.grew()
+    }
+}
+struct Out<'s> {
+    sink: &'s mut dyn Sink,
+    mixing: bool,
+}
+impl Out<'_> {
+    fn raw(&mut self, b: &[u8]) -> Result<()> {
+        self.sink.plain(b)
+    }
+    fn value(&mut self, b: &[u8]) -> Result<()> {
+        self.sink.value(b)
     }
     fn int(&mut self, v: i32) -> Result<()> {
         self.raw(&v.to_le_bytes())
@@ -1154,20 +1318,19 @@ impl Out {
     }
     fn tiles(&mut self, surface: &yolu_core::Surface) -> Result<()> {
         self.int(surface.tile_count() as i32)?;
-        let mut tile = vec![0; surface.tile_bytes()];
+        let bytes = surface.tile_bytes() as i32;
         for coord in surface.tile_coords() {
-            surface.copy_tile(coord, &mut tile)?;
             self.int(coord.x as i32)?;
             self.int(coord.y as i32)?;
-            self.int(tile.len() as i32)?;
-            self.raw(&tile)?;
+            self.int(bytes)?;
+            self.sink.tile(surface, coord)?;
         }
         Ok(())
     }
 }
 
 /// 1 つの層（C# の `DocumentBinary.Write` の層の並び）。
-fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
+fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     let named = |why: &str| format!("層「{}」の{why}", layer.name());
     w.raw(&native_id(layer.id().0))?;
     w.text(layer.name())
@@ -1216,7 +1379,7 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     for (c, v) in fills {
         w.int(c.index() as i32)?;
         w.boolean(layer.is_channel_enabled(c))?;
-        w.raw(&v.to_array())?;
+        w.value(&v.to_array())?;
     }
     if fill_images {
         w.int(images.len() as i32)?;
@@ -1319,7 +1482,7 @@ fn write_layer(w: &mut Out, layer: &yolu_core::Layer) -> Result<()> {
     Ok(())
 }
 
-fn write_projection(w: &mut Out, p: &Projection) -> Result<()> {
+fn write_projection(w: &mut Out<'_>, p: &Projection) -> Result<()> {
     w.int(Projection::ALGORITHM_VERSION as i32)?;
     w.int(p.mode as i32)?;
     w.int(p.wrap as i32)?;
@@ -1350,7 +1513,7 @@ fn write_projection(w: &mut Out, p: &Projection) -> Result<()> {
     Ok(())
 }
 
-fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
+fn write_generator(w: &mut Out<'_>, g: &generator::Settings) -> Result<()> {
     w.int(g.kind as i32)?;
     w.int(g.algorithm_version() as i32)?;
     for v in [g.low, g.high, g.softness] {
@@ -1386,6 +1549,10 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
             w.float(v)?;
         }
         if let Some(r) = &g.ramp {
+            // Unity 版と共有の並び。混色・混合率曲線は書けないので、黙って落とさず断る（画面は塗りつぶしのグラデーションには出さない）
+            if r.uses_mixing() {
+                return Err(Error::Unwritable(Unwritable::GeneratorRampMixing));
+            }
             write_ramp(w, r)?;
         }
     }
@@ -1427,11 +1594,11 @@ fn write_generator(w: &mut Out, g: &generator::Settings) -> Result<()> {
 }
 
 /// ランプ（色の分岐点・不透明度の分岐点・値のカーブ。`read_ramp` と対）。
-fn write_ramp(w: &mut Out, r: &Ramp) -> Result<()> {
+fn write_ramp(w: &mut Out<'_>, r: &Ramp) -> Result<()> {
     w.int(r.colors().len() as i32)?;
     for c in r.colors() {
         w.float(c.position)?;
-        w.raw(&[c.color.r, c.color.g, c.color.b])?;
+        w.value(&[c.color.r, c.color.g, c.color.b])?;
         w.float(c.midpoint)?;
     }
     w.int(r.opacities().len() as i32)?;
@@ -1442,8 +1609,24 @@ fn write_ramp(w: &mut Out, r: &Ramp) -> Result<()> {
     }
     write_curve(w, r.value_curve())
 }
+/// グラデーションマップの混色の欄（正本の版 25。`read_gradient_mixing` と対）: 混色モード・輝度の補正・区間の数と、区間ごとの印と混合率曲線。
+fn write_gradient_mixing(w: &mut Out<'_>, r: &Ramp) -> Result<()> {
+    w.int(i32::from(r.mix_mode().index()))?;
+    w.int(i32::from(r.luminance_correction().index()))?;
+    w.int(r.colors().len() as i32 - 1)?;
+    for k in 0..r.colors().len() - 1 {
+        match r.segment_curve(k) {
+            Some(curve) => {
+                w.boolean(true)?;
+                write_curve(w, curve)?;
+            }
+            None => w.boolean(false)?,
+        }
+    }
+    Ok(())
+}
 /// 値のカーブ（点の数と x・y。`read_curve` と対）。
-fn write_curve(w: &mut Out, curve: &Curve) -> Result<()> {
+fn write_curve(w: &mut Out<'_>, curve: &Curve) -> Result<()> {
     w.int(curve.points().len() as i32)?;
     for c in curve.points() {
         w.float(c.x)?;
@@ -1452,11 +1635,14 @@ fn write_curve(w: &mut Out, curve: &Curve) -> Result<()> {
     Ok(())
 }
 /// 64 からの調整・フィルターの種類の欄（正本の版 24。`read_color_adjust` と対）。
-fn write_color_adjust(w: &mut Out, value: &ColorAdjust) -> Result<()> {
+fn write_color_adjust(w: &mut Out<'_>, value: &ColorAdjust) -> Result<()> {
     match value {
         ColorAdjust::GradientMap(v) => {
             w.boolean(v.reverse())?;
             write_ramp(w, v.ramp())?;
+            if w.mixing {
+                write_gradient_mixing(w, v.ramp())?;
+            }
         }
         ColorAdjust::ToneCurve(v) => {
             for channel in [
@@ -1491,7 +1677,7 @@ fn write_color_adjust(w: &mut Out, value: &ColorAdjust) -> Result<()> {
 }
 
 /// 1 つのスタック（C# の `WriteFilters`）。Generator の段はフィルターの値を既定のまま書き、そのあとに Generator の欄が続く。
-fn write_filters(w: &mut Out, stack: &[FilterEffect], content: bool) -> Result<()> {
+fn write_filters(w: &mut Out<'_>, stack: &[FilterEffect], content: bool) -> Result<()> {
     w.int(stack.len() as i32)?;
     for e in stack {
         w.raw(&native_id(e.id().0))?;

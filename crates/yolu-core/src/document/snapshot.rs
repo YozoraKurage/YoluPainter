@@ -7,7 +7,7 @@
 use super::*;
 
 impl Document {
-    /// 履歴を持たない保存用の写しを取る。文書・層・チャンネルの ID と属性・マスク・選択範囲・Normal の設定・手動の ID 色・
+    /// 履歴を持たない保存用の写しを取る。文書・層・チャンネルの ID と属性・マスク・選択範囲・Normal の設定・手動の ID 色・見た目の設定・
     /// `revision` を保ち、タイルは共有する（画素のコピーはしない）。呼んだあとは元を編集してよく、写しは別のスレッドへ
     /// 渡して読める。進行中のストロークがあれば断り、元は何も変えない。
     pub fn capture_snapshot(&self) -> Result<Document, CoreError> {
@@ -23,6 +23,10 @@ impl Document {
             normal_settings,
             selection,
             id_colors,
+            look,
+            received_look,
+            drawn_look,
+            look_serial,
             source_budget,
             stroke_budget,
             undo_budget,
@@ -54,6 +58,10 @@ impl Document {
         copy.normal_settings = *normal_settings;
         copy.selection = selection.clone();
         copy.id_colors = id_colors.clone();
+        copy.look = look.clone();
+        copy.received_look = received_look.clone();
+        copy.drawn_look = drawn_look.clone();
+        copy.look_serial = *look_serial;
         copy.source_budget = *source_budget;
         copy.stroke_budget = *stroke_budget;
         copy.undo_budget = *undo_budget;

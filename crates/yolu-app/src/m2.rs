@@ -1005,7 +1005,7 @@ impl AppState {
                 self.m2.display_channel = channel;
             }
             Edit::SetChannel { channel, info } => self.doc.set_channel_info(channel, info)?,
-            Edit::RemoveChannel(channel) => self.doc.remove_channel(channel)?,
+            Edit::RemoveChannel(channel) => crate::look::remove_channel(&mut self.doc, channel)?,
             Edit::MergeDown => self.merge_down_selected()?,
             Edit::MergeVisible => self.merge_visible_layers()?,
             Edit::ConfirmMerge => self.confirm_merge()?,
@@ -1168,7 +1168,7 @@ impl AppState {
                     },
                 };
                 // 効果のブラシは消しゴムにできない。描くツールへ戻す
-                if kind != EffectKind::Paint && self.tool == crate::state::Tool::Eraser {
+                if kind != EffectKind::Paint && self.tool.erases() {
                     self.tool = crate::state::Tool::Brush;
                 }
             }
@@ -1289,6 +1289,19 @@ impl AppState {
         };
         // クローンが、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごと）を読む（最初のダブの前に凍結する。マスクには使えない）
         if self.view3d.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
+            stroke.use_composite_clone_source(&mut self.doc)?;
+        }
+        // 色の混ぜが「全レイヤーから」拾うブラシも、同じ参照元（見えているレイヤーの重なり）を最初のダブの前に凍結する
+        // （色のチャンネルを塗らない間は、混ぜが効かないので凍結しない）
+        if brush.mix.wants_composite()
+            && brush.effect.is_paint()
+            && !brush.base.erase
+            && self.paint_channels().iter().any(|p| {
+                self.doc
+                    .channel_info(p.channel)
+                    .is_some_and(|i| yolu_core::brush::carries_color(i.kind))
+            })
+        {
             stroke.use_composite_clone_source(&mut self.doc)?;
         }
         Ok(stroke)

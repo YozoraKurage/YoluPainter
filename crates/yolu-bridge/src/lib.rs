@@ -17,4 +17,4 @@ mod session;
 mod testserver;
 
 pub use ffi::*;
-pub use testserver::YlbTestServerStats;
+pub use testserver::{YlbTestServerOriginal, YlbTestServerStats, YlbTestServerTexture};

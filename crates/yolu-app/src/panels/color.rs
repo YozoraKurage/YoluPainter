@@ -27,7 +27,7 @@ fn rgb32(r: f32, g: f32, b: f32) -> Color32 {
 }
 
 impl ColorTextures {
-    fn sv(&mut self, ctx: &egui::Context, hue: f32) -> egui::TextureId {
+    pub(crate) fn sv(&mut self, ctx: &egui::Context, hue: f32) -> egui::TextureId {
         if !self
             .sv
             .as_ref()
@@ -81,7 +81,7 @@ impl ColorTextures {
             .id()
     }
 
-    fn ring(&mut self, ctx: &egui::Context) -> egui::TextureId {
+    pub(crate) fn ring(&mut self, ctx: &egui::Context) -> egui::TextureId {
         self.ring
             .get_or_insert_with(|| {
                 const N: usize = 256;

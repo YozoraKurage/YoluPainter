@@ -689,7 +689,8 @@ fn texts_on_screen_are_names_states_and_reasons_not_instructions() {
     );
 }
 
-/// 開発用の数（メモリ・タイル・三角形・合成の方式）を、状態の帯とビューの隅に出さない。
+/// 開発用の数（タイル・三角形・合成の方式・文書のメモリ）を、状態の帯とビューの隅に出さない。ユーザーの頼みの例外は、状態の帯の右端の
+/// 版・ビルドと、このプロセスの使っているメモリ・GPU の量だけ（`usage.rs`。`chrome.rs` が画面で確かめる）。
 #[test]
 fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
     const DEVELOPER_WORDS: [&str; 14] = [
@@ -721,7 +722,8 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
             }
         }
     }
-    // 状態の帯は、直前の操作の結果と理由（message）だけを出す。数を読む呼び出しも持たない
+    // 状態の帯の左は何も出さない（直前の操作の結果と理由は、小さな知らせ `toast` が短く出す）。右端の版・ビルドと使っているメモリは、
+    // ユーザーの頼みの例外で `usage` が決める（数の文字は `usage.rs` が作り、ここの関数は文書・履歴・タイル・描画の数を読まない）
     let shell = production_sources()
         .into_iter()
         .find(|(file, _)| file == "shell.rs")

@@ -6,6 +6,10 @@
 //!   乗算済み（透明の縁が黒くならない）にして上げる。不透明な画素では同じ値。Emission の RGB は書き出しと同じ（値 × アルファ。アルファは持つだけで
 //!   読まない）、Roughness・Metallic・Height は値 × アルファ（塗っていない所は 0。1 チャンネル 8 bit）、Normal は Normal の出力（塗った法線を
 //!   平らな法線に載せ、Height → Normal が有効なら Height から作った法線を土台に重ねたもの）。書き出しとのテクセルの一致は試験が照らす。
+//! - sRGB の色（Color・Emission）は sRGB の形式（`Rgba8UnormSrgb`）で持つ: GPU が読むときにテクセルをリニアへ直してから補間し、ミップも
+//!   リニアで平均する（Unity がリニアの色空間で sRGB のテクスチャを読むのと同じ。ガンマの値のまま補間すると、色の境目の中間の色が暗い）。
+//!   Color の乗算済みはリニアで掛ける（テクセル = sRGB(リニア(色) × α)。不透明なら書き出しと同じバイト）。Emission は書き出しと同じバイト
+//!   （ガンマの値 × α）を、読むときにリニアにする（Unity が書き出した PNG を読むのと同じ）。
 //! - 初めと文書が変わったときだけ全部を作り、あとは core が「変わった」と言うタイルだけを合成して上げる（変わらなかったチャンネルは触らない）。
 //!   Normal は、Normal の変わったタイルと、Height → Normal が有効なら Height の変わったタイルの 1 画素外側まで（Sobel が隣を読む）。
 //!   ミップマップは変わった範囲だけ作り直す。行は core と同じ下から上（UV の v がそのまま文書の y）。
@@ -31,9 +35,11 @@ const MAX_PAINT_SIZE: u32 = 8192;
 /// 使っているチャンネルのテクスチャ全部（ミップ込み）の GPU のバイト数の予算（既定）。超える文書は縮めて持つ。4096² で 6 チャンネルすべて
 /// （320 MiB）は収まり、8192² の 6 チャンネル（約 1.28 GiB）は 1 段縮めて 4096² にする。
 pub const PAINT_BUDGET_BYTES: u64 = 512 << 20;
-/// 8 bit ずつの色（Color・Emission・Normal）と 1 チャンネル 8 bit の値の形式。
+/// 8 bit ずつのリニアの値（Normal・メッシュマップ・リニアの画像）と 1 チャンネル 8 bit の値の形式。
 const RGBA: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SCALAR: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// sRGB の色（Color・Emission・sRGB の画像）の形式: 読むときに GPU がテクセルをリニアへ直してから補間する。
+const RGBA_SRGB: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// 見せるチャンネル（シェーダーの束縛の順 = `binding(1 + 番号)`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -79,7 +85,8 @@ impl Slot {
     fn format(self) -> wgpu::TextureFormat {
         match self {
             Slot::Metallic | Slot::Roughness | Slot::Height => SCALAR,
-            _ => RGBA,
+            Slot::Color | Slot::Emission => RGBA_SRGB,
+            Slot::Normal => RGBA,
         }
     }
 
@@ -172,6 +179,8 @@ struct PaintSet {
 struct Mips {
     layout: wgpu::BindGroupLayout,
     rgba: wgpu::RenderPipeline,
+    /// sRGB の形式の段を作る（読むときにリニアへ、書くときに sRGB へ: リニアで平均する）。
+    srgb: wgpu::RenderPipeline,
     scalar: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
 }
@@ -267,6 +276,7 @@ impl Paint {
             })
         };
         let rgba = make(RGBA);
+        let srgb = make(RGBA_SRGB);
         let scalar = make(SCALAR);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("yolu-3d-mip"),
@@ -315,6 +325,7 @@ impl Paint {
             mips: Mips {
                 layout,
                 rgba,
+                srgb,
                 scalar,
                 sampler,
             },
@@ -416,6 +427,11 @@ impl Paint {
 
     /// この文書を `cap`（辺の上限）で縮めて持つとしたときのバイト数（使っているチャンネルのミップ込み。持つかどうかの計画に使う）。
     pub fn estimate_bytes(&self, doc: &Document, cap: u32) -> u64 {
+        self.estimate(doc, cap).1
+    }
+
+    /// `estimate_bytes` の、縮めの段とバイト数（ユーザーチャンネルの配列は、この段から縮める）。
+    pub fn estimate(&self, doc: &Document, cap: u32) -> (u32, u64) {
         let limit = self.side_limit().min(cap);
         let per_texel = used_bytes_per_texel(doc);
         let shift = choose_shift([doc.width(), doc.height()], per_texel, limit, u64::MAX);
@@ -423,22 +439,27 @@ impl Paint {
             doc.width().div_ceil(1 << shift).max(1),
             doc.height().div_ceil(1 << shift).max(1),
         ];
-        mip_bytes(size, per_texel)
+        (shift, mip_bytes(size, per_texel))
     }
 
     /// 次の同期のあとに、この文書の絵が取るバイト数（使っているチャンネルのミップ込み）。作り直すなら今の予算と上限で決まる大きさ、
     /// 作り直さないなら今の大きさ。今のセットが替わるとき、新しい絵を作る前に予算の残りを決めるのに使う。
     pub fn planned_bytes(&self, doc: &Document) -> u64 {
-        let (want, _) = self.shift_for(doc);
-        let shift = match &self.set {
-            Some(s) if !self.rebuild_needed(doc, want) => s.shift,
-            _ => want,
-        };
+        let shift = self.planned_level(doc);
         let size = [
             doc.width().div_ceil(1 << shift).max(1),
             doc.height().div_ceil(1 << shift).max(1),
         ];
         mip_bytes(size, used_bytes_per_texel(doc))
+    }
+
+    /// `planned_bytes` の縮めの段。
+    pub fn planned_level(&self, doc: &Document) -> u32 {
+        let (want, _) = self.shift_for(doc);
+        match &self.set {
+            Some(s) if !self.rebuild_needed(doc, want) => s.shift,
+            _ => want,
+        }
     }
 
     /// 同期の作業用のバッファを、容量ごと手放す。合成の作業は文書の大きさ（帯の分、Height から作る Wrap の Normal は文書全体）に
@@ -542,8 +563,17 @@ impl Paint {
         true
     }
 
-    /// バイトの予算を決める（試験が小さくして、縮めの道を通す）。決め直したあと、次の同期で必要なら全部を作り直す。
+    /// バイトの予算を決める（試験が小さくして、縮めの道を通す。ほかのセットは `u64::MAX` にして、辺の上限だけで縮める）。決め直したあと、
+    /// 次の同期で必要なら全部を作り直す。上げても、予算で縮めていた絵は戻らない（縮めは上げるだけ。戻るのは文書が替わるとき）。
+    /// セットを替えるたびに呼ぶ口なので、ここでは戻さない（戻すと、替えるたびに縮めていた絵を作り直す）。
     pub fn set_budget(&mut self, bytes: u64) {
+        self.budget = bytes;
+    }
+
+    /// 利用者が決めた予算（設定の GPU のメモリ）を、今のセットの絵に入れる。`set_budget` と違い、上げたときは予算で縮めていた絵を
+    /// 元の大きさへ戻す（`uncapped`。次の同期が作り直す）。設定の予算を入れる口（`View3dRenderer::set_paint_budget`）だけが使う。
+    pub fn set_budget_and_regrow(&mut self, bytes: u64) {
+        self.uncapped |= bytes > self.budget;
         self.budget = bytes;
     }
 
@@ -856,13 +886,15 @@ impl Paint {
         }
     }
 
-    /// 文書の大きさと関係なく、1 枚の絵（straight RGBA8、行は下から。メッシュマップの表示用の 8 bit）をミップつきのテクスチャにして返す
-    /// （乗算済みにして上げる）。GPU のテクスチャの辺の上限か予算（`budget` の半分。ミップ込み）を超える大きさは、2 の累乗で縮めて持つ
-    /// （`ImageTexture::level`）。大きさ 0・バイト数が合わない絵は None。
+    /// 文書の大きさと関係なく、1 枚の絵（straight RGBA8、行は下から。メッシュマップの表示用の 8 bit・マットキャップの画像）をミップつきの
+    /// テクスチャにして返す（乗算済みにして上げる）。`srgb` の絵は sRGB の形式で、リニアで乗算済みにする（読むとリニアの乗算済み。
+    /// Color と同じ）。そうでない絵は値のまま乗算済みにする（メッシュマップはガンマの値のまま見せる）。GPU のテクスチャの辺の上限か
+    /// 予算（`budget` の半分。ミップ込み）を超える大きさは、2 の累乗で縮めて持つ（`ImageTexture::level`）。大きさ 0・バイト数が合わない絵は None。
     pub fn create_image(
         &self,
         rgba: &[u8],
         size: [u32; 2],
+        srgb: bool,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Option<ImageTexture> {
         if size[0] == 0 || size[1] == 0 || rgba.len() as u64 != size[0] as u64 * size[1] as u64 * 4
@@ -871,9 +903,15 @@ impl Paint {
         }
         let limit = self.device.limits().max_texture_dimension_2d;
         let shift = choose_shift(size, 4, limit, self.budget / 2);
-        let (data, w, h) = reduce_premultiplied(rgba, DocRect::new(0, 0, size[0], size[1]), shift);
+        let region = DocRect::new(0, 0, size[0], size[1]);
+        let (data, w, h) = if srgb {
+            reduce_srgb_premultiplied(rgba, region, shift)
+        } else {
+            reduce_premultiplied(rgba, region, shift)
+        };
+        let format = if srgb { RGBA_SRGB } else { RGBA };
         let levels = 32 - w.max(h).leading_zeros();
-        let texture = self.make_texture(RGBA, [w, h], levels);
+        let texture = self.make_texture(format, [w, h], levels);
         self.queue.write_texture(
             texture.texture.as_image_copy(),
             &data,
@@ -888,7 +926,7 @@ impl Paint {
                 depth_or_array_layers: 1,
             },
         );
-        self.rebuild_mips(RGBA, &texture, encoder, [0, 0, w, h]);
+        self.rebuild_mips(format, &texture, encoder, [0, 0, w, h]);
         Some(ImageTexture {
             texture,
             level: shift,
@@ -1037,10 +1075,15 @@ impl Paint {
                     [p[0] as u32, p[1] as u32, p[2] as u32, 255]
                 }))
             }
-            Slot::Color | Slot::Emission => {
+            Slot::Color => {
                 doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
                     .ok()?;
-                Some(reduce_premultiplied(&self.scratch, rect, shift))
+                Some(reduce_srgb_premultiplied(&self.scratch, rect, shift))
+            }
+            Slot::Emission => {
+                doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
+                    .ok()?;
+                Some(reduce_emission(&self.scratch, rect, shift))
             }
             Slot::Metallic | Slot::Roughness | Slot::Height => {
                 doc.composite_into(slot.channel(), rect, &mut self.scratch, RowOrder::BottomUp)
@@ -1061,10 +1104,10 @@ impl Paint {
         encoder: &mut wgpu::CommandEncoder,
         dirty: [u32; 4],
     ) {
-        let pipeline = if format == SCALAR {
-            &self.mips.scalar
-        } else {
-            &self.mips.rgba
+        let pipeline = match format {
+            SCALAR => &self.mips.scalar,
+            RGBA_SRGB => &self.mips.srgb,
+            _ => &self.mips.rgba,
         };
         for level in 1..texture.levels.len() {
             let w = (texture.size[0] >> level).max(1);
@@ -1113,7 +1156,7 @@ fn used_bytes_per_texel(doc: &Document) -> u64 {
 }
 
 /// 大きさ（辺）のテクスチャ（全部の段）のバイト数。`bytes_per_texel` は 1 テクセルのバイト数（チャンネルを重ねるなら合計）。
-fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
+pub(super) fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
     let levels = 32 - size[0].max(size[1]).leading_zeros();
     (0..levels)
         .map(|l| (size[0] >> l).max(1) as u64 * (size[1] >> l).max(1) as u64)
@@ -1123,7 +1166,7 @@ fn mip_bytes(size: [u32; 2], bytes_per_texel: u64) -> u64 {
 
 /// 大きさを 2 の shift 乗で縮める段数: 辺が `limit` に収まり、全部の段のバイト数（`bytes_per_texel` は重ねるチャンネルの合計）が
 /// `budget` に収まる最小の段。1 × 1 まで縮めても収まらないなら、そこまで。
-fn choose_shift(size: [u32; 2], bytes_per_texel: u64, limit: u32, budget: u64) -> u32 {
+pub(super) fn choose_shift(size: [u32; 2], bytes_per_texel: u64, limit: u32, budget: u64) -> u32 {
     let mut shift = 0;
     while shift < 31 {
         let reduced = [
@@ -1153,7 +1196,7 @@ fn expand(rect: DocRect, by: u32, bounds: DocRect) -> DocRect {
 }
 
 /// 矩形を縮めの境（2^shift）に合わせて外へ広げる（画布の端で切る）。
-fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
+pub(super) fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
     if shift == 0 {
         return rect;
     }
@@ -1269,7 +1312,7 @@ fn union(a: &DocRect, b: &DocRect) -> DocRect {
 /// 上げる矩形をまとめる: 隣り合って合わせても余計な面積がほとんど出ない矩形を 1 つにし（1 回の書き込みの手間が大きい API でも、
 /// 1 回のストロークの隣り合うタイルは 1 回で上がる）、全面のように大きくなったものは帯に切る（`keep_whole` なら切らない）。
 /// 各矩形のタイルの数は足し合わせる。
-fn plan_regions(
+pub(super) fn plan_regions(
     mut items: Vec<(DocRect, usize)>,
     shift: u32,
     bounds: DocRect,
@@ -1359,6 +1402,63 @@ pub fn reduce_premultiplied(straight: &[u8], region: DocRect, shift: u32) -> (Ve
     })
 }
 
+/// straight の sRGB の RGBA8（行は下から）を、リニアで乗算済みにして sRGB に符号化し直し（`Rgba8UnormSrgb` が読むとリニアの乗算済み）、
+/// 2^shift の箱でリニアのまま平均して縮める。不透明な画素は元のバイトのまま（8 bit の sRGB → 16 bit のリニア → 8 bit の sRGB は元に戻る）。
+pub fn reduce_srgb_premultiplied(straight: &[u8], region: DocRect, shift: u32) -> (Vec<u8>, u32, u32) {
+    let (decode, encode) = (srgb_decode16(), srgb_encode16());
+    reduce_with(
+        straight,
+        region,
+        shift,
+        4,
+        |p| {
+            let a = p[3] as u32;
+            [
+                (decode[p[0] as usize] as u32 * a + 127) / 255,
+                (decode[p[1] as usize] as u32 * a + 127) / 255,
+                (decode[p[2] as usize] as u32 * a + 127) / 255,
+                a,
+            ]
+        },
+        |q| [encode[q[0] as usize], encode[q[1] as usize], encode[q[2] as usize], q[3] as u8],
+    )
+}
+
+/// Emission: 書き出しと同じバイト（ガンマの値 × α。整数の式）。縮めるときはリニアで平均する（sRGB の形式のミップと同じ）。
+fn reduce_emission(straight: &[u8], region: DocRect, shift: u32) -> (Vec<u8>, u32, u32) {
+    let (decode, encode) = (srgb_decode16(), srgb_encode16());
+    reduce_with(
+        straight,
+        region,
+        shift,
+        4,
+        |p| {
+            let a = p[3] as u32;
+            let g = |v: u8| decode[((v as u32 * a + 127) / 255) as usize] as u32;
+            [g(p[0]), g(p[1]), g(p[2]), a]
+        },
+        |q| [encode[q[0] as usize], encode[q[1] as usize], encode[q[2] as usize], q[3] as u8],
+    )
+}
+
+/// sRGB の 8 bit → リニアの 16 bit（0〜65535）。
+fn srgb_decode16() -> &'static [u16; 256] {
+    static TABLE: std::sync::OnceLock<[u16; 256]> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|i| (super::brdf::srgb_to_linear(i as f32 / 255.0) * 65535.0).round() as u16)
+    })
+}
+
+/// リニアの 16 bit → sRGB の 8 bit（四捨五入）。
+fn srgb_encode16() -> &'static [u8] {
+    static TABLE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        (0..=u16::MAX)
+            .map(|i| (super::brdf::linear_to_srgb(i as f32 / 65535.0) * 255.0).round().min(255.0) as u8)
+            .collect()
+    })
+}
+
 /// 矩形の画素ごとに `map`（4 バイト → 最大 4 つの値）を当てて、2^shift の箱で平均して縮める。`channels` は出力のバイト数（1 か 4）。
 fn reduce(
     src: &[u8],
@@ -1367,12 +1467,24 @@ fn reduce(
     channels: usize,
     map: impl Fn(&[u8]) -> [u32; 4],
 ) -> (Vec<u8>, u32, u32) {
+    reduce_with(src, region, shift, channels, map, |q| q.map(|v| v as u8))
+}
+
+/// `reduce` の、平均した値をバイトへ直す式（`finish`）を選べる形（`map` の値は 8 bit を超えてよい）。
+fn reduce_with(
+    src: &[u8],
+    region: DocRect,
+    shift: u32,
+    channels: usize,
+    map: impl Fn(&[u8]) -> [u32; 4],
+    finish: impl Fn([u32; 4]) -> [u8; 4],
+) -> (Vec<u8>, u32, u32) {
     let (w, h) = (region.width, region.height);
     if shift == 0 {
         let mut out = Vec::with_capacity((w * h) as usize * channels);
         for p in src.as_chunks::<4>().0 {
-            let q = map(p);
-            out.extend(q.iter().take(channels).map(|v| *v as u8));
+            let q = finish(map(p));
+            out.extend_from_slice(&q[..channels]);
         }
         return (out, w, h);
     }
@@ -1393,9 +1505,8 @@ fn reduce(
                     n += 1;
                 }
             }
-            for s in sum.iter().take(channels) {
-                out.push(((s + n / 2) / n) as u8);
-            }
+            let q = finish(sum.map(|s| (s + n / 2) / n));
+            out.extend_from_slice(&q[..channels]);
         }
     }
     (out, dw, dh)
@@ -1428,6 +1539,28 @@ mod tests {
         let (same, w, h) = reduce_premultiplied(&s, DocRect::new(0, 0, 3, 2), 0);
         assert_eq!((w, h), (3, 2));
         assert_eq!(&same[4..8], &[128, 0, 0, 128]);
+    }
+
+    #[test]
+    fn srgb_texels_keep_opaque_bytes_and_premultiply_and_average_in_linear() {
+        // 不透明な画素は元のバイトのまま（8 bit の sRGB → 16 bit のリニア → 8 bit の sRGB が元に戻る。書き出しと同じテクセル）
+        let all: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v, v / 2, 255]).collect();
+        let (out, _, _) = reduce_srgb_premultiplied(&all, DocRect::new(0, 0, 256, 1), 0);
+        assert_eq!(out, all);
+        let (out, _, _) = reduce_emission(&all, DocRect::new(0, 0, 256, 1), 0);
+        assert_eq!(out, all);
+        // 半透明: リニアで掛ける（sRGB 255 × α 0.5 → リニア 0.5 → sRGB 188）。ガンマのまま掛ける Emission は書き出しと同じ 128
+        let half = [255u8, 255, 255, 128];
+        let (out, _, _) = reduce_srgb_premultiplied(&half, DocRect::new(0, 0, 1, 1), 0);
+        assert_eq!(out, [188, 188, 188, 128]);
+        let (out, _, _) = reduce_emission(&half, DocRect::new(0, 0, 1, 1), 0);
+        assert_eq!(out, [128, 128, 128, 128]);
+        // 白と黒（不透明）を縮めると、リニアの平均 0.5 → sRGB 188（ガンマの平均の 128 より明るい。Unity のミップと同じ）
+        let bw = [255u8, 255, 255, 255, 0, 0, 0, 255];
+        let (out, w, h) = reduce_srgb_premultiplied(&bw, DocRect::new(0, 0, 2, 1), 1);
+        assert_eq!((out.as_slice(), w, h), (&[188u8, 188, 188, 255][..], 1, 1));
+        let (out, _, _) = reduce_emission(&bw, DocRect::new(0, 0, 2, 1), 1);
+        assert_eq!(out, [188, 188, 188, 255]);
     }
 
     #[test]

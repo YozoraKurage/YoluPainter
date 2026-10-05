@@ -9,6 +9,7 @@ use super::brushes::{is_eraser, live_brush, paint_sample};
 use crate::brushes::sample::SampleSpec;
 use crate::brushes::Category;
 use crate::state::AppState;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, Rows};
 use crate::ui::window::{self, Spec};
@@ -137,16 +138,11 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     // 欄（スクロール）
     let body = Rect::from_min_max(pos2(pane.left(), title.bottom() + 2.0), pane.max);
     let detail = &mut app.brushes.ui.detail;
-    let max_scroll = (detail.content - body.height()).max(0.0);
-    if ui.rect_contains_pointer(body) {
-        detail.scroll -= ui.input(|i| i.smooth_scroll_delta.y);
-    }
-    detail.scroll = detail.scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, body, detail.content, &mut detail.scroll);
     let scroll = detail.scroll;
-    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
     let area = Rect::from_min_max(
         pos2(body.left(), body.top() - scroll),
-        pos2(body.right() - bar, body.bottom()),
+        pos2(body.right() - bar.reserved(), body.bottom()),
     );
     let outer = ui.clip_rect();
     ui.set_clip_rect(body.intersect(outer));
@@ -155,17 +151,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     rows.space(10.0);
     app.brushes.ui.detail.content = rows.used();
     ui.set_clip_rect(outer);
-    if max_scroll > 0.0 {
-        let track = body.height();
-        let bar_h = (track * track / app.brushes.ui.detail.content).max(16.0);
-        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "brush_detail.scroll", &mut app.brushes.ui.detail.scroll);
 }
 
 /// 窓を描く（開いていなければ何もしない）。
@@ -178,10 +164,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.ui.detail.placed {
         // 初めは、左のドックの右・上の寄りに置く（キャンバスの真ん中を空ける）
         let screen = ctx.content_rect();
-        let min = pos2(
-            screen.left() + t::TOOL_STRIP_WIDTH + t::DOCK_WIDTH + 24.0,
-            screen.top() + 124.0,
-        );
+        let dock_right = match app.subtools.ui.panel_right {
+            right if right > 0.0 => right,
+            _ => screen.left() + t::TOOL_STRIP_WIDTH + t::DOCK_WIDTH,
+        };
+        let min = pos2(dock_right + 24.0, screen.top() + 124.0);
         let center = min + vec2(WIDTH, HEIGHT) / 2.0;
         app.brushes.ui.detail.offset = center - screen.center();
         app.brushes.ui.detail.placed = true;

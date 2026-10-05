@@ -347,7 +347,7 @@ fn settings_dir(tag: &str) -> PathBuf {
 
 fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp> {
     let path = path.to_path_buf();
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(size)
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -365,7 +365,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
 }
 
 fn open_settings(h: &mut Harness<'static, YoluApp>) {
-    let at = menu_title(h, "表示").center();
+    // 設定は編集のメニューの一番下（Unity の Edit ▸ Preferences と同じ）
+    let at = menu_title(h, "編集").center();
     click(h, at);
     let item = popup_item(h, "設定…").center();
     click(h, item);
@@ -394,7 +395,7 @@ fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
 }
 
 #[test]
-fn the_settings_window_opens_from_the_view_menu_and_edits_every_value_into_the_file() {
+fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_file() {
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
@@ -587,4 +588,235 @@ fn headless_loading_allows_the_set_budget_but_never_less_than_the_core_default()
     assert_eq!(state.load_source_bytes(), 2048 * MIB);
     set(&mut state, Pref::Budget(BudgetKind::Source, Budget::Mib(4096)));
     assert_eq!(state.load_source_bytes(), 4096 * MIB);
+}
+
+// ───────── 窓の収まり・メニューの位置とキー・3D ビューの視点の中心 ─────────
+
+fn drawn_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
+    use egui::epaint::Shape;
+    fn walk(shape: &Shape, clip: Rect, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
+            Shape::Text(t) => {
+                let r = t.galley.rect.translate(t.pos.to_vec2());
+                out.push((t.galley.job.text.clone(), r.intersect(clip)));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for s in &h.output().shapes {
+        // 切り取られた外の文字は画面に出ない（共通のスクロールで隠れた行）
+        walk(&s.shape, s.clip_rect, &mut out);
+    }
+    out
+}
+
+fn english(h: &mut Harness<'static, YoluApp>, lang: Lang) {
+    h.state_mut().state.lang = lang;
+    h.run();
+}
+
+/// 窓の高さの見積もり（描く行の数と合わせた表）が、実際に並べた高さと同じ（行を足して数え違えると、最後の行が窓からはみ出す）。
+#[test]
+fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_languages() {
+    let dir = settings_dir("height");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1600.0, 1100.0));
+    open_settings(&mut h);
+    for lang in Lang::ALL {
+        english(&mut h, lang);
+        for details in [false, true] {
+            h.state_mut().state.apply(Action::Prefs(PrefsAction::GpuDetails(details)));
+            h.run();
+            h.run();
+            let window = window_rect(&h);
+            let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
+            let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
+            assert!(
+                (body - drawn).abs() < 0.5,
+                "{lang:?} 詳しく={details}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
+            );
+        }
+    }
+}
+
+/// どの大きさの窓でも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
+/// 横にははみ出さない。日英・いちばん小さい窓（960 × 640）。
+#[test]
+fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both_languages() {
+    let dir = settings_dir("small");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    for lang in Lang::ALL {
+        let mut h = app_with_settings(&path, vec2(960.0, 640.0));
+        // 小さい窓では編集のメニューも長くてポップアップの中で送るので、窓はキーで開く
+        key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
+        h.run();
+        assert!(h.state().state.prefs.open);
+        english(&mut h, lang);
+        let window = window_rect(&h);
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 640.0));
+        assert!(screen.contains_rect(window), "{lang:?}: {window:?}");
+        // 横: どの文字も窓の幅に収まる（見える所だけ）
+        for (text, r) in drawn_texts(&h).into_iter().filter(|(_, r)| r.height() > 0.0 && window.contains(r.center())) {
+            assert!(
+                r.left() >= window.left() - 0.5 && r.right() <= window.right() + 0.5,
+                "{lang:?}: 窓の横からはみ出す「{text}」{r:?} {window:?}"
+            );
+        }
+        // 縦: 低い画面では中身が窓に収まらないので、つまみがある。ホイールで一番下まで送ると、最後の行が窓の中に入る
+        let bar_in = |h: &Harness<'static, YoluApp>| {
+            h.query_all_by_role(egui::accesskit::Role::ScrollBar)
+                .map(|n| n.rect())
+                .find(|r| window.contains_rect(*r))
+        };
+        let bar = bar_in(&h).unwrap_or_else(|| panic!("{lang:?}: 収まらないのに、窓の中につまみが無い"));
+        assert!(bar.height() > 100.0, "{bar:?}");
+        let keep_all = lang.pick("すべて残す", "Keep all");
+        h.event(egui::Event::PointerMoved(window.center() - vec2(100.0, 0.0)));
+        h.step();
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -5000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.run();
+        h.run();
+        let last = h.get_by_label(keep_all).rect();
+        assert!(window.contains_rect(last), "{lang:?}: 一番下の行 {last:?} が窓 {window:?} の外");
+        // つまみを掴んで一番上へ戻せる
+        let bar = bar_in(&h).expect("窓のつまみ");
+        let grab = egui::pos2(bar.center().x, bar.bottom() - 6.0);
+        drag(&mut h, &[grab, egui::pos2(grab.x, bar.top() - 50.0)]);
+        h.run();
+        let name = lang.pick("言語", "Language");
+        assert!(
+            drawn_texts(&h).iter().any(|(t, r)| t == name && window.contains(r.center())),
+            "{lang:?}: 一番上へ戻すと最初の行が見える"
+        );
+    }
+}
+
+/// 設定は編集のメニューの一番下（区切りの後。Unity の Edit ▸ Preferences と同じ）で、表示のメニューには無い。
+#[test]
+fn settings_is_the_last_item_of_the_edit_menu_after_a_separator_and_not_in_the_view_menu() {
+    use yolu_app::ui::menu::Entry;
+    for lang in Lang::ALL {
+        let mut s = state();
+        s.lang = lang;
+        let edit = yolu_app::shell::menu_entries(&s, 1);
+        let Some(Entry::Item { label, action, shortcut, .. }) = edit.last() else {
+            panic!("{lang:?}: 編集のメニューの最後が項目でない");
+        };
+        assert_eq!(*action, Action::Prefs(PrefsAction::Open));
+        assert_eq!(label, lang.pick("設定…", "Settings…"));
+        assert_eq!(shortcut.as_deref(), Some("Ctrl+,"));
+        assert!(matches!(edit[edit.len() - 2], Entry::Separator), "{lang:?}: 設定の前に区切り");
+        for index in 0..7 {
+            if index == 1 {
+                continue;
+            }
+            let entries = yolu_app::shell::menu_entries(&s, index);
+            assert!(
+                !yolu_app::ui::menu::leaves(&entries).iter().any(|e| matches!(e, Entry::Item { action: Action::Prefs(_), .. })),
+                "{lang:?}: 編集以外のメニュー {index} に設定がある"
+            );
+        }
+    }
+}
+
+/// Ctrl+, で設定の窓が開き、キーの一覧にも出る（名前はメニューと同じ）。
+#[test]
+fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
+    let dir = settings_dir("key");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.prefs.open);
+    key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
+    h.run();
+    assert!(h.state().state.prefs.open, "Ctrl+, で開く");
+    // 開いたままもう一度押しても、そのまま（閉じも、二重にもならない）
+    key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
+    h.run();
+    assert!(h.state().state.prefs.open);
+    // キーの一覧（読むだけの窓）にある
+    let binding = yolu_app::shortcuts::bindings()
+        .into_iter()
+        .find(|b| b.action == Action::Prefs(PrefsAction::Open))
+        .expect("一覧に設定のキーがある");
+    assert_eq!(yolu_app::shortcuts::key_label(&binding), "Ctrl+,");
+    for lang in Lang::ALL {
+        h.state_mut().state.lang = lang;
+        assert_eq!(
+            yolu_app::shortcuts::action_label(&h.state().state, &binding.action).as_deref(),
+            Some(lang.pick("設定…", "Settings…"))
+        );
+    }
+    assert_eq!(yolu_app::shortcuts::shortcut_text(&Action::Prefs(PrefsAction::Open)).as_deref(), Some("Ctrl+,"));
+}
+
+/// 3D の視点の中心（回転・ズーム）を設定の窓の「3D ビュー」の節でも選べる。3D ビューの表示の設定の「視点」と同じ値で、設定のファイルに
+/// 書かれ、次の起動で戻る。
+#[test]
+fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_restart() {
+    use yolu_app::view3d::navigation::{OrbitCenter, ZoomCenter};
+    // 選択肢は 4 つと 2 つ。今の値に印
+    let mut s = state();
+    for (choice, count) in [(PrefChoice::OrbitCenter, 4), (PrefChoice::ZoomCenter, 2)] {
+        let e = entries(&s, choice);
+        assert_eq!(e.len(), count);
+        assert_eq!(labels(&e).len(), count);
+    }
+    assert_eq!(
+        labels(&entries(&s, PrefChoice::OrbitCenter)),
+        OrbitCenter::ALL.map(|c| c.label(s.lang).to_owned()).to_vec()
+    );
+    set(&mut s, Pref::OrbitCenter(OrbitCenter::TextureSet));
+    set(&mut s, Pref::ZoomCenter(ZoomCenter::Pointer));
+    assert_eq!(s.prefs.settings.navigation.orbit, OrbitCenter::TextureSet);
+    assert_eq!(s.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
+
+    // 窓で選ぶ（節の見出しと値の箱）
+    let dir = settings_dir("pivot");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    open_settings(&mut h);
+    assert!(drawn_texts(&h).iter().any(|(t, _)| t == "3D ビュー"), "節の見出し");
+    let pick = |h: &mut Harness<'static, YoluApp>, label: &str, item: &str| {
+        let at = h.get_by_label(label).rect().center();
+        click(h, at);
+        let at = popup_item(h, item).center();
+        click(h, at);
+    };
+    assert_eq!(h.state().state.prefs.settings.navigation.orbit, OrbitCenter::View);
+    pick(&mut h, "回転の中心: 画面の中心", "面の位置（自動深度）");
+    assert_eq!(h.state().state.prefs.settings.navigation.orbit, OrbitCenter::Surface);
+    pick(&mut h, "回転の中心: 面の位置（自動深度）", "モデルの中心");
+    assert_eq!(h.state().state.prefs.settings.navigation.orbit, OrbitCenter::Model);
+    pick(&mut h, "ズームの中心: 画面の中心へ", "ポインタの所へ");
+    assert_eq!(h.state().state.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
+    // 3D ビューの表示の設定と同じ値（見る口が同じ）
+    assert_eq!(h.state().state.settings().navigation.orbit, OrbitCenter::Model);
+    h.run();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.lines().any(|l| l == "view3d_orbit=model"), "{written}");
+    assert!(written.lines().any(|l| l == "view3d_zoom=pointer"), "{written}");
+    drop(h);
+    let h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert_eq!(h.state().state.prefs.settings.navigation.orbit, OrbitCenter::Model);
+    assert_eq!(h.state().state.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
+    // 英語でも節と値の名前が出る
+    let mut h = h;
+    open_settings_in(&mut h, Lang::En);
+    assert!(drawn_texts(&h).iter().any(|(t, _)| t == "3D View"), "節の見出し");
+    let _ = h.get_by_label("Orbit center: Model center");
+    let _ = h.get_by_label("Zoom center: Toward pointer");
+}
+
+fn open_settings_in(h: &mut Harness<'static, YoluApp>, lang: Lang) {
+    h.state_mut().state.lang = lang;
+    h.run();
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.run();
 }

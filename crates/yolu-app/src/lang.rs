@@ -42,3 +42,4 @@ mod tests {
 }
 
 mod errors;
+pub(crate) use errors::budget_text;

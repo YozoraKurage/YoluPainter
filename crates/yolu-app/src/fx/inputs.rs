@@ -122,6 +122,12 @@ pub struct InputsState {
 }
 
 impl InputsState {
+    /// セット（uid）の文書へ渡した入力の覚えを捨てる（文書を別のものに替えたとき。次の同期で、新しい文書へ入力を渡し直す）。
+    pub(crate) fn forget_set(&mut self, uid: u32) {
+        self.keys.remove(&uid);
+        self.attempts.remove(&uid);
+    }
+
     /// 復号できなかった画像の理由。
     pub fn image_error(&self, id: ImageId) -> Option<&str> {
         self.image_errors.get(&id).map(|f| f.reason.as_str())
@@ -347,6 +353,7 @@ impl AppState {
             for layer in self.set_doc(i).layers() {
                 pointed.extend(layer.fill_images().map(|(_, id)| id));
             }
+            pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
         let waiting_sets: HashSet<u32> = self.sets.iter().filter(|s| s.waiting_inputs).map(|s| s.uid).collect();
         let state = &mut self.fx.inputs;
@@ -622,6 +629,8 @@ impl AppState {
             return false;
         };
         let selection = native.selection.clone();
+        let look = project.project().look(&set.id);
+        let received = project.project().received_look(&set.id);
         let mut doc = match crate::project::to_core(&native.document, self.lang, budget) {
             Ok(doc) => doc,
             Err(reason) => {
@@ -642,6 +651,9 @@ impl AppState {
         }
         // 選択範囲（selection.bin）は開いたときと同じく文書に戻す
         let restored = crate::selection::io::restore_into(&mut doc, selection.as_ref(), self.lang);
+        // 見た目の設定（look.json）も開いたときと同じく戻す（読めなければ標準のまま、理由を言う）
+        let look_restored = crate::look::io::restore_from(&mut doc, look, self.lang)
+            .and(crate::look::io::restore_received_from(&mut doc, received, self.lang));
         let saved = Some((doc.id(), doc.revision()));
         self.put_set_doc(index, doc);
         if let Some(set) = self.sets.get_mut(index) {
@@ -656,6 +668,9 @@ impl AppState {
         );
         // 選択範囲を戻せなかったら、開いたときと同じく理由を言う（選択なしで開く）
         if let Err(e) = restored {
+            self.message += &format!(" {e}");
+        }
+        if let Err(e) = look_restored {
             self.message += &format!(" {e}");
         }
         true
@@ -707,7 +722,8 @@ impl AppState {
             let png = self
                 .project
                 .as_ref()
-                .and_then(|p| p.project().migrated_entries().get(&format!("sets/{id}/composite/Color.png")).cloned());
+                .and_then(|p| p.project().migrated_entries().get(&format!("sets/{id}/composite/Color.png")).cloned())
+                .and_then(|b| b.bytes().ok());
             let (preview, note) = crate::project::preview_document(png.as_deref(), width, height, lang);
             let reason = match note {
                 Some(n) => format!("{reason}。{n}"),
@@ -785,7 +801,7 @@ mod tests {
         source.apply(Action::SaveProjectAs(path.clone()));
         assert!(!source.modified, "{}", source.message);
         let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
-        let bytes = crate::project::to_core(&native, Lang::Ja, u64::MAX).unwrap().allocated_bytes();
+        let bytes = crate::project::to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, u64::MAX).unwrap().allocated_bytes();
         assert!(bytes >= 4 * 65536);
 
         // 開く（予算にちょうど収まる）: 画像が無いので、入力待ちの読むだけ

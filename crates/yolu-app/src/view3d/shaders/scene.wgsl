@@ -34,6 +34,12 @@ struct Uniforms {
     shadow_matrix: mat4x4<f32>,
     // x: 影を使う（1）、y: ぼかしの半径（u v）、z: 深さの偏りの基本（深さの単位）、w: 法線の向きにずらす量（世界）
     shadow: vec4<f32>,
+    // lilToon の光（liltoon.wgsl）: 環境光の SH を Unity の unity_SHAr・SHAg・SHAb・SHBr・SHBg・SHBb・SHC の形で（環境の明るさ込み。
+    // 環境を使わないときは一様な環境光を L0 に）
+    lil_sh: array<vec4<f32>, 7>,
+    // カメラの上と、画面から手前への向き（Unity の視点の行列の 1 行目と 2 行目）
+    lil_camera_up: vec4<f32>,
+    lil_camera_front: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -96,6 +102,14 @@ fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = v * 12.92;
     let hi = 1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
     return select(hi, lo, v <= vec3<f32>(0.0031308));
+}
+
+// リニアの乗算済みの色 → ガンマの乗算済み（ガンマの値 × α）
+fn premultiplied_gamma(c: vec4<f32>) -> vec3<f32> {
+    if (c.a <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    return linear_to_srgb(c.rgb / c.a) * c.a;
 }
 
 fn saturate(x: f32) -> f32 {
@@ -245,19 +259,22 @@ fn standard_brdf(
 
 @fragment
 fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
-    // 標本の取り出しは条件の外で（導関数の一様性）。絵は乗算済み（行は文書と同じ下から上: v がそのまま文書の y）
+    // 標本の取り出しは条件の外で（導関数の一様性）。絵は乗算済み（行は文書と同じ下から上: v がそのまま文書の y）。Color・Emission は
+    // sRGB の形式で、読んだ値はリニア（リニアで補間した値。Color はリニアの乗算済み）
     let tex_color = textureSample(color_tex, paint_sampler, f.uv);
     let tex_metallic = textureSample(metallic_tex, paint_sampler, f.uv).r;
     let tex_roughness = textureSample(roughness_tex, paint_sampler, f.uv).r;
     let tex_normal = textureSample(normal_tex, paint_sampler, f.uv).rgb;
     let tex_emission = textureSample(emission_tex, paint_sampler, f.uv).rgb;
+    // 市松の上に重ねるのは今までどおりガンマの値で（画面の 2D の画布と同じ見え方）
+    let color_gamma = premultiplied_gamma(tex_color);
     let tex_height = textureSample(height_tex, paint_sampler, f.uv).r;
     let tex_map = textureSample(map_tex, paint_sampler, f.uv);
     let painted = set_params.flags.x > 0.5;
     let background = checker_gamma(f.uv);
     var base_gamma = background;
     if (painted) {
-        base_gamma = background * (1.0 - tex_color.a) + tex_color.rgb;
+        base_gamma = background * (1.0 - tex_color.a) + color_gamma;
     }
 
     // チャンネルだけ・メッシュマップだけ（光なし）: 値をそのまま出す
@@ -278,7 +295,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
             } else if (ch == 3) {
                 c = tex_normal;
             } else if (ch == 4) {
-                c = tex_emission;
+                c = linear_to_srgb(tex_emission);
             } else if (ch == 5) {
                 c = vec3<f32>(tex_height);
             }
@@ -322,7 +339,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     if (painted) {
         metallic = tex_metallic;
         smoothness = 1.0 - tex_roughness;
-        emission = srgb_to_linear(tex_emission);
+        emission = tex_emission;
     }
     var gi_diffuse = u.ambient.rgb;
     var gi_specular = u.ambient.rgb;

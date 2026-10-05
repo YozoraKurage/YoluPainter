@@ -7,14 +7,17 @@ pub mod display;
 pub mod environment;
 pub mod gizmo;
 pub mod input;
+pub mod look_gpu;
 pub mod model;
 pub mod navigation;
 pub mod other_sets;
 pub mod paint;
+pub mod received_layers;
 pub mod pose;
 pub mod render;
 pub mod shape_gizmo;
 pub mod tangents;
+pub mod user_layers;
 
 use std::sync::Arc;
 

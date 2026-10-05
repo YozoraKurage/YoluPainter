@@ -1,7 +1,5 @@
 //! 日英の対象パネル・通知・失敗時の保存契約。
 mod common;
-#[path = "common/gpu_thread.rs"]
-mod gpu_thread;
 use egui::{epaint::Shape, vec2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
 use common::*;
@@ -60,7 +58,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
             let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
             let mut textures = color::ColorTextures::default();
-            let mut h = Harness::builder().with_size(vec2(300.0, 360.0))
+            let mut h = common::gpu_thread::builder().with_size(vec2(300.0, 360.0))
                 .with_render_options(common::render_options()).wgpu()
                 .build_ui_state(move |ui, state| {
                     if !ready {
@@ -75,6 +73,9 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                         _ => assets::show(ui, state),
                     }
                 }, state);
+            h.run();
+            // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
+            h.state_mut().shelf.wait_inspections();
             h.run();
             let mut labels = Vec::new();
             for shape in &h.output().shapes { text_shapes(&shape.shape, shape.clip_rect, &mut labels); }
@@ -139,14 +140,32 @@ fn project_notices_and_conflicts_follow_the_language_without_changing_data() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// 正本の展開後の大きさを 512 MiB を超えると宣言した .ylp（中央ディレクトリとローカルヘッダーの欄だけを書き換える）。
+fn declared_too_large() -> Vec<u8> {
+    let le16 = |b: &[u8], at: usize| u16::from_le_bytes([b[at], b[at + 1]]) as usize;
+    let le32 = |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap()) as usize;
+    let files = std::collections::BTreeMap::from([("document.utpaint".to_owned(), "x".repeat(4096).into_bytes())]);
+    let mut b = yolu_io::Archive::from_entries(files).unwrap().to_bytes().unwrap();
+    let end = b.len() - 22;
+    let mut at = le32(&b, end + 16);
+    while &b[at + 46..at + 46 + le16(&b, at + 28)] != b"document.utpaint" {
+        at += 46 + le16(&b, at + 28) + le16(&b, at + 30) + le16(&b, at + 32);
+    }
+    let local = le32(&b, at + 42);
+    let size = (600u32 << 20).to_le_bytes();
+    b[at + 24..at + 28].copy_from_slice(&size);
+    b[local + 22..local + 26].copy_from_slice(&size);
+    b
+}
+
 /// 開く・保存するの失敗は、壊れたファイル・予算超過・まだ書けない中身を言い分ける（どれも同じ文にしない）。日本語は診断を保つ。
 #[test]
 fn project_failures_are_told_apart_by_kind_in_both_languages() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/i18n-failure-tests").join(std::process::id().to_string());
     std::fs::create_dir_all(&root).unwrap();
-    // 予算を超える大きさのファイル（中身は読まずに断る。疎なファイルなので場所を取らない）
+    // 1 エントリの上限（512 MiB）を超える大きさを宣言したファイル（展開する前に、宣言で断る。中身は小さい）
     let big = root.join("big.ylp");
-    std::fs::File::create(&big).unwrap().set_len((yolu_io::MAX_TOTAL_BYTES + 3 * 1024 * 1024) as u64).unwrap();
+    std::fs::write(&big, declared_too_large()).unwrap();
     let broken = root.join("broken.ylp");
     std::fs::write(&broken, b"not an archive").unwrap();
     let mut seen: Vec<Vec<String>> = Vec::new();
@@ -191,6 +210,62 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
     }
     assert_ne!(seen[0], seen[1]);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// 設定の予算（「レイヤーの画素」から決まる上限）で断った理由は、どの予算かを日英それぞれで言う。開発用の数（MiB）・内部の識別子
+/// （セットの ID）・上限の導き方は出さない。.ylp（大きな形 `YLP-4`）と復旧の世代の両方。
+#[test]
+fn a_budget_refusal_names_the_budget_in_both_languages() {
+    use yolu_io::{GenerationStore, Limits, NativeDocument, Package, Project, SetSpec, Thresholds, WriterInfo};
+    let (doc, _) = yolu_app::state::blank_document(64, 64);
+    let id = yolu_app::sets::guid_string(doc.id());
+    let native = NativeDocument::from_core(&doc).unwrap();
+    let small = Thresholds { classic_total_bytes: 64, ..Thresholds::REAL };
+    let project = small.scoped(|| {
+        Project::create(
+            WriterInfo { app: "試験".into(), version: "0".into(), unity: "standalone".into() },
+            &[SetSpec {
+                id: id.clone(),
+                name: "セット".into(),
+                material: yolu_io::MaterialRef::PendingSlot(0),
+                document: Some(native.clone().into()),
+                composites: vec![],
+            }],
+            &id,
+        )
+        .unwrap()
+    });
+    let bytes = small.scoped(|| project.to_bytes().unwrap());
+    let document = native.to_bytes().len() as u64;
+    let per_document = Limits { document_bytes: document - 1, other_bytes: u64::MAX / 2 };
+    let whole = Limits { document_bytes: document, other_bytes: 0 };
+    let refusals = [
+        Package::read_bytes(&bytes, &per_document).unwrap_err(),
+        Package::read_bytes(&bytes, &whole).unwrap_err(),
+    ];
+    let ja: Vec<String> = refusals.iter().map(|e| Lang::Ja.io_error(e)).collect();
+    let en: Vec<String> = refusals.iter().map(|e| Lang::En.io_error(e)).collect();
+    for text in ja.iter().chain(&en) {
+        assert!(!text.contains("MiB") && !text.contains(&id), "{text}");
+    }
+    assert!(ja.iter().all(|t| t.contains("「レイヤーの画素」の予算")), "{ja:?}");
+    assert!(en.iter().all(|t| t.contains("Layer pixels budget") && !has_japanese(t)), "{en:?}");
+    assert_ne!(en[0], en[1], "セットごとの正本と全体を言い分ける");
+    // 復旧の世代も同じ数え方・同じ言い方
+    let root = std::env::temp_dir().join(format!("yolu-i18n-budget-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = GenerationStore::new(&root);
+    store
+        .commit(
+            project.original_archive().entries(),
+            &yolu_io::CommitOptions { expected: None, keep: None, share: true },
+        )
+        .unwrap();
+    let Err(refused) = store.clone().with_limits(per_document).load() else { panic!("予算で断らない") };
+    let (ja, en) = (Lang::Ja.store_error(&refused), Lang::En.store_error(&refused));
+    assert!(ja.contains("「レイヤーの画素」の予算") && !ja.contains("MiB"), "{ja}");
+    assert!(en.contains("Layer pixels budget"), "{en}");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 古い形式を開いたときの io の知らせは、件数ではなく内容を日英それぞれで読める。
@@ -238,7 +313,7 @@ fn english_app() -> Harness<'static, YoluApp> {
 }
 
 fn english_app_sized(width: f32, height: f32, lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -352,7 +427,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     assert!(!japanese_left(&h, &[]).is_empty());
     h.state_mut().state.lang = Lang::En;
     h.run();
-    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::SubTools, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
@@ -392,7 +467,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     h.state_mut().state.brushes.ui.detail.open = false;
     h.run();
     // 一覧: 全グループ（組み込みの名前・利用者のブラシ）
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     apply(&mut h, Action::Brush(BrushAction::Add));
     for group in Group::ALL {
         h.state_mut().state.brushes.ui.group = group;
@@ -464,7 +539,7 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
 /// 設定のファイルを使うアプリ（`settings` は設定のファイルの場所）。
 fn app_with_settings(settings: &std::path::Path) -> Harness<'static, YoluApp> {
     let settings = settings.to_path_buf();
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -646,17 +721,17 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
 }
 
 #[test]
-fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages() {
-    gpu_thread::run(the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu);
+fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages() {
+    gpu_thread::run(the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu);
 }
 
-fn the_settings_window_opens_from_the_view_menu_and_changes_the_backups_in_both_languages_gpu() {
+fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu() {
     use egui_kittest::kittest::NodeT;
     use yolu_app::prefs;
     use yolu_io::BackupKeep;
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        let (view, item) = (lang.pick("表示", "View"), lang.pick("設定…", "Settings…"));
+        let (view, item) = (lang.pick("編集", "Edit"), lang.pick("設定…", "Settings…"));
         let (title, label, keep_all) =
             (lang.pick("設定", "Settings"), lang.pick("退避を残す数", "Backups to keep"), lang.pick("すべて残す", "Keep all"));
         assert!(prefs::last_rect(&h.ctx).is_none());
@@ -955,12 +1030,12 @@ fn english_texture_set_states_have_no_japanese_gpu() {
 fn walk_states(lang: Lang, width: f32, height: f32, mut visit: impl FnMut(&mut Harness<'static, YoluApp>, &str)) {
     let mut h = english_app_sized(width, height, lang);
     visit(&mut h, "default");
-    for tab in [Tab::Brushes, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
+    for tab in [Tab::SubTools, Tab::Assets, Tab::Color, Tab::Channels, Tab::TextureSets, Tab::Layers, Tab::Properties, Tab::View3d, Tab::Canvas] {
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
     // ブラシの一覧（全グループ）と詳細の窓（全カテゴリ）
-    click_tab(&mut h, Tab::Brushes);
+    click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
         h.state_mut().state.brushes.ui.group = group;
         h.run();
@@ -1007,7 +1082,7 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
         let mut state = AppState::new(64, 64);
         state.lang = lang;
         let mut ready = false;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(300.0, 1100.0))
             .with_render_options(common::render_options())
             .wgpu()
@@ -1023,6 +1098,9 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
                 },
                 state,
             );
+        h.run();
+        // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
+        h.state_mut().shelf.wait_inspections();
         h.run();
         widgets::take_truncations();
         h.step();

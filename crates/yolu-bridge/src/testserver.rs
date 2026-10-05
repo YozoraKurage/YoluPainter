@@ -7,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use yolu_protocol::host::PublishedSet;
-use yolu_protocol::link::{accept, error_message, wrong_direction};
+use yolu_protocol::link::{accept_as, error_message, wrong_direction, HANDSHAKE_TIMEOUT};
 use yolu_protocol::*;
 
 /// 自己診断のスタンドアロンが受けたものの数。
@@ -37,6 +37,54 @@ pub struct YlbTestServerStats {
     pub last_materials_count: u32,
     pub last_materials_routes: u32,
     pub last_materials_shader_len: u32,
+    /// 受けたマテリアルの値（MaterialValues）の数と、最後の値のマテリアルの番号・種類（0 値なし・1 lilToon）・プロパティの数・
+    /// キーワードの数・スロットの数・シェーダー名の長さ。
+    pub values: u32,
+    pub last_values_material: u32,
+    pub last_values_kind: u32,
+    pub last_values_properties: u32,
+    pub last_values_keywords: u32,
+    pub last_values_slots: u32,
+    pub last_values_shader_len: u32,
+    /// 受けた描いていないスロットの絵（MaterialTexture）の数と、その画素のバイトの合計（KiB、切り上げ）。
+    pub textures: u32,
+    pub texture_kib: u32,
+    /// 受けた元の絵（MaterialOriginal）の数（絵の付かない様子も数える）と、絵の付いたものの画素のバイトの合計（KiB、切り上げ）。
+    pub originals: u32,
+    pub original_kib: u32,
+    /// 元の絵が揃うまで出さずに待たせているセットの数（機能の印 ORIGINAL_TEXTURES を名乗っているときだけ待たせる）。
+    pub held_sets: u32,
+}
+
+/// 自己診断のスタンドアロンが受けた、元の絵 1 つの様子（`ylb_test_server_original`）。
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct YlbTestServerOriginal {
+    /// 0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える。
+    pub state: u32,
+    /// 0 原本のファイル・1 取り込んだ絵・2 GPU を通して。
+    pub read: u32,
+    /// 0 でなければ圧縮されたテクスチャから読んだ。
+    pub compressed: u32,
+    /// 0 でなければ sRGB。
+    pub srgb: u32,
+    pub width: u32,
+    pub height: u32,
+    /// 真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）と、一番下の左の画素の RGBA を r | g << 8 | b << 16 | a << 24 に詰めたもの（絵が付かなければ 0）。
+    pub center: u32,
+    pub corner: u32,
+}
+
+/// 自己診断のスタンドアロンが受けた、描いていないスロットの絵 1 つの様子（`ylb_test_server_texture`）。
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct YlbTestServerTexture {
+    pub width: u32,
+    pub height: u32,
+    /// 0 でなければ sRGB。
+    pub srgb: u32,
+    /// 真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）の RGBA を r | g << 8 | b << 16 | a << 24 に詰めたもの。
+    pub center: u32,
 }
 
 const PALETTE: [[u8; 3]; 8] = [
@@ -61,12 +109,31 @@ pub fn pattern(material: u32, tile_x: u32, tile_y: u32) -> [u8; 4] {
 }
 
 struct Shared {
+    /// 挨拶で名乗る内容（`configure` で替える。次につなぐブリッジから効く）。
+    identity: Identity,
     conn: Option<Connection>,
     session: u64,
     generation: u32,
     next_set: u32,
     sets: Vec<PublishedSet>,
     stats: YlbTestServerStats,
+    /// マテリアルの番号ごとの最後の値と、(番号, スロット) ごとの最後の絵（試験が名前で引く）。
+    values: std::collections::BTreeMap<u32, MaterialValues>,
+    textures: std::collections::BTreeMap<(u32, String), MaterialTexture>,
+    /// (番号, スロット) ごとの最後の元の絵。
+    originals: std::collections::BTreeMap<(u32, String), MaterialOriginal>,
+    /// 元の絵が揃うまで出さないセット（マテリアルの番号ごと。スタンドアロンが、新しく作ったセットを元の絵が入るまで Unity に出さないのと同じ）。
+    held: std::collections::BTreeMap<u32, Held>,
+}
+
+/// 元の絵を待たせているセット 1 つ。
+struct Held {
+    name: String,
+    channels: Vec<u8>,
+    /// まだ来ていないスロット。
+    expected: std::collections::BTreeSet<String>,
+    /// 来た元の絵（絵が付いたものだけ。Color の模様の代わりにする）。
+    image: Option<MaterialOriginal>,
 }
 
 pub struct TestServer {
@@ -86,12 +153,18 @@ impl TestServer {
         let key = listener.key();
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Mutex::new(Shared {
+            identity: Identity::standalone("YoluPainter bridge test server")
+                .with_version(AppVersion::parse(env!("CARGO_PKG_VERSION"))),
             conn: None,
             session: 0,
             generation: 0,
             next_set: 0,
             sets: Vec::new(),
             stats: YlbTestServerStats::default(),
+            values: Default::default(),
+            textures: Default::default(),
+            originals: Default::default(),
+            held: Default::default(),
         }));
         let (s, sh) = (stop.clone(), shared.clone());
         let thread = thread::Builder::new()
@@ -109,15 +182,20 @@ impl TestServer {
                             continue;
                         }
                     };
-                    let session = {
+                    let (session, identity) = {
                         let mut g = lock(&sh);
                         g.stats.connections += 1;
                         g.session += 1;
-                        g.session
+                        (g.session, g.identity.clone())
                     };
-                    let Ok((conn, mut reader, _)) =
-                        accept(stream, "YoluPainter bridge test server", session, &key)
-                    else {
+                    let Ok((conn, mut reader, _)) = accept_as(
+                        stream,
+                        &identity,
+                        session,
+                        &key,
+                        HANDSHAKE_TIMEOUT,
+                        &|_| Ok(()),
+                    ) else {
                         continue;
                     };
                     lock(&sh).conn = Some(conn.clone());
@@ -142,6 +220,8 @@ impl TestServer {
                     let mut g = lock(&sh);
                     g.conn = None;
                     g.sets.clear();
+                    g.held.clear();
+                    g.stats.held_sets = 0;
                 }
             })?;
         Ok(TestServer {
@@ -174,8 +254,93 @@ impl TestServer {
         }
     }
 
+    /// 挨拶で名乗る版・求める相手の版・機能の印を決める（版が None なら版を名乗らない古い役）。読めるプロトコルの版の範囲は変えない。
+    pub fn configure(&self, app_version: Option<AppVersion>, min_peer: AppVersion, features: u64) {
+        let mut g = lock(&self.shared);
+        let (min, max) = g.identity.protocol_range();
+        g.identity = Identity::standalone("YoluPainter bridge test server")
+            .with_version(app_version)
+            .with_min_peer(min_peer)
+            .with_features(features)
+            .with_protocol_range(min, max);
+    }
+
+    /// 読めるプロトコルの版の範囲を決める（つなぐブリッジの範囲と重ならなければ、版の範囲の断りを返す）。
+    pub fn set_protocol_range(&self, min: u16, max: u16) {
+        let mut g = lock(&self.shared);
+        g.identity = g.identity.clone().with_protocol_range(min, max);
+    }
+
     pub fn stats(&self) -> YlbTestServerStats {
         lock(&self.shared).stats
+    }
+
+    /// 最後に受けた、マテリアル `material` の値のプロパティ `name`（無ければ None）。
+    pub fn value(&self, material: u32, name: &str) -> Option<PropertyValue> {
+        lock(&self.shared)
+            .values
+            .get(&material)?
+            .properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.value)
+    }
+
+    /// 最後に受けた、マテリアル `material` の値のスロット `name` の様子（無ければ None）。
+    pub fn slot(&self, material: u32, name: &str) -> Option<SlotState> {
+        lock(&self.shared)
+            .values
+            .get(&material)?
+            .slots
+            .iter()
+            .find(|x| x.name == name)
+            .map(|x| x.state)
+    }
+
+    /// 最後に受けた、マテリアル `material` のキーワード `name` があるか。
+    pub fn has_keyword(&self, material: u32, name: &str) -> bool {
+        lock(&self.shared)
+            .values
+            .get(&material)
+            .is_some_and(|v| v.keywords.iter().any(|k| k == name))
+    }
+
+    /// 最後に受けた、マテリアル `material` のスロット `slot` の元の絵の様子。
+    pub fn original(&self, material: u32, slot: &str) -> Option<YlbTestServerOriginal> {
+        let g = lock(&self.shared);
+        let o = g.originals.get(&(material, slot.to_owned()))?;
+        let pixel = |x: u32, y: u32| {
+            if o.pixels.is_empty() {
+                return 0;
+            }
+            let at = (y as usize * o.width as usize + x as usize) * 4;
+            u32::from_le_bytes([o.pixels[at], o.pixels[at + 1], o.pixels[at + 2], o.pixels[at + 3]])
+        };
+        Some(YlbTestServerOriginal {
+            state: o.state as u32,
+            read: o.read as u32,
+            compressed: o.compressed as u32,
+            srgb: o.srgb as u32,
+            width: o.width,
+            height: o.height,
+            center: pixel(o.width / 2, o.height / 2),
+            corner: pixel(0, 0),
+        })
+    }
+
+    /// 最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。
+    pub fn texture(&self, material: u32, slot: &str) -> Option<YlbTestServerTexture> {
+        let g = lock(&self.shared);
+        let t = g.textures.get(&(material, slot.to_owned()))?;
+        let (x, y) = (t.width / 2, t.height / 2);
+        let at = (y as usize * t.width as usize + x as usize) * 4;
+        let p = &t.pixels[at..at + 4];
+        Some(YlbTestServerTexture {
+            width: t.width,
+            height: t.height,
+            srgb: t.srgb as u32,
+            center: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -234,11 +399,20 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
             g.stats.meshes = m.meshes.len() as u32;
             g.stats.vertices = m.meshes.iter().map(|x| x.positions.len() as u32).sum();
             g.generation = m.generation;
+            g.values.clear();
+            g.textures.clear();
             // 前のモデルのセットを片付ける
             for old in std::mem::take(&mut g.sets) {
                 let _ = conn.send(&Message::TextureSetRemoved { set: old.set });
             }
-            let session = g.session;
+            g.originals.clear();
+            g.held.clear();
+            g.stats.held_sets = 0;
+            // 元の絵を送ると名乗る相手とつながっているときは、Color の流し込み先に絵の入っているマテリアルのセットを、元の絵が揃うまで
+            // 出さない（スタンドアロンが、新しく作ったセットを元の絵が入るまで Unity に出さないのと同じ。出た後の Color は元の絵）
+            let waits = conn
+                .link_info()
+                .is_some_and(|l| l.common_features() & feature::ORIGINAL_TEXTURES != 0);
             for (i, mat) in m.materials.iter().enumerate() {
                 let mut channels = vec![channel::COLOR];
                 for r in &mat.routes {
@@ -250,56 +424,31 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                     MaterialKey::Unassigned => "Unassigned".to_owned(),
                     MaterialKey::Material { name, .. } => name.clone(),
                 };
-                g.next_set = g.next_set.wrapping_add(1);
-                let Ok(mut set) = PublishedSet::create(
-                    session,
-                    g.next_set,
-                    m.generation,
-                    i as u32,
-                    &name,
-                    size,
-                    size,
-                    tile_size,
-                    &channels,
-                ) else {
-                    let _ = conn.send(&error_message(
-                        ErrorCode::Other,
-                        Kind::Model as u16,
-                        format!("共有メモリを作れません（{name}）"),
-                    ));
+                let expected: std::collections::BTreeSet<String> = mat
+                    .routes
+                    .iter()
+                    .filter(|r| r.channel == channel::COLOR)
+                    .filter(|r| {
+                        mat.textures
+                            .iter()
+                            .any(|t| t.name == r.property && t.width > 0 && t.height > 0)
+                    })
+                    .map(|r| r.property.clone())
+                    .collect();
+                if waits && !expected.is_empty() {
+                    g.held.insert(
+                        i as u32,
+                        Held {
+                            name,
+                            channels,
+                            expected,
+                            image: None,
+                        },
+                    );
+                    g.stats.held_sets = g.held.len() as u32;
                     continue;
-                };
-                let (tx, ty) = (size.div_ceil(tile_size), size.div_ceil(tile_size));
-                let mut tiles = Vec::new();
-                for &ch in &channels {
-                    let img = set.image_mut(ch).unwrap();
-                    for y in 0..ty {
-                        for x in 0..tx {
-                            let px = if ch == channel::COLOR {
-                                pattern(i as u32, x, y)
-                            } else {
-                                [200, 200, 200, 255]
-                            };
-                            let _ = img.write_tile(x, y, |slot| {
-                                for p in slot.chunks_exact_mut(4) {
-                                    p.copy_from_slice(&px);
-                                }
-                            });
-                            if ch == channel::COLOR {
-                                tiles.push(Tile {
-                                    x: x as u16,
-                                    y: y as u16,
-                                });
-                            }
-                        }
-                    }
                 }
-                let _ = conn.send(&set.announce());
-                // 知らせた時の中身はブリッジが全部写すが、描いた所を知らせる流れも通す
-                for msg in set.tiles_changed(channel::COLOR, &tiles) {
-                    let _ = conn.send(&msg);
-                }
-                g.sets.push(set);
+                publish_set(&mut g, conn, i as u32, &name, &channels, size, tile_size, None);
             }
         }
         Message::Pose(p) => {
@@ -323,6 +472,8 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
         Message::ModelClosed { generation } => {
             if generation == g.generation {
                 g.stats.models_closed += 1;
+                g.held.clear();
+                g.stats.held_sets = 0;
                 for old in std::mem::take(&mut g.sets) {
                     let _ = conn.send(&Message::TextureSetRemoved { set: old.set });
                 }
@@ -347,7 +498,160 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                 .map(|x| x.shader.len() as u32)
                 .unwrap_or(0);
         }
+        Message::MaterialValues(v) => {
+            if v.generation != g.generation || v.material >= g.stats.materials {
+                g.stats.refused += 1;
+                let _ = conn.send(&error_message(
+                    ErrorCode::Refused,
+                    Kind::MaterialValues as u16,
+                    "古い世代か、無いマテリアルの値です".into(),
+                ));
+                return;
+            }
+            g.stats.values += 1;
+            g.stats.last_values_material = v.material;
+            g.stats.last_values_kind = v.kind as u32;
+            g.stats.last_values_properties = v.properties.len() as u32;
+            g.stats.last_values_keywords = v.keywords.len() as u32;
+            g.stats.last_values_slots = v.slots.len() as u32;
+            g.stats.last_values_shader_len = v.shader.len() as u32;
+            g.values.insert(v.material, v);
+        }
+        Message::MaterialTexture(t) => {
+            if t.generation != g.generation || t.material >= g.stats.materials {
+                g.stats.refused += 1;
+                return;
+            }
+            g.stats.textures += 1;
+            g.stats.texture_kib = g
+                .stats
+                .texture_kib
+                .saturating_add(t.pixels.len().div_ceil(1024) as u32);
+            g.textures.insert((t.material, t.slot.clone()), t);
+        }
+        Message::MaterialOriginal(o) => {
+            if o.generation != g.generation || o.material >= g.stats.materials {
+                g.stats.refused += 1;
+                let _ = conn.send(&error_message(
+                    ErrorCode::Refused,
+                    Kind::MaterialOriginal as u16,
+                    "古い世代か、無いマテリアルの元の絵です".into(),
+                ));
+                return;
+            }
+            g.stats.originals += 1;
+            g.stats.original_kib = g
+                .stats
+                .original_kib
+                .saturating_add(o.pixels.len().div_ceil(1024) as u32);
+            let (material, slot) = (o.material, o.slot.clone());
+            g.originals.insert((material, slot.clone()), o.clone());
+            let done = match g.held.get_mut(&material) {
+                Some(h) => {
+                    if h.expected.remove(&slot) && o.state == OriginalState::Image {
+                        h.image = Some(o);
+                    }
+                    h.expected.is_empty()
+                }
+                None => false,
+            };
+            if done {
+                let h = g.held.remove(&material).expect("上で見た");
+                g.stats.held_sets = g.held.len() as u32;
+                publish_set(
+                    &mut g,
+                    conn,
+                    material,
+                    &h.name,
+                    &h.channels,
+                    size,
+                    tile_size,
+                    h.image.as_ref(),
+                );
+            }
+        }
         Message::Error(_) => {}
         _ => {}
     }
+}
+
+/// マテリアル `material` のセットを作って知らせる。Color は `original` があればその絵（最近傍で size × size に合わせる）、無ければ試しの模様、
+/// ほかのチャンネルは灰色。
+#[allow(clippy::too_many_arguments)]
+fn publish_set(
+    g: &mut Shared,
+    conn: &Connection,
+    material: u32,
+    name: &str,
+    channels: &[u8],
+    size: u32,
+    tile_size: u32,
+    original: Option<&MaterialOriginal>,
+) {
+    g.next_set = g.next_set.wrapping_add(1);
+    let Ok(mut set) = PublishedSet::create(
+        g.session,
+        g.next_set,
+        g.generation,
+        material,
+        name,
+        size,
+        size,
+        tile_size,
+        channels,
+    ) else {
+        let _ = conn.send(&error_message(
+            ErrorCode::Other,
+            Kind::Model as u16,
+            format!("共有メモリを作れません（{name}）"),
+        ));
+        return;
+    };
+    let (tx, ty) = (size.div_ceil(tile_size), size.div_ceil(tile_size));
+    let mut tiles = Vec::new();
+    for &ch in channels {
+        let img = set.image_mut(ch).unwrap();
+        for y in 0..ty {
+            for x in 0..tx {
+                let _ = img.write_tile(x, y, |slot| match (ch, original) {
+                    (channel::COLOR, Some(o)) => {
+                        for (i, p) in slot.chunks_exact_mut(4).enumerate() {
+                            let (px, py) = (
+                                x * tile_size + i as u32 % tile_size,
+                                y * tile_size + i as u32 / tile_size,
+                            );
+                            let (sx, sy) = (
+                                (px as u64 * o.width as u64 / size as u64) as usize,
+                                (py as u64 * o.height as u64 / size as u64) as usize,
+                            );
+                            let at = (sy * o.width as usize + sx) * 4;
+                            p.copy_from_slice(&o.pixels[at..at + 4]);
+                        }
+                    }
+                    _ => {
+                        let px = if ch == channel::COLOR {
+                            pattern(material, x, y)
+                        } else {
+                            [200, 200, 200, 255]
+                        };
+                        for p in slot.chunks_exact_mut(4) {
+                            p.copy_from_slice(&px);
+                        }
+                    }
+                });
+                if ch == channel::COLOR {
+                    tiles.push(Tile {
+                        x: x as u16,
+                        y: y as u16,
+                    });
+                }
+            }
+        }
+    }
+    let _ = conn.send(&set.announce());
+    // 知らせた時の中身はブリッジが全部写すが、描いた所を知らせる流れも通す
+    for msg in set.tiles_changed(channel::COLOR, &tiles) {
+        let _ = conn.send(&msg);
+    }
+    g.sets.push(set);
 }

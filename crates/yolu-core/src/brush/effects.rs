@@ -50,6 +50,12 @@ impl EffectFrame {
         &mut self.pixels[start..start + len]
     }
 
+    /// 画素 (x, y) の色（枠の中。色の混ぜが下地を 1 画素ずつ読む）。
+    #[inline]
+    pub(crate) fn pixel(&self, px: i64, py: i64) -> Rgba8 {
+        self.pixels[((py - self.y) * self.width + px - self.x) as usize]
+    }
+
     /// 積分画像（行ごとの累積の和を上へ足す。R·A・G·A・B·A・A の 4 つ）。
     pub(crate) fn build_integral(&mut self) {
         let stride = ((self.width + 1) * 4) as usize;

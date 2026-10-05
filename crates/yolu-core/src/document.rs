@@ -17,6 +17,7 @@ mod edits;
 mod effects;
 mod eval;
 mod layer_path;
+mod look;
 pub(crate) mod locks;
 mod material;
 mod merge;
@@ -163,10 +164,11 @@ impl Stroke {
             state.apply_pixel(surface, x, y, coverage, pressure, Some(at), changed)
         })
     }
-    /// クローンが読む元を、描く層ではなく見えている層の重なり（チャンネルごとの合成）にする（C# の UseCompositeCloneSource）。
-    /// 最初のダブの前に、層が画素を持ち得るタイルだけを合成して凍結する（書き込みの途中で合成を読み返さない）。複数チャンネルの
-    /// ストロークは、チャンネルごとにそのチャンネルの合成を凍結する。タイルの写しと索引はストロークの予算に数える。
-    /// クローン以外・マスクへのストローク・最初のダブより後・予算を超える、のどれも、このストロークを取り消してから返す。
+    /// クローンが読む元（と、色の混ぜが「全レイヤーから」で読む下地）を、描く層ではなく見えている層の重なり（チャンネルごとの合成）に
+    /// する（C# の UseCompositeCloneSource）。最初のダブの前に、層が画素を持ち得るタイルだけを合成して凍結する（書き込みの途中で合成を
+    /// 読み返さない）。複数チャンネルのストロークは、チャンネルごとにそのチャンネルの合成を凍結する。タイルの写しと索引はストロークの
+    /// 予算に数える。クローンでも「全レイヤーから」の色の混ぜでもないブラシ・マスクへのストローク・最初のダブより後・予算を超える、の
+    /// どれも、このストロークを取り消してから返す。
     pub fn use_composite_clone_source(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.use_composite_clone_source(self.id)
     }
@@ -390,6 +392,11 @@ pub(crate) enum Command {
     Path(layer_path::PathCommand),
     /// 複数の段を 1 段にまとめたもの（`Document::batch`・貼り付け）。当てるのは先頭から、戻すのは末尾から。
     Compound(Vec<Entry>),
+    /// 見た目の設定の入れ替え（画素も合成も変えない）。
+    Look {
+        old: crate::look::SharedLook,
+        new: crate::look::SharedLook,
+    },
 }
 
 pub(crate) struct Entry {
@@ -411,6 +418,8 @@ pub(crate) enum CoalesceKey {
     FilterSettings(FilterId),
     Projection(LayerId),
     FillGradient(LayerId, Channel),
+    /// 見た目の設定（スライダーのドラッグ）。
+    Look,
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
@@ -457,6 +466,14 @@ pub struct Document {
     material: material::MaterialState,
     triangle_fill: Option<triangle_fill::TriangleState>,
     id_colors: crate::mesh_maps::IdColorAssignments,
+    /// 見た目の設定（3D ビューの描き方と lilToon の値。画素ではなく、正本には入らない。`look`）。
+    look: crate::look::SharedLook,
+    /// 外から受けた見た目（Live Link。Undo にも版にも入らない。`look`）。
+    received_look: Option<std::sync::Arc<crate::look::ReceivedLook>>,
+    /// 描く見た目（受けた見た目があるときだけ、その上に `look` を重ねたもの。無ければ `look` を描く）。
+    drawn_look: Option<crate::look::SharedLook>,
+    /// 描く見た目が変わるたびに増える番号（利用者の設定・受けた見た目・Undo のどれでも。描き直しの鍵）。
+    look_serial: u64,
     /// 進行中のストロークが描く面（active があるときだけ意味がある）。
     active_target: Target,
     next_stroke: u64,
@@ -531,6 +548,10 @@ impl Document {
             material: material::MaterialState::default(),
             triangle_fill: None,
             id_colors: crate::mesh_maps::IdColorAssignments::default(),
+            look: Default::default(),
+            received_look: None,
+            drawn_look: None,
+            look_serial: 0,
             active_target: Target::Channel(Channel::Color),
             next_stroke: 1,
             revision: 0,
@@ -886,6 +907,7 @@ impl Document {
                     (Command::FillChannel { new: n, .. }, Command::FillChannel { new, .. }) => {
                         *n = new
                     }
+                    (Command::Look { new: n, .. }, Command::Look { new, .. }) => *n = new,
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
                 self.revision += 1;
@@ -1334,7 +1356,10 @@ impl Document {
         if result.is_ok()
             && !matches!(
                 command,
-                Command::Stroke { .. } | Command::NormalSettings { .. } | Command::Selection { .. }
+                Command::Stroke { .. }
+                    | Command::NormalSettings { .. }
+                    | Command::Selection { .. }
+                    | Command::Look { .. }
             )
         {
             self.refresh_anchor_readers();
@@ -1345,7 +1370,10 @@ impl Document {
     fn switch_command(&mut self, command: &mut Command, backwards: bool) -> Result<(), CoreError> {
         if !matches!(
             command,
-            Command::Stroke { .. } | Command::NormalSettings { .. } | Command::Selection { .. }
+            Command::Stroke { .. }
+                | Command::NormalSettings { .. }
+                | Command::Selection { .. }
+                | Command::Look { .. }
         ) {
             // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
             self.mark_clip_bases();
@@ -1354,6 +1382,12 @@ impl Document {
             Command::Material(m) => self.restore_material(m, backwards),
             Command::IdColors { old, new } => {
                 self.id_colors = if backwards { old.clone() } else { new.clone() };
+                Ok(())
+            }
+            Command::Look { old, new } => {
+                // 画素も合成も変えないので、タイルの変化は記録しない
+                self.look = if backwards { old.clone() } else { new.clone() };
+                self.refresh_drawn_look();
                 Ok(())
             }
             Command::Swap(state) => self.swap_state(state),

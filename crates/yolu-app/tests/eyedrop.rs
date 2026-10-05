@@ -518,10 +518,11 @@ fn clicking_with_the_eyedropper_picks_and_the_option_bar_chooses_the_layer_or_al
     assert_eq!(main_rgb(&h.state().state), [200, 0, 0], "{}", h.state().state.message);
     assert!(!h.state().state.is_stroking());
     assert_eq!(h.state().state.modified, modified);
-    // オプションバーの「全レイヤーを対象」
-    h.get_by_label("全レイヤーを対象").click();
-    h.run();
+    // オプションバーの「全レイヤーを対象」（ツールプロパティにも同じ値が出る）
+    let bar = bar_rect(&h, "全レイヤーを対象");
+    click(&mut h, bar.center());
     assert!(h.state().state.eyedrop.all_layers);
+    let _ = dock_rect(&h, "全レイヤーを対象");
     click(&mut h, at);
     assert_eq!(main_rgb(&h.state().state), [0, 0, 200]);
     assert_eq!(h.state().state.selected_layer, Some(bottom));
@@ -529,7 +530,8 @@ fn clicking_with_the_eyedropper_picks_and_the_option_bar_chooses_the_layer_or_al
     // 英語の名前
     h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    let _ = h.get_by_label("Sample All Layers");
+    let _ = bar_rect(&h, "Sample All Layers");
+    let _ = dock_rect(&h, "Sample All Layers");
 }
 
 #[test]

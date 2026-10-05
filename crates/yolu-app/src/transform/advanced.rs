@@ -4,7 +4,7 @@ use crate::{
     canvas::view::CanvasView,
     state::{AppState, StrokeSource, Tool},
 };
-use egui::{Modifiers, Painter, Pos2, Rect, Ui};
+use egui::{Modifiers, Painter, Pos2};
 use yolu_core::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -376,73 +376,4 @@ pub fn paint(painter: &Painter, view: &CanvasView, app: &mut AppState) -> bool {
         return true;
     }
     false
-}
-pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) -> f32 {
-    let lang = app.lang;
-    let state = &mut app.transform.advanced;
-    let width = if app.tool == Tool::Liquify {
-        430.
-    } else if state.kind == Kind::Mesh {
-        440.
-    } else {
-        250.
-    };
-    let at = Rect::from_min_max(
-        egui::pos2(x, r.top() + 5.),
-        egui::pos2((x + width).min(r.right()), r.bottom() - 5.),
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(at), |ui| {
-        ui.horizontal(|ui| {
-            if app.tool == Tool::Liquify {
-                let modes = [
-                    (LiquifyMode::Push, lang.pick("プッシュ", "Push")),
-                    (LiquifyMode::Clockwise, lang.pick("右回転", "Twirl Right")),
-                    (
-                        LiquifyMode::CounterClockwise,
-                        lang.pick("左回転", "Twirl Left"),
-                    ),
-                    (LiquifyMode::Pinch, lang.pick("縮小", "Pinch")),
-                    (LiquifyMode::Expand, lang.pick("膨張", "Expand")),
-                    (LiquifyMode::Restore, lang.pick("戻す", "Restore")),
-                ];
-                let label = modes.iter().find(|(m, _)| *m == state.mode).unwrap().1;
-                egui::ComboBox::from_id_salt("liquify.mode")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        for (mode, label) in modes {
-                            ui.selectable_value(&mut state.mode, mode, label);
-                        }
-                    })
-                    .response
-                    .on_hover_text(lang.pick(
-                        "戻す: このゆがみを始めた時の画素",
-                        "Restore: pixels at the start of this liquify session",
-                    ));
-                ui.label(lang.pick("直径", "Diameter"));
-                ui.add(egui::DragValue::new(&mut state.diameter).range(1. ..=2048.));
-                ui.label(lang.pick("強さ", "Strength"));
-                ui.add(
-                    egui::DragValue::new(&mut state.strength)
-                        .range(0. ..=1.)
-                        .speed(0.01),
-                );
-            } else {
-                for (kind, ja, en) in [
-                    (Kind::Affine, "通常", "Normal"),
-                    (Kind::Free, "自由", "Free"),
-                    (Kind::Perspective, "遠近", "Perspective"),
-                    (Kind::Mesh, "メッシュ", "Mesh"),
-                ] {
-                    ui.selectable_value(&mut state.kind, kind, lang.pick(ja, en));
-                }
-                if state.kind == Kind::Mesh {
-                    ui.label(lang.pick("列", "Columns"));
-                    ui.add(egui::DragValue::new(&mut state.columns).range(1..=32));
-                    ui.label(lang.pick("行", "Rows"));
-                    ui.add(egui::DragValue::new(&mut state.rows).range(1..=32));
-                }
-            }
-        });
-    });
-    x + width + 8.
 }

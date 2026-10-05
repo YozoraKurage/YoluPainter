@@ -14,12 +14,27 @@ fn main() -> eframe::Result {
 fn start() -> eframe::Result {
     // CPU のスレッドの設定は、最初の rayon の利用より前に入れる（変えた値は次の起動から効く）
     yolu_app::settings::apply_thread_setting();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("YoluPainter")
+        .with_inner_size([1600.0, 960.0])
+        .with_min_inner_size(yolu_app::layout::MIN_SIZE)
+        .with_icon(icon());
+    // Windows だけ OS のタイトルバーを外す（最小化・最大化・閉じるは、メニューの帯の右端に自前で置く）
+    if yolu_app::titlebar::CUSTOM_FRAME {
+        viewport = viewport.with_decorations(false);
+    }
+    // 前に終わったときの窓の大きさと位置（設定のフォルダの layout.json）。位置が今のどの画面にも見えなければ、位置は戻さず大きさだけ戻す
+    if let Some(window) = yolu_app::layout::saved_window() {
+        viewport = viewport.with_inner_size(window.size);
+        if yolu_app::layout::is_visible_on_a_monitor(&window) {
+            viewport = viewport.with_position(window.position);
+        }
+        if window.maximized {
+            viewport = viewport.with_maximized(true);
+        }
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("YoluPainter")
-            .with_inner_size([1600.0, 960.0])
-            .with_min_inner_size([960.0, 640.0])
-            .with_icon(icon()),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

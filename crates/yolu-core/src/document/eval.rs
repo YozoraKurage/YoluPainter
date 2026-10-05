@@ -1363,7 +1363,7 @@ impl Document {
                 None => None,
                 Some((grid, r)) => {
                     let EffectSettings::Generator(gs) = &cfg.chain[k].settings else {
-                        unreachable!("Anchor の段は Generator");
+                        unreachable!("Anchor の段はジェネレーター");
                     };
                     match r.placement {
                         AnchorPlacement::Layer => {

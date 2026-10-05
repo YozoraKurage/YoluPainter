@@ -10,7 +10,7 @@ use crate::m2::{
     self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label,
     BrushOp, Edit, EffectKind, UiOp,
 };
-use crate::region::RegionAction;
+use crate::subtool::SubToolAction;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 
@@ -25,6 +25,8 @@ pub enum Popup {
     LayerBlank,
     /// ブラシの一覧の行の右クリック（対象は `brushes.ui.context`）。
     BrushContext,
+    /// サブツール（バケツ・グラデーションなどのプリセット）の右クリック。
+    SubToolContext,
     Effect,
     Tip,
     Texture,
@@ -36,8 +38,6 @@ pub enum Popup {
     /// ユーザーチャンネルの種類。
     ChannelKind(Channel),
     ChannelContext(Channel),
-    /// バケツ・ポリゴン塗りつぶしの範囲（今のツールで並びが違う）。
-    Region,
     /// ステンシルの画像（読む・読んだ画像・外す）。
     StencilImage,
     StencilMode,
@@ -63,10 +63,13 @@ pub enum Popup {
     /// 塗りつぶしの層の投影の種類・外側。
     ProjectionMode(crate::engine::LayerId),
     ProjectionWrap(crate::engine::LayerId),
-    /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。
+    /// 形のグラデーションの形・階調のプリセット・値のカーブのプリセット。階調と値のカーブのプリセットは、欄では `ramp_rows` のグラデーションセットの
+    /// 一覧と値のカーブの欄へ移ったので、今は欄から開かない（項目の出し方と当て方を試験が確かめている）。
     GradientShape(crate::engine::LayerId, Channel),
     RampPresets(crate::engine::LayerId, Channel),
     CurvePresets(crate::engine::LayerId, Channel),
+    /// 見た目の設定の欄のドロップダウン（種類・描画モード・選ぶ値・テクスチャのスロット）。
+    Look(crate::look::panel::LookChoice),
 }
 
 fn tips(
@@ -150,6 +153,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         })
         .collect(),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
+        Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::NormalEdges => {
             let current = app.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]
@@ -183,32 +187,6 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                     .enabled(free)
                 })
                 .collect()
-        }
-        Popup::Region => {
-            let by_color = app.tool == crate::state::Tool::Fill;
-            let mut v = Vec::new();
-            if by_color {
-                v.push(
-                    Entry::item(
-                        lang.pick("近い色", "Similar colors"),
-                        Action::Region(RegionAction::ByColor(true)),
-                    )
-                    .radio(app.region.by_color),
-                );
-            }
-            for kind in crate::region::KINDS {
-                let action = if by_color {
-                    // バケツ: 範囲の種類を選んだら、近い色はやめる
-                    Action::Region(RegionAction::FillRange(kind))
-                } else {
-                    Action::Region(RegionAction::Kind(kind))
-                };
-                v.push(
-                    Entry::item(crate::region::kind_name(lang, kind), action)
-                        .radio((!by_color || !app.region.by_color) && app.region.kind == kind),
-                );
-            }
-            v
         }
         Popup::NewAdjustment => crate::layermenu::adjustment_entries(app),
         Popup::NewFill => crate::layermenu::fill_entries(app),
@@ -244,6 +222,41 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 Entry::item(
                     lang.pick("削除", "Delete"),
                     Action::Brush(BrushAction::Delete(key)),
+                )
+                .enabled(free && user),
+            ]
+        }
+        Popup::SubToolContext => {
+            let Some((tool, key)) = app.subtools.ui.context else {
+                return Vec::new();
+            };
+            let user = key.is_user();
+            let modified = app.subtool_is_modified(tool, key);
+            vec![
+                Entry::item(
+                    lang.pick("名前を変更", "Rename"),
+                    Action::SubTool(SubToolAction::StartRename(tool, key)),
+                )
+                .enabled(free && user),
+                Entry::item(
+                    lang.pick("複製", "Duplicate"),
+                    Action::SubTool(SubToolAction::Duplicate(tool, key)),
+                )
+                .enabled(free),
+                Entry::item(
+                    lang.pick("この設定で登録", "Register These Settings"),
+                    Action::SubTool(SubToolAction::Register(tool, key)),
+                )
+                .enabled(free && user && modified),
+                Entry::item(
+                    lang.pick("元に戻す", "Revert"),
+                    Action::SubTool(SubToolAction::Revert(tool, key)),
+                )
+                .enabled(free && modified),
+                Entry::Separator,
+                Entry::item(
+                    lang.pick("削除", "Delete"),
+                    Action::SubTool(SubToolAction::Delete(tool, key)),
                 )
                 .enabled(free && user),
             ]

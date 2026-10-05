@@ -1,7 +1,8 @@
 //! スタンドアロンと Unity のブリッジのあいだの通信の形（Live Link）。
 //!
 //! - Unity → スタンドアロン: モデル（メッシュの頂点・法線・UV0・三角形・サブメッシュ・マテリアルの組と名前と安定した鍵）、ポーズの変化
-//!   （焼いたメッシュの位置）、マテリアルの情報（シェーダーとテクスチャのプロパティの名前、Unity 側が見せられるチャンネル）。
+//!   （焼いたメッシュの位置）、マテリアルの情報（シェーダーとテクスチャのプロパティの名前、Unity 側が見せられるチャンネル）、
+//!   マテリアルの値（lilToon のプロパティの値と、描いていないスロットの絵。機能の印 `MATERIAL_VALUES` が双方にあるときだけ）。
 //! - スタンドアロン → Unity: テクスチャセット（マテリアル）ごと・チャンネルごとの画像の「変わったタイル」。画素は共有メモリ（`shm`）、
 //!   どのタイルが変わったかは命令で知らせる。
 //!
@@ -12,6 +13,7 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub mod auth;
+pub mod compat;
 pub mod frame;
 pub mod host;
 pub mod link;
@@ -21,6 +23,10 @@ pub mod shm;
 pub mod wire;
 
 pub use auth::{HelloCheck, LinkKey, ServerKey};
+pub use compat::{
+    feature, AppVersion, Identity, LinkInfo, PeerInfo, Product, RejectDetail, SkewReport, VersionInfo,
+    VersionRefusal, MIN_STANDALONE, MIN_UNITY_PACKAGE,
+};
 pub use frame::{encode_message, Frame, FrameError, FrameReader};
 pub use link::{Connection, ConnectionReader, LinkError, Received, Server, DEFAULT_LINK_NAME};
 pub use message::*;

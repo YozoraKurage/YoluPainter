@@ -27,7 +27,6 @@ use yolu_core::{
 use crate::lang::Lang;
 use crate::matpaint::refusal_text;
 use crate::state::{AppState, DialogRequest};
-use crate::ui::ramp::Selection;
 use crate::view3d::shape_gizmo::{Handle, Mode};
 
 /// 塗りつぶしの画面の状態。
@@ -45,9 +44,6 @@ pub struct FillFxState {
     pub drag: Option<gizmo::ShapeDrag>,
     /// ポインタの下のハンドル（カーソル用。描くたびに更新）。
     pub hover: Handle,
-    /// ランプの分岐点の選び（欄が覚える）。`ramp_for` はどのグラデーションの選びか。
-    pub ramp_selection: Selection,
-    pub ramp_for: Option<(LayerId, Channel)>,
 }
 
 /// 塗りつぶしの操作（`Action::Fill`）。

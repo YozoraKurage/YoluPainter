@@ -11,7 +11,8 @@ use std::time::Instant;
 use yolu_io::{CommitOptions, Committed, Fault, Files, GenerationStore, RecoveryInfo, StoreError, INFO_NAME};
 
 use super::capture::{build, Capture, Fingerprint};
-use super::RecoveryError;
+use super::quota::{self, Limits, Trimmed};
+use super::{pool, space, RecoveryError};
 
 /// 書き込みの頼み。
 pub(crate) struct Request {
@@ -21,6 +22,12 @@ pub(crate) struct Request {
     pub keep: Option<usize>,
     /// 頼んだときの保存・開くの世代（この世代と違う結果は、保存済みの印に使わない）。
     pub epoch: u64,
+    /// 復旧の置き場の根（この実行のプール `root` の親。ディスクの上限の整理が、ほかのプールも見る）。
+    pub home: PathBuf,
+    /// 空きの確かめと上限。
+    pub limits: Limits,
+    /// 書いたあとで、上限を超えていれば古い世代を消す（設定のファイルを読めず、量を選んでいないときは消さない）。
+    pub enforce: bool,
 }
 
 /// 書き込みの結果。
@@ -29,6 +36,8 @@ pub(crate) struct Outcome {
     pub epoch: u64,
     pub result: Result<Committed, RecoveryError>,
     pub millis: f64,
+    /// 書いたあとの、ディスクの上限の整理の結果。
+    pub trimmed: Trimmed,
 }
 
 #[derive(Default)]
@@ -137,15 +146,16 @@ fn run(shared: Arc<(Mutex<Inner>, Condvar)>, fault: Option<Fault>, budget: Optio
         let fingerprint = request.capture.fingerprint.clone();
         let epoch = request.epoch;
         // 書き込みの中の失敗（パニック）で、書き手が「動いている」まま止まらないようにする（終わるときの待ちが固まる）
-        let (result, token) = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
+        let (result, token, trimmed) = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
             write(&request, token.clone(), fault.as_ref(), budget)
         }))
-        .unwrap_or((Err(RecoveryError::Panicked), token));
+        .unwrap_or((Err(RecoveryError::Panicked), token, Trimmed::default()));
         let outcome = Outcome {
             fingerprint,
             epoch,
             result,
             millis: started.elapsed().as_secs_f64() * 1000.0,
+            trimmed,
         };
         let mut inner = lock.lock().unwrap();
         inner.token = token;
@@ -154,12 +164,19 @@ fn run(shared: Arc<(Mutex<Inner>, Condvar)>, fault: Option<Fault>, budget: Optio
 }
 
 /// 1 回の書き込み。返す札は次の確定が期待する値（確定したら新しい札。確定の後で失敗しても、置き場を読み直して合わせる）。
+/// 確定したら、ディスクの上限の整理もここ（別のスレッド）でする。
 fn write(
     request: &Request,
     token: Option<String>,
     fault: Option<&Fault>,
     budget: Option<(u64, u64)>,
-) -> (Result<Committed, RecoveryError>, Option<String>) {
+) -> (Result<Committed, RecoveryError>, Option<String>, Trimmed) {
+    // 空きがすでに空けておく量を割っているなら、組み立ても直前の世代の読み直しもハッシュもせずに断る（空きが戻るまで毎回の間隔で
+    // 来るので、この断るほうの道がいちばん通る）。新しく書く量を足した確かめは、書く直前にもう 1 度する
+    let guard = space::guard(request.limits.probe.clone(), request.root.clone());
+    if let Err(low) = guard(0) {
+        return (Err(StoreError::LowSpace(low).into()), token, Trimmed::default());
+    }
     // current を置き換えた（確定した）かを、障害の注入より先に見て覚える
     let switched = Arc::new(AtomicBool::new(false));
     let seen = switched.clone();
@@ -173,11 +190,13 @@ fn write(
             None => Ok(()),
         }
     });
-    let mut store = GenerationStore::new(&request.root).with_fault(hook);
+    let mut store = GenerationStore::new(&request.root)
+        .with_fault(hook)
+        .with_space_guard(guard);
     if let Some((entry, total)) = budget {
         store = store.with_budget(entry, total);
     }
-    let result = (|| -> Result<Committed, RecoveryError> {
+    let result = request.capture.thresholds.scoped(|| -> Result<Committed, RecoveryError> {
         if let Some(f) = fault {
             f("snapshot").map_err(|e| RecoveryError::Store(StoreError::Io(e)))?;
         }
@@ -191,7 +210,7 @@ fn write(
             unchanged: false,
             sets: capture.sets.len(),
         };
-        files.insert(INFO_NAME.into(), Arc::from(info.to_bytes()));
+        files.insert(INFO_NAME.into(), yolu_io::Blob::from(info.to_bytes()));
         Ok(store.commit(
             &files,
             &CommitOptions {
@@ -200,12 +219,19 @@ fn write(
                 share: true,
             },
         )?)
-    })();
+    });
     let token = match &result {
         Ok(committed) => Some(committed.token.clone()),
         // 確定の後で通知を失った場合だけ、置き場を読み直して次回の札を合わせる（外の書き手の確定は採らない）
         Err(_) if switched.load(Ordering::SeqCst) => store.token().ok(),
         Err(_) => token,
     };
-    (result, token)
+    // 確定した書き置きのあとで、上限を超えていれば古い世代から消す（失敗しても書き置きは確定している）
+    let trimmed = match &result {
+        Ok(_) if request.enforce => {
+            quota::enforce(&request.home, &request.limits, Some(&request.root), pool::now_ms())
+        }
+        _ => Trimmed::default(),
+    };
+    (result, token, trimmed)
 }

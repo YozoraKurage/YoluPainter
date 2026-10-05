@@ -1,4 +1,8 @@
-use crate::{check, check_budget, hash, is_hash, Error, Project, Result, MAX_TOTAL_BYTES};
+use crate::{
+    check, is_hash,
+    package::{file_digest, Limits, Package},
+    Error, Project, Result,
+};
 
 fn conflict(ok: bool, reason: impl Into<String>) -> Result<()> {
     if ok {
@@ -34,6 +38,8 @@ pub enum BackupKeep {
 pub struct SaveReport {
     /// 保存した版の印。
     pub stamp: FileStamp,
+    /// 保存したプロジェクト（中身は書いたファイルから読む。次の保存・書き置きは、変わらないエントリをこのファイルから写す）。
+    pub project: Option<Project>,
     /// 今回退避した前の版（新規の保存と、退避しない設定では作らない）。
     pub backup: Option<PathBuf>,
     /// 保持数を超えた古い退避のうち消せなかったもの（退避のフォルダーを読めなかったときは、そのフォルダー）。
@@ -88,10 +94,22 @@ pub struct SaveTarget {
     expected: Option<FileStamp>,
 }
 impl SaveTarget {
+    /// 既定の予算の上限（`Limits::default`）で開く。
     pub fn open(path: impl AsRef<Path>) -> Result<(Project, Self)> {
+        Self::open_within(path, &Limits::default())
+    }
+    /// 上限（設定の予算から）を渡して開く。ファイルは流して読み（全エントリを確かめる）、正本の画素はメモリに読まない。
+    pub fn open_within(path: impl AsRef<Path>, limits: &Limits) -> Result<(Project, Self)> {
         let path = path.as_ref().to_path_buf();
-        let (b, stamp) = read_stamp(&path)?;
-        let p = Project::read(&b)?;
+        // 先にプロジェクトとして読んで確かめ（壊れた・大きすぎるファイルは、全体のハッシュを数える前に断る）、それから印を数える。
+        // 読む間に書き換えられていないことは、長さと更新時刻で見る
+        let before = fs::symlink_metadata(&path)?;
+        let p = Project::open(&path, limits)?;
+        let stamp = read_stamp(&path)?;
+        conflict(
+            before.len() == stamp.length && before.modified()? == stamp.modified,
+            "読み込み中にファイルが変更されました",
+        )?;
         Ok((
             p,
             Self {
@@ -156,9 +174,9 @@ impl SaveTarget {
             .file_stem()
             .map(|s| s.to_string_lossy())
             .unwrap_or_default();
-        // 中身はディスクに触る前に作って確かめる（不正な中身のためにフォルダーを作ったり、ロックを持ったりしない）
-        let bytes = project.to_bytes()?;
-        Project::read(&bytes)?;
+        // 中身はディスクに触る前に数えて確かめる（1 回目: 全エントリの長さと SHA-256、作る正本は読み手で読み直す。不正な中身のために
+        // フォルダーを作ったり、ロックを持ったりしない）
+        let plan = project.original.plan()?;
         (seams.phase)("memory-verified")?;
         // 新規の保存先のフォルダーは、なければ作る。このあとの失敗で、作ったフォルダーは空なら消す（ロックより後に手放す順）
         let mut created = match &self.expected {
@@ -178,37 +196,46 @@ impl SaveTarget {
         let mut pending = Pending::create(
             parent.join(format!(".{name}.{}-{nonce}.pending~", std::process::id())),
         )?;
-        let f = pending.file.as_mut().unwrap();
-        f.write_all(&bytes)?;
+        // 2 回目: 流して書く（ファイル全体をメモリに組まない）
+        let f = pending.file.take().expect("作ったばかり");
+        let mut out = io::BufWriter::with_capacity(1 << 20, f);
+        project.original.write_with(&plan, &mut out)?;
+        let f = out.into_inner().map_err(|e| e.into_error())?;
         f.sync_all()?;
+        drop(f);
         (seams.phase)("flushed")?;
-        pending.file.take();
-        let (written, new_stamp) = read_stamp(&pending.path)?;
-        conflict(written == bytes, "一時ファイルの内容が変化しました")?;
-        Project::read(&written)?;
-        drop(written);
+        // 書いたものを読み直して確かめる（全エントリの長さ・CRC・SHA-256、manifest が書こうとしたものと同じこと、プロジェクトとして
+        // 読めること）
+        let new_stamp = read_stamp(&pending.path)?;
+        let written = Package::open(&pending.path, &Limits::unbounded())?;
+        conflict(
+            written.read_manifest() == Some(&plan.manifest[..]),
+            "一時ファイルの内容が変化しました",
+        )?;
+        let saved = project.rehomed(written)?;
         (seams.phase)("disk-verified")?;
         // 前の版（退避する版）。置き場が塞がれていたら、保存先に触る前に断る。保存先の周りの事情なので、プロジェクトのデータの不正
         // （InvalidData）ではなく SaveConflict で、画面が言い分けられるようにする。退避しない設定では置き場に触らない
         let mut to_back_up = None;
         if let Some(expected) = &self.expected {
-            let (previous, stamp) = read_target(&self.path)?;
-            conflict(
-                stamp.same_content(expected),
-                "保存先が外部で変更されています",
-            )?;
             if keep != BackupKeep::Count(0) {
                 let folder = parent.join(format!("{name}-backups~"));
                 check_backup_folder(&folder)?;
-                to_back_up = Some((folder, previous));
+                to_back_up = Some((folder, expected.clone()));
             }
         }
         (seams.phase)("before-replace")?;
-        self.check_expected()?;
-        // 退避は置換の直前に作る（置換に失敗したら、作った退避は消す。途中で止まった保存が退避を溜めない）
+        // 置き換える直前に、保存先が開いた・保存した時の中身のままかを確かめる。退避するなら、退避へ写しながら数えて確かめる（大きな
+        // ファイルを 2 度読まない）。退避は置換の直前に作る（置換に失敗したら、作った退避は消す。途中で止まった保存が退避を溜めない）
         let backup = match to_back_up {
-            Some((folder, previous)) => Some(Backup::make(&folder, &stem, &previous)?),
-            None => None,
+            Some((folder, previous)) => {
+                present(&self.path)?;
+                Some(Backup::make(&folder, &stem, &self.path, &previous)?)
+            }
+            None => {
+                self.check_expected()?;
+                None
+            }
         };
         (seams.phase)("backed-up")?;
         match &self.expected {
@@ -241,6 +268,7 @@ impl SaveTarget {
         };
         Ok(SaveReport {
             stamp: new_stamp,
+            project: Some(saved.moved_to(&self.path)),
             backup,
             prune_failures,
         })
@@ -248,7 +276,7 @@ impl SaveTarget {
     fn check_expected(&self) -> Result<()> {
         match &self.expected {
             Some(want) => {
-                let (_, actual) = read_target(&self.path)?;
+                let actual = read_target(&self.path)?;
                 conflict(
                     actual.same_content(want),
                     "保存先が外部で変更されています。上書きしません",
@@ -347,8 +375,9 @@ struct Backup {
     created_folder: Option<PathBuf>,
 }
 impl Backup {
-    /// 前の版のバイト列を、新しい名前のファイルとして書く（同じ名前が先にあれば、別の名前でやり直す）。
-    fn make(folder: &Path, stem: &str, previous: &[u8]) -> Result<Self> {
+    /// 前の版（`source` の今の中身。`expected` と同じ中身であること）を、新しい名前のファイルへ流して写す（同じ名前が先にあれば、
+    /// 別の名前でやり直す）。写しながら数えた中身が `expected` と違えば、外部の変更として断る（写しは消す）。
+    fn make(folder: &Path, stem: &str, source: &Path, expected: &FileStamp) -> Result<Self> {
         let created = match fs::create_dir(folder) {
             Ok(()) => true,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => false,
@@ -363,10 +392,31 @@ impl Backup {
         for _ in 0..BACKUP_NAME_ATTEMPTS {
             let path = folder.join(backup_name(folder, stem, SystemTime::now())?);
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut f) => {
+                Ok(f) => {
                     backup.path = Some(path);
-                    f.write_all(previous)?;
+                    let mut from = io::BufReader::with_capacity(1 << 20, File::open(source)?);
+                    let mut to = io::BufWriter::with_capacity(1 << 20, f);
+                    let mut sha = <sha2::Sha256 as sha2::Digest>::new();
+                    let mut buf = vec![0u8; 1 << 20];
+                    let mut length = 0u64;
+                    loop {
+                        let n = match from.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                            Err(e) => return Err(e.into()),
+                        };
+                        sha2::Digest::update(&mut sha, &buf[..n]);
+                        to.write_all(&buf[..n])?;
+                        length += n as u64;
+                    }
+                    let f = to.into_inner().map_err(|e| e.into_error())?;
                     f.sync_all()?;
+                    conflict(
+                        length == expected.length
+                            && format!("{:x}", sha2::Digest::finalize(sha)) == expected.sha256,
+                        "保存先が外部で変更されています",
+                    )?;
                     return Ok(backup);
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -660,8 +710,18 @@ fn absent(path: &Path) -> Result<bool> {
         Err(e) => Err(e.into()),
     }
 }
-/// 開いたあとの保存先を読む。消されていたら外部の変更として断る（無いファイルの代わりに書き始めない）。
-fn read_target(path: &Path) -> Result<(Vec<u8>, FileStamp)> {
+/// 開いたあとの保存先がまだあるか（消されていたら外部の変更として断る。中身は見ない）。
+fn present(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(Error::SaveConflict(
+            "保存先が外部で消されています。上書きしません".into(),
+        )),
+        Err(e) => Err(e.into()),
+        Ok(_) => Ok(()),
+    }
+}
+/// 開いたあとの保存先の印を数える。消されていたら外部の変更として断る（無いファイルの代わりに書き始めない）。
+fn read_target(path: &Path) -> Result<FileStamp> {
     match read_stamp(path) {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::SaveConflict(
             "保存先が外部で消されています。上書きしません".into(),
@@ -669,33 +729,26 @@ fn read_target(path: &Path) -> Result<(Vec<u8>, FileStamp)> {
         other => other,
     }
 }
-fn read_stamp(path: &Path) -> Result<(Vec<u8>, FileStamp)> {
+/// ファイルの印（SHA-256・長さ・更新時刻）を、流して数える（ファイル全体をメモリに読まない）。
+fn read_stamp(path: &Path) -> Result<FileStamp> {
     let metadata = fs::symlink_metadata(path)?;
     check(
         metadata.is_file() && !metadata.file_type().is_symlink(),
         "通常のファイルではありません",
     )?;
-    check_budget(
-        metadata.len() <= (MAX_TOTAL_BYTES + 2 * 1024 * 1024) as u64,
-        "ファイルの読み込み予算超過です",
-    )?;
-    let f = File::open(path)?;
-    let mut b = Vec::new();
-    f.take((MAX_TOTAL_BYTES + 2 * 1024 * 1024 + 1) as u64)
-        .read_to_end(&mut b)?;
+    let (sha256, length) = file_digest(path)?;
     let after = fs::metadata(path)?;
     conflict(
-        b.len() as u64 == metadata.len()
+        length == metadata.len()
             && after.len() == metadata.len()
             && after.modified()? == metadata.modified()?,
         "読み込み中にファイルが変更されました",
     )?;
-    let stamp = FileStamp {
-        sha256: hash(&b),
-        length: b.len() as u64,
+    Ok(FileStamp {
+        sha256,
+        length,
         modified: metadata.modified()?,
-    };
-    Ok((b, stamp))
+    })
 }
 /// 保存の一時ファイル。名前は保存ごとに一意（pid と通し番号）なので、保存が確定したあとも落とすときに必ず消しにいく。
 /// 置き換える移動で無くなっていれば `NotFound` で無害、リンクで移して元の名前を消せなかったときの残りはここで片付く。
@@ -760,6 +813,13 @@ impl SaveLock {
                 // （本当のアクセス拒否・場所の不具合とは違うので、ここだけを「進行中」にする）
                 #[cfg(windows)]
                 Err(e) if e.raw_os_error() == Some(32) => return Err(in_progress()),
+                // Windows: 消している途中（削除の保留）のファイルを開くと ERROR_ACCESS_DENIED（5）になる。消し終わるまでの
+                // 短い間だけなので、少し待ってやり直す。何度でも拒否されるなら本当のアクセス拒否として返す
+                #[cfg(windows)]
+                Err(e) if e.raw_os_error() == Some(5) && attempt + 1 < LOCK_ATTEMPTS => {
+                    std::thread::sleep(std::time::Duration::from_millis(1 << attempt.min(4)));
+                    continue;
+                }
                 Err(e) => return Err(e.into()),
             };
             match try_lock(&file) {
@@ -826,6 +886,7 @@ fn names_the_same_file(_: &File, _: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hash;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::AtomicUsize;
@@ -1114,7 +1175,7 @@ mod tests {
         assert_ne!(stamp.sha256, before.sha256);
         assert_eq!(stamp.sha256, hash(&want));
         assert_eq!(stamp.length, want.len() as u64);
-        assert_eq!(stamp, read_stamp(&s.file()).unwrap().1);
+        assert_eq!(stamp, read_stamp(&s.file()).unwrap());
         // 置換された前の版は退避されている。ロックと一時ファイルは残らない
         assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
         assert!(s.leftovers().is_empty());
@@ -1151,7 +1212,7 @@ mod tests {
         assert!(t.save_inner(&p, fail_at("after-replace")).is_err());
         let want = p.to_bytes().unwrap();
         assert_bytes(&fs::read(s.file()).unwrap(), &want, "保存先");
-        assert_eq!(t.stamp(), Some(&read_stamp(&s.file()).unwrap().1));
+        assert_eq!(t.stamp(), Some(&read_stamp(&s.file()).unwrap()));
         assert_eq!(s.names(), ["sample.ylp"]);
         // 以後は上書きとして、前の版を残して保存できる
         let next = t.save(&changed(&p, "新規のあとの上書き")).unwrap();
@@ -1211,7 +1272,7 @@ mod tests {
             .unwrap()
             .set_modified(stamp.modified)
             .unwrap();
-        let now = read_stamp(&s.file()).unwrap().1;
+        let now = read_stamp(&s.file()).unwrap();
         assert_eq!((now.length, now.modified), (stamp.length, stamp.modified));
         // 長さも更新時刻も同じ。印は内容のハッシュなので見逃さない
         let error = t.save(&p).unwrap_err();
@@ -1747,7 +1808,7 @@ mod tests {
         // 保存は成功し、新しい版が確定していて、印も新しい
         assert_bytes(&fs::read(s.file()).unwrap(), &next.to_bytes().unwrap(), "保存先");
         assert_eq!(t.stamp(), Some(&report.stamp));
-        assert_eq!(report.stamp, read_stamp(&s.file()).unwrap().1);
+        assert_eq!(report.stamp, read_stamp(&s.file()).unwrap());
         // 消せなかったものと理由を返し、ほかの古い版は消えている
         assert_eq!(report.prune_failures.len(), 1);
         assert_eq!(report.prune_failures[0].path, stuck);

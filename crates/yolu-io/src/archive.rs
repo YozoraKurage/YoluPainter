@@ -390,12 +390,22 @@ fn complete(f: &Files, level: u32, prefix: &str) -> Result<()> {
         "必要な正本エントリがありません",
     )
 }
+/// .ylp に要る正本のエントリ（根か、形式 3 からはどれかのセットの下の `document.utpaint`）があるか。
+pub(crate) fn complete_ylp<'a>(mut names: impl Iterator<Item = &'a String>, level: u32) -> Result<()> {
+    check(
+        names.any(|n| {
+            n == "document.utpaint"
+                || level >= 2 && split_set(n).is_some_and(|(_, s)| s == "document.utpaint")
+        }),
+        "必要な正本エントリがありません",
+    )
+}
 pub(crate) fn split_set(n: &str) -> Option<(&str, &str)> {
     let s = n.strip_prefix("sets/")?;
     let (id, rest) = s.split_once('/')?;
     valid_id(id).then_some((id, rest))
 }
-fn name_check(n: &str, level: u32, prefix: &str) -> Result<()> {
+pub(crate) fn name_check(n: &str, level: u32, prefix: &str) -> Result<()> {
     if prefix == "YOLUPAINTER-BRUSH-" {
         return check(
             ["manifest.sha256", "state.json", "texture.png", "dual.png"].contains(&n)
@@ -1827,6 +1837,41 @@ mod tests {
                 }
             }
         }
+        // 流して読む新しい読み手（`Package`）も、今の形のファイルには同じ判定をする（受けるなら同じ中身、断るなら壊れた・予算の種類）
+        let old = Archive::read(bad).ok();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            largest_request(|| crate::Package::read_bytes(bad, &crate::Limits::default()))
+        }));
+        match outcome {
+            Err(_) => problems.push(format!("{}: 新しい読み手がパニック", what())),
+            Ok((result, largest)) => {
+                if largest >= SMALL_REQUEST {
+                    problems.push(format!("{}: 新しい読み手の確保 {largest}", what()));
+                }
+                match (result, old) {
+                    (Ok(read), Some(old)) => {
+                        let same = read.level == old.level
+                            && read.read_manifest() == Some(&old.manifest[..])
+                            && read.files.len() == old.files.len()
+                            && read
+                                .files
+                                .iter()
+                                .all(|(k, v)| old.files.get(k).is_some_and(|o| v.in_memory() == Some(&o[..])));
+                        if !same {
+                            problems.push(format!("{}: 新しい読み手が違う中身で受理", what()));
+                        }
+                    }
+                    (Ok(_), None) => problems.push(format!("{}: 新しい読み手だけが受理", what())),
+                    (Err(e), Some(_)) => {
+                        problems.push(format!("{}: 新しい読み手だけが拒否 {e:?}", what()))
+                    }
+                    (Err(Error::InvalidData(_) | Error::Budget(_)), None) => {}
+                    (Err(other), None) => {
+                        problems.push(format!("{}: 新しい読み手 {other:?}", what()))
+                    }
+                }
+            }
+        }
     }
     fn assert_no_problems(problems: &[String], started: std::time::Instant) {
         assert!(
@@ -1840,6 +1885,87 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+    /// `YLP-4`（zip64 の位置と終端の記録つき）の壊し方の網羅: 1 バイトずつ・極端な値・乱数の複数バイト。断るか、同じ中身で読むか
+    /// で、パニック・大きな確保・壊れたもの以外の種類の断りは無い。
+    #[test]
+    fn every_damage_of_a_ylp_4_zip64_file_is_refused_or_harmless() {
+        let started = std::time::Instant::now();
+        let t = crate::Thresholds {
+            classic_total_bytes: 10,
+            zip64_offset_at: 64,
+            zip64_count_above: 2,
+            ..crate::Thresholds::REAL
+        };
+        let files: crate::package::Files = small_sample()
+            .into_iter()
+            .map(|(k, v)| (k, crate::Blob::from(v)))
+            .collect();
+        let zip = t.scoped(|| crate::Package::build(files, 3).unwrap().to_bytes().unwrap());
+        assert!(zip.windows(4).any(|w| w == b"PK\x06\x06"), "zip64 の終端がある");
+        let limits = crate::Limits::default();
+        let original = crate::Package::read_bytes(&zip, &limits).unwrap();
+        assert_eq!(original.manifest_version(), 4);
+        let mut problems = Vec::new();
+        let (mut accepted, mut refused) = (0usize, 0usize);
+        let mut judge4 = |bad: &[u8], what: &dyn Fn() -> String| {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                largest_request(|| crate::Package::read_bytes(bad, &limits))
+            }));
+            match outcome {
+                Err(_) => problems.push(format!("{}: パニック", what())),
+                Ok((result, largest)) => {
+                    if largest >= SMALL_REQUEST {
+                        problems.push(format!("{}: 確保 {largest}", what()));
+                    }
+                    match result {
+                        Ok(read) => {
+                            accepted += 1;
+                            let same = read.read_manifest() == original.read_manifest()
+                                && read.files.len() == original.files.len()
+                                && read.files.iter().all(|(k, v)| {
+                                    original.files.get(k).is_some_and(|o| v.in_memory() == o.in_memory())
+                                });
+                            if !same {
+                                problems.push(format!("{}: 違う中身で受理", what()));
+                            }
+                        }
+                        Err(Error::InvalidData(_) | Error::Budget(_)) => refused += 1,
+                        Err(other) => problems.push(format!("{}: {other:?}", what())),
+                    }
+                }
+            }
+        };
+        for mask in [0xffu8, 0x01, 0x80] {
+            for i in 0..zip.len() {
+                let mut bad = zip.clone();
+                bad[i] ^= mask;
+                judge4(&bad, &|| format!("offset {i} ^ {mask:#x}"));
+            }
+        }
+        let patterns: [&[u8]; 4] = [&[0xff, 0xff, 0xff, 0xff], &[0, 0, 0, 0], &[0xff; 8], &[0; 8]];
+        for pattern in patterns {
+            for i in 0..=zip.len() - pattern.len() {
+                let mut bad = zip.clone();
+                bad[i..i + pattern.len()].copy_from_slice(pattern);
+                judge4(&bad, &|| format!("offset {i} {pattern:02x?}"));
+            }
+        }
+        let mut rng = Rng(20_261_005);
+        for round in 0..3000 {
+            let mut bad = zip.clone();
+            for _ in 0..1 + rng.below(6) {
+                let i = rng.below(bad.len());
+                bad[i] = rng.next() as u8;
+            }
+            judge4(&bad, &|| format!("乱数 {round}"));
+        }
+        for n in 0..zip.len() {
+            judge4(&zip[..n], &|| format!("切れた {n}"));
+        }
+        // 網羅が読み手を通っている（ほとんどを断り、時刻の欄などの無害な変更は受ける）
+        assert!(refused > 10_000 && accepted > 10, "断った {refused}、受けた {accepted}");
+        assert_no_problems(&problems, started);
     }
     /// 全バイト位置の網羅（上の 3 本）が対象にする ZIP の大きさ。「小さな ZIP」の主張を測った範囲に結びつけ、
     /// 見本を大きくして網羅が重くなったり、網羅の意味（全位置）が薄まったりしたら気づく。

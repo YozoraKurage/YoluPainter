@@ -10,11 +10,17 @@
 //! 一覧から開く・捨てるを選ばせる。開いたものは「名称未設定（復旧）」で、元の `.ylp` には書かない。正しく閉じると印を消し、
 //! 世代は閉じたプールの合計で設定の数だけ残す。
 //!
+//! ディスクの使いすぎを防ぐ歯止めが 2 つある。1 つは使う量の上限（`quota`。利用者が選ぶ。超えたぶんは古い世代から消し、この実行の
+//! 最新と落ちた実行ごとの最新は残す）、もう 1 つは書く前の空きの守り（`space`。書くと空きが残す量を割るなら、書かずに理由を出す。
+//! 描くのは止めない）。使っている量は復旧の窓に出す。
+//!
 //! 試験では `RecoveryState::enable` に一時フォルダを渡して使う（何もしなければ復旧は動かず、ディスクに触れない）。
 
 mod capture;
 mod pool;
+mod quota;
 mod settings;
+mod space;
 mod text;
 pub mod window;
 mod writer;
@@ -26,7 +32,11 @@ use yolu_io::{Fault, StoreError};
 
 pub use capture::Fingerprint;
 pub use pool::{Kind as PoolKind, Row};
-pub use settings::{IoReason, Problem, RecoverySettings, INTERVAL_RANGE, KEEP_RANGE, MAX_STROKES};
+pub use quota::{usage, Limits, Trimmed, Usage, CRASHED_KEEP_DAYS};
+pub use settings::{
+    DiskBudget, IoReason, Problem, RecoverySettings, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE, MAX_STROKES,
+};
+pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
 
 use crate::state::{Action, AppState};
@@ -90,6 +100,10 @@ pub enum RecoveryAction {
     /// 書き置きの間隔（秒）・残す世代の数を替える（設定のファイルへ書く）。
     SetInterval(u32),
     SetKeep(u32),
+    /// 使うディスクの量を替える（設定のファイルへ書き、超えていれば古い世代から消す）。
+    SetDisk(DiskBudget),
+    /// 窓の「詳しく」を開く・閉じる（窓の中だけの状態。設定には書かない）。
+    DiskDetails(bool),
 }
 
 /// 世代を開く頼み（今の変更を捨ててよいか確かめたあとで開く）。
@@ -138,6 +152,9 @@ pub struct RecoveryState {
     /// 書き置きが確定した数と、最後の書き込みにかかった時間（試験・診断用）。
     checkpoints: u64,
     last_millis: f64,
+    /// 書き置きのあとの上限の整理で、これまでに消した世代の数と、最後の整理の結果（試験・診断用）。
+    trimmed_total: usize,
+    last_trimmed: Trimmed,
     /// 設定のファイル（変えたら書く）。
     settings_path: Option<PathBuf>,
     /// 設定のファイルを読めなかった。利用者が選んだ世代の数が分からないので、選び直すまで世代を整理せず、設定のファイルに
@@ -145,9 +162,15 @@ pub struct RecoveryState {
     settings_unreadable: bool,
     /// 読めなかった設定のまま、利用者が窓で世代の数を選んだ（この実行のあいだ、その数で整理する）。
     keep_chosen: bool,
+    /// 読めなかった設定のまま、利用者が窓で使う量を選んだ（この実行のあいだ、その量で整理する）。読めないあいだは、選んだ量が
+    /// 分からないので、ディスクの上限では消さない（空きの守りは、設定に関わらず働く）。
+    disk_chosen: bool,
     fault: Option<Fault>,
     /// 試験用: 書き込みの予算（1 エントリ・合計、バイト数）。
     budget: Option<(u64, u64)>,
+    /// 試験用: 空きを偽る口（`None` は OS に聞く）と、上限を直に指定する値。
+    probe: Option<SpaceProbe>,
+    cap_override: Option<u64>,
 }
 
 impl RecoveryState {
@@ -169,6 +192,14 @@ impl RecoveryState {
     pub fn checkpoints(&self) -> u64 {
         self.checkpoints
     }
+    /// 書き置きのあとの、ディスクの上限の整理で消した世代の数（この実行の合計）。
+    pub fn trimmed_generations(&self) -> usize {
+        self.trimmed_total
+    }
+    /// 最後の書き置きのあとの、上限の整理の結果。
+    pub fn last_trimmed(&self) -> Trimmed {
+        self.last_trimmed
+    }
     /// 最後の書き置きの、別のスレッドでの所要時間（ミリ秒。主のスレッドは止めない）。
     pub fn last_write_millis(&self) -> f64 {
         self.last_millis
@@ -184,6 +215,37 @@ impl RecoveryState {
     /// 世代を整理する数。設定のファイルを読めず、数も選んでいないときは None（整理しない）。
     fn keep(&self) -> Option<usize> {
         (!self.settings_unreadable || self.keep_chosen).then_some(self.settings.generations_to_keep as usize)
+    }
+    /// 空きの確かめと上限のもと。
+    fn limits(&self) -> Limits {
+        Limits {
+            budget: self.settings.disk,
+            probe: self.probe.clone().unwrap_or_else(system_probe),
+            cap_override: self.cap_override,
+        }
+    }
+    /// ディスクの上限で整理するときのもと。設定のファイルを読めず、量を選んでいないときは None（整理しない）。
+    fn quota_limits(&self) -> Option<Limits> {
+        (!self.settings_unreadable || self.disk_chosen).then(|| self.limits())
+    }
+    /// 試験用: 空きを偽る（`None` で OS に聞く）。書く前の守りと、自動の上限と、窓の表示が使う。
+    pub fn set_space_probe(&mut self, probe: Option<SpaceProbe>) {
+        self.probe = probe;
+    }
+    /// 試験用: 上限のバイト数を直に指定する（`None` で選びに従う）。
+    pub fn set_disk_cap(&mut self, cap: Option<u64>) {
+        self.cap_override = cap;
+    }
+    /// いま復旧が使っている量（置き場が動いていなければ None）。
+    pub fn usage(&self) -> Option<Usage> {
+        let a = self.active.as_ref()?;
+        Some(quota::usage(&a.root, Some(a.session.dir())))
+    }
+    /// いまの上限（バイト）。置き場が動いていなければ None。
+    pub fn disk_cap(&self) -> Option<u64> {
+        let a = self.active.as_ref()?;
+        let used = quota::usage(&a.root, Some(a.session.dir())).total();
+        Some(self.limits().cap(&a.root, used))
     }
     /// 試験用: 書き込みの予算を小さくする（1 エントリの上限・合計の上限、バイト数）。
     pub fn set_budget(&mut self, budget: Option<(u64, u64)>) {
@@ -215,12 +277,13 @@ impl RecoveryState {
     pub fn enable(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
         self.settings_unreadable = false;
         self.keep_chosen = false;
+        self.disk_chosen = false;
         self.enable_with(root, settings)
     }
 
     fn enable_with(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
         self.settings = settings;
-        let started = pool::start(&root, self.keep())?;
+        let started = pool::start(&root, self.keep(), self.quota_limits().as_ref())?;
         let mut problems = Vec::new();
         if let Some(e) = &started.skipped {
             problems.push(Problem::PreviousRun(IoReason::of(e)));
@@ -263,6 +326,7 @@ impl RecoveryState {
         self.settings_path = conf.clone();
         self.settings_unreadable = false;
         self.keep_chosen = false;
+        self.disk_chosen = false;
         let mut problems = Vec::new();
         let settings = match conf.as_deref().map(RecoverySettings::load) {
             Some(Ok((settings, found))) => {
@@ -293,8 +357,13 @@ impl RecoveryState {
             return;
         };
         let rows = pool::list(&active.root, Some(active.session.dir()));
+        let usage = quota::usage(&active.root, Some(active.session.dir()));
+        let limits = self.limits();
+        let cap = limits.cap(&active.root, usage.total());
+        let free = limits.space(&active.root).map(|d| d.available);
         if let Some(w) = self.window.as_mut() {
             w.set_rows(rows);
+            w.set_usage(usage, cap, free);
         }
     }
 
@@ -384,6 +453,8 @@ impl AppState {
             return;
         };
         let keep = self.recovery.keep();
+        let limits = self.recovery.limits();
+        let enforce = self.recovery.quota_limits().is_some();
         let a = self.recovery.active.as_mut().expect("呼ぶ前に確かめた");
         a.submitted = Some(captured.fingerprint.clone());
         a.last_attempt = Some(now);
@@ -395,6 +466,9 @@ impl AppState {
             root: a.session.dir().to_path_buf(),
             keep,
             epoch: a.epoch,
+            home: a.root.clone(),
+            limits,
+            enforce,
         });
     }
 
@@ -416,6 +490,8 @@ impl AppState {
                     }
                     self.recovery.checkpoints += 1;
                     self.recovery.last_millis = outcome.millis;
+                    self.recovery.trimmed_total += outcome.trimmed.generations;
+                    self.recovery.last_trimmed = outcome.trimmed;
                     landed = true;
                     if self.recovery.failed {
                         self.recovery.failed = false;
@@ -495,9 +571,10 @@ impl AppState {
         let deadline = Instant::now() + Duration::from_secs(10);
         self.recovery_flush_until(Some(deadline));
         let keep = self.recovery.keep();
+        let limits = self.recovery.quota_limits();
         if let Some(a) = self.recovery.active.take() {
             if a.writer.wait_until(Some(deadline)) {
-                a.session.close_clean(&a.root, keep);
+                a.session.close_clean(&a.root, keep, limits.as_ref());
             }
             // 間に合わなかったときは、書き込みが終わる前に印を消さない（落ちた体のまま。次の起動が世代を見つける）
         }
@@ -564,7 +641,34 @@ impl AppState {
                 self.recovery.keep_chosen = true;
                 self.recovery_save_settings();
             }
+            A::SetDisk(budget) => {
+                self.recovery.settings.disk = match budget {
+                    DiskBudget::Gib(n) => DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1)),
+                    other => other,
+                };
+                // 読めなかった設定でも、利用者が選んだ量は分かった（この実行のあいだ、その量で整理する）
+                self.recovery.disk_chosen = true;
+                self.recovery_save_settings();
+                self.recovery_enforce_now();
+            }
+            A::DiskDetails(open) => {
+                if let Some(w) = self.recovery.window.as_mut() {
+                    w.details = open;
+                }
+            }
         }
+    }
+
+    /// 使う量を替えたとき: 書き込みが終わるのを待って（置き場を変えない）、上限を超えていれば古い世代から消す。
+    fn recovery_enforce_now(&mut self) {
+        if let Some(a) = self.recovery.active.as_ref() {
+            a.writer.wait();
+        }
+        self.recovery_poll();
+        if let (Some(a), Some(limits)) = (self.recovery.active.as_ref(), self.recovery.quota_limits()) {
+            quota::enforce(&a.root, &limits, Some(a.session.dir()), pool::now_ms());
+        }
+        self.recovery.refresh_window();
     }
 
     fn recovery_save_settings(&mut self) {
@@ -586,7 +690,8 @@ impl AppState {
         if self.is_stroking() {
             return;
         }
-        match pool::load(&a.root, &request.pool, &request.id) {
+        let limits = yolu_io::Limits::from_layer_pixels(self.load_source_bytes());
+        match pool::load(&a.root, &request.pool, &request.id, limits, a.session.dir()) {
             Ok((project, info)) => {
                 crate::project::open_recovered(self, project);
                 self.recovery.recovered_from = Some(info.project_path)

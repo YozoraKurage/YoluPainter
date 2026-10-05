@@ -172,10 +172,13 @@ impl PressureResponses {
 }
 
 /// 1 つのダブ（か 1 回の画素の呼び出し）の、筆圧を応えに通した後の不透明度と流量の係数（切っている項目は 1）。
+/// 色の混ぜの絵の具の量・濃さの係数も持つ（混ぜない・切っているときは 1）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PressureScale {
     pub opacity: f64,
     pub flow: f64,
+    pub mix_paint: f64,
+    pub mix_density: f64,
 }
 
 #[cfg(test)]

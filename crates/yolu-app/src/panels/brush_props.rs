@@ -21,8 +21,8 @@ fn group(ui: &mut Ui, rows: &mut Rows, text: &str) {
 }
 use crate::brushes::Category;
 use crate::engine::{
-    BrushEffect, ColorDynamics, Controls, DVec2, Jitter, PressureResponse, PressureResponses,
-    TipShape,
+    BrushEffect, ColorDynamics, ColorMix, Controls, DVec2, Jitter, MixGround, MixMode,
+    PressureResponse, PressureResponses, TipShape,
 };
 use crate::lang::Lang;
 use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
@@ -121,6 +121,7 @@ pub fn category_body(
         Category::Texture => texture_fields(ui, app, rows, ctx, lang),
         Category::Dual => dual_fields(ui, app, rows, ctx, lang),
         Category::Color => color_fields(ui, app, rows, lang),
+        Category::Mix => mix_fields(ui, app, rows, lang),
         Category::Effect => effect_fields(ui, app, rows, ctx, lang),
         Category::Symmetry => crate::selection::props::symmetry_fields(ui, app, rows, lang),
     }
@@ -170,6 +171,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.m2.dual_stash = Default::default();
         }
         Category::Color => brush.color = ColorDynamics::default(),
+        Category::Mix => brush.mix = ColorMix::default(),
         Category::Effect => brush.effect = BrushEffect::Paint,
         Category::Symmetry => app.sel.symmetry = crate::selection::SymmetryState::default(),
     }
@@ -1073,6 +1075,261 @@ fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         free,
     ) {
         c.per_tip = v;
+    }
+}
+
+// ───────── 色の混ぜ ─────────
+
+/// 色の混ぜが、今の道具・ブラシ・描く先では効かない理由（効くなら None）。
+fn mix_unavailable(app: &AppState, lang: Lang) -> Option<&'static str> {
+    if app.tool == Tool::Eraser {
+        return Some(lang.pick("消しゴムでは効きません", "No effect with the eraser"));
+    }
+    if !app.m2.brush.effect.is_paint() {
+        return Some(lang.pick("効果のブラシでは効きません", "No effect on effect brushes"));
+    }
+    let kind = app
+        .doc
+        .channel_info(app.m2.paint_channel)
+        .map(|i| i.kind)
+        .unwrap_or(crate::engine::ChannelKind::Color);
+    (app.m2.edit_mask || !yolu_core::brush::carries_color(kind))
+        .then(|| lang.pick("このチャンネルでは効きません", "No effect on this channel"))
+}
+
+/// 筆圧で変えられる色の混ぜの項目。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MixItem {
+    Paint,
+    Density,
+}
+
+impl MixItem {
+    fn key(self) -> &'static str {
+        match self {
+            MixItem::Paint => "paint",
+            MixItem::Density => "density",
+        }
+    }
+
+    fn name(self, lang: Lang) -> &'static str {
+        match self {
+            MixItem::Paint => lang.pick("絵の具の量", "Paint amount"),
+            MixItem::Density => lang.pick("絵の具の濃さ", "Paint density"),
+        }
+    }
+
+    fn on(self, mix: &ColorMix) -> bool {
+        match self {
+            MixItem::Paint => mix.pressure_paint,
+            MixItem::Density => mix.pressure_density,
+        }
+    }
+
+    fn set_on(self, mix: &mut ColorMix, on: bool) {
+        match self {
+            MixItem::Paint => mix.pressure_paint = on,
+            MixItem::Density => mix.pressure_density = on,
+        }
+    }
+
+    fn response(self, mix: &mut ColorMix) -> &mut PressureResponse {
+        match self {
+            MixItem::Paint => &mut mix.response_paint,
+            MixItem::Density => &mut mix.response_density,
+        }
+    }
+}
+
+fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    let reason = mix_unavailable(app, lang);
+    let usable = reason.is_none();
+    let mode = app.m2.brush.mix.mode;
+    // 混ぜ方: 排他の 2 つの切り替え（どちらも切ならなし）
+    let (mixes, smears) = toggle_pair(
+        ui,
+        rows,
+        "mix.mode",
+        usable,
+        (
+            lang.pick("混ぜる", "Mix"),
+            tip(
+                reason,
+                lang.pick(
+                    "下の色を拾い、描く色と混ぜて置く",
+                    "Picks up the color underneath and mixes it with the paint",
+                ),
+            )
+            .unwrap_or(""),
+            mode == MixMode::Mix,
+        ),
+        Some((
+            lang.pick("伸ばす", "Smear"),
+            tip(
+                reason,
+                lang.pick(
+                    "動きの後ろの色をぼかしながら引きずる",
+                    "Drags the color from behind the stroke, softened",
+                ),
+            )
+            .unwrap_or(""),
+            mode == MixMode::Smear,
+        )),
+    );
+    if let Some(on) = mixes {
+        app.m2.brush.mix.mode = if on { MixMode::Mix } else { MixMode::Off };
+    }
+    if let Some(on) = smears {
+        app.m2.brush.mix.mode = if on { MixMode::Smear } else { MixMode::Off };
+    }
+    let off_reason = reason.or_else(|| {
+        (!app.m2.brush.mix.is_active()).then(|| lang.pick("混ぜ方がなしです", "Mixing is off"))
+    });
+    let active = off_reason.is_none();
+    let unit = (0.0, 1.0);
+    let mix = &mut app.m2.brush.mix;
+    if let Some(v) = percent_row(
+        ui,
+        rows,
+        "mix.paint",
+        MixItem::Paint.name(lang),
+        mix.paint,
+        unit,
+        tip(
+            off_reason,
+            lang.pick(
+                "混ぜた色に占める描く色の割合（100% は下の色を拾わない）",
+                "The share of the paint color in the mix (100% picks up nothing)",
+            ),
+        ),
+        active,
+    ) {
+        mix.paint = v;
+    }
+    if let Some(v) = percent_row(
+        ui,
+        rows,
+        "mix.density",
+        MixItem::Density.name(lang),
+        mix.density,
+        unit,
+        tip(
+            off_reason,
+            lang.pick(
+                "置く量（不透明度の天井に掛ける）",
+                "How much is laid down (multiplies the opacity ceiling)",
+            ),
+        ),
+        active,
+    ) {
+        mix.density = v;
+    }
+    if let Some(v) = percent_row(
+        ui,
+        rows,
+        "mix.stretch",
+        lang.pick("色延び", "Color stretch"),
+        mix.stretch,
+        unit,
+        tip(
+            off_reason,
+            lang.pick(
+                "前の打点で拾った色を次の打点へ引きずる割合",
+                "How much of the color picked up by the previous dab is carried to the next",
+            ),
+        ),
+        active,
+    ) {
+        mix.stretch = v;
+    }
+    let masked = app.m2.edit_mask;
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "mix.ground",
+        lang.pick("全レイヤーから", "All layers"),
+        mix.ground == MixGround::Composite,
+        tip(
+            off_reason,
+            lang.pick(
+                "描くレイヤーだけでなく、見えているレイヤーの重なりから色を拾う",
+                "Picks up from the visible layers together, not only the layer being painted",
+            ),
+        ),
+        active && !masked,
+    ) {
+        mix.ground = if v {
+            MixGround::Composite
+        } else {
+            MixGround::Layer
+        };
+    }
+    // 筆圧（量・濃さ）: 筆圧のカテゴリと同じ形（切り替え・最小値・曲線）
+    for item in [MixItem::Paint, MixItem::Density] {
+        let key = item.key();
+        let response = item.response(&mut app.m2.brush.mix).clone();
+        let on = item.on(&app.m2.brush.mix);
+        group(ui, rows, &lang.pick(format!("{}（筆圧）", item.name(lang)), format!("{} (pressure)", item.name(lang))));
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            &format!("mix.{key}.on"),
+            lang.pick("筆圧を使う", "Use pen pressure"),
+            on,
+            tip(
+                off_reason,
+                lang.pick(
+                    "筆圧で値を変える（軽いと下の色を拾い、強いと描く色を置く）",
+                    "Pen pressure changes the value (light picks up, firm lays paint)",
+                ),
+            ),
+            active,
+        ) {
+            item.set_on(&mut app.m2.brush.mix, v);
+        }
+        let used = active && on;
+        let pressure_off = off_reason.unwrap_or_else(|| lang.pick("筆圧を使っていません", "Pen pressure is not used"));
+        if let Some(v) = percent_row(
+            ui,
+            rows,
+            &format!("mix.{key}.min"),
+            lang.pick("最小", "Minimum"),
+            response.min(),
+            (0.0, 1.0),
+            Some(if used {
+                lang.pick(
+                    "筆圧 0 のときの値（元の値に対する割合）",
+                    "The value at zero pressure, as a share of the original",
+                )
+            } else {
+                pressure_off
+            }),
+            used,
+        ) {
+            if let Ok(next) = response.with_min(v) {
+                *item.response(&mut app.m2.brush.mix) = next;
+            }
+        }
+        let curve_tip = if used {
+            lang.pick(
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
+            )
+        } else {
+            pressure_off
+        };
+        if let Some(next) = pressure_curve_row(
+            ui,
+            rows,
+            &format!("mix.{key}.curve"),
+            &response.curve_shape(),
+            curve_tip,
+            used,
+        ) {
+            if let Ok(next) = response.with_curve_shape(next) {
+                *item.response(&mut app.m2.brush.mix) = next;
+            }
+        }
     }
 }
 

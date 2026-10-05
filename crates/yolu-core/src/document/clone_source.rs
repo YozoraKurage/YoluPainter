@@ -1,4 +1,4 @@
-//! クローンの合成の参照元の組み立て（C# の BrushStroke.UseCompositeCloneSource の、文書を読む部分）。
+//! 合成の参照元（クローンが読む元と、色の混ぜの「全レイヤーから」の下地）の組み立て（C# の BrushStroke.UseCompositeCloneSource の、文書を読む部分）。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -52,7 +52,7 @@ impl Document {
             .collect();
         if states.iter().any(|s| !s.can_take_source()) {
             return Err(CoreError::Unsupported(
-                "合成の参照元はクローンの最初のダブの前にだけ決められる",
+                "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる",
             ));
         }
         let ts = self.tile_size;

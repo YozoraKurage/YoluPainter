@@ -257,7 +257,7 @@ fn refusals_change_nothing() {
         )
         .map(|_| ())
     });
-    refused(&mut doc, "Generator を法線に", |d| {
+    refused(&mut doc, "ジェネレーターを法線に", |d| {
         d.add_filter(
             base,
             FilterTarget::Content,
@@ -382,7 +382,7 @@ fn refusals_change_nothing() {
     let mut bad = Settings::new(generator::Kind::EdgeWear);
     bad.low = 0.9;
     bad.high = 0.9;
-    refused(&mut doc, "Generator のレベル", |d| {
+    refused(&mut doc, "ジェネレーターのレベル", |d| {
         d.add_filter(
             base,
             FilterTarget::Content,
@@ -843,7 +843,7 @@ fn anchors_must_be_below_and_say_what_is_wrong() {
             FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]),
         )
         .unwrap();
-    refused(&mut doc, "Anchor の Generator ではない", |d| {
+    refused(&mut doc, "Anchor のジェネレーターではない", |d| {
         d.set_generator_anchor(
             mid,
             plain,

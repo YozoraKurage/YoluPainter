@@ -602,7 +602,7 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     assert!(s.doc.inactive_effect_list().is_empty());
     let screen = s.doc.composite(s.doc.bounds()).unwrap();
     let hidden = screen.iter().skip(3).step_by(4).filter(|a| **a != 255).count();
-    assert!(hidden > 0, "焼いたマップの Generator が見える所を絞る");
+    assert!(hidden > 0, "焼いたマップのジェネレーターが見える所を絞る");
     let after = Dir::new("generator-after");
     export(&mut s, "unity-standard", &after.0);
     s.wait_export();
@@ -990,4 +990,37 @@ fn all_channels_skip_a_read_only_set_and_say_so_and_cancel_leaves_nothing() {
     s.apply(Action::Export(ExportAction::Cancel));
     s.wait_export();
     assert!(cancel.files().is_empty(), "{:?}", cancel.files());
+}
+
+/// 正本にすると 512 MiB を超える文書（一様なタイルの層は core では小さいが、正本では全画素を書く）も書き出せる: 書き出しは文書の写し
+/// （タイルを共有）から作り、正本を経ない。
+#[test]
+fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {
+    let dir = Dir::new("png-big");
+    let mut s = AppState::new(1024, 1024);
+    s.export.padding = 0;
+    let ts = s.doc.tile_size();
+    let n = 1024 / ts;
+    let layers = (520u64 << 20).div_ceil(u64::from(n * n) * u64::from(ts * ts) * 4) as u32;
+    for i in 0..layers {
+        let id = s.doc.add_layer(&format!("平ら {i}")).unwrap();
+        let flat = [i as u8, 255 - i as u8, 7, 255].repeat((ts * ts) as usize);
+        for ty in 0..n {
+            for tx in 0..n {
+                s.doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat).unwrap();
+            }
+        }
+    }
+    s.doc.clear_history().unwrap();
+    // 正本の画素の値だけで 512 MiB を超える（作って確かめると 512 MiB を確保するので、数で見る）。core の画素は小さい
+    assert!(u64::from(layers * n * n) * u64::from(ts * ts * 4) > yolu_io::MAX_ONE_ENTRY);
+    assert!(s.doc.allocated_bytes() < 1 << 20);
+    let path = dir.0.join("big.png");
+    export_channel(&mut s, &path);
+    s.wait_export();
+    assert!(s.message.contains("書き出しました"), "{}", s.message);
+    let top = layers - 1;
+    let image = load_png(&path);
+    assert_eq!((image.0, image.1), (1024, 1024));
+    assert_eq!(px(&image, 500, 500), [top as u8, 255 - top as u8, 7, 255]);
 }

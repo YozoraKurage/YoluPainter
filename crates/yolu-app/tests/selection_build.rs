@@ -120,9 +120,21 @@ fn drag_by(h: &mut H, points: &[(f32, f32)]) {
     drag(h, &pts);
 }
 
-/// ツールチップが名前になっているボタンの「選んでいる・点いている」印。
+/// ツールチップが名前になっているボタンの「選んでいる・点いている」印。オプションバーとツールプロパティの両方にあるボタンは、2 つが同じ印であること。
 fn lit(h: &H, label: &str) -> bool {
-    h.get_by_label(label).accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+    let marks: Vec<bool> = h
+        .get_all_by_label(label)
+        .map(|n| n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True))
+        .collect();
+    assert!(!marks.is_empty(), "{label}");
+    assert!(marks.iter().all(|m| *m == marks[0]), "{label}: {marks:?}");
+    marks[0]
+}
+
+/// オプションバーのボタンを押す。
+fn click_bar(h: &mut H, label: &str) {
+    let at = bar_rect(h, label).center();
+    click(h, at);
 }
 
 const NEW: &str = "新規選択: 新しい形で置き換える";
@@ -198,8 +210,7 @@ fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys()
         (SelectionCombine::Intersect, ISECT),
         (SelectionCombine::Replace, NEW),
     ] {
-        h.get_by_label(label).click();
-        h.run();
+        click_bar(&mut h, label);
         assert_eq!(st(&h).sel.combine, mode);
         for l in all {
             assert_eq!(lit(&h, l), l == label, "{label} を選んだとき {l}");
@@ -248,7 +259,9 @@ fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_th
             "Subtract from the selection (Ctrl)",
             "Intersect: keep only the overlap (Shift + Ctrl)",
         ] {
-            h.get_by_label(label);
+            // オプションバーとツールプロパティの両方に出る
+            bar_rect(&h, label);
+            dock_rect(&h, label);
         }
     }
     assert_eq!(
@@ -267,10 +280,9 @@ fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes
     pick_tool(&mut h, Tool::SelectPen);
     let pen = "選択ペン: 選択範囲に足す（Shift）";
     let eraser = "選択消し: 選択範囲から消す（Ctrl）";
-    assert!(h.query_by_label(NEW).is_none());
+    assert!(h.query_all_by_label(NEW).next().is_none());
     assert!(lit(&h, pen) && !lit(&h, eraser));
-    h.get_by_label(eraser).click();
-    h.run();
+    click_bar(&mut h, eraser);
     assert!(st(&h).sel.pen_erase);
     assert!(lit(&h, eraser) && !lit(&h, pen));
     // 押しているあいだ替わる: Shift は選択ペン（選んでいる選択消しは枠だけ）
@@ -1452,16 +1464,16 @@ fn quick_mask_is_off_when_the_document_changes_and_refused_while_drawing() {
 }
 
 #[test]
-fn the_quick_mask_button_in_the_option_bar_lights_up_and_toggles() {
+fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     let label = "クイックマスク（Shift+Q）";
+    assert!(h.query_all_by_label(label).count() == 1, "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）");
     assert!(!lit(&h, label));
-    h.get_by_label(label).click();
-    h.run();
+    let at = dock_rect(&h, label).center();
+    click(&mut h, at);
     assert!(st(&h).sel.quick && lit(&h, label));
-    h.get_by_label(label).click();
-    h.run();
+    click(&mut h, at);
     assert!(!st(&h).sel.quick && !lit(&h, label));
 }
 

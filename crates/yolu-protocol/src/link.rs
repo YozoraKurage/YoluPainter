@@ -13,7 +13,7 @@
 
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -23,10 +23,11 @@ use interprocess::local_socket::GenericNamespaced;
 use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Name, Stream};
 
 use crate::auth::{random_bytes, same_bytes, HelloCheck, LinkKey, ServerKey};
+use crate::compat::{self, judge_ranges, Identity, LinkInfo, PeerInfo, RejectDetail};
 use crate::frame::{encode_frame, encode_message, FrameError, FrameReader};
 use crate::message::{
     ErrorCode, ErrorMessage, Hello, HelloAuth, Kind, Message, Reject, RejectCode, Welcome,
-    MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    PROTOCOL_VERSION,
 };
 use crate::wire::DecodeError;
 
@@ -392,6 +393,8 @@ impl From<FrameError> for LinkError {
 pub struct Connection {
     stream: Arc<Stream>,
     write_lock: Arc<Mutex<()>>,
+    /// 挨拶が済むと入る、両側の名乗りと決まった版（複製と共有）。
+    info: Arc<OnceLock<LinkInfo>>,
 }
 
 impl Connection {
@@ -401,6 +404,7 @@ impl Connection {
             Connection {
                 stream: stream.clone(),
                 write_lock: Arc::new(Mutex::new(())),
+                info: Arc::new(OnceLock::new()),
             },
             ConnectionReader {
                 stream,
@@ -409,9 +413,44 @@ impl Connection {
         )
     }
 
-    /// 命令を送る（書き終えるまで待つ）。
+    /// 命令を送る（書き終えるまで待つ）。相手の機能の印は確かめない（印の要る新しい命令は `send_gated`）。
     pub fn send(&self, message: &Message) -> io::Result<()> {
         self.send_frame(&encode_message(message))
+    }
+
+    /// 挨拶が済んだ後の、両側の名乗りと決まった版（挨拶の前・失敗した後は None）。
+    pub fn link_info(&self) -> Option<&LinkInfo> {
+        self.info.get()
+    }
+
+    /// このつながりで使える機能（双方の印の共通部分。挨拶の前は 0）。
+    pub fn common_features(&self) -> u64 {
+        self.info.get().map_or(0, LinkInfo::common_features)
+    }
+
+    /// 機能 `feature` が相手にも立っているときだけ送る。送ったら true、相手に印が無くて送らなかったら false（誤りにはしない。
+    /// 相手は知らない命令を `Error` で断るので、送る側が先に控える）。
+    pub fn send_requiring(&self, feature: u64, message: &Message) -> io::Result<bool> {
+        if !compat::satisfies(self.common_features(), feature) {
+            return Ok(false);
+        }
+        self.send(message)?;
+        Ok(true)
+    }
+
+    /// 命令の種類が要る印（`Kind::required_feature`）が相手にも立っているときだけ送る。新しい命令は、この関数で送る
+    /// （印の要らない今の命令は、いつもどおり送られる）。送ったら true。
+    pub fn send_gated(&self, message: &Message) -> io::Result<bool> {
+        self.send_gated_with(message, Kind::required_feature)
+    }
+
+    /// `send_gated` の、命令の種類ごとに要る印の決め方を選べる形（試験が印の要る表を差し込む。`compat::accepts_with`）。
+    pub fn send_gated_with(
+        &self,
+        message: &Message,
+        need_of: impl Fn(Kind) -> u64,
+    ) -> io::Result<bool> {
+        self.send_requiring(need_of(message.kind()), message)
     }
 
     /// 作った枠をそのまま送る。
@@ -519,21 +558,34 @@ pub fn wrong_direction(message: &Message, receiver_is_standalone: bool) -> Optio
     })
 }
 
-/// 版の取り決め: 両方の読める一番新しい版。重ならなければ断りの中身。
+/// 版の取り決め: 両方の読める一番新しい版。重ならなければ断りの中身（どちらを何版以上に、の文と、その構造）。
 pub fn negotiate(hello: &Hello) -> Result<u16, Reject> {
-    let lo = hello.min_version.max(MIN_PROTOCOL_VERSION);
-    let hi = hello.max_version.min(PROTOCOL_VERSION);
+    negotiate_as(&Identity::standalone(""), hello)
+}
+
+/// `negotiate`（自分の名乗りを選べる。断りの文が求める版は、`own.min_peer` と、相手の挨拶の求める版から）。
+pub fn negotiate_as(own: &Identity, hello: &Hello) -> Result<u16, Reject> {
+    let (own_min, own_max) = own.protocol_range();
+    let lo = hello.min_version.max(own_min);
+    let hi = hello.max_version.min(own_max);
     if lo <= hi {
-        Ok(hi)
-    } else {
-        Err(Reject {
-            code: RejectCode::VersionMismatch,
-            text: format!(
-                "プロトコルの版が合いません（Unity 側 {}〜{}、スタンドアロン {}〜{}）",
-                hello.min_version, hello.max_version, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
-            ),
-        })
+        return Ok(hi);
     }
+    let peer_min = hello.versions.map(|v| v.min_peer);
+    let refusal = judge_ranges(own, (hello.min_version, hello.max_version), peer_min)
+        .expect("範囲が重ならないので断る内容がある");
+    Err(Reject {
+        code: RejectCode::VersionMismatch,
+        text: refusal.text(),
+        detail: Some(RejectDetail {
+            min_version: own_min,
+            max_version: own_max,
+            min_peer: own.min_peer,
+            peer_min_version: hello.min_version,
+            peer_max_version: hello.max_version,
+            peer_min_peer: peer_min.unwrap_or(crate::compat::AppVersion::ZERO),
+        }),
+    })
 }
 
 /// 挨拶の鍵を確かめた結果の断り（確かめられれば None）。
@@ -544,10 +596,7 @@ fn auth_reject(key: &ServerKey, hello: &Hello) -> Option<Reject> {
         HelloCheck::Wrong => WRONG_KEY_TEXT,
         HelloCheck::Replayed => REPLAYED_TEXT,
     };
-    Some(Reject {
-        code: RejectCode::Unauthorized,
-        text: text.to_owned(),
-    })
+    Some(Reject::plain(RejectCode::Unauthorized, text))
 }
 
 /// 挨拶を待って読む（来ない・最初が Hello でないなら失敗）。
@@ -592,11 +641,31 @@ pub fn accept(
     accept_with(stream, agent, session, key, HANDSHAKE_TIMEOUT, &|_| Ok(()))
 }
 
-/// `accept`（挨拶を待つ時間と、受けてよいかの確かめ `claim` を選べる）。鍵と版が合ってから `claim` を呼び、断られたらその理由を返して閉じる
-/// （ほかの Unity とつながっている、など。つながっていることは、鍵を知っている相手にだけ教える）。
+/// `accept_with`（版を名乗らず、機能の印も出さない。古い版と同じ挨拶）。
 pub fn accept_with(
     stream: Stream,
     agent: &str,
+    session: u64,
+    key: &ServerKey,
+    timeout: Duration,
+    claim: Claim<'_>,
+) -> Result<(Connection, ConnectionReader, Hello), LinkError> {
+    accept_as(
+        stream,
+        &Identity::standalone(agent),
+        session,
+        key,
+        timeout,
+        claim,
+    )
+}
+
+/// `accept`（自分の名乗り（版・機能の印）と、挨拶を待つ時間と、受けてよいかの確かめ `claim` を選べる）。鍵と版が合ってから `claim` を呼び、
+/// 断られたらその理由を返して閉じる（ほかの Unity とつながっている、など。つながっていることは、鍵を知っている相手にだけ教える）。
+/// 挨拶が済んだつながりには `Connection::link_info`（両側の名乗りと、使える機能）が入る。
+pub fn accept_as(
+    stream: Stream,
+    own: &Identity,
     session: u64,
     key: &ServerKey,
     timeout: Duration,
@@ -609,7 +678,7 @@ pub fn accept_with(
         let _ = conn.send(&Message::Reject(reject.clone()));
         return Err(LinkError::Rejected(reject));
     }
-    let version = match negotiate(&hello) {
+    let version = match negotiate_as(own, &hello) {
         Ok(v) => v,
         Err(reject) => {
             let _ = conn.send(&Message::Reject(reject.clone()));
@@ -621,12 +690,23 @@ pub fn accept_with(
         return Err(LinkError::Rejected(reject));
     }
     let nonce = hello.auth.as_ref().map(|a| a.nonce).unwrap_or_default();
+    // 名乗りと決まった版は、返事を送る前に入れる（返事を受けた相手が先に動いても、こちらの口は答えられる）
+    let _ = conn.info.set(LinkInfo {
+        protocol: version,
+        own: own.clone(),
+        peer: PeerInfo {
+            agent: hello.agent.clone(),
+            versions: hello.versions,
+            features: hello.features,
+        },
+    });
     conn.send(&Message::Welcome(Welcome {
         version,
-        agent: agent.to_owned(),
+        agent: own.agent.clone(),
         session,
-        features: 0,
+        features: own.features,
         proof: Some(key.key().welcome_proof(&nonce, version, session)),
+        versions: own.version_info(),
     }))?;
     Ok((conn, reader, hello))
 }
@@ -636,6 +716,14 @@ pub fn connect_and_greet(
     name: &str,
     agent: &str,
 ) -> Result<(Connection, ConnectionReader, Welcome), LinkError> {
+    connect_and_greet_as(name, &Identity::unity(agent))
+}
+
+/// `connect_and_greet`（自分の名乗り（版・機能の印）を選べる）。挨拶が済んだつながりには `Connection::link_info` が入る。
+pub fn connect_and_greet_as(
+    name: &str,
+    own: &Identity,
+) -> Result<(Connection, ConnectionReader, Welcome), LinkError> {
     // 待ち受けていなければ、鍵のファイルが無いという分かりやすい理由で失敗する（この読みは挨拶には使わない）
     LinkKey::load(name)?;
     let stream = connect(name)?;
@@ -644,15 +732,17 @@ pub fn connect_and_greet(
     let key = LinkKey::load(name)?;
     let (conn, mut reader) = Connection::new(stream);
     let nonce = random_bytes()?;
+    let (own_min, own_max) = own.protocol_range();
     conn.send(&Message::Hello(Hello {
-        min_version: MIN_PROTOCOL_VERSION,
-        max_version: PROTOCOL_VERSION,
-        agent: agent.to_owned(),
-        features: 0,
+        min_version: own_min,
+        max_version: own_max,
+        agent: own.agent.clone(),
+        features: own.features,
         auth: Some(HelloAuth {
             nonce,
             proof: key.hello_proof(&nonce),
         }),
+        versions: own.version_info(),
     }))?;
     let welcome = match reader.next_within(&conn, HANDSHAKE_TIMEOUT)? {
         Received::Message(Message::Welcome(w)) => w,
@@ -682,12 +772,21 @@ pub fn connect_and_greet(
         }
         Some(_) => {}
     }
-    if !(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&welcome.version) {
+    if !(own_min..=own_max).contains(&welcome.version) {
         return Err(LinkError::Protocol(format!(
             "スタンドアロンが読めない版 {} を選びました",
             welcome.version
         )));
     }
+    let _ = conn.info.set(LinkInfo {
+        protocol: welcome.version,
+        own: own.clone(),
+        peer: PeerInfo {
+            agent: welcome.agent.clone(),
+            versions: welcome.versions,
+            features: welcome.features,
+        },
+    });
     Ok((conn, reader, welcome))
 }
 

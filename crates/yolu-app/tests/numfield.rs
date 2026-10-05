@@ -45,7 +45,7 @@ fn draw(ui: &mut egui::Ui, f: &mut Field) {
 }
 
 fn field(value: f64, spec: NumSpec) -> Harness<'static, Field> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(240.0, 80.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)

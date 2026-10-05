@@ -26,8 +26,6 @@ pub enum BrushImportError {
 /// 読まないファイルの種類。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnsupportedFile {
-    /// CLIP STUDIO PAINT の `.sut`（筆先が保護された入れ物に入っている）。
-    ClipStudio,
     /// Krita のブラシプリセット `.kpp`（Krita の筆のエンジンの設定。筆先の画像 `.gbr`・`.gih`・`.png` は別に読める）。
     KritaPreset,
     /// 知らない拡張子（拡張子が無ければ空）。
@@ -197,6 +195,16 @@ pub enum Fault {
     // PNG の筆先
     NotPng,
     PngLimits,
+
+    // CLIP STUDIO の .sut（SQLite）
+    /// SQLite のデータベースとして読めない（署名が無い・壊れている・暗号化されている）。
+    SutNotDatabase,
+    /// ブラシの表（`Node`）が無い・読めない。
+    SutNoNodeTable,
+    /// 読めるブラシが 1 つも無い。
+    SutNoBrushes,
+    /// データベースの読み取りが上限（命令の数・展開する画素）を超えた。
+    SutLimits,
 }
 
 impl From<std::io::Error> for BrushImportError {
@@ -505,6 +513,23 @@ impl Fault {
                 "画像が大きすぎます（メモリの上限）".into(),
                 "Image too large (memory limit).".into(),
             ),
+            SutNotDatabase => (
+                "CLIP STUDIO のブラシ（SQLite のデータベース）として読めません".into(),
+                "Not a readable CLIP STUDIO brush (SQLite database).".into(),
+            ),
+            SutNoNodeTable => (
+                "ブラシの表（Node）がありません。CLIP STUDIO のブラシではない可能性があります"
+                    .into(),
+                "The brush table (Node) is missing; this may not be a CLIP STUDIO brush.".into(),
+            ),
+            SutNoBrushes => (
+                "このファイルに読めるブラシがありません".into(),
+                "The file contains no brushes this tool can read.".into(),
+            ),
+            SutLimits => (
+                "データベースが大きすぎる、または複雑すぎます（読み取りの上限）".into(),
+                "The database is too large or too complex (read limit).".into(),
+            ),
         }
     }
 }
@@ -514,17 +539,13 @@ impl BrushImportError {
         match self {
             Self::Io(e) => (format!("ファイルを読めません（{e}）"), "The file cannot be read.".into()),
             Self::FileTooLarge { .. } => ("ファイルが大きすぎます".into(), "The file is too large.".into()),
-            Self::Unsupported(UnsupportedFile::ClipStudio) => (
-                "CLIP STUDIO PAINT のブラシ（.sut）は未対応です（筆先が保護された入れ物に入っています）".into(),
-                "Clip Studio Paint brushes (.sut) are not supported: their tips are stored in a protected container.".into(),
-            ),
             Self::Unsupported(UnsupportedFile::KritaPreset) => (
                 "Krita のブラシプリセット（.kpp）は未対応です".into(),
                 "Krita brush presets (.kpp) are not supported.".into(),
             ),
             Self::Unsupported(UnsupportedFile::Extension(ext)) => (
-                format!("ブラシファイルの種類 '{ext}' は未対応です（対応: abr, pat, gbr, gih, vbr, png）"),
-                format!("Unsupported brush file type '{ext}'. Supported: abr, pat, gbr, gih, vbr, png."),
+                format!("ブラシファイルの種類 '{ext}' は未対応です（対応: abr, pat, gbr, gih, vbr, png, sut）"),
+                format!("Unsupported brush file type '{ext}'. Supported: abr, pat, gbr, gih, vbr, png, sut."),
             ),
             Self::Fault(f) => f.texts(),
             Self::NoUsablePattern(skipped) => {

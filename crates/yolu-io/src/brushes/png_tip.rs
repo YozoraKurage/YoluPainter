@@ -9,6 +9,20 @@ use yolu_core::BrushTip;
 use super::error::{Fault, Result, SizedItem};
 
 pub(crate) fn read_png_tip(bytes: &[u8], name: &str) -> Result<BrushTip> {
+    read_gray(bytes, name, |lum, a| ((255 - lum) * a / 255) as u8)
+}
+
+/// PNG の質感（CLIP STUDIO の素材）。Photoshop の模様と同じく白が塗れ、黒が塗れない（覆い = 輝度。透明な所は白として重ねる）。
+/// `invert` なら反転する。
+pub(crate) fn read_png_texture(bytes: &[u8], name: &str, invert: bool) -> Result<BrushTip> {
+    read_gray(bytes, name, move |lum, a| {
+        let covered = (lum * a + 255 * (255 - a)) / 255;
+        (if invert { 255 - covered } else { covered }) as u8
+    })
+}
+
+/// 1 辺の上限と画素の上限を守って PNG を読み、1 画素ごとに（輝度 0〜255, アルファ 0〜255）から覆い（0〜255）を作る。
+fn read_gray(bytes: &[u8], name: &str, cover: impl Fn(u32, u32) -> u8) -> Result<BrushTip> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     // パレット・8 bit 未満・tRNS を展開し、16 bit は上位バイトにする（読み込み後は 8 bit の灰・灰+アルファ・RGB・RGBA だけ）
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
@@ -56,7 +70,7 @@ pub(crate) fn read_png_tip(bytes: &[u8], name: &str) -> Result<BrushTip> {
                 _ => (luminance(p[0], p[1], p[2]), p[3] as u32),
             };
             // PNG の行は上から。筆先は下の行が先
-            alpha[(h - 1 - y) * w + x] = ((255 - lum) * a / 255) as u8;
+            alpha[(h - 1 - y) * w + x] = cover(lum, a);
         }
     }
     BrushTip::new(name, w as u32, h as u32, alpha).map_err(|_| Fault::SizeOutOfRange {

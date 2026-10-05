@@ -229,7 +229,7 @@ impl EffectSettings {
             Self::Filter(f) => {
                 if matches!(f, filter::Settings::Generator { .. }) {
                     return Err(CoreError::InvalidArgument(
-                        "Generator は generator の設定で置く",
+                        "ジェネレーターはジェネレーターの設定で置く",
                     ));
                 }
                 f.validate(value_type).map_err(|e| match e {
@@ -240,12 +240,12 @@ impl EffectSettings {
             Self::Generator(g) => {
                 if value_type == ValueType::TangentNormal {
                     return Err(CoreError::Unsupported(
-                        "Generator は 1 画素に 1 つの値を作るので、接空間の法線には置けない",
+                        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない",
                     ));
                 }
                 g.validate().map_err(|e| match e {
                     generator::Error::Invalid(why) => CoreError::InvalidArgument(why),
-                    _ => CoreError::InvalidArgument("Generator の設定"),
+                    _ => CoreError::InvalidArgument("ジェネレーターの設定"),
                 })
             }
         }
@@ -269,7 +269,7 @@ impl EffectSettings {
                 filter::Settings::BrightnessContrast(_) => "明るさ・コントラスト",
                 filter::Settings::Threshold(_) => "2 値化",
                 filter::Settings::Posterize(_) => "ポスタリゼーション",
-                filter::Settings::Generator { .. } => "Generator",
+                filter::Settings::Generator { .. } => "ジェネレーター",
             },
             Self::Generator(g) => generator_kind_name(g.kind),
         }

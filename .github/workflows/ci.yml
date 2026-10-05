@@ -17,9 +17,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # 組み直しが長い（アプリの試験の実行形式が 70 本以上）ので、画面の試験は別のジョブに分けて並べて回す。
+  #
+  # runs-on は ubuntu-latest にしない。収録済みの正解は glibc と Mesa の版に結びつく（描画しないクレートの golden は glibc の tan・atan・
+  # atan2 とビット一致、画面の正解は Mesa の lavapipe）。ubuntu-latest は 2026-10-19 から Ubuntu 26 に移るので、glibc・Mesa を測り直して
+  # から、版を決めて移す（確かめたのは glibc 2.35・2.39 と Mesa 23.2・25.2 だけ）。
   linux:
     name: Linux の試験と静的検査
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -31,6 +36,9 @@ jobs:
           toolchain: stable
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
           sudo apt-get update
@@ -39,20 +47,71 @@ jobs:
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
-      - name: ワークスペース全体の試験（ソフトウェア描画）
+      - name: 描画しないクレートの試験（並列）
+        run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
+      - name: Clippy（警告をエラーにする）
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # cargo fmt --check は既存の整形差分を解消してから追加する。
+
+  linux-render:
+    name: Linux の画面の試験（ソフトウェアの Vulkan）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
+      - name: ビルドとソフトウェア描画の依存を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
+            libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
+            libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth nsis
+      - name: 描画する試験（1 本ずつ）
         env:
-          # 収録済みの画面の正解と同じ GL / llvmpipe を選ぶ。
-          WGPU_BACKEND: gl
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          GALLIUM_DRIVER: llvmpipe
+          # 収録済みの画面の正解は、手元の既定（wgpu の Vulkan と Mesa の lavapipe）で撮ったもの。GL の llvmpipe は
+          # コンピュートが足りず（GPU 合成の試験が省略になる）、環境の反射の絵も違うので使わない。
+          WGPU_BACKEND: vulkan
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a cargo test --workspace --locked -- --nocapture --test-threads=1
-      - name: Clippy（警告をエラーにする）
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # cargo fmt --check は既存の整形差分を解消してから追加する。
+          xvfb-run -a cargo test -p yolu-gpu -p yolu-app --locked --no-fail-fast -- --nocapture --test-threads=1
+      - name: 画面の正解との差の画像を残す
+        if: failure()
+        shell: bash
+        run: |
+          # .new.png は落ちたときにだけ書かれる（画像の大きさが違う・正解の PNG が無い試験は .new.png だけで、.diff.png は
+          # 閾値を越えたときだけ）。.new.png を基準に回し、対応する .diff.png があれば一緒に写す。
+          mkdir -p "$RUNNER_TEMP/snapshot-diffs"
+          cd crates/yolu-app/tests/snapshots
+          for n in *.new.png; do
+            [ -e "$n" ] || continue
+            cp "$n" "$RUNNER_TEMP/snapshot-diffs/"
+            d="${n%.new.png}.diff.png"
+            if [ -e "$d" ]; then
+              cp "$d" "$RUNNER_TEMP/snapshot-diffs/"
+            fi
+          done
+      - name: 差の画像をアップロード
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-diffs
+          path: ${{ runner.temp }}/snapshot-diffs
+          if-no-files-found: ignore
 
   windows:
     name: Windows のビルドと画面なし試験
@@ -67,17 +126,26 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          cache-on-failure: true
       - name: アプリのビルド
         run: cargo build -p yolu-app --locked
       - name: 描画を使わないクレートの試験
-        run: cargo test --locked -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -- --test-threads=1
       - name: アプリの単体試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
       - name: Live Link の統合試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test livelink --locked headless_ -- --test-threads=1
       - name: 自動更新の統合試験（画面なし）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test update --locked headless_ -- --test-threads=1
       - name: ブラシの一覧の統合試験（画面なし。保存と読み戻し・壊れたファイル）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test brush_list --locked headless_ -- --test-threads=1
       - name: 復旧の試験（画面なし。OS のロック・置換・落ちた体の起動）
+        if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test recovery --locked headless_ -- --test-threads=1

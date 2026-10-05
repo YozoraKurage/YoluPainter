@@ -109,7 +109,7 @@ pub fn issue_url() -> String {
             .collect()
     }
     format!(
-        "https://github.com/YozoraKurage/YoluPainter-rs/issues/new?title={}&body={}",
+        "https://github.com/YozoraKurage/YoluPainter/issues/new?title={}&body={}",
         encode("Crash report"),
         encode(&format!(
             "Version: {}\nOS: {} {}",

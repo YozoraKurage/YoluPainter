@@ -6,6 +6,9 @@
 有無と更新での引き継ぎ、上書きの更新、/RUN での起こし直し、exe を書き込みで開けない間は待ち、上限を超えたら
 何も変えずに終了コード 5 で終わること（待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる）、
 アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA で消す）。
+文書（docs\ と docs\en\）は、入れる・上書きで新しい版の中身になる・前の版にだけあった文書が更新で消える・利用者が docs\ に
+置いたファイルと、記録が書き換えられていても入れ先の外には触れない・アンインストールで空になったフォルダだけが消える、を確かめる。
+ショートカットの作業フォルダと、/RUN で起こしたアプリの作業フォルダが入れ先であること（文書を入れたあとで入れ先へ戻す SetOutPath の確かめ）も読む。
 実際に動いている exe を待つ動きは、Wine が動いている exe の上書きを断るときだけ確かめられる（上書きできる Wine では注意を
 出して通る。Windows の実機で確かめる）。画面を出す側（ページの並び・チェック・終了の確かめ）は確かめない。
 時間は monotonic で測る（WSL2 では壁時計が数秒戻ることがある）。
@@ -18,6 +21,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -25,15 +29,29 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / 'target/test-installer'
 PRODUCT_KEY = r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\YoluPainter'
+SCRIPT = ROOT / 'installer/yolupainter.nsi'
+ROOT_FILES = ['LICENSE', 'README.md', 'README.en.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md', 'THIRD_PARTY_LICENSES.txt']
 FAKE_APP = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
-/* 起動した印（<exe>.ran に引数を 1 行）を残す。`hold N` なら N 秒動いたままにする（exe が使われている状態を作る）。 */
+/* 起動した印（<exe>.ran に引数を 1 行）と、そのときの作業フォルダ（<exe>.cwd）を残す。
+   `hold N` なら N 秒動いたままにする（exe が使われている状態を作る）。 */
 int main(int argc, char **argv) {
     char path[MAX_PATH + 8];
+    char cwd[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
+    if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
+        char cwd_path[MAX_PATH + 8];
+        strcpy(cwd_path, path);
+        strcat(cwd_path, ".cwd");
+        FILE *c = fopen(cwd_path, "w");
+        if (c) {
+            fprintf(c, "%s\n", cwd);
+            fclose(c);
+        }
+    }
     strcat(path, ".ran");
     FILE *f = fopen(path, "a");
     if (f) {
@@ -90,12 +108,46 @@ def registry(key, name=None):
     return None
 
 
+def shortcut_working_dir(path):
+    """.lnk（MS-SHLLINK）の作業フォルダ（StringData の WorkingDir）を返す。無ければ None。"""
+    data = Path(path).read_bytes()
+    assert data[:4] == b'L\x00\x00\x00', '.lnk のヘッダーではない'
+    flags = struct.unpack_from('<I', data, 0x14)[0]
+    unicode_strings = bool(flags & 0x80)
+    offset = 0x4C
+    if flags & 0x01:  # HasLinkTargetIDList
+        offset += 2 + struct.unpack_from('<H', data, offset)[0]
+    if flags & 0x02:  # HasLinkInfo
+        offset += struct.unpack_from('<I', data, offset)[0]
+    # StringData は NAME・RELATIVE_PATH・WORKING_DIR・ARGUMENTS・ICON_LOCATION の順（フラグが立っているものだけ）。
+    for bit in (0x04, 0x08, 0x10):
+        if not flags & bit:
+            continue
+        count = struct.unpack_from('<H', data, offset)[0]
+        offset += 2
+        size = count * 2 if unicode_strings else count
+        # Wine は文字列の終わりの NUL まで数えて書くので、取り除く。
+        text = data[offset:offset + size].decode('utf-16-le' if unicode_strings else 'latin-1', errors='replace').rstrip('\x00')
+        offset += size
+        if bit == 0x10:
+            return text
+    return None
+
+
 def expand(variable):
     out = wine('cmd', '/c', f'echo %{variable}%').stdout.strip()
     return to_unix(out)
 
 
-def build_installer(version, numeric, name, wait_steps=None):
+def script_docs():
+    """スクリプトの DocFiles の一覧（入れ先からの相対。例: docs\\en\\GUIDE.md）。
+    一覧が xtask の配布物の一覧と同じことは xtask の試験が確かめる。ここでは、一覧のとおりに入って・消えるかを確かめる。"""
+    text = SCRIPT.read_text(encoding='utf-8-sig')
+    return [f'{folder}\\{name}' for folder, name in re.findall(r'!insertmacro \$\{ACTION\} "([^"]+)" "([^"]+)"', text)]
+
+
+def build_installer(version, numeric, name, wait_steps=None, extra_docs=()):
+    """extra_docs は、スクリプトの一覧に足す文書（入れ先からの相対。前の版にだけあった文書を作るための、試験用のスクリプトの写しを使う）。"""
     stage = WORK / f'stage-{version}'
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
@@ -106,15 +158,31 @@ def build_installer(version, numeric, name, wait_steps=None):
     with open(stage / 'yolupainter.exe', 'ab') as exe:
         exe.write(f'build {version}'.encode())
     shutil.copy(ROOT / 'LICENSE', stage / 'LICENSE')
-    for file in ['README.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md', 'THIRD_PARTY_LICENSES.txt']:
+    for file in ROOT_FILES[1:]:
         (stage / file).write_text(f'{file} {version}\n')
+    script = SCRIPT
+    if extra_docs:
+        lines = []
+        for doc in extra_docs:
+            folder, file = doc.rsplit('\\', 1)
+            lines.append(f'  !insertmacro ${{ACTION}} "{folder}" "{file}"\n')
+        patched = SCRIPT.read_text(encoding='utf-8-sig')
+        marker = '!macroend\n!macro InstallDoc'
+        assert marker in patched
+        patched = patched.replace(marker, ''.join(lines) + marker, 1)
+        script = WORK / f'{name}.nsi'
+        script.write_text(patched, encoding='utf-8-sig')
+    for doc in [*script_docs(), *extra_docs]:
+        path = stage.joinpath(*doc.split('\\'))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'{doc} {version}\n')
     output = WORK / name
     command = ['makensis', '-INPUTCHARSET', 'UTF8', '-WX', '-V2', f'-DVERSION={version}',
                f'-DVERSION_NUMERIC={numeric}', f'-DSTAGE={stage}', f'-DOUTFILE={output}']
     command.append(f'-DICON={ROOT / "crates/yolu-app/assets/logo/yolupainter.ico"}')
     if wait_steps is not None:
         command.append(f'-DWAIT_STEPS={wait_steps}')
-    subprocess.run([*command, ROOT / 'installer/yolupainter.nsi'], check=True, cwd=ROOT)
+    subprocess.run([*command, script], check=True, cwd=ROOT)
     return output
 
 
@@ -172,6 +240,10 @@ def run(args):
     v2 = build_installer('0.2.0-rc.1', '0.2.0.0', 'setup-0.2.0.exe')
     # 待ちの上限を 3 秒（0.5 秒 × 6 回）に縮めた版（通常は 60 秒）。待ちの上限の試験だけが使う。
     v3 = build_installer('0.3.0', '0.3.0.0', 'setup-0.3.0-short-wait.exe', wait_steps=6)
+    # 前の版にだけあった文書（今のスクリプトの一覧に無い 2 つ）を入れる版。更新で消えることの試験が使う。
+    retired = [r'docs\RETIRED.md', r'docs\en\RETIRED.md']
+    vold = build_installer('0.0.9', '0.0.9.0', 'setup-0.0.9-retired-docs.exe', extra_docs=retired)
+    docs = script_docs()
     wine('wineboot', '-u', timeout=300)
     appdata = expand('APPDATA')
 
@@ -187,10 +259,18 @@ def run(args):
     check(bool(location) and location.lower().endswith(r'\programs\yolupainter'),
           f'既定の入れ先は %LOCALAPPDATA%\\Programs\\YoluPainter（{location}）')
     install = to_unix(location) if location else WORK / 'missing'
-    for name in ['yolupainter.exe', 'LICENSE', 'README.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md',
-                 'THIRD_PARTY_LICENSES.txt', 'uninstall.exe']:
+    for name in ['yolupainter.exe', *ROOT_FILES, 'uninstall.exe']:
         check((install / name).is_file(), f'入る: {name}')
+    missing = [doc for doc in docs if not (install / Path(*doc.split('\\'))).is_file()]
+    check(not missing and len(docs) >= 16, f'文書が一覧のとおり入る（{len(docs)} 件。無いもの {missing}）')
+    check((install / 'docs/en/GUIDE.md').read_text() == 'docs\\en\\GUIDE.md 0.1.0\n', '入った文書の中身は、その版の段のもの')
+    recorded = (install / 'docs/.installed').read_text().split()
+    check(recorded == docs, '入れた文書の名前の記録（docs\\.installed）が、一覧のとおりにある')
     check(shortcut() is not None, 'スタートメニューのショートカットができる')
+    # 文書を入れると出力先（$OUTDIR）が docs\en に移るので、SetOutPath で入れ先へ戻していないと、ショートカットの作業フォルダが docs\en になる。
+    working = shortcut_working_dir(shortcut()) if shortcut() else None
+    check(bool(working) and bool(location) and working.rstrip('\\').lower() == location.lower(),
+          f'ショートカットの作業フォルダは入れ先（{working}）')
     check(registry(PRODUCT_KEY, 'DisplayName') == 'YoluPainter', 'アンインストールの登録: 製品名')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == '0.1.0', 'アンインストールの登録: 版')
     check(bool(registry(PRODUCT_KEY, 'Publisher')), 'アンインストールの登録: 作者')
@@ -202,13 +282,39 @@ def run(args):
     before = exe.read_bytes()
     ran = Path(str(exe) + '.ran')
     ran.unlink(missing_ok=True)
+    cwd_record = Path(str(exe) + '.cwd')
+    cwd_record.unlink(missing_ok=True)
     code, _ = run_silent(v2, '/RUN')
     check(code == 0, f'更新の無音のインストールが終わる（終了コード {code}）')
     check(exe.read_bytes() != before and exe.read_bytes().endswith(b'build 0.2.0-rc.1'), 'exe が新しい版に置き換わる')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == '0.2.0-rc.1', '登録の版が新しくなる')
     check(registry(PRODUCT_KEY, 'InstallLocation') == location, '更新で入れ先が変わらない')
     check(wait_for(ran), '/RUN で入れ終わったあとにアプリが起きる')
+    started_in = cwd_record.read_text().strip() if cwd_record.exists() else None
+    check(bool(started_in) and bool(location) and started_in.rstrip('\\').lower() == location.lower(),
+          f'/RUN で起きたアプリの作業フォルダは入れ先（{started_in}）')
     check(registry(r'HKCU\Software\Classes\.ylp') is None, '更新で、無かった関連付けを勝手に付けない')
+    check((install / 'docs/GUIDE.md').read_text() == 'docs\\GUIDE.md 0.2.0-rc.1\n'
+          and (install / 'README.en.md').read_text() == 'README.en.md 0.2.0-rc.1\n', '更新で、文書も新しい版の中身に置き換わる')
+
+    # 2b. 前の版にだけあった文書は、更新で消える。利用者が docs\ に置いたファイルと、記録が書き換えられていても入れ先の外は、消えない
+    code, _ = run_silent(vold)
+    check(code == 0 and all((install / Path(*doc.split('\\'))).is_file() for doc in retired),
+          '前の版にだけあった文書（試験用）を入れる')
+    mine = [install / 'docs/my-notes.md', install / 'docs/en/my-notes.txt', install / 'keep.md', install / 'outside.md']
+    for path in mine:
+        path.write_text('利用者のファイル')
+    with open(install / 'docs/.installed', 'a') as record:
+        # 書き換えられた記録: 入れ先の外へ出る名前・docs\ の外の名前・.md でない名前は消さない
+        record.write('docs\\..\\outside.md\r\nkeep.md\r\ndocs\\en\\my-notes.txt\r\n')
+    code, _ = run_silent(v2)
+    check(code == 0, f'更新の無音のインストールが終わる（終了コード {code}）')
+    check(not any((install / Path(*doc.split('\\'))).exists() for doc in retired), '前の版にだけあった文書は、更新で消える')
+    check(all(path.exists() for path in mine), '記録に無い利用者のファイルと、記録が書き換えられても入れ先の外・docs\\ の外・.md でないものは消さない')
+    check(all((install / Path(*doc.split('\\'))).is_file() for doc in docs), '今の版の文書は全部ある')
+    check((install / 'docs/.installed').read_text().split() == docs, '記録は今の版の一覧に書き直される')
+    for path in mine:
+        path.unlink()
 
     # 3. 関連付けを付ける（/ASSOC=1）と、次の更新（指定なし）でも保たれる。/ASSOC=0 で外れはしない
     code, _ = run_silent(v1, '/ASSOC=1')
@@ -239,7 +345,8 @@ def run(args):
     # 4b. 待ちの上限: exe を書き込みで開けない間は待ち、上限を超えたら何も変えずに終了コード 5 で終わる。
     #     開けない状態は読み取り専用で作る（Windows の「使用中」と同じく、書き込みで開くのが失敗する）。上限は試験用に 3 秒。
     #     開けるようになれば、同じインストーラーで入る。
-    snapshot = {name: (install / name).read_bytes() for name in ['yolupainter.exe', 'README.md', 'uninstall.exe']}
+    snapshot = {name: (install / name).read_bytes() for name in
+                ['yolupainter.exe', 'README.md', 'docs/GUIDE.md', 'docs/en/GUIDE.md', 'docs/.installed', 'uninstall.exe']}
     version_before = registry(PRODUCT_KEY, 'DisplayVersion')
     ran = Path(str(exe) + '.ran')
     ran.unlink(missing_ok=True)
@@ -253,7 +360,7 @@ def run(args):
     check(code == 5, f'待ちの上限を超えたら終了コード 5（終了コード {code}）')
     check(2.0 <= seconds < 30, f'上限（試験用に 3 秒）まで待って終わる（{seconds:.1f} 秒）')
     check(all((install / name).read_bytes() == data for name, data in snapshot.items()),
-          '上限を超えたら、exe・README・アンインストーラーを何も変えない')
+          '上限を超えたら、exe・README・文書とその記録・アンインストーラーを何も変えない')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == version_before, '上限を超えたら、登録の版を変えない')
     check(not ran.exists(), '上限を超えたら、/RUN でもアプリを起こさない')
     code, _ = run_silent(v3)
@@ -266,11 +373,14 @@ def run(args):
     data.mkdir(exist_ok=True)
     (data / 'settings.conf').write_text('language=ja\n')
     (install / 'my-notes.txt').write_text('利用者のファイル')
+    (install / 'docs/en/mine.txt').write_text('利用者のファイル')
     code, gone = uninstall(install)
     check(code == 0 and gone, f'無音のアンインストールが終わり、アンインストーラー自身も消える（終了コード {code}）')
-    for name in ['yolupainter.exe', 'LICENSE', 'README.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md',
-                 'THIRD_PARTY_LICENSES.txt', 'uninstall.exe']:
+    for name in ['yolupainter.exe', *ROOT_FILES, 'uninstall.exe']:
         check(not (install / name).exists(), f'消える: {name}')
+    left = [doc for doc in docs if (install / Path(*doc.split('\\'))).exists()]
+    check(not left and not (install / 'docs/.installed').exists(), f'入れた文書と記録が全部消える（残り {left}）')
+    check((install / 'docs/en/mine.txt').exists(), '利用者が docs\\ に置いたファイルは消さない（docs のフォルダも残る）')
     check((install / 'my-notes.txt').exists(), '入れていないファイルは消さない（入れ先も残る）')
     check(shortcut() is None, 'ショートカットが消える')
     check(registry(PRODUCT_KEY, 'DisplayName') is None, '登録が消える')
@@ -279,6 +389,8 @@ def run(args):
 
     # 6. /DELETEDATA で、設定などのデータも消える。他のアプリに替えられた関連付けには触らない
     (install / 'my-notes.txt').unlink()
+    shutil.rmtree(install / 'docs')  # 利用者のファイルだけが残っていたフォルダ。消えると、この後の「入れ先が空になれば消える」が文書のフォルダも確かめる
+    Path(str(exe) + '.cwd').unlink(missing_ok=True)
     Path(str(exe) + '.ran').unlink(missing_ok=True)  # 試験用の exe が残した印（入れたファイルではないので、アンインストールは消さない）
     code, _ = run_silent(v1, '/ASSOC=1')
     wine('reg', 'add', r'HKCU\Software\Classes\.ylp', '/ve', '/d', 'OtherApp.File', '/f')

@@ -341,6 +341,8 @@ fn screen_pixel(h: &mut Harness<'_, YoluApp>, x: u32, y: u32) -> [u8; 4] {
     let doc = &h.state().state.doc;
     let view = h.state().state.view.view(rect, doc.width(), doc.height());
     let at = view.to_screen(x as f64 + 0.5, y as f64 + 0.5);
+    // 左下の知らせがキャンバスの隅に重なるので、読む前に消す
+    h.state_mut().state.clear_message();
     h.event(egui::Event::PointerGone);
     h.step();
     let image = h.render().expect("描画");
@@ -847,7 +849,7 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     // テクスチャセットのパネルに出る
     h.get_by_label("Body");
 
-    // 原本の保持だけの PSD（PSB）: 何も変えず、理由の窓
+    // 取り込めない PSD（PSB）: 何も変えず、理由の窓
     let mut psb = bytes.clone();
     psb[4..6].copy_from_slice(&2u16.to_be_bytes());
     let psb_path = dir.0.join("Big.psd");
@@ -877,7 +879,98 @@ fn importing_a_psd_adds_a_set_and_a_refused_one_shows_its_reasons() {
     );
     settle(&mut h);
     h.get_by_label("Close");
-    assert!(h.state().state.message.contains("Preserve only"));
+    assert!(h.state().state.message.contains("PSB (large document)"));
+}
+
+/// 層 ID を持たない 2 層の PSD を書く（書き手は ID を必ず書くので、lyid のタグを同じ長さの別のタグに書き換える）。
+fn psd_without_layer_ids(path: &Path) {
+    psd_without_layer_ids_with(path, false)
+}
+
+/// `dissolve` のとき、下の層の合成モードを取り込めない「ディゾルブ」にする（取り込みでは通常になる＝変わる。確かめの窓が出る）。
+fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
+    use yolu_io::psd::{self, Document, Layer, Limits};
+    let layer = |id: i32, name: &str, rgba: [u8; 4]| Layer {
+        id,
+        name: name.into(),
+        width: 8,
+        height: 8,
+        pixels_rgba: rgba.repeat(64),
+        ..Layer::default()
+    };
+    let doc = Document {
+        width: 8,
+        height: 8,
+        layers: vec![layer(2, "上", [0, 0, 255, 255]), layer(1, "下", [255, 0, 0, 255])],
+        composite_rgba: None,
+    };
+    let mut bytes = psd::write(&doc, &Limits::default()).unwrap();
+    let mut at = 0;
+    while let Some(i) = bytes[at..].windows(4).position(|w| w == b"lyid") {
+        bytes[at + i..at + i + 4].copy_from_slice(b"lnsr");
+        at += i + 4;
+    }
+    if dissolve {
+        let i = bytes.windows(8).position(|w| w == b"8BIMnorm").expect("層の記録の合成モード");
+        bytes[i + 4..i + 8].copy_from_slice(b"diss");
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_the_yes() {
+    let dir = TempDir::new("psd-import-check");
+    let path = dir.0.join("Ids.psd");
+    psd_without_layer_ids_with(&path, true);
+    let mut h = app(1280.0, 800.0, 32);
+    let import = |h: &mut Harness<'_, YoluApp>| {
+        apply(
+            h,
+            Action::Psd(PsdAction::Import {
+                path: path.clone(),
+                target: PsdTarget::NewSet,
+            }),
+        );
+        settle(h);
+    };
+    import(&mut h);
+    assert!(h.state().state.psd.import_check.is_some());
+    assert_eq!(h.state().state.sets.len(), 1, "確かめるまで入れない");
+    let texts = window_texts(&h, "psd-import");
+    for want in ["レイヤー ID の欠落・重複", "レイヤーのメタデータ", "変わる", "無視", "下、上"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    // PSD の内部のタグ名（4 文字のキー）は画面に出さない
+    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
+    assert!(
+        texts.iter().any(|t| t.contains("Ids.psd") && t.contains("変わる 1") && t.contains("無視 2")),
+        "{texts:?}"
+    );
+    shot(&mut h, "psd-import", "psd_import_check");
+    // やめる: 何も入れない
+    h.get_by_label("やめる").click();
+    h.run();
+    assert!(h.state().state.psd.import_check.is_none());
+    assert_eq!(h.state().state.sets.len(), 1);
+    // 英語で、もう一度読んで取り込む
+    h.state_mut().state.lang = Lang::En;
+    import(&mut h);
+    let texts = window_texts(&h, "psd-import");
+    for want in ["Missing or duplicate layer IDs", "Layer metadata", "Changed", "Ignored"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
+    // 日本語が残ってよいのは、利用者の名前（層の名前）だけ
+    assert!(
+        texts.iter().all(|t| !has_japanese(t) || t == "下, 上" || t == "下"),
+        "{texts:?}"
+    );
+    shot(&mut h, "psd-import", "psd_import_check_english");
+    h.get_by_label("Import").click();
+    h.run();
+    assert!(h.state().state.psd.import_check.is_none());
+    assert_eq!(h.state().state.sets.len(), 2);
+    assert_eq!(h.state().state.sets.current().name, "Ids");
 }
 
 /// 窓の中に描いた文字（描いた順）。
@@ -1404,4 +1497,51 @@ fn headless_an_imported_psd_survives_save_and_reopen_and_exports_again() {
     again.apply(Action::Psd(PsdAction::Export(out.clone())));
     again.wait_psd();
     assert!(out.exists(), "{}", again.message);
+}
+
+/// 写しとして取り込んだ PSD（層 ID の欠落に新しい ID を振ったもの）も、.ylp に保存して開き直しても同じ絵・同じ層・同じ ID で戻り、
+/// 書き出しは新しい PSD になる（取り込んだ PSD は 1 バイトも変わらない。同じファイルへ書くときは置き換える前に確かめる）。
+#[test]
+fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_original() {
+    let dir = TempDir::new("hcopy");
+    let psd = dir.0.join("Copy.psd");
+    psd_without_layer_ids(&psd);
+    let original = std::fs::read(&psd).unwrap();
+    let mut s = AppState::new(32, 32);
+    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    s.apply(Action::Psd(PsdAction::Import {
+        path: psd.clone(),
+        target: PsdTarget::NewSet,
+    }));
+    s.wait_psd();
+    assert!(s.psd.import_check.is_none(), "層 ID の欠落は無視（確かめずに入る）");
+    assert_eq!(s.sets.len(), 2);
+    let composite = |s: &AppState| s.doc.composite(s.doc.bounds()).unwrap();
+    let before = composite(&s);
+    let layers = |s: &AppState| -> Vec<(String, u128)> {
+        s.doc.layers().iter().map(|l| (l.name().to_owned(), l.id().0)).collect()
+    };
+    let ids = layers(&s);
+    assert!(ids.iter().all(|(_, id)| id >> 96 > 0));
+    let project = dir.0.join("copy.ylp");
+    s.apply(Action::SaveProjectAs(project.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+
+    let mut again = AppState::new(32, 32);
+    again.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    again.apply(Action::OpenProject(project));
+    let index = again.sets.iter().position(|x| x.name == "Copy").expect("セットの名前");
+    again.switch_set(index).unwrap();
+    assert!(composite(&again) == before, "同じ絵");
+    assert_eq!(layers(&again), ids, "同じ層・同じ ID");
+    // 書き出しは別のファイルへ新しい PSD として。取り込んだ PSD は変わらない
+    let out = dir.0.join("out.psd");
+    again.apply(Action::Psd(PsdAction::Export(out.clone())));
+    again.wait_psd();
+    assert!(out.exists(), "{}", again.message);
+    assert_eq!(std::fs::read(&psd).unwrap(), original, "取り込んだ PSD は書き換えない");
+    // 取り込んだ文書から、取り込んだファイルと同じ場所へ書き出そうとすると、置き換える前に確かめる
+    s.apply(Action::Psd(PsdAction::Export(psd.clone())));
+    assert!(s.psd.confirm.as_ref().is_some_and(|c| c.imported), "{}", s.message);
+    assert_eq!(std::fs::read(&psd).unwrap(), original, "確かめるまで書かない");
 }

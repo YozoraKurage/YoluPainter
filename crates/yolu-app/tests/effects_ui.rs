@@ -493,6 +493,36 @@ fn shape_generator_edit_button_toggles_the_3d_target() {
 }
 
 #[test]
+fn the_shape_row_of_a_generator_tells_each_shape_with_the_same_sentences_as_the_menus() {
+    use yolu_app::fx::names;
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 1800.0, 32);
+        h.state_mut().state.set_language(lang);
+        apply(&mut h, Action::LoadDemoModel);
+        fx(&mut h, FxOp::AddGenerator { target: FilterTarget::Content, kind: Kind::ShapeGradient });
+        let shape = procedural(&h).volume.shape;
+        let row = h
+            .get_by_label(&format!("{}: {}", lang.pick("形", "Shape"), names::shape_name(lang, shape)))
+            .rect();
+        hover_and_wait(&mut h, row.center());
+        // ツールチップは 3 つの形を「名前: メニューと同じ説明」で並べる（形の名前の言い回しも同じ画面の名前と揃う）
+        let tip = names::shape_tooltip(lang);
+        assert_eq!(tip.lines().count(), names::SHAPES.len(), "{lang:?}");
+        for s in names::SHAPES {
+            let line = format!("{}: {}", names::shape_name(lang, s), names::shape_hint(lang, s));
+            assert!(tip.lines().any(|l| l == line), "{lang:?}: {line}");
+        }
+        assert!(
+            h.query_all_by_label_contains(names::shape_hint(lang, yolu_core::generator::Shape::Plane))
+                .next()
+                .is_some(),
+            "{lang:?}: ツールチップが出ていない"
+        );
+        assert_eq!(has_japanese(&tip), lang == Lang::Ja, "{lang:?}: {tip}");
+    }
+}
+
+#[test]
 fn snapshot_procedural_panels_in_both_languages() {
     let mut results = SnapshotResults::new();
     for lang in Lang::ALL {

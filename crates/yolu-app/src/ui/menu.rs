@@ -6,6 +6,7 @@
 
 use egui::{pos2, vec2, Color32, Id, Order, Pos2, Rect, Sense, Ui, Vec2, WidgetInfo, WidgetType};
 
+use super::scroll::Scroll;
 use super::theme as t;
 use super::widgets::{self as w, Align};
 
@@ -351,7 +352,6 @@ fn draw_level<A: Clone>(
 ) -> LevelOut<A> {
     let body = rect.shrink(MARGIN);
     let content = entries.iter().map(Entry::height).sum::<f32>() + PADDING * 2.0;
-    let max_scroll = (content - body.height()).max(0.0);
     let mut out = LevelOut {
         chosen: None,
         hovered: None,
@@ -375,20 +375,14 @@ fn draw_level<A: Clone>(
             }
             w::rounded(&p, body, t::PANEL_BG, 8.0);
             w::outline(&p, body, t::SEPARATOR, 1.0, 8.0);
-            if ui.rect_contains_pointer(body) {
-                let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-                if wheel != 0.0 {
-                    level.scroll = (level.scroll - wheel).clamp(0.0, max_scroll);
-                }
-            }
-            level.scroll = level.scroll.clamp(0.0, max_scroll);
+            let bar = Scroll::begin(ui, body, content, &mut level.scroll);
             let clip = body.shrink2(vec2(0.0, 1.0));
             let p = p.with_clip_rect(clip);
             let mut y = body.top() + PADDING - level.scroll;
             for (i, entry) in entries.iter().enumerate() {
                 let row = Rect::from_min_size(
                     pos2(body.left() + 4.0, y),
-                    vec2(body.width() - 8.0, entry.height()),
+                    vec2(body.width() - 8.0 - bar.reserved(), entry.height()),
                 );
                 y += row.height();
                 out.rows.push(row);
@@ -581,16 +575,7 @@ fn draw_level<A: Clone>(
                     }
                 }
             }
-            if max_scroll > 0.0 {
-                let bar_h = body.height() * body.height() / content;
-                let bar_y = body.top() + (body.height() - bar_h) * (level.scroll / max_scroll);
-                w::rounded(
-                    &ui.painter().clone(),
-                    Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-                    t::CONTROL_ACTIVE,
-                    2.0,
-                );
-            }
+            bar.end(ui, base.with("scroll"), &mut level.scroll);
         });
     out
 }

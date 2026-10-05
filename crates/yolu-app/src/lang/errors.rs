@@ -8,6 +8,17 @@ use yolu_core::skin::RigError;
 use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
 use yolu_model::ModelError;
 
+/// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
+pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
+    if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
+        Some("A document exceeds the Layer pixels budget")
+    } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
+        Some("The whole exceeds the Layer pixels budget")
+    } else {
+        None
+    }
+}
+
 impl Lang {
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
@@ -51,11 +62,13 @@ impl Lang {
             Error::Io(e) => self.file_error(e),
             Error::Json(e) => self.pick(error.to_string(), format!("Invalid JSON: {e}")),
             Error::InvalidData(text) => self.pick(text.clone(), "Invalid or unsupported project data".into()),
-            Error::Budget(text) => self.pick(text.clone(), "Size, count or memory limit exceeded".into()),
+            // 設定の予算で断ったものは、どの予算かを英語でも言う（yolu-io の理由の文で見分ける）
+            Error::Budget(text) => self.pick(text.clone(), budget_text(text).unwrap_or("Size, count or memory limit exceeded").into()),
             Error::Unwritable(what) => self.pick(
                 what.to_string(),
                 match what {
                     Unwritable::ManualIdColors => "Manual ID colors cannot be saved to .ylp yet".into(),
+                    Unwritable::GeneratorRampMixing => "Color mixing in a fill gradient cannot be saved to .ylp".into(),
                 },
             ),
             // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。
@@ -76,6 +89,10 @@ impl Lang {
             }
             Error::SaveConflict(text) if text.contains("外部で作られました") => {
                 self.pick(text.clone(), "A file appeared at the save target; not overwritten".into())
+            }
+            // 開いた .ylp（変えていないセットの中身を写す元）が外で消された・動かされた
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_MISSING) => {
+                self.pick(text.clone(), "The opened .ylp was deleted or moved outside".into())
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
@@ -294,10 +311,19 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "マスクへのストロークはチャンネルの合成を読めない" => {
             "A mask stroke cannot read the channel composite"
         }
-        "合成の参照元はクローンの最初のダブの前にだけ決められる" => {
-            "The composite clone source can only be set before the first clone dab"
+        "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる" => {
+            "The composite source can only be set before the first dab of a clone or color mixing"
         }
         "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
+        "写像されたダブはクローン・指先・色の混ぜの伸ばすだけ" => {
+            "Mapped dabs need clone, smudge or the smear of color mixing"
+        }
+        "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）" => {
+            "A mixing brush cannot paint pixel by pixel"
+        }
+        "絵の具の量（0〜1）" => "Paint amount (0–1)",
+        "絵の具の濃さ（0〜1）" => "Paint density (0–1)",
+        "色延び（0〜1）" => "Color stretch (0–1)",
         "写像されたダブの画素" => "Mapped dab pixel",
         "写像されたダブの参照" => "Mapped dab source",
         "写像された画素に参照が無い" => "A mapped pixel needs a source",
@@ -460,17 +486,17 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "未知のロック" => "Unknown lock",
         "結合は 2 層以上" => "Merging requires at least two layers",
         "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
-        "Anchor の Generator ではない" => "Not an anchor generator",
+        "Anchor のジェネレーターではない" => "Not an anchor generator",
         "Anchor の ID が空" => "Anchor ID is empty",
         "Anchor の ID が空か重なっている" => "Anchor ID is empty or duplicated",
         "Anchor の ID が重なっている" => "Anchor ID is duplicated",
         "Anchor の名前が空" => "Anchor name is empty",
         "Anchor の名前が長すぎる" => "Anchor name is too long",
         "Anchor は Normal を読めない" => "An anchor cannot read Normal",
-        "Generator ではない" => "Not a generator",
-        "Generator の設定" => "Generator settings",
-        "Generator は 1 画素に 1 つの値を作るので、接空間の法線には置けない" => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
-        "Generator は generator の設定で置く" => "A generator is placed with generator settings",
+        "ジェネレーターではない" => "Not a generator",
+        "ジェネレーターの設定" => "Generator settings",
+        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない" => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
+        "ジェネレーターはジェネレーターの設定で置く" => "A generator is placed with generator settings",
         "グラデーションの設定" => "Gradient settings",
         "グループの合成へのフィルターは無い" => "Groups have no filters on their composite",
         "このマスクにはもう Anchor がある" => "This mask already has an anchor",
@@ -526,9 +552,24 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "画像の ID が空" => "Image ID is empty",
         "画像の大きさ" => "Image size",
         "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
-        "自分の層の Anchor を読む Generator（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
+        "自分の層の Anchor を読むジェネレーター（値が自分に戻る）" => "A generator reading an anchor on its own layer (the value would feed back)",
         "調整の層には画素が無い" => "Adjustment layers have no pixels",
         "面のダブを拒否した" => "The surface dab was refused",
+        "見た目の設定の復元は読み込み直後だけ" => "Look settings can only be restored right after loading",
+        "見た目のシェーダーの名前" => "Look shader name",
+        "見た目のプロパティの数" => "Number of look properties",
+        "見た目のテクスチャの数" => "Number of look textures",
+        "見た目のキーワードの数" => "Number of look keywords",
+        "受けた見た目の出どころ" => "Source of the received look",
+        "受けた見た目の絵の数" => "Number of received look textures",
+        "受けた見た目の絵" => "Received look texture",
+        "受けた見た目のスロットの名前" => "Received look slot name",
+        "見た目のプロパティの名前" => "Look property name",
+        "見た目のプロパティの値" => "Look property value",
+        "見た目のテクスチャの名前" => "Look texture name",
+        "見た目の詰め合わせの成分" => "Look packed texture component",
+        "見た目の画像の ID" => "Look image ID",
+        "見た目のキーワード" => "Look keyword",
         _ => return None,
     })
 }
@@ -1181,7 +1222,7 @@ mod tests {
             Note::Migrated { format: 2 },
             Note::MaterialRefsMigrated { format: 3 },
             Note::UnknownEntryKept("future.bin".into()),
-            Note::SetNotConvertible { set: "Skin".into(), issue: "layers[2].filters（フィルター・Generator）".into() },
+            Note::SetNotConvertible { set: "Skin".into(), issue: "layers[2].filters（フィルター・ジェネレーター）".into() },
             Note::SmartResourceKept("Rust".into()),
             Note::BrushKept,
         ];
@@ -1194,9 +1235,9 @@ mod tests {
         // 件数だけでなく、名前・形式・項目のキーが読める
         assert!(english[1].contains('2') && english[2].contains('3'));
         assert!(english[3].contains("future.bin") && english[5].contains("Rust"));
-        assert!(english[4].contains("Skin") && english[4].contains("layers[2].filters") && !english[4].contains("Generator"));
+        assert!(english[4].contains("Skin") && english[4].contains("layers[2].filters") && !english[4].contains("ジェネレーター"));
 
-        let issues: Vec<String> = ["layers[0].locks（ロック）", "manual_id_colors（手動の ID 色）", "layers[1].filters（フィルター・Generator）", "layers[2].anchor（Anchor）", "layers[3].anchor（Anchor）"]
+        let issues: Vec<String> = ["layers[0].locks（ロック）", "manual_id_colors（手動の ID 色）", "layers[1].filters（フィルター・ジェネレーター）", "layers[2].anchor（Anchor）", "layers[3].anchor（Anchor）"]
             .into_iter()
             .map(String::from)
             .collect();

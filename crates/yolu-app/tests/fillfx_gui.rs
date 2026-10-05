@@ -182,6 +182,50 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
 }
 
 #[test]
+fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_tab_closed() {
+    let (mut h, _) = window();
+    // 左の列をブラシへ（棚の格子が絵を頼まない）。別のスレッドは、頼まれても止めておく
+    click_tab(&mut h, Tab::SubTools);
+    h.run();
+    h.state_mut().state.shelf.hold_inspections(true);
+    let (rid, image) = shelf_image(&mut h, "石の模様");
+    apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
+    let layer = st(&h).selected_layer.unwrap();
+    apply(
+        &mut h,
+        Action::Fill(FillOp::Image {
+            layer,
+            channel: Channel::Color,
+            image: Some(image),
+        }),
+    );
+    // 画像の箱は名前を出し、絵はまだ作っていない（画面のスレッドでは作らない）。頼んだ仕事が別のスレッドに積まれている
+    let _ = rect_of(&h, "石の模様", |r| {
+        r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0
+    });
+    for _ in 0..5 {
+        h.step();
+    }
+    assert!(
+        st(&h).shelf.info(&rid).is_none(),
+        "画面のスレッドで展開しない"
+    );
+    assert!(st(&h).shelf.inspections_pending(), "別のスレッドへ頼んだ");
+    // 別のスレッドが終わると、箱の絵になる（受け取りは棚のタブが閉じていても毎フレーム）
+    h.state_mut().state.shelf.hold_inspections(false);
+    let started = std::time::Instant::now();
+    while st(&h).shelf.info(&rid).is_none() {
+        assert!(started.elapsed().as_secs() < 30, "絵ができない");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        h.step();
+    }
+    h.run();
+    assert!(!st(&h).shelf.inspections_pending());
+    let ctx = h.ctx.clone();
+    assert!(h.state_mut().state.shelf.texture(&ctx, &rid).is_some());
+}
+
+#[test]
 fn dragging_a_gizmo_handle_in_the_3d_view_moves_the_box_in_one_undo_and_escape_puts_it_back() {
     let (mut h, rect) = window();
     let (_, image) = shelf_image(&mut h, "石の模様");
@@ -306,6 +350,9 @@ fn q_hides_and_shows_the_handles_and_the_mode_buttons_switch_the_handles() {
     move_to(&h, rect.min + vec2(14.0, 40.0));
     // 焼いた時間を載せた知らせは撮るたびに変わる（状態の帯に出る）ので消す
     h.state_mut().state.message.clear();
+    h.run();
+    // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
+    h.state_mut().state.shelf.wait_inspections();
     h.run();
     h.snapshot("fillfx_gizmo_3d");
 }
@@ -441,6 +488,9 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
                 shown > 15,
                 "{lang:?} {k}: 欄の文字を集められていない（{shown}）"
             );
+            // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
+            h.state_mut().state.shelf.wait_inspections();
+            h.run();
             h.snapshot(format!("fillfx_panel_{}_{k}", lang.pick("ja", "en")));
         }
         results.extend_harness(&mut h);
@@ -512,12 +562,20 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
             .clone()
             .unwrap()
     };
-    // 分岐点の位置のスライダーが、欄の見える範囲の真ん中あたりに来るように送る
-    let found = rect_of(&h, "分岐点の位置", |r| r.left() > 1000.0);
+    // 分岐点の位置のスライダー（欄の下の方にある「位置」）が、欄の見える範囲の真ん中あたりに来るように送る
+    let position = |h: &Harness<'_, YoluApp>| {
+        use egui_kittest::kittest::Queryable;
+        h.get_all_by_label("位置")
+            .map(|n| n.rect())
+            .filter(|r| r.left() > 1000.0)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .expect("分岐点の位置")
+    };
+    let found = position(&h);
     let scroll = st(&h).m2.props_scroll + (found.top() - 760.0);
     h.state_mut().state.m2.props_scroll = scroll;
     h.run();
-    let slider = rect_of(&h, "分岐点の位置", |r| r.left() > 1000.0);
+    let slider = position(&h);
     assert!(
         slider.top() > 640.0 && slider.bottom() < 970.0,
         "{slider:?}"

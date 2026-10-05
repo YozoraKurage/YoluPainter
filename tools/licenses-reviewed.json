@@ -1086,6 +1086,19 @@
         }
       ]
     },
+    "enumn@0.1.14": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
     "epaint@0.36.2": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -4391,6 +4404,58 @@
           "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
         }
       ]
+    },
+    "rusqlite@0.40.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c10c1f27337546471e5f7e4e97fdd398b35b9d4e126115dcd22de8d8e65abf6f"
+        }
+      ]
+    },
+    "libsqlite3-sys@0.38.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c10c1f27337546471e5f7e4e97fdd398b35b9d4e126115dcd22de8d8e65abf6f"
+        }
+      ]
+    },
+    "fallible-iterator@0.3.0": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "0816e154b159ba255c563f7c8c7df5bbb8cc5fc96f5ab8cf9f4743b4f41fe7eb"
+        }
+      ]
+    },
+    "fallible-streaming-iterator@0.1.9": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "8dcec5569a9be5b0e086c80faed6f1aefa670af0ec29cecc2f714303096887e0"
+        }
+      ]
     }
   },
   "bundled": {
@@ -4590,6 +4655,10 @@
           {
             "path": "crates/yolu-app/assets/icons/link_off.png",
             "sha256": "33dbc32f7ecdfea775246ac07cf2b1e047dc0116ae9d6e19e47ed0090ec8de19"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/local_fire_department.png",
+            "sha256": "3db6794b50efb6a0369573f7af9be7996d25351325035bb6ea392ab2da0e0986"
           },
           {
             "path": "crates/yolu-app/assets/icons/lock.png",
@@ -4838,6 +4907,18 @@
           {
             "path": "crates/yolu-app/assets/icons/warning.png",
             "sha256": "18c12d0493735b3997edb04bbc6db9519df9e512bca3387778c24bfd15b301c8"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/window_maximize.png",
+            "sha256": "f44bc1a5d4b6abf4fc77d1e2bf044947f6bce07ec52a165825b49b14722cb173"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/window_minimize.png",
+            "sha256": "9a7b8ddc6df373d31ba4c2d70fe70a1b829d81c2aaaaa53b7fe376dccb78d079"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/window_restore.png",
+            "sha256": "a6395104d65f1e5aa589a1d179948c8501f9ee7a7ab7029af82856e4a320da10"
           }
         ],
         "file_globs": [
@@ -4845,7 +4926,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "a6517de71131e1d5d8f86229ed57abe809ce0bacc72369eefa11dd2a2aaf3fa5"
+          "sha256": "276b36e3106f8ff1648700373479ace150de5cf9911edd5d0247259776f70f8c"
         }
       },
       {
@@ -5180,6 +5261,25 @@
         "license_file": {
           "path": "crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md",
           "sha256": "0ce758c1725a0ad668aa76c2e700160b578d27999639f2b211ef415a5d0b0ac3"
+        }
+      },
+      {
+        "name": "lilToon（3D ビューの再現の式の移植）",
+        "version": "2.3.4",
+        "declared": "MIT",
+        "selected": [
+          "MIT"
+        ],
+        "origin": "https://github.com/lilxyzw/lilToon ; OpenLit Library 1.0.2（CC0-1.0、lilToon に同梱） ; Simplest Fastest 2D Hash https://www.shadertoy.com/view/MdcfDj（Unlicense、lilToon の lilHashRGB4 の元）",
+        "files": [
+          {
+            "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
+            "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
+          }
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
+          "sha256": "2562ec36d62e74eb514d5ce5c4225276b4dc5963406a13eb232e8fdf2ea007c6"
         }
       }
     ]

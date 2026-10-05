@@ -1,7 +1,9 @@
-//! 選択範囲と対称の、オプションバーとプロパティの欄の部品。
-//! - 選択の道具のオプションバー: 作成方法（新規・追加・削除・共通）、すべて・解除・反転、自動選択の許容値・隣接・全レイヤー
+//! 選択範囲と対称の、オプションバーとツールプロパティの部品。
+//! - 選択の道具のオプションバー: 作成方法（新規・追加・削除・共通。選択ペンは選択ペン・選択消し）、選択ペンの直径、自動選択の許容値
 //! - ブラシ・消しゴムのオプションバーの右端: 対称の切り替えとモードの選び（▾）
-//! - プロパティの欄: 選択の道具では「選択範囲を変更」。対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ（`symmetry_fields`）
+//! - 左のドックのツールプロパティ: 選択の道具の作成方法・すべて・解除・反転・クイックマスク、道具ごとの設定（自動選択の許容値・隣接・全レイヤー、
+//!   形の道具のアンチエイリアス・縦横比・中心から・角の丸め、選択ペンの直径・硬さ・不透明度）、選択範囲を変更。対称の欄は、ブラシの詳細の窓の
+//!   「対称」のカテゴリ（`symmetry_fields`）
 //!
 //! 値は画面の状態を直に、文書を変えるものは `Action::Sel` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
@@ -11,7 +13,7 @@ use super::symmetry::{axis_name, mode_name, mode_tooltip, AXES_3D, MODES};
 use super::{combine_tooltip, ModifyKind, SelAction, SelEdit, SymOp};
 use crate::engine::{BrushEffect, SelectionCombine, SymmetryMode, MAX_MODIFY_RADIUS};
 use crate::lang::Lang;
-use crate::panels::properties::{group_label, section, slider_row, status_row, toggle_row};
+use crate::panels::properties::{group_label, slider_row, status_row, toggle_row};
 use crate::state::{Action, AppState, OpenPopup, PopupKind, Tool};
 use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
@@ -192,8 +194,10 @@ fn pen_group(
     x + width
 }
 
-/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。
-pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
+/// 選択の道具のオプションバーの中身。`x` は次の部品を置く左端（道具のアイコンと区切りの右）。作成方法（選択ペンは選択ペンと選択消し）に、
+/// 選択ペンは直径、自動選択は許容値。すべて・解除・反転・クイックマスクと、道具ごとのほかの設定はツールプロパティ。
+pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
+    let mut x = x + 4.0;
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let l = app.lang;
     let p = ui.painter().clone();
@@ -203,74 +207,12 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     } else {
         creation_group(ui, app, y, h, x, held)
     };
-    x += 8.0;
-    w::vline(&p, x, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
-    x += 8.0;
-    let free = !app.is_stroking() && app.read_only_reason().is_none();
-    let any = app.doc.selection().is_some();
-    let buttons: [(&str, &str, SelEdit, bool); 3] = [
-        (
-            "select_all",
-            l.pick("すべてを選択（Ctrl+A）", "Select All (Ctrl+A)"),
-            SelEdit::All,
-            free,
-        ),
-        (
-            "deselect",
-            l.pick("選択を解除（Ctrl+D）", "Deselect (Ctrl+D)"),
-            SelEdit::Clear,
-            free && any,
-        ),
-        (
-            "invert_colors",
-            l.pick(
-                "選択範囲を反転（Ctrl+Shift+I）",
-                "Invert Selection (Ctrl+Shift+I)",
-            ),
-            SelEdit::Invert,
-            free && any,
-        ),
-    ];
-    for (icon, tip, edit, enabled) in buttons {
-        let at = Rect::from_min_size(pos2(x, y), vec2(28.0, h));
-        if w::icon_button(
-            ui,
-            at,
-            ("options.select.op", icon),
-            icon,
-            tip,
-            false,
-            enabled,
-            20.0,
-        )
-        .clicked()
-        {
-            app.apply(Action::Sel(SelAction::Edit(edit)));
-        }
-        x += 32.0;
-    }
-    // クイックマスク（入っているあいだ点く）
-    let at = Rect::from_min_size(pos2(x, y), vec2(28.0, h));
-    if w::icon_button(
-        ui,
-        at,
-        "options.select.quick-mask",
-        "quick_mask",
-        l.pick("クイックマスク（Shift+Q）", "Quick Mask (Shift+Q)"),
-        app.sel.quick,
-        !app.is_stroking(),
-        20.0,
-    )
-    .clicked()
-    {
-        app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::QuickMask(None))));
-    }
-    x += 32.0;
+    // 窓が狭いときは、入りきらない部品を出さない
+    let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
     if app.tool == Tool::SelectPen {
-        x += 4.0;
+        x += 8.0;
         w::vline(&p, x, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
         x += 8.0;
-        let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
         if !fits(x, 150.0) {
             return;
         }
@@ -291,95 +233,27 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
         if out.changed {
             b.radius = (out.value / 2.0).max(0.5);
         }
-        x += 150.0 + 10.0;
-        if !fits(x, 130.0) {
-            return;
-        }
-        let at = Rect::from_min_size(pos2(x, y), vec2(130.0, h));
-        let out = w::slider(
-            ui,
-            at,
-            "options.sel-pen.hardness",
-            b.hardness * 100.0,
-            &SliderSpec::new(
-                l.pick("硬さ", "Hardness"),
-                0.0,
-                100.0,
-                NumberFormat::int("%"),
-            )
-            .tooltip(l.pick(
-                "縁のぼけ。ブラシと共通",
-                "Edge softness, shared with the brush",
-            )),
-        );
-        if out.changed {
-            b.hardness = out.value / 100.0;
-        }
     }
     if app.tool == Tool::Wand {
-        x += 4.0;
+        x += 8.0;
         w::vline(&p, x, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
         x += 8.0;
-        // 窓が狭いときは、入りきらない部品を出さない
-        let fits = |x: f32, width: f32| x + width <= r.right() - 8.0;
         if !fits(x, 170.0) {
             return;
         }
         let at = Rect::from_min_size(pos2(x, y), vec2(170.0, h));
-        let out = w::slider(
-            ui,
-            at,
-            "options.wand.tolerance",
-            app.sel.tolerance as f32,
-            &SliderSpec::new(
-                l.pick("許容値", "Tolerance"),
-                0.0,
-                255.0,
-                NumberFormat::int(""),
-            )
-            .tooltip(l.pick(
-                "種の色から、各成分（RGBA）の差がこの値以下の画素を選ぶ",
-                "Selects pixels whose every RGBA component is within this distance of the clicked color",
-            )),
-        );
+        let out = w::slider(ui, at, "options.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(l));
         if out.changed {
             app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
         }
-        x += 170.0 + 10.0;
-        if !fits(x, 90.0) {
-            return;
-        }
-        let at = Rect::from_min_size(pos2(x, y), vec2(90.0, h));
-        app.sel.contiguous = w::toggle(
-            ui,
-            at,
-            "options.wand.contiguous",
-            l.pick("隣接", "Contiguous"),
-            app.sel.contiguous,
-            Some(l.pick(
-                "種からつながる所だけを選ぶ（切ると、キャンバス全体の合う画素）",
-                "Only pixels connected to the click (off: every matching pixel)",
-            )),
-            true,
-        );
-        x += 90.0 + 10.0;
-        if !fits(x, 140.0) {
-            return;
-        }
-        let at = Rect::from_min_size(pos2(x, y), vec2(140.0, h));
-        app.sel.all_layers = w::toggle(
-            ui,
-            at,
-            "options.wand.all-layers",
-            l.pick("全レイヤーを対象", "Sample All Layers"),
-            app.sel.all_layers,
-            Some(l.pick(
-                "選んだレイヤーでなく、チャンネルの合成から選ぶ",
-                "Use the composite instead of the selected layer",
-            )),
-            true,
-        );
     }
+}
+
+fn wand_tolerance_spec(l: Lang) -> SliderSpec<'static> {
+    SliderSpec::new(l.pick("許容値", "Tolerance"), 0.0, 255.0, NumberFormat::int("")).tooltip(l.pick(
+        "種の色から、各成分（RGBA）の差がこの値以下の画素を選ぶ",
+        "Selects pixels whose every RGBA component is within this distance of the clicked color",
+    ))
 }
 
 /// ブラシ・消しゴムのオプションバーの右端に、対称の切り替えとモードの選び（▾）。左の部品が使える右端（`left`）より狭ければ何も出さない。
@@ -464,22 +338,131 @@ pub fn symmetry_options(ui: &mut Ui, app: &mut AppState, r: Rect, left: f32) {
     }
 }
 
-/// プロパティの欄の選択の道具の中身（選択範囲を変更）。
-pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    tool_settings(ui, app, rows);
-    let lang = app.lang;
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "selection-modify",
-        lang.pick("選択範囲を変更", "Modify Selection"),
-        "select_all",
-        None,
-    );
-    if !open {
-        return;
+/// 作成方法の 1 行（新規・追加・削除・共通のアイコン。選んでいるのが点く。バーの作成方法と同じ値）。
+pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let l = app.lang;
+    let row = rows.row(24.0, 4.0);
+    let held = ui.input(|i| i.modifiers);
+    let effective = super::combine_of(app.sel.combine, held);
+    for (i, mode) in CREATION_MODES.into_iter().enumerate() {
+        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let lit = effective == mode;
+        if w::icon_button(
+            ui,
+            at,
+            ("props.select.mode", mode),
+            super::saved::creation_icon(mode),
+            combine_tooltip(l, mode),
+            lit,
+            true,
+            18.0,
+        )
+        .clicked()
+        {
+            app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::Combine(mode))));
+        }
+        if app.sel.combine == mode && !lit {
+            w::outline(ui.painter(), at.shrink(1.0), t::ACCENT, 1.0, 4.0);
+        }
     }
+}
+
+/// 選択ペン・選択消しの 1 行（バーと同じ値）。
+fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let l = app.lang;
+    let row = rows.row(24.0, 4.0);
+    let held = ui.input(|i| i.modifiers);
+    let erasing = super::pen::erases(app.sel.pen_erase, held);
+    let items = [
+        (
+            false,
+            "edit",
+            l.pick(
+                "選択ペン: 選択範囲に足す（Shift）",
+                "Selection Pen: add to the selection (Shift)",
+            ),
+        ),
+        (
+            true,
+            "tools/eraser",
+            l.pick(
+                "選択消し: 選択範囲から消す（Ctrl）",
+                "Selection Eraser: remove from the selection (Ctrl)",
+            ),
+        ),
+    ];
+    for (i, (erase, icon, tip)) in items.into_iter().enumerate() {
+        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let lit = erasing == erase;
+        if w::icon_button(ui, at, ("props.select.pen", erase), icon, tip, lit, true, 18.0).clicked() {
+            app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(erase))));
+        }
+        if app.sel.pen_erase == erase && !lit {
+            w::outline(ui.painter(), at.shrink(1.0), t::ACCENT, 1.0, 4.0);
+        }
+    }
+}
+
+/// すべて・解除・反転・クイックマスクの 1 行。
+fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let l = app.lang;
+    let row = rows.row(24.0, 4.0);
+    let free = !app.is_stroking() && app.read_only_reason().is_none();
+    let any = app.doc.selection().is_some();
+    let buttons: [(&str, &str, SelEdit, bool); 3] = [
+        ("select_all", l.pick("すべてを選択", "Select All"), SelEdit::All, free),
+        ("deselect", l.pick("選択を解除", "Deselect"), SelEdit::Clear, free && any),
+        ("invert_colors", l.pick("選択範囲を反転", "Invert Selection"), SelEdit::Invert, free && any),
+    ];
+    let mut x = row.left();
+    for (icon, name, edit, enabled) in buttons {
+        let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, row.height()));
+        // キーは割り当ての表から（文字を直に書かない）
+        let action = Action::Sel(SelAction::Edit(edit));
+        let tip = crate::shortcuts::tip_with_key(l, name, &action);
+        if w::icon_button(ui, at, ("props.select.op", icon), icon, &tip, false, enabled, 18.0).clicked() {
+            app.apply(action);
+        }
+        x += 30.0;
+    }
+    // クイックマスク（入っているあいだ点く）
+    let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, row.height()));
+    if w::icon_button(
+        ui,
+        at,
+        "props.select.quick-mask",
+        "quick_mask",
+        &crate::shortcuts::tip_with_key(
+            l,
+            l.pick("クイックマスク", "Quick Mask"),
+            &Action::Sel(SelAction::Ui(super::SelUiOp::QuickMask(None))),
+        ),
+        app.sel.quick,
+        !app.is_stroking(),
+        18.0,
+    )
+    .clicked()
+    {
+        app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::QuickMask(None))));
+    }
+}
+
+/// ツールプロパティの中身（選択の道具のもの。ID の色で選択は範囲の道具の欄 `region_props`）。
+pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
+    if app.tool == Tool::SelectPen {
+        pen_row(ui, app, rows);
+    } else {
+        creation_row(ui, app, rows);
+    }
+    operations_row(ui, app, rows);
+    tool_settings(ui, app, rows);
+    modify_selection(ui, app, rows);
+}
+
+/// 選択範囲を変更（拡張・縮小・境界線・ぼかしなどの半径と実行）。
+fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let lang = app.lang;
+    group_label(ui, rows, lang.pick("選択範囲を変更", "Modify Selection"));
     let free = !app.is_stroking() && app.read_only_reason().is_none();
     let any = app.doc.selection().is_some();
     // 選択範囲が無いあいだは欄を無効にして、理由をツールチップに出す（注記の行は置かない）
@@ -540,43 +523,47 @@ pub fn selection_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
 }
 
-/// プロパティの欄の選択の道具の設定（形の道具: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 切り替えと直径・硬さ・不透明度）。
+/// 道具ごとの設定（自動選択: 許容値・隣接・全レイヤー。形の道具: アンチエイリアス・縦横比・中心から・角の丸め。選択ペン: 直径・硬さ・不透明度）。
 fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     let tool = app.tool;
-    if tool == Tool::SelectPen {
-        let (open, _) = section(
+    if tool == Tool::Wand {
+        let at = rows.slider_row();
+        let out = w::slider(ui, at, "props.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(lang));
+        if out.changed {
+            app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
+        }
+        if let Some(v) = toggle_row(
             ui,
-            app,
             rows,
-            "selection-pen",
-            tool.name_in(lang),
-            "edit",
-            None,
-        );
-        if !open {
-            return;
+            "props.wand.contiguous",
+            lang.pick("隣接", "Contiguous"),
+            app.sel.contiguous,
+            Some(lang.pick(
+                "種からつながる所だけを選ぶ（切ると、キャンバス全体の合う画素）",
+                "Only pixels connected to the click (off: every matching pixel)",
+            )),
+            true,
+        ) {
+            app.sel.contiguous = v;
         }
-        let items = [
-            FlowButton {
-                label: lang.pick("選択ペン", "Pen"),
-                primary: !app.sel.pen_erase,
-                enabled: true,
-                tooltip: lang.pick("選択範囲に足す（Shift）", "Add to the selection (Shift)"),
-            },
-            FlowButton {
-                label: lang.pick("選択消し", "Eraser"),
-                primary: app.sel.pen_erase,
-                enabled: true,
-                tooltip: lang.pick(
-                    "選択範囲から消す（Ctrl）",
-                    "Remove from the selection (Ctrl)",
-                ),
-            },
-        ];
-        if let Some(i) = flow_buttons(ui, rows, "sel.pen.mode", &items) {
-            app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(i == 1))));
+        if let Some(v) = toggle_row(
+            ui,
+            rows,
+            "props.wand.all-layers",
+            lang.pick("全レイヤーを対象", "Sample All Layers"),
+            app.sel.all_layers,
+            Some(lang.pick(
+                "選んだレイヤーでなく、チャンネルの合成から選ぶ",
+                "Use the composite instead of the selected layer",
+            )),
+            true,
+        ) {
+            app.sel.all_layers = v;
         }
+        return;
+    }
+    if tool == Tool::SelectPen {
         let shared = lang.pick("ブラシと共通", "Shared with the brush");
         if let Some(v) = slider_row(
             ui,
@@ -626,18 +613,6 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         tool,
         Tool::SelectRect | Tool::SelectEllipse | Tool::Lasso | Tool::Polygon
     ) {
-        return;
-    }
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "selection-tool",
-        tool.name_in(lang),
-        "tune",
-        None,
-    );
-    if !open {
         return;
     }
     let rect = tool == Tool::SelectRect;

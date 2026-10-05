@@ -1,8 +1,10 @@
-//! プロパティの欄（Substance Painter の並び）: 選んでいる物の中身だけを出す。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
-//! 頭にタブ（ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈は
-//! レイヤーの欄だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルとマテリアルの欄は `brush_props` 経由、レイヤーの欄は `layer_props`）。
-//! ブラシそのもの（筆先の形も。一覧・ツールプロパティ・詳細）は左のドックのブラシのパネル（`brushes`）と詳細の窓（`brush_detail`）。
-//! 値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
+//! プロパティの欄（Substance Painter の並び）: 選んでいる層の中身だけを出す。道具の設定は出さない（道具の設定は左のドックのサブツールのパネルの
+//! ツールプロパティ。どの道具を選んでいても、この欄は同じ層には同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
+//! 頭にタブ（ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、層の下の
+//! 効果の行を選んでいるときはその行の設定だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルとマテリアルの欄は `brush_props` 経由、
+//! レイヤーの欄は `layer_props`）。ブラシそのもの（一覧・ツールプロパティ・詳細）は左のドックのサブツールのパネル（`subtools`・`brushes`）と
+//! 詳細の窓（`brush_detail`）。値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には
+//! 名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
 
@@ -10,28 +12,21 @@ use crate::engine::LayerKind;
 use crate::m2_menu::Popup;
 use crate::state::{AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
 pub const TAB_ICONS: [&str; 3] = ["square", "layers", "tune"];
 
-/// 欄の文脈。
+/// 欄の文脈（選んでいる層で決まる。道具では決まらない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Context {
-    /// ブラシ・消しゴムで描く（ペイントのレイヤーか、マスク）。
+    /// 描ける層（ペイントのレイヤーか、マスク）。
     Paint,
     /// 塗りつぶし・調整・グループの中身（これらには描けない）。
     Layer,
-    /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）。ブラシのタブは出さず、その道具の欄だけ。
-    Tool,
-    /// 選択の道具（選択範囲を変更。どの層を選んでいても）。
-    Selection,
     /// 層の下の効果の行（フィルター・Generator・アンカー）を選んでいる。タブは出さず、その行の設定だけ。
     Effect,
-    /// 移動・変形の道具（変形の数値・補間と、選んでいる層のロック。どの層を選んでいても）。
-    Transform,
-    /// パスの道具（パスの状態・ブラシ・組。どの層を選んでいても）。
-    Path,
 }
 
 /// 今の文脈（マスクを選んでいればどの層でも描く文脈）。
@@ -39,29 +34,14 @@ pub fn context(app: &AppState) -> Context {
     if crate::fx::props_visible(app) {
         return Context::Effect;
     }
-    if app.tool.is_select() {
-        return Context::Selection;
-    }
-    if app.tool == crate::state::Tool::Move {
-        return Context::Transform;
-    }
-    if app.tool.is_path() {
-        return Context::Path;
-    }
     let kind = app
         .selected_layer
         .and_then(|id| app.doc.layer(id))
         .map(|l| l.kind());
-    let base = match kind {
+    match kind {
         Some(LayerKind::Raster) | None => Context::Paint,
         Some(_) if app.m2.edit_mask => Context::Paint,
         Some(_) => Context::Layer,
-    };
-    // 範囲の道具は、その道具の欄（ID の色で選択はどの層でも。バケツとポリゴン塗りつぶしは、塗れる層のとき）
-    if super::region_props::owns_properties(app, base == Context::Paint) {
-        Context::Tool
-    } else {
-        base
     }
 }
 
@@ -245,7 +225,8 @@ pub fn toggle_row(
     tooltip: Option<&str>,
     enabled: bool,
 ) -> Option<bool> {
-    let r = rows.row(t::ROW_HEIGHT, 2.0);
+    let height = w::toggle_height(ui.painter(), rows.width(), label);
+    let r = rows.row(height, 2.0);
     let next = w::toggle(ui, r, id, label, value, tooltip, enabled);
     (next != value).then_some(next)
 }
@@ -261,8 +242,53 @@ pub fn choice_row(
     enabled: bool,
 ) -> Option<Rect> {
     let r = rows.row(t::ROW_HEIGHT, 4.0);
-    let (response, b) = w::dropdown(ui, r, id, Some(label), value, tooltip, enabled, 92.0);
+    // 狭い欄（左のドックのツールプロパティ）は、名前の幅に合わせる（値の箱を広く取る）
+    let label_width = if rows.compact {
+        (w::text_width(ui.painter(), label, t::LABEL) + 10.0).min(r.width() * 0.6)
+    } else {
+        92.0
+    };
+    let (response, b) = w::dropdown(ui, r, id, Some(label), value, tooltip, enabled, label_width);
     response.clicked().then_some(b)
+}
+
+/// 選び・切り替えのボタン 1 つ（`choice_buttons` に並べる）。
+pub struct ChoiceButton<'a> {
+    pub id: &'a str,
+    pub label: &'a str,
+    pub selected: bool,
+    pub enabled: bool,
+    pub tooltip: Option<&'a str>,
+}
+
+/// ボタンを欄の幅に並べる。全部が 1 行に収まらないとき（狭い欄の英語など）は、収まる最大の列数で折り返す（名前を切らない・「…」で詰めない）。
+/// どの行も同じ幅のボタン。押されたボタンの番号を返す。
+pub fn choice_buttons(ui: &mut Ui, rows: &mut Rows, items: &[ChoiceButton]) -> Option<usize> {
+    const GAP: f32 = 4.0;
+    if items.is_empty() {
+        return None;
+    }
+    let needed = items
+        .iter()
+        .map(|b| w::text_width(ui.painter(), b.label, t::LABEL))
+        .fold(0.0, f32::max)
+        + 14.0;
+    let width = rows.width();
+    let cols = (1..=items.len())
+        .rev()
+        .find(|c| (width - GAP * (*c as f32 - 1.0)) / *c as f32 >= needed)
+        .unwrap_or(1);
+    let mut clicked = None;
+    for (line_no, line) in items.chunks(cols).enumerate() {
+        let row = rows.row(24.0, GAP);
+        let cells = Rows::split(row, cols, GAP);
+        for (i, (cell, b)) in cells.iter().zip(line).enumerate() {
+            if w::button(ui, *cell, (b.id, "choice"), b.label, b.selected, b.enabled, b.tooltip, None).clicked() {
+                clicked = Some(line_no * cols + i);
+            }
+        }
+    }
+    clicked
 }
 
 /// 小さな見出しの 1 行（まとまりの名前）。
@@ -305,17 +331,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let body = Rect::from_min_max(pos2(r.left(), top), r.max);
 
     // スクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
-    let max_scroll = (app.m2.props_content - body.height()).max(0.0);
-    if ui.rect_contains_pointer(body) {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        app.m2.props_scroll -= wheel;
-    }
-    app.m2.props_scroll = app.m2.props_scroll.clamp(0.0, max_scroll);
+    let bar = Scroll::begin(ui, body, app.m2.props_content, &mut app.m2.props_scroll);
     let scroll = app.m2.props_scroll;
-    let bar = if max_scroll > 0.0 { 8.0 } else { 0.0 };
     let area = Rect::from_min_max(
         pos2(body.left(), body.top() - scroll),
-        pos2(body.right() - bar, body.bottom()),
+        pos2(body.right() - bar.reserved(), body.bottom()),
     );
     let outer_clip = ui.clip_rect();
     ui.set_clip_rect(body.intersect(outer_clip));
@@ -323,10 +343,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     match context {
         Context::Effect => super::effect_props::effect_body(ui, app, &mut rows, &ctx),
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
-        Context::Tool => super::region_props::body(ui, app, &mut rows, &ctx),
-        Context::Selection => crate::selection::props::selection_body(ui, app, &mut rows),
-        Context::Transform => crate::transform::props::body(ui, app, &mut rows, &ctx),
-        Context::Path => super::path_props::body(ui, app, &mut rows),
         Context::Paint => match tab {
             0 => super::brush_props::stencil_tab(ui, app, &mut rows),
             1 if app.m2.edit_mask => super::layer_props::mask_tab(ui, app, &mut rows),
@@ -344,15 +360,5 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::gizmo::dragging(app) {
         app.m2_end_drag();
     }
-    if max_scroll > 0.0 {
-        let track = body.height();
-        let bar_h = (track * track / app.m2.props_content).max(16.0);
-        let bar_y = body.top() + (track - bar_h) * scroll / max_scroll;
-        w::rounded(
-            ui.painter(),
-            Rect::from_min_size(pos2(body.right() - 6.0, bar_y), vec2(4.0, bar_h)),
-            t::CONTROL_ACTIVE,
-            2.0,
-        );
-    }
+    bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);
 }

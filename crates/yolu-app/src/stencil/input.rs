@@ -144,8 +144,8 @@ pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let blocked = app.popup.is_some() || app.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
-            i.key_down(Key::T),
-            i.key_down(Key::N),
+            i.key_down(crate::keymap::STENCIL_MOVE),
+            i.key_down(crate::keymap::STENCIL_BYPASS),
             i.modifiers,
             i.events
                 .iter()
@@ -223,12 +223,11 @@ pub fn handle_event(
     {
         return false;
     }
-    let kind = match button {
-        PointerButton::Middle => DragKind::Move,
-        PointerButton::Primary if modifiers.command => DragKind::Move,
-        PointerButton::Secondary => DragKind::Scale,
-        PointerButton::Primary if modifiers.alt => DragKind::Scale,
-        PointerButton::Primary => DragKind::Rotate,
+    // 押し方で決まるドラッグの種類は `keymap::GESTURES`（T を押しながら）
+    let kind = match crate::keymap::gesture("stencil", *button, modifiers, true) {
+        Some(crate::keymap::Operation::MoveStencil) => DragKind::Move,
+        Some(crate::keymap::Operation::ScaleStencil) => DragKind::Scale,
+        Some(crate::keymap::Operation::RotateStencil) => DragKind::Rotate,
         _ => return false,
     };
     if app.stencil.image.is_none() {

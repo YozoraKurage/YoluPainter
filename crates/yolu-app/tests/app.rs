@@ -459,8 +459,8 @@ fn color_panel_picks_hex_swap_and_wheel() {
 fn properties_tabs_and_pen_toggles() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1600.0, 900.0, 256);
-    // 筆圧の切り替えは左のブラシのパネル（ツールプロパティ）にある（オプションバーにも同じ切り替えがある）
-    let in_panel = |r: egui::Rect| r.left() < 340.0 && r.top() > 80.0;
+    // 筆圧の切り替えは左のサブツールのパネル（ツールプロパティ）にある（オプションバーには直径と不透明度だけ）
+    let in_panel = |r: egui::Rect| r.left() < 390.0 && r.top() > 80.0;
     let pen = rect_of(&h, "筆圧で直径を変える", in_panel);
     click(&mut h, pen.center());
     assert!(!h.state().state.brush.pressure_size);

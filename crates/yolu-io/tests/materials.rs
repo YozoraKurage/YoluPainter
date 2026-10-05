@@ -56,7 +56,7 @@ fn format6_and_shared_materials_migrate_slots_preserving_other_entries() {
     ] {
         let p = Project::read(bytes).unwrap();
         let original: Value =
-            serde_json::from_slice(&p.original_archive().entries()["project.json"]).unwrap();
+            serde_json::from_slice(&p.original_archive().entries()["project.json"].bytes().unwrap()).unwrap();
         let upgraded = p
             .upgraded(WriterInfo {
                 app: "test".into(),
@@ -178,7 +178,7 @@ fn material_edit_is_validated_and_preserves_other_files_and_unknown_keys() {
         }
     }
     let j: Value =
-        serde_json::from_slice(&updated.original_archive().entries()["project.json"]).unwrap();
+        serde_json::from_slice(&updated.original_archive().entries()["project.json"].bytes().unwrap()).unwrap();
     assert_eq!(j["future"], 19);
     assert_eq!(j["sets"][0]["future"], "kept");
     assert_eq!(j["sets"][0]["material"]["future"]["extension"], 17);

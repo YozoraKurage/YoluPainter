@@ -1,7 +1,10 @@
 use crate::{
-    archive::{split_set, Files},
-    check, check_budget, hash, is_hash, valid_id, Archive, Error, NativeDocument, NativeValue, Result, Selection,
-    MAX_ENTRY_BYTES, MAX_TOTAL_BYTES,
+    archive::split_set,
+    bigdoc::{DocumentSource, SetDocument},
+    check, check_budget, hash, is_hash,
+    package::{part_number, Blob, Files, Limits, Package},
+    valid_id, Archive, Error, NativeDocument, NativeValue, Result, Selection, MAX_ENTRY_BYTES,
+    MAX_TOTAL_BYTES,
 };
 use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
@@ -111,7 +114,8 @@ pub struct TextureSet {
     pub id: String,
     pub name: String,
     pub material: MaterialRef,
-    pub document: NativeDocument,
+    /// 正本（画素は持たず、要るときに流して読む）。
+    pub document: SetDocument,
     pub selection: Option<Selection>,
 }
 /// 書き手が作る・並べ直すセット（`Project::create`・`Project::with_sets`）。
@@ -120,8 +124,9 @@ pub struct SetSpec {
     pub id: String,
     pub name: String,
     pub material: MaterialRef,
-    /// 新しい正本。None なら元のプロジェクトの同じ ID のセットのエントリをバイト列のまま残す（新しいセットには要る）。
-    pub document: Option<NativeDocument>,
+    /// 新しい正本（メモリの正本か core の文書）。None なら元のプロジェクトの同じ ID のセットのエントリをバイト列のまま残す（新しい
+    /// セットには要る）。core の文書は全体の正本をメモリに組まずに流して書く（大きければ版 26 で分ける）。
+    pub document: Option<DocumentSource>,
     /// 新しい正本の、使っているチャンネルごとの合成の PNG（`composite/<チャンネル>.png`。`composite_pngs` が作る）。標準の
     /// チャンネルだけで、同じチャンネルを 2 回は渡せない。正本を替えたセットの `composite/` の下は、中身と合わない派生を
     /// 残さないよう全部を消してから、これを書く（Unity 版のインポーターはここからチャンネルの一覧を出す）。
@@ -186,28 +191,103 @@ impl std::fmt::Display for Note {
 
 #[derive(Clone, Debug)]
 pub struct Project {
-    original: Archive,
-    files: Files,
+    pub(crate) original: Package,
+    pub(crate) files: Files,
     info: FormatInfo,
-    sets: Vec<TextureSet>,
+    pub(crate) sets: Vec<TextureSet>,
     current: String,
-    resources: Vec<Resource>,
+    pub(crate) resources: Vec<Resource>,
     notes: Vec<Note>,
-    unknown: Vec<String>,
+    pub(crate) unknown: Vec<String>,
 }
 impl Project {
+    /// メモリの中の .ylp を読む（上限は既定の予算から。`Limits::default`）。
     pub fn read(bytes: &[u8]) -> Result<Self> {
-        Self::from_archive(Archive::read(bytes)?)
+        Self::read_within(bytes, &Limits::default())
+    }
+    /// `read` の、上限（設定の予算から）を渡す形。
+    pub fn read_within(bytes: &[u8], limits: &Limits) -> Result<Self> {
+        Self::from_package(Package::read_bytes(bytes, limits)?, &[])
+    }
+    /// .ylp のファイルを流して開く（全エントリを確かめ、正本は骨組みだけを読む。画素は要るときに位置から流して読む）。
+    pub fn open(path: &std::path::Path, limits: &Limits) -> Result<Self> {
+        Self::from_package(Package::open(path, limits)?, &[])
     }
     /// 全エントリ（`.ylp` のエントリ名 → 中身。`ylp.json` を含み、`mimetype` と manifest は含まない）から開く。復旧の世代
     /// （`GenerationStore`）から読んだエントリを、ZIP に詰め直さずに `Project` にする。検証は `read` と同じ。
     pub fn from_entries(entries: Files) -> Result<Self> {
-        Self::from_archive(Archive::build(
-            entries,
-            3,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        Self::from_package(Package::build(entries, 3)?, &[])
+    }
+    /// 同じ中身を書いた外側（保存で書いたファイル）から読むプロジェクトにする。正本は中身が同じなら骨組みを読み直さない
+    /// （画素はそのファイルの位置から読む。保存に使った core の文書の写しは手放す）。
+    pub(crate) fn rehomed(&self, package: Package) -> Result<Self> {
+        let mut known = Vec::new();
+        for set in &self.sets {
+            let prefix = if self.info.format < 3 {
+                String::new()
+            } else {
+                format!("sets/{}/", set.id)
+            };
+            let Some(header) = package.files.get(&format!("{prefix}document.utpaint")) else {
+                continue;
+            };
+            let mut parts = Vec::new();
+            while let Some(p) = package
+                .files
+                .get(&format!("{prefix}document.utpaint.{}", parts.len() + 1))
+            {
+                parts.push(p.clone());
+            }
+            if let Some(doc) = set.document.repointed(header, &parts) {
+                known.push(doc);
+            }
+        }
+        Self::from_package(package, &known)
+    }
+    /// ファイルの位置で持つエントリを `path`（同じ中身を同じ位置に持つファイル。保存で置き換えた後）へ向け直す。外側・移行後の
+    /// エントリ・セットの正本の同じエントリは、向け直した後も同じエントリ（`Blob::same`）のまま（次の作り直しで、変わっていない正本の
+    /// 骨組みを読み直さない）。
+    pub(crate) fn moved_to(&self, path: &std::path::Path) -> Self {
+        let source = crate::package::Source::Path(Arc::new(path.to_path_buf()));
+        let mut moves = crate::package::Moves::default();
+        let mut p = self.clone();
+        p.original = self.original.with_source(&source, &mut moves);
+        p.files = self
+            .files
+            .iter()
+            .map(|(k, v)| (k.clone(), v.with_source(&source, &mut moves)))
+            .collect();
+        for set in &mut p.sets {
+            set.document = set.document.with_source(&source, &mut moves);
+        }
+        p
+    }
+    /// エントリを替えたプロジェクトを、今の外側の版で作り直す（配布用の写しなど）。
+    pub(crate) fn rebuild_at(&self, files: Files) -> Result<Self> {
+        self.rebuild(files, self.original.level, &[])
+    }
+    /// 棚を差し替えたエントリから作り直す（形式 7 へ上げた並び）。
+    pub(crate) fn rebuild_shelf(&self, files: Files) -> Result<Self> {
+        self.rebuild(files, 3, &[])
+    }
+    /// エントリを替えたプロジェクトを作り直す（変わっていない正本は、骨組みを読み直さずにそのまま使う）。
+    fn rebuild(&self, files: Files, level: u32, fresh: &[SetDocument]) -> Result<Self> {
+        let known: Vec<SetDocument> = fresh
+            .iter()
+            .cloned()
+            .chain(self.sets.iter().map(|s| s.document.clone()))
+            .collect();
+        let mut package = Package::build(files, level)?;
+        // 外したエントリ（替えたセットの前の正本の部分など）は、同じ中身なら圧縮したバイト列を写せる元として覚える
+        let removed: Vec<&Blob> = self
+            .original
+            .files
+            .values()
+            .chain(&self.original.donors)
+            .filter(|b| b.in_memory().is_none() && !package.files.values().any(|n| n.same(b)))
+            .collect();
+        package.remember_donors(removed.into_iter());
+        Self::from_package(package, &known)
     }
     pub fn info(&self) -> &FormatInfo {
         &self.info
@@ -233,7 +313,8 @@ impl Project {
     pub fn unknown_entries(&self) -> &[String] {
         &self.unknown
     }
-    pub fn original_archive(&self) -> &Archive {
+    /// 読んだ・作ったときの全エントリ（外側）。
+    pub fn original_archive(&self) -> &Package {
         &self.original
     }
     pub fn migrated_entries(&self) -> &Files {
@@ -247,7 +328,7 @@ impl Project {
     pub fn upgraded(&self, writer: WriterInfo) -> Result<Self> {
         let mut files = self.files.clone();
         let mut info = if let Some(b) = self.original.files.get("ylp.json") {
-            json(b, 65536)?
+            json(&b.bytes()?, 65536)?
         } else {
             serde_json::json!({})
         };
@@ -266,40 +347,31 @@ impl Project {
             }
         }
         info["savedBy"] = w;
-        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
-        Self::from_archive(Archive::build(
-            files,
-            3,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
+        self.rebuild(files, 3, &[])
     }
     /// 形式7の新しいプロジェクトを作る（セットは1〜64、どれも正本が要る）。書いたものは読み直して検証する。
     pub fn create(writer: WriterInfo, sets: &[SetSpec], current: &str) -> Result<Self> {
         let w = writer_json(&writer);
         let info = serde_json::json!({"format": 7, "savedBy": w, "createdBy": w});
         let mut files = Files::new();
-        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
+        files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
         let mut list = Vec::with_capacity(sets.len());
+        let mut fresh = Vec::new();
         for spec in sets {
             check(
                 spec.document.is_some(),
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
             list.push(set_json(None, spec));
-            put_set_entries(&mut files, spec)?;
+            fresh.extend(put_set_entries(&mut files, spec)?);
         }
         let project = serde_json::json!({"sets": list, "current": current});
         files.insert(
             "project.json".into(),
-            Arc::from(serde_json::to_vec(&project)?),
+            Blob::from(serde_json::to_vec(&project)?),
         );
-        Self::from_archive(Archive::build(
-            files,
-            3,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        Self::from_package(Package::build(files, 3)?, &fresh)
     }
     /// 形式7のセットの並び・名前・マテリアル参照・現在のセットを置き換え、正本と合成を差し替える。旧形式は先にupgradedで
     /// 明示的に移行する。元のセットは全部が並びに要る（セットを消すのは [`Project::with_sets_dropping`] で、黙って消さない）。
@@ -324,7 +396,7 @@ impl Project {
             "セットを並べ直す前にupgradedで形式7へ移行してください",
         )?;
         let mut files = self.original.files.clone();
-        let mut project = json(required(&files, "project.json")?, 65536)?;
+        let mut project = json(&required(&files, "project.json")?, 65536)?;
         let old: Vec<Value> = project["sets"].as_array().cloned().unwrap_or_default();
         for id in dropped {
             check(
@@ -350,6 +422,7 @@ impl Project {
             files.retain(|n, _| !n.starts_with(&prefix));
         }
         let mut list = Vec::with_capacity(sets.len());
+        let mut fresh = Vec::new();
         for spec in sets {
             let previous = old
                 .iter()
@@ -359,23 +432,18 @@ impl Project {
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
             list.push(set_json(previous, spec));
-            put_set_entries(&mut files, spec)?;
+            fresh.extend(put_set_entries(&mut files, spec)?);
         }
         project["sets"] = Value::Array(list);
         project["current"] = Value::from(current);
         files.insert(
             "project.json".into(),
-            Arc::from(serde_json::to_vec(&project)?),
+            Blob::from(serde_json::to_vec(&project)?),
         );
-        let mut info = json(required(&files, "ylp.json")?, 65536)?;
+        let mut info = json(&required(&files, "ylp.json")?, 65536)?;
         info["savedBy"] = writer_json(&writer);
-        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
+        self.rebuild(files, self.original.level, &fresh)
     }
     /// 既存セットの正本だけを置き換える。選択範囲・リソースを含めて再検証する。
     pub fn with_document(&self, set_id: &str, doc: &NativeDocument) -> Result<Self> {
@@ -383,19 +451,16 @@ impl Project {
             self.sets.iter().any(|s| s.id == set_id),
             "セットがありません",
         )?;
-        let name = if self.info.format < 3 {
-            "document.utpaint".into()
+        let prefix = if self.info.format < 3 {
+            String::new()
         } else {
-            format!("sets/{set_id}/document.utpaint")
+            format!("sets/{set_id}/")
         };
         let mut files = self.original.files.clone();
-        files.insert(name, Arc::from(doc.to_bytes()));
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        remove_document_entries(&mut files, &prefix);
+        let (fresh, entries) = SetDocument::from_source(&DocumentSource::Native(doc.clone()), &prefix)?;
+        files.extend(entries);
+        self.rebuild(files, self.original.level, &[fresh])
     }
     /// 既存セットの選択範囲（`selection.bin`）だけを置き換える。None は選択なし（エントリを消す）。選択範囲と正本の大きさが
     /// 違えば再検証で断る。ほかのエントリには触らない。
@@ -412,18 +477,106 @@ impl Project {
         let mut files = self.original.files.clone();
         match selection {
             Some(s) => {
-                files.insert(name, Arc::from(s.to_bytes()));
+                files.insert(name, Blob::from(s.to_bytes()));
             }
             None => {
                 files.remove(&name);
             }
         }
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild(files, self.original.level, &[])
+    }
+    /// セットの見た目の設定（`sets/<ID>/look.json`）。無ければ None。読めない（壊れた・新しい形式の）ものはエラーを返し、元のエントリは
+    /// バイト列のまま残る（呼び手は標準の見た目で開いて知らせる）。
+    pub fn look(&self, set_id: &str) -> Result<Option<yolu_core::look::MaterialLook>> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        self.files
+            .get(&format!("sets/{set_id}/{}", crate::look::ENTRY))
+            .map(|b| crate::look::read(&b.bytes()?))
+            .transpose()
+    }
+    /// セットの受けた見た目（`look.json` の `received`。Live Link で Unity のマテリアルから受けた値）。無ければ None。読めないものは
+    /// エラーを返し、元のエントリはバイト列のまま残る。
+    pub fn received_look(&self, set_id: &str) -> Result<Option<yolu_core::look::ReceivedLook>> {
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        match self
+            .files
+            .get(&format!("sets/{set_id}/{}", crate::look::ENTRY))
+        {
+            Some(b) => crate::look::read_received(&b.bytes()?),
+            None => Ok(None),
+        }
+    }
+    /// セットの受けた見た目だけを置き換える（None は外す）。利用者の設定と知らないキーは前のエントリのまま。利用者の設定が既定で
+    /// 受けた見た目も知らないキーも無くなれば、エントリを消す。形式 7 だけ。
+    pub fn with_received_look(
+        &self,
+        set_id: &str,
+        received: Option<&yolu_core::look::ReceivedLook>,
+    ) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "見た目の設定を書く前にupgradedで形式7へ移行してください",
+        )?;
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = format!("sets/{set_id}/{}", crate::look::ENTRY);
+        let mut files = self.original.files.clone();
+        let previous = files.get(&name).map(Blob::bytes).transpose()?;
+        match crate::look::write_received(received, previous.as_deref())? {
+            Some(bytes) => {
+                files.insert(name, Blob::from(bytes));
+            }
+            None => {
+                files.remove(&name);
+            }
+        }
+        self.rebuild(files, self.original.level, &[])
+    }
+    /// セットの見た目の設定だけを置き換える（None は既定に戻す。受けた見た目（`received`）が無ければエントリを消す）。形式 7 だけ
+    /// （旧形式は先に upgraded）。前のエントリの知らないキーと受けた見た目は残す。正本・ほかのエントリには触らない。
+    pub fn with_look(
+        &self,
+        set_id: &str,
+        look: Option<&yolu_core::look::MaterialLook>,
+    ) -> Result<Self> {
+        check(
+            self.info.format == 7,
+            "見た目の設定を書く前にupgradedで形式7へ移行してください",
+        )?;
+        check(
+            self.sets.iter().any(|s| s.id == set_id),
+            "セットがありません",
+        )?;
+        let name = format!("sets/{set_id}/{}", crate::look::ENTRY);
+        let mut files = self.original.files.clone();
+        let previous = files.get(&name).map(Blob::bytes).transpose()?;
+        match look {
+            Some(look) => {
+                let bytes = crate::look::write(look, previous.as_deref())?;
+                files.insert(name, Blob::from(bytes));
+            }
+            None => match previous.filter(|b| crate::look::has_received(b)) {
+                Some(previous) => {
+                    let bytes = crate::look::write(
+                        &yolu_core::look::MaterialLook::default(),
+                        Some(&previous[..]),
+                    )?;
+                    files.insert(name, Blob::from(bytes));
+                }
+                None => {
+                    files.remove(&name);
+                }
+            },
+        }
+        self.rebuild(files, self.original.level, &[])
     }
     /// セットの派生メッシュマップを読む。壊れた派生物はエラーを返し、元のエントリは保持する。
     pub fn mesh_map(
@@ -436,8 +589,12 @@ impl Project {
         self.original
             .files
             .get(&name)
-            .map(|bytes| {
-                let map = crate::mesh_map::read_with_limit(bytes, max_bytes)?;
+            .map(|blob| {
+                check_budget(
+                    blob.len() <= max_bytes as u64,
+                    "メッシュマップの予算超過です",
+                )?;
+                let map = crate::mesh_map::read_with_limit(&blob.bytes()?, max_bytes)?;
                 check(
                     map.kind() == kind,
                     "メッシュマップのエントリ名と種類が一致しません",
@@ -459,13 +616,8 @@ impl Project {
         )?;
         let name = self.mesh_map_entry(set_id, map.kind())?;
         let mut files = self.original.files.clone();
-        files.insert(name, Arc::from(crate::mesh_map::write(map)?));
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        files.insert(name, Blob::from(crate::mesh_map::write(map)?));
+        self.rebuild(files, self.original.level, &[])
     }
     fn mesh_map_entry(
         &self,
@@ -490,7 +642,7 @@ impl Project {
             "マテリアル参照を変える前にupgradedで形式7へ移行してください",
         )?;
         let mut files = self.original.files.clone();
-        let mut project = json(required(&files, "project.json")?, 65536)?;
+        let mut project = json(&required(&files, "project.json")?, 65536)?;
         let set = project["sets"]
             .as_array_mut()
             .unwrap()
@@ -508,14 +660,9 @@ impl Project {
         reference.extend(replacement);
         files.insert(
             "project.json".into(),
-            Arc::from(serde_json::to_vec(&project)?),
+            Blob::from(serde_json::to_vec(&project)?),
         );
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild(files, self.original.level, &[])
     }
     /// スタンドアロン版が view.json（状態のエントリ）に残した、開いたモデルのファイルの参照（`standaloneModel.path`。呼び手が決めた文字列
     /// のまま。.ylp からの相対か絶対のパス）。無ければ None。読めない view.json・形の違う参照は断る（正本ではないので、呼び手は
@@ -524,7 +671,7 @@ impl Project {
         let Some(bytes) = self.files.get("view.json") else {
             return Ok(None);
         };
-        let view = read_view(bytes)?;
+        let view = read_view(&bytes.bytes()?)?;
         match view.get("standaloneModel") {
             None | Some(Value::Null) => Ok(None),
             Some(model) => {
@@ -552,7 +699,12 @@ impl Project {
         )?;
         let mut files = self.original.files.clone();
         let minimal = || serde_json::json!({"modelAssetGuid": "", "selectedChannel": 0});
-        let mut view = match (files.get("view.json").map(|b| read_view(b)), path) {
+        let mut view = match (
+            files
+                .get("view.json")
+                .map(|b| b.bytes().and_then(|b| read_view(&b))),
+            path,
+        ) {
             (Some(Ok(view)), _) => view,
             // 読めない view.json は状態（正本ではない）なので、参照を書くときは最小の形に作り直す（Unity 版も、読めない状態は
             // 既定に戻して開く）。参照を外すだけなら、読めないものには触らない
@@ -576,18 +728,14 @@ impl Project {
         }
         files.insert(
             "view.json".into(),
-            Arc::from(serde_json::to_vec_pretty(&view)?),
+            Blob::from(serde_json::to_vec_pretty(&view)?),
         );
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild(files, self.original.level, &[])
     }
-    pub(crate) fn from_archive(original: Archive) -> Result<Self> {
+    /// 全エントリを確かめた外側から、プロジェクトを作る。`known` の正本（同じエントリを置いたもの）は骨組みを読み直さない。
+    pub(crate) fn from_package(original: Package, known: &[SetDocument]) -> Result<Self> {
         let info = if let Some(b) = original.files.get("ylp.json") {
-            let root = json(b, 65536)?;
+            let root = json(&b.bytes()?, 65536)?;
             let format = number(&root, "format", 2, i32::MAX as i64)? as i32;
             let saved = writer(&root["savedBy"])?;
             let created = if root.get("createdBy").is_some_and(|v| !v.is_null()) {
@@ -623,14 +771,14 @@ impl Project {
                     && !files.keys().any(|k| k.starts_with("sets/")),
                 "旧形式に移行先のセットが既にあります",
             )?;
-            let doc = NativeDocument::read(
-                files
-                    .get("document.utpaint")
-                    .ok_or_else(|| Error::InvalidData("旧形式の正本がありません".into()))?,
+            check(
+                files.contains_key("document.utpaint"),
+                "旧形式の正本がありません",
             )?;
+            let doc = set_document(&files, "", known, &original.skeletons)?;
             let mut slot = 0;
             if let Some(b) = files.get("view.json") {
-                match json(b, 65536).and_then(|j| {
+                match b.bytes().and_then(|b| json(&b, 65536)).and_then(|j| {
                     if j.get("materialSlot").is_none_or(Value::is_null) {
                         Ok(0)
                     } else {
@@ -652,10 +800,10 @@ impl Project {
                 files.insert(format!("sets/{id}/{n}"), b);
             }
             let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
-            files.insert("project.json".into(), Arc::from(project.into_bytes()));
+            files.insert("project.json".into(), Blob::from(project.into_bytes()));
             notes.push(Note::Migrated { format: info.format });
         }
-        let mut root = json(required(&files, "project.json")?, 65536)?;
+        let mut root = json(&required(&files, "project.json")?, 65536)?;
         if info.format < 7 {
             for set in root
                 .get_mut("sets")
@@ -670,7 +818,7 @@ impl Project {
                     .ok_or_else(|| Error::InvalidData("セットがオブジェクトではありません".into()))?
                     .remove("materialSlot");
             }
-            files.insert("project.json".into(), Arc::from(serde_json::to_vec(&root)?));
+            files.insert("project.json".into(), Blob::from(serde_json::to_vec(&root)?));
             notes.push(Note::MaterialRefsMigrated { format: info.format });
         }
         let list = array(&root, "sets", 1, 64)?;
@@ -689,11 +837,11 @@ impl Project {
                 "セットのID・名前・排他的なマテリアル参照が重複しています",
             )?;
             let prefix = format!("sets/{id}/");
-            let document =
-                NativeDocument::read(required(&files, &format!("{prefix}document.utpaint"))?)?;
+            let document = set_document(&files, &prefix, known, &original.skeletons)?;
+            let size = (document.width(), document.height(), document.tile_size());
             let selection = files
                 .get(&format!("{prefix}selection.bin"))
-                .map(|b| Selection::read(b, &document))
+                .map(|b| Selection::read_sized(&b.bytes()?, size))
                 .transpose()?;
             sets.push(TextureSet {
                 id,
@@ -710,7 +858,7 @@ impl Project {
         let mut unknown = Vec::new();
         for n in files.keys() {
             let known = if let Some((id, leaf)) = split_set(n) {
-                ids.contains(id) && moves_into_set(leaf)
+                ids.contains(id) && (moves_into_set(leaf) || leaf == crate::look::ENTRY)
             } else if n.starts_with("resources/") {
                 resource_entries.contains(n.as_str())
             } else {
@@ -755,7 +903,7 @@ impl Project {
 pub const MODEL_PATH_MAX: usize = 1024;
 /// view.json の読み込み（Unity 版の予算 256 KiB と同じ。オブジェクトでなければ断る）。ここは状態のエントリなので、正本の
 /// JSON の厳しい検査（`json`。文字列は 1024 文字まで）は使わない: Unity 版の表示の状態は長い鍵を持てる。
-fn read_view(bytes: &[u8]) -> Result<Value> {
+pub(crate) fn read_view(bytes: &[u8]) -> Result<Value> {
     check_budget(bytes.len() <= 262_144, "view.json のバイト予算超過です")?;
     let view: Value = serde_json::from_slice(bytes)?;
     check(view.is_object(), "view.json がオブジェクトではありません")?;
@@ -783,9 +931,11 @@ fn set_json(previous: Option<&Value>, spec: &SetSpec) -> Value {
     set
 }
 /// セットの正本と合成を置く（正本が無ければ何もしない）。
-fn put_set_entries(files: &mut Files, spec: &SetSpec) -> Result<()> {
+/// セットの正本と合成を置く（正本が無ければ何もしない）。前の正本のヘッダーと部分は全部消してから置く（古い部分を残さない）。
+/// 置いた正本を返す（骨組みを読み直さないため）。
+fn put_set_entries(files: &mut Files, spec: &SetSpec) -> Result<Option<SetDocument>> {
     let Some(doc) = &spec.document else {
-        return Ok(());
+        return Ok(None);
     };
     let mut composites = Vec::with_capacity(spec.composites.len());
     for (channel, png) in &spec.composites {
@@ -802,25 +952,80 @@ fn put_set_entries(files: &mut Files, spec: &SetSpec) -> Result<()> {
         composites.push((name, png));
     }
     let prefix = format!("sets/{}/", spec.id);
+    let (document, entries) = SetDocument::from_source(doc, &prefix)?;
     files.retain(|n, _| !n.starts_with(&format!("{prefix}composite/")));
-    files.insert(
-        format!("{prefix}document.utpaint"),
-        Arc::from(doc.to_bytes()),
-    );
+    remove_document_entries(files, &prefix);
+    files.extend(entries);
     for (name, png) in composites {
         files.insert(
             format!("{prefix}composite/{name}.png"),
-            Arc::from(png.as_slice()),
+            Blob::from(png.as_slice()),
         );
     }
-    Ok(())
+    Ok(Some(document))
+}
+/// `prefix`（`sets/<ID>/` か根なら空）の下の正本のヘッダーと部分を消す。
+pub(crate) fn remove_document_entries(files: &mut Files, prefix: &str) {
+    files.retain(|n, _| {
+        n.strip_prefix(prefix)
+            .is_none_or(|leaf| leaf.contains('/') || !is_document_leaf(leaf))
+    });
+}
+/// 正本のヘッダーか部分の名前（セットの下の葉）。
+fn is_document_leaf(leaf: &str) -> bool {
+    leaf == "document.utpaint" || part_number(leaf).is_some()
+}
+/// `prefix` の下の正本（ヘッダーと番号の続く部分）。`known` に同じエントリを置いた正本があれば、それを使う（骨組みを読み直さない）。
+fn set_document(
+    files: &Files,
+    prefix: &str,
+    known: &[SetDocument],
+    read: &std::collections::BTreeMap<String, std::result::Result<Arc<NativeDocument>, String>>,
+) -> Result<SetDocument> {
+    let name = format!("{prefix}document.utpaint");
+    let header = files
+        .get(&name)
+        .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {name}")))?;
+    let mut parts = Vec::new();
+    while let Some(p) = files.get(&format!("{prefix}document.utpaint.{}", parts.len() + 1)) {
+        parts.push(p.clone());
+    }
+    let numbered = files
+        .keys()
+        .filter(|n| {
+            n.strip_prefix(prefix)
+                .is_some_and(|leaf| !leaf.contains('/') && part_number(leaf).is_some())
+        })
+        .count();
+    check(
+        numbered == parts.len(),
+        format!("正本の部分の番号が 1 から続いていません: {name}"),
+    )?;
+    let placed: Vec<&Blob> = std::iter::once(header).chain(&parts).collect();
+    if let Some(doc) = known.iter().find(|d| d.placed_as(&placed)) {
+        return Ok(doc.clone());
+    }
+    if parts.is_empty() {
+        if let Some(skeleton) = read.get(&name) {
+            let skeleton = skeleton.clone().map_err(Error::InvalidData)?;
+            return Ok(SetDocument::stored_with(
+                crate::bigdoc::StoredDoc {
+                    header: header.clone(),
+                    parts,
+                },
+                skeleton,
+            ));
+        }
+    }
+    SetDocument::stored(header.clone(), parts)
 }
 fn moves_into_set(n: &str) -> bool {
     ["document.utpaint", "selection.bin", "imported-original.psd"].contains(&n)
+        || part_number(n).is_some()
         || n.starts_with("composite/")
         || n.starts_with("meshmap-") && n.ends_with(".bin")
 }
-fn writer_json(w: &WriterInfo) -> Value {
+pub(crate) fn writer_json(w: &WriterInfo) -> Value {
     serde_json::json!({"app":w.app,"version":w.version,"unity":w.unity})
 }
 pub(crate) fn writer(v: &Value) -> Result<WriterInfo> {
@@ -830,10 +1035,23 @@ pub(crate) fn writer(v: &Value) -> Result<WriterInfo> {
         unity: text(v, "unity", 1, 256)?.into(),
     })
 }
-pub(crate) fn required<'a>(f: &'a Files, n: &str) -> Result<&'a [u8]> {
-    f.get(n)
-        .map(|b| b.as_ref())
-        .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {n}")))
+/// エントリの並び（メモリの zip のものと、.ylp のもの）から中身を読む口。
+pub(crate) trait EntryMap {
+    fn entry(&self, name: &str) -> Option<Result<Arc<[u8]>>>;
+}
+impl EntryMap for crate::archive::Files {
+    fn entry(&self, name: &str) -> Option<Result<Arc<[u8]>>> {
+        self.get(name).map(|b| Ok(b.clone()))
+    }
+}
+impl EntryMap for Files {
+    fn entry(&self, name: &str) -> Option<Result<Arc<[u8]>>> {
+        self.get(name).map(Blob::bytes)
+    }
+}
+pub(crate) fn required(f: &impl EntryMap, n: &str) -> Result<Arc<[u8]>> {
+    f.entry(n)
+        .ok_or_else(|| Error::InvalidData(format!("エントリがありません: {n}")))?
 }
 pub(crate) fn text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
     let s = v
@@ -882,16 +1100,16 @@ fn array<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a Vec<Va
     Ok(a)
 }
 pub(crate) fn load_resources(
-    files: &Files,
+    files: &impl EntryMap,
     budget: &mut usize,
     depth: usize,
     notes: &mut Vec<Note>,
 ) -> Result<Vec<Resource>> {
     check(depth <= 8, "リソースの入れ子が深すぎます")?;
-    let Some(b) = files.get("resources.json") else {
+    let Some(b) = files.entry("resources.json") else {
         return Ok(Vec::new());
     };
-    let root = json(b, 1024 * 1024)?;
+    let root = json(&b?, 1024 * 1024)?;
     // 個数の上限は予算と同じ種類の断り（壊れたファイルとは別に、棚がいっぱいだと言い分けられる）
     let list = array(&root, "resources", 0, usize::MAX)?;
     check_budget(
@@ -937,7 +1155,7 @@ pub(crate) fn load_resources(
                 )?;
             }
             if decoded.insert((content.clone(), w, h)) {
-                let rgba = png_pixels(bytes, w, h, budget)?;
+                let rgba = png_pixels(&bytes, w, h, budget)?;
                 use sha2::{Digest, Sha256};
                 let mut sha = Sha256::new();
                 sha.update(b"YLPRGBA8");
@@ -954,21 +1172,21 @@ pub(crate) fn load_resources(
         } else {
             let len = number(v, "length", 1, MAX_ENTRY_BYTES as i64)? as usize;
             check(
-                bytes.len() == len && hash(bytes) == content,
+                bytes.len() == len && hash(&bytes) == content,
                 "リソースファイルの長さまたはSHA-256が一致しません",
             )?;
             if decoded.insert((format!("{content}:{kind}"), 0, 0)) {
                 add_budget(budget, bytes.len())?;
                 if kind == "brush" {
-                    validate_brush(bytes, budget, notes)?;
+                    validate_brush(&bytes, budget, notes)?;
                 } else {
                     let a = Archive::read_profile(
-                        bytes,
+                        &bytes,
                         "application/x-yolupainter-smart",
                         "YOLUPAINTER-SMART-",
                         1,
                     )?;
-                    let info = json(required(&a.files, "smart.json")?, 65536)?;
+                    let info = json(&required(&a.files, "smart.json")?, 65536)?;
                     number(&info, "format", 1, 1)?;
                     writer(&info["savedBy"])?;
                     label(&info, "name")?;
@@ -982,7 +1200,7 @@ pub(crate) fn load_resources(
                             },
                         "スマートリソースの種類が索引と一致しません",
                     )?;
-                    let d = NativeDocument::read(required(&a.files, "layers.utpaint")?)?;
+                    let d = NativeDocument::read(&required(&a.files, "layers.utpaint")?)?;
                     check(
                         number(&info, "width", 1, 8192)? == d.width() as i64
                             && number(&info, "height", 1, 8192)? == d.height() as i64
@@ -1074,7 +1292,7 @@ fn add_budget(b: &mut usize, n: usize) -> Result<()> {
 /// `limit` は復号した画素の合計に許すバイト数（`MAX_TOTAL_BYTES` を超えて広げられない）。
 pub(crate) fn image_inputs_of<'a>(
     resources: impl Iterator<Item = &'a Resource>,
-    files: &Files,
+    files: &impl EntryMap,
     used: usize,
     limit: usize,
 ) -> Result<Vec<(yolu_core::ImageId, yolu_core::ImageInput)>> {
@@ -1084,8 +1302,8 @@ pub(crate) fn image_inputs_of<'a>(
     for r in resources.filter(|r| r.kind == "image") {
         let name = &r.name;
         let bytes = files
-            .get(&r.entry)
-            .ok_or_else(|| Error::InvalidData(format!("画像「{name}」のPNGがありません")))?;
+            .entry(&r.entry)
+            .ok_or_else(|| Error::InvalidData(format!("画像「{name}」のPNGがありません")))??;
         let (w, h) = (
             number(&r.metadata, "width", 1, 8192)? as u32,
             number(&r.metadata, "height", 1, 8192)? as u32,
@@ -1097,7 +1315,7 @@ pub(crate) fn image_inputs_of<'a>(
                 .is_some_and(|total| total <= limit),
             format!("画像「{name}」: 復号した画像の{} MiB予算超過です", limit >> 20),
         )?;
-        let top_down = png_pixels(bytes, w, h, &mut budget)
+        let top_down = png_pixels(&bytes, w, h, &mut budget)
             .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
         let mut pixels = Vec::with_capacity(top_down.len());
         for row in top_down.chunks_exact(w as usize * 4).rev() {
@@ -1157,7 +1375,7 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<Note>) -> Re
         "YOLUPAINTER-BRUSH-",
         1,
     )?;
-    let state = json(required(&a.files, "state.json")?, 65536)?;
+    let state = json(&required(&a.files, "state.json")?, 65536)?;
     let schema = state
         .get("schema")
         .and_then(Value::as_i64)
@@ -1330,7 +1548,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
         if f.path.contains(".filters.items[") && f.path.ends_with(".generator.pin_count") {
             check(
                 f.value == NativeValue::Int(0),
-                "スマートリソースのGeneratorにベイクの固定があります",
+                "スマートリソースのジェネレーターにベイクの固定があります",
             )?;
             let p = f.path.strip_suffix(".generator.pin_count").unwrap();
             if let Some(NativeValue::Guid(id)) = d.field(&format!("{p}.id")) {
@@ -1370,7 +1588,7 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
                 .ok_or_else(|| Error::InvalidData("repinのIDが文字列ではありません".into()))?;
             check(
                 valid_id(id) && seen.insert(id) && stages.contains(id),
-                "repinは正本のGenerator IDを重複なく指定する必要があります",
+                "repinは正本のジェネレーターIDを重複なく指定する必要があります",
             )?;
         }
     }
@@ -1381,7 +1599,8 @@ pub(crate) fn validate_smart(info: &Value, d: &NativeDocument) -> Result<()> {
 mod tests {
     use super::*;
     fn brush(state: &str, names: &[&str]) -> Vec<u8> {
-        let mut files = Files::from([("state.json".into(), Arc::from(state.as_bytes()))]);
+        let mut files =
+            crate::archive::Files::from([("state.json".into(), Arc::from(state.as_bytes()))]);
         for n in names {
             files.insert(n.to_string(), Arc::from([0u8]));
         }

@@ -1,3 +1,4 @@
+mod common;
 use egui_kittest::{
     kittest::{NodeT, Queryable},
     Harness,
@@ -17,7 +18,7 @@ fn rows_move_back_and_forward_in_both_languages() {
         let mut app = AppState::new_in(16, 16, lang);
         let id = app.doc.add_layer("private layer name").unwrap();
         app.doc.set_layer_opacity(id, 0.4, false).unwrap();
-        let mut h = Harness::builder().build_ui_state(show, app);
+        let mut h = common::gpu_thread::builder().build_ui_state(show, app);
         h.run();
         let earlier = h.get_by_label(title(HistoryKind::AddLayer, lang));
         let later = h.get_by_label(title(HistoryKind::LayerProperties, lang));
@@ -112,7 +113,7 @@ fn tab_is_available_and_invalid_position_is_ignored() {
 
 #[test]
 fn empty_and_evicted_history_do_not_show_discarded_steps() {
-    let mut h = Harness::builder().build_ui_state(show, AppState::new(16, 16));
+    let mut h = common::gpu_thread::builder().build_ui_state(show, AppState::new(16, 16));
     h.run();
     assert!(h.query_by_label("開始位置").is_none());
     let id = h.state_mut().doc.add_layer("a").unwrap();
@@ -132,7 +133,7 @@ fn history_rows_are_disabled_during_a_stroke() {
     let mut app = AppState::new(16, 16);
     let id = app.doc.add_layer("a").unwrap();
     let s = app.doc.begin_stroke(id, &BrushSettings::default()).unwrap();
-    let mut h = Harness::builder().build_ui_state(show, app);
+    let mut h = common::gpu_thread::builder().build_ui_state(show, app);
     h.run();
     assert!(h.get_by_label("開始位置").accesskit_node().is_disabled());
     assert!(h
@@ -161,7 +162,7 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     }
     app.doc.remove_layer(marker).unwrap();
     assert_eq!(app.doc.undo_count(), 10_002);
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(egui::vec2(300.0, 240.0))
         .with_max_steps(120)
         .build_ui_state(

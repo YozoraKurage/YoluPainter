@@ -1,5 +1,5 @@
-//! パスの道具の欄: オプションバー（点の太さ・閉じる/開く・点を消す・ラスタライズ）と、プロパティの欄（パスの節: 状態・点の操作・
-//! 点の太さ・ブラシを使う・描き直す・ラスタライズ、ブラシの節: パスのブラシの値、続けてマテリアルで塗る組）。値の操作は
+//! パスの道具の欄: オプションバー（点の太さ・閉じる/開く・点を消す・ラスタライズ）と、左のドックのツールプロパティ（パスの節: 状態・点の操作・
+//! 点の太さ・ブラシを使う・描き直す・ラスタライズ、ブラシの節: パスのブラシの値）。値の操作は
 //! `Action::Path`（キー・試験と同じ道）。パスのブラシや点の太さのスライダーは、離したとき 1 回で描き直す（動かしている間は値だけ）。
 //! 画面には名前と値だけを出し、説明はツールチップ。
 
@@ -265,10 +265,10 @@ fn button_grid(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, buttons: Vec<Bt
     }
 }
 
-pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+/// ツールプロパティ（パスの道具）: パスの節とパスのブラシの節。塗るチャンネルの組はプロパティの欄のマテリアル。
+pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     path_section(ui, app, rows);
     brush_section(ui, app, rows);
-    super::material::material_section(ui, app, rows);
 }
 
 /// パスの状態の短い文（2D・3D、見える点の数、描くチャンネル）。パスが無ければ None。
@@ -295,6 +295,10 @@ pub fn status_text(app: &AppState) -> Option<String> {
 
 fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
+    // 選んでいる層にパスが無いあいだは、点の操作の欄は空なので出さない（次に作るパスのブラシは下の欄）
+    if app.path_layer().is_none() {
+        return;
+    }
     let (open, _) = section(
         ui,
         app,

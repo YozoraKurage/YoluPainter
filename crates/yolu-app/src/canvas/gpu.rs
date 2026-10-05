@@ -276,7 +276,12 @@ impl Default for GpuCanvas {
 }
 
 impl GpuCanvas {
-    /// 常駐の予算を替える（試験・計測用）。GPU の資源を手放し、過去の失敗を忘れて試し直す。
+    /// 常駐の予算。
+    pub fn budget(&self) -> u64 {
+        self.budget
+    }
+
+    /// 常駐の予算を替える（設定の GPU のメモリ・試験・計測用）。GPU の資源を手放し、過去の失敗を忘れて試し直す。
     pub fn set_budget(&mut self, bytes: u64) {
         self.budget = bytes;
         self.release();

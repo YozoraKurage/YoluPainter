@@ -1,4 +1,4 @@
-//! 復旧の設定（書き置きの間隔・終わったストロークの数・残す世代の数・置き場）。言語の設定（`settings.conf`）とは別の
+//! 復旧の設定（書き置きの間隔・終わったストロークの数・残す世代の数・使うディスクの量・置き場）。言語の設定（`settings.conf`）とは別の
 //! `recovery.conf`（同じフォルダ）に、`キー=値` を 1 行ずつ書く。範囲の外の値は、Unity 版の設定と同じく既定へ戻し、
 //! 理由を返す（ファイルは、保存し直すまで触らない）。
 
@@ -11,6 +11,86 @@ pub const INTERVAL_RANGE: (u32, u32) = (5, 600);
 pub const KEEP_RANGE: (u32, u32) = (2, 1000);
 /// ストロークの数の上限（0 は数では書かない）。
 pub const MAX_STROKES: u32 = 1000;
+/// 詳しくで指定できる、復旧が使うディスクの量（GiB）の範囲。
+pub const DISK_GIB_RANGE: (u32, u32) = (1, 256);
+
+const GIB: u64 = 1 << 30;
+
+/// 復旧が使ってよいディスクの量（上限）。超えたぶんは古い世代から消す（`quota`）。段を選ぶか、詳しくで GiB を指定する。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiskBudget {
+    /// 2 GiB と、復旧が使えるディスク（空き + 今使っている量）の 10% の小さいほう（下限 256 MiB）。量が分からなければ 2 GiB。
+    #[default]
+    Auto,
+    /// 1 GiB。
+    Low,
+    /// 2 GiB。
+    Standard,
+    /// 8 GiB。
+    High,
+    /// 詳しくで指定した量（GiB）。
+    Gib(u32),
+}
+
+impl DiskBudget {
+    /// 窓の選択肢に並べる段（指定した量は並べない）。
+    pub const LEVELS: [DiskBudget; 4] = [DiskBudget::Auto, DiskBudget::Low, DiskBudget::Standard, DiskBudget::High];
+    /// 自動の上限（バイト）と、復旧が使えるディスクのうち自動が使う割合（分母）・下限。
+    pub const AUTO_CAP: u64 = 2 * GIB;
+    pub const AUTO_DIVISOR: u64 = 10;
+    pub const AUTO_FLOOR: u64 = GIB / 4;
+
+    /// 設定のファイルの値。
+    pub fn key(self) -> String {
+        match self {
+            DiskBudget::Auto => "auto".into(),
+            DiskBudget::Low => "low".into(),
+            DiskBudget::Standard => "standard".into(),
+            DiskBudget::High => "high".into(),
+            DiskBudget::Gib(n) => n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1).to_string(),
+        }
+    }
+
+    /// 設定のファイルの値から。範囲の外の数・知らない語は None。
+    pub fn parse(value: &str) -> Option<DiskBudget> {
+        match value {
+            "auto" => Some(DiskBudget::Auto),
+            "low" => Some(DiskBudget::Low),
+            "standard" => Some(DiskBudget::Standard),
+            "high" => Some(DiskBudget::High),
+            _ => value
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (DISK_GIB_RANGE.0..=DISK_GIB_RANGE.1).contains(n))
+                .map(DiskBudget::Gib),
+        }
+    }
+
+    /// 窓に出す名前（数は出さない。指定した量は「指定」とだけ）。
+    pub fn name(self, lang: crate::lang::Lang) -> &'static str {
+        match self {
+            DiskBudget::Auto => lang.pick("自動", "Automatic"),
+            DiskBudget::Low => lang.pick("少なめ", "Low"),
+            DiskBudget::Standard => lang.pick("標準", "Standard"),
+            DiskBudget::High => lang.pick("多め", "High"),
+            DiskBudget::Gib(_) => lang.pick("指定", "Custom"),
+        }
+    }
+
+    /// 上限（バイト）。`available` は置き場のボリュームの空き、`used` は復旧が今使っている量（分からなければ None・0）。
+    pub fn cap(self, available: Option<u64>, used: u64) -> u64 {
+        match self {
+            DiskBudget::Auto => match available {
+                Some(free) => (free.saturating_add(used) / Self::AUTO_DIVISOR).clamp(Self::AUTO_FLOOR, Self::AUTO_CAP),
+                None => Self::AUTO_CAP,
+            },
+            DiskBudget::Low => GIB,
+            DiskBudget::Standard => 2 * GIB,
+            DiskBudget::High => 8 * GIB,
+            DiskBudget::Gib(n) => u64::from(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1)) * GIB,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecoverySettings {
@@ -20,6 +100,8 @@ pub struct RecoverySettings {
     pub strokes_between: u32,
     /// 閉じた置き場に残す世代の数、と、この実行の置き場で残す世代の数。
     pub generations_to_keep: u32,
+    /// 復旧が使ってよいディスクの量。超えたぶんは古い世代から消す。
+    pub disk: DiskBudget,
     /// 置き場。無ければ設定のフォルダの下の `recovery`。
     pub directory: Option<PathBuf>,
 }
@@ -30,6 +112,7 @@ impl Default for RecoverySettings {
             interval_seconds: 15,
             strokes_between: 10,
             generations_to_keep: 3,
+            disk: DiskBudget::default(),
             directory: None,
         }
     }
@@ -127,6 +210,14 @@ impl RecoverySettings {
                 "interval" => number("interval", INTERVAL_RANGE, &mut settings.interval_seconds),
                 "generations" => number("generations", KEEP_RANGE, &mut settings.generations_to_keep),
                 "strokes" => number("strokes", (0, MAX_STROKES), &mut settings.strokes_between),
+                "disk" => match DiskBudget::parse(value) {
+                    Some(budget) => settings.disk = budget,
+                    None => problems.push(Problem::OutOfRange {
+                        key: "disk",
+                        value: value.to_owned(),
+                        range: DISK_GIB_RANGE,
+                    }),
+                },
                 "directory" if !value.is_empty() => {
                     if Path::new(value).is_absolute() {
                         settings.directory = Some(PathBuf::from(value));
@@ -152,8 +243,11 @@ impl RecoverySettings {
             .create_new(true)
             .open(&pending)?;
         let mut text = format!(
-            "interval={}\nstrokes={}\ngenerations={}\n",
-            self.interval_seconds, self.strokes_between, self.generations_to_keep
+            "interval={}\nstrokes={}\ngenerations={}\ndisk={}\n",
+            self.interval_seconds,
+            self.strokes_between,
+            self.generations_to_keep,
+            self.disk.key()
         );
         if let Some(dir) = &self.directory {
             text.push_str(&format!("directory={}\n", dir.display()));
@@ -216,6 +310,7 @@ mod tests {
             interval_seconds: 30,
             strokes_between: 0,
             generations_to_keep: 7,
+            disk: DiskBudget::Gib(12),
             directory: Some(dir.join("置き場")),
         };
         custom.save(&path).unwrap();
@@ -229,5 +324,45 @@ mod tests {
         std::fs::write(&path, vec![b'a'; 4097]).unwrap();
         assert!(RecoverySettings::load(&path).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_disk_budget_is_read_written_and_out_of_range_values_fall_back_with_a_reason() {
+        let (s, problems) = RecoverySettings::parse("disk=high\n");
+        assert!(problems.is_empty());
+        assert_eq!(s.disk, DiskBudget::High);
+        for (text, budget) in [("auto", DiskBudget::Auto), ("low", DiskBudget::Low), ("standard", DiskBudget::Standard), ("1", DiskBudget::Gib(1)), ("256", DiskBudget::Gib(256))] {
+            let (s, problems) = RecoverySettings::parse(&format!("disk={text}"));
+            assert!(problems.is_empty(), "{text}");
+            assert_eq!(s.disk, budget);
+            assert_eq!(DiskBudget::parse(&budget.key()), Some(budget), "書いた値は読み戻せる: {text}");
+        }
+        for bad in ["0", "257", "-1", "lots", "", "2.5"] {
+            let (s, problems) = RecoverySettings::parse(&format!("disk={bad}"));
+            assert_eq!(s.disk, DiskBudget::Auto, "範囲の外は既定: {bad:?}");
+            assert_eq!(
+                problems,
+                vec![Problem::OutOfRange { key: "disk", value: bad.into(), range: (1, 256) }]
+            );
+        }
+        // 古い版が書いた設定（disk が無い）は、既定の自動で読む
+        let (s, problems) = RecoverySettings::parse("interval=30\ngenerations=5\n");
+        assert!(problems.is_empty());
+        assert_eq!(s.disk, DiskBudget::Auto);
+    }
+
+    #[test]
+    fn the_caps_follow_the_level_and_the_automatic_one_follows_the_disk() {
+        let gib = 1u64 << 30;
+        assert_eq!(DiskBudget::Low.cap(Some(1), 0), gib);
+        assert_eq!(DiskBudget::Standard.cap(None, 0), 2 * gib);
+        assert_eq!(DiskBudget::High.cap(Some(gib), 99), 8 * gib);
+        assert_eq!(DiskBudget::Gib(5).cap(None, 0), 5 * gib);
+        assert_eq!(DiskBudget::Gib(9999).cap(None, 0), 256 * gib, "範囲に収める");
+        // 自動: 2 GiB と、空き + 使っている量の 10% の小さいほう（下限 256 MiB）
+        assert_eq!(DiskBudget::Auto.cap(Some(500 * gib), 0), 2 * gib);
+        assert_eq!(DiskBudget::Auto.cap(Some(8 * gib), 2 * gib), gib, "空き + 使用中の 10%");
+        assert_eq!(DiskBudget::Auto.cap(Some(gib), 0), gib / 4, "下限");
+        assert_eq!(DiskBudget::Auto.cap(None, 0), 2 * gib, "量が分からなければ 2 GiB");
     }
 }

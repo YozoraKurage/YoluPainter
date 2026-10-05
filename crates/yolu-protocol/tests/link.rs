@@ -131,6 +131,7 @@ fn messages_round_trip_and_unknown_commands_are_refused_without_dropping_the_lin
         session: 0,
         features: 0,
         proof: None,
+        versions: None,
     }))
     .unwrap();
     match next_message(&mut reader, &conn) {
@@ -166,6 +167,7 @@ fn a_bridge_from_another_version_is_rejected() {
         agent: "未来のブリッジ".into(),
         features: 0,
         auth: Some(good_auth(&key)),
+        versions: None,
     })))
     .unwrap();
     let mut frames = FrameReader::new();
@@ -187,6 +189,7 @@ fn a_busy_standalone_refuses_after_the_greeting_with_the_reason() {
             Err(Reject {
                 code: RejectCode::Busy,
                 text: "ほかの Unity とつながっています".into(),
+                detail: None,
             })
         };
         link::accept_with(
@@ -367,6 +370,7 @@ fn hello_with(auth: Option<HelloAuth>) -> Hello {
         agent: "試験の相手".into(),
         features: 0,
         auth,
+        versions: None,
     }
 }
 
@@ -471,6 +475,7 @@ fn a_busy_standalone_does_not_tell_a_stranger_that_it_is_busy() {
             Err(Reject {
                 code: RejectCode::Busy,
                 text: "つながっています".into(),
+                detail: None,
             })
         };
         link::accept_with(
@@ -523,6 +528,7 @@ fn impostor(name: &str, reply: impl FnOnce(&Hello) -> Option<[u8; 32]> + Send + 
             session: 1,
             features: 0,
             proof,
+            versions: None,
         })))
         .unwrap();
         thread::sleep(Duration::from_millis(500));

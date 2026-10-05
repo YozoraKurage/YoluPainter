@@ -363,13 +363,7 @@ pub fn navigation_settings(
     for center in OrbitCenter::ALL {
         let r = rows.row(26.0, 4.0);
         if w::button(ui, r, ("view3d.orbit", center as u8), center.label(lang),
-            app.prefs.settings.navigation.orbit == center, true,
-            Some(if center == OrbitCenter::Surface {
-                lang.pick("回し始めの面を中心にし、パンの速さも面の深さに合わせます。面が無ければ今の中心です。",
-                    "Orbit around the starting surface and pan at its depth. Empty space keeps the current center.")
-            } else {
-                lang.pick("回し始めに中心を決め、離すまで保ちます。", "Choose the pivot at the start and keep it until release.")
-            }), None).clicked()
+            app.prefs.settings.navigation.orbit == center, true, Some(center.tip(lang)), None).clicked()
         {
             app.prefs.settings.navigation.orbit = center;
         }
@@ -383,23 +377,16 @@ pub fn navigation_settings(
         t::LABEL_BOLD,
         w::Align::Left,
     );
-    for center in [ZoomCenter::View, ZoomCenter::Pointer] {
+    for center in ZoomCenter::ALL {
         let r = rows.row(26.0, 4.0);
-        let label = match center {
-            ZoomCenter::View => lang.pick("画面の中心へ", "Toward view center"),
-            ZoomCenter::Pointer => lang.pick("ポインタの所へ", "Toward pointer"),
-        };
         if w::button(
             ui,
             r,
             ("view3d.zoom", center as u8),
-            label,
+            center.label(lang),
             app.prefs.settings.navigation.zoom == center,
             true,
-            Some(lang.pick(
-                "面が無ければポインタの向きへ寄ります。",
-                "Empty space zooms along the pointer direction.",
-            )),
+            Some(center.tip(lang)),
             None,
         )
         .clicked()

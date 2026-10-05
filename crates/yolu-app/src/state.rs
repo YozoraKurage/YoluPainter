@@ -76,84 +76,27 @@ impl Tool {
     ];
     /// アイコンの名前（tools/<id>）。
     pub fn id(self) -> &'static str {
-        match self {
-            Tool::Brush => "brush",
-            Tool::Eraser => "eraser",
-            Tool::Fill => "fill",
-            Tool::Gradient => "gradient",
-            Tool::Shape => "shape",
-            Tool::Ruler => "ruler",
-            Tool::PolygonFill => "polygon-fill",
-            Tool::Eyedropper => "eyedropper",
-            Tool::IdSelect => "id-select",
-            Tool::SelectPen => "select-pen",
-            Tool::SelectRect => "select-rectangle",
-            Tool::SelectEllipse => "select-ellipse",
-            Tool::Lasso => "lasso",
-            Tool::Polygon => "select-polygon",
-            Tool::Wand => "magic-wand",
-            Tool::Move => "move",
-            Tool::Liquify => "liquify",
-            Tool::Path => "path",
-        }
+        self.def().id
     }
     pub fn name(self) -> &'static str {
         self.name_in(Lang::Ja)
     }
     /// 言語ごとの名前。
     pub fn name_in(self, lang: Lang) -> &'static str {
-        match self {
-            Tool::Brush => lang.pick("ブラシ", "Brush"),
-            Tool::Eraser => lang.pick("消しゴム", "Eraser"),
-            Tool::Fill => lang.pick("バケツ", "Fill"),
-            Tool::Gradient => lang.pick("グラデーション", "Gradient"),
-            Tool::Shape => lang.pick("図形", "Shape"),
-            Tool::Ruler => lang.pick("定規", "Ruler"),
-            Tool::PolygonFill => lang.pick("ポリゴン塗りつぶし", "Polygon Fill"),
-            Tool::Eyedropper => lang.pick("スポイト", "Eyedropper"),
-            Tool::IdSelect => lang.pick("ID の色で選択", "ID Color Select"),
-            Tool::SelectPen => lang.pick("選択ペン", "Selection Pen"),
-            Tool::SelectRect => lang.pick("長方形選択", "Rectangle Select"),
-            Tool::SelectEllipse => lang.pick("楕円形選択", "Ellipse Select"),
-            Tool::Lasso => lang.pick("なげなわ", "Lasso"),
-            Tool::Polygon => lang.pick("多角形選択", "Polygon Select"),
-            Tool::Wand => lang.pick("自動選択", "Magic Wand"),
-            Tool::Move => lang.pick("移動・変形", "Move / Transform"),
-            Tool::Liquify => lang.pick("ゆがみ", "Liquify"),
-            Tool::Path => lang.pick("パス", "Path"),
-        }
+        self.def().name(lang)
     }
     pub fn key(self) -> &'static str {
-        match self {
-            Tool::Brush => "B",
-            Tool::Eraser => "E",
-            Tool::Fill => "G",
-            Tool::Gradient => "Shift+G",
-            Tool::Shape => "U",
-            Tool::Ruler => "Shift+U",
-            Tool::PolygonFill => "4",
-            Tool::Eyedropper => "I",
-            Tool::IdSelect => "Shift+W",
-            Tool::SelectPen => "S",
-            Tool::SelectRect => "M",
-            Tool::SelectEllipse => "Shift+M",
-            Tool::Lasso => "L",
-            Tool::Polygon => "Shift+L",
-            Tool::Wand => "W",
-            Tool::Move => "V",
-            Tool::Liquify => "",
-            Tool::Path => "P",
-        }
+        self.def().key
     }
     /// 範囲を塗る・選ぶツール（バケツ・ポリゴン塗りつぶし・ID の色で選択。キャンバスと 3D ビューの入力は `region`）。
-    /// ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
+    /// 道具の表（`tools`）が持つ。ブラシの否定ではなく並べて書く（ツールが増えたとき、足した道具が黙って範囲の道具になって入力・カーソル・強調の道へ流れない）。
     pub fn is_region(self) -> bool {
-        matches!(self, Tool::Fill | Tool::PolygonFill | Tool::IdSelect)
+        self.def().region
     }
     /// 押した瞬間に終わるツール（バケツ・ID の色で選択・スポイト）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
     /// 押し直さないよう、入力の側が押している間の印（`pen_press`）を持つ。
     pub fn is_one_shot(self) -> bool {
-        matches!(self, Tool::Fill | Tool::IdSelect | Tool::Eyedropper)
+        self.def().one_shot
     }
 }
 
@@ -493,6 +436,8 @@ pub enum Action {
     Stencil(crate::stencil::StencilOp),
     /// ブラシの一覧（替える・追加・複製・削除・名前・並べ替え・元に戻す。文書は変えない）。
     Brush(crate::brushes::BrushAction),
+    /// サブツールの一覧（バケツ・グラデーション・図形などのプリセット。替える・追加・複製・削除・名前・元に戻す・登録。文書は変えない）。
+    SubTool(crate::subtool::SubToolAction),
     /// 選択範囲（文書を変える `Edit` は 1 つが 1 回の Undo）と 2 D の対称（画面だけ）の操作。
     Sel(crate::selection::SelAction),
     /// パスの道具（点の操作・ブラシ・組・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
@@ -564,6 +509,8 @@ pub enum Action {
     Export(crate::export::ExportAction),
     /// PSD の読み込みと書き出し。
     Psd(crate::psd::PsdAction),
+    /// 配布用に保存（除く物の窓・保存先・書き込み）。
+    Distribute(crate::distribute::DistributeAction),
     /// 新規プロジェクトの窓・プロジェクトの構成・テクスチャセットの足す・消す。
     Project(crate::newproject::NpAction),
     /// 自動更新（確かめる・更新する・起動時に確かめる設定）。
@@ -574,6 +521,8 @@ pub enum Action {
     Pressure(crate::pen::window::PressureAction),
     /// 復旧（世代の一覧の窓・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
+    /// テクスチャセットの見た目の設定（標準・lilToon と lilToon の値。1 つが 1 回の Undo）。
+    Look(crate::look::LookOp),
 }
 
 impl Action {
@@ -588,6 +537,7 @@ impl Action {
             Self::Fx(..) => "Fx",
             Self::Stencil(..) => "Stencil",
             Self::Brush(..) => "Brush",
+            Self::SubTool(..) => "SubTool",
             Self::Sel(..) => "Sel",
             Self::Path(..) => "Path",
             Self::Fill(..) => "Fill",
@@ -642,11 +592,13 @@ impl Action {
             Self::Bake(..) => "Bake",
             Self::Export(..) => "Export",
             Self::Psd(..) => "Psd",
+            Self::Distribute(..) => "Distribute",
             Self::Project(..) => "Project",
             Self::Update(..) => "Update",
             Self::Prefs(..) => "Prefs",
             Self::Pressure(..) => "Pressure",
             Self::Recovery(..) => "Recovery",
+            Self::Look(..) => "Look",
         }
     }
 
@@ -677,6 +629,7 @@ impl Action {
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
         ) || matches!(self, Action::Fill(op) if op.edits_document())
+            || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
     }
 }
@@ -691,6 +644,10 @@ pub struct AppState {
     pub mat: crate::matpaint::MaterialPaint,
     /// 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）の設定と途中の状態。
     pub region: crate::region::RegionState,
+    /// サブツール（バケツ・グラデーション・図形などの設定の組のプリセット。ブラシと消しゴムは `brushes`）。アプリの状態で、.ylp には入れない。
+    pub subtools: crate::subtool::SubToolState,
+    /// グラデーションセット（グラデーションマップ・塗りつぶしのグラデーションのランプの見本の一覧。利用者の組は設定のフォルダに保存。.ylp には入れない）。
+    pub ramp_sets: crate::rampsets::RampSets,
     pub doc: Document,
     /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
     /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
@@ -704,8 +661,12 @@ pub struct AppState {
     pub color: ColorState,
     pub colorsets: crate::colorsets::ColorSets,
     pub view: ViewState,
-    /// ステータスバーの知らせ。
+    /// 直前の操作の結果と理由（短い文）。状態の帯には出さず、小さな知らせ（`toast`）として短く出して消える。試験が読む。
     pub message: String,
+    /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
+    pub toast: crate::toast::Toast,
+    /// 状態の帯の右端の版・ビルドと使っているメモリ。
+    pub usage: crate::usage::Usage,
     /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
     pub property_tab: usize,
     /// 見出しの開閉（キー → 開いているか）。
@@ -748,6 +709,11 @@ pub struct AppState {
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
     pub link_request: Option<LinkRequest>,
+    /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
+    pub link_originals: crate::livelink_base::OriginalMarks,
+    /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
+    /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
+    pub resolution_chosen: bool,
     /// 開いた .ylp（保存先と、保存で残す元の中身）。
     pub project: Option<ProjectFile>,
     /// ファイルの窓を開く頼み（`YoluApp` が開く。試験では開かない）。
@@ -756,6 +722,8 @@ pub struct AppState {
     pub view3d: View3dState,
     /// アセットの棚（.ylp の resources）。
     pub shelf: ShelfState,
+    /// 個人のライブラリ（フォルダ。アセットの欄が棚と切り替えて見せる）。
+    pub library: crate::library::LibraryState,
     /// 選択範囲と 2D の対称の画面の状態（選択範囲そのものは文書が持つ）。
     pub sel: crate::selection::SelState,
     /// メッシュマップのベイク（設定・窓・走っている仕事）。
@@ -764,6 +732,8 @@ pub struct AppState {
     pub export: crate::export::ExportState,
     /// PSD の読み書き（結果・確かめ・走っている仕事）。
     pub psd: crate::psd::PsdState,
+    /// 配布用に保存（準備した写し・窓の選び・走っている仕事）。
+    pub distribute: crate::distribute::DistributeState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
@@ -814,6 +784,12 @@ pub enum DialogRequest {
     ShelfExport,
     /// 棚の素材（`shelf.pending_remove`）を消してよいか確かめる。
     ShelfRemove,
+    /// ライブラリへ足すファイル（PNG・.ylsmart。複数）を選ぶ。
+    LibraryAdd,
+    /// ライブラリのファイル（`library.pending_remove`）を消してよいか確かめる。
+    LibraryRemove,
+    /// ライブラリのフォルダを OS のファイルの窓で開く。
+    LibraryReveal,
     /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
     ExportFolder(String),
     /// 描くチャンネルの PNG を書き出すファイルを選ぶ。
@@ -826,6 +802,8 @@ pub enum DialogRequest {
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。
     PsdExport,
+    /// 配布用に保存の保存先を選ぶ。
+    DistributeSave,
     /// ステンシルの画像（PNG）を選ぶ。
     OpenStencil,
     /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT。複数）を選ぶ。
@@ -848,6 +826,7 @@ pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Opti
     let mut doc = Document::new(width, height).expect("文書の大きさ");
     let first = doc.add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
+    crate::look::apply_new_set_look(&mut doc);
     (doc, first)
 }
 
@@ -900,6 +879,8 @@ impl AppState {
             m2: M2State::default(),
             mat: Default::default(),
             region: Default::default(),
+            subtools: Default::default(),
+            ramp_sets: Default::default(),
             doc,
             doc_epoch: 0,
             stroke: None,
@@ -910,6 +891,8 @@ impl AppState {
             colorsets: crate::colorsets::ColorSets::default(),
             view: ViewState::default(),
             message: String::new(),
+            toast: crate::toast::Toast::default(),
+            usage: crate::usage::Usage::default(),
             property_tab: 0,
             sections: HashMap::new(),
             renaming: None,
@@ -935,14 +918,18 @@ impl AppState {
             model: None,
             link: LinkView::default(),
             link_request: None,
+            link_originals: Default::default(),
+            resolution_chosen: false,
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
             shelf: ShelfState::default(),
+            library: Default::default(),
             sel: crate::selection::SelState::default(),
             bake: Default::default(),
             export: Default::default(),
             psd: Default::default(),
+            distribute: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -988,6 +975,8 @@ impl AppState {
             return false;
         }
         if tool != self.tool {
+            // 今の道具の設定を覚え、入る道具の今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
+            self.subtool_leave(self.tool);
             self.sel_tool_changed();
             if !keep_effect {
                 self.fx.selected = None; // 選んだ効果の欄は道具を替えたら閉じる
@@ -997,6 +986,7 @@ impl AppState {
             self.path_tool_changed();
             self.gradient_cancel_drag();
             self.drafting_cancel();
+            self.subtool_enter(tool);
         }
         self.tool = tool;
         true
@@ -1052,11 +1042,33 @@ impl AppState {
     /// 今のツールで描くブラシの設定（ペンの消しゴムの端なら消す）。
     pub fn stroke_settings(&self, pen_eraser: bool) -> BrushSettings {
         self.brush
-            .settings(self.color.main, self.tool == Tool::Eraser || pen_eraser)
+            .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
-    /// 操作を当てる。描いている最中は、表示と色の操作のほかは断る。
+    /// `message` を書く操作の入口。前の文を預かって `message` を空にする（出口で、書かれたかを前と同じ文でも見分けて、知らせにする）。
+    /// 操作の中では、前の操作の文は見えない。
+    pub fn message_begin(&mut self) -> String {
+        self.toast.begin(&mut self.message)
+    }
+
+    /// `message_begin` の出口。書かれていれば新しい知らせとして出し、書かれていなければ前の文を戻す。
+    pub fn message_end(&mut self, prior: String) {
+        self.toast.end(&mut self.message, prior);
+    }
+
+    /// `message` を明示して空にする（操作の中では、空のまま終わっても前の文を戻さない。保存の結果が書かれたかを見分ける所が使う）。
+    pub fn clear_message(&mut self) {
+        self.toast.clear(&mut self.message);
+    }
+
+    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
     pub fn apply(&mut self, action: Action) {
+        let prior = self.message_begin();
+        self.apply_action(action);
+        self.message_end(prior);
+    }
+
+    fn apply_action(&mut self, action: Action) {
         crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
         let refuse = |s: &mut AppState| {
@@ -1086,11 +1098,13 @@ impl AppState {
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
+            Action::Look(op) => self.look_apply(op),
             Action::Region(a) => self.region_apply(a),
             Action::Shelf(op) => self.shelf_apply(op),
             Action::Fx(op) => self.fx_apply(op),
             Action::Stencil(op) => self.stencil_op(op),
             Action::Brush(action) => self.brush_action(action),
+            Action::SubTool(action) => self.subtool_action(action),
             Action::Sel(action) => self.sel_action(action),
             Action::Path(a) => self.path_apply(a),
             Action::Fill(op) => self.fill_apply(op),
@@ -1390,6 +1404,7 @@ impl AppState {
             Action::Bake(a) => self.bake_apply(a),
             Action::Export(a) => self.export_apply(a),
             Action::Psd(a) => self.psd_apply(a),
+            Action::Distribute(a) => self.distribute_apply(a),
             Action::Project(a) => self.np_apply(a),
             Action::Update(a) => self.update_apply(a),
             Action::Prefs(a) => self.prefs_apply(a),

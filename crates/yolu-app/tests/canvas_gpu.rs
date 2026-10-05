@@ -27,7 +27,7 @@ use yolu_gpu::Unsupported;
 
 /// 1280 × 800 の窓に、doc_w × doc_h の文書。
 fn canvas_app(doc_w: u32, doc_h: u32, policy: CanvasBackend) -> Harness<'static, YoluApp> {
-    let mut h = Harness::builder()
+    let mut h = common::gpu_thread::builder()
         .with_size(vec2(1280.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
@@ -860,6 +860,9 @@ fn same_id_reload(policy: CanvasBackend) {
         0,
         "世代の巻き戻りを GPU の失敗にしない"
     );
+    // 「開きました」の知らせがキャンバスの左下の隅に重なるので、読む前に消す
+    h.state_mut().state.clear_message();
+    h.run();
     let image = h.render().unwrap();
     assert_eq!(
         &screen_pixel(&h, &image, 7.0, 5.0)[..3],

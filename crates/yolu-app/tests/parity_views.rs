@@ -1,6 +1,7 @@
 //! UV の表示専用の入口と、日英のショートカットの窓。
+mod common;
 use egui::{vec2, Color32, Rect};
-use egui_kittest::{kittest::Queryable, Harness};
+use egui_kittest::kittest::Queryable;
 use yolu_app::{
     canvas::display::CanvasDisplay,
     lang::Lang,
@@ -17,7 +18,7 @@ fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
         app.sync_view3d();
         let mut display = CanvasDisplay::default();
         let mut ready = false;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(500.0, 400.0))
             .build_ui_state(
                 move |ui, app| {
@@ -52,7 +53,7 @@ fn shortcut_window_is_localized_and_closes_without_document_changes() {
         app.lang = lang;
         app.apply(Action::ShowShortcuts);
         let mut ready = false;
-        let mut h = Harness::builder()
+        let mut h = common::gpu_thread::builder()
             .with_size(vec2(850.0, 600.0))
             .build_ui_state(
                 move |ui, app| {

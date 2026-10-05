@@ -259,15 +259,44 @@ pub fn direction_name(lang: Lang, d: [f64; 3]) -> String {
     }
 }
 
+/// 形の名前（ワールドスペースのグラデーションの形。塗りつぶしの欄の「形」・新規塗りつぶしレイヤーのメニュー・効果の欄が同じ名前を使う）。
+/// 平面は後ろが 0・前が 1 の、1 方向のグラデーション（線形）。
 pub fn shape_name(lang: Lang, shape: Shape) -> &'static str {
     match shape {
         Shape::Box => lang.pick("ボックス", "Box"),
         Shape::Sphere => lang.pick("球", "Sphere"),
-        Shape::Plane => lang.pick("平面", "Plane"),
+        Shape::Plane => lang.pick("平面（線形）", "Plane (Linear)"),
+    }
+}
+
+/// 形の短い説明（メニューの項目のツールチップ）。
+pub fn shape_hint(lang: Lang, shape: Shape) -> &'static str {
+    match shape {
+        Shape::Box => lang.pick(
+            "箱の中は 1、面へ向かって 0 に消える",
+            "1 inside the box, fading to 0 at its faces",
+        ),
+        Shape::Sphere => lang.pick(
+            "球の中は 1、表面へ向かって 0 に消える",
+            "1 inside the sphere, fading to 0 at its surface",
+        ),
+        Shape::Plane => lang.pick(
+            "平面の後ろが 0、前が 1（1 方向のグラデーション）",
+            "0 behind the plane to 1 in front of it (a one-direction gradient)",
+        ),
     }
 }
 
 pub const SHAPES: [Shape; 3] = [Shape::Box, Shape::Sphere, Shape::Plane];
+
+/// 形の欄（塗りつぶしの欄・効果の欄）のツールチップ: 3 つの形の「名前: 説明」を 1 行ずつ。メニューの項目と同じ名前と説明の文。
+pub fn shape_tooltip(lang: Lang) -> String {
+    SHAPES
+        .iter()
+        .map(|s| format!("{}: {}", shape_name(lang, *s), shape_hint(lang, *s)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 pub fn read_mode_name(lang: Lang, mode: ReadMode) -> &'static str {
     match mode {

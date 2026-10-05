@@ -9,7 +9,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use yolu_io::{
-    generation_time_ms, utc_stamp, CommitOptions, Fault, Files, GenerationStore, StoreError,
+    generation_time_ms, utc_stamp, CommitOptions, Fault, Files, GenerationStore, LowSpace, SpaceGuard,
+    StoreError,
 };
 
 struct Dir(PathBuf);
@@ -35,8 +36,8 @@ impl Drop for Dir {
 const SET_A: &str = "11111111-1111-1111-1111-111111111111";
 const SET_B: &str = "22222222-2222-2222-2222-222222222222";
 
-fn bytes(b: &[u8]) -> Arc<[u8]> {
-    Arc::from(b.to_vec())
+fn bytes(b: &[u8]) -> yolu_io::Blob {
+    yolu_io::Blob::from(b)
 }
 fn files(value: u8) -> Files {
     let mut f = Files::new();
@@ -102,7 +103,7 @@ fn only_generations_beyond_the_chosen_count_are_removed() {
         assert!(kept.contains(&saved.id) && kept.contains(&previous));
         assert_eq!(pointer(&dir.0, "current"), saved.id);
         assert_eq!(pointer(&dir.0, "previous"), previous);
-        assert_eq!(&*store.load().unwrap().files["document.utpaint"], &[8u8]);
+        assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[8u8]);
         assert_eq!(
             contents(&dir.0),
             keep + 1,
@@ -149,7 +150,7 @@ fn files_in_the_generations_folder_that_are_not_generations_neither_stop_nor_suf
         .collect();
     assert_eq!(real.len(), 3, "置かれたものがあっても、設定の数まで整理する: {real:?}");
     assert!(real.contains(&saved.id));
-    assert_eq!(&*store.load().unwrap().files["document.utpaint"], &[8u8]);
+    assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[8u8]);
     // 世代でないものは、消さない
     assert!(folder.join(".DS_Store").is_file() && folder.join("desktop.ini").is_file());
     assert!(folder.join("20200101T000000000-abc").is_file());
@@ -259,7 +260,7 @@ fn an_unchanged_set_writes_no_content_again() {
     let second = store
         .commit(&f, &share(Some(2), Some(&first.token)))
         .unwrap();
-    assert_eq!(second.written_bytes, changed.len() as u64);
+    assert_eq!(second.written_bytes, changed.len());
     assert_eq!(second.reused_files, 1);
     assert_eq!(
         fs::metadata(&untouched).unwrap().modified().unwrap(),
@@ -582,17 +583,36 @@ fn manifests_with_unsafe_lines_are_refused() {
             store.load().err()
         );
     }
-    // 合計が予算を超える manifest は、壊れたものとは別に予算の拒否
+    // 合計が予算（設定の「レイヤーの画素」の予算から: 正本の数 × 予算の 4 倍 ＋ 768 MiB）を超える manifest は、壊れたものとは別に
+    // 予算の拒否（中身を読む前に）
+    let limited = GenerationStore::new(&dir.0).with_limits(yolu_io::Limits::from_layer_pixels(256 << 20));
+    let others: String = (0..4)
+        .map(|i| format!("{good} {} a{i}.bin\n", 500u64 << 20))
+        .collect();
     fs::write(
         &manifest,
-        format!(
-            "DOTPAINT-MANIFEST-2\n{good} {} a.bin\n{good} {} document.utpaint\n",
-            500u64 << 20,
-            300u64 << 20
-        ),
+        format!("DOTPAINT-MANIFEST-2\n{others}{good} {} document.utpaint\n", 300u64 << 20),
     )
     .unwrap();
-    assert!(matches!(store.load(), Err(StoreError::Budget(_))));
+    let refused = limited.load();
+    assert!(matches!(refused, Err(StoreError::Budget(_))), "{:?}", refused.err());
+    // セットごとの正本が予算の 4 倍を超えるのも、予算の拒否
+    let parts: String = (1..=5)
+        .map(|i| format!("{good} {} document.utpaint.{i}\n", 250u64 << 20))
+        .collect();
+    fs::write(
+        &manifest,
+        format!("DOTPAINT-MANIFEST-2\n{good} 1 document.utpaint\n{parts}"),
+    )
+    .unwrap();
+    let refused = limited.load();
+    assert!(
+        matches!(&refused, Err(StoreError::Budget(why)) if why.contains("レイヤーの画素")),
+        "{:?}",
+        refused.err()
+    );
+    // 予算を決めていない置き場は、形の上限（1 エントリ）だけで、量では断らない（中身が無いので壊れたものとして断る）
+    assert!(matches!(store.load(), Err(StoreError::Corrupt(_))));
 }
 
 #[test]
@@ -844,7 +864,7 @@ fn a_store_written_in_the_unity_layout_is_read_back() {
     ]
     .into_iter()
     .collect();
-    let got: BTreeMap<_, _> = loaded.files.iter().map(|(k, v)| (k.clone(), v.to_vec())).collect();
+    let got: BTreeMap<_, _> = loaded.files.iter().map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec())).collect();
     assert_eq!(got, expected);
     assert_eq!(generation_time_ms(id), Some(1_791_028_800_000));
     // Rust 版が確定を重ねても、その世代は previous として残る
@@ -883,14 +903,14 @@ fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
     assert!(names.iter().any(|n| n.starts_with("sets/") && n.ends_with("/document.utpaint")));
     assert!(names.iter().any(|n| n.starts_with("sets/") && n.ends_with("/selection.bin")));
     assert!(names.iter().any(|n| n.starts_with("resources/") && n.ends_with(".png")));
-    assert!(String::from_utf8_lossy(&newest.files["recovery.json"]).contains("second"));
+    assert!(String::from_utf8_lossy(&newest.files["recovery.json"].bytes().unwrap()).contains("second"));
     let listed = store.list().unwrap();
     assert_eq!(listed.len(), 2);
     assert!(listed[0].is_current && listed[0].shared && listed[0].documents == 1 && listed[0].problem.is_none());
     assert!(listed[1].problem.is_none());
     assert_eq!(pointer(&dir.0, "previous"), listed[1].id, "Unity 版の previous の書き方（File.Replace）も同じ形");
     let older = store.load_generation(&listed[1].id).unwrap();
-    assert!(String::from_utf8_lossy(&older.files["recovery.json"]).contains("first"));
+    assert!(String::from_utf8_lossy(&older.files["recovery.json"].bytes().unwrap()).contains("first"));
     assert_eq!(contents(&dir.0), 6, "選択範囲と resources の中身は 2 世代で共有");
     // Rust 版が確定を重ねると、Unity 版の current は previous になり、2 つ前は整理される（共有していた中身は残る）
     let mut next = Files::new();
@@ -999,7 +1019,7 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
         id: id.clone(),
         name: "セット".into(),
         material: MaterialRef::PendingSlot(0),
-        document: Some(NativeDocument::from_core(&doc).unwrap()),
+        document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: composite_pngs(&doc).unwrap(),
     };
     let project = Project::create(writer, &[spec], &id).unwrap();
@@ -1017,11 +1037,196 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
     assert_eq!(reopened.current_set(), id);
     assert_eq!(reopened.sets().len(), 1);
     assert_eq!(
-        reopened.sets()[0].document.to_bytes(),
-        project.sets()[0].document.to_bytes()
+        reopened.sets()[0].document.to_bytes().unwrap(),
+        project.sets()[0].document.to_bytes().unwrap()
     );
     // 世代の名前に使えないエントリ（`.ylp` の名前の範囲の外）を含む Project は作れない
     let mut bad = entries.clone();
     bad.insert("brushes/../x".into(), bytes(b"x"));
     assert!(Project::from_entries(bad).is_err());
+}
+
+/// フォルダの中のファイルの長さの合計（試験の物差し）。
+fn walk_bytes(path: &Path) -> u64 {
+    let mut total = 0;
+    for entry in fs::read_dir(path).unwrap() {
+        let entry = entry.unwrap();
+        let meta = fs::symlink_metadata(entry.path()).unwrap();
+        total += if meta.is_dir() { walk_bytes(&entry.path()) } else { meta.len() };
+    }
+    total
+}
+
+#[test]
+fn the_footprint_lists_each_generations_shared_contents_and_counts_the_whole_folder() {
+    let dir = Dir::new();
+    let store = GenerationStore::new(&dir.0);
+    assert!(store.footprint().unwrap().generations.is_empty(), "置き場がまだ無ければ空");
+    let a = store.commit(&files(1), &share(None, None)).unwrap();
+    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    let footprint = store.footprint().unwrap();
+    let ids: Vec<&str> = footprint.generations.iter().map(|g| g.id.as_str()).collect();
+    assert_eq!(ids, [b.id.as_str(), a.id.as_str()], "新しい順");
+    let unchanged = hash_of(&vec![0u8; 16384]);
+    for g in &footprint.generations {
+        assert!(g.problem.is_none() && g.time_ms.is_some());
+        assert_eq!(g.contents.len(), 2, "正本と変わらない中身");
+        assert!(g.contents.contains(&(unchanged.clone(), 16384)), "変わらない中身は両方の世代が使う");
+        assert!(g.own_bytes > 0 && g.own_bytes < 1024, "共有の世代のフォルダの中は manifest だけ");
+    }
+    assert_eq!(footprint.total_bytes, walk_bytes(&dir.0));
+    assert!(footprint.total_bytes >= 16384 + 2);
+}
+
+#[test]
+fn the_footprint_of_a_flat_generation_is_its_own_bytes_and_a_damaged_one_is_reported() {
+    let dir = Dir::new();
+    let store = GenerationStore::new(&dir.0);
+    let flat = CommitOptions { expected: None, keep: None, share: false };
+    let a = store.commit(&files(1), &flat).unwrap();
+    let footprint = store.footprint().unwrap();
+    assert_eq!(footprint.generations.len(), 1);
+    assert!(footprint.generations[0].contents.is_empty());
+    assert!(footprint.generations[0].own_bytes >= 16385, "中身は世代の中に持つ");
+    // manifest が無い世代は、理由を付けて数え、占めるバイト数は分かる
+    fs::remove_file(dir.path("generations").join(&a.id).join("manifest.sha256")).unwrap();
+    let footprint = store.footprint().unwrap();
+    let g = &footprint.generations[0];
+    assert!(g.problem.is_some() && g.contents.is_empty());
+    assert!(g.own_bytes >= 16385);
+}
+
+#[test]
+fn a_space_guard_is_asked_once_with_only_the_bytes_that_are_new() {
+    let dir = Dir::new();
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let seen = asked.clone();
+    let guard: SpaceGuard = Arc::new(move |needed| {
+        seen.lock().unwrap().push(needed);
+        Ok(())
+    });
+    let store = GenerationStore::new(&dir.0).with_space_guard(guard);
+    let a = store.commit(&files(1), &share(None, None)).unwrap();
+    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    // 同じ中身だけの確定は、新しく書くものが無い
+    let c = store.commit(&files(2), &share(None, Some(&b.token))).unwrap();
+    // 同じ中身が 2 つの名前にあっても、新しく書くのは 1 度分
+    let mut twins = files(3);
+    twins.insert("twin-a.bin".into(), bytes(&vec![7u8; 1000]));
+    twins.insert("twin-b.bin".into(), bytes(&vec![7u8; 1000]));
+    let d = store.commit(&twins, &share(None, Some(&c.token))).unwrap();
+    assert_eq!(*asked.lock().unwrap(), [16384 + 1, 1, 0, 1 + 1000]);
+    assert_eq!(d.written_bytes, 1 + 1000);
+    // 中身を世代の中に持つ形は、ぜんぶ新しく書く
+    let flat = CommitOptions { expected: Some(&d.token), keep: None, share: false };
+    store.commit(&files(4), &flat).unwrap();
+    assert_eq!(asked.lock().unwrap().last(), Some(&(16384 + 1)));
+}
+
+#[test]
+fn a_refusing_space_guard_writes_nothing_and_keeps_the_last_generation() {
+    let dir = Dir::new();
+    let first = GenerationStore::new(&dir.0);
+    let a = first.commit(&files(1), &share(None, None)).unwrap();
+    let before = walk_bytes(&dir.0);
+    let low = LowSpace { available: 10, needed: 20, reserve: 5 };
+    let refuse: SpaceGuard = Arc::new(move |needed| {
+        assert_eq!(needed, 1, "変わった正本の分だけ");
+        Err(low)
+    });
+    let store = GenerationStore::new(&dir.0).with_space_guard(refuse);
+    match store.commit(&files(2), &share(None, Some(&a.token))) {
+        Err(StoreError::LowSpace(got)) => assert_eq!(got, low),
+        other => panic!("空きの断りのはず: {other:?}"),
+    }
+    assert_eq!(pointer(&dir.0, "current"), a.id, "current は前のまま");
+    assert_eq!(generations(&dir.0), vec![a.id.clone()]);
+    assert_eq!(walk_bytes(&dir.0), before, "作りかけも新しい中身も残さない");
+    assert!(!fs::read_dir(&dir.0)
+        .unwrap()
+        .any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".staging-")));
+    assert_eq!(&first.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[1u8]);
+    // 断られても、次の確定（確かめなし）は期待の札のまま通る
+    first.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+}
+
+/// 落ちた書き込みの残り: 作りかけのフォルダ（`<札>.pending` 入り。manifest はまだ無い）と、確定の前に落ちて誰も使わない中身。
+fn leave_a_crashed_write(root: &Path, name: &str, pending_bytes: usize) -> PathBuf {
+    let staging = root.join(format!(".staging-{name}"));
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(staging.join(format!("{}.pending", hash_of(name.as_bytes()))), vec![9u8; pending_bytes]).unwrap();
+    staging
+}
+
+#[test]
+fn a_crashed_writes_leftovers_are_reclaimed_and_nothing_a_generation_uses_is_touched() {
+    let dir = Dir::new();
+    let store = GenerationStore::new(&dir.0);
+    let a = store.commit(&files(1), &share(None, None)).unwrap();
+    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    let stale = leave_a_crashed_write(&dir.0, "20200101T000000000-x", 50_000);
+    // 中身は書いたが、manifest を書く前に落ちた: どの世代も使わない
+    let orphan = dir.0.join("contents").join(format!("{}.bin", hash_of(b"orphan")));
+    fs::write(&orphan, vec![7u8; 30_000]).unwrap();
+    // manifest が無い作りかけが 1 つでもあると、整理は何も消さない（この残りが、使う量が減らない原因だった）
+    assert!(store.disk_bytes() >= 80_000);
+    store.remove_generation(&a.id).unwrap();
+    assert!(orphan.exists(), "作りかけが残っているあいだは、使われない中身も消えない");
+    let before = store.disk_bytes();
+    let freed = store.reclaim_abandoned().unwrap();
+    assert!(freed >= 80_000, "{freed}");
+    assert_eq!(store.disk_bytes(), before - freed);
+    assert!(!stale.exists() && !orphan.exists());
+    // 世代と、その共有の中身は無事
+    assert_eq!(generations(&dir.0), vec![b.id.clone()]);
+    assert_eq!(pointer(&dir.0, "current"), b.id);
+    assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[2u8]);
+    // もう 1 度呼んでも何も起きない
+    assert_eq!(store.reclaim_abandoned().unwrap(), 0);
+    // 置き場がまだ無ければ、何もせず（置き場も作らず）0
+    let none = Dir::new();
+    assert_eq!(GenerationStore::new(&none.0).reclaim_abandoned().unwrap(), 0);
+    assert!(!none.0.exists());
+}
+
+#[test]
+fn leftovers_are_not_reclaimed_while_a_writer_holds_the_lock_and_a_running_commit_is_never_cut() {
+    let dir = Dir::new();
+    let store = GenerationStore::new(&dir.0);
+    let a = store.commit(&files(1), &share(None, None)).unwrap();
+    let stale = leave_a_crashed_write(&dir.0, "20200101T000000000-y", 10_000);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.path(".save.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    assert!(matches!(store.reclaim_abandoned(), Err(StoreError::Busy)));
+    assert!(stale.exists(), "書いている最中かもしれないので、触らない");
+    drop(lock);
+    assert!(store.reclaim_abandoned().unwrap() >= 10_000);
+    assert!(!stale.exists());
+    assert_eq!(pointer(&dir.0, "current"), a.id);
+}
+
+#[test]
+fn a_symlinked_staging_is_not_followed_and_a_generation_is_never_removed_by_reclaiming() {
+    let dir = Dir::new();
+    let store = GenerationStore::new(&dir.0);
+    let a = store.commit(&files(1), &share(None, None)).unwrap();
+    // 置き場の外のフォルダ（利用者のもの）を指す `.staging-*` は、辿らない
+    let outside = Dir::new();
+    fs::create_dir_all(&outside.0).unwrap();
+    fs::write(outside.path("keep.bin"), b"mine").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside.0, dir.path(".staging-link")).unwrap();
+        store.reclaim_abandoned().unwrap();
+        assert!(outside.path("keep.bin").is_file());
+    }
+    #[cfg(not(unix))]
+    let _ = &outside;
+    assert_eq!(generations(&dir.0), vec![a.id]);
 }

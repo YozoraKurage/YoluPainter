@@ -421,7 +421,7 @@ fn bucket_properties_draw_new_labels_in_both_languages() {
                 let ctx = ui.ctx().clone();
                 let rect = ui.available_rect_before_wrap();
                 let mut rows = Rows::new(rect, rect.top());
-                region_props::body(ui, &mut s, &mut rows, &ctx);
+                region_props::fill_props(ui, &mut s, &mut rows, &ctx);
             });
             out.textures_delta.clear();
             labels.clear();

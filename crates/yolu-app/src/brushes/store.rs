@@ -1,7 +1,8 @@
 //! 利用者のブラシの保存（設定のフォルダの `brushes/`）。ブラシ 1 つが 1 ファイル（`brush-<番号>.ylbrush`）、並びは `order.conf`。
 //!
 //! 形式は 1 行目が `yolupainter-brush 1`（筆圧の応えを使うブラシだけ `yolupainter-brush 2`。最小値・曲線に加え、硬さを筆圧で変える切り替えだけでも 2 になる。
-//! 版 2 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 色の混ぜ（厚塗り）を使うブラシだけ `yolupainter-brush 3`（筆圧の応えも使えば、その項目も同じファイルに書く）。
+//! 版 2・3 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -19,8 +20,8 @@ use super::gaps::Gap;
 use super::images;
 use super::{canonical, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
-    Brush, BrushEffect, CoreError, DVec2, DualBrush, DualBrushMode, PaperTexture, PressureResponse,
-    TextureMode,
+    Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, MixGround, MixMode,
+    PaperTexture, PressureResponse, TextureMode,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, TipSelection, MAX_CURVE_POINTS};
@@ -32,6 +33,9 @@ pub const HEADER: &str = "yolupainter-brush 1";
 /// 筆圧の応え（最小値・曲線・硬さの切り替え）を使うブラシの版。使わないブラシは版 1 のままで、今までと同じバイト。版 1 しか読めない
 /// 古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V2: &str = "yolupainter-brush 2";
+/// 色の混ぜ（厚塗り）を使うブラシの版。使わないブラシは版 1・2 のままで、今までと同じバイト。版 2 までしか読めない古いアプリは、
+/// このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V3: &str = "yolupainter-brush 3";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -291,7 +295,9 @@ pub struct Encoded {
 pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let mut pending = Pending::default();
-    let header = if uses_pressure_response(&b) {
+    let header = if uses_mix(&b) {
+        HEADER_V3
+    } else if uses_pressure_response(&b) {
         HEADER_V2
     } else {
         HEADER
@@ -389,6 +395,26 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         }
         if !r.curve().is_empty() {
             w.line(&format!("pressure.{name}.curve"), curve_text(r.curve()));
+        }
+    }
+    // 色の混ぜ（版 3。混ぜ方が切のブラシは書かない）
+    if uses_mix(&b) {
+        let m = &b.mix;
+        w.line("mix.mode", mix_mode_id(m.mode));
+        w.single("mix.paint", m.paint);
+        w.single("mix.density", m.density);
+        w.single("mix.stretch", m.stretch);
+        w.line("mix.ground", mix_ground_id(m.ground));
+        for (name, on, r) in mix_pressure_items(m) {
+            if on {
+                w.bool(&format!("mix.{name}.pressure"), true);
+            }
+            if r.min() != 0.0 {
+                w.single(&format!("mix.{name}.min"), r.min());
+            }
+            if !r.curve().is_empty() {
+                w.line(&format!("mix.{name}.curve"), curve_text(r.curve()));
+            }
         }
     }
     match b.effect {
@@ -499,6 +525,34 @@ fn uses_pressure_response(b: &Brush) -> bool {
     b.controls.pressure_hardness || !b.pressure.is_identity()
 }
 
+/// 色の混ぜを使うか（使えば版 3 で書く）。混ぜ方が切なら、ほかの値が既定でなくても使っていない（`canonical` が既定へそろえる）。
+fn uses_mix(b: &Brush) -> bool {
+    b.mix.is_active()
+}
+
+fn mix_mode_id(mode: MixMode) -> &'static str {
+    match mode {
+        MixMode::Off => "off",
+        MixMode::Mix => "mix",
+        MixMode::Smear => "smear",
+    }
+}
+
+fn mix_ground_id(ground: MixGround) -> &'static str {
+    match ground {
+        MixGround::Layer => "layer",
+        MixGround::Composite => "composite",
+    }
+}
+
+/// 色の混ぜの筆圧の項目（ファイルの名前・筆圧で変えるか・応え）。
+fn mix_pressure_items(m: &ColorMix) -> [(&'static str, bool, &PressureResponse); 2] {
+    [
+        ("paint", m.pressure_paint, &m.response_paint),
+        ("density", m.pressure_density, &m.response_density),
+    ]
+}
+
 /// 曲線の点を `x:y,x:y,…`（画面の精度 f32 の最短の表記）にする。
 pub(crate) fn curve_text(points: &[CurvePoint]) -> String {
     let parts: Vec<String> = points
@@ -561,6 +615,7 @@ pub fn decode_user(
     let version = match lines.next() {
         Some(HEADER) => 1,
         Some(HEADER_V2) => 2,
+        Some(HEADER_V3) => 3,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
@@ -680,6 +735,10 @@ pub fn decode_user(
             }
         }
     }
+    // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）
+    if version >= 3 {
+        b.mix = read_mix(&mut r)?;
+    }
     b.effect = match r.take("effect").as_deref() {
         None | Some("paint") => BrushEffect::Paint,
         Some("blur") => BrushEffect::Blur {
@@ -735,6 +794,43 @@ pub fn decode_user(
     })
 }
 
+/// 版 3 の色の混ぜの項目を読む（無い項目は既定）。
+fn read_mix(r: &mut Reader) -> Result<ColorMix, StoreError> {
+    let mut m = ColorMix::default();
+    m.mode = match r.take("mix.mode").as_deref() {
+        None | Some("off") => MixMode::Off,
+        Some("mix") => MixMode::Mix,
+        Some("smear") => MixMode::Smear,
+        Some(_) => return Err(StoreError::BadValue("mix.mode".into())),
+    };
+    m.paint = r.single("mix.paint", m.paint)?;
+    m.density = r.single("mix.density", m.density)?;
+    m.stretch = r.single("mix.stretch", m.stretch)?;
+    m.ground = match r.take("mix.ground").as_deref() {
+        None | Some("layer") => MixGround::Layer,
+        Some("composite") => MixGround::Composite,
+        Some(_) => return Err(StoreError::BadValue("mix.ground".into())),
+    };
+    for name in ["paint", "density"] {
+        let on = r.bool(&format!("mix.{name}.pressure"), false)?;
+        let min = r.single(&format!("mix.{name}.min"), 0.0)?;
+        let curve_key = format!("mix.{name}.curve");
+        let curve = match r.take(&curve_key) {
+            Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
+            None => Vec::new(),
+        };
+        let response = PressureResponse::new(min, curve).map_err(StoreError::Invalid)?;
+        if name == "paint" {
+            m.pressure_paint = on;
+            m.response_paint = response;
+        } else {
+            m.pressure_density = on;
+            m.response_density = response;
+        }
+    }
+    Ok(m)
+}
+
 // ───────── フォルダ ─────────
 
 /// `brush-<8 桁の 16 進>.ylbrush` の番号。
@@ -781,6 +877,19 @@ fn replace_file(
     verify: impl FnOnce(&str) -> bool,
 ) -> Result<(), StoreError> {
     replace_bytes(path, text.as_bytes(), MAX_FILE_BYTES, |read| {
+        std::str::from_utf8(read).is_ok_and(verify)
+    })
+}
+
+/// 設定のフォルダの文のファイルを置く（一時ファイルへ書いて読み戻して確かめ、最後の 1 回の置換で確定）。ブラシ以外の設定のファイル
+/// （サブツールのプリセット）も、同じ置き方を使う。`limit` はそのファイルの大きさの上限（読み戻しもここまで。超えれば `TooLarge`）。
+pub(crate) fn replace_text(
+    path: &Path,
+    text: &str,
+    limit: u64,
+    verify: impl FnOnce(&str) -> bool,
+) -> Result<(), StoreError> {
+    replace_bytes(path, text.as_bytes(), limit, |read| {
         std::str::from_utf8(read).is_ok_and(verify)
     })
 }
@@ -1321,6 +1430,142 @@ mod tests {
         ));
     }
 
+    /// 色の混ぜを全項目に入れたブラシ（筆圧の応えも使う）。
+    fn mixing_brush() -> Brush {
+        Brush {
+            mix: ColorMix {
+                mode: MixMode::Smear,
+                paint: 0.625,
+                density: 0.8,
+                stretch: 0.25,
+                ground: MixGround::Composite,
+                pressure_paint: true,
+                pressure_density: true,
+                response_paint: PressureResponse::new(0.2, vec![]).unwrap(),
+                response_density: PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)]).unwrap(),
+            },
+            ..Brush::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_that_mixes_is_version_three_and_round_trips() {
+        let u = user(5, mixing_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 3\n"), "{t}");
+        for key in [
+            "mix.mode=smear",
+            "mix.paint=0.625",
+            "mix.density=0.8",
+            "mix.stretch=0.25",
+            "mix.ground=composite",
+            "mix.paint.pressure=1",
+            "mix.paint.min=0.2",
+            "mix.density.pressure=1",
+            "mix.density.curve=0:0,0.5:0.75,1:1",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        // 既定の項目（最小値 0・直線）は書かない
+        assert!(!t.contains("mix.paint.curve"), "{t}");
+        assert!(!t.contains("mix.density.min"), "{t}");
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        assert_eq!(text(&UserBrush { brush: back, ..u }), t);
+        // 混ぜる + 筆圧の応えは、同じ版 3 のファイルに両方の項目を書く
+        let mut both = mixing_brush();
+        both.controls.pressure_hardness = true;
+        both.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
+        let t = text(&user(6, both.clone()));
+        assert!(t.starts_with("yolupainter-brush 3\n"), "{t}");
+        assert!(t.lines().any(|l| l == "pressure.size.min=0.25"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&both));
+        // 値は画面の精度（f32）で書く: 半端な値は丸めた値と同じになり、何度書いても変わらない
+        let mut odd = mixing_brush();
+        odd.mix.paint = 0.123_456_79;
+        let u = user(7, odd);
+        let t = text(&u);
+        let back = decode(&t).unwrap().2;
+        assert_eq!(back, u.brush);
+        assert_eq!(back.mix.paint, 0.123_456_79_f32 as f64);
+    }
+
+    #[test]
+    fn a_brush_that_does_not_mix_keeps_its_version_and_its_bytes() {
+        let plain = text(&user(1, Brush::default()));
+        assert!(plain.starts_with("yolupainter-brush 1\n"), "{plain}");
+        assert!(!plain.contains("mix."), "{plain}");
+        // 混ぜ方が切なら、ほかの値が既定でなくても使っていない: 版もバイトも混ぜを足す前と同じ
+        let mut off = Brush::default();
+        off.mix.paint = 0.1;
+        off.mix.density = 0.2;
+        off.mix.stretch = 0.9;
+        off.mix.ground = MixGround::Composite;
+        off.mix.pressure_paint = true;
+        assert_eq!(text(&user(1, off)), plain);
+        // 筆圧の応えだけのブラシは版 2 のまま、混ぜの行は無い
+        let t = text(&user(1, pressure_brush()));
+        assert!(t.starts_with("yolupainter-brush 2\n"), "{t}");
+        assert!(!t.contains("mix."), "{t}");
+        // 組み込みの全部が、混ぜを使わない（版 3 で書かれるのは厚塗りのブラシだけ）
+        for b in super::super::builtin::all() {
+            let u = UserBrush {
+                id: 1,
+                name: "x".into(),
+                group: b.group,
+                brush: b.brush.clone(),
+                import: None,
+            };
+            let t = encode(&u).unwrap().text;
+            assert_eq!(t.starts_with("yolupainter-brush 3\n"), b.brush.mix.is_active(), "{}", b.id);
+        }
+    }
+
+    #[test]
+    fn mix_items_belong_to_version_three_and_are_checked() {
+        let v3 = text(&user(1, mixing_brush()));
+        // 版 1・2 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
+        for old in ["yolupainter-brush 1", "yolupainter-brush 2"] {
+            let as_old = v3.replacen("yolupainter-brush 3", old, 1);
+            assert!(
+                matches!(
+                    decode(&as_old).unwrap_err(),
+                    StoreError::UnknownKey(k) if k.starts_with("mix.") || k.starts_with("pressure.")
+                ),
+                "{old}"
+            );
+        }
+        // 版 3 でも、項目が無ければ既定（混ぜない）
+        let plain = text(&user(1, Brush::default())).replacen("yolupainter-brush 1", "yolupainter-brush 3", 1);
+        assert_eq!(decode(&plain).unwrap().2, canonical(&Brush::default()));
+        // 今までの版のファイルは、そのまま読めて混ぜない
+        for header in ["yolupainter-brush 1", "yolupainter-brush 2"] {
+            let old = text(&user(1, Brush::default())).replacen("yolupainter-brush 1", header, 1);
+            assert!(!decode(&old).unwrap().2.mix.is_active(), "{header}");
+        }
+        let bad = |from: &str, to: &str| decode(&v3.replace(from, to)).unwrap_err();
+        assert!(matches!(bad("mix.mode=smear", "mix.mode=blend"), StoreError::BadValue(k) if k == "mix.mode"));
+        assert!(matches!(bad("mix.ground=composite", "mix.ground=all"), StoreError::BadValue(k) if k == "mix.ground"));
+        assert!(matches!(bad("mix.paint=0.625", "mix.paint=lots"), StoreError::BadValue(k) if k == "mix.paint"));
+        assert!(matches!(bad("mix.paint=0.625", "mix.paint=1.5"), StoreError::Invalid(_)));
+        assert!(matches!(bad("mix.density=0.8", "mix.density=-0.1"), StoreError::Invalid(_)));
+        assert!(matches!(bad("mix.stretch=0.25", "mix.stretch=NaN"), StoreError::BadValue(k) if k == "mix.stretch"));
+        assert!(matches!(bad("mix.paint.min=0.2", "mix.paint.min=2"), StoreError::Invalid(_)));
+        assert!(matches!(
+            bad("mix.density.curve=0:0,0.5:0.75,1:1", "mix.density.curve=0:0;1:1"),
+            StoreError::BadValue(k) if k == "mix.density.curve"
+        ));
+        assert!(matches!(
+            bad("mix.density.curve=0:0,0.5:0.75,1:1", "mix.density.curve=0:0,0.5:3,1:1"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(bad("mix.paint.pressure=1", "mix.paint.pressure=yes"), StoreError::BadValue(_)));
+        assert!(matches!(
+            decode(&format!("{v3}mix.paint=0.5\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
     #[test]
     fn broken_files_are_refused_with_a_reason() {
         let ok = text(&user(1, Brush::default()));
@@ -1331,7 +1576,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 3\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 4\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -1681,7 +1926,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 3\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 4\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -1690,7 +1935,7 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 3\nname=future\n"
+            "yolupainter-brush 4\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

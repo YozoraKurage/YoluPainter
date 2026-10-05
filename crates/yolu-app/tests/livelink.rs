@@ -18,7 +18,7 @@ use yolu_app::engine::composite_pixel;
 use yolu_app::livelink::LinkStatus;
 use yolu_app::state::Action;
 use yolu_app::YoluApp;
-use yolu_protocol::link::{connect_and_greet, LinkError};
+use yolu_protocol::link::{connect_and_greet, connect_and_greet_as, LinkError};
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
@@ -127,7 +127,12 @@ struct FakeUnity {
 
 impl FakeUnity {
     fn connect(name: &str) -> FakeUnity {
-        let (conn, mut reader, welcome) = connect_and_greet(name, "試験の Unity").unwrap();
+        // 版を名乗る Unity（名乗らない古いブリッジだと、入口の印は版のずれの警告の色になる。link_version.rs）
+        // 機能の印はスタンドアロンと同じ（印のずれも警告になるので、印を立てる機能が増えても色は変わらない）
+        let identity = Identity::unity("試験の Unity")
+            .with_version(Some(AppVersion::new(0, 3, 0)))
+            .with_features(yolu_app::livelink::FEATURES);
+        let (conn, mut reader, welcome) = connect_and_greet_as(name, &identity).unwrap();
         assert_eq!(welcome.version, PROTOCOL_VERSION);
         assert!(welcome.agent.starts_with("YoluPainter"));
         let (tx, rx) = mpsc::channel();
@@ -149,8 +154,30 @@ impl FakeUnity {
         FakeUnity { conn, rx }
     }
 
+    /// 送る。モデルのあとには、元の絵を送る Unity と同じに、来るはずの元の絵（Color の流し込み先に絵のあるマテリアル）の様子も送る
+    /// （この試験の Unity の役は元の絵を読めない: 画素なし。元の絵を待つセットが、いつまでも Unity に出ないままにならない）。
     fn send(&self, m: Message) {
         self.conn.send(&m).unwrap();
+        if let Message::Model(model) = &m {
+            for (i, info) in model.materials.iter().enumerate() {
+                if let Some(slot) = yolu_app::livelink_base::expected_slot(info) {
+                    self.conn
+                        .send(&Message::MaterialOriginal(MaterialOriginal {
+                            generation: model.generation,
+                            material: i as u32,
+                            slot,
+                            state: OriginalState::Unreadable,
+                            read: OriginalRead::File,
+                            compressed: false,
+                            width: 0,
+                            height: 0,
+                            srgb: true,
+                            pixels: Vec::new(),
+                        }))
+                        .unwrap();
+                }
+            }
+        }
     }
 
     /// フレームを進めながら、条件に合う命令が来るまで集める（集めた全部を返す）。
@@ -440,6 +467,7 @@ fn a_connection_without_the_right_key_is_refused_and_noted_while_the_link_stays_
             agent: "知らない相手".into(),
             features: 0,
             auth,
+            versions: None,
         })))
         .unwrap();
         let mut frames = FrameReader::new();
@@ -492,6 +520,7 @@ fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
         agent: "未来の Unity".into(),
         features: 0,
         auth: Some(hello_auth(&yolu_protocol::LinkKey::load(&name).unwrap())),
+        versions: None,
     })))
     .unwrap();
     let mut frames = FrameReader::new();
@@ -594,13 +623,17 @@ fn child_unity() {
         }
     };
     unsafe {
-        assert_eq!(ylb_abi_version(), 2);
+        assert_eq!(ylb_abi_version(), 5);
         let agent = "子の Unity";
-        let h = ylb_connect(
+        // 本物の C の口で、Unity のパッケージの版を名乗る
+        let version = "0.3.0";
+        let h = ylb_connect_with(
             name.as_ptr(),
             name.len() as i32,
             agent.as_ptr(),
             agent.len() as i32,
+            version.as_ptr(),
+            version.len() as i32,
         );
         assert_ne!(h, 0);
         poll(h, "つながる", Box::new(|| ylb_status(h) == 1));
@@ -650,6 +683,30 @@ fn child_unity() {
         assert_eq!(ylb_model_submesh(h, 0, 0, [0, 2, 1].as_ptr(), 3), 0);
         assert_eq!(ylb_model_submesh(h, 0, 1, [1, 2, 3].as_ptr(), 3), 0);
         assert_eq!(ylb_model_send(h), 1);
+        // 元の絵（原本のファイルから読んだ、同じ大きさの平らな絵）。揃うまで、スタンドアロンはセットを出さない
+        for (i, (size, color)) in [(256u32, [200u8, 100, 50, 255]), (512, [10, 200, 90, 255])]
+            .iter()
+            .enumerate()
+        {
+            let (slot, pixels) = ("_MainTex", color.repeat((size * size) as usize));
+            assert_eq!(
+                ylb_original_send(
+                    h,
+                    i as i32,
+                    slot.as_ptr(),
+                    slot.len() as i32,
+                    0,
+                    0,
+                    0,
+                    *size,
+                    *size,
+                    1,
+                    pixels.as_ptr(),
+                    pixels.len() as i32,
+                ),
+                1
+            );
+        }
         poll(h, "2 つのセット", Box::new(|| ylb_set_count(h) == 2));
         let mut infos = Vec::new();
         for i in 0..2 {
@@ -787,6 +844,16 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
         next_child_line(&mut h, &rx, &mut child, "接続完了"),
         "connected"
     );
+    // 本物の C の口（ylb_connect_with）で名乗った Unity のパッケージの版が、挨拶でスタンドアロンに届く
+    let peer = h.state().state.link.link.as_ref().map(|l| l.peer.app_version());
+    assert_eq!(peer, Some(Some(AppVersion::new(0, 3, 0))));
+    // 版は揃っている（子のブリッジの機能の印は、ブリッジが出す印で、スタンドアロンの印とは別に決まる）
+    assert!(h
+        .state()
+        .state
+        .link
+        .skew()
+        .is_none_or(|s| s.update_peer.is_none() && s.update_self.is_none()));
     let body = next_child_line(&mut h, &rx, &mut child, "Bodyの初回セット");
     let hair = next_child_line(&mut h, &rx, &mut child, "Hairの初回セット");
     let s = &h.state().state;

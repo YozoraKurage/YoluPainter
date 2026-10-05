@@ -37,6 +37,12 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern ulong ylb_connect(byte* name, int name_len, byte* agent, int agent_len);
 
         /// <summary>
+        ///  `ylb_connect`（自分のアプリの版を挨拶で名乗る。Unity のパッケージの版の文字列「0.3.0」など。読めない・空なら名乗らない）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_connect_with", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_connect_with(byte* name, int name_len, byte* agent, int agent_len, byte* app_version, int app_version_len);
+
+        /// <summary>
         ///  切る（Bye を送る。共有メモリの写像を手放す）。番号はもう使えない。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_disconnect", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -65,6 +71,24 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_serial", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern ulong ylb_serial(ulong handle);
+
+        /// <summary>
+        ///  このつながりで使える機能の印（双方が出した印の共通部分。つながるまでは 0）。印の要る新しい命令は、ここに立っているときだけ送る。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_common_features", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_common_features(ulong handle);
+
+        /// <summary>
+        ///  相手（スタンドアロン）のアプリの版（`major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`）。つながっていない・版を名乗らない古い相手は `u64::MAX`。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_peer_app_version", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_peer_app_version(ulong handle);
+
+        /// <summary>
+        ///  版のずれと機能の印の様子を取り出す。返すのは `state`（0 = まだ無い、1 = つながった、2 = 版の範囲が合わず断られた）、負は失敗。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_link_report", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_link_report(ulong handle, YlbLinkReport* report);
 
         /// <summary>
         ///  知らせを 1 つ取り出す。取り出せば 1、無ければ 0。
@@ -170,6 +194,81 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_pose_send(ulong handle);
 
         /// <summary>
+        ///  マテリアルの値の組み立てを始める（前の組み立ては捨てる）。送ったモデルがあるときだけ。`material` は送ったモデルのマテリアルの番号、
+        ///  `kind` は 0 = 値なし（前に送った値を捨てさせる）・1 = lilToon、`source` は何の対応と確かめたかの文（人に見せるだけ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_begin", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_begin(ulong handle, int material, int kind, byte* shader, int shader_len, byte* source, int source_len);
+
+        /// <summary>
+        ///  Float・Range の値を足す（有限の数だけ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_float", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_float(ulong handle, byte* name, int name_len, float value);
+
+        /// <summary>
+        ///  Integer の値を足す。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_int", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_int(ulong handle, byte* name, int name_len, int value);
+
+        /// <summary>
+        ///  色の値を足す（マテリアルに入っているままの値。`[HDR]` でない色はガンマの空間）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_color", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_color(ulong handle, byte* name, int name_len, float r, float g, float b, float a);
+
+        /// <summary>
+        ///  ベクトルの値を足す（テクスチャのタイリング・オフセットは `&lt;名前&gt;_ST` の名前で）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_vector", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_vector(ulong handle, byte* name, int name_len, float x, float y, float z, float w);
+
+        /// <summary>
+        ///  有効なキーワードを足す（重ねて足したものは 1 つ）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_keyword", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_keyword(ulong handle, byte* name, int name_len);
+
+        /// <summary>
+        ///  描いていないスロットの様子を足す。`state`: 0 入っていない・1 絵を送る（この値を送った後に ylb_texture_send）・2 前に送った絵と同じ・
+        ///  3 予算を超えて送らない・4 読めない。`width`・`height` は元のテクスチャの大きさ。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_slot", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_slot(ulong handle, byte* name, int name_len, int state, uint width, uint height);
+
+        /// <summary>
+        ///  組み立てた値を送る（積むだけ）。返すのは 1 = 積んだ、0 = スタンドアロンに印（MATERIAL_VALUES）が無いので送らない（組み立ては捨てる）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_values_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_values_send(ulong handle);
+
+        /// <summary>
+        ///  描いていないスロットの絵を送る（積むだけ。直前の値で状態 1 と言ったスロット）。`pixels` は RGBA8（straight）で行は下から、
+        ///  `pixel_len` は幅 × 高さ × 4。辺は MAX_SLOT_TEXTURE_SIZE まで（送る側が縮める）。`srgb` が 0 でなければ Unity はこの絵を sRGB として
+        ///  読む。返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_texture_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_texture_send(ulong handle, int material, byte* slot, int slot_len, uint width, uint height, int srgb, byte* pixels, int pixel_len);
+
+        /// <summary>
+        ///  元の絵を送る（積むだけ）。Color の流し込み先のスロットの元のテクスチャ 1 つ（直前のモデルのマテリアルで絵が入っているもの）。
+        ///  `state` は 0 = 絵が付く・1 = 読めない・2 = 辺が上限を超える・3 = 全部の絵の予算を超える（1〜3 は画素なし。`width`・`height` は元の
+        ///  テクスチャの大きさ）、`read` は 0 = 原本のファイル・1 = 取り込んだ絵の CPU の値・2 = GPU を通して、`flags` の bit0 は圧縮された
+        ///  テクスチャから読んだ。`pixels` は RGBA8（straight）で行は下から、`pixel_len` は幅 × 高さ × 4（辺は MAX_ORIGINAL_SIZE まで）。
+        ///  `srgb` が 0 でなければ Unity はこの絵を sRGB として読む（ガンマの色空間のプロジェクトは真で送る）。
+        ///  返すのは 1 = 積んだ、0 = スタンドアロンに印が無いので送らない。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_original_send", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_original_send(ulong handle, int material, byte* slot, int slot_len, int state, int read, int flags, uint width, uint height, int srgb, byte* pixels, int pixel_len);
+
+        /// <summary>
+        ///  まだ送り終えていない（順番待ちに積んだ）命令のバイトの合計。大きな絵を続けて送るとき、これが小さくなるまで次を積まないための目安。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_pending_bytes", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern ulong ylb_pending_bytes(ulong handle);
+
+        /// <summary>
         ///  テクスチャセットの数。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_set_count", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
@@ -247,12 +346,109 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         internal static extern int ylb_test_server_replace_key(ulong server);
 
         /// <summary>
+        ///  自己診断のスタンドアロンの名乗りを決める（次につなぐブリッジから効く）。`app_version`・`min_peer` は `major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`
+        ///  （`u64::MAX` は版を名乗らない古いスタンドアロンの役）、`features` は出す機能の印。既定はこの DLL の版・要求なし・印なし。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_configure", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_configure(ulong server, ulong app_version, ulong min_peer, ulong features);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンの読めるプロトコルの版の範囲を決める（次につなぐブリッジから効く。ブリッジの範囲と重ならなければ、版の範囲の断りを返す）。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_set_protocol", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_set_protocol(ulong server, uint min, uint max);
+
+        /// <summary>
         ///  自己診断のスタンドアロンが受けたものの数。
         /// </summary>
         [DllImport(__DllName, EntryPoint = "ylb_test_server_stats", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern int ylb_test_server_stats(ulong server, YlbTestServerStats* stats);
 
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` の値のプロパティ `name` を `out`（4 つの f32。数は x、Int は x に
+        ///  数として）へ写す。返すのは型（0 Float・1 Int・2 Color・3 Vector）、無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_value", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_value(ulong server, uint material, byte* name, int name_len, float* @out);
 
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `name` の様子（0〜4。`ylb_values_slot` と同じ番号）。
+        ///  キーワードを引くときは `keyword` を 0 でなくする（あれば 1、無ければ 0）。値が無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_slot", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_slot(ulong server, uint material, byte* name, int name_len, int keyword);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の元の絵の様子。無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_original", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_original(ulong server, uint material, byte* slot, int slot_len, YlbTestServerOriginal* @out);
+
+        /// <summary>
+        ///  自己診断のスタンドアロンが最後に受けた、マテリアル `material` のスロット `slot` の絵の様子。無ければ YLB_E_ARGUMENT。
+        /// </summary>
+        [DllImport(__DllName, EntryPoint = "ylb_test_server_texture", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+        internal static extern int ylb_test_server_texture(ulong server, uint material, byte* slot, int slot_len, YlbTestServerTexture* @out);
+
+
+    }
+
+    /// <summary>
+    ///  版のずれと機能の印の様子（`ylb_link_report`）。版は `major &lt;&lt; 32 | minor &lt;&lt; 16 | patch`、不明は `u64::MAX`。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbLinkReport
+    {
+        /// <summary>
+        ///  相手のアプリの版。
+        /// </summary>
+        public ulong peer_version;
+        /// <summary>
+        ///  相手が自分に求める版（相手が宣言していなければ不明）。
+        /// </summary>
+        public ulong peer_min_peer;
+        /// <summary>
+        ///  相手を上げるべきなら、求める版（`0` は版の指定なし）。上げなくてよければ不明。版を名乗らない古い相手は上げるべき。
+        /// </summary>
+        public ulong update_peer;
+        /// <summary>
+        ///  自分（Unity のパッケージ）を上げるべきなら、求める版。上げなくてよければ不明。
+        /// </summary>
+        public ulong update_self;
+        /// <summary>
+        ///  自分が出した機能の印・相手が出した印・共通部分（使える機能）。
+        /// </summary>
+        public ulong own_features;
+        public ulong peer_features;
+        public ulong common_features;
+        /// <summary>
+        ///  自分にあって相手に無い機能（相手を上げれば使える）・相手にあって自分に無い機能（自分を上げれば使える）。
+        /// </summary>
+        public ulong missing_on_peer;
+        public ulong missing_here;
+        /// <summary>
+        ///  断られたとき（state 2）、上げるべき製品: 1 = Unity のパッケージ、2 = スタンドアロン。それ以外は 0。
+        /// </summary>
+        public int refused_update;
+        /// <summary>
+        ///  断られたときの、上げるべき製品の求める版（求める版が決まっていなければ不明）。
+        /// </summary>
+        public ulong refused_to;
+        /// <summary>
+        ///  断られたときの、Unity 側・スタンドアロンの読めるプロトコルの版の範囲。
+        /// </summary>
+        public uint unity_min_protocol;
+        public uint unity_max_protocol;
+        public uint standalone_min_protocol;
+        public uint standalone_max_protocol;
+        /// <summary>
+        ///  0 = まだ無い（つないでいる・つなげなかった）、1 = つながった（上の欄を決めた）、2 = プロトコルの版の範囲が合わず断られた。
+        /// </summary>
+        public int state;
+        /// <summary>
+        ///  つながったときの、決まったプロトコルの版。
+        /// </summary>
+        public uint protocol;
     }
 
     /// <summary>
@@ -369,6 +565,80 @@ namespace Yozolab.YoluPainter.Editor.LiveLink
         public uint last_materials_count;
         public uint last_materials_routes;
         public uint last_materials_shader_len;
+        /// <summary>
+        ///  受けたマテリアルの値（MaterialValues）の数と、最後の値のマテリアルの番号・種類（0 値なし・1 lilToon）・プロパティの数・
+        ///  キーワードの数・スロットの数・シェーダー名の長さ。
+        /// </summary>
+        public uint values;
+        public uint last_values_material;
+        public uint last_values_kind;
+        public uint last_values_properties;
+        public uint last_values_keywords;
+        public uint last_values_slots;
+        public uint last_values_shader_len;
+        /// <summary>
+        ///  受けた描いていないスロットの絵（MaterialTexture）の数と、その画素のバイトの合計（KiB、切り上げ）。
+        /// </summary>
+        public uint textures;
+        public uint texture_kib;
+        /// <summary>
+        ///  受けた元の絵（MaterialOriginal）の数（絵の付かない様子も数える）と、絵の付いたものの画素のバイトの合計（KiB、切り上げ）。
+        /// </summary>
+        public uint originals;
+        public uint original_kib;
+        /// <summary>
+        ///  元の絵が揃うまで出さずに待たせているセットの数（機能の印 ORIGINAL_TEXTURES を名乗っているときだけ待たせる）。
+        /// </summary>
+        public uint held_sets;
+    }
+
+    /// <summary>
+    ///  自己診断のスタンドアロンが受けた、元の絵 1 つの様子（`ylb_test_server_original`）。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbTestServerOriginal
+    {
+        /// <summary>
+        ///  0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える。
+        /// </summary>
+        public uint state;
+        /// <summary>
+        ///  0 原本のファイル・1 取り込んだ絵・2 GPU を通して。
+        /// </summary>
+        public uint read;
+        /// <summary>
+        ///  0 でなければ圧縮されたテクスチャから読んだ。
+        /// </summary>
+        public uint compressed;
+        /// <summary>
+        ///  0 でなければ sRGB。
+        /// </summary>
+        public uint srgb;
+        public uint width;
+        public uint height;
+        /// <summary>
+        ///  真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）と、一番下の左の画素の RGBA を r | g &lt;&lt; 8 | b &lt;&lt; 16 | a &lt;&lt; 24 に詰めたもの（絵が付かなければ 0）。
+        /// </summary>
+        public uint center;
+        public uint corner;
+    }
+
+    /// <summary>
+    ///  自己診断のスタンドアロンが受けた、描いていないスロットの絵 1 つの様子（`ylb_test_server_texture`）。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe partial struct YlbTestServerTexture
+    {
+        public uint width;
+        public uint height;
+        /// <summary>
+        ///  0 でなければ sRGB。
+        /// </summary>
+        public uint srgb;
+        /// <summary>
+        ///  真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）の RGBA を r | g &lt;&lt; 8 | b &lt;&lt; 16 | a &lt;&lt; 24 に詰めたもの。
+        /// </summary>
+        public uint center;
     }
 
 

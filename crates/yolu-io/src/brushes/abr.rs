@@ -565,6 +565,9 @@ fn preset(
     if preset.bool("useTexture") == Some(true) {
         texture(preset, textures, inverted, budget, &mut b, &mut notes)?;
     }
+    if preset.bool("usePaintDynamics") == Some(true) && mixer_dynamics(preset) {
+        notes.push(Unrepresented::MixerBrush);
+    }
     if preset.bool("Nose") == Some(true) {
         notes.push(Unrepresented::Noise);
     }
@@ -580,6 +583,16 @@ fn preset(
         b,
         notes,
     )?)))
+}
+
+/// 混合ブラシのウェット・混合のゆらぎ（`wetnessControl`・`mixControl`。不透明度・流量のゆらぎと同じ形の記述）が、ゆらぎかコントロールを
+/// 持つか。基本の値（ウェット・負荷・混合）はブラシの記述に入らないので、あるのはゆらぎだけ。キー名は実物の ABR では確かめていない
+/// （試験は同じ想定のキーで作った合成のデータ）。
+fn mixer_dynamics(preset: &Object) -> bool {
+    ["wetnessControl", "mixControl"].into_iter().any(|key| {
+        let d = preset.object(key);
+        jitter(d) > 0.0 || d.and_then(|d| d.number("bVTy")).unwrap_or(0.0) as i32 != 0
+    })
 }
 
 /// カラーダイナミクス: 描画色/背景色のゆらぎ（clVr）、色相（H）・彩度（Strt）・明るさ（Brgh）、純度。背景色はブラシに入っていないので、

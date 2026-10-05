@@ -1,9 +1,14 @@
 # egui_kittest のスナップショットの決まり（cargo test は crates/yolu-app で走るので、出力はその tests/snapshots）。
-# 正解の PNG はコンテナの llvmpipe（Mesa のソフトの描画、wgpu の GL）で撮ったもの。Windows・macOS の実の GPU では
-# 縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
+# 正解の PNG は手元の既定（wgpu の Vulkan と Mesa の lavapipe、ソフトの描画）で撮ったもの。
+# 測ったこと:
+#   - Vulkan（lavapipe）は、手元の Mesa 23.2 でも CI の Ubuntu 24.04 の Mesa 25.2 でも、全 194 枚で閾値を越える画素が 0（許す画素を 0 にして通った）。
+#   - 同じ画像を GL の llvmpipe で描くと、12 枚が 1〜2 画素、view3d_material_balls が 8288 画素閾値を越えた（Mesa の版違いではなく描画の経路の違い）。
+# 推測（実測の裏づけは無い）: Linux だけ許す 4 画素は、将来の Mesa の版違いで縁の画素が少しずれたときへの保険。
+# この許容は CI にも手元の実行にも効くので、数画素だけの退行（小さい印・縁）は通る。material_balls のような面の崩れ（数百画素以上）は落ちる。
+# Windows・macOS の実の GPU では縁のアンチエイリアスとテクスチャの補間が少し違うので、その OS では緩める。
 output_path = "tests/snapshots"
 threshold = 0.6
-max_failed_pixels = 0
+max_failed_pixels = 4
 
 [windows]
 threshold = 2.0

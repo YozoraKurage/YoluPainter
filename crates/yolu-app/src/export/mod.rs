@@ -5,7 +5,9 @@
 //!   同じになる画像・もうあるファイル（画面で確かめてから置き換える）を、1 枚も書く前に断る。書く前の検査・一時ファイル・置き換えの
 //!   手順は `write_images` に任せ、複数のセットの画像を **1 回の呼び出し**で書くので、取消・失敗のときは元のファイルが 1 つも変わらない
 //!   （置き換えの途中の失敗だけは、済んだ分が置き換わっていると知らせる）。
-//! - **別のスレッドで書く**: 文書は作業の最中に変わるので、始めるときに正本（`NativeDocument`）へ写して渡す（写すのはこのスレッド）。
+//! - **別のスレッドで書く**: 文書は作業の最中に変わるので、始めるときに文書の写し（`capture_snapshot`。タイルは共有して画素は写さない。
+//!   効果の入力・見た目の設定も写る）を取って渡す（取るのはこのスレッド）。正本（`NativeDocument`）を経ないので、正本が 512 MiB を超える
+//!   大きな文書も書き出せる。
 //!   画像を作る・塗り広げる・PNG にする・読み戻して確かめるのは別のスレッドで、進み具合と取消がある。
 //! - **パディング**: 画像のテクセルのうち UV の三角形が覆わない所を、境目の色で塗り広げる（Unity 版の `ExportPadding`。既定は届くかぎり
 //!   全部）。UV は 3D ビューのモデルから、セットのマテリアルの三角形を使う。モデルが無い・セットの面が無ければ塗り広げず、そう知らせる。
@@ -33,7 +35,6 @@ use yolu_io::export::{
     clashes, existing_files, file_name, plan_template, sanitize, write_images, ExportError,
     ExportFile, Overwrite, PlanSet, WriteOptions, WrittenImage,
 };
-use yolu_io::NativeDocument;
 
 use crate::bake::Occlusion;
 use crate::state::{AppState, DialogRequest};
@@ -220,9 +221,8 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
 
 /// 1 セットぶんの書き出しの入力（始めるときに写す）。
 struct SetInput {
-    native: NativeDocument,
-    /// 効果の入力（焼いたマップ・モデルのルート・画像。正本には入らないので、写した文書へ渡し直す）。
-    inputs: yolu_core::EffectInputs,
+    /// 文書の写し（`capture_snapshot`。タイルは元と共有し、効果の入力・見た目の設定も持つ）。
+    doc: Document,
     occlusion: Option<Vec<u8>>,
     /// UV の三角形（画素の座標）。塗り広げないなら None。
     uv: Option<Vec<[DVec2; 3]>>,
@@ -237,6 +237,8 @@ struct PlannedImage {
     name: String,
     /// チャンネルの画像（`yolu_core::export::channel_image`）か。None ならテンプレートの画像（`build`）。
     channel: Option<Channel>,
+    /// lilToon の詰め方のスロットの画像（`look::export::slot_image`）か。
+    look_slot: Option<&'static str>,
 }
 
 struct Plan {
@@ -383,10 +385,10 @@ impl AppState {
                 let d = self.set_doc(index);
                 (d.width(), d.height())
             };
-            let native = NativeDocument::from_core(self.set_doc(index)).map_err(|e| {
+            let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
                 lang.pick(
-                    format!("文書を写せません: {e}"),
-                    format!("Cannot copy the document: {e}"),
+                    format!("文書を写せません: {}", lang.core_error(&e)),
+                    format!("Cannot copy the document: {}", lang.core_error(&e)),
                 )
             })?;
             let name = self.sets.get(index).expect("範囲内").name.clone();
@@ -395,7 +397,6 @@ impl AppState {
             if !inactive.is_empty() {
                 notes.push(Note::InactiveEffects(name.clone(), inactive));
             }
-            let inputs = self.set_doc(index).effect_inputs().clone();
             let uv = if !padding_on {
                 None
             } else {
@@ -420,8 +421,7 @@ impl AppState {
                 }
             };
             sets.push(SetInput {
-                native,
-                inputs,
+                doc: snapshot,
                 occlusion: occlusions[p].clone(),
                 uv,
             });
@@ -467,6 +467,26 @@ impl AppState {
                 .collect();
             plan_template(stem, &plan_sets, template).map_err(|e| e.to_string())?
         };
+        // lilToon の詰め方: lilToon のテンプレートなら、見た目の設定が lilToon のセットのスロットの画像を足す
+        let mut template = template.clone();
+        let mut planned = planned;
+        let mut look_slots: Vec<Option<&'static str>> = vec![None; planned.len()];
+        if template.id == "liltoon" {
+            for (p, &i) in indices.iter().enumerate() {
+                for (slot, image) in crate::look::export::extra_images(self.set_doc(i)) {
+                    let name = several.then(|| self.sets.get(i).expect("範囲内").name.as_str());
+                    let file_name = file_name(stem, name, &image).map_err(|e| e.to_string())?;
+                    template.images.push(image);
+                    planned.push(yolu_io::export::PlannedFile {
+                        set: p,
+                        image: template.images.len() - 1,
+                        file_name,
+                    });
+                    look_slots.push(Some(slot));
+                }
+            }
+        }
+        let template = &template;
         if planned.is_empty() {
             return Err(lang.pick(
                 format!(
@@ -494,7 +514,7 @@ impl AppState {
         let (sets, position) = self.copy_sets(&indices, &used, &occlusions, &mut notes)?;
         let mut files = Vec::with_capacity(planned.len());
         let mut white = false;
-        for p in &planned {
+        for (p, look_slot) in planned.iter().zip(&look_slots) {
             let slot = position[p.set].expect("使うセットは写した");
             let wants_occlusion = template.images[p.image]
                 .scalars()
@@ -507,6 +527,7 @@ impl AppState {
                 image: p.image,
                 name: p.file_name.clone(),
                 channel: None,
+                look_slot: *look_slot,
             });
         }
         if white {
@@ -610,6 +631,7 @@ impl AppState {
                 image,
                 name,
                 channel: Some(channel),
+                look_slot: None,
             })
             .collect();
         Ok(Plan {
@@ -867,7 +889,6 @@ impl AppState {
             cancel: cancel.clone(),
             park: std::mem::take(&mut self.export.park_next),
             working_bytes: self.export_working_bytes(),
-            source_bytes: self.load_source_bytes(),
         };
         let spawned = std::thread::Builder::new()
             .name("yolu-export".into())
@@ -1004,11 +1025,9 @@ struct WorkerInput {
     park: bool,
     /// 画像を作る作業と塗り広げの作業のメモリの上限（設定の「1 回の操作」。Unity 版が塗り広げに渡す StrokeBudgetBytes と同じ）。
     working_bytes: u64,
-    /// 写した文書を戻すときに 1 つの文書に許す層の画素（設定の「レイヤーの画素」。256 MiB を下回らない）。
-    source_bytes: u64,
 }
 
-/// 別のスレッドの本体: 写した正本を文書に戻し、塗り広げの覆いを作り、全部の画像を 1 回の `write_images` で書く。
+/// 別のスレッドの本体: 写した文書から塗り広げの覆いを作り、全部の画像を 1 回の `write_images` で書く。
 fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
     let WorkerInput {
         dir,
@@ -1021,24 +1040,11 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         cancel,
         park,
         working_bytes,
-        source_bytes,
     } = input;
     if park {
         crate::windows::park_until_canceled(&cancel);
     }
-    let docs = sets
-        .iter()
-        .map(|s| {
-            let mut doc = s
-                .native
-                .to_core_within(Some(source_bytes))
-                .map_err(|e| ExportError::Io(format!("写した文書を戻せません: {e}")))?;
-            // 正本は効果の入力を持たないので、写す前の文書に渡していた入力を渡し直す（渡さないと、Generator・画像が入力のまま通る）
-            doc.set_effect_inputs(s.inputs.clone())
-                .map_err(|e| ExportError::Io(format!("効果の入力を渡せません: {e}")))?;
-            Ok::<_, ExportError>(doc)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let docs: Vec<&Document> = sets.iter().map(|s| &s.doc).collect();
     let mut coverage: Vec<Option<Vec<bool>>> = Vec::with_capacity(sets.len());
     for (set, doc) in sets.iter().zip(&docs) {
         if cancel.load(Ordering::Relaxed) {
@@ -1070,9 +1076,10 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         done.store(i, Ordering::Relaxed);
         let file = &files[i];
         let doc = &docs[file.set];
-        let pixels = match file.channel {
-            Some(channel) => channel_image(doc, channel, working_bytes),
-            None => build(
+        let pixels = match (file.channel, file.look_slot) {
+            (_, Some(slot)) => crate::look::export::slot_image(doc, slot, working_bytes),
+            (Some(channel), None) => channel_image(doc, channel, working_bytes),
+            (None, None) => build(
                 doc,
                 &template.images[file.image],
                 sets[file.set].occlusion.as_deref(),

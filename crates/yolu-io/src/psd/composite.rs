@@ -151,6 +151,7 @@ pub(super) fn composite_cancellable(d: &Document, cancel: Option<&AtomicBool>) -
         }
     })
 }
+#[cfg(test)]
 pub(super) fn composite(d: &Document) -> Vec<u8> {
     composite_cancellable(d, None).expect("取消の旗が無ければ止まらない")
 }

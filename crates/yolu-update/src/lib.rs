@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-pub const RELEASE_BASE: &str = "https://github.com/YozoraKurage/YoluPainter-rs/releases/download";
+pub const RELEASE_BASE: &str = "https://github.com/YozoraKurage/YoluPainter/releases/download";
 /// アプリが更新情報を取る場所。GitHub の「最新の Release」（下書き・プレリリースを除く最新）の資産へ飛ぶ。
 /// ファイル名に schema の番号（`UPDATER_SCHEMA`）を含める。schema を上げた更新情報は別の名前に置き、
 /// 旧い schema を読むアプリが取る更新情報を旧形式のまま残すため。
 pub const UPDATER_URL: &str =
-    "https://github.com/YozoraKurage/YoluPainter-rs/releases/latest/download/updater-v1.json";
+    "https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json";
 /// 更新情報の本文の schema。変えるときは `UPDATER_FILE` と `UPDATER_URL` の番号も上げ、旧い名前のファイルも残して配る。
 pub const UPDATER_SCHEMA: u32 = 1;
 /// Release に置く更新情報のファイル名（`UPDATER_URL` の末尾）。

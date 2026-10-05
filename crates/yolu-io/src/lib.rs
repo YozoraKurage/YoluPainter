@@ -1,28 +1,40 @@
 //! Unity 版 .ylp の検証、損失のない正本の読み書き、メモリ上の旧形式移行。
 mod archive;
+mod bigdoc;
+pub use bigdoc::{DocumentSource, SetDocument};
 pub mod brushes;
 mod composite_png;
 mod core_bridge;
+mod distribution;
 pub mod export;
 mod generation;
+pub mod library;
+pub mod look;
 mod native;
+mod package;
 mod project;
 mod selection;
 pub mod shelf;
 pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
+pub use package::{
+    Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
+    OVER_LAYER_PIXELS_DOCUMENT, OVER_LAYER_PIXELS_TOTAL, SOURCE_MISSING,
+};
 pub use native::{
-    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION,
+    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
     PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
+pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
     FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
     MODEL_PATH_MAX,
 };
 pub use generation::{
-    generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Generation,
-    GenerationInfo, GenerationStore, RecoveryInfo, StoreError, INFO_LIMIT, INFO_NAME,
+    generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
+    GenerationFootprint, GenerationInfo, GenerationStore, LowSpace, RecoveryInfo, SpaceGuard,
+    StoreError, INFO_LIMIT, INFO_NAME,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
@@ -55,11 +67,16 @@ pub enum Error {
 pub enum Unwritable {
     /// 手動の ID の色（正本の版 19）。
     ManualIdColors,
+    /// 塗りつぶしのグラデーションのランプの混色・混合率曲線（Unity 版と共有の並びに形が無い）。
+    GeneratorRampMixing,
 }
 impl fmt::Display for Unwritable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::ManualIdColors => "手動の ID の色はまだ .ylp に書けません",
+            Self::GeneratorRampMixing => {
+                "塗りつぶしのグラデーションのランプの混色は .ylp に書けません"
+            }
         })
     }
 }

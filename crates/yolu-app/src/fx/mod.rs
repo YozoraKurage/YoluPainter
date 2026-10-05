@@ -552,7 +552,7 @@ impl AppState {
             };
             let note = lang.pick(
                 format!(
-                    "アンカーを読む Generator {} 段が、入力をそのまま通すようになりました: {reason}",
+                    "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました: {reason}",
                     fresh.len()
                 ),
                 format!(

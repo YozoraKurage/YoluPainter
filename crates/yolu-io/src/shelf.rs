@@ -1,7 +1,7 @@
 //! プロジェクト内の素材。外部の参照先を開かず、検証した埋め込みの写しを保持する。
 use crate::{
-    archive::Files, check, check_budget, project, Archive, NativeDocument, NativeValue, Project, Resource,
-    Result, MAX_TOTAL_BYTES,
+    archive::Files, check, check_budget, is_hash, project, Archive, NativeDocument, NativeValue, Project,
+    Resource, Result, MAX_TOTAL_BYTES,
 };
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
@@ -113,6 +113,13 @@ impl Shelf {
             .find(|r| r.id == id)
             .map(|r| self.files[&r.entry].as_ref())
     }
+    /// 素材の中身を、写さずに共有して返す（別のスレッドへ渡して、サムネイルや書き出しを作るため）。
+    pub fn content_arc(&self, id: &str) -> Option<Arc<[u8]>> {
+        self.resources
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| self.files[&r.entry].clone())
+    }
     /// 索引の1項目と写しを追加。同種・同内容は既存の ID を返す。拒否では何も変えない。
     pub fn add(&mut self, metadata: Value, bytes: &[u8]) -> Result<String> {
         let content = project::text(&metadata, "content", 64, 64)?;
@@ -207,7 +214,17 @@ impl Shelf {
 }
 impl Project {
     pub fn shelf(&self, budget: u64) -> Result<Shelf> {
-        Shelf::read(self.migrated_entries(), budget)
+        // 棚の索引と中身だけをメモリに読む（正本などの大きなエントリには触らない）
+        let mut files = Files::new();
+        if let Some(b) = self.migrated_entries().get("resources.json") {
+            files.insert("resources.json".into(), b.bytes()?);
+        }
+        for r in self.resources() {
+            if let Some(b) = self.migrated_entries().get(&r.entry) {
+                files.insert(r.entry.clone(), b.bytes()?);
+            }
+        }
+        Shelf::read(&files, budget)
     }
     /// セットと未知のエントリを保ち、棚を差し替えた新しいプロジェクトを検証して返す。形式7へ上げ（`upgraded` と同じ）、
     /// `savedBy` は書き手（最後に保存したアプリ）にする。
@@ -217,18 +234,18 @@ impl Project {
             files.remove(&r.entry);
         }
         files.remove("resources.json");
-        files.extend(shelf.files.clone());
+        files.extend(
+            shelf
+                .files
+                .iter()
+                .map(|(k, v)| (k.clone(), crate::Blob::from(v.clone()))),
+        );
         let upgraded = self.upgraded(writer)?;
         files.insert(
             "ylp.json".into(),
             upgraded.original_archive().entries()["ylp.json"].clone(),
         );
-        Self::from_archive(Archive::build(
-            files,
-            3,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild_shelf(files)
     }
 }
 pub(crate) fn quote(s: &str) -> String {
@@ -255,7 +272,7 @@ fn origin(v: &Value) -> String {
         _=>"{ \"type\": \"none\" }".into()
     }
 }
-fn write_index(resources: &[Resource]) -> Result<Vec<u8>> {
+pub(crate) fn write_index(resources: &[Resource]) -> Result<Vec<u8>> {
     let mut s = String::from("{\n  \"resources\": [");
     for (i, r) in resources.iter().enumerate() {
         s.push_str(if i == 0 { "\n" } else { ",\n" });
@@ -406,6 +423,59 @@ impl Shelf {
             "画像は素材のファイルとして追加できません",
         )?;
         self.add(json!({"id":id,"kind":kind.as_str(),"name":name,"content":crate::hash(bytes),"length":bytes.len(),"origin":origin}),bytes)
+    }
+    /// 個人のライブラリのファイル（ライブラリからの相対パス `rel`・ファイルの SHA-256・長さ）から取り込んだ素材を追加する。出どころは
+    /// `library`（見せる・印を付けるだけ。中身は写しを持つので、ライブラリの無い所でも開ける）。同じ種類・同じ中身が既にあれば、その ID。
+    pub fn add_file_from_library(
+        &mut self,
+        id: &str,
+        name: &str,
+        kind: ResourceKind,
+        bytes: &[u8],
+        rel: &str,
+        sha256: &str,
+    ) -> Result<String> {
+        check(
+            crate::library::is_library_path(rel),
+            "ライブラリの相対パスが安全ではありません",
+        )?;
+        check(is_hash(sha256), "出どころのSHA-256が不正です")?;
+        self.add_file(
+            id,
+            name,
+            kind,
+            bytes,
+            json!({"type":"library","file":rel,"sha256":sha256,"length":bytes.len()}),
+        )
+    }
+    /// ライブラリの画像（左下原点・straight RGBA8 に直したもの）を取り込む。出どころの `sha256`・`length` は元のファイルのもの。
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_image_from_library(
+        &mut self,
+        id: &str,
+        name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        color_space: &str,
+        rel: &str,
+        sha256: &str,
+        length: u64,
+    ) -> Result<String> {
+        check(
+            crate::library::is_library_path(rel),
+            "ライブラリの相対パスが安全ではありません",
+        )?;
+        check(is_hash(sha256), "出どころのSHA-256が不正です")?;
+        self.add_image(
+            id,
+            name,
+            rgba,
+            width,
+            height,
+            color_space,
+            json!({"type":"library","file":rel,"sha256":sha256,"length":length}),
+        )
     }
     /// 出どころの記録を持たない素材（アプリの中で作った・外のファイルから読んだもの）を追加する。外のパスを .ylp に書き込まない。
     pub fn add_file_without_origin(

@@ -252,15 +252,19 @@ fn filter_body(
         }
         EffectSettings::Filter(_) => {
             if let Some(value) = effect.settings().color_adjust() {
-                let params = super::color_adjust::Params {
+                let mut params = super::color_adjust::Params {
                     key: ("effect", id.0),
                     enabled,
                     why: None,
                     paint: app.color.main,
+                    sub: app.color.sub,
                     lang,
                     histogram: None,
+                    sets: &mut app.ramp_sets,
+                    eyedrop: &mut app.eyedrop,
+                    message: &mut app.message,
                 };
-                if let Some(change) = super::color_adjust::rows(ui, rows, &params, &value) {
+                if let Some(change) = super::color_adjust::rows(ui, rows, &mut params, &value) {
                     discrete = change.discrete;
                     next = Some(EffectSettings::from_color_adjust(change.value));
                 }
@@ -756,16 +760,15 @@ fn shape_rows(
 ) {
     let lang = app.lang;
     let v = g.volume;
+    // 形の説明は新規塗りつぶしレイヤーのメニュー・塗りつぶしの欄と同じ文
+    let shape_tip = names::shape_tooltip(lang);
     if let Some(rect) = choice_row(
         ui,
         rows,
         "fx.shape",
         lang.pick("形", "Shape"),
         names::shape_name(lang, v.shape),
-        Some(lang.pick(
-            "ボックス: 中が 1 で、面に向かって 0 へ。球: 表面に向かって同じく。平面: 後ろが 0、前が 1（幅の間で）。",
-            "Box: 1 inside, fading to 0 at its faces. Sphere: the same toward its surface. Plane: 0 behind it to 1 in front of it, across its width.",
-        )),
+        Some(shape_tip.as_str()),
         enabled,
     ) {
         open_popup(app, ctx, Popup::Fx(FxChoice::Shape), rect, rect.width());
@@ -954,7 +957,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
         name_rect,
         (key, "anchor.name", id.0),
         name,
-        Some(lang.pick("アンカーの名前（上の層の Generator はこの名前で選びます）", "The anchor's name: generators above list it by this name")),
+        Some(lang.pick("アンカーの名前（上の層のジェネレーターはこの名前で選びます）", "The anchor's name: generators above list it by this name")),
         false,
     );
     if let Some(next) = out.committed {
@@ -965,7 +968,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
     let count_rect = Rect::from_min_max(pos2(name_rect.right() + 4.0, row.top()), pos2(row.right() - 26.0, row.bottom()));
     w::text(ui.painter(), count_rect, &count, t::LABEL_DIM.with_color(t::TEXT_DIM), w::Align::Left);
     let tip = if readers.is_empty() {
-        lang.pick("読んでいる Generator はありません", "No generator reads this anchor.").to_owned()
+        lang.pick("読んでいるジェネレーターはありません", "No generator reads this anchor.").to_owned()
     } else {
         let names: Vec<String> = readers
             .iter()
@@ -989,7 +992,7 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
         (key, "anchor.remove", id.0),
         "delete",
         lang.pick(
-            "アンカーを外す（読んでいる Generator は、取り消すまで入力をそのまま通します）",
+            "アンカーを外す（読んでいるジェネレーターは、取り消すまで入力をそのまま通します）",
             "Remove the anchor (generators that read it pass their input through until you undo)",
         ),
         false,
@@ -1012,7 +1015,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             "fx.add",
             lang.pick("フィルターを足す", "Add Filter"),
             lang.pick(
-                "画素にフィルターか Generator（焼いたメッシュマップから値を作る）を足す",
+                "画素にフィルターかジェネレーター（焼いたメッシュマップから値を作る）を足す",
                 "Add a filter or a generator (values from the baked mesh maps) on the pixels",
             ),
         ),
@@ -1020,7 +1023,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             "fx.add.mask",
             lang.pick("マスクにフィルターを足す", "Add Filter to Mask"),
             lang.pick(
-                "マスクにフィルターか Generator（レイヤーの見える所を、焼いたメッシュマップから作る）を足す",
+                "マスクにフィルターかジェネレーター（レイヤーの見える所を、焼いたメッシュマップから作る）を足す",
                 "Add a filter or a generator on the mask (where the layer shows, from the baked mesh maps)",
             ),
         ),
@@ -1046,14 +1049,14 @@ pub fn anchor_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, layer: Layer
                 AnchorPlacement::Layer => (
                     lang.pick("アンカーを置く", "Add Anchor"),
                     lang.pick(
-                        "この層までの合成の結果に名前を付けて、上の層の Generator が読めるようにします（下の層の Height で上の層の摩耗を決める、など）",
+                        "この層までの合成の結果に名前を付けて、上の層のジェネレーターが読めるようにします（下の層の Height で上の層の摩耗を決める、など）",
                         "Name the stack's result up to this layer, so generators on the layers above can read it (a lower layer's Height can drive an upper layer's wear, for example)",
                     ),
                 ),
                 AnchorPlacement::Mask => (
                     lang.pick("マスクにアンカーを置く", "Add Anchor to Mask"),
                     lang.pick(
-                        "このマスクに名前を付けて、上の層の Generator が「この層がどれだけ見えるか」を読めるようにします",
+                        "このマスクに名前を付けて、上の層のジェネレーターが「この層がどれだけ見えるか」を読めるようにします",
                         "Name this mask, so generators on the layers above can read how much this layer shows",
                     ),
                 ),

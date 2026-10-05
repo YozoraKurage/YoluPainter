@@ -33,7 +33,13 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 `bundle` と `installer` は `target/dist` に過去の版を残すので、手元で出すときは `target/dist` を空にしてから作ります。
 違う版や余分なファイルが残っていると `updater-json` が拒否します（CI は毎回まっさらです）。
 出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`。
-実行ファイル、LICENSE、操作・動作環境を含む README、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文を同梱します（インストーラーも同じ物を入れます）。
+実行ファイル、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
+同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
+開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
+`docs/` に足したファイルは、そのどちらかへ必ず載せます（載せ忘れると `bundle`・`installer` が止まり、`cargo test -p xtask` も落ちます）。
+入れる物は `.md` の文書だけで、画像など `.md` でない物は `LEFT_OUT_DOCS` へ載せて入れません（更新で前の版にだけあった文書を消すインストーラーの掃除が `.md` だけを対象にするため。入れる必要が出たら、`installer/yolupainter.nsi` の `RemoveOldDocs` も直します。試験が断ります）。
+入れる文書の相対のリンクが配布物の中で切れないことも試験が確かめるので、入れない物（`docs/DEVELOPMENT.md`・`CHANGELOG.md`・`crates/` の README など）へは GitHub の URL で張ります。
+インストーラーのスクリプト `installer/yolupainter.nsi` の `DocFiles` にも同じ一覧があり、試験が突き合わせます（文書を足したら両方に足します）。
 `tools/third-party.py` が対象ごとに許諾を照合し、未確認の依存や原文の不一致では束ねません。
 更新クレート（`yolu-update`）はアプリに組み込まれているので、その依存の許諾全文も含めます。
 `xtask` 自体は配りません。独自の `CARGO_TARGET_DIR` は使わず、出力を `target/` に揃えてください。
@@ -42,8 +48,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 Windows の zip があるのにインストーラーが無い版も拒否します（インストーラーで入れたアプリは、更新にインストーラーを使うので、並べて出します）。
 更新情報（schema 1）には、zip・tar.gz を対象の三つ組み（`x86_64-pc-windows-msvc` など）で、インストーラーを別の鍵 `x86_64-pc-windows-msvc-setup` で載せます。
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
-URL は `https://github.com/YozoraKurage/YoluPainter-rs/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
-`https://github.com/YozoraKurage/YoluPainter-rs/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
+URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
+`https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
 フォークから配る場合は、更新クレートの `RELEASE_BASE`・`UPDATER_URL` も変更してビルドします。
 署名なしの JSON は検査専用で、更新クレートは受理しません。
 
@@ -63,13 +69,17 @@ NSIS のスクリプトは `installer/yolupainter.nsi` です。利用者ごと�
 実行中のアプリは終了させません。実行ファイルが使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5）、
 アンインストーラーは自分が入れたファイルだけを消します（入れ先に利用者のファイルがあれば、入れ先のフォルダは残ります）。
 
+文書は入れ先の `docs\`・`docs\en\` に入ります。入れた文書の名前は `docs\.installed` に記録し、更新（上書き）のとき、前の版の記録にある文書を先に消してから今の版の文書を入れるので、
+前の版にだけあった文書（名前を変えた・外した文書）が残りません。消すのは記録にある `docs\` の下の `.md` だけで、`..` を含む名前は読み飛ばします
+（利用者が `docs\` に置いたファイルと、入れ先の外は消えません）。アンインストールは一覧の文書と記録を消し、`docs\en`・`docs\` は空のときだけ消します（`RMDir /r` は使いません）。
+
 NSIS は 3.x が要ります。ワークフローは、windows-latest のイメージに `makensis` が無ければ Chocolatey（`choco install nsis --version=3.11.0`）で入れ、
 入っていた物でも入れた物でも `makensis /VERSION` が 3.11 でなければ止めます（配布物の作り方を変えないため）。確かめた `makensis` は
 `MAKENSIS` で `cargo xtask installer` へ渡します。手元では Windows は `winget install NSIS.NSIS`、Debian・Ubuntu は
 `sudo apt install nsis` で入れます（`MAKENSIS` に `makensis` の場所を指定することもできます）。
 `cargo test -p xtask` は、`makensis` があればスクリプトを実際にコンパイルします（CI の Linux は `nsis` を入れて走らせます）。
 
-画面を出さない流れ（新規・更新・`/RUN`・関連付けの保持・アンインストール）と、待ちの上限（書き込みで開けない実行ファイルが残っている間は待ち、
+画面を出さない流れ（新規・更新・`/RUN`・関連付けの保持・アンインストール。文書の入れ方と、更新で前の版にだけあった文書が消えること・利用者のファイルが消えないことを含む）と、待ちの上限（書き込みで開けない実行ファイルが残っている間は待ち、
 上限を超えたら何も変えずに終了コード 5。試験用に上限を 3 秒へ縮めたインストーラー `-DWAIT_STEPS=6` を使います）は、Wine で通せます。
 
 ```sh
@@ -132,6 +142,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist --sign --key-
 `--key-file` を省くと環境変数 `YOLUPAINTER_UPDATE_PRIVATE_KEY` を読みます。
 署名したら、公開鍵だけで、アプリと同じ検証（署名・版・大きさ・SHA-256）を通るかを確かめます。
 別の鍵で署名した更新情報、配布物との食い違い、載っているのに無い配布物はここで失敗します。
+zip・tar.gz は中身も開いて、梱包の一覧（上の文書を含む）と照らします。足りないファイルも、一覧に無いファイルも、同じ名前の重複も、名前を並べて断ります
+（インストーラーの中は開けないので、一覧どおりの段から作ることと、スクリプトの試験で確かめます）。
 
 ```sh
 cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公開鍵の hex>
