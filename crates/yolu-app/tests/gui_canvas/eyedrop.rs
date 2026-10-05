@@ -415,9 +415,10 @@ fn headless_3d_reads_the_composite_of_another_texture_set_without_switching() {
     let (_, shape) = s.receive_link_model(&two_materials_link_model(), 0);
     shape.expect("3D に読める");
     s.tool = Tool::Eyedropper;
+    // 全体を表示してから向きを決める（frame_model は既定の向き＝モデルの前の +Z 側へ戻す。試しの三角形は -Z 側が表なので、正面から見る）
+    s.view3d.frame_model();
     s.view3d.camera.yaw = 0.0;
     s.view3d.camera.pitch = 0.0;
-    s.view3d.frame_model();
     let current = s.sets.current_index();
     assert_eq!(current, 0);
     let other = 1;
