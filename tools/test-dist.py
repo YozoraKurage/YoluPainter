@@ -545,8 +545,8 @@ class Workflows(unittest.TestCase):
     def test_this_repositorys_workflows_pass(self):
         documents, problems = check_workflows.check(ROOT)
         self.assertEqual(problems, [])
-        # 別のワークフロー（コード解析など）を足しても落ちない。決まりの対象の 3 本があることだけ確かめる。
-        self.assertLessEqual({'ci.yml', 'release.yml', 'dist-build.yml'}, set(documents))
+        # 別のワークフロー（コード解析など）を足しても落ちない。決まりの対象の 4 本があることだけ確かめる。
+        self.assertLessEqual({'ci.yml', 'release.yml', 'dist-build.yml', 'beta-channel.yml'}, set(documents))
 
     @unittest.skipIf(check_workflows.yaml is None, 'PyYAML が無い')
     def test_each_rule_fails_on_a_broken_copy(self):
@@ -582,7 +582,41 @@ class Workflows(unittest.TestCase):
                 if "github.base_ref == 'main'" in str(job.get('if', '')):
                     job['if'] = str(job['if']).replace("github.base_ref == 'main'", "github.base_ref == 'dev'")
 
+        def on_of(document):
+            return document['on'] if 'on' in document else document[True]
+
+        def beta_dispatch(document):
+            on_of(document)['workflow_dispatch'] = {}
+
+        def beta_prereleased(document):
+            on_of(document)['release']['types'] = ['prereleased', 'published']
+
+        def beta_write_everywhere(document):
+            document['permissions'] = {'contents': 'write'}
+
+        def beta_no_prefix(document):
+            for job in document['jobs'].values():
+                job['if'] = str(job['if']).replace(" && startsWith(github.event.release.tag_name, 'v')", '')
+
+        def beta_stable_too(document):
+            for job in document['jobs'].values():
+                job['if'] = str(job['if']).replace('github.event.release.prerelease', 'true')
+
+        def beta_other_tag(document):
+            document['env']['CHANNEL_TAG'] = 'updater-beta-2'
+
+        def beta_cache(document):
+            first_step_using(document, 'actions/checkout').setdefault('with', {})['cache'] = 'x'
+
         cases = {
+            'beta channel: also on dispatch': ('beta-channel.yml', yaml_edit(beta_dispatch), 'published だけ'),
+            'beta channel: prereleased': ('beta-channel.yml', yaml_edit(beta_prereleased), 'published だけ'),
+            'beta channel: write everywhere': ('beta-channel.yml', yaml_edit(beta_write_everywhere), 'contents: read だけ'),
+            'beta channel: runs on its own release': ('beta-channel.yml', yaml_edit(beta_no_prefix), "startsWith(github.event.release.tag_name, 'v')"),
+            'beta channel: runs for stable': ('beta-channel.yml', yaml_edit(beta_stable_too), 'github.event.release.prerelease'),
+            'beta channel: tag drift': ('beta-channel.yml', yaml_edit(beta_other_tag), 'BETA_CHANNEL_TAG'),
+            'beta channel: schema drift': ('beta-channel.yml', lambda t: t.replace('updater-v1.json', 'updater-v2.json'), 'UPDATER_FILE'),
+            'beta channel: cache': ('beta-channel.yml', yaml_edit(beta_cache), 'キャッシュ'),
             'push trigger': ('ci.yml', yaml_edit(add_push), 'push で動かさない'),
             'unpinned action': ('ci.yml', yaml_edit(unpin), '固定されていません'),
             'cache in dist': ('dist-build.yml', yaml_edit(add_cache), 'キャッシュ'),
@@ -598,6 +632,8 @@ class Workflows(unittest.TestCase):
                 (root / '.github/workflows').mkdir(parents=True)
                 (root / 'tools').mkdir()
                 shutil.copy(ROOT / 'tools/dist-targets.json', root / 'tools/dist-targets.json')
+                (root / 'crates/yolu-update/src').mkdir(parents=True)
+                shutil.copy(ROOT / 'crates/yolu-update/src/lib.rs', root / 'crates/yolu-update/src/lib.rs')
                 for path in (ROOT / '.github/workflows').glob('*.yml'):
                     shutil.copy(path, root / '.github/workflows' / path.name)
                 target = root / '.github/workflows' / file
@@ -608,6 +644,26 @@ class Workflows(unittest.TestCase):
                 self.assertTrue(any(text in p for p in problems), (name, problems))
                 # 壊した 1 つ以外の決まりには触れていない（書き戻しで元の決まりを壊していない）。
                 self.assertLessEqual(len(problems), 2, (name, problems))
+
+    @unittest.skipIf(check_workflows.yaml is None, 'PyYAML が無い')
+    def test_the_beta_channel_workflow_and_the_library_constants_are_required(self):
+        import shutil
+        for name, remove, text in [
+            ('no workflow', '.github/workflows/beta-channel.yml', 'beta-channel.yml がありません'),
+            ('no library', 'crates/yolu-update/src/lib.rs', 'BETA_CHANNEL_TAG・UPDATER_FILE が読めません'),
+        ]:
+            with self.subTest(name), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                (root / '.github/workflows').mkdir(parents=True)
+                (root / 'tools').mkdir()
+                (root / 'crates/yolu-update/src').mkdir(parents=True)
+                shutil.copy(ROOT / 'tools/dist-targets.json', root / 'tools/dist-targets.json')
+                shutil.copy(ROOT / 'crates/yolu-update/src/lib.rs', root / 'crates/yolu-update/src/lib.rs')
+                for path in (ROOT / '.github/workflows').glob('*.yml'):
+                    shutil.copy(path, root / '.github/workflows' / path.name)
+                (root / remove).unlink()
+                _, problems = check_workflows.check(root)
+                self.assertTrue(any(text in p for p in problems), (name, problems))
 
     @unittest.skipIf(check_workflows.yaml is None, 'PyYAML が無い')
     def test_command_exit_codes(self):

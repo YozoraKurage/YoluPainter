@@ -18,7 +18,8 @@ use yolu_app::update::{Mode, Preference, UpdateAction};
 use yolu_app::YoluApp;
 use yolu_update::{
     asset_name, asset_url, release_page, sha256, Asset, Envelope, Error, Manifest, Transport,
-    Version, LINUX_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL, WINDOWS_ARCHIVE,
+    WINDOWS_INSTALLER,
 };
 
 const SEED: [u8; 32] = [42; 32];
@@ -59,10 +60,16 @@ impl Drop for TempDir {
 /// 偽の配布元。更新情報とインストーラーを返し、取った URL を記録する。
 struct Server {
     metadata: Mutex<Vec<u8>>,
+    /// 試験版の置き場の更新情報（`None` は、置き場が引けない）。
+    beta_metadata: Mutex<Option<Vec<u8>>>,
+    /// 試験版の置き場の取得を、これが下りるまで止める（確かめの途中で設定を替える）。
+    hold_beta: AtomicBool,
     installer: Mutex<Vec<u8>>,
     calls: Mutex<Vec<String>>,
     /// インストーラーの取得を、これが下りるまで止める（途中の状態・取消を見る）。
     hold: AtomicBool,
+    /// 止めている間に取消を見ない（転送は終わっていて、そのあとの確かめ・書き込みの間に取り消された形にする）。
+    ignore_cancel: AtomicBool,
     fail_metadata: AtomicBool,
     fail_download: AtomicBool,
 }
@@ -75,6 +82,18 @@ struct Fake {
 impl Transport for Fake {
     fn get(&self, url: &str, _max_bytes: usize) -> Result<Vec<u8>, Error> {
         self.server.calls.lock().unwrap().push(url.to_owned());
+        if url == BETA_UPDATER_URL {
+            while self.server.hold_beta.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            return self
+                .server
+                .beta_metadata
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| Error("置き場が無い".into()));
+        }
         if url == UPDATER_URL {
             if self.server.fail_metadata.load(Ordering::Relaxed) {
                 return Err(Error("ネットワークが無い".into()));
@@ -82,7 +101,7 @@ impl Transport for Fake {
             return Ok(self.server.metadata.lock().unwrap().clone());
         }
         while self.server.hold.load(Ordering::Relaxed) {
-            if self.link.is_canceled() {
+            if self.link.is_canceled() && !self.server.ignore_cancel.load(Ordering::Relaxed) {
                 return Err(Error("取り消し".into()));
             }
             std::thread::sleep(Duration::from_millis(1));
@@ -155,9 +174,12 @@ struct Rig {
 fn rig(state: &mut AppState, served: &str, mode: Mode) -> Rig {
     let server = Arc::new(Server {
         metadata: Mutex::new(signed_metadata(served, INSTALLER)),
+        beta_metadata: Mutex::new(None),
+        hold_beta: AtomicBool::new(false),
         installer: Mutex::new(INSTALLER.to_vec()),
         calls: Mutex::new(Vec::new()),
         hold: AtomicBool::new(false),
+        ignore_cancel: AtomicBool::new(false),
         fail_metadata: AtomicBool::new(false),
         fail_download: AtomicBool::new(false),
     });
@@ -496,6 +518,430 @@ fn headless_a_failed_startup_check_stays_quiet() {
     settle(&mut state);
     assert_eq!(rig.calls(), 1);
     assert!(state.message.is_empty(), "{}", state.message);
+}
+
+// ───────── 試験版 ─────────
+
+/// 試験版の置き場に、その版の更新情報を置く（`None` なら、置き場は引けない）。
+fn serve_beta(rig: &Rig, version: Option<&str>) {
+    *rig.server.beta_metadata.lock().unwrap() = version.map(|v| signed_metadata(v, INSTALLER));
+}
+
+/// stable の更新情報を、その版にする。
+fn serve_stable(rig: &Rig, version: &str) {
+    *rig.server.metadata.lock().unwrap() = signed_metadata(version, INSTALLER);
+}
+
+fn asked(rig: &Rig) -> Vec<String> {
+    rig.server.calls.lock().unwrap().clone()
+}
+
+fn check_now(state: &mut AppState) {
+    apply(state, UpdateAction::Check);
+    settle(state);
+}
+
+fn offered(state: &AppState) -> Option<String> {
+    state.update.offer().map(|o| o.version.to_string())
+}
+
+const BETA_ITEM: &str = "試験版を使う";
+
+#[test]
+fn headless_the_beta_setting_is_off_by_default_and_an_old_settings_file_reads_as_before() {
+    let dir = TempDir::new("beta-default");
+    // 旧い版が書いた 1 行だけのファイル
+    std::fs::write(dir.0.join("update.conf"), "check_on_startup=on\n").unwrap();
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    state.update.attach_config(dir.0.join("update.conf"));
+    assert_eq!(state.update.preference(), Preference::On);
+    assert!(!state.update.beta());
+    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::None);
+    // 試験版が置いてあっても、切のうちは stable の置き場だけを見る
+    state.update_startup();
+    settle(&mut state);
+    assert_eq!(asked(&rig), [UPDATER_URL]);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    // 設定が壊れていても、試験版は切（stable だけ）
+    let broken = TempDir::new("beta-broken");
+    std::fs::write(broken.0.join("update.conf"), "use_beta=maybe").unwrap();
+    let mut next = AppState::new(64, 64);
+    let rig2 = self::rig(&mut next, "0.2.0", Mode::Installer);
+    serve_beta(&rig2, Some("0.3.0-rc.1"));
+    next.update.attach_config(broken.0.join("update.conf"));
+    assert!(!next.update.beta() && next.update.preference() == Preference::Unset);
+    check_now(&mut next);
+    assert_eq!(asked(&rig2), [UPDATER_URL]);
+}
+
+#[test]
+fn headless_the_beta_setting_offers_the_newer_of_beta_and_stable_and_off_goes_back_to_stable() {
+    let dir = TempDir::new("beta-switch");
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    state.update.attach_config(dir.0.join("update.conf"));
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    // 入にしただけでは通信しない。いま出ている提案もそのまま
+    apply(&mut state, UpdateAction::SetBeta(true));
+    assert_eq!(rig.calls(), 1);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::Checked);
+    // 入: stable と試験版の新しい方（試験版 0.3.0-rc.1）。両方の置き場を見る
+    check_now(&mut state);
+    assert_eq!(asked(&rig)[1..], [UPDATER_URL, BETA_UPDATER_URL]);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0-rc.1"));
+    assert_eq!(state.message, "YoluPainter 0.3.0-rc.1 があります。");
+    assert_eq!(help_labels(&state)[0], "YoluPainter 0.3.0-rc.1 に更新");
+    // stable が試験版より新しくなれば、試験版を使う人にも stable が見える
+    serve_stable(&rig, "0.3.0");
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0"));
+    // 次の試験版が出れば、それが新しい
+    serve_beta(&rig, Some("0.4.0-rc.1"));
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.4.0-rc.1"));
+    // 切: 見つけていた試験版の提案はその場で消え、次の確かめは stable だけ
+    let before = rig.calls();
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert!(state.update.offer().is_none());
+    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::None);
+    assert!(help_labels(&state)[0].starts_with("更新を確かめる"));
+    assert_eq!(rig.calls(), before);
+    check_now(&mut state);
+    assert_eq!(asked(&rig)[before..], [UPDATER_URL]);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0"));
+    // stable の提案は、設定を切っても消さない
+    apply(&mut state, UpdateAction::SetBeta(true));
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0"));
+}
+
+#[test]
+fn headless_the_beta_setting_never_downgrades_and_stable_returns_when_it_is_newer() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    // 試験版 0.3.0-rc.1 を使っている
+    state.update.configure_for_test(
+        Some(public_key()),
+        "0.3.0-rc.1",
+        Some(WINDOWS_INSTALLER),
+        Mode::Installer,
+    );
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    for beta in [false, true] {
+        apply(&mut state, UpdateAction::SetBeta(beta));
+        // 今の版より古い stable（0.2.0）へは下げない。試験版も同じ版なので、何も勧めない
+        check_now(&mut state);
+        assert!(state.update.offer().is_none(), "beta={beta}");
+        assert_eq!(state.message, "YoluPainter は最新です。");
+    }
+    // 次の stable が今の版より新しくなったら、設定が切でも入でも勧める（試験版から stable へ戻る）
+    serve_stable(&rig, "0.3.0");
+    for beta in [false, true] {
+        apply(&mut state, UpdateAction::SetBeta(beta));
+        check_now(&mut state);
+        assert_eq!(offered(&state).as_deref(), Some("0.3.0"), "beta={beta}");
+    }
+}
+
+#[test]
+fn headless_the_beta_setting_is_saved_beside_the_startup_choice_and_read_back() {
+    let dir = TempDir::new("beta-save");
+    let file = dir.0.join("update.conf");
+    let mut state = AppState::new(64, 64);
+    let _rig = rig(&mut state, "0.2.0", Mode::Installer);
+    state.update.attach_config(file.clone());
+    // まだ聞いていない人が試験版だけを入れても、起動時の問いは聞いていないまま
+    apply(&mut state, UpdateAction::SetBeta(true));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "use_beta=on\n");
+    assert_eq!(state.update.preference(), Preference::Unset);
+    // 起動時の確かめの選択を足しても、試験版を落とさない（逆も同じ）
+    apply(&mut state, UpdateAction::SetCheckOnStartup(true));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "check_on_startup=on\nuse_beta=on\n"
+    );
+    let mut next = AppState::new(64, 64);
+    let _rig2 = self::rig(&mut next, "0.2.0", Mode::Installer);
+    next.update.attach_config(file.clone());
+    assert!(next.update.beta());
+    assert_eq!(next.update.preference(), Preference::On);
+    assert_eq!(help_item(&next, BETA_ITEM).1, yolu_app::ui::menu::Check::Checked);
+    // 切にすると、旧い版と同じ 1 行になる
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "check_on_startup=on\n");
+    let mut again = AppState::new(64, 64);
+    let _rig3 = self::rig(&mut again, "0.2.0", Mode::Installer);
+    again.update.attach_config(file.clone());
+    assert!(!again.update.beta() && again.update.preference() == Preference::On);
+    // 何も設定していない状態へ戻ると、ファイルは残らない
+    let mut fresh = AppState::new(64, 64);
+    let _rig4 = self::rig(&mut fresh, "0.2.0", Mode::Installer);
+    let other = dir.0.join("fresh").join("update.conf");
+    fresh.update.attach_config(other.clone());
+    apply(&mut fresh, UpdateAction::SetBeta(true));
+    assert!(other.exists());
+    apply(&mut fresh, UpdateAction::SetBeta(false));
+    assert!(!other.exists());
+    // 保存できなくても、この回の選択は効き、知らせる
+    std::fs::remove_dir_all(&dir.0).unwrap();
+    std::fs::write(&dir.0, b"a file where the folder should be").unwrap();
+    apply(&mut state, UpdateAction::SetBeta(true));
+    assert!(state.update.beta());
+    assert!(
+        state.message.contains("更新の設定を保存できません"),
+        "{}",
+        state.message
+    );
+    std::fs::remove_file(&dir.0).unwrap();
+}
+
+#[test]
+fn headless_an_unusable_beta_place_never_stops_the_stable_update() {
+    // 設定を入れた状態で、stable は 0.2.0・今は 0.1.0。試験版の置き場はそれぞれ別の状態にする
+    let setup = |beta: Option<Vec<u8>>| {
+        let mut state = AppState::new(64, 64);
+        let rig = rig(&mut state, "0.2.0", Mode::Installer);
+        *rig.server.beta_metadata.lock().unwrap() = beta;
+        apply(&mut state, UpdateAction::SetBeta(true));
+        (state, rig)
+    };
+    // まだ 1 つも試験版を出していない（置き場が引けない）
+    let (mut state, _rig) = setup(None);
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    assert_eq!(state.message, "YoluPainter 0.2.0 があります。");
+    // 別の鍵で署名された試験版は、新しくても受けない
+    let v = Version::parse("0.9.0-rc.1").unwrap();
+    let name = asset_name(&v, WINDOWS_INSTALLER).unwrap();
+    let payload = serde_json::to_string(&Manifest {
+        schema: UPDATER_SCHEMA,
+        version: v.to_string(),
+        assets: vec![Asset {
+            target: WINDOWS_INSTALLER.into(),
+            url: asset_url(&v, &name),
+            name,
+            sha256: sha256(INSTALLER),
+            size: INSTALLER.len() as u64,
+        }],
+    })
+    .unwrap();
+    let other = SigningKey::from_bytes(&[43; 32]);
+    let signature = Some(hex::encode(other.sign(payload.as_bytes()).to_bytes()));
+    let (mut state, _rig) = setup(Some(
+        serde_json::to_vec(&Envelope { payload, signature }).unwrap(),
+    ));
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    // stable が引けないとき: 新しい試験版があればそれを勧める
+    let (mut state, rig) = setup(Some(signed_metadata("0.3.0-rc.1", INSTALLER)));
+    rig.server.fail_metadata.store(true, Ordering::Relaxed);
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0-rc.1"));
+    // 試験版が新しくなければ、「最新」とは言わず失敗を伝える（引けなかった stable に新しい版があるかもしれない）
+    let (mut state, rig) = setup(Some(signed_metadata("0.1.0-rc.1", INSTALLER)));
+    rig.server.fail_metadata.store(true, Ordering::Relaxed);
+    check_now(&mut state);
+    assert_eq!(state.message, "更新を確かめられません: 通信できません");
+    assert!(state.update.offer().is_none());
+}
+
+#[test]
+fn headless_turning_the_beta_setting_off_cancels_and_forgets_a_beta_download() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    apply(&mut state, UpdateAction::SetBeta(true));
+    find_update(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0-rc.1"));
+    // ダウンロード中に切る: 取り消し、何も残さない
+    rig.server.hold.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Install);
+    assert!(state.update.is_busy());
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert!(state.update.progress().unwrap().canceling);
+    settle(&mut state);
+    assert_eq!(state.message, "ダウンロードを取り消しました。");
+    assert!(rig.staging.files().is_empty());
+    assert!(state.update.ready().is_none() && state.update.offer().is_none());
+    // 落とし済み（あとで）の試験版も、切ると使わない
+    rig.server.hold.store(false, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::SetBeta(true));
+    find_update(&mut state);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    assert!(state.update.is_ready_open());
+    apply(&mut state, UpdateAction::Later);
+    assert!(state.update.ready().is_some());
+    assert_eq!(rig.staging.files().len(), 1);
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert!(state.update.ready().is_none() && state.update.offer().is_none());
+    assert!(!state.update.is_ready_open());
+    // 置き場の試験版のインストーラーも消す（今の版より新しいファイルは、起動時の片付けでも消えない）
+    assert!(rig.staging.files().is_empty(), "{:?}", rig.staging.files());
+    // stable の落とし済みは、切っても残す（ファイルも）
+    check_now(&mut state);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    apply(&mut state, UpdateAction::Later);
+    apply(&mut state, UpdateAction::SetBeta(true));
+    apply(&mut state, UpdateAction::SetBeta(false));
+    assert!(state.update.ready().is_some() && state.update.offer().is_some());
+    assert_eq!(rig.staging.files().len(), 1);
+}
+
+#[test]
+fn headless_a_cancel_after_the_transfer_ended_still_wins_and_leaves_no_file() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    apply(&mut state, UpdateAction::SetBeta(true));
+    find_update(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.3.0-rc.1"));
+    // 転送が済んだあと（確かめ・書き込みの間）に設定を切る: 取消は転送の途中でしか見ないが、試験版は受けない
+    rig.server.ignore_cancel.store(true, Ordering::Relaxed);
+    rig.server.hold.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Install);
+    assert!(state.update.is_busy());
+    apply(&mut state, UpdateAction::SetBeta(false));
+    rig.server.hold.store(false, Ordering::Relaxed);
+    settle(&mut state);
+    assert!(state.update.ready().is_none() && !state.update.is_ready_open());
+    assert_eq!(state.message, "ダウンロードを取り消しました。");
+    assert!(rig.staging.files().is_empty(), "{:?}", rig.staging.files());
+    // 利用者の取消も同じ（stable。準備の窓を開かず、置いたファイルも消す）
+    check_now(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    rig.server.hold.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Install);
+    apply(&mut state, UpdateAction::Cancel);
+    rig.server.hold.store(false, Ordering::Relaxed);
+    settle(&mut state);
+    assert!(state.update.ready().is_none() && !state.update.is_ready_open());
+    assert_eq!(state.message, "ダウンロードを取り消しました。");
+    assert!(rig.staging.files().is_empty(), "{:?}", rig.staging.files());
+    // 取り消さなければ、同じ道で準備の窓が開く
+    rig.server.ignore_cancel.store(false, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Install);
+    settle(&mut state);
+    assert!(state.update.is_ready_open());
+    assert_eq!(rig.staging.files().len(), 1);
+}
+
+#[test]
+fn headless_a_check_that_was_running_when_the_beta_setting_went_off_does_not_bring_in_a_beta() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.1.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    apply(&mut state, UpdateAction::SetBeta(true));
+    rig.server.hold_beta.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Check);
+    assert!(state.update.is_busy());
+    apply(&mut state, UpdateAction::SetBeta(false));
+    rig.server.hold_beta.store(false, Ordering::Relaxed);
+    settle(&mut state);
+    assert!(state.update.offer().is_none());
+    assert_eq!(state.message, "YoluPainter は最新です。");
+}
+
+#[test]
+fn headless_a_check_cut_short_by_the_beta_setting_still_offers_a_newer_stable() {
+    // 今は 0.1.0、stable は 0.2.0、試験版は 0.3.0-rc.1。確かめの途中で切にしても、stable の 0.2.0 は勧める（「最新」とは言わない）
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    serve_beta(&rig, Some("0.3.0-rc.1"));
+    apply(&mut state, UpdateAction::SetBeta(true));
+    rig.server.hold_beta.store(true, Ordering::Relaxed);
+    apply(&mut state, UpdateAction::Check);
+    assert!(state.update.is_busy());
+    apply(&mut state, UpdateAction::SetBeta(false));
+    rig.server.hold_beta.store(false, Ordering::Relaxed);
+    settle(&mut state);
+    assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
+    assert_eq!(state.message, "YoluPainter 0.2.0 があります。");
+    // stable が引けないときは、試験版を捨てたあとも「最新」とは言わず失敗を伝える
+    let mut next = AppState::new(64, 64);
+    let rig2 = self::rig(&mut next, "0.2.0", Mode::Installer);
+    serve_beta(&rig2, Some("0.3.0-rc.1"));
+    rig2.server.fail_metadata.store(true, Ordering::Relaxed);
+    apply(&mut next, UpdateAction::SetBeta(true));
+    rig2.server.hold_beta.store(true, Ordering::Relaxed);
+    apply(&mut next, UpdateAction::Check);
+    apply(&mut next, UpdateAction::SetBeta(false));
+    rig2.server.hold_beta.store(false, Ordering::Relaxed);
+    settle(&mut next);
+    assert!(next.update.offer().is_none());
+    assert_eq!(next.message, "更新を確かめられません: 通信できません");
+}
+
+#[test]
+fn headless_the_failure_reason_comes_from_stable_not_from_the_beta_place() {
+    // 試験版の置き場が引けなくても（まだ 1 つも出していない間はいつもそう）、stable の失敗の本当の理由を言う
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Installer);
+    apply(&mut state, UpdateAction::SetBeta(true));
+    serve_beta(&rig, None);
+    // stable の更新情報が壊れている（署名・形式）: 検証を通らない
+    *rig.server.metadata.lock().unwrap() = b"not an update file".to_vec();
+    check_now(&mut state);
+    assert_eq!(state.message, "更新を確かめられません: 検証を通りません");
+    state.lang = Lang::En;
+    check_now(&mut state);
+    assert_eq!(state.message, "Cannot check for updates: verification failed");
+    // stable が引けない: 通信できない
+    state.lang = Lang::Ja;
+    rig.server.fail_metadata.store(true, Ordering::Relaxed);
+    check_now(&mut state);
+    assert_eq!(state.message, "更新を確かめられません: 通信できません");
+    assert!(state.update.offer().is_none());
+}
+
+#[test]
+fn headless_the_help_menu_has_the_beta_item_with_a_tooltip_in_both_languages() {
+    let mut state = AppState::new(64, 64);
+    let _rig = rig(&mut state, "0.2.0", Mode::Installer);
+    for (lang, label, startup) in [
+        (Lang::Ja, BETA_ITEM, "起動時に更新を確かめる"),
+        (Lang::En, "Use Beta Versions", "Check for Updates at Startup"),
+    ] {
+        state.lang = lang;
+        let labels = help_labels(&state);
+        let at = |name: &str| labels.iter().position(|l| l == name).unwrap_or_else(|| panic!("{name}: {labels:?}"));
+        assert_eq!(at(label), at(startup) + 1, "起動時の確かめのすぐ下: {labels:?}");
+        let tip = shell::menu_entries(&state, shell::HELP_MENU)
+            .into_iter()
+            .find_map(|e| match e {
+                yolu_app::ui::menu::Entry::Item { label: l, tooltip, .. } if l == label => tooltip,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{label} に説明が無い"));
+        assert!(!tip.is_empty());
+        // 試験版の項目を、公開鍵の無いビルドへ出さない
+        let mut plain = AppState::new(64, 64);
+        plain.lang = lang;
+        assert!(!help_labels(&plain).iter().any(|l| l == label));
+    }
+}
+
+#[test]
+fn the_status_band_marks_a_beta_version_and_only_a_beta_version() {
+    use egui_kittest::kittest::Queryable;
+    for (lang, mark) in [(Lang::Ja, "試験版"), (Lang::En, "Beta")] {
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.state_mut().state.usage.build = Some("0.4.0 · a1b2c3d".into());
+        h.run();
+        assert!(h.query_by_label(mark).is_none(), "{lang:?}: 正式版に印は付かない");
+        h.state_mut().state.usage.build = Some("0.4.0-rc.1 · a1b2c3d".into());
+        h.run();
+        h.get_by_label(mark);
+        h.get_by_label("0.4.0-rc.1 · a1b2c3d");
+    }
 }
 
 // ───────── ダウンロードと検証、インストーラーの起動 ─────────

@@ -44,6 +44,23 @@ pub fn build_label() -> String {
     }
 }
 
+/// 版の文字（「0.4.0-rc.1」や、「0.4.0-rc.1 · a1b2c3d」の先頭）が試験版（`alpha.N`・`beta.N`・`rc.N` の版）か。
+fn is_beta_label(text: &str) -> bool {
+    text.split_whitespace()
+        .next()
+        .and_then(|version| yolu_update::Version::parse(version).ok())
+        .is_some_and(|version| yolu_update::is_beta_version(&version))
+}
+
+/// 「について」の知らせ。試験版には、版のあとに試験版の印を付ける（正式版は製品名と版だけ）。
+pub fn about_text(lang: Lang, version: &str) -> String {
+    if is_beta_label(version) {
+        format!("YoluPainter {version}{}", lang.pick("（試験版）", " (beta)"))
+    } else {
+        format!("YoluPainter {version}")
+    }
+}
+
 /// 量の短い文字（1 GB 未満は「812 MB」、以上は「1.4 GB」。1 MB 未満も「0 MB」でなく「1 MB」から）。
 pub fn format_size(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
@@ -138,7 +155,7 @@ pub struct Item {
 }
 
 impl Usage {
-    /// 右端から左へ並べる項目（版とビルド・GPU・メモリの順。測れていない値は無い）。
+    /// 右端から左へ並べる項目（版とビルド・試験版の印（試験版のときだけ）・GPU・メモリの順。測れていない値は無い）。
     pub fn items(&self, lang: Lang) -> Vec<Item> {
         let mut items = Vec::new();
         if let Some(build) = &self.build {
@@ -147,6 +164,16 @@ impl Usage {
                 text: build.clone(),
                 tip: lang.pick("版とビルド", "Version and build").to_owned(),
             });
+            // 試験版には、版の左に印（「試験版」「Beta」）。正式版は何も足さない。
+            if is_beta_label(build) {
+                items.push(Item {
+                    key: "beta",
+                    text: lang.pick("試験版", "Beta").to_owned(),
+                    tip: lang
+                        .pick("試験版（正式版より前の版）", "Beta version (before the stable release)")
+                        .to_owned(),
+                });
+            }
         }
         if self.process.is_some() || self.gpu.is_some() {
             let tip = tooltip(self, lang);
@@ -197,6 +224,31 @@ mod tests {
         match option_env!("YOLU_GIT_REV") {
             Some(rev) if !rev.is_empty() => assert!(label.ends_with(&format!(" · {rev}")), "{label}"),
             _ => assert_eq!(label, env!("CARGO_PKG_VERSION")),
+        }
+    }
+
+    #[test]
+    fn a_beta_version_carries_a_mark_in_the_status_band_and_the_about_text() {
+        let usage = |build: &str| Usage { build: Some(build.into()), ..Usage::default() };
+        for lang in Lang::ALL {
+            let mark = lang.pick("試験版", "Beta");
+            // 試験版: 版とビルドの左に印が付く（右端が版とビルド）
+            let items = usage("0.4.0-rc.1 · a1b2c3d").items(lang);
+            let keys: Vec<_> = items.iter().map(|i| (i.key, i.text.as_str())).collect();
+            assert_eq!(keys, [("build", "0.4.0-rc.1 · a1b2c3d"), ("beta", mark)], "{lang:?}");
+            assert!(!items[1].tip.is_empty());
+            // 版だけ（ビルドの ID が埋まっていない）でも同じ
+            assert_eq!(usage("0.4.0-beta.2").items(lang).len(), 2);
+            // 正式版・試験版の形でないプレリリース・測っていない窓には、印を足さない
+            for plain in ["0.4.0 · a1b2c3d", "0.4.0", "0.4.0-preview.1 · a1b2c3d", "0.4.0-rc1"] {
+                assert_eq!(usage(plain).items(lang).len(), 1, "{plain}");
+            }
+            assert!(Usage::default().items(lang).is_empty());
+        }
+        assert_eq!(about_text(Lang::Ja, "0.4.0-rc.1"), "YoluPainter 0.4.0-rc.1（試験版）");
+        assert_eq!(about_text(Lang::En, "0.4.0-rc.1"), "YoluPainter 0.4.0-rc.1 (beta)");
+        for lang in Lang::ALL {
+            assert_eq!(about_text(lang, "0.4.0"), "YoluPainter 0.4.0");
         }
     }
 

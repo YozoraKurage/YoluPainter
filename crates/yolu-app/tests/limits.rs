@@ -221,7 +221,16 @@ fn about_names_the_product_and_the_version_and_nothing_else() {
     for lang in Lang::ALL {
         let mut s = AppState::new_in(64, 64, lang);
         s.apply(Action::About);
-        assert_eq!(s.message, format!("YoluPainter {}", env!("CARGO_PKG_VERSION")));
+        // 正式版は製品名と版だけ。試験版（0.4.0-rc.1 のような版）には、版のあとに試験版の印が付く
+        let version = env!("CARGO_PKG_VERSION");
+        let beta = yolu_update::Version::parse(version)
+            .is_ok_and(|version| yolu_update::is_beta_version(&version));
+        let mark = match (beta, lang) {
+            (false, _) => "",
+            (true, Lang::Ja) => "（試験版）",
+            (true, Lang::En) => " (beta)",
+        };
+        assert_eq!(s.message, format!("YoluPainter {version}{mark}"));
     }
 }
 

@@ -21,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXED_INPUTS = {'kind', 'dry-run', 'rebuild'}
 PINNED = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$')
 DIST_BUILD = './.github/workflows/dist-build.yml'
+# 試験版の更新情報を固定のタグの Release へ置くワークフロー。アプリが取る場所の定数は更新クレートが持つ。
+BETA_CHANNEL = 'beta-channel.yml'
+UPDATE_LIBRARY = 'crates/yolu-update/src/lib.rs'
 
 
 def triggers(document):
@@ -41,6 +44,42 @@ def uses_of(document):
     for step in steps_of(document):
         if 'uses' in step:
             yield step['uses']
+
+
+def library_constant(root, name):
+    """更新クレートの `pub const NAME: &str = "…";` の値。読めなければ None。"""
+    try:
+        text = (Path(root) / UPDATE_LIBRARY).read_text(encoding='utf-8')
+    except OSError:
+        return None
+    found = re.search(rf'pub const {name}: &str = "([^"]*)";', text)
+    return found.group(1) if found else None
+
+
+def check_beta_channel(root, document):
+    """試験版の置き場へ更新情報を置くワークフローの決まり。"""
+    problems = []
+    on = triggers(document)
+    if set(on) != {'release'} or (on['release'] or {}).get('types') != ['published']:
+        problems.append(f'{BETA_CHANNEL}: release の published だけで動かす'
+                        '（Draft のうちは置き場を動かさない。prereleased は Draft からの公開では起こらない）')
+    if (document.get('permissions') or {}) != {'contents': 'read'}:
+        problems.append(f'{BETA_CHANNEL}: 全体の権限は contents: read だけにする（書き込みはジョブに限る）')
+    conditions = ' '.join(str(job.get('if', '')) for job in document['jobs'].values())
+    for needle in ('github.event.release.prerelease', "startsWith(github.event.release.tag_name, 'v')"):
+        if needle not in conditions:
+            problems.append(f'{BETA_CHANNEL}: 条件に {needle} がありません（試験版の Release だけで動かす。置き場の Release 自身では動かさない）')
+    tag = library_constant(root, 'BETA_CHANNEL_TAG')
+    name = library_constant(root, 'UPDATER_FILE')
+    if tag is None or name is None:
+        problems.append(f'{UPDATE_LIBRARY}: BETA_CHANNEL_TAG・UPDATER_FILE が読めません')
+        return problems
+    if (document.get('env') or {}).get('CHANNEL_TAG') != tag:
+        problems.append(f'{BETA_CHANNEL}: env の CHANNEL_TAG が {UPDATE_LIBRARY} の BETA_CHANNEL_TAG（{tag}）と違います')
+    names = set(re.findall(r'updater-v[0-9]+\.json', json.dumps(document, ensure_ascii=False)))
+    if names != {name}:
+        problems.append(f'{BETA_CHANNEL}: 更新情報のファイル名が UPDATER_FILE（{name}）だけではありません: {sorted(names)}')
+    return problems
 
 
 def load(root):
@@ -111,8 +150,15 @@ def check(root):
         if name in documents and DIST_BUILD not in list(uses_of(documents[name])):
             problems.append(f'{name}: 配る物の組み（{DIST_BUILD}）を呼んでいません')
 
+    # 試験版の更新情報の置き場（公開した試験版の署名を確かめ直して、固定のタグの Release へ置く）。
+    beta = documents.get(BETA_CHANNEL)
+    if beta is None:
+        problems.append(f'{BETA_CHANNEL} がありません')
+    else:
+        problems.extend(check_beta_channel(root, beta))
+
     # 配る物を作る手順はキャッシュを使わない（汚染されたキャッシュが配る物に入る道を作らない）。
-    for name in ('release.yml', 'dist-build.yml'):
+    for name in ('release.yml', 'dist-build.yml', BETA_CHANNEL):
         document = documents.get(name)
         if document is None:
             continue

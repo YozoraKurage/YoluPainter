@@ -19,7 +19,9 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 ## 版と配布物
 
 `Cargo.toml` の workspace.package.version を更新し、`Cargo.lock` を更新・コミットしてから、そのコミットを配布対象にします。
-版は SemVer です。試験版は `0.1.0-rc.1` のようにプレリリース識別子を付けてください。
+版は SemVer です。試験版（kind=prerelease）は `0.1.0-rc.1` のように、プレリリース識別子を `alpha.N`・`beta.N`・`rc.N`（N は整数）の 1 つにします。
+この形にすると、`rc.2` < `rc.10` < 正式版の順に並び（`rc10` のようにつなげると辞書順で `rc10` < `rc2` になるので認めません）、アプリの「試験版を使う」の設定が見つけられます
+（[試験版の置き場](#試験版の置き場)）。stable は識別子を含む版を使えません。`cargo xtask preflight --kind prerelease` が版の形を確かめます。
 
 ```sh
 cargo xtask build --target x86_64-pc-windows-msvc --release
@@ -52,6 +54,7 @@ Windows の zip があるのにインストーラーが無い版も拒否しま�
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
 URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
 `https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
+設定「試験版を使う」を入れたアプリは、これに加えて固定のタグの置き場（`releases/download/updater-beta/updater-v1.json`）も見ます。
 フォークから配る場合は、更新クレートの `RELEASE_BASE`・`UPDATER_URL` も変更してビルドします。
 署名なしの JSON は検査専用で、更新クレートは受理しません。
 
@@ -131,6 +134,7 @@ python3 tools/test-installer.py
 ```sh
 cargo xtask preflight                       # 既定の対象（tools/dist-targets.json の、入力が要らない対象）
 cargo xtask preflight --kind stable         # 出す種類も確かめる（stable にプレリリースの版は使えない）
+cargo xtask preflight --kind prerelease     # 試験版は alpha.N・beta.N・rc.N の版だけ
 cargo xtask preflight --target x86_64-unknown-linux-gnu --offline
 cargo xtask preflight --installer           # 加えて、Wine でインストーラーを通す（tools/test-installer.py。wine32 が要る）
 cargo xtask preflight --only version --kind prerelease
@@ -141,7 +145,7 @@ cargo xtask preflight --only version --kind prerelease
 | `licenses` | 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ。未確認の依存・原文の不一致・`blocked` で落ちる） |
 | `attributes` | SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か（Windows の checkout で CRLF になると照合が落ちる） |
 | `nsis` | `installer/yolupainter.nsi` の `Target` が、公式の Windows 版 NSIS が持つ stub（`x86-unicode`・`x86-ansi`）か（amd64 の stub は無い） |
-| `version` | yolu-app の版のタグ `v<版>` が origin にまだ無いか（`git ls-remote --tags origin`。問い合わせられなければ「飛ばした」と表示する）、`--kind stable` ならプレリリースの版でないか |
+| `version` | yolu-app の版のタグ `v<版>` が origin にまだ無いか（`git ls-remote --tags origin`。問い合わせられなければ「飛ばした」と表示する）、`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら `alpha.N`・`beta.N`・`rc.N` の版か |
 | `targets` | `tools/dist-targets.json` の対象が、xtask の配れる対象で、Windows にだけインストーラーがあるか |
 | `workflows` | ワークフローの YAML が読めるか、release.yml の入力と対象の並びが食い違わないか、外の Action が SHA で固定されているか、配る物の手順がキャッシュを使っていないか（`tools/check-workflows.py`。PyYAML が無ければ「飛ばした」） |
 | `installer` | Wine でインストーラーを通す（`--installer` か `--only installer` のときだけ） |
@@ -192,6 +196,67 @@ cargo xtask preflight --only version --kind prerelease
 - 保存は 14 日です。PR を出してから 14 日以上たって配るときは、組み直します。
 
 手元で受け取りの条件を確かめるには、`python3 tools/test-dist.py`（GitHub の API を偽の窓口に置き換えた試験）を回します。
+
+## 試験版の置き場
+
+試験版（kind=prerelease の Release）は、`releases/latest` に出ません。設定「試験版を使う」を入れたアプリが見つけられるように、
+公開した試験版の署名つきの更新情報を、**固定のタグ `updater-beta` の Release** に原本のまま上書きで置きます。
+
+- アプリ（`yolu-update` の `UpdateClient::check_channels`）は、設定が入のとき、stable の置き場（`releases/latest/download/updater-v1.json`）と
+  試験版の置き場（`releases/download/updater-beta/updater-v1.json`）を両方取り、**今の版より新しい方**を勧めます。どちらも同じ鍵・同じ検証です
+  （署名・形式・版・対象・大きさ・SHA-256）。同じ版が両方にあれば stable を勧め、版を下げる更新は勧めません。
+- 切のときは stable の置き場だけを見ます。stable の更新情報に試験版の版が載っていても受けません。試験版を入れていた人が設定を切っても、
+  次の stable が今の版より新しくなるまでは何も勧めません（試験版から正式版へ戻るのは、そのとき）。
+- stable が出れば `releases/latest` が切り替わります。置き場は何もしなくてよく、試験版を使う人にも、試験版より新しい stable が見えます。
+- 確かめの途中で設定を切ると、その確かめは試験版の結果だけを捨て、stable の結果で答えます（今の版より新しい stable があれば勧めます。「最新」と言うのは stable も新しくないときだけ）。
+  ダウンロード中の試験版は取り消し、転送が済んだあとの確かめ・書き込みの間に切った場合も受けません。落とし済みの試験版は、置き場のインストーラーも消します。
+- 失敗の理由（通信できない・検証を通らない）は stable の取得で決めます。試験版の置き場が引けないこと（まだ 1 つも出していない間はいつもそうです）は、理由に混ぜません。
+- 試験版の置き場が引けない（まだ 1 つも出していない間も含む）・署名が合わない・対象の配布物が無いときは、stable の結果だけで答えます。
+  逆に stable が引けないときは、新しい試験版が見つかればそれを勧め、見つからなければ「最新」とは答えずに失敗を伝えます。
+
+### 置き場の決め方の比べ
+
+| 候補 | 認証なしで引けるか | 回数の上限 | キャッシュ | 壊れにくさ | 署名との関係 | 公開の順・運用 |
+|---|---|---|---|---|---|---|
+| **固定のタグの Release の資産**（採用） | 引ける（stable の道と同じ種類の URL） | 無い（Web の配布の道で、API の回数制限の外） | 最初の応答は `no-cache`（stable の道で確かめた）。置き換えは資産の削除と再登録なので、古い写しが返る見込みは低い（置き換えの反映の遅れは測っていない） | アプリが決めた更新情報の形をそのまま返す。GitHub の API の JSON の形に依存しない | 原本の署名つきの更新情報。stable と同じ鍵・同じ形で、アプリは追加の仕組み無しに検証できる | 公開（published）のときに 1 回だけ上書き。Draft のうちは置き場が動かない。置き場の Release を 1 つ持つ |
+| GitHub の API で最新の prerelease を引く（`releases`） | 引ける（認証なし） | 認証なしは 1 時間 60 回・IP ごと。共有の回線の利用者がまとめて止まる | API の応答に依存 | Release の本文などを含む大きな JSON の形・ページ送り・並び（作成日順で stable と混ざる）に依存する | API の応答は署名の外。結局、更新情報を取る 2 回目の通信が要る | Draft は認証が無いと見えない。置き場の更新の手間は要らない |
+| `releases.atom`（フィード）を読む | 引ける | 無い | フィードのキャッシュに依存 | XML の解析と依存の追加。項目から prerelease かを確実に見分けられる保証が無い | 署名の外の指し示しで、2 回目の通信が要る | 置き場の更新の手間は要らない |
+| リポジトリのファイル（`main` の raw）に置く | 引ける | 無い | 数分のキャッシュ | ファイル名は固定 | 署名つきの更新情報を置ける | 保護された `main` へワークフローが push することになり、PR 必須の運用と合わない |
+
+採った理由は、認証と API の回数に頼らず、署名つきの更新情報を原本のまま（再署名なし・秘密鍵に触れずに）置けて、アプリの検証が stable と 1 つで済むことです。
+失うものは、置き場の Release が 1 つ増えること（Releases の一覧に prerelease として出ます）と、置き換えの間の数秒に取得が失敗し得ることです
+（そのときの確かめは stable の結果で答えるので、更新が止まることはありません）。
+
+### 試験版を出す手順
+
+1. 作業ブランチで `Cargo.toml` の workspace.package.version を `0.4.0-rc.1` のように `alpha.N`・`beta.N`・`rc.N` の版にし、`Cargo.lock` を更新してコミットし、main 向けの PR を出します
+   （CI が配る物を組みます。`cargo xtask preflight --kind prerelease` で版の形も確かめられます）。
+2. Actions の「配布物の作成」を kind=prerelease で、まず dry-run=true、次に dry-run=false（environment の承認）で動かします。Draft Release が prerelease の印つきで出ます。
+3. 実機の確認のあとに Draft を公開します。**公開すると `beta-channel.yml` が動き**、公開した Release の配布物をすべて取り、公開鍵だけで署名・版・大きさ・SHA-256・梱包の中身を確かめ直して
+   （`cargo xtask beta-channel`）、`updater-beta` の Release の `updater-v1.json` を上書きします（初めてなら Release を作ります）。
+   置き場の Release は毎回 prerelease・「最新の Release」にしない設定へ付け直すので、stable の `releases/latest` は動きません。
+4. 「試験版を使う」を入れたアプリが、次の更新の確かめで新しい試験版を見つけます。入れていない人には何も変わりません。
+
+`xtask beta-channel` の規則:
+- 版は `alpha.N`・`beta.N`・`rc.N` の形だけ（正式版や別の識別子の版は置き場に載せません）。
+- 置き場の今の更新情報の版が今の版以上なら、置き換えません（古い試験版を後から公開しても、置き場が戻りません）。今の置き場が読めなければ、直すつもりで置きます。
+  この比べは戻し防止の目安で、署名の確かめではありません（アプリが署名を確かめます）。
+- ワークフローは、置き場の Release がまだ無いとき（`release not found`）だけ新しく作ります。取得の失敗など、ほかの失敗は止めます（置き場の版を見ずに上書きしないため）。
+- 失敗したときは、Actions の「Re-run」で同じ公開に対してやり直せます。置き場の Release を手で消したり、prerelease の印を外したりしないでください
+  （外すと `releases/latest` が置き場を指します。次の試験版の公開で付け直されます）。
+
+保証しないこと: 置き場の更新情報は署名つきの過去の物の再送を防げません（stable と同じ）。試験版の置き場への反映は、公開のあと、ワークフローが終わるまで（数分）かかります。
+反映の遅れ（資産の置き換えから、取得する側に新しい中身が返るまで）は測っていません。
+
+### 以前の版との違いと互換
+
+- 失った能力: 以前は、試験版の版で動いているアプリが、stable の更新情報に載った試験版の版も自動で受けていました（今の版がプレリリースなら受ける、という判定）。
+  今は設定「試験版を使う」が入のときだけ受けます。stable の更新情報は preflight が試験版の版を断るので、公式の手順で出した物では起こらない場面ですが、
+  手元で作って stable の置き場に載せた試験版は、設定が切のアプリには届かなくなりました。
+- 設定ファイル: 試験版を入にすると `update.conf` に `use_beta=on` の行が増えます（切のときは旧い版と同じ 1 行だけで、ファイルが無かった人には作りません）。
+  0.3.x はこのファイルを「1 行だけの形」で読むので、行が増えたファイルは読めない選択として扱い、初回の問い（起動時に確かめるか）をもう一度出します。
+  試験版の設定そのものは 0.3.x に無いので、戻したアプリは stable だけを見ます。切にしてから戻せば、旧い 1 行のままです。
+- 配布のワークフロー: kind の既定は prerelease のままですが、prerelease は試験版の形の版しか受け付けなくなりました。正式版の形の版を出すときは kind=stable を選びます。
 
 ## 更新情報の互換
 
@@ -259,6 +324,8 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
    配る物の組みが、この値をアプリへ組み込みます（main 向けの PR の CI の組みと、dry-run=false の配布の組みでは、空だと止まります。成果物の目録にも載り、変数を変えると、PR の CI の成果物は受け取らず組み直します）。
    draft ジョブは署名の直後にこの公開鍵で `verify` を実行し、通らなければ Draft を作りません。
 4. Actions の「配布物の作成」で配布対象のコミットを含むブランチ／タグを選び、kind を prerelease または stable にします。
+   版が `0.4.0-rc.1` のような試験版なら prerelease、`0.4.0` のようにプレリリース識別子のない正式版の形なら **stable** を選びます。
+   kind の既定は prerelease なので、正式版の形の版を既定のまま動かすと preflight の version で止まります（止まるのは Draft を作る前です）。
 5. 最初は **dry-run=true（既定）** で実行します。同じ木の物が main 向けの PR の CI にあれば受け取り（[配る物を組む場所と、受け取る道](#配る物を組む場所と受け取る道)）、無ければ Windows（`linux` が入なら Linux も）を組み、未署名 JSON を含む `release-preview` artifact を作ります。secret に触れず、Release は作りません。
 6. artifact を取得し、両 OS で展開・起動・同梱文書・許諾全文を確認します。Linux 実行ファイルには実行権限があります。
    Windows はインストーラーで、インストール・起動・更新（前の版のインストーラーで入れた上に入れる）・アンインストールを通します。
@@ -266,10 +333,12 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
 8. 署名と各配布物の SHA-256・サイズはワークフローが公開鍵で確認済みです。Draft のタグと対象コミット、版、prerelease の状態を確認します。
    本文は空で作られるので、両 OS の実機確認後、管理者が本文を書き、README の「Code signing policy」の節へのリンクを入れて手で公開します。
    **公開した時点で `releases/latest` が切り替わり、アプリの更新の確認がその版を見つけ始めます**（stable のみ。prerelease は `latest` に出ません）。
+   prerelease を公開すると `.github/workflows/beta-channel.yml` が動き、試験版の置き場を更新します（[試験版の置き場](#試験版の置き場)）。
 
 同時実行は 1 本です。実行中の処理は自動取消しません。既存の同じタグの Release は上書きしません。
 失敗後は Draft とタグの状態を確認してから再実行してください。非公開リポジトリでは認証と Actions の利用枠にも注意してください。
-GitHub の prerelease 設定と SemVer のプレリリース識別子は別です。stable はプレリリース識別子を含む版を拒否します。
+版の形と kind は組になっています。kind=prerelease は `alpha.N`・`beta.N`・`rc.N` の版だけ、kind=stable はプレリリース識別子のない版だけを受け付けます
+（`cargo xtask preflight` の version が確かめ、合わなければ Draft を作る前に止まります）。
 
 ## コード署名（SignPath Foundation）
 
@@ -308,7 +377,7 @@ cargo test -p yolu-update -p xtask --locked
 python3 tools/test-release-tools.py
 python3 tools/test-dist.py
 cargo xtask preflight
-actionlint .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/dist-build.yml
+actionlint .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/dist-build.yml .github/workflows/beta-channel.yml
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -318,7 +387,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 https だけ・時間切れ・読み込み中のサイズ上限・取消を守り、止まらない転送の連なりは失敗にします。転送の回数は、curl は 5 回まで（転送先も https だけ）、
 WinHTTP は 5 回に絞る設定を試み、設定できない環境では OS の既定（10 回）まで、で、https から http へは WinHTTP の既定が断ります。
 現在の API は同期で、取得データをメモリに保持します。更新情報は 1 MiB、配布物は 2 GiB が上限です。
-プレリリースの版を提案するのは、実行中のアプリ自身がプレリリースのときだけです。同じ版・古い版への更新は提案しません。
+試験版を提案するのは、設定「試験版を使う」が入っているときだけです（stable の更新情報に試験版の版が載っていても受けません）。同じ版・古い版への更新は提案しません。
 署名済みの過去の情報の再送による「新しい版を見せない」攻撃への鮮度保証はありません。
 ダウンロードは、利用者が「更新」を押したあとだけ始めます。ダウンロードしたインストーラーは、署名つきの更新情報の SHA-256・大きさで確かめたものを
 利用者ごとの置き場（Windows は `%LOCALAPPDATA%\YoluPainter\updates`）へ置き、走らせる直前にもう一度確かめます。

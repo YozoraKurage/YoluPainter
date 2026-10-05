@@ -1321,7 +1321,7 @@ impl AppState {
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::View3d(op) => self.view3d.display.apply(op),
             Action::About => {
-                self.message = format!("YoluPainter {}", env!("CARGO_PKG_VERSION"));
+                self.message = crate::usage::about_text(self.lang, env!("CARGO_PKG_VERSION"));
             }
             Action::SelectSet(uid) => {
                 if let Some(i) = self.sets.index_of(uid) {

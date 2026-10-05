@@ -334,6 +334,18 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .checked(on),
     );
+    let beta = app.update.beta();
+    entries.push(
+        Entry::item(
+            l.pick("試験版を使う", "Use Beta Versions"),
+            Action::Update(UpdateAction::SetBeta(!beta)),
+        )
+        .checked(beta)
+        .tooltip(l.pick(
+            "正式版より前の試験版も、更新の候補にします。切ると正式版だけを見ます",
+            "Also offers beta versions as updates. When off, only stable releases are offered",
+        )),
+    );
     entries.push(Entry::Separator);
     entries.push(crate::shortcuts::menu_entry(l));
     entries.push(Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder));

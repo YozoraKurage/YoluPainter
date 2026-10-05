@@ -11,16 +11,16 @@ use std::{
     process::Command,
 };
 use yolu_update::{
-    asset_name, asset_url, check_public_key, is_archive_target, sha256, Asset, Envelope, Manifest,
-    Transport, UpdateClient, MAX_ASSET, RELEASE_BASE, TARGETS, UPDATER_FILE, UPDATER_SCHEMA,
-    WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
+    asset_name, asset_url, check_public_key, is_archive_target, is_beta_version, sha256, Asset,
+    Envelope, Manifest, Transport, UpdateClient, MAX_ASSET, MAX_METADATA, RELEASE_BASE, TARGETS,
+    UPDATER_FILE, UPDATER_SCHEMA, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -69,6 +69,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     let mut key_file = None;
     let mut public_key = None;
     let mut output = None;
+    let mut existing = None;
     let mut release = false;
     let mut sign = false;
     let mut require_update_key = false;
@@ -82,17 +83,28 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
             {
                 target = Some(value(&mut args)?)
             }
-            "--version" if matches!(command.as_str(), "updater-json" | "verify") => {
+            "--version"
+                if matches!(command.as_str(), "updater-json" | "verify" | "beta-channel") =>
+            {
                 version = Some(Version::parse(&value(&mut args)?)?)
             }
-            "--assets" if matches!(command.as_str(), "updater-json" | "verify") => {
+            "--assets"
+                if matches!(command.as_str(), "updater-json" | "verify" | "beta-channel") =>
+            {
                 assets = Some(PathBuf::from(value(&mut args)?))
             }
             "--key-file" if matches!(command.as_str(), "updater-json" | "pubkey") => {
                 key_file = Some(PathBuf::from(value(&mut args)?))
             }
-            "--public-key" if command == "verify" => public_key = Some(value(&mut args)?),
-            "--output" if command == "keygen" => output = Some(PathBuf::from(value(&mut args)?)),
+            "--public-key" if matches!(command.as_str(), "verify" | "beta-channel") => {
+                public_key = Some(value(&mut args)?)
+            }
+            "--output" if matches!(command.as_str(), "keygen" | "beta-channel") => {
+                output = Some(PathBuf::from(value(&mut args)?))
+            }
+            "--existing" if command == "beta-channel" => {
+                existing = Some(PathBuf::from(value(&mut args)?))
+            }
             "--release" if command == "build" => release = true,
             "--require-update-key" if command == "build" => require_update_key = true,
             "--sign" if command == "updater-json" => sign = true,
@@ -132,6 +144,13 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
             &version.ok_or("--version が必要です")?,
             &assets.ok_or("--assets が必要です")?,
             public_key_bytes(&public_key.ok_or("--public-key が必要です")?)?,
+        ),
+        "beta-channel" => beta_channel(
+            &version.ok_or("--version が必要です")?,
+            &assets.ok_or("--assets が必要です")?,
+            public_key_bytes(&public_key.ok_or("--public-key が必要です")?)?,
+            existing.as_deref(),
+            &output.ok_or("--output が必要です")?,
         ),
         "keygen" => {
             println!("公開鍵: {}", keygen(&output.ok_or("--output が必要です")?)?);
@@ -829,6 +848,64 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
     );
     Ok(())
 }
+/// 置き場にすでにある更新情報の版（署名は見ない。読めなければ None）。置き換えてよいかの目安にだけ使う。
+fn held_version(existing: &Path) -> Option<Version> {
+    let mut bytes = Vec::new();
+    File::open(existing)
+        .ok()?
+        .take(MAX_METADATA as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let envelope: Envelope = serde_json::from_slice(&bytes).ok()?;
+    let payload: serde_json::Value = serde_json::from_str(&envelope.payload).ok()?;
+    Version::parse(payload.get("version")?.as_str()?).ok()
+}
+/// 公開した試験版の署名つきの更新情報（`directory` の `UPDATER_FILE`）を、試験版の置き場（固定のタグの Release）へ上書きで置く物として
+/// `output` へ写す。写すのは原本のバイト列そのままで、再署名しない（秘密鍵に触れない）。
+///
+/// - 版は試験版の形（`is_beta_version`）。正式版や形の違う版は置き場に載せない。
+/// - 置く前に、公開鍵だけで署名・版・配布物の大きさと SHA-256・梱包の中身を `verify` と同じに確かめる
+///   （Draft のあとに Release の資産が差し替えられても、公開した今の物で確かめ直す）。
+/// - `existing`（今の置き場の更新情報）の版が今の版以上なら、置き換えず何も書かない（古い試験版を後から公開しても、置き場を戻さない）。
+///   `existing` が読めなければ、壊れた置き場を直すつもりで置く。この比べは戻し防止の目安で、署名の確かめではない
+///   （アプリが署名を確かめる）。
+fn beta_channel(
+    version: &Version,
+    directory: &Path,
+    public_key: [u8; 32],
+    existing: Option<&Path>,
+    output: &Path,
+) -> Result<()> {
+    let destination = output.join(UPDATER_FILE);
+    remove_if_present(&destination)?;
+    if !is_beta_version(version) {
+        return Err(format!(
+            "試験版の置き場に載せられない版です: {version}（プレリリース識別子は alpha.N・beta.N・rc.N の 1 つ）"
+        )
+        .into());
+    }
+    verify(version, directory, public_key)?;
+    let source = directory.join(UPDATER_FILE);
+    let mut bytes = Vec::new();
+    File::open(&source)?
+        .take(MAX_METADATA as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_METADATA {
+        return Err("更新情報が大きすぎます".into());
+    }
+    if let Some(held) = existing.and_then(held_version) {
+        if held.cmp_precedence(version).is_ge() {
+            println!("置き場の版 {held} は今の版 {version} 以上なので、置き換えません");
+            return Ok(());
+        }
+    }
+    fs::create_dir_all(output)?;
+    let temporary = output.join(format!("{UPDATER_FILE}.tmp"));
+    fs::write(&temporary, &bytes)?;
+    fs::rename(temporary, destination)?;
+    println!("試験版の置き場に {version} を置きます");
+    Ok(())
+}
 fn keygen(output: &Path) -> Result<String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -1144,6 +1221,43 @@ mod tests {
             vec!["verify", "--version", "1.0.0", "--public-key", "00"],
             vec!["pubkey"],
             vec!["keygen"],
+            // 試験版の置き場: 必要な引数が揃わない・ほかの命令に --existing
+            vec![
+                "beta-channel",
+                "--version",
+                "1.0.0-rc.1",
+                "--assets",
+                dir,
+                "--public-key",
+                "00",
+            ],
+            vec![
+                "beta-channel",
+                "--version",
+                "1.0.0-rc.1",
+                "--assets",
+                dir,
+                "--output",
+                dir,
+            ],
+            vec![
+                "beta-channel",
+                "--assets",
+                dir,
+                "--public-key",
+                "00",
+                "--output",
+                dir,
+            ],
+            vec![
+                "updater-json",
+                "--version",
+                "1.0.0",
+                "--assets",
+                dir,
+                "--existing",
+                "x",
+            ],
             vec!["unknown"],
             vec![],
         ] {
@@ -2062,5 +2176,184 @@ mod tests {
             !script.contains("RMDir /r \"$INSTDIR"),
             "入れ先を丸ごとは消さない"
         );
+    }
+
+    // ───────── 試験版の置き場（beta-channel） ─────────
+
+    /// 試験版 `version`（zip・インストーラー）を、使い捨ての鍵で署名した置き場と、その公開鍵。
+    fn beta_dist(version: &str) -> (Scratch, String) {
+        signed_dist(&Version::parse(version).unwrap(), &[0])
+    }
+    fn channel_args<'a>(
+        version: &'a str,
+        assets: &'a Path,
+        key: &'a str,
+        output: &'a Path,
+        existing: Option<&'a Path>,
+    ) -> Vec<&'a str> {
+        let mut list = vec![
+            "beta-channel",
+            "--version",
+            version,
+            "--assets",
+            assets.to_str().unwrap(),
+            "--public-key",
+            key,
+            "--output",
+            output.to_str().unwrap(),
+        ];
+        if let Some(path) = existing {
+            list.extend(["--existing", path.to_str().unwrap()]);
+        }
+        list
+    }
+    #[test]
+    fn beta_channel_copies_the_signed_manifest_unchanged_and_the_app_accepts_it_at_the_beta_url() {
+        let (dist, key) = beta_dist("1.2.0-rc.1");
+        let out = Scratch::new();
+        exec(&channel_args("1.2.0-rc.1", &dist.0, &key, &out.0, None)).unwrap();
+        // 原本のバイト列のまま（再署名しない）。一時ファイルは残らない
+        let original = fs::read(dist.0.join(UPDATER_FILE)).unwrap();
+        assert_eq!(fs::read(out.0.join(UPDATER_FILE)).unwrap(), original);
+        assert_eq!(fs::read_dir(&out.0).unwrap().count(), 1);
+        // 写した物を試験版の置き場の URL で返す偽の口に置くと、同じ鍵で検証を通り、試験版が見つかる
+        struct Place(Vec<u8>);
+        impl Transport for Place {
+            fn get(&self, url: &str, _: usize) -> std::result::Result<Vec<u8>, yolu_update::Error> {
+                if url == yolu_update::BETA_UPDATER_URL {
+                    Ok(self.0.clone())
+                } else {
+                    Err(yolu_update::Error("通信できません".into()))
+                }
+            }
+        }
+        let client = UpdateClient::with_public_key(
+            Place(fs::read(out.0.join(UPDATER_FILE)).unwrap()),
+            public_key_bytes(&key).unwrap(),
+        )
+        .unwrap();
+        let found = client
+            .check_channels(
+                yolu_update::UPDATER_URL,
+                Some(yolu_update::BETA_UPDATER_URL),
+                &Version::new(1, 1, 0),
+                TARGETS[0],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.version().to_string(), "1.2.0-rc.1");
+        // 別の鍵を信じるアプリは受けない
+        let other = UpdateClient::with_public_key(
+            Place(fs::read(out.0.join(UPDATER_FILE)).unwrap()),
+            SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes(),
+        )
+        .unwrap();
+        assert!(other
+            .check(
+                yolu_update::BETA_UPDATER_URL,
+                &Version::new(1, 1, 0),
+                TARGETS[0],
+                true
+            )
+            .is_err());
+    }
+    #[test]
+    fn beta_channel_refuses_versions_that_are_not_beta_and_leaves_no_file() {
+        for version in ["1.2.0", "1.2.0-preview.1", "1.2.0-rc1", "1.2.0-rc"] {
+            let (dist, key) = beta_dist(version);
+            let out = Scratch::new();
+            // 前の実行の残りも消す（古い置き場の物を、今回の成果として渡さない）
+            fs::write(out.0.join(UPDATER_FILE), "stale").unwrap();
+            assert!(
+                exec(&channel_args(version, &dist.0, &key, &out.0, None)).is_err(),
+                "{version}"
+            );
+            assert_no_metadata(&out.0);
+        }
+    }
+    #[test]
+    fn beta_channel_checks_the_signature_and_the_assets_before_copying() {
+        let (dist, key) = beta_dist("1.2.0-rc.1");
+        let version = Version::parse("1.2.0-rc.1").unwrap();
+        // 別の鍵
+        let out = Scratch::new();
+        let other = hex::encode(SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes());
+        assert!(exec(&channel_args("1.2.0-rc.1", &dist.0, &other, &out.0, None)).is_err());
+        assert_no_metadata(&out.0);
+        // 版が違う（更新情報は 1.2.0-rc.1 のもの）
+        assert!(exec(&channel_args("1.2.0-rc.2", &dist.0, &key, &out.0, None)).is_err());
+        assert_no_metadata(&out.0);
+        // 公開後に配布物が差し替えられた（大きさ・SHA-256 が合わない）
+        fs::write(
+            asset_path(&dist.0, &version, 0),
+            b"replaced after the draft",
+        )
+        .unwrap();
+        assert!(exec(&channel_args("1.2.0-rc.1", &dist.0, &key, &out.0, None)).is_err());
+        assert_no_metadata(&out.0);
+        // 署名の無い更新情報
+        let (unsigned, key) = beta_dist("1.2.0-rc.1");
+        fs::write(
+            unsigned.0.join(UPDATER_FILE),
+            serde_json::to_vec(&Envelope {
+                payload: serde_json::to_string(&Manifest {
+                    schema: UPDATER_SCHEMA,
+                    version: version.to_string(),
+                    assets: vec![],
+                })
+                .unwrap(),
+                signature: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(exec(&channel_args("1.2.0-rc.1", &unsigned.0, &key, &out.0, None)).is_err());
+        assert_no_metadata(&out.0);
+    }
+    #[test]
+    fn beta_channel_never_moves_the_place_back_to_an_older_or_the_same_beta() {
+        let written = |out: &Scratch| out.0.join(UPDATER_FILE).exists();
+        let (dist, key) = beta_dist("1.2.0-rc.2");
+        let place = Scratch::new();
+        let held = |version: &str| {
+            let (d, _) = beta_dist(version);
+            let path = place.0.join(format!("held-{version}.json"));
+            fs::copy(d.0.join(UPDATER_FILE), &path).unwrap();
+            path
+        };
+        // 置き場の版が同じ・新しい（rc.10 は rc.2 より新しい。辞書順ではない）: 置き換えない（成功で、何も書かない）
+        for older_or_same in ["1.2.0-rc.2", "1.2.0-rc.10", "1.3.0-beta.1"] {
+            let out = Scratch::new();
+            let existing = held(older_or_same);
+            exec(&channel_args(
+                "1.2.0-rc.2",
+                &dist.0,
+                &key,
+                &out.0,
+                Some(&existing),
+            ))
+            .unwrap();
+            assert!(!written(&out), "{older_or_same}");
+        }
+        // 置き場の版が古い・置き場が空・壊れている・まだ無い: 置く
+        let garbage = place.0.join("garbage.json");
+        fs::write(&garbage, "not json").unwrap();
+        for existing in [
+            held("1.2.0-rc.1"),
+            held("1.2.0-beta.7"),
+            garbage,
+            place.0.join("absent.json"),
+        ] {
+            let out = Scratch::new();
+            exec(&channel_args(
+                "1.2.0-rc.2",
+                &dist.0,
+                &key,
+                &out.0,
+                Some(&existing),
+            ))
+            .unwrap();
+            assert!(written(&out), "{existing:?}");
+        }
     }
 }

@@ -6,7 +6,8 @@
 //! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か
 //!   （Windows の checkout で CRLF になって照合が落ちた、0.3.0 の配布の失敗）
 //! - `nsis`: インストーラーの台本の `Target` が、公式の Windows 版 NSIS が持つ stub（x86-unicode・x86-ansi）か（amd64 は無く、0.3.0 の配布で落ちた）
-//! - `version`: yolu-app の版のタグ `v<版>` が origin にまだ無いか。`--kind stable` ならプレリリースの版でないか
+//! - `version`: yolu-app の版のタグ `v<版>` が origin にまだ無いか。`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら
+//!   試験版の形（`alpha.N`・`beta.N`・`rc.N`）の版か
 //! - `targets`: `tools/dist-targets.json` の対象が、この xtask が配れる対象（と、Windows はインストーラーつき）か
 //! - `workflows`: ワークフローの YAML が読めるか。release.yml の入力と対象の並びが食い違わないか（`tools/check-workflows.py`）
 //! - `installer`（`--installer` か `--only installer` のときだけ）: Wine で `tools/test-installer.py`（wine32 が要る）
@@ -18,7 +19,7 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
-use yolu_update::{is_archive_target, WINDOWS_ARCHIVE};
+use yolu_update::{is_archive_target, is_beta_version, WINDOWS_ARCHIVE};
 
 /// 確かめの名前（実行する順）。
 pub(crate) const CHECKS: &[&str] = &[
@@ -399,6 +400,12 @@ fn version_outcome(
     if kind == Some(Kind::Stable) && !version.pre.is_empty() {
         problems.push(format!(
             "stable の配布にプレリリースの版は使えません（{version}）"
+        ));
+    }
+    // 試験版は、アプリが「試験版を使う」の設定で見つけられる形の版にする（版の前後が SemVer のとおりに並ぶ形）。
+    if kind == Some(Kind::Prerelease) && !is_beta_version(version) {
+        problems.push(format!(
+            "prerelease の配布の版には alpha.N・beta.N・rc.N のプレリリース識別子が要ります（{version}。例: 0.4.0-rc.1）"
         ));
     }
     if tag == Ok(true) {
@@ -823,6 +830,38 @@ mod tests {
         ));
         assert!(matches!(
             version_outcome(&pre, Some(Kind::Prerelease), Ok(false)),
+            Passed(_)
+        ));
+        // 試験版は alpha.N・beta.N・rc.N の版だけ（正式版の形・知らない名前・数の無い識別子・つなげた書き方は断る）。
+        for bad in [
+            "1.2.3",
+            "1.2.3-preview.1",
+            "1.2.3-rc",
+            "1.2.3-rc1",
+            "1.2.3-rc.1.2",
+        ] {
+            match version_outcome(
+                &Version::parse(bad).unwrap(),
+                Some(Kind::Prerelease),
+                Ok(false),
+            ) {
+                Failed(p) => assert!(p[0].contains("rc.N") && p[0].contains(bad), "{p:?}"),
+                other => panic!("{bad}: {other:?}"),
+            }
+        }
+        for good in ["1.2.3-alpha.1", "1.2.3-beta.2", "1.2.3-rc.10"] {
+            assert!(matches!(
+                version_outcome(
+                    &Version::parse(good).unwrap(),
+                    Some(Kind::Prerelease),
+                    Ok(false)
+                ),
+                Passed(_)
+            ));
+        }
+        // 種類を言わない確かめは、版の形を見ない（手元の既定の確かめで、0.4.0 のような正式版の作業中も通る）。
+        assert!(matches!(
+            version_outcome(&Version::parse("1.2.3-preview.1").unwrap(), None, Ok(false)),
             Passed(_)
         ));
         // タグが既にある。

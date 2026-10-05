@@ -185,6 +185,8 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
           PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
         run: target/debug/xtask verify --version "$VERSION" --assets target/dist --public-key "$PUBLIC_KEY"
+      # kind=prerelease の Draft は、公開すると beta-channel.yml が動き、試験版の置き場（固定のタグ updater-beta）へ署名つきの更新情報を置く
+      # （Draft のうちは置かない）。kind=stable の流れはこれまでどおり（releases/latest が切り替わる）。
       - name: Draft Release を作成
         env:
           GH_TOKEN: ${{ github.token }}
