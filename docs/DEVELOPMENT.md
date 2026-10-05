@@ -62,3 +62,12 @@ Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存�
 `target/bench-all/summary.md` に比較表、同じ場所にログと実行条件を保存する。Python 3.10 以降・taskset・上記の C# 用の Unity 同梱ツールが必要。
 `--source DIR` で Unity 版の場所、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
 合成・ブラシは予熱 2 回を除き、面は予熱なしの中央値。フィルターはレベル補正・ブラシのぼかし／指先を含む。GPU と独立フィルター全種は対象外。
+
+## 画素の計算の SIMD
+
+x86_64 では、合成（Normal チャンネルを含む）・調整の層・フィルターの画素の計算に AVX2（と FMA）・SSE4.1 を使い、実行時に CPU が持つ一番広い道を選ぶ
+（Windows の配布物も同じ）。それ以外の CPU（aarch64 など）は、今までの画素ごとの計算を使う。結果のバイトはどの道でも同じで、試験が道ごとに画素ごとの式と比べる。
+環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で狭い道へ下げられる（CPU が持たない広い道には上げない）。
+
+`cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|kernel|all] [回数]` が、合成モード・調整の種類・フィルターごとの時間
+（1 タイルと 4096²。`kernel` は行の核だけの ns/画素）を測る。スレッドは `SIMD_THREADS`（既定 1）、名前の絞り込みは `SIMD_FILTER`（カンマ区切り）。

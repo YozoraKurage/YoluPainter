@@ -322,6 +322,10 @@ impl ColorBalance {
     pub fn byte_size(&self) -> u64 {
         96
     }
+    /// 行の核（SIMD）が同じ式をレーンで計算するために、範囲ごとの値と「輝度を保つ」を渡す。
+    pub(super) fn parts(&self) -> (&[[f64; 3]; 3], bool) {
+        (&self.values, self.preserve_luminosity)
+    }
 }
 
 // ───────── 明るさ/コントラスト ─────────
@@ -438,6 +442,14 @@ impl Posterize {
     #[inline]
     pub fn apply(&self, c: Rgba8) -> Rgba8 {
         Rgba8::new(self.channel(c.r), self.channel(c.g), self.channel(c.b), c.a)
+    }
+    /// 0〜255 → 結果の 256 の表（`apply` の 1 チャンネルの式を全値で引いたもの）。
+    pub(super) fn table(&self) -> [u8; 256] {
+        let mut t = [0u8; 256];
+        for (v, e) in t.iter_mut().enumerate() {
+            *e = self.channel(v as u8);
+        }
+        t
     }
     pub fn byte_size(&self) -> u64 {
         32
