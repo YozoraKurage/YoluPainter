@@ -187,7 +187,7 @@ pub fn default_name(state: &AppState) -> String {
 /// 保存先を選ぶ窓（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（窓は開いたまま）。
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
-    let mut dialog = rfd::FileDialog::new()
+    let mut dialog = crate::dialog::file()
         .set_title(lang.pick("配布用に保存", "Save for Distribution"))
         .add_filter(
             lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),

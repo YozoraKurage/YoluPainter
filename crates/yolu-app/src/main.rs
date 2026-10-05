@@ -41,7 +41,11 @@ fn start() -> eframe::Result {
     eframe::run_native(
         "YoluPainter",
         options,
-        Box::new(|cc| Ok(Box::new(yolu_app::YoluApp::new(cc)))),
+        Box::new(|cc| {
+            // Windows: ファイルの窓の親になる主の窓を預ける
+            yolu_app::dialog::set_owner(cc);
+            Ok(Box::new(yolu_app::YoluApp::new(cc)))
+        }),
     )
 }
 

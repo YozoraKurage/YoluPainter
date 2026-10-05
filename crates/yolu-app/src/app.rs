@@ -677,7 +677,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ProjectModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("モデルを選ぶ", "Choose a model"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
@@ -689,7 +689,7 @@ impl YoluApp {
             Some(DialogRequest::Open) => {
                 let lang = self.state.lang;
                 if self.confirm_discard() {
-                    if let Some(path) = rfd::FileDialog::new()
+                    if let Some(path) = crate::dialog::file()
                         .set_title(lang.pick("プロジェクトを開く", "Open Project"))
                         .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
                         .pick_file()
@@ -701,7 +701,7 @@ impl YoluApp {
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.project_name);
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("別名で保存", "Save As"))
                     .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
                     .set_file_name(name)
@@ -712,7 +712,7 @@ impl YoluApp {
             }
             Some(DialogRequest::OpenModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("3D ビューに FBX を開く", "Open FBX in the 3D View"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
@@ -730,7 +730,7 @@ impl YoluApp {
             ) => assets::run_dialog(&mut self.state, request),
             Some(DialogRequest::ExportFolder(id)) => {
                 let lang = self.state.lang;
-                if let Some(dir) = rfd::FileDialog::new()
+                if let Some(dir) = crate::dialog::file()
                     .set_title(
                         lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
                     )
@@ -745,7 +745,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ExportChannel) => {
                 let lang = self.state.lang;
-                let mut dialog = rfd::FileDialog::new()
+                let mut dialog = crate::dialog::file()
                     .set_title(lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"))
                     .add_filter("PNG", &["png"])
                     .set_file_name(crate::export::default_channel_file_name(&self.state));
@@ -766,7 +766,7 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = rfd::FileDialog::new()
+                let mut dialog = crate::dialog::file()
                     .set_title(lang.pick("棚の場所", "Library folder"));
                 if let Some(current) = self.state.prefs.settings.library_folder().filter(|d| d.is_dir()) {
                     dialog = dialog.set_directory(current);
@@ -779,7 +779,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ExportChannelsFolder) => {
                 let lang = self.state.lang;
-                if let Some(dir) = rfd::FileDialog::new()
+                if let Some(dir) = crate::dialog::file()
                     .set_title(
                         lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
                     )
@@ -793,7 +793,7 @@ impl YoluApp {
                 let lang = self.state.lang;
                 // 今の文書を替えるときは、保存していない変更を捨ててよいか聞く
                 if target == crate::psd::PsdTarget::NewSet || self.confirm_discard() {
-                    if let Some(path) = rfd::FileDialog::new()
+                    if let Some(path) = crate::dialog::file()
                         .set_title(lang.pick("PSD を読み込む", "Import PSD"))
                         .add_filter("PSD", &["psd", "PSD"])
                         .pick_file()
@@ -806,7 +806,7 @@ impl YoluApp {
             Some(DialogRequest::PsdExport) => {
                 let lang = self.state.lang;
                 let name = crate::psd::default_export_name(&self.state);
-                let mut dialog = rfd::FileDialog::new()
+                let mut dialog = crate::dialog::file()
                     .set_title(lang.pick("PSD に書き出す", "Export PSD"))
                     .add_filter("PSD", &["psd"])
                     .set_file_name(name);
@@ -821,7 +821,7 @@ impl YoluApp {
             Some(DialogRequest::DistributeSave) => crate::distribute::run_dialog(&mut self.state),
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("ステンシルの画像を開く", "Open a stencil image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
@@ -832,7 +832,7 @@ impl YoluApp {
             }
             Some(DialogRequest::FillImage) => {
                 let lang = self.state.lang;
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("画像を棚へ取り込む", "Add an image to the shelf"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
@@ -844,7 +844,7 @@ impl YoluApp {
             Some(DialogRequest::NewFillImage(mode)) => {
                 let lang = self.state.lang;
                 // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
-                if let Some(path) = rfd::FileDialog::new()
+                if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("画像で塗りつぶしを作る", "Create a fill from an image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
@@ -858,7 +858,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
-                if let Some(paths) = rfd::FileDialog::new()
+                if let Some(paths) = crate::dialog::file()
                     .set_title(lang.pick("ブラシを取り込む", "Import Brushes"))
                     .add_filter(
                         lang.pick("ブラシのファイル", "Brush files"),
@@ -897,7 +897,7 @@ impl YoluApp {
         if !self.state.modified || !self.dialogs {
             return true;
         }
-        rfd::MessageDialog::new()
+        crate::dialog::message()
             .set_title("YoluPainter")
             .set_description(self.state.lang.pick(
                 "保存していない変更があります。変更を捨てますか？",

@@ -70,6 +70,7 @@ pub mod update;
 pub mod usage;
 pub mod view3d;
 pub mod windows;
+pub mod dialog;
 pub mod uv_wireframe;
 pub mod shortcuts;
 
