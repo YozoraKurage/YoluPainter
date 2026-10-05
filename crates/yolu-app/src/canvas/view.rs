@@ -5,7 +5,7 @@
 
 use egui::{pos2, vec2, Pos2, Rect, Vec2};
 
-use crate::engine::{DVec2, Tilt};
+use crate::engine::{DVec2, Rect as DocRect, Tilt};
 
 pub const ROTATE_STEP: f32 = 15.0;
 // 全体フィットに対する倍率。最大32768画素の文書を1点の表示域から100%にしても、
@@ -166,6 +166,35 @@ impl CanvasView {
         let a = -(degrees as f64).to_radians(); // 画面で反時計回り
         let (cx, cy) = self.direction_to_canvas(a.cos(), -a.sin());
         cy.atan2(cx)
+    }
+
+    /// 画面の矩形に見える文書の矩形（画素の座標。文書の内側に切り、整数へ外向きに丸める）。回している・反転しているときは、画面の 4 隅を
+    /// 写した点の外接の矩形（見えない隅を含み得る。タイルを上げる順を決めるだけなので、広めで構わない）。何も見えなければ None。
+    pub fn visible_doc_rect(&self, screen: Rect) -> Option<DocRect> {
+        let corners = [
+            screen.left_top(),
+            screen.right_top(),
+            screen.right_bottom(),
+            screen.left_bottom(),
+        ]
+        .map(|p| self.to_canvas(p));
+        let (mut x0, mut y0) = (f64::INFINITY, f64::INFINITY);
+        let (mut x1, mut y1) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for (x, y) in corners {
+            if !x.is_finite() || !y.is_finite() {
+                return None;
+            }
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        let (w, h) = (self.width as f64, self.height as f64);
+        let (x0, y0) = (x0.floor().clamp(0.0, w), y0.floor().clamp(0.0, h));
+        let (x1, y1) = (x1.ceil().clamp(0.0, w), y1.ceil().clamp(0.0, h));
+        (x1 > x0 && y1 > y0).then(|| {
+            DocRect::new(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32)
+        })
     }
 
     /// 画面の座標をキャンバスの画素の座標（左下が原点、範囲外も返す）に。ストロークの点はこれ。
@@ -427,6 +456,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_visible_rect_is_the_part_of_the_document_inside_the_screen_rectangle() {
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0));
+        // 文書全体が入っている（左右に余白）
+        let fit = CanvasView::new(screen, 100, 100, 1.0, Vec2::ZERO, 0.0, false);
+        assert_eq!(fit.visible_doc_rect(screen), Some(DocRect::new(0, 0, 100, 100)));
+        // 2 倍に拡げて中央: 文書の中央の半分が見える
+        let zoomed = CanvasView::new(screen, 100, 100, 2.0, Vec2::ZERO, 0.0, false);
+        let r = zoomed.visible_doc_rect(screen).unwrap();
+        assert_eq!((r.x, r.y, r.width, r.height), (0, 25, 100, 50));
+        // 画面の外へ動かすと見えない
+        let away = CanvasView::new(screen, 100, 100, 1.0, vec2(1000.0, 0.0), 0.0, false);
+        assert_eq!(away.visible_doc_rect(screen), None);
+        // 回しているときは外接の矩形（文書の内側に切る）
+        let turned = CanvasView::new(screen, 100, 100, 1.0, Vec2::ZERO, 45.0, false);
+        let r = turned.visible_doc_rect(screen).unwrap();
+        assert!(r.x + r.width <= 100 && r.y + r.height <= 100 && r.width >= 50);
     }
 
     #[test]

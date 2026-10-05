@@ -1,6 +1,7 @@
 //! 文書の合成を見せるテクスチャ。文書を PAGE 画素の頁に分け（大きい文書でも GPU のテクスチャの上限に収める）、
-//! 初めと大きさが変わったときだけ全部を作り、あとは core が「変わった」と言うタイルだけを合成して、そのタイルの範囲だけを
-//! テクスチャに上げる（egui の `set_partial`。egui-wgpu がその範囲だけ `write_texture` する）。
+//! 初めと大きさが変わったときに頁を作り直し、あとは core が「変わった」と言うタイルだけを合成して、そのタイルの範囲だけを
+//! テクスチャに上げる（egui の `set_partial`。egui-wgpu がその範囲だけ `write_texture` する）。CPU の頁の上げ方（見えている所から・
+//! 時間の枠の中で）は [`super::cpu`]。
 //! テクスチャの行は core と同じ下から上のまま（行を並べ替えない）。上下は描くときの UV で返す。
 //! 見せるだけの写しで、保存の正本ではない（正本は core の straight RGBA8）。乗算済みへの変換は表示のためだけ。
 //!
@@ -9,11 +10,9 @@
 //! ときにもう一方の資源を手放す）。straight から乗算済みへの変換の式は両方の道で同じ整数の式だが、合成の画素は GPU が f32、
 //! CPU が f64 の丸めなので、窓の絵で最大 1、多段の文書で 2 以内ずれ得る（表示だけ。保存・書き出し・3D は CPU の正本）。
 
-use egui::{
-    epaint::Vertex, pos2, Color32, ColorImage, Mesh, Painter, Pos2, Rect, Shape, TextureHandle,
-    TextureOptions,
-};
+use egui::{pos2, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, TextureOptions};
 
+use super::cpu::{CpuCanvas, FrameBudget, Viewport};
 use super::gpu::{CanvasBackend, Fallback, GpuCanvas, Shown};
 use super::view::CanvasView;
 use crate::engine::{Channel, Document, Rect as DocRect, RowOrder};
@@ -27,27 +26,6 @@ const CHECKER_CELL: f32 = 8.0;
 /// 画素 1 つがこの点数以上に拡大されたら、補間せずに画素の角を見せる（それ未満は滑らかに）。
 pub const NEAREST_FROM_PIXEL_SIZE: f32 = 2.0;
 
-fn options(nearest: bool) -> TextureOptions {
-    TextureOptions {
-        magnification: if nearest {
-            egui::TextureFilter::Nearest
-        } else {
-            egui::TextureFilter::Linear
-        },
-        minification: egui::TextureFilter::Linear,
-        wrap_mode: egui::TextureWrapMode::ClampToEdge,
-        mipmap_mode: None,
-    }
-}
-
-struct Page {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-    texture: TextureHandle,
-}
-
 /// 上げた量の記録（試験と状態の表示用）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UploadStats {
@@ -60,20 +38,11 @@ pub struct UploadStats {
 }
 
 pub struct CanvasDisplay {
-    /// 最後に読んだ文書（テクスチャセットを替える・開き直すと別の文書になる。通し番号は文書ごとなので、替わったら全部を作り直す）。
-    doc_id: u128,
-    /// 最後に読んだチャンネル（替わったら全部を作り直す）。
-    channel: Option<Channel>,
-    /// 最後に読んだ core の変化の通し番号（次はこれより後の変化だけを読む）。
-    serial: u64,
-    /// 合成の受け皿（毎回の確保を避ける）。
-    buffer: Vec<u8>,
+    /// CPU の頁（タイルごとの状態・上げる順。[`CpuCanvas`]）。
+    cpu: CpuCanvas,
     size: (u32, u32),
-    pages: Vec<Page>,
     checker: Option<TextureHandle>,
-    /// 今のテクスチャが画素の角を見せる（Nearest）か。
-    nearest: bool,
-    /// 次の `sync` で、この補間で作り直す。
+    /// 次の `sync` で、この補間で頁を作り直す。
     want_nearest: bool,
     pub stats: UploadStats,
     /// 最後に見た文書の入れ替えの回数（[`CanvasDisplay::set_document_epoch`]）。
@@ -85,19 +54,17 @@ pub struct CanvasDisplay {
     shown: Shown,
     /// GPU で合成していない理由（GPU なら None）。
     fallback: Option<Fallback>,
+    /// 見えている範囲（CPU の頁の上げる順に使う。None なら枠なしで全部を上げてから返る）。
+    viewport: Option<Viewport>,
+    budget: FrameBudget,
 }
 
 impl Default for CanvasDisplay {
     fn default() -> Self {
         CanvasDisplay {
-            doc_id: 0,
-            channel: None,
-            serial: 0,
-            buffer: Vec::new(),
+            cpu: CpuCanvas::default(),
             size: (0, 0),
-            pages: Vec::new(),
             checker: None,
-            nearest: false,
             want_nearest: false,
             stats: UploadStats::default(),
             epoch: 0,
@@ -105,18 +72,10 @@ impl Default for CanvasDisplay {
             policy: CanvasBackend::from_env(),
             shown: Shown::Cpu,
             fallback: None,
+            viewport: None,
+            budget: FrameBudget::default(),
         }
     }
-}
-
-fn to_image(width: u32, height: u32, straight: &[u8]) -> ColorImage {
-    let pixels = straight
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-        .collect();
-    ColorImage::new([width as usize, height as usize], pixels)
 }
 
 impl CanvasDisplay {
@@ -198,10 +157,7 @@ impl CanvasDisplay {
     /// 前の文書の合成を全部捨てる（次の `sync` が全部を作り直す）。装置の初期化の失敗など、文書によらない記憶は残す。
     pub fn invalidate(&mut self) {
         self.gpu.invalidate();
-        self.pages.clear();
-        self.doc_id = 0;
-        self.channel = None;
-        self.serial = 0;
+        self.cpu.clear();
         self.fallback = None;
     }
 
@@ -245,7 +201,7 @@ impl CanvasDisplay {
             self.gpu.release();
         }
         self.shown = Shown::Cpu;
-        self.pages.clear();
+        self.cpu.clear();
     }
 
     /// 文書の変わった所をテクスチャに上げる。上げたタイルの数を返す。
@@ -260,7 +216,7 @@ impl CanvasDisplay {
             None => {
                 if self.shown != Shown::Gpu {
                     // CPU の頁を手放して GPU の道へ移る
-                    self.pages.clear();
+                    self.cpu.clear();
                     self.shown = Shown::Gpu;
                 }
                 match self.gpu.sync(doc, channel, self.want_nearest) {
@@ -290,104 +246,66 @@ impl CanvasDisplay {
         self.sync_cpu(ctx, doc, channel)
     }
 
+    /// 見えている範囲を渡す。渡すと CPU の頁は、見えているタイルから時間の枠の中で順に上げ（残りは次のフレーム）、渡さない（既定）と
+    /// 全部を上げてから返る。画面の側はフレームごとに、`sync` の前に渡す。
+    pub fn set_viewport(&mut self, viewport: Option<Viewport>) {
+        self.viewport = viewport;
+    }
+
+    /// 1 フレームに合成してよい時間（見えているタイルと、見えていないタイル）。
+    pub fn set_frame_budget(&mut self, budget: FrameBudget) {
+        self.budget = budget;
+    }
+
+    /// CPU の頁でまだ正確でないタイルの数（GPU の道では 0）。
+    pub fn pending_tiles(&self) -> usize {
+        if self.shown == Shown::Cpu {
+            self.cpu.pending()
+        } else {
+            0
+        }
+    }
+
+    /// CPU の頁で、見えている範囲（[`CanvasDisplay::set_viewport`]）にあるまだ正確でないタイルの数（範囲が無ければ全部）。
+    pub fn pending_visible_tiles(&self) -> usize {
+        if self.shown != Shown::Cpu {
+            return 0;
+        }
+        match &self.viewport {
+            Some(v) => self.cpu.pending_in(&v.visible),
+            None => self.cpu.pending(),
+        }
+    }
+
+    /// 見えている範囲で、まだ何も見せていない（正確な絵も粗い絵も無い）タイルの数。
+    pub fn unshown_visible_tiles(&self) -> usize {
+        if self.shown != Shown::Cpu {
+            return 0;
+        }
+        match &self.viewport {
+            Some(v) => self.cpu.unshown_in(&v.visible),
+            None => self.cpu.unshown_in(&DocRect::new(0, 0, self.size.0, self.size.1)),
+        }
+    }
+
+    /// CPU の頁のタイルの状態（試験用）。
+    pub fn tile_state(&self, coord: crate::engine::TileCoord) -> Option<super::cpu::TileState> {
+        self.cpu.tile_state(coord)
+    }
+
     /// CPU の道: 文書の変わった所を頁のテクスチャに上げる。
     fn sync_cpu(&mut self, ctx: &egui::Context, doc: &Document, channel: Channel) -> usize {
-        let (w, h) = (doc.width(), doc.height());
-        let changed = doc.changed_tiles(channel, self.serial);
-        let serial = doc.change_serial();
-        if self.size != (w, h)
-            || self.pages.is_empty()
-            || self.nearest != self.want_nearest
-            || self.doc_id != doc.id()
-            || self.channel != Some(channel)
-            || changed.is_none()
-        {
-            self.nearest = self.want_nearest;
-            self.doc_id = doc.id();
-            self.channel = Some(channel);
-            self.serial = serial;
-            self.pages.clear();
-            let mut y = 0;
-            while y < h {
-                let mut x = 0;
-                while x < w {
-                    let (pw, ph) = (PAGE.min(w - x), PAGE.min(h - y));
-                    let rect = DocRect::new(x, y, pw, ph);
-                    self.buffer.resize((pw * ph * 4) as usize, 0);
-                    let image = match doc.composite_into(
-                        channel,
-                        rect,
-                        &mut self.buffer,
-                        RowOrder::BottomUp,
-                    ) {
-                        Ok(()) => to_image(pw, ph, &self.buffer),
-                        Err(_) => {
-                            ColorImage::filled([pw as usize, ph as usize], Color32::TRANSPARENT)
-                        }
-                    };
-                    let texture = ctx.load_texture(
-                        format!("canvas-page-{x}-{y}"),
-                        image,
-                        options(self.nearest),
-                    );
-                    self.pages.push(Page {
-                        x,
-                        y,
-                        width: pw,
-                        height: ph,
-                        texture,
-                    });
-                    x += PAGE;
-                }
-                y += PAGE;
-            }
-            self.size = (w, h);
-            let ts = doc.tile_size();
-            let tiles = (w.div_ceil(ts) * h.div_ceil(ts)) as usize;
-            self.stats = UploadStats {
-                last_tiles: tiles,
-                last_rebuilt: true,
-                total_tiles: self.stats.total_tiles + tiles,
-            };
-            return tiles;
-        }
-        let changed = changed.unwrap_or_default();
-        self.serial = serial;
-        for coord in &changed {
-            let Some(region) = doc.tile_rect(*coord) else {
-                continue;
-            };
-            if region.width == 0 || region.height == 0 {
-                continue;
-            }
-            self.buffer
-                .resize((region.width * region.height * 4) as usize, 0);
-            if doc
-                .composite_into(channel, region, &mut self.buffer, RowOrder::BottomUp)
-                .is_err()
-            {
-                continue;
-            }
-            let pixels = &self.buffer;
-            if let Some(page) = self.pages.iter_mut().find(|p| {
-                region.x >= p.x
-                    && region.x < p.x + p.width
-                    && region.y >= p.y
-                    && region.y < p.y + p.height
-            }) {
-                page.texture.set_partial(
-                    [(region.x - page.x) as usize, (region.y - page.y) as usize],
-                    to_image(region.width, region.height, pixels),
-                    options(self.nearest),
-                );
-            }
-        }
+        self.size = (doc.width(), doc.height());
+        let schedule = self.viewport.as_ref().map(|v| (v, &self.budget));
+        let report = self
+            .cpu
+            .sync(ctx, doc, channel, self.want_nearest, schedule);
         self.stats = UploadStats {
-            last_tiles: changed.len(),
-            last_rebuilt: false,
-            total_tiles: self.stats.total_tiles + changed.len(),
+            last_tiles: report.tiles,
+            last_rebuilt: report.rebuilt,
+            total_tiles: self.stats.total_tiles + report.tiles,
         };
-        changed.len()
+        report.tiles
     }
 
     fn checker_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -424,24 +342,20 @@ impl CanvasDisplay {
         corners: [(f64, f64); 4],
         uvs: [Pos2; 4],
     ) {
-        let mut mesh = Mesh::with_texture(texture);
-        for (c, uv) in corners.iter().zip(uvs) {
-            mesh.vertices.push(Vertex {
-                pos: view.to_screen(c.0, c.1),
-                uv,
-                color: Color32::WHITE,
-            });
-        }
-        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-        painter.add(Shape::mesh(mesh));
+        super::cpu::quad(painter, texture, view, corners, uvs);
+    }
+
+    /// 画素の角を見せる補間にするか（拡大が `NEAREST_FROM_PIXEL_SIZE` 以上か）を次の `sync` へ伝える。変わったら true。
+    pub fn set_nearest(&mut self, want: bool) -> bool {
+        let changed = want != self.want_nearest;
+        self.want_nearest = want;
+        changed
     }
 
     /// 透明の市松と合成の絵を描く（painter はキャンバスの矩形で切ったもの）。
     pub fn paint(&mut self, painter: &Painter, view: &CanvasView) {
         // 補間の切り替えは境を越えたときだけ（作り直し・登録し直しは次のフレームの `sync`）
-        let want = view.pixel_size() >= NEAREST_FROM_PIXEL_SIZE;
-        if want != self.want_nearest {
-            self.want_nearest = want;
+        if self.set_nearest(view.pixel_size() >= NEAREST_FROM_PIXEL_SIZE) {
             painter.ctx().request_repaint();
         }
         let (w, h) = (self.size.0 as f64, self.size.1 as f64);
@@ -450,7 +364,7 @@ impl CanvasDisplay {
         } else {
             None
         };
-        if gpu_texture.is_none() && self.pages.is_empty() {
+        if gpu_texture.is_none() && self.cpu.is_empty() {
             return;
         }
         // 市松は画面の大きさが一定（拡大しても 8 点のマス）で、画像と一緒に回る
@@ -476,41 +390,35 @@ impl CanvasDisplay {
             Self::quad(painter, texture, view, corners, full);
             return;
         }
-        for page in &self.pages {
-            let (x0, y0) = (page.x as f64, page.y as f64);
-            let (x1, y1) = (x0 + page.width as f64, y0 + page.height as f64);
-            // テクスチャの行 0 が文書の y0（下）なので、UV の v はそのまま y に比例する
-            Self::quad(
-                painter,
-                page.texture.id(),
-                view,
-                [(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
-                full,
-            );
-        }
+        self.cpu.paint(painter, view);
     }
 
     /// 画素の角を見せる補間か（試験用）。
     pub fn is_nearest(&self) -> bool {
         match (self.shown, self.gpu.texture()) {
             (Shown::Gpu, Some((_, nearest))) => nearest,
-            _ => self.nearest,
+            _ => self.cpu.is_nearest(),
         }
     }
 
     /// 頁の数（試験用。GPU の道では 0）。
     pub fn page_count(&self) -> usize {
-        self.pages.len()
+        self.cpu.page_count()
     }
 
-    /// 画面のこの点の下の、テクスチャに載っている画素の矩形（試験用。無ければ None）。
+    /// 頁の文書の矩形（試験用。無ければ None）。
     pub fn page_rect(&self, index: usize) -> Option<Rect> {
-        self.pages.get(index).map(|p| {
+        self.cpu.page_rect(index).map(|p| {
             Rect::from_min_size(
                 pos2(p.x as f32, p.y as f32),
                 egui::vec2(p.width as f32, p.height as f32),
             )
         })
+    }
+
+    /// 頁のテクスチャの番号（試験用）。
+    pub fn page_texture(&self, index: usize) -> Option<egui::TextureId> {
+        self.cpu.page_texture(index)
     }
 }
 

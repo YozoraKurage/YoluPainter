@@ -177,9 +177,11 @@ impl Document {
                 self.target_surface_mut(index, target).unwrap(),
                 &mut changed,
             );
+            self.journal.own = true; // ストロークが自分の面へ書いた変化（下の覚えは、これでは捨てない）
             for coord in changed {
                 self.mark_target_tile(index, target, coord);
             }
+            self.journal.own = false;
             match r {
                 Ok(any) => {
                     if any {
@@ -197,11 +199,14 @@ impl Document {
         self.material.extra = states;
         if result.is_err() {
             self.cancel_material();
+        } else {
+            self.fit_memo_to_budget();
         }
         result
     }
     pub(super) fn finish_material(&mut self) -> Result<StrokeResult, CoreError> {
         let first = self.active.take().unwrap();
+        self.journal.memo.clear(); // 描き終えた（下の覚えを手放す）
         let result = StrokeResult {
             changed: false,
             stamps: first.stamp_count,
@@ -276,6 +281,7 @@ impl Document {
         let Some(first) = self.active.take() else {
             return false;
         };
+        self.journal.memo.clear(); // 取り消した（下の覚えを手放す）
         let layer = first.layer;
         let index = first.layer_index;
         let mut states = std::mem::take(&mut self.material.extra);

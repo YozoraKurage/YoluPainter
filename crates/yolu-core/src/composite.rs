@@ -14,6 +14,10 @@
 
 use rayon::prelude::*;
 
+mod memo;
+pub use memo::MemoStats;
+pub(crate) use memo::{Memo, MemoRequest};
+
 use crate::adjust::AdjustKernel;
 use crate::blend::{blend, blend_rgb, clip_onto, fade, separable_table, MIN_SHORTCUT_ALPHA};
 use crate::document::EvalSet;
@@ -81,6 +85,11 @@ impl<'a> Stack<'a> {
             kind,
             eval,
         }
+    }
+
+    /// 評価した面が粗く評価したもの（`EvalSet::reduced`）なら、その歩幅。
+    pub(crate) fn reduced_by(&self) -> Option<usize> {
+        self.eval.and_then(|e| e.reduced).map(|s| s as usize)
     }
 
     /// 層（番号）の評価済みの出力の面（評価が要らない層は None）。
@@ -547,8 +556,19 @@ enum Content<'a> {
     Group,
 }
 
+/// 画素の面のタイルの読み方: タイルの一辺と、拾う歩幅（1 なら全画素。粗い合成は歩幅ごとに 1 画素）。
+#[derive(Clone, Copy, Debug)]
+struct Geo {
+    tile: usize,
+    sample: usize,
+}
+
 struct Node<'a> {
     content: Content<'a>,
+    /// 画素の面の読み方。
+    px: Geo,
+    /// マスクの面の読み方。
+    mask_px: Geo,
     opacity: f64,
     /// 重ねるモード（PassThrough は Normal）。
     mode: BlendMode,
@@ -567,15 +587,41 @@ struct Plan<'a> {
     roots: Vec<usize>,
     normal: bool,
     tile_size: usize,
+    /// 粗い合成の歩幅（1 なら全画素）。
+    stride: usize,
+}
+
+impl Node<'_> {
+    /// 1 画素あたりの仕事の重み: 不透明で 1 つ上書きするだけの層は 1、重ね方の計算が要る層・調整・グループは 6（実測で、128² のタイル 1 枚が
+    /// 通常モードの不透明な層 24 枚で 0.4 ms 前後、モードや不透明度の違う層 24 枚で 2.7 ms 前後）。
+    fn weight(&self) -> u64 {
+        let copy = matches!(self.content, Content::Raster(_) | Content::Fill(_))
+            && self.mode == BlendMode::Normal
+            && self.mask.is_none()
+            && self.opacity >= 1.0
+            && self.clips.is_empty();
+        if copy {
+            1
+        } else {
+            6
+        }
+    }
 }
 
 impl<'a> Plan<'a> {
-    fn build(stack: &Stack<'a>, plan: &[Entry]) -> Plan<'a> {
+    fn build(stack: &Stack<'a>, plan: &[Entry], tile_size: u32) -> Plan<'a> {
+        Self::build_strided(stack, plan, 1, tile_size as usize)
+    }
+
+    /// 歩幅 stride で拾う計画。`tile_size` は文書のタイルの一辺（評価した面が粗く評価したもの（`EvalSet::reduced`）なら、その面のタイルは
+    /// 一辺が tile_size / stride で、全画素を読む）。
+    fn build_strided(stack: &Stack<'a>, plan: &[Entry], stride: usize, tile_size: usize) -> Plan<'a> {
         let mut p = Plan {
             nodes: Vec::new(),
             roots: Vec::new(),
             normal: stack.kind == ChannelKind::Normal,
-            tile_size: 0,
+            tile_size,
+            stride,
         };
         p.roots = plan.iter().map(|e| p.add(stack, e)).collect();
         p
@@ -584,14 +630,36 @@ impl<'a> Plan<'a> {
     fn add(&mut self, stack: &Stack<'a>, e: &Entry) -> usize {
         let layers: &'a [Layer] = stack.layers;
         let layer: &'a Layer = &layers[e.layer];
+        // 評価した出力の面（粗く評価したものは、タイルの一辺が歩幅の分だけ小さく、全画素を読む）か、層の保存した画素の面
+        let reduced = stack.reduced_by();
+        let geo_of = |evaluated: bool, this: &Self| -> Geo {
+            match reduced {
+                Some(s) if evaluated => Geo {
+                    tile: this.tile_size / s,
+                    sample: 1,
+                },
+                _ => Geo {
+                    tile: this.tile_size,
+                    sample: this.stride,
+                },
+            }
+        };
+        let mut px = geo_of(false, self);
         let content = match layer.kind {
-            LayerKind::Raster => Content::Raster(
-                stack
-                    .evaluated_content(e.layer)
-                    .unwrap_or_else(|| layer.surface(stack.channel).expect("計画の層は面を持つ")),
-            ),
+            LayerKind::Raster => match stack.evaluated_content(e.layer) {
+                Some(surface) => {
+                    px = geo_of(true, self);
+                    Content::Raster(surface)
+                }
+                None => Content::Raster(
+                    layer.surface(stack.channel).expect("計画の層は面を持つ"),
+                ),
+            },
             LayerKind::Fill => match stack.evaluated_content(e.layer) {
-                Some(surface) => Content::Raster(surface),
+                Some(surface) => {
+                    px = geo_of(true, self);
+                    Content::Raster(surface)
+                }
                 None => Content::Fill(
                     layer
                         .fill_value(stack.channel)
@@ -608,15 +676,22 @@ impl<'a> Plan<'a> {
             LayerKind::Group => Content::Group,
         };
         let mode = e.blend_mode();
+        let mut mask_px = geo_of(false, self);
         let mask = layer.mask.as_ref().filter(|m| !m.is_neutral()).map(|m| {
+            let evaluated = stack.evaluated_mask(e.layer);
+            if evaluated.is_some() {
+                mask_px = geo_of(true, self);
+            }
             (
-                stack.evaluated_mask(e.layer).unwrap_or(&m.surface),
+                evaluated.unwrap_or(&m.surface),
                 Box::new(m.factor_table()),
             )
         });
         let id = self.nodes.len();
         self.nodes.push(Node {
             content,
+            px,
+            mask_px,
             opacity: e.opacity,
             mode,
             raw_mode: e.mode,
@@ -731,13 +806,54 @@ impl<'a> Plan<'a> {
         any
     }
 
-    fn rows<'s>(&self, src: &'s Src<'a>, g: Geom) -> Rows<'s> {
+    /// 矩形の仕事の見積り（画素 × そのタイルで画素のある層・調整の重みの和）。タイルが少ない矩形は、タイルごとに読んで本当に画素のある層を数える
+    /// （空のタイルの多い文書で、小さな合成を分けて高くつくのを避ける）。多い矩形はどのタイルも詰まっているとみなす（`layer_count` 枚）。
+    fn work(&self, rect: Rect, layer_count: u64, run: Option<&memo::MemoRun>) -> u64 {
+        let ts = self.tile_size as u32;
+        let (tx0, tx1) = (rect.x / ts, (rect.x + rect.width - 1) / ts);
+        let (ty0, ty1) = (rect.y / ts, (rect.y + rect.height - 1) / ts);
+        let tiles = (tx1 - tx0 + 1) as u64 * (ty1 - ty0 + 1) as u64;
+        if tiles > WORK_SCAN_TILES {
+            return rect.width as u64 * rect.height as u64 * layer_count;
+        }
+        let n = self.nodes.len();
+        let mut st = TileState {
+            present: vec![false; n],
+            pixels: vec![Src::Absent; n],
+            masks: vec![Src::Absent; n],
+        };
+        let (rx1, ry1) = (rect.x + rect.width, rect.y + rect.height);
+        let mut work = 0u64;
+        for ty in ty0..=ty1 {
+            for tx in tx0..=tx1 {
+                st.present.fill(false);
+                if !self.load(&self.roots, TileCoord::new(tx, ty), &mut st) {
+                    continue; // 透明のまま（合成しない）
+                }
+                let w = ((tx + 1) * ts).min(rx1) - (tx * ts).max(rect.x);
+                let h = ((ty + 1) * ts).min(ry1) - (ty * ts).max(rect.y);
+                // 覚えから続けるタイルは、描く層以降の段だけが仕事
+                let only = run.and_then(|r| r.suffix_of(TileCoord::new(tx, ty)));
+                let weight: u64 = st
+                    .present
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, p)| **p && only.is_none_or(|m| m[*i]))
+                    .map(|(i, _)| self.nodes[i].weight())
+                    .sum();
+                work += w as u64 * h as u64 * weight;
+            }
+        }
+        work
+    }
+
+    fn rows<'s>(&self, src: &'s Src<'a>, g: Geom, geo: Geo) -> Rows<'s> {
         match src {
             Src::Data(d) => Rows {
                 bytes: d,
-                off: (g.y * self.tile_size + g.x) * 4,
-                stride: self.tile_size * 4,
-                step: 4,
+                off: (g.y * geo.sample * geo.tile + g.x * geo.sample) * 4,
+                stride: geo.tile * geo.sample * 4,
+                step: 4 * geo.sample,
             },
             Src::Uniform(c) => Rows {
                 bytes: c,
@@ -756,7 +872,7 @@ impl<'a> Plan<'a> {
             mask: n
                 .mask
                 .as_ref()
-                .map(|(_, f)| (self.rows(&st.masks[id], g), &**f)),
+                .map(|(_, f)| (self.rows(&st.masks[id], g, n.mask_px), &**f)),
         }
     }
 
@@ -771,104 +887,142 @@ impl<'a> Plan<'a> {
         st: &TileState<'a>,
         scratch: &mut [Level],
     ) {
+        for &id in ids {
+            self.eval_node(id, res, out, g, st, scratch, None);
+        }
+    }
+
+    /// 段の子の並びを重ねる。描いている層への道をたどるとき（`resume` がある）は、その段の手前までの覚えから続ける。
+    #[allow(clippy::too_many_arguments)]
+    fn eval_children(
+        &self,
+        ids: &[usize],
+        res: &mut [u8],
+        out: Out,
+        g: Geom,
+        st: &TileState<'a>,
+        scratch: &mut [Level],
+        resume: Option<memo::Resume<'_>>,
+    ) {
+        match resume {
+            None => self.eval_rect(ids, res, out, g, st, scratch),
+            Some(r) => self.eval_resume(ids, r, res, out, g, st, scratch),
+        }
+    }
+
+    /// 段 1 つを res へ重ねる。`resume` は、この段が描いている層への道の途中の段（グループ）のとき、その中身の評価を覚えから続ける印。
+    #[allow(clippy::too_many_arguments)]
+    fn eval_node(
+        &self,
+        id: usize,
+        res: &mut [u8],
+        out: Out,
+        g: Geom,
+        st: &TileState<'a>,
+        scratch: &mut [Level],
+        resume: Option<memo::Resume<'_>>,
+    ) {
+        if !st.present[id] {
+            return;
+        }
         let packed = g.count * 4;
         let area = g.rows * packed;
-        for &id in ids {
-            if !st.present[id] {
-                continue;
+        let n = &self.nodes[id];
+        let amount = self.amount(id, g, st);
+        if let Content::Adjust(k) = &n.content {
+            adjust_rows(res, out, g, k, amount, n.raw_mode);
+            return;
+        }
+        let (level, deeper) = scratch.split_first_mut().expect("深さの分の作業の矩形");
+        if n.passes_through {
+            if n.mask.is_none() && n.opacity >= 1.0 {
+                // 不透明度 1 でマスクの効かない通過グループ: フェードは中身そのものなので、下の結果へそのまま重ねる
+                self.eval_children(&n.children, res, out, g, st, deeper, resume);
+                return;
             }
-            let n = &self.nodes[id];
-            let amount = self.amount(id, g, st);
-            if let Content::Adjust(k) = &n.content {
-                adjust_rows(res, out, g, k, amount, n.raw_mode);
-                continue;
+            let inner = grow(&mut level.inner, area);
+            for r in 0..g.rows {
+                inner[r * packed..(r + 1) * packed]
+                    .copy_from_slice(&res[out.row(r)..out.row(r) + packed]);
             }
-            let (level, deeper) = scratch.split_first_mut().expect("深さの分の作業の矩形");
-            if n.passes_through {
-                if n.mask.is_none() && n.opacity >= 1.0 {
-                    // 不透明度 1 でマスクの効かない通過グループ: フェードは中身そのものなので、下の結果へそのまま重ねる
-                    self.eval_rect(&n.children, res, out, g, st, deeper);
-                    continue;
-                }
-                let inner = grow(&mut level.inner, area);
+            self.eval_children(&n.children, inner, Out::packed(packed), g, st, deeper, resume);
+            fade_rows(res, out, inner, g, amount, self.normal);
+            return;
+        }
+        // 下地: グループは中身を透明から、クリッピングの組は層の画素の写し、ほかは層の画素をそのまま読む
+        let base: &mut [u8] = match &n.content {
+            Content::Group => {
+                let gb = grow(&mut level.group, area);
+                gb.fill(0);
+                self.eval_children(&n.children, gb, Out::packed(packed), g, st, deeper, resume);
+                gb
+            }
+            _ if !n.clips.is_empty() => {
+                let gb = grow(&mut level.group, area);
+                let src = self.rows(&st.pixels[id], g, n.px);
                 for r in 0..g.rows {
-                    inner[r * packed..(r + 1) * packed]
-                        .copy_from_slice(&res[out.row(r)..out.row(r) + packed]);
-                }
-                self.eval_rect(&n.children, inner, Out::packed(packed), g, st, deeper);
-                fade_rows(res, out, inner, g, amount, self.normal);
-                continue;
-            }
-            // 下地: グループは中身を透明から、クリッピングの組は層の画素の写し、ほかは層の画素をそのまま読む
-            let base: &mut [u8] = match &n.content {
-                Content::Group => {
-                    let gb = grow(&mut level.group, area);
-                    gb.fill(0);
-                    self.eval_rect(&n.children, gb, Out::packed(packed), g, st, deeper);
-                    gb
-                }
-                _ if !n.clips.is_empty() => {
-                    let gb = grow(&mut level.group, area);
-                    let src = self.rows(&st.pixels[id], g);
-                    for r in 0..g.rows {
-                        let row = src.row(r);
-                        let out = &mut gb[r * packed..(r + 1) * packed];
-                        if src.step == 0 {
-                            for p in out.chunks_exact_mut(4) {
-                                p.copy_from_slice(&row[..4]);
-                            }
-                        } else {
-                            out.copy_from_slice(&row[..packed]);
+                    let row = src.row(r);
+                    let out = &mut gb[r * packed..(r + 1) * packed];
+                    if src.step == 0 {
+                        for p in out.chunks_exact_mut(4) {
+                            p.copy_from_slice(&row[..4]);
+                        }
+                    } else if src.step == 4 {
+                        out.copy_from_slice(&row[..packed]);
+                    } else {
+                        // 歩幅つきの読み（粗い合成）: 画素を間引いて写す
+                        for (i, p) in out.chunks_exact_mut(4).enumerate() {
+                            p.copy_from_slice(&row[i * src.step..i * src.step + 4]);
                         }
                     }
-                    gb
                 }
-                _ => {
-                    let src = self.rows(&st.pixels[id], g);
-                    blend_rows(res, out, src, g, amount, n.mode, n.table, self.normal);
-                    continue;
+                gb
+            }
+            _ => {
+                let src = self.rows(&st.pixels[id], g, n.px);
+                blend_rows(res, out, src, g, amount, n.mode, n.table, self.normal);
+                return;
+            }
+        };
+        for &cid in &n.clips {
+            if !st.present[cid] {
+                continue;
+            }
+            let c = &self.nodes[cid];
+            let camount = self.amount(cid, g, st);
+            if let Content::Adjust(k) = &c.content {
+                adjust_rows(base, Out::packed(packed), g, k, camount, c.raw_mode);
+                continue;
+            }
+            let over = if let Content::Group = c.content {
+                let cb = grow(&mut level.clip, area);
+                cb.fill(0);
+                self.eval_rect(&c.children, cb, Out::packed(packed), g, st, deeper);
+                Rows {
+                    bytes: &level.clip[..area],
+                    off: 0,
+                    stride: packed,
+                    step: 4,
                 }
+            } else {
+                self.rows(&st.pixels[cid], g, c.px)
             };
-            for &cid in &n.clips {
-                if !st.present[cid] {
-                    continue;
-                }
-                let c = &self.nodes[cid];
-                let camount = self.amount(cid, g, st);
-                if let Content::Adjust(k) = &c.content {
-                    adjust_rows(base, Out::packed(packed), g, k, camount, c.raw_mode);
-                    continue;
-                }
-                let over = if let Content::Group = c.content {
-                    let cb = grow(&mut level.clip, area);
-                    cb.fill(0);
-                    self.eval_rect(&c.children, cb, Out::packed(packed), g, st, deeper);
-                    Rows {
-                        bytes: &level.clip[..area],
-                        off: 0,
-                        stride: packed,
-                        step: 4,
-                    }
+            for r in 0..g.rows {
+                let row = &mut base[r * packed..(r + 1) * packed];
+                if self.normal {
+                    normal_clip_span(row, over.row(r), over.step, camount.row(r), c.mode);
                 } else {
-                    self.rows(&st.pixels[cid], g)
-                };
-                for r in 0..g.rows {
-                    let row = &mut base[r * packed..(r + 1) * packed];
-                    if self.normal {
-                        normal_clip_span(row, over.row(r), over.step, camount.row(r), c.mode);
-                    } else {
-                        clip_span(row, over.row(r), over.step, camount.row(r), c.mode, c.table);
-                    }
+                    clip_span(row, over.row(r), over.step, camount.row(r), c.mode, c.table);
                 }
             }
-            let over = Rows {
-                bytes: base,
-                off: 0,
-                stride: packed,
-                step: 4,
-            };
-            blend_rows(res, out, over, g, amount, n.mode, n.table, self.normal);
         }
+        let over = Rows {
+            bytes: base,
+            off: 0,
+            stride: packed,
+            step: 4,
+        };
+        blend_rows(res, out, over, g, amount, n.mode, n.table, self.normal);
     }
 }
 
@@ -940,8 +1094,15 @@ fn fade_rows(res: &mut [u8], out: Out, inner: &[u8], g: Geom, amount: Amount<'_>
     }
 }
 
-/// これより仕事（画素 × 層）が少ない合成は、呼んだスレッドだけで行う（ワーカーを起こす方が高くつく。C# と同じ目安）。
-const PARALLEL_MINIMUM_WORK: u64 = 1 << 16;
+/// これより仕事（画素 × 画素のある層）が少ない合成は、呼んだスレッドだけで行う（ワーカーを起こす・分けたタイルを読み直す費用が、
+/// 計算より高くつく。1 タイル 128² を 7 層で 0.1 ms 足らずの計算に、8 本へ分ける費用が 0.4 ms 前後かかる）。
+const PARALLEL_MINIMUM_WORK: u64 = 1 << 19;
+
+/// 1 つの帯に持たせる仕事の下限（これより小さく割らない）。
+const MINIMUM_BAND_WORK: u64 = 1 << 18;
+
+/// 仕事を数えるためにタイルを読んで見る上限の枚数（これより多い矩形は、どのタイルも詰まっているとみなす）。
+const WORK_SCAN_TILES: u64 = 256;
 
 /// ワーカーごとの道具（タイルの状態と深さごとの作業の矩形）。
 struct Worker<'a> {
@@ -974,6 +1135,18 @@ pub(crate) fn composite_into(
     composite_entries_into(stack, stack.plan(), tile_size, rect, out, order)
 }
 
+/// `composite_into` の、描いている間の下の覚えを使える形（覚えが使えない・描く層が計画に無いときは `composite_into` と同じ道）。
+pub(crate) fn composite_into_memo(
+    stack: &Stack<'_>,
+    tile_size: u32,
+    rect: Rect,
+    out: &mut [u8],
+    order: RowOrder,
+    memo: &MemoRequest<'_>,
+) {
+    composite_entries_with(stack, stack.plan(), tile_size, rect, out, order, Some(memo))
+}
+
 /// `composite_into` の、計画（段の並び）を渡す形。グループの中身だけを透明から重ねるとき（グループの出力）に、そのグループの子の計画を渡す。
 pub(crate) fn composite_entries_into(
     stack: &Stack<'_>,
@@ -983,6 +1156,18 @@ pub(crate) fn composite_entries_into(
     out: &mut [u8],
     order: RowOrder,
 ) {
+    composite_entries_with(stack, entries, tile_size, rect, out, order, None)
+}
+
+fn composite_entries_with(
+    stack: &Stack<'_>,
+    entries: Vec<Entry>,
+    tile_size: u32,
+    rect: Rect,
+    out: &mut [u8],
+    order: RowOrder,
+    memo: Option<&MemoRequest<'_>>,
+) {
     if rect.is_empty() {
         return;
     }
@@ -990,11 +1175,34 @@ pub(crate) fn composite_entries_into(
         out.fill(0);
         return;
     }
-    let mut plan = Plan::build(stack, &entries);
-    plan.tile_size = tile_size as usize;
+    let plan = Plan::build(stack, &entries, tile_size);
     let depth = plan_depth(&entries);
     let layer_count = count_entries(&entries).max(1);
-    let work = rect.width as u64 * rect.height as u64 * layer_count;
+    let run = memo.and_then(|m| {
+        let ts = tile_size;
+        let coords: Vec<TileCoord> = (rect.y / ts..=(rect.y + rect.height - 1) / ts)
+            .flat_map(|ty| {
+                (rect.x / ts..=(rect.x + rect.width - 1) / ts).map(move |tx| TileCoord::new(tx, ty))
+            })
+            .collect();
+        memo::prepare(&plan, &entries, m, &coords, depth)
+    });
+    let work = plan.work(rect, layer_count, run.as_ref());
+    composite_plan_into(&plan, depth, work, rect, out, order, run.as_ref());
+}
+
+/// 計画を、矩形を行の帯に割って重ねる（仕事が小さければ、呼んだスレッドだけで）。work は `Plan::work` の見積り。
+#[allow(clippy::too_many_arguments)]
+fn composite_plan_into(
+    plan: &Plan<'_>,
+    depth: usize,
+    work: u64,
+    rect: Rect,
+    out: &mut [u8],
+    order: RowOrder,
+    run: Option<&memo::MemoRun>,
+) {
+    let tile_size = plan.tile_size as u32;
     let threads = if work < PARALLEL_MINIMUM_WORK {
         1
     } else {
@@ -1008,7 +1216,10 @@ pub(crate) fn composite_entries_into(
     let pieces_per_tile_row = if threads <= 1 {
         1
     } else {
-        ((threads as u32 * 2).div_ceil(tile_rows)).clamp(1, ts.div_ceil(8))
+        let by_threads = (threads as u32 * 2).div_ceil(tile_rows);
+        // 小さな帯に割りすぎると、帯ごとのタイルの読み直しと分ける費用が計算を上回る
+        let by_work = (work / MINIMUM_BAND_WORK / tile_rows as u64).max(1) as u32;
+        by_threads.min(by_work).clamp(1, ts.div_ceil(8))
     };
     let mut bands: Vec<(u32, u32)> = Vec::new();
     for ty in ry0 / ts..=(ry1 - 1) / ts {
@@ -1035,22 +1246,157 @@ pub(crate) fn composite_entries_into(
         rest = tail;
     }
     let make = || Worker::new(plan.nodes.len(), depth);
-    let plan = &plan;
     if threads <= 1 || chunks.len() <= 1 {
         let mut w = make();
         for ((y0, y1), chunk) in chunks {
-            composite_band(plan, &mut w, rect, y0, y1, chunk, order);
+            composite_band(plan, &mut w, rect, y0, y1, chunk, order, run);
         }
     } else {
         chunks
             .into_par_iter()
             .for_each_init(make, |w, ((y0, y1), chunk)| {
-                composite_band(plan, w, rect, y0, y1, chunk, order)
+                composite_band(plan, w, rect, y0, y1, chunk, order, run)
             });
     }
 }
 
+/// 散らばったタイルの合成（1 つの計画を使い回し、タイルごとにワーカーへ分ける）。regions のどれも 1 枚のタイルの中の矩形で、結果は
+/// regions と同じ並びの straight RGBA8（行は下から上）。矩形ごとに合成の関数を呼ぶ（その度に計画を作り、タイルの行ごとに帯へ分ける）より、
+/// 計画を 1 回で組み、タイルをまとめてワーカーへ分けるので、1 枚あたりの時間が短い（比は文書と負荷による。計測の台 `comp2d_bench --only call` の
+/// 「1 枚ずつ ÷ 束」）。画素の値は `composite_into` と同じ（矩形の分け方によらない）。
+pub(crate) fn composite_tiles_into(
+    stack: &Stack<'_>,
+    tile_size: u32,
+    regions: &[Rect],
+    memo: Option<&MemoRequest<'_>>,
+) -> Vec<Vec<u8>> {
+    let size = |r: &Rect| r.width as usize * r.height as usize * 4;
+    let entries = stack.plan();
+    if entries.is_empty() {
+        return regions.iter().map(|r| vec![0u8; size(r)]).collect();
+    }
+    let plan = Plan::build(stack, &entries, tile_size);
+    let depth = plan_depth(&entries);
+    let nodes = plan.nodes.len();
+    let run = memo.and_then(|m| {
+        let coords: Vec<TileCoord> = regions
+            .iter()
+            .filter(|r| !r.is_empty())
+            .map(|r| TileCoord::new(r.x / tile_size, r.y / tile_size))
+            .collect();
+        memo::prepare(&plan, &entries, m, &coords, depth)
+    });
+    let run = run.as_ref();
+    fn one<'a>(
+        plan: &Plan<'a>,
+        w: &mut Worker<'a>,
+        r: &Rect,
+        run: Option<&memo::MemoRun>,
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
+        if !r.is_empty() {
+            let ts = plan.tile_size as u32;
+            debug_assert!(r.x / ts == (r.x + r.width - 1) / ts);
+            debug_assert!(r.y / ts == (r.y + r.height - 1) / ts);
+            composite_band(plan, w, *r, r.y, r.y + r.height, &mut out, RowOrder::BottomUp, run);
+        }
+        out
+    }
+    let plan = &plan;
+    if regions.len() < PARALLEL_MINIMUM_TILES {
+        // 少ない枚数でも、1 枚の仕事が大きければ（詰まった文書）、そのタイルを帯に割ってワーカーへ分ける
+        let layer_count = count_entries(&entries).max(1);
+        let mut w = Worker::new(nodes, depth);
+        regions
+            .iter()
+            .map(|r| {
+                let work = if r.is_empty() { 0 } else { plan.work(*r, layer_count, run) };
+                if work >= PARALLEL_MINIMUM_WORK {
+                    let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
+                    composite_plan_into(plan, depth, work, *r, &mut out, RowOrder::BottomUp, run);
+                    out
+                } else {
+                    one(plan, &mut w, r, run)
+                }
+            })
+            .collect()
+    } else {
+        regions
+            .par_iter()
+            .map_init(|| Worker::new(nodes, depth), |w, r| one(plan, w, r, run))
+            .collect()
+    }
+}
+
+/// 散らばったタイルの、歩幅 stride で拾った粗い合成（表示の仮の絵）。regions のどれも 1 枚のタイルの中の矩形で、結果は regions と同じ並びの
+/// straight RGBA8（行は下から上、幅・高さは矩形を stride で切り上げて割った値）。画素 (i, j) は矩形の左下から (i·stride, j·stride) の画素の
+/// 合成と同じバイト（効果の出力は、評価した面の種類による。`Document::composite_coarse_tiles`）。stride は 1 以上でタイルの一辺の約数。
+pub(crate) fn composite_coarse_tiles_into(
+    stack: &Stack<'_>,
+    tile_size: u32,
+    regions: &[Rect],
+    stride: u32,
+) -> Vec<Vec<u8>> {
+    let dims = |r: &Rect| {
+        (
+            r.width.div_ceil(stride) as usize,
+            r.height.div_ceil(stride) as usize,
+        )
+    };
+    let entries = stack.plan();
+    if entries.is_empty() {
+        return regions
+            .iter()
+            .map(|r| {
+                let (w, h) = dims(r);
+                vec![0u8; w * h * 4]
+            })
+            .collect();
+    }
+    let plan = Plan::build_strided(stack, &entries, stride as usize, tile_size as usize);
+    let depth = plan_depth(&entries);
+    let nodes = plan.nodes.len();
+    fn one<'a>(plan: &Plan<'a>, w: &mut Worker<'a>, r: &Rect, stride: u32) -> Vec<u8> {
+        let (ow, oh) = (
+            r.width.div_ceil(stride) as usize,
+            r.height.div_ceil(stride) as usize,
+        );
+        let mut out = vec![0u8; ow * oh * 4];
+        if r.is_empty() {
+            return out;
+        }
+        let ts = plan.tile_size as u32;
+        debug_assert!(r.x / ts == (r.x + r.width - 1) / ts);
+        debug_assert!(r.y / ts == (r.y + r.height - 1) / ts);
+        if !plan.load(&plan.roots, TileCoord::new(r.x / ts, r.y / ts), &mut w.st) {
+            return out;
+        }
+        let g = Geom {
+            x: 0,
+            y: 0,
+            rows: oh,
+            count: ow,
+        };
+        plan.eval_rect(&plan.roots, &mut out, Out::packed(ow * 4), g, &w.st, &mut w.scratch);
+        out
+    }
+    let plan = &plan;
+    if regions.len() < PARALLEL_MINIMUM_TILES {
+        let mut w = Worker::new(nodes, depth);
+        regions.iter().map(|r| one(plan, &mut w, r, stride)).collect()
+    } else {
+        regions
+            .par_iter()
+            .map_init(|| Worker::new(nodes, depth), |w, r| one(plan, w, r, stride))
+            .collect()
+    }
+}
+
+/// タイルの束がこの枚数より少ないときは、呼んだスレッドだけで合成する（1 枚が 0.1 ms 前後で、ワーカーを起こす費用に見合わない）。
+const PARALLEL_MINIMUM_TILES: usize = 4;
+
 /// 1 つの帯（タイルの行の中の y0..y1）を合成する。chunk は帯の行（order の並び）。
+#[allow(clippy::too_many_arguments)]
 fn composite_band<'a>(
     plan: &Plan<'a>,
     w: &mut Worker<'a>,
@@ -1059,6 +1405,7 @@ fn composite_band<'a>(
     y1: u32,
     chunk: &mut [u8],
     order: RowOrder,
+    memo: Option<&memo::MemoRun>,
 ) {
     chunk.fill(0); // 透明から（帯ごとに、受け持つスレッドが 0 で埋める）
     let ts = plan.tile_size as u32;
@@ -1083,7 +1430,11 @@ fn composite_band<'a>(
             stride: row_bytes,
             flip: (order == RowOrder::TopDown).then_some(rows - 1),
         };
-        plan.eval_rect(&plan.roots, res, out, g, &w.st, &mut w.scratch);
+        match memo.and_then(|m| m.resume(coord)) {
+            // 描く層より下は覚えから、描く層と上の層だけを重ねる
+            Some(r) => plan.eval_resume(&plan.roots, r, res, out, g, &w.st, &mut w.scratch),
+            None => plan.eval_rect(&plan.roots, res, out, g, &w.st, &mut w.scratch),
+        }
     }
 }
 

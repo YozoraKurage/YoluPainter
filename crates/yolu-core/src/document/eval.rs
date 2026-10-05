@@ -55,6 +55,71 @@ impl TileRange {
     }
 }
 
+/// 評価の出力を作るタイルの範囲: 長方形か、散らばったタイルの組（合成のタイルの束。範囲の外のブロックは評価しない）。
+pub(crate) enum Region<'r> {
+    Range(TileRange),
+    Tiles(&'r [TileCoord]),
+}
+
+/// 歩幅つきの読み元（粗い評価）: 粗い画素 (x, y) は元の画素 (x·歩幅, y·歩幅)。
+struct StridedSource<'e> {
+    inner: &'e dyn filter::Source,
+    stride: u32,
+    coarse: (u32, u32),
+    full: (u32, u32),
+}
+
+impl filter::Source for StridedSource<'_> {
+    fn dimensions(&self) -> (u32, u32) {
+        self.coarse
+    }
+    fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        self.inner.pixel(
+            (x * self.stride).min(self.full.0 - 1),
+            (y * self.stride).min(self.full.1 - 1),
+        )
+    }
+}
+
+/// 粗い評価の Generator: 粗い画素 (x, y) の値は、元の画素 (x·歩幅, y·歩幅) での値。
+struct ScaledGenerators<'e> {
+    inner: &'e dyn GeneratorInput,
+    stride: u32,
+    full: (u32, u32),
+}
+
+impl GeneratorInput for ScaledGenerators<'_> {
+    fn sample(&self, slot: u32, x: u32, y: u32) -> Option<filter::Generated> {
+        self.inner.sample(
+            slot,
+            (x * self.stride).min(self.full.0 - 1),
+            (y * self.stride).min(self.full.1 - 1),
+        )
+    }
+}
+
+/// 粗い評価の段: ぼかし・シャープの半径を歩幅で割る（丸めて 0 になる段は外す。半径が歩幅の半分に満たないぼかしは、粗い絵では見えない）。
+/// ほかの段は点ごとの処理かノイズ・正規化なので、そのまま。
+fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
+    let reduce = |r: u32| (r + stride / 2) / stride;
+    stages
+        .iter()
+        .map(|stage| {
+            let mut stage = stage.clone();
+            let keep = match &mut stage.settings {
+                filter::Settings::GaussianBlur { radius } | filter::Settings::Sharpen { radius, .. } => {
+                    let r = reduce(*radius);
+                    *radius = r.max(1);
+                    r > 0
+                }
+                _ => true,
+            };
+            stage.enabled &= keep;
+            stage
+        })
+        .collect()
+}
+
 /// 評価の状態（文書の一部。保存も Undo もしない）。
 pub(crate) struct EffectState {
     pub inputs: EffectInputs,
@@ -228,6 +293,8 @@ struct Spec {
 pub(crate) struct EvalSet {
     pub content: HashMap<usize, Surface>,
     pub masks: HashMap<usize, Surface>,
+    /// 面が粗く評価したもの（歩幅。幅・高さは文書の 1/歩幅、タイルの一辺は文書のタイルの 1/歩幅）なら、その歩幅。
+    pub reduced: Option<u32>,
 }
 
 impl EvalSet {
@@ -237,6 +304,7 @@ impl EvalSet {
         EvalSet {
             content: pick(&self.content).into_iter().collect(),
             masks: pick(&self.masks).into_iter().collect(),
+            reduced: self.reduced,
         }
     }
 }
@@ -801,6 +869,22 @@ impl Document {
         rect: Rect,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
+        self.evaluate_for_composite_in(
+            channel,
+            kind,
+            &Region::Range(self.range_of_rect(rect)),
+            cancel,
+        )
+    }
+
+    /// `evaluate_for_composite` の、散らばったタイルの組も渡せる形。
+    pub(crate) fn evaluate_for_composite_in(
+        &self,
+        channel: Channel,
+        kind: ChannelKind,
+        region: &Region<'_>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<EvalSet, CoreError> {
         if !self.layers.iter().any(|l| {
             l.has_evaluated_output(channel)
                 || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
@@ -808,7 +892,7 @@ impl Document {
             return Ok(EvalSet::default());
         }
         let stack = Stack::new(&self.layers, channel, kind, None);
-        self.evaluate_entries(&stack.plan(), channel, rect, cancel)
+        self.evaluate_entries_in(&stack.plan(), channel, region, cancel)
     }
 
     /// 計画（段の並び）に出る層のうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
@@ -820,10 +904,24 @@ impl Document {
         rect: Rect,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
+        self.evaluate_entries_in(
+            entries,
+            channel,
+            &Region::Range(self.range_of_rect(rect)),
+            cancel,
+        )
+    }
+
+    fn evaluate_entries_in(
+        &self,
+        entries: &[Entry],
+        channel: Channel,
+        region: &Region<'_>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<EvalSet, CoreError> {
         let mut set = EvalSet::default();
         let mut indices = Vec::new();
         collect_layers(entries, &mut indices);
-        let range = self.range_of_rect(rect);
         for i in indices {
             let l = &self.layers[i];
             if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
@@ -831,7 +929,7 @@ impl Document {
             {
                 set.content.insert(
                     i,
-                    self.output_surface(i, SourceKey::Channel(channel), range, cancel)?,
+                    self.output_surface_in(i, SourceKey::Channel(channel), region, cancel)?,
                 );
             }
             if l.mask
@@ -839,10 +937,248 @@ impl Document {
                 .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
             {
                 set.masks
-                    .insert(i, self.output_surface(i, SourceKey::Mask, range, cancel)?);
+                    .insert(i, self.output_surface_in(i, SourceKey::Mask, region, cancel)?);
             }
         }
         Ok(set)
+    }
+
+    /// 効果の出力（フィルター・Generator・画像・グラデーション）を、評価していないタイルがあるか（そのタイルを正確に合成するには、評価が
+    /// 要るか）。評価した出力が持てるブロックが、キャッシュに無い・古いとき true。表示が、操作中の効果を粗く見せるかを決めるのに使う。
+    pub fn effects_pending(&self, channel: Channel, coords: &[TileCoord]) -> bool {
+        let Ok(kind) = self.channel_kind(channel) else {
+            return false;
+        };
+        if !self.layers.iter().any(|l| {
+            l.has_evaluated_output(channel)
+                || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
+        }) {
+            return false;
+        }
+        let stack = Stack::new(&self.layers, channel, kind, None);
+        let mut indices = Vec::new();
+        collect_layers(&stack.plan(), &mut indices);
+        let bt = self.block_tiles();
+        let missing = |i: usize, key: SourceKey| -> bool {
+            let spec = self.make_spec(i, key);
+            let mut blocks: Vec<(u32, u32)> = coords
+                .iter()
+                .filter(|c| self.may_cover(&spec, **c))
+                .map(|c| (c.x / bt, c.y / bt))
+                .collect();
+            blocks.sort_unstable();
+            blocks.dedup();
+            blocks
+                .iter()
+                .any(|&(bx, by)| self.cached_block(&spec, bx, by).is_none())
+        };
+        indices.into_iter().any(|i| {
+            let l = &self.layers[i];
+            (matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+                && l.has_evaluated_output(channel)
+                && missing(i, SourceKey::Channel(channel)))
+                || (l
+                    .mask
+                    .as_ref()
+                    .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
+                    && missing(i, SourceKey::Mask))
+        })
+    }
+
+    /// 合成のために、プランに出る層の評価した出力を、歩幅 stride で粗く評価して作る（タイルの束のタイルだけ。面は文書の 1/歩幅で、
+    /// キャッシュには入れない）。評価が要る層が無ければ空。
+    pub(crate) fn evaluate_for_composite_coarse(
+        &self,
+        channel: Channel,
+        kind: ChannelKind,
+        coords: &[TileCoord],
+        stride: u32,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<EvalSet, CoreError> {
+        if !self.layers.iter().any(|l| {
+            l.has_evaluated_output(channel)
+                || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
+        }) {
+            return Ok(EvalSet::default());
+        }
+        let stack = Stack::new(&self.layers, channel, kind, None);
+        let mut indices = Vec::new();
+        collect_layers(&stack.plan(), &mut indices);
+        let mut set = EvalSet {
+            reduced: Some(stride),
+            ..EvalSet::default()
+        };
+        for i in indices {
+            let l = &self.layers[i];
+            if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+                && l.has_evaluated_output(channel)
+            {
+                set.content.insert(
+                    i,
+                    self.coarse_output_surface(i, SourceKey::Channel(channel), coords, stride, cancel)?,
+                );
+            }
+            if l.mask
+                .as_ref()
+                .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
+            {
+                set.masks.insert(
+                    i,
+                    self.coarse_output_surface(i, SourceKey::Mask, coords, stride, cancel)?,
+                );
+            }
+        }
+        Ok(set)
+    }
+
+    /// 層の出力の面を、歩幅 stride で粗く評価する（coords のタイルだけ）。読み元を歩幅で拾い、ぼかし・シャープの半径を歩幅で割って、
+    /// 縮めた画像の上で評価する（評価にかかる画素数が 1/歩幅²）。操作中の仮の絵で、離したあとの正確な評価の代わりではない。面は幅・高さが
+    /// 文書の 1/歩幅、タイルの一辺が文書のタイルの 1/歩幅で、タイルの座標は文書と同じ。
+    fn coarse_output_surface(
+        &self,
+        index: usize,
+        key: SourceKey,
+        coords: &[TileCoord],
+        stride: u32,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Surface, CoreError> {
+        let spec = self.make_spec(index, key);
+        let ct = self.tile_size / stride;
+        let (cw, ch) = (self.width.div_ceil(stride), self.height.div_ceil(stride));
+        let mut out = Surface::new(cw, ch, ct);
+        let wanted: Vec<TileCoord> = coords
+            .iter()
+            .copied()
+            .filter(|c| self.may_cover(&spec, *c))
+            .collect();
+        if wanted.is_empty() {
+            return Ok(out);
+        }
+        let bt = self.block_tiles();
+        let mut groups: HashMap<(u32, u32), Vec<TileCoord>> = HashMap::new();
+        for c in wanted {
+            groups.entry((c.x / bt, c.y / bt)).or_default().push(c);
+        }
+        let groups: Vec<Vec<TileCoord>> = groups.into_values().collect();
+        let statistics = if spec.global {
+            Some(self.coarse_statistics(&spec, stride, cancel)?)
+        } else {
+            None
+        };
+        let done: Vec<Result<Vec<(TileCoord, Tile)>, CoreError>> = groups
+            .par_iter()
+            .map(|tiles| self.coarse_block(&spec, tiles, stride, statistics.as_deref(), cancel))
+            .collect();
+        for block in done {
+            for (coord, tile) in block? {
+                out.restore(coord, Some(&tile));
+            }
+        }
+        Ok(out)
+    }
+
+    /// 粗い評価の、全域の統計（正規化。縮めた入力の全体から）。
+    fn coarse_statistics(
+        &self,
+        spec: &Spec,
+        stride: u32,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Arc<Vec<Option<filter::Statistics>>>, CoreError> {
+        let full = (self.width, self.height);
+        let coarse = (full.0.div_ceil(stride), full.1.div_ceil(stride));
+        let stats = self.with_env(spec, self.whole_range(), cancel, |env| {
+            let strided = StridedSource {
+                inner: env.source,
+                stride,
+                coarse,
+                full,
+            };
+            let generators = ScaledGenerators {
+                inner: env.generators,
+                stride,
+                full,
+            };
+            let stages = coarse_stages(env.stages, stride);
+            let options = filter::Options {
+                working_budget: self.effects.working_budget,
+                block_size: self.effects.block_pixels,
+                cancel,
+                generators: Some(&generators),
+                statistics: None,
+            };
+            filter::statistics(&strided, env.value_type, &stages, &options).map_err(map_filter_error)
+        })?;
+        Ok(Arc::new(stats))
+    }
+
+    /// 粗い評価の 1 ブロックぶん（tiles は同じブロックの、出力を持ち得るタイル）。
+    fn coarse_block(
+        &self,
+        spec: &Spec,
+        tiles: &[TileCoord],
+        stride: u32,
+        statistics: Option<&Vec<Option<filter::Statistics>>>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Vec<(TileCoord, Tile)>, CoreError> {
+        cancelled(cancel)?;
+        let ts = self.tile_size;
+        let ct = (ts / stride) as usize;
+        let full = (self.width, self.height);
+        let coarse = (full.0.div_ceil(stride), full.1.div_ceil(stride));
+        let bx0 = tiles.iter().map(|c| c.x).min().unwrap_or(0);
+        let by0 = tiles.iter().map(|c| c.y).min().unwrap_or(0);
+        let bx1 = tiles.iter().map(|c| c.x).max().unwrap_or(0) + 1;
+        let by1 = tiles.iter().map(|c| c.y).max().unwrap_or(0) + 1;
+        // 評価する粗い画素の矩形（タイルを含む最小の矩形。端は文書の端で切る）
+        let (cx0, cy0) = (bx0 * ts / stride, by0 * ts / stride);
+        let (cx1, cy1) = (
+            (bx1 * ts).min(full.0).div_ceil(stride),
+            (by1 * ts).min(full.1).div_ceil(stride),
+        );
+        let region = Rect::new(cx0, cy0, cx1 - cx0, cy1 - cy0);
+        let range = TileRange {
+            x0: bx0,
+            y0: by0,
+            x1: bx1,
+            y1: by1,
+        };
+        let output = self.with_env(spec, self.grown_range(range, spec.halo), cancel, |env| {
+            let strided = StridedSource {
+                inner: env.source,
+                stride,
+                coarse,
+                full,
+            };
+            let generators = ScaledGenerators {
+                inner: env.generators,
+                stride,
+                full,
+            };
+            let stages = coarse_stages(env.stages, stride);
+            let options = filter::Options {
+                working_budget: self.effects.working_budget,
+                block_size: self.effects.block_pixels,
+                cancel,
+                generators: Some(&generators),
+                statistics: statistics.map(Vec::as_slice),
+            };
+            filter::evaluate(&strided, env.value_type, &stages, region, &options)
+                .map_err(map_filter_error)
+        })?;
+        let row = region.width as usize * 4;
+        let mut out = Vec::with_capacity(tiles.len());
+        for &coord in tiles {
+            let mut bytes = vec![0u8; ct * ct * 4];
+            let (x0, y0) = (coord.x as usize * ct, coord.y as usize * ct);
+            let w = ct.min(coarse.0 as usize - x0);
+            let h = ct.min(coarse.1 as usize - y0);
+            for r in 0..h {
+                let src = (y0 + r - region.y as usize) * row + (x0 - region.x as usize) * 4;
+                bytes[r * ct * 4..][..w * 4].copy_from_slice(&output[src..src + w * 4]);
+            }
+            out.push((coord, covered_tile(bytes)));
+        }
+        Ok(out)
     }
 
     /// 合成のためでなく、層の並びの写し（結合の準備のために並べ直した層）の、評価した出力を作る。鍵は `layers` の番号で、
@@ -900,11 +1236,31 @@ impl Document {
         range: TileRange,
         cancel: Option<&AtomicBool>,
     ) -> Result<Surface, CoreError> {
+        self.output_surface_in(index, key, &Region::Range(range), cancel)
+    }
+
+    /// `output_surface` の、散らばったタイルの組も渡せる形（組のタイルを含むブロックだけを評価する）。
+    pub(super) fn output_surface_in(
+        &self,
+        index: usize,
+        key: SourceKey,
+        region: &Region<'_>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Surface, CoreError> {
         let spec = self.make_spec(index, key);
         let bt = self.block_tiles();
-        let blocks: Vec<(u32, u32)> = (range.y0 / bt..=(range.y1 - 1) / bt)
-            .flat_map(|by| (range.x0 / bt..=(range.x1 - 1) / bt).map(move |bx| (bx, by)))
-            .collect();
+        let blocks: Vec<(u32, u32)> = match region {
+            Region::Range(range) => (range.y0 / bt..=(range.y1 - 1) / bt)
+                .flat_map(|by| (range.x0 / bt..=(range.x1 - 1) / bt).map(move |bx| (bx, by)))
+                .collect(),
+            Region::Tiles(tiles) => {
+                let mut set: Vec<(u32, u32)> =
+                    tiles.iter().map(|c| (c.x / bt, c.y / bt)).collect();
+                set.sort_by_key(|&(bx, by)| (by, bx));
+                set.dedup();
+                set
+            }
+        };
         let mut results: Vec<Option<BlockTiles>> = blocks
             .iter()
             .map(|&(bx, by)| self.cached_block(&spec, bx, by))
@@ -928,7 +1284,12 @@ impl Document {
         let mut out = Surface::new(self.width, self.height, self.tile_size);
         for tiles in results.into_iter().flatten() {
             for (coord, tile) in tiles.iter() {
-                if range.contains(*coord) {
+                // 範囲の外のタイルは入れない（散らばった組では、評価したブロックの中の組でないタイルも、読まれないので入れて構わない）
+                let wanted = match region {
+                    Region::Range(range) => range.contains(*coord),
+                    Region::Tiles(_) => true,
+                };
+                if wanted {
                     if let Some(t) = tile {
                         out.restore(*coord, Some(t));
                     }

@@ -67,8 +67,32 @@ use crate::types::{
 };
 
 pub use crate::layer::{Layer, LayerId};
+#[cfg(test)]
+mod memo_tests;
 pub use eval::EffectCounters;
 pub(crate) use eval::EvalSet;
+
+/// 合成したタイル 1 枚（[`Document::composite_tiles`]・[`Document::composite_coarse_tiles`]）。
+#[derive(Clone, Debug)]
+pub struct CompositedTile {
+    pub coord: TileCoord,
+    /// 画布の中のタイルの矩形（端のタイルは画布の内側だけ）。
+    pub rect: Rect,
+    /// 画素の拾い方: 1 なら全画素、そうでなければ歩幅ごとに 1 画素（粗い合成）。
+    pub stride: u32,
+    /// straight RGBA8、行は下から上。幅・高さは `rect` を歩幅で切り上げて割った値（歩幅 1 なら `rect` と同じ）。
+    pub pixels: Vec<u8>,
+}
+
+impl CompositedTile {
+    /// 画像の幅・高さ（画素）。
+    pub fn size(&self) -> (u32, u32) {
+        (
+            self.rect.width.div_ceil(self.stride),
+            self.rect.height.div_ceil(self.stride),
+        )
+    }
+}
 
 /// ストロークの札。文書を借りないので、フレームをまたいで持てる（中身は文書が持つ）。確定・取消で手放す。
 #[derive(Debug)]
@@ -428,10 +452,20 @@ pub(crate) enum CoalesceKey {
 struct Journal {
     serial: u64,
     tiles: Vec<HashMap<TileCoord, u64>>,
+    /// 描いているストロークの層の画素以外の変化（層の属性・並び・ほかの層の画素・チャンネルなど、`mark` を通ったもの）の回数。
+    /// 描いている間の下の覚え（[`composite::Memo`]）が、覚えがまだ正しいかを見る印。
+    foreign: u64,
+    /// ストロークが自分の面へ書いた変化を記録している間 true（`foreign` を進めない）。
+    own: bool,
+    /// 描いている間の、描く層より下の合成の覚え。
+    memo: composite::Memo,
 }
 
 impl Journal {
     fn mark(&mut self, channel: Channel, coord: TileCoord) {
+        if !self.own {
+            self.foreign += 1;
+        }
         self.serial += 1;
         let i = channel.index();
         if self.tiles.len() <= i {
@@ -925,6 +959,11 @@ impl Document {
     /// まとめている変更の続きを終える（スライダーのドラッグの終わり）。次の変更は別の Undo になる。
     pub fn end_coalescing(&mut self) {
         self.coalesce = None;
+    }
+
+    /// 変更をまとめている途中か（スライダーのドラッグの間。`end_coalescing` で終わる）。表示は、この間に変わった効果の出力を粗く見せてよい。
+    pub fn is_coalescing(&self) -> bool {
+        self.coalesce.is_some()
     }
 
     /// まとめている変更を取り消して、その段ごと捨てる（ドラッグを Escape で止めたとき）。まとめが無ければ false。
@@ -2065,14 +2104,18 @@ impl Document {
         .expect("ストロークの面");
         let mut changed = Vec::new();
         let result = f(state, surface, &mut changed);
+        self.journal.own = true; // ストロークが自分の面へ書いた変化（下の覚えは、これでは捨てない）
         for coord in changed {
             self.mark_target_tile(index, target, coord);
         }
+        self.journal.own = false;
         match result {
             Ok(any) => {
                 if any {
                     self.revision += 1;
                 }
+                // 画素が変わらなくても、巻き戻し用の写しは育ち得る
+                self.fit_memo_to_budget();
                 Ok(any)
             }
             Err(e) => {
@@ -2099,6 +2142,7 @@ impl Document {
             return self.finish_material();
         }
         let state = self.active.take().expect("確かめた");
+        self.journal.memo.clear(); // 描き終えた（下の覚えを手放す）
         let target = self.active_target;
         let surface = self
             .target_surface_mut(state.layer_index, target)
@@ -2164,6 +2208,7 @@ impl Document {
         let Some(state) = self.active.take() else {
             return false;
         };
+        self.journal.memo.clear(); // 取り消した（下の覚えを手放す）
         let target = self.active_target;
         let surface = self
             .target_surface_mut(state.layer_index, target)
@@ -2230,8 +2275,159 @@ impl Document {
             self.evaluate_for_composite(channel, kind, rect, cancel)?
         };
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
-        composite::composite_into(&stack, self.tile_size, rect, out, order);
+        match self.memo_request(channel) {
+            Some(memo) => {
+                composite::composite_into_memo(&stack, self.tile_size, rect, out, order, &memo)
+            }
+            None => composite::composite_into(&stack, self.tile_size, rect, out, order),
+        }
         Ok(())
+    }
+
+    /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別の層へ書く
+    /// 多チャンネルのストロークのときは None）。
+    fn memo_request(&self, channel: Channel) -> Option<composite::MemoRequest<'_>> {
+        let a = self.active.as_ref()?;
+        if !self.journal.memo.enabled()
+            || self.triangle_fill.is_some()
+            || self.material.extra.iter().any(|s| s.layer_index != a.layer_index)
+            || self.has_anchor_readers()
+        {
+            return None;
+        }
+        Some(composite::MemoRequest {
+            memo: &self.journal.memo,
+            stroke: a.id,
+            layer: a.layer_index,
+            channel,
+            foreign: self.journal.foreign,
+            limit: self.memo_limit(a),
+            width: self.width,
+            height: self.height,
+            touched: Box::new(move |c| a.tiles.contains_key(&c)),
+        })
+    }
+
+    /// 下の覚えに使ってよいバイト数: ストロークの予算から、巻き戻し用の写し（多チャンネルのストロークなら、全部の面の分）を引いた残り。
+    fn memo_limit(&self, active: &StrokeState) -> u64 {
+        let rollback = active.rollback_total()
+            + self
+                .material
+                .extra
+                .iter()
+                .map(|s| s.rollback_total())
+                .sum::<u64>();
+        self.stroke_budget.saturating_sub(rollback)
+    }
+
+    /// ストロークの点を足して巻き戻しが育ったあと、下の覚えを予算の残りへ収める（覚えが譲る。ブラシの予算の確かめは覚えを数えず、
+    /// 覚えの都合でストロークを断らないため）。点を足した後も、合成のあとも、覚え + 巻き戻しが予算に収まる。1 点の中の途中の瞬間は、
+    /// 巻き戻しが先に育つので、覚えの分だけ越え得る。
+    fn fit_memo_to_budget(&self) {
+        if let Some(a) = self.active.as_ref() {
+            self.journal.memo.fit(self.memo_limit(a));
+        }
+    }
+
+    /// 描いている間の下の覚えの状況（試験・計測用）。
+    pub fn composite_memo_stats(&self) -> composite::MemoStats {
+        self.journal.memo.stats()
+    }
+
+    /// 描いている間の下の覚えを使うか切り替える（既定は使う。使っても合成のバイトは変わらない。前後の比較・診断のために切れる）。
+    pub fn set_composite_memo(&mut self, on: bool) {
+        self.journal.memo.set_enabled(on);
+    }
+
+    /// 散らばったタイルの合成（straight RGBA8、行は下から上。画布の外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
+    /// 1 回で組み、タイルをワーカーへ分けるので、表示のように何枚も作り直すときの 1 枚あたりの時間が短い（比は文書と負荷による。計測の台
+    /// `comp2d_bench --only call` の「1 枚ずつ ÷ 束」）。
+    /// 効果の出力は、組のタイルを含むブロックだけを評価する。画素は `composite_into` と同じバイト。
+    pub fn composite_tiles(
+        &self,
+        channel: Channel,
+        coords: &[TileCoord],
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.composite_tiles_cancellable(channel, coords, None)
+    }
+
+    /// `composite_tiles` の、効果の評価を取り消せる形（取り消すと `Cancelled` で、何も返さない）。
+    pub fn composite_tiles_cancellable(
+        &self,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        let kind = self.channel_kind(channel)?;
+        let tiles: Vec<(TileCoord, Rect)> = coords
+            .iter()
+            .filter_map(|c| self.tile_rect(*c).filter(|r| !r.is_empty()).map(|r| (*c, r)))
+            .collect();
+        if tiles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
+        let eval = self.evaluate_for_composite_in(
+            channel,
+            kind,
+            &eval::Region::Tiles(&wanted),
+            cancel,
+        )?;
+        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
+        let memo = self.memo_request(channel);
+        let images = composite::composite_tiles_into(&stack, self.tile_size, &rects, memo.as_ref());
+        Ok(tiles
+            .into_iter()
+            .zip(images)
+            .map(|((coord, rect), pixels)| CompositedTile {
+                coord,
+                rect,
+                stride: 1,
+                pixels,
+            })
+            .collect())
+    }
+
+    /// 散らばったタイルの、歩幅 stride で拾った粗い合成（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)
+    /// の画素の合成と同じバイト。効果の出力は、評価していないブロックがあれば、粗く評価した出力（縮めた読み元で、半径を歩幅で割る。
+    /// 近似で、キャッシュには入れない）で、全部が評価済みなら、その正確な出力を拾う。stride は 1 以上でタイルの一辺の約数。
+    pub fn composite_coarse_tiles(
+        &self,
+        channel: Channel,
+        coords: &[TileCoord],
+        stride: u32,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        if stride == 0 || !self.tile_size.is_multiple_of(stride) {
+            return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
+        }
+        let kind = self.channel_kind(channel)?;
+        let tiles: Vec<(TileCoord, Rect)> = coords
+            .iter()
+            .filter_map(|c| self.tile_rect(*c).filter(|r| !r.is_empty()).map(|r| (*c, r)))
+            .collect();
+        if tiles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
+        let eval = if self.effects_pending(channel, &wanted) {
+            self.evaluate_for_composite_coarse(channel, kind, &wanted, stride, None)?
+        } else {
+            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), None)?
+        };
+        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
+        let images = composite::composite_coarse_tiles_into(&stack, self.tile_size, &rects, stride);
+        Ok(tiles
+            .into_iter()
+            .zip(images)
+            .map(|((coord, rect), pixels)| CompositedTile {
+                coord,
+                rect,
+                stride,
+                pixels,
+            })
+            .collect())
     }
 
     /// 層 `id` より下の合成（その層と上の層は入れない。調整の層の入力の見積りに使う）。straight RGBA8、行は下から上。
