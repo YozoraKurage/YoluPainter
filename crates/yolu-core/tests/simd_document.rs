@@ -2,9 +2,8 @@
 //! グループ（通過・独立）・調整の層（全種類）・Normal チャンネル（Normal・Overlay）を 1 つの文書に重ねて、全チャンネル・領域の端をまたぐ矩形で比べる。
 //! 道の選びは環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で変えて同じ試験を回せる。
 //!
-//! 合成の本体（`composite.rs`）が行の核（`blend_row`・`clip_row`・`fade_row`・`composite_row`）を呼ぶ形のときに、SIMD の道を通る合成の
-//! 回帰の網になる。そのときは `YOLU_SIMD` で道ごとに回す。呼ぶ前は画素ごとの経路どうしの比較で、SIMD の道は 1 つも通らない
-//! （道を変えても同じ結果になるだけで、SIMD の確認にならない）。
+//! 合成の本体（`composite.rs`）は行の核（`blend_row`・`clip_row`・`fade_row`・`composite_row`・Normal チャンネルの `normal::*_row`）で重ねるので、
+//! この試験は SIMD の道を通る合成の回帰の網になる（参照の `composite_pixel` は画素ごとの式）。`YOLU_SIMD` で道ごとに回す。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use yolu_core::curve::{Curve, CurvePoint};
@@ -113,8 +112,12 @@ fn adjustments() -> Vec<AdjustmentSettings> {
 }
 
 fn complex_document() -> Document {
-    // 300 × 200: タイルの端（256）をまたぐ。端のタイルは部分
-    let mut doc = Document::new(300, 200).unwrap();
+    complex_document_with_tile_size(Document::DEFAULT_TILE_SIZE)
+}
+
+fn complex_document_with_tile_size(tile_size: u32) -> Document {
+    // 300 × 200: タイルの端をまたぐ（既定の 128 なら 128・256 の線）。端のタイルは部分
+    let mut doc = Document::with_tile_size(300, 200, tile_size).unwrap();
     doc.set_source_budget_bytes(1 << 30).unwrap();
     let mut rng = SplitMix(2026);
     let base = doc.add_layer("base").unwrap();
@@ -215,6 +218,124 @@ fn the_tile_path_matches_the_pixel_reference_for_every_mode_and_layer_kind() {
                     );
                 }
             }
+        }
+    }
+}
+
+/// 歩幅つきの粗い合成（読み元の刻みが 4 より大きい。行は 64 画素ずつ詰めて行の核へ渡る）の画素が、全体の合成のその位置の画素と同じバイトか。
+/// タイルが 256 なら歩幅 2 の行は 128 画素で、詰める単位（64 画素）をまたぎ（マスクの読みも 64 画素目から続く）、端のタイルは部分になる。
+#[test]
+fn a_coarse_composite_matches_the_pixel_reference_at_the_sample_points() {
+    for tile_size in [128, 256] {
+        let doc = complex_document_with_tile_size(tile_size);
+        let coords: Vec<TileCoord> = doc.canvas_tiles().collect();
+        for ch in [Channel::Color, Channel::Normal] {
+            for stride in [1u32, 2, 4, 16, 64] {
+                for t in doc.composite_coarse_tiles(ch, &coords, stride).unwrap() {
+                    let (w, h) = t.size();
+                    for j in 0..h {
+                        for i in 0..w {
+                            let (x, y) = (t.rect.x + i * stride, t.rect.y + j * stride);
+                            let want = doc.composite_pixel(ch, x, y).unwrap().to_array();
+                            let at = ((j * w + i) * 4) as usize;
+                            assert_eq!(
+                                &t.pixels[at..at + 4],
+                                &want,
+                                "{ch:?} タイル {tile_size} 歩幅 {stride} ({x},{y}) 道 {}",
+                                yolu_core::blend::simd_level_name()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 表示に寄与する層の結合は、タイルの経路（行の核）で焼く。結果の層の画素が、結合前の画素ごとの参照（`composite_pixel`）と同じバイトか
+/// （アルファ 0 の画素は RGB も 0 に揃える）。端のタイル（部分）も含める。
+#[test]
+fn merging_visible_layers_bakes_the_pixel_reference() {
+    for tile_size in [128, 256] {
+        let mut doc = complex_document_with_tile_size(tile_size);
+        let (w, h) = (doc.width(), doc.height());
+        let channels = [Channel::Color, Channel::Normal];
+        let mut want = Vec::new();
+        for ch in channels {
+            for y in 0..h {
+                for x in 0..w {
+                    let p = doc.composite_pixel(ch, x, y).unwrap();
+                    want.push(if p.a == 0 { Rgba8::TRANSPARENT } else { p });
+                }
+            }
+        }
+        let report = doc.merge_visible("merged", 255).unwrap();
+        let merged = doc.layer(report.result_id).expect("結合の結果");
+        let mut at = 0;
+        for ch in channels {
+            for y in 0..h {
+                for x in 0..w {
+                    assert_eq!(
+                        merged.pixel(ch, x, y).unwrap(),
+                        want[at],
+                        "{ch:?} タイル {tile_size} ({x},{y}) 道 {}",
+                        yolu_core::blend::simd_level_name()
+                    );
+                    at += 1;
+                }
+            }
+        }
+    }
+}
+
+/// グループの結合は、グループの中身だけを透明から重ねたものを、タイルの経路で焼く。結果の層の画素が、ほかの層を隠した文書の画素ごとの参照と
+/// 同じバイトか（全モード・マスク・クリッピングの組を含むグループ）。
+#[test]
+fn merging_a_group_bakes_the_pixel_reference_of_its_children() {
+    let mut doc = Document::new(300, 200).unwrap();
+    doc.set_source_budget_bytes(1 << 30).unwrap();
+    let mut rng = SplitMix(77);
+    let under = doc.add_layer("under").unwrap();
+    fill(&mut doc, under, Channel::Color, &mut rng);
+    let opacities = [0.35, 0.7, 1.0, 0.999];
+    let mut members = Vec::new();
+    for (i, mode) in BlendMode::LAYER_MODES.into_iter().enumerate() {
+        let l = doc.add_layer(&format!("m{i}")).unwrap();
+        fill(&mut doc, l, Channel::Color, &mut rng);
+        doc.set_layer_blend_mode(l, mode).unwrap();
+        doc.set_layer_opacity(l, opacities[i % opacities.len()], false)
+            .unwrap();
+        if i % 3 == 1 {
+            fill_mask(&mut doc, l, &mut rng);
+        }
+        if i % 4 == 2 {
+            doc.set_layer_clipping(l, true).unwrap();
+        }
+        members.push(l);
+    }
+    let group = doc.group_layers(&members, "G").unwrap();
+    doc.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
+    // 参照: 下の層を隠すと、見えるのはグループの中身だけ
+    doc.set_layer_visible(under, false).unwrap();
+    let (w, h) = (doc.width(), doc.height());
+    let mut want = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let p = doc.composite_pixel(Channel::Color, x, y).unwrap();
+            want.push(if p.a == 0 { Rgba8::TRANSPARENT } else { p });
+        }
+    }
+    doc.set_layer_visible(under, true).unwrap();
+    let report = doc.merge_group(group, 255).unwrap();
+    let merged = doc.layer(report.result_id).expect("結合の結果");
+    for y in 0..h {
+        for x in 0..w {
+            assert_eq!(
+                merged.pixel(Channel::Color, x, y).unwrap(),
+                want[(y * w + x) as usize],
+                "({x},{y}) 道 {}",
+                yolu_core::blend::simd_level_name()
+            );
         }
     }
 }

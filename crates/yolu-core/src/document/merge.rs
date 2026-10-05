@@ -214,17 +214,16 @@ impl Document {
         }
         Ok(())
     }
+    /// 画素ごとの式 render(x, y) で組んだ面（結合の方法ごとに式が違う `merge_down` 用）。
     fn merge_surface(
         &self,
         coords: &BTreeSet<TileCoord>,
         budget: &mut u64,
         render: impl Fn(u32, u32) -> Rgba8 + Sync,
     ) -> Result<Surface, CoreError> {
-        let mut out = Surface::new(self.width, self.height, self.tile_size);
         let ts = self.tile_size;
-        let coords: Vec<_> = coords.iter().copied().collect();
-        for batch in coords.chunks(rayon::current_num_threads().clamp(1, 64) * 2) {
-            let tiles: Vec<_> = batch
+        self.merge_surface_tiles(coords, budget, |batch| {
+            batch
                 .par_iter()
                 .map(|&coord| {
                     let mut bytes = vec![0; (ts * ts * 4) as usize];
@@ -235,10 +234,57 @@ impl Document {
                             bytes[at..at + 4].copy_from_slice(&p.to_array());
                         }
                     }
-                    (coord, Tile::from_bytes(&bytes))
+                    Tile::from_bytes(&bytes)
                 })
+                .collect()
+        })
+    }
+    /// 計画（plan）の合成だけを焼く面（表示に寄与する層・複数の層・グループの結合）。バッチ（`merge_surface_tiles`）ごとに計画を 1 回組み、
+    /// バッチのタイルをまとめてワーカーへ分ける（`composite::composite_tiles_with`。タイルごとに計画を組み直さない。組む回数はバッチの数）。
+    /// 合成・アルファ 0 の画素の RGB の 0 揃え・タイルの圧縮は、タイルを合成したワーカーが続けて行う（並列の段は 1 つ）。
+    /// 画素は、画素ごとの `composite::evaluate_pixel` と同じバイトになる。
+    fn merge_surface_of_plan(
+        &self,
+        coords: &BTreeSet<TileCoord>,
+        budget: &mut u64,
+        stack: &Stack<'_>,
+    ) -> Result<Surface, CoreError> {
+        let ts = self.tile_size as usize;
+        self.merge_surface_tiles(coords, budget, |batch| {
+            let regions: Vec<crate::Rect> = batch
+                .iter()
+                .map(|&c| self.tile_rect(c).expect("結合が読むタイルは画布の中にある"))
                 .collect();
-            for (coord, t) in tiles {
+            composite::composite_tiles_with(stack, self.tile_size, &regions, None, |i, image| {
+                // 矩形の画素を、ts × ts の 0 埋めの行（下から）に置く
+                let row = regions[i].width as usize * 4;
+                let mut bytes = vec![0u8; ts * ts * 4];
+                for (dst, src) in bytes.chunks_exact_mut(ts * 4).zip(image.chunks_exact(row)) {
+                    dst[..row].copy_from_slice(src);
+                }
+                for p in bytes.as_chunks_mut::<4>().0 {
+                    if p[3] == 0 {
+                        *p = [0; 4];
+                    }
+                }
+                Tile::from_bytes(&bytes)
+            })
+        })
+    }
+    /// タイルのバッチごとに render(座標の並び) → 座標ごとのタイル（画素が無ければ None）で組んだ面。タイルの計算はバッチの中で並列に行い、
+    /// 予算の確かめと書き込みは座標の順にこのスレッドで行う。
+    fn merge_surface_tiles(
+        &self,
+        coords: &BTreeSet<TileCoord>,
+        budget: &mut u64,
+        render: impl Fn(&[TileCoord]) -> Vec<Option<Tile>>,
+    ) -> Result<Surface, CoreError> {
+        let mut out = Surface::new(self.width, self.height, self.tile_size);
+        let coords: Vec<_> = coords.iter().copied().collect();
+        for batch in coords.chunks(rayon::current_num_threads().clamp(1, 64) * 2) {
+            let tiles = render(batch);
+            debug_assert_eq!(tiles.len(), batch.len());
+            for (&coord, t) in batch.iter().zip(tiles) {
                 if let Some(t) = t {
                     *budget += 64 + t.byte_size();
                     if *budget > self.stroke_budget {
@@ -562,15 +608,7 @@ impl Document {
             coords.extend(evaluated_tiles.iter().copied());
             output_tiles.entry(c).or_default().extend(evaluated_tiles);
             let stack = Stack::new(&self.layers, c, kind, Some(&eval));
-            let plan = stack.plan();
-            let surface = self.merge_surface(&coords, &mut budget, |x, y| {
-                let p = composite::evaluate_pixel(&stack, &plan, Rgba8::TRANSPARENT, x, y);
-                if p.a == 0 {
-                    Rgba8::TRANSPARENT
-                } else {
-                    p
-                }
-            })?;
+            let surface = self.merge_surface_of_plan(&coords, &mut budget, &stack)?;
             if surface.tile_count() > 0 {
                 result.put_surface(c, Some(surface));
                 result.set_enabled(c, true);
@@ -772,15 +810,7 @@ impl Document {
             coords.extend(evaluated_tiles.iter().copied());
             output_tiles.entry(c).or_default().extend(evaluated_tiles);
             let stack = Stack::new(&isolated, c, kind, Some(&eval));
-            let plan = stack.plan();
-            let surface = self.merge_surface(&coords, &mut budget, |x, y| {
-                let p = composite::evaluate_pixel(&stack, &plan, Rgba8::TRANSPARENT, x, y);
-                if p.a == 0 {
-                    Rgba8::TRANSPARENT
-                } else {
-                    p
-                }
-            })?;
+            let surface = self.merge_surface_of_plan(&coords, &mut budget, &stack)?;
             if surface.tile_count() > 0 {
                 result.put_surface(c, Some(surface));
                 result.set_enabled(c, true);

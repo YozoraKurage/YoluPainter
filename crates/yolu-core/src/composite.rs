@@ -11,6 +11,8 @@
 //! - タイルの経路は、そのタイルに何も無い層（グループは中身に画素も調整も無いもの）を飛ばす（C# と同じ）。
 //! - Normal の種類のチャンネルは [`crate::normal`] のベクトルの式で、ほかは色の式で重ねる。調整はどちらも色の式。
 //! - 画素の値は自分の入力だけで決まるので、どのスレッドがどの行を受け持っても同じバイトになる。
+//! - タイルの経路は行ごとの核（[`crate::blend::blend_row`] など。実行時に AVX2・SSE4.1・スカラーを選ぶ）で重ねる。画素ごとの参照
+//!   （`evaluate_pixel`）と同じバイトで、歩幅つきの読み（粗い合成）は 64 画素ずつ詰めて核へ渡す。
 
 use rayon::prelude::*;
 
@@ -19,10 +21,9 @@ pub use memo::MemoStats;
 pub(crate) use memo::{Memo, MemoRequest};
 
 use crate::adjust::AdjustKernel;
-use crate::blend::{blend, blend_rgb, clip_onto, fade, separable_table, MIN_SHORTCUT_ALPHA};
+use crate::blend::{blend, blend_row, clip_onto, clip_row, fade, fade_row, RowAmount};
 use crate::document::EvalSet;
 use crate::layer::{Layer, LayerId};
-use crate::math::{to_byte, UNIT};
 use crate::normal;
 use crate::surface::{Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
@@ -343,13 +344,6 @@ struct Amount<'a> {
     mask: Option<(Rows<'a>, &'a [f64; 256])>,
 }
 
-/// 1 行ぶんの量の読み方。
-#[derive(Clone, Copy)]
-struct RowAmount<'a> {
-    opacity: f64,
-    mask: Option<(&'a [u8], usize, &'a [f64; 256])>,
-}
-
 impl<'a> Amount<'a> {
     #[inline]
     fn row(&self, r: usize) -> RowAmount<'a> {
@@ -357,191 +351,6 @@ impl<'a> Amount<'a> {
             opacity: self.opacity,
             mask: self.mask.map(|(m, f)| (m.row(r), m.step, f)),
         }
-    }
-}
-
-impl RowAmount<'_> {
-    #[inline(always)]
-    fn at(&self, i: usize) -> f64 {
-        match self.mask {
-            None => self.opacity,
-            Some((m, step, f)) => self.opacity * f[m[i * step + 3] as usize],
-        }
-    }
-}
-
-/// 下（res）に上（src）を重ねる（C# の BlendRect の 1 行。各画素は `blend` と同じバイト）。
-#[inline]
-fn blend_span(
-    res: &mut [u8],
-    sb: &[u8],
-    step: usize,
-    amount: RowAmount<'_>,
-    mode: BlendMode,
-    table: Option<&[f64]>,
-) {
-    let simple = mode == BlendMode::Normal || mode == BlendMode::PassThrough;
-    let count = res.len() / 4;
-    for i in 0..count {
-        let r = i * 4;
-        let s = i * step;
-        let s_a = sb[s + 3];
-        if s_a == 0 {
-            continue; // 上が透明: 下のまま
-        }
-        let amount = amount.at(i);
-        if simple && s_a == 255 && amount == 1.0 {
-            res[r..r + 3].copy_from_slice(&sb[s..s + 3]);
-            res[r + 3] = 255;
-            continue;
-        }
-        let sa = UNIT[s_a as usize] * amount;
-        if sa <= 0.0 {
-            continue;
-        }
-        let d_a = res[r + 3];
-        if d_a == 0 && sa >= MIN_SHORTCUT_ALPHA {
-            // 下が透明: 重みは 0・a_s・0 で色は (a_s·c)/a_s。積が正規化数なら c から 2 ulp 以内で、丸めると c のバイト
-            res[r..r + 3].copy_from_slice(&sb[s..s + 3]);
-            res[r + 3] = to_byte(sa);
-            continue;
-        }
-        let (dr, dg, db) = (
-            UNIT[res[r] as usize],
-            UNIT[res[r + 1] as usize],
-            UNIT[res[r + 2] as usize],
-        );
-        let (sr, sg, sbb) = (
-            UNIT[sb[s] as usize],
-            UNIT[sb[s + 1] as usize],
-            UNIT[sb[s + 2] as usize],
-        );
-        let (br, bg, bb) = if simple {
-            (sr, sg, sbb)
-        } else if let Some(t) = table {
-            (
-                t[(res[r] as usize) << 8 | sb[s] as usize],
-                t[(res[r + 1] as usize) << 8 | sb[s + 1] as usize],
-                t[(res[r + 2] as usize) << 8 | sb[s + 2] as usize],
-            )
-        } else {
-            blend_rgb(mode, dr, dg, db, sr, sg, sbb)
-        };
-        let (vr, vg, vb);
-        if d_a == 255 {
-            // 下が不透明: a = a_s + (1 − a_s) はちょうど 1、重みは 1 − a_s・0・a_s（0 の項と ÷1 は値を変えない）
-            let t = 1.0 - sa;
-            vr = t * dr + sa * br;
-            vg = t * dg + sa * bg;
-            vb = t * db + sa * bb;
-            res[r + 3] = 255;
-        } else {
-            let da = UNIT[d_a as usize];
-            let a = sa + da * (1.0 - sa);
-            let wd = (1.0 - sa) * da;
-            let ws = (1.0 - da) * sa;
-            let wb = da * sa;
-            vr = (wd * dr + ws * sr + wb * br) / a;
-            vg = (wd * dg + ws * sg + wb * bg) / a;
-            vb = (wd * db + ws * sbb + wb * bb) / a;
-            res[r + 3] = to_byte(a);
-        }
-        res[r] = to_byte(vr);
-        res[r + 1] = to_byte(vg);
-        res[r + 2] = to_byte(vb);
-    }
-}
-
-/// クリッピングの下地（g）へクリッピングされた層（c）を重ねる（C# の ClipRect の 1 行。各画素は `clip_onto` と同じバイト）。
-#[inline]
-fn clip_span(
-    g: &mut [u8],
-    cb: &[u8],
-    step: usize,
-    amount: RowAmount<'_>,
-    mode: BlendMode,
-    table: Option<&[f64]>,
-) {
-    let simple = mode == BlendMode::Normal || mode == BlendMode::PassThrough;
-    let count = g.len() / 4;
-    for i in 0..count {
-        let r = i * 4;
-        let s = i * step;
-        let c_a = cb[s + 3];
-        if c_a == 0 || g[r + 3] == 0 {
-            continue; // 量 0、または描く下地が無い
-        }
-        let a = UNIT[c_a as usize] * amount.at(i);
-        if a <= 0.0 {
-            continue;
-        }
-        let (dr, dg, db) = (
-            UNIT[g[r] as usize],
-            UNIT[g[r + 1] as usize],
-            UNIT[g[r + 2] as usize],
-        );
-        let (br, bg, bb) = if simple {
-            (
-                UNIT[cb[s] as usize],
-                UNIT[cb[s + 1] as usize],
-                UNIT[cb[s + 2] as usize],
-            )
-        } else if let Some(t) = table {
-            (
-                t[(g[r] as usize) << 8 | cb[s] as usize],
-                t[(g[r + 1] as usize) << 8 | cb[s + 1] as usize],
-                t[(g[r + 2] as usize) << 8 | cb[s + 2] as usize],
-            )
-        } else {
-            blend_rgb(
-                mode,
-                dr,
-                dg,
-                db,
-                UNIT[cb[s] as usize],
-                UNIT[cb[s + 1] as usize],
-                UNIT[cb[s + 2] as usize],
-            )
-        };
-        g[r] = to_byte(dr + (br - dr) * a);
-        g[r + 1] = to_byte(dg + (bg - dg) * a);
-        g[r + 2] = to_byte(db + (bb - db) * a);
-    }
-}
-
-/// Normal のチャンネルの重ね（画素ごとに [`normal::blend_unchecked`]）。
-#[inline]
-fn normal_blend_span(
-    res: &mut [u8],
-    sb: &[u8],
-    step: usize,
-    amount: RowAmount<'_>,
-    mode: BlendMode,
-) {
-    for i in 0..res.len() / 4 {
-        let r = i * 4;
-        let v = normal::blend_unchecked(
-            Rgba8::from_slice(&res[r..]),
-            Rgba8::from_slice(&sb[i * step..]),
-            amount.at(i),
-            mode,
-        );
-        res[r..r + 4].copy_from_slice(&v.to_array());
-    }
-}
-
-/// Normal のチャンネルのクリッピング（画素ごとに [`normal::clip_onto`]）。
-#[inline]
-fn normal_clip_span(g: &mut [u8], cb: &[u8], step: usize, amount: RowAmount<'_>, mode: BlendMode) {
-    for i in 0..g.len() / 4 {
-        let r = i * 4;
-        let v = normal::clip_onto(
-            Rgba8::from_slice(&g[r..]),
-            Rgba8::from_slice(&cb[i * step..]),
-            amount.at(i),
-            mode,
-        );
-        g[r..r + 4].copy_from_slice(&v.to_array());
     }
 }
 
@@ -574,7 +383,6 @@ struct Node<'a> {
     mode: BlendMode,
     /// 計画のモードそのもの（調整の合成に使う）。
     raw_mode: BlendMode,
-    table: Option<&'static [f64]>,
     /// 何かを変えるマスクだけ（面と、隠す量の表）。
     mask: Option<(&'a Surface, Box<[f64; 256]>)>,
     passes_through: bool,
@@ -695,11 +503,6 @@ impl<'a> Plan<'a> {
             opacity: e.opacity,
             mode,
             raw_mode: e.mode,
-            table: if stack.kind == ChannelKind::Normal {
-                None
-            } else {
-                separable_table(mode)
-            },
             mask,
             passes_through: e.passes_through(stack.layers),
             children: Vec::new(),
@@ -980,7 +783,7 @@ impl<'a> Plan<'a> {
             }
             _ => {
                 let src = self.rows(&st.pixels[id], g, n.px);
-                blend_rows(res, out, src, g, amount, n.mode, n.table, self.normal);
+                blend_rows(res, out, src, g, amount, n.mode, self.normal);
                 return;
             }
         };
@@ -1007,12 +810,17 @@ impl<'a> Plan<'a> {
             } else {
                 self.rows(&st.pixels[cid], g, c.px)
             };
+            let mode = c.mode;
             for r in 0..g.rows {
                 let row = &mut base[r * packed..(r + 1) * packed];
                 if self.normal {
-                    normal_clip_span(row, over.row(r), over.step, camount.row(r), c.mode);
+                    over_row(row, over.row(r), over.step, camount.row(r), |g, s, step, a| {
+                        normal::clip_row(g, s, step, a, mode)
+                    });
                 } else {
-                    clip_span(row, over.row(r), over.step, camount.row(r), c.mode, c.table);
+                    over_row(row, over.row(r), over.step, camount.row(r), |g, s, step, a| {
+                        clip_row(g, s, step, a, mode)
+                    });
                 }
             }
         }
@@ -1022,7 +830,7 @@ impl<'a> Plan<'a> {
             stride: packed,
             step: 4,
         };
-        blend_rows(res, out, over, g, amount, n.mode, n.table, self.normal);
+        blend_rows(res, out, over, g, amount, n.mode, self.normal);
     }
 }
 
@@ -1035,7 +843,7 @@ fn grow(v: &mut Vec<u8>, n: usize) -> &mut [u8] {
     &mut v[..n]
 }
 
-#[allow(clippy::too_many_arguments)]
+/// 矩形の行ごとに、読み元（over）を res の行へ重ねる（`normal` なら Normal チャンネルの式）。
 #[inline]
 fn blend_rows(
     res: &mut [u8],
@@ -1044,20 +852,51 @@ fn blend_rows(
     g: Geom,
     amount: Amount<'_>,
     mode: BlendMode,
-    table: Option<&[f64]>,
     normal: bool,
 ) {
     let packed = g.count * 4;
     for r in 0..g.rows {
         let row = &mut res[out.row(r)..out.row(r) + packed];
         if normal {
-            normal_blend_span(row, over.row(r), over.step, amount.row(r), mode);
+            over_row(row, over.row(r), over.step, amount.row(r), |d, s, step, a| {
+                normal::blend_row(d, s, step, a, mode)
+            });
         } else {
-            blend_span(row, over.row(r), over.step, amount.row(r), mode, table);
+            over_row(row, over.row(r), over.step, amount.row(r), |d, s, step, a| {
+                blend_row(d, s, step, a, mode)
+            });
         }
     }
 }
 
+/// 歩幅つきの読み（粗い合成）を詰めて渡す 1 回の画素数。
+const GATHER: usize = 64;
+
+/// 行の核（読み元の刻みが 0 か 4 のときだけ SIMD の道を通る）へ 1 行を渡す。刻みが 4 より大きい読み元（粗い合成）は、`GATHER` 画素ずつ
+/// 詰めて刻み 4 で渡し、量のマスクの読みも同じだけ進める（詰める費用は画素 1 つの 4 バイトの複写）。
+#[inline]
+fn over_row(
+    dst: &mut [u8],
+    src: &[u8],
+    step: usize,
+    amount: RowAmount<'_>,
+    kernel: impl Fn(&mut [u8], &[u8], usize, RowAmount<'_>),
+) {
+    if step == 0 || step == 4 {
+        return kernel(dst, src, step, amount);
+    }
+    let mut packed = [0u8; GATHER * 4];
+    for (k, part) in dst.chunks_mut(GATHER * 4).enumerate() {
+        let (first, n) = (k * GATHER, part.len() / 4);
+        for (i, p) in packed.chunks_exact_mut(4).take(n).enumerate() {
+            let at = (first + i) * step;
+            p.copy_from_slice(&src[at..at + 4]);
+        }
+        kernel(part, &packed[..n * 4], 4, amount.offset(first));
+    }
+}
+
+/// 矩形の行ごとに、調整の核を res の行へ当てる。
 fn adjust_rows(
     res: &mut [u8],
     out: Out,
@@ -1067,29 +906,22 @@ fn adjust_rows(
     mode: BlendMode,
 ) {
     for r in 0..g.rows {
-        let a = amount.row(r);
         let row = &mut res[out.row(r)..out.row(r) + g.count * 4];
-        for (i, p) in row.chunks_exact_mut(4).enumerate() {
-            let v = k.composite(Rgba8::from_slice(p), a.at(i), mode);
-            p.copy_from_slice(&v.to_array());
-        }
+        k.composite_row(row, amount.row(r), mode);
     }
 }
 
+/// 矩形の行ごとに、中身（inner）と res の行を量でフェードさせる（通過のグループ）。
 fn fade_rows(res: &mut [u8], out: Out, inner: &[u8], g: Geom, amount: Amount<'_>, normal: bool) {
     let packed = g.count * 4;
     for r in 0..g.rows {
         let a = amount.row(r);
         let row = &mut res[out.row(r)..out.row(r) + packed];
         let inn = &inner[r * packed..(r + 1) * packed];
-        for (i, p) in row.chunks_exact_mut(4).enumerate() {
-            let v = stack_fade(
-                normal,
-                Rgba8::from_slice(p),
-                Rgba8::from_slice(&inn[i * 4..]),
-                a.at(i),
-            );
-            p.copy_from_slice(&v.to_array());
+        if normal {
+            normal::fade_row(row, inn, a);
+        } else {
+            fade_row(row, inn, a);
         }
     }
 }
@@ -1132,7 +964,7 @@ pub(crate) fn composite_into(
     out: &mut [u8],
     order: RowOrder,
 ) {
-    composite_entries_into(stack, stack.plan(), tile_size, rect, out, order)
+    composite_entries_into(stack, &stack.plan(), tile_size, rect, out, order)
 }
 
 /// `composite_into` の、描いている間の下の覚えを使える形（覚えが使えない・描く層が計画に無いときは `composite_into` と同じ道）。
@@ -1144,13 +976,13 @@ pub(crate) fn composite_into_memo(
     order: RowOrder,
     memo: &MemoRequest<'_>,
 ) {
-    composite_entries_with(stack, stack.plan(), tile_size, rect, out, order, Some(memo))
+    composite_entries_with(stack, &stack.plan(), tile_size, rect, out, order, Some(memo))
 }
 
 /// `composite_into` の、計画（段の並び）を渡す形。グループの中身だけを透明から重ねるとき（グループの出力）に、そのグループの子の計画を渡す。
 pub(crate) fn composite_entries_into(
     stack: &Stack<'_>,
-    entries: Vec<Entry>,
+    entries: &[Entry],
     tile_size: u32,
     rect: Rect,
     out: &mut [u8],
@@ -1161,7 +993,7 @@ pub(crate) fn composite_entries_into(
 
 fn composite_entries_with(
     stack: &Stack<'_>,
-    entries: Vec<Entry>,
+    entries: &[Entry],
     tile_size: u32,
     rect: Rect,
     out: &mut [u8],
@@ -1175,9 +1007,9 @@ fn composite_entries_with(
         out.fill(0);
         return;
     }
-    let plan = Plan::build(stack, &entries, tile_size);
-    let depth = plan_depth(&entries);
-    let layer_count = count_entries(&entries).max(1);
+    let plan = Plan::build(stack, entries, tile_size);
+    let depth = plan_depth(entries);
+    let layer_count = count_entries(entries).max(1);
     let run = memo.and_then(|m| {
         let ts = tile_size;
         let coords: Vec<TileCoord> = (rect.y / ts..=(rect.y + rect.height - 1) / ts)
@@ -1185,7 +1017,7 @@ fn composite_entries_with(
                 (rect.x / ts..=(rect.x + rect.width - 1) / ts).map(move |tx| TileCoord::new(tx, ty))
             })
             .collect();
-        memo::prepare(&plan, &entries, m, &coords, depth)
+        memo::prepare(&plan, entries, m, &coords, depth)
     });
     let work = plan.work(rect, layer_count, run.as_ref());
     composite_plan_into(&plan, depth, work, rect, out, order, run.as_ref());
@@ -1270,10 +1102,27 @@ pub(crate) fn composite_tiles_into(
     regions: &[Rect],
     memo: Option<&MemoRequest<'_>>,
 ) -> Vec<Vec<u8>> {
+    composite_tiles_with(stack, tile_size, regions, memo, |_, image| image)
+}
+
+/// `composite_tiles_into` の、矩形ごとの仕上げ `finish(矩形の番号, 合成した画素)` を、その矩形を合成したワーカーがそのまま行う形（結果は
+/// regions と同じ並びの仕上げの戻り値）。合成のあとに別の並列の段を挟むと、ワーカーを起こして待つ費用が段の数だけかかるので、
+/// 画素を別の形（圧縮したタイルなど）へ変える仕事は仕上げに入れる。
+pub(crate) fn composite_tiles_with<R: Send>(
+    stack: &Stack<'_>,
+    tile_size: u32,
+    regions: &[Rect],
+    memo: Option<&MemoRequest<'_>>,
+    finish: impl Fn(usize, Vec<u8>) -> R + Sync,
+) -> Vec<R> {
     let size = |r: &Rect| r.width as usize * r.height as usize * 4;
     let entries = stack.plan();
     if entries.is_empty() {
-        return regions.iter().map(|r| vec![0u8; size(r)]).collect();
+        return regions
+            .iter()
+            .enumerate()
+            .map(|(i, r)| finish(i, vec![0u8; size(r)]))
+            .collect();
     }
     let plan = Plan::build(stack, &entries, tile_size);
     let depth = plan_depth(&entries);
@@ -1309,21 +1158,29 @@ pub(crate) fn composite_tiles_into(
         let mut w = Worker::new(nodes, depth);
         regions
             .iter()
-            .map(|r| {
+            .enumerate()
+            .map(|(i, r)| {
                 let work = if r.is_empty() { 0 } else { plan.work(*r, layer_count, run) };
-                if work >= PARALLEL_MINIMUM_WORK {
-                    let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
-                    composite_plan_into(plan, depth, work, *r, &mut out, RowOrder::BottomUp, run);
-                    out
-                } else {
-                    one(plan, &mut w, r, run)
-                }
+                finish(
+                    i,
+                    if work >= PARALLEL_MINIMUM_WORK {
+                        let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
+                        composite_plan_into(plan, depth, work, *r, &mut out, RowOrder::BottomUp, run);
+                        out
+                    } else {
+                        one(plan, &mut w, r, run)
+                    },
+                )
             })
             .collect()
     } else {
         regions
             .par_iter()
-            .map_init(|| Worker::new(nodes, depth), |w, r| one(plan, w, r, run))
+            .enumerate()
+            .map_init(
+                || Worker::new(nodes, depth),
+                |w, (i, r)| finish(i, one(plan, w, r, run)),
+            )
             .collect()
     }
 }
@@ -1442,6 +1299,7 @@ fn composite_band<'a>(
 mod tests {
     use super::*;
     use crate::math::to_byte;
+    use crate::math::UNIT;
 
     struct Rng(u64);
     impl Rng {
@@ -1487,7 +1345,6 @@ mod tests {
             *f = 1.0 - 0.8 * UNIT[h];
         }
         for mode in BlendMode::LAYER_MODES {
-            let table = separable_table(mode);
             for &amount in &amounts {
                 let n = 512;
                 let below: Vec<u8> = (0..n * 4).map(|_| rng.byte()).collect();
@@ -1499,11 +1356,11 @@ mod tests {
                         mask: masked.then_some((&mask[..], 4, &factor)),
                     };
                     let mut res = below.clone();
-                    blend_span(&mut res, &over, 4, a, mode, table);
+                    blend_row(&mut res, &over, 4, a, mode);
                     let mut g = below.clone();
-                    clip_span(&mut g, &over, 4, a, mode, table);
+                    clip_row(&mut g, &over, 4, a, mode);
                     let mut nres = below.clone();
-                    normal_blend_span(&mut nres, &over, 4, a, mode);
+                    normal::blend_row(&mut nres, &over, 4, a, mode);
                     for i in 0..n {
                         let d = Rgba8::from_slice(&below[i * 4..]);
                         let s = Rgba8::from_slice(&over[i * 4..]);
@@ -1529,13 +1386,12 @@ mod tests {
         }
         // 一様な読み元（刻み 0）
         let mut res = vec![10u8, 20, 30, 128, 0, 0, 0, 0];
-        blend_span(
+        blend_row(
             &mut res,
             &[200, 100, 50, 77],
             0,
             whole(1.0),
             BlendMode::Screen,
-            None,
         );
         assert_eq!(
             Rgba8::from_slice(&res[4..]),

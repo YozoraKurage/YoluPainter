@@ -22,7 +22,8 @@ use crate::math::simd::{Avx2, Sse41};
 #[derive(Clone, Copy)]
 pub struct RowAmount<'a> {
     pub opacity: f64,
-    /// マスクの行（先頭からの画素の刻み 0 または 4）・刻み・アルファ → 量の表。
+    /// マスクの行（先頭の画素から）・画素の刻み（任意。粗い合成では 4 × 歩幅、1 色のマスクは 0）・アルファ → 量の表。
+    /// 読み元 `sb` の刻み（0 か 4 のときだけ SIMD の道に入る）とは独立で、量は画素ごとに表を引いて読む。
     pub mask: Option<(&'a [u8], usize, &'a [f64; 256])>,
 }
 

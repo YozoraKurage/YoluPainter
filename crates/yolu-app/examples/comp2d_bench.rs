@@ -5,7 +5,7 @@
 //! 繰り返しの中央値を出す。出力は `場面<TAB>測るもの<TAB>値`。
 //!
 //! 使い方: `cargo run -p yolu-app --release --example comp2d_bench -- --synthetic 2048` /
-//! `-- --psd file.psd --label A`。`--only 名前` で場面を絞る（open・stroke・visible・opacity・effect・zoom・hash・call）。
+//! `-- --psd file.psd --label A`。`--only 名前` で場面を絞る（open・stroke・visible・opacity・effect・zoom・hash・merge・call）。
 
 use std::time::Instant;
 
@@ -619,6 +619,31 @@ fn scene_zoom(b: &mut Bench, doc: &Document) {
     b.sync_ms(doc);
 }
 
+/// 結合（表示に寄与する層・上から最初に結合できる層を下へ）の時間と、結合したあとの合成の指紋（前後のコードで同じ値になること）。結合は Undo で戻す。
+fn scene_merge(doc: &mut Document) {
+    let whole = |d: &Document| fnv(&d.composite_channel(Channel::Color, d.bounds()).unwrap());
+    // 結合の 1 段は外した層と結果の層の分だけ大きく、既定の履歴の予算では Undo の段が残らない
+    doc.set_undo_budget_bytes(4 << 30).unwrap();
+    let before = whole(doc);
+    let mut run = |label: &str, f: &mut dyn FnMut(&mut Document) -> bool| {
+        let t = Instant::now();
+        if f(doc) {
+            report("merge", &format!("{label}(ms)"), ms(t));
+            println!("merge\t{label} 後の合成の指紋\t{:016x}", whole(doc));
+            assert!(doc.undo().unwrap(), "結合の Undo の段が残っている");
+            assert_eq!(whole(doc), before, "Undo で結合の前に戻る");
+        } else {
+            println!("merge\t{label} は断られた\t-");
+        }
+    };
+    run("表示に寄与する層を結合", &mut |d| d.merge_visible("merged", 255).is_ok());
+    // 下の層へ: 上から順に、断られない最初の層（断られた層は文書を変えない）
+    run("上から最初に結合できる層を下へ結合", &mut |d| {
+        let ids: Vec<LayerId> = d.layers().iter().rev().map(|l| l.id()).collect();
+        ids.iter().any(|id| d.merge_down(*id, 255).is_ok())
+    });
+}
+
 /// 合成の呼び出し 1 回の固定費: 中央の 8×8 タイルを、タイルごと（スレッド 1 / 既定）・1 回の矩形で合成する時間。
 fn scene_call(doc: &Document) {
     let ts = doc.tile_size();
@@ -694,6 +719,21 @@ fn scene_call(doc: &Document) {
         v_conv.push(conv);
     }
     report("call", "全タイルの合成だけ(ms)", median(&mut v));
+    // 歩幅つきの粗い合成（効果の操作中の仮の絵）: 全タイルを束（64 枚）ずつ。歩幅はタイルの一辺の約数だけ
+    for stride in [2u32, 4, 8] {
+        if !ts.is_multiple_of(stride) {
+            continue;
+        }
+        let mut v = Vec::new();
+        for _ in 0..5 {
+            let t = Instant::now();
+            for chunk in all.chunks(64) {
+                std::hint::black_box(doc.composite_coarse_tiles(Channel::Color, chunk, stride).unwrap());
+            }
+            v.push(ms(t));
+        }
+        report("call", &format!("全タイルの粗い合成 歩幅 {stride}(ms)"), median(&mut v));
+    }
     report("call", "全タイルの乗算済みへの変換だけ(ms)", median(&mut v_conv));
     let r = yolu_core::Rect::new(
         (cx - 4) * ts,
@@ -716,6 +756,22 @@ fn scene_call(doc: &Document) {
         v.push(ms(t) / 64.0);
     }
     report("call", "8×8 を 1 回の矩形・スレッド 1(1 タイル ms)", median(&mut v));
+    // 画布全体を 1 回の矩形で（スレッド 1 / 既定）: 空のタイルが多い文書の、1 コアあたりの全体の費用
+    let whole = doc.bounds();
+    let mut all_px = vec![0u8; (whole.width as usize) * (whole.height as usize) * 4];
+    for (label, pool) in [("スレッド 1", Some(&one)), ("既定", None)] {
+        let mut v = Vec::new();
+        for _ in 0..3 {
+            let t = Instant::now();
+            let mut run = || doc.composite_into(Channel::Color, whole, &mut all_px, yolu_core::RowOrder::BottomUp).unwrap();
+            match pool {
+                Some(p) => p.install(run),
+                None => run(),
+            }
+            v.push(ms(t));
+        }
+        report("call", &format!("画布全体を 1 回の矩形・{label}(ms)"), median(&mut v));
+    }
 }
 
 /// 束と 1 枚ずつの比: 中央の 8×8 タイルを、1 枚ずつ `composite_into` で（今までの表示の呼び方）・1 回の `composite_tiles`（束）で合成する時間を、
@@ -905,6 +961,9 @@ fn main() {
     }
     if want("hash") {
         scene_hash(&mut doc, nested);
+    }
+    if want("merge") {
+        scene_merge(&mut doc);
     }
     if want("call") {
         scene_call(&doc);

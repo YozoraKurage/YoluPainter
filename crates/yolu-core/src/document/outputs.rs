@@ -249,7 +249,7 @@ impl Document {
         let entries = Stack::new(&self.layers, channel, kind, None).plan_level(Some(id));
         let eval = self.evaluate_entries(&entries, channel, rect, cancel)?;
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
-        composite_entries_into(&stack, entries, self.tile_size, rect, out, order);
+        composite_entries_into(&stack, &entries, self.tile_size, rect, out, order);
         Ok(())
     }
 }
