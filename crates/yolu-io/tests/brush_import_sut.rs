@@ -133,6 +133,30 @@ fn a_file_without_known_columns_still_gives_a_default_brush_named_after_the_node
 // ---------------- 筆先の画像 ----------------
 
 #[test]
+fn a_tip_stored_only_in_the_proprietary_format_is_left_out_and_reported() {
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), tar(&[("data/material.layer", b"\x89C2F\r\n\x1a\nbody")]))
+        .brush(
+            "Stamp",
+            1,
+            &[
+                ("BrushSize", real(30.0)),
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["C:\\mats\\tip_a.png", "cat/aaaa", "tip_a"]])),
+                ),
+            ],
+        )
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert!(b.brush.tip.image.is_none() && b.brush.tip.images.is_empty(), "丸い筆先");
+    assert_eq!(b.brush.base.radius, 15.0, "設定は取り込む");
+    assert!(has(b, SutNote::TipMissing));
+    assert!(has(b, SutNote::ProprietaryImage), "独自の形式で読めないことを知らせる");
+}
+
+#[test]
 fn the_tip_is_the_preview_png_of_the_referenced_material() {
     let file = SutBuilder::new()
         .material(Some("tip_a"), material_with_thumbnail(&tip_png()))

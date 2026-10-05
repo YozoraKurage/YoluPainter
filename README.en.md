@@ -18,7 +18,7 @@ Windows is the primary platform. Mac and Linux support is experimental.
 - Filters, generators that read baked mesh maps (AO, curvature, thickness, ID, and more), noise and grunge, and smart materials
 - The lilToon look in the 3D view
 - Live Link with Unity: open a model in one step and see your colors on the scene's materials (original assets are never modified)
-- PSD layers, groups, masks, and adjustments in and out; import of ABR and CLIP STUDIO (.sut) brushes
+- PSD layers, groups, masks, and adjustments in and out; import of ABR brushes and CLIP STUDIO (.sut) brush settings
 - Export of per-channel PNGs and templates for Unity Standard, URP, HDRP, and lilToon
 - Automatic recovery after a crash
 

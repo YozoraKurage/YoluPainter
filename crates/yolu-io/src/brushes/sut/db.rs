@@ -233,6 +233,8 @@ pub(super) struct Material {
     /// 参照と突き合わせるための文字列（行の文字列の列。小文字・場所と拡張子を落とす前のもの）。
     pub texts: Vec<String>,
     pub image: Option<material::Image>,
+    /// 画像が CLIP STUDIO 独自の入れ物にだけあって読めない（使える PNG が無い）。
+    pub proprietary: bool,
 }
 
 pub(super) struct Database {
@@ -535,6 +537,7 @@ impl Database {
             let mut order = index;
             let mut texts = Vec::new();
             let mut image = None;
+            let mut proprietary = false;
             for (i, name) in names.iter().enumerate() {
                 let Ok(value) = row.get_ref(i) else {
                     continue;
@@ -542,6 +545,7 @@ impl Database {
                 match (name.as_str(), value) {
                     ("filedata", ValueRef::Blob(blob)) => {
                         image = material::extract(blob);
+                        proprietary = image.is_none() && material::has_proprietary_image(blob);
                     }
                     ("_pw_id", ValueRef::Integer(id)) => order = id,
                     (_, ValueRef::Text(t)) if texts.len() < 8 => {
@@ -564,6 +568,7 @@ impl Database {
                 order,
                 texts,
                 image,
+                proprietary,
             });
             index += 1;
         }

@@ -270,7 +270,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
         },
         U::ClipStudio(note) => match note {
             SutNote::PreviewImage => Gap::ImageResolution,
-            SutNote::TipMissing | SutNote::TipGuessed => Gap::TipImage,
+            SutNote::TipMissing | SutNote::TipGuessed | SutNote::ProprietaryImage => Gap::TipImage,
             SutNote::TipOrder => Gap::TipOrder,
             SutNote::TextureMissing | SutNote::TextureGuessed => Gap::TexturePattern,
             SutNote::TextureRotation => Gap::TextureRotation,

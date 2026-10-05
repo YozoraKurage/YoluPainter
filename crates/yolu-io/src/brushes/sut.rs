@@ -425,6 +425,11 @@ impl<'a> Library<'a> {
         Ok(tip.map(|t| (t, self.preview(index))))
     }
 
+    /// 画像が CLIP STUDIO 独自の入れ物にだけあって読めない素材が 1 つでもあるか。
+    fn any_proprietary(&mut self) -> Result<bool, Fault> {
+        Ok(self.materials()?.0.iter().any(|m| m.proprietary))
+    }
+
     fn preview(&self, index: usize) -> bool {
         self.materials
             .as_ref()
@@ -490,6 +495,9 @@ fn tips(
     }
     if out.is_empty() || missing {
         notes.push(Unrepresented::ClipStudio(SutNote::TipMissing));
+        if library.any_proprietary()? {
+            notes.push(Unrepresented::ClipStudio(SutNote::ProprietaryImage));
+        }
     }
     if !out.is_empty() {
         if guessed {
@@ -541,6 +549,10 @@ fn texture(
     };
     let Some((image, preview, guessed)) = found else {
         notes.push(Unrepresented::ClipStudio(SutNote::TextureMissing));
+        let note = Unrepresented::ClipStudio(SutNote::ProprietaryImage);
+        if library.any_proprietary()? && !notes.contains(&note) {
+            notes.push(note);
+        }
         return Ok(());
     };
     if guessed {
@@ -896,6 +908,7 @@ mod tests {
             order,
             texts: texts.iter().map(|s| s.to_string()).collect(),
             image: None,
+            proprietary: false,
         }
     }
 

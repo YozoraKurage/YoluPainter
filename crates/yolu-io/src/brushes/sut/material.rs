@@ -1,8 +1,11 @@
 //! 素材（`MaterialFile.FileData`）から画像（PNG）を取り出す。
 //!
 //! 公開の解析では、`FileData` は無圧縮の tar で、その中に素材のプレビュー（`thumbnail/thumbnail.png`）の PNG がある。元の大きさの
-//! 画像は CLIP STUDIO 独自の入れ物（`.layer`・`.c2f`）の中にあり、読まない。tar でないときは、先頭が PNG か、PNG が
+//! 画像は CLIP STUDIO 独自の入れ物（`.layer`・`.c2f`。先頭が `\x89C2F`）の中にあり、読まない。tar でないときは、先頭が PNG か、PNG が
 //! 埋め込まれていればその最後の 1 枚を取る。
+//!
+//! 本物の `.sut`（CLIP STUDIO の書き出し）では、プレビューがどの素材にも同じ汎用の絵のことがある（素材の絵ではない）。知っている汎用の
+//! 絵（[`PLACEHOLDER_PREVIEWS`]）は画像として使わない（違う絵を筆先にしない）。
 
 use super::tar;
 
@@ -10,6 +13,26 @@ use super::tar;
 pub(super) const MAX_PNG_BYTES: usize = 16 * 1024 * 1024;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// CLIP STUDIO の独自の入れ物の先頭。
+const C2F_SIGNATURE: &[u8] = b"\x89C2F";
+
+/// 素材の絵ではない汎用のプレビュー（PNG の SHA-256）。本物の `.sut` で、全部の素材に同じ絵が入っていたもの。
+const PLACEHOLDER_PREVIEWS: &[&str] = &["ef425e25330db3d6288c9c42d2229de46fd7d6c470474a5df8b77e46917e99e9"];
+
+fn is_placeholder(png: &[u8], placeholders: &[&str]) -> bool {
+    placeholders.contains(&crate::hash(png).as_str())
+}
+
+/// 素材の画像が CLIP STUDIO 独自の入れ物（`.layer`・`.c2f`）だけに入っているか（tar の中に独自の入れ物がある）。読めないことを
+/// 知らせるのに使う。
+pub(super) fn has_proprietary_image(blob: &[u8]) -> bool {
+    tar::looks_like_tar(blob)
+        && tar::entries(blob).iter().take(32).any(|e| {
+            let name = e.name.to_ascii_lowercase();
+            e.data.starts_with(C2F_SIGNATURE) || name.ends_with(".layer") || name.ends_with(".c2f")
+        })
+}
 
 /// 素材から取り出した画像。
 pub(super) struct Image {
@@ -35,6 +58,10 @@ fn scan(blob: &[u8]) -> Option<&[u8]> {
 
 /// 素材の画像。見つからなければ None。
 pub(super) fn extract(blob: &[u8]) -> Option<Image> {
+    extract_with(blob, PLACEHOLDER_PREVIEWS)
+}
+
+fn extract_with(blob: &[u8], placeholders: &[&str]) -> Option<Image> {
     if tar::looks_like_tar(blob) {
         let entries = tar::entries(blob);
         // プレビューでない PNG（原寸）を優先し、大きい方を取る。無ければプレビュー
@@ -44,6 +71,9 @@ pub(super) fn extract(blob: &[u8]) -> Option<Image> {
                 continue;
             }
             let preview = entry.name.to_ascii_lowercase().contains("thumbnail");
+            if preview && is_placeholder(entry.data, placeholders) {
+                continue;
+            }
             let better = match best {
                 None => true,
                 Some((best_preview, data)) => {
@@ -55,12 +85,11 @@ pub(super) fn extract(blob: &[u8]) -> Option<Image> {
                 best = Some((preview, entry.data));
             }
         }
-        if let Some((preview, data)) = best {
-            return Some(Image {
-                png: data.to_vec(),
-                preview,
-            });
-        }
+        // tar の中に使える PNG が無ければ無い（埋め込みの PNG を探し直すと、外した汎用の絵を拾ってしまう）
+        return best.map(|(preview, data)| Image {
+            png: data.to_vec(),
+            preview,
+        });
     }
     if is_png(blob) && blob.len() <= MAX_PNG_BYTES {
         return Some(Image {
@@ -69,7 +98,7 @@ pub(super) fn extract(blob: &[u8]) -> Option<Image> {
         });
     }
     let found = scan(blob)?;
-    if found.len() > MAX_PNG_BYTES || !is_png(found) {
+    if found.len() > MAX_PNG_BYTES || !is_png(found) || is_placeholder(found, placeholders) {
         return None;
     }
     Some(Image {
@@ -105,6 +134,18 @@ mod tests {
         let image = extract(&blob).unwrap();
         assert!(!image.preview);
         assert_eq!(image.png, big);
+    }
+
+    #[test]
+    fn a_known_placeholder_preview_is_not_taken_and_the_proprietary_image_is_reported() {
+        let thumb = png(4, 10);
+        let blob = tar(&[("thumbnail/thumbnail.png", &thumb), ("data/material.layer", b"\x89C2F\r\n\x1a\nbody")]);
+        let hash = crate::hash(&thumb);
+        assert!(extract_with(&blob, &[hash.as_str()]).is_none(), "汎用の絵は筆先にしない");
+        assert!(extract_with(&blob, &[]).is_some(), "知らない絵はこれまでどおりプレビューとして使う");
+        assert!(has_proprietary_image(&blob));
+        assert!(!has_proprietary_image(&tar(&[("thumbnail/thumbnail.png", &thumb)])));
+        assert!(!has_proprietary_image(&thumb), "tar でないものは数えない");
     }
 
     #[test]

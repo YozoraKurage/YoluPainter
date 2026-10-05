@@ -283,6 +283,8 @@ pub enum SutNote {
     /// 筆先・質感の画像は素材に入っているプレビュー（PNG）から取った。元の大きさの画像は CLIP STUDIO 独自の入れ物（`.layer`）の
     /// 中にあり、読まない。解像度はプレビューまで。
     PreviewImage,
+    /// 筆先・質感の画像が CLIP STUDIO 独自の入れ物（`.layer`）にだけ入っていて、読めなかった（使える PNG が無い）。
+    ProprietaryImage,
     /// 筆先にできない素材があった（特定できない・画像を取り出せない・筆先の数の上限を超えた）ので、その筆先は使わない。1 枚も
     /// 使えなければ丸い筆先にした。
     TipMissing,
@@ -348,6 +350,10 @@ impl SutNote {
             Self::PreviewImage => (
                 "筆先・質感の画像は素材のプレビューから取った（元の大きさの画像は独自の入れ物の中にあり、読まない。解像度はプレビューまで）".into(),
                 "Tip and texture images come from the material's preview; the full-size image is in a proprietary container and is not read, so resolution is limited to the preview.".into(),
+            ),
+            Self::ProprietaryImage => (
+                "筆先・質感の画像が CLIP STUDIO 独自の形式でしか入っていないため、読めない（設定だけを取り込んだ）".into(),
+                "The tip and texture images are stored only in CLIP STUDIO's own format and cannot be read; only the settings were imported.".into(),
             ),
             Self::TipMissing => (
                 "筆先にできない素材がある（特定できない・画像を取り出せない・筆先の数の上限を超えた）ので、その筆先は使わず、1 枚も無ければ丸い筆先にした".into(),

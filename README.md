@@ -18,7 +18,7 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 - フィルター、焼いたメッシュマップ（AO・曲率・厚み・ID など）を読む Generator、ノイズとグランジ、スマートマテリアル
 - 3D ビューでの lilToon の見た目
 - Unity との Live Link。モデルを 1 回の操作で開き、描いた色をシーンのマテリアルに映します（元のアセットは変えません）
-- PSD のレイヤー・グループ・マスク・調整の読み書き、ABR や CLIP STUDIO のブラシ（.sut）の取り込み
+- PSD のレイヤー・グループ・マスク・調整の読み書き、ABR のブラシと CLIP STUDIO のブラシ（.sut。設定だけ）の取り込み
 - チャンネルごとの PNG と、Unity Standard・URP・HDRP・lilToon 向けのテンプレートの書き出し
 - 落ちたときの自動の復旧
 
