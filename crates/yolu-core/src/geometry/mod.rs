@@ -16,6 +16,7 @@ mod camera;
 mod dab;
 mod model;
 mod paint;
+mod project;
 mod query;
 mod refit;
 mod regions;
@@ -38,6 +39,10 @@ pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
     pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceStroke, SurfaceStrokeError,
     SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup,
+};
+pub use project::{
+    CopyTransform, ProjectionSettings, ProjectionStats, SurfaceProjector, MAX_BUCKET,
+    MAX_SEAM_BLEED, MIN_BUCKET,
 };
 pub use query::{
     barycentric, closest_point, intersect_triangle, uv_barycentric, NodeBudgetExceeded,
@@ -205,6 +210,9 @@ pub struct SurfaceGeometry {
     /// ブラシの半径をモデルの単位に直す基準（箱の対角線。`reposition` は元の値を引き継ぐ）。
     pub(crate) brush_scale: f32,
     pub(crate) timings: BuildTimings,
+    /// 投影の塗りの、カメラによらない一覧（UV の覆い・島の縁）の覚え（テクスチャセットと文書の大きさごと。新しい 2 つまで）。
+    /// 位置だけ変えたスナップショット（ポーズ）は、UV と隣り合わせが同じなので引き継ぐ。
+    pub(crate) projection_cache: std::sync::Mutex<Vec<std::sync::Arc<project::Shared>>>,
 }
 
 /// 溶接の既定の許し（C# と同じ 1e-6。モデルの単位）。

@@ -143,6 +143,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.brush.opacity = defaults.opacity;
             brush.assist.stabilizer = 0.0;
             brush.assist.curve = false;
+            app.view3d.projection = Default::default();
         }
         Category::Pressure => {
             app.brush.pressure_size = defaults.pressure_size;
@@ -277,6 +278,140 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     ) {
         a.curve = v;
     }
+    if app.view3d.paintable_on_screen() {
+        projection_fields(ui, app, rows, lang);
+    } else {
+        app.view3d.projection_dragging = false;
+    }
+}
+
+/// 3D の塗りの切り替え（3D のビューが出ているあいだだけ。ストロークの始めに固める）。
+fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    let free = !app.is_stroking();
+    group(ui, rows, "3D");
+    let mut dragging = false;
+    let p = &mut app.view3d.projection;
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "projection.hidden",
+        lang.pick("隠れた所も塗る", "Paint hidden areas"),
+        p.paint_hidden,
+        Some(lang.pick(
+            "ブラシの円の中で、手前の面に隠れた所にも塗る",
+            "Also paints surfaces hidden behind nearer ones under the brush",
+        )),
+        free,
+    ) {
+        p.paint_hidden = v;
+    }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "projection.backfaces",
+        lang.pick("裏の面も塗る", "Paint back faces"),
+        p.paint_backfaces,
+        Some(lang.pick(
+            "カメラに背を向けた面にも塗る",
+            "Also paints faces that point away from the camera",
+        )),
+        free,
+    ) {
+        p.paint_backfaces = v;
+    }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "projection.falloff",
+        lang.pick("面の向きで弱める", "Fade by angle"),
+        p.angle_falloff,
+        Some(lang.pick(
+            "面が視線に対して傾くほど薄く塗る",
+            "Paints more lightly where the surface turns away from the view",
+        )),
+        free,
+    ) {
+        p.angle_falloff = v;
+    }
+    if p.angle_falloff {
+        if let Some(v) = projection_slider(
+            ui,
+            rows,
+            &mut dragging,
+            "projection.angle-start",
+            lang.pick("弱め始め", "Fade start"),
+            p.angle_start,
+            (0.0, 90.0),
+            NumberFormat::int("°"),
+            Some(lang.pick(
+                "面の法線と視線の角度がこれを超えると弱める",
+                "Angle between the surface normal and the view where fading begins",
+            )),
+            free,
+        ) {
+            p.angle_start = v.round();
+            p.angle_end = p.angle_end.max(p.angle_start);
+        }
+        if let Some(v) = projection_slider(
+            ui,
+            rows,
+            &mut dragging,
+            "projection.angle-end",
+            lang.pick("塗らない角度", "Fade end"),
+            p.angle_end,
+            (0.0, 90.0),
+            NumberFormat::int("°"),
+            Some(lang.pick(
+                "面の法線と視線の角度がこれ以上なら塗らない",
+                "Angle between the surface normal and the view where painting stops",
+            )),
+            free,
+        ) {
+            p.angle_end = v.round();
+            p.angle_start = p.angle_start.min(p.angle_end);
+        }
+    }
+    if let Some(v) = projection_slider(
+        ui,
+        rows,
+        &mut dragging,
+        "projection.bleed",
+        lang.pick("継ぎ目のにじみ", "Seam bleed"),
+        p.seam_bleed as f32,
+        (0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32),
+        NumberFormat::int(" px"),
+        Some(lang.pick(
+            "UV の島の縁から外へ塗る幅。継ぎ目に線が出ないように",
+            "Paints this far outside the edges of UV islands so seams do not show",
+        )),
+        free,
+    ) {
+        p.seam_bleed = v.round().clamp(0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32) as u32;
+    }
+    app.view3d.projection_dragging = dragging;
+}
+
+/// 3D の塗りの切り替えのスライダーの 1 行（[`slider_row`] と同じ形）。ドラッグしている間は dragging を立てる。
+#[allow(clippy::too_many_arguments)]
+fn projection_slider(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    dragging: &mut bool,
+    id: &str,
+    label: &str,
+    value: f32,
+    range: (f32, f32),
+    format: NumberFormat,
+    tooltip: Option<&str>,
+    enabled: bool,
+) -> Option<f32> {
+    let mut spec = w::SliderSpec::new(label, range.0, range.1, format).enabled(enabled);
+    if let Some(tip) = tooltip {
+        spec = spec.tooltip(tip);
+    }
+    let out = w::slider(ui, rows.slider_row(), id, value, &spec);
+    *dragging |= out.active;
+    out.changed.then_some(out.value)
 }
 
 // ───────── 筆圧 ─────────

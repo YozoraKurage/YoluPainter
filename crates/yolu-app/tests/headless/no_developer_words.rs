@@ -136,6 +136,7 @@ fn the_dab_refusal_texts_of_the_core_are_plain_words_too() {
         PixelBudget,
         VisibilityBudget,
         BvhBudget,
+        MemoryBudget,
     ] {
         let text = refusal.to_string();
         for word in ["スナップショット", "ダブ", "レイ", "BVH", "予算"] {

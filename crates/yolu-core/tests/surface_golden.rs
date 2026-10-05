@@ -262,6 +262,8 @@ fn why(r: Option<DabRefusal>) -> &'static str {
         Some(DabRefusal::PixelBudget) => "pixels",
         Some(DabRefusal::VisibilityBudget) => "visibility",
         Some(DabRefusal::BvhBudget) => "bvh",
+        // 投影の塗りだけの断り（古い道は出さない）
+        Some(DabRefusal::MemoryBudget) => "memory",
     }
 }
 

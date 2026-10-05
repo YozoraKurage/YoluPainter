@@ -69,17 +69,21 @@ pub enum DabRefusal {
     VisibilityBudget,
     /// 遮蔽のレイの BVH の仕事量の予算を超えた（ストロークを取り消す）。
     BvhBudget,
+    /// 投影の塗りで、このダブに要る区画の投影の画素が、1 回の操作のメモリに入らない（そのダブだけ飛ばす）。
+    MemoryBudget,
 }
 
 impl DabRefusal {
-    /// 予算で断ったか（呼ぶ側はストロークを取り消す。ほかの理由はそのダブを飛ばして知らせるだけ）。
-    pub fn cancels_stroke(self) -> bool {
+    /// 上限を超えた断りか（ダブ 1 つの 4 つの上限と、投影の塗りのメモリ）。3D のストロークは、どの断りでもストロークを取り消さず、
+    /// そのダブ・写しを飛ばして知らせる。パスの評価は、どの断りでも評価ごと失敗する。
+    pub fn is_limit(self) -> bool {
         matches!(
             self,
             DabRefusal::TriangleBudget
                 | DabRefusal::PixelBudget
                 | DabRefusal::VisibilityBudget
                 | DabRefusal::BvhBudget
+                | DabRefusal::MemoryBudget
         )
     }
 
@@ -93,6 +97,7 @@ impl DabRefusal {
             DabRefusal::PixelBudget => "Surface dab exceeded the pixel budget. No pixels were changed; reduce brush radius or use a smaller document.",
             DabRefusal::VisibilityBudget => "Surface dab exceeded the visibility budget. No pixels were changed; reduce the brush radius.",
             DabRefusal::BvhBudget => "Surface visibility exceeded the BVH work budget. No pixels were changed; reduce the radius or simplify overlapping geometry.",
+            DabRefusal::MemoryBudget => "The projected brush area does not fit in the stroke memory budget. The dab was skipped.",
         }
     }
 }
@@ -107,6 +112,7 @@ impl std::fmt::Display for DabRefusal {
             DabRefusal::PixelBudget => "ブラシが大きすぎるので、ストロークを取り消しました。ブラシを小さくするか、文書を小さくしてください",
             DabRefusal::VisibilityBudget => "見え方の確認が多すぎるので、ストロークを取り消しました。ブラシを小さくしてください",
             DabRefusal::BvhBudget => "見え方の確認が重すぎるので、ストロークを取り消しました。ブラシを小さくするか、重なった面を減らしてください",
+            DabRefusal::MemoryBudget => "ブラシの範囲が 1 回の操作のメモリに入らないので、塗らなかった所があります",
         })
     }
 }
@@ -125,9 +131,9 @@ pub struct SurfaceDabResult {
 }
 
 impl SurfaceDabResult {
-    /// 予算で断ったか（C# の WasClipped）。
+    /// 上限で断ったか（C# の WasClipped）。
     pub fn was_clipped(&self) -> bool {
-        self.refusal.is_some_and(|r| r.cancels_stroke())
+        self.refusal.is_some_and(|r| r.is_limit())
     }
     pub(crate) fn reject(mut self, why: DabRefusal) -> SurfaceDabResult {
         self.pixels.clear();

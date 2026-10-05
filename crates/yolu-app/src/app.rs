@@ -524,7 +524,7 @@ impl YoluApp {
 
     /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
-    /// 退避の数・UV ワイヤーフレームの色・筆圧の調整・3D の仕上げは、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    /// 退避の数・UV ワイヤーフレームの色・筆圧の調整・3D の仕上げ・3D の塗りの切り替えは、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
         crate::colorsets::persist(&mut self.state);
         let Some((path, saved)) = &mut self.settings else {
@@ -539,9 +539,12 @@ impl YoluApp {
         if self.state.pressure.dragging {
             now.pressure = saved.pressure.clone();
         }
-        // 3D の仕上げのスライダー（ブルーム）も、ドラッグ中は書かず、離したときの値を書く
+        // 3D の仕上げのスライダー（ブルーム）と 3D の塗りの切り替えのスライダーも、ドラッグ中は書かず、離したときの値を書く
         if self.state.view3d.display.post_dragging {
             now.view3d_post = saved.view3d_post;
+        }
+        if self.state.view3d.projection_dragging {
+            now.view3d_paint = saved.view3d_paint;
         }
         if *saved == now {
             return;
@@ -1794,6 +1797,10 @@ impl eframe::App for YoluApp {
         self.frame(ui);
         // このフレームの中で始めた保存も、次のフレームを待たずに OS の終了を待たせる印へ伝える
         self.mark_saving();
+        // 押していないのに残った 3D の塗りの切り替えのドラッグの印は下ろす（欄が描かれなくなった間に離したとき）
+        if !ui.ctx().input(|i| i.pointer.any_down()) {
+            self.state.view3d.projection_dragging = false;
+        }
         self.persist_settings();
         self.persist_layout(ui.ctx());
         self.state.message_end(prior);
