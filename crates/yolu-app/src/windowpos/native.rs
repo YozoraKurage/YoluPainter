@@ -3,7 +3,7 @@
 //! 最大化の 1 画素: 枠を外した窓は、winit が `WM_NCCALCSIZE` で、最大化中の内側を作業領域いっぱいに直す（枠の分を消すため）。
 //! タスクバーを自動で隠していると作業領域は画面全体と同じなので、窓が画面の端まで覆い、端へマウスを寄せてもタスクバーが出てこない。
 //! 知られた手は 3 つあり、一番素直な「最大化中の内側を、自動で隠すタスクバーのある辺だけ 1 画素縮める」を選んだ
-//! （Chromium・Electron など、枠を自前で描く窓が同じことをしている）。
+//! （最大化の状態を OS に残したまま、winit が内側を作った後に縮められる）。
 //! - `WM_GETMINMAXINFO` で最大化の位置と大きさを変える: winit の `WM_NCCALCSIZE` が内側を作業領域で上書きするので効かない。
 //! - 最大化を OS に任せず、作業領域より 1 画素小さい矩形を自分で置く: Win+↑・スナップ・ダブルクリックと最大化の状態を失う。
 //! - `WM_NCCALCSIZE` で縮める: 最大化の状態は OS のまま。winit の処理（窓のプロシージャ）より前に付けて、winit が内側を作った後に縮める。
@@ -12,6 +12,7 @@
 //! 自動で隠すタスクバーのある辺は、`SHAppBarMessage(ABM_GETAUTOHIDEBAREX)` で画面ごと・辺ごとに調べる。
 
 use std::mem::size_of;
+use std::sync::Once;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::core::BOOL;
@@ -20,8 +21,8 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::HiDpi::{
-    GetDpiForMonitor, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-    MDT_EFFECTIVE_DPI,
+    GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
 };
 use windows::Win32::UI::Shell::{
     DefSubclassProc, RemoveWindowSubclass, SHAppBarMessage, SetWindowSubclass, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP,
@@ -45,30 +46,29 @@ fn rect(px: PxRect) -> RECT {
     RECT { left: px.left, top: px.top, right: px.right, bottom: px.bottom }
 }
 
-/// この間だけ、呼んだスレッドを画面ごとの拡大率に対応した扱いにする（起動の前は、プロセスの対応がまだ決まっておらず、画面の座標と
-/// 拡大率が仮想化されたものになるので、画素の実際の値を読むために切り替える。終われば元に戻す）。
-struct PerMonitorScope(DPI_AWARENESS_CONTEXT);
-
-impl PerMonitorScope {
-    fn enter() -> Option<PerMonitorScope> {
-        // SAFETY: 引数は定数。戻り値は元の文脈で、`Drop` で戻す。
-        let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-        (!previous.0.is_null()).then_some(PerMonitorScope(previous))
-    }
-}
-
-impl Drop for PerMonitorScope {
-    fn drop(&mut self) {
-        // SAFETY: `enter` が受け取った元の文脈を戻す。
+/// プロセスを画面ごとの拡大率に対応させる（winit が窓を作る前にかけるのと同じ設定を、列挙の前に 1 度だけ先にかける）。
+///
+/// 起動の前は、この実行ファイルに DPI の manifest が無いので、プロセスは拡大率に対応していない。そのまま列挙すると、画面の座標と
+/// 拡大率が仮想化された値（拡大率は常に 1.0）になり、画素の実際の値が読めない。かといって、呼んだスレッドの文脈を一時的に切り替えて
+/// 戻す形にはしない: 戻すときに、元の「非対応」がそのスレッドの明示の値として残りうる。すると、あとで winit がプロセスに対応を入れても、
+/// 明示したスレッドの値が優先されて、主のスレッドで作る窓が非対応になりうる（OS が窓をぼかして引き伸ばす）。プロセスにかければ、
+/// winit のあとの同じ呼び出しは「すでに設定済み」で失敗するだけで、結果は同じ。すでに設定されている（manifest・互換性の設定）なら変えない。
+fn become_per_monitor_aware() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: 引数は定数。プロセスの設定は 1 度しか入らず、入っていれば失敗が返るだけ。
         unsafe {
-            SetThreadDpiAwarenessContext(self.0);
+            // 画面ごとの拡大率（V2）は Windows 10 の 1703 から。無ければ V1 を試す（winit と同じ順）
+            if SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_err() {
+                let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
+            }
         }
-    }
+    });
 }
 
 /// つながっている画面の一覧（仮想スクリーンの画素。拡大率は画面の実効 DPI を 96 で割った値）。
 pub fn monitors() -> Vec<Monitor> {
-    let _scope = PerMonitorScope::enter();
+    become_per_monitor_aware();
     let mut list: Vec<Monitor> = Vec::new();
     // SAFETY: `collect` は `list` を、この呼び出しの間だけ（同じスレッドで同期的に）使う。
     unsafe {
