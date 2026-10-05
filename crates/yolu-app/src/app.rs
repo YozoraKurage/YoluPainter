@@ -306,6 +306,8 @@ pub struct YoluApp {
     fit_window: bool,
     /// 浮かせた窓の今の位置と大きさ（保存に入れる。egui_dock は窓の矩形を自分では更新しない）。
     float_rects: Vec<crate::layout::FloatRect>,
+    /// 落とした PSD のうち、取り込まなかった数（取り込みの仕事が終わったときの文に、理由として足す。0 なら無い）。
+    psd_drop_more: usize,
 }
 
 impl YoluApp {
@@ -625,6 +627,7 @@ impl YoluApp {
             bar_press_rects: Vec::new(),
             settings: None,
             was_focused: None,
+            psd_drop_more: 0,
             compositing_applied: crate::settings::Compositing::Auto,
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
             gpu_device: None,
@@ -914,8 +917,8 @@ impl YoluApp {
             == rfd::MessageDialogResult::Yes
     }
 
-    /// 窓に落としたファイル（.ylp なら開く。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら取り込む。PNG はブラシの一覧の上に
-    /// 落としたときだけブラシの筆先として取り込む）。
+    /// 窓に落としたファイル（.ylp なら開く。.psd なら新しいテクスチャセットとして取り込む。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら
+    /// 取り込む。PNG はブラシの一覧の上に落としたときだけブラシの筆先として取り込む）。
     fn open_dropped(&mut self, ctx: &egui::Context) {
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
             i.raw
@@ -938,6 +941,7 @@ impl YoluApp {
             }
             return;
         }
+        self.import_dropped_psd(&dropped);
         let over_list = ctx
             .input(|i| i.pointer.latest_pos())
             .zip(self.state.brushes.ui.list_rect)
@@ -951,6 +955,52 @@ impl YoluApp {
             self.state
                 .apply(Action::Brush(crate::brushes::BrushAction::Import(brushes)));
         }
+    }
+
+    /// 落とした .psd を、「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込み（読み込み → 取り込みの確かめの窓）へ回す。
+    /// 取り込むのは最初の 1 つだけ（取り込みの確かめの窓は 1 つずつ。ほかは取り込まず、数を知らせる）。描いている最中は、取り込み側が断る。
+    /// 行き先は新しいセット: 今のセットの文書を替えると取り消せないので、落としただけでは今の絵に触れない
+    /// （文書を替えるときの、保存していない変更の確認はいらない）。
+    fn import_dropped_psd(&mut self, dropped: &[std::path::PathBuf]) {
+        let mut psds = dropped.iter().filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("psd"))
+        });
+        let Some(first) = psds.next() else {
+            return;
+        };
+        let more = psds.count();
+        let busy = self.state.psd.is_busy() || self.state.psd.import_check.is_some();
+        self.state.apply(Action::Psd(crate::psd::PsdAction::Import {
+            path: first.clone(),
+            target: crate::psd::PsdTarget::NewSet,
+        }));
+        // 取り込みが始まったときだけ（始まらなかった理由の文を、取り込まない件数で上書きしない）。理由は、仕事が終わったときの文に足す
+        // （小さな PSD は同じフレームのうちに読み終わるので、読み始めの文に足しても残らない）
+        if more > 0 && !busy && self.state.psd.is_busy() {
+            self.psd_drop_more = more;
+        }
+    }
+
+    /// 取り込まなかった PSD の件数を、取り込みの仕事の終わりの文に理由として足す（文の最初の 1 文はそのまま。断りの文と取り違えない）。
+    fn note_dropped_psds(&mut self) {
+        if self.psd_drop_more == 0 || self.state.psd.is_busy() {
+            return;
+        }
+        let more = std::mem::take(&mut self.psd_drop_more);
+        let lang = self.state.lang;
+        let message = &mut self.state.message;
+        let joint = lang.pick(
+            if message.ends_with('。') { "" } else { "。" },
+            if message.ends_with('.') { " " } else { ". " },
+        );
+        *message += &format!(
+            "{joint}{}",
+            lang.pick(
+                format!("ほか {more} 件は取り込みません（PSD は 1 つずつ）。"),
+                format!("{more} more not imported (one PSD at a time)."),
+            )
+        );
     }
 
     /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
@@ -1187,6 +1237,7 @@ impl YoluApp {
         self.state.poll_export();
         self.state.sync_budgets();
         self.state.poll_psd();
+        self.note_dropped_psds();
         self.state.poll_distribute();
         self.state.poll_brush_import();
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
