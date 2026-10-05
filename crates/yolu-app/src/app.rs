@@ -500,7 +500,7 @@ impl YoluApp {
 
     /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
-    /// 退避の数・UV ワイヤーフレームの色・筆圧の調整は、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
+    /// 退避の数・UV ワイヤーフレームの色・筆圧の調整・3D の仕上げは、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
         crate::colorsets::persist(&mut self.state);
         let Some((path, saved)) = &mut self.settings else {
@@ -514,6 +514,10 @@ impl YoluApp {
         }
         if self.state.pressure.dragging {
             now.pressure = saved.pressure.clone();
+        }
+        // 3D の仕上げのスライダー（ブルーム）も、ドラッグ中は書かず、離したときの値を書く
+        if self.state.view3d.display.post_dragging {
+            now.view3d_post = saved.view3d_post;
         }
         if *saved == now {
             return;
@@ -1006,6 +1010,9 @@ impl YoluApp {
     /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
     pub fn with_render_state(mut self, rs: Option<&eframe::egui_wgpu::RenderState>) -> YoluApp {
         self.renderer3d = rs.map(View3dRenderer::new);
+        // アンチエイリアスに選べる数は、この機材が描き先に使える数だけ
+        let supported = self.renderer3d.as_ref().map(|r| r.supported_samples().to_vec()).unwrap_or_default();
+        self.state.view3d.display.set_supported_samples(&supported);
         self.gpu_device = rs.map(|rs| rs.device.clone());
         // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
         self.display.attach_render_state(rs.cloned());
@@ -1081,6 +1088,23 @@ impl YoluApp {
         if let Some(r) = &mut self.renderer3d {
             r.set_paint_budget(bytes);
         }
+    }
+
+    /// 試験用: 3D の面の描き先に使ってよいバイト数を決める（None で既定の、3D の絵の予算と同じ量）。多サンプルを下げる道を通す。
+    pub fn view3d_set_target_budget(&mut self, bytes: Option<u64>) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_target_budget(bytes);
+        }
+    }
+
+    /// 3D の面の描き先に使ってよいバイト数（試験・計測用。設定の合計の外の勘定。wgpu が無ければ None）。
+    pub fn view3d_target_budget(&self) -> Option<u64> {
+        self.renderer3d.as_ref().map(|r| r.target_budget())
+    }
+
+    /// 3D の面の描き先に機材が使えるサンプル数（昇順。1 を含む。wgpu が無ければ None）。
+    pub fn view3d_supported_samples(&self) -> Option<Vec<u32>> {
+        self.renderer3d.as_ref().map(|r| r.supported_samples().to_vec())
     }
 
     /// 試験用: 塗った絵を捨てる（次の描きが文書から全部を作り直す）。

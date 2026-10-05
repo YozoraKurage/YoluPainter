@@ -43,6 +43,8 @@ fn start() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す
+        wgpu_options: yolu_app::view3d::render::wgpu_configuration(),
         ..Default::default()
     };
     eframe::run_native(

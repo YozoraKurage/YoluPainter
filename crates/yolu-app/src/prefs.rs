@@ -168,6 +168,7 @@ impl AppState {
         Settings {
             lang: self.lang,
             color_wheel: self.color.wheel,
+            view3d_post: self.view3d.display.post,
             ..self.prefs.settings.clone()
         }
     }
@@ -177,6 +178,7 @@ impl AppState {
         self.export.padding = settings.export_padding;
         self.prefs.threads_at_start = settings.cpu_threads;
         self.color.wheel = settings.color_wheel;
+        self.view3d.display.post = settings.view3d_post;
         // 「すべて残す」を外したときに戻る数も、保存してあった数にする
         if let BackupKeep::Count(n) = settings.backups {
             self.prefs.remembered_backups = n;

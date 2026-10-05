@@ -1982,7 +1982,8 @@ fn material_balls(h: &mut Harness<'_, YoluApp>) {
         }
     }
     set_model(h, meshes);
-    look_at(h, Vec3::ZERO, 9.8, 0.0, 0.0);
+    // 光の既定の向きはモデルの前（+Z）の斜め上なので、カメラも +Z の側から見る（光とカメラが同じ側。球は −Z の側へ向く面を見せない）
+    look_at(h, Vec3::ZERO, 9.8, 180.0, 0.0);
 }
 
 #[test]

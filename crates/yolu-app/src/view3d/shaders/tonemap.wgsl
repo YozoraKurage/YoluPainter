@@ -1,11 +1,14 @@
 // 3D ビューの絵だけに当てる露出とトーンマッピング（Unity 版の PreviewToneMap.shader と同じ式。brdf.rs の tone_map が CPU の参照）。
-// 入力は HDR の描き先で、値は「画面にそのまま出す値」（ガンマ）。ガンマの値としてリニアに直し → 露出の倍率 → 曲線 → 0〜1 で切る → ガンマに戻す。
+// 入力は HDR の描き先で、値は「画面にそのまま出す値」（ガンマ）。ガンマの値としてリニアに直し → 露出の倍率 → ブルームを足す → 曲線 →
+// 0〜1 で切る → ガンマに戻す。ブルームの絵（bloom.wgsl。露出を掛けたあとのリニア）は、強さが 0 のあいだは読まない（切のときは前と同じ絵）。
 struct Params {
-    // x: 曲線（0 なし・1 Neutral・2 ACES）、y: 露出の倍率（2^EV）
+    // x: 曲線（0 なし・1 Neutral・2 ACES）、y: 露出の倍率（2^EV）、z: ブルームの強さ（0 は足さない）
     p: vec4<f32>,
 };
 @group(0) @binding(0) var hdr: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var bloom: texture_2d<f32>;
+@group(0) @binding(3) var bloom_samp: sampler;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -58,6 +61,10 @@ fn fs_main(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let c = textureLoad(hdr, vec2<i32>(p.xy), 0);
     var x = srgb_to_linear(max(c.rgb, vec3<f32>(0.0)));
     x = x * params.p.y;
+    if (params.p.z > 0.0) {
+        let uv = p.xy / vec2<f32>(textureDimensions(hdr));
+        x = x + textureSampleLevel(bloom, bloom_samp, uv, 0.0).rgb * params.p.z;
+    }
     if (params.p.x > 1.5) {
         x = aces(x);
     } else if (params.p.x > 0.5) {

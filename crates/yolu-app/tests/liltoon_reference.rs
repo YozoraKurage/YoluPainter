@@ -1427,6 +1427,8 @@ fn render_as(
     let light = scene_light(scene.name);
     h.state_mut().apply(Action::View3d(Op::LightYaw(light.0)));
     h.state_mut().apply(Action::View3d(Op::LightPitch(light.1)));
+    // Unity の参照の絵は多サンプルなし。縁の比べ（片方だけの画素・平均）が多サンプルでずれないよう、この比べは 1× で描く
+    h.state_mut().apply(Action::View3d(Op::Antialias(1)));
     if uniform_env(scene.name) {
         h.state_mut().state.view3d.display.ambient = [1.0; 3];
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::None)));

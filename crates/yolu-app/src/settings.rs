@@ -161,6 +161,8 @@ pub struct Settings {
     /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」の窓）。
     pub pressure: PressureAdjust,
     pub navigation: crate::view3d::navigation::Preferences,
+    /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
+    pub view3d_post: crate::view3d::display::PostFx,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
     /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
@@ -189,6 +191,7 @@ impl Default for Settings {
             selection_bar: true,
             pressure: PressureAdjust::default(),
             navigation: crate::view3d::navigation::Preferences::default(),
+            view3d_post: crate::view3d::display::PostFx::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
@@ -344,6 +347,10 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "language" => lang.pick("言語", "Language"),
         "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
         "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
+        "view3d_antialias" => lang.pick("アンチエイリアス", "Anti-aliasing"),
+        "view3d_bloom" => lang.pick("ブルーム", "Bloom"),
+        "view3d_bloom_strength" => lang.pick("ブルームの強さ", "Bloom strength"),
+        "view3d_bloom_threshold" => lang.pick("ブルームのしきい値", "Bloom threshold"),
         "export_padding" => lang.pick("書き出しの余白", "Export padding"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
@@ -443,6 +450,23 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 None => invalid("pressure_curve"),
             },
             "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
+            "view3d_antialias" => match value.parse::<u32>().ok().filter(|n| crate::view3d::display::SAMPLE_CHOICES.contains(n)) {
+                Some(n) => settings.view3d_post.antialias = n,
+                None => invalid("view3d_antialias"),
+            },
+            "view3d_bloom" => match value {
+                "on" => settings.view3d_post.bloom = true,
+                "off" => settings.view3d_post.bloom = false,
+                _ => invalid("view3d_bloom"),
+            },
+            "view3d_bloom_strength" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_STRENGTH_MAX).contains(v)) {
+                Some(v) => settings.view3d_post.bloom_strength = v,
+                None => invalid("view3d_bloom_strength"),
+            },
+            "view3d_bloom_threshold" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_THRESHOLD_MAX).contains(v)) {
+                Some(v) => settings.view3d_post.bloom_threshold = v,
+                None => invalid("view3d_bloom_threshold"),
+            },
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
@@ -563,6 +587,7 @@ fn render(settings: &Settings) -> String {
         text += &format!("pressure_curve={}\n", crate::brushes::store::curve_text(pressure.curve()));
     }
     settings.navigation.write(&mut text);
+    write_post(&mut text, &settings.view3d_post);
     crate::uv_wireframe::save_settings(&mut text, settings);
     if !settings.livelink_on_startup {
         text += "livelink_on_startup=off\n";
@@ -584,6 +609,25 @@ fn render(settings: &Settings) -> String {
         }
     }
     text
+}
+
+/// 3D の絵の仕上げ。既定のものは書かない。範囲の外の値は、書くときに範囲へ収める。
+fn write_post(text: &mut String, post: &crate::view3d::display::PostFx) {
+    use crate::view3d::display::{PostFx, BLOOM_STRENGTH_MAX, BLOOM_THRESHOLD_MAX, SAMPLE_CHOICES};
+    let default = PostFx::default();
+    if post.antialias != default.antialias && SAMPLE_CHOICES.contains(&post.antialias) {
+        *text += &format!("view3d_antialias={}\n", post.antialias);
+    }
+    if post.bloom != default.bloom {
+        *text += if post.bloom { "view3d_bloom=on\n" } else { "view3d_bloom=off\n" };
+    }
+    let value = |v: f32, max: f32| v.is_finite().then(|| v.clamp(0.0, max));
+    if let Some(v) = value(post.bloom_strength, BLOOM_STRENGTH_MAX).filter(|v| *v != default.bloom_strength) {
+        *text += &format!("view3d_bloom_strength={v}\n");
+    }
+    if let Some(v) = value(post.bloom_threshold, BLOOM_THRESHOLD_MAX).filter(|v| *v != default.bloom_threshold) {
+        *text += &format!("view3d_bloom_threshold={v}\n");
+    }
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
@@ -655,6 +699,12 @@ mod tests {
             )
             .unwrap(),
             navigation: crate::view3d::navigation::Preferences::default(),
+            view3d_post: crate::view3d::display::PostFx {
+                antialias: 8,
+                bloom: true,
+                bloom_strength: 1.25,
+                bloom_threshold: 1.5,
+            },
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
@@ -752,6 +802,84 @@ mod tests {
     }
 
     #[test]
+    fn the_3d_finish_defaults_to_four_samples_and_no_bloom_and_is_written_only_when_changed() {
+        use crate::view3d::display::PostFx;
+        let dir = temp_dir("finish");
+        let path = dir.join("settings.conf");
+        let default = PostFx::default();
+        assert_eq!((default.antialias, default.bloom), (4, false));
+        assert_eq!(load(&path).0.view3d_post, default);
+        // 既定は書かない
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
+        // 1 つずつ変えると、その行だけが書かれて読み直せる
+        let cases = [
+            (PostFx { antialias: 1, ..default }, "view3d_antialias=1"),
+            (PostFx { antialias: 2, ..default }, "view3d_antialias=2"),
+            (PostFx { antialias: 8, ..default }, "view3d_antialias=8"),
+            (PostFx { bloom: true, ..default }, "view3d_bloom=on"),
+            (PostFx { bloom_strength: 0.0, ..default }, "view3d_bloom_strength=0"),
+            (PostFx { bloom_strength: 2.0, ..default }, "view3d_bloom_strength=2"),
+            (PostFx { bloom_threshold: 0.0, ..default }, "view3d_bloom_threshold=0"),
+            (PostFx { bloom_threshold: 3.5, ..default }, "view3d_bloom_threshold=3.5"),
+        ];
+        for (post, line) in cases {
+            let settings = Settings { view3d_post: post, ..with_lang(Lang::Ja) };
+            save(&path, &settings).unwrap();
+            let written = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(written, format!("language=ja\n{line}\n"), "{post:?}");
+            assert_eq!(load(&path), (settings, vec![]), "{post:?}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_3d_finish_reads_unchanged() {
+        use crate::view3d::display::PostFx;
+        // 仕上げの項目が無い、前の版が書いたファイル（ほかの項目は全部そのまま読める。仕上げは既定）
+        let old = "language=en\nexport_padding=8\nundo_budget_mib=512\ncompositing=cpu\nview3d_orbit=model\nview3d_zoom=pointer\nuv_wireframe=off\n";
+        let (settings, problems) = parse(old);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.lang, Lang::En);
+        assert_eq!(settings.export_padding, 8);
+        assert_eq!(settings.undo_budget, Budget::Mib(512));
+        assert_eq!(settings.compositing, Compositing::Cpu);
+        assert!(!settings.uv_wireframe);
+        assert_eq!(settings.view3d_post, PostFx::default());
+        // 読んで書き直しても、前の項目の値は同じ（仕上げは既定のままなので行は増えない）
+        let written = render(&settings);
+        assert!(!written.contains("view3d_antialias") && !written.contains("view3d_bloom"), "{written}");
+        assert_eq!(parse(&written), (settings, vec![]));
+    }
+
+    #[test]
+    fn a_bad_3d_finish_value_resets_only_that_item_and_names_it() {
+        use crate::view3d::display::PostFx;
+        let text = "language=en\nview3d_antialias=3\nview3d_bloom=maybe\nview3d_bloom_strength=9\nview3d_bloom_threshold=nan\nexport_padding=8\n";
+        let (settings, problems) = parse(text);
+        assert_eq!(settings.view3d_post, PostFx::default());
+        assert_eq!(settings.export_padding, 8, "ほかの項目は生きる");
+        let keys: Vec<&str> = problems
+            .iter()
+            .filter_map(|p| match p {
+                Problem::Invalid { key, .. } => Some(*key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, ["view3d_antialias", "view3d_bloom", "view3d_bloom_strength", "view3d_bloom_threshold"]);
+        for lang in Lang::ALL {
+            for key in keys.iter().copied() {
+                let name = setting_name(lang, key);
+                assert_ne!(name, setting_name(lang, "unknown_key"), "{key} に名前がある");
+            }
+        }
+        // 範囲の外の値は書かない（読めなくなる）。範囲へ収めて書く
+        let wild = Settings { view3d_post: PostFx { bloom_strength: 99.0, bloom_threshold: f32::NAN, ..PostFx::default() }, ..Settings::default() };
+        let written = render(&wild);
+        assert!(written.contains("view3d_bloom_strength=2\n") && !written.contains("view3d_bloom_threshold"), "{written}");
+    }
+
+    #[test]
     fn every_setting_survives_a_restart_and_the_default_ones_are_not_written() {
         let dir = temp_dir("all");
         let path = dir.join("settings.conf");
@@ -775,6 +903,10 @@ mod tests {
             "pressure_low=0.125",
             "pressure_high=0.875",
             "pressure_curve=0:0,0.4:0.6,1:1",
+            "view3d_antialias=8",
+            "view3d_bloom=on",
+            "view3d_bloom_strength=1.25",
+            "view3d_bloom_threshold=1.5",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -793,6 +925,7 @@ mod tests {
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
+        back.view3d_post = crate::view3d::display::PostFx::default();
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値
