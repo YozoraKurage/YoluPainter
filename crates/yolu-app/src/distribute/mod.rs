@@ -26,7 +26,7 @@ use egui::Vec2;
 use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
 use yolu_io::{
-    composite_pngs, shelf::Shelf, BackupKeep, Inventory, NativeDocument, Project, Removal,
+    composite_pngs, shelf::Shelf, BackupKeep, DocumentSource, Inventory, Project, Removal,
     SaveTarget, SetSpec,
 };
 
@@ -557,7 +557,7 @@ struct SetCapture {
     name: String,
     material: MaterialRef,
     /// 文書の写し（読むだけのセットは無い。選択範囲・見た目・Unity の値はここから）。
-    snapshot: Option<Document>,
+    snapshot: Option<Arc<Document>>,
     /// 正本・合成の PNG を作り直すか（開いた時のファイルに無い、または開いた・保存した時から変わった）。
     rewrite: bool,
 }
@@ -609,7 +609,7 @@ fn capture(state: &AppState) -> Result<Capture, String> {
         let snapshot = if read_only {
             None
         } else {
-            Some(doc.capture_snapshot().map_err(|e| lang.core_error(&e))?)
+            Some(Arc::new(doc.capture_snapshot().map_err(|e| lang.core_error(&e))?))
         };
         let unsaved = set.mesh_maps.unsaved();
         if !unsaved.is_empty() {
@@ -671,7 +671,7 @@ fn build(capture: &Capture, cancel: &AtomicBool) -> Result<Prepared, Failure> {
                 .snapshot
                 .as_ref()
                 .expect("読むだけのセットは作り直さない");
-            let native = NativeDocument::from_core(doc).map_err(|e| {
+            let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
                 Failure::Message(format!(
                     "{}: {}",
                     lang.pick(
@@ -818,7 +818,8 @@ fn write(
         return Err(Failure::Canceled);
     }
     let mut target = if replacing {
-        SaveTarget::open(dest)
+        // 置き換える先は .ylp として読めることだけを確かめる（予算では断らない）
+        SaveTarget::open_within(dest, &yolu_io::Limits::unbounded())
             .map_err(|e| {
                 Failure::Message(format!(
                     "{}: {}",

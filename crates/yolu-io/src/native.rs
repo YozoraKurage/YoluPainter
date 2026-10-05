@@ -70,6 +70,8 @@ pub struct NativeDocument {
     tile_size: i32,
     layers: usize,
     fields: Vec<NativeField>,
+    /// `Bytes` の値（画素・色）を持たない骨組みか（[`Keep::Skeleton`]）。
+    skeleton: bool,
 }
 impl NativeDocument {
     pub fn version(&self) -> i32 {
@@ -100,6 +102,7 @@ impl NativeDocument {
             .map(|f| &f.value)
     }
     pub fn to_bytes(&self) -> Vec<u8> {
+        debug_assert!(!self.skeleton, "骨組み（Bytes の値の無い項目）は正本として書けません");
         let mut out = Vec::new();
         for f in &self.fields {
             f.value.write(&mut out);
@@ -108,6 +111,7 @@ impl NativeDocument {
     }
     /// 値を差し替えて全体を再検証する。未知の構造や不整合を保存に持ち越さない。
     pub fn with_value(&self, path: &str, value: NativeValue) -> Result<Self> {
+        check(!self.skeleton, "骨組みの正本は書き換えられません")?;
         let mut fields = self.fields.clone();
         let field = fields
             .iter_mut()
@@ -129,17 +133,315 @@ impl NativeDocument {
             b.len() <= MAX_ENTRY_BYTES,
             "正本の512 MiB予算を超えています",
         )?;
-        let mut r = Reader {
-            bytes: b,
+        let mut src = SliceSource { bytes: b, at: 0 };
+        let mut parse = Parse::begin(&mut src, None, Keep::All)?;
+        while parse.next_layer()?.is_some() {}
+        parse.finish()
+    }
+    /// 版 26（分けた正本）の読み: ヘッダー（`document.utpaint`）と部分（`document.utpaint.1`…の順）。項目は分けていない正本
+    /// （中の版）を読んだのと同じになる。
+    pub(crate) fn read_split(header: &[u8], parts: &[&[u8]]) -> Result<Self> {
+        let mut src = SliceSource { bytes: header, at: 0 };
+        let mut stream = PartStream::new(
+            parts
+                .iter()
+                .map(|p| Part::Reader(Box::new(std::io::Cursor::new(p.to_vec())), p.len() as u64))
+                .collect(),
+        )?;
+        let mut parse = Parse::begin(&mut src, Some(&mut stream), Keep::All)?;
+        while parse.next_layer()?.is_some() {}
+        parse.finish()
+    }
+    /// 骨組み（`Bytes` の値を持たない項目。層の構造・名前・ID・効果の設定）だけを持つか。骨組みは `to_bytes`・`to_core` に使わない。
+    pub(crate) fn is_skeleton(&self) -> bool {
+        self.skeleton
+    }
+}
+/// 正本の項目の残し方。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Keep {
+    /// 全部（画素も）。
+    All,
+    /// `Bytes` の値（画素・色）を残さない骨組み。値は読んで確かめる（部分の中身が無い読みでは長さだけ）。
+    Skeleton,
+}
+/// 正本の並びの読み元（メモリのバイト列か、流れ）。1 回に取るのは 1 つの値（タイルなら最大 1 MiB）。
+pub(crate) trait ByteSource {
+    /// 次の `n` バイト。足りなければ、どこで切れたかを添えて断る。
+    fn take(&mut self, n: usize) -> Result<&[u8]>;
+    /// 読んだバイト数。
+    fn position(&self) -> u64;
+    /// もう読むものが無いか。
+    fn at_end(&mut self) -> Result<bool>;
+    /// 中身が読めるか（長さだけの読みは false。中身の確かめを飛ばす）。
+    fn has_content(&self) -> bool {
+        true
+    }
+}
+pub(crate) struct SliceSource<'a> {
+    pub bytes: &'a [u8],
+    pub at: usize,
+}
+impl ByteSource for SliceSource<'_> {
+    fn take(&mut self, n: usize) -> Result<&[u8]> {
+        let end = self
+            .at
+            .checked_add(n)
+            .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
+        let s = self
+            .bytes
+            .get(self.at..end)
+            .ok_or_else(|| Error::InvalidData("正本が途中で切れています".into()))?;
+        self.at = end;
+        Ok(s)
+    }
+    fn position(&self) -> u64 {
+        self.at as u64
+    }
+    fn at_end(&mut self) -> Result<bool> {
+        Ok(self.at >= self.bytes.len())
+    }
+}
+/// 流れ（ファイルのエントリの展開など）から読む。読みの失敗（壊れた中身・SHA-256 の不一致）は `InvalidData` にする。
+pub(crate) struct StreamSource<R: std::io::Read> {
+    r: R,
+    buf: Vec<u8>,
+    at: u64,
+    peeked: Option<u8>,
+}
+impl<R: std::io::Read> StreamSource<R> {
+    pub fn new(r: R) -> Self {
+        Self {
+            r,
+            buf: Vec::new(),
             at: 0,
+            peeked: None,
+        }
+    }
+    fn fill(&mut self, out_from: usize) -> Result<()> {
+        let mut at = out_from;
+        while at < self.buf.len() {
+            match self.r.read(&mut self.buf[at..]) {
+                Ok(0) => return Err(Error::InvalidData("正本が途中で切れています".into())),
+                Ok(n) => at += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(crate::package::io_error(e)),
+            }
+        }
+        Ok(())
+    }
+}
+impl<R: std::io::Read> ByteSource for StreamSource<R> {
+    fn take(&mut self, n: usize) -> Result<&[u8]> {
+        // 値は大きくてもタイル 1 枚（1 MiB）なので、宣言の長さの確保は正本の値の上限で抑える
+        check_budget(n <= 1 << 20, "正本の値が大きすぎます")?;
+        self.buf.clear();
+        self.buf.resize(n, 0);
+        let mut from = 0;
+        if n > 0 {
+            if let Some(b) = self.peeked.take() {
+                self.buf[0] = b;
+                from = 1;
+            }
+        }
+        self.fill(from)?;
+        self.at += n as u64;
+        Ok(&self.buf)
+    }
+    fn position(&self) -> u64 {
+        self.at
+    }
+    fn at_end(&mut self) -> Result<bool> {
+        if self.peeked.is_some() {
+            return Ok(false);
+        }
+        let mut one = [0u8; 1];
+        loop {
+            match self.r.read(&mut one) {
+                Ok(0) => return Ok(true),
+                Ok(_) => {
+                    self.peeked = Some(one[0]);
+                    return Ok(false);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(crate::package::io_error(e)),
+            }
+        }
+    }
+}
+/// 版 26 の部分の 1 つ（流れと長さ、流れを作るエントリ（読む番が来てから開く）、または長さだけ）。
+pub(crate) enum Part {
+    Reader(Box<dyn std::io::Read + Send>, u64),
+    Blob(crate::Blob),
+    Length(u64),
+}
+impl Part {
+    fn len(&self) -> u64 {
+        match self {
+            Self::Reader(_, n) | Self::Length(n) => *n,
+            Self::Blob(b) => b.len(),
+        }
+    }
+}
+/// 版 26 の部分を順につないだ `Bytes` の値の流れ。値は部分の境目をまたげず、空の部分・余り・足りない部分は断る。
+pub(crate) struct PartStream {
+    parts: std::collections::VecDeque<Part>,
+    current: Option<Part>,
+    remaining: u64,
+    total: usize,
+    buf: Vec<u8>,
+}
+impl PartStream {
+    pub fn new(parts: Vec<Part>) -> Result<Self> {
+        check(!parts.is_empty(), "正本の部分がありません")?;
+        for p in &parts {
+            check(p.len() > 0, "正本の部分が空です")?;
+        }
+        Ok(Self {
+            total: parts.len(),
+            parts: parts.into(),
+            current: None,
+            remaining: 0,
+            buf: Vec::new(),
+        })
+    }
+    pub fn count(&self) -> usize {
+        self.total
+    }
+    /// 今の部分を読み終えたことを確かめる（流れなら終わりまで読み、長さと SHA-256 の確かめを起こす）。
+    fn close_current(&mut self) -> Result<()> {
+        if let Some(Part::Reader(mut r, _)) = self.current.take() {
+            let mut one = [0u8; 1];
+            loop {
+                match r.read(&mut one) {
+                    Ok(0) => break,
+                    Ok(_) => return Err(Error::InvalidData("正本の部分に余りがあります".into())),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(crate::package::io_error(e)),
+                }
+            }
+        }
+        Ok(())
+    }
+    /// 全部の部分を読み終えたか（余りも足りない部分も無いか）。
+    pub fn finish(&mut self) -> Result<()> {
+        check(
+            self.remaining == 0,
+            "正本の部分に余りがあります",
+        )?;
+        self.close_current()?;
+        check(self.parts.is_empty(), "正本の部分が余っています")
+    }
+}
+impl ByteSource for PartStream {
+    fn take(&mut self, n: usize) -> Result<&[u8]> {
+        check_budget(n <= 1 << 20, "正本の値が大きすぎます")?;
+        if self.remaining == 0 && n > 0 {
+            self.close_current()?;
+            let next = self
+                .parts
+                .pop_front()
+                .ok_or_else(|| Error::InvalidData("正本の部分が足りません".into()))?;
+            self.remaining = next.len();
+            // エントリは読む番が来てから開く（部分の数だけファイルを開いたままにしない）
+            self.current = Some(match next {
+                Part::Blob(b) => Part::Reader(b.reader()?, b.len()),
+                other => other,
+            });
+        }
+        check(
+            n as u64 <= self.remaining,
+            "正本の値が部分の境目をまたいでいます",
+        )?;
+        self.remaining -= n as u64;
+        self.buf.clear();
+        self.buf.resize(n, 0);
+        if let Some(Part::Reader(r, _)) = &mut self.current {
+            let mut at = 0;
+            while at < n {
+                match r.read(&mut self.buf[at..]) {
+                    Ok(0) => return Err(Error::InvalidData("正本の部分が途中で切れています".into())),
+                    Ok(k) => at += k,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => return Err(crate::package::io_error(e)),
+                }
+            }
+        }
+        Ok(&self.buf)
+    }
+    fn position(&self) -> u64 {
+        0
+    }
+    fn at_end(&mut self) -> Result<bool> {
+        Ok(self.remaining == 0 && self.parts.is_empty())
+    }
+    fn has_content(&self) -> bool {
+        !matches!(self.current, Some(Part::Length(_)))
+            && !matches!(self.parts.front(), Some(Part::Length(_)))
+    }
+}
+
+/// 版 26（分けた正本）の識別の版。ヘッダーは `DOTPAINT`・26・中の版・部分の数・中の版の並びから `Bytes` の値を抜いたもの。
+pub const SPLIT_VERSION: i32 = 26;
+
+/// 正本を層ごとに読む（頭 → 層 0, 1, … → 終わり）。層ごとに項目を取り出せる（流して core へ入れる読みが、層 1 枚ぶんだけ持つため）。
+pub(crate) struct Parse<'a> {
+    r: Reader<'a>,
+    pub version: i32,
+    pub width: i32,
+    pub height: i32,
+    pub tile_size: i32,
+    id: String,
+    user: UserChannels,
+    count: i32,
+    next: i32,
+    layers: Vec<Layer>,
+    ids: HashSet<[u8; 16]>,
+    anchor_ids: HashMap<[u8; 16], i32>,
+    /// 今の層の項目の始まり（`fields` の位置）。
+    layer_start: usize,
+}
+impl<'a> Parse<'a> {
+    /// 識別子から層の数までを読む。版 26 なら `parts` が要る（部分の数がヘッダーと合うこと）、ほかの版なら要らない。
+    pub fn begin(
+        src: &'a mut dyn ByteSource,
+        parts: Option<&'a mut PartStream>,
+        keep: Keep,
+    ) -> Result<Self> {
+        let mut r = Reader {
+            src,
+            parts: None,
             prefix: String::new(),
             fields: Vec::new(),
+            keep,
         };
-        check(
-            r.blob("magic", 8)?.as_ref() == b"DOTPAINT",
-            "正本の識別子が不正です",
-        )?;
-        let version = r.int("version", 1, MAX_NATIVE_VERSION)?;
+        let magic = r.take(8)? == b"DOTPAINT";
+        check(magic, "正本の識別子が不正です")?;
+        r.add("magic", NativeValue::Bytes(Arc::from(&b"DOTPAINT"[..])));
+        let stored = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
+        let version = if stored == SPLIT_VERSION {
+            let inner = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
+            check(
+                (UNITY_NATIVE_VERSION..=MAX_NATIVE_VERSION).contains(&inner),
+                format!("分けた正本の中の版 {inner} は未対応です"),
+            )?;
+            let count = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
+            let parts = parts.ok_or_else(|| Error::InvalidData("分けた正本の部分がありません".into()))?;
+            check(
+                count >= 1 && count as usize == parts.count(),
+                "分けた正本の部分の数が一致しません",
+            )?;
+            r.parts = Some(parts);
+            inner
+        } else {
+            check(
+                (1..=MAX_NATIVE_VERSION).contains(&stored),
+                format!(".version の値 {stored} は未対応または範囲外です (1..{MAX_NATIVE_VERSION})"),
+            )?;
+            check(parts.is_none(), "分けていない正本に部分があります")?;
+            stored
+        };
+        r.add("version", NativeValue::Int(version));
         let id = guid(&r.id("id", false)?);
         let width = r.int("width", 1, 8192)?;
         let height = r.int("height", 1, 8192)?;
@@ -161,28 +463,75 @@ impl NativeDocument {
             UserChannels::new()
         };
         let count = r.int("layer_count", 0, 2048)?;
-        let mut layers = Vec::new();
-        let mut ids = HashSet::new();
-        let mut anchor_ids = HashMap::new();
-        for i in 0..count {
-            let l = r.block(&format!("layers[{i}]"), |r| {
-                layer(r, version, width, height, ts, &user)
-            })?;
-            check(ids.insert(l.id), "レイヤーIDが重複しています")?;
-            for id in &l.anchors {
-                check(
-                    anchor_ids.insert(*id, i).is_none(),
-                    "Anchor IDが重複しています",
-                )?;
-            }
-            layers.push(l);
+        let layer_start = r.fields.len();
+        Ok(Self {
+            r,
+            version,
+            width,
+            height,
+            tile_size: ts,
+            id,
+            user,
+            count,
+            next: 0,
+            layers: Vec::new(),
+            ids: HashSet::new(),
+            anchor_ids: HashMap::new(),
+            layer_start,
+        })
+    }
+    /// 頭の項目（層より前）。
+    pub fn head_fields(&self) -> &[NativeField] {
+        &self.r.fields[..self.layer_start.min(self.r.fields.len())]
+    }
+    /// 次の層を読む（無ければ None）。読んだ層の項目は `layer_fields` で見られる。
+    pub fn next_layer(&mut self) -> Result<Option<usize>> {
+        if self.next >= self.count {
+            return Ok(None);
         }
-        if version >= 19 && r.at < b.len() {
+        let i = self.next;
+        self.layer_start = self.r.fields.len();
+        let (v, w, h, ts) = (self.version, self.width, self.height, self.tile_size);
+        let user = &self.user;
+        let l = self
+            .r
+            .block(&format!("layers[{i}]"), |r| layer(r, v, w, h, ts, user))?;
+        check(self.ids.insert(l.id), "レイヤーIDが重複しています")?;
+        for id in &l.anchors {
+            check(
+                self.anchor_ids.insert(*id, i).is_none(),
+                "Anchor IDが重複しています",
+            )?;
+        }
+        self.layers.push(l);
+        self.next += 1;
+        Ok(Some(i as usize))
+    }
+    /// 今読んだ層の項目。
+    pub fn layer_fields(&self) -> &[NativeField] {
+        &self.r.fields[self.layer_start..]
+    }
+    /// 今読んだ層の `Bytes` の値（画素）を手放す（骨組みだけ残す）。
+    pub fn drop_layer_values(&mut self) {
+        let start = self.layer_start;
+        let mut kept = 0;
+        for k in start..self.r.fields.len() {
+            if !matches!(self.r.fields[k].value, NativeValue::Bytes(_)) {
+                self.r.fields.swap(start + kept, k);
+                kept += 1;
+            }
+        }
+        self.r.fields.truncate(start + kept);
+    }
+    /// 層の後（手動の ID の色）と終わり、層をまたぐ決まり（親のグループ・Anchor・フィルターの ID）を確かめて、文書にする。
+    pub fn finish(mut self) -> Result<NativeDocument> {
+        check(self.next == self.count, "正本の層を読み終えていません")?;
+        let r = &mut self.r;
+        if self.version >= 19 && !r.at_end()? {
             r.block("manual_id_colors", |r| {
-                check(
-                    r.blob("tag", 4)?.as_ref() == b"YLID",
-                    "末尾に未知のデータがあります",
-                )?;
+                r.blob_checked("tag", 4, |tag| {
+                    check(tag == b"YLID", "末尾に未知のデータがあります")
+                })?;
                 let n = r.int("count", 1, 4096)?;
                 check(is_hash(&r.string("binding")?), "手動ID色の指紋が不正です")?;
                 let mut prev = -1;
@@ -199,9 +548,13 @@ impl NativeDocument {
             })?;
         }
         check(
-            r.at == b.len(),
+            r.at_end()?,
             "正本の末尾に未知のデータがあります。新しい読み手が必要です",
         )?;
+        if let Some(parts) = r.parts.as_mut() {
+            parts.finish()?;
+        }
+        let layers = &self.layers;
         let by_id: HashMap<_, _> = layers.iter().enumerate().map(|(i, l)| (l.id, i)).collect();
         for (i, l) in layers.iter().enumerate() {
             let mut parent = l.parent;
@@ -227,43 +580,59 @@ impl NativeDocument {
             }
             for a in &l.references {
                 check(
-                    anchor_ids.get(a).copied() != Some(i as i32),
+                    self.anchor_ids.get(a).copied() != Some(i as i32),
                     "自身のレイヤーのAnchorを参照しています",
                 )?;
             }
         }
-        validate_fields(&r.fields)?;
-        Ok(Self {
-            version,
-            id,
-            width,
-            height,
-            tile_size: ts,
-            layers: count as usize,
-            fields: r.fields,
+        validate_fields(&self.r.fields)?;
+        let skeleton = self.r.keep == Keep::Skeleton;
+        let fields = if skeleton {
+            self.r
+                .fields
+                .into_iter()
+                .filter(|f| !matches!(f.value, NativeValue::Bytes(_)))
+                .collect()
+        } else {
+            self.r.fields
+        };
+        Ok(NativeDocument {
+            version: self.version,
+            id: self.id,
+            width: self.width,
+            height: self.height,
+            tile_size: self.tile_size,
+            layers: self.count as usize,
+            fields,
+            skeleton,
         })
     }
 }
 struct Reader<'a> {
-    bytes: &'a [u8],
-    at: usize,
+    src: &'a mut dyn ByteSource,
+    /// 版 26: `Bytes` の値はここから取る。
+    parts: Option<&'a mut PartStream>,
     prefix: String,
     fields: Vec<NativeField>,
+    keep: Keep,
 }
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
-        let end = self
-            .at
-            .checked_add(n)
-            .ok_or_else(|| Error::Budget("長さが過大です".into()))?;
-        let s = self.bytes.get(self.at..end).ok_or_else(|| {
-            Error::InvalidData(format!(
-                "正本が途中で切れています: {} (位置{})",
-                self.prefix, self.at
-            ))
-        })?;
-        self.at = end;
-        Ok(s)
+        let at = self.src.position();
+        let prefix = &self.prefix;
+        self.src.take(n).map_err(|e| match e {
+            Error::InvalidData(why) if why == "正本が途中で切れています" => {
+                Error::InvalidData(format!("正本が途中で切れています: {prefix} (位置{at})"))
+            }
+            other => other,
+        })
+    }
+    fn at_end(&mut self) -> Result<bool> {
+        self.src.at_end()
+    }
+    /// `Bytes` の値の中身が読めるか（版 26 の部分を長さだけで読むときは false）。
+    fn content(&self) -> bool {
+        self.parts.as_ref().is_none_or(|p| p.has_content())
     }
     fn add(&mut self, n: &str, value: NativeValue) {
         self.fields.push(NativeField {
@@ -327,10 +696,41 @@ impl Reader<'_> {
         self.add(n, NativeValue::Guid(v));
         Ok(v)
     }
-    fn blob(&mut self, n: &str, len: usize) -> Result<Arc<[u8]>> {
-        let v: Arc<[u8]> = Arc::from(self.take(len)?);
-        self.add(n, NativeValue::Bytes(v.clone()));
-        Ok(v)
+    /// `Bytes` の値（色・画素）。版 26 では部分から取る。骨組みの読みでは残さない（返すのは全部を残す読みと、確かめに要るときだけ）。
+    fn blob(&mut self, n: &str, len: usize) -> Result<Option<Arc<[u8]>>> {
+        self.blob_checked(n, len, |_| Ok(()))
+    }
+    /// `blob` に、中身の確かめを添える（中身の無い読みでは確かめない）。
+    fn blob_checked(
+        &mut self,
+        n: &str,
+        len: usize,
+        verify: impl FnOnce(&[u8]) -> Result<()>,
+    ) -> Result<Option<Arc<[u8]>>> {
+        let content = self.content();
+        let keep = self.keep == Keep::All;
+        let at = self.src.position();
+        let prefix = self.prefix.clone();
+        let source: &mut dyn ByteSource = match self.parts.as_mut() {
+            Some(p) => &mut **p,
+            None => &mut *self.src,
+        };
+        let bytes = source.take(len).map_err(|e| match e {
+            Error::InvalidData(why) if why == "正本が途中で切れています" => {
+                Error::InvalidData(format!("正本が途中で切れています: {prefix} (位置{at})"))
+            }
+            other => other,
+        })?;
+        if content {
+            verify(bytes)?;
+        }
+        if keep {
+            let v: Arc<[u8]> = Arc::from(bytes);
+            self.add(n, NativeValue::Bytes(v.clone()));
+            Ok(Some(v))
+        } else {
+            Ok(None)
+        }
     }
     fn string(&mut self, n: &str) -> Result<String> {
         let len = i32::from_le_bytes(self.take(4)?.try_into().unwrap());
@@ -683,11 +1083,13 @@ fn tiles(r: &mut Reader<'_>, w: i32, h: i32, ts: i32, mask: bool) -> Result<()> 
             let y = r.int("y", 0, rows - 1)?;
             check(seen.insert((x, y)), "タイルが重複しています")?;
             let len = r.int("length", ts * ts * 4, ts * ts * 4)?;
-            let b = r.blob("rgba", len as usize)?;
-            check(
-                !mask || b.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]),
-                "マスクのRGBは0でなければなりません",
-            )
+            r.blob_checked("rgba", len as usize, |b| {
+                check(
+                    !mask || b.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]),
+                    "マスクのRGBは0でなければなりません",
+                )
+            })?;
+            Ok(())
         })?;
     }
     Ok(())

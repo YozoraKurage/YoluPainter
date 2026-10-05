@@ -78,7 +78,7 @@ fn spec(id: &str, name: &str, doc: &Document) -> SetSpec {
             name: name.into(),
             asset: None,
         },
-        document: Some(NativeDocument::from_core(doc).unwrap()),
+        document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: composite_pngs(doc).unwrap(),
     }
 }
@@ -96,7 +96,7 @@ fn entries(project: &Project) -> BTreeMap<String, Vec<u8>> {
         .original_archive()
         .entries()
         .iter()
-        .map(|(n, b)| (n.clone(), b.to_vec()))
+        .map(|(n, b)| (n.clone(), b.bytes().unwrap().to_vec()))
         .collect()
 }
 fn reopened(entries: BTreeMap<String, Vec<u8>>) -> Project {
@@ -394,7 +394,7 @@ fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
                 name: "Body".into(),
                 asset: None,
             },
-            document: Some(native),
+            document: Some(native.into()),
             composites: composite_pngs(&doc).unwrap(),
         }],
         SET_A,
@@ -660,7 +660,7 @@ fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
         }
     }
     for (x, y) in project.sets().iter().zip(again.sets()) {
-        assert_eq!(x.document.to_bytes(), y.document.to_bytes(), "{}", x.name);
+        assert_eq!(x.document.to_bytes().unwrap(), y.document.to_bytes().unwrap(), "{}", x.name);
         assert_eq!(
             (x.id.as_str(), x.name.as_str()),
             (y.id.as_str(), y.name.as_str())

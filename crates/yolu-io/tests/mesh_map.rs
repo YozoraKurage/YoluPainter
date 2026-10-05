@@ -281,7 +281,7 @@ fn formats_1_and_2_read_root_entries_and_write_after_upgrade() {
             .original_archive()
             .entries()
             .iter()
-            .map(|(k, v)| (k.clone(), v.to_vec()))
+            .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
             .collect();
         entries.insert("meshmap-Position.bin".into(), donor_bytes.clone());
         let with_root = yolu_io::Project::read(

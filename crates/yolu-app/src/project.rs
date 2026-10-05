@@ -1,15 +1,17 @@
 //! .ylp（Unity 版と同じ作業ファイル）の開く・保存・新規。読み書きと検証は yolu-io、ここは画面の状態（テクスチャセット）との受け渡しだけ。
 //!
-//! - 開く: yolu-io の `SaveTarget::open`（ZIP・manifest・正本を検証し、保存で外からの書き換えを見張る印を取る）で読み、セットごとに
-//!   正本（`NativeDocument`）を core の文書へ変える（`to_core`。透明の画素の RGB・文書とレイヤーの ID を保つ）。core で扱えない中身
+//! - 開く: yolu-io の `SaveTarget::open_within`（ZIP・manifest・正本を流して検証し、保存で外からの書き換えを見張る印を取る。上限は設定の
+//!   「レイヤーの画素」の予算から）で読み、セットごとに正本（`SetDocument`）を層ごとに流して core の文書へ変える（`to_core`。透明の画素の
+//!   RGB・文書とレイヤーの ID を保つ。ファイル全体・正本全体をメモリに組まない）。core で扱えない中身
 //!   （手動の ID の色など。`core_issues`）のあるセットは**読むだけ**にして理由を出す（黙って捨てない）。
 //!   グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの合成・ユーザーチャンネルと、効果（フィルター・Generator・Anchor・
 //!   塗りつぶしの画像・グラデーション・パス）は core が持つので、描けて保存で保たれる。
 //!   読むだけのセットは、保存した合成の PNG（`composite/Color.png`）を 1 枚のレイヤーにして見せる（描けない。Live Link でも Unity に
 //!   見せる）。
-//! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書を
-//!   正本に戻し（`from_core`。Color の合成の PNG も書く）、描いていないセット・読むだけのセット・知らないエントリは開いた時のバイト列の
-//!   まま残す。セットの並び・名前・マテリアルの鍵・今のセットは `with_sets`、ファイルが無かったプロジェクトは `create`。書くのは
+//! - 保存: 形式 7 で書く（開いたのが古い形式なら yolu-io の `upgraded` で上げてから）。開いた後に描いた・変えたセットだけ core の文書の
+//!   写しを正本の元にし（`DocumentSource::from_core`。書くときに層ごとに流して作り、大きければ版 26 で分ける。Color の合成の PNG も書く）、
+//!   描いていないセット・読むだけのセット・知らないエントリは開いた時のバイト列のまま（ファイルから流して写す）残す。保存した後は、書いた
+//!   ファイルを指すプロジェクト（`SaveReport::project`）を次の保存・書き置きの元にする。セットの並び・名前・マテリアルの鍵・今のセットは `with_sets`、ファイルが無かったプロジェクトは `create`。書くのは
 //!   yolu-io の安全な保存（検証した一時ファイルから 1 回の置き換え。上書きなら前の版は `<名前>-backups~/` に、設定の「退避を残す数」
 //!   （既定はすべて）だけ残す。開いた後に外で書き換えられていたら断る）。PSD を「今のセットへ」取り込み直して文書を替えたセットは、古い
 //!   PSD の原本（Unity 版が持つ `imported-original.psd`）を持ち越さない（新しい文書の原本ではない。前の版は退避に残る）。
@@ -18,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use yolu_core::mesh_maps::MeshMapKind;
-use yolu_io::{composite_pngs, NativeDocument, Project, SaveTarget, SetSpec, WriterInfo};
+use yolu_io::{composite_pngs, DocumentSource, Project, SaveTarget, SetDocument, SetSpec, WriterInfo};
 
 /// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
@@ -87,7 +89,7 @@ pub fn writer() -> WriterInfo {
 
 /// 正本を core の文書へ。扱えない中身があれば、その理由（多ければ初めの 3 つと数）。`source_budget` は、この文書の層の画素に
 /// 許すバイト数（超えれば、読むだけのセットにして理由を出す）。
-pub(crate) fn to_core(native: &NativeDocument, lang: Lang, source_budget: u64) -> Result<Document, String> {
+pub(crate) fn to_core(native: &SetDocument, lang: Lang, source_budget: u64) -> Result<Document, String> {
     let issues = native.core_issues();
     if !issues.is_empty() {
         return Err(lang.unsupported_features(&issues));
@@ -173,7 +175,9 @@ pub fn open_into(state: &mut AppState, path: &Path) {
 
 /// `open_into` の、1 つのテクスチャセットの層の画素に許すバイト数を指定する形。超えるセットは読むだけにして、理由（予算）を出す。
 pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
-    let (project, target) = match SaveTarget::open(path) {
+    // ファイルは流して読む（全エントリを確かめ、正本の画素はメモリに読まない）。上限は「レイヤーの画素」の予算から（`Limits`）
+    let limits = yolu_io::Limits::from_layer_pixels(budget);
+    let (project, target) = match SaveTarget::open_within(path, &limits) {
         Ok(x) => x,
         Err(e) => {
             state.message = format!("{}: {}: {}", state.lang.pick("開けません", "Cannot open"), path.display(), state.lang.io_error(&e));
@@ -196,10 +200,26 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
     let mut selection_issues = Vec::new();
-    for set in project.sets() {
+    // セットごとの正本を、別々のスレッドで流して core の文書にする（セットは互いに独立。持つのはスレッドごとに層 1 枚ぶん）
+    let lang = state.lang;
+    let converted: Vec<Result<Document, String>> = std::thread::scope(|scope| {
+        let running: Vec<_> = project
+            .sets()
+            .iter()
+            .map(|set| scope.spawn(move || to_core(&set.document, lang, budget)))
+            .collect();
+        running
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err(lang.pick("正本を読む途中で止まりました", "Reading the document stopped").into()))
+            })
+            .collect()
+    });
+    for (set, converted) in project.sets().iter().zip(converted) {
         let native = &set.document;
         let (w, h) = (native.width() as u32, native.height() as u32);
-        match to_core(native, state.lang, budget) {
+        match converted {
             Ok(mut doc) => {
                 // 選択範囲（selection.bin）は文書に戻す（読めなければ選択なしで開き、理由を出す）
                 if let Err(e) =
@@ -223,8 +243,8 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
                 read_only.push(set.name.clone());
                 let png = entries
                     .get(&format!("sets/{}/composite/Color.png", set.id))
-                    .map(|b| &b[..]);
-                let (mut doc, note) = preview_document(png, w, h, state.lang);
+                    .and_then(|b| b.bytes().ok());
+                let (mut doc, note) = preview_document(png.as_deref(), w, h, state.lang);
                 // 読むだけのセットも、見た目の設定で 3D に見せる（読めなければ標準のまま、通常のセットと同じ理由を言う）
                 let look = crate::look::io::restore_into(&mut doc, &project, &set.id, state.lang).err();
                 if let Some(e) = &look {
@@ -248,6 +268,8 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
             }
         }
     }
+    // 復旧の世代から開いたプロジェクトの大きなエントリ（読むだけのセットの正本を含む）は、読むときに世代の外へ置き直してある
+    // （`recovery::pool::load`）。その世代が後で整理・破棄されても保存できる
     let current = project
         .sets()
         .iter()
@@ -455,6 +477,19 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
     if state.is_stroking() {
         return Err(state.lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
     }
+    // 配布用に保存の写し（準備した写し・書いている途中）は、開いた .ylp の位置から読む。保存でそのファイルを置き換えると、写しが新しい
+    // ファイルの古い位置を読んで失敗する（Windows では、読んでいるハンドルが置き換えを妨げうる）ので、その間は保存しない
+    if state.distribute.is_busy() || state.distribute.is_open() {
+        return Err(state
+            .lang
+            .pick("配布用に保存の途中は保存しません", "Cannot save while saving for distribution")
+            .into());
+    }
+    // 復旧の書き置きのスレッドも、開いた .ylp の位置から読む。そのファイルを置き換える保存は、今の書き込みと待っている頼みが終わるのを
+    // 待ってから書く（保存のあいだは主のスレッドが新しい頼みを出さないので、置き換えと読みが重ならない。書き置きの結果もここで受ける）
+    if state.project.as_ref().is_some_and(|p| p.is_file() && same_file(&p.path, path)) {
+        state.recovery_wait();
+    }
     let base = state.project.as_ref().map(|p| &*p.original);
     let mut specs = Vec::with_capacity(state.sets.len());
     let mut written = Vec::new();
@@ -474,7 +509,11 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         let (document, composites) = if in_base && (set.read_only.is_some() || unchanged) {
             (None, Vec::new())
         } else {
-            let native = NativeDocument::from_core(doc)
+            // 正本は全体をメモリに組まない: 写し（タイルは共有）を渡し、書くときに層ごとに流して作る（大きければ版 26 で分ける）
+            let native = doc
+                .capture_snapshot()
+                .map_err(yolu_io::Error::from)
+                .and_then(|snapshot| DocumentSource::from_core(std::sync::Arc::new(snapshot)))
                 .map_err(|e| {
                     let what = state.lang.pick(format!("セット「{}」を正本にできません", set.name), format!("Cannot convert texture set “{}” to a document", set.name));
                     format!("{what}: {}", state.lang.io_error(&e))
@@ -581,14 +620,15 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         .as_ref()
         .is_some_and(|p| p.is_file() && same_file(&p.path, path));
     let keep = state.prefs.settings.backups;
-    let report = if reuse {
+    let mut report = if reuse {
         let file = state.project.as_mut().expect("上で確かめた");
         let target = file.target.as_mut().expect("ファイルのあるプロジェクトは印を持つ");
         target.save_with(&project, keep).map_err(|e| state.lang.io_error(&e))?
     } else {
-        // 別の場所: あれば .ylp として読めるものだけを上書きする（読めないファイルを黙って潰さない）
+        // 別の場所: あれば .ylp として読めるものだけを上書きする（読めないファイルを黙って潰さない）。中身は確かめるだけなので、
+        // 予算では断らない
         let mut target = if overwrite {
-            SaveTarget::open(path)
+            SaveTarget::open_within(path, &yolu_io::Limits::unbounded())
                 .map_err(|e| format!("{}: {}", state.lang.pick("上書きする先を .ylp として読めません", "Invalid overwrite target"), state.lang.io_error(&e)))?
                 .1
         } else {
@@ -602,8 +642,14 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
         });
         report
     };
+    // 次の保存・書き置きの元は、書いたファイルを指すプロジェクト（変わらないエントリはそのファイルから写す。保存に使った core の文書の
+    // 写しは手放す）
+    let saved = report.project.take().map(std::sync::Arc::new).unwrap_or(project);
+    // 書いた .ylp を、今の「レイヤーの画素」の予算で開き直せるか（読み手の上限は予算から決まり、一様なタイルの多い文書は core の画素が
+    // 小さいまま正本だけが大きくなる。保存は止めず、開き直すのに予算が要ることをここで言う）
+    let reopen = reopen_note(state.lang, &saved, &yolu_io::Limits::from_layer_pixels(state.load_source_bytes()));
     if let Some(file) = state.project.as_mut() {
-        file.original = project;
+        file.original = saved;
         file.path = path.to_path_buf();
     }
     for (i, id, revision) in &written {
@@ -659,8 +705,30 @@ fn save(state: &mut AppState, path: &Path) -> Result<String, String> {
             text += &state.lang.inactive_effects_not_in_composite(set, &inactive);
         }
     }
+    if let Some(note) = reopen {
+        text += &note;
+    }
     text += &backup_text(state.lang, path, &report);
     Ok(text)
+}
+
+/// 保存した .ylp が、`limits`（今の「レイヤーの画素」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
+/// かかる（今の形は今の上限に収まるときだけ書く）。
+pub(crate) fn reopen_note(lang: Lang, project: &Project, limits: &yolu_io::Limits) -> Option<String> {
+    let archive = project.original_archive();
+    if archive.manifest_version() < 4 {
+        return None;
+    }
+    limits
+        .check(archive.entries().iter().map(|(name, blob)| (name.as_str(), blob.len())))
+        .err()?;
+    Some(
+        lang.pick(
+            " 今の「レイヤーの画素」の予算では開き直せません。",
+            " Too large to reopen within the current Layer pixels budget.",
+        )
+        .into(),
+    )
 }
 
 /// 保存の知らせのうち退避の文。前の版は、退避する設定で上書きしたときだけ残る（退避しない設定・新規の保存では作らない）。
@@ -689,11 +757,63 @@ fn backup_text(lang: Lang, path: &Path, report: &yolu_io::SaveReport) -> String 
 mod tests {
     use super::*;
 
+    /// 保存した大きな形（`YLP-4`）の .ylp を今の予算で開き直せないときは、保存の知らせで言う（一様なタイルの層は core の画素が小さい
+    /// まま正本だけが大きくなる）。開き直せるもの・今の形のものには何も言わない。
+    #[test]
+    fn a_saved_file_the_budget_cannot_reopen_is_told_when_saving() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/project-reopen-tests").join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = AppState::new(128, 128);
+        let ts = s.doc.tile_size();
+        let flat = [40u8, 80, 120, 255].repeat((ts * ts) as usize);
+        for i in 0..8 {
+            let id = s.doc.add_layer(&format!("平ら {i}")).unwrap();
+            for ty in 0..128 / ts {
+                for tx in 0..128 / ts {
+                    s.doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat).unwrap();
+                }
+            }
+        }
+        s.modified = true;
+        let small = yolu_io::Thresholds { classic_total_bytes: 1 << 10, ..yolu_io::Thresholds::REAL };
+        let path = dir.join("平ら.ylp");
+        small.scoped(|| s.apply(crate::state::Action::SaveProjectAs(path.clone())));
+        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        let saved = s.project.as_ref().unwrap().project();
+        assert_eq!(saved.original_archive().manifest_version(), 4);
+        let document: u64 = saved
+            .original_archive()
+            .entries()
+            .iter()
+            .filter(|(n, _)| n.contains("document.utpaint"))
+            .map(|(_, b)| b.len())
+            .sum();
+        assert!(document > 4 * 1000 * s.doc.allocated_bytes(), "{document}");
+        let tight = yolu_io::Limits { document_bytes: document - 1, other_bytes: yolu_io::Limits::default().other_bytes };
+        let note = reopen_note(Lang::Ja, saved, &tight).expect("開き直せないと言う");
+        assert!(note.contains("「レイヤーの画素」の予算") && !note.contains("MiB"), "{note}");
+        assert!(reopen_note(Lang::En, saved, &tight).unwrap().contains("Layer pixels budget"));
+        // 言ったとおり、その上限の読み手は断る
+        assert!(matches!(yolu_io::Package::open(&path, &tight), Err(yolu_io::Error::Budget(_))));
+        let enough = yolu_io::Limits { document_bytes: document, ..tight };
+        assert_eq!(reopen_note(Lang::Ja, saved, &enough), None);
+        yolu_io::Package::open(&path, &enough).unwrap();
+        // 今の形（今の上限に収まる）には上限の予算はかからない
+        let classic = dir.join("今の形.ylp");
+        s.apply(crate::state::Action::SaveProjectAs(classic));
+        let saved = s.project.as_ref().unwrap().project();
+        assert!(saved.original_archive().manifest_version() <= 3);
+        assert_eq!(reopen_note(Lang::Ja, saved, &tight), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_backup_text_names_the_kept_version_and_the_old_ones_that_could_not_be_deleted() {
         use yolu_io::{FileStamp, PruneFailure, SaveReport};
         let report = |backup: bool, failures: usize| SaveReport {
             stamp: FileStamp { sha256: String::new(), length: 0, modified: std::time::UNIX_EPOCH },
+            project: None,
             backup: backup.then(|| PathBuf::from("a.ylp-backups~/a-20260101T000000000Z.ylp")),
             prune_failures: (0..failures)
                 .map(|i| PruneFailure {
@@ -738,11 +858,11 @@ mod tests {
         assert!(!source.modified, "{}", source.message);
         // ちょうどの予算なら読める
         let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
-        assert_eq!(to_core(&native, Lang::Ja, bytes).unwrap().allocated_bytes(), bytes);
+        assert_eq!(to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes).unwrap().allocated_bytes(), bytes);
         // 1 バイト足りなければ、壊れたファイルではなく予算として断る（日英）
-        let ja = to_core(&native, Lang::Ja, bytes - 1).err().expect("断る");
+        let ja = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, bytes - 1).err().expect("断る");
         assert!(ja.starts_with("core の文書にできません") && ja.contains("予算"), "{ja}");
-        let en = to_core(&native, Lang::En, bytes - 1).err().expect("断る");
+        let en = to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::En, bytes - 1).err().expect("断る");
         assert_eq!(en, "Cannot convert to a core document: Size, count or memory limit exceeded");
         // 開く: 予算に収まれば編集できるセット、収まらなければ読むだけのセット（理由つき）。どちらも元のファイルは変えない
         let mut opened = AppState::new(64, 64);

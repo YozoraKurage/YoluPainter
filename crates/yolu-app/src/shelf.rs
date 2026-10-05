@@ -1100,10 +1100,12 @@ impl ShelfState {
     fn used_by(&self, project: Option<&Project>, id: &str) -> bool {
         let Some(project) = project else { return false };
         project.sets().iter().any(|s| {
-            s.document
-                .fields()
-                .iter()
-                .any(|f| matches!(&f.value, NativeValue::Guid(g) if guid_text(g) == id))
+            // 正本の骨組み（ID の項目）。読めない正本は、使っている物を消さないよう、使っているとみなす
+            s.document.skeleton().map_or(true, |d| {
+                d.fields()
+                    .iter()
+                    .any(|f| matches!(&f.value, NativeValue::Guid(g) if guid_text(g) == id))
+            })
         })
     }
 

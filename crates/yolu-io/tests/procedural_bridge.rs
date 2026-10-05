@@ -318,7 +318,7 @@ fn a_ylp_keeps_the_stages_and_the_version() {
         id: "0f0f0f0f-0000-4000-8000-000000000001".into(),
         name: "Set".into(),
         material: yolu_io::MaterialRef::Unassigned,
-        document: Some(native.clone()),
+        document: Some(native.clone().into()),
         composites: vec![],
     };
     let project = Project::create(writer(), std::slice::from_ref(&spec), &spec.id).unwrap();
@@ -330,7 +330,7 @@ fn a_ylp_keeps_the_stages_and_the_version() {
     let (again, _) = SaveTarget::open(&path).unwrap();
     let reopened = &again.sets()[0].document;
     assert_eq!(reopened.version(), PROCEDURAL_VERSION);
-    assert_eq!(reopened.to_bytes(), native.to_bytes());
+    assert_eq!(reopened.to_bytes().unwrap(), native.to_bytes());
     assert_eq!(stages(&reopened.to_core().unwrap()), stages(&doc));
     // 開いたまま何も変えずに書き直しても、正本のバイトは変わらない
     SaveTarget::create(dir.join("again.ylp"))
@@ -338,7 +338,7 @@ fn a_ylp_keeps_the_stages_and_the_version() {
         .save(&again)
         .unwrap();
     let (third, _) = SaveTarget::open(dir.join("again.ylp")).unwrap();
-    assert_eq!(third.sets()[0].document.to_bytes(), native.to_bytes());
+    assert_eq!(third.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

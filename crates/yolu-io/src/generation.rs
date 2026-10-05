@@ -26,7 +26,7 @@
 //! ファイルは `sync_all` で書き出す。ディレクトリの fsync と電源断の耐久性は OS に依り、約束しない。ロックはこの道具どうしの
 //! 排他で、ロックしない外部の書き手はハッシュで見つける（止めない）。
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -34,7 +34,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{hash, is_hash, valid_id, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
+use crate::package::{part_number, Blob, Limits, MAX_ONE_ENTRY, MAX_PART_BYTES};
+use crate::{hash, is_hash, valid_id};
 
 const FLAT: &str = "DOTPAINT-MANIFEST-1";
 const SHARED: &str = "DOTPAINT-MANIFEST-2";
@@ -43,8 +44,8 @@ const MANIFEST: &str = "manifest.sha256";
 /// manifest の大きさの上限。
 const MANIFEST_LIMIT: u64 = 1024 * 1024;
 
-/// 世代の全エントリ（`.ylp` のエントリ名 → 中身）。
-pub type Files = BTreeMap<String, Arc<[u8]>>;
+/// 世代の全エントリ（`.ylp` のエントリ名 → 中身。中身はメモリか、置き場のファイル・.ylp の中の位置・正本から作るもの）。
+pub type Files = crate::package::Files;
 
 /// 書く前の空きの確かめ。これから**新しく**書くバイト数（共有の中身で置き場にもうあるものは含めない。manifest・ポインタの小さな
 /// ものも含めない）を渡され、書けないなら `LowSpace` を返す。確定の前、中身を書き始める前に 1 回だけ呼ばれ、Err なら何も
@@ -202,8 +203,12 @@ pub struct Footprint {
 pub struct GenerationStore {
     root: PathBuf,
     fault: Option<Fault>,
-    /// 書き込みの予算（1 エントリ・合計の上限バイト数）。`None` は既定（`MAX_ENTRY_BYTES`・`MAX_TOTAL_BYTES`）。
+    /// 書き込みの予算（1 エントリ・合計の上限バイト数）。`None` は形の上限だけ（1 エントリは正本の部分 256 MiB・ほか 512 MiB）。
     budget: Option<(u64, u64)>,
+    /// 読み書きの量の上限（設定の予算から。`None` は形の上限だけ）。
+    limits: Option<Limits>,
+    /// この道具が流して確かめた共有の中身と、そのときの長さ・更新時刻（同じなら、次の確定でハッシュを数え直さない。複製の間で共有）。
+    good: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, (u64, SystemTime)>>>,
     /// 書く前の空きの確かめ。`None` は確かめない。
     space: Option<SpaceGuard>,
 }
@@ -213,6 +218,7 @@ impl std::fmt::Debug for GenerationStore {
             .field("root", &self.root)
             .field("fault", &self.fault.is_some())
             .field("budget", &self.budget)
+            .field("limits", &self.limits)
             .field("space_guard", &self.space.is_some())
             .finish()
     }
@@ -237,8 +243,39 @@ impl GenerationStore {
             root: root.into(),
             fault: None,
             budget: None,
+            limits: None,
             space: None,
+            good: Arc::default(),
         }
+    }
+    /// この道具が確かめた後、長さと更新時刻の変わっていない共有の中身か（ハッシュを数え直さない。保証の射程: 更新時刻を変えずに
+    /// 同じ長さで書き換える外の書き手は、ここでは見つけない。開くとき（`load`）はいつも全部を数える）。
+    fn known_good(&self, path: &Path, len: u64) -> bool {
+        let Ok(meta) = fs::symlink_metadata(path) else {
+            return false;
+        };
+        let Ok(modified) = meta.modified() else {
+            return false;
+        };
+        meta.is_file()
+            && meta.len() == len
+            && self
+                .good
+                .lock()
+                .is_ok_and(|g| g.get(path) == Some(&(len, modified)))
+    }
+    fn remember_good(&self, path: &Path) {
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if let (Ok(modified), Ok(mut g)) = (meta.modified(), self.good.lock()) {
+                g.insert(path.to_path_buf(), (meta.len(), modified));
+            }
+        }
+    }
+    /// 読み書きの量の上限を設定の予算から決める（`Limits`。セットごとの正本は「レイヤーの画素」の予算の 4 倍、全体は正本の数 ×
+    /// それ ＋ 768 MiB）。超える世代は書かず、読まない（理由に予算の名前を添える）。
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = Some(limits);
+        self
     }
     /// 書く前の空きの確かめを付ける（`SpaceGuard`）。確かめは新しく書くバイト数を見るので、前の世代と同じ中身だけの確定は
     /// 0 バイトで確かめる。
@@ -249,10 +286,7 @@ impl GenerationStore {
     /// 書き込みの予算を小さくする（1 エントリの上限・合計の上限、バイト数）。既定の上限より大きくはできない。試験が、大きな領域を
     /// 確保せずに予算の断りを確かめるための口。
     pub fn with_budget(mut self, entry_bytes: u64, total_bytes: u64) -> Self {
-        self.budget = Some((
-            entry_bytes.min(MAX_ENTRY_BYTES as u64),
-            total_bytes.min(MAX_TOTAL_BYTES as u64),
-        ));
+        self.budget = Some((entry_bytes.min(MAX_ONE_ENTRY), total_bytes));
         self
     }
     /// 試験用の障害注入（`Fault`）を付ける。
@@ -314,21 +348,30 @@ impl GenerationStore {
             Err(e) => Err(e.into()),
         }
     }
+    /// 世代の全エントリを長さとハッシュまで流して確かめる。`keep_bytes` なら、エントリを返す（小さなものはメモリに、ほかは置き場の
+    /// ファイルを指す）。
     fn read_generation(&self, id: &str, keep_bytes: bool) -> R<Generation> {
         let manifest_bytes = self.read_manifest_bytes(id)?;
         let manifest = parse_manifest(&manifest_bytes)?;
+        if keep_bytes {
+            self.check_limits(manifest.entries.iter().map(|e| (e.name.as_str(), e.len)))?;
+        }
         let dir = self.generations_dir().join(id);
         let mut files = Files::new();
         for entry in &manifest.entries {
-            let data = self.read_entry(&dir, &manifest, entry)?;
-            files.insert(
-                entry.name.clone(),
-                if keep_bytes {
-                    Arc::from(data)
-                } else {
-                    Arc::from(Vec::new())
-                },
-            );
+            let small = self.read_entry(&dir, &manifest, entry, keep_bytes)?;
+            if keep_bytes {
+                let blob = match small {
+                    Some(bytes) => Blob::from(bytes),
+                    None => Blob::file(
+                        self.entry_path(&dir, &manifest, entry),
+                        &entry.name,
+                        entry.len,
+                        entry.hash.clone(),
+                    ),
+                };
+                files.insert(entry.name.clone(), blob);
+            }
         }
         Ok(Generation {
             id: id.to_owned(),
@@ -336,8 +379,14 @@ impl GenerationStore {
             files,
         })
     }
-    /// 1 エントリを長さとハッシュを確かめて読む。
-    fn read_entry(&self, dir: &Path, manifest: &Manifest, entry: &Entry) -> R<Vec<u8>> {
+    /// 1 エントリを長さとハッシュを流して確かめる（メモリに全部を読まない）。`keep` なら、小さな中身（1 MiB まで）を返す。
+    fn read_entry(
+        &self,
+        dir: &Path,
+        manifest: &Manifest,
+        entry: &Entry,
+        keep: bool,
+    ) -> R<Option<Vec<u8>>> {
         let path = self.entry_path(dir, manifest, entry);
         match fs::symlink_metadata(&path) {
             Ok(m) if m.is_file() && m.len() == entry.len => {}
@@ -347,11 +396,29 @@ impl GenerationStore {
             }
             Err(e) => return Err(e.into()),
         }
-        let data = read_bounded(&path, entry.len)?;
-        if hash(&data) != entry.hash {
+        if !keep && manifest.shared && self.known_good(&path, entry.len) {
+            return Ok(None);
+        }
+        let small = keep && entry.len <= crate::package::Thresholds::current().keep_in_memory;
+        let (digest, bytes) = digest_file(&path, entry.len, small)?;
+        if manifest.shared && digest == entry.hash {
+            self.remember_good(&path);
+        }
+        if digest != entry.hash {
             return corrupt(format!("世代のハッシュが合いません: {}", entry.name));
         }
-        Ok(data)
+        Ok(bytes)
+    }
+    /// 量の上限（`Limits`。設定の予算から）を確かめる。
+    fn check_limits<'a>(&self, entries: impl Iterator<Item = (&'a str, u64)>) -> R<()> {
+        let Some(limits) = &self.limits else {
+            return Ok(());
+        };
+        // .ylp の読み手と同じ数え方・同じ理由の文（どの予算かだけ。画面の英語はこの文で見分けて訳す）
+        limits.check(entries).map_err(|e| match e {
+            crate::Error::Budget(why) => StoreError::Budget(why),
+            other => StoreError::Corrupt(other.to_string()),
+        })
     }
     fn entry_path(&self, dir: &Path, manifest: &Manifest, entry: &Entry) -> PathBuf {
         if manifest.shared {
@@ -383,7 +450,12 @@ impl GenerationStore {
             ));
         }
         let dir = self.generations_dir().join(&id);
-        Ok(Some(self.read_entry(&dir, &manifest, entry)?))
+        let path = self.entry_path(&dir, &manifest, entry);
+        let (digest, bytes) = digest_file(&path, entry.len, true)?;
+        if digest != entry.hash {
+            return corrupt(format!("世代のハッシュが合いません: {}", entry.name));
+        }
+        Ok(bytes)
     }
 
     /// 世代を 1 つ確定する。作る → 確かめる → 世代の名前へ改名 → `previous` → `current` を**最後に**置き換える。失敗したら
@@ -397,22 +469,21 @@ impl GenerationStore {
         if files.is_empty() || !has_native(files.keys().map(String::as_str)) {
             return Err(StoreError::InvalidArgument("完全な正本が要ります"));
         }
-        let (entry_max, total_max) = self
-            .budget
-            .unwrap_or((MAX_ENTRY_BYTES as u64, MAX_TOTAL_BYTES as u64));
+        let (entry_max, total_max) = self.budget.unwrap_or((MAX_ONE_ENTRY, u64::MAX));
         let mut total = 0u64;
         for (name, data) in files {
             validate_name(name)?;
-            if data.len() as u64 > entry_max {
+            if data.len() > entry_max.min(entry_limit(name)) {
                 return Err(StoreError::Budget("エントリの予算を超えています".into()));
             }
-            total += data.len() as u64;
+            total = total.saturating_add(data.len());
         }
         if total > total_max {
             return Err(StoreError::Budget(
                 "書き置きが作業の予算を超えています".into(),
             ));
         }
+        self.check_limits(files.iter().map(|(n, b)| (n.as_str(), b.len())))?;
         fs::create_dir_all(&self.root)?;
         let lock = OpenOptions::new()
             .read(true)
@@ -460,8 +531,11 @@ impl GenerationStore {
         let mut written = 0u64;
         let mut reused = 0usize;
         let mut verified: HashSet<String> = HashSet::new();
-        // 札は 1 度だけ計算する（空きの確かめも、書く段も、同じ札を使う）
-        let digests: Vec<String> = files.values().map(|d| hash(d)).collect();
+        // 札は 1 度だけ計算する（空きの確かめも、書く段も、同じ札を使う）。正本から作るエントリは、ここで 1 度作って数える
+        let digests: Vec<String> = files
+            .values()
+            .map(|d| d.sha256().map_err(|e| StoreError::Corrupt(e.to_string())))
+            .collect::<R<_>>()?;
         if let Some(guard) = &self.space {
             let mut needed = 0u64;
             let mut counted: HashSet<&str> = HashSet::new();
@@ -475,7 +549,7 @@ impl GenerationStore {
                     true
                 };
                 if is_new {
-                    needed += data.len() as u64;
+                    needed += data.len();
                 }
             }
             guard(needed).map_err(StoreError::LowSpace)?;
@@ -493,20 +567,23 @@ impl GenerationStore {
                                 "共有の中身が、この道具の外で変わっています".into(),
                             )
                         };
-                        if fs::symlink_metadata(&path)?.len() != data.len() as u64 {
+                        if fs::symlink_metadata(&path)?.len() != data.len() {
                             return Err(changed());
                         }
-                        if hash(&read_bounded(&path, data.len() as u64)?) != digest {
-                            return Err(changed());
+                        if !self.known_good(&path, data.len()) {
+                            if digest_file(&path, data.len(), false)?.0 != digest {
+                                return Err(changed());
+                            }
+                            self.remember_good(&path);
                         }
                         verified.insert(digest.clone());
                         reused += 1;
                     }
                     Err(e) if e.kind() == io::ErrorKind::NotFound => {
                         let pending = staging.join(format!("{digest}.pending"));
-                        write_durable(&pending, data)?;
+                        write_blob_durable(&pending, data)?;
                         fs::rename(&pending, &path)?;
-                        written += data.len() as u64;
+                        written += data.len();
                     }
                     Err(e) => return Err(e.into()),
                 }
@@ -515,8 +592,8 @@ impl GenerationStore {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                write_durable(&path, data)?;
-                written += data.len() as u64;
+                write_blob_durable(&path, data)?;
+                written += data.len();
             }
             manifest.push_str(&format!("{digest} {} {name}\n", data.len()));
             self.hit(&format!("file:{name}"))?;
@@ -529,7 +606,10 @@ impl GenerationStore {
             if verified.contains(&entry.hash) {
                 continue;
             }
-            self.read_entry(staging, &parsed, entry)?;
+            self.read_entry(staging, &parsed, entry, false)?;
+            if parsed.shared {
+                self.remember_good(&self.content_path(&entry.hash));
+            }
         }
         self.hit("verified")?;
         let committed_dir = generations.join(id);
@@ -1001,17 +1081,14 @@ fn parse_manifest(bytes: &[u8]) -> R<Manifest> {
         let (true, Some(len)) = (parts.len() == 3 && is_hash(parts[0]), len) else {
             return corrupt("manifest の行が不正です");
         };
-        if len > MAX_ENTRY_BYTES as u64 {
+        if len > entry_limit(parts[2]) {
             return corrupt("manifest の行が不正です");
         }
         validate_name(parts[2])?;
         if !names.insert(parts[2]) {
             return corrupt("manifest にエントリが重複しています");
         }
-        total += len;
-        if total > MAX_TOTAL_BYTES as u64 {
-            return Err(StoreError::Budget("世代が読み込みの予算を超えています".into()));
-        }
+        total = total.saturating_add(len);
         entries.push(Entry {
             hash: parts[0].to_owned(),
             len,
@@ -1090,6 +1167,59 @@ fn read_bounded(path: &Path, max: u64) -> R<Vec<u8>> {
     Ok(buf)
 }
 
+/// 新しいファイルにエントリを流して書いて `sync_all` する（あるファイルは上書きしない）。
+fn write_blob_durable(path: &Path, blob: &Blob) -> R<()> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut out = io::BufWriter::with_capacity(1 << 20, file);
+    blob.write_to(&mut out).map_err(|e| match e {
+        crate::Error::Io(e) => StoreError::Io(e),
+        other => StoreError::Corrupt(other.to_string()),
+    })?;
+    let file = out.into_inner().map_err(|e| e.into_error())?;
+    file.sync_all()?;
+    Ok(())
+}
+/// ファイルの SHA-256 を流して数える（長さが `len` と違えば断る）。`keep` なら中身も返す（小さなもの）。
+fn digest_file(path: &Path, len: u64, keep: bool) -> R<(String, Option<Vec<u8>>)> {
+    use sha2::{Digest, Sha256};
+    let mut f = io::BufReader::with_capacity(1 << 20, File::open(path)?);
+    let mut sha = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut kept = keep.then(|| Vec::with_capacity(len.min(1 << 20) as usize));
+    let mut n_total = 0u64;
+    loop {
+        let n = match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        };
+        n_total += n as u64;
+        if n_total > len {
+            return Err(StoreError::Io(io::Error::other(
+                "読み込み中にファイルが変わりました",
+            )));
+        }
+        sha.update(&buf[..n]);
+        if let Some(k) = &mut kept {
+            k.extend_from_slice(&buf[..n]);
+        }
+    }
+    if n_total != len {
+        return Err(StoreError::Io(io::Error::other(
+            "読み込み中にファイルが変わりました",
+        )));
+    }
+    Ok((format!("{:x}", sha.finalize()), kept))
+}
+/// 1 エントリの上限（正本の部分は小さい）。
+fn entry_limit(name: &str) -> u64 {
+    if part_number(name).is_some() {
+        MAX_PART_BYTES
+    } else {
+        MAX_ONE_ENTRY
+    }
+}
 /// 新しいファイルに書いて `sync_all` する（あるファイルは上書きしない）。
 fn write_durable(path: &Path, bytes: &[u8]) -> R<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;

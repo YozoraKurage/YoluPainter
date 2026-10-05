@@ -10,12 +10,14 @@ fn fixture(mode: usize) -> Project {
     )
     .unwrap()
 }
-fn current(p: &Project) -> &NativeDocument {
-    &p.sets()
+fn current(p: &Project) -> NativeDocument {
+    p.sets()
         .iter()
         .find(|s| s.id == p.current_set())
         .unwrap()
         .document
+        .to_native()
+        .unwrap()
 }
 #[test]
 fn csharp_m1_all_modes_composite_png_and_native_roundtrip() {
@@ -73,7 +75,7 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
     );
     for set in p.sets().iter().filter(|s| s.id != p.current_set()) {
         assert_eq!(
-            set.document.to_bytes(),
+            set.document.to_bytes().unwrap(),
             reopened
                 .sets()
                 .iter()
@@ -81,6 +83,7 @@ fn edit_core_save_and_reopen_keeps_identity_pixels_and_properties() {
                 .unwrap()
                 .document
                 .to_bytes()
+                .unwrap()
         );
     }
 }

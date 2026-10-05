@@ -49,7 +49,7 @@ fn spec(id: &str, name: &str, material: MaterialRef, doc: Option<&Document>) -> 
         id: id.into(),
         name: name.into(),
         material,
-        document: doc.map(|d| NativeDocument::from_core(d).unwrap()),
+        document: doc.map(|d| NativeDocument::from_core(d).unwrap().into()),
         composites: doc.map(|d| composite_pngs(d).unwrap()).unwrap_or_default(),
     }
 }
@@ -95,7 +95,7 @@ fn a_new_project_round_trips_and_saves() {
         );
     }
     assert_eq!(
-        p.migrated_entries()[&format!("sets/{A}/composite/Color.png")][..],
+        p.migrated_entries()[&format!("sets/{A}/composite/Color.png")].bytes().unwrap()[..],
         composite_png(&body).unwrap()[..]
     );
     // 安全な保存で書いて、読み直す
@@ -228,7 +228,7 @@ fn with_sets_keeps_keys_it_does_not_know() {
         .original_archive()
         .entries()
         .iter()
-        .map(|(k, v)| (k.clone(), v.to_vec()))
+        .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
         .collect();
     let mut project: serde_json::Value = serde_json::from_slice(&files["project.json"]).unwrap();
     project["future"] = serde_json::json!({"x": 1});
@@ -249,7 +249,7 @@ fn with_sets_keeps_keys_it_does_not_know() {
         .collect();
     let q = p.with_sets(writer(), &specs, p.current_set()).unwrap();
     let json: serde_json::Value =
-        serde_json::from_slice(&q.original_archive().entries()["project.json"]).unwrap();
+        serde_json::from_slice(&q.original_archive().entries()["project.json"].bytes().unwrap()).unwrap();
     assert_eq!(json["future"], serde_json::json!({"x": 1}));
     assert_eq!(json["sets"][0]["future"], serde_json::json!(true));
     assert_eq!(
@@ -334,7 +334,7 @@ fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
     let q = p.with_view_model(Some("../models/body.fbx")).unwrap();
     assert_eq!(q.view_model().unwrap().as_deref(), Some("../models/body.fbx"));
     let view: serde_json::Value =
-        serde_json::from_slice(&q.migrated_entries()["view.json"]).unwrap();
+        serde_json::from_slice(&q.migrated_entries()["view.json"].bytes().unwrap()).unwrap();
     assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
     assert_eq!(view["selectedChannel"], 0);
     assert_eq!(view["standaloneModel"]["path"], "../models/body.fbx");
@@ -351,7 +351,7 @@ fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
     let s = r.with_view_model(None).unwrap();
     assert_eq!(s.view_model().unwrap(), None);
     let view: serde_json::Value =
-        serde_json::from_slice(&s.migrated_entries()["view.json"]).unwrap();
+        serde_json::from_slice(&s.migrated_entries()["view.json"].bytes().unwrap()).unwrap();
     assert!(view.get("standaloneModel").is_none());
     assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
     // 保存して読み直しても残る
@@ -375,7 +375,7 @@ fn a_project_without_view_json_gets_the_smallest_state_unity_accepts() {
     );
     let q = p.with_view_model(Some("model.fbx")).unwrap();
     let view: serde_json::Value =
-        serde_json::from_slice(&q.migrated_entries()["view.json"]).unwrap();
+        serde_json::from_slice(&q.migrated_entries()["view.json"].bytes().unwrap()).unwrap();
     // Unity 版の ViewState（モデルの GUID・選んだチャンネル）の形で、モデルは無し・Color
     assert_eq!(view["modelAssetGuid"], "");
     assert_eq!(view["selectedChannel"], 0);
@@ -404,13 +404,13 @@ fn the_model_reference_refuses_what_it_cannot_keep() {
         .original_archive()
         .entries()
         .iter()
-        .map(|(k, v)| (k.clone(), v.to_vec()))
+        .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
         .collect();
     files.insert("view.json".into(), b"not json".to_vec());
     let broken = Project::read(&Archive::from_entries(files.clone()).unwrap().to_bytes().unwrap()).unwrap();
     assert!(broken.view_model().is_err());
     let untouched = broken.with_view_model(None).unwrap();
-    assert_eq!(untouched.migrated_entries()["view.json"][..], b"not json"[..]);
+    assert_eq!(untouched.migrated_entries()["view.json"].bytes().unwrap()[..], b"not json"[..]);
     let rebuilt = broken.with_view_model(Some("a.fbx")).unwrap();
     assert_eq!(rebuilt.view_model().unwrap().as_deref(), Some("a.fbx"));
     // 形の違う参照

@@ -34,7 +34,7 @@ impl SmartFile {
     }
     pub fn read(bytes: &[u8]) -> Result<Self> {
         let archive = Archive::read_profile(bytes, MIME, PREFIX, 1)?;
-        let info = project::json(project::required(archive.entries(), "smart.json")?, 65536)?;
+        let info = project::json(&project::required(archive.entries(), "smart.json")?, 65536)?;
         project::number(&info, "format", 1, 1)?;
         project::writer(&info["savedBy"])?;
         project::label(&info, "name")?;
@@ -43,7 +43,7 @@ impl SmartFile {
             "未知のスマート素材の種類です",
         )?;
         let fragment =
-            NativeDocument::read(project::required(archive.entries(), "layers.utpaint")?)?;
+            NativeDocument::read(&project::required(archive.entries(), "layers.utpaint")?)?;
         check(
             project::number(&info, "width", 1, 8192)? == fragment.width() as i64
                 && project::number(&info, "height", 1, 8192)? == fragment.height() as i64

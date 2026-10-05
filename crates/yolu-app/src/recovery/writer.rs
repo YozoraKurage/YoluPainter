@@ -196,7 +196,7 @@ fn write(
     if let Some((entry, total)) = budget {
         store = store.with_budget(entry, total);
     }
-    let result = (|| -> Result<Committed, RecoveryError> {
+    let result = request.capture.thresholds.scoped(|| -> Result<Committed, RecoveryError> {
         if let Some(f) = fault {
             f("snapshot").map_err(|e| RecoveryError::Store(StoreError::Io(e)))?;
         }
@@ -210,7 +210,7 @@ fn write(
             unchanged: false,
             sets: capture.sets.len(),
         };
-        files.insert(INFO_NAME.into(), Arc::from(info.to_bytes()));
+        files.insert(INFO_NAME.into(), yolu_io::Blob::from(info.to_bytes()));
         Ok(store.commit(
             &files,
             &CommitOptions {
@@ -219,7 +219,7 @@ fn write(
                 share: true,
             },
         )?)
-    })();
+    });
     let token = match &result {
         Ok(committed) => Some(committed.token.clone()),
         // 確定の後で通知を失った場合だけ、置き場を読み直して次回の札を合わせる（外の書き手の確定は採らない）

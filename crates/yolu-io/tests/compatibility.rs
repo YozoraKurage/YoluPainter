@@ -25,10 +25,10 @@ fn unity_formats_1_to_6_roundtrip_every_entry() {
         assert_eq!(read.manifest(), rewritten.manifest());
         for s in p.sets() {
             let native = &p.migrated_entries()[&format!("sets/{}/document.utpaint", s.id)];
-            assert_eq!(native.as_ref(), s.document.to_bytes());
+            assert_eq!(&native.bytes().unwrap()[..], &s.document.to_bytes().unwrap()[..]);
             if let Some(sel) = &s.selection {
                 assert_eq!(
-                    p.migrated_entries()[&format!("sets/{}/selection.bin", s.id)].as_ref(),
+                    &p.migrated_entries()[&format!("sets/{}/selection.bin", s.id)].bytes().unwrap()[..],
                     sel.to_bytes()
                 );
             }
@@ -43,14 +43,14 @@ fn unity_formats_1_to_6_roundtrip_every_entry() {
         assert_eq!(upgraded.info().format, 7);
         assert_eq!(upgraded.sets().len(), p.sets().len());
         for (a, b) in p.sets().iter().zip(upgraded.sets()) {
-            assert_eq!(a.document.to_bytes(), b.document.to_bytes());
+            assert_eq!(a.document.to_bytes().unwrap(), b.document.to_bytes().unwrap());
         }
     }
 }
 #[test]
 fn native_header_and_truncation_refused() {
     let p = Project::read(&fixture(1)).unwrap();
-    let original = p.sets()[0].document.to_bytes();
+    let original = p.sets()[0].document.to_bytes().unwrap();
     for offset in [0, 8, 28, 32, 36] {
         let mut b = original.clone();
         b[offset..offset + 4].copy_from_slice(&(-1i32).to_le_bytes());

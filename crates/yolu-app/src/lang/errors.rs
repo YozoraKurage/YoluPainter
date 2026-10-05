@@ -8,6 +8,17 @@ use yolu_core::skin::RigError;
 use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
 use yolu_model::ModelError;
 
+/// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
+pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
+    if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
+        Some("A document exceeds the Layer pixels budget")
+    } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
+        Some("The whole exceeds the Layer pixels budget")
+    } else {
+        None
+    }
+}
+
 impl Lang {
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
@@ -51,7 +62,8 @@ impl Lang {
             Error::Io(e) => self.file_error(e),
             Error::Json(e) => self.pick(error.to_string(), format!("Invalid JSON: {e}")),
             Error::InvalidData(text) => self.pick(text.clone(), "Invalid or unsupported project data".into()),
-            Error::Budget(text) => self.pick(text.clone(), "Size, count or memory limit exceeded".into()),
+            // 設定の予算で断ったものは、どの予算かを英語でも言う（yolu-io の理由の文で見分ける）
+            Error::Budget(text) => self.pick(text.clone(), budget_text(text).unwrap_or("Size, count or memory limit exceeded").into()),
             Error::Unwritable(what) => self.pick(
                 what.to_string(),
                 match what {
@@ -77,6 +89,10 @@ impl Lang {
             }
             Error::SaveConflict(text) if text.contains("外部で作られました") => {
                 self.pick(text.clone(), "A file appeared at the save target; not overwritten".into())
+            }
+            // 開いた .ylp（変えていないセットの中身を写す元）が外で消された・動かされた
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_MISSING) => {
+                self.pick(text.clone(), "The opened .ylp was deleted or moved outside".into())
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(

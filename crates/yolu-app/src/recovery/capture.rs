@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use yolu_core::SelectionMask;
-use yolu_io::{NativeDocument, Project, SetSpec};
+use yolu_io::{DocumentSource, Project, SetSpec};
 
 use crate::engine::Document;
 use crate::lang::Lang;
@@ -33,8 +33,8 @@ pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
     pub material: MaterialRef,
-    /// 文書の写し。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
-    pub snapshot: Option<Document>,
+    /// 文書の写し（タイルは共有）。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
+    pub snapshot: Option<Arc<Document>>,
 }
 
 /// 書き置き 1 回分の材料（別のスレッドへ渡す）。
@@ -53,6 +53,8 @@ pub(crate) struct Capture {
     pub title: String,
     pub project_path: String,
     pub fingerprint: Fingerprint,
+    /// 書く形の閾値（取ったスレッドのもの。書き込みのスレッドも同じ形で書く。本物は既定の値で、試験だけが小さくする）。
+    pub thresholds: yolu_io::Thresholds,
 }
 
 /// いまの状態の札（文書の版が変わらない変更 = セットの名前・マテリアル・並び・今のセットを含む）。
@@ -107,7 +109,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         let snapshot = if read_only || unchanged {
             None
         } else {
-            Some(doc.capture_snapshot().map_err(|_| Refusal::Stroke)?)
+            Some(Arc::new(doc.capture_snapshot().map_err(|_| Refusal::Stroke)?))
         };
         sets.push(SetCapture {
             id: set.id.clone(),
@@ -145,6 +147,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         title,
         project_path,
         fingerprint: fingerprint(state),
+        thresholds: yolu_io::Thresholds::current(),
     })
 }
 
@@ -156,8 +159,9 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
             .base
             .as_ref()
             .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
+        // 正本は全体をメモリに組まない: 写しを渡し、置き場へ書くときに層ごとに流して作る（変わらない層の部分は前の世代と共有）
         let document = match &set.snapshot {
-            Some(doc) => Some(NativeDocument::from_core(doc)?),
+            Some(doc) => Some(DocumentSource::from_core(doc.clone())?),
             None => None,
         };
         if document.is_none() && !in_base {

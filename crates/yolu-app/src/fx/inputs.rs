@@ -722,7 +722,8 @@ impl AppState {
             let png = self
                 .project
                 .as_ref()
-                .and_then(|p| p.project().migrated_entries().get(&format!("sets/{id}/composite/Color.png")).cloned());
+                .and_then(|p| p.project().migrated_entries().get(&format!("sets/{id}/composite/Color.png")).cloned())
+                .and_then(|b| b.bytes().ok());
             let (preview, note) = crate::project::preview_document(png.as_deref(), width, height, lang);
             let reason = match note {
                 Some(n) => format!("{reason}。{n}"),
@@ -800,7 +801,7 @@ mod tests {
         source.apply(Action::SaveProjectAs(path.clone()));
         assert!(!source.modified, "{}", source.message);
         let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
-        let bytes = crate::project::to_core(&native, Lang::Ja, u64::MAX).unwrap().allocated_bytes();
+        let bytes = crate::project::to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, u64::MAX).unwrap().allocated_bytes();
         assert!(bytes >= 4 * 65536);
 
         // 開く（予算にちょうど収まる）: 画像が無いので、入力待ちの読むだけ

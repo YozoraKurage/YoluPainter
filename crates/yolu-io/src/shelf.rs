@@ -214,7 +214,17 @@ impl Shelf {
 }
 impl Project {
     pub fn shelf(&self, budget: u64) -> Result<Shelf> {
-        Shelf::read(self.migrated_entries(), budget)
+        // 棚の索引と中身だけをメモリに読む（正本などの大きなエントリには触らない）
+        let mut files = Files::new();
+        if let Some(b) = self.migrated_entries().get("resources.json") {
+            files.insert("resources.json".into(), b.bytes()?);
+        }
+        for r in self.resources() {
+            if let Some(b) = self.migrated_entries().get(&r.entry) {
+                files.insert(r.entry.clone(), b.bytes()?);
+            }
+        }
+        Shelf::read(&files, budget)
     }
     /// セットと未知のエントリを保ち、棚を差し替えた新しいプロジェクトを検証して返す。形式7へ上げ（`upgraded` と同じ）、
     /// `savedBy` は書き手（最後に保存したアプリ）にする。
@@ -224,18 +234,18 @@ impl Project {
             files.remove(&r.entry);
         }
         files.remove("resources.json");
-        files.extend(shelf.files.clone());
+        files.extend(
+            shelf
+                .files
+                .iter()
+                .map(|(k, v)| (k.clone(), crate::Blob::from(v.clone()))),
+        );
         let upgraded = self.upgraded(writer)?;
         files.insert(
             "ylp.json".into(),
             upgraded.original_archive().entries()["ylp.json"].clone(),
         );
-        Self::from_archive(Archive::build(
-            files,
-            3,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild_shelf(files)
     }
 }
 pub(crate) fn quote(s: &str) -> String {

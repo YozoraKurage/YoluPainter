@@ -893,7 +893,7 @@ fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewher
         id,
         name: name.into(),
         material: MaterialRef::PendingSlot(slot),
-        document: Some(doc),
+        document: Some(doc.into()),
         composites: vec![],
     };
     let readonly_id = "00000000-0000-4000-8000-0000000000aa".to_owned();
@@ -927,7 +927,7 @@ fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewher
     assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
     let reopened = Project::read(&std::fs::read(&saved).unwrap()).unwrap();
     let kept = reopened.sets().iter().find(|x| x.id == readonly_id).unwrap();
-    assert_eq!(kept.document.to_bytes(), rich.to_bytes(), "読むだけのセットの正本はバイト列のまま残る");
+    assert_eq!(kept.document.to_bytes().unwrap(), rich.to_bytes(), "読むだけのセットの正本はバイト列のまま残る");
 }
 
 /// 計測（時間は環境による。`cargo test -p yolu-app --test recovery measure -- --ignored --nocapture`）: 主のスレッドが払う
@@ -1394,7 +1394,7 @@ fn two_set_file(dir: &TempDir) -> (PathBuf, String, String) {
         id: id.into(),
         name: name.into(),
         material: MaterialRef::PendingSlot(slot),
-        document: Some(NativeDocument::from_core(doc).unwrap()),
+        document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: vec![],
     };
     let project = Project::create(
@@ -1436,13 +1436,13 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
     // 変えていないセットは、開いた時のバイト列のまま（正本も選択範囲も）
     for leaf in ["document.utpaint", "selection.bin"] {
         assert_eq!(
-            &*files[&entry(&id_b, leaf)],
-            &*base_entries[&entry(&id_b, leaf)],
+            &files[&entry(&id_b, leaf)].bytes().unwrap()[..],
+            &base_entries[&entry(&id_b, leaf)].bytes().unwrap()[..],
             "変えていないセットの {leaf} はバイト列のまま"
         );
         assert_ne!(
-            &*files[&entry(&id_a, leaf)],
-            &*base_entries[&entry(&id_a, leaf)],
+            &files[&entry(&id_a, leaf)].bytes().unwrap()[..],
+            &base_entries[&entry(&id_a, leaf)].bytes().unwrap()[..],
             "変えたセットの {leaf} は書き直す"
         );
     }

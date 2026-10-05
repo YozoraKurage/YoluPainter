@@ -111,7 +111,7 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
         id: "5f7f1e2e-8d52-4b8e-9a31-0c0c0c0c0c01".into(),
         name: "Set".into(),
         material: yolu_io::MaterialRef::Unassigned,
-        document: Some(native.clone()),
+        document: Some(native.clone().into()),
         composites: Vec::new(),
     };
     let writer = yolu_io::WriterInfo {
@@ -134,7 +134,7 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
         .expect("選択範囲が残る");
     assert_eq!(stored.to_core().unwrap(), mask);
     assert_eq!(
-        reopened.sets()[0].document.to_bytes(),
+        reopened.sets()[0].document.to_bytes().unwrap(),
         native.to_bytes(),
         "正本は変わらない"
     );
@@ -143,7 +143,7 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
     let without = reopened.with_selection(&id, None).unwrap();
     let again = Project::read(&without.to_bytes().unwrap()).unwrap();
     assert!(again.sets()[0].selection.is_none());
-    assert_eq!(again.sets()[0].document.to_bytes(), native.to_bytes());
+    assert_eq!(again.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
 
     // 知らないセットと、正本と大きさの合わない選択範囲は断る
     assert!(with
@@ -221,7 +221,7 @@ fn the_selection_goes_into_and_out_of_every_older_format_without_touching_the_re
         let set = &project.sets()[0];
         let id = set.id.clone();
         let entry = selection_entry(format, &id);
-        let mask = mask_for(&set.document);
+        let mask = mask_for(&set.document.to_native().unwrap());
         let selection = Selection::from_core(&mask).unwrap();
         let had_before = before.entries().contains_key(&entry);
         assert_ne!(
@@ -262,8 +262,8 @@ fn the_selection_goes_into_and_out_of_every_older_format_without_touching_the_re
         );
         for (a, b) in project.sets().iter().zip(reopened.sets()) {
             assert_eq!(
-                a.document.to_bytes(),
-                b.document.to_bytes(),
+                a.document.to_bytes().unwrap(),
+                b.document.to_bytes().unwrap(),
                 "形式{n}: 文書"
             );
             if a.id != id {

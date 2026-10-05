@@ -264,7 +264,7 @@ fn a_ylp_keeps_the_mixing_and_the_version() {
         id: "0f0f0f0f-0000-4000-8000-000000000025".into(),
         name: "Set".into(),
         material: yolu_io::MaterialRef::Unassigned,
-        document: Some(native.clone()),
+        document: Some(native.clone().into()),
         composites: vec![],
     };
     let project = Project::create(writer(), std::slice::from_ref(&spec), &spec.id).unwrap();
@@ -276,7 +276,7 @@ fn a_ylp_keeps_the_mixing_and_the_version() {
     let (again, _) = SaveTarget::open(&path).unwrap();
     let reopened = &again.sets()[0].document;
     assert_eq!(reopened.version(), MIXING_VERSION);
-    assert_eq!(reopened.to_bytes(), native.to_bytes());
+    assert_eq!(reopened.to_bytes().unwrap(), native.to_bytes());
     assert_eq!(
         gradient_ramps(&reopened.to_core().unwrap()),
         vec![mixed_ramp()]

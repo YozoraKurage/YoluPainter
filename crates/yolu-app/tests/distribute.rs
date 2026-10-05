@@ -91,7 +91,7 @@ fn entries_of(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         .original_archive()
         .entries()
         .iter()
-        .map(|(n, b)| (n.clone(), b.to_vec()))
+        .map(|(n, b)| (n.clone(), b.bytes().unwrap().to_vec()))
         .collect()
 }
 
@@ -141,7 +141,7 @@ fn unity_style(path: &Path) -> String {
         .original_archive()
         .entries()
         .iter()
-        .map(|(n, b)| (n.clone(), b.to_vec()))
+        .map(|(n, b)| (n.clone(), b.bytes().unwrap().to_vec()))
         .collect();
     files.insert(
         format!("sets/{id}/imported-original.psd"),
@@ -295,7 +295,7 @@ fn headless_a_psd_imported_into_the_current_set_leaves_no_stale_original_in_the_
     assert_eq!(project.sets().len(), 1);
     assert_eq!(project.sets()[0].id, id);
     assert_eq!(
-        project.sets()[0].document.to_bytes(),
+        project.sets()[0].document.to_bytes().unwrap(),
         NativeDocument::from_core(&s.doc).unwrap().to_bytes(),
         "保存した文書は取り込んだ文書"
     );
@@ -382,7 +382,7 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
     assert_eq!(project.info().format, 7);
     assert_eq!(project.sets().len(), 1);
     assert_eq!(
-        project.sets()[0].document.to_bytes(),
+        project.sets()[0].document.to_bytes().unwrap(),
         NativeDocument::from_core(&s.doc).unwrap().to_bytes()
     );
     assert!(project.unknown_entries().is_empty());
@@ -795,7 +795,7 @@ fn read_only_style(path: &Path) -> (String, String) {
         id: id.into(),
         name: name.into(),
         material: MaterialRef::PendingSlot(slot),
-        document: Some(doc),
+        document: Some(doc.into()),
         composites: vec![],
     };
     let project = Project::create(
@@ -1151,7 +1151,7 @@ fn headless_a_checkpoint_after_a_psd_reimport_has_no_stale_original_and_neither_
         "書き置きに古い原本が残っている"
     );
     assert_eq!(
-        checkpoint.sets()[0].document.to_bytes(),
+        checkpoint.sets()[0].document.to_bytes().unwrap(),
         NativeDocument::from_core(&s.doc).unwrap().to_bytes()
     );
     // 落ちて、復旧で開いて保存しても、古い原本は戻らない

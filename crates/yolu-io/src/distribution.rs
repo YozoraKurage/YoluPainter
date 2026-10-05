@@ -25,17 +25,15 @@
 //! セットの名前・マテリアルの参照（作品の一部）、選択範囲・合成の PNG（絵そのもの）。
 
 use crate::{
-    archive::{split_set, Files},
+    archive::split_set,
     check, guid,
+    package::{Blob, Files},
     project::{json, read_view, required, writer_json},
     shelf::write_index,
-    Archive, NativeValue, Project, Resource, Result, TextureSet, WriterInfo,
+    NativeValue, Project, Resource, Result, TextureSet, WriterInfo,
 };
 use serde_json::Value;
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
 
 /// 配布用の写しで除く物の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -186,7 +184,12 @@ impl References {
     }
     fn scan_documents(&mut self, sets: &[TextureSet]) {
         for set in sets {
-            for field in set.document.fields() {
+            // 正本の骨組み（ID と文字列の項目）を見る。読めない正本は、使っている物を見落とさないよう、棚の全部を使っているとみなす
+            let Ok(skeleton) = set.document.skeleton() else {
+                self.used.extend(self.by_key.values().cloned());
+                continue;
+            };
+            for field in skeleton.fields() {
                 match &field.value {
                     NativeValue::Guid(g) => self.note(&guid(g)),
                     NativeValue::Text(t) => self.scan_text(t.as_bytes()),
@@ -197,8 +200,11 @@ impl References {
     }
     fn scan_looks(&mut self, sets: &[TextureSet], files: &Files) {
         for set in sets {
-            if let Some(bytes) = files.get(&set_entry(&set.id, crate::look::ENTRY)) {
-                self.scan_text(bytes);
+            if let Some(blob) = files.get(&set_entry(&set.id, crate::look::ENTRY)) {
+                match blob.bytes() {
+                    Ok(bytes) => self.scan_text(&bytes),
+                    Err(_) => self.used.extend(self.by_key.values().cloned()),
+                }
             }
         }
     }
@@ -278,7 +284,7 @@ impl Project {
         let received = sets_with(&|s| {
             self.files
                 .get(&set_entry(&s.id, crate::look::ENTRY))
-                .is_some_and(|b| crate::look::has_received(b))
+                .is_some_and(|b| b.bytes().is_ok_and(|b| crate::look::has_received(&b)))
         });
         if !received.is_empty() {
             add(Removal::UnityValues, received);
@@ -301,7 +307,7 @@ impl Project {
     /// 名前 `view.json` で当たる。
     fn model_reference(&self) -> Option<Vec<String>> {
         let bytes = self.files.get("view.json")?;
-        let Ok(view) = read_view(bytes) else {
+        let Ok(view) = bytes.bytes().and_then(|b| read_view(&b)) else {
             return Some(vec!["view.json".into()]);
         };
         let model = view.get("standaloneModel").filter(|m| !m.is_null());
@@ -343,12 +349,7 @@ impl Project {
         }
         let mut files = self.original.files.clone();
         files.remove(&name);
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        self.rebuild_at(files)
     }
 
     /// 配布用の写し: `remove` の種類を除いた形式 7 のプロジェクト。このプロジェクトは変えない。`savedBy` は writer にする。書いたものは読み直して
@@ -365,15 +366,10 @@ impl Project {
             on(Removal::UnusedShelf),
             on(Removal::SourcePaths),
         )?;
-        let mut info = json(required(&files, "ylp.json")?, 65536)?;
+        let mut info = json(&required(&files, "ylp.json")?, 65536)?;
         info["savedBy"] = writer_json(&writer);
-        files.insert("ylp.json".into(), Arc::from(serde_json::to_vec(&info)?));
-        Self::from_archive(Archive::build(
-            files,
-            self.original.level,
-            "application/x-yolupainter",
-            "YOLUPAINTER-YLP-",
-        )?)
+        files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
+        self.rebuild_at(files)
     }
 
     /// 棚以外の種類（`remove` のうち）を除いたエントリ。
@@ -391,7 +387,7 @@ impl Project {
         if on(Removal::UnityValues) {
             for set in &self.sets {
                 let name = set_entry(&set.id, crate::look::ENTRY);
-                let Some(previous) = files.get(&name).cloned() else {
+                let Some(previous) = files.get(&name).map(Blob::bytes).transpose()? else {
                     continue;
                 };
                 if !crate::look::has_received(&previous) {
@@ -401,7 +397,7 @@ impl Project {
                     .map_err(|e| e.in_context(format!("セット「{}」の見た目の設定", set.name)))?
                 {
                     Some(bytes) => {
-                        files.insert(name, Arc::from(bytes));
+                        files.insert(name, Blob::from(bytes));
                     }
                     None => {
                         files.remove(&name);
@@ -420,13 +416,13 @@ impl Project {
             }
         }
         if on(Removal::ModelReference) {
-            if let Some(bytes) = files.get("view.json").cloned() {
-                match read_view(&bytes) {
+            if let Some(blob) = files.get("view.json").cloned() {
+                match blob.bytes().and_then(|b| read_view(&b)) {
                     Ok(mut view) => {
                         clean_view(&mut view);
                         files.insert(
                             "view.json".into(),
-                            Arc::from(serde_json::to_vec_pretty(&view)?),
+                            Blob::from(serde_json::to_vec_pretty(&view)?),
                         );
                     }
                     // 読めない状態は中を確かめられないので、エントリごと除く（状態のエントリは無くても開ける）
@@ -468,7 +464,7 @@ impl Project {
             // リソースの無いプロジェクトは resources.json を持たない
             files.remove("resources.json");
         } else {
-            files.insert("resources.json".into(), Arc::from(write_index(&kept)?));
+            files.insert("resources.json".into(), Blob::from(write_index(&kept)?));
         }
         Ok(())
     }

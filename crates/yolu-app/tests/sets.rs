@@ -565,7 +565,7 @@ fn read_project(path: &std::path::Path) -> yolu_io::Project {
 
 /// .ylp の 1 つのエントリ（形式 7 の並びへ移した名前で）。
 fn zip_entry(path: &std::path::Path, name: &str) -> Vec<u8> {
-    read_project(path).migrated_entries()[name].to_vec()
+    read_project(path).migrated_entries()[name].bytes().unwrap().to_vec()
 }
 
 fn backups(path: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -881,7 +881,7 @@ fn m2_project(path: &std::path::Path) -> Vec<yolu_io::NativeDocument> {
                     name: format!("M2 {i}"),
                     asset: None,
                 },
-                document: Some(n.clone()),
+                document: Some(n.clone().into()),
                 composites: yolu_io::composite_pngs(&core).unwrap(),
             }
         })
@@ -939,12 +939,12 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     assert!(message.contains("書き直した正本 1"), "{message}");
     let saved = read_project(&path);
     assert_eq!(
-        saved.sets()[0].document.to_bytes(),
+        saved.sets()[0].document.to_bytes().unwrap(),
         yolu_io::NativeDocument::from_core(&expected)
             .unwrap()
             .to_bytes()
     );
-    assert_eq!(saved.sets()[1].document.to_bytes(), natives[1].to_bytes());
+    assert_eq!(saved.sets()[1].document.to_bytes().unwrap(), natives[1].to_bytes());
     assert_eq!(saved.sets()[0].document.version(), 21);
     // 書き直したセットの合成は、使っているチャンネルごと（Color のほか Height）に書く。Unity 版が合成の並びからチャンネルを出す
     let first = saved.sets()[0].id.clone();
@@ -958,8 +958,8 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
             channel.standard_name().unwrap()
         );
         assert_eq!(
-            saved.migrated_entries().get(&entry).map(|b| &b[..]),
-            Some(png.as_slice()),
+            saved.migrated_entries().get(&entry).map(|b| b.bytes().unwrap().to_vec()),
+            Some(png.clone()),
             "{entry}"
         );
     }
@@ -967,7 +967,7 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     h.state_mut().state.apply(Action::Undo);
     h.state_mut().state.apply(Action::SaveProject);
     assert_eq!(
-        read_project(&path).sets()[0].document.to_bytes(),
+        read_project(&path).sets()[0].document.to_bytes().unwrap(),
         natives[0].to_bytes()
     );
 }

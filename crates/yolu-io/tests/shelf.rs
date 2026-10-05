@@ -156,12 +156,16 @@ fn project_shelf_roundtrip_preserves_resource_payloads() {
     let reopened = Project::read(&next.to_bytes().unwrap()).unwrap();
     assert_eq!(reopened.shelf(1024).unwrap().entries(), shelf.entries());
     assert_eq!(
-        p.sets()[0].document.to_bytes(),
-        reopened.sets()[0].document.to_bytes()
+        p.sets()[0].document.to_bytes().unwrap(),
+        reopened.sets()[0].document.to_bytes().unwrap()
     );
     assert_eq!(
         Archive::read(&p.to_bytes().unwrap()).unwrap().entries(),
-        p.original_archive().entries()
+        &p.original_archive()
+            .entries()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.bytes().unwrap()))
+            .collect::<std::collections::BTreeMap<_, _>>()
     );
 }
 #[test]
@@ -520,8 +524,8 @@ fn with_shelf_records_the_writer_that_saved_and_keeps_who_created() {
     // 書き手の違いだけが変わり、棚と正本は変わらない
     assert_eq!(saved.shelf(1 << 20).unwrap().entries(), shelf.entries());
     assert_eq!(
-        saved.sets()[0].document.to_bytes(),
-        p.sets()[0].document.to_bytes()
+        saved.sets()[0].document.to_bytes().unwrap(),
+        p.sets()[0].document.to_bytes().unwrap()
     );
 }
 #[test]

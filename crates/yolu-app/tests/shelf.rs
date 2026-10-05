@@ -738,7 +738,7 @@ fn headless_an_unchanged_shelf_keeps_the_opened_files_resources_as_they_were() {
         p.migrated_entries()
             .iter()
             .filter(|(n, _)| n.starts_with("resources"))
-            .map(|(n, b)| (n.clone(), b.to_vec()))
+            .map(|(n, b)| (n.clone(), b.bytes().unwrap().to_vec()))
             .collect()
     };
     assert_eq!(entries(&first), entries(&second));

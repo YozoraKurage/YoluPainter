@@ -26,7 +26,7 @@ fn spec(id: &str, name: &str) -> SetSpec {
             name: name.into(),
             asset: None,
         },
-        document: Some(NativeDocument::from_core(&doc).unwrap()),
+        document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: Vec::new(),
     }
 }
@@ -64,7 +64,7 @@ fn lil() -> MaterialLook {
 fn entries(p: &Project) -> BTreeMap<String, Vec<u8>> {
     p.migrated_entries()
         .iter()
-        .map(|(k, v)| (k.clone(), v.to_vec()))
+        .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
         .collect()
 }
 
@@ -103,7 +103,7 @@ fn an_unreadable_look_is_refused_and_its_bytes_are_kept() {
         .original_archive()
         .entries()
         .iter()
-        .map(|(k, v)| (k.clone(), v.to_vec()))
+        .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
         .collect();
     let name = format!("sets/{A}/look.json");
     let newer = br#"{"format": 9, "kind": "lilToon", "fromTheFuture": true}"#.to_vec();
@@ -113,9 +113,9 @@ fn an_unreadable_look_is_refused_and_its_bytes_are_kept() {
     assert!(q.look(A).is_err(), "読めない設定は断る（黙って既定にしない）");
     // 開けて、ほかのセットや正本は読める。エントリはバイト列のまま残る
     assert_eq!(q.sets().len(), 2);
-    assert_eq!(q.migrated_entries()[&name].to_vec(), newer);
+    assert_eq!(q.migrated_entries()[&name].bytes().unwrap().to_vec(), newer);
     let reread = Project::read(&q.to_bytes().unwrap()).unwrap();
-    assert_eq!(reread.migrated_entries()[&name].to_vec(), newer);
+    assert_eq!(reread.migrated_entries()[&name].bytes().unwrap().to_vec(), newer);
 }
 
 #[test]
@@ -127,12 +127,12 @@ fn rewriting_keeps_unknown_keys_only_from_the_same_format() {
             .original_archive()
             .entries()
             .iter()
-            .map(|(k, v)| (k.clone(), v.to_vec()))
+            .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
             .collect();
         files.insert(name.clone(), bytes.to_vec());
         Project::read(&yolu_io::Archive::from_entries(files).unwrap().to_bytes().unwrap()).unwrap()
     };
-    let json = |p: &Project| -> serde_json::Value { serde_json::from_slice(&p.migrated_entries()[&name]).unwrap() };
+    let json = |p: &Project| -> serde_json::Value { serde_json::from_slice(&p.migrated_entries()[&name].bytes().unwrap()).unwrap() };
     // 同じ形式の中で足されたキーは、書き直しても残る
     let same = with_entry(br#"{"format": 1, "kind": "lilToon", "addedLater": [1, 2]}"#);
     let r = same.with_look(A, Some(&lil())).unwrap();

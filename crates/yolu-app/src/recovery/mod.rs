@@ -690,7 +690,8 @@ impl AppState {
         if self.is_stroking() {
             return;
         }
-        match pool::load(&a.root, &request.pool, &request.id) {
+        let limits = yolu_io::Limits::from_layer_pixels(self.load_source_bytes());
+        match pool::load(&a.root, &request.pool, &request.id, limits, a.session.dir()) {
             Ok((project, info)) => {
                 crate::project::open_recovered(self, project);
                 self.recovery.recovered_from = Some(info.project_path)

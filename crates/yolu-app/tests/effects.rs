@@ -723,8 +723,8 @@ fn a_set_with_generators_is_read_only_until_its_inputs_arrive_and_then_editable(
     let after = std::fs::read(&path).unwrap();
     let (a, b) = (yolu_io::Project::read(&before).unwrap(), yolu_io::Project::read(&after).unwrap());
     assert_eq!(
-        a.sets()[0].document.to_bytes(),
-        b.sets()[0].document.to_bytes(),
+        a.sets()[0].document.to_bytes().unwrap(),
+        b.sets()[0].document.to_bytes().unwrap(),
         "読むだけのセットの正本は書き換えない"
     );
 

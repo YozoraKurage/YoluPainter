@@ -39,7 +39,7 @@ impl Lang {
             StoreError::Changed(_) => "The recovery folder was changed outside".into(),
             StoreError::Busy => "Another writer is using the recovery folder".into(),
             StoreError::Corrupt(_) => "Damaged generation".into(),
-            StoreError::Budget(_) => "Size limit exceeded".into(),
+            StoreError::Budget(why) => crate::lang::budget_text(why).unwrap_or("Size limit exceeded").into(),
             StoreError::InvalidArgument(_) => "Invalid setting".into(),
         }
     }

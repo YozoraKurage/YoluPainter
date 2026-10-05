@@ -371,9 +371,9 @@ mod tests {
         let store = GenerationStore::new(pool);
         let token = store.token().ok();
         let mut files = Files::new();
-        files.insert("document.utpaint".into(), Arc::from(vec![unique; SIZE]));
+        files.insert("document.utpaint".into(), yolu_io::Blob::from(vec![unique; SIZE]));
         if let Some((value, size)) = shared {
-            files.insert("shared.bin".into(), Arc::from(vec![value; size]));
+            files.insert("shared.bin".into(), yolu_io::Blob::from(vec![value; size]));
         }
         store
             .commit(

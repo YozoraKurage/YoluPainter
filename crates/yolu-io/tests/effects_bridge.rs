@@ -1015,7 +1015,7 @@ fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
         id: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
         name: "効果".into(),
         material: yolu_io::MaterialRef::Unassigned,
-        document: Some(NativeDocument::from_core(doc).unwrap()),
+        document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: yolu_io::composite_pngs(doc).unwrap(),
     };
     let project = yolu_io::Project::create(

@@ -249,6 +249,7 @@ pub fn start(root: &Path, keep: Option<usize>, limits: Option<&Limits>) -> Resul
             crashed.push(pool);
         }
     }
+    sweep_held(root);
     if let Some(keep) = keep {
         let _ = sweep(root, keep, None);
     }
@@ -309,6 +310,8 @@ impl Session {
     pub fn close_clean(mut self, root: &Path, keep: Option<usize>, limits: Option<&Limits>) {
         drop(self.lock.take());
         let _ = fs::remove_file(self.dir.join(LOCK));
+        // 復旧から開いたプロジェクトの置き直した中身（閉じたあとは使わない）
+        let _ = fs::remove_dir_all(held_root(&self.dir));
         let empty = GenerationStore::new(&self.dir)
             .list()
             .map(|g| g.is_empty())
@@ -396,16 +399,88 @@ pub fn list(root: &Path, own: Option<&Path>) -> Vec<Row> {
     rows
 }
 
-/// 世代を開く用に読む（全エントリを確かめる）。一覧用の情報は外す。
-pub fn load(root: &Path, pool: &Path, id: &str) -> Result<(Project, RecoveryInfo), RecoveryError> {
+/// 世代を開く用に読む（全エントリを確かめる。上限は設定の「レイヤーの画素」の予算から）。一覧用の情報は外す。メモリに読まなかった
+/// エントリ（正本・PSD の原本などの大きなもの）は、置き場の世代の外（この実行の [`Held`]）へ置き直してから読む: 開いたあとで、その世代が
+/// 整理・破棄されても（復旧の窓の「破棄」・保持数・ディスクの上限・ほかのウィンドウの整理）、読むだけのセット（core で扱えない中身・
+/// 予算超過・効果の入力がそろわない）の正本と、描いていないセットのエントリを保存できるように。置き直しはハードリンクで、できなければ
+/// 流して写す（メモリに全部を持たない）。置き直せなければ、開かずに理由を返す（後で保存できなくなる開き方をしない）。
+pub fn load(
+    root: &Path,
+    pool: &Path,
+    id: &str,
+    limits: yolu_io::Limits,
+    own: &Path,
+) -> Result<(Project, RecoveryInfo), RecoveryError> {
     check_pool(root, pool)?;
-    let generation = GenerationStore::new(pool).load_generation(id)?;
+    let generation = GenerationStore::new(pool).with_limits(limits).load_generation(id)?;
     let mut files = generation.files;
+    if files.values().any(|b| b.in_memory().is_none()) {
+        let held = Held::create(own)?;
+        let keep: yolu_io::Keep = held.clone();
+        for blob in files.values_mut() {
+            *blob = blob.hold_in(&held.0, &keep)?;
+        }
+    }
     let info = files
         .remove(INFO_NAME)
+        .and_then(|b| b.bytes().ok())
         .and_then(|b| RecoveryInfo::from_bytes(&b).ok())
         .unwrap_or_default();
     Ok((Project::from_entries(files)?, info))
+}
+
+/// 復旧から開いたプロジェクトの、置き場の世代の外へ置き直した中身のフォルダ（`<根>/<この実行のプール>.held~/<番号>`）。中身を指す
+/// エントリ（`Blob`）が持ち、最後の 1 つ（とその読み手）が手放されると消える（ほかのプロジェクトを開いた・保存した .ylp を元にした
+/// あと）。正しく閉じるときは `close_clean` が、落ちて残ったものは次の起動の `start` が片付ける（動いているプロセスのものには触らない）。
+/// プールの名前の形ではない（`.` と `~` を含む）ので、プールの一覧・整理・ディスクの量の数えには入らない。
+pub(crate) struct Held(PathBuf);
+
+impl Held {
+    fn create(own: &Path) -> io::Result<std::sync::Arc<Self>> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = held_root(own);
+        fs::create_dir_all(&parent)?;
+        loop {
+            let dir = parent.join(NEXT.fetch_add(1, Ordering::Relaxed).to_string());
+            match fs::create_dir(&dir) {
+                Ok(()) => return Ok(std::sync::Arc::new(Self(dir))),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// この実行のプール（`own`）の、置き直した中身の置き場。
+pub(crate) fn held_root(own: &Path) -> PathBuf {
+    let name = own.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    own.with_file_name(format!("{name}{HELD_SUFFIX}"))
+}
+
+const HELD_SUFFIX: &str = ".held~";
+
+/// 落ちた実行・閉じた実行が残した、置き直した中身の置き場を消す（持ち主のプールが別のプロセスで動いているものは残す）。
+fn sweep_held(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(owner) = name.strip_suffix(HELD_SUFFIX) else {
+            continue;
+        };
+        let path = entry.path();
+        if is_pool_name(owner) && is_real_dir(&path) && kind(&root.join(owner)) != Kind::Live {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
 }
 
 /// 世代を 1 つ捨てる。プールが空になれば（この実行のプール以外は）プールごと消す。
