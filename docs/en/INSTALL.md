@@ -7,6 +7,8 @@ Download from [Releases](https://github.com/YozoraKurage/YoluPainter-rs/releases
 - `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. Uninstall through Settings → Apps; you will be asked whether to remove settings, brushes, and recovery data as well (they remain if no prompt is shown). Use `/S` for silent installation, `/ASSOC=1` to enable file association (`/ASSOC=0` to disable it), and `/RUN` to launch the application after installation.
 - `yolupainter-<version>-x86_64-pc-windows-msvc.zip`: extract and run `yolupainter.exe`; no installation is needed.
 
+Both include `README.md` and a `docs` folder (English under `docs/en`) with this document, so they can be read offline.
+
 ## Updates
 
 On first launch, the application asks whether to check for updates at startup. Only choosing Yes enables a request to GitHub for the latest version on each launch. Change this at any time through Help → Check for Updates at Startup, or check manually through Help → Check for Updates….

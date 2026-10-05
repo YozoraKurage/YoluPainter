@@ -35,14 +35,14 @@ You need stable Rust and a C/C++ build environment.
 cargo build --release -p yolu-app --locked
 ```
 
-See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (Japanese) for tests and the Unity bridge.
+See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/docs/DEVELOPMENT.md) (Japanese) for tests and the Unity bridge.
 
 ## Documentation
 
 - [Features and controls](docs/en/GUIDE.md)
 - [Working with Unity](docs/en/UNITY.md) (Live Link, exchanging `.ylp` files with the Unity version)
-- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md)
-- [Changelog](CHANGELOG.md)
+- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md)
+- [Changelog](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/CHANGELOG.md)
 
 ## Privacy
 

@@ -35,14 +35,14 @@ Rust の stable と C/C++ のビルド環境が要ります。
 cargo build --release -p yolu-app --locked
 ```
 
-OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) にあります。
+OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用のブリッジは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/docs/DEVELOPMENT.md) にあります。
 
 ## 文書
 
 - [機能と操作](docs/GUIDE.md)
 - [Unity との連携](docs/UNITY.md)（Live Link・Unity 版との `.ylp` の受け渡し）
-- [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)
-- [変更の記録](CHANGELOG.md)
+- [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)
+- [変更の記録](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/CHANGELOG.md)
 
 ## プライバシー
 

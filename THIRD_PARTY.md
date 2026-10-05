@@ -12,7 +12,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 クレートに原文が無い場合は、そのクレートの発行時コミットにある上流の原文を取得する。
 単に同じ種類の一般的な許諾文で代用せず、著作権表記と NOTICE も保持する。
 
-生成方法は [開発用の手順](docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
+生成方法は [開発用の手順](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/docs/DEVELOPMENT.md#配布用の許諾全文) を参照。
 一覧の JSON と Markdown、成功した製品の `THIRD_PARTY_LICENSES.txt` は `target/third-party/<target>/<クレート>/` にできる（`--target` を省くと Windows GNU 用を `target/third-party/<クレート>/` に出力）。
 生成物は Git に入れない。この文書は確認済みの依存構成の記録で、配布には生成した全文を同梱する。
 
@@ -63,7 +63,7 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 標準書体の OFL-1.1 と Ubuntu Font Licence は、各書体の著作権・名称・条件を原文のまま全文束に含める。
 書体を変更して配る場合は、予約された書体名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
-[既存のアイコンの表記](crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
+[既存のアイコンの表記](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
 アイコン 102 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
 Phosphor はブラシ・グラデーション・楕円選択・多角形選択・ID 選択・アンカーに使っている。
 
@@ -74,7 +74,7 @@ Phosphor はブラシ・グラデーション・楕円選択・多角形選択�
 配布元は [googlefonts/morisawa-biz-ud-gothic](https://github.com/googlefonts/morisawa-biz-ud-gothic) のリリース v1.051
 （コミット `18934af56b9c003ca58c54bffbf226848cb11032`）の TTF で、加工せずに `crates/yolu-app/assets/fonts/` へ置く。
 許諾の全文は同じ場所の `OFL.txt`（配布元の同じコミットの原文）と
-[書体の第三者表記](crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
+[書体の第三者表記](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md) に保持し、app の全文束にも含める。書体はクレートではないので、上の件数には含めない
 （アイコンと同じ扱い）。
 
 | 同梱ファイル | SHA-256 |
@@ -97,7 +97,7 @@ Linux 専用の `rfd` バックエンドにある window_identifier の MIT 原�
 （`crates/yolu-app/src/look/liltoon.rs`）は、[lilToon](https://github.com/lilxyzw/lilToon) 2.3.4（**MIT**、Copyright (c) 2020-present lilxyzw）の
 シェーダーとインスペクターから式と値を移したもの。lilToon のファイル・テクスチャは同梱しない。光の式は lilToon に同梱の
 OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilToon の `lilHashRGB4` からで、その元は Shadertoy の
-「Simplest Fastest 2D Hash」（MdcfDj、**Unlicense**。原文の先頭の表記で確認）。MIT の原文と出どころは [再現の第三者表記](crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
+「Simplest Fastest 2D Hash」（MdcfDj、**Unlicense**。原文の先頭の表記で確認）。MIT の原文と出どころは [再現の第三者表記](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md)
 にあり、`tools/licenses-reviewed.json` の `bundled` で照合して app の全文束に含める。クレートではないので、上の件数には含めない。
 
 ## グラデーションの混色（Oklab）
@@ -129,7 +129,7 @@ Windows 配布物や Unity の Plugins に入れない。Wine や Windows の DL
 `SHA256SUMS`・出どころと束の SHA-256 を書いた `README.md` は `crates/yolu-brush-sets/data/krita4/` にある。
 作者の表記（CC0 では不要）: David Revoy（Deevad）と、Ramon Miranda・Razvanc・Radian・Wolthera・Storm・Scottyp ほかの派生、Krita プロジェクト。
 Krita のプリセット（`.kpp`）・SVG の筆先・パターンは入れていない。このアプリでの設定（半径・間隔など）は独自のもの。
-[筆先の第三者表記](crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
+[筆先の第三者表記](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
 `tools/licenses-reviewed.json` で筆先 76 個・元の宣言・取り込み記録・表記のハッシュを照合する。
 ロゴを除くアプリの同梱画像はこの筆先と前述のアイコンであり、試験の fixtures・snapshots は配布へ含めない。
 
@@ -196,8 +196,8 @@ python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-ap
 
 原文取得後は `--offline` でも同じ照合ができる。
 配布物には対象ごとの `THIRD_PARTY.md` を `DEPENDENCIES.md`、全文を `THIRD_PARTY_LICENSES.txt` として同梱する。
-`LICENSE`・この `THIRD_PARTY.md`・`README.md` も同梱する。zip・tar.gz とインストーラーは
-`xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](docs/RELEASING.md) と一致する。
+`LICENSE`・この `THIRD_PARTY.md`・`README.md`・`README.en.md` と、使う人向けの `docs/`（日英。開発とリリースの手順は入れない）も同梱する。
+zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使い、NSIS でも同じ文書を入れる。[配布の手順](https://github.com/YozoraKurage/YoluPainter-rs/blob/main/docs/RELEASING.md) と一致する。
 別の対象の一覧を流用しない。結果は `target/third-party/<target>/<クレート>/` に出力する。
 
 | 対象 | app（更新依存込み） | bridge | update 単独 | xtask | app の全文束 |
