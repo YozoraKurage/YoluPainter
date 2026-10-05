@@ -191,10 +191,17 @@ fn unrelated_edits_keep_the_saved_selection_entries_byte_for_byte() {
         assert_eq!(edited.original_archive().entries()[name].bytes().unwrap().as_ref(), bytes.as_slice(), "{name}");
     }
     assert_eq!(format_of(&edited), 8);
-    // 配布用の写しも残す（除く種類に入れていない）
-    let copy = edited.for_distribution(writer(), &yolu_io::Removal::ALL).unwrap();
+    // 配布用の写しは、除く種類に「覚えた選択範囲」を入れなければ残し（形式 8 のまま）、入れれば除いて形式 7 にする
+    let keep: Vec<yolu_io::Removal> = yolu_io::Removal::ALL
+        .into_iter()
+        .filter(|r| *r != yolu_io::Removal::SavedSelections)
+        .collect();
+    let copy = edited.for_distribution(writer(), &keep).unwrap();
     assert_eq!(copy.saved_selections(A).unwrap().items.len(), 1);
     assert_eq!(format_of(&copy), 8);
+    let stripped = edited.for_distribution(writer(), &yolu_io::Removal::ALL).unwrap();
+    assert!(stripped.saved_selections(A).unwrap().items.is_empty());
+    assert_eq!(format_of(&stripped), 7);
 }
 
 #[test]
