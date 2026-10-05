@@ -416,6 +416,7 @@ impl YoluApp {
             app.state.attach_subtool_store(dir.join("subtools"));
             app.state.ramp_sets.attach(dir.join("gradients"));
             app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
+            app.state.view3d.pose.pose_presets.attach(dir.join("pose_presets"));
         }
         // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
         app.state.library.attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));

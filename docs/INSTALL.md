@@ -35,6 +35,7 @@
 | `%APPDATA%\YoluPainter\gradients\` | グラデーションのセット | 残る |
 | `%APPDATA%\YoluPainter\colorsets\` | カラーセット | 残る |
 | `%APPDATA%\YoluPainter\hide_presets\` | 面の隠し方のプリセット | 残る |
+| `%APPDATA%\YoluPainter\pose_presets\` | ポーズのプリセット | 残る |
 
 残る物と、このアプリが作ったのではないファイルがあるときは、`%APPDATA%\YoluPainter` のフォルダごと残ります。設定で棚の場所や復旧の置き場を別のフォルダにしているときは、そのフォルダには触りません。`.ylp` などの文書は、どちらの場合も消えません。
 

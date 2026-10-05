@@ -6,12 +6,14 @@
 //!   文書ごとにメモリの予算で古いものが消えるので、混ぜると片方の都合で片方が消える。ポーズのモードの間は Ctrl+Z がこちらへ来る。
 //! - ストロークの最中はポーズを変えない（描いている間の当たりと遮蔽の覚えは、そのスナップショットのもの）。断って知らせる。
 //! - FBX は別のスレッドで読む（読み込み・変換・休みの形の組み立て）。読み終わったらフレームの初めに入れ替える。
-//! - ポーズはまだ保存しない（保存するなら形式は後で決める）。
-//! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`（どちらもポーズの取り消しの並びとは別の持ち物は持たない:
-//!   数値の編集・戻しは 1 つの取り消しの段、隠すのは見せ方の状態で取り消しの対象ではない）。
+//! - ポーズは `.ylp` に保存しない（保存するなら形式は後で決める）。名前を付けて残すのは個人の設定のフォルダのプリセット（`presets`）。
+//! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`、ポーズのプリセット（保存・当てる・左右反転）は
+//!   `presets`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・プリセットを当てるのは 1 つの取り消しの段、
+//!   隠すのは見せ方の状態で取り消しの対象ではない）。
 
 pub mod edit;
 pub mod hide;
+pub mod presets;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -81,6 +83,8 @@ pub struct PoseSession {
     pub euler_hint: Option<edit::EulerHint>,
     /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
     pub hide: hide::HideState,
+    /// 最後にポーズのプリセットを当てたとき、このモデルの骨へ対応させられず飛ばした項目。
+    pub preset_notes: Vec<presets::Skipped>,
 }
 
 impl PoseSession {
@@ -143,6 +147,13 @@ pub struct PoseEditor {
     pub panel_content: f32,
     /// 隠し方を保存する名前の欄（決めた文字。空なら既定の名前）。
     pub hide_name: String,
+    /// ポーズのプリセット（個人の設定のフォルダ。モデルをまたいで残る）。
+    pub pose_presets: presets::store::Presets,
+    /// ポーズを保存する名前の欄（決めた文字。空なら既定の名前）。
+    pub preset_name: String,
+    /// 名前を変えているプリセットと、その欄に初めのフォーカスを渡したか。
+    pub preset_rename: Option<u32>,
+    pub preset_rename_started: bool,
 }
 
 impl PoseEditor {
@@ -210,6 +221,7 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         warnings: loaded.warnings,
         euler_hint: None,
         hide: hide::HideState::default(),
+        preset_notes: Vec::new(),
     });
     view3d.pose.drag = None;
     // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）

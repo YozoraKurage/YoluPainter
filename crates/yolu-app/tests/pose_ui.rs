@@ -16,6 +16,7 @@ use yolu_app::ui::widgets;
 use yolu_app::view3d::pose::edit;
 use yolu_app::view3d::pose::hide::store::PresetEntry;
 use yolu_app::view3d::pose::hide::{self, DEFAULT_THRESHOLD};
+use yolu_app::view3d::pose::presets;
 use yolu_app::view3d::pose::{self, PoseAction};
 use yolu_app::{Tab, YoluApp};
 use yolu_core::glam::{Quat, Vec3};
@@ -1030,6 +1031,355 @@ fn a_preset_whose_bones_do_not_fit_is_skipped_with_a_reason_shown_as_a_notice() 
     );
 }
 
+// ───────── ポーズのプリセット ─────────
+
+/// 右上腕を回して・動かし、頭を傾けたポーズにする（取り消しに 1 段）。
+fn bend_arm(h: &mut H) {
+    let mut p = session(h).pose().clone();
+    let arm = bone(h, "右上腕");
+    let head = bone(h, "頭");
+    p.locals[arm].rotation = Quat::from_euler(yolu_core::glam::EulerRot::XYZ, 0.2, 0.4, -0.9);
+    p.locals[arm].translation += Vec3::new(0.02, 0.01, -0.03);
+    p.locals[head].rotation = Quat::from_rotation_z(0.3);
+    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    h.run();
+}
+
+fn near(a: &yolu_core::skin::BoneTransform, b: &yolu_core::skin::BoneTransform) -> bool {
+    (a.translation - b.translation).length() < 1e-5
+        && a.rotation.dot(b.rotation).abs() > 0.999_999
+        && (a.scale - b.scale).abs().max_element() < 1e-5
+}
+
+fn pose_preset_files(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".ylpose"))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
+    let dir = temp_dir("pose-presets");
+    let mut h = figure(256);
+    h.state_mut()
+        .state
+        .view3d
+        .pose
+        .pose_presets
+        .attach(dir.clone());
+    float_pose_tab(&mut h);
+    let (arm, left_arm, head) = (
+        bone(&h, "右上腕"),
+        bone(&h, "左上腕"),
+        bone(&h, "頭"),
+    );
+    // 休みの形では保存できない（保存するものが無い）
+    assert!(disabled(&h, "ポーズを保存"));
+    bend_arm(&mut h);
+    let bent = session(&h).pose().clone();
+    assert!(!disabled(&h, "ポーズを保存"));
+    // 名前を付けて保存
+    let save = h.get_by_label("ポーズを保存").rect();
+    type_over(&mut h, pos2(save.left() - 60.0, save.center().y), "構え");
+    assert_eq!(h.state().state.view3d.pose.preset_name, "構え");
+    h.get_by_label("ポーズを保存").click();
+    h.run();
+    let id = {
+        let presets = &h.state().state.view3d.pose.pose_presets;
+        assert_eq!(presets.items().len(), 1);
+        assert_eq!(presets.items()[0].name, "構え");
+        assert_eq!(presets.items()[0].entries.len(), 2, "動かした骨の 2 本だけ");
+        presets.items()[0].id
+    };
+    assert_eq!(pose_preset_files(&dir), 1, "個人の設定のフォルダに書いた");
+    assert!(h.state().state.view3d.pose.preset_name.is_empty(), "保存したら名前の欄は空へ");
+    // 名前の欄が空なら既定の名前
+    h.get_by_label("ポーズを保存").click();
+    h.run();
+    assert_eq!(h.state().state.view3d.pose.pose_presets.items()[1].name, "ポーズ");
+    // 休みの形へ戻して、名前を押して当てる: 取り消しの 1 段
+    h.get_by_label("ポーズを戻す（ファイルのポーズへ）").click();
+    h.run();
+    assert!(!session(&h).is_posed());
+    let steps = undo_len(&h);
+    h.get_by_label("構え").click();
+    h.run();
+    assert_eq!(undo_len(&h), steps + 1, "当てるのは取り消しの 1 段");
+    for (i, (a, b)) in session(&h).pose().locals.iter().zip(&bent.locals).enumerate() {
+        assert!(near(a, b), "骨 {i}");
+    }
+    assert!(
+        h.state().state.message.contains("構え"),
+        "{}",
+        h.state().state.message
+    );
+    h.get_by_label("取り消し").click();
+    h.run();
+    assert!(!session(&h).is_posed(), "取り消すと当てる前");
+    // 左右を反転して当てる（行の右のアイコン。1 行目は「構え」）
+    let mirror = h
+        .get_all_by_label("左右を反転して当てる")
+        .map(|n| n.rect())
+        .next()
+        .unwrap();
+    click(&mut h, mirror.center());
+    assert!(session(&h).pose().locals[left_arm] != session(&h).rig.bones()[left_arm].rest, "左腕が動く");
+    assert_eq!(session(&h).pose().locals[arm], session(&h).rig.bones()[arm].rest, "右腕は休みのまま");
+    assert!(near(&session(&h).pose().locals[head], &bent.locals[head]), "対にならない頭はそのまま");
+    assert!(h.state().state.message.contains("左右反転"), "{}", h.state().state.message);
+    // 今のポーズで上書き（名前はそのまま・ほかは変わらない）
+    let overwrite = h
+        .get_all_by_label("今のポーズで上書き")
+        .map(|n| n.rect())
+        .next()
+        .unwrap();
+    click(&mut h, overwrite.center());
+    {
+        let presets = &h.state().state.view3d.pose.pose_presets;
+        assert_eq!(presets.get(id).unwrap().name, "構え");
+        let paths: Vec<String> = presets
+            .get(id)
+            .unwrap()
+            .entries
+            .iter()
+            .map(|e| e.path_text())
+            .collect();
+        assert_eq!(paths.len(), 2, "左腕と頭: {paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("左上腕")), "{paths:?}");
+        assert_eq!(presets.items()[1].entries.len(), 2, "ほかは変わらない");
+    }
+    assert_eq!(pose_preset_files(&dir), 2);
+    // 名前を変える（編集のアイコンで欄になる。Enter で決める）
+    let edit_button = h
+        .get_all_by_label("名前を変える")
+        .map(|n| n.rect())
+        .next()
+        .unwrap();
+    click(&mut h, edit_button.center());
+    h.run();
+    assert_eq!(h.state().state.view3d.pose.preset_rename, Some(id));
+    key(&h, Key::A, Modifiers::COMMAND);
+    h.step();
+    h.event(Event::Text("左を曲げる".to_owned()));
+    h.step();
+    key(&h, Key::Enter, Modifiers::NONE);
+    h.run();
+    h.run();
+    assert_eq!(
+        h.state().state.view3d.pose.pose_presets.get(id).unwrap().name,
+        "左を曲げる"
+    );
+    assert_eq!(h.state().state.view3d.pose.preset_rename, None, "決めたら欄は元の名前の表示へ");
+    assert!(h.query_by_label("左を曲げる").is_some());
+    // 読み直しても同じ（名前の変更も上書きもファイルに入っている）
+    let mut again = pose_presets_in(&dir);
+    assert!(again.problems.is_empty());
+    assert_eq!(again.items(), h.state().state.view3d.pose.pose_presets.items());
+    // 消す: 選んだ 1 つだけ
+    let delete = h
+        .get_all_by_label("このポーズを消す")
+        .map(|n| n.rect())
+        .next()
+        .unwrap();
+    click(&mut h, delete.center());
+    assert!(h.state().state.view3d.pose.pose_presets.get(id).is_none());
+    assert_eq!(h.state().state.view3d.pose.pose_presets.items().len(), 1);
+    assert_eq!(pose_preset_files(&dir), 1);
+    assert!(h.query_by_label("左を曲げる").is_none());
+    again.attach(dir.clone());
+    assert_eq!(again.items().len(), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn pose_presets_in(dir: &std::path::Path) -> presets::store::Presets {
+    let mut p = presets::store::Presets::default();
+    p.attach(dir.to_path_buf());
+    p
+}
+
+#[test]
+fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
+    let dir = temp_dir("pose-presets-stroking");
+    let mut h = figure(256);
+    h.state_mut()
+        .state
+        .view3d
+        .pose
+        .pose_presets
+        .attach(dir.clone());
+    float_pose_tab(&mut h);
+    bend_arm(&mut h);
+    let id = presets::save_preset(&mut h.state_mut().state, "構え").unwrap();
+    pose::reset(&mut h.state_mut().state.view3d).unwrap();
+    h.run();
+    for label in [
+        "左右を反転して当てる",
+        "今のポーズで上書き",
+        "名前を変える",
+        "このポーズを消す",
+    ] {
+        assert!(!disabled(&h, label), "{label}");
+    }
+    // 描いている最中は、保存も当てるのも消すのも押せない
+    {
+        let app = &mut h.state_mut().state;
+        let layer = app.selected_layer.unwrap();
+        let settings = app.stroke_settings(false);
+        app.stroke = Some(app.doc.begin_stroke(layer, &settings).unwrap());
+    }
+    h.run();
+    assert!(h.state().state.is_stroking());
+    for label in [
+        "ポーズを保存",
+        "左右を反転して当てる",
+        "今のポーズで上書き",
+        "名前を変える",
+        "このポーズを消す",
+    ] {
+        assert!(disabled(&h, label), "{label}");
+    }
+    assert!(disabled(&h, "構え"), "名前のボタンも押せない");
+    let steps = undo_len(&h);
+    assert!(!presets::apply_preset(&mut h.state_mut().state, id, false));
+    assert_eq!(undo_len(&h), steps);
+    assert!(!session(&h).is_posed());
+    assert_eq!(
+        h.state().state.message,
+        yolu_app::view3d::model::ViewError::Stroking.to_string()
+    );
+    assert_eq!(pose_preset_files(&dir), 1);
+    // 終わると使える
+    {
+        let app = &mut h.state_mut().state;
+        let stroke = app.stroke.take().unwrap();
+        app.doc.cancel_stroke(stroke);
+    }
+    h.run();
+    assert!(!disabled(&h, "左右を反転して当てる"));
+    h.get_by_label("構え").click();
+    h.run();
+    assert!(session(&h).is_posed());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_pose_preset_whose_bones_do_not_fit_applies_what_fits_and_shows_the_reasons_as_a_notice() {
+    use yolu_app::view3d::pose::presets::store::PoseEntry;
+    let mut h = figure(256);
+    float_pose_tab(&mut h);
+    let entry = |path: &[&str]| PoseEntry {
+        path: path.iter().map(|s| s.to_string()).collect(),
+        translation: Vec3::ZERO,
+        rotation: Quat::from_rotation_y(0.5),
+        scale: Vec3::ONE,
+    };
+    h.state_mut()
+        .state
+        .view3d
+        .pose
+        .pose_presets
+        .add(
+            "合わない",
+            vec![
+                entry(&["腰", "背骨", "胸", "首", "頭"]),
+                entry(&["別の根", "頭"]),
+            ],
+        )
+        .unwrap();
+    h.run();
+    assert!(
+        !texts(&h).iter().any(|t| t.starts_with("知らせ")),
+        "当てるまでは知らせない"
+    );
+    h.get_by_label("合わない").click();
+    h.run();
+    let head = bone(&h, "頭");
+    assert!(session(&h).pose().locals[head] != session(&h).rig.bones()[head].rest, "合う骨は当たる");
+    let notes = &session(&h).preset_notes;
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].path, "別の根/頭");
+    assert!(notes[0].describe(Lang::Ja).contains("ボーンがありません"));
+    assert!(
+        texts(&h).iter().any(|t| t == "知らせ 1 件"),
+        "{:?}",
+        texts(&h)
+    );
+    assert!(h.state().state.message.contains("飛ばしたボーン 1 件"), "{}", h.state().state.message);
+    // 1 つも合わないものは、ポーズを変えない
+    let before = session(&h).pose().clone();
+    let none = h
+        .state_mut()
+        .state
+        .view3d
+        .pose
+        .pose_presets
+        .add("全部合わない", vec![entry(&["別の根"])])
+        .unwrap();
+    assert!(!presets::apply_preset(&mut h.state_mut().state, none, false));
+    assert_eq!(session(&h).pose(), &before);
+    // 読めなかったファイルも、同じ印で知らせる
+    let dir = temp_dir("pose-presets-broken");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pose-1.ylpose"), "壊れた").unwrap();
+    h.state_mut()
+        .state
+        .view3d
+        .pose
+        .pose_presets
+        .attach(dir.clone());
+    h.run();
+    assert!(texts(&h).iter().any(|t| t == "知らせ 2 件"), "{:?}", texts(&h));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_app_keeps_pose_presets_in_the_folder_next_to_its_settings_and_reads_them_back() {
+    let dir = temp_dir("pose-presets-app");
+    let settings = dir.join("settings.conf");
+    let ctx = egui::Context::default();
+    let mut app =
+        YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
+    app.state.apply(Action::Pose(PoseAction::LoadFigure));
+    let mut p = app.state.view3d.pose.session.as_ref().unwrap().pose().clone();
+    let arm = app
+        .state
+        .view3d
+        .pose
+        .session
+        .as_ref()
+        .unwrap()
+        .rig
+        .bones()
+        .iter()
+        .position(|b| b.name == "右上腕")
+        .unwrap();
+    p.locals[arm].rotation = Quat::from_rotation_z(-0.8);
+    pose::set_pose(&mut app.state.view3d, p).unwrap();
+    let id = presets::save_preset(&mut app.state, "構え").unwrap();
+    assert!(dir.join("pose_presets").join(format!("pose-{id}.ylpose")).is_file());
+    // 次の起動で、同じポーズのプリセットが一覧にある（隠し方のフォルダとは別）
+    let again = YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
+    assert_eq!(again.state.view3d.pose.pose_presets.items().len(), 1);
+    assert_eq!(again.state.view3d.pose.pose_presets.items()[0].name, "構え");
+    assert!(again.state.view3d.pose.hide_presets.items().is_empty());
+    // 壊れたファイルは読み飛ばして理由を残し、ほかは読む
+    std::fs::write(dir.join("pose_presets").join("pose-9.ylpose"), "x").unwrap();
+    let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
+    assert_eq!(broken.state.view3d.pose.pose_presets.items().len(), 1);
+    assert_eq!(broken.state.view3d.pose.pose_presets.problems.len(), 1);
+    assert_eq!(broken.state.view3d.pose.pose_presets.problems[0].file, "pose-9.ylpose");
+    // 設定が無ければ、この起動の間だけ
+    let mut none = YoluApp::for_context_with_settings(&ctx, None, PenInput::detached());
+    assert!(none.state.view3d.pose.pose_presets.dir().is_none());
+    none.state.apply(Action::Pose(PoseAction::LoadFigure));
+    assert!(presets::save_preset(&mut none.state, "メモリ").is_some());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 // ───────── 日英・文字の収まり ─────────
 
 fn drawn(shape: &Shape, out: &mut Vec<String>) {
@@ -1150,6 +1500,30 @@ fn pose_states(h: &mut H, visit: &mut dyn FnMut(&mut H, &str)) {
     }
     h.run();
     scan(h, "presets and notice", visit);
+    // ポーズのプリセット: 保存した名前（既定の名前）・飛ばしたボーンの知らせ
+    bend_arm(h);
+    {
+        let app = &mut h.state_mut().state;
+        let id = presets::save_preset(app, "").expect("保存できる");
+        let other = app
+            .view3d
+            .pose
+            .pose_presets
+            .add(
+                "Unmatched",
+                vec![presets::store::PoseEntry {
+                    path: vec!["x".into(), "y".into()],
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                }],
+            )
+            .unwrap();
+        presets::apply_preset(app, id, true);
+        presets::apply_preset(app, other, false);
+    }
+    h.run();
+    scan(h, "pose presets and notice", visit);
 }
 
 #[test]
@@ -1261,6 +1635,41 @@ fn pose_tab_docked_snapshot() {
     click_tab(&mut h, Tab::Pose);
     select(&mut h, "右上腕");
     snapshots.add(h.try_snapshot("pose_tab_docked"));
+}
+
+/// ポーズのプリセットの節: 保存した名前の一覧（左右反転・上書き・名前を変える・消すの印）と、飛ばしたボーンの知らせ。
+#[test]
+fn pose_presets_snapshot() {
+    use yolu_app::view3d::pose::presets::store::PoseEntry;
+    let mut snapshots = SnapshotResults::new();
+    let mut h = figure(256);
+    float_pose_tab(&mut h);
+    for section in ["pose.bones", "pose.hide", "pose.shapes"] {
+        h.state_mut().state.sections.insert(section, false);
+    }
+    bend_arm(&mut h);
+    {
+        let app = &mut h.state_mut().state;
+        presets::save_preset(app, "右を曲げる").unwrap();
+        presets::save_preset(app, "").unwrap();
+        let other = app
+            .view3d
+            .pose
+            .pose_presets
+            .add(
+                "合わない",
+                vec![PoseEntry {
+                    path: vec!["別の根".into(), "頭".into()],
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::ONE,
+                }],
+            )
+            .unwrap();
+        presets::apply_preset(app, other, false);
+    }
+    h.run();
+    snapshots.add(h.try_snapshot("pose_tab_presets"));
 }
 
 #[test]
