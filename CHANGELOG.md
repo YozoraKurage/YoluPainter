@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.2
+
+### 日本語
+
+- **保存**: 開いている .ylp を外で名前を変える・動かす・消す・置き換えても、別名で保存できます。保存の途中でアプリが落ちても、途中で切れた退避や一時ファイルが次の保存で片付きます。Windows で保存先がほかのアプリに一時的に掴まれていても、少し待ってやり直します。
+- **メモリ**: 自動の上限を物理メモリに見合う値に上げました（レイヤーのメモリは物理メモリの半分）。設定の「レイヤーの画素」は「レイヤーのメモリ」と呼びます。
+- **取り込みの上限**: .ylp に保存できない大きさ（1 辺 8192 を超える）・層の数（2048 を超える）・グループの入れ子（64 段を超える）の PSD は、取り込む前に理由を出して断ります。Live Link でマテリアルが 64 を超えるときは 64 までセットを作り、数を知らせます。
+- **Live Link**: スタンドアロンを最小化していても動きます。Unity で発光のテクスチャが空のマテリアルも、3D ビューで光ります。Unity の「Open in YoluPainter」が、変えた Link name で起動します。
+- **lilToon**: スロットの選択肢から「新しいチャンネル」を作って割り当てられます。
+- **選択**: 選択があるときの Esc で選択を解除します。
+- **そのほか**: ネットワーク上のモデルの参照は、開くときに自動で読みに行きません。Ctrl+- で画面全体が縮まなくなりました。「YoluPainter について」の表示と、画面の文の言葉を直しました。
+
+### English
+
+- **Saving**: You can save under another name even after the open .ylp was renamed, moved, deleted or replaced outside the app. Leftovers from a save interrupted by a crash are cleaned up by the next save. On Windows, saving retries briefly when another app holds the file.
+- **Memory**: Automatic limits now follow physical memory (layer memory is half of it). "Layer pixels" is now called "Layer memory".
+- **Import limits**: PSDs that cannot be saved as .ylp (edge over 8192, more than 2048 layers, groups nested over 64 levels) are refused before import. Live Link creates at most 64 sets and tells you how many were left out.
+- **Live Link**: Works while the standalone is minimized. Materials whose emission texture is empty in Unity now glow in the 3D view. "Open in YoluPainter" in Unity starts the standalone with the changed Link name.
+- **lilToon**: Slots can create and assign a new channel.
+- **Selection**: Esc deselects when there is a selection.
+- **Other**: Network paths to models are not read automatically when opening. Ctrl+- no longer shrinks the whole UI. Fixed the About text and wording in messages.
+
 ## 0.3.1
 
 ### 日本語
