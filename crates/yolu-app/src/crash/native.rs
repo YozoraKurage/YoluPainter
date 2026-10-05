@@ -1,13 +1,25 @@
 //! ネイティブ障害の最小記録。ファイルとヘッダーは平常時に準備する。
 use std::{
+    fmt::Write as _,
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, OnceLock},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        OnceLock,
+    },
 };
-#[cfg(windows)]
-use std::sync::atomic::Ordering;
 static OUTPUT: OnceLock<Output> = OnceLock::new();
 static ENTERED: AtomicBool = AtomicBool::new(false);
+/// 確保の失敗の欄を書いた（ヘッダーは書いてある。落ちたとき、ヘッダーを重ねて書かずに、欄の後ろへ続ける）。
+static ALLOC_SEEN: AtomicBool = AtomicBool::new(false);
+/// 確保の失敗を書いている最中（記録のための確保の失敗や、別のスレッドの同時の失敗で、重ねて書かない）。
+static ALLOC_BUSY: AtomicBool = AtomicBool::new(false);
+static ALLOC_FAILURES: AtomicU64 = AtomicU64::new(0);
+static IMAGE_BASE: AtomicUsize = AtomicUsize::new(0);
+/// 確保の失敗の欄の大きさ（バイト。ヘッダーの直後に固定の大きさで置き、続けて起きた失敗は同じ場所へ上書きする。落ちた詳細はこの後ろ）。
+const ALLOC_BLOCK: usize = 1024;
+/// 確保の失敗の欄に書く、呼び出しの番地の数。
+const ALLOC_FRAMES: usize = 32;
 struct Output {
     file: File,
     path: PathBuf,
@@ -38,6 +50,9 @@ pub fn install(dir: &Path, header: &str) {
     if OUTPUT.set(output).is_err() {
         return;
     }
+    // 確保の失敗の記録で使うものを、平常時に用意する（失敗した確保の中では、確保も読み込みもできない）
+    IMAGE_BASE.store(super::image_base().unwrap_or(0), Ordering::Relaxed);
+    capture_frames(&mut [0usize; 4]);
     super::prune(dir, "crash-", super::CRASH_KEEP);
     #[cfg(windows)]
     // SAFETY: プロセス終了まで生きる関数を登録する。異常から実行を再開しない。
@@ -70,17 +85,129 @@ pub fn reserved(path: &Path) -> bool {
 
 pub fn cleanup() {
     if let Some(out) = OUTPUT.get() {
+        // 確保の失敗だけが書いてあって、落ちる処理は入っていない（受け止めて動き続けた失敗。`try_reserve` の断りなど）なら、
+        // 落ちた記録にしない
+        if ALLOC_SEEN.load(Ordering::Relaxed) && !ENTERED.load(Ordering::Relaxed) {
+            let _ = out.file.set_len(0);
+        }
         if out.file.metadata().is_ok_and(|m| m.len() == 0) {
             let _ = std::fs::remove_file(&out.path);
         }
     }
 }
 
+/// 呼び出しの番地を `frames` へ入れ、入れた数を返す（確保も読み込みもしない。取れなければ 0）。
+fn capture_frames(frames: &mut [usize]) -> usize {
+    #[cfg(windows)]
+    {
+        let mut raw = [std::ptr::null_mut::<std::ffi::c_void>(); ALLOC_FRAMES];
+        let wanted = frames.len().min(raw.len());
+        // SAFETY: 長さ `wanted` までの配列へ書くだけ。
+        let count = unsafe {
+            windows::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(1, &mut raw[..wanted], None)
+        } as usize;
+        for (slot, address) in frames.iter_mut().zip(&raw[..count.min(wanted)]) {
+            *slot = *address as usize;
+        }
+        count.min(wanted)
+    }
+    #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
+    {
+        let mut raw = [std::ptr::null_mut::<libc::c_void>(); ALLOC_FRAMES];
+        let wanted = frames.len().min(raw.len());
+        // SAFETY: 長さ `wanted` までの配列へ書くだけ（glibc・Apple の `backtrace`）。最初の呼び出しは共有ライブラリを読み込むことがあるので、
+        // `install` が平常時に 1 度呼んでおく。
+        let count = unsafe { libc::backtrace(raw.as_mut_ptr(), wanted as libc::c_int) }.max(0) as usize;
+        for (slot, address) in frames.iter_mut().zip(&raw[..count.min(wanted)]) {
+            *slot = *address as usize;
+        }
+        count.min(wanted)
+    }
+    #[cfg(not(any(windows, all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
+    {
+        let _ = frames;
+        0
+    }
+}
+
+/// 固定の大きさの配列へ書く `fmt::Write`（あふれた分は捨てる）。確保しない。
+struct Stack<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+
+impl std::fmt::Write for Stack<'_> {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let room = self.buf.len() - self.len;
+        let take = text.len().min(room);
+        self.buf[self.len..self.len + take].copy_from_slice(&text.as_bytes()[..take]);
+        self.len += take;
+        Ok(())
+    }
+}
+
+/// 位置を指定して書く（ファイルの位置を使わない。確保しない）。
+fn write_at(file: &File, offset: u64, bytes: &[u8]) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        let _ = file.write_all_at(bytes, offset);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut done = 0;
+        while done < bytes.len() {
+            match file.seek_write(&bytes[done..], offset + done as u64) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => done += n,
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (file, offset, bytes);
+    }
+}
+
+/// 確保が失敗した（アロケーターが null を返した。`oom::RecordingAlloc`）ときに、大きさと呼び出しの番地を記録の先へ書く。
+/// 失敗した確保が致命的か（Rust の標準の確保は失敗すると `handle_alloc_error` で止まる。Windows では `__fastfail` で、フィルターに来ない）は
+/// ここでは分からないので、すぐ書く。`try_reserve` の断りのように受け止めて動き続けた失敗は、`cleanup`（正常な終わり）が落ちた記録にしない。
+/// 書くのは確保も読み込みもしない道（固定の配列・位置指定の書き込み）だけ。
+pub fn allocation_failed(size: usize, align: usize) {
+    let Some(out) = OUTPUT.get() else { return };
+    if ENTERED.load(Ordering::Relaxed) || ALLOC_BUSY.swap(true, Ordering::Acquire) {
+        return;
+    }
+    let failures = ALLOC_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut frames = [0usize; ALLOC_FRAMES];
+    let count = capture_frames(&mut frames);
+    let mut block = [b' '; ALLOC_BLOCK];
+    {
+        let mut text = Stack {
+            buf: &mut block[..ALLOC_BLOCK - 1],
+            len: 0,
+        };
+        let _ = writeln!(text, "Allocation failed: {size} bytes (align {align}), failure #{failures}");
+        let _ = writeln!(text, "Image base: 0x{:x}", IMAGE_BASE.load(Ordering::Relaxed));
+        let _ = writeln!(text, "Frames:");
+        for address in &frames[..count] {
+            let _ = writeln!(text, "0x{address:x}");
+        }
+    }
+    block[ALLOC_BLOCK - 1] = b'\n';
+    if !ALLOC_SEEN.swap(true, Ordering::Relaxed) {
+        write_at(&out.file, 0, &out.header);
+    }
+    write_at(&out.file, out.header.len() as u64, &block);
+    ALLOC_BUSY.store(false, Ordering::Release);
+}
+
 /// Linux のシグナル。std が SIGSEGV・SIGBUS に置いているスタック溢れの検出（sigaltstack の上で動く）を壊さないよう、
 /// `sigaction` で SA_ONSTACK を付けて置き、前の動作を控えて、記録のあとでそれへ引き継ぐ。
 #[cfg(target_os = "linux")]
 mod signals {
-    use super::{ENTERED, OUTPUT};
+    use super::{ALLOC_BLOCK, ALLOC_SEEN, ENTERED, OUTPUT};
     use libc::{c_int, c_void, siginfo_t};
     use std::sync::{atomic::Ordering, OnceLock};
 
@@ -126,11 +253,20 @@ mod signals {
                 };
                 // SAFETY: fd は閉じず、スライスもプロセス終了まで有効。割り当て・ロック・Rust の I/O は使わない。
                 unsafe {
-                    libc::write(
-                        out.file.as_raw_fd(),
-                        out.header.as_ptr().cast(),
-                        out.header.len(),
-                    );
+                    if ALLOC_SEEN.load(Ordering::Relaxed) {
+                        // 確保の失敗の欄が先に書いてある: ヘッダーは重ねず、欄の後ろへ続ける
+                        libc::lseek(
+                            out.file.as_raw_fd(),
+                            (out.header.len() + ALLOC_BLOCK) as libc::off_t,
+                            libc::SEEK_SET,
+                        );
+                    } else {
+                        libc::write(
+                            out.file.as_raw_fd(),
+                            out.header.as_ptr().cast(),
+                            out.header.len(),
+                        );
+                    }
                     libc::write(out.file.as_raw_fd(), detail.as_ptr().cast(), detail.len());
                 }
             }
@@ -182,8 +318,14 @@ unsafe extern "system" fn filter(
         return 0;
     }
     if let Some(out) = OUTPUT.get() {
+        use std::io::{Seek, SeekFrom};
         let mut file = &out.file;
-        let _ = file.write_all(&out.header);
+        if ALLOC_SEEN.load(Ordering::Relaxed) {
+            // 確保の失敗の欄が先に書いてある: ヘッダーは重ねず、欄の後ろへ続ける
+            let _ = file.seek(SeekFrom::Start((out.header.len() + ALLOC_BLOCK) as u64));
+        } else {
+            let _ = file.write_all(&out.header);
+        }
         // SAFETY: OS がフィルターの呼び出し中だけ渡す構造体。null は読み取らない。
         let record = unsafe { (*info).ExceptionRecord };
         if !record.is_null() {

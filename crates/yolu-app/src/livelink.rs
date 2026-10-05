@@ -34,6 +34,7 @@ use yolu_protocol::{
 
 use crate::engine::{Channel, Document, RowOrder, TileCoord};
 use crate::livelink_pose::PoseSlot;
+use crate::livelink_queue::{message_bytes, pose_bytes, Backlog};
 use crate::model::{ModelSource, SceneModel};
 use crate::state::AppState;
 use crate::lang::Lang;
@@ -385,6 +386,8 @@ enum Event {
     Message {
         session: u64,
         message: Message,
+        /// 列に積んでいる間の大きさ（`livelink_queue::message_bytes`。取り出したときに帳簿から引く）。
+        bytes: usize,
     },
     /// 読むスレッドがポーズを溜め始めた（束 `batch`。`PoseSlot::put`）。この知らせを列の順に読んだときに、その束のポーズを取り出して当てる。
     PoseReady {
@@ -488,6 +491,8 @@ pub struct LiveLink {
     base: crate::livelink_base::LiveBase,
     /// 待ちの時間切れを見るため、待っているあいだ描き直しを頼む窓口（`start` で受け取る）。
     ctx: Option<egui::Context>,
+    /// 読むスレッドが列へ積んだ命令の量（上限に達したら、読むスレッドは画面のスレッドが取り出すまで読まない）。
+    backlog: Arc<Backlog>,
     /// Unity に出した頼みの数（試験・診断用）。
     requests_sent: u64,
     /// 頼めない理由を知らせた（このつながりで 1 度だけ）。
@@ -505,6 +510,8 @@ impl Drop for LiveLink {
         if let Some(a) = self.active.take() {
             let _ = a.out.send(Out::Bye);
         }
+        // 上限で待っている読むスレッドを終わらせる（列の受け手はもう無い）
+        self.backlog.close();
     }
 }
 
@@ -535,6 +542,7 @@ impl LiveLink {
             values: Default::default(),
             base: Default::default(),
             ctx: None,
+            backlog: Backlog::new(),
             requests_sent: 0,
             request_unavailable_told: false,
         }
@@ -610,6 +618,7 @@ impl LiveLink {
             let ctx = ctx.clone();
             let active = self.active_session.clone();
             let sessions = self.sessions.clone();
+            let backlog = self.backlog.clone();
             let key = listener.key();
             thread::Builder::new()
                 .name("yolu-livelink-listen".into())
@@ -619,10 +628,10 @@ impl LiveLink {
                             Ok(stream) => {
                                 let session = sessions.fetch_add(1, Ordering::Relaxed) + 1;
                                 let (tx, ctx, active) = (tx.clone(), ctx.clone(), active.clone());
-                                let key = key.clone();
+                                let (key, backlog) = (key.clone(), backlog.clone());
                                 let _ = thread::Builder::new()
                                     .name(format!("yolu-livelink-{session}"))
-                                    .spawn(move || serve(stream, session, tx, ctx, active, key));
+                                    .spawn(move || serve(stream, session, tx, ctx, active, key, backlog));
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 thread::sleep(Duration::from_millis(50))
@@ -757,7 +766,9 @@ impl LiveLink {
                     let text = state.lang.pick(format!("Live Link: つなぎ始めで失敗しました: {e}"), format!("Live Link: Handshake failed: {e}"));
                     self.notify(NoticeLevel::Warning, text, state);
                 }
-                Event::Message { session, message } => {
+                Event::Message { session, message, bytes } => {
+                    // 列から出したので、帳簿から引く（読むスレッドが上限で待っていれば、ここで再開する）
+                    self.backlog.release(bytes);
                     if Some(session) == self.current_session() {
                         self.handle(message, state);
                     }
@@ -920,6 +931,16 @@ impl LiveLink {
     /// Unity に出した頼みの数（試験・診断用）。
     pub fn requests_sent(&self) -> u64 {
         self.requests_sent
+    }
+
+    /// 読むスレッドが命令の列へ積んでいて、画面のスレッドがまだ取り出していない量（バイト。試験・診断用）。
+    pub fn queued_bytes(&self) -> usize {
+        self.backlog.queued()
+    }
+
+    /// 命令の列に積んでおく量の上限を決める（試験用。既定は `livelink_queue::MAX_QUEUED_BYTES`）。
+    pub fn set_queue_limit(&mut self, bytes: usize) {
+        self.backlog.set_limit(bytes);
     }
 
     /// 読むスレッドが溜めている、まだ当てていないポーズの量（位置と法線のバイト。試験・診断用）。
@@ -1325,6 +1346,7 @@ fn serve(
     ctx: egui::Context,
     active: Arc<AtomicU64>,
     key: Arc<ServerKey>,
+    backlog: Arc<Backlog>,
 ) {
     // 読むスレッドが溜めるポーズ（メッシュごとに最新だけ。画面のスレッドが止まっていても膨らまない）。ポーズはほかの命令より先に適用される
     // 必要があるので、別の命令を列へ積む前に、溜めたポーズを先に列へ流す
@@ -1332,9 +1354,12 @@ fn serve(
     let wake = |e: Event| {
         if let Some(taken) = pose_slot.take() {
             if !taken.pose.meshes.is_empty() {
+                let bytes = pose_bytes(&taken.pose);
+                backlog.add(bytes);
                 let _ = tx.send(Event::Message {
                     session,
                     message: Message::Pose(taken.pose),
+                    bytes,
                 });
             }
         }
@@ -1407,6 +1432,11 @@ fn serve(
         pose: pose_slot.clone(),
     });
     loop {
+        // 積んだ量が上限に達していたら、画面のスレッドが取り出すまで次の命令を読まない（ソケットとパイプが詰まる。溜まりはブリッジの送り待ちへ移る。`livelink_queue` の保証の射程）。今のつながりでなくなれば終える
+        if !backlog.wait_for_room(|| active.load(Ordering::Acquire) == session) {
+            release();
+            break;
+        }
         match reader.next(&conn) {
             Ok(Received::Message(Message::Bye)) => {
                 // 自分から抜けて閉じる（Windows は受けの時間切れが無いので、待ち合わない）
@@ -1424,7 +1454,11 @@ fn serve(
                     ctx.request_repaint();
                 }
             }
-            Ok(Received::Message(message)) => wake(Event::Message { session, message }),
+            Ok(Received::Message(message)) => {
+                let bytes = message_bytes(&message);
+                backlog.add(bytes);
+                wake(Event::Message { session, message, bytes })
+            }
             Ok(Received::Unknown(kind)) => wake(Event::Unknown { session, kind }),
             Ok(Received::Malformed(kind, e)) => wake(Event::Malformed {
                 session,

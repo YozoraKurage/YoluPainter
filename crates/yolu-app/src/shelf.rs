@@ -729,6 +729,11 @@ impl ShelfState {
         self.hold.store(hold, Ordering::SeqCst);
     }
 
+    /// 別のスレッドで素材を書き出している（`Some(true)` は個人のライブラリのファイルの取り込み、`Some(false)` は層の保存。無ければ None）。
+    pub fn pending_save(&self) -> Option<bool> {
+        self.saving.as_ref().map(|p| p.from_library)
+    }
+
     /// 走っている書き出しのスレッドの数（やめた保存のスレッドも、終わるまで数える）。
     pub fn saves_running(&self) -> usize {
         self.running.load(Ordering::SeqCst)

@@ -900,8 +900,107 @@ pub fn park_until_canceled(cancel: &std::sync::atomic::AtomicBool) {
     }
 }
 
-/// 終わる前に、走っている仕事（ベイク・書き出し・PSD）を取り消して、止まるのを少し待つ（書きかけの一時ファイルを残さないため。
-/// 取消は次の区切りで効くので、待つのは `wait` まで）。
+/// 閉じる前に知らせる仕事（走っていて、利用者が結果を待っている物）。閉じると取り消される。
+/// 保存は含まない（保存は閉じる流れが終わるまで待つ。`YoluApp::close_flow`）。画面に出ない裏の仕事（サムネイル・一覧の読み込み・
+/// 更新の確かめ）は、結果を待っていないので含まない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseJob {
+    Bake,
+    Export,
+    PsdImport,
+    PsdExport,
+    Distribute,
+    UpdateDownload,
+    BrushImport,
+    /// ライブラリのフォルダへの書き込み（ライブラリへ入れる・ファイルを足す）。
+    LibraryWrite,
+    /// 層の素材（スマートマテリアル・マスク）の保存。
+    ShelfSave,
+    /// 個人のライブラリのファイルのプロジェクトへの取り込み。
+    ShelfImport,
+}
+
+impl CloseJob {
+    /// 確かめの文に出す名前（仕事の札・メニューの名前と同じ言い方）。
+    pub fn label(self, lang: Lang) -> &'static str {
+        match self {
+            CloseJob::Bake => lang.pick("ベイク", "Bake"),
+            CloseJob::Export => lang.pick("書き出し", "Export"),
+            CloseJob::PsdImport => lang.pick("PSD の取り込み", "PSD import"),
+            CloseJob::PsdExport => lang.pick("PSD の書き出し", "PSD export"),
+            CloseJob::Distribute => lang.pick("配布用に保存", "Save for distribution"),
+            CloseJob::UpdateDownload => lang.pick("更新のダウンロード", "Update download"),
+            CloseJob::BrushImport => lang.pick("ブラシの取り込み", "Brush import"),
+            CloseJob::LibraryWrite => lang.pick("ライブラリへの書き込み", "Writing to the library"),
+            CloseJob::ShelfSave => lang.pick("素材の保存", "Saving a material"),
+            CloseJob::ShelfImport => lang.pick("素材の取り込み", "Importing a material"),
+        }
+    }
+}
+
+/// 閉じると取り消される、走っている仕事（一覧の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは済んでいる）も、
+/// 走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
+pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
+    let mut jobs = Vec::new();
+    if app.bake.is_baking() {
+        jobs.push(CloseJob::Bake);
+    }
+    if app.export.is_exporting() {
+        jobs.push(CloseJob::Export);
+    }
+    if let Some(progress) = app.psd.progress() {
+        jobs.push(if progress.importing { CloseJob::PsdImport } else { CloseJob::PsdExport });
+    }
+    if app.distribute.is_busy() {
+        jobs.push(CloseJob::Distribute);
+    }
+    // 更新は、ダウンロードだけが利用者の待つ仕事（起動時の確かめは待っていない）
+    if app.update.progress().is_some() {
+        jobs.push(CloseJob::UpdateDownload);
+    }
+    if app.brushes.import.is_busy() {
+        jobs.push(CloseJob::BrushImport);
+    }
+    if app.library.write.is_some() {
+        jobs.push(CloseJob::LibraryWrite);
+    }
+    match app.shelf.pending_save() {
+        Some(true) => jobs.push(CloseJob::ShelfImport),
+        Some(false) => jobs.push(CloseJob::ShelfSave),
+        None => {}
+    }
+    jobs
+}
+
+/// 閉じる前の確かめの文。保存していない変更（`modified`）と、閉じると取り消される仕事（`jobs`）を、1 つの問いにまとめる。
+/// 変更も仕事も無ければ空（問わない）。
+pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
+    let names = jobs
+        .iter()
+        .map(|job| job.label(lang))
+        .collect::<Vec<_>>()
+        .join(lang.pick("・", ", "));
+    match (modified, jobs.is_empty()) {
+        (false, true) => String::new(),
+        (true, true) => lang
+            .pick(
+                "保存していない変更があります。変更を捨てて終わりますか？",
+                "There are unsaved changes. Discard them and quit?",
+            )
+            .to_owned(),
+        (false, false) => lang.pick(
+            format!("走っている仕事（{names}）は取り消されます。終わりますか？"),
+            format!("Running jobs ({names}) will be cancelled. Quit?"),
+        ),
+        (true, false) => lang.pick(
+            format!("保存していない変更があります。走っている仕事（{names}）も取り消されます。変更を捨てて終わりますか？"),
+            format!("There are unsaved changes, and running jobs ({names}) will be cancelled. Discard and quit?"),
+        ),
+    }
+}
+
+/// 終わる前に、走っている仕事（ベイク・書き出し・PSD・配布用に保存・更新・ブラシの取り込み・ライブラリと素材の書き込み）を取り消して、
+/// 止まるのを少し待つ（書きかけの一時ファイルを残さないため。取消は次の区切りで効くので、待つのは `wait` まで）。
 pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
@@ -909,13 +1008,17 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Distribute(crate::distribute::DistributeAction::CancelJob));
     app.apply(Action::Update(crate::update::UpdateAction::Cancel));
     app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
+    // ライブラリのフォルダへの書き込みと素材の保存・取り込み（やめても、スレッドは次の区切りまで走る）
+    app.shelf_apply(crate::shelf::ShelfOp::CancelSave);
     let start = std::time::Instant::now();
     while (app.bake.is_baking()
         || app.export.is_exporting()
         || app.psd.is_busy()
         || app.distribute.is_busy()
         || app.update.is_busy()
-        || app.brushes.import.is_busy())
+        || app.brushes.import.is_busy()
+        || app.shelf.saves_running() > 0
+        || app.library.busy_reason(app.lang).is_some())
         && start.elapsed() < wait
     {
         app.poll_bake();

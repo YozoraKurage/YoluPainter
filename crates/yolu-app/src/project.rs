@@ -108,6 +108,24 @@ pub(crate) fn to_core(native: &SetDocument, lang: Lang, source_budget: u64) -> R
     })
 }
 
+/// `to_core` の、途中の panic を受け止める形。止まったセットは理由の文にして続ける（ほかのセットは開く）。受け止めた panic は
+/// 落ちた記録にせず、普段のログへ 1 行だけ書く。
+pub(crate) fn to_core_caught(native: &SetDocument, lang: Lang, source_budget: u64) -> Result<Document, String> {
+    caught_as_text(lang, std::panic::AssertUnwindSafe(|| to_core(native, lang, source_budget)))
+}
+
+/// 仕事の途中の panic を、理由の文の失敗にする（受け止めた panic は落ちた記録にしない）。
+pub(crate) fn caught_as_text<T>(
+    lang: Lang,
+    work: impl FnOnce() -> Result<T, String> + std::panic::UnwindSafe,
+) -> Result<T, String> {
+    crate::crash::handled(work).unwrap_or_else(|_| Err(reading_stopped(lang)))
+}
+
+fn reading_stopped(lang: Lang) -> String {
+    lang.pick("文書を読む途中で止まりました", "Reading the document stopped").into()
+}
+
 /// 保存した合成の PNG から、見せるだけの文書（1 枚のレイヤー）を作る。大きさが正本と違えば使わない。
 pub(crate) fn preview_document(png: Option<&[u8]>, width: u32, height: u32, lang: Lang) -> (Document, Option<String>) {
     let blank = || {
@@ -226,14 +244,11 @@ fn open_project(state: &mut AppState, project: Project, file: Option<(PathBuf, S
         let running: Vec<_> = project
             .sets()
             .iter()
-            .map(|set| scope.spawn(move || to_core(&set.document, lang, budget)))
+            .map(|set| scope.spawn(move || to_core_caught(&set.document, lang, budget)))
             .collect();
         running
             .into_iter()
-            .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(lang.pick("文書を読む途中で止まりました", "Reading the document stopped").into()))
-            })
+            .map(|h| h.join().unwrap_or_else(|_| Err(reading_stopped(lang))))
             .collect()
     });
     for (set, converted) in project.sets().iter().zip(converted) {

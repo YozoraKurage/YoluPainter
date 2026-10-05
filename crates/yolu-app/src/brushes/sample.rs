@@ -9,13 +9,14 @@
 //! 消しゴムは灰色を一面に敷いて消し、効果のブラシ（ぼかし・指先・クローン）と色を混ぜるブラシは縦の帯を並べた絵の上に描く。
 //!
 //! 描く場所は 2 通り。既定は画面のスレッドで 1 フレームに数枚まで描く（試験・画面を持たない使い方）。`render_in_background` を呼ぶと、
-//! 描くのを別のスレッド（rayon の池）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の見本で画面が止まらない）。
-//! 描いている最中の札は重ねて頼まず、同時に頼む数にも上限がある。
+//! 描くのを別のスレッド（見本専用の小さな rayon の池。`POOL_THREADS` 本）へ出し、できた絵は次のフレームで受ける（取り込んだ大きな筆先の
+//! 見本で画面が止まらない）。見本の中の並列（core の筆の計算・合成）もこの池の中で回るので、全体の rayon の池（合成・保存の並列）を
+//! 見本が塞がない。描いている最中の札は重ねて頼まず、同時に頼む数にも上限がある。
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 use egui::{ColorImage, TextureHandle, TextureId, TextureOptions};
 
@@ -35,6 +36,46 @@ pub const MAX_IN_FLIGHT: usize = 6;
 /// 覚える見本の枚数とバイト数の上限。
 pub const MAX_ENTRIES: usize = 96;
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+/// 見本を描く専用の池のスレッド数。一覧の見本は画面に見えている数だけなので、少数でよい（残りは全体の池の仕事に残す）。
+pub const POOL_THREADS: usize = 2;
+/// 見本の池のスレッドの名前の頭（試験が、見本が専用の池で描かれることを確かめる）。
+pub const POOL_THREAD_PREFIX: &str = "yolu-brush-sample-";
+
+/// 見本を描く専用の池。全体の rayon の池へ出すと、取り込んだ大きな筆先の見本が池のスレッドを長く握り、その間の合成・保存の並列が
+/// 待たされる。池を作れなければ None（呼び手が 1 本のスレッドへ落とす）。
+fn pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(POOL_THREADS)
+            .thread_name(|n| format!("{POOL_THREAD_PREFIX}{n}"))
+            // 仕事の panic は仕事の中で受け止める。取りこぼしても池の panic でプロセスを止めない
+            .panic_handler(|_| {})
+            .build()
+            .ok()
+    })
+    .as_ref()
+}
+
+/// 見本の仕事を専用の池で走らせる（池が無ければ名前つきの 1 本のスレッド）。スレッドも立てられなければ Err（仕事は走らない）。
+fn spawn_in_pool(job: impl FnOnce() + Send + 'static) -> Result<(), std::io::Error> {
+    match pool() {
+        Some(pool) => {
+            pool.spawn(job);
+            Ok(())
+        }
+        None => std::thread::Builder::new()
+            .name(format!("{POOL_THREAD_PREFIX}solo"))
+            .spawn(job)
+            .map(drop),
+    }
+}
+
+/// 試験用: 見本の仕事と同じ道（専用の池）で仕事を走らせる。
+#[doc(hidden)]
+pub fn spawn_for_test(job: impl FnOnce() + Send + 'static) -> Result<(), std::io::Error> {
+    spawn_in_pool(job)
+}
 
 /// 見本の大きさ（画素）と、消しゴムとして描くか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -446,8 +487,9 @@ impl SampleCache {
             self.stats.renders += 1;
             let (brush, spec) = (brush.clone(), spec.clamped());
             let (tx, ctx) = (background.tx.clone(), background.ctx.clone());
-            rayon::spawn(move || {
-                // 池の仕事が落ちるとプロセスごと止まるので、描く途中で落ちても空の見本にする
+            let failed = (tx.clone(), ctx.clone());
+            let spawned = spawn_in_pool(move || {
+                // 描く途中で落ちても空の見本にする（池の仕事の panic がプロセスを止めない）
                 let image = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
                     render(&brush, spec).ok()
                 }))
@@ -455,6 +497,11 @@ impl SampleCache {
                 let _ = tx.send((key, spec, image));
                 ctx.request_repaint();
             });
+            if spawned.is_err() {
+                // スレッドを立てられなかった: 描けなかった見本として返す（札が頼みっぱなしで残らない）
+                let _ = failed.0.send((key, spec, None));
+                failed.1.request_repaint();
+            }
             return None;
         }
         if self.renders_in_frame >= RENDERS_PER_FRAME {
@@ -789,5 +836,130 @@ mod tests {
         assert_eq!(cache.texture(&ctx, key), Some(a), "同じ絵を作り直さない");
         assert_eq!(cache.texture(&ctx, key ^ 1), None);
         assert_eq!(cache.image(key).unwrap().width, 340);
+    }
+
+    /// 池を塞ぐ試験どうしを 1 つずつにする（片方が全体の池を塞いだまま、もう片方が見本の池を塞いで、互いを待つのを避ける）。
+    static POOL_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn one_pool_test_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+        POOL_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 旗が立つまで居座る仕事を、全体の rayon の池のスレッドの数だけ出して、池を塞ぐ。落とすと（試験が途中で失敗しても）旗を立てて放す。
+    struct BlockedGlobalPool(Arc<std::sync::atomic::AtomicBool>);
+
+    impl BlockedGlobalPool {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+            use std::time::{Duration, Instant};
+            let release = Arc::new(AtomicBool::new(false));
+            let started = Arc::new(AtomicUsize::new(0));
+            let threads = rayon::current_num_threads();
+            for _ in 0..threads {
+                let (release, started) = (release.clone(), started.clone());
+                rayon::spawn(move || {
+                    started.fetch_add(1, Ordering::SeqCst);
+                    let deadline = Instant::now() + Duration::from_secs(60);
+                    while !release.load(Ordering::SeqCst) && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                });
+            }
+            let this = BlockedGlobalPool(release);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while started.load(Ordering::SeqCst) < threads {
+                assert!(Instant::now() < deadline, "全体の池を塞げない");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            this
+        }
+    }
+
+    impl Drop for BlockedGlobalPool {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// 全体の rayon の池のスレッドが全部ふさがっていても、見本は専用の池で描かれて届く。
+    #[test]
+    fn a_background_sample_is_drawn_even_while_every_thread_of_the_global_pool_is_busy() {
+        let _one = one_pool_test_at_a_time();
+        let ctx = egui::Context::default();
+        let mut cache = SampleCache::default();
+        cache.render_in_background(&ctx);
+        let (brush, spec) = (Brush::default(), SampleSpec::row(false));
+        let blocked = BlockedGlobalPool::new();
+        let start = std::time::Instant::now();
+        let mut frame = 0;
+        let key = loop {
+            frame += 1;
+            cache.begin_frame(frame);
+            if let Some(key) = cache.request(&brush, spec) {
+                break key;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(20),
+                "全体の池がふさがっている間、見本が描かれない"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        };
+        assert_eq!(cache.image(key).unwrap().width, spec.width);
+        drop(blocked);
+    }
+
+    /// 見本の仕事は専用の少数のスレッドで走り、いくら積んでも全体の池のスレッドを握らない（全体の池の仕事は止まらず進む）。
+    #[test]
+    fn samples_run_on_their_own_few_threads_and_never_hold_the_global_pool() {
+        let _one = one_pool_test_at_a_time();
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc::{channel, RecvTimeoutError};
+        use std::time::Duration;
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let release = Release(Arc::new(AtomicBool::new(false)));
+        let (tx, started) = channel();
+        // 全体の池のスレッドの数より多く、居座る見本の仕事を積む
+        let jobs = rayon::current_num_threads() + POOL_THREADS + 2;
+        for _ in 0..jobs {
+            let (flag, tx) = (release.0.clone(), tx.clone());
+            spawn_for_test(move || {
+                let name = std::thread::current().name().map(str::to_owned).unwrap_or_default();
+                let _ = tx.send(name);
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                while !flag.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            })
+            .unwrap();
+        }
+        // 走り出すのは専用の池のスレッドの数だけ（残りは待つ）
+        let mut names = Vec::new();
+        for _ in 0..POOL_THREADS {
+            names.push(started.recv_timeout(Duration::from_secs(20)).expect("専用の池で走り出す"));
+        }
+        assert!(
+            names.iter().all(|n| n.starts_with(POOL_THREAD_PREFIX)),
+            "見本は専用の池のスレッドで走る: {names:?}"
+        );
+        assert!(
+            matches!(started.recv_timeout(Duration::from_millis(200)), Err(RecvTimeoutError::Timeout)),
+            "専用の池のスレッドの数を超えて走らない"
+        );
+        // そのあいだも、全体の池の仕事は進む
+        let (done, finished) = channel();
+        rayon::spawn(move || {
+            let _ = done.send(rayon::current_thread_index().is_some());
+        });
+        assert_eq!(
+            finished.recv_timeout(Duration::from_secs(20)),
+            Ok(true),
+            "見本が詰まっていても、全体の池の仕事は走る"
+        );
+        drop(release);
     }
 }

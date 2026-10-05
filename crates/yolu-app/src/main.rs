@@ -1,6 +1,10 @@
 //! YoluPainter（Rust 版）を起動する。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+/// 確保の失敗（メモリ不足）を、落ちる前に記録の先へ書く（`crash::oom`）。
+#[global_allocator]
+static ALLOCATOR: yolu_app::crash::RecordingAlloc = yolu_app::crash::RecordingAlloc;
+
 fn main() -> eframe::Result {
     yolu_app::crash::install();
     let result = yolu_app::crash::guard(start, yolu_app::crash::failure_dialog);

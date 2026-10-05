@@ -7,7 +7,7 @@
 //! 仕事場を落とす（プロジェクトを替える・パネルを閉じる）と、残りの仕事は始めず、走っている仕事の結果は捨てる。
 //! 仕事がパニックしても、スレッドは続き、結果は `None` で返す（札が残り続けて頼み直し続けることはない）。
 use std::collections::{HashMap, VecDeque};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -218,7 +218,8 @@ fn worker<R: Send + 'static>(shared: Arc<Shared<R>>, tx: Sender<(String, Option<
             }
         };
         let Job { key, work } = job;
-        let result = catch_unwind(AssertUnwindSafe(|| work(&shared.cancel))).ok();
+        // 受け止めて続ける panic は、落ちた記録にしない（次の起動に「落ちました」と出さず、普段のログに 1 行だけ書く）
+        let result = crate::crash::handled(AssertUnwindSafe(|| work(&shared.cancel))).ok();
         let cancelled = shared.cancel.is_set();
         // 結果を渡してから「走っていない」ことにする（`wait_done` が返ったときには、結果は受け口に入っている）
         if !cancelled {

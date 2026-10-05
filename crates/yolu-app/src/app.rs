@@ -271,6 +271,12 @@ pub struct YoluApp {
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
+    /// 主の wgpu の装置の見張り（実際の窓だけ。`watch_gpu`）。装置を失ったときの流れは `gpu_lost`。
+    gpu_watch: Option<crate::gpu_watch::GpuWatch>,
+    /// 主の wgpu の装置を失った（このあと終わる）。
+    gpu_lost: Option<crate::gpu_watch::Lost>,
+    /// 装置を失ったとき、書き置きの書き込みを待つ長さの上限（取るときも、終わるときも。試験が短くする）。
+    gpu_lost_wait: std::time::Duration,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
@@ -318,6 +324,8 @@ pub struct YoluApp {
     psd_drop_more: usize,
 }
 
+mod gpu_lost;
+
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（窓を作るときに 1 度）。
     pub fn setup(ctx: &egui::Context) {
@@ -341,6 +349,10 @@ impl YoluApp {
         crate::session_end::attach(cc);
         let mut app = YoluApp::with_settings(crate::settings::path(), pen)
             .with_render_state(cc.wgpu_render_state.as_ref());
+        // 主の装置を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
+        if let Some(rs) = &cc.wgpu_render_state {
+            app.watch_gpu(rs, &cc.egui_ctx);
+        }
         app.dialogs = true;
         // 保存は裏のスレッドで動かす（描ける・見られる。試験の状態は、保存の頼みの中で終える）
         app.state.save.background = true;
@@ -635,6 +647,9 @@ impl YoluApp {
             pen_buttons: crate::pen::ButtonMap::default(),
             view3d: View3dSlot::default(),
             renderer3d: None,
+            gpu_watch: None,
+            gpu_lost: None,
+            gpu_lost_wait: gpu_lost::RECOVERY_WAIT,
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
             dialogs: false,
@@ -942,8 +957,13 @@ impl YoluApp {
     /// 保存していない変更があっても終わってよいか（窓を開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
     /// 状態で聞く）。
     fn confirm_close(&mut self) -> bool {
-        // 更新のために終わるときは、保存するか捨てるかを更新の窓で選び済み
-        if !self.state.modified || self.state.update.is_quitting() {
+        // 更新のために終わるときは、保存するか捨てるかを更新の窓で選び済み。GPU の装置を失って終わるときは、復旧の書き置きに任せる
+        if self.state.update.is_quitting() || self.gpu_lost.is_some() {
+            return true;
+        }
+        // 閉じると取り消される仕事（利用者が結果を待っている書き出しなど）も、保存していない変更と一緒に知らせる
+        let jobs = crate::windows::close_jobs(&self.state);
+        if !self.state.modified && jobs.is_empty() {
             return true;
         }
         // 試験が、窓を開かずに答える口
@@ -955,9 +975,10 @@ impl YoluApp {
         }
         crate::dialog::message()
             .set_title("YoluPainter")
-            .set_description(self.state.lang.pick(
-                "保存していない変更があります。変更を捨てて終わりますか？",
-                "There are unsaved changes. Discard them and quit?",
+            .set_description(crate::windows::close_question(
+                self.state.lang,
+                self.state.modified,
+                &jobs,
             ))
             .set_buttons(rfd::MessageButtons::YesNo)
             .set_level(rfd::MessageLevel::Warning)
@@ -1288,6 +1309,7 @@ impl YoluApp {
 
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        self.poll_gpu_watch(&ctx);
         self.state.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
         let mut pen = self.pen.drain();
@@ -1734,6 +1756,7 @@ impl YoluApp {
         // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
         // 見えない窓を知らせのために回し続けない）
         let prior = self.state.message_begin();
+        self.poll_gpu_watch(ctx);
         self.tick_link();
         // 保存の途中は、隠れていても保存を捨てて閉じない。窓を閉じる頼み（タスクバーの「閉じる」など）は止めて待ち、終わりを受け、
         // 保存が終わって終了の頼みが残っていれば閉じる流れを進める（見えない窓の保存を、知らせのために回し続けはしない: 保存の間だけ）
@@ -1783,7 +1806,13 @@ impl eframe::App for YoluApp {
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
     fn on_exit(&mut self) {
-        self.state.recovery_shutdown();
+        if self.gpu_lost.is_some() && self.state.modified {
+            // 装置を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ）、書き込み中の分だけ、期限まで待つ。
+            // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧の窓から開ける
+            self.state.recovery_wait_within(self.gpu_lost_wait);
+        } else {
+            self.state.recovery_shutdown();
+        }
         // 並びと窓の大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
         self.save_layout(false);
     }
