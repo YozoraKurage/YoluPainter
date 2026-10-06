@@ -49,6 +49,13 @@ fn start() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す
         wgpu_options: yolu_app::view3d::render::wgpu_configuration(),
+        // Linux: 窓は X11 で開く（Wayland の机では XWayland の上）。Wayland は浮かせる窓の位置を決められず、窓の外へ出す欄・位置の覚えが
+        // 効かないため。X11 が無い机（XWayland の無い Wayland）では起動できない
+        #[cfg(target_os = "linux")]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            builder.with_x11();
+        })),
         ..Default::default()
     };
     eframe::run_native(
