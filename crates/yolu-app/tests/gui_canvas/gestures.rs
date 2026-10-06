@@ -402,7 +402,7 @@ fn the_grab_of_a_dock_tab_blocks_a_stroke_until_the_frame_after_it_ends() {
     let mut h = app(1280.0, 800.0, 256);
     let c = canvas_rect(&h).center();
     // つかんでいる印（前のフレームの結果）が立っている間は、触れても描かない
-    h.state_mut().state.dock_grab = [true, false];
+    h.state_mut().state.ui.dock_grab = [true, false];
     Pen::tip().drag(&mut h, &[c, offset(c, 20.0, 0.0)]);
     assert!(!h.state().state.doc.can_undo(), "つかんでいる間は描かない");
     h.run();
@@ -1216,7 +1216,7 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
         assert!(h.state().state.canvas.panning, "パンの途中");
         click_tab(&mut h, Tab::View3d);
         h.run();
-        assert!(!h.state().state.canvas_visible, "キャンバスは隠れた");
+        assert!(!h.state().state.ui.canvas_visible, "キャンバスは隠れた");
         assert!(
             h.state().state.canvas.pen_press.is_none(),
             "押しの印を捨てた"
@@ -1227,7 +1227,7 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
         release_key(&mut h, Key::Space);
         click_tab(&mut h, Tab::Canvas);
         h.run();
-        assert!(h.state().state.canvas_visible);
+        assert!(h.state().state.ui.canvas_visible);
         assert!(h.state().state.canvas.pen_press.is_none());
         nothing_started(&h);
         // 次に触れた押しは、前の押しの続きではなく、新しい押しとして描ける

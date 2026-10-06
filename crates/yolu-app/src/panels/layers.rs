@@ -294,14 +294,14 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     // 層の行の下に効果の行（高さが違う）が続くので、行の位置は配置を数えて決める
     let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT);
     let content = layout.height;
-    let bar = Scroll::begin(ui, list, content, &mut app.layer_scroll);
+    let bar = Scroll::begin(ui, list, content, &mut app.ui.layer_scroll);
     let row_width = list.width() - bar.reserved();
 
     // 空白の右クリック（行の下）
     let blank = Rect::from_min_max(
         pos2(
             list.left(),
-            (list.top() + content - app.layer_scroll).max(list.top()),
+            (list.top() + content - app.ui.layer_scroll).max(list.top()),
         ),
         list.max,
     );
@@ -323,7 +323,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let chosen = app.selected_layers();
     for entry in &layout.entries {
         let rect = Rect::from_min_size(
-            pos2(list.left(), list.top() + entry.y - app.layer_scroll),
+            pos2(list.left(), list.top() + entry.y - app.ui.layer_scroll),
             vec2(row_width, entry.height),
         );
         if rect.bottom() < list.top() || rect.top() > list.bottom() {
@@ -352,12 +352,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     if let Some(LayerDrag {
         target: Some(target),
         ..
-    }) = app.layer_drag
+    }) = app.ui.layer_drag
     {
         let painter = ui.painter_at(list);
         match target {
             DropTarget::Gap(gap) => {
-                let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
+                let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
                 painter.rect_filled(
                     Rect::from_min_size(
                         pos2(list.left() + 4.0, y - 1.0),
@@ -369,7 +369,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
             DropTarget::Into(group) => {
                 if let Some(i) = rows.iter().position(|r| r.id == group) {
-                    let y = list.top() + layout.layer_y(i) - app.layer_scroll;
+                    let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
                     w::outline(
                         &painter,
                         Rect::from_min_size(
@@ -384,7 +384,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
         }
     }
-    bar.end(ui, "layers.scroll", &mut app.layer_scroll);
+    bar.end(ui, "layers.scroll", &mut app.ui.layer_scroll);
 
     toolbar(ui, app, &ctx, r, list, enabled);
 }
@@ -738,9 +738,9 @@ fn dragged_layers(app: &AppState, id: LayerId) -> Vec<LayerId> {
 fn update_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row], id: LayerId) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         let layout = effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
-        let position = layout.position_at(p.y - list.top() + app.layer_scroll);
+        let position = layout.position_at(p.y - list.top() + app.ui.layer_scroll);
         let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
-        app.layer_drag = Some(LayerDrag { id, target });
+        app.ui.layer_drag = Some(LayerDrag { id, target });
     }
 }
 
@@ -749,21 +749,21 @@ fn drop_drag(app: &mut AppState, rows: &[Row]) {
     if let Some(LayerDrag {
         id: dragged,
         target: Some(target),
-    }) = app.layer_drag.take()
+    }) = app.ui.layer_drag.take()
     {
         let ids = dragged_layers(app, dragged);
         if let Some(edit) = m2::drop_edit_for(&app.doc, rows, &ids, target) {
             app.apply(Action::M2(edit));
         }
     }
-    app.layer_drag = None;
+    app.ui.layer_drag = None;
 }
 
 /// ドラッグ中にホイールで一覧を送って、ドラッグしている行が見えなくなったとき。見えない行は描かない（応答が来ない）ので、
 /// 行の側の「動いた・離した」が届かず、落とす先の線が残り続けて落とす操作も起きない。ここで、ボタンを押しているあいだは
 /// 落とす先をポインタに追わせ、離したら行の側と同じく落として手放す。
 fn follow_drag(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
-    let Some(LayerDrag { id, .. }) = app.layer_drag else {
+    let Some(LayerDrag { id, .. }) = app.ui.layer_drag else {
         return;
     };
     if ui.input(|i| i.pointer.primary_down()) {
@@ -992,16 +992,16 @@ fn layer_row(
         } else {
             app.select_single_layer(id);
         }
-        if app.renaming != Some(id) {
-            app.renaming = None;
+        if app.ui.renaming != Some(id) {
+            app.ui.renaming = None;
         }
     } else if response.drag_started() {
         if !in_selection {
             app.select_single_layer(id);
         }
         app.fx.selected = None; // 層を選ぶと、選んでいた効果の欄は層の欄へ戻る
-        if app.renaming != Some(id) {
-            app.renaming = None;
+        if app.ui.renaming != Some(id) {
+            app.ui.renaming = None;
         }
     }
     if (response.double_clicked() || response.triple_clicked())
@@ -1009,8 +1009,8 @@ fn layer_row(
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| name_rect.contains(p))
     {
-        app.renaming = Some(id);
-        app.rename_started = false;
+        app.ui.renaming = Some(id);
+        app.ui.rename_started = false;
     }
     if response.secondary_clicked() {
         select_for_menu(app, id, in_selection);
@@ -1138,9 +1138,9 @@ fn layer_row(
 
     // 名前（ダブルクリックで変える）
     let painter = ui.painter_at(list);
-    if app.renaming == Some(id) {
-        let first = !app.rename_started;
-        app.rename_started = true;
+    if app.ui.renaming == Some(id) {
+        let first = !app.ui.rename_started;
+        app.ui.rename_started = true;
         let out = w::text_field(ui, name_rect, ("layer.rename", id.0), &name, None, first);
         if let Some(next) = out.committed {
             let next = next.trim().to_owned();
@@ -1152,7 +1152,7 @@ fn layer_row(
             }
         }
         if !first && !out.focused {
-            app.renaming = None;
+            app.ui.renaming = None;
         }
     } else {
         let color = if !visible {

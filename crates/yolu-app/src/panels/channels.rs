@@ -130,7 +130,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
 fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
     let lang = app.lang;
     // 初めは閉じておく（チャンネルの一覧を押しのけない。開いた・閉じたは覚える）
-    app.sections.entry("normal").or_insert(false);
+    app.ui.sections.entry("normal").or_insert(false);
     let (open, _) = section(
         ui,
         app,

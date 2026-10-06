@@ -106,7 +106,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             Color32::WHITE,
         );
     }
-    if let Some(viewport) = app.canvas_rect.filter(|r| r.is_positive()) {
+    if let Some(viewport) = app.ui.canvas_rect.filter(|r| r.is_positive()) {
         let view = app.view.view(viewport, size.0, size.1);
         if (response.is_pointer_button_down_on() || response.clicked())
             && !app.is_stroking()
@@ -150,8 +150,8 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             Stroke::new(1.0, theme::ACCENT),
         ));
     }
-    ui.add_enabled_ui(app.canvas_rect.is_some() && !app.is_stroking(), |ui| {
-        let viewport = app.canvas_rect.unwrap_or(area);
+    ui.add_enabled_ui(app.ui.canvas_rect.is_some() && !app.is_stroking(), |ui| {
+        let viewport = app.ui.canvas_rect.unwrap_or(area);
         let fit = (viewport.width() / size.0 as f32).min(viewport.height() / size.1 as f32);
         let mut zoom = app.view.zoom;
         if ui

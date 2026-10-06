@@ -572,8 +572,8 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     }
     app.sel_doc_changed();
     app.ensure_selection();
-    app.renaming_set = None;
-    app.set_scroll = 0.0;
+    app.ui.renaming_set = None;
+    app.ui.set_scroll = 0.0;
     app.sync_mesh_map_view();
     app.sync_view3d();
     app.modified = true;

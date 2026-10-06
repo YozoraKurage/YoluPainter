@@ -435,7 +435,7 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
                 channel: Channel::Roughness,
             }));
             for key in ["fill-image", "fill-projection", "fill-gradient"] {
-                s.sections.insert(key, true);
+                s.ui.sections.insert(key, true);
             }
             s.m2.props_scroll = 0.0;
         }
@@ -547,7 +547,11 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
             channel: Channel::Roughness,
         }),
     );
-    h.state_mut().state.sections.insert("fill-gradient", true);
+    h.state_mut()
+        .state
+        .ui
+        .sections
+        .insert("fill-gradient", true);
     // 欄のいちばん下（階調の分岐点の欄とカーブ）まで送る
     h.state_mut().state.m2.props_scroll = 100_000.0;
     h.run();
@@ -626,7 +630,11 @@ fn projection_window() -> (Harness<'static, YoluApp>, LayerId, Pos2) {
     let (mut h, _) = window();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
     let layer = st(&h).selected_layer.unwrap();
-    h.state_mut().state.sections.insert("fill-projection", true);
+    h.state_mut()
+        .state
+        .ui
+        .sections
+        .insert("fill-projection", true);
     h.state_mut().state.m2.props_scroll = 0.0;
     h.run();
     let tile_u = |h: &Harness<'_, YoluApp>| {

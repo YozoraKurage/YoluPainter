@@ -363,13 +363,13 @@ fn layer_rename_by_double_click() {
         h.step();
     }
     h.run();
-    assert!(h.state().state.renaming.is_some());
+    assert!(h.state().state.ui.renaming.is_some());
     key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("背景".into()));
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
     assert_eq!(h.state().state.doc.layers()[0].name(), "背景");
-    assert!(h.state().state.renaming.is_none());
+    assert!(h.state().state.ui.renaming.is_none());
 }
 
 #[test]
@@ -468,15 +468,15 @@ fn properties_tabs_and_pen_toggles() {
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
     // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細の窓の「形状」）
-    assert_eq!(h.state().state.property_tab, 0);
+    assert_eq!(h.state().state.ui.property_tab, 0);
     assert!(h.query_all_by_label("アルファ").next().is_none());
     h.get_by_label("マテリアル").click();
     h.run();
-    assert_eq!(h.state().state.property_tab, 1);
+    assert_eq!(h.state().state.ui.property_tab, 1);
     h.snapshot("properties_material_tab");
     h.get_by_label("ステンシル").click();
     h.run();
-    assert_eq!(h.state().state.property_tab, 0);
+    assert_eq!(h.state().state.ui.property_tab, 0);
     h.snapshot("properties_stencil_tab");
 }
 

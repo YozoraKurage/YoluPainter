@@ -740,7 +740,7 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
 // ───────── プロパティのタブ ─────────
 
 fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
-    h.state_mut().state.property_tab = 0;
+    h.state_mut().state.ui.property_tab = 0;
     h.run();
 }
 
@@ -1787,13 +1787,13 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
     assert_eq!(try_start(&mut s, true), (false, false), "ポップアップ");
     s.popup = None;
     // 直前のフレームで開いていたポップアップ（このフレームの外のクリックで閉じたもの）
-    s.popup_was_open = true;
+    s.ui.popup_was_open = true;
     assert_eq!(
         try_start(&mut s, true),
         (false, false),
         "直前のポップアップ"
     );
-    s.popup_was_open = false;
+    s.ui.popup_was_open = false;
     // ストロークの最中
     let layer = s.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke_with(layer, false, None).unwrap();

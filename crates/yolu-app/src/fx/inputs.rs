@@ -1002,7 +1002,7 @@ mod tests {
         s.put_set_doc(s.sets.current_index(), doc);
         assert_settled(&s, "put_set_doc");
         assert_eq!(s.view, view, "表示は今のまま");
-        assert_eq!(s.layer_scroll, 0.0);
+        assert_eq!(s.ui.layer_scroll, 0.0);
         assert!(s.selected_layer.is_some());
     }
 }

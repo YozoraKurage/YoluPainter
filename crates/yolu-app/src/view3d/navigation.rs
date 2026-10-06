@@ -302,7 +302,7 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     if foreign
         || ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
-        || app.popup_was_open
+        || app.ui.popup_was_open
         || app.view3d.display.settings_open
         || app.dock_grabbed()
         || app.sel.dialog.is_some()

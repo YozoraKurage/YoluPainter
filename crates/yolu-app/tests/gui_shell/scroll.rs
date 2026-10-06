@@ -402,7 +402,7 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
         .iter()
         .find(|r| r.left() > 900.0)
         .unwrap_or_else(|| panic!("{bars:?}"));
-    assert_eq!(h.state().state.layer_scroll, 0.0);
+    assert_eq!(h.state().state.ui.layer_scroll, 0.0);
     let from = pos2(bar.center().x, bar.top() + 6.0);
     let touch = |phase, pos| Event::Touch {
         device_id: egui::TouchDeviceId(1),
@@ -435,9 +435,9 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
     h.event(Event::PointerGone);
     h.run();
     assert!(
-        h.state().state.layer_scroll > 20.0,
+        h.state().state.ui.layer_scroll > 20.0,
         "ペンでつまみを引いたぶん一覧が動く: {}",
-        h.state().state.layer_scroll
+        h.state().state.ui.layer_scroll
     );
 }
 

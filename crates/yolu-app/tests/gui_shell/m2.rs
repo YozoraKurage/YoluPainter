@@ -176,15 +176,19 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
         move_to(&h, offset(start, 0.0, dy));
         h.step();
     }
-    assert!(h.state().state.layer_drag.is_some(), "ドラッグが始まった");
+    assert!(
+        h.state().state.ui.layer_drag.is_some(),
+        "ドラッグが始まった"
+    );
     // ホイールで一覧を送る（最後まで）。ドラッグしている行は見えなくなる
-    h.state_mut().state.layer_scroll = 100_000.0;
+    h.state_mut().state.ui.layer_scroll = 100_000.0;
     h.step();
     h.step();
     assert!(h.query_by_label(&name).is_none(), "行は一覧の外");
     assert!(
         h.state()
             .state
+            .ui
             .layer_drag
             .is_some_and(|d| d.target.is_some()),
         "ボタンを押しているあいだは、落とす先をポインタに追わせる"
@@ -193,7 +197,7 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     h.step();
     h.step();
     assert!(
-        h.state().state.layer_drag.is_none(),
+        h.state().state.ui.layer_drag.is_none(),
         "離したらドラッグを手放す（線が残り続けない）"
     );
     assert_eq!(h.state().state.doc.layers().len(), before);
@@ -504,33 +508,37 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
     use yolu_app::m2::MASK_TAB;
     let mut s = AppState::new(64, 64);
     let id = s.selected_layer.unwrap();
-    assert_eq!(s.property_tab, 0);
+    assert_eq!(s.ui.property_tab, 0);
     // マスクを足す → マスクのタブ。編集をやめる → 先頭（アルファ）。もう一度 → マスク
     s.apply(Action::M2(Edit::AddMask(id)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
     s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
     s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (true, MASK_TAB));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
     // マスクを消す
     s.apply(Action::M2(Edit::RemoveMask(id)));
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0));
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
     // マスクを足したあとの取り消し
     s.apply(Action::M2(Edit::AddMask(id)));
     s.apply(Action::Undo);
     s.apply(Action::Undo);
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "足す前に戻る");
+    assert_eq!(
+        (s.m2.edit_mask, s.ui.property_tab),
+        (false, 0),
+        "足す前に戻る"
+    );
     // マスクの編集中に新しいレイヤーを足す・マスクのあるレイヤーを消す
     s.apply(Action::M2(Edit::AddMask(id)));
     s.apply(Action::NewLayer);
     assert_eq!(
-        (s.m2.edit_mask, s.property_tab),
+        (s.m2.edit_mask, s.ui.property_tab),
         (false, 0),
         "新しい層を選ぶ"
     );
     s.selected_layer = Some(id);
     s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!(s.property_tab, MASK_TAB);
+    assert_eq!(s.ui.property_tab, MASK_TAB);
     let other = s
         .doc
         .layers()
@@ -540,12 +548,15 @@ fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
         .unwrap();
     s.apply(Action::DeleteLayer); // マスクの層を消す（選んでいるのは id）
     assert!(s.doc.layer(id).is_none() && s.doc.layer(other).is_some());
-    assert_eq!((s.m2.edit_mask, s.property_tab), (false, 0), "消した");
+    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0), "消した");
     // マテリアルのタブを自分で選んでいるだけなら、そのまま
-    s.property_tab = MASK_TAB;
+    s.ui.property_tab = MASK_TAB;
     s.ensure_m2_selection();
     s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!(s.property_tab, MASK_TAB, "マスクを描いていなければ触らない");
+    assert_eq!(
+        s.ui.property_tab, MASK_TAB,
+        "マスクを描いていなければ触らない"
+    );
 }
 
 #[test]
@@ -555,13 +566,17 @@ fn selecting_another_layer_row_leaves_the_mask_tab() {
     apply(&mut h, Action::NewLayer);
     let top = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(top)));
-    assert_eq!(h.state().state.property_tab, yolu_app::m2::MASK_TAB);
+    assert_eq!(h.state().state.ui.property_tab, yolu_app::m2::MASK_TAB);
     let name = h.state().state.doc.layer(first).unwrap().name().to_owned();
     let row = rect_of(&h, &name, |_| true);
     click(&mut h, pos2(row.left() + 90.0, row.center().y));
     assert_eq!(h.state().state.selected_layer, Some(first));
     assert!(!h.state().state.m2.edit_mask);
-    assert_eq!(h.state().state.property_tab, 0, "使えないタブに落とさない");
+    assert_eq!(
+        h.state().state.ui.property_tab,
+        0,
+        "使えないタブに落とさない"
+    );
 }
 
 // ───────── グループを含む削除と上へ・下へ ─────────

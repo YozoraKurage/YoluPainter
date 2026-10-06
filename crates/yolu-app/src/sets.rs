@@ -634,7 +634,7 @@ impl AppState {
             doc: std::mem::replace(&mut self.doc, incoming.doc),
             selected_layer: self.selected_layer,
             view: std::mem::take(&mut self.view),
-            layer_scroll: self.layer_scroll,
+            layer_scroll: self.ui.layer_scroll,
         };
         let previous = self.sets.current;
         self.sets.list[previous].stash = Some(outgoing);
@@ -664,11 +664,11 @@ impl AppState {
             self.view = view;
         }
         if let Some(scroll) = keep.layer_scroll {
-            self.layer_scroll = scroll;
+            self.ui.layer_scroll = scroll;
         }
         // 前の文書のレイヤーを指す途中の操作は捨てる
-        self.renaming = None;
-        self.layer_drag = None;
+        self.ui.renaming = None;
+        self.ui.layer_drag = None;
         self.popup = None;
         self.fx.selected = None;
         // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
@@ -727,7 +727,7 @@ impl AppState {
         self.fx.inputs.image_limit = image_limit;
         // 新規プロジェクトの窓で作ったときだけ、作ったあとで立てる（窓で選んだ解像度）
         self.resolution_chosen = false;
-        self.renaming_set = None;
+        self.ui.renaming_set = None;
         // モデルのマテリアルに結び付けてから文書を入れる（3D ビューの同期は、描くマテリアルが決まったあとの 1 回）。結び付けは
         // セットの並びとモデルだけを読み書きし、今の文書には触らない
         self.bind_model_to_sets(create_missing);
@@ -1002,12 +1002,12 @@ impl AppState {
             if let Some(set) = self.sets.take_other(*uid) {
                 names.push(set.name.clone());
                 self.bake.skipped.remove(uid);
-                if self.renaming_set == Some(*uid) {
-                    self.renaming_set = None;
+                if self.ui.renaming_set == Some(*uid) {
+                    self.ui.renaming_set = None;
                 }
             }
         }
-        self.set_scroll = 0.0;
+        self.ui.set_scroll = 0.0;
         self.sync_mesh_map_view();
         self.sync_view3d();
         self.modified = true;
@@ -1075,8 +1075,8 @@ pub(crate) mod install_testing {
             .selected_layer
             .or_else(|| app.doc.layers().first().map(|l| l.id()))
             .expect("層がある");
-        app.renaming = Some(layer);
-        app.layer_drag = Some(crate::m2::LayerDrag {
+        app.ui.renaming = Some(layer);
+        app.ui.layer_drag = Some(crate::m2::LayerDrag {
             id: layer,
             target: None,
         });
@@ -1087,13 +1087,13 @@ pub(crate) mod install_testing {
         app.fx.selected = Some(crate::fx::Selected::Anchor {
             id: yolu_core::AnchorId(1),
         });
-        app.layer_scroll = 37.0;
+        app.ui.layer_scroll = 37.0;
     }
 
     /// 前の文書を指す途中の状態が戻った。
     pub(crate) fn assert_settled(app: &AppState, what: &str) {
-        assert!(app.renaming.is_none(), "{what}: 名前の変更");
-        assert!(app.layer_drag.is_none(), "{what}: 層のドラッグ");
+        assert!(app.ui.renaming.is_none(), "{what}: 名前の変更");
+        assert!(app.ui.layer_drag.is_none(), "{what}: 層のドラッグ");
         assert!(app.popup.is_none(), "{what}: ポップアップ");
         assert!(app.fx.selected.is_none(), "{what}: 効果の選び");
     }
@@ -1392,13 +1392,13 @@ mod tests {
             crate::canvas::view::ViewState::default(),
             "入れ替え先の表示"
         );
-        assert_eq!(s.layer_scroll, 0.0, "入れ替え先のスクロール");
+        assert_eq!(s.ui.layer_scroll, 0.0, "入れ替え先のスクロール");
         assert!(s.selected_layer.is_some(), "選び直す");
         stir(&mut s);
         s.switch_set(0).unwrap();
         assert_settled(&s, "switch_set（戻す）");
         assert_eq!(s.view, first_view, "しまっていた表示");
-        assert_eq!(s.layer_scroll, 37.0, "しまっていたスクロール");
+        assert_eq!(s.ui.layer_scroll, 37.0, "しまっていたスクロール");
     }
 
     #[test]
@@ -1410,7 +1410,7 @@ mod tests {
         s.swap_untouched_set_document(s.sets.current_index(), doc);
         assert_settled(&s, "swap_untouched_set_document");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
-        assert_eq!(s.layer_scroll, 0.0);
+        assert_eq!(s.ui.layer_scroll, 0.0);
         assert_eq!(s.doc.width(), 64);
     }
 
@@ -1419,14 +1419,14 @@ mod tests {
         let mut s = AppState::new(32, 32);
         zoom(&mut s);
         stir(&mut s);
-        s.renaming_set = Some(s.sets.current().uid);
+        s.ui.renaming_set = Some(s.sets.current().uid);
         let (doc, _) = crate::state::blank_document(64, 64);
         let sets = TextureSets::first(&doc);
         s.replace_sets_with(sets, doc, true);
         assert_settled(&s, "replace_sets_with");
-        assert!(s.renaming_set.is_none(), "セットの名前の変更");
+        assert!(s.ui.renaming_set.is_none(), "セットの名前の変更");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
-        assert_eq!(s.layer_scroll, 0.0);
+        assert_eq!(s.ui.layer_scroll, 0.0);
         assert!(s.selected_layer.is_some());
     }
 }

@@ -141,7 +141,7 @@ impl super::StencilState {
 /// だけ（Ctrl+N は新しいプロジェクト、Ctrl+Shift+N は新しいレイヤー）。押し始めたあとは、離すまで続く（Ctrl を足しても外れない）。
 pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let typing = ctx.egui_wants_keyboard_input();
-    let blocked = app.popup.is_some() || app.popup_was_open;
+    let blocked = app.popup.is_some() || app.ui.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
             i.key_down(crate::keymap::STENCIL_MOVE),
@@ -218,7 +218,7 @@ pub fn handle_event(
     if !app.stencil.key_held
         || app.is_stroking()
         || app.popup.is_some()
-        || app.popup_was_open
+        || app.ui.popup_was_open
         || !over
     {
         return false;

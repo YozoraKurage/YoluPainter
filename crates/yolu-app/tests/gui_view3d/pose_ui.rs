@@ -244,7 +244,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
     // ボーンの節を閉じる: 木が消える
     h.get_by_label("ボーン").click();
     h.run();
-    assert_eq!(h.state().state.sections.get("pose.bones"), Some(&false));
+    assert_eq!(h.state().state.ui.sections.get("pose.bones"), Some(&false));
     assert!(h.query_by_label("腰").is_none(), "閉じたら木は出ない");
     assert!(h.query_by_label("面を隠す").is_some(), "ほかの節はそのまま");
     h.get_by_label("ボーン").click();
@@ -255,7 +255,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
     h.get_by_label("BlendShape").click();
     h.run();
     assert!(h.query_by_label("おなか").is_none());
-    assert_eq!(h.state().state.sections.get("pose.shapes"), Some(&false));
+    assert_eq!(h.state().state.ui.sections.get("pose.shapes"), Some(&false));
     // 面を隠すの節
     assert!(h.query_by_label("選んだボーンの面を隠す").is_some());
     h.get_by_label("面を隠す").click();
@@ -273,7 +273,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
 #[test]
 fn the_inspector_edits_a_bone_by_numbers_and_each_change_is_one_pose_undo_step() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let steps = undo_len(&h);
@@ -334,7 +334,7 @@ fn the_inspector_edits_a_bone_by_numbers_and_each_change_is_one_pose_undo_step()
 #[test]
 fn dragging_a_field_and_pressing_escape_puts_the_value_back_without_an_undo_step() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let before = local(&h, upper);
@@ -362,7 +362,7 @@ fn dragging_a_field_and_pressing_escape_puts_the_value_back_without_an_undo_step
 #[test]
 fn losing_focus_in_the_middle_of_a_field_drag_commits_what_was_dragged() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let before = local(&h, upper).translation;
@@ -384,7 +384,7 @@ fn losing_focus_in_the_middle_of_a_field_drag_commits_what_was_dragged() {
 #[test]
 fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_step_each() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let (upper, lower, hand) = (bone(&h, "右上腕"), bone(&h, "右前腕"), bone(&h, "右手"));
     select(&mut h, "右上腕");
@@ -458,8 +458,8 @@ fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_st
 #[test]
 fn blend_shapes_reset_one_by_one_and_all_at_once() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
-    h.state_mut().state.sections.insert("pose.bones", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.bones", false);
     float_pose_tab(&mut h);
     let mut p = session(&h).pose().clone();
     p.blend_weights[0][0] = 70.0;
@@ -505,7 +505,7 @@ fn blend_shapes_reset_one_by_one_and_all_at_once() {
 #[test]
 fn nothing_in_the_pose_tab_changes_while_stroking() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     select(&mut h, "右上腕");
     // 胴に描き始める（本物のポインタで）
@@ -1708,7 +1708,7 @@ fn the_floating_pose_window_fits_too() {
 fn pose_tab_snapshots() {
     let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.shapes", false);
+    h.state_mut().state.ui.sections.insert("pose.shapes", false);
     float_pose_tab(&mut h);
     select(&mut h, "右上腕");
     let mut p = session(&h).pose().clone();
@@ -1722,7 +1722,7 @@ fn pose_tab_snapshots() {
     hide::hide_bone(&mut h.state_mut().state, upper);
     let app = &mut h.state_mut().state;
     hide::save_preset(app, "右腕").unwrap();
-    h.state_mut().state.sections.insert("pose.bones", false);
+    h.state_mut().state.ui.sections.insert("pose.bones", false);
     h.run();
     snapshots.add(h.try_snapshot("pose_tab_hide"));
 }
@@ -1745,7 +1745,7 @@ fn pose_presets_snapshot() {
     let mut h = figure(256);
     float_pose_tab(&mut h);
     for section in ["pose.bones", "pose.hide", "pose.shapes"] {
-        h.state_mut().state.sections.insert(section, false);
+        h.state_mut().state.ui.sections.insert(section, false);
     }
     bend_arm(&mut h);
     {
@@ -1775,7 +1775,7 @@ fn pose_presets_snapshot() {
 #[test]
 fn a_pose_edit_through_the_inspector_survives_the_undo_redo_buttons() {
     let mut h = figure(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let at = center_of(&h, ROTATION_Z);

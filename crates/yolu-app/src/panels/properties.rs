@@ -122,7 +122,7 @@ pub fn section(
     let header = rows.full_row(t::PANEL_HEADER_HEIGHT, 5.0);
     let out = w::section_header(ui, header, ("section", key), title, open, Some(icon), reset);
     if out.open != open {
-        app.sections.insert(key, out.open);
+        app.ui.sections.insert(key, out.open);
     }
     if out.open {
         rows.indent = t::SECTION_INDENT;
@@ -162,7 +162,7 @@ pub fn subsection(
         .clicked();
     }
     if next != open {
-        app.sections.insert(key, next);
+        app.ui.sections.insert(key, next);
     }
     rows.indent = t::SECTION_INDENT + 10.0;
     (next, reset_clicked)
@@ -327,7 +327,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let context = context(app);
     let mut top = r.top();
-    let mut tab = app.property_tab.min(TAB_ICONS.len() - 1);
+    let mut tab = app.ui.property_tab.min(TAB_ICONS.len() - 1);
     if context == Context::Paint {
         let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
         let labels = tab_labels(app);
@@ -336,7 +336,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             app.m2.props_scroll = 0.0;
         }
         tab = chosen;
-        app.property_tab = tab;
+        app.ui.property_tab = tab;
         top = strip.bottom();
     }
     let body = Rect::from_min_max(pos2(r.left(), top), r.max);

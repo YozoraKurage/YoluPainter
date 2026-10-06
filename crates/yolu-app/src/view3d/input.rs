@@ -637,7 +637,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         app.view3d.input.pen_press = None;
         return;
     }
-    let blocked = app.popup.is_some() || app.popup_was_open;
+    let blocked = app.popup.is_some() || app.ui.popup_was_open;
     app.region.modifiers = ui.input(|i| i.modifiers);
     // 設定のパネルを開いているあいだの押しは、パネルの外でも 3D に使わない（パネルは外の押しで閉じる。その押しが描き始め・回し始めに
     // ならないように。このフレームの押しで閉じるときも、パネルはこの後に描くので開いている）。ホイールは使える。ドックのタブの見出しを

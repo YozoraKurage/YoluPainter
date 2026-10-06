@@ -160,13 +160,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let n = app.sets.len();
     let content = n as f32 * ROW_HEIGHT;
-    let bar = Scroll::begin(ui, list, content, &mut app.set_scroll);
+    let bar = Scroll::begin(ui, list, content, &mut app.ui.set_scroll);
     let row_width = list.width() - bar.reserved();
     for index in 0..n {
         let row = Rect::from_min_size(
             pos2(
                 list.left(),
-                list.top() + index as f32 * ROW_HEIGHT - app.set_scroll,
+                list.top() + index as f32 * ROW_HEIGHT - app.ui.set_scroll,
             ),
             vec2(row_width, ROW_HEIGHT),
         );
@@ -175,7 +175,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
         set_row(ui, app, &ctx, list, row, index);
     }
-    bar.end(ui, "texture_sets.scroll", &mut app.set_scroll);
+    bar.end(ui, "texture_sets.scroll", &mut app.ui.set_scroll);
 
     // 足す・消す・プロジェクトの構成（今のセットのマテリアルや見え方を文字の行で繰り返さない。状態は行の印とツールチップ）
     toolbar_buttons(ui, app, toolbar);
@@ -351,8 +351,8 @@ fn set_row(
 
     if response.clicked() {
         app.apply(Action::SelectSet(uid));
-        if app.renaming_set != Some(uid) {
-            app.renaming_set = None;
+        if app.ui.renaming_set != Some(uid) {
+            app.ui.renaming_set = None;
         }
     }
     if response.double_clicked()
@@ -409,9 +409,9 @@ fn set_row(
     }
     w::text(&painter, res_rect, &resolution, t::LABEL_DIM, Align::Right);
 
-    if app.renaming_set == Some(uid) {
-        let first = !app.rename_set_started;
-        app.rename_set_started = true;
+    if app.ui.renaming_set == Some(uid) {
+        let first = !app.ui.rename_set_started;
+        app.ui.rename_set_started = true;
         let out = w::text_field(ui, name_rect, ("set.rename", uid), &name, None, first);
         if let Some(next) = out.committed {
             if let Err(e) = app.rename_set(uid, &next) {
@@ -419,7 +419,7 @@ fn set_row(
             }
         }
         if !first && !out.focused {
-            app.renaming_set = None;
+            app.ui.renaming_set = None;
         }
     } else {
         let color = if selected {

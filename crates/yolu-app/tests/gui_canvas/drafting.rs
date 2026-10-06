@@ -268,7 +268,7 @@ fn mouse(h: &mut Harness<'_, YoluApp>, p: Pos2, down: bool, m: Modifiers) {
 fn point(h: &Harness<'_, YoluApp>, x: f64, y: f64) -> Pos2 {
     let s = &h.state().state;
     s.view
-        .view(s.canvas_rect.unwrap(), s.doc.width(), s.doc.height())
+        .view(s.ui.canvas_rect.unwrap(), s.doc.width(), s.doc.height())
         .to_screen(x, y)
 }
 fn pen(h: &mut Harness<'_, YoluApp>, p: Pos2, contact: bool, pressure: f32, m: Modifiers) {
@@ -975,7 +975,7 @@ fn a_shape_drag_with_the_pen_is_dropped_when_the_canvas_is_hidden() {
     // 触れたまま別のタブへ（キャンバスは隠れ、ペンの離れを受け取れない）
     common::click_tab(&mut h, Tab::View3d);
     h.run();
-    assert!(!h.state().state.canvas_visible);
+    assert!(!h.state().state.ui.canvas_visible);
     assert!(
         h.state().state.drafting.drag.is_none(),
         "図形の途中を捨てた"
@@ -987,7 +987,7 @@ fn a_shape_drag_with_the_pen_is_dropped_when_the_canvas_is_hidden() {
     pen(&mut h, b, false, 0.0, Modifiers::NONE);
     common::click_tab(&mut h, Tab::Canvas);
     h.run();
-    assert!(h.state().state.canvas_visible);
+    assert!(h.state().state.ui.canvas_visible);
     assert!(
         !h.state().state.doc.can_undo(),
         "隠れているあいだに何も塗らない"

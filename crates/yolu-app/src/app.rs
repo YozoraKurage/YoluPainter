@@ -1362,7 +1362,7 @@ impl YoluApp {
 
     /// 最後に描いたキャンバスの表示域（画面の点）。
     pub fn canvas_view_rect(&self) -> Option<Rect> {
-        self.state.canvas_rect
+        self.state.ui.canvas_rect
     }
 
     pub fn thumbnails(&self) -> &Thumbnails {
@@ -1394,7 +1394,7 @@ impl YoluApp {
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         self.poll_gpu_watch(&ctx);
-        self.state.popup_was_open = self.state.popup.is_some();
+        self.state.ui.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
         let mut pen = self.pen.drain();
         // 窓の縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
@@ -1637,14 +1637,14 @@ impl YoluApp {
                     .show_inside(ui, &mut tabs);
                 let grabbed = tabs.grabbed;
                 self.tab_rects = tabs.tab_rects;
-                self.state.dock_grab = [grabbed, self.state.dock_grab[0]];
+                self.state.ui.dock_grab = [grabbed, self.state.ui.dock_grab[0]];
             });
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
-        self.state.canvas_visible = std::mem::take(&mut self.state.canvas_drawn);
+        self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
         // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
         // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
-        if !self.state.canvas_visible {
+        if !self.state.ui.canvas_visible {
             self.state.drafting_cancel();
             self.state.drafting.pen_down = None;
             self.state.canvas.pen_press = None;

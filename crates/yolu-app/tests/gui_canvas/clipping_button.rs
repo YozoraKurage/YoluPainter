@@ -140,7 +140,7 @@ fn the_layer_properties_have_no_clipping_row_and_the_button_is_in_the_layer_pane
         r.top() > props.bottom() && r.top() < props.bottom() + 40.0
     });
     click(&mut h, tab.center());
-    assert_eq!(h.state().state.property_tab, 2);
+    assert_eq!(h.state().state.ui.property_tab, 2);
     assert!(
         h.query_all_by_label("クリッピング").next().is_none(),
         "プロパティのレイヤーの欄にクリッピングの項目は無い"

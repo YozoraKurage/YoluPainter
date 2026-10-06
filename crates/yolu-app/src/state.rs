@@ -635,6 +635,42 @@ impl Action {
     }
 }
 
+/// 画面の一時の状態（前のフレームの結果・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・層のドラッグ）は
+/// `AppState::install_document` が戻す。
+#[derive(Debug, Default)]
+pub struct UiTemp {
+    /// 名前を変えている層。
+    pub renaming: Option<LayerId>,
+    /// 名前の入力欄がフォーカスを取った後か（外れたら名前の変更を終える）。
+    pub rename_started: bool,
+    /// 層の欄のスクロール。
+    pub layer_scroll: f32,
+    /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
+    pub layer_drag: Option<LayerDrag>,
+    /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
+    pub renaming_set: Option<u32>,
+    pub rename_set_started: bool,
+    /// テクスチャセットの欄のスクロール。
+    pub set_scroll: f32,
+    /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
+    pub canvas_rect: Option<egui::Rect>,
+    /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
+    /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
+    pub canvas_visible: bool,
+    pub canvas_drawn: bool,
+    /// 最後にキャンバスのタブを描いたフレームの番号（`Context::cumulative_frame_nr`）。タブが後ろにあるあいだは進まない。
+    pub canvas_frame: Option<u64>,
+    /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
+    /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
+    pub dock_grab: [bool; 2],
+    /// 前のフレームでポップアップが開いていた（このフレームの押下はキャンバスへ渡さない）。
+    pub popup_was_open: bool,
+    /// 見出しの開閉（キー → 開いているか）。
+    pub sections: HashMap<&'static str, bool>,
+    /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
+    pub property_tab: usize,
+}
+
 /// 画面の状態の全部。
 pub struct AppState {
     /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
@@ -668,18 +704,10 @@ pub struct AppState {
     pub toast: crate::toast::Toast,
     /// 状態の帯の右端の版・ビルドと使っているメモリ。
     pub usage: crate::usage::Usage,
-    /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
-    pub property_tab: usize,
-    /// 見出しの開閉（キー → 開いているか）。
-    pub sections: HashMap<&'static str, bool>,
-    pub renaming: Option<LayerId>,
-    /// 名前の入力欄がフォーカスを取った後か（外れたら名前の変更を終える）。
-    pub rename_started: bool,
-    pub layer_scroll: f32,
+    /// 画面の一時の状態（名前の変更・層の欄のスクロールとドラッグ・キャンバスの表示域・見出しの開閉など。保存しない）。
+    pub ui: UiTemp,
     pub canvas: CanvasInput,
     pub popup: Option<OpenPopup>,
-    /// 前のフレームでポップアップが開いていた（このフレームの押下はキャンバスへ渡さない）。
-    pub popup_was_open: bool,
     pub project_name: String,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
@@ -688,25 +716,8 @@ pub struct AppState {
     pub rewritten_sets: usize,
     pub reset_layout: bool,
     pub quit: bool,
-    /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
-    pub layer_drag: Option<LayerDrag>,
-    /// 最後に描いたキャンバスの表示域（画面の点。試験と外の窓の位置合わせ用）。
-    pub canvas_rect: Option<egui::Rect>,
-    /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
-    /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
-    pub canvas_visible: bool,
-    pub canvas_drawn: bool,
-    /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
-    /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
-    pub dock_grab: [bool; 2],
-    /// 最後にキャンバスのタブを描いたフレームの番号（`Context::cumulative_frame_nr`）。タブが後ろにあるあいだは進まない。
-    pub canvas_frame: Option<u64>,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
-    /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
-    pub renaming_set: Option<u32>,
-    pub rename_set_started: bool,
-    pub set_scroll: f32,
     /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
     pub model: Option<SceneModel>,
     /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
@@ -905,29 +916,15 @@ impl AppState {
             message: String::new(),
             toast: crate::toast::Toast::default(),
             usage: crate::usage::Usage::default(),
-            property_tab: 0,
-            sections: HashMap::new(),
-            renaming: None,
-            rename_started: false,
-            layer_scroll: 0.0,
+            ui: UiTemp::default(),
             canvas: CanvasInput::default(),
             popup: None,
-            popup_was_open: false,
             project_name: lang.pick("名称未設定", "Untitled").into(),
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
             quit: false,
-            layer_drag: None,
-            canvas_rect: None,
-            canvas_visible: false,
-            canvas_drawn: false,
-            dock_grab: [false; 2],
-            canvas_frame: None,
             sets,
-            renaming_set: None,
-            rename_set_started: false,
-            set_scroll: 0.0,
             model: None,
             link: LinkView::default(),
             link_request: None,
@@ -989,7 +986,7 @@ impl AppState {
 
     /// ドックのタブの見出しをつかんでいる最中か、離した直後のフレームか（このあいだ、ビューは描き始め・回し始めない）。
     pub fn dock_grabbed(&self) -> bool {
-        self.dock_grab[0] || self.dock_grab[1]
+        self.ui.dock_grab[0] || self.ui.dock_grab[1]
     }
 
     /// 道具を替える（どの経路も通る 1 つの口）。ブラシと消しゴムは道具ごとに最後のブラシへ（ストロークの最中に替わるなら断って false）。
@@ -1020,7 +1017,7 @@ impl AppState {
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
     /// 2D にも描けるので偽。2D だけの設定（対称など）は、真のあいだだけ無効にする。
     pub fn paints_only_in_3d(&self) -> bool {
-        self.view3d.paintable_on_screen() && !self.canvas_visible
+        self.view3d.paintable_on_screen() && !self.ui.canvas_visible
     }
 
     /// 取り消せるか（多角形の点を打っている間は最後の点、ポーズのモードではポーズの取り消し）。
@@ -1042,7 +1039,7 @@ impl AppState {
     }
 
     pub fn section_open(&self, key: &'static str, default: bool) -> bool {
-        *self.sections.get(key).unwrap_or(&default)
+        *self.ui.sections.get(key).unwrap_or(&default)
     }
 
     /// 選んでいるレイヤー（消えていれば一番上を選び直す）。
@@ -1280,8 +1277,8 @@ impl AppState {
                 self.modified = true;
             }
             Action::StartRename(id) => {
-                self.renaming = Some(id);
-                self.rename_started = false;
+                self.ui.renaming = Some(id);
+                self.ui.rename_started = false;
             }
             Action::ZoomIn => self
                 .view
@@ -1367,8 +1364,8 @@ impl AppState {
                         .into()
                 }
                 Some(_) => {
-                    self.renaming_set = Some(uid);
-                    self.rename_set_started = false;
+                    self.ui.renaming_set = Some(uid);
+                    self.ui.rename_set_started = false;
                 }
                 None => {}
             },

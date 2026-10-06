@@ -193,7 +193,7 @@ pub fn pen_sample(
 
 /// 矢印キー: 1 画素（Shift で 10）。`screen` は画面の向き（右・下が正）。表示を回していても画面の向きに動く。
 pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
-    let Some(rect) = app.canvas_rect else {
+    let Some(rect) = app.ui.canvas_rect else {
         return;
     };
     let view = app.view.view(rect, app.doc.width(), app.doc.height());

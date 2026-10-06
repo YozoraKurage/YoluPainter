@@ -161,7 +161,7 @@ fn loading_the_figure_shows_the_pose_panel_and_tree() {
     }
     // 3D の表示域はポーズの欄に削られない（欄はドックのタブ）
     assert!(rect.width() > 500.0, "{rect:?}");
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     // 木: 根と、その下の 1 段が開いている
     for name in ["腰", "背骨", "右太もも"] {
@@ -414,7 +414,7 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
 #[test]
 fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
     let (mut h, _rect) = figure_view(256);
-    h.state_mut().state.sections.insert("pose.hide", false);
+    h.state_mut().state.ui.sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let before: Vec<Vec3> = h.state().state.view3d.model.as_ref().unwrap().meshes[0]
         .positions

@@ -3489,7 +3489,7 @@ mod tests {
         assert!(s.install_psd(doc, PsdTarget::CurrentSet, "a.psd"));
         assert_settled(&s, "PSD を今のセットへ");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
-        assert_eq!(s.layer_scroll, 0.0);
+        assert_eq!(s.ui.layer_scroll, 0.0);
         assert!(s.selected_layer.is_some());
         assert!(s.modified);
     }

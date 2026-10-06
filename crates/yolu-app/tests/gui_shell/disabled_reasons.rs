@@ -173,7 +173,7 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         h.run();
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
         assert!(
-            h.state().state.canvas_visible && h.state().state.view3d.paintable_on_screen(),
+            h.state().state.ui.canvas_visible && h.state().state.view3d.paintable_on_screen(),
             "{lang:?}"
         );
         assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");

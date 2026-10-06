@@ -33,9 +33,9 @@ const SHIFT_HOLD_POINTS: f32 = 8.0;
 pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &[PenSample]) {
     let rect = ui.max_rect();
     let response = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
-    app.canvas_rect = Some(rect);
-    app.canvas_drawn = true;
-    app.canvas_frame = Some(ui.ctx().cumulative_frame_nr());
+    app.ui.canvas_rect = Some(rect);
+    app.ui.canvas_drawn = true;
+    app.ui.canvas_frame = Some(ui.ctx().cumulative_frame_nr());
     ui.advance_cursor_after_rect(rect);
     handle_input(
         ui,
@@ -673,7 +673,7 @@ fn drive_pen(
     let ctx = InputCtx {
         modifiers: frame.modifiers,
         now: frame.now,
-        rect: app.canvas_rect.unwrap_or(Rect::NOTHING),
+        rect: app.ui.canvas_rect.unwrap_or(Rect::NOTHING),
         pass: 0,
     };
     let starting = contact
@@ -731,7 +731,7 @@ fn typing_id() -> egui::Id {
 fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
     app.doc.selection().is_some()
         && app.popup.is_none()
-        && !app.popup_was_open
+        && !app.ui.popup_was_open
         && app.sel.dialog.is_none()
         && !crate::windows::modal_open(app)
         && !crate::ui::window::any_open(ctx)
@@ -751,7 +751,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     let typed_last = ctx.data_mut(|d| d.get_temp::<bool>(typing_id()).unwrap_or(false));
     ctx.data_mut(|d| d.insert_temp(typing_id(), typing));
     let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
-    let blocked = app.popup.is_some() || app.popup_was_open || app.sel.dialog.is_some();
+    let blocked = app.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some();
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
             i.events.clone(),

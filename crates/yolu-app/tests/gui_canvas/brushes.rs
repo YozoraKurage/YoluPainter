@@ -125,7 +125,7 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
         h.query_all_by_label("アルファ").next().is_none(),
         "筆先の形は詳細の窓の「形状」にあり、プロパティにアルファのタブは無い"
     );
-    assert_eq!(st(&h).property_tab, 0);
+    assert_eq!(st(&h).ui.property_tab, 0);
     // 英語
     language(&mut h, Lang::En);
     assert!(h.query_by_label("Tool Properties").is_some());

@@ -1115,7 +1115,7 @@ fn arrow_keys_while_typing_a_layer_name_edit_the_text_and_never_move_the_layer()
         h.step();
     }
     h.run();
-    assert!(h.state().state.renaming.is_some(), "名前の入力が始まる");
+    assert!(h.state().state.ui.renaming.is_some(), "名前の入力が始まる");
     assert_eq!(h.state().state.tool, Tool::Move);
     let revision = h.state().state.doc.revision();
     let before = color_bytes(&h.state().state, id);
@@ -1131,14 +1131,14 @@ fn arrow_keys_while_typing_a_layer_name_edit_the_text_and_never_move_the_layer()
         }
     }
     let s = &h.state().state;
-    assert!(s.renaming.is_some(), "入力は続いている");
+    assert!(s.ui.renaming.is_some(), "入力は続いている");
     assert_eq!(s.doc.revision(), revision, "文字を打っている間に層が動いた");
     assert_eq!(color_bytes(s, id), before);
     assert!(!s.modified);
     // 入力を終えると、同じキーで動く
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.renaming.is_none());
+    assert!(h.state().state.ui.renaming.is_none());
     key(&h, Key::ArrowRight, Modifiers::NONE);
     h.run();
     assert_eq!(pixel(&h.state().state, id, 31, 40), RED.to_array());
@@ -1599,7 +1599,7 @@ fn clicking_rows_with_ctrl_and_shift_selects_several_layers() {
     move_to(&h, to);
     h.step();
     assert_eq!(h.state().state.selected_layers(), layers);
-    assert!(h.state().state.layer_drag.is_some());
+    assert!(h.state().state.ui.layer_drag.is_some());
     release(&h, to, PointerButton::Primary);
     h.run();
     assert_eq!(h.state().state.doc.layers().len(), 4);

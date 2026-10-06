@@ -1014,7 +1014,7 @@ pub(super) fn section_band(
         None,
     );
     if out.open != open {
-        app.sections.insert(key, out.open);
+        app.ui.sections.insert(key, out.open);
     }
     out.open
 }

@@ -158,7 +158,7 @@ fn rename_hide_and_the_header_show_the_set() {
     }
     h.run();
     assert_eq!(
-        h.state().state.renaming_set,
+        h.state().state.ui.renaming_set,
         h.state().state.sets.get(1).map(|s| s.uid)
     );
     key(&h, Key::A, egui::Modifiers::COMMAND);
@@ -281,7 +281,7 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
     let uid = h.state().state.sets.current().uid;
     assert!(h.state_mut().state.rename_set(uid, "x").is_err());
     h.state_mut().state.apply(Action::StartRenameSet(uid));
-    assert_eq!(h.state().state.renaming_set, None);
+    assert_eq!(h.state().state.ui.renaming_set, None);
     // レイヤーのパネルの操作は押せない
     assert!(h
         .get_by_label("新規レイヤー")

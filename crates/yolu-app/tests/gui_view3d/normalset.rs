@@ -230,10 +230,10 @@ fn open_channels(h: &mut Harness<'static, YoluApp>) {
     click_tab(h, Tab::Channels);
     h.run();
     // 「ノーマル」の節は初めは閉じている（見出しを押して開く）
-    assert_eq!(h.state().state.sections.get("normal"), Some(&false));
+    assert_eq!(h.state().state.ui.sections.get("normal"), Some(&false));
     let header = lowest(h, "ノーマル");
     click(h, header.center());
-    assert_eq!(h.state().state.sections.get("normal"), Some(&true));
+    assert_eq!(h.state().state.ui.sections.get("normal"), Some(&true));
 }
 
 /// 左の列の中の、同じ名前の部品のうち一番下のもの（チャンネルの行と同じ名前の見出しなど）。
@@ -354,7 +354,7 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
     let mut h = app(1280.0, 500.0, 128);
     click_tab(&mut h, Tab::Channels);
     // 見出しが見える所に無いほど短いので、開いた状態を直に入れる
-    h.state_mut().state.sections.insert("normal", true);
+    h.state_mut().state.ui.sections.insert("normal", true);
     h.run();
     let content = h.state().state.m2.channels_content;
     assert!(content > 6.0 * 28.0 + 60.0, "一覧の下に節が続く: {content}");

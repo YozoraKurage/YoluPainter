@@ -1308,7 +1308,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
     let released = ui.input(|i| i.pointer.any_released());
     // 一覧の行の高さは層と効果で違うので、行の数え方は効果の行の配置から（層の行の単位に直す）
     let layout = crate::panels::effect_rows::layout(&app.doc, rows, ROW_HEIGHT);
-    let at = p.y - list.top() + app.layer_scroll;
+    let at = p.y - list.top() + app.ui.layer_scroll;
     let position = layout.position_at(at);
     let painter = ui.painter_at(list);
     let frame = |y: f32| {
@@ -1321,7 +1321,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
         ItemKind::SmartMask => {
             let index = layout.row_at(at).unwrap_or(rows.len());
             rows.get(index).map(|row| {
-                let y = list.top() + layout.layer_y(index) - app.layer_scroll;
+                let y = list.top() + layout.layer_y(index) - app.ui.layer_scroll;
                 w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                 PlaceTarget::Mask(row.id)
             })
@@ -1331,7 +1331,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
             let target = gap_or_group(rows, position);
             match target {
                 DropTarget::Gap(gap) => {
-                    let y = list.top() + layout.gap_y(gap) - app.layer_scroll;
+                    let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
                     painter.rect_filled(
                         Rect::from_min_size(
                             pos2(list.left() + 4.0, y - 1.0),
@@ -1343,7 +1343,7 @@ pub fn layer_list_drop(ui: &Ui, app: &mut AppState, list: Rect, rows: &[Row]) {
                 }
                 DropTarget::Into(group) => {
                     if let Some(i) = rows.iter().position(|r| r.id == group) {
-                        let y = list.top() + layout.layer_y(i) - app.layer_scroll;
+                        let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
                         w::outline(&painter, frame(y), t::ACCENT, 2.0, 3.0);
                     }
                 }

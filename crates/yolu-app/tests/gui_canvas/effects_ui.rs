@@ -107,7 +107,7 @@ fn snapshot_the_add_menu() {
     let mut h = app(1280.0, 1000.0, 128);
     effect_document(&mut h);
     fx(&mut h, FxOp::Deselect);
-    h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
+    h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
     h.get_by_label("フィルターを追加").click();
     h.run();
@@ -260,7 +260,7 @@ fn the_context_menu_of_a_row_acts_on_that_row() {
 fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
     let mut h = app(1280.0, 1000.0, 128);
     let layer = h.state().state.selected_layer.unwrap();
-    h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
+    h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
     h.get_by_label("フィルターを追加").click();
     h.run();
@@ -425,7 +425,7 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1000.0, 128);
         h.state_mut().state.set_language(lang);
-        h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
+        h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         h.run();
         h.get_by_label(lang.pick("フィルターを追加", "Add Filter"))
             .click();

@@ -21,7 +21,7 @@ fn harness_sized(lang: Lang, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(1500.0, height, 64);
     h.state_mut().state.lang = lang;
     // 描く文脈のマテリアルのタブ
-    h.state_mut().state.property_tab = 1;
+    h.state_mut().state.ui.property_tab = 1;
     h.run();
     h
 }

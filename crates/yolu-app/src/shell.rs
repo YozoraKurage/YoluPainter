@@ -727,6 +727,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     // 移動・変形の道具: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
     let canvas_shown = app
+        .ui
         .canvas_frame
         .is_some_and(|f| ctx.cumulative_frame_nr().saturating_sub(f) <= 1);
     let arrows_move = app.tool == Tool::Move
