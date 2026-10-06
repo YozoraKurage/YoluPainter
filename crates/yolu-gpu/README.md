@@ -182,7 +182,7 @@ cargo test -p yolu-gpu -- --nocapture
 cargo run -p yolu-gpu --example measure
 ```
 
-アダプターまたはデバイスを取得できない場合、GPU 試験は理由を標準エラーへ出して終了します（Rust の集計では passed と表示されるため `--nocapture` の出力を確認してください）。環境変数 `YOLUPAINTER_REQUIRE_GPU` を設定すると、ベイクの試験（`tests/bake.rs`）はスキップせず失敗にするので、アダプターのある環境で試験が実行されたことを確かめられます。シェーダーの不具合はスキップせず失敗します。`WGPU_BACKEND` など wgpu の環境変数でバックエンドを選択できます。
+アダプターまたはデバイスを取得できない場合、GPU 試験は理由を標準エラーへ出して終了します（Rust の集計では passed と表示されるため `--nocapture` の出力を確認してください）。環境変数 `YOLUPAINTER_REQUIRE_GPU` を設定すると、アダプターが無くて飛ばす試験（このクレートの試験と単体試験、yolu-app の `common::canvas_device`）はスキップせず失敗にするので、アダプターのある環境で試験が実行されたことを確かめられます。シェーダーの不具合はスキップせず失敗します。`WGPU_BACKEND` など wgpu の環境変数でバックエンドを選択できます。
 
 GPU を使う試験は、装置（wgpu の Instance・Device）を作る前に `tests/support/gpu_lease.rs` の `lease()` を呼びます。同じ実行ファイルの中の試験が、装置を作る・使う・捨てるのを 1 つずつにするためです（Vulkan の lavapipe では、別々のスレッドで装置を同時に作ると、プロセスごと SIGSEGV で落ちることがあります）。貸し出しはスレッドが終わるとき（試験が終わるとき）に放され、同じ試験が装置を何個作っても待ちません。
 

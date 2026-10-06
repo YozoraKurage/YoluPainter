@@ -18,6 +18,8 @@ const TOLERANCE: u8 = 2;
 
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
     gpu_lease::lease();
@@ -25,7 +27,7 @@ fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            eprintln!("キャンバスの GPU 試験をスキップ: {e}");
+            require_gpu::skipped("キャンバスの GPU 試験", &e.to_string());
             return None;
         }
     };
@@ -787,7 +789,7 @@ fn shared_device_and_limited_devices() {
     let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
-        eprintln!("共有デバイスの試験をスキップ: アダプターなし");
+        require_gpu::skipped("共有デバイスの試験", "アダプターなし");
         return;
     };
     let info = adapter.get_info();

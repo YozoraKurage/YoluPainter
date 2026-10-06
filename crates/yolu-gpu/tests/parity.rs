@@ -1,6 +1,8 @@
 use yolu_core::{BlendMode, BrushSettings, Channel, Document, Rgba8, TileCoord};
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 use yolu_gpu::{Compositor, Dab, GpuPainter, Options};
 fn gpu() -> Option<GpuPainter> {
     gpu_lease::lease();
@@ -14,7 +16,7 @@ fn gpu() -> Option<GpuPainter> {
                 e.to_string().starts_with("GPU 利用不可:"),
                 "GPU 実装の初期化失敗: {e}"
             );
-            eprintln!("GPU 試験をスキップ: {e}");
+            require_gpu::skipped("GPU 試験", &e.to_string());
             None
         }
     }

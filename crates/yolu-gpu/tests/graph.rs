@@ -20,6 +20,8 @@ const TOLERANCE: u8 = 2;
 
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
+#[path = "support/require_gpu.rs"]
+mod require_gpu;
 
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
     gpu_lease::lease();
@@ -27,7 +29,7 @@ fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            eprintln!("キャンバスの GPU 試験をスキップ: {e}");
+            require_gpu::skipped("キャンバスの GPU 試験", &e.to_string());
             return None;
         }
     };

@@ -86,16 +86,20 @@ jobs:
             libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis
-      - name: 描画する試験（1 本ずつ）
+      # 試験の実行ファイルごとの別のプロセスを 3 列に並べて回す（列の中は順に、プロセスの中は 1 本ずつ。並べ方は tools/render-tests.py の頭）。
+      # 窓・GPU の装置を同じプロセスで同時に作ると lavapipe の中で落ちることがあったので、プロセスの中は前と同じく 1 本ずつにしている。
+      - name: 描画する試験（束ごとのプロセスを並べ、プロセスの中は 1 本ずつ）
         env:
           # 収録済みの画面の正解は、手元の既定（wgpu の Vulkan と Mesa の lavapipe）で撮ったもの。GL の llvmpipe は
           # コンピュートが足りず（GPU 合成の試験が省略になる）、環境の反射の絵も違うので使わない。
           WGPU_BACKEND: vulkan
+          # アダプターを取れないとき、GPU の試験を飛ばして通った扱いにせず、落とす
+          YOLUPAINTER_REQUIRE_GPU: "1"
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          xvfb-run -a cargo test -p yolu-gpu -p yolu-app --locked --no-fail-fast -- --nocapture --test-threads=1
+          xvfb-run -a python3 tools/render-tests.py --log-dir "$RUNNER_TEMP/render-logs"
       - name: 画面の正解との差の画像を残す
         if: failure()
         shell: bash
