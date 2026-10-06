@@ -14,6 +14,8 @@ use super::{
 use super::noisefn::{sin_cos_deg_lanes, unit24_lanes};
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
+#[cfg(target_arch = "x86_64")]
+use super::procedural::GenLanes;
 
 /// セルの枠（Worley の特徴点を引く座標の写し方）。
 pub(super) struct CellSpec {
@@ -484,28 +486,56 @@ unsafe fn per_hash<V: Lanes>(ids: V::F, f: impl Fn(u32) -> f64) -> V::F {
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-pub(super) unsafe fn eval_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3], preset: GrungePreset) -> V::F {
-    match preset {
-        GrungePreset::Stain => stain_lanes::<V>(cx, b),
-        GrungePreset::Rust => rust_lanes::<V>(cx, b),
-        GrungePreset::Scratches => scratches_lanes::<V>(cx, b),
-        GrungePreset::Dust => dust_lanes::<V>(cx, b),
-        GrungePreset::Fingerprints => fingerprints_lanes::<V>(cx, b),
-        GrungePreset::Weave => weave_lanes::<V>(cx, b),
-        GrungePreset::Cracks => cracks_lanes::<V>(cx, b),
-        GrungePreset::Splatter => splatter_lanes::<V>(cx, b),
-        GrungePreset::Peeling => peeling_lanes::<V>(cx, b),
-        GrungePreset::WoodGrain => wood_grain_lanes::<V>(cx, b),
-        GrungePreset::Pebbles => pebbles_lanes::<V>(cx, b),
-    }
+pub(super) unsafe fn eval_lanes<V: GenLanes>(cx: &mut Ctx<'_>, b: [V::F; 3], preset: GrungePreset) -> V::F {
+    V::grunge(cx, b, preset)
 }
+
+/// 模様ごとの、道の命令を有効にした展開しない入口（`$m::dispatch` が模様で選ぶ）。模様の中のノイズの層・セル・線分は展開したまま
+/// （模様ごとの関数は数個の層の大きさに収まる）、模様どうしは別の関数にする。
+macro_rules! preset_entries {
+    ($m:ident, $ty:ident, $feature:literal, $($preset:ident => $f:ident),* $(,)?) => {
+        #[cfg(target_arch = "x86_64")]
+        pub(super) mod $m {
+            use super::*;
+            use crate::math::simd::$ty;
+            $(
+                #[target_feature(enable = $feature)]
+                #[inline(never)]
+                unsafe fn $f(cx: &mut Ctx<'_>, b: [<$ty as Lanes>::F; 3]) -> <$ty as Lanes>::F {
+                    super::$f::<$ty>(cx, b)
+                }
+            )*
+            #[inline(always)]
+            pub(in crate::generator) unsafe fn dispatch(
+                cx: &mut Ctx<'_>,
+                b: [<$ty as Lanes>::F; 3],
+                preset: GrungePreset,
+            ) -> <$ty as Lanes>::F {
+                match preset {
+                    $(GrungePreset::$preset => $f(cx, b),)*
+                }
+            }
+        }
+    };
+}
+macro_rules! presets {
+    ($($args:tt)*) => {
+        preset_entries!($($args)*,
+            Stain => stain_lanes, Rust => rust_lanes, Scratches => scratches_lanes, Dust => dust_lanes,
+            Fingerprints => fingerprints_lanes, Weave => weave_lanes, Cracks => cracks_lanes,
+            Splatter => splatter_lanes, Peeling => peeling_lanes, WoodGrain => wood_grain_lanes,
+            Pebbles => pebbles_lanes);
+    };
+}
+presets!(avx2, Avx2, "avx2,fma");
+presets!(sse41, Sse41, "sse4.1");
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn stain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let a = cx.layer_lanes::<V>(b, 0);
-    let c = cx.layer_lanes::<V>(b, 1);
-    let g = cx.layer_lanes::<V>(b, 2);
+    let a = cx.layer_body::<V>(b, 0);
+    let c = cx.layer_body::<V>(b, 1);
+    let g = cx.layer_body::<V>(b, 2);
     V::mul(
         smooth_lanes::<V>(
             0.38,
@@ -519,11 +549,11 @@ unsafe fn stain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn rust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let patch = cx.layer_lanes::<V>(b, 0);
-    let blot = cx.layer_lanes::<V>(b, 1);
+    let patch = cx.layer_body::<V>(b, 0);
+    let blot = cx.layer_body::<V>(b, 1);
     let pits = V::sub(
         V::splat(1.),
-        smooth_lanes::<V>(0., 0.2, cx.layer_lanes::<V>(b, 2)),
+        smooth_lanes::<V>(0., 0.2, cx.layer_body::<V>(b, 2)),
     );
     let spread = smooth_lanes::<V>(0.42, 0.60, patch);
     let halo = V::mul(
@@ -605,10 +635,10 @@ pub(super) unsafe fn segments_lanes<V: Lanes>(
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn scratches_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let wear = smooth_lanes::<V>(0.25, 0.6, cx.layer_lanes::<V>(b, 0));
-    let long = cx.segments_lanes::<V>(b, 0);
-    let mid = cx.segments_lanes::<V>(b, 1);
-    let short = cx.segments_lanes::<V>(b, 2);
+    let wear = smooth_lanes::<V>(0.25, 0.6, cx.layer_body::<V>(b, 0));
+    let long = cx.segments_body::<V>(b, 0);
+    let mid = cx.segments_body::<V>(b, 1);
+    let short = cx.segments_body::<V>(b, 2);
     V::mul(
         V::max(V::max(long, mid), short),
         V::add(V::splat(0.35), V::mul(V::splat(0.65), wear)),
@@ -618,8 +648,8 @@ unsafe fn scratches_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn dust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let fine = cx.layer_lanes::<V>(b, 0);
-    let m = cx.layer_lanes::<V>(b, 1);
+    let fine = cx.layer_body::<V>(b, 0);
+    let m = cx.layer_body::<V>(b, 1);
     let cover = smooth_lanes::<V>(0.30, 0.65, m);
     V::mul(
         cover,
@@ -633,16 +663,16 @@ unsafe fn dust_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn fingerprints_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let (c, fp) = cx.cells_lanes::<V>(b, 0);
+    let (c, fp) = cx.cells_body::<V>(b, 0);
     let d = [V::sub(fp[0], c.point[0]), V::sub(fp[1], c.point[1])];
     let (s, co) = sin_cos_deg_lanes::<V>(V::mul(unit24_lanes::<V>(c.id), V::splat(180.)));
     let dx = V::add(V::mul(co, d[0]), V::mul(s, d[1]));
     let dy = V::mul(V::sub(V::mul(co, d[1]), V::mul(s, d[0])), V::splat(1.3));
     let r = V::sqrt(V::add(V::mul(dx, dx), V::mul(dy, dy)));
     let half = V::splat(0.5);
-    let n1 = V::sub(cx.layer_lanes::<V>(b, 0), half);
-    let n2 = V::sub(cx.layer_lanes::<V>(b, 1), half);
-    let vis = smooth_lanes::<V>(0.25, 0.6, cx.layer_lanes::<V>(b, 2));
+    let n1 = V::sub(cx.layer_body::<V>(b, 0), half);
+    let n2 = V::sub(cx.layer_body::<V>(b, 1), half);
+    let vis = smooth_lanes::<V>(0.25, 0.6, cx.layer_body::<V>(b, 2));
     let ridge = smooth_lanes::<V>(
         0.30,
         0.55,
@@ -688,7 +718,7 @@ unsafe fn weave_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
         prof_lanes::<V>(fx),
         prof_lanes::<V>(fy),
     );
-    let fiber = cx.layer_lanes::<V>(b, 0);
+    let fiber = cx.layer_body::<V>(b, 0);
     V::mul(
         V::mul(
             V::add(V::splat(0.3), V::mul(V::splat(0.7), over)),
@@ -710,18 +740,18 @@ unsafe fn prof_lanes<V: Lanes>(f: V::F) -> V::F {
 unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     let half = V::splat(0.5);
     let k = V::splat(0.45);
-    let wx = V::mul(V::sub(cx.layer_lanes::<V>(b, 0), half), k);
-    let wy = V::mul(V::sub(cx.layer_lanes::<V>(b, 1), half), k);
+    let wx = V::mul(V::sub(cx.layer_body::<V>(b, 0), half), k);
+    let wy = V::mul(V::sub(cx.layer_body::<V>(b, 1), half), k);
     let wz = if cx.plan.is_uv() {
         b[2]
     } else {
-        V::add(b[2], V::mul(V::sub(cx.layer_lanes::<V>(b, 2), half), k))
+        V::add(b[2], V::mul(V::sub(cx.layer_body::<V>(b, 2), half), k))
     };
     let wb = [V::add(b[0], wx), V::add(b[1], wy), wz];
-    let (f1, f2) = cx.distances_lanes::<V>(wb, 0);
+    let (f1, f2) = cx.distances_body::<V>(wb, 0);
     let width = V::add(
         V::splat(0.012),
-        V::mul(V::splat(0.02), cx.layer_lanes::<V>(b, 3)),
+        V::mul(V::splat(0.02), cx.layer_body::<V>(b, 3)),
     );
     let main = V::sub(
         V::splat(1.),
@@ -731,13 +761,13 @@ unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
             V::sub(f2, f1),
         ),
     );
-    let (f1b, f2b) = cx.distances_lanes::<V>(wb, 1);
+    let (f1b, f2b) = cx.distances_body::<V>(wb, 1);
     let fine = V::mul(
         V::sub(
             V::splat(1.),
             smooth_lanes::<V>(0.01, 0.03, V::sub(f2b, f1b)),
         ),
-        smooth_lanes::<V>(0.4, 0.6, cx.layer_lanes::<V>(b, 4)),
+        smooth_lanes::<V>(0.4, 0.6, cx.layer_body::<V>(b, 4)),
     );
     V::max(main, V::mul(V::splat(0.6), fine))
 }
@@ -745,7 +775,7 @@ unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn drops_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3], frame: usize, biggest: f64) -> V::F {
-    let (c, _) = cx.cells_lanes::<V>(b, frame);
+    let (c, _) = cx.cells_body::<V>(b, frame);
     let r1 = unit24_lanes::<V>(c.id);
     let r2 = per_hash::<V>(c.id, |id| hash_unit(id ^ 0x7f4a_7c15));
     let radius = V::add(V::splat(0.04), V::mul(V::mul(V::splat(biggest), r1), r1));
@@ -767,8 +797,8 @@ unsafe fn splatter_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn peeling_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let base = cx.layer_lanes::<V>(b, 0);
-    let chip = cx.layer_lanes::<V>(b, 1);
+    let base = cx.layer_body::<V>(b, 0);
+    let chip = cx.layer_body::<V>(b, 1);
     V::add(base, V::mul(V::splat(0.12), V::sub(chip, V::splat(0.5))))
 }
 
@@ -788,8 +818,8 @@ unsafe fn wood_grain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
     };
     let half = V::splat(0.5);
     let warp = V::add(
-        V::mul(V::sub(cx.layer_lanes::<V>(b, 0), half), V::splat(1.6)),
-        V::mul(V::sub(cx.layer_lanes::<V>(b, 1), half), V::splat(0.25)),
+        V::mul(V::sub(cx.layer_body::<V>(b, 0), half), V::splat(1.6)),
+        V::mul(V::sub(cx.layer_body::<V>(b, 1), half), V::splat(0.25)),
     );
     let rings = V::add(r, warp);
     let f = V::sub(rings, V::floor(rings));
@@ -798,7 +828,7 @@ unsafe fn wood_grain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
         V::div(f, V::splat(0.78)),
         V::div(V::sub(V::splat(1.), f), V::splat(0.22)),
     );
-    let fiber = cx.layer_lanes::<V>(b, 2);
+    let fiber = cx.layer_body::<V>(b, 2);
     V::mul(
         V::add(V::splat(0.2), V::mul(V::splat(0.8), ring)),
         V::add(V::splat(0.8), V::mul(V::splat(0.4), fiber)),
@@ -808,7 +838,7 @@ unsafe fn wood_grain_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 unsafe fn pebbles_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
-    let (c, _) = cx.cells_lanes::<V>(b, 0);
+    let (c, _) = cx.cells_body::<V>(b, 0);
     let border = smooth_lanes::<V>(0., 0.14, V::sub(c.f2, c.f1));
     let dome = V::sub(V::splat(1.), smooth_lanes::<V>(0., 0.6, c.f1));
     V::mul(

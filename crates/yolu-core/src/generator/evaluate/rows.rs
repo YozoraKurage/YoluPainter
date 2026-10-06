@@ -720,7 +720,7 @@ unsafe fn gather_lanes<V: Lanes>(m: Option<&Map<'_>>, i0: usize, none: [V::F; 3]
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn procedural_row_lanes<V: Lanes>(
+unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
     g: &BoundGenerator<'_>,
     x0: u32,
     y: u32,

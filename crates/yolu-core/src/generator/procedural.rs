@@ -20,6 +20,8 @@ use super::noisefn::{
 };
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
+#[cfg(target_arch = "x86_64")]
+use crate::math::simd::{Avx2, Sse41};
 
 /// 評価する空間。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -748,7 +750,7 @@ impl Plan {
     /// 三角面の向きが定まらない画素（`value` が `None` を返す画素）が 1 つでもあれば `None`（呼び手が 1 画素ずつ引く）。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn value_lanes<V: Lanes>(
+    pub(super) unsafe fn value_lanes<V: GenLanes>(
         &self,
         x: u32,
         y: u32,
@@ -762,10 +764,10 @@ impl Plan {
                 let (w, c) = (size.0 as f64, self.counts[0] as f64);
                 let bx = V::from_fn(|k| ((x + k as u32) as f64 + 0.5) / w * c);
                 let by = V::splat((y as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64);
-                self.recipe_lanes::<V>([bx, by, V::splat(0.)], &mut scratch.sets[0])
+                V::recipe(self, [bx, by, V::splat(0.)], &mut scratch.sets[0])
             }
             Mode::Space3 => {
-                self.recipe_lanes::<V>(self.rotated_lanes::<V>(position), &mut scratch.sets[0])
+                V::recipe(self, self.rotated_lanes::<V>(position), &mut scratch.sets[0])
             }
             Mode::Triplanar => {
                 let r = self.rotated_lanes::<V>(position);
@@ -815,7 +817,8 @@ impl Plan {
                         1 => (V::select(positive, rx, V::neg(rx)), rz),
                         _ => (V::select(positive, V::neg(rx), rx), ry),
                     };
-                    let value = self.recipe_lanes::<V>(
+                    let value = V::recipe(
+                        self,
                         [s, t, V::splat(17. * axis as f64)],
                         &mut scratch.sets[axis],
                     );
@@ -852,7 +855,7 @@ impl Plan {
 
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    unsafe fn recipe_lanes<V: Lanes>(&self, b: [V::F; 3], set: &mut CellSet) -> V::F {
+    pub(super) unsafe fn recipe_body<V: GenLanes>(&self, b: [V::F; 3], set: &mut CellSet) -> V::F {
         let mut cx = Ctx { plan: self, set };
         let b = cx.warp_lanes::<V>(b);
         match self.kind {
@@ -917,6 +920,63 @@ static NEXT_PLAN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 unsafe fn shift_lanes<V: Lanes>(layer: V::F, a: V::F) -> V::F {
     V::mul(V::sub(layer, V::splat(0.5)), a)
 }
+
+/// Generator の重い式（ノイズの層・グランジの模様・1 つの値の式）の、道（AVX2・SSE4.1）ごとの入口。
+///
+/// 式の本体（`*_body`）は `#[inline(always)]` のレーンの式で、呼んだ所に丸ごと展開される。ノイズの層は 1 つの値の式の中で何十回も
+/// 呼ばれ（にじみ・種類・グランジの各模様）、その全部を 1 つの関数に展開すると、LLVM の最適化が 1 関数で数十秒かかっていた。
+/// ここで道ごとに `#[target_feature]` 付きの展開しない関数を 1 つずつ置き、呼び出しの側は関数の呼び出しになる（式も演算の順も
+/// 変わらないので、値は同じ bit）。呼び出しは 1 回で N 画素ぶん（AVX2 は 4、SSE4.1 は 2）。
+#[cfg(target_arch = "x86_64")]
+pub(super) trait GenLanes: Lanes {
+    unsafe fn layer(cx: &mut Ctx<'_>, b: [Self::F; 3], index: usize) -> Self::F;
+    unsafe fn recipe(plan: &Plan, b: [Self::F; 3], set: &mut CellSet) -> Self::F;
+    /// グランジの模様（模様ごとに 1 つの展開しない関数）。
+    unsafe fn grunge(cx: &mut Ctx<'_>, b: [Self::F; 3], preset: GrungePreset) -> Self::F;
+}
+
+/// `GenLanes` を道の型に実装する（入口の関数は、その道の命令を有効にした展開しない関数）。
+#[cfg(target_arch = "x86_64")]
+macro_rules! gen_lanes {
+    ($ty:ident, $feature:literal, $m:ident) => {
+        impl GenLanes for $ty {
+            #[inline(always)]
+            unsafe fn grunge(cx: &mut Ctx<'_>, b: [Self::F; 3], preset: GrungePreset) -> Self::F {
+                grunge::$m::dispatch(cx, b, preset)
+            }
+            #[inline(always)]
+            unsafe fn layer(cx: &mut Ctx<'_>, b: [Self::F; 3], index: usize) -> Self::F {
+                #[target_feature(enable = $feature)]
+                #[inline(never)]
+                unsafe fn entry(
+                    cx: &mut Ctx<'_>,
+                    b: [<$ty as Lanes>::F; 3],
+                    index: usize,
+                ) -> <$ty as Lanes>::F {
+                    cx.layer_body::<$ty>(b, index)
+                }
+                entry(cx, b, index)
+            }
+            #[inline(always)]
+            unsafe fn recipe(plan: &Plan, b: [Self::F; 3], set: &mut CellSet) -> Self::F {
+                #[target_feature(enable = $feature)]
+                #[inline(never)]
+                unsafe fn entry(
+                    plan: &Plan,
+                    b: [<$ty as Lanes>::F; 3],
+                    set: &mut CellSet,
+                ) -> <$ty as Lanes>::F {
+                    plan.recipe_body::<$ty>(b, set)
+                }
+                entry(plan, b, set)
+            }
+        }
+    };
+}
+#[cfg(target_arch = "x86_64")]
+gen_lanes!(Avx2, "avx2,fma", avx2);
+#[cfg(target_arch = "x86_64")]
+gen_lanes!(Sse41, "sse4.1", sse41);
 
 /// 1 組の格子の覚え（基底ごとに、層のオクターブ・セルの枠の数だけ）。
 pub(super) struct CellSet {
@@ -998,7 +1058,7 @@ impl Ctx<'_> {
     /// `layer` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn layer_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+    pub(super) unsafe fn layer_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let layer = &plan.layers[index];
         let uv = plan.mode == Mode::Uv;
@@ -1045,7 +1105,7 @@ impl Ctx<'_> {
     /// `cells` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn cells_lanes<V: Lanes>(
+    pub(super) unsafe fn cells_body<V: Lanes>(
         &mut self,
         b: [V::F; 3],
         index: usize,
@@ -1060,7 +1120,7 @@ impl Ctx<'_> {
     /// セルの枠 `index` の最寄りと 2 番目の距離だけ（`cells_lanes` の `f1`・`f2` と同じ値。ID・点が要らない呼び手用）。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn distances_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> (V::F, V::F) {
+    pub(super) unsafe fn distances_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> (V::F, V::F) {
         let plan = self.plan;
         let oc = &plan.cells[index];
         let q = oc.point_lanes::<V>(b, plan.mode == Mode::Uv);
@@ -1070,17 +1130,24 @@ impl Ctx<'_> {
     /// `segments` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub unsafe fn segments_lanes<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+    pub(super) unsafe fn segments_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
         let plan = self.plan;
         let (oc, spec) = &plan.segments[index];
         let q = oc.point_lanes::<V>(b, plan.mode == Mode::Uv);
         grunge::segments_lanes::<V>(q, oc.seed, oc.per, spec, &mut self.set.segments[oc.slot])
     }
 
+    /// `layer` の N 画素ぶん。道ごとの入口（[`GenLanes::layer`]）を呼び、ノイズの式の展開はそこで止まる。
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    pub unsafe fn layer_lanes<V: GenLanes>(&mut self, b: [V::F; 3], index: usize) -> V::F {
+        V::layer(self, b, index)
+    }
+
     /// `warp` の N 画素ぶん。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    unsafe fn warp_lanes<V: Lanes>(&mut self, b: [V::F; 3]) -> [V::F; 3] {
+    unsafe fn warp_lanes<V: GenLanes>(&mut self, b: [V::F; 3]) -> [V::F; 3] {
         let amount = self.plan.p.bleed;
         if amount <= 0. {
             return b;
@@ -1286,7 +1353,7 @@ mod tests {
     fn lane_values_equal_single_pixel_values_on_every_simd_level() {
         const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         #[inline(never)]
-        unsafe fn value_lanes<V: Lanes>(
+        unsafe fn value_lanes<V: GenLanes>(
             plan: &Plan,
             x: u32,
             y: u32,
@@ -1297,7 +1364,7 @@ mod tests {
             plan.value_lanes::<V>(x, y, (16, 16), position, normal, scratch)
         }
         #[allow(clippy::needless_range_loop)]
-        unsafe fn check<V: Lanes>() {
+        unsafe fn check<V: GenLanes>() {
             let data = [0u16; 16 * 16 * 3];
             let cover = [1u8; 16 * 16];
             let map = |kind| Map {
