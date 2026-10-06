@@ -18,8 +18,7 @@
 //!   `<名前>[_<セット名>]_<チャンネル>.png`（チャンネルは言語によらず英語の綴り）。書く手順・余白・取消はテンプレートと同じ道を通す。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,6 +36,7 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
+use crate::jobs::{Cancel, Polled, Worker};
 use crate::state::{AppState, DialogRequest};
 
 /// 書き出しの操作（`Action::Export`）。
@@ -123,9 +123,8 @@ struct Job {
     report: bool,
     total: usize,
     done: Arc<AtomicUsize>,
-    cancel: Arc<AtomicBool>,
     notes: Vec<Note>,
-    rx: Receiver<Result<Vec<WrittenImage>, ExportError>>,
+    worker: Worker<Result<Vec<WrittenImage>, ExportError>>,
 }
 
 /// 書き出しの状態。
@@ -177,7 +176,7 @@ impl ExportState {
             template: job.template.clone(),
             index: (job.done.load(Ordering::Relaxed) + 1).min(job.total),
             total: job.total,
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
@@ -714,7 +713,7 @@ impl AppState {
             }
             ExportAction::Cancel => {
                 if let Some(job) = &self.export.job {
-                    job.cancel.store(true, Ordering::Relaxed);
+                    job.worker.cancel();
                     self.message = lang
                         .pick("書き出しを取り消しています…", "Canceling the export…")
                         .into();
@@ -882,8 +881,6 @@ impl AppState {
         let reach = Reach::from_setting(self.export.padding).unwrap_or(Reach::Fill);
         let total = plan.files.len();
         let done = Arc::new(AtomicUsize::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
         let input = WorkerInput {
             dir: dir.to_path_buf(),
             template: plan.template,
@@ -896,19 +893,18 @@ impl AppState {
             },
             reach,
             done: done.clone(),
-            cancel: cancel.clone(),
             park: std::mem::take(&mut self.export.park_next),
             working_bytes: self.export_working_bytes(),
         };
-        let spawned = std::thread::Builder::new()
-            .name("yolu-export".into())
-            .spawn(move || {
-                let _ = tx.send(run(input));
-            });
-        if let Err(e) = spawned {
-            self.message = format!("{e}");
-            return;
-        }
+        let worker = match Worker::spawn("yolu-export", move |tx, cancel| {
+            let _ = tx.send(run(input, &cancel));
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = format!("{e}");
+                return;
+            }
+        };
         self.message = if total == 1 {
             lang.pick(
                 format!("書き出し中: {label}…"),
@@ -926,9 +922,8 @@ impl AppState {
             report,
             total,
             done,
-            cancel,
             notes: plan.notes,
-            rx,
+            worker,
         });
     }
 
@@ -938,10 +933,10 @@ impl AppState {
         let Some(job) = &self.export.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(ExportError::Io(
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(ExportError::Io(
                 lang.pick("書き出しが止まりました", "The export stopped")
                     .into(),
             )),
@@ -1031,14 +1026,13 @@ struct WorkerInput {
     overwrite: Overwrite,
     reach: Reach,
     done: Arc<AtomicUsize>,
-    cancel: Arc<AtomicBool>,
     park: bool,
     /// 画像を作る作業と塗り広げの作業のメモリの上限（設定の「1 回の操作」。Unity 版が塗り広げに渡す StrokeBudgetBytes と同じ）。
     working_bytes: u64,
 }
 
 /// 別のスレッドの本体: 写した文書から塗り広げの覆いを作り、全部の画像を 1 回の `write_images` で書く。
-fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
+fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportError> {
     let WorkerInput {
         dir,
         template,
@@ -1047,12 +1041,12 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         overwrite,
         reach,
         done,
-        cancel,
         park,
         working_bytes,
     } = input;
+    let cancel = cancel.flag();
     if park {
-        crate::windows::park_until_canceled(&cancel);
+        crate::windows::park_until_canceled(cancel);
     }
     let docs: Vec<&Document> = sets.iter().map(|s| &s.doc).collect();
     let mut coverage: Vec<Option<Vec<bool>>> = Vec::with_capacity(sets.len());
@@ -1080,7 +1074,7 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
         .collect();
     let options = WriteOptions {
         overwrite,
-        cancel: Some(&cancel),
+        cancel: Some(cancel),
     };
     write_images(&dir, &export_files, &options, |i| {
         done.store(i, Ordering::Relaxed);
@@ -1105,7 +1099,7 @@ fn run(input: WorkerInput) -> Result<Vec<WrittenImage>, ExportError> {
                 keep,
                 reach,
                 working_bytes,
-                Some(&cancel),
+                Some(cancel),
             )?),
             None => Ok(pixels),
         }

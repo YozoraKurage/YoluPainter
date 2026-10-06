@@ -7,14 +7,13 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
-use std::sync::Arc;
 
 use egui::Vec2;
 use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
+use crate::jobs::{Polled, Worker};
 use crate::state::{AppState, DialogRequest};
 
 /// 一覧の 1 行の中身（見本まで読めたか）。
@@ -89,17 +88,6 @@ enum Msg {
     Done,
 }
 
-struct Job {
-    rx: Receiver<Msg>,
-    cancel: Arc<AtomicBool>,
-}
-
-impl Drop for Job {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
 /// 「CLIP STUDIO から」の窓の状態。
 #[derive(Default)]
 pub struct CspState {
@@ -110,7 +98,8 @@ pub struct CspState {
     /// 手で選んだフォルダ（None は既定の場所）。
     pub folder: Option<PathBuf>,
     pub listing: Option<Listing>,
-    job: Option<Job>,
+    /// 走っている探す仕事（受け口を捨てると取り消す）。
+    job: Option<Worker<Msg>>,
     /// 探し始めのフォルダ（相対の表示を作る）。
     base: Vec<PathBuf>,
     /// 試験用: 既定の場所の代わりに使う環境の手がかり（実機の環境変数ではなく、試験用の一時フォルダを探す）。
@@ -204,14 +193,11 @@ impl AppState {
         };
         csp.listing = None;
         let park = std::mem::take(&mut csp.park_next);
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-brush-csp".into())
-            .spawn(move || run(source, &flag, &tx, park));
+        let spawned = Worker::spawn("yolu-brush-csp", move |tx, cancel| {
+            run(source, cancel.flag(), &tx, park)
+        });
         match spawned {
-            Ok(_) => csp.job = Some(Job { rx, cancel }),
+            Ok(worker) => csp.job = Some(worker.cancel_on_drop()),
             Err(e) => self.message = e.to_string(),
         }
     }
@@ -223,10 +209,10 @@ impl AppState {
             let Some(job) = &csp.job else {
                 return;
             };
-            let msg = match job.rx.try_recv() {
-                Ok(m) => m,
-                Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => Msg::Done,
+            let msg = match job.poll() {
+                Polled::Message(m) => m,
+                Polled::Empty => return,
+                Polled::Lost => Msg::Done,
             };
             match msg {
                 Msg::Scan(scan) => {

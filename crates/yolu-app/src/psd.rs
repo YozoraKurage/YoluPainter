@@ -23,7 +23,6 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,6 +33,7 @@ use yolu_io::psd::{
     ExportMode, ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
+use crate::jobs::{Polled, Worker};
 use crate::lang::Lang;
 use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
@@ -43,6 +43,13 @@ use crate::state::{AppState, DialogRequest};
 /// 照らすために合成し、書き出しは計画で再帰する）の再帰に足りる大きさ（合成の実測は `MAX_GROUP_DEPTH` の説明: 64 段は Linux で 320KB。
 /// 計画・書き込みの再帰は測っていない。8MiB は標準の 2MiB より大きく取った余裕）。
 const PSD_THREAD_STACK: usize = 8 * 1024 * 1024;
+
+/// PSD の仕事のスレッドの作り方（名前と、大きなスタック）。
+fn psd_thread(name: &str) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(PSD_THREAD_STACK)
+}
 
 /// 読み込んだ PSD の行き先。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,8 +287,7 @@ enum Kind {
 struct Job {
     kind: Kind,
     file: String,
-    cancel: Arc<AtomicBool>,
-    rx: Receiver<Result<Output, Failure>>,
+    worker: Worker<Result<Output, Failure>>,
     /// 今のセットの文書を替える読み込みが始まったときの、セットの uid・文書の ID・版（読んでいる間に変わっていたら入れない）。
     guard: Option<(u32, u128, u64)>,
 }
@@ -400,7 +406,7 @@ impl PsdState {
         Some(Progress {
             importing: matches!(job.kind, Kind::Import(_)),
             file: job.file.clone(),
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
@@ -631,7 +637,7 @@ impl AppState {
             }
             PsdAction::Cancel => {
                 if let Some(job) = &self.psd.job {
-                    job.cancel.store(true, Ordering::Relaxed);
+                    job.worker.cancel();
                     self.message = lang
                         .pick("PSD の処理を取り消しています…", "Canceling the PSD job…")
                         .into();
@@ -663,25 +669,27 @@ impl AppState {
             self.message = crate::newproject::limit_error(lang);
             return;
         }
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let (flag, path_owned) = (cancel.clone(), path.to_path_buf());
+        let path_owned = path.to_path_buf();
         let park = std::mem::take(&mut self.psd.park_next);
         // 層の数・画素の上限は、設定の「レイヤーのメモリ」の予算から決める（.ylp を開くときと同じ）
         let budget = self.load_source_bytes();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-psd-import".into())
-            .stack_size(PSD_THREAD_STACK)
-            .spawn(move || {
+        let spawned = Worker::spawn_on(
+            psd_thread("yolu-psd-import"),
+            Arc::default(),
+            move |tx, flag| {
                 if park {
-                    crate::windows::park_until_canceled(&flag);
+                    crate::windows::park_until_canceled(flag.flag());
                 }
-                let _ = tx.send(import_worker(&path_owned, budget, &flag));
-            });
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+                let _ = tx.send(import_worker(&path_owned, budget, flag.flag()));
+            },
+        );
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                return;
+            }
+        };
         let file = file_name(path);
         self.message = lang.pick(
             format!("PSD を読み込み中: {file}"),
@@ -692,8 +700,7 @@ impl AppState {
         self.psd.job = Some(Job {
             kind: Kind::Import(target),
             file,
-            cancel,
-            rx,
+            worker,
             guard,
         });
         // 取り込んだ場所を覚える（同じファイルへ書き出すときに確かめる）
@@ -802,24 +809,32 @@ impl AppState {
             Err(e) => return self.refuse_psd_export(&file, vec![lang.core_error(&e)]),
         };
         self.psd.notes_confirm = None;
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
         let park = std::mem::take(&mut self.psd.park_next);
         let name = file.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-psd-plan".into())
-            .stack_size(PSD_THREAD_STACK)
-            .spawn(move || {
+        let spawned = Worker::spawn_on(
+            psd_thread("yolu-psd-plan"),
+            Arc::default(),
+            move |tx, flag| {
                 if park {
-                    crate::windows::park_until_canceled(&flag);
+                    crate::windows::park_until_canceled(flag.flag());
                 }
-                let _ = tx.send(plan_worker(snapshot, mode, targets, name, budget, &flag));
-            });
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+                let _ = tx.send(plan_worker(
+                    snapshot,
+                    mode,
+                    targets,
+                    name,
+                    budget,
+                    flag.flag(),
+                ));
+            },
+        );
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                return;
+            }
+        };
         self.message = lang.pick(
             format!("PSD に書き出し中: {file}"),
             format!("Writing PSD: {file}"),
@@ -827,8 +842,7 @@ impl AppState {
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
-            cancel,
-            rx,
+            worker,
             guard: None,
         });
     }
@@ -837,23 +851,24 @@ impl AppState {
     fn start_psd_write(&mut self, run: Run) {
         let lang = self.lang;
         let file = run.file.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
         let park = std::mem::take(&mut self.psd.park_write);
-        let spawned = std::thread::Builder::new()
-            .name("yolu-psd-export".into())
-            .stack_size(PSD_THREAD_STACK)
-            .spawn(move || {
+        let spawned = Worker::spawn_on(
+            psd_thread("yolu-psd-export"),
+            Arc::default(),
+            move |tx, flag| {
                 if park {
-                    crate::windows::park_until_canceled(&flag);
+                    crate::windows::park_until_canceled(flag.flag());
                 }
-                let _ = tx.send(write_worker(run, &flag));
-            });
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+                let _ = tx.send(write_worker(run, flag.flag()));
+            },
+        );
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                return;
+            }
+        };
         self.message = lang.pick(
             format!("PSD に書き出し中: {file}"),
             format!("Writing PSD: {file}"),
@@ -861,8 +876,7 @@ impl AppState {
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
-            cancel,
-            rx,
+            worker,
             guard: None,
         });
     }
@@ -898,10 +912,10 @@ impl AppState {
         let Some(job) = &self.psd.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(Failure::Stopped),
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(Failure::Stopped),
         };
         let job = self.psd.job.take().expect("上で見た");
         let importing = matches!(job.kind, Kind::Import(_));

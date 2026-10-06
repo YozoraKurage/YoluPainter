@@ -23,7 +23,6 @@ pub mod stored;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -37,6 +36,7 @@ use loads::LoadProgress;
 
 use super::model::{ViewError, ViewModel};
 use super::View3dState;
+use crate::jobs::{Polled, Worker};
 use crate::lang::Lang;
 use crate::state::{AppState, DialogRequest};
 
@@ -133,17 +133,10 @@ struct Loaded {
 
 struct Loading {
     name: String,
-    rx: Receiver<Result<Loaded, ViewError>>,
-    cancel: Arc<AtomicBool>,
+    /// 受け口を捨てたら、読み込みも止める（結果の行き先が無い）。
+    worker: Worker<Result<Loaded, ViewError>>,
     progress: Arc<LoadProgress>,
     revision: u32,
-}
-
-impl Drop for Loading {
-    /// 受け口を捨てたら、読み込みも止める（結果の行き先が無い）。
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
 }
 
 /// 3D ビューのポーズの状態（`View3dState::pose`）。
@@ -345,29 +338,32 @@ fn load_blocking(
     })
 }
 
-/// 読み込みのスレッドを始める（結果の受け口・取消の旗・進み具合を返す）。スレッドは `view3d` に登録する（終わるときに止まるのを待つため）。
+/// 読み込みのスレッドを始める（結果の受け口と進み具合を返す。受け口を捨てると読み込みも止める）。スレッドは `view3d` に登録する
+/// （終わるときに止まるのを待つため）。スレッドを作れなければ panic（`std::thread::spawn` と同じ）。
 fn spawn_load<T: Send + 'static>(
     view3d: &mut View3dState,
     path: &Path,
     limits: ModelLimits,
     revision: u32,
     wrap: fn(Loaded) -> T,
-) -> (
-    Receiver<Result<T, ViewError>>,
-    Arc<AtomicBool>,
-    Arc<LoadProgress>,
-) {
+) -> (Worker<Result<T, ViewError>>, Arc<LoadProgress>) {
     let cancel = Arc::new(AtomicBool::new(false));
     let progress = Arc::new(LoadProgress::default());
     let finished = view3d.pose.loads.register(&cancel);
-    let (tx, rx) = channel();
     let path: PathBuf = path.to_path_buf();
-    let (flag, shared) = (cancel.clone(), progress.clone());
-    std::thread::spawn(move || {
-        let _finished = finished;
-        let _ = tx.send(load_blocking(&path, &limits, revision, &flag, &shared).map(wrap));
-    });
-    (rx, cancel, progress)
+    let shared = progress.clone();
+    let worker = Worker::spawn_on(
+        std::thread::Builder::new().name("yolu-fbx-load".into()),
+        cancel,
+        move |tx, flag| {
+            let _finished = finished;
+            let _ =
+                tx.send(load_blocking(&path, &limits, revision, flag.flag(), &shared).map(wrap));
+        },
+    )
+    .expect("failed to spawn thread")
+    .cancel_on_drop();
+    (worker, progress)
 }
 
 /// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成の窓が持ち、決めたときに
@@ -391,30 +387,23 @@ impl PreparedModel {
 
 /// 読み込みの結果を受ける口（裏のスレッドと、取消の旗）。
 pub struct PrepareJob {
-    rx: Receiver<Result<PreparedModel, ViewError>>,
-    cancel: Arc<AtomicBool>,
-    progress: Arc<LoadProgress>,
-}
-
-impl Drop for PrepareJob {
     /// 受け口を捨てたら、読み込みも止める（窓を閉じた・別のモデルを読み始めた。結果の行き先が無い）。
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
+    worker: Worker<Result<PreparedModel, ViewError>>,
+    progress: Arc<LoadProgress>,
 }
 
 impl PrepareJob {
     /// 読み終わっていれば結果（まだなら None。スレッドが落ちたら読み込みが止まったとして返す）。
     pub fn poll(&self) -> Option<Result<PreparedModel, ViewError>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err(ViewError::LoadStopped)),
+        match self.worker.poll() {
+            Polled::Message(r) => Some(r),
+            Polled::Empty => None,
+            Polled::Lost => Some(Err(ViewError::LoadStopped)),
         }
     }
     /// 取り消す（読み込みは次の区切りで止まり、途中の物と結果は捨てる）。
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        self.worker.cancel();
     }
     /// 進み具合（0〜1。読み込みのスレッドからまだ知らせが無ければ None）。
     pub fn fraction(&self) -> Option<f32> {
@@ -431,11 +420,10 @@ impl PrepareJob {
         PrepareJob,
         std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>,
     ) {
-        let (tx, rx) = channel();
+        let (worker, tx) = Worker::parked();
         (
             PrepareJob {
-                rx,
-                cancel: Arc::new(AtomicBool::new(false)),
+                worker: worker.cancel_on_drop(),
                 progress: Arc::new(LoadProgress::default()),
             },
             tx,
@@ -446,12 +434,8 @@ impl PrepareJob {
 /// FBX を別のスレッドで読み始める（3D ビューには入れない）。`view3d` は世代の番号を取るためだけに借りる。
 pub fn prepare_fbx(view3d: &mut View3dState, path: &Path, limits: ModelLimits) -> PrepareJob {
     let revision = view3d.next_revision();
-    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, PreparedModel);
-    PrepareJob {
-        rx,
-        cancel,
-        progress,
-    }
+    let (worker, progress) = spawn_load(view3d, path, limits, revision, PreparedModel);
+    PrepareJob { worker, progress }
 }
 
 /// 終わらない読み込みの送り口（`park_loading` が返す。持っているあいだは読み込み中のまま）。
@@ -464,7 +448,7 @@ pub struct ParkedLoad {
 /// 取り消すか、返す物を捨てると読み込み中でなくなる。
 #[doc(hidden)]
 pub fn park_loading(view3d: &mut View3dState, name: &str, fraction: Option<f32>) -> ParkedLoad {
-    let (tx, rx) = channel();
+    let (worker, tx) = Worker::parked();
     let progress = Arc::new(LoadProgress::default());
     if let Some(f) = fraction {
         progress.set(f);
@@ -472,8 +456,7 @@ pub fn park_loading(view3d: &mut View3dState, name: &str, fraction: Option<f32>)
     let revision = view3d.next_revision();
     view3d.pose.loading = Some(Loading {
         name: name.to_owned(),
-        rx,
-        cancel: Arc::new(AtomicBool::new(false)),
+        worker: worker.cancel_on_drop(),
         progress,
         revision,
     });
@@ -503,11 +486,10 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, |loaded| loaded);
+    let (worker, progress) = spawn_load(view3d, path, limits, revision, |loaded| loaded);
     view3d.pose.loading = Some(Loading {
         name,
-        rx,
-        cancel,
+        worker,
         progress,
         revision,
     });
@@ -516,13 +498,13 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
 #[cfg(test)]
 pub(crate) fn wait_for_load(view3d: &mut View3dState) -> (Option<String>, bool) {
     if let Some(loading) = &mut view3d.pose.loading {
-        let result = loading
-            .rx
-            .recv_timeout(std::time::Duration::from_secs(120))
-            .expect("FBXの完了通知が来ない（受信切断またはハング検出上限）");
-        let (tx, rx) = channel();
+        let Polled::Message(result) = loading.worker.wait(std::time::Duration::from_secs(120))
+        else {
+            panic!("FBXの完了通知が来ない（受信切断またはハング検出上限）");
+        };
+        let (worker, tx) = Worker::parked();
         tx.send(result).unwrap();
-        loading.rx = rx;
+        loading.worker = worker.cancel_on_drop();
     }
     poll(view3d)
 }
@@ -538,8 +520,8 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
     let mut message = None;
     let mut installed = false;
     if let Some(loading) = &view3d.pose.loading {
-        match loading.rx.try_recv() {
-            Ok(Ok(loaded)) => {
+        match loading.worker.poll() {
+            Polled::Message(Ok(loaded)) => {
                 let name = loading.name.clone();
                 let stale = loaded.rest.revision() != loading.revision;
                 view3d.pose.loading = None;
@@ -558,12 +540,12 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
                     });
                 }
             }
-            Ok(Err(e)) => {
+            Polled::Message(Err(e)) => {
                 message = Some(format!("{}: {}", loading.name, lang.view_error(&e)));
                 view3d.pose.loading = None;
             }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
+            Polled::Empty => {}
+            Polled::Lost => {
                 message = Some(format!(
                     "{}: {}",
                     loading.name,

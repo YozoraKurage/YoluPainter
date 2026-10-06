@@ -3,12 +3,13 @@ use super::{
     color::{self, Reference, Request},
     tools::paint_gate,
 };
-use crate::{canvas::view::CanvasView, state::AppState};
-use egui::{Context, Pos2};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc, Arc,
+use crate::{
+    canvas::view::CanvasView,
+    jobs::{Polled, Worker},
+    state::AppState,
 };
+use egui::{Context, Pos2};
+use std::sync::atomic::AtomicBool;
 use yolu_core::{CoreError, LayerId, SelectionMask};
 
 pub struct Drag {
@@ -16,18 +17,13 @@ pub struct Drag {
     document: u128,
     revision: u64,
 }
+/// 別のスレッドで計算している塗りつぶし（受け口を捨てると取り消す）。
 pub struct Job {
-    cancel: Arc<AtomicBool>,
-    rx: mpsc::Receiver<Result<SelectionMask, CoreError>>,
+    worker: Worker<Result<SelectionMask, CoreError>>,
     document: u128,
     revision: u64,
     layer: LayerId,
     style: Style,
-}
-impl Drop for Job {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
 }
 
 pub fn request(app: &AppState, layer: LayerId, points: Vec<(f64, f64)>) -> Request {
@@ -160,24 +156,18 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
             return;
         }
     };
-    let cancel = Arc::new(AtomicBool::new(false));
-    let flag = cancel.clone();
-    let (tx, rx) = mpsc::sync_channel(1);
-    let spawn = std::thread::Builder::new()
-        .name("bucket".into())
-        .spawn(move || {
-            let _ = tx.send(color::compute(&snapshot, &req, &flag));
-        });
-    if spawn.is_err() {
+    let spawn = Worker::spawn("bucket", move |tx, cancel| {
+        let _ = tx.send(color::compute(&snapshot, &req, cancel.flag()));
+    });
+    let Ok(worker) = spawn else {
         app.message = app
             .lang
             .pick("処理を開始できません", "Cannot start operation")
             .into();
         return;
-    }
+    };
     app.region.job = Some(Job {
-        cancel,
-        rx,
+        worker: worker.cancel_on_drop(),
         document: app.doc.id(),
         revision: app.doc.revision(),
         layer,
@@ -205,8 +195,8 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         app.region.job = None;
         return;
     }
-    match job.rx.try_recv() {
-        Ok(result) => {
+    match job.worker.poll() {
+        Polled::Message(result) => {
             let layer = job.layer;
             let mut finished = app.region.job.take().unwrap();
             let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
@@ -220,16 +210,14 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
                 }
             }
         }
-        Err(mpsc::TryRecvError::Disconnected) => {
+        Polled::Lost => {
             app.region.job = None;
             app.message = app
                 .lang
                 .pick("塗りつぶしに失敗しました", "Fill failed")
                 .into();
         }
-        Err(mpsc::TryRecvError::Empty) => {
-            ctx.request_repaint_after(std::time::Duration::from_millis(16))
-        }
+        Polled::Empty => ctx.request_repaint_after(std::time::Duration::from_millis(16)),
     }
 }
 

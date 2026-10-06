@@ -30,6 +30,7 @@ pub mod gesture;
 pub mod gpu_memory;
 pub mod gpu_watch;
 pub mod gradient;
+pub mod jobs;
 pub mod keymap;
 pub mod lang;
 pub mod layermenu;

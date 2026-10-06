@@ -25,7 +25,6 @@ pub mod overlay;
 pub mod window;
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
@@ -41,6 +40,7 @@ use yolu_core::mesh_maps::{
     MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind, MeshMapState,
 };
 
+use crate::jobs::{Polled, Worker};
 use crate::lang::Lang;
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
@@ -69,9 +69,8 @@ struct Job {
     uid: u32,
     name: String,
     settings: MeshBakeSettings,
-    cancel: Arc<AtomicBool>,
     progress: Arc<Mutex<(f64, String)>>,
-    rx: Receiver<Result<(MeshBakeResult, BakeRun), String>>,
+    worker: Worker<Result<(MeshBakeResult, BakeRun), String>>,
     doc_id: u128,
     size: (u32, u32),
     slots: Vec<i32>,
@@ -248,7 +247,7 @@ impl BakeState {
             set: job.name.clone(),
             index: self.finished + 1,
             total: self.total.max(1),
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
@@ -987,54 +986,50 @@ impl AppState {
         let (uid, name) = (set.uid, set.name.clone());
         let doc = self.set_doc(index);
         let (doc_id, size) = (doc.id(), (doc.width(), doc.height()));
-        let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(Mutex::new((0.0, "Preparing".to_owned())));
-        let (tx, rx) = channel();
-        let (flag, shared, run_settings) = (cancel.clone(), progress.clone(), settings.clone());
+        let (shared, run_settings) = (progress.clone(), settings.clone());
         let park = std::mem::take(&mut self.bake.park_next);
         let park_mid = std::mem::take(&mut self.bake.park_mid_bake);
         let backend = self.bake.backend;
         let gpu = self.bake.gpu.clone();
-        std::thread::Builder::new()
-            .name("yolu-bake".into())
-            .spawn(move || {
-                if park {
-                    crate::windows::park_until_canceled(&flag);
-                }
-                let mut baking = 0;
-                let result = bake_mesh_maps(
-                    backend,
-                    &gpu,
-                    &input,
-                    &run_settings,
-                    &MeshBakeBudget::default(),
-                    Some(&flag),
-                    None,
-                    |fraction, phase| {
-                        if park_mid && phase == "Baking" {
-                            // 1 回目は焼き始めの通知。2 回目が、最初の dispatch（行）を終えたあと
-                            baking += 1;
-                            if baking == 2 {
-                                crate::windows::park_until_canceled(&flag);
-                            }
+        let worker = Worker::spawn("yolu-bake", move |tx, cancel| {
+            let flag = cancel.flag();
+            if park {
+                crate::windows::park_until_canceled(flag);
+            }
+            let mut baking = 0;
+            let result = bake_mesh_maps(
+                backend,
+                &gpu,
+                &input,
+                &run_settings,
+                &MeshBakeBudget::default(),
+                Some(flag),
+                None,
+                |fraction, phase| {
+                    if park_mid && phase == "Baking" {
+                        // 1 回目は焼き始めの通知。2 回目が、最初の dispatch（行）を終えたあと
+                        baking += 1;
+                        if baking == 2 {
+                            crate::windows::park_until_canceled(flag);
                         }
-                        if let Ok(mut p) = shared.lock() {
-                            *p = (fraction, phase.to_owned());
-                        }
-                        true
-                    },
-                )
-                .map_err(|e| e.to_string());
-                let _ = tx.send(result);
-            })
-            .map_err(|e| e.to_string())?;
+                    }
+                    if let Ok(mut p) = shared.lock() {
+                        *p = (fraction, phase.to_owned());
+                    }
+                    true
+                },
+            )
+            .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
         Ok(Job {
             uid,
             name,
             settings,
-            cancel,
             progress,
-            rx,
+            worker,
             doc_id,
             size,
             slots,
@@ -1047,7 +1042,7 @@ impl AppState {
         let lang = self.lang;
         if let Some(job) = &self.bake.job {
             self.bake.queue.clear();
-            job.cancel.store(true, Ordering::Relaxed);
+            job.worker.cancel();
             self.message = lang
                 .pick(
                     "メッシュマップのベイクを取り消しています…",
@@ -1063,12 +1058,10 @@ impl AppState {
         let Some(job) = &self.bake.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                Err(lang.pick("ベイクが止まりました", "The bake stopped").into())
-            }
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(lang.pick("ベイクが止まりました", "The bake stopped").into()),
         };
         let job = self.bake.job.take().expect("上で見た");
         self.finish_bake(job, result);

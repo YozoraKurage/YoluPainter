@@ -10,8 +10,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use yolu_io::brushes::{self, BrushImportError, Unrepresented};
 
@@ -19,6 +18,7 @@ use super::store::{BrushStore, StoreError};
 use super::{
     clean_name, gaps, BrushAction, BrushKey, Entry, Group, IdSource, ImportMeta, UserBrush,
 };
+use crate::jobs::{Polled, Worker};
 use crate::lang::Lang;
 use crate::state::{AppState, DialogRequest, MAX_RADIUS};
 
@@ -47,8 +47,7 @@ pub struct ImportState {
 }
 
 struct Job {
-    rx: Receiver<Msg>,
-    cancel: Arc<AtomicBool>,
+    worker: Worker<Msg>,
     canceling: bool,
     file: String,
     index: usize,
@@ -309,24 +308,23 @@ impl AppState {
             park_after,
             placed: 0,
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-brush-import".into())
-            .spawn(move || run(work, &flag, &tx));
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+        let spawned = Worker::spawn("yolu-brush-import", move |tx, cancel| {
+            run(work, cancel.flag(), &tx)
+        });
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                return;
+            }
+        };
         let first = paths.first().map(|p| file_name(p)).unwrap_or_default();
         self.message = lang.pick(
             format!("ブラシを取り込み中: {first}"),
             format!("Importing brushes: {first}"),
         );
         self.brushes.import.job = Some(Job {
-            rx,
-            cancel,
+            worker,
             canceling: false,
             file: first,
             index: 1,
@@ -339,7 +337,7 @@ impl AppState {
     pub(super) fn brush_import_cancel(&mut self) {
         let lang = self.lang;
         if let Some(job) = &mut self.brushes.import.job {
-            job.cancel.store(true, Ordering::Relaxed);
+            job.worker.cancel();
             job.canceling = true;
             self.message = lang
                 .pick("取り込みを取り消しています…", "Canceling the import…")
@@ -353,11 +351,11 @@ impl AppState {
             let Some(job) = &mut self.brushes.import.job else {
                 return;
             };
-            let msg = match job.rx.try_recv() {
-                Ok(m) => m,
-                Err(TryRecvError::Empty) => return,
+            let msg = match job.worker.poll() {
+                Polled::Message(m) => m,
+                Polled::Empty => return,
                 // 仕事が知らせずに止まった（スレッドの異常）。届いた分で終えて、止まったことを知らせる
-                Err(TryRecvError::Disconnected) => {
+                Polled::Lost => {
                     job.report.stopped = true;
                     Msg::Finished
                 }

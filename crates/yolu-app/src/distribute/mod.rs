@@ -18,19 +18,26 @@ pub mod window;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::time::Instant;
 
 use egui::Vec2;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
+use crate::jobs::{Polled, Worker};
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
 use crate::state::{Action, AppState, DialogRequest};
 
 /// 準備・書き込みのスレッドのスタック（正本への詰め直しと合成の再帰に足りる大きさ）。
 const THREAD_STACK: usize = 8 * 1024 * 1024;
+
+/// 仕事のスレッドの作り方（名前と、大きなスタック）。
+fn thread(name: &str) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(THREAD_STACK)
+}
 
 /// 配布用に保存の操作（`Action::Distribute`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -115,8 +122,7 @@ enum Kind {
 struct Job {
     kind: Kind,
     file: String,
-    cancel: Arc<AtomicBool>,
-    rx: Receiver<Result<Output, Failure>>,
+    worker: Worker<Result<Output, Failure>>,
 }
 
 /// 進み具合（仕事の札）。
@@ -168,7 +174,7 @@ impl DistributeState {
         Some(Progress {
             file: job.file.clone(),
             writing: matches!(job.kind, Kind::Write),
-            canceling: job.cancel.load(Ordering::Relaxed),
+            canceling: job.worker.is_canceled(),
         })
     }
 }
@@ -310,7 +316,7 @@ impl AppState {
             }
             DistributeAction::CancelJob => {
                 if let Some(job) = &self.distribute.job {
-                    job.cancel.store(true, Ordering::Relaxed);
+                    job.worker.cancel();
                     self.message = lang
                         .pick(
                             "配布用の保存を取り消しています…",
@@ -370,23 +376,25 @@ impl AppState {
                 return;
             }
         };
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
         let park = std::mem::take(&mut self.distribute.park_next);
-        let spawned = std::thread::Builder::new()
-            .name("yolu-distribute-prepare".into())
-            .stack_size(THREAD_STACK)
-            .spawn(move || {
+        let spawned = Worker::spawn_on(
+            thread("yolu-distribute-prepare"),
+            Arc::default(),
+            move |tx, flag| {
                 if park {
-                    crate::windows::park_until_canceled(&flag);
+                    crate::windows::park_until_canceled(flag.flag());
                 }
-                let _ = tx.send(build(&capture, &flag).map(|p| Output::Prepared(Box::new(p))));
-            });
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            return;
-        }
+                let _ =
+                    tx.send(build(&capture, flag.flag()).map(|p| Output::Prepared(Box::new(p))));
+            },
+        );
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                return;
+            }
+        };
         self.message = lang
             .pick(
                 "配布用の写しを準備中…",
@@ -396,8 +404,7 @@ impl AppState {
         self.distribute.job = Some(Job {
             kind: Kind::Prepare,
             file: self.project_name.clone(),
-            cancel,
-            rx,
+            worker,
         });
     }
 
@@ -438,28 +445,30 @@ impl AppState {
         window.visible = false;
         let prepared = window.prepared.clone();
         let remove = window.selected.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = channel();
-        let flag = cancel.clone();
         let park = std::mem::take(&mut self.distribute.park_write);
         let target = path.clone();
-        let spawned = std::thread::Builder::new()
-            .name("yolu-distribute-write".into())
-            .stack_size(THREAD_STACK)
-            .spawn(move || {
+        let spawned = Worker::spawn_on(
+            thread("yolu-distribute-write"),
+            Arc::default(),
+            move |tx, flag| {
                 if park {
-                    crate::windows::park_until_canceled(&flag);
+                    crate::windows::park_until_canceled(flag.flag());
                 }
                 let _ = tx.send(
-                    write(&prepared, &remove, &target, replacing, lang, &flag).map(Output::Written),
+                    write(&prepared, &remove, &target, replacing, lang, flag.flag())
+                        .map(Output::Written),
                 );
-            });
-        if let Err(e) = spawned {
-            self.message = e.to_string();
-            // 出さないと決めた窓を戻す（窓なしの流れなら閉じる）。仕事が無いまま、窓も出ない状態にしない
-            self.settle_distribute_window();
-            return;
-        }
+            },
+        );
+        let worker = match spawned {
+            Ok(w) => w,
+            Err(e) => {
+                self.message = e.to_string();
+                // 出さないと決めた窓を戻す（窓なしの流れなら閉じる）。仕事が無いまま、窓も出ない状態にしない
+                self.settle_distribute_window();
+                return;
+            }
+        };
         let file = file_name(&path);
         self.message = lang.pick(
             format!("配布用に保存中: {file}"),
@@ -468,8 +477,7 @@ impl AppState {
         self.distribute.job = Some(Job {
             kind: Kind::Write,
             file,
-            cancel,
-            rx,
+            worker,
         });
     }
 
@@ -479,10 +487,10 @@ impl AppState {
         let Some(job) = &self.distribute.job else {
             return;
         };
-        let result = match job.rx.try_recv() {
-            Ok(r) => r,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(Failure::Stopped),
+        let result = match job.worker.poll() {
+            Polled::Message(r) => r,
+            Polled::Empty => return,
+            Polled::Lost => Err(Failure::Stopped),
         };
         let job = self.distribute.job.take().expect("上で見た");
         match (result, job.kind) {
