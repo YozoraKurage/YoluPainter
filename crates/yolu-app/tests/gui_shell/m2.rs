@@ -900,7 +900,7 @@ fn fill_and_adjustment_properties_edit_and_undo() {
         Some(yolu_app::engine::Rgba8::new(255, 0, 0, 255))
     );
     // ほかのチャンネルの値を足す・外す
-    h.get_by_label_contains("ラフネス の値を足す").click();
+    h.get_by_label_contains("ラフネス の値を追加").click();
     h.run();
     assert!(h
         .state()

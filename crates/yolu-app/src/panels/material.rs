@@ -98,7 +98,7 @@ fn chips(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: boo
                 )
             } else {
                 lang.pick(
-                    format!("{name}: 塗らない（クリックで足す）"),
+                    format!("{name}: 塗らない（クリックで追加）"),
                     format!("{name}: not painted (click to paint it too)"),
                 )
             };

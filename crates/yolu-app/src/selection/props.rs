@@ -152,7 +152,7 @@ fn pen_group(
             false,
             "edit",
             l.pick(
-                "選択ペン: 選択範囲に足す（Shift）",
+                "選択ペン: 選択範囲に追加（Shift）",
                 "Selection Pen: add to the selection (Shift)",
             ),
         ),
@@ -393,7 +393,7 @@ fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             false,
             "edit",
             l.pick(
-                "選択ペン: 選択範囲に足す（Shift）",
+                "選択ペン: 選択範囲に追加（Shift）",
                 "Selection Pen: add to the selection (Shift)",
             ),
         ),

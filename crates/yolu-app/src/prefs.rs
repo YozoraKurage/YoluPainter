@@ -312,7 +312,7 @@ impl AppState {
             let lang = self.lang;
             self.message = lang
                 .pick(
-                    "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。",
+                    "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。",
                     "The layer memory is already over the budget; nothing can be added until it is raised.",
                 )
                 .into();

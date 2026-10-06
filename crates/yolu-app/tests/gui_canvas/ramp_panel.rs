@@ -446,7 +446,7 @@ fn adding_renaming_and_removing_your_own_gradients_are_kept_in_the_settings_fold
     h.state_mut().sets.attach(dir.clone());
     h.run();
     // 足す: 今のランプが「自分」の組へ入り、選ばれる
-    click_label(&mut h, "今のグラデーションを自分の組に足す");
+    click_label(&mut h, "今のグラデーションを自分の組に追加");
     assert_eq!(h.state().sets.user().len(), 1);
     assert!(h.state().sets.showing_user());
     assert_eq!(h.state().sets.selected, Some(0));
@@ -497,7 +497,7 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     h.run();
     // 上限では足すボタンが押せない（理由はツールチップ）
     let n = h.state().sets.user().len();
-    click_label(&mut h, "今のグラデーションを自分の組に足す");
+    click_label(&mut h, "今のグラデーションを自分の組に追加");
     assert_eq!(h.state().sets.user().len(), n);
     // 保存に失敗する（読めたあとで、フォルダの場所がファイルでふさがれた）: 足さず、理由が状態の帯へ出る
     let blocked = temp("blocked");
@@ -510,7 +510,7 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     );
     std::fs::write(&target, "x").unwrap();
     stuck.run();
-    click_label(&mut stuck, "今のグラデーションを自分の組に足す");
+    click_label(&mut stuck, "今のグラデーションを自分の組に追加");
     assert!(
         stuck.state().sets.user().is_empty(),
         "保存できなければ足さない"
@@ -531,7 +531,7 @@ fn the_user_set_is_limited_and_the_reason_goes_to_the_status_message() {
     unreadable.state_mut().sets.attach(kept.clone());
     assert!(unreadable.state().sets.problem().is_some());
     unreadable.run();
-    click_label(&mut unreadable, "今のグラデーションを自分の組に足す");
+    click_label(&mut unreadable, "今のグラデーションを自分の組に追加");
     assert!(unreadable.state().sets.user().is_empty());
     assert!(
         unreadable

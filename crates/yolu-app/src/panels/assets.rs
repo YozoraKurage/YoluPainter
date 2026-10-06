@@ -206,7 +206,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 "shelf.library.add",
                 "add",
                 lang.pick(
-                    "ライブラリへファイルを足す…（PNG・.ylsmart）",
+                    "ライブラリへファイルを追加…（PNG・.ylsmart）",
                     "Add files to the library… (PNG, .ylsmart)",
                 ),
                 false,
@@ -1590,7 +1590,10 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         }
         DialogRequest::LibraryAdd => {
             if let Some(paths) = crate::dialog::file()
-                .set_title(lang.pick("ライブラリへ足すファイル", "Files to add to the library"))
+                .set_title(lang.pick(
+                    "ライブラリへ追加するファイル",
+                    "Files to add to the library",
+                ))
                 .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
                 .pick_files()
             {

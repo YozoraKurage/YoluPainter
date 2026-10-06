@@ -130,7 +130,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<LayerAddArgs, Edited>(
             "layer.add", "edited", false, Safe, false,
-            ("レイヤーを足す", "ペイント・塗りつぶし・グループ・調整のレイヤーを足す。1 回の取り消しで戻る。"),
+            ("レイヤーを追加", "ペイント・塗りつぶし・グループ・調整のレイヤーを追加する。1 回の取り消しで戻る。"),
             ("Add a layer", "Add a paint, fill, group or adjustment layer. One undo step."),
         ),
         spec::<LayerDeleteArgs, Edited>(
@@ -150,7 +150,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<MaskAddArgs, Edited>(
             "mask.add", "edited", false, Safe, false,
-            ("マスクを足す", "何も隠さないラスターマスクを足す。1 回の取り消しで戻る。"),
+            ("マスクを追加", "何も隠さないラスターマスクを追加する。1 回の取り消しで戻る。"),
             ("Add a mask", "Add a raster mask that hides nothing. One undo step."),
         ),
         spec::<MaskDeleteArgs, Edited>(
@@ -170,7 +170,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<EffectAddArgs, Edited>(
             "effect.add", "edited", false, Safe, false,
-            ("効果を足す", "フィルター・Generator を種類の名前と値で足す（種類は effect.list_kinds）。1 回の取り消しで戻る。"),
+            ("効果を追加", "フィルター・Generator を種類の名前と値で追加する（種類は effect.list_kinds）。1 回の取り消しで戻る。"),
             ("Add an effect", "Add a filter or generator by kind and parameter values (see effect.list_kinds). One undo step."),
         ),
         spec::<EffectSetArgs, Edited>(

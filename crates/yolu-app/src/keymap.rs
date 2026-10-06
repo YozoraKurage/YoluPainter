@@ -390,7 +390,7 @@ impl Operation {
             Self::Zoom => lang.pick("ズーム", "Zoom"),
             Self::Rotate => lang.pick("回転", "Rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
-            Self::SelectionAdd => lang.pick("選択範囲に足す", "Add to Selection"),
+            Self::SelectionAdd => lang.pick("選択範囲に追加", "Add to Selection"),
             Self::SelectionSubtract => lang.pick("選択範囲から引く", "Subtract from Selection"),
             Self::SelectionIntersect => lang.pick("選択範囲と重ねる", "Intersect with Selection"),
             Self::MoveStencil => lang.pick("ステンシルの移動", "Move Stencil"),

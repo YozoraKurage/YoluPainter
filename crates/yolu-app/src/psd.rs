@@ -1533,7 +1533,7 @@ mod tests {
         b.wait_psd();
         assert_eq!(b.sets.len(), 2);
         assert_eq!(b.sets.current().name, "Body", "セットの名前はファイル名");
-        assert_eq!(b.sets.current_index(), 1, "足したセットへ替える");
+        assert_eq!(b.sets.current_index(), 1, "追加したセットへ替える");
         assert_eq!((b.doc.width(), b.doc.height()), (64, 64));
         assert_eq!(b.doc.layers().len(), 2);
         assert!(composite(&b) == before, "合成は同じ");

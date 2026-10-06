@@ -50,7 +50,7 @@ fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
                     (lang.pick("回転", "Rotate"), format!("Shift+{middle}")),
                     (lang.pick("スポイト", "Eyedropper"), format!("Alt+{left}")),
                     (
-                        lang.pick("選択範囲に足す", "Add to Selection"),
+                        lang.pick("選択範囲に追加", "Add to Selection"),
                         format!("Shift+{left}"),
                     ),
                     (

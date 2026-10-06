@@ -252,7 +252,7 @@ fn fill_section(
                     ("fill.add", channel.index()),
                     "add",
                     &lang.pick(
-                        format!("{name} の値を足す（描画色から）"),
+                        format!("{name} の値を追加（描画色から）"),
                         format!("Add a value for {name} (from the paint color)"),
                     ),
                     false,

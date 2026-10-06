@@ -433,13 +433,13 @@ impl AppState {
         let lang = self.lang;
         match target {
             FilterTarget::Mask => lang.pick(
-                format!("マスクに {name} を足しました。"),
+                format!("マスクに {name} を追加しました。"),
                 format!("Added {name} to the mask."),
             ),
             FilterTarget::Content => {
                 let channel = crate::m2::channel_name(lang, &self.doc, self.m2.paint_channel);
                 lang.pick(
-                    format!("{channel} の画素に {name} を足しました。"),
+                    format!("{channel} の画素に {name} を追加しました。"),
                     format!("Added {name} to the {channel} pixels."),
                 )
             }
@@ -502,7 +502,7 @@ impl AppState {
                         )
                     } else {
                         lang.pick(
-                            format!("ID の色に {hex} を足しました。"),
+                            format!("ID の色に {hex} を追加しました。"),
                             format!("Added {hex} to the ID colors."),
                         )
                     };

@@ -323,7 +323,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             names(fills),
             [
                 ja_en("単色", "Solid Color"),
-                ja_en("ワールドスペースのグラデーション", "World Space Gradient"),
+                ja_en("グラデーションデカール", "Gradient Decal"),
                 ja_en("画像", "Image"),
                 ja_en("デカール", "Decal"),
             ]
@@ -423,7 +423,7 @@ fn a_menu_image_fill_adds_one_fill_layer_with_the_image_and_one_undo_takes_it_ba
     assert_eq!(layer.projection().mode, ProjectionMode::Uv);
     assert_eq!(s.doc.undo_count(), steps + 1, "{}", s.message);
     assert!(
-        s.message.starts_with("画像の塗りつぶしを足しました"),
+        s.message.starts_with("画像の塗りつぶしを追加しました"),
         "{}",
         s.message
     );
@@ -524,7 +524,7 @@ fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
         .to_vec();
         let gradient = submenu(
             &fills,
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            lang.pick("グラデーションデカール", "Gradient Decal"),
         );
         // 形の名前と順は、塗りつぶしの欄の「形」の選びと同じ
         let shapes = [Shape::Box, Shape::Sphere, Shape::Plane];
@@ -565,7 +565,7 @@ fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
         .to_vec();
         let gradient = submenu(
             &fills,
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            lang.pick("グラデーションデカール", "Gradient Decal"),
         );
         assert!(leaves(gradient)
             .iter()
@@ -592,7 +592,7 @@ fn the_fill_panels_shape_choice_lists_the_same_names_in_the_same_order_as_the_me
         .to_vec();
         let menu = submenu(
             &fills,
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            lang.pick("グラデーションデカール", "Gradient Decal"),
         );
         assert_eq!(names(&panel), names(menu), "{lang:?}");
         assert_eq!(names(&panel).len(), 3);
@@ -648,7 +648,7 @@ fn each_shape_makes_one_fill_layer_of_that_shape_fitted_to_the_model_with_one_un
         assert_eq!(layer_count(&s), layers + 1);
         assert_eq!(s.doc.undo_count(), steps + 1, "{shape:?}: 1 回の Undo");
         assert!(
-            s.message.contains("ワールドスペースのグラデーション"),
+            s.message.contains("グラデーションデカール"),
             "{}",
             s.message
         );
@@ -665,7 +665,7 @@ fn each_shape_makes_one_fill_layer_of_that_shape_fitted_to_the_model_with_one_un
             s.message
         );
         assert!(
-            s.message.starts_with("World space gradient added"),
+            s.message.starts_with("Gradient decal added"),
             "{}",
             s.message
         );
@@ -1189,10 +1189,7 @@ fn the_menu_bar_opens_the_gradient_shapes_two_levels_down_and_a_click_makes_that
         hover(&mut h, pos2(640.0, 400.0));
         let fill = popup_item(&h, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
         hover(&mut h, fill.center());
-        let gradient = popup_item(
-            &h,
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
-        );
+        let gradient = popup_item(&h, lang.pick("グラデーションデカール", "Gradient Decal"));
         hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
         hover(&mut h, gradient.center());
         assert_eq!(depth(&h), 2, "{lang:?}: 形の一覧がもう 1 段右に開く");
@@ -1286,7 +1283,7 @@ fn the_layers_toolbar_fill_button_opens_the_kinds_and_the_effect_button_the_filt
         common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         // 効果: フィルター → 区切り → ジェネレーター ▸（見出しなし）
-        h.get_by_label(lang.pick("効果を足す", "Add Effect"))
+        h.get_by_label(lang.pick("効果を追加", "Add Effect"))
             .click();
         h.run();
         assert_eq!(
@@ -1307,7 +1304,7 @@ fn the_effect_button_needs_a_selected_layer() {
     let mut h = app(1280.0, 800.0, 64);
     h.state_mut().state.selected_layer = None;
     h.run();
-    h.get_by_label("効果を足す").click();
+    h.get_by_label("効果を追加").click();
     h.run();
     assert!(
         h.state().state.popup.is_none(),
@@ -1325,7 +1322,7 @@ fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both
             lang.pick("新規レイヤー", "New Layer"),
             lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
             lang.pick("新規調整レイヤー", "New Adjustment Layer"),
-            lang.pick("効果を足す", "Add Effect"),
+            lang.pick("効果を追加", "Add Effect"),
             lang.pick("レイヤーをグループ化", "Group Layers"),
             lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
             // 押せないときは名前に理由が続く
@@ -1676,10 +1673,7 @@ fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
         hover(&mut h, pos2(640.0, 400.0));
         let fill = popup_item(&h, lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"));
         hover(&mut h, fill.center());
-        let gradient = popup_item(
-            &h,
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
-        );
+        let gradient = popup_item(&h, lang.pick("グラデーションデカール", "Gradient Decal"));
         hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
         hover(&mut h, gradient.center());
         assert_eq!(depth(&h), 2, "{lang:?}");

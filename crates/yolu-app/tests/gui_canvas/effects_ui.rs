@@ -109,7 +109,7 @@ fn snapshot_the_add_menu() {
     fx(&mut h, FxOp::Deselect);
     h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
-    h.get_by_label("フィルターを足す").click();
+    h.get_by_label("フィルターを追加").click();
     h.run();
     assert!(matches!(
         h.state().state.popup.as_ref().map(|p| p.kind),
@@ -262,7 +262,7 @@ fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
     let layer = h.state().state.selected_layer.unwrap();
     h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
-    h.get_by_label("フィルターを足す").click();
+    h.get_by_label("フィルターを追加").click();
     h.run();
     let item = popup_item(&h, "シャープ");
     click(&mut h, item.center());
@@ -427,7 +427,7 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
         h.state_mut().state.set_language(lang);
         h.state_mut().state.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         h.run();
-        h.get_by_label(lang.pick("フィルターを足す", "Add Filter"))
+        h.get_by_label(lang.pick("フィルターを追加", "Add Filter"))
             .click();
         h.run();
         for (text, _) in shown_texts(&h) {

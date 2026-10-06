@@ -910,7 +910,7 @@ impl AppState {
         self.modified = true;
         self.switch_set(uid_index)?;
         self.message = lang.pick(
-            format!("テクスチャセット {name} を足しました。"),
+            format!("テクスチャセット {name} を追加しました。"),
             format!("Added the texture set {name}."),
         );
         Ok(uid)

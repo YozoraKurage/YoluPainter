@@ -478,7 +478,7 @@ pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
             "New: replace the selection",
         ),
         SelectionCombine::Add => lang.pick(
-            "追加選択: 選択範囲に足す（Shift）",
+            "追加選択: 選択範囲に追加（Shift）",
             "Add to the selection (Shift)",
         ),
         SelectionCombine::Subtract => lang.pick(

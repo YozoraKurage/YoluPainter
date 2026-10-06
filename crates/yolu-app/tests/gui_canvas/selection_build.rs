@@ -138,7 +138,7 @@ fn click_bar(h: &mut H, label: &str) {
 }
 
 const NEW: &str = "新規選択: 新しい形で置き換える";
-const ADD: &str = "追加選択: 選択範囲に足す（Shift）";
+const ADD: &str = "追加選択: 選択範囲に追加（Shift）";
 const SUB: &str = "一部削除: 選択範囲から引く（Ctrl）";
 const ISECT: &str = "選択中を選択: 重なる所だけ残す（Shift + Ctrl）";
 
@@ -278,7 +278,7 @@ fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_th
 fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectPen);
-    let pen = "選択ペン: 選択範囲に足す（Shift）";
+    let pen = "選択ペン: 選択範囲に追加（Shift）";
     let eraser = "選択消し: 選択範囲から消す（Ctrl）";
     assert!(h.query_all_by_label(NEW).next().is_none());
     assert!(lit(&h, pen) && !lit(&h, eraser));

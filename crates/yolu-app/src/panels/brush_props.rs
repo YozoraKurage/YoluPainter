@@ -557,7 +557,7 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         }
         let curve_tip = if used {
             lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
                 "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
             )
         } else {
@@ -1462,7 +1462,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         }
         let curve_tip = if used {
             lang.pick(
-                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "筆圧（左から右）が、この項目の値（下から上）になる。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
                 "Pen pressure (across) becomes the value of this item (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
             )
         } else {

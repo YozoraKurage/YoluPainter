@@ -497,7 +497,7 @@ fn sets_rows(
         (p.key, "ramp.add"),
         "add",
         lang.pick(
-            "今のグラデーションを自分の組に足す",
+            "今のグラデーションを自分の組に追加",
             "Add the current gradient to your set",
         ),
         false,
@@ -639,7 +639,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         &mut selection,
         p.scalar,
         lang.pick(
-            "上: 不透明度の分岐点。下: 色の分岐点（ダブルクリックで色を選ぶ）。何も無い所を押すと足し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
+            "上: 不透明度の分岐点。下: 色の分岐点（ダブルクリックで色を選ぶ）。何も無い所を押すと追加し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
             "Top: opacity stops. Bottom: color stops (double-click to pick a color). Click to add, drag to move, right-click or drag outside to remove. Small diamonds move the midpoint. Escape cancels a drag",
         ),
         enabled,
@@ -1074,7 +1074,7 @@ fn segment_rows(
                 diagonal: true,
             },
             lang.pick(
-                "横: 2 つの分岐点の間の位置。縦: 左の分岐点の色（下）から右の分岐点の色（上）への混ざり具合。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す",
+                "横: 2 つの分岐点の間の位置。縦: 左の分岐点の色（下）から右の分岐点の色（上）への混ざり具合。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す",
                 "Across: position between the two stops. Up: from the left stop color (bottom) to the right stop color (top). Click to add a point, drag to move, right-click to remove",
             ),
             enabled,
@@ -1152,7 +1152,7 @@ fn value_curve_rows(
         (p.key, "ramp.vc.editor"),
         ramp,
         lang.pick(
-            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
             "Shape value in (across), gradient position out (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
         ),
         p.enabled,

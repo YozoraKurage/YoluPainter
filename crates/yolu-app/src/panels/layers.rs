@@ -532,7 +532,7 @@ fn toolbar(
         b,
         "layers.effect",
         "auto_awesome",
-        lang.pick("効果を足す", "Add Effect"),
+        lang.pick("効果を追加", "Add Effect"),
         false,
         has,
         icon(17.0),

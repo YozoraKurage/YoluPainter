@@ -482,7 +482,7 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    let button = bar_rect(&h, "追加選択: 選択範囲に足す（Shift）").center();
+    let button = bar_rect(&h, "追加選択: 選択範囲に追加（Shift）").center();
     click(&mut h, button);
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));

@@ -2850,7 +2850,7 @@ fn the_window_follows_the_language_without_clipped_or_japanese_text() {
         for expected in [
             lang.pick("補間方法", "Resampling"),
             lang.pick("適用", "Apply"),
-            lang.pick("テクスチャセットを足す", "Add Texture Set"),
+            lang.pick("テクスチャセットを追加", "Add Texture Set"),
         ] {
             assert!(
                 texts.iter().any(|t| t == expected),
@@ -2980,7 +2980,7 @@ fn the_file_menu_opens_the_configuration_and_a_row_edits_removes_and_applies() {
 #[test]
 fn the_texture_set_panel_adds_removes_and_opens_the_configuration() {
     let mut h = gui();
-    h.get_by_label("空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）")
+    h.get_by_label("空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）")
         .click();
     h.run();
     assert_eq!(st(&h).sets.len(), 2);

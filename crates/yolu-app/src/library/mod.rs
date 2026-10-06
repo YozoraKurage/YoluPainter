@@ -59,7 +59,7 @@ pub const PROBES_PER_FRAME: usize = 8;
 pub const MAX_KNOWN: usize = 1024;
 
 /// 足せない種類のファイルの断りの文言（`reason` が言語ごとの短い文にする）。
-pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ足せるのは PNG と .ylsmart だけです";
+pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ追加できるのは PNG と .ylsmart だけです";
 /// 画像の読めない理由の文言（`reason` が言語ごとの短い文にする）。
 pub const REFUSAL_PNG: &str = "PNG として読めません";
 pub const REFUSAL_PNG_SIZE: &str = "画像の 1 辺は 1〜8192 です";

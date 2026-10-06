@@ -1,6 +1,6 @@
 //! 塗りつぶしのレイヤーのプロパティ（Unity 版の FillImages・Decals・FillGradients・GradientRamp・ShapeGradient の欄）: 描くチャンネルの画像、層の投影
 //! （UV・トライプラナー・平面・球・円柱・デカール、タイル・オフセット・回転、トライプラナーのぼかし、デカールの間引き、モデルの上の置き場）、描くチャンネルの
-//! ワールドスペースのグラデーション（形・置き場・減衰・色と不透明度の分岐点・値のカーブ）。値は `Action::Fill` を通る（1 回の Undo。数値とスライダーの
+//! グラデーションデカール（形・置き場・減衰・色と不透明度の分岐点・値のカーブ）。値は `Action::Fill` を通る（1 回の Undo。数値とスライダーの
 //! ドラッグは離したところで区切る）。画面には名前と値と短い理由だけを出し、使い方の説明はツールチップ。
 
 use egui::{pos2, vec2, DragAndDrop, Rect, Sense, Ui, WidgetInfo, WidgetType};
@@ -967,7 +967,7 @@ fn handle_buttons(
     }
 }
 
-// ───────── ワールドスペースのグラデーション ─────────
+// ───────── グラデーションデカール ─────────
 
 /// 形の名前。新規塗りつぶしレイヤーのメニュー・効果の欄と同じもの（`fx::names`）。
 pub fn shape_name(lang: Lang, shape: Shape) -> &'static str {
@@ -1009,7 +1009,7 @@ fn gradient_section(
         app,
         rows,
         "fill-gradient",
-        lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+        lang.pick("グラデーションデカール", "Gradient Decal"),
         "palette",
         None,
     );
@@ -1027,7 +1027,7 @@ fn gradient_section(
             ui,
             r,
             "fill.gradient.add",
-            lang.pick("グラデーションを足す", "Add Gradient"),
+            lang.pick("グラデーションを追加", "Add Gradient"),
             false,
             enabled,
             Some(lang.pick(

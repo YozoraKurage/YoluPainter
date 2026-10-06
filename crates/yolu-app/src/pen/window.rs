@@ -378,7 +378,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             id.with("curve"),
             &adjust.curve_shape(),
             lang.pick(
-                "ペンの筆圧（左から右）が、ブラシへ渡す筆圧（下から上）になる。薄い棒は、描いた線の筆圧の分布。何も無い所を押すと点を足し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
+                "ペンの筆圧（左から右）が、ブラシへ渡す筆圧（下から上）になる。薄い棒は、描いた線の筆圧の分布。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
                 "The pen pressure (across) becomes the pressure the brush gets (up). The faint bars show the pressure of the strokes you drew. Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
             ),
             true,

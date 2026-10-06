@@ -117,7 +117,7 @@ impl AppState {
                 "Hid everything outside the selection in the mask.",
             ),
             (false, Some(LayerKind::Group)) => lang.pick(
-                "グループにマスクを足しました。",
+                "グループにマスクを追加しました。",
                 "Added a mask to the group.",
             ),
             _ => lang.pick(

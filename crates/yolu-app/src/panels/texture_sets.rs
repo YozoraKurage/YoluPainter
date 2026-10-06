@@ -198,7 +198,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         "set.add",
         "add",
         lang.pick(
-            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
             "Add an empty texture set (same size and channels as this one)",
         ),
         false,

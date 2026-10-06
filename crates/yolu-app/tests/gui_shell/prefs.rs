@@ -258,7 +258,7 @@ fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so
     );
     assert_eq!(
         s.message,
-        "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。"
+        "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。"
     );
     // 同じ状況では知らせ直さない
     s.message.clear();
@@ -356,7 +356,7 @@ fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_w
     );
     assert_eq!(
         s.message,
-        "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで足せません。"
+        "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。"
     );
     // 選んだ値は設定に残る（画素の少ない文書なら効く）。何度も知らせ直さない
     assert_eq!(s.prefs.settings.source_budget, Budget::Mib(16));

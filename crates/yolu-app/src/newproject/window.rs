@@ -549,7 +549,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
                 id.with("add-unused"),
                 "add",
                 lang.pick(
-                    "セットの無いマテリアルに、空のテクスチャセットを足す",
+                    "セットの無いマテリアルに、空のテクスチャセットを追加",
                     "Add an empty texture set for each material without one",
                 ),
                 false,
@@ -950,7 +950,7 @@ fn draw_drafts(
                 id.with(("name", i)),
                 &d.name,
                 Some(if d.uid.is_none() {
-                    lang.pick("足す空のテクスチャセット", "A new, empty texture set")
+                    lang.pick("追加する空のテクスチャセット", "A new, empty texture set")
                 } else {
                     lang.pick("テクスチャセットの名前", "Texture set name")
                 }),
@@ -968,7 +968,7 @@ fn draw_drafts(
         );
         let size_tip = if d.uid.is_none() {
             lang.pick(
-                "足すテクスチャセットの大きさ",
+                "追加するテクスチャセットの大きさ",
                 "Size of the new texture set",
             )
             .to_owned()
@@ -1072,11 +1072,11 @@ fn draw_drafts(
         ui,
         add,
         id.with("add"),
-        lang.pick("テクスチャセットを足す", "Add Texture Set"),
+        lang.pick("テクスチャセットを追加", "Add Texture Set"),
         false,
         can_add && !locked,
         Some(lang.pick(
-            "マテリアルの無いセットも足せる、空のテクスチャセット（開いているセットと同じ大きさ・チャンネル）",
+            "マテリアルの無いセットも追加できる、空のテクスチャセット（開いているセットと同じ大きさ・チャンネル）",
             "An empty texture set, for a material without one or none yet (same size and channels as the open one)",
         )),
         Some("add"),

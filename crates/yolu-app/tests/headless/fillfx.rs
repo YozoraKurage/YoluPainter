@@ -1,4 +1,4 @@
-//! 塗りつぶしの層の画像と投影・デカール・ワールドスペースのグラデーションと、グラデーションの道具（Shift+G）の試験。`headless_` で始まる試験は
+//! 塗りつぶしの層の画像と投影・デカール・グラデーションデカールと、グラデーションの道具（Shift+G）の試験。`headless_` で始まる試験は
 //! 画面を描かず、Wine でも回る。どれも「操作 → 文書が変わる → 取り消し 1 回で戻る」（ロックの層は断って何も変えない・保存して開き直すと同じ）。
 //! マップ（位置・法線）は、試しの立方体を CPU で焼いた結果を文書の効果の入力へ足して使う（入力を渡す側は別の部品。ここは渡された後の振る舞い）。
 use crate::common;
@@ -918,7 +918,7 @@ fn headless_a_locked_layer_refuses_the_gizmo_and_a_hidden_handle_cancels_a_runni
     s.doc.end_stroke(stroke).unwrap();
 }
 
-// ───────── ワールドスペースのグラデーション ─────────
+// ───────── グラデーションデカール ─────────
 
 #[test]
 fn headless_a_world_space_gradient_is_added_fitted_to_the_model_and_every_edit_is_one_undo() {

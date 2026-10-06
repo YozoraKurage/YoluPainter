@@ -366,7 +366,7 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
     for lang in Lang::ALL {
         let configure = lang.pick("プロジェクト設定…", "Project Configuration…");
         let add = lang.pick(
-            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
             "Add an empty texture set (same size and channels as this one)",
         );
         let remove_label = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
@@ -462,7 +462,7 @@ fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
 fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: Lang, name: &str) {
     let add = h
         .get_by_label(lang.pick(
-            "空のテクスチャセットを足す（今のセットと同じ大きさ・チャンネル）",
+            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
             "Add an empty texture set (same size and channels as this one)",
         ))
         .rect();

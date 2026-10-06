@@ -1160,7 +1160,7 @@ fn id_color_rows(
         picking,
         enabled,
         Some(lang.pick(
-            "押してから 2D のキャンバスか 3D ビューを押すと、その所の ID の色を足します（Ctrl を押しながらなら外します）。もう一度押すと終わります",
+            "押してから 2D のキャンバスか 3D ビューを押すと、その所の ID の色を追加します（Ctrl を押しながらなら外します）。もう一度押すと終わります",
             "Then click the 2D canvas or the 3D view: each click adds the ID colour there (Ctrl+click takes it out). Press again to stop",
         )),
         Some("target"),
@@ -1327,17 +1327,17 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
     let (key, label, tip) = match target {
         FilterTarget::Content => (
             "fx.add",
-            lang.pick("フィルターを足す", "Add Filter"),
+            lang.pick("フィルターを追加", "Add Filter"),
             lang.pick(
-                "画素にフィルターかジェネレーター（焼いたメッシュマップから値を作る）を足す",
+                "画素にフィルターかジェネレーター（焼いたメッシュマップから値を作る）を追加",
                 "Add a filter or a generator (values from the baked mesh maps) on the pixels",
             ),
         ),
         FilterTarget::Mask => (
             "fx.add.mask",
-            lang.pick("マスクにフィルターを足す", "Add Filter to Mask"),
+            lang.pick("マスクにフィルターを追加", "Add Filter to Mask"),
             lang.pick(
-                "マスクにフィルターかジェネレーター（レイヤーの見える所を、焼いたメッシュマップから作る）を足す",
+                "マスクにフィルターかジェネレーター（レイヤーの見える所を、焼いたメッシュマップから作る）を追加",
                 "Add a filter or a generator on the mask (where the layer shows, from the baked mesh maps)",
             ),
         ),

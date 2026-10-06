@@ -1,7 +1,7 @@
 //! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリック・
 //! レイヤーのパネルの下の帯のボタンが同じものを使う）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
 //!
-//! 塗りつぶしの種類は単色・ワールドスペースのグラデーション・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
+//! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
 //! 入れ子に開き、選んだ形で新しい塗りつぶしの層を作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
 //! 「ファイルから取り込む…」）を同じく入れ子に開き、選んだ画像で新しい塗りつぶしの層を作る（デカールは投影を Decal に）。選ばずに閉じれば
 //! 何も作らず、Undo の段も増えない。層の作成と画像・投影の設定は 1 回の Undo。新しい保存の形は無い（既存の塗りつぶしの層の画像・投影・グラデーション）。
@@ -31,7 +31,7 @@ pub enum Op {
     FillImageDialog(ProjectionMode),
     /// 選んだ PNG を棚へ取り込み、その画像で塗りつぶしの層を作る（窓の結果）。
     FillImageFile { path: PathBuf, mode: ProjectionMode },
-    /// ワールドスペースのグラデーション（モデルの外形に合わせた、その形の置き場）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
+    /// グラデーションデカール（モデルの外形に合わせた、その形の置き場）の塗りつぶしの層を作り、3D ビューで形を編集できるようにする。
     FillGradient(Shape),
 }
 
@@ -63,14 +63,14 @@ pub fn adjustment_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 塗りつぶしの種類: 単色・ワールドスペースのグラデーション ▸・画像 ▸・デカール ▸。
+/// 塗りつぶしの種類: 単色・グラデーションデカール ▸・画像 ▸・デカール ▸。
 pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
         Entry::item(lang.pick("単色", "Solid Color"), Action::M2(Edit::NewFill)).enabled(free),
         Entry::submenu(
-            lang.pick("ワールドスペースのグラデーション", "World Space Gradient"),
+            lang.pick("グラデーションデカール", "Gradient Decal"),
             gradient_entries(app),
         )
         .tooltip(lang.pick(
@@ -91,7 +91,7 @@ pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     ]
 }
 
-/// ワールドスペースのグラデーションの形の一覧（選ぶと、その形の塗りつぶしの層を作る）。名前と順は塗りつぶしの欄の「形」と同じ。
+/// グラデーションデカールの形の一覧（選ぶと、その形の塗りつぶしの層を作る）。名前と順は塗りつぶしの欄の「形」と同じ。
 fn gradient_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -268,7 +268,7 @@ impl AppState {
                 } else {
                     format!(
                         "{}: {name}",
-                        lang.pick("画像の塗りつぶしを足しました", "Image fill added")
+                        lang.pick("画像の塗りつぶしを追加しました", "Image fill added")
                     )
                 };
             }
@@ -277,7 +277,7 @@ impl AppState {
         }
     }
 
-    /// ワールドスペースのグラデーションの新しい塗りつぶしの層（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
+    /// グラデーションデカールの新しい塗りつぶしの層（モデルの外形に合わせた、`shape` の置き場）を作り、3D ビューでその形を編集できるようにする。
     fn new_gradient_fill(&mut self, shape: Shape) {
         let lang = self.lang;
         if self.is_stroking() {
@@ -299,8 +299,8 @@ impl AppState {
             self.message = format!(
                 "{}: {name}",
                 lang.pick(
-                    "ワールドスペースのグラデーションを足しました",
-                    "World space gradient added"
+                    "グラデーションデカールを追加しました",
+                    "Gradient decal added"
                 )
             );
         }

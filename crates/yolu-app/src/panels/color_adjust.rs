@@ -270,7 +270,7 @@ fn tone_curve_rows(
         curves.curve(channel),
         &style,
         lang.pick(
-            "横が入力、縦が出力。何も無い所を押すと点を足し、ドラッグで動かし、右クリックか枠の外へ離すと消す。Esc でドラッグをやめる",
+            "横が入力、縦が出力。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックか枠の外へ離すと消す。Esc でドラッグをやめる",
             "Input across, output up. Click to add a point, drag to move, right-click or drag outside to remove. Escape cancels a drag",
         ),
         p.enabled,

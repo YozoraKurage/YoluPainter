@@ -193,7 +193,7 @@ fn close_label_and_tip(lang: Lang, closed: bool) -> (&'static str, &'static str)
         (
             lang.pick("閉じる", "Close"),
             lang.pick(
-                "終わりに始めの点を足して、輪にします（3 点以上）",
+                "終わりに始めの点を追加して、輪にします（3 点以上）",
                 "Add the start point at the end to make a loop (3 points or more)",
             ),
         )
