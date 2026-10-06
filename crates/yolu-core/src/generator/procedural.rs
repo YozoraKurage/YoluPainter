@@ -1285,6 +1285,17 @@ mod tests {
     #[test]
     fn lane_values_equal_single_pixel_values_on_every_simd_level() {
         const KEY: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        #[inline(never)]
+        unsafe fn value_lanes<V: Lanes>(
+            plan: &Plan,
+            x: u32,
+            y: u32,
+            position: [V::F; 3],
+            normal: [V::F; 3],
+            scratch: &mut PlanScratch,
+        ) -> Option<V::F> {
+            plan.value_lanes::<V>(x, y, (16, 16), position, normal, scratch)
+        }
         #[allow(clippy::needless_range_loop)]
         unsafe fn check<V: Lanes>() {
             let data = [0u16; 16 * 16 * 3];
@@ -1356,10 +1367,10 @@ mod tests {
                                     V::load_f64(&a[2]),
                                 ]
                             };
-                            let got = plan.value_lanes::<V>(
+                            let got = value_lanes::<V>(
+                                &plan,
                                 x,
                                 y,
-                                (16, 16),
                                 lanes(&pos),
                                 lanes(&nrm),
                                 &mut shared,
