@@ -3,11 +3,14 @@
 //!
 //! - 一時ファイルは置き先と同じフォルダの `.{ファイル名}.{pid}-{通し番号}.pending~`（.ylp の保存と同じ形。[`is_leftover_name`]）。
 //!   `create_new` で作るので、同じプロセスで同時に書いても、ほかのプロセスの一時ファイルにも重ならない。
+//!   ファイル名が [`STEM_MAX`] バイトより長いときは、先頭を切って全体の指紋を付けた名前にする（一時ファイルが OS の名前の長さの上限
+//!   〔255〕を超えて、置き先は作れるのに書けない、を避ける）。
 //! - 書いたら `sync_all`。置換は `rename`。Windows の共有違反・ロック違反・アクセス拒否（同期の道具・ウイルス対策が一時的に掴んでいる）
 //!   のあいだは短くやり直す（[`retry_busy`]。合計 1.5 秒まで）。
 //! - 置換のあと、フォルダは同期しない（.ylp の保存と同じ。置換そのものの耐久は OS に任せる）。
 //! - 失敗したら（途中の `?` でも）一時ファイルを消す。置き先は前のまま。
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -181,21 +184,43 @@ pub fn failing<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// `name`（置き先のファイル名）の一時ファイルの名前（`.{name}.{pid}-{通し番号}.pending~`）。
+/// 一時ファイルの名前に入れる置き先のファイル名（以下「幹」）の最長（バイト）。一時ファイルの名前は `.{幹}.{pid}-{通し番号}.pending~`
+/// で、pid（10 桁まで）・通し番号（20 桁まで）・区切りと拡張子の分 42 バイトを足しても 242 バイトで、OS の上限（255。Windows は UTF-16 の
+/// 255 単位で、UTF-8 のバイト数より多くはならない）に収まる。
+pub const STEM_MAX: usize = 200;
+
+/// 置き先のファイル名から、一時ファイルの名前に入れる幹を作る。[`STEM_MAX`] 以下ならそのまま。長ければ先頭（文字の境目で切る）に
+/// `~` と全体の FNV-1a（16 桁）を付けて [`STEM_MAX`] に収める（同じ先頭を持つ別の長い名前の一時ファイルと取り違えない）。
+fn stem(name: &str) -> Cow<'_, str> {
+    if name.len() <= STEM_MAX {
+        return Cow::Borrowed(name);
+    }
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let mut end = STEM_MAX - 17;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    Cow::Owned(format!("{}~{hash:016x}", &name[..end]))
+}
+
+/// `name`（置き先のファイル名）の一時ファイルの名前（`.{幹}.{pid}-{通し番号}.pending~`。幹は [`STEM_MAX`] まで `name` そのまま）。
 pub(crate) fn pending_name(name: &str) -> String {
     format!(
-        ".{name}.{}-{}.pending~",
+        ".{}.{}-{}.pending~",
+        stem(name),
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     )
 }
 
-/// 一時ファイル `.{name}.{pid}-{通し番号}.pending~` の名前か。`name` は置き先のファイル名。形が違うもの（別の置き先の一時ファイル・
-/// 利用者のファイル）は含めない。
+/// 一時ファイル `.{幹}.{pid}-{通し番号}.pending~`（幹は [`STEM_MAX`] まで `name` そのまま）の名前か。`name` は置き先のファイル名。
+/// 形が違うもの（別の置き先の一時ファイル・利用者のファイル）は含めない。
 pub fn is_leftover_name(name: &str, found: &str) -> bool {
     let Some(rest) = found
         .strip_prefix('.')
-        .and_then(|r| r.strip_prefix(name))
+        .and_then(|r| r.strip_prefix(&*stem(name)))
         .and_then(|r| r.strip_prefix('.'))
         .and_then(|r| r.strip_suffix(".pending~"))
     else {
@@ -205,6 +230,7 @@ pub fn is_leftover_name(name: &str, found: &str) -> bool {
 }
 
 /// 一時ファイルの名前なら、その置き先のファイル名（強制終了で残った一時ファイルを、置き先の名前の形で見分ける片付けのため）。
+/// [`STEM_MAX`] より長い置き先の分は、置き先そのものでなく幹（切った名前）が返る。
 pub fn leftover_target(found: &str) -> Option<&str> {
     let rest = found.strip_prefix('.')?.strip_suffix(".pending~")?;
     let (name, serial) = rest.rsplit_once('.')?;
@@ -472,6 +498,56 @@ mod tests {
         ] {
             assert_eq!(leftover_target(other), None, "{other}");
             assert!(!is_leftover_name("a.conf", other), "{other}");
+        }
+    }
+
+    /// 置き先の名前の長さ（255 バイトまで）によらず、一時ファイルの名前が OS の上限に収まり、片付けの見分けも通る。
+    #[test]
+    fn a_long_target_name_gets_a_temp_name_within_the_os_limit() {
+        // 200 バイトちょうどまではそのまま、超えたら切る
+        let exact = "a".repeat(STEM_MAX - 5) + ".conf";
+        assert_eq!(exact.len(), STEM_MAX);
+        assert!(pending_name(&exact).starts_with(&format!(".{exact}.")));
+        let over = "a".repeat(STEM_MAX - 4) + ".conf";
+        assert!(!pending_name(&over).starts_with(&format!(".{over}.")));
+        // ASCII と、3 バイトの文字（切る位置が文字の途中に当たる）で、上限いっぱいの名前
+        let ascii = "a".repeat(250) + ".conf";
+        let wide = "あ".repeat(83) + ".conf";
+        let wide_shifted = "x".to_string() + &"あ".repeat(83) + ".conf";
+        for name in [&ascii, &wide, &wide_shifted] {
+            assert!(name.len() <= 255, "{}", name.len());
+            let temp = pending_name(name);
+            // pid・通し番号が最も長い形でも 255 に収まる
+            let widest = format!(".{}.{}-{}.pending~", stem(name), u32::MAX, u64::MAX);
+            assert!(temp.len() <= 255 && widest.len() <= 255, "{}", widest.len());
+            assert!(is_leftover_name(name, &temp), "{temp}");
+            assert_eq!(leftover_target(&temp), Some(&*stem(name)));
+        }
+        // 先頭が同じでも、別の置き先の一時ファイルは取り違えない（短い名前の一時ファイルも）
+        let sibling = "a".repeat(250) + ".bak";
+        assert!(!is_leftover_name(&ascii, &pending_name(&sibling)));
+        assert!(!is_leftover_name(&ascii, &pending_name("a.conf")));
+        assert!(!is_leftover_name("a.conf", &pending_name(&ascii)));
+    }
+
+    /// 前は一時ファイルの名前が 255 バイトを超え、置き先は作れるのに書けなかった名前（ほかの OS・ファイルシステムの上限は確かめていない）。
+    #[cfg(unix)]
+    #[test]
+    fn a_target_name_near_the_os_limit_can_be_replaced() {
+        let s = Scratch::new("long");
+        for name in ["a".repeat(250) + ".conf", "あ".repeat(83) + ".conf"] {
+            let path = s.0.join(&name);
+            replace_bytes(&path, b"one").unwrap();
+            replace_bytes(&path, b"two").unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"two");
+            let error = failing(|| replace_bytes(&path, b"three")).unwrap_err();
+            assert_eq!(error.to_string(), "replace failed (test)");
+            fs::remove_file(&path).unwrap();
+            assert!(
+                s.names().is_empty(),
+                "一時ファイルが残っている: {:?}",
+                s.names()
+            );
         }
     }
 }

@@ -324,6 +324,22 @@ mod tests {
         (doc, plan)
     }
 
+    /// 前は一時ファイルの名前が 255 バイトを超え、置き先は作れるのに「一時ファイルを作れません」で失敗した名前。
+    #[cfg(unix)]
+    #[test]
+    fn a_verified_psd_with_a_name_near_the_os_limit_is_written() {
+        let dir = Dir::new("long");
+        let (doc, plan) = painted();
+        let ctl = ExportControl::default();
+        for name in ["a".repeat(251) + ".psd", "あ".repeat(83) + ".psd"] {
+            let path = dir.0.join(&name);
+            write_verified(&path, &plan, &doc, &ctl, Commit::CreateNew).unwrap();
+            write_verified(&path, &plan, &doc, &ctl, Commit::Replace).unwrap();
+            assert_eq!(dir.files(), std::slice::from_ref(&name));
+            fs::remove_file(&path).unwrap();
+        }
+    }
+
     #[test]
     fn a_verified_psd_replaces_the_old_file_and_leaves_no_temp_file() {
         let dir = Dir::new("replace");

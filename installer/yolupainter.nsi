@@ -388,6 +388,8 @@ Section "Uninstall"
   Delete "$APPDATA\${PRODUCT}\recovery.conf"
   Delete "$APPDATA\${PRODUCT}\update.conf"
   Delete "$APPDATA\${PRODUCT}\layout.json"
+  ; 書き込み途中の一時ファイル: 今の版は .{名前}.{pid}-{番号}.pending~、前の版は {名前}.{pid}.pending
+  Delete "$APPDATA\${PRODUCT}\.*.pending~"
   Delete "$APPDATA\${PRODUCT}\*.pending"
   RMDir /r "$APPDATA\${PRODUCT}\recovery"
   RMDir /r "$APPDATA\${PRODUCT}\logs"

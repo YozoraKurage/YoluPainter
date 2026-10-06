@@ -40,6 +40,7 @@ ROOT_FILES = ['LICENSE', 'README.md', 'README.en.md', 'THIRD_PARTY.md', 'DEPENDE
 # アプリが %APPDATA%\YoluPainter（設定のフォルダ）と %LOCALAPPDATA%\YoluPainter に作る物。どれがどちらかは docs/INSTALL.md の表と同じ。
 # 作り直せる物（/DELETEDATA で消える）
 REBUILDABLE_ROAMING = ['settings.conf', 'recovery.conf', 'update.conf', 'layout.json', 'settings.4242.pending', 'layout.json.4242.pending',
+                       '.settings.conf.4242-0.pending~', '.layout.json.4242-1.pending~', '.recovery.conf.4242-2.pending~', '.update.conf.4242-3.pending~',
                        'recovery/session-a/generation-1/data.bin', 'recovery/session.lock', 'logs/crash-1.log', 'logs/session-1.log']
 REBUILDABLE_LOCAL = ['thumbnails/ab/cd.png', 'LiveLink/link.sock']
 # 利用者が作った物と、知らないファイル（どちらの答えでも消えない）
