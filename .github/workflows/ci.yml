@@ -121,7 +121,8 @@ jobs:
   windows:
     name: Windows のビルドと画面なし試験
     runs-on: windows-latest
-    timeout-minutes: 45
+    # キャッシュが外れたとき（Cargo.lock が変わった後の初回）は、組みだけで 40 分を超える（0.4.0 で yolu-cli・rmcp が増えた）
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
