@@ -11,6 +11,10 @@ rayon = "1.12"
 
 sha2 = "0.10"
 
+[features]
+# ストロークの段ごとの時間の計測（examples/stroke_bench.rs が読む）。既定は無効で、無いときは何も残らない
+stroke-profile = []
+
 [dev-dependencies]
 # 試験だけ: glibc 以外（Windows など）でペンの傾きの式を、OS に依らない数学の実装（musl の移植）と ulp で比べる
 libm = "0.2"

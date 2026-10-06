@@ -113,3 +113,12 @@ x86_64 では、合成（Normal チャンネルを含む）・調整の層・フ
 
 `cargo run --release -p yolu-core --example simd_bench [blend|adjust|filter|kernel|all] [回数]` が、合成モード・調整の種類・フィルターごとの時間
 （1 タイルと 4096²。`kernel` は行の核だけの ns/画素）を測る。スレッドは `SIMD_THREADS`（既定 1）、名前の絞り込みは `SIMD_FILTER`（カンマ区切り）。
+
+2D のブラシのダブの画素（丸・筆先の画像・紙の質感・デュアル・指先・ぼかし・クローン・色の混ぜ・ダブごとの色）も同じ道で、行ごとにレーンで描く。
+参照は画素ごとの式（`YOLU_SIMD=scalar`）で、試験が乱数で振ったブラシ・層・タイルの大きさ・点の列を道ごとに描いて、層の全バイトとダブの数を比べる。
+選択範囲・透明部分のロックは、色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式。ステンシル・乗算でない紙の質感・3D の面のダブも画素ごとの式のまま。ダブをタイルごとにワーカーで描くかは、
+外接の箱の大きさに画素ごとの時間の見積もり（ブラシの種類で決まる）を掛けて決める。速いブラシの大きなダブは、ワーカーを起こす費用が勝つので直列で描く。
+
+`cargo run --release -p yolu-core --example stroke_bench -- --threads 1` が、ブラシの種類 × 大きさ × 間隔ごとに、4096² の文書への 1 ストロークの時間を測る
+（`--threads 1` は CPU 時間、2 以上は壁時計。`--features stroke-profile` を付けると段ごとの時間も出る）。ペンの入力が画面に出るまでの遅れは
+`cargo run --release -p yolu-app --example stroke_latency`、取り込んだブラシは `cargo run --release -p yolu-io --example stroke_bench_imported -- --bundled 6` で測る。

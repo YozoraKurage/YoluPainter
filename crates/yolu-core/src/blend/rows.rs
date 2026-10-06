@@ -252,7 +252,7 @@ fn fade_from_scalar(res: &mut [u8], inner: &[u8], amount: RowAmount<'_>, from: u
 
 /// N 画素の合成（下 dst に上 src を量 amount で）。レーンごとの結果は `blend_from_scalar` の 1 画素と同じバイト。
 #[inline(always)]
-unsafe fn blend_block<V: Lanes, const MODE: u8>(
+pub(crate) unsafe fn blend_block<V: Lanes, const MODE: u8>(
     dst: [V::F; 4],
     src: [V::F; 4],
     amount: V::F,
@@ -447,7 +447,7 @@ unsafe fn mix_row_lanes<V: Lanes, const MODE: u8>(
 
 /// N 画素のフェード（下 backdrop と中身 inner をプリマルチプライドで補間）。
 #[inline(always)]
-unsafe fn fade_block<V: Lanes>(backdrop: [V::F; 4], inner: [V::F; 4], amount: V::F) -> [V::F; 4] {
+pub(crate) unsafe fn fade_block<V: Lanes>(backdrop: [V::F; 4], inner: [V::F; 4], amount: V::F) -> [V::F; 4] {
     let (zero, one) = (V::splat(0.0), V::splat(1.0));
     let ba = V::mul(V::unit(backdrop[3]), V::sub(one, amount));
     let ia = V::mul(V::unit(inner[3]), amount);

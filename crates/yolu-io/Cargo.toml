@@ -5,6 +5,10 @@ license.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+# ストロークの段ごとの時間の計測（examples/stroke_bench_imported.rs）
+stroke-profile = ["yolu-core/stroke-profile"]
+
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
 crc32fast = "1"

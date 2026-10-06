@@ -13,7 +13,7 @@ use crate::types::{BlendMode, Rgba8};
 pub(crate) mod lanes;
 mod rows;
 
-pub(crate) use rows::mix_row_at;
+pub(crate) use rows::{blend_block, fade_block, mix_row_at};
 
 /// 画素の計算（合成・調整・フィルター・Normal チャンネル）が使っている SIMD の道の名前（`"avx2"`・`"sse41"`・`"scalar"`）。
 /// 診断と計測用。CPU が持つ一番広い道を選び、環境変数 `YOLU_SIMD` で下げられる。

@@ -154,9 +154,9 @@ impl BrushTip {
 
 /// 並べた読みの 1 行分（[`BrushTip::tiled_row`]）。
 pub(crate) struct TiledRow {
-    row0: usize,
-    row1: usize,
-    fy: f64,
+    pub(crate) row0: usize,
+    pub(crate) row1: usize,
+    pub(crate) fy: f64,
 }
 
 /// 組み込みの筆先・紙の質感の名前（C# の BuiltInBrushes.TipIds と同じ）。

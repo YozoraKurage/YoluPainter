@@ -1005,6 +1005,14 @@ fn compositing_does_not_depend_on_the_thread_count() {
 
 #[test]
 fn big_dabs_give_the_same_bytes_with_any_thread_count() {
+    // 既定のしきい値は画素ごとの時間の見積もりで決まり、速いブラシの大きなダブは直列で描くので、ワーカーの経路を通すために箱の下限を 1 にする
+    struct Restore(i64);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            yolu_core::brush::set_parallel_dab_pixels(self.0);
+        }
+    }
+    let _restore = Restore(yolu_core::brush::set_parallel_dab_pixels(1));
     let run = || {
         let mut doc = Document::with_tile_size(400, 300, 64).unwrap();
         let l = doc.add_layer("L").unwrap();
