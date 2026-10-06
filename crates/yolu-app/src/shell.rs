@@ -813,6 +813,16 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
     let mut right = r.right() - 10.0;
+    // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
+    if let Some(indicator) = app.ops.indicator() {
+        let tip = app.ops.tooltip(app.lang);
+        let dot = Rect::from_center_size(pos2(right - OPS_DOT / 2.0, r.center().y), vec2(OPS_DOT, OPS_DOT));
+        p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
+        let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
+        response.on_hover_text(&tip);
+        right = dot.left() - 16.0;
+    }
     for item in app.usage.items(app.lang) {
         let width = w::text_width(&p, &item.text, t::LABEL_DIM);
         let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
@@ -821,6 +831,19 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
         response.on_hover_text(&item.tip);
         right = at.left() - 16.0;
+    }
+}
+
+/// 状態の帯の、外からの操作の印（丸）の直径。
+const OPS_DOT: f32 = 8.0;
+
+/// 外からの操作の印の色。
+pub fn ops_indicator_color(indicator: crate::opslive::OpsIndicator) -> egui::Color32 {
+    use crate::opslive::OpsIndicator;
+    match indicator {
+        OpsIndicator::Waiting => t::ACCENT_DIM,
+        OpsIndicator::Connected => t::OK,
+        OpsIndicator::Failed => t::ERROR,
     }
 }
 

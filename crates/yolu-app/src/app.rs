@@ -9,6 +9,7 @@ use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
 use crate::livelink::LiveLink;
+use crate::opslive::OpsLink;
 use crate::panels::{
     assets, color::ColorTextures, layers, layers::Thumbnails, properties, texture_sets,
     view3d::View3dHost, view3d::View3dSlot,
@@ -280,6 +281,8 @@ pub struct YoluApp {
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
+    /// 外からの操作（CLI・MCP のクライアント）を受ける（設定「外からの操作を受ける」が入っている間だけ待ち受ける）。
+    ops: OpsLink,
     /// ファイルの窓・確かめの窓を開くか（eframe の窓だけ。試験では開かず、頼みを `state.dialog_request` に残す）。
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
@@ -378,6 +381,8 @@ impl YoluApp {
         // 更新: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる（実際の窓だけ。試験は呼ばない）
         app.state.update_startup();
         app.start_live_link(&cc.egui_ctx, std::env::args_os());
+        // 外からの操作を受ける設定が入っていれば、起動のうちに待ち受ける
+        app.tick_ops(&cc.egui_ctx);
         app
     }
 
@@ -655,6 +660,7 @@ impl YoluApp {
             gpu_lost_wait: gpu_lost::RECOVERY_WAIT,
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
+            ops: OpsLink::new(),
             dialogs: false,
             closing: false,
             close_answer: None,
@@ -713,6 +719,15 @@ impl YoluApp {
     /// Live Link（試験でつなぎ先の名前を替える）。
     pub fn link_mut(&mut self) -> &mut LiveLink {
         &mut self.link
+    }
+
+    pub fn ops(&self) -> &OpsLink {
+        &self.ops
+    }
+
+    /// 外からの操作の受け口（試験でつなぎ先の名前を替える）。
+    pub fn ops_mut(&mut self) -> &mut OpsLink {
+        &mut self.ops
     }
 
     /// Live Link を始める・やめるの頼みと、ファイルの窓の頼みを当てる。
@@ -1351,6 +1366,8 @@ impl YoluApp {
         self.note_dropped_psds();
         self.state.poll_distribute();
         self.poll_saving();
+        // 外からの操作: 設定に合わせて待ち受けを始める・やめ、受けた要求を実行する（保存の結果を受けた後に。返事待ちの保存の返事も返す）
+        self.tick_ops(&ctx);
         self.state.poll_brush_import();
         self.state.poll_brush_csp();
         // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
@@ -1752,6 +1769,14 @@ impl YoluApp {
         self.state.link = self.link.view();
     }
 
+    /// 外からの操作を 1 回まわす: 設定（外からの操作を受ける）に合わせて待ち受けを始める・やめ、受けた要求を画面のスレッドで実行して返す。
+    fn tick_ops(&mut self, ctx: &egui::Context) {
+        let want = self.state.prefs.settings.external_ops;
+        self.ops.sync(want, ctx, &mut self.state);
+        self.ops.poll(&mut self.state);
+        self.state.ops = self.ops.view();
+    }
+
     /// 窓が隠れている間の 1 回（`eframe::App::logic` が、見えていないときに呼ぶ。試験は、`ui` を回さずにこれを呼んで、隠れた窓の道を
     /// 通す）。
     #[doc(hidden)]
@@ -1771,6 +1796,8 @@ impl YoluApp {
         } else if self.state.quit {
             self.close_flow(ctx, false);
         }
+        // 見えない窓でも、受けた要求は実行する（保存の結果を受けた後に）
+        self.tick_ops(ctx);
         self.state.message_end(prior);
         crate::crash::message(&self.state.message);
     }

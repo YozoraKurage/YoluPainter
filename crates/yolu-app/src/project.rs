@@ -25,7 +25,7 @@ use yolu_io::{Project, SaveTarget, SetDocument, WriterInfo};
 
 pub(crate) mod capture;
 mod save;
-pub use save::{busy_reason, save_from, SaveHold, SaveProgress, SaveState};
+pub use save::{busy_reason, save_for_ops, save_from, SaveHold, SaveOutcome, SaveProgress, SaveState, SavedFacts};
 
 /// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
@@ -496,7 +496,7 @@ pub(crate) fn replaced_sets<'a>(base: Option<&Project>, sets: impl Iterator<Item
     .collect()
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,

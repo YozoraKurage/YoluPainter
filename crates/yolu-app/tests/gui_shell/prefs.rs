@@ -852,3 +852,66 @@ fn open_settings_in(h: &mut Harness<'static, YoluApp>, lang: Lang) {
     h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
     h.run();
 }
+
+/// 状態の帯の右端（丸のあたり）だけを撮って、正解の絵と比べる。
+fn status_bar_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
+    h.event(egui::Event::PointerGone);
+    h.step();
+    let image = h.render().expect("描画");
+    let height = yolu_app::ui::theme::STATUS_BAR_HEIGHT.ceil() as u32;
+    let cropped = image::imageops::crop_imm(&image, image.width() - 120, image.height() - height, 120, height).to_image();
+    egui_kittest::image_snapshot(&cropped, name);
+}
+
+/// 「外からの操作を受ける」: 既定は切。欄を押すと待ち受けて設定のファイルに書かれ、状態の帯の右端に小さな丸（説明はツールチップ。日英）が出る。
+/// もう一度押すと待ち受けをやめ、丸も消える。
+#[test]
+fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows_a_dot() {
+    let dir = settings_dir("ops");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    // 試験ごとに別の名前で受ける（ほかの試験・開いているアプリと重ならない）
+    let name = common::names::unique_name("ylops", "prefs");
+    h.state_mut().ops_mut().set_name(&name).unwrap();
+    assert!(h.query_by_label("外からの操作を待っています").is_none(), "切のあいだは丸が無い");
+    open_settings(&mut h);
+    assert!(!h.state().state.prefs.settings.external_ops, "既定は切");
+    h.get_by_label("外からの操作を受ける").click();
+    h.run();
+    assert!(h.state().state.settings().external_ops);
+    assert_eq!(h.state().state.ops.status, yolu_app::opslive::OpsStatus::Listening);
+    assert!(yolu_protocol::link::connect(&name).is_ok(), "待ち受けている");
+    status_bar_shot(&mut h, "status_bar_ops_listening");
+    let dot = h.get_by_label("外からの操作を待っています").rect();
+    let bar = Rect::from_min_max(egui::pos2(0.0, 800.0 - yolu_app::ui::theme::STATUS_BAR_HEIGHT), egui::pos2(1280.0, 800.0));
+    assert!(bar.contains_rect(dot), "状態の帯の中にある: {bar:?} {dot:?}");
+    assert!(dot.right() > bar.right() - 20.0, "右端にある: {dot:?}");
+    h.run();
+    assert!(std::fs::read_to_string(&path).unwrap().lines().any(|l| l == "external_ops=on"));
+    // つながると、丸は「つながっている」になる（色が替わる。ツールチップも）
+    let identity = yolu_protocol::Identity::standalone("試験のクライアント");
+    let (_conn, _reader, _) = yolu_protocol::link::connect_and_greet_as(&name, &identity).expect("つなげる");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while h.state().state.ops.status != yolu_app::opslive::OpsStatus::Connected(1) {
+        assert!(std::time::Instant::now() < deadline, "つながらない: {:?}", h.state().state.ops.status);
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.run();
+    let _ = h.get_by_label("外からの操作を受けています（つながり 1）");
+    status_bar_shot(&mut h, "status_bar_ops_connected");
+    // 英語の表示
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("Accepting external commands (1 connected)");
+    let _ = h.get_by_label("Accept external commands");
+    english(&mut h, Lang::Ja);
+    // 切る: 待ち受けをやめ、丸も消える
+    h.get_by_label("外からの操作を受ける").click();
+    h.run();
+    assert!(!h.state().state.settings().external_ops);
+    assert_eq!(h.state().state.ops.status, yolu_app::opslive::OpsStatus::Off);
+    assert!(h.query_by_label("外からの操作を待っています").is_none());
+    assert!(yolu_protocol::link::connect(&name).is_err());
+    h.run();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("external_ops"));
+}

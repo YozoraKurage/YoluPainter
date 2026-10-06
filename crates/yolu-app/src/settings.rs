@@ -171,6 +171,9 @@ pub struct Settings {
     pub livelink_on_startup: bool,
     /// Live Link で Unity から受けたマテリアルの値を .ylp に保存するか（`look.json` の `received`。既定は保存する）。
     pub livelink_keep_values: bool,
+    /// 外からの操作（CLI・MCP のクライアントなど、同じ PC の同じユーザーのプログラムからの命令）を受けるか。既定は切。入っている間だけ待ち受ける
+    /// （`opslive`）。
+    pub external_ops: bool,
     /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
@@ -199,6 +202,7 @@ impl Default for Settings {
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: true,
+            external_ops: false,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
         }
@@ -370,6 +374,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "library_folder" => lang.pick("棚の場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
+        "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
@@ -485,6 +490,8 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             "livelink_keep_values" => settings.livelink_keep_values = value != "off",
+            // 入れたときだけ書く行（既定は切）。読めない値は切のまま
+            "external_ops" => settings.external_ops = value == "on",
             "color_wheel" => settings.color_wheel = value != "off",
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
@@ -649,6 +656,9 @@ fn render(settings: &Settings) -> String {
     if !settings.livelink_keep_values {
         text += "livelink_keep_values=off\n";
     }
+    if settings.external_ops {
+        text += "external_ops=on\n";
+    }
     if !settings.color_wheel {
         text += "color_wheel=off\n";
     }
@@ -796,6 +806,7 @@ mod tests {
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: false,
+            external_ops: true,
             color_wheel: true,
             gpu_memory: GpuMemory::Mib(1536),
         }
@@ -810,6 +821,25 @@ mod tests {
         save(&path, &off).unwrap();
         assert_eq!(load(&path), (off, vec![]));
         assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn accepting_external_commands_defaults_off_and_survives_restart_only_when_on() {
+        let dir = temp_dir("externalops");
+        let path = dir.join("settings.conf");
+        assert!(!load(&path).0.external_ops, "ファイルが無ければ切");
+        let on = Settings { external_ops: true, ..Settings::default() };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), (on, vec![]));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("external_ops=on"));
+        // 切は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("external_ops"));
+        // この項目を知らない古い設定は切として読む。読めない値も切
+        assert!(!parse("language=ja\nlivelink_keep_values=off\n").0.external_ops);
+        let (settings, problems) = parse("external_ops=maybe\nlanguage=en\n");
+        assert!(!settings.external_ops && problems.is_empty(), "{problems:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1076,6 +1106,7 @@ mod tests {
             "view3d_paint_falloff_start=60",
             "view3d_paint_falloff_end=75",
             "view3d_paint_seam_bleed=4",
+            "external_ops=on",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -1094,6 +1125,7 @@ mod tests {
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
+        back.external_ops = false;
         back.view3d_post = crate::view3d::display::PostFx::default();
         back.view3d_paint = yolu_core::geometry::ProjectionSettings::default();
         save(&path, &back).unwrap();

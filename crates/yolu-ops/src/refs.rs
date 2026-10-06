@@ -38,6 +38,35 @@ pub fn resolve_layer(doc: &Document, text: &str) -> Result<LayerId, OpError> {
     }
 }
 
+/// テクスチャセットを ID か名前で引く（`sets` は（ID, 名前）の並び。省略は `current`（セットの ID）のセット、無ければ先頭）。ID が先。
+/// 名前が複数に当たれば `ambiguous`（候補の ID と名前を `data` に）、無ければ `not_found`（あるセットの一覧を `data` に）。
+/// 画面なしのホストと起動中のアプリのホストが、同じ指し方・同じ誤りになるように 1 か所に置く。
+pub fn resolve_set(sets: &[(&str, &str)], set: Option<&str>, current: &str) -> Result<usize, OpError> {
+    let Some(text) = set else {
+        return sets
+            .iter()
+            .position(|(id, _)| *id == current)
+            .or(if sets.is_empty() { None } else { Some(0) })
+            .ok_or_else(|| OpError::not_found(Noun::Set, current));
+    };
+    if let Some(i) = sets.iter().position(|(id, _)| *id == text) {
+        return Ok(i);
+    }
+    let named: Vec<usize> =
+        sets.iter().enumerate().filter(|(_, (_, name))| *name == text).map(|(i, _)| i).collect();
+    match named.as_slice() {
+        [] => Err(OpError::not_found(Noun::Set, text)
+            .with_data(json!({"sets": sets.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>()}))),
+        [one] => Ok(*one),
+        many => Err(OpError::new(
+            ErrorCode::Ambiguous,
+            format!("セット名「{text}」が {} 個に当たります。ID で指してください", many.len()),
+            format!("{} texture sets are named \"{text}\"; use the set id", many.len()),
+        )
+        .with_data(json!({"candidates": many.iter().map(|i| json!({"id": sets[*i].0, "name": sets[*i].1})).collect::<Vec<_>>()}))),
+    }
+}
+
 pub fn kind_word(kind: LayerKind) -> &'static str {
     match kind {
         LayerKind::Raster => "paint",

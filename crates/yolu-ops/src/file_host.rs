@@ -22,7 +22,7 @@ use yolu_io::{
 };
 
 use crate::doc_ops::{inactive_texts, SetFacts};
-use crate::error::{ErrorCode, Noun, OpError};
+use crate::error::{ErrorCode, OpError};
 use crate::host::{read_only_error, OpHost, SaveJob, SetView};
 use crate::path::PathPolicy;
 use crate::reply::*;
@@ -206,30 +206,8 @@ impl Opened {
 
     /// セットを ID か名前で引く（省略は今のセット）。
     fn resolve_set(&self, set: Option<&str>) -> Result<usize, OpError> {
-        let Some(text) = set else {
-            return self
-                .sets
-                .iter()
-                .position(|s| s.id == self.current)
-                .or(if self.sets.is_empty() { None } else { Some(0) })
-                .ok_or_else(|| OpError::not_found(Noun::Set, &self.current));
-        };
-        if let Some(i) = self.sets.iter().position(|s| s.id == text) {
-            return Ok(i);
-        }
-        let named: Vec<usize> =
-            self.sets.iter().enumerate().filter(|(_, s)| s.name == text).map(|(i, _)| i).collect();
-        match named.as_slice() {
-            [] => Err(OpError::not_found(Noun::Set, text)
-                .with_data(json!({"sets": self.sets.iter().map(|s| json!({"id": s.id, "name": s.name})).collect::<Vec<_>>()}))),
-            [one] => Ok(*one),
-            many => Err(OpError::new(
-                ErrorCode::Ambiguous,
-                format!("セット名「{text}」が {} 個に当たります。ID で指してください", many.len()),
-                format!("{} texture sets are named \"{text}\"; use the set id", many.len()),
-            )
-            .with_data(json!({"candidates": many.iter().map(|i| json!({"id": self.sets[*i].id, "name": self.sets[*i].name})).collect::<Vec<_>>()}))),
-        }
+        let sets: Vec<(&str, &str)> = self.sets.iter().map(|s| (s.id.as_str(), s.name.as_str())).collect();
+        crate::refs::resolve_set(&sets, set, &self.current)
     }
 
     /// セットを core の文書にする（まだなら）。予算を超える・読めないときは断り、状態は変えない。
@@ -279,6 +257,17 @@ impl Opened {
         // 渡せなくても読む・編集はできる（その効果が入力のまま通ると、知らせに出る）
         let _ = doc.set_effect_inputs(inputs);
     }
+}
+
+/// セットを書いた文書の版が、Unity 版（0.2.0）の開ける版より新しいときの知らせ（Rust 版だけの効果・調整を使うセットは新しい版で保存される。
+/// Unity 版は理由を言って開くのを断り、中身は消えない）。起動中のアプリのホストも、保存の返事に同じ文を使う。
+pub fn newer_version_note(set_name: &str, version: i32) -> Option<Text> {
+    (version > yolu_io::UNITY_NATIVE_VERSION).then(|| {
+        Text::new(
+            format!("テクスチャセット「{set_name}」は Rust 版だけの機能を使うため、Unity 版（0.2.0）が開けない版（{version}）で保存しました（Unity 版は理由を言って開くのを断ります。中身は消えません）"),
+            format!("Texture set \"{set_name}\" uses features only this editor has, so it was saved in document version {version}, which the Unity package 0.2.0 cannot open (it refuses the file with a reason; nothing is lost)"),
+        )
+    })
 }
 
 fn unsupported_text(issues: &[String]) -> Text {
@@ -443,23 +432,14 @@ impl OpHost for FileHost {
         let requested = destination.unwrap_or(&o.path).to_path_buf();
         let is_ylp = requested.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp"));
         if !is_ylp {
-            return Err(OpError::new(
-                ErrorCode::PathRefused,
-                "保存先の名前は .ylp で終わります",
-                "The file name must end with .ylp",
-            )
-            .with_data(json!({"path": requested.display().to_string()})));
+            return Err(OpError::ylp_name_required(&requested.display().to_string()));
         }
         // 開いたファイルと同じ物かは、書き方（`..`・大文字小文字・リンク）に依らず見る。同じなら開いたときの場所と印で書く
         let same_file = destination.is_none_or(|p| is_same_file(p, &o.path));
         let target_path = if same_file { o.path.clone() } else { requested };
         let exists = std::fs::symlink_metadata(&target_path).is_ok();
         if exists && !confirm {
-            return Err(OpError::confirm_required(
-                "もうあるファイルを置き換えます。confirm: true を付けてください",
-                "The existing file would be replaced; pass confirm: true",
-                Some(json!({"files": [target_path.display().to_string()]})),
-            ));
+            return Err(OpError::replace_confirm_required(&[target_path.display().to_string()]));
         }
         let dirty: Vec<usize> = (0..o.sets.len()).filter(|i| o.sets[*i].unsaved()).collect();
         if same_file && dirty.is_empty() {
@@ -539,13 +519,8 @@ impl OpHost for FileHost {
         // Unity 版（0.2.0）が開けない版で書いたセットを知らせる（Rust 版だけの効果・調整を使うと、新しい版で保存される）
         for id in &written_ids {
             let version = o.project.sets().iter().find(|s| s.id == *id).map_or(0, |s| s.document.version());
-            if version > yolu_io::UNITY_NATIVE_VERSION {
-                let name = o.sets.iter().find(|s| s.id == *id).map_or("", |s| s.name.as_str());
-                notes.push(Text::new(
-                    format!("テクスチャセット「{name}」は Rust 版だけの機能を使うため、Unity 版（0.2.0）が開けない版（{version}）で保存しました（Unity 版は理由を言って開くのを断ります。中身は消えません）"),
-                    format!("Texture set \"{name}\" uses features only this editor has, so it was saved in document version {version}, which the Unity package 0.2.0 cannot open (it refuses the file with a reason; nothing is lost)"),
-                ));
-            }
+            let name = o.sets.iter().find(|s| s.id == *id).map_or("", |s| s.name.as_str());
+            notes.extend(newer_version_note(name, version));
         }
         Ok(Reply::Saved(Saved {
             path: o.path.display().to_string(),

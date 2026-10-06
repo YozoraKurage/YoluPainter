@@ -158,6 +158,42 @@ fn messages_round_trip_and_unknown_commands_are_refused_without_dropping_the_lin
     server.join().unwrap();
 }
 
+/// 挨拶のあとの枠を Live Link の命令にせずに読む口（`ConnectionReader::raw`）: 別の使い手の種類の枠は、知らない命令として断られずにそのまま届き、
+/// 読みを終わらせる口（`cancel_reads`）は、読んでいないときに呼んでも何も壊さない。
+#[test]
+fn after_the_greeting_frames_of_another_kind_pass_through_raw_and_are_not_refused() {
+    const REQUEST: u16 = 0x4f50;
+    const RESPONSE: u16 = 0x4f51;
+    let name = unique_name("raw");
+    let listener = Server::bind(&name, false).unwrap();
+    let server = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let (conn, mut reader, _) = accept(stream, "試験のスタンドアロン", 7, &listener.key()).unwrap();
+        let (frames, stream) = reader.raw();
+        let mut stream = stream;
+        let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
+        assert_eq!((frame.kind, frame.payload.as_slice()), (REQUEST, &b"ping"[..]));
+        conn.cancel_reads();
+        conn.send_raw(RESPONSE, b"pong").unwrap();
+        // 閉じるまで待つ（相手の Bye ではなく、枠の切れ目の閉じ）
+        let closed = frames.read_frame(&mut stream);
+        assert!(closed.is_err() || closed.unwrap().is_none());
+    });
+    let (conn, mut reader, welcome) = connect_and_greet(&name, "試験のクライアント").unwrap();
+    assert_eq!(welcome.session, 7);
+    conn.send_raw(REQUEST, b"ping").unwrap();
+    {
+        let (frames, stream) = reader.raw();
+        let mut stream = stream;
+        let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
+        // 最初に届くのは返事の枠。知らない種類の枠への `Error`（`next` が返すもの）ではない
+        assert_eq!((frame.kind, frame.payload.as_slice()), (RESPONSE, &b"pong"[..]));
+    }
+    drop(reader);
+    drop(conn);
+    server.join().unwrap();
+}
+
 #[test]
 fn a_command_over_the_limit_is_refused_by_send_and_the_link_keeps_working() {
     // 512 MiB の命令は作らず、上限を狭めて送り口の断りを通す（`send` は `send_within` の上限が 512 MiB のもの）

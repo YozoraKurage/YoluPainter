@@ -22,6 +22,7 @@ mod livelink_request;
 mod livelink_values;
 mod no_developer_words;
 mod no_instruction_text;
+mod ops_live;
 mod pose_saved;
 mod procedural;
 mod recovery;

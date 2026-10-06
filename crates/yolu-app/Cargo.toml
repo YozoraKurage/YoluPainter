@@ -21,6 +21,7 @@ yolu-core.workspace = true
 yolu-gpu.workspace = true
 yolu-io.workspace = true
 yolu-model.workspace = true
+yolu-ops.workspace = true   # 外からの操作（CLI・MCP）の命令。起動中のアプリのホストは `ops_host`
 yolu-protocol.workspace = true
 yolu-update.workspace = true   # 更新の確かめ（署名・版・SHA-256・大きさ）。通信は `update/http.rs`
 serde = "1"   # MIT OR Apache-2.0（ドックのタブの名前の保存。yolu-io・yolu-update が既に使っている）

@@ -67,6 +67,11 @@ pub(crate) fn raw_of(stream: &Stream) -> usize {
     }
 }
 
+/// 口（`raw_of`）で待っている読みを取り消す（取り消されたスレッドの読みは誤りで返る。取り消すものが無ければ何もしない）。口が生きている間だけ呼ぶ。
+pub(crate) fn cancel_reads(raw: usize) {
+    unsafe { CancelIoEx(raw as HANDLE, std::ptr::null()) };
+}
+
 /// つないだ相手のプロセスの番号（サーバーの側ならクライアント、クライアントの側ならサーバー）。
 pub(crate) fn peer_pid(stream: &Stream) -> io::Result<u32> {
     use interprocess::local_socket::traits::StreamCommon;

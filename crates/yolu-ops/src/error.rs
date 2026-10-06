@@ -114,6 +114,27 @@ impl OpError {
             None => e,
         }
     }
+    /// もうあるファイルの置き換えに `confirm: true` が無い（保存。`files` は置き換えるファイルの道）。
+    pub fn replace_confirm_required(files: &[String]) -> Self {
+        Self::confirm_required(
+            "もうあるファイルを置き換えます。confirm: true を付けてください",
+            "The existing file would be replaced; pass confirm: true",
+            Some(json!({"files": files})),
+        )
+    }
+    /// 保存先の名前が .ylp で終わらない。
+    pub fn ylp_name_required(path: &str) -> Self {
+        Self::new(ErrorCode::PathRefused, "保存先の名前は .ylp で終わります", "The file name must end with .ylp")
+            .with_data(json!({"path": path}))
+    }
+    /// まだファイルになっていない文書の上書き保存（保存先を `save_as` で言う）。
+    pub fn no_file_to_save() -> Self {
+        Self::invalid_value(
+            "まだファイルになっていない文書です。save_as で保存先を指定してください",
+            "The document is not a file yet; give a destination with save_as",
+        )
+        .with_data(json!({"reason": "no_file"}))
+    }
     /// core の失敗。理由の文は日本語が core の診断、英語は種類ごとの文（細かい理由は `data.detail` に日本語で残す）。
     pub fn from_core(e: &CoreError) -> Self {
         let ja = e.to_string();

@@ -38,6 +38,26 @@ pub struct SaveState {
     job: Option<Job>,
     /// 試験用: 次の保存の仕事を、手が離されるまで始めずに止めておく。
     hold: Option<Arc<AtomicBool>>,
+    /// 外からの操作が頼んだ保存の結果（`save_for_ops`。`take_outcome` が 1 度だけ渡す）。
+    outcome: Option<SaveOutcome>,
+}
+
+/// 外からの操作（`save_for_ops`）が頼んだ保存の結果。画面の保存（メニュー・Ctrl+S）の結果は残さない。
+#[derive(Debug)]
+pub struct SaveOutcome {
+    /// 頼んだ保存先。
+    pub path: PathBuf,
+    /// 成功なら書いたセットの ID と退避の場所、失敗なら理由の文（画面の言語）。
+    pub result: Result<SavedFacts, String>,
+}
+
+/// 保存した事実（返事の組み立てに使う）。
+#[derive(Debug)]
+pub struct SavedFacts {
+    /// 文書を書き直したセットの ID（書き直さなかったセットは開いたときのバイト列のまま残る）。
+    pub sets_written: Vec<String>,
+    /// 置き換えで残した前の版（上書きでなければ無い）。
+    pub backup: Option<PathBuf>,
 }
 
 /// 試験用: 止めておいた保存の仕事の手。`release` で動き出す。
@@ -72,6 +92,8 @@ struct Job {
     shared: Arc<Shared>,
     /// 開いているファイルと同じ場所への保存か（そうなら、保存後の印を開いているファイルの印にする）。
     reuse: bool,
+    /// 外からの操作が頼んだ保存か（終わったら `SaveState::outcome` に結果を残す）。
+    report: bool,
     /// 頼む前の「変更あり」・棚の「変更あり」（失敗したら戻す。保存の間の編集は、そのまま残る）。
     was_modified: bool,
     shelf_was_changed: bool,
@@ -91,6 +113,8 @@ struct Done {
     /// 書いたファイルを指すプロジェクト（次の保存・書き置きの元）。
     project: Arc<Project>,
     text: String,
+    /// 置き換えで残した前の版。
+    backup: Option<PathBuf>,
 }
 
 /// 裏のスレッドへ渡す頼み。
@@ -124,6 +148,11 @@ impl SaveState {
             file: job.file.clone(),
             fraction: (done + WEIGHTS[stage] * inside).clamp(0.0, 1.0),
         })
+    }
+
+    /// 外からの操作が頼んだ保存の結果を受け取る（終わっていなければ None。受け取ると空になる）。
+    pub fn take_outcome(&mut self) -> Option<SaveOutcome> {
+        self.outcome.take()
     }
 
     /// 試験用: 次の保存の仕事を、手が離されるまで始めずに止めておく。
@@ -200,7 +229,7 @@ fn stopped(lang: Lang) -> Finished {
 
 /// 保存の頼み（ファイルのメニュー・Ctrl+S・別名で保存・保存して更新）。断る・失敗するときは、何も変えずに理由を出す。
 pub fn save_from(state: &mut AppState, path: &Path) {
-    if let Err(e) = start(state, path) {
+    if let Err(e) = start(state, path, false) {
         state.message = format!(
             "{}: {}: {e}",
             state.lang.pick("保存できません", "Cannot save"),
@@ -209,8 +238,15 @@ pub fn save_from(state: &mut AppState, path: &Path) {
     }
 }
 
-/// 頼みを組み立てて、仕事を始める。始められなければ理由。
-fn start(state: &mut AppState, path: &Path) -> Result<(), String> {
+/// 外からの操作の保存の頼み: `save_from` と同じ道（裏のスレッド・書き直しの印・退避）で、結果は `SaveState::take_outcome` が渡す（メッセージだけに
+/// しない）。始められなければ理由の文（何も変えない）。試験の状態（`background` が false）は、頼みの中で終えるので、戻ってすぐ結果が取れる。
+pub fn save_for_ops(state: &mut AppState, path: &Path) -> Result<(), String> {
+    state.save.outcome = None;
+    start(state, path, true)
+}
+
+/// 頼みを組み立てて、仕事を始める。始められなければ理由。`report` は外からの操作の頼み（結果を `SaveState::outcome` に残す）。
+fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> {
     let lang = state.lang;
     if state.is_stroking() {
         return Err(lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
@@ -272,6 +308,7 @@ fn start(state: &mut AppState, path: &Path) -> Result<(), String> {
         rx,
         shared: shared.clone(),
         reuse: same_file_as_open,
+        report,
         was_modified,
         shelf_was_changed,
         written,
@@ -416,7 +453,7 @@ fn work(request: Request) -> Finished {
         text += &note;
     }
     text += &backup_text(lang, &path, &report);
-    Finished { result: Ok(Done { project: saved, text }), target: Some(target) }
+    Finished { result: Ok(Done { project: saved, text, backup: report.backup.clone() }), target: Some(target) }
 }
 
 /// 結果を受ける（画面のスレッド）。成功なら開いているファイルとセットの保存済みの印を更新し、失敗なら何も変えずに理由を出す。
@@ -459,6 +496,15 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
             state.rewritten_sets = job.written.len();
             state.message = done.text;
+            if job.report {
+                state.save.outcome = Some(SaveOutcome {
+                    path: job.path.clone(),
+                    result: Ok(SavedFacts {
+                        sets_written: job.written.iter().map(|(id, _, _)| id.clone()).collect(),
+                        backup: done.backup,
+                    }),
+                });
+            }
         }
         Err(text) => fail(state, &job, text, finished.target),
     }
@@ -471,6 +517,9 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
     }
     state.modified |= job.was_modified;
     state.shelf.changed |= job.shelf_was_changed;
+    if job.report {
+        state.save.outcome = Some(SaveOutcome { path: job.path.clone(), result: Err(text.clone()) });
+    }
     state.message = format!(
         "{}: {}: {text}",
         state.lang.pick("保存できません", "Cannot save"),

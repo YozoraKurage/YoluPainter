@@ -39,10 +39,10 @@ Windows MSVC・Windows GNU・Linux GNU 向けの `yolu-app`（スタンドアロ
 - `bevy_mikktspace 1.0.0`（3D ビューの法線マップの接線）は **Zlib AND (MIT OR Apache-2.0)**。MikkTSpace の参照実装（Morten S. Mikkelsen）を
   Rust に書き直したもので、Zlib の注意書きは独立した許諾ファイルが無くクレートの `src/lib.rs` の冒頭にある。MIT の `LICENSE-MIT` とともに
   その原文（`lib.rs`）を全文束へ含める。選ぶのは MIT で、Zlib の条件（出所を偽らない・改変を明示する・注意書きを消さない）は残す。
-- `yolu-ops`（外から文書を操作する命令の型と、画面なしのホスト。のちに `yolu-app` と CLI が使う）は、命令・返事・誤りの JSON Schema を型から作るために
+- `yolu-ops`（外から文書を操作する命令の型と、画面なしのホスト。`yolu-app` と CLI が使う）は、命令・返事・誤りの JSON Schema を型から作るために
   `schemars 1.2.2`（MIT。原文はクレートの `LICENSE`）を使う。増えるクレートは `schemars_derive 1.2.2`（手続きマクロ。MIT）と、`serde_derive_internals 0.30.0`・
   `dyn-clone 1.0.20`・`ref-cast 1.0.27`・`ref-cast-impl 1.0.27`（いずれも MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の計 6 件で、どれも各クレートに同梱の原文を
-  SHA-256 で照合する。`yolu-app` の一覧に入るのは、アプリが `yolu-ops` を使うようになったとき（それまで `yolu-app` の依存の件数は変わらない）。
+  SHA-256 で照合する。アプリは外からの操作を受けるために `yolu-ops` を使うので、この 6 件は `yolu-app` の一覧にも入る（以前の `yolu-app` の件数から +6）。
 - exe のバージョン情報（アイコン・製品名・版）を埋めるビルド用の `winresource`（MIT）は、実行ファイルには入らず、ビルド依存として全文束に含める。
 - 更新の通信は OS の部品を呼ぶだけで、通信の部品は同梱しない。Windows は OS 付属の WinHTTP、Linux は利用者の環境の `curl` を呼ぶ。
 - Windows のインストーラーは NSIS 3（zlib/libpng 許諾）で作る。作ったインストーラーには NSIS の実行時の部品（stub）が入り、
@@ -206,9 +206,9 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 
 | 対象 | app（更新依存込み） | bridge | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 205 | 27 | 31 | 49 | 生成成功 |
-| Windows GNU | 205 | 27 | 31 | 49 | 生成成功 |
-| Linux GNU | 279 | 24 | 31 | 54 | 判断待ち |
+| Windows MSVC | 211 | 27 | 31 | 49 | 生成成功 |
+| Windows GNU | 211 | 27 | 31 | 49 | 生成成功 |
+| Linux GNU | 285 | 24 | 31 | 54 | 判断待ち |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。

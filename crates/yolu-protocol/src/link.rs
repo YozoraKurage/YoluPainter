@@ -534,6 +534,14 @@ impl Connection {
         self.send_requiring(need_of(message.kind()), message)
     }
 
+    /// 待っている読み（別のスレッドが `ConnectionReader` で読んでいる）を、こちらから終わらせる。Windows の名前付きパイプには読みの時間切れが
+    /// 無く、相手が何も送らず閉じもしないと読むスレッドが止まらないので、`Bye` を送って閉じるときに呼ぶ（読みは誤りで返る）。
+    /// Unix は読みの時間切れで見回れるので、何もしない。
+    pub fn cancel_reads(&self) {
+        #[cfg(windows)]
+        crate::winpipe::cancel_reads(raw_of(&self.stream).id);
+    }
+
     /// 作った枠をそのまま送る。
     pub fn send_frame(&self, frame: &[u8]) -> io::Result<()> {
         let _guard = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -570,6 +578,13 @@ impl ConnectionReader {
     /// 受けの時間切れ（Windows では効かないので、無視する）。
     pub fn set_timeout(&self, timeout: Option<Duration>) {
         let _ = self.stream.set_recv_timeout(timeout);
+    }
+
+    /// 挨拶が済んだあと、枠を Live Link の命令に直さずにそのまま読むための口（溜めた枠の読み手と、流れ）。Live Link ではない別の使い手
+    /// （起動中のアプリへの操作の通信。`yolu-ops::link`）が、同じ経路・同じ鍵の確かめ合いの上に自分の種類の枠を流すのに使う。
+    /// `next` と混ぜない: `next` は知らない種類を `Error` で断って捨てる。読みの時間切れ（Unix）は `set_timeout`。
+    pub fn raw(&mut self) -> (&mut FrameReader, &Stream) {
+        (&mut self.frames, &*self.stream)
     }
 
     /// 次の命令を、時間内に待つ（来なければ `Idle`）。Unix は受けの時間切れを使う。Windows の名前付きパイプには受けの時間切れが無く、
