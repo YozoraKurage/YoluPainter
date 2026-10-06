@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.4.0
+
+### 日本語
+
+- **コマンドラインと AI からの操作**: 同梱の `yolupainter-cli` で、.ylp をアプリを開かずに、またはいま開いている文書を、同じ命令（読む・見本の画像・層と効果と値の編集・書き出し・保存）で操作できます。`yolupainter-cli mcp` は MCP サーバーで、Claude Desktop（Release に `.mcpb` を付けます）・Claude Code などの AI のアシスタントからつなげます。起動中のアプリへの操作は、設定「外からの操作を受ける」を入れたときだけ受けます（[詳しくは](docs/CLI.md)）。
+- **速さ**: 結果の画素は変えずに速くしました。
+  - 2D のブラシ: 大きなブラシほど速く、柔らかい丸・筆先・質感・指先・ぼかし・色の混ぜで 2〜6 倍ほど。
+  - 合成・調整・フィルター・Normal の計算を CPU の SIMD（AVX2・SSE4.1）で。Generator（エッジの摩耗・汚れ・ノイズ・グランジなど）は数倍〜十数倍。
+  - 効果のスライダーを動かしている間は粗い絵ですぐに見せ、2D の表示は見えている所から仕上げます。キャンバスの GPU の表示が、独立したグループ・調整の層・法線・効果のある文書にも効きます。
+  - 保存は裏で動き、保存している間も描けます。
+- **3D の塗り**: 大きなブラシ・面の重なった所でも、ストロークを取り消さずに塗ります。隠れた所・裏の面・面の向きで弱める・継ぎ目のにじみを、ブラシの「3D」の欄で選べます。
+- **選択範囲を名前を付けて残す**: 文書に残して呼び戻せます。使った .ylp は形式 8 になり、0.3.x と Unity 版では開けません（配布用に保存で除けば、形式 7 の写しになります）。
+- **ポーズ**: 今のポーズを .ylp に残し、開くと戻します。ポーズのプリセット（名前を付けて残し、同じボーン名のモデルへ当てる。左右反転つき）。
+- **3D ビュー**: アンチエイリアスとブルーム。既定のカメラはモデルの前から、光はモデルの前の斜め上から。FBX の読み込みを途中で取り消せます。
+- **CLIP STUDIO のブラシ**: 入り抜き・傾き・筆先の角度とランダム・手ぶれ補正を写し、サブツールのフォルダから選んで取り込めます。素材から原寸の筆先・質感を読みます。
+- **Live Link**: スタンドアロンが要るマテリアルだけを Unity に頼み、変わらない絵は送り直しません。送りが詰まったときは、Unity の操作を止めずに少し後で送り直します。Unity ブリッジも 0.4.0 にしてください。
+- **PSD**: 窓に .psd を落とすと、新しいテクスチャセットとして取り込めます。
+- **試験版**: 「ヘルプ → 試験版を使う」で、alpha・beta・rc の更新も受けられます。
+- **Windows**: 拡大率の違う画面・画面の増減・自動で隠すタスクバーでの窓の置き場所と、ファイルや確かめの窓が後ろに回る不具合を直しました。
+- **頑丈さ**: GPU の装置を失ったとき・メモリが足りないときは、作業を復旧に残し、理由を出して終わります。閉じるときに書き出しなどの仕事が走っていれば尋ねます。
+- **.ylp の形式**: 形式の仕様を [docs/YLP_FORMAT.md](docs/YLP_FORMAT.md) にまとめました。
+
+### English
+
+- **Command line and AI assistants**: The bundled `yolupainter-cli` runs the same commands (read, preview images, edit layers, effects and values, export, save) on a .ylp without opening the app, or on the document open in the app. `yolupainter-cli mcp` is an MCP server for AI assistants such as Claude Desktop (an `.mcpb` is attached to the release) and Claude Code. The running app accepts commands only while "Accept external commands" is on in its settings ([details](docs/en/CLI.md)).
+- **Speed**: Faster without changing the resulting pixels.
+  - 2D brushes: the larger the brush, the bigger the gain; roughly 2–6× for soft round, tip images, textures, smudge, blur and color mixing.
+  - Compositing, adjustments, filters and Normal use CPU SIMD (AVX2, SSE4.1). Generators (edge wear, dirt, noise, grunge and so on) are several to more than ten times faster.
+  - While you drag an effect slider, a coarse image shows at once, and the 2D view finishes the visible area first. The canvas GPU display now also covers isolated groups, adjustment layers, normals and documents with effects.
+  - Saving runs in the background, and you can keep painting while it saves.
+- **3D painting**: Large brushes and overlapping faces no longer cancel strokes. Choose how hidden areas, back faces, facing angle falloff and seam bleeding behave in the brush's "3D" section.
+- **Saved selections**: Name a selection, keep it in the document and recall it. A .ylp that uses them becomes format 8, which 0.3.x and the Unity version cannot open (Save for Distribution can leave them out for a format 7 copy).
+- **Pose**: The current pose is saved in the .ylp and restored on open. Pose presets: name a pose and apply it to models with the same bone names, with mirroring.
+- **3D view**: Anti-aliasing and bloom. The default camera looks at the model's front, and the light comes from above in front. FBX loading can be cancelled.
+- **CLIP STUDIO brushes**: Taper, tilt, tip angle and its randomness, and stabilization are carried over, and brushes can be picked from a sub tool folder. Full-size tips and textures are read from the material files.
+- **Live Link**: The standalone asks Unity only for the materials it needs and does not resend unchanged images. When sending is congested, Unity resends a little later without stalling. Update the Unity bridge to 0.4.0 as well.
+- **PSD**: Dropping a .psd on the window imports it as a new texture set.
+- **Beta versions**: "Help → Use Beta Versions" also offers alpha, beta and rc updates.
+- **Windows**: Fixed window placement across displays with different scaling, displays being added or removed, and auto-hiding taskbars, and file and confirmation dialogs opening behind the window.
+- **Robustness**: When the GPU device is lost or memory runs out, your work is kept for recovery and the app quits with the reason. Closing the app asks first if an export or similar job is running.
+- **.ylp format**: The format specification is now in [docs/YLP_FORMAT.md](docs/YLP_FORMAT.md).
+
 ## 0.3.2
 
 ### 日本語
