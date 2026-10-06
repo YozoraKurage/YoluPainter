@@ -13,7 +13,7 @@
 //! 試験版の行を別のファイルにしなかったのは、アンインストーラーが消すファイルを名前で挙げている（`installer/yolupainter.nsi`・
 //! `docs/INSTALL.md` の表）ため。増やすと、その 3 か所と試験を揃える必要がある。
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// 起動時に更新を確かめるか。
@@ -98,21 +98,7 @@ pub fn save(path: &Path, stored: &Stored) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing"))?;
     std::fs::create_dir_all(parent)?;
-    let pending = path.with_extension(format!("{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    yolu_io::atomic::replace_bytes(path, text.as_bytes())
 }
 
 #[cfg(test)]
@@ -220,12 +206,10 @@ mod tests {
         let dir = scratch("broken");
         let path = dir.join("update.conf");
         save(&path, &checked(Preference::On)).unwrap();
-        // 書きかけの一時ファイルが道をふさいでいる: 保存は失敗し、前の選択が残る。
-        let pending = path.with_extension(format!("{}.pending", std::process::id()));
-        std::fs::write(&pending, "busy").unwrap();
-        assert!(save(&path, &checked(Preference::Off)).is_err());
+        // 置き換える前に失敗する: 保存は失敗し、前の選択が残る（一時ファイルも残らない）。
+        assert!(yolu_io::atomic::failing(|| save(&path, &checked(Preference::Off))).is_err());
         assert_eq!(load(&path).unwrap(), checked(Preference::On));
-        std::fs::remove_file(&pending).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         for bad in [
             "check_on_startup=maybe",
             "language=ja",

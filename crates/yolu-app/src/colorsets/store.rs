@@ -23,36 +23,14 @@ pub fn read_bounded(path: &Path) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SERIAL: AtomicU64 = AtomicU64::new(0);
     if bytes.len() > MAX_FILE_BYTES {
         return Err(Error::Limit);
     }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent).map_err(|_| Error::Io)?;
-    let pending = parent.join(format!(
-        ".colors-{}-{}.pending",
-        std::process::id(),
-        SERIAL.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)
-        .map_err(|_| Error::Io)?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&pending);
-    }
-    result.map_err(|_| Error::Io)
+    let opts = yolu_io::atomic::ReplaceOptions {
+        create_dirs: true,
+        ..Default::default()
+    };
+    yolu_io::atomic::replace_with(path, &opts, |f| f.write_all(bytes)).map_err(|_| Error::Io)
 }
 impl ColorSets {
     pub(super) fn save_palette(&self, id: u64, palette: &Palette) -> Result<(), Error> {

@@ -1,3 +1,6 @@
+use crate::atomic::{
+    is_busy, is_leftover_name, pending_name, retry_busy, retry_busy_within, BUSY_BUDGET,
+};
 use crate::{
     check, is_hash,
     package::{file_digest, release_at, Limits, Package},
@@ -16,10 +19,8 @@ use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-static NEXT: AtomicU64 = AtomicU64::new(0);
 /// 保存先の名前の終わり（大文字小文字は問わない）。
 const EXTENSION: &str = ".ylp";
 /// 退避の保持数の上限（設定が受ける上限。保存そのものはこれを超える数も受ける）。
@@ -246,10 +247,7 @@ impl SaveTarget {
         if lock.exclusive {
             sweep_leftovers(parent, &name);
         }
-        let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
-        let mut pending = Pending::create(
-            parent.join(format!(".{name}.{}-{nonce}.pending~", std::process::id())),
-        )?;
+        let mut pending = Pending::create(parent.join(pending_name(&name)))?;
         // 2 回目: 流して書く（ファイル全体をメモリに組まない）
         let f = pending.file.take().expect("作ったばかり");
         let mut out = io::BufWriter::with_capacity(1 << 20, f);
@@ -431,50 +429,6 @@ fn show(path: &Path) -> Result<()> {
 fn show(_: &Path) -> Result<()> {
     Ok(())
 }
-/// 置き換えの失敗のうち、やり直しに値するもの。Windows の共有違反（32）・ロック違反（33）・アクセス拒否（5）: 同期の道具・ウイルス
-/// 対策・Unity の .ylp の取り込み（読む間は他の書き換えを許さない）などが一時的にファイルを掴んでいるとき。アクセス拒否は本当の
-/// 権限の不足でも出るが、そのときは待っても通らないだけ（待つのは [`BUSY_BUDGET`] まで）。Unix の `rename` は開いているファイルに
-/// 妨げられないので、やり直さない。
-#[cfg(windows)]
-fn is_busy(e: &io::Error) -> bool {
-    matches!(e.raw_os_error(), Some(5 | 32 | 33))
-}
-#[cfg(not(windows))]
-fn is_busy(_: &io::Error) -> bool {
-    false
-}
-/// やり直しの間に待つ合計の上限。保存は主のスレッドで回るので、長く待つと画面が固まって見える。掴んでいる側はたいてい 1 秒以内に手放す
-/// ので 1.5 秒で諦め、本当の失敗として返す（待ちは 10・20・40…ms と倍にし、300 ms で頭打ち）。
-const BUSY_BUDGET: Duration = Duration::from_millis(1500);
-/// `op` を、`busy` と言える失敗のあいだ、合計 [`BUSY_BUDGET`] まで待ちながらやり直す。ほかの失敗は待たずに返す。
-fn retry_busy<T>(
-    busy: &dyn Fn(&io::Error) -> bool,
-    sleep: &mut dyn FnMut(Duration),
-    op: impl FnMut() -> io::Result<T>,
-) -> io::Result<T> {
-    retry_busy_within(BUSY_BUDGET, busy, sleep, op)
-}
-/// [`retry_busy`] の、待つ合計の上限を渡す形（待ちを 2 つに分ける置換が使う）。上限まで待って通らなければ、最後の失敗を返す。
-fn retry_busy_within<T>(
-    budget: Duration,
-    busy: &dyn Fn(&io::Error) -> bool,
-    sleep: &mut dyn FnMut(Duration),
-    mut op: impl FnMut() -> io::Result<T>,
-) -> io::Result<T> {
-    let mut waited = Duration::ZERO;
-    let mut next = Duration::from_millis(10);
-    loop {
-        match op() {
-            Err(e) if busy(&e) && waited < budget => {
-                let pause = next.min(budget - waited);
-                sleep(pause);
-                waited += pause;
-                next = (next * 2).min(Duration::from_millis(300));
-            }
-            other => return other,
-        }
-    }
-}
 /// 置換が共有違反のとき、自分のハンドルを手放す前に、手放さずに待つ合計（[`BUSY_BUDGET`] の内側）。NTFS では、外の道具（ウイルス対策・
 /// 同期の道具・Unity の取り込み）が掴んでいるのが普通の原因で、自分のハンドルは置換を妨げない。たいていはこの間に手放されるので、
 /// 手放さずに通れば、保存前のプロジェクトの写しは読めたまま残る。
@@ -501,21 +455,6 @@ fn replace_file(from: &Path, to: &Path, seams: &mut Seams<'_>) -> io::Result<()>
         }
         other => other,
     }
-}
-/// 保存の一時ファイル `.{名前}.{pid}-{通し番号}.pending~`（退避の一時ファイルも同じ形）の名前か。`name` はこの保存先のファイル名。
-/// 形が違うもの（別の保存先の一時ファイル・利用者のファイル）は含めない。
-fn is_leftover_name(name: &str, found: &str) -> bool {
-    let Some(rest) = found
-        .strip_prefix('.')
-        .and_then(|r| r.strip_prefix(name))
-        .and_then(|r| r.strip_prefix('.'))
-        .and_then(|r| r.strip_suffix(".pending~"))
-    else {
-        return false;
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
-    rest.split_once('-')
-        .is_some_and(|(pid, nonce)| digits(pid) && digits(nonce))
 }
 /// `folder` の中の、この保存先の一時ファイルの残り（強制終了された保存が残したもの）を消す。誰も保存していないと確かめた（保存先の排他
 /// ロックを持っている）ときだけ呼ぶ。普通のファイルだけで、リンク・フォルダーには触らない。消せなくても無視する（次の保存でやり直す）。
@@ -626,11 +565,7 @@ impl Backup {
         };
         // 作る間に置き場がリンクやファイルに替えられていないか
         check_backup_folder(folder)?;
-        let temp = folder.join(format!(
-            ".{name}.{}-{}.pending~",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let temp = folder.join(pending_name(name));
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         let f = hide(&mut options).open(&temp)?;
@@ -1176,7 +1111,9 @@ mod tests {
     use crate::{hash, Thresholds};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    /// 試験の作業フォルダの通し番号。
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {

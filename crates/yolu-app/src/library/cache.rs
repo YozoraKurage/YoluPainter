@@ -7,7 +7,7 @@
 //! 前の版の絵は使われずに、古いものから消えていく。
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -80,8 +80,6 @@ pub struct Cache {
     puts: AtomicUsize,
     trimming: Mutex<()>,
 }
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl Cache {
     /// 既定の上限で、フォルダ `dir`（無ければ書くときに作る）のキャッシュ。
@@ -161,22 +159,11 @@ impl Cache {
         let Some(bytes) = encode(cached) else {
             return;
         };
-        if std::fs::create_dir_all(&self.dir).is_err() {
-            return;
-        }
-        let temp = self.dir.join(format!(
-            ".{key}.{}-{}.tmp",
-            std::process::id(),
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let written = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .and_then(|mut f| f.write_all(&bytes))
-            .and_then(|()| std::fs::rename(&temp, &path));
-        if written.is_err() {
-            let _ = std::fs::remove_file(&temp);
+        let opts = yolu_io::atomic::ReplaceOptions {
+            create_dirs: true,
+            ..Default::default()
+        };
+        if yolu_io::atomic::replace_with(&path, &opts, |f| f.write_all(&bytes)).is_err() {
             return;
         }
         let n = self.puts.fetch_add(1, Ordering::Relaxed);
@@ -203,7 +190,10 @@ impl Cache {
             let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             match path.extension().and_then(|e| e.to_str()) {
                 Some(EXTENSION) => files.push((modified, meta.len(), path)),
-                Some("tmp") if modified.elapsed().is_ok_and(|age| age > TEMP_LIFETIME) => {
+                // 一時ファイル（今の `.{名前}.{pid}-{番号}.pending~` と、前の版の `.tmp`）
+                Some("pending~" | "tmp")
+                    if modified.elapsed().is_ok_and(|age| age > TEMP_LIFETIME) =>
+                {
                     let _ = std::fs::remove_file(&path);
                 }
                 _ => {}

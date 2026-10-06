@@ -571,10 +571,12 @@ fn headless_ylsmart_files_export_and_import_byte_for_byte() {
     assert!(s.message.starts_with("書き出しました"), "{}", s.message);
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(bytes, s.shelf.shelf().content_bytes(&id).unwrap());
-    assert!(
-        !dir.join("木目.ylsmart.tmp~").exists(),
-        "一時ファイルを残さない"
-    );
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("pending") || n.ends_with("tmp~"))
+        .collect();
+    assert!(left.is_empty(), "一時ファイルを残さない: {left:?}");
     // 別のプロジェクトへ読み込む: 同じ中身・名前・種類。もう一度は「すでにある」
     let mut other = AppState::new(32, 32);
     other.apply(Action::Shelf(ShelfOp::ImportFile(path.clone())));

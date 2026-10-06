@@ -2355,9 +2355,8 @@ impl AppState {
         let Some(bytes) = self.shelf.shelf.content_bytes(id) else {
             return;
         };
-        // 置き換えは 1 回（一時ファイルへ書いて名前を付け替える。途中で失敗しても元のファイルは変わらない）
-        let tmp = path.with_extension("ylsmart.tmp~");
-        let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+        // 置き換えは 1 回（一時ファイルへ書いて同期し、名前を付け替える。途中で失敗しても元のファイルは変わらない）
+        let result = yolu_io::atomic::replace_bytes(path, bytes);
         match result {
             Ok(()) => {
                 self.message = format!(
@@ -2367,7 +2366,6 @@ impl AppState {
                 )
             }
             Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
                 self.shelf_refusal(format!("{}: {}", path.display(), lang.file_error(&e)));
             }
         }

@@ -501,30 +501,23 @@ fn stage(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     for entry in std::fs::read_dir(dir)?.flatten() {
         let old = entry.file_name().to_string_lossy().into_owned();
-        if old.starts_with("yolupainter-") && (old.ends_with(".exe") || old.ends_with(".part")) {
+        // 書きかけは今の一時ファイル（`.{名前}.{pid}-{番号}.pending~`）と、前の版の `.part`
+        let target = yolu_io::atomic::leftover_target(&old).unwrap_or(&old);
+        if target.starts_with("yolupainter-")
+            && (target.ends_with(".exe") || target.ends_with(".part"))
+        {
             let _ = std::fs::remove_file(entry.path());
         }
     }
     let path = dir.join(name);
-    let part = dir.join(format!("{name}.part"));
-    let written = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&part)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&part, &path)
-    })();
-    if written.is_err() {
-        let _ = std::fs::remove_file(&part);
-    }
-    written.map(|()| path)
+    yolu_io::atomic::replace_with(&path, &Default::default(), |file| file.write_all(bytes))?;
+    Ok(path)
 }
 
-/// 置き場のファイル名（`yolupainter-<版>-<対象の鍵>.exe`、書きかけは末尾に `.part`）から版を取る。
+/// 置き場のファイル名（`yolupainter-<版>-<対象の鍵>.exe`、書きかけは一時ファイル `.{名前}.{pid}-{番号}.pending~` か、前の版の
+/// 末尾の `.part`）から版を取る。
 fn staged_version(file: &str) -> Option<Version> {
+    let file = yolu_io::atomic::leftover_target(file).unwrap_or(file);
     let rest = file.strip_prefix("yolupainter-")?;
     let rest = rest.strip_suffix(".part").unwrap_or(rest);
     let rest = rest.strip_suffix(".exe")?;

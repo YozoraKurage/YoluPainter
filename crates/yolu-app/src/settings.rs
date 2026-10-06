@@ -3,7 +3,7 @@
 //! 設定のファイルは `キー=値` を 1 行ずつ。**既定の値は書かない**（言語は常に書く）ので、何も変えていない間は今までと同じ中身で、
 //! 知らないキーは読み飛ばす（新しい版が足した項目で壊れない）。正しくない値は、その項目だけを既定へ戻して理由（`Problem`）を返し、
 //! ほかの項目は生かす。読んだだけではファイルに触らず、設定を変えて書き直すときに置き換える。
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -820,21 +820,7 @@ pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
             "settings too large",
         ));
     }
-    let pending = path.with_extension(format!("{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    yolu_io::atomic::replace_bytes(path, text.as_bytes())
 }
 
 /// 起動のときに、設定のファイルの CPU のスレッドの数を rayon の全体のスレッドプールに入れる（最初の rayon の利用より前に 1 回。
@@ -1056,10 +1042,10 @@ mod tests {
             save(&path, &with_lang(lang)).unwrap();
             assert_eq!(load(&path), (with_lang(lang), vec![]));
         }
-        let pending = path.with_extension(format!("{}.pending", std::process::id()));
-        std::fs::write(&pending, "busy").unwrap();
-        assert!(save(&path, &with_lang(Lang::Ja)).is_err());
+        // 置き換える前に失敗しても、前のファイルのまま（一時ファイルも残らない）
+        assert!(yolu_io::atomic::failing(|| save(&path, &with_lang(Lang::Ja))).is_err());
         assert_eq!(load(&path).0.lang, Lang::En);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::write(&path, "language=unknown").unwrap();
         assert_eq!(
             load(&path),

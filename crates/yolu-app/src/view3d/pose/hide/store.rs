@@ -413,28 +413,25 @@ fn write_file(dir: &Path, preset: &Preset) -> Result<(), StoreError> {
     if text.len() as u64 > MAX_FILE_BYTES {
         return Err(StoreError::TooLarge);
     }
-    let path = path_of(dir, preset.id);
-    let pending = path.with_extension(format!("{EXTENSION}.{}.pending", std::process::id()));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&pending)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        let (name, entries) = read_file(&pending)?;
-        if name != preset.name || entries != preset.entries {
-            return Err(StoreError::Mismatch);
-        }
-        std::fs::rename(&pending, &path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    let verify = |read: &[u8]| {
+        std::str::from_utf8(read)
+            .ok()
+            .and_then(|text| parse(text).ok())
+            .is_some_and(|(name, entries)| name == preset.name && entries == preset.entries)
+    };
+    let opts = yolu_io::atomic::ReplaceOptions {
+        limit: Some(MAX_FILE_BYTES),
+        verify: Some(&verify),
+        create_dirs: false,
+    };
+    yolu_io::atomic::replace_with(&path_of(dir, preset.id), &opts, |f| {
+        f.write_all(text.as_bytes())
+    })
+    .map_err(|e| match yolu_io::atomic::rejected(&e) {
+        Some(yolu_io::atomic::Rejected::TooLarge) => StoreError::TooLarge,
+        Some(yolu_io::atomic::Rejected::Mismatch) => StoreError::Mismatch,
+        None => StoreError::Io(e),
+    })
 }
 
 #[cfg(test)]
@@ -546,7 +543,10 @@ mod tests {
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".pending"))
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.ends_with(".pending") || name.ends_with(".pending~")
+            })
             .collect();
         assert!(leftovers.is_empty());
         let mut again = Presets::default();

@@ -931,13 +931,9 @@ fn read_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, StoreError> {
 }
 
 /// 一時ファイルに書いて同期し、`verify` が読み戻しを確かめたら `path` へ置き換える。失敗したら一時ファイルを消す。
-fn replace_file(
-    path: &Path,
-    text: &str,
-    verify: impl FnOnce(&str) -> bool,
-) -> Result<(), StoreError> {
+fn replace_file(path: &Path, text: &str, verify: impl Fn(&str) -> bool) -> Result<(), StoreError> {
     replace_bytes(path, text.as_bytes(), MAX_FILE_BYTES, |read| {
-        std::str::from_utf8(read).is_ok_and(verify)
+        std::str::from_utf8(read).is_ok_and(&verify)
     })
 }
 
@@ -947,47 +943,36 @@ pub(crate) fn replace_text(
     path: &Path,
     text: &str,
     limit: u64,
-    verify: impl FnOnce(&str) -> bool,
+    verify: impl Fn(&str) -> bool,
 ) -> Result<(), StoreError> {
     replace_bytes(path, text.as_bytes(), limit, |read| {
-        std::str::from_utf8(read).is_ok_and(verify)
+        std::str::from_utf8(read).is_ok_and(&verify)
     })
 }
 
-/// `replace_file` のバイト列版（画像）。読み戻しは `limit` バイトまで。
+/// `replace_file` のバイト列版（画像）。読み戻しは `limit` バイトまで（超えれば `TooLarge`）。
 fn replace_bytes(
     path: &Path,
     bytes: &[u8],
     limit: u64,
-    verify: impl FnOnce(&[u8]) -> bool,
+    verify: impl Fn(&[u8]) -> bool,
 ) -> Result<(), StoreError> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "brush directory missing"))?;
     std::fs::create_dir_all(parent)?;
-    let pending = path.with_extension(format!(
-        "{}.{}.pending",
-        path.extension().and_then(|e| e.to_str()).unwrap_or("tmp"),
-        std::process::id()
-    ));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = (|| -> Result<(), StoreError> {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        if !verify(&read_bytes(&pending, limit)?) {
-            return Err(StoreError::Mismatch);
+    let opts = yolu_io::atomic::ReplaceOptions {
+        limit: Some(limit),
+        verify: Some(&verify),
+        create_dirs: false,
+    };
+    yolu_io::atomic::replace_with(path, &opts, |f| f.write_all(bytes)).map_err(|e| {
+        match yolu_io::atomic::rejected(&e) {
+            Some(yolu_io::atomic::Rejected::TooLarge) => StoreError::TooLarge,
+            Some(yolu_io::atomic::Rejected::Mismatch) => StoreError::Mismatch,
+            None => StoreError::Io(e),
         }
-        std::fs::rename(&pending, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    })
 }
 
 /// ブラシのファイルの文が指す取り込んだ画像の指紋（文字として探す。読めない値のファイルでも数える）。
@@ -2223,17 +2208,13 @@ mod tests {
         // 読めなかったファイルの番号（4）も最大に入る。名前の形でないファイルと一時ファイルは入らない
         assert_eq!(report.max_file_id, Some(4));
         assert!(store.is_taken(3) && store.is_taken(4) && !store.is_taken(5));
-        // 一時ファイルの名前が塞がっていて置換できないとき、元のファイルは変わらない
+        // 置換できないとき、元のファイルは変わらず、一時ファイルも残らない
         let before = std::fs::read(store.path_of(1)).unwrap();
-        let pending = store
-            .path_of(1)
-            .with_extension(format!("ylbrush.{}.pending", std::process::id()));
-        std::fs::write(&pending, "busy").unwrap();
+        let files = std::fs::read_dir(&dir).unwrap().count();
         first.brush.base.radius = 99.0;
-        assert!(store.save_brush(&first).is_err());
+        assert!(yolu_io::atomic::failing(|| store.save_brush(&first)).is_err());
         assert_eq!(std::fs::read(store.path_of(1)).unwrap(), before);
-        assert_eq!(std::fs::read(&pending).unwrap(), b"busy");
-        std::fs::remove_file(&pending).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), files);
         store.save_brush(&first).unwrap();
         assert_ne!(std::fs::read(store.path_of(1)).unwrap(), before);
         // 消す

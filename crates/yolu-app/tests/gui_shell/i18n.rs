@@ -885,30 +885,26 @@ fn unwritable_settings_report_once_and_do_not_break_the_app() {
 fn unwritable_settings_report_once_and_do_not_break_the_app_gpu() {
     let dir = settings_dir("unwritable");
     let path = dir.join("settings.conf");
-    // 書く途中のファイルが残っていて書けない（settings.rs の試験と同じ手）
-    std::fs::write(
-        path.with_extension(format!("{}.pending", std::process::id())),
-        "busy",
-    )
-    .unwrap();
     let mut h = app_with_settings(&path);
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
-    h.run();
-    assert_eq!(h.state().state.lang, Lang::En, "書けなくても言語は替わる");
-    assert_eq!(h.state().state.message, "Cannot save the settings.");
-    assert!(!path.exists());
-    // 同じ選択で毎フレーム書き直さない（知らせを消したら、出し直さない）
-    h.state_mut().state.message.clear();
-    h.run();
-    h.run();
-    assert_eq!(h.state().state.message, "");
-    // 窓の操作はそのまま動く
-    h.state_mut().state.apply(Action::NewProject);
-    assert_eq!(h.state().state.message, "New project created.");
+    // 置き換える前に失敗して書けない（このスレッドの置換を失敗させる。settings.rs の試験と同じ手）
+    yolu_io::atomic::failing(|| {
+        h.state_mut()
+            .state
+            .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+        h.run();
+        assert_eq!(h.state().state.lang, Lang::En, "書けなくても言語は替わる");
+        assert_eq!(h.state().state.message, "Cannot save the settings.");
+        assert!(!path.exists());
+        // 同じ選択で毎フレーム書き直さない（知らせを消したら、出し直さない）
+        h.state_mut().state.message.clear();
+        h.run();
+        h.run();
+        assert_eq!(h.state().state.message, "");
+        // 窓の操作はそのまま動く
+        h.state_mut().state.apply(Action::NewProject);
+        assert_eq!(h.state().state.message, "New project created.");
+    });
     // 書けるようになれば、次に選んだときに書く
-    std::fs::remove_file(path.with_extension(format!("{}.pending", std::process::id()))).unwrap();
     h.state_mut()
         .state
         .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));

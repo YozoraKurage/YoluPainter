@@ -8,7 +8,7 @@
 //! 分け方・窓の位置）のどれでも、そのファイルのドックは捨てて既定の並び（`app::default_dock`）で始める（理由は診断のログだけで、画面には
 //! 出さない）。窓の大きさ・位置は、ドックとは別に確かめる（ドックを捨てても窓は戻す）。
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use egui_dock::DockState;
@@ -395,21 +395,7 @@ pub fn save(path: &Path, text: &str) -> io::Result<()> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "layout directory missing"))?;
     std::fs::create_dir_all(parent)?;
-    let pending = path.with_extension(format!("json.{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&pending)?;
-    let result = (|| {
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&pending, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&pending);
-    }
-    result
+    yolu_io::atomic::replace_bytes(path, text.as_bytes())
 }
 
 /// 起動のときに窓へ戻す大きさと位置（設定のファイルから。無い・正しくないなら None）。置き場所は `windowpos::startup` が、画面ごとの

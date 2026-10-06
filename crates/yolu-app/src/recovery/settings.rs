@@ -2,7 +2,7 @@
 //! `recovery.conf`（同じフォルダ）に、`キー=値` を 1 行ずつ書く。範囲の外の値は、Unity 版の設定と同じく既定へ戻し、
 //! 理由を返す（ファイルは、保存し直すまで触らない）。
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// 書き置きの間隔（秒）の範囲。
@@ -248,11 +248,6 @@ impl RecoverySettings {
             io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing")
         })?;
         std::fs::create_dir_all(parent)?;
-        let pending = path.with_extension(format!("{}.pending", std::process::id()));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pending)?;
         let mut text = format!(
             "interval={}\nstrokes={}\ngenerations={}\ndisk={}\n",
             self.interval_seconds,
@@ -263,16 +258,7 @@ impl RecoverySettings {
         if let Some(dir) = &self.directory {
             text.push_str(&format!("directory={}\n", dir.display()));
         }
-        let result = (|| {
-            file.write_all(text.as_bytes())?;
-            file.sync_all()?;
-            drop(file);
-            std::fs::rename(&pending, path)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&pending);
-        }
-        result
+        yolu_io::atomic::replace_bytes(path, text.as_bytes())
     }
 }
 
@@ -338,10 +324,14 @@ mod tests {
         let (loaded, problems) = RecoverySettings::load(&path).unwrap();
         assert_eq!(loaded, custom);
         assert!(problems.is_empty());
-        let pending = path.with_extension(format!("{}.pending", std::process::id()));
-        std::fs::write(&pending, "busy").unwrap();
-        assert!(RecoverySettings::default().save(&path).is_err());
+        // 置き換える前に失敗しても、前のファイルのまま（一時ファイルも残らない）
+        assert!(yolu_io::atomic::failing(|| RecoverySettings::default().save(&path)).is_err());
         assert_eq!(RecoverySettings::load(&path).unwrap().0, custom);
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "設定のファイルだけ"
+        );
         std::fs::write(&path, vec![b'a'; 4097]).unwrap();
         assert!(RecoverySettings::load(&path).is_err());
         std::fs::remove_dir_all(dir).unwrap();
