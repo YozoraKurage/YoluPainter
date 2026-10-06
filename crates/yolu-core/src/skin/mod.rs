@@ -303,7 +303,7 @@ impl Rig {
             }
             if !b.rest.is_finite() {
                 return Err(RigError::NonFinite {
-                    what: "ボーンの変換"
+                    what: "ボーンの変換",
                 });
             }
         }

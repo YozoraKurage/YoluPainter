@@ -166,9 +166,15 @@ impl Icons {
             map.insert(*name, set);
         }
         // 同梱の MIT アイコンを道具にも共用する。
-        for (alias, source) in [("tools/shape", "shapes"), ("tools/shape_selected", "shapes"),
-            ("tools/ruler", "grid_dots"), ("tools/ruler_selected", "grid_dots")] {
-            if let Some(set) = map.get(source).cloned() { map.insert(alias, set); }
+        for (alias, source) in [
+            ("tools/shape", "shapes"),
+            ("tools/shape_selected", "shapes"),
+            ("tools/ruler", "grid_dots"),
+            ("tools/ruler_selected", "grid_dots"),
+        ] {
+            if let Some(set) = map.get(source).cloned() {
+                map.insert(alias, set);
+            }
         }
         Icons { map }
     }

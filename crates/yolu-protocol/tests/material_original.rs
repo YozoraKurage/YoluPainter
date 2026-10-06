@@ -52,7 +52,10 @@ fn the_original_command_has_its_own_kind_mark_and_direction() {
     assert_eq!(feature::ORIGINAL_TEXTURES, 1 << 4);
     assert_eq!(Kind::MaterialOriginal.direction(), Direction::ToStandalone);
     // 第 5 波の予約（bit1〜3）には触れない
-    assert_eq!(feature::ASSETS | feature::PROJECT_TRANSFER | feature::ANIMATION, 0b1110);
+    assert_eq!(
+        feature::ASSETS | feature::PROJECT_TRANSFER | feature::ANIMATION,
+        0b1110
+    );
     assert_ne!(feature::KNOWN & feature::ORIGINAL_TEXTURES, 0);
     assert_eq!(
         feature::known_bits(feature::ORIGINAL_TEXTURES | feature::MATERIAL_VALUES | 1 << 40),
@@ -110,13 +113,20 @@ fn a_declined_original_carries_its_reason_and_no_pixels() {
         OriginalState::OverBudget,
     ] {
         let m = Message::MaterialOriginal(declined(state));
-        assert_eq!(Message::decode(0x0016, &m.encode_payload()).unwrap(), m, "{state:?}");
+        assert_eq!(
+            Message::decode(0x0016, &m.encode_payload()).unwrap(),
+            m,
+            "{state:?}"
+        );
     }
     // 絵の付かない様子に画素が付いていたら読まない（来ない絵を待たせない・大きな領域を取らない）
     let mut with_pixels = declined(OriginalState::OverBudget);
     with_pixels.pixels = vec![1; 16];
     assert_eq!(
-        Message::decode(0x0016, &Message::MaterialOriginal(with_pixels).encode_payload()),
+        Message::decode(
+            0x0016,
+            &Message::MaterialOriginal(with_pixels).encode_payload()
+        ),
         Err(DecodeError::Invalid("絵の付かない元の絵の画素"))
     );
 }
@@ -141,7 +151,10 @@ fn sizes_and_pixel_counts_are_checked_and_the_limit_is_the_edge_of_an_image_reso
     // 上限ちょうどの辺は読める
     let edge = MAX_ORIGINAL_SIZE;
     let full = Message::MaterialOriginal(original(edge, 1, edge as usize * 4));
-    assert_eq!(Message::decode(0x0016, &full.encode_payload()).unwrap(), full);
+    assert_eq!(
+        Message::decode(0x0016, &full.encode_payload()).unwrap(),
+        full
+    );
     // 領域は読む前に断る（長さの欄だけが大きい壊れた中身で、大きな領域を取らない）
     let mut payload = Message::MaterialOriginal(original(2, 2, 16)).encode_payload();
     let len_at = payload.len() - 8 - 16 - 4; // 画素の長さの欄は、画素の前（印の 8 バイトと画素 16 バイトの前）
@@ -174,7 +187,7 @@ fn unknown_states_reads_and_flags_are_read_as_the_least_certain_thing() {
     payload[at] = 9;
     payload[at + 1] = 7; // 知らない読み方は GPU を通して（原本の確かな値と言わない）
     payload[at + 2] = 0b1000_0001; // 知らない bit は読み飛ばし、圧縮の bit だけ読む
-    // 画素（16 バイト）と後ろの印（8 バイト）を外し、画素の長さの欄を 0 にする
+                                   // 画素（16 バイト）と後ろの印（8 バイト）を外し、画素の長さの欄を 0 にする
     payload.truncate(payload.len() - 8 - 16);
     let len_at = payload.len() - 4;
     payload[len_at..].copy_from_slice(&0u32.to_le_bytes());

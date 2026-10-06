@@ -9,8 +9,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use yolu_io::{
-    generation_time_ms, utc_stamp, CommitOptions, Fault, Files, GenerationStore, LowSpace, SpaceGuard,
-    StoreError,
+    generation_time_ms, utc_stamp, CommitOptions, Fault, Files, GenerationStore, LowSpace,
+    SpaceGuard, StoreError,
 };
 
 struct Dir(PathBuf);
@@ -62,7 +62,10 @@ fn fault_at(stage: &'static str) -> Fault {
     })
 }
 fn pointer(root: &Path, name: &str) -> String {
-    fs::read_to_string(root.join(name)).unwrap().trim().to_owned()
+    fs::read_to_string(root.join(name))
+        .unwrap()
+        .trim()
+        .to_owned()
 }
 fn generations(root: &Path) -> Vec<String> {
     let mut v: Vec<String> = fs::read_dir(root.join("generations"))
@@ -103,7 +106,12 @@ fn only_generations_beyond_the_chosen_count_are_removed() {
         assert!(kept.contains(&saved.id) && kept.contains(&previous));
         assert_eq!(pointer(&dir.0, "current"), saved.id);
         assert_eq!(pointer(&dir.0, "previous"), previous);
-        assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[8u8]);
+        assert_eq!(
+            &store.load().unwrap().files["document.utpaint"]
+                .bytes()
+                .unwrap()[..],
+            &[8u8]
+        );
         assert_eq!(
             contents(&dir.0),
             keep + 1,
@@ -130,35 +138,60 @@ fn files_in_the_generations_folder_that_are_not_generations_neither_stop_nor_suf
     let mut saved: Option<yolu_io::Committed> = None;
     for i in 0..3u8 {
         let token = saved.as_ref().map(|s| s.token.clone());
-        saved = Some(store.commit(&files(i), &share(Some(3), token.as_deref())).unwrap());
+        saved = Some(
+            store
+                .commit(&files(i), &share(Some(3), token.as_deref()))
+                .unwrap(),
+        );
     }
     // OS やユーザーが置いたもの（ファイル・名前が世代の形でないフォルダ・世代に似た名前のファイル）
     let folder = dir.path("generations");
     fs::write(folder.join(".DS_Store"), b"x").unwrap();
     fs::write(folder.join("desktop.ini"), b"x").unwrap();
-    fs::write(folder.join("20200101T000000000-abc"), b"a file, not a folder").unwrap();
+    fs::write(
+        folder.join("20200101T000000000-abc"),
+        b"a file, not a folder",
+    )
+    .unwrap();
     fs::create_dir(folder.join("notes")).unwrap();
     fs::write(folder.join("notes").join("a.txt"), b"mine").unwrap();
     for i in 3..9u8 {
         let token = saved.as_ref().map(|s| s.token.clone());
-        saved = Some(store.commit(&files(i), &share(Some(3), token.as_deref())).unwrap());
+        saved = Some(
+            store
+                .commit(&files(i), &share(Some(3), token.as_deref()))
+                .unwrap(),
+        );
     }
     let saved = saved.unwrap();
     let real: Vec<String> = generations(&dir.0)
         .into_iter()
         .filter(|n| generation_time_ms(n).is_some() && folder.join(n).is_dir())
         .collect();
-    assert_eq!(real.len(), 3, "置かれたものがあっても、設定の数まで整理する: {real:?}");
+    assert_eq!(
+        real.len(),
+        3,
+        "置かれたものがあっても、設定の数まで整理する: {real:?}"
+    );
     assert!(real.contains(&saved.id));
-    assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[8u8]);
+    assert_eq!(
+        &store.load().unwrap().files["document.utpaint"]
+            .bytes()
+            .unwrap()[..],
+        &[8u8]
+    );
     // 世代でないものは、消さない
     assert!(folder.join(".DS_Store").is_file() && folder.join("desktop.ini").is_file());
     assert!(folder.join("20200101T000000000-abc").is_file());
-    assert_eq!(fs::read(folder.join("notes").join("a.txt")).unwrap(), b"mine");
+    assert_eq!(
+        fs::read(folder.join("notes").join("a.txt")).unwrap(),
+        b"mine"
+    );
 }
 
 #[test]
-fn a_commit_over_the_write_budget_is_refused_before_anything_is_written_and_the_previous_generation_stays() {
+fn a_commit_over_the_write_budget_is_refused_before_anything_is_written_and_the_previous_generation_stays(
+) {
     let dir = Dir::new();
     // 予算を小さくして、巨大な領域を確保せずに、書く側の上限（1 エントリ・合計）を確かめる
     let small = GenerationStore::new(dir.path("root")).with_budget(1024, 4096);
@@ -175,13 +208,23 @@ fn a_commit_over_the_write_budget_is_refused_before_anything_is_written_and_the_
     };
     let mut many = Files::new();
     for i in 0..5 {
-        many.insert(if i == 0 { "document.utpaint".to_owned() } else { format!("part{i}.bin") }, bytes(&vec![i as u8; 1000]));
+        many.insert(
+            if i == 0 {
+                "document.utpaint".to_owned()
+            } else {
+                format!("part{i}.bin")
+            },
+            bytes(&vec![i as u8; 1000]),
+        );
     }
     // 何も書いていない置き場: 断っても何も作らない
     for (what, f) in [("1 エントリの上限", &big_entry), ("合計の上限", &many)] {
         match small.commit(f, &share(None, None)) {
             Err(StoreError::Budget(why)) => {
-                assert!(!why.chars().any(|c| c.is_ascii_digit()), "{what}: 理由に開発用の数を出さない: {why}");
+                assert!(
+                    !why.chars().any(|c| c.is_ascii_digit()),
+                    "{what}: 理由に開発用の数を出さない: {why}"
+                );
             }
             other => panic!("{what}: 予算で断るはず: {other:?}"),
         }
@@ -196,7 +239,12 @@ fn a_commit_over_the_write_budget_is_refused_before_anything_is_written_and_the_
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        (names, generations(root), contents(root), pointer(root, "current"))
+        (
+            names,
+            generations(root),
+            contents(root),
+            pointer(root, "current"),
+        )
     };
     let before = snapshot(&dir.path("root"));
     let small = GenerationStore::new(dir.path("root")).with_budget(1024, 4096);
@@ -209,10 +257,16 @@ fn a_commit_over_the_write_budget_is_refused_before_anything_is_written_and_the_
     }
     assert_eq!(store.load().unwrap().token, first.token);
     // 予算の中なら、同じ置き場へ確定できる（予算は既定より大きくならない）
-    let ok = small.commit(&tiny(2), &share(Some(3), Some(&first.token))).unwrap();
+    let ok = small
+        .commit(&tiny(2), &share(Some(3), Some(&first.token)))
+        .unwrap();
     assert_eq!(store.load().unwrap().token, ok.token);
     let wide = GenerationStore::new(dir.path("root")).with_budget(u64::MAX, u64::MAX);
-    assert!(wide.commit(&files(3), &share(Some(3), Some(&ok.token))).is_ok(), "予算は広げても既定の上限まで。小さくしていない置き場と同じく、通常の書き込みは通る");
+    assert!(
+        wide.commit(&files(3), &share(Some(3), Some(&ok.token)))
+            .is_ok(),
+        "予算は広げても既定の上限まで。小さくしていない置き場と同じく、通常の書き込みは通る"
+    );
 }
 
 #[test]
@@ -300,11 +354,18 @@ fn cleanup_failure_does_not_turn_a_committed_save_into_failure() {
         assert!(*hits.lock().unwrap() > 0, "{point}");
         assert_eq!(store.load().unwrap().token, third.token);
         let kept = generations(&dir.0);
-        assert!(kept.contains(&third.id) && kept.contains(&second.id), "{point}");
+        assert!(
+            kept.contains(&third.id) && kept.contains(&second.id),
+            "{point}"
+        );
         let fourth = store
             .commit(&files(4), &share(Some(2), Some(&third.token)))
             .unwrap();
-        assert_eq!(generations(&dir.0).len(), 2, "次の確定で整理し直す: {point}");
+        assert_eq!(
+            generations(&dir.0).len(),
+            2,
+            "次の確定で整理し直す: {point}"
+        );
         assert_eq!(store.load().unwrap().token, fourth.token);
         assert_eq!(contents(&dir.0), 3);
     }
@@ -312,7 +373,12 @@ fn cleanup_failure_does_not_turn_a_committed_save_into_failure() {
 
 #[test]
 fn shared_content_save_failure_keeps_current_and_previous() {
-    for point in ["file:document.utpaint", "verified", "generation-renamed", "before-pointer"] {
+    for point in [
+        "file:document.utpaint",
+        "verified",
+        "generation-renamed",
+        "before-pointer",
+    ] {
         let dir = Dir::new();
         let store = GenerationStore::new(&dir.0);
         let first = store.commit(&files(1), &share(Some(3), None)).unwrap();
@@ -325,18 +391,25 @@ fn shared_content_save_failure_keeps_current_and_previous() {
         assert_eq!(store.load().unwrap().token, second.token, "{point}");
         assert_eq!(pointer(&dir.0, "previous"), first.id, "{point}");
         let kept = generations(&dir.0);
-        assert!(kept.contains(&first.id) && kept.contains(&second.id), "{point}");
+        assert!(
+            kept.contains(&first.id) && kept.contains(&second.id),
+            "{point}"
+        );
         // 確定していない作りかけは片付け、残った世代は読める
         assert!(
-            fs::read_dir(&dir.0)
+            fs::read_dir(&dir.0).unwrap().all(|e| !e
                 .unwrap()
-                .all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".staging-")),
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".staging-")),
             "{point}: 作りかけが残っている"
         );
         assert!(
-            fs::read_dir(&dir.0)
+            fs::read_dir(&dir.0).unwrap().all(|e| !e
                 .unwrap()
-                .all(|e| !e.unwrap().file_name().to_string_lossy().starts_with(".current-")),
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".current-")),
             "{point}: 一時のポインタが残っている"
         );
         // そのあと普通に確定できる
@@ -391,7 +464,10 @@ fn current_is_replaced_last_and_previous_follows() {
         );
         assert_eq!(
             *renamed,
-            matches!(stage.as_str(), "generation-renamed" | "before-pointer" | "after-pointer"),
+            matches!(
+                stage.as_str(),
+                "generation-renamed" | "before-pointer" | "after-pointer"
+            ),
             "{stage}: 世代の名前への改名は確かめた後"
         );
     }
@@ -506,7 +582,10 @@ fn tampered_shared_content_is_refused_before_another_save() {
     .unwrap();
     assert!(matches!(store.load(), Err(StoreError::Corrupt(_))));
     let refused = store.commit(&files(3), &share(Some(3), Some(&first.token)));
-    assert!(matches!(refused, Err(StoreError::Changed(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(StoreError::Changed(_))),
+        "{refused:?}"
+    );
     assert_eq!(pointer(&dir.0, "current"), first.id);
 }
 
@@ -521,9 +600,7 @@ fn small_metadata_reads_are_verified_and_bounded_in_both_layouts() {
         store.read_file(None, "recovery.json", 32).unwrap().unwrap(),
         b"{}"
     );
-    let second = store
-        .commit(&f, &share(None, Some(&first.token)))
-        .unwrap();
+    let second = store.commit(&f, &share(None, Some(&first.token))).unwrap();
     assert_eq!(
         store.read_file(None, "recovery.json", 32).unwrap().unwrap(),
         b"{}"
@@ -548,10 +625,16 @@ fn a_shared_pointer_cannot_escape_the_content_folder() {
     let dir = Dir::new();
     let store = GenerationStore::new(&dir.0);
     let first = store.commit(&files(1), &share(None, None)).unwrap();
-    let manifest = dir.path("generations").join(&first.id).join("manifest.sha256");
+    let manifest = dir
+        .path("generations")
+        .join(&first.id)
+        .join("manifest.sha256");
     fs::write(
         manifest,
-        format!("DOTPAINT-MANIFEST-2\n{} 1 document.utpaint\n", ".".repeat(64)),
+        format!(
+            "DOTPAINT-MANIFEST-2\n{} 1 document.utpaint\n",
+            ".".repeat(64)
+        ),
     )
     .unwrap();
     assert!(matches!(store.load(), Err(StoreError::Corrupt(_))));
@@ -562,18 +645,54 @@ fn manifests_with_unsafe_lines_are_refused() {
     let dir = Dir::new();
     let store = GenerationStore::new(&dir.0);
     let first = store.commit(&files(1), &share(None, None)).unwrap();
-    let manifest = dir.path("generations").join(&first.id).join("manifest.sha256");
+    let manifest = dir
+        .path("generations")
+        .join(&first.id)
+        .join("manifest.sha256");
     let good = hash_of(&[1]);
     let cases = [
-        ("見出しが違う", "DOTPAINT-MANIFEST-9\n".to_owned() + &format!("{good} 1 document.utpaint\n")),
-        ("上の階へ出る名前", format!("DOTPAINT-MANIFEST-2\n{good} 1 ../document.utpaint\n")),
-        ("大文字の札", format!("DOTPAINT-MANIFEST-2\n{} 1 document.utpaint\n", good.to_uppercase())),
-        ("名前に空白", format!("DOTPAINT-MANIFEST-2\n{good} 1 document .utpaint\n")),
-        ("重複", format!("DOTPAINT-MANIFEST-2\n{good} 1 document.utpaint\n{good} 1 document.utpaint\n")),
-        ("manifest の名前", format!("DOTPAINT-MANIFEST-2\n{good} 1 manifest.sha256\n{good} 1 document.utpaint\n")),
-        ("正本が無い", format!("DOTPAINT-MANIFEST-2\n{good} 1 other.bin\n")),
-        ("1 つの長さが上限超え", format!("DOTPAINT-MANIFEST-2\n{good} {} document.utpaint\n", 600u64 << 20)),
-        ("長さが数でない", format!("DOTPAINT-MANIFEST-2\n{good} x document.utpaint\n")),
+        (
+            "見出しが違う",
+            "DOTPAINT-MANIFEST-9\n".to_owned() + &format!("{good} 1 document.utpaint\n"),
+        ),
+        (
+            "上の階へ出る名前",
+            format!("DOTPAINT-MANIFEST-2\n{good} 1 ../document.utpaint\n"),
+        ),
+        (
+            "大文字の札",
+            format!(
+                "DOTPAINT-MANIFEST-2\n{} 1 document.utpaint\n",
+                good.to_uppercase()
+            ),
+        ),
+        (
+            "名前に空白",
+            format!("DOTPAINT-MANIFEST-2\n{good} 1 document .utpaint\n"),
+        ),
+        (
+            "重複",
+            format!("DOTPAINT-MANIFEST-2\n{good} 1 document.utpaint\n{good} 1 document.utpaint\n"),
+        ),
+        (
+            "manifest の名前",
+            format!("DOTPAINT-MANIFEST-2\n{good} 1 manifest.sha256\n{good} 1 document.utpaint\n"),
+        ),
+        (
+            "正本が無い",
+            format!("DOTPAINT-MANIFEST-2\n{good} 1 other.bin\n"),
+        ),
+        (
+            "1 つの長さが上限超え",
+            format!(
+                "DOTPAINT-MANIFEST-2\n{good} {} document.utpaint\n",
+                600u64 << 20
+            ),
+        ),
+        (
+            "長さが数でない",
+            format!("DOTPAINT-MANIFEST-2\n{good} x document.utpaint\n"),
+        ),
     ];
     for (why, text) in cases {
         fs::write(&manifest, text).unwrap();
@@ -585,17 +704,25 @@ fn manifests_with_unsafe_lines_are_refused() {
     }
     // 合計が予算（設定の「レイヤーのメモリ」の予算から: 正本の数 × 予算の 4 倍 ＋ 768 MiB）を超える manifest は、壊れたものとは別に
     // 予算の拒否（中身を読む前に）
-    let limited = GenerationStore::new(&dir.0).with_limits(yolu_io::Limits::from_layer_pixels(256 << 20));
+    let limited =
+        GenerationStore::new(&dir.0).with_limits(yolu_io::Limits::from_layer_pixels(256 << 20));
     let others: String = (0..4)
         .map(|i| format!("{good} {} a{i}.bin\n", 500u64 << 20))
         .collect();
     fs::write(
         &manifest,
-        format!("DOTPAINT-MANIFEST-2\n{others}{good} {} document.utpaint\n", 300u64 << 20),
+        format!(
+            "DOTPAINT-MANIFEST-2\n{others}{good} {} document.utpaint\n",
+            300u64 << 20
+        ),
     )
     .unwrap();
     let refused = limited.load();
-    assert!(matches!(refused, Err(StoreError::Budget(_))), "{:?}", refused.err());
+    assert!(
+        matches!(refused, Err(StoreError::Budget(_))),
+        "{:?}",
+        refused.err()
+    );
     // セットごとの正本が予算の 4 倍を超えるのも、予算の拒否
     let parts: String = (1..=5)
         .map(|i| format!("{good} {} document.utpaint.{i}\n", 250u64 << 20))
@@ -633,7 +760,10 @@ fn entry_names_that_could_escape_are_refused_before_anything_is_written() {
         let mut f = files(1);
         f.insert(name.into(), bytes(b"x"));
         assert!(
-            matches!(store.commit(&f, &share(None, None)), Err(StoreError::Corrupt(_))),
+            matches!(
+                store.commit(&f, &share(None, None)),
+                Err(StoreError::Corrupt(_))
+            ),
             "{name:?}"
         );
     }
@@ -654,7 +784,10 @@ fn an_external_change_to_current_is_refused_not_adopted() {
     assert!(!store.has_external_change(&external.token));
     for _ in 0..2 {
         let refused = store.commit(&files(2), &share(Some(3), Some(&first.token)));
-        assert!(matches!(refused, Err(StoreError::Changed(_))), "{refused:?}");
+        assert!(
+            matches!(refused, Err(StoreError::Changed(_))),
+            "{refused:?}"
+        );
         assert_eq!(store.load().unwrap().token, external.token);
     }
     // 札が無いまま、世代のある置き場へは確定しない
@@ -708,7 +841,10 @@ fn a_second_writer_gets_busy_while_the_lock_is_held() {
     let blocked = store.commit(&files(3), &share(Some(3), Some(&first.token)));
     assert!(matches!(blocked, Err(StoreError::Busy)), "{blocked:?}");
     assert_eq!(
-        store.remove_generation(&first.id).err().map(|e| matches!(e, StoreError::Busy)),
+        store
+            .remove_generation(&first.id)
+            .err()
+            .map(|e| matches!(e, StoreError::Busy)),
         Some(true),
         "捨てるのも、書いているあいだは待たずに断る"
     );
@@ -748,8 +884,14 @@ fn the_listing_is_newest_first_counts_documents_and_names_the_reason_for_broken_
     assert!(store.list().unwrap().is_empty(), "置き場がまだ無い");
     let named = |value: u8| {
         let mut f = Files::new();
-        f.insert(format!("sets/{SET_A}/document.utpaint"), bytes(&[value; 10]));
-        f.insert(format!("sets/{SET_B}/document.utpaint"), bytes(&[value; 20]));
+        f.insert(
+            format!("sets/{SET_A}/document.utpaint"),
+            bytes(&[value; 10]),
+        );
+        f.insert(
+            format!("sets/{SET_B}/document.utpaint"),
+            bytes(&[value; 20]),
+        );
         f.insert("recovery.json".into(), bytes(b"{}"));
         f
     };
@@ -765,11 +907,17 @@ fn the_listing_is_newest_first_counts_documents_and_names_the_reason_for_broken_
     }
     // 古い方から 2 つ壊す: 中身の長さを変える・manifest を消す
     fs::write(
-        dir.path("contents").join(format!("{}.bin", hash_of(&[0u8; 10]))),
+        dir.path("contents")
+            .join(format!("{}.bin", hash_of(&[0u8; 10]))),
         b"cut",
     )
     .unwrap();
-    fs::remove_file(dir.path("generations").join(&ids[1]).join("manifest.sha256")).unwrap();
+    fs::remove_file(
+        dir.path("generations")
+            .join(&ids[1])
+            .join("manifest.sha256"),
+    )
+    .unwrap();
     let list = store.list().unwrap();
     let order: Vec<&str> = list.iter().map(|g| g.id.as_str()).collect();
     assert_eq!(order, [&ids[3], &ids[2], &ids[1], &ids[0]]);
@@ -786,8 +934,14 @@ fn the_listing_is_newest_first_counts_documents_and_names_the_reason_for_broken_
     assert!(list[3].problem.as_deref().unwrap().contains("長さ"));
     // 壊れた世代があっても、ほかの世代は名前で読める。壊れた世代は理由で断る
     assert_eq!(store.load_generation(&ids[2]).unwrap().id, ids[2]);
-    assert!(matches!(store.load_generation(&ids[1]), Err(StoreError::Corrupt(_))));
-    assert!(matches!(store.load_generation(&ids[0]), Err(StoreError::Corrupt(_))));
+    assert!(matches!(
+        store.load_generation(&ids[1]),
+        Err(StoreError::Corrupt(_))
+    ));
+    assert!(matches!(
+        store.load_generation(&ids[0]),
+        Err(StoreError::Corrupt(_))
+    ));
     assert!(matches!(
         store.load_generation("../../etc"),
         Err(StoreError::Corrupt(_))
@@ -864,7 +1018,11 @@ fn a_store_written_in_the_unity_layout_is_read_back() {
     ]
     .into_iter()
     .collect();
-    let got: BTreeMap<_, _> = loaded.files.iter().map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec())).collect();
+    let got: BTreeMap<_, _> = loaded
+        .files
+        .iter()
+        .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
+        .collect();
     assert_eq!(got, expected);
     assert_eq!(generation_time_ms(id), Some(1_791_028_800_000));
     // Rust 版が確定を重ねても、その世代は previous として残る
@@ -876,7 +1034,9 @@ fn a_store_written_in_the_unity_layout_is_read_back() {
 }
 
 fn fixture_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
 }
 fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
@@ -900,25 +1060,50 @@ fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
     let newest = store.load().unwrap();
     let names: Vec<&str> = newest.files.keys().map(String::as_str).collect();
     assert_eq!(names.len(), 4, "{names:?}");
-    assert!(names.iter().any(|n| n.starts_with("sets/") && n.ends_with("/document.utpaint")));
-    assert!(names.iter().any(|n| n.starts_with("sets/") && n.ends_with("/selection.bin")));
-    assert!(names.iter().any(|n| n.starts_with("resources/") && n.ends_with(".png")));
-    assert!(String::from_utf8_lossy(&newest.files["recovery.json"].bytes().unwrap()).contains("second"));
+    assert!(names
+        .iter()
+        .any(|n| n.starts_with("sets/") && n.ends_with("/document.utpaint")));
+    assert!(names
+        .iter()
+        .any(|n| n.starts_with("sets/") && n.ends_with("/selection.bin")));
+    assert!(names
+        .iter()
+        .any(|n| n.starts_with("resources/") && n.ends_with(".png")));
+    assert!(
+        String::from_utf8_lossy(&newest.files["recovery.json"].bytes().unwrap()).contains("second")
+    );
     let listed = store.list().unwrap();
     assert_eq!(listed.len(), 2);
-    assert!(listed[0].is_current && listed[0].shared && listed[0].documents == 1 && listed[0].problem.is_none());
+    assert!(
+        listed[0].is_current
+            && listed[0].shared
+            && listed[0].documents == 1
+            && listed[0].problem.is_none()
+    );
     assert!(listed[1].problem.is_none());
-    assert_eq!(pointer(&dir.0, "previous"), listed[1].id, "Unity 版の previous の書き方（File.Replace）も同じ形");
+    assert_eq!(
+        pointer(&dir.0, "previous"),
+        listed[1].id,
+        "Unity 版の previous の書き方（File.Replace）も同じ形"
+    );
     let older = store.load_generation(&listed[1].id).unwrap();
-    assert!(String::from_utf8_lossy(&older.files["recovery.json"].bytes().unwrap()).contains("first"));
-    assert_eq!(contents(&dir.0), 6, "選択範囲と resources の中身は 2 世代で共有");
+    assert!(
+        String::from_utf8_lossy(&older.files["recovery.json"].bytes().unwrap()).contains("first")
+    );
+    assert_eq!(
+        contents(&dir.0),
+        6,
+        "選択範囲と resources の中身は 2 世代で共有"
+    );
     // Rust 版が確定を重ねると、Unity 版の current は previous になり、2 つ前は整理される（共有していた中身は残る）
     let mut next = Files::new();
     for (name, data) in &newest.files {
         next.insert(name.clone(), data.clone());
     }
     next.insert("recovery.json".into(), bytes(b"{\"title\":\"third\"}"));
-    let committed = store.commit(&next, &share(Some(2), Some(&newest.token))).unwrap();
+    let committed = store
+        .commit(&next, &share(Some(2), Some(&newest.token)))
+        .unwrap();
     assert_eq!(pointer(&dir.0, "previous"), newest.id);
     assert_eq!(generations(&dir.0).len(), 2);
     assert!(!generations(&dir.0).contains(&listed[1].id));
@@ -932,19 +1117,36 @@ fn names_inside_a_set_folder_are_wider_here_than_in_unity_and_the_difference_is_
     // 同じ範囲（合成の PNG `sets/<ID>/composite/Color.png` など）を通す。開いた `.ylp` のエントリをそのまま世代に入れた置き場を
     // Unity 版に読ませた記録（`rust-generation.unity.txt`）と、同じ入力でこの置き場が読めることを突き合わせる
     let verdict = fs::read_to_string(fixture_path("rust-generation.unity.txt")).unwrap();
-    let line = |folder: &str| verdict.lines().find(|l| l.starts_with(folder)).unwrap_or_else(|| panic!("{folder}: {verdict}"));
-    assert!(line("as-opened:").contains("Unsafe generation filename"), "{verdict}");
+    let line = |folder: &str| {
+        verdict
+            .lines()
+            .find(|l| l.starts_with(folder))
+            .unwrap_or_else(|| panic!("{folder}: {verdict}"))
+    };
+    assert!(
+        line("as-opened:").contains("Unsafe generation filename"),
+        "{verdict}"
+    );
     assert!(line("flat-names:").contains("読めた"), "{verdict}");
     let project = yolu_io::Project::read(&fs::read(fixture_path("format6.ylp")).unwrap()).unwrap();
     let entries = project.original_archive().entries().clone();
-    let nested: Vec<&String> = entries.keys().filter(|n| n.matches('/').count() > 2).collect();
-    assert!(!nested.is_empty() && nested.iter().all(|n| n.contains("/composite/")), "{nested:?}");
+    let nested: Vec<&String> = entries
+        .keys()
+        .filter(|n| n.matches('/').count() > 2)
+        .collect();
+    assert!(
+        !nested.is_empty() && nested.iter().all(|n| n.contains("/composite/")),
+        "{nested:?}"
+    );
     let flat: Files = entries
         .iter()
         .filter(|(n, _)| n.matches('/').count() <= 2)
         .map(|(n, d)| (n.clone(), d.clone()))
         .collect();
-    for (what, files) in [("開いたままの全エントリ", &entries), ("入れ子を除いたもの", &flat)] {
+    for (what, files) in [
+        ("開いたままの全エントリ", &entries),
+        ("入れ子を除いたもの", &flat),
+    ] {
         let dir = Dir::new();
         let store = GenerationStore::new(&dir.0);
         store.commit(files, &share(None, None)).unwrap();
@@ -954,14 +1156,32 @@ fn names_inside_a_set_folder_are_wider_here_than_in_unity_and_the_difference_is_
 
 #[test]
 fn utc_stamps_round_trip_and_malformed_names_have_no_time() {
-    for ms in [0u64, 951_782_400_000 /* 2000-02-29 */, 1_709_164_800_123 /* 2024-02-29 */, 1_791_028_800_999, 4_102_444_799_000] {
+    for ms in [
+        0u64,
+        951_782_400_000,   /* 2000-02-29 */
+        1_709_164_800_123, /* 2024-02-29 */
+        1_791_028_800_999,
+        4_102_444_799_000,
+    ] {
         let stamp = utc_stamp(ms);
         assert_eq!(stamp.len(), 18, "{stamp}");
-        assert_eq!(generation_time_ms(&format!("{stamp}-abcd")), Some(ms), "{stamp}");
+        assert_eq!(
+            generation_time_ms(&format!("{stamp}-abcd")),
+            Some(ms),
+            "{stamp}"
+        );
     }
     assert_eq!(utc_stamp(0), "19700101T000000000");
     assert_eq!(utc_stamp(1_709_164_800_123), "20240229T000000123");
-    for bad in ["", "x", "20261003T120000-aa", "2026100312000000-aa", "20261301T120000000-aa", "20261003T250000000-aa", "20261003X120000000-aa"] {
+    for bad in [
+        "",
+        "x",
+        "20261003T120000-aa",
+        "2026100312000000-aa",
+        "20261301T120000000-aa",
+        "20261003T250000000-aa",
+        "20261003X120000000-aa",
+    ] {
         assert_eq!(generation_time_ms(bad), None, "{bad:?}");
     }
 }
@@ -975,12 +1195,22 @@ fn recovery_info_round_trips_and_tolerates_unknown_or_missing_keys() {
         unchanged: true,
         sets: 3,
     };
-    assert_eq!(yolu_io::RecoveryInfo::from_bytes(&info.to_bytes()).unwrap(), info);
+    assert_eq!(
+        yolu_io::RecoveryInfo::from_bytes(&info.to_bytes()).unwrap(),
+        info
+    );
     // Unity 版の recovery.json（sets 無し）と、知らないキー
-    let unity = br#"{"title":"x","projectPath":"","projectToken":"","unchanged":false,"future":[1,2]}"#;
+    let unity =
+        br#"{"title":"x","projectPath":"","projectToken":"","unchanged":false,"future":[1,2]}"#;
     let read = yolu_io::RecoveryInfo::from_bytes(unity).unwrap();
-    assert_eq!((read.title.as_str(), read.sets, read.unchanged), ("x", 0, false));
-    assert!(yolu_io::RecoveryInfo::from_bytes(b"{}").unwrap().title.is_empty());
+    assert_eq!(
+        (read.title.as_str(), read.sets, read.unchanged),
+        ("x", 0, false)
+    );
+    assert!(yolu_io::RecoveryInfo::from_bytes(b"{}")
+        .unwrap()
+        .title
+        .is_empty());
     for bad in [&b"not json"[..], b"[1]", b"\"s\"", b""] {
         assert!(matches!(
             yolu_io::RecoveryInfo::from_bytes(bad),
@@ -1052,7 +1282,11 @@ fn walk_bytes(path: &Path) -> u64 {
     for entry in fs::read_dir(path).unwrap() {
         let entry = entry.unwrap();
         let meta = fs::symlink_metadata(entry.path()).unwrap();
-        total += if meta.is_dir() { walk_bytes(&entry.path()) } else { meta.len() };
+        total += if meta.is_dir() {
+            walk_bytes(&entry.path())
+        } else {
+            meta.len()
+        };
     }
     total
 }
@@ -1061,18 +1295,33 @@ fn walk_bytes(path: &Path) -> u64 {
 fn the_footprint_lists_each_generations_shared_contents_and_counts_the_whole_folder() {
     let dir = Dir::new();
     let store = GenerationStore::new(&dir.0);
-    assert!(store.footprint().unwrap().generations.is_empty(), "置き場がまだ無ければ空");
+    assert!(
+        store.footprint().unwrap().generations.is_empty(),
+        "置き場がまだ無ければ空"
+    );
     let a = store.commit(&files(1), &share(None, None)).unwrap();
-    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    let b = store
+        .commit(&files(2), &share(None, Some(&a.token)))
+        .unwrap();
     let footprint = store.footprint().unwrap();
-    let ids: Vec<&str> = footprint.generations.iter().map(|g| g.id.as_str()).collect();
+    let ids: Vec<&str> = footprint
+        .generations
+        .iter()
+        .map(|g| g.id.as_str())
+        .collect();
     assert_eq!(ids, [b.id.as_str(), a.id.as_str()], "新しい順");
     let unchanged = hash_of(&vec![0u8; 16384]);
     for g in &footprint.generations {
         assert!(g.problem.is_none() && g.time_ms.is_some());
         assert_eq!(g.contents.len(), 2, "正本と変わらない中身");
-        assert!(g.contents.contains(&(unchanged.clone(), 16384)), "変わらない中身は両方の世代が使う");
-        assert!(g.own_bytes > 0 && g.own_bytes < 1024, "共有の世代のフォルダの中は manifest だけ");
+        assert!(
+            g.contents.contains(&(unchanged.clone(), 16384)),
+            "変わらない中身は両方の世代が使う"
+        );
+        assert!(
+            g.own_bytes > 0 && g.own_bytes < 1024,
+            "共有の世代のフォルダの中は manifest だけ"
+        );
     }
     assert_eq!(footprint.total_bytes, walk_bytes(&dir.0));
     assert!(footprint.total_bytes >= 16384 + 2);
@@ -1082,12 +1331,19 @@ fn the_footprint_lists_each_generations_shared_contents_and_counts_the_whole_fol
 fn the_footprint_of_a_flat_generation_is_its_own_bytes_and_a_damaged_one_is_reported() {
     let dir = Dir::new();
     let store = GenerationStore::new(&dir.0);
-    let flat = CommitOptions { expected: None, keep: None, share: false };
+    let flat = CommitOptions {
+        expected: None,
+        keep: None,
+        share: false,
+    };
     let a = store.commit(&files(1), &flat).unwrap();
     let footprint = store.footprint().unwrap();
     assert_eq!(footprint.generations.len(), 1);
     assert!(footprint.generations[0].contents.is_empty());
-    assert!(footprint.generations[0].own_bytes >= 16385, "中身は世代の中に持つ");
+    assert!(
+        footprint.generations[0].own_bytes >= 16385,
+        "中身は世代の中に持つ"
+    );
     // manifest が無い世代は、理由を付けて数え、占めるバイト数は分かる
     fs::remove_file(dir.path("generations").join(&a.id).join("manifest.sha256")).unwrap();
     let footprint = store.footprint().unwrap();
@@ -1107,9 +1363,13 @@ fn a_space_guard_is_asked_once_with_only_the_bytes_that_are_new() {
     });
     let store = GenerationStore::new(&dir.0).with_space_guard(guard);
     let a = store.commit(&files(1), &share(None, None)).unwrap();
-    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    let b = store
+        .commit(&files(2), &share(None, Some(&a.token)))
+        .unwrap();
     // 同じ中身だけの確定は、新しく書くものが無い
-    let c = store.commit(&files(2), &share(None, Some(&b.token))).unwrap();
+    let c = store
+        .commit(&files(2), &share(None, Some(&b.token)))
+        .unwrap();
     // 同じ中身が 2 つの名前にあっても、新しく書くのは 1 度分
     let mut twins = files(3);
     twins.insert("twin-a.bin".into(), bytes(&vec![7u8; 1000]));
@@ -1118,7 +1378,11 @@ fn a_space_guard_is_asked_once_with_only_the_bytes_that_are_new() {
     assert_eq!(*asked.lock().unwrap(), [16384 + 1, 1, 0, 1 + 1000]);
     assert_eq!(d.written_bytes, 1 + 1000);
     // 中身を世代の中に持つ形は、ぜんぶ新しく書く
-    let flat = CommitOptions { expected: Some(&d.token), keep: None, share: false };
+    let flat = CommitOptions {
+        expected: Some(&d.token),
+        keep: None,
+        share: false,
+    };
     store.commit(&files(4), &flat).unwrap();
     assert_eq!(asked.lock().unwrap().last(), Some(&(16384 + 1)));
 }
@@ -1129,7 +1393,11 @@ fn a_refusing_space_guard_writes_nothing_and_keeps_the_last_generation() {
     let first = GenerationStore::new(&dir.0);
     let a = first.commit(&files(1), &share(None, None)).unwrap();
     let before = walk_bytes(&dir.0);
-    let low = LowSpace { available: 10, needed: 20, reserve: 5 };
+    let low = LowSpace {
+        available: 10,
+        needed: 20,
+        reserve: 5,
+    };
     let refuse: SpaceGuard = Arc::new(move |needed| {
         assert_eq!(needed, 1, "変わった正本の分だけ");
         Err(low)
@@ -1142,19 +1410,32 @@ fn a_refusing_space_guard_writes_nothing_and_keeps_the_last_generation() {
     assert_eq!(pointer(&dir.0, "current"), a.id, "current は前のまま");
     assert_eq!(generations(&dir.0), vec![a.id.clone()]);
     assert_eq!(walk_bytes(&dir.0), before, "作りかけも新しい中身も残さない");
-    assert!(!fs::read_dir(&dir.0)
+    assert!(!fs::read_dir(&dir.0).unwrap().any(|e| e
         .unwrap()
-        .any(|e| e.unwrap().file_name().to_string_lossy().starts_with(".staging-")));
-    assert_eq!(&first.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[1u8]);
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".staging-")));
+    assert_eq!(
+        &first.load().unwrap().files["document.utpaint"]
+            .bytes()
+            .unwrap()[..],
+        &[1u8]
+    );
     // 断られても、次の確定（確かめなし）は期待の札のまま通る
-    first.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    first
+        .commit(&files(2), &share(None, Some(&a.token)))
+        .unwrap();
 }
 
 /// 落ちた書き込みの残り: 作りかけのフォルダ（`<札>.pending` 入り。manifest はまだ無い）と、確定の前に落ちて誰も使わない中身。
 fn leave_a_crashed_write(root: &Path, name: &str, pending_bytes: usize) -> PathBuf {
     let staging = root.join(format!(".staging-{name}"));
     fs::create_dir_all(&staging).unwrap();
-    fs::write(staging.join(format!("{}.pending", hash_of(name.as_bytes()))), vec![9u8; pending_bytes]).unwrap();
+    fs::write(
+        staging.join(format!("{}.pending", hash_of(name.as_bytes()))),
+        vec![9u8; pending_bytes],
+    )
+    .unwrap();
     staging
 }
 
@@ -1163,15 +1444,23 @@ fn a_crashed_writes_leftovers_are_reclaimed_and_nothing_a_generation_uses_is_tou
     let dir = Dir::new();
     let store = GenerationStore::new(&dir.0);
     let a = store.commit(&files(1), &share(None, None)).unwrap();
-    let b = store.commit(&files(2), &share(None, Some(&a.token))).unwrap();
+    let b = store
+        .commit(&files(2), &share(None, Some(&a.token)))
+        .unwrap();
     let stale = leave_a_crashed_write(&dir.0, "20200101T000000000-x", 50_000);
     // 中身は書いたが、manifest を書く前に落ちた: どの世代も使わない
-    let orphan = dir.0.join("contents").join(format!("{}.bin", hash_of(b"orphan")));
+    let orphan = dir
+        .0
+        .join("contents")
+        .join(format!("{}.bin", hash_of(b"orphan")));
     fs::write(&orphan, vec![7u8; 30_000]).unwrap();
     // manifest が無い作りかけが 1 つでもあると、整理は何も消さない（この残りが、使う量が減らない原因だった）
     assert!(store.disk_bytes() >= 80_000);
     store.remove_generation(&a.id).unwrap();
-    assert!(orphan.exists(), "作りかけが残っているあいだは、使われない中身も消えない");
+    assert!(
+        orphan.exists(),
+        "作りかけが残っているあいだは、使われない中身も消えない"
+    );
     let before = store.disk_bytes();
     let freed = store.reclaim_abandoned().unwrap();
     assert!(freed >= 80_000, "{freed}");
@@ -1180,12 +1469,20 @@ fn a_crashed_writes_leftovers_are_reclaimed_and_nothing_a_generation_uses_is_tou
     // 世代と、その共有の中身は無事
     assert_eq!(generations(&dir.0), vec![b.id.clone()]);
     assert_eq!(pointer(&dir.0, "current"), b.id);
-    assert_eq!(&store.load().unwrap().files["document.utpaint"].bytes().unwrap()[..], &[2u8]);
+    assert_eq!(
+        &store.load().unwrap().files["document.utpaint"]
+            .bytes()
+            .unwrap()[..],
+        &[2u8]
+    );
     // もう 1 度呼んでも何も起きない
     assert_eq!(store.reclaim_abandoned().unwrap(), 0);
     // 置き場がまだ無ければ、何もせず（置き場も作らず）0
     let none = Dir::new();
-    assert_eq!(GenerationStore::new(&none.0).reclaim_abandoned().unwrap(), 0);
+    assert_eq!(
+        GenerationStore::new(&none.0).reclaim_abandoned().unwrap(),
+        0
+    );
     assert!(!none.0.exists());
 }
 

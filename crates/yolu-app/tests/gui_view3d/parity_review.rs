@@ -1,8 +1,6 @@
 //! レビューで見つかった、組み合わせの欠落・色選択の内部表記・設定の書き込みの時機。
 use crate::common;
-use common::{
-    app, canvas_rect, move_to, press, release, with_render_state_cpu_canvas,
-};
+use common::{app, canvas_rect, move_to, press, release, with_render_state_cpu_canvas};
 use egui::{accesskit::Role, epaint::Shape, vec2, Event, Key, Modifiers, PointerButton};
 use egui_kittest::{kittest::Queryable, Harness};
 use yolu_app::{

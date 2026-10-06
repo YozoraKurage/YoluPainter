@@ -342,12 +342,23 @@ mod platform {
         ]
         .map(String::from)
         .to_vec();
-        args.extend([limit_seconds.to_string(), "--user-agent".into(), USER_AGENT.into()]);
+        args.extend([
+            limit_seconds.to_string(),
+            "--user-agent".into(),
+            USER_AGENT.into(),
+        ]);
         let more: &[&str] = if url.secure {
             &["--proto", "=https", "--proto-redir", "=https", "--tlsv1.2"]
         } else {
             // 試験用の同じ機械への http（`Url::parse` が許したときだけ）
-            &["--proto", "=http,https", "--proto-redir", "=http,https", "--noproxy", "*"]
+            &[
+                "--proto",
+                "=http,https",
+                "--proto-redir",
+                "=http,https",
+                "--noproxy",
+                "*",
+            ]
         };
         args.extend(more.iter().map(|a| (*a).to_owned()));
         args.extend(["--output", "-", "--", url.text.as_str()].map(String::from));
@@ -573,7 +584,12 @@ mod tests {
                     .split(['/', ' '])
                     .find_map(|part| part.parse().ok())
                     .unwrap_or(0);
-                respond(s, "302 Found", &format!("Location: /hop/{}\r\n", n + 1), b"");
+                respond(
+                    s,
+                    "302 Found",
+                    &format!("Location: /hop/{}\r\n", n + 1),
+                    b"",
+                );
             }),
         );
         let result = get(server.port, "/hop/0", 100, Link::default());
@@ -599,12 +615,21 @@ mod tests {
             let at = args.iter().position(|a| a == key).unwrap();
             args[at + 1].clone()
         };
-        let secure = args("https://github.com/o/r/releases/latest/download/u.json", false);
+        let secure = args(
+            "https://github.com/o/r/releases/latest/download/u.json",
+            false,
+        );
         assert_eq!(pair(&secure, "--max-redirs"), "5");
         assert_eq!(pair(&secure, "--proto"), "=https");
         assert_eq!(pair(&secure, "--proto-redir"), "=https");
-        assert!(secure.contains(&"-q".to_owned()), "利用者の .curlrc を読まない");
-        assert_eq!(secure.last().unwrap(), "https://github.com/o/r/releases/latest/download/u.json");
+        assert!(
+            secure.contains(&"-q".to_owned()),
+            "利用者の .curlrc を読まない"
+        );
+        assert_eq!(
+            secure.last().unwrap(),
+            "https://github.com/o/r/releases/latest/download/u.json"
+        );
         // 試験用の同じ機械への http だけが、http を許す（本番の URL は https しか通らない）
         let local = args("http://127.0.0.1:8080/x", true);
         assert_eq!(pair(&local, "--max-redirs"), "5");

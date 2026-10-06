@@ -693,9 +693,9 @@ fn convert(
                     }
                 }
                 if joint_of_cluster.iter().any(|j| j.is_none()) {
-                    report
-                        .warnings
-                        .push(format!("{label}: ボーンの無いクラスターのウェイトを捨てました"));
+                    report.warnings.push(format!(
+                        "{label}: ボーンの無いクラスターのウェイトを捨てました"
+                    ));
                 }
                 let fallback = joints.len() as u32;
                 joints.push(Joint {

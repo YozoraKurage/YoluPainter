@@ -71,7 +71,11 @@ fn scalar_row(m: &Map<'_>, at: usize, out: &mut [f64], f: impl Fn(f64) -> f64) {
     let n = out.len();
     let (cover, data) = (&m.coverage[at..at + n], &m.data[at..at + n]);
     for ((o, c), d) in out.iter_mut().zip(cover).zip(data) {
-        *o = if *c == 0 { none() } else { f(*d as f64 / 65535.) };
+        *o = if *c == 0 {
+            none()
+        } else {
+            f(*d as f64 / 65535.)
+        };
     }
 }
 /// 3 チャンネルのマップを行で読み、被覆 0 の画素は「値なし」、ほかは `f(生の値の 3 つ)`。
@@ -169,11 +173,10 @@ impl BoundGenerator<'_> {
                 let tolerance = g.id_tolerance as i32;
                 vector_row(self.map(MapKind::Id), at, out, |v| {
                     let rgb = v.map(|v| ((v as u32 + 128) / 257) as i32);
-                    if colors.iter().any(|c| {
-                        c.iter()
-                            .zip(rgb)
-                            .all(|(c, v)| (c - v).abs() <= tolerance)
-                    }) {
+                    if colors
+                        .iter()
+                        .any(|c| c.iter().zip(rgb).all(|(c, v)| (c - v).abs() <= tolerance))
+                    {
                         1.
                     } else {
                         0.
@@ -327,14 +330,7 @@ impl BoundGenerator<'_> {
             _ => self.noise_scalar(x0, y, at, out, cache),
         }
     }
-    fn noise_scalar(
-        &self,
-        x0: u32,
-        y: u32,
-        at: usize,
-        out: &mut [f64],
-        cache: &mut noise::Cache,
-    ) {
+    fn noise_scalar(&self, x0: u32, y: u32, at: usize, out: &mut [f64], cache: &mut noise::Cache) {
         let g = self.g;
         let amount = g.noise_amount;
         let seeds = self.seeds;
@@ -494,8 +490,7 @@ fn ramp_row(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>
 }
 fn ramp_scalar(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>]) {
     for (o, v) in out.iter_mut().zip(values) {
-        *o = (!is_none(*v))
-            .then(|| Generated::Mapped(r.evaluate_unchecked(*v, scalar).to_array()));
+        *o = (!is_none(*v)).then(|| Generated::Mapped(r.evaluate_unchecked(*v, scalar).to_array()));
     }
 }
 
@@ -673,11 +668,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
         let p = match position {
             None => {
                 let x = x0 + k as u32;
-                [
-                    V::from_fn(|j| ((x + j as u32) as f64 + 0.5) * kx),
-                    py,
-                    zero,
-                ]
+                [V::from_fn(|j| ((x + j as u32) as f64 + 0.5) * kx), py, zero]
             }
             Some(m) => {
                 let d = &m.data[i0 * 3..(i0 + V::N) * 3];
@@ -692,10 +683,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
         let m = simd::clamp01::<V>(V::div(V::sub(f, offset), span));
         let smooth = V::mul(V::mul(m, m), V::sub(three, V::mul(two, m)));
         let t = V::load_f64(group);
-        V::store_f64(
-            group,
-            V::mul(t, V::sub(one, V::mul(amount, smooth))),
-        );
+        V::store_f64(group, V::mul(t, V::sub(one, V::mul(amount, smooth))));
         k += V::N;
     }
     g.noise_scalar(x0 + k as u32, y, at + k, &mut out[k..], cache);
@@ -834,7 +822,10 @@ unsafe fn apply_lanes<V: Lanes, B: Op>(
                 }
             };
             let covered = mix_lanes::<V, B>(V::sub(one, V::unit(src[3])), value, strength);
-            V::store(px, [zero, zero, zero, V::sub(top, simd::to_byte::<V>(covered))]);
+            V::store(
+                px,
+                [zero, zero, zero, V::sub(top, simd::to_byte::<V>(covered))],
+            );
         } else {
             let (rgb, alpha) = match ramp {
                 None => ([v; 3], src[3]),
@@ -947,8 +938,16 @@ mod tests {
                 for x in 0..W {
                     let jump = (x + y) % 9 == 0;
                     position.extend([
-                        (if jump { next() % 65536 } else { x * 1700 + y * 90 }) as u16,
-                        (if jump { next() % 65536 } else { y * 2900 + x * 40 }) as u16,
+                        (if jump {
+                            next() % 65536
+                        } else {
+                            x * 1700 + y * 90
+                        }) as u16,
+                        (if jump {
+                            next() % 65536
+                        } else {
+                            y * 2900 + x * 40
+                        }) as u16,
                         ((x * 11 + y * 17) % 60 * 1000) as u16,
                     ]);
                     normal.extend([

@@ -41,7 +41,11 @@ pub fn resolve_layer(doc: &Document, text: &str) -> Result<LayerId, OpError> {
 /// テクスチャセットを ID か名前で引く（`sets` は（ID, 名前）の並び。省略は `current`（セットの ID）のセット、無ければ先頭）。ID が先。
 /// 名前が複数に当たれば `ambiguous`（候補の ID と名前を `data` に）、無ければ `not_found`（あるセットの一覧を `data` に）。
 /// 画面なしのホストと起動中のアプリのホストが、同じ指し方・同じ誤りになるように 1 か所に置く。
-pub fn resolve_set(sets: &[(&str, &str)], set: Option<&str>, current: &str) -> Result<usize, OpError> {
+pub fn resolve_set(
+    sets: &[(&str, &str)],
+    set: Option<&str>,
+    current: &str,
+) -> Result<usize, OpError> {
     let Some(text) = set else {
         return sets
             .iter()
@@ -52,8 +56,12 @@ pub fn resolve_set(sets: &[(&str, &str)], set: Option<&str>, current: &str) -> R
     if let Some(i) = sets.iter().position(|(id, _)| *id == text) {
         return Ok(i);
     }
-    let named: Vec<usize> =
-        sets.iter().enumerate().filter(|(_, (_, name))| *name == text).map(|(i, _)| i).collect();
+    let named: Vec<usize> = sets
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, name))| *name == text)
+        .map(|(i, _)| i)
+        .collect();
     match named.as_slice() {
         [] => Err(OpError::not_found(Noun::Set, text)
             .with_data(json!({"sets": sets.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>()}))),
@@ -87,7 +95,11 @@ pub fn channel_name(doc: &Document, channel: Channel) -> String {
 /// チャンネルを名前（大文字小文字を問わない）か番号で引く。文書にあるチャンネルだけ。
 pub fn resolve_channel(doc: &Document, text: &str) -> Result<Channel, OpError> {
     let channels = doc.channels();
-    if let Some(c) = channels.iter().copied().find(|c| channel_name(doc, *c) == text) {
+    if let Some(c) = channels
+        .iter()
+        .copied()
+        .find(|c| channel_name(doc, *c) == text)
+    {
         return Ok(c);
     }
     let lower = text.to_lowercase();
@@ -115,13 +127,19 @@ pub fn resolve_channel(doc: &Document, text: &str) -> Result<Channel, OpError> {
             return Ok(c);
         }
     }
-    Err(OpError::not_found(Noun::Channel, text)
-        .with_data(json!({"channels": channels.iter().map(|c| channel_name(doc, *c)).collect::<Vec<_>>()})))
+    Err(OpError::not_found(Noun::Channel, text).with_data(
+        json!({"channels": channels.iter().map(|c| channel_name(doc, *c)).collect::<Vec<_>>()}),
+    ))
 }
 
 /// 合成モードを名前から。`Multiply`・`multiply`・`color_dodge` のどれでもよい。
 pub fn parse_blend(text: &str) -> Result<BlendMode, OpError> {
-    let key = |s: &str| s.chars().filter(|c| !matches!(c, '_' | '-' | ' ')).collect::<String>().to_lowercase();
+    let key = |s: &str| {
+        s.chars()
+            .filter(|c| !matches!(c, '_' | '-' | ' '))
+            .collect::<String>()
+            .to_lowercase()
+    };
     let want = key(text);
     BlendMode::LAYER_MODES
         .iter()
@@ -181,21 +199,33 @@ mod tests {
         let e = resolve_layer(&doc, "b").unwrap_err();
         assert_eq!(e.code, ErrorCode::Ambiguous);
         assert_eq!(e.data.unwrap()["candidates"].as_array().unwrap().len(), 2);
-        assert_eq!(resolve_layer(&doc, "zzz").unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(
+            resolve_layer(&doc, "zzz").unwrap_err().code,
+            ErrorCode::NotFound
+        );
         // 32 桁の 16 進でも、その ID の層が無ければ名前として探す
-        assert_eq!(resolve_layer(&doc, &"1".repeat(32)).unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(
+            resolve_layer(&doc, &"1".repeat(32)).unwrap_err().code,
+            ErrorCode::NotFound
+        );
     }
 
     #[test]
     fn channels_resolve_by_name_case_insensitive_and_number() {
         let doc = doc();
         assert_eq!(resolve_channel(&doc, "Color").unwrap(), Channel::Color);
-        assert_eq!(resolve_channel(&doc, "roughness").unwrap(), Channel::Roughness);
+        assert_eq!(
+            resolve_channel(&doc, "roughness").unwrap(),
+            Channel::Roughness
+        );
         assert_eq!(resolve_channel(&doc, "4").unwrap(), Channel::Normal);
         let e = resolve_channel(&doc, "Gloss").unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound);
         assert!(e.data.unwrap()["channels"].as_array().unwrap().len() >= 6);
-        assert_eq!(resolve_channel(&doc, "40").unwrap_err().code, ErrorCode::NotFound);
+        assert_eq!(
+            resolve_channel(&doc, "40").unwrap_err().code,
+            ErrorCode::NotFound
+        );
     }
 
     #[test]
@@ -203,7 +233,10 @@ mod tests {
         assert_eq!(parse_blend("Multiply").unwrap(), BlendMode::Multiply);
         assert_eq!(parse_blend("color_dodge").unwrap(), BlendMode::ColorDodge);
         assert_eq!(parse_blend("pass through").unwrap(), BlendMode::PassThrough);
-        assert_eq!(parse_blend("nope").unwrap_err().code, ErrorCode::InvalidValue);
+        assert_eq!(
+            parse_blend("nope").unwrap_err().code,
+            ErrorCode::InvalidValue
+        );
     }
 
     #[test]

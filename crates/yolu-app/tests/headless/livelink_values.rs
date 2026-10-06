@@ -385,8 +385,15 @@ fn headless_main_2nd_is_not_drawn_over_everything_when_unity_does_not_list_its_t
     let drawn = a.state.doc.drawn_look().clone();
     assert_eq!(drawn.kind, LookKind::LilToon);
     assert_eq!(features_of(&drawn) & (1 << bit::MAIN2), 0);
-    assert_eq!(features_of(&drawn) & (1 << bit::SHADOW), 1 << bit::SHADOW, "ほかの機能は描く");
-    assert_eq!(received(&a.state).unwrap().missing["_Main2ndTex"], MissingImage::Unreadable);
+    assert_eq!(
+        features_of(&drawn) & (1 << bit::SHADOW),
+        1 << bit::SHADOW,
+        "ほかの機能は描く"
+    );
+    assert_eq!(
+        received(&a.state).unwrap().missing["_Main2ndTex"],
+        MissingImage::Unreadable
+    );
     // スロットを知らせる Unity（テクスチャの有り無しを言う）なら、Unity と同じく描く
     let mut new = old;
     new.slots.push(SlotTexture {
@@ -416,7 +423,10 @@ fn headless_main_2nd_is_not_drawn_over_everything_when_unity_does_not_list_its_t
     });
     let drawn = a.state.doc.drawn_look().clone();
     assert_ne!(features_of(&drawn) & (1 << bit::MAIN2), 0);
-    assert!(!received(&a.state).unwrap().missing.contains_key("_Main2ndTex"));
+    assert!(!received(&a.state)
+        .unwrap()
+        .missing
+        .contains_key("_Main2ndTex"));
 }
 
 #[test]

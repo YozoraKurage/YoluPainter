@@ -34,7 +34,7 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           toolchain: stable
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
@@ -57,7 +57,9 @@ jobs:
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # cargo fmt --check は既存の整形差分を解消してから追加する。
+      - name: 整形（cargo fmt の確かめ）
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
 
   linux-render:
     name: Linux の画面の試験（ソフトウェアの Vulkan）

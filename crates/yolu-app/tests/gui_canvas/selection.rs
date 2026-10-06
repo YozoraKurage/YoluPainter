@@ -669,7 +669,10 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
         ("拡張", original.grow(6, budget).unwrap()),
         ("縮小", original.shrink(6, false, budget).unwrap()),
         ("境界線", original.border(6, false, budget).unwrap()),
-        ("境界をぼかす", original.feather(6.0, false, budget).unwrap()),
+        (
+            "境界をぼかす",
+            original.feather(6.0, false, budget).unwrap(),
+        ),
         ("境界をくっきり", original.sharpen()),
     ] {
         let at = rect_of(&h, label, |r| r.left() < 340.0 && r.top() > 62.0).center();

@@ -9,8 +9,8 @@ use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotResults};
 use yolu_app::eyedrop::EyedropState;
 use yolu_app::lang::Lang;
-use yolu_app::rampsets::RampSets;
 use yolu_app::panels::color_adjust::{self, Change, Histogram, Params};
+use yolu_app::rampsets::RampSets;
 use yolu_app::ui::theme as t;
 use yolu_app::ui::widgets::Rows;
 use yolu_app::YoluApp;
@@ -311,8 +311,14 @@ fn tone_curve_edits_one_curve_at_a_time_and_presets_set_the_selected_one() {
 fn stops_editor_rect(h: &Harness<'_, Panel>) -> Rect {
     let prev = rect(h, "<");
     Rect::from_min_size(
-        pos2(prev.left(), prev.top() - 4.0 - yolu_app::ui::ramp::STOPS_HEIGHT),
-        vec2(WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT, yolu_app::ui::ramp::STOPS_HEIGHT),
+        pos2(
+            prev.left(),
+            prev.top() - 4.0 - yolu_app::ui::ramp::STOPS_HEIGHT,
+        ),
+        vec2(
+            WIDTH - 2.0 * t::PADDING - t::SECTION_INDENT,
+            yolu_app::ui::ramp::STOPS_HEIGHT,
+        ),
     )
 }
 
@@ -375,7 +381,10 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     click_slider(&mut h, "位置", 0.25);
     assert!(h.state().changes.len() > n);
     assert_ne!(ramp_of(&h), before);
-    assert!(!last(&h).discrete, "スライダーは離すまで 1 回の取り消しにまとめる");
+    assert!(
+        !last(&h).discrete,
+        "スライダーは離すまで 1 回の取り消しにまとめる"
+    );
 }
 
 #[test]

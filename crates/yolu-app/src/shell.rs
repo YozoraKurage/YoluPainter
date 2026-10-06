@@ -118,9 +118,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .shortcut("Ctrl+N")
                 .enabled(idle)),
-                why(Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
-                    .shortcut("Ctrl+O")
-                    .enabled(idle)),
+                why(
+                    Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
+                        .shortcut("Ctrl+O")
+                        .enabled(idle),
+                ),
                 why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
@@ -252,8 +254,13 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             )
             .shortcut("Shift+R")
             .enabled(free && app.view.angle != 0.0),
-            Entry::item(l.pick("定規にスナップ", "Snap to Ruler"), Action::ToggleRulerSnap)
-                .shortcut("Ctrl+1").checked(app.drafting.snap).enabled(free),
+            Entry::item(
+                l.pick("定規にスナップ", "Snap to Ruler"),
+                Action::ToggleRulerSnap,
+            )
+            .shortcut("Ctrl+1")
+            .checked(app.drafting.snap)
+            .enabled(free),
             Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
                 .shortcut("H")
                 .checked(app.view.flip)
@@ -313,7 +320,10 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     if !app.update.enabled() {
         return vec![
             crate::shortcuts::menu_entry(l),
-            Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder),
+            Entry::item(
+                l.pick("ログのフォルダを開く", "Open Log Folder"),
+                Action::OpenLogFolder,
+            ),
             about,
         ];
     }
@@ -355,7 +365,10 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     );
     entries.push(Entry::Separator);
     entries.push(crate::shortcuts::menu_entry(l));
-    entries.push(Entry::item(l.pick("ログのフォルダを開く", "Open Log Folder"), Action::OpenLogFolder));
+    entries.push(Entry::item(
+        l.pick("ログのフォルダを開く", "Open Log Folder"),
+        Action::OpenLogFolder,
+    ));
     entries.push(about);
     entries
 }
@@ -634,16 +647,18 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
     }
     v.push(Entry::Separator);
-    v.push(Entry::Heading(
-        lang.pick("変形", "Transform").to_owned(),
-    ));
+    v.push(Entry::Heading(lang.pick("変形", "Transform").to_owned()));
     for x in [
         Xform::Flip { horizontal: true },
         Xform::Flip { horizontal: false },
         Xform::Rotate90 { clockwise: true },
         Xform::Rotate90 { clockwise: false },
     ] {
-        v.push(transform_entry(lang, x, free && app.selected_layer == Some(id)));
+        v.push(transform_entry(
+            lang,
+            x,
+            free && app.selected_layer == Some(id),
+        ));
     }
     v.push(Entry::Separator);
     v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));
@@ -777,7 +792,11 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let separators = Tool::ALL.iter().filter(|t| starts_group(**t)).count() as f32;
     // 道具が増えても、窓の最小の高さ（帯が一番低くなる所）で最後のボタンが切れないよう、足りなければ間隔を詰める（ボタンの間は 2 点）。
     // 帯の下の端に付く 2 枚の色の分の高さを先に取る
-    let step = ((r.height() - 6.0 - 4.0 - separators * 9.0 - crate::panels::color_swatch::reserved_height())
+    let step = ((r.height()
+        - 6.0
+        - 4.0
+        - separators * 9.0
+        - crate::panels::color_swatch::reserved_height())
         / Tool::ALL.len() as f32)
         .clamp(24.0, 34.0);
     let mut y = r.top() + 6.0;
@@ -816,7 +835,10 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
     if let Some(indicator) = app.ops.indicator() {
         let tip = app.ops.tooltip(app.lang);
-        let dot = Rect::from_center_size(pos2(right - OPS_DOT / 2.0, r.center().y), vec2(OPS_DOT, OPS_DOT));
+        let dot = Rect::from_center_size(
+            pos2(right - OPS_DOT / 2.0, r.center().y),
+            vec2(OPS_DOT, OPS_DOT),
+        );
         p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
         let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
@@ -827,8 +849,13 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
         let width = w::text_width(&p, &item.text, t::LABEL_DIM);
         let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
         w::text(&p, at, &item.text, t::LABEL_DIM, Align::Right);
-        let response = ui.interact(at.expand2(vec2(4.0, 0.0)), ui.id().with(("status", item.key)), Sense::hover());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
+        let response = ui.interact(
+            at.expand2(vec2(4.0, 0.0)),
+            ui.id().with(("status", item.key)),
+            Sense::hover(),
+        );
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
         response.on_hover_text(&item.tip);
         right = at.left() - 16.0;
     }
@@ -879,9 +906,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
     let link = &app.link;
     let tip = link.tooltip(app.lang);
     let response = ui.interact(rect, ui.id().with("menubar.livelink"), Sense::hover());
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &tip)
-    });
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &tip));
     let hover = response.hovered();
     let pressed = ui.input(|i| {
         i.pointer.primary_pressed() && i.pointer.press_origin().is_some_and(|at| rect.contains(at))

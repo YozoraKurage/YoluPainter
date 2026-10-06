@@ -12,8 +12,8 @@ pub mod model;
 pub mod navigation;
 pub mod other_sets;
 pub mod paint;
-pub mod received_layers;
 pub mod pose;
+pub mod received_layers;
 pub mod render;
 pub mod shape_gizmo;
 pub mod tangents;
@@ -235,9 +235,10 @@ impl View3dState {
             self.shown_base = None;
             return;
         }
-        self.shown_base = self.shown_base.take().filter(|b| {
-            b.hidden == self.hidden && same_mask(&b.mask, &mask) && b.total == total
-        });
+        self.shown_base = self
+            .shown_base
+            .take()
+            .filter(|b| b.hidden == self.hidden && same_mask(&b.mask, &mask) && b.total == total);
         let revision = self.next_revision();
         let triangles = || model_triangles(&meshes);
         let reused = self.shown_base.as_ref().and_then(|b| {
@@ -255,12 +256,8 @@ impl View3dState {
             return;
         };
         let geometry = Arc::new(geometry);
-        let mut shown = ViewModel::with_geometry(
-            &full.name,
-            meshes,
-            full.materials.clone(),
-            geometry.clone(),
-        );
+        let mut shown =
+            ViewModel::with_geometry(&full.name, meshes, full.materials.clone(), geometry.clone());
         shown.link_generation = full.link_generation;
         shown.demo = full.demo;
         self.shown_base = Some(ShownBase {
@@ -425,7 +422,10 @@ impl View3dState {
 }
 
 /// 三角形の並び・UV・レンダラーとスロットが同じか（位置・法線は見ない。3D のパスの指紋と同じ範囲を、ハッシュを作らずに比べる）。
-fn same_structure(a: &yolu_core::geometry::SurfaceGeometry, b: &yolu_core::geometry::SurfaceGeometry) -> bool {
+fn same_structure(
+    a: &yolu_core::geometry::SurfaceGeometry,
+    b: &yolu_core::geometry::SurfaceGeometry,
+) -> bool {
     a.triangle_count() == b.triangle_count()
         && a.triangles().iter().zip(b.triangles()).all(|(x, y)| {
             x.renderer == y.renderer
@@ -444,10 +444,7 @@ struct ShownBase {
     geometry: Arc<SurfaceGeometry>,
 }
 
-fn same_mask(
-    a: &Option<Arc<pose::hide::FaceMask>>,
-    b: &Option<Arc<pose::hide::FaceMask>>,
-) -> bool {
+fn same_mask(a: &Option<Arc<pose::hide::FaceMask>>, b: &Option<Arc<pose::hide::FaceMask>>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => Arc::ptr_eq(a, b),

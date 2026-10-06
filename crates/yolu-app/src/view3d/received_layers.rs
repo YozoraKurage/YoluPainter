@@ -131,7 +131,12 @@ impl ReceivedLayers {
 
     /// 持つ絵を合わせる（[`MAX_RECEIVED_LAYERS`] まで。`limit` は辺の上限、`budget` はバイトの予算。[`plan`]）。並びと中身と大きさが前と同じなら
     /// 何もしない。作り直したら true。
-    pub fn sync(&mut self, wanted: &[(String, Arc<ReceivedImage>)], limit: u32, budget: u64) -> bool {
+    pub fn sync(
+        &mut self,
+        wanted: &[(String, Arc<ReceivedImage>)],
+        limit: u32,
+        budget: u64,
+    ) -> bool {
         let wanted = &wanted[..wanted.len().min(MAX_RECEIVED_LAYERS)];
         let size = plan(wanted, limit, budget).0;
         let same = match &self.state {
@@ -236,8 +241,18 @@ pub fn plan(images: &[(String, Arc<ReceivedImage>)], limit: u32, budget: u64) ->
     if images.is_empty() {
         return ([0, 0], 0);
     }
-    let w = images.iter().map(|(_, i)| i.width).max().unwrap_or(1).max(1);
-    let h = images.iter().map(|(_, i)| i.height).max().unwrap_or(1).max(1);
+    let w = images
+        .iter()
+        .map(|(_, i)| i.width)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let h = images
+        .iter()
+        .map(|(_, i)| i.height)
+        .max()
+        .unwrap_or(1)
+        .max(1);
     let count = images.len().clamp(MIN_LAYERS, MAX_RECEIVED_LAYERS) as u64;
     let limit = limit.clamp(1, MAX_LAYER_SIZE);
     let budget = budget.min(BUDGET_BYTES);
@@ -363,13 +378,20 @@ mod tests {
         let small = ("a".to_owned(), image(256, 128, |_, _| [0; 4]));
         let big = ("b".to_owned(), image(2048, 2048, |_, _| [0; 4]));
         let full = BUDGET_BYTES;
-        assert_eq!(plan(&[], MAX_LAYER_SIZE, full), ([0, 0], 0), "絵が無ければ持たない");
+        assert_eq!(
+            plan(&[], MAX_LAYER_SIZE, full),
+            ([0, 0], 0),
+            "絵が無ければ持たない"
+        );
         // 1 枚でも 2 層（GL）で数える
         assert_eq!(
             plan(std::slice::from_ref(&small), MAX_LAYER_SIZE, full),
             ([256, 128], mip_bytes([256, 128]) * 2)
         );
-        assert_eq!(plan(&[small.clone(), big.clone()], MAX_LAYER_SIZE, full).0, [1024, 1024]);
+        assert_eq!(
+            plan(&[small.clone(), big.clone()], MAX_LAYER_SIZE, full).0,
+            [1024, 1024]
+        );
         // 16 層の 1024² はミップ込みで約 85 MiB（1 つのセットの上限の中）
         let many: Vec<_> = (0..MAX_RECEIVED_LAYERS)
             .map(|i| (format!("s{i}"), big.1.clone()))
@@ -397,7 +419,10 @@ mod tests {
                 [255, 100, 50, 0]
             }
         });
-        assert_eq!(resample(&half, [2, 1]), vec![200, 100, 50, 255, 255, 100, 50, 0]);
+        assert_eq!(
+            resample(&half, [2, 1]),
+            vec![200, 100, 50, 255, 255, 100, 50, 0]
+        );
         // 縮め: 成分ごとの箱の平均（A の小さい画素の RGB も同じ重み）
         let checker = image(4, 4, |x, y| {
             if (x + y) % 2 == 0 {
@@ -422,7 +447,12 @@ mod tests {
             .iter()
             .all(|p| *p == [10, 20, 30, 0]));
         // ミップも straight のまま成分ごと
-        let (m, s) = halve(&[255, 140, 0, 0, 255, 140, 0, 10, 255, 140, 0, 0, 255, 140, 0, 10], [2, 2]);
+        let (m, s) = halve(
+            &[
+                255, 140, 0, 0, 255, 140, 0, 10, 255, 140, 0, 0, 255, 140, 0, 10,
+            ],
+            [2, 2],
+        );
         assert_eq!(s, [1, 1]);
         assert_eq!(m, vec![255, 140, 0, 5]);
     }

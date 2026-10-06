@@ -18,7 +18,9 @@
 
 use std::time::{Duration, Instant};
 
-use egui::{epaint::Vertex, Color32, ColorImage, Mesh, Painter, Pos2, Shape, TextureHandle, TextureOptions};
+use egui::{
+    epaint::Vertex, Color32, ColorImage, Mesh, Painter, Pos2, Shape, TextureHandle, TextureOptions,
+};
 use rayon::prelude::*;
 
 use super::display::PAGE;
@@ -225,7 +227,10 @@ impl CpuCanvas {
 
     /// まだ正確でないタイルの数。
     pub(super) fn pending(&self) -> usize {
-        self.state.iter().filter(|s| **s != TileState::Fresh).count()
+        self.state
+            .iter()
+            .filter(|s| **s != TileState::Fresh)
+            .count()
     }
 
     /// 矩形（文書の画素）にかかるタイルのうち、まだ何も見せていない（`Missing`・`Stale` で、粗い絵も無い）ものの数。
@@ -311,7 +316,12 @@ impl CpuCanvas {
             let n = (1.0 / pixel_size.max(1e-6)).floor().max(1.0) as u32;
             (1u32 << n.ilog2()).clamp(STRIDE_MIN, STRIDE_MAX)
         };
-        let side = self.size.0.max(self.size.1).div_ceil(COARSE_SIDE_MAX).max(1);
+        let side = self
+            .size
+            .0
+            .max(self.size.1)
+            .div_ceil(COARSE_SIDE_MAX)
+            .max(1);
         let mut s = want.max(side.next_power_of_two());
         while s >= STRIDE_MIN && !self.tile_size.is_multiple_of(s) {
             s /= 2;
@@ -367,7 +377,11 @@ impl CpuCanvas {
             Some((viewport, budget)) => {
                 // 粗い絵の歩幅が変わったら粗い絵を捨てる（その絵を見せていたタイルは、直す順を待つ）
                 let stride = self.pick_stride(viewport.pixel_size);
-                if self.coarse.as_ref().is_some_and(|c| Some(c.stride) != stride) {
+                if self
+                    .coarse
+                    .as_ref()
+                    .is_some_and(|c| Some(c.stride) != stride)
+                {
                     self.coarse = None;
                     for s in &mut self.state {
                         if matches!(*s, TileState::CoarseCurrent | TileState::CoarseOld) {
@@ -407,9 +421,9 @@ impl CpuCanvas {
                 let exact = visible.iter().all(|&i| self.state[i] == TileState::Fresh);
                 // ドラッグの間は、粗い絵でよい（離したら正確に直す）
                 waiting_for_release = interactive
-                    && visible
-                        .iter()
-                        .all(|&i| matches!(self.state[i], TileState::Fresh | TileState::CoarseCurrent));
+                    && visible.iter().all(|&i| {
+                        matches!(self.state[i], TileState::Fresh | TileState::CoarseCurrent)
+                    });
                 if exact && !interactive {
                     let background_start = Instant::now();
                     uploaded += self
@@ -472,7 +486,11 @@ impl CpuCanvas {
             if inside {
                 let d = ((tx as f64 - cx).powi(2) + (ty as f64 - cy).powi(2)) * 1024.0;
                 // 描いた所（変わったタイル）が先。初めて見せるタイル・粗い絵のタイルは、そのあと
-                let class = if matches!(*s, TileState::Stale | TileState::CoarseOld) { 0 } else { 1 };
+                let class = if matches!(*s, TileState::Stale | TileState::CoarseOld) {
+                    0
+                } else {
+                    1
+                };
                 visible.push((class, d as u64, i));
             } else {
                 // 表示域の矩形までの距離（タイルの単位）
@@ -510,7 +528,8 @@ impl CpuCanvas {
             .collect();
         let seen: std::collections::HashSet<usize> = list.iter().copied().collect();
         list.extend(
-            (0..self.state.len()).filter(|&i| self.state[i] == TileState::Missing && !seen.contains(&i)),
+            (0..self.state.len())
+                .filter(|&i| self.state[i] == TileState::Missing && !seen.contains(&i)),
         );
         let started = Instant::now();
         let limit = budget.visible / 2;
@@ -581,7 +600,10 @@ impl CpuCanvas {
         });
         let (w, h) = tile.size();
         coarse.texture.set_partial(
-            [(tile.rect.x / stride) as usize, (tile.rect.y / stride) as usize],
+            [
+                (tile.rect.x / stride) as usize,
+                (tile.rect.y / stride) as usize,
+            ],
             to_image(w, h, &tile.pixels),
             coarse_options(),
         );
@@ -637,10 +659,16 @@ impl CpuCanvas {
             if let Ok(tiles) = doc.composite_tiles(channel, &coords) {
                 // 乗算済みの画像への変換をタイルごとにワーカーへ分け、頁へ上げるのは 1 つのスレッドで
                 let pieces: Vec<Vec<(usize, [usize; 2], ColorImage)>> = if tiles.len() < 4 {
-                    tiles.iter().map(|t| self.pieces(t.rect, &t.pixels)).collect()
+                    tiles
+                        .iter()
+                        .map(|t| self.pieces(t.rect, &t.pixels))
+                        .collect()
                 } else {
                     let me = &*self;
-                    tiles.par_iter().map(|t| me.pieces(t.rect, &t.pixels)).collect()
+                    tiles
+                        .par_iter()
+                        .map(|t| me.pieces(t.rect, &t.pixels))
+                        .collect()
                 };
                 for (page, pos, image) in pieces.into_iter().flatten() {
                     self.put(ctx, page, pos, image);
@@ -667,7 +695,8 @@ impl CpuCanvas {
             if x0 >= x1 || y0 >= y1 {
                 continue;
             }
-            let image = if (x0, y0, x1, y1) == (rect.x, rect.y, rect.x + rect.width, rect.y + rect.height)
+            let image = if (x0, y0, x1, y1)
+                == (rect.x, rect.y, rect.x + rect.width, rect.y + rect.height)
             {
                 to_image(rect.width, rect.height, straight)
             } else {
@@ -837,8 +866,10 @@ mod tests {
         for y in (0..h).step_by(3) {
             for x in (0..w).step_by(2) {
                 let v = (x * 7 + y * 13) as u8;
-                doc.set_pixel(a, x, y, Rgba8::new(v, 255 - v, v / 2, 200)).unwrap();
-                doc.set_pixel(b, x, y, Rgba8::new(255 - v, v, 90, (y % 255) as u8)).unwrap();
+                doc.set_pixel(a, x, y, Rgba8::new(v, 255 - v, v / 2, 200))
+                    .unwrap();
+                doc.set_pixel(b, x, y, Rgba8::new(255 - v, v, 90, (y % 255) as u8))
+                    .unwrap();
             }
         }
         doc.clear_history().unwrap();
@@ -909,8 +940,15 @@ mod tests {
                 assert!(visible_done, "frame {frame}: {fresh:?}");
             }
         }
-        assert_eq!(first_visible_done, Some(1), "見えている 2 枚は 2 フレームで済む");
-        assert_eq!(frames, 11, "11 フレーム（見えている所が済んだフレームは 2 枚）");
+        assert_eq!(
+            first_visible_done,
+            Some(1),
+            "見えている 2 枚は 2 フレームで済む"
+        );
+        assert_eq!(
+            frames, 11,
+            "11 フレーム（見えている所が済んだフレームは 2 枚）"
+        );
         assert_eq!(canvas.pending(), 0);
         assert_shows_the_document(&canvas, &mirror, &doc);
     }
@@ -922,8 +960,12 @@ mod tests {
         let mut canvas = CpuCanvas::default();
         let mut mirror = Mirror::default();
         let vp = viewport(0, 0, 256, 192); // 全部が見えている
-        // 全部を上げる
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &ZERO))).pending > 0 {}
+                                           // 全部を上げる
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&vp, &ZERO)))
+            .pending
+            > 0
+        {}
         mirror.apply(&ctx);
         assert_shows_the_document(&canvas, &mirror, &doc);
         // 作り直しで全部が上げ直しになる（補間を替える）。枠が 0 なので 1 枚だけ正確に上がり、残りは粗い絵で見える
@@ -932,12 +974,17 @@ mod tests {
         let edited = TileCoord::new(3, 2); // 表示域の中心から一番遠い隅
         assert_eq!(canvas.tile_state(edited), Some(TileState::CoarseCurrent));
         // 遠いタイルを描く: 粗い絵も古くなる。次のフレームは、まだ見せていない近いタイルより先に、これを直す
-        doc.set_pixel(a, 250, 180, Rgba8::new(1, 2, 3, 255)).unwrap();
+        doc.set_pixel(a, 250, 180, Rgba8::new(1, 2, 3, 255))
+            .unwrap();
         let r = canvas.sync(&ctx, &doc, Channel::Color, true, Some((&vp, &ZERO)));
         assert_eq!(r.tiles, 1);
         assert_eq!(canvas.tile_state(edited), Some(TileState::Fresh));
         mirror.apply(&ctx);
-        while canvas.sync(&ctx, &doc, Channel::Color, true, Some((&vp, &ZERO))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, true, Some((&vp, &ZERO)))
+            .pending
+            > 0
+        {}
         mirror.apply(&ctx);
         assert_shows_the_document(&canvas, &mirror, &doc);
     }
@@ -952,7 +999,8 @@ mod tests {
         canvas.sync(&ctx, &doc, Channel::Color, false, None);
         mirror.apply(&ctx);
         doc.set_pixel(a, 5, 5, Rgba8::new(9, 9, 9, 255)).unwrap();
-        doc.set_pixel(a, 100, 100, Rgba8::new(9, 9, 9, 255)).unwrap();
+        doc.set_pixel(a, 100, 100, Rgba8::new(9, 9, 9, 255))
+            .unwrap();
         // 枠が 0: 1 枚ずつ。まだ直していないタイルは Stale のまま、前の絵が残る
         let r = canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &ZERO)));
         assert_eq!((r.tiles, r.pending), (1, 1));
@@ -994,10 +1042,21 @@ mod tests {
 
     // ───────── 粗い絵 ─────────
 
-    fn coarse_expected(doc: &Document, size: (u32, u32), stride: u32, coords: &[TileCoord]) -> ColorImage {
-        let (w, h) = (size.0.div_ceil(stride) as usize, size.1.div_ceil(stride) as usize);
+    fn coarse_expected(
+        doc: &Document,
+        size: (u32, u32),
+        stride: u32,
+        coords: &[TileCoord],
+    ) -> ColorImage {
+        let (w, h) = (
+            size.0.div_ceil(stride) as usize,
+            size.1.div_ceil(stride) as usize,
+        );
         let mut image = ColorImage::filled([w, h], Color32::TRANSPARENT);
-        for t in doc.composite_coarse_tiles(Channel::Color, coords, stride).unwrap() {
+        for t in doc
+            .composite_coarse_tiles(Channel::Color, coords, stride)
+            .unwrap()
+        {
             let (tw, th) = t.size();
             let small = to_image(tw, th, &t.pixels);
             let (x0, y0) = ((t.rect.x / stride) as usize, (t.rect.y / stride) as usize);
@@ -1036,7 +1095,10 @@ mod tests {
             .collect();
         assert_eq!(fresh.len(), 1, "正確なのは 1 枚だけ");
         let want = coarse_expected(&doc, (512, 512), 4, &coords);
-        assert!(mirror.images[&id].pixels == want.pixels, "粗い絵が粗い合成と同じ");
+        assert!(
+            mirror.images[&id].pixels == want.pixels,
+            "粗い絵が粗い合成と同じ"
+        );
         // 粗い絵のタイルは、頁の所が透明
         let page = &mirror.images[&canvas.page_texture(0).unwrap()];
         let coarse_tile = coords
@@ -1046,7 +1108,17 @@ mod tests {
         let at = (coarse_tile.y * 64 * 512 + coarse_tile.x * 64) as usize;
         assert_eq!(page.pixels[at], Color32::TRANSPARENT);
         // 落ち着くと、全部が正確で、粗い絵は手放す
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &FrameBudget::default()))).pending > 0 {}
+        while canvas
+            .sync(
+                &ctx,
+                &doc,
+                Channel::Color,
+                false,
+                Some((&vp, &FrameBudget::default())),
+            )
+            .pending
+            > 0
+        {}
         mirror.apply(&ctx);
         assert!(canvas.coarse_texture().is_none());
         assert_eq!(canvas.pending(), 0);
@@ -1073,7 +1145,8 @@ mod tests {
         let other = doc.add_layer("other").unwrap();
         for y in (0..h).step_by(5) {
             for x in (0..w).step_by(4) {
-                doc.set_pixel(other, x, y, Rgba8::new(200, 30, 60, 180)).unwrap();
+                doc.set_pixel(other, x, y, Rgba8::new(200, 30, 60, 180))
+                    .unwrap();
             }
         }
         let fx = doc
@@ -1093,23 +1166,36 @@ mod tests {
     };
 
     #[test]
-    fn dragging_an_effect_shows_coarse_tiles_without_evaluating_it_and_releasing_makes_them_exact() {
+    fn dragging_an_effect_shows_coarse_tiles_without_evaluating_it_and_releasing_makes_them_exact()
+    {
         let ctx = egui::Context::default();
         let (mut doc, a, fx, _) = with_blur(256, 192, 64);
         let mut canvas = CpuCanvas::default();
         let mut mirror = Mirror::default();
         let vp = viewport(0, 0, 256, 192);
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)))
+            .pending
+            > 0
+        {}
         mirror.apply(&ctx);
         assert_shows_the_document(&canvas, &mirror, &doc);
         let evaluated = doc.effect_counters().blocks_evaluated;
         // 半径をドラッグで変える
         for radius in [9u32, 12, 15] {
-            doc.set_filter_settings(a, fx, yolu_core::effects::EffectSettings::blur(radius), true)
-                .unwrap();
+            doc.set_filter_settings(
+                a,
+                fx,
+                yolu_core::effects::EffectSettings::blur(radius),
+                true,
+            )
+            .unwrap();
             let r = canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)));
             mirror.apply(&ctx);
-            assert!(r.coarse > 0 && r.tiles == 0, "ドラッグの間は粗い絵だけ: {r:?}");
+            assert!(
+                r.coarse > 0 && r.tiles == 0,
+                "ドラッグの間は粗い絵だけ: {r:?}"
+            );
             let coords = every_tile(&canvas);
             let coarse: Vec<TileCoord> = coords
                 .iter()
@@ -1118,7 +1204,8 @@ mod tests {
                 .collect();
             assert_eq!(coarse.len(), r.coarse);
             assert_eq!(
-                doc.effect_counters().blocks_evaluated, evaluated,
+                doc.effect_counters().blocks_evaluated,
+                evaluated,
                 "ドラッグの間は効果を正確に評価しない（キャッシュにも入れない）"
             );
             // 粗い絵のテクスチャの内容と、頁の透明
@@ -1128,20 +1215,33 @@ mod tests {
             for t in &coarse {
                 for dy in 0..(64 / stride) as usize {
                     for dx in 0..(64 / stride) as usize {
-                        let (x, y) = (t.x as usize * 64 / stride as usize + dx, t.y as usize * 64 / stride as usize + dy);
+                        let (x, y) = (
+                            t.x as usize * 64 / stride as usize + dx,
+                            t.y as usize * 64 / stride as usize + dy,
+                        );
                         let i = y * got.size[0] + x;
                         assert!(got.pixels[i] == want.pixels[i], "粗い絵 {t:?} ({dx},{dy})");
                     }
                 }
                 let page = &mirror.images[&canvas.page_texture(0).unwrap()];
-                assert_eq!(page.pixels[(t.y * 64 * 256 + t.x * 64) as usize], Color32::TRANSPARENT);
+                assert_eq!(
+                    page.pixels[(t.y * 64 * 256 + t.x * 64) as usize],
+                    Color32::TRANSPARENT
+                );
             }
             // 離すまで、同じ粗い絵に何もしない（再描画を回し続けない）
-            assert!(canvas.state.iter().all(|s| *s == TileState::CoarseCurrent || *s == TileState::Fresh));
+            assert!(canvas
+                .state
+                .iter()
+                .all(|s| *s == TileState::CoarseCurrent || *s == TileState::Fresh));
         }
         // 離す
         doc.end_coalescing();
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)))
+            .pending
+            > 0
+        {}
         mirror.apply(&ctx);
         assert!(canvas.coarse_texture().is_none());
         assert_shows_the_document(&canvas, &mirror, &doc);
@@ -1154,7 +1254,11 @@ mod tests {
         let mut canvas = CpuCanvas::default();
         let mut mirror = Mirror::default();
         let vp = viewport(0, 0, 256, 192);
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)))
+            .pending
+            > 0
+        {}
         // 効果の無い層の不透明度のドラッグ: 効果の出力は評価済みなので、粗くせず正確に
         doc.set_layer_opacity(other, 0.3, true).unwrap();
         assert!(doc.is_coalescing());
@@ -1171,15 +1275,27 @@ mod tests {
         let (mut doc, a, fx, _) = with_blur(256, 192, 64);
         let mut canvas = CpuCanvas::default();
         let all = viewport(0, 0, 256, 192);
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&all, &PLENTY))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&all, &PLENTY)))
+            .pending
+            > 0
+        {}
         // 見えるのは左上の 1 タイルだけ
         let vp = viewport(0, 0, 64, 64);
-        doc.set_filter_settings(a, fx, yolu_core::effects::EffectSettings::blur(11), true).unwrap();
+        doc.set_filter_settings(a, fx, yolu_core::effects::EffectSettings::blur(11), true)
+            .unwrap();
         let r = canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)));
         assert_eq!(r.coarse, 1, "見えているタイルだけ粗く");
-        assert_eq!(canvas.tile_state(TileCoord::new(3, 2)), Some(TileState::Stale));
+        assert_eq!(
+            canvas.tile_state(TileCoord::new(3, 2)),
+            Some(TileState::Stale)
+        );
         doc.end_coalescing();
-        while canvas.sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY))).pending > 0 {}
+        while canvas
+            .sync(&ctx, &doc, Channel::Color, false, Some((&vp, &PLENTY)))
+            .pending
+            > 0
+        {}
         assert_eq!(canvas.pending(), 0);
     }
 }

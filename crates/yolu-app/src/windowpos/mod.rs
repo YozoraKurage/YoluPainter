@@ -51,7 +51,12 @@ pub struct PxRect {
 
 impl PxRect {
     pub fn from_origin_size(left: i32, top: i32, width: i32, height: i32) -> PxRect {
-        PxRect { left, top, right: left + width, bottom: top + height }
+        PxRect {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+        }
     }
 
     pub fn width(&self) -> i32 {
@@ -93,7 +98,10 @@ pub struct Placement {
 impl Placement {
     /// 窓を作るときに渡す内側の大きさ（点。置く画面の拡大率で割った論理の大きさ）。
     pub fn size_points(&self) -> [f32; 2] {
-        [self.rect.width() as f32 / self.scale, self.rect.height() as f32 / self.scale]
+        [
+            self.rect.width() as f32 / self.scale,
+            self.rect.height() as f32 / self.scale,
+        ]
     }
 }
 
@@ -121,7 +129,10 @@ fn title_band(rect: PxRect, scale: f32) -> PxRect {
 }
 
 fn primary(monitors: &[Monitor]) -> Option<&Monitor> {
-    monitors.iter().find(|m| m.primary).or_else(|| monitors.first())
+    monitors
+        .iter()
+        .find(|m| m.primary)
+        .or_else(|| monitors.first())
 }
 
 /// `size`（点）を `monitor` の拡大率で画素にし、作業領域に収まるまで縮める。ただし窓の最小の大きさ（`MIN_SIZE`）は割らない
@@ -129,9 +140,15 @@ fn primary(monitors: &[Monitor]) -> Option<&Monitor> {
 fn fitted_size(monitor: &Monitor, size: [f32; 2]) -> (i32, i32) {
     let work = monitor.work;
     let fit = |points: f32, limit: i32, minimum: f32| {
-        ((points * monitor.scale).round() as i32).min(limit).max((minimum * monitor.scale).round() as i32).max(1)
+        ((points * monitor.scale).round() as i32)
+            .min(limit)
+            .max((minimum * monitor.scale).round() as i32)
+            .max(1)
     };
-    (fit(size[0], work.width(), MIN_SIZE[0]), fit(size[1], work.height(), MIN_SIZE[1]))
+    (
+        fit(size[0], work.width(), MIN_SIZE[0]),
+        fit(size[1], work.height(), MIN_SIZE[1]),
+    )
 }
 
 /// `monitor` の作業領域の中央に、`size`（点。作業領域に収まるまで縮める）の窓を置く。
@@ -200,8 +217,14 @@ impl Actual {
         let outer = info.outer_rect?;
         let inner = info.inner_rect?;
         Some(Actual {
-            position: [(outer.min.x * scale).round() as i32, (outer.min.y * scale).round() as i32],
-            size: [(inner.width() * scale).round() as i32, (inner.height() * scale).round() as i32],
+            position: [
+                (outer.min.x * scale).round() as i32,
+                (outer.min.y * scale).round() as i32,
+            ],
+            size: [
+                (inner.width() * scale).round() as i32,
+                (inner.height() * scale).round() as i32,
+            ],
             scale,
         })
     }
@@ -234,18 +257,27 @@ impl Settle {
     pub fn step(&mut self, actual: Option<Actual>) -> Step {
         self.frames += 1;
         let done = |target: &Placement| Step {
-            commands: if target.maximized { vec![ViewportCommand::Maximized(true)] } else { Vec::new() },
+            commands: if target.maximized {
+                vec![ViewportCommand::Maximized(true)]
+            } else {
+                Vec::new()
+            },
             settling: false,
         };
         if self.frames > MAX_FRAMES {
             return done(&self.target);
         }
         let Some(actual) = actual else {
-            return Step { commands: Vec::new(), settling: true };
+            return Step {
+                commands: Vec::new(),
+                settling: true,
+            };
         };
         let want = self.target.rect;
-        let moved = (actual.position[0] - want.left).abs() > TOLERANCE || (actual.position[1] - want.top).abs() > TOLERANCE;
-        let resized = (actual.size[0] - want.width()).abs() > TOLERANCE || (actual.size[1] - want.height()).abs() > TOLERANCE;
+        let moved = (actual.position[0] - want.left).abs() > TOLERANCE
+            || (actual.position[1] - want.top).abs() > TOLERANCE;
+        let resized = (actual.size[0] - want.width()).abs() > TOLERANCE
+            || (actual.size[1] - want.height()).abs() > TOLERANCE;
         if !moved && !resized {
             return done(&self.target);
         }
@@ -253,12 +285,21 @@ impl Settle {
         let same_screen = (scale - self.target.scale).abs() < 0.01;
         let mut commands = Vec::new();
         if moved {
-            commands.push(ViewportCommand::OuterPosition(pos2(want.left as f32 / scale, want.top as f32 / scale)));
+            commands.push(ViewportCommand::OuterPosition(pos2(
+                want.left as f32 / scale,
+                want.top as f32 / scale,
+            )));
         }
         if resized && (same_screen || !moved) {
-            commands.push(ViewportCommand::InnerSize(vec2(want.width() as f32 / scale, want.height() as f32 / scale)));
+            commands.push(ViewportCommand::InnerSize(vec2(
+                want.width() as f32 / scale,
+                want.height() as f32 / scale,
+            )));
         }
-        Step { commands, settling: true }
+        Step {
+            commands,
+            settling: true,
+        }
     }
 }
 
@@ -316,7 +357,11 @@ pub fn settle(ctx: &egui::Context) -> bool {
     };
     let info = ctx.input(|i| i.viewport().clone());
     // 最小化中・全画面中は窓の情報が当てにならないので待つ（隠したまま起動する場合など）
-    let actual = if info.minimized == Some(true) || info.fullscreen == Some(true) { None } else { Actual::from_viewport(&info) };
+    let actual = if info.minimized == Some(true) || info.fullscreen == Some(true) {
+        None
+    } else {
+        Actual::from_viewport(&info)
+    };
     let step = settling.step(actual);
     for command in step.commands {
         ctx.send_viewport_cmd(command);

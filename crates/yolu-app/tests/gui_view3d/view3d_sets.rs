@@ -1115,16 +1115,31 @@ fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_buildi
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.paint_level, s.paint_by_budget), (1, true), "{s:?}");
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
-    h.state_mut().state.set_doc_mut(0).remove_layer(extra).unwrap();
+    h.state_mut()
+        .state
+        .set_doc_mut(0)
+        .remove_layer(extra)
+        .unwrap();
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.paint_level, 1, "縮めは上げるだけ: {s:?}");
     // 替える: 前の絵（セット 0）は縮めたまま。作り直さない
     switch(&mut h, 1);
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!((s.paint_level, s.other_sets, s.other_skipped), (0, 1, 0), "{s:?}");
-    assert_eq!((s.other_level, s.other_bytes), (1, 349_524), "縮めたまま持ち越す: {s:?}");
-    let (_, size, level) = h.state().view3d_read_other_level(0, Slot::Color, 0).unwrap();
+    assert_eq!(
+        (s.paint_level, s.other_sets, s.other_skipped),
+        (0, 1, 0),
+        "{s:?}"
+    );
+    assert_eq!(
+        (s.other_level, s.other_bytes),
+        (1, 349_524),
+        "縮めたまま持ち越す: {s:?}"
+    );
+    let (_, size, level) = h
+        .state()
+        .view3d_read_other_level(0, Slot::Color, 0)
+        .unwrap();
     assert_eq!((size, level), ([256, 256], 1));
     assert_close(face(&mut h, 0, 2), COLORS[0], 2, "縮めたままの絵");
     // 前の絵が今のセットへ戻ると、文書の大きさで作る（下げるのは文書が替わるとき）

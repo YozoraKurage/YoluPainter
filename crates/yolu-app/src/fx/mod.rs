@@ -150,11 +150,14 @@ impl FxOp {
 
 impl FxState {
     /// 選んでいる段（層・マスクにまだあるもの）。
-    pub fn filter<'a>(&self, doc: &'a Document) -> Option<(LayerId, &'a FilterEffect, FilterTarget)> {
+    pub fn filter<'a>(
+        &self,
+        doc: &'a Document,
+    ) -> Option<(LayerId, &'a FilterEffect, FilterTarget)> {
         match self.selected {
-            Some(Selected::Filter { layer, id }) => doc
-                .find_filter(id)
-                .filter(|(l, _, _)| *l == layer),
+            Some(Selected::Filter { layer, id }) => {
+                doc.find_filter(id).filter(|(l, _, _)| *l == layer)
+            }
             _ => None,
         }
     }
@@ -350,9 +353,7 @@ impl AppState {
                     AnchorPlacement::Layer => l.name().to_owned(),
                 };
                 let name = unique_anchor_name(&self.doc, &base, lang);
-                let id = self
-                    .doc
-                    .add_anchor(layer, placement, Some(&name), None)?;
+                let id = self.doc.add_anchor(layer, placement, Some(&name), None)?;
                 self.select_anchor(id);
                 Ok(Some(lang.pick(
                     format!("アンカー「{name}」を置きました。"),
@@ -477,18 +478,33 @@ impl AppState {
         if next == g {
             // 足す色がもう入っている・外す色が入っていない
             self.message = if remove {
-                lang.pick(format!("ID の色 {hex} は入っていません。"), format!("{hex} is not in the ID colors."))
+                lang.pick(
+                    format!("ID の色 {hex} は入っていません。"),
+                    format!("{hex} is not in the ID colors."),
+                )
             } else {
-                lang.pick(format!("ID の色 {hex} は入っています。"), format!("{hex} is already in the ID colors."))
+                lang.pick(
+                    format!("ID の色 {hex} は入っています。"),
+                    format!("{hex} is already in the ID colors."),
+                )
             };
         } else {
             let revision = self.doc.revision();
-            match self.doc.set_filter_settings(layer, id, EffectSettings::generator(next), false) {
+            match self
+                .doc
+                .set_filter_settings(layer, id, EffectSettings::generator(next), false)
+            {
                 Ok(()) => {
                     self.message = if remove {
-                        lang.pick(format!("ID の色から {hex} を外しました。"), format!("Took {hex} out of the ID colors."))
+                        lang.pick(
+                            format!("ID の色から {hex} を外しました。"),
+                            format!("Took {hex} out of the ID colors."),
+                        )
                     } else {
-                        lang.pick(format!("ID の色に {hex} を足しました。"), format!("Added {hex} to the ID colors."))
+                        lang.pick(
+                            format!("ID の色に {hex} を足しました。"),
+                            format!("Added {hex} to the ID colors."),
+                        )
                     };
                 }
                 Err(e) => self.message = lang.core_error(&e),
@@ -534,7 +550,8 @@ impl AppState {
             issues
                 .iter()
                 .filter(|i| {
-                    !self.fx.issues.known.contains(&i.filter) && i.kind != AnchorIssueKind::NotChosen
+                    !self.fx.issues.known.contains(&i.filter)
+                        && i.kind != AnchorIssueKind::NotChosen
                 })
                 .collect()
         } else {
@@ -543,7 +560,9 @@ impl AppState {
         let lang = self.lang;
         if let Some(first) = fresh.first() {
             let reason = match first.kind {
-                AnchorIssueKind::Missing => lang.pick("読むアンカーがありません", "The anchor to read is gone"),
+                AnchorIssueKind::Missing => {
+                    lang.pick("読むアンカーがありません", "The anchor to read is gone")
+                }
                 AnchorIssueKind::NotBelow => lang.pick(
                     "アンカーが自分の層より下にありません",
                     "The anchor is not below its layer",

@@ -242,7 +242,13 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
             return;
         }
         let at = Rect::from_min_size(pos2(x, y), vec2(170.0, h));
-        let out = w::slider(ui, at, "options.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(l));
+        let out = w::slider(
+            ui,
+            at,
+            "options.wand.tolerance",
+            app.sel.tolerance as f32,
+            &wand_tolerance_spec(l),
+        );
         if out.changed {
             app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
         }
@@ -250,7 +256,13 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 }
 
 fn wand_tolerance_spec(l: Lang) -> SliderSpec<'static> {
-    SliderSpec::new(l.pick("許容値", "Tolerance"), 0.0, 255.0, NumberFormat::int("")).tooltip(l.pick(
+    SliderSpec::new(
+        l.pick("許容値", "Tolerance"),
+        0.0,
+        255.0,
+        NumberFormat::int(""),
+    )
+    .tooltip(l.pick(
         "種の色から、各成分（RGBA）の差がこの値以下の画素を選ぶ",
         "Selects pixels whose every RGBA component is within this distance of the clicked color",
     ))
@@ -345,7 +357,10 @@ pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let held = ui.input(|i| i.modifiers);
     let effective = super::combine_of(app.sel.combine, held);
     for (i, mode) in CREATION_MODES.into_iter().enumerate() {
-        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let at = Rect::from_min_size(
+            pos2(row.left() + 30.0 * i as f32, row.top()),
+            vec2(28.0, row.height()),
+        );
         let lit = effective == mode;
         if w::icon_button(
             ui,
@@ -392,9 +407,23 @@ fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ),
     ];
     for (i, (erase, icon, tip)) in items.into_iter().enumerate() {
-        let at = Rect::from_min_size(pos2(row.left() + 30.0 * i as f32, row.top()), vec2(28.0, row.height()));
+        let at = Rect::from_min_size(
+            pos2(row.left() + 30.0 * i as f32, row.top()),
+            vec2(28.0, row.height()),
+        );
         let lit = erasing == erase;
-        if w::icon_button(ui, at, ("props.select.pen", erase), icon, tip, lit, true, 18.0).clicked() {
+        if w::icon_button(
+            ui,
+            at,
+            ("props.select.pen", erase),
+            icon,
+            tip,
+            lit,
+            true,
+            18.0,
+        )
+        .clicked()
+        {
             app.apply(Action::Sel(SelAction::Ui(super::SelUiOp::PenErase(erase))));
         }
         if app.sel.pen_erase == erase && !lit {
@@ -410,9 +439,24 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let free = !app.is_stroking() && app.read_only_reason().is_none();
     let any = app.doc.selection().is_some();
     let buttons: [(&str, &str, SelEdit, bool); 3] = [
-        ("select_all", l.pick("すべてを選択", "Select All"), SelEdit::All, free),
-        ("deselect", l.pick("選択を解除", "Deselect"), SelEdit::Clear, free && any),
-        ("invert_colors", l.pick("選択範囲を反転", "Invert Selection"), SelEdit::Invert, free && any),
+        (
+            "select_all",
+            l.pick("すべてを選択", "Select All"),
+            SelEdit::All,
+            free,
+        ),
+        (
+            "deselect",
+            l.pick("選択を解除", "Deselect"),
+            SelEdit::Clear,
+            free && any,
+        ),
+        (
+            "invert_colors",
+            l.pick("選択範囲を反転", "Invert Selection"),
+            SelEdit::Invert,
+            free && any,
+        ),
     ];
     let mut x = row.left();
     for (icon, name, edit, enabled) in buttons {
@@ -420,7 +464,18 @@ fn operations_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         // キーは割り当ての表から（文字を直に書かない）
         let action = Action::Sel(SelAction::Edit(edit));
         let tip = crate::shortcuts::tip_with_key(l, name, &action);
-        if w::icon_button(ui, at, ("props.select.op", icon), icon, &tip, false, enabled, 18.0).clicked() {
+        if w::icon_button(
+            ui,
+            at,
+            ("props.select.op", icon),
+            icon,
+            &tip,
+            false,
+            enabled,
+            18.0,
+        )
+        .clicked()
+        {
             app.apply(action);
         }
         x += 30.0;
@@ -511,7 +566,11 @@ fn modify_selection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             label: kind.name(lang),
             primary: false,
             enabled: any && free,
-            tooltip: if any { kind.tooltip(lang) } else { no_selection },
+            tooltip: if any {
+                kind.tooltip(lang)
+            } else {
+                no_selection
+            },
         })
         .collect();
     if let Some(i) = flow_buttons(ui, rows, "sel.modify", &items) {
@@ -529,7 +588,13 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let tool = app.tool;
     if tool == Tool::Wand {
         let at = rows.slider_row();
-        let out = w::slider(ui, at, "props.wand.tolerance", app.sel.tolerance as f32, &wand_tolerance_spec(lang));
+        let out = w::slider(
+            ui,
+            at,
+            "props.wand.tolerance",
+            app.sel.tolerance as f32,
+            &wand_tolerance_spec(lang),
+        );
         if out.changed {
             app.sel.tolerance = out.value.round().clamp(0.0, 255.0) as u8;
         }

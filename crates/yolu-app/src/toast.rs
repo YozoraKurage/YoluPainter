@@ -57,9 +57,23 @@ pub fn is_error(text: &str) -> bool {
     main.contains("ません")
         || main.contains("失敗")
         || main.contains("できない")
-        || ["cannot", "can't", "could not", "couldn't", "failed", "unable", "invalid", "not supported", "no "]
-            .iter()
-            .any(|w| lower.starts_with(w) || lower.contains(&format!(" {w}")) || lower.contains(&format!("; {w}")))
+        || [
+            "cannot",
+            "can't",
+            "could not",
+            "couldn't",
+            "failed",
+            "unable",
+            "invalid",
+            "not supported",
+            "no ",
+        ]
+        .iter()
+        .any(|w| {
+            lower.starts_with(w)
+                || lower.contains(&format!(" {w}"))
+                || lower.contains(&format!("; {w}"))
+        })
 }
 
 impl Toast {
@@ -199,7 +213,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let error = app.toast.is_error();
     let opacity = app.toast.opacity(now);
     let screen = ctx.content_rect();
-    let wrap = (screen.width() - t::TOOL_STRIP_WIDTH - 48.0 - PADDING.x * 2.0).clamp(120.0, MAX_WIDTH);
+    let wrap =
+        (screen.width() - t::TOOL_STRIP_WIDTH - 48.0 - PADDING.x * 2.0).clamp(120.0, MAX_WIDTH);
     let mut dismissed = false;
     let mut hovered = false;
     egui::Area::new(egui::Id::new("yolu.toast"))
@@ -212,21 +227,36 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         .interactable(true)
         .show(ctx, |ui| {
             let fade = |c: Color32| c.gamma_multiply(opacity);
-            let galley = ui.painter().layout(text.clone(), t::LABEL.font(), fade(t::TEXT), wrap);
+            let galley = ui
+                .painter()
+                .layout(text.clone(), t::LABEL.font(), fade(t::TEXT), wrap);
             let size = galley.size() + PADDING * 2.0 + vec2(4.0, 0.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let p = ui.painter();
             p.rect_filled(rect.expand(1.0), 6.0, fade(Color32::from_black_alpha(60)));
             p.rect_filled(rect, 5.0, fade(t::PANEL_HEADER));
-            p.rect_stroke(rect, 5.0, Stroke::new(1.0, fade(t::SEPARATOR)), egui::StrokeKind::Inside);
+            p.rect_stroke(
+                rect,
+                5.0,
+                Stroke::new(1.0, fade(t::SEPARATOR)),
+                egui::StrokeKind::Inside,
+            );
             // 左の帯: エラーは赤、ふつうは青
             p.rect_filled(
-                egui::Rect::from_min_size(rect.min + vec2(0.0, 3.0), vec2(3.0, rect.height() - 6.0)),
+                egui::Rect::from_min_size(
+                    rect.min + vec2(0.0, 3.0),
+                    vec2(3.0, rect.height() - 6.0),
+                ),
                 1.5,
                 fade(if error { t::ERROR } else { t::ACCENT }),
             );
-            p.galley(rect.min + pos2(PADDING.x + 4.0, PADDING.y).to_vec2(), galley, t::TEXT);
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
+            p.galley(
+                rect.min + pos2(PADDING.x + 4.0, PADDING.y).to_vec2(),
+                galley,
+                t::TEXT,
+            );
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
             dismissed = response.clicked();
             hovered = response.hovered();
         });
@@ -239,7 +269,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     // 消える時刻（と、うすくなっていく間）に描き直す
     let remaining = app.toast.remaining(now);
-    let wait = if remaining > FADE_SECONDS { remaining - FADE_SECONDS } else { 1.0 / 30.0 };
+    let wait = if remaining > FADE_SECONDS {
+        remaining - FADE_SECONDS
+    } else {
+        1.0 / 30.0
+    };
     ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.0)));
 }
 
@@ -305,8 +339,14 @@ mod tests {
         operation(&mut toast, &mut message, Some("開けません"));
         toast.update(10.0);
         assert!(toast.is_error());
-        assert!(toast.is_visible(10.0 + INFO_SECONDS + 1.0), "エラーは普通の知らせより長く出る");
-        assert!(toast.is_visible(10.0 + ERROR_SECONDS - 0.01) && !toast.is_visible(10.0 + ERROR_SECONDS + 0.01));
+        assert!(
+            toast.is_visible(10.0 + INFO_SECONDS + 1.0),
+            "エラーは普通の知らせより長く出る"
+        );
+        assert!(
+            toast.is_visible(10.0 + ERROR_SECONDS - 0.01)
+                && !toast.is_visible(10.0 + ERROR_SECONDS + 0.01)
+        );
         const { assert!(ERROR_SECONDS > INFO_SECONDS * 2.0) };
     }
 
@@ -321,13 +361,19 @@ mod tests {
         assert!(!toast.is_visible(INFO_SECONDS + 0.5));
         operation(&mut toast, &mut message, Some("保存しました。"));
         toast.update(10.0);
-        assert!(toast.is_visible(10.5), "時間切れのあとの同じ文も、新しい知らせ");
+        assert!(
+            toast.is_visible(10.5),
+            "時間切れのあとの同じ文も、新しい知らせ"
+        );
         // 押して消したあとにも
         toast.dismiss();
         assert!(!toast.is_visible(11.0));
         operation(&mut toast, &mut message, Some("保存しました。"));
         toast.update(12.0);
-        assert!(toast.is_visible(12.5), "押して消したあとの同じ文も、新しい知らせ");
+        assert!(
+            toast.is_visible(12.5),
+            "押して消したあとの同じ文も、新しい知らせ"
+        );
         assert_eq!(message, "保存しました。");
     }
 
@@ -342,7 +388,10 @@ mod tests {
         operation(&mut toast, &mut message, None);
         assert_eq!(message, "取り消しました。", "最後の文は操作の外から読める");
         toast.update(INFO_SECONDS + 1.0);
-        assert!(!toast.is_pending() && !toast.is_visible(INFO_SECONDS + 1.0), "書かれていなければ出し直さない");
+        assert!(
+            !toast.is_pending() && !toast.is_visible(INFO_SECONDS + 1.0),
+            "書かれていなければ出し直さない"
+        );
     }
 
     #[test]
@@ -383,7 +432,10 @@ mod tests {
         toast.end(&mut message, frame);
         assert!(!toast.is_pending(), "内側で出した文を外側が重ねて出さない");
         toast.update(0.1);
-        assert!(!toast.is_visible(0.2), "押して消した知らせが、同じフレームの終わりで戻らない");
+        assert!(
+            !toast.is_visible(0.2),
+            "押して消した知らせが、同じフレームの終わりで戻らない"
+        );
         // 同じフレームの中で、別の文があとから書かれれば、それも出す
         let frame = toast.begin(&mut message);
         let apply = toast.begin(&mut message);
@@ -414,7 +466,10 @@ mod tests {
         message.clear();
         let prior = toast.begin(&mut message);
         toast.end(&mut message, prior);
-        assert!(!toast.is_visible(1.5), "空にされたら、出している知らせも消える");
+        assert!(
+            !toast.is_visible(1.5),
+            "空にされたら、出している知らせも消える"
+        );
         message = "起動時の知らせ".into();
         let prior = toast.begin(&mut message);
         toast.end(&mut message, prior);
@@ -427,9 +482,15 @@ mod tests {
         toast.write("取り消しました。");
         toast.update(0.0);
         assert_eq!(toast.opacity(1.0), 1.0);
-        assert!(toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) < 1.0 && toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) > 0.0);
+        assert!(
+            toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) < 1.0
+                && toast.opacity(INFO_SECONDS - FADE_SECONDS / 2.0) > 0.0
+        );
         toast.hold(3.0);
-        assert!(toast.is_visible(3.0 + INFO_SECONDS - 0.01), "乗せているあいだは延びる");
+        assert!(
+            toast.is_visible(3.0 + INFO_SECONDS - 0.01),
+            "乗せているあいだは延びる"
+        );
         // 乗せ続けても、初めて出てから HOLD_LIMIT 倍で打ち切る（合計で INFO_SECONDS * HOLD_LIMIT を超えない）
         let limit = INFO_SECONDS * HOLD_LIMIT;
         let mut t = 3.0;
@@ -437,8 +498,14 @@ mod tests {
             toast.hold(t);
             t += 0.25;
         }
-        assert!(!toast.is_visible(limit + 0.01), "置きっぱなしでも、初めて出てから {limit} 秒で消える");
-        assert!(toast.is_visible(limit - 0.5), "乗せているあいだは、上限まで出ている");
+        assert!(
+            !toast.is_visible(limit + 0.01),
+            "置きっぱなしでも、初めて出てから {limit} 秒で消える"
+        );
+        assert!(
+            toast.is_visible(limit - 0.5),
+            "乗せているあいだは、上限まで出ている"
+        );
         toast.write("取り消しました。");
         toast.update(100.0);
         toast.dismiss();

@@ -15,8 +15,8 @@ use yolu_core::{
 use super::properties::{slider_row, toggle_row};
 use super::ramp_rows;
 use crate::eyedrop::EyedropState;
-use crate::rampsets::RampSets;
 use crate::lang::Lang;
+use crate::rampsets::RampSets;
 use crate::ui::curve::{self, CurveStyle};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
@@ -52,7 +52,12 @@ pub struct Params<'a> {
 }
 
 /// 6 種の欄の全部。
-pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, value: &ColorAdjust) -> Option<Change> {
+pub fn rows(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    p: &mut Params<'_>,
+    value: &ColorAdjust,
+) -> Option<Change> {
     match value {
         ColorAdjust::GradientMap(v) => gradient_map_rows(ui, rows, p, v),
         ColorAdjust::ToneCurve(v) => tone_curve_rows(ui, rows, p, v),

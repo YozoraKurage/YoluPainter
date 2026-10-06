@@ -382,14 +382,24 @@ fn the_one_operation_budget_in_the_settings_is_the_exports_working_memory() {
     s.prefs.ram_mib = 16384;
     s.apply(Action::LoadDemoModel);
     s.modified = false;
-    s.apply(Action::Prefs(PrefsAction::Set(Pref::Budget(BudgetKind::Stroke, Budget::Mib(8)))));
+    s.apply(Action::Prefs(PrefsAction::Set(Pref::Budget(
+        BudgetKind::Stroke,
+        Budget::Mib(8),
+    ))));
     assert_eq!(s.export_working_bytes(), 8 * 1024 * 1024);
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
-    assert!(s.message.contains("書き出せません") && s.message.contains("予算"), "{}", s.message);
+    assert!(
+        s.message.contains("書き出せません") && s.message.contains("予算"),
+        "{}",
+        s.message
+    );
     assert!(dir.files().is_empty(), "何も書かない: {:?}", dir.files());
     // 設定を上げれば、同じ書き出しが通る
-    s.apply(Action::Prefs(PrefsAction::Set(Pref::Budget(BudgetKind::Stroke, Budget::Mib(512)))));
+    s.apply(Action::Prefs(PrefsAction::Set(Pref::Budget(
+        BudgetKind::Stroke,
+        Budget::Mib(512),
+    ))));
     assert_eq!(s.export_working_bytes(), 512 * 1024 * 1024);
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
@@ -555,7 +565,8 @@ fn the_set_materials_uv_triangles_scale_to_the_document() {
 /// 書き出した画像にも、画面と同じ効果が入る（正本は効果の入力を持たないので、写した文書へ入力を渡し直す）。読むマップが無くて効いていない効果は、
 /// 黙って入力のまま書かず、書き出した画像に入っていないことを注意に出す。
 #[test]
-fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_named_in_the_notes() {
+fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_named_in_the_notes()
+{
     use crate::fx::FxOp;
     use yolu_core::generator::Kind;
     use yolu_core::FilterTarget;
@@ -572,7 +583,7 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.bake.settings.ao_samples = 8;
     s.bake.settings.padding = 4;
     s.export.padding = 0; // 塗り広げの覆い（モデルの UV）を使わない
-    // 黒の塗りつぶしの層のマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
+                          // 黒の塗りつぶしの層のマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
     s.apply(Action::M2(crate::m2::Edit::NewFill));
     let layer = s.selected_layer.unwrap();
     s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
@@ -587,13 +598,24 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.wait_export();
     let report = s.export.report.as_ref().expect("書き出した");
     assert!(
-        report.notes.iter().any(|n| matches!(n, Note::InactiveEffects(_, effects) if effects.len() == 1)),
+        report
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::InactiveEffects(_, effects) if effects.len() == 1)),
         "{:?}",
         report.notes
     );
-    assert!(s.message.contains("効いていない効果 1 件は書き出しに入っていません"), "{}", s.message);
+    assert!(
+        s.message
+            .contains("効いていない効果 1 件は書き出しに入っていません"),
+        "{}",
+        s.message
+    );
     let png = load_png(&before.0.join("Texture_Albedo.png"));
-    assert!((0..64).all(|y| (0..64).all(|x| px(&png, x, y)[3] == 255)), "入力のまま通る");
+    assert!(
+        (0..64).all(|y| (0..64).all(|x| px(&png, x, y)[3] == 255)),
+        "入力のまま通る"
+    );
 
     // 焼いた後: 書いた画像の透明（マスクが隠した所）が、画面の合成と同じ
     s.apply(Action::Bake(BakeAction::Start));
@@ -601,13 +623,24 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.sync_effects();
     assert!(s.doc.inactive_effect_list().is_empty());
     let screen = s.doc.composite(s.doc.bounds()).unwrap();
-    let hidden = screen.iter().skip(3).step_by(4).filter(|a| **a != 255).count();
+    let hidden = screen
+        .iter()
+        .skip(3)
+        .step_by(4)
+        .filter(|a| **a != 255)
+        .count();
     assert!(hidden > 0, "焼いたマップのジェネレーターが見える所を絞る");
     let after = Dir::new("generator-after");
     export(&mut s, "unity-standard", &after.0);
     s.wait_export();
     assert!(
-        !s.export.report.as_ref().unwrap().notes.iter().any(|n| matches!(n, Note::InactiveEffects(..))),
+        !s.export
+            .report
+            .as_ref()
+            .unwrap()
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::InactiveEffects(..))),
         "効く効果は注意に出さない"
     );
     let png = load_png(&after.0.join("Texture_Albedo.png"));
@@ -657,12 +690,17 @@ fn the_menu_entries_only_ask_for_the_file_or_the_folder() {
 fn the_dialog_suggests_the_same_name_the_folder_export_would_write() {
     let mut s = AppState::new(64, 64);
     assert_eq!(default_channel_file_name(&s), "Texture_Color.png");
-    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(Channel::Roughness)));
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(
+        Channel::Roughness,
+    )));
     assert_eq!(default_channel_file_name(&s), "Texture_Roughness.png");
     // セットが複数ならセット名が入る
     let s = two_sets();
     let name = default_channel_file_name(&s);
-    assert!(name == "Texture_Skin_Color.png" || name == "Texture_Hair_Color.png", "{name}");
+    assert!(
+        name == "Texture_Skin_Color.png" || name == "Texture_Hair_Color.png",
+        "{name}"
+    );
     assert!(name.contains(&s.sets.current().name), "{name}");
 }
 
@@ -692,15 +730,23 @@ fn a_channel_png_is_the_same_bytes_as_the_template_and_the_composite() {
     assert!(s.export.report.is_some(), "テンプレートの結果");
     s.export.report = None;
     // 描くチャンネルを替えると、そのチャンネルの合成そのまま（詰めない・色を掛けない）
-    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(Channel::Roughness)));
+    s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(
+        Channel::Roughness,
+    )));
     let rough = dir.0.join("rough.png");
     export_channel(&mut s, &rough);
     s.wait_export();
     assert!(s.export.report.is_none());
-    assert!(s.message.contains("書き出しました") && s.message.contains("rough.png"), "{}", s.message);
+    assert!(
+        s.message.contains("書き出しました") && s.message.contains("rough.png"),
+        "{}",
+        s.message
+    );
     assert_eq!(
         png_bytes(&rough),
-        s.doc.composite_channel(Channel::Roughness, s.doc.bounds()).unwrap()
+        s.doc
+            .composite_channel(Channel::Roughness, s.doc.bounds())
+            .unwrap()
     );
     // 文書は変わらない
     assert!(!s.doc.can_undo() && !s.modified);
@@ -731,8 +777,14 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
         "OpenGL はテンプレートの Normal と同じバイト"
     );
     // DirectX: 緑だけが 255 − G
-    let settings = s.doc.normal_settings().with_file_direction(yolu_core::NormalYDirection::DirectX);
-    s.apply(Action::M2(crate::m2::Edit::NormalSettings { settings, coalesce: false }));
+    let settings = s
+        .doc
+        .normal_settings()
+        .with_file_direction(yolu_core::NormalYDirection::DirectX);
+    s.apply(Action::M2(crate::m2::Edit::NormalSettings {
+        settings,
+        coalesce: false,
+    }));
     let directx = dir.0.join("directx.png");
     export_channel(&mut s, &directx);
     s.wait_export();
@@ -741,13 +793,20 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
     for (x, y) in a.chunks(4).zip(b.chunks(4)) {
         assert_eq!([x[0], 255 - x[1], x[2], x[3]], [y[0], y[1], y[2], y[3]]);
     }
-    assert_eq!(b, s.doc.normal_file_output(s.export_working_bytes()).unwrap());
+    assert_eq!(
+        b,
+        s.doc.normal_file_output(s.export_working_bytes()).unwrap()
+    );
     // 選ぶ窓が置き換えを確かめているので、もうあるファイルは確かめずに置き換える
     export_channel(&mut s, &opengl);
     assert!(s.export.confirm.is_none());
     s.wait_export();
     assert_eq!(png_bytes(&opengl), b, "同じ名前に新しい DirectX の画像");
-    assert!(dir.files().iter().all(|f| f.ends_with(".png")), "{:?}", dir.files());
+    assert!(
+        dir.files().iter().all(|f| f.ends_with(".png")),
+        "{:?}",
+        dir.files()
+    );
 }
 
 #[test]
@@ -755,9 +814,18 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     let dir = Dir::new("png-named");
     // 拡張子が無い名前だけが、足した名前を確かめる道を通る（付いている名前は、選ぶ窓が確かめた）
     let bare = dir.0.join("foo");
-    assert_eq!(channel_action(bare.clone()), ExportAction::ChannelNamed(dir.0.join("foo.png")));
-    assert_eq!(channel_action(dir.0.join("foo.png")), ExportAction::ChannelTo(dir.0.join("foo.png")));
-    assert_eq!(channel_action(dir.0.join("foo.PNG")), ExportAction::ChannelTo(dir.0.join("foo.PNG")));
+    assert_eq!(
+        channel_action(bare.clone()),
+        ExportAction::ChannelNamed(dir.0.join("foo.png"))
+    );
+    assert_eq!(
+        channel_action(dir.0.join("foo.png")),
+        ExportAction::ChannelTo(dir.0.join("foo.png"))
+    );
+    assert_eq!(
+        channel_action(dir.0.join("foo.PNG")),
+        ExportAction::ChannelTo(dir.0.join("foo.PNG"))
+    );
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
     let layer = s.selected_layer.unwrap();
@@ -774,7 +842,10 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     assert!(!s.export.is_exporting());
     let confirm = s.export.confirm.clone().expect("確かめの窓");
     assert_eq!(confirm.what, What::ChannelFile(dir.0.join("foo.png")));
-    assert_eq!((confirm.existing.clone(), confirm.total), (vec!["foo.png".to_string()], 1));
+    assert_eq!(
+        (confirm.existing.clone(), confirm.total),
+        (vec!["foo.png".to_string()], 1)
+    );
     assert_eq!(s.message, "もうあるファイル 1 個を置き換えるか確かめます。");
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
     // やめれば、そのまま
@@ -812,7 +883,11 @@ fn a_channel_png_pads_outside_the_uvs_like_the_templates_do() {
     s.wait_export();
     let img = load_png(&path);
     assert_eq!(px(&img, 10, 30), [255, 0, 0, 255]);
-    assert_eq!(px(&img, 60, 30), [255, 0, 0, 255], "UV の外は境目の色で塗り広げる");
+    assert_eq!(
+        px(&img, 60, 30),
+        [255, 0, 0, 255],
+        "UV の外は境目の色で塗り広げる"
+    );
     // 塗り広げない設定なら空のまま
     s.export.padding = 0;
     let plain = dir.0.join("plain.png");
@@ -835,11 +910,18 @@ fn a_read_only_set_and_a_missing_file_name_are_refused_with_a_reason() {
     s.sets.get_mut(index).unwrap().read_only = Some("フィルターのあるレイヤーがあります".into());
     export_channel(&mut s, &dir.0.join("x.png"));
     assert!(!s.export.is_exporting());
-    assert_eq!(s.message, "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります");
+    assert_eq!(
+        s.message,
+        "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります"
+    );
     assert!(dir.files().is_empty());
     s.lang = crate::lang::Lang::En;
     export_channel(&mut s, &dir.0.join("x.png"));
-    assert!(s.message.starts_with("Read-only texture set"), "{}", s.message);
+    assert!(
+        s.message.starts_with("Read-only texture set"),
+        "{}",
+        s.message
+    );
     // ファイル名の無い道
     let mut s = AppState::new(64, 64);
     s.apply(Action::Export(ExportAction::ChannelTo(PathBuf::from("/"))));
@@ -870,9 +952,18 @@ fn all_channels_are_written_per_set_with_english_names_and_only_the_used_ones() 
     want.sort();
     assert_eq!(dir.files(), want);
     let rough = png_bytes(&dir.0.join(format!("Texture_{current}_Roughness.png")));
-    assert_eq!(rough, s.doc.composite_channel(Channel::Roughness, s.doc.bounds()).unwrap());
+    assert_eq!(
+        rough,
+        s.doc
+            .composite_channel(Channel::Roughness, s.doc.bounds())
+            .unwrap()
+    );
     let emission = load_png(&dir.0.join(format!("Texture_{current}_Emission.png")));
-    assert_eq!(px(&emission, 10, 30), [5, 6, 7, 128], "テンプレートの Emission と違い、アルファのまま");
+    assert_eq!(
+        px(&emission, 10, 30),
+        [5, 6, 7, 128],
+        "テンプレートの Emission と違い、アルファのまま"
+    );
     // 結果の窓: 種類（sRGB・リニア）
     let report = s.export.report.as_ref().unwrap();
     assert_eq!(report.images.len(), 4);
@@ -892,9 +983,14 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
     let layer = s.selected_layer.unwrap();
     // Height だけ使い、Height → Normal を有効にすると、Normal の画像も出る（塗った Normal の層が無くても）
     paint_left_half(&mut s.doc, layer, Channel::Height, [200, 200, 200, 255]);
-    s.doc.set_channel_enabled(layer, Channel::Color, false).unwrap();
+    s.doc
+        .set_channel_enabled(layer, Channel::Color, false)
+        .unwrap();
     let settings = yolu_core::NormalSettings::DEFAULT.with_derive(true);
-    s.apply(Action::M2(crate::m2::Edit::NormalSettings { settings, coalesce: false }));
+    s.apply(Action::M2(crate::m2::Edit::NormalSettings {
+        settings,
+        coalesce: false,
+    }));
     // ユーザーチャンネル（名前が使えない文字を含む）
     let info = yolu_core::ChannelInfo {
         name: "AO/Mask".into(),
@@ -919,15 +1015,24 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
         s.doc.normal_file_output(s.export_working_bytes()).unwrap()
     );
     let report = s.export.report.as_ref().unwrap();
-    assert!(report.images.iter().any(|i| i.normal_map && i.suffix == "Normal"));
+    assert!(report
+        .images
+        .iter()
+        .any(|i| i.normal_map && i.suffix == "Normal"));
     // 何も使っていない文書は書くものが無い
     let empty = Dir::new("all-empty");
     let mut s = AppState::new(64, 64);
     let layer = s.selected_layer.unwrap();
-    s.doc.set_channel_enabled(layer, Channel::Color, false).unwrap();
+    s.doc
+        .set_channel_enabled(layer, Channel::Color, false)
+        .unwrap();
     export_channels(&mut s, &empty.0);
     assert!(!s.export.is_exporting());
-    assert!(s.message.contains("書き出すものがありません"), "{}", s.message);
+    assert!(
+        s.message.contains("書き出すものがありません"),
+        "{}",
+        s.message
+    );
     s.lang = crate::lang::Lang::En;
     export_channels(&mut s, &empty.0);
     assert!(s.message.starts_with("Nothing to export"), "{}", s.message);
@@ -951,14 +1056,25 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
     assert_eq!(confirm.total, 2);
     assert_eq!(confirm.existing.len(), 2);
     s.apply(Action::Export(ExportAction::CancelConfirm));
-    assert_eq!(std::fs::read(dir.0.join(&name)).unwrap(), original, "やめたら元のまま");
+    assert_eq!(
+        std::fs::read(dir.0.join(&name)).unwrap(),
+        original,
+        "やめたら元のまま"
+    );
     // 置き換える: 確かめの窓の「置き換える」が、同じ全チャンネルをもう一度計画する
     export_channels(&mut s, &dir.0);
     s.apply(Action::Export(ExportAction::ConfirmReplace));
     assert!(s.export.is_exporting());
     s.wait_export();
     assert_ne!(std::fs::read(dir.0.join(&name)).unwrap(), original);
-    assert!(s.export.report.as_ref().unwrap().images.iter().all(|i| i.replaced));
+    assert!(s
+        .export
+        .report
+        .as_ref()
+        .unwrap()
+        .images
+        .iter()
+        .all(|i| i.replaced));
     // セット名が同じファイルになる
     let clash = Dir::new("all-clash");
     let (a, b) = (s.sets.get(0).unwrap().uid, s.sets.get(1).unwrap().uid);
@@ -981,7 +1097,11 @@ fn all_channels_skip_a_read_only_set_and_say_so_and_cancel_leaves_nothing() {
     s.wait_export();
     assert_eq!(dir.files().len(), 1, "{:?}", dir.files());
     let report = s.export.report.as_ref().unwrap();
-    assert!(report.notes.contains(&Note::ReadOnly(name)), "{:?}", report.notes);
+    assert!(
+        report.notes.contains(&Note::ReadOnly(name)),
+        "{:?}",
+        report.notes
+    );
     // 取消: 何も書かず、一時ファイルも残さない
     let cancel = Dir::new("all-cancel");
     s.export.park_next = true;
@@ -1007,7 +1127,9 @@ fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {
         let flat = [i as u8, 255 - i as u8, 7, 255].repeat((ts * ts) as usize);
         for ty in 0..n {
             for tx in 0..n {
-                s.doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat).unwrap();
+                s.doc
+                    .import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat)
+                    .unwrap();
             }
         }
     }

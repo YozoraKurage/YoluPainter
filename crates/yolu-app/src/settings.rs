@@ -16,7 +16,9 @@ use crate::pen::adjust::{PressureAdjust, MIN_SPAN};
 
 /// 設定のファイルの場所（設定のフォルダが分からなければ None）。
 pub fn path() -> Option<PathBuf> {
-    config_path(std::env::consts::OS, |key| std::env::var_os(key).map(PathBuf::from))
+    config_path(std::env::consts::OS, |key| {
+        std::env::var_os(key).map(PathBuf::from)
+    })
 }
 
 fn config_base(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
@@ -29,13 +31,19 @@ fn config_base(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBu
 }
 
 fn config_path(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
-    Some(config_base(os, env)?.join("YoluPainter").join("settings.conf"))
+    Some(
+        config_base(os, env)?
+            .join("YoluPainter")
+            .join("settings.conf"),
+    )
 }
 
 /// 棚の場所の既定（設定のフォルダの下の Library）。設定のフォルダが分からなければ None。
 pub fn default_library_folder() -> Option<PathBuf> {
-    config_base(std::env::consts::OS, |key| std::env::var_os(key).map(PathBuf::from))
-        .map(|base| base.join("YoluPainter").join("Library"))
+    config_base(std::env::consts::OS, |key| {
+        std::env::var_os(key).map(PathBuf::from)
+    })
+    .map(|base| base.join("YoluPainter").join("Library"))
 }
 
 // ───────── 値の種類 ─────────
@@ -247,7 +255,9 @@ impl Settings {
     /// 設定を上げれば大きな文書も読める。設定を下げても、読めていた文書は読める（今の画素が予算を超えるときは `sync_budgets` が
     /// 予算をその量まで広げて知らせる）。
     pub fn load_source_bytes(&self, ram_mib: u64) -> u64 {
-        self.budgets(ram_mib).source.max(DEFAULT_SOURCE_BUDGET_BYTES)
+        self.budgets(ram_mib)
+            .source
+            .max(DEFAULT_SOURCE_BUDGET_BYTES)
     }
 
     /// 棚の場所（設定になければ既定。設定のフォルダも分からなければ None）。
@@ -298,7 +308,10 @@ fn detect_memory_mib() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn detect_memory_mib() -> Option<u64> {
-    let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .ok()?;
     let bytes: u64 = String::from_utf8(out.stdout).ok()?.trim().parse().ok()?;
     Some(bytes / (1024 * 1024))
 }
@@ -327,8 +340,15 @@ impl Problem {
     /// 状態の帯の短い文。
     pub fn text(&self, lang: Lang) -> String {
         match self {
-            Self::Unreadable => lang.pick("設定を読めません。", "Cannot read the settings.").into(),
-            Self::Language(_) => lang.pick("言語の設定を読めません。", "Cannot read the language setting.").into(),
+            Self::Unreadable => lang
+                .pick("設定を読めません。", "Cannot read the settings.")
+                .into(),
+            Self::Language(_) => lang
+                .pick(
+                    "言語の設定を読めません。",
+                    "Cannot read the language setting.",
+                )
+                .into(),
             Self::Invalid { key, value } => {
                 let shown: String = value.chars().take(12).collect();
                 let name = setting_name(lang, key);
@@ -399,7 +419,10 @@ fn read(path: &Path) -> io::Result<String> {
     let mut text = String::new();
     file.take(MAX_FILE_BYTES + 1).read_to_string(&mut text)?;
     if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "settings too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "settings too large",
+        ));
     }
     Ok(text)
 }
@@ -416,7 +439,12 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             return (Settings::default(), vec![Problem::Unreadable]);
         };
         let value = value.trim();
-        let mut invalid = |key: &'static str| problems.push(Problem::Invalid { key, value: value.to_owned() });
+        let mut invalid = |key: &'static str| {
+            problems.push(Problem::Invalid {
+                key,
+                value: value.to_owned(),
+            })
+        };
         match key.trim() {
             "language" => match value {
                 "ja" => settings.lang = Lang::Ja,
@@ -427,7 +455,11 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 Some(v) => settings.export_padding = v,
                 None => invalid("export_padding"),
             },
-            "min_undo_steps" => match value.parse::<u32>().ok().filter(|n| *n <= MAX_MIN_UNDO_STEPS) {
+            "min_undo_steps" => match value
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n <= MAX_MIN_UNDO_STEPS)
+            {
                 Some(v) => settings.min_undo_steps = v,
                 None => invalid("min_undo_steps"),
             },
@@ -449,11 +481,19 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             },
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
-            "pressure_low" => match value.parse::<f32>().ok().filter(|v| (0.0..=1.0 - MIN_SPAN).contains(v)) {
+            "pressure_low" => match value
+                .parse::<f32>()
+                .ok()
+                .filter(|v| (0.0..=1.0 - MIN_SPAN).contains(v))
+            {
                 Some(v) => low = Some(v),
                 None => invalid("pressure_low"),
             },
-            "pressure_high" => match value.parse::<f32>().ok().filter(|v| (MIN_SPAN..=1.0).contains(v)) {
+            "pressure_high" => match value
+                .parse::<f32>()
+                .ok()
+                .filter(|v| (MIN_SPAN..=1.0).contains(v))
+            {
                 Some(v) => high = Some(v),
                 None => invalid("pressure_high"),
             },
@@ -463,8 +503,14 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 Some(points) => curve = Some(points),
                 None => invalid("pressure_curve"),
             },
-            "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
-            "view3d_antialias" => match value.parse::<u32>().ok().filter(|n| crate::view3d::display::SAMPLE_CHOICES.contains(n)) {
+            "view3d_orbit" | "view3d_zoom" => {
+                settings.navigation.parse(key.trim(), value, &mut problems)
+            }
+            "view3d_antialias" => match value
+                .parse::<u32>()
+                .ok()
+                .filter(|n| crate::view3d::display::SAMPLE_CHOICES.contains(n))
+            {
                 Some(n) => settings.view3d_post.antialias = n,
                 None => invalid("view3d_antialias"),
             },
@@ -473,21 +519,37 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 "off" => settings.view3d_post.bloom = false,
                 _ => invalid("view3d_bloom"),
             },
-            "view3d_bloom_strength" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_STRENGTH_MAX).contains(v)) {
+            "view3d_bloom_strength" => match value
+                .parse::<f32>()
+                .ok()
+                .filter(|v| (0.0..=crate::view3d::display::BLOOM_STRENGTH_MAX).contains(v))
+            {
                 Some(v) => settings.view3d_post.bloom_strength = v,
                 None => invalid("view3d_bloom_strength"),
             },
-            "view3d_bloom_threshold" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_THRESHOLD_MAX).contains(v)) {
+            "view3d_bloom_threshold" => match value
+                .parse::<f32>()
+                .ok()
+                .filter(|v| (0.0..=crate::view3d::display::BLOOM_THRESHOLD_MAX).contains(v))
+            {
                 Some(v) => settings.view3d_post.bloom_threshold = v,
                 None => invalid("view3d_bloom_threshold"),
             },
-            "view3d_paint_hidden" | "view3d_paint_backfaces" | "view3d_paint_falloff" | "view3d_paint_falloff_start" | "view3d_paint_falloff_end" | "view3d_paint_seam_bleed" => {
+            "view3d_paint_hidden"
+            | "view3d_paint_backfaces"
+            | "view3d_paint_falloff"
+            | "view3d_paint_falloff_start"
+            | "view3d_paint_falloff_end"
+            | "view3d_paint_seam_bleed" => {
                 if let Some(key) = parse_paint(&mut settings.view3d_paint, key.trim(), value) {
                     invalid(key);
                 }
             }
             "uv_wireframe" => settings.uv_wireframe = value != "off",
-            "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
+            "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) {
+                Some(c) => settings.uv_wireframe_color = c,
+                None => invalid("uv_wireframe_color"),
+            },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             "livelink_keep_values" => settings.livelink_keep_values = value != "off",
             // 入れたときだけ書く行（既定は切）。読めない値は切のまま
@@ -523,13 +585,22 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
 }
 
 /// 3D の塗りの切り替えの 1 項目を読む（読めなければ、その項目は既定のまま、正しくない項目のキーを返す）。
-fn parse_paint(paint: &mut yolu_core::geometry::ProjectionSettings, key: &str, value: &str) -> Option<&'static str> {
+fn parse_paint(
+    paint: &mut yolu_core::geometry::ProjectionSettings,
+    key: &str,
+    value: &str,
+) -> Option<&'static str> {
     let switch = |value: &str| match value {
         "on" => Some(true),
         "off" => Some(false),
         _ => None,
     };
-    let angle = |value: &str| value.parse::<f32>().ok().filter(|v| (0.0..=90.0).contains(v));
+    let angle = |value: &str| {
+        value
+            .parse::<f32>()
+            .ok()
+            .filter(|v| (0.0..=90.0).contains(v))
+    };
     match key {
         "view3d_paint_hidden" => match switch(value) {
             Some(v) => paint.paint_hidden = v,
@@ -551,7 +622,11 @@ fn parse_paint(paint: &mut yolu_core::geometry::ProjectionSettings, key: &str, v
             Some(v) => paint.angle_end = v,
             None => return Some("view3d_paint_falloff_end"),
         },
-        _ => match value.parse::<u32>().ok().filter(|n| *n <= yolu_core::geometry::MAX_SEAM_BLEED) {
+        _ => match value
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n <= yolu_core::geometry::MAX_SEAM_BLEED)
+        {
             Some(n) => paint.seam_bleed = n,
             None => return Some("view3d_paint_seam_bleed"),
         },
@@ -622,7 +697,10 @@ fn render(settings: &Settings) -> String {
         }
     }
     if settings.min_undo_steps != default.min_undo_steps {
-        text += &format!("min_undo_steps={}\n", settings.min_undo_steps.min(MAX_MIN_UNDO_STEPS));
+        text += &format!(
+            "min_undo_steps={}\n",
+            settings.min_undo_steps.min(MAX_MIN_UNDO_STEPS)
+        );
     }
     if let Some(n) = settings.cpu_threads {
         text += &format!("cpu_threads={}\n", n.clamp(1, MAX_CPU_THREADS));
@@ -644,7 +722,10 @@ fn render(settings: &Settings) -> String {
         text += &format!("pressure_high={}\n", pressure.high());
     }
     if !pressure.curve().is_empty() {
-        text += &format!("pressure_curve={}\n", crate::brushes::store::curve_text(pressure.curve()));
+        text += &format!(
+            "pressure_curve={}\n",
+            crate::brushes::store::curve_text(pressure.curve())
+        );
     }
     settings.navigation.write(&mut text);
     write_post(&mut text, &settings.view3d_post);
@@ -683,13 +764,21 @@ fn write_post(text: &mut String, post: &crate::view3d::display::PostFx) {
         *text += &format!("view3d_antialias={}\n", post.antialias);
     }
     if post.bloom != default.bloom {
-        *text += if post.bloom { "view3d_bloom=on\n" } else { "view3d_bloom=off\n" };
+        *text += if post.bloom {
+            "view3d_bloom=on\n"
+        } else {
+            "view3d_bloom=off\n"
+        };
     }
     let value = |v: f32, max: f32| v.is_finite().then(|| v.clamp(0.0, max));
-    if let Some(v) = value(post.bloom_strength, BLOOM_STRENGTH_MAX).filter(|v| *v != default.bloom_strength) {
+    if let Some(v) =
+        value(post.bloom_strength, BLOOM_STRENGTH_MAX).filter(|v| *v != default.bloom_strength)
+    {
         *text += &format!("view3d_bloom_strength={v}\n");
     }
-    if let Some(v) = value(post.bloom_threshold, BLOOM_THRESHOLD_MAX).filter(|v| *v != default.bloom_threshold) {
+    if let Some(v) =
+        value(post.bloom_threshold, BLOOM_THRESHOLD_MAX).filter(|v| *v != default.bloom_threshold)
+    {
         *text += &format!("view3d_bloom_threshold={v}\n");
     }
 }
@@ -720,14 +809,22 @@ fn write_paint(text: &mut String, paint: &yolu_core::geometry::ProjectionSetting
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing"))?;
     std::fs::create_dir_all(parent)?;
     let text = render(settings);
     if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "settings too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "settings too large",
+        ));
     }
     let pending = path.with_extension(format!("{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&pending)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending)?;
     let result = (|| {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
@@ -746,7 +843,9 @@ pub fn apply_thread_setting() {
     let Some(path) = path() else { return };
     let (settings, _) = load(&path);
     if let Some(n) = settings.cpu_threads {
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(n as usize).build_global();
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(n as usize)
+            .build_global();
     }
 }
 
@@ -755,13 +854,18 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/settings-tests").join(format!("{}-{tag}", std::process::id()));
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/settings-tests")
+            .join(format!("{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
 
     fn with_lang(lang: Lang) -> Settings {
-        Settings { lang, ..Settings::default() }
+        Settings {
+            lang,
+            ..Settings::default()
+        }
     }
 
     fn custom(dir: &Path) -> Settings {
@@ -817,10 +921,15 @@ mod tests {
         let dir = temp_dir("livelinkvalues");
         let path = dir.join("settings.conf");
         assert!(load(&path).0.livelink_keep_values);
-        let off = Settings { livelink_keep_values: false, ..Settings::default() };
+        let off = Settings {
+            livelink_keep_values: false,
+            ..Settings::default()
+        };
         save(&path, &off).unwrap();
         assert_eq!(load(&path), (off, vec![]));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_keep_values=off"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("livelink_keep_values=off"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -829,17 +938,31 @@ mod tests {
         let dir = temp_dir("externalops");
         let path = dir.join("settings.conf");
         assert!(!load(&path).0.external_ops, "ファイルが無ければ切");
-        let on = Settings { external_ops: true, ..Settings::default() };
+        let on = Settings {
+            external_ops: true,
+            ..Settings::default()
+        };
         save(&path, &on).unwrap();
         assert_eq!(load(&path), (on, vec![]));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("external_ops=on"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("external_ops=on"));
         // 切は書かない（行が無い設定ファイルと同じ）
         save(&path, &Settings::default()).unwrap();
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("external_ops"));
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("external_ops"));
         // この項目を知らない古い設定は切として読む。読めない値も切
-        assert!(!parse("language=ja\nlivelink_keep_values=off\n").0.external_ops);
+        assert!(
+            !parse("language=ja\nlivelink_keep_values=off\n")
+                .0
+                .external_ops
+        );
         let (settings, problems) = parse("external_ops=maybe\nlanguage=en\n");
-        assert!(!settings.external_ops && problems.is_empty(), "{problems:?}");
+        assert!(
+            !settings.external_ops && problems.is_empty(),
+            "{problems:?}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -848,13 +971,20 @@ mod tests {
         let dir = temp_dir("livelink");
         let path = dir.join("settings.conf");
         assert!(load(&path).0.livelink_on_startup);
-        let off = Settings { livelink_on_startup: false, ..Settings::default() };
+        let off = Settings {
+            livelink_on_startup: false,
+            ..Settings::default()
+        };
         save(&path, &off).unwrap();
         assert_eq!(load(&path), (off, vec![]));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_on_startup=off"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("livelink_on_startup=off"));
         save(&path, &Settings::default()).unwrap();
         assert_eq!(load(&path), (Settings::default(), vec![]));
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("livelink_on_startup"));
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("livelink_on_startup"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -863,12 +993,19 @@ mod tests {
         let dir = temp_dir("colorwheel");
         let path = dir.join("settings.conf");
         assert!(load(&path).0.color_wheel);
-        let off = Settings { color_wheel: false, ..Settings::default() };
+        let off = Settings {
+            color_wheel: false,
+            ..Settings::default()
+        };
         save(&path, &off).unwrap();
         assert_eq!(load(&path), (off, vec![]));
-        assert!(std::fs::read_to_string(&path).unwrap().contains("color_wheel=off"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("color_wheel=off"));
         save(&path, &Settings::default()).unwrap();
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("color_wheel"));
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("color_wheel"));
         // 切り替えは AppState の設定に出て、読んだ設定は AppState へ入る
         let mut state = crate::state::AppState::new(8, 8);
         assert!(state.color.wheel && state.settings().color_wheel);
@@ -890,11 +1027,23 @@ mod tests {
             "XDG_CONFIG_HOME" => Some(PathBuf::from("relative")),
             _ => None,
         };
-        assert_eq!(config_path("linux", env).unwrap(), home.join(".config/YoluPainter/settings.conf"));
-        assert_eq!(config_path("macos", env).unwrap(), home.join("Library/Application Support/YoluPainter/settings.conf"));
-        assert_eq!(config_path("windows", env).unwrap(), base.join("roaming/YoluPainter/settings.conf"));
+        assert_eq!(
+            config_path("linux", env).unwrap(),
+            home.join(".config/YoluPainter/settings.conf")
+        );
+        assert_eq!(
+            config_path("macos", env).unwrap(),
+            home.join("Library/Application Support/YoluPainter/settings.conf")
+        );
+        assert_eq!(
+            config_path("windows", env).unwrap(),
+            base.join("roaming/YoluPainter/settings.conf")
+        );
         assert!(config_path("linux", |_| None).is_none());
-        assert_eq!(config_path("linux", |_| Some(base.join("config"))).unwrap(), base.join("config/YoluPainter/settings.conf"));
+        assert_eq!(
+            config_path("linux", |_| Some(base.join("config"))).unwrap(),
+            base.join("config/YoluPainter/settings.conf")
+        );
     }
 
     #[test]
@@ -912,9 +1061,18 @@ mod tests {
         assert!(save(&path, &with_lang(Lang::Ja)).is_err());
         assert_eq!(load(&path).0.lang, Lang::En);
         std::fs::write(&path, "language=unknown").unwrap();
-        assert_eq!(load(&path), (Settings::default(), vec![Problem::Language("unknown".into())]));
+        assert_eq!(
+            load(&path),
+            (
+                Settings::default(),
+                vec![Problem::Language("unknown".into())]
+            )
+        );
         std::fs::write(&path, vec![b'a'; 4097]).unwrap();
-        assert_eq!(load(&path), (Settings::default(), vec![Problem::Unreadable]));
+        assert_eq!(
+            load(&path),
+            (Settings::default(), vec![Problem::Unreadable])
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -931,17 +1089,68 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
         // 1 つずつ変えると、その行だけが書かれて読み直せる
         let cases = [
-            (PostFx { antialias: 1, ..default }, "view3d_antialias=1"),
-            (PostFx { antialias: 2, ..default }, "view3d_antialias=2"),
-            (PostFx { antialias: 8, ..default }, "view3d_antialias=8"),
-            (PostFx { bloom: true, ..default }, "view3d_bloom=on"),
-            (PostFx { bloom_strength: 0.0, ..default }, "view3d_bloom_strength=0"),
-            (PostFx { bloom_strength: 2.0, ..default }, "view3d_bloom_strength=2"),
-            (PostFx { bloom_threshold: 0.0, ..default }, "view3d_bloom_threshold=0"),
-            (PostFx { bloom_threshold: 3.5, ..default }, "view3d_bloom_threshold=3.5"),
+            (
+                PostFx {
+                    antialias: 1,
+                    ..default
+                },
+                "view3d_antialias=1",
+            ),
+            (
+                PostFx {
+                    antialias: 2,
+                    ..default
+                },
+                "view3d_antialias=2",
+            ),
+            (
+                PostFx {
+                    antialias: 8,
+                    ..default
+                },
+                "view3d_antialias=8",
+            ),
+            (
+                PostFx {
+                    bloom: true,
+                    ..default
+                },
+                "view3d_bloom=on",
+            ),
+            (
+                PostFx {
+                    bloom_strength: 0.0,
+                    ..default
+                },
+                "view3d_bloom_strength=0",
+            ),
+            (
+                PostFx {
+                    bloom_strength: 2.0,
+                    ..default
+                },
+                "view3d_bloom_strength=2",
+            ),
+            (
+                PostFx {
+                    bloom_threshold: 0.0,
+                    ..default
+                },
+                "view3d_bloom_threshold=0",
+            ),
+            (
+                PostFx {
+                    bloom_threshold: 3.5,
+                    ..default
+                },
+                "view3d_bloom_threshold=3.5",
+            ),
         ];
         for (post, line) in cases {
-            let settings = Settings { view3d_post: post, ..with_lang(Lang::Ja) };
+            let settings = Settings {
+                view3d_post: post,
+                ..with_lang(Lang::Ja)
+            };
             save(&path, &settings).unwrap();
             let written = std::fs::read_to_string(&path).unwrap();
             assert_eq!(written, format!("language=ja\n{line}\n"), "{post:?}");
@@ -965,7 +1174,10 @@ mod tests {
         assert_eq!(settings.view3d_post, PostFx::default());
         // 読んで書き直しても、前の項目の値は同じ（仕上げは既定のままなので行は増えない）
         let written = render(&settings);
-        assert!(!written.contains("view3d_antialias") && !written.contains("view3d_bloom"), "{written}");
+        assert!(
+            !written.contains("view3d_antialias") && !written.contains("view3d_bloom"),
+            "{written}"
+        );
         assert_eq!(parse(&written), (settings, vec![]));
     }
 
@@ -983,17 +1195,40 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(keys, ["view3d_antialias", "view3d_bloom", "view3d_bloom_strength", "view3d_bloom_threshold"]);
+        assert_eq!(
+            keys,
+            [
+                "view3d_antialias",
+                "view3d_bloom",
+                "view3d_bloom_strength",
+                "view3d_bloom_threshold"
+            ]
+        );
         for lang in Lang::ALL {
             for key in keys.iter().copied() {
                 let name = setting_name(lang, key);
-                assert_ne!(name, setting_name(lang, "unknown_key"), "{key} に名前がある");
+                assert_ne!(
+                    name,
+                    setting_name(lang, "unknown_key"),
+                    "{key} に名前がある"
+                );
             }
         }
         // 範囲の外の値は書かない（読めなくなる）。範囲へ収めて書く
-        let wild = Settings { view3d_post: PostFx { bloom_strength: 99.0, bloom_threshold: f32::NAN, ..PostFx::default() }, ..Settings::default() };
+        let wild = Settings {
+            view3d_post: PostFx {
+                bloom_strength: 99.0,
+                bloom_threshold: f32::NAN,
+                ..PostFx::default()
+            },
+            ..Settings::default()
+        };
         let written = render(&wild);
-        assert!(written.contains("view3d_bloom_strength=2\n") && !written.contains("view3d_bloom_threshold"), "{written}");
+        assert!(
+            written.contains("view3d_bloom_strength=2\n")
+                && !written.contains("view3d_bloom_threshold"),
+            "{written}"
+        );
     }
 
     #[test]
@@ -1007,24 +1242,79 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
         // 1 つずつ変えると、その行だけが書かれて読み直せる（範囲の端も）
         let cases = [
-            (ProjectionSettings { paint_hidden: true, ..default }, "view3d_paint_hidden=on"),
-            (ProjectionSettings { paint_backfaces: true, ..default }, "view3d_paint_backfaces=on"),
-            (ProjectionSettings { angle_falloff: false, ..default }, "view3d_paint_falloff=off"),
-            (ProjectionSettings { angle_start: 0.0, ..default }, "view3d_paint_falloff_start=0"),
-            (ProjectionSettings { angle_end: 90.0, ..default }, "view3d_paint_falloff_end=90"),
-            (ProjectionSettings { seam_bleed: 0, ..default }, "view3d_paint_seam_bleed=0"),
-            (ProjectionSettings { seam_bleed: yolu_core::geometry::MAX_SEAM_BLEED, ..default }, "view3d_paint_seam_bleed=16"),
+            (
+                ProjectionSettings {
+                    paint_hidden: true,
+                    ..default
+                },
+                "view3d_paint_hidden=on",
+            ),
+            (
+                ProjectionSettings {
+                    paint_backfaces: true,
+                    ..default
+                },
+                "view3d_paint_backfaces=on",
+            ),
+            (
+                ProjectionSettings {
+                    angle_falloff: false,
+                    ..default
+                },
+                "view3d_paint_falloff=off",
+            ),
+            (
+                ProjectionSettings {
+                    angle_start: 0.0,
+                    ..default
+                },
+                "view3d_paint_falloff_start=0",
+            ),
+            (
+                ProjectionSettings {
+                    angle_end: 90.0,
+                    ..default
+                },
+                "view3d_paint_falloff_end=90",
+            ),
+            (
+                ProjectionSettings {
+                    seam_bleed: 0,
+                    ..default
+                },
+                "view3d_paint_seam_bleed=0",
+            ),
+            (
+                ProjectionSettings {
+                    seam_bleed: yolu_core::geometry::MAX_SEAM_BLEED,
+                    ..default
+                },
+                "view3d_paint_seam_bleed=16",
+            ),
         ];
         for (paint, line) in cases {
-            let settings = Settings { view3d_paint: paint, ..with_lang(Lang::Ja) };
+            let settings = Settings {
+                view3d_paint: paint,
+                ..with_lang(Lang::Ja)
+            };
             save(&path, &settings).unwrap();
-            assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("language=ja\n{line}\n"), "{paint:?}");
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                format!("language=ja\n{line}\n"),
+                "{paint:?}"
+            );
             assert_eq!(load(&path), (settings, vec![]), "{paint:?}");
         }
         // 画面の切り替えは AppState の設定に出て、読んだ設定は AppState へ入る（起動し直しても同じ）
         let mut state = crate::state::AppState::new(8, 8);
         assert_eq!(state.settings().view3d_paint, default);
-        let changed = ProjectionSettings { paint_hidden: true, angle_start: 70.0, angle_end: 88.0, seam_bleed: 5, ..default };
+        let changed = ProjectionSettings {
+            paint_hidden: true,
+            angle_start: 70.0,
+            angle_end: 88.0,
+            seam_bleed: 5,
+            ..default
+        };
         state.view3d.projection = changed;
         save(&path, &state.settings()).unwrap();
         let mut again = crate::state::AppState::new(8, 8);
@@ -1038,8 +1328,14 @@ mod tests {
         let old = "language=en\nexport_padding=8\nview3d_antialias=8\nuv_wireframe=off\n";
         let (settings, problems) = parse(old);
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(settings.view3d_paint, yolu_core::geometry::ProjectionSettings::default());
-        assert_eq!((settings.export_padding, settings.view3d_post.antialias), (8, 8));
+        assert_eq!(
+            settings.view3d_paint,
+            yolu_core::geometry::ProjectionSettings::default()
+        );
+        assert_eq!(
+            (settings.export_padding, settings.view3d_post.antialias),
+            (8, 8)
+        );
         assert!(!render(&settings).contains("view3d_paint"));
     }
 
@@ -1048,7 +1344,14 @@ mod tests {
         use yolu_core::geometry::ProjectionSettings;
         let text = "language=en\nview3d_paint_hidden=yes\nview3d_paint_backfaces=on\nview3d_paint_falloff=1\nview3d_paint_falloff_start=91\nview3d_paint_falloff_end=nan\nview3d_paint_seam_bleed=17\nexport_padding=8\n";
         let (settings, problems) = parse(text);
-        assert_eq!(settings.view3d_paint, ProjectionSettings { paint_backfaces: true, ..ProjectionSettings::default() }, "正しい項目は生かす");
+        assert_eq!(
+            settings.view3d_paint,
+            ProjectionSettings {
+                paint_backfaces: true,
+                ..ProjectionSettings::default()
+            },
+            "正しい項目は生かす"
+        );
         assert_eq!(settings.export_padding, 8);
         let keys: Vec<&str> = problems
             .iter()
@@ -1059,17 +1362,34 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["view3d_paint_hidden", "view3d_paint_falloff", "view3d_paint_falloff_start", "view3d_paint_falloff_end", "view3d_paint_seam_bleed"]
+            [
+                "view3d_paint_hidden",
+                "view3d_paint_falloff",
+                "view3d_paint_falloff_start",
+                "view3d_paint_falloff_end",
+                "view3d_paint_seam_bleed"
+            ]
         );
         for lang in Lang::ALL {
             for key in keys.iter().copied() {
-                assert_ne!(setting_name(lang, key), setting_name(lang, "unknown_key"), "{key} に名前がある");
+                assert_ne!(
+                    setting_name(lang, key),
+                    setting_name(lang, "unknown_key"),
+                    "{key} に名前がある"
+                );
             }
         }
         // 塗らない角度が弱め始めより小さいファイルは、弱め始めに揃えて読む
-        let (settings, problems) = parse("view3d_paint_falloff_start=70\nview3d_paint_falloff_end=50\n");
+        let (settings, problems) =
+            parse("view3d_paint_falloff_start=70\nview3d_paint_falloff_end=50\n");
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!((settings.view3d_paint.angle_start, settings.view3d_paint.angle_end), (70.0, 70.0));
+        assert_eq!(
+            (
+                settings.view3d_paint.angle_start,
+                settings.view3d_paint.angle_end
+            ),
+            (70.0, 70.0)
+        );
     }
 
     #[test]
@@ -1145,7 +1465,10 @@ mod tests {
         // 届くかぎり全部（-1）は既定なので書かず、fill と書いても読める
         edge.export_padding = -1;
         assert!(!render(&edge).contains("export_padding"));
-        assert_eq!(parse("export_padding=fill\n"), (Settings::default(), vec![]));
+        assert_eq!(
+            parse("export_padding=fill\n"),
+            (Settings::default(), vec![])
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1155,10 +1478,27 @@ mod tests {
         assert_eq!(read.lang, Lang::En);
         assert_eq!(read.compositing, Compositing::Cpu, "正しい項目は生かす");
         assert_eq!(read.undo_budget, Budget::Auto);
-        assert_eq!(problems, [Problem::Invalid { key: "undo_budget_mib", value: "lots".into() }]);
+        assert_eq!(
+            problems,
+            [Problem::Invalid {
+                key: "undo_budget_mib",
+                value: "lots".into()
+            }]
+        );
         // 範囲の外・負・小数・空・大文字・16 進・桁あふれ
         let cases: [(&'static str, &[&str]); 10] = [
-            ("undo_budget_mib", &["-1", "16385", "1.5", "", "AUTO", "0x10", "99999999999999999999"]),
+            (
+                "undo_budget_mib",
+                &[
+                    "-1",
+                    "16385",
+                    "1.5",
+                    "",
+                    "AUTO",
+                    "0x10",
+                    "99999999999999999999",
+                ],
+            ),
             ("source_budget_mib", &["15", "65537", "0"]),
             ("stroke_budget_mib", &["7", "8193"]),
             ("min_undo_steps", &["101", "-1", "auto", ""]),
@@ -1167,24 +1507,53 @@ mod tests {
             ("compositing", &["both", "GPU", ""]),
             ("pressure_low", &["-0.1", "0.95", "x", "", "NaN"]),
             ("pressure_high", &["0.05", "1.5", "x", ""]),
-            ("pressure_curve", &["0:0", "0:0,1:2", "0:0,0.5:0.5", "0:0;1:1", "a:b", "", "0:0,0.001:0.5,1:1"]),
+            (
+                "pressure_curve",
+                &[
+                    "0:0",
+                    "0:0,1:2",
+                    "0:0,0.5:0.5",
+                    "0:0;1:1",
+                    "a:b",
+                    "",
+                    "0:0,0.001:0.5,1:1",
+                ],
+            ),
         ];
         for (key, values) in cases {
             for bad in values {
                 let (read, problems) = parse(&format!("language=ja\n{key}={bad}\n"));
                 assert_eq!(read, Settings::default(), "{key}={bad:?}");
-                assert_eq!(problems, [Problem::Invalid { key, value: (*bad).into() }], "{key}={bad:?}");
+                assert_eq!(
+                    problems,
+                    [Problem::Invalid {
+                        key,
+                        value: (*bad).into()
+                    }],
+                    "{key}={bad:?}"
+                );
             }
         }
         // 棚の場所: 相対パスは断る（どこからの相対か決まらない）、空は既定
         for bad in ["shelf", "./shelf", "../shelf"] {
             let (read, problems) = parse(&format!("library_folder={bad}\n"));
             assert_eq!(read.library_folder, None);
-            assert_eq!(problems, [Problem::Invalid { key: "library_folder", value: bad.into() }]);
+            assert_eq!(
+                problems,
+                [Problem::Invalid {
+                    key: "library_folder",
+                    value: bad.into()
+                }]
+            );
         }
         assert_eq!(parse("library_folder=\n"), (Settings::default(), vec![]));
         let absolute = std::env::current_dir().unwrap().join("shelf");
-        assert_eq!(parse(&format!("library_folder={}\n", absolute.display())).0.library_folder, Some(absolute));
+        assert_eq!(
+            parse(&format!("library_folder={}\n", absolute.display()))
+                .0
+                .library_folder,
+            Some(absolute)
+        );
         // 複数の壊れた値は、全部の理由。書いていない項目は既定で理由を出さない
         let (read, problems) = parse("language=fr\ncpu_threads=0\nmin_undo_steps=-3\n");
         assert_eq!(read, Settings::default());
@@ -1192,21 +1561,39 @@ mod tests {
             problems,
             [
                 Problem::Language("fr".into()),
-                Problem::Invalid { key: "cpu_threads", value: "0".into() },
-                Problem::Invalid { key: "min_undo_steps", value: "-3".into() },
+                Problem::Invalid {
+                    key: "cpu_threads",
+                    value: "0".into()
+                },
+                Problem::Invalid {
+                    key: "min_undo_steps",
+                    value: "-3".into()
+                },
             ]
         );
         // 空白・空行・知らないキー（読み飛ばす。新しい版が足した項目で壊れない）・後ろの行が勝つ
-        let (read, problems) = parse("\n  language = en \n future=1\n cpu_threads = 2 \ncpu_threads=3\n");
+        let (read, problems) =
+            parse("\n  language = en \n future=1\n cpu_threads = 2 \ncpu_threads=3\n");
         assert_eq!((read.lang, read.cpu_threads), (Lang::En, Some(3)));
         assert!(problems.is_empty());
         // `キー=値` ではない行は、読めないファイル（全部既定）
-        assert_eq!(parse("language=en\njunk\n"), (Settings::default(), vec![Problem::Unreadable]));
+        assert_eq!(
+            parse("language=en\njunk\n"),
+            (Settings::default(), vec![Problem::Unreadable])
+        );
         // 筆圧の下限と上限は組: 1 つずつは範囲内でも、近すぎれば調整は全部既定に戻して理由を出す。ほかの項目は生かす
-        let (read, problems) = parse("cpu_threads=2\npressure_low=0.5\npressure_high=0.55\npressure_curve=0:0,0.5:0.8,1:1\n");
+        let (read, problems) = parse(
+            "cpu_threads=2\npressure_low=0.5\npressure_high=0.55\npressure_curve=0:0,0.5:0.8,1:1\n",
+        );
         assert_eq!(read.pressure, PressureAdjust::default());
         assert_eq!(read.cpu_threads, Some(2));
-        assert_eq!(problems, [Problem::Invalid { key: "pressure_high", value: "0.55".into() }]);
+        assert_eq!(
+            problems,
+            [Problem::Invalid {
+                key: "pressure_high",
+                value: "0.55".into()
+            }]
+        );
         // 片方だけ書いてあっても読める
         let (read, problems) = parse("pressure_high=0.8\n");
         assert_eq!((read.pressure.low(), read.pressure.high()), (0.0, 0.8));
@@ -1222,17 +1609,28 @@ mod tests {
         let path = dir.join("settings.conf");
         let (c, k) = ops::add_point(&Curve::identity(), 0.373_737_373_7, 0.616_161_616_1).unwrap();
         let c = ops::move_point(&c, k, 0.412_345_678_91, 0.777_777_777_7).unwrap();
-        let pressure = PressureAdjust::new(0.1, 0.9, vec![]).unwrap().with_curve_shape(c).unwrap();
-        let settings = Settings { pressure, ..Settings::default() };
+        let pressure = PressureAdjust::new(0.1, 0.9, vec![])
+            .unwrap()
+            .with_curve_shape(c)
+            .unwrap();
+        let settings = Settings {
+            pressure,
+            ..Settings::default()
+        };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), (settings.clone(), vec![]));
         // 直線へ戻すと、曲線の行は消える
         let straight = Settings {
-            pressure: settings.pressure.with_curve_shape(Curve::identity()).unwrap(),
+            pressure: settings
+                .pressure
+                .with_curve_shape(Curve::identity())
+                .unwrap(),
             ..Settings::default()
         };
         save(&path, &straight).unwrap();
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("pressure_curve"));
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("pressure_curve"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1240,21 +1638,36 @@ mod tests {
     fn backups_to_keep_is_written_only_when_it_is_not_the_default_and_restored() {
         let dir = temp_dir("backups");
         let path = dir.join("settings.conf");
-        let with = |lang, backups| Settings { lang, backups, ..Settings::default() };
+        let with = |lang, backups| Settings {
+            lang,
+            backups,
+            ..Settings::default()
+        };
         // 既定（すべて残す）は書かない。今までのファイルと同じ中身
         save(&path, &with(Lang::En, BackupKeep::All)).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
-        for keep in [BackupKeep::Count(0), BackupKeep::Count(1), BackupKeep::Count(37), BackupKeep::Count(MAX_BACKUPS_TO_KEEP)] {
+        for keep in [
+            BackupKeep::Count(0),
+            BackupKeep::Count(1),
+            BackupKeep::Count(37),
+            BackupKeep::Count(MAX_BACKUPS_TO_KEEP),
+        ] {
             save(&path, &with(Lang::Ja, keep)).unwrap();
             assert_eq!(load(&path), (with(Lang::Ja, keep), vec![]), "{keep:?}");
         }
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\nbackups=1000\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=ja\nbackups=1000\n"
+        );
         // 選び直して「すべて」に戻すと、行は消える
         save(&path, &with(Lang::Ja, BackupKeep::All)).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
         // 上限を超えて渡されても、書くのは上限
         save(&path, &with(Lang::Ja, BackupKeep::Count(5000))).unwrap();
-        assert_eq!(load(&path).0.backups, BackupKeep::Count(MAX_BACKUPS_TO_KEEP));
+        assert_eq!(
+            load(&path).0.backups,
+            BackupKeep::Count(MAX_BACKUPS_TO_KEEP)
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1263,13 +1676,27 @@ mod tests {
         let dir = temp_dir("selection-bar");
         let path = dir.join("settings.conf");
         save(&path, &with_lang(Lang::Ja)).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n", "出す（既定）は書かない");
-        let off = Settings { selection_bar: false, backups: BackupKeep::Count(3), ..with_lang(Lang::En) };
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=ja\n",
+            "出す（既定）は書かない"
+        );
+        let off = Settings {
+            selection_bar: false,
+            backups: BackupKeep::Count(3),
+            ..with_lang(Lang::En)
+        };
         save(&path, &off).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=3\nselection_bar=off\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=en\nbackups=3\nselection_bar=off\n"
+        );
         assert_eq!(load(&path), (off, vec![]));
         // 知らない値は既定（出す）。理由は出さない
-        assert_eq!(parse("selection_bar=maybe\n"), (Settings::default(), vec![]));
+        assert_eq!(
+            parse("selection_bar=maybe\n"),
+            (Settings::default(), vec![])
+        );
         assert_eq!(parse("selection_bar=on\n"), (Settings::default(), vec![]));
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1277,17 +1704,33 @@ mod tests {
     #[test]
     fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_the_rest_is_kept() {
         let (read, problems) = parse("language=en\nbackups=many\ncompositing=cpu\n");
-        assert_eq!((read.lang, read.backups, read.compositing), (Lang::En, BackupKeep::All, Compositing::Cpu));
+        assert_eq!(
+            (read.lang, read.backups, read.compositing),
+            (Lang::En, BackupKeep::All, Compositing::Cpu)
+        );
         assert_eq!(problems, [Problem::Backups("many".into())]);
         // 範囲の外・負・小数・空・大文字・16 進・桁あふれ・上限の次
-        for bad in ["-1", "1001", "5000", "2.5", "", "ALL", "0x10", "99999999999999999999"] {
+        for bad in [
+            "-1",
+            "1001",
+            "5000",
+            "2.5",
+            "",
+            "ALL",
+            "0x10",
+            "99999999999999999999",
+        ] {
             let (read, problems) = parse(&format!("backups={bad}\n"));
             assert_eq!(read.backups, BackupKeep::All, "{bad:?}");
             assert_eq!(problems, [Problem::Backups(bad.into())], "{bad:?}");
         }
         assert_eq!(parse("backups=7\n").0.backups, BackupKeep::Count(7));
         assert_eq!(parse("backups=all\n"), (Settings::default(), vec![]));
-        assert_eq!(parse("backups = 12 \nbackups=13\n").0.backups, BackupKeep::Count(13), "後ろの行が勝つ");
+        assert_eq!(
+            parse("backups = 12 \nbackups=13\n").0.backups,
+            BackupKeep::Count(13),
+            "後ろの行が勝つ"
+        );
     }
 
     #[test]
@@ -1295,8 +1738,14 @@ mod tests {
         let problems = [
             Problem::Unreadable,
             Problem::Language("x".into()),
-            Problem::Invalid { key: "undo_budget_mib", value: "5000".into() },
-            Problem::Invalid { key: "library_folder", value: "rel".into() },
+            Problem::Invalid {
+                key: "undo_budget_mib",
+                value: "5000".into(),
+            },
+            Problem::Invalid {
+                key: "library_folder",
+                value: "rel".into(),
+            },
             Problem::Backups("5000".into()),
         ];
         for lang in Lang::ALL {
@@ -1307,22 +1756,50 @@ mod tests {
             }
             assert!(texts[2].contains("5000") && texts[4].contains("5000"));
         }
-        assert_eq!(problems[4].text(Lang::Ja), "退避を残す数の設定が正しくありません（5000）。すべて残します。");
-        assert_eq!(problems[4].text(Lang::En), "Invalid Backups to Keep setting (5000); keeping all.");
-        assert_eq!(problems[2].text(Lang::Ja), "取り消し履歴の設定が正しくありません（5000）。既定に戻します。");
-        assert_eq!(problems[2].text(Lang::En), "Invalid Undo history setting (5000); using the default.");
+        assert_eq!(
+            problems[4].text(Lang::Ja),
+            "退避を残す数の設定が正しくありません（5000）。すべて残します。"
+        );
+        assert_eq!(
+            problems[4].text(Lang::En),
+            "Invalid Backups to Keep setting (5000); keeping all."
+        );
+        assert_eq!(
+            problems[2].text(Lang::Ja),
+            "取り消し履歴の設定が正しくありません（5000）。既定に戻します。"
+        );
+        assert_eq!(
+            problems[2].text(Lang::En),
+            "Invalid Undo history setting (5000); using the default."
+        );
         // 長い値は切って、帯を溢れさせない
-        let long = Problem::Invalid { key: "cpu_threads", value: "9".repeat(500) }.text(Lang::En);
+        let long = Problem::Invalid {
+            key: "cpu_threads",
+            value: "9".repeat(500),
+        }
+        .text(Lang::En);
         assert!(long.len() < 100, "{long}");
         let long = Problem::Backups("9".repeat(500)).text(Lang::En);
         assert!(long.len() < 100, "{long}");
         // どのキーにも名前がある
-        for key in ["language", "export_padding", "min_undo_steps", "cpu_threads", "compositing", "library_folder", "backups"]
-            .into_iter()
-            .chain(BudgetKind::ALL.iter().map(|k| k.key()))
+        for key in [
+            "language",
+            "export_padding",
+            "min_undo_steps",
+            "cpu_threads",
+            "compositing",
+            "library_folder",
+            "backups",
+        ]
+        .into_iter()
+        .chain(BudgetKind::ALL.iter().map(|k| k.key()))
         {
             for lang in Lang::ALL {
-                assert_ne!(setting_name(lang, key), setting_name(lang, "unknown"), "{key}");
+                assert_ne!(
+                    setting_name(lang, key),
+                    setting_name(lang, "unknown"),
+                    "{key}"
+                );
             }
         }
     }
@@ -1340,9 +1817,21 @@ mod tests {
             (131072, 16384, 65536, 4096),
             (1 << 20, 16384, 65536, 4096),
         ] {
-            assert_eq!(BudgetKind::Undo.automatic_mib(ram), undo, "取り消し @ {ram}");
-            assert_eq!(BudgetKind::Source.automatic_mib(ram), source, "レイヤーのメモリ @ {ram}");
-            assert_eq!(BudgetKind::Stroke.automatic_mib(ram), stroke, "1 回の操作 @ {ram}");
+            assert_eq!(
+                BudgetKind::Undo.automatic_mib(ram),
+                undo,
+                "取り消し @ {ram}"
+            );
+            assert_eq!(
+                BudgetKind::Source.automatic_mib(ram),
+                source,
+                "レイヤーのメモリ @ {ram}"
+            );
+            assert_eq!(
+                BudgetKind::Stroke.automatic_mib(ram),
+                stroke,
+                "1 回の操作 @ {ram}"
+            );
         }
         // 設定からバイトへ: 自動はメモリから、数はそのまま
         let s = Settings {
@@ -1352,17 +1841,27 @@ mod tests {
         };
         assert_eq!(
             s.budgets(16384),
-            Budgets { undo: 2048 << 20, source: 100 << 20, stroke: 1024 << 20, min_undo_steps: 7 }
+            Budgets {
+                undo: 2048 << 20,
+                source: 100 << 20,
+                stroke: 1024 << 20,
+                min_undo_steps: 7
+            }
         );
         // 自動の最大は範囲の中で、選択肢にもある（自動で出る値を、そのまま選び直せる）
         for kind in BudgetKind::ALL {
             let (lo, hi) = kind.range();
             let top = kind.automatic_mib(1 << 24);
-            assert!((lo..=hi).contains(&top), "{kind:?}: 自動の最大 {top} は範囲 {lo}..={hi} の中");
+            assert!(
+                (lo..=hi).contains(&top),
+                "{kind:?}: 自動の最大 {top} は範囲 {lo}..={hi} の中"
+            );
             assert!(kind.choices().contains(&top), "{kind:?}: 選択肢に {top}");
         }
         assert_eq!(BudgetKind::Source.range().1, 65536);
-        assert!(BudgetKind::Source.choices().ends_with(&[16384, 32768, 65536]));
+        assert!(BudgetKind::Source
+            .choices()
+            .ends_with(&[16384, 32768, 65536]));
         assert!(BudgetKind::Undo.choices().ends_with(&[8192, 16384]));
         assert!(BudgetKind::Stroke.choices().ends_with(&[2048, 4096]));
         // 選択肢は範囲の中で、昇順
@@ -1377,28 +1876,42 @@ mod tests {
     #[test]
     fn budget_values_written_before_the_raise_still_read_and_the_new_top_is_accepted() {
         // 古い設定ファイルの MiB の指定は、そのまま読める（自動へ直さない）
-        let (read, problems) = parse("source_budget_mib=8192\nundo_budget_mib=2048\nstroke_budget_mib=512\n");
+        let (read, problems) =
+            parse("source_budget_mib=8192\nundo_budget_mib=2048\nstroke_budget_mib=512\n");
         assert_eq!(problems, vec![]);
         assert_eq!(
             (read.source_budget, read.undo_budget, read.stroke_budget),
             (Budget::Mib(8192), Budget::Mib(2048), Budget::Mib(512))
         );
         // 新しい上限まで書けて、1 つ上は断る
-        let (read, problems) = parse("source_budget_mib=65536\nundo_budget_mib=16384\nstroke_budget_mib=4096\n");
+        let (read, problems) =
+            parse("source_budget_mib=65536\nundo_budget_mib=16384\nstroke_budget_mib=4096\n");
         assert_eq!(problems, vec![]);
         assert_eq!(read.source_budget, Budget::Mib(65536));
         let (read, problems) = parse("source_budget_mib=65537\n");
         assert_eq!(read.source_budget, Budget::Auto);
-        assert_eq!(problems, [Problem::Invalid { key: "source_budget_mib", value: "65537".into() }]);
+        assert_eq!(
+            problems,
+            [Problem::Invalid {
+                key: "source_budget_mib",
+                value: "65537".into()
+            }]
+        );
         // 大きい予算も、設定から文書へ渡すバイトで桁あふれしない
-        let big = Settings { source_budget: Budget::Mib(65536), ..Settings::default() };
+        let big = Settings {
+            source_budget: Budget::Mib(65536),
+            ..Settings::default()
+        };
         assert_eq!(big.budgets(1 << 20).source, 65536u64 << 20);
         assert_eq!(big.load_source_bytes(1 << 20), 65536u64 << 20);
     }
 
     #[test]
     fn the_memory_is_read_from_meminfo_and_has_a_floor() {
-        assert_eq!(parse_meminfo("MemTotal:       16384000 kB\nMemFree: 1 kB\n"), Some(16000));
+        assert_eq!(
+            parse_meminfo("MemTotal:       16384000 kB\nMemFree: 1 kB\n"),
+            Some(16000)
+        );
         assert_eq!(parse_meminfo("MemFree: 1 kB\n"), None);
         assert_eq!(parse_meminfo("MemTotal: many kB\n"), None);
         assert!(system_memory_mib() >= 1024);
@@ -1409,7 +1922,11 @@ mod tests {
         let mut s = Settings::default();
         assert_eq!(s.library_folder(), default_library_folder());
         if let Some(default) = default_library_folder() {
-            assert!(default.ends_with("YoluPainter/Library") || default.ends_with("YoluPainter\\Library"), "{default:?}");
+            assert!(
+                default.ends_with("YoluPainter/Library")
+                    || default.ends_with("YoluPainter\\Library"),
+                "{default:?}"
+            );
         }
         let chosen = std::env::current_dir().unwrap().join("mine");
         s.library_folder = Some(chosen.clone());
@@ -1420,16 +1937,35 @@ mod tests {
     fn the_gpu_memory_survives_a_restart_and_the_default_is_not_written() {
         let dir = temp_dir("gpu-memory");
         let path = dir.join("settings.conf");
-        assert_eq!(load(&path).0.gpu_memory, GpuMemory::Auto, "ファイルが無ければ自動");
-        for choice in [GpuMemory::Low, GpuMemory::Standard, GpuMemory::High, GpuMemory::Mib(256), GpuMemory::Mib(1536), GpuMemory::Mib(crate::gpu_memory::MAX_TOTAL_MIB)] {
-            let settings = Settings { gpu_memory: choice, ..Settings::default() };
+        assert_eq!(
+            load(&path).0.gpu_memory,
+            GpuMemory::Auto,
+            "ファイルが無ければ自動"
+        );
+        for choice in [
+            GpuMemory::Low,
+            GpuMemory::Standard,
+            GpuMemory::High,
+            GpuMemory::Mib(256),
+            GpuMemory::Mib(1536),
+            GpuMemory::Mib(crate::gpu_memory::MAX_TOTAL_MIB),
+        ] {
+            let settings = Settings {
+                gpu_memory: choice,
+                ..Settings::default()
+            };
             save(&path, &settings).unwrap();
             assert_eq!(load(&path), (settings, vec![]), "{choice:?}");
-            assert!(std::fs::read_to_string(&path).unwrap().lines().any(|l| l == format!("gpu_memory={}", choice.key())));
+            assert!(std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .any(|l| l == format!("gpu_memory={}", choice.key())));
         }
         // 自動へ戻すと行が消え、今までと同じ中身になる
         save(&path, &Settings::default()).unwrap();
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("gpu_memory"));
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("gpu_memory"));
         assert_eq!(load(&path), (Settings::default(), vec![]));
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1438,24 +1974,58 @@ mod tests {
     fn a_settings_file_from_before_the_gpu_memory_reads_as_automatic_without_a_reason() {
         let (read, problems) = parse("language=en\nundo_budget_mib=512\ncompositing=cpu\n");
         assert_eq!((read.gpu_memory, problems), (GpuMemory::Auto, vec![]));
-        assert_eq!(read.undo_budget, Budget::Mib(512), "ほかの項目は今までどおり");
+        assert_eq!(
+            read.undo_budget,
+            Budget::Mib(512),
+            "ほかの項目は今までどおり"
+        );
         // 値の無い行・空の値は壊れた値の扱い
         let (read, problems) = parse("gpu_memory=\n");
         assert_eq!(read.gpu_memory, GpuMemory::Auto);
-        assert_eq!(problems, vec![Problem::Invalid { key: "gpu_memory", value: String::new() }]);
+        assert_eq!(
+            problems,
+            vec![Problem::Invalid {
+                key: "gpu_memory",
+                value: String::new()
+            }]
+        );
     }
 
     #[test]
     fn a_broken_gpu_memory_falls_back_to_automatic_with_a_reason_and_keeps_the_rest() {
-        for bad in ["medium", "AUTO", "255", "32769", "-1", "1e3", "12.5", "99999999999999999999", "1024MiB"] {
+        for bad in [
+            "medium",
+            "AUTO",
+            "255",
+            "32769",
+            "-1",
+            "1e3",
+            "12.5",
+            "99999999999999999999",
+            "1024MiB",
+        ] {
             let (read, problems) = parse(&format!("language=en\ngpu_memory={bad}\nbackups=3\n"));
             assert_eq!(read.gpu_memory, GpuMemory::Auto, "{bad}");
-            assert_eq!(problems, vec![Problem::Invalid { key: "gpu_memory", value: bad.to_owned() }], "{bad}");
-            assert_eq!((read.lang, read.backups), (Lang::En, BackupKeep::Count(3)), "ほかの項目は生かす: {bad}");
+            assert_eq!(
+                problems,
+                vec![Problem::Invalid {
+                    key: "gpu_memory",
+                    value: bad.to_owned()
+                }],
+                "{bad}"
+            );
+            assert_eq!(
+                (read.lang, read.backups),
+                (Lang::En, BackupKeep::Count(3)),
+                "ほかの項目は生かす: {bad}"
+            );
             // 理由は短い文で、設定の名前を言う
             let ja = problems[0].text(Lang::Ja);
             let en = problems[0].text(Lang::En);
-            assert!(ja.contains("GPU のメモリ") && en.contains("GPU memory"), "{ja} / {en}");
+            assert!(
+                ja.contains("GPU のメモリ") && en.contains("GPU memory"),
+                "{ja} / {en}"
+            );
         }
         // 読み直して書き直すと、壊れた行は消える（直前まで読めた値は残る）
         let dir = temp_dir("gpu-memory-broken");
@@ -1465,7 +2035,10 @@ mod tests {
         let (read, problems) = load(&path);
         assert_eq!(problems.len(), 1);
         save(&path, &read).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\nbackups=3\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=en\nbackups=3\n"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

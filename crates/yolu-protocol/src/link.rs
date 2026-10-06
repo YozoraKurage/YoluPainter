@@ -24,9 +24,7 @@ use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Name, St
 
 use crate::auth::{random_bytes, same_bytes, HelloCheck, LinkKey, ServerKey};
 use crate::compat::{self, judge_ranges, Identity, LinkInfo, PeerInfo, RejectDetail};
-use crate::frame::{
-    encode_frame, try_encode_message_within, FrameError, FrameReader, MAX_PAYLOAD,
-};
+use crate::frame::{encode_frame, try_encode_message_within, FrameError, FrameReader, MAX_PAYLOAD};
 use crate::message::{
     ErrorCode, ErrorMessage, Hello, HelloAuth, Kind, Message, Reject, RejectCode, Welcome,
     PROTOCOL_VERSION,

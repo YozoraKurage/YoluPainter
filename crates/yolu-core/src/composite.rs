@@ -423,7 +423,12 @@ impl<'a> Plan<'a> {
 
     /// 歩幅 stride で拾う計画。`tile_size` は文書のタイルの一辺（評価した面が粗く評価したもの（`EvalSet::reduced`）なら、その面のタイルは
     /// 一辺が tile_size / stride で、全画素を読む）。
-    fn build_strided(stack: &Stack<'a>, plan: &[Entry], stride: usize, tile_size: usize) -> Plan<'a> {
+    fn build_strided(
+        stack: &Stack<'a>,
+        plan: &[Entry],
+        stride: usize,
+        tile_size: usize,
+    ) -> Plan<'a> {
         let mut p = Plan {
             nodes: Vec::new(),
             roots: Vec::new(),
@@ -459,9 +464,7 @@ impl<'a> Plan<'a> {
                     px = geo_of(true, self);
                     Content::Raster(surface)
                 }
-                None => Content::Raster(
-                    layer.surface(stack.channel).expect("計画の層は面を持つ"),
-                ),
+                None => Content::Raster(layer.surface(stack.channel).expect("計画の層は面を持つ")),
             },
             LayerKind::Fill => match stack.evaluated_content(e.layer) {
                 Some(surface) => {
@@ -490,10 +493,7 @@ impl<'a> Plan<'a> {
             if evaluated.is_some() {
                 mask_px = geo_of(true, self);
             }
-            (
-                evaluated.unwrap_or(&m.surface),
-                Box::new(m.factor_table()),
-            )
+            (evaluated.unwrap_or(&m.surface), Box::new(m.factor_table()))
         });
         let id = self.nodes.len();
         self.nodes.push(Node {
@@ -748,7 +748,15 @@ impl<'a> Plan<'a> {
                 inner[r * packed..(r + 1) * packed]
                     .copy_from_slice(&res[out.row(r)..out.row(r) + packed]);
             }
-            self.eval_children(&n.children, inner, Out::packed(packed), g, st, deeper, resume);
+            self.eval_children(
+                &n.children,
+                inner,
+                Out::packed(packed),
+                g,
+                st,
+                deeper,
+                resume,
+            );
             fade_rows(res, out, inner, g, amount, self.normal);
             return;
         }
@@ -814,13 +822,21 @@ impl<'a> Plan<'a> {
             for r in 0..g.rows {
                 let row = &mut base[r * packed..(r + 1) * packed];
                 if self.normal {
-                    over_row(row, over.row(r), over.step, camount.row(r), |g, s, step, a| {
-                        normal::clip_row(g, s, step, a, mode)
-                    });
+                    over_row(
+                        row,
+                        over.row(r),
+                        over.step,
+                        camount.row(r),
+                        |g, s, step, a| normal::clip_row(g, s, step, a, mode),
+                    );
                 } else {
-                    over_row(row, over.row(r), over.step, camount.row(r), |g, s, step, a| {
-                        clip_row(g, s, step, a, mode)
-                    });
+                    over_row(
+                        row,
+                        over.row(r),
+                        over.step,
+                        camount.row(r),
+                        |g, s, step, a| clip_row(g, s, step, a, mode),
+                    );
                 }
             }
         }
@@ -858,13 +874,21 @@ fn blend_rows(
     for r in 0..g.rows {
         let row = &mut res[out.row(r)..out.row(r) + packed];
         if normal {
-            over_row(row, over.row(r), over.step, amount.row(r), |d, s, step, a| {
-                normal::blend_row(d, s, step, a, mode)
-            });
+            over_row(
+                row,
+                over.row(r),
+                over.step,
+                amount.row(r),
+                |d, s, step, a| normal::blend_row(d, s, step, a, mode),
+            );
         } else {
-            over_row(row, over.row(r), over.step, amount.row(r), |d, s, step, a| {
-                blend_row(d, s, step, a, mode)
-            });
+            over_row(
+                row,
+                over.row(r),
+                over.step,
+                amount.row(r),
+                |d, s, step, a| blend_row(d, s, step, a, mode),
+            );
         }
     }
 }
@@ -976,7 +1000,15 @@ pub(crate) fn composite_into_memo(
     order: RowOrder,
     memo: &MemoRequest<'_>,
 ) {
-    composite_entries_with(stack, &stack.plan(), tile_size, rect, out, order, Some(memo))
+    composite_entries_with(
+        stack,
+        &stack.plan(),
+        tile_size,
+        rect,
+        out,
+        order,
+        Some(memo),
+    )
 }
 
 /// `composite_into` の、計画（段の並び）を渡す形。グループの中身だけを透明から重ねるとき（グループの出力）に、そのグループの子の計画を渡す。
@@ -1147,7 +1179,16 @@ pub(crate) fn composite_tiles_with<R: Send>(
             let ts = plan.tile_size as u32;
             debug_assert!(r.x / ts == (r.x + r.width - 1) / ts);
             debug_assert!(r.y / ts == (r.y + r.height - 1) / ts);
-            composite_band(plan, w, *r, r.y, r.y + r.height, &mut out, RowOrder::BottomUp, run);
+            composite_band(
+                plan,
+                w,
+                *r,
+                r.y,
+                r.y + r.height,
+                &mut out,
+                RowOrder::BottomUp,
+                run,
+            );
         }
         out
     }
@@ -1160,12 +1201,24 @@ pub(crate) fn composite_tiles_with<R: Send>(
             .iter()
             .enumerate()
             .map(|(i, r)| {
-                let work = if r.is_empty() { 0 } else { plan.work(*r, layer_count, run) };
+                let work = if r.is_empty() {
+                    0
+                } else {
+                    plan.work(*r, layer_count, run)
+                };
                 finish(
                     i,
                     if work >= PARALLEL_MINIMUM_WORK {
                         let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
-                        composite_plan_into(plan, depth, work, *r, &mut out, RowOrder::BottomUp, run);
+                        composite_plan_into(
+                            plan,
+                            depth,
+                            work,
+                            *r,
+                            &mut out,
+                            RowOrder::BottomUp,
+                            run,
+                        );
                         out
                     } else {
                         one(plan, &mut w, r, run)
@@ -1234,13 +1287,23 @@ pub(crate) fn composite_coarse_tiles_into(
             rows: oh,
             count: ow,
         };
-        plan.eval_rect(&plan.roots, &mut out, Out::packed(ow * 4), g, &w.st, &mut w.scratch);
+        plan.eval_rect(
+            &plan.roots,
+            &mut out,
+            Out::packed(ow * 4),
+            g,
+            &w.st,
+            &mut w.scratch,
+        );
         out
     }
     let plan = &plan;
     if regions.len() < PARALLEL_MINIMUM_TILES {
         let mut w = Worker::new(nodes, depth);
-        regions.iter().map(|r| one(plan, &mut w, r, stride)).collect()
+        regions
+            .iter()
+            .map(|r| one(plan, &mut w, r, stride))
+            .collect()
     } else {
         regions
             .par_iter()

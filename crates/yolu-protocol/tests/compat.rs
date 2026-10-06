@@ -368,8 +368,20 @@ fn a_kind_that_needs_a_mark_is_not_sent_without_it_through_the_connection() {
     assert_eq!(pair.unity_conn.common_features(), FEATURE_A);
     let removed = |set| Message::TextureSetRemoved { set };
     // 種類ごとの表から印を決めて送る: TextureSetRemoved を A 要り・B 要りとして試す
-    let need_a = |k: Kind| if k == Kind::TextureSetRemoved { FEATURE_A } else { 0 };
-    let need_b = |k: Kind| if k == Kind::TextureSetRemoved { FEATURE_B } else { 0 };
+    let need_a = |k: Kind| {
+        if k == Kind::TextureSetRemoved {
+            FEATURE_A
+        } else {
+            0
+        }
+    };
+    let need_b = |k: Kind| {
+        if k == Kind::TextureSetRemoved {
+            FEATURE_B
+        } else {
+            0
+        }
+    };
     let need_ab = |k: Kind| {
         if k == Kind::TextureSetRemoved {
             FEATURE_A | FEATURE_B
@@ -526,14 +538,14 @@ fn a_protocol_range_that_does_not_overlap_is_refused_with_which_side_to_update()
     // 求める版が決まっていなければ、版を添えず更新を促す
     let reject = negotiate_as(&Identity::standalone("s"), &old).unwrap_err();
     assert!(
-        reject.text.contains("Unity のパッケージを更新する必要があります。"),
+        reject
+            .text
+            .contains("Unity のパッケージを更新する必要があります。"),
         "{}",
         reject.text
     );
     assert!(
-        reject
-            .text
-            .contains("The Unity package must be updated."),
+        reject.text.contains("The Unity package must be updated."),
         "{}",
         reject.text
     );

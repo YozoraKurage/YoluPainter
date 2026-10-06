@@ -140,7 +140,11 @@ impl SaveState {
         let inside = if stage == 0 {
             let total = job.shared.build.sets_total.load(Ordering::Relaxed);
             let finished = job.shared.build.sets_done.load(Ordering::Relaxed);
-            if total > 0 { finished as f32 / total as f32 } else { 0.0 }
+            if total > 0 {
+                finished as f32 / total as f32
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -213,7 +217,10 @@ impl AppState {
             if self.save.job.is_none() {
                 break;
             }
-            assert!(start.elapsed().as_secs() < 120, "保存の処理が終わらない（ハング検出上限）");
+            assert!(
+                start.elapsed().as_secs() < 120,
+                "保存の処理が終わらない（ハング検出上限）"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -249,7 +256,9 @@ pub fn save_for_ops(state: &mut AppState, path: &Path) -> Result<(), String> {
 fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> {
     let lang = state.lang;
     if state.is_stroking() {
-        return Err(lang.pick("描いている間は保存しません", "Cannot save during a stroke").into());
+        return Err(lang
+            .pick("描いている間は保存しません", "Cannot save during a stroke")
+            .into());
     }
     if state.save.job.is_some() {
         return Err(busy_reason(lang).into());
@@ -260,7 +269,10 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     // 断られる。その間は保存しない
     if state.distribute.is_busy() || state.distribute.is_open() {
         return Err(lang
-            .pick("配布用に保存の途中は保存しません", "Cannot save while saving for distribution")
+            .pick(
+                "配布用に保存の途中は保存しません",
+                "Cannot save while saving for distribution",
+            )
             .into());
     }
     let capture = capture(state, path.to_path_buf())?;
@@ -290,7 +302,11 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         keep: state.prefs.settings.backups,
         // 書き置きの書き込みも、開いた .ylp のハンドルから読む（上と同じ事情）。そのファイルを置き換える保存は、今の書き込みと待っている
         // 頼みが終わるのを待ってから置き換える。新しい頼みは、保存の間は出さない
-        recovery: if same_file_as_open { state.recovery_waiter() } else { None },
+        recovery: if same_file_as_open {
+            state.recovery_waiter()
+        } else {
+            None
+        },
         reopen_limits: yolu_io::Limits::from_layer_pixels(state.load_source_bytes()),
         thresholds: yolu_io::Thresholds::current(),
         hold: state.save.hold.take(),
@@ -330,7 +346,10 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     } else {
         // 試験の状態: 呼び手のスレッドで終えて、すぐ受ける（止めておく頼みは、止めても手を離す側がいないので使わない）
         let (tx, rx) = channel();
-        let _ = tx.send(run(Request { hold: None, ..request }));
+        let _ = tx.send(run(Request {
+            hold: None,
+            ..request
+        }));
         state.modified = false;
         state.shelf.changed = false;
         let job = job(rx);
@@ -352,9 +371,21 @@ fn run(request: Request) -> Finished {
 }
 
 fn work(request: Request) -> Finished {
-    let Request { capture, path, reuse, keep, recovery, reopen_limits, shared, .. } = request;
+    let Request {
+        capture,
+        path,
+        reuse,
+        keep,
+        recovery,
+        reopen_limits,
+        shared,
+        ..
+    } = request;
     let lang = capture.lang;
-    let fail = |text: String| Finished { result: Err(text), target: None };
+    let fail = |text: String| Finished {
+        result: Err(text),
+        target: None,
+    };
     shared.stage.store(0, Ordering::Relaxed);
     let built = match build(&capture, None, &shared.build) {
         Ok(b) => b,
@@ -374,7 +405,10 @@ fn work(request: Request) -> Finished {
                     .map_err(|e| {
                         format!(
                             "{}: {}",
-                            lang.pick("上書きする先を .ylp として読めません", "Invalid overwrite target"),
+                            lang.pick(
+                                "上書きする先を .ylp として読めません",
+                                "Invalid overwrite target"
+                            ),
                             lang.io_error(&e)
                         )
                     })
@@ -396,7 +430,10 @@ fn work(request: Request) -> Finished {
         Ok(r) => r,
         // 置換の後に失敗しても、新しい版は確定していて印も新しい（開いているファイルの保存なら、その印を持ち帰る）
         Err(e) => {
-            return Finished { result: Err(lang.io_error(&e)), target: reused.then_some(target) };
+            return Finished {
+                result: Err(lang.io_error(&e)),
+                target: reused.then_some(target),
+            };
         }
     };
     // 次の保存・書き置きの元は、書いたファイルを指すプロジェクト（変わらないエントリはそのファイルから写す。保存に使った core の文書の
@@ -422,10 +459,19 @@ fn work(request: Request) -> Finished {
         let names: Vec<&str> = built
             .looks_overwritten
             .iter()
-            .filter_map(|id| capture.sets.iter().find(|s| s.id == *id).map(|s| s.name.as_str()))
+            .filter_map(|id| {
+                capture
+                    .sets
+                    .iter()
+                    .find(|s| s.id == *id)
+                    .map(|s| s.name.as_str())
+            })
             .collect();
         text += &lang.pick(
-            format!(" 読めなかった見た目の設定を上書きしました: {}。", names.join("、")),
+            format!(
+                " 読めなかった見た目の設定を上書きしました: {}。",
+                names.join("、")
+            ),
             format!(" Overwrote unreadable look settings: {}.", names.join(", ")),
         );
     }
@@ -434,11 +480,23 @@ fn work(request: Request) -> Finished {
         let names: Vec<&str> = built
             .saved_overwritten
             .iter()
-            .filter_map(|id| capture.sets.iter().find(|s| s.id == *id).map(|s| s.name.as_str()))
+            .filter_map(|id| {
+                capture
+                    .sets
+                    .iter()
+                    .find(|s| s.id == *id)
+                    .map(|s| s.name.as_str())
+            })
             .collect();
         text += &lang.pick(
-            format!(" 読めなかった覚えた選択範囲の項目を置き換えました: {}。", names.join("、")),
-            format!(" Replaced unreadable remembered selections: {}.", names.join(", ")),
+            format!(
+                " 読めなかった覚えた選択範囲の項目を置き換えました: {}。",
+                names.join("、")
+            ),
+            format!(
+                " Replaced unreadable remembered selections: {}.",
+                names.join(", ")
+            ),
         );
     }
     if built.pose_overwritten {
@@ -453,7 +511,14 @@ fn work(request: Request) -> Finished {
         text += &note;
     }
     text += &backup_text(lang, &path, &report);
-    Finished { result: Ok(Done { project: saved, text, backup: report.backup.clone() }), target: Some(target) }
+    Finished {
+        result: Ok(Done {
+            project: saved,
+            text,
+            backup: report.backup.clone(),
+        }),
+        target: Some(target),
+    }
 }
 
 /// 結果を受ける（画面のスレッド）。成功なら開いているファイルとセットの保存済みの印を更新し、失敗なら何も変えずに理由を出す。
@@ -462,7 +527,12 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
     match finished.result {
         Ok(done) => {
             let Some(target) = finished.target else {
-                return fail(state, &job, lang.pick("処理が止まりました", "The save stopped").into(), None);
+                return fail(
+                    state,
+                    &job,
+                    lang.pick("処理が止まりました", "The save stopped").into(),
+                    None,
+                );
             };
             match state.project.as_mut().filter(|_| job.reuse) {
                 Some(file) => {
@@ -480,12 +550,22 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
             }
             // 保存済みの印は、写しを取った時点の文書（保存の間に描いた分は「変更あり」のまま）
             for (id, doc_id, revision) in &job.written {
-                if let Some(set) = state.sets.iter().position(|s| s.id == *id).and_then(|i| state.sets.get_mut(i)) {
+                if let Some(set) = state
+                    .sets
+                    .iter()
+                    .position(|s| s.id == *id)
+                    .and_then(|i| state.sets.get_mut(i))
+                {
                     set.saved = Some((*doc_id, *revision));
                 }
             }
             for (id, maps) in &job.maps {
-                if let Some(set) = state.sets.iter().position(|s| s.id == *id).and_then(|i| state.sets.get_mut(i)) {
+                if let Some(set) = state
+                    .sets
+                    .iter()
+                    .position(|s| s.id == *id)
+                    .and_then(|i| state.sets.get_mut(i))
+                {
                     set.mesh_maps.mark_saved(maps);
                 }
             }
@@ -518,7 +598,10 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
     state.modified |= job.was_modified;
     state.shelf.changed |= job.shelf_was_changed;
     if job.report {
-        state.save.outcome = Some(SaveOutcome { path: job.path.clone(), result: Err(text.clone()) });
+        state.save.outcome = Some(SaveOutcome {
+            path: job.path.clone(),
+            result: Err(text.clone()),
+        });
     }
     state.message = format!(
         "{}: {}: {text}",

@@ -157,11 +157,20 @@ mod tests {
     fn only_the_newest_pose_of_each_mesh_is_kept() {
         let slot = PoseSlot::new();
         assert!(slot.take().is_none());
-        assert!(slot.put(pose(2, vec![mesh(0, 4, 1.0), mesh(1, 4, 1.0)])).is_some(), "空だったので束を始める");
+        assert!(
+            slot.put(pose(2, vec![mesh(0, 4, 1.0), mesh(1, 4, 1.0)]))
+                .is_some(),
+            "空だったので束を始める"
+        );
         // 続けて来たポーズは束を始めない（溜め場は膨らまない）
         assert!(slot.put(pose(2, vec![mesh(0, 4, 2.0)])).is_none());
-        assert!(slot.put(pose(2, vec![mesh(0, 4, 3.0), mesh(2, 2, 3.0)])).is_none());
-        assert_eq!((slot.pending_meshes(), slot.pending_bytes()), (3, (4 + 4 + 2) * 24));
+        assert!(slot
+            .put(pose(2, vec![mesh(0, 4, 3.0), mesh(2, 2, 3.0)]))
+            .is_none());
+        assert_eq!(
+            (slot.pending_meshes(), slot.pending_bytes()),
+            (3, (4 + 4 + 2) * 24)
+        );
         let taken = slot.take().unwrap();
         assert_eq!(taken.dropped, 0);
         assert_eq!(taken.pose.generation, 2);
@@ -171,7 +180,11 @@ mod tests {
             .iter()
             .map(|m| (m.mesh, m.positions[0][0]))
             .collect();
-        assert_eq!(xs, vec![(0, 3.0), (1, 1.0), (2, 3.0)], "メッシュごとに最新だけ。番号の順");
+        assert_eq!(
+            xs,
+            vec![(0, 3.0), (1, 1.0), (2, 3.0)],
+            "メッシュごとに最新だけ。番号の順"
+        );
         assert!(slot.take().is_none(), "取り出したら空");
         assert_eq!(slot.pending_bytes(), 0);
         // 取り出したあとの次のポーズは、また束を始める
@@ -183,21 +196,34 @@ mod tests {
         // 画面のスレッドが止まっている間に、同じモデルのポーズが何万回来ても、溜め場は 1 つのモデルの量のまま
         let slot = PoseSlot::new();
         for i in 0..50_000u32 {
-            slot.put(pose(1, vec![mesh(0, 1000, i as f32), mesh(1, 500, i as f32)]));
+            slot.put(pose(
+                1,
+                vec![mesh(0, 1000, i as f32), mesh(1, 500, i as f32)],
+            ));
         }
         assert_eq!(slot.pending_meshes(), 2);
         assert_eq!(slot.pending_bytes(), (1000 + 500) * 24);
-        assert_eq!(slot.take().unwrap().pose.meshes[0].positions[0][0], 49_999.0);
+        assert_eq!(
+            slot.take().unwrap().pose.meshes[0].positions[0][0],
+            49_999.0
+        );
     }
 
     #[test]
     fn a_pose_of_another_generation_replaces_the_pile() {
         let slot = PoseSlot::new();
         slot.put(pose(1, vec![mesh(0, 4, 1.0), mesh(1, 4, 1.0)]));
-        assert!(slot.put(pose(2, vec![mesh(0, 4, 9.0)])).is_none(), "溜め場は空でなかった");
+        assert!(
+            slot.put(pose(2, vec![mesh(0, 4, 9.0)])).is_none(),
+            "溜め場は空でなかった"
+        );
         let taken = slot.take().unwrap();
         assert_eq!(taken.pose.generation, 2);
-        assert_eq!(taken.pose.meshes.len(), 1, "前の世代のメッシュ 1 は残らない");
+        assert_eq!(
+            taken.pose.meshes.len(),
+            1,
+            "前の世代のメッシュ 1 は残らない"
+        );
         assert_eq!(taken.pose.meshes[0].positions[0][0], 9.0);
     }
 
@@ -236,7 +262,10 @@ mod tests {
         assert!(slot.take_batch(first.wrapping_sub(1)).is_none());
         assert_eq!(slot.pending_meshes(), 1, "取り出せなかった束はそのまま");
         let taken = slot.take_batch(first).unwrap();
-        assert_eq!(taken.pose.meshes[0].positions[0][0], 2.0, "束の中では最新だけ");
+        assert_eq!(
+            taken.pose.meshes[0].positions[0][0], 2.0,
+            "束の中では最新だけ"
+        );
         assert!(slot.take_batch(first).is_none(), "取り出したら空");
     }
 
@@ -257,7 +286,10 @@ mod tests {
         assert_eq!(slot.pending_meshes(), 1);
         // 束 2 の知らせ（モデルのあと）で取り出す
         let taken = slot.take_batch(second).unwrap();
-        assert_eq!((taken.pose.generation, taken.pose.meshes[0].positions[0][0]), (2, 9.0));
+        assert_eq!(
+            (taken.pose.generation, taken.pose.meshes[0].positions[0][0]),
+            (2, 9.0)
+        );
     }
 
     #[test]

@@ -75,7 +75,10 @@ impl ZoomCenter {
     /// ツールチップ。
     pub fn tip(self, lang: Lang) -> &'static str {
         match self {
-            Self::View => lang.pick("画面の中心を保ってズームします。", "Zoom keeping the view center."),
+            Self::View => lang.pick(
+                "画面の中心を保ってズームします。",
+                "Zoom keeping the view center.",
+            ),
             Self::Pointer => lang.pick(
                 "面が無ければポインタの向きへ寄ります。",
                 "Empty space zooms along the pointer direction.",

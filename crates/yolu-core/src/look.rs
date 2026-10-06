@@ -112,7 +112,10 @@ pub enum PlaneSource {
     Zero,
     One,
     /// チャンネルの成分（0 R・1 G・2 B・3 A。スカラーのチャンネルは 0 が値）。
-    Channel { channel: Channel, component: u8 },
+    Channel {
+        channel: Channel,
+        component: u8,
+    },
 }
 
 /// テクスチャのスロットの入力。
@@ -206,7 +209,8 @@ impl MaterialLook {
     /// このチャンネルを読むスロットを外した設定（チャンネルを消すとき、割り当てを残さない。詰め合わせはその成分だけ既定の 1 に）。
     pub fn without_channel(&self, channel: Channel) -> MaterialLook {
         let mut look = self.clone();
-        look.textures.retain(|_, t| *t != TextureSource::Channel(channel));
+        look.textures
+            .retain(|_, t| *t != TextureSource::Channel(channel));
         for t in look.textures.values_mut() {
             if let TextureSource::Packed(planes) = t {
                 for p in planes.iter_mut() {
@@ -380,7 +384,9 @@ impl ReceivedLook {
             let n = s.encode_utf16().count();
             (1..=MAX_NAME).contains(&n) && !s.chars().any(|c| c.is_control())
         };
-        if self.source.encode_utf16().count() > MAX_SHADER_NAME || self.source.chars().any(|c| c.is_control()) {
+        if self.source.encode_utf16().count() > MAX_SHADER_NAME
+            || self.source.chars().any(|c| c.is_control())
+        {
             return Err(CoreError::InvalidArgument("受けた見た目の出どころ"));
         }
         if self.images.len() + self.missing.len() > MAX_TEXTURES {
@@ -423,7 +429,10 @@ mod tests {
         assert_eq!(look.kind, LookKind::Standard);
         assert_eq!(look.shader_name(), LILTOON_SHADER);
         assert!(look.validate().is_ok());
-        assert_eq!(LookKind::from_key(LookKind::LilToon.key()), Some(LookKind::LilToon));
+        assert_eq!(
+            LookKind::from_key(LookKind::LilToon.key()),
+            Some(LookKind::LilToon)
+        );
         assert_eq!(LookKind::from_key("lilToonFur"), None);
     }
 
@@ -432,9 +441,12 @@ mod tests {
         let mut look = MaterialLook::default();
         look.properties
             .insert("_ShadowBorder".into(), LookValue::Float(0.25));
+        look.properties.insert(
+            "_ShadowColor".into(),
+            LookValue::Color([0.1, 0.2, 0.3, 1.0]),
+        );
         look.properties
-            .insert("_ShadowColor".into(), LookValue::Color([0.1, 0.2, 0.3, 1.0]));
-        look.properties.insert("_UseShadow".into(), LookValue::Int(1));
+            .insert("_UseShadow".into(), LookValue::Int(1));
         assert_eq!(look.float("_ShadowBorder", 0.5), 0.25);
         assert_eq!(look.float("_ShadowBlur", 0.1), 0.1);
         assert_eq!(look.float("_UseShadow", 0.0), 1.0);
@@ -447,8 +459,10 @@ mod tests {
         let mut look = MaterialLook::default();
         look.textures
             .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
-        look.textures
-            .insert("_ShadowStrengthMask".into(), TextureSource::Channel(user(7)));
+        look.textures.insert(
+            "_ShadowStrengthMask".into(),
+            TextureSource::Channel(user(7)),
+        );
         look.textures.insert(
             "_ShadowBorderMask".into(),
             TextureSource::Packed([
@@ -502,7 +516,8 @@ mod tests {
         })
         .is_err());
         assert!(ok(&|l| {
-            l.properties.insert("x".repeat(MAX_NAME + 1), LookValue::Float(1.0));
+            l.properties
+                .insert("x".repeat(MAX_NAME + 1), LookValue::Float(1.0));
         })
         .is_err());
         assert!(ok(&|l| {
@@ -510,8 +525,10 @@ mod tests {
         })
         .is_err());
         assert!(ok(&|l| {
-            l.properties
-                .insert("_A".into(), LookValue::Color([0.0, f32::INFINITY, 0.0, 1.0]));
+            l.properties.insert(
+                "_A".into(),
+                LookValue::Color([0.0, f32::INFINITY, 0.0, 1.0]),
+            );
         })
         .is_err());
         assert!(ok(&|l| {

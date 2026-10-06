@@ -36,7 +36,10 @@ impl AppState {
         } else {
             (
                 lang.pick("選択範囲を塗りつぶしました。", "Filled the selection."),
-                lang.pick("塗りつぶしは変わりません。", "The fill did not change anything."),
+                lang.pick(
+                    "塗りつぶしは変わりません。",
+                    "The fill did not change anything.",
+                ),
             )
         };
         Ok(if changed { done } else { same }.into())
@@ -81,7 +84,10 @@ impl AppState {
         let Some(selection) = self.doc.selection().cloned() else {
             return Err(self.no_selection_text());
         };
-        let Some(id) = self.selected_layer.filter(|id| self.doc.layer(*id).is_some()) else {
+        let Some(id) = self
+            .selected_layer
+            .filter(|id| self.doc.layer(*id).is_some())
+        else {
             return Err(lang
                 .pick("レイヤーが選ばれていません。", "No layer is selected.")
                 .into());
@@ -114,7 +120,10 @@ impl AppState {
                 "グループにマスクを足しました。",
                 "Added a mask to the group.",
             ),
-            _ => lang.pick("選択範囲からマスクを作りました。", "Made a mask from the selection."),
+            _ => lang.pick(
+                "選択範囲からマスクを作りました。",
+                "Made a mask from the selection.",
+            ),
         }
         .into())
     }

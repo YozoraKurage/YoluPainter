@@ -221,10 +221,19 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
             let slider = rect_of(&h, lang.pick("不透明度", "Opacity"), panel);
             let blend = rect_of(&h, lang.pick("通常", "Normal"), panel);
             if stacked {
-                assert!(slider.top() >= blend.bottom(), "{lang:?} {width}: 積む {slider:?} {blend:?}");
-                assert!(slider.left() <= blend.left() + 1.0, "{lang:?} {width}: 合成モードの下に揃える");
+                assert!(
+                    slider.top() >= blend.bottom(),
+                    "{lang:?} {width}: 積む {slider:?} {blend:?}"
+                );
+                assert!(
+                    slider.left() <= blend.left() + 1.0,
+                    "{lang:?} {width}: 合成モードの下に揃える"
+                );
             } else {
-                assert!(slider.left() >= blend.right(), "{lang:?} {width}: 横に並ぶ {slider:?} {blend:?}");
+                assert!(
+                    slider.left() >= blend.right(),
+                    "{lang:?} {width}: 横に並ぶ {slider:?} {blend:?}"
+                );
                 assert_eq!(slider.top(), blend.top(), "{lang:?} {width}");
             }
             // 名前は詰めずに出る（最小の幅でも「…」にならない）
@@ -233,11 +242,26 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
             h.step();
             let truncated = yolu_app::ui::widgets::take_truncations();
             yolu_app::ui::widgets::record_truncations(false);
-            assert!(!truncated.iter().any(|t| t == lang.pick("不透明度", "Opacity")), "{lang:?} {width}: {truncated:?}");
+            assert!(
+                !truncated
+                    .iter()
+                    .any(|t| t == lang.pick("不透明度", "Opacity")),
+                "{lang:?} {width}: {truncated:?}"
+            );
             // 一覧は、積んだ分だけ下から始まる
-            let layer = h.state().state.doc.layers().first().map(|l| l.name().to_owned()).unwrap();
+            let layer = h
+                .state()
+                .state
+                .doc
+                .layers()
+                .first()
+                .map(|l| l.name().to_owned())
+                .unwrap();
             let row = rect_of(&h, &layer, |r| panel(r) && r.top() >= slider.top());
-            assert!(row.top() >= slider.bottom(), "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下");
+            assert!(
+                row.top() >= slider.bottom(),
+                "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下"
+            );
         }
     }
 }
@@ -1428,7 +1452,11 @@ fn headless_each_m2_content_saves_and_reopens() {
         let mut s = AppState::new(64, 64);
         make(&mut s);
         s.apply(Action::SaveProjectAs(path.clone()));
-        assert!(s.message.starts_with("保存しました"), "{name}: {}", s.message);
+        assert!(
+            s.message.starts_with("保存しました"),
+            "{name}: {}",
+            s.message
+        );
         assert!(!s.modified, "{name}: 保存したら変更の印は下りる");
         let mut again = AppState::new(64, 64);
         again.apply(Action::OpenProject(path));
@@ -1454,7 +1482,10 @@ fn headless_overwriting_with_m2_content_keeps_the_previous_version() {
     assert!(!s.modified);
     assert_ne!(std::fs::read(&path).unwrap(), first);
     let backups = dir.join("keep.ylp-backups~");
-    let kept: Vec<_> = std::fs::read_dir(&backups).unwrap().map(|e| std::fs::read(e.unwrap().path()).unwrap()).collect();
+    let kept: Vec<_> = std::fs::read_dir(&backups)
+        .unwrap()
+        .map(|e| std::fs::read(e.unwrap().path()).unwrap())
+        .collect();
     assert!(kept.contains(&first), "前の版は -backups~ に残る");
     let mut again = AppState::new(64, 64);
     again.apply(Action::OpenProject(path));
@@ -1805,4 +1836,3 @@ fn the_cube_refuses_a_layer_that_cannot_be_painted_and_says_why() {
         h.state().state.message
     );
 }
-

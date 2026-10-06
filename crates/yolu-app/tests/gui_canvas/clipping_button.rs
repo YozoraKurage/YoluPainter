@@ -36,7 +36,10 @@ fn the_button_clips_the_selected_layer_to_the_one_below_and_back_with_one_undo_e
     h.get_by_label(name()).click();
     h.run();
     let doc = &h.state().state.doc;
-    assert!(doc.layer(top).unwrap().clipping(), "押すとクリッピングが入る");
+    assert!(
+        doc.layer(top).unwrap().clipping(),
+        "押すとクリッピングが入る"
+    );
     assert!(
         doc.is_effectively_clipped(doc.layer_index(top).unwrap()),
         "下のレイヤーがあるので効く"
@@ -133,7 +136,9 @@ fn the_layer_properties_have_no_clipping_row_and_the_button_is_in_the_layer_pane
     new_layer(&mut h);
     // プロパティの「レイヤー」のタブ（3 つ目。同じ名前のドックのタブの下にある）
     let props = h.state().tab_rects[&yolu_app::Tab::Properties];
-    let tab = rect_of(&h, "レイヤー", |r| r.top() > props.bottom() && r.top() < props.bottom() + 40.0);
+    let tab = rect_of(&h, "レイヤー", |r| {
+        r.top() > props.bottom() && r.top() < props.bottom() + 40.0
+    });
     click(&mut h, tab.center());
     assert_eq!(h.state().state.property_tab, 2);
     assert!(

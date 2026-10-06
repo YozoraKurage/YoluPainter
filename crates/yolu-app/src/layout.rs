@@ -58,7 +58,12 @@ pub struct WindowRecord {
 impl WindowRecord {
     /// 値が正しいか（有限・範囲の中）。大きさは最小の大きさまで引き上げる。正しくなければ None。
     pub fn sanitized(self) -> Option<WindowRecord> {
-        let finite = self.position.iter().chain(&self.size).chain([&self.pixels_per_point]).all(|v| v.is_finite());
+        let finite = self
+            .position
+            .iter()
+            .chain(&self.size)
+            .chain([&self.pixels_per_point])
+            .all(|v| v.is_finite());
         let range = self.position.iter().all(|v| v.abs() <= MAX_POSITION)
             && self.size.iter().all(|v| (1.0..=MAX_SIZE).contains(v))
             && (0.25..=8.0).contains(&self.pixels_per_point);
@@ -83,7 +88,10 @@ impl WindowRecord {
             position: [number("x")?, number("y")?],
             size: [number("width")?, number("height")?],
             pixels_per_point: number("pixels_per_point")?,
-            maximized: value.get("maximized").and_then(Value::as_bool).unwrap_or(false),
+            maximized: value
+                .get("maximized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
         .sanitized()
     }
@@ -104,26 +112,39 @@ pub struct Loaded {
 pub fn load(path: &Path) -> Loaded {
     let text = match std::fs::metadata(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Loaded::default(),
-        Err(e) => return problem(format!("画面の並びのファイルを調べられません（{e}）。既定の並びで始めます。")),
+        Err(e) => {
+            return problem(format!(
+                "画面の並びのファイルを調べられません（{e}）。既定の並びで始めます。"
+            ))
+        }
         Ok(meta) if meta.len() > MAX_FILE_BYTES => {
             return problem("画面の並びのファイルが大きすぎます。既定の並びで始めます。".into());
         }
         Ok(_) => match std::fs::read_to_string(path) {
             Ok(text) => text,
-            Err(e) => return problem(format!("画面の並びのファイルを読めません（{e}）。既定の並びで始めます。")),
+            Err(e) => {
+                return problem(format!(
+                    "画面の並びのファイルを読めません（{e}）。既定の並びで始めます。"
+                ))
+            }
         },
     };
     parse(&text)
 }
 
 fn problem(text: String) -> Loaded {
-    Loaded { problems: vec![text], ..Loaded::default() }
+    Loaded {
+        problems: vec![text],
+        ..Loaded::default()
+    }
 }
 
 /// ファイルの中身を読む。
 pub fn parse(text: &str) -> Loaded {
     let Ok(root) = serde_json::from_str::<Value>(text) else {
-        return problem("画面の並びのファイルが JSON として読めません。既定の並びで始めます。".into());
+        return problem(
+            "画面の並びのファイルが JSON として読めません。既定の並びで始めます。".into(),
+        );
     };
     let mut out = Loaded::default();
     let Some(format) = root.get("format").and_then(Value::as_u64) else {
@@ -137,11 +158,14 @@ pub fn parse(text: &str) -> Loaded {
         None | Some(Value::Null) => {}
         Some(value) => match WindowRecord::from_json(value) {
             Some(window) => out.window = Some(window),
-            None => out.problems.push("窓の大きさと位置の値が正しくありません。窓は既定の大きさで始めます。".into()),
+            None => out.problems.push(
+                "窓の大きさと位置の値が正しくありません。窓は既定の大きさで始めます。".into(),
+            ),
         },
     }
     let Some(dock) = root.get("dock") else {
-        out.problems.push("画面の並びのファイルにドックの並びがありません。既定の並びで始めます。".into());
+        out.problems
+            .push("画面の並びのファイルにドックの並びがありません。既定の並びで始めます。".into());
         return out;
     };
     match serde_json::from_value::<DockState<Tab>>(dock.clone()) {
@@ -149,10 +173,14 @@ pub fn parse(text: &str) -> Loaded {
             forget_focus(&mut dock);
             match validate(&dock) {
                 Ok(()) => out.dock = Some(dock),
-                Err(reason) => out.problems.push(format!("ドックの並びを使えません（{reason}）。既定の並びで始めます。")),
+                Err(reason) => out.problems.push(format!(
+                    "ドックの並びを使えません（{reason}）。既定の並びで始めます。"
+                )),
             }
         }
-        Err(e) => out.problems.push(format!("ドックの並びを読めません（{e}）。既定の並びで始めます。")),
+        Err(e) => out.problems.push(format!(
+            "ドックの並びを読めません（{e}）。既定の並びで始めます。"
+        )),
     }
     out
 }
@@ -199,7 +227,10 @@ pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
                 // 浮かせた窓の木のフォーカスは、描くときに組として引く（メインの木は、組を全部浮かせたあとに、もう無い組を指したままでよい）
                 if let Some(focus) = tree.focused_leaf() {
                     if !tree.iter().nth(focus.0).is_some_and(|node| node.is_leaf()) {
-                        return Err(format!("浮かせた窓 {} のフォーカスが組を指していない", index.0));
+                        return Err(format!(
+                            "浮かせた窓 {} のフォーカスが組を指していない",
+                            index.0
+                        ));
                     }
                 }
                 if !tree.iter().any(|node| node.is_leaf()) {
@@ -209,8 +240,15 @@ pub fn validate(dock: &DockState<Tab>) -> Result<(), String> {
                 let value = serde_json::to_value(state).unwrap_or(Value::Null);
                 let position = (-f64::from(MAX_POSITION), f64::from(MAX_POSITION));
                 let size = (1.0, f64::from(MAX_SIZE));
-                for (key, (low, high)) in [("screen_rect", position), ("next_position", position), ("next_size", size)] {
-                    if !value.get(key).is_none_or(|v| v.is_null() || bounded(v, low, high)) {
+                for (key, (low, high)) in [
+                    ("screen_rect", position),
+                    ("next_position", position),
+                    ("next_size", size),
+                ] {
+                    if !value
+                        .get(key)
+                        .is_none_or(|v| v.is_null() || bounded(v, low, high))
+                    {
                         return Err(format!("浮かせた窓 {} の {key} が範囲の外", index.0));
                     }
                 }
@@ -249,7 +287,11 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
     use egui_dock::Node;
     let nodes: Vec<&Node<Tab>> = tree.iter().collect();
     let mut reachable = vec![false; nodes.len()];
-    let mut pending = if nodes.is_empty() { Vec::new() } else { vec![0usize] };
+    let mut pending = if nodes.is_empty() {
+        Vec::new()
+    } else {
+        vec![0usize]
+    };
     while let Some(i) = pending.pop() {
         reachable[i] = true;
         match nodes[i] {
@@ -259,7 +301,11 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
                     return Err("タブの無い組がある".into());
                 }
                 if leaf.active.0 >= leaf.tabs.len() {
-                    return Err(format!("前のタブの番号 {} がタブの数 {} の外", leaf.active.0, leaf.tabs.len()));
+                    return Err(format!(
+                        "前のタブの番号 {} がタブの数 {} の外",
+                        leaf.active.0,
+                        leaf.tabs.len()
+                    ));
                 }
                 if !leaf.scroll.is_finite() {
                     return Err("タブの帯のスクロールが有限でない".into());
@@ -281,7 +327,11 @@ fn validate_tree(tree: &egui_dock::Tree<Tab>) -> Result<(), String> {
             }
         }
     }
-    if nodes.iter().zip(&reachable).any(|(node, seen)| !seen && !matches!(node, Node::Empty)) {
+    if nodes
+        .iter()
+        .zip(&reachable)
+        .any(|(node, seen)| !seen && !matches!(node, Node::Empty))
+    {
         return Err("根からつながらない節がある".into());
     }
     Ok(())
@@ -298,7 +348,8 @@ fn normalized(dock: &DockState<Tab>, floats: &[FloatRect]) -> DockState<Tab> {
     use egui_dock::Node;
     let mut copy = dock.clone();
     for (surface, rect) in floats {
-        if rect.min.is_finite() && rect.max.is_finite() && rect.width() > 0.0 && rect.height() > 0.0 {
+        if rect.min.is_finite() && rect.max.is_finite() && rect.width() > 0.0 && rect.height() > 0.0
+        {
             // （`get_window_state_mut` は範囲の外の番号で落ちるので、面を取ってから見る）
             if let Some(egui_dock::Surface::Window(_, state)) = copy.get_surface_mut(*surface) {
                 state.set_position(rect.min).set_size(rect.size());
@@ -325,7 +376,11 @@ pub fn render(dock: &DockState<Tab>, window: Option<&WindowRecord>) -> String {
 }
 
 /// ファイルの中身を作る。`floats` は浮かせた窓の今の位置と大きさ。
-pub fn render_with(dock: &DockState<Tab>, window: Option<&WindowRecord>, floats: &[FloatRect]) -> String {
+pub fn render_with(
+    dock: &DockState<Tab>,
+    window: Option<&WindowRecord>,
+    floats: &[FloatRect],
+) -> String {
     let dock = serde_json::to_value(normalized(dock, floats)).unwrap_or(Value::Null);
     let mut root = json!({ "format": FORMAT, "dock": dock });
     if let Some(window) = window {
@@ -336,10 +391,15 @@ pub fn render_with(dock: &DockState<Tab>, window: Option<&WindowRecord>, floats:
 
 /// 書く（一時ファイルへ書いて同期し、最後の 1 回の置き換えで確定する。途中で止まっても前のファイルは壊れない）。
 pub fn save(path: &Path, text: &str) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "layout directory missing"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "layout directory missing"))?;
     std::fs::create_dir_all(parent)?;
     let pending = path.with_extension(format!("json.{}.pending", std::process::id()));
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&pending)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending)?;
     let result = (|| {
         file.write_all(text.as_bytes())?;
         file.sync_all()?;

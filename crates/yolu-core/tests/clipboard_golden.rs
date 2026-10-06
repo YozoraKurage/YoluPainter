@@ -604,7 +604,14 @@ fn csharp_clipboard_all_bytes_and_parallelism() {
                 if differs && golden_update::updating() {
                     if degree == 1 {
                         let path = golden_update::tests_dir().join("golden/clipboard/index.txt");
-                        let line = format!("{} {} {} {} {digest} {}", p[0], p[1], p[2], p[3], actual.len());
+                        let line = format!(
+                            "{} {} {} {} {digest} {}",
+                            p[0],
+                            p[1],
+                            p[2],
+                            p[3],
+                            actual.len()
+                        );
                         golden_update::replace_line(&path, p[0], &line);
                     }
                 } else if differs {

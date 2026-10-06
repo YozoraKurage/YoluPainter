@@ -20,9 +20,9 @@ pub mod link;
 pub mod message;
 pub mod private;
 pub mod shm;
-pub mod wire;
 #[cfg(windows)]
 pub(crate) mod winpipe;
+pub mod wire;
 
 pub use auth::{HelloCheck, LinkKey, ServerKey};
 pub use compat::{

@@ -39,7 +39,10 @@ pub struct Text {
 
 impl Text {
     pub fn new(ja: impl Into<String>, en: impl Into<String>) -> Self {
-        Text { ja: ja.into(), en: en.into() }
+        Text {
+            ja: ja.into(),
+            en: en.into(),
+        }
     }
     pub fn pick(&self, lang: Lang) -> &str {
         match lang {

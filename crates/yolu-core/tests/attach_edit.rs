@@ -843,16 +843,20 @@ fn anchors_must_be_below_and_say_what_is_wrong() {
             FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]),
         )
         .unwrap();
-    refused(&mut doc, "Anchor のジェネレーターではない", |d| {
-        d.set_generator_anchor(
-            mid,
-            plain,
-            Some(a_base),
-            Channel::Height,
-            ReadMode::Value,
-            false,
-        )
-    });
+    refused(
+        &mut doc,
+        "Anchor のジェネレーターではない",
+        |d| {
+            d.set_generator_anchor(
+                mid,
+                plain,
+                Some(a_base),
+                Channel::Height,
+                ReadMode::Value,
+                false,
+            )
+        },
+    );
     assert_eq!(doc.anchors_readable_from(mid).unwrap().len(), 1);
     assert_eq!(doc.anchors_readable_from(base).unwrap().len(), 0);
     doc.set_generator_anchor(

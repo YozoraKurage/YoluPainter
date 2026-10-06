@@ -75,7 +75,12 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "visibility_off",
             t::TEXT_DIM,
-            app.lang.pick("3D ビューと Unity に見せていない", "Hidden in the 3D View and Unity").into(),
+            app.lang
+                .pick(
+                    "3D ビューと Unity に見せていない",
+                    "Hidden in the 3D View and Unity",
+                )
+                .into(),
         );
     }
     let published = app.link.published.contains(&set.uid);
@@ -85,7 +90,10 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         // （予算の警告が、Unity に見えない警告や「Unity に見せている」の印を隠さない）
         let mut lines: Vec<&str> = Vec::new();
         if !routed {
-            lines.push(app.lang.pick("Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）", "This material has no Color route in Unity (not shown in Unity)."));
+            lines.push(app.lang.pick(
+                "Unity 側にこのマテリアルの Color の流し込み先が無い（Unity には見えない）",
+                "This material has no Color route in Unity (not shown in Unity).",
+            ));
         }
         if unpainted {
             lines.push(app.lang.pick(
@@ -180,7 +188,8 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     w::hline(&p, bar.left(), bar.right(), bar.top(), t::BORDER);
     let lang = app.lang;
     let free = !app.is_stroking();
-    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
+    let button =
+        |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
     let mut action = None;
     let mut action_bake = false;
     if w::icon_button(
@@ -223,7 +232,9 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     )
     .clicked()
     {
-        action = Some(crate::newproject::NpAction::RemoveSets(vec![app.sets.current().uid]));
+        action = Some(crate::newproject::NpAction::RemoveSets(vec![
+            app.sets.current().uid,
+        ]));
     }
     // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクはメニューから）
     if bar.width() >= BAKE_BUTTON_MIN_BAR_WIDTH {
@@ -370,7 +381,10 @@ fn set_row(
             "visibility_off"
         },
         if visible {
-            app.lang.pick("隠す（3D ビューと Unity に見せない）", "Hide in the 3D View and Unity")
+            app.lang.pick(
+                "隠す（3D ビューと Unity に見せない）",
+                "Hide in the 3D View and Unity",
+            )
         } else {
             app.lang.pick("見せる", "Show")
         },

@@ -114,7 +114,11 @@ pub(super) fn is_eraser(app: &AppState) -> bool {
 /// ブラシの道具のタブに出すグループ（組み込みのあるグループはいつも。取り込んだブラシが 1 つでもあれば「取り込み」も）。消しゴムのグループは
 /// 消しゴムの道具の一覧なので出さない（ブラシと消しゴムを同じ一覧に並べない）。
 pub fn tab_groups(app: &AppState) -> Vec<Group> {
-    let mut groups: Vec<Group> = Group::ALL.iter().copied().filter(|g| !g.is_eraser()).collect();
+    let mut groups: Vec<Group> = Group::ALL
+        .iter()
+        .copied()
+        .filter(|g| !g.is_eraser())
+        .collect();
     if app
         .brushes
         .lib
@@ -304,11 +308,7 @@ fn brush_row(
     selected: bool,
 ) {
     let lang = app.lang;
-    let import = app
-        .brushes
-        .lib
-        .entry(key)
-        .and_then(|e| e.import.clone());
+    let import = app.brushes.lib.entry(key).and_then(|e| e.import.clone());
     let gaps: Vec<crate::brushes::Gap> = import.iter().flat_map(|m| m.gaps.clone()).collect();
     let clip = ui.clip_rect();
     let hit = row.intersect(clip);
@@ -888,7 +888,13 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         next(130.0),
         "options.opacity",
         b.opacity * 100.0,
-        &SliderSpec::new(l.pick("不透明度", "Opacity"), 0.0, 100.0, NumberFormat::int("%")).enabled(editable),
+        &SliderSpec::new(
+            l.pick("不透明度", "Opacity"),
+            0.0,
+            100.0,
+            NumberFormat::int("%"),
+        )
+        .enabled(editable),
     );
     if out.changed {
         b.opacity = out.value / 100.0;
@@ -899,7 +905,10 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 
 /// ブラシサイズの格子の列の数（欄の幅に入るだけ。1 列以上、全部の数まで）。
 pub(super) fn size_columns(width: f32) -> usize {
-    (((width - 2.0 * t::PADDING) / SIZE_CELL_MIN).floor().max(1.0) as usize).min(SIZES.len())
+    (((width - 2.0 * t::PADDING) / SIZE_CELL_MIN)
+        .floor()
+        .max(1.0) as usize)
+        .min(SIZES.len())
 }
 
 /// ブラシサイズの格子の高さ（段の数 × 段の高さと上下の余白）。

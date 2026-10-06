@@ -39,11 +39,16 @@ pub struct SetView<'a> {
 
 impl SetView<'_> {
     pub fn facts(&self) -> SetFacts<'_> {
-        SetFacts { id: self.id, name: self.name, unsaved: self.unsaved }
+        SetFacts {
+            id: self.id,
+            name: self.name,
+            unsaved: self.unsaved,
+        }
     }
     /// 編集できるセットの文書。読むだけのセットは理由つきで断る。
     pub fn editable_doc(&self) -> Result<&Document, OpError> {
-        self.doc.ok_or_else(|| read_only_error(self.name, self.read_only))
+        self.doc
+            .ok_or_else(|| read_only_error(self.name, self.read_only))
     }
 }
 
@@ -112,20 +117,29 @@ pub trait OpHost {
     /// 書き出す。既定は、セットの文書を読んで `crate::export` の関数を通す。
     fn export(&mut self, job: &ExportJob<'_>) -> Result<Reply, OpError> {
         let policy = self.policy().clone();
-        self.read_set(job.set(), &mut |view| crate::export::run(view, &policy, job))
+        self.read_set(job.set(), &mut |view| {
+            crate::export::run(view, &policy, job)
+        })
     }
     /// 見本の画像。既定は、セットの文書を読んで `crate::preview` を通す。
     fn preview(&mut self, args: &PreviewArgs) -> Result<Reply, OpError> {
-        self.read_set(args.set.as_deref(), &mut |view| crate::preview::render(view, args))
+        self.read_set(args.set.as_deref(), &mut |view| {
+            crate::preview::render(view, args)
+        })
     }
 }
 
 /// 壊す操作に `confirm: true` があるか（`Danger::Always` の命令。置き換えるときだけ壊す命令は、置き換える所で確かめる）。
 fn check_confirm(command: &Command) -> Result<(), OpError> {
-    let Some(spec) = command_spec(command.name()) else { return Ok(()) };
+    let Some(spec) = command_spec(command.name()) else {
+        return Ok(());
+    };
     if spec.danger == Danger::Always && command.confirmed() != Some(true) {
         return Err(OpError::confirm_required(
-            format!("{} は壊す操作です。confirm: true を付けてください", command.name()),
+            format!(
+                "{} は壊す操作です。confirm: true を付けてください",
+                command.name()
+            ),
             format!("{} is destructive; pass confirm: true", command.name()),
             Some(serde_json::json!({"command": command.name()})),
         ));
@@ -138,8 +152,8 @@ fn check_confirm(command: &Command) -> Result<(), OpError> {
 /// 途中の panic は `internal` の誤りにして返す（呼び手のプロセス・つながりを落とさない）。文書の編集は `Document::batch` が積んだ段を戻してから
 /// panic を返すので、文書は編集の前のまま。
 pub fn execute(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(host, command))).unwrap_or_else(
-        |payload| {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(host, command)))
+        .unwrap_or_else(|payload| {
             let detail = payload
                 .downcast_ref::<&str>()
                 .map(|s| (*s).to_owned())
@@ -148,11 +162,13 @@ pub fn execute(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpErro
             Err(OpError::new(
                 ErrorCode::Internal,
                 format!("{} の途中で想定していない失敗が起きました", command.name()),
-                format!("{} stopped because of an unexpected failure", command.name()),
+                format!(
+                    "{} stopped because of an unexpected failure",
+                    command.name()
+                ),
             )
             .with_data(serde_json::json!({"command": command.name(), "detail": detail})))
-        },
-    )
+        })
 }
 
 fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> {
@@ -167,7 +183,10 @@ fn dispatch(host: &mut dyn OpHost, command: &Command) -> Result<Reply, OpError> 
         Command::Save(a) => host.save(&SaveJob::InPlace { confirm: a.confirm }),
         Command::SaveAs(a) => {
             let path = host.policy().resolve(&a.path)?;
-            host.save(&SaveJob::As { path, confirm: a.confirm })
+            host.save(&SaveJob::As {
+                path,
+                confirm: a.confirm,
+            })
         }
         Command::Preview(a) => host.preview(a),
         Command::ExportChannels(a) => host.export(&ExportJob::Channels(a)),

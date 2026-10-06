@@ -217,7 +217,11 @@ impl CopyRefusal {
             Self::LayerDataTooLarge { layer } => {
                 format!("レイヤー「{layer}」の付加情報が大きすぎます")
             }
-            Self::EdgeOverLimit { width, height, limit } => {
+            Self::EdgeOverLimit {
+                width,
+                height,
+                limit,
+            } => {
                 format!("キャンバスが大きすぎます（{width}×{height}、上限 {limit}）")
             }
             Self::LayerCountOverLimit { count, limit } => {
@@ -299,7 +303,12 @@ impl CopyState {
         }
     }
     /// 層の画素を入れるときに分かった知らせ（層の名前つき）。
-    pub(super) fn add_layer_note(&mut self, feature: ImportFeature, action: ImportAction, name: &str) {
+    pub(super) fn add_layer_note(
+        &mut self,
+        feature: ImportFeature,
+        action: ImportAction,
+        name: &str,
+    ) {
         self.add(feature, action, Vec::new(), Some(name))
     }
     pub(super) fn discard_layer(&mut self) {
@@ -353,11 +362,16 @@ impl State<'_> {
         let Some(c) = self.copy.as_mut() else { return };
         if c.in_layer {
             // 1 枚の層の中で同じ機能は 1 度だけ数える（細目は足す）
-            if let Some(p) = c.pending.iter_mut().find(|p| p.0 == feature && p.1 == action) {
+            if let Some(p) = c
+                .pending
+                .iter_mut()
+                .find(|p| p.0 == feature && p.1 == action)
+            {
                 p.2.extend(detail);
                 return;
             }
-            c.pending.push((feature, action, detail.into_iter().collect()))
+            c.pending
+                .push((feature, action, detail.into_iter().collect()))
         } else {
             c.add(feature, action, detail.into_iter().collect(), None)
         }
@@ -531,7 +545,8 @@ fn tell<R: Seek>(r: &mut R) -> Step<u64> {
     Ok(r.stream_position()?)
 }
 fn skip<R: Seek>(r: &mut R, n: u64) -> Step<()> {
-    let n = i64::try_from(n).map_err(|_| Stop::Error(Error::InvalidData("区間長が大きすぎます".into())))?;
+    let n = i64::try_from(n)
+        .map_err(|_| Stop::Error(Error::InvalidData("区間長が大きすぎます".into())))?;
     r.seek(SeekFrom::Current(n))?;
     Ok(())
 }
@@ -688,7 +703,11 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     for (i, rec) in records.iter().enumerate() {
         cancelled(cancel)?;
         let (w, hh) = (rec.layer.width, rec.layer.height);
-        let (mw, mh) = rec.layer.mask.as_ref().map_or((0, 0), |m| (m.width, m.height));
+        let (mw, mh) = rec
+            .layer
+            .mask
+            .as_ref()
+            .map_or((0, 0), |m| (m.width, m.height));
         for &(id, len) in &rec.channels {
             let (cw, ch) = if id == -2 { (mw, mh) } else { (w, hh) };
             let bound = u64::from(cw) * u64::from(ch) * 2 + u64::from(ch) * 4 + 1024;
@@ -919,7 +938,11 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let mut dropped = c.drop_layer && plain;
         c.drop_layer = false;
         if mask_values_lost && !dropped {
-            s.copy_note(ImportFeature::MaskWithoutPixels, ImportAction::Changed, None);
+            s.copy_note(
+                ImportFeature::MaskWithoutPixels,
+                ImportAction::Changed,
+                None,
+            );
         }
         s.copy.as_mut().unwrap().in_layer = false;
         // 形のあるシェイプ（塗りつぶし + ベクターマスク）は、塗りの設定でなく層の画素（描画された形）で取り込む
@@ -1151,7 +1174,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             LayerKind::Group { .. } => d.add_group(&l.name, None)?,
             LayerKind::SolidColor([cr, cg, cb]) => d.add_fill_layer(
                 &l.name,
-                &[(yolu_core::Channel::Color, yolu_core::Rgba8::new(*cr, *cg, *cb, 255))],
+                &[(
+                    yolu_core::Channel::Color,
+                    yolu_core::Rgba8::new(*cr, *cg, *cb, 255),
+                )],
                 None,
             )?,
             LayerKind::Adjustment(a) => {
@@ -1256,7 +1282,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     // 統合画像と照らす
     check_composite(r, &d, channels, merged_alpha, total, o, &mut s)?;
     let notes = s.copy.take().unwrap().into_notes();
-    Ok(CopyOutcome::Imported(Box::new(CopyImport { document: d, notes })))
+    Ok(CopyOutcome::Imported(Box::new(CopyImport {
+        document: d,
+        notes,
+    })))
 }
 
 /// 画像リソースを読み飛ばす（色に効くものだけ中身を見る）。
@@ -1319,7 +1348,11 @@ fn check_composite<R: Read + Seek>(
 ) -> Step<()> {
     let (w, h) = (d.width() as usize, d.height() as usize);
     let unchecked = |s: &mut State, why: Unchecked| -> Step<()> {
-        s.copy_note(ImportFeature::CompositeUnchecked(why), ImportAction::Ignored, None);
+        s.copy_note(
+            ImportFeature::CompositeUnchecked(why),
+            ImportAction::Ignored,
+            None,
+        );
         Ok(())
     };
     // 統合画像（1 枚）と、帯の合成が予算に入るか
@@ -1347,7 +1380,12 @@ fn check_composite<R: Read + Seek>(
             let psd_row = h - 1 - (y as usize + row);
             let ours = &out[row * w * 4..(row + 1) * w * 4];
             let theirs = &merged[psd_row * w * 4..(psd_row + 1) * w * 4];
-            for (a, b) in ours.as_chunks::<4>().0.iter().zip(theirs.as_chunks::<4>().0) {
+            for (a, b) in ours
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(theirs.as_chunks::<4>().0)
+            {
                 let worst = (0..compared_channels)
                     .map(|c| a[c].abs_diff(b[c]))
                     .max()

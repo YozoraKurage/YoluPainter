@@ -294,15 +294,23 @@ fn shelf_images_become_effect_inputs_like_project_images_and_only_the_wanted_one
     let b = [200u8, 100, 50, 255];
     let id_a = "0a0b0c0d-0000-4000-8000-00000000000a";
     let id_b = "0a0b0c0d-0000-4000-8000-00000000000b";
-    shelf.add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null).unwrap();
-    shelf.add_image(id_b, "b", &b, 1, 1, "linear", Value::Null).unwrap();
+    shelf
+        .add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null)
+        .unwrap();
+    shelf
+        .add_image(id_b, "b", &b, 1, 1, "linear", Value::Null)
+        .unwrap();
     // 全部
     let all = shelf.image_inputs(None).unwrap();
     assert_eq!(all.len(), 2);
     let (got_a, image_a) = &all[0];
     assert_eq!(got_a.0, 0x0a0b0c0d_0000_4000_8000_00000000000a);
     assert_eq!((image_a.width, image_a.height), (2, 2));
-    assert_eq!(&image_a.pixels[..], &a[..], "文書と同じ向き（下の行が先）で、透明の画素の RGB も保つ");
+    assert_eq!(
+        &image_a.pixels[..],
+        &a[..],
+        "文書と同じ向き（下の行が先）で、透明の画素の RGB も保つ"
+    );
     assert_eq!(image_a.hash, yolu_io::shelf::image_hash(&a, 2, 2).unwrap());
     assert_eq!(all[1].1.color_space, yolu_core::ImageColorSpace::Linear);
     // 必要な ID だけ
@@ -310,16 +318,25 @@ fn shelf_images_become_effect_inputs_like_project_images_and_only_the_wanted_one
     assert_eq!(only.len(), 1);
     assert_eq!(only[0].0 .0, 0x0a0b0c0d_0000_4000_8000_00000000000b);
     assert!(shelf.image_inputs(Some(&[])).unwrap().is_empty());
-    assert!(shelf.image_inputs(Some(&["ffffffff-0000-4000-8000-000000000000"])).unwrap().is_empty());
+    assert!(shelf
+        .image_inputs(Some(&["ffffffff-0000-4000-8000-000000000000"]))
+        .unwrap()
+        .is_empty());
     // プロジェクトの画像（`Project::image_inputs`）と同じ結果
-    let bytes = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/format5.ylp")).unwrap();
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/format5.ylp"),
+    )
+    .unwrap();
     let project = Project::read(&bytes).unwrap();
     let from_project = project.image_inputs().unwrap();
     let from_shelf = project.shelf(1 << 30).unwrap().image_inputs(None).unwrap();
     assert!(!from_project.is_empty());
     assert_eq!(from_project.len(), from_shelf.len());
     for ((ida, a), (idb, b)) in from_project.iter().zip(&from_shelf) {
-        assert_eq!((ida, &a.hash, a.width, a.height), (idb, &b.hash, b.width, b.height));
+        assert_eq!(
+            (ida, &a.hash, a.width, a.height),
+            (idb, &b.hash, b.width, b.height)
+        );
         assert_eq!(a.pixels, b.pixels);
     }
 }
@@ -332,20 +349,45 @@ fn shelf_image_decode_budget_is_carried_across_one_by_one_calls() {
     let b = [200u8, 100, 50, 255]; // 1 × 1 = 4 バイト
     let id_a = "0a0b0c0d-0000-4000-8000-00000000000a";
     let id_b = "0a0b0c0d-0000-4000-8000-00000000000b";
-    shelf.add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null).unwrap();
-    shelf.add_image(id_b, "b", &b, 1, 1, "srgb", Value::Null).unwrap();
+    shelf
+        .add_image(id_a, "a", &a, 2, 2, "srgb", Value::Null)
+        .unwrap();
+    shelf
+        .add_image(id_b, "b", &b, 1, 1, "srgb", Value::Null)
+        .unwrap();
     // 上限 20 バイト: 16 + 4 はちょうど入り、もう 1 枚は入らない
-    assert_eq!(shelf.image_inputs_within(Some(&[id_a]), 0, 20).unwrap().len(), 1);
-    assert_eq!(shelf.image_inputs_within(Some(&[id_b]), 16, 20).unwrap().len(), 1);
-    let refused = shelf.image_inputs_within(Some(&[id_a]), 16, 20).unwrap_err();
+    assert_eq!(
+        shelf
+            .image_inputs_within(Some(&[id_a]), 0, 20)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        shelf
+            .image_inputs_within(Some(&[id_b]), 16, 20)
+            .unwrap()
+            .len(),
+        1
+    );
+    let refused = shelf
+        .image_inputs_within(Some(&[id_a]), 16, 20)
+        .unwrap_err();
     assert!(matches!(refused, yolu_io::Error::Budget(_)), "{refused:?}");
-    assert!(refused.to_string().contains("予算超過") && refused.to_string().contains('a'), "{refused}");
+    assert!(
+        refused.to_string().contains("予算超過") && refused.to_string().contains('a'),
+        "{refused}"
+    );
     // 渡さない形（`image_inputs`）は今までと同じ（0 から数える）
     assert_eq!(shelf.image_inputs(Some(&[id_a])).unwrap().len(), 1);
     // 上限は 768 MiB より広げられない
     let max = yolu_io::MAX_TOTAL_BYTES;
-    assert!(shelf.image_inputs_within(Some(&[id_b]), max - 3, usize::MAX).is_err());
-    assert!(shelf.image_inputs_within(Some(&[id_b]), max - 4, usize::MAX).is_ok());
+    assert!(shelf
+        .image_inputs_within(Some(&[id_b]), max - 3, usize::MAX)
+        .is_err());
+    assert!(shelf
+        .image_inputs_within(Some(&[id_b]), max - 4, usize::MAX)
+        .is_ok());
 }
 #[test]
 fn mask_and_group_smart_core_roundtrip_keeps_layers_and_pixels() {
@@ -838,7 +880,9 @@ fn files_without_an_origin_record_none_and_deduplicate() {
     assert_eq!(shelf.resources().len(), 1);
     // 索引は C# と同じ書式で、読み直せる
     let index = shelf.canonical_index().unwrap();
-    assert!(std::str::from_utf8(&index).unwrap().contains("\"type\": \"none\""));
+    assert!(std::str::from_utf8(&index)
+        .unwrap()
+        .contains("\"type\": \"none\""));
     let mut files = shelf.entries().clone();
     files.insert("resources.json".into(), Arc::from(index));
     assert_eq!(Shelf::read(&files, 1 << 20).unwrap().resources().len(), 1);
@@ -849,7 +893,14 @@ fn an_images_color_space_changes_only_the_index_and_round_trips() {
     let mut shelf = Shelf::new(1 << 20);
     let rgba = [255u8, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 0];
     let id = shelf
-        .add_image_without_origin("11111111-1111-1111-1111-111111111111", "tile", &rgba, 2, 2, "srgb")
+        .add_image_without_origin(
+            "11111111-1111-1111-1111-111111111111",
+            "tile",
+            &rgba,
+            2,
+            2,
+            "srgb",
+        )
         .unwrap();
     let content = shelf.resources()[0].content.clone();
     let png = shelf.content_bytes(&id).unwrap().to_vec();
@@ -867,6 +918,12 @@ fn an_images_color_space_changes_only_the_index_and_round_trips() {
     assert_eq!(again.resources()[0].metadata["colorSpace"], "linear");
     // 知らない色空間・無い画像・画像でない素材は断る
     assert!(shelf.set_image_color_space(&id, "pink").is_err());
-    assert!(shelf.set_image_color_space("22222222-2222-2222-2222-222222222222", "srgb").is_err());
-    assert_eq!(shelf.resources()[0].metadata["colorSpace"], "linear", "断ったら変えない");
+    assert!(shelf
+        .set_image_color_space("22222222-2222-2222-2222-222222222222", "srgb")
+        .is_err());
+    assert_eq!(
+        shelf.resources()[0].metadata["colorSpace"],
+        "linear",
+        "断ったら変えない"
+    );
 }

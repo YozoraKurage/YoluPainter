@@ -10,15 +10,14 @@ use egui::{
     pos2, vec2, Color32, ColorImage, Id, Rect, Sense, TextureHandle, TextureId, TextureOptions, Ui,
 };
 
-use super::properties::{
-    choice_row, group_label, open_popup, percent_row, slider_row, toggle_row,
-};
+use super::properties::{choice_row, group_label, open_popup, percent_row, slider_row, toggle_row};
 
 /// まとまりの小見出し（前の行との間を少し空ける）。
 fn group(ui: &mut Ui, rows: &mut Rows, text: &str) {
     rows.space(5.0);
     group_label(ui, rows, text);
 }
+use super::tip_library;
 use crate::brushes::Category;
 use crate::engine::{
     BrushEffect, ColorDynamics, ColorMix, Controls, DVec2, Jitter, MixGround, MixMode,
@@ -26,7 +25,6 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::m2::{self, dual_mode_label, texture_mode_label, tip_label, BrushOp, EffectKind, UiOp};
-use super::tip_library;
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, BrushState, Tool};
 use crate::ui::curve;
@@ -386,7 +384,9 @@ fn projection_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lan
         )),
         free,
     ) {
-        p.seam_bleed = v.round().clamp(0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32) as u32;
+        p.seam_bleed = v
+            .round()
+            .clamp(0.0, yolu_core::geometry::MAX_SEAM_BLEED as f32) as u32;
     }
     app.view3d.projection_dragging = dragging;
 }
@@ -496,7 +496,14 @@ impl PressureItem {
 
 /// 筆圧の曲線の行（`ui::curve::curve_editor`）。点を足す・動かす・消す操作が決まったとき（ドラッグは離したとき）だけ、新しい曲線を返す。
 /// 最小値はスライダーが持つので、枠が描くのは曲線そのもの。
-fn pressure_curve_row(ui: &mut Ui, rows: &mut Rows, id: &str, curve: &Curve, tooltip: &str, enabled: bool) -> Option<Curve> {
+fn pressure_curve_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    curve: &Curve,
+    tooltip: &str,
+    enabled: bool,
+) -> Option<Curve> {
     let rect = rows.row(curve::HEIGHT, 6.0);
     curve::curve_editor(ui, rect, id.to_owned(), curve, tooltip, enabled)
 }
@@ -1404,7 +1411,14 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
         let key = item.key();
         let response = item.response(&mut app.m2.brush.mix).clone();
         let on = item.on(&app.m2.brush.mix);
-        group(ui, rows, &lang.pick(format!("{}（筆圧）", item.name(lang)), format!("{} (pressure)", item.name(lang))));
+        group(
+            ui,
+            rows,
+            &lang.pick(
+                format!("{}（筆圧）", item.name(lang)),
+                format!("{} (pressure)", item.name(lang)),
+            ),
+        );
         if let Some(v) = toggle_row(
             ui,
             rows,
@@ -1423,7 +1437,8 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             item.set_on(&mut app.m2.brush.mix, v);
         }
         let used = active && on;
-        let pressure_off = off_reason.unwrap_or_else(|| lang.pick("筆圧を使っていません", "Pen pressure is not used"));
+        let pressure_off = off_reason
+            .unwrap_or_else(|| lang.pick("筆圧を使っていません", "Pen pressure is not used"));
         if let Some(v) = percent_row(
             ui,
             rows,

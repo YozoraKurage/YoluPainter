@@ -135,7 +135,12 @@ impl FakeUnity {
             .unwrap()
             .iter()
             .filter_map(|m| match m {
-                Message::MaterialRequest(r) => Some(r.items.iter().map(|i| (r.generation, i.clone())).collect::<Vec<_>>()),
+                Message::MaterialRequest(r) => Some(
+                    r.items
+                        .iter()
+                        .map(|i| (r.generation, i.clone()))
+                        .collect::<Vec<_>>(),
+                ),
                 _ => None,
             })
             .flatten()
@@ -210,7 +215,11 @@ fn model(generation: u32, materials: Vec<MaterialInfo>) -> Model {
             submeshes: (0..n)
                 .map(|m| Submesh {
                     material: m,
-                    indices: if m % 2 == 0 { vec![0, 2, 1] } else { vec![1, 2, 3] },
+                    indices: if m % 2 == 0 {
+                        vec![0, 2, 1]
+                    } else {
+                        vec![1, 2, 3]
+                    },
                 })
                 .collect(),
         }],
@@ -263,13 +272,21 @@ const OLD: u64 = feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES;
 const NEW: u64 = OLD | feature::MATERIAL_REQUEST;
 
 #[test]
-fn headless_the_sets_that_wait_for_an_original_are_asked_for_once_and_the_answer_goes_under_the_layers() {
+fn headless_the_sets_that_wait_for_an_original_are_asked_for_once_and_the_answer_goes_under_the_layers(
+) {
     let (mut a, name) = Headless::listen("ask");
     let unity = a.connect(&name, NEW);
-    assert_ne!(a.state.link.common_features() & feature::MATERIAL_REQUEST, 0);
+    assert_ne!(
+        a.state.link.common_features() & feature::MATERIAL_REQUEST,
+        0
+    );
     unity.send(Message::Model(model(
         1,
-        vec![material("Body", Some(256)), material("Hair", Some(128)), material("Plain", None)],
+        vec![
+            material("Body", Some(256)),
+            material("Hair", Some(128)),
+            material("Plain", None),
+        ],
     )));
     a.until("頼み", |_| unity.request_messages() >= 1);
     a.settle();
@@ -287,7 +304,9 @@ fn headless_the_sets_that_wait_for_an_original_are_asked_for_once_and_the_answer
     // Unity は頼まれた分を（印つきで）答える。入るまで Unity に出さなかったセットが出る
     unity.send(original(1, 0, 256, 0x51));
     unity.send(original(1, 1, 128, 0x52));
-    a.until("セット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    a.until("セット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.link.originals_waiting(), 0);
     let (body, hair) = (a.set_index("Body"), a.set_index("Hair"));
     for set in [body, hair] {
@@ -299,7 +318,11 @@ fn headless_the_sets_that_wait_for_an_original_are_asked_for_once_and_the_answer
     // 描いたセットのあるモデルの送り直しでは、新しいセットだけを頼む
     unity.send(Message::Model(model(
         2,
-        vec![material("Body", Some(256)), material("Hair", Some(128)), material("Extra", Some(64))],
+        vec![
+            material("Body", Some(256)),
+            material("Hair", Some(128)),
+            material("Extra", Some(64)),
+        ],
     )));
     a.until("2 度目の頼み", |_| unity.request_messages() >= 2);
     a.settle();
@@ -315,8 +338,14 @@ fn headless_the_sets_that_wait_for_an_original_are_asked_for_once_and_the_answer
 fn headless_a_unity_without_the_mark_is_not_asked_and_pushes_the_originals_as_before() {
     let (mut a, name) = Headless::listen("old");
     let unity = a.connect(&name, OLD);
-    assert_eq!(a.state.link.common_features() & feature::MATERIAL_REQUEST, 0);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(256)), material("Hair", Some(128))])));
+    assert_eq!(
+        a.state.link.common_features() & feature::MATERIAL_REQUEST,
+        0
+    );
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(256)), material("Hair", Some(128))],
+    )));
     a.until("元の絵を待つ", |a| a.link.originals_waiting() == 2);
     a.settle();
     assert_eq!(unity.request_messages(), 0, "印の無い Unity には頼まない");
@@ -324,16 +353,24 @@ fn headless_a_unity_without_the_mark_is_not_asked_and_pushes_the_originals_as_be
     // 元の絵は Unity が押し出す（今までどおり）。印は付いていない（0.3.x）
     unity.send(original(1, 0, 256, 0));
     unity.send(original(1, 1, 128, 0));
-    a.until("セット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
-    assert_eq!(a.link.original_cache().len(), 0, "印の無い絵は手元に残さない");
+    a.until("セット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
+    assert_eq!(
+        a.link.original_cache().len(),
+        0,
+        "印の無い絵は手元に残さない"
+    );
     assert!(unity.errors().is_empty());
 }
 
 #[test]
-fn headless_a_material_whose_values_never_arrive_is_asked_for_and_a_unity_that_cannot_be_asked_is_told_why() {
+fn headless_a_material_whose_values_never_arrive_is_asked_for_and_a_unity_that_cannot_be_asked_is_told_why(
+) {
     // 頼める Unity: 値が来ないマテリアルを頼む（絵の無い・マテリアルの無い組は頼まない）。答え（値なし）が来たら、もう頼まない
     let (mut a, name) = Headless::listen("values");
-    a.link.set_ask_timing(Duration::ZERO, Duration::from_millis(50));
+    a.link
+        .set_ask_timing(Duration::ZERO, Duration::from_millis(50));
     let unity = a.connect(&name, NEW);
     let unassigned = MaterialInfo {
         key: MaterialKey::Unassigned,
@@ -352,10 +389,16 @@ fn headless_a_material_whose_values_never_arrive_is_asked_for_and_a_unity_that_c
             .any(|(_, w)| w.wants_values() && w.material == 0)
     });
     a.until("値の頼み", |_| {
-        unity.requests().iter().any(|(_, w)| w.wants_values() && w.material == 1)
+        unity
+            .requests()
+            .iter()
+            .any(|(_, w)| w.wants_values() && w.material == 1)
     });
     assert!(
-        unity.requests().iter().all(|(g, w)| *g == 1 && w.material < 2 && w.wants == WANT_VALUES),
+        unity
+            .requests()
+            .iter()
+            .all(|(g, w)| *g == 1 && w.material < 2 && w.wants == WANT_VALUES),
         "マテリアルの無い組は頼まない: {:?}",
         unity.requests()
     );
@@ -374,25 +417,48 @@ fn headless_a_material_whose_values_never_arrive_is_asked_for_and_a_unity_that_c
     };
     unity.send(none(0));
     a.until("頼み直し", |_| {
-        unity.requests().iter().filter(|(_, w)| w.material == 1).count() >= 3
+        unity
+            .requests()
+            .iter()
+            .filter(|(_, w)| w.material == 1)
+            .count()
+            >= 3
     });
     a.settle();
     std::thread::sleep(Duration::from_millis(200));
     a.settle();
-    let count = |m: u32| unity.requests().iter().filter(|(_, w)| w.material == m).count();
+    let count = |m: u32| {
+        unity
+            .requests()
+            .iter()
+            .filter(|(_, w)| w.material == m)
+            .count()
+    };
     assert_eq!(count(1), 3, "回数の上限（3 回）で止まる");
-    assert!(count(0) <= 1, "値が来たマテリアルは頼み直さない: {}", count(0));
+    assert!(
+        count(0) <= 1,
+        "値が来たマテリアルは頼み直さない: {}",
+        count(0)
+    );
 
     // 頼めない Unity（印なし）: 頼まず、値が来ないままなら理由（Unity のパッケージの版）を 1 度だけ知らせる
     let (mut a, name) = Headless::listen("values-old");
-    a.link.set_ask_timing(Duration::ZERO, Duration::from_millis(50));
+    a.link
+        .set_ask_timing(Duration::ZERO, Duration::from_millis(50));
     let unity = a.connect(&name, OLD);
     unity.send(Message::Model(model(1, vec![material("Body", None)])));
     a.until("理由の知らせ", |a| {
-        a.state.link.notice.as_ref().is_some_and(|(_, t)| t.contains("取り直せません"))
+        a.state
+            .link
+            .notice
+            .as_ref()
+            .is_some_and(|(_, t)| t.contains("取り直せません"))
     });
     let text = a.state.link.notice.clone().unwrap().1;
-    assert!(text.contains("Unity のパッケージを 0.4.0 以上に上げる必要があります"), "{text}");
+    assert!(
+        text.contains("Unity のパッケージを 0.4.0 以上に上げる必要があります"),
+        "{text}"
+    );
     a.settle();
     assert_eq!(unity.request_messages(), 0);
     assert_eq!(a.link.requests_sent(), 0);
@@ -406,11 +472,16 @@ fn headless_a_material_whose_values_never_arrive_is_asked_for_and_a_unity_that_c
 fn headless_a_cached_answer_uses_the_original_in_hand_and_a_changed_stamp_is_asked_for_again() {
     let (mut a, name) = Headless::listen("cached");
     let unity = a.connect(&name, NEW);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("最初の頼み", |_| unity.request_messages() >= 1);
     unity.send(original(1, 0, 64, 0xAA));
     unity.send(original(1, 1, 64, 0xBB));
-    a.until("セット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    a.until("セット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.link.original_cache().len(), 2);
     // 利用者が Hair のセットを消す。Unity がモデルを送り直す（世代 2）と、Hair のセットが新しく作られ、元の絵をまた頼む。
     // 手元に Hair の絵があるので、頼みに印が付く
@@ -418,7 +489,10 @@ fn headless_a_cached_answer_uses_the_original_in_hand_and_a_changed_stamp_is_ask
     a.state.remove_sets(&[hair_uid]).unwrap();
     a.frame();
     let before = unity.request_messages();
-    unity.send(Message::Model(model(2, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        2,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("2 度目の頼み", |_| unity.request_messages() > before);
     assert_eq!(
         unity.requests().last().unwrap(),
@@ -445,7 +519,10 @@ fn headless_a_cached_answer_uses_the_original_in_hand_and_a_changed_stamp_is_ask
     a.state.remove_sets(&[hair_uid]).unwrap();
     a.frame();
     let before = unity.request_messages();
-    unity.send(Message::Model(model(3, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        3,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("3 度目の頼み", |_| unity.request_messages() > before);
     assert_eq!(unity.requests().last().unwrap().1.have, 0xBB);
     unity.send(cached(3, 1, 64, 0xCC));
@@ -456,7 +533,10 @@ fn headless_a_cached_answer_uses_the_original_in_hand_and_a_changed_stamp_is_ask
         &(3, MaterialWant::original(1, "_MainTex", 0)),
         "古い絵は使わず、印なしで頼み直す"
     );
-    assert!(!unity.set_of(1).is_some_and(|t| t.generation == 3), "古い絵では出さない");
+    assert!(
+        !unity.set_of(1).is_some_and(|t| t.generation == 3),
+        "古い絵では出さない"
+    );
     let mut fresh = picture(64);
     fresh[0] = 200;
     unity.send(Message::MaterialOriginal(MaterialOriginal {
@@ -472,15 +552,21 @@ fn headless_a_cached_answer_uses_the_original_in_hand_and_a_changed_stamp_is_ask
         pixels: fresh,
         stamp: 0xCC,
     }));
-    a.until("新しい絵のセット", |_| unity.set_of(1).is_some_and(|t| t.generation == 3));
+    a.until("新しい絵のセット", |_| {
+        unity.set_of(1).is_some_and(|t| t.generation == 3)
+    });
     let hair = a.set_index("Hair");
     let doc = a.state.set_doc(hair);
-    assert_eq!(yolu_app::engine::layer_pixel(&doc.layers()[0], 0, 0)[0], 200);
+    assert_eq!(
+        yolu_app::engine::layer_pixel(&doc.layers()[0], 0, 0)[0],
+        200
+    );
     assert_eq!(a.link.original_cache().len(), 2);
 }
 
 #[test]
-fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_one_after_the_model() {
+fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_one_after_the_model()
+{
     let (mut a, name) = Headless::listen("pose");
     let unity = a.connect(&name, OLD);
     unity.send(Message::Model(model(1, vec![material("Body", None)])));
@@ -513,7 +599,9 @@ fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_on
         "300 回受けても、溜め場には 1 つのメッシュの 1 回分（位置 4 頂点）だけ"
     );
     // 画面が戻る: 最新の 1 つだけが当たる
-    a.until("最新のポーズ", |a| pos(a) == yolu_core::glam::Vec3::splat(300.0));
+    a.until("最新のポーズ", |a| {
+        pos(a) == yolu_core::glam::Vec3::splat(300.0)
+    });
     assert_eq!(a.link.pending_pose_bytes(), 0);
 
     // 順番: モデル（世代 2）のすぐ後ろのポーズは、新しいモデルに当たる（前のモデルに当てて断られない）
@@ -526,8 +614,14 @@ fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_on
             normals: vec![],
         }],
     }));
-    a.until("世代 2 のポーズ", |a| pos(a) == yolu_core::glam::Vec3::splat(7.0));
-    assert!(unity.errors().is_empty(), "断られていない: {:?}", unity.errors());
+    a.until("世代 2 のポーズ", |a| {
+        pos(a) == yolu_core::glam::Vec3::splat(7.0)
+    });
+    assert!(
+        unity.errors().is_empty(),
+        "断られていない: {:?}",
+        unity.errors()
+    );
     // 前の世代のポーズが溜まったまま次のモデルが来ても、前のポーズは前のモデルに先に当たり、新しいポーズは新しいモデルに当たる
     unity.send(Message::Pose(Pose {
         generation: 2,
@@ -546,8 +640,14 @@ fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_on
             normals: vec![],
         }],
     }));
-    a.until("世代 3 のポーズ", |a| pos(a) == yolu_core::glam::Vec3::splat(9.0));
-    assert!(unity.errors().is_empty(), "断られていない: {:?}", unity.errors());
+    a.until("世代 3 のポーズ", |a| {
+        pos(a) == yolu_core::glam::Vec3::splat(9.0)
+    });
+    assert!(
+        unity.errors().is_empty(),
+        "断られていない: {:?}",
+        unity.errors()
+    );
 
     // 順番: ポーズのすぐ後ろの「モデルを閉じた」。ポーズは閉じる前に当たる（閉じたあとのモデルへ当てて、断る返事を返さない）。
     // 画面のスレッドが止まっている間に、読むスレッドが「閉じた」を列へ積む前にポーズを先に流す
@@ -561,10 +661,18 @@ fn headless_a_pile_of_poses_while_the_screen_is_stopped_applies_as_the_newest_on
     }));
     unity.send(Message::ModelClosed { generation: 3 });
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(a.link.pending_pose_bytes(), 0, "「閉じた」の前に、溜めたポーズは列へ流れた");
+    assert_eq!(
+        a.link.pending_pose_bytes(),
+        0,
+        "「閉じた」の前に、溜めたポーズは列へ流れた"
+    );
     a.until("モデルが閉じる", |a| a.state.model.is_none());
     a.settle();
-    assert!(unity.errors().is_empty(), "閉じたあとのモデルに当てて断られた: {:?}", unity.errors());
+    assert!(
+        unity.errors().is_empty(),
+        "閉じたあとのモデルに当てて断られた: {:?}",
+        unity.errors()
+    );
 }
 
 #[test]
@@ -596,12 +704,21 @@ fn headless_poses_around_new_models_that_pile_up_while_the_screen_is_stopped_app
     // 読むスレッドが全部を受け切るまで待つ（フレームは回さない）
     let deadline = Instant::now() + WATCHDOG;
     while a.link.pending_pose_bytes() != 4 * 12 {
-        assert!(Instant::now() < deadline, "世代 3 のポーズが溜め場に届かない");
+        assert!(
+            Instant::now() < deadline,
+            "世代 3 のポーズが溜め場に届かない"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     std::thread::sleep(Duration::from_millis(100));
-    a.until("世代 3 の最新のポーズ", |a| pos(a) == yolu_core::glam::Vec3::splat(6.0));
+    a.until("世代 3 の最新のポーズ", |a| {
+        pos(a) == yolu_core::glam::Vec3::splat(6.0)
+    });
     assert_eq!(a.link.pending_pose_bytes(), 0);
     a.settle();
-    assert!(unity.errors().is_empty(), "どのポーズも断られていない: {:?}", unity.errors());
+    assert!(
+        unity.errors().is_empty(),
+        "どのポーズも断られていない: {:?}",
+        unity.errors()
+    );
 }

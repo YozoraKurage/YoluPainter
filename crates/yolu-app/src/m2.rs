@@ -765,11 +765,7 @@ pub fn drop_edit_for(
             .first()
             .and_then(|m| drop_edit(doc, rows, *m, target));
     }
-    let carried = |id: LayerId| {
-        members
-            .iter()
-            .any(|m| *m == id || is_inside(doc, id, *m))
-    };
+    let carried = |id: LayerId| members.iter().any(|m| *m == id || is_inside(doc, id, *m));
     match target {
         DropTarget::Into(group) => {
             if carried(group) {
@@ -1036,13 +1032,22 @@ impl AppState {
                     self.message = if settings.derive_from_height() {
                         lang.pick("ハイト → ノーマルをオンにしました。", "Height → Normal on.")
                     } else {
-                        lang.pick("ハイト → ノーマルをオフにしました。", "Height → Normal off.")
+                        lang.pick(
+                            "ハイト → ノーマルをオフにしました。",
+                            "Height → Normal off.",
+                        )
                     }
                     .into();
                 } else if settings.file_direction() != old.file_direction() {
                     self.message = lang.pick(
-                        format!("ノーマルのファイル: {}", direction_name(settings.file_direction())),
-                        format!("Normal files: {}", direction_name(settings.file_direction())),
+                        format!(
+                            "ノーマルのファイル: {}",
+                            direction_name(settings.file_direction())
+                        ),
+                        format!(
+                            "Normal files: {}",
+                            direction_name(settings.file_direction())
+                        ),
                     );
                 }
             }
@@ -1351,7 +1356,10 @@ impl AppState {
         }
         let channel = self.m2.paint_channel;
         // マテリアルで塗るなら、無効のチャンネルは core が有効にする
-        if !self.mat.enabled && layer.surface(channel).is_some() && !layer.is_channel_enabled(channel) {
+        if !self.mat.enabled
+            && layer.surface(channel).is_some()
+            && !layer.is_channel_enabled(channel)
+        {
             return Some(format!(
                 "{}: {}",
                 lang.pick(

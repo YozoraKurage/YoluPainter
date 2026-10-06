@@ -2,7 +2,10 @@ use super::*;
 use crate::generator::Kind as G;
 
 fn given(items: &[(&str, ParamValue)]) -> BTreeMap<String, ParamValue> {
-    items.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
+    items
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), v.clone()))
+        .collect()
 }
 
 fn num_v(v: f64) -> ParamValue {
@@ -13,8 +16,16 @@ fn num_v(v: f64) -> ParamValue {
 fn every_parameter_has_a_default_inside_its_own_type() {
     for kind in kinds() {
         if !kind.addable {
-            assert!(kind.params.is_empty(), "{} は足せないので欄を持たない", kind.id);
-            assert!(!kind.opaque.is_empty(), "{} は足せない理由の中身を挙げる", kind.id);
+            assert!(
+                kind.params.is_empty(),
+                "{} は足せないので欄を持たない",
+                kind.id
+            );
+            assert!(
+                !kind.opaque.is_empty(),
+                "{} は足せない理由の中身を挙げる",
+                kind.id
+            );
         }
         assert!(kind.stack || kind.adjustment, "{}", kind.id);
         for param in &kind.params {
@@ -22,7 +33,12 @@ fn every_parameter_has_a_default_inside_its_own_type() {
                 .unwrap_or_else(|e| panic!("{}.{} の既定が型の外: {e}", kind.id, param.name));
         }
         let names: std::collections::HashSet<_> = kind.params.iter().map(|p| p.name).collect();
-        assert_eq!(names.len(), kind.params.len(), "{} の欄の名前が重なっている", kind.id);
+        assert_eq!(
+            names.len(),
+            kind.params.len(),
+            "{} の欄の名前が重なっている",
+            kind.id
+        );
     }
     let ids: std::collections::HashSet<_> = kinds().iter().map(|k| k.id).collect();
     assert_eq!(ids.len(), kinds().len());
@@ -31,8 +47,11 @@ fn every_parameter_has_a_default_inside_its_own_type() {
 #[test]
 fn every_addable_kind_builds_from_defaults_and_reads_back_the_same_values() {
     for kind in kinds().iter().filter(|k| k.addable) {
-        let defaults: Vec<(&str, ParamValue)> =
-            kind.params.iter().map(|p| (p.name, p.default.clone())).collect();
+        let defaults: Vec<(&str, ParamValue)> = kind
+            .params
+            .iter()
+            .map(|p| (p.name, p.default.clone()))
+            .collect();
         if kind.stack {
             let s = EffectSettings::from_catalog(kind.id, &BTreeMap::new())
                 .unwrap_or_else(|e| panic!("{}: {e}", kind.id));
@@ -41,7 +60,12 @@ fn every_addable_kind_builds_from_defaults_and_reads_back_the_same_values() {
             // 読んだ値をそのまま渡し直すと同じ設定
             let again = EffectSettings::from_catalog(kind.id, &given(&defaults)).unwrap();
             assert_eq!(again, s, "{}", kind.id);
-            assert_eq!(s.with_catalog_values(&BTreeMap::new()).unwrap(), s, "{}", kind.id);
+            assert_eq!(
+                s.with_catalog_values(&BTreeMap::new()).unwrap(),
+                s,
+                "{}",
+                kind.id
+            );
             assert_eq!(s.is_generator(), kind.generator, "{}", kind.id);
         }
         if kind.adjustment {
@@ -100,8 +124,11 @@ fn values_just_outside_a_range_are_refused_by_the_table_and_by_the_core_check() 
                     EffectSettings::from_catalog(kind.id, &given(&[(param.name, num_v(outside))]))
                         .unwrap_err()
                 } else {
-                    AdjustmentSettings::from_catalog(kind.id, &given(&[(param.name, num_v(outside))]))
-                        .unwrap_err()
+                    AdjustmentSettings::from_catalog(
+                        kind.id,
+                        &given(&[(param.name, num_v(outside))]),
+                    )
+                    .unwrap_err()
                 };
                 assert!(
                     matches!(err, ParamError::OutOfRange { name, .. } if name == param.name),
@@ -120,7 +147,8 @@ fn values_just_outside_a_range_are_refused_by_the_table_and_by_the_core_check() 
                 // シードは i32 へ丸めるので範囲の外が通る（型が範囲）。それ以外は core が断る
                 let is_seed = matches!(param.ty, ParamType::Integer { min, .. } if min == i64::from(i32::MIN));
                 // 負の値は符号なしの欄へ丸められて（0）範囲に入るので、表の検査だけが断る
-                let negative_into_unsigned = matches!(param.ty, ParamType::Integer { min, .. } if min >= 0) && outside < 0.0;
+                let negative_into_unsigned =
+                    matches!(param.ty, ParamType::Integer { min, .. } if min >= 0) && outside < 0.0;
                 if !is_seed && !negative_into_unsigned {
                     assert!(
                         matches!(built, Err(ParamError::Refused(_))),
@@ -155,13 +183,21 @@ fn the_edges_of_single_parameters_build_when_nothing_else_conflicts() {
     let blur = |r: f64| EffectSettings::from_catalog("blur", &given(&[("radius", num_v(r))]));
     assert!(blur(1.0).is_ok() && blur(256.0).is_ok());
     assert!(blur(0.0).is_err() && blur(257.0).is_err());
-    assert!(matches!(blur(2.5), Err(ParamError::NotInteger { name: "radius" })));
-    let thr = |v: f64| AdjustmentSettings::from_catalog("threshold", &given(&[("level", num_v(v))]));
+    assert!(matches!(
+        blur(2.5),
+        Err(ParamError::NotInteger { name: "radius" })
+    ));
+    let thr =
+        |v: f64| AdjustmentSettings::from_catalog("threshold", &given(&[("level", num_v(v))]));
     assert!(thr(1.0).is_ok() && thr(255.0).is_ok() && thr(0.0).is_err());
-    let post = |v: f64| AdjustmentSettings::from_catalog("posterize", &given(&[("levels", num_v(v))]));
+    let post =
+        |v: f64| AdjustmentSettings::from_catalog("posterize", &given(&[("levels", num_v(v))]));
     assert!(post(2.0).is_ok() && post(255.0).is_ok() && post(1.0).is_err());
     let balance = |v: f64| {
-        AdjustmentSettings::from_catalog("color_balance", &given(&[("midtones_cyan_red", num_v(v))]))
+        AdjustmentSettings::from_catalog(
+            "color_balance",
+            &given(&[("midtones_cyan_red", num_v(v))]),
+        )
     };
     assert!(balance(-100.0).is_ok() && balance(100.0).is_ok() && balance(100.5).is_err());
 }
@@ -180,7 +216,8 @@ fn combinations_the_core_check_refuses_are_reported_as_refused() {
     );
     assert!(matches!(r, Err(ParamError::Refused(_))), "{r:?}");
     // Generator は高さが低さより 0.001 以上上
-    let r = EffectSettings::from_catalog("dirt", &given(&[("low", num_v(0.5)), ("high", num_v(0.5))]));
+    let r =
+        EffectSettings::from_catalog("dirt", &given(&[("low", num_v(0.5)), ("high", num_v(0.5))]));
     assert!(matches!(r, Err(ParamError::Refused(_))), "{r:?}");
     // 方向は零ベクトルにできない
     let r = EffectSettings::from_catalog(
@@ -214,7 +251,10 @@ fn wrong_names_types_and_options_are_told_apart() {
         EffectSettings::from_catalog(kind, &given(items)).unwrap_err()
     };
     assert!(matches!(e("nope", &[]), ParamError::UnknownKind(_)));
-    assert!(matches!(e("blur", &[("size", num_v(1.0))]), ParamError::UnknownParam { .. }));
+    assert!(matches!(
+        e("blur", &[("size", num_v(1.0))]),
+        ParamError::UnknownParam { .. }
+    ));
     assert!(matches!(
         e("blur", &[("radius", ParamValue::Bool(true))]),
         ParamError::WrongType { name: "radius", .. }
@@ -234,16 +274,31 @@ fn wrong_names_types_and_options_are_told_apart() {
     // 使い方が違う種類
     assert!(matches!(
         EffectSettings::from_catalog("hue_saturation", &BTreeMap::new()),
-        Err(ParamError::WrongTarget { adjustment: false, .. })
+        Err(ParamError::WrongTarget {
+            adjustment: false,
+            ..
+        })
     ));
     assert!(matches!(
         AdjustmentSettings::from_catalog("blur", &BTreeMap::new()),
-        Err(ParamError::WrongTarget { adjustment: true, .. })
+        Err(ParamError::WrongTarget {
+            adjustment: true,
+            ..
+        })
     ));
     // 足せない種類
-    for id in ["gradient_map", "tone_curve", "shape_gradient", "id_color", "anchor"] {
+    for id in [
+        "gradient_map",
+        "tone_curve",
+        "shape_gradient",
+        "id_color",
+        "anchor",
+    ] {
         assert!(
-            matches!(EffectSettings::from_catalog(id, &BTreeMap::new()), Err(ParamError::NotEditable { .. })),
+            matches!(
+                EffectSettings::from_catalog(id, &BTreeMap::new()),
+                Err(ParamError::NotEditable { .. })
+            ),
             "{id}"
         );
     }
@@ -274,7 +329,8 @@ fn an_existing_effect_with_a_list_part_is_readable_and_keeps_that_part() {
     let anchor = EffectSettings::generator(generator::Settings::new(G::Anchor));
     assert_eq!(anchor.kind_id(), "anchor");
     assert_eq!(anchor.opaque_parts(), &["anchor"]);
-    let adjust = AdjustmentSettings::gradient_map(crate::GradientMap::new(generator::Ramp::default(), true));
+    let adjust =
+        AdjustmentSettings::gradient_map(crate::GradientMap::new(generator::Ramp::default(), true));
     assert_eq!(adjust.kind_id(), "gradient_map");
     assert_eq!(adjust.opaque_parts(), &["ramp"]);
 }
@@ -285,7 +341,9 @@ fn changing_values_keeps_the_pinned_maps_of_a_generator() {
     let key = "a".repeat(64);
     g.pins.insert(generator::MapKind::Curvature, key.clone());
     let existing = EffectSettings::generator(g);
-    let changed = existing.with_catalog_values(&given(&[("low", num_v(0.1))])).unwrap();
+    let changed = existing
+        .with_catalog_values(&given(&[("low", num_v(0.1))]))
+        .unwrap();
     let g = changed.generator_settings().unwrap();
     assert_eq!(g.low, 0.1);
     assert_eq!(g.pins.get(&generator::MapKind::Curvature), Some(&key));
@@ -370,7 +428,11 @@ fn a_built_effect_can_be_added_to_a_document_and_read_back() {
     for kind in kinds().iter().filter(|k| k.addable && k.stack) {
         let settings = EffectSettings::from_catalog(kind.id, &BTreeMap::new()).unwrap();
         let id = doc
-            .add_filter(layer, FilterTarget::Content, FilterSpec::new(settings.clone()))
+            .add_filter(
+                layer,
+                FilterTarget::Content,
+                FilterSpec::new(settings.clone()),
+            )
             .unwrap_or_else(|e| panic!("{}: {e}", kind.id));
         let (_, effect, _) = doc.find_filter(id).unwrap();
         assert_eq!(effect.settings(), &settings, "{}", kind.id);
@@ -379,7 +441,11 @@ fn a_built_effect_can_be_added_to_a_document_and_read_back() {
 
 #[test]
 fn the_rust_only_kinds_are_the_ones_unity_cannot_read() {
-    let rust_only: Vec<&str> = kinds().iter().filter(|k| k.rust_only).map(|k| k.id).collect();
+    let rust_only: Vec<&str> = kinds()
+        .iter()
+        .filter(|k| k.rust_only)
+        .map(|k| k.id)
+        .collect();
     assert_eq!(
         rust_only,
         [

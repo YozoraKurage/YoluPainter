@@ -3,10 +3,10 @@
 
 use std::sync::{Arc, OnceLock};
 
+use yolu_core::geometry::GeometryError;
 use yolu_core::geometry::{
     demo_cube, model_triangles, ModelMesh, Submesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
 };
-use yolu_core::geometry::GeometryError;
 use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::skin::RigError;
 use yolu_model::ModelError;
@@ -33,7 +33,10 @@ pub enum ViewError {
     /// 読み込みのスレッドが結果を返さずに止まった。
     LoadStopped,
     /// Live Link のポーズの世代がモデルと違う（モデルが無ければ None）。
-    PoseGeneration { pose: u32, model: Option<u32> },
+    PoseGeneration {
+        pose: u32,
+        model: Option<u32>,
+    },
     /// Live Link のポーズのメッシュの番号が範囲外。
     PoseMesh,
     /// Live Link のポーズの頂点の数がメッシュと違う。
@@ -55,7 +58,10 @@ impl std::fmt::Display for ViewError {
             Self::NoTriangles => f.write_str("三角形がありません"),
             Self::Cancelled => f.write_str("取り消しました"),
             Self::LoadStopped => f.write_str("読み込みが止まりました"),
-            Self::PoseGeneration { pose, model: Some(model) } => write!(
+            Self::PoseGeneration {
+                pose,
+                model: Some(model),
+            } => write!(
                 f,
                 "ポーズの世代 {pose} は今のモデルの世代 {model} と違います"
             ),
@@ -235,9 +241,7 @@ impl ViewModel {
         }
         let mut meshes = self.meshes.clone();
         for p in &pose.meshes {
-            let m = meshes
-                .get_mut(p.mesh as usize)
-                .ok_or(ViewError::PoseMesh)?;
+            let m = meshes.get_mut(p.mesh as usize).ok_or(ViewError::PoseMesh)?;
             if p.positions.len() != m.positions.len()
                 || (!p.normals.is_empty() && p.normals.len() != m.positions.len())
             {
@@ -319,7 +323,10 @@ mod tests {
         let m = ViewModel::from_live_link(&model, 5).unwrap();
         assert_eq!(m.triangle_count(), 4);
         assert_eq!(m.revision(), 5);
-        assert_eq!(m.materials, vec![Some("肌".to_string()), Some("服".to_string())]);
+        assert_eq!(
+            m.materials,
+            vec![Some("肌".to_string()), Some("服".to_string())]
+        );
         let t = m.geometry.triangles();
         assert_eq!(
             t.iter()

@@ -887,7 +887,10 @@ fn the_channel_textures_hold_the_same_texels_as_the_export() {
             for k in 0..3 {
                 let linear = brdf::srgb_to_linear(o[k] as f32 / 255.0) * a;
                 let expected = (brdf::linear_to_srgb(linear) * 255.0).round() as i32;
-                assert!((g[k] as i32 - expected).abs() <= 1, "Color {i}: {g:?} と {expected}");
+                assert!(
+                    (g[k] as i32 - expected).abs() <= 1,
+                    "Color {i}: {g:?} と {expected}"
+                );
             }
             assert_eq!(g[3], o[3]);
             translucent += usize::from(o[3] > 0 && g[..3] != o[..3]);
@@ -920,7 +923,11 @@ fn the_srgb_channels_average_their_mips_in_linear() {
         }
     }
     h.run();
-    for (slot, expected) in [(Slot::Color, 188u8), (Slot::Emission, 188), (Slot::Roughness, 128)] {
+    for (slot, expected) in [
+        (Slot::Color, 188u8),
+        (Slot::Emission, 188),
+        (Slot::Roughness, 128),
+    ] {
         let (bytes, size) = h
             .state()
             .view3d_read_paint_level(slot, 1)

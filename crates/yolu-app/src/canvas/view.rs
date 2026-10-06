@@ -192,9 +192,8 @@ impl CanvasView {
         let (w, h) = (self.width as f64, self.height as f64);
         let (x0, y0) = (x0.floor().clamp(0.0, w), y0.floor().clamp(0.0, h));
         let (x1, y1) = (x1.ceil().clamp(0.0, w), y1.ceil().clamp(0.0, h));
-        (x1 > x0 && y1 > y0).then(|| {
-            DocRect::new(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32)
-        })
+        (x1 > x0 && y1 > y0)
+            .then(|| DocRect::new(x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
     }
 
     /// 画面の座標をキャンバスの画素の座標（左下が原点、範囲外も返す）に。ストロークの点はこれ。
@@ -463,7 +462,10 @@ mod tests {
         let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(200.0, 100.0));
         // 文書全体が入っている（左右に余白）
         let fit = CanvasView::new(screen, 100, 100, 1.0, Vec2::ZERO, 0.0, false);
-        assert_eq!(fit.visible_doc_rect(screen), Some(DocRect::new(0, 0, 100, 100)));
+        assert_eq!(
+            fit.visible_doc_rect(screen),
+            Some(DocRect::new(0, 0, 100, 100))
+        );
         // 2 倍に拡げて中央: 文書の中央の半分が見える
         let zoomed = CanvasView::new(screen, 100, 100, 2.0, Vec2::ZERO, 0.0, false);
         let r = zoomed.visible_doc_rect(screen).unwrap();

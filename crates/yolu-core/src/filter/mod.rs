@@ -9,8 +9,8 @@ mod rows;
 mod tests;
 use crate::{
     math::{clamp01, to_byte},
-    ranges,
-    BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold, ToneCurves,
+    ranges, BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold,
+    ToneCurves,
 };
 use rayon::prelude::*;
 use std::{
@@ -126,7 +126,9 @@ impl Settings {
                     && ranges::SHARPEN_AMOUNT.contains(&amount)
                     && ranges::SHARPEN_THRESHOLD.contains(&threshold)
             }
-            Self::Noise { amount, .. } => amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount),
+            Self::Noise { amount, .. } => {
+                amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount)
+            }
             Self::Levels {
                 input_black: b,
                 input_white: w,

@@ -1219,7 +1219,8 @@ pub(super) fn align(rect: DocRect, shift: u32, bounds: DocRect) -> DocRect {
 fn full_rects(doc: &Document, slot: Slot, shift: u32) -> Vec<(DocRect, usize)> {
     let channel = slot.channel();
     let whole = doc.layers().iter().any(|l| {
-        (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment) && l.is_channel_enabled(channel))
+        (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment)
+            && l.is_channel_enabled(channel))
             || l.has_active_filters(channel)
             || l.mask().is_some_and(|m| m.has_active_filters())
     });
@@ -1404,7 +1405,11 @@ pub fn reduce_premultiplied(straight: &[u8], region: DocRect, shift: u32) -> (Ve
 
 /// straight の sRGB の RGBA8（行は下から）を、リニアで乗算済みにして sRGB に符号化し直し（`Rgba8UnormSrgb` が読むとリニアの乗算済み）、
 /// 2^shift の箱でリニアのまま平均して縮める。不透明な画素は元のバイトのまま（8 bit の sRGB → 16 bit のリニア → 8 bit の sRGB は元に戻る）。
-pub fn reduce_srgb_premultiplied(straight: &[u8], region: DocRect, shift: u32) -> (Vec<u8>, u32, u32) {
+pub fn reduce_srgb_premultiplied(
+    straight: &[u8],
+    region: DocRect,
+    shift: u32,
+) -> (Vec<u8>, u32, u32) {
     let (decode, encode) = (srgb_decode16(), srgb_encode16());
     reduce_with(
         straight,
@@ -1420,7 +1425,14 @@ pub fn reduce_srgb_premultiplied(straight: &[u8], region: DocRect, shift: u32) -
                 a,
             ]
         },
-        |q| [encode[q[0] as usize], encode[q[1] as usize], encode[q[2] as usize], q[3] as u8],
+        |q| {
+            [
+                encode[q[0] as usize],
+                encode[q[1] as usize],
+                encode[q[2] as usize],
+                q[3] as u8,
+            ]
+        },
     )
 }
 
@@ -1437,7 +1449,14 @@ fn reduce_emission(straight: &[u8], region: DocRect, shift: u32) -> (Vec<u8>, u3
             let g = |v: u8| decode[((v as u32 * a + 127) / 255) as usize] as u32;
             [g(p[0]), g(p[1]), g(p[2]), a]
         },
-        |q| [encode[q[0] as usize], encode[q[1] as usize], encode[q[2] as usize], q[3] as u8],
+        |q| {
+            [
+                encode[q[0] as usize],
+                encode[q[1] as usize],
+                encode[q[2] as usize],
+                q[3] as u8,
+            ]
+        },
     )
 }
 
@@ -1445,7 +1464,9 @@ fn reduce_emission(straight: &[u8], region: DocRect, shift: u32) -> (Vec<u8>, u3
 fn srgb_decode16() -> &'static [u16; 256] {
     static TABLE: std::sync::OnceLock<[u16; 256]> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
-        std::array::from_fn(|i| (super::brdf::srgb_to_linear(i as f32 / 255.0) * 65535.0).round() as u16)
+        std::array::from_fn(|i| {
+            (super::brdf::srgb_to_linear(i as f32 / 255.0) * 65535.0).round() as u16
+        })
     })
 }
 
@@ -1454,7 +1475,11 @@ fn srgb_encode16() -> &'static [u8] {
     static TABLE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
         (0..=u16::MAX)
-            .map(|i| (super::brdf::linear_to_srgb(i as f32 / 65535.0) * 255.0).round().min(255.0) as u8)
+            .map(|i| {
+                (super::brdf::linear_to_srgb(i as f32 / 65535.0) * 255.0)
+                    .round()
+                    .min(255.0) as u8
+            })
             .collect()
     })
 }

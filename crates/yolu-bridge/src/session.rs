@@ -173,17 +173,35 @@ impl std::fmt::Display for EnqueueError {
 /// 受けるので、同じ持ち主の新しい命令だけが古いものを置き換える（`superseded`）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Tag {
-    Materials { generation: u32 },
-    Values { generation: u32, material: u32 },
-    Texture { generation: u32, material: u32, slot: String },
-    Original { generation: u32, material: u32, slot: String },
+    Materials {
+        generation: u32,
+    },
+    Values {
+        generation: u32,
+        material: u32,
+    },
+    Texture {
+        generation: u32,
+        material: u32,
+        slot: String,
+    },
+    Original {
+        generation: u32,
+        material: u32,
+        slot: String,
+    },
 }
 
 impl Tag {
     fn of(message: &Message) -> Option<Tag> {
         match message {
-            Message::Materials(u) => Some(Tag::Materials { generation: u.generation }),
-            Message::MaterialValues(v) => Some(Tag::Values { generation: v.generation, material: v.material }),
+            Message::Materials(u) => Some(Tag::Materials {
+                generation: u.generation,
+            }),
+            Message::MaterialValues(v) => Some(Tag::Values {
+                generation: v.generation,
+                material: v.material,
+            }),
             Message::MaterialTexture(t) => Some(Tag::Texture {
                 generation: t.generation,
                 material: t.material,
@@ -226,7 +244,9 @@ fn superseded(frames: &VecDeque<Queued>, message: &Message) -> Vec<usize> {
             .collect()
     };
     match message {
-        Message::Materials(u) => hit(&|t| matches!(t, Tag::Materials { generation } if *generation == u.generation)),
+        Message::Materials(u) => {
+            hit(&|t| matches!(t, Tag::Materials { generation } if *generation == u.generation))
+        }
         Message::MaterialTexture(t) => hit(&|o| {
             matches!(o, Tag::Texture { generation, material, slot }
                 if *generation == t.generation && *material == t.material && *slot == t.slot)
@@ -242,13 +262,22 @@ fn superseded(frames: &VecDeque<Queued>, message: &Message) -> Vec<usize> {
                         if *generation == v.generation && *material == v.material && s == slot)
                 })
             };
-            if v.slots.iter().any(|s| s.state == SlotState::Unchanged && waiting(&s.name)) {
+            if v.slots
+                .iter()
+                .any(|s| s.state == SlotState::Unchanged && waiting(&s.name))
+            {
                 return Vec::new();
             }
             hit(&|t| match t {
-                Tag::Values { generation, material } | Tag::Texture { generation, material, .. } => {
-                    *generation == v.generation && *material == v.material
+                Tag::Values {
+                    generation,
+                    material,
                 }
+                | Tag::Texture {
+                    generation,
+                    material,
+                    ..
+                } => *generation == v.generation && *material == v.material,
                 _ => false,
             })
         }
@@ -260,7 +289,10 @@ fn superseded(frames: &VecDeque<Queued>, message: &Message) -> Vec<usize> {
 fn is_control(message: &Message) -> bool {
     matches!(
         message,
-        Message::ModelClosed { .. } | Message::TextureSetRemoved { .. } | Message::Error(_) | Message::Bye
+        Message::ModelClosed { .. }
+            | Message::TextureSetRemoved { .. }
+            | Message::Error(_)
+            | Message::Bye
     )
 }
 
@@ -432,7 +464,10 @@ impl Session {
 
     /// このつながりで使える機能（双方の印の共通部分。つながるまでは 0）。
     pub fn common_features(&self) -> u64 {
-        lock(&self.state).link.as_ref().map_or(0, LinkInfo::common_features)
+        lock(&self.state)
+            .link
+            .as_ref()
+            .map_or(0, LinkInfo::common_features)
     }
 
     /// まだ書き終えていない枠のバイトの合計（順番待ちに積んだものと、いま書いている途中のもの）。
@@ -1004,7 +1039,11 @@ mod tests {
         let s = linked(0, 0);
         assert_eq!(s.payload_limit(), frame::MAX_PAYLOAD);
         s.set_payload_limit(usize::MAX);
-        assert_eq!(s.payload_limit(), frame::MAX_PAYLOAD, "枠の上限より広げない");
+        assert_eq!(
+            s.payload_limit(),
+            frame::MAX_PAYLOAD,
+            "枠の上限より広げない"
+        );
         s.set_payload_limit(64);
         let big = Message::Error(ErrorMessage {
             code: ErrorCode::Other,
@@ -1019,7 +1058,9 @@ mod tests {
         assert!(!s.enqueue(&big));
         assert_eq!(queued(&s), (0, 0));
         // 上限に収まる命令は積める
-        assert!(s.try_enqueue(&Message::TextureSetRemoved { set: 1 }).unwrap());
+        assert!(s
+            .try_enqueue(&Message::TextureSetRemoved { set: 1 })
+            .unwrap());
         assert_eq!(queued(&s), (1, 0));
         // 上限を戻せば同じ命令を積める
         s.set_payload_limit(frame::MAX_PAYLOAD);
@@ -1046,7 +1087,10 @@ mod tests {
             st.push_request(5, MaterialWant::values(m + 100));
         }
         assert_eq!(st.requests.len(), MAX_PENDING_REQUESTS);
-        assert_eq!(st.requests.back().unwrap().item.material, MAX_PENDING_REQUESTS as u32 + 109);
+        assert_eq!(
+            st.requests.back().unwrap().item.material,
+            MAX_PENDING_REQUESTS as u32 + 109
+        );
         assert_eq!(st.requests.front().unwrap().item.material, 110);
     }
 
@@ -1120,7 +1164,14 @@ mod tests {
         })
     }
 
-    fn original(generation: u32, material: u32, slot: &str, state: OriginalState, bytes: usize, fill: u8) -> Message {
+    fn original(
+        generation: u32,
+        material: u32,
+        slot: &str,
+        state: OriginalState,
+        bytes: usize,
+        fill: u8,
+    ) -> Message {
         let width = bytes.div_ceil(4).max(1);
         Message::MaterialOriginal(MaterialOriginal {
             generation,
@@ -1132,12 +1183,21 @@ mod tests {
             width: width as u32,
             height: 1,
             srgb: true,
-            pixels: if state == OriginalState::Image { vec![fill; width * 4] } else { Vec::new() },
+            pixels: if state == OriginalState::Image {
+                vec![fill; width * 4]
+            } else {
+                Vec::new()
+            },
             stamp: 7,
         })
     }
 
-    fn values(generation: u32, material: u32, shader: &str, slots: &[(&str, SlotState)]) -> Message {
+    fn values(
+        generation: u32,
+        material: u32,
+        shader: &str,
+        slots: &[(&str, SlotState)],
+    ) -> Message {
         Message::MaterialValues(MaterialValues {
             generation,
             material,
@@ -1214,9 +1274,21 @@ mod tests {
         // 積める量の目安は、上限から積んだ量を引いたもの
         assert_eq!(s.send_room() as usize, n / 2);
         // 制御の命令は、混んでいても積む（モデルを閉じる知らせが断られて、相手に閉じたことが伝わらないままにならない）
-        assert!(s.try_enqueue(&Message::ModelClosed { generation: 2 }).unwrap());
-        assert!(s.try_enqueue(&Message::TextureSetRemoved { set: 1 }).unwrap());
-        assert_eq!(kinds(&s), vec![Kind::Model, Kind::Model, Kind::ModelClosed, Kind::TextureSetRemoved]);
+        assert!(s
+            .try_enqueue(&Message::ModelClosed { generation: 2 })
+            .unwrap());
+        assert!(s
+            .try_enqueue(&Message::TextureSetRemoved { set: 1 })
+            .unwrap());
+        assert_eq!(
+            kinds(&s),
+            vec![
+                Kind::Model,
+                Kind::Model,
+                Kind::ModelClosed,
+                Kind::TextureSetRemoved
+            ]
+        );
         // 上限を上げれば（または相手が読んで空きができれば）同じ命令を積める
         s.set_outbox_limit(n * 10);
         assert!(s.try_enqueue(&model(3, 400)).unwrap());
@@ -1262,7 +1334,10 @@ mod tests {
         assert!(frame_len(&big) > 1 << 19);
         let before = encoded();
         // 1 つの命令の上限を超える大きさは、混んでいても「混んでいる」ではなく「大きすぎる」（送り直しても入らない）
-        assert!(matches!(s.try_enqueue(&big), Err(EnqueueError::TooLarge(_))));
+        assert!(matches!(
+            s.try_enqueue(&big),
+            Err(EnqueueError::TooLarge(_))
+        ));
         assert_eq!(encoded(), before);
         // 閉じたつながりには積まない（混みの断りより先に）
         s.set_payload_limit(frame::MAX_PAYLOAD);
@@ -1321,7 +1396,9 @@ mod tests {
         let order: Vec<(u32, u32, String, u8)> = q
             .iter()
             .map(|m| match m {
-                Message::MaterialTexture(t) => (t.generation, t.material, t.slot.clone(), t.pixels[0]),
+                Message::MaterialTexture(t) => {
+                    (t.generation, t.material, t.slot.clone(), t.pixels[0])
+                }
                 other => panic!("{other:?}"),
             })
             .collect();
@@ -1344,8 +1421,14 @@ mod tests {
         let n = frame_len(&first);
         s.set_outbox_limit(n + 10);
         assert!(s.try_enqueue(&first).unwrap());
-        assert!(busy(s.try_enqueue(&texture(1, 0, "_b", 1000, 2))), "別のスロットは置き換えられない");
-        assert!(s.try_enqueue(&texture(1, 0, "_a", 1000, 3)).unwrap(), "同じスロットは置き換わる");
+        assert!(
+            busy(s.try_enqueue(&texture(1, 0, "_b", 1000, 2))),
+            "別のスロットは置き換えられない"
+        );
+        assert!(
+            s.try_enqueue(&texture(1, 0, "_a", 1000, 3)).unwrap(),
+            "同じスロットは置き換わる"
+        );
         assert_eq!(s.pending_bytes() as usize, n);
         match &queue(&s)[0] {
             Message::MaterialTexture(t) => assert_eq!(t.pixels[0], 3, "最新が残る"),
@@ -1378,7 +1461,10 @@ mod tests {
         let keep = original(1, 1, "_keep", OriginalState::Image, 100, 1);
         let fill = texture(1, 0, "_fill", 1000, 1);
         let value = none(0);
-        assert!(frame_len(&value) < frame_len(&fill), "外す絵の方が、値より大きい（外せば収まる）");
+        assert!(
+            frame_len(&value) < frame_len(&fill),
+            "外す絵の方が、値より大きい（外せば収まる）"
+        );
         let stacked = |limit: usize| {
             let s = open();
             s.set_outbox_limit(frame_len(&keep) + frame_len(&fill));
@@ -1391,13 +1477,20 @@ mod tests {
         let exact = frame_len(&keep) + frame_len(&value);
         let s = stacked(exact);
         assert!(s.try_enqueue(&value).unwrap(), "外した分で収まる");
-        assert_eq!(kinds(&s), vec![Kind::MaterialOriginal, Kind::MaterialValues]);
+        assert_eq!(
+            kinds(&s),
+            vec![Kind::MaterialOriginal, Kind::MaterialValues]
+        );
         assert_eq!(s.pending_bytes() as usize, exact);
         // 1 小さい上限: 絵を外しても収まらないので断る。前に積んだ物（外すはずだった絵も）は残り、量は変わらない
         let s = stacked(exact - 1);
         let held = s.pending_bytes();
         assert!(busy(s.try_enqueue(&value)), "外しても 1 足りない");
-        assert_eq!(kinds(&s), vec![Kind::MaterialOriginal, Kind::MaterialTexture], "断られても、外さない");
+        assert_eq!(
+            kinds(&s),
+            vec![Kind::MaterialOriginal, Kind::MaterialTexture],
+            "断られても、外さない"
+        );
         assert_eq!(s.pending_bytes(), held);
         // 別のマテリアルの絵・同じマテリアルの元の絵だけで満杯: 外せないので断る
         let full_of = |ballast: &Message| {
@@ -1406,11 +1499,22 @@ mod tests {
             assert!(s.try_enqueue(ballast).unwrap());
             s
         };
-        for ballast in [texture(1, 1, "_fill", 1000, 1), original(1, 0, "_fill", OriginalState::Image, 1000, 1)] {
+        for ballast in [
+            texture(1, 1, "_fill", 1000, 1),
+            original(1, 0, "_fill", OriginalState::Image, 1000, 1),
+        ] {
             let s = full_of(&ballast);
             let held = s.pending_bytes();
-            assert!(busy(s.try_enqueue(&value)), "{:?} は値に置き換えられない", ballast.kind());
-            assert_eq!(kinds(&s), vec![ballast.kind()], "断られても、前に積んだ物は残る");
+            assert!(
+                busy(s.try_enqueue(&value)),
+                "{:?} は値に置き換えられない",
+                ballast.kind()
+            );
+            assert_eq!(
+                kinds(&s),
+                vec![ballast.kind()],
+                "断られても、前に積んだ物は残る"
+            );
             assert_eq!(s.pending_bytes(), held);
         }
     }
@@ -1418,18 +1522,30 @@ mod tests {
     #[test]
     fn an_original_with_pixels_replaces_older_originals_of_the_slot_but_a_status_does_not() {
         let s = open();
-        assert!(s.try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 100, 1)).unwrap());
-        assert!(s.try_enqueue(&original(1, 1, "_MainTex", OriginalState::Image, 100, 2)).unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 100, 1))
+            .unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 1, "_MainTex", OriginalState::Image, 100, 2))
+            .unwrap());
         // 画素の付いた新しい元の絵は、同じ世代・マテリアル・スロットの古いものを置き換える
-        assert!(s.try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 120, 3)).unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 120, 3))
+            .unwrap());
         let q = queue(&s);
         assert_eq!(q.len(), 2);
         // 画素なしの様子（印が同じ・読めない）は何も置き換えない（前の画素に頼ることがあるので、積んだ順も保つ）
-        assert!(s.try_enqueue(&original(1, 0, "_MainTex", OriginalState::Cached, 0, 0)).unwrap());
-        assert!(s.try_enqueue(&original(1, 1, "_MainTex", OriginalState::Unreadable, 0, 0)).unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 0, "_MainTex", OriginalState::Cached, 0, 0))
+            .unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 1, "_MainTex", OriginalState::Unreadable, 0, 0))
+            .unwrap());
         assert_eq!(queue(&s).len(), 4);
         // 画素の付いた絵は、前の画素なしの様子も置き換える（絵そのものを持つので、前の様子に頼らない）
-        assert!(s.try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 90, 4)).unwrap());
+        assert!(s
+            .try_enqueue(&original(1, 0, "_MainTex", OriginalState::Image, 90, 4))
+            .unwrap());
         let q = queue(&s);
         let shape: Vec<(u32, OriginalState)> = q
             .iter()
@@ -1447,7 +1563,9 @@ mod tests {
             ]
         );
         // 別の世代は置き換えない
-        assert!(s.try_enqueue(&original(2, 0, "_MainTex", OriginalState::Image, 10, 5)).unwrap());
+        assert!(s
+            .try_enqueue(&original(2, 0, "_MainTex", OriginalState::Image, 10, 5))
+            .unwrap());
         assert_eq!(queue(&s).len(), 4);
     }
 
@@ -1480,7 +1598,10 @@ mod tests {
         assert!(s.try_enqueue(&model(1, 10)).unwrap());
         assert!(s.try_enqueue(&values(1, 0, "A", &[])).unwrap());
         assert!(s.try_enqueue(&model(2, 10)).unwrap());
-        assert_eq!(kinds(&s), vec![Kind::Model, Kind::MaterialValues, Kind::Model]);
+        assert_eq!(
+            kinds(&s),
+            vec![Kind::Model, Kind::MaterialValues, Kind::Model]
+        );
     }
 
     #[test]
@@ -1488,13 +1609,29 @@ mod tests {
         let s = open();
         assert!(s.try_enqueue(&model(1, 10)).unwrap());
         // マテリアル 0: 値（絵が来る）と絵 2 枚。マテリアル 1: 値と絵 1 枚
-        assert!(s.try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Follows), ("_b", SlotState::Follows)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(
+                1,
+                0,
+                "A",
+                &[("_a", SlotState::Follows), ("_b", SlotState::Follows)]
+            ))
+            .unwrap());
         assert!(s.try_enqueue(&texture(1, 0, "_a", 50, 1)).unwrap());
         assert!(s.try_enqueue(&texture(1, 0, "_b", 50, 2)).unwrap());
-        assert!(s.try_enqueue(&values(1, 1, "B", &[("_a", SlotState::Follows)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(1, 1, "B", &[("_a", SlotState::Follows)]))
+            .unwrap());
         assert!(s.try_enqueue(&texture(1, 1, "_a", 50, 3)).unwrap());
         // マテリアル 0 の新しい値（絵は 1 枚だけ来る、もう 1 つは入っていない）: 古い値と絵を全部外す。マテリアル 1 は残る
-        assert!(s.try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Follows), ("_b", SlotState::Empty)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(
+                1,
+                0,
+                "A2",
+                &[("_a", SlotState::Follows), ("_b", SlotState::Empty)]
+            ))
+            .unwrap());
         let q = queue(&s);
         let shape: Vec<String> = q
             .iter()
@@ -1505,10 +1642,22 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(shape, vec!["model", "values 1 B", "texture 1 _a", "values 0 A2"]);
+        assert_eq!(
+            shape,
+            vec!["model", "values 1 B", "texture 1 _a", "values 0 A2"]
+        );
         // その後に来る絵は、新しい値の後ろに付く
         assert!(s.try_enqueue(&texture(1, 0, "_a", 50, 4)).unwrap());
-        assert_eq!(kinds(&s), vec![Kind::Model, Kind::MaterialValues, Kind::MaterialTexture, Kind::MaterialValues, Kind::MaterialTexture]);
+        assert_eq!(
+            kinds(&s),
+            vec![
+                Kind::Model,
+                Kind::MaterialValues,
+                Kind::MaterialTexture,
+                Kind::MaterialValues,
+                Kind::MaterialTexture
+            ]
+        );
     }
 
     #[test]
@@ -1516,14 +1665,29 @@ mod tests {
         // 古い値で「絵が来る」と言った絵が列の中にある。新しい値が「前と同じ」と言うなら、その絵を捨てると、受け手は絵を持たないまま
         // 「前と同じ」を受ける。だから何も置き換えず、積んだ順のまま全部を残す
         let s = open();
-        assert!(s.try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Follows)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Follows)]))
+            .unwrap());
         assert!(s.try_enqueue(&texture(1, 0, "_a", 50, 1)).unwrap());
-        assert!(s.try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Unchanged)])).unwrap());
-        assert_eq!(kinds(&s), vec![Kind::MaterialValues, Kind::MaterialTexture, Kind::MaterialValues]);
+        assert!(s
+            .try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Unchanged)]))
+            .unwrap());
+        assert_eq!(
+            kinds(&s),
+            vec![
+                Kind::MaterialValues,
+                Kind::MaterialTexture,
+                Kind::MaterialValues
+            ]
+        );
         // 列の中に絵が無い（もう相手に渡った）スロットの「前と同じ」は、古い値を置き換えてよい
         let s = open();
-        assert!(s.try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Unchanged)])).unwrap());
-        assert!(s.try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Unchanged)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Unchanged)]))
+            .unwrap());
+        assert!(s
+            .try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Unchanged)]))
+            .unwrap());
         assert_eq!(kinds(&s), vec![Kind::MaterialValues]);
         match &queue(&s)[0] {
             Message::MaterialValues(v) => assert_eq!(v.shader, "A2"),
@@ -1531,9 +1695,23 @@ mod tests {
         }
         // 絵を待たせているスロットと、前と同じと言うスロットが別なら、絵ごと置き換える
         let s = open();
-        assert!(s.try_enqueue(&values(1, 0, "A", &[("_a", SlotState::Follows), ("_b", SlotState::Unchanged)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(
+                1,
+                0,
+                "A",
+                &[("_a", SlotState::Follows), ("_b", SlotState::Unchanged)]
+            ))
+            .unwrap());
         assert!(s.try_enqueue(&texture(1, 0, "_a", 50, 1)).unwrap());
-        assert!(s.try_enqueue(&values(1, 0, "A2", &[("_a", SlotState::Follows), ("_b", SlotState::Unchanged)])).unwrap());
+        assert!(s
+            .try_enqueue(&values(
+                1,
+                0,
+                "A2",
+                &[("_a", SlotState::Follows), ("_b", SlotState::Unchanged)]
+            ))
+            .unwrap());
         assert_eq!(kinds(&s), vec![Kind::MaterialValues]);
         // 「値なし」も古い値と絵を置き換える
         let none = Message::MaterialValues(MaterialValues {
@@ -1560,7 +1738,13 @@ mod tests {
         let mut refused = 0;
         for i in 0..400u32 {
             let message = match i % 7 {
-                0 => texture(1, i % 3, if i % 2 == 0 { "_a" } else { "_b" }, 700 + (i as usize % 5) * 100, i as u8),
+                0 => texture(
+                    1,
+                    i % 3,
+                    if i % 2 == 0 { "_a" } else { "_b" },
+                    700 + (i as usize % 5) * 100,
+                    i as u8,
+                ),
                 1 => original(1, i % 4, "_MainTex", OriginalState::Image, 900, i as u8),
                 2 => values(1, i % 3, "S", &[("_a", SlotState::Follows)]),
                 3 => materials_for(1, "m"),
@@ -1578,9 +1762,13 @@ mod tests {
                 other => panic!("{other:?}"),
             }
             // 制御の命令は小さい（上限をはみ出すのは、その分だけ）
-            let controls = queue(&s).iter().filter(|m| matches!(m, Message::ModelClosed { .. })).count();
+            let controls = queue(&s)
+                .iter()
+                .filter(|m| matches!(m, Message::ModelClosed { .. }))
+                .count();
             assert!(
-                s.pending_bytes() as usize <= limit + controls * frame_len(&Message::ModelClosed { generation: 0 }),
+                s.pending_bytes() as usize
+                    <= limit + controls * frame_len(&Message::ModelClosed { generation: 0 }),
                 "{} バイト（上限 {limit}）",
                 s.pending_bytes()
             );
@@ -1591,7 +1779,10 @@ mod tests {
                 o.in_flight = 0;
             }
         }
-        assert!(accepted > 0 && refused > 0, "積めたもの {accepted}・断ったもの {refused}");
+        assert!(
+            accepted > 0 && refused > 0,
+            "積めたもの {accepted}・断ったもの {refused}"
+        );
     }
 
     #[test]
@@ -1602,7 +1793,10 @@ mod tests {
         // Bye が積まれ、閉じたあとは何も積まない（混んでいる、ではなく積まない）
         assert!(!s.try_enqueue(&texture(1, 0, "_b", 100, 1)).unwrap());
         let held = s.pending_bytes() as usize;
-        assert_eq!(held, frame_len(&texture(1, 0, "_a", 100, 1)) + frame_len(&Message::Bye));
+        assert_eq!(
+            held,
+            frame_len(&texture(1, 0, "_a", 100, 1)) + frame_len(&Message::Bye)
+        );
         let s = open();
         assert!(s.try_enqueue(&texture(1, 0, "_a", 100, 1)).unwrap());
         s.fail(Status::Closed, EventKind::Closed, 0, "終わり".into());

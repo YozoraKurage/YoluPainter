@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
-use yolu_io::{CommitOptions, Committed, Fault, Files, GenerationStore, RecoveryInfo, StoreError, INFO_NAME};
+use yolu_io::{
+    CommitOptions, Committed, Fault, Files, GenerationStore, RecoveryInfo, StoreError, INFO_NAME,
+};
 
 use super::capture::{build, Capture, Fingerprint};
 use super::quota::{self, Limits, Trimmed};
@@ -195,7 +197,11 @@ fn write(
     // 来るので、この断るほうの道がいちばん通る）。新しく書く量を足した確かめは、書く直前にもう 1 度する
     let guard = space::guard(request.limits.probe.clone(), request.root.clone());
     if let Err(low) = guard(0) {
-        return (Err(StoreError::LowSpace(low).into()), token, Trimmed::default());
+        return (
+            Err(StoreError::LowSpace(low).into()),
+            token,
+            Trimmed::default(),
+        );
     }
     // current を置き換えた（確定した）かを、障害の注入より先に見て覚える
     let switched = Arc::new(AtomicBool::new(false));
@@ -216,30 +222,33 @@ fn write(
     if let Some((entry, total)) = budget {
         store = store.with_budget(entry, total);
     }
-    let result = request.capture.thresholds.scoped(|| -> Result<Committed, RecoveryError> {
-        if let Some(f) = fault {
-            f("snapshot").map_err(|e| RecoveryError::Store(StoreError::Io(e)))?;
-        }
-        let capture = &request.capture;
-        let project = build(capture)?;
-        let mut files: Files = project.original_archive().entries().clone();
-        let info = RecoveryInfo {
-            title: capture.title.clone(),
-            project_path: capture.project_path.clone(),
-            project_token: String::new(),
-            unchanged: false,
-            sets: capture.sets.len(),
-        };
-        files.insert(INFO_NAME.into(), yolu_io::Blob::from(info.to_bytes()));
-        Ok(store.commit(
-            &files,
-            &CommitOptions {
-                expected: token.as_deref(),
-                keep: request.keep,
-                share: true,
-            },
-        )?)
-    });
+    let result = request
+        .capture
+        .thresholds
+        .scoped(|| -> Result<Committed, RecoveryError> {
+            if let Some(f) = fault {
+                f("snapshot").map_err(|e| RecoveryError::Store(StoreError::Io(e)))?;
+            }
+            let capture = &request.capture;
+            let project = build(capture)?;
+            let mut files: Files = project.original_archive().entries().clone();
+            let info = RecoveryInfo {
+                title: capture.title.clone(),
+                project_path: capture.project_path.clone(),
+                project_token: String::new(),
+                unchanged: false,
+                sets: capture.sets.len(),
+            };
+            files.insert(INFO_NAME.into(), yolu_io::Blob::from(info.to_bytes()));
+            Ok(store.commit(
+                &files,
+                &CommitOptions {
+                    expected: token.as_deref(),
+                    keep: request.keep,
+                    share: true,
+                },
+            )?)
+        });
     let token = match &result {
         Ok(committed) => Some(committed.token.clone()),
         // 確定の後で通知を失った場合だけ、置き場を読み直して次回の札を合わせる（外の書き手の確定は採らない）
@@ -248,9 +257,12 @@ fn write(
     };
     // 確定した書き置きのあとで、上限を超えていれば古い世代から消す（失敗しても書き置きは確定している）
     let trimmed = match &result {
-        Ok(_) if request.enforce => {
-            quota::enforce(&request.home, &request.limits, Some(&request.root), pool::now_ms())
-        }
+        Ok(_) if request.enforce => quota::enforce(
+            &request.home,
+            &request.limits,
+            Some(&request.root),
+            pool::now_ms(),
+        ),
         _ => Trimmed::default(),
     };
     (result, token, trimmed)

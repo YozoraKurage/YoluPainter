@@ -52,7 +52,11 @@ fn the_request_has_its_own_kind_mark_and_direction() {
     assert_ne!(feature::KNOWN & feature::MATERIAL_REQUEST, 0);
     // 今までの印とは重ならない
     assert_eq!(
-        feature::MATERIAL_VALUES | feature::ASSETS | feature::PROJECT_TRANSFER | feature::ANIMATION | feature::ORIGINAL_TEXTURES,
+        feature::MATERIAL_VALUES
+            | feature::ASSETS
+            | feature::PROJECT_TRANSFER
+            | feature::ANIMATION
+            | feature::ORIGINAL_TEXTURES,
         0b1_1111
     );
     assert_eq!(
@@ -101,15 +105,21 @@ fn a_request_round_trips() {
     }
     // 上限ちょうどの項目の数は読める
     let full = Message::MaterialRequest(request(
-        (0..MAX_REQUEST_ITEMS as u32).map(MaterialWant::values).collect(),
+        (0..MAX_REQUEST_ITEMS as u32)
+            .map(MaterialWant::values)
+            .collect(),
     ));
-    assert_eq!(Message::decode(0x0113, &full.encode_payload()).unwrap(), full);
+    assert_eq!(
+        Message::decode(0x0113, &full.encode_payload()).unwrap(),
+        full
+    );
 }
 
 #[test]
 fn a_broken_or_oversized_request_is_refused() {
     // 項目の数が上限を超える（読む前に断る: 数の欄だけが大きい壊れた中身で、大きな領域を取らない）
-    let mut payload = Message::MaterialRequest(request(vec![MaterialWant::values(0)])).encode_payload();
+    let mut payload =
+        Message::MaterialRequest(request(vec![MaterialWant::values(0)])).encode_payload();
     payload[4..8].copy_from_slice(&(MAX_REQUEST_ITEMS as u32 + 1).to_le_bytes());
     assert_eq!(
         Message::decode(0x0113, &payload),
@@ -122,7 +132,10 @@ fn a_broken_or_oversized_request_is_refused() {
     );
     // 数の欄が実際より多い（途中で終わっている）
     payload[4..8].copy_from_slice(&2u32.to_le_bytes());
-    assert_eq!(Message::decode(0x0113, &payload), Err(DecodeError::Truncated));
+    assert_eq!(
+        Message::decode(0x0113, &payload),
+        Err(DecodeError::Truncated)
+    );
     // 何も頼まない項目（wants が 0）は決まりに合わない
     let nothing = Message::MaterialRequest(request(vec![MaterialWant {
         wants: 0,
@@ -143,7 +156,8 @@ fn a_broken_or_oversized_request_is_refused() {
         Err(DecodeError::TooLarge("スロットの名前"))
     );
     // 中身が途中で終わっている
-    let ok = Message::MaterialRequest(request(vec![MaterialWant::original(0, "_MainTex", 5)])).encode_payload();
+    let ok = Message::MaterialRequest(request(vec![MaterialWant::original(0, "_MainTex", 5)]))
+        .encode_payload();
     for cut in [1, 4, 9, 13] {
         assert_eq!(
             Message::decode(0x0113, &ok[..ok.len() - cut]),
@@ -180,7 +194,11 @@ fn an_original_carries_its_stamp_and_a_cached_one_has_no_pixels() {
     // 画素の付いた絵の印
     for stamp in [0, 1, u64::MAX] {
         let m = Message::MaterialOriginal(original(OriginalState::Image, 16, stamp));
-        assert_eq!(Message::decode(0x0016, &m.encode_payload()).unwrap(), m, "{stamp}");
+        assert_eq!(
+            Message::decode(0x0016, &m.encode_payload()).unwrap(),
+            m,
+            "{stamp}"
+        );
     }
     // 画素を付けない Cached: 印は 0 でない・画素は付けない・大きさは Unity のテクスチャの大きさ
     let cached = Message::MaterialOriginal(MaterialOriginal {
@@ -188,7 +206,10 @@ fn an_original_carries_its_stamp_and_a_cached_one_has_no_pixels() {
         height: 4096,
         ..original(OriginalState::Cached, 0, 0xfeed)
     });
-    assert_eq!(Message::decode(0x0016, &cached.encode_payload()).unwrap(), cached);
+    assert_eq!(
+        Message::decode(0x0016, &cached.encode_payload()).unwrap(),
+        cached
+    );
     let no_stamp = Message::MaterialOriginal(original(OriginalState::Cached, 0, 0));
     assert_eq!(
         Message::decode(0x0016, &no_stamp.encode_payload()),
@@ -347,8 +368,10 @@ fn a_request_is_not_sent_to_a_peer_without_the_mark_and_the_reason_names_the_ver
             true,
         ),
     ] {
-        let (standalone, _s_reader, _unity, mut unity_reader, _listener) =
-            greet(feature::MATERIAL_REQUEST | feature::MATERIAL_VALUES, unity_marks);
+        let (standalone, _s_reader, _unity, mut unity_reader, _listener) = greet(
+            feature::MATERIAL_REQUEST | feature::MATERIAL_VALUES,
+            unity_marks,
+        );
         let info = standalone.link_info().unwrap().clone();
         let message = Message::MaterialRequest(request(vec![MaterialWant::values(0)]));
         assert_eq!(
@@ -412,7 +435,11 @@ fn the_reason_also_says_when_this_side_has_no_mark() {
     assert_eq!(reason.peer_version, Some(AppVersion::new(0, 3, 2)));
     // 版を名乗らない古い相手は、版が None
     let (standalone, _r, _unity, _ur, _l) = greet(feature::MATERIAL_REQUEST, 0);
-    let reason = standalone.link_info().unwrap().request_support().unwrap_err();
+    let reason = standalone
+        .link_info()
+        .unwrap()
+        .request_support()
+        .unwrap_err();
     assert!(reason.own_has_mark);
 }
 
@@ -428,7 +455,10 @@ fn a_request_and_its_answers_cross_a_real_link() {
         MaterialWant::values(2),
     ]));
     assert!(standalone.send_gated(&ask).unwrap());
-    let Received::Message(got) = u_reader.next_within(&unity, Duration::from_secs(5)).unwrap() else {
+    let Received::Message(got) = u_reader
+        .next_within(&unity, Duration::from_secs(5))
+        .unwrap()
+    else {
         panic!("頼みが届かない")
     };
     assert_eq!(got, ask);

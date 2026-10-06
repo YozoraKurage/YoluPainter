@@ -87,7 +87,12 @@ pub fn parse_color(text: &str) -> Option<Rgba8> {
         return None;
     }
     let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
-    Some(Rgba8::new(byte(0)?, byte(2)?, byte(4)?, if hex.len() == 8 { byte(6)? } else { 255 }))
+    Some(Rgba8::new(
+        byte(0)?,
+        byte(2)?,
+        byte(4)?,
+        if hex.len() == 8 { byte(6)? } else { 255 },
+    ))
 }
 
 /// 色を `#rrggbb`（不透明）か `#rrggbbaa` に。
@@ -108,12 +113,24 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 pub fn base64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -212,8 +229,14 @@ mod tests {
         assert_eq!(serde_json::to_string(&Value::Number(4.0)).unwrap(), "4");
         assert_eq!(serde_json::to_string(&Value::Number(0.25)).unwrap(), "0.25");
         assert_eq!(serde_json::to_string(&Value::Bool(true)).unwrap(), "true");
-        assert_eq!(serde_json::from_str::<Value>("\"x\"").unwrap(), Value::Text("x".into()));
-        assert_eq!(serde_json::from_str::<Value>("3").unwrap(), Value::Number(3.0));
+        assert_eq!(
+            serde_json::from_str::<Value>("\"x\"").unwrap(),
+            Value::Text("x".into())
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>("3").unwrap(),
+            Value::Number(3.0)
+        );
         for bad in ["null", "[1]", "{}"] {
             assert!(serde_json::from_str::<Value>(bad).is_err(), "{bad}");
         }

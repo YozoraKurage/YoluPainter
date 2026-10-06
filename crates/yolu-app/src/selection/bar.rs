@@ -56,7 +56,9 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "deselect",
                 icon: "deselect",
-                tooltip: lang.pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)").into(),
+                tooltip: lang
+                    .pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)")
+                    .into(),
                 enabled: free,
                 action: edit(SelEdit::Clear),
             },
@@ -146,9 +148,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "remember",
                 icon: "save",
-                tooltip: lang
-                    .pick("選択範囲を覚える…", "Remember Selection…")
-                    .into(),
+                tooltip: lang.pick("選択範囲を覚える…", "Remember Selection…").into(),
                 enabled: free,
                 action: Action::Sel(SelAction::Saved(SavedOp::OpenWindow)),
             },
@@ -167,8 +167,11 @@ fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
     };
     let paint = app.paint_blocker();
     let masked = app.m2.edit_mask && layer.mask().is_some();
-    let copy = (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill))
-        .then(|| lang.pick("画素を持たないレイヤーです", "This layer has no pixels").to_owned());
+    let copy =
+        (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill)).then(|| {
+            lang.pick("画素を持たないレイヤーです", "This layer has no pixels")
+                .to_owned()
+        });
     (paint, copy, None)
 }
 
@@ -209,8 +212,8 @@ fn bar_size(groups: &[Vec<Item>; 3]) -> Vec2 {
 fn screen_bounds(app: &mut AppState, view: &CanvasView) -> Option<Rect> {
     let mask = app.doc.selection().cloned()?;
     let (x0, y0, x1, y1) = app.sel.bounds_of(&mask)?;
-    let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-        .map(|(x, y)| view.to_screen(x as f64, y as f64));
+    let corners =
+        [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(x, y)| view.to_screen(x as f64, y as f64));
     Some(Rect::from_points(&corners))
 }
 

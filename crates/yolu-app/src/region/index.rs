@@ -63,9 +63,15 @@ fn connect(
     for (i, t) in triangles.iter().enumerate() {
         let [a, b, c] = key(t);
         for (p, q) in [(a, b), (b, c), (c, a)] {
-            let edge = if p <= q { (t.material_slot, p, q) } else { (t.material_slot, q, p) };
+            let edge = if p <= q {
+                (t.material_slot, p, q)
+            } else {
+                (t.material_slot, q, p)
+            };
             match edges.entry(edge) {
-                std::collections::hash_map::Entry::Occupied(o) => union(&mut parent, i as u32, *o.get()),
+                std::collections::hash_map::Entry::Occupied(o) => {
+                    union(&mut parent, i as u32, *o.get())
+                }
                 std::collections::hash_map::Entry::Vacant(v) => {
                     v.insert(i as u32);
                 }
@@ -145,7 +151,9 @@ impl RegionIndex {
             SurfaceRegionKind::Triangle => (1 << 60) | triangle as u64,
             SurfaceRegionKind::UvIsland => (2 << 60) | self.island[i] as u64,
             SurfaceRegionKind::MeshPart => (3 << 60) | self.part[i] as u64,
-            SurfaceRegionKind::Material => (4 << 60) | self.geometry.triangles()[i].material as u32 as u64,
+            SurfaceRegionKind::Material => {
+                (4 << 60) | self.geometry.triangles()[i].material as u32 as u64
+            }
         }
     }
 
@@ -158,7 +166,11 @@ impl RegionIndex {
             let t = &triangles[i as usize];
             let q = |v: Vec2| (quantize(v.x, 1e6), quantize(v.y, 1e6));
             for (a, b) in [(t.uv_a, t.uv_b), (t.uv_b, t.uv_c), (t.uv_c, t.uv_a)] {
-                let key = if q(a) <= q(b) { (q(a), q(b)) } else { (q(b), q(a)) };
+                let key = if q(a) <= q(b) {
+                    (q(a), q(b))
+                } else {
+                    (q(b), q(a))
+                };
                 count.entry(key).or_insert((0, [a, b])).0 += 1;
             }
         }
@@ -169,7 +181,14 @@ impl RegionIndex {
             .collect();
         // 並びを決める（同じ範囲は同じ線の列）
         out.sort_by(|a, b| {
-            let key = |e: &[Vec2; 2]| (e[0].x.to_bits(), e[0].y.to_bits(), e[1].x.to_bits(), e[1].y.to_bits());
+            let key = |e: &[Vec2; 2]| {
+                (
+                    e[0].x.to_bits(),
+                    e[0].y.to_bits(),
+                    e[1].x.to_bits(),
+                    e[1].y.to_bits(),
+                )
+            };
             key(a).cmp(&key(b))
         });
         out
@@ -196,8 +215,14 @@ impl UvGrid {
             if t.material != material {
                 continue;
             }
-            let (x0, x1) = (t.uv_a.x.min(t.uv_b.x).min(t.uv_c.x), t.uv_a.x.max(t.uv_b.x).max(t.uv_c.x));
-            let (y0, y1) = (t.uv_a.y.min(t.uv_b.y).min(t.uv_c.y), t.uv_a.y.max(t.uv_b.y).max(t.uv_c.y));
+            let (x0, x1) = (
+                t.uv_a.x.min(t.uv_b.x).min(t.uv_c.x),
+                t.uv_a.x.max(t.uv_b.x).max(t.uv_c.x),
+            );
+            let (y0, y1) = (
+                t.uv_a.y.min(t.uv_b.y).min(t.uv_c.y),
+                t.uv_a.y.max(t.uv_b.y).max(t.uv_c.y),
+            );
             if x1 < 0.0 || y1 < 0.0 || x0 > 1.0 || y0 > 1.0 {
                 continue;
             }
@@ -263,8 +288,14 @@ mod tests {
                 Vec2::new(uv0 + 0.3, 0.4),
             ],
             submeshes: vec![
-                Submesh { material: slots[0], indices: vec![0, 1, 2, 2, 1, 3] },
-                Submesh { material: slots[1], indices: vec![1, 4, 3, 3, 4, 5] },
+                Submesh {
+                    material: slots[0],
+                    indices: vec![0, 1, 2, 2, 1, 3],
+                },
+                Submesh {
+                    material: slots[1],
+                    indices: vec![1, 4, 3, 3, 4, 5],
+                },
             ],
         };
         let mut meshes = vec![quad(0.0, 0.0, [0, 0]), quad(5.0, 0.5, [0, 1])];
@@ -323,7 +354,12 @@ mod tests {
         let g = model(true);
         let index = RegionIndex::new(&g);
         // 三角形 1 つは 3 辺
-        assert_eq!(index.outline(index.region(0, SurfaceRegionKind::Triangle)).len(), 3);
+        assert_eq!(
+            index
+                .outline(index.region(0, SurfaceRegionKind::Triangle))
+                .len(),
+            3
+        );
         // 2 枚の三角形でできた四角の UV アイランドは外周の 4 辺（共有する対角線は輪郭ではない）
         let island = index.region(0, SurfaceRegionKind::UvIsland);
         assert_eq!(island.len(), 2);
@@ -349,6 +385,10 @@ mod tests {
         let grid1 = UvGrid::new(&g, 1);
         let other = grid1.find(Vec2::new(0.5 + 0.25, 0.1));
         assert!(other.is_some_and(|i| g.triangles()[i as usize].material == 1));
-        assert_eq!(grid0.find(Vec2::new(0.5 + 0.25, 0.1)), None, "別のマテリアルの三角形は引かない");
+        assert_eq!(
+            grid0.find(Vec2::new(0.5 + 0.25, 0.1)),
+            None,
+            "別のマテリアルの三角形は引かない"
+        );
     }
 }

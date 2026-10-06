@@ -424,7 +424,10 @@ impl GenerationStore {
         if manifest.shared {
             self.content_path(&entry.hash)
         } else {
-            entry.name.split('/').fold(dir.to_path_buf(), |p, c| p.join(c))
+            entry
+                .name
+                .split('/')
+                .fold(dir.to_path_buf(), |p, c| p.join(c))
         }
     }
 
@@ -445,9 +448,7 @@ impl GenerationStore {
             return Ok(None);
         };
         if entry.len > max {
-            return Err(StoreError::Budget(
-                "復旧の情報が予算を超えています".into(),
-            ));
+            return Err(StoreError::Budget("復旧の情報が予算を超えています".into()));
         }
         let dir = self.generations_dir().join(&id);
         let path = self.entry_path(&dir, &manifest, entry);
@@ -509,7 +510,8 @@ impl GenerationStore {
         fs::create_dir_all(&staging)?;
         fs::create_dir_all(&generations)?;
         let mut renamed = false;
-        let result = self.write_generation(files, options, &id, &staging, &generations, &mut renamed);
+        let result =
+            self.write_generation(files, options, &id, &staging, &generations, &mut renamed);
         if result.is_err() && !renamed {
             // 確定していない作りかけだけを片付ける（前の世代・current には触れない）。残すと、整理が共有の中身を消せなくなる。
             let _ = fs::remove_dir_all(&staging);
@@ -563,9 +565,7 @@ impl GenerationStore {
                 match fs::symlink_metadata(&path) {
                     Ok(_) => {
                         let changed = || {
-                            StoreError::Corrupt(
-                                "共有の中身が、この道具の外で変わっています".into(),
-                            )
+                            StoreError::Corrupt("共有の中身が、この道具の外で変わっています".into())
                         };
                         if fs::symlink_metadata(&path)?.len() != data.len() {
                             return Err(changed());
@@ -588,7 +588,9 @@ impl GenerationStore {
                     Err(e) => return Err(e.into()),
                 }
             } else {
-                let path = name.split('/').fold(staging.to_path_buf(), |p, c| p.join(c));
+                let path = name
+                    .split('/')
+                    .fold(staging.to_path_buf(), |p, c| p.join(c));
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
@@ -1140,9 +1142,7 @@ fn validate_name(name: &str) -> R<()> {
     Ok(())
 }
 fn validate_generation(id: &str) -> R<()> {
-    if id.is_empty()
-        || id.len() > 80
-        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    if id.is_empty() || id.len() > 80 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
     {
         return corrupt("不正な世代の名前です");
     }
@@ -1155,7 +1155,9 @@ fn read_bounded(path: &Path, max: u64) -> R<Vec<u8>> {
         return corrupt("通常のファイルではありません");
     }
     if meta.len() > max {
-        return Err(StoreError::Budget("ファイルが許す大きさを超えています".into()));
+        return Err(StoreError::Budget(
+            "ファイルが許す大きさを超えています".into(),
+        ));
     }
     let mut buf = Vec::with_capacity(meta.len() as usize);
     File::open(path)?.take(max + 1).read_to_end(&mut buf)?;
@@ -1260,7 +1262,12 @@ pub fn utc_stamp(ms: u64) -> String {
 pub fn generation_time_ms(id: &str) -> Option<u64> {
     let stamp = id.split('-').next()?;
     let b = stamp.as_bytes();
-    if b.len() != 18 || b[8] != b'T' || !b.iter().enumerate().all(|(i, c)| i == 8 || c.is_ascii_digit())
+    if b.len() != 18
+        || b[8] != b'T'
+        || !b
+            .iter()
+            .enumerate()
+            .all(|(i, c)| i == 8 || c.is_ascii_digit())
     {
         return None;
     }
@@ -1333,7 +1340,13 @@ impl RecoveryInfo {
         }
         let value: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|_| StoreError::Corrupt("復旧の情報を読めません".into()))?;
-        let text = |key: &str| value.get(key).and_then(|v| v.as_str()).unwrap_or("").to_owned();
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned()
+        };
         if !value.is_object() {
             return corrupt("復旧の情報を読めません");
         }
@@ -1341,7 +1354,10 @@ impl RecoveryInfo {
             title: text("title"),
             project_path: text("projectPath"),
             project_token: text("projectToken"),
-            unchanged: value.get("unchanged").and_then(|v| v.as_bool()).unwrap_or(false),
+            unchanged: value
+                .get("unchanged")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             sets: value.get("sets").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
         })
     }

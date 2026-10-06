@@ -65,11 +65,12 @@ pub fn paint_canvas(
     let color = color_of(h.erase);
     let shadow = Stroke::new(2.5, Color32::from_black_alpha(170));
     let line = Stroke::new(1.6, color);
-    painter.extend(
-        points
-            .iter()
-            .map(|p| Shape::line_segment([p[0] + egui::vec2(1.0, 1.0), p[1] + egui::vec2(1.0, 1.0)], shadow)),
-    );
+    painter.extend(points.iter().map(|p| {
+        Shape::line_segment(
+            [p[0] + egui::vec2(1.0, 1.0), p[1] + egui::vec2(1.0, 1.0)],
+            shadow,
+        )
+    }));
     painter.extend(points.iter().map(|p| Shape::line_segment(*p, line)));
 }
 
@@ -90,7 +91,9 @@ fn visible(hover: &super::tools::Hover, view: &CameraView) -> Arc<Vec<u32>> {
             let distance = (centre - camera).length();
             let ray = Ray::new(camera, centre - camera);
             if let Some(hit) = geometry.raycast(ray, true, f32::INFINITY) {
-                if hit.triangle != i && hit.distance < distance - distance * 1e-3 - geometry.visibility_epsilon() {
+                if hit.triangle != i
+                    && hit.distance < distance - distance * 1e-3 - geometry.visibility_epsilon()
+                {
                     continue; // 手前の面に隠れている
                 }
             }

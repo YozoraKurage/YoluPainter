@@ -109,7 +109,11 @@ impl GpuWatch {
     /// 溜まった知らせを取り出す（失った知らせは 1 度だけ）。
     pub fn take(&self) -> Events {
         let mut inner = self.inner();
-        let lost = if inner.announced { None } else { inner.lost.clone() };
+        let lost = if inner.announced {
+            None
+        } else {
+            inner.lost.clone()
+        };
         inner.announced |= lost.is_some();
         Events {
             lost,
@@ -153,9 +157,15 @@ pub fn lost_text(lang: Lang, saved: Saved) -> String {
         "The GPU device was lost, so YoluPainter cannot continue.",
     );
     let tail = match saved {
-        Saved::Yes => lang.pick("描いていた絵は復旧用に保存しました。", " Your work was saved for recovery."),
+        Saved::Yes => lang.pick(
+            "描いていた絵は復旧用に保存しました。",
+            " Your work was saved for recovery.",
+        ),
         Saved::NothingToSave => "",
-        Saved::No => lang.pick("復旧用に保存できませんでした。", " Could not save for recovery."),
+        Saved::No => lang.pick(
+            "復旧用に保存できませんでした。",
+            " Could not save for recovery.",
+        ),
     };
     format!("{head}{tail}")
 }
@@ -190,7 +200,13 @@ mod tests {
         watch.inject_loss("Destroyed", "after the first");
         assert!(watch.is_lost());
         let first = watch.take();
-        assert_eq!(first.lost, Some(Lost { reason: "Unknown".into(), message: "driver reset".into() }));
+        assert_eq!(
+            first.lost,
+            Some(Lost {
+                reason: "Unknown".into(),
+                message: "driver reset".into()
+            })
+        );
         assert_eq!(watch.take().lost, None, "知らせは 1 度だけ");
         assert!(watch.is_lost(), "失ったことは残る");
     }
@@ -202,7 +218,10 @@ mod tests {
             watch.inject_error("validation: same");
         }
         assert_eq!(watch.take().errors, vec!["validation: same".to_owned()]);
-        assert!(watch.take().errors.is_empty(), "同じ文は、取り出したあとも数えない");
+        assert!(
+            watch.take().errors.is_empty(),
+            "同じ文は、取り出したあとも数えない"
+        );
         for i in 0..1000 {
             watch.inject_error(&format!("error {i}"));
         }
@@ -220,9 +239,15 @@ mod tests {
         for lang in [Lang::Ja, Lang::En] {
             for saved in [Saved::Yes, Saved::NothingToSave, Saved::No] {
                 let text = lost_text(lang, saved);
-                assert!(text.starts_with(lang.pick("GPU の装置が失われた", "The GPU device was lost")), "{text}");
+                assert!(
+                    text.starts_with(lang.pick("GPU の装置が失われた", "The GPU device was lost")),
+                    "{text}"
+                );
                 let dialog = lost_dialog_text(lang, saved);
-                assert!(dialog.starts_with(&text) && dialog.lines().count() == 2, "{dialog}");
+                assert!(
+                    dialog.starts_with(&text) && dialog.lines().count() == 2,
+                    "{dialog}"
+                );
                 if lang == Lang::En {
                     assert!(text.is_ascii(), "{text}");
                 }

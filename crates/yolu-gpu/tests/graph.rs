@@ -146,8 +146,13 @@ fn paint_tiles(d: &mut Document, layer: LayerId, rng: &mut Rng, percent: u8, alp
             for y in ty * ts..((ty + 1) * ts).min(d.height()) {
                 for x in tx * ts..((tx + 1) * ts).min(d.width()) {
                     let a = alphas[(x as usize + y as usize) % alphas.len()];
-                    d.set_pixel(layer, x, y, Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a))
-                        .unwrap();
+                    d.set_pixel(
+                        layer,
+                        x,
+                        y,
+                        Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a),
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -169,7 +174,12 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
         paint_tiles(&mut d, l, &mut rng, 35, &[255, 200, 90, 0][k % 3..]);
         d.set_layer_blend_mode(
             l,
-            [BlendMode::Normal, BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay][k % 4],
+            [
+                BlendMode::Normal,
+                BlendMode::Multiply,
+                BlendMode::Screen,
+                BlendMode::Overlay,
+            ][k % 4],
         )
         .unwrap();
         layers.push(l);
@@ -182,7 +192,8 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
         for ty in 0..d.height().div_ceil(ts) {
             for tx in 0..d.width().div_ceil(ts) {
                 if rng.byte().is_multiple_of(2) {
-                    d.set_mask_pixel(l, tx * ts + 2, ty * ts + 3, rng.byte()).unwrap();
+                    d.set_mask_pixel(l, tx * ts + 2, ty * ts + 3, rng.byte())
+                        .unwrap();
                 }
             }
         }
@@ -201,7 +212,12 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
         .unwrap();
     check(&mut g, &d, "疎な層の上の調整");
     let clip_adj = d
-        .add_adjustment_layer("クリップの反転", AdjustmentSettings::invert(), None, Some(layers[7]))
+        .add_adjustment_layer(
+            "クリップの反転",
+            AdjustmentSettings::invert(),
+            None,
+            Some(layers[7]),
+        )
         .unwrap();
     d.set_layer_clipping(clip_adj, true).unwrap();
     check(&mut g, &d, "疎な下地へのクリッピングの調整");
@@ -209,7 +225,9 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
     let g1 = d.group_layers(&[layers[1], layers[2]], "独立 1").unwrap();
     d.set_layer_blend_mode(g1, BlendMode::Normal).unwrap();
     d.set_layer_opacity(g1, 0.8, false).unwrap();
-    let g2 = d.group_layers(&[layers[6], adj, layers[7]], "通過").unwrap();
+    let g2 = d
+        .group_layers(&[layers[6], adj, layers[7]], "通過")
+        .unwrap();
     d.set_layer_blend_mode(g2, BlendMode::PassThrough).unwrap();
     d.set_layer_opacity(g2, 0.6, false).unwrap();
     check(&mut g, &d, "疎な層のグループ");
@@ -220,7 +238,12 @@ fn sparse_documents_with_culled_tile_programs_match_cpu() {
     let l9 = layers[9];
     for (x, y) in [(3, 3), (70, 40), (120, 90), (17, 33)] {
         d.set_pixel(l9, x, y, Rgba8::new(255, 0, 255, 255)).unwrap();
-        step(&mut g, &d, Channel::Color, &format!("({x}, {y}) に描き足す"));
+        step(
+            &mut g,
+            &d,
+            Channel::Color,
+            &format!("({x}, {y}) に描き足す"),
+        );
     }
     for &l in &layers[1..6] {
         d.set_pixel(l, 66, 10, Rgba8::new(0, 255, 0, 255)).unwrap();
@@ -295,10 +318,18 @@ fn isolated_groups_match_cpu() {
     let clipped = d.group_layers(&[inner, inner2], "クリップの組").unwrap();
     d.move_layer_to(clipped, None, 1).unwrap();
     d.set_layer_clipping(clipped, true).unwrap();
-    check(&mut g, &d, "クリッピングされたグループ（通過の指定でも透明から）");
+    check(
+        &mut g,
+        &d,
+        "クリッピングされたグループ（通過の指定でも透明から）",
+    );
     d.set_layer_blend_mode(clipped, BlendMode::Normal).unwrap();
     d.set_layer_opacity(clipped, 0.5, false).unwrap();
-    check(&mut g, &d, "クリッピングされたグループの Normal・不透明度 0.5");
+    check(
+        &mut g,
+        &d,
+        "クリッピングされたグループの Normal・不透明度 0.5",
+    );
     let _ = base;
 }
 
@@ -318,9 +349,11 @@ fn nested_and_mixed_groups_match_cpu() {
     let l3 = add_painted(&mut d, &mut rng, &[255, 0, 160]);
     d.set_layer_blend_mode(l3, BlendMode::Screen).unwrap();
     let pass_inner = add_painted(&mut d, &mut rng, &[240, 120]);
-    d.set_layer_blend_mode(pass_inner, BlendMode::Overlay).unwrap();
+    d.set_layer_blend_mode(pass_inner, BlendMode::Overlay)
+        .unwrap();
     let pass = d.group_layers(&[pass_inner], "通過").unwrap();
-    d.set_layer_blend_mode(pass, BlendMode::PassThrough).unwrap();
+    d.set_layer_blend_mode(pass, BlendMode::PassThrough)
+        .unwrap();
     d.set_layer_opacity(pass, 0.5, false).unwrap();
     let clip = add_painted(&mut d, &mut rng, &[255, 100]);
     d.set_layer_clipping(clip, true).unwrap();
@@ -340,7 +373,11 @@ fn nested_and_mixed_groups_match_cpu() {
             Some(l3),
         )
         .unwrap();
-    check(&mut g, &d, "独立のグループの中の調整（中の合成だけを変える）");
+    check(
+        &mut g,
+        &d,
+        "独立のグループの中の調整（中の合成だけを変える）",
+    );
     d.set_layer_opacity(adj, 0.5, false).unwrap();
     check(&mut g, &d, "調整の不透明度");
     d.set_layer_opacity(outer, 0.6, false).unwrap();
@@ -358,8 +395,11 @@ fn nested_and_mixed_groups_match_cpu() {
         let l = add_painted(&mut d, &mut rng, &[255, 0, 200 - k * 30]);
         deep_layers.push(l);
         let grp = d.group_layers(&deep_layers, "段").unwrap();
-        d.set_layer_blend_mode(grp, [BlendMode::Normal, BlendMode::PassThrough][k as usize % 2])
-            .unwrap();
+        d.set_layer_blend_mode(
+            grp,
+            [BlendMode::Normal, BlendMode::PassThrough][k as usize % 2],
+        )
+        .unwrap();
         if k % 2 == 1 {
             d.set_layer_opacity(grp, 0.7, false).unwrap();
         }
@@ -375,7 +415,8 @@ fn deep_isolated_nesting_up_to_the_stack_still_matches_cpu() {
     let mut rng = Rng(107);
     let mut inner = add_painted(&mut d, &mut rng, &[255, 120, 60]);
     let sibling = add_painted(&mut d, &mut rng, &[200, 255]);
-    d.set_layer_blend_mode(sibling, BlendMode::Multiply).unwrap();
+    d.set_layer_blend_mode(sibling, BlendMode::Multiply)
+        .unwrap();
     // 32 段（独立のグループは 2 語ずつ退避するので、積みの限り）
     for k in 0..32 {
         let grp = d.group_layers(&[inner], "段").unwrap();
@@ -477,15 +518,25 @@ fn adjustment_kinds() -> Vec<(&'static str, AdjustmentSettings)> {
         (
             "カラーバランス",
             AdjustmentSettings::color_balance(
-                ColorBalance::new([30.0, -10.0, 0.0], [0.0, 40.0, -40.0], [-20.0, 0.0, 60.0], true)
-                    .unwrap(),
+                ColorBalance::new(
+                    [30.0, -10.0, 0.0],
+                    [0.0, 40.0, -40.0],
+                    [-20.0, 0.0, 60.0],
+                    true,
+                )
+                .unwrap(),
             ),
         ),
         (
             "カラーバランス（輝度を保たない）",
             AdjustmentSettings::color_balance(
-                ColorBalance::new([30.0, -10.0, 0.0], [0.0, 40.0, -40.0], [-20.0, 0.0, 60.0], false)
-                    .unwrap(),
+                ColorBalance::new(
+                    [30.0, -10.0, 0.0],
+                    [0.0, 40.0, -40.0],
+                    [-20.0, 0.0, 60.0],
+                    false,
+                )
+                .unwrap(),
             ),
         ),
         (
@@ -534,7 +585,12 @@ fn every_adjustment_kind_matches_cpu() {
             yolu_core::AdjustmentType::HueSaturation | yolu_core::AdjustmentType::ColorBalance
         );
         let modes: &[BlendMode] = if exact {
-            &[BlendMode::Multiply, BlendMode::Hue, BlendMode::Screen, BlendMode::Divide]
+            &[
+                BlendMode::Multiply,
+                BlendMode::Hue,
+                BlendMode::Screen,
+                BlendMode::Divide,
+            ]
         } else {
             &[BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay]
         };
@@ -626,7 +682,13 @@ fn adjustments_on_scalar_channels_match_cpu() {
         let adj = d
             .add_adjustment_layer(name, settings, Some(&[Channel::Roughness]), None)
             .unwrap();
-        check_in(&mut g, &d, Channel::Roughness, TOLERANCE, &format!("Roughness {name}"));
+        check_in(
+            &mut g,
+            &d,
+            Channel::Roughness,
+            TOLERANCE,
+            &format!("Roughness {name}"),
+        );
         d.remove_layer(adj).unwrap();
     }
 }
@@ -646,7 +708,10 @@ fn normal_doc(rng: &mut Rng) -> (Document, LayerId, LayerId, LayerId) {
                 let c = if (x + y) % 5 == 0 {
                     Rgba8::new(rng.byte(), rng.byte(), rng.byte(), a)
                 } else {
-                    let (nx, ny) = ((rng.byte() as f64 - 128.0) / 400.0, (rng.byte() as f64 - 128.0) / 400.0);
+                    let (nx, ny) = (
+                        (rng.byte() as f64 - 128.0) / 400.0,
+                        (rng.byte() as f64 - 128.0) / 400.0,
+                    );
                     let nz = (1.0 - nx * nx - ny * ny).sqrt();
                     let enc = |v: f64| ((v * 0.5 + 0.5) * 255.0).round() as u8;
                     Rgba8::new(enc(nx), enc(ny), enc(nz), a)
@@ -669,39 +734,104 @@ fn normal_channels_match_cpu() {
     let normal_tolerance = TOLERANCE;
     let mut worst = check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 通常");
     d.set_layer_blend_mode(b, BlendMode::Overlay).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 Overlay（RNM）"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 Overlay（RNM）",
+    ));
     d.set_layer_opacity(b, 0.6, false).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 Overlay 不透明度"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 Overlay 不透明度",
+    ));
     d.set_layer_blend_mode(c, BlendMode::Multiply).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 ほかのモードは置き換え"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 ほかのモードは置き換え",
+    ));
     d.add_layer_mask(c).unwrap();
     paint_mask(&mut d, c, &mut rng);
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 マスク"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 マスク",
+    ));
     // クリッピング・グループ・フェード
     d.set_layer_clipping(c, true).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 クリッピング"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 クリッピング",
+    ));
     d.set_layer_blend_mode(c, BlendMode::Overlay).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 クリッピングの Overlay"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 クリッピングの Overlay",
+    ));
     let grp = d.group_layers(&[b, c], "組").unwrap();
     d.set_layer_blend_mode(grp, BlendMode::Normal).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 独立のグループ"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 独立のグループ",
+    ));
     d.set_layer_blend_mode(grp, BlendMode::PassThrough).unwrap();
     d.set_layer_opacity(grp, 0.5, false).unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 通過のグループのフェード"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 通過のグループのフェード",
+    ));
     d.set_layer_opacity(grp, 1.0, false).unwrap();
     // 法線にも使える調整（反転・レベル補正）は色の式のまま
     for (name, settings) in adjustment_kinds().into_iter().take(2) {
         let adj = d
             .add_adjustment_layer(name, settings, Some(&[Channel::Normal]), None)
             .unwrap();
-        worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, &format!("法線 {name}")));
+        worst = worst.max(check_in(
+            &mut g,
+            &d,
+            Channel::Normal,
+            normal_tolerance,
+            &format!("法線 {name}"),
+        ));
         d.remove_layer(adj).unwrap();
     }
     // 法線に使えない調整は描かない（CPU も描かない）
     let adj = d
-        .add_adjustment_layer("色相/彩度", adjustment_kinds()[2].1.clone(), Some(&[Channel::Color]), None)
+        .add_adjustment_layer(
+            "色相/彩度",
+            adjustment_kinds()[2].1.clone(),
+            Some(&[Channel::Color]),
+            None,
+        )
         .unwrap();
-    worst = worst.max(check_in(&mut g, &d, Channel::Normal, normal_tolerance, "法線 色のチャンネルだけの調整"));
+    worst = worst.max(check_in(
+        &mut g,
+        &d,
+        Channel::Normal,
+        normal_tolerance,
+        "法線 色のチャンネルだけの調整",
+    ));
     d.remove_layer(adj).unwrap();
     let _ = a;
     eprintln!("法線の最大差 {worst}");
@@ -788,13 +918,22 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
         .unwrap();
     step(&mut g, &d, Channel::Color, "正規化（全体の統計が要る段）");
     d.set_pixel(a, 5, 5, Rgba8::new(0, 0, 0, 255)).unwrap();
-    step(&mut g, &d, Channel::Color, "正規化の層に描く（全体が変わる）");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "正規化の層に描く（全体が変わる）",
+    );
     d.remove_filter(a, normalize).unwrap();
     // マスクのフィルター
     d.add_layer_mask(a).unwrap();
     paint_mask(&mut d, a, &mut rng);
     let mask_filter = d
-        .add_filter(a, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2)))
+        .add_filter(
+            a,
+            FilterTarget::Mask,
+            FilterSpec::new(EffectSettings::blur(2)),
+        )
         .unwrap();
     step(&mut g, &d, Channel::Color, "マスクのぼかし");
     d.set_mask_pixel(a, 20, 20, 255).unwrap();
@@ -804,13 +943,21 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
     d.set_filter_enabled(a, mask_filter, true).unwrap();
     // 反転のフィルターは何も無い所にも値を作る（マスクの外側がすべて隠す量 0 → 255）
     let invert_mask = d
-        .add_filter(a, FilterTarget::Mask, FilterSpec::new(EffectSettings::invert()))
+        .add_filter(
+            a,
+            FilterTarget::Mask,
+            FilterSpec::new(EffectSettings::invert()),
+        )
         .unwrap();
     step(&mut g, &d, Channel::Color, "マスクの反転のフィルター");
     d.remove_filter(a, invert_mask).unwrap();
     // 塗りつぶしのグラデーション（全面）
     let fill = d
-        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(10, 20, 30, 255))], None)
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(10, 20, 30, 255))],
+            None,
+        )
         .unwrap();
     let mut gradient = generator::Settings::new(generator::Kind::ShapeGradient);
     gradient.ramp = Some(three_stop_ramp(0.8));
@@ -822,11 +969,16 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
     step(&mut g, &d, Channel::Color, "塗りつぶしのグラデーション");
     d.set_layer_opacity(fill, 0.3, false).unwrap();
     step(&mut g, &d, Channel::Color, "グラデーションの不透明度");
-    d.set_fill_gradient(fill, Channel::Color, None, false).unwrap();
+    d.set_fill_gradient(fill, Channel::Color, None, false)
+        .unwrap();
     step(&mut g, &d, Channel::Color, "グラデーションを外す");
     // フィルターを掛けた塗りつぶし（全面。値が画素ごとに違う）
     let noisy = d
-        .add_fill_layer("ノイズの塗り", &[(Channel::Color, Rgba8::new(128, 120, 90, 200))], None)
+        .add_fill_layer(
+            "ノイズの塗り",
+            &[(Channel::Color, Rgba8::new(128, 120, 90, 200))],
+            None,
+        )
         .unwrap();
     let noise = d
         .add_filter(
@@ -836,13 +988,33 @@ fn global_filters_and_generators_and_mask_filters_match_cpu() {
         )
         .unwrap();
     d.set_layer_blend_mode(noisy, BlendMode::Overlay).unwrap();
-    let stats = step(&mut g, &d, Channel::Color, "ノイズのフィルターを掛けた塗りつぶし");
+    let stats = step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "ノイズのフィルターを掛けた塗りつぶし",
+    );
     assert!(stats.cached_tiles >= 5 * 4, "全面のタイルが常駐する");
-    d.set_fill_value(noisy, Channel::Color, Some(Rgba8::new(10, 200, 90, 255)), false)
-        .unwrap();
-    step(&mut g, &d, Channel::Color, "塗りの値を替える（出力が変わる）");
+    d.set_fill_value(
+        noisy,
+        Channel::Color,
+        Some(Rgba8::new(10, 200, 90, 255)),
+        false,
+    )
+    .unwrap();
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "塗りの値を替える（出力が変わる）",
+    );
     d.remove_filter(noisy, noise).unwrap();
-    step(&mut g, &d, Channel::Color, "ノイズを外す（単色の塗りつぶしに戻る）");
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "ノイズを外す（単色の塗りつぶしに戻る）",
+    );
     let _ = base;
 }
 
@@ -866,8 +1038,14 @@ fn effects_inside_isolated_groups_and_clipping_match_cpu() {
     let grp = d.group_layers(&[a, b], "効果入り").unwrap();
     d.set_layer_blend_mode(grp, BlendMode::Normal).unwrap();
     d.set_layer_opacity(grp, 0.75, false).unwrap();
-    step(&mut g, &d, Channel::Color, "独立のグループの中の効果とクリッピング");
-    d.set_pixel(a, 30, 30, Rgba8::new(255, 255, 0, 255)).unwrap();
+    step(
+        &mut g,
+        &d,
+        Channel::Color,
+        "独立のグループの中の効果とクリッピング",
+    );
+    d.set_pixel(a, 30, 30, Rgba8::new(255, 255, 0, 255))
+        .unwrap();
     step(&mut g, &d, Channel::Color, "効果のある層に描く");
     let _ = base;
 }
@@ -883,7 +1061,11 @@ fn evaluated_layers_count_toward_the_budget_and_come_back_when_they_fit() {
     let plain = resident_requirements(&d, Channel::Color, &options, &limits).unwrap();
     // ノイズのフィルターを掛けた塗りつぶし: 全部のタイルが常駐する（見積もりは全タイルぶん増える）
     let fill = d
-        .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(128, 128, 128, 255))], None)
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(128, 128, 128, 255))],
+            None,
+        )
         .unwrap();
     let noise = d
         .add_filter(
@@ -915,7 +1097,10 @@ fn evaluated_layers_count_toward_the_budget_and_come_back_when_they_fit() {
     // 効果を外すと、要る量は元に戻る（予算を超えて CPU へ落ちていても、収まれば GPU へ戻る）
     d.remove_filter(fill, noise).unwrap();
     let back = resident_requirements(&d, Channel::Color, &options, &limits).unwrap();
-    assert_eq!(back.tile_bytes, plain.tile_bytes, "単色の塗りつぶしは面を持たない");
+    assert_eq!(
+        back.tile_bytes, plain.tile_bytes,
+        "単色の塗りつぶしは面を持たない"
+    );
     let _ = base;
 }
 

@@ -8,9 +8,9 @@
 //!
 //! 形は画布の座標（左下が原点）で決まり、表示を回している・反転しているときは回って見える。
 
+pub mod advanced;
 pub mod canvas;
 pub mod props;
-pub mod advanced;
 
 use egui::Pos2;
 use yolu_core::{Affine2D, Resampling};

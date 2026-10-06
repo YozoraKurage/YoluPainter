@@ -227,19 +227,13 @@ impl WorleyCell {
     pub(super) const EMPTY: Self = Self {
         valid: false,
         key: [0; 3],
-        points: [Point {
-            q: [0.; 3],
-            h: 0,
-        }; 27],
+        points: [Point { q: [0.; 3], h: 0 }; 27],
     };
 }
 fn fill_points(seed: u32, ix: i32, iy: i32, iz: i32, per: [i32; 2]) -> [Point; 27] {
     let hx = [-1, 0, 1].map(|d| hash(seed ^ (wrap(ix + d, per[0]) as u32).wrapping_mul(KX)));
     let ys = [-1, 0, 1].map(|d| (wrap(iy + d, per[1]) as u32).wrapping_mul(KY));
-    let mut points = [Point {
-        q: [0.; 3],
-        h: 0,
-    }; 27];
+    let mut points = [Point { q: [0.; 3], h: 0 }; 27];
     for dz in -1..=1i32 {
         let zk = ((iz + dz) as u32).wrapping_mul(KZ);
         for dy in -1..=1i32 {
@@ -311,7 +305,11 @@ unsafe fn same_cell<V: Lanes>(fx: V::F, fy: V::F, fz: V::F) -> Option<Key> {
             return None;
         }
     }
-    Some([floors[0][0] as i32, floors[1][0] as i32, floors[2][0] as i32])
+    Some([
+        floors[0][0] as i32,
+        floors[1][0] as i32,
+        floors[2][0] as i32,
+    ])
 }
 /// N 画素を 1 画素ずつの式 `f` で引く（格子をまたぐ組）。
 #[inline(always)]
@@ -397,10 +395,7 @@ pub(super) unsafe fn perlin3_lanes<V: Lanes>(
             if k & 4 == 0 { z } else { z1 },
         ];
         let (i1, s1, i2, s2) = GRAD[cell.sel[k] as usize];
-        *out = V::add(
-            V::mul(V::splat(s1), c[i1]),
-            V::mul(V::splat(s2), c[i2]),
-        );
+        *out = V::add(V::mul(V::splat(s1), c[i1]), V::mul(V::splat(s2), c[i2]));
     }
     let x00 = lerp_lanes::<V>(g[0], g[1], u);
     let x10 = lerp_lanes::<V>(g[2], g[3], u);
@@ -636,8 +631,16 @@ pub(super) unsafe fn sin_cos_deg_lanes<V: Lanes>(deg: V::F) -> (V::F, V::F) {
     );
     let (neg_sin, neg_cos) = (V::neg(sin), V::neg(cos));
     (
-        V::select(is3, neg_cos, V::select(is2, neg_sin, V::select(is1, cos, sin))),
-        V::select(is3, sin, V::select(is2, neg_cos, V::select(is1, neg_sin, cos))),
+        V::select(
+            is3,
+            neg_cos,
+            V::select(is2, neg_sin, V::select(is1, cos, sin)),
+        ),
+        V::select(
+            is3,
+            sin,
+            V::select(is2, neg_cos, V::select(is1, neg_sin, cos)),
+        ),
     )
 }
 /// N 画素のハッシュ（整数の値を持つ f64）を [0, 1) の値に（`unit24` と同じ値）。
@@ -966,7 +969,12 @@ mod tests {
                 let mut got = [0.; 4];
                 V::store_f64(&mut got, unit24_lanes::<V>(V::load_f64(&lanes)));
                 for k in 0..V::N {
-                    assert_eq!(got[k].to_bits(), unit24(hs[k]).to_bits(), "unit24 {}", hs[k]);
+                    assert_eq!(
+                        got[k].to_bits(),
+                        unit24(hs[k]).to_bits(),
+                        "unit24 {}",
+                        hs[k]
+                    );
                 }
             }
         }
@@ -1023,11 +1031,8 @@ mod tests {
                     let (mut e1, mut e2, mut ew) = (f64::MAX, f64::MAX, 0usize);
                     let mut same = 0;
                     for (j, pt) in points.iter().enumerate() {
-                        let (x, y, z) = (
-                            pt.q[0] - at[0][k],
-                            pt.q[1] - at[1][k],
-                            pt.q[2] - at[2][k],
-                        );
+                        let (x, y, z) =
+                            (pt.q[0] - at[0][k], pt.q[1] - at[1][k], pt.q[2] - at[2][k]);
                         let d = x * x + y * y + z * z;
                         if d == e1 {
                             same += 1;

@@ -102,7 +102,10 @@ impl NativeDocument {
             .map(|f| &f.value)
     }
     pub fn to_bytes(&self) -> Vec<u8> {
-        debug_assert!(!self.skeleton, "骨組み（Bytes の値の無い項目）は正本として書けません");
+        debug_assert!(
+            !self.skeleton,
+            "骨組み（Bytes の値の無い項目）は正本として書けません"
+        );
         let mut out = Vec::new();
         for f in &self.fields {
             f.value.write(&mut out);
@@ -141,7 +144,10 @@ impl NativeDocument {
     /// 版 26（分けた正本）の読み: ヘッダー（`document.utpaint`）と部分（`document.utpaint.1`…の順）。項目は分けていない正本
     /// （中の版）を読んだのと同じになる。
     pub(crate) fn read_split(header: &[u8], parts: &[&[u8]]) -> Result<Self> {
-        let mut src = SliceSource { bytes: header, at: 0 };
+        let mut src = SliceSource {
+            bytes: header,
+            at: 0,
+        };
         let mut stream = PartStream::new(
             parts
                 .iter()
@@ -325,10 +331,7 @@ impl PartStream {
     }
     /// 全部の部分を読み終えたか（余りも足りない部分も無いか）。
     pub fn finish(&mut self) -> Result<()> {
-        check(
-            self.remaining == 0,
-            "正本の部分に余りがあります",
-        )?;
+        check(self.remaining == 0, "正本の部分に余りがあります")?;
         self.close_current()?;
         check(self.parts.is_empty(), "正本の部分が余っています")
     }
@@ -360,7 +363,9 @@ impl ByteSource for PartStream {
             let mut at = 0;
             while at < n {
                 match r.read(&mut self.buf[at..]) {
-                    Ok(0) => return Err(Error::InvalidData("正本の部分が途中で切れています".into())),
+                    Ok(0) => {
+                        return Err(Error::InvalidData("正本の部分が途中で切れています".into()))
+                    }
                     Ok(k) => at += k,
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
                     Err(e) => return Err(crate::package::io_error(e)),
@@ -426,7 +431,8 @@ impl<'a> Parse<'a> {
                 format!("分けた正本の中の版 {inner} は未対応です"),
             )?;
             let count = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
-            let parts = parts.ok_or_else(|| Error::InvalidData("分けた正本の部分がありません".into()))?;
+            let parts =
+                parts.ok_or_else(|| Error::InvalidData("分けた正本の部分がありません".into()))?;
             check(
                 count >= 1 && count as usize == parts.count(),
                 "分けた正本の部分の数が一致しません",
@@ -436,7 +442,9 @@ impl<'a> Parse<'a> {
         } else {
             check(
                 (1..=MAX_NATIVE_VERSION).contains(&stored),
-                format!(".version の値 {stored} は未対応または範囲外です (1..{MAX_NATIVE_VERSION})"),
+                format!(
+                    ".version の値 {stored} は未対応または範囲外です (1..{MAX_NATIVE_VERSION})"
+                ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
             stored
@@ -1178,7 +1186,10 @@ fn generator(r: &mut Reader<'_>, v: i32, refs: &mut Vec<[u8; 16]>) -> Result<i32
     let algorithm = r.int("algorithm", 1, if t == 5 && v >= 21 { 2 } else { 1 })?;
     let low = r.unit("low")?;
     let high = r.unit("high")?;
-    check(high - low >= 0.001, "ジェネレーターのレベル幅が不足しています")?;
+    check(
+        high - low >= 0.001,
+        "ジェネレーターのレベル幅が不足しています",
+    )?;
     r.unit("softness")?;
     r.boolean("invert")?;
     r.unit("noise_amount")?;

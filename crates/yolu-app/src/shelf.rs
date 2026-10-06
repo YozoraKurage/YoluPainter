@@ -1304,7 +1304,9 @@ pub(crate) fn inspect_smart_kind(
                 .unwrap_or(Thumb::None)
         }
         // 展開の予算を超えただけの素材は、アイコンで見せて置ける（置くときの展開に上限は無い）。io が予算の種類で返す
-        Err(yolu_io::Error::Budget(_) | yolu_io::Error::Core(CoreError::SourceBudgetExceeded)) => out.budget_skipped = true,
+        Err(yolu_io::Error::Budget(_) | yolu_io::Error::Core(CoreError::SourceBudgetExceeded)) => {
+            out.budget_skipped = true
+        }
         Err(e) => out.block = Some(smart_block(&file, &e)),
     }
     (out, Some(file.kind()))
@@ -1706,9 +1708,10 @@ impl AppState {
                     ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => self
                         .lang
                         .pick("組み込みは消せません", "Built-in items cannot be removed"),
-                    _ => self
-                        .lang
-                        .pick("組み込みは書き出せません", "Built-in items cannot be exported"),
+                    _ => self.lang.pick(
+                        "組み込みは書き出せません",
+                        "Built-in items cannot be exported",
+                    ),
                 };
                 return self.shelf_refusal(reason.into());
             }
@@ -2062,8 +2065,11 @@ impl AppState {
         let made = if builtin {
             // 同梱の素材はコードから組む（ファイルも棚の中身も無い）
             self.shelf.build_builtin(id, lang).ok_or_else(|| {
-                lang.pick("組み込みの素材を組めません", "Cannot build the built-in item")
-                    .to_owned()
+                lang.pick(
+                    "組み込みの素材を組めません",
+                    "Cannot build the built-in item",
+                )
+                .to_owned()
             })
         } else if kind == Some(ItemKind::Image) {
             image_as_material(lang, bytes, width, height, &name)

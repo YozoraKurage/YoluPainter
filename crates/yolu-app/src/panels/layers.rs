@@ -13,8 +13,8 @@ use egui::{
 use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
 use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
-use crate::panels::effect_rows;
 use crate::m2_menu::Popup;
+use crate::panels::effect_rows;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::{context_anchor, PopupState};
 use crate::ui::scroll::Scroll;
@@ -258,14 +258,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         if response.clicked() {
             open_popup(app, &ctx, PopupKind::BlendMode(id), b, b.width());
         }
-        let spec = SliderSpec::new(
-            opacity_label,
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .enabled(enabled)
-        .tooltip(lang.pick("レイヤーの不透明度", "Layer opacity"));
+        let spec = SliderSpec::new(opacity_label, 0.0, 100.0, NumberFormat::int("%"))
+            .enabled(enabled)
+            .tooltip(lang.pick("レイヤーの不透明度", "Layer opacity"));
         let o = w::slider(
             ui,
             opacity_rect,
@@ -335,9 +330,17 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             continue;
         }
         match entry.kind {
-            effect_rows::Kind::Layer(row_index) => {
-                layer_row(ui, app, thumbs, &ctx, list, rect, rows[row_index], &rows, &chosen)
-            }
+            effect_rows::Kind::Layer(row_index) => layer_row(
+                ui,
+                app,
+                thumbs,
+                &ctx,
+                list,
+                rect,
+                rows[row_index],
+                &rows,
+                &chosen,
+            ),
             effect_rows::Kind::Child(child) => {
                 effect_rows::child_row(ui, app, list, rect, entry, child)
             }
@@ -419,7 +422,10 @@ pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
         return (false, None);
     };
     let parent = layer.parent();
-    if app.doc.layers()[..index].iter().any(|l| l.parent() == parent) {
+    if app.doc.layers()[..index]
+        .iter()
+        .any(|l| l.parent() == parent)
+    {
         (false, None)
     } else if parent.is_some() {
         (
@@ -842,7 +848,11 @@ fn lock_mark(
         &painter,
         mark,
         if full { "lock_filled" } else { "lock" },
-        if own_locked { t::TEXT_DIM } else { t::TEXT_DISABLED },
+        if own_locked {
+            t::TEXT_DIM
+        } else {
+            t::TEXT_DISABLED
+        },
         13.0,
     );
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled && own_locked, &tip));

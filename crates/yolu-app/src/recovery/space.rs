@@ -54,7 +54,8 @@ pub(crate) fn guard(probe: SpaceProbe, root: std::path::PathBuf) -> SpaceGuard {
 
 /// まだ無いパスは、あるところまで遡ってボリュームを見る。
 fn existing_ancestor(path: &Path) -> Option<&Path> {
-    path.ancestors().find(|p| !p.as_os_str().is_empty() && p.exists())
+    path.ancestors()
+        .find(|p| !p.as_os_str().is_empty() && p.exists())
 }
 
 // statvfs の欄の型は、64 ビットの Linux では u64、32 ビットでは u32。どちらでも同じ書き方で u64 にする
@@ -91,7 +92,13 @@ fn probe_system(path: &Path) -> Option<DiskSpace> {
     let (mut available, mut total) = (0u64, 0u64);
     // SAFETY: `wide` は NUL 終端の UTF-16、2 つの出力は書き込める u64（GetDiskFreeSpaceExW の呼び方どおり。呼び出したユーザーが使える空きを返す）。
     unsafe {
-        GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut available as *mut u64), Some(&mut total as *mut u64), None).ok()?;
+        GetDiskFreeSpaceExW(
+            PCWSTR(wide.as_ptr()),
+            Some(&mut available as *mut u64),
+            Some(&mut total as *mut u64),
+            None,
+        )
+        .ok()?;
     }
     Some(DiskSpace { total, available })
 }
@@ -112,7 +119,11 @@ mod tests {
         assert_eq!(reserve(20 * GIB), GIB);
         assert_eq!(reserve(100 * GIB), 5 * GIB);
         assert_eq!(reserve(0), GIB);
-        assert_eq!(reserve(1000 * GIB), 10 * GIB, "容量が大きくても 10 GiB まで");
+        assert_eq!(
+            reserve(1000 * GIB),
+            10 * GIB,
+            "容量が大きくても 10 GiB まで"
+        );
         assert_eq!(reserve(u64::MAX), 10 * GIB);
     }
 
@@ -120,7 +131,12 @@ mod tests {
     fn the_guard_refuses_only_when_the_write_would_drop_the_free_space_below_the_reserve() {
         let at = |available: u64| -> SpaceGuard {
             guard(
-                Arc::new(move |_| Some(DiskSpace { total: 100 * GIB, available })),
+                Arc::new(move |_| {
+                    Some(DiskSpace {
+                        total: 100 * GIB,
+                        available,
+                    })
+                }),
                 "x".into(),
             )
         };
@@ -129,7 +145,11 @@ mod tests {
         let refused = at(5 * GIB + 9)(10).unwrap_err();
         assert_eq!(
             refused,
-            LowSpace { available: 5 * GIB + 9, needed: 10, reserve: 5 * GIB }
+            LowSpace {
+                available: 5 * GIB + 9,
+                needed: 10,
+                reserve: 5 * GIB
+            }
         );
         // 書くものが無くても、すでに予約を割っているあいだは書かない
         assert!(at(5 * GIB - 1)(0).is_err());
@@ -145,7 +165,8 @@ mod tests {
             return;
         };
         assert!(disk.total > 0 && disk.available <= disk.total);
-        let later = probe_system(&here.join("yolu-space-not-there").join("deeper")).expect("遡って同じボリュームを見る");
+        let later = probe_system(&here.join("yolu-space-not-there").join("deeper"))
+            .expect("遡って同じボリュームを見る");
         assert_eq!(later.total, disk.total);
     }
 }

@@ -347,26 +347,48 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
                 assert!(matches!(
                     cut,
-                    Message::Hello(Hello { auth: Some(_), versions: None, .. })
+                    Message::Hello(Hello {
+                        auth: Some(_),
+                        versions: None,
+                        ..
+                    })
                 ));
                 continue;
             }
             Message::Hello(h) if h.auth.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
-                assert!(matches!(cut, Message::Hello(Hello { auth: None, versions: None, .. })));
+                assert!(matches!(
+                    cut,
+                    Message::Hello(Hello {
+                        auth: None,
+                        versions: None,
+                        ..
+                    })
+                ));
                 continue;
             }
             Message::Welcome(w) if w.versions.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
                 assert!(matches!(
                     cut,
-                    Message::Welcome(Welcome { proof: Some(_), versions: None, .. })
+                    Message::Welcome(Welcome {
+                        proof: Some(_),
+                        versions: None,
+                        ..
+                    })
                 ));
                 continue;
             }
             Message::Welcome(w) if w.proof.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
-                assert!(matches!(cut, Message::Welcome(Welcome { proof: None, versions: None, .. })));
+                assert!(matches!(
+                    cut,
+                    Message::Welcome(Welcome {
+                        proof: None,
+                        versions: None,
+                        ..
+                    })
+                ));
                 continue;
             }
             // 断りの詳しい欄も後ろに足した欄（途中で切れていれば古い相手の断り）
@@ -489,7 +511,11 @@ fn the_version_fields_are_not_written_without_the_key_fields() {
         auth: None,
         versions,
     };
-    let bare = Message::Hello(Hello { versions: None, ..hello.clone() }).encode_payload();
+    let bare = Message::Hello(Hello {
+        versions: None,
+        ..hello.clone()
+    })
+    .encode_payload();
     assert_eq!(Message::Hello(hello).encode_payload(), bare);
     let welcome = Welcome {
         version: 1,
@@ -499,7 +525,11 @@ fn the_version_fields_are_not_written_without_the_key_fields() {
         proof: None,
         versions,
     };
-    let bare = Message::Welcome(Welcome { versions: None, ..welcome.clone() }).encode_payload();
+    let bare = Message::Welcome(Welcome {
+        versions: None,
+        ..welcome.clone()
+    })
+    .encode_payload();
     assert_eq!(Message::Welcome(welcome).encode_payload(), bare);
 }
 
@@ -511,7 +541,10 @@ fn an_old_reader_reads_the_front_of_a_greeting_with_the_new_fields() {
         max_version: 1,
         agent: "新しいブリッジ".into(),
         features: feature::MATERIAL_VALUES,
-        auth: Some(HelloAuth { nonce: [5; 32], proof: [6; 32] }),
+        auth: Some(HelloAuth {
+            nonce: [5; 32],
+            proof: [6; 32],
+        }),
         versions: Some(VersionInfo {
             app: AppVersion::new(0, 3, 0),
             min_peer: AppVersion::new(0, 1, 0),
@@ -522,7 +555,10 @@ fn an_old_reader_reads_the_front_of_a_greeting_with_the_new_fields() {
     let old = Message::decode(Kind::Hello as u16, &payload[..payload.len() - 12]).unwrap();
     match (new, old) {
         (Message::Hello(n), Message::Hello(o)) => {
-            assert_eq!((n.min_version, n.max_version, &n.agent, n.features, &n.auth), (o.min_version, o.max_version, &o.agent, o.features, &o.auth));
+            assert_eq!(
+                (n.min_version, n.max_version, &n.agent, n.features, &n.auth),
+                (o.min_version, o.max_version, &o.agent, o.features, &o.auth)
+            );
             assert_eq!(o.versions, None);
         }
         other => panic!("{other:?}"),

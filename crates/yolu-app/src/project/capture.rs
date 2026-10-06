@@ -183,7 +183,9 @@ pub(crate) fn build(
     let io = |e: yolu_io::Error| BuildError::Message(lang.io_error(&e));
     let canceled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     let rewriting: Vec<&SetCapture> = capture.sets.iter().filter(|s| s.rewrite).collect();
-    progress.sets_total.store(rewriting.len(), Ordering::Relaxed);
+    progress
+        .sets_total
+        .store(rewriting.len(), Ordering::Relaxed);
     progress.sets_done.store(0, Ordering::Relaxed);
     // 書き直すセットの正本の元と合成の PNG。セットは互いに独立なので、いくつかを同時に作る（結果は 1 つずつ作るのと同じ並び・
     // 失敗の理由も、並びのいちばん前に失敗したセットのもの）
@@ -218,7 +220,11 @@ pub(crate) fn build(
         .sets
         .iter()
         .filter(|s| s.rewrite)
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size()))))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size())))
+        })
         .collect();
     let resized = capture
         .base
@@ -235,7 +241,8 @@ pub(crate) fn build(
                 base
             };
             // 大きさを変えた文書の、古い大きさの今の選択範囲は外す（新しい文書と合わず、書き直しの検証が断る。今の選択範囲はあとで書く）
-            let fitted = crate::selection::io::without_stale(base, &sizes, lang).map_err(BuildError::Message)?;
+            let fitted = crate::selection::io::without_stale(base, &sizes, lang)
+                .map_err(BuildError::Message)?;
             let base: &Project = &fitted;
             // 開いたあとに消したセット（プロジェクトの構成・テクスチャセットのパネルで確かめて消したもの）は、ファイルからも消す
             let dropped: Vec<&str> = base
@@ -265,9 +272,14 @@ pub(crate) fn build(
     let saved: Vec<(&str, &[yolu_core::SavedSelection])> = capture
         .sets
         .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.saved_selections())))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), d.saved_selections()))
+        })
         .collect();
-    let (written, saved_overwritten) = crate::selection::io::write_saved_into(project, &saved, &resized, lang).map_err(text)?;
+    let (written, saved_overwritten) =
+        crate::selection::io::write_saved_into(project, &saved, &resized, lang).map_err(text)?;
     project = written;
     // 見た目の設定（look.json。正本と別のエントリ。違うセットだけ書き換える）。Unity から受けた値は、設定が入のときだけ書く
     let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
@@ -275,14 +287,18 @@ pub(crate) fn build(
         .iter()
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
         .collect();
-    let (written, looks_overwritten) = crate::look::io::write_into(project, &looks, lang).map_err(text)?;
+    let (written, looks_overwritten) =
+        crate::look::io::write_into(project, &looks, lang).map_err(text)?;
     project = written;
     let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
         .sets
         .iter()
         .filter_map(|s| {
             s.snapshot.as_ref().map(|d| {
-                (s.id.as_str(), d.received_look().filter(|_| capture.keep_received))
+                (
+                    s.id.as_str(),
+                    d.received_look().filter(|_| capture.keep_received),
+                )
             })
         })
         .collect();
@@ -334,7 +350,13 @@ pub(crate) fn build(
             }
         }
     }
-    Ok(Built { project, looks_overwritten, saved_overwritten, pose_overwritten, inactive_effects })
+    Ok(Built {
+        project,
+        looks_overwritten,
+        saved_overwritten,
+        pose_overwritten,
+        inactive_effects,
+    })
 }
 
 /// 書き直すセットごとの（正本の元・合成の PNG）。並びはセットの並び。失敗したセットより後ろは作らず `None`（先に断りが見つかる）。
@@ -344,8 +366,10 @@ fn compose_sets(
     canceled: &(dyn Fn() -> bool + Sync),
     progress: &BuildProgress,
 ) -> Vec<Option<Result<Composed, BuildError>>> {
-    let results: Vec<std::sync::Mutex<Option<Result<_, BuildError>>>> =
-        rewriting.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    let results: Vec<std::sync::Mutex<Option<Result<_, BuildError>>>> = rewriting
+        .iter()
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
     let next = AtomicUsize::new(0);
     let failed = AtomicUsize::new(usize::MAX);
     let threads = rewriting.len().clamp(1, COMPOSITE_PARALLEL);
@@ -356,7 +380,10 @@ fn compose_sets(
         if canceled() {
             return Err(BuildError::Canceled);
         }
-        let doc = set.snapshot.as_ref().expect("読むだけのセットは作り直さない");
+        let doc = set
+            .snapshot
+            .as_ref()
+            .expect("読むだけのセットは作り直さない");
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
             BuildError::Message(format!(
                 "{}: {}",
@@ -372,7 +399,10 @@ fn compose_sets(
                 "{}: {}",
                 lang.pick(
                     format!("セット「{}」の合成の PNG を作れません", set.name),
-                    format!("Cannot build the composite PNG of texture set “{}”", set.name)
+                    format!(
+                        "Cannot build the composite PNG of texture set “{}”",
+                        set.name
+                    )
                 ),
                 lang.io_error(&e)
             ))

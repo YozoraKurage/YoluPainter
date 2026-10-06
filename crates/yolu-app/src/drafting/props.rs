@@ -137,9 +137,27 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
     let enabled = !app.is_stroking();
     let figures = [Figure::Line, Figure::Rectangle, Figure::Ellipse];
     let items = [
-        ChoiceButton { id: "props.line", label: lang.pick("直線", "Line"), selected: app.drafting.figure == Figure::Line, enabled, tooltip: None },
-        ChoiceButton { id: "props.rectangle", label: lang.pick("長方形", "Rectangle"), selected: app.drafting.figure == Figure::Rectangle, enabled, tooltip: None },
-        ChoiceButton { id: "props.ellipse", label: lang.pick("楕円", "Ellipse"), selected: app.drafting.figure == Figure::Ellipse, enabled, tooltip: None },
+        ChoiceButton {
+            id: "props.line",
+            label: lang.pick("直線", "Line"),
+            selected: app.drafting.figure == Figure::Line,
+            enabled,
+            tooltip: None,
+        },
+        ChoiceButton {
+            id: "props.rectangle",
+            label: lang.pick("長方形", "Rectangle"),
+            selected: app.drafting.figure == Figure::Rectangle,
+            enabled,
+            tooltip: None,
+        },
+        ChoiceButton {
+            id: "props.ellipse",
+            label: lang.pick("楕円", "Ellipse"),
+            selected: app.drafting.figure == Figure::Ellipse,
+            enabled,
+            tooltip: None,
+        },
     ];
     if let Some(i) = choice_buttons(ui, rows, &items) {
         app.drafting.figure = figures[i];
@@ -149,8 +167,20 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
     }
     if app.drafting.figure != Figure::Line {
         let items = [
-            ChoiceButton { id: "props.outline", label: lang.pick("線で描く", "Outline"), selected: !app.drafting.fill, enabled, tooltip: None },
-            ChoiceButton { id: "props.fill", label: lang.pick("塗る", "Fill"), selected: app.drafting.fill, enabled, tooltip: None },
+            ChoiceButton {
+                id: "props.outline",
+                label: lang.pick("線で描く", "Outline"),
+                selected: !app.drafting.fill,
+                enabled,
+                tooltip: None,
+            },
+            ChoiceButton {
+                id: "props.fill",
+                label: lang.pick("塗る", "Fill"),
+                selected: app.drafting.fill,
+                enabled,
+                tooltip: None,
+            },
         ];
         if let Some(i) = choice_buttons(ui, rows, &items) {
             app.drafting.fill = i == 1;
@@ -204,12 +234,41 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
 pub fn ruler_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let lang = app.lang;
     let enabled = !app.is_stroking();
-    let kinds = [RulerKind::Line, RulerKind::Parallel, RulerKind::Concentric, RulerKind::Perspective];
+    let kinds = [
+        RulerKind::Line,
+        RulerKind::Parallel,
+        RulerKind::Concentric,
+        RulerKind::Perspective,
+    ];
     let items = [
-        ChoiceButton { id: "props.ruler.line", label: lang.pick("直線定規", "Straight Ruler"), selected: app.drafting.ruler_kind == RulerKind::Line, enabled, tooltip: None },
-        ChoiceButton { id: "props.ruler.parallel", label: lang.pick("平行線", "Parallel"), selected: app.drafting.ruler_kind == RulerKind::Parallel, enabled, tooltip: None },
-        ChoiceButton { id: "props.ruler.circle", label: lang.pick("同心円", "Concentric"), selected: app.drafting.ruler_kind == RulerKind::Concentric, enabled, tooltip: None },
-        ChoiceButton { id: "props.ruler.perspective", label: lang.pick("パース", "Perspective"), selected: app.drafting.ruler_kind == RulerKind::Perspective, enabled, tooltip: None },
+        ChoiceButton {
+            id: "props.ruler.line",
+            label: lang.pick("直線定規", "Straight Ruler"),
+            selected: app.drafting.ruler_kind == RulerKind::Line,
+            enabled,
+            tooltip: None,
+        },
+        ChoiceButton {
+            id: "props.ruler.parallel",
+            label: lang.pick("平行線", "Parallel"),
+            selected: app.drafting.ruler_kind == RulerKind::Parallel,
+            enabled,
+            tooltip: None,
+        },
+        ChoiceButton {
+            id: "props.ruler.circle",
+            label: lang.pick("同心円", "Concentric"),
+            selected: app.drafting.ruler_kind == RulerKind::Concentric,
+            enabled,
+            tooltip: None,
+        },
+        ChoiceButton {
+            id: "props.ruler.perspective",
+            label: lang.pick("パース", "Perspective"),
+            selected: app.drafting.ruler_kind == RulerKind::Perspective,
+            enabled,
+            tooltip: None,
+        },
     ];
     if let Some(i) = choice_buttons(ui, rows, &items) {
         app.drafting.ruler_kind = kinds[i];
@@ -219,8 +278,20 @@ pub fn ruler_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
     }
     if app.drafting.ruler_kind == RulerKind::Perspective {
         let items = [
-            ChoiceButton { id: "props.ruler.one", label: lang.pick("1 点", "1 Point"), selected: !app.drafting.two_points, enabled, tooltip: None },
-            ChoiceButton { id: "props.ruler.two", label: lang.pick("2 点", "2 Points"), selected: app.drafting.two_points, enabled, tooltip: None },
+            ChoiceButton {
+                id: "props.ruler.one",
+                label: lang.pick("1 点", "1 Point"),
+                selected: !app.drafting.two_points,
+                enabled,
+                tooltip: None,
+            },
+            ChoiceButton {
+                id: "props.ruler.two",
+                label: lang.pick("2 点", "2 Points"),
+                selected: app.drafting.two_points,
+                enabled,
+                tooltip: None,
+            },
         ];
         if let Some(i) = choice_buttons(ui, rows, &items) {
             app.drafting.two_points = i == 1;

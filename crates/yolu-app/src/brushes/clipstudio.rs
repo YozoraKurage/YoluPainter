@@ -250,11 +250,7 @@ impl AppState {
                     });
                 }
                 Msg::Peeked(i, result) => {
-                    if let Some(row) = csp
-                        .listing
-                        .as_mut()
-                        .and_then(|l| l.rows.get_mut(i))
-                    {
+                    if let Some(row) = csp.listing.as_mut().and_then(|l| l.rows.get_mut(i)) {
                         row.state = match result {
                             Ok(peek) => RowState::Ready(peek),
                             Err(e) => RowState::Failed(e),

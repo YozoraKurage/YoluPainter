@@ -532,7 +532,9 @@ fn headless_projected_values_are_the_cores_values() {
         );
         fill(&mut app_side, FillOp::ProjectionMode { layer: a, mode });
         let placement = layer_projection(&app_side, a).placement;
-        core_side.use_shelf_image(&inputs::resource_id(image_b)).unwrap();
+        core_side
+            .use_shelf_image(&inputs::resource_id(image_b))
+            .unwrap();
         core_side
             .doc
             .set_fill_image(b, Channel::Color, Some(image_b))
@@ -1664,7 +1666,11 @@ fn headless_an_image_over_the_core_budget_or_a_layer_that_is_not_a_fill_is_refus
     );
     assert_eq!(s.doc.layer(layer).unwrap().fill_image(Channel::Color), None);
     assert_eq!(s.doc.undo_count(), steps, "Undo の段を足さない");
-    assert_eq!(s.fx.inputs.decoded_image_count(), 0, "差さなかった画像は復号したまま残さない");
+    assert_eq!(
+        s.fx.inputs.decoded_image_count(),
+        0,
+        "差さなかった画像は復号したまま残さない"
+    );
     s.lang = Lang::En;
     fill(
         &mut s,
@@ -1735,48 +1741,124 @@ fn headless_an_image_that_is_refused_is_not_left_decoded_in_the_shared_budget() 
         .unwrap();
     let image_b = inputs::image_id(&rid_b).unwrap();
     let layer = new_fill(&mut s);
-    fill(&mut s, FillOp::Image { layer, channel: Channel::Color, image: Some(image_a) });
-    assert_eq!(s.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image_a));
-    let (count, bytes) = (s.fx.inputs.decoded_image_count(), s.fx.inputs.decoded_image_bytes());
+    fill(
+        &mut s,
+        FillOp::Image {
+            layer,
+            channel: Channel::Color,
+            image: Some(image_a),
+        },
+    );
+    assert_eq!(
+        s.doc.layer(layer).unwrap().fill_image(Channel::Color),
+        Some(image_a)
+    );
+    let (count, bytes) = (
+        s.fx.inputs.decoded_image_count(),
+        s.fx.inputs.decoded_image_bytes(),
+    );
     assert_eq!(count, 1);
     // ロック中の層への差し替え: 断られ、差そうとした画像は文書にも予算にも残らない（フレームを回しても増えない）
     s.doc.set_layer_locks(layer, LayerLocks::ALL).unwrap();
     let steps = s.doc.undo_count();
     s.message.clear();
-    fill(&mut s, FillOp::Image { layer, channel: Channel::Color, image: Some(image_b) });
+    fill(
+        &mut s,
+        FillOp::Image {
+            layer,
+            channel: Channel::Color,
+            image: Some(image_b),
+        },
+    );
     assert!(s.message.contains("ロック"), "{}", s.message);
     assert_eq!(s.doc.undo_count(), steps);
-    assert_eq!(s.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image_a));
+    assert_eq!(
+        s.doc.layer(layer).unwrap().fill_image(Channel::Color),
+        Some(image_a)
+    );
     for _ in 0..3 {
         s.sync_effects();
         assert_eq!(s.fx.inputs.decoded_image_count(), count);
         assert_eq!(s.fx.inputs.decoded_image_bytes(), bytes);
-        assert!(s.doc.effect_inputs().image(image_b).is_none(), "文書の入力にも残さない");
+        assert!(
+            s.doc.effect_inputs().image(image_b).is_none(),
+            "文書の入力にも残さない"
+        );
     }
     // 断られた画像が別の層の指している画像でもあるなら、その層のためにそのまま持つ
     let other = new_fill(&mut s);
-    fill(&mut s, FillOp::Image { layer: other, channel: Channel::Color, image: Some(image_b) });
+    fill(
+        &mut s,
+        FillOp::Image {
+            layer: other,
+            channel: Channel::Color,
+            image: Some(image_b),
+        },
+    );
     assert_eq!(s.fx.inputs.decoded_image_count(), 2);
-    fill(&mut s, FillOp::Image { layer, channel: Channel::Color, image: Some(image_b) });
-    assert_eq!(s.fx.inputs.decoded_image_count(), 2, "別の層が指している画像は手放さない");
+    fill(
+        &mut s,
+        FillOp::Image {
+            layer,
+            channel: Channel::Color,
+            image: Some(image_b),
+        },
+    );
+    assert_eq!(
+        s.fx.inputs.decoded_image_count(),
+        2,
+        "別の層が指している画像は手放さない"
+    );
     assert!(s.doc.effect_inputs().image(image_b).is_some());
     // ロックを外せば同じ操作が通る（断りの理由がロックだったこと）
     s.doc.set_layer_locks(layer, LayerLocks::NONE).unwrap();
-    fill(&mut s, FillOp::Image { layer, channel: Channel::Color, image: Some(image_b) });
-    assert_eq!(s.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image_b), "{}", s.message);
+    fill(
+        &mut s,
+        FillOp::Image {
+            layer,
+            channel: Channel::Color,
+            image: Some(image_b),
+        },
+    );
+    assert_eq!(
+        s.doc.layer(layer).unwrap().fill_image(Channel::Color),
+        Some(image_b),
+        "{}",
+        s.message
+    );
     s.sync_effects();
-    assert_eq!(s.fx.inputs.decoded_image_count(), 1, "指されなくなった画像は手放す");
+    assert_eq!(
+        s.fx.inputs.decoded_image_count(),
+        1,
+        "指されなくなった画像は手放す"
+    );
     // デカールを置けなかったとき（core の予算で断られる）も、その画像を残さない
     let (_, image_c) = shelf_image(&mut s, "デカール");
     s.doc.set_fill_image_cache_budget_bytes(3);
     let layers = s.doc.layers().len();
-    fill(&mut s, FillOp::PlaceDecal { image: image_c, at: pos2(400.0, 300.0), rect: view_rect() });
+    fill(
+        &mut s,
+        FillOp::PlaceDecal {
+            image: image_c,
+            at: pos2(400.0, 300.0),
+            rect: view_rect(),
+        },
+    );
     assert_eq!(s.doc.layers().len(), layers, "{}", s.message);
-    assert!(!s.fx.inputs.has_decoded_image(image_c), "置けなかったデカールの画像は復号したまま残さない");
+    assert!(
+        !s.fx.inputs.has_decoded_image(image_c),
+        "置けなかったデカールの画像は復号したまま残さない"
+    );
     s.doc.set_fill_image_cache_budget_bytes(256 * 1024 * 1024);
     // 使っていない棚の画像の読み方を替えても、復号して予算に残さない
     let before = s.fx.inputs.decoded_image_count();
-    fill(&mut s, FillOp::ImageColorSpace { image: image_c, space: yolu_core::ImageColorSpace::Linear });
+    fill(
+        &mut s,
+        FillOp::ImageColorSpace {
+            image: image_c,
+            space: yolu_core::ImageColorSpace::Linear,
+        },
+    );
     assert_eq!(s.fx.inputs.decoded_image_count(), before);
     assert!(!s.fx.inputs.has_decoded_image(image_c));
 }
@@ -1787,17 +1869,32 @@ fn headless_syncing_images_each_frame_keeps_the_shared_budget_and_inputs() {
     s.fx.inputs.image_limit = Some(40);
     for k in 0..3u8 {
         let rgba: Vec<u8> = [[k * 40, 10, 20, 255]; 4].concat();
-        let rid = s.shelf.add_image(Lang::Ja, &format!("c{k}"), &rgba, 2, 2).unwrap();
+        let rid = s
+            .shelf
+            .add_image(Lang::Ja, &format!("c{k}"), &rgba, 2, 2)
+            .unwrap();
         let image = inputs::image_id(&rid).unwrap();
         let layer = new_fill(&mut s);
-        fill(&mut s, FillOp::Image { layer, channel: Channel::Color, image: Some(image) });
-        assert_eq!(s.doc.layer(layer).unwrap().fill_image(Channel::Color), (k < 2).then_some(image));
+        fill(
+            &mut s,
+            FillOp::Image {
+                layer,
+                channel: Channel::Color,
+                image: Some(image),
+            },
+        );
+        assert_eq!(
+            s.doc.layer(layer).unwrap().fill_image(Channel::Color),
+            (k < 2).then_some(image)
+        );
     }
     assert_eq!(s.fx.inputs.decoded_image_count(), 2);
     assert_eq!(s.fx.inputs.decoded_image_bytes(), 32);
     let revision = s.doc.revision();
     let passed = s.fx.inputs.passed;
-    for _ in 0..30 { s.sync_effects(); }
+    for _ in 0..30 {
+        s.sync_effects();
+    }
     assert_eq!(s.fx.inputs.passed, passed, "同じ入力を文書へ渡し直さない");
     assert_eq!(s.doc.revision(), revision);
     assert_eq!(s.fx.inputs.decoded_image_count(), 2);
@@ -1835,8 +1932,14 @@ fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_i
         .find(|l| l.kind() == yolu_app::engine::LayerKind::Fill)
         .expect("塗りつぶしの層が戻る")
         .id();
-    assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image));
-    assert!(t.doc.effect_inputs().image(image).is_some(), "棚の画像が入力に戻る");
+    assert_eq!(
+        t.doc.layer(layer).unwrap().fill_image(Channel::Color),
+        Some(image)
+    );
+    assert!(
+        t.doc.effect_inputs().image(image).is_some(),
+        "棚の画像が入力に戻る"
+    );
     assert!(t.shelf.get(&rid).is_some());
     // 編集できる: 画像を外すのは 1 回の Undo
     let steps = t.doc.undo_count();
@@ -1851,7 +1954,10 @@ fn headless_a_project_with_an_image_layer_opens_and_is_editable_once_the_shelf_i
     assert_eq!(t.doc.undo_count(), steps + 1);
     assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), None);
     t.apply(Action::Undo);
-    assert_eq!(t.doc.layer(layer).unwrap().fill_image(Channel::Color), Some(image));
+    assert_eq!(
+        t.doc.layer(layer).unwrap().fill_image(Channel::Color),
+        Some(image)
+    );
     // 保存し直して開き直しても、同じく編集できる
     t.apply(Action::SaveProjectAs(again.clone()));
     assert!(t.message.starts_with("保存しました"), "{}", t.message);

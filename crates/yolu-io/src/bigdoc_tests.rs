@@ -54,19 +54,30 @@ fn largest_tile(doc: &NativeDocument) -> u64 {
 fn splitting_a_native_document_reads_back_the_same_fields() {
     for name in FIXTURES {
         let doc = fixture(name);
-        for (part, min) in [(largest_tile(&doc), 0), (largest_tile(&doc) * 3, 1 << 30), (1 << 20, 64)] {
+        for (part, min) in [
+            (largest_tile(&doc), 0),
+            (largest_tile(&doc) * 3, 1 << 30),
+            (1 << 20, 64),
+        ] {
             let t = tiny(part, min);
             let entries = t.scoped(|| native_entries(&doc, "sets/x/"));
             assert!(entries.len() >= 2, "{name}: 分けていない");
             assert_eq!(entries[0].0, "sets/x/document.utpaint");
             for (k, (n, b)) in entries[1..].iter().enumerate() {
                 assert_eq!(n, &format!("sets/x/document.utpaint.{}", k + 1));
-                assert!(!b.is_empty() && b.len() <= part.max(largest_tile(&doc)), "{name}: 部分 {k} の長さ {}", b.len());
+                assert!(
+                    !b.is_empty() && b.len() <= part.max(largest_tile(&doc)),
+                    "{name}: 部分 {k} の長さ {}",
+                    b.len()
+                );
             }
             let header = entries[0].1.bytes().unwrap();
             assert_eq!(&header[..8], b"DOTPAINT");
             assert_eq!(i32::from_le_bytes(header[8..12].try_into().unwrap()), 26);
-            assert_eq!(i32::from_le_bytes(header[12..16].try_into().unwrap()), doc.version());
+            assert_eq!(
+                i32::from_le_bytes(header[12..16].try_into().unwrap()),
+                doc.version()
+            );
             // 古い読み手は版の数で断る（今の読み手の上限は 25、Unity 版 0.2.0 は 21）
             const { assert!(26 > crate::MAX_NATIVE_VERSION) };
             let back = stored(&entries).to_native().unwrap();
@@ -74,8 +85,16 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
             assert_eq!(back.to_bytes(), doc.to_bytes(), "{name}");
             // 骨組み（中身を読む・長さだけ）
             let s = stored(&entries);
-            assert_eq!(s.skeleton(true).unwrap().fields(), &without_values(doc.fields())[..], "{name}");
-            assert_eq!(s.skeleton(false).unwrap().fields(), &without_values(doc.fields())[..], "{name}");
+            assert_eq!(
+                s.skeleton(true).unwrap().fields(),
+                &without_values(doc.fields())[..],
+                "{name}"
+            );
+            assert_eq!(
+                s.skeleton(false).unwrap().fields(),
+                &without_values(doc.fields())[..],
+                "{name}"
+            );
         }
         // 閾値より小さければ分けない（今と同じ 1 つのエントリ・同じバイト列）
         let entries = native_entries(&doc, "");
@@ -99,12 +118,21 @@ fn a_core_document_streams_the_same_bytes_as_from_core() {
         assert_eq!(&bytes[..], &expected.to_bytes()[..], "{name}");
         assert_eq!(entries[0].1.sha256().unwrap(), crate::hash(&bytes));
         assert_eq!(entries[0].1.len(), bytes.len() as u64);
-        assert_eq!(made.skeleton().unwrap().fields(), &without_values(expected.fields())[..]);
+        assert_eq!(
+            made.skeleton().unwrap().fields(),
+            &without_values(expected.fields())[..]
+        );
         // 分ける: メモリの正本を分けたものとバイトまで同じ（同じ区切り）
-        for (part, min) in [(largest_tile(&expected), 0), (largest_tile(&expected) * 5, 1 << 30)] {
+        for (part, min) in [
+            (largest_tile(&expected), 0),
+            (largest_tile(&expected) * 5, 1 << 30),
+        ] {
             let t = tiny(part, min);
             let (made, from_native) = t.scoped(|| {
-                (CoreDoc::new(doc.clone()).unwrap(), native_entries(&expected, "sets/x/"))
+                (
+                    CoreDoc::new(doc.clone()).unwrap(),
+                    native_entries(&expected, "sets/x/"),
+                )
             });
             let entries = made.entries("sets/x/");
             assert_eq!(entries.len(), from_native.len(), "{name}");
@@ -115,7 +143,10 @@ fn a_core_document_streams_the_same_bytes_as_from_core() {
                 assert_eq!(b.len(), written.len() as u64, "{name} {n}");
                 assert_eq!(b.sha256().unwrap(), crate::hash(&written), "{name} {n}");
             }
-            assert_eq!(stored(&entries).to_native().unwrap().fields(), expected.fields());
+            assert_eq!(
+                stored(&entries).to_native().unwrap().fields(),
+                expected.fields()
+            );
         }
     }
 }
@@ -132,12 +163,20 @@ fn streaming_into_core_matches_reading_the_whole_document() {
             let s = stored(&entries);
             let skeleton = s.skeleton(true).unwrap();
             let streamed = s.to_core(&skeleton, None).unwrap();
-            assert_eq!(NativeDocument::from_core(&streamed).unwrap().to_bytes(), expected, "{name}");
+            assert_eq!(
+                NativeDocument::from_core(&streamed).unwrap().to_bytes(),
+                expected,
+                "{name}"
+            );
         }
         // core の文書から作る正本を、そのまま流して
         let made = tiny(largest_tile(&native), 0).scoped(|| CoreDoc::new(Arc::new(core)).unwrap());
         let again = made.to_core(None).unwrap();
-        assert_eq!(NativeDocument::from_core(&again).unwrap().to_bytes(), expected, "{name}");
+        assert_eq!(
+            NativeDocument::from_core(&again).unwrap().to_bytes(),
+            expected,
+            "{name}"
+        );
     }
 }
 
@@ -147,7 +186,9 @@ fn the_pixel_budget_stops_a_streamed_read() {
     let entries = tiny(largest_tile(&native), 0).scoped(|| native_entries(&native, ""));
     let s = stored(&entries);
     let skeleton = s.skeleton(true).unwrap();
-    let Err(e) = s.to_core(&skeleton, Some(1)) else { panic!("予算で止まらない") };
+    let Err(e) = s.to_core(&skeleton, Some(1)) else {
+        panic!("予算で止まらない")
+    };
     assert!(matches!(e, Error::Budget(_)), "{e:?}");
 }
 
@@ -184,7 +225,10 @@ fn wrong_parts_are_refused() {
     // 最後の部分の余り
     let mut tail = parts.clone();
     tail.last_mut().unwrap().push(0);
-    assert!(read(&header, &tail).unwrap_err().to_string().contains("余り"));
+    assert!(read(&header, &tail)
+        .unwrap_err()
+        .to_string()
+        .contains("余り"));
     // 空の部分
     let mut empty = parts.clone();
     empty.insert(1, Vec::new());
@@ -231,7 +275,15 @@ fn cut_groups_small_layers_keeps_big_layers_apart_and_never_splits_a_value() {
     let ranges = cut(&values, &t);
     assert_eq!(
         ranges,
-        vec![(0, 34), (34, 44), (44, 84), (84, 94), (94, 154), (154, 214), (214, 219)]
+        vec![
+            (0, 34),
+            (34, 44),
+            (44, 84),
+            (84, 94),
+            (94, 154),
+            (154, 214),
+            (214, 219)
+        ]
     );
     for w in ranges.windows(2) {
         assert_eq!(w[0].1, w[1].0);
@@ -242,7 +294,9 @@ fn cut_groups_small_layers_keeps_big_layers_apart_and_never_splits_a_value() {
     for (_, n) in values {
         edges.push(edges.last().unwrap() + n as u64);
     }
-    assert!(ranges.iter().all(|(s, e)| edges.contains(s) && edges.contains(e)));
+    assert!(ranges
+        .iter()
+        .all(|(s, e)| edges.contains(s) && edges.contains(e)));
     assert!(cut(&[], &t).is_empty());
 }
 
@@ -262,8 +316,13 @@ fn uniform_layers(size: u32, tile: u32, layers: usize) -> yolu_core::Document {
         let id = doc.add_layer(&format!("L{i}")).unwrap();
         for ty in 0..size / tile {
             for tx in 0..size / tile {
-                doc.import_tile(id, yolu_core::Channel::Color, yolu_core::TileCoord::new(tx, ty), &bytes)
-                    .unwrap();
+                doc.import_tile(
+                    id,
+                    yolu_core::Channel::Color,
+                    yolu_core::TileCoord::new(tx, ty),
+                    &bytes,
+                )
+                .unwrap();
             }
         }
     }
@@ -276,19 +335,33 @@ fn uniform_layers(size: u32, tile: u32, layers: usize) -> yolu_core::Document {
 fn a_document_too_big_for_memory_is_refused_before_reading() {
     // 置いてある正本: 長さだけで断る（ファイルは無い。読みに行けば NotFound になる）
     let missing = std::env::temp_dir().join("yolu-bigdoc-missing-part.bin");
-    let fake = |len: u64| Blob::file(missing.clone(), "sets/x/document.utpaint.1", len, "0".repeat(64));
+    let fake = |len: u64| {
+        Blob::file(
+            missing.clone(),
+            "sets/x/document.utpaint.1",
+            len,
+            "0".repeat(64),
+        )
+    };
     let s = StoredDoc {
         header: fake(100),
         parts: vec![fake(MAX_ONE_ENTRY / 2), fake(MAX_ONE_ENTRY / 2)],
     };
-    let Err(e) = s.to_native() else { panic!("断らない") };
-    assert!(matches!(&e, Error::Budget(why) if why == TOO_BIG_FOR_MEMORY), "{e:?}");
+    let Err(e) = s.to_native() else {
+        panic!("断らない")
+    };
+    assert!(
+        matches!(&e, Error::Budget(why) if why == TOO_BIG_FOR_MEMORY),
+        "{e:?}"
+    );
     // core の文書から作る正本: 一様なタイルの層で正本だけが 512 MiB を超える（core の画素は小さい）
     let doc = uniform_layers(1024, 512, 130);
     assert!(doc.allocated_bytes() < 1 << 20);
     let made = CoreDoc::new(Arc::new(doc)).unwrap();
     assert!(made.plan().total() > MAX_ONE_ENTRY);
-    let Err(e) = made.to_native() else { panic!("断らない") };
+    let Err(e) = made.to_native() else {
+        panic!("断らない")
+    };
     assert!(matches!(e, Error::Budget(_)), "{e:?}");
 }
 
@@ -330,7 +403,10 @@ fn the_save_side_check_predicts_what_the_reader_refuses() {
         .filter(|(n, _)| n.contains("document.utpaint"))
         .map(|(_, b)| b.len())
         .sum();
-    assert!(document > 4 * allocated * 1000, "正本 {document}・core {allocated}");
+    assert!(
+        document > 4 * allocated * 1000,
+        "正本 {document}・core {allocated}"
+    );
     let tight = Limits {
         document_bytes: document - 1,
         other_bytes: crate::package::OTHER_BYTES,
@@ -346,8 +422,16 @@ fn the_save_side_check_predicts_what_the_reader_refuses() {
     let predicted = tight.check(entries()).unwrap_err();
     let refused = Package::read_bytes(&bytes, &tight).unwrap_err();
     assert_eq!(predicted.to_string(), refused.to_string());
-    assert!(refused.to_string().contains(crate::OVER_LAYER_PIXELS_DOCUMENT), "{refused}");
-    assert!(!refused.to_string().contains("MiB") && !refused.to_string().contains(&id), "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains(crate::OVER_LAYER_PIXELS_DOCUMENT),
+        "{refused}"
+    );
+    assert!(
+        !refused.to_string().contains("MiB") && !refused.to_string().contains(&id),
+        "{refused}"
+    );
     // 足りる上限なら、見積もりも読み手も通る
     let enough = Limits {
         document_bytes: document,
@@ -384,7 +468,9 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
         ..Thresholds::REAL
     };
     keep_out.scoped(|| {
-        let project = crate::Project::create(writer.clone(), &[spec(Some(native.clone().into()))], &id).unwrap();
+        let project =
+            crate::Project::create(writer.clone(), &[spec(Some(native.clone().into()))], &id)
+                .unwrap();
         let path = dir.join("再利用.ylp");
         let mut target = crate::SaveTarget::create(&path).unwrap();
         let saved = target
@@ -398,7 +484,10 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
         assert!(entry.in_memory().is_none());
         assert!(document.placed_as(&[entry]), "外側と正本が同じエントリ");
         let rebuilt = saved.with_sets(writer.clone(), &[spec(None)], &id).unwrap();
-        assert!(rebuilt.sets()[0].document.same_as(document), "骨組みを読み直さずに同じ正本を使う");
+        assert!(
+            rebuilt.sets()[0].document.same_as(document),
+            "骨組みを読み直さずに同じ正本を使う"
+        );
         // もう 1 度保存しても同じ（保存した後のプロジェクトどうしでも）
         let again = target
             .save_with(&rebuilt, crate::BackupKeep::Count(0))
@@ -407,7 +496,10 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
             .unwrap();
         let next = again.with_sets(writer, &[spec(None)], &id).unwrap();
         assert!(next.sets()[0].document.same_as(&again.sets()[0].document));
-        assert_eq!(next.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
+        assert_eq!(
+            next.sets()[0].document.to_bytes().unwrap(),
+            native.to_bytes()
+        );
     });
     let _ = std::fs::remove_dir_all(&dir);
 }

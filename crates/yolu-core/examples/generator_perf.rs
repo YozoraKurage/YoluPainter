@@ -59,7 +59,13 @@ fn smooth_map(kind: MapKind, w: u32, h: u32) -> (Vec<u16>, Vec<u8>) {
     let ch = kind.channels();
     let mut data = Vec::with_capacity(w as usize * h as usize * ch);
     let mut cover = Vec::with_capacity(w as usize * h as usize);
-    let palette = [0x20_80_40u32, 0xab_c1_23, 0x10_20_f0, 0xe0_30_30, 0x70_70_70];
+    let palette = [
+        0x20_80_40u32,
+        0xab_c1_23,
+        0x10_20_f0,
+        0xe0_30_30,
+        0x70_70_70,
+    ];
     for y in 0..h {
         let v = (y as f64 + 0.5) / h as f64;
         for x in 0..w {
@@ -70,7 +76,9 @@ fn smooth_map(kind: MapKind, w: u32, h: u32) -> (Vec<u16>, Vec<u8>) {
                 MapKind::Position => {
                     data.push(encode(0.08 + 0.84 * u));
                     data.push(encode(0.08 + 0.84 * v + 0.06 * u * v));
-                    data.push(encode(0.5 + 0.35 * (u - 0.5) * (1. - v) + 0.1 * smooth01(u)));
+                    data.push(encode(
+                        0.5 + 0.35 * (u - 0.5) * (1. - v) + 0.1 * smooth01(u),
+                    ));
                 }
                 MapKind::WorldNormal | MapKind::BentNormal | MapKind::TangentNormal => {
                     let n = [1.6 * (u - 0.5), 1.6 * (v - 0.5), 0.6 + 0.4 * u * v];
@@ -140,15 +148,16 @@ fn rows() -> Vec<Row> {
             strength: 1.,
         });
     };
-    let noise = |basis: NoiseBasis, cell: CellOutput, fractal: FractalMode, space: ProceduralSpace| {
-        let mut s = Settings::new(Kind::Noise);
-        s.procedural.basis = basis;
-        s.procedural.cell_output = cell;
-        s.procedural.fractal = fractal;
-        s.procedural.space = space;
-        s.procedural.seed = 7;
-        s
-    };
+    let noise =
+        |basis: NoiseBasis, cell: CellOutput, fractal: FractalMode, space: ProceduralSpace| {
+            let mut s = Settings::new(Kind::Noise);
+            s.procedural.basis = basis;
+            s.procedural.cell_output = cell;
+            s.procedural.fractal = fractal;
+            s.procedural.space = space;
+            s.procedural.seed = 7;
+            s
+        };
     use CellOutput::*;
     use FractalMode::*;
     use NoiseBasis::*;
@@ -304,10 +313,13 @@ fn table() {
                     .unwrap()
                     .pixels
                 };
-                let (ms, output) = p.install(|| best_ms(runs_for(size), *t == 1 && size >= 2048, run));
+                let (ms, output) =
+                    p.install(|| best_ms(runs_for(size), *t == 1 && size >= 2048, run));
                 let d = digest(&output);
                 match &size_hash {
-                    Some(prev) => assert_eq!(prev, &d, "{} {size}²: スレッド {t} で出力が違う", row.name),
+                    Some(prev) => {
+                        assert_eq!(prev, &d, "{} {size}²: スレッド {t} で出力が違う", row.name)
+                    }
                     None => size_hash = Some(d),
                 }
                 cells.push(ms);
@@ -429,7 +441,6 @@ fn breakdown() {
     }
 }
 
-
 /// 固定のシードの乱数（`GEN_FUZZ` の入力を毎回同じにする）。
 struct Rng(u64);
 impl Rng {
@@ -478,7 +489,11 @@ fn fuzz_settings(rng: &mut Rng) -> Settings {
     if s.high - s.low < 0.001 {
         s.low = 0.;
     }
-    s.softness = if rng.chance(0.5) { 0. } else { rng.range(0., 1.) };
+    s.softness = if rng.chance(0.5) {
+        0.
+    } else {
+        rng.range(0., 1.)
+    };
     s.invert = rng.chance(0.3);
     s.blend = [
         Blend::Multiply,
@@ -501,14 +516,23 @@ fn fuzz_settings(rng: &mut Rng) -> Settings {
         p.rotation = if rng.chance(0.5) {
             [0.; 3]
         } else {
-            [rng.range(-360., 360.), rng.range(-360., 360.), rng.range(-360., 360.)]
+            [
+                rng.range(-360., 360.),
+                rng.range(-360., 360.),
+                rng.range(-360., 360.),
+            ]
         };
-        p.bleed = if rng.chance(0.5) { 0. } else { rng.range(0., 1.) };
+        p.bleed = if rng.chance(0.5) {
+            0.
+        } else {
+            rng.range(0., 1.)
+        };
         p.blend_width = rng.range(0., 1.);
         if kind == Kind::Noise {
             p.basis = [NoiseBasis::Value, NoiseBasis::Perlin, NoiseBasis::Worley][rng.below(3)];
             if p.basis == NoiseBasis::Worley {
-                p.cell_output = [CellOutput::F1, CellOutput::F2, CellOutput::F2MinusF1][rng.below(3)];
+                p.cell_output =
+                    [CellOutput::F1, CellOutput::F2, CellOutput::F2MinusF1][rng.below(3)];
             }
             p.fractal = [Fbm, Ridged, Turbulence][rng.below(3)];
             p.octaves = 1 + rng.below(8) as u32;
@@ -525,7 +549,11 @@ fn fuzz_settings(rng: &mut Rng) -> Settings {
         }
         return s;
     }
-    s.noise_amount = if rng.chance(0.4) { 0. } else { rng.range(0.05, 1.) };
+    s.noise_amount = if rng.chance(0.4) {
+        0.
+    } else {
+        rng.range(0.05, 1.)
+    };
     s.noise_scale = [0.001, 0.01, 0.05, 0.2, 1.][rng.below(5)];
     s.noise_seed = rng.next() as i32;
     s.noise_space = if rng.chance(0.5) {
@@ -544,9 +572,17 @@ fn fuzz_settings(rng: &mut Rng) -> Settings {
             s.volume = Volume {
                 shape: [Shape::Box, Shape::Sphere, Shape::Plane][rng.below(3)],
                 center: [rng.range(-1., 1.), rng.range(-1., 1.), rng.range(-1., 1.)],
-                rotation: [rng.range(-90., 90.), rng.range(-90., 90.), rng.range(-90., 90.)],
+                rotation: [
+                    rng.range(-90., 90.),
+                    rng.range(-90., 90.),
+                    rng.range(-90., 90.),
+                ],
                 size: [rng.range(0.5, 5.), rng.range(0.5, 5.), rng.range(0.5, 5.)],
-                falloff: if rng.chance(0.3) { 0. } else { rng.range(0., 1.) },
+                falloff: if rng.chance(0.3) {
+                    0.
+                } else {
+                    rng.range(0., 1.)
+                },
             };
             if rng.chance(0.6) {
                 s.ramp = Some(support::ramp());
@@ -569,7 +605,7 @@ fn fuzz(count: u64) {
         let s = fuzz_settings(&mut rng);
         let smooth = rng.chance(0.5);
         let target = [Target::Color, Target::Scalar, Target::Mask][rng.below(3)];
-        let strength = [1., 0.43, 0.9, 0.]  [rng.below(4)];
+        let strength = [1., 0.43, 0.9, 0.][rng.below(4)];
         let region = {
             let rw = 1 + rng.below(w as usize) as u32;
             let rh = 1 + rng.below(h as usize) as u32;
@@ -583,7 +619,11 @@ fn fuzz(count: u64) {
         let (min, extent) = (
             [rng.range(-5., 5.), rng.range(-5., 5.), rng.range(-5., 5.)],
             [
-                if rng.chance(0.05) { 0. } else { rng.range(0.1, 6.) },
+                if rng.chance(0.05) {
+                    0.
+                } else {
+                    rng.range(0.1, 6.)
+                },
                 rng.range(0.1, 6.),
                 rng.range(0.1, 6.),
             ],
@@ -622,25 +662,19 @@ fn fuzz(count: u64) {
         };
         let frame = ModelFrame::new(
             [rng.range(-1., 1.), rng.range(-1., 1.), rng.range(-1., 1.)],
-            [rng.range(-1., 1.), rng.range(-1., 1.), rng.range(-1., 1.), 1.],
+            [
+                rng.range(-1., 1.),
+                rng.range(-1., 1.),
+                rng.range(-1., 1.),
+                1.,
+            ],
         )
         .unwrap();
         let line = match BoundGenerator::bind(&s, &maps, Some(frame), (w, h), Ok(&layer)) {
             Err(e) => format!("error {e}"),
-            Ok(b) => match evaluate(
-                &image,
-                &b,
-                region,
-                target,
-                strength,
-                &Options::default(),
-            ) {
+            Ok(b) => match evaluate(&image, &b, region, target, strength, &Options::default()) {
                 Err(e) => format!("error {e}"),
-                Ok(out) => format!(
-                    "{} {:?}",
-                    digest(&out.pixels),
-                    out.inactive
-                ),
+                Ok(out) => format!("{} {:?}", digest(&out.pixels), out.inactive),
             },
         };
         println!("{i} {:?} {w}x{h} {target:?} {strength} {line}", s.kind);

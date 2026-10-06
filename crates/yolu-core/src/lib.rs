@@ -83,12 +83,12 @@ pub use brush::{
     StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
-    Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint,
-    Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, CompositedTile, Document, EffectCounters,
-    DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
-    LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
-    clean_saved_name, SavedSelection, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
-    PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
+    clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
+    CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport, LiquifyDab,
+    LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, PreparedResize,
+    Resampling, ResizeReport, SavedSelection, Stroke, StrokeResult, StrokeStats, TriangleFill,
+    Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH, MAX_SAVED_NAME_CHARS,
+    MAX_SAVED_SELECTIONS,
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,

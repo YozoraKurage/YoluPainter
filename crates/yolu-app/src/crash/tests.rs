@@ -183,12 +183,14 @@ fn child_crash() {
     if mode == "writer" {
         // 復旧の書き手の panic は、書き手が受け止めて動き続ける（落ちではない）。実際の書き手で起こす。
         let mut state = crate::state::AppState::new_in(64, 64, Lang::En);
-        state.recovery.set_fault(Some(std::sync::Arc::new(|stage: &str| {
-            if stage == "snapshot" {
-                panic!("writer panic");
-            }
-            Ok(())
-        })));
+        state
+            .recovery
+            .set_fault(Some(std::sync::Arc::new(|stage: &str| {
+                if stage == "snapshot" {
+                    panic!("writer panic");
+                }
+                Ok(())
+            })));
         let root = std::env::temp_dir().join(format!("yolu-crash-writer-{}", stamp()));
         state
             .recovery
@@ -284,7 +286,10 @@ fn the_image_base_precedes_the_code_of_this_executable() {
     let base = super::image_base();
     if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         let base = base.expect("基底が分かる OS");
-        assert!(here > base && here - base < (1 << 31), "{here:#x} {base:#x}");
+        assert!(
+            here > base && here - base < (1 << 31),
+            "{here:#x} {base:#x}"
+        );
     } else {
         assert!(base.is_none());
     }
@@ -305,7 +310,11 @@ fn real_panic_hook_records_backtrace_and_redacts_payload() {
         .skip(1)
         .filter(|line| frame_address(line).is_some())
         .collect();
-    assert!(frames.len() >= 3, "番地つきのフレームが無い: {}", report.text);
+    assert!(
+        frames.len() >= 3,
+        "番地つきのフレームが無い: {}",
+        report.text
+    );
     if cfg!(any(windows, target_os = "linux", target_os = "macos")) {
         let base = report
             .text
@@ -549,7 +558,9 @@ fn apply_records_only_action_names_and_failure_reasons_without_names() {
     let report = window::Report::load(dir.0.clone());
     assert!(report.text.contains("app panic"), "{}", report.text);
     assert!(
-        report.text.contains("ZoomIn x40, StartRename, NewLayer, Undo"),
+        report
+            .text
+            .contains("ZoomIn x40, StartRename, NewLayer, Undo"),
         "{}",
         report.text
     );
@@ -613,7 +624,11 @@ fn ordinary_log_compares_the_raw_message_first_and_forgets_old_problems() {
 fn empty_files_do_not_use_up_the_crash_quota() {
     let dir = Temp::new();
     for i in 0..30 {
-        fs::write(dir.0.join(format!("crash-record{i:02}.log")), "Kind: test\n").unwrap();
+        fs::write(
+            dir.0.join(format!("crash-record{i:02}.log")),
+            "Kind: test\n",
+        )
+        .unwrap();
     }
     for i in 0..10 {
         fs::write(dir.0.join(format!("crash-empty{i:02}.log")), "").unwrap();

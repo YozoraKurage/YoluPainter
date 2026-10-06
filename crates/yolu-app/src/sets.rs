@@ -40,13 +40,12 @@ pub fn describe_material(material: &MaterialRef) -> String {
 
 pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
-        MaterialRef::Material { name, .. } => {
-            lang.pick(format!("マテリアル「{name}」"), format!("Material “{name}”"))
-        }
+        MaterialRef::Material { name, .. } => lang.pick(
+            format!("マテリアル「{name}」"),
+            format!("Material “{name}”"),
+        ),
         MaterialRef::Unassigned => lang.pick("マテリアルなし", "No material").into(),
-        MaterialRef::PendingSlot(_) => {
-            lang.pick("マテリアルに未割り当て", "Unassigned").into()
-        }
+        MaterialRef::PendingSlot(_) => lang.pick("マテリアルに未割り当て", "Unassigned").into(),
     }
 }
 
@@ -230,7 +229,10 @@ impl TextureSets {
             return;
         }
         for i in 0..self.list.len() {
-            let taken = self.list.iter().any(|s| s.name.to_uppercase() == new.to_uppercase());
+            let taken = self
+                .list
+                .iter()
+                .any(|s| s.name.to_uppercase() == new.to_uppercase());
             let set = &mut self.list[i];
             if set.auto_name && set.name == old && !taken {
                 set.name = new.into();
@@ -422,7 +424,9 @@ pub(crate) fn exclusive_key(material: &MaterialRef) -> Option<String> {
     match material {
         MaterialRef::Unassigned => Some("unassigned".into()),
         MaterialRef::PendingSlot(n) => Some(format!("slot:{n}")),
-        MaterialRef::Material { asset: Some(a), .. } => Some(format!("asset:{}:{}", a.guid, a.file_id)),
+        MaterialRef::Material { asset: Some(a), .. } => {
+            Some(format!("asset:{}:{}", a.guid, a.file_id))
+        }
         MaterialRef::Material { asset: None, .. } => None,
     }
 }
@@ -578,13 +582,25 @@ impl AppState {
     /// 今のセットを替える（描いている間は断る）。表示（拡大・回転）と選んだレイヤーはセットごとに覚える。
     pub fn switch_set(&mut self, index: usize) -> Result<(), String> {
         if index >= self.sets.len() {
-            return Err(self.lang.pick("そのテクスチャセットはありません。", "Texture set not found.").into());
+            return Err(self
+                .lang
+                .pick(
+                    "そのテクスチャセットはありません。",
+                    "Texture set not found.",
+                )
+                .into());
         }
         if index == self.sets.current_index() {
             return Ok(());
         }
         if self.is_stroking() {
-            return Err(self.lang.pick("描いている間はテクスチャセットを替えません。", "Cannot switch texture sets during a stroke.").into());
+            return Err(self
+                .lang
+                .pick(
+                    "描いている間はテクスチャセットを替えません。",
+                    "Cannot switch texture sets during a stroke.",
+                )
+                .into());
         }
         self.doc.end_coalescing();
         let incoming = self.sets.list[index]
@@ -782,16 +798,32 @@ impl AppState {
     pub fn rename_set(&mut self, uid: u32, name: &str) -> Result<(), String> {
         let name = name.trim();
         let Some(i) = self.sets.index_of(uid) else {
-            return Err(self.lang.pick("そのテクスチャセットはありません。", "Texture set not found.").into());
+            return Err(self
+                .lang
+                .pick(
+                    "そのテクスチャセットはありません。",
+                    "Texture set not found.",
+                )
+                .into());
         };
         if let Some(reason) = &self.sets.list[i].read_only {
-            return Err(format!("{}: {reason}", self.lang.pick("読むだけのテクスチャセットです", "Read-only texture set")));
+            return Err(format!(
+                "{}: {reason}",
+                self.lang
+                    .pick("読むだけのテクスチャセットです", "Read-only texture set")
+            ));
         }
         if name.is_empty()
             || name.chars().any(|c| c.is_control())
             || name.encode_utf16().count() > 256
         {
-            return Err(self.lang.pick("テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。", "Invalid texture set name (1–256 characters, no control characters).").into());
+            return Err(self
+                .lang
+                .pick(
+                    "テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。",
+                    "Invalid texture set name (1–256 characters, no control characters).",
+                )
+                .into());
         }
         let upper = name.to_uppercase();
         if self
@@ -800,7 +832,10 @@ impl AppState {
             .iter()
             .any(|s| s.uid != uid && s.name.to_uppercase() == upper)
         {
-            return Err(self.lang.pick(format!("「{name}」はほかのテクスチャセットと同じ名前です。"), format!("Another texture set is already named {name}.")));
+            return Err(self.lang.pick(
+                format!("「{name}」はほかのテクスチャセットと同じ名前です。"),
+                format!("Another texture set is already named {name}."),
+            ));
         }
         let set = &mut self.sets.list[i];
         if set.name != name {
@@ -817,15 +852,27 @@ impl AppState {
     pub fn add_texture_set(&mut self) -> Result<u32, String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Err(lang.pick("描いている間はできません。", "Not while drawing.").into());
+            return Err(lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into());
         }
         if self.sets.len() >= crate::newproject::MAX_SETS {
             return Err(lang.pick(
-                format!("1 つのプロジェクトのテクスチャセットは {} までです。", crate::newproject::MAX_SETS),
-                format!("A project has at most {} texture sets.", crate::newproject::MAX_SETS),
+                format!(
+                    "1 つのプロジェクトのテクスチャセットは {} までです。",
+                    crate::newproject::MAX_SETS
+                ),
+                format!(
+                    "A project has at most {} texture sets.",
+                    crate::newproject::MAX_SETS
+                ),
             ));
         }
-        let groups = self.model.as_ref().map(crate::newproject::groups_of).unwrap_or_default();
+        let groups = self
+            .model
+            .as_ref()
+            .map(crate::newproject::groups_of)
+            .unwrap_or_default();
         let free = groups
             .iter()
             .find(|g| self.sets.iter().all(|s| s.bound != Some(g.index as u32)));
@@ -842,14 +889,20 @@ impl AppState {
         };
         let base = match free {
             Some(g) => g.name.clone(),
-            None => format!("{} {}", lang.pick("テクスチャセット", "Texture Set"), self.sets.len() + 1),
+            None => format!(
+                "{} {}",
+                lang.pick("テクスチャセット", "Texture Set"),
+                self.sets.len() + 1
+            ),
         };
         let name = unique_name(&base, self.sets.iter().map(|s| s.name.as_str()));
         let key = match free {
             Some(g) => g.key.clone(),
             None => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
         };
-        let uid_index = self.sets.push(guid_string(doc.id()), name.clone(), true, key, None, doc);
+        let uid_index = self
+            .sets
+            .push(guid_string(doc.id()), name.clone(), true, key, None, doc);
         let uid = self.sets.get(uid_index).expect("足した").uid;
         if let Some(set) = self.sets.get_mut(uid_index) {
             set.bound = free.map(|g| g.index as u32);
@@ -872,7 +925,10 @@ impl AppState {
                 .any(|s| s.material == MaterialRef::PendingSlot(n))
                 || also.iter().any(|k| **k == MaterialRef::PendingSlot(n))
         };
-        let mut slot = self.model.as_ref().map_or(0, |m| m.slots.len().min(u16::MAX as usize) as u16);
+        let mut slot = self
+            .model
+            .as_ref()
+            .map_or(0, |m| m.slots.len().min(u16::MAX as usize) as u16);
         while used(slot) && slot < u16::MAX {
             slot += 1;
         }
@@ -884,7 +940,9 @@ impl AppState {
     pub fn remove_sets(&mut self, uids: &[u32]) -> Result<Vec<String>, String> {
         let lang = self.lang;
         if self.is_stroking() {
-            return Err(lang.pick("描いている間はできません。", "Not while drawing.").into());
+            return Err(lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into());
         }
         let mut gone: Vec<u32> = uids
             .iter()
@@ -938,7 +996,10 @@ impl AppState {
         let mut seen = std::collections::HashSet::new();
         let order: Vec<usize> = (0..self.sets.len())
             .filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_some()))
-            .chain((0..self.sets.len()).filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_none())))
+            .chain(
+                (0..self.sets.len())
+                    .filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_none())),
+            )
             .collect();
         for i in order {
             let Some(key) = self.sets.get(i).and_then(|s| exclusive_key(&s.material)) else {
@@ -952,7 +1013,9 @@ impl AppState {
                 (set.material.clone(), set.name.clone())
             };
             let next = match material {
-                MaterialRef::PendingSlot(_) => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
+                MaterialRef::PendingSlot(_) => {
+                    MaterialRef::PendingSlot(self.unbound_pending_slot(&[]))
+                }
                 MaterialRef::Unassigned | MaterialRef::Material { .. } => {
                     MaterialRef::Material { name, asset: None }
                 }

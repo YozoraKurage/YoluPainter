@@ -615,13 +615,29 @@ fn a_mixer_brush_preset_notes_wetness_and_mix_jitter_and_others_do_not() {
         set.brushes[0].unrepresented.clone()
     };
     let noted = |n: &Vec<Unrepresented>| n.contains(&Unrepresented::MixerBrush);
-    assert!(noted(&preset_with(Some(dynamics(0, 40.0)), None, true)), "ウェットのゆらぎ");
-    assert!(noted(&preset_with(None, Some(dynamics(2, 0.0)), true)), "混合のコントロール（筆圧）");
-    assert!(!noted(&preset_with(Some(dynamics(0, 0.0)), Some(dynamics(0, 0.0)), true)), "ゆらぎもコントロールも無い");
+    assert!(
+        noted(&preset_with(Some(dynamics(0, 40.0)), None, true)),
+        "ウェットのゆらぎ"
+    );
+    assert!(
+        noted(&preset_with(None, Some(dynamics(2, 0.0)), true)),
+        "混合のコントロール（筆圧）"
+    );
+    assert!(
+        !noted(&preset_with(
+            Some(dynamics(0, 0.0)),
+            Some(dynamics(0, 0.0)),
+            true
+        )),
+        "ゆらぎもコントロールも無い"
+    );
     assert!(!noted(&preset_with(None, None, true)));
     // 「トランスファー」を使っていないプリセットの値は効いていないので載せない
     assert!(!noted(&preset_with(Some(dynamics(0, 40.0)), None, false)));
-    assert_eq!(Unrepresented::MixerBrush.to_string(), "混合ブラシのウェット・混合のゆらぎは未対応");
+    assert_eq!(
+        Unrepresented::MixerBrush.to_string(),
+        "混合ブラシのウェット・混合のゆらぎは未対応"
+    );
     assert_eq!(
         Unrepresented::MixerBrush.english(),
         "Mixer brush wetness and mix jitter are not supported."
@@ -1149,7 +1165,8 @@ fn the_minimum_diameter_becomes_the_size_minimum_only_when_pressure_drives_the_s
         let b = by(name);
         assert!(b.brush.pressure.is_identity(), "{name}");
         assert!(
-            b.unrepresented.contains(&Unrepresented::MinimumDiameter(25.0)),
+            b.unrepresented
+                .contains(&Unrepresented::MinimumDiameter(25.0)),
             "{name}"
         );
     }

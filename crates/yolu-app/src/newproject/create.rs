@@ -158,7 +158,9 @@ fn install(
             format!("New project for {name}."),
         ),
         Some(name) => lang.pick(
-            format!("{name} の新しいプロジェクトを作りました（テクスチャセット {sets_count}{over}）。"),
+            format!(
+                "{name} の新しいプロジェクトを作りました（テクスチャセット {sets_count}{over}）。"
+            ),
             format!("New project for {name} with {sets_count} texture sets{over}."),
         ),
     };

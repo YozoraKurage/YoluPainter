@@ -49,7 +49,9 @@ pub(crate) fn connect_anonymous(pipe: &str) -> Result<Stream, Connect> {
             .security_qos_flags(SECURITY_ANONYMOUS);
         match options.open(&path) {
             Ok(f) => break f,
-            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && started.elapsed() < BUSY_WAIT => {
+            Err(e)
+                if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && started.elapsed() < BUSY_WAIT =>
+            {
                 std::thread::sleep(Duration::from_millis(20));
             }
             Err(e) => return Err(Connect::Os(e)),

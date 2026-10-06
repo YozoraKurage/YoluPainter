@@ -417,10 +417,7 @@ impl Ramp {
             );
             rgb = [luma; 3];
         }
-        let (o0, o1) = (
-            V::from_fn(|l| a0(l).opacity),
-            V::from_fn(|l| a1(l).opacity),
-        );
+        let (o0, o1) = (V::from_fn(|l| a0(l).opacity), V::from_fn(|l| a1(l).opacity));
         [
             byte_lanes::<V>(rgb[0]),
             byte_lanes::<V>(rgb[1]),
@@ -508,7 +505,9 @@ mod tests {
     /// `n` 個の、間隔が 0.0001 以上で 0..1 の位置（端を含むことがある）。
     fn positions(rng: &mut Rng, n: usize) -> Vec<f64> {
         loop {
-            let mut v: Vec<f64> = (0..n).map(|_| (rng.unit() * 1000.).round() / 1000.).collect();
+            let mut v: Vec<f64> = (0..n)
+                .map(|_| (rng.unit() * 1000.).round() / 1000.)
+                .collect();
             if rng.below(2) == 0 {
                 v[0] = 0.;
                 v[n - 1] = 1.;
@@ -539,7 +538,10 @@ mod tests {
             })
             .collect();
         let curve = (rng.below(2) == 0).then(|| {
-            let mut points = vec![CurvePoint { x: 0., y: rng.unit() }];
+            let mut points = vec![CurvePoint {
+                x: 0.,
+                y: rng.unit(),
+            }];
             let mut x = 0.;
             while x + 0.05 < 0.9 && points.len() < 6 {
                 x += 0.05 + 0.2 * rng.unit();
@@ -547,7 +549,10 @@ mod tests {
                     points.push(CurvePoint { x, y: rng.unit() });
                 }
             }
-            points.push(CurvePoint { x: 1., y: rng.unit() });
+            points.push(CurvePoint {
+                x: 1.,
+                y: rng.unit(),
+            });
             points
         });
         let mut ramp = Ramp::new(colors, opacities, curve).unwrap();

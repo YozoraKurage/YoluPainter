@@ -149,7 +149,10 @@ fn lowercase_english_sits_a_little_below_the_middle_like_any_typeface_but_not_fa
     for ppp in [1.0, 2.0] {
         for size in [11.0, 12.0] {
             let offset = center_offsets(&["xaecnomu"], regular(size), ppp)[0];
-            assert!(offset > -0.5 && offset <= 2.0, "小文字（{size} pt・拡大 {ppp}）: {offset} 点");
+            assert!(
+                offset > -0.5 && offset <= 2.0,
+                "小文字（{size} pt・拡大 {ppp}）: {offset} 点"
+            );
         }
     }
 }
@@ -188,5 +191,11 @@ fn japanese_and_english_text_share_one_line_height() {
     h.run();
     let s = h.state();
     assert!(s.ja > 0.0);
-    assert!((s.ja - s.en).abs() < 0.01 && (s.ja - s.mixed).abs() < 0.01, "{} {} {}", s.ja, s.en, s.mixed);
+    assert!(
+        (s.ja - s.en).abs() < 0.01 && (s.ja - s.mixed).abs() < 0.01,
+        "{} {} {}",
+        s.ja,
+        s.en,
+        s.mixed
+    );
 }

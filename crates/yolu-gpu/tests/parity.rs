@@ -399,7 +399,8 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
         }
         layers.push(l);
     }
-    d.set_layer_blend_mode(layers[1], BlendMode::Multiply).unwrap();
+    d.set_layer_blend_mode(layers[1], BlendMode::Multiply)
+        .unwrap();
     let group = d.group_layers(&[layers[1], layers[2]], "組").unwrap();
     d.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
     d.set_layer_opacity(group, 0.7, false).unwrap();

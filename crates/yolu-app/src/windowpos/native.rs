@@ -18,19 +18,21 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromRect, HDC, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::HiDpi::{
     GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
 };
 use windows::Win32::UI::Shell::{
-    DefSubclassProc, RemoveWindowSubclass, SHAppBarMessage, SetWindowSubclass, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP,
-    ABM_GETAUTOHIDEBAREX, APPBARDATA,
+    DefSubclassProc, RemoveWindowSubclass, SHAppBarMessage, SetWindowSubclass, ABE_BOTTOM,
+    ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindow, IsZoomed, SetWindowPos, MONITORINFOF_PRIMARY, NCCALCSIZE_PARAMS, SPI_SETWORKAREA, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCCALCSIZE, WM_NCDESTROY, WM_SETTINGCHANGE,
+    IsWindow, IsZoomed, SetWindowPos, MONITORINFOF_PRIMARY, NCCALCSIZE_PARAMS, SPI_SETWORKAREA,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCCALCSIZE,
+    WM_NCDESTROY, WM_SETTINGCHANGE,
 };
 
 use super::{maximized_client, Edges, Monitor, PxRect};
@@ -39,11 +41,21 @@ use super::{maximized_client, Edges, Monitor, PxRect};
 const SUBCLASS_ID: usize = 0x594F_4C55;
 
 fn px(rect: RECT) -> PxRect {
-    PxRect { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+    PxRect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    }
 }
 
 fn rect(px: PxRect) -> RECT {
-    RECT { left: px.left, top: px.top, right: px.right, bottom: px.bottom }
+    RECT {
+        left: px.left,
+        top: px.top,
+        right: px.right,
+        bottom: px.bottom,
+    }
 }
 
 /// プロセスを画面ごとの拡大率に対応させる（winit が窓を作る前にかけるのと同じ設定を、列挙の前に 1 度だけ先にかける）。
@@ -72,7 +84,12 @@ pub fn monitors() -> Vec<Monitor> {
     let mut list: Vec<Monitor> = Vec::new();
     // SAFETY: `collect` は `list` を、この呼び出しの間だけ（同じスレッドで同期的に）使う。
     unsafe {
-        let _ = EnumDisplayMonitors(None, None, Some(collect), LPARAM(&mut list as *mut Vec<Monitor> as isize));
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect),
+            LPARAM(&mut list as *mut Vec<Monitor> as isize),
+        );
     }
     list
 }
@@ -83,10 +100,11 @@ unsafe extern "system" fn collect(monitor: HMONITOR, _: HDC, _: *mut RECT, data:
     if let Some(info) = info(monitor) {
         let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
         // SAFETY: 出力先は自分の変数。
-        let scale = match unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) } {
-            Ok(()) if dpi_x > 0 => dpi_x as f32 / 96.0,
-            _ => 1.0,
-        };
+        let scale =
+            match unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) } {
+                Ok(()) if dpi_x > 0 => dpi_x as f32 / 96.0,
+                _ => 1.0,
+            };
         list.push(Monitor {
             bounds: px(info.rcMonitor),
             work: px(info.rcWork),
@@ -98,9 +116,14 @@ unsafe extern "system" fn collect(monitor: HMONITOR, _: HDC, _: *mut RECT, data:
 }
 
 fn info(monitor: HMONITOR) -> Option<MONITORINFO> {
-    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
     // SAFETY: `cbSize` を入れた MONITORINFO を渡す（Win32 の呼び方どおり）。
-    unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool().then_some(info)
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some(info)
 }
 
 /// 窓のプロシージャを包んで、最大化の 1 画素を空ける（実際の窓だけ。窓のハンドルが取れなければ何もしない）。
@@ -118,7 +141,14 @@ pub fn install(cc: &eframe::CreationContext<'_>) {
     }
 }
 
-unsafe extern "system" fn subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, _: usize) -> LRESULT {
+unsafe extern "system" fn subclass(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _: usize,
+    _: usize,
+) -> LRESULT {
     match message {
         WM_NCCALCSIZE if wparam.0 != 0 && lparam.0 != 0 => {
             // winit（この先）が、最大化中の内側を作業領域に直す。その後で縮める
@@ -175,16 +205,28 @@ fn leave_autohide_gap(client: RECT) -> Option<RECT> {
         return None;
     }
     let edges = autohide_edges(info.rcMonitor);
-    edges.any().then(|| rect(maximized_client(px(info.rcWork), edges)))
+    edges
+        .any()
+        .then(|| rect(maximized_client(px(info.rcWork), edges)))
 }
 
 /// 画面 `monitor` の、自動で隠すタスクバー（アプリバー）がある辺。
 fn autohide_edges(monitor: RECT) -> Edges {
     let has = |edge: u32| {
-        let mut data = APPBARDATA { cbSize: size_of::<APPBARDATA>() as u32, uEdge: edge, rc: monitor, ..Default::default() };
+        let mut data = APPBARDATA {
+            cbSize: size_of::<APPBARDATA>() as u32,
+            uEdge: edge,
+            rc: monitor,
+            ..Default::default()
+        };
         // SAFETY: `cbSize` と画面の矩形を入れた APPBARDATA を渡す。戻り値はその辺のアプリバーの窓（無ければ 0）。
         let bar = unsafe { SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &mut data) };
         bar != 0 && unsafe { IsWindow(Some(HWND(bar as *mut _))) }.as_bool()
     };
-    Edges { left: has(ABE_LEFT), top: has(ABE_TOP), right: has(ABE_RIGHT), bottom: has(ABE_BOTTOM) }
+    Edges {
+        left: has(ABE_LEFT),
+        top: has(ABE_TOP),
+        right: has(ABE_RIGHT),
+        bottom: has(ABE_BOTTOM),
+    }
 }

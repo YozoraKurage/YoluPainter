@@ -247,7 +247,14 @@ fn preflight<'a>(
         "統合RGBAの大きさが不一致です",
     )?;
     let mut records = Vec::new();
-    flatten(&d.layers, 0, &mut records, &mut HashSet::new(), limits, true)?;
+    flatten(
+        &d.layers,
+        0,
+        &mut records,
+        &mut HashSet::new(),
+        limits,
+        true,
+    )?;
     let mut pixels = canvas;
     let mut metadata = 0u64;
     let mut info = 2u64;
@@ -515,10 +522,7 @@ pub(super) struct StreamOptions<'a> {
 }
 
 /// 記録の骨組みだけの層の並び（画素を持たない層）を、書く順（PSD の記録の順）に並べる。構造・名前・ID・調整の確かめだけで、画素は渡すときに確かめる。
-pub(super) fn skeleton_records<'a>(
-    d: &'a Document,
-    limits: &Limits,
-) -> Result<Vec<Record<'a>>> {
+pub(super) fn skeleton_records<'a>(d: &'a Document, limits: &Limits) -> Result<Vec<Record<'a>>> {
     limits.validate()?;
     rectangle(0, 0, d.width, d.height, limits)?;
     check(
@@ -526,7 +530,14 @@ pub(super) fn skeleton_records<'a>(
         "PSD は空のキャンバス・レイヤー一覧を持てません",
     )?;
     let mut records = Vec::new();
-    flatten(&d.layers, 0, &mut records, &mut HashSet::new(), limits, false)?;
+    flatten(
+        &d.layers,
+        0,
+        &mut records,
+        &mut HashSet::new(),
+        limits,
+        false,
+    )?;
     Ok(records)
 }
 
@@ -765,7 +776,10 @@ fn write_merged<W: Write>(
     cancel: Option<&AtomicBool>,
 ) -> XResult<u64> {
     let plane = |c: usize, y: usize, row: &mut [u8]| {
-        for (d, px) in row.iter_mut().zip(merged[y * w * 4..(y + 1) * w * 4].as_chunks::<4>().0) {
+        for (d, px) in row
+            .iter_mut()
+            .zip(merged[y * w * 4..(y + 1) * w * 4].as_chunks::<4>().0)
+        {
             *d = px[c]
         }
     };
@@ -907,9 +921,14 @@ pub(super) fn stream<'a, W: Write + Seek>(
     for (i, r) in records.iter().enumerate() {
         cancelled(opts.cancel)?;
         let wanted = r.raster() || r.mask().is_some();
-        let supplied = if wanted { supply(i)? } else { Supplied::default() };
+        let supplied = if wanted {
+            supply(i)?
+        } else {
+            Supplied::default()
+        };
         check(
-            supplied.raster.is_some() == r.raster() && supplied.mask.is_some() == r.mask().is_some(),
+            supplied.raster.is_some() == r.raster()
+                && supplied.mask.is_some() == r.mask().is_some(),
             "PSD に書く画素が記録と一致しません",
         )?;
         let patch = &patches[i];
@@ -938,7 +957,10 @@ pub(super) fn stream<'a, W: Write + Seek>(
                         &mut sc,
                         opts.cancel,
                         |y, row| {
-                            for (d, px) in row.iter_mut().zip(rgba[y * rw * 4..(y + 1) * rw * 4].as_chunks::<4>().0) {
+                            for (d, px) in row
+                                .iter_mut()
+                                .zip(rgba[y * rw * 4..(y + 1) * rw * 4].as_chunks::<4>().0)
+                            {
                                 *d = px[c]
                             }
                         },
@@ -971,7 +993,11 @@ pub(super) fn stream<'a, W: Write + Seek>(
             put_bounds(&mut head[at..], m.left, m.top, m.width, m.height);
             head[at + 16] = m.default_color
         }
-        for (k, len) in lens.iter().take(4 + usize::from(supplied.mask.is_some())).enumerate() {
+        for (k, len) in lens
+            .iter()
+            .take(4 + usize::from(supplied.mask.is_some()))
+            .enumerate()
+        {
             let at = patch.lens_at + k * 6 + 2;
             head[at..at + 4].copy_from_slice(&len.to_be_bytes())
         }
@@ -998,7 +1024,15 @@ pub(super) fn stream<'a, W: Write + Seek>(
         "統合RGBAの大きさが不一致です",
     )?;
     super::composite::matte(&mut merged);
-    pos += write_merged(&mut out, &merged, w, h, opts.compression, &mut sc, opts.cancel)?;
+    pos += write_merged(
+        &mut out,
+        &merged,
+        w,
+        h,
+        opts.compression,
+        &mut sc,
+        opts.cancel,
+    )?;
     drop(merged);
     too_big(pos, "")?;
     let tail = out.crc.finalize();
@@ -1091,7 +1125,14 @@ pub fn write_with(d: &Document, limits: &Limits, compression: Compression) -> Re
         Compression::Rle => total.min(16 * 1024 * 1024),
     };
     let mut out = std::io::Cursor::new(Vec::with_capacity(capacity));
-    stream_document(&mut out, d, limits, compression, limits.max_output_bytes as u64, None)?;
+    stream_document(
+        &mut out,
+        d,
+        limits,
+        compression,
+        limits.max_output_bytes as u64,
+        None,
+    )?;
     let out = out.into_inner();
     // 無圧縮の長さは、書く前の確かめが数えた長さと一致する（書き手と確かめのずれを見つける）
     if compression == Compression::Raw {

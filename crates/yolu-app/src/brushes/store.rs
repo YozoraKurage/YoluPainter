@@ -447,7 +447,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         }
     }
     if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
-        w.line("import.source", meta.source.replace(|c: char| c.is_control(), " "));
+        w.line(
+            "import.source",
+            meta.source.replace(|c: char| c.is_control(), " "),
+        );
         if meta.pattern {
             w.bool("import.pattern", true);
         }
@@ -624,7 +627,10 @@ pub struct Decoded {
 /// ファイルの中身から、名前・グループ・ブラシ（正規の形）を読む。取り込んだ画像（`img:`）は読めない（`decode_user`）。
 pub fn decode(text: &str) -> Result<(String, Group, Brush), StoreError> {
     let d = decode_user(text, &mut |hash| {
-        Err(StoreError::UnknownTip(format!("{IMAGE_PREFIX}{}", hash.chars().take(8).collect::<String>())))
+        Err(StoreError::UnknownTip(format!(
+            "{IMAGE_PREFIX}{}",
+            hash.chars().take(8).collect::<String>()
+        )))
     })?;
     Ok((d.name, d.group, d.brush))
 }
@@ -1107,7 +1113,10 @@ impl BrushStore {
         replace_file(&self.path_of(user.id), &encoded.text, |read| {
             let mut load = |hash: &str| {
                 have.get(hash).map(|tip| Arc::clone(tip)).ok_or_else(|| {
-                    StoreError::UnknownTip(format!("{IMAGE_PREFIX}{}", hash.chars().take(8).collect::<String>()))
+                    StoreError::UnknownTip(format!(
+                        "{IMAGE_PREFIX}{}",
+                        hash.chars().take(8).collect::<String>()
+                    ))
                 })
             };
             decode_user(read, &mut load).is_ok_and(|got| got == expect)
@@ -1406,7 +1415,10 @@ mod tests {
         let (c, k) = ops::add_point(&Curve::identity(), 0.373_737_373_7, 0.616_161_616_1).unwrap();
         let c = ops::move_point(&c, k, 0.412_345_678_91, 0.777_777_777_7).unwrap();
         let mut b = Brush::default();
-        b.pressure.size = PressureResponse::new(0.123_456_789, vec![]).unwrap().with_curve_shape(c.clone()).unwrap();
+        b.pressure.size = PressureResponse::new(0.123_456_789, vec![])
+            .unwrap()
+            .with_curve_shape(c.clone())
+            .unwrap();
         let u = user(2, b);
         let t = text(&u);
         assert!(t.starts_with("yolupainter-brush 2\n"), "{t}");
@@ -1414,9 +1426,15 @@ mod tests {
         assert_eq!(back, canonical(&u.brush));
         assert_eq!(back.pressure.size.curve().len(), 3);
         for (saved, made) in back.pressure.size.curve().iter().zip(c.points()) {
-            assert!((saved.x - made.x).abs() < 1e-6 && (saved.y - made.y).abs() < 1e-6, "{saved:?} {made:?}");
+            assert!(
+                (saved.x - made.x).abs() < 1e-6 && (saved.y - made.y).abs() < 1e-6,
+                "{saved:?} {made:?}"
+            );
         }
-        let again = text(&UserBrush { brush: back.clone(), ..u });
+        let again = text(&UserBrush {
+            brush: back.clone(),
+            ..u
+        });
         assert_eq!(again, t);
         assert_eq!(decode(&again).unwrap().2, back);
     }
@@ -1432,7 +1450,8 @@ mod tests {
         assert!(!t.contains("pressure_hardness"), "{t}");
         // 直線の曲線を明示しても既定と同じ
         let mut straight = Brush::default();
-        straight.pressure.size = PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(1.0, 1.0)]).unwrap();
+        straight.pressure.size =
+            PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(1.0, 1.0)]).unwrap();
         assert_eq!(text(&user(1, straight)), text(&user(1, Brush::default())));
     }
 
@@ -1446,7 +1465,11 @@ mod tests {
             StoreError::UnknownKey(k) if k.starts_with("pressure.") || k.starts_with("controls.pressure")
         ));
         // 版 2 でも、項目が無ければ既定
-        let plain = text(&user(1, Brush::default())).replacen("yolupainter-brush 1", "yolupainter-brush 2", 1);
+        let plain = text(&user(1, Brush::default())).replacen(
+            "yolupainter-brush 1",
+            "yolupainter-brush 2",
+            1,
+        );
         assert_eq!(decode(&plain).unwrap().2, canonical(&Brush::default()));
         let bad = |from: &str, to: &str| decode(&v2.replace(from, to)).unwrap_err();
         assert!(matches!(
@@ -1462,7 +1485,10 @@ mod tests {
             StoreError::BadValue(k) if k == "pressure.flow.curve"
         ));
         assert!(matches!(
-            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1,0.5:2,1:0.2"),
+            bad(
+                "pressure.flow.curve=0:1,1:0.2",
+                "pressure.flow.curve=0:1,0.5:2,1:0.2"
+            ),
             StoreError::Invalid(_)
         ));
         assert!(matches!(
@@ -1470,12 +1496,20 @@ mod tests {
             StoreError::BadValue(k) if k == "pressure.flow.curve"
         ));
         assert!(matches!(
-            bad("pressure.flow.curve=0:1,1:0.2", "pressure.flow.curve=0:1,0.5:0.5"),
+            bad(
+                "pressure.flow.curve=0:1,1:0.2",
+                "pressure.flow.curve=0:1,0.5:0.5"
+            ),
             StoreError::Invalid(_)
         ));
-        let many: Vec<String> = (0..40).map(|i| format!("{}:0.5", i as f64 / 39.0)).collect();
+        let many: Vec<String> = (0..40)
+            .map(|i| format!("{}:0.5", i as f64 / 39.0))
+            .collect();
         assert!(matches!(
-            bad("pressure.flow.curve=0:1,1:0.2", &format!("pressure.flow.curve={}", many.join(","))),
+            bad(
+                "pressure.flow.curve=0:1,1:0.2",
+                &format!("pressure.flow.curve={}", many.join(","))
+            ),
             StoreError::Invalid(_)
         ));
         assert!(matches!(
@@ -1483,7 +1517,11 @@ mod tests {
             StoreError::DuplicateKey(_)
         ));
         assert!(matches!(
-            decode(&v2.replace("controls.pressure_hardness=1", "controls.pressure_hardness=maybe")).unwrap_err(),
+            decode(&v2.replace(
+                "controls.pressure_hardness=1",
+                "controls.pressure_hardness=maybe"
+            ))
+            .unwrap_err(),
             StoreError::BadValue(_)
         ));
     }
@@ -1500,7 +1538,11 @@ mod tests {
                 pressure_paint: true,
                 pressure_density: true,
                 response_paint: PressureResponse::new(0.2, vec![]).unwrap(),
-                response_density: PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)]).unwrap(),
+                response_density: PressureResponse::new(
+                    0.0,
+                    vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)],
+                )
+                .unwrap(),
             },
             ..Brush::default()
         }
@@ -1576,7 +1618,12 @@ mod tests {
                 assist: None,
             };
             let t = encode(&u).unwrap().text;
-            assert_eq!(t.starts_with("yolupainter-brush 3\n"), b.brush.mix.is_active(), "{}", b.id);
+            assert_eq!(
+                t.starts_with("yolupainter-brush 3\n"),
+                b.brush.mix.is_active(),
+                "{}",
+                b.id
+            );
         }
     }
 
@@ -1595,7 +1642,11 @@ mod tests {
             );
         }
         // 版 3 でも、項目が無ければ既定（混ぜない）
-        let plain = text(&user(1, Brush::default())).replacen("yolupainter-brush 1", "yolupainter-brush 3", 1);
+        let plain = text(&user(1, Brush::default())).replacen(
+            "yolupainter-brush 1",
+            "yolupainter-brush 3",
+            1,
+        );
         assert_eq!(decode(&plain).unwrap().2, canonical(&Brush::default()));
         // 今までの版のファイルは、そのまま読めて混ぜない
         for header in ["yolupainter-brush 1", "yolupainter-brush 2"] {
@@ -1603,22 +1654,45 @@ mod tests {
             assert!(!decode(&old).unwrap().2.mix.is_active(), "{header}");
         }
         let bad = |from: &str, to: &str| decode(&v3.replace(from, to)).unwrap_err();
-        assert!(matches!(bad("mix.mode=smear", "mix.mode=blend"), StoreError::BadValue(k) if k == "mix.mode"));
-        assert!(matches!(bad("mix.ground=composite", "mix.ground=all"), StoreError::BadValue(k) if k == "mix.ground"));
-        assert!(matches!(bad("mix.paint=0.625", "mix.paint=lots"), StoreError::BadValue(k) if k == "mix.paint"));
-        assert!(matches!(bad("mix.paint=0.625", "mix.paint=1.5"), StoreError::Invalid(_)));
-        assert!(matches!(bad("mix.density=0.8", "mix.density=-0.1"), StoreError::Invalid(_)));
-        assert!(matches!(bad("mix.stretch=0.25", "mix.stretch=NaN"), StoreError::BadValue(k) if k == "mix.stretch"));
-        assert!(matches!(bad("mix.paint.min=0.2", "mix.paint.min=2"), StoreError::Invalid(_)));
+        assert!(
+            matches!(bad("mix.mode=smear", "mix.mode=blend"), StoreError::BadValue(k) if k == "mix.mode")
+        );
+        assert!(
+            matches!(bad("mix.ground=composite", "mix.ground=all"), StoreError::BadValue(k) if k == "mix.ground")
+        );
+        assert!(
+            matches!(bad("mix.paint=0.625", "mix.paint=lots"), StoreError::BadValue(k) if k == "mix.paint")
+        );
+        assert!(matches!(
+            bad("mix.paint=0.625", "mix.paint=1.5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("mix.density=0.8", "mix.density=-0.1"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("mix.stretch=0.25", "mix.stretch=NaN"), StoreError::BadValue(k) if k == "mix.stretch")
+        );
+        assert!(matches!(
+            bad("mix.paint.min=0.2", "mix.paint.min=2"),
+            StoreError::Invalid(_)
+        ));
         assert!(matches!(
             bad("mix.density.curve=0:0,0.5:0.75,1:1", "mix.density.curve=0:0;1:1"),
             StoreError::BadValue(k) if k == "mix.density.curve"
         ));
         assert!(matches!(
-            bad("mix.density.curve=0:0,0.5:0.75,1:1", "mix.density.curve=0:0,0.5:3,1:1"),
+            bad(
+                "mix.density.curve=0:0,0.5:0.75,1:1",
+                "mix.density.curve=0:0,0.5:3,1:1"
+            ),
             StoreError::Invalid(_)
         ));
-        assert!(matches!(bad("mix.paint.pressure=1", "mix.paint.pressure=yes"), StoreError::BadValue(_)));
+        assert!(matches!(
+            bad("mix.paint.pressure=1", "mix.paint.pressure=yes"),
+            StoreError::BadValue(_)
+        ));
         assert!(matches!(
             decode(&format!("{v3}mix.paint=0.5\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
@@ -1711,19 +1785,36 @@ mod tests {
         let u = carrying(assist);
         let t = text(&u);
         assert!(t.starts_with("yolupainter-brush 4\n"), "{t}");
-        for line in ["assist.stabilizer=6\n", "assist.taper_in=1130.5\n", "assist.taper_out=14\n"] {
+        for line in [
+            "assist.stabilizer=6\n",
+            "assist.taper_in=1130.5\n",
+            "assist.taper_out=14\n",
+        ] {
             assert!(t.contains(line), "{t}");
         }
         let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
         assert_eq!(d.assist, Some(assist));
-        assert_eq!(d.brush, canonical(&Brush::default()), "ブラシの設定には手ぶれ補正・入り抜きを入れない");
+        assert_eq!(
+            d.brush,
+            canonical(&Brush::default()),
+            "ブラシの設定には手ぶれ補正・入り抜きを入れない"
+        );
         // 持たないブラシ（全部 0 も持たない）は、今までと同じ版・同じ文
         let plain = text(&user(1, Brush::default()));
-        assert!(plain.starts_with("yolupainter-brush 1\n") && !plain.contains("assist."), "{plain}");
+        assert!(
+            plain.starts_with("yolupainter-brush 1\n") && !plain.contains("assist."),
+            "{plain}"
+        );
         assert_eq!(text(&carrying(StrokeAssist::default())), plain);
-        assert_eq!(decode_user(&plain, &mut |_| unreachable!()).unwrap().assist, None);
+        assert_eq!(
+            decode_user(&plain, &mut |_| unreachable!()).unwrap().assist,
+            None
+        );
         // 曲線の切り替えはブラシが持たない（描き手の設定）
-        let with_curve = StrokeAssist { curve: true, ..assist };
+        let with_curve = StrokeAssist {
+            curve: true,
+            ..assist
+        };
         assert_eq!(text(&carrying(with_curve)), t);
         // 版 4 は、ほかの版の項目（筆圧の応え・色の混ぜ）も同じファイルに書く
         let both = UserBrush {
@@ -1731,7 +1822,10 @@ mod tests {
             ..user(1, mixing_brush())
         };
         let t = text(&both);
-        assert!(t.starts_with("yolupainter-brush 4\n") && t.contains("mix.mode="), "{t}");
+        assert!(
+            t.starts_with("yolupainter-brush 4\n") && t.contains("mix.mode="),
+            "{t}"
+        );
         let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
         assert_eq!((d.assist, d.brush), (Some(assist), both.brush.clone()));
     }
@@ -1745,7 +1839,11 @@ mod tests {
             curve: false,
         }));
         // 版 1〜3 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
-        for old in ["yolupainter-brush 1", "yolupainter-brush 2", "yolupainter-brush 3"] {
+        for old in [
+            "yolupainter-brush 1",
+            "yolupainter-brush 2",
+            "yolupainter-brush 3",
+        ] {
             let as_old = t.replacen("yolupainter-brush 4", old, 1);
             assert!(
                 matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("assist.")),
@@ -1754,7 +1852,10 @@ mod tests {
         }
         // 版 5 は新しい形式として断る
         let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 5", 1);
-        assert!(matches!(decode(&newer).unwrap_err(), StoreError::NewerVersion(_)));
+        assert!(matches!(
+            decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
         // 範囲の外・有限でない値は、そのファイルを断る
         for bad in ["-1", "10001", "NaN", "inf", "x"] {
             let broken = t.replace("assist.taper_in=20", &format!("assist.taper_in={bad}"));
@@ -1779,7 +1880,10 @@ mod tests {
             })
         );
         let none = "yolupainter-brush 4\nname=a\ngroup=pen\n";
-        assert_eq!(decode_user(none, &mut |_| unreachable!()).unwrap().assist, None);
+        assert_eq!(
+            decode_user(none, &mut |_| unreachable!()).unwrap().assist,
+            None
+        );
     }
 
     #[test]
@@ -1821,11 +1925,21 @@ mod tests {
         for (hash, tip) in &encoded.images {
             assert!(images::is_fingerprint(hash));
             assert_eq!(*hash, images::fingerprint(tip));
-            assert!(encoded.text.contains(&format!("img:{hash}")), "{}", encoded.text);
+            assert!(
+                encoded.text.contains(&format!("img:{hash}")),
+                "{}",
+                encoded.text
+            );
         }
-        assert!(!encoded.text.contains("tip.image=grain"), "{}", encoded.text);
+        assert!(
+            !encoded.text.contains("tip.image=grain"),
+            "{}",
+            encoded.text
+        );
         // 画像を渡さずに読むと、知らない画像として断る（画像のファイルが無いブラシは通さない）
-        assert!(matches!(decode(&encoded.text).unwrap_err(), StoreError::UnknownTip(n) if n.starts_with("img:")));
+        assert!(
+            matches!(decode(&encoded.text).unwrap_err(), StoreError::UnknownTip(n) if n.starts_with("img:"))
+        );
         // 同じ画像を 2 か所に使っても 1 枚
         let mut again = Brush::default();
         again.tip.image = Some(custom("same", 9));
@@ -1864,7 +1978,11 @@ mod tests {
         let got = report.brushes[0].import.as_ref().unwrap();
         assert_eq!(got.source, "Photoshop ABR v10");
         assert!(got.pattern);
-        assert_eq!(got.gaps, [Gap::ColorTip, Gap::WetEdges], "並び順で重ならない");
+        assert_eq!(
+            got.gaps,
+            [Gap::ColorTip, Gap::WetEdges],
+            "並び順で重ならない"
+        );
         assert_eq!(report.brushes[1].import, None);
         // 2 つのブラシが使う同じ画像は読んだあとも 1 つを共有する
         let first = report.brushes[0].brush.tip.image.as_ref().unwrap();
@@ -1929,14 +2047,18 @@ mod tests {
         let report = load_all(&dir);
         let ids: Vec<u32> = report.brushes.iter().map(|b| b.id).collect();
         assert_eq!(ids, [2, 3]);
-        assert!(matches!(report.problems[0].reason, StoreError::BadImage(_)), "{:?}", report.problems);
+        assert!(
+            matches!(report.problems[0].reason, StoreError::BadImage(_)),
+            "{:?}",
+            report.problems
+        );
         // 画像のファイルが無いときは、知らない画像
         std::fs::remove_file(store.image_path(&hash_b)).unwrap();
         let report = load_all(&dir);
-        assert!(report
-            .problems
-            .iter()
-            .all(|p| matches!(p.reason, StoreError::UnknownTip(_) | StoreError::BadImage(_))));
+        assert!(report.problems.iter().all(|p| matches!(
+            p.reason,
+            StoreError::UnknownTip(_) | StoreError::BadImage(_)
+        )));
         for p in &report.problems {
             assert!(!p.describe(Lang::Ja).is_empty() && !p.describe(Lang::En).is_empty());
         }
@@ -2034,7 +2156,10 @@ mod tests {
         b.tip.selection = hose.brush.tip.selection;
         for (n, brush, id) in [(1, a, &single.id), (2, b, &hose.id)] {
             let encoded = encode(&user(n, brush.clone())).unwrap();
-            assert!(encoded.images.is_empty(), "同梱の筆先は画像のファイルを置かない");
+            assert!(
+                encoded.images.is_empty(),
+                "同梱の筆先は画像のファイルを置かない"
+            );
             assert!(encoded.text.contains(id.as_str()), "{}", encoded.text);
             let (_, _, back) = decode(&encoded.text).unwrap();
             assert_eq!(back, canonical(&brush));
@@ -2044,7 +2169,10 @@ mod tests {
         bad = bad.replace("tip.image=none", &format!("tip.image={}", hose.id));
         assert!(matches!(decode(&bad).unwrap_err(), StoreError::BadValue(k) if k == "tip.image"));
         let unknown = bad.replace(&hose.id, "bundled:krita4/no-such-file.png");
-        assert!(matches!(decode(&unknown).unwrap_err(), StoreError::UnknownTip(_)));
+        assert!(matches!(
+            decode(&unknown).unwrap_err(),
+            StoreError::UnknownTip(_)
+        ));
     }
 
     #[test]
@@ -2130,7 +2258,11 @@ mod tests {
         // 読まなかった番号も、次に付ける番号の根拠に入る
         assert_eq!(report.max_file_id, Some(MAX_FILES as u32 + 6));
         assert_eq!(
-            report.problems.iter().filter(|p| matches!(p.reason, StoreError::TooMany)).count(),
+            report
+                .problems
+                .iter()
+                .filter(|p| matches!(p.reason, StoreError::TooMany))
+                .count(),
             1
         );
         // 読んだ（読もうとした）のは番号の小さい順に MAX_FILES 個。残りには触れない

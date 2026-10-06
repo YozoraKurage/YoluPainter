@@ -96,7 +96,10 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     );
     v.push(
         Entry::item(
-            l.pick("選択範囲をレイヤーマスクにする", "Make the Selection a Layer Mask"),
+            l.pick(
+                "選択範囲をレイヤーマスクにする",
+                "Make the Selection a Layer Mask",
+            ),
             edit(SelEdit::ToMask),
         )
         .enabled(free && any && app.selected_layer.is_some()),
@@ -120,8 +123,13 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     );
     v.push(
         Entry::item(
-            l.pick("選択範囲のボタンの帯を表示", "Show the Selection Button Bar"),
-            Action::Sel(SelAction::Ui(SelUiOp::Bar(!app.prefs.settings.selection_bar))),
+            l.pick(
+                "選択範囲のボタンの帯を表示",
+                "Show the Selection Button Bar",
+            ),
+            Action::Sel(SelAction::Ui(SelUiOp::Bar(
+                !app.prefs.settings.selection_bar,
+            ))),
         )
         .checked(app.prefs.settings.selection_bar),
     );

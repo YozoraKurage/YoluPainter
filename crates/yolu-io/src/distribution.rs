@@ -297,9 +297,10 @@ impl Project {
         }
         let remembered = sets_with(&|s| {
             let prefix = set_entry(&s.id, "");
-            self.files
-                .keys()
-                .any(|n| n.strip_prefix(&prefix).is_some_and(crate::saved_selections::is_entry_leaf))
+            self.files.keys().any(|n| {
+                n.strip_prefix(&prefix)
+                    .is_some_and(crate::saved_selections::is_entry_leaf)
+            })
         });
         if !remembered.is_empty() {
             add(Removal::SavedSelections, remembered);

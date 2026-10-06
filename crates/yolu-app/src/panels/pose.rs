@@ -36,9 +36,7 @@ pub fn ensure_tab(app: &AppState, dock: &mut DockState<crate::Tab>) {
         return;
     }
     // レイヤーと同じ組へ（プロパティの組はヒストリーもあり、3 つ並べると最小の窓で名前が欠ける）
-    let target = dock
-        .find_tab(&crate::Tab::Layers)
-        .map(|p| p.node_path());
+    let target = dock.find_tab(&crate::Tab::Layers).map(|p| p.node_path());
     match target.and_then(|path| dock.leaf_mut(path).ok()) {
         Some(leaf) => leaf.tabs.push(crate::Tab::Pose),
         None => dock.push_to_first_leaf(crate::Tab::Pose),
@@ -80,10 +78,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 pos2(body.left() + t::PADDING, body.top() + 4.0),
                 vec2(body.width() - 2.0 * t::PADDING, BONE_ROW),
             );
-            let cancel = Rect::from_min_size(
-                pos2(row.right() - 24.0, row.top()),
-                vec2(24.0, BONE_ROW),
-            );
+            let cancel =
+                Rect::from_min_size(pos2(row.right() - 24.0, row.top()), vec2(24.0, BONE_ROW));
             let shown = match fraction {
                 Some(f) => format!(
                     "{}: {name} {}%",
@@ -118,7 +114,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     }
 
     // 縦のスクロール（中身の高さは前のフレームのもの。はみ出していれば右端に細い帯）
-    let scroller = Scroll::new(body, app.view3d.pose.panel_content, &mut app.view3d.pose.panel_scroll);
+    let scroller = Scroll::new(
+        body,
+        app.view3d.pose.panel_content,
+        &mut app.view3d.pose.panel_scroll,
+    );
     let scroll = app.view3d.pose.panel_scroll;
     let area = Rect::from_min_max(
         pos2(body.left(), body.top() - scroll),
@@ -446,7 +446,11 @@ fn bone_tree(ui: &mut Ui, app: &mut AppState, list: Rect) -> bool {
     let rows = visible_bones(s);
     let content = rows.len() as f32 * BONE_ROW;
     let max_scroll = (content - list.height()).max(0.0);
-    let reserved = if max_scroll > 0.0 { crate::ui::scroll::BAR_WIDTH } else { 0.0 };
+    let reserved = if max_scroll > 0.0 {
+        crate::ui::scroll::BAR_WIDTH
+    } else {
+        0.0
+    };
     if let Some(b) = s.reveal.take() {
         if let Some(i) = rows.iter().position(|(r, _)| *r == b) {
             let top = i as f32 * BONE_ROW;

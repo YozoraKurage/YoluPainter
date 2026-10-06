@@ -834,7 +834,9 @@ pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
 /// `blank_document`の、最初のレイヤーの名前を言語に合わせたもの（新しいレイヤーの名前と同じ言い方）。
 pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
     let mut doc = Document::new(width, height).expect("文書の大きさ");
-    let first = doc.add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer"))).ok();
+    let first = doc
+        .add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer")))
+        .ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
     crate::look::apply_new_set_look(&mut doc);
     (doc, first)
@@ -979,7 +981,8 @@ impl AppState {
         self.canvas.stroke.is_some()
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
-            || self.region.job.is_some() || self.region.leftover_drag.is_some()
+            || self.region.job.is_some()
+            || self.region.leftover_drag.is_some()
             || self.path.drag.is_some()
             || self.drafting.drag.is_some()
     }
@@ -1114,8 +1117,12 @@ impl AppState {
             }
         }
         match action {
-            Action::OpenLogFolder => self.crash.request = Some(crate::crash::window::Request::Folder),
-            Action::ToggleUvWireframe => self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe,
+            Action::OpenLogFolder => {
+                self.crash.request = Some(crate::crash::window::Request::Folder)
+            }
+            Action::ToggleUvWireframe => {
+                self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe
+            }
             Action::ShowShortcuts => self.shortcuts.open = true,
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
@@ -1353,7 +1360,10 @@ impl AppState {
                 Some(set) if set.read_only.is_some() => {
                     self.message = self
                         .lang
-                        .pick("読むだけのテクスチャセットです。", "This texture set is read-only.")
+                        .pick(
+                            "読むだけのテクスチャセットです。",
+                            "This texture set is read-only.",
+                        )
                         .into()
                 }
                 Some(_) => {
@@ -1374,7 +1384,10 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、選んでから断るのではなく、窓を開く前に断る
-                if self.refuse_while_saving(self.lang.pick("新しいプロジェクトを作れません", "Cannot create a new project")) {
+                if self.refuse_while_saving(self.lang.pick(
+                    "新しいプロジェクトを作れません",
+                    "Cannot create a new project",
+                )) {
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::New)
@@ -1398,7 +1411,8 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save"))
+                {
                     return;
                 }
                 self.dialog_request = Some(DialogRequest::SaveAs)
@@ -1414,10 +1428,16 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、保存先を選ぶ窓（まだファイルが無いプロジェクト）も開かずに断る
-                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save"))
+                {
                     return;
                 }
-                match self.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf()) {
+                match self
+                    .project
+                    .as_ref()
+                    .filter(|p| p.is_file())
+                    .map(|p| p.path().to_path_buf())
+                {
                     Some(path) => crate::project::save_from(self, &path),
                     None => self.dialog_request = Some(DialogRequest::SaveAs),
                 }

@@ -157,7 +157,10 @@ impl LinkValues {
             if now.saturating_duration_since(ask.since) < after || ask.asked >= MAX_ASKS {
                 continue;
             }
-            if ask.last.is_some_and(|t| now.saturating_duration_since(t) < again) {
+            if ask
+                .last
+                .is_some_and(|t| now.saturating_duration_since(t) < again)
+            {
                 continue;
             }
             ask.asked += 1;
@@ -229,7 +232,11 @@ impl LinkValues {
 
     /// 描いていないスロットの絵を受けた。持てなければ理由を返す（世代・値が合わない命令の食い違いは Unity への診断、予算を超えたのは
     /// 利用者への知らせ）。
-    pub fn receive_texture(&mut self, texture: MaterialTexture, lang: Lang) -> Result<(), TextureRefused> {
+    pub fn receive_texture(
+        &mut self,
+        texture: MaterialTexture,
+        lang: Lang,
+    ) -> Result<(), TextureRefused> {
         if texture.generation != self.generation {
             return Err(TextureRefused::Protocol(format!(
                 "スロットの絵の世代 {} は今のモデルの世代 {} と違います",
@@ -263,7 +270,8 @@ impl LinkValues {
         if others + texture.pixels.len() as u64 > MAX_RECEIVED_IMAGE_BYTES {
             entry.images.remove(&texture.slot);
             entry.refused.insert(texture.slot.clone());
-            let label = crate::look::liltoon::slot(&texture.slot).map_or(texture.slot.as_str(), |s| s.label(lang));
+            let label = crate::look::liltoon::slot(&texture.slot)
+                .map_or(texture.slot.as_str(), |s| s.label(lang));
             return Err(TextureRefused::OverBudget(lang.pick(
                 format!("Unity のテクスチャ（{label}）を持てません: 受けたテクスチャが多すぎます"),
                 format!("Cannot keep the Unity texture ({label}): too many received textures"),
@@ -460,7 +468,8 @@ fn leave_out_unlisted_features(out: &mut ReceivedLook, values: &MaterialValues) 
         out.look.properties.insert((*toggle).to_owned(), off);
         for slot in unlisted {
             if out.images.len() + out.missing.len() < MAX_TEXTURES {
-                out.missing.insert(slot.to_owned(), MissingImage::Unreadable);
+                out.missing
+                    .insert(slot.to_owned(), MissingImage::Unreadable);
             }
         }
     }
@@ -580,12 +589,19 @@ mod tests {
         });
         let r = received_look(&v, &routes(), &BTreeMap::new(), &BTreeSet::new());
         assert!(!crate::look::liltoon::on(&r.look, "_UseMain2ndTex"));
-        assert_eq!(r.look.properties["_UseMain2ndTex"], LookValue::Int(0), "型は Unity のまま");
+        assert_eq!(
+            r.look.properties["_UseMain2ndTex"],
+            LookValue::Int(0),
+            "型は Unity のまま"
+        );
         assert!(!crate::look::liltoon::on(&r.look, "_UseRimShade"));
         assert_eq!(r.missing["_Main2ndTex"], MissingImage::Unreadable);
         assert_eq!(r.missing["_Main2ndBlendMask"], MissingImage::Unreadable);
         assert_eq!(r.missing["_RimShadeMask"], MissingImage::Unreadable);
-        assert!(!r.missing.contains_key("_Main3rdTex"), "切の機能のスロットは理由を出さない");
+        assert!(
+            !r.missing.contains_key("_Main3rdTex"),
+            "切の機能のスロットは理由を出さない"
+        );
         assert!(r.validate().is_ok());
         // スロットを知らせる Unity: テクスチャが無くても（Unity も既定のテクスチャで読む）入のまま
         for name in ["_Main2ndTex", "_Main2ndBlendMask"] {
@@ -708,7 +724,10 @@ mod tests {
         assert_eq!(link.wanted([0, 1], secs(t0, 8.0)), vec![0, 1]);
         assert_eq!(link.wanted([0, 1], secs(t0, 14.0)), vec![0, 1]);
         assert_eq!(link.asked(0), MAX_ASKS);
-        assert!(link.wanted([0, 1], secs(t0, 60.0)).is_empty(), "答えない Unity に頼み続けない");
+        assert!(
+            link.wanted([0, 1], secs(t0, 60.0)).is_empty(),
+            "答えない Unity に頼み続けない"
+        );
         // 同じ番号を重ねて渡しても 1 つ。モデルに無い番号・どのセットにも付いていないマテリアルは頼まない
         let mut link = LinkValues::default();
         link.model(1, 3);
@@ -740,7 +759,8 @@ mod tests {
     }
 
     #[test]
-    fn a_material_whose_pictures_do_not_arrive_is_asked_for_after_the_grace_counted_again_at_each_picture() {
+    fn a_material_whose_pictures_do_not_arrive_is_asked_for_after_the_grace_counted_again_at_each_picture(
+    ) {
         let mut link = LinkValues::default();
         link.model(4, 1);
         let t0 = Instant::now();
@@ -748,12 +768,17 @@ mod tests {
         link.receive_values(values(4)).unwrap();
         assert!(link.wanted([0], t0).is_empty());
         // 絵が 1 枚届くたびに猶予を数え直す（大きな絵が続いて届いているあいだは、頼まない）
-        link.receive_texture(texture(4, "_MatCapTex", 16), Lang::Ja).unwrap();
+        link.receive_texture(texture(4, "_MatCapTex", 16), Lang::Ja)
+            .unwrap();
         assert!(link.wanted([0], secs(t0, 1.5)).is_empty());
-        assert!(link.wanted([0], secs(t0, 3.4)).is_empty(), "数え直した 1.5 秒から 2 秒たっていない");
+        assert!(
+            link.wanted([0], secs(t0, 3.4)).is_empty(),
+            "数え直した 1.5 秒から 2 秒たっていない"
+        );
         assert_eq!(link.wanted([0], secs(t0, 3.6)), vec![0]);
         // 揃ったら頼まない（頼みの様子も捨てる）
-        link.receive_texture(texture(4, "_MainTex", 16), Lang::Ja).unwrap();
+        link.receive_texture(texture(4, "_MainTex", 16), Lang::Ja)
+            .unwrap();
         assert!(link.wanted([0], secs(t0, 20.0)).is_empty());
         assert_eq!(link.asked(0), 0);
     }

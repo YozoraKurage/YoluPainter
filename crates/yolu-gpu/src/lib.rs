@@ -538,15 +538,27 @@ impl GpuPainter {
             let dab = buffer(dabs, wgpu::BufferUsages::STORAGE);
             // 空の束縛は作れないので、表が無いときは 1 語の 0 を渡す（式の種類が表を引かなければ読まれない）
             let table = buffer(
-                if tables.is_empty() { &[0u8; 16] } else { tables },
+                if tables.is_empty() {
+                    &[0u8; 16]
+                } else {
+                    tables
+                },
                 wgpu::BufferUsages::STORAGE,
             );
             let flags = buffer(
-                if presence.is_empty() { &[0u8; 16] } else { presence },
+                if presence.is_empty() {
+                    &[0u8; 16]
+                } else {
+                    presence
+                },
                 wgpu::BufferUsages::STORAGE,
             );
             let program = buffer(
-                if programs.is_empty() { &[0u8; 16] } else { programs },
+                if programs.is_empty() {
+                    &[0u8; 16]
+                } else {
+                    programs
+                },
                 wgpu::BufferUsages::STORAGE,
             );
             let uniform = buffer(bytemuck::cast_slice(&params), wgpu::BufferUsages::UNIFORM);
@@ -572,12 +584,12 @@ impl GpuPainter {
                 (8, &flags),
                 (9, &program),
             ]
-                .iter()
-                .map(|&(binding, b)| wgpu::BindGroupEntry {
-                    binding,
-                    resource: b.as_entire_binding(),
-                })
-                .collect();
+            .iter()
+            .map(|&(binding, b)| wgpu::BindGroupEntry {
+                binding,
+                resource: b.as_entire_binding(),
+            })
+            .collect();
             let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.layout,

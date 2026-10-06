@@ -1646,13 +1646,7 @@ impl Document {
                 for e in stack {
                     if let (EffectSettings::Generator(g), true) = (&e.settings, e.is_active()) {
                         if let Some(why) = self.generator_reason(g, i) {
-                            push(
-                                InactiveTarget::Generator {
-                                    mask,
-                                    kind: g.kind,
-                                },
-                                why,
-                            );
+                            push(InactiveTarget::Generator { mask, kind: g.kind }, why);
                         }
                     }
                 }

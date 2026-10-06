@@ -37,7 +37,9 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
         let WgpuSetup::CreateNew(mut setup) = egui_kittest::wgpu::default_wgpu_setup() else {
             unreachable!("kittest の既定は新しく作る形")
         };
-        let WgpuSetup::CreateNew(product) = yolu_app::view3d::render::wgpu_configuration().wgpu_setup else {
+        let WgpuSetup::CreateNew(product) =
+            yolu_app::view3d::render::wgpu_configuration().wgpu_setup
+        else {
             unreachable!("製品の設定は新しく作る形")
         };
         setup.device_descriptor = product.device_descriptor;
@@ -52,14 +54,20 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
     egui_kittest::wgpu::WgpuTestRenderer::from_render_state(state)
 }
 
-fn build(width: f32, height: f32, make: impl FnOnce(&egui::Context) -> YoluApp + 'static) -> Harness<'static, YoluApp> {
+fn build(
+    width: f32,
+    height: f32,
+    make: impl FnOnce(&egui::Context) -> YoluApp + 'static,
+) -> Harness<'static, YoluApp> {
     let mut h = gpu_thread::builder()
         .with_size(vec2(width, height))
         .with_pixels_per_point(1.0)
         .with_step_dt(1.0 / 60.0)
         .with_max_steps(120)
         .renderer(renderer())
-        .build_eframe(move |cc| with_render_state_cpu_canvas(make(&cc.egui_ctx), cc.wgpu_render_state.as_ref()));
+        .build_eframe(move |cc| {
+            with_render_state_cpu_canvas(make(&cc.egui_ctx), cc.wgpu_render_state.as_ref())
+        });
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
     h
@@ -103,7 +111,11 @@ fn quad(size: f32, normal: Vec3) -> ModelMesh {
         submeshes: vec![Submesh {
             material: 0,
             // 表は時計回り（Unity の表）。+Z を向く板は巡りを逆にする
-            indices: if front { vec![0, 2, 1, 2, 3, 1] } else { vec![0, 1, 2, 2, 1, 3] },
+            indices: if front {
+                vec![0, 2, 1, 2, 3, 1]
+            } else {
+                vec![0, 1, 2, 2, 1, 3]
+            },
         }],
     }
 }
@@ -140,7 +152,11 @@ fn fill(h: &mut Harness<'_, YoluApp>, values: &[(Channel, [u8; 4])]) {
         .iter()
         .map(|(c, v)| (*c, yolu_core::Rgba8::new(v[0], v[1], v[2], v[3])))
         .collect();
-    h.state_mut().state.doc.add_fill_layer("値", &values, None).unwrap();
+    h.state_mut()
+        .state
+        .doc
+        .add_fill_layer("値", &values, None)
+        .unwrap();
     h.run();
 }
 
@@ -162,7 +178,10 @@ fn close(a: [u8; 3], b: [u8; 3], tol: u8) -> bool {
 }
 
 fn assert_close(a: [u8; 3], b: [u8; 3], tol: u8, what: &str) {
-    assert!(close(a, b, tol), "{what}: {a:?} と期待 {b:?}（許す差 {tol}）");
+    assert!(
+        close(a, b, tol),
+        "{what}: {a:?} と期待 {b:?}（許す差 {tol}）"
+    );
 }
 
 /// 数える範囲（右上のアイコンの帯の下、表示域の内側）。
@@ -206,27 +225,53 @@ fn the_supported_counts_are_listed_ascending_and_always_include_one_and_four() {
     let h = view(900.0, 640.0, 32);
     let supported = h.state().view3d_supported_samples().expect("描き手がある");
     // 何で確かめたかの記録（--nocapture で見える）
-    eprintln!("view3d_fx: {:?} のサンプル数 {supported:?}", h.state().view3d_adapter());
+    eprintln!(
+        "view3d_fx: {:?} のサンプル数 {supported:?}",
+        h.state().view3d_adapter()
+    );
     assert!(supported.windows(2).all(|w| w[0] < w[1]), "{supported:?}");
-    assert!(supported.iter().all(|n| SAMPLE_CHOICES.contains(n)), "{supported:?}");
+    assert!(
+        supported.iter().all(|n| SAMPLE_CHOICES.contains(n)),
+        "{supported:?}"
+    );
     // WebGPU が保証する 1 と 4 は、どの機材・どの装置の設定でも使える
-    assert!(supported.contains(&1) && supported.contains(&4), "{supported:?}");
+    assert!(
+        supported.contains(&1) && supported.contains(&4),
+        "{supported:?}"
+    );
     // 画面の選びは、同じ数だけ押せる
-    assert_eq!(h.state().state.view3d.display.supported_sample_counts(), supported);
+    assert_eq!(
+        h.state().state.view3d.display.supported_sample_counts(),
+        supported
+    );
 }
 
 /// 場面ごとの設定（面の色は一様になるものだけ。縁の中間の値を数えるため）。
 fn aa_scenes() -> Vec<(&'static str, Vec<Op>)> {
     vec![
-        ("光なし（チャンネル）", vec![Op::Shading(Shading::Channel(Channel::Color))]),
-        ("8 bit の描き先（中立）", vec![Op::Shading(Shading::Neutral)]),
+        (
+            "光なし（チャンネル）",
+            vec![Op::Shading(Shading::Channel(Channel::Color))],
+        ),
+        (
+            "8 bit の描き先（中立）",
+            vec![Op::Shading(Shading::Neutral)],
+        ),
         (
             "HDR の描き先（トーンマッピング）",
-            vec![Op::Shading(Shading::Neutral), Op::Tone(Curve::Aces), Op::Exposure(0.5)],
+            vec![
+                Op::Shading(Shading::Neutral),
+                Op::Tone(Curve::Aces),
+                Op::Exposure(0.5),
+            ],
         ),
         (
             "HDR の描き先（ブルーム）",
-            vec![Op::Shading(Shading::Neutral), Op::Bloom(true), Op::BloomThreshold(4.0)],
+            vec![
+                Op::Shading(Shading::Neutral),
+                Op::Bloom(true),
+                Op::BloomThreshold(4.0),
+            ],
         ),
     ]
 }
@@ -258,7 +303,10 @@ fn every_sample_count_makes_intermediate_values_on_slanted_edges_and_leaves_the_
             if samples == 1 {
                 assert_eq!(others, 0, "{name}・1×: 縁の画素は面か背景のどちらか");
             } else {
-                assert!(others > 100, "{name}・{samples}×: 縁に中間の値が出る（{others}）");
+                assert!(
+                    others > 100,
+                    "{name}・{samples}×: 縁に中間の値が出る（{others}）"
+                );
             }
             // 内側と背景は、数で変わらない（縁だけが変わる）
             match reference {
@@ -287,9 +335,11 @@ fn a_lil_toon_transparent_face_blends_edges_at_every_sample_count_too() {
         kind: LookKind::LilToon,
         ..MaterialLook::default()
     };
-    look.textures.insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
+    look.textures
+        .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
     look.shader = "Hidden/lilToonTransparent".into();
-    look.properties.insert("_Cutoff".into(), LookValue::Float(0.001));
+    look.properties
+        .insert("_Cutoff".into(), LookValue::Float(0.001));
     h.state_mut().state.doc.set_look(look, false).unwrap();
     h.run();
     let supported = h.state().view3d_supported_samples().unwrap();
@@ -307,7 +357,10 @@ fn a_lil_toon_transparent_face_blends_edges_at_every_sample_count_too() {
         if samples == 1 {
             assert_eq!(others, 0, "1×");
         } else {
-            assert!(others > 100, "{samples}×: 半透明の縁にも中間の値が出る（{others}）");
+            assert!(
+                others > 100,
+                "{samples}×: 半透明の縁にも中間の値が出る（{others}）"
+            );
         }
         match reference {
             None => reference = Some(face),
@@ -330,11 +383,19 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     assert_eq!(h.state().state.view3d.display.post.antialias, 8);
     let want = clamp_samples(8, &supported);
     assert_eq!(h.state().view3d_stats().unwrap().samples, want);
-    assert_eq!(h.state().state.view3d.display.shown_samples(), want, "画面に出す選びは、使える最大へ下げたもの");
+    assert_eq!(
+        h.state().state.view3d.display.shown_samples(),
+        want,
+        "画面に出す選びは、使える最大へ下げたもの"
+    );
     // 描き先の上限が小さければ、多サンプルをやめる（描けなくはしない）
     h.state_mut().view3d_set_target_budget(Some(1));
     h.run();
-    assert_eq!(h.state().view3d_stats().unwrap().samples, 1, "上限を超えるときは 1×");
+    assert_eq!(
+        h.state().view3d_stats().unwrap().samples,
+        1,
+        "上限を超えるときは 1×"
+    );
     let image = h.render().unwrap();
     let (face, background) = (px(&image, center(&h)), px(&image, background_point(&h)));
     assert_eq!(count_other(&image, region(&h), &[face, background], 2), 0);
@@ -342,9 +403,14 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     if let Some(&lower) = supported.iter().rev().find(|n| **n > 1 && **n < want) {
         let rect = view_rect(&h);
         let size = [rect.width().round() as u32, rect.height().round() as u32];
-        h.state_mut().view3d_set_target_budget(Some(target_bytes(size, lower, false, false)));
+        h.state_mut()
+            .view3d_set_target_budget(Some(target_bytes(size, lower, false, false)));
         h.run();
-        assert_eq!(h.state().view3d_stats().unwrap().samples, lower, "{lower}× までなら入る上限");
+        assert_eq!(
+            h.state().view3d_stats().unwrap().samples,
+            lower,
+            "{lower}× までなら入る上限"
+        );
     }
     // 上限を戻すと、また対応する最大の数
     h.state_mut().view3d_set_target_budget(None);
@@ -362,17 +428,35 @@ fn the_target_ceiling_is_the_size_of_the_picture_share_and_sits_outside_the_sett
     use yolu_app::gpu_memory::{self, GpuMemory};
     use yolu_app::prefs::{Pref, PrefsAction};
     let mut h = view(900.0, 640.0, 32);
-    for choice in [GpuMemory::Low, GpuMemory::High, GpuMemory::Mib(2048), GpuMemory::Standard] {
-        h.state_mut().state.apply(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
+    for choice in [
+        GpuMemory::Low,
+        GpuMemory::High,
+        GpuMemory::Mib(2048),
+        GpuMemory::Standard,
+    ] {
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
         h.run();
         let adapter = h.state().state.prefs.gpu.clone();
         let budgets = gpu_memory::budgets(choice, &adapter);
         // 描き先の上限は、3D の絵の取り分と同じ量（別の勘定。取り分からは引かない）
-        assert_eq!(h.state().view3d_paint_budget(), Some(budgets.paint), "{choice:?}");
-        assert_eq!(h.state().view3d_target_budget(), Some(budgets.paint), "{choice:?}");
+        assert_eq!(
+            h.state().view3d_paint_budget(),
+            Some(budgets.paint),
+            "{choice:?}"
+        );
+        assert_eq!(
+            h.state().view3d_target_budget(),
+            Some(budgets.paint),
+            "{choice:?}"
+        );
         // 合計に配った 3 つの外に足すので、載り切ると合計を超えうる
         let total = gpu_memory::total_bytes(choice, &adapter);
-        assert!(budgets.paint + budgets.canvas + budgets.shelf_preview + budgets.paint > total, "{choice:?}");
+        assert!(
+            budgets.paint + budgets.canvas + budgets.shelf_preview + budgets.paint > total,
+            "{choice:?}"
+        );
     }
     // 試験が決めた上限は取り分に従わず、None で取り分と同じ量へ戻る
     let paint = h.state().view3d_paint_budget();
@@ -389,7 +473,11 @@ fn the_sample_planner_steps_down_through_what_the_device_has() {
     let big = u64::MAX;
     assert_eq!(plan_samples(&all, 8, size, false, false, big), 8);
     assert_eq!(plan_samples(&all, 4, size, false, false, big), 4);
-    assert_eq!(plan_samples(&all, 3, size, false, false, big), 2, "選べない数は、以下で対応する最大");
+    assert_eq!(
+        plan_samples(&all, 3, size, false, false, big),
+        2,
+        "選べない数は、以下で対応する最大"
+    );
     assert_eq!(plan_samples(&all, 1, size, false, false, big), 1);
     // 機材が持たない数は選べない
     assert_eq!(plan_samples(&[1, 4], 8, size, false, false, big), 4);
@@ -398,18 +486,36 @@ fn the_sample_planner_steps_down_through_what_the_device_has() {
     assert_eq!(plan_samples(&[], 8, size, false, false, big), 1);
     // 上限: 8× の見積もりより 1 バイト少なければ 4×、4× より少なければ 2×、…、0 でも 1×（使えなくはしない）
     let bytes = |n, hdr, bloom| target_bytes(size, n, hdr, bloom);
-    assert_eq!(plan_samples(&all, 8, size, false, false, bytes(8, false, false)), 8);
-    assert_eq!(plan_samples(&all, 8, size, false, false, bytes(8, false, false) - 1), 4);
-    assert_eq!(plan_samples(&all, 8, size, false, false, bytes(4, false, false) - 1), 2);
-    assert_eq!(plan_samples(&all, 8, size, false, false, bytes(2, false, false) - 1), 1);
+    assert_eq!(
+        plan_samples(&all, 8, size, false, false, bytes(8, false, false)),
+        8
+    );
+    assert_eq!(
+        plan_samples(&all, 8, size, false, false, bytes(8, false, false) - 1),
+        4
+    );
+    assert_eq!(
+        plan_samples(&all, 8, size, false, false, bytes(4, false, false) - 1),
+        2
+    );
+    assert_eq!(
+        plan_samples(&all, 8, size, false, false, bytes(2, false, false) - 1),
+        1
+    );
     assert_eq!(plan_samples(&all, 8, size, false, false, 0), 1);
     // 対応する数だけを飛び石に下がる
-    assert_eq!(plan_samples(&[1, 4], 8, size, false, false, bytes(4, false, false) - 1), 1);
+    assert_eq!(
+        plan_samples(&[1, 4], 8, size, false, false, bytes(4, false, false) - 1),
+        1
+    );
     // HDR・ブルームは見積もりを増やすので、同じ上限で数が下がる
     let budget = bytes(4, false, false);
     assert_eq!(plan_samples(&all, 4, size, false, false, budget), 4);
     assert_eq!(plan_samples(&all, 4, size, true, false, budget), 2);
-    assert!(bytes(4, true, true) > bytes(4, true, false) && bytes(4, true, false) > bytes(4, false, false));
+    assert!(
+        bytes(4, true, true) > bytes(4, true, false)
+            && bytes(4, true, false) > bytes(4, false, false)
+    );
 }
 
 // ───────── 描き先のメモリ ─────────
@@ -428,18 +534,38 @@ fn the_target_estimate_adds_up_depth_color_resolve_hdr_and_bloom() {
     // ブルーム: 半分の大きさから 6 段（500×250・250×125・125×62・62×31・31×15・15×7）、1 画素 8 B
     assert_eq!(
         bloom_levels(size),
-        vec![[500, 250], [250, 125], [125, 62], [62, 31], [31, 15], [15, 7]]
+        vec![
+            [500, 250],
+            [250, 125],
+            [125, 62],
+            [62, 31],
+            [31, 15],
+            [15, 7]
+        ]
     );
     let bloom = (125_000 + 31_250 + 7_750 + 1_922 + 465 + 105) * 8;
-    assert_eq!(target_bytes(size, 4, true, true), px * (4 + 16 + 32 + 8) + bloom);
+    assert_eq!(
+        target_bytes(size, 4, true, true),
+        px * (4 + 16 + 32 + 8) + bloom
+    );
     assert_eq!(target_bytes(size, 1, true, true), px * (4 + 4 + 8) + bloom);
     // 小さい絵は段を減らし、1 画素未満にしない
     assert_eq!(bloom_levels([8, 8]), vec![[4, 4]]);
     assert_eq!(bloom_levels([1, 1]), vec![[1, 1]]);
     for s in [[1, 1], [2, 2], [7, 3], [64, 48], [4096, 2160]] {
         let levels = bloom_levels(s);
-        assert!(!levels.is_empty() && levels.len() <= 6 && levels[0] == [(s[0] / 2).max(1), (s[1] / 2).max(1)], "{s:?}");
-        assert!(levels.windows(2).all(|w| w[1][0] <= w[0][0] && w[1][1] <= w[0][1] && w[1][0] >= 1 && w[1][1] >= 1), "{s:?}");
+        assert!(
+            !levels.is_empty()
+                && levels.len() <= 6
+                && levels[0] == [(s[0] / 2).max(1), (s[1] / 2).max(1)],
+            "{s:?}"
+        );
+        assert!(
+            levels
+                .windows(2)
+                .all(|w| w[1][0] <= w[0][0] && w[1][1] <= w[0][1] && w[1][0] >= 1 && w[1][1] >= 1),
+            "{s:?}"
+        );
     }
 }
 
@@ -466,12 +592,21 @@ fn the_stats_report_the_estimate_of_the_targets_in_use() {
         for n in [1, 4] {
             op(&mut h, Op::Antialias(n));
             let stats = h.state().view3d_stats().unwrap();
-            assert_eq!(stats.target_bytes, target_bytes(size, stats.samples, hdr, bloom), "{n}× hdr {hdr} bloom {bloom}");
+            assert_eq!(
+                stats.target_bytes,
+                target_bytes(size, stats.samples, hdr, bloom),
+                "{n}× hdr {hdr} bloom {bloom}"
+            );
             seen.push((stats.samples, hdr, bloom, stats.target_bytes));
         }
     }
     // 多サンプル・HDR・ブルームの順に増える
-    let find = |s: u32, hdr, bloom| seen.iter().find(|e| e.0 == s && e.1 == hdr && e.2 == bloom).map(|e| e.3).unwrap();
+    let find = |s: u32, hdr, bloom| {
+        seen.iter()
+            .find(|e| e.0 == s && e.1 == hdr && e.2 == bloom)
+            .map(|e| e.3)
+            .unwrap()
+    };
     assert!(find(4, false, false) > find(1, false, false));
     assert!(find(1, true, false) > find(1, false, false));
     assert!(find(1, true, true) > find(1, true, false));
@@ -482,11 +617,24 @@ fn the_stats_report_the_estimate_of_the_targets_in_use() {
 #[ignore = "報告の表を出すだけ"]
 fn memory_table() {
     println!("| 絵の大きさ | 仕上げ | 1× | 2× | 4× | 8× |");
-    for (name, size) in [("1920×1080", [1920u32, 1080]), ("2560×1440", [2560, 1440]), ("3840×2160", [3840, 2160])] {
-        for (label, hdr, bloom) in [("8 bit", false, false), ("HDR（トーンマッピング）", true, false), ("HDR＋ブルーム", true, true)] {
+    for (name, size) in [
+        ("1920×1080", [1920u32, 1080]),
+        ("2560×1440", [2560, 1440]),
+        ("3840×2160", [3840, 2160]),
+    ] {
+        for (label, hdr, bloom) in [
+            ("8 bit", false, false),
+            ("HDR（トーンマッピング）", true, false),
+            ("HDR＋ブルーム", true, true),
+        ] {
             let cells: Vec<String> = SAMPLE_CHOICES
                 .iter()
-                .map(|n| format!("{:.0} MiB", target_bytes(size, *n, hdr, bloom) as f64 / 1048576.0))
+                .map(|n| {
+                    format!(
+                        "{:.0} MiB",
+                        target_bytes(size, *n, hdr, bloom) as f64 / 1048576.0
+                    )
+                })
                 .collect();
             println!("| {name} | {label} | {} |", cells.join(" | "));
         }
@@ -509,9 +657,18 @@ fn bright_scene(h: &mut Harness<'_, YoluApp>, color: [u8; 3]) {
 fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
     // 板の端の画面上の位置
     let rect = view_rect(h);
-    let view = h.state().state.view3d.camera.view(rect.width(), rect.height());
+    let view = h
+        .state()
+        .state
+        .view3d
+        .camera
+        .view(rect.width(), rect.height());
     let edge = view.to_screen(Vec3::new(-0.35, 0.0, 0.0)).unwrap();
-    let side = if edge.x < rect.width() * 0.5 { -1.0 } else { 1.0 };
+    let side = if edge.x < rect.width() * 0.5 {
+        -1.0
+    } else {
+        1.0
+    };
     let near = pos2(rect.left() + edge.x + side * gap, rect.top() + edge.y);
     (near, pos2(rect.left() + 100.0, rect.bottom() - 100.0))
 }
@@ -530,21 +687,40 @@ fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
     assert!(h.state().view3d_stats().unwrap().bloom_renders >= 1);
     // 板のすぐ外は明るくなり、離れた隅はほぼ変わらない
     let lum = |c: [u8; 3]| c[0] as i32 + c[1] as i32 + c[2] as i32;
-    assert!(lum(on.0) > lum(off.0) + 30, "板の外が明るくなる: {:?} → {:?}", off.0, on.0);
-    assert!(lum(on.1) <= lum(off.1) + 6, "遠い隅は変わらない: {:?} → {:?}", off.1, on.1);
+    assert!(
+        lum(on.0) > lum(off.0) + 30,
+        "板の外が明るくなる: {:?} → {:?}",
+        off.0,
+        on.0
+    );
+    assert!(
+        lum(on.1) <= lum(off.1) + 6,
+        "遠い隅は変わらない: {:?} → {:?}",
+        off.1,
+        on.1
+    );
     // 板の上（芯）はしきい値を超えて飽和したまま、減らない
     assert!(lum(px(&after, center(&h))) >= lum(px(&before, center(&h))));
     // 離れるほど弱い
     let (mid, _) = halo_points(&h, 24.0);
     let (outer, _) = halo_points(&h, 80.0);
-    assert!(lum(px(&after, near)) > lum(px(&after, mid)) && lum(px(&after, mid)) >= lum(px(&after, outer)));
+    assert!(
+        lum(px(&after, near)) > lum(px(&after, mid))
+            && lum(px(&after, mid)) >= lum(px(&after, outer))
+    );
     // 強さに比例して強くなる
     op(&mut h, Op::BloomStrength(2.0));
     let strong = h.render().unwrap();
-    assert!(lum(px(&strong, near)) > lum(px(&after, near)) + 10, "強さを上げると強い");
+    assert!(
+        lum(px(&strong, near)) > lum(px(&after, near)) + 10,
+        "強さを上げると強い"
+    );
     op(&mut h, Op::BloomStrength(0.3));
     let weak = h.render().unwrap();
-    assert!(lum(px(&weak, near)) < lum(px(&after, near)), "強さを下げると弱い");
+    assert!(
+        lum(px(&weak, near)) < lum(px(&after, near)),
+        "強さを下げると弱い"
+    );
     assert!(lum(px(&weak, near)) > lum(off.0));
 }
 
@@ -567,7 +743,10 @@ fn bloom_leaves_what_is_below_the_threshold_alone() {
             worst = worst.max((0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap());
         }
     }
-    assert!(worst <= 1, "しきい値より暗い絵は 1 段階以上は変わらない: {worst}");
+    assert!(
+        worst <= 1,
+        "しきい値より暗い絵は 1 段階以上は変わらない: {worst}"
+    );
     // しきい値を上げても、明るい板がにじまなくなる（しきい値が効いている）
     bright_scene(&mut h, [255, 255, 255]);
     let (near, _) = halo_points(&h, 6.0);
@@ -579,8 +758,14 @@ fn bloom_leaves_what_is_below_the_threshold_alone() {
     let low = px(&h.render().unwrap(), near);
     op(&mut h, Op::BloomThreshold(3.5));
     let high = px(&h.render().unwrap(), near);
-    assert!(close(high, bright_off, 1), "しきい値 3.5 では 1.0 の板はにじまない: {bright_off:?} → {high:?}");
-    assert!(low[0] as i32 > high[0] as i32 + 30, "しきい値が低いほどにじむ: {low:?} {high:?}");
+    assert!(
+        close(high, bright_off, 1),
+        "しきい値 3.5 では 1.0 の板はにじまない: {bright_off:?} → {high:?}"
+    );
+    assert!(
+        low[0] as i32 > high[0] as i32 + 30,
+        "しきい値が低いほどにじむ: {low:?} {high:?}"
+    );
 }
 
 #[test]
@@ -596,13 +781,21 @@ fn bloom_off_draws_the_same_picture_byte_for_byte() {
     assert_ne!(first.as_raw(), lit.as_raw(), "入なら絵が変わる");
     op(&mut h, Op::Bloom(false));
     let back = h.render().unwrap();
-    assert_eq!(first.as_raw(), back.as_raw(), "切に戻すと前と同じ絵（バイト）");
+    assert_eq!(
+        first.as_raw(),
+        back.as_raw(),
+        "切に戻すと前と同じ絵（バイト）"
+    );
     assert_eq!(h.state().view3d_stats().unwrap().bloom_renders, renders + 1);
     // 入でも強さ 0 は何も足さない（切と同じ道・同じ絵）
     op(&mut h, Op::BloomStrength(0.0));
     op(&mut h, Op::Bloom(true));
     let zero = h.render().unwrap();
-    assert_eq!(first.as_raw(), zero.as_raw(), "強さ 0 は切と同じ絵（バイト）");
+    assert_eq!(
+        first.as_raw(),
+        zero.as_raw(),
+        "強さ 0 は切と同じ絵（バイト）"
+    );
     assert_eq!(h.state().view3d_stats().unwrap().bloom_renders, renders + 1);
     // トーンマッピングの道でも、ブルームが切（強さ 0）なら前と同じ絵（バイト）
     op(&mut h, Op::Exposure(0.5));
@@ -611,7 +804,11 @@ fn bloom_off_draws_the_same_picture_byte_for_byte() {
     op(&mut h, Op::BloomStrength(1.0));
     op(&mut h, Op::Bloom(false));
     let tone_off = h.render().unwrap();
-    assert_eq!(tone.as_raw(), tone_off.as_raw(), "トーンマッピングの道: ブルームを切ると同じ絵（バイト）");
+    assert_eq!(
+        tone.as_raw(),
+        tone_off.as_raw(),
+        "トーンマッピングの道: ブルームを切ると同じ絵（バイト）"
+    );
 }
 
 #[test]
@@ -627,8 +824,14 @@ fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
     let lit = px(&h.render().unwrap(), near);
     op(&mut h, Op::Bloom(false));
     let lit_off = px(&h.render().unwrap(), near);
-    assert!(lit[0] as i32 > lit_off[0] as i32 + 10, "露出を上げると、板の外へにじむ: {lit_off:?} → {lit:?}");
-    assert!(dim[0] <= lit_off[0] || dim[0] <= 45, "露出 0 ではほぼにじまない: {dim:?}");
+    assert!(
+        lit[0] as i32 > lit_off[0] as i32 + 10,
+        "露出を上げると、板の外へにじむ: {lit_off:?} → {lit:?}"
+    );
+    assert!(
+        dim[0] <= lit_off[0] || dim[0] <= 45,
+        "露出 0 ではほぼにじまない: {dim:?}"
+    );
     // 光なしの表示（チャンネルだけ）は、ブルームを入にしても足さない
     op(&mut h, Op::Bloom(true));
     op(&mut h, Op::Exposure(0.0));
@@ -637,7 +840,11 @@ fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
     let channel_on = h.render().unwrap();
     op(&mut h, Op::Bloom(false));
     let channel_off = h.render().unwrap();
-    assert_eq!(channel_on.as_raw(), channel_off.as_raw(), "チャンネルだけの表示にブルームは足さない");
+    assert_eq!(
+        channel_on.as_raw(),
+        channel_off.as_raw(),
+        "チャンネルだけの表示にブルームは足さない"
+    );
     assert_eq!(h.state().view3d_stats().unwrap().bloom_renders, renders);
 }
 
@@ -659,12 +866,21 @@ fn the_emission_channel_glows_in_the_material_view() {
     let (near, far) = halo_points(&h, 6.0);
     let off = h.render().unwrap();
     // 発光は面そのものに出る（光を切っても板は明るい）
-    assert!(px(&off, center(&h))[0] > 200, "発光の板: {:?}", px(&off, center(&h)));
+    assert!(
+        px(&off, center(&h))[0] > 200,
+        "発光の板: {:?}",
+        px(&off, center(&h))
+    );
     op(&mut h, Op::Bloom(true));
     op(&mut h, Op::BloomStrength(1.0));
     let on = h.render().unwrap();
     let lum = |c: [u8; 3]| c[0] as i32 + c[1] as i32 + c[2] as i32;
-    assert!(lum(px(&on, near)) > lum(px(&off, near)) + 30, "発光の周りが光る: {:?} → {:?}", px(&off, near), px(&on, near));
+    assert!(
+        lum(px(&on, near)) > lum(px(&off, near)) + 30,
+        "発光の周りが光る: {:?} → {:?}",
+        px(&off, near),
+        px(&on, near)
+    );
     assert!(lum(px(&on, far)) <= lum(px(&off, far)) + 6);
     // にじみは発光の色（橙）を帯びる
     let glow = px(&on, near);
@@ -686,7 +902,11 @@ fn the_default_light_lights_the_front_of_a_model_facing_plus_z_and_not_its_back(
     op(&mut h, Op::Shading(Shading::Neutral));
     op(&mut h, Op::Env(yolu_app::view3d::display::EnvKind::None));
     op(&mut h, Op::Antialias(1));
-    assert_eq!(h.state().state.view3d.display.light_direction(), to_light, "新しい窓の光は既定のまま");
+    assert_eq!(
+        h.state().state.view3d.display.light_direction(),
+        to_light,
+        "新しい窓の光は既定のまま"
+    );
     let front = px(&h.render().unwrap(), center(&h));
     let want = (255.0 * (0.35 + 0.65 * to_light.dot(Vec3::Z).clamp(0.0, 1.0))).round() as u8;
     assert_close(front, [want; 3], 2, "前から見た面");
@@ -700,7 +920,10 @@ fn the_default_light_lights_the_front_of_a_model_facing_plus_z_and_not_its_back(
     op(&mut b, Op::Antialias(1));
     let back = px(&b.render().unwrap(), center(&b));
     assert_close(back, [(255.0f32 * 0.35).round() as u8; 3], 2, "背中側の面");
-    assert!(front[0] > back[0] + 80, "前は背中より明るい: {front:?} {back:?}");
+    assert!(
+        front[0] > back[0] + 80,
+        "前は背中より明るい: {front:?} {back:?}"
+    );
 }
 
 // ───────── 設定の保存と読み直し ─────────
@@ -736,23 +959,43 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
     op(&mut h, Op::BloomThreshold(1.5));
     h.run();
     let written = std::fs::read_to_string(&path).unwrap();
-    for line in ["view3d_antialias=8", "view3d_bloom=on", "view3d_bloom_strength=1.25", "view3d_bloom_threshold=1.5"] {
+    for line in [
+        "view3d_antialias=8",
+        "view3d_bloom=on",
+        "view3d_bloom_strength=1.25",
+        "view3d_bloom_threshold=1.5",
+    ] {
         assert!(written.lines().any(|l| l == line), "{line}\n{written}");
     }
     // スライダーをドラッグしているあいだは書かない。離したときの値を書く
     h.state_mut().state.view3d.display.post_dragging = true;
     op(&mut h, Op::BloomStrength(0.5));
     op(&mut h, Op::BloomStrength(0.75));
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), written, "ドラッグ中は書かない");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        written,
+        "ドラッグ中は書かない"
+    );
     h.state_mut().state.view3d.display.post_dragging = false;
     h.run();
     let released = std::fs::read_to_string(&path).unwrap();
-    assert!(released.lines().any(|l| l == "view3d_bloom_strength=0.75"), "{released}");
+    assert!(
+        released.lines().any(|l| l == "view3d_bloom_strength=0.75"),
+        "{released}"
+    );
     drop(h);
     // 次の起動は、書いた値で始まる。既定に戻すと行が消える（既定は書かない）
     let mut h = app_with_settings(&path);
     let post = h.state().state.view3d.display.post;
-    assert_eq!((post.antialias, post.bloom, post.bloom_strength, post.bloom_threshold), (8, true, 0.75, 1.5));
+    assert_eq!(
+        (
+            post.antialias,
+            post.bloom,
+            post.bloom_strength,
+            post.bloom_threshold
+        ),
+        (8, true, 0.75, 1.5)
+    );
     op(&mut h, Op::Antialias(4));
     op(&mut h, Op::Bloom(false));
     op(&mut h, Op::BloomStrength(0.6));
@@ -775,7 +1018,11 @@ fn a_settings_file_from_before_the_finish_keeps_every_other_value_and_starts_at_
     assert_eq!(app.lang, yolu_app::lang::Lang::En);
     assert_eq!(app.prefs.settings.export_padding, 8);
     assert!(!app.prefs.settings.uv_wireframe);
-    assert_eq!(app.view3d.display.post, Display::default().post, "仕上げは既定");
+    assert_eq!(
+        app.view3d.display.post,
+        Display::default().post,
+        "仕上げは既定"
+    );
     assert_eq!(app.view3d.display.post.antialias, 4);
     assert_eq!(app.message, "", "壊れた設定として知らせない");
     // 読んだだけではファイルに触らない
@@ -795,10 +1042,15 @@ fn a_3d_stroke_lands_on_the_same_texels_at_every_sample_count() {
         h.run();
         let c = center(&h);
         // 斜めの縁の近くまで（縁をまたぐ点を含む）
-        let path: Vec<egui::Pos2> = (0..=8).map(|i| c + vec2(-90.0 + 22.0 * i as f32, -60.0 + 16.0 * i as f32)).collect();
+        let path: Vec<egui::Pos2> = (0..=8)
+            .map(|i| c + vec2(-90.0 + 22.0 * i as f32, -60.0 + 16.0 * i as f32))
+            .collect();
         drag(&mut h, &path);
         let doc = &h.state().state.doc;
-        (h.state().view3d_stats().unwrap().samples, doc.composite(doc.bounds()).unwrap())
+        (
+            h.state().view3d_stats().unwrap().samples,
+            doc.composite(doc.bounds()).unwrap(),
+        )
     };
     let (one, a) = stroke(1);
     let (many, b) = stroke(8);
@@ -820,7 +1072,10 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     assert!(h.state().state.view3d.display.settings_open);
     h.get_by_label("画質").click();
     h.run();
-    assert_eq!(h.state().state.view3d.display.tab, yolu_app::view3d::display::SettingsTab::Quality);
+    assert_eq!(
+        h.state().state.view3d.display.tab,
+        yolu_app::view3d::display::SettingsTab::Quality
+    );
     for label in ["切", "4×", "ブルーム", "強さ", "しきい値"] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
@@ -837,7 +1092,11 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
         if !supported.contains(&n) {
             h.get_by_label(&format!("{n}×")).click();
             h.run();
-            assert_eq!(h.state().state.view3d.display.post.antialias, 4, "{n}× は対応しない");
+            assert_eq!(
+                h.state().state.view3d.display.post.antialias,
+                4,
+                "{n}× は対応しない"
+            );
         }
     }
     // ブルームの入・切（値の欄は切のあいだ押せない）
@@ -854,10 +1113,16 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     op(&mut h, Op::BloomThreshold(2.0));
     op(&mut h, Op::ResetLighting);
     let post = h.state().state.view3d.display.post;
-    assert!(!post.bloom && post.bloom_threshold == yolu_app::view3d::display::DEFAULT_BLOOM_THRESHOLD);
+    assert!(
+        !post.bloom && post.bloom_threshold == yolu_app::view3d::display::DEFAULT_BLOOM_THRESHOLD
+    );
     assert_eq!(post.antialias, 2);
     // 画像は機材によらず同じ並びで（全部の数を押せる並び・4× を選んだ状態）
-    h.state_mut().state.view3d.display.set_supported_samples(&[1, 2, 4, 8]);
+    h.state_mut()
+        .state
+        .view3d
+        .display
+        .set_supported_samples(&[1, 2, 4, 8]);
     op(&mut h, Op::Antialias(4));
     // 英語
     h.state_mut().state.lang = yolu_app::lang::Lang::En;

@@ -881,7 +881,11 @@ pub fn menu_bar_marked(
         }
         w::text(&p, item, title, t::LABEL, Align::Center);
         if marked == Some(i) {
-            p.circle_filled(pos2(item.right() - 6.0, item.center().y - 6.0), 3.0, t::ACCENT);
+            p.circle_filled(
+                pos2(item.right() - 6.0, item.center().y - 6.0),
+                3.0,
+                t::ACCENT,
+            );
         }
         out.rects.push(item);
         x += width;

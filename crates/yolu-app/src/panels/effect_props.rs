@@ -6,9 +6,13 @@ use egui::{pos2, vec2, Rect, Sense, Ui};
 use yolu_core::filter::Settings as Filter;
 use yolu_core::generator::{self, Kind, MapKind, MapState, Shape};
 use yolu_core::mesh_maps::MeshMapState;
-use yolu_core::{AnchorId, AnchorPlacement, EffectSettings, FilterEffect, FilterTarget, InactiveReason, LayerId};
+use yolu_core::{
+    AnchorId, AnchorPlacement, EffectSettings, FilterEffect, FilterTarget, InactiveReason, LayerId,
+};
 
-use super::properties::{choice_row, group_label, open_popup, percent_row, section, slider_row, status_row, toggle_row};
+use super::properties::{
+    choice_row, group_label, open_popup, percent_row, section, slider_row, status_row, toggle_row,
+};
 use crate::bake::{kind_label, state_label, BakeAction};
 use crate::fx::menu::{anchor_choice_name, FxChoice};
 use crate::fx::{inputs, names, FxOp};
@@ -28,13 +32,15 @@ fn decimals(places: u8) -> NumberFormat<'static> {
 
 /// 効果の欄の全部（選んでいる行が段か Anchor かで）。
 pub fn effect_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
-    if let Some((layer, effect, target)) = app
-        .fx
-        .filter(&app.doc)
-        .map(|(l, e, t)| (l, e.clone(), t))
+    if let Some((layer, effect, target)) =
+        app.fx.filter(&app.doc).map(|(l, e, t)| (l, e.clone(), t))
     {
         filter_body(ui, app, rows, ctx, layer, &effect, target);
-    } else if let Some(info) = app.fx.anchor(&app.doc).map(|i| (i.anchor.id(), i.anchor.name().to_owned())) {
+    } else if let Some(info) = app
+        .fx
+        .anchor(&app.doc)
+        .map(|i| (i.anchor.id(), i.anchor.name().to_owned()))
+    {
         anchor_body(ui, app, rows, info.0, &info.1);
     }
 }
@@ -42,7 +48,14 @@ pub fn effect_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
 // ───────── 名前と数の入力 ─────────
 
 /// 名前と文字の入力欄の 1 行。決めた文字を返す（Enter か外を押したとき）。
-fn text_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, shown: &str, tooltip: Option<&str>) -> Option<String> {
+fn text_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    shown: &str,
+    tooltip: Option<&str>,
+) -> Option<String> {
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let lw = (r.width() * 0.42).floor();
     w::text(
@@ -57,14 +70,28 @@ fn text_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, shown: &str, to
 }
 
 /// 整数の入力欄の 1 行（決めた値）。
-fn int_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, value: i32, tooltip: Option<&str>) -> Option<i32> {
+fn int_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: i32,
+    tooltip: Option<&str>,
+) -> Option<i32> {
     text_row(ui, rows, id, label, &value.to_string(), tooltip)
         .and_then(|s| s.trim().parse::<i32>().ok())
         .filter(|v| *v != value)
 }
 
 /// 3 つの数の入力欄（見出しの下に 1 行）。決めた値を返す。
-fn vec3_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, value: [f64; 3], tooltip: Option<&str>) -> Option<[f64; 3]> {
+fn vec3_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    id: &str,
+    label: &str,
+    value: [f64; 3],
+    tooltip: Option<&str>,
+) -> Option<[f64; 3]> {
     group_label(ui, rows, label);
     let r = rows.row(t::ROW_HEIGHT, 4.0);
     let mut next = None;
@@ -83,7 +110,13 @@ fn vec3_row(ui: &mut Ui, rows: &mut Rows, id: &str, label: &str, value: [f64; 3]
     next
 }
 
-fn set_settings(app: &mut AppState, layer: LayerId, id: yolu_core::FilterId, settings: EffectSettings, coalesce: bool) {
+fn set_settings(
+    app: &mut AppState,
+    layer: LayerId,
+    id: yolu_core::FilterId,
+    settings: EffectSettings,
+    coalesce: bool,
+) {
     app.apply(Action::Fx(FxOp::SetSettings {
         layer,
         id,
@@ -115,7 +148,15 @@ fn filter_body(
         FilterTarget::Mask => lang.pick(format!("{name}（マスク）"), format!("{name} (mask)")),
         FilterTarget::Content => name.to_owned(),
     };
-    let (open, _) = section(ui, app, rows, "effect", &title, names::effect_icon(effect.settings()), None);
+    let (open, _) = section(
+        ui,
+        app,
+        rows,
+        "effect",
+        &title,
+        names::effect_icon(effect.settings()),
+        None,
+    );
     if !open {
         return;
     }
@@ -132,7 +173,10 @@ fn filter_body(
                 *radius as f32,
                 (1.0, 256.0),
                 NumberFormat::int(" px"),
-                Some(lang.pick("広がり（画素。標準偏差は半径の約 1/3）", "Reach in pixels (standard deviation ≈ radius / 3)")),
+                Some(lang.pick(
+                    "広がり（画素。標準偏差は半径の約 1/3）",
+                    "Reach in pixels (standard deviation ≈ radius / 3)",
+                )),
                 enabled,
             ) {
                 next = Some(EffectSettings::blur(v.round().clamp(1.0, 256.0) as u32));
@@ -145,7 +189,17 @@ fn filter_body(
         }) => {
             let (mut r, mut a, mut th) = (*radius, *amount, *threshold);
             let mut changed = false;
-            if let Some(v) = slider_row(ui, rows, "fx.radius", lang.pick("半径", "Radius"), r as f32, (1.0, 64.0), NumberFormat::int(" px"), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.radius",
+                lang.pick("半径", "Radius"),
+                r as f32,
+                (1.0, 64.0),
+                NumberFormat::int(" px"),
+                None,
+                enabled,
+            ) {
                 r = v.round().clamp(1.0, 64.0) as u32;
                 changed = true;
             }
@@ -157,7 +211,10 @@ fn filter_body(
                 a as f32,
                 (0.0, 5.0),
                 decimals(2),
-                Some(lang.pick("輪郭をどれだけ強めるか", "How much the edges are strengthened")),
+                Some(lang.pick(
+                    "輪郭をどれだけ強めるか",
+                    "How much the edges are strengthened",
+                )),
                 enabled,
             ) {
                 a = v as f64;
@@ -171,7 +228,10 @@ fn filter_body(
                 th as f32,
                 (0.0, 255.0),
                 NumberFormat::int(""),
-                Some(lang.pick("これより小さい差（0〜255）は触らない", "Differences smaller than this (0–255) are left alone")),
+                Some(lang.pick(
+                    "これより小さい差（0〜255）は触らない",
+                    "Differences smaller than this (0–255) are left alone",
+                )),
                 enabled,
             ) {
                 th = v.round().clamp(0.0, 255.0) as u32;
@@ -188,7 +248,16 @@ fn filter_body(
         }) => {
             let (mut a, mut s) = (*amount, *seed);
             let mut changed = false;
-            if let Some(v) = percent_row(ui, rows, "fx.amount", lang.pick("量", "Amount"), a, (0.0, 1.0), None, enabled) {
+            if let Some(v) = percent_row(
+                ui,
+                rows,
+                "fx.amount",
+                lang.pick("量", "Amount"),
+                a,
+                (0.0, 1.0),
+                None,
+                enabled,
+            ) {
                 a = v;
                 changed = true;
             }
@@ -198,7 +267,10 @@ fn filter_body(
                 "fx.seed",
                 lang.pick("シード", "Seed"),
                 s,
-                Some(lang.pick("同じシードなら同じノイズ", "The same seed gives the same noise.")),
+                Some(lang.pick(
+                    "同じシードなら同じノイズ",
+                    "The same seed gives the same noise.",
+                )),
             ) {
                 s = v;
                 changed = true;
@@ -225,29 +297,81 @@ fn filter_body(
             let range = (0.0, 1.0);
             let gap = 1.0 / 255.0 + 1e-4;
             group_label(ui, rows, lang.pick("入力", "Input"));
-            if let Some(v) = slider_row(ui, rows, "fx.ib", lang.pick("黒", "Black"), ib, range, decimals(3), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.ib",
+                lang.pick("黒", "Black"),
+                ib,
+                range,
+                decimals(3),
+                None,
+                enabled,
+            ) {
                 ib = v.min(iw - gap).max(0.0);
                 changed = true;
             }
-            if let Some(v) = slider_row(ui, rows, "fx.iw", lang.pick("白", "White"), iw, range, decimals(3), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.iw",
+                lang.pick("白", "White"),
+                iw,
+                range,
+                decimals(3),
+                None,
+                enabled,
+            ) {
                 iw = v.max(ib + gap).min(1.0);
                 changed = true;
             }
-            if let Some(v) = slider_row(ui, rows, "fx.gamma", lang.pick("ガンマ", "Gamma"), gm, (0.1, 9.99), decimals(2), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.gamma",
+                lang.pick("ガンマ", "Gamma"),
+                gm,
+                (0.1, 9.99),
+                decimals(2),
+                None,
+                enabled,
+            ) {
                 gm = v;
                 changed = true;
             }
             group_label(ui, rows, lang.pick("出力", "Output"));
-            if let Some(v) = slider_row(ui, rows, "fx.ob", lang.pick("黒", "Black"), ob, range, decimals(3), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.ob",
+                lang.pick("黒", "Black"),
+                ob,
+                range,
+                decimals(3),
+                None,
+                enabled,
+            ) {
                 ob = v;
                 changed = true;
             }
-            if let Some(v) = slider_row(ui, rows, "fx.ow", lang.pick("白", "White"), ow, range, decimals(3), None, enabled) {
+            if let Some(v) = slider_row(
+                ui,
+                rows,
+                "fx.ow",
+                lang.pick("白", "White"),
+                ow,
+                range,
+                decimals(3),
+                None,
+                enabled,
+            ) {
                 ow = v;
                 changed = true;
             }
             if changed {
-                next = Some(EffectSettings::levels(ib as f64, iw as f64, gm as f64, ob as f64, ow as f64));
+                next = Some(EffectSettings::levels(
+                    ib as f64, iw as f64, gm as f64, ob as f64, ow as f64,
+                ));
             }
         }
         EffectSettings::Filter(_) => {
@@ -288,7 +412,10 @@ fn filter_body(
         lang.pick("強さ", "Strength"),
         effect.strength(),
         (0.0, 1.0),
-        Some(lang.pick("結果をどれだけ混ぜるか", "How much of the result is mixed in")),
+        Some(lang.pick(
+            "結果をどれだけ混ぜるか",
+            "How much of the result is mixed in",
+        )),
         enabled,
     ) {
         app.apply(Action::Fx(FxOp::SetStrength {
@@ -305,7 +432,10 @@ fn filter_body(
         status_row(
             ui,
             rows,
-            &lang.pick(format!("{channel} には掛かりません"), format!("Not applied to {channel}")),
+            &lang.pick(
+                format!("{channel} には掛かりません"),
+                format!("Not applied to {channel}"),
+            ),
         );
     }
     rows.space(4.0);
@@ -334,11 +464,18 @@ fn map_row(ui: &mut Ui, app: &AppState, rows: &mut Rows, kind: MapKind, pinned: 
         state_label(lang, state)
     };
     let row = rows.row(20.0, 2.0);
-    let color = if usable { egui::Color32::from_rgb(89, 199, 107) } else { t::WARNING };
+    let color = if usable {
+        egui::Color32::from_rgb(89, 199, 107)
+    } else {
+        t::WARNING
+    };
     let dot = Rect::from_center_size(pos2(row.left() + 6.0, row.center().y), vec2(8.0, 8.0));
     ui.painter().circle_filled(dot.center(), 4.0, color);
     let right = w::text_width(ui.painter(), label, t::LABEL_DIM) + 4.0;
-    let name_rect = Rect::from_min_max(pos2(row.left() + 18.0, row.top()), pos2(row.right() - right, row.bottom()));
+    let name_rect = Rect::from_min_max(
+        pos2(row.left() + 18.0, row.top()),
+        pos2(row.right() - right, row.bottom()),
+    );
     let name = kind_label(lang, mesh);
     let shown = w::fit(ui.painter(), name, name_rect.width(), t::LABEL);
     w::text(ui.painter(), name_rect, &shown, t::LABEL, w::Align::Left);
@@ -356,11 +493,20 @@ fn map_row(ui: &mut Ui, app: &AppState, rows: &mut Rows, kind: MapKind, pinned: 
         .get(mesh)
         .map(|m| {
             let p = m.provenance();
-            format!("{name} · {} × {} · {}", p.width, p.height, crate::bake::slot_list(&[p.target_slot]))
+            format!(
+                "{name} · {} × {} · {}",
+                p.width,
+                p.height,
+                crate::bake::slot_list(&[p.target_slot])
+            )
         })
         .unwrap_or_else(|| name.to_owned());
-    ui.interact(row, ui.make_persistent_id(("fx.map", mesh as i32)), Sense::hover())
-        .on_hover_text(tip);
+    ui.interact(
+        row,
+        ui.make_persistent_id(("fx.map", mesh as i32)),
+        Sense::hover(),
+    )
+    .on_hover_text(tip);
 }
 
 /// 効かない理由の短い 1 行（警告の印と理由）。
@@ -375,10 +521,20 @@ fn warning_row(ui: &mut Ui, rows: &mut Rows, text: &str) {
     );
     let text_rect = Rect::from_min_max(pos2(r.left() + 20.0, r.top()), r.max);
     let shown = w::fit(ui.painter(), text, text_rect.width(), t::LABEL_DIM);
-    w::text(ui.painter(), text_rect, &shown, t::LABEL_DIM.with_color(t::WARNING), w::Align::Left);
+    w::text(
+        ui.painter(),
+        text_rect,
+        &shown,
+        t::LABEL_DIM.with_color(t::WARNING),
+        w::Align::Left,
+    );
     if shown != text {
-        ui.interact(r, ui.make_persistent_id(("fx.warning", text.len())), Sense::hover())
-            .on_hover_text(text);
+        ui.interact(
+            r,
+            ui.make_persistent_id(("fx.warning", text.len())),
+            Sense::hover(),
+        )
+        .on_hover_text(text);
     }
 }
 
@@ -394,7 +550,15 @@ fn anchor_reading_rows(
 ) {
     let lang = app.lang;
     let current = (g.anchor.id != 0).then_some(AnchorId(g.anchor.id));
-    let info = current.and_then(|id| app.doc.find_anchor(id).map(|i| (i.layer, i.placement, app.doc.layer(i.layer).map(|l| l.name().to_owned()))));
+    let info = current.and_then(|id| {
+        app.doc.find_anchor(id).map(|i| {
+            (
+                i.layer,
+                i.placement,
+                app.doc.layer(i.layer).map(|l| l.name().to_owned()),
+            )
+        })
+    });
     let tip = lang.pick(
         "この段が読むアンカー（この層より下の層のもの、または下の層のマスクのもの）",
         "The anchor this stage reads (one on a layer below, or on a lower layer's mask)",
@@ -406,14 +570,22 @@ fn anchor_reading_rows(
         lang.pick("アンカー", "Anchor"),
         &anchor_choice_name(app, current),
         Some(&match &info {
-            Some((_, _, Some(name))) => format!("{tip}\n{}", lang.pick(format!("層「{name}」にあります"), format!("On the layer \"{name}\""))),
+            Some((_, _, Some(name))) => format!(
+                "{tip}\n{}",
+                lang.pick(
+                    format!("層「{name}」にあります"),
+                    format!("On the layer \"{name}\"")
+                )
+            ),
             _ => tip.to_owned(),
         }),
         enabled,
     ) {
         open_popup(app, ctx, Popup::Fx(FxChoice::Anchor), rect, rect.width());
     }
-    let mask = info.as_ref().is_some_and(|(_, p, _)| *p == AnchorPlacement::Mask);
+    let mask = info
+        .as_ref()
+        .is_some_and(|(_, p, _)| *p == AnchorPlacement::Mask);
     let channel_name = crate::m2::channel_name(lang, &app.doc, g.anchor.channel);
     if let Some(rect) = choice_row(
         ui,
@@ -422,13 +594,25 @@ fn anchor_reading_rows(
         lang.pick("チャンネル", "Channel"),
         &channel_name,
         Some(if mask {
-            lang.pick("マスクのアンカーの値は 1 つ（その層の見える度合い）", "A mask anchor has one value: how much its layer shows")
+            lang.pick(
+                "マスクのアンカーの値は 1 つ（その層の見える度合い）",
+                "A mask anchor has one value: how much its layer shows",
+            )
         } else {
-            lang.pick("合成のどのチャンネルを読むか（ハイト: 描いた凹凸）", "Which channel of the stack to read (Height: the painted relief)")
+            lang.pick(
+                "合成のどのチャンネルを読むか（ハイト: 描いた凹凸）",
+                "Which channel of the stack to read (Height: the painted relief)",
+            )
         }),
         enabled && !mask,
     ) {
-        open_popup(app, ctx, Popup::Fx(FxChoice::AnchorChannel), rect, rect.width());
+        open_popup(
+            app,
+            ctx,
+            Popup::Fx(FxChoice::AnchorChannel),
+            rect,
+            rect.width(),
+        );
     }
     if let Some(rect) = choice_row(
         ui,
@@ -453,7 +637,10 @@ fn anchor_reading_rows(
             lang.pick("アンカーの層を選ぶ", "Select the Anchor's Layer"),
             false,
             enabled,
-            Some(lang.pick("アンカーを置いた層を選びます", "Select the layer the anchor is on")),
+            Some(lang.pick(
+                "アンカーを置いた層を選びます",
+                "Select the layer the anchor is on",
+            )),
             Some("anchor"),
         )
         .clicked()
@@ -531,7 +718,9 @@ fn generator_rows(
     // このベイクだけを読む
     if !used.is_empty() {
         let pinned = !g.pins.is_empty();
-        let all_usable = used.iter().all(|k| map_state(app, *k) == Some(MeshMapState::Current));
+        let all_usable = used
+            .iter()
+            .all(|k| map_state(app, *k) == Some(MeshMapState::Current));
         if let Some(on) = toggle_row(
             ui,
             rows,
@@ -564,7 +753,10 @@ fn generator_rows(
                 lang.pick("AO ↔ 隙間", "AO ↔ Cavities"),
                 g.balance,
                 (0.0, 1.0),
-                Some(lang.pick("0 %: 環境遮蔽だけ。100 %: 隙間（曲率の凹）だけ。", "0 %: ambient occlusion only. 100 %: cavities (concave curvature) only.")),
+                Some(lang.pick(
+                    "0 %: 環境遮蔽だけ。100 %: 隙間（曲率の凹）だけ。",
+                    "0 %: ambient occlusion only. 100 %: cavities (concave curvature) only.",
+                )),
                 enabled,
             ) {
                 next.balance = v;
@@ -620,11 +812,26 @@ fn generator_rows(
             shape_rows(ui, app, rows, ctx, g, &mut next, enabled);
             let editing = app.fillfx.edit_filter == Some((layer, id));
             let r = rows.row(24.0, 4.0);
-            if w::button(ui, r, "fx.shape.edit", lang.pick("3D ビューで編集", "Edit in 3D View"), editing,
-                enabled && app.view3d.model.is_some(), Some(lang.pick("3D ビューに形とハンドルを出す", "Show the shape in the 3D view with handles")), Some("view_in_ar")).clicked() {
-                app.apply(Action::Fill(crate::fillfx::FillOp::EditFilter(if editing { None } else { Some((layer, id)) })));
+            if w::button(
+                ui,
+                r,
+                "fx.shape.edit",
+                lang.pick("3D ビューで編集", "Edit in 3D View"),
+                editing,
+                enabled && app.view3d.model.is_some(),
+                Some(lang.pick(
+                    "3D ビューに形とハンドルを出す",
+                    "Show the shape in the 3D view with handles",
+                )),
+                Some("view_in_ar"),
+            )
+            .clicked()
+            {
+                app.apply(Action::Fill(crate::fillfx::FillOp::EditFilter(
+                    if editing { None } else { Some((layer, id)) },
+                )));
             }
-        },
+        }
         Kind::IdColor => id_color_rows(ui, app, rows, layer, id, g, &mut next, enabled),
         Kind::Noise | Kind::Grunge => procedural_rows(ui, app, rows, ctx, &mut next, enabled),
         Kind::EdgeWear | Kind::Thickness | Kind::Anchor => {}
@@ -641,7 +848,10 @@ fn generator_rows(
             g.low as f32,
             (0.0, 1.0),
             decimals(3),
-            Some(lang.pick("元の値がこれ以下なら 0", "Base values at or below this give 0")),
+            Some(lang.pick(
+                "元の値がこれ以下なら 0",
+                "Base values at or below this give 0",
+            )),
             enabled,
         ) {
             next.low = (v as f64).min(g.high - gap).max(0.0);
@@ -654,7 +864,10 @@ fn generator_rows(
             g.high as f32,
             (0.0, 1.0),
             decimals(3),
-            Some(lang.pick("元の値がこれ以上なら 1", "Base values at or above this give 1")),
+            Some(lang.pick(
+                "元の値がこれ以上なら 1",
+                "Base values at or above this give 1",
+            )),
             enabled,
         ) {
             next.high = (v as f64).max(g.low + gap).min(1.0);
@@ -666,7 +879,10 @@ fn generator_rows(
             lang.pick("やわらかさ", "Softness"),
             g.softness,
             (0.0, 1.0),
-            Some(lang.pick("0 %: 下限から上限までまっすぐ。100 %: なめらかな S 字。", "0 %: a straight ramp from low to high. 100 %: a smooth S curve.")),
+            Some(lang.pick(
+                "0 %: 下限から上限までまっすぐ。100 %: なめらかな S 字。",
+                "0 %: a straight ramp from low to high. 100 %: a smooth S curve.",
+            )),
             enabled,
         ) {
             next.softness = v;
@@ -678,7 +894,10 @@ fn generator_rows(
         "fx.invert",
         lang.pick("反転", "Invert"),
         g.invert,
-        Some(lang.pick("範囲の後で 0 と 1 を入れ替えます", "Swap 0 and 1 after the range")),
+        Some(lang.pick(
+            "範囲の後で 0 と 1 を入れ替えます",
+            "Swap 0 and 1 after the range",
+        )),
         enabled,
     ) {
         next.invert = on;
@@ -686,7 +905,16 @@ fn generator_rows(
     // 崩し（ノイズ・グランジは重ねるノイズを持たない。core が断るので出さない）
     if !g.kind.is_procedural() {
         group_label(ui, rows, lang.pick("崩し", "Breakup"));
-        if let Some(v) = percent_row(ui, rows, "fx.noise", lang.pick("量", "Amount"), g.noise_amount, (0.0, 1.0), None, enabled) {
+        if let Some(v) = percent_row(
+            ui,
+            rows,
+            "fx.noise",
+            lang.pick("量", "Amount"),
+            g.noise_amount,
+            (0.0, 1.0),
+            None,
+            enabled,
+        ) {
             next.noise_amount = v;
         }
         if let Some(v) = int_row(
@@ -695,7 +923,10 @@ fn generator_rows(
             "fx.noise.seed",
             lang.pick("シード", "Seed"),
             g.noise_seed,
-            Some(lang.pick("同じシードなら同じノイズ", "The same seed gives the same noise.")),
+            Some(lang.pick(
+                "同じシードなら同じノイズ",
+                "The same seed gives the same noise.",
+            )),
         ) {
             next.noise_seed = v;
         }
@@ -777,7 +1008,14 @@ fn shape_rows(
         "モデルのルートの空間での位置と回転（シーンの単位）",
         "In the model root's space: its position and rotation, in scene units",
     );
-    if let Some(c) = vec3_row(ui, rows, "fx.shape.center", lang.pick("位置", "Placement"), v.center, Some(frame_tip)) {
+    if let Some(c) = vec3_row(
+        ui,
+        rows,
+        "fx.shape.center",
+        lang.pick("位置", "Placement"),
+        v.center,
+        Some(frame_tip),
+    ) {
         next.volume.center = c;
     }
     if let Some(r) = vec3_row(
@@ -786,18 +1024,35 @@ fn shape_rows(
         "fx.shape.rotation",
         lang.pick("回転", "Rotation"),
         v.rotation,
-        Some(lang.pick("度（Z、X、Y の順に回した角度）", "Euler angles in degrees (turned about Z, then X, then Y)")),
+        Some(lang.pick(
+            "度（Z、X、Y の順に回した角度）",
+            "Euler angles in degrees (turned about Z, then X, then Y)",
+        )),
     ) {
         next.volume.rotation = r.map(|d| d.clamp(-360.0, 360.0));
     }
     match v.shape {
         Shape::Box => {
-            if let Some(s) = vec3_row(ui, rows, "fx.shape.size", lang.pick("大きさ", "Size"), v.size, None) {
+            if let Some(s) = vec3_row(
+                ui,
+                rows,
+                "fx.shape.size",
+                lang.pick("大きさ", "Size"),
+                v.size,
+                None,
+            ) {
                 next.volume.size = s.map(|d| d.clamp(1e-6, 1e6));
             }
         }
         Shape::Sphere => {
-            if let Some(text) = text_row(ui, rows, "fx.shape.radius", lang.pick("半径", "Radius"), &names::trim(v.size[0] / 2.0, 3), None) {
+            if let Some(text) = text_row(
+                ui,
+                rows,
+                "fx.shape.radius",
+                lang.pick("半径", "Radius"),
+                &names::trim(v.size[0] / 2.0, 3),
+                None,
+            ) {
                 if let Ok(r) = text.trim().parse::<f64>() {
                     if r.is_finite() && r > 0.0 {
                         let d = (r * 2.0).clamp(1e-6, 1e6);
@@ -807,7 +1062,14 @@ fn shape_rows(
             }
         }
         Shape::Plane => {
-            if let Some(text) = text_row(ui, rows, "fx.shape.width", lang.pick("幅", "Width"), &names::trim(v.size[1], 3), None) {
+            if let Some(text) = text_row(
+                ui,
+                rows,
+                "fx.shape.width",
+                lang.pick("幅", "Width"),
+                &names::trim(v.size[1], 3),
+                None,
+            ) {
                 if let Ok(width) = text.trim().parse::<f64>() {
                     if width.is_finite() && width > 0.0 {
                         next.volume.size[1] = width.clamp(1e-6, 1e6);
@@ -849,7 +1111,10 @@ fn id_color_rows(
     group_label(ui, rows, lang.pick("ID の色", "ID Colors"));
     for (i, rgb) in g.id_colors.iter().enumerate() {
         let row = rows.row(20.0, 2.0);
-        let swatch = Rect::from_min_size(pos2(row.left(), row.top() + 2.0), vec2(34.0, row.height() - 4.0));
+        let swatch = Rect::from_min_size(
+            pos2(row.left(), row.top() + 2.0),
+            vec2(34.0, row.height() - 4.0),
+        );
         w::rounded(
             ui.painter(),
             swatch,
@@ -859,14 +1124,20 @@ fn id_color_rows(
         w::outline(ui.painter(), swatch, t::BORDER, 1.0, 3.0);
         w::text(
             ui.painter(),
-            Rect::from_min_max(pos2(swatch.right() + 8.0, row.top()), pos2(row.right() - 28.0, row.bottom())),
+            Rect::from_min_max(
+                pos2(swatch.right() + 8.0, row.top()),
+                pos2(row.right() - 28.0, row.bottom()),
+            ),
             &format!("{rgb:06X}"),
             t::LABEL,
             w::Align::Left,
         );
         if w::icon_button(
             ui,
-            Rect::from_min_size(pos2(row.right() - 24.0, row.top()), vec2(24.0, row.height())),
+            Rect::from_min_size(
+                pos2(row.right() - 24.0, row.top()),
+                vec2(24.0, row.height()),
+            ),
             ("fx.id.remove", i),
             "close",
             lang.pick("この色を外す", "Take this colour out"),
@@ -934,11 +1205,21 @@ fn anchor_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId, n
 }
 
 /// Anchor の名前の欄・読んでいる段の数・外すボタン（プロパティの「層」と「レイヤーマスク」の欄と、Anchor の行の欄で共有）。
-fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId, name: &str, key: &str) {
+fn anchor_fields(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    id: AnchorId,
+    name: &str,
+    key: &str,
+) {
     let lang = app.lang;
     let enabled = app.can_edit();
     let readers = super::effect_rows::anchor_readers(&app.doc, id);
-    let count = lang.pick(format!("{} 段が読む", readers.len()), format!("read by {}", readers.len()));
+    let count = lang.pick(
+        format!("{} 段が読む", readers.len()),
+        format!("read by {}", readers.len()),
+    );
     let row = rows.row(t::ROW_HEIGHT, 4.0);
     w::icon(
         ui.painter(),
@@ -950,14 +1231,20 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
     let count_w = w::text_width(ui.painter(), &count, t::LABEL_DIM) + 6.0;
     let name_rect = Rect::from_min_max(
         pos2(row.left() + 22.0, row.top()),
-        pos2((row.right() - 28.0 - count_w).max(row.left() + 62.0), row.bottom()),
+        pos2(
+            (row.right() - 28.0 - count_w).max(row.left() + 62.0),
+            row.bottom(),
+        ),
     );
     let out = w::text_field(
         ui,
         name_rect,
         (key, "anchor.name", id.0),
         name,
-        Some(lang.pick("アンカーの名前（上の層のジェネレーターはこの名前で選びます）", "The anchor's name: generators above list it by this name")),
+        Some(lang.pick(
+            "アンカーの名前（上の層のジェネレーターはこの名前で選びます）",
+            "The anchor's name: generators above list it by this name",
+        )),
         false,
     );
     if let Some(next) = out.committed {
@@ -965,30 +1252,57 @@ fn anchor_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, id: AnchorId,
             app.apply(Action::Fx(FxOp::RenameAnchor { id, name: next }));
         }
     }
-    let count_rect = Rect::from_min_max(pos2(name_rect.right() + 4.0, row.top()), pos2(row.right() - 26.0, row.bottom()));
-    w::text(ui.painter(), count_rect, &count, t::LABEL_DIM.with_color(t::TEXT_DIM), w::Align::Left);
+    let count_rect = Rect::from_min_max(
+        pos2(name_rect.right() + 4.0, row.top()),
+        pos2(row.right() - 26.0, row.bottom()),
+    );
+    w::text(
+        ui.painter(),
+        count_rect,
+        &count,
+        t::LABEL_DIM.with_color(t::TEXT_DIM),
+        w::Align::Left,
+    );
     let tip = if readers.is_empty() {
-        lang.pick("読んでいるジェネレーターはありません", "No generator reads this anchor.").to_owned()
+        lang.pick(
+            "読んでいるジェネレーターはありません",
+            "No generator reads this anchor.",
+        )
+        .to_owned()
     } else {
         let names: Vec<String> = readers
             .iter()
             .filter_map(|(l, target)| {
                 app.doc.layer(*l).map(|layer| {
                     if *target == FilterTarget::Mask {
-                        lang.pick(format!("{}（マスク）", layer.name()), format!("{} (mask)", layer.name()))
+                        lang.pick(
+                            format!("{}（マスク）", layer.name()),
+                            format!("{} (mask)", layer.name()),
+                        )
                     } else {
                         layer.name().to_owned()
                     }
                 })
             })
             .collect();
-        format!("{}\n{}", lang.pick("読んでいる段:", "Read by:"), names.join("\n"))
+        format!(
+            "{}\n{}",
+            lang.pick("読んでいる段:", "Read by:"),
+            names.join("\n")
+        )
     };
-    ui.interact(count_rect, ui.make_persistent_id((key, "anchor.readers", id.0)), Sense::hover())
-        .on_hover_text(tip);
+    ui.interact(
+        count_rect,
+        ui.make_persistent_id((key, "anchor.readers", id.0)),
+        Sense::hover(),
+    )
+    .on_hover_text(tip);
     if w::icon_button(
         ui,
-        Rect::from_min_size(pos2(row.right() - 24.0, row.top()), vec2(24.0, row.height())),
+        Rect::from_min_size(
+            pos2(row.right() - 24.0, row.top()),
+            vec2(24.0, row.height()),
+        ),
         (key, "anchor.remove", id.0),
         "delete",
         lang.pick(
@@ -1028,14 +1342,31 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             ),
         ),
     };
-    if w::button(ui, r, key, label, false, enabled, Some(tip), Some("auto_awesome")).clicked() {
+    if w::button(
+        ui,
+        r,
+        key,
+        label,
+        false,
+        enabled,
+        Some(tip),
+        Some("auto_awesome"),
+    )
+    .clicked()
+    {
         let ctx = ui.ctx().clone();
         open_popup(app, &ctx, Popup::AddEffect(target), r, r.width());
     }
 }
 
 /// プロパティの「層」（placement が Layer）と「レイヤーマスク」（Mask）の欄の Anchor の行: 無ければ置くボタン、あれば名前の欄。
-pub fn anchor_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, layer: LayerId, placement: AnchorPlacement) {
+pub fn anchor_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    layer: LayerId,
+    placement: AnchorPlacement,
+) {
     let lang: Lang = app.lang;
     let enabled = app.can_edit();
     let anchor = app.doc.layer(layer).and_then(|l| match placement {
@@ -1080,7 +1411,14 @@ pub fn anchor_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, layer: Layer
 }
 
 /// ノイズ・グランジの欄。共通（空間・シード・大きさ・回転ほか）を土台に、ノイズ専用の段とグランジのプリセットの格子を足す。
-fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context, next: &mut generator::Settings, enabled: bool) {
+fn procedural_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    ctx: &egui::Context,
+    next: &mut generator::Settings,
+    enabled: bool,
+) {
     let lang = app.lang;
     let kind = next.kind;
     let p = &mut next.procedural;
@@ -1094,7 +1432,13 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         None,
         enabled,
     ) {
-        open_popup(app, ctx, Popup::Fx(FxChoice::ProceduralSpace), rect, rect.width());
+        open_popup(
+            app,
+            ctx,
+            Popup::Fx(FxChoice::ProceduralSpace),
+            rect,
+            rect.width(),
+        );
     }
     // ノイズ専用（core は、グランジが基底・重ね方などを既定から動かすと断る）
     if kind == Kind::Noise {
@@ -1107,7 +1451,13 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
             None,
             enabled,
         ) {
-            open_popup(app, ctx, Popup::Fx(FxChoice::NoiseBasis), rect, rect.width());
+            open_popup(
+                app,
+                ctx,
+                Popup::Fx(FxChoice::NoiseBasis),
+                rect,
+                rect.width(),
+            );
         }
         if p.basis == generator::NoiseBasis::Worley {
             if let Some(rect) = choice_row(
@@ -1119,7 +1469,13 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
                 None,
                 enabled,
             ) {
-                open_popup(app, ctx, Popup::Fx(FxChoice::CellOutput), rect, rect.width());
+                open_popup(
+                    app,
+                    ctx,
+                    Popup::Fx(FxChoice::CellOutput),
+                    rect,
+                    rect.width(),
+                );
             }
         }
         if let Some(rect) = choice_row(
@@ -1131,7 +1487,13 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
             None,
             enabled,
         ) {
-            open_popup(app, ctx, Popup::Fx(FxChoice::FractalMode), rect, rect.width());
+            open_popup(
+                app,
+                ctx,
+                Popup::Fx(FxChoice::FractalMode),
+                rect,
+                rect.width(),
+            );
         }
         if let Some(v) = slider_row(
             ui,
@@ -1186,11 +1548,29 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         });
     }
     // 共通
-    if let Some(v) = int_row(ui, rows, "fx.procedural.seed", lang.pick("シード", "Seed"), p.seed, None) {
+    if let Some(v) = int_row(
+        ui,
+        rows,
+        "fx.procedural.seed",
+        lang.pick("シード", "Seed"),
+        p.seed,
+        None,
+    ) {
         p.seed = v;
     }
     let r = rows.row(24.0, 4.0);
-    if w::button(ui, r, "fx.procedural.reroll", lang.pick("振り直す", "Reroll"), false, enabled, None, Some("restart_alt")).clicked() {
+    if w::button(
+        ui,
+        r,
+        "fx.procedural.reroll",
+        lang.pick("振り直す", "Reroll"),
+        false,
+        enabled,
+        None,
+        Some("restart_alt"),
+    )
+    .clicked()
+    {
         p.seed = p.seed.wrapping_mul(1664525).wrapping_add(1013904223);
     }
     if let Some(v) = slider_row(
@@ -1232,7 +1612,10 @@ fn procedural_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
     ) {
         p.blend_width = (v as f64).clamp(0.0, 1.0);
     }
-    let rotation_tip = lang.pick("UV では回転は効きません", "Rotation has no effect in UV space");
+    let rotation_tip = lang.pick(
+        "UV では回転は効きません",
+        "Rotation has no effect in UV space",
+    );
     for (i, axis) in (0..3).map(|i| (i, names::axis_name(i))) {
         if let Some(v) = slider_row(
             ui,

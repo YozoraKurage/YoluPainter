@@ -99,7 +99,9 @@ fn begin(
         }
         // 範囲の道具（バケツ・ポリゴン塗りつぶし・ID の色で選択）は、点でなく押した面の範囲を使う
         Surface::Region => {
-            if app.region.drag.is_none() && crate::region::tools::surface_press(app, rect, at, source) {
+            if app.region.drag.is_none()
+                && crate::region::tools::surface_press(app, rect, at, source)
+            {
                 app.view3d.input.stroke = Some(source);
                 app.view3d.input.stroke_points = 0;
             }
@@ -149,7 +151,10 @@ fn begin(
         }
     }
     let Some(layer) = app.selected_layer else {
-        app.message = app.lang.pick("描くレイヤーがありません。", "No layer to paint on.").into();
+        app.message = app
+            .lang
+            .pick("描くレイヤーがありません。", "No layer to paint on.")
+            .into();
         return;
     };
     if let Some(reason) = app.paint_blocker() {
@@ -197,7 +202,11 @@ fn begin(
         Ok(Some((brush, surface))) => (Some(brush), Some(surface)),
         Ok(None) => (None, None),
         Err(e) => {
-            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
+            app.message = format!(
+                "{}: {}",
+                app.lang.pick("描けません", "Cannot paint"),
+                app.lang.core_error(&e)
+            );
             return;
         }
     };
@@ -206,7 +215,11 @@ fn begin(
     let mut stroke = match app.begin_paint_stroke_with(layer, eraser, stencil_brush) {
         Ok(s) => s,
         Err(e) => {
-            app.message = format!("{}: {}", app.lang.pick("描けません", "Cannot paint"), app.lang.core_error(&e));
+            app.message = format!(
+                "{}: {}",
+                app.lang.pick("描けません", "Cannot paint"),
+                app.lang.core_error(&e)
+            );
             return;
         }
     };
@@ -303,7 +316,10 @@ pub fn finish(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.doc.cancel_stroke(stroke);
-        app.message = app.lang.pick("ストロークを取り消しました。", "Stroke cancelled.").into();
+        app.message = app
+            .lang
+            .pick("ストロークを取り消しました。", "Stroke cancelled.")
+            .into();
     } else {
         let mut surface = surface;
         let last = surface
@@ -362,7 +378,11 @@ fn nav_press(
     m: &Modifiers,
     space: bool,
 ) {
-    app.view3d.input.navigation = Some(super::navigation::Drag::new(&app.view3d, app.prefs.settings.navigation, pos));
+    app.view3d.input.navigation = Some(super::navigation::Drag::new(
+        &app.view3d,
+        app.prefs.settings.navigation,
+        pos,
+    ));
     app.view3d.input.nav = Some((nav, button));
     if nav == Nav::Zoom {
         app.view3d.input.zoom = Some(ZoomDrag::new(pos, m.alt));
@@ -399,7 +419,13 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
                 let dx = zoom.moved_to(pos);
                 // 動かさずに離せば寄る（クリック）なので、少しの揺れでは動かさない
                 if !zoom.is_click() {
-                    super::navigation::move_by(app, rect, Nav::Zoom, dx / gesture::POINTS_PER_NOTCH, 0.0);
+                    super::navigation::move_by(
+                        app,
+                        rect,
+                        Nav::Zoom,
+                        dx / gesture::POINTS_PER_NOTCH,
+                        0.0,
+                    );
                 }
                 app.view3d.input.zoom = Some(zoom);
             }
@@ -414,7 +440,13 @@ fn nav_release(app: &mut AppState, rect: Rect, pos: Pos2, button: PointerButton)
         if let Some(zoom) = app.view3d.input.zoom.take() {
             if zoom.is_click() {
                 let sign = if zoom.out { -1.0 } else { 1.0 };
-                super::navigation::move_by(app, rect, Nav::Zoom, sign * gesture::CLICK_NOTCHES, 0.0);
+                super::navigation::move_by(
+                    app,
+                    rect,
+                    Nav::Zoom,
+                    sign * gesture::CLICK_NOTCHES,
+                    0.0,
+                );
             }
         }
         app.view3d.input.nav = None;
@@ -507,7 +539,14 @@ fn pen_sample(
                         // 形のギズモのハンドルの上: 描かずにドラッグを始める
                     } else if app.tool.def().surface == Surface::Path {
                         // パスの道具: 押す・動く・離すを、点を足す・掴む・動かすにする
-                        crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, true);
+                        crate::pathtool::surface::pen_sample(
+                            app,
+                            rect,
+                            p,
+                            s.pointer_id,
+                            true,
+                            true,
+                        );
                     } else {
                         begin(app, rect, p, s.pressure, source, s.eraser);
                     }
@@ -555,7 +594,14 @@ fn pen_sample(
 /// ペンが触れた最初の点の行き先。ビューを動かす（サイドボタン・Alt・Space・Ctrl+Space）・何もしない（押した所が別の部品・ビューを動かして
 /// いる最中・ステンシルを動かしている間・修飾を押したブラシと消しゴム）・道具。ステンシルを動かす押しは、同じ押しの egui のポインタの
 /// 代わりの入力をステンシルが取るので、ビューを動かす判定より先に手放す（マウスの押しと同じく、ステンシルだけが動く）。
-fn press_kind(ui: &Ui, app: &AppState, rect: Rect, p: Pos2, s: &PenSample, frame: &Frame) -> PressKind {
+fn press_kind(
+    ui: &Ui,
+    app: &AppState,
+    rect: Rect,
+    p: Pos2,
+    s: &PenSample,
+    frame: &Frame,
+) -> PressKind {
     if frame.press_blocked
         || !on_top(ui, rect, p)
         || app.view3d.input.nav.is_some()
@@ -609,7 +655,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
-    let space = ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
+    let space =
+        ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
     // ギズモのドラッグは、1 フレームに何度ポインタが動いても、最後の位置を 1 回だけ当てる（1 回ごとにスキニング・refit・
     // モデルの組み直しが走るので、高いポーリングのマウスやペンでは、途中の位置は描かれずに捨てられるだけ）。ボタンを離す・Esc・
     // フォーカスを失うの前には、そこまでの位置を当ててから終える
@@ -692,7 +739,12 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
                         flush(app, &mut drag_at);
                         gizmo::release(app, true);
-                        if app.fillfx.drag.as_ref().is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse) {
+                        if app
+                            .fillfx
+                            .drag
+                            .as_ref()
+                            .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                        {
                             crate::fillfx::gizmo::release(app, true);
                         }
                     }
@@ -709,7 +761,11 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
                 }
                 if app.view3d.pose.drag.is_some()
-                    || app.fillfx.drag.as_ref().is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                    || app
+                        .fillfx
+                        .drag
+                        .as_ref()
+                        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
                 {
                     drag_at = Some(pos);
                 }
@@ -775,7 +831,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     {
         finish(app, false);
     }
-    if app.path.drag.is_some_and(|d| d.source == StrokeSource::Mouse && d.surface)
+    if app
+        .path
+        .drag
+        .is_some_and(|d| d.source == StrokeSource::Mouse && d.surface)
         && !primary
         && !events
             .iter()

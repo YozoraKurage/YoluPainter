@@ -268,7 +268,13 @@ fn pixel(image: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
     [image[i], image[i + 1], image[i + 2], image[i + 3]]
 }
 
-fn original(generation: u32, material: u32, size: u32, read: OriginalRead, compressed: bool) -> MaterialOriginal {
+fn original(
+    generation: u32,
+    material: u32,
+    size: u32,
+    read: OriginalRead,
+    compressed: bool,
+) -> MaterialOriginal {
     MaterialOriginal {
         generation,
         material,
@@ -321,7 +327,10 @@ const MARKS: u64 = feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES;
 fn headless_a_new_set_waits_for_its_original_and_gets_it_under_the_first_layer() {
     let (mut a, name) = Headless::listen("under");
     let unity = a.connect(&name, MARKS);
-    assert_ne!(a.state.link.common_features() & feature::ORIGINAL_TEXTURES, 0);
+    assert_ne!(
+        a.state.link.common_features() & feature::ORIGINAL_TEXTURES,
+        0
+    );
     // Body は何も触っていない最初のセット（64 の文書）に付き、Hair は新しいセット（大きさは 256）、Plain は絵が無い
     unity.send(Message::Model(model(
         1,
@@ -331,24 +340,50 @@ fn headless_a_new_set_waits_for_its_original_and_gets_it_under_the_first_layer()
             material("Plain", None),
         ],
     )));
-    a.until("絵の無いマテリアルのセット", |_| unity.set_of(2).is_some());
-    assert_eq!(a.link.originals_waiting(), 2, "絵のある 2 つのセットは元の絵を待つ");
+    a.until("絵の無いマテリアルのセット", |_| {
+        unity.set_of(2).is_some()
+    });
+    assert_eq!(
+        a.link.originals_waiting(),
+        2,
+        "絵のある 2 つのセットは元の絵を待つ"
+    );
     a.settle();
     assert!(
         unity.set_of(0).is_none() && unity.set_of(1).is_none(),
         "元の絵が入るまで、空の絵で Unity の表示を置き換えない: {:?}",
         unity.sets().iter().map(|s| s.material).collect::<Vec<_>>()
     );
-    assert!(!a.state.link.published.contains(&a.state.sets.get(0).unwrap().uid));
+    assert!(!a
+        .state
+        .link
+        .published
+        .contains(&a.state.sets.get(0).unwrap().uid));
     let (body, hair) = (a.set_index("Body"), a.set_index("Hair"));
     assert_eq!(a.state.set_doc(hair).width(), 256);
     assert_eq!(a.layer_names(body), ["レイヤー 1"]);
-    assert_eq!(a.state.set_doc(body).width(), 64, "最初のセットは、元の絵が届くまで作り直さない");
+    assert_eq!(
+        a.state.set_doc(body).width(),
+        64,
+        "最初のセットは、元の絵が届くまで作り直さない"
+    );
     let before_message = a.state.message.clone();
 
     // 元の絵が届く: Body は 256（原本のファイルから）、Hair は半分の大きさ（GPU を通して・圧縮から）
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 128, OriginalRead::Gpu, true)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        128,
+        OriginalRead::Gpu,
+        true,
+    )));
     a.until("元の絵を入れたセット", |_| {
         unity.set_of(0).is_some() && unity.set_of(1).is_some()
     });
@@ -358,7 +393,10 @@ fn headless_a_new_set_waits_for_its_original_and_gets_it_under_the_first_layer()
     // 何も触っていない最初のセットは、元の絵の大きさ（256）で作り直した文書に替わる（Hair と同じ大きさ）
     assert_eq!(a.state.set_doc(body).width(), 256);
     assert_eq!(a.state.set_doc(body).height(), 256);
-    assert_eq!(a.state.sets.get(body).unwrap().id, yolu_app::sets::guid_string(a.state.set_doc(body).id()));
+    assert_eq!(
+        a.state.sets.get(body).unwrap().id,
+        yolu_app::sets::guid_string(a.state.set_doc(body).id())
+    );
     // 一番下に「元の絵」、その上に最初の層。Undo の段は増えず、編集の印も付かない
     for set in [body, hair] {
         assert_eq!(a.layer_names(set), ["元の絵", "レイヤー 1"], "{set}");
@@ -367,15 +405,26 @@ fn headless_a_new_set_waits_for_its_original_and_gets_it_under_the_first_layer()
         assert_eq!(doc.undo_count(), 0);
     }
     assert!(!a.state.modified);
-    assert_eq!(a.state.message, before_message, "入れたことは知らせない（入れなかったときだけ）");
+    assert_eq!(
+        a.state.message, before_message,
+        "入れたことは知らせない（入れなかったときだけ）"
+    );
     // 同じ大きさ: 画素をそのまま（透明な画素の RGB も）
     let doc = a.state.set_doc(body);
     let bottom = &doc.layers()[0];
     let expected = picture(256);
     for (x, y) in [(0, 0), (5, 5), (3, 3), (255, 255), (10, 40), (200, 100)] {
-        assert_eq!(layer_pixel(bottom, x, y), pixel(&expected, 256, x, y), "({x}, {y})");
+        assert_eq!(
+            layer_pixel(bottom, x, y),
+            pixel(&expected, 256, x, y),
+            "({x}, {y})"
+        );
     }
-    assert_eq!(composite_pixel(doc, 5, 5), pixel(&expected, 256, 5, 5), "合成にも出る");
+    assert_eq!(
+        composite_pixel(doc, 5, 5),
+        pixel(&expected, 256, 5, 5),
+        "合成にも出る"
+    );
     assert!(
         !yolu_app::engine::layer_has_pixels(&doc.layers()[1]),
         "上の層は空のまま"
@@ -398,11 +447,17 @@ fn headless_a_new_set_waits_for_its_original_and_gets_it_under_the_first_layer()
     // 層の欄の印: 読み方・拡大縮小の理由（原本のそのままの値には出さない）
     let marks = &a.state.link_originals;
     let body_mark = marks
-        .get(a.state.set_doc(body).id(), a.state.set_doc(body).layers()[0].id())
+        .get(
+            a.state.set_doc(body).id(),
+            a.state.set_doc(body).layers()[0].id(),
+        )
         .unwrap();
     assert!(!body_mark.is_noted(), "{body_mark:?}");
     let hair_mark = marks
-        .get(a.state.set_doc(hair).id(), a.state.set_doc(hair).layers()[0].id())
+        .get(
+            a.state.set_doc(hair).id(),
+            a.state.set_doc(hair).layers()[0].id(),
+        )
         .unwrap();
     assert!(hair_mark.gpu && hair_mark.compressed && !hair_mark.converted);
     assert_eq!(hair_mark.resized_from, Some((128, 128)));
@@ -415,13 +470,26 @@ fn headless_the_exported_png_holds_the_original_under_the_painting() {
     let unity = a.connect(&name, MARKS);
     unity.send(Message::Model(model(1, vec![material("Body", Some(256))])));
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
     a.until("元の絵", |_| unity.set_of(0).is_some());
     // 元の絵の上に描いた層（半分透明の赤）を足す: 書き出しは、下に元の絵が見える
     let doc = &mut a.state.doc;
     let layer = doc.layers()[1].id();
-    let clip = PixelClipboard::from_image(256, 256, [255u8, 0, 0, 128].repeat(256 * 256), Channel::Color).unwrap();
-    doc.paste_as_layer(&clip, Channel::Color, Some("赤"), Some(layer)).unwrap();
+    let clip = PixelClipboard::from_image(
+        256,
+        256,
+        [255u8, 0, 0, 128].repeat(256 * 256),
+        Channel::Color,
+    )
+    .unwrap();
+    doc.paste_as_layer(&clip, Channel::Color, Some("赤"), Some(layer))
+        .unwrap();
     let png = yolu_io::composite_png(&a.state.doc).unwrap();
     let image = image::load_from_memory(&png).unwrap().to_rgba8();
     let expected = picture(256);
@@ -434,7 +502,10 @@ fn headless_the_exported_png_holds_the_original_under_the_painting() {
         (1, source[1] as f32 * 127.0 / 255.0),
         (2, source[2] as f32 * 127.0 / 255.0),
     ] {
-        assert!((got[c] as f32 - want).abs() <= 2.0, "チャンネル {c}: {got:?} は {want}");
+        assert!(
+            (got[c] as f32 - want).abs() <= 2.0,
+            "チャンネル {c}: {got:?} は {want}"
+        );
     }
     assert_eq!(got[3], 255, "下の元の絵は不透明");
     // .ylp に入る合成も同じ（セットの合成の PNG）
@@ -477,13 +548,37 @@ fn headless_originals_leave_painted_sets_and_what_the_user_opened_alone() {
         vec![material("Body", Some(64)), material("Hair", Some(64))],
     )));
     a.until("描いたセット", |_| unity.set_of(0).is_some());
-    assert_eq!(a.link.originals_waiting(), 1, "待つのは新しいセットだけ（描いたセットは待たせず出す）");
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 64, OriginalRead::File, false)));
+    assert_eq!(
+        a.link.originals_waiting(),
+        1,
+        "待つのは新しいセットだけ（描いたセットは待たせず出す）"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.until("Hair のセット", |_| unity.set_of(1).is_some());
     a.settle();
-    assert_eq!(a.layer_names(a.set_index("Body")), ["レイヤー 1", "描いた"], "描いたセットは変えない");
-    assert_eq!(a.state.set_doc(a.set_index("Body")).width(), 64, "描いた最初のセットは作り直さない");
+    assert_eq!(
+        a.layer_names(a.set_index("Body")),
+        ["レイヤー 1", "描いた"],
+        "描いたセットは変えない"
+    );
+    assert_eq!(
+        a.state.set_doc(a.set_index("Body")).width(),
+        64,
+        "描いた最初のセットは作り直さない"
+    );
     assert_eq!(layer_pixel(&a.state.doc.layers()[1], 5, 5), painted);
     assert_eq!(a.layer_names(a.set_index("Hair")), ["元の絵", "レイヤー 1"]);
     assert!(
@@ -506,14 +601,35 @@ fn headless_a_set_edited_while_waiting_does_not_get_the_original() {
     // 元の絵が届く前に、利用者が Hair に描いた
     let hair = a.set_index("Hair");
     a.paint(hair);
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 64, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
-    assert_eq!(a.layer_names(hair), ["レイヤー 1", "描いた"], "描いたものを黙って変えない");
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
+    assert_eq!(
+        a.layer_names(hair),
+        ["レイヤー 1", "描いた"],
+        "描いたものを黙って変えない"
+    );
     assert_eq!(a.layer_names(a.set_index("Body")), ["元の絵", "レイヤー 1"]);
     let (level, text) = a.state.link.notice.clone().unwrap();
     assert_eq!(level, NoticeLevel::Warning);
-    assert!(text.contains("元の絵を入れませんでした") && text.contains("Hair"), "{text}");
+    assert!(
+        text.contains("元の絵を入れませんでした") && text.contains("Hair"),
+        "{text}"
+    );
     assert!(text.contains("すでに編集されています"), "{text}");
     // 描いた内容で出る（元の絵は含まない）
     let announced = unity.set_of(1).unwrap();
@@ -531,10 +647,26 @@ fn headless_a_declined_original_lets_the_set_out_empty_with_the_reason() {
         vec![material("Body", Some(64)), material("Hair", Some(64))],
     )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(declined(1, 1, OriginalState::TooLarge)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
-    assert_eq!(a.layer_names(a.set_index("Hair")), ["レイヤー 1"], "絵が付かなければ層を足さない");
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(declined(
+        1,
+        1,
+        OriginalState::TooLarge,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
+    assert_eq!(
+        a.layer_names(a.set_index("Hair")),
+        ["レイヤー 1"],
+        "絵が付かなければ層を足さない"
+    );
     assert_eq!(
         composite_pixel(a.state.set_doc(a.set_index("Hair")), 5, 5),
         [0, 0, 0, 0],
@@ -542,14 +674,28 @@ fn headless_a_declined_original_lets_the_set_out_empty_with_the_reason() {
     );
     let (level, text) = a.state.link.notice.clone().unwrap();
     assert_eq!(level, NoticeLevel::Warning);
-    assert!(text.contains("Hair") && text.contains("大きすぎます（16384×16384）"), "{text}");
+    assert!(
+        text.contains("Hair") && text.contains("大きすぎます（16384×16384）"),
+        "{text}"
+    );
     assert!(!text.contains("Body"), "{text}");
     // 理由ごとの文（日本語と英語）
     for (state, ja, en) in [
-        (OriginalState::Unreadable, "Unity が読めませんでした", "Unity could not read it"),
-        (OriginalState::OverBudget, "一度に送れる量を超えました", "Over the amount Unity sends at once"),
+        (
+            OriginalState::Unreadable,
+            "Unity が読めませんでした",
+            "Unity could not read it",
+        ),
+        (
+            OriginalState::OverBudget,
+            "一度に送れる量を超えました",
+            "Over the amount Unity sends at once",
+        ),
     ] {
-        for (lang, want) in [(yolu_app::lang::Lang::Ja, ja), (yolu_app::lang::Lang::En, en)] {
+        for (lang, want) in [
+            (yolu_app::lang::Lang::Ja, ja),
+            (yolu_app::lang::Lang::En, en),
+        ] {
             let (mut b, name) = Headless::listen("reason");
             b.state.lang = lang;
             let unity = b.connect(&name, MARKS);
@@ -562,7 +708,11 @@ fn headless_a_declined_original_lets_the_set_out_empty_with_the_reason() {
             // 最初のセットも、読めない・大きすぎる・予算超えの絵では作り直さず、白で埋めない
             assert_eq!(b.state.doc.width(), 64, "{lang:?} {state:?}");
             assert_eq!(b.layer_names(0).len(), 1, "{lang:?} {state:?}");
-            assert_eq!(composite_pixel(&b.state.doc, 5, 5), [0, 0, 0, 0], "{lang:?} {state:?}");
+            assert_eq!(
+                composite_pixel(&b.state.doc, 5, 5),
+                [0, 0, 0, 0],
+                "{lang:?} {state:?}"
+            );
         }
     }
 }
@@ -575,15 +725,31 @@ fn headless_a_stroke_in_progress_delays_the_original_until_it_ends() {
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
     // 描き始めたところ（まだ何も変えていない）へ元の絵が届く: 描いている最中は文書を変えず、セットも出さない
     let layer = a.state.doc.layers()[0].id();
-    let stroke = a.state.doc.begin_stroke(layer, &BrushSettings::default()).unwrap();
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
+    let stroke = a
+        .state
+        .doc
+        .begin_stroke(layer, &BrushSettings::default())
+        .unwrap();
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.settle();
     assert_eq!(a.layer_names(0), ["レイヤー 1"]);
-    assert_eq!(a.link.originals_waiting(), 1, "届いたが入れるのを待っている");
+    assert_eq!(
+        a.link.originals_waiting(),
+        1,
+        "届いたが入れるのを待っている"
+    );
     assert!(unity.set_of(0).is_none());
     // 描くのをやめる（何も描かなかった）と、そのあとのフレームで入る
     a.state.doc.cancel_stroke(stroke);
-    a.until("元の絵を入れたセット", |_| unity.set_of(0).is_some());
+    a.until("元の絵を入れたセット", |_| {
+        unity.set_of(0).is_some()
+    });
     assert_eq!(a.layer_names(0), ["元の絵", "レイヤー 1"]);
 }
 
@@ -592,19 +758,39 @@ fn headless_a_unity_without_the_mark_gets_nothing_held_and_a_stray_original_is_r
     let (mut a, name) = Headless::listen("nomark");
     // 元の絵の印を出さない Unity（この機能より古いパッケージ）: セットは待たせずに出し、元の絵は入れない
     let unity = a.connect(&name, feature::MATERIAL_VALUES);
-    assert_eq!(a.state.link.common_features() & feature::ORIGINAL_TEXTURES, 0);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(64)), material("Hair", Some(64))])));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    assert_eq!(
+        a.state.link.common_features() & feature::ORIGINAL_TEXTURES,
+        0
+    );
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.link.originals_waiting(), 0);
     assert!(
         !unity
             .conn
-            .send_gated(&Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)))
+            .send_gated(&Message::MaterialOriginal(original(
+                1,
+                0,
+                64,
+                OriginalRead::File,
+                false
+            )))
             .unwrap(),
         "印の無い相手へは送らない"
     );
     // 守らずに送ってきても入れない（命令の食い違いとして、誤りで返す）
-    unity.send(Message::MaterialOriginal(original(1, 1, 64, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.until("誤りの返事", |_| unity.errors().len() == 1);
     assert_eq!(unity.errors()[0].code, ErrorCode::Refused);
     assert_eq!(a.layer_names(a.set_index("Hair")), ["レイヤー 1"]);
@@ -614,11 +800,20 @@ fn headless_a_unity_without_the_mark_gets_nothing_held_and_a_stray_original_is_r
 fn headless_a_mismatched_original_is_answered_with_an_error_and_changes_nothing() {
     let (mut a, name) = Headless::listen("mismatch");
     let unity = a.connect(&name, MARKS);
-    unity.send(Message::Model(model(2, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        2,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
     let shown = a.state.message.clone();
     // 古い世代・知らせていないスロット: 何も変えずに断る（画面の知らせには出さない）
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     let mut other_slot = original(2, 1, 64, OriginalRead::File, false);
     other_slot.slot = "_OtherTex".into();
     unity.send(Message::MaterialOriginal(other_slot));
@@ -631,9 +826,23 @@ fn headless_a_mismatched_original_is_answered_with_an_error_and_changes_nothing(
     assert_eq!(a.state.message, shown);
     assert_eq!(a.layer_names(0), ["レイヤー 1"]);
     // 正しい元の絵はそのあとも入る
-    unity.send(Message::MaterialOriginal(original(2, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(2, 1, 64, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        2,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        2,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.layer_names(a.set_index("Hair")), ["元の絵", "レイヤー 1"]);
 }
 
@@ -641,24 +850,43 @@ fn headless_a_mismatched_original_is_answered_with_an_error_and_changes_nothing(
 fn headless_an_original_command_that_cannot_be_read_lets_every_waiting_set_out_at_once() {
     let (mut a, name) = Headless::listen("unreadable");
     let unity = a.connect(&name, MARKS);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
     assert_eq!(a.link.originals_waiting(), 2);
     // 元の絵でない命令が読めなくても、待ちは変わらない（読めなかった命令の種類を見て、元の絵のときだけ出す）
-    unity.conn.send_raw(Kind::MaterialValues as u16, &[1, 0]).unwrap();
+    unity
+        .conn
+        .send_raw(Kind::MaterialValues as u16, &[1, 0])
+        .unwrap();
     a.until("値の命令の誤り", |_| {
-        unity.errors().iter().any(|e| e.kind == Kind::MaterialValues as u16)
+        unity
+            .errors()
+            .iter()
+            .any(|e| e.kind == Kind::MaterialValues as u16)
     });
     a.settle();
-    assert_eq!(a.link.originals_waiting(), 2, "元の絵の命令でない誤りでは出さない");
+    assert_eq!(
+        a.link.originals_waiting(),
+        2,
+        "元の絵の命令でない誤りでは出さない"
+    );
     assert!(unity.set_of(0).is_none() && unity.set_of(1).is_none());
     // 元の絵の命令が読めない（画素が途中で切れている）: どの絵が欠けたか分からないので、待たずに全部出す。STALL（30 秒）を待った出し方と
     // 区別するため、その半分の時間のうちに出ることを見る
-    let mut payload = Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)).encode_payload();
+    let mut payload =
+        Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)).encode_payload();
     payload.truncate(payload.len() - 100);
     let sent = Instant::now();
-    unity.conn.send_raw(Kind::MaterialOriginal as u16, &payload).unwrap();
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity
+        .conn
+        .send_raw(Kind::MaterialOriginal as u16, &payload)
+        .unwrap();
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert!(
         sent.elapsed() < yolu_app::livelink_base::STALL / 2,
         "待たずに出る: {:?}",
@@ -666,18 +894,30 @@ fn headless_an_original_command_that_cannot_be_read_lets_every_waiting_set_out_a
     );
     assert_eq!(a.link.originals_waiting(), 0);
     assert!(
-        unity.errors().iter().any(|e| e.kind == Kind::MaterialOriginal as u16),
+        unity
+            .errors()
+            .iter()
+            .any(|e| e.kind == Kind::MaterialOriginal as u16),
         "読めない命令は Unity へ誤りで返る"
     );
     // 画面の知らせは、読めなかった命令の警告（STALL の「届きませんでした」ではない）
     let (level, text) = a.state.link.notice.clone().unwrap();
     assert_eq!(level, NoticeLevel::Warning);
-    assert!(text.contains("MaterialOriginal") && text.contains("読めません"), "{text}");
+    assert!(
+        text.contains("MaterialOriginal") && text.contains("読めません"),
+        "{text}"
+    );
     assert!(!text.contains("届きませんでした"), "{text}");
     // 元の絵は入らず、出したあとに届いた元の絵も（待たせていないので）入れない
     assert_eq!(a.layer_names(a.set_index("Body")), ["レイヤー 1"]);
     assert_eq!(a.layer_names(a.set_index("Hair")), ["レイヤー 1"]);
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.settle();
     assert_eq!(a.layer_names(a.set_index("Body")), ["レイヤー 1"]);
 }
@@ -686,27 +926,74 @@ fn headless_an_original_command_that_cannot_be_read_lets_every_waiting_set_out_a
 fn headless_a_model_sent_again_keeps_waiting_and_an_installed_original_is_not_replaced() {
     let (mut a, name) = Headless::listen("again");
     let unity = a.connect(&name, MARKS);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(64)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
     // 元の絵が揃う前に、Unity がモデルを送り直した（構造の変化）: 待ちは持ち越され、新しい世代の元の絵を待つ
-    unity.send(Message::Model(model(2, vec![material("Body", Some(64)), material("Hair", Some(64))])));
-    a.until("新しい世代", |a| a.state.model.as_ref().is_some_and(|m| m.generation == 2));
+    unity.send(Message::Model(model(
+        2,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
+    a.until("新しい世代", |a| {
+        a.state.model.as_ref().is_some_and(|m| m.generation == 2)
+    });
     assert_eq!(a.link.originals_waiting(), 2);
     a.settle();
     assert!(unity.set_of(0).is_none() && unity.set_of(1).is_none());
-    unity.send(Message::MaterialOriginal(original(2, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(2, 1, 64, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        2,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        2,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     // 入れたあとの送り直し: 元の絵がまた届いても、描いていなくても 2 枚目は入らない
-    unity.send(Message::Model(model(3, vec![material("Body", Some(64)), material("Hair", Some(64))])));
-    a.until("3 世代目", |a| a.state.model.as_ref().is_some_and(|m| m.generation == 3));
-    assert_eq!(a.link.originals_waiting(), 0, "入れたセットは文書が変わっているので待たせない");
-    unity.send(Message::MaterialOriginal(original(3, 0, 64, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(3, 1, 64, OriginalRead::File, false)));
+    unity.send(Message::Model(model(
+        3,
+        vec![material("Body", Some(64)), material("Hair", Some(64))],
+    )));
+    a.until("3 世代目", |a| {
+        a.state.model.as_ref().is_some_and(|m| m.generation == 3)
+    });
+    assert_eq!(
+        a.link.originals_waiting(),
+        0,
+        "入れたセットは文書が変わっているので待たせない"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        3,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        3,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.settle();
     assert_eq!(a.layer_names(a.set_index("Body")), ["元の絵", "レイヤー 1"]);
     assert_eq!(a.layer_names(a.set_index("Hair")), ["元の絵", "レイヤー 1"]);
-    assert_eq!(a.state.set_doc(a.set_index("Body")).width(), 256, "持ち越した待ちも、最初のセットを作り直して入れる");
+    assert_eq!(
+        a.state.set_doc(a.set_index("Body")).width(),
+        256,
+        "持ち越した待ちも、最初のセットを作り直して入れる"
+    );
     assert!(unity.errors().is_empty(), "{:?}", unity.errors());
 }
 
@@ -732,24 +1019,52 @@ fn headless_the_original_is_an_ordinary_layer_after_saving_and_opening() {
     let path = dir.0.join("元の絵.ylp");
     let (mut a, name) = Headless::listen("save");
     let unity = a.connect(&name, MARKS);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(256)), material("Hair", Some(128))])));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(256)), material("Hair", Some(128))],
+    )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 128, OriginalRead::Imported, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        128,
+        OriginalRead::Imported,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     a.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(a.state.message.starts_with("保存しました"), "{}", a.state.message);
+    assert!(
+        a.state.message.starts_with("保存しました"),
+        "{}",
+        a.state.message
+    );
 
     // 開き直す: 普通のピクセルレイヤーとして復元される（描いた層の下、画素は保存したまま）
     let mut b = AppState::new(64, 64);
     b.apply(Action::OpenProject(path.clone()));
     assert_eq!(b.sets.len(), 2);
     for (i, expected) in [(0usize, picture(256)), (1, picture(128))] {
-        let set = b.sets.iter().position(|s| s.name == a.state.sets.get(i).unwrap().name).unwrap();
+        let set = b
+            .sets
+            .iter()
+            .position(|s| s.name == a.state.sets.get(i).unwrap().name)
+            .unwrap();
         let doc = b.set_doc(set);
         let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["元の絵", "レイヤー 1"]);
-        assert_eq!(layer_pixel(&doc.layers()[0], 0, 0), pixel(&expected, if i == 0 { 256 } else { 128 }, 0, 0));
+        assert_eq!(
+            layer_pixel(&doc.layers()[0], 0, 0),
+            pixel(&expected, if i == 0 { 256 } else { 128 }, 0, 0)
+        );
         if i == 0 {
             // 同じ大きさで入れた絵は、透明な画素の RGB も保存される
             assert_eq!(layer_pixel(&doc.layers()[0], 3, 3), [9, 8, 7, 0]);
@@ -762,12 +1077,31 @@ fn headless_the_original_is_an_ordinary_layer_after_saving_and_opening() {
     let (mut c, name) = Headless::listen("reopen");
     c.state.apply(Action::OpenProject(path));
     let unity = c.connect(&name, MARKS);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(256)), material("Hair", Some(128))])));
-    c.until("セット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
-    assert_eq!(c.link.originals_waiting(), 0, "開いたプロジェクトのセットは待たせない");
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(256)), material("Hair", Some(128))],
+    )));
+    c.until("セット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
+    assert_eq!(
+        c.link.originals_waiting(),
+        0,
+        "開いたプロジェクトのセットは待たせない"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
     c.settle();
-    assert_eq!(c.layer_names(c.set_index("Body")), ["元の絵", "レイヤー 1"], "二重に入らない");
+    assert_eq!(
+        c.layer_names(c.set_index("Body")),
+        ["元の絵", "レイヤー 1"],
+        "二重に入らない"
+    );
 }
 
 #[test]
@@ -778,12 +1112,21 @@ fn headless_an_original_over_the_documents_pixel_budget_is_refused_with_the_reas
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
     // 層の画素の予算が足りない文書（予算を超えて入れない。黙って切り詰めない）
     a.state.doc.set_source_budget_bytes(1024).unwrap();
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.until("セット", |_| unity.set_of(0).is_some());
     assert_eq!(a.layer_names(0), ["レイヤー 1"]);
     let (level, text) = a.state.link.notice.clone().unwrap();
     assert_eq!(level, NoticeLevel::Warning);
-    assert!(text.contains("元の絵を入れませんでした") && text.contains("予算"), "{text}");
+    assert!(
+        text.contains("元の絵を入れませんでした") && text.contains("予算"),
+        "{text}"
+    );
 }
 
 /// PSD を書く（赤で塗った 1 枚のレイヤーを持つ、size × size の文書）。
@@ -812,11 +1155,28 @@ fn headless_a_psd_imported_after_linking_replaces_the_set_unity_shows_it_and_the
     let psd = write_red_psd(&dir, 256);
     let (mut a, name) = Headless::listen("psd");
     let unity = a.connect(&name, MARKS);
-    unity.send(Message::Model(model(1, vec![material("Body", Some(256)), material("Hair", Some(64))])));
+    unity.send(Message::Model(model(
+        1,
+        vec![material("Body", Some(256)), material("Hair", Some(64))],
+    )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 64, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        64,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     let body = a.set_index("Body");
     assert_eq!(a.state.sets.current_index(), body);
     let updates = unity.tile_updates(unity.set_of(0).unwrap().set);
@@ -827,10 +1187,20 @@ fn headless_a_psd_imported_after_linking_replaces_the_set_unity_shows_it_and_the
         target: PsdTarget::CurrentSet,
     }));
     a.state.wait_psd();
-    assert!(a.state.message.contains("PSD を読み込みました"), "{}", a.state.message);
-    assert_eq!(a.layer_names(body), ["レイヤー 1", "赤"], "PSD の層に替わる（元の絵の層は、文書ごと替わる）");
+    assert!(
+        a.state.message.contains("PSD を読み込みました"),
+        "{}",
+        a.state.message
+    );
+    assert_eq!(
+        a.layer_names(body),
+        ["レイヤー 1", "赤"],
+        "PSD の層に替わる（元の絵の層は、文書ごと替わる）"
+    );
     // Unity にも届く（同じセットの全タイルが新しい中身で書き直される）
-    a.until("書き直し", |_| unity.tile_updates(unity.set_of(0).unwrap().set) > updates);
+    a.until("書き直し", |_| {
+        unity.tile_updates(unity.set_of(0).unwrap().set) > updates
+    });
     let announced = unity.set_of(0).unwrap();
     let image = read_image(&announced.channels[0].path, 256, 256);
     assert_eq!(pixel(&image, 256, 5, 5), [255, 0, 0, 255]);
@@ -845,12 +1215,20 @@ fn headless_a_psd_imported_after_linking_replaces_the_set_unity_shows_it_and_the
     a.state.wait_psd();
     assert_eq!(a.state.sets.len(), sets + 1);
     a.settle();
-    assert_eq!(unity.sets().len(), 2, "名前の合うマテリアルが無ければ、Unity に出さない");
+    assert_eq!(
+        unity.sets().len(),
+        2,
+        "名前の合うマテリアルが無ければ、Unity に出さない"
+    );
 
     // .ylp に保存して開き直すと、PSD の層も Live Link で作ったセットもそのまま
     let path = dir.0.join("リンクのあと.ylp");
     a.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(a.state.message.starts_with("保存しました"), "{}", a.state.message);
+    assert!(
+        a.state.message.starts_with("保存しました"),
+        "{}",
+        a.state.message
+    );
     let mut b = AppState::new(64, 64);
     b.apply(Action::OpenProject(path));
     assert_eq!(b.sets.len(), 3);
@@ -858,7 +1236,11 @@ fn headless_a_psd_imported_after_linking_replaces_the_set_unity_shows_it_and_the
     assert_eq!(composite_pixel(b.set_doc(reopened), 5, 5), [255, 0, 0, 255]);
     let hair = b.sets.iter().position(|s| s.name == "Hair").unwrap();
     assert_eq!(
-        b.set_doc(hair).layers().iter().map(|l| l.name().to_owned()).collect::<Vec<_>>(),
+        b.set_doc(hair)
+            .layers()
+            .iter()
+            .map(|l| l.name().to_owned())
+            .collect::<Vec<_>>(),
         ["元の絵", "レイヤー 1"],
         "つないで作ったセットの元の絵も保存される"
     );
@@ -877,29 +1259,56 @@ fn headless_the_untouched_first_set_is_rebuilt_at_the_originals_size() {
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
     assert_eq!(a.link.originals_waiting(), 1);
     assert_eq!(a.state.doc.width(), 2048, "元の絵が届くまでは作り直さない");
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
-    a.until("元の絵を入れたセット", |_| unity.set_of(0).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("元の絵を入れたセット", |_| {
+        unity.set_of(0).is_some()
+    });
 
     let doc = &a.state.doc;
     assert_eq!((doc.width(), doc.height()), (512, 512));
     assert_ne!(doc.id(), first, "文書は作り直した");
-    assert_eq!(a.state.sets.current().uid, uid, "セットは同じ（uid・名前・マテリアルへの結び付け）");
+    assert_eq!(
+        a.state.sets.current().uid,
+        uid,
+        "セットは同じ（uid・名前・マテリアルへの結び付け）"
+    );
     assert_eq!(a.state.sets.current().bound, Some(0));
-    assert_eq!(a.state.sets.current().id, yolu_app::sets::guid_string(doc.id()));
+    assert_eq!(
+        a.state.sets.current().id,
+        yolu_app::sets::guid_string(doc.id())
+    );
     assert_eq!(a.layer_names(0), ["元の絵", "レイヤー 1"]);
     // 同じ大きさなので画素はそのまま（透明な画素の RGB も）。印も付かない
     let expected = picture(512);
     for (x, y) in [(0, 0), (5, 5), (3, 3), (511, 511), (300, 77)] {
-        assert_eq!(layer_pixel(&doc.layers()[0], x, y), pixel(&expected, 512, x, y), "({x}, {y})");
+        assert_eq!(
+            layer_pixel(&doc.layers()[0], x, y),
+            pixel(&expected, 512, x, y),
+            "({x}, {y})"
+        );
     }
     assert_eq!(layer_pixel(&doc.layers()[0], 3, 3), [9, 8, 7, 0]);
-    let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
+    let mark = a
+        .state
+        .link_originals
+        .get(doc.id(), doc.layers()[0].id())
+        .unwrap();
     assert!(!mark.is_noted(), "{mark:?}");
     // 作った直後の初期化: Undo の段にならず、変更の印も付かない
     assert!(!doc.can_undo());
     assert_eq!(doc.undo_count(), 0);
     assert!(!a.state.modified);
-    assert_eq!(a.state.selected_layer, Some(doc.layers()[1].id()), "選んでいる層は新しい文書の最初の層");
+    assert_eq!(
+        a.state.selected_layer,
+        Some(doc.layers()[1].id()),
+        "選んでいる層は新しい文書の最初の層"
+    );
     // Unity には、作り直した大きさで、元の絵を含んで出る（空の 2048 は出さない）
     let announced = unity.set_of(0).unwrap();
     assert_eq!((announced.width, announced.height), (512, 512));
@@ -919,15 +1328,37 @@ fn headless_the_first_set_gets_the_same_size_as_a_new_set_for_the_same_texture()
     )));
     a.until("結び付け", |a| a.state.sets.len() == 2);
     let hair = a.set_index("Hair");
-    assert_eq!(a.state.set_doc(hair).width(), 1024, "新しいセットは作るときに丸める");
-    unity.send(Message::MaterialOriginal(original(1, 0, 600, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 600, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    assert_eq!(
+        a.state.set_doc(hair).width(),
+        1024,
+        "新しいセットは作るときに丸める"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        600,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        600,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     let body = a.set_index("Body");
     for set in [body, hair] {
         let doc = a.state.set_doc(set);
         assert_eq!((doc.width(), doc.height()), (1024, 1024), "{set}");
-        let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
+        let mark = a
+            .state
+            .link_originals
+            .get(doc.id(), doc.layers()[0].id())
+            .unwrap();
         assert_eq!(mark.resized_from, Some((600, 600)), "{set}");
     }
 }
@@ -942,12 +1373,18 @@ fn headless_a_4096_original_no_longer_shrinks_into_a_default_sized_first_set() {
     let mut o = original(1, 0, 4096, OriginalRead::File, false);
     o.pixels = [30u8, 60, 90, 255].repeat(4096 * 4096);
     unity.send(Message::MaterialOriginal(o));
-    a.until("元の絵を入れたセット", |_| unity.set_of(0).is_some());
+    a.until("元の絵を入れたセット", |_| {
+        unity.set_of(0).is_some()
+    });
     let doc = &a.state.doc;
     assert_eq!((doc.width(), doc.height()), (4096, 4096));
     assert_eq!(layer_pixel(&doc.layers()[0], 4095, 4095), [30, 60, 90, 255]);
     assert_eq!(layer_pixel(&doc.layers()[0], 100, 3000), [30, 60, 90, 255]);
-    let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
+    let mark = a
+        .state
+        .link_originals
+        .get(doc.id(), doc.layers()[0].id())
+        .unwrap();
     assert!(!mark.is_noted(), "縮めていないので印は付かない: {mark:?}");
     assert!(unity.errors().is_empty(), "{:?}", unity.errors());
 }
@@ -961,14 +1398,26 @@ fn headless_a_first_set_edited_while_waiting_is_neither_rebuilt_nor_given_the_or
     assert_eq!(a.link.originals_waiting(), 1);
     // 元の絵が届く前に、利用者が最初のセットに描いた
     a.paint(0);
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
     a.until("セット", |_| unity.set_of(0).is_some());
     assert_eq!(a.state.doc.width(), 64, "触ったセットは作り直さない");
     assert_eq!(a.layer_names(0), ["レイヤー 1", "描いた"]);
     let (level, text) = a.state.link.notice.clone().unwrap();
     assert_eq!(level, NoticeLevel::Warning);
-    assert!(text.contains("Body") && text.contains("すでに編集されています"), "{text}");
-    assert_eq!(layer_pixel(&a.state.doc.layers()[1], 5, 5), [90, 80, 70, 255]);
+    assert!(
+        text.contains("Body") && text.contains("すでに編集されています"),
+        "{text}"
+    );
+    assert_eq!(
+        layer_pixel(&a.state.doc.layers()[1], 5, 5),
+        [90, 80, 70, 255]
+    );
 }
 
 #[test]
@@ -980,11 +1429,21 @@ fn headless_a_first_set_with_only_history_is_not_waited_for_or_rebuilt() {
     unity.send(Message::Model(model(1, vec![material("Body", Some(512))])));
     a.until("セット", |_| unity.set_of(0).is_some());
     assert_eq!(a.link.originals_waiting(), 0);
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
     a.settle();
     assert_eq!(a.state.doc.width(), 64);
     assert_eq!(a.layer_names(0), ["レイヤー 1", "手を付けた"]);
-    assert!(unity.errors().is_empty(), "待たせていない元の絵は黙って捨てる: {:?}", unity.errors());
+    assert!(
+        unity.errors().is_empty(),
+        "待たせていない元の絵は黙って捨てる: {:?}",
+        unity.errors()
+    );
 }
 
 #[test]
@@ -1000,10 +1459,24 @@ fn headless_the_first_set_of_a_project_the_user_opened_is_not_rebuilt() {
     let unity = c.connect(&name, MARKS);
     unity.send(Message::Model(model(1, vec![material("Body", Some(512))])));
     c.until("セット", |_| unity.set_of(0).is_some());
-    assert_eq!(c.link.originals_waiting(), 0, "開いたプロジェクトのセットは待たせない");
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
+    assert_eq!(
+        c.link.originals_waiting(),
+        0,
+        "開いたプロジェクトのセットは待たせない"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
     c.settle();
-    assert_eq!(c.state.doc.width(), 64, "開いたプロジェクトのセットは作り直さない");
+    assert_eq!(
+        c.state.doc.width(),
+        64,
+        "開いたプロジェクトのセットは作り直さない"
+    );
     assert_eq!(c.layer_names(0), ["レイヤー 1"]);
 }
 
@@ -1020,16 +1493,33 @@ fn headless_an_original_that_does_not_fit_at_its_own_size_is_shrunk_into_the_cur
             _ => a.state.doc.set_stroke_budget_bytes(300 << 10).unwrap(),
         }
         let first = a.state.doc.id();
-        unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
+        unity.send(Message::MaterialOriginal(original(
+            1,
+            0,
+            512,
+            OriginalRead::File,
+            false,
+        )));
         a.until("セット", |_| unity.set_of(0).is_some());
         let doc = &a.state.doc;
-        assert_eq!(doc.id(), first, "{kind}: 作り直した文書には入らないので、今の文書へ入れる");
+        assert_eq!(
+            doc.id(),
+            first,
+            "{kind}: 作り直した文書には入らないので、今の文書へ入れる"
+        );
         assert_eq!((doc.width(), doc.height()), (64, 64), "{kind}");
         assert_eq!(a.layer_names(0), ["元の絵", "レイヤー 1"], "{kind}");
         let bottom = layer_pixel(&doc.layers()[0], 30, 30);
         assert_eq!(bottom[3], 255, "{kind}: {bottom:?}");
-        assert!((240..=247).contains(&bottom[0]), "{kind}: 8 × 8 の平均 {bottom:?}");
-        let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
+        assert!(
+            (240..=247).contains(&bottom[0]),
+            "{kind}: 8 × 8 の平均 {bottom:?}"
+        );
+        let mark = a
+            .state
+            .link_originals
+            .get(doc.id(), doc.layers()[0].id())
+            .unwrap();
         assert_eq!(mark.resized_from, Some((512, 512)), "{kind}");
         assert!(mark.is_noted());
         // 入ったので、入れなかった知らせは出さない
@@ -1051,9 +1541,23 @@ fn headless_a_first_set_that_is_not_the_current_one_is_rebuilt_too() {
     // 元の絵が届く前に、利用者が Hair へ切り替えた（最初のセットはしまわれた文書になる）
     let (body, hair) = (a.set_index("Body"), a.set_index("Hair"));
     a.state.switch_set(hair).unwrap();
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
-    unity.send(Message::MaterialOriginal(original(1, 1, 128, OriginalRead::File, false)));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        1,
+        128,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.state.sets.current_index(), hair);
     assert_eq!(a.state.set_doc(body).width(), 512);
     assert_eq!(a.layer_names(body), ["元の絵", "レイヤー 1"]);
@@ -1078,8 +1582,16 @@ fn headless_a_rebuilt_first_set_gets_the_effect_inputs_passed_to_its_new_documen
     let first = a.state.doc.id();
     let passed = a.state.fx.inputs.passed;
     assert!(passed > 0, "作り直す前に、最初のセットへ入力が渡っている");
-    unity.send(Message::MaterialOriginal(original(1, 0, 512, OriginalRead::File, false)));
-    a.until("元の絵を入れたセット", |_| unity.set_of(0).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        512,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("元の絵を入れたセット", |_| {
+        unity.set_of(0).is_some()
+    });
     assert_ne!(a.state.doc.id(), first, "文書は作り直した");
     a.state.sync_effects();
     assert!(
@@ -1109,22 +1621,49 @@ fn headless_an_original_the_size_of_the_first_set_goes_into_the_same_document() 
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
     assert_eq!(a.link.originals_waiting(), 1);
     let selected = a.state.selected_layer;
-    unity.send(Message::MaterialOriginal(original(1, 0, 256, OriginalRead::File, false)));
-    a.until("元の絵を入れたセット", |_| unity.set_of(0).is_some());
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        256,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("元の絵を入れたセット", |_| {
+        unity.set_of(0).is_some()
+    });
 
     let doc = &a.state.doc;
     assert_eq!(doc.id(), first, "同じ大きさなので文書は作り直さない");
-    assert_eq!(a.state.sets.current().id, set_id, "セットの ID も変わらない");
+    assert_eq!(
+        a.state.sets.current().id,
+        set_id,
+        "セットの ID も変わらない"
+    );
     assert_eq!(a.state.sets.current().uid, uid);
     assert_eq!((doc.width(), doc.height()), (256, 256));
     assert_eq!(a.layer_names(0), ["元の絵", "レイヤー 1"]);
     let expected = picture(256);
     for (x, y) in [(0, 0), (5, 5), (3, 3), (255, 255), (200, 77)] {
-        assert_eq!(layer_pixel(&doc.layers()[0], x, y), pixel(&expected, 256, x, y), "({x}, {y})");
+        assert_eq!(
+            layer_pixel(&doc.layers()[0], x, y),
+            pixel(&expected, 256, x, y),
+            "({x}, {y})"
+        );
     }
-    assert_eq!(layer_pixel(&doc.layers()[0], 3, 3), [9, 8, 7, 0], "透明な画素の RGB もそのまま");
-    let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
-    assert_eq!(mark.resized_from, None, "拡大縮小していないので印は付かない");
+    assert_eq!(
+        layer_pixel(&doc.layers()[0], 3, 3),
+        [9, 8, 7, 0],
+        "透明な画素の RGB もそのまま"
+    );
+    let mark = a
+        .state
+        .link_originals
+        .get(doc.id(), doc.layers()[0].id())
+        .unwrap();
+    assert_eq!(
+        mark.resized_from, None,
+        "拡大縮小していないので印は付かない"
+    );
     assert!(!mark.is_noted(), "{mark:?}");
     assert!(!doc.can_undo());
     assert_eq!(doc.undo_count(), 0);
@@ -1154,23 +1693,52 @@ fn headless_a_project_made_in_the_new_project_window_keeps_the_chosen_resolution
     assert_eq!(a.state.sets.len(), 1);
     assert_eq!(a.state.sets.current().name, "Body");
     assert!(a.state.resolution_chosen);
-    assert!(a.state.is_pristine(), "窓で作った 1 セットは、何も触っていないプロジェクトとして元の絵を受ける");
+    assert!(
+        a.state.is_pristine(),
+        "窓で作った 1 セットは、何も触っていないプロジェクトとして元の絵を受ける"
+    );
     let first = a.state.doc.id();
     // Unity が送り直し、元の絵（1024）が届く
     unity.send(Message::Model(model(
         2,
         vec![material("Body", Some(1024)), material("Hair", Some(1024))],
     )));
-    a.until("新しい世代", |a| a.state.model.as_ref().is_some_and(|m| m.generation == 2));
-    assert_eq!(a.link.originals_waiting(), 2, "窓で作った Body と、今回新しくできた Hair");
-    unity.send(Message::MaterialOriginal(original(2, 0, 1024, OriginalRead::File, false)));
-    a.until("元の絵が入る", |a| a.layer_names(0).first().is_some_and(|n| n == "元の絵"));
+    a.until("新しい世代", |a| {
+        a.state.model.as_ref().is_some_and(|m| m.generation == 2)
+    });
+    assert_eq!(
+        a.link.originals_waiting(),
+        2,
+        "窓で作った Body と、今回新しくできた Hair"
+    );
+    unity.send(Message::MaterialOriginal(original(
+        2,
+        0,
+        1024,
+        OriginalRead::File,
+        false,
+    )));
+    a.until("元の絵が入る", |a| {
+        a.layer_names(0).first().is_some_and(|n| n == "元の絵")
+    });
 
     let doc = &a.state.doc;
     assert_eq!(doc.id(), first, "選んだ解像度の文書のまま");
-    assert_eq!((doc.width(), doc.height()), (512, 512), "選んだ 512 を元の絵の 1024 で上書きしない");
-    let mark = a.state.link_originals.get(doc.id(), doc.layers()[0].id()).unwrap();
-    assert_eq!(mark.resized_from, Some((1024, 1024)), "元の絵を選んだ大きさへ縮めて入れた");
+    assert_eq!(
+        (doc.width(), doc.height()),
+        (512, 512),
+        "選んだ 512 を元の絵の 1024 で上書きしない"
+    );
+    let mark = a
+        .state
+        .link_originals
+        .get(doc.id(), doc.layers()[0].id())
+        .unwrap();
+    assert_eq!(
+        mark.resized_from,
+        Some((1024, 1024)),
+        "元の絵を選んだ大きさへ縮めて入れた"
+    );
     assert!(!doc.can_undo());
     // 既定の大きさの「新規」で作り直せば、窓で選んだ印は外れる
     yolu_app::project::new_into(&mut a.state);
@@ -1191,25 +1759,53 @@ fn headless_a_material_without_a_texture_starts_from_a_white_original() {
     glow.routes.clear();
     unity.send(Message::Model(model(
         1,
-        vec![empty_slot("Body"), empty_slot("Cloth"), material("Plain", None), glow],
+        vec![
+            empty_slot("Body"),
+            empty_slot("Cloth"),
+            material("Plain", None),
+            glow,
+        ],
     )));
-    a.until("白で始める 2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    a.until("白で始める 2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.link.originals_waiting(), 0, "来る絵は無いので、待たない");
     assert!(unity.errors().is_empty(), "{:?}", unity.errors());
 
-    let (body, cloth, plain) = (a.set_index("Body"), a.set_index("Cloth"), a.set_index("Plain"));
+    let (body, cloth, plain) = (
+        a.set_index("Body"),
+        a.set_index("Cloth"),
+        a.set_index("Plain"),
+    );
     for set in [body, cloth] {
         let doc = a.state.set_doc(set);
         assert_eq!(a.layer_names(set), ["元の絵", "レイヤー 1"], "{set}");
         let (w, h) = (doc.width(), doc.height());
         for (x, y) in [(0, 0), (5, 5), (w - 1, h - 1), (w / 2, 3)] {
-            assert_eq!(layer_pixel(&doc.layers()[0], x, y), [255, 255, 255, 255], "{set} ({x}, {y})");
-            assert_eq!(composite_pixel(doc, x, y), [255, 255, 255, 255], "{set} 合成にも出る");
+            assert_eq!(
+                layer_pixel(&doc.layers()[0], x, y),
+                [255, 255, 255, 255],
+                "{set} ({x}, {y})"
+            );
+            assert_eq!(
+                composite_pixel(doc, x, y),
+                [255, 255, 255, 255],
+                "{set} 合成にも出る"
+            );
         }
-        assert!(!yolu_app::engine::layer_has_pixels(&doc.layers()[1]), "上の層は空のまま");
+        assert!(
+            !yolu_app::engine::layer_has_pixels(&doc.layers()[1]),
+            "上の層は空のまま"
+        );
         // Undo の段にならない・層の欄の印は付けない（Unity が描くのと同じ値）
         assert!(!doc.can_undo() && doc.undo_count() == 0, "{set}");
-        assert!(a.state.link_originals.get(doc.id(), doc.layers()[0].id()).is_none(), "{set}");
+        assert!(
+            a.state
+                .link_originals
+                .get(doc.id(), doc.layers()[0].id())
+                .is_none(),
+            "{set}"
+        );
     }
     assert!(a.state.link_originals.is_empty());
     assert!(!a.state.modified);
@@ -1226,22 +1822,47 @@ fn headless_a_material_without_a_texture_starts_from_a_white_original() {
     assert_eq!(level, NoticeLevel::Info);
     // Unity には白い絵で出る（空の絵で元の見た目を置き換えない）
     let announced = unity.set_of(0).unwrap();
-    let image = read_image(&announced.channels[0].path, announced.width, announced.height);
+    let image = read_image(
+        &announced.channels[0].path,
+        announced.width,
+        announced.height,
+    );
     assert_eq!(pixel(&image, announced.width, 5, 5), [255, 255, 255, 255]);
     let plain_set = unity.set_of(2).unwrap();
-    let image = read_image(&plain_set.channels[0].path, plain_set.width, plain_set.height);
-    assert_eq!(pixel(&image, plain_set.width, 5, 5), [0, 0, 0, 0], "項目の無いマテリアルは空のまま");
+    let image = read_image(
+        &plain_set.channels[0].path,
+        plain_set.width,
+        plain_set.height,
+    );
+    assert_eq!(
+        pixel(&image, plain_set.width, 5, 5),
+        [0, 0, 0, 0],
+        "項目の無いマテリアルは空のまま"
+    );
 
     // 絵が無いと知らせたマテリアルの元の絵が（食い違って）届いても、入れない・誤りにもしない
-    unity.send(Message::MaterialOriginal(original(1, 0, 64, OriginalRead::File, false)));
+    unity.send(Message::MaterialOriginal(original(
+        1,
+        0,
+        64,
+        OriginalRead::File,
+        false,
+    )));
     a.settle();
     assert_eq!(a.layer_names(body), ["元の絵", "レイヤー 1"]);
-    assert_eq!(layer_pixel(&a.state.set_doc(body).layers()[0], 5, 5), [255, 255, 255, 255]);
+    assert_eq!(
+        layer_pixel(&a.state.set_doc(body).layers()[0], 5, 5),
+        [255, 255, 255, 255]
+    );
     assert!(unity.errors().is_empty(), "{:?}", unity.errors());
 
     // 保存と復元: 普通のピクセルレイヤー（白）。履歴は空
     a.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(a.state.message.starts_with("保存しました"), "{}", a.state.message);
+    assert!(
+        a.state.message.starts_with("保存しました"),
+        "{}",
+        a.state.message
+    );
     let mut b = AppState::new(64, 64);
     b.apply(Action::OpenProject(path));
     for name in ["Body", "Cloth"] {
@@ -1249,7 +1870,11 @@ fn headless_a_material_without_a_texture_starts_from_a_white_original() {
         let doc = b.set_doc(set);
         let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["元の絵", "レイヤー 1"], "{name}");
-        assert_eq!(layer_pixel(&doc.layers()[0], 5, 5), [255, 255, 255, 255], "{name}");
+        assert_eq!(
+            layer_pixel(&doc.layers()[0], 5, 5),
+            [255, 255, 255, 255],
+            "{name}"
+        );
         assert_eq!(doc.undo_count(), 0);
     }
     assert!(b.link_originals.is_empty());
@@ -1261,17 +1886,28 @@ fn headless_a_white_original_waits_for_a_stroke_to_end_and_keeps_the_set_back_me
     let unity = a.connect(&name, MARKS);
     // 描き始めたところ（まだ何も変えていない）へ、絵の無いマテリアルのモデルが届く
     let layer = a.state.doc.layers()[0].id();
-    let stroke = a.state.doc.begin_stroke(layer, &BrushSettings::default()).unwrap();
+    let stroke = a
+        .state
+        .doc
+        .begin_stroke(layer, &BrushSettings::default())
+        .unwrap();
     unity.send(Message::Model(model(1, vec![empty_slot("Body")])));
     a.until("結び付け", |a| a.state.sets.current().bound == Some(0));
     a.settle();
-    assert_eq!(a.layer_names(0), ["レイヤー 1"], "描いている最中は文書を変えない");
+    assert_eq!(
+        a.layer_names(0),
+        ["レイヤー 1"],
+        "描いている最中は文書を変えない"
+    );
     assert_eq!(a.link.originals_waiting(), 1);
     assert!(unity.set_of(0).is_none(), "白が入るまで、空の絵で出さない");
     a.state.doc.cancel_stroke(stroke);
     a.until("白で始めるセット", |_| unity.set_of(0).is_some());
     assert_eq!(a.layer_names(0), ["元の絵", "レイヤー 1"]);
-    assert_eq!(layer_pixel(&a.state.doc.layers()[0], 5, 5), [255, 255, 255, 255]);
+    assert_eq!(
+        layer_pixel(&a.state.doc.layers()[0], 5, 5),
+        [255, 255, 255, 255]
+    );
 }
 
 #[test]
@@ -1280,15 +1916,29 @@ fn headless_a_painted_first_set_and_an_old_unity_get_no_white() {
     let (mut a, name) = Headless::listen("white-painted");
     let unity = a.connect(&name, MARKS);
     a.paint(0);
-    unity.send(Message::Model(model(1, vec![empty_slot("Body"), empty_slot("Cloth")])));
-    a.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::Model(model(
+        1,
+        vec![empty_slot("Body"), empty_slot("Cloth")],
+    )));
+    a.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(a.layer_names(a.set_index("Body")), ["レイヤー 1", "描いた"]);
-    assert_eq!(a.layer_names(a.set_index("Cloth")), ["元の絵", "レイヤー 1"], "新しいセットには入る");
+    assert_eq!(
+        a.layer_names(a.set_index("Cloth")),
+        ["元の絵", "レイヤー 1"],
+        "新しいセットには入る"
+    );
     // 元の絵の印の無い Unity: 今までどおり（白も入れない）
     let (mut b, name) = Headless::listen("white-old");
     let unity = b.connect(&name, feature::MATERIAL_VALUES);
-    unity.send(Message::Model(model(1, vec![empty_slot("Body"), empty_slot("Cloth")])));
-    b.until("2 つのセット", |_| unity.set_of(0).is_some() && unity.set_of(1).is_some());
+    unity.send(Message::Model(model(
+        1,
+        vec![empty_slot("Body"), empty_slot("Cloth")],
+    )));
+    b.until("2 つのセット", |_| {
+        unity.set_of(0).is_some() && unity.set_of(1).is_some()
+    });
     assert_eq!(b.layer_names(b.set_index("Body")), ["レイヤー 1"]);
     assert_eq!(b.layer_names(b.set_index("Cloth")), ["レイヤー 1"]);
 }

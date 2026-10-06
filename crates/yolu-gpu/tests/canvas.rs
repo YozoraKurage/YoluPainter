@@ -179,7 +179,11 @@ fn only_unknown_channels_and_too_deep_groups_are_refused_with_a_reason() {
         .unwrap()
         .id();
     too_deep.set_layer_visible(outer, false).unwrap();
-    assert_eq!(supports(&too_deep, Channel::Color), Ok(()), "見えないグループ");
+    assert_eq!(
+        supports(&too_deep, Channel::Color),
+        Ok(()),
+        "見えないグループ"
+    );
 }
 
 /// 通過のグループのすぐ上に並ぶクリッピングの層が何も描かない（隠す・不透明度 0・空のグループ）なら、core の計画は組を持たない
@@ -199,7 +203,11 @@ fn clipping_layers_on_a_pass_through_group_follow_the_cpu_plan() {
     let top = d.add_layer("上").unwrap();
     paint(&mut d, top, &mut rng, &[255, 90]);
     d.set_layer_clipping(top, true).unwrap();
-    check(&mut g, &d, "描くクリッピングの層が下地のグループを独立にする");
+    check(
+        &mut g,
+        &d,
+        "描くクリッピングの層が下地のグループを独立にする",
+    );
     d.set_layer_visible(top, false).unwrap();
     check(&mut g, &d, "隠したクリッピングの層");
     d.set_layer_visible(top, true).unwrap();
@@ -429,7 +437,11 @@ fn pass_through_groups_are_flattened_and_match_cpu() {
     d.undo().unwrap();
     check(&mut g, &d, "解いたグループを戻す");
     d.set_layer_opacity(outer, 0.5, false).unwrap();
-    check(&mut g, &d, "不透明度 0.5 の通過のグループ（下とフェードする）");
+    check(
+        &mut g,
+        &d,
+        "不透明度 0.5 の通過のグループ（下とフェードする）",
+    );
     d.set_layer_opacity(outer, 1.0, false).unwrap();
     check(&mut g, &d, "平らな通過に戻した");
 }

@@ -85,7 +85,11 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 }
 
 /// 範囲の三角形の UV を、キャンバスの画素座標の三角形に（UV (0, 0) がキャンバスの左下）。
-pub fn pixel_triangles(doc: &Document, geometry: &SurfaceGeometry, region: &[u32]) -> Vec<PixelTriangle> {
+pub fn pixel_triangles(
+    doc: &Document,
+    geometry: &SurfaceGeometry,
+    region: &[u32],
+) -> Vec<PixelTriangle> {
     let (w, h) = (doc.width() as f64, doc.height() as f64);
     region
         .iter()
@@ -174,7 +178,8 @@ fn fill_with(app: &mut AppState, layer: LayerId, mask: &SelectionMask) -> Result
         return app.doc.fill_mask(layer, opacity, Some(mask), reveal);
     }
     let channels = app.paint_channels();
-    app.doc.fill_material(layer, &channels, opacity, Some(mask), erase)
+    app.doc
+        .fill_material(layer, &channels, opacity, Some(mask), erase)
 }
 
 fn needs_model(app: &mut AppState) {
@@ -184,7 +189,10 @@ fn needs_model(app: &mut AppState) {
 fn other_set(app: &mut AppState, name: &str) {
     app.message = format!(
         "{}: {name}",
-        app.lang.pick("ほかのテクスチャセットの面です", "Another texture set's face")
+        app.lang.pick(
+            "ほかのテクスチャセットの面です",
+            "Another texture set's face"
+        )
     );
 }
 
@@ -241,11 +249,15 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
         )
     };
     let mask = mask.and_then(|mask| {
-        let margin=app.region.color.margin;
-        let budget=app.doc.source_budget_bytes();
-        if margin>0 { mask.grow(margin as u32,budget) }
-        else if margin<0 { mask.shrink(margin.unsigned_abs() as u32,false,budget) }
-        else { Ok(mask) }
+        let margin = app.region.color.margin;
+        let budget = app.doc.source_budget_bytes();
+        if margin > 0 {
+            mask.grow(margin as u32, budget)
+        } else if margin < 0 {
+            mask.shrink(margin.unsigned_abs() as u32, false, budget)
+        } else {
+            Ok(mask)
+        }
     });
     let mask = match mask {
         Ok(m) => m,
@@ -388,7 +400,9 @@ pub fn drag_to(app: &mut AppState, w: Where, at: Pos2) {
 
 /// ドラッグを終える（cancel なら捨てる）。ドラッグが無ければ false。
 pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
-    if super::bucket::finish(app, cancel) { return true; }
+    if super::bucket::finish(app, cancel) {
+        return true;
+    }
     let Some(drag) = app.region.drag.take() else {
         return false;
     };
@@ -407,9 +421,15 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
             app.message = if result.changed {
                 app.modified = true;
                 if drag.erase {
-                    format!("{what} × {regions} {}", lang.pick("を消しました。", "erased."))
+                    format!(
+                        "{what} × {regions} {}",
+                        lang.pick("を消しました。", "erased.")
+                    )
                 } else {
-                    format!("{what} × {regions} {}", lang.pick("を塗りました。", "filled."))
+                    format!(
+                        "{what} × {regions} {}",
+                        lang.pick("を塗りました。", "filled.")
+                    )
                 }
             } else if regions == 0 {
                 lang.pick(
@@ -430,10 +450,17 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
 // ───────── 入口（キャンバス・3D ビューの入力から） ─────────
 
 /// 2D キャンバスの押下（ブラシ以外のツール）。ドラッグを始めたら true。
-pub fn canvas_press(app: &mut AppState, view: &CanvasView, at: Pos2, _source: StrokeSource) -> bool {
+pub fn canvas_press(
+    app: &mut AppState,
+    view: &CanvasView,
+    at: Pos2,
+    _source: StrokeSource,
+) -> bool {
     let w = Where::Canvas(view);
     match app.tool {
-        Tool::Fill if app.region.by_color && app.region.color.leftovers => super::bucket::begin(app, view, at),
+        Tool::Fill if app.region.by_color && app.region.color.leftovers => {
+            super::bucket::begin(app, view, at)
+        }
         Tool::Fill => {
             bucket(app, w, at);
             false
@@ -544,7 +571,15 @@ mod tests {
         let s = samples(Pos2::new(0.0, 0.0), Pos2::new(40.0, 0.0));
         assert_eq!(s.len(), 10);
         assert_eq!(*s.last().unwrap(), Pos2::new(40.0, 0.0));
-        assert_eq!(samples(Pos2::ZERO, Pos2::ZERO), vec![Pos2::ZERO], "動かなくても 1 点");
-        assert_eq!(samples(Pos2::ZERO, Pos2::new(10_000.0, 0.0)).len(), 64, "多くて 64 点");
+        assert_eq!(
+            samples(Pos2::ZERO, Pos2::ZERO),
+            vec![Pos2::ZERO],
+            "動かなくても 1 点"
+        );
+        assert_eq!(
+            samples(Pos2::ZERO, Pos2::new(10_000.0, 0.0)).len(),
+            64,
+            "多くて 64 点"
+        );
     }
 }

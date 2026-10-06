@@ -144,7 +144,11 @@ fn same_key<V: Lanes>(floors: &[[f64; 4]; 3]) -> Option<[i32; 3]> {
             return None;
         }
     }
-    Some([floors[0][0] as i32, floors[1][0] as i32, floors[2][0] as i32])
+    Some([
+        floors[0][0] as i32,
+        floors[1][0] as i32,
+        floors[2][0] as i32,
+    ])
 }
 /// N 画素の値ノイズ。N 画素が同じ格子に入るなら角の値を共有してレーンで補間し、またぐなら 1 画素ずつ引く（どちらも 1 画素の式と同じ値）。
 #[inline(always)]
@@ -210,7 +214,10 @@ pub(super) unsafe fn fractal_lanes<V: Lanes>(
     let mut total = 0.;
     let two = V::splat(2.);
     for (seed, cell) in seeds.into_iter().zip(cache.cells.iter_mut()) {
-        sum = V::add(sum, V::mul(V::splat(weight), value_lanes::<V>(p, seed, cell)));
+        sum = V::add(
+            sum,
+            V::mul(V::splat(weight), value_lanes::<V>(p, seed, cell)),
+        );
         total += weight;
         p = [V::mul(p[0], two), V::mul(p[1], two), V::mul(p[2], two)];
         weight *= 0.5;

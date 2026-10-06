@@ -36,7 +36,11 @@ pub const MAX_TOTAL_MIB: u32 = 32768;
 pub const TOTAL_STEP_MIB: u32 = 64;
 
 /// 3 つの予算の割合（3D の絵 : キャンバスの合成 : 棚のサムネイル）。標準の 1152 MiB で 512 : 512 : 128 になる。
-pub const SHARES: Shares = Shares { paint: 4, canvas: 4, shelf: 1 };
+pub const SHARES: Shares = Shares {
+    paint: 4,
+    canvas: 4,
+    shelf: 1,
+};
 
 /// 配り方の割合。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +71,12 @@ pub enum GpuMemory {
 
 impl GpuMemory {
     /// 窓の選択肢に並べる段（指定した量は並べない）。
-    pub const LEVELS: [GpuMemory; 4] = [GpuMemory::Auto, GpuMemory::Low, GpuMemory::Standard, GpuMemory::High];
+    pub const LEVELS: [GpuMemory; 4] = [
+        GpuMemory::Auto,
+        GpuMemory::Low,
+        GpuMemory::Standard,
+        GpuMemory::High,
+    ];
 
     /// 設定のファイルの値。
     pub fn key(self) -> String {
@@ -191,18 +200,31 @@ mod platform {
     /// メインメモリとの共有の量（MiB）。
     #[cfg(windows)]
     pub fn memory_mib(vendor: u32, device: u32, dedicated: bool) -> Option<u64> {
-        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+        use windows::Win32::Graphics::Dxgi::{
+            CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+        };
         // SAFETY: DXGI の工場を作って、アダプターを数え上げ、記述を読むだけ（Win32 の呼び方どおり）。
         unsafe {
             let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
             let mut found: Option<u64> = None;
             for index in 0.. {
-                let Ok(adapter) = factory.EnumAdapters1(index) else { break };
-                let Ok(desc) = adapter.GetDesc1() else { continue };
-                if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 || desc.VendorId != vendor || desc.DeviceId != device {
+                let Ok(adapter) = factory.EnumAdapters1(index) else {
+                    break;
+                };
+                let Ok(desc) = adapter.GetDesc1() else {
+                    continue;
+                };
+                if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0
+                    || desc.VendorId != vendor
+                    || desc.DeviceId != device
+                {
                     continue;
                 }
-                let bytes = if dedicated { desc.DedicatedVideoMemory } else { desc.SharedSystemMemory } as u64;
+                let bytes = if dedicated {
+                    desc.DedicatedVideoMemory
+                } else {
+                    desc.SharedSystemMemory
+                } as u64;
                 found = found.max(Some(bytes / (1 << 20)));
             }
             found.filter(|mib| *mib > 0)
@@ -221,7 +243,9 @@ mod tests {
     use super::*;
 
     fn gpu(memory_mib: u64) -> Adapter {
-        Adapter { memory_mib: Some(memory_mib) }
+        Adapter {
+            memory_mib: Some(memory_mib),
+        }
     }
 
     #[test]
@@ -238,7 +262,16 @@ mod tests {
 
     #[test]
     fn the_split_follows_the_shares_and_loses_nothing() {
-        for total in [0, 1, 7, 9, 1000, 1152 * MIB, 1152 * MIB + 5, u64::from(u32::MAX) * MIB] {
+        for total in [
+            0,
+            1,
+            7,
+            9,
+            1000,
+            1152 * MIB,
+            1152 * MIB + 5,
+            u64::from(u32::MAX) * MIB,
+        ] {
             let b = distribute(total);
             let sum = b.paint + b.canvas + b.shelf_preview;
             // 端数は切り捨てるだけ（合計を超えず、失うのは割合の数より少ない）
@@ -247,7 +280,10 @@ mod tests {
             assert!(b.shelf_preview <= b.paint, "{total}");
         }
         let b = distribute(900 * MIB);
-        assert_eq!((b.paint, b.canvas, b.shelf_preview), (400 * MIB, 400 * MIB, 100 * MIB));
+        assert_eq!(
+            (b.paint, b.canvas, b.shelf_preview),
+            (400 * MIB, 400 * MIB, 100 * MIB)
+        );
     }
 
     #[test]
@@ -261,7 +297,10 @@ mod tests {
         assert_eq!((low * 2, standard * 2), (standard, high));
         assert_eq!(total_bytes(GpuMemory::Auto, &a), standard);
         for known in [gpu(4096), gpu(8192), gpu(24576)] {
-            assert_eq!(total_bytes(GpuMemory::Auto, &known), total_bytes(GpuMemory::Standard, &known));
+            assert_eq!(
+                total_bytes(GpuMemory::Auto, &known),
+                total_bytes(GpuMemory::Standard, &known)
+            );
         }
     }
 
@@ -289,7 +328,10 @@ mod tests {
         assert_eq!(total_bytes(GpuMemory::Auto, &gpu(3071)), low_of(&gpu(3071)));
         assert_ne!(total_bytes(GpuMemory::Auto, &gpu(3072)), low_of(&gpu(3072)));
         // 量が分からないときは、低にしない
-        assert_ne!(total_bytes(GpuMemory::Auto, &Adapter::default()), low_of(&Adapter::default()));
+        assert_ne!(
+            total_bytes(GpuMemory::Auto, &Adapter::default()),
+            low_of(&Adapter::default())
+        );
     }
 
     #[test]
@@ -301,10 +343,29 @@ mod tests {
 
     #[test]
     fn the_file_values_round_trip_and_bad_values_are_refused() {
-        for choice in [GpuMemory::Auto, GpuMemory::Low, GpuMemory::Standard, GpuMemory::High, GpuMemory::Mib(256), GpuMemory::Mib(1500), GpuMemory::Mib(32768)] {
+        for choice in [
+            GpuMemory::Auto,
+            GpuMemory::Low,
+            GpuMemory::Standard,
+            GpuMemory::High,
+            GpuMemory::Mib(256),
+            GpuMemory::Mib(1500),
+            GpuMemory::Mib(32768),
+        ] {
             assert_eq!(GpuMemory::parse(&choice.key()), Some(choice), "{choice:?}");
         }
-        for bad in ["", "AUTO", "mid", "-1", "255", "32769", "1e3", "12.5", "99999999999999999999", " 512"] {
+        for bad in [
+            "",
+            "AUTO",
+            "mid",
+            "-1",
+            "255",
+            "32769",
+            "1e3",
+            "12.5",
+            "99999999999999999999",
+            " 512",
+        ] {
             assert_eq!(GpuMemory::parse(bad), None, "{bad:?}");
         }
         // 範囲の外の MiB は、書くときに範囲へ収める
@@ -317,7 +378,10 @@ mod tests {
         for lang in Lang::ALL {
             for choice in GpuMemory::LEVELS.into_iter().chain([GpuMemory::Mib(1500)]) {
                 let name = choice.name(lang);
-                assert!(!name.is_empty() && !name.chars().any(|c| c.is_ascii_digit()), "{lang:?} {choice:?}: {name}");
+                assert!(
+                    !name.is_empty() && !name.chars().any(|c| c.is_ascii_digit()),
+                    "{lang:?} {choice:?}: {name}"
+                );
             }
         }
     }

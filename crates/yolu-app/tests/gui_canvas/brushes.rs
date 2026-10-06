@@ -163,8 +163,14 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     // 消しゴムの道具に替えると、一覧は消しゴムだけになる（グループのタブも無い）。行を押しても道具は消しゴムのまま
     h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
     h.run();
-    assert!(h.query_all_by_label("ハード円").next().is_none(), "消しゴムの一覧にブラシは無い");
-    assert!(h.query_all_by_label("筆").next().is_none(), "グループのタブは出ない");
+    assert!(
+        h.query_all_by_label("ハード円").next().is_none(),
+        "消しゴムの一覧にブラシは無い"
+    );
+    assert!(
+        h.query_all_by_label("筆").next().is_none(),
+        "グループのタブは出ない"
+    );
     click_row(&mut h, "ソフト消しゴム");
     assert_eq!(st(&h).tool, Tool::Eraser);
     assert_eq!(st(&h).brush.radius, 24.0);
@@ -618,7 +624,10 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     let curve = size(&h).curve_shape();
     assert_eq!(curve.points().len(), 3);
     let p = curve.points()[1];
-    assert!((p.x - 0.5).abs() < 0.02 && (p.y - 0.8).abs() < 0.02, "{p:?}");
+    assert!(
+        (p.x - 0.5).abs() < 0.02 && (p.y - 0.8).abs() < 0.02,
+        "{p:?}"
+    );
     assert!((size(&h).apply(0.5) - 0.8).abs() < 0.03);
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // ほかの項目は変わらない
@@ -695,18 +704,31 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
         pos2(opacity_min.left(), opacity_min.bottom() + 4.0),
         vec2(opacity_min.width(), yolu_app::ui::curve::HEIGHT),
     );
-    assert!(window.contains_rect(opacity_frame), "{window:?} {opacity_frame:?}");
+    assert!(
+        window.contains_rect(opacity_frame),
+        "{window:?} {opacity_frame:?}"
+    );
     let size_now = size(&h);
     click(
         &mut h,
-        pos2(opacity_min.left() + opacity_min.width() * 0.6, opacity_min.center().y),
+        pos2(
+            opacity_min.left() + opacity_min.width() * 0.6,
+            opacity_min.center().y,
+        ),
     );
     let opacity = |h: &H| st(h).m2.brush.pressure.opacity.clone();
-    assert!((0.5..0.7).contains(&opacity(&h).min()), "{}", opacity(&h).min());
+    assert!(
+        (0.5..0.7).contains(&opacity(&h).min()),
+        "{}",
+        opacity(&h).min()
+    );
     let og = opacity_frame.shrink(6.0);
     click(
         &mut h,
-        pos2(og.left() + 0.5 * og.width(), og.bottom() - 0.8 * og.height()),
+        pos2(
+            og.left() + 0.5 * og.width(),
+            og.bottom() - 0.8 * og.height(),
+        ),
     );
     let bent = opacity(&h);
     assert_eq!(bent.curve().len(), 3, "{bent:?}");
@@ -715,7 +737,10 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert!(st(&h).m2.brush.pressure.flow.is_identity());
     assert!(st(&h).m2.brush.pressure.hardness.is_identity());
     // 不透明度の点を右クリックで消すと直線へ戻る（サイズは触れない）
-    let on = pos2(og.left() + 0.5 * og.width(), og.bottom() - 0.8 * og.height());
+    let on = pos2(
+        og.left() + 0.5 * og.width(),
+        og.bottom() - 0.8 * og.height(),
+    );
     move_to(&h, on);
     h.step();
     press(&h, on, PointerButton::Secondary);
@@ -951,7 +976,10 @@ fn the_symmetry_category_sets_mode_center_and_count() {
     let y = in_pane(&h, "中心 Y");
     click(&mut h, pos2(y.left() + y.width() * 0.75, y.center().y));
     let (cx, cy) = st(&h).sel.symmetry.center;
-    assert!((cx - 0.25).abs() < 0.05 && (cy - 0.75).abs() < 0.05, "{cx} {cy}");
+    assert!(
+        (cx - 0.25).abs() < 0.05 && (cy - 0.75).abs() < 0.05,
+        "{cx} {cy}"
+    );
     let c = st(&h).canvas_symmetry();
     assert!(
         (c.center.x - 64.0).abs() < 13.0 && (c.center.y - 192.0).abs() < 13.0,
@@ -966,15 +994,26 @@ fn the_symmetry_category_sets_mode_center_and_count() {
     assert_eq!(st(&h).canvas_symmetry().count, 16);
     click(&mut h, pos2(count.left() + 1.0, count.center().y));
     assert_eq!(st(&h).sel.symmetry.count, 2);
-    click(&mut h, pos2(count.left() + count.width() * 0.5, count.center().y));
-    assert!((7..=11).contains(&st(&h).sel.symmetry.count), "{}", st(&h).sel.symmetry.count);
+    click(
+        &mut h,
+        pos2(count.left() + count.width() * 0.5, count.center().y),
+    );
+    assert!(
+        (7..=11).contains(&st(&h).sel.symmetry.count),
+        "{}",
+        st(&h).sel.symmetry.count
+    );
     assert_eq!(st(&h).canvas_symmetry().count, st(&h).sel.symmetry.count);
     // 「キャンバスの中心」で 0.5 に戻る（戻ったあとは押せない）
-    assert!(!in_pane_node(&h, "キャンバスの中心").accesskit_node().is_disabled());
+    assert!(!in_pane_node(&h, "キャンバスの中心")
+        .accesskit_node()
+        .is_disabled());
     let at = in_pane(&h, "キャンバスの中心").center();
     click(&mut h, at);
     assert_eq!(st(&h).sel.symmetry.center, (0.5, 0.5));
-    assert!(in_pane_node(&h, "キャンバスの中心").accesskit_node().is_disabled());
+    assert!(in_pane_node(&h, "キャンバスの中心")
+        .accesskit_node()
+        .is_disabled());
     // 指先は対称と組めない。モードは替えられる（ペイントに戻したときに効く設定を用意できる）が、効く欄（中心など）は無効にする
     h.state_mut().state.m2.brush.effect = BrushEffect::SMUDGE;
     h.run();
@@ -1334,19 +1373,27 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
         h.run();
     };
     // ポインタを一覧の外（ツールプロパティの見出し）に置いたホイールは、全体を送る。一覧は動かない
-    let band = rect_of(&h, "ツールプロパティ", |r| r.left() < 340.0 && r.top() > 80.0);
+    let band = rect_of(&h, "ツールプロパティ", |r| {
+        r.left() < 340.0 && r.top() > 80.0
+    });
     let list_before = st(&h).brushes.ui.list_scroll;
     wheel(&mut h, band.center(), -400.0);
     let scrolled = st(&h).brushes.ui.panel_scroll;
     assert!(scrolled > 0.0, "全体がスクロールする: {scrolled}");
     assert!(scrolled < content, "中身の高さまでは送らない: {scrolled}");
-    assert_eq!(st(&h).brushes.ui.list_scroll, list_before, "一覧は動かさない");
+    assert_eq!(
+        st(&h).brushes.ui.list_scroll,
+        list_before,
+        "一覧は動かさない"
+    );
     // 逆向きに戻せて、先頭より前には行かない
     wheel(&mut h, band.center(), 100_000.0);
     assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
     // 十分に高い窓では、全体は送れない
     let mut tall = app(1280.0, 1400.0, 128);
-    let band = rect_of(&tall, "ツールプロパティ", |r| r.left() < 340.0 && r.top() > 80.0);
+    let band = rect_of(&tall, "ツールプロパティ", |r| {
+        r.left() < 340.0 && r.top() > 80.0
+    });
     wheel(&mut tall, band.center(), -400.0);
     assert_eq!(st(&tall).brushes.ui.panel_scroll, 0.0);
     // ブラシサイズの丸はスクロールしても押せる
@@ -1379,7 +1426,11 @@ fn escape_cancels_a_row_drag_and_nothing_moves() {
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     assert_eq!(st(&h).brushes.ui.drag, None);
-    release(&h, pos2(a.left() + 30.0, a.top() + 4.0), PointerButton::Primary);
+    release(
+        &h,
+        pos2(a.left() + 30.0, a.top() + 4.0),
+        PointerButton::Primary,
+    );
     h.run();
     assert_eq!(st(&h).brushes.lib.order(), order, "落とさない");
 }
@@ -1395,10 +1446,14 @@ fn the_hardness_in_the_tool_properties_follows_the_tip_image() {
             .is_disabled()
     };
     assert!(!hardness_disabled(&h), "丸い先端なら硬さが効く");
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     assert!(hardness_disabled(&h), "画像の先端は画像の縁のまま");
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
     h.run();
     assert!(!hardness_disabled(&h));
 }
@@ -1418,7 +1473,10 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
         .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     assert!(!hardness_applies(st(&h)));
-    assert!(tool_off(&h) && shape_off(&h), "画像の先端は 2D では効かない");
+    assert!(
+        tool_off(&h) && shape_off(&h),
+        "画像の先端は 2D では効かない"
+    );
     // 3D: 面のダブは画像を使わず丸いので、画像の先端でも両方が効く
     click_tab(&mut h, Tab::View3d);
     h.state_mut().state.apply(Action::LoadDemoModel);
@@ -1427,7 +1485,10 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
     assert!(st(&h).m2.brush.tip.image.is_some());
     assert!(hardness_applies(st(&h)));
     assert!(!tool_off(&h), "3D ではツールプロパティの硬さが効く");
-    assert!(!shape_off(&h), "3D では形状の硬さも効く（同じブラシで食い違わない）");
+    assert!(
+        !shape_off(&h),
+        "3D では形状の硬さも効く（同じブラシで食い違わない）"
+    );
     h.state_mut()
         .state
         .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
@@ -1509,7 +1570,9 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     // 硬さの切り替えを入れると、硬さの最小が使える。ほかの項目は変わらない
     click(&mut h, hardness.0.center());
     assert!(st(&h).m2.brush.controls.pressure_hardness);
-    assert!(st(&h).brush.pressure_size && st(&h).brush.pressure_opacity && !st(&h).brush.pressure_flow);
+    assert!(
+        st(&h).brush.pressure_size && st(&h).brush.pressure_opacity && !st(&h).brush.pressure_flow
+    );
     assert!(!last_two(&h, "最小")[1].1);
     assert!(st(&h).brush_is_modified(b("standard")));
     // 画像の筆先では、硬さの切り替えも最小も押せない（入っていても）。流量は押せたまま
@@ -1521,11 +1584,18 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     assert!(!flow.1 && hardness.1, "{flow:?} {hardness:?}");
     assert!(last_two(&h, "最小")[1].1);
     click(&mut h, hardness.0.center());
-    assert!(st(&h).m2.brush.controls.pressure_hardness, "押せない所では何も起きない");
+    assert!(
+        st(&h).m2.brush.controls.pressure_hardness,
+        "押せない所では何も起きない"
+    );
     let before = st(&h).m2.brush.pressure.hardness.clone();
     let min = last_two(&h, "最小")[1].0;
     click(&mut h, pos2(min.left() + min.width() * 0.5, min.center().y));
-    assert_eq!(st(&h).m2.brush.pressure.hardness, before, "押せない所では何も起きない");
+    assert_eq!(
+        st(&h).m2.brush.pressure.hardness,
+        before,
+        "押せない所では何も起きない"
+    );
     h.state_mut()
         .state
         .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));

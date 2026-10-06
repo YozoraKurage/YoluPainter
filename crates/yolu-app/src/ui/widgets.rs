@@ -111,7 +111,12 @@ pub fn record_truncations(on: bool) {
 
 /// 貯めた分を取り出す（貯めていなければ空）。
 pub fn take_truncations() -> Vec<String> {
-    TRUNCATED.with(|t| t.borrow_mut().as_mut().map(std::mem::take).unwrap_or_default())
+    TRUNCATED.with(|t| {
+        t.borrow_mut()
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    })
 }
 
 /// 幅に収まらなければ後ろを「…」で詰める。
@@ -315,7 +320,12 @@ pub fn corner_bottom(view: Rect, items: usize) -> f32 {
 
 /// ビューの右上の隅に、小さなアイコンの列を重ねる（右から左ではなく、並べた順に左から右へ。右端が最後）。見出しの帯の代わり。
 /// 別の層（`egui::Area`）に置くので、下のビューの入力（描く・回す）は、アイコンの上では始まらない。
-pub fn corner_icons(ui: &mut Ui, id: &'static str, view: Rect, items: &[CornerIcon]) -> CornerOutcome {
+pub fn corner_icons(
+    ui: &mut Ui,
+    id: &'static str,
+    view: Rect,
+    items: &[CornerIcon],
+) -> CornerOutcome {
     if items.is_empty() {
         return CornerOutcome {
             clicked: None,
@@ -323,8 +333,14 @@ pub fn corner_icons(ui: &mut Ui, id: &'static str, view: Rect, items: &[CornerIc
         };
     }
     let n = items.len() as f32;
-    let size = vec2(n * CORNER_ICON_SIZE + (n - 1.0) * 2.0 + 4.0, CORNER_ICON_SIZE + 4.0);
-    let at = pos2(view.right() - CORNER_MARGIN - size.x, view.top() + CORNER_MARGIN);
+    let size = vec2(
+        n * CORNER_ICON_SIZE + (n - 1.0) * 2.0 + 4.0,
+        CORNER_ICON_SIZE + 4.0,
+    );
+    let at = pos2(
+        view.right() - CORNER_MARGIN - size.x,
+        view.top() + CORNER_MARGIN,
+    );
     let mut clicked = None;
     let rects: Vec<Rect> = (0..items.len())
         .map(|i| {
@@ -352,7 +368,8 @@ pub fn corner_icons(ui: &mut Ui, id: &'static str, view: Rect, items: &[CornerIc
                     Sense::click(),
                 );
                 let hover = item.enabled && item.clickable && response.hovered();
-                let pressed = item.enabled && item.clickable && response.is_pointer_button_down_on();
+                let pressed =
+                    item.enabled && item.clickable && response.is_pointer_button_down_on();
                 if item.selected {
                     rounded(ui.painter(), r, t::ACCENT_DIM, 4.0);
                 } else if pressed {
@@ -810,7 +827,11 @@ impl<'a> SliderSpec<'a> {
         self
     }
     pub fn power(mut self, power: f32) -> Self {
-        self.power = if power.is_finite() && power > 0.0 { power } else { 1.0 };
+        self.power = if power.is_finite() && power > 0.0 {
+            power
+        } else {
+            1.0
+        };
         self
     }
     /// 値の溝の位置（0〜1）。
@@ -826,7 +847,11 @@ impl<'a> SliderSpec<'a> {
     pub fn value_at(&self, fraction: f32) -> f32 {
         let (lo, hi) = (self.curve(self.min), self.curve(self.max));
         let t = lo + (hi - lo) * fraction.clamp(0.0, 1.0);
-        let v = if self.power == 1.0 { t } else { t.signum() * t.abs().powf(self.power) };
+        let v = if self.power == 1.0 {
+            t
+        } else {
+            t.signum() * t.abs().powf(self.power)
+        };
         v.clamp(self.min.min(self.max), self.max.max(self.min))
     }
     fn curve(&self, v: f32) -> f32 {
@@ -1226,7 +1251,12 @@ pub fn toggle_height(p: &Painter, width: f32, label: &str) -> f32 {
     if self::text_width(p, label, t::LABEL) <= text_width {
         return t::ROW_HEIGHT;
     }
-    let galley = p.layout(label.to_owned(), t::LABEL.font(), t::LABEL.color, text_width);
+    let galley = p.layout(
+        label.to_owned(),
+        t::LABEL.font(),
+        t::LABEL.color,
+        text_width,
+    );
     (galley.size().y + 8.0).max(t::ROW_HEIGHT)
 }
 
@@ -1249,7 +1279,11 @@ pub fn toggle(
     let hover = enabled && response.hovered();
     let p = ui.painter();
     let tall = r.height() > t::ROW_HEIGHT + 0.5;
-    let center_y = if tall { r.top() + t::ROW_HEIGHT / 2.0 } else { r.center().y };
+    let center_y = if tall {
+        r.top() + t::ROW_HEIGHT / 2.0
+    } else {
+        r.center().y
+    };
     let b = Rect::from_min_size(pos2(r.left(), center_y - 8.0), vec2(16.0, 16.0));
     rounded(
         p,
@@ -1278,9 +1312,20 @@ pub fn toggle(
     }
     let style = t::LABEL.with_color(if enabled { t::TEXT } else { t::TEXT_DISABLED });
     if tall {
-        wrapped_text(p, Rect::from_min_max(pos2(b.right() + 7.0, r.top() + 4.0), r.max), label, style);
+        wrapped_text(
+            p,
+            Rect::from_min_max(pos2(b.right() + 7.0, r.top() + 4.0), r.max),
+            label,
+            style,
+        );
     } else {
-        text(p, Rect::from_min_max(pos2(b.right() + 7.0, r.top()), r.max), label, style, Align::Left);
+        text(
+            p,
+            Rect::from_min_max(pos2(b.right() + 7.0, r.top()), r.max),
+            label,
+            style,
+            Align::Left,
+        );
     }
     response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, next, label));
     let _ = with_tooltip(response, tooltip);

@@ -845,12 +845,16 @@ mod tests {
         assert!(app.subtool_is_modified(Tool::Fill, user));
         // 元に戻すのは専用の操作だけ
         app.apply(Action::SubTool(SubToolAction::Revert(Tool::Fill, user)));
-        assert_eq!(app.region.tolerance, 90, "登録した設定（追加したときの設定）");
+        assert_eq!(
+            app.region.tolerance, 90,
+            "登録した設定（追加したときの設定）"
+        );
         assert!(!app.subtool_is_modified(Tool::Fill, user));
     }
 
     #[test]
-    fn the_mark_stays_on_the_row_pressed_even_when_its_changed_settings_equal_another_rows_original() {
+    fn the_mark_stays_on_the_row_pressed_even_when_its_changed_settings_equal_another_rows_original(
+    ) {
         use crate::state::Action;
         let mut app = AppState::new(32, 32);
         app.apply(Action::SelectTool(Tool::Fill));
@@ -885,10 +889,9 @@ mod tests {
         assert!(app.tool.paints(), "{:?}", app.tool);
         app.apply(Action::SelectTool(Tool::Fill));
         assert_eq!(app.region.tolerance, 90, "戻ると変えたままの設定");
-        assert!(app.subtool_is_modified(
-            Tool::Fill,
-            app.subtool_list(Tool::Fill).unwrap().current()
-        ));
+        assert!(
+            app.subtool_is_modified(Tool::Fill, app.subtool_list(Tool::Fill).unwrap().current())
+        );
     }
 
     #[test]

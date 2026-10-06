@@ -594,9 +594,7 @@ impl Document {
                     // p が開いていなければ、p の子が途切れてから戻ってきた（子が連続していない）
                     while open.last() != Some(&p) {
                         if open.pop().is_none() {
-                            return Err(CoreError::InvalidArgument(
-                                "グループの中身が続いていない",
-                            ));
+                            return Err(CoreError::InvalidArgument("グループの中身が続いていない"));
                         }
                     }
                 }

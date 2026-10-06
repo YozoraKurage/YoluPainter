@@ -95,7 +95,9 @@ fn a_new_project_round_trips_and_saves() {
         );
     }
     assert_eq!(
-        p.migrated_entries()[&format!("sets/{A}/composite/Color.png")].bytes().unwrap()[..],
+        p.migrated_entries()[&format!("sets/{A}/composite/Color.png")]
+            .bytes()
+            .unwrap()[..],
         composite_png(&body).unwrap()[..]
     );
     // 安全な保存で書いて、読み直す
@@ -132,7 +134,10 @@ fn create_refuses_what_the_format_refuses() {
     );
     assert!(two_unassigned.is_err());
     let no_document = Project::create(writer(), &[spec(A, "a", MaterialRef::Unassigned, None)], A);
-    assert!(no_document.unwrap_err().to_string().contains("正本がありません"));
+    assert!(no_document
+        .unwrap_err()
+        .to_string()
+        .contains("正本がありません"));
     let bad_current = Project::create(
         writer(),
         &[spec(A, "a", MaterialRef::Unassigned, Some(&doc))],
@@ -248,8 +253,12 @@ fn with_sets_keeps_keys_it_does_not_know() {
         })
         .collect();
     let q = p.with_sets(writer(), &specs, p.current_set()).unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&q.original_archive().entries()["project.json"].bytes().unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(
+        &q.original_archive().entries()["project.json"]
+            .bytes()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(json["future"], serde_json::json!({"x": 1}));
     assert_eq!(json["sets"][0]["future"], serde_json::json!(true));
     assert_eq!(
@@ -267,7 +276,14 @@ fn with_sets_dropping_removes_the_set_with_every_entry_and_keeps_the_rest_byte_f
     let before = p.migrated_entries().clone();
     let keep: Vec<SetSpec> = [0usize, 2]
         .iter()
-        .map(|&i| spec(&ids[i], &p.sets()[i].name, p.sets()[i].material.clone(), None))
+        .map(|&i| {
+            spec(
+                &ids[i],
+                &p.sets()[i].name,
+                p.sets()[i].material.clone(),
+                None,
+            )
+        })
         .collect();
     let dropped = [ids[1].as_str()];
     let q = p
@@ -282,7 +298,10 @@ fn with_sets_dropping_removes_the_set_with_every_entry_and_keeps_the_rest_byte_f
         "消したセットのエントリ（正本・合成・メッシュマップ）は全部消える: {:?}",
         after.keys().collect::<Vec<_>>()
     );
-    assert!(q.unknown_entries().is_empty(), "取り残したエントリが知らないエントリにならない");
+    assert!(
+        q.unknown_entries().is_empty(),
+        "取り残したエントリが知らないエントリにならない"
+    );
     for n in before.keys().filter(|n| !n.starts_with(&gone)) {
         if n == "project.json" || n == "ylp.json" {
             continue;
@@ -312,10 +331,15 @@ fn with_sets_dropping_refuses_what_would_lose_a_set_silently() {
     assert!(both.unwrap_err().to_string().contains("並びにもあります"));
     // ファイルに無い ID は消せない
     let unknown = p.with_sets_dropping(writer(), &all, &ids[0], &[C]);
-    assert!(unknown.unwrap_err().to_string().contains("ファイルにありません"));
+    assert!(unknown
+        .unwrap_err()
+        .to_string()
+        .contains("ファイルにありません"));
     // 全部は消せない（セットは 1 つは要る）
     let everything: Vec<&str> = ids.iter().map(String::as_str).collect();
-    assert!(p.with_sets_dropping(writer(), &[], &ids[0], &everything).is_err());
+    assert!(p
+        .with_sets_dropping(writer(), &[], &ids[0], &everything)
+        .is_err());
     // 今のセットを消して、今のセットを並びの外に残すのも断る
     let current_gone = p.with_sets_dropping(writer(), &all[1..], &ids[0], &[ids[0].as_str()]);
     assert!(current_gone.is_err());
@@ -332,7 +356,10 @@ fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
     let p = fixture("format6.ylp").upgraded(writer()).unwrap();
     assert_eq!(p.view_model().unwrap(), None);
     let q = p.with_view_model(Some("../models/body.fbx")).unwrap();
-    assert_eq!(q.view_model().unwrap().as_deref(), Some("../models/body.fbx"));
+    assert_eq!(
+        q.view_model().unwrap().as_deref(),
+        Some("../models/body.fbx")
+    );
     let view: serde_json::Value =
         serde_json::from_slice(&q.migrated_entries()["view.json"].bytes().unwrap()).unwrap();
     assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
@@ -347,7 +374,10 @@ fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
     assert_eq!(q.info().format, 7);
     // 書き換える・外す
     let r = q.with_view_model(Some("C:/models/other.fbx")).unwrap();
-    assert_eq!(r.view_model().unwrap().as_deref(), Some("C:/models/other.fbx"));
+    assert_eq!(
+        r.view_model().unwrap().as_deref(),
+        Some("C:/models/other.fbx")
+    );
     let s = r.with_view_model(None).unwrap();
     assert_eq!(s.view_model().unwrap(), None);
     let view: serde_json::Value =
@@ -356,7 +386,10 @@ fn the_model_reference_lives_in_view_json_without_touching_the_rest_of_it() {
     assert_eq!(view["modelAssetGuid"], "0ad8236696f48ed92abbf8de9e04a6fb");
     // 保存して読み直しても残る
     let again = Project::read(&q.to_bytes().unwrap()).unwrap();
-    assert_eq!(again.view_model().unwrap().as_deref(), Some("../models/body.fbx"));
+    assert_eq!(
+        again.view_model().unwrap().as_deref(),
+        Some("../models/body.fbx")
+    );
 }
 
 #[test]
@@ -370,7 +403,10 @@ fn a_project_without_view_json_gets_the_smallest_state_unity_accepts() {
     .unwrap();
     assert_eq!(p.view_model().unwrap(), None);
     assert!(
-        !p.with_view_model(None).unwrap().migrated_entries().contains_key("view.json"),
+        !p.with_view_model(None)
+            .unwrap()
+            .migrated_entries()
+            .contains_key("view.json"),
         "外すだけなら view.json を作らない"
     );
     let q = p.with_view_model(Some("model.fbx")).unwrap();
@@ -407,10 +443,19 @@ fn the_model_reference_refuses_what_it_cannot_keep() {
         .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
         .collect();
     files.insert("view.json".into(), b"not json".to_vec());
-    let broken = Project::read(&Archive::from_entries(files.clone()).unwrap().to_bytes().unwrap()).unwrap();
+    let broken = Project::read(
+        &Archive::from_entries(files.clone())
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     assert!(broken.view_model().is_err());
     let untouched = broken.with_view_model(None).unwrap();
-    assert_eq!(untouched.migrated_entries()["view.json"].bytes().unwrap()[..], b"not json"[..]);
+    assert_eq!(
+        untouched.migrated_entries()["view.json"].bytes().unwrap()[..],
+        b"not json"[..]
+    );
     let rebuilt = broken.with_view_model(Some("a.fbx")).unwrap();
     assert_eq!(rebuilt.view_model().unwrap().as_deref(), Some("a.fbx"));
     // 形の違う参照

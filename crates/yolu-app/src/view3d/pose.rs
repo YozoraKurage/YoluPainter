@@ -427,7 +427,10 @@ impl PrepareJob {
     }
     /// 終わらない読み込み（試験用）。返す送り口を持っているあいだは読み込み中のまま、送れば（失敗で）終わる。
     #[doc(hidden)]
-    pub fn parked() -> (PrepareJob, std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>) {
+    pub fn parked() -> (
+        PrepareJob,
+        std::sync::mpsc::Sender<Result<PreparedModel, ViewError>>,
+    ) {
         let (tx, rx) = channel();
         (
             PrepareJob {
@@ -551,10 +554,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
                             format!("Loaded {name} ({warnings} notices)"),
                         )
                     } else {
-                        lang.pick(
-                            format!("{name}を読み込みました"),
-                            format!("Loaded {name}"),
-                        )
+                        lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}"))
                     });
                 }
             }
@@ -589,19 +589,13 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<String>, bool) {
 /// ポーズを当てる（スキニング → 三角形の写し → 休みの形の refit → モデルを入れ替える）。
 fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     let revision = view3d.next_revision();
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     let clock = Instant::now();
     let meshes = s.rig.deform(&pose)?;
     let skin_ms = clock.elapsed().as_secs_f64() * 1000.0;
     let clock2 = Instant::now();
     let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
-    let geometry = s
-        .rest
-        .reposition(triangles, revision, BvhUpdate::Refit)?;
+    let geometry = s.rest.reposition(triangles, revision, BvhUpdate::Refit)?;
     let refit_ms = clock2.elapsed().as_secs_f64() * 1000.0;
     let model = ViewModel::with_geometry(
         s.rig.name(),
@@ -634,11 +628,7 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     s.rig.check_pose(&pose)?;
     if s.pose == pose {
         return Ok(());
@@ -653,11 +643,7 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
 
 /// 開いた .ylp のポーズを戻す（取り消しの段にも「変更あり」の印にも数えない: 開いた直後の状態）。
 pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    let s = view3d
-        .pose
-        .session
-        .as_ref()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
     s.rig.check_pose(&pose)?;
     apply(view3d, pose)?;
     if let Some(s) = view3d.pose.session.as_mut() {
@@ -674,11 +660,7 @@ pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
     if view3d.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
-    let s = view3d
-        .pose
-        .session
-        .as_mut()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
         s.edit_start = Some(s.pose.clone());
     }
@@ -687,11 +669,7 @@ pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
 
 /// 続けて変えている途中のポーズ（取り消しには積まない）。
 pub fn edit(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    let s = view3d
-        .pose
-        .session
-        .as_ref()
-        .ok_or(ViewError::NoPoseModel)?;
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
     if s.edit_start.is_none() {
         return Err(ViewError::NoPoseEdit);
     }
@@ -832,12 +810,18 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app.lang.pick("ポーズを取り消しました。", "Pose undone.").into();
+                app.message = app
+                    .lang
+                    .pick("ポーズを取り消しました。", "Pose undone.")
+                    .into();
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.message = app.lang.pick("ポーズをやり直しました。", "Pose redone.").into();
+                app.message = app
+                    .lang
+                    .pick("ポーズをやり直しました。", "Pose redone.")
+                    .into();
             }
         }),
     };
@@ -1167,7 +1151,10 @@ mod tests {
         assert!(installed, "{message:?}");
         // 名前を知らせる（三角形・骨の数や時間は出さない）
         let message = message.unwrap();
-        assert!(message.contains("三角.fbx") && !message.contains("三角形"), "{message}");
+        assert!(
+            message.contains("三角.fbx") && !message.contains("三角形"),
+            "{message}"
+        );
         let s = app.view3d.pose.session.as_ref().unwrap();
         assert_eq!(s.rig.name(), "三角");
         assert_eq!(app.view3d.model.as_ref().unwrap().triangle_count(), 1);

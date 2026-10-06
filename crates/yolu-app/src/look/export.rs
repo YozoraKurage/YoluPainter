@@ -52,8 +52,12 @@ pub fn extra_images(doc: &Document) -> Vec<(&'static str, ExportImage)> {
         }
         let image = match source {
             TextureSource::Channel(c) => match doc.channel_info(*c) {
-                Some(info) if info.kind == ChannelKind::Normal => ExportImage::of(slot.suffix, ExportImageKind::Normal),
-                Some(info) if info.kind == ChannelKind::Color && info.color_space == ColorSpace::Srgb => {
+                Some(info) if info.kind == ChannelKind::Normal => {
+                    ExportImage::of(slot.suffix, ExportImageKind::Normal)
+                }
+                Some(info)
+                    if info.kind == ChannelKind::Color && info.color_space == ColorSpace::Srgb =>
+                {
                     ExportImage::of(slot.suffix, ExportImageKind::BaseColor)
                 }
                 _ => linear(slot.suffix),
@@ -77,7 +81,11 @@ fn linear(suffix: &str) -> ExportImage {
 }
 
 /// チャンネルの、lilToon の再現が読む値（straight RGBA8、行は下から上、文書の大きさ）。
-fn channel_values(doc: &Document, channel: Channel, max_working_bytes: u64) -> Result<Vec<u8>, ExportError> {
+fn channel_values(
+    doc: &Document,
+    channel: Channel,
+    max_working_bytes: u64,
+) -> Result<Vec<u8>, ExportError> {
     let n = doc.width() as u64 * doc.height() as u64;
     if 4 * n > max_working_bytes {
         return Err(ExportError::WorkingBudgetExceeded {
@@ -85,7 +93,10 @@ fn channel_values(doc: &Document, channel: Channel, max_working_bytes: u64) -> R
             allowed: max_working_bytes,
         });
     }
-    let info = doc.channel_info(channel).ok_or(ExportError::InvalidArgument("チャンネルが無い"))?.clone();
+    let info = doc
+        .channel_info(channel)
+        .ok_or(ExportError::InvalidArgument("チャンネルが無い"))?
+        .clone();
     if channel == Channel::Normal {
         return Ok(doc.normal_output(max_working_bytes)?);
     }
@@ -117,7 +128,11 @@ fn channel_values(doc: &Document, channel: Channel, max_working_bytes: u64) -> R
     for p in px.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         for k in 0..4 {
-            let premult = if k == 3 { a } else { (p[k] as u32 * a + 127) / 255 };
+            let premult = if k == 3 {
+                a
+            } else {
+                (p[k] as u32 * a + 127) / 255
+            };
             let v = premult + (d[k] as u32 * (255 - a) + 127) / 255;
             p[k] = v.min(255) as u8;
         }
@@ -133,7 +148,11 @@ fn channel_values(doc: &Document, channel: Channel, max_working_bytes: u64) -> R
 /// スロットの画像を作る（`extra_images` に出たスロット）。作業のバイト数（`max_working_bytes`）は、確保の前に同時に持つ量で
 /// 見積もって断る: チャンネル 1 つなら合成の 1 枚（4n）、成分ごとの詰め合わせなら出力と、読むチャンネルの合成を 1 つずつ（8n。
 /// チャンネルごとに合成して出力へ書いたら捨てる）。
-pub fn slot_image(doc: &Document, slot: &str, max_working_bytes: u64) -> Result<Vec<u8>, ExportError> {
+pub fn slot_image(
+    doc: &Document,
+    slot: &str,
+    max_working_bytes: u64,
+) -> Result<Vec<u8>, ExportError> {
     let source = doc
         .drawn_look()
         .textures
@@ -160,7 +179,11 @@ pub fn slot_image(doc: &Document, slot: &str, max_working_bytes: u64) -> Result<
                     PlaneSource::Zero => Some(0u8),
                     PlaneSource::One => Some(255),
                     // 無いチャンネルは 3D ビューと同じく 1
-                    PlaneSource::Channel { channel, .. } if doc.channel_info(*channel).is_none() => Some(255),
+                    PlaneSource::Channel { channel, .. }
+                        if doc.channel_info(*channel).is_none() =>
+                    {
+                        Some(255)
+                    }
                     PlaneSource::Channel { .. } => None,
                 };
                 if let Some(v) = fixed {
@@ -181,10 +204,19 @@ pub fn slot_image(doc: &Document, slot: &str, max_working_bytes: u64) -> Result<
                 done.push(*channel);
                 let values = channel_values(doc, *channel, max_working_bytes - 4 * n)?;
                 for (k, p) in planes.iter().enumerate() {
-                    if let PlaneSource::Channel { channel: c, component } = p {
+                    if let PlaneSource::Channel {
+                        channel: c,
+                        component,
+                    } = p
+                    {
                         if c == channel {
                             let at = (*component).min(3) as usize;
-                            for (o, s) in out.as_chunks_mut::<4>().0.iter_mut().zip(values.as_chunks::<4>().0) {
+                            for (o, s) in out
+                                .as_chunks_mut::<4>()
+                                .0
+                                .iter_mut()
+                                .zip(values.as_chunks::<4>().0)
+                            {
                                 o[k] = s[at];
                             }
                         }
@@ -193,7 +225,9 @@ pub fn slot_image(doc: &Document, slot: &str, max_working_bytes: u64) -> Result<
             }
             Ok(out)
         }
-        TextureSource::Image(_) => Err(ExportError::InvalidArgument("プロジェクトの画像のスロット")),
+        TextureSource::Image(_) => {
+            Err(ExportError::InvalidArgument("プロジェクトの画像のスロット"))
+        }
     }
 }
 
@@ -216,8 +250,10 @@ mod tests {
             .unwrap();
         let layer = doc.add_layer("a").unwrap();
         doc.set_channel_enabled(layer, mask, true).unwrap();
-        doc.set_channel_pixel(layer, mask, 0, 0, Rgba8::new(10, 10, 10, 255)).unwrap();
-        doc.set_channel_pixel(layer, mask, 1, 0, Rgba8::new(10, 10, 10, 128)).unwrap();
+        doc.set_channel_pixel(layer, mask, 0, 0, Rgba8::new(10, 10, 10, 255))
+            .unwrap();
+        doc.set_channel_pixel(layer, mask, 1, 0, Rgba8::new(10, 10, 10, 128))
+            .unwrap();
         let mut look = MaterialLook {
             kind: LookKind::LilToon,
             ..MaterialLook::default()
@@ -228,7 +264,10 @@ mod tests {
         look.textures.insert(
             "_ShadowBorderMask".into(),
             TextureSource::Packed([
-                PlaneSource::Channel { channel: mask, component: 0 },
+                PlaneSource::Channel {
+                    channel: mask,
+                    component: 0,
+                },
                 PlaneSource::Zero,
                 PlaneSource::One,
                 PlaneSource::One,
@@ -237,7 +276,11 @@ mod tests {
         doc.set_look(look, false).unwrap();
         let extra = extra_images(&doc);
         let names: Vec<&str> = extra.iter().map(|(s, _)| *s).collect();
-        assert_eq!(names, vec!["_ShadowStrengthMask", "_ShadowBorderMask"], "Main・Normal・Emission はテンプレートの画像");
+        assert_eq!(
+            names,
+            vec!["_ShadowStrengthMask", "_ShadowBorderMask"],
+            "Main・Normal・Emission はテンプレートの画像"
+        );
         assert!(!extra[0].1.srgb());
         let px = slot_image(&doc, "_ShadowStrengthMask", u64::MAX).unwrap();
         // 塗った所は値、半分の所は既定と半々、何も描いていない所は既定
@@ -249,7 +292,9 @@ mod tests {
         assert_eq!(&packed[0..4], &[10, 0, 255, 255]);
         assert_eq!(&packed[8..12], &[200, 0, 255, 255]);
         // 予算を超える作業は確保の前に断る（チャンネル 1 つは合成の 1 枚 = 4n、詰め合わせは出力と合成 1 つ = 8n。n = 8 画素）
-        let over = |r: Result<Vec<u8>, ExportError>| matches!(r, Err(ExportError::WorkingBudgetExceeded { .. }));
+        let over = |r: Result<Vec<u8>, ExportError>| {
+            matches!(r, Err(ExportError::WorkingBudgetExceeded { .. }))
+        };
         assert!(over(slot_image(&doc, "_ShadowStrengthMask", 31)));
         assert!(slot_image(&doc, "_ShadowStrengthMask", 32).is_ok());
         assert!(over(slot_image(&doc, "_ShadowBorderMask", 63)));
@@ -274,7 +319,8 @@ mod tests {
             doc.set_channel_enabled(layer, c, true).unwrap();
             for y in 0..4 {
                 for x in 0..4 {
-                    doc.set_channel_pixel(layer, c, x, y, Rgba8::new(v, v, v, 255)).unwrap();
+                    doc.set_channel_pixel(layer, c, x, y, Rgba8::new(v, v, v, 255))
+                        .unwrap();
                 }
             }
             masks.push(c);
@@ -286,28 +332,50 @@ mod tests {
         look.textures.insert(
             "_ShadowStrengthMask".into(),
             TextureSource::Packed([
-                PlaneSource::Channel { channel: masks[0], component: 0 },
-                PlaneSource::Channel { channel: masks[1], component: 0 },
-                PlaneSource::Channel { channel: masks[0], component: 0 },
+                PlaneSource::Channel {
+                    channel: masks[0],
+                    component: 0,
+                },
+                PlaneSource::Channel {
+                    channel: masks[1],
+                    component: 0,
+                },
+                PlaneSource::Channel {
+                    channel: masks[0],
+                    component: 0,
+                },
                 PlaneSource::One,
             ]),
         );
         look.textures.insert(
             "_ShadowBorderMask".into(),
-            TextureSource::Packed([PlaneSource::One, PlaneSource::Zero, PlaneSource::One, PlaneSource::Zero]),
+            TextureSource::Packed([
+                PlaneSource::One,
+                PlaneSource::Zero,
+                PlaneSource::One,
+                PlaneSource::Zero,
+            ]),
         );
         doc.set_look(look, false).unwrap();
         let n = 16u64;
         match slot_image(&doc, "_ShadowStrengthMask", 8 * n - 1) {
-            Err(ExportError::WorkingBudgetExceeded { needed, allowed }) => assert_eq!((needed, allowed), (8 * n, 8 * n - 1)),
+            Err(ExportError::WorkingBudgetExceeded { needed, allowed }) => {
+                assert_eq!((needed, allowed), (8 * n, 8 * n - 1))
+            }
             other => panic!("{other:?}"),
         }
         let px = slot_image(&doc, "_ShadowStrengthMask", 8 * n).unwrap();
         assert_eq!(&px[0..4], &[30, 220, 30, 255]);
         assert_eq!(&px[60..64], &[30, 220, 30, 255]);
         // 成分が 0・1 だけの詰め合わせは出力の 1 枚
-        assert!(matches!(slot_image(&doc, "_ShadowBorderMask", 4 * n - 1), Err(ExportError::WorkingBudgetExceeded { .. })));
-        assert_eq!(&slot_image(&doc, "_ShadowBorderMask", 4 * n).unwrap()[0..4], &[255, 0, 255, 0]);
+        assert!(matches!(
+            slot_image(&doc, "_ShadowBorderMask", 4 * n - 1),
+            Err(ExportError::WorkingBudgetExceeded { .. })
+        ));
+        assert_eq!(
+            &slot_image(&doc, "_ShadowBorderMask", 4 * n).unwrap()[0..4],
+            &[255, 0, 255, 0]
+        );
     }
 
     #[test]
@@ -316,15 +384,24 @@ mod tests {
         let mut doc = Document::new(4, 2).unwrap();
         crate::look::apply_new_set_look(&mut doc);
         let layer = doc.add_layer("a").unwrap();
-        let rim = crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
-        let decal = crate::look::paint_slot(&mut doc, "_Main2ndTex", crate::lang::Lang::Ja).unwrap();
+        let rim =
+            crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
+        let decal =
+            crate::look::paint_slot(&mut doc, "_Main2ndTex", crate::lang::Lang::Ja).unwrap();
         for c in [rim, decal] {
             doc.set_channel_enabled(layer, c, true).unwrap();
         }
-        doc.set_channel_pixel(layer, decal, 0, 0, Rgba8::new(255, 0, 0, 255)).unwrap();
+        doc.set_channel_pixel(layer, decal, 0, 0, Rgba8::new(255, 0, 0, 255))
+            .unwrap();
         let extra = extra_images(&doc);
         let names: Vec<(&str, &str)> = extra.iter().map(|(s, i)| (*s, i.suffix())).collect();
-        assert_eq!(names, vec![("_Main2ndTex", "Main2nd"), ("_RimShadeMask", "RimShadeMask")]);
+        assert_eq!(
+            names,
+            vec![
+                ("_Main2ndTex", "Main2nd"),
+                ("_RimShadeMask", "RimShadeMask")
+            ]
+        );
         assert!(extra[0].1.srgb(), "色の層は sRGB");
         assert!(!extra[1].1.srgb());
         // 色の層は何も描いていない所が透明

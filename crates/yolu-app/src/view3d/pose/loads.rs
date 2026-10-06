@@ -134,8 +134,8 @@ mod tests {
     struct Dir(PathBuf);
     impl Dir {
         fn new(tag: &str) -> Dir {
-            let dir = std::env::temp_dir()
-                .join(format!("yolu-app-loads-{tag}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("yolu-app-loads-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Dir(dir)
@@ -174,7 +174,10 @@ mod tests {
     fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
         let start = Instant::now();
         while !done() {
-            assert!(start.elapsed() < Duration::from_secs(20), "待ちきれない: {what}");
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "待ちきれない: {what}"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -202,9 +205,15 @@ mod tests {
         assert_eq!(app.view3d.pose.loads_running(), 1);
         app.apply(Action::Pose(PoseAction::CancelLoad));
         assert!(!app.view3d.pose.is_loading());
-        assert!(app.message.contains("取り消しました") && app.message.contains("新.fbx"), "{}", app.message);
+        assert!(
+            app.message.contains("取り消しました") && app.message.contains("新.fbx"),
+            "{}",
+            app.message
+        );
         // スレッドは止まり（放さなくても。取り消しで止まる）、何も入らない
-        wait_until("読み込みのスレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("読み込みのスレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         let (message, installed) = poll(&mut app.view3d);
         assert!(!installed && message.is_none(), "{message:?}");
         let s = app.view3d.pose.session.as_ref().unwrap();
@@ -234,7 +243,9 @@ mod tests {
             "休みの形の組み立てまで進まない: {:?}",
             job.fraction()
         );
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         assert!(app.view3d.model.is_none() && app.view3d.pose.session.is_none());
         held.release();
     }
@@ -248,7 +259,9 @@ mod tests {
         let job = prepare_fbx(&mut app.view3d, &path, ModelLimits::default());
         assert_eq!(app.view3d.pose.loads_running(), 1);
         drop(job);
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         held.release();
     }
 
@@ -266,7 +279,9 @@ mod tests {
         assert!(installed);
         assert_eq!(app.view3d.pose.session.as_ref().unwrap().rig.name(), "乙");
         // 前の読み込みは放さなくても止まり、あとから入らない
-        wait_until("前のスレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("前のスレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         held.release();
         let (message, installed) = poll(&mut app.view3d);
         assert!(!installed && message.is_none());
@@ -284,15 +299,25 @@ mod tests {
         assert!(app.np.window.as_ref().unwrap().is_loading());
         assert_eq!(app.view3d.pose.loads_running(), 1);
         app.np_apply(NpAction::ChooseModel(second.clone()));
-        wait_until("前のスレッドが止まる", || app.view3d.pose.loads_running() <= 1);
+        wait_until("前のスレッドが止まる", || {
+            app.view3d.pose.loads_running() <= 1
+        });
         wait_until("後のモデルが読めた", || {
             app.poll_newproject();
             matches!(app.np.window.as_ref().unwrap().prep, Prep::Ready { .. })
         });
-        assert_eq!(app.np.window.as_ref().unwrap().model_path(), Some(second.as_path()));
-        wait_until("前のスレッドが止まった", || app.view3d.pose.loads_running() == 0);
+        assert_eq!(
+            app.np.window.as_ref().unwrap().model_path(),
+            Some(second.as_path())
+        );
+        wait_until("前のスレッドが止まった", || {
+            app.view3d.pose.loads_running() == 0
+        });
         held.release();
-        assert!(app.view3d.pose.session.is_none(), "窓で決めるまで 3D ビューには入れない");
+        assert!(
+            app.view3d.pose.session.is_none(),
+            "窓で決めるまで 3D ビューには入れない"
+        );
     }
 
     #[test]
@@ -304,13 +329,25 @@ mod tests {
         let revision = app.view3d.model.as_ref().unwrap().revision();
         app.np_apply(NpAction::OpenModel(path.clone()));
         // 何も触っていないプロジェクトではないので、構成の窓で読む
-        assert!(app.np.window.as_ref().unwrap().is_loading(), "{}", app.message);
+        assert!(
+            app.np.window.as_ref().unwrap().is_loading(),
+            "{}",
+            app.message
+        );
         assert_eq!(app.view3d.pose.loads_running(), 1);
         app.np_apply(NpAction::CancelPrepare);
-        assert!(matches!(app.np.window.as_ref().unwrap().prep, Prep::Canceled { .. }));
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        assert!(matches!(
+            app.np.window.as_ref().unwrap().prep,
+            Prep::Canceled { .. }
+        ));
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         assert_eq!(app.view3d.model.as_ref().unwrap().revision(), revision);
-        assert_eq!(app.view3d.pose.session.as_ref().unwrap().rig.name(), "試しの人形");
+        assert_eq!(
+            app.view3d.pose.session.as_ref().unwrap().rig.name(),
+            "試しの人形"
+        );
         held.release();
     }
 
@@ -323,7 +360,9 @@ mod tests {
         app.np_apply(NpAction::OpenModel(path.clone()));
         assert_eq!(app.view3d.pose.loads_running(), 1);
         app.np_apply(NpAction::Close);
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         held.release();
     }
 
@@ -347,9 +386,14 @@ mod tests {
         });
         app.np_apply(NpAction::CancelReopen);
         assert!(app.np.reopening.is_none());
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
         app.poll_newproject();
-        assert!(app.view3d.pose.session.is_none(), "取り消した読み込みは入らない");
+        assert!(
+            app.view3d.pose.session.is_none(),
+            "取り消した読み込みは入らない"
+        );
         held.release();
     }
 
@@ -391,7 +435,11 @@ mod tests {
         app.np.window.as_mut().unwrap().prep = Prep::Idle;
         let started = Instant::now();
         stop_jobs(&mut app, Duration::from_secs(10));
-        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(app.view3d.pose.loads_running(), 0);
         held.release();
     }
@@ -409,6 +457,8 @@ mod tests {
         });
         assert!(matches!(result, Some(Ok(_))));
         assert_eq!(job.fraction(), Some(1.0));
-        wait_until("スレッドが止まる", || app.view3d.pose.loads_running() == 0);
+        wait_until("スレッドが止まる", || {
+            app.view3d.pose.loads_running() == 0
+        });
     }
 }

@@ -539,7 +539,10 @@ fn version_mismatch_and_a_second_unity_are_refused_and_shown() {
     assert_eq!(s.link.status, LinkStatus::Listening, "待ち受けは続ける");
     assert!(s.message.contains("版の合わない"));
     // 入口の印は警告の色で、理由はツールチップ（状態の帯には出さない）
-    assert_eq!(s.link.indicator(), yolu_app::livelink::LinkIndicator::Mismatch);
+    assert_eq!(
+        s.link.indicator(),
+        yolu_app::livelink::LinkIndicator::Mismatch
+    );
     assert_eq!(
         yolu_app::shell::link_indicator_color(s.link.indicator()),
         yolu_app::ui::theme::WARNING
@@ -834,7 +837,12 @@ fn child_unity_name() -> String {
 fn spawn_child_unity(name: &str) -> (ChildGuard, std::process::ChildStdin, mpsc::Receiver<String>) {
     let mut child = ChildGuard::spawn(
         Command::new(std::env::current_exe().unwrap())
-            .args([child_unity_name().as_str(), "--exact", "--nocapture", "--test-threads=1"])
+            .args([
+                child_unity_name().as_str(),
+                "--exact",
+                "--nocapture",
+                "--test-threads=1",
+            ])
             .env("YLAPP_CHILD_UNITY", name)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped()),
@@ -894,7 +902,13 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
         "connected"
     );
     // 本物の C の口（ylb_connect_with）で名乗った Unity のパッケージの版が、挨拶でスタンドアロンに届く
-    let peer = h.state().state.link.link.as_ref().map(|l| l.peer.app_version());
+    let peer = h
+        .state()
+        .state
+        .link
+        .link
+        .as_ref()
+        .map(|l| l.peer.app_version());
     assert_eq!(peer, Some(Some(AppVersion::new(0, 3, 0))));
     // 版は揃っている（子のブリッジの機能の印は、ブリッジが出す印で、スタンドアロンの印とは別に決まる）
     assert!(h
@@ -920,7 +934,10 @@ fn the_unity_bridge_in_another_process_sees_the_painted_tiles() {
     );
 
     // モデルが届くと 3D ビューのタブが前に出る（キャンバスは裏）
-    assert!(h.state().view3d_rect().is_some(), "モデルが届いたら 3D ビューを前に出す");
+    assert!(
+        h.state().view3d_rect().is_some(),
+        "モデルが届いたら 3D ビューを前に出す"
+    );
     // Hair を選んで、キャンバスのタブを前に戻し、真ん中に描く
     h.state_mut().state.apply(Action::SelectSet(hair_uid));
     h.run();
@@ -1249,20 +1266,34 @@ fn headless_new_document_gets_material_sets_and_painted_document_is_preserved() 
     for painted in [false, true] {
         let (mut app, name) = Headless::listen(256, if painted { "keep" } else { "new" });
         assert!(app.state.is_pristine());
-        if painted { app.paint((100.0, 128.0), (140.0, 128.0)); }
+        if painted {
+            app.paint((100.0, 128.0), (140.0, 128.0));
+        }
         let id = app.state.doc.id();
         let revision = app.state.doc.revision();
         let pixel = composite_pixel(&app.state.doc, 128, 128);
         let undo = app.state.doc.can_undo();
         let unity = FakeUnity::connect(&name);
-        app.until("接続", |s| matches!(s.link.status, LinkStatus::Connected { .. }));
+        app.until("接続", |s| {
+            matches!(s.link.status, LinkStatus::Connected { .. })
+        });
         for generation in [1, 2] {
-            unity.send(Message::Model(model(generation, vec![
-                material("First", 256, true), material("Second", 512, true),
-            ])));
-            app.until("モデル受信", |s| s.model.as_ref().is_some_and(|m| m.generation == generation));
+            unity.send(Message::Model(model(
+                generation,
+                vec![material("First", 256, true), material("Second", 512, true)],
+            )));
+            app.until("モデル受信", |s| {
+                s.model.as_ref().is_some_and(|m| m.generation == generation)
+            });
             assert_eq!(app.state.sets.len(), 2);
-            assert_eq!(app.state.sets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+            assert_eq!(
+                app.state
+                    .sets
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["First", "Second"]
+            );
             assert_eq!(app.state.doc.id(), id);
             assert_eq!(app.state.doc.revision(), revision);
             assert_eq!(app.state.doc.can_undo(), undo);
@@ -1323,13 +1354,21 @@ fn a_minimized_window_still_serves_the_live_link() {
         run_logic(&mut h, false);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(h.state().state.link.status, LinkStatus::Listening, "見えている間は読まない");
+    assert_eq!(
+        h.state().state.link.status,
+        LinkStatus::Listening,
+        "見えている間は読まない"
+    );
     // 見えている間の `logic` が頼みを使い切ったので、窓が隠れたあとの次の頼み（積まれた知らせはそのまま残っている）で回る
     h.ctx.request_repaint();
     let deadline = Instant::now() + WATCHDOG;
     while !matches!(h.state().state.link.status, LinkStatus::Connected { .. }) {
         Hidden(&mut h).next_frame();
-        assert!(Instant::now() < deadline, "最小化の間につながらない: {:?}", h.state().state.link.status);
+        assert!(
+            Instant::now() < deadline,
+            "最小化の間につながらない: {:?}",
+            h.state().state.link.status
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     unity.send(Message::Model(model(1, vec![material("Body", 512, true)])));
@@ -1354,8 +1393,12 @@ fn a_minimized_window_still_serves_the_live_link() {
         let brush = s.stroke_settings(false);
         let doc = &mut s.doc;
         let mut stroke = doc.begin_stroke(layer, &brush).unwrap();
-        stroke.add_point(doc, 100.0, 100.0, 1.0, DVec2::ZERO).unwrap();
-        stroke.add_point(doc, 110.0, 100.0, 1.0, DVec2::ZERO).unwrap();
+        stroke
+            .add_point(doc, 100.0, 100.0, 1.0, DVec2::ZERO)
+            .unwrap();
+        stroke
+            .add_point(doc, 110.0, 100.0, 1.0, DVec2::ZERO)
+            .unwrap();
         doc.end_stroke(stroke).unwrap();
     }
     h.ctx.request_repaint();
@@ -1365,18 +1408,27 @@ fn a_minimized_window_still_serves_the_live_link() {
         std::thread::sleep(Duration::from_millis(5));
     }
     while let Ok(r) = unity.rx.try_recv() {
-        assert!(!matches!(r, Ok(Received::Message(Message::TilesChanged(_)))), "見えている間は出さない: {r:?}");
+        assert!(
+            !matches!(r, Ok(Received::Message(Message::TilesChanged(_)))),
+            "見えている間は出さない: {r:?}"
+        );
     }
     h.ctx.request_repaint();
     let got = unity.collect_until(&mut Hidden(&mut h), "変わったタイル", |m| {
         m.iter().any(|m| matches!(m, Message::TilesChanged(_)))
     });
-    assert!(got.iter().any(|m| matches!(m, Message::TilesChanged(t) if t.set == set.set)));
+    assert!(got
+        .iter()
+        .any(|m| matches!(m, Message::TilesChanged(t) if t.set == set.set)));
     // Unity が切ると、状態は待機に戻る
     unity.send(Message::Bye);
     while h.state().state.link.status != LinkStatus::Listening {
         Hidden(&mut h).next_frame();
-        assert!(Instant::now() < deadline, "切れたのを受けない: {:?}", h.state().state.link.status);
+        assert!(
+            Instant::now() < deadline,
+            "切れたのを受けない: {:?}",
+            h.state().state.link.status
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }

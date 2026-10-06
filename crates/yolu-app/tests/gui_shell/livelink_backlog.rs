@@ -77,7 +77,11 @@ fn serial_of(message: &Message) -> Option<u32> {
     }
 }
 
-fn step_until(h: &mut Harness<'_, YoluApp>, what: &str, mut cond: impl FnMut(&mut Harness<'_, YoluApp>) -> bool) {
+fn step_until(
+    h: &mut Harness<'_, YoluApp>,
+    what: &str,
+    mut cond: impl FnMut(&mut Harness<'_, YoluApp>) -> bool,
+) {
     let deadline = Instant::now() + WATCHDOG;
     loop {
         h.step();
@@ -100,7 +104,9 @@ fn a_flood_of_large_commands_waits_at_the_limit_and_every_command_arrives_in_ord
     h.run();
     h.state_mut().link_mut().set_queue_limit(LIMIT);
     let unity = FakeUnity::connect(&name);
-    step_until(&mut h, "つながる", |h| matches!(h.state().state.link.status, LinkStatus::Connected { .. }));
+    step_until(&mut h, "つながる", |h| {
+        matches!(h.state().state.link.status, LinkStatus::Connected { .. })
+    });
 
     // 画面のフレームを回さない間に、1 MiB の命令を 24 個（上限の 12 倍）送る。送るのは別のスレッド（待たされるので）
     let conn = unity.conn.clone();
@@ -113,13 +119,23 @@ fn a_flood_of_large_commands_waits_at_the_limit_and_every_command_arrives_in_ord
     let one = 512 * 512 * 4;
     let deadline = Instant::now() + WATCHDOG;
     while h.state().link().queued_bytes() < LIMIT {
-        assert!(Instant::now() < deadline, "積まれない: {}", h.state().link().queued_bytes());
+        assert!(
+            Instant::now() < deadline,
+            "積まれない: {}",
+            h.state().link().queued_bytes()
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     std::thread::sleep(Duration::from_millis(400));
     let queued = h.state().link().queued_bytes();
-    assert!(queued <= LIMIT + one + 4096, "積みは上限と、手前で読んだ 1 つまで: {queued}");
-    assert!(!sender.is_finished(), "上限に達している間は、Unity の送りが待たされる");
+    assert!(
+        queued <= LIMIT + one + 4096,
+        "積みは上限と、手前で読んだ 1 つまで: {queued}"
+    );
+    assert!(
+        !sender.is_finished(),
+        "上限に達している間は、Unity の送りが待たされる"
+    );
 
     // 画面が取り出し始めると、読むのが再開して、全部が送った順に届く（捨てない）
     let mut serials = Vec::new();
@@ -130,7 +146,11 @@ fn a_flood_of_large_commands_waits_at_the_limit_and_every_command_arrives_in_ord
         serials.len() as u32 >= COMMANDS
     });
     sender.join().unwrap();
-    assert_eq!(serials, (1000..1000 + COMMANDS).collect::<Vec<_>>(), "全部・送った順に当たる");
+    assert_eq!(
+        serials,
+        (1000..1000 + COMMANDS).collect::<Vec<_>>(),
+        "全部・送った順に当たる"
+    );
     assert_eq!(h.state().link().queued_bytes(), 0, "取り出したら帳簿は空");
 }
 
@@ -145,7 +165,9 @@ fn a_reader_waiting_at_the_limit_ends_when_the_link_is_dropped() {
     h.run();
     h.state_mut().link_mut().set_queue_limit(1 << 20);
     let unity = FakeUnity::connect(&name);
-    step_until(&mut h, "つながる", |h| matches!(h.state().state.link.status, LinkStatus::Connected { .. }));
+    step_until(&mut h, "つながる", |h| {
+        matches!(h.state().state.link.status, LinkStatus::Connected { .. })
+    });
     let conn = unity.conn.clone();
     let sender = std::thread::spawn(move || {
         for serial in 0..16u32 {
@@ -167,7 +189,10 @@ fn a_reader_waiting_at_the_limit_ends_when_the_link_is_dropped() {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !sender.is_finished() {
         h.step();
-        assert!(Instant::now() < deadline, "切ったあとも Unity の送りが待たされたまま");
+        assert!(
+            Instant::now() < deadline,
+            "切ったあとも Unity の送りが待たされたまま"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     sender.join().unwrap();

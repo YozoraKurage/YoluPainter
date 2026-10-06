@@ -6,6 +6,10 @@
 //! - 位置のマップが使えない（無い・古い・大きさが違う・ピンと違う・境界箱が 0）ときは入力のまま通さず、UV 空間に落とす。
 //!   UV では x・y の格子を周期で巻くので、テクスチャの端で継ぎ目が出ない（回転は効かない）。理由は [`super::BoundGenerator::fallback`]。
 //! - 式は + − × ÷ sqrt floor と整数だけ（libm を使わない）。同じ設定・シード・マップなら、スレッド数・領域の切り方に依らず同じバイト。
+#[cfg(target_arch = "x86_64")]
+use super::noisefn::{
+    perlin3_lanes, value3_lanes, worley3_lanes, worley_distances_lanes, CellsLanes,
+};
 use super::{
     grunge,
     noisefn::{
@@ -13,10 +17,6 @@ use super::{
         WorleyCell, MAX_OCTAVES,
     },
     unit, Error, Inactive, Kind, Map, MapKind, MapState,
-};
-#[cfg(target_arch = "x86_64")]
-use super::noisefn::{
-    perlin3_lanes, value3_lanes, worley3_lanes, worley_distances_lanes, CellsLanes,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
@@ -766,9 +766,11 @@ impl Plan {
                 let by = V::splat((y as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64);
                 V::recipe(self, [bx, by, V::splat(0.)], &mut scratch.sets[0])
             }
-            Mode::Space3 => {
-                V::recipe(self, self.rotated_lanes::<V>(position), &mut scratch.sets[0])
-            }
+            Mode::Space3 => V::recipe(
+                self,
+                self.rotated_lanes::<V>(position),
+                &mut scratch.sets[0],
+            ),
             Mode::Triplanar => {
                 let r = self.rotated_lanes::<V>(position);
                 let (zero, one, two) = (V::splat(0.), V::splat(1.), V::splat(2.));
@@ -1067,7 +1069,9 @@ impl Ctx<'_> {
             let oc = &layer.octaves[o];
             let q = oc.point_lanes::<V>(b, uv);
             let n = match layer.basis {
-                NoiseBasis::Value => value3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.value[oc.slot]),
+                NoiseBasis::Value => {
+                    value3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.value[oc.slot])
+                }
                 NoiseBasis::Perlin => {
                     perlin3_lanes::<V>(q, oc.seed, oc.per, &mut self.set.perlin[oc.slot])
                 }
@@ -1120,7 +1124,11 @@ impl Ctx<'_> {
     /// セルの枠 `index` の最寄りと 2 番目の距離だけ（`cells_lanes` の `f1`・`f2` と同じ値。ID・点が要らない呼び手用）。
     #[inline(always)]
     #[cfg(target_arch = "x86_64")]
-    pub(super) unsafe fn distances_body<V: Lanes>(&mut self, b: [V::F; 3], index: usize) -> (V::F, V::F) {
+    pub(super) unsafe fn distances_body<V: Lanes>(
+        &mut self,
+        b: [V::F; 3],
+        index: usize,
+    ) -> (V::F, V::F) {
         let plan = self.plan;
         let oc = &plan.cells[index];
         let q = oc.point_lanes::<V>(b, plan.mode == Mode::Uv);
@@ -1320,8 +1328,14 @@ mod tests {
                         let t = i as f64;
                         // 3 つの区間: ゆっくり進む（同じ格子が続く）・速く進む（毎画素ちがう格子）・向きが回って重みが入れ替わる
                         let (pos, n) = match i / 100 {
-                            0 => ([10000. + 9. * t, 20000. + 3. * t, 30000. + t], [0.2, 0.9, 0.3]),
-                            1 => ([5000. + 631. * t, 40000. - 377. * t, 700. * t], [0.9, 0.1, 0.2]),
+                            0 => (
+                                [10000. + 9. * t, 20000. + 3. * t, 30000. + t],
+                                [0.2, 0.9, 0.3],
+                            ),
+                            1 => (
+                                [5000. + 631. * t, 40000. - 377. * t, 700. * t],
+                                [0.9, 0.1, 0.2],
+                            ),
                             _ => (
                                 [30000. + t, 31000. + 2. * t, 32000. + 3. * t],
                                 [(t * 0.07).cos(), (t * 0.05).sin(), 0.3 + (t * 0.03).sin()],
@@ -1428,11 +1442,7 @@ mod tests {
                             let x = i % 8 * 2;
                             let y = i / 8 % 16;
                             let lanes = |a: &[[f64; 4]; 3]| {
-                                [
-                                    V::load_f64(&a[0]),
-                                    V::load_f64(&a[1]),
-                                    V::load_f64(&a[2]),
-                                ]
+                                [V::load_f64(&a[0]), V::load_f64(&a[1]), V::load_f64(&a[2])]
                             };
                             let got = value_lanes::<V>(
                                 &plan,

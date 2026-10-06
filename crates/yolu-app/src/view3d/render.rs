@@ -26,15 +26,17 @@ use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
 
 use super::brdf::{self, Curve};
-use super::display::{clamp_samples, Display, EnvKind, Shading, DEFAULT_SAMPLES, KEY_BITS, SAMPLE_CHOICES};
+use super::display::{
+    clamp_samples, Display, EnvKind, Shading, DEFAULT_SAMPLES, KEY_BITS, SAMPLE_CHOICES,
+};
 use super::environment::{self, Baked, Source, FACE_SIZE, MIP_COUNT};
 use super::look_gpu::{self, LookBudget, LookGpu, SetDraw};
-use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
-use super::user_layers::USER_BUDGET_BYTES;
 use super::model::ViewModel;
 use super::other_sets::OtherSet;
 use super::paint::{ImageTexture, Paint, PaintStats, Slot};
+use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
 use super::tangents::Tangent;
+use super::user_layers::USER_BUDGET_BYTES;
 
 /// 背景（Unity 版の 3D ビューのカメラの背景 (0.12, 0.13, 0.15)）。
 pub const BACKGROUND: [f64; 3] = [0.12, 0.13, 0.15];
@@ -558,7 +560,9 @@ pub fn bloom_levels(size: [u32; 2]) -> Vec<[u32; 2]> {
     let base = [(size[0] / 2).max(1), (size[1] / 2).max(1)];
     // 小さい絵では段を減らす（最後の段が 4 画素ほどになるまで）
     let count = (size[0].min(size[1]).max(4).ilog2() - 2).clamp(1, BLOOM_MAX_LEVELS);
-    (0..count).map(|k| [(base[0] >> k).max(1), (base[1] >> k).max(1)]).collect()
+    (0..count)
+        .map(|k| [(base[0] >> k).max(1), (base[1] >> k).max(1)])
+        .collect()
 }
 
 /// 面の描き先の GPU のバイト数の見積もり（テクスチャの大きさの式。ドライバの詰め物は含めない）。内訳は、解決後の 8 bit（egui が読む）・
@@ -574,14 +578,21 @@ pub fn target_bytes(size: [u32; 2], samples: u32, hdr: bool, bloom: bool) -> u64
         bytes += pixels * 8;
     }
     if bloom {
-        bytes += bloom_levels(size).iter().map(|l| l[0] as u64 * l[1] as u64 * 8).sum::<u64>();
+        bytes += bloom_levels(size)
+            .iter()
+            .map(|l| l[0] as u64 * l[1] as u64 * 8)
+            .sum::<u64>();
     }
     bytes
 }
 
 /// 面の描き先（8 bit・HDR・深度。8 bit は sRGB の見え方も）で機材が使えるサンプル数（昇順。1 を含む）。多サンプルを解決（resolve）できる形式だけ。
 /// 装置が `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` を持たないあいだは、WebGPU が保証する 1 と 4 だけ（`wgpu_configuration` が、機材が持つときは装置に要求する）。
-pub fn supported_samples(adapter: &wgpu::Adapter, device: &wgpu::Device, srgb_views: bool) -> Vec<u32> {
+pub fn supported_samples(
+    adapter: &wgpu::Adapter,
+    device: &wgpu::Device,
+    srgb_views: bool,
+) -> Vec<u32> {
     let specific = device
         .features()
         .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
@@ -605,8 +616,10 @@ pub fn supported_samples(adapter: &wgpu::Adapter, device: &wgpu::Device, srgb_vi
                 || (depth.flags.sample_count_supported(n)
                     && colors.iter().all(|f| {
                         f.flags.sample_count_supported(n)
-                            && f.flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
-                            && f.allowed_usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+                            && f.flags
+                                .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE)
+                            && f.allowed_usages
+                                .contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
                     }))
         })
         .collect()
@@ -614,7 +627,14 @@ pub fn supported_samples(adapter: &wgpu::Adapter, device: &wgpu::Device, srgb_vi
 
 /// 描き先のサンプル数を決める: 機材が対応する数（`supported`）のうち `want` 以下の最大から始め、描き先の見積もり（`target_bytes`）が
 /// 上限 `budget` を超えるあいだ、次に小さい対応する数へ下げる（1 まで。1 は多サンプルなしで、上限を超えても使う: 描けなくはしない）。
-pub fn plan_samples(supported: &[u32], want: u32, size: [u32; 2], hdr: bool, bloom: bool, budget: u64) -> u32 {
+pub fn plan_samples(
+    supported: &[u32],
+    want: u32,
+    size: [u32; 2],
+    hdr: bool,
+    bloom: bool,
+    budget: u64,
+) -> u32 {
     let mut samples = clamp_samples(want, supported);
     while samples > 1 && target_bytes(size, samples, hdr, bloom) > budget {
         samples = clamp_samples(samples - 1, supported);
@@ -838,8 +858,22 @@ impl View3dRenderer {
         // 機材が使えるサンプル数。初めは既定の数（描くときに選びと描き先のメモリで決めて、数が変わればパイプラインを作り直す）
         let supported = supported_samples(&rs.adapter, device, srgb_views);
         let samples = clamp_samples(DEFAULT_SAMPLES, &supported);
-        let ldr = build_pipelines(device, &scene_module, &scene_pipeline_layout, &background_pipeline_layout, LDR, samples);
-        let hdr = build_pipelines(device, &scene_module, &scene_pipeline_layout, &background_pipeline_layout, HDR, samples);
+        let ldr = build_pipelines(
+            device,
+            &scene_module,
+            &scene_pipeline_layout,
+            &background_pipeline_layout,
+            LDR,
+            samples,
+        );
+        let hdr = build_pipelines(
+            device,
+            &scene_module,
+            &scene_pipeline_layout,
+            &background_pipeline_layout,
+            HDR,
+            samples,
+        );
         let tone_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("yolu-3d-tonemap"),
             entries: &[
@@ -1199,7 +1233,14 @@ impl View3dRenderer {
 
     /// 選んだサンプル数 `want` から、今の描き先で使うサンプル数を決める（`plan_samples`）。
     pub fn plan_samples(&self, want: u32, size: [u32; 2], hdr: bool, bloom: bool) -> u32 {
-        plan_samples(&self.supported, want, size, hdr, bloom, self.target_budget())
+        plan_samples(
+            &self.supported,
+            want,
+            size,
+            hdr,
+            bloom,
+            self.target_budget(),
+        )
     }
 
     /// ほかのセットの絵を新しく作り始めてよい 1 フレームの時間を決める（試験が 0 にして、1 フレームに 1 つずつの道を通す）。
@@ -1514,7 +1555,11 @@ impl View3dRenderer {
         ));
         // Unity から受けた絵の配列も、その残りから（セットごとの上限まで）
         self.received_budget = remaining;
-        remaining = remaining.saturating_sub(look_gpu::planned_received_bytes(doc, limit, self.received_budget));
+        remaining = remaining.saturating_sub(look_gpu::planned_received_bytes(
+            doc,
+            limit,
+            self.received_budget,
+        ));
         let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
         self.unpainted.clear();
         for o in want {
@@ -1668,7 +1713,15 @@ impl View3dRenderer {
         };
         if stale(&self.current_bind, &self.paint, &self.current_look) {
             self.current_bind = Some(SetBind {
-                bind: make_set_bind(&device, layout, &self.paint, true, true, &self.current_look, white),
+                bind: make_set_bind(
+                    &device,
+                    layout,
+                    &self.paint,
+                    true,
+                    true,
+                    &self.current_look,
+                    white,
+                ),
                 uid: self.paint.uid(),
                 layout_version: self.paint.layout_version(),
                 look: self.current_look.bind_key(),
@@ -1727,7 +1780,8 @@ impl View3dRenderer {
     fn looks_key(&self) -> u64 {
         let mut key = self.current_look.key();
         for h in &self.held {
-            key = (key ^ h.look.key() ^ h.material as u32 as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            key =
+                (key ^ h.look.key() ^ h.material as u32 as u64).wrapping_mul(0x0000_0100_0000_01b3);
         }
         key
     }
@@ -2602,7 +2656,11 @@ impl View3dRenderer {
             key.spec.constants().to_vec()
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(if key.outline { "yolu-3d-liltoon-outline" } else { "yolu-3d-liltoon" }),
+            label: Some(if key.outline {
+                "yolu-3d-liltoon-outline"
+            } else {
+                "yolu-3d-liltoon"
+            }),
             layout: Some(&self.scene_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &self.scene_module,
@@ -2697,7 +2755,11 @@ impl View3dRenderer {
                     end += mesh.ranges[i].count;
                     i += 1;
                 }
-                let mut draw = if lil_on { self.draw_of(pick) } else { SetDraw::STANDARD };
+                let mut draw = if lil_on {
+                    self.draw_of(pick)
+                } else {
+                    SetDraw::STANDARD
+                };
                 // 実機は全部入りの 1 本（入切のたびにパイプラインを作り直さない）。ソフトの描画だけ使う機能で作る
                 if !self.software {
                     draw.spec = look_gpu::LilSpec::ALL;
@@ -2721,9 +2783,25 @@ impl View3dRenderer {
             }
             let transparent = is_transparent(d);
             let srgb = transparent && linear_blend;
-            needed.push(LilPipe { hdr: hdr_path, srgb, cull: d.cull, transparent, outline: false, spec: d.spec, samples });
+            needed.push(LilPipe {
+                hdr: hdr_path,
+                srgb,
+                cull: d.cull,
+                transparent,
+                outline: false,
+                spec: d.spec,
+                samples,
+            });
             if d.outline {
-                needed.push(LilPipe { hdr: hdr_path, srgb, cull: 1, transparent, outline: true, spec: d.spec, samples });
+                needed.push(LilPipe {
+                    hdr: hdr_path,
+                    srgb,
+                    cull: 1,
+                    transparent,
+                    outline: true,
+                    spec: d.spec,
+                    samples,
+                });
             }
         }
         // ソフトの描画は機能とスロットの読み方ごとに作るので、溜まりすぎたら今のフレームで使わないものを捨てる
@@ -2804,13 +2882,30 @@ impl View3dRenderer {
                 pass.set_bind_group(0, bind, &[]);
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
                 // 1. 不透明・カットアウト（Unity の描く順: 不透明 → アルファテスト → 半透明）。輪郭線はその面の後
-                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| !is_transparent(d)) {
+                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| !is_transparent(d))
+                {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
                     if d.lil {
-                        pass.set_pipeline(lil(LilPipe { hdr: hdr_path, srgb: false, cull: d.cull, transparent: false, outline: false, spec: d.spec, samples }));
+                        pass.set_pipeline(lil(LilPipe {
+                            hdr: hdr_path,
+                            srgb: false,
+                            cull: d.cull,
+                            transparent: false,
+                            outline: false,
+                            spec: d.spec,
+                            samples,
+                        }));
                         pass.draw(*start..*end, 0..1);
                         if d.outline {
-                            pass.set_pipeline(lil(LilPipe { hdr: hdr_path, srgb: false, cull: 1, transparent: false, outline: true, spec: d.spec, samples }));
+                            pass.set_pipeline(lil(LilPipe {
+                                hdr: hdr_path,
+                                srgb: false,
+                                cull: 1,
+                                transparent: false,
+                                outline: true,
+                                spec: d.spec,
+                                samples,
+                            }));
                             pass.draw(*start..*end, 0..1);
                         }
                     } else {
@@ -2820,12 +2915,30 @@ impl View3dRenderer {
                 }
                 // 2. 半透明（HDR の描き先なら同じパスで。モデルの並びの順。面ごとの並べ替えはしない）
                 if !second_pass {
-                    for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
+                    for (start, end, pick, d) in
+                        draws.iter().filter(|(_, _, _, d)| is_transparent(d))
+                    {
                         pass.set_bind_group(1, set_bind(*pick), &[]);
-                        pass.set_pipeline(lil(LilPipe { hdr: hdr_path, srgb: false, cull: d.cull, transparent: true, outline: false, spec: d.spec, samples }));
+                        pass.set_pipeline(lil(LilPipe {
+                            hdr: hdr_path,
+                            srgb: false,
+                            cull: d.cull,
+                            transparent: true,
+                            outline: false,
+                            spec: d.spec,
+                            samples,
+                        }));
                         pass.draw(*start..*end, 0..1);
                         if d.outline {
-                            pass.set_pipeline(lil(LilPipe { hdr: hdr_path, srgb: false, cull: 1, transparent: true, outline: true, spec: d.spec, samples }));
+                            pass.set_pipeline(lil(LilPipe {
+                                hdr: hdr_path,
+                                srgb: false,
+                                cull: 1,
+                                transparent: true,
+                                outline: true,
+                                spec: d.spec,
+                                samples,
+                            }));
                             pass.draw(*start..*end, 0..1);
                         }
                     }
@@ -2841,7 +2954,9 @@ impl View3dRenderer {
                         Some(msaa) => wgpu::RenderPassColorAttachment {
                             view: msaa.srgb_view.as_ref().expect("見え方を作れる機材だけ"),
                             depth_slice: None,
-                            resolve_target: Some(target.srgb_view.as_ref().expect("見え方を作れる機材だけ")),
+                            resolve_target: Some(
+                                target.srgb_view.as_ref().expect("見え方を作れる機材だけ"),
+                            ),
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Load,
                                 store: wgpu::StoreOp::Discard,
@@ -2873,10 +2988,26 @@ impl View3dRenderer {
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
                 for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
-                    pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: d.cull, transparent: true, outline: false, spec: d.spec, samples }));
+                    pass.set_pipeline(lil(LilPipe {
+                        hdr: false,
+                        srgb: true,
+                        cull: d.cull,
+                        transparent: true,
+                        outline: false,
+                        spec: d.spec,
+                        samples,
+                    }));
                     pass.draw(*start..*end, 0..1);
                     if d.outline {
-                        pass.set_pipeline(lil(LilPipe { hdr: false, srgb: true, cull: 1, transparent: true, outline: true, spec: d.spec, samples }));
+                        pass.set_pipeline(lil(LilPipe {
+                            hdr: false,
+                            srgb: true,
+                            cull: 1,
+                            transparent: true,
+                            outline: true,
+                            spec: d.spec,
+                            samples,
+                        }));
                         pass.draw(*start..*end, 0..1);
                     }
                 }
@@ -2894,7 +3025,11 @@ impl View3dRenderer {
                 Curve::Aces => 2.0,
             };
             // ブルームの絵の和は、散らしの重み（`BLOOM_SCATTER`）の等比数列の和 1 / (1 − 散らし) になっているので、掛けて 1 に戻す
-            let bloom_gain = if bloom { display.post.bloom_strength * (1.0 - BLOOM_SCATTER) } else { 0.0 };
+            let bloom_gain = if bloom {
+                display.post.bloom_strength * (1.0 - BLOOM_SCATTER)
+            } else {
+                0.0
+            };
             let params: Vec<u8> = [curve, ev.exp2(), bloom_gain, 0.0]
                 .iter()
                 .flat_map(|v| v.to_le_bytes())
@@ -2905,28 +3040,31 @@ impl View3dRenderer {
                 (true, Some(chain)) => &chain.views[0],
                 _ => &self.dummy_bloom,
             };
-            let tone_bind = self.rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("yolu-3d-tonemap"),
-                layout: &self.tone.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&hdr.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.tone.params.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(bloom_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(&self.bloom_sampler),
-                    },
-                ],
-            });
+            let tone_bind = self
+                .rs
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("yolu-3d-tonemap"),
+                    layout: &self.tone.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&hdr.view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: self.tone.params.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(bloom_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&self.bloom_sampler),
+                        },
+                    ],
+                });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("yolu-3d-tonemap"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2952,39 +3090,52 @@ impl View3dRenderer {
     /// ブルームの段を積む: HDR の絵（解決後）から明るい所を半分の大きさへ取り出し（最初の段）、1 段ごとに半分へ縮めて、
     /// 小さい段から順に 1 つ大きい段へ重みつきで足し戻す。結果は最初の段（`BloomChain::views[0]`）。
     fn encode_bloom(&self, encoder: &mut wgpu::CommandEncoder, display: &Display) {
-        let (Some(pipes), Some(chain), Some(hdr)) =
-            (self.bloom.as_ref(), self.bloom_chain.as_ref(), self.hdr_target.as_ref())
-        else {
+        let (Some(pipes), Some(chain), Some(hdr)) = (
+            self.bloom.as_ref(),
+            self.bloom_chain.as_ref(),
+            self.hdr_target.as_ref(),
+        ) else {
             return;
         };
         let threshold = display.post.bloom_threshold;
         // ひざ: しきい値の下でなめらかに立ち上げる幅（しきい値の半分）
-        let params: Vec<u8> = [threshold, threshold * 0.5 + 1e-4, BLOOM_SCATTER, display.exposure.exp2()]
-            .iter()
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
+        let params: Vec<u8> = [
+            threshold,
+            threshold * 0.5 + 1e-4,
+            BLOOM_SCATTER,
+            display.exposure.exp2(),
+        ]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
         self.rs.queue.write_buffer(&pipes.params, 0, &params);
         let bind = |source: &wgpu::TextureView| {
-            self.rs.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("yolu-3d-bloom"),
-                layout: &pipes.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(source),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.bloom_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: pipes.params.as_entire_binding(),
-                    },
-                ],
-            })
+            self.rs
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("yolu-3d-bloom"),
+                    layout: &pipes.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(source),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.bloom_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: pipes.params.as_entire_binding(),
+                        },
+                    ],
+                })
         };
-        let mut run = |label: &str, target: &wgpu::TextureView, load: wgpu::LoadOp<wgpu::Color>, pipeline: &wgpu::RenderPipeline, source: &wgpu::TextureView| {
+        let mut run = |label: &str,
+                       target: &wgpu::TextureView,
+                       load: wgpu::LoadOp<wgpu::Color>,
+                       pipeline: &wgpu::RenderPipeline,
+                       source: &wgpu::TextureView| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3006,12 +3157,30 @@ impl View3dRenderer {
             pass.draw(0..3, 0..1);
         };
         let clear = wgpu::LoadOp::Clear(wgpu::Color::BLACK);
-        run("yolu-3d-bloom-prefilter", &chain.views[0], clear, &pipes.prefilter, &hdr.view);
+        run(
+            "yolu-3d-bloom-prefilter",
+            &chain.views[0],
+            clear,
+            &pipes.prefilter,
+            &hdr.view,
+        );
         for k in 1..chain.views.len() {
-            run("yolu-3d-bloom-down", &chain.views[k], clear, &pipes.down, &chain.views[k - 1]);
+            run(
+                "yolu-3d-bloom-down",
+                &chain.views[k],
+                clear,
+                &pipes.down,
+                &chain.views[k - 1],
+            );
         }
         for k in (1..chain.views.len()).rev() {
-            run("yolu-3d-bloom-up", &chain.views[k - 1], wgpu::LoadOp::Load, &pipes.up, &chain.views[k]);
+            run(
+                "yolu-3d-bloom-up",
+                &chain.views[k - 1],
+                wgpu::LoadOp::Load,
+                &pipes.up,
+                &chain.views[k],
+            );
         }
     }
 }

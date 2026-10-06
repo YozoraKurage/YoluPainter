@@ -2011,12 +2011,19 @@ fn replacing_tiles_refuses_what_a_stored_file_could_not_hold() {
     let d = doc(20, 20, 16);
     let base = SelectionMask::none(&d);
     let tile = |fill: u8| vec![fill; 16 * 16];
-    assert!(base.with_tiles([(TileCoord::new(2, 0), tile(1))]).is_err(), "文書の外");
-    assert!(base
-        .with_tiles([(TileCoord::new(0, 0), vec![1u8; 10])])
-        .is_err(), "長さ");
+    assert!(
+        base.with_tiles([(TileCoord::new(2, 0), tile(1))]).is_err(),
+        "文書の外"
+    );
+    assert!(
+        base.with_tiles([(TileCoord::new(0, 0), vec![1u8; 10])])
+            .is_err(),
+        "長さ"
+    );
     // 右上のタイルは 4×4 だけが画布: 余白に量があれば断る
-    assert!(base.with_tiles([(TileCoord::new(1, 1), tile(255))]).is_err());
+    assert!(base
+        .with_tiles([(TileCoord::new(1, 1), tile(255))])
+        .is_err());
     // 量が全部 0 のタイルは断らず、無いタイルのまま
     let cleared = base.with_tiles([(TileCoord::new(0, 0), tile(0))]).unwrap();
     assert!(cleared.is_empty());

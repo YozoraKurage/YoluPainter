@@ -228,7 +228,10 @@ impl SaveTarget {
         let mut created = match &self.expected {
             None => CreatedDirs::make(parent)?,
             Some(_) => {
-                conflict(parent.exists(), "保存先が外部で消されています。上書きしません")?;
+                conflict(
+                    parent.exists(),
+                    "保存先が外部で消されています。上書きしません",
+                )?;
                 CreatedDirs::default()
             }
         };
@@ -290,7 +293,9 @@ impl SaveTarget {
         let backup = match to_back_up {
             Some((folder, previous)) => {
                 present(&self.path)?;
-                Some(Backup::make(&folder, &name, &stem, &self.path, &previous, seams)?)
+                Some(Backup::make(
+                    &folder, &name, &stem, &self.path, &previous, seams,
+                )?)
             }
             None => {
                 self.check_expected()?;
@@ -305,14 +310,18 @@ impl SaveTarget {
             // ウイルス対策・Unity の取り込みが保存先や一時ファイルを一時的に掴んでいると失敗するので、短くやり直す（`replace_file`）
             Some(_) => replace_file(&pending.path, &self.path, seams)?,
             // 新規の保存先は、置き換えない移動。最後の確かめから移動までの間に外から作られたものを上書きしない
-            None => match retry_busy(seams.busy, &mut *seams.sleep, || (seams.move_new)(&pending.path, &self.path))? {
+            None => match retry_busy(seams.busy, &mut *seams.sleep, || {
+                (seams.move_new)(&pending.path, &self.path)
+            })? {
                 Moved::Done => {}
                 Moved::Occupied => return Err(occupied()),
                 // 置き換えない移動の使えないファイルシステム。確かめ直してから置き換える移動に落とす（その間に作られる競合は
                 // 防げない。ロックの使えない場所で排他なしに続けるのと同じ考え方）
                 Moved::Unsupported => {
                     conflict(absent(&self.path)?, occupied_reason())?;
-                    retry_busy(seams.busy, &mut *seams.sleep, || (seams.rename)(&pending.path, &self.path))?;
+                    retry_busy(seams.busy, &mut *seams.sleep, || {
+                        (seams.rename)(&pending.path, &self.path)
+                    })?;
                 }
             },
         }
@@ -326,7 +335,9 @@ impl SaveTarget {
         (seams.phase)("after-replace")?;
         // 整理は確定した後だけ。今回の退避は数に入れて必ず残し、消せなくても保存は成功のまま理由を返す
         let prune_failures = match (keep, &backup) {
-            (BackupKeep::Count(n), Some(made)) if n > 0 => prune(&stem, n, made, &mut *seams.remove),
+            (BackupKeep::Count(n), Some(made)) if n > 0 => {
+                prune(&stem, n, made, &mut *seams.remove)
+            }
             _ => Vec::new(),
         };
         Ok(SaveReport {
@@ -375,7 +386,8 @@ fn check_name(path: &Path) -> Result<()> {
     let ok = path.file_name().is_some_and(|n| {
         let n = n.to_string_lossy();
         let n = n.as_bytes();
-        n.len() > EXTENSION.len() && n[n.len() - EXTENSION.len()..].eq_ignore_ascii_case(EXTENSION.as_bytes())
+        n.len() > EXTENSION.len()
+            && n[n.len() - EXTENSION.len()..].eq_ignore_ascii_case(EXTENSION.as_bytes())
     });
     conflict(ok, "保存先の名前が .ylp で終わっていません")
 }
@@ -478,7 +490,10 @@ fn replace_file(from: &Path, to: &Path, seams: &mut Seams<'_>) -> io::Result<()>
     match retry_busy_within(RELEASE_AFTER, busy, &mut *seams.sleep, || rename(from, to)) {
         Err(e) if busy(&e) => {
             let released = release_at(to);
-            let result = retry_busy_within(BUSY_BUDGET - RELEASE_AFTER, busy, &mut *seams.sleep, || rename(from, to));
+            let result =
+                retry_busy_within(BUSY_BUDGET - RELEASE_AFTER, busy, &mut *seams.sleep, || {
+                    rename(from, to)
+                });
             if result.is_err() {
                 released.reacquire();
             }
@@ -499,7 +514,8 @@ fn is_leftover_name(name: &str, found: &str) -> bool {
         return false;
     };
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
-    rest.split_once('-').is_some_and(|(pid, nonce)| digits(pid) && digits(nonce))
+    rest.split_once('-')
+        .is_some_and(|(pid, nonce)| digits(pid) && digits(nonce))
 }
 /// `folder` の中の、この保存先の一時ファイルの残り（強制終了された保存が残したもの）を消す。誰も保存していないと確かめた（保存先の排他
 /// ロックを持っている）ときだけ呼ぶ。普通のファイルだけで、リンク・フォルダーには触らない。消せなくても無視する（次の保存でやり直す）。
@@ -569,7 +585,9 @@ impl Drop for CreatedDirs {
 /// 前の版の置き場が、使えない形（普通のファイル・シンボリックリンク）で塞がれていないか。
 fn check_backup_folder(folder: &Path) -> Result<()> {
     match fs::symlink_metadata(folder) {
-        Ok(m) if m.file_type().is_symlink() => conflict(false, "バックアップ先がシンボリックリンクです"),
+        Ok(m) if m.file_type().is_symlink() => {
+            conflict(false, "バックアップ先がシンボリックリンクです")
+        }
         Ok(m) => conflict(m.is_dir(), "バックアップ先がフォルダーではありません"),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
@@ -637,7 +655,8 @@ impl Backup {
         f.sync_all()?;
         drop(f);
         conflict(
-            length == expected.length && format!("{:x}", sha2::Digest::finalize(sha)) == expected.sha256,
+            length == expected.length
+                && format!("{:x}", sha2::Digest::finalize(sha)) == expected.sha256,
             "保存先が外部で変更されています",
         )?;
         (seams.phase)("backup-copied")?;
@@ -645,13 +664,17 @@ impl Backup {
         for _ in 0..BACKUP_NAME_ATTEMPTS {
             let path = folder.join(backup_name(folder, stem, SystemTime::now())?);
             // 置き換えない移動: 同じ名前が先にあれば（別のプロセスが同じ時刻に作った）断られるので、別の名前でやり直す
-            let moved = retry_busy(seams.busy, &mut *seams.sleep, || (seams.move_new)(&temp, &path))?;
+            let moved = retry_busy(seams.busy, &mut *seams.sleep, || {
+                (seams.move_new)(&temp, &path)
+            })?;
             let done = match moved {
                 Moved::Done => true,
                 Moved::Occupied => false,
                 // 置き換えない移動の使えないファイルシステム。確かめ直してから移す
                 Moved::Unsupported if absent(&path)? => {
-                    retry_busy(seams.busy, &mut *seams.sleep, || (seams.rename)(&temp, &path))?;
+                    retry_busy(seams.busy, &mut *seams.sleep, || {
+                        (seams.rename)(&temp, &path)
+                    })?;
                     true
                 }
                 Moved::Unsupported => false,
@@ -736,7 +759,10 @@ fn list_backups(folder: &Path, stem: &str) -> io::Result<Vec<Found>> {
         // 更新時刻は、時刻の名前を持たない以前の退避の順にだけ使う
         let modified = match stamp {
             Some(_) => UNIX_EPOCH,
-            None => entry.metadata().and_then(|m| m.modified()).unwrap_or(UNIX_EPOCH),
+            None => entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(UNIX_EPOCH),
         };
         found.push(Found {
             path: entry.path(),
@@ -768,7 +794,10 @@ fn backup_name(folder: &Path, stem: &str, now: SystemTime) -> io::Result<String>
         Some((stamp, n)) if stamp >= now => (stamp, n + 1),
         _ => (now, 0),
     };
-    Ok(format!("{stem}-{stamp}{}{EXTENSION}", "_".repeat(underscores)))
+    Ok(format!(
+        "{stem}-{stamp}{}{EXTENSION}",
+        "_".repeat(underscores)
+    ))
 }
 /// `yyyyMMddTHHmmssfffZ`（UTC）。
 fn stamp_of(time: SystemTime) -> String {
@@ -843,7 +872,11 @@ fn move_without_replacing(from: &Path, to: &Path) -> io::Result<Moved> {
         Ok(()) => return Ok(Moved::Done),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(Moved::Occupied),
         // フラグを知らないカーネル・ファイルシステム（ENOSYS・EINVAL・EOPNOTSUPP）。リンクに落とす
-        Err(e) if matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput) => {}
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+            ) => {}
         Err(e) => return Err(e),
     }
     link_then_unlink(from, to)
@@ -890,7 +923,15 @@ fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     };
     let (from, to) = (cstr(from)?, cstr(to)?);
     // SAFETY: どちらも NUL で終わる C 文字列で、呼び出しの間生きている。カレントのフォルダーからの相対（AT_FDCWD）
-    let rc = unsafe { renameat2(AT_FDCWD, from.as_ptr(), AT_FDCWD, to.as_ptr(), RENAME_NOREPLACE) };
+    let rc = unsafe {
+        renameat2(
+            AT_FDCWD,
+            from.as_ptr(),
+            AT_FDCWD,
+            to.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    };
     if rc == 0 {
         Ok(())
     } else {
@@ -1315,7 +1356,8 @@ mod tests {
             busy: impl Fn(&io::Error) -> bool,
             sleep: impl FnMut(Duration),
         ) -> Result<FileStamp> {
-            self.save_replacing_report(project, rename, busy, sleep).map(|r| r.stamp)
+            self.save_replacing_report(project, rename, busy, sleep)
+                .map(|r| r.stamp)
         }
         /// `save_replacing` の、保存の報告（保存後のプロジェクト）を返す形。
         fn save_replacing_report(
@@ -1551,7 +1593,12 @@ mod tests {
     }
     #[test]
     fn an_outside_change_during_the_save_is_caught_before_replacing() {
-        for point in ["memory-verified", "flushed", "disk-verified", "before-replace"] {
+        for point in [
+            "memory-verified",
+            "flushed",
+            "disk-verified",
+            "before-replace",
+        ] {
             let s = Scratch::new();
             let (p, mut t) = open_original(&s);
             let outside = b"external bytes";
@@ -1746,10 +1793,14 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         let mut phases = Vec::new();
-        t.save_locking(&changed(&p, "ロックの無い場所"), unsupported_lock, |phase| {
-            phases.push(phase.to_string());
-            Ok(())
-        })
+        t.save_locking(
+            &changed(&p, "ロックの無い場所"),
+            unsupported_lock,
+            |phase| {
+                phases.push(phase.to_string());
+                Ok(())
+            },
+        )
         .unwrap();
         assert!(phases.iter().any(|x| x == "after-replace"), "{phases:?}");
         assert_eq!(s.names(), ["sample.ylp", "sample.ylp-backups~"]);
@@ -1763,7 +1814,8 @@ mod tests {
         // 新規の保存先も同じ
         let s = Scratch::new();
         let mut t = SaveTarget::create(s.file()).unwrap();
-        t.save_locking(&project(), unsupported_lock, |_| Ok(())).unwrap();
+        t.save_locking(&project(), unsupported_lock, |_| Ok(()))
+            .unwrap();
         assert_eq!(s.names(), ["sample.ylp"]);
     }
     #[test]
@@ -1771,8 +1823,10 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         fs::write(s.lock(), b"left by a crash").unwrap();
-        t.save_locking(&changed(&p, "残ったロック"), unsupported_lock, |_| Ok(()))
-            .unwrap();
+        t.save_locking(&changed(&p, "残ったロック"), unsupported_lock, |_| {
+            Ok(())
+        })
+        .unwrap();
         assert!(s.leftovers().is_empty(), "{:?}", s.leftovers());
     }
     #[test]
@@ -1984,16 +2038,22 @@ mod tests {
     fn keeping_zero_makes_no_backup_and_never_touches_the_place() {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
-        let report = t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0)).unwrap();
+        let report = t
+            .save_with(&changed(&p, "退避しない"), BackupKeep::Count(0))
+            .unwrap();
         assert!(report.backup.is_none() && report.prune_failures.is_empty());
         assert!(!s.backups().exists(), "{:?}", s.names());
         assert_eq!(s.names(), ["sample.ylp"]);
         // 置き場が塞がれていても、退避しないなら関係なく保存できる
         fs::write(s.backups(), b"a file where the folder should be").unwrap();
         let next = changed(&p, "塞がれていても").to_bytes().unwrap();
-        t.save_with(&changed(&p, "塞がれていても"), BackupKeep::Count(0)).unwrap();
+        t.save_with(&changed(&p, "塞がれていても"), BackupKeep::Count(0))
+            .unwrap();
         assert_bytes(&fs::read(s.file()).unwrap(), &next, "保存先");
-        assert_eq!(fs::read(s.backups()).unwrap(), b"a file where the folder should be");
+        assert_eq!(
+            fs::read(s.backups()).unwrap(),
+            b"a file where the folder should be"
+        );
     }
     #[test]
     fn keeping_zero_does_not_delete_the_backups_that_already_exist() {
@@ -2003,7 +2063,8 @@ mod tests {
         t.save(&changed(&p, "二つ目")).unwrap();
         let before = s.kept();
         assert_eq!(before.len(), 2);
-        t.save_with(&changed(&p, "三つ目"), BackupKeep::Count(0)).unwrap();
+        t.save_with(&changed(&p, "三つ目"), BackupKeep::Count(0))
+            .unwrap();
         // 0 は「これから退避しない」で、すでにある版を消す設定ではない
         assert_eq!(s.kept(), before);
     }
@@ -2033,11 +2094,14 @@ mod tests {
         {
             let outside = s.0.join("outside.txt");
             fs::write(&outside, b"precious").unwrap();
-            std::os::unix::fs::symlink(&outside, dir.join("sample-20180101T000000000Z.ylp")).unwrap();
+            std::os::unix::fs::symlink(&outside, dir.join("sample-20180101T000000000Z.ylp"))
+                .unwrap();
         }
         assert_eq!(s.kept().len(), 3);
         let last = fs::read(s.file()).unwrap();
-        let report = t.save_with(&changed(&p, "版 5"), BackupKeep::Count(1)).unwrap();
+        let report = t
+            .save_with(&changed(&p, "版 5"), BackupKeep::Count(1))
+            .unwrap();
         assert!(report.prune_failures.is_empty());
         assert_eq!(s.kept(), [last], "残るのは今回の退避だけ");
         for name in foreign {
@@ -2046,10 +2110,12 @@ mod tests {
         assert!(dir.join("sample-20190101T000000000Z.ylp").is_dir());
         #[cfg(unix)]
         {
-            assert!(fs::symlink_metadata(dir.join("sample-20180101T000000000Z.ylp"))
-                .unwrap()
-                .file_type()
-                .is_symlink());
+            assert!(
+                fs::symlink_metadata(dir.join("sample-20180101T000000000Z.ylp"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
             assert_eq!(fs::read(s.0.join("outside.txt")).unwrap(), b"precious");
         }
     }
@@ -2058,10 +2124,15 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         touch(&s.backups().join("sample-keep.ylp"), b"renamed by the user");
-        let report = t.save_with(&changed(&p, "名前を変えた版の隣"), BackupKeep::Count(1)).unwrap();
+        let report = t
+            .save_with(&changed(&p, "名前を変えた版の隣"), BackupKeep::Count(1))
+            .unwrap();
         let made = report.backup.unwrap();
         assert_eq!(fs::read(&made).unwrap(), ORIGINAL);
-        assert_eq!(fs::read(s.backups().join("sample-keep.ylp")).unwrap(), b"renamed by the user");
+        assert_eq!(
+            fs::read(s.backups().join("sample-keep.ylp")).unwrap(),
+            b"renamed by the user"
+        );
     }
     #[test]
     fn a_save_that_does_not_reach_the_replace_prunes_nothing_and_leaves_no_new_backup() {
@@ -2071,7 +2142,14 @@ mod tests {
             t.save(&changed(&p, &format!("版 {i}"))).unwrap();
         }
         let before = s.backup_dir_names();
-        for point in ["memory-verified", "flushed", "disk-verified", "before-replace", "backup-copied", "backed-up"] {
+        for point in [
+            "memory-verified",
+            "flushed",
+            "disk-verified",
+            "before-replace",
+            "backup-copied",
+            "backed-up",
+        ] {
             let error = t.save_core(
                 &changed(&p, "止まる保存"),
                 BackupKeep::Count(1),
@@ -2094,7 +2172,9 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         fs::create_dir(s.backups()).unwrap();
-        assert!(t.save_inner(&changed(&p, "止まる"), fail_at("backed-up")).is_err());
+        assert!(t
+            .save_inner(&changed(&p, "止まる"), fail_at("backed-up"))
+            .is_err());
         // もとからあった置き場は空でも残し、作った退避だけを消す
         assert!(s.backups().is_dir());
         assert!(s.backup_dir_names().is_empty());
@@ -2123,19 +2203,31 @@ mod tests {
             })
             .unwrap();
         // 保存は成功し、新しい版が確定していて、印も新しい
-        assert_bytes(&fs::read(s.file()).unwrap(), &next.to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &next.to_bytes().unwrap(),
+            "保存先",
+        );
         assert_eq!(t.stamp(), Some(&report.stamp));
         assert_eq!(report.stamp, read_stamp(&s.file()).unwrap());
         // 消せなかったものと理由を返し、ほかの古い版は消えている
         assert_eq!(report.prune_failures.len(), 1);
         assert_eq!(report.prune_failures[0].path, stuck);
-        assert_eq!(report.prune_failures[0].error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            report.prune_failures[0].error.kind(),
+            io::ErrorKind::PermissionDenied
+        );
         // 新しい方から 1 つ（今回の退避と合わせて 2 つ）を残し、残りを古い方へ消そうとする。消せないものがあっても続ける
-        assert_eq!(tried, listed[1..], "消せないものがあっても、残りの整理を続ける");
+        assert_eq!(
+            tried,
+            listed[1..],
+            "消せないものがあっても、残りの整理を続ける"
+        );
         assert!(stuck.exists() && !gone.exists() && listed[0].exists() && !listed[1].exists());
         assert!(s.leftovers().is_empty());
         // 次の保存はそのまま通る（消せなかったものは、また整理の対象になる）
-        t.save_with(&changed(&p, "版 6"), BackupKeep::Count(2)).unwrap();
+        t.save_with(&changed(&p, "版 6"), BackupKeep::Count(2))
+            .unwrap();
         assert_eq!(s.kept().len(), 2);
         assert!(!stuck.exists());
     }
@@ -2143,7 +2235,12 @@ mod tests {
     fn an_unreadable_backup_folder_is_reported_not_fatal() {
         // 整理のとき退避のフォルダーを読めなければ、そのフォルダーと理由を返す（保存は成功のまま）
         let s = Scratch::new();
-        let failures = prune("sample", 1, &s.0.join("no-such-folder").join("x.ylp"), &mut |_| Ok(()));
+        let failures = prune(
+            "sample",
+            1,
+            &s.0.join("no-such-folder").join("x.ylp"),
+            &mut |_| Ok(()),
+        );
         // フォルダーが無いのは「退避が無い」なので失敗ではない
         assert!(failures.is_empty());
         let file = s.0.join("a-file");
@@ -2175,11 +2272,16 @@ mod tests {
         assert_eq!(names.len(), 4);
         assert!(names[0].starts_with("sample-"), "{names:?}");
         assert_eq!(names[1..], [old('c'), old('b'), old('a')]);
-        let report = t.save_with(&changed(&p, "時刻の名前 2"), BackupKeep::Count(3)).unwrap();
+        let report = t
+            .save_with(&changed(&p, "時刻の名前 2"), BackupKeep::Count(3))
+            .unwrap();
         assert!(report.prune_failures.is_empty());
         let names = s.kept_names();
         assert_eq!(names.len(), 3);
-        assert!(names[0].starts_with("sample-") && names[1].starts_with("sample-"), "{names:?}");
+        assert!(
+            names[0].starts_with("sample-") && names[1].starts_with("sample-"),
+            "{names:?}"
+        );
         assert_eq!(names[2], old('c'));
         assert_eq!(fs::read(dir.join("zzzz.ylp")).unwrap(), b"mine");
     }
@@ -2197,7 +2299,10 @@ mod tests {
         sorted.reverse();
         assert_eq!(
             names.iter().map(|n| n.replace('_', "")).collect::<Vec<_>>(),
-            sorted.iter().map(|n| n.replace('_', "")).collect::<Vec<_>>()
+            sorted
+                .iter()
+                .map(|n| n.replace('_', ""))
+                .collect::<Vec<_>>()
         );
     }
     #[test]
@@ -2212,7 +2317,10 @@ mod tests {
         assert_eq!(stamp_of(at(4_107_542_400, 0)), "21000301T000000000Z");
         assert_eq!(stamp_of(at(2_147_483_648, 0)), "20380119T031408000Z");
         // 時計が 1970 年より前でも落ちない
-        assert_eq!(stamp_of(UNIX_EPOCH - std::time::Duration::from_secs(5)), "19700101T000000000Z");
+        assert_eq!(
+            stamp_of(UNIX_EPOCH - std::time::Duration::from_secs(5)),
+            "19700101T000000000Z"
+        );
     }
     #[test]
     fn colliding_backup_names_sort_newest_first_like_the_unity_version() {
@@ -2249,32 +2357,54 @@ mod tests {
         let second = backup_name(&dir, "sample", now).unwrap();
         assert_eq!(second, "sample-20260101T000000000Z_.ylp");
         touch(&dir.join(&second), &[2]);
-        assert_eq!(backup_name(&dir, "sample", now).unwrap(), "sample-20260101T000000000Z__.ylp");
+        assert_eq!(
+            backup_name(&dir, "sample", now).unwrap(),
+            "sample-20260101T000000000Z__.ylp"
+        );
         fs::remove_file(dir.join(&first)).unwrap(); // 整理で古い方を消しても、空いた名前を使い直さない
-        assert_eq!(backup_name(&dir, "sample", now).unwrap(), "sample-20260101T000000000Z__.ylp");
+        assert_eq!(
+            backup_name(&dir, "sample", now).unwrap(),
+            "sample-20260101T000000000Z__.ylp"
+        );
         // 時計が戻っていても、いちばん新しい版の時刻に下線を足して、新しい版が先に並ぶ
         let back = at(1_767_225_600 - 86_400, 0);
-        assert_eq!(backup_name(&dir, "sample", back).unwrap(), "sample-20260101T000000000Z__.ylp");
+        assert_eq!(
+            backup_name(&dir, "sample", back).unwrap(),
+            "sample-20260101T000000000Z__.ylp"
+        );
         // 進んでいれば、その時刻
         let later = at(1_767_225_600, 1);
-        assert_eq!(backup_name(&dir, "sample", later).unwrap(), "sample-20260101T000000001Z.ylp");
+        assert_eq!(
+            backup_name(&dir, "sample", later).unwrap(),
+            "sample-20260101T000000001Z.ylp"
+        );
         // 別の文書の退避の名前は数えない
         touch(&dir.join("other-20990101T000000000Z.ylp"), &[3]);
-        assert_eq!(backup_name(&dir, "sample", later).unwrap(), "sample-20260101T000000001Z.ylp");
+        assert_eq!(
+            backup_name(&dir, "sample", later).unwrap(),
+            "sample-20260101T000000001Z.ylp"
+        );
     }
     #[test]
     fn a_backup_made_while_the_clock_is_behind_still_sorts_as_the_newest() {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         // 未来の時刻の退避（時計が戻った・別のマシンで作った）がある
-        touch(&s.backups().join("sample-29990101T000000000Z.ylp"), b"from the future");
+        touch(
+            &s.backups().join("sample-29990101T000000000Z.ylp"),
+            b"from the future",
+        );
         t.save(&changed(&p, "時計が戻っている")).unwrap();
         let names = s.kept_names();
         assert_eq!(names.len(), 2);
-        assert_eq!(names[0], "sample-29990101T000000000Z_.ylp", "今回の退避が先頭");
+        assert_eq!(
+            names[0], "sample-29990101T000000000Z_.ylp",
+            "今回の退避が先頭"
+        );
         assert_eq!(fs::read(s.backups().join(&names[0])).unwrap(), ORIGINAL);
         // 整理しても、今回の退避を消さずに古い方を消す
-        t.save_with(&changed(&p, "もう一度"), BackupKeep::Count(1)).unwrap();
+        t.save_with(&changed(&p, "もう一度"), BackupKeep::Count(1))
+            .unwrap();
         assert_eq!(s.kept_names(), ["sample-29990101T000000000Z__.ylp"]);
     }
     #[test]
@@ -2288,7 +2418,11 @@ mod tests {
         let listed = backups(&upper).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].parent().unwrap(), backup_folder(&upper));
-        assert!(listed[0].file_name().unwrap().to_string_lossy().starts_with("Doc-"));
+        assert!(listed[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("Doc-"));
         assert_eq!(backup_folder(&upper), s.0.join("Doc.YLP-backups~"));
     }
 
@@ -2320,7 +2454,11 @@ mod tests {
         // 外の物が無くなれば、同じ保存先へ保存できる
         fs::remove_file(s.file()).unwrap();
         t.save(&project()).unwrap();
-        assert_bytes(&fs::read(s.file()).unwrap(), &project().to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &project().to_bytes().unwrap(),
+            "保存先",
+        );
     }
     #[test]
     fn a_folder_or_a_dangling_link_created_in_that_gap_is_not_replaced_either() {
@@ -2351,7 +2489,10 @@ mod tests {
                 |_| Ok(()),
             );
             assert!(matches!(error, Err(Error::SaveConflict(_))), "{error:?}");
-            assert!(fs::symlink_metadata(s.file()).unwrap().file_type().is_symlink());
+            assert!(fs::symlink_metadata(s.file())
+                .unwrap()
+                .file_type()
+                .is_symlink());
             assert!(!s.0.join("missing.ylp").exists(), "リンクの先に書かない");
             assert!(s.leftovers().is_empty());
         }
@@ -2367,10 +2508,16 @@ mod tests {
         // 先がある: ファイル・フォルダー。何も変えない
         fs::write(&from, b"newer").unwrap();
         assert_eq!(move_without_replacing(&from, &to).unwrap(), Moved::Occupied);
-        assert_eq!((fs::read(&from).unwrap(), fs::read(&to).unwrap()), (b"newer".to_vec(), b"new".to_vec()));
+        assert_eq!(
+            (fs::read(&from).unwrap(), fs::read(&to).unwrap()),
+            (b"newer".to_vec(), b"new".to_vec())
+        );
         let dir = s.0.join("dir.bin");
         fs::create_dir(&dir).unwrap();
-        assert_eq!(move_without_replacing(&from, &dir).unwrap(), Moved::Occupied);
+        assert_eq!(
+            move_without_replacing(&from, &dir).unwrap(),
+            Moved::Occupied
+        );
         assert!(dir.is_dir() && from.exists());
         // 元が無い（本当の失敗）は、占有とも未対応とも言わず失敗として返す
         assert!(move_without_replacing(&s.0.join("missing"), &s.0.join("free")).is_err());
@@ -2386,20 +2533,31 @@ mod tests {
         fs::write(&to, b"old").unwrap();
         match rename_noreplace(&from, &to) {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) if matches!(e.kind(), io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+                ) =>
+            {
                 eprintln!("renameat2 の置き換えない移動は、この置き場では使えないので見送る: {e}");
                 return;
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!((fs::read(&from).unwrap(), fs::read(&to).unwrap()), (b"new".to_vec(), b"old".to_vec()));
+        assert_eq!(
+            (fs::read(&from).unwrap(), fs::read(&to).unwrap()),
+            (b"new".to_vec(), b"old".to_vec())
+        );
         fs::remove_file(&to).unwrap();
         rename_noreplace(&from, &to).unwrap();
         assert!(!from.exists());
         assert_eq!(fs::read(&to).unwrap(), b"new");
         // NUL を含む名前は、C の文字列にできないので断る
         let nul = Path::new(std::ffi::OsStr::from_bytes(b"a\0b"));
-        assert_eq!(rename_noreplace(nul, &to).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            rename_noreplace(nul, &to).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
     #[cfg(unix)]
     #[test]
@@ -2413,11 +2571,20 @@ mod tests {
         assert_eq!(fs::read(&to).unwrap(), b"new");
         fs::write(&from, b"newer").unwrap();
         assert_eq!(link_then_unlink(&from, &to).unwrap(), Moved::Occupied);
-        assert_eq!((fs::read(&from).unwrap(), fs::read(&to).unwrap()), (b"newer".to_vec(), b"new".to_vec()));
+        assert_eq!(
+            (fs::read(&from).unwrap(), fs::read(&to).unwrap()),
+            (b"newer".to_vec(), b"new".to_vec())
+        );
         std::os::unix::fs::symlink(s.0.join("missing"), s.0.join("dangling")).unwrap();
-        assert_eq!(link_then_unlink(&from, &s.0.join("dangling")).unwrap(), Moved::Occupied);
+        assert_eq!(
+            link_then_unlink(&from, &s.0.join("dangling")).unwrap(),
+            Moved::Occupied
+        );
         // リンクを作れない（ここでは元が無い）なら、未対応として呼び出し側に任せる
-        assert_eq!(link_then_unlink(&s.0.join("missing"), &s.0.join("free")).unwrap(), Moved::Unsupported);
+        assert_eq!(
+            link_then_unlink(&s.0.join("missing"), &s.0.join("free")).unwrap(),
+            Moved::Unsupported
+        );
     }
     #[cfg(unix)]
     #[test]
@@ -2441,22 +2608,36 @@ mod tests {
         .unwrap();
         assert_eq!(refused, 1);
         assert_eq!(s.names(), ["sample.ylp"], "隠しファイルが残らない");
-        assert_bytes(&fs::read(s.file()).unwrap(), &project().to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &project().to_bytes().unwrap(),
+            "保存先",
+        );
         // 単体でも: 消せなくても Done で、リンクは両方の名前に残る（消し直すのは呼ぶ側）
         let (from, to) = (s.0.join("from.bin"), s.0.join("to.bin"));
         fs::write(&from, b"new").unwrap();
-        let moved = link_then_unlink_with(&from, &to, &mut |_| Err(io::Error::from(io::ErrorKind::PermissionDenied)));
+        let moved = link_then_unlink_with(&from, &to, &mut |_| {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        });
         assert_eq!(moved.unwrap(), Moved::Done);
-        assert_eq!((fs::read(&from).unwrap(), fs::read(&to).unwrap()), (b"new".to_vec(), b"new".to_vec()));
+        assert_eq!(
+            (fs::read(&from).unwrap(), fs::read(&to).unwrap()),
+            (b"new".to_vec(), b"new".to_vec())
+        );
     }
     #[test]
     fn a_file_system_that_cannot_move_without_replacing_still_saves_and_still_checks() {
         // 置き換えない移動の使えない場所でも、断らずに保存できる（確かめ直してから置き換える移動）
         let s = Scratch::new();
         let mut t = SaveTarget::create(s.file()).unwrap();
-        t.save_moving(&project(), |_, _| Ok(Moved::Unsupported), |_| Ok(())).unwrap();
+        t.save_moving(&project(), |_, _| Ok(Moved::Unsupported), |_| Ok(()))
+            .unwrap();
         assert_eq!(s.names(), ["sample.ylp"]);
-        assert_bytes(&fs::read(s.file()).unwrap(), &project().to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &project().to_bytes().unwrap(),
+            "保存先",
+        );
         // 確かめ直しは働く: 未対応と分かった後に外から作られていても上書きしない
         let s = Scratch::new();
         let mut t = SaveTarget::create(s.file()).unwrap();
@@ -2479,7 +2660,10 @@ mod tests {
             |_, _| Err(io::Error::from(io::ErrorKind::PermissionDenied)),
             |_| Ok(()),
         );
-        assert!(matches!(&error, Err(Error::Io(e)) if e.kind() == io::ErrorKind::PermissionDenied), "{error:?}");
+        assert!(
+            matches!(&error, Err(Error::Io(e)) if e.kind() == io::ErrorKind::PermissionDenied),
+            "{error:?}"
+        );
         assert!(s.names().is_empty(), "{:?}", s.names());
     }
     /// 保証の射程: 同じ新規の保存先へ同時に着いた保存のうち、勝つのは 1 つで中身は無傷（実際の保存はロックで直列になり、負けた側は
@@ -2493,7 +2677,12 @@ mod tests {
         // 保存先を取る（`create`）は全員ぶん先に済ませる。先に勝った保存が終わってから着いた側が「保存先が既にあります」で
         // create の時点で落ちると、競争ではなくなる。全員が同じ「まだ無い」保存先を持って、Barrier で揃えてから保存を始める
         let mut targets: Vec<(SaveTarget, Project)> = (0..SAVERS)
-            .map(|i| (SaveTarget::create(s.file()).unwrap(), changed(&base, &format!("競争 {i}"))))
+            .map(|i| {
+                (
+                    SaveTarget::create(s.file()).unwrap(),
+                    changed(&base, &format!("競争 {i}")),
+                )
+            })
             .collect();
         let gate = std::sync::Barrier::new(SAVERS);
         let results: Vec<(Result<FileStamp>, Vec<u8>)> = std::thread::scope(|scope| {
@@ -2510,7 +2699,12 @@ mod tests {
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
         let winners: Vec<_> = results.iter().filter(|(r, _)| r.is_ok()).collect();
-        assert_eq!(winners.len(), 1, "{:?}", results.iter().map(|(r, _)| r.is_ok()).collect::<Vec<_>>());
+        assert_eq!(
+            winners.len(),
+            1,
+            "{:?}",
+            results.iter().map(|(r, _)| r.is_ok()).collect::<Vec<_>>()
+        );
         // 負けた側は外部の変更・進行中として断られ、勝った側の中身がそのまま残る
         for (r, _) in &results {
             if let Err(e) = r {
@@ -2530,13 +2724,21 @@ mod tests {
         t.save_moving(
             &next,
             |from, to| {
-                assert_eq!(to.parent(), Some(backups.as_path()), "上書きは置き換えない移動を通らない: {to:?}");
+                assert_eq!(
+                    to.parent(),
+                    Some(backups.as_path()),
+                    "上書きは置き換えない移動を通らない: {to:?}"
+                );
                 move_without_replacing(from, to)
             },
             |_| Ok(()),
         )
         .unwrap();
-        assert_bytes(&fs::read(s.file()).unwrap(), &next.to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &next.to_bytes().unwrap(),
+            "保存先",
+        );
     }
     #[cfg(windows)]
     #[test]
@@ -2550,7 +2752,11 @@ mod tests {
         let target = dir.join("sample.ylp");
         let mut t = SaveTarget::create(&target).unwrap();
         t.save(&project()).unwrap();
-        assert_bytes(&fs::read(&target).unwrap(), &project().to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(&target).unwrap(),
+            &project().to_bytes().unwrap(),
+            "保存先",
+        );
         // 長い名前でも、先にあれば置き換えずに断る
         let mut again = SaveTarget::create(dir.join("other.ylp")).unwrap();
         let error = again.save_moving(
@@ -2570,7 +2776,16 @@ mod tests {
     #[test]
     fn a_name_that_does_not_end_in_ylp_is_refused_before_touching_disk() {
         let s = Scratch::new();
-        for bad in ["doc.txt", "doc.ylp.bak", "doc", "doc.ylp~", "doc.yl", ".ylp", "doc.ylpx", "doc.ylp "] {
+        for bad in [
+            "doc.txt",
+            "doc.ylp.bak",
+            "doc",
+            "doc.ylp~",
+            "doc.yl",
+            ".ylp",
+            "doc.ylpx",
+            "doc.ylp ",
+        ] {
             let path = s.0.join("sub").join(bad);
             let error = SaveTarget::create(&path).unwrap_err();
             assert!(
@@ -2594,7 +2809,10 @@ mod tests {
         fs::write(&path, ORIGINAL).unwrap();
         let (p, mut t) = SaveTarget::open(&path).unwrap();
         let error = t.save(&p).unwrap_err();
-        assert!(matches!(&error, Error::SaveConflict(why) if why.contains(".ylp")), "{error:?}");
+        assert!(
+            matches!(&error, Error::SaveConflict(why) if why.contains(".ylp")),
+            "{error:?}"
+        );
         assert_eq!(fs::read(&path).unwrap(), ORIGINAL);
         assert_eq!(s.names(), ["renamed.bin"]);
     }
@@ -2605,8 +2823,16 @@ mod tests {
         let mut t = SaveTarget::create(&nested).unwrap();
         assert!(!s.0.join("a").exists(), "create はまだ作らない");
         t.save(&project()).unwrap();
-        assert_bytes(&fs::read(&nested).unwrap(), &project().to_bytes().unwrap(), "保存先");
-        assert_eq!(fs::read_dir(nested.parent().unwrap()).unwrap().count(), 1, "ロックも一時ファイルも残らない");
+        assert_bytes(
+            &fs::read(&nested).unwrap(),
+            &project().to_bytes().unwrap(),
+            "保存先",
+        );
+        assert_eq!(
+            fs::read_dir(nested.parent().unwrap()).unwrap().count(),
+            1,
+            "ロックも一時ファイルも残らない"
+        );
         // 開き直せて、上書きでは退避する
         let (p, mut t) = SaveTarget::open(&nested).unwrap();
         t.save(&changed(&p, "入れ子の上書き")).unwrap();
@@ -2633,7 +2859,9 @@ mod tests {
         let s = Scratch::new();
         let target = s.0.join("never").join("deeper").join("doc.ylp");
         let mut t = SaveTarget::create(&target).unwrap();
-        assert!(t.save_inner(&project(), fail_at("memory-verified")).is_err());
+        assert!(t
+            .save_inner(&project(), fail_at("memory-verified"))
+            .is_err());
         assert!(!s.0.join("never").exists());
         assert!(s.names().is_empty());
     }
@@ -2652,7 +2880,13 @@ mod tests {
         });
         assert!(error.is_err());
         // 中に他のものが入ったフォルダーは消さない。保存が置いたロックと一時ファイルは消える
-        assert_eq!(fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>(), ["mine.txt"]);
+        assert_eq!(
+            fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["mine.txt"]
+        );
     }
     #[test]
     fn a_parent_that_is_a_file_fails_and_leaves_nothing() {
@@ -2683,7 +2917,10 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
         let error = t.save(&p).unwrap_err();
         // 開いたファイルの場所は作り直さない（外で消されたものを、無かったことにして書き始めない）
-        assert!(matches!(&error, Error::SaveConflict(why) if why.contains("外部で消されています")), "{error:?}");
+        assert!(
+            matches!(&error, Error::SaveConflict(why) if why.contains("外部で消されています")),
+            "{error:?}"
+        );
         assert!(!dir.exists());
     }
 
@@ -2720,7 +2957,10 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
-        assert!(slept.iter().all(|d| *d <= Duration::from_millis(300)), "{slept:?}");
+        assert!(
+            slept.iter().all(|d| *d <= Duration::from_millis(300)),
+            "{slept:?}"
+        );
         assert_eq!(calls, slept.len() + 1);
         // 別の失敗は待たずに返す
         let (mut slept, mut calls) = (Vec::new(), 0);
@@ -2729,10 +2969,16 @@ mod tests {
             Err(io::Error::from(io::ErrorKind::NotFound))
         })
         .unwrap_err();
-        assert_eq!((error.kind(), slept.len(), calls), (io::ErrorKind::NotFound, 0, 1));
+        assert_eq!(
+            (error.kind(), slept.len(), calls),
+            (io::ErrorKind::NotFound, 0, 1)
+        );
         // 本物の判定は Windows の共有違反・ロック違反・アクセス拒否だけ（Unix の置換は開いているファイルに妨げられない）
         let os = |code| io::Error::from_raw_os_error(code);
-        assert_eq!([os(5), os(32), os(33), os(2)].map(|e| is_busy(&e)), [cfg!(windows), cfg!(windows), cfg!(windows), false]);
+        assert_eq!(
+            [os(5), os(32), os(33), os(2)].map(|e| is_busy(&e)),
+            [cfg!(windows), cfg!(windows), cfg!(windows), false]
+        );
     }
     #[test]
     fn a_busy_replace_is_retried_until_it_goes_through() {
@@ -2766,23 +3012,40 @@ mod tests {
         let before = t.stamp().unwrap().clone();
         let mut slept = Vec::new();
         let error = t
-            .save_replacing(&changed(&p, "通らない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .save_replacing(
+                &changed(&p, "通らない"),
+                |_, _| Err(pretend_busy()),
+                is_pretend_busy,
+                |d| slept.push(d),
+            )
             .unwrap_err();
-        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert!(
+            matches!(&error, Error::Io(e) if is_pretend_busy(e)),
+            "{error:?}"
+        );
         assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
         assert_bytes(&fs::read(s.file()).unwrap(), ORIGINAL, "保存先");
-        assert_eq!(t.stamp().unwrap(), &before, "印は変えない（次の保存がそのまま通る）");
+        assert_eq!(
+            t.stamp().unwrap(),
+            &before,
+            "印は変えない（次の保存がそのまま通る）"
+        );
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
-        assert!(!s.backups().exists(), "置換に至らなかった保存は退避を残さない");
+        assert!(
+            !s.backups().exists(),
+            "置換に至らなかった保存は退避を残さない"
+        );
         t.save(&changed(&p, "次の保存")).unwrap();
     }
     /// ファイルの位置で持つ形で開いたとき（`open_by_handle`）の閾値。保存のあとのプロジェクトも、同じ形で持たせる。
-    const BY_HANDLE: Thresholds = Thresholds { keep_in_memory: 0, ..Thresholds::REAL };
+    const BY_HANDLE: Thresholds = Thresholds {
+        keep_in_memory: 0,
+        ..Thresholds::REAL
+    };
     /// 開いたエントリをファイルの位置で持つ形（メモリに残さない）で開く。
     fn open_by_handle(s: &Scratch) -> (Project, SaveTarget, String) {
         fs::write(s.file(), ORIGINAL).unwrap();
-        let (p, t) = BY_HANDLE
-            .scoped(|| SaveTarget::open(s.file()).unwrap());
+        let (p, t) = BY_HANDLE.scoped(|| SaveTarget::open(s.file()).unwrap());
         let name = p
             .original_archive()
             .entries()
@@ -2817,19 +3080,34 @@ mod tests {
                     |d| slept.push(d),
                 )
                 .unwrap();
-            assert_eq!(slept.iter().sum::<Duration>(), RELEASE_AFTER, "手放す前に、手放さずに待った合計");
+            assert_eq!(
+                slept.iter().sum::<Duration>(),
+                RELEASE_AFTER,
+                "手放す前に、手放さずに待った合計"
+            );
             let refused = blob.bytes().unwrap_err();
-            assert!(refused.to_string().contains(crate::SOURCE_RELEASED), "{refused:?}");
+            assert!(
+                refused.to_string().contains(crate::SOURCE_RELEASED),
+                "{refused:?}"
+            );
             let saved = report.project.unwrap();
             let from_new = saved.original_archive().entries()[&name].bytes().unwrap();
-            assert_eq!(from_new, want, "保存した後のプロジェクトは新しいファイルから同じ中身を読む");
+            assert_eq!(
+                from_new, want,
+                "保存した後のプロジェクトは新しいファイルから同じ中身を読む"
+            );
             // 置き換えられなかったときは、全部の待ちを使い切って、掴み直して今までどおり読める
             let s = Scratch::new();
             let (p, mut t, name) = open_by_handle(&s);
             let blob = p.original_archive().entries()[&name].clone();
             let want = blob.bytes().unwrap();
             let mut slept = Vec::new();
-            let error = t.save_replacing(&changed(&p, "通らない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d));
+            let error = t.save_replacing(
+                &changed(&p, "通らない"),
+                |_, _| Err(pretend_busy()),
+                is_pretend_busy,
+                |d| slept.push(d),
+            );
             assert!(error.is_err());
             assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
             assert_eq!(blob.bytes().unwrap(), want, "掴み直して読める");
@@ -2865,7 +3143,10 @@ mod tests {
             assert_eq!(readable, [true; 4], "どの試みでも手放していない");
             assert_eq!(blob.bytes().unwrap(), want, "保存前の写しも読める");
             let saved = report.project.unwrap();
-            assert_eq!(saved.original_archive().entries()[&name].bytes().unwrap(), want);
+            assert_eq!(
+                saved.original_archive().entries()[&name].bytes().unwrap(),
+                want
+            );
         });
     }
     #[test]
@@ -2925,12 +3206,18 @@ mod tests {
         // あるときだけ、開いたハンドルを持つ
         let s = Scratch::new();
         let (p, _t) = open_original(&s);
-        assert!(release_at(&s.file()).is_empty(), "小さなエントリだけ: ハンドルを持たない");
+        assert!(
+            release_at(&s.file()).is_empty(),
+            "小さなエントリだけ: ハンドルを持たない"
+        );
         drop(p);
         let s = Scratch::new();
         let (p, _t, _) = open_by_handle(&s);
         let released = release_at(&s.file());
-        assert!(!released.is_empty(), "大きなエントリがあれば、ハンドルを持つ");
+        assert!(
+            !released.is_empty(),
+            "大きなエントリがあれば、ハンドルを持つ"
+        );
         released.reacquire();
         drop(p);
     }
@@ -2954,16 +3241,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
-        assert_bytes(&fs::read(s.file()).unwrap(), &p.to_bytes().unwrap(), "保存先");
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &p.to_bytes().unwrap(),
+            "保存先",
+        );
         assert_eq!(s.names(), ["sample.ylp"], "一時ファイルとロックは残らない");
         // ずっと共有違反: 予算を使い切って、何も作らず失敗する
         let s = Scratch::new();
         let mut t = SaveTarget::create(s.file()).unwrap();
         let mut slept = Vec::new();
         let error = t
-            .save_moving_busy(&p, |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .save_moving_busy(
+                &p,
+                |_, _| Err(pretend_busy()),
+                is_pretend_busy,
+                |d| slept.push(d),
+            )
             .unwrap_err();
-        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert!(
+            matches!(&error, Error::Io(e) if is_pretend_busy(e)),
+            "{error:?}"
+        );
         assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
         assert!(s.names().is_empty(), "{:?}", s.names());
     }
@@ -2990,7 +3289,11 @@ mod tests {
         .unwrap();
         assert_eq!(slept, [10, 20, 40].map(Duration::from_millis));
         assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
-        assert_eq!(s.backup_dir_names(), s.kept_names(), "退避の一時ファイルは残らない");
+        assert_eq!(
+            s.backup_dir_names(),
+            s.kept_names(),
+            "退避の一時ファイルは残らない"
+        );
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
         // ずっと共有違反: 予算を使い切って失敗し、退避（作ったフォルダーごと）も保存先の変更も残さない
         let s = Scratch::new();
@@ -2998,9 +3301,17 @@ mod tests {
         let before = t.stamp().unwrap().clone();
         let mut slept = Vec::new();
         let error = t
-            .save_moving_busy(&changed(&p, "退避が移せない"), |_, _| Err(pretend_busy()), is_pretend_busy, |d| slept.push(d))
+            .save_moving_busy(
+                &changed(&p, "退避が移せない"),
+                |_, _| Err(pretend_busy()),
+                is_pretend_busy,
+                |d| slept.push(d),
+            )
             .unwrap_err();
-        assert!(matches!(&error, Error::Io(e) if is_pretend_busy(e)), "{error:?}");
+        assert!(
+            matches!(&error, Error::Io(e) if is_pretend_busy(e)),
+            "{error:?}"
+        );
         assert_eq!(slept.iter().sum::<Duration>(), BUSY_BUDGET);
         assert!(!s.backups().exists(), "{:?}", s.names());
         assert_bytes(&fs::read(s.file()).unwrap(), ORIGINAL, "保存先");
@@ -3029,7 +3340,10 @@ mod tests {
     /// 前の保存の残骸（保存の一時ファイル・退避の一時ファイル）と、触ってはいけない似た名前のファイルを置く。
     fn plant_leftovers(s: &Scratch) -> (Vec<PathBuf>, Vec<PathBuf>) {
         fs::create_dir_all(s.backups()).unwrap();
-        let stale = vec![s.0.join(".sample.ylp.4242-1.pending~"), s.backups().join(".sample.ylp.4242-2.pending~")];
+        let stale = vec![
+            s.0.join(".sample.ylp.4242-1.pending~"),
+            s.backups().join(".sample.ylp.4242-2.pending~"),
+        ];
         let others = vec![
             s.0.join(".other.ylp.4242-1.pending~"),
             s.0.join(".sample.ylp.notes.pending~"),
@@ -3048,7 +3362,10 @@ mod tests {
         let (stale, others) = plant_leftovers(&s);
         t.save(&changed(&p, "残骸のあと")).unwrap();
         assert!(stale.iter().all(|f| !f.exists()), "{:?}", s.names());
-        assert!(others.iter().all(|f| f.exists()), "別の保存先・別の形・利用者のファイルには触らない");
+        assert!(
+            others.iter().all(|f| f.exists()),
+            "別の保存先・別の形・利用者のファイルには触らない"
+        );
         assert_eq!(fs::read(&others[0]).unwrap(), b"cut off");
         assert_eq!(s.kept(), [ORIGINAL.to_vec()]);
     }
@@ -3059,11 +3376,19 @@ mod tests {
         let (p, mut t) = open_original(&s);
         let (stale, _) = plant_leftovers(&s);
         let _held = hold(&s.lock());
-        assert!(matches!(t.save(&changed(&p, "断られる")), Err(Error::SaveConflict(_))));
+        assert!(matches!(
+            t.save(&changed(&p, "断られる")),
+            Err(Error::SaveConflict(_))
+        ));
         assert!(stale.iter().all(|f| f.exists()));
         drop(_held);
         // ロックの使えないファイルシステム: 誰も保存していないと確かめられないので、触らない（保存は通る）
-        t.save_locking(&changed(&p, "ロックの無い場所"), unsupported_lock, |_| Ok(())).unwrap();
+        t.save_locking(
+            &changed(&p, "ロックの無い場所"),
+            unsupported_lock,
+            |_| Ok(()),
+        )
+        .unwrap();
         assert!(stale.iter().all(|f| f.exists()), "{:?}", s.names());
         // ロックが取れれば片付く
         t.save(&changed(&p, "取れる")).unwrap();
@@ -3080,14 +3405,21 @@ mod tests {
         let theirs = elsewhere.join(".sample.ylp.4242-2.pending~");
         fs::write(&theirs, b"someone else's").unwrap();
         std::os::unix::fs::symlink(&elsewhere, s.backups()).unwrap();
-        assert!(matches!(t.save(&changed(&p, "断られる")), Err(Error::SaveConflict(_))));
+        assert!(matches!(
+            t.save(&changed(&p, "断られる")),
+            Err(Error::SaveConflict(_))
+        ));
         assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
-        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0)).unwrap();
+        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0))
+            .unwrap();
         assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
         // 確かめたあとでリンクに替えられても、見直して触らない
         sweep_backup_leftovers(&s.backups(), "sample.ylp");
         assert_eq!(fs::read(&theirs).unwrap(), b"someone else's");
-        assert!(fs::symlink_metadata(s.backups()).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(s.backups())
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
     #[test]
     fn a_save_that_makes_no_backup_leaves_the_backup_place_alone() {
@@ -3096,9 +3428,14 @@ mod tests {
         let (p, mut t) = open_original(&s);
         let (stale, others) = plant_leftovers(&s);
         let in_place = fs::read_dir(s.backups()).unwrap().count();
-        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0)).unwrap();
+        t.save_with(&changed(&p, "退避しない"), BackupKeep::Count(0))
+            .unwrap();
         assert!(!stale[0].exists(), "保存先の隣の残りは片付く");
-        assert!(stale[1].exists() && others.iter().all(|f| f.exists()), "{:?}", s.backup_dir_names());
+        assert!(
+            stale[1].exists() && others.iter().all(|f| f.exists()),
+            "{:?}",
+            s.backup_dir_names()
+        );
         assert_eq!(fs::read_dir(s.backups()).unwrap().count(), in_place);
         // 退避を作る保存になれば片付く
         t.save(&changed(&p, "退避する")).unwrap();
@@ -3109,7 +3446,10 @@ mod tests {
         fs::create_dir(s.backups()).unwrap();
         let theirs = s.backups().join(".sample.ylp.4242-2.pending~");
         fs::write(&theirs, b"cut off").unwrap();
-        SaveTarget::create(s.file()).unwrap().save(&project()).unwrap();
+        SaveTarget::create(s.file())
+            .unwrap()
+            .save(&project())
+            .unwrap();
         assert!(theirs.exists());
     }
     #[test]
@@ -3127,7 +3467,10 @@ mod tests {
         // 写し終えた時点では、一時の名前（隠れる名前）だけがあり、退避としては数えられない
         let (names, kept) = at_copied.expect("通った");
         assert_eq!(names.len(), 1, "{names:?}");
-        assert!(names[0].starts_with(".sample.ylp.") && names[0].ends_with(".pending~"), "{names:?}");
+        assert!(
+            names[0].starts_with(".sample.ylp.") && names[0].ends_with(".pending~"),
+            "{names:?}"
+        );
         assert!(kept.is_empty(), "{kept:?}");
         // 終わると、最終の名前の退避が 1 つだけ（一時の名前は残らない）
         assert_eq!(s.kept_names().len(), 1);
@@ -3162,23 +3505,41 @@ mod tests {
             t.save(&changed(&p, "1 回目")).unwrap();
             let before = fs::read(s.file()).unwrap();
             let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "store::tests::killed_save_child", "--test-threads=1"])
+                .args([
+                    "--exact",
+                    "store::tests::killed_save_child",
+                    "--test-threads=1",
+                ])
                 .env(ABORT_AT, at)
                 .env(ABORT_DIR, &s.0)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
                 .unwrap();
-            assert!(!status.success() && status.code() != Some(3), "{at}: 途中で落ちる子: {status:?}");
+            assert!(
+                !status.success() && status.code() != Some(3),
+                "{at}: 途中で落ちる子: {status:?}"
+            );
             // 落ちた子の残骸: 保存先は前の版のまま、保存の一時ファイルとロックのファイルが残る
             assert_eq!(fs::read(s.file()).unwrap(), before, "{at}");
             let left = s.leftovers();
-            assert!(left.iter().any(|n| n.ends_with(".pending~")), "{at}: {left:?}");
-            assert!(left.iter().any(|n| n.ends_with(".save.lock~")), "{at}: {left:?}");
+            assert!(
+                left.iter().any(|n| n.ends_with(".pending~")),
+                "{at}: {left:?}"
+            );
+            assert!(
+                left.iter().any(|n| n.ends_with(".save.lock~")),
+                "{at}: {left:?}"
+            );
             // 退避の一時ファイル（写し終えたあとで落ちた形）は退避として数えない
             assert_eq!(s.kept_names().len(), 1, "{at}: {:?}", s.backup_dir_names());
             if at == "backup-copied" {
-                assert!(s.backup_dir_names().iter().any(|n| n.ends_with(".pending~")), "{at}");
+                assert!(
+                    s.backup_dir_names()
+                        .iter()
+                        .any(|n| n.ends_with(".pending~")),
+                    "{at}"
+                );
             }
             // 次の保存が、誰も保存していないと確かめて（ロックが取れる）片付ける
             t.save(&changed(&p, "3 回目")).unwrap();
@@ -3202,21 +3563,35 @@ mod tests {
         let mut seen = Vec::new();
         t.save_inner(&changed(&p, "隠し属性"), |phase| {
             if phase == "backup-copied" {
-                for entry in fs::read_dir(&s.0).unwrap().chain(fs::read_dir(s.backups()).unwrap()) {
+                for entry in fs::read_dir(&s.0)
+                    .unwrap()
+                    .chain(fs::read_dir(s.backups()).unwrap())
+                {
                     let entry = entry.unwrap();
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if name.ends_with(".pending~") || name.ends_with(".save.lock~") {
-                        seen.push((name, entry.metadata().unwrap().file_attributes() & HIDDEN != 0));
+                        seen.push((
+                            name,
+                            entry.metadata().unwrap().file_attributes() & HIDDEN != 0,
+                        ));
                     }
                 }
             }
             Ok(())
         })
         .unwrap();
-        assert_eq!(seen.len(), 3, "保存の一時ファイル・ロック・退避の一時ファイル: {seen:?}");
+        assert_eq!(
+            seen.len(),
+            3,
+            "保存の一時ファイル・ロック・退避の一時ファイル: {seen:?}"
+        );
         assert!(seen.iter().all(|(_, hidden)| *hidden), "{seen:?}");
         for path in std::iter::once(s.file()).chain(backups(&s.file()).unwrap()) {
-            assert_eq!(fs::metadata(&path).unwrap().file_attributes() & HIDDEN, 0, "{path:?}");
+            assert_eq!(
+                fs::metadata(&path).unwrap().file_attributes() & HIDDEN,
+                0,
+                "{path:?}"
+            );
         }
     }
     /// （Windows でだけ回る）外の道具が削除を共有せずに保存先を開いているあいだは置き換えが共有違反になる。手放されるまで待ってやり直し、通る。
@@ -3226,14 +3601,22 @@ mod tests {
         use std::os::windows::fs::OpenOptionsExt;
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
-        let holder = OpenOptions::new().read(true).share_mode(0x1 | 0x2).open(s.file()).unwrap();
+        let holder = OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(s.file())
+            .unwrap();
         let release = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(400));
             drop(holder);
         });
         let started = std::time::Instant::now();
         t.save(&changed(&p, "共有違反のあと")).unwrap();
-        assert!(started.elapsed() >= Duration::from_millis(300), "手放されるまで待った: {:?}", started.elapsed());
+        assert!(
+            started.elapsed() >= Duration::from_millis(300),
+            "手放されるまで待った: {:?}",
+            started.elapsed()
+        );
         release.join().unwrap();
         assert_ne!(fs::read(s.file()).unwrap(), ORIGINAL);
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
@@ -3244,23 +3627,44 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         let mut seen = Vec::new();
-        t.save_with_progress(&changed(&p, "段の知らせ"), BackupKeep::All, &mut |stage| seen.push(stage))
-            .unwrap();
+        t.save_with_progress(
+            &changed(&p, "段の知らせ"),
+            BackupKeep::All,
+            &mut |stage| seen.push(stage),
+        )
+        .unwrap();
         assert_eq!(
             seen,
-            [SaveStage::Counting, SaveStage::Writing, SaveStage::Verifying, SaveStage::Replacing]
+            [
+                SaveStage::Counting,
+                SaveStage::Writing,
+                SaveStage::Verifying,
+                SaveStage::Replacing
+            ]
         );
-        assert_eq!(seen.iter().map(|s| s.index()).collect::<Vec<_>>(), [0, 1, 2, 3]);
+        assert_eq!(
+            seen.iter().map(|s| s.index()).collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
         assert_eq!(SaveStage::COUNT, 4);
         // 外で書き換えられた保存先: 数えて、ロックのあとの確かめで断る（書く段へは進まない）
         fs::write(s.file(), b"someone else").unwrap();
         let mut seen = Vec::new();
         let refused = t
-            .save_with_progress(&changed(&p, "断る"), BackupKeep::All, &mut |stage| seen.push(stage))
+            .save_with_progress(&changed(&p, "断る"), BackupKeep::All, &mut |stage| {
+                seen.push(stage)
+            })
             .unwrap_err();
         assert!(matches!(refused, Error::SaveConflict(_)), "{refused:?}");
-        assert!(seen.len() <= 2 && seen.first() == Some(&SaveStage::Counting), "{seen:?}");
-        assert_bytes(&fs::read(s.file()).unwrap(), b"someone else", "外のファイルは潰さない");
+        assert!(
+            seen.len() <= 2 && seen.first() == Some(&SaveStage::Counting),
+            "{seen:?}"
+        );
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            b"someone else",
+            "外のファイルは潰さない",
+        );
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
     }
     /// 保存先の複製は、持ち主の印を動かさない。複製で保存した後、元の印のまま保存すると、外で変えられたものとして断る（印を取り違えて
@@ -3276,23 +3680,36 @@ mod tests {
         assert_ne!(owner.stamp(), copy.stamp());
         let written = fs::read(s.file()).unwrap();
         let refused = owner.save(&changed(&after, "元の印のまま")).unwrap_err();
-        assert!(matches!(&refused, Error::SaveConflict(why) if why.contains("外部で変更")), "{refused:?}");
-        assert_bytes(&fs::read(s.file()).unwrap(), &written, "断ったので、複製の保存のまま");
+        assert!(
+            matches!(&refused, Error::SaveConflict(why) if why.contains("外部で変更")),
+            "{refused:?}"
+        );
+        assert_bytes(
+            &fs::read(s.file()).unwrap(),
+            &written,
+            "断ったので、複製の保存のまま",
+        );
         owner = copy;
-        owner.save(&changed(&after, "複製の印で置き換えた")).unwrap();
+        owner
+            .save(&changed(&after, "複製の印で置き換えた"))
+            .unwrap();
         assert_ne!(fs::read(s.file()).unwrap(), written);
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
     }
     /// 書いた一時ファイルが（書いた直後に）壊れていたら、置換の前に断る。断る理由は、確かめを動かすスレッド数に依らず同じで、保存先は前の
     /// ままで、一時ファイルもロックも残さない。
     #[test]
-    fn a_broken_temporary_file_is_refused_before_the_replace_for_the_same_reason_at_any_thread_count() {
+    fn a_broken_temporary_file_is_refused_before_the_replace_for_the_same_reason_at_any_thread_count(
+    ) {
         let reasons: Vec<String> = [1usize, 2, 8]
             .into_iter()
             .map(|threads| {
                 let s = Scratch::new();
                 let (p, mut t) = open_original(&s);
-                let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap();
                 let folder = s.0.clone();
                 let error = pool
                     .install(|| {

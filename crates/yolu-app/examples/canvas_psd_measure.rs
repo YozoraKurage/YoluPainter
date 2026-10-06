@@ -7,9 +7,7 @@
 //! アダプター名・バックエンドを併せて出す。ソフトウェアの GPU（llvmpipe・lavapipe）と実 GPU を混同しないこと。
 use eframe::egui_wgpu::wgpu;
 use std::time::Instant;
-use yolu_core::{
-    AdjustmentType, Channel, Document, LayerId, LayerKind, RowOrder, TileCoord,
-};
+use yolu_core::{AdjustmentType, Channel, Document, LayerId, LayerKind, RowOrder, TileCoord};
 use yolu_gpu::{
     resident_requirements, supports, GpuPainter, Options, ResidentCompositor, ResidentOptions,
 };
@@ -173,7 +171,12 @@ fn describe(doc: &Document) {
     );
     let names: Vec<String> = kinds
         .iter()
-        .map(|(k, n)| format!("{:?}×{n}", AdjustmentType::from_index(i64::from(*k)).unwrap()))
+        .map(|(k, n)| {
+            format!(
+                "{:?}×{n}",
+                AdjustmentType::from_index(i64::from(*k)).unwrap()
+            )
+        })
         .collect();
     println!("調整の種類: {}", names.join("・"));
 }
@@ -238,13 +241,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for item in extra.split(',').map(str::trim) {
             match (item, biggest) {
                 ("adjust", Some(target)) => {
-                    let top = doc
-                        .add_adjustment_layer(
-                            "色相",
-                            yolu_core::AdjustmentSettings::hue_saturation(40.0, 0.2, 0.0)?,
-                            None,
-                            None,
-                        )?;
+                    let top = doc.add_adjustment_layer(
+                        "色相",
+                        yolu_core::AdjustmentSettings::hue_saturation(40.0, 0.2, 0.0)?,
+                        None,
+                        None,
+                    )?;
                     let _ = top;
                     let clipped = doc.add_adjustment_layer(
                         "レベル",
@@ -354,9 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let compare = |gpu: &mut ResidentCompositor, doc: &Document, what: &str| {
         let expected = {
-            let mut v = doc
-                .composite_channel(Channel::Color, doc.bounds())
-                .unwrap();
+            let mut v = doc.composite_channel(Channel::Color, doc.bounds()).unwrap();
             premultiply(&mut v);
             v
         };
@@ -393,9 +393,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         compare(&mut gpu, doc, &format!("  {name} のあと"));
     };
     println!("操作する層: タイルの多い層（{tiles} タイル）");
-    stamp("不透明度 0.5（タイルの多い層）", &mut doc, &|d| {
-        d.set_layer_opacity(target, 0.5, false).unwrap()
-    });
+    stamp(
+        "不透明度 0.5（タイルの多い層）",
+        &mut doc,
+        &|d| d.set_layer_opacity(target, 0.5, false).unwrap(),
+    );
     stamp("不透明度を戻す", &mut doc, &|d| {
         d.set_layer_opacity(target, 1.0, false).unwrap()
     });

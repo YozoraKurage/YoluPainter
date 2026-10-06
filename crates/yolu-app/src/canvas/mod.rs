@@ -367,7 +367,10 @@ fn add_point(
     time: f64,
 ) {
     // ポリゴン塗りつぶしのドラッグは、点でなく通った範囲を足す
-    if app.region.leftover_drag.is_some() { crate::region::bucket::drag(app, view, p); return; }
+    if app.region.leftover_drag.is_some() {
+        crate::region::bucket::drag(app, view, p);
+        return;
+    }
     if app.region.drag.is_some() {
         crate::region::tools::drag_to(app, crate::region::tools::Where::Canvas(view), p);
         return;
@@ -673,7 +676,10 @@ fn drive_pen(
         rect: app.canvas_rect.unwrap_or(Rect::NOTHING),
         pass: 0,
     };
-    let starting = contact && !CanvasKind::ALL.iter().any(|k| k.handler().pen_active(app, id));
+    let starting = contact
+        && !CanvasKind::ALL
+            .iter()
+            .any(|k| k.handler().pen_active(app, id));
     let current = app.tool.def().canvas;
     for kind in CanvasKind::ALL {
         let handler = kind.handler();
@@ -884,8 +890,12 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     (PointerButton::Middle, true) => {
                         if !frame.no_press && !pen_frame && on_top(ui, rect, pos) {
                             // 中ボタン: パン、Shift を足すと回転（`keymap::GESTURES`）
-                            if crate::keymap::gesture("canvas", PointerButton::Middle, &modifiers, false)
-                                == Some(crate::keymap::Operation::Rotate)
+                            if crate::keymap::gesture(
+                                "canvas",
+                                PointerButton::Middle,
+                                &modifiers,
+                                false,
+                            ) == Some(crate::keymap::Operation::Rotate)
                             {
                                 app.canvas.middle_rotating = !app.is_stroking();
                             } else {
@@ -979,11 +989,15 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 } else if let Some(drag) = app.canvas.rotating.take() {
                     app.view.angle = drag.start_angle;
                     app.view.pan = drag.start_pan;
-                } else if !cancelled(app, false) && !typing && !typed_last && escape_is_free(app, ui.ctx()) {
+                } else if !cancelled(app, false)
+                    && !typing
+                    && !typed_last
+                    && escape_is_free(app, ui.ctx())
+                {
                     // やめるものが無かった: 選択範囲があれば解除（Ctrl+D と同じ。1 回の取り消し）
-                    app.apply(crate::state::Action::Sel(crate::selection::SelAction::Edit(
-                        crate::selection::SelEdit::Clear,
-                    )));
+                    app.apply(crate::state::Action::Sel(
+                        crate::selection::SelAction::Edit(crate::selection::SelEdit::Clear),
+                    ));
                 }
             }
             Event::Key {

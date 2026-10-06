@@ -126,7 +126,9 @@ impl<'a> BoundGenerator<'a> {
         if g.kind == Kind::Anchor {
             if let Ok(a) = anchor {
                 if a.dimensions() != (width, height) {
-                    return Err(Error::Invalid("Anchor とジェネレーターの画像サイズが違います"));
+                    return Err(Error::Invalid(
+                        "Anchor とジェネレーターの画像サイズが違います",
+                    ));
                 }
             }
         }

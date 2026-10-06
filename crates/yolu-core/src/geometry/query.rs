@@ -430,6 +430,7 @@ pub(crate) fn coverage(distance: f32, hardness: f32) -> f32 {
     if distance <= hardness || hardness >= 0.9999 {
         1.0
     } else {
-        (1.0 - super::unity::smooth_step(0.0, 1.0, (distance - hardness) / (1.0 - hardness))).max(0.0)
+        (1.0 - super::unity::smooth_step(0.0, 1.0, (distance - hardness) / (1.0 - hardness)))
+            .max(0.0)
     }
 }

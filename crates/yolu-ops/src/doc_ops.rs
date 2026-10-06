@@ -122,7 +122,8 @@ fn batch<T>(
 }
 
 fn layer_of(doc: &Document, id: LayerId) -> Result<&Layer, OpError> {
-    doc.layer(id).ok_or_else(|| OpError::not_found(Noun::Layer, &id.to_string()))
+    doc.layer(id)
+        .ok_or_else(|| OpError::not_found(Noun::Layer, &id.to_string()))
 }
 
 fn edited(
@@ -201,7 +202,12 @@ pub fn set_info(facts: SetFacts<'_>, doc: &Document) -> SetInfo {
         reason: None,
         channels: channel_infos(doc),
         // 平らな並びは下から上でグループの中身がグループの前に続くので、逆にすると上から下で、グループが中身の前に来る
-        layers: doc.layers().iter().rev().map(|l| layer_summary(doc, l)).collect(),
+        layers: doc
+            .layers()
+            .iter()
+            .rev()
+            .map(|l| layer_summary(doc, l))
+            .collect(),
         inactive_effects: inactive_texts(doc),
         unsaved: facts.unsaved,
     }
@@ -217,7 +223,11 @@ pub fn history_info(doc: &Document) -> HistoryInfo {
 }
 
 fn values_of(settings: &EffectSettings) -> BTreeMap<String, Value> {
-    settings.catalog_values().into_iter().map(|(k, v)| (k.to_owned(), v.into())).collect()
+    settings
+        .catalog_values()
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.into()))
+        .collect()
 }
 
 fn target_of(t: FilterTarget) -> EffectTarget {
@@ -234,15 +244,29 @@ fn core_target(t: EffectTarget) -> FilterTarget {
     }
 }
 
-pub fn effect_info(doc: &Document, fe: &FilterEffect, target: FilterTarget, index: usize) -> EffectInfo {
+pub fn effect_info(
+    doc: &Document,
+    fe: &FilterEffect,
+    target: FilterTarget,
+    index: usize,
+) -> EffectInfo {
     EffectInfo {
         id: fe.id().to_string(),
         kind: fe.settings().kind_id().to_owned(),
         values: values_of(fe.settings()),
-        opaque: fe.settings().opaque_parts().iter().map(|s| (*s).to_owned()).collect(),
+        opaque: fe
+            .settings()
+            .opaque_parts()
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect(),
         strength: fe.strength(),
         enabled: fe.enabled(),
-        channels: fe.channels().iter().map(|c| channel_name(doc, *c)).collect(),
+        channels: fe
+            .channels()
+            .iter()
+            .map(|c| channel_name(doc, *c))
+            .collect(),
         target: target_of(target),
         index: index as u32,
     }
@@ -260,7 +284,11 @@ fn effects_of(doc: &Document, layer: &Layer) -> Vec<EffectInfo> {
 fn adjustment_values(a: &AdjustmentSettings) -> EffectValues {
     EffectValues {
         kind: a.kind_id().to_owned(),
-        values: a.catalog_values().into_iter().map(|(k, v)| (k.to_owned(), v.into())).collect(),
+        values: a
+            .catalog_values()
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.into()))
+            .collect(),
         opaque: a.opaque_parts().iter().map(|s| (*s).to_owned()).collect(),
     }
 }
@@ -323,11 +351,16 @@ fn effect_get(doc: &Document, args: &EffectGetArgs) -> Result<Reply, OpError> {
         }
         Some(text) => {
             let (id, target, index) = find_effect(doc, layer_id, text)?;
-            let (_, fe, _) = doc.find_filter(id).ok_or_else(|| OpError::not_found(Noun::Effect, text))?;
+            let (_, fe, _) = doc
+                .find_filter(id)
+                .ok_or_else(|| OpError::not_found(Noun::Effect, text))?;
             vec![effect_info(doc, fe, target, index)]
         }
     };
-    Ok(Reply::Effects(EffectsInfo { layer: layer_id.to_string(), effects }))
+    Ok(Reply::Effects(EffectsInfo {
+        layer: layer_id.to_string(),
+        effects,
+    }))
 }
 
 /// 効果の ID を、その層の中から探す（別の層の効果は「無い」）。ID・スタック・位置を返す。
@@ -339,7 +372,9 @@ fn find_effect(
     let id = parse_filter_id(text)?;
     match doc.find_filter(id) {
         Some((owner, _, target)) if owner == layer => {
-            let stack = doc.filters_of(layer, target).map_err(|e| OpError::from_core(&e))?;
+            let stack = doc
+                .filters_of(layer, target)
+                .map_err(|e| OpError::from_core(&e))?;
             let index = stack.iter().position(|e| e.id() == id).unwrap_or(0);
             Ok((id, target, index))
         }
@@ -351,7 +386,10 @@ fn find_effect(
 
 /// 入力のまま通している効果の知らせ（日英）。
 pub fn inactive_texts(doc: &Document) -> Vec<Text> {
-    doc.inactive_effect_list().iter().map(inactive_text).collect()
+    doc.inactive_effect_list()
+        .iter()
+        .map(inactive_text)
+        .collect()
 }
 
 fn inactive_text(e: &InactiveEffect) -> Text {
@@ -382,11 +420,21 @@ fn inactive_text(e: &InactiveEffect) -> Text {
     };
     let why = match &e.reason {
         InactiveReason::Generator(I::MissingMap(k)) => format!("no {k:?} map is available"),
-        InactiveReason::Generator(I::StaleMap(k)) => format!("the {k:?} map was baked under other conditions"),
-        InactiveReason::Generator(I::UnverifiedMap(k)) => format!("the {k:?} map cannot be verified"),
-        InactiveReason::Generator(I::MapSize(k)) => format!("the {k:?} map has another size than the texture set"),
-        InactiveReason::Generator(I::PinMismatch(k)) => format!("the {k:?} map differs from the pinned bake"),
-        InactiveReason::Generator(I::MissingFrame) => "the model root position is unknown".to_owned(),
+        InactiveReason::Generator(I::StaleMap(k)) => {
+            format!("the {k:?} map was baked under other conditions")
+        }
+        InactiveReason::Generator(I::UnverifiedMap(k)) => {
+            format!("the {k:?} map cannot be verified")
+        }
+        InactiveReason::Generator(I::MapSize(k)) => {
+            format!("the {k:?} map has another size than the texture set")
+        }
+        InactiveReason::Generator(I::PinMismatch(k)) => {
+            format!("the {k:?} map differs from the pinned bake")
+        }
+        InactiveReason::Generator(I::MissingFrame) => {
+            "the model root position is unknown".to_owned()
+        }
         InactiveReason::Generator(I::EmptyBounds) => "the position bounds are empty".to_owned(),
         InactiveReason::Generator(I::NoIdColors) => "no ID colors are chosen".to_owned(),
         InactiveReason::Generator(I::Anchor(_)) => "the anchor is not usable".to_owned(),
@@ -394,7 +442,10 @@ fn inactive_text(e: &InactiveEffect) -> Text {
     };
     Text::new(
         e.to_string(),
-        format!("Layer \"{}\": the {what} passes its input through ({why})", e.layer_name),
+        format!(
+            "Layer \"{}\": the {what} passes its input through ({why})",
+            e.layer_name
+        ),
     )
 }
 
@@ -410,8 +461,11 @@ fn color_of(text: &str) -> Result<Rgba8, OpError> {
 }
 
 fn adjustment_of(spec: &EffectSpec) -> Result<AdjustmentSettings, OpError> {
-    let values: BTreeMap<String, ParamValue> =
-        spec.values.iter().map(|(k, v)| (k.clone(), v.clone().into())).collect();
+    let values: BTreeMap<String, ParamValue> = spec
+        .values
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone().into()))
+        .collect();
     Ok(AdjustmentSettings::from_catalog(&spec.kind, &values)?)
 }
 
@@ -421,7 +475,11 @@ fn layer_add(
     args: &LayerAddArgs,
     before: usize,
 ) -> Result<Reply, OpError> {
-    let above = args.above.as_deref().map(|t| resolve_layer(doc, t)).transpose()?;
+    let above = args
+        .above
+        .as_deref()
+        .map(|t| resolve_layer(doc, t))
+        .transpose()?;
     if let Some(name) = &args.name {
         check_layer_name(name)?;
     }
@@ -488,7 +546,9 @@ fn layer_add(
                 .collect::<Result<_, _>>()?;
             let name = args.name.as_deref().unwrap_or("Adjustment");
             let selected = (!channels.is_empty()).then_some(channels.as_slice());
-            batch(doc, |d| d.add_adjustment_layer(name, settings, selected, above))?
+            batch(doc, |d| {
+                d.add_adjustment_layer(name, settings, selected, above)
+            })?
         }
     };
     Ok(edited(facts, doc, Some(id), None, before))
@@ -515,7 +575,11 @@ fn layer_move(
     } else {
         current
     };
-    let siblings = doc.layers().iter().filter(|l| l.parent() == parent && l.id() != id).count();
+    let siblings = doc
+        .layers()
+        .iter()
+        .filter(|l| l.parent() == parent && l.id() != id)
+        .count();
     let index = args.index.unwrap_or(siblings);
     if index > siblings {
         return Err(OpError::invalid_value(
@@ -544,7 +608,10 @@ fn layer_set(
     }
     let mut fills = Vec::new();
     for (name, color) in &args.fill {
-        fills.push((resolve_channel(doc, name)?, color.as_deref().map(color_of).transpose()?));
+        fills.push((
+            resolve_channel(doc, name)?,
+            color.as_deref().map(color_of).transpose()?,
+        ));
     }
     let adjustment = match &args.adjustment {
         None => None,
@@ -557,8 +624,11 @@ fn layer_set(
                     "Only adjustment layers have an adjustment",
                 ));
             };
-            let values: BTreeMap<String, ParamValue> =
-                spec.values.iter().map(|(k, v)| (k.clone(), v.clone().into())).collect();
+            let values: BTreeMap<String, ParamValue> = spec
+                .values
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone().into()))
+                .collect();
             let new = if current.kind_id() == spec.kind {
                 current.with_catalog_values(&values)?
             } else {
@@ -572,7 +642,10 @@ fn layer_set(
                     let patched = channels.iter().find(|(ch, _)| ch == c).map(|(_, on)| *on);
                     patched.unwrap_or_else(|| layer.is_channel_enabled(*c))
                 })
-                .filter(|c| doc.channel_info(*c).is_some_and(|i| !new.applies_to(i.kind)))
+                .filter(|c| {
+                    doc.channel_info(*c)
+                        .is_some_and(|i| !new.applies_to(i.kind))
+                })
                 .map(|c| channel_name(doc, c))
                 .collect();
             if !refused.is_empty() {
@@ -681,7 +754,10 @@ fn mask_set(
 // ───────── 効果 ─────────
 
 fn param_map(values: &BTreeMap<String, Value>) -> BTreeMap<String, ParamValue> {
-    values.iter().map(|(k, v)| (k.clone(), v.clone().into())).collect()
+    values
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone().into()))
+        .collect()
 }
 
 fn channels_of(doc: &Document, names: &[String]) -> Result<Vec<Channel>, OpError> {
@@ -733,7 +809,9 @@ fn effect_set(
         .ok_or_else(|| OpError::not_found(Noun::Effect, &args.effect))?;
     let values = param_map(&args.values);
     let settings = match &args.kind {
-        Some(kind) if kind != current.kind_id() => Some(EffectSettings::from_catalog(kind, &values)?),
+        Some(kind) if kind != current.kind_id() => {
+            Some(EffectSettings::from_catalog(kind, &values)?)
+        }
         _ if !values.is_empty() => Some(current.with_catalog_values(&values)?),
         _ => None,
     }
@@ -751,7 +829,11 @@ fn effect_set(
         .map(|(_, fe, _)| fe.channels().to_vec())
         .unwrap_or_default();
     if let (Some(new), FilterTarget::Content) = (&settings, target) {
-        let after = if channels.is_empty() { &old_channels } else { &channels };
+        let after = if channels.is_empty() {
+            &old_channels
+        } else {
+            &channels
+        };
         let refused: Vec<String> = after
             .iter()
             .filter(|c| doc.filter_refusal(layer, target, new, **c).is_err())
@@ -825,7 +907,8 @@ fn step_history(
     }
     let mut done = 0;
     for _ in 0..steps {
-        let moved = if undo { doc.undo() } else { doc.redo() }.map_err(|e| OpError::from_core(&e))?;
+        let moved =
+            if undo { doc.undo() } else { doc.redo() }.map_err(|e| OpError::from_core(&e))?;
         if !moved {
             break;
         }
@@ -871,9 +954,12 @@ pub fn kinds_info() -> KindsInfo {
                         .iter()
                         .map(|p| {
                             let (kind, min, max, options) = match &p.ty {
-                                ParamType::Integer { min, max } => {
-                                    (ParamKindName::Integer, Some(*min as f64), Some(*max as f64), vec![])
-                                }
+                                ParamType::Integer { min, max } => (
+                                    ParamKindName::Integer,
+                                    Some(*min as f64),
+                                    Some(*max as f64),
+                                    vec![],
+                                ),
                                 ParamType::Number { min, max } => {
                                     (ParamKindName::Number, Some(*min), Some(*max), vec![])
                                 }

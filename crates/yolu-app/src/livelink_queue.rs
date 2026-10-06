@@ -157,7 +157,11 @@ mod tests {
         backlog.add(60);
         assert!(backlog.wait_for_room(|| true), "上限の手前なら読む");
         backlog.add(60);
-        assert_eq!(backlog.queued(), 120, "手前で読んだ 1 つの分は、上限を超えて積める");
+        assert_eq!(
+            backlog.queued(),
+            120,
+            "手前で読んだ 1 つの分は、上限を超えて積める"
+        );
         let waiting = Arc::new(AtomicBool::new(true));
         let thread = {
             let (backlog, waiting) = (backlog.clone(), waiting.clone());
@@ -168,10 +172,15 @@ mod tests {
             })
         };
         std::thread::sleep(Duration::from_millis(150));
-        assert!(waiting.load(Ordering::SeqCst), "上限に達している間は読まない");
+        assert!(
+            waiting.load(Ordering::SeqCst),
+            "上限に達している間は読まない"
+        );
         backlog.release(60);
         assert_eq!(backlog.queued(), 60);
-        wait_for("読むのが再開する", || !waiting.load(Ordering::SeqCst));
+        wait_for("読むのが再開する", || {
+            !waiting.load(Ordering::SeqCst)
+        });
         assert!(thread.join().unwrap());
     }
 
@@ -208,7 +217,10 @@ mod tests {
         };
         std::thread::sleep(Duration::from_millis(50));
         alive.store(false, Ordering::SeqCst);
-        assert!(!thread.join().unwrap(), "つながりが終われば、待たずに読むスレッドを終える");
+        assert!(
+            !thread.join().unwrap(),
+            "つながりが終われば、待たずに読むスレッドを終える"
+        );
 
         let thread = {
             let backlog = backlog.clone();
@@ -231,7 +243,11 @@ mod tests {
             counter.fetch_add(1, Ordering::SeqCst);
             true
         }));
-        assert_eq!(counter.load(Ordering::SeqCst), 0, "余裕があれば確かめも要らない");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "余裕があれば確かめも要らない"
+        );
     }
 
     #[test]

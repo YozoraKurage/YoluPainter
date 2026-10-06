@@ -10,10 +10,11 @@
 //!
 //! メモリ: 作る・読む・確かめるどの道も、持つのは層 1 枚ぶんの並びと小さな作業域だけ（core の文書とその写しのほかに）。
 use crate::{
+    check, check_budget,
     core_bridge::{check_writable, version_of, write_document, CoreLoad, Fields, Sink},
     native::{ByteSource, Keep, Parse, Part, PartStream, StreamSource, SPLIT_VERSION},
     package::{Blob, Made, Thresholds, MAX_ONE_ENTRY},
-    check, check_budget, Error, NativeDocument, NativeField, NativeValue, Result,
+    Error, NativeDocument, NativeField, NativeValue, Result,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -102,7 +103,8 @@ impl Sink for PlanSink {
         Ok(())
     }
     fn tile(&mut self, surface: &Surface, _: TileCoord) -> Result<()> {
-        self.values.push((self.section, surface.tile_bytes() as u32));
+        self.values
+            .push((self.section, surface.tile_bytes() as u32));
         Ok(())
     }
     fn layer(&mut self, i: usize) -> Result<()> {
@@ -179,11 +181,16 @@ impl CoreDoc {
         };
         match &self.plan.split {
             None => vec![(format!("{prefix}document.utpaint"), blob(Which::Full))],
-            Some(ranges) => std::iter::once((format!("{prefix}document.utpaint"), blob(Which::Header)))
-                .chain((0..ranges.len()).map(|k| {
-                    (format!("{prefix}document.utpaint.{}", k + 1), blob(Which::Part(k)))
-                }))
-                .collect(),
+            Some(ranges) => {
+                std::iter::once((format!("{prefix}document.utpaint"), blob(Which::Header)))
+                    .chain((0..ranges.len()).map(|k| {
+                        (
+                            format!("{prefix}document.utpaint.{}", k + 1),
+                            blob(Which::Part(k)),
+                        )
+                    }))
+                    .collect()
+            }
         }
     }
     fn len_of(&self, which: Which) -> u64 {
@@ -218,7 +225,13 @@ impl CoreDoc {
             plain_at: 0,
             value_at: 0,
         };
-        let skeleton = walk(&self.doc, self.plan.version, Keep::Skeleton, &mut hashes, |_, _| Ok(()))?;
+        let skeleton = walk(
+            &self.doc,
+            self.plan.version,
+            Keep::Skeleton,
+            &mut hashes,
+            |_, _| Ok(()),
+        )?;
         Ok(Checked {
             full: hashes.full.map(|h| format!("{:x}", h.finalize())),
             header: hashes.header.map(|h| format!("{:x}", h.finalize())),
@@ -269,23 +282,19 @@ impl CoreDoc {
         let mut head: Vec<NativeField> = Vec::new();
         let version = self.plan.version;
         let size = (skeleton.width(), skeleton.height(), skeleton.tile_size());
-        walk(
-            &self.doc,
-            version,
-            Keep::All,
-            &mut NoSink,
-            |parse, i| {
-                if load.is_none() {
-                    head = parse.head_fields().to_vec();
-                    load = Some(CoreLoad::begin(&Fields::of(&head), version, size, budget)?);
-                }
-                if let Some(i) = i {
-                    load.as_mut().expect("頭で作った").layer(&Fields::of(parse.layer_fields()), i)?;
-                    parse.drop_layer_values();
-                }
-                Ok(())
-            },
-        )?;
+        walk(&self.doc, version, Keep::All, &mut NoSink, |parse, i| {
+            if load.is_none() {
+                head = parse.head_fields().to_vec();
+                load = Some(CoreLoad::begin(&Fields::of(&head), version, size, budget)?);
+            }
+            if let Some(i) = i {
+                load.as_mut()
+                    .expect("頭で作った")
+                    .layer(&Fields::of(parse.layer_fields()), i)?;
+                parse.drop_layer_values();
+            }
+            Ok(())
+        })?;
         load.ok_or_else(|| Error::InvalidData("正本の頭がありません".into()))?
             .finish(&Fields::of(&head))
     }
@@ -495,10 +504,7 @@ fn walk(
         out: Vec::new(),
         at: 0,
     };
-    let mut feed = Feed {
-        buf: fed,
-        observer,
-    };
+    let mut feed = Feed { buf: fed, observer };
     // 層の前までを書いて読み、層は 1 つずつ書いて読む
     crate::core_bridge::write_head(&mut feed, doc, version)?;
     let mut parse = Parse::begin(&mut source, None, keep)?;
@@ -543,7 +549,11 @@ pub(crate) fn native_entries(doc: &NativeDocument, prefix: &str) -> Vec<(String,
         .collect()
 }
 /// 項目の並びから、版 26 のヘッダーと部分を作る（`Bytes` の値は、はじめの識別子を除いて部分へ）。
-pub(crate) fn split_fields(fields: &[NativeField], version: i32, t: &Thresholds) -> (Vec<u8>, Vec<Vec<u8>>) {
+pub(crate) fn split_fields(
+    fields: &[NativeField],
+    version: i32,
+    t: &Thresholds,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
     let section = |path: &str| -> u32 {
         path.strip_prefix("layers[")
             .and_then(|r| r.split(']').next())
@@ -743,7 +753,9 @@ impl SetDocument {
     /// メモリの正本から（どこにも置いていない正本。試験や、メモリの正本を `SetDocument` として扱うため）。
     pub fn in_memory(doc: NativeDocument) -> Self {
         let source = DocumentSource::Native(doc);
-        Self::from_source(&source, "").expect("メモリの正本は作れる").0
+        Self::from_source(&source, "")
+            .expect("メモリの正本は作れる")
+            .0
     }
     /// 置いてある正本（ヘッダーと番号の順の部分）。骨組みを読んで確かめる（版 26 の部分は長さと数だけ。中身は読むときに確かめる）。
     pub(crate) fn stored(header: Blob, parts: Vec<Blob>) -> Result<Self> {
@@ -765,7 +777,10 @@ impl SetDocument {
         }))
     }
     /// 元から作る正本と、`prefix`（`sets/<ID>/` か根なら空）の下に置くエントリ。
-    pub(crate) fn from_source(source: &DocumentSource, prefix: &str) -> Result<(Self, Vec<(String, Blob)>)> {
+    pub(crate) fn from_source(
+        source: &DocumentSource,
+        prefix: &str,
+    ) -> Result<(Self, Vec<(String, Blob)>)> {
         match source {
             DocumentSource::Native(doc) => {
                 let entries = native_entries(doc, prefix);

@@ -213,17 +213,29 @@ pub fn context_entries(app: &AppState) -> Vec<Entry<Action>> {
                 } else {
                     lang.pick("フィルターを有効にする", "Turn the filter on")
                 },
-                Action::Fx(FxOp::SetEnabled { layer, id, enabled: !on }),
+                Action::Fx(FxOp::SetEnabled {
+                    layer,
+                    id,
+                    enabled: !on,
+                }),
             )
             .enabled(free),
             Entry::item(
                 lang.pick("上へ（後から掛かる）", "Move up (applied later)"),
-                Action::Fx(FxOp::Move { layer, id, index: index + 1 }),
+                Action::Fx(FxOp::Move {
+                    layer,
+                    id,
+                    index: index + 1,
+                }),
             )
             .enabled(free && index + 1 < count),
             Entry::item(
                 lang.pick("下へ（先に掛かる）", "Move down (applied earlier)"),
-                Action::Fx(FxOp::Move { layer, id, index: index.wrapping_sub(1) }),
+                Action::Fx(FxOp::Move {
+                    layer,
+                    id,
+                    index: index.wrapping_sub(1),
+                }),
             )
             .enabled(free && index > 0),
             Entry::item(
@@ -272,11 +284,7 @@ pub enum FxChoice {
 }
 
 /// 選んでいる Generator の設定を 1 つ変えて渡す操作。
-fn set_generator(
-    layer: LayerId,
-    id: yolu_core::FilterId,
-    g: generator::Settings,
-) -> Action {
+fn set_generator(layer: LayerId, id: yolu_core::FilterId, g: generator::Settings) -> Action {
     Action::Fx(FxOp::SetSettings {
         layer,
         id,
@@ -325,9 +333,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
                 .map(|d| {
                     let mut next = g.clone();
                     next.direction = d;
-                    Entry::item(names::direction_name(lang, d), set_generator(layer, id, next))
-                        .radio(g.direction == d)
-                        .enabled(free)
+                    Entry::item(
+                        names::direction_name(lang, d),
+                        set_generator(layer, id, next),
+                    )
+                    .radio(g.direction == d)
+                    .enabled(free)
                 })
                 .collect()
         }
@@ -336,9 +347,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .map(|value| {
                 let mut next = g.clone();
                 next.procedural.space = *value;
-                Entry::item(names::procedural_space_name(lang, *value), set_generator(layer, id, next))
-                    .radio(g.procedural.space == *value)
-                    .enabled(free)
+                Entry::item(
+                    names::procedural_space_name(lang, *value),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.procedural.space == *value)
+                .enabled(free)
             })
             .collect(),
         FxChoice::NoiseBasis => names::NOISE_BASES
@@ -350,9 +364,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
                 if *value != generator::NoiseBasis::Worley {
                     next.procedural.cell_output = generator::CellOutput::F1;
                 }
-                Entry::item(names::noise_basis_name(lang, *value), set_generator(layer, id, next))
-                    .radio(g.procedural.basis == *value)
-                    .enabled(free)
+                Entry::item(
+                    names::noise_basis_name(lang, *value),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.procedural.basis == *value)
+                .enabled(free)
             })
             .collect(),
         FxChoice::CellOutput => names::CELL_OUTPUTS
@@ -360,9 +377,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .map(|value| {
                 let mut next = g.clone();
                 next.procedural.cell_output = *value;
-                Entry::item(names::cell_output_name(*value), set_generator(layer, id, next))
-                    .radio(g.procedural.cell_output == *value)
-                    .enabled(free)
+                Entry::item(
+                    names::cell_output_name(*value),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.procedural.cell_output == *value)
+                .enabled(free)
             })
             .collect(),
         FxChoice::FractalMode => names::FRACTAL_MODES
@@ -370,9 +390,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .map(|value| {
                 let mut next = g.clone();
                 next.procedural.fractal = *value;
-                Entry::item(names::fractal_mode_name(*value), set_generator(layer, id, next))
-                    .radio(g.procedural.fractal == *value)
-                    .enabled(free)
+                Entry::item(
+                    names::fractal_mode_name(*value),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.procedural.fractal == *value)
+                .enabled(free)
             })
             .collect(),
         FxChoice::NoiseSpace => [NoiseSpace::Model, NoiseSpace::Uv]
@@ -380,9 +403,12 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .map(|s| {
                 let mut next = g.clone();
                 next.noise_space = *s;
-                Entry::item(names::noise_space_name(lang, *s), set_generator(layer, id, next))
-                    .radio(g.noise_space == *s)
-                    .enabled(free)
+                Entry::item(
+                    names::noise_space_name(lang, *s),
+                    set_generator(layer, id, next),
+                )
+                .radio(g.noise_space == *s)
+                .enabled(free)
             })
             .collect(),
         FxChoice::Shape => names::SHAPES

@@ -535,7 +535,10 @@ impl fmt::Display for InactiveEffect {
                 generator_kind_name(kind),
             ),
             InactiveTarget::FillGradient(c) => {
-                write!(f, "「{name}」（{c:?}）: グラデーションは値を見せています。{why}")
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: グラデーションは値を見せています。{why}"
+                )
             }
             InactiveTarget::Decal => write!(f, "「{name}」（デカール）: 出ていません。{why}"),
             InactiveTarget::FillImage(c) => {

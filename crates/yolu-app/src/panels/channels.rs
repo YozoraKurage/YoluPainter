@@ -39,7 +39,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     );
     let channels = app.doc.channels();
     let list_height = channels.len() as f32 * ROW_HEIGHT;
-    let bar = Scroll::begin(ui, body, app.m2.channels_content, &mut app.m2.channel_scroll);
+    let bar = Scroll::begin(
+        ui,
+        body,
+        app.m2.channels_content,
+        &mut app.m2.channel_scroll,
+    );
     let scroll = app.m2.channel_scroll;
     w::fill(&ui.painter_at(body), body, t::PANEL_BG);
     let list = Rect::from_min_size(
@@ -184,11 +189,12 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         }
     }
     // 狭い欄でも値を切らないよう、名前を上に置いて箱は幅いっぱいに
-    let dropdown = |ui: &mut Ui, rows: &mut Rows, id: &str, value: &str, tip: &str, enabled: bool| {
-        let r = rows.row(t::ROW_HEIGHT, 4.0);
-        let (response, at) = w::dropdown(ui, r, id, None, value, Some(tip), enabled, 0.0);
-        response.clicked().then_some(at)
-    };
+    let dropdown =
+        |ui: &mut Ui, rows: &mut Rows, id: &str, value: &str, tip: &str, enabled: bool| {
+            let r = rows.row(t::ROW_HEIGHT, 4.0);
+            let (response, at) = w::dropdown(ui, r, id, None, value, Some(tip), enabled, 0.0);
+            response.clicked().then_some(at)
+        };
     group_label(ui, rows, lang.pick("端", "Edges"));
     if let Some(at) = dropdown(
         ui,
@@ -404,7 +410,11 @@ fn channel_row(
         let names: Vec<&str> = reading.iter().map(|s| s.label(lang)).collect();
         let tip = format!("lilToon: {}", names.join(lang.pick("、", ", ")));
         let hit = icon_rect.intersect(list);
-        let response = ui.interact(hit, ui.make_persistent_id(("channel.look", channel.index())), Sense::hover());
+        let response = ui.interact(
+            hit,
+            ui.make_persistent_id(("channel.look", channel.index())),
+            Sense::hover(),
+        );
         let label = tip.clone();
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &label));
         response.on_hover_text(tip);

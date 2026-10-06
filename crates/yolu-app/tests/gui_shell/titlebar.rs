@@ -4,7 +4,9 @@
 use crate::common;
 
 use common::*;
-use egui::{pos2, vec2, CursorIcon, Event, PointerButton, Pos2, Rect, ResizeDirection, ViewportCommand};
+use egui::{
+    pos2, vec2, CursorIcon, Event, PointerButton, Pos2, Rect, ResizeDirection, ViewportCommand,
+};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::{Harness, SnapshotResults};
 use yolu_app::lang::Lang;
@@ -26,7 +28,11 @@ fn windows_app(width: f32, height: f32) -> Harness<'static, YoluApp> {
 }
 
 fn set_maximized(h: &mut Harness<'_, YoluApp>, on: bool) {
-    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).expect("root").maximized = Some(on);
+    h.input_mut()
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .expect("root")
+        .maximized = Some(on);
     h.step();
 }
 
@@ -55,13 +61,26 @@ fn pointer(at: Pos2) -> Event {
 }
 
 fn button(at: Pos2, pressed: bool) -> Event {
-    Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
+    Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    }
 }
 
 /// Alt を押しながらの左ボタン（3D ビューでは回す操作。モデルに当たらなくても始まるので、押しがビューに渡ったかを確かめられる）。
 fn alt_button(at: Pos2, pressed: bool) -> Event {
-    let modifiers = egui::Modifiers { alt: true, ..egui::Modifiers::NONE };
-    Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers }
+    let modifiers = egui::Modifiers {
+        alt: true,
+        ..egui::Modifiers::NONE
+    };
+    Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    }
 }
 
 /// ペンの 1 点（位置は物理の画素。試験の窓は 1 点 = 1 画素）。
@@ -83,13 +102,28 @@ fn pen_point(at: Pos2, contact: bool, pressure: f32) -> PenSample {
 fn press_and_drag(h: &mut Harness<'_, YoluApp>, at: Pos2, by: egui::Vec2) -> Vec<ViewportCommand> {
     play(
         h,
-        vec![pointer(at), button(at, true), pointer(at + by * 0.5), pointer(at + by), button(at + by, false)],
+        vec![
+            pointer(at),
+            button(at, true),
+            pointer(at + by * 0.5),
+            pointer(at + by),
+            button(at + by, false),
+        ],
     )
 }
 
 /// `at` をダブルクリックする。
 fn double_click(h: &mut Harness<'_, YoluApp>, at: Pos2) -> Vec<ViewportCommand> {
-    play(h, vec![pointer(at), button(at, true), button(at, false), button(at, true), button(at, false)])
+    play(
+        h,
+        vec![
+            pointer(at),
+            button(at, true),
+            button(at, false),
+            button(at, true),
+            button(at, false),
+        ],
+    )
 }
 
 fn single_click(h: &mut Harness<'_, YoluApp>, at: Pos2) -> Vec<ViewportCommand> {
@@ -141,7 +175,9 @@ fn empty_bar_point(h: &Harness<'_, YoluApp>) -> Pos2 {
 fn top_shot(h: &mut Harness<'_, YoluApp>, name: &str, results: &mut SnapshotResults) {
     // 直前に押した所のポインタが絵に残らないように（乗せた絵は、乗せてから撮る）
     let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(&image, 0, 0, image.width(), t::MENU_BAR_HEIGHT as u32 + 2).to_image();
+    let cropped =
+        image::imageops::crop_imm(&image, 0, 0, image.width(), t::MENU_BAR_HEIGHT as u32 + 2)
+            .to_image();
     results.add(egui_kittest::try_image_snapshot(&cropped, name));
 }
 
@@ -166,7 +202,10 @@ fn the_windows_bar_looks_right() {
             top_shot(&mut h, "titlebar_windows_maximized", &mut results);
             set_maximized(&mut h, false);
             // 閉じるに乗せる（赤）、最小化に乗せる
-            let [min, _, close] = titlebar::button_rects(Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, t::MENU_BAR_HEIGHT)));
+            let [min, _, close] = titlebar::button_rects(Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(WIDTH, t::MENU_BAR_HEIGHT),
+            ));
             play(&mut h, vec![pointer(close.center())]);
             top_shot(&mut h, "titlebar_windows_close_hover", &mut results);
             play(&mut h, vec![pointer(min.center())]);
@@ -184,14 +223,23 @@ fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
         h.run();
         for button in Button::ALL {
             for maximized in [false, true] {
-                assert!(h.query_by_label(button.name(lang, maximized)).is_none(), "{lang:?} {button:?}: ボタンがある");
+                assert!(
+                    h.query_by_label(button.name(lang, maximized)).is_none(),
+                    "{lang:?} {button:?}: ボタンがある"
+                );
             }
         }
     }
     let at = pos2(WIDTH - 1.0, HEIGHT / 2.0);
-    let sent = play(&mut h, vec![pointer(at), button(at, true), button(at, false)]);
+    let sent = play(
+        &mut h,
+        vec![pointer(at), button(at, true), button(at, false)],
+    );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert_ne!(h.output().platform_output.cursor_icon, CursorIcon::ResizeHorizontal);
+    assert_ne!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::ResizeHorizontal
+    );
     // 帯を引いても動かさず、ダブルクリックでも最大化しない
     let empty = pos2(600.0, t::MENU_BAR_HEIGHT / 2.0);
     let sent = press_and_drag(&mut h, empty, vec2(30.0, 0.0));
@@ -213,21 +261,37 @@ fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
             let rects = Button::ALL.map(|b| h.get_by_label(b.name(lang, false)).rect());
             for (i, r) in rects.iter().enumerate() {
                 assert_eq!(r.width(), titlebar::BUTTON_WIDTH, "{lang:?} {width}: {i}");
-                assert!(r.top() <= 0.5 && r.bottom() <= t::MENU_BAR_HEIGHT, "{lang:?} {width}: {r:?}");
+                assert!(
+                    r.top() <= 0.5 && r.bottom() <= t::MENU_BAR_HEIGHT,
+                    "{lang:?} {width}: {r:?}"
+                );
             }
-            assert_eq!(rects[2].right(), width, "{lang:?} {width}: 閉じるは窓の右端");
+            assert_eq!(
+                rects[2].right(),
+                width,
+                "{lang:?} {width}: 閉じるは窓の右端"
+            );
             assert!(rects[0].left() < rects[1].left() && rects[1].left() < rects[2].left());
             let icon = link_rect(&h);
-            assert!(icon.right() < rects[0].left(), "{lang:?} {width}: Live Link の印 {icon:?} がボタンに重なる");
+            assert!(
+                icon.right() < rects[0].left(),
+                "{lang:?} {width}: Live Link の印 {icon:?} がボタンに重なる"
+            );
             let last = menu_title(&h, last_menu_title(lang));
-            assert!(icon.left() >= last.right(), "{lang:?} {width}: 印がメニューの見出しに重なる");
+            assert!(
+                icon.left() >= last.right(),
+                "{lang:?} {width}: 印がメニューの見出しに重なる"
+            );
             // 名前の字（明るい画素）が、ボタンの列に入り込まない
             let image = h.render().expect("描画");
             for y in 2..(t::MENU_BAR_HEIGHT as u32 - 2) {
                 let edge = rects[0].left() as u32;
                 for x in edge - 6..edge {
                     let p = image.get_pixel(x, y).0;
-                    assert!(p[0] as u32 + p[1] as u32 + p[2] as u32 <= 330, "{lang:?} {width}: 名前の字がボタンの左の隙間 ({x},{y}) まで来る");
+                    assert!(
+                        p[0] as u32 + p[1] as u32 + p[2] as u32 <= 330,
+                        "{lang:?} {width}: 名前の字がボタンの左の隙間 ({x},{y}) まで来る"
+                    );
                 }
             }
         }
@@ -273,18 +337,30 @@ fn minimize_and_maximize_and_restore_send_their_commands() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = h.get_by_label("最小化").rect().center();
     let sent = single_click(&mut h, at);
-    assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Minimized(true))), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, ViewportCommand::Minimized(true))),
+        "{sent:?}"
+    );
     assert_eq!(count(&sent, toggles_maximized), 0);
 
     let at = h.get_by_label("最大化").rect().center();
     let sent = single_click(&mut h, at);
-    assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Maximized(true))), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, ViewportCommand::Maximized(true))),
+        "{sent:?}"
+    );
 
     // 最大化中は、同じボタンが元に戻す
     set_maximized(&mut h, true);
     let at = h.get_by_label("元に戻す").rect().center();
     let sent = single_click(&mut h, at);
-    assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Maximized(false))), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, ViewportCommand::Maximized(false))),
+        "{sent:?}"
+    );
 }
 
 /// 閉じるは、メニューの「終了」と同じ道（`Action::Quit`。保存していない変更の確かめは、終了の処理が窓を開く実際のアプリで行う）。
@@ -296,14 +372,22 @@ fn close_goes_the_same_way_as_the_quit_menu_item() {
         via_menu.state_mut().state.modified = modified;
         via_menu.state_mut().state.apply(Action::Quit);
         via_menu.step();
-        let menu = (via_menu.state().state.quit, commands(&via_menu).iter().any(|c| matches!(c, ViewportCommand::Close)));
+        let menu = (
+            via_menu.state().state.quit,
+            commands(&via_menu)
+                .iter()
+                .any(|c| matches!(c, ViewportCommand::Close)),
+        );
         // 閉じるのボタン
         let mut h = windows_app(WIDTH, HEIGHT);
         h.state_mut().state.modified = modified;
         h.run();
         let at = h.get_by_label("閉じる").rect().center();
         let sent = single_click(&mut h, at);
-        let button = (h.state().state.quit, sent.iter().any(|c| matches!(c, ViewportCommand::Close)));
+        let button = (
+            h.state().state.quit,
+            sent.iter().any(|c| matches!(c, ViewportCommand::Close)),
+        );
         assert_eq!(button, menu, "modified={modified}");
         assert!(button.0 && button.1, "modified={modified}: 終了の頼みになり、窓を閉じる頼みが出る（試験の窓は確かめを開かない）");
     }
@@ -328,7 +412,11 @@ fn double_clicking_the_empty_bar_toggles_maximized() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = empty_bar_point(&h);
     let sent = double_click(&mut h, at);
-    assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Maximized(true))), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, ViewportCommand::Maximized(true))),
+        "{sent:?}"
+    );
     assert_eq!(count(&sent, starts_drag), 0, "ダブルクリックは動かさない");
     // 最大化中は元に戻す（前のダブルクリックから離す。続けると 3 回目のクリックになる）
     set_maximized(&mut h, true);
@@ -336,14 +424,26 @@ fn double_clicking_the_empty_bar_toggles_maximized() {
         h.step();
     }
     let sent = double_click(&mut h, at);
-    assert!(sent.iter().any(|c| matches!(c, ViewportCommand::Maximized(false))), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|c| matches!(c, ViewportCommand::Maximized(false))),
+        "{sent:?}"
+    );
 }
 
 /// 名前の上（右の端）の何も無い所も動かす。
 #[test]
 fn dragging_over_the_project_name_also_moves_the_window() {
     let mut h = windows_app(WIDTH, HEIGHT);
-    let at = pos2(titlebar::content_rect(Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, t::MENU_BAR_HEIGHT)), true).right() - 12.0, 12.0);
+    let at = pos2(
+        titlebar::content_rect(
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, t::MENU_BAR_HEIGHT)),
+            true,
+        )
+        .right()
+            - 12.0,
+        12.0,
+    );
     let sent = press_and_drag(&mut h, at, vec2(-30.0, 8.0));
     assert_eq!(count(&sent, starts_drag), 1, "{sent:?}");
 }
@@ -363,7 +463,11 @@ fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
             h.state_mut().state.popup = None;
             h.run();
             let sent = double_click(&mut h, at);
-            assert_eq!(count(&sent, toggles_maximized), 0, "{lang:?} {title}: {sent:?}");
+            assert_eq!(
+                count(&sent, toggles_maximized),
+                0,
+                "{lang:?} {title}: {sent:?}"
+            );
             h.state_mut().state.popup = None;
             h.run();
         }
@@ -380,11 +484,17 @@ fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = menu_title(&h, "ファイル").center();
     single_click(&mut h, at);
-    assert!(matches!(h.state().state.popup.as_ref().map(|p| p.kind), Some(PopupKind::MenuBar(0))));
+    assert!(matches!(
+        h.state().state.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::MenuBar(0))
+    ));
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = link_rect(&h).center();
     single_click(&mut h, at);
-    assert!(matches!(h.state().state.popup.as_ref().map(|p| p.kind), Some(PopupKind::LiveLink)));
+    assert!(matches!(
+        h.state().state.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::LiveLink)
+    ));
 }
 
 /// ボタンを押したときも、動かさず最大化の切り替えを重ねない（ダブルクリックで最大化を 2 回送らない）。
@@ -414,14 +524,46 @@ fn an_open_menu_covers_the_bar_so_it_does_not_start_a_drag() {
 
 fn edge_cases() -> [(Pos2, ResizeDirection, CursorIcon); 8] {
     [
-        (pos2(WIDTH - 1.0, HEIGHT / 2.0), ResizeDirection::East, CursorIcon::ResizeHorizontal),
-        (pos2(1.0, HEIGHT / 2.0), ResizeDirection::West, CursorIcon::ResizeHorizontal),
-        (pos2(WIDTH / 2.0, HEIGHT - 1.0), ResizeDirection::South, CursorIcon::ResizeVertical),
-        (pos2(WIDTH / 2.0, 1.0), ResizeDirection::North, CursorIcon::ResizeVertical),
-        (pos2(1.0, 1.0), ResizeDirection::NorthWest, CursorIcon::ResizeNwSe),
-        (pos2(WIDTH - 1.0, 1.0), ResizeDirection::NorthEast, CursorIcon::ResizeNeSw),
-        (pos2(1.0, HEIGHT - 1.0), ResizeDirection::SouthWest, CursorIcon::ResizeNeSw),
-        (pos2(WIDTH - 1.0, HEIGHT - 1.0), ResizeDirection::SouthEast, CursorIcon::ResizeNwSe),
+        (
+            pos2(WIDTH - 1.0, HEIGHT / 2.0),
+            ResizeDirection::East,
+            CursorIcon::ResizeHorizontal,
+        ),
+        (
+            pos2(1.0, HEIGHT / 2.0),
+            ResizeDirection::West,
+            CursorIcon::ResizeHorizontal,
+        ),
+        (
+            pos2(WIDTH / 2.0, HEIGHT - 1.0),
+            ResizeDirection::South,
+            CursorIcon::ResizeVertical,
+        ),
+        (
+            pos2(WIDTH / 2.0, 1.0),
+            ResizeDirection::North,
+            CursorIcon::ResizeVertical,
+        ),
+        (
+            pos2(1.0, 1.0),
+            ResizeDirection::NorthWest,
+            CursorIcon::ResizeNwSe,
+        ),
+        (
+            pos2(WIDTH - 1.0, 1.0),
+            ResizeDirection::NorthEast,
+            CursorIcon::ResizeNeSw,
+        ),
+        (
+            pos2(1.0, HEIGHT - 1.0),
+            ResizeDirection::SouthWest,
+            CursorIcon::ResizeNeSw,
+        ),
+        (
+            pos2(WIDTH - 1.0, HEIGHT - 1.0),
+            ResizeDirection::SouthEast,
+            CursorIcon::ResizeNwSe,
+        ),
     ]
 }
 
@@ -433,7 +575,11 @@ fn pressing_a_window_edge_begins_a_resize_in_that_direction() {
         // 乗せただけ: 形が変わるが、頼みは出ない
         let sent = play(&mut h, vec![pointer(at)]);
         assert!(sent.is_empty(), "{direction:?}: {sent:?}");
-        assert_eq!(h.output().platform_output.cursor_icon, cursor, "{direction:?}: 乗せたときの形");
+        assert_eq!(
+            h.output().platform_output.cursor_icon,
+            cursor,
+            "{direction:?}: 乗せたときの形"
+        );
         let sent = play(&mut h, vec![button(at, true)]);
         assert_eq!(resizes(&sent), vec![direction], "{direction:?}: {sent:?}");
         // 離したあと、次の押しは新しく受ける
@@ -452,11 +598,20 @@ fn inside_the_edge_nothing_resizes_and_the_cursor_stays() {
         pos2(WIDTH / 2.0, HEIGHT - titlebar::EDGE - 2.0),
         pos2(WIDTH / 2.0, 300.0),
     ] {
-        let sent = play(&mut h, vec![pointer(at), button(at, true), button(at, false)]);
+        let sent = play(
+            &mut h,
+            vec![pointer(at), button(at, true), button(at, false)],
+        );
         assert!(resizes(&sent).is_empty(), "{at:?}: {sent:?}");
         let cursor = h.output().platform_output.cursor_icon;
         assert!(
-            !matches!(cursor, CursorIcon::ResizeHorizontal | CursorIcon::ResizeVertical | CursorIcon::ResizeNwSe | CursorIcon::ResizeNeSw),
+            !matches!(
+                cursor,
+                CursorIcon::ResizeHorizontal
+                    | CursorIcon::ResizeVertical
+                    | CursorIcon::ResizeNwSe
+                    | CursorIcon::ResizeNeSw
+            ),
             "{at:?}: {cursor:?}"
         );
     }
@@ -469,16 +624,30 @@ fn while_maximized_the_edges_do_nothing() {
     set_maximized(&mut h, true);
     for (at, direction, cursor) in edge_cases() {
         let sent = play(&mut h, vec![pointer(at)]);
-        assert_ne!(h.output().platform_output.cursor_icon, cursor, "{direction:?}");
+        assert_ne!(
+            h.output().platform_output.cursor_icon,
+            cursor,
+            "{direction:?}"
+        );
         let sent2 = play(&mut h, vec![button(at, true), button(at, false)]);
-        assert!(resizes(&sent).is_empty() && resizes(&sent2).is_empty(), "{direction:?}: {sent:?} {sent2:?}");
+        assert!(
+            resizes(&sent).is_empty() && resizes(&sent2).is_empty(),
+            "{direction:?}: {sent:?} {sent2:?}"
+        );
     }
     // 全画面も同じ
     set_maximized(&mut h, false);
-    h.input_mut().viewports.get_mut(&egui::ViewportId::ROOT).unwrap().fullscreen = Some(true);
+    h.input_mut()
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .fullscreen = Some(true);
     h.step();
     let at = pos2(WIDTH - 1.0, HEIGHT / 2.0);
-    let sent = play(&mut h, vec![pointer(at), button(at, true), button(at, false)]);
+    let sent = play(
+        &mut h,
+        vec![pointer(at), button(at, true), button(at, false)],
+    );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
 }
 
@@ -491,9 +660,15 @@ fn a_menu_over_the_edge_keeps_the_press() {
     assert!(h.state().state.popup.is_some());
     let edge = pos2(1.0, HEIGHT / 2.0);
     let sent = play(&mut h, vec![pointer(edge)]);
-    assert_ne!(h.output().platform_output.cursor_icon, CursorIcon::ResizeHorizontal);
+    assert_ne!(
+        h.output().platform_output.cursor_icon,
+        CursorIcon::ResizeHorizontal
+    );
     let sent2 = play(&mut h, vec![button(edge, true), button(edge, false)]);
-    assert!(resizes(&sent).is_empty() && resizes(&sent2).is_empty(), "{sent:?} {sent2:?}");
+    assert!(
+        resizes(&sent).is_empty() && resizes(&sent2).is_empty(),
+        "{sent:?} {sent2:?}"
+    );
 }
 
 /// ペン・タッチの押し（winit は Touch と、同じ押しのポインタを同じフレームで届ける）は、縁の押しとして受けない。
@@ -526,20 +701,36 @@ fn an_edge_press_over_the_canvas_does_not_paint() {
     h.state_mut().dock = egui_dock::DockState::new(vec![Tab::Canvas]);
     h.run();
     let canvas = canvas_rect(&h);
-    assert!(canvas.right() >= WIDTH - 1.0, "キャンバスが窓の右端まで届く: {canvas:?}");
+    assert!(
+        canvas.right() >= WIDTH - 1.0,
+        "キャンバスが窓の右端まで届く: {canvas:?}"
+    );
     let y = canvas.center().y;
     // 縁（右端）: 大きさを変える頼みが出て、ストロークは始まらない
     let edge = pos2(WIDTH - 1.0, y);
     let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
     play(&mut h, vec![pointer(edge - vec2(0.0, 8.0))]);
-    assert!(!h.state().state.is_stroking(), "縁の押しでストロークが始まった");
+    assert!(
+        !h.state().state.is_stroking(),
+        "縁の押しでストロークが始まった"
+    );
     play(&mut h, vec![button(edge - vec2(0.0, 8.0), false)]);
     // 縁より内側: 描き始める（対照）
     let inner = pos2(WIDTH - titlebar::EDGE - 20.0, y);
-    let sent = play(&mut h, vec![pointer(inner), button(inner, true), pointer(inner - vec2(0.0, 8.0))]);
+    let sent = play(
+        &mut h,
+        vec![
+            pointer(inner),
+            button(inner, true),
+            pointer(inner - vec2(0.0, 8.0)),
+        ],
+    );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert!(h.state().state.is_stroking(), "縁の内側ではストロークが始まる");
+    assert!(
+        h.state().state.is_stroking(),
+        "縁の内側ではストロークが始まる"
+    );
     play(&mut h, vec![button(inner - vec2(0.0, 8.0), false)]);
 }
 
@@ -551,11 +742,21 @@ fn a_press_at_the_edge_during_a_stroke_does_not_begin_a_resize() {
     h.run();
     let y = canvas_rect(&h).center().y;
     let inner = pos2(WIDTH - titlebar::EDGE - 20.0, y);
-    play(&mut h, vec![pointer(inner), button(inner, true), pointer(inner - vec2(0.0, 8.0))]);
+    play(
+        &mut h,
+        vec![
+            pointer(inner),
+            button(inner, true),
+            pointer(inner - vec2(0.0, 8.0)),
+        ],
+    );
     assert!(h.state().state.is_stroking(), "描いている最中");
     let edge = pos2(WIDTH - 1.0, y);
     let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
-    assert!(resizes(&sent).is_empty(), "描いている最中の縁の押しが大きさを変えた: {sent:?}");
+    assert!(
+        resizes(&sent).is_empty(),
+        "描いている最中の縁の押しが大きさを変えた: {sent:?}"
+    );
     play(&mut h, vec![button(edge, false)]);
     assert!(!h.state().state.is_stroking());
     // 描き終えたあとは、同じ縁の押しを受ける（対照）
@@ -582,9 +783,16 @@ fn the_pen_blocks_an_edge_press_by_contact_not_by_pressure() {
         let sent = commands(&h);
         let got = resizes(&sent);
         if resizes_expected {
-            assert_eq!(got, vec![ResizeDirection::East], "contact={contact} pressure={pressure}: {sent:?}");
+            assert_eq!(
+                got,
+                vec![ResizeDirection::East],
+                "contact={contact} pressure={pressure}: {sent:?}"
+            );
         } else {
-            assert!(got.is_empty(), "contact={contact} pressure={pressure}: {sent:?}");
+            assert!(
+                got.is_empty(),
+                "contact={contact} pressure={pressure}: {sent:?}"
+            );
         }
     }
 }
@@ -599,7 +807,13 @@ fn a_stroke_that_runs_into_the_edge_keeps_painting_and_does_not_resize() {
     let start = pos2(WIDTH - 60.0, y);
     let sent = play(
         &mut h,
-        vec![pointer(start), button(start, true), pointer(start + vec2(20.0, 0.0)), pointer(pos2(WIDTH - 1.0, y)), pointer(pos2(WIDTH - 1.0, y + 6.0))],
+        vec![
+            pointer(start),
+            button(start, true),
+            pointer(start + vec2(20.0, 0.0)),
+            pointer(pos2(WIDTH - 1.0, y)),
+            pointer(pos2(WIDTH - 1.0, y + 6.0)),
+        ],
     );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
     assert!(h.state().state.is_stroking());
@@ -612,10 +826,22 @@ fn the_top_edge_yields_to_the_menu_titles_but_resizes_over_the_empty_bar() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let title = menu_title(&h, "ファイル");
     let at = pos2(title.center().x, 3.0);
-    assert!(title.top() <= 2.0 && at.y < titlebar::EDGE, "見出しは上の縁に届く: {title:?}");
-    let sent = play(&mut h, vec![pointer(at), button(at, true), button(at, false)]);
+    assert!(
+        title.top() <= 2.0 && at.y < titlebar::EDGE,
+        "見出しは上の縁に届く: {title:?}"
+    );
+    let sent = play(
+        &mut h,
+        vec![pointer(at), button(at, true), button(at, false)],
+    );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert!(matches!(h.state().state.popup.as_ref().map(|p| p.kind), Some(PopupKind::MenuBar(0))), "メニューが開く");
+    assert!(
+        matches!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::MenuBar(0))
+        ),
+        "メニューが開く"
+    );
     h.state_mut().state.popup = None;
     h.run();
     let empty = pos2(empty_bar_point(&h).x, 1.0);
@@ -629,10 +855,25 @@ fn the_top_edge_yields_to_the_link_mark() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let mark = link_rect(&h);
     let at = pos2(mark.center().x, 2.0);
-    assert!(mark.top() <= 2.0 && at.y < titlebar::EDGE, "印は上の縁に届く: {mark:?}");
-    let sent = play(&mut h, vec![pointer(at), button(at, true), button(at, false)]);
-    assert!(resizes(&sent).is_empty(), "印の上の押しが縁になった: {sent:?}");
-    assert!(matches!(h.state().state.popup.as_ref().map(|p| p.kind), Some(PopupKind::LiveLink)), "Live Link の窓が開く");
+    assert!(
+        mark.top() <= 2.0 && at.y < titlebar::EDGE,
+        "印は上の縁に届く: {mark:?}"
+    );
+    let sent = play(
+        &mut h,
+        vec![pointer(at), button(at, true), button(at, false)],
+    );
+    assert!(
+        resizes(&sent).is_empty(),
+        "印の上の押しが縁になった: {sent:?}"
+    );
+    assert!(
+        matches!(
+            h.state().state.popup.as_ref().map(|p| p.kind),
+            Some(PopupKind::LiveLink)
+        ),
+        "Live Link の窓が開く"
+    );
     // 印の外の同じ高さ（何も無い所）は、上へ大きさを変える（対照）
     h.state_mut().state.popup = None;
     h.run();
@@ -653,17 +894,26 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let edge = pos2(WIDTH - 1.0, y);
     let sent = play(&mut h, vec![pointer(edge), alt_button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
-    assert!(h.state().state.view3d.input.nav.is_none(), "縁の押しで回す操作が始まった");
+    assert!(
+        h.state().state.view3d.input.nav.is_none(),
+        "縁の押しで回す操作が始まった"
+    );
     // 縁の押しを持ったまま動かしても、回さない
     let moved = edge + vec2(-30.0, 12.0);
     play(&mut h, vec![pointer(moved)]);
-    assert!(h.state().state.view3d.input.nav.is_none(), "縁の押しのまま動かして回した");
+    assert!(
+        h.state().state.view3d.input.nav.is_none(),
+        "縁の押しのまま動かして回した"
+    );
     play(&mut h, vec![alt_button(moved, false)]);
     // 縁の 1 点内側（縁の幅の外）では、同じ押しが回す操作を始める（対照）
     let inner = pos2(WIDTH - titlebar::EDGE - 1.0, y);
     let sent = play(&mut h, vec![pointer(inner), alt_button(inner, true)]);
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert!(h.state().state.view3d.input.nav.is_some(), "縁の内側で回す操作が始まらない");
+    assert!(
+        h.state().state.view3d.input.nav.is_some(),
+        "縁の内側で回す操作が始まらない"
+    );
     play(&mut h, vec![alt_button(inner, false)]);
     assert!(h.state().state.view3d.input.nav.is_none());
 }
@@ -682,7 +932,18 @@ fn a_scroll_thumb_at_the_right_edge_keeps_its_press() {
     assert!(!thumbs.is_empty(), "右の縁に届くつまみの溝が出ている");
     for thumb in thumbs {
         let at = pos2(WIDTH - 1.0, thumb.center().y);
-        let sent = play(&mut h, vec![pointer(at), button(at, true), pointer(at + vec2(0.0, 12.0)), button(at + vec2(0.0, 12.0), false)]);
-        assert!(resizes(&sent).is_empty(), "つまみの上の押しが縁になった: {sent:?} {thumb:?}");
+        let sent = play(
+            &mut h,
+            vec![
+                pointer(at),
+                button(at, true),
+                pointer(at + vec2(0.0, 12.0)),
+                button(at + vec2(0.0, 12.0), false),
+            ],
+        );
+        assert!(
+            resizes(&sent).is_empty(),
+            "つまみの上の押しが縁になった: {sent:?} {thumb:?}"
+        );
     }
 }

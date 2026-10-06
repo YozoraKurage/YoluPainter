@@ -210,10 +210,19 @@ pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
             format!("Read-only set \"{set}\" was not exported"),
         ),
         Note::InactiveEffects(set, effects) => {
-            let first = effects.first().map(|e| lang.inactive_effect(e)).unwrap_or_default();
+            let first = effects
+                .first()
+                .map(|e| lang.inactive_effect(e))
+                .unwrap_or_default();
             lang.pick(
-                format!("「{set}」の効いていない効果 {} 件は書き出しに入っていません: {first}", effects.len()),
-                format!("{} inactive effect(s) of \"{set}\" are not in the exported images: {first}", effects.len()),
+                format!(
+                    "「{set}」の効いていない効果 {} 件は書き出しに入っていません: {first}",
+                    effects.len()
+                ),
+                format!(
+                    "{} inactive effect(s) of \"{set}\" are not in the exported images: {first}",
+                    effects.len()
+                ),
             )
         }
     }
@@ -827,11 +836,12 @@ impl AppState {
             existing: vec![name],
             total: 1,
         });
-        self.message = lang.pick(
-            "もうあるファイル 1 個を置き換えるか確かめます。",
-            "Confirm replacing 1 existing file.",
-        )
-        .into();
+        self.message = lang
+            .pick(
+                "もうあるファイル 1 個を置き換えるか確かめます。",
+                "Confirm replacing 1 existing file.",
+            )
+            .into();
     }
 
     /// 描くチャンネルを `path` の 1 枚の PNG に書き出す（選ぶ窓が置き換えてよいと確かめているので、もうあれば置き換える）。

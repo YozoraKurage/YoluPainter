@@ -125,9 +125,7 @@ impl StoreError {
                     "Written file does not read back",
                 )
                 .into(),
-            StoreError::TooMany => lang
-                .pick("ポーズが多すぎます", "Too many poses")
-                .into(),
+            StoreError::TooMany => lang.pick("ポーズが多すぎます", "Too many poses").into(),
             StoreError::Missing => lang
                 .pick("一覧にないポーズです", "The pose is not in the list")
                 .into(),
@@ -390,10 +388,7 @@ fn parse_entry(value: &str) -> Option<PoseEntry> {
     if (q.length() - 1.0).abs() > QUAT_TOLERANCE {
         return None;
     }
-    let path: Vec<String> = path_text
-        .split('/')
-        .map(unescape)
-        .collect::<Option<_>>()?;
+    let path: Vec<String> = path_text.split('/').map(unescape).collect::<Option<_>>()?;
     if path.iter().any(|c| c.is_empty()) {
         return None;
     }
@@ -439,7 +434,8 @@ pub fn parse(text: &str) -> Result<(String, Vec<PoseEntry>), StoreError> {
                 if entries.len() >= MAX_ENTRIES {
                     return Err(StoreError::TooMany);
                 }
-                let entry = parse_entry(value).ok_or_else(|| StoreError::BadValue("bone".into()))?;
+                let entry =
+                    parse_entry(value).ok_or_else(|| StoreError::BadValue("bone".into()))?;
                 if !paths.insert(entry.path.clone()) {
                     // 同じ骨の項目が 2 つ（どちらを当てるか決まらない）
                     return Err(StoreError::BadValue("bone".into()));
@@ -500,7 +496,8 @@ mod tests {
     use super::*;
 
     fn dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("yolu-pose-store-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yolu-pose-store-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -595,7 +592,12 @@ mod tests {
             parse(&format!("yolupainter-pose 1\nname={long}\n")),
             Err(StoreError::BadValue(_))
         ));
-        for e in [StoreError::Missing, StoreError::TooMany, StoreError::Mismatch, StoreError::TooLarge] {
+        for e in [
+            StoreError::Missing,
+            StoreError::TooMany,
+            StoreError::Mismatch,
+            StoreError::TooLarge,
+        ] {
             assert!(!e.describe(Lang::Ja).is_empty() && e.describe(Lang::En).is_ascii());
         }
     }
@@ -606,8 +608,12 @@ mod tests {
         let mut presets = Presets::default();
         presets.attach(dir.clone());
         assert!(presets.items().is_empty());
-        let a = presets.add("構え", vec![entry(&["腰", "頭"], 0.3)]).unwrap();
-        let b = presets.add("座り", vec![entry(&["腰", "胸"], 0.5)]).unwrap();
+        let a = presets
+            .add("構え", vec![entry(&["腰", "頭"], 0.3)])
+            .unwrap();
+        let b = presets
+            .add("座り", vec![entry(&["腰", "胸"], 0.5)])
+            .unwrap();
         assert!(b > a);
         assert!(dir.join(format!("pose-{a}.ylpose")).exists());
         // 一時ファイルは残さない
@@ -645,7 +651,10 @@ mod tests {
         presets.add(" ポーズ ", e()).unwrap();
         let names: Vec<&str> = presets.items().iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["ポーズ", "ポーズ 2", "ポーズ 3"]);
-        assert!(matches!(presets.add("  ", e()), Err(StoreError::BadValue(_))));
+        assert!(matches!(
+            presets.add("  ", e()),
+            Err(StoreError::BadValue(_))
+        ));
         // 休みの形（項目が 0）のプリセットも足せる
         assert!(presets.add("休み", Vec::new()).is_ok());
         std::fs::remove_dir_all(dir).unwrap();
@@ -686,10 +695,15 @@ mod tests {
         assert_eq!(presets.rename(a, "走り").unwrap(), "走り");
         // 別のプリセットの名前と重なれば番号を付ける
         assert_eq!(presets.rename(a, "座り").unwrap(), "座り 2");
-        assert!(matches!(presets.rename(a, " "), Err(StoreError::BadValue(_))));
+        assert!(matches!(
+            presets.rename(a, " "),
+            Err(StoreError::BadValue(_))
+        ));
         assert!(matches!(presets.rename(999, "x"), Err(StoreError::Missing)));
         // 上書き: 名前はそのまま、項目だけ入れ替わる
-        presets.replace(b, vec![entry(&["腰", "頭"], -0.4)]).unwrap();
+        presets
+            .replace(b, vec![entry(&["腰", "頭"], -0.4)])
+            .unwrap();
         assert_eq!(presets.get(b).unwrap().name, "座り");
         assert!(matches!(
             presets.replace(999, Vec::new()),
@@ -733,7 +747,8 @@ mod tests {
             format!("pose-{}.ylpose", MAX_PRESETS + 1)
         );
         assert!(
-            dir.join(format!("pose-{}.ylpose", MAX_PRESETS + 1)).exists(),
+            dir.join(format!("pose-{}.ylpose", MAX_PRESETS + 1))
+                .exists(),
             "読み飛ばしたファイルには触らない"
         );
         let err = presets.add("あふれ", vec![entry(&["根"], 0.3)]);
@@ -832,7 +847,9 @@ mod tests {
     fn without_a_folder_presets_live_in_memory() {
         let mut presets = Presets::default();
         assert!(presets.dir().is_none());
-        let id = presets.add("メモリだけ", vec![entry(&["根"], 0.3)]).unwrap();
+        let id = presets
+            .add("メモリだけ", vec![entry(&["根"], 0.3)])
+            .unwrap();
         assert_eq!(presets.get(id).unwrap().name, "メモリだけ");
         assert_eq!(presets.rename(id, "改名").unwrap(), "改名");
         presets.replace(id, Vec::new()).unwrap();

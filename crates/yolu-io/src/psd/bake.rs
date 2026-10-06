@@ -35,9 +35,7 @@ use super::bridge::{
     channel_label, core_adjustment, divider_part, layer_part, psd_adjustment, psd_locks, unique_id,
     Blocker, Refusal, PIXEL_BUDGET,
 };
-use super::write::{
-    MaskRegion, Region, StreamOptions, Supplied, XResult,
-};
+use super::write::{MaskRegion, Region, StreamOptions, Supplied, XResult};
 use super::*;
 use crate::{check, check_budget, Error, Result};
 use std::borrow::Cow;
@@ -1709,11 +1707,17 @@ impl<'a> Builder<'a> {
     ) -> XResult<Supplied<'static>> {
         let mut supplied = Supplied::default();
         if raster {
-            let source = *slots.content.get(&id).expect("ラスターの層には出どころがある");
+            let source = *slots
+                .content
+                .get(&id)
+                .expect("ラスターの層には出どころがある");
             supplied.raster = Some(self.content(source)?.into_region());
         }
         if has_mask {
-            let (l, m, baked) = *slots.masks.get(&id).expect("マスクのある層には出どころがある");
+            let (l, m, baked) = *slots
+                .masks
+                .get(&id)
+                .expect("マスクのある層には出どころがある");
             supplied.mask = Some(self.mask(l, m, baked)?);
         }
         Ok(supplied)
@@ -1802,10 +1806,7 @@ impl<'a> Builder<'a> {
                 pixels,
             }
         };
-        self.add(
-            name,
-            u64::from(region.width) * u64::from(region.height) * 4,
-        )?;
+        self.add(name, u64::from(region.width) * u64::from(region.height) * 4)?;
         Ok(region)
     }
 
@@ -1848,8 +1849,10 @@ impl<'a> Builder<'a> {
                 let n = ts.min(canvas_w - x0);
                 for row in 0..ts.min(canvas_h - y0) {
                     // core の行（下から）を、層の行（上から）へ
-                    let at = (top as usize - 1 - (y0 + row)) * width as usize + (x0 - left as usize);
-                    pixels[at * 4..(at + n) * 4].copy_from_slice(&tile[row * ts * 4..(row * ts + n) * 4])
+                    let at =
+                        (top as usize - 1 - (y0 + row)) * width as usize + (x0 - left as usize);
+                    pixels[at * 4..(at + n) * 4]
+                        .copy_from_slice(&tile[row * ts * 4..(row * ts + n) * 4])
                 }
             }
         }
@@ -1866,12 +1869,7 @@ impl<'a> Builder<'a> {
     /// core のマスク（隠す量をアルファに持ち、左下原点）→ PSD のマスク（255 が見える、上から下）。焼くときは、フィルターを通した隠す量を
     /// 使い、反転は値を反転して画素にする（有効と濃度はそのまま）。矩形は既定の値と違う画素の外接矩形で、既定の値は 255 と 0 のうち
     /// 矩形が小さくなるほう（同じなら 255）。画布のどこでも同じ値になる。
-    fn mask(
-        &mut self,
-        l: &CoreLayer,
-        m: &RasterMask,
-        baked: bool,
-    ) -> XResult<MaskRegion<'static>> {
+    fn mask(&mut self, l: &CoreLayer, m: &RasterMask, baked: bool) -> XResult<MaskRegion<'static>> {
         let d = self.d;
         let (w, h, ts) = (
             d.width() as usize,

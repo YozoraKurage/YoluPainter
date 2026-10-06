@@ -30,8 +30,8 @@ use std::time::Instant;
 use egui::Vec2;
 use yolu_core::{Channel, Document};
 use yolu_io::psd::{
-    self, Compression, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError, ExportMode,
-    ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
+    self, Compression, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError,
+    ExportMode, ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
 use crate::lang::Lang;
@@ -971,7 +971,10 @@ impl AppState {
             }
             (Output::Imported { doc, notes }, Kind::Import(target)) => {
                 // 無視だけ（見え方にも内容にも効かない）なら確かめずに取り込む。落とす・変わるものがあれば確かめの窓
-                if notes.iter().all(|n| n.action == yolu_io::psd::ImportAction::Ignored) {
+                if notes
+                    .iter()
+                    .all(|n| n.action == yolu_io::psd::ImportAction::Ignored)
+                {
                     self.install_checked(*doc, &job.file, target, job.guard);
                 } else {
                     // 無視・落とす・変わるものがある: 利用者が確かめるまで、何も入れない
@@ -1056,7 +1059,9 @@ impl AppState {
         let layers = doc.layers().len();
         let switched = self.install_psd(doc, target, file);
         self.message = lang.pick(
-            format!("PSD を読み込みました: {file}（レイヤー {layers}）。PSD 自体は書き換えません。"),
+            format!(
+                "PSD を読み込みました: {file}（レイヤー {layers}）。PSD 自体は書き換えません。"
+            ),
             format!("Imported {file} ({layers} layers). The PSD itself is never rewritten."),
         );
         if !switched {
@@ -1286,8 +1291,13 @@ fn verify_written(
         .filter(|w| w.bytes == verified.bytes && w.layers == verified.layers)
         .ok_or_else(mismatch)?;
     let mut file = reader.into_inner();
-    file.seek(std::io::SeekFrom::Start(0)).map_err(Failure::File)?;
-    if written.checksum.matches(&mut file, Some(cancel)).map_err(read_failure)? {
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(Failure::File)?;
+    if written
+        .checksum
+        .matches(&mut file, Some(cancel))
+        .map_err(read_failure)?
+    {
         Ok(())
     } else {
         Err(mismatch())
@@ -1368,7 +1378,9 @@ fn stage(
         let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
         fill(&mut out)?;
         out.flush().map_err(Failure::File)?;
-        let file = out.into_inner().map_err(|e| Failure::File(e.into_error()))?;
+        let file = out
+            .into_inner()
+            .map_err(|e| Failure::File(e.into_error()))?;
         file.sync_all().map_err(Failure::File)?;
         drop(file);
         check(temp.path())?;
@@ -1427,9 +1439,9 @@ fn write_replacing(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
 mod tests {
     use super::*;
     use crate::state::Action;
-    use yolu_io::psd::{CompatibilityMode, Limits};
     use std::sync::atomic::AtomicU32;
     use yolu_core::{Channel, LayerId, TileCoord};
+    use yolu_io::psd::{CompatibilityMode, Limits};
 
     /// 試験用の一時フォルダ（終わると消す）。
     struct Dir(PathBuf);
@@ -1733,7 +1745,11 @@ mod tests {
                 before,
                 "{file}: 何も変えない"
             );
-            assert!(s.message.contains("読み込めません"), "{file}: {}", s.message);
+            assert!(
+                s.message.contains("読み込めません"),
+                "{file}: {}",
+                s.message
+            );
             let report = s.psd.report.take().expect(file);
             assert!(!report.ok && report.importing, "{file}");
             assert!(
@@ -1798,7 +1814,10 @@ mod tests {
     /// （取り込みでは通常になる。層 ID の振り直しとレイヤーのメタデータは無視なので、それだけでは確かめの窓を出さない）。
     fn needing_a_check() -> Vec<u8> {
         let mut bytes = without_layer_ids();
-        let i = bytes.windows(8).position(|w| w == b"8BIMnorm").expect("層の記録の合成モード");
+        let i = bytes
+            .windows(8)
+            .position(|w| w == b"8BIMnorm")
+            .expect("層の記録の合成モード");
         bytes[i + 4..i + 8].copy_from_slice(b"diss");
         bytes
     }
@@ -1839,7 +1858,11 @@ mod tests {
             target: PsdTarget::NewSet,
         }));
         s.wait_psd();
-        assert_eq!((s.sets.len(), s.doc.id(), s.modified), before, "確かめるまで入れない");
+        assert_eq!(
+            (s.sets.len(), s.doc.id(), s.modified),
+            before,
+            "確かめるまで入れない"
+        );
         let check = s.psd.import_check.as_ref().expect("確かめの窓");
         assert_eq!(check.file(), "Ids.psd");
         let ids = check
@@ -1848,11 +1871,17 @@ mod tests {
             .find(|n| n.feature == yolu_io::psd::ImportFeature::LayerIds)
             .expect("層 ID");
         assert_eq!(ids.layers, ["下", "上"], "取り込みの順（下から上）");
-        assert_eq!(check.notes().len(), 3, "層 ID・メタデータ（無視）と合成モード（変わる）: {:?}", check.notes());
+        assert_eq!(
+            check.notes().len(),
+            3,
+            "層 ID・メタデータ（無視）と合成モード（変わる）: {:?}",
+            check.notes()
+        );
         assert!(check
             .notes()
             .iter()
-            .any(|n| n.feature == yolu_io::psd::ImportFeature::BlendMode && n.action == yolu_io::psd::ImportAction::Changed));
+            .any(|n| n.feature == yolu_io::psd::ImportFeature::BlendMode
+                && n.action == yolu_io::psd::ImportAction::Changed));
         assert!(s.message.contains("確かめ待ち"), "{}", s.message);
         // 確かめている間は、ほかの取り込みを始めない
         s.apply(Action::Psd(PsdAction::Import {
@@ -2360,7 +2389,9 @@ mod tests {
             "{tone_what}"
         );
         assert!(
-            map_what.contains("カーブ → 停止点 色") && !map_what.contains("混色") && map_what.ends_with("不透明度 2"),
+            map_what.contains("カーブ → 停止点 色")
+                && !map_what.contains("混色")
+                && map_what.ends_with("不透明度 2"),
             "{map_what}"
         );
         assert!(tone_how.starts_with("最大差 ") && map_how.starts_with("最大差 "));
@@ -2371,7 +2402,11 @@ mod tests {
             "{}",
             en[1].1
         );
-        assert!(en[0].1.contains("Curve → stops: ") && !en[0].1.contains("ixing") && en[0].2.starts_with("Max diff "));
+        assert!(
+            en[0].1.contains("Curve → stops: ")
+                && !en[0].1.contains("ixing")
+                && en[0].2.starts_with("Max diff ")
+        );
         for (_, what, how) in &en {
             for text in [what, how] {
                 assert!(
@@ -2454,7 +2489,10 @@ mod tests {
         let dir = Dir::new("first");
         let [a, b] = ["a", "b"].map(|n| dir.0.join(format!("{n}.psd")));
         std::fs::write(&a, b"old-a").unwrap();
-        let staged: Vec<Staged> = [&a, &b].iter().map(|p| stage_bytes(p, b"new").unwrap()).collect();
+        let staged: Vec<Staged> = [&a, &b]
+            .iter()
+            .map(|p| stage_bytes(p, b"new").unwrap())
+            .collect();
         std::fs::remove_file(staged[0].temp.path()).unwrap();
         let err = commit(staged).unwrap_err();
         assert!(matches!(err, Failure::File(_)), "{err:?}");
@@ -2475,7 +2513,9 @@ mod tests {
             &path,
             |out| {
                 out.write_all(&vec![7u8; 3 << 20]).map_err(Failure::File)?;
-                Err(Failure::Overrun(Overrun::FileSize { layer: "下絵".into() }))
+                Err(Failure::Overrun(Overrun::FileSize {
+                    layer: "下絵".into(),
+                }))
             },
             |_| Ok(()),
         )
@@ -2485,7 +2525,10 @@ mod tests {
         assert_eq!(dir.files(), ["keep.psd"]);
         assert_eq!(std::fs::read(&path).unwrap(), b"old");
         // 書き終えてから、確かめで失敗する（確かめの途中の取消も同じ）
-        for failure in [Failure::Canceled, Failure::message("読み戻せません", "Cannot read back")] {
+        for failure in [
+            Failure::Canceled,
+            Failure::message("読み戻せません", "Cannot read back"),
+        ] {
             let mut failure = Some(failure);
             let err = stage(
                 &path,
@@ -2497,12 +2540,20 @@ mod tests {
             )
             .map(|_| ())
             .unwrap_err();
-            assert!(matches!(err, Failure::Canceled | Failure::Message { .. }), "{err:?}");
+            assert!(
+                matches!(err, Failure::Canceled | Failure::Message { .. }),
+                "{err:?}"
+            );
             assert_eq!(dir.files(), ["keep.psd"]);
             assert_eq!(std::fs::read(&path).unwrap(), b"old");
         }
         // 通れば、置き換えるまでは元のファイルのまま
-        let staged = stage(&path, |out| out.write_all(b"new").map_err(Failure::File), |_| Ok(())).unwrap();
+        let staged = stage(
+            &path,
+            |out| out.write_all(b"new").map_err(Failure::File),
+            |_| Ok(()),
+        )
+        .unwrap();
         assert_eq!(staged.len, 3);
         assert_eq!(std::fs::read(&path).unwrap(), b"old");
         commit(vec![staged]).unwrap();
@@ -2520,7 +2571,11 @@ mod tests {
         std::fs::write(&b, b"old").unwrap();
         let result = catch_unwind(AssertUnwindSafe(|| {
             let mut staged = vec![stage_bytes(&a, b"new").unwrap()];
-            assert_eq!(dir.files().len(), 3, "元のファイルと、確かめ済みの一時ファイル 1 つ");
+            assert_eq!(
+                dir.files().len(),
+                3,
+                "元のファイルと、確かめ済みの一時ファイル 1 つ"
+            );
             staged.push(
                 stage(
                     &b,
@@ -2534,18 +2589,32 @@ mod tests {
             );
         }));
         assert!(result.is_err());
-        assert_eq!(dir.files(), ["b.psd"], "一時ファイルは全部消え、元のファイルはそのまま");
+        assert_eq!(
+            dir.files(),
+            ["b.psd"],
+            "一時ファイルは全部消え、元のファイルはそのまま"
+        );
         assert_eq!(std::fs::read(&b).unwrap(), b"old");
         // 確かめの途中の panic も同じ
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let _ = stage(&b, |out| out.write_all(b"new").map_err(Failure::File), |_| panic!("確かめの途中の panic"));
+            let _ = stage(
+                &b,
+                |out| out.write_all(b"new").map_err(Failure::File),
+                |_| panic!("確かめの途中の panic"),
+            );
         }));
         assert!(result.is_err());
         assert_eq!(dir.files(), ["b.psd"]);
         // 同じ名前が既にあって一時ファイルを作れなかったときは、自分のものではないので消さない
         let name = format!(".b.psd.{}.tmp~", std::process::id());
         std::fs::write(dir.0.join(&name), b"not ours").unwrap();
-        let err = stage(&b, |out| out.write_all(b"new").map_err(Failure::File), |_| Ok(())).map(|_| ()).unwrap_err();
+        let err = stage(
+            &b,
+            |out| out.write_all(b"new").map_err(Failure::File),
+            |_| Ok(()),
+        )
+        .map(|_| ())
+        .unwrap_err();
         assert!(matches!(err, Failure::File(_)), "{err:?}");
         assert_eq!(std::fs::read(dir.0.join(&name)).unwrap(), b"not ours");
     }
@@ -2576,8 +2645,16 @@ mod tests {
         std::fs::write(&path, b"old").unwrap();
         let s = painted();
         let cancel = AtomicBool::new(false);
-        let ctl = ExportControl { cancel: Some(&cancel), ..ExportControl::default() };
-        let plan = psd::plan_export(&s.doc, &ExportOptions::new(Channel::Color, ExportMode::Bake), &ctl).unwrap();
+        let ctl = ExportControl {
+            cancel: Some(&cancel),
+            ..ExportControl::default()
+        };
+        let plan = psd::plan_export(
+            &s.doc,
+            &ExportOptions::new(Channel::Color, ExportMode::Bake),
+            &ctl,
+        )
+        .unwrap();
         let err = stage(
             &path,
             |out| {
@@ -2622,8 +2699,14 @@ mod tests {
         // 書いた長さ・層の数と合わなければ、読み戻しが一致しない
         for wrong in [
             None,
-            Some(psd::Written { layers: written.layers + 1, ..written }),
-            Some(psd::Written { bytes: written.bytes + 1, ..written }),
+            Some(psd::Written {
+                layers: written.layers + 1,
+                ..written
+            }),
+            Some(psd::Written {
+                bytes: written.bytes + 1,
+                ..written
+            }),
         ] {
             let err = verify_written(&path, wrong, &calm).unwrap_err();
             assert!(matches!(err, Failure::Message { .. }), "{err:?}");
@@ -2634,8 +2717,13 @@ mod tests {
         *flipped.last_mut().unwrap() ^= 1;
         let p = dir.0.join("flipped.psd");
         std::fs::write(&p, &flipped).unwrap();
-        psd::verify_stream(&mut std::fs::File::open(&p).map(std::io::BufReader::new).unwrap(), None)
-            .expect("構造は壊れていないので、復号だけでは見つからない");
+        psd::verify_stream(
+            &mut std::fs::File::open(&p)
+                .map(std::io::BufReader::new)
+                .unwrap(),
+            None,
+        )
+        .expect("構造は壊れていないので、復号だけでは見つからない");
         let err = verify_written(&p, Some(written), &calm).unwrap_err();
         assert!(matches!(err, Failure::Message { .. }), "{err:?}");
         assert!(err.text(Lang::Ja, false).contains("読み戻しが一致しません"));
@@ -2651,7 +2739,10 @@ mod tests {
             let (ja, en) = (err.text(Lang::Ja, false), err.text(Lang::En, false));
             assert!(ja.starts_with("書く PSD を読み戻せません"), "{ja}");
             assert!(en.starts_with("Cannot read back the PSD to write"), "{en}");
-            assert!(!en.chars().any(|c| c > '\u{2000}'), "英語に日本語の診断を出さない: {en}");
+            assert!(
+                !en.chars().any(|c| c > '\u{2000}'),
+                "英語に日本語の診断を出さない: {en}"
+            );
         }
     }
 
@@ -2692,32 +2783,67 @@ mod tests {
     #[test]
     fn overruns_are_worded_in_both_languages_with_the_layer_name_and_a_tooltip() {
         let overruns = [
-            Overrun::Canvas { width: 9000, height: 8000 },
-            Overrun::Side { width: 32768, height: 16, limit: 30000 },
-            Overrun::Side { width: 9000, height: 100, limit: 8192 },
-            Overrun::Layers { count: 300, limit: 256 },
-            Overrun::Memory { layer: "Sketch".into() },
+            Overrun::Canvas {
+                width: 9000,
+                height: 8000,
+            },
+            Overrun::Side {
+                width: 32768,
+                height: 16,
+                limit: 30000,
+            },
+            Overrun::Side {
+                width: 9000,
+                height: 100,
+                limit: 8192,
+            },
+            Overrun::Layers {
+                count: 300,
+                limit: 256,
+            },
+            Overrun::Memory {
+                layer: "Sketch".into(),
+            },
             Overrun::Extra,
-            Overrun::FileSize { layer: "Paint".into() },
+            Overrun::FileSize {
+                layer: "Paint".into(),
+            },
         ];
-        let has_japanese = |t: &str| t.chars().any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}'));
+        let has_japanese = |t: &str| {
+            t.chars()
+                .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}'))
+        };
         for over in &overruns {
             let failure = Failure::Overrun(over.clone());
             let (ja, en) = (failure.text(Lang::Ja, false), failure.text(Lang::En, false));
             assert!(has_japanese(&ja) && !has_japanese(&en), "{ja} / {en}");
-            let (tj, te) = (failure.tooltip(Lang::Ja).unwrap(), failure.tooltip(Lang::En).unwrap());
+            let (tj, te) = (
+                failure.tooltip(Lang::Ja).unwrap(),
+                failure.tooltip(Lang::En).unwrap(),
+            );
             assert!(has_japanese(&tj) && !has_japanese(&te), "{tj} / {te}");
             if over.raised_by_budget() {
-                assert!(tj.contains("レイヤーのメモリ") && te.contains("Layer memory"), "{tj} / {te}");
+                assert!(
+                    tj.contains("レイヤーのメモリ") && te.contains("Layer memory"),
+                    "{tj} / {te}"
+                );
                 assert!(te.ends_with("succeed"), "英語の文が終わっている: {te}");
             } else if matches!(over, Overrun::Side { .. }) {
-                assert!(tj.contains("30000") && te.contains("30000"), "辺の上限は予算を上げても書けない: {tj} / {te}");
-                assert!(!tj.contains("レイヤーのメモリ") && !te.contains("Layer memory"), "{tj} / {te}");
+                assert!(
+                    tj.contains("30000") && te.contains("30000"),
+                    "辺の上限は予算を上げても書けない: {tj} / {te}"
+                );
+                assert!(
+                    !tj.contains("レイヤーのメモリ") && !te.contains("Layer memory"),
+                    "{tj} / {te}"
+                );
             } else {
                 assert!(tj.contains("2 GiB") && te.contains("2 GiB"), "{tj} / {te}");
             }
         }
-        let named = Failure::Overrun(Overrun::Memory { layer: "法線".into() });
+        let named = Failure::Overrun(Overrun::Memory {
+            layer: "法線".into(),
+        });
         assert!(named.text(Lang::Ja, false).contains("「法線」"));
         assert!(named.text(Lang::En, false).contains("\"法線\""));
         assert!(Failure::Canceled.tooltip(Lang::Ja).is_none());
@@ -3115,7 +3241,10 @@ mod tests {
             s.doc
                 .add_fill_layer(
                     &format!("ガラス{n}"),
-                    &[(Channel::Color, yolu_core::Rgba8::new(1 + n as u8, 2, 3, 100))],
+                    &[(
+                        Channel::Color,
+                        yolu_core::Rgba8::new(1 + n as u8, 2, 3, 100),
+                    )],
                     None,
                 )
                 .unwrap();
@@ -3155,7 +3284,8 @@ mod tests {
     /// 層の記録（グループは区切りも数える）が設定の予算から決まる上限を超えるときは、計画のあとの確かめでなく書き始めてから分かる。理由を結果の窓に出し
     /// （日英・設定で上げられることはツールチップで）、何も書かず、一時ファイルも残さない。
     #[test]
-    fn layer_records_over_the_budget_are_refused_with_the_reason_and_the_hint_and_nothing_is_left() {
+    fn layer_records_over_the_budget_are_refused_with_the_reason_and_the_hint_and_nothing_is_left()
+    {
         let dir = Dir::new("records");
         let mut s = AppState::new(16, 16);
         // 設定の予算 256 MiB の層の記録は 256 件まで。初めの層 1 枚とグループ 130 個は、区切りの記録も数えて 261 件になる
@@ -3165,7 +3295,12 @@ mod tests {
         }
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("g.psd"))));
         s.wait_psd();
-        assert!(s.message.contains("レイヤーが多すぎます（261 件・上限 256 件）"), "{}", s.message);
+        assert!(
+            s.message
+                .contains("レイヤーが多すぎます（261 件・上限 256 件）"),
+            "{}",
+            s.message
+        );
         let report = s.psd.report.take().expect("理由の窓");
         assert!(!report.ok && !report.importing);
         assert!(report.lines[0].warning);
@@ -3177,13 +3312,25 @@ mod tests {
             "{:?}",
             report.lines[0].tooltip
         );
-        assert!(dir.files().is_empty(), "書いていない・一時ファイルも無い: {:?}", dir.files());
+        assert!(
+            dir.files().is_empty(),
+            "書いていない・一時ファイルも無い: {:?}",
+            dir.files()
+        );
         s.lang = Lang::En;
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("g.psd"))));
         s.wait_psd();
-        assert!(s.message.contains("Too many layers (261; limit 256)"), "{}", s.message);
+        assert!(
+            s.message.contains("Too many layers (261; limit 256)"),
+            "{}",
+            s.message
+        );
         let report = s.psd.report.take().unwrap();
-        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer memory"));
+        assert!(report.lines[0]
+            .tooltip
+            .as_deref()
+            .unwrap()
+            .contains("Layer memory"));
         assert!(dir.files().is_empty());
         // 予算を上げれば書ける
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(512);
@@ -3269,7 +3416,8 @@ mod tests {
     }
 
     #[test]
-    fn a_canvas_over_a_limit_is_refused_with_the_reason_and_the_hint_where_the_budget_helps_and_changes_nothing() {
+    fn a_canvas_over_a_limit_is_refused_with_the_reason_and_the_hint_where_the_budget_helps_and_changes_nothing(
+    ) {
         let dir = Dir::new("budget");
         let mut s = AppState::new(32, 32);
         // 層の画素の予算（設定の「レイヤーのメモリ」）を下げる。読み込みは 256 MiB を下回らない
@@ -3302,13 +3450,25 @@ mod tests {
             target: PsdTarget::CurrentSet,
         }));
         s.wait_psd();
-        assert!(s.message.contains("キャンバスが大きすぎます"), "{}", s.message);
+        assert!(
+            s.message.contains("キャンバスが大きすぎます"),
+            "{}",
+            s.message
+        );
         let report = s.psd.report.take().expect("理由の窓");
         assert!(!report.ok && report.importing);
         assert!(report.lines[0].warning && report.lines[0].text.contains("9000×9000"));
         // 辺が .ylp の上限（8192）を超える: 設定の予算を上げても取り込めないので、予算の案内は出さない
-        assert!(report.lines[0].text.contains("8192"), "{}", report.lines[0].text);
-        assert!(report.lines[0].tooltip.is_none(), "{:?}", report.lines[0].tooltip);
+        assert!(
+            report.lines[0].text.contains("8192"),
+            "{}",
+            report.lines[0].text
+        );
+        assert!(
+            report.lines[0].tooltip.is_none(),
+            "{:?}",
+            report.lines[0].tooltip
+        );
         assert_eq!((s.sets.len(), s.doc.id(), s.modified), before);
         // 英語
         s.lang = Lang::En;
@@ -3319,14 +3479,22 @@ mod tests {
         s.wait_psd();
         assert!(s.message.contains("Canvas too large"), "{}", s.message);
         let report = s.psd.report.take().unwrap();
-        assert!(report.lines[0].text.contains("limit 8192"), "{}", report.lines[0].text);
+        assert!(
+            report.lines[0].text.contains("limit 8192"),
+            "{}",
+            report.lines[0].text
+        );
         assert!(report.lines[0].tooltip.is_none());
         // 書き出しのキャンバス（設定の予算 256 MiB に入らない 9000²）: 何も作らず、一時ファイルも作らない。理由は日英で、設定で上げられることはツールチップで
         let mut big = AppState::new(9000, 9000);
         big.prefs.settings.source_budget = crate::settings::Budget::Mib(256);
         big.apply(Action::Psd(PsdAction::Export(dir.0.join("big.psd"))));
         assert!(!big.psd.is_busy());
-        assert!(big.message.contains("キャンバスが大きすぎます"), "{}", big.message);
+        assert!(
+            big.message.contains("キャンバスが大きすぎます"),
+            "{}",
+            big.message
+        );
         let report = big.psd.report.take().expect("理由の窓");
         assert!(!report.ok && !report.importing);
         assert!(report.lines[0].warning && report.lines[0].text.contains("9000×9000"));
@@ -3342,7 +3510,11 @@ mod tests {
         big.apply(Action::Psd(PsdAction::Export(dir.0.join("big.psd"))));
         assert!(big.message.contains("Canvas too large"), "{}", big.message);
         let report = big.psd.report.take().unwrap();
-        assert!(report.lines[0].tooltip.as_deref().unwrap().contains("Layer memory"));
+        assert!(report.lines[0]
+            .tooltip
+            .as_deref()
+            .unwrap()
+            .contains("Layer memory"));
         assert_eq!(dir.files(), ["huge.psd", "wide.psd"], "書いていない");
     }
 }

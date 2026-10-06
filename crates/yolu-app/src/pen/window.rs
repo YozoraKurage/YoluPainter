@@ -183,7 +183,11 @@ impl AppState {
         }
         for event in events {
             if let egui::Event::Touch {
-                id, phase, pos, force, ..
+                id,
+                phase,
+                pos,
+                force,
+                ..
             } = event
             {
                 match (phase, force) {
@@ -220,7 +224,11 @@ impl AppState {
                 high,
                 moved_low,
             } => {
-                let next = self.prefs.settings.pressure.with_range(low, high, moved_low);
+                let next = self
+                    .prefs
+                    .settings
+                    .pressure
+                    .with_range(low, high, moved_low);
                 self.prefs.settings.pressure = next;
             }
             PressureAction::SetCurve(curve) => {
@@ -278,7 +286,12 @@ fn distribution_overlay(ui: &egui::Ui, rect: Rect, adjust: &PressureAdjust, samp
     }
     let p = ui.painter().clone();
     let inner = rect.shrink(6.0);
-    let at = |x: f32, y: f32| pos2(inner.left() + x * inner.width(), inner.bottom() - y * inner.height());
+    let at = |x: f32, y: f32| {
+        pos2(
+            inner.left() + x * inner.width(),
+            inner.bottom() - y * inner.height(),
+        )
+    };
     let mut bins = [0u32; BINS];
     let span = adjust.high() - adjust.low();
     for s in samples {
@@ -293,7 +306,11 @@ fn distribution_overlay(ui: &egui::Ui, rect: Rect, adjust: &PressureAdjust, samp
         }
         let height = *n as f32 / tallest * 0.6;
         let (x0, x1) = (i as f32 / BINS as f32, (i + 1) as f32 / BINS as f32);
-        p.rect_filled(Rect::from_two_pos(at(x0, 0.0), at(x1, height)).shrink2(vec2(0.5, 0.0)), 0.0, fill);
+        p.rect_filled(
+            Rect::from_two_pos(at(x0, 0.0), at(x1, height)).shrink2(vec2(0.5, 0.0)),
+            0.0,
+            fill,
+        );
     }
 }
 
@@ -316,7 +333,11 @@ fn draw_frame(ui: &mut egui::Ui, rect: Rect, window: &PressureWindow, adjust: &P
             previous = Some(dot);
         }
         if let ([only], true) = (stroke.as_slice(), stroke.len() == 1) {
-            clip.circle_filled(rect.min + only.pos, 0.5 + 3.5 * adjust.apply(only.pressure), t::TEXT);
+            clip.circle_filled(
+                rect.min + only.pos,
+                0.5 + 3.5 * adjust.apply(only.pressure),
+                t::TEXT,
+            );
         }
     }
 }
@@ -398,7 +419,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             dragging |= out.active;
             if out.changed {
                 let v = (out.value / 100.0).clamp(0.0, 1.0);
-                let (low, high) = if is_low { (v, adjust.high()) } else { (adjust.low(), v) };
+                let (low, high) = if is_low {
+                    (v, adjust.high())
+                } else {
+                    (adjust.low(), v)
+                };
                 actions.push(PressureAction::SetRange {
                     low,
                     high,
@@ -409,7 +434,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let draw = rows.row(DRAW_HEIGHT, GAP);
         draw_frame(ui, draw, &app.pressure, &adjust);
         frame_rect = Some(draw);
-        ui.interact(draw, id.with("draw"), egui::Sense::hover()).on_hover_text(lang.pick(
+        ui.interact(draw, id.with("draw"), egui::Sense::hover())
+            .on_hover_text(lang.pick(
             "普段の強さで何本か描く。描いた線は文書に入らない",
             "Draw a few strokes at your usual strength. The strokes are not part of the document",
         ));
@@ -459,7 +485,18 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
         ];
         for ((key, label, enabled, tip, action, primary), rect) in items.into_iter().zip(buttons) {
-            if w::button(ui, rect, ("pressure", key), label, primary, enabled, Some(tip), None).clicked() {
+            if w::button(
+                ui,
+                rect,
+                ("pressure", key),
+                label,
+                primary,
+                enabled,
+                Some(tip),
+                None,
+            )
+            .clicked()
+            {
                 actions.push(action);
             }
         }

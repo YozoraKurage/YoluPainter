@@ -34,7 +34,12 @@ pub enum DiskBudget {
 
 impl DiskBudget {
     /// 窓の選択肢に並べる段（指定した量は並べない）。
-    pub const LEVELS: [DiskBudget; 4] = [DiskBudget::Auto, DiskBudget::Low, DiskBudget::Standard, DiskBudget::High];
+    pub const LEVELS: [DiskBudget; 4] = [
+        DiskBudget::Auto,
+        DiskBudget::Low,
+        DiskBudget::Standard,
+        DiskBudget::High,
+    ];
     /// 自動の上限（バイト）と、復旧が使えるディスクのうち自動が使う割合（分母）・下限。
     pub const AUTO_CAP: u64 = 2 * GIB;
     pub const AUTO_DIVISOR: u64 = 10;
@@ -81,7 +86,8 @@ impl DiskBudget {
     pub fn cap(self, available: Option<u64>, used: u64) -> u64 {
         match self {
             DiskBudget::Auto => match available {
-                Some(free) => (free.saturating_add(used) / Self::AUTO_DIVISOR).clamp(Self::AUTO_FLOOR, Self::AUTO_CAP),
+                Some(free) => (free.saturating_add(used) / Self::AUTO_DIVISOR)
+                    .clamp(Self::AUTO_FLOOR, Self::AUTO_CAP),
                 None => Self::AUTO_CAP,
             },
             DiskBudget::Low => GIB,
@@ -182,7 +188,10 @@ impl RecoverySettings {
         let mut text = String::new();
         file.take(4097).read_to_string(&mut text)?;
         if text.len() > 4096 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "settings too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "settings too large",
+            ));
         }
         Ok(Self::parse(&text))
     }
@@ -208,7 +217,9 @@ impl RecoverySettings {
             };
             match key {
                 "interval" => number("interval", INTERVAL_RANGE, &mut settings.interval_seconds),
-                "generations" => number("generations", KEEP_RANGE, &mut settings.generations_to_keep),
+                "generations" => {
+                    number("generations", KEEP_RANGE, &mut settings.generations_to_keep)
+                }
                 "strokes" => number("strokes", (0, MAX_STROKES), &mut settings.strokes_between),
                 "disk" => match DiskBudget::parse(value) {
                     Some(budget) => settings.disk = budget,
@@ -233,9 +244,9 @@ impl RecoverySettings {
 
     /// 書く（検証した一時ファイルから 1 回の置き換え。書けなければ元のまま）。
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing"))?;
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "settings directory missing")
+        })?;
         std::fs::create_dir_all(parent)?;
         let pending = path.with_extension(format!("{}.pending", std::process::id()));
         let mut file = std::fs::OpenOptions::new()
@@ -285,9 +296,16 @@ mod tests {
         assert_eq!(problems.len(), 4);
         assert!(matches!(
             problems[0],
-            Problem::OutOfRange { key: "interval", range: (5, 600), .. }
+            Problem::OutOfRange {
+                key: "interval",
+                range: (5, 600),
+                ..
+            }
         ));
-        assert_eq!(problems[3], Problem::RelativeDirectory("relative/dir".into()));
+        assert_eq!(
+            problems[3],
+            Problem::RelativeDirectory("relative/dir".into())
+        );
         let (s, problems) = RecoverySettings::parse("interval=600\ngenerations=1000\nstrokes=0\n");
         assert!(problems.is_empty());
         assert_eq!(
@@ -305,7 +323,10 @@ mod tests {
             .join(std::process::id().to_string());
         let path = dir.join("recovery.conf");
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(RecoverySettings::load(&path).unwrap().0, RecoverySettings::default());
+        assert_eq!(
+            RecoverySettings::load(&path).unwrap().0,
+            RecoverySettings::default()
+        );
         let custom = RecoverySettings {
             interval_seconds: 30,
             strokes_between: 0,
@@ -331,18 +352,32 @@ mod tests {
         let (s, problems) = RecoverySettings::parse("disk=high\n");
         assert!(problems.is_empty());
         assert_eq!(s.disk, DiskBudget::High);
-        for (text, budget) in [("auto", DiskBudget::Auto), ("low", DiskBudget::Low), ("standard", DiskBudget::Standard), ("1", DiskBudget::Gib(1)), ("256", DiskBudget::Gib(256))] {
+        for (text, budget) in [
+            ("auto", DiskBudget::Auto),
+            ("low", DiskBudget::Low),
+            ("standard", DiskBudget::Standard),
+            ("1", DiskBudget::Gib(1)),
+            ("256", DiskBudget::Gib(256)),
+        ] {
             let (s, problems) = RecoverySettings::parse(&format!("disk={text}"));
             assert!(problems.is_empty(), "{text}");
             assert_eq!(s.disk, budget);
-            assert_eq!(DiskBudget::parse(&budget.key()), Some(budget), "書いた値は読み戻せる: {text}");
+            assert_eq!(
+                DiskBudget::parse(&budget.key()),
+                Some(budget),
+                "書いた値は読み戻せる: {text}"
+            );
         }
         for bad in ["0", "257", "-1", "lots", "", "2.5"] {
             let (s, problems) = RecoverySettings::parse(&format!("disk={bad}"));
             assert_eq!(s.disk, DiskBudget::Auto, "範囲の外は既定: {bad:?}");
             assert_eq!(
                 problems,
-                vec![Problem::OutOfRange { key: "disk", value: bad.into(), range: (1, 256) }]
+                vec![Problem::OutOfRange {
+                    key: "disk",
+                    value: bad.into(),
+                    range: (1, 256)
+                }]
             );
         }
         // 古い版が書いた設定（disk が無い）は、既定の自動で読む
@@ -358,11 +393,23 @@ mod tests {
         assert_eq!(DiskBudget::Standard.cap(None, 0), 2 * gib);
         assert_eq!(DiskBudget::High.cap(Some(gib), 99), 8 * gib);
         assert_eq!(DiskBudget::Gib(5).cap(None, 0), 5 * gib);
-        assert_eq!(DiskBudget::Gib(9999).cap(None, 0), 256 * gib, "範囲に収める");
+        assert_eq!(
+            DiskBudget::Gib(9999).cap(None, 0),
+            256 * gib,
+            "範囲に収める"
+        );
         // 自動: 2 GiB と、空き + 使っている量の 10% の小さいほう（下限 256 MiB）
         assert_eq!(DiskBudget::Auto.cap(Some(500 * gib), 0), 2 * gib);
-        assert_eq!(DiskBudget::Auto.cap(Some(8 * gib), 2 * gib), gib, "空き + 使用中の 10%");
+        assert_eq!(
+            DiskBudget::Auto.cap(Some(8 * gib), 2 * gib),
+            gib,
+            "空き + 使用中の 10%"
+        );
         assert_eq!(DiskBudget::Auto.cap(Some(gib), 0), gib / 4, "下限");
-        assert_eq!(DiskBudget::Auto.cap(None, 0), 2 * gib, "量が分からなければ 2 GiB");
+        assert_eq!(
+            DiskBudget::Auto.cap(None, 0),
+            2 * gib,
+            "量が分からなければ 2 GiB"
+        );
     }
 }

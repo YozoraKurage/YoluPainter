@@ -702,9 +702,7 @@ impl Builder<'_> {
                 )
             }
             AdjustmentType::ColorBalance => {
-                let b = a
-                    .color_balance_value()
-                    .expect("カラーバランスは値を持つ");
+                let b = a.color_balance_value().expect("カラーバランスは値を持つ");
                 let mut v = [0f32; 11];
                 for (r, range) in [
                     BalanceRange::Shadows,
@@ -833,8 +831,13 @@ mod tests {
 
     fn paint_tile(d: &mut Document, layer: LayerId, coord: TileCoord) {
         let ts = d.tile_size();
-        d.set_pixel(layer, coord.x * ts + 1, coord.y * ts + 1, Rgba8::new(9, 8, 7, 255))
-            .unwrap();
+        d.set_pixel(
+            layer,
+            coord.x * ts + 1,
+            coord.y * ts + 1,
+            Rgba8::new(9, 8, 7, 255),
+        )
+        .unwrap();
     }
 
     fn doc() -> Document {
@@ -855,7 +858,10 @@ mod tests {
                     };
                     let source = shader_source(variant);
                     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| {
-                        panic!("{variant:?}: WGSL を読めない: {}", e.emit_to_string(&source))
+                        panic!(
+                            "{variant:?}: WGSL を読めない: {}",
+                            e.emit_to_string(&source)
+                        )
                     });
                     naga::valid::Validator::new(
                         naga::valid::ValidationFlags::all(),
@@ -863,7 +869,10 @@ mod tests {
                     )
                     .validate(&module)
                     .unwrap_or_else(|e| {
-                        panic!("{variant:?}: WGSL の検証に失敗: {}", e.emit_to_string(&source))
+                        panic!(
+                            "{variant:?}: WGSL の検証に失敗: {}",
+                            e.emit_to_string(&source)
+                        )
                     });
                     // 命令の構造体は Rust の LayerData と同じ並び（8 語・32 バイト）
                     let layer = module
@@ -876,7 +885,8 @@ mod tests {
                         panic!("Layer は構造体");
                     };
                     assert_eq!(*span as usize, std::mem::size_of::<LayerData>());
-                    let names: Vec<_> = members.iter().map(|m| m.name.as_deref().unwrap()).collect();
+                    let names: Vec<_> =
+                        members.iter().map(|m| m.name.as_deref().unwrap()).collect();
                     assert_eq!(
                         names,
                         [
@@ -910,8 +920,14 @@ mod tests {
         paint_tile(&mut d, c, TileCoord::new(1, 0));
         let plan = Plan::build(&d, Channel::Color, false).unwrap();
         assert_eq!(plan.entries.len(), 3);
-        assert_eq!(kinds(&plan, &d, TileCoord::new(0, 0)), [op::LAYER, op::LAYER]);
-        assert_eq!(kinds(&plan, &d, TileCoord::new(1, 0)), [op::LAYER, op::LAYER]);
+        assert_eq!(
+            kinds(&plan, &d, TileCoord::new(0, 0)),
+            [op::LAYER, op::LAYER]
+        );
+        assert_eq!(
+            kinds(&plan, &d, TileCoord::new(1, 0)),
+            [op::LAYER, op::LAYER]
+        );
         assert_eq!(kinds(&plan, &d, TileCoord::new(1, 1)), Vec::<u32>::new());
         // 無いタイルの層だけを落とす: 順序は保つ
         let mut out = Vec::new();
@@ -964,7 +980,8 @@ mod tests {
             .add_adjustment_layer("中の反転", AdjustmentSettings::invert(), None, None)
             .unwrap();
         let pass = d.group_layers(&[inner_adj], "通過").unwrap();
-        d.set_layer_blend_mode(pass, BlendMode::PassThrough).unwrap();
+        d.set_layer_blend_mode(pass, BlendMode::PassThrough)
+            .unwrap();
         d.set_layer_opacity(pass, 0.5, false).unwrap();
         let _ = adj;
         let plan = Plan::build(&d, Channel::Color, false).unwrap();

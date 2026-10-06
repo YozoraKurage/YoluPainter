@@ -529,7 +529,10 @@ fn the_colour_blend_of_a_layer_is_written_whatever_the_other_channels_say() {
             Channel::Roughness,
             ChannelBlend::new(Some(CoreBlend::Multiply), Some(100.0 / 255.0)),
         ),
-        (Channel::Metallic, ChannelBlend::new(Some(CoreBlend::Screen), None)),
+        (
+            Channel::Metallic,
+            ChannelBlend::new(Some(CoreBlend::Screen), None),
+        ),
     ] {
         d.set_channel_blend(a, channel, blend, false).unwrap();
     }
@@ -578,7 +581,8 @@ fn an_adjustments_colour_opacity_is_written_whatever_the_other_channels_it_acts_
 type RefusedCase<'a> = (&'a str, Box<dyn Fn(&mut Document)>, &'a [&'a str]);
 
 #[test]
-fn the_strict_export_refuses_what_psd_has_no_form_for_with_the_layer_name_and_nothing_is_flattened() {
+fn the_strict_export_refuses_what_psd_has_no_form_for_with_the_layer_name_and_nothing_is_flattened()
+{
     let cases: Vec<RefusedCase> = vec![
         (
             "inverted mask",

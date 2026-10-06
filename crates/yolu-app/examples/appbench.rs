@@ -719,7 +719,14 @@ mod tests {
             expected.dedup();
             assert_eq!(names, expected, "--only {op}");
         }
-        let two = run(&psd, "T", 1, &dir.join("out"), None, Some("levels,merge_app"));
+        let two = run(
+            &psd,
+            "T",
+            1,
+            &dir.join("out"),
+            None,
+            Some("levels,merge_app"),
+        );
         let names: Vec<&str> = two.rows.iter().map(|(o, _)| o.as_str()).collect();
         assert_eq!(names, ["open", "levels", "merge_app"], "複数の名前");
         std::fs::remove_dir_all(&dir).ok();

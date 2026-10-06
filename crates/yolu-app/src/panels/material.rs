@@ -137,23 +137,51 @@ fn chip(
         },
         4.0,
     );
-    let text_color = if included { egui::Color32::WHITE } else { t::TEXT };
+    let text_color = if included {
+        egui::Color32::WHITE
+    } else {
+        t::TEXT
+    };
     w::icon(
         p,
         Rect::from_min_size(pos2(r.left() + 3.0, r.top()), vec2(18.0, r.height())),
-        if included { "check" } else { channel_icon(channel) },
-        if included { egui::Color32::WHITE } else { t::TEXT_DIM },
+        if included {
+            "check"
+        } else {
+            channel_icon(channel)
+        },
+        if included {
+            egui::Color32::WHITE
+        } else {
+            t::TEXT_DIM
+        },
         14.0,
     );
-    let label_rect = Rect::from_min_max(pos2(r.left() + 21.0, r.top()), pos2(r.right() - 3.0, r.bottom()));
+    let label_rect = Rect::from_min_max(
+        pos2(r.left() + 21.0, r.top()),
+        pos2(r.right() - 3.0, r.bottom()),
+    );
     let shown = w::fit(p, name, label_rect.width(), t::LABEL_SMALL);
-    w::text(p, label_rect, &shown, t::LABEL_SMALL.with_color(text_color), w::Align::Left);
+    w::text(
+        p,
+        label_rect,
+        &shown,
+        t::LABEL_SMALL.with_color(text_color),
+        w::Align::Left,
+    );
     if current {
         // 描くチャンネル（今見ているもの）の印
         w::rounded(
             p,
-            Rect::from_min_size(pos2(r.left() + 4.0, r.bottom() - 3.0), vec2(r.width() - 8.0, 2.0)),
-            if included { egui::Color32::WHITE } else { t::ACCENT },
+            Rect::from_min_size(
+                pos2(r.left() + 4.0, r.bottom() - 3.0),
+                vec2(r.width() - 8.0, 2.0),
+            ),
+            if included {
+                egui::Color32::WHITE
+            } else {
+                t::ACCENT
+            },
             1.0,
         );
     }
@@ -163,15 +191,29 @@ fn chip(
 }
 
 /// 組のチャンネルの値の行。
-fn value_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, channel: Channel, lang: Lang, free: bool) {
+fn value_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    channel: Channel,
+    lang: Lang,
+    free: bool,
+) {
     let name = channel_name(lang, &app.doc, channel);
     match channel {
         Channel::Color => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);
-            label_and_swatch(ui, row, &name, "mat.color", app.color.main, lang.pick(
-                "描画色（カラーのパネルと同じ）",
-                "The paint color (also in the Color panel)",
-            ));
+            label_and_swatch(
+                ui,
+                row,
+                &name,
+                "mat.color",
+                app.color.main,
+                lang.pick(
+                    "描画色（カラーのパネルと同じ）",
+                    "The paint color (also in the Color panel)",
+                ),
+            );
         }
         Channel::Emission => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);
@@ -190,10 +232,20 @@ fn value_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, channel: Channel
             if swatch && free {
                 app.apply(Action::Mat(MatAction::EmissionFromPaint));
             }
-            let hex_rect = Rect::from_min_max(pos2(row.left() + 84.0 + 40.0, row.top() + 1.0), pos2(row.right(), row.bottom() - 1.0));
+            let hex_rect = Rect::from_min_max(
+                pos2(row.left() + 84.0 + 40.0, row.top() + 1.0),
+                pos2(row.right(), row.bottom() - 1.0),
+            );
             if hex_rect.width() > 40.0 {
                 let current = crate::state::to_hex([e[0], e[1], e[2], 1.0]);
-                let out = w::text_field(ui, hex_rect, "mat.emission.hex", &current, Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")), false);
+                let out = w::text_field(
+                    ui,
+                    hex_rect,
+                    "mat.emission.hex",
+                    &current,
+                    Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")),
+                    false,
+                );
                 if let Some(text) = out.committed {
                     if let Some(rgb) = crate::state::parse_hex(&text) {
                         app.apply(Action::Mat(MatAction::Emission(rgb)));
@@ -210,7 +262,10 @@ fn value_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, channel: Channel
                 t::LABEL,
                 w::Align::Left,
             );
-            let reset = Rect::from_min_size(pos2(row.right() - 24.0, row.top()), vec2(24.0, row.height()));
+            let reset = Rect::from_min_size(
+                pos2(row.right() - 24.0, row.top()),
+                vec2(24.0, row.height()),
+            );
             if w::icon_button(
                 ui,
                 reset,
@@ -237,7 +292,10 @@ fn value_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, channel: Channel
                 x,
                 (-1.0, 1.0),
                 two_decimals(),
-                Some(lang.pick("法線の向き: +1 で右に傾く", "The normal as a direction: +1 leans right")),
+                Some(lang.pick(
+                    "法線の向き: +1 で右に傾く",
+                    "The normal as a direction: +1 leans right",
+                )),
                 free,
             );
             let ny = slider_row(
@@ -248,7 +306,10 @@ fn value_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, channel: Channel
                 y,
                 (-1.0, 1.0),
                 two_decimals(),
-                Some(lang.pick("+1 で上に傾く（OpenGL・Unity）", "+1 leans up (OpenGL / Unity)")),
+                Some(lang.pick(
+                    "+1 で上に傾く（OpenGL・Unity）",
+                    "+1 leans up (OpenGL / Unity)",
+                )),
                 free,
             );
             if nx.is_some() || ny.is_some() {
@@ -295,6 +356,9 @@ fn label_and_swatch(
         t::LABEL,
         w::Align::Left,
     );
-    let swatch = Rect::from_min_size(pos2(row.left() + 84.0, row.top() + 1.0), vec2(36.0, row.height() - 2.0));
+    let swatch = Rect::from_min_size(
+        pos2(row.left() + 84.0, row.top() + 1.0),
+        vec2(36.0, row.height() - 2.0),
+    );
     w::color_swatch(ui, swatch, id, color, tooltip, true).clicked()
 }

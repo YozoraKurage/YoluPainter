@@ -1068,10 +1068,17 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     let (mut s, rect) = state3d(two_material_plate());
     s.apply(Action::Mat(MatAction::Enabled(true)));
     s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    for p in [Vec3::new(-0.8, -0.4, 0.0), Vec3::new(-0.4, 0.5, 0.0), Vec3::new(-0.1, -0.3, 0.0)] {
+    for p in [
+        Vec3::new(-0.8, -0.4, 0.0),
+        Vec3::new(-0.4, 0.5, 0.0),
+        Vec3::new(-0.1, -0.3, 0.0),
+    ] {
         click3d(&mut s, rect, p);
     }
-    s.apply(Action::Path(PathAction::Point(PointOp::Width { index: 1, pressure: 0.5 })));
+    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+        index: 1,
+        pressure: 0.5,
+    })));
     let layer = s.selected_layer.unwrap();
     let before = surface_path(&s);
     let before_alpha = alpha_at(&s, 0.1, 0.3);
@@ -1083,10 +1090,14 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     // 同じ形のモデルを読むと、パスは結び付いて、そのまま編集できる
     let mut t = AppState::new(64, 64);
     t.apply(Action::OpenProject(file.clone()));
-    let Some(LayerPath::Surface(opened)) = t.doc.layer(layer).and_then(|l| l.path().cloned()) else {
+    let Some(LayerPath::Surface(opened)) = t.doc.layer(layer).and_then(|l| l.path().cloned())
+    else {
         panic!("3D のパスが戻らない: {}", t.message)
     };
-    assert_eq!(opened, before, "点・太さ・ブラシ・組・指紋が保存して開いても同じ");
+    assert_eq!(
+        opened, before,
+        "点・太さ・ブラシ・組・指紋が保存して開いても同じ"
+    );
     assert_eq!(alpha_at(&t, 0.1, 0.3), before_alpha, "画素も同じ");
     t.apply(Action::SelectTool(Tool::Path));
     t.selected_layer = Some(layer);
@@ -1095,7 +1106,10 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     t.view3d.camera.yaw = 0.0;
     t.view3d.camera.pitch = 0.0;
     t.sync_view3d();
-    assert_eq!(*t.path_fingerprint(&t.view3d.full_model().unwrap().geometry), before.model_fingerprint);
+    assert_eq!(
+        *t.path_fingerprint(&t.view3d.full_model().unwrap().geometry),
+        before.model_fingerprint
+    );
     let undo = t.doc.undo_count();
     click3d(&mut t, rect, Vec3::new(-0.2, 0.8, 0.0));
     assert_eq!(surface_path(&t).points.len(), 4, "{}", t.message);
@@ -1185,7 +1199,10 @@ fn rebind_far_model() -> ViewModel {
 fn link_plate(generation: u32, flip: bool) -> yolu_protocol::Model {
     use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, Model, Submesh as WireSubmesh};
     let info = |name: &str| MaterialInfo {
-        key: MaterialKey::Material { name: name.into(), asset: None },
+        key: MaterialKey::Material {
+            name: name.into(),
+            asset: None,
+        },
         shader: String::new(),
         textures: vec![],
         routes: vec![],
@@ -1221,8 +1238,14 @@ fn link_plate(generation: u32, flip: bool) -> yolu_protocol::Model {
                 [u(1.0), 1.0],
             ],
             submeshes: vec![
-                WireSubmesh { material: 0, indices: vec![0, 2, 1, 2, 3, 1] },
-                WireSubmesh { material: 1, indices: vec![4, 6, 5, 6, 7, 5] },
+                WireSubmesh {
+                    material: 0,
+                    indices: vec![0, 2, 1, 2, 3, 1],
+                },
+                WireSubmesh {
+                    material: 1,
+                    indices: vec![4, 6, 5, 6, 7, 5],
+                },
             ],
         }],
     }
@@ -1257,18 +1280,26 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     let new_print = core_paths::fingerprint(&s.view3d.full_model().unwrap().geometry);
     assert_ne!(old_print, new_print);
     // 今のセット（右）: UV が入れ替わったので、画素は反対側に
-    let Some(LayerPath::Surface(p)) = s.doc.layer(right_layer).and_then(|l| l.path().cloned()) else {
+    let Some(LayerPath::Surface(p)) = s.doc.layer(right_layer).and_then(|l| l.path().cloned())
+    else {
         panic!("右のパスが無い: {}", s.message)
     };
     assert_eq!(p.model_fingerprint, new_print);
-    assert!(alpha_at(&s, 0.35, 0.35) > 0 && alpha_at(&s, 0.65, 0.35) == 0, "右のセットの画素が新しい UV の所へ");
+    assert!(
+        alpha_at(&s, 0.35, 0.35) > 0 && alpha_at(&s, 0.65, 0.35) == 0,
+        "右のセットの画素が新しい UV の所へ"
+    );
     // 今でないセット（左）の文書も付け直す
     s.apply(Action::SelectSet(left_uid));
-    let Some(LayerPath::Surface(p)) = s.doc.layer(left_layer).and_then(|l| l.path().cloned()) else {
+    let Some(LayerPath::Surface(p)) = s.doc.layer(left_layer).and_then(|l| l.path().cloned())
+    else {
         panic!("左のパスが無い")
     };
     assert_eq!(p.model_fingerprint, new_print);
-    assert!(alpha_at(&s, 0.85, 0.35) > 0 && alpha_at(&s, 0.15, 0.35) == 0, "左のセットの画素も新しい UV の所へ");
+    assert!(
+        alpha_at(&s, 0.85, 0.35) > 0 && alpha_at(&s, 0.15, 0.35) == 0,
+        "左のセットの画素も新しい UV の所へ"
+    );
     assert!(s.message.contains("パス 2 本を描き直し"), "{}", s.message);
     // 1 回の Undo（セットごと）で前のモデルのパスに戻る
     s.apply(Action::Undo);
@@ -1364,7 +1395,11 @@ fn pen_in_both_views(
 #[test]
 fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
     for surface_first in [false, true] {
-        let order = if surface_first { "3D が先" } else { "2D が先" };
+        let order = if surface_first {
+            "3D が先"
+        } else {
+            "2D が先"
+        };
         // 3D で触れて点を掴み、離したサンプルを 2D が見ても、3D が離したのを受け取って確定する
         let (mut s, rect) = state3d(two_material_plate());
         click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
@@ -1377,15 +1412,25 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
             pen_in_both_views(s, rect, at, 1, contact, over, surface_first)
         };
         both(&mut s, from, true, (false, true));
-        assert!(s.path.drag.is_some_and(|d| d.surface), "{order}: 3D のドラッグ");
+        assert!(
+            s.path.drag.is_some_and(|d| d.surface),
+            "{order}: 3D のドラッグ"
+        );
         assert_eq!(s.path.pen_down.map(|p| p.surface), Some(true), "{order}");
         // 触れたまま 2D のキャンバスの上へ動いても、触れた 3D のビューが続ける
         both(&mut s, to, true, (true, false));
         assert_eq!(s.path.pen_down.map(|p| p.surface), Some(true), "{order}");
         both(&mut s, to, false, (true, false));
-        assert!(s.path.drag.is_none() && s.path.pen_down.is_none(), "{order}");
+        assert!(
+            s.path.drag.is_none() && s.path.pen_down.is_none(),
+            "{order}"
+        );
         assert!(!s.is_stroking(), "{order}: 離したあとに取り残さない");
-        assert_eq!(s.doc.undo_count(), undo + 1, "{order}: 動かしたのは 1 回の Undo");
+        assert_eq!(
+            s.doc.undo_count(),
+            undo + 1,
+            "{order}: 動かしたのは 1 回の Undo"
+        );
         assert_ne!(surface_path(&s).points[1], before.points[1], "{order}");
 
         // 2D で触れて点を掴み、離したサンプルを 3D が見ても、2D が離したのを受け取って確定する
@@ -1401,11 +1446,17 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
         };
         let (from, to) = (at(&t, 120.0, 120.0), at(&t, 120.0, 190.0));
         both(&mut t, from, true, (true, false));
-        assert!(t.path.drag.is_some_and(|d| !d.surface), "{order}: 2D のドラッグ");
+        assert!(
+            t.path.drag.is_some_and(|d| !d.surface),
+            "{order}: 2D のドラッグ"
+        );
         assert_eq!(t.path.pen_down.map(|p| p.surface), Some(false), "{order}");
         both(&mut t, to, true, (true, false));
         both(&mut t, to, false, (true, false));
-        assert!(t.path.drag.is_none() && t.path.pen_down.is_none(), "{order}");
+        assert!(
+            t.path.drag.is_none() && t.path.pen_down.is_none(),
+            "{order}"
+        );
         assert!(!t.is_stroking(), "{order}: 離したあとに取り残さない");
         assert_eq!(t.doc.undo_count(), undo + 1, "{order}");
         assert!((canvas_points(&t)[1].1 - 190.0).abs() < 1.0, "{order}");
@@ -1415,7 +1466,10 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
         both(&mut t, to, true, (false, true));
         assert_eq!(t.path.pen_down.map(|p| p.surface), Some(false), "{order}");
         both(&mut t, to, false, (false, true));
-        assert!(t.path.drag.is_none() && t.path.pen_down.is_none(), "{order}");
+        assert!(
+            t.path.drag.is_none() && t.path.pen_down.is_none(),
+            "{order}"
+        );
         assert!(!t.is_stroking(), "{order}");
         assert_eq!(t.doc.undo_count(), undo + 2, "{order}");
         assert!((canvas_points(&t)[1].1 - 100.0).abs() < 1.0, "{order}");
@@ -1500,10 +1554,9 @@ fn headless_the_tool_is_in_the_strip_with_a_key_and_both_languages() {
 // ───────── 評価の失敗・遮り・モデルの入れ替え中のドラッグ ─────────
 
 fn add_canvas(s: &mut AppState, x: f64, y: f64) {
-    s.apply(Action::Path(PathAction::Point(PointOp::Add(Place::Canvas {
-        x,
-        y,
-    }))));
+    s.apply(Action::Path(PathAction::Point(PointOp::Add(
+        Place::Canvas { x, y },
+    ))));
 }
 
 fn add_surface(s: &mut AppState, triangle: u32, u: f64, v: f64) {
@@ -1559,9 +1612,11 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
     add_canvas(&mut s, 10.0, 8.0);
     assert!(path(&s).is_some(), "{}", s.message);
     assert_eq!(canvas_points(&s).len(), 1);
-    assert_refused_with(&mut s, [(Lang::Ja, "長すぎ"), (Lang::En, "too long")], |s| {
-        add_canvas(s, 11990.0, 8.0)
-    });
+    assert_refused_with(
+        &mut s,
+        [(Lang::Ja, "長すぎ"), (Lang::En, "too long")],
+        |s| add_canvas(s, 11990.0, 8.0),
+    );
     assert_eq!(canvas_points(&s).len(), 1);
 
     // 2D、新しい層: 画素の予算が足りない（作りかけの層を残さない）
@@ -1588,22 +1643,28 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
 
     // 3D: 三角形がモデルに無い点（パスのある層・新しい層）
     let (mut v, rect) = state3d(two_material_plate());
-    assert_refused_with(&mut v, [(Lang::Ja, "三角形"), (Lang::En, "triangle")], |v| {
-        add_surface(v, 99_999, 0.1, 0.1)
-    });
+    assert_refused_with(
+        &mut v,
+        [(Lang::Ja, "三角形"), (Lang::En, "triangle")],
+        |v| add_surface(v, 99_999, 0.1, 0.1),
+    );
     assert_eq!(v.doc.layers().len(), 1, "新しい層を作らない");
     click3d(&mut v, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut v, rect, Vec3::new(-0.3, 0.4, 0.0));
     assert_eq!(surface_path(&v).points.len(), 2);
-    assert_refused_with(&mut v, [(Lang::Ja, "三角形"), (Lang::En, "triangle")], |v| {
-        add_surface(v, 99_999, 0.1, 0.1)
-    });
+    assert_refused_with(
+        &mut v,
+        [(Lang::Ja, "三角形"), (Lang::En, "triangle")],
+        |v| add_surface(v, 99_999, 0.1, 0.1),
+    );
     // 3D: ブラシの間隔に対してパスが長すぎる（直径をごく小さく・間隔を 1% に）
     v.apply(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.01))));
     assert_eq!(surface_path(&v).brush.0.spacing, 0.01, "{}", v.message);
-    assert_refused_with(&mut v, [(Lang::Ja, "長すぎ"), (Lang::En, "too long")], |v| {
-        v.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(1e-5))))
-    });
+    assert_refused_with(
+        &mut v,
+        [(Lang::Ja, "長すぎ"), (Lang::En, "too long")],
+        |v| v.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(1e-5)))),
+    );
     assert_eq!(surface_path(&v).points.len(), 2);
 }
 
@@ -1698,8 +1759,14 @@ fn headless_every_evaluation_failure_has_a_short_reason_in_both_languages() {
             pathtool::path_error_text(Lang::Ja, error),
             pathtool::path_error_text(Lang::En, error),
         );
-        assert!(has_japanese(&ja) && ja.chars().count() <= 40, "{error:?}: {ja}");
-        assert!(en.is_ascii() && en.len() <= 70 && ja != en, "{error:?}: {en}");
+        assert!(
+            has_japanese(&ja) && ja.chars().count() <= 40,
+            "{error:?}: {ja}"
+        );
+        assert!(
+            en.is_ascii() && en.len() <= 70 && ja != en,
+            "{error:?}: {en}"
+        );
         assert!(!ja.ends_with('。') && !en.ends_with('.'), "{error:?}");
     }
     // 文の中身も確かめる（種類ごとに別の理由）
@@ -1797,7 +1864,11 @@ fn headless_3d_points_behind_the_model_are_dimmed_and_not_grabbed_up_to_256_poin
     let b = at3d(&s, rect, Vec3::new(-0.5, 0.6, 0.0));
     let fills = marker_fills(&s, rect);
     assert_eq!(fill_at(&fills, a), pathtool::PATH_COLOR, "見える点");
-    assert_eq!(fill_at(&fills, b), egui::Color32::WHITE, "選んでいる点（最後）");
+    assert_eq!(
+        fill_at(&fills, b),
+        egui::Color32::WHITE,
+        "選んでいる点（最後）"
+    );
     assert_eq!(fill_at(&fills, c), dim, "遮られる点は薄く出す");
 
     // 遮られる点は掴まない（足す・差し込む先も手前の板で、ほかのテクスチャセットの面として断る）
@@ -1805,7 +1876,11 @@ fn headless_3d_points_behind_the_model_are_dimmed_and_not_grabbed_up_to_256_poin
     s.message.clear();
     pathtool::surface::press(&mut s, rect, c, StrokeSource::Mouse);
     assert!(s.path.drag.is_none(), "掴まない");
-    assert!(s.message.contains("ほかのテクスチャセット"), "{}", s.message);
+    assert!(
+        s.message.contains("ほかのテクスチャセット"),
+        "{}",
+        s.message
+    );
     assert_eq!(s.doc.undo_count(), undo);
     assert_eq!(surface_path(&s).points, points);
     // 同じ場所でも、手前の板が見せる形に無ければ（遮らなければ）掴む
@@ -1851,7 +1926,10 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     s.view3d.set_model(flipped_plate());
     s.view3d.material = 0;
     s.sync_view3d();
-    assert!(s.path.drag.is_none() && !s.is_stroking(), "ドラッグを取り残さない");
+    assert!(
+        s.path.drag.is_none() && !s.is_stroking(),
+        "ドラッグを取り残さない"
+    );
     let rebound = surface_path(&s);
     assert_eq!(
         rebound.model_fingerprint,
@@ -1859,7 +1937,11 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     );
     let undo = s.doc.undo_count();
     pathtool::surface::release(&mut s, rect, to, StrokeSource::Mouse);
-    assert_eq!(s.doc.undo_count(), undo, "前のモデルの三角形の番号を、付け直したパスへ当てない");
+    assert_eq!(
+        s.doc.undo_count(),
+        undo,
+        "前のモデルの三角形の番号を、付け直したパスへ当てない"
+    );
     assert_eq!(surface_path(&s), rebound);
     // 2D の点を掴んでいるあいだの入れ替えは、2D のドラッグに触れない
     let mut t = state(256);
@@ -1873,7 +1955,10 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     t.view3d.set_model(flipped_plate());
     t.view3d.material = 0;
     t.sync_view3d();
-    assert!(t.path.drag.is_some_and(|d| !d.surface), "2D のドラッグは続く");
+    assert!(
+        t.path.drag.is_some_and(|d| !d.surface),
+        "2D のドラッグは続く"
+    );
     release2d(&mut t, 150.0, 200.0);
     assert!((canvas_points(&t)[1].1 - 200.0).abs() < 1.0);
 }
@@ -1894,7 +1979,11 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
         s.sync_view3d();
         assert!(s.path_layer().is_none(), "画素にした");
         assert!(s.message.contains(rasterized), "{lang:?}: {}", s.message);
-        assert!(!s.message.contains(redrawn), "0 件は出さない: {}", s.message);
+        assert!(
+            !s.message.contains(redrawn),
+            "0 件は出さない: {}",
+            s.message
+        );
         assert!(s.message.contains(because), "{lang:?}: {}", s.message);
         // 付け直せるときは、描き直した件数だけ（理由は無い）
         let (mut t, rect) = state3d(two_material_plate());

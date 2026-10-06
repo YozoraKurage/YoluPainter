@@ -66,8 +66,13 @@ fn csharp_m2_documents_roundtrip_byte_for_byte_and_composite_like_the_recorded_b
             "{name}: C# の正本を core にして書き戻すとバイト一致"
         );
         let got = composites(&core);
-        if std::env::var_os("YOLU_GOLDEN_UPDATE").is_some() && got != read(&format!("{name}.composite")) {
-            let path = format!("{}/tests/fixtures/{name}.composite", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("YOLU_GOLDEN_UPDATE").is_some()
+            && got != read(&format!("{name}.composite"))
+        {
+            let path = format!(
+                "{}/tests/fixtures/{name}.composite",
+                env!("CARGO_MANIFEST_DIR")
+            );
             std::fs::write(path, &got).unwrap();
             continue;
         }
@@ -1062,7 +1067,9 @@ fn adjustment_values_the_kind_does_not_use_are_refused_even_when_the_layer_is_hi
                 (format!("layers[{i}].mask.enabled"), &mut disabled),
             ] {
                 if refused.field(&field) == Some(&NativeValue::Bool(true)) {
-                    changed = changed.with_value(&field, NativeValue::Bool(false)).unwrap();
+                    changed = changed
+                        .with_value(&field, NativeValue::Bool(false))
+                        .unwrap();
                     *count += 1;
                 }
             }
@@ -1538,7 +1545,10 @@ fn layer_locks_are_written_and_read_back() {
             doc.set_layer_locks(target, LayerLocks::NONE).unwrap();
         }
     }
-    assert_eq!(NativeDocument::from_core(&doc).unwrap().to_bytes(), unlocked);
+    assert_eq!(
+        NativeDocument::from_core(&doc).unwrap().to_bytes(),
+        unlocked
+    );
 }
 
 // ───────── PSD への書き出し: 表せないものは断る、表せるロックは書く ─────────
@@ -1624,27 +1634,31 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             d.set_channel_pixel(id, Channel::Metallic, 3, 3, Rgba8::new(9, 9, 9, 255))
                 .unwrap();
         }),
-        ("Metallic を有効にしただけ", |d, id| d.set_channel_enabled(id, Channel::Metallic, true).unwrap(),),
+        ("Metallic を有効にしただけ", |d, id| {
+            d.set_channel_enabled(id, Channel::Metallic, true).unwrap()
+        }),
         ("無効にした Roughness の画素", |d, id| {
-                d.set_channel_pixel(id, Channel::Roughness, 1, 1, Rgba8::new(9, 9, 9, 255))
-                    .unwrap();
-                d.set_channel_enabled(id, Channel::Roughness, false)
-                    .unwrap();
-            },),
+            d.set_channel_pixel(id, Channel::Roughness, 1, 1, Rgba8::new(9, 9, 9, 255))
+                .unwrap();
+            d.set_channel_enabled(id, Channel::Roughness, false)
+                .unwrap();
+        }),
         ("ユーザーチャンネルの画素", |d, id| {
-                let user = d
-                    .add_channel(info(
-                        "AO",
-                        ChannelKind::Scalar,
-                        ColorSpace::Linear,
-                        [255, 255, 255, 255],
-                    ))
-                    .unwrap();
-                assert!(!user.is_standard());
-                d.set_channel_pixel(id, user, 3, 3, Rgba8::new(9, 9, 9, 255))
-                    .unwrap();
-            },),
-        ("ユーザーチャンネルを有効にしただけ", |d, id| {
+            let user = d
+                .add_channel(info(
+                    "AO",
+                    ChannelKind::Scalar,
+                    ColorSpace::Linear,
+                    [255, 255, 255, 255],
+                ))
+                .unwrap();
+            assert!(!user.is_standard());
+            d.set_channel_pixel(id, user, 3, 3, Rgba8::new(9, 9, 9, 255))
+                .unwrap();
+        }),
+        (
+            "ユーザーチャンネルを有効にしただけ",
+            |d, id| {
                 let user = d
                     .add_channel(info(
                         "Tint",
@@ -1654,8 +1668,11 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                     ))
                     .unwrap();
                 d.set_channel_enabled(id, user, true).unwrap();
-            },),
-        ("無効にしたユーザーチャンネルの画素", |d, id| {
+            },
+        ),
+        (
+            "無効にしたユーザーチャンネルの画素",
+            |d, id| {
                 let user = d
                     .add_channel(info(
                         "Detail",
@@ -1667,7 +1684,8 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
                 d.set_channel_pixel(id, user, 1, 1, Rgba8::new(9, 9, 9, 255))
                     .unwrap();
                 d.set_channel_enabled(id, user, false).unwrap();
-            },),
+            },
+        ),
     ];
     let control = psd_source();
     psd::Document::from_core(&control).expect("何も足さなければ書ける");
@@ -1689,7 +1707,10 @@ fn psd_export_refuses_what_psd_cannot_hold_by_feature_instead_of_dropping_it() {
             let id = id_of(&doc, name);
             let before = psd_bytes(&doc);
             setup(&mut doc, id);
-            assert!(psd_bytes(&doc) == before, "{label}（{name}）: Color の PSD が変わった");
+            assert!(
+                psd_bytes(&doc) == before,
+                "{label}（{name}）: Color の PSD が変わった"
+            );
         }
     }
     // Color を無効にした層は、Color の PSD では隠した層（C# と同じ。断らない）
@@ -1849,11 +1870,18 @@ fn psd_export_writes_the_locks_a_psd_can_hold() {
         // 自分のロックは「すべて」だけに畳まれるが、効くロックは変わらない）
         assert!(again.core_issues().is_empty(), "{lock:?}");
         let back = again.to_core().unwrap();
-        assert!(!back.can_undo(), "{lock:?}: 読み込みは Undo の履歴に残さない");
+        assert!(
+            !back.can_undo(),
+            "{lock:?}: 読み込みは Undo の履歴に残さない"
+        );
         let names = ["下", "中", "上"];
         for name in names {
             let id = id_of(&back, name);
-            let before = if name == "中" { lock } else { LayerLocks::NONE };
+            let before = if name == "中" {
+                lock
+            } else {
+                LayerLocks::NONE
+            };
             assert_eq!(
                 back.effective_locks(id).unwrap(),
                 doc.effective_locks(id_of(&doc, name)).unwrap(),

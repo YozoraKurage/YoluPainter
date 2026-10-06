@@ -516,7 +516,11 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
     // 起動し直すと、応えが戻り、選べば今の設定に入る。別のブラシへ替えると応えも替わる
     let mut back = AppState::new(64, 64);
     back.attach_brush_store(dir.clone());
-    assert!(back.brushes.problems.is_empty(), "{:?}", back.brushes.problems.len());
+    assert!(
+        back.brushes.problems.is_empty(),
+        "{:?}",
+        back.brushes.problems.len()
+    );
     select(&mut back, key);
     assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
     assert_eq!(back.m2.brush.pressure.opacity.curve().len(), 3);
@@ -619,7 +623,11 @@ fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_langu
     assert_eq!(next, 0x66, "読めなかったファイルの番号の続き");
     assert_ne!(next, user_id(good));
     for (name, bytes) in &broken {
-        assert_eq!(&std::fs::read(folder.join(name)).unwrap(), bytes, "{name} はそのまま");
+        assert_eq!(
+            &std::fs::read(folder.join(name)).unwrap(),
+            bytes,
+            "{name} はそのまま"
+        );
     }
     // 並びのファイルが壊れていても読める（元の並び）
     std::fs::write(folder.join("order.conf"), vec![b'x'; 70_000]).unwrap();
@@ -680,7 +688,10 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
             .filter(|(name, _)| name != "order.conf" && only.iter().any(|(o, _)| o == name))
             .collect::<Vec<_>>()
     };
-    assert_eq!(brush_files(snapshot_of(&dir), &before), brush_files(before.clone(), &before));
+    assert_eq!(
+        brush_files(snapshot_of(&dir), &before),
+        brush_files(before.clone(), &before)
+    );
     assert!(dir.join("brush-00000005.ylbrush").is_dir());
     assert_eq!(
         std::fs::read(dir.join("brush-00000002.ylbrush")).unwrap(),
@@ -706,7 +717,11 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
 #[test]
 fn headless_when_the_brush_numbers_run_out_adding_is_refused_and_nothing_is_overwritten() {
     for readable in [false, true] {
-        let dir = temp_dir(if readable { "ids-max-ok" } else { "ids-max-bad" });
+        let dir = temp_dir(if readable {
+            "ids-max-ok"
+        } else {
+            "ids-max-bad"
+        });
         let mut s = AppState::new(64, 64);
         s.attach_brush_store(dir.clone());
         s.apply(Action::Brush(BrushAction::Add));
@@ -725,7 +740,11 @@ fn headless_when_the_brush_numbers_run_out_adding_is_refused_and_nothing_is_over
             let count = back.brushes.lib.entries().len();
             for _ in 0..2 {
                 back.apply(Action::Brush(BrushAction::Add));
-                assert_eq!(back.brushes.lib.entries().len(), count, "{readable} {lang:?}: 足さない");
+                assert_eq!(
+                    back.brushes.lib.entries().len(),
+                    count,
+                    "{readable} {lang:?}: 足さない"
+                );
                 assert_eq!(back.brushes.lib.current(), current);
                 assert!(
                     back.message.contains(lang.pick("使い切", "Out of")),
@@ -789,7 +808,11 @@ fn headless_imported_tip_images_are_saved_with_the_brush_and_come_back() {
     );
     s.m2.brush.tip.image = Some(tip.clone());
     s.apply(Action::Brush(BrushAction::Add));
-    assert!(s.message.starts_with("ブラシを追加しました"), "{}", s.message);
+    assert!(
+        s.message.starts_with("ブラシを追加しました"),
+        "{}",
+        s.message
+    );
     let key = s.brushes.lib.current();
     assert!(dir.join("brush-00000001.ylbrush").exists());
     // 画像は内容の名前で 1 枚（ブラシのファイルは画像の名前を指すだけ）
@@ -798,7 +821,11 @@ fn headless_imported_tip_images_are_saved_with_the_brush_and_come_back() {
     // 別の起動で読み戻しても、同じ画像（名前・画素）のブラシ
     let mut again = AppState::new(64, 64);
     again.attach_brush_store(dir.clone());
-    assert!(again.brushes.problems.is_empty(), "{:?}", again.brushes.problems);
+    assert!(
+        again.brushes.problems.is_empty(),
+        "{:?}",
+        again.brushes.problems
+    );
     let back = again.brushes.lib.entry(key).expect("読み戻したブラシ");
     assert_eq!(back.baseline.tip.image.as_deref(), Some(&*tip));
     // 消すと、その画像のファイルも消える

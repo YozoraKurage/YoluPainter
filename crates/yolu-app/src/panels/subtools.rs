@@ -624,5 +624,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         }
     }
     ui.set_clip_rect(outer);
-    bar.end(ui, "subtools.panel.scroll", &mut app.brushes.ui.panel_scroll);
+    bar.end(
+        ui,
+        "subtools.panel.scroll",
+        &mut app.brushes.ui.panel_scroll,
+    );
 }

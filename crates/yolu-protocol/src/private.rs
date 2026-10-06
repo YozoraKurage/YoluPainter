@@ -389,7 +389,9 @@ pub mod win {
     /// そのプロセス番号のプロセスのユーザーの SID。プロセスを開けない（もう無い・権限が足りない）・トークンを読めないときは失敗する
     /// （呼び手は、確かめられない相手を信じない）。照会だけの権限（PROCESS_QUERY_LIMITED_INFORMATION）で開く。
     pub fn process_user_sid(pid: u32) -> io::Result<String> {
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
         unsafe {
             let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if process.is_null() {
@@ -777,7 +779,10 @@ mod account_tests {
     fn only_the_same_account_is_accepted_and_the_case_does_not_matter() {
         assert!(same_account(ME, ME));
         assert!(same_account(ME, &ME.to_ascii_lowercase()));
-        assert!(!same_account(ME, "S-1-5-21-1111-2222-3333-1002"), "別のユーザー");
+        assert!(
+            !same_account(ME, "S-1-5-21-1111-2222-3333-1002"),
+            "別のユーザー"
+        );
         assert!(!same_account(ME, "S-1-5-18"), "SYSTEM も別のアカウント");
         assert!(!same_account(ME, ""));
         assert!(!same_account("", ""), "空の SID は誰とも同じにしない");
@@ -790,10 +795,12 @@ mod account_tests {
         assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
         assert!(other.to_string().contains("別のユーザー"), "{other}");
         // 持ち主を取り出せない（プロセスを開けない・もう無い）相手は信じない。取り出せなかった理由を添える
-        let unknown = judge_peer_account(ME, Err(io::Error::other("アクセスが拒否されました"))).unwrap_err();
+        let unknown =
+            judge_peer_account(ME, Err(io::Error::other("アクセスが拒否されました"))).unwrap_err();
         assert_eq!(unknown.kind(), io::ErrorKind::PermissionDenied);
         assert!(
-            unknown.to_string().contains("確かめられません") && unknown.to_string().contains("アクセスが拒否"),
+            unknown.to_string().contains("確かめられません")
+                && unknown.to_string().contains("アクセスが拒否"),
             "{unknown}"
         );
         // 自分の SID が空（取れていない）なら、誰も通さない

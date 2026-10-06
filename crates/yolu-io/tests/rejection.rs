@@ -119,7 +119,8 @@ fn legacy_material_slot_fallback_is_reported() {
     assert!(p
         .notes()
         .iter()
-        .any(|n| matches!(n, yolu_io::Note::ViewSlotUnreadable(_)) && n.to_string().contains("スロット")));
+        .any(|n| matches!(n, yolu_io::Note::ViewSlotUnreadable(_))
+            && n.to_string().contains("スロット")));
 }
 #[test]
 fn resource_unknown_kind_origin_and_missing_pixels_are_refused() {

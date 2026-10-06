@@ -135,7 +135,10 @@ impl OriginalCache {
     ) -> Option<MaterialOriginal> {
         let tick = self.tick + 1;
         let cached = self.entries.get_mut(&(key.clone(), slot.to_owned()))?;
-        if stamp == 0 || cached.stamp != stamp || (cached.original.width, cached.original.height) != size {
+        if stamp == 0
+            || cached.stamp != stamp
+            || (cached.original.width, cached.original.height) != size
+        {
             return None;
         }
         self.tick = tick;
@@ -195,10 +198,14 @@ impl OriginalMark {
             ));
         }
         if self.compressed {
-            lines.push(lang.pick(
-                "圧縮されたテクスチャから読んだ値です（元のファイルの値とは少し違います）".to_owned(),
-                "Read from a compressed texture (it differs slightly from the source file)".to_owned(),
-            ));
+            lines.push(
+                lang.pick(
+                    "圧縮されたテクスチャから読んだ値です（元のファイルの値とは少し違います）"
+                        .to_owned(),
+                    "Read from a compressed texture (it differs slightly from the source file)"
+                        .to_owned(),
+                ),
+            );
         }
         if self.converted {
             lines.push(lang.pick(
@@ -208,7 +215,10 @@ impl OriginalMark {
         }
         if let Some((w, h)) = self.resized_from {
             lines.push(lang.pick(
-                format!("{w}×{h} をセットの大きさ {}×{} に拡大縮小しています", set.0, set.1),
+                format!(
+                    "{w}×{h} をセットの大きさ {}×{} に拡大縮小しています",
+                    set.0, set.1
+                ),
                 format!("Scaled from {w}×{h} to the set size {}×{}", set.0, set.1),
             ));
         }
@@ -395,7 +405,11 @@ impl LiveBase {
             }
             wait.requested = true;
             let have = self.cache.have(&wait.key, &wait.slot);
-            out.push(MaterialWant::original(wait.material, wait.slot.clone(), have));
+            out.push(MaterialWant::original(
+                wait.material,
+                wait.slot.clone(),
+                have,
+            ));
         }
         // 同じマテリアル・スロットは 1 つ（先の頼み。頼み直し（印なし）が先に並ぶ）
         let mut seen = std::collections::BTreeSet::new();
@@ -491,14 +505,16 @@ impl LiveBase {
             ));
         }
         self.progress = now;
-        wait.arrival = Some(if pending + original.pixels.len() as u64 > self.pending_limit {
-            Arrival::TooMany
-        } else {
-            // 印の付いた絵は手元に残す（次に Unity が「印が同じ」と答えたとき使う）。印の無い絵は残さず、前の絵も捨てる
-            let key = wait.key.clone();
-            self.cache.remember(&key, &original);
-            Arrival::Unity(original)
-        });
+        wait.arrival = Some(
+            if pending + original.pixels.len() as u64 > self.pending_limit {
+                Arrival::TooMany
+            } else {
+                // 印の付いた絵は手元に残す（次に Unity が「印が同じ」と答えたとき使う）。印の無い絵は残さず、前の絵も捨てる
+                let key = wait.key.clone();
+                self.cache.remember(&key, &original);
+                Arrival::Unity(original)
+            },
+        );
         Ok(())
     }
 
@@ -516,10 +532,9 @@ impl LiveBase {
     /// 毎フレーム: 揃ったセットへ元の絵を入れ、進みが止まったものをあきらめる。入れなかった・入れられなかったものの理由を 1 つの知らせの文に
     /// まとめて返す。
     pub fn poll(&mut self, state: &mut AppState, session: u64, now: Instant) -> Option<String> {
-        let ours = state
-            .model
-            .as_ref()
-            .is_some_and(|m| m.source == (ModelSource::LiveLink { session }) && m.generation == self.generation);
+        let ours = state.model.as_ref().is_some_and(|m| {
+            m.source == (ModelSource::LiveLink { session }) && m.generation == self.generation
+        });
         if !ours {
             self.waits.clear();
             return None;
@@ -535,7 +550,8 @@ impl LiveBase {
                     let name = set_name(state, uid);
                     failed.push((
                         name,
-                        lang.pick("Unity から届きませんでした", "It did not arrive from Unity").to_owned(),
+                        lang.pick("Unity から届きませんでした", "It did not arrive from Unity")
+                            .to_owned(),
                     ));
                 }
                 continue;
@@ -612,7 +628,10 @@ fn settle(state: &mut AppState, uid: u32, wait: Wait, lang: Lang) -> Result<(), 
     let set = state.sets.get(index).expect("位置を見た");
     if set.bound != Some(wait.material) {
         return Err(lang
-            .pick("マテリアルから外れました", "No longer bound to the material")
+            .pick(
+                "マテリアルから外れました",
+                "No longer bound to the material",
+            )
             .to_owned());
     }
     if let Some(reason) = &set.read_only {
@@ -706,7 +725,11 @@ fn install(
 
 /// `like`（何も触っていない最初のセットの文書）の代わりに、元の絵の大きさ（新しく作るセットと同じ辺の丸め・上限）で作り直した文書へ
 /// 元の絵を入れたもの。大きさが同じなら作り直さず、作り直した文書に入らない（予算）ときも None（今の文書へ縮めて入れる）。
-fn rebuilt_with(like: &Document, original: &MaterialOriginal, lang: Lang) -> Option<(Document, LayerId)> {
+fn rebuilt_with(
+    like: &Document,
+    original: &MaterialOriginal,
+    lang: Lang,
+) -> Option<(Document, LayerId)> {
     let side = fit_side(original.width.max(original.height));
     if (side, side) == (like.width(), like.height()) {
         return None;
@@ -723,8 +746,10 @@ fn rebuilt_with(like: &Document, original: &MaterialOriginal, lang: Lang) -> Opt
     // 予算は今の文書と同じ（入らなければ今の文書へ戻る）
     doc.set_minimum_undo_steps(like.minimum_undo_steps()).ok()?;
     doc.set_undo_budget_bytes(like.undo_budget_bytes()).ok()?;
-    doc.set_stroke_budget_bytes(like.stroke_budget_bytes()).ok()?;
-    doc.set_source_budget_bytes(like.source_budget_bytes()).ok()?;
+    doc.set_stroke_budget_bytes(like.stroke_budget_bytes())
+        .ok()?;
+    doc.set_source_budget_bytes(like.source_budget_bytes())
+        .ok()?;
     // 入らなかったときに今の文書へ入れ直せるよう、元の画素は手放さない（借りる）
     let pixels = prepare(
         Cow::Borrowed(&original.pixels),
@@ -963,7 +988,11 @@ mod tests {
 
     /// Live Link のモデルを受けた状態の AppState（セットは Body = 最初のセット・Hair = 新しいセット）と、待たせ始めた LiveBase。
     fn waiting() -> (AppState, LiveBase, Model, Instant) {
-        waiting_with(vec![info("Body", true), info("Hair", true), info("Plain", false)])
+        waiting_with(vec![
+            info("Body", true),
+            info("Hair", true),
+            info("Plain", false),
+        ])
     }
 
     fn waiting_with(materials: Vec<MaterialInfo>) -> (AppState, LiveBase, Model, Instant) {
@@ -982,13 +1011,25 @@ mod tests {
     #[test]
     fn only_a_color_slot_with_a_texture_is_waited_for() {
         assert_eq!(expected_slot(&info("A", true)).as_deref(), Some("_MainTex"));
-        assert_eq!(expected_slot(&info("A", false)), None, "絵が入っていなければ来ない");
+        assert_eq!(
+            expected_slot(&info("A", false)),
+            None,
+            "絵が入っていなければ来ない"
+        );
         let mut no_route = info("A", true);
         no_route.routes.clear();
-        assert_eq!(expected_slot(&no_route), None, "Color の流し込み先が無ければ来ない");
+        assert_eq!(
+            expected_slot(&no_route),
+            None,
+            "Color の流し込み先が無ければ来ない"
+        );
         let mut other = info("A", true);
         other.routes[0].channel = channel::EMISSION;
-        assert_eq!(expected_slot(&other), None, "Color 以外は送らない（Unity が元のまま見せる）");
+        assert_eq!(
+            expected_slot(&other),
+            None,
+            "Color 以外は送らない（Unity が元のまま見せる）"
+        );
         let mut empty = info("A", true);
         empty.textures[0].width = 0;
         assert_eq!(expected_slot(&empty), None);
@@ -1002,10 +1043,18 @@ mod tests {
     fn only_a_color_slot_that_unity_says_is_empty_gets_a_white_original() {
         assert_eq!(white_slot(&empty("A")).as_deref(), Some("_MainTex"));
         assert_eq!(white_slot(&info("A", true)), None, "絵があれば白にしない");
-        assert_eq!(white_slot(&info("A", false)), None, "項目が無ければ、絵が無いと言い切れない");
+        assert_eq!(
+            white_slot(&info("A", false)),
+            None,
+            "項目が無ければ、絵が無いと言い切れない"
+        );
         let mut no_route = empty("A");
         no_route.routes.clear();
-        assert_eq!(white_slot(&no_route), None, "Color の流し込み先が無ければ、描いた絵を見せない");
+        assert_eq!(
+            white_slot(&no_route),
+            None,
+            "Color の流し込み先が無ければ、描いた絵を見せない"
+        );
         let mut other = empty("A");
         other.routes[0].channel = channel::EMISSION;
         assert_eq!(white_slot(&other), None, "Color 以外は触らない");
@@ -1020,13 +1069,27 @@ mod tests {
 
     #[test]
     fn a_set_gets_the_side_of_a_new_set_from_the_longest_side_of_the_picture() {
-        for (longest, side) in [(1, 256), (100, 256), (256, 256), (257, 512), (600, 1024), (2048, 2048), (3000, 4096), (4096, 4096), (8192, 4096)] {
+        for (longest, side) in [
+            (1, 256),
+            (100, 256),
+            (256, 256),
+            (257, 512),
+            (600, 1024),
+            (2048, 2048),
+            (3000, 4096),
+            (4096, 4096),
+            (8192, 4096),
+        ] {
             assert_eq!(fit_side(longest), side, "{longest}");
         }
         let mut material = info("A", true);
         material.textures[0].width = 600;
         material.textures[0].height = 300;
-        assert_eq!(crate::sets::size_for(&material), fit_side(600), "新しいセットの大きさと同じ決め方");
+        assert_eq!(
+            crate::sets::size_for(&material),
+            fit_side(600),
+            "新しいセットの大きさと同じ決め方"
+        );
     }
 
     #[test]
@@ -1034,7 +1097,10 @@ mod tests {
         let (mut state, mut base, _, t0) = waiting_with(vec![empty("Body"), info("Hair", true)]);
         let uids: Vec<u32> = state.sets.iter().map(|s| s.uid).collect();
         assert_eq!(base.waiting_count(), 2);
-        assert!(base.holds(uids[0]), "白が入るまで、空の絵で Unity に出さない");
+        assert!(
+            base.holds(uids[0]),
+            "白が入るまで、空の絵で Unity に出さない"
+        );
         // 絵が無いと知らせたマテリアルの元の絵が届いても、受けて捨てる（誤りにしない・白を置き換えない）
         let mut stray = image(1, 0, 4);
         stray.pixels = vec![1, 2, 3, 255];
@@ -1045,10 +1111,20 @@ mod tests {
         let doc = state.set_doc(0);
         let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["元の絵", "レイヤー 1"]);
-        assert_eq!(crate::engine::layer_pixel(&doc.layers()[0], 0, 0), [255, 255, 255, 255]);
-        assert_eq!(crate::engine::layer_pixel(&doc.layers()[0], 63, 63), [255, 255, 255, 255]);
+        assert_eq!(
+            crate::engine::layer_pixel(&doc.layers()[0], 0, 0),
+            [255, 255, 255, 255]
+        );
+        assert_eq!(
+            crate::engine::layer_pixel(&doc.layers()[0], 63, 63),
+            [255, 255, 255, 255]
+        );
         assert!(!doc.can_undo(), "初期化は履歴に入らない");
-        assert_eq!((doc.width(), doc.height()), (64, 64), "白は大きさを変えない");
+        assert_eq!(
+            (doc.width(), doc.height()),
+            (64, 64),
+            "白は大きさを変えない"
+        );
         assert!(state.link_originals.is_empty(), "層の欄の印は付けない");
     }
 
@@ -1057,25 +1133,54 @@ mod tests {
         let (mut state, mut base, _, t0) = waiting_with(vec![empty("Body")]);
         state.doc.set_stroke_budget_bytes(10).unwrap();
         let text = base.poll(&mut state, 7, t0).unwrap();
-        assert!(text.contains("元の絵を入れませんでした") && text.contains("予算"), "{text}");
-        assert!(!base.waiting(), "入れられなくても待ちは終わる（空のまま出す）");
+        assert!(
+            text.contains("元の絵を入れませんでした") && text.contains("予算"),
+            "{text}"
+        );
+        assert!(
+            !base.waiting(),
+            "入れられなくても待ちは終わる（空のまま出す）"
+        );
         assert_eq!(state.doc.layers().len(), 1);
     }
 
     #[test]
     fn a_silent_unity_stops_holding_the_sets_after_the_stall_and_says_which() {
         let (mut state, mut base, _, t0) = waiting();
-        assert!(base.poll(&mut state, 7, t0 + STALL - Duration::from_secs(1)).is_none());
-        assert_eq!(base.waiting_count(), 2, "進みが止まって 30 秒たつまでは待つ");
+        assert!(base
+            .poll(&mut state, 7, t0 + STALL - Duration::from_secs(1))
+            .is_none());
+        assert_eq!(
+            base.waiting_count(),
+            2,
+            "進みが止まって 30 秒たつまでは待つ"
+        );
         // Hair が届く（入れて終わり）。Body の 30 秒は、最後に届いた時刻から数える
-        base.receive(image(1, 1, 4), t0 + Duration::from_secs(10)).unwrap();
-        assert!(base.poll(&mut state, 7, t0 + STALL + Duration::from_secs(1)).is_none());
-        assert_eq!(base.waiting_count(), 1, "Hair は入れた。Body は最後の到着から 21 秒なので、まだ待つ");
-        let text = base
-            .poll(&mut state, 7, t0 + Duration::from_secs(10) + STALL + Duration::from_secs(1))
+        base.receive(image(1, 1, 4), t0 + Duration::from_secs(10))
             .unwrap();
-        assert!(text.contains("Body") && text.contains("Unity から届きませんでした"), "{text}");
-        assert!(!text.contains("Hair"), "届いたセットは理由に挙げない: {text}");
+        assert!(base
+            .poll(&mut state, 7, t0 + STALL + Duration::from_secs(1))
+            .is_none());
+        assert_eq!(
+            base.waiting_count(),
+            1,
+            "Hair は入れた。Body は最後の到着から 21 秒なので、まだ待つ"
+        );
+        let text = base
+            .poll(
+                &mut state,
+                7,
+                t0 + Duration::from_secs(10) + STALL + Duration::from_secs(1),
+            )
+            .unwrap();
+        assert!(
+            text.contains("Body") && text.contains("Unity から届きませんでした"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Hair"),
+            "届いたセットは理由に挙げない: {text}"
+        );
         assert_eq!(base.waiting_count(), 0, "出す（待ちをやめる）");
     }
 
@@ -1087,11 +1192,20 @@ mod tests {
         body.state = OriginalState::Unreadable;
         body.pixels.clear();
         base.receive(body, t0 + Duration::from_secs(20)).unwrap();
-        let text = base.poll(&mut state, 7, t0 + Duration::from_secs(40)).unwrap();
+        let text = base
+            .poll(&mut state, 7, t0 + Duration::from_secs(40))
+            .unwrap();
         assert!(text.contains("Body") && !text.contains("Hair"), "{text}");
-        assert_eq!(base.waiting_count(), 1, "Hair はまだ待つ（最後の到着から 20 秒）");
-        base.receive(image(1, 1, 4), t0 + Duration::from_secs(40)).unwrap();
-        assert!(base.poll(&mut state, 7, t0 + Duration::from_secs(40)).is_none());
+        assert_eq!(
+            base.waiting_count(),
+            1,
+            "Hair はまだ待つ（最後の到着から 20 秒）"
+        );
+        base.receive(image(1, 1, 4), t0 + Duration::from_secs(40))
+            .unwrap();
+        assert!(base
+            .poll(&mut state, 7, t0 + Duration::from_secs(40))
+            .is_none());
         assert_eq!(base.waiting_count(), 0, "届いて入れた");
     }
 
@@ -1105,7 +1219,10 @@ mod tests {
     #[test]
     fn originals_of_another_generation_or_slot_are_refused_and_unwaited_ones_are_ignored() {
         let (_, mut base, _, t0) = waiting();
-        assert!(base.receive(image(2, 0, 4), t0).unwrap_err().contains("世代"));
+        assert!(base
+            .receive(image(2, 0, 4), t0)
+            .unwrap_err()
+            .contains("世代"));
         let mut slot = image(1, 0, 4);
         slot.slot = "_BaseMap".into();
         assert!(base.receive(slot, t0).unwrap_err().contains("_BaseMap"));
@@ -1123,7 +1240,10 @@ mod tests {
         base.receive(image(1, 1, 8), t0).unwrap();
         // 描いている最中は入れずに待つ（上限を超えた 2 つ目は、持たずに理由で出す）
         let text = base.poll(&mut state, 7, t0).unwrap();
-        assert!(text.contains("Hair") && text.contains("多すぎます"), "{text}");
+        assert!(
+            text.contains("Hair") && text.contains("多すぎます"),
+            "{text}"
+        );
         assert!(!text.contains("Body"), "{text}");
     }
 
@@ -1134,7 +1254,10 @@ mod tests {
         assert!(base.poll(&mut state, 7, t0).is_none());
         assert!(!base.waiting(), "モデルが閉じたら待たない（セットは出す）");
         let (mut state, mut base, _, t0) = waiting();
-        assert!(base.poll(&mut state, 8, t0).is_none(), "別のつながりのモデル");
+        assert!(
+            base.poll(&mut state, 8, t0).is_none(),
+            "別のつながりのモデル"
+        );
         assert!(!base.waiting());
     }
 
@@ -1161,11 +1284,19 @@ mod tests {
         assert_eq!(resample(&src, [2, 2], [1, 1]), [50, 50, 0, 255]);
         // 一様な絵は縮めても丸め誤差を出さない
         let flat = solid(8, 8, [13, 77, 201, 255]);
-        assert_eq!(resample(&flat, [8, 8], [3, 5]), solid(3, 5, [13, 77, 201, 255]));
+        assert_eq!(
+            resample(&flat, [8, 8], [3, 5]),
+            solid(3, 5, [13, 77, 201, 255])
+        );
         // 非正方形: 4 × 2 → 2 × 2（横だけ縮める）
-        let row: Vec<u8> = [[10, 0, 0, 255], [30, 0, 0, 255], [50, 0, 0, 255], [70, 0, 0, 255]]
-            .concat()
-            .repeat(2);
+        let row: Vec<u8> = [
+            [10, 0, 0, 255],
+            [30, 0, 0, 255],
+            [50, 0, 0, 255],
+            [70, 0, 0, 255],
+        ]
+        .concat()
+        .repeat(2);
         let out = resample(&row, [4, 2], [2, 2]);
         assert_eq!(out[..4], [20, 0, 0, 255]);
         assert_eq!(out[4..8], [60, 0, 0, 255]);
@@ -1253,16 +1384,50 @@ mod tests {
         assert!(cache.is_empty());
         let body = stamped(1, 0, 16, 11);
         cache.remember(&key("Body"), &body);
-        assert_eq!((cache.len(), cache.bytes(), cache.have(&key("Body"), "_MainTex")), (1, 16, 11));
-        assert_eq!(cache.have(&key("Hair"), "_MainTex"), 0, "別のマテリアルの絵は持たない");
-        assert_eq!(cache.have(&key("Body"), "_BaseMap"), 0, "別のスロットの絵は持たない");
+        assert_eq!(
+            (
+                cache.len(),
+                cache.bytes(),
+                cache.have(&key("Body"), "_MainTex")
+            ),
+            (1, 16, 11)
+        );
+        assert_eq!(
+            cache.have(&key("Hair"), "_MainTex"),
+            0,
+            "別のマテリアルの絵は持たない"
+        );
+        assert_eq!(
+            cache.have(&key("Body"), "_BaseMap"),
+            0,
+            "別のスロットの絵は持たない"
+        );
         // 印と大きさが合えば使える（画素はそのまま）。1 つでも違えば使えない
-        let hit = cache.use_cached(&key("Body"), "_MainTex", 11, (1, 4)).unwrap();
+        let hit = cache
+            .use_cached(&key("Body"), "_MainTex", 11, (1, 4))
+            .unwrap();
         assert_eq!(hit.pixels, body.pixels);
-        assert!(cache.use_cached(&key("Body"), "_MainTex", 12, (1, 4)).is_none(), "印が違う");
-        assert!(cache.use_cached(&key("Body"), "_MainTex", 0, (1, 4)).is_none(), "印なしは使わない");
-        assert!(cache.use_cached(&key("Body"), "_MainTex", 11, (2, 2)).is_none(), "大きさが違う");
-        assert!(cache.use_cached(&key("Hair"), "_MainTex", 11, (1, 4)).is_none());
+        assert!(
+            cache
+                .use_cached(&key("Body"), "_MainTex", 12, (1, 4))
+                .is_none(),
+            "印が違う"
+        );
+        assert!(
+            cache
+                .use_cached(&key("Body"), "_MainTex", 0, (1, 4))
+                .is_none(),
+            "印なしは使わない"
+        );
+        assert!(
+            cache
+                .use_cached(&key("Body"), "_MainTex", 11, (2, 2))
+                .is_none(),
+            "大きさが違う"
+        );
+        assert!(cache
+            .use_cached(&key("Hair"), "_MainTex", 11, (1, 4))
+            .is_none());
         // 印の無い絵・絵の付かない様子は残さず、前の絵も捨てる（印の無い新しい絵が来た以上、前の絵は今の絵ではない）
         cache.remember(&key("Body"), &stamped(1, 0, 16, 0));
         assert!(cache.is_empty());
@@ -1275,7 +1440,14 @@ mod tests {
         // 同じ鍵・スロットは置き換える
         cache.remember(&key("Body"), &stamped(1, 0, 16, 1));
         cache.remember(&key("Body"), &stamped(1, 0, 8, 2));
-        assert_eq!((cache.len(), cache.bytes(), cache.have(&key("Body"), "_MainTex")), (1, 8, 2));
+        assert_eq!(
+            (
+                cache.len(),
+                cache.bytes(),
+                cache.have(&key("Body"), "_MainTex")
+            ),
+            (1, 8, 2)
+        );
     }
 
     #[test]
@@ -1288,7 +1460,11 @@ mod tests {
         cache.remember(&key("C"), &stamped(1, 0, 16, 3));
         assert_eq!(cache.bytes(), 32);
         assert_eq!(cache.have(&key("A"), "_MainTex"), 1);
-        assert_eq!(cache.have(&key("B"), "_MainTex"), 0, "使っていない B を捨てた");
+        assert_eq!(
+            cache.have(&key("B"), "_MainTex"),
+            0,
+            "使っていない B を捨てた"
+        );
         assert_eq!(cache.have(&key("C"), "_MainTex"), 3);
         // 1 枚で上限を超える絵は残さない（ほかの絵も追い出さない）
         cache.remember(&key("D"), &stamped(1, 0, 44, 4));
@@ -1305,12 +1481,19 @@ mod tests {
         let asked = base.take_requests();
         assert_eq!(
             asked,
-            vec![MaterialWant::original(0, "_MainTex", 0), MaterialWant::original(1, "_MainTex", 0)]
+            vec![
+                MaterialWant::original(0, "_MainTex", 0),
+                MaterialWant::original(1, "_MainTex", 0)
+            ]
         );
-        assert!(base.take_requests().is_empty(), "頼んだものは、もう頼まない");
+        assert!(
+            base.take_requests().is_empty(),
+            "頼んだものは、もう頼まない"
+        );
         // 手元に Body の絵がある状態で、モデルを送り直された: Body の頼みには印が付き、Hair は印なし
         let (state, mut base, m, t0) = waiting();
-        base.cache.remember(&key("Body"), &stamped(1, 0, 16, 0xABCD));
+        base.cache
+            .remember(&key("Body"), &stamped(1, 0, 16, 0xABCD));
         let uids: Vec<u32> = state.sets.iter().map(|s| s.uid).collect();
         base.model(&state, &m, &uids[..2], None, t0);
         let asked = base.take_requests();
@@ -1330,7 +1513,11 @@ mod tests {
     fn a_cached_answer_with_the_same_stamp_uses_the_picture_in_hand() {
         let (mut state, mut base, _, t0) = waiting();
         base.cache.remember(&key("Body"), &stamped(1, 0, 16, 7));
-        let hand = base.cache.use_cached(&key("Body"), "_MainTex", 7, (1, 4)).unwrap().pixels;
+        let hand = base
+            .cache
+            .use_cached(&key("Body"), "_MainTex", 7, (1, 4))
+            .unwrap()
+            .pixels;
         base.take_requests();
         // Unity の答え: 印が同じ（画素なし）。手元の絵が届いたものとして扱い、セットに入る
         base.receive(cached_answer(1, 0, 16, 7), t0).unwrap();
@@ -1339,7 +1526,10 @@ mod tests {
         assert!(base.poll(&mut state, 7, t0).is_none());
         assert_eq!(base.waiting_count(), 0, "手元の絵で、待ちが終わった");
         let doc = state.set_doc(0);
-        assert_eq!(doc.layers().iter().map(|l| l.name()).collect::<Vec<_>>(), ["元の絵", "レイヤー 1"]);
+        assert_eq!(
+            doc.layers().iter().map(|l| l.name()).collect::<Vec<_>>(),
+            ["元の絵", "レイヤー 1"]
+        );
         // 入った画素は手元の絵の画素（1 × 4 の絵を 64 の文書の大きさへ拡大したもの。端は元の画素）
         let bottom = crate::engine::layer_pixel(&doc.layers()[0], 0, 0);
         assert_eq!(bottom, [hand[0], hand[1], hand[2], hand[3]]);
@@ -1352,9 +1542,19 @@ mod tests {
             base.cache.remember(&key("Body"), &stamped(1, 0, 16, 7));
             base.take_requests();
             // 印が違う（Unity の絵が変わった）・大きさが違う: 手元の絵は使わない
-            base.receive(cached_answer(1, 0, size_bytes, stamp), t0 + Duration::from_secs(1)).unwrap();
-            assert!(base.poll(&mut state, 7, t0 + Duration::from_secs(1)).is_none());
-            assert_eq!(base.waiting_count(), 2, "古い絵で入れず、待ち続ける（stamp {stamp}）");
+            base.receive(
+                cached_answer(1, 0, size_bytes, stamp),
+                t0 + Duration::from_secs(1),
+            )
+            .unwrap();
+            assert!(base
+                .poll(&mut state, 7, t0 + Duration::from_secs(1))
+                .is_none());
+            assert_eq!(
+                base.waiting_count(),
+                2,
+                "古い絵で入れず、待ち続ける（stamp {stamp}）"
+            );
             assert_eq!(
                 base.take_requests(),
                 vec![MaterialWant::original(0, "_MainTex", 0)],
@@ -1362,14 +1562,18 @@ mod tests {
             );
             assert!(base.take_requests().is_empty());
             // 頼み直しの答え（画素つき・新しい印）で入り、手元の絵も新しくなる
-            base.receive(stamped(1, 0, 32, 99), t0 + Duration::from_secs(2)).unwrap();
+            base.receive(stamped(1, 0, 32, 99), t0 + Duration::from_secs(2))
+                .unwrap();
             assert_eq!(base.cache().have(&key("Body"), "_MainTex"), 99);
         }
         // 手元に何も無いのに「印が同じ」と言われても、使わず頼み直す
         let (_, mut base, _, t0) = waiting();
         base.take_requests();
         base.receive(cached_answer(1, 1, 16, 5), t0).unwrap();
-        assert_eq!(base.take_requests(), vec![MaterialWant::original(1, "_MainTex", 0)]);
+        assert_eq!(
+            base.take_requests(),
+            vec![MaterialWant::original(1, "_MainTex", 0)]
+        );
         // 待たせていないマテリアルの答えは、受けて捨てる（頼み直さない）
         base.receive(cached_answer(1, 2, 16, 5), t0).unwrap();
         assert!(base.take_requests().is_empty());

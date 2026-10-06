@@ -685,7 +685,9 @@ fn hue_saturation_cannot_target_scalar_channels() {
     assert!(d
         .add_adjustment_layer("bad", hs.clone(), Some(&[Channel::Roughness]), None)
         .is_err());
-    let hsl = d.add_adjustment_layer("hsl", hs.clone(), None, None).unwrap();
+    let hsl = d
+        .add_adjustment_layer("hsl", hs.clone(), None, None)
+        .unwrap();
     assert_eq!(
         d.layer(hsl).unwrap().enabled_channels(),
         vec![Channel::Color, Channel::Emission]

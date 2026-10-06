@@ -219,7 +219,10 @@ fn effect_documents_composite_every_channel_like_the_recorded_bytes() {
         let got = composites(&core);
         let want = read(&format!("{name}.composite"));
         if got != want && std::env::var_os("YOLU_GOLDEN_UPDATE").is_some() {
-            let path = format!("{}/tests/fixtures/{name}.composite", env!("CARGO_MANIFEST_DIR"));
+            let path = format!(
+                "{}/tests/fixtures/{name}.composite",
+                env!("CARGO_MANIFEST_DIR")
+            );
             std::fs::write(path, &got).unwrap();
             continue;
         }

@@ -43,13 +43,18 @@ fn a_failure_returns_to_the_caller_and_the_next_test_runs() {
 #[test]
 fn a_failure_carries_the_place_it_panicked_at() {
     let _serial = serial();
+    // 次の行で落とす（整形で折れない長さに保つ。折れると行がずれる）
     let line = line!() + 1;
-    let failure = gpu_thread::run_checked(|| panic!("場所を見る")).expect_err("失敗を成功として扱わない");
+    let failure = gpu_thread::run_checked(|| panic!("場所を見る"));
+    let failure = failure.expect_err("失敗を成功として扱わない");
     let at = failure.location.as_deref().expect("落ちた場所が残る");
     assert!(at.contains("window_lease.rs"), "ファイル名: {at}");
     assert!(at.contains(&format!(":{line}:")), "行 {line}: {at}");
     let described = failure.describe();
-    assert!(described.contains("場所を見る") && described.contains(at), "{described}");
+    assert!(
+        described.contains("場所を見る") && described.contains(at),
+        "{described}"
+    );
     // 次の試験の場所に前の失敗が混ざらない。
     assert!(gpu_thread::run_checked(|| {}).is_ok());
     let line = line!() + 1;
@@ -94,13 +99,19 @@ fn a_thread_can_lease_again_and_others_wait_until_it_ends() {
     });
     held_rx.recv().unwrap();
     let other = std::thread::spawn(|| {
-        assert!(!gpu_thread::is_free(), "ほかのスレッドが持っている間は空いていない");
+        assert!(
+            !gpu_thread::is_free(),
+            "ほかのスレッドが持っている間は空いていない"
+        );
     });
     other.join().unwrap();
     finish.send(()).unwrap();
     owner.join().unwrap();
     // スレッドが終わると放される（join はスレッドの後始末まで待つ）
-    assert!(gpu_thread::is_free(), "終わったスレッドの貸し出しが残っている");
+    assert!(
+        gpu_thread::is_free(),
+        "終わったスレッドの貸し出しが残っている"
+    );
 }
 
 /// 常駐のスレッドへ送る試験は、呼び手の貸し出しを先に放し（さもないと常駐のスレッドが待ち、呼び手が結果を待つ）、
@@ -145,16 +156,24 @@ fn the_canvas_device_is_taken_through_the_same_lease() {
     let (finish, finish_rx) = std::sync::mpsc::channel::<()>();
     let owner = std::thread::spawn(move || {
         let device = canvas_device::begin("window_lease");
-        assert!(!gpu_thread::is_free(), "装置を作る間は窓と同じ貸し出しを持つ");
+        assert!(
+            !gpu_thread::is_free(),
+            "装置を作る間は窓と同じ貸し出しを持つ"
+        );
         held.send(()).unwrap();
         finish_rx.recv().unwrap();
         drop(device);
     });
     held_rx.recv().unwrap();
-    std::thread::spawn(|| assert!(!gpu_thread::is_free(), "ほかのスレッドから見て空いていない")).join().unwrap();
+    std::thread::spawn(|| assert!(!gpu_thread::is_free(), "ほかのスレッドから見て空いていない"))
+        .join()
+        .unwrap();
     finish.send(()).unwrap();
     owner.join().unwrap();
-    assert!(gpu_thread::is_free(), "終わったスレッドの貸し出しが残っている");
+    assert!(
+        gpu_thread::is_free(),
+        "終わったスレッドの貸し出しが残っている"
+    );
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -175,11 +194,25 @@ fn every_window_is_built_through_the_lease() {
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut files = Vec::new();
     rust_files(&tests, &mut files);
-    assert!(files.len() > 50, "試験のファイルが見つからない: {}", files.len());
-    let forbidden = ["Harness::builder", "Harness::new", "HarnessBuilder::", "Harness::default", "Harness::<"];
+    assert!(
+        files.len() > 50,
+        "試験のファイルが見つからない: {}",
+        files.len()
+    );
+    let forbidden = [
+        "Harness::builder",
+        "Harness::new",
+        "HarnessBuilder::",
+        "Harness::default",
+        "Harness::<",
+    ];
     let mut bad = Vec::new();
     for path in files {
-        let name = path.strip_prefix(&tests).unwrap().to_string_lossy().replace('\\', "/");
+        let name = path
+            .strip_prefix(&tests)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
         // この確かめ自身と、貸し出しの口（builder の中）は除く
         if name == "window_lease.rs" || name == "common/gpu_thread.rs" {
             continue;
@@ -195,7 +228,11 @@ fn every_window_is_built_through_the_lease() {
             }
         }
     }
-    assert!(bad.is_empty(), "窓を貸し出しを通さずに作っている:\n{}", bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "窓を貸し出しを通さずに作っている:\n{}",
+        bad.join("\n")
+    );
 }
 
 /// 窓（harness）を作らなくても、焼く場所に GPU（`Gpu`・`Auto`）を選んで確かめる試験は、製品のスレッドで GPU の装置を作る。
@@ -209,7 +246,11 @@ fn every_gpu_bake_test_takes_the_lease() {
     let mut bad = Vec::new();
     let mut checked = 0;
     for path in files {
-        let name = path.strip_prefix(&tests).unwrap().to_string_lossy().replace('\\', "/");
+        let name = path
+            .strip_prefix(&tests)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
         if name == "window_lease.rs" {
             continue;
         }
@@ -245,7 +286,10 @@ fn every_gpu_bake_test_takes_the_lease() {
             }
         }
     }
-    assert!(checked >= 1, "GPU で焼く試験が 1 つも見つからない（見つけ方が古くなった）");
+    assert!(
+        checked >= 1,
+        "GPU で焼く試験が 1 つも見つからない（見つけ方が古くなった）"
+    );
     assert!(
         bad.is_empty(),
         "GPU を選んで焼く試験が貸し出しを取っていない（先頭で `common::gpu_thread::lease()` を呼ぶ）:\n{}",

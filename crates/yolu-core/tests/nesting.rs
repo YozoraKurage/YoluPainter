@@ -36,7 +36,10 @@ fn grouping_stops_at_the_depth_limit_and_changes_nothing() {
     let (layers, revision) = (d.layers().len(), d.revision());
     let e = d.group_layers(&[top], "one more").unwrap_err();
     assert!(too_deep(&e), "{e:?}");
-    assert_eq!((d.layers().len(), d.revision(), d.undo_count()), (layers, revision, 0));
+    assert_eq!(
+        (d.layers().len(), d.revision(), d.undo_count()),
+        (layers, revision, 0)
+    );
     // 別の層をまとめるだけなら、深さは増えないので通る
     let extra = d.add_layer("extra").unwrap();
     d.group_layers(&[extra], "side").unwrap();
@@ -77,7 +80,10 @@ fn adding_a_group_next_to_a_layer_in_the_deepest_group_is_refused_and_changes_no
     // 一番内側のグループの中の層の隣へ足すと、グループが 65 段になる
     let e = d.add_group("one more", Some(leaf)).unwrap_err();
     assert!(too_deep(&e), "{e:?}");
-    assert_eq!((d.layers().len(), d.revision(), d.undo_count()), (layers, revision, 0));
+    assert_eq!(
+        (d.layers().len(), d.revision(), d.undo_count()),
+        (layers, revision, 0)
+    );
     d.validate_structure().unwrap();
     // 一番上の段・別の段の隣へなら足せる（鎖は増えない）
     d.add_group("top", None).unwrap();
@@ -118,7 +124,10 @@ fn undo_back_into_a_valid_nesting_still_works_after_a_refusal() {
 }
 
 /// 層を平らに足し、`parents`（下から上の並び。`None` は一番上の段）を `set_structure_for_load` で渡す。
-fn load(kinds: &[bool], parents: impl Fn(&[LayerId]) -> Vec<Option<LayerId>>) -> Result<Document, CoreError> {
+fn load(
+    kinds: &[bool],
+    parents: impl Fn(&[LayerId]) -> Vec<Option<LayerId>>,
+) -> Result<Document, CoreError> {
     let mut d = doc();
     let ids: Vec<LayerId> = kinds
         .iter()
@@ -137,7 +146,9 @@ fn load(kinds: &[bool], parents: impl Fn(&[LayerId]) -> Vec<Option<LayerId>>) ->
 
 /// 並び [leaf, g1, g2, …, gN]（g1 が leaf の親、g2 が g1 の親…）。
 fn chain_parents(n: usize) -> Result<Document, CoreError> {
-    let kinds: Vec<bool> = std::iter::once(false).chain(std::iter::repeat_n(true, n)).collect();
+    let kinds: Vec<bool> = std::iter::once(false)
+        .chain(std::iter::repeat_n(true, n))
+        .collect();
     load(&kinds, |ids| {
         (0..ids.len()).map(|i| ids.get(i + 1).copied()).collect()
     })
@@ -145,8 +156,13 @@ fn chain_parents(n: usize) -> Result<Document, CoreError> {
 
 #[test]
 fn loaders_refuse_a_chain_deeper_than_the_limit() {
-    chain_parents(MAX_GROUP_DEPTH).unwrap().validate_structure().unwrap();
-    let e = chain_parents(MAX_GROUP_DEPTH + 1).err().expect("65 段は断る");
+    chain_parents(MAX_GROUP_DEPTH)
+        .unwrap()
+        .validate_structure()
+        .unwrap();
+    let e = chain_parents(MAX_GROUP_DEPTH + 1)
+        .err()
+        .expect("65 段は断る");
     assert!(too_deep(&e), "{e:?}");
     // 1000 段（取り込みが以前は受けていた深さ）
     let e = chain_parents(1000).err().expect("断る");
@@ -183,7 +199,10 @@ fn nesting_is_checked_in_one_pass_even_for_2000_layers_in_a_deep_chain() {
     d.validate_structure().unwrap();
     let took = started.elapsed();
     assert!(n > 1900, "{n}");
-    assert!(took < Duration::from_secs(5), "{n} 層の入れ子の確かめに {took:?}");
+    assert!(
+        took < Duration::from_secs(5),
+        "{n} 層の入れ子の確かめに {took:?}"
+    );
 }
 
 #[test]
@@ -206,7 +225,10 @@ fn placing_a_smart_material_stops_at_the_depth_limit() {
     let leaf = src.add_layer("葉").unwrap();
     let g = src.group_layers(&[leaf], "g").unwrap();
     let material = src.capture_smart_material(&[g], "素材").unwrap();
-    let at = |parent| SmartPlacement { parent: Some(parent), ..SmartPlacement::default() };
+    let at = |parent| SmartPlacement {
+        parent: Some(parent),
+        ..SmartPlacement::default()
+    };
     // 63 段の鎖の一番内側へ置くと、ちょうど 64 段
     let (mut d, _) = chain(MAX_GROUP_DEPTH - 1);
     let innermost = d.layers()[1].id();
@@ -216,9 +238,12 @@ fn placing_a_smart_material_stops_at_the_depth_limit() {
     let (mut d, _) = chain(MAX_GROUP_DEPTH);
     let innermost = d.layers()[1].id();
     let (layers, revision) = (d.layers().len(), d.revision());
-    let e = d.place_smart_material(&material, &at(innermost)).unwrap_err();
+    let e = d
+        .place_smart_material(&material, &at(innermost))
+        .unwrap_err();
     assert!(too_deep(&e), "{e:?}");
     assert_eq!((d.layers().len(), d.revision()), (layers, revision));
     // 一番上の段へは置ける
-    d.place_smart_material(&material, &SmartPlacement::default()).unwrap();
+    d.place_smart_material(&material, &SmartPlacement::default())
+        .unwrap();
 }

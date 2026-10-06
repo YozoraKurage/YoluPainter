@@ -324,7 +324,10 @@ fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_ope
             .rect();
         assert_eq!(bake.center().y, configure.center().y, "{lang:?}");
         assert!(bake.right() <= configure.left(), "{bake:?} {configure:?}");
-        assert!(configure.left() - bake.right() < 12.0, "{bake:?} {configure:?}");
+        assert!(
+            configure.left() - bake.right() < 12.0,
+            "{bake:?} {configure:?}"
+        );
         // 押すとベイクの窓が開く（メニューの項目と同じ操作）
         assert!(h.state().state.bake.window.is_none());
         click(&mut h, bake.center());
@@ -367,10 +370,12 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
             "Add an empty texture set (same size and channels as this one)",
         );
         let remove_label = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
-            h.get_all_by_label_contains(lang.pick("プロジェクトには少なくとも", "A project keeps at least"))
-                .next()
-                .expect("消すボタン")
-                .rect()
+            h.get_all_by_label_contains(
+                lang.pick("プロジェクトには少なくとも", "A project keeps at least"),
+            )
+            .next()
+            .expect("消すボタン")
+            .rect()
         };
         // 帯の幅: 足すボタンは左端から 4、設定のボタンは右端の 4 手前に終わる（パネルの縁の分だけ窓の幅より狭い）
         let bar_width = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
@@ -379,16 +384,27 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
         let edge = 400.0 - bar_width(&set_panel(400.0, lang));
         assert!(edge >= 0.0, "{lang:?}: 帯が窓より広い");
         for bar in [
-            90.0_f32, 110.0, 120.0, 126.0, 127.0, 127.5, 128.0, 128.5, 129.0, 135.0, 160.0, 235.0, 400.0,
+            90.0_f32, 110.0, 120.0, 126.0, 127.0, 127.5, 128.0, 128.5, 129.0, 135.0, 160.0, 235.0,
+            400.0,
         ] {
             let h = set_panel(bar + edge, lang);
-            assert!((bar_width(&h) - bar).abs() < 0.01, "{lang:?} 帯 {bar}: {}", bar_width(&h));
+            assert!(
+                (bar_width(&h) - bar).abs() < 0.01,
+                "{lang:?} 帯 {bar}: {}",
+                bar_width(&h)
+            );
             let bake = h
-                .query_all_by_label_contains(lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…"))
+                .query_all_by_label_contains(
+                    lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                )
                 .next()
                 .map(|n| n.rect());
             // 境は 128 px ちょうど: 127.5 までは出さず、128 からは出す
-            assert_eq!(bake.is_some(), bar >= BAKE_MIN_BAR_WIDTH, "{lang:?} 帯 {bar}");
+            assert_eq!(
+                bake.is_some(),
+                bar >= BAKE_MIN_BAR_WIDTH,
+                "{lang:?} 帯 {bar}"
+            );
             let mut rects = vec![
                 h.get_by_label(add).rect(),
                 remove_label(&h),
@@ -413,9 +429,8 @@ fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
     let mut h = app(1280.0, 800.0, 128);
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
-    let marked = |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>| {
-        bake_entrance(&h.state().state).marked
-    };
+    let marked =
+        |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>| bake_entrance(&h.state().state).marked;
     assert!(marked(&h), "焼く前");
     bake_current_set(&mut h);
     let baked = bake_entrance(&h.state().state);
@@ -425,7 +440,9 @@ fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
     let at = h.get_by_label(&baked.tooltip).rect().center();
     click(&mut h, at);
     assert!(h.state().state.bake.window.is_some());
-    h.state_mut().state.apply(Action::Bake(yolu_app::bake::BakeAction::CloseWindow));
+    h.state_mut()
+        .state
+        .apply(Action::Bake(yolu_app::bake::BakeAction::CloseWindow));
     // 足した空のセットは、ほかのセットが焼けていても印が付く。戻せば消える
     let first = h.state().state.sets.current().uid;
     h.state_mut()
@@ -454,7 +471,10 @@ fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: 
         .rect();
     let image = h.render().expect("描画");
     // 左へは、帯の左端より広く（右に寄った帯のボタンのツールチップは左へ伸びる）
-    let (left, top) = ((configure.right() - 330.0).max(0.0) as u32, (add.top() - 100.0).max(0.0) as u32);
+    let (left, top) = (
+        (configure.right() - 330.0).max(0.0) as u32,
+        (add.top() - 100.0).max(0.0) as u32,
+    );
     let right = ((configure.right() + 8.0) as u32).min(image.width());
     let bottom = ((add.bottom() + 70.0) as u32).min(image.height());
     let cropped =
@@ -515,10 +535,15 @@ fn the_fire_icon_is_loaded_and_listed_in_the_licence_tables() {
     assert!(yolu_app::ui::icons::Icons::load(&ctx).has("local_fire_department"));
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let png = std::fs::read(root.join("assets/icons/local_fire_department.png")).unwrap();
-    let digest: String = Sha256::digest(&png).iter().map(|b| format!("{b:02x}")).collect();
+    let digest: String = Sha256::digest(&png)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     // 許諾の表: 確認済みの PNG の SHA-256 と、元の名前の対応（JSON として読む。改行や字下げに頼らない）
-    let reviewed: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.join("../../tools/licenses-reviewed.json")).unwrap()).unwrap();
+    let reviewed: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("../../tools/licenses-reviewed.json")).unwrap(),
+    )
+    .unwrap();
     let listed = reviewed["bundled"]["yolu-app"]
         .as_array()
         .expect("bundled の yolu-app の配列")
@@ -526,8 +551,13 @@ fn the_fire_icon_is_loaded_and_listed_in_the_licence_tables() {
         .flat_map(|entry| entry["files"].as_array().into_iter().flatten())
         .find(|file| file["path"] == "crates/yolu-app/assets/icons/local_fire_department.png")
         .expect("licenses-reviewed.json に載っていない");
-    assert_eq!(listed["sha256"], digest.as_str(), "載っている SHA-256 と PNG が違う");
-    let notices = std::fs::read_to_string(root.join("assets/icons/THIRD-PARTY-NOTICES.md")).unwrap();
+    assert_eq!(
+        listed["sha256"],
+        digest.as_str(),
+        "載っている SHA-256 と PNG が違う"
+    );
+    let notices =
+        std::fs::read_to_string(root.join("assets/icons/THIRD-PARTY-NOTICES.md")).unwrap();
     assert!(notices.contains("| `local_fire_department` | fluent | `fire` | regular |"));
 }
 
@@ -564,7 +594,10 @@ fn read_project(path: &std::path::Path) -> yolu_io::Project {
 
 /// .ylp の 1 つのエントリ（形式 7 の並びへ移した名前で）。
 fn zip_entry(path: &std::path::Path, name: &str) -> Vec<u8> {
-    read_project(path).migrated_entries()[name].bytes().unwrap().to_vec()
+    read_project(path).migrated_entries()[name]
+        .bytes()
+        .unwrap()
+        .to_vec()
 }
 
 fn backups(path: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -633,10 +666,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     assert!(!s.modified);
     let saved = read_project(&path);
     assert_eq!(saved.info().format, 7);
-    assert_eq!(
-        saved.info().saved_by.as_ref().unwrap().app,
-        "YoluPainter"
-    );
+    assert_eq!(saved.info().saved_by.as_ref().unwrap().app, "YoluPainter");
     assert_eq!(saved.info().created_by, original.info().created_by);
     let doc = saved.sets()[0].document.to_core().unwrap();
     assert_eq!(
@@ -945,7 +975,10 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
             .unwrap()
             .to_bytes()
     );
-    assert_eq!(saved.sets()[1].document.to_bytes().unwrap(), natives[1].to_bytes());
+    assert_eq!(
+        saved.sets()[1].document.to_bytes().unwrap(),
+        natives[1].to_bytes()
+    );
     assert_eq!(saved.sets()[0].document.version(), 21);
     // 書き直したセットの合成は、使っているチャンネルごと（Color のほか Height）に書く。Unity 版が合成の並びからチャンネルを出す
     let first = saved.sets()[0].id.clone();
@@ -959,7 +992,10 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
             channel.standard_name().unwrap()
         );
         assert_eq!(
-            saved.migrated_entries().get(&entry).map(|b| b.bytes().unwrap().to_vec()),
+            saved
+                .migrated_entries()
+                .get(&entry)
+                .map(|b| b.bytes().unwrap().to_vec()),
             Some(png.clone()),
             "{entry}"
         );
@@ -1177,8 +1213,12 @@ fn paint_a_stroke(s: &mut yolu_app::state::AppState, x: f64) {
     let layer = s.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
     let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
-    stroke.add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO).unwrap();
-    stroke.add_point(&mut s.doc, x + 6.0, 20.0, 1.0, DVec2::ZERO).unwrap();
+    stroke
+        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .unwrap();
+    stroke
+        .add_point(&mut s.doc, x + 6.0, 20.0, 1.0, DVec2::ZERO)
+        .unwrap();
     s.doc.end_stroke(stroke).unwrap();
     s.modified = true;
 }
@@ -1191,28 +1231,47 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     let dir = TempDir::new("keep");
     let path = dir.0.join("keep.ylp");
     let mut s = AppState::new(64, 64);
-    assert_eq!(s.prefs.settings.backups, BackupKeep::All, "既定はすべて残す");
+    assert_eq!(
+        s.prefs.settings.backups,
+        BackupKeep::All,
+        "既定はすべて残す"
+    );
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(2))));
     s.apply(Action::SaveProjectAs(path.clone()));
     assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert!(!s.message.contains("前の版は"), "新しく作ったので前の版は無い");
+    assert!(
+        !s.message.contains("前の版は"),
+        "新しく作ったので前の版は無い"
+    );
     for i in 0..4 {
         paint_a_stroke(&mut s, 8.0 + 8.0 * i as f64);
         s.apply(Action::SaveProject);
         assert!(s.message.starts_with("保存しました"), "{}", s.message);
-        assert!(s.message.contains("前の版は keep.ylp-backups~ に残しました"), "{}", s.message);
+        assert!(
+            s.message
+                .contains("前の版は keep.ylp-backups~ に残しました"),
+            "{}",
+            s.message
+        );
     }
     // 4 回の上書きで、残るのは新しい 2 つだけ。今のファイルの 1 つ前の版が必ず入っている
     assert_eq!(backups(&path).len(), 2);
     let newest = yolu_io::backups(&path).unwrap().remove(0);
     let before_last_save = std::fs::read(&newest).unwrap();
     assert_ne!(before_last_save, std::fs::read(&path).unwrap());
-    assert!(yolu_io::Project::read(&before_last_save).is_ok(), "退避は .ylp として読める");
+    assert!(
+        yolu_io::Project::read(&before_last_save).is_ok(),
+        "退避は .ylp として読める"
+    );
     // 0: 退避しない（知らせにも出さず、すでにある 2 つは消さない）
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
     paint_a_stroke(&mut s, 50.0);
     s.apply(Action::SaveProject);
-    assert!(s.message.starts_with("保存しました") && !s.message.contains("前の版は"), "{}", s.message);
+    assert!(
+        s.message.starts_with("保存しました") && !s.message.contains("前の版は"),
+        "{}",
+        s.message
+    );
     assert_eq!(backups(&path).len(), 2);
     // すべて: 消さずに溜める
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
@@ -1225,7 +1284,11 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     s.set_language(yolu_app::lang::Lang::En);
     paint_a_stroke(&mut s, 40.0);
     s.apply(Action::SaveProject);
-    assert!(s.message.contains("Previous version: keep.ylp-backups~."), "{}", s.message);
+    assert!(
+        s.message.contains("Previous version: keep.ylp-backups~."),
+        "{}",
+        s.message
+    );
 }
 
 #[test]
@@ -1243,12 +1306,20 @@ fn saving_as_over_another_file_follows_the_setting_too() {
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
     paint_a_stroke(&mut s, 20.0);
     s.apply(Action::SaveProjectAs(a.clone()));
-    assert!(s.message.starts_with("保存しました") && !s.message.contains("前の版は"), "{}", s.message);
+    assert!(
+        s.message.starts_with("保存しました") && !s.message.contains("前の版は"),
+        "{}",
+        s.message
+    );
     assert!(backups(&a).is_empty());
     s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(1))));
     paint_a_stroke(&mut s, 30.0);
     s.apply(Action::SaveProjectAs(a.clone()));
-    assert!(s.message.contains("前の版は a.ylp-backups~"), "{}", s.message);
+    assert!(
+        s.message.contains("前の版は a.ylp-backups~"),
+        "{}",
+        s.message
+    );
     assert_eq!(backups(&a).len(), 1);
 }
 
@@ -1259,13 +1330,24 @@ fn a_name_without_ylp_is_refused_and_a_missing_folder_is_created() {
     let mut s = AppState::new(64, 64);
     for bad in ["noext", "pic.png", "doc.ylp.bak", "doc.ylp~"] {
         s.apply(Action::SaveProjectAs(dir.0.join("sub").join(bad)));
-        assert!(s.message.starts_with("保存できません") && s.message.contains(".ylp"), "{bad}: {}", s.message);
+        assert!(
+            s.message.starts_with("保存できません") && s.message.contains(".ylp"),
+            "{bad}: {}",
+            s.message
+        );
         assert!(s.project.is_none(), "{bad}");
     }
-    assert!(!dir.0.join("sub").exists(), "断った保存はフォルダーも作らない");
+    assert!(
+        !dir.0.join("sub").exists(),
+        "断った保存はフォルダーも作らない"
+    );
     s.set_language(yolu_app::lang::Lang::En);
     s.apply(Action::SaveProjectAs(dir.0.join("noext")));
-    assert!(s.message.ends_with("The file name must end with .ylp"), "{}", s.message);
+    assert!(
+        s.message.ends_with("The file name must end with .ylp"),
+        "{}",
+        s.message
+    );
     // フォルダーは、なければ保存のときに作る（大文字の拡張子でも保存できる）
     let nested = dir.0.join("a").join("b").join("Deep.YLP");
     s.apply(Action::SaveProjectAs(nested.clone()));

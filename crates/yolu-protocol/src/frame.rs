@@ -243,7 +243,10 @@ mod tests {
         // 上限ちょうどの枠は 512 MiB を写すので、ここでは作らない（0 で埋めた領域はまだ物理メモリを使わない）
         let over = vec![0u8; MAX_PAYLOAD + 1];
         let e = try_encode_frame(0x7fff, 0, &over).unwrap_err();
-        assert!(matches!(e, FrameError::TooLarge(n) if n == MAX_PAYLOAD + 1), "{e}");
+        assert!(
+            matches!(e, FrameError::TooLarge(n) if n == MAX_PAYLOAD + 1),
+            "{e}"
+        );
         assert!(e.to_string().contains("512 MiB"), "理由に上限が入る: {e}");
         // 書く口は、何も書かずに InvalidInput（パニックしない）。512 MiB の命令は作らず、上限を狭めて同じ道を通す
         let hello = Message::Hello(Hello {

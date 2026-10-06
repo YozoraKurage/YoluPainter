@@ -104,7 +104,11 @@ fn capture_frames(frames: &mut [usize]) -> usize {
         let wanted = frames.len().min(raw.len());
         // SAFETY: 長さ `wanted` までの配列へ書くだけ。
         let count = unsafe {
-            windows::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(1, &mut raw[..wanted], None)
+            windows::Win32::System::Diagnostics::Debug::RtlCaptureStackBackTrace(
+                1,
+                &mut raw[..wanted],
+                None,
+            )
         } as usize;
         for (slot, address) in frames.iter_mut().zip(&raw[..count.min(wanted)]) {
             *slot = *address as usize;
@@ -117,13 +121,18 @@ fn capture_frames(frames: &mut [usize]) -> usize {
         let wanted = frames.len().min(raw.len());
         // SAFETY: 長さ `wanted` までの配列へ書くだけ（glibc・Apple の `backtrace`）。最初の呼び出しは共有ライブラリを読み込むことがあるので、
         // `install` が平常時に 1 度呼んでおく。
-        let count = unsafe { libc::backtrace(raw.as_mut_ptr(), wanted as libc::c_int) }.max(0) as usize;
+        let count =
+            unsafe { libc::backtrace(raw.as_mut_ptr(), wanted as libc::c_int) }.max(0) as usize;
         for (slot, address) in frames.iter_mut().zip(&raw[..count.min(wanted)]) {
             *slot = *address as usize;
         }
         count.min(wanted)
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
+    #[cfg(not(any(
+        windows,
+        all(target_os = "linux", target_env = "gnu"),
+        target_os = "macos"
+    )))]
     {
         let _ = frames;
         0
@@ -188,8 +197,15 @@ pub fn allocation_failed(size: usize, align: usize) {
             buf: &mut block[..ALLOC_BLOCK - 1],
             len: 0,
         };
-        let _ = writeln!(text, "Allocation failed: {size} bytes (align {align}), failure #{failures}");
-        let _ = writeln!(text, "Image base: 0x{:x}", IMAGE_BASE.load(Ordering::Relaxed));
+        let _ = writeln!(
+            text,
+            "Allocation failed: {size} bytes (align {align}), failure #{failures}"
+        );
+        let _ = writeln!(
+            text,
+            "Image base: 0x{:x}",
+            IMAGE_BASE.load(Ordering::Relaxed)
+        );
         let _ = writeln!(text, "Frames:");
         for address in &frames[..count] {
             let _ = writeln!(text, "0x{address:x}");

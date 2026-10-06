@@ -101,7 +101,10 @@ impl OpsView {
         match &self.status {
             OpsStatus::Off => String::new(),
             OpsStatus::Listening => lang
-                .pick("外からの操作を待っています", "Waiting for external commands")
+                .pick(
+                    "外からの操作を待っています",
+                    "Waiting for external commands",
+                )
                 .into(),
             OpsStatus::Connected(n) => lang.pick(
                 format!("外からの操作を受けています（つながり {n}）"),
@@ -277,7 +280,9 @@ impl OpsLink {
 
     /// 画面に写す様子。
     pub fn view(&self) -> OpsView {
-        OpsView { status: self.status() }
+        OpsView {
+            status: self.status(),
+        }
     }
 
     /// これまでに実行した要求の数（断った・誤りにした要求も数える。試験・診断用）。
@@ -321,7 +326,10 @@ impl OpsLink {
                 } else {
                     e.to_string()
                 };
-                state.message = OpsView { status: OpsStatus::Failed(reason.clone()) }.tooltip(lang);
+                state.message = OpsView {
+                    status: OpsStatus::Failed(reason.clone()),
+                }
+                .tooltip(lang);
                 self.failure = Some(reason);
                 return;
             }
@@ -346,7 +354,9 @@ impl OpsLink {
                                 let (key, active) = (key.clone(), active.clone());
                                 let _ = thread::Builder::new()
                                     .name(format!("yolu-ops-{session}"))
-                                    .spawn(move || serve(stream, session, tx, ctx, stop, key, active));
+                                    .spawn(move || {
+                                        serve(stream, session, tx, ctx, stop, key, active)
+                                    });
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 thread::sleep(Duration::from_millis(50))
@@ -357,7 +367,10 @@ impl OpsLink {
                 })
                 .expect("スレッドを作れる")
         };
-        self.listening = Some(Listening { stop, thread: Some(thread) });
+        self.listening = Some(Listening {
+            stop,
+            thread: Some(thread),
+        });
     }
 
     /// 待ち受けをやめ、つながりを閉じる（`Bye` を送る）。
@@ -390,7 +403,11 @@ impl OpsLink {
             }
             let Ok(event) = self.rx.try_recv() else { break };
             match event {
-                Event::Connected { session, agent, out } => {
+                Event::Connected {
+                    session,
+                    agent,
+                    out,
+                } => {
                     if self.listening.is_none() {
                         // やめた後に来た
                         let _ = out.send(Out::Bye);
@@ -437,18 +454,25 @@ impl OpsLink {
         let (result, started) = {
             let mut host = AppHost::new(state);
             // `execute` は途中の panic を `internal` の誤りにして返す（文書の編集は積んだ段を戻してから）。受け止めて動き続ける panic なので、落ちた記録にしない
-            let result = crate::crash::handled(std::panic::AssertUnwindSafe(|| yolu_ops::execute(&mut host, &command)))
-                .unwrap_or_else(|_| {
-                    Err(OpError::new(
-                        ErrorCode::Internal,
-                        "命令の途中で想定していない失敗が起きました",
-                        "The command stopped because of an unexpected failure",
-                    ))
-                });
+            let result = crate::crash::handled(std::panic::AssertUnwindSafe(|| {
+                yolu_ops::execute(&mut host, &command)
+            }))
+            .unwrap_or_else(|_| {
+                Err(OpError::new(
+                    ErrorCode::Internal,
+                    "命令の途中で想定していない失敗が起きました",
+                    "The command stopped because of an unexpected failure",
+                ))
+            });
             (result, host.take_started_save())
         };
         if let Some(started) = started {
-            self.pending = Some(PendingSave { session, id, command: command.name(), started });
+            self.pending = Some(PendingSave {
+                session,
+                id,
+                command: command.name(),
+                started,
+            });
             self.finish_pending_save(state);
             return;
         }
@@ -479,7 +503,10 @@ impl OpsLink {
                     if command_breaks(pending.command) || pending.started.replaced {
                         announce(state, pending.command);
                     }
-                    Response::ok(pending.id, AppHost::saved_reply(state, &pending.started, facts))
+                    Response::ok(
+                        pending.id,
+                        AppHost::saved_reply(state, &pending.started, facts),
+                    )
                 }
                 Err(text) => Response::err(
                     pending.id,
@@ -517,13 +544,18 @@ fn breaks_something(command: &Command, reply: &Reply) -> bool {
 
 /// 壊す操作が済んだときの短い知らせ（命令の名前。誰が・何を、は書かない）。
 fn announce(state: &mut AppState, command: &str) {
-    let Some(spec) = command_spec(command) else { return };
+    let Some(spec) = command_spec(command) else {
+        return;
+    };
     let lang = state.lang;
     let title = spec.title.pick(match lang {
         Lang::Ja => yolu_ops::Lang::Ja,
         Lang::En => yolu_ops::Lang::En,
     });
-    state.message = lang.pick(format!("外からの操作: {title}"), format!("External command: {title}"));
+    state.message = lang.pick(
+        format!("外からの操作: {title}"),
+        format!("External command: {title}"),
+    );
 }
 
 fn refusal_text(lang: Lang, kind: Refusal) -> String {
@@ -592,7 +624,10 @@ fn serve(
         ctx.request_repaint();
         sent
     };
-    let slot = Slot { active: active.clone(), held: Cell::new(false) };
+    let slot = Slot {
+        active: active.clone(),
+        held: Cell::new(false),
+    };
     // 数は、挨拶（鍵と版）が済んでから取る。挨拶を送らない接続や鍵の合わない接続が枠を塞がない
     let claim = |_: &Hello| -> Result<(), Reject> {
         if active.fetch_add(1, Ordering::AcqRel) >= MAX_SESSIONS {
@@ -602,24 +637,30 @@ fn serve(
         slot.held.set(true);
         Ok(())
     };
-    let (conn, mut reader, hello) =
-        match accept_as(stream, &identity(), session, &key, link::HANDSHAKE_TIMEOUT, &claim) {
-            Ok(x) => x,
-            Err(LinkError::Rejected(r)) => {
-                let kind = match r.code {
-                    RejectCode::Busy => Refusal::Busy,
-                    RejectCode::Unauthorized => Refusal::Unauthorized,
-                    RejectCode::VersionMismatch => Refusal::Version,
-                    _ => Refusal::Other,
-                };
-                wake(Event::Refused(kind));
-                return;
-            }
-            Err(_) => {
-                wake(Event::Refused(Refusal::Other));
-                return;
-            }
-        };
+    let (conn, mut reader, hello) = match accept_as(
+        stream,
+        &identity(),
+        session,
+        &key,
+        link::HANDSHAKE_TIMEOUT,
+        &claim,
+    ) {
+        Ok(x) => x,
+        Err(LinkError::Rejected(r)) => {
+            let kind = match r.code {
+                RejectCode::Busy => Refusal::Busy,
+                RejectCode::Unauthorized => Refusal::Unauthorized,
+                RejectCode::VersionMismatch => Refusal::Version,
+                _ => Refusal::Other,
+            };
+            wake(Event::Refused(kind));
+            return;
+        }
+        Err(_) => {
+            wake(Event::Refused(Refusal::Other));
+            return;
+        }
+    };
     let (out_tx, out_rx) = mpsc::channel::<Out>();
     {
         let writer = conn.clone();
@@ -630,7 +671,11 @@ fn serve(
             return;
         }
     }
-    if !wake(Event::Connected { session, agent: hello.agent.clone(), out: out_tx.clone() }) {
+    if !wake(Event::Connected {
+        session,
+        agent: hello.agent.clone(),
+        out: out_tx.clone(),
+    }) {
         return;
     }
     reader.set_timeout(Some(READ_TICK));

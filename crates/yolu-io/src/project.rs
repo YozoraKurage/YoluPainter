@@ -175,7 +175,10 @@ impl std::fmt::Display for Note {
                 write!(f, "形式{format}を形式7の並びへメモリ上で移行しました")
             }
             Self::MaterialRefsMigrated { format } => {
-                write!(f, "形式{format}のマテリアル参照を形式7へメモリ上で移行しました")
+                write!(
+                    f,
+                    "形式{format}のマテリアル参照を形式7へメモリ上で移行しました"
+                )
             }
             Self::UnknownEntryKept(name) => {
                 write!(f, "未対応のエントリを原本のまま保持します: {name}")
@@ -464,7 +467,8 @@ impl Project {
         };
         let mut files = self.original.files.clone();
         remove_document_entries(&mut files, &prefix);
-        let (fresh, entries) = SetDocument::from_source(&DocumentSource::Native(doc.clone()), &prefix)?;
+        let (fresh, entries) =
+            SetDocument::from_source(&DocumentSource::Native(doc.clone()), &prefix)?;
         files.extend(entries);
         self.rebuild(files, self.original.level, &[fresh])
     }
@@ -493,13 +497,20 @@ impl Project {
     }
     /// セットの、名前を付けて残した選択範囲（`sets/<ID>/selections.json` と `selection-<SHA-256>.bin`。形式 8）。読めない項目は飛ばして
     /// 理由を `skipped` に返し（ファイルにはバイト列のまま残る）、読める項目だけを `items` に返す。何も無ければ空。セットが無ければ断る。
-    pub fn saved_selections(&self, set_id: &str) -> Result<crate::saved_selections::SavedSelections> {
+    pub fn saved_selections(
+        &self,
+        set_id: &str,
+    ) -> Result<crate::saved_selections::SavedSelections> {
         let set = self
             .sets
             .iter()
             .find(|s| s.id == set_id)
             .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
-        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        let size = (
+            set.document.width(),
+            set.document.height(),
+            set.document.tile_size(),
+        );
         let prefix = format!("sets/{set_id}/");
         Ok(crate::saved_selections::read(
             &|leaf| self.files.get(&format!("{prefix}{leaf}")).map(Blob::bytes),
@@ -523,13 +534,18 @@ impl Project {
             .iter()
             .find(|s| s.id == set_id)
             .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
-        let size = (set.document.width(), set.document.height(), set.document.tile_size());
+        let size = (
+            set.document.width(),
+            set.document.height(),
+            set.document.tile_size(),
+        );
         crate::saved_selections::validate(items, size)?;
         let prefix = format!("sets/{set_id}/");
         let mut files = self.original.files.clone();
         files.retain(|n, _| {
-            n.strip_prefix(&prefix)
-                .is_none_or(|leaf| leaf.contains('/') || !crate::saved_selections::is_entry_leaf(leaf))
+            n.strip_prefix(&prefix).is_none_or(|leaf| {
+                leaf.contains('/') || !crate::saved_selections::is_entry_leaf(leaf)
+            })
         });
         for (leaf, blob) in crate::saved_selections::entries(items)? {
             files.insert(format!("{prefix}{leaf}"), blob);
@@ -553,7 +569,10 @@ impl Project {
         let mut files = self.original.files.clone();
         match pose {
             Some(p) => {
-                files.insert(crate::pose::ENTRY.into(), Blob::from(crate::pose::write(p)?));
+                files.insert(
+                    crate::pose::ENTRY.into(),
+                    Blob::from(crate::pose::write(p)?),
+                );
             }
             None => {
                 files.remove(crate::pose::ENTRY);
@@ -877,7 +896,9 @@ impl Project {
             }
             let project=format!("{{\n  \"sets\": [\n    {{ \"id\": \"{id}\", \"name\": \"Texture Set 1\", \"materialSlot\": {slot} }}\n  ],\n  \"current\": \"{id}\"\n}}\n");
             files.insert("project.json".into(), Blob::from(project.into_bytes()));
-            notes.push(Note::Migrated { format: info.format });
+            notes.push(Note::Migrated {
+                format: info.format,
+            });
         }
         let mut root = json(&required(&files, "project.json")?, 65536)?;
         if info.format < 7 {
@@ -894,8 +915,13 @@ impl Project {
                     .ok_or_else(|| Error::InvalidData("セットがオブジェクトではありません".into()))?
                     .remove("materialSlot");
             }
-            files.insert("project.json".into(), Blob::from(serde_json::to_vec(&root)?));
-            notes.push(Note::MaterialRefsMigrated { format: info.format });
+            files.insert(
+                "project.json".into(),
+                Blob::from(serde_json::to_vec(&root)?),
+            );
+            notes.push(Note::MaterialRefsMigrated {
+                format: info.format,
+            });
         }
         let list = array(&root, "sets", 1, MAX_PROJECT_SETS)?;
         let current = id_text(&root, "current")?.to_string();
@@ -1177,10 +1203,14 @@ fn settle_format(files: &mut Files) -> Result<()> {
     if !(7..=i64::from(MAX_FORMAT)).contains(&format) {
         return Ok(());
     }
-    let uses = files
-        .keys()
-        .any(|n| split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf)));
-    let want = if uses { i64::from(SAVED_SELECTIONS_FORMAT) } else { 7 };
+    let uses = files.keys().any(|n| {
+        split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf))
+    });
+    let want = if uses {
+        i64::from(SAVED_SELECTIONS_FORMAT)
+    } else {
+        7
+    };
     if format != want {
         info["format"] = Value::from(want);
         files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
@@ -1475,7 +1505,10 @@ pub(crate) fn image_inputs_of<'a>(
             budget
                 .checked_add(w as usize * h as usize * 4)
                 .is_some_and(|total| total <= limit),
-            format!("画像「{name}」: 復号した画像の{} MiB予算超過です", limit >> 20),
+            format!(
+                "画像「{name}」: 復号した画像の{} MiB予算超過です",
+                limit >> 20
+            ),
         )?;
         let top_down = png_pixels(&bytes, w, h, &mut budget)
             .map_err(|e| Error::InvalidData(format!("画像「{name}」: {e}")))?;
@@ -1555,7 +1588,9 @@ fn validate_brush(bytes: &[u8], budget: &mut usize, notes: &mut Vec<Note>) -> Re
                 tips += 1;
             }
             let d = png::Decoder::new(Cursor::new(b.as_ref()));
-            let r = d.read_info().map_err(|e| Error::InvalidData(e.to_string()))?;
+            let r = d
+                .read_info()
+                .map_err(|e| Error::InvalidData(e.to_string()))?;
             let (w, h) = (r.info().width, r.info().height);
             check(
                 (1..=2048).contains(&w) && (1..=2048).contains(&h),

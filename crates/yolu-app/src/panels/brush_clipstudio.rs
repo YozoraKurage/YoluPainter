@@ -91,9 +91,7 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
                 "サブツールのフォルダが見つかりません",
                 "Sub tool folder not found",
             ),
-            Missing::Unreadable => {
-                lang.pick("フォルダを開けません", "Cannot open the folder")
-            }
+            Missing::Unreadable => lang.pick("フォルダを開けません", "Cannot open the folder"),
             Missing::NoFiles => lang.pick("サブツールがありません", "No sub tools"),
         };
         return (text.into(), true, tip);
@@ -117,12 +115,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let lang = app.lang;
-    let rows = app
-        .brushes
-        .csp
-        .listing
-        .as_ref()
-        .map_or(0, |l| l.rows.len());
+    let rows = app.brushes.csp.listing.as_ref().map_or(0, |l| l.rows.len());
     let visible = rows.clamp(1, MAX_ROWS);
     let height = window::HEADER_HEIGHT + 30.0 + visible as f32 * ROW_HEIGHT + 10.0 + FOOTER;
     // 見える行の見本の絵を作る（見えない行は作らない。一覧が長くても絵は 8 枚ほど）
@@ -177,7 +170,15 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             vec2(body.width(), visible as f32 * ROW_HEIGHT),
         );
         if let Some(listing) = &csp.listing {
-            draw_list(ui, list, listing, window_id, &mut scroll, &mut actions, state);
+            draw_list(
+                ui,
+                list,
+                listing,
+                window_id,
+                &mut scroll,
+                &mut actions,
+                state,
+            );
         }
         // 下の帯
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
@@ -252,7 +253,13 @@ fn draw_list(
                     pos2(r.right(), r.bottom()),
                 );
                 let shown = w::fit(&cp, &title, text_rect.width(), t::LABEL);
-                w::text(&cp, text_rect, &shown, t::LABEL.with_color(t::WARNING), Align::Left);
+                w::text(
+                    &cp,
+                    text_rect,
+                    &shown,
+                    t::LABEL.with_color(t::WARNING),
+                    Align::Left,
+                );
                 let reason = crate::brushes::import::describe_error(lang, error);
                 let response = child.interact(r, window_id.with(("row", i)), Sense::hover());
                 response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &title));
@@ -329,7 +336,10 @@ fn draw_footer(
     };
     // 右から: 取り込む・全部選ぶ（外す）
     let import_label = if selected > 0 {
-        lang.pick(format!("取り込む（{selected}）"), format!("Import ({selected})"))
+        lang.pick(
+            format!("取り込む（{selected}）"),
+            format!("Import ({selected})"),
+        )
     } else {
         lang.pick("取り込む", "Import").to_owned()
     };
@@ -366,7 +376,10 @@ fn draw_footer(
         "all",
         false,
         ready > 0,
-        lang.pick("読めたサブツールを全部選ぶ・外す", "Select or clear every readable sub tool"),
+        lang.pick(
+            "読めたサブツールを全部選ぶ・外す",
+            "Select or clear every readable sub tool",
+        ),
     )
     .0
     {

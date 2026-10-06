@@ -34,7 +34,8 @@ pub use capture::Fingerprint;
 pub use pool::{Kind as PoolKind, Row};
 pub use quota::{usage, Limits, Trimmed, Usage, CRASHED_KEEP_DAYS};
 pub use settings::{
-    DiskBudget, IoReason, Problem, RecoverySettings, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE, MAX_STROKES,
+    DiskBudget, IoReason, Problem, RecoverySettings, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE,
+    MAX_STROKES,
 };
 pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
@@ -215,7 +216,8 @@ impl RecoveryState {
     }
     /// 世代を整理する数。設定のファイルを読めず、数も選んでいないときは None（整理しない）。
     fn keep(&self) -> Option<usize> {
-        (!self.settings_unreadable || self.keep_chosen).then_some(self.settings.generations_to_keep as usize)
+        (!self.settings_unreadable || self.keep_chosen)
+            .then_some(self.settings.generations_to_keep as usize)
     }
     /// 空きの確かめと上限のもと。
     fn limits(&self) -> Limits {
@@ -275,14 +277,22 @@ impl RecoveryState {
 
     /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧の窓を開いた
     /// 状態にする。始められなければ Err（復旧は動かない）。返すのは、前の実行の後片付けで気づいたこと。
-    pub fn enable(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
+    pub fn enable(
+        &mut self,
+        root: PathBuf,
+        settings: RecoverySettings,
+    ) -> Result<Vec<Problem>, RecoveryError> {
         self.settings_unreadable = false;
         self.keep_chosen = false;
         self.disk_chosen = false;
         self.enable_with(root, settings)
     }
 
-    fn enable_with(&mut self, root: PathBuf, settings: RecoverySettings) -> Result<Vec<Problem>, RecoveryError> {
+    fn enable_with(
+        &mut self,
+        root: PathBuf,
+        settings: RecoverySettings,
+    ) -> Result<Vec<Problem>, RecoveryError> {
         self.settings = settings;
         let started = pool::start(&root, self.keep(), self.quota_limits().as_ref())?;
         let mut problems = Vec::new();
@@ -377,7 +387,10 @@ impl RecoveryState {
         let since = a.dirty_since?;
         let base = a.last_attempt.map_or(since, |l| l.max(since));
         let due = base + Duration::from_secs(self.settings.interval_seconds as u64);
-        Some(due.saturating_duration_since(now).max(Duration::from_millis(50)))
+        Some(
+            due.saturating_duration_since(now)
+                .max(Duration::from_millis(50)),
+        )
     }
 }
 
@@ -629,7 +642,12 @@ impl AppState {
                 }
             }
             A::Open => {
-                let Some(row) = self.recovery.window.as_ref().and_then(|w| w.selected_row()).cloned()
+                let Some(row) = self
+                    .recovery
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.selected_row())
+                    .cloned()
                 else {
                     return;
                 };
@@ -637,10 +655,16 @@ impl AppState {
                     return;
                 }
                 if self.is_stroking() {
-                    self.message = self.lang.pick("描いている間は開きません。", "Cannot open during a stroke.").into();
+                    self.message = self
+                        .lang
+                        .pick("描いている間は開きません。", "Cannot open during a stroke.")
+                        .into();
                     return;
                 }
-                let request = OpenRequest { pool: row.pool, id: row.id };
+                let request = OpenRequest {
+                    pool: row.pool,
+                    id: row.id,
+                };
                 if self.modified {
                     // 今の変更を捨ててよいかは、窓を持つ側（YoluApp）が聞いてから `recovery_open` する
                     self.recovery.open_request = Some(request);
@@ -673,7 +697,9 @@ impl AppState {
             }
             A::SetDisk(budget) => {
                 self.recovery.settings.disk = match budget {
-                    DiskBudget::Gib(n) => DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1)),
+                    DiskBudget::Gib(n) => {
+                        DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1))
+                    }
                     other => other,
                 };
                 // 読めなかった設定でも、利用者が選んだ量は分かった（この実行のあいだ、その量で整理する）
@@ -695,7 +721,9 @@ impl AppState {
             a.writer.wait();
         }
         self.recovery_poll();
-        if let (Some(a), Some(limits)) = (self.recovery.active.as_ref(), self.recovery.quota_limits()) {
+        if let (Some(a), Some(limits)) =
+            (self.recovery.active.as_ref(), self.recovery.quota_limits())
+        {
             quota::enforce(&a.root, &limits, Some(a.session.dir()), pool::now_ms());
         }
         self.recovery.refresh_window();
@@ -708,7 +736,13 @@ impl AppState {
             None => !self.recovery.settings_unreadable,
         };
         if !saved {
-            self.message = self.lang.pick("復旧の設定を保存できません。", "Cannot save the recovery settings.").into();
+            self.message = self
+                .lang
+                .pick(
+                    "復旧の設定を保存できません。",
+                    "Cannot save the recovery settings.",
+                )
+                .into();
         }
     }
 

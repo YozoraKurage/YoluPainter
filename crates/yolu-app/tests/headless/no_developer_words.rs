@@ -66,9 +66,15 @@ fn literals(line: &str, with_keys: bool) -> Vec<String> {
                 let before: String = chars[..start].iter().collect();
                 let before = before.trim_end();
                 // `=>` の左（表のキー）と、`expect("…")`・`panic!("…")` などの開発者向けの文は見ない
-                let developer = ["expect(", "panic!(", "unreachable!(", "assert!(", "debug_assert!("]
-                    .iter()
-                    .any(|m| before.ends_with(m));
+                let developer = [
+                    "expect(",
+                    "panic!(",
+                    "unreachable!(",
+                    "assert!(",
+                    "debug_assert!(",
+                ]
+                .iter()
+                .any(|m| before.ends_with(m));
                 if (with_keys || !after.trim_start().starts_with("=>")) && !developer {
                     out.push(text);
                 }
@@ -121,7 +127,11 @@ fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<Stri
 fn no_screen_text_in_the_app_uses_a_developer_word() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let found = scan(&root);
-    assert!(found.is_empty(), "画面の文に開発の言葉:\n{}", found.join("\n"));
+    assert!(
+        found.is_empty(),
+        "画面の文に開発の言葉:\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]
@@ -155,14 +165,21 @@ fn no_message_in_any_crate_writes_the_canvas_with_the_old_kanji() {
     let mut found = Vec::new();
     for name in ["yolu-core", "yolu-io", "yolu-gpu", "yolu-app"] {
         let root = crates.join(name).join("src");
-        found.extend(scan_words(&root, &EVERYWHERE, true).into_iter().map(|f| format!("{name}/{f}")));
+        found.extend(
+            scan_words(&root, &EVERYWHERE, true)
+                .into_iter()
+                .map(|f| format!("{name}/{f}")),
+        );
     }
     assert!(found.is_empty(), "文に「画布」:\n{}", found.join("\n"));
 }
 
 #[test]
 fn the_scanner_finds_a_developer_word_and_skips_table_keys_and_comments() {
-    assert_eq!(literals(r#"let a = "core の文書"; // "BVH""#, false), ["core の文書"]);
+    assert_eq!(
+        literals(r#"let a = "core の文書"; // "BVH""#, false),
+        ["core の文書"]
+    );
     assert_eq!(literals(r#""キー" => "Value""#, false), ["Value"]);
     assert_eq!(literals(r#""キー" => "Value""#, true), ["キー", "Value"]);
 }

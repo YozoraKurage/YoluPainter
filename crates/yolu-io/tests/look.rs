@@ -41,9 +41,12 @@ fn lil() -> MaterialLook {
         shader: "Hidden/lilToonOutline".into(),
         ..MaterialLook::default()
     };
-    look.properties.insert("_UseShadow".into(), LookValue::Int(1));
     look.properties
-        .insert("_ShadowColor".into(), LookValue::Color([0.8, 0.7, 0.9, 1.0]));
+        .insert("_UseShadow".into(), LookValue::Int(1));
+    look.properties.insert(
+        "_ShadowColor".into(),
+        LookValue::Color([0.8, 0.7, 0.9, 1.0]),
+    );
     look.textures
         .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
     look.textures.insert(
@@ -84,7 +87,10 @@ fn a_look_is_written_read_back_and_removed_without_touching_the_rest() {
     assert_eq!(after.len(), before.len() + 1);
     // 知っているエントリ（知らないエントリの知らせに出ない）
     assert!(q.unknown_entries().is_empty(), "{:?}", q.unknown_entries());
-    assert!(!q.notes().iter().any(|n| matches!(n, Note::UnknownEntryKept(_))));
+    assert!(!q
+        .notes()
+        .iter()
+        .any(|n| matches!(n, Note::UnknownEntryKept(_))));
     // ファイルにして読み直しても同じ
     let reread = Project::read(&q.to_bytes().unwrap()).unwrap();
     assert_eq!(reread.look(A).unwrap(), Some(lil()));
@@ -110,12 +116,18 @@ fn an_unreadable_look_is_refused_and_its_bytes_are_kept() {
     files.insert(name.clone(), newer.clone());
     let archive = yolu_io::Archive::from_entries(files).unwrap();
     let q = Project::read(&archive.to_bytes().unwrap()).unwrap();
-    assert!(q.look(A).is_err(), "読めない設定は断る（黙って既定にしない）");
+    assert!(
+        q.look(A).is_err(),
+        "読めない設定は断る（黙って既定にしない）"
+    );
     // 開けて、ほかのセットや正本は読める。エントリはバイト列のまま残る
     assert_eq!(q.sets().len(), 2);
     assert_eq!(q.migrated_entries()[&name].bytes().unwrap().to_vec(), newer);
     let reread = Project::read(&q.to_bytes().unwrap()).unwrap();
-    assert_eq!(reread.migrated_entries()[&name].bytes().unwrap().to_vec(), newer);
+    assert_eq!(
+        reread.migrated_entries()[&name].bytes().unwrap().to_vec(),
+        newer
+    );
 }
 
 #[test]
@@ -130,9 +142,17 @@ fn rewriting_keeps_unknown_keys_only_from_the_same_format() {
             .map(|(k, v)| (k.clone(), v.bytes().unwrap().to_vec()))
             .collect();
         files.insert(name.clone(), bytes.to_vec());
-        Project::read(&yolu_io::Archive::from_entries(files).unwrap().to_bytes().unwrap()).unwrap()
+        Project::read(
+            &yolu_io::Archive::from_entries(files)
+                .unwrap()
+                .to_bytes()
+                .unwrap(),
+        )
+        .unwrap()
     };
-    let json = |p: &Project| -> serde_json::Value { serde_json::from_slice(&p.migrated_entries()[&name].bytes().unwrap()).unwrap() };
+    let json = |p: &Project| -> serde_json::Value {
+        serde_json::from_slice(&p.migrated_entries()[&name].bytes().unwrap()).unwrap()
+    };
     // 同じ形式の中で足されたキーは、書き直しても残る
     let same = with_entry(br#"{"format": 1, "kind": "lilToon", "addedLater": [1, 2]}"#);
     let r = same.with_look(A, Some(&lil())).unwrap();
@@ -172,7 +192,9 @@ fn dropping_a_set_drops_its_look() {
 #[test]
 fn the_look_is_refused_for_missing_sets_and_kept_across_set_edits() {
     let p = project().with_look(A, Some(&lil())).unwrap();
-    assert!(p.with_look("33333333-3333-4333-8333-333333333333", Some(&lil())).is_err());
+    assert!(p
+        .with_look("33333333-3333-4333-8333-333333333333", Some(&lil()))
+        .is_err());
     // セットの名前・並びを変えても残る
     let mut a = spec(A, "Skin 2");
     a.document = None;
@@ -224,7 +246,11 @@ fn received_values_are_kept_beside_the_users_look_and_images_are_not_written() {
     assert_eq!(back.look, received().look);
     assert_eq!(back.source, received().source);
     assert!(back.images.is_empty(), "絵の画素は書かない");
-    assert_eq!(back.missing["_MatCapTex"], MissingImage::Pending, "絵のあったスロットは届いていない");
+    assert_eq!(
+        back.missing["_MatCapTex"],
+        MissingImage::Pending,
+        "絵のあったスロットは届いていない"
+    );
     assert_eq!(back.missing["_ShadowColorTex"], MissingImage::OverBudget);
     assert!(q.look(A).unwrap().is_none_or(|l| l.is_default()));
     assert_eq!(q.received_look(B).unwrap(), None);

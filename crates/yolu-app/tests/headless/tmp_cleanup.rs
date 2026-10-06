@@ -19,7 +19,11 @@ fn a_test_directory_is_gone_when_the_test_thread_ends_and_not_before() {
         (dir, inside_exists)
     });
     assert!(inside_exists, "試験の間は使える");
-    assert!(!dir.exists(), "試験（のスレッド）が終わったら消える: {}", dir.display());
+    assert!(
+        !dir.exists(),
+        "試験（のスレッド）が終わったら消える: {}",
+        dir.display()
+    );
 }
 
 #[test]
@@ -29,8 +33,10 @@ fn directories_made_by_two_calls_do_not_collide() {
 }
 
 #[test]
-fn a_directory_registered_after_creation_is_removed_with_its_contents_and_a_failing_test_is_cleaned_too() {
-    let dir: PathBuf = std::env::temp_dir().join(format!("yolu-test-registered-{}", std::process::id()));
+fn a_directory_registered_after_creation_is_removed_with_its_contents_and_a_failing_test_is_cleaned_too(
+) {
+    let dir: PathBuf =
+        std::env::temp_dir().join(format!("yolu-test-registered-{}", std::process::id()));
     let made = dir.clone();
     // 落ちる（panic する）試験でも、スレッドの後始末は走る
     let outcome = std::thread::spawn(move || {
@@ -60,12 +66,18 @@ fn live_link_names_leave_no_lock_key_or_socket_file_after_the_test() {
         let name = names::unique_name("ylclean", "files");
         let server = yolu_protocol::Server::bind(&name, false).expect("待ち受けられる");
         let dir = yolu_protocol::private::link_dir().unwrap();
-        let files: Vec<PathBuf> = ["lock", "key", "sock"].iter().map(|e| dir.join(format!("{name}.{e}"))).collect();
+        let files: Vec<PathBuf> = ["lock", "key", "sock"]
+            .iter()
+            .map(|e| dir.join(format!("{name}.{e}")))
+            .collect();
         let held = files.iter().filter(|f| f.exists()).count();
         drop(server);
         (name, files, held)
     });
-    assert!(held >= 2, "待ち受けている間は、鍵とロックのファイルがある（{name}）");
+    assert!(
+        held >= 2,
+        "待ち受けている間は、鍵とロックのファイルがある（{name}）"
+    );
     for file in files {
         assert!(!file.exists(), "試験が終わったら消える: {}", file.display());
     }
@@ -86,7 +98,10 @@ fn a_backdated_file_reports_the_new_modified_time_and_a_rewrite_changes_it() {
         std::fs::write(&path, b"first").unwrap();
         let old = tmp::backdate(&path);
         assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), old);
-        assert!(old < std::time::SystemTime::now() - std::time::Duration::from_secs(300), "少し前（時刻の粒度より十分前）");
+        assert!(
+            old < std::time::SystemTime::now() - std::time::Duration::from_secs(300),
+            "少し前（時刻の粒度より十分前）"
+        );
         // 書き直すと、返った時刻とは食い違う（待たずに見つかる）
         std::fs::write(&path, b"second").unwrap();
         assert_ne!(std::fs::metadata(&path).unwrap().modified().unwrap(), old);

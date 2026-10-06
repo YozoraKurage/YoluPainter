@@ -703,7 +703,14 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     let mut h = csp_window(Lang::Ja, &dir);
     assert!(st(&h).brushes.csp.open);
     // 見出し・状態の 1 行・名前（読めたもの）・ファイル名（読めなかったもの）・下の帯のボタン
-    for label in ["Stamp", "Ink", "c_broken", "フォルダ…", "探し直す", "すべて選ぶ"] {
+    for label in [
+        "Stamp",
+        "Ink",
+        "c_broken",
+        "フォルダ…",
+        "探し直す",
+        "すべて選ぶ",
+    ] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
@@ -733,8 +740,14 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     h.run();
     hover_and_wait(&mut h, pos2(row.left() + 30.0, row.center().y));
     let tip = tooltip_text(&h, "写した項目").expect("ツールチップ");
-    assert!(tip.contains("入り抜き") && tip.contains("CLIP STUDIO SUT"), "{tip}");
-    assert!(tip.contains("入り抜きの速さ・割合"), "近似した中身は表せなかった項目に: {tip}");
+    assert!(
+        tip.contains("入り抜き") && tip.contains("CLIP STUDIO SUT"),
+        "{tip}"
+    );
+    assert!(
+        tip.contains("入り抜きの速さ・割合"),
+        "近似した中身は表せなかった項目に: {tip}"
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -742,13 +755,26 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
 fn the_clip_studio_window_in_english_and_the_button_is_off_while_importing() {
     let dir = temp_dir("csp-ui-en");
     let mut h = csp_window(Lang::En, &dir);
-    for label in ["Stamp", "Ink", "c_broken", "Folder…", "Rescan", "Select All"] {
+    for label in [
+        "Stamp",
+        "Ink",
+        "c_broken",
+        "Folder…",
+        "Rescan",
+        "Select All",
+    ] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(drawn_texts(&h).iter().any(|t| t == "From CLIP STUDIO"));
-    assert!(drawn_texts(&h).iter().any(|t| t == "3 sub tools"), "{:?}", drawn_texts(&h));
     assert!(
-        drawn_texts(&h).iter().all(|t| !has_japanese(t) || t.contains("Ink") || t.contains("Stamp")),
+        drawn_texts(&h).iter().any(|t| t == "3 sub tools"),
+        "{:?}",
+        drawn_texts(&h)
+    );
+    assert!(
+        drawn_texts(&h)
+            .iter()
+            .all(|t| !has_japanese(t) || t.contains("Ink") || t.contains("Stamp")),
         "英語の画面に日本語が混ざらない: {:?}",
         drawn_texts(&h)
     );
@@ -797,7 +823,11 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
         h.get_by_label(lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"))
             .click();
         wait_csp(&mut h);
-        assert!(drawn_texts(&h).iter().any(|t| t == expect), "{lang:?}: {:?}", drawn_texts(&h));
+        assert!(
+            drawn_texts(&h).iter().any(|t| t == expect),
+            "{lang:?}: {:?}",
+            drawn_texts(&h)
+        );
         // 一覧が無いので、取り込むと全部選ぶは押せない
         let import = lang.pick("取り込む", "Import");
         assert!(h.get_by_label(import).accesskit_node().is_disabled());

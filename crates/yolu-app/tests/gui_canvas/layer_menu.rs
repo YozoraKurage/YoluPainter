@@ -540,7 +540,8 @@ fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
         }
         // 日本語の画面に英語、英語の画面に日本語を出さない。名前・ツールチップは短く、使い方の文を置かない
         for entry in fills.iter().chain(gradient) {
-            if let Entry::Item { label, tooltip, .. } | Entry::Submenu { label, tooltip, .. } = entry
+            if let Entry::Item { label, tooltip, .. } | Entry::Submenu { label, tooltip, .. } =
+                entry
             {
                 for text in std::iter::once(label).chain(tooltip) {
                     assert_plain(&format!("{lang:?} {text}"), text);
@@ -634,9 +635,16 @@ fn each_shape_makes_one_fill_layer_of_that_shape_fitted_to_the_model_with_one_un
                     .all(|d| near(*d, full.x.max(full.y).max(full.z) * 0.75)),
                 "直径は一番長い辺の 4 分の 3"
             ),
-            Shape::Plane => assert!(near(g.volume.size[1], full.y), "幅は外形の高さ（下が 0・上が 1）"),
+            Shape::Plane => assert!(
+                near(g.volume.size[1], full.y),
+                "幅は外形の高さ（下が 0・上が 1）"
+            ),
         }
-        assert_eq!(s.fillfx.edit_gradient, Some((id, Channel::Color)), "{shape:?}");
+        assert_eq!(
+            s.fillfx.edit_gradient,
+            Some((id, Channel::Color)),
+            "{shape:?}"
+        );
         assert_eq!(layer_count(&s), layers + 1);
         assert_eq!(s.doc.undo_count(), steps + 1, "{shape:?}: 1 回の Undo");
         assert!(
@@ -651,7 +659,11 @@ fn each_shape_makes_one_fill_layer_of_that_shape_fitted_to_the_model_with_one_un
         // 英語の画面の知らせ
         s.lang = Lang::En;
         s.apply(Action::LayerMenu(Op::FillGradient(shape)));
-        assert!(!has_japanese(&s.message), "英語の画面に日本語: {}", s.message);
+        assert!(
+            !has_japanese(&s.message),
+            "英語の画面に日本語: {}",
+            s.message
+        );
         assert!(
             s.message.starts_with("World space gradient added"),
             "{}",

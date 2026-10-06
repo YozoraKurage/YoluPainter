@@ -22,9 +22,9 @@ use crate::engine::{Channel, CoreError, Document, LayerId, LayerKind, Rgba8};
 use crate::lang::Lang;
 use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
+use crate::panels::properties::toggle_row;
 use crate::state::{AppState, Tool};
 use crate::ui::theme as t;
-use crate::panels::properties::toggle_row;
 use crate::ui::widgets::{self as w, Rows};
 
 /// スポイトの設定（画面の状態。文書には入らない）。
@@ -56,7 +56,12 @@ pub fn pick_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
         return false;
     }
-    pick_texel(app, app.sets.current_index(), x.floor() as u32, y.floor() as u32)
+    pick_texel(
+        app,
+        app.sets.current_index(),
+        x.floor() as u32,
+        y.floor() as u32,
+    )
 }
 
 /// 3D ビューの `at`（画面の点。`rect` は中身の表示域）の面の値を取る。取れたら true。
@@ -113,7 +118,8 @@ pub(crate) fn texel_of(uv: Vec2, w: u32, h: u32) -> Option<(u32, u32)> {
 }
 
 /// 1 画素を読む口（`read_pixel`。試験は、読めない文書を作れないので、断る口に差し替える）。
-type Reader<'a> = &'a dyn Fn(&Document, Option<LayerId>, Channel, u32, u32) -> Result<Option<Rgba8>, CoreError>;
+type Reader<'a> =
+    &'a dyn Fn(&Document, Option<LayerId>, Channel, u32, u32) -> Result<Option<Rgba8>, CoreError>;
 
 /// セット `set` の文書の画素 (x, y) の値を取る。
 pub fn pick_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> bool {
@@ -272,12 +278,20 @@ mod tests {
         s.tool = Tool::Eyedropper;
         let id = s.selected_layer.unwrap();
         for channel in [Channel::Color, Channel::Roughness] {
-            s.doc.set_channel_pixel(id, channel, 3, 3, Rgba8::new(90, 80, 70, 255)).unwrap();
+            s.doc
+                .set_channel_pixel(id, channel, 3, 3, Rgba8::new(90, 80, 70, 255))
+                .unwrap();
         }
         s
     }
 
-    fn refuse(_: &Document, _: Option<LayerId>, _: Channel, _: u32, _: u32) -> Result<Option<Rgba8>, CoreError> {
+    fn refuse(
+        _: &Document,
+        _: Option<LayerId>,
+        _: Channel,
+        _: u32,
+        _: u32,
+    ) -> Result<Option<Rgba8>, CoreError> {
         Err(CoreError::WorkingBudgetExceeded)
     }
 
@@ -290,7 +304,10 @@ mod tests {
         assert!(!pick_texel_with(&mut s, 0, 20, 20, &read_pixel));
         assert_eq!(s.message, "そこには何もありません（透明）。");
         assert!(!pick_texel_with(&mut s, 0, 3, 3, &refuse));
-        assert_eq!(s.message, Lang::Ja.core_error(&CoreError::WorkingBudgetExceeded));
+        assert_eq!(
+            s.message,
+            Lang::Ja.core_error(&CoreError::WorkingBudgetExceeded)
+        );
         assert!(!s.message.contains("透明"), "{}", s.message);
         assert_eq!(s.color, before, "何も変えない");
         s.lang = Lang::En;
@@ -308,15 +325,19 @@ mod tests {
         s.apply(Action::Mat(MatAction::Enabled(true)));
         let (mat, color) = (s.mat.clone(), s.color.clone());
         // Roughness だけ断る。先に読めた Color（と、あとに読める分）も反映しない
-        let only_roughness = |doc: &Document, layer: Option<LayerId>, channel: Channel, x: u32, y: u32| {
-            if channel == Channel::Roughness {
-                Err(CoreError::WorkingBudgetExceeded)
-            } else {
-                read_pixel(doc, layer, channel, x, y)
-            }
-        };
+        let only_roughness =
+            |doc: &Document, layer: Option<LayerId>, channel: Channel, x: u32, y: u32| {
+                if channel == Channel::Roughness {
+                    Err(CoreError::WorkingBudgetExceeded)
+                } else {
+                    read_pixel(doc, layer, channel, x, y)
+                }
+            };
         assert!(!pick_texel_with(&mut s, 0, 3, 3, &only_roughness));
-        assert_eq!(s.message, Lang::Ja.core_error(&CoreError::WorkingBudgetExceeded));
+        assert_eq!(
+            s.message,
+            Lang::Ja.core_error(&CoreError::WorkingBudgetExceeded)
+        );
         assert_eq!((s.mat.clone(), s.color.clone()), (mat, color));
         // 読めれば、Color と Roughness を取る
         assert!(pick_texel_with(&mut s, 0, 3, 3, &read_pixel));
@@ -340,7 +361,14 @@ mod tests {
         // 1 テクセルの文書
         assert_eq!(texel_of(uv(1.0, 1.0), 1, 1), Some((0, 0)));
         // 0〜1 の外・数でない値は読まない
-        for (u, v) in [(-0.0001, 0.5), (0.5, -1.0), (1.0001, 0.5), (0.5, 2.0), (f32::NAN, 0.5), (0.5, f32::INFINITY)] {
+        for (u, v) in [
+            (-0.0001, 0.5),
+            (0.5, -1.0),
+            (1.0001, 0.5),
+            (0.5, 2.0),
+            (f32::NAN, 0.5),
+            (0.5, f32::INFINITY),
+        ] {
             assert_eq!(texel_of(uv(u, v), 64, 64), None, "{u} {v}");
         }
     }
@@ -351,9 +379,15 @@ mod tests {
         let doc = &s.doc;
         let gone = Channel::from_index(42).unwrap();
         assert_eq!(read_pixel(doc, None, gone, 3, 3), Ok(None));
-        assert_eq!(read_pixel(doc, None, Channel::Color, 3, 3), Ok(Some(Rgba8::new(90, 80, 70, 255))));
+        assert_eq!(
+            read_pixel(doc, None, Channel::Color, 3, 3),
+            Ok(Some(Rgba8::new(90, 80, 70, 255)))
+        );
         assert_eq!(read_pixel(doc, None, Channel::Color, 4, 4), Ok(None));
         // 範囲の外は読めない（透明ではない）
-        assert!(matches!(read_pixel(doc, None, Channel::Color, 99, 3), Err(CoreError::InvalidArgument(_))));
+        assert!(matches!(
+            read_pixel(doc, None, Channel::Color, 99, 3),
+            Err(CoreError::InvalidArgument(_))
+        ));
     }
 }

@@ -66,8 +66,10 @@ fn view(app: &AppState, win: &NpWindow) -> View {
     let groups = win.groups(app);
     // 選んでいない・今のモデルが無いときは None（欄は空のまま。説明はツールチップ）。名前は表示の文字で判定しない
     let file_name = |path: &Path| {
-        path.file_name()
-            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+        path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        )
     };
     let (model_name, model_tip) = match (&win.prep, win.model_path()) {
         (_, Some(path)) => (Some(file_name(path)), path.display().to_string()),

@@ -8,7 +8,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use yolu_ops::link::{decode_response, encode_request, read_frame, Received, Request, KIND_RESPONSE, LINK_NAME};
+use yolu_ops::link::{
+    decode_response, encode_request, read_frame, Received, Request, KIND_RESPONSE, LINK_NAME,
+};
 use yolu_ops::{Command, ErrorCode, OpError, Reply};
 use yolu_protocol::link::{connect_and_greet_within, LinkError, HANDSHAKE_TIMEOUT};
 use yolu_protocol::{Identity, Kind};

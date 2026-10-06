@@ -15,7 +15,10 @@ use yolu_ops::{execute, parse_command, ErrorCode, OpError, COMMAND_VERSION};
 use yolu_protocol::frame::{Frame, FrameReader};
 
 fn request(id: u64, command: Value) -> Request {
-    Request { id, command: parse_command(&command).unwrap() }
+    Request {
+        id,
+        command: parse_command(&command).unwrap(),
+    }
 }
 
 /// 枠が 1 つそろうところまで読む（そろわなければ試験の失敗）。
@@ -29,7 +32,11 @@ fn frame_of(reader: &mut FrameReader, stream: &mut impl Read) -> Frame {
 #[test]
 fn the_link_name_is_valid_and_separate_from_live_link() {
     assert!(yolu_protocol::link::valid_link_name(LINK_NAME));
-    assert_ne!(LINK_NAME, yolu_protocol::DEFAULT_LINK_NAME, "Live Link とは別の名前（別のソケット・別の鍵のファイル）");
+    assert_ne!(
+        LINK_NAME,
+        yolu_protocol::DEFAULT_LINK_NAME,
+        "Live Link とは別の名前（別のソケット・別の鍵のファイル）"
+    );
     assert!(LINK_NAME.len() <= 64);
     assert_ne!(KIND_REQUEST, KIND_RESPONSE);
 }
@@ -62,9 +69,15 @@ fn requests_and_responses_round_trip_through_json() {
     let reply = ok(&mut host, json!({"command": "set.info"}));
     let good = Response::ok(3, reply);
     assert_eq!(Response::from_json(&good.to_json()).unwrap(), good);
-    let bad = Response::err(4, OpError::new(ErrorCode::NotFound, "無い", "missing").with_data(json!({"x": 1})));
+    let bad = Response::err(
+        4,
+        OpError::new(ErrorCode::NotFound, "無い", "missing").with_data(json!({"x": 1})),
+    );
     let json = bad.to_json();
-    assert_eq!((json["ok"].clone(), json["v"].clone()), (json!(false), json!(COMMAND_VERSION)));
+    assert_eq!(
+        (json["ok"].clone(), json["v"].clone()),
+        (json!(false), json!(COMMAND_VERSION))
+    );
     assert_eq!(Response::from_json(&json).unwrap(), bad);
     let bytes = encode_response(&good);
     let mut reader = FrameReader::new();
@@ -86,23 +99,45 @@ fn a_different_command_version_or_a_missing_field_is_refused_with_a_reason() {
     // 通信の要求は、版を省けない（命令の JSON は省ける）
     let mut json = good.clone();
     json.as_object_mut().unwrap().remove("v");
-    assert_eq!(Request::from_json(&json).unwrap_err().code, ErrorCode::UnsupportedVersion);
+    assert_eq!(
+        Request::from_json(&json).unwrap_err().code,
+        ErrorCode::UnsupportedVersion
+    );
     parse_command(&json).unwrap();
     // id が無い・数でない
-    for broken in [json!({"v": 1, "command": "doc.info"}), json!({"v": 1, "id": "x", "command": "doc.info"})] {
-        assert_eq!(Request::from_json(&broken).unwrap_err().code, ErrorCode::InvalidRequest);
+    for broken in [
+        json!({"v": 1, "command": "doc.info"}),
+        json!({"v": 1, "id": "x", "command": "doc.info"}),
+    ] {
+        assert_eq!(
+            Request::from_json(&broken).unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
     }
     // 知らない命令・引数の誤りは、要求として読む所で断る
     let e = Request::from_json(&json!({"v": 1, "id": 1, "command": "nope"})).unwrap_err();
     assert_eq!(e.code, ErrorCode::UnknownCommand);
-    let e = Request::from_json(&json!({"v": 1, "id": 1, "command": "layer.get", "args": {"extra": 1}})).unwrap_err();
+    let e =
+        Request::from_json(&json!({"v": 1, "id": 1, "command": "layer.get", "args": {"extra": 1}}))
+            .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidRequest);
     // 返事の版・欄
-    let reply = Response::ok(1, Reply::History(yolu_ops::reply::HistoryInfo { undo_count: 0, redo_count: 0, can_undo: false, can_redo: false }));
+    let reply = Response::ok(
+        1,
+        Reply::History(yolu_ops::reply::HistoryInfo {
+            undo_count: 0,
+            redo_count: 0,
+            can_undo: false,
+            can_redo: false,
+        }),
+    );
     for v in [json!(2), json!(null)] {
         let mut json = reply.to_json();
         json["v"] = v;
-        assert_eq!(Response::from_json(&json).unwrap_err().code, ErrorCode::UnsupportedVersion);
+        assert_eq!(
+            Response::from_json(&json).unwrap_err().code,
+            ErrorCode::UnsupportedVersion
+        );
     }
     for field in ["v", "id", "ok", "reply"] {
         let mut json = reply.to_json();
@@ -116,9 +151,19 @@ fn frames_of_the_wrong_kind_or_with_broken_json_are_refused() {
     let r = request(1, json!({"command": "doc.info"}));
     let mut reader = FrameReader::new();
     let frame = frame_of(&mut reader, &mut encode_request(&r).unwrap().as_slice());
-    assert_eq!(decode_response(&frame).unwrap_err().code, ErrorCode::InvalidRequest);
-    let broken = Frame { kind: KIND_REQUEST, flags: 0, payload: b"{not json".to_vec() };
-    assert_eq!(decode_request(&broken).unwrap_err().code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        decode_response(&frame).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    let broken = Frame {
+        kind: KIND_REQUEST,
+        flags: 0,
+        payload: b"{not json".to_vec(),
+    };
+    assert_eq!(
+        decode_request(&broken).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
     // 頭の合言葉が違う流れは、区切りが分からないので断る
     let mut reader = FrameReader::new();
     let e = read_frame(&mut reader, &mut &b"NOPE0000000000000000"[..]).unwrap_err();
@@ -129,7 +174,9 @@ fn frames_of_the_wrong_kind_or_with_broken_json_are_refused() {
 struct Trickle<'a>(&'a [u8]);
 impl Read for Trickle<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let Some((first, rest)) = self.0.split_first() else { return Ok(0) };
+        let Some((first, rest)) = self.0.split_first() else {
+            return Ok(0);
+        };
         buf[0] = *first;
         self.0 = rest;
         Ok(1)
@@ -138,7 +185,10 @@ impl Read for Trickle<'_> {
 
 #[test]
 fn a_frame_is_reassembled_from_a_stream_that_delivers_one_byte_at_a_time() {
-    let r = request(9, json!({"command": "layer.set", "args": {"layer": "Base", "name": "名前"}}));
+    let r = request(
+        9,
+        json!({"command": "layer.set", "args": {"layer": "Base", "name": "名前"}}),
+    );
     let mut both = encode_request(&r).unwrap();
     both.extend(encode_request(&request(10, json!({"command": "doc.info"}))).unwrap());
     let mut stream = Trickle(&both);
@@ -147,7 +197,10 @@ fn a_frame_is_reassembled_from_a_stream_that_delivers_one_byte_at_a_time() {
     let b = frame_of(&mut reader, &mut stream);
     assert_eq!(decode_request(&a).unwrap(), r);
     assert_eq!(decode_request(&b).unwrap().id, 10);
-    assert_eq!(read_frame(&mut reader, &mut stream).unwrap(), Received::Closed);
+    assert_eq!(
+        read_frame(&mut reader, &mut stream).unwrap(),
+        Received::Closed
+    );
 }
 
 /// 台本どおりに返す読み手: 決めたバイト列・時間切れを順に返し、尽きたら相手が閉じた（0 バイト）。
@@ -178,9 +231,17 @@ fn script(steps: Vec<Step>) -> Script {
 
 #[test]
 fn a_read_timeout_is_idle_not_the_end_of_the_link_and_keeps_the_partial_frame() {
-    let bytes = encode_request(&request(21, json!({"command": "layer.get", "args": {"layer": "Base"}}))).unwrap();
+    let bytes = encode_request(&request(
+        21,
+        json!({"command": "layer.get", "args": {"layer": "Base"}}),
+    ))
+    .unwrap();
     let (head, tail) = bytes.split_at(bytes.len() / 2);
-    for kind in [std::io::ErrorKind::TimedOut, std::io::ErrorKind::WouldBlock, std::io::ErrorKind::Interrupted] {
+    for kind in [
+        std::io::ErrorKind::TimedOut,
+        std::io::ErrorKind::WouldBlock,
+        std::io::ErrorKind::Interrupted,
+    ] {
         let mut stream = script(vec![
             Step::Error(kind),
             Step::Bytes(head.to_vec()),
@@ -189,15 +250,26 @@ fn a_read_timeout_is_idle_not_the_end_of_the_link_and_keeps_the_partial_frame() 
         ]);
         let mut reader = FrameReader::new();
         // 何も届いていない間の時間切れ
-        assert_eq!(read_frame(&mut reader, &mut stream).unwrap(), Received::Idle, "{kind:?}");
+        assert_eq!(
+            read_frame(&mut reader, &mut stream).unwrap(),
+            Received::Idle,
+            "{kind:?}"
+        );
         // 枠の途中までで時間切れ: 読んだ分は失わず、つながりが終わったとも見ない
-        assert_eq!(read_frame(&mut reader, &mut stream).unwrap(), Received::Idle, "{kind:?}");
+        assert_eq!(
+            read_frame(&mut reader, &mut stream).unwrap(),
+            Received::Idle,
+            "{kind:?}"
+        );
         assert_eq!(reader.pending(), head.len());
         // 残りが届けば、同じ読み手で枠がそろう
         let frame = frame_of(&mut reader, &mut stream);
         assert_eq!(decode_request(&frame).unwrap().id, 21);
         // そのあと相手が閉じたら、枠の切れ目の閉じ
-        assert_eq!(read_frame(&mut reader, &mut stream).unwrap(), Received::Closed);
+        assert_eq!(
+            read_frame(&mut reader, &mut stream).unwrap(),
+            Received::Closed
+        );
     }
 }
 
@@ -205,18 +277,37 @@ fn a_read_timeout_is_idle_not_the_end_of_the_link_and_keeps_the_partial_frame() 
 fn closing_between_frames_is_closed_and_closing_inside_a_frame_is_an_error() {
     // 何も読まずに閉じた・枠をそろえたあとで閉じた: きれいな閉じ
     let mut reader = FrameReader::new();
-    assert_eq!(read_frame(&mut reader, &mut &b""[..]).unwrap(), Received::Closed);
+    assert_eq!(
+        read_frame(&mut reader, &mut &b""[..]).unwrap(),
+        Received::Closed
+    );
     let bytes = encode_request(&request(1, json!({"command": "doc.info"}))).unwrap();
     let mut stream = bytes.as_slice();
-    assert_eq!(decode_request(&frame_of(&mut reader, &mut stream)).unwrap().id, 1);
-    assert_eq!(read_frame(&mut reader, &mut stream).unwrap(), Received::Closed);
+    assert_eq!(
+        decode_request(&frame_of(&mut reader, &mut stream))
+            .unwrap()
+            .id,
+        1
+    );
+    assert_eq!(
+        read_frame(&mut reader, &mut stream).unwrap(),
+        Received::Closed
+    );
     // 頭の途中・中身の途中で閉じた: 要求が欠けたので、閉じとして流さず、何バイト目かを言う誤り
     for cut in [3, 12, bytes.len() - 1] {
         let mut reader = FrameReader::new();
         let e = read_frame(&mut reader, &mut &bytes[..cut]).unwrap_err();
         assert_eq!(e.code, ErrorCode::Io, "{cut}");
-        assert!(e.message.en.contains("middle of a frame") && e.message.ja.contains("途中"), "{cut}: {}", e.message.en);
-        assert!(e.message.en.contains(&format!("{cut} bytes")), "{}", e.message.en);
+        assert!(
+            e.message.en.contains("middle of a frame") && e.message.ja.contains("途中"),
+            "{cut}: {}",
+            e.message.en
+        );
+        assert!(
+            e.message.en.contains(&format!("{cut} bytes")),
+            "{}",
+            e.message.en
+        );
     }
 }
 
@@ -242,8 +333,15 @@ fn a_message_over_the_limit_is_refused_before_it_is_sent() {
     assert_eq!(e.code, ErrorCode::Budget);
     assert!(e.message.ja.contains("大きすぎます") && e.message.en.contains("too large"));
     // 要求: 送る前に断る
-    let command = parse_command(&json!({"command": "layer.get", "args": {"layer": "x".repeat(MAX_PAYLOAD)}})).unwrap();
-    assert_eq!(encode_request(&Request { id: 1, command }).unwrap_err().code, ErrorCode::Budget);
+    let command =
+        parse_command(&json!({"command": "layer.get", "args": {"layer": "x".repeat(MAX_PAYLOAD)}}))
+            .unwrap();
+    assert_eq!(
+        encode_request(&Request { id: 1, command })
+            .unwrap_err()
+            .code,
+        ErrorCode::Budget
+    );
 }
 
 /// 実際の流れ（ループバックの TCP。試験の道具で、経路の実装ではない）で、要求を送って返事を受ける。
@@ -266,7 +364,10 @@ fn requests_travel_over_a_stream_to_a_host_and_the_replies_come_back_in_order() 
                 Received::Closed => break,
             };
             let response = match decode_request(&frame) {
-                Ok(request) => Response { id: request.id, outcome: execute(&mut host, &request.command) },
+                Ok(request) => Response {
+                    id: request.id,
+                    outcome: execute(&mut host, &request.command),
+                },
                 Err(error) => Response::err(0, error),
             };
             write_bytes(&mut stream, &encode_response(&response)).unwrap();
@@ -283,21 +384,37 @@ fn requests_travel_over_a_stream_to_a_host_and_the_replies_come_back_in_order() 
     };
     // 文書が無い間は、理由つきの誤り
     let r = ask(1, json!({"command": "doc.info"}));
-    assert_eq!((r.id, r.outcome.unwrap_err().code), (1, ErrorCode::NoDocument));
+    assert_eq!(
+        (r.id, r.outcome.unwrap_err().code),
+        (1, ErrorCode::NoDocument)
+    );
     let r = ask(2, json!({"command": "doc.open", "args": {"path": "a.ylp"}}));
     assert!(matches!(r.outcome, Ok(Reply::Doc(_))));
-    let r = ask(3, json!({"command": "layer.add", "args": {"kind": "paint", "name": "Over the wire"}}));
-    let Ok(Reply::Edited(edited)) = r.outcome else { panic!("{r:?}") };
+    let r = ask(
+        3,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "Over the wire"}}),
+    );
+    let Ok(Reply::Edited(edited)) = r.outcome else {
+        panic!("{r:?}")
+    };
     assert_eq!(r.id, 3);
     assert!(edited.layer.is_some() && edited.undo_count == 1);
     // 見本の画像（PNG）が枠に載って返る
     let r = ask(4, json!({"command": "preview", "args": {"max_edge": 32}}));
-    let Ok(Reply::Preview(p)) = r.outcome else { panic!() };
+    let Ok(Reply::Preview(p)) = r.outcome else {
+        panic!()
+    };
     assert_eq!((p.width, p.height), (32, 24));
     assert_eq!(&p.png.0[..8], b"\x89PNG\r\n\x1a\n");
     // 断りも同じ道で返る
-    let r = ask(5, json!({"command": "layer.delete", "args": {"layer": "Base"}}));
-    assert_eq!((r.id, r.outcome.unwrap_err().code), (5, ErrorCode::ConfirmRequired));
+    let r = ask(
+        5,
+        json!({"command": "layer.delete", "args": {"layer": "Base"}}),
+    );
+    assert_eq!(
+        (r.id, r.outcome.unwrap_err().code),
+        (5, ErrorCode::ConfirmRequired)
+    );
     drop(ask);
     drop(stream);
     assert_eq!(server.join().unwrap(), 5);

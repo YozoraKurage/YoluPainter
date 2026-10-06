@@ -39,7 +39,10 @@ fn flat(kinds: &[bool]) -> NativeDocument {
 }
 
 /// `layers[i].parent` を `parents[i]`（層の番号。None は一番上の段）に書き換えたバイト列を読む。
-fn read_with_parents(native: &NativeDocument, parents: &[Option<usize>]) -> Result<NativeDocument, Error> {
+fn read_with_parents(
+    native: &NativeDocument,
+    parents: &[Option<usize>],
+) -> Result<NativeDocument, Error> {
     let mut fields = native.fields().to_vec();
     let ids: Vec<NativeValue> = (0..parents.len())
         .map(|i| native.field(&format!("layers[{i}].id")).unwrap().clone())
@@ -57,8 +60,12 @@ fn read_with_parents(native: &NativeDocument, parents: &[Option<usize>]) -> Resu
 
 /// 並び [葉, g1, g2, …, gN]（g1 が葉の親、g2 が g1 の親…）。
 fn chain(n: usize) -> Result<NativeDocument, Error> {
-    let kinds: Vec<bool> = std::iter::once(false).chain(std::iter::repeat_n(true, n)).collect();
-    let parents: Vec<Option<usize>> = (0..kinds.len()).map(|i| (i + 1 < kinds.len()).then_some(i + 1)).collect();
+    let kinds: Vec<bool> = std::iter::once(false)
+        .chain(std::iter::repeat_n(true, n))
+        .collect();
+    let parents: Vec<Option<usize>> = (0..kinds.len())
+        .map(|i| (i + 1 < kinds.len()).then_some(i + 1))
+        .collect();
     read_with_parents(&flat(&kinds), &parents)
 }
 
@@ -71,7 +78,10 @@ fn the_reader_accepts_a_chain_up_to_the_limit_and_refuses_a_deeper_one_as_a_limi
     for n in [MAX_GROUP_DEPTH + 1, 500] {
         match chain(n) {
             Err(Error::Budget(why)) => assert!(why.contains("入れ子の上限"), "{why}"),
-            other => panic!("{n} 段は上限として断る: {:?}", other.map(|d| d.layer_count())),
+            other => panic!(
+                "{n} 段は上限として断る: {:?}",
+                other.map(|d| d.layer_count())
+            ),
         }
     }
 }
@@ -83,9 +93,15 @@ fn the_parent_rules_still_hold_after_the_one_pass_rewrite() {
     let native = flat(&kinds);
     let parents = [Some(2), Some(2), Some(4), Some(4), None];
     read_with_parents(&native, &parents).unwrap();
-    let invalid = |kinds: &[bool], parents: &[Option<usize>]| match read_with_parents(&flat(kinds), parents) {
+    let invalid = |kinds: &[bool], parents: &[Option<usize>]| match read_with_parents(
+        &flat(kinds),
+        parents,
+    ) {
         Err(Error::InvalidData(_)) => {}
-        other => panic!("{parents:?}: 壊れたファイルとして断る: {:?}", other.map(|d| d.layer_count())),
+        other => panic!(
+            "{parents:?}: 壊れたファイルとして断る: {:?}",
+            other.map(|d| d.layer_count())
+        ),
     };
     // 親が子より下にある・自分が親・グループでない層が親
     invalid(&[true, false], &[None, Some(0)]);
@@ -94,12 +110,22 @@ fn the_parent_rules_still_hold_after_the_one_pass_rewrite() {
     // 子が連続していない: [A ∈ G, B（外）, G]
     invalid(&[false, false, true], &[Some(2), None, None]);
     // G1 の中身（A）と G1 の間に、外側の G2 の子（B）が挟まる: [A ∈ G1, B ∈ G2, G1 ∈ G2, G2]
-    invalid(&[false, false, true, true], &[Some(2), Some(3), Some(3), None]);
+    invalid(
+        &[false, false, true, true],
+        &[Some(2), Some(3), Some(3), None],
+    );
     // 存在しない親
     let native = flat(&[false, true]);
     let mut fields = native.fields().to_vec();
-    fields.iter_mut().find(|f| f.path == "layers[0].parent").unwrap().value = NativeValue::Guid([7; 16]);
-    assert!(matches!(NativeDocument::read(&write(&fields)), Err(Error::InvalidData(_))));
+    fields
+        .iter_mut()
+        .find(|f| f.path == "layers[0].parent")
+        .unwrap()
+        .value = NativeValue::Guid([7; 16]);
+    assert!(matches!(
+        NativeDocument::read(&write(&fields)),
+        Err(Error::InvalidData(_))
+    ));
 }
 
 #[test]
@@ -124,5 +150,9 @@ fn the_parent_check_reads_2000_layers_in_a_deep_chain_in_one_pass() {
     let read = read_with_parents(&native, &parents).unwrap();
     let took = started.elapsed();
     assert!(read.layer_count() > 1900);
-    assert!(took < Duration::from_secs(5), "{} 層の読みに {took:?}", read.layer_count());
+    assert!(
+        took < Duration::from_secs(5),
+        "{} 層の読みに {took:?}",
+        read.layer_count()
+    );
 }

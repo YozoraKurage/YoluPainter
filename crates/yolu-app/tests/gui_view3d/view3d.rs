@@ -320,14 +320,21 @@ fn a_model_opens_seen_from_its_front() {
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     let opened = h.state().state.view3d.camera;
-    let model = h.state().state.view3d.model.clone().expect("モデルを読んだ");
+    let model = h
+        .state()
+        .state
+        .view3d
+        .model
+        .clone()
+        .expect("モデルを読んだ");
     assert_eq!(
         opened,
         yolu_core::geometry::OrbitCamera::framing(&model.geometry.bounds())
     );
     let view = opened.view(rect.width(), rect.height());
     let center = yolu_core::glam::Vec2::new(rect.width() * 0.5, rect.height() * 0.5);
-    let hit = yolu_core::geometry::pick(&model.geometry, &view, center).expect("中央にモデルがある");
+    let hit =
+        yolu_core::geometry::pick(&model.geometry, &view, center).expect("中央にモデルがある");
     assert!(hit.normal.z > 0.9, "前（+Z）の面が見える: {:?}", hit.normal);
     // 手で回してから全体を表示すると、開いた直後の位置へ戻る
     h.state_mut().state.view3d.camera.yaw = 100.0;

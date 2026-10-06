@@ -13,8 +13,8 @@ use yolu_core::glam::{Quat, Vec3};
 use yolu_core::skin::{Pose, Rig};
 use yolu_io::pose::{StoredBone, StoredPose, StoredShape};
 
-use super::presets::{self, Built, SkipReason, Skipped};
 use super::presets::store::PoseEntry;
+use super::presets::{self, Built, SkipReason, Skipped};
 use crate::lang::Lang;
 use crate::state::AppState;
 
@@ -33,9 +33,11 @@ pub fn stored_from_pose(rig: &Rig, pose: &Pose) -> (StoredPose, Vec<String>) {
             && e.path.len() <= yolu_io::pose::MAX_PATH_DEPTH
             && e.path.iter().all(|n| savable_name(n))
             && out.bones.len() < yolu_io::pose::MAX_BONES
-            && [e.translation, e.scale]
-                .iter()
-                .all(|v| v.to_array().iter().all(|x| x.is_finite() && x.abs() <= yolu_io::pose::MAX_MAGNITUDE));
+            && [e.translation, e.scale].iter().all(|v| {
+                v.to_array()
+                    .iter()
+                    .all(|x| x.is_finite() && x.abs() <= yolu_io::pose::MAX_MAGNITUDE)
+            });
         if !ok {
             unsaved.push(e.path.last().cloned().unwrap_or_default());
             continue;
@@ -139,7 +141,10 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         Err(e) => {
             return Some(format!(
                 "{}: {}",
-                lang.pick("ポーズを読めません（ファイルには残っています）", "Cannot read the pose (kept in the file)"),
+                lang.pick(
+                    "ポーズを読めません（ファイルには残っています）",
+                    "Cannot read the pose (kept in the file)"
+                ),
                 lang.io_error(&e)
             ))
         }
@@ -158,7 +163,11 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         s.preset_notes = built.skipped;
     }
     Some(match result {
-        Err(e) => format!("{}: {}", lang.pick("ポーズを戻せません", "Cannot restore the pose"), lang.view_error(&e)),
+        Err(e) => format!(
+            "{}: {}",
+            lang.pick("ポーズを戻せません", "Cannot restore the pose"),
+            lang.view_error(&e)
+        ),
         Ok(()) if nothing_fits => lang.pick(
             "ファイルのポーズに合うボーンがありません。".to_owned(),
             "No bone fits the pose in the file.".to_owned(),
@@ -167,7 +176,10 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
             format!("ポーズを戻しました（合わない項目 {skipped} 件）。"),
             format!("Pose restored (unmatched items: {skipped})."),
         ),
-        Ok(()) => lang.pick("ポーズを戻しました。".to_owned(), "Pose restored.".to_owned()),
+        Ok(()) => lang.pick(
+            "ポーズを戻しました。".to_owned(),
+            "Pose restored.".to_owned(),
+        ),
     })
 }
 
@@ -191,7 +203,10 @@ pub fn capture(app: &AppState) -> (PoseCapture, Vec<String>) {
         return (PoseCapture::Keep, Vec::new());
     };
     let (stored, unsaved) = stored_from_pose(&session.rig, session.pose());
-    (PoseCapture::Write((!stored.is_rest()).then_some(stored)), unsaved)
+    (
+        PoseCapture::Write((!stored.is_rest()).then_some(stored)),
+        unsaved,
+    )
 }
 
 /// 保存できなかった項目の知らせ（無ければ空。先頭に空白を置いて、保存の知らせの文へ続ける）。
@@ -224,7 +239,11 @@ pub fn write_into(
         Ok(_) => {}
     }
     let written = project.with_pose(next.as_ref()).map_err(|e| {
-        format!("{}: {}", lang.pick("ポーズを書けません", "Cannot write the pose"), lang.io_error(&e))
+        format!(
+            "{}: {}",
+            lang.pick("ポーズを書けません", "Cannot write the pose"),
+            lang.io_error(&e)
+        )
     })?;
     Ok((written, overwritten))
 }

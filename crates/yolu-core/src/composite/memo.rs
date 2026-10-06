@@ -295,12 +295,13 @@ pub(super) fn prepare<'a>(
     }
     let hits = have.len() as u64;
     let nodes = plan.nodes.len();
-    let compute = |w: &mut Worker<'a>, c: TileCoord, d: (usize, usize)| {
-        plan.tile_memo(&positions, w, c, d)
-    };
+    let compute =
+        |w: &mut Worker<'a>, c: TileCoord, d: (usize, usize)| plan.tile_memo(&positions, w, c, d);
     let built: Vec<(TileCoord, TileMemo)> = if want.len() < 4 {
         let mut w = Worker::new(nodes, depth);
-        want.iter().map(|&(c, d)| (c, compute(&mut w, c, d))).collect()
+        want.iter()
+            .map(|&(c, d)| (c, compute(&mut w, c, d)))
+            .collect()
     } else {
         want.par_iter()
             .map_init(

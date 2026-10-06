@@ -508,7 +508,8 @@ mod tests {
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("yolu-pose-presets-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yolu-pose-presets-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -525,13 +526,29 @@ mod tests {
         let (entries, unsaved) = entries_from_pose(&s.rig, s.pose());
         assert!(unsaved.is_empty());
         assert_eq!(entries.len(), 2, "動かした 2 本だけ");
-        let arm = entries.iter().find(|e| e.path.last().unwrap() == "右上腕").unwrap();
+        let arm = entries
+            .iter()
+            .find(|e| e.path.last().unwrap() == "右上腕")
+            .unwrap();
         assert_eq!(arm.path, ["腰", "背骨", "胸", "右肩", "右上腕"]);
-        assert!((arm.translation - Vec3::new(0.01, -0.02, 0.03)).length() < 1.0e-6, "平行移動は差");
-        assert_eq!(arm.scale, Vec3::new(1.0, 1.25, 0.8), "大きさは比（休みは 1）");
+        assert!(
+            (arm.translation - Vec3::new(0.01, -0.02, 0.03)).length() < 1.0e-6,
+            "平行移動は差"
+        );
+        assert_eq!(
+            arm.scale,
+            Vec3::new(1.0, 1.25, 0.8),
+            "大きさは比（休みは 1）"
+        );
         assert!(arm.rotation.w >= 0.0);
         // BlendShape だけの変更は、骨の項目にならない
-        assert!(!has_bone_changes(&s.rig, &Pose { locals: s.rig.rest_pose().locals, ..s.pose().clone() }));
+        assert!(!has_bone_changes(
+            &s.rig,
+            &Pose {
+                locals: s.rig.rest_pose().locals,
+                ..s.pose().clone()
+            }
+        ));
     }
 
     #[test]
@@ -546,10 +563,20 @@ mod tests {
         let undo_before = session(&app).undo_len();
         assert!(apply_preset(&mut app, id, false), "{}", app.message);
         assert_eq!(session(&app).undo_len(), undo_before + 1, "取り消しの 1 段");
-        for (i, (a, b)) in session(&app).pose().locals.iter().zip(&saved.locals).enumerate() {
+        for (i, (a, b)) in session(&app)
+            .pose()
+            .locals
+            .iter()
+            .zip(&saved.locals)
+            .enumerate()
+        {
             assert!(close(a, b), "骨 {i}: {a:?} {b:?}");
         }
-        assert!(app.message.contains("構え") && !app.message.contains("飛ばした"), "{}", app.message);
+        assert!(
+            app.message.contains("構え") && !app.message.contains("飛ばした"),
+            "{}",
+            app.message
+        );
         assert!(session(&app).preset_notes.is_empty());
         // 取り消すと当てる前（休みの形）
         assert!(pose::undo(&mut app.view3d).unwrap());
@@ -560,8 +587,14 @@ mod tests {
         other.locals[leg].rotation = Quat::from_rotation_x(0.5);
         pose::set_pose(&mut app.view3d, other).unwrap();
         assert!(apply_preset(&mut app, id, false));
-        assert_eq!(session(&app).pose().locals[leg], session(&app).rig.bones()[leg].rest);
-        assert!(close(&session(&app).pose().locals[bone(&app, "頭")], &saved.locals[bone(&app, "頭")]));
+        assert_eq!(
+            session(&app).pose().locals[leg],
+            session(&app).rig.bones()[leg].rest
+        );
+        assert!(close(
+            &session(&app).pose().locals[bone(&app, "頭")],
+            &saved.locals[bone(&app, "頭")]
+        ));
     }
 
     #[test]
@@ -605,12 +638,20 @@ mod tests {
         pose_bones(&mut app);
         let a = save_preset(&mut app, "構え").unwrap();
         let b = save_preset(&mut app, "").unwrap();
-        assert_eq!(app.view3d.pose.pose_presets.get(b).unwrap().name, "ポーズ", "名前が空なら既定の名前");
+        assert_eq!(
+            app.view3d.pose.pose_presets.get(b).unwrap().name,
+            "ポーズ",
+            "名前が空なら既定の名前"
+        );
         // 名前を変える
         assert!(rename_preset(&mut app, a, "走り"));
         assert_eq!(app.view3d.pose.pose_presets.get(a).unwrap().name, "走り");
         assert!(!rename_preset(&mut app, a, "  "));
-        assert!(app.message.contains("名前を変えられません"), "{}", app.message);
+        assert!(
+            app.message.contains("名前を変えられません"),
+            "{}",
+            app.message
+        );
         // 今のポーズ（休みの形）で上書き: 項目が 0 になり、名前はそのまま（データとしては許す。ポーズの欄は休みの形では
         // 上書きのボタンを押せなくする）
         pose::reset(&mut app.view3d).unwrap();
@@ -618,7 +659,11 @@ mod tests {
         assert!(app.message.contains("走り"), "{}", app.message);
         let p = app.view3d.pose.pose_presets.get(a).unwrap();
         assert_eq!((p.name.as_str(), p.entries.len()), ("走り", 0));
-        assert_eq!(app.view3d.pose.pose_presets.get(b).unwrap().entries.len(), 2, "ほかは変わらない");
+        assert_eq!(
+            app.view3d.pose.pose_presets.get(b).unwrap().entries.len(),
+            2,
+            "ほかは変わらない"
+        );
         // 休みの形のプリセットを当てると、ポーズが休みの形へ
         pose_bones(&mut app);
         assert!(apply_preset(&mut app, a, false));
@@ -664,7 +709,11 @@ mod tests {
             .unwrap();
         assert!(apply_preset(&mut app, id, false));
         assert!(session(&app).is_posed(), "合う骨は当たる");
-        let notes: Vec<_> = session(&app).preset_notes.iter().map(|k| (k.path.clone(), k.reason)).collect();
+        let notes: Vec<_> = session(&app)
+            .preset_notes
+            .iter()
+            .map(|k| (k.path.clone(), k.reason))
+            .collect();
         assert_eq!(
             notes,
             [
@@ -672,10 +721,22 @@ mod tests {
                 ("腰/しっぽ".to_string(), SkipReason::NotFound),
             ]
         );
-        assert!(app.message.contains("飛ばしたボーン 2 件"), "{}", app.message);
+        assert!(
+            app.message.contains("飛ばしたボーン 2 件"),
+            "{}",
+            app.message
+        );
         for k in &session(&app).preset_notes {
-            assert!(k.describe(Lang::Ja).ends_with("(ボーンがありません)"), "{}", k.describe(Lang::Ja));
-            assert!(k.describe(Lang::En).ends_with("(Bone not found)"), "{}", k.describe(Lang::En));
+            assert!(
+                k.describe(Lang::Ja).ends_with("(ボーンがありません)"),
+                "{}",
+                k.describe(Lang::Ja)
+            );
+            assert!(
+                k.describe(Lang::En).ends_with("(Bone not found)"),
+                "{}",
+                k.describe(Lang::En)
+            );
         }
         // 1 つも合わないプリセットは、ポーズを変えない（休みの形へ戻さない）
         let before = session(&app).pose().clone();
@@ -697,7 +758,11 @@ mod tests {
         assert!(!apply_preset(&mut app, none, false));
         assert_eq!(session(&app).pose(), &before);
         assert_eq!(session(&app).undo_len(), undo);
-        assert!(app.message.contains("合うボーンがありません"), "{}", app.message);
+        assert!(
+            app.message.contains("合うボーンがありません"),
+            "{}",
+            app.message
+        );
         assert_eq!(session(&app).preset_notes.len(), 1, "理由は残す");
     }
 
@@ -712,7 +777,12 @@ mod tests {
         // 同じ親の下に同じ名前の骨が 2 つ
         let rig = Rig::new(
             "重なり",
-            vec![bone("根", None), bone("同じ", Some(0)), bone("同じ", Some(0)), bone("別", Some(0))],
+            vec![
+                bone("根", None),
+                bone("同じ", Some(0)),
+                bone("同じ", Some(0)),
+                bone("別", Some(0)),
+            ],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -747,7 +817,10 @@ mod tests {
         pose::begin_edit(&mut app.view3d).unwrap();
         assert!(!apply_preset(&mut app, id, false));
         assert!(!session(&app).is_posed());
-        assert!(save_preset(&mut app, "途中").is_none(), "途中のポーズは保存しない");
+        assert!(
+            save_preset(&mut app, "途中").is_none(),
+            "途中のポーズは保存しない"
+        );
         pose::end_edit(&mut app.view3d, false);
         // 描いている最中
         let layer = app.selected_layer.unwrap();
@@ -790,8 +863,14 @@ mod tests {
         let got = s.pose().locals[l_arm];
         let d = rest_l.rotation.inverse() * got.rotation;
         let src = rest_arm.rotation.inverse() * p.locals[r_arm].rotation;
-        assert!(d.dot(Quat::from_xyzw(src.x, -src.y, -src.z, src.w)).abs() > 0.999_999, "{d:?} {src:?}");
-        assert!(((got.translation - rest_l.translation) - Vec3::new(-0.02, 0.01, -0.03)).length() < 1.0e-6);
+        assert!(
+            d.dot(Quat::from_xyzw(src.x, -src.y, -src.z, src.w)).abs() > 0.999_999,
+            "{d:?} {src:?}"
+        );
+        assert!(
+            ((got.translation - rest_l.translation) - Vec3::new(-0.02, 0.01, -0.03)).length()
+                < 1.0e-6
+        );
         // 右腕は休みの形のまま
         assert_eq!(s.pose().locals[r_arm], s.rig.bones()[r_arm].rest);
         // 対にならない骨（頭）は、そのまま
@@ -843,19 +922,54 @@ mod tests {
         };
         // 鏡像の休みの形: 当たる
         let rig = build(0.0);
-        let built = build_pose(&rig, &rig.rest_pose(), "p", &[entry(&["Root", "Arm_R"])], true);
-        assert_eq!((built.applied, built.skipped.len()), (1, 0), "{:?}", built.skipped);
-        assert!(built.pose.locals[1].rotation.dot(Quat::from_rotation_z(-0.5)).abs() > 0.999_999);
+        let built = build_pose(
+            &rig,
+            &rig.rest_pose(),
+            "p",
+            &[entry(&["Root", "Arm_R"])],
+            true,
+        );
+        assert_eq!(
+            (built.applied, built.skipped.len()),
+            (1, 0),
+            "{:?}",
+            built.skipped
+        );
+        assert!(
+            built.pose.locals[1]
+                .rotation
+                .dot(Quat::from_rotation_z(-0.5))
+                .abs()
+                > 0.999_999
+        );
         // 左だけ休みの回転が違う（鏡像でない）: 飛ばして理由
         let rig = build(0.6);
-        let built = build_pose(&rig, &rig.rest_pose(), "p", &[entry(&["Root", "Arm_R"])], true);
+        let built = build_pose(
+            &rig,
+            &rig.rest_pose(),
+            "p",
+            &[entry(&["Root", "Arm_R"])],
+            true,
+        );
         assert_eq!((built.applied, built.skipped.len()), (0, 1));
         assert_eq!(built.skipped[0].reason, SkipReason::MirrorAsymmetric);
         // 反転しないなら休みの形は見ない
-        let built = build_pose(&rig, &rig.rest_pose(), "p", &[entry(&["Root", "Arm_R"])], false);
+        let built = build_pose(
+            &rig,
+            &rig.rest_pose(),
+            "p",
+            &[entry(&["Root", "Arm_R"])],
+            false,
+        );
         assert_eq!(built.applied, 1);
         // 相手の骨が無い: 理由
-        let built = build_pose(&rig, &rig.rest_pose(), "p", &[entry(&["Root", "Solo_L"])], true);
+        let built = build_pose(
+            &rig,
+            &rig.rest_pose(),
+            "p",
+            &[entry(&["Root", "Solo_L"])],
+            true,
+        );
         assert_eq!(built.skipped[0].reason, SkipReason::MirrorNotFound);
         // 左右の両方を持つプリセット: 入れ替わる（重ならない）
         let rig = build(0.0);
@@ -867,8 +981,17 @@ mod tests {
             true,
         );
         assert_eq!((built.applied, built.skipped.len()), (2, 0));
-        for r in [SkipReason::MirrorNotFound, SkipReason::MirrorAmbiguous, SkipReason::MirrorAsymmetric, SkipReason::Overlap] {
-            let k = Skipped { preset: "p".into(), path: "a/b".into(), reason: r };
+        for r in [
+            SkipReason::MirrorNotFound,
+            SkipReason::MirrorAmbiguous,
+            SkipReason::MirrorAsymmetric,
+            SkipReason::Overlap,
+        ] {
+            let k = Skipped {
+                preset: "p".into(),
+                path: "a/b".into(),
+                reason: r,
+            };
             assert!(!k.describe(Lang::Ja).is_empty() && k.describe(Lang::En).is_ascii());
         }
     }

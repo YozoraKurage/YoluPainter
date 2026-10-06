@@ -21,9 +21,9 @@ use yolu_core::mesh_maps::{
 use yolu_core::SelectionMask;
 
 use super::tools::{read_only_message, Hover, Where};
-use crate::selection::{combine_name, combine_of};
 use crate::lang::Lang;
 use crate::matpaint::refusal_text;
+use crate::selection::{combine_name, combine_of};
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
 
@@ -174,7 +174,10 @@ impl AppState {
                 )
                 .into()),
             _ => Err(lang
-                .pick("ID マップを確かめられません", "The ID map cannot be checked")
+                .pick(
+                    "ID マップを確かめられません",
+                    "The ID map cannot be checked",
+                )
                 .into()),
         }
     }
@@ -203,9 +206,7 @@ impl AppState {
                 };
                 let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
                 if *part >= count {
-                    self.message = lang
-                        .pick("その部品はありません", "No such part")
-                        .into();
+                    self.message = lang.pick("その部品はありません", "No such part").into();
                     return;
                 }
                 if !colors.colors().is_empty() && colors.binding() != parts.binding {
@@ -243,12 +244,7 @@ impl AppState {
 }
 
 /// ポインタの下の ID の色。取れなければ理由。
-fn color_under(
-    app: &mut AppState,
-    w: Where,
-    at: Pos2,
-    map: &BakedMeshMap,
-) -> Result<u32, String> {
+fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Result<u32, String> {
     let lang = app.lang;
     let none = |s: &'static str, e: &'static str| lang.pick(s, e).to_owned();
     match w {
@@ -268,7 +264,10 @@ fn color_under(
                 let name = model.material_name(hit.material as usize, lang);
                 return Err(format!(
                     "{}: {name}",
-                    lang.pick("ほかのテクスチャセットの面です", "Another texture set's face")
+                    lang.pick(
+                        "ほかのテクスチャセットの面です",
+                        "Another texture set's face"
+                    )
                 ));
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
@@ -286,10 +285,7 @@ fn color_under(
             }
             match try_get(map, x.floor() as i64, y.floor() as i64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none(
-                    "そこには部品がありません",
-                    "No part there",
-                )),
+                _ => Err(none("そこには部品がありません", "No part there")),
             }
         }
     }

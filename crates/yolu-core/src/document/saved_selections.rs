@@ -54,7 +54,9 @@ impl Document {
 
     /// 残した選択範囲が、今の文書の大きさに合うか。
     fn saved_fits(&self, mask: &SelectionMask) -> bool {
-        mask.width() == self.width && mask.height() == self.height && mask.tile_size() == self.tile_size
+        mask.width() == self.width
+            && mask.height() == self.height
+            && mask.tile_size() == self.tile_size
     }
 
     /// 並びを入れ替える 1 段（同じ並びなら何もしない）。履歴の重さは、前後で共有していない選択範囲の大きさ。
@@ -73,7 +75,8 @@ impl Document {
                 .map(|s| s.mask.history_bytes())
                 .sum()
         };
-        let cost = 64 + only_in(&next, &self.saved_selections) + only_in(&self.saved_selections, &next);
+        let cost =
+            64 + only_in(&next, &self.saved_selections) + only_in(&self.saved_selections, &next);
         let old = self.saved_selections.clone();
         self.execute(
             Command::SavedSelections {
@@ -162,10 +165,7 @@ impl Document {
 
     /// 文書と一緒に読んだ残した選択範囲を戻す（`selections.json`）: Undo の段も版も増やさない（開いた直後の文書は保存済みのまま）。
     /// 履歴ができた後は断る。数・名前・大きさが決まりに合わなければ、何も戻さずに断る。
-    pub fn restore_saved_selections(
-        &mut self,
-        list: Vec<SavedSelection>,
-    ) -> Result<(), CoreError> {
+    pub fn restore_saved_selections(&mut self, list: Vec<SavedSelection>) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
             return Err(CoreError::Unsupported(
@@ -254,12 +254,20 @@ mod tests {
         assert_eq!(d.save_selection("b").unwrap(), 1);
         assert_eq!(d.undo_count(), steps);
         select(&mut d, 10, 10, 30, 25);
-        assert_eq!(d.save_selection("a").unwrap(), 0, "同じ名前はその場所を入れ替える");
+        assert_eq!(
+            d.save_selection("a").unwrap(),
+            0,
+            "同じ名前はその場所を入れ替える"
+        );
         assert_eq!(d.saved_selections().len(), 2);
         assert_eq!(d.saved_selections()[0].mask.amount(15, 15), 255);
         assert_eq!(d.saved_selections()[0].mask.amount(2, 2), 0);
         assert!(d.undo().unwrap());
-        assert_eq!(d.saved_selections()[0].mask.amount(2, 2), 255, "取り消すと前の選択範囲");
+        assert_eq!(
+            d.saved_selections()[0].mask.amount(2, 2),
+            255,
+            "取り消すと前の選択範囲"
+        );
     }
 
     #[test]
@@ -270,15 +278,28 @@ mod tests {
         select(&mut d, 0, 0, 8, 8);
         assert!(d.save_selection("   ").is_err(), "空の名前");
         assert!(d.save_selection("a\nb").is_err(), "制御文字");
-        assert!(d.save_selection(&"あ".repeat(MAX_SAVED_NAME_CHARS + 1)).is_err(), "長すぎる");
-        assert!(d.save_selection(&"あ".repeat(MAX_SAVED_NAME_CHARS)).is_ok(), "上限ちょうどは通る");
+        assert!(
+            d.save_selection(&"あ".repeat(MAX_SAVED_NAME_CHARS + 1))
+                .is_err(),
+            "長すぎる"
+        );
+        assert!(
+            d.save_selection(&"あ".repeat(MAX_SAVED_NAME_CHARS)).is_ok(),
+            "上限ちょうどは通る"
+        );
         assert_eq!(d.saved_selections().len(), 1);
         d.save_selection("b").unwrap();
         let steps = d.undo_count();
-        assert!(d.rename_saved_selection(1, &"あ".repeat(MAX_SAVED_NAME_CHARS)).is_err(), "同じ名前");
+        assert!(
+            d.rename_saved_selection(1, &"あ".repeat(MAX_SAVED_NAME_CHARS))
+                .is_err(),
+            "同じ名前"
+        );
         assert!(d.rename_saved_selection(5, "z").is_err());
         assert!(d.delete_saved_selection(5).is_err());
-        assert!(d.recall_saved_selection(5, SelectionCombine::Replace).is_err());
+        assert!(d
+            .recall_saved_selection(5, SelectionCombine::Replace)
+            .is_err());
         assert_eq!(d.undo_count(), steps);
         // 上限
         for i in 0..MAX_SAVED_SELECTIONS {
@@ -288,7 +309,10 @@ mod tests {
         let steps = d.undo_count();
         assert!(d.save_selection("one too many").is_err());
         assert_eq!(d.undo_count(), steps);
-        assert!(d.save_selection("b").is_ok(), "同じ名前の入れ替えは上限でもできる");
+        assert!(
+            d.save_selection("b").is_ok(),
+            "同じ名前の入れ替えは上限でもできる"
+        );
     }
 
     #[test]
@@ -300,41 +324,77 @@ mod tests {
         let amount = |d: &Document, x, y| d.selection().map_or(0, |m| m.amount(x, y));
         // 置き換え
         let steps = d.undo_count();
-        d.recall_saved_selection(0, SelectionCombine::Replace).unwrap();
+        d.recall_saved_selection(0, SelectionCombine::Replace)
+            .unwrap();
         assert_eq!(d.undo_count(), steps + 1);
         assert_eq!((amount(&d, 5, 5), amount(&d, 25, 25)), (255, 0));
         assert!(d.undo().unwrap());
-        assert_eq!((amount(&d, 5, 5), amount(&d, 25, 25)), (0, 255), "取り消すと今の選択範囲");
+        assert_eq!(
+            (amount(&d, 5, 5), amount(&d, 25, 25)),
+            (0, 255),
+            "取り消すと今の選択範囲"
+        );
         // 足す
         d.recall_saved_selection(0, SelectionCombine::Add).unwrap();
-        assert_eq!((amount(&d, 5, 5), amount(&d, 15, 15), amount(&d, 25, 25)), (255, 255, 255));
+        assert_eq!(
+            (amount(&d, 5, 5), amount(&d, 15, 15), amount(&d, 25, 25)),
+            (255, 255, 255)
+        );
         assert!(d.undo().unwrap());
         // 引く
-        d.recall_saved_selection(0, SelectionCombine::Subtract).unwrap();
+        d.recall_saved_selection(0, SelectionCombine::Subtract)
+            .unwrap();
         assert_eq!((amount(&d, 15, 15), amount(&d, 25, 25)), (0, 255));
         assert!(d.undo().unwrap());
         // 重なり
-        d.recall_saved_selection(0, SelectionCombine::Intersect).unwrap();
-        assert_eq!((amount(&d, 5, 5), amount(&d, 15, 15), amount(&d, 25, 25)), (0, 255, 0));
+        d.recall_saved_selection(0, SelectionCombine::Intersect)
+            .unwrap();
+        assert_eq!(
+            (amount(&d, 5, 5), amount(&d, 15, 15), amount(&d, 25, 25)),
+            (0, 255, 0)
+        );
     }
 
     #[test]
     fn restore_after_load_adds_no_step_and_checks_the_rules() {
         let mut d = doc();
         let mask = SelectionMask::rectangle(&d, 1, 1, 9, 9);
-        let item = |name: &str| SavedSelection { name: name.into(), mask: mask.clone() };
+        let item = |name: &str| SavedSelection {
+            name: name.into(),
+            mask: mask.clone(),
+        };
         let revision = d.revision();
-        d.restore_saved_selections(vec![item("a"), item("b")]).unwrap();
-        assert_eq!((d.undo_count(), d.revision()), (0, revision), "段も版も増えない");
+        d.restore_saved_selections(vec![item("a"), item("b")])
+            .unwrap();
+        assert_eq!(
+            (d.undo_count(), d.revision()),
+            (0, revision),
+            "段も版も増えない"
+        );
         assert_eq!(d.saved_selections().len(), 2);
         // 決まりに合わない並びは断り、何も変えない
         let mut e = doc();
-        assert!(e.restore_saved_selections(vec![item("a"), item("a")]).is_err(), "名前の重なり");
-        assert!(e.restore_saved_selections(vec![item(" a")]).is_err(), "整っていない名前");
+        assert!(
+            e.restore_saved_selections(vec![item("a"), item("a")])
+                .is_err(),
+            "名前の重なり"
+        );
+        assert!(
+            e.restore_saved_selections(vec![item(" a")]).is_err(),
+            "整っていない名前"
+        );
         let other = Document::with_tile_size(41, 30, 16).unwrap();
-        let wrong = SavedSelection { name: "w".into(), mask: SelectionMask::rectangle(&other, 0, 0, 5, 5) };
-        assert!(e.restore_saved_selections(vec![wrong]).is_err(), "大きさが違う");
-        let many: Vec<_> = (0..=MAX_SAVED_SELECTIONS).map(|i| item(&format!("n{i}"))).collect();
+        let wrong = SavedSelection {
+            name: "w".into(),
+            mask: SelectionMask::rectangle(&other, 0, 0, 5, 5),
+        };
+        assert!(
+            e.restore_saved_selections(vec![wrong]).is_err(),
+            "大きさが違う"
+        );
+        let many: Vec<_> = (0..=MAX_SAVED_SELECTIONS)
+            .map(|i| item(&format!("n{i}")))
+            .collect();
         assert!(e.restore_saved_selections(many).is_err(), "上限");
         assert!(e.saved_selections().is_empty());
         // 履歴ができた後は断る
@@ -399,12 +459,15 @@ mod tests {
         for s in d.saved_selections() {
             assert_eq!((s.mask.width(), s.mask.height()), (40, 30), "{}", s.name);
         }
-        d.recall_saved_selection(0, SelectionCombine::Replace).unwrap();
+        d.recall_saved_selection(0, SelectionCombine::Replace)
+            .unwrap();
         // 縮小で何も残らないもの（量 1 の 1 画素を面積で平均すると 0 になる）は外し、報告に書く
         let mut e = Document::with_tile_size(40, 30, 16).unwrap();
         let mut amounts = vec![0u8; 16 * 16];
         amounts[0] = 1;
-        let faint = SelectionMask::from_amount_tiles(40, 30, 16, [(crate::TileCoord::new(0, 0), amounts)]).unwrap();
+        let faint =
+            SelectionMask::from_amount_tiles(40, 30, 16, [(crate::TileCoord::new(0, 0), amounts)])
+                .unwrap();
         e.set_selection(Some(faint)).unwrap();
         e.save_selection("faint").unwrap();
         select(&mut e, 0, 0, 20, 20);
@@ -413,9 +476,16 @@ mod tests {
         let _ = report;
         assert_eq!(e.saved_selections().len(), 1, "{:?}", e.saved_selections());
         assert_eq!(e.saved_selections()[0].name, "big");
-        assert!(report2.notes.iter().any(|n| n.contains("残した選択範囲")), "{:?}", report2.notes);
+        assert!(
+            report2.notes.iter().any(|n| n.contains("残した選択範囲")),
+            "{:?}",
+            report2.notes
+        );
         assert_eq!(report2.dropped_saved_selections, 1, "数も型で返す");
-        assert_eq!(report.dropped_saved_selections, 1, "近傍の縮小で拾われない 1 画素（tiny）だけが外れる");
+        assert_eq!(
+            report.dropped_saved_selections, 1,
+            "近傍の縮小で拾われない 1 画素（tiny）だけが外れる"
+        );
         assert!(e.undo().unwrap());
         assert_eq!(e.saved_selections().len(), 2, "取り消すと戻る");
         // 画布だけの変更（切り落とし）でも大きさが合う
@@ -424,9 +494,13 @@ mod tests {
         f.save_selection("a").unwrap();
         f.resize_canvas(60, 50, (5, 5)).unwrap();
         assert_eq!(
-            (f.saved_selections()[0].mask.width(), f.saved_selections()[0].mask.height()),
+            (
+                f.saved_selections()[0].mask.width(),
+                f.saved_selections()[0].mask.height()
+            ),
             (60, 50)
         );
-        f.recall_saved_selection(0, SelectionCombine::Replace).unwrap();
+        f.recall_saved_selection(0, SelectionCombine::Replace)
+            .unwrap();
     }
 }

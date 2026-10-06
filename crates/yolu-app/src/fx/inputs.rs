@@ -135,7 +135,10 @@ impl InputsState {
 
     /// 復号している画像の画素の合計バイト数。
     pub fn decoded_image_bytes(&self) -> usize {
-        self.images.values().map(|(_, image)| image.pixels.len()).sum()
+        self.images
+            .values()
+            .map(|(_, image)| image.pixels.len())
+            .sum()
     }
 
     /// 復号している画像の数。
@@ -208,7 +211,11 @@ pub fn missing_inputs(doc: &Document) -> Vec<InactiveEffect> {
 }
 
 /// 効果 1 件の名前（層の名前は利用者のデータなのでそのまま）。
-fn what(lang: Lang, effect: &InactiveEffect, channel_name: &dyn Fn(yolu_core::Channel) -> String) -> String {
+fn what(
+    lang: Lang,
+    effect: &InactiveEffect,
+    channel_name: &dyn Fn(yolu_core::Channel) -> String,
+) -> String {
     match effect.target {
         InactiveTarget::Generator { mask, kind } => {
             let name = super::names::generator_name(lang, kind);
@@ -242,7 +249,10 @@ pub fn needed_maps(doc: &Document) -> Vec<MeshMapKind> {
         }
     }
     for layer in doc.layers() {
-        for target in [yolu_core::FilterTarget::Content, yolu_core::FilterTarget::Mask] {
+        for target in [
+            yolu_core::FilterTarget::Content,
+            yolu_core::FilterTarget::Mask,
+        ] {
             for stage in doc.filters_of(layer.id(), target).unwrap_or(&[]) {
                 if let Some(g) = stage.settings().generator_settings() {
                     add_settings(&mut want, g);
@@ -253,12 +263,17 @@ pub fn needed_maps(doc: &Document) -> Vec<MeshMapKind> {
             add_settings(&mut want, g);
         }
         // 位置を読む投影（デカール・トライプラナー・平面ほか）は、位置と法線のマップが要る
-        if layer.kind() == yolu_core::LayerKind::Fill && layer.projection().mode != ProjectionMode::Uv {
+        if layer.kind() == yolu_core::LayerKind::Fill
+            && layer.projection().mode != ProjectionMode::Uv
+        {
             want[MeshMapKind::Position as usize] = true;
             want[MeshMapKind::WorldNormal as usize] = true;
         }
     }
-    MeshMapKind::ALL.into_iter().filter(|k| want[*k as usize]).collect()
+    MeshMapKind::ALL
+        .into_iter()
+        .filter(|k| want[*k as usize])
+        .collect()
 }
 
 /// 効いていない塗りつぶしの画像が指す画像の ID（その層のそのチャンネルの画像）。
@@ -275,12 +290,22 @@ pub fn fill_image_of(doc: &Document, effect: &InactiveEffect) -> Option<ImageId>
 /// 効果 1 件の理由。画像は、棚の画像を復号できなかったならその理由（壊れている・予算を超える）を言い、そうでなく棚に無いなら
 /// 設定の不備ではなく画像が無いことを言う。`failure` は、その画像を復号できなかった理由。
 fn reason(lang: Lang, effect: &InactiveEffect, failure: Option<&str>) -> String {
-    if let (InactiveTarget::FillImage(_), InactiveReason::Rejected(why)) = (&effect.target, &effect.reason) {
+    if let (InactiveTarget::FillImage(_), InactiveReason::Rejected(why)) =
+        (&effect.target, &effect.reason)
+    {
         if let Some(why) = failure {
-            return lang.pick(format!("画像を読めません（{why}）"), format!("Cannot read the image ({why})"));
+            return lang.pick(
+                format!("画像を読めません（{why}）"),
+                format!("Cannot read the image ({why})"),
+            );
         }
         if why.contains("その画像が無い") {
-            return lang.pick("プロジェクトに画像が無い", "The image is not in the project").into();
+            return lang
+                .pick(
+                    "プロジェクトに画像が無い",
+                    "The image is not in the project",
+                )
+                .into();
         }
     }
     lang.inactive_reason(&effect.reason)
@@ -355,7 +380,12 @@ impl AppState {
             }
             pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
-        let waiting_sets: HashSet<u32> = self.sets.iter().filter(|s| s.waiting_inputs).map(|s| s.uid).collect();
+        let waiting_sets: HashSet<u32> = self
+            .sets
+            .iter()
+            .filter(|s| s.waiting_inputs)
+            .map(|s| s.uid)
+            .collect();
         let state = &mut self.fx.inputs;
         let present: HashMap<ImageId, &yolu_io::Resource> = self
             .shelf
@@ -365,7 +395,9 @@ impl AppState {
             .filter_map(|r| image_id(&r.id).map(|id| (id, r)))
             .collect();
         // 頼まれた画像は、棚にあって文書がまだ指していないあいだだけ（指したら文書の分。棚から消えたら要らない）
-        state.requested.retain(|id| present.contains_key(id) && !pointed.contains(id));
+        state
+            .requested
+            .retain(|id| present.contains_key(id) && !pointed.contains(id));
         state.waiting.retain(|uid, _| waiting_sets.contains(uid));
         let mut wanted: Vec<ImageId> = pointed
             .iter()
@@ -378,15 +410,17 @@ impl AppState {
         wanted.sort_by_key(|id| id.0); // 予算で断る画像が、フレームごとに替わらないように
         let wanted_set: HashSet<ImageId> = wanted.iter().copied().collect();
         // 棚から消えた画像・使わなくなった画像・中身の替わった画像は手放す
-        state
-            .images
-            .retain(|id, (content, _)| wanted_set.contains(id) && present.get(id).is_some_and(|r| &image_key(r) == content));
+        state.images.retain(|id, (content, _)| {
+            wanted_set.contains(id) && present.get(id).is_some_and(|r| &image_key(r) == content)
+        });
         let mut used = state.decoded_image_bytes();
         // 失敗は、同じ中身・同じ上限で、持っている分が減っていないあいだだけ覚える（中身が変われば別の画像、減れば予算で断った画像を通せる）
         let limit = state.image_limit.unwrap_or(yolu_io::MAX_TOTAL_BYTES);
         state.image_errors.retain(|id, failure| {
             wanted_set.contains(id)
-                && present.get(id).is_some_and(|r| image_key(r) == failure.content)
+                && present
+                    .get(id)
+                    .is_some_and(|r| image_key(r) == failure.content)
                 && used >= failure.used
                 && limit == failure.limit
         });
@@ -427,14 +461,19 @@ impl AppState {
     /// 文書の画像の ID を返す（`Document::set_fill_image` に渡せる）。棚に無い・復号できないときは理由。
     pub fn use_shelf_image(&mut self, resource_id: &str) -> Result<ImageId, String> {
         let lang = self.lang;
-        let id = image_id(resource_id).ok_or_else(|| lang.pick("その画像は棚にありません", "No such image on the shelf").to_owned())?;
+        let id = image_id(resource_id).ok_or_else(|| {
+            lang.pick("その画像は棚にありません", "No such image on the shelf")
+                .to_owned()
+        })?;
         let present = self
             .shelf
             .resources()
             .iter()
             .any(|r| r.kind == "image" && r.id == resource_id);
         if !present {
-            return Err(lang.pick("その画像は棚にありません", "No such image on the shelf").into());
+            return Err(lang
+                .pick("その画像は棚にありません", "No such image on the shelf")
+                .into());
         }
         self.fx.inputs.requested.insert(id);
         self.fx.inputs.image_errors.remove(&id);
@@ -456,7 +495,13 @@ impl AppState {
     }
 
     /// 1 つのセットの今の鍵（モデルの入力と、渡す画像から）。`needed` は読むマップの種類（読むだけのセットは文書が無いので全部）。
-    fn set_key(&self, index: usize, input: Option<&MeshBakeInput>, frame: bool, needed: &[MeshMapKind]) -> SetKey {
+    fn set_key(
+        &self,
+        index: usize,
+        input: Option<&MeshBakeInput>,
+        frame: bool,
+        needed: &[MeshMapKind],
+    ) -> SetKey {
         let Some(set) = self.sets.get(index) else {
             return SetKey {
                 frame,
@@ -518,7 +563,10 @@ impl AppState {
             .cloned()
             .collect();
         let live: HashSet<MeshMapKind> = maps.iter().map(|m| m.kind()).collect();
-        self.fx.inputs.maps.retain(|(u, k), _| *u != uid || live.contains(k));
+        self.fx
+            .inputs
+            .maps
+            .retain(|(u, k), _| *u != uid || live.contains(k));
         for map in maps {
             let state = map_state(map.provenance().check(&expected).state);
             let key = (uid, map.kind());
@@ -592,9 +640,12 @@ impl AppState {
                 continue;
             }
             let images_match = self.fx.inputs.images.iter().all(|(id, (_, image))| {
-                self.set_doc(index).effect_inputs().image(*id).is_some_and(|current| {
-                    current.hash == image.hash && current.color_space == image.color_space
-                })
+                self.set_doc(index)
+                    .effect_inputs()
+                    .image(*id)
+                    .is_some_and(|current| {
+                        current.hash == image.hash && current.color_space == image.color_space
+                    })
             });
             if self.fx.inputs.keys.get(&uid) == Some(&key) && images_match {
                 continue;
@@ -613,19 +664,20 @@ impl AppState {
     /// 読むだけにしていたセットの正本を core の文書にして、入力をそろえてみる。そろえば文書を入れ替えて編集できるようにする。
     /// 正本は開くときと同じ予算（`budget`: 層の画素に許すバイト数）で変換する。変換できなければ（予算を超えるなど）、理由を
     /// 読むだけの理由と状態の帯へ出して false（同じ予算のうちは試し直さない）。
-    fn unlock_set(&mut self, index: usize, input: Option<&MeshBakeInput>, frame: bool, budget: u64) -> bool {
+    fn unlock_set(
+        &mut self,
+        index: usize,
+        input: Option<&MeshBakeInput>,
+        frame: bool,
+        budget: u64,
+    ) -> bool {
         let Some(set) = self.sets.get(index) else {
             return false;
         };
         let Some(project) = &self.project else {
             return false;
         };
-        let Some(native) = project
-            .project()
-            .sets()
-            .iter()
-            .find(|s| s.id == set.id)
-        else {
+        let Some(native) = project.project().sets().iter().find(|s| s.id == set.id) else {
             return false;
         };
         let selection = native.selection.clone();
@@ -653,8 +705,9 @@ impl AppState {
         // 選択範囲（selection.bin）は開いたときと同じく文書に戻す
         let restored = crate::selection::io::restore_into(&mut doc, selection.as_ref(), self.lang);
         // 見た目の設定（look.json）も開いたときと同じく戻す（読めなければ標準のまま、理由を言う）
-        let look_restored = crate::look::io::restore_from(&mut doc, look, self.lang)
-            .and(crate::look::io::restore_received_from(&mut doc, received, self.lang));
+        let look_restored = crate::look::io::restore_from(&mut doc, look, self.lang).and(
+            crate::look::io::restore_received_from(&mut doc, received, self.lang),
+        );
         // 名前を付けて残した選択範囲も戻す（読めない項目は飛ばして理由を言う。ファイルには残る）
         let saved_restored = match saved_selections {
             Ok(read) => crate::selection::io::restore_saved_into(&mut doc, read, self.lang),
@@ -724,16 +777,24 @@ impl AppState {
             let reason = {
                 let names = |c: yolu_core::Channel| crate::m2::channel_name(lang, doc, c);
                 let failure = |e: &InactiveEffect| {
-                    fill_image_of(doc, e).and_then(|id| self.fx.inputs.image_error(id)).map(str::to_owned)
+                    fill_image_of(doc, e)
+                        .and_then(|id| self.fx.inputs.image_error(id))
+                        .map(str::to_owned)
                 };
                 missing_text(lang, &missing, &names, &failure)
             };
             let png = self
                 .project
                 .as_ref()
-                .and_then(|p| p.project().migrated_entries().get(&format!("sets/{id}/composite/Color.png")).cloned())
+                .and_then(|p| {
+                    p.project()
+                        .migrated_entries()
+                        .get(&format!("sets/{id}/composite/Color.png"))
+                        .cloned()
+                })
                 .and_then(|b| b.bytes().ok());
-            let (preview, note) = crate::project::preview_document(png.as_deref(), width, height, lang);
+            let (preview, note) =
+                crate::project::preview_document(png.as_deref(), width, height, lang);
             let reason = match note {
                 Some(n) => format!("{reason}。{n}"),
                 None => reason,
@@ -753,7 +814,10 @@ impl AppState {
                 set.read_only = Some(reason);
                 set.waiting_inputs = true;
             }
-            self.fx.inputs.keys.remove(&self.sets.get(index).map_or(0, |s| s.uid));
+            self.fx
+                .inputs
+                .keys
+                .remove(&self.sets.get(index).map_or(0, |s| s.uid));
             locked.push(name);
         }
         locked
@@ -784,7 +848,6 @@ mod tests {
         assert_eq!(image_id("1234"), None);
     }
 
-
     const IMAGE: &str = "00000000-0000-4000-8000-000000000001";
 
     /// 入力待ちの読むだけのセットを編集できるようにするときの層の画素の予算は、開くときと同じ（設定の予算。`load_source_bytes`）。
@@ -799,28 +862,53 @@ mod tests {
         let mut source = AppState::new(256, 256);
         let base = source.selected_layer.unwrap();
         for (x, y) in [(0, 0), (128, 0), (0, 128), (128, 128)] {
-            source.doc.set_pixel(base, x, y, Rgba8::new(1, 2, 3, 255)).unwrap();
+            source
+                .doc
+                .set_pixel(base, x, y, Rgba8::new(1, 2, 3, 255))
+                .unwrap();
         }
         source.apply(Action::M2(Edit::NewFill));
         let fill = source.selected_layer.unwrap();
         source
             .doc
-            .set_fill_images_for_load(fill, &[(Channel::Color, image_id(IMAGE).unwrap())], Default::default())
+            .set_fill_images_for_load(
+                fill,
+                &[(Channel::Color, image_id(IMAGE).unwrap())],
+                Default::default(),
+            )
             .unwrap();
         source.apply(Action::SaveProjectAs(path.clone()));
         assert!(!source.modified, "{}", source.message);
         let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
-        let bytes = crate::project::to_core(&yolu_io::SetDocument::in_memory(native.clone()), Lang::Ja, u64::MAX).unwrap().allocated_bytes();
+        let bytes = crate::project::to_core(
+            &yolu_io::SetDocument::in_memory(native.clone()),
+            Lang::Ja,
+            u64::MAX,
+        )
+        .unwrap()
+        .allocated_bytes();
         assert!(bytes >= 4 * 65536);
 
         // 開く（予算にちょうど収まる）: 画像が無いので、入力待ちの読むだけ
         let mut a = AppState::new(64, 64);
         open_within(&mut a, &path, bytes);
         assert!(a.sets.current().waiting_inputs, "{}", a.message);
-        assert!(a.read_only_reason().is_some_and(|r| r.contains("効果の入力がそろっていない")));
+        assert!(a
+            .read_only_reason()
+            .is_some_and(|r| r.contains("効果の入力がそろっていない")));
         // 画像が棚に入り、復号できた（入力はそろった）
         let mut shelf = yolu_io::shelf::Shelf::new(crate::shelf::SHELF_BUDGET);
-        shelf.add_image(IMAGE, "image", &[9, 8, 7, 255], 1, 1, "srgb", Default::default()).unwrap();
+        shelf
+            .add_image(
+                IMAGE,
+                "image",
+                &[9, 8, 7, 255],
+                1,
+                1,
+                "srgb",
+                Default::default(),
+            )
+            .unwrap();
         a.shelf = crate::shelf::ShelfState::with_shelf(shelf);
         a.refresh_effect_images();
         assert_eq!(a.fx.inputs.decoded_image_count(), 1);
@@ -828,19 +916,36 @@ mod tests {
         // 1 バイト足りない予算: 開く経路と同じく予算として断り、理由を読むだけの理由と状態の帯へ出す（黙って戻らない）
         let mut refused = AppState::new(64, 64);
         open_within(&mut refused, &path, bytes - 1);
-        let open_reason = refused.read_only_reason().expect("開くときも断る").to_owned();
+        let open_reason = refused
+            .read_only_reason()
+            .expect("開くときも断る")
+            .to_owned();
         assert!(!a.unlock_set(0, None, false, bytes - 1));
         let reason = a.read_only_reason().expect("読むだけのまま").to_owned();
-        assert!(reason.starts_with("編集用に開けません") && reason.contains("予算"), "{reason}");
-        assert!(open_reason.starts_with(&reason), "開くときと同じ断りの文: {open_reason}");
-        assert!(a.message.contains("編集できません") && a.message.contains("予算"), "{}", a.message);
+        assert!(
+            reason.starts_with("編集用に開けません") && reason.contains("予算"),
+            "{reason}"
+        );
+        assert!(
+            open_reason.starts_with(&reason),
+            "開くときと同じ断りの文: {open_reason}"
+        );
+        assert!(
+            a.message.contains("編集できません") && a.message.contains("予算"),
+            "{}",
+            a.message
+        );
         assert!(a.sets.current().waiting_inputs, "予算を上げれば試せる");
 
         // ちょうどの予算なら、開く経路と同じく変換できて、入力もそろっているので編集できる
         assert!(a.unlock_set(0, None, false, bytes), "{}", a.message);
         assert!(a.read_only_reason().is_none());
         assert!(!a.sets.current().waiting_inputs);
-        assert!(a.doc.inactive_effect_list().is_empty(), "{:?}", a.doc.inactive_effect_list());
+        assert!(
+            a.doc.inactive_effect_list().is_empty(),
+            "{:?}",
+            a.doc.inactive_effect_list()
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -857,13 +962,19 @@ mod tests {
         let missing = [effect("プロジェクトにその画像が無い")];
         let none = |_: &InactiveEffect| None;
         let ja = missing_text(Lang::Ja, &missing, &names, &none);
-        assert!(ja.contains("プロジェクトに画像が無い") && !ja.contains("読めません"), "{ja}");
+        assert!(
+            ja.contains("プロジェクトに画像が無い") && !ja.contains("読めません"),
+            "{ja}"
+        );
         let en = missing_text(Lang::En, &missing, &names, &none);
         assert!(en.contains("The image is not in the project"), "{en}");
         // 壊れた PNG・予算超過などで復号できなかったときは、その理由
         let broken = |_: &InactiveEffect| Some("PNGが不正です".to_owned());
         let ja = missing_text(Lang::Ja, &missing, &names, &broken);
-        assert!(ja.contains("画像を読めません（PNGが不正です）") && !ja.contains("画像が無い"), "{ja}");
+        assert!(
+            ja.contains("画像を読めません（PNGが不正です）") && !ja.contains("画像が無い"),
+            "{ja}"
+        );
         let broken = |_: &InactiveEffect| Some("Invalid PNG".to_owned());
         let en = missing_text(Lang::En, &missing, &names, &broken);
         assert!(en.contains("Cannot read the image (Invalid PNG)"), "{en}");

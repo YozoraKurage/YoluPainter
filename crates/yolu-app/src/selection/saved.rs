@@ -45,7 +45,10 @@ pub enum SavedOp {
     /// 消す（1 回の Undo）。
     Delete(usize),
     /// 名前を変える（1 回の Undo。ほかの選択範囲と同じ名前は断る）。
-    Rename { index: usize, name: String },
+    Rename {
+        index: usize,
+        name: String,
+    },
 }
 
 impl SavedOp {
@@ -140,7 +143,9 @@ impl AppState {
                         .into();
                     return;
                 }
-                if self.saved_bytes_without(existing) + mask.allocated_bytes() > self.sel.saved_budget {
+                if self.saved_bytes_without(existing) + mask.allocated_bytes()
+                    > self.sel.saved_budget
+                {
                     self.message = lang
                         .pick(
                             "覚えた選択範囲が大きすぎます。",
@@ -192,7 +197,8 @@ impl AppState {
                 if self.refuse_while_stroking() {
                     return;
                 }
-                let Some(current) = self.saved_selections().get(index).map(|s| s.name.clone()) else {
+                let Some(current) = self.saved_selections().get(index).map(|s| s.name.clone())
+                else {
                     return;
                 };
                 let name = name.trim().to_owned();
@@ -201,7 +207,8 @@ impl AppState {
                 }
                 match self.doc.rename_saved_selection(index, &name) {
                     Ok(()) => {
-                        self.message = format!("{}: {name}", lang.pick("名前を変えました", "Renamed"));
+                        self.message =
+                            format!("{}: {name}", lang.pick("名前を変えました", "Renamed"));
                         self.modified = true;
                     }
                     Err(e) => self.message = self.saved_error(&e),
@@ -227,11 +234,20 @@ impl AppState {
         let lang = self.lang;
         match e {
             CoreError::InvalidArgument("選択範囲の名前が長すぎる") => lang.pick(
-                format!("名前が長すぎます（{} 文字まで）。", yolu_core::MAX_SAVED_NAME_CHARS),
-                format!("The name is too long (up to {} characters).", yolu_core::MAX_SAVED_NAME_CHARS),
+                format!(
+                    "名前が長すぎます（{} 文字まで）。",
+                    yolu_core::MAX_SAVED_NAME_CHARS
+                ),
+                format!(
+                    "The name is too long (up to {} characters).",
+                    yolu_core::MAX_SAVED_NAME_CHARS
+                ),
             ),
             CoreError::InvalidArgument("同じ名前の選択範囲がある") => lang
-                .pick("同じ名前の選択範囲があります。", "A saved selection with that name exists.")
+                .pick(
+                    "同じ名前の選択範囲があります。",
+                    "A saved selection with that name exists.",
+                )
                 .into(),
             other => lang.core_error(other),
         }
@@ -299,7 +315,8 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
     let height = window::HEADER_HEIGHT + 14.0 + 28.0 + 10.0 + list_h + 14.0;
     let keys_free = !ctx.egui_wants_keyboard_input();
     // 名前を変えている間の Esc は名前の欄のもの（欄がやめて元の表示へ戻る。窓は閉じない）
-    let esc_pressed = keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    let esc_pressed =
+        keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
     let esc = esc_pressed && win.rename.is_none();
     let spec = Spec {
         title: window_title(lang),
@@ -395,7 +412,14 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
                 // 名前を変えている行: 名前の欄（Enter か外を押して決める。Esc でやめる）
                 let first = !win.rename_started;
                 win.rename_started = true;
-                let out = w::text_field(ui, label.shrink2(vec2(0.0, 2.0)), (id, "rename", i), name, None, first);
+                let out = w::text_field(
+                    ui,
+                    label.shrink2(vec2(0.0, 2.0)),
+                    (id, "rename", i),
+                    name,
+                    None,
+                    first,
+                );
                 if let Some(next) = out.committed {
                     rename_op = Some((i, next));
                 }
@@ -438,16 +462,34 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             x += 4.0;
             let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
             let tip = format!("{}: {name}", lang.pick("名前を変える", "Rename"));
-            if w::icon_button(ui, at, (id, "rename-button", i), "edit", &tip, win.rename == Some(i), can_edit, 16.0)
-                .clicked()
+            if w::icon_button(
+                ui,
+                at,
+                (id, "rename-button", i),
+                "edit",
+                &tip,
+                win.rename == Some(i),
+                can_edit,
+                16.0,
+            )
+            .clicked()
             {
                 start_rename = Some(i);
             }
             x += 28.0;
             let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
             let tip = format!("{} {name}", lang.pick("消す:", "Remove:"));
-            if w::icon_button(ui, at, (id, "delete", i), "delete", &tip, false, can_edit, 16.0)
-                .clicked()
+            if w::icon_button(
+                ui,
+                at,
+                (id, "delete", i),
+                "delete",
+                &tip,
+                false,
+                can_edit,
+                16.0,
+            )
+            .clicked()
             {
                 actions.push(Action::Sel(SelAction::Saved(SavedOp::Delete(i))));
             }
@@ -460,7 +502,10 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         win.rename_started = false;
     }
     if let Some((index, name)) = rename_op {
-        actions.push(Action::Sel(SelAction::Saved(SavedOp::Rename { index, name })));
+        actions.push(Action::Sel(SelAction::Saved(SavedOp::Rename {
+            index,
+            name,
+        })));
     }
     // 動かした窓の状態を戻す（操作で閉じた・窓を替えたあとは上書きしない）
     if app.sel.saved_window.is_some() {

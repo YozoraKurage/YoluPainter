@@ -210,7 +210,9 @@ impl AppState {
                 }
                 self.prefs.settings.backups = keep;
             }
-            PrefsAction::ChooseLibraryFolder => self.dialog_request = Some(DialogRequest::PrefsLibraryFolder),
+            PrefsAction::ChooseLibraryFolder => {
+                self.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
+            }
             PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
@@ -245,7 +247,9 @@ impl AppState {
                 Pref::Compositing(c) => self.prefs.settings.compositing = c,
                 Pref::GpuMemory(choice) => {
                     self.prefs.settings.gpu_memory = match choice {
-                        GpuMemory::Mib(n) => GpuMemory::Mib(n.clamp(gpu_memory::MIN_TOTAL_MIB, gpu_memory::MAX_TOTAL_MIB)),
+                        GpuMemory::Mib(n) => GpuMemory::Mib(
+                            n.clamp(gpu_memory::MIN_TOTAL_MIB, gpu_memory::MAX_TOTAL_MIB),
+                        ),
                         level => level,
                     };
                 }
@@ -254,7 +258,10 @@ impl AppState {
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
                         self.message = lang
-                            .pick("棚の場所は絶対パスで指定します。", "The library folder must be an absolute path.")
+                            .pick(
+                                "棚の場所は絶対パスで指定します。",
+                                "The library folder must be an absolute path.",
+                            )
                             .into();
                     }
                     folder => self.prefs.settings.library_folder = folder,
@@ -324,7 +331,8 @@ impl AppState {
 
     /// 今の GPU のメモリの合計（MiB。「詳しく」のスライダーに見せる。選んだ段・自動もこの数になる）。
     pub fn gpu_total_mib(&self) -> u32 {
-        (gpu_memory::total_bytes(self.prefs.settings.gpu_memory, &self.prefs.gpu) / gpu_memory::MIB) as u32
+        (gpu_memory::total_bytes(self.prefs.settings.gpu_memory, &self.prefs.gpu) / gpu_memory::MIB)
+            as u32
     }
 }
 
@@ -351,7 +359,9 @@ fn budget_name(lang: Lang, kind: BudgetKind, budget: Budget, ram_mib: u64) -> St
 fn threads_name(lang: Lang, threads: Option<u32>, cores: u32) -> String {
     match threads {
         None => lang.pick(format!("自動（{cores}）"), format!("Automatic ({cores})")),
-        Some(1) => lang.pick("1（並列にしない）", "1 (no parallel work)").into(),
+        Some(1) => lang
+            .pick("1（並列にしない）", "1 (no parallel work)")
+            .into(),
         Some(n) => n.to_string(),
     }
 }
@@ -390,7 +400,10 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
             .collect(),
         PrefChoice::ExportPadding => EXPORT_PADDINGS
             .into_iter()
-            .map(|p| Entry::item(padding_name(lang, p), set(Pref::ExportPadding(p))).radio(s.export_padding == p))
+            .map(|p| {
+                Entry::item(padding_name(lang, p), set(Pref::ExportPadding(p)))
+                    .radio(s.export_padding == p)
+            })
             .collect(),
         PrefChoice::Budget(kind) => {
             let ram = app.prefs.ram_mib;
@@ -402,7 +415,8 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
             values
                 .into_iter()
                 .map(|b| {
-                    Entry::item(budget_name(lang, kind, b, ram), set(Pref::Budget(kind, b))).radio(s.budget(kind) == b)
+                    Entry::item(budget_name(lang, kind, b, ram), set(Pref::Budget(kind, b)))
+                        .radio(s.budget(kind) == b)
                 })
                 .collect()
         }
@@ -414,13 +428,20 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
             values
                 .into_iter()
                 .map(|n| {
-                    Entry::item(threads_name(lang, n, app.prefs.cores), set(Pref::CpuThreads(n))).radio(s.cpu_threads == n)
+                    Entry::item(
+                        threads_name(lang, n, app.prefs.cores),
+                        set(Pref::CpuThreads(n)),
+                    )
+                    .radio(s.cpu_threads == n)
                 })
                 .collect()
         }
         PrefChoice::Compositing => Compositing::ALL
             .into_iter()
-            .map(|c| Entry::item(compositing_name(lang, c), set(Pref::Compositing(c))).radio(s.compositing == c))
+            .map(|c| {
+                Entry::item(compositing_name(lang, c), set(Pref::Compositing(c)))
+                    .radio(s.compositing == c)
+            })
             .collect(),
         PrefChoice::OrbitCenter => OrbitCenter::ALL
             .into_iter()
@@ -441,11 +462,16 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
         PrefChoice::GpuMemory => {
             let mut entries: Vec<Entry<Action>> = GpuMemory::LEVELS
                 .into_iter()
-                .map(|g| Entry::item(g.name(lang), set(Pref::GpuMemory(g))).radio(s.gpu_memory == g))
+                .map(|g| {
+                    Entry::item(g.name(lang), set(Pref::GpuMemory(g))).radio(s.gpu_memory == g)
+                })
                 .collect();
             // 詳しくで量を指定しているときは、その印を末尾に（数は出さない。選び直すと段に戻る）
             if matches!(s.gpu_memory, GpuMemory::Mib(_)) {
-                entries.push(Entry::item(s.gpu_memory.name(lang), set(Pref::GpuMemory(s.gpu_memory))).radio(true));
+                entries.push(
+                    Entry::item(s.gpu_memory.name(lang), set(Pref::GpuMemory(s.gpu_memory)))
+                        .radio(true),
+                );
             }
             entries
         }
@@ -533,16 +559,37 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let outer_clip = ui.clip_rect();
         ui.set_clip_rect(body.intersect(outer_clip));
         let mut rows = w::Rows::new(area, 8.0);
-        let choice = |ui: &mut egui::Ui, rows: &mut w::Rows, key: &str, label: &str, value: &str, tip: &str, which: PrefChoice| {
+        let choice = |ui: &mut egui::Ui,
+                      rows: &mut w::Rows,
+                      key: &str,
+                      label: &str,
+                      value: &str,
+                      tip: &str,
+                      which: PrefChoice| {
             let r = rows.row(t::ROW_HEIGHT, GAP);
-            let (response, b) = w::dropdown(ui, r, ("prefs", key), Some(label), value, Some(tip), enabled, LABEL_WIDTH);
+            let (response, b) = w::dropdown(
+                ui,
+                r,
+                ("prefs", key),
+                Some(label),
+                value,
+                Some(tip),
+                enabled,
+                LABEL_WIDTH,
+            );
             response.clicked().then_some(Request::Open(which, b))
         };
         // 節の見出し（2 つ目からは上に細い線）
         let section = |ui: &mut egui::Ui, rows: &mut w::Rows, first: bool, title: &str| {
             let r = rows.row(HEADING, 0.0);
             if !first {
-                w::hline(ui.painter(), r.left(), r.right(), r.top() + 3.0, t::SEPARATOR);
+                w::hline(
+                    ui.painter(),
+                    r.left(),
+                    r.right(),
+                    r.top() + 3.0,
+                    t::SEPARATOR,
+                );
             }
             w::text(
                 ui.painter(),
@@ -567,7 +614,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             rows.row(t::ROW_HEIGHT, GAP),
             id.with("livelink-on-startup"),
-            lang.pick("起動時に Live Link を待ち受ける", "Start Live Link on launch"),
+            lang.pick(
+                "起動時に Live Link を待ち受ける",
+                "Start Live Link on launch",
+            ),
             s.livelink_on_startup,
             Some(lang.pick(
                 "次の起動から反映。--livelink を付けて起動すると、この設定によらず待ち受けます",
@@ -591,7 +641,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             enabled,
         );
         if next != s.livelink_keep_values {
-            requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkKeepValues(next))));
+            requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkKeepValues(
+                next,
+            ))));
         }
         let next = w::toggle(
             ui,
@@ -670,7 +722,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         section(ui, &mut rows, false, lang.pick("処理", "Processing"));
         let mut threads = threads_name(lang, s.cpu_threads, cores);
         if restart {
-            threads += &format!("{}{}", lang.pick(" ・ ", " · "), lang.pick("再起動で反映", "applies after restart"));
+            threads += &format!(
+                "{}{}",
+                lang.pick(" ・ ", " · "),
+                lang.pick("再起動で反映", "applies after restart")
+            );
         }
         requests.extend(choice(
             ui,
@@ -708,7 +764,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ),
             PrefChoice::GpuMemory,
         ));
-        let open = w::subsection_header(ui, rows.row(t::ROW_HEIGHT, GAP), ("prefs", "gpu-details"), lang.pick("詳しく", "Details"), gpu_details);
+        let open = w::subsection_header(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            ("prefs", "gpu-details"),
+            lang.pick("詳しく", "Details"),
+            gpu_details,
+        );
         if open != gpu_details {
             requests.push(Request::Do(PrefsAction::GpuDetails(open)));
         }
@@ -743,7 +805,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 } else {
                     let step = gpu_memory::TOTAL_STEP_MIB as f32;
                     let mib = ((out.value / step).round() * step) as u32;
-                    requests.push(Request::Do(PrefsAction::Set(Pref::GpuMemory(GpuMemory::Mib(mib)))));
+                    requests.push(Request::Do(PrefsAction::Set(Pref::GpuMemory(
+                        GpuMemory::Mib(mib),
+                    ))));
                 }
             }
             if !out.active {
@@ -802,12 +866,19 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             t::LABEL_DIM,
             Align::Left,
         );
-        ui.interact(path_rect, id.with("library-path"), egui::Sense::hover()).on_hover_text(&shown);
+        ui.interact(path_rect, id.with("library-path"), egui::Sense::hover())
+            .on_hover_text(&shown);
         let row = rows.row(t::ROW_HEIGHT, GAP);
-        let (choose, default) = (lang.pick("選ぶ…", "Choose…"), lang.pick("既定に戻す", "Default"));
+        let (choose, default) = (
+            lang.pick("選ぶ…", "Choose…"),
+            lang.pick("既定に戻す", "Default"),
+        );
         let widths = [choose, default].map(|s| w::text_width(&p, s, t::LABEL) + 24.0);
         let right = row.right();
-        let default_rect = Rect::from_min_size(pos2(right - widths[1], row.top()), vec2(widths[1], row.height()));
+        let default_rect = Rect::from_min_size(
+            pos2(right - widths[1], row.top()),
+            vec2(widths[1], row.height()),
+        );
         let choose_rect = Rect::from_min_size(
             pos2(default_rect.left() - GAP - widths[0], row.top()),
             vec2(widths[0], row.height()),
@@ -873,7 +944,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             enabled,
         );
         if next != keep_all {
-            let keep = if next { BackupKeep::All } else { BackupKeep::Count(backup_count) };
+            let keep = if next {
+                BackupKeep::All
+            } else {
+                BackupKeep::Count(backup_count)
+            };
             requests.push(Request::Do(PrefsAction::SetBackups(keep)));
         }
         rows.space(8.0);

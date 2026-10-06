@@ -41,7 +41,10 @@ pub fn press(
     source: StrokeSource,
     modifiers: Modifiers,
 ) {
-    if app.is_stroking() || !matches!(app.tool, Tool::Move | Tool::Liquify) || app.transform.drag.is_some() {
+    if app.is_stroking()
+        || !matches!(app.tool, Tool::Move | Tool::Liquify)
+        || app.transform.drag.is_some()
+    {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
@@ -116,7 +119,9 @@ pub fn release(
 
 /// ドラッグを今の位置で確定する（離した・Enter）。動かしていない・何も変わらない変形は当てない。
 pub fn commit(app: &mut AppState) {
-    if super::advanced::commit(app) { return; }
+    if super::advanced::commit(app) {
+        return;
+    }
     let Some(drag) = app.transform.drag.take() else {
         return;
     };
@@ -202,7 +207,9 @@ pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
 
 /// ポインタの下のカーソル（ドラッグ中はドラッグの種類）。
 pub fn cursor(app: &mut AppState, view: &CanvasView, hover: Option<Pos2>) -> CursorIcon {
-    if app.tool == Tool::Liquify { return CursorIcon::Crosshair; }
+    if app.tool == Tool::Liquify {
+        return CursorIcon::Crosshair;
+    }
     let mode = match (&app.transform.drag, hover) {
         (Some(drag), _) => drag.mode,
         (None, Some(p)) => match app.transform_bounds_cached() {
@@ -252,7 +259,9 @@ fn corners(view: &CanvasView, b: Bounds, map: impl Fn((f64, f64)) -> (f64, f64))
 
 /// 動かすものの外枠とハンドル（ドラッグ中は変形後の外枠だけ）。移動の道具のときだけ。
 pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &mut AppState) {
-    if super::advanced::paint(painter, view, app) { return; }
+    if super::advanced::paint(painter, view, app) {
+        return;
+    }
     if app.tool != Tool::Move {
         return;
     }

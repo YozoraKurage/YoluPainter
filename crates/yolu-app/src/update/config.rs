@@ -167,9 +167,15 @@ mod tests {
         }
         // 試験版を切のまま保存すると、旧い版と同じ 1 行のまま（旧い版が読める）
         save(&path, &checked(Preference::On)).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "check_on_startup=on\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "check_on_startup=on\n"
+        );
         // 入のときだけ 2 行目が付く。保存し直しても、もう一方の値を落とさない
-        let both = Stored { check: Preference::On, beta: true };
+        let both = Stored {
+            check: Preference::On,
+            beta: true,
+        };
         save(&path, &both).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -177,7 +183,10 @@ mod tests {
         );
         assert_eq!(load(&path).unwrap(), both);
         // 順番は問わない・切の行も読める
-        for text in ["use_beta=on\ncheck_on_startup=on\n", "check_on_startup=on\nuse_beta=on"] {
+        for text in [
+            "use_beta=on\ncheck_on_startup=on\n",
+            "check_on_startup=on\nuse_beta=on",
+        ] {
             std::fs::write(&path, text).unwrap();
             assert_eq!(load(&path).unwrap(), both, "{text:?}");
         }
@@ -191,7 +200,10 @@ mod tests {
         let dir = scratch("beta-alone");
         let path = dir.join("update.conf");
         // まだ聞いていない人が試験版だけを入れる: 問いはまだ聞いていないまま
-        let beta_only = Stored { check: Preference::Unset, beta: true };
+        let beta_only = Stored {
+            check: Preference::Unset,
+            beta: true,
+        };
         save(&path, &beta_only).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "use_beta=on\n");
         assert_eq!(load(&path).unwrap(), beta_only);

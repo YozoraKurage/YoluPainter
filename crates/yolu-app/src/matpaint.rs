@@ -119,7 +119,8 @@ impl MaterialPaint {
     /// チャンネルの値（straight RGBA8）。アルファは描画色のアルファ。Color は描画色、Emission は色、データは灰色、Normal は傾きの法線。
     pub fn value(&self, channel: Channel, color: Rgba) -> Rgba8 {
         let a = color[3];
-        let rgba = |r: f32, g: f32, b: f32| Rgba8::new(to_byte(r), to_byte(g), to_byte(b), to_byte(a));
+        let rgba =
+            |r: f32, g: f32, b: f32| Rgba8::new(to_byte(r), to_byte(g), to_byte(b), to_byte(a));
         match channel {
             Channel::Color => rgba(color[0], color[1], color[2]),
             Channel::Emission => rgba(self.emission[0], self.emission[1], self.emission[2]),
@@ -177,7 +178,11 @@ pub fn lock_names(lang: Lang, lock: yolu_core::LayerLocks) -> String {
 /// 断られた理由の短い文（core のエラーを、画面の言語で名前と理由だけにする）。
 pub fn refusal_text(lang: Lang, error: &CoreError) -> String {
     match error {
-        CoreError::LayerLocked { layer, holder, lock } => format!(
+        CoreError::LayerLocked {
+            layer,
+            holder,
+            lock,
+        } => format!(
             "{}: {}",
             if layer == holder {
                 lang.pick("レイヤーがロックされています", "The layer is locked")
@@ -190,7 +195,9 @@ pub fn refusal_text(lang: Lang, error: &CoreError) -> String {
         CoreError::StrokeActive | CoreError::NoActiveStroke => lang
             .pick("描いている間はできません", "Not while drawing")
             .to_owned(),
-        CoreError::LayerNotFound => lang.pick("レイヤーがありません", "No such layer").to_owned(),
+        CoreError::LayerNotFound => lang
+            .pick("レイヤーがありません", "No such layer")
+            .to_owned(),
         CoreError::ChannelNotFound => lang
             .pick("チャンネルがありません", "No such channel")
             .to_owned(),
@@ -214,7 +221,10 @@ impl AppState {
                 return paints;
             }
         }
-        vec![ChannelPaint::new(self.m2.paint_channel, single_value(color))]
+        vec![ChannelPaint::new(
+            self.m2.paint_channel,
+            single_value(color),
+        )]
     }
 
     /// マテリアルで塗る設定を使うストロークか（マスクに描くあいだは使わない）。
@@ -265,7 +275,10 @@ mod tests {
         let mut m = MaterialPaint::default();
         m.set_enabled(true, Channel::Roughness);
         assert_eq!(m.included(), vec![Channel::Roughness]);
-        assert!(!m.set_channel(Channel::Roughness, false), "最後の 1 つは外せない");
+        assert!(
+            !m.set_channel(Channel::Roughness, false),
+            "最後の 1 つは外せない"
+        );
         assert!(m.set_channel(Channel::Color, true));
         assert!(m.set_channel(Channel::Roughness, false));
         assert_eq!(m.included(), vec![Channel::Color]);
@@ -291,7 +304,10 @@ mod tests {
             "アルファは描画色のもの"
         );
         m.emission = [0.0, 1.0, 0.0];
-        assert_eq!(m.value(Channel::Emission, color), Rgba8::new(0, 255, 0, 128));
+        assert_eq!(
+            m.value(Channel::Emission, color),
+            Rgba8::new(0, 255, 0, 128)
+        );
         // 平らな法線は (128, 128, 255)、傾きは長さ 1 に収める
         assert_eq!(
             m.value(Channel::Normal, [0.0, 0.0, 0.0, 1.0]),
@@ -313,7 +329,14 @@ mod tests {
         m.set_enabled(true, Channel::Emission);
         m.set_channel(Channel::Color, true);
         m.set_channel(Channel::Height, true);
-        let order: Vec<Channel> = m.paints([0.0, 0.0, 0.0, 1.0]).iter().map(|p| p.channel).collect();
-        assert_eq!(order, vec![Channel::Color, Channel::Height, Channel::Emission]);
+        let order: Vec<Channel> = m
+            .paints([0.0, 0.0, 0.0, 1.0])
+            .iter()
+            .map(|p| p.channel)
+            .collect();
+        assert_eq!(
+            order,
+            vec![Channel::Color, Channel::Height, Channel::Emission]
+        );
     }
 }

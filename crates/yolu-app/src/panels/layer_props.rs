@@ -117,7 +117,10 @@ fn layer_section(
     // この層までの合成に名前を付ける（上の層の Generator が読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
     // 画素へのフィルター（調整・グループの層には画素が無い）
-    if matches!(app.doc.layer(id).map(|l| l.kind()), Some(LayerKind::Raster | LayerKind::Fill)) {
+    if matches!(
+        app.doc.layer(id).map(|l| l.kind()),
+        Some(LayerKind::Raster | LayerKind::Fill)
+    ) {
         super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
     }
 }
@@ -131,7 +134,15 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if ids.is_empty() {
         return;
     }
-    let (open, _) = section(ui, app, rows, "locks", lang.pick("ロック", "Lock"), "lock", None);
+    let (open, _) = section(
+        ui,
+        app,
+        rows,
+        "locks",
+        lang.pick("ロック", "Lock"),
+        "lock",
+        None,
+    );
     if !open {
         return;
     }
@@ -452,7 +463,10 @@ fn adjustment_section(
                 ib,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick("これ以下の入力は黒", "Input at or below this becomes black"))),
+                why.or(Some(lang.pick(
+                    "これ以下の入力は黒",
+                    "Input at or below this becomes black",
+                ))),
                 enabled,
             ) {
                 ib = v.min(iw - 0.004).max(0.0);
@@ -466,7 +480,10 @@ fn adjustment_section(
                 iw,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick("これ以上の入力は白", "Input at or above this becomes white"))),
+                why.or(Some(lang.pick(
+                    "これ以上の入力は白",
+                    "Input at or above this becomes white",
+                ))),
                 enabled,
             ) {
                 iw = v.max(ib + 0.004).min(1.0);

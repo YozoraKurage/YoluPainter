@@ -133,8 +133,7 @@ pub fn is_network_path(stored: &str) -> bool {
     match rest.strip_prefix("?/") {
         Some(after) => {
             let mut chars = after.chars();
-            !(chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-                && chars.next() == Some(':'))
+            !(chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next() == Some(':'))
         }
         None => true,
     }
@@ -159,8 +158,14 @@ pub fn start(app: &mut AppState, ylp: &Path, stored: &str, base: &str) -> Option
         let path = PathBuf::from(stored);
         app.np.model_file = Some(path.clone());
         return Some(lang.pick(
-            format!("ネットワーク上のモデルは自動では読みません: {}。", file_name(&path)),
-            format!("Not reading the model on the network automatically: {}.", file_name(&path)),
+            format!(
+                "ネットワーク上のモデルは自動では読みません: {}。",
+                file_name(&path)
+            ),
+            format!(
+                "Not reading the model on the network automatically: {}.",
+                file_name(&path)
+            ),
         ));
     }
     let path = resolve_model_path(stored, ylp);
@@ -195,25 +200,23 @@ pub(super) fn poll(app: &mut AppState) {
     let lang = app.lang;
     let name = file_name(&reopen.path);
     let result = match &reopen.stage {
-        Stage::Checking(rx) => {
-            match rx.try_recv() {
-                Err(TryRecvError::Empty) => {
-                    app.np.reopening = Some(reopen);
-                    return;
-                }
-                Ok(true) => {
-                    let job = pose::prepare_fbx(
-                        &mut app.view3d,
-                        &reopen.path,
-                        yolu_model::ModelLimits::default(),
-                    );
-                    reopen.stage = Stage::Loading(job);
-                    app.np.reopening = Some(reopen);
-                    return;
-                }
-                Ok(false) | Err(TryRecvError::Disconnected) => None,
+        Stage::Checking(rx) => match rx.try_recv() {
+            Err(TryRecvError::Empty) => {
+                app.np.reopening = Some(reopen);
+                return;
             }
-        }
+            Ok(true) => {
+                let job = pose::prepare_fbx(
+                    &mut app.view3d,
+                    &reopen.path,
+                    yolu_model::ModelLimits::default(),
+                );
+                reopen.stage = Stage::Loading(job);
+                app.np.reopening = Some(reopen);
+                return;
+            }
+            Ok(false) | Err(TryRecvError::Disconnected) => None,
+        },
         Stage::Loading(job) => match job.poll() {
             Some(result) => Some(result),
             None => {
@@ -313,9 +316,16 @@ mod tests {
     #[test]
     fn a_relative_path_never_leaves_the_project_folder_for_another_host() {
         let ylp = Path::new("/work/proj/p.ylp");
-        for stored in ["../../../../../nas/share/x.fbx", "models/../../x.fbx", "./x.fbx"] {
+        for stored in [
+            "../../../../../nas/share/x.fbx",
+            "models/../../x.fbx",
+            "./x.fbx",
+        ] {
             let resolved = resolve_model_path(stored, ylp);
-            assert!(resolved.is_absolute() && !is_network_path(&resolved.to_string_lossy()), "{resolved:?}");
+            assert!(
+                resolved.is_absolute() && !is_network_path(&resolved.to_string_lossy()),
+                "{resolved:?}"
+            );
         }
     }
 
@@ -324,13 +334,20 @@ mod tests {
     #[test]
     fn a_network_model_is_kept_as_written_off_windows() {
         let ylp = Path::new("/work/proj/p.ylp");
-        for model in ["//nas/share/models/body.fbx", "\\\\nas\\share\\models\\body.fbx", "//nas/body.fbx"] {
+        for model in [
+            "//nas/share/models/body.fbx",
+            "\\\\nas\\share\\models\\body.fbx",
+            "//nas/body.fbx",
+        ] {
             let stored = relative_model_path(Path::new(model), ylp);
             assert_eq!(stored, model.replace('\\', "/"), "{model}");
             assert!(is_network_path(&stored), "{stored}");
         }
         // ローカルのパスは今までどおり相対にする
-        assert_eq!(relative_model_path(Path::new("/work/models/body.fbx"), ylp), "../models/body.fbx");
+        assert_eq!(
+            relative_model_path(Path::new("/work/models/body.fbx"), ylp),
+            "../models/body.fbx"
+        );
     }
 
     #[cfg(windows)]

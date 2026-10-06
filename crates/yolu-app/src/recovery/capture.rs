@@ -70,7 +70,13 @@ pub(crate) fn fingerprint(state: &AppState) -> Fingerprint {
             .enumerate()
             .map(|(i, s)| {
                 let doc = state.set_doc(i);
-                (s.id.clone(), doc.id(), doc.revision(), s.name.clone(), s.material.clone())
+                (
+                    s.id.clone(),
+                    doc.id(),
+                    doc.revision(),
+                    s.name.clone(),
+                    s.material.clone(),
+                )
             })
             .collect(),
         current: state.sets.current().id.clone(),
@@ -118,7 +124,9 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         let snapshot = if read_only || unchanged {
             None
         } else {
-            Some(Arc::new(doc.capture_snapshot().map_err(|_| Refusal::Stroke)?))
+            Some(Arc::new(
+                doc.capture_snapshot().map_err(|_| Refusal::Stroke)?,
+            ))
         };
         sets.push(SetCapture {
             id: set.id.clone(),
@@ -143,7 +151,11 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
     };
     // 一覧に出す名前は、ファイルのあるプロジェクトのものだけ（名前の無いプロジェクトは空にして、一覧が今の言語で
     // 「名称未設定」と出す。書いた時の言語の既定の名前を残さない）
-    let title = if project_path.is_empty() { String::new() } else { state.project_name.clone() };
+    let title = if project_path.is_empty() {
+        String::new()
+    } else {
+        state.project_name.clone()
+    };
     let shelf = (state.shelf.changed && state.shelf.unavailable.is_none())
         .then(|| state.shelf.shelf().clone());
     Ok(Capture {
@@ -175,10 +187,9 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
             None => None,
         };
         if document.is_none() && !in_base {
-            return Err(RecoveryError::Project(yolu_io::Error::InvalidData(format!(
-                "セット「{}」の元の文書がありません",
-                set.name
-            ))));
+            return Err(RecoveryError::Project(yolu_io::Error::InvalidData(
+                format!("セット「{}」の元の文書がありません", set.name),
+            )));
         }
         specs.push(SetSpec {
             id: set.id.clone(),
@@ -193,7 +204,11 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
     let sizes: Vec<(&str, (u32, u32, u32))> = capture
         .sets
         .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size()))))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), (d.width(), d.height(), d.tile_size())))
+        })
         .collect();
     let resized = capture
         .base
@@ -202,7 +217,8 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .unwrap_or_default();
     let project = match &capture.base {
         Some(base) => {
-            let fitted = crate::selection::io::without_stale(base, &sizes, capture.lang).map_err(RecoveryError::Text)?;
+            let fitted = crate::selection::io::without_stale(base, &sizes, capture.lang)
+                .map_err(RecoveryError::Text)?;
             if fitted.info().format < 7 {
                 fitted
                     .upgraded(writer.clone())?
@@ -230,10 +246,15 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
     let saved: Vec<(&str, &[yolu_core::SavedSelection])> = capture
         .sets
         .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.saved_selections())))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), d.saved_selections()))
+        })
         .collect();
-    let (project, _) = crate::selection::io::write_saved_into(project, &saved, &resized, capture.lang)
-        .map_err(RecoveryError::Text)?;
+    let (project, _) =
+        crate::selection::io::write_saved_into(project, &saved, &resized, capture.lang)
+            .map_err(RecoveryError::Text)?;
     // 見た目の設定（look.json）も、取った写しのものを、違うセットだけ書き換える
     let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
         .sets
@@ -241,19 +262,24 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
         .collect();
     // 読めなかったエントリを上書きしたかは、復旧の写しでは知らせない（開いた .ylp には手を付けない。保存のときに知らせる）
-    let (project, _) = crate::look::io::write_into(project, &looks, capture.lang)
-        .map_err(RecoveryError::Text)?;
+    let (project, _) =
+        crate::look::io::write_into(project, &looks, capture.lang).map_err(RecoveryError::Text)?;
     // Unity から受けた値（復旧は、開いていた時の見た目に戻すために、保存の設定によらず書く）
     let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
         .sets
         .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.received_look())))
+        .filter_map(|s| {
+            s.snapshot
+                .as_ref()
+                .map(|d| (s.id.as_str(), d.received_look()))
+        })
         .collect();
     let project = crate::look::io::write_received_into(project, &received, capture.lang)
         .map_err(RecoveryError::Text)?;
     // モデルのポーズ（pose.json。保存と同じく、違うときだけ書く。読めなかったエントリを上書きしたかは、保存のときに知らせる）
-    let (project, _) = crate::view3d::pose::stored::write_into(project, &capture.pose, capture.lang)
-        .map_err(RecoveryError::Text)?;
+    let (project, _) =
+        crate::view3d::pose::stored::write_into(project, &capture.pose, capture.lang)
+            .map_err(RecoveryError::Text)?;
     // アセットの棚（保存と同じく、変えたときだけ resources を書き直す）
     match &capture.shelf {
         Some(shelf) => Ok(project.with_shelf(shelf, crate::project::writer())?),

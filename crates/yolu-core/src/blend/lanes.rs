@@ -155,7 +155,11 @@ unsafe fn set_lum<V: Lanes32>(c: Rgb<V>, l: V::F) -> Rgb<V> {
         );
         *v = V::select(high, adjusted, *v);
     }
-    [clamp01_32::<V>(k[0]), clamp01_32::<V>(k[1]), clamp01_32::<V>(k[2])]
+    [
+        clamp01_32::<V>(k[0]),
+        clamp01_32::<V>(k[1]),
+        clamp01_32::<V>(k[2]),
+    ]
 }
 
 /// SetSat の 1 成分: 最大なら s、最小なら 0、中間は比を保つ。mx = mn（flat）の画素は 0。

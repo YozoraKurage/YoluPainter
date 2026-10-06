@@ -63,7 +63,9 @@ impl YoluApp {
         // 変更があれば、復旧の書き置きを今すぐ取る（文書そのものは触らない）
         let saved = if !self.state.modified {
             Saved::NothingToSave
-        } else if self.state.recovery.is_enabled() && self.state.recovery_flush_within(self.gpu_lost_wait) {
+        } else if self.state.recovery.is_enabled()
+            && self.state.recovery_flush_within(self.gpu_lost_wait)
+        {
             Saved::Yes
         } else {
             Saved::No
@@ -74,8 +76,15 @@ impl YoluApp {
         self.gpu_device = None;
         let lang = self.state.lang;
         self.state.message = gpu_watch::lost_text(lang, saved);
-        let adapter = self.gpu_watch.as_ref().map(GpuWatch::adapter).unwrap_or_default();
-        crate::crash::event("GPU device lost", &gpu_watch::lost_detail(&adapter, &lost, saved));
+        let adapter = self
+            .gpu_watch
+            .as_ref()
+            .map(GpuWatch::adapter)
+            .unwrap_or_default();
+        crate::crash::event(
+            "GPU device lost",
+            &gpu_watch::lost_detail(&adapter, &lost, saved),
+        );
         self.gpu_lost = Some(lost);
         if self.dialogs {
             // 窓の描画が止まっているので、理由は OS の窓で出す。閉じるまでここで待つ

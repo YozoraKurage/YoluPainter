@@ -706,8 +706,7 @@ fn connect_returns_before_the_peer_sends_its_welcome() {
     let h = connect(&name);
     assert_eq!(ylb_status(h), 0, "相手の挨拶より先に返る");
     let stream = server.accept().unwrap();
-    let (conn, _reader, _) =
-        yolu_protocol::link::accept(stream, "試験", 1, &server.key()).unwrap();
+    let (conn, _reader, _) = yolu_protocol::link::accept(stream, "試験", 1, &server.key()).unwrap();
     wait_for(h, "保留していた挨拶の完了", || {
         ylb_status(h) == 1
     });
@@ -766,7 +765,12 @@ fn report_against(
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
     assert_ne!(server, 0);
     assert_eq!(
-        ylb_test_server_configure(server, pack(server_version), pack(server_min_peer), server_features),
+        ylb_test_server_configure(
+            server,
+            pack(server_version),
+            pack(server_min_peer),
+            server_features
+        ),
         0
     );
     let agent = "試験";
@@ -826,8 +830,17 @@ fn the_peer_version_and_the_marks_are_asked_through_the_c_functions() {
     assert_eq!(ylb_disconnect(h), 0);
 
     // 機能の印: 共通はこのブリッジも出す印（マテリアルの値）だけで、ブリッジに無い印（アニメーション）は自分を上げれば使える機能として出る
-    let (h, r) = report_against("marks", "0.3.0", v(0, 1, 0), v(0, 0, 0), feature::MATERIAL_VALUES | feature::ANIMATION);
-    assert_eq!(r.peer_features, feature::MATERIAL_VALUES | feature::ANIMATION);
+    let (h, r) = report_against(
+        "marks",
+        "0.3.0",
+        v(0, 1, 0),
+        v(0, 0, 0),
+        feature::MATERIAL_VALUES | feature::ANIMATION,
+    );
+    assert_eq!(
+        r.peer_features,
+        feature::MATERIAL_VALUES | feature::ANIMATION
+    );
     assert_eq!(r.own_features, BRIDGE_FEATURES);
     assert_eq!(r.common_features, BRIDGE_FEATURES & r.peer_features);
     assert_eq!(r.missing_here, r.peer_features & !BRIDGE_FEATURES);
@@ -839,13 +852,19 @@ fn the_peer_version_and_the_marks_are_asked_through_the_c_functions() {
     assert_eq!(ylb_common_features(987654321), 0);
     assert_eq!(ylb_peer_app_version(987654321), none);
     let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { ylb_link_report(987654321, &mut report) }, YLB_E_HANDLE);
+    assert_eq!(
+        unsafe { ylb_link_report(987654321, &mut report) },
+        YLB_E_HANDLE
+    );
 }
 
 #[test]
 // 試験のスタンドアロンは、Windows では止めても受けた接続を閉じない（名前付きパイプの読みの待ちを外から切れないので、待たずに手放す）。
 // 相手の終わりを作れないので Windows では回さない。終わったつながりが版と機能を答えない仕組み（Session の fail・close）は OS に依らず、Linux で確かめる。
-#[cfg_attr(windows, ignore = "試験のスタンドアロンが Windows では接続を閉じず、相手の終わりを作れない")]
+#[cfg_attr(
+    windows,
+    ignore = "試験のスタンドアロンが Windows では接続を閉じず、相手の終わりを作れない"
+)]
 fn the_answers_about_the_peer_end_with_the_link() {
     // 版も機能もずれたスタンドアロンにつなぎ、そのスタンドアロンが終わる（自己診断のサーバーを止める）
     let name = unique_name("ends");
@@ -853,7 +872,12 @@ fn the_answers_about_the_peer_end_with_the_link() {
     assert_ne!(server, 0);
     let unknown = 1u64 << 50;
     assert_eq!(
-        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(v(9, 0, 0)), BRIDGE_FEATURES | unknown),
+        ylb_test_server_configure(
+            server,
+            pack(v(0, 1, 0)),
+            pack(v(9, 0, 0)),
+            BRIDGE_FEATURES | unknown
+        ),
         0
     );
     let agent = "試験";
@@ -872,7 +896,11 @@ fn the_answers_about_the_peer_end_with_the_link() {
     wait_for(h, "つながり", || ylb_status(h) == 1);
     let mut report: YlbLinkReport = unsafe { std::mem::zeroed() };
     assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 1);
-    assert_eq!(report.update_self, pack(v(9, 0, 0)), "つながっている間は、ずれが見える");
+    assert_eq!(
+        report.update_self,
+        pack(v(9, 0, 0)),
+        "つながっている間は、ずれが見える"
+    );
     assert_eq!(report.missing_here, unknown);
     assert_eq!(ylb_peer_app_version(h), pack(v(0, 1, 0)));
     assert_eq!(ylb_common_features(h), BRIDGE_FEATURES);
@@ -880,17 +908,33 @@ fn the_answers_about_the_peer_end_with_the_link() {
     assert_eq!(ylb_test_server_stop(server), 0);
     let deadline = Instant::now() + Duration::from_secs(60);
     while ylb_status(h) == 1 {
-        assert!(Instant::now() < deadline, "スタンドアロンが終わったのに、つながったまま");
+        assert!(
+            Instant::now() < deadline,
+            "スタンドアロンが終わったのに、つながったまま"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     // 終わったつながりの版・使える機能は答えない（閉じたあとも版のずれの印を残さない）
     assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 0);
     assert_eq!(report.state, 0);
     assert_eq!(
-        (report.update_self, report.update_peer, report.missing_here, report.common_features),
-        (yolu_protocol::AppVersion::NONE_PACKED, yolu_protocol::AppVersion::NONE_PACKED, 0, 0)
+        (
+            report.update_self,
+            report.update_peer,
+            report.missing_here,
+            report.common_features
+        ),
+        (
+            yolu_protocol::AppVersion::NONE_PACKED,
+            yolu_protocol::AppVersion::NONE_PACKED,
+            0,
+            0
+        )
     );
-    assert_eq!(ylb_peer_app_version(h), yolu_protocol::AppVersion::NONE_PACKED);
+    assert_eq!(
+        ylb_peer_app_version(h),
+        yolu_protocol::AppVersion::NONE_PACKED
+    );
     assert_eq!(ylb_common_features(h), 0);
     assert_eq!(ylb_disconnect(h), 0);
 }
@@ -906,7 +950,12 @@ fn a_refusal_for_the_protocol_range_comes_with_which_side_to_update() {
         let stream = server.accept().unwrap();
         let mut s = &stream;
         let mut frames = FrameReader::new();
-        let hello = frames.read_frame(&mut s).unwrap().unwrap().decode().unwrap();
+        let hello = frames
+            .read_frame(&mut s)
+            .unwrap()
+            .unwrap()
+            .decode()
+            .unwrap();
         assert!(matches!(hello, Message::Hello(_)));
         // 新しいスタンドアロン（読めるのは版 2 から。Unity のパッケージを 0.6.0 以上に求める）の断り
         let reject = yolu_protocol::Reject {
@@ -921,7 +970,8 @@ fn a_refusal_for_the_protocol_range_comes_with_which_side_to_update() {
                 peer_min_peer: yolu_protocol::AppVersion::new(0, 1, 0),
             }),
         };
-        s.write_all(&encode_message(&Message::Reject(reject))).unwrap();
+        s.write_all(&encode_message(&Message::Reject(reject)))
+            .unwrap();
         std::thread::sleep(Duration::from_millis(300));
         server
     });
@@ -942,8 +992,17 @@ fn a_refusal_for_the_protocol_range_comes_with_which_side_to_update() {
     assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
     assert_eq!(report.refused_update, 1, "Unity のパッケージを上げる");
     assert_eq!(report.refused_to, pack(v(0, 6, 0)));
-    assert_eq!((report.unity_min_protocol, report.unity_max_protocol), (1, 1));
-    assert_eq!((report.standalone_min_protocol, report.standalone_max_protocol), (2, 3));
+    assert_eq!(
+        (report.unity_min_protocol, report.unity_max_protocol),
+        (1, 1)
+    );
+    assert_eq!(
+        (
+            report.standalone_min_protocol,
+            report.standalone_max_protocol
+        ),
+        (2, 3)
+    );
     let ev = events(h);
     assert!(ev.iter().any(|e| e.0 == 2), "断りの知らせが来る: {ev:?}");
     assert_eq!(ylb_disconnect(h), 0);
@@ -979,8 +1038,17 @@ fn the_test_server_with_another_protocol_range_refuses_and_the_report_names_the_
     assert_eq!(unsafe { ylb_link_report(h, &mut report) }, 2);
     assert_eq!(report.refused_update, 1, "Unity のパッケージを上げる");
     assert_eq!(report.refused_to, pack(v(0, 6, 0)));
-    assert_eq!((report.unity_min_protocol, report.unity_max_protocol), (1, 1));
-    assert_eq!((report.standalone_min_protocol, report.standalone_max_protocol), (2, 3));
+    assert_eq!(
+        (report.unity_min_protocol, report.unity_max_protocol),
+        (1, 1)
+    );
+    assert_eq!(
+        (
+            report.standalone_min_protocol,
+            report.standalone_max_protocol
+        ),
+        (2, 3)
+    );
     assert_eq!(ylb_disconnect(h), 0);
     // 古い範囲（0〜0）だけを読むスタンドアロンの役なら、スタンドアロンを上げる（ブリッジの求める版へ。今は要求がないので版の指定なし）
     assert_eq!(ylb_test_server_set_protocol(server, 0, 0), 0);
@@ -1012,7 +1080,10 @@ fn stats(server: u64) -> YlbTestServerStats {
 
 fn put_values(h: u64, material: i32) -> i32 {
     unsafe {
-        let (shader, source) = ("Hidden/lilToonOutline", "lilToon 2.3.4 · Standard/Opaque+Outline");
+        let (shader, source) = (
+            "Hidden/lilToonOutline",
+            "lilToon 2.3.4 · Standard/Opaque+Outline",
+        );
         let r = ylb_values_begin(
             h,
             material,
@@ -1038,7 +1109,10 @@ fn put_values(h: u64, material: i32) -> i32 {
         assert_eq!(ylb_values_vector(h, p, l, 2.0, 1.0, 0.5, 0.0), 0);
         // 有限でない値・空の名前・制御文字の名前は断る
         assert_eq!(ylb_values_float(h, p, l, f32::NAN), YLB_E_ARGUMENT);
-        assert_eq!(ylb_values_color(h, p, l, 0.0, f32::INFINITY, 0.0, 1.0), YLB_E_ARGUMENT);
+        assert_eq!(
+            ylb_values_color(h, p, l, 0.0, f32::INFINITY, 0.0, 1.0),
+            YLB_E_ARGUMENT
+        );
         let (p0, _) = n("x");
         assert_eq!(ylb_values_float(h, p0, 0, 1.0), YLB_E_ARGUMENT);
         let (pc, lc) = n("_A\n");
@@ -1050,7 +1124,11 @@ fn put_values(h: u64, material: i32) -> i32 {
         assert_eq!(ylb_values_keyword(h, p, l), YLB_E_ARGUMENT);
         let (p, l) = n("_MatCapTex");
         assert_eq!(ylb_values_slot(h, p, l, 1, 4, 2), 0);
-        assert_eq!(ylb_values_slot(h, p, l, 1, 4, 2), YLB_E_ARGUMENT, "同じスロットは 1 つ");
+        assert_eq!(
+            ylb_values_slot(h, p, l, 1, 4, 2),
+            YLB_E_ARGUMENT,
+            "同じスロットは 1 つ"
+        );
         let (p, l) = n("_ShadowColorTex");
         assert_eq!(ylb_values_slot(h, p, l, 3, 4096, 4096), 0);
         assert_eq!(ylb_values_slot(h, p, l, 9, 1, 1), YLB_E_ARGUMENT);
@@ -1078,12 +1156,21 @@ fn send_texture(h: u64, material: i32, pixels: &[u8], width: u32, height: u32) -
 #[test]
 fn material_values_reach_a_standalone_with_the_mark() {
     use yolu_protocol::feature;
-    assert_ne!(BRIDGE_FEATURES & feature::MATERIAL_VALUES, 0, "ブリッジは値の印を出す");
+    assert_ne!(
+        BRIDGE_FEATURES & feature::MATERIAL_VALUES,
+        0,
+        "ブリッジは値の印を出す"
+    );
     let name = unique_name("values");
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
     assert_ne!(server, 0);
     assert_eq!(
-        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), feature::MATERIAL_VALUES),
+        ylb_test_server_configure(
+            server,
+            pack(v(0, 1, 0)),
+            pack(None),
+            feature::MATERIAL_VALUES
+        ),
         0
     );
     let h = connect(&name);
@@ -1107,10 +1194,19 @@ fn material_values_reach_a_standalone_with_the_mark() {
         ),
         (1, 1, 4, 1, 2)
     );
-    assert_eq!(st.last_values_shader_len, "Hidden/lilToonOutline".len() as u32);
+    assert_eq!(
+        st.last_values_shader_len,
+        "Hidden/lilToonOutline".len() as u32
+    );
     let mut out = [0f32; 4];
     let read = |name: &str, out: &mut [f32; 4]| unsafe {
-        ylb_test_server_value(server, 1, name.as_ptr(), name.len() as i32, out.as_mut_ptr())
+        ylb_test_server_value(
+            server,
+            1,
+            name.as_ptr(),
+            name.len() as i32,
+            out.as_mut_ptr(),
+        )
     };
     assert_eq!(read("_ShadowBorder", &mut out), 0);
     assert_eq!(out[0], 0.3);
@@ -1149,7 +1245,8 @@ fn material_values_reach_a_standalone_with_the_mark() {
     let mut t = YlbTestServerTexture::default();
     let s = "_MatCapTex";
     wait_for(h, "絵", || {
-        let found = unsafe { ylb_test_server_texture(server, 1, s.as_ptr(), s.len() as i32, &mut t) };
+        let found =
+            unsafe { ylb_test_server_texture(server, 1, s.as_ptr(), s.len() as i32, &mut t) };
         found == 0 && t.width == 4
     });
     assert!((1..=2).contains(&stats(server).textures));
@@ -1167,7 +1264,10 @@ fn material_values_are_not_sent_to_a_standalone_without_the_mark() {
     let name = unique_name("novalues");
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
     assert_ne!(server, 0);
-    assert_eq!(ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), 0), 0);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), 0),
+        0
+    );
     let h = connect(&name);
     wait_for(h, "つながり", || ylb_status(h) == 1);
     assert_eq!(ylb_common_features(h), 0);
@@ -1178,7 +1278,9 @@ fn material_values_are_not_sent_to_a_standalone_without_the_mark() {
     assert_eq!(send_texture(h, 0, &pixels, 2, 2), 0);
     // 後から送った印の要らない命令が届くまで待ち、その前に値・絵が届いていないことを見る
     assert_eq!(ylb_model_close(h), 0);
-    wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
+    wait_for(h, "モデルを閉じる知らせ", || {
+        stats(server).models_closed == 1
+    });
     let st = stats(server);
     assert_eq!((st.values, st.textures, st.unknown), (0, 0, 0));
     assert_eq!(ylb_disconnect(h), 0);
@@ -1281,7 +1383,9 @@ fn ask(server: u64, generation: u32, material: u32, wants: i32, slot: &str, have
 
 fn original_of(server: u64, material: u32, slot: &str) -> Option<YlbTestServerOriginal> {
     let mut o = YlbTestServerOriginal::default();
-    (unsafe { ylb_test_server_original(server, material, slot.as_ptr(), slot.len() as i32, &mut o) } == 0)
+    (unsafe {
+        ylb_test_server_original(server, material, slot.as_ptr(), slot.len() as i32, &mut o)
+    } == 0)
         .then_some(o)
 }
 
@@ -1299,7 +1403,11 @@ fn small_original() -> Vec<u8> {
 #[test]
 fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_all_there() {
     use yolu_protocol::{feature, MAX_ORIGINAL_SIZE};
-    assert_ne!(BRIDGE_FEATURES & feature::ORIGINAL_TEXTURES, 0, "ブリッジは元の絵の印を出す");
+    assert_ne!(
+        BRIDGE_FEATURES & feature::ORIGINAL_TEXTURES,
+        0,
+        "ブリッジは元の絵の印を出す"
+    );
     let name = unique_name("originals");
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
     assert_ne!(server, 0);
@@ -1317,7 +1425,10 @@ fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_a
     assert_ne!(ylb_common_features(h) & feature::ORIGINAL_TEXTURES, 0);
     let px = small_original();
     // モデルを送る前は送らない
-    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_STATE);
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px),
+        YLB_E_STATE
+    );
     send_quad_model(h);
     wait_for(h, "モデル", || stats(server).models == 1);
     // 2 つのマテリアルの Color の流し込み先に絵が入っている: 元の絵が揃うまで、どのセットも出さない
@@ -1326,22 +1437,65 @@ fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_a
     assert_eq!(ylb_set_count(h), 0, "揃うまでセットを出さない");
 
     // 引数の確かめ: 画素の長さが合わない・辺 0・上限を超える辺・知らない様子と読み方・絵の付かない様子に画素・無いマテリアル・空の名前
-    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px[..31]), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 0), 1, &[]), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (0, 2), 1, &[]), YLB_E_ARGUMENT);
-    let over = vec![0u8; (MAX_ORIGINAL_SIZE as usize + 1) * 4];
     assert_eq!(
-        send_original(h, 0, "_MainTex", 0, 0, 0, (MAX_ORIGINAL_SIZE + 1, 1), 1, &over),
+        send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px[..31]),
         YLB_E_ARGUMENT
     );
-    assert_eq!(send_original(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, &[]), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_MainTex", -1, 0, 0, (4, 2), 1, &[]), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_MainTex", 0, 3, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_MainTex", 2, 0, 0, (16384, 16384), 1, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 2, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, -1, "_MainTex", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original(h, 0, "_A\n", 0, 0, 0, (4, 2), 1, &px), YLB_E_ARGUMENT);
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 0, 0, 0, (4, 0), 1, &[]),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 0, 0, 0, (0, 2), 1, &[]),
+        YLB_E_ARGUMENT
+    );
+    let over = vec![0u8; (MAX_ORIGINAL_SIZE as usize + 1) * 4];
+    assert_eq!(
+        send_original(
+            h,
+            0,
+            "_MainTex",
+            0,
+            0,
+            0,
+            (MAX_ORIGINAL_SIZE + 1, 1),
+            1,
+            &over
+        ),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, &[]),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_MainTex", -1, 0, 0, (4, 2), 1, &[]),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 0, 3, 0, (4, 2), 1, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_MainTex", 2, 0, 0, (16384, 16384), 1, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 2, "_MainTex", 0, 0, 0, (4, 2), 1, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, -1, "_MainTex", 0, 0, 0, (4, 2), 1, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "", 0, 0, 0, (4, 2), 1, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original(h, 0, "_A\n", 0, 0, 0, (4, 2), 1, &px),
+        YLB_E_ARGUMENT
+    );
     assert_eq!(stats(server).originals, 0, "断った絵は届かない");
 
     // マテリアル 0 の元の絵（原本のファイルから）: そのセットだけが出る。マテリアル 1 は待たせたまま
@@ -1360,7 +1514,9 @@ fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_a
     // 出たセットの Color は元の絵（最近傍で 256 に合わせた）
     let all = sets(h);
     let zero = all.iter().find(|s| s.material == 0).unwrap();
-    wait_for(h, "汚れたタイル", || ylb_channel_dirty(h, zero.set, 0) == 4);
+    wait_for(h, "汚れたタイル", || {
+        ylb_channel_dirty(h, zero.set, 0) == 4
+    });
     let mut image = vec![0u8; 256 * 256 * 4];
     let mut r = YlbCopyResult::default();
     let n = unsafe {
@@ -1379,27 +1535,47 @@ fn originals_reach_a_standalone_with_the_mark_and_its_sets_wait_until_they_are_a
     };
     assert_eq!(n, 4);
     let at = |x: usize, y: usize| ((y * 256 + x) * 4, (y * 256 + x) * 4 + 4);
-    for (x, y, expected) in [(5usize, 7usize, [10u8, 5, 7, 255]), (200, 200, [130, 105, 7, 255]), (70, 130, [50, 105, 7, 255])] {
+    for (x, y, expected) in [
+        (5usize, 7usize, [10u8, 5, 7, 255]),
+        (200, 200, [130, 105, 7, 255]),
+        (70, 130, [50, 105, 7, 255]),
+    ] {
         let (a, b) = at(x, y);
         assert_eq!(image[a..b], expected, "({x}, {y})");
     }
 
     // 受けた様子: 読み方・圧縮・sRGB・大きさ・画素
     let first = original_of(server, 0, "_MainTex").unwrap();
-    assert_eq!((first.state, first.read, first.compressed, first.srgb), (0, 0, 0, 1));
+    assert_eq!(
+        (first.state, first.read, first.compressed, first.srgb),
+        (0, 0, 0, 1)
+    );
     assert_eq!((first.width, first.height), (4, 2));
     assert_eq!(first.corner.to_le_bytes(), [10, 5, 7, 255]);
     assert_eq!(first.center.to_le_bytes(), [90, 105, 7, 255]);
     let declined = original_of(server, 1, "_MainTex").unwrap();
-    assert_eq!((declined.state, declined.read, declined.compressed, declined.srgb), (2, 2, 1, 0));
-    assert_eq!((declined.width, declined.height, declined.center), (16384, 16384, 0));
+    assert_eq!(
+        (
+            declined.state,
+            declined.read,
+            declined.compressed,
+            declined.srgb
+        ),
+        (2, 2, 1, 0)
+    );
+    assert_eq!(
+        (declined.width, declined.height, declined.center),
+        (16384, 16384, 0)
+    );
     assert!(original_of(server, 0, "_Other").is_none());
     // 同じスロットはあとの絵で置き換わる（GPU を通して・圧縮・リニア）
     assert_eq!(send_original(h, 0, "_MainTex", 0, 2, 1, (4, 2), 0, &px), 1);
     wait_for(h, "置き換え", || stats(server).originals == 3);
     let again = original_of(server, 0, "_MainTex").unwrap();
     assert_eq!((again.read, again.compressed, again.srgb), (2, 1, 0));
-    wait_for(h, "積んだ命令が出ていく", || ylb_pending_bytes(h) == 0);
+    wait_for(h, "積んだ命令が出ていく", || {
+        ylb_pending_bytes(h) == 0
+    });
     assert_eq!(stats(server).refused, 0);
     assert_eq!(ylb_pending_bytes(0), 0, "知らないつながりは 0");
     assert_eq!(ylb_disconnect(h), 0);
@@ -1414,7 +1590,12 @@ fn originals_are_not_sent_to_a_standalone_without_the_mark_and_nothing_waits() {
     let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
     assert_ne!(server, 0);
     assert_eq!(
-        ylb_test_server_configure(server, pack(v(0, 1, 0)), pack(None), feature::MATERIAL_VALUES),
+        ylb_test_server_configure(
+            server,
+            pack(v(0, 1, 0)),
+            pack(None),
+            feature::MATERIAL_VALUES
+        ),
         0
     );
     let h = connect(&name);
@@ -1424,10 +1605,15 @@ fn originals_are_not_sent_to_a_standalone_without_the_mark_and_nothing_waits() {
     wait_for(h, "2 つのセット", || sets(h).len() == 2);
     let px = small_original();
     assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), 0);
-    assert_eq!(send_original(h, 1, "_MainTex", 2, 2, 0, (16384, 16384), 1, &[]), 0);
+    assert_eq!(
+        send_original(h, 1, "_MainTex", 2, 2, 0, (16384, 16384), 1, &[]),
+        0
+    );
     // 後から送った印の要らない命令が届くまで待ち、その前に元の絵が届いていないことを見る
     assert_eq!(ylb_model_close(h), 0);
-    wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
+    wait_for(h, "モデルを閉じる知らせ", || {
+        stats(server).models_closed == 1
+    });
     let st = stats(server);
     assert_eq!((st.originals, st.held_sets, st.unknown), (0, 0, 0));
     assert_eq!(ylb_disconnect(h), 0);
@@ -1454,7 +1640,11 @@ fn request_server(tag: &str, marks: u64) -> (String, u64) {
 #[test]
 fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
     use yolu_protocol::{feature, WANT_ORIGINAL, WANT_VALUES};
-    assert_ne!(BRIDGE_FEATURES & feature::MATERIAL_REQUEST, 0, "ブリッジは頼みの印を出す");
+    assert_ne!(
+        BRIDGE_FEATURES & feature::MATERIAL_REQUEST,
+        0,
+        "ブリッジは頼みの印を出す"
+    );
     assert_eq!(ABI_VERSION, 7);
     let (name, server) = request_server("ask", MARKS_ALL);
     let h = connect(&name);
@@ -1476,15 +1666,47 @@ fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
     assert_eq!(
         auto,
         vec![
-            Asked { generation, material: 0, wants: WANT_ORIGINAL as u32, have: 0, slot: "_MainTex".into() },
-            Asked { generation, material: 1, wants: WANT_ORIGINAL as u32, have: 0, slot: "_MainTex".into() },
+            Asked {
+                generation,
+                material: 0,
+                wants: WANT_ORIGINAL as u32,
+                have: 0,
+                slot: "_MainTex".into()
+            },
+            Asked {
+                generation,
+                material: 1,
+                wants: WANT_ORIGINAL as u32,
+                have: 0,
+                slot: "_MainTex".into()
+            },
         ]
     );
     // 手で頼む（0 の世代は今のモデルの世代）
     assert_eq!(ask(server, 0, 1, WANT_VALUES as i32, "", 0), 0);
-    assert_eq!(ask(server, 0, 0, (WANT_VALUES | WANT_ORIGINAL) as i32, "_MainTex", 0xfeed_beef_0000_0001), 0);
+    assert_eq!(
+        ask(
+            server,
+            0,
+            0,
+            (WANT_VALUES | WANT_ORIGINAL) as i32,
+            "_MainTex",
+            0xfeed_beef_0000_0001
+        ),
+        0
+    );
     // 同じマテリアル・同じ頼みは 1 つにまとまる（新しい印で答える）
-    assert_eq!(ask(server, 0, 0, (WANT_VALUES | WANT_ORIGINAL) as i32, "_MainTex", 0x77), 0);
+    assert_eq!(
+        ask(
+            server,
+            0,
+            0,
+            (WANT_VALUES | WANT_ORIGINAL) as i32,
+            "_MainTex",
+            0x77
+        ),
+        0
+    );
     let mut manual = Vec::new();
     // 最後に送った頼み（印 0x77）が、ブリッジに届くまで待つ（サーバーが送り終えたことと、ブリッジが受けたことは別）
     wait_for(h, "手の頼みの取り出し", || {
@@ -1492,7 +1714,9 @@ fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
         manual.iter().any(|a| a.have == 0x77)
     });
     // 3 つ目は 2 つ目を置き換えるが（取り出される前なら）、取り出された後に届けば別の項目として並ぶ。どちらでも、あとの頼みの印が最後
-    assert!(manual.iter().any(|a| a.material == 1 && a.wants == WANT_VALUES as u32 && a.slot.is_empty()));
+    assert!(manual
+        .iter()
+        .any(|a| a.material == 1 && a.wants == WANT_VALUES as u32 && a.slot.is_empty()));
     let both: Vec<_> = manual.iter().filter(|a| a.material == 0).collect();
     assert!(!both.is_empty() && both.iter().all(|a| a.wants == 3 && a.slot == "_MainTex"));
     assert_eq!(both.last().unwrap().have, 0x77, "あとの頼みの印が残る");
@@ -1501,10 +1725,19 @@ fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
     assert_eq!(ask(server + 99, 0, 0, 1, "", 0), YLB_E_HANDLE);
     // 取り出しの引数: 知らないつながり・領域なし
     let mut r = YlbRequest::default();
-    assert_eq!(unsafe { ylb_next_request(0, &mut r, std::ptr::null_mut(), 0) }, YLB_E_HANDLE);
-    assert_eq!(unsafe { ylb_next_request(h, std::ptr::null_mut(), std::ptr::null_mut(), 0) }, YLB_E_ARGUMENT);
+    assert_eq!(
+        unsafe { ylb_next_request(0, &mut r, std::ptr::null_mut(), 0) },
+        YLB_E_HANDLE
+    );
+    assert_eq!(
+        unsafe { ylb_next_request(h, std::ptr::null_mut(), std::ptr::null_mut(), 0) },
+        YLB_E_ARGUMENT
+    );
     // 小さな領域には、文字の途中で切って入れ、要る長さを返す
-    assert_eq!(ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTexスロット", 0), 0);
+    assert_eq!(
+        ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTexスロット", 0),
+        0
+    );
     let mut seen = None;
     wait_for(h, "切れる頼み", || {
         let mut buf = [0u8; 10];
@@ -1517,7 +1750,10 @@ fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
     let (len, buf) = seen.unwrap();
     assert_eq!(len as usize, "_MainTexスロット".len());
     assert_eq!(&buf[..8], "_MainTex".as_bytes());
-    assert_eq!(buf[8], 0, "文字の途中で切らない（ス の 3 バイトは入らないので 1 つも書かない）");
+    assert_eq!(
+        buf[8], 0,
+        "文字の途中で切らない（ス の 3 バイトは入らないので 1 つも書かない）"
+    );
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
 }
@@ -1527,13 +1763,19 @@ fn requests_do_not_reach_a_bridge_without_the_mark_and_the_standalone_does_not_a
     use yolu_protocol::{feature, WANT_ORIGINAL};
     // 頼みの印を知らない（印の無い）スタンドアロン役: 頼めない（YLB_E_STATE）。元の絵は今までどおりブリッジが押し出す必要があり、
     // スタンドアロンは自分から頼まない
-    let (name, server) = request_server("noask", feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES);
+    let (name, server) = request_server(
+        "noask",
+        feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES,
+    );
     let h = connect(&name);
     wait_for(h, "つながり", || ylb_status(h) == 1);
     assert_eq!(ylb_common_features(h) & feature::MATERIAL_REQUEST, 0);
     send_quad_model(h);
     wait_for(h, "モデル", || stats(server).models == 1);
-    assert_eq!(ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTex", 0), YLB_E_STATE);
+    assert_eq!(
+        ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTex", 0),
+        YLB_E_STATE
+    );
     // 押し出す元の絵は、印の無い相手には今までどおり届く
     let px = small_original();
     assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), 1);
@@ -1555,10 +1797,19 @@ fn an_original_with_the_same_stamp_is_answered_without_pixels_and_a_wrong_one_is
     let first = send_quad_model(h) as u32;
     wait_for(h, "最初の頼み", || stats(server).requests == 1);
     let asked = requests(h);
-    assert!(asked.iter().all(|a| a.have == 0), "最初は手元に何も無い: {asked:?}");
+    assert!(
+        asked.iter().all(|a| a.have == 0),
+        "最初は手元に何も無い: {asked:?}"
+    );
     // 最初の答えは画素つき（印 0xAA01 / 0xAA02）。スタンドアロン役は印の付いた絵を手元に残す
-    assert_eq!(send_original_stamped(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, 0xAA01, &px), 1);
-    assert_eq!(send_original_stamped(h, 1, "_MainTex", 0, 1, 0, (4, 2), 1, 0xAA02, &px), 1);
+    assert_eq!(
+        send_original_stamped(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, 0xAA01, &px),
+        1
+    );
+    assert_eq!(
+        send_original_stamped(h, 1, "_MainTex", 0, 1, 0, (4, 2), 1, 0xAA02, &px),
+        1
+    );
     wait_for(h, "2 つのセット", || sets(h).len() == 2);
     assert_eq!(original_of(server, 0, "_MainTex").unwrap().stamp, 0xAA01);
     let wire_kib = stats(server).original_kib;
@@ -1575,17 +1826,33 @@ fn an_original_with_the_same_stamp_is_answered_without_pixels_and_a_wrong_one_is
     assert_eq!((again[0].have, again[1].have), (0xAA01, 0xAA02));
     assert!(again.iter().all(|a| a.generation == second));
     // 印が同じ: 画素なしの Cached（state 4）で答える。スタンドアロン役は手元の絵を使い、セットが出る
-    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0xAA01, &[]), 1);
-    wait_for(h, "手元の絵のセット", || stats(server).cached_used == 1);
-    wait_for(h, "セット 1 つ", || sets(h).iter().any(|s| s.generation == second && s.material == 0));
+    assert_eq!(
+        send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0xAA01, &[]),
+        1
+    );
+    wait_for(h, "手元の絵のセット", || {
+        stats(server).cached_used == 1
+    });
+    wait_for(h, "セット 1 つ", || {
+        sets(h)
+            .iter()
+            .any(|s| s.generation == second && s.material == 0)
+    });
     let st = stats(server);
     assert_eq!(st.last_original_state, 4, "線の上は画素なし");
     assert_eq!(st.original_kib, wire_kib, "画素は送っていない");
     let used = original_of(server, 0, "_MainTex").unwrap();
-    assert_eq!((used.state, used.stamp, used.width, used.height), (0, 0xAA01, 4, 2), "使った絵は手元の絵");
+    assert_eq!(
+        (used.state, used.stamp, used.width, used.height),
+        (0, 0xAA01, 4, 2),
+        "使った絵は手元の絵"
+    );
     assert_eq!(used.center.to_le_bytes(), [90, 105, 7, 255]);
     // 印が違う（Unity の今の印が変わった）: 手元の絵は使わず、印なしで頼み直す
-    assert_eq!(send_original_stamped(h, 1, "_MainTex", 4, 0, 0, (4, 2), 1, 0xBEEF, &[]), 1);
+    assert_eq!(
+        send_original_stamped(h, 1, "_MainTex", 4, 0, 0, (4, 2), 1, 0xBEEF, &[]),
+        1
+    );
     wait_for(h, "使えなかった", || stats(server).cached_missed == 1);
     let mut redo = Vec::new();
     wait_for(h, "頼み直し", || {
@@ -1594,16 +1861,36 @@ fn an_original_with_the_same_stamp_is_answered_without_pixels_and_a_wrong_one_is
     });
     assert_eq!(
         redo,
-        vec![Asked { generation: second, material: 1, wants: 2, have: 0, slot: "_MainTex".into() }]
+        vec![Asked {
+            generation: second,
+            material: 1,
+            wants: 2,
+            have: 0,
+            slot: "_MainTex".into()
+        }]
     );
     // 頼み直しには画素で答える（新しい印）
-    assert_eq!(send_original_stamped(h, 1, "_MainTex", 0, 0, 0, (4, 2), 1, 0xBEEF, &px), 1);
-    wait_for(h, "全部のセット", || sets(h).iter().filter(|s| s.generation == second).count() == 2);
+    assert_eq!(
+        send_original_stamped(h, 1, "_MainTex", 0, 0, 0, (4, 2), 1, 0xBEEF, &px),
+        1
+    );
+    wait_for(h, "全部のセット", || {
+        sets(h).iter().filter(|s| s.generation == second).count() == 2
+    });
     assert_eq!(original_of(server, 1, "_MainTex").unwrap().stamp, 0xBEEF);
     // 引数の確かめ: 印の無い Cached・画素の付いた Cached・知らない様子
-    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0, &[]), YLB_E_ARGUMENT);
-    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 5, &px), YLB_E_ARGUMENT);
-    assert_eq!(send_original_stamped(h, 0, "_MainTex", 5, 0, 0, (4, 2), 1, 5, &[]), YLB_E_ARGUMENT);
+    assert_eq!(
+        send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0, &[]),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 5, &px),
+        YLB_E_ARGUMENT
+    );
+    assert_eq!(
+        send_original_stamped(h, 0, "_MainTex", 5, 0, 0, (4, 2), 1, 5, &[]),
+        YLB_E_ARGUMENT
+    );
     assert_ne!(ylb_common_features(h) & feature::MATERIAL_REQUEST, 0);
     assert_eq!(stats(server).unknown, 0);
     assert_eq!(ylb_disconnect(h), 0);
@@ -1625,11 +1912,35 @@ fn a_model_over_the_frame_limit_is_refused_with_a_reason_and_nothing_is_sent() {
         assert_eq!(ylb_model_begin(h, name.as_ptr(), name.len() as i32), 0);
         let pos: [f32; 12] = [0., 0., 0., 1., 0., 0., 0., 1., 0., 1., 1., 0.];
         assert_eq!(
-            ylb_model_mesh(h, "0".as_ptr(), 1, "Quad".as_ptr(), 4, 0, pos.as_ptr(), std::ptr::null(), std::ptr::null(), 4),
+            ylb_model_mesh(
+                h,
+                "0".as_ptr(),
+                1,
+                "Quad".as_ptr(),
+                4,
+                0,
+                pos.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                4
+            ),
             0
         );
         let tri: [i32; 3] = [0, 1, 2];
-        assert_eq!(ylb_model_material(h, 1, std::ptr::null(), 0, std::ptr::null(), 0, 0, std::ptr::null(), 0), 0);
+        assert_eq!(
+            ylb_model_material(
+                h,
+                1,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                0,
+                std::ptr::null(),
+                0
+            ),
+            0
+        );
         assert_eq!(ylb_model_submesh(h, 0, 0, tri.as_ptr(), 3), 0);
         assert_eq!(ylb_model_send(h), YLB_E_TOO_LARGE);
     }
@@ -1668,7 +1979,8 @@ fn put_texture(h: u64, material: i32, slot: &str, fill: u8) -> i32 {
 
 fn texture_center(server: u64, material: u32, slot: &str) -> Option<[u8; 4]> {
     let mut t = YlbTestServerTexture::default();
-    (unsafe { ylb_test_server_texture(server, material, slot.as_ptr(), slot.len() as i32, &mut t) } == 0)
+    (unsafe { ylb_test_server_texture(server, material, slot.as_ptr(), slot.len() as i32, &mut t) }
+        == 0)
         .then(|| t.center.to_le_bytes())
 }
 
@@ -1688,9 +2000,14 @@ fn stalled(tag: &str, limit: usize) -> (u64, u64) {
     if cfg!(windows) {
         let pos: [f32; 12] = [0.5, 0.25, 0.125, 1., 0., 0., 0., 1., 0., 1., 1., 0.];
         assert_eq!(ylb_pose_begin(h), 0);
-        assert_eq!(unsafe { ylb_pose_mesh(h, 0, pos.as_ptr(), std::ptr::null(), 4) }, 0);
+        assert_eq!(
+            unsafe { ylb_pose_mesh(h, 0, pos.as_ptr(), std::ptr::null(), 4) },
+            0
+        );
         assert_eq!(ylb_pose_send(h), 1);
-        wait_for(h, "止める前に読みに入っていた分", || stats(server).poses == 1);
+        wait_for(h, "止める前に読みに入っていた分", || {
+            stats(server).poses == 1
+        });
         std::thread::sleep(Duration::from_millis(100));
     }
     (h, server)
@@ -1716,7 +2033,11 @@ fn a_reader_that_stops_cannot_make_the_send_queue_grow_past_the_limit() {
             break;
         }
         accepted += 1;
-        assert!(ylb_pending_bytes(h) <= limit as u64, "積んだ量が上限を超えた: {}", ylb_pending_bytes(h));
+        assert!(
+            ylb_pending_bytes(h) <= limit as u64,
+            "積んだ量が上限を超えた: {}",
+            ylb_pending_bytes(h)
+        );
     }
     assert_eq!(code, YLB_E_BUSY, "上限で断る（積めた数 {accepted}）");
     assert_eq!(accepted, 3);
@@ -1735,8 +2056,16 @@ fn a_reader_that_stops_cannot_make_the_send_queue_grow_past_the_limit() {
     wait_for(h, "絵", || stats(server).textures == 3);
     assert_eq!(texture_center(server, 0, "_t0"), Some([1; 4]));
     assert_eq!(texture_center(server, 0, "_t1"), Some([2; 4]));
-    assert_eq!(texture_center(server, 0, "_t2"), Some([99; 4]), "置き換えた新しい絵");
-    assert_eq!(texture_center(server, 0, "_t9"), None, "断られた絵は届かない");
+    assert_eq!(
+        texture_center(server, 0, "_t2"),
+        Some([99; 4]),
+        "置き換えた新しい絵"
+    );
+    assert_eq!(
+        texture_center(server, 0, "_t9"),
+        None,
+        "断られた絵は届かない"
+    );
     assert_eq!(stats(server).refused, 0);
     // 空に戻れば、また積める
     assert_eq!(ylb_send_room(h), u64::MAX);
@@ -1753,7 +2082,11 @@ fn a_model_refused_as_busy_keeps_what_was_built_and_goes_when_the_reader_returns
     // 積んだ量のすぐ上を上限にする: 四角のモデルでさえ入らない
     let held = ylb_pending_bytes(h);
     assert_eq!(ylb_test_set_outbox_limit(h, held + 10), 0);
-    assert_eq!(quad_model_result(h), YLB_E_BUSY, "モデルは置き換えられないので、混んでいれば断る");
+    assert_eq!(
+        quad_model_result(h),
+        YLB_E_BUSY,
+        "モデルは置き換えられないので、混んでいれば断る"
+    );
     // 組み立てたモデルは残る（読み直さずに、同じ関数をもう一度呼べる。「組み立てが無い」の YLB_E_STATE にならない）
     assert_eq!(ylb_model_send(h), YLB_E_BUSY);
     assert_eq!(ylb_pending_bytes(h), held);
@@ -1761,7 +2094,9 @@ fn a_model_refused_as_busy_keeps_what_was_built_and_goes_when_the_reader_returns
     assert_eq!(ylb_model_close(h), 0);
     assert!(ylb_pending_bytes(h) > held);
     resumed(h, server);
-    wait_for(h, "モデルを閉じた", || stats(server).models_closed == 1);
+    wait_for(h, "モデルを閉じた", || {
+        stats(server).models_closed == 1
+    });
     assert_eq!(stats(server).models, 1, "断られたモデルは届いていない");
     // 空に戻ったら、組み立てたモデルがそのまま送れる（世代は 1 つ進むだけ）
     assert_eq!(ylb_model_send(h), 2);
@@ -1790,7 +2125,11 @@ fn values_refused_as_busy_keep_their_build_and_replace_the_older_values_in_the_q
     assert!(one > held);
     assert_eq!(put_values(h, 1), 1);
     assert_eq!(ylb_pending_bytes(h), one, "置き換えで増えない");
-    assert_eq!(ylb_values_send(h), YLB_E_STATE, "送ってしまえば組み立ては無い");
+    assert_eq!(
+        ylb_values_send(h),
+        YLB_E_STATE,
+        "送ってしまえば組み立ては無い"
+    );
     resumed(h, server);
     wait_for(h, "値", || stats(server).values == 1);
     // 届いたあと、少し待っても 2 つ目は来ない
@@ -1827,7 +2166,10 @@ fn an_original_is_refused_as_busy_and_a_newer_one_of_the_slot_replaces_the_queue
     std::thread::sleep(Duration::from_millis(200));
     // 届いたのは _MainTex（新しい方）と _Other。古い _MainTex は届かない
     assert_eq!(stats(server).originals, 2);
-    assert_eq!(original_of(server, 0, "_MainTex").map(|o| o.center != 0), Some(true));
+    assert_eq!(
+        original_of(server, 0, "_MainTex").map(|o| o.center != 0),
+        Some(true)
+    );
     assert_eq!(stats(server).refused, 0);
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
@@ -1866,13 +2208,23 @@ fn a_material_update_refused_as_busy_keeps_its_build_and_a_newer_one_replaces_th
     let one = ylb_pending_bytes(h);
     build("Custom/Bee");
     assert_eq!(ylb_materials_send(h), 2);
-    assert_eq!(ylb_pending_bytes(h), one + 2 * 2, "置き換えなので、新しい更新の分（シェーダー名が 2 文字長い 2 マテリアル）だけ多い");
+    assert_eq!(
+        ylb_pending_bytes(h),
+        one + 2 * 2,
+        "置き換えなので、新しい更新の分（シェーダー名が 2 文字長い 2 マテリアル）だけ多い"
+    );
     resumed(h, server);
-    wait_for(h, "マテリアルの更新", || stats(server).materials_updates == 1);
+    wait_for(h, "マテリアルの更新", || {
+        stats(server).materials_updates == 1
+    });
     std::thread::sleep(Duration::from_millis(200));
     let st = stats(server);
     assert_eq!(st.materials_updates, 1, "古い更新は届かない");
-    assert_eq!(st.last_materials_shader_len, "Custom/Bee".len() as u32, "最新が残る");
+    assert_eq!(
+        st.last_materials_shader_len,
+        "Custom/Bee".len() as u32,
+        "最新が残る"
+    );
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
 }

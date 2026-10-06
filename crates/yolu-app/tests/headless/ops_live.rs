@@ -82,7 +82,9 @@ impl Live {
 
     fn connect(&mut self, name: &str) -> Client {
         let client = Client::connect(name);
-        self.until("つながり", |l| matches!(l.app.state.ops.status, OpsStatus::Connected(_)).then_some(()));
+        self.until("つながり", |l| {
+            matches!(l.app.state.ops.status, OpsStatus::Connected(_)).then_some(())
+        });
         client
     }
 
@@ -100,16 +102,24 @@ impl Live {
 
     fn ok(&mut self, client: &mut Client, command: Value) -> Reply {
         let name = command["command"].clone();
-        self.ask(client, command).unwrap_or_else(|e| panic!("{name} が断られた: {e} {:?}", e.data))
+        self.ask(client, command)
+            .unwrap_or_else(|e| panic!("{name} が断られた: {e} {:?}", e.data))
     }
 
     fn err(&mut self, client: &mut Client, command: Value) -> OpError {
         let name = command["command"].clone();
-        self.ask(client, command).expect_err(&format!("{name} は断られるはず"))
+        self.ask(client, command)
+            .expect_err(&format!("{name} は断られるはず"))
     }
 
     fn layer_names(&self) -> Vec<String> {
-        self.app.state.doc.layers().iter().map(|l| l.name().to_owned()).collect()
+        self.app
+            .state
+            .doc
+            .layers()
+            .iter()
+            .map(|l| l.name().to_owned())
+            .collect()
     }
 }
 
@@ -143,7 +153,8 @@ impl Client {
 
     /// つなぐ（挨拶で断られれば `LinkError::Rejected`）。
     fn try_connect(name: &str) -> Result<Client, LinkError> {
-        let identity = Identity::standalone("試験のクライアント").with_version(Some(AppVersion::new(0, 4, 0)));
+        let identity =
+            Identity::standalone("試験のクライアント").with_version(Some(AppVersion::new(0, 4, 0)));
         let (conn, mut reader, _) = connect_and_greet_as(name, &identity)?;
         let (tx, rx) = mpsc::channel();
         let done = Arc::new(AtomicBool::new(false));
@@ -172,14 +183,24 @@ impl Client {
                 }
             }
         });
-        Ok(Client { conn, rx, next_id: 1, done })
+        Ok(Client {
+            conn,
+            rx,
+            next_id: 1,
+            done,
+        })
     }
 
     fn send(&mut self, command: Value) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        let request = Request { id, command: parse_command(&command).expect("命令の形") };
-        self.conn.send_frame(&encode_request(&request).unwrap()).expect("送れる");
+        let request = Request {
+            id,
+            command: parse_command(&command).expect("命令の形"),
+        };
+        self.conn
+            .send_frame(&encode_request(&request).unwrap())
+            .expect("送れる");
         id
     }
 
@@ -240,12 +261,17 @@ fn the_setting_starts_and_stops_listening_and_removes_the_key_file() {
     assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
     assert!(live.app.state.ops.is_on());
     assert!(key.exists(), "鍵のファイルは待ち受けている間だけ");
-    assert!(!live.app.state.ops.tooltip(Lang::Ja).is_empty() && !live.app.state.ops.tooltip(Lang::En).is_empty());
+    assert!(
+        !live.app.state.ops.tooltip(Lang::Ja).is_empty()
+            && !live.app.state.ops.tooltip(Lang::En).is_empty()
+    );
     let mut client = live.connect(&name);
     assert_eq!(live.app.state.ops.status, OpsStatus::Connected(1));
     // 命令が通る
     let reply = live.ok(&mut client, json!({"command": "doc.info"}));
-    let Reply::Doc(doc) = reply else { panic!("doc.info の返事ではない") };
+    let Reply::Doc(doc) = reply else {
+        panic!("doc.info の返事ではない")
+    };
     assert_eq!(doc.sets.len(), 1);
     assert_eq!(doc.path, "", "まだファイルが無い文書");
     // つないだまま切ると、Bye を送って閉じる。待ち受けもやめ、鍵も消える
@@ -260,7 +286,10 @@ fn the_setting_starts_and_stops_listening_and_removes_the_key_file() {
     live.frame();
     assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
     let mut again = live.connect(&name);
-    assert!(matches!(live.ok(&mut again, json!({"command": "doc.info"})), Reply::Doc(_)));
+    assert!(matches!(
+        live.ok(&mut again, json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
 }
 
 #[test]
@@ -275,12 +304,18 @@ fn a_second_app_with_the_same_name_does_not_listen_and_says_why() {
         panic!("2 つ目は待ち受けない: {:?}", second.app.state.ops.status)
     };
     assert!(!reason.is_empty());
-    assert!(second.app.state.ops.tooltip(Lang::Ja).contains(&reason), "理由が印のツールチップに出る");
+    assert!(
+        second.app.state.ops.tooltip(Lang::Ja).contains(&reason),
+        "理由が印のツールチップに出る"
+    );
     assert!(!second.app.state.message.is_empty(), "理由を知らせる");
     // 先に待ち受けている方は影響を受けず、受け続ける
     assert_eq!(first.app.state.ops.status, OpsStatus::Listening);
     let mut client = first.connect(&name);
-    assert!(matches!(first.ok(&mut client, json!({"command": "doc.info"})), Reply::Doc(_)));
+    assert!(matches!(
+        first.ok(&mut client, json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
     // 毎フレームは試さない（設定を切って入れ直すまで、失敗のまま）
     second.settle();
     assert!(matches!(second.app.state.ops.status, OpsStatus::Failed(_)));
@@ -299,7 +334,10 @@ fn one_command_is_one_step_of_the_screens_undo_and_redo() {
     let before = layer_count(&live);
     let undo_before = live.app.state.doc.undo_count();
     // 層を足す: 1 命令 = 1 段
-    let reply = edited(live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint", "name": "外から"}})));
+    let reply = edited(live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "外から"}}),
+    ));
     assert_eq!(layer_count(&live), before + 1);
     assert_eq!(live.app.state.doc.undo_count(), undo_before + 1);
     assert!(reply.can_undo);
@@ -311,11 +349,25 @@ fn one_command_is_one_step_of_the_screens_undo_and_redo() {
         json!({"command": "layer.set", "args": {"layer": "外から", "opacity": 0.5, "visible": false, "name": "外から 2"}}),
     );
     assert_eq!(live.app.state.doc.undo_count(), undo_mid + 1);
-    let layer = live.app.state.doc.layers().iter().find(|l| l.name() == "外から 2").expect("名前が変わった");
+    let layer = live
+        .app
+        .state
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.name() == "外から 2")
+        .expect("名前が変わった");
     assert!((layer.opacity() - 0.5).abs() < 1e-9 && !layer.visible());
     // 画面の取り消し（Ctrl+Z と同じ道）で 1 段ずつ戻る
     live.app.state.apply(Action::Undo);
-    let layer = live.app.state.doc.layers().iter().find(|l| l.name() == "外から").expect("名前が戻った");
+    let layer = live
+        .app
+        .state
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.name() == "外から")
+        .expect("名前が戻った");
     assert!((layer.opacity() - 1.0).abs() < 1e-9 && layer.visible());
     live.app.state.apply(Action::Undo);
     assert_eq!(layer_count(&live), before);
@@ -335,12 +387,29 @@ fn deleting_a_selected_layer_keeps_the_screens_selection_valid() {
     let (mut live, name) = Live::on("selection");
     live.frame();
     let mut client = live.connect(&name);
-    live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint", "name": "選ぶ"}}));
-    let id = live.app.state.doc.layers().iter().find(|l| l.name() == "選ぶ").unwrap().id();
+    live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "選ぶ"}}),
+    );
+    let id = live
+        .app
+        .state
+        .doc
+        .layers()
+        .iter()
+        .find(|l| l.name() == "選ぶ")
+        .unwrap()
+        .id();
     live.app.state.selected_layer = Some(id);
-    live.ok(&mut client, json!({"command": "layer.delete", "args": {"layer": "選ぶ", "confirm": true}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.delete", "args": {"layer": "選ぶ", "confirm": true}}),
+    );
     let selected = live.app.state.selected_layer.expect("選び直される");
-    assert!(live.app.state.doc.layer(selected).is_some(), "消した層を選んだままにしない");
+    assert!(
+        live.app.state.doc.layer(selected).is_some(),
+        "消した層を選んだままにしない"
+    );
 }
 
 #[test]
@@ -353,16 +422,28 @@ fn reads_describe_the_open_project_and_the_current_set() {
     assert_eq!(info.state, SetState::Editable);
     assert_eq!(info.layers.len(), layer_count(&live));
     // セットの名前でも ID でも指せる。知らない名前は一覧つきで断る
-    let by_name = first_set(live.ok(&mut client, json!({"command": "set.info", "args": {"set": info.name}})));
+    let by_name = first_set(live.ok(
+        &mut client,
+        json!({"command": "set.info", "args": {"set": info.name}}),
+    ));
     assert_eq!(by_name.id, info.id);
-    let e = live.err(&mut client, json!({"command": "set.info", "args": {"set": "無いセット"}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "set.info", "args": {"set": "無いセット"}}),
+    );
     assert_eq!(e.code, ErrorCode::NotFound);
     assert!(e.data.unwrap()["sets"].is_array());
     // 見本は今の合成から（PNG の大きさが最大の辺に収まる）
-    let Reply::Preview(preview) = live.ok(&mut client, json!({"command": "preview", "args": {"max_edge": 16}})) else {
+    let Reply::Preview(preview) = live.ok(
+        &mut client,
+        json!({"command": "preview", "args": {"max_edge": 16}}),
+    ) else {
         panic!("preview の返事ではない")
     };
-    assert_eq!((preview.width, preview.height, preview.source_width), (16, 16, 64));
+    assert_eq!(
+        (preview.width, preview.height, preview.source_width),
+        (16, 16, 64)
+    );
     assert_eq!(&preview.png.0[1..4], b"PNG");
     // 読む命令は何も変えない
     assert!(!live.app.state.modified);
@@ -378,7 +459,9 @@ fn edits_are_refused_while_drawing_and_reads_still_answer() {
     let layer = live.app.state.doc.layers().last().unwrap().id();
     let brush = live.app.state.stroke_settings(false);
     let mut stroke = live.app.state.doc.begin_stroke(layer, &brush).unwrap();
-    stroke.add_point(&mut live.app.state.doc, 10.0, 10.0, 1.0, DVec2::ZERO).unwrap();
+    stroke
+        .add_point(&mut live.app.state.doc, 10.0, 10.0, 1.0, DVec2::ZERO)
+        .unwrap();
     assert!(live.app.state.is_stroking());
     let before = layer_count(&live);
     for command in [
@@ -392,10 +475,16 @@ fn edits_are_refused_while_drawing_and_reads_still_answer() {
     }
     assert_eq!(layer_count(&live), before, "断った命令は何も変えない");
     // 読むだけの命令は答える
-    assert!(matches!(live.ok(&mut client, json!({"command": "set.info"})), Reply::Set(_)));
+    assert!(matches!(
+        live.ok(&mut client, json!({"command": "set.info"})),
+        Reply::Set(_)
+    ));
     // 終われば通る
     live.app.state.doc.end_stroke(stroke).unwrap();
-    live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint"}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint"}}),
+    );
     assert_eq!(layer_count(&live), before + 1);
 }
 
@@ -405,12 +494,17 @@ fn a_read_only_set_refuses_edits_with_the_screens_reason() {
     live.app.state.sets.get_mut(0).unwrap().read_only = Some("編集できない中身があります".into());
     live.frame();
     let mut client = live.connect(&name);
-    let e = live.err(&mut client, json!({"command": "layer.add", "args": {"kind": "paint"}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint"}}),
+    );
     assert_eq!(e.code, ErrorCode::ReadOnly);
     assert!(e.message.ja.contains("編集できない中身があります"));
     let info = first_set(live.ok(&mut client, json!({"command": "set.info"})));
     assert_eq!(info.state, SetState::ReadOnly);
-    let Reply::Doc(doc) = live.ok(&mut client, json!({"command": "doc.info"})) else { panic!() };
+    let Reply::Doc(doc) = live.ok(&mut client, json!({"command": "doc.info"})) else {
+        panic!()
+    };
     assert_eq!(doc.sets[0].state, SetState::ReadOnly);
     assert!(doc.sets[0].reason.is_some());
 }
@@ -420,21 +514,37 @@ fn destructive_commands_need_confirmation_and_say_so_briefly_when_done() {
     let (mut live, name) = Live::on("confirm");
     live.frame();
     let mut client = live.connect(&name);
-    live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint", "name": "消す"}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "消す"}}),
+    );
     let before = layer_count(&live);
     live.app.state.message.clear();
-    let e = live.err(&mut client, json!({"command": "layer.delete", "args": {"layer": "消す"}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "layer.delete", "args": {"layer": "消す"}}),
+    );
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
     assert_eq!(layer_count(&live), before);
     assert!(live.app.state.message.is_empty(), "断ったときは知らせない");
-    live.ok(&mut client, json!({"command": "layer.delete", "args": {"layer": "消す", "confirm": true}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.delete", "args": {"layer": "消す", "confirm": true}}),
+    );
     assert_eq!(layer_count(&live), before - 1);
     assert_eq!(live.app.state.message, "外からの操作: レイヤーを消す");
     // 命令ごとのログは出さない: 壊さない命令は知らせない
     live.app.state.message.clear();
-    live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint"}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint"}}),
+    );
     live.ok(&mut client, json!({"command": "set.info"}));
-    assert!(live.app.state.message.is_empty(), "{}", live.app.state.message);
+    assert!(
+        live.app.state.message.is_empty(),
+        "{}",
+        live.app.state.message
+    );
 }
 
 #[test]
@@ -449,7 +559,10 @@ fn opening_another_document_is_refused_and_the_same_file_returns_the_current_one
     let mut client = live.connect(&name);
     let e = live.err(&mut client, json!({"command": "doc.open", "args": {"path": dir.join("other.ylp").display().to_string()}}));
     assert_eq!(e.code, ErrorCode::Unsupported);
-    let Reply::Doc(doc) = live.ok(&mut client, json!({"command": "doc.open", "args": {"path": file.display().to_string()}})) else {
+    let Reply::Doc(doc) = live.ok(
+        &mut client,
+        json!({"command": "doc.open", "args": {"path": file.display().to_string()}}),
+    ) else {
         panic!()
     };
     assert_eq!(PathBuf::from(&doc.path), file);
@@ -463,20 +576,33 @@ fn a_malformed_request_is_refused_with_its_number_and_the_link_stays_usable() {
     // 壊れた JSON（番号を読めないので 0）
     client.conn.send_raw(KIND_REQUEST, b"{not json").unwrap();
     let got = live.until("断り", |_| client.rx.try_recv().ok());
-    let Got::Response(response) = got else { panic!("{got:?}") };
+    let Got::Response(response) = got else {
+        panic!("{got:?}")
+    };
     assert_eq!(response.id, 0);
-    assert_eq!(response.outcome.unwrap_err().code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        response.outcome.unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
     // 知らない命令（番号は読める）
     client
         .conn
         .send_raw(KIND_REQUEST, br#"{"v":1,"id":41,"command":"no.such"}"#)
         .unwrap();
     let got = live.until("断り", |_| client.rx.try_recv().ok());
-    let Got::Response(response) = got else { panic!("{got:?}") };
+    let Got::Response(response) = got else {
+        panic!("{got:?}")
+    };
     assert_eq!(response.id, 41);
-    assert_eq!(response.outcome.unwrap_err().code, ErrorCode::UnknownCommand);
+    assert_eq!(
+        response.outcome.unwrap_err().code,
+        ErrorCode::UnknownCommand
+    );
     // つながりは使える
-    assert!(matches!(live.ok(&mut client, json!({"command": "doc.info"})), Reply::Doc(_)));
+    assert!(matches!(
+        live.ok(&mut client, json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
 }
 
 // ───────── 保存 ─────────
@@ -492,7 +618,10 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     live.frame();
     let mut client = live.connect(&name);
     // 保存のあとに編集すると、上書き保存が書く
-    live.ok(&mut client, json!({"command": "layer.add", "args": {"kind": "paint", "name": "保存する層"}}));
+    live.ok(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "保存する層"}}),
+    );
     // 確認が無ければ断る
     let e = live.err(&mut client, json!({"command": "save"}));
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
@@ -502,12 +631,27 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     live.until("保存の開始", |l| l.app.state.is_saving().then_some(()));
     assert!(live.app.ops().save_pending());
     live.settle();
-    assert!(client.rx.try_recv().is_err(), "保存が終わるまで返事は来ない");
-    let e = live.err(&mut client, json!({"command": "layer.add", "args": {"kind": "paint"}}));
+    assert!(
+        client.rx.try_recv().is_err(),
+        "保存が終わるまで返事は来ない"
+    );
+    let e = live.err(
+        &mut client,
+        json!({"command": "layer.add", "args": {"kind": "paint"}}),
+    );
     assert_eq!(e.code, ErrorCode::Busy, "保存の途中の編集は断る");
-    let e = live.err(&mut client, json!({"command": "save", "args": {"confirm": true}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "save", "args": {"confirm": true}}),
+    );
     assert_eq!(e.code, ErrorCode::Busy, "保存の途中の 2 回目の保存は断る");
-    assert!(matches!(live.ok(&mut client, json!({"command": "set.info"})), Reply::Set(_)), "読む命令は保存の途中でも答える");
+    assert!(
+        matches!(
+            live.ok(&mut client, json!({"command": "set.info"})),
+            Reply::Set(_)
+        ),
+        "読む命令は保存の途中でも答える"
+    );
     hold.release();
     let response = live.until("保存の返事", |_| match client.rx.try_recv() {
         Ok(Got::Response(r)) => Some(r),
@@ -515,7 +659,9 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
         Err(_) => None,
     });
     assert_eq!(response.id, id);
-    let Reply::Saved(saved) = response.outcome.expect("保存できた") else { panic!("saved の返事ではない") };
+    let Reply::Saved(saved) = response.outcome.expect("保存できた") else {
+        panic!("saved の返事ではない")
+    };
     assert!(saved.written);
     assert_eq!(PathBuf::from(&saved.path), file);
     assert_eq!(saved.sets_written.len(), 1);
@@ -526,17 +672,31 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     let mut host = FileHost::new(PathPolicy::new(&dir).unwrap());
     host.open(&file, true).unwrap();
     let names = host
-        .with_document(None, |doc| doc.layers().iter().map(|l| l.name().to_owned()).collect::<Vec<_>>())
+        .with_document(None, |doc| {
+            doc.layers()
+                .iter()
+                .map(|l| l.name().to_owned())
+                .collect::<Vec<_>>()
+        })
         .unwrap();
     assert!(names.iter().any(|n| n == "保存する層"), "{names:?}");
     // 書いた上書き保存は短く知らせる
     assert_eq!(live.app.state.message, "外からの操作: 保存");
     // 何も変えていなければ、もう一度保存しても書かない。何も壊していないので知らせない
     live.app.state.message.clear();
-    let Reply::Saved(again) = live.ok(&mut client, json!({"command": "save", "args": {"confirm": true}})) else { panic!() };
+    let Reply::Saved(again) = live.ok(
+        &mut client,
+        json!({"command": "save", "args": {"confirm": true}}),
+    ) else {
+        panic!()
+    };
     assert!(!again.written);
     live.settle();
-    assert!(live.app.state.message.is_empty(), "書かなかった保存は知らせない: {}", live.app.state.message);
+    assert!(
+        live.app.state.message.is_empty(),
+        "書かなかった保存は知らせない: {}",
+        live.app.state.message
+    );
 }
 
 #[test]
@@ -546,29 +706,50 @@ fn saving_a_new_document_needs_a_destination_and_replacing_a_file_needs_confirma
     live.frame();
     let mut client = live.connect(&name);
     // まだファイルが無い文書の上書き保存は、保存先を言って断る
-    let e = live.err(&mut client, json!({"command": "save", "args": {"confirm": true}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "save", "args": {"confirm": true}}),
+    );
     assert_eq!(e.code, ErrorCode::InvalidValue);
     // 名前は .ylp で終わる
-    let e = live.err(&mut client, json!({"command": "save_as", "args": {"path": dir.join("x.png").display().to_string()}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "save_as", "args": {"path": dir.join("x.png").display().to_string()}}),
+    );
     assert_eq!(e.code, ErrorCode::PathRefused);
     // 新しいファイルへ（同期の保存でも、返事は返る）
     let file = dir.join("new.ylp");
-    let Reply::Saved(saved) = live.ok(&mut client, json!({"command": "save_as", "args": {"path": file.display().to_string()}})) else {
+    let Reply::Saved(saved) = live.ok(
+        &mut client,
+        json!({"command": "save_as", "args": {"path": file.display().to_string()}}),
+    ) else {
         panic!()
     };
     assert!(saved.written && file.exists());
     assert!(saved.backup.is_none(), "新しいファイルには退避が無い");
-    let Reply::Doc(doc) = live.ok(&mut client, json!({"command": "doc.info"})) else { panic!() };
-    assert_eq!(PathBuf::from(&doc.path), file, "保存した先が今のファイルになる");
+    let Reply::Doc(doc) = live.ok(&mut client, json!({"command": "doc.info"})) else {
+        panic!()
+    };
+    assert_eq!(
+        PathBuf::from(&doc.path),
+        file,
+        "保存した先が今のファイルになる"
+    );
     assert!(!doc.unsaved);
     // もうあるファイルへの保存は、確認が要る
     let other = dir.join("other.ylp");
     std::fs::copy(&file, &other).unwrap();
-    let e = live.err(&mut client, json!({"command": "save_as", "args": {"path": other.display().to_string()}}));
+    let e = live.err(
+        &mut client,
+        json!({"command": "save_as", "args": {"path": other.display().to_string()}}),
+    );
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
     live.app.state.message.clear();
     live.ok(&mut client, json!({"command": "save_as", "args": {"path": other.display().to_string(), "confirm": true}}));
-    assert_eq!(live.app.state.message, "外からの操作: 名前を付けて保存", "置き換えたときだけ知らせる");
+    assert_eq!(
+        live.app.state.message, "外からの操作: 名前を付けて保存",
+        "置き換えたときだけ知らせる"
+    );
 }
 
 #[test]
@@ -587,7 +768,10 @@ fn exports_write_the_current_sets_composite() {
     assert_eq!(exported.files.len(), 1);
     let written = PathBuf::from(&exported.files[0].path);
     assert!(written.exists() && written.starts_with(&out), "{written:?}");
-    assert_eq!((exported.files[0].width, exported.files[0].height), (64, 64));
+    assert_eq!(
+        (exported.files[0].width, exported.files[0].height),
+        (64, 64)
+    );
     // もうあるファイルへの書き出しは確認が要る
     let e = live.err(
         &mut client,
@@ -604,19 +788,34 @@ fn several_clients_share_the_link_and_a_closed_one_is_forgotten() {
     live.frame();
     let mut a = live.connect(&name);
     let mut b = Client::connect(&name);
-    live.until("2 つ目のつながり", |l| (l.app.state.ops.status == OpsStatus::Connected(2)).then_some(()));
+    live.until("2 つ目のつながり", |l| {
+        (l.app.state.ops.status == OpsStatus::Connected(2)).then_some(())
+    });
     // 同じ画面のスレッドで、順に実行される
-    live.ok(&mut a, json!({"command": "layer.add", "args": {"kind": "paint", "name": "A"}}));
-    live.ok(&mut b, json!({"command": "layer.add", "args": {"kind": "paint", "name": "B"}}));
+    live.ok(
+        &mut a,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "A"}}),
+    );
+    live.ok(
+        &mut b,
+        json!({"command": "layer.add", "args": {"kind": "paint", "name": "B"}}),
+    );
     let names = live.layer_names();
     assert!(names.iter().any(|n| n == "A") && names.iter().any(|n| n == "B"));
     // 何も言わずに切れたつながり（プログラムが落ちた）を忘れる
     drop(a);
-    live.until("閉じたつながりを忘れる", |l| (l.app.state.ops.status == OpsStatus::Connected(1)).then_some(()));
-    assert!(matches!(live.ok(&mut b, json!({"command": "doc.info"})), Reply::Doc(_)));
+    live.until("閉じたつながりを忘れる", |l| {
+        (l.app.state.ops.status == OpsStatus::Connected(1)).then_some(())
+    });
+    assert!(matches!(
+        live.ok(&mut b, json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
     // 礼儀正しく抜けたつながり（Bye を送る）も忘れる
     b.leave();
-    live.until("抜けたつながりを忘れる", |l| (l.app.state.ops.status == OpsStatus::Listening).then_some(()));
+    live.until("抜けたつながりを忘れる", |l| {
+        (l.app.state.ops.status == OpsStatus::Listening).then_some(())
+    });
 }
 
 /// 数は挨拶（鍵と版）が済んでから取る。何も言わないつなぎは枠を取らず、9 つ目は挨拶で `Busy` と断られ（知らせは 1 度だけ）、閉じたつながりの分は戻る。
@@ -627,15 +826,20 @@ fn the_ninth_client_is_refused_as_busy_and_a_closed_ones_place_is_given_back() {
     let mut clients = Vec::new();
     for n in 1..=7 {
         clients.push(Client::connect(&name));
-        live.until("つながり", |l| (l.app.state.ops.status == OpsStatus::Connected(n)).then_some(()));
+        live.until("つながり", |l| {
+            (l.app.state.ops.status == OpsStatus::Connected(n)).then_some(())
+        });
     }
     // 挨拶を送らないつなぎは、数に入らない（8 つ目がつなげる）
     let silent = yolu_protocol::link::connect(&name).expect("つなげる");
     clients.push(Client::connect(&name));
-    live.until("8 つ目のつながり", |l| (l.app.state.ops.status == OpsStatus::Connected(8)).then_some(()));
+    live.until("8 つ目のつながり", |l| {
+        (l.app.state.ops.status == OpsStatus::Connected(8)).then_some(())
+    });
     drop(silent);
     live.until("挨拶の無いつなぎを断った知らせ", |l| {
-        (l.app.state.message == "外からの操作: 挨拶できないクライアントを断りました。").then_some(())
+        (l.app.state.message == "外からの操作: 挨拶できないクライアントを断りました。")
+            .then_some(())
     });
     // 9 つ目は挨拶で断られる。知らせは 1 度だけ。つながっている 8 つは影響を受けない
     live.app.state.message.clear();
@@ -645,20 +849,41 @@ fn the_ninth_client_is_refused_as_busy_and_a_closed_ones_place_is_given_back() {
         Ok(_) => panic!("9 つ目はつなげない"),
     };
     assert_eq!(busy(&name), RejectCode::Busy);
-    live.until("上限の知らせ", |l| (!l.app.state.message.is_empty()).then_some(()));
-    assert_eq!(live.app.state.message, "外からの操作: つながりの数が上限のため断りました。");
+    live.until("上限の知らせ", |l| {
+        (!l.app.state.message.is_empty()).then_some(())
+    });
+    assert_eq!(
+        live.app.state.message,
+        "外からの操作: つながりの数が上限のため断りました。"
+    );
     live.app.state.message.clear();
     assert_eq!(busy(&name), RejectCode::Busy);
     live.settle();
-    assert!(live.app.state.message.is_empty(), "同じ断りが続いても知らせは 1 度: {}", live.app.state.message);
+    assert!(
+        live.app.state.message.is_empty(),
+        "同じ断りが続いても知らせは 1 度: {}",
+        live.app.state.message
+    );
     assert_eq!(live.app.state.ops.status, OpsStatus::Connected(8));
-    assert!(matches!(live.ok(&mut clients[0], json!({"command": "doc.info"})), Reply::Doc(_)));
+    assert!(matches!(
+        live.ok(&mut clients[0], json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
     // 1 つ閉じると、その分が戻って、またつなげる（閉じた知らせとつなぎ側の枠の戻しは別なので、少し待って繰り返す）
     drop(clients.remove(0));
-    live.until("閉じたつながりを忘れる", |l| (l.app.state.ops.status == OpsStatus::Connected(7)).then_some(()));
-    let mut again = live.until("枠が戻ってつなげる", |_| Client::try_connect(&name).ok());
-    live.until("つなぎ直し", |l| (l.app.state.ops.status == OpsStatus::Connected(8)).then_some(()));
-    assert!(matches!(live.ok(&mut again, json!({"command": "doc.info"})), Reply::Doc(_)));
+    live.until("閉じたつながりを忘れる", |l| {
+        (l.app.state.ops.status == OpsStatus::Connected(7)).then_some(())
+    });
+    let mut again = live.until("枠が戻ってつなげる", |_| {
+        Client::try_connect(&name).ok()
+    });
+    live.until("つなぎ直し", |l| {
+        (l.app.state.ops.status == OpsStatus::Connected(8)).then_some(())
+    });
+    assert!(matches!(
+        live.ok(&mut again, json!({"command": "doc.info"})),
+        Reply::Doc(_)
+    ));
 }
 
 #[test]
@@ -687,7 +912,8 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
     std::fs::write(&settings, "language=ja\nexternal_ops=on\n").unwrap();
     let name = names::unique_name("ylops", "startup");
     let ctx = egui::Context::default();
-    let mut app = YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
+    let mut app =
+        YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
     app.ops_mut().set_name(&name).unwrap();
     assert!(app.state.prefs.settings.external_ops);
     app.tick_hidden(&ctx);
@@ -716,7 +942,10 @@ fn the_command_line_client_talks_to_the_running_app_and_reads_its_bye() {
     live.app.state.apply(Action::SaveProjectAs(file.clone()));
     live.app.state.wait_save();
     live.frame();
-    let config = yolu_cli::live::LiveConfig { name, timeout: Duration::from_secs(60) };
+    let config = yolu_cli::live::LiveConfig {
+        name,
+        timeout: Duration::from_secs(60),
+    };
     let ask = |command: Value| {
         let config = config.clone();
         let command = parse_command(&command).expect("命令の形");
@@ -729,10 +958,16 @@ fn the_command_line_client_talks_to_the_running_app_and_reads_its_bye() {
     let rx = ask(json!({"command": "layer.add", "args": {"kind": "paint", "name": "CLI の層"}}));
     let reply = live.until("CLI の編集の返事", |_| rx.try_recv().ok());
     assert!(matches!(reply, Ok(Reply::Edited(_))), "{reply:?}");
-    assert!(live.layer_names().iter().any(|n| n == "CLI の層"), "画面の文書に当たる: {:?}", live.layer_names());
+    assert!(
+        live.layer_names().iter().any(|n| n == "CLI の層"),
+        "画面の文書に当たる: {:?}",
+        live.layer_names()
+    );
     let rx = ask(json!({"command": "doc.info"}));
     let reply = live.until("CLI の読む返事", |_| rx.try_recv().ok());
-    let Ok(Reply::Doc(doc)) = reply else { panic!("doc.info の返事ではない: {reply:?}") };
+    let Ok(Reply::Doc(doc)) = reply else {
+        panic!("doc.info の返事ではない: {reply:?}")
+    };
     assert_eq!(PathBuf::from(&doc.path), file);
     // 保存を止めておき、返事を待っている間に受け口を切る
     let hold = live.app.state.save.hold_next();
@@ -744,7 +979,11 @@ fn the_command_line_client_talks_to_the_running_app_and_reads_its_bye() {
     let reply = live.until("切ったあとの客の結果", |_| rx.try_recv().ok());
     let error = reply.expect_err("返事は来ず、つなげない誤りになる");
     assert!(yolu_cli::live::is_unreachable(&error), "{error:?}");
-    assert!(error.message.ja.contains("受け付けをやめました"), "{}", error.message.ja);
+    assert!(
+        error.message.ja.contains("受け付けをやめました"),
+        "{}",
+        error.message.ja
+    );
     hold.release();
     live.app.state.wait_save();
 }

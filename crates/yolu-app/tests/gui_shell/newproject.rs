@@ -11,7 +11,9 @@ use common::{app, click, key, menu_title, popup_item, rect_of};
 use egui::{Key, Modifiers, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
-use yolu_app::engine::{CanvasResampling, Channel, Document, NormalYDirection, Rgba8, SelectionMask};
+use yolu_app::engine::{
+    CanvasResampling, Channel, Document, NormalYDirection, Rgba8, SelectionMask,
+};
 use yolu_app::lang::Lang;
 use yolu_app::newproject::{DraftOp, NpAction, Prep, Template};
 use yolu_app::sets::MaterialRef;
@@ -600,21 +602,41 @@ fn a_shrink_that_removes_remembered_selections_says_so_in_the_result_in_both_lan
         let set_name = s.sets.get(0).unwrap().name.clone();
         np(&mut s, NpAction::OpenConfigure);
         np(&mut s, NpAction::Draft(0, DraftOp::Size(512, 512)));
-        np(&mut s, NpAction::Resampling(Some(CanvasResampling::Nearest)));
+        np(
+            &mut s,
+            NpAction::Resampling(Some(CanvasResampling::Nearest)),
+        );
         np(&mut s, NpAction::Submit);
         np(&mut s, NpAction::ConfirmApply);
-        assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+        assert!(
+            s.np.window.is_none(),
+            "{:?}",
+            s.np.window.as_ref().map(|w| w.error.clone())
+        );
         assert_eq!(size_of(&s, 0), (512, 512));
-        let kept: Vec<&str> = s.set_doc(0).saved_selections().iter().map(|x| x.name.as_str()).collect();
+        let kept: Vec<&str> = s
+            .set_doc(0)
+            .saved_selections()
+            .iter()
+            .map(|x| x.name.as_str())
+            .collect();
         assert_eq!(kept, ["wide"], "{lang:?}");
-        assert!(!s.set_doc(0).can_undo(), "履歴は消える（取り消しでは戻らない）");
+        assert!(
+            !s.set_doc(0).can_undo(),
+            "履歴は消える（取り消しでは戻らない）"
+        );
         // 戻せないので、外れたことと数を、結果の文で言う
         let want = lang.pick(
             format!("縮小で消えた覚えた選択範囲: {set_name} 1 件"),
             format!("Remembered selections lost to the shrink: {set_name} 1"),
         );
         assert!(s.message.contains(&want), "{lang:?}: {}", s.message);
-        assert_eq!(s.message.contains("縮小"), lang == Lang::Ja, "{lang:?}: {}", s.message);
+        assert_eq!(
+            s.message.contains("縮小"),
+            lang == Lang::Ja,
+            "{lang:?}: {}",
+            s.message
+        );
     }
     // 縮小でも全部残るときは、何も言わない
     let mut s = S::new(64, 64);
@@ -679,7 +701,12 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     s.set_doc_mut(1).set_source_budget_bytes(tight).unwrap();
     let state = |s: &S, i: usize| {
         let d = s.set_doc(i);
-        (d.undo_count(), d.redo_count(), d.history_bytes(), d.revision())
+        (
+            d.undo_count(),
+            d.redo_count(),
+            d.history_bytes(),
+            d.revision(),
+        )
     };
     let before = (state(&s, 0), state(&s, 1));
     assert!(before.0 .0 >= 1 && before.0 .1 == 1, "{before:?}");
@@ -691,7 +718,11 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     let win = s.np.window.as_ref().expect("断られたら窓は残る");
     let error = win.error.clone().expect("理由");
     assert!(error.starts_with("Hair"), "{error}");
-    assert_eq!(size_of(&s, 0), (1024, 1024), "先に縮めるはずのセットも元の大きさ");
+    assert_eq!(
+        size_of(&s, 0),
+        (1024, 1024),
+        "先に縮めるはずのセットも元の大きさ"
+    );
     assert_eq!(size_of(&s, 1), (1024, 1024));
     assert_eq!(pixel_of(&s, 0, (3, 3)), Rgba8::new(10, 20, 30, 255));
     assert_eq!(pixel_of(&s, 1, (4, 4)), Rgba8::new(40, 50, 60, 255));
@@ -707,7 +738,9 @@ fn a_resize_refused_halfway_changes_no_set_and_keeps_every_history() {
     assert!(
         s.np.window.is_none(),
         "{:?}",
-        s.np.window.as_ref().map(|w| (w.error.clone(), w.confirm.is_some()))
+        s.np.window
+            .as_ref()
+            .map(|w| (w.error.clone(), w.confirm.is_some()))
     );
     assert_eq!(size_of(&s, 0), (512, 512));
     assert_eq!(size_of(&s, 1), (512, 512));
@@ -1381,7 +1414,13 @@ fn a_model_dropped_while_the_list_is_up_drops_the_list_and_a_stale_list_is_never
     assert_eq!(s.model.as_ref().unwrap().name, "old");
     // 出し直した一覧を見て決める
     np(&mut s, NpAction::Submit);
-    let plan = s.np.window.as_ref().unwrap().confirm.clone().expect("出し直す");
+    let plan =
+        s.np.window
+            .as_ref()
+            .unwrap()
+            .confirm
+            .clone()
+            .expect("出し直す");
     assert_eq!(plan.rows[0].left, "old → again");
     np(&mut s, NpAction::ConfirmApply);
     assert!(s.np.window.is_none(), "{:?}", s.message);
@@ -1416,7 +1455,13 @@ fn a_list_that_no_longer_matches_the_window_is_shown_again_instead_of_applied() 
     assert!(s.np.window.is_some(), "見せていない変更は適用しない");
     assert_eq!(size_of(&s, 0), (512, 512));
     assert_eq!(size_of(&s, 1), (512, 512));
-    let now = s.np.window.as_ref().unwrap().confirm.clone().expect("今の計画の一覧を出し直す");
+    let now =
+        s.np.window
+            .as_ref()
+            .unwrap()
+            .confirm
+            .clone()
+            .expect("今の計画の一覧を出し直す");
     assert_ne!(now, shown);
     assert_eq!(now.rows.len(), 2);
     np(&mut s, NpAction::ConfirmApply);
@@ -1435,7 +1480,10 @@ fn a_model_added_to_a_project_without_one_is_listed_by_its_name_alone() {
         configure_with(&mut s, &new);
         np(&mut s, NpAction::Submit);
         let plan = s.np.window.as_ref().unwrap().confirm.clone().unwrap();
-        assert_eq!(plan.rows[0].left, "new", "前のモデルの名前の代わりの文字を出さない");
+        assert_eq!(
+            plan.rows[0].left, "new",
+            "前のモデルの名前の代わりの文字を出さない"
+        );
         assert_eq!(plan.rows[0].right, lang.pick("追加", "Add"));
         for row in &plan.rows {
             for text in [&row.left, &row.middle, &row.right] {
@@ -1580,7 +1628,12 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     let mut s = project_from(&model, 256);
     // モデルの骨を 1 本回す（読んだ FBX の骨のうち、最初のもの）
     let posed = {
-        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        let session = s
+            .view3d
+            .pose
+            .session
+            .as_ref()
+            .expect("モデルのポーズのセッション");
         assert!(!session.rig.bones().is_empty());
         let mut p = session.pose().clone();
         p.locals[0].rotation = Quat::from_rotation_y(0.7);
@@ -1600,7 +1653,13 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     wait_reopen(&mut t);
     let session = t.view3d.pose.session.as_ref().unwrap();
     assert!(session.is_posed(), "{}", t.message);
-    assert!(session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999);
+    assert!(
+        session.pose().locals[0]
+            .rotation
+            .dot(posed.locals[0].rotation)
+            .abs()
+            > 0.999_999
+    );
     assert!(!session.can_undo());
     assert!(t.message.contains("ポーズを戻しました"), "{}", t.message);
     yolu_app::view3d::pose::sync_modified(&mut t);
@@ -1609,19 +1668,32 @@ fn a_saved_project_brings_the_pose_of_its_model_back_when_the_model_is_read_agai
     let other = write_fbx(
         &dir.join("other"),
         "o.fbx",
-        &ascii_fbx(&["Cloth"], &[mesh("Wing", &[Some(0)]), mesh("Tail", &[Some(0)])]),
+        &ascii_fbx(
+            &["Cloth"],
+            &[mesh("Wing", &[Some(0)]), mesh("Tail", &[Some(0)])],
+        ),
     );
     let swapped = read_file(&ylp)
-        .with_view_model(Some(&yolu_app::newproject::relative_model_path(&other, &ylp)))
+        .with_view_model(Some(&yolu_app::newproject::relative_model_path(
+            &other, &ylp,
+        )))
         .unwrap();
     std::fs::write(&ylp, swapped.to_bytes().unwrap()).unwrap();
     let mut u = S::new(64, 64);
     u.apply(Action::OpenProject(ylp.clone()));
     wait_reopen(&mut u);
     let session = u.view3d.pose.session.as_ref().unwrap();
-    assert!(!session.is_posed(), "合わないポーズは当てない: {}", u.message);
+    assert!(
+        !session.is_posed(),
+        "合わないポーズは当てない: {}",
+        u.message
+    );
     assert!(!session.preset_notes.is_empty(), "飛ばした項目の理由が残る");
-    assert!(u.message.contains("合わない") || u.message.contains("合うボーンがありません"), "{}", u.message);
+    assert!(
+        u.message.contains("合わない") || u.message.contains("合うボーンがありません"),
+        "{}",
+        u.message
+    );
 }
 
 /// プロジェクトの構成の窓で、モデルを選び直す（`reload` なら読み直す）。確かめが出たら適用する。
@@ -1636,18 +1708,28 @@ fn configure_model(s: &mut S, choose: Option<&Path>) {
     if s.np.window.as_ref().is_some_and(|w| w.confirm.is_some()) {
         np(s, NpAction::ConfirmApply);
     }
-    assert!(s.np.window.is_none(), "{:?}", s.np.window.as_ref().map(|w| w.error.clone()));
+    assert!(
+        s.np.window.is_none(),
+        "{:?}",
+        s.np.window.as_ref().map(|w| w.error.clone())
+    );
 }
 
 #[test]
-fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configuration_and_is_not_lost_on_save() {
+fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configuration_and_is_not_lost_on_save(
+) {
     use yolu_core::glam::Quat;
     let dir = temp_dir("configure-pose");
     let model = character(&dir.join("models"), "c.fbx");
     let ylp = dir.join("p.ylp");
     let mut s = project_from(&model, 256);
     let posed = {
-        let session = s.view3d.pose.session.as_ref().expect("モデルのポーズのセッション");
+        let session = s
+            .view3d
+            .pose
+            .session
+            .as_ref()
+            .expect("モデルのポーズのセッション");
         let mut p = session.pose().clone();
         p.locals[0].rotation = Quat::from_rotation_y(0.7);
         p
@@ -1658,7 +1740,12 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     let stored = read_file(&ylp).pose().unwrap().expect("保存したポーズ");
     let rotated = |t: &S| {
         let session = t.view3d.pose.session.as_ref().expect("ポーズのセッション");
-        session.is_posed() && session.pose().locals[0].rotation.dot(posed.locals[0].rotation).abs() > 0.999_999
+        session.is_posed()
+            && session.pose().locals[0]
+                .rotation
+                .dot(posed.locals[0].rotation)
+                .abs()
+                > 0.999_999
     };
     // モデルのファイルを動かしてから開く: 見つからず、ポーズのセッションは無い
     let moved = dir.join("moved");
@@ -1666,7 +1753,11 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp.clone()));
     wait_reopen(&mut t);
-    assert!(t.message.contains("モデルが見つかりません"), "{}", t.message);
+    assert!(
+        t.message.contains("モデルが見つかりません"),
+        "{}",
+        t.message
+    );
     assert!(t.view3d.pose.session.is_none());
     // 構成の窓で動かした先のモデルを選び直すと、ファイルのポーズが戻り、そのことが結果の文に出る
     configure_model(&mut t, Some(&moved.join("c.fbx")));
@@ -1675,7 +1766,11 @@ fn the_pose_in_the_file_comes_back_when_the_model_is_chosen_again_in_the_configu
     // そのまま保存しても pose.json は消えず、同じ中身
     t.apply(Action::SaveProject);
     assert!(t.message.contains("保存しました"), "{}", t.message);
-    assert_eq!(read_file(&ylp).pose().unwrap().as_ref(), Some(&stored), "ファイルのポーズが残る");
+    assert_eq!(
+        read_file(&ylp).pose().unwrap().as_ref(),
+        Some(&stored),
+        "ファイルのポーズが残る"
+    );
     // 読み直しでも戻る（ポーズのセッションは新しい休みの形から始まる）
     let mut u = S::new(64, 64);
     u.apply(Action::OpenProject(ylp.clone()));
@@ -1777,7 +1872,11 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
         "{}",
         t.message
     );
-    assert!(t.message.starts_with("開きました"), "開いた知らせの後ろに続く: {}", t.message);
+    assert!(
+        t.message.starts_with("開きました"),
+        "開いた知らせの後ろに続く: {}",
+        t.message
+    );
     assert!(t.np.reopening.is_none() && t.model.is_none());
     assert!(t.np.model_file.is_some(), "参照は残す");
     // 別の場所へ保存しても、参照は（その場所からの相対で）残る
@@ -1834,16 +1933,30 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
     let stored = "//nas.invalid/share/models/c.fbx";
     let ylp = project_with_stored_model(&dir, stored);
     for (lang, text) in [
-        (Lang::Ja, "ネットワーク上のモデルは自動では読みません: c.fbx"),
-        (Lang::En, "Not reading the model on the network automatically: c.fbx"),
+        (
+            Lang::Ja,
+            "ネットワーク上のモデルは自動では読みません: c.fbx",
+        ),
+        (
+            Lang::En,
+            "Not reading the model on the network automatically: c.fbx",
+        ),
     ] {
         let mut t = S::new_in(64, 64, lang);
         t.apply(Action::OpenProject(ylp.clone()));
         assert!(t.np.reopening.is_none(), "確かめも読み込みも始めない");
         assert!(t.model.is_none() && t.view3d.pose.session.is_none());
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(stored)), "参照は残す");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(stored)),
+            "参照は残す"
+        );
         assert!(t.message.contains(text), "{}", t.message);
-        assert!(t.message.starts_with(lang.pick("開きました", "Opened")), "{}", t.message);
+        assert!(
+            t.message.starts_with(lang.pick("開きました", "Opened")),
+            "{}",
+            t.message
+        );
         assert_eq!(t.sets.len(), 3, "セットは開く");
     }
     // 書き直しても参照は消えない（保存し直すと、同じ文字列が残る。UNC を相対に直さない。どの OS でも）
@@ -1851,7 +1964,13 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(ylp));
         t.apply(Action::SaveProjectAs(dir.join("again.ylp")));
-        assert_eq!(read_file(&dir.join("again.ylp")).view_model().unwrap().as_deref(), Some(stored));
+        assert_eq!(
+            read_file(&dir.join("again.ylp"))
+                .view_model()
+                .unwrap()
+                .as_deref(),
+            Some(stored)
+        );
     }
     // バックスラッシュで書かれた UNC も、'/' 区切りの同じ参照として残る（OS によらず、別の相対のファイル名にならない）
     {
@@ -1859,7 +1978,13 @@ fn a_model_on_the_network_is_kept_as_a_reference_and_never_touched_when_the_proj
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(back));
         t.apply(Action::SaveProjectAs(dir.join("again2.ylp")));
-        assert_eq!(read_file(&dir.join("again2.ylp")).view_model().unwrap().as_deref(), Some(stored));
+        assert_eq!(
+            read_file(&dir.join("again2.ylp"))
+                .view_model()
+                .unwrap()
+                .as_deref(),
+            Some(stored)
+        );
     }
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1878,7 +2003,11 @@ fn a_model_reference_on_the_network_is_not_touched_by_a_new_project_window_eithe
         let ylp = project_with_stored_model(&dir, &stored);
         let mut t = S::new(64, 64);
         t.apply(Action::OpenProject(ylp));
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は残る");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(&stored)),
+            "参照は残る"
+        );
         assert!(t.np.reopening.is_none(), "{stored}");
         np(&mut t, NpAction::OpenNew);
         let win = t.np.window.as_ref().expect("窓は開く");
@@ -1886,7 +2015,11 @@ fn a_model_reference_on_the_network_is_not_touched_by_a_new_project_window_eithe
             !win.is_loading() && win.model_path().is_none() && matches!(win.prep, Prep::Idle),
             "{stored}: ネットワークの参照を初めのモデルにして読み始めた"
         );
-        assert_eq!(t.np.model_file.as_deref(), Some(Path::new(&stored)), "参照は消えない");
+        assert_eq!(
+            t.np.model_file.as_deref(),
+            Some(Path::new(&stored)),
+            "参照は消えない"
+        );
     }
     // 対照: 同じファイルをローカルの絶対のパスで参照していれば、新規の窓の初めのモデルとして読む
     let ylp = project_with_stored_model(&dir, &local.to_string_lossy());
@@ -2110,7 +2243,11 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     np(&mut t, NpAction::Material(64, true));
     {
         let win = t.np.window.as_ref().unwrap();
-        assert!(win.error.as_deref().is_some_and(|e| e.contains("64")), "{:?}", win.error);
+        assert!(
+            win.error.as_deref().is_some_and(|e| e.contains("64")),
+            "{:?}",
+            win.error
+        );
         assert_eq!(win.materials, None, "選びは変わらない");
     }
     // 1 つ外せば別の 1 つを選べる。選びを初めの形へ戻せば「選び直していない」に戻る
@@ -2145,7 +2282,11 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     {
         let win = t.np.window.as_ref().unwrap();
         assert_eq!(win.drafts.len(), 64, "上限を超えて足さない");
-        assert!(win.error.as_deref().is_some_and(|e| e.contains("64")), "{:?}", win.error);
+        assert!(
+            win.error.as_deref().is_some_and(|e| e.contains("64")),
+            "{:?}",
+            win.error
+        );
     }
     np(&mut t, NpAction::Close);
     // 英語でも
@@ -2217,7 +2358,10 @@ fn applying_without_touching_the_normal_format_leaves_sets_with_another_format_a
     // 名前だけ変えて適用: どちらのセットの形式も、Undo の段も変わらない（窓は今のセット = 1 つ目の形式で開く）
     s.switch_set(0).unwrap();
     np(&mut s, NpAction::OpenConfigure);
-    assert_eq!(s.np.window.as_ref().unwrap().normal, NormalYDirection::OpenGL);
+    assert_eq!(
+        s.np.window.as_ref().unwrap().normal,
+        NormalYDirection::OpenGL
+    );
     np(&mut s, NpAction::Draft(0, DraftOp::Name("名前".into())));
     np(&mut s, NpAction::Submit);
     assert!(s.np.window.is_none(), "{:?}", s.message);
@@ -2605,7 +2749,11 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
             Lang::En => ("Preparing the model", "Cancel preparation"),
         };
         h.run();
-        assert!(window_texts(&h).iter().any(|t| t == label), "{lang:?}: {:?}", window_texts(&h));
+        assert!(
+            window_texts(&h).iter().any(|t| t == label),
+            "{lang:?}: {:?}",
+            window_texts(&h)
+        );
         assert!(h.query_by_label(cancel).is_some(), "{lang:?}");
         match &st(&h).np.window.as_ref().unwrap().prep {
             Prep::Loading { job, .. } => job.report_progress(0.37),
@@ -2613,7 +2761,9 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
         }
         h.run();
         assert!(
-            window_texts(&h).iter().any(|t| *t == format!("{label} 37%")),
+            window_texts(&h)
+                .iter()
+                .any(|t| *t == format!("{label} 37%")),
             "{lang:?}: {:?}",
             window_texts(&h)
         );

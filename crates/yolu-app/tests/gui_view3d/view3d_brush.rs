@@ -609,8 +609,14 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
     };
     let adjusted = painted(PressureAdjust::new(0.25, 0.75, vec![]).unwrap(), 0.375);
     let plain = painted(PressureAdjust::default(), 0.25);
-    assert!(plain.iter().skip(3).step_by(4).any(|a| *a != 0), "3D に描けている");
+    assert!(
+        plain.iter().skip(3).step_by(4).any(|a| *a != 0),
+        "3D に描けている"
+    );
     assert_eq!(adjusted, plain);
     let unadjusted = painted(PressureAdjust::default(), 0.375);
-    assert_ne!(unadjusted, plain, "調整が無ければ、ペンの 0.375 は 0.25 と別の線");
+    assert_ne!(
+        unadjusted, plain,
+        "調整が無ければ、ペンの 0.375 は 0.25 と別の線"
+    );
 }

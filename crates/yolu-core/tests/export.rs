@@ -5,8 +5,8 @@
 use std::sync::atomic::AtomicBool;
 
 use yolu_core::export::{
-    build, channel_image, channel_working_bytes, default_value, occlusion_byte, should_write, working_bytes, ExportError, ExportImage,
-    ExportImageKind, ExportScalar, ExportTemplate,
+    build, channel_image, channel_working_bytes, default_value, occlusion_byte, should_write,
+    working_bytes, ExportError, ExportImage, ExportImageKind, ExportScalar, ExportTemplate,
 };
 use yolu_core::glam::DVec2;
 use yolu_core::padding::{
@@ -818,27 +818,53 @@ fn a_channel_image_is_the_composite_and_a_normal_follows_the_file_direction() {
         );
     }
     let emission = channel_image(&doc, Channel::Emission, ALL).unwrap();
-    assert_eq!(px(&emission, 3, 1), [200, 100, 50, 128], "テンプレートの Emission と違い、アルファのまま");
+    assert_eq!(
+        px(&emission, 3, 1),
+        [200, 100, 50, 128],
+        "テンプレートの Emission と違い、アルファのまま"
+    );
     // Color は、テンプレートの BaseColor と同じバイト
     assert_eq!(
         channel_image(&doc, Channel::Color, ALL).unwrap(),
-        build(&doc, image(&ExportTemplate::unity_hdrp(), "BaseColor"), None, ALL).unwrap()
+        build(
+            &doc,
+            image(&ExportTemplate::unity_hdrp(), "BaseColor"),
+            None,
+            ALL
+        )
+        .unwrap()
     );
     // Normal: OpenGL はテンプレートの Normal と同じバイト、DirectX は緑だけが 255 − G
     let opengl = channel_image(&doc, Channel::Normal, ALL).unwrap();
     assert_eq!(
         opengl,
-        build(&doc, image(&ExportTemplate::unity_hdrp(), "Normal"), None, ALL).unwrap()
+        build(
+            &doc,
+            image(&ExportTemplate::unity_hdrp(), "Normal"),
+            None,
+            ALL
+        )
+        .unwrap()
     );
-    doc.set_normal_settings(doc.normal_settings().with_file_direction(NormalYDirection::DirectX), false)
-        .unwrap();
+    doc.set_normal_settings(
+        doc.normal_settings()
+            .with_file_direction(NormalYDirection::DirectX),
+        false,
+    )
+    .unwrap();
     let directx = channel_image(&doc, Channel::Normal, ALL).unwrap();
     assert_ne!(directx, opengl);
     for (a, b) in opengl.chunks(4).zip(directx.chunks(4)) {
         assert_eq!([a[0], 255 - a[1], a[2], a[3]], [b[0], b[1], b[2], b[3]]);
     }
     assert_eq!(
-        build(&doc, image(&ExportTemplate::unity_hdrp(), "Normal"), None, ALL).unwrap(),
+        build(
+            &doc,
+            image(&ExportTemplate::unity_hdrp(), "Normal"),
+            None,
+            ALL
+        )
+        .unwrap(),
         opengl,
         "テンプレートは Unity 向けなので、ファイルの向きに依らず OpenGL"
     );
@@ -854,7 +880,11 @@ fn a_channel_image_includes_the_normal_derived_from_height() {
     .unwrap();
     let derived = channel_image(&doc, Channel::Normal, ALL).unwrap();
     assert_eq!(derived, doc.normal_output(ALL).unwrap());
-    assert_ne!(px(&derived, 3, 1), [128, 128, 255, 255], "傾きのある所は平らでない");
+    assert_ne!(
+        px(&derived, 3, 1),
+        [128, 128, 255, 255],
+        "傾きのある所は平らでない"
+    );
 }
 
 #[test]
@@ -862,15 +892,24 @@ fn a_channel_image_refuses_before_allocating_and_for_a_channel_the_document_lack
     let doc = document(&[(Channel::Color, &|_, _| [1, 2, 3, 255])]);
     let n = (W * H) as u64;
     assert_eq!(channel_working_bytes(&doc, Channel::Color), 4 * n);
-    assert_eq!(channel_working_bytes(&doc, Channel::Normal), doc.normal_working_bytes());
+    assert_eq!(
+        channel_working_bytes(&doc, Channel::Normal),
+        doc.normal_working_bytes()
+    );
     for channel in [Channel::Color, Channel::Normal] {
         let needed = channel_working_bytes(&doc, channel);
         assert_eq!(
             channel_image(&doc, channel, needed - 1),
-            Err(ExportError::WorkingBudgetExceeded { needed, allowed: needed - 1 }),
+            Err(ExportError::WorkingBudgetExceeded {
+                needed,
+                allowed: needed - 1
+            }),
             "{channel:?}"
         );
-        assert!(channel_image(&doc, channel, needed).is_ok(), "{channel:?}: ちょうどなら通る");
+        assert!(
+            channel_image(&doc, channel, needed).is_ok(),
+            "{channel:?}: ちょうどなら通る"
+        );
     }
     let missing = Channel::from_index(40).unwrap();
     assert!(doc.channel_info(missing).is_none());

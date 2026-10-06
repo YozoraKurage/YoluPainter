@@ -9,7 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use egui::{pos2, vec2, Id, Key, Rect, Sense, Vec2};
 
-use super::{pool::Row, text, DiskBudget, RecoveryAction, Usage, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE};
+use super::{
+    pool::Row, text, DiskBudget, RecoveryAction, Usage, DISK_GIB_RANGE, INTERVAL_RANGE, KEEP_RANGE,
+};
 use crate::lang::Lang;
 use crate::state::{Action, AppState};
 use crate::ui::scroll::Scroll;
@@ -59,9 +61,7 @@ impl WindowState {
     }
     /// 一覧を入れ替える。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
     pub fn set_rows(&mut self, rows: Vec<Row>) {
-        let keep = self
-            .selected_row()
-            .map(|r| (r.pool.clone(), r.id.clone()));
+        let keep = self.selected_row().map(|r| (r.pool.clone(), r.id.clone()));
         self.rows = rows;
         self.selected = keep
             .and_then(|(pool, id)| self.rows.iter().position(|r| r.pool == pool && r.id == id))
@@ -92,7 +92,9 @@ fn row_age(lang: Lang, row: &Row) -> String {
         return lang.pick("読めません", "Unreadable").into();
     }
     match row.time_ms {
-        Some(ms) => lang.age_text(std::time::Duration::from_millis(now_ms().saturating_sub(ms))),
+        Some(ms) => lang.age_text(std::time::Duration::from_millis(
+            now_ms().saturating_sub(ms),
+        )),
         None => String::new(),
     }
 }
@@ -138,7 +140,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         + 10.0
         + 3.0 * SETTINGS_ROW
         + DETAILS_ROW
-        + if details { t::SLIDER_ROW_HEIGHT + 4.0 } else { 0.0 }
+        + if details {
+            t::SLIDER_ROW_HEIGHT + 4.0
+        } else {
+            0.0
+        }
         + FOOTER;
     let spec = Spec {
         title: lang.pick("復旧", "Recovery"),
@@ -166,11 +172,15 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         // 状態の 1 行（断られた理由があるときだけ）
         let top = body.top() + 4.0;
         if let Some(summary) = &error {
-            let r = Rect::from_min_size(pos2(body.left() + 14.0, top), vec2(body.width() - 28.0, 22.0));
+            let r = Rect::from_min_size(
+                pos2(body.left() + 14.0, top),
+                vec2(body.width() - 28.0, 22.0),
+            );
             let shown = w::fit(&p, summary, r.width(), t::LABEL);
             w::text(&p, r, &shown, t::LABEL.with_color(t::WARNING), Align::Left);
             if shown != *summary {
-                ui.interact(r, id.with("summary"), Sense::hover()).on_hover_text(summary);
+                ui.interact(r, id.with("summary"), Sense::hover())
+                    .on_hover_text(summary);
             }
         }
         let list = Rect::from_min_size(
@@ -192,7 +202,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             .fold(0.0f32, f32::max);
         for (i, row) in rows.iter().enumerate() {
             let r = Rect::from_min_size(
-                pos2(list.left() + 8.0, list.top() + i as f32 * ROW_HEIGHT - scroll),
+                pos2(
+                    list.left() + 8.0,
+                    list.top() + i as f32 * ROW_HEIGHT - scroll,
+                ),
                 vec2(list.width() - 16.0 - bar.reserved(), ROW_HEIGHT),
             );
             if r.bottom() < list.top() || r.top() > list.bottom() {
@@ -206,25 +219,47 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             } else if response.hovered() {
                 w::rounded(&cp, r, t::CONTROL_HOVER, 3.0);
             }
-            let color = if row.problem.is_some() { t::WARNING } else { t::TEXT };
-            let right = Rect::from_min_size(pos2(r.right() - 8.0 - right_w, r.top()), vec2(right_w, r.height()));
+            let color = if row.problem.is_some() {
+                t::WARNING
+            } else {
+                t::TEXT
+            };
+            let right = Rect::from_min_size(
+                pos2(r.right() - 8.0 - right_w, r.top()),
+                vec2(right_w, r.height()),
+            );
             let middle = Rect::from_min_size(
                 pos2(right.left() - 14.0 - mid_w, r.top()),
                 vec2(mid_w, r.height()),
             );
-            let left = Rect::from_min_max(pos2(r.left() + 8.0, r.top()), pos2(middle.left() - 12.0, r.bottom()));
+            let left = Rect::from_min_max(
+                pos2(r.left() + 8.0, r.top()),
+                pos2(middle.left() - 12.0, r.bottom()),
+            );
             let shown = w::fit(&cp, &name, left.width(), t::LABEL);
             w::text(&cp, left, &shown, t::LABEL.with_color(color), Align::Left);
-            w::text(&cp, middle, &lang.sets_text(row.documents), t::LABEL_DIM, Align::Left);
+            w::text(
+                &cp,
+                middle,
+                &lang.sets_text(row.documents),
+                t::LABEL_DIM,
+                Align::Left,
+            );
             w::text(
                 &cp,
                 right,
                 &row_age(lang, row),
-                t::LABEL_DIM.with_color(if row.problem.is_some() { t::WARNING } else { t::TEXT_DIM }),
+                t::LABEL_DIM.with_color(if row.problem.is_some() {
+                    t::WARNING
+                } else {
+                    t::TEXT_DIM
+                }),
                 Align::Right,
             );
             let tooltip = match (&row.problem, row.time_ms) {
-                (Some(reason), _) => lang.pick(reason.clone(), "Damaged generation (cannot be read)".into()),
+                (Some(reason), _) => {
+                    lang.pick(reason.clone(), "Damaged generation (cannot be read)".into())
+                }
                 (None, Some(ms)) => text::utc_text(ms),
                 (None, None) => String::new(),
             };
@@ -254,7 +289,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         };
         let mut interval_values: Vec<u32> = INTERVALS.to_vec();
-        if !interval_values.contains(&interval) && (INTERVAL_RANGE.0..=INTERVAL_RANGE.1).contains(&interval) {
+        if !interval_values.contains(&interval)
+            && (INTERVAL_RANGE.0..=INTERVAL_RANGE.1).contains(&interval)
+        {
             interval_values.push(interval);
             interval_values.sort_unstable();
         }
@@ -266,7 +303,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         }
         let keep_labels: Vec<String> = keep_values.iter().map(|n| n.to_string()).collect();
         // 使う量: 段の名前（数は出さない）。詳しくで量を指定しているときは、その印を末尾に
-        let mut disk_labels: Vec<String> = DiskBudget::LEVELS.iter().map(|d| d.name(lang).to_owned()).collect();
+        let mut disk_labels: Vec<String> = DiskBudget::LEVELS
+            .iter()
+            .map(|d| d.name(lang).to_owned())
+            .collect();
         let disk_active = match DiskBudget::LEVELS.iter().position(|d| *d == disk) {
             Some(i) => i,
             None => {
@@ -278,7 +318,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             (
                 lang.pick("書き置きの間隔", "Checkpoint interval"),
                 &interval_labels,
-                interval_values.iter().position(|n| *n == interval).unwrap_or(0),
+                interval_values
+                    .iter()
+                    .position(|n| *n == interval)
+                    .unwrap_or(0),
                 "interval",
             ),
             (
@@ -287,7 +330,12 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 keep_values.iter().position(|n| *n == keep).unwrap_or(0),
                 "keep",
             ),
-            (lang.pick("使う量", "Disk space"), &disk_labels, disk_active, "disk"),
+            (
+                lang.pick("使う量", "Disk space"),
+                &disk_labels,
+                disk_active,
+                "disk",
+            ),
         ];
         let label_w = settings_rows
             .iter()
@@ -295,15 +343,23 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             .fold(0.0f32, f32::max)
             + 8.0;
         for (label, options, active, key) in settings_rows {
-            let r = Rect::from_min_size(pos2(body.left() + 14.0, y), vec2(body.width() - 28.0, SETTINGS_ROW));
+            let r = Rect::from_min_size(
+                pos2(body.left() + 14.0, y),
+                vec2(body.width() - 28.0, SETTINGS_ROW),
+            );
             let lr = Rect::from_min_size(r.min, vec2(label_w, r.height()));
             w::text(&p, lr, label, t::LABEL_DIM, Align::Left);
             ui.interact(lr, id.with(("settings-tip", key)), Sense::hover())
                 .on_hover_text(text::settings_tip(lang, key));
-            let strip = Rect::from_min_max(pos2(r.left() + label_w, r.top() + 2.0), pos2(r.right(), r.bottom() - 2.0));
+            let strip = Rect::from_min_max(
+                pos2(r.left() + label_w, r.top() + 2.0),
+                pos2(r.right(), r.bottom() - 2.0),
+            );
             if let Some(picked) = segmented(ui, strip, id.with(key), options, active) {
                 match key {
-                    "interval" => actions.push(RecoveryAction::SetInterval(interval_values[picked])),
+                    "interval" => {
+                        actions.push(RecoveryAction::SetInterval(interval_values[picked]))
+                    }
                     "keep" => actions.push(RecoveryAction::SetKeep(keep_values[picked])),
                     _ => {
                         if let Some(level) = DiskBudget::LEVELS.get(picked) {
@@ -316,15 +372,28 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             y += SETTINGS_ROW;
         }
         // 詳しく: 上限の量（GB）。動かしている間は選びを変えず、離したときに当てる
-        let header = Rect::from_min_size(pos2(body.left() + 14.0, y + 2.0), vec2(body.width() - 28.0, DETAILS_ROW - 4.0));
-        let open = w::subsection_header(ui, header, ("recovery", "disk-details"), lang.pick("詳しく", "Details"), details);
+        let header = Rect::from_min_size(
+            pos2(body.left() + 14.0, y + 2.0),
+            vec2(body.width() - 28.0, DETAILS_ROW - 4.0),
+        );
+        let open = w::subsection_header(
+            ui,
+            header,
+            ("recovery", "disk-details"),
+            lang.pick("詳しく", "Details"),
+            details,
+        );
         if open != details {
             actions.push(RecoveryAction::DiskDetails(open));
         }
         y += DETAILS_ROW;
         if details {
-            let r = Rect::from_min_size(pos2(body.left() + 14.0, y), vec2(body.width() - 28.0, t::SLIDER_ROW_HEIGHT));
-            let cap_gib = ((cap as f64 / GIB as f64).round() as u32).clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1);
+            let r = Rect::from_min_size(
+                pos2(body.left() + 14.0, y),
+                vec2(body.width() - 28.0, t::SLIDER_ROW_HEIGHT),
+            );
+            let cap_gib = ((cap as f64 / GIB as f64).round() as u32)
+                .clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1);
             let shown = drag_gib.unwrap_or(cap_gib);
             let tip = lang.pick(
                 "復旧の世代が使ってよいディスクの量（1 GB = 1024 MB）。動かして離すと、段の選びを置き換えた量の指定になり、超えていれば古い世代から消します",
@@ -361,12 +430,34 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
         if !app.crash.text.is_empty() {
-            let report_rect = Rect::from_min_size(pos2(footer.left() + 14.0, footer.top() + 10.0), vec2(165.0, 28.0));
-            if w::button(ui, report_rect, id.with("crash-report"), lang.pick("クラッシュの報告", "Crash Report"), false, true, None, None).clicked() { app.crash.open = true; }
+            let report_rect = Rect::from_min_size(
+                pos2(footer.left() + 14.0, footer.top() + 10.0),
+                vec2(165.0, 28.0),
+            );
+            if w::button(
+                ui,
+                report_rect,
+                id.with("crash-report"),
+                lang.pick("クラッシュの報告", "Crash Report"),
+                false,
+                true,
+                None,
+                None,
+            )
+            .clicked()
+            {
+                app.crash.open = true;
+            }
         }
         // 使っている量（短く。内訳はツールチップ）
         {
-            let left = footer.left() + 14.0 + if app.crash.text.is_empty() { 0.0 } else { 165.0 + 12.0 };
+            let left = footer.left()
+                + 14.0
+                + if app.crash.text.is_empty() {
+                    0.0
+                } else {
+                    165.0 + 12.0
+                };
             let label = lang.recovery_usage_text(&usage);
             let width = w::text_width(&p, &label, t::LABEL_DIM) + 4.0;
             let r = Rect::from_min_size(pos2(left, footer.top() + 10.0), vec2(width, 28.0));
@@ -403,7 +494,18 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             let r = Rect::from_min_size(pos2(x - bw, footer.top() + 10.0), vec2(bw, 28.0));
             x = r.left() - 8.0;
             let tooltip = (!tooltip.is_empty()).then_some(tooltip);
-            if w::button(ui, r, id.with(("button", i)), label, primary, enabled, tooltip, None).clicked() {
+            if w::button(
+                ui,
+                r,
+                id.with(("button", i)),
+                label,
+                primary,
+                enabled,
+                tooltip,
+                None,
+            )
+            .clicked()
+            {
                 actions.push(action);
             }
         }
@@ -460,19 +562,30 @@ fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
     let mut offset = Vec2::ZERO;
     let mut scroll = 0.0;
     match crate::windows::show_list(ctx, &spec, &mut offset, &mut scroll) {
-        Some(crate::windows::Reply::Button(1)) => app.apply(Action::Recovery(RecoveryAction::ConfirmDiscard)),
+        Some(crate::windows::Reply::Button(1)) => {
+            app.apply(Action::Recovery(RecoveryAction::ConfirmDiscard))
+        }
         Some(_) => app.apply(Action::Recovery(RecoveryAction::CancelDiscard)),
         None => {}
     }
 }
 
 /// 選択肢の帯（1 つを選ぶ）。押された選択肢の番号を返す（今のものを押しても返さない）。名前は選択肢の文字。
-fn segmented(ui: &mut egui::Ui, r: Rect, id: Id, options: &[String], active: usize) -> Option<usize> {
+fn segmented(
+    ui: &mut egui::Ui,
+    r: Rect,
+    id: Id,
+    options: &[String],
+    active: usize,
+) -> Option<usize> {
     let n = options.len().max(1);
     let seg_w = ((r.width() - 4.0 * (n as f32 - 1.0)) / n as f32).min(86.0);
     let mut picked = None;
     for (i, label) in options.iter().enumerate() {
-        let sr = Rect::from_min_size(pos2(r.left() + i as f32 * (seg_w + 4.0), r.top()), vec2(seg_w, r.height()));
+        let sr = Rect::from_min_size(
+            pos2(r.left() + i as f32 * (seg_w + 4.0), r.top()),
+            vec2(seg_w, r.height()),
+        );
         let on = i == active;
         let response = ui.interact(sr, id.with(i), Sense::click());
         let p = ui.painter();
@@ -491,7 +604,9 @@ fn segmented(ui: &mut egui::Ui, r: Rect, id: Id, options: &[String], active: usi
             Align::Center,
         );
         let name = label.clone();
-        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &name));
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &name)
+        });
         if response.clicked() && !on {
             picked = Some(i);
         }

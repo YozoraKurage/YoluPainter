@@ -712,7 +712,11 @@ fn mask(mut r: Reader, s: &mut State) -> Result<Option<Mask>> {
     if s.copy.is_some() && !matches!(color, 0 | 255) {
         // 写しとしての取り込み: 0・255 以外の既定値は、近いほうへ寄せる（矩形の外の見え方が変わるので知らせる）
         color = if color >= 128 { 255 } else { 0 };
-        s.copy_note(import::ImportFeature::MaskDefault, import::ImportAction::Changed, None)
+        s.copy_note(
+            import::ImportFeature::MaskDefault,
+            import::ImportAction::Changed,
+            None,
+        )
     }
     check(matches!(color, 0 | 255), "マスク既定値は0または255です")?;
     let flags = r.u8()?;

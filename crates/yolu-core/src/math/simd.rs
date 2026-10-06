@@ -238,9 +238,9 @@ mod x86;
 pub(crate) use x86::{Avx2, Sse41};
 
 mod lanes32;
+pub(crate) use lanes32::{clamp01_32, to_byte32, Lanes32, Scalar1};
 #[cfg(target_arch = "x86_64")]
 pub(crate) use lanes32::{Avx2x8, Sse41x4};
-pub(crate) use lanes32::{clamp01_32, to_byte32, Lanes32, Scalar1};
 
 /// 試験用: [`on_each_level`] の f32 のレーン（[`Lanes32`]）の版。1 本のレーン（[`Scalar1`]）と、この CPU が持つ SIMD の道
 /// （AVX2・SSE4.1）ごとに、その命令を有効にした入口の中で `f::<V>()` を走らせる。

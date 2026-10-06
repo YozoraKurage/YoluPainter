@@ -371,7 +371,8 @@ fn pressing_the_current_row_again_or_double_clicking_it_keeps_the_settings_chang
 }
 
 #[test]
-fn a_long_list_scrolls_to_the_added_row_the_next_row_after_a_delete_and_the_current_row_after_switching_tools() {
+fn a_long_list_scrolls_to_the_added_row_the_next_row_after_a_delete_and_the_current_row_after_switching_tools(
+) {
     let mut h = app(1280.0, 900.0, 128);
     pick(&mut h, Tool::Fill);
     // 組み込み 5 つに自分のを 4 つ足すと 9 行で、一覧の窓（8 行）に入りきらない。足した行は見えるところまで送る

@@ -51,7 +51,10 @@ fn headless_every_change_is_one_undo_and_a_drag_is_one_undo() {
     set(&mut s, NormalSettings::DEFAULT.with_derive(true), false);
     let next = s.doc.normal_settings().with_edges(HeightEdgeMode::Wrap);
     set(&mut s, next, false);
-    let next = s.doc.normal_settings().with_file_direction(NormalYDirection::DirectX);
+    let next = s
+        .doc
+        .normal_settings()
+        .with_file_direction(NormalYDirection::DirectX);
     set(&mut s, next, false);
     assert_eq!(s.doc.undo_count(), base + 3);
     assert_eq!(s.message, "ノーマルのファイル: DirectX (Y−)");
@@ -69,14 +72,24 @@ fn headless_every_change_is_one_undo_and_a_drag_is_one_undo() {
     s.m2_end_drag();
     assert_eq!(s.doc.undo_count(), base + 4, "ドラッグ全体で 1 回");
     s.apply(Action::Undo);
-    assert_eq!(s.doc.normal_settings().strength(), 4.0, "ドラッグの前に戻る");
-    assert_eq!(s.doc.normal_settings().file_direction(), NormalYDirection::DirectX);
+    assert_eq!(
+        s.doc.normal_settings().strength(),
+        4.0,
+        "ドラッグの前に戻る"
+    );
+    assert_eq!(
+        s.doc.normal_settings().file_direction(),
+        NormalYDirection::DirectX
+    );
     s.apply(Action::Redo);
     assert_eq!(s.doc.normal_settings().strength(), 40.0);
     // 1 つずつ戻る
     s.apply(Action::Undo);
     s.apply(Action::Undo);
-    assert_eq!(s.doc.normal_settings().file_direction(), NormalYDirection::OpenGL);
+    assert_eq!(
+        s.doc.normal_settings().file_direction(),
+        NormalYDirection::OpenGL
+    );
     assert_eq!(s.doc.normal_settings().edges(), HeightEdgeMode::Wrap);
     s.apply(Action::Undo);
     s.apply(Action::Undo);
@@ -121,9 +134,16 @@ fn headless_the_settings_survive_save_and_open() {
 fn two_sets_model() -> yolu_protocol::Model {
     use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, Model, Submesh, TextureProperty};
     let material = |name: &str| MaterialInfo {
-        key: MaterialKey::Material { name: name.into(), asset: None },
+        key: MaterialKey::Material {
+            name: name.into(),
+            asset: None,
+        },
         shader: "Standard".into(),
-        textures: vec![TextureProperty { name: "_MainTex".into(), width: 64, height: 64 }],
+        textures: vec![TextureProperty {
+            name: "_MainTex".into(),
+            width: 64,
+            height: 64,
+        }],
         routes: vec![],
     };
     let mesh = |name: &str, x: f32, material: u32| MeshData {
@@ -133,7 +153,10 @@ fn two_sets_model() -> yolu_protocol::Model {
         positions: vec![[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0], [x, 1.0, 0.0]],
         normals: vec![],
         uv0: vec![[0.1, 0.1], [0.4, 0.1], [0.1, 0.4]],
-        submeshes: vec![Submesh { material, indices: vec![0, 2, 1] }],
+        submeshes: vec![Submesh {
+            material,
+            indices: vec![0, 2, 1],
+        }],
     };
     Model {
         generation: 1,
@@ -153,10 +176,15 @@ fn headless_each_texture_set_keeps_its_own_normal_settings_through_save_and_open
     assert_eq!(s.sets.len(), 2);
     let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
     // 1 つ目のセットは custom()、2 つ目は別の設定（DirectX で強さが違う）。もう 1 つのセットの設定は変わらない
-    let other = NormalSettings::new(true, 33.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL).unwrap();
+    let other =
+        NormalSettings::new(true, 33.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL).unwrap();
     assert_ne!(other, custom());
     set(&mut s, custom(), false);
-    assert_eq!(s.set_doc(second).normal_settings(), NormalSettings::DEFAULT, "ほかのセットは変わらない");
+    assert_eq!(
+        s.set_doc(second).normal_settings(),
+        NormalSettings::DEFAULT,
+        "ほかのセットは変わらない"
+    );
     s.switch_set(second).unwrap();
     set(&mut s, other, false);
     assert_eq!(s.set_doc(first).normal_settings(), custom());
@@ -181,7 +209,10 @@ fn headless_a_read_only_set_and_drawing_refuse_the_change_with_a_reason() {
     s.sets.get_mut(index).unwrap().read_only = Some("フィルターのあるレイヤーがあります".into());
     set(&mut s, custom(), false);
     assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
-    assert_eq!(s.message, "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります");
+    assert_eq!(
+        s.message,
+        "読むだけのテクスチャセットです: フィルターのあるレイヤーがあります"
+    );
     s.sets.get_mut(index).unwrap().read_only = None;
     let layer = s.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
@@ -238,7 +269,11 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
     );
     let strength = h.state().state.doc.normal_settings().strength();
     assert!((60.0..140.0).contains(&strength), "{strength}");
-    assert_eq!(h.state().state.doc.undo_count(), base + 2, "ドラッグ全体で 1 回");
+    assert_eq!(
+        h.state().state.doc.undo_count(),
+        base + 2,
+        "ドラッグ全体で 1 回"
+    );
     h.snapshot("channels_normal_on");
     h.state_mut().state.apply(Action::Undo);
     assert_eq!(h.state().state.doc.normal_settings().strength(), 4.0);
@@ -248,7 +283,10 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
     click(&mut h, edges.center());
     let wrap = popup_item(&h, "ラップ（タイル）").center();
     click(&mut h, wrap);
-    assert_eq!(h.state().state.doc.normal_settings().edges(), HeightEdgeMode::Wrap);
+    assert_eq!(
+        h.state().state.doc.normal_settings().edges(),
+        HeightEdgeMode::Wrap
+    );
     // ファイルの Y のドロップダウン
     let direction = lowest(&h, "OpenGL (Y+)");
     click(&mut h, direction.center());
@@ -261,8 +299,13 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
     // 戻す
     h.state_mut().state.apply(Action::Undo);
     h.state_mut().state.apply(Action::Undo);
-    assert_eq!(h.state().state.doc.normal_settings().edges(), HeightEdgeMode::Clamp);
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    assert_eq!(
+        h.state().state.doc.normal_settings().edges(),
+        HeightEdgeMode::Clamp
+    );
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     h.snapshot("channels_normal_english");
     let _ = lowest(&h, "Height → Normal");
@@ -284,7 +327,10 @@ fn strength_and_edges_wait_for_height_to_normal_and_a_read_only_set_disables_eve
             pos2(slider.right() - 2.0, slider.center().y),
         ],
     );
-    assert_eq!(h.state().state.doc.normal_settings(), NormalSettings::DEFAULT);
+    assert_eq!(
+        h.state().state.doc.normal_settings(),
+        NormalSettings::DEFAULT
+    );
     let edges = lowest(&h, "クランプ");
     click(&mut h, edges.center());
     assert!(h.state().state.popup.is_none(), "オフのあいだ端は開かない");
@@ -313,7 +359,12 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
     let content = h.state().state.m2.channels_content;
     assert!(content > 6.0 * 28.0 + 60.0, "一覧の下に節が続く: {content}");
     // ホイールで動かすと、下の節が見える
-    let at = h.state().tab_rects.get(&Tab::Channels).unwrap().center_bottom();
+    let at = h
+        .state()
+        .tab_rects
+        .get(&Tab::Channels)
+        .unwrap()
+        .center_bottom();
     let before = h.state().state.m2.channel_scroll;
     h.event(egui::Event::PointerMoved(pos2(at.x, at.y + 60.0)));
     h.event(egui::Event::MouseWheel {

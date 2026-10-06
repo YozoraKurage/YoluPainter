@@ -338,11 +338,7 @@ impl Model {
             n += match &m.key {
                 MaterialKey::Unassigned => 1,
                 MaterialKey::Material { name, asset } => {
-                    1 + text(name)
-                        + 1
-                        + asset
-                            .as_ref()
-                            .map_or(0, |(guid, _)| text(guid) + 8)
+                    1 + text(name) + 1 + asset.as_ref().map_or(0, |(guid, _)| text(guid) + 8)
                 }
             };
             n += text(&m.shader) + 4;

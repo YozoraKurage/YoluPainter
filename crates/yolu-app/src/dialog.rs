@@ -39,7 +39,8 @@ mod owner {
     use std::sync::atomic::{AtomicIsize, Ordering};
 
     use raw_window_handle::{
-        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle,
+        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle,
+        Win32WindowHandle, WindowHandle,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::IsWindow;
@@ -59,7 +60,9 @@ mod owner {
     pub fn get() -> Option<Owner> {
         let hwnd = NonZeroIsize::new(OWNER.load(Ordering::Relaxed))?;
         // SAFETY: 窓のハンドルが今も窓を指しているかを見るだけ。
-        unsafe { IsWindow(Some(HWND(hwnd.get() as *mut _))) }.as_bool().then_some(Owner(hwnd))
+        unsafe { IsWindow(Some(HWND(hwnd.get() as *mut _))) }
+            .as_bool()
+            .then_some(Owner(hwnd))
     }
 
     /// 主の窓（`rfd` の `set_parent` が窓のハンドルと表示のハンドルを求める）。
@@ -68,7 +71,9 @@ mod owner {
     impl HasWindowHandle for Owner {
         fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
             // SAFETY: 主の窓はアプリが動いている間ずっとあり、`get` が今も窓であることを確かめている。
-            Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Win32(Win32WindowHandle::new(self.0))) })
+            Ok(unsafe {
+                WindowHandle::borrow_raw(RawWindowHandle::Win32(Win32WindowHandle::new(self.0)))
+            })
         }
     }
 

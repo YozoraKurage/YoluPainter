@@ -210,14 +210,11 @@ impl TestServer {
                         g.session += 1;
                         (g.session, g.identity.clone())
                     };
-                    let Ok((conn, mut reader, _)) = accept_as(
-                        stream,
-                        &identity,
-                        session,
-                        &key,
-                        HANDSHAKE_TIMEOUT,
-                        &|_| Ok(()),
-                    ) else {
+                    let Ok((conn, mut reader, _)) =
+                        accept_as(stream, &identity, session, &key, HANDSHAKE_TIMEOUT, &|_| {
+                            Ok(())
+                        })
+                    else {
                         continue;
                     };
                     lock(&sh).conn = Some(conn.clone());
@@ -346,7 +343,12 @@ impl TestServer {
                 return 0;
             }
             let at = (y as usize * o.width as usize + x as usize) * 4;
-            u32::from_le_bytes([o.pixels[at], o.pixels[at + 1], o.pixels[at + 2], o.pixels[at + 3]])
+            u32::from_le_bytes([
+                o.pixels[at],
+                o.pixels[at + 1],
+                o.pixels[at + 2],
+                o.pixels[at + 3],
+            ])
         };
         Some(YlbTestServerOriginal {
             state: o.state as u32,
@@ -377,19 +379,16 @@ impl TestServer {
     }
 
     /// 頼みを 1 つ送る（スタンドアロンが Unity に頼む。`generation` が 0 なら今のモデルの世代）。相手に印が無い・つながっていないなら負。
-    pub fn request(
-        &self,
-        generation: u32,
-        material: u32,
-        wants: u8,
-        slot: &str,
-        have: u64,
-    ) -> i32 {
+    pub fn request(&self, generation: u32, material: u32, wants: u8, slot: &str, have: u64) -> i32 {
         let mut g = lock(&self.shared);
         let Some(conn) = g.conn.clone() else {
             return crate::ffi::YLB_E_STATE;
         };
-        let generation = if generation == 0 { g.generation } else { generation };
+        let generation = if generation == 0 {
+            g.generation
+        } else {
+            generation
+        };
         let message = Message::MaterialRequest(MaterialRequest {
             generation,
             items: vec![MaterialWant {
@@ -513,7 +512,10 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                     .collect();
                 if waits && !expected.is_empty() {
                     for slot in &expected {
-                        let have = g.cache.get(&(name.clone(), slot.clone())).map_or(0, |o| o.stamp);
+                        let have = g
+                            .cache
+                            .get(&(name.clone(), slot.clone()))
+                            .map_or(0, |o| o.stamp);
                         wanted.push(MaterialWant::original(i as u32, slot.clone(), have));
                     }
                     g.held.insert(
@@ -528,7 +530,9 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                     g.stats.held_sets = g.held.len() as u32;
                     continue;
                 }
-                publish_set(&mut g, conn, i as u32, &name, &channels, size, tile_size, None);
+                publish_set(
+                    &mut g, conn, i as u32, &name, &channels, size, tile_size, None,
+                );
             }
             // 印が双方にあれば、待たせたセットの元の絵を自分から頼む（実際のスタンドアロンと同じ。Unity は頼まれない元の絵を送らない）
             if !wanted.is_empty() && conn.common_features() & feature::MATERIAL_REQUEST != 0 {
@@ -631,7 +635,11 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                 ));
                 return;
             }
-            let name = g.names.get(o.material as usize).cloned().unwrap_or_default();
+            let name = g
+                .names
+                .get(o.material as usize)
+                .cloned()
+                .unwrap_or_default();
             g.stats.last_original_state = o.state as u32;
             g.stats.last_original_material = o.material;
             // 線の上の画素のバイト（手元の絵に置き換える前）

@@ -550,7 +550,10 @@ fn failure_text(lang: Lang, what: &'static str, failure: Failure) -> String {
     let reason = match failure {
         Failure::Network => lang.pick("通信できません", "connection failed"),
         Failure::Verify => lang.pick("検証を通りません", "verification failed"),
-        Failure::NoAsset => lang.pick("この環境向けの配布物がありません", "no download for this system"),
+        Failure::NoAsset => lang.pick(
+            "この環境向けの配布物がありません",
+            "no download for this system",
+        ),
         Failure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
         Failure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
         Failure::Canceled => {

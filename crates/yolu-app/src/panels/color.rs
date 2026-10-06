@@ -206,7 +206,13 @@ fn sv_square(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures, r: Rect, 
         r.top() + (1.0 - app.color.val) * r.height(),
     );
     marker(&p.with_clip_rect(r.expand(8.0)), at, 6.0);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, app.lang.pick("彩度と明度", "Saturation and value")));
+    response.widget_info(|| {
+        WidgetInfo::labeled(
+            WidgetType::Other,
+            true,
+            app.lang.pick("彩度と明度", "Saturation and value"),
+        )
+    });
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
@@ -304,7 +310,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             ),
             6.0,
         );
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, true, app.lang.pick("色相の円", "Hue wheel")));
+        response.widget_info(|| {
+            WidgetInfo::labeled(
+                WidgetType::Other,
+                true,
+                app.lang.pick("色相の円", "Hue wheel"),
+            )
+        });
     } else {
         let sv = Rect::from_min_size(
             area.min,
@@ -346,7 +358,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             1.5,
             2.0,
         );
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Slider, true, app.lang.pick("色相", "Hue")));
+        response.widget_info(|| {
+            WidgetInfo::labeled(WidgetType::Slider, true, app.lang.pick("色相", "Hue"))
+        });
     }
     let tip = if app.color.wheel {
         app.lang.pick("四角と色相の帯", "Square and hue bar")
@@ -400,10 +414,17 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             app.color
                 .set_main([rgb[0], rgb[1], rgb[2], app.color.main[3]]);
         } else {
-            app.message = format!("{}: {typed}", app.lang.pick("16 進の色として読めません", "Invalid hex color"));
+            app.message = format!(
+                "{}: {typed}",
+                app.lang
+                    .pick("16 進の色として読めません", "Invalid hex color")
+            );
         }
     }
-    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%")).tooltip(app.lang.pick("描画色のアルファ", "Alpha of the brush color"));
+    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%")).tooltip(
+        app.lang
+            .pick("描画色のアルファ", "Alpha of the brush color"),
+    );
     let alpha = w::slider(
         ui,
         cells[1],

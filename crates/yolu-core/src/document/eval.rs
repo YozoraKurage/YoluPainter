@@ -107,7 +107,8 @@ fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
         .map(|stage| {
             let mut stage = stage.clone();
             let keep = match &mut stage.settings {
-                filter::Settings::GaussianBlur { radius } | filter::Settings::Sharpen { radius, .. } => {
+                filter::Settings::GaussianBlur { radius }
+                | filter::Settings::Sharpen { radius, .. } => {
                     let r = reduce(*radius);
                     *radius = r.max(1);
                     r > 0
@@ -936,8 +937,10 @@ impl Document {
                 .as_ref()
                 .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
             {
-                set.masks
-                    .insert(i, self.output_surface_in(i, SourceKey::Mask, region, cancel)?);
+                set.masks.insert(
+                    i,
+                    self.output_surface_in(i, SourceKey::Mask, region, cancel)?,
+                );
             }
         }
         Ok(set)
@@ -1015,7 +1018,13 @@ impl Document {
             {
                 set.content.insert(
                     i,
-                    self.coarse_output_surface(i, SourceKey::Channel(channel), coords, stride, cancel)?,
+                    self.coarse_output_surface(
+                        i,
+                        SourceKey::Channel(channel),
+                        coords,
+                        stride,
+                        cancel,
+                    )?,
                 );
             }
             if l.mask
@@ -1106,7 +1115,8 @@ impl Document {
                 generators: Some(&generators),
                 statistics: None,
             };
-            filter::statistics(&strided, env.value_type, &stages, &options).map_err(map_filter_error)
+            filter::statistics(&strided, env.value_type, &stages, &options)
+                .map_err(map_filter_error)
         })?;
         Ok(Arc::new(stats))
     }
@@ -1254,8 +1264,7 @@ impl Document {
                 .flat_map(|by| (range.x0 / bt..=(range.x1 - 1) / bt).map(move |bx| (bx, by)))
                 .collect(),
             Region::Tiles(tiles) => {
-                let mut set: Vec<(u32, u32)> =
-                    tiles.iter().map(|c| (c.x / bt, c.y / bt)).collect();
+                let mut set: Vec<(u32, u32)> = tiles.iter().map(|c| (c.x / bt, c.y / bt)).collect();
                 set.sort_by_key(|&(bx, by)| (by, bx));
                 set.dedup();
                 set

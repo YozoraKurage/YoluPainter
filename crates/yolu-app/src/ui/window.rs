@@ -47,7 +47,8 @@ pub fn note_open(ctx: &egui::Context) {
 /// 窓より先に描くキャンバスなどが横取りしない（窓を優先する）ために使う。
 pub fn any_open(ctx: &egui::Context) -> bool {
     let now = ctx.cumulative_frame_nr();
-    ctx.data(|d| d.get_temp::<u64>(shown_id())).is_some_and(|at| now.saturating_sub(at) <= 1)
+    ctx.data(|d| d.get_temp::<u64>(shown_id()))
+        .is_some_and(|at| now.saturating_sub(at) <= 1)
 }
 
 /// Esc を使い切ったフレームの番号を覚えておく場所。

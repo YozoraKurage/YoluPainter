@@ -668,7 +668,12 @@ fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
         }
     }
     for (x, y) in project.sets().iter().zip(again.sets()) {
-        assert_eq!(x.document.to_bytes().unwrap(), y.document.to_bytes().unwrap(), "{}", x.name);
+        assert_eq!(
+            x.document.to_bytes().unwrap(),
+            y.document.to_bytes().unwrap(),
+            "{}",
+            x.name
+        );
         assert_eq!(
             (x.id.as_str(), x.name.as_str()),
             (y.id.as_str(), y.name.as_str())
@@ -863,9 +868,13 @@ fn with_remembered() -> Project {
     )
     .unwrap();
     let selection = |x1: i64| {
-        yolu_io::Selection::from_core(&yolu_core::SelectionMask::rectangle(&a, 0, 0, x1, 30)).unwrap()
+        yolu_io::Selection::from_core(&yolu_core::SelectionMask::rectangle(&a, 0, 0, x1, 30))
+            .unwrap()
     };
-    let saved = |name: &str, x1| yolu_io::saved_selections::SavedSelection { name: name.into(), selection: selection(x1) };
+    let saved = |name: &str, x1| yolu_io::saved_selections::SavedSelection {
+        name: name.into(),
+        selection: selection(x1),
+    };
     let pose = yolu_io::pose::StoredPose {
         bones: vec![yolu_io::pose::StoredBone {
             path: vec!["Root".into()],
@@ -888,7 +897,8 @@ fn with_remembered() -> Project {
 }
 
 #[test]
-fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy_back_to_format_7() {
+fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy_back_to_format_7()
+{
     let project = with_remembered();
     assert_eq!(project.info().format, 8);
     assert_eq!(names(&project, Removal::SavedSelections), ["Body", "Prop"]);
@@ -905,7 +915,9 @@ fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy
         .unwrap();
     assert_eq!(copy.info().format, 7, "Unity 版が開ける形式に戻る");
     assert!(copy.saved_selections(SET_A).unwrap().items.is_empty());
-    assert!(!entries(&copy).keys().any(|n| n.ends_with("selections.json") || n.contains("/selection-")));
+    assert!(!entries(&copy)
+        .keys()
+        .any(|n| n.ends_with("selections.json") || n.contains("/selection-")));
     assert!(copy.sets()[0].selection.is_some(), "今の選択範囲は絵の一部");
     // 元は変わらない。写しに残る物と目録が一致する（除いた写しの目録に、この種類は出ない）
     assert_eq!(project.info().format, 8);

@@ -108,7 +108,8 @@ fn the_global_adjustment_changes_what_the_pen_draws_and_not_the_mouse() {
     pen_stroke(&mut c, from, to, 0.375);
     assert_ne!(pixels(&c), plain);
     // 曲線も通る: 曲線で 0.5 を 0.75 に持ち上げると、ペンの 0.5 がブラシの 0.75 になる
-    let lifted = PressureAdjust::new(0.0, 1.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)]).unwrap();
+    let lifted =
+        PressureAdjust::new(0.0, 1.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)]).unwrap();
     let mut d = app_with_adjust(lifted);
     pen_stroke(&mut d, from, to, 0.5);
     let mut e = app_with_adjust(PressureAdjust::default());
@@ -242,7 +243,13 @@ fn draw_strokes(h: &mut H, n: usize, lo: f32, hi: f32) -> Vec<f32> {
         for i in 0..12 {
             let t = i as f32 / 11.0;
             let pressure = lo + (hi - lo) * t;
-            pen(h, pos2(frame.left() + 12.0 + t * (frame.width() - 24.0), y), pressure, true, i * 8);
+            pen(
+                h,
+                pos2(frame.left() + 12.0 + t * (frame.width() - 24.0), y),
+                pressure,
+                true,
+                i * 8,
+            );
             all.push(pressure);
         }
         pen(h, pos2(frame.right() - 12.0, y), 0.0, false, 200);
@@ -263,7 +270,12 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     assert!(rect.contains_rect(frame_of(&h)));
     // 枠の外（キャンバスの上）に描いても集めない・キャンバスにも描かない
     let canvas = canvas_rect(&h);
-    pen_stroke(&mut h, canvas.center() - vec2(200.0, 0.0), canvas.center() - vec2(100.0, 0.0), 0.7);
+    pen_stroke(
+        &mut h,
+        canvas.center() - vec2(200.0, 0.0),
+        canvas.center() - vec2(100.0, 0.0),
+        0.7,
+    );
     assert!(h.state().state.pressure.strokes.is_empty());
 
     // 足りない間は決められない（短い理由が出る）
@@ -309,8 +321,14 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     click(&mut h, fit_at);
     h.run();
     let written = std::fs::read_to_string(&path).unwrap();
-    assert!(written.lines().any(|l| l.starts_with("pressure_low=")), "{written}");
-    assert!(written.lines().any(|l| l.starts_with("pressure_high=")), "{written}");
+    assert!(
+        written.lines().any(|l| l.starts_with("pressure_low=")),
+        "{written}"
+    );
+    assert!(
+        written.lines().any(|l| l.starts_with("pressure_high=")),
+        "{written}"
+    );
     // 閉じると線を捨てる。次の起動は、書いた調整で始まる
     h.get_by_label("閉じる").click();
     h.run();
@@ -362,8 +380,18 @@ fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_c
     assert_eq!(h.state().state.pressure.strokes.len(), 2);
     assert_eq!(h.state().state.pressure.samples(), vec![0.8, 0.4, 0.6, 0.3]);
     // 枠の外の点は集めない
-    touch(&mut h, frame.right_bottom() + vec2(40.0, 40.0), egui::TouchPhase::Start, Some(0.9));
-    touch(&mut h, frame.right_bottom() + vec2(50.0, 40.0), egui::TouchPhase::End, None);
+    touch(
+        &mut h,
+        frame.right_bottom() + vec2(40.0, 40.0),
+        egui::TouchPhase::Start,
+        Some(0.9),
+    );
+    touch(
+        &mut h,
+        frame.right_bottom() + vec2(50.0, 40.0),
+        egui::TouchPhase::End,
+        None,
+    );
     assert_eq!(h.state().state.pressure.strokes.len(), 2);
     // 閉じると線を捨て、そのあとの枠だった所の点も集めない
     h.get_by_label("閉じる").click();
@@ -381,33 +409,49 @@ fn window_actions_set_the_range_and_the_curve_and_the_collected_distribution_sta
     open_window(&mut h);
     let drawn = draw_strokes(&mut h, 4, 0.1, 0.5);
     // 動かしたほうが、相手の手前（最小の幅）で止まる。相手は動かさない
-    h.state_mut().state.apply(Action::Pressure(PressureAction::SetRange {
-        low: 0.95,
-        high: 1.0,
-        moved_low: true,
-    }));
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::SetRange {
+            low: 0.95,
+            high: 1.0,
+            moved_low: true,
+        }));
     let p = &h.state().state.prefs.settings.pressure;
     assert!((p.high() - p.low() - yolu_app::pen::adjust::MIN_SPAN).abs() < 1e-6);
     assert_eq!(p.high(), 1.0);
-    h.state_mut().state.apply(Action::Pressure(PressureAction::SetRange {
-        low: 0.2,
-        high: 0.3,
-        moved_low: true,
-    }));
-    h.state_mut().state.apply(Action::Pressure(PressureAction::SetRange {
-        low: 0.25,
-        high: 0.3,
-        moved_low: true,
-    }));
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::SetRange {
+            low: 0.2,
+            high: 0.3,
+            moved_low: true,
+        }));
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::SetRange {
+            low: 0.25,
+            high: 0.3,
+            moved_low: true,
+        }));
     let p = &h.state().state.prefs.settings.pressure;
-    assert!((p.low() - 0.2).abs() < 1e-6 && p.high() == 0.3, "{} {}", p.low(), p.high());
+    assert!(
+        (p.low() - 0.2).abs() < 1e-6 && p.high() == 0.3,
+        "{} {}",
+        p.low(),
+        p.high()
+    );
     let bent = Curve::new(vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)]).unwrap();
-    h.state_mut().state.apply(Action::Pressure(PressureAction::SetCurve(bent.clone())));
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::SetCurve(bent.clone())));
     assert_eq!(h.state().state.prefs.settings.pressure.curve().len(), 3);
     // 調整は曲線の点を画面の精度（f32）に丸めて持つ
     let held = h.state().state.prefs.settings.pressure.curve_shape();
     for (a, b) in held.points().iter().zip(bent.points()) {
-        assert!((a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6, "{a:?} {b:?}");
+        assert!(
+            (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6,
+            "{a:?} {b:?}"
+        );
     }
     // 範囲外の曲線は、共通の曲線の型が作る時点で断る（調整へは届かない）
     assert!(Curve::new(vec![pt(0.0, 0.0), pt(0.5, 2.0), pt(1.0, 1.0)]).is_err());
@@ -426,13 +470,24 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     let mut h = app_with_settings(&path);
     open_window(&mut h);
     h.run();
-    let frame = h.state().state.pressure.curve_frame.expect("窓が曲線の枠を描いた");
+    let frame = h
+        .state()
+        .state
+        .pressure
+        .curve_frame
+        .expect("窓が曲線の枠を描いた");
     let g = frame.shrink(6.0);
     let at = |x: f32, y: f32| pos2(g.left() + x * g.width(), g.bottom() - y * g.height());
     let primary = egui::PointerButton::Primary;
     let curve = |h: &H| h.state().state.prefs.settings.pressure.curve_shape();
     let watch = || std::fs::write(&path, "watch\n").unwrap();
-    let untouched = || assert_eq!(std::fs::read_to_string(&path).unwrap(), "watch\n", "書いてはいけない");
+    let untouched = || {
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "watch\n",
+            "書いてはいけない"
+        )
+    };
     assert!(curve(&h).is_identity());
 
     // 押して動かす間は下書き: 調整も設定のファイルも変わらない。離すと 1 回で (0.5, 0.8) の点が入る
@@ -453,7 +508,10 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     let bent = curve(&h);
     assert_eq!(bent.points().len(), 3);
     let p = bent.points()[1];
-    assert!((p.x - 0.5).abs() < 0.02 && (p.y - 0.8).abs() < 0.02, "{p:?}");
+    assert!(
+        (p.x - 0.5).abs() < 0.02 && (p.y - 0.8).abs() < 0.02,
+        "{p:?}"
+    );
     assert!(!h.state().state.prefs.settings.pressure.is_default());
     // ペンの筆圧がその曲線で曲がる（下限 0・上限 1 のまま）
     let bent_pressure = h.state().state.adjust_pressure(0.5);
@@ -461,7 +519,10 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     assert_eq!(h.state().state.adjust_pressure(1.0), 1.0);
     assert_eq!(h.state().state.adjust_pressure(0.0), 0.0);
     // 設定のファイルには曲線が書かれる
-    assert!(std::fs::read_to_string(&path).unwrap().lines().any(|l| l.starts_with("pressure_curve=")));
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .any(|l| l.starts_with("pressure_curve=")));
 
     // Esc でやめると、押す前のまま（書かない）
     let before = h.state().state.prefs.settings.pressure.clone();
@@ -544,13 +605,21 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     let mut h = app_with_settings(&path);
     open_window(&mut h);
     h.run();
-    let slider = h.get_by_role_and_label(egui::accesskit::Role::Slider, "下限").rect();
+    let slider = h
+        .get_by_role_and_label(egui::accesskit::Role::Slider, "下限")
+        .rect();
     let y = slider.bottom() - 4.0;
     let at = |fraction: f32| pos2(slider.left() + slider.width() * fraction, y);
     let low = |h: &H| h.state().state.prefs.settings.pressure.low();
     // 書いたかどうかは、ファイルを見張り用の中身に替えておき、書き換えられたかで見る
     let watch = || std::fs::write(&path, "watch\n").unwrap();
-    let untouched = || assert_eq!(std::fs::read_to_string(&path).unwrap(), "watch\n", "書いてはいけない");
+    let untouched = || {
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "watch\n",
+            "書いてはいけない"
+        )
+    };
     let primary = egui::PointerButton::Primary;
     let written_low = || -> Option<f32> {
         std::fs::read_to_string(&path)
@@ -609,7 +678,9 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     h.step();
     untouched();
     let mid = low(&h);
-    h.state_mut().state.apply(Action::Pressure(PressureAction::Close));
+    h.state_mut()
+        .state
+        .apply(Action::Pressure(PressureAction::Close));
     h.step();
     h.run();
     assert!(!h.state().state.pressure.dragging);
@@ -631,7 +702,16 @@ fn window_state() -> (AppState, egui::Rect) {
 
 /// 枠の中の点 index（筆圧は index の目印）。
 fn inside(frame: egui::Rect, index: usize, pressure: f32, contact: bool) -> PenSample {
-    sample(frame.min + vec2(5.0 + (index % 300) as f32, 10.0 + (index / 300 % 60) as f32 * 0.5), pressure, contact, index as u32)
+    sample(
+        frame.min
+            + vec2(
+                5.0 + (index % 300) as f32,
+                10.0 + (index / 300 % 60) as f32 * 0.5,
+            ),
+        pressure,
+        contact,
+        index as u32,
+    )
 }
 
 #[test]
@@ -641,7 +721,10 @@ fn headless_the_window_keeps_at_most_the_stroke_limit_and_drops_the_oldest_strok
     for k in 0..total {
         // 1 本 = 3 点 + 離す。筆圧は線ごとの目印
         let mark = (k + 1) as f32 / 1000.0;
-        let points: Vec<PenSample> = (0..3).map(|i| inside(frame, i, mark, true)).chain([inside(frame, 3, 0.0, false)]).collect();
+        let points: Vec<PenSample> = (0..3)
+            .map(|i| inside(frame, i, mark, true))
+            .chain([inside(frame, 3, 0.0, false)])
+            .collect();
         s.pressure_observe(1.0, &points);
         assert!(s.pressure.strokes.len() <= window::MAX_STROKES);
     }
@@ -649,7 +732,10 @@ fn headless_the_window_keeps_at_most_the_stroke_limit_and_drops_the_oldest_strok
     // 残るのは新しい 64 本（古い 6 本が落ちた）
     let first_mark = s.pressure.strokes[0][0].pressure;
     let last_mark = s.pressure.strokes.last().unwrap()[0].pressure;
-    assert_eq!(first_mark, (total - window::MAX_STROKES + 1) as f32 / 1000.0);
+    assert_eq!(
+        first_mark,
+        (total - window::MAX_STROKES + 1) as f32 / 1000.0
+    );
     assert_eq!(last_mark, total as f32 / 1000.0);
 }
 
@@ -673,7 +759,8 @@ fn headless_one_long_stroke_keeps_at_most_the_dot_limit_by_dropping_its_oldest_d
 }
 
 #[test]
-fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_of_the_oldest_kept() {
+fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_of_the_oldest_kept()
+{
     let (mut s, frame) = window_state();
     let each = 8_000;
     for k in 0..3 {
@@ -697,7 +784,8 @@ fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_
 }
 
 #[test]
-fn headless_fitting_a_distribution_clamped_on_one_side_does_not_panic_and_gives_a_valid_adjustment() {
+fn headless_fitting_a_distribution_clamped_on_one_side_does_not_panic_and_gives_a_valid_adjustment()
+{
     // 強く押して飽和するペン（p10 = 0.915・p90 = 1.0）と、軽くしか押さないペン（p10 = 0.001・p90 = 0.086）。窓の「自動調整」と同じ Action
     for (lo, hi) in [(0.915f32, 1.0f32), (0.001, 0.086)] {
         let (mut s, frame) = window_state();
@@ -705,9 +793,18 @@ fn headless_fitting_a_distribution_clamped_on_one_side_does_not_panic_and_gives_
         points.extend((20..100).map(|i| inside(frame, i, hi, true)));
         s.pressure_observe(1.0, &points);
         s.apply(Action::Pressure(PressureAction::Fit));
-        assert!(s.pressure.note.is_none(), "{lo} {hi}: {:?}", s.pressure.note);
+        assert!(
+            s.pressure.note.is_none(),
+            "{lo} {hi}: {:?}",
+            s.pressure.note
+        );
         let a = &s.prefs.settings.pressure;
-        assert!(a.low() >= 0.0 && a.high() <= 1.0 && a.high() - a.low() >= yolu_app::pen::adjust::MIN_SPAN - 1e-6, "{lo} {hi}");
+        assert!(
+            a.low() >= 0.0
+                && a.high() <= 1.0
+                && a.high() - a.low() >= yolu_app::pen::adjust::MIN_SPAN - 1e-6,
+            "{lo} {hi}"
+        );
         assert!(!a.is_default());
     }
 }
@@ -719,7 +816,9 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
     for label in ["自動調整", "消す", "元に戻す", "既定", "下限", "上限"] {
         let _ = h.get_by_label(label);
     }
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     for label in ["Auto", "Clear", "Revert", "Default", "Low", "High"] {
         let _ = h.get_by_label(label);
@@ -756,7 +855,9 @@ fn the_window_looks_the_same_before_and_after_fitting_and_in_english() {
     let fit_at = h.get_by_label("自動調整").rect().center();
     click(&mut h, fit_at);
     shot(&mut h, "pressure_window_fitted");
-    h.state_mut().state.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.state_mut()
+        .state
+        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     shot(&mut h, "pressure_window_english");
 }

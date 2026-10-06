@@ -1641,7 +1641,10 @@ fn brush_formulas_match_the_csharp_core_on_sweeps() {
         if bit_exact {
             mine.push(format!("sweep pen_tilt {}", f.hex()));
         } else {
-            assert!(worst <= 4, "ペンの傾きの式が OS に依らない実装から {worst} ulp 離れている");
+            assert!(
+                worst <= 4,
+                "ペンの傾きの式が OS に依らない実装から {worst} ulp 離れている"
+            );
             let expected = events
                 .iter()
                 .find(|e| e.starts_with("sweep pen_tilt "))
@@ -1780,7 +1783,11 @@ fn portable_pen_tilt(tilt_x: f64, tilt_y: f64) -> (f64, f64) {
 fn ulps(a: f64, b: f64) -> u64 {
     let key = |v: f64| {
         let bits = v.to_bits() as i64;
-        if bits < 0 { i64::MIN - bits } else { bits }
+        if bits < 0 {
+            i64::MIN - bits
+        } else {
+            bits
+        }
     };
     key(a).abs_diff(key(b))
 }

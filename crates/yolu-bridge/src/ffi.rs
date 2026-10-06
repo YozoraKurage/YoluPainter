@@ -236,9 +236,7 @@ pub extern "C" fn ylb_serial(handle: u64) -> u64 {
 /// このつながりで使える機能の印（双方が出した印の共通部分。つながるまでは 0）。印の要る新しい命令は、ここに立っているときだけ送る。
 #[no_mangle]
 pub extern "C" fn ylb_common_features(handle: u64) -> u64 {
-    guard(0, || {
-        session(handle).map_or(0, |s| s.common_features())
-    })
+    guard(0, || session(handle).map_or(0, |s| s.common_features()))
 }
 
 /// 相手（スタンドアロン）のアプリの版（`major << 32 | minor << 16 | patch`）。つながっていない・版を名乗らない古い相手は `u64::MAX`。
@@ -1004,7 +1002,8 @@ pub unsafe extern "C" fn ylb_values_begin(
         let Some(s) = session(handle) else {
             return YLB_E_HANDLE;
         };
-        let (Some(shader), Some(source)) = (text(shader, shader_len), text(source, source_len)) else {
+        let (Some(shader), Some(source)) = (text(shader, shader_len), text(source, source_len))
+        else {
             return YLB_E_ARGUMENT;
         };
         let kind = match kind {
@@ -1081,13 +1080,23 @@ unsafe fn push_value(handle: u64, name: (*const u8, i32), value: PropertyValue) 
 
 /// Float・Range の値を足す（有限の数だけ）。
 #[no_mangle]
-pub unsafe extern "C" fn ylb_values_float(handle: u64, name: *const u8, name_len: i32, value: f32) -> i32 {
+pub unsafe extern "C" fn ylb_values_float(
+    handle: u64,
+    name: *const u8,
+    name_len: i32,
+    value: f32,
+) -> i32 {
     push_value(handle, (name, name_len), PropertyValue::Float(value))
 }
 
 /// Integer の値を足す。
 #[no_mangle]
-pub unsafe extern "C" fn ylb_values_int(handle: u64, name: *const u8, name_len: i32, value: i32) -> i32 {
+pub unsafe extern "C" fn ylb_values_int(
+    handle: u64,
+    name: *const u8,
+    name_len: i32,
+    value: i32,
+) -> i32 {
     push_value(handle, (name, name_len), PropertyValue::Int(value))
 }
 
@@ -1116,7 +1125,11 @@ pub unsafe extern "C" fn ylb_values_vector(
     z: f32,
     w: f32,
 ) -> i32 {
-    push_value(handle, (name, name_len), PropertyValue::Vector([x, y, z, w]))
+    push_value(
+        handle,
+        (name, name_len),
+        PropertyValue::Vector([x, y, z, w]),
+    )
 }
 
 /// 有効なキーワードを足す（重ねて足したものは 1 つ）。
@@ -1270,7 +1283,10 @@ pub unsafe extern "C" fn ylb_texture_send(
         if material < 0 || material as usize >= materials {
             return YLB_E_ARGUMENT;
         }
-        if !compat::satisfies(s.common_features(), Kind::MaterialTexture.required_feature()) {
+        if !compat::satisfies(
+            s.common_features(),
+            Kind::MaterialTexture.required_feature(),
+        ) {
             return 0;
         }
         let message = Message::MaterialTexture(MaterialTexture {
@@ -1353,7 +1369,10 @@ pub unsafe extern "C" fn ylb_original_send(
         if material < 0 || material as usize >= materials {
             return YLB_E_ARGUMENT;
         }
-        if !compat::satisfies(s.common_features(), Kind::MaterialOriginal.required_feature()) {
+        if !compat::satisfies(
+            s.common_features(),
+            Kind::MaterialOriginal.required_feature(),
+        ) {
             return 0;
         }
         let message = Message::MaterialOriginal(MaterialOriginal {
@@ -1907,7 +1926,8 @@ pub unsafe extern "C" fn ylb_test_server_slot(
         if keyword != 0 {
             return s.has_keyword(material, name) as i32;
         }
-        s.slot(material, name).map_or(YLB_E_ARGUMENT, |st| st as i32)
+        s.slot(material, name)
+            .map_or(YLB_E_ARGUMENT, |st| st as i32)
     })
 }
 
@@ -1959,7 +1979,11 @@ pub unsafe extern "C" fn ylb_test_server_request(
         let Some(s) = servers.get(&server) else {
             return YLB_E_HANDLE;
         };
-        let Some(slot) = (if slot_len == 0 { Some("") } else { text(slot, slot_len) }) else {
+        let Some(slot) = (if slot_len == 0 {
+            Some("")
+        } else {
+            text(slot, slot_len)
+        }) else {
             return YLB_E_ARGUMENT;
         };
         if !(1..=255).contains(&wants) {

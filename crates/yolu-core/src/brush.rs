@@ -74,8 +74,8 @@ use rayon::prelude::*;
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use mix::{ColorMix, MixGround, MixMode};
 pub use presets::{builtin_presets, BrushPreset};
-pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub(crate) use pressure::PressureScale;
+pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
@@ -88,13 +88,13 @@ pub use stencil::{
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
 
-use blend64::{blend, fade};
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite, to_byte};
 use crate::selection::{Amounts, SelectionMask};
 use crate::surface::{Growth, LiveTile, Surface, Tile};
 use crate::types::{Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
+use blend64::{blend, fade};
 use dynamics::{f64_max, f64_min};
 use effects::{mix_effect, EffectFrame};
 use mix::{MixDab, MixRun, MixTally};

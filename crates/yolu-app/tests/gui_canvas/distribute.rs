@@ -399,7 +399,11 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
 #[test]
 fn headless_the_copy_is_written_from_the_opened_contents_after_the_file_moved_or_changed_outside() {
     // 開いたエントリはメモリに残さず、ファイルのハンドルで持つ（パスで開き直す形は、外で変わると読めなくなる）
-    Thresholds { keep_in_memory: 0, ..Thresholds::REAL }.scoped(|| {
+    Thresholds {
+        keep_in_memory: 0,
+        ..Thresholds::REAL
+    }
+    .scoped(|| {
         for how in ["moved", "deleted", "replaced"] {
             let dir = TempDir::new(how);
             let (mut s, path) = opened(&dir);
@@ -423,15 +427,30 @@ fn headless_the_copy_is_written_from_the_opened_contents_after_the_file_moved_or
             let theirs = outside.as_ref().map(|p| std::fs::read(p).unwrap());
             let dir_before = dir.files();
             let dest = dir.path("Copy.ylp");
-            write_copy(&mut s, &dest, &[Removal::PsdOriginals, Removal::MeshMaps, Removal::UnknownEntries]);
+            write_copy(
+                &mut s,
+                &dest,
+                &[
+                    Removal::PsdOriginals,
+                    Removal::MeshMaps,
+                    Removal::UnknownEntries,
+                ],
+            );
             let copy = read_entries(&dest);
             let kept: Vec<&String> = base
                 .keys()
-                .filter(|n| n.ends_with("/imported-original.psd") || n.contains("meshmap-") || *n == "extra.dat")
+                .filter(|n| {
+                    n.ends_with("/imported-original.psd")
+                        || n.contains("meshmap-")
+                        || *n == "extra.dat"
+                })
                 .collect();
             assert_eq!(kept.len(), 3, "{how}: {kept:?}");
             for name in kept {
-                assert!(copy.get(name) == Some(&base[name]), "{how}: {name} は開いたときのバイト列のまま");
+                assert!(
+                    copy.get(name) == Some(&base[name]),
+                    "{how}: {name} は開いたときのバイト列のまま"
+                );
             }
             let project = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
             assert_eq!(
@@ -1455,12 +1474,29 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     let dir = TempDir::new("remembered");
     let (mut s, _path) = opened(&dir);
     // 残した選択範囲を持つ（開いている文書の変更として）
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect { x0: 2, y0: 2, x1: 20, y1: 20, mode: SelectionCombine::Replace })));
+    s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
+        x0: 2,
+        y0: 2,
+        x1: 20,
+        y1: 20,
+        mode: SelectionCombine::Replace,
+    })));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Save("髪".into()))));
     assert_eq!(s.saved_selections().len(), 1);
     start(&mut s);
-    assert!(kinds(&s).contains(&Removal::SavedSelections), "{:?}", kinds(&s));
-    assert!(s.distribute.window().unwrap().selected().contains(&Removal::SavedSelections), "既定は除く");
+    assert!(
+        kinds(&s).contains(&Removal::SavedSelections),
+        "{:?}",
+        kinds(&s)
+    );
+    assert!(
+        s.distribute
+            .window()
+            .unwrap()
+            .selected()
+            .contains(&Removal::SavedSelections),
+        "既定は除く"
+    );
     // 既定（除く）: 写しは形式 7 で、残した選択範囲のエントリが無い。今の選択範囲は絵の一部として残る
     let dest = dir.path("Dist.ylp");
     s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
@@ -1472,7 +1508,9 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     assert!(copy.sets()[0].selection.is_some());
     // 切り替えを外すと残り、形式は 8
     start(&mut s);
-    s.apply(Action::Distribute(DistributeAction::Toggle(Removal::SavedSelections)));
+    s.apply(Action::Distribute(DistributeAction::Toggle(
+        Removal::SavedSelections,
+    )));
     let kept = dir.path("Kept.ylp");
     s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
     s.wait_distribute();

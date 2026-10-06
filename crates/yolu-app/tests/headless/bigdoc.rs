@@ -66,8 +66,12 @@ fn fill_layers(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
-                    let bytes = noise((ts * ts * 4) as usize, seed * 10_000 + (i as u64) * 101 + (ty * n + tx) as u64);
-                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes).unwrap();
+                    let bytes = noise(
+                        (ts * ts * 4) as usize,
+                        seed * 10_000 + (i as u64) * 101 + (ty * n + tx) as u64,
+                    );
+                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes)
+                        .unwrap();
                 }
             }
         }
@@ -114,18 +118,29 @@ fn a_big_document_is_saved_split_reopened_and_saved_again() {
         again.modified = true;
         let fewer = bytes_of(&again.doc);
         again.apply(Action::SaveProject);
-        assert!(again.message.starts_with("保存しました"), "{}", again.message);
+        assert!(
+            again.message.starts_with("保存しました"),
+            "{}",
+            again.message
+        );
         let resaved = package(&path);
         assert!(parts(&resaved).len() < first_parts.len());
         let mut third = AppState::new_in(64, 64, Lang::Ja);
         third.apply(Action::OpenProject(path.clone()));
         assert_eq!(bytes_of(&third.doc), fewer);
         // 開いたまま、ほかの変更なしにもう 1 度保存しても読める（変わらない部分はファイルから写す）
-        third.doc.set_layer_opacity(third.doc.layers()[0].id(), 0.5, false).unwrap();
+        third
+            .doc
+            .set_layer_opacity(third.doc.layers()[0].id(), 0.5, false)
+            .unwrap();
         third.modified = true;
         let half = bytes_of(&third.doc);
         third.apply(Action::SaveProject);
-        assert!(third.message.starts_with("保存しました"), "{}", third.message);
+        assert!(
+            third.message.starts_with("保存しました"),
+            "{}",
+            third.message
+        );
         let mut fourth = AppState::new_in(64, 64, Lang::Ja);
         fourth.apply(Action::OpenProject(path));
         assert_eq!(bytes_of(&fourth.doc), half);
@@ -187,7 +202,12 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
         let ts = s.doc.tile_size();
         let last = s.doc.layers()[s.doc.layers().len() - 1].id();
         s.doc
-            .import_tile(last, Channel::Color, TileCoord::new(0, 0), &noise((ts * ts * 4) as usize, 4242))
+            .import_tile(
+                last,
+                Channel::Color,
+                TileCoord::new(0, 0),
+                &noise((ts * ts * 4) as usize, 4242),
+            )
             .unwrap();
         s.modified = true;
         let painted = bytes_of(&s.doc);
@@ -195,13 +215,25 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
         let second = store.load().unwrap();
         let same = first_parts
             .iter()
-            .filter(|(k, sha)| second.files.get(k).is_some_and(|b| b.sha256().unwrap() == *sha))
+            .filter(|(k, sha)| {
+                second
+                    .files
+                    .get(k)
+                    .is_some_and(|b| b.sha256().unwrap() == *sha)
+            })
             .count();
-        assert!(same >= first_parts.len() - 2, "{same} / {}", first_parts.len());
+        assert!(
+            same >= first_parts.len() - 2,
+            "{same} / {}",
+            first_parts.len()
+        );
         let mut files = second.files.clone();
         files.remove(INFO_NAME);
         let project = Project::from_entries(files).unwrap();
-        assert_eq!(bytes_of(&project.sets()[0].document.to_core().unwrap()), painted);
+        assert_eq!(
+            bytes_of(&project.sets()[0].document.to_core().unwrap()),
+            painted
+        );
         // 落ちた体から、復旧の窓で開く
         drop(store);
         assert!(s.recovery.is_idle());
@@ -268,18 +300,34 @@ fn a_moved_deleted_or_replaced_original_still_saves_under_another_name() {
             assert!(s.message.starts_with("保存しました"), "{}", s.message);
             let mut opened = AppState::new_in(64, 64, Lang::Ja);
             opened.apply(Action::OpenProject(path.clone()));
-            assert!(opened.message.starts_with("開きました"), "{}", opened.message);
+            assert!(
+                opened.message.starts_with("開きました"),
+                "{}",
+                opened.message
+            );
             // 外で: 動かす・消す・別のファイルを同じ名前へ置き換える。動かした・置き換えたファイルには、このあと触らない
             let outside = change_outside(&dir, &path, how);
             let before = outside.as_ref().map(|p| std::fs::read(p).unwrap());
             // 変えていないセットの中身は、開いたファイルから写す。別名の保存はできて、開き直すと開いたときの中身のまま
             let to = dir.0.join("別のフォルダ").join("別名.ylp");
             opened.apply(Action::SaveProjectAs(to.clone()));
-            assert!(opened.message.starts_with("保存しました"), "{how}: {}", opened.message);
+            assert!(
+                opened.message.starts_with("保存しました"),
+                "{how}: {}",
+                opened.message
+            );
             let mut check = AppState::new_in(64, 64, Lang::Ja);
             check.apply(Action::OpenProject(to));
-            assert!(check.message.starts_with("開きました"), "{how}: {}", check.message);
-            assert_eq!(bytes_of(&check.doc), painted, "{how}: 開いたときの中身のまま");
+            assert!(
+                check.message.starts_with("開きました"),
+                "{how}: {}",
+                check.message
+            );
+            assert_eq!(
+                bytes_of(&check.doc),
+                painted,
+                "{how}: 開いたときの中身のまま"
+            );
             if let (Some(p), Some(before)) = (&outside, &before) {
                 assert_eq!(&std::fs::read(p).unwrap(), before, "{how}");
             }
@@ -300,8 +348,18 @@ fn a_moved_deleted_or_replaced_original_still_saves_under_another_name() {
 fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
     small().scoped(|| {
         for (lang, changed, deleted, prefix) in [
-            (Lang::Ja, "外部で変更されています", "外部で消されています", "保存できません"),
-            (Lang::En, "Save target or backup changed", "The save target was deleted or moved outside", "Cannot save"),
+            (
+                Lang::Ja,
+                "外部で変更されています",
+                "外部で消されています",
+                "保存できません",
+            ),
+            (
+                Lang::En,
+                "Save target or backup changed",
+                "The save target was deleted or moved outside",
+                "Cannot save",
+            ),
         ] {
             let dir = TempDir::new("over");
             // 英語の画面の文には、ファイル名の日本語が入らないよう、名前は ASCII にする
@@ -316,21 +374,54 @@ fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
             let theirs = std::fs::read(&outside).unwrap();
             opened.modified = true;
             opened.apply(Action::SaveProject);
-            assert!(opened.message.starts_with(prefix), "{lang:?}: {}", opened.message);
-            assert!(opened.message.contains(changed), "{lang:?}: {}", opened.message);
-            assert!(!opened.message.contains(deleted), "{lang:?}: {}", opened.message);
+            assert!(
+                opened.message.starts_with(prefix),
+                "{lang:?}: {}",
+                opened.message
+            );
+            assert!(
+                opened.message.contains(changed),
+                "{lang:?}: {}",
+                opened.message
+            );
+            assert!(
+                !opened.message.contains(deleted),
+                "{lang:?}: {}",
+                opened.message
+            );
             assert!(opened.modified, "保存していない印のまま");
             assert_eq!(std::fs::read(&path).unwrap(), theirs);
             // 消された後は、保存先が外で消されたと断る（新しく作らない）
             std::fs::remove_file(&path).unwrap();
             opened.apply(Action::SaveProject);
-            assert!(opened.message.starts_with(prefix), "{lang:?}: {}", opened.message);
-            assert!(opened.message.contains(deleted), "{lang:?}: {}", opened.message);
-            assert!(!opened.message.contains(changed), "{lang:?}: {}", opened.message);
-            assert_eq!(lang == Lang::En, opened.message.is_ascii(), "{lang:?}: {}", opened.message);
+            assert!(
+                opened.message.starts_with(prefix),
+                "{lang:?}: {}",
+                opened.message
+            );
+            assert!(
+                opened.message.contains(deleted),
+                "{lang:?}: {}",
+                opened.message
+            );
+            assert!(
+                !opened.message.contains(changed),
+                "{lang:?}: {}",
+                opened.message
+            );
+            assert_eq!(
+                lang == Lang::En,
+                opened.message.is_ascii(),
+                "{lang:?}: {}",
+                opened.message
+            );
             assert!(!path.exists());
             assert!(opened.modified, "保存していない印のまま");
-            assert!(save_leftovers(&dir.0).is_empty(), "{:?}", save_leftovers(&dir.0));
+            assert!(
+                save_leftovers(&dir.0).is_empty(),
+                "{:?}",
+                save_leftovers(&dir.0)
+            );
         }
     });
 }
@@ -350,11 +441,17 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         let dir = TempDir::new("held");
         let root = dir.0.join("recovery");
         let generators = NativeDocument::read(
-            &std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-io/tests/fixtures/effects-generators.utpaint"))
-                .unwrap(),
+            &std::fs::read(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../yolu-io/tests/fixtures/effects-generators.utpaint"),
+            )
+            .unwrap(),
         )
         .unwrap();
-        assert!(generators.core_issues().is_empty(), "core へは変換できる（入力がそろわないだけ）");
+        assert!(
+            generators.core_issues().is_empty(),
+            "core へは変換できる（入力がそろわないだけ）"
+        );
         let (blank, _) = yolu_app::state::blank_document(SIZE, SIZE);
         let editable = yolu_app::sets::guid_string(blank.id());
         let locked = generators.id().to_owned();
@@ -366,7 +463,11 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
             composites: vec![],
         };
         let project = Project::create(
-            WriterInfo { app: "試験".into(), version: "0".into(), unity: "standalone".into() },
+            WriterInfo {
+                app: "試験".into(),
+                version: "0".into(),
+                unity: "standalone".into(),
+            },
             &[
                 spec(&editable, "描ける", 0, blank.into()),
                 spec(&locked, "効果", 1, generators.clone().into()),
@@ -376,7 +477,10 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         .unwrap();
         let path = dir.0.join("効果.ylp");
         SaveTarget::create(&path).unwrap().save(&project).unwrap();
-        assert!(!parts(&package(&path)).is_empty(), "読むだけになるセットの正本は分けて置く");
+        assert!(
+            !parts(&package(&path)).is_empty(),
+            "読むだけになるセットの正本は分けて置く"
+        );
 
         let mut s = session(&root);
         s.apply(Action::OpenProject(path.clone()));
@@ -389,7 +493,10 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         let mut s2 = session(&root);
         s2.recovery_apply(RecoveryAction::Open);
         assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
-        assert!(s2.sets.get(1).unwrap().read_only.is_some(), "開いたあとで入力がそろわず読むだけ");
+        assert!(
+            s2.sets.get(1).unwrap().read_only.is_some(),
+            "開いたあとで入力がそろわず読むだけ"
+        );
         let held = held_dirs(&root);
         assert_eq!(held.len(), 1, "{held:?}");
         // 開いた世代を復旧の窓で捨てる（落ちた実行のプールごと消える）
@@ -410,7 +517,9 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         assert_eq!(kept.document.to_bytes().unwrap(), generators.to_bytes());
         // 置き直した中身は、プロジェクトを手放すと消える（落ちて残ったものは次の起動が片付ける）
         drop(s2);
-        assert!(held_dirs(&root).iter().all(|d| std::fs::read_dir(d).unwrap().next().is_none()));
+        assert!(held_dirs(&root)
+            .iter()
+            .all(|d| std::fs::read_dir(d).unwrap().next().is_none()));
         let _s3 = session(&root);
         assert!(held_dirs(&root).is_empty());
     });
@@ -427,10 +536,15 @@ fn held_dirs(root: &Path) -> Vec<PathBuf> {
 /// 2 つのセット（描く 0 番が名前の順で先）の .ylp。1 番のセットにも画素を入れる。返すのは、ファイルとセットの ID。
 fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
     use yolu_io::{MaterialRef, SaveTarget, SetSpec, WriterInfo};
-    let mut docs: Vec<_> = (0..2).map(|_| yolu_app::state::blank_document(SIZE, SIZE).0).collect();
+    let mut docs: Vec<_> = (0..2)
+        .map(|_| yolu_app::state::blank_document(SIZE, SIZE).0)
+        .collect();
     docs.sort_by_key(|d| yolu_app::sets::guid_string(d.id()));
     fill_layers(&mut docs[1], 2, 9);
-    let ids: Vec<String> = docs.iter().map(|d| yolu_app::sets::guid_string(d.id())).collect();
+    let ids: Vec<String> = docs
+        .iter()
+        .map(|d| yolu_app::sets::guid_string(d.id()))
+        .collect();
     let specs: Vec<SetSpec> = docs
         .iter()
         .enumerate()
@@ -443,7 +557,11 @@ fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
         })
         .collect();
     let project = Project::create(
-        WriterInfo { app: "試験".into(), version: "0".into(), unity: "standalone".into() },
+        WriterInfo {
+            app: "試験".into(),
+            version: "0".into(),
+            unity: "standalone".into(),
+        },
         &specs,
         &ids[0],
     )
@@ -477,7 +595,11 @@ fn a_checkpoint_is_written_from_the_opened_contents_after_the_file_moved_or_chan
             let dir = TempDir::new(how);
             let root = dir.0.join("recovery");
             let (path, ids) = two_sets(&dir, "二つ.ylp");
-            let base = Project::read(&std::fs::read(&path).unwrap()).unwrap().original_archive().entries().clone();
+            let base = Project::read(&std::fs::read(&path).unwrap())
+                .unwrap()
+                .original_archive()
+                .entries()
+                .clone();
             let mut s = session(&root);
             s.apply(Action::OpenProject(path.clone()));
             assert!(s.message.starts_with("開きました"), "{how}: {}", s.message);
@@ -488,30 +610,54 @@ fn a_checkpoint_is_written_from_the_opened_contents_after_the_file_moved_or_chan
             let painted = bytes_of(&s.doc);
             write_after(&mut s, Instant::now());
             assert_eq!(s.recovery.checkpoints(), 1, "{how}: {}", s.message);
-            let mut files = GenerationStore::new(s.recovery.session_dir().unwrap()).load().unwrap().files;
+            let mut files = GenerationStore::new(s.recovery.session_dir().unwrap())
+                .load()
+                .unwrap()
+                .files;
             let prefix = format!("sets/{}/", ids[1]);
             let untouched: Vec<&String> = base.keys().filter(|k| k.starts_with(&prefix)).collect();
-            assert!(untouched.iter().any(|k| k.contains("document.utpaint")), "{how}: {untouched:?}");
+            assert!(
+                untouched.iter().any(|k| k.contains("document.utpaint")),
+                "{how}: {untouched:?}"
+            );
             for name in untouched {
-                assert_eq!(files[name].bytes().unwrap(), base[name].bytes().unwrap(), "{how}: {name} は開いたときのまま");
+                assert_eq!(
+                    files[name].bytes().unwrap(),
+                    base[name].bytes().unwrap(),
+                    "{how}: {name} は開いたときのまま"
+                );
             }
             files.remove(INFO_NAME);
             let written = Project::from_entries(files).unwrap();
             let drawn = written.sets().iter().find(|x| x.id == ids[0]).unwrap();
-            assert_eq!(bytes_of(&drawn.document.to_core().unwrap()), painted, "{how}");
+            assert_eq!(
+                bytes_of(&drawn.document.to_core().unwrap()),
+                painted,
+                "{how}"
+            );
             // 外のファイルには触らず、書き置きの途中のものも、保存先の隣の残骸も残さない
             if let (Some(p), Some(theirs)) = (&outside, &theirs) {
                 assert_eq!(&std::fs::read(p).unwrap(), theirs, "{how}");
             }
-            let left: Vec<String> =
-                names_under(&root).into_iter().filter(|n| n.contains("pending") || n.contains("staging")).collect();
+            let left: Vec<String> = names_under(&root)
+                .into_iter()
+                .filter(|n| n.contains("pending") || n.contains("staging"))
+                .collect();
             assert!(left.is_empty(), "{how}: {left:?}");
-            assert!(save_leftovers(&dir.0).is_empty(), "{how}: {:?}", save_leftovers(&dir.0));
+            assert!(
+                save_leftovers(&dir.0).is_empty(),
+                "{how}: {:?}",
+                save_leftovers(&dir.0)
+            );
             // 落ちたあと、復旧で開くと描いたとおりに戻る
             drop(s);
             let mut s2 = session(&root);
             s2.recovery_apply(RecoveryAction::Open);
-            assert!(s2.message.starts_with("復旧しました"), "{how}: {}", s2.message);
+            assert!(
+                s2.message.starts_with("復旧しました"),
+                "{how}: {}",
+                s2.message
+            );
             assert_eq!(bytes_of(&s2.doc), painted, "{how}");
         }
     });
@@ -528,10 +674,15 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
         let dir = TempDir::new("overlap");
         let root = dir.0.join("recovery");
         // 2 つのセット: 描くセットが名前の順で先（書き直すと、描かないセットのエントリの位置がずれる）。描かないセットにも画素を入れる
-        let mut docs: Vec<_> = (0..2).map(|_| yolu_app::state::blank_document(SIZE, SIZE).0).collect();
+        let mut docs: Vec<_> = (0..2)
+            .map(|_| yolu_app::state::blank_document(SIZE, SIZE).0)
+            .collect();
         docs.sort_by_key(|d| yolu_app::sets::guid_string(d.id()));
         fill_layers(&mut docs[1], 2, 9);
-        let ids: Vec<String> = docs.iter().map(|d| yolu_app::sets::guid_string(d.id())).collect();
+        let ids: Vec<String> = docs
+            .iter()
+            .map(|d| yolu_app::sets::guid_string(d.id()))
+            .collect();
         let specs: Vec<SetSpec> = docs
             .iter()
             .enumerate()
@@ -544,7 +695,11 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
             })
             .collect();
         let project = Project::create(
-            WriterInfo { app: "試験".into(), version: "0".into(), unity: "standalone".into() },
+            WriterInfo {
+                app: "試験".into(),
+                version: "0".into(),
+                unity: "standalone".into(),
+            },
             &specs,
             &ids[0],
         )
@@ -573,7 +728,9 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
         let t0 = Instant::now();
         s.recovery_tick_at(t0);
         s.recovery_tick_at(t0 + Duration::from_secs(16));
-        wait_entered.recv_timeout(Duration::from_secs(30)).expect("書き置きが始まる");
+        wait_entered
+            .recv_timeout(Duration::from_secs(30))
+            .expect("書き置きが始まる");
         let releaser = {
             let r = release.clone();
             std::thread::spawn(move || {
@@ -586,7 +743,12 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
         assert!(s.message.starts_with("保存しました"), "{}", s.message);
         releaser.join().unwrap();
         s.recovery_wait();
-        assert_eq!(s.recovery.checkpoints(), 1, "書き置きは前のファイルを読み終えて確定する: {}", s.message);
+        assert_eq!(
+            s.recovery.checkpoints(),
+            1,
+            "書き置きは前のファイルを読み終えて確定する: {}",
+            s.message
+        );
         let mut again = AppState::new_in(64, 64, Lang::Ja);
         again.apply(Action::OpenProject(path.clone()));
         assert!(again.message.starts_with("開きました"), "{}", again.message);

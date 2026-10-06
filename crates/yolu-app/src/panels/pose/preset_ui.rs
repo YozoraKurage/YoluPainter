@@ -99,7 +99,14 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         if renaming == Some(*id) {
             let first = !app.view3d.pose.preset_rename_started;
             app.view3d.pose.preset_rename_started = true;
-            let out = w::text_field(ui, label_rect, ("pose.preset.rename", *id), name, None, first);
+            let out = w::text_field(
+                ui,
+                label_rect,
+                ("pose.preset.rename", *id),
+                name,
+                None,
+                first,
+            );
             if let Some(next) = out.committed {
                 presets::rename_preset(app, *id, &next);
             }
@@ -110,7 +117,11 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             let response = ui.interact(
                 label_rect,
                 ui.make_persistent_id(("pose.preset.apply", *id)),
-                if editable { Sense::click() } else { Sense::hover() },
+                if editable {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
             );
             if editable && response.hovered() {
                 w::fill(ui.painter(), label_rect, t::CONTROL_HOVER);

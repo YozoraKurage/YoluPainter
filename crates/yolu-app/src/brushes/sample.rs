@@ -699,16 +699,23 @@ mod tests {
     #[test]
     fn images_with_the_same_name_and_size_but_other_pixels_get_other_keys() {
         use crate::engine::{DualBrush, PaperTexture};
-        let tip = |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
+        let tip =
+            |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
         let (a, b) = (tip([0, 255, 255, 0]), tip([255, 0, 0, 255]));
         let same_as_a = tip([0, 255, 255, 0]);
-        assert_eq!(format!("{a:?}"), format!("{b:?}"), "Debug だけでは見分けられない画像");
+        assert_eq!(
+            format!("{a:?}"),
+            format!("{b:?}"),
+            "Debug だけでは見分けられない画像"
+        );
         let spec = SampleSpec::row(false);
         type Put = fn(&mut Brush, Arc<BrushTip>);
         let places: [(&str, Put); 4] = [
             ("tip", |br, t| br.tip.image = Some(t)),
             ("tips", |br, t| br.tip.images = vec![t]),
-            ("texture", |br, t| br.texture = Some(PaperTexture::new(t, 0.5))),
+            ("texture", |br, t| {
+                br.texture = Some(PaperTexture::new(t, 0.5))
+            }),
             ("dual", |br, t| {
                 br.dual = Some(DualBrush {
                     tip: Some(t),
@@ -724,8 +731,16 @@ mod tests {
                 br
             };
             let (ba, bb, bc) = (make(&a), make(&b), make(&same_as_a));
-            assert_ne!(key_of(&ba, spec), key_of(&bb, spec), "{place}: 画素だけが違う");
-            assert_eq!(key_of(&ba, spec), key_of(&bc, spec), "{place}: 中身が同じなら同じ札");
+            assert_ne!(
+                key_of(&ba, spec),
+                key_of(&bb, spec),
+                "{place}: 画素だけが違う"
+            );
+            assert_eq!(
+                key_of(&ba, spec),
+                key_of(&bc, spec),
+                "{place}: 中身が同じなら同じ札"
+            );
             // キャッシュも同じ札を使い、画素だけが違うブラシには別の見本を描く
             cache.begin_frame(1000 + cache.stats.renders);
             let ka = cache.request(&ba, spec).unwrap();
@@ -928,7 +943,10 @@ mod tests {
         for _ in 0..jobs {
             let (flag, tx) = (release.0.clone(), tx.clone());
             spawn_for_test(move || {
-                let name = std::thread::current().name().map(str::to_owned).unwrap_or_default();
+                let name = std::thread::current()
+                    .name()
+                    .map(str::to_owned)
+                    .unwrap_or_default();
                 let _ = tx.send(name);
                 let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 while !flag.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
@@ -940,14 +958,21 @@ mod tests {
         // 走り出すのは専用の池のスレッドの数だけ（残りは待つ）
         let mut names = Vec::new();
         for _ in 0..POOL_THREADS {
-            names.push(started.recv_timeout(Duration::from_secs(20)).expect("専用の池で走り出す"));
+            names.push(
+                started
+                    .recv_timeout(Duration::from_secs(20))
+                    .expect("専用の池で走り出す"),
+            );
         }
         assert!(
             names.iter().all(|n| n.starts_with(POOL_THREAD_PREFIX)),
             "見本は専用の池のスレッドで走る: {names:?}"
         );
         assert!(
-            matches!(started.recv_timeout(Duration::from_millis(200)), Err(RecvTimeoutError::Timeout)),
+            matches!(
+                started.recv_timeout(Duration::from_millis(200)),
+                Err(RecvTimeoutError::Timeout)
+            ),
             "専用の池のスレッドの数を超えて走らない"
         );
         // そのあいだも、全体の池の仕事は進む

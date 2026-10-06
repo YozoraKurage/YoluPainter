@@ -3,7 +3,8 @@
 use yolu_core::effects::{generator_kind_name, EffectSettings};
 use yolu_core::filter::Settings as Filter;
 use yolu_core::generator::{
-    anchor::ReadMode, Blend, CellOutput, FractalMode, Kind, NoiseBasis, NoiseSpace, ProceduralSpace, Shape,
+    anchor::ReadMode, Blend, CellOutput, FractalMode, Kind, NoiseBasis, NoiseSpace,
+    ProceduralSpace, Shape,
 };
 use yolu_core::{Anchor, AnchorPlacement, Channel, FilterEffect, FilterTarget};
 
@@ -187,7 +188,11 @@ pub fn noise_space_name(lang: Lang, space: NoiseSpace) -> &'static str {
     }
 }
 
-pub const PROCEDURAL_SPACES: [ProceduralSpace; 3] = [ProceduralSpace::Position, ProceduralSpace::Uv, ProceduralSpace::Triplanar];
+pub const PROCEDURAL_SPACES: [ProceduralSpace; 3] = [
+    ProceduralSpace::Position,
+    ProceduralSpace::Uv,
+    ProceduralSpace::Triplanar,
+];
 
 pub fn procedural_space_name(lang: Lang, space: ProceduralSpace) -> &'static str {
     match space {
@@ -197,7 +202,8 @@ pub fn procedural_space_name(lang: Lang, space: ProceduralSpace) -> &'static str
     }
 }
 
-pub const NOISE_BASES: [NoiseBasis; 3] = [NoiseBasis::Value, NoiseBasis::Perlin, NoiseBasis::Worley];
+pub const NOISE_BASES: [NoiseBasis; 3] =
+    [NoiseBasis::Value, NoiseBasis::Perlin, NoiseBasis::Worley];
 
 pub fn noise_basis_name(lang: Lang, basis: NoiseBasis) -> &'static str {
     match basis {
@@ -217,7 +223,11 @@ pub fn cell_output_name(output: CellOutput) -> &'static str {
     }
 }
 
-pub const FRACTAL_MODES: [FractalMode; 3] = [FractalMode::Fbm, FractalMode::Ridged, FractalMode::Turbulence];
+pub const FRACTAL_MODES: [FractalMode; 3] = [
+    FractalMode::Fbm,
+    FractalMode::Ridged,
+    FractalMode::Turbulence,
+];
 
 pub fn fractal_mode_name(mode: FractalMode) -> &'static str {
     match mode {
@@ -316,7 +326,10 @@ pub const ANCHOR_CHANNELS: [Channel; 5] = [
 
 /// Anchor の一覧での名前（マスクの Anchor で名前が「）」で終わらないものは「（マスク）」を足す）。
 pub fn anchor_label(lang: Lang, anchor: &Anchor, placement: AnchorPlacement) -> String {
-    if placement == AnchorPlacement::Mask && !anchor.name().ends_with(')') && !anchor.name().ends_with('）') {
+    if placement == AnchorPlacement::Mask
+        && !anchor.name().ends_with(')')
+        && !anchor.name().ends_with('）')
+    {
         lang.pick(
             format!("{}（マスク）", anchor.name()),
             format!("{} (mask)", anchor.name()),

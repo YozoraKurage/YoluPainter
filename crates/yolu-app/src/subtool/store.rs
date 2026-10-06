@@ -681,13 +681,17 @@ mod tests {
                     values: longest_values(tool),
                 })
                 .collect();
-            store.save(tool, &presets).unwrap_or_else(|e| {
-                panic!("{tool:?}: {MAX_USER_PRESETS} 個を保存できない: {e:?}")
-            });
+            store
+                .save(tool, &presets)
+                .unwrap_or_else(|e| panic!("{tool:?}: {MAX_USER_PRESETS} 個を保存できない: {e:?}"));
             let size = std::fs::metadata(store.path_of(tool)).unwrap().len();
             assert!(size <= MAX_FILE_BYTES, "{tool:?}: {size}");
             let report = load_all(&dir);
-            assert!(report.problems.is_empty(), "{tool:?}: {:?}", report.problems);
+            assert!(
+                report.problems.is_empty(),
+                "{tool:?}: {:?}",
+                report.problems
+            );
             assert!(
                 report.presets.contains(&(tool, presets)),
                 "{tool:?}: 読み戻した中身が違う"

@@ -303,7 +303,11 @@ fn headless_a_build_without_a_public_key_shows_nothing_and_sends_nothing() {
     assert_eq!(updates, 0, "{:?}", help_labels(&state));
     assert_eq!(
         help_labels(&state),
-        ["ショートカット", "ログのフォルダを開く", "YoluPainter について"]
+        [
+            "ショートカット",
+            "ログのフォルダを開く",
+            "YoluPainter について"
+        ]
     );
     state.update_startup();
     assert!(!state.update.is_asking() && !state.update.window_open());
@@ -558,7 +562,10 @@ fn headless_the_beta_setting_is_off_by_default_and_an_old_settings_file_reads_as
     state.update.attach_config(dir.0.join("update.conf"));
     assert_eq!(state.update.preference(), Preference::On);
     assert!(!state.update.beta());
-    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::None);
+    assert_eq!(
+        help_item(&state, BETA_ITEM).1,
+        yolu_app::ui::menu::Check::None
+    );
     // 試験版が置いてあっても、切のうちは stable の置き場だけを見る
     state.update_startup();
     settle(&mut state);
@@ -589,7 +596,10 @@ fn headless_the_beta_setting_offers_the_newer_of_beta_and_stable_and_off_goes_ba
     apply(&mut state, UpdateAction::SetBeta(true));
     assert_eq!(rig.calls(), 1);
     assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
-    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::Checked);
+    assert_eq!(
+        help_item(&state, BETA_ITEM).1,
+        yolu_app::ui::menu::Check::Checked
+    );
     // 入: stable と試験版の新しい方（試験版 0.3.0-rc.1）。両方の置き場を見る
     check_now(&mut state);
     assert_eq!(asked(&rig)[1..], [UPDATER_URL, BETA_UPDATER_URL]);
@@ -608,7 +618,10 @@ fn headless_the_beta_setting_offers_the_newer_of_beta_and_stable_and_off_goes_ba
     let before = rig.calls();
     apply(&mut state, UpdateAction::SetBeta(false));
     assert!(state.update.offer().is_none());
-    assert_eq!(help_item(&state, BETA_ITEM).1, yolu_app::ui::menu::Check::None);
+    assert_eq!(
+        help_item(&state, BETA_ITEM).1,
+        yolu_app::ui::menu::Check::None
+    );
     assert!(help_labels(&state)[0].starts_with("更新を確かめる"));
     assert_eq!(rig.calls(), before);
     check_now(&mut state);
@@ -670,10 +683,16 @@ fn headless_the_beta_setting_is_saved_beside_the_startup_choice_and_read_back() 
     next.update.attach_config(file.clone());
     assert!(next.update.beta());
     assert_eq!(next.update.preference(), Preference::On);
-    assert_eq!(help_item(&next, BETA_ITEM).1, yolu_app::ui::menu::Check::Checked);
+    assert_eq!(
+        help_item(&next, BETA_ITEM).1,
+        yolu_app::ui::menu::Check::Checked
+    );
     // 切にすると、旧い版と同じ 1 行になる
     apply(&mut state, UpdateAction::SetBeta(false));
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "check_on_startup=on\n");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "check_on_startup=on\n"
+    );
     let mut again = AppState::new(64, 64);
     let _rig3 = self::rig(&mut again, "0.2.0", Mode::Installer);
     again.update.attach_config(file.clone());
@@ -892,7 +911,10 @@ fn headless_the_failure_reason_comes_from_stable_not_from_the_beta_place() {
     assert_eq!(state.message, "更新を確かめられません: 検証を通りません");
     state.lang = Lang::En;
     check_now(&mut state);
-    assert_eq!(state.message, "Cannot check for updates: verification failed");
+    assert_eq!(
+        state.message,
+        "Cannot check for updates: verification failed"
+    );
     // stable が引けない: 通信できない
     state.lang = Lang::Ja;
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
@@ -907,16 +929,31 @@ fn headless_the_help_menu_has_the_beta_item_with_a_tooltip_in_both_languages() {
     let _rig = rig(&mut state, "0.2.0", Mode::Installer);
     for (lang, label, startup) in [
         (Lang::Ja, BETA_ITEM, "起動時に更新を確かめる"),
-        (Lang::En, "Use Beta Versions", "Check for Updates at Startup"),
+        (
+            Lang::En,
+            "Use Beta Versions",
+            "Check for Updates at Startup",
+        ),
     ] {
         state.lang = lang;
         let labels = help_labels(&state);
-        let at = |name: &str| labels.iter().position(|l| l == name).unwrap_or_else(|| panic!("{name}: {labels:?}"));
-        assert_eq!(at(label), at(startup) + 1, "起動時の確かめのすぐ下: {labels:?}");
+        let at = |name: &str| {
+            labels
+                .iter()
+                .position(|l| l == name)
+                .unwrap_or_else(|| panic!("{name}: {labels:?}"))
+        };
+        assert_eq!(
+            at(label),
+            at(startup) + 1,
+            "起動時の確かめのすぐ下: {labels:?}"
+        );
         let tip = shell::menu_entries(&state, shell::HELP_MENU)
             .into_iter()
             .find_map(|e| match e {
-                yolu_app::ui::menu::Entry::Item { label: l, tooltip, .. } if l == label => tooltip,
+                yolu_app::ui::menu::Entry::Item {
+                    label: l, tooltip, ..
+                } if l == label => tooltip,
                 _ => None,
             })
             .unwrap_or_else(|| panic!("{label} に説明が無い"));
@@ -936,7 +973,10 @@ fn the_status_band_marks_a_beta_version_and_only_a_beta_version() {
         h.state_mut().state.lang = lang;
         h.state_mut().state.usage.build = Some("0.4.0 · a1b2c3d".into());
         h.run();
-        assert!(h.query_by_label(mark).is_none(), "{lang:?}: 正式版に印は付かない");
+        assert!(
+            h.query_by_label(mark).is_none(),
+            "{lang:?}: 正式版に印は付かない"
+        );
         h.state_mut().state.usage.build = Some("0.4.0-rc.1 · a1b2c3d".into());
         h.run();
         h.get_by_label(mark);
@@ -1024,26 +1064,38 @@ fn headless_a_corrupt_or_cut_download_is_rejected_and_leaves_nothing_to_run() {
 }
 
 #[test]
-fn headless_metadata_without_this_systems_download_says_so_and_a_broken_one_still_fails_verification() {
+fn headless_metadata_without_this_systems_download_says_so_and_a_broken_one_still_fails_verification(
+) {
     let mut state = AppState::new(64, 64);
     let rig = rig(&mut state, "0.2.0", Mode::Installer);
     // 署名は正しいが、この環境の対象（インストーラー）が載っていない: 検証の失敗ではなく、配布物が無いと言う
-    *rig.server.metadata.lock().unwrap() = signed_metadata_without("0.2.0", INSTALLER, Some(WINDOWS_INSTALLER));
+    *rig.server.metadata.lock().unwrap() =
+        signed_metadata_without("0.2.0", INSTALLER, Some(WINDOWS_INSTALLER));
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
     assert!(state.update.offer().is_none());
-    assert_eq!(state.message, "更新を確かめられません: この環境向けの配布物がありません");
+    assert_eq!(
+        state.message,
+        "更新を確かめられません: この環境向けの配布物がありません"
+    );
     state.lang = Lang::En;
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
-    assert_eq!(state.message, "Cannot check for updates: no download for this system");
+    assert_eq!(
+        state.message,
+        "Cannot check for updates: no download for this system"
+    );
     // 署名の合わない（本文を書き換えた）更新情報は、今までどおり検証の失敗
-    let mut envelope: Envelope = serde_json::from_slice(&signed_metadata("0.2.0", INSTALLER)).unwrap();
+    let mut envelope: Envelope =
+        serde_json::from_slice(&signed_metadata("0.2.0", INSTALLER)).unwrap();
     envelope.payload = envelope.payload.replace("0.2.0", "0.9.0");
     *rig.server.metadata.lock().unwrap() = serde_json::to_vec(&envelope).unwrap();
     apply(&mut state, UpdateAction::Check);
     settle(&mut state);
-    assert_eq!(state.message, "Cannot check for updates: verification failed");
+    assert_eq!(
+        state.message,
+        "Cannot check for updates: verification failed"
+    );
     // 通信の失敗は、通信できないまま
     rig.server.fail_metadata.store(true, Ordering::Relaxed);
     apply(&mut state, UpdateAction::Check);
@@ -1203,7 +1255,11 @@ fn headless_saving_a_named_project_then_updating_and_updating_without_saving() {
     state.modified = true;
     apply(&mut state, UpdateAction::Run { save: true });
     assert!(!state.modified);
-    assert_ne!(std::fs::read(dir.0.join("a.ylp")).unwrap(), before, "保存し直した");
+    assert_ne!(
+        std::fs::read(dir.0.join("a.ylp")).unwrap(),
+        before,
+        "保存し直した"
+    );
     assert_eq!(rig.launched().len(), 1);
     assert!(state.quit && state.update.is_quitting());
 }
@@ -1252,7 +1308,11 @@ fn headless_a_failed_save_keeps_its_reason_and_stops_the_update() {
         assert!(state.modified && !state.quit && rig.launched().is_empty());
         assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
         state.update_finish_save();
-        assert!(state.message.starts_with("保存できません: "), "{}", state.message);
+        assert!(
+            state.message.starts_with("保存できません: "),
+            "{}",
+            state.message
+        );
     }
     // 別の場所へ保存し直せば、そのあとで保存して入れる
     let elsewhere = TempDir::new("savefail-elsewhere");
@@ -1286,7 +1346,10 @@ fn headless_save_and_update_waits_for_a_background_save() {
         for _ in 0..3 {
             state.update_finish_save();
         }
-        assert!(rig.launched().is_empty() && !state.quit, "保存の間は入れない");
+        assert!(
+            rig.launched().is_empty() && !state.quit,
+            "保存の間は入れない"
+        );
         if fails {
             // 保存先が外から消えて、保存できない
             std::fs::remove_dir_all(&dir.0).unwrap();
@@ -1295,7 +1358,11 @@ fn headless_save_and_update_waits_for_a_background_save() {
         state.wait_save();
         state.update_finish_save();
         if fails {
-            assert!(state.message.starts_with("保存できません: "), "{}", state.message);
+            assert!(
+                state.message.starts_with("保存できません: "),
+                "{}",
+                state.message
+            );
             assert!(state.modified && !state.quit && rig.launched().is_empty());
             assert!(state.update.is_ready_open(), "更新の窓は残り、やり直せる");
         } else {
@@ -1324,13 +1391,26 @@ fn headless_installing_is_refused_while_a_save_is_running() {
         let hold = state.save.hold_next();
         state.apply(Action::SaveProject);
         assert!(state.is_saving() && !state.modified, "{}", state.message);
-        assert!(state.shows_modified(), "保存の結果が出るまで、頼む前の印を見せる");
-        apply(&mut state, UpdateAction::Run { save });
-        assert!(rig.launched().is_empty(), "保存の間はインストーラーを起動しない");
-        assert!(!state.quit && !state.update.is_quitting());
-        assert!(state.update.is_ready_open(), "更新の窓は残り、保存の後にやり直せる");
         assert!(
-            state.message.contains(if english { "A save is in progress" } else { "保存の途中です" }),
+            state.shows_modified(),
+            "保存の結果が出るまで、頼む前の印を見せる"
+        );
+        apply(&mut state, UpdateAction::Run { save });
+        assert!(
+            rig.launched().is_empty(),
+            "保存の間はインストーラーを起動しない"
+        );
+        assert!(!state.quit && !state.update.is_quitting());
+        assert!(
+            state.update.is_ready_open(),
+            "更新の窓は残り、保存の後にやり直せる"
+        );
+        assert!(
+            state.message.contains(if english {
+                "A save is in progress"
+            } else {
+                "保存の途中です"
+            }),
             "{}",
             state.message
         );
@@ -1417,7 +1497,10 @@ fn headless_the_refusal_comes_before_saving_and_is_told_in_english_too() {
     apply(&mut state, UpdateAction::Run { save: true });
     assert!(state.modified, "保存していない変更は、そのまま");
     assert_eq!(
-        std::fs::metadata(dir.0.join("a.ylp")).unwrap().modified().unwrap(),
+        std::fs::metadata(dir.0.join("a.ylp"))
+            .unwrap()
+            .modified()
+            .unwrap(),
         before
     );
     assert!(state.dialog_request.is_none() && rig.launched().is_empty() && !state.quit);
@@ -1486,7 +1569,10 @@ fn the_ready_window_gives_the_reason_while_another_window_is_open() {
     }
     assert!(rig.launched().is_empty() && !h.state().state.quit);
     // 別の窓を閉じてからもう一度押すと入る
-    h.state_mut().state.update.set_other_instance_for_test(Arc::new(|| false));
+    h.state_mut()
+        .state
+        .update
+        .set_other_instance_for_test(Arc::new(|| false));
     click_label(&mut h, "更新して再起動");
     h.run();
     assert_eq!(rig.launched().len(), 1);
@@ -1713,10 +1799,18 @@ fn the_ready_window_keeps_the_unsaved_form_while_a_save_runs_and_launches_nothin
     }
     click_label(&mut h, "保存せずに更新");
     steps(&mut h, 6);
-    assert!(rig.launched().is_empty() && !h.state().state.quit, "{}", h.state().state.message);
+    assert!(
+        rig.launched().is_empty() && !h.state().state.quit,
+        "{}",
+        h.state().state.message
+    );
     click_label(&mut h, "保存して更新");
     steps(&mut h, 6);
-    assert!(rig.launched().is_empty() && !h.state().state.quit, "{}", h.state().state.message);
+    assert!(
+        rig.launched().is_empty() && !h.state().state.quit,
+        "{}",
+        h.state().state.message
+    );
     hold.release();
     h.state_mut().state.wait_save();
 }

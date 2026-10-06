@@ -137,7 +137,8 @@ fn redraw_one(
     material: i32,
     lang: Lang,
 ) -> Result<Option<String>, String> {
-    let rebound = rebind_surface_path(path, old, new, material).map_err(|e| rebind_error_text(lang, e))?;
+    let rebound =
+        rebind_surface_path(path, old, new, material).map_err(|e| rebind_error_text(lang, e))?;
     let options = Options {
         width: doc.width(),
         height: doc.height(),

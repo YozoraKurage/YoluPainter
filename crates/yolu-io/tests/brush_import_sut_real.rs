@@ -75,21 +75,34 @@ fn print_what_the_real_files_import_as() {
 fn the_real_folder_is_listed_and_peeked_and_left_alone() {
     use yolu_io::brushes::clipstudio::{peek, scan, Limits};
     let dir = std::path::PathBuf::from(
-        std::env::var("YOLU_REAL_SUT_DIR").expect("YOLU_REAL_SUT_DIR に .sut のあるフォルダを入れる"),
+        std::env::var("YOLU_REAL_SUT_DIR")
+            .expect("YOLU_REAL_SUT_DIR に .sut のあるフォルダを入れる"),
     );
     let state = |dir: &std::path::Path| -> Vec<(u64, Option<std::time::SystemTime>)> {
         let mut v: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .flatten()
-            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.metadata().unwrap()))
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    e.metadata().unwrap(),
+                )
+            })
             .collect();
         v.sort_by(|a, b| a.0.cmp(&b.0));
-        v.into_iter().map(|(_, m)| (m.len(), m.modified().ok())).collect()
+        v.into_iter()
+            .map(|(_, m)| (m.len(), m.modified().ok()))
+            .collect()
     };
     let before = state(&dir);
     let started = std::time::Instant::now();
     let found = scan(std::slice::from_ref(&dir), Limits::default());
-    println!("scan: {} files, missing={:?}, truncated={}", found.files.len(), found.missing, found.truncated);
+    println!(
+        "scan: {} files, missing={:?}, truncated={}",
+        found.files.len(),
+        found.missing,
+        found.truncated
+    );
     assert!(!found.files.is_empty());
     for (i, f) in found.files.iter().enumerate() {
         let t = std::time::Instant::now();
@@ -106,5 +119,9 @@ fn the_real_folder_is_listed_and_peeked_and_left_alone() {
         }
     }
     println!("total {} ms", started.elapsed().as_millis());
-    assert_eq!(state(&dir), before, "読んだだけで、更新時刻・大きさが変わらない");
+    assert_eq!(
+        state(&dir),
+        before,
+        "読んだだけで、更新時刻・大きさが変わらない"
+    );
 }

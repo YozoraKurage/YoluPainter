@@ -5,7 +5,9 @@
 //! 名前を付けて残した選択範囲（`sets/<ID>/selections.json` と中身。形式 8）も同じ流儀: 読み込みは `restore_saved_into`（読めない項目は
 //! 飛ばして理由を返し、ファイルには残る）、保存は `write_saved_into`（残した選択範囲を変えたセットだけ書き換える。使う文書だけが形式 8）。
 
-use yolu_io::saved_selections::{SavedSelection as StoredSaved, SavedSelections, SkipReason, Skipped};
+use yolu_io::saved_selections::{
+    SavedSelection as StoredSaved, SavedSelections, SkipReason, Skipped,
+};
 use yolu_io::{Project, Selection};
 
 use crate::engine::Document;
@@ -76,7 +78,11 @@ pub fn write_into(
 /// 文書の大きさを変えるセット（`sizes` はセットの ID と、新しい文書の幅・高さ・タイルの大きさ）の、古い大きさの今の選択範囲
 /// （`selection.bin`）を外したプロジェクト。新しい文書とは合わず、正本を書き直すときの検証が断るため。今の選択範囲は、このあと
 /// `write_into` が文書のものを書く。大きさが合うセットと選択範囲の無いセットには触れない。
-pub fn without_stale(project: &Project, sizes: &[(&str, (u32, u32, u32))], lang: Lang) -> Result<Project, String> {
+pub fn without_stale(
+    project: &Project,
+    sizes: &[(&str, (u32, u32, u32))],
+    lang: Lang,
+) -> Result<Project, String> {
     let mut project = project.clone();
     for (id, (w, h, ts)) in sizes {
         let stale = project
@@ -84,12 +90,17 @@ pub fn without_stale(project: &Project, sizes: &[(&str, (u32, u32, u32))], lang:
             .iter()
             .find(|s| s.id == *id)
             .and_then(|s| s.selection.as_ref())
-            .is_some_and(|s| (s.width(), s.height(), s.tile_size()) != (*w as i32, *h as i32, *ts as i32));
+            .is_some_and(|s| {
+                (s.width(), s.height(), s.tile_size()) != (*w as i32, *h as i32, *ts as i32)
+            });
         if stale {
             project = project.with_selection(id, None).map_err(|e| {
                 format!(
                     "{}: {}",
-                    lang.pick("古い選択範囲を外せません", "Cannot drop the outdated selection"),
+                    lang.pick(
+                        "古い選択範囲を外せません",
+                        "Cannot drop the outdated selection"
+                    ),
                     lang.io_error(&e)
                 )
             })?;
@@ -105,7 +116,9 @@ fn skip_text(lang: Lang, s: &Skipped) -> String {
         SkipReason::Item(_) => lang.pick("項目の形が正しくありません", "malformed item"),
         SkipReason::MissingContent => lang.pick("中身がありません", "content is missing"),
         SkipReason::UnreadableContent(_) => lang.pick("中身を読めません", "content cannot be read"),
-        SkipReason::WrongSize => lang.pick("文書と大きさが違います", "size differs from the document"),
+        SkipReason::WrongSize => {
+            lang.pick("文書と大きさが違います", "size differs from the document")
+        }
         SkipReason::DuplicateName => lang.pick("名前が重なっています", "duplicate name"),
         SkipReason::TooMany => lang.pick("数の上限を超えています", "over the limit"),
     };
@@ -117,12 +130,19 @@ fn skip_text(lang: Lang, s: &Skipped) -> String {
 
 /// 開いた .ylp のセットの、名前を付けて残した選択範囲を文書へ戻す（`Project::saved_selections` の結果）。読めた項目は戻し、飛ばした
 /// 項目は理由を返す（エントリはファイルにバイト列のまま残り、残した選択範囲を変えて保存するまで保たれる）。
-pub fn restore_saved_into(doc: &mut Document, read: SavedSelections, lang: Lang) -> Result<(), String> {
+pub fn restore_saved_into(
+    doc: &mut Document,
+    read: SavedSelections,
+    lang: Lang,
+) -> Result<(), String> {
     let mut skipped = read.skipped;
     let mut list = Vec::with_capacity(read.items.len());
     for item in read.items {
         match item.selection.to_core() {
-            Ok(mask) => list.push(yolu_core::SavedSelection { name: item.name, mask }),
+            Ok(mask) => list.push(yolu_core::SavedSelection {
+                name: item.name,
+                mask,
+            }),
             Err(_) => skipped.push(Skipped {
                 index: 0,
                 name: Some(item.name),
@@ -133,7 +153,10 @@ pub fn restore_saved_into(doc: &mut Document, read: SavedSelections, lang: Lang)
     let restored = doc.restore_saved_selections(list).map_err(|e| {
         format!(
             "{}: {}",
-            lang.pick("覚えた選択範囲を戻せません", "Cannot restore the remembered selections"),
+            lang.pick(
+                "覚えた選択範囲を戻せません",
+                "Cannot restore the remembered selections"
+            ),
             lang.core_error(&e)
         )
     });
@@ -144,8 +167,16 @@ pub fn restore_saved_into(doc: &mut Document, read: SavedSelections, lang: Lang)
     }
     let list: Vec<String> = skipped.iter().map(|s| skip_text(lang, s)).collect();
     Err(lang.pick(
-        format!("読めない覚えた選択範囲 {}（ファイルには残っています）: {}", skipped.len(), list.join("、")),
-        format!("Unreadable remembered selections: {} (kept in the file): {}", skipped.len(), list.join(", ")),
+        format!(
+            "読めない覚えた選択範囲 {}（ファイルには残っています）: {}",
+            skipped.len(),
+            list.join("、")
+        ),
+        format!(
+            "Unreadable remembered selections: {} (kept in the file): {}",
+            skipped.len(),
+            list.join(", ")
+        ),
     ))
 }
 
@@ -157,7 +188,11 @@ pub fn resized_sets(base: &Project, sizes: &[(&str, (u32, u32, u32))]) -> Vec<St
         .iter()
         .filter(|(id, (w, h, ts))| {
             base.sets().iter().find(|s| s.id == *id).is_some_and(|s| {
-                (s.document.width(), s.document.height(), s.document.tile_size()) != (*w as i32, *h as i32, *ts as i32)
+                (
+                    s.document.width(),
+                    s.document.height(),
+                    s.document.tile_size(),
+                ) != (*w as i32, *h as i32, *ts as i32)
             })
         })
         .map(|(id, _)| (*id).to_owned())
@@ -179,20 +214,35 @@ pub fn write_saved_into(
     let mut overwritten = Vec::new();
     for (id, list) in lists {
         let stored = project.saved_selections(id).map_err(|e| {
-            fail(lang.pick("覚えた選択範囲を読めません", "Cannot read the remembered selections"), lang.io_error(&e))
+            fail(
+                lang.pick(
+                    "覚えた選択範囲を読めません",
+                    "Cannot read the remembered selections",
+                ),
+                lang.io_error(&e),
+            )
         })?;
         let mut next = Vec::with_capacity(list.len());
         for s in *list {
             let selection = Selection::from_core(&s.mask).map_err(|e| {
                 fail(
-                    lang.pick("覚えた選択範囲を文書にできません", "Cannot turn the remembered selections into the document"),
+                    lang.pick(
+                        "覚えた選択範囲を文書にできません",
+                        "Cannot turn the remembered selections into the document",
+                    ),
                     lang.io_error(&e),
                 )
             })?;
-            next.push(StoredSaved { name: s.name.clone(), selection });
+            next.push(StoredSaved {
+                name: s.name.clone(),
+                selection,
+            });
         }
         let outdated = resized.iter().any(|r| r == id)
-            && stored.skipped.iter().any(|s| matches!(s.reason, SkipReason::WrongSize));
+            && stored
+                .skipped
+                .iter()
+                .any(|s| matches!(s.reason, SkipReason::WrongSize));
         if next == stored.items && !outdated {
             continue;
         }
@@ -204,7 +254,13 @@ pub fn write_saved_into(
             overwritten.push((*id).to_owned());
         }
         project = project.with_saved_selections(id, &next).map_err(|e| {
-            fail(lang.pick("覚えた選択範囲を書けません", "Cannot write the remembered selections"), lang.io_error(&e))
+            fail(
+                lang.pick(
+                    "覚えた選択範囲を書けません",
+                    "Cannot write the remembered selections",
+                ),
+                lang.io_error(&e),
+            )
         })?;
     }
     Ok((project, overwritten))

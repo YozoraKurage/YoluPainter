@@ -35,6 +35,11 @@ pub fn replace_line(path: &Path, key: &str, line: &str) {
             }
         })
         .collect();
-    assert_eq!(found, 1, "{} に鍵 {key} の行が 1 つではない", path.display());
+    assert_eq!(
+        found,
+        1,
+        "{} に鍵 {key} の行が 1 つではない",
+        path.display()
+    );
     std::fs::write(path, lines.join("\n") + "\n").unwrap();
 }

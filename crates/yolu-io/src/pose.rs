@@ -80,7 +80,9 @@ impl StoredPose {
 
 /// 名前（骨・メッシュ・BlendShape）が決まりに合うか（1〜上限の文字数、制御文字なし）。
 pub fn name_ok(name: &str) -> bool {
-    !name.is_empty() && name.chars().count() <= MAX_NAME_CHARS && !name.chars().any(char::is_control)
+    !name.is_empty()
+        && name.chars().count() <= MAX_NAME_CHARS
+        && !name.chars().any(char::is_control)
 }
 
 /// 決まりを確かめる（読むときも書くときも同じ。回転は読んだあとの正規化は呼ばない）。
@@ -93,7 +95,9 @@ fn validate(pose: &StoredPose) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for b in &pose.bones {
         check(
-            !b.path.is_empty() && b.path.len() <= MAX_PATH_DEPTH && b.path.iter().all(|n| name_ok(n)),
+            !b.path.is_empty()
+                && b.path.len() <= MAX_PATH_DEPTH
+                && b.path.iter().all(|n| name_ok(n)),
             "ポーズの骨の名前の道が不正です",
         )?;
         check(
@@ -118,7 +122,10 @@ fn validate(pose: &StoredPose) -> Result<()> {
         )?;
         check(
             seen.insert((s.mesh.clone(), s.name.clone())),
-            format!("ポーズの BlendShape が重なっています: {}/{}", s.mesh, s.name),
+            format!(
+                "ポーズの BlendShape が重なっています: {}/{}",
+                s.mesh, s.name
+            ),
         )?;
         check(
             s.weight.is_finite() && s.weight.abs() <= MAX_WEIGHT,
@@ -130,25 +137,27 @@ fn validate(pose: &StoredPose) -> Result<()> {
 
 /// 数 `n` 個の配列を読む。
 fn floats<const N: usize>(v: &Value, what: &str) -> Result<[f32; N]> {
-    let list = v
-        .as_array()
-        .filter(|a| a.len() == N)
-        .ok_or_else(|| crate::Error::InvalidData(format!("pose.json の {what} が {N} 個の数ではありません")))?;
+    let list = v.as_array().filter(|a| a.len() == N).ok_or_else(|| {
+        crate::Error::InvalidData(format!("pose.json の {what} が {N} 個の数ではありません"))
+    })?;
     let mut out = [0f32; N];
     for (slot, x) in out.iter_mut().zip(list) {
-        let x = x
-            .as_f64()
-            .ok_or_else(|| crate::Error::InvalidData(format!("pose.json の {what} に数でない値があります")))?;
-        check(x.is_finite() && x.abs() <= f64::from(f32::MAX), format!("pose.json の {what} が範囲外です"))?;
+        let x = x.as_f64().ok_or_else(|| {
+            crate::Error::InvalidData(format!("pose.json の {what} に数でない値があります"))
+        })?;
+        check(
+            x.is_finite() && x.abs() <= f64::from(f32::MAX),
+            format!("pose.json の {what} が範囲外です"),
+        )?;
         *slot = x as f32;
     }
     Ok(out)
 }
 
 fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
-    v.get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| crate::Error::InvalidData(format!("pose.json の {key} が文字列ではありません")))
+    v.get(key).and_then(Value::as_str).ok_or_else(|| {
+        crate::Error::InvalidData(format!("pose.json の {key} が文字列ではありません"))
+    })
 }
 
 /// 読む（形の違い・新しい版・範囲外・重なり・上限超えは断る。回転は読んだあとに長さを 1 に直す）。
@@ -164,7 +173,9 @@ pub fn read(bytes: &[u8]) -> Result<StoredPose> {
         match root.get(key) {
             None | Some(Value::Null) => Ok(Vec::new()),
             Some(Value::Array(a)) => Ok(a.clone()),
-            Some(_) => Err(crate::Error::InvalidData(format!("pose.json の {key} が配列ではありません"))),
+            Some(_) => Err(crate::Error::InvalidData(format!(
+                "pose.json の {key} が配列ではありません"
+            ))),
         }
     };
     let (bones, shapes) = (array("bones")?, array("shapes")?);
@@ -178,12 +189,16 @@ pub fn read(bytes: &[u8]) -> Result<StoredPose> {
         let path = b
             .get("path")
             .and_then(Value::as_array)
-            .ok_or_else(|| crate::Error::InvalidData("pose.json の path が配列ではありません".into()))?
+            .ok_or_else(|| {
+                crate::Error::InvalidData("pose.json の path が配列ではありません".into())
+            })?
             .iter()
             .map(|n| {
-                n.as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| crate::Error::InvalidData("pose.json の path に文字列でない名前があります".into()))
+                n.as_str().map(str::to_owned).ok_or_else(|| {
+                    crate::Error::InvalidData(
+                        "pose.json の path に文字列でない名前があります".into(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         pose.bones.push(StoredBone {
@@ -194,7 +209,10 @@ pub fn read(bytes: &[u8]) -> Result<StoredPose> {
         });
     }
     for s in &shapes {
-        let [weight] = floats::<1>(&serde_json::json!([s.get("weight").cloned().unwrap_or(Value::Null)]), "weight")?;
+        let [weight] = floats::<1>(
+            &serde_json::json!([s.get("weight").cloned().unwrap_or(Value::Null)]),
+            "weight",
+        )?;
         pose.shapes.push(StoredShape {
             mesh: text(s, "mesh")?.to_owned(),
             name: text(s, "name")?.to_owned(),
@@ -230,7 +248,10 @@ fn number(x: f32) -> String {
 }
 
 fn array<const N: usize>(v: &[f32; N]) -> String {
-    format!("[{}]", v.iter().map(|x| number(*x)).collect::<Vec<_>>().join(","))
+    format!(
+        "[{}]",
+        v.iter().map(|x| number(*x)).collect::<Vec<_>>().join(",")
+    )
 }
 
 /// 書く（決まりに合わなければ断る）。同じポーズはいつも同じバイト列になる。

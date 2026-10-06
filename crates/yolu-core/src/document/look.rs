@@ -75,7 +75,9 @@ impl Document {
     pub fn restore_look(&mut self, look: MaterialLook) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
-            return Err(CoreError::Unsupported("見た目の設定の復元は読み込み直後だけ"));
+            return Err(CoreError::Unsupported(
+                "見た目の設定の復元は読み込み直後だけ",
+            ));
         }
         look.validate()?;
         self.look = Arc::new(look);
@@ -132,7 +134,10 @@ mod tests {
         doc.undo().unwrap();
         assert_eq!(doc.look().float("_ShadowBorder", 0.5), 0.3);
         doc.undo().unwrap();
-        assert!(doc.look().is_default(), "まとめた段の前（最初の変更の前）へ戻る");
+        assert!(
+            doc.look().is_default(),
+            "まとめた段の前（最初の変更の前）へ戻る"
+        );
         // Escape で止めたドラッグは段ごと捨てる
         doc.set_look(lil(0.7), true).unwrap();
         doc.set_look(lil(0.8), true).unwrap();
@@ -181,8 +186,10 @@ mod tests {
                 default: Rgba8::new(255, 255, 255, 255),
             })?;
             let mut look = d.look().clone();
-            look.textures
-                .insert("_ShadowStrengthMask".into(), TextureSource::Channel(channel));
+            look.textures.insert(
+                "_ShadowStrengthMask".into(),
+                TextureSource::Channel(channel),
+            );
             d.set_look(look, false)
         })
         .unwrap();
@@ -196,8 +203,10 @@ mod tests {
     fn received(border: f32) -> crate::look::ReceivedLook {
         let mut look = lil(border);
         look.shader = "Hidden/lilToonTransparent".into();
-        look.properties
-            .insert("_ShadowColor".into(), LookValue::Color([0.1, 0.2, 0.3, 1.0]));
+        look.properties.insert(
+            "_ShadowColor".into(),
+            LookValue::Color([0.1, 0.2, 0.3, 1.0]),
+        );
         look.textures
             .insert("_MainTex".into(), TextureSource::Channel(Channel::Color));
         crate::look::ReceivedLook {
@@ -213,7 +222,11 @@ mod tests {
         let (revision, serial) = (doc.revision(), doc.look_serial());
         assert!(doc.set_received_look(Some(received(0.2))).unwrap());
         assert_eq!(doc.undo_count(), 0, "受け取りは Undo に入らない");
-        assert_eq!(doc.revision(), revision, "版も進めない（保存の鍵を変えない）");
+        assert_eq!(
+            doc.revision(),
+            revision,
+            "版も進めない（保存の鍵を変えない）"
+        );
         assert!(doc.look_serial() > serial, "描き直しの鍵は進む");
         // 利用者の設定は既定のまま、描く見た目は受けた値（描き方も lilToon）
         assert!(doc.look().is_default());
@@ -269,7 +282,10 @@ mod tests {
         mine.keywords = vec!["A".into()];
         doc.set_look(mine, false).unwrap();
         let drawn = doc.drawn_look();
-        assert_eq!((drawn.kind, drawn.shader.as_str()), (LookKind::LilToon, "lilToon"));
+        assert_eq!(
+            (drawn.kind, drawn.shader.as_str()),
+            (LookKind::LilToon, "lilToon")
+        );
         assert_eq!(drawn.keywords, vec!["A".to_owned()]);
         // 受けたスロットのチャンネルは利用者のスロットと合わさる
         assert_eq!(

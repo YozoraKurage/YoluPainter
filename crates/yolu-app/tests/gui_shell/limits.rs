@@ -96,13 +96,19 @@ fn a_psd_wider_than_the_ylp_limit_is_refused_with_its_reason_and_nothing_changes
         assert_eq!((s.doc.width(), s.doc.height()), (64, 64));
         let text = report_text(&s);
         assert!(text.contains("8193") && text.contains("8192"), "{text}");
-        assert!(!text.contains("予算"), "予算を上げても取り込めない理由: {text}");
+        assert!(
+            !text.contains("予算"),
+            "予算を上げても取り込めない理由: {text}"
+        );
         s.psd.report = None;
     }
     s.lang = Lang::En;
     import(&mut s, &path, PsdTarget::NewSet);
     let text = report_text(&s);
-    assert!(text.contains("limit 8192") && !text.chars().any(|c| c > '\u{2000}'), "{text}");
+    assert!(
+        text.contains("limit 8192") && !text.chars().any(|c| c > '\u{2000}'),
+        "{text}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -160,7 +166,11 @@ fn a_psd_read_while_the_sets_filled_up_is_not_installed() {
 fn a_live_link_model_with_more_materials_than_a_project_holds_gets_sets_up_to_the_limit() {
     let mut s = AppState::new(64, 64);
     let (report, _) = s.receive_link_model(&model_with(MAX_SETS + 1), 1);
-    assert_eq!(s.sets.len(), MAX_SETS, "65 個目のマテリアルにはセットを作らない");
+    assert_eq!(
+        s.sets.len(),
+        MAX_SETS,
+        "65 個目のマテリアルにはセットを作らない"
+    );
     // 最初のセットがマテリアルに付き、残りの 63 を作る。足りない 1 つを数で知らせる
     assert_eq!(report.created.len(), MAX_SETS - 1);
     assert_eq!(report.skipped, 1);
@@ -199,7 +209,14 @@ fn zoom_after_keys(setup: bool) -> f32 {
         ui.label("x");
     });
     h.run();
-    for key in [Key::Minus, Key::Minus, Key::Equals, Key::Plus, Key::Num0, Key::Minus] {
+    for key in [
+        Key::Minus,
+        Key::Minus,
+        Key::Equals,
+        Key::Plus,
+        Key::Num0,
+        Key::Minus,
+    ] {
         h.key_press_modifiers(Modifiers::COMMAND, key);
         h.run();
     }
@@ -238,7 +255,10 @@ fn about_names_the_product_and_the_version_and_nothing_else() {
 fn the_save_notice_names_the_file_and_the_writer_is_the_product_name() {
     let dir = temp_dir("limits-save");
     let path = dir.join("作品.ylp");
-    for (lang, text) in [(Lang::Ja, "保存しました: 作品.ylp。"), (Lang::En, "Saved: 作品.ylp.")] {
+    for (lang, text) in [
+        (Lang::Ja, "保存しました: 作品.ylp。"),
+        (Lang::En, "Saved: 作品.ylp."),
+    ] {
         let mut s = AppState::new_in(64, 64, lang);
         s.apply(Action::SaveProjectAs(path.clone()));
         assert_eq!(s.message, text, "形式・セットの数・書き直した数は出さない");
@@ -249,7 +269,10 @@ fn the_save_notice_names_the_file_and_the_writer_is_the_product_name() {
     s.apply(Action::SaveProjectAs(path.clone()));
     let saved = yolu_io::SaveTarget::open(&path).unwrap().0;
     let by = saved.info().saved_by.clone().unwrap();
-    assert_eq!((by.app.as_str(), by.unity.as_str()), ("YoluPainter", "standalone"));
+    assert_eq!(
+        (by.app.as_str(), by.unity.as_str()),
+        ("YoluPainter", "standalone")
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -263,10 +286,16 @@ fn the_view_menu_has_no_test_cube_or_test_figure() {
         for e in &entries {
             if let Entry::Item { action, label, .. } = e {
                 assert!(
-                    !matches!(action, Action::LoadDemoModel | Action::Pose(PoseAction::LoadFigure)),
+                    !matches!(
+                        action,
+                        Action::LoadDemoModel | Action::Pose(PoseAction::LoadFigure)
+                    ),
                     "{label}"
                 );
-                assert!(!label.contains("試し") && !label.contains("Test"), "{label}");
+                assert!(
+                    !label.contains("試し") && !label.contains("Test"),
+                    "{label}"
+                );
             }
         }
     }

@@ -86,7 +86,10 @@ enum State {
     /// まだ core の文書にしていない。
     Unloaded,
     /// core の文書。`saved` は開いた・保存したときの（文書の ID, 変更番号）。
-    Loaded { doc: Box<Document>, saved: (u128, u64) },
+    Loaded {
+        doc: Box<Document>,
+        saved: (u128, u64),
+    },
     /// core で扱えない中身があるので、読むだけ。
     ReadOnly(Text),
 }
@@ -106,7 +109,11 @@ impl FileHost {
         Self::with_config(policy, FileHostConfig::default())
     }
     pub fn with_config(policy: PathPolicy, config: FileHostConfig) -> Self {
-        FileHost { policy, config, open: None }
+        FileHost {
+            policy,
+            config,
+            open: None,
+        }
     }
     /// .ylp を開いたホスト（作業のフォルダは今のフォルダ）。
     pub fn open_file(path: impl AsRef<Path>) -> Result<Self, OpError> {
@@ -121,7 +128,9 @@ impl FileHost {
     }
     /// 保存していない変更があるか。
     pub fn has_unsaved_changes(&self) -> bool {
-        self.open.as_ref().is_some_and(|o| o.sets.iter().any(Slot::unsaved))
+        self.open
+            .as_ref()
+            .is_some_and(|o| o.sets.iter().any(Slot::unsaved))
     }
     /// セットの文書を、変えずに読む（試験・呼び手の確認用）。読むだけのセットは断る。
     pub fn with_document<R>(
@@ -190,12 +199,19 @@ impl Opened {
                 } else {
                     State::ReadOnly(unsupported_text(&issues))
                 };
-                Slot { id: set.id.clone(), name: set.name.clone(), state }
+                Slot {
+                    id: set.id.clone(),
+                    name: set.name.clone(),
+                    state,
+                }
             })
             .collect();
         Opened {
             path: path.to_path_buf(),
-            stem: path.file_stem().map_or_else(|| "Texture".to_owned(), |s| s.to_string_lossy().into_owned()),
+            stem: path.file_stem().map_or_else(
+                || "Texture".to_owned(),
+                |s| s.to_string_lossy().into_owned(),
+            ),
             target,
             current: project.current_set().to_owned(),
             project,
@@ -206,7 +222,11 @@ impl Opened {
 
     /// セットを ID か名前で引く（省略は今のセット）。
     fn resolve_set(&self, set: Option<&str>) -> Result<usize, OpError> {
-        let sets: Vec<(&str, &str)> = self.sets.iter().map(|s| (s.id.as_str(), s.name.as_str())).collect();
+        let sets: Vec<(&str, &str)> = self
+            .sets
+            .iter()
+            .map(|s| (s.id.as_str(), s.name.as_str()))
+            .collect();
         crate::refs::resolve_set(&sets, set, &self.current)
     }
 
@@ -223,25 +243,33 @@ impl Opened {
             .find(|s| s.id == id)
             .ok_or_else(|| internal("セットがファイルにありません"))?;
         // 途中の panic は、断りの理由にする（画面なしでも、読む途中で止めない）
-        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| set.document.to_core_within(Some(budget))))
-            .map_err(|_| {
-                OpError::new(
-                    ErrorCode::Internal,
-                    "文書を読む途中で止まりました",
-                    "Reading the document stopped unexpectedly",
-                )
-            })?;
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            set.document.to_core_within(Some(budget))
+        }))
+        .map_err(|_| {
+            OpError::new(
+                ErrorCode::Internal,
+                "文書を読む途中で止まりました",
+                "Reading the document stopped unexpectedly",
+            )
+        })?;
         let mut doc = loaded.map_err(|e| OpError::from_io(&e))?;
         self.give_images(&mut doc);
         let saved = (doc.id(), doc.revision());
-        self.sets[index].state = State::Loaded { doc: Box::new(doc), saved };
+        self.sets[index].state = State::Loaded {
+            doc: Box::new(doc),
+            saved,
+        };
         Ok(())
     }
 
     /// 塗りつぶしの画像が指すプロジェクトの画像を、効果の入力として文書へ渡す。モデルはここには無いので、位置を読む効果は入力のまま通す。
     fn give_images(&mut self, doc: &mut Document) {
-        let wanted: HashSet<ImageId> =
-            doc.layers().iter().flat_map(|l| l.fill_images().map(|(_, id)| id)).collect();
+        let wanted: HashSet<ImageId> = doc
+            .layers()
+            .iter()
+            .flat_map(|l| l.fill_images().map(|(_, id)| id))
+            .collect();
         if wanted.is_empty() {
             return;
         }
@@ -271,22 +299,40 @@ pub fn newer_version_note(set_name: &str, version: i32) -> Option<Text> {
 }
 
 fn unsupported_text(issues: &[String]) -> Text {
-    let shown = issues.iter().take(3).cloned().collect::<Vec<_>>().join("、");
-    let more = if issues.len() > 3 { format!(" ほか {} 件", issues.len() - 3) } else { String::new() };
+    let shown = issues
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("、");
+    let more = if issues.len() > 3 {
+        format!(" ほか {} 件", issues.len() - 3)
+    } else {
+        String::new()
+    };
     Text::new(
         format!("編集できない中身があります: {shown}{more}"),
-        format!("It holds content that cannot be edited yet ({} item(s))", issues.len()),
+        format!(
+            "It holds content that cannot be edited yet ({} item(s))",
+            issues.len()
+        ),
     )
 }
 
 fn note_text(note: &yolu_io::Note) -> Text {
     use yolu_io::Note as N;
     let en = match note {
-        N::ViewSlotUnreadable(_) => "The material slot in view.json could not be read; slot 0 is used".to_owned(),
+        N::ViewSlotUnreadable(_) => {
+            "The material slot in view.json could not be read; slot 0 is used".to_owned()
+        }
         N::Migrated { format } => format!("Format {format} was migrated to format 7 in memory"),
-        N::MaterialRefsMigrated { format } => format!("The material references of format {format} were migrated to format 7 in memory"),
+        N::MaterialRefsMigrated { format } => format!(
+            "The material references of format {format} were migrated to format 7 in memory"
+        ),
         N::UnknownEntryKept(name) => format!("An unknown entry is kept as it is: {name}"),
-        N::SetNotConvertible { set, .. } => format!("Texture set \"{set}\" cannot be converted for editing"),
+        N::SetNotConvertible { set, .. } => {
+            format!("Texture set \"{set}\" cannot be converted for editing")
+        }
         N::SmartResourceKept(name) => format!("The smart resource \"{name}\" is kept as a file"),
         N::BrushKept => "Brush settings and images are kept as they are".to_owned(),
     };
@@ -294,18 +340,29 @@ fn note_text(note: &yolu_io::Note) -> Text {
 }
 
 fn summary(project: &Project, slot: &Slot) -> SetSummary {
-    let (width, height, layers) = project
-        .sets()
-        .iter()
-        .find(|s| s.id == slot.id)
-        .map_or((0, 0, 0), |s| (s.document.width(), s.document.height(), s.document.layer_count()));
+    let (width, height, layers) =
+        project
+            .sets()
+            .iter()
+            .find(|s| s.id == slot.id)
+            .map_or((0, 0, 0), |s| {
+                (
+                    s.document.width(),
+                    s.document.height(),
+                    s.document.layer_count(),
+                )
+            });
     SetSummary {
         id: slot.id.clone(),
         name: slot.name.clone(),
         width: width.max(0) as u32,
         height: height.max(0) as u32,
         layer_count: layers as u32,
-        state: if matches!(slot.state, State::ReadOnly(_)) { SetState::ReadOnly } else { SetState::Editable },
+        state: if matches!(slot.state, State::ReadOnly(_)) {
+            SetState::ReadOnly
+        } else {
+            SetState::Editable
+        },
         reason: match &slot.state {
             State::ReadOnly(reason) => Some(reason.clone()),
             _ => None,
@@ -350,15 +407,20 @@ impl OpHost for FileHost {
 
     fn open(&mut self, path: &Path, confirm: bool) -> Result<DocInfo, OpError> {
         if let Some(o) = &self.open {
-            let unsaved: Vec<String> = o.sets.iter().filter(|s| s.unsaved()).map(|s| s.name.clone()).collect();
+            let unsaved: Vec<String> = o
+                .sets
+                .iter()
+                .filter(|s| s.unsaved())
+                .map(|s| s.name.clone())
+                .collect();
             if !unsaved.is_empty() && !confirm {
                 return Err(confirm_unsaved(&unsaved));
             }
         }
         // 絶対パスで覚える（あとの保存先との同じファイルの判定が、書き方に依らないように）
         let path = std::path::absolute(path).map_err(|e| OpError::from_io(&e.into()))?;
-        let (project, target) =
-            SaveTarget::open_within(&path, &self.config.limits).map_err(|e| OpError::from_io(&e))?;
+        let (project, target) = SaveTarget::open_within(&path, &self.config.limits)
+            .map_err(|e| OpError::from_io(&e))?;
         let opened = Opened::from_project(&path, project, target);
         let info = doc_info_of(&opened);
         self.open = Some(opened);
@@ -375,12 +437,18 @@ impl OpHost for FileHost {
         let index = o.resolve_set(set)?;
         o.ensure_loaded(index, budget)?;
         let slot = &o.sets[index];
-        let (width, height, layers) = o
-            .project
-            .sets()
-            .iter()
-            .find(|s| s.id == slot.id)
-            .map_or((0, 0, 0), |s| (s.document.width(), s.document.height(), s.document.layer_count()));
+        let (width, height, layers) =
+            o.project
+                .sets()
+                .iter()
+                .find(|s| s.id == slot.id)
+                .map_or((0, 0, 0), |s| {
+                    (
+                        s.document.width(),
+                        s.document.height(),
+                        s.document.layer_count(),
+                    )
+                });
         let (doc, read_only) = match &slot.state {
             State::Loaded { doc, .. } => (Some(&**doc), None),
             State::ReadOnly(reason) => (None, Some(reason)),
@@ -414,7 +482,11 @@ impl OpHost for FileHost {
         }
         o.ensure_loaded(index, budget)?;
         let slot = &mut o.sets[index];
-        let facts = SetFacts { id: &slot.id, name: &slot.name, unsaved: true };
+        let facts = SetFacts {
+            id: &slot.id,
+            name: &slot.name,
+            unsaved: true,
+        };
         match &mut slot.state {
             State::Loaded { doc, .. } => f(facts, doc),
             _ => Err(internal("セットを読み込めていません")),
@@ -430,7 +502,9 @@ impl OpHost for FileHost {
             SaveJob::As { path, confirm } => (Some(path.as_path()), *confirm),
         };
         let requested = destination.unwrap_or(&o.path).to_path_buf();
-        let is_ylp = requested.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp"));
+        let is_ylp = requested
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ylp"));
         if !is_ylp {
             return Err(OpError::ylp_name_required(&requested.display().to_string()));
         }
@@ -439,7 +513,9 @@ impl OpHost for FileHost {
         let target_path = if same_file { o.path.clone() } else { requested };
         let exists = std::fs::symlink_metadata(&target_path).is_ok();
         if exists && !confirm {
-            return Err(OpError::replace_confirm_required(&[target_path.display().to_string()]));
+            return Err(OpError::replace_confirm_required(&[target_path
+                .display()
+                .to_string()]));
         }
         let dirty: Vec<usize> = (0..o.sets.len()).filter(|i| o.sets[*i].unsaved()).collect();
         if same_file && dirty.is_empty() {
@@ -457,7 +533,9 @@ impl OpHost for FileHost {
         let mut target = if same_file {
             o.target.clone()
         } else if exists {
-            SaveTarget::open_within(&target_path, &limits).map(|(_, t)| t).map_err(|e| OpError::from_io(&e))?
+            SaveTarget::open_within(&target_path, &limits)
+                .map(|(_, t)| t)
+                .map_err(|e| OpError::from_io(&e))?
         } else {
             SaveTarget::create(&target_path).map_err(|e| OpError::from_io(&e))?
         };
@@ -467,7 +545,10 @@ impl OpHost for FileHost {
         let upgraded;
         let base: &Project = match upgraded_from {
             Some(_) => {
-                upgraded = o.project.upgraded(writer.clone()).map_err(|e| OpError::from_io(&e))?;
+                upgraded = o
+                    .project
+                    .upgraded(writer.clone())
+                    .map_err(|e| OpError::from_io(&e))?;
                 &upgraded
             }
             None => &o.project,
@@ -484,8 +565,10 @@ impl OpHost for FileHost {
                 .ok_or_else(|| internal("セットがファイルにありません"))?;
             let (document, composites) = match (&slot.state, dirty.contains(&i)) {
                 (State::Loaded { doc, .. }, true) => {
-                    let snapshot = Arc::new(doc.capture_snapshot().map_err(|e| OpError::from_core(&e))?);
-                    let source = DocumentSource::from_core(snapshot.clone()).map_err(|e| OpError::from_io(&e))?;
+                    let snapshot =
+                        Arc::new(doc.capture_snapshot().map_err(|e| OpError::from_core(&e))?);
+                    let source = DocumentSource::from_core(snapshot.clone())
+                        .map_err(|e| OpError::from_io(&e))?;
                     let pngs = composite_pngs(&snapshot).map_err(|e| OpError::from_io(&e))?;
                     let inactive = inactive_texts(doc);
                     if !inactive.is_empty() {
@@ -500,16 +583,26 @@ impl OpHost for FileHost {
                 }
                 _ => (None, Vec::new()),
             };
-            specs.push(SetSpec { id: slot.id.clone(), name: slot.name.clone(), material, document, composites });
+            specs.push(SetSpec {
+                id: slot.id.clone(),
+                name: slot.name.clone(),
+                material,
+                document,
+                composites,
+            });
         }
         let project = base
             .with_sets(writer, &specs, &o.current)
             .map_err(|e| OpError::from_io(&e))?;
-        let report = target.save_with(&project, keep).map_err(|e| OpError::from_io(&e))?;
+        let report = target
+            .save_with(&project, keep)
+            .map_err(|e| OpError::from_io(&e))?;
         // 確定した: 開いているプロジェクトを書いたファイルへ向け、編集したセットは保存済みにする
         o.project = report.project.unwrap_or(project);
         o.target = target;
-        o.stem = target_path.file_stem().map_or_else(|| o.stem.clone(), |s| s.to_string_lossy().into_owned());
+        o.stem = target_path
+            .file_stem()
+            .map_or_else(|| o.stem.clone(), |s| s.to_string_lossy().into_owned());
         o.path = target_path;
         for slot in &mut o.sets {
             if let State::Loaded { doc, saved } = &mut slot.state {
@@ -518,8 +611,17 @@ impl OpHost for FileHost {
         }
         // Unity 版（0.2.0）が開けない版で書いたセットを知らせる（Rust 版だけの効果・調整を使うと、新しい版で保存される）
         for id in &written_ids {
-            let version = o.project.sets().iter().find(|s| s.id == *id).map_or(0, |s| s.document.version());
-            let name = o.sets.iter().find(|s| s.id == *id).map_or("", |s| s.name.as_str());
+            let version = o
+                .project
+                .sets()
+                .iter()
+                .find(|s| s.id == *id)
+                .map_or(0, |s| s.document.version());
+            let name = o
+                .sets
+                .iter()
+                .find(|s| s.id == *id)
+                .map_or("", |s| s.name.as_str());
             notes.extend(newer_version_note(name, version));
         }
         Ok(Reply::Saved(Saved {
@@ -545,12 +647,18 @@ mod tests {
             SetSpec {
                 id: id.into(),
                 name: name.into(),
-                material: MaterialRef::Material { name: name.into(), asset: None },
+                material: MaterialRef::Material {
+                    name: name.into(),
+                    asset: None,
+                },
                 composites: composite_pngs(&doc).unwrap(),
                 document: Some(DocumentSource::from_core(Arc::new(doc)).unwrap()),
             }
         };
-        let (a, b) = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222");
+        let (a, b) = (
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        );
         let project = Project::create(writer(), &[spec(a, "First"), spec(b, "Second")], a).unwrap();
         let path = dir.join("x.ylp");
         let target = SaveTarget::create(&path).unwrap();
@@ -577,7 +685,12 @@ mod tests {
             ])
         );
         // ID なら引ける
-        assert_eq!(opened.resolve_set(Some("22222222-2222-4222-8222-222222222222")).unwrap(), 1);
+        assert_eq!(
+            opened
+                .resolve_set(Some("22222222-2222-4222-8222-222222222222"))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -589,13 +702,25 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         std::fs::write(dir.join("b.ylp"), b"x").unwrap();
         assert!(is_same_file(&file, &file));
-        assert!(is_same_file(&dir.join("sub").join("..").join("a.ylp"), &file));
+        assert!(is_same_file(
+            &dir.join("sub").join("..").join("a.ylp"),
+            &file
+        ));
         assert!(is_same_file(&file, &dir.join(".").join("a.ylp")));
-        assert!(!is_same_file(&dir.join("b.ylp"), &file), "中身が同じでも別のファイル");
+        assert!(
+            !is_same_file(&dir.join("b.ylp"), &file),
+            "中身が同じでも別のファイル"
+        );
         assert!(!is_same_file(&dir.join("c.ylp"), &file), "まだ無いファイル");
         // まだ無いファイルどうしも、上のフォルダの書き方の違いは畳む
-        assert!(is_same_file(&dir.join("sub").join("..").join("gone.ylp"), &dir.join("gone.ylp")));
-        assert!(!is_same_file(&dir.join("sub").join("gone.ylp"), &dir.join("gone.ylp")));
+        assert!(is_same_file(
+            &dir.join("sub").join("..").join("gone.ylp"),
+            &dir.join("gone.ylp")
+        ));
+        assert!(!is_same_file(
+            &dir.join("sub").join("gone.ylp"),
+            &dir.join("gone.ylp")
+        ));
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&dir, dir.join("dirlink")).unwrap();
@@ -606,7 +731,10 @@ mod tests {
             assert!(is_same_file(&dir.join("hard.ylp"), &file));
         }
         #[cfg(windows)]
-        assert!(is_same_file(&PathBuf::from(file.to_string_lossy().to_uppercase()), &file));
+        assert!(is_same_file(
+            &PathBuf::from(file.to_string_lossy().to_uppercase()),
+            &file
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

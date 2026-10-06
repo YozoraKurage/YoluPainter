@@ -3,9 +3,7 @@
 //! 説明はツールチップに置く。
 
 use egui::Vec2;
-use yolu_io::psd::{
-    CopyRefusal, ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked,
-};
+use yolu_io::psd::{CopyRefusal, ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked};
 
 use crate::lang::Lang;
 use crate::psd::PsdAction;
@@ -203,7 +201,9 @@ fn adjustment_name(lang: Lang, key: &str) -> String {
         "brit" | "CgEd" => K::BrightnessContrast.name(lang).into(),
         "thrs" => K::Threshold.name(lang).into(),
         "post" => K::Posterize.name(lang).into(),
-        "hue " => lang.pick("色相・彩度（旧式）", "Hue/saturation (legacy)").into(),
+        "hue " => lang
+            .pick("色相・彩度（旧式）", "Hue/saturation (legacy)")
+            .into(),
         "selc" => lang.pick("特定色域の選択", "Selective color").into(),
         "mixr" => lang.pick("チャンネルミキサー", "Channel mixer").into(),
         "phfl" => lang.pick("フォトフィルター", "Photo filter").into(),
@@ -219,7 +219,9 @@ fn adjustment_name(lang: Lang, key: &str) -> String {
 fn blend_name(lang: Lang, key: &str) -> String {
     match key {
         "diss" => lang.pick("ディゾルブ", "Dissolve").into(),
-        "pass" => lang.pick("通過（グループ以外）", "Pass through (non-group)").into(),
+        "pass" => lang
+            .pick("通過（グループ以外）", "Pass through (non-group)")
+            .into(),
         _ => lang.pick("その他", "Other").into(),
     }
 }
@@ -242,7 +244,10 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             format!("文書のタグ {} 件", note.count),
             format!("Document tags: {}", note.count),
         ),
-        F::ExtraChannel => plain("統合画像の追加チャンネル", "Extra channel in the merged image"),
+        F::ExtraChannel => plain(
+            "統合画像の追加チャンネル",
+            "Extra channel in the merged image",
+        ),
         F::LayerInfoTail => plain("レイヤー情報の余り", "Trailing layer data"),
         F::CompositeDiffers {
             max_diff,
@@ -284,10 +289,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             "クリップした層のグループ合成",
             "Blend clipped layers as group",
         ),
-        F::InteriorBlend => plain(
-            "内部効果のグループ合成",
-            "Blend interior effects as group",
-        ),
+        F::InteriorBlend => plain("内部効果のグループ合成", "Blend interior effects as group"),
         F::Knockout => plain("ノックアウト", "Knockout"),
         F::TransparencyShapes => plain("透明部分が形を決める設定", "Transparency shapes layer"),
         F::ChannelRestrictions => plain("チャンネルの合成制限", "Channel restrictions"),
@@ -473,7 +475,11 @@ pub fn refusal_text(lang: Lang, why: &CopyRefusal) -> String {
             format!("「{layer}」の付加情報が大きすぎます"),
             format!("\"{layer}\" has too much extra data"),
         ),
-        CopyRefusal::EdgeOverLimit { width, height, limit } => lang.pick(
+        CopyRefusal::EdgeOverLimit {
+            width,
+            height,
+            limit,
+        } => lang.pick(
             format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
             format!("Canvas too large ({width}×{height}; limit {limit})"),
         ),
@@ -583,14 +589,22 @@ mod tests {
             assert!(has_japanese(&ja), "{ja}");
             assert!(!has_japanese(&en), "{:?}: {en}", note.feature);
             for raw in ["selc", "levl", "brit", "zzzz"] {
-                assert!(!ja.contains(raw) && !en.contains(raw), "{:?}: {ja} / {en}", note.feature);
+                assert!(
+                    !ja.contains(raw) && !en.contains(raw),
+                    "{:?}: {ja} / {en}",
+                    note.feature
+                );
             }
             if let Some(tip) = feature_tooltip(Lang::En, &note) {
                 assert!(!has_japanese(tip), "{tip}");
                 assert!(has_japanese(feature_tooltip(Lang::Ja, &note).unwrap()));
             }
         }
-        for action in [ImportAction::Ignored, ImportAction::Dropped, ImportAction::Changed] {
+        for action in [
+            ImportAction::Ignored,
+            ImportAction::Dropped,
+            ImportAction::Changed,
+        ] {
             assert!(!has_japanese(action_text(Lang::En, action)));
             assert!(has_japanese(action_text(Lang::Ja, action)));
         }
@@ -616,8 +630,14 @@ mod tests {
             let n = note(&[k]);
             let (ja, en) = (feature_text(Lang::Ja, &n), feature_text(Lang::En, &n));
             let key = String::from_utf8_lossy(&k).to_string();
-            assert!(!ja.contains(key.trim()) && !en.contains(key.trim()), "{key}: {ja} / {en}");
-            assert!(has_japanese(&ja) && !has_japanese(&en), "{key}: {ja} / {en}");
+            assert!(
+                !ja.contains(key.trim()) && !en.contains(key.trim()),
+                "{key}: {ja} / {en}"
+            );
+            assert!(
+                has_japanese(&ja) && !has_japanese(&en),
+                "{key}: {ja} / {en}"
+            );
             assert!(
                 !ja.contains("その他") && !en.contains("Other"),
                 "{key} が「その他」になっている: {ja} / {en}"
@@ -636,7 +656,10 @@ mod tests {
         // 知らないキーは、4 文字のままでなく「その他」
         let n = note(&[*b"zzzz", *b"yyyy"]);
         assert_eq!(feature_text(Lang::Ja, &n), "調整レイヤー: その他の調整");
-        assert_eq!(feature_text(Lang::En, &n), "Adjustment layer: Other adjustments");
+        assert_eq!(
+            feature_text(Lang::En, &n),
+            "Adjustment layer: Other adjustments"
+        );
     }
 
     #[test]
@@ -710,13 +733,26 @@ mod tests {
             CopyRefusal::ColorFormat { depth: 16, mode: 3 },
             CopyRefusal::ColorFormat { depth: 8, mode: 4 },
             CopyRefusal::NoLayers,
-            CopyRefusal::TooManyLayers { count: 300, limit: 256 },
-            CopyRefusal::CanvasTooLarge { width: 9000, height: 9000 },
+            CopyRefusal::TooManyLayers {
+                count: 300,
+                limit: 256,
+            },
+            CopyRefusal::CanvasTooLarge {
+                width: 9000,
+                height: 9000,
+            },
             CopyRefusal::LayerTooLarge { layer: "L".into() },
             CopyRefusal::BudgetExceeded { layer: "L".into() },
             CopyRefusal::LayerDataTooLarge { layer: "L".into() },
-            CopyRefusal::EdgeOverLimit { width: 9000, height: 9000, limit: 8192 },
-            CopyRefusal::LayerCountOverLimit { count: 2100, limit: 2048 },
+            CopyRefusal::EdgeOverLimit {
+                width: 9000,
+                height: 9000,
+                limit: 8192,
+            },
+            CopyRefusal::LayerCountOverLimit {
+                count: 2100,
+                limit: 2048,
+            },
             CopyRefusal::NestingTooDeep { limit: 64 },
         ];
         for why in &reasons {
@@ -733,7 +769,13 @@ mod tests {
             }
         }
         // 利用者の名前（層の名前）だけは、英語の画面でもそのまま
-        assert!(refusal_text(Lang::En, &CopyRefusal::BudgetExceeded { layer: "下".into() }).contains('下'));
+        assert!(refusal_text(
+            Lang::En,
+            &CopyRefusal::BudgetExceeded {
+                layer: "下".into()
+            }
+        )
+        .contains('下'));
     }
 
     #[test]

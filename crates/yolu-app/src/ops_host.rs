@@ -75,7 +75,11 @@ impl<'a> AppHost<'a> {
         let policy = PathPolicy::new(&base)
             .or_else(|_| PathPolicy::new(std::env::temp_dir()))
             .expect("一時フォルダは絶対パスにできる");
-        AppHost { state, policy, started: None }
+        AppHost {
+            state,
+            policy,
+            started: None,
+        }
     }
 
     /// 裏で始めた保存（あれば。取ると空になる）。
@@ -102,18 +106,30 @@ impl<'a> AppHost<'a> {
 
     /// 開いている .ylp のファイル（まだファイルが無い文書は None）。
     fn open_file(&self) -> Option<PathBuf> {
-        self.state.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf())
+        self.state
+            .project
+            .as_ref()
+            .filter(|p| p.is_file())
+            .map(|p| p.path().to_path_buf())
     }
 
     fn resolve(&self, set: Option<&str>) -> Result<usize, OpError> {
-        let list: Vec<(&str, &str)> = self.state.sets.iter().map(|s| (s.id.as_str(), s.name.as_str())).collect();
+        let list: Vec<(&str, &str)> = self
+            .state
+            .sets
+            .iter()
+            .map(|s| (s.id.as_str(), s.name.as_str()))
+            .collect();
         yolu_ops::refs::resolve_set(&list, set, &self.state.sets.current().id)
     }
 
     /// セットが、開いた・保存したあとに編集されたか（まだファイルに無いセットは、いつも編集済み）。
     fn unsaved(&self, index: usize) -> bool {
         let doc = self.state.set_doc(index);
-        self.state.sets.get(index).is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
+        self.state
+            .sets
+            .get(index)
+            .is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
     }
 
     /// セットの大きさと層の数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
@@ -153,7 +169,11 @@ impl<'a> AppHost<'a> {
             width,
             height,
             layer_count: layers,
-            state: if reason.is_some() { SetState::ReadOnly } else { SetState::Editable },
+            state: if reason.is_some() {
+                SetState::ReadOnly
+            } else {
+                SetState::Editable
+            },
             reason,
             unsaved: self.unsaved(index),
         }
@@ -168,7 +188,9 @@ impl<'a> AppHost<'a> {
         let project = state.project.as_ref();
         let mut notes = Vec::new();
         for id in &facts.sets_written {
-            let Some(index) = state.sets.iter().position(|s| s.id == *id) else { continue };
+            let Some(index) = state.sets.iter().position(|s| s.id == *id) else {
+                continue;
+            };
             let name = state.sets.get(index).map_or("", |s| s.name.as_str());
             let inactive = inactive_texts(state.set_doc(index));
             if !inactive.is_empty() {
@@ -203,9 +225,13 @@ impl OpHost for AppHost<'_> {
     fn doc_info(&mut self) -> Result<DocInfo, OpError> {
         let project = self.state.project.as_ref().filter(|p| p.is_file());
         let info = project.map(|p| p.project().info());
-        let sets: Vec<SetSummary> = (0..self.state.sets.len()).map(|i| self.summary(i)).collect();
+        let sets: Vec<SetSummary> = (0..self.state.sets.len())
+            .map(|i| self.summary(i))
+            .collect();
         Ok(DocInfo {
-            path: project.map(|p| p.path().display().to_string()).unwrap_or_default(),
+            path: project
+                .map(|p| p.path().display().to_string())
+                .unwrap_or_default(),
             // まだファイルが無い文書は、保存で書く形式
             format: project.map_or(7, |p| p.format()),
             saved_by: info.and_then(|i| i.saved_by.as_ref()).map(|w| WriterInfo {
@@ -213,7 +239,9 @@ impl OpHost for AppHost<'_> {
                 version: w.version.clone(),
                 platform: w.unity.clone(),
             }),
-            unsaved: self.state.shows_modified() || self.state.shelf.changed || sets.iter().any(|s| s.unsaved),
+            unsaved: self.state.shows_modified()
+                || self.state.shelf.changed
+                || sets.iter().any(|s| s.unsaved),
             sets,
             current_set: self.state.sets.current().id.clone(),
             notes: Vec::new(),
@@ -282,7 +310,14 @@ impl OpHost for AppHost<'_> {
         // 直前の画面の操作（スライダーなど）の段に混ざらないよう、取り消しのまとめを切る
         doc.end_coalescing();
         let before = (doc.id(), doc.revision());
-        let result = f(SetFacts { id: &id, name: &name, unsaved: true }, doc);
+        let result = f(
+            SetFacts {
+                id: &id,
+                name: &name,
+                unsaved: true,
+            },
+            doc,
+        );
         if (doc.id(), doc.revision()) != before {
             state.modified = true;
             if current {
@@ -298,7 +333,10 @@ impl OpHost for AppHost<'_> {
             return Err(e);
         }
         if self.state.distribute.is_busy() || self.state.distribute.is_open() {
-            return Err(busy("配布用に保存の途中です", "Saving for distribution is in progress"));
+            return Err(busy(
+                "配布用に保存の途中です",
+                "Saving for distribution is in progress",
+            ));
         }
         let open_file = self.open_file();
         let (destination, confirm) = match job {
@@ -310,15 +348,27 @@ impl OpHost for AppHost<'_> {
             (None, Some(file)) => file.clone(),
             (None, None) => return Err(OpError::no_file_to_save()),
         };
-        if !target.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")) {
+        if !target
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ylp"))
+        {
             return Err(OpError::ylp_name_required(&target.display().to_string()));
         }
-        let same_file = open_file.as_ref().is_some_and(|f| crate::project::same_file(f, &target));
+        let same_file = open_file
+            .as_ref()
+            .is_some_and(|f| crate::project::same_file(f, &target));
         let exists = std::fs::symlink_metadata(&target).is_ok();
         if exists && !confirm {
-            return Err(OpError::replace_confirm_required(&[target.display().to_string()]));
+            return Err(OpError::replace_confirm_required(&[target
+                .display()
+                .to_string()]));
         }
-        let upgraded_from = self.state.project.as_ref().map(|p| p.format()).filter(|f| *f < 7);
+        let upgraded_from = self
+            .state
+            .project
+            .as_ref()
+            .map(|p| p.format())
+            .filter(|f| *f < 7);
         // 何も編集していなければ書かない（開いているファイルへの上書きだけ）
         if same_file && !self.state.shows_modified() && !self.state.shelf.changed {
             return Ok(Reply::Saved(Saved {
@@ -335,7 +385,11 @@ impl OpHost for AppHost<'_> {
             return Err(OpError::new(ErrorCode::Refused, text.clone(), text)
                 .with_data(json!({"path": target.display().to_string()})));
         }
-        self.started = Some(StartedSave { path: target, upgraded_from, replaced: exists });
+        self.started = Some(StartedSave {
+            path: target,
+            upgraded_from,
+            replaced: exists,
+        });
         Err(deferred())
     }
 
@@ -344,13 +398,17 @@ impl OpHost for AppHost<'_> {
             return Err(e);
         }
         let policy = self.policy.clone();
-        self.read_set(job.set(), &mut |view| yolu_ops::export::run(view, &policy, job))
+        self.read_set(job.set(), &mut |view| {
+            yolu_ops::export::run(view, &policy, job)
+        })
     }
 
     fn preview(&mut self, args: &PreviewArgs) -> Result<Reply, OpError> {
         if let Some(e) = self.drawing() {
             return Err(e);
         }
-        self.read_set(args.set.as_deref(), &mut |view| yolu_ops::preview::render(view, args))
+        self.read_set(args.set.as_deref(), &mut |view| {
+            yolu_ops::preview::render(view, args)
+        })
     }
 }

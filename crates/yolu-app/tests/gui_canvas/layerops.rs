@@ -340,10 +340,18 @@ fn headless_a_merge_that_changes_the_look_asks_first() {
         assert!(s.layer_ops.merge_confirm.is_none());
         assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
         // 状態の文は結合した層の名前だけ（見た目が変わったのを承知した結合でも、画素数・差の数は載せない）
-        let merged = s.doc.layer(s.selected_layer.unwrap()).unwrap().name().to_owned();
+        let merged = s
+            .doc
+            .layer(s.selected_layer.unwrap())
+            .unwrap()
+            .name()
+            .to_owned();
         assert_eq!(
             s.message,
-            lang.pick(format!("結合しました: {merged}"), format!("Merged into {merged}"))
+            lang.pick(
+                format!("結合しました: {merged}"),
+                format!("Merged into {merged}")
+            )
         );
         undo(&mut s);
         assert_eq!(s.doc.layers().len(), 3);
@@ -426,7 +434,8 @@ fn headless_a_new_group_next_to_a_layer_in_the_deepest_group_is_refused_with_a_s
         );
         s.doc.validate_structure().unwrap();
         assert!(
-            s.message.contains(lang.pick("入れ子が深すぎる", "nesting is too deep")),
+            s.message
+                .contains(lang.pick("入れ子が深すぎる", "nesting is too deep")),
             "{lang:?}: {}",
             s.message
         );
@@ -1111,7 +1120,12 @@ fn arrow_keys_while_typing_a_layer_name_edit_the_text_and_never_move_the_layer()
     let revision = h.state().state.doc.revision();
     let before = color_bytes(&h.state().state, id);
     for modifiers in [Modifiers::NONE, Modifiers::SHIFT] {
-        for k in [Key::ArrowRight, Key::ArrowLeft, Key::ArrowUp, Key::ArrowDown] {
+        for k in [
+            Key::ArrowRight,
+            Key::ArrowLeft,
+            Key::ArrowUp,
+            Key::ArrowDown,
+        ] {
             key(&h, k, modifiers);
             h.run();
         }
@@ -1322,7 +1336,12 @@ fn pen(h: &mut Harness<'_, YoluApp>, pos: egui::Pos2, contact: bool, pointer_id:
 
 fn non_transparent(s: &AppState, id: LayerId) -> usize {
     let bytes = color_bytes(s, id);
-    bytes.as_chunks::<4>().0.iter().filter(|p| p[3] != 0).count()
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[3] != 0)
+        .count()
 }
 
 #[test]
@@ -1358,7 +1377,11 @@ fn a_pen_touch_drag_and_lift_move_the_layer_like_the_mouse_with_one_undo_and_nev
     let s = &h.state().state;
     assert_eq!(pixel(s, id, 40, 36), RED.to_array());
     assert_eq!(pixel(s, id, 30, 30), [0; 4]);
-    assert_eq!(non_transparent(s, id), painted, "描いていない。動かしただけ");
+    assert_eq!(
+        non_transparent(s, id),
+        painted,
+        "描いていない。動かしただけ"
+    );
     assert!(s.canvas.stroke.is_none());
     assert!(s.transform.drag.is_none() && s.transform.pen_down.is_none());
     assert!(!s.is_stroking());
@@ -1410,7 +1433,10 @@ fn escape_losing_focus_and_switching_tools_during_a_pen_drag_change_nothing_and_
     pen(&mut h, far, false, 3);
     h.run();
     settled(&h);
-    assert!(h.state().state.transform.pen_down.is_none(), "離したら外れる");
+    assert!(
+        h.state().state.transform.pen_down.is_none(),
+        "離したら外れる"
+    );
     // 窓がフォーカスを失った: 離したのを受け取れないので、ドラッグも押している印も捨てる
     start(&mut h);
     h.event(Event::WindowFocused(false));
@@ -1422,7 +1448,9 @@ fn escape_losing_focus_and_switching_tools_during_a_pen_drag_change_nothing_and_
     settled(&h);
     // ほかの道具へ替えた: 同じく何も変えずにやめる（ペンを離しても何も起きない）
     start(&mut h);
-    h.state_mut().state.apply(Action::SelectTool(Tool::SelectRect));
+    h.state_mut()
+        .state
+        .apply(Action::SelectTool(Tool::SelectRect));
     h.run();
     settled(&h);
     assert!(h.state().state.transform.pen_down.is_none());
@@ -1905,7 +1933,9 @@ fn headless_a_project_with_layer_locks_saves_and_opens_with_the_same_locks() {
         let unlocked_path = root.join(lang.pick("ja-unlocked.ylp", "en-unlocked.ylp"));
         opened.apply(Action::SaveProjectAs(unlocked_path.clone()));
         assert!(
-            opened.message.starts_with(lang.pick("保存しました", "Saved")),
+            opened
+                .message
+                .starts_with(lang.pick("保存しました", "Saved")),
             "{}",
             opened.message
         );

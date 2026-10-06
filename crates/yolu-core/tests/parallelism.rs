@@ -741,7 +741,10 @@ fn operation_fingerprint(d: &Document, ids: &[LayerId]) -> String {
         for c in [Channel::Color, Channel::Height] {
             parts.push(l.surface(c).map_or("-".to_owned(), surface_hash));
         }
-        parts.push(l.mask().map_or("-".to_owned(), |m| surface_hash(m.surface())));
+        parts.push(
+            l.mask()
+                .map_or("-".to_owned(), |m| surface_hash(m.surface())),
+        );
     }
     parts.push(format!(
         "sel={}",
@@ -769,15 +772,51 @@ fn transforms() -> Vec<(&'static str, Affine2D, Resampling)> {
         Affine2D::from_parts(pivot, mv, deg, sc).unwrap()
     };
     vec![
-        ("整数の移動", Affine2D::translation(37.0, -21.0), Resampling::Bilinear),
-        ("小数の移動", Affine2D::translation(10.5, 3.25), Resampling::Bilinear),
-        ("任意の角度", parts((300.0, 180.0), (0.0, 0.0), 23.5, (1.0, 1.0)), Resampling::Bilinear),
-        ("拡大", parts((120.0, 90.0), (5.0, -5.0), 0.0, (2.5, 1.75)), Resampling::Bilinear),
-        ("縮小と回転", parts((300.0, 180.0), (0.0, 0.0), -71.0, (0.4, 0.6)), Resampling::Bilinear),
-        ("左右反転", parts((300.0, 180.0), (0.0, 0.0), 0.0, (-1.0, 1.0)), Resampling::Bilinear),
-        ("90° 回転", parts((300.0, 180.0), (0.0, 0.0), 90.0, (1.0, 1.0)), Resampling::Bilinear),
-        ("ニアレストの回転", parts((300.0, 180.0), (0.0, 0.0), 33.0, (1.3, 1.3)), Resampling::Nearest),
-        ("ニアレストの縮小", parts((0.0, 0.0), (0.0, 0.0), 0.0, (0.37, 0.37)), Resampling::Nearest),
+        (
+            "整数の移動",
+            Affine2D::translation(37.0, -21.0),
+            Resampling::Bilinear,
+        ),
+        (
+            "小数の移動",
+            Affine2D::translation(10.5, 3.25),
+            Resampling::Bilinear,
+        ),
+        (
+            "任意の角度",
+            parts((300.0, 180.0), (0.0, 0.0), 23.5, (1.0, 1.0)),
+            Resampling::Bilinear,
+        ),
+        (
+            "拡大",
+            parts((120.0, 90.0), (5.0, -5.0), 0.0, (2.5, 1.75)),
+            Resampling::Bilinear,
+        ),
+        (
+            "縮小と回転",
+            parts((300.0, 180.0), (0.0, 0.0), -71.0, (0.4, 0.6)),
+            Resampling::Bilinear,
+        ),
+        (
+            "左右反転",
+            parts((300.0, 180.0), (0.0, 0.0), 0.0, (-1.0, 1.0)),
+            Resampling::Bilinear,
+        ),
+        (
+            "90° 回転",
+            parts((300.0, 180.0), (0.0, 0.0), 90.0, (1.0, 1.0)),
+            Resampling::Bilinear,
+        ),
+        (
+            "ニアレストの回転",
+            parts((300.0, 180.0), (0.0, 0.0), 33.0, (1.3, 1.3)),
+            Resampling::Nearest,
+        ),
+        (
+            "ニアレストの縮小",
+            parts((0.0, 0.0), (0.0, 0.0), 0.0, (0.37, 0.37)),
+            Resampling::Nearest,
+        ),
     ]
 }
 
@@ -823,12 +862,17 @@ fn cancelled_or_refused_transforms_leave_the_exact_pixels_with_any_number_of_thr
             // 最初の確認で取り消す・3 回目の確認で取り消す
             for stop_at in [0usize, 2] {
                 let mut calls = 0;
-                let result = d.transform_layers_cancellable(&ids, t, Resampling::Bilinear, &mut || {
-                    calls += 1;
-                    calls > stop_at
-                });
+                let result =
+                    d.transform_layers_cancellable(&ids, t, Resampling::Bilinear, &mut || {
+                        calls += 1;
+                        calls > stop_at
+                    });
                 assert_eq!(result, Err(CoreError::Cancelled), "{degree}: {stop_at}");
-                assert_eq!(operation_fingerprint(&d, &ids), before, "{degree}: {stop_at}");
+                assert_eq!(
+                    operation_fingerprint(&d, &ids),
+                    before,
+                    "{degree}: {stop_at}"
+                );
             }
             // 一操作の予算が足りない
             let budget = d.stroke_budget_bytes();
@@ -838,7 +882,11 @@ fn cancelled_or_refused_transforms_leave_the_exact_pixels_with_any_number_of_thr
                 Err(CoreError::StrokeBudgetExceeded),
                 "{degree}"
             );
-            assert_eq!(operation_fingerprint(&d, &ids), before, "{degree}: 予算の拒否");
+            assert_eq!(
+                operation_fingerprint(&d, &ids),
+                before,
+                "{degree}: 予算の拒否"
+            );
             d.set_stroke_budget_bytes(budget).unwrap();
             // ロックの拒否
             d.set_layer_locks(heights, LayerLocks::POSITION).unwrap();
@@ -847,7 +895,11 @@ fn cancelled_or_refused_transforms_leave_the_exact_pixels_with_any_number_of_thr
                 d.transform_layers(&ids, t, Resampling::Bilinear),
                 Err(CoreError::LayerLocked { .. })
             ));
-            assert_eq!(operation_fingerprint(&d, &ids), locked, "{degree}: ロックの拒否");
+            assert_eq!(
+                operation_fingerprint(&d, &ids),
+                locked,
+                "{degree}: ロックの拒否"
+            );
         });
     }
 }
@@ -887,13 +939,22 @@ fn layer_merges_are_the_same_with_any_number_of_threads() {
             let after = operation_fingerprint(&d, &[merged]);
             // 結合の前後の Color の合成は、報告と同じ規則で比べて報告と合う（変わった画素の数が同じで、最大の差は報告の内。報告が
             // 正確なら 1 画素も変わらない）。報告そのものがスレッド数で変わらないことは、返す値の比べ合わせが見る
-            let (changed, largest) = color_difference(&composite, &d.composite(d.bounds()).unwrap());
+            let (changed, largest) =
+                color_difference(&composite, &d.composite(d.bounds()).unwrap());
             assert_eq!(
                 changed,
-                report.changed_by_channel.get(&Channel::Color).copied().unwrap_or(0),
+                report
+                    .changed_by_channel
+                    .get(&Channel::Color)
+                    .copied()
+                    .unwrap_or(0),
                 "{kind}: 報告の変わった画素の数"
             );
-            assert!(largest <= report.max_difference, "{kind}: {largest} / {}", report.max_difference);
+            assert!(
+                largest <= report.max_difference,
+                "{kind}: {largest} / {}",
+                report.max_difference
+            );
             if report.exact() {
                 assert_eq!(changed, 0, "{kind}");
             }

@@ -283,7 +283,18 @@ pub fn choice_buttons(ui: &mut Ui, rows: &mut Rows, items: &[ChoiceButton]) -> O
         let row = rows.row(24.0, GAP);
         let cells = Rows::split(row, cols, GAP);
         for (i, (cell, b)) in cells.iter().zip(line).enumerate() {
-            if w::button(ui, *cell, (b.id, "choice"), b.label, b.selected, b.enabled, b.tooltip, None).clicked() {
+            if w::button(
+                ui,
+                *cell,
+                (b.id, "choice"),
+                b.label,
+                b.selected,
+                b.enabled,
+                b.tooltip,
+                None,
+            )
+            .clicked()
+            {
                 clicked = Some(line_no * cols + i);
             }
         }

@@ -285,7 +285,11 @@ pub fn modal_open(app: &AppState) -> bool {
         || app.distribute.window_visible()
         || app.distribute.replace.is_some()
         || app.update.window_open()
-        || app.recovery.window.as_ref().is_some_and(|w| w.confirm.is_some())
+        || app
+            .recovery
+            .window
+            .as_ref()
+            .is_some_and(|w| w.confirm.is_some())
         || app.np.window.is_some()
         || app.np.remove_confirm.is_some()
         || app.layer_ops.merge_confirm.is_some()
@@ -681,12 +685,17 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 if p.writing {
                     lang.pick("配布用に保存中", "Saving for distribution")
                 } else {
-                    lang.pick("配布用の写しを準備中", "Preparing the copy for distribution")
+                    lang.pick(
+                        "配布用の写しを準備中",
+                        "Preparing the copy for distribution",
+                    )
                 },
                 p.file
             ),
             fraction: None,
-            cancel: Some(Action::Distribute(crate::distribute::DistributeAction::CancelJob)),
+            cancel: Some(Action::Distribute(
+                crate::distribute::DistributeAction::CancelJob,
+            )),
             canceling: p.canceling,
         });
     }
@@ -721,7 +730,11 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
     if let Some(r) = &app.np.reopening {
         entries.push(Entry {
             id: "model",
-            text: format!("{} — {}", lang.pick("モデルを読み込み中", "Loading the model"), r.file_name()),
+            text: format!(
+                "{} — {}",
+                lang.pick("モデルを読み込み中", "Loading the model"),
+                r.file_name()
+            ),
             fraction: r.fraction(),
             cancel: Some(Action::Project(crate::newproject::NpAction::CancelReopen)),
             canceling: false,
@@ -773,7 +786,11 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                     vec2(24.0, 24.0),
                 );
                 // 取り消せない仕事（保存）は、取消のボタンの場所まで使う
-                let right = if e.cancel.is_some() { button.left() - 6.0 } else { row.right() };
+                let right = if e.cancel.is_some() {
+                    button.left() - 6.0
+                } else {
+                    row.right()
+                };
                 let text_rect = Rect::from_min_max(row.min, pos2(right, row.top() + 18.0));
                 let shown = w::fit(&p, &e.text, text_rect.width(), t::LABEL_DIM);
                 w::text(&p, text_rect, &shown, t::LABEL_DIM, Align::Left);
@@ -830,7 +847,8 @@ fn saving_before_close(ctx: &egui::Context, app: &AppState) {
         .interactable(true)
         .show(ctx, |ui| {
             ui.interact(screen, id.with("blocker-hit"), Sense::click_and_drag());
-            ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
+            ui.painter()
+                .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
         });
     let rect = Rect::from_center_size(screen.center(), vec2(320.0, 84.0));
     // 最後に描いた窓の矩形（試験が位置を知るために読む。`window::last_rect`）
@@ -849,14 +867,24 @@ fn saving_before_close(ctx: &egui::Context, app: &AppState) {
             let title = lang.pick("保存しています", "Saving");
             let head = Rect::from_min_size(inner.min, vec2(inner.width(), 22.0));
             w::text(&p, head, title, t::HEADER, Align::Left);
-            let name = Rect::from_min_size(pos2(inner.left(), head.bottom()), vec2(inner.width(), 18.0));
+            let name =
+                Rect::from_min_size(pos2(inner.left(), head.bottom()), vec2(inner.width(), 18.0));
             let shown = w::fit(&p, &progress.file, name.width(), t::LABEL_DIM);
             w::text(&p, name, &shown, t::LABEL_DIM, Align::Left);
-            let bar = Rect::from_min_size(pos2(inner.left(), name.bottom() + 6.0), vec2(inner.width(), 6.0));
+            let bar = Rect::from_min_size(
+                pos2(inner.left(), name.bottom() + 6.0),
+                vec2(inner.width(), 6.0),
+            );
             w::rounded(&p, bar, t::CONTROL_BG, 3.0);
             w::rounded(
                 &p,
-                Rect::from_min_size(bar.min, vec2(bar.width() * progress.fraction.clamp(0.0, 1.0), bar.height())),
+                Rect::from_min_size(
+                    bar.min,
+                    vec2(
+                        bar.width() * progress.fraction.clamp(0.0, 1.0),
+                        bar.height(),
+                    ),
+                ),
                 t::ACCENT,
                 3.0,
             );
@@ -926,7 +954,11 @@ pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
         jobs.push(CloseJob::Export);
     }
     if let Some(progress) = app.psd.progress() {
-        jobs.push(if progress.importing { CloseJob::PsdImport } else { CloseJob::PsdExport });
+        jobs.push(if progress.importing {
+            CloseJob::PsdImport
+        } else {
+            CloseJob::PsdExport
+        });
     }
     if app.distribute.is_busy() {
         jobs.push(CloseJob::Distribute);
@@ -983,7 +1015,9 @@ pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
     app.apply(Action::Bake(BakeAction::Cancel));
     app.apply(Action::Export(ExportAction::Cancel));
     app.apply(Action::Psd(PsdAction::Cancel));
-    app.apply(Action::Distribute(crate::distribute::DistributeAction::CancelJob));
+    app.apply(Action::Distribute(
+        crate::distribute::DistributeAction::CancelJob,
+    ));
     app.apply(Action::Update(crate::update::UpdateAction::Cancel));
     app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
     // ライブラリのフォルダへの書き込みと素材の保存・取り込み（やめても、スレッドは次の区切りまで走る）

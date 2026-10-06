@@ -135,7 +135,10 @@ fn a_file_without_known_columns_still_gives_a_default_brush_named_after_the_node
 #[test]
 fn a_tip_stored_only_in_the_proprietary_format_is_left_out_and_reported() {
     let file = SutBuilder::new()
-        .material(Some("tip_a"), tar(&[("data/material.layer", b"\x89C2F\r\n\x1a\nbody")]))
+        .material(
+            Some("tip_a"),
+            tar(&[("data/material.layer", b"\x89C2F\r\n\x1a\nbody")]),
+        )
         .brush(
             "Stamp",
             1,
@@ -150,10 +153,16 @@ fn a_tip_stored_only_in_the_proprietary_format_is_left_out_and_reported() {
         )
         .build();
     let b = &ok(&file).brushes[0];
-    assert!(b.brush.tip.image.is_none() && b.brush.tip.images.is_empty(), "丸い筆先");
+    assert!(
+        b.brush.tip.image.is_none() && b.brush.tip.images.is_empty(),
+        "丸い筆先"
+    );
     assert_eq!(b.brush.base.radius, 15.0, "設定は取り込む");
     assert!(has(b, SutNote::TipMissing));
-    assert!(has(b, SutNote::ProprietaryImage), "独自の形式で読めないことを知らせる");
+    assert!(
+        has(b, SutNote::ProprietaryImage),
+        "独自の形式で読めないことを知らせる"
+    );
 }
 
 #[test]
@@ -891,7 +900,9 @@ fn the_default_mixing_values_of_a_brush_with_mixing_off_do_not_turn_mixing_on() 
     let b = &ok(&file).brushes[0];
     assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::default());
     assert!(
-        !b.unrepresented.iter().any(|u| matches!(u, Unrepresented::ClipStudio(SutNote::ColorMixing { .. }))),
+        !b.unrepresented
+            .iter()
+            .any(|u| matches!(u, Unrepresented::ClipStudio(SutNote::ColorMixing { .. }))),
         "混色が切なら知らせもしない"
     );
 }

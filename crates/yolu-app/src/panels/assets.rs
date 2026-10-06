@@ -741,7 +741,10 @@ fn card_cell(
     }
     if card.builtin {
         // 組み込みの印（左上。消せない・書き出せない元）
-        let badge = Rect::from_min_size(pos2(thumb.left() + 2.0, thumb.top() + 2.0), vec2(14.0, 14.0));
+        let badge = Rect::from_min_size(
+            pos2(thumb.left() + 2.0, thumb.top() + 2.0),
+            vec2(14.0, 14.0),
+        );
         w::rounded(painter, badge, t::PANEL_BG, 7.0);
         w::icon(painter, badge, "lock", t::TEXT_DIM, 11.0);
     }
@@ -925,7 +928,8 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "save",
         lang.pick("書き出す…（.ylsmart）", "Export… (.ylsmart)"),
         false,
-        id.as_deref().is_some_and(|i| !shelf::is_builtin(i)) && kind.is_some_and(ItemKind::is_smart),
+        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+            && kind.is_some_and(ItemKind::is_smart),
         16.0,
     )
     .clicked()

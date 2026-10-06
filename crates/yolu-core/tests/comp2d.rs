@@ -8,7 +8,8 @@ use yolu_core::{Channel, Document, Rect, RowOrder, TileCoord};
 
 fn reference(d: &Document, ch: Channel, r: Rect) -> Vec<u8> {
     let mut out = vec![0u8; (r.width * r.height * 4) as usize];
-    d.composite_into(ch, r, &mut out, RowOrder::BottomUp).unwrap();
+    d.composite_into(ch, r, &mut out, RowOrder::BottomUp)
+        .unwrap();
     out
 }
 
@@ -20,12 +21,21 @@ fn tiles_composited_in_a_batch_match_the_rectangle_composite() {
             // 全部・飛び飛び・1 枚だけ
             let all = all_tiles(&d);
             let sparse: Vec<TileCoord> = all.iter().copied().step_by(3).collect();
-            for coords in [all.clone(), sparse, all[..1].to_vec(), all[all.len() - 2..].to_vec()] {
+            for coords in [
+                all.clone(),
+                sparse,
+                all[..1].to_vec(),
+                all[all.len() - 2..].to_vec(),
+            ] {
                 let tiles = d.composite_tiles(ch, &coords).unwrap();
                 assert_eq!(tiles.len(), coords.len());
                 for (t, c) in tiles.iter().zip(&coords) {
                     assert_eq!(t.coord, *c);
-                    assert_eq!(t.pixels, reference(&d, ch, t.rect), "seed {seed} {ch:?} {c:?}");
+                    assert_eq!(
+                        t.pixels,
+                        reference(&d, ch, t.rect),
+                        "seed {seed} {ch:?} {c:?}"
+                    );
                 }
             }
         }
@@ -35,7 +45,11 @@ fn tiles_composited_in_a_batch_match_the_rectangle_composite() {
 #[test]
 fn tiles_outside_the_canvas_are_skipped_and_edge_tiles_are_trimmed() {
     let (d, _) = random_doc(3, 70, 50, 16);
-    let coords = [TileCoord::new(0, 0), TileCoord::new(40, 40), TileCoord::new(4, 3)];
+    let coords = [
+        TileCoord::new(0, 0),
+        TileCoord::new(40, 40),
+        TileCoord::new(4, 3),
+    ];
     let tiles = d.composite_tiles(Channel::Color, &coords).unwrap();
     assert_eq!(tiles.len(), 2);
     let edge = &tiles[1];
@@ -67,9 +81,16 @@ fn brush(rng: &mut Rng, radius: f64) -> BrushSettings {
 fn assert_same(a: &Document, b: &Document, what: &str) {
     for ch in a.channels() {
         let whole = a.composite_channel(ch, a.bounds()).unwrap();
-        assert_eq!(whole, b.composite_channel(ch, b.bounds()).unwrap(), "{what} {ch:?} 全体");
+        assert_eq!(
+            whole,
+            b.composite_channel(ch, b.bounds()).unwrap(),
+            "{what} {ch:?} 全体"
+        );
         let coords = all_tiles(a);
-        let (ta, tb) = (a.composite_tiles(ch, &coords).unwrap(), b.composite_tiles(ch, &coords).unwrap());
+        let (ta, tb) = (
+            a.composite_tiles(ch, &coords).unwrap(),
+            b.composite_tiles(ch, &coords).unwrap(),
+        );
         for (x, y) in ta.iter().zip(&tb) {
             assert_eq!(x.pixels, y.pixels, "{what} {ch:?} タイル {:?}", x.coord);
         }
@@ -101,7 +122,9 @@ fn memo_case_in(
     if candidates.is_empty() {
         return None;
     }
-    let index = with.layer_index(candidates[pick % candidates.len()]).unwrap();
+    let index = with
+        .layer_index(candidates[pick % candidates.len()])
+        .unwrap();
     let (la, lb) = (with.layers()[index].id(), without.layers()[index].id());
     if let Some(b) = budget {
         with.set_stroke_budget_bytes(b).unwrap();
@@ -133,7 +156,11 @@ fn memo_case_in(
     let stats = with.composite_memo_stats();
     with.end_stroke(sa).unwrap();
     without.end_stroke(sb).unwrap();
-    assert_eq!(with.composite_memo_stats().tiles, 0, "確定したら覚えを手放す");
+    assert_eq!(
+        with.composite_memo_stats().tiles,
+        0,
+        "確定したら覚えを手放す"
+    );
     assert_same(&with, &without, &format!("seed {seed} 確定"));
     with.undo().unwrap();
     without.undo().unwrap();
@@ -159,7 +186,10 @@ fn the_remembered_composite_matches_the_full_composite_through_a_stroke() {
 #[test]
 fn the_remembered_composite_matches_when_the_work_is_split_into_bands_across_threads() {
     // 128² のタイルに詰まった層: 仕事が大きく、タイルが行の帯に割れてワーカーへ分かれる（帯ごとに覚えの切り出しの位置が違う）
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
     let hits: u64 = pool.install(|| {
         (0..6u64)
             .filter_map(|seed| memo_case_in(seed, seed as usize, None, (256, 200, 128)))
@@ -195,16 +225,27 @@ fn memo_long_stroke(seed: u64, budget: u64) -> Option<(u64, bool)> {
     if candidates.is_empty() {
         return None;
     }
-    let index = with.layer_index(candidates[seed as usize % candidates.len()]).unwrap();
+    let index = with
+        .layer_index(candidates[seed as usize % candidates.len()])
+        .unwrap();
     let (la, lb) = (with.layers()[index].id(), without.layers()[index].id());
     with.set_stroke_budget_bytes(budget).unwrap();
     without.set_stroke_budget_bytes(budget).unwrap();
     let mut rng = Rng(seed ^ 0x5EED);
     let br = brush(&mut rng, 6.0);
-    let (mut sa, mut sb) = (with.begin_stroke(la, &br).ok()?, without.begin_stroke(lb, &br).ok()?);
+    let (mut sa, mut sb) = (
+        with.begin_stroke(la, &br).ok()?,
+        without.begin_stroke(lb, &br).ok()?,
+    );
     let fits = |d: &Document, what: &str| {
-        let (memo, rollback) = (d.composite_memo_stats().bytes, d.active_stroke_stats().map_or(0, |s| s.rollback_bytes));
-        assert!(memo + rollback <= budget, "{what}: 覚え {memo} + 巻き戻し {rollback} が予算 {budget} を超えた");
+        let (memo, rollback) = (
+            d.composite_memo_stats().bytes,
+            d.active_stroke_stats().map_or(0, |s| s.rollback_bytes),
+        );
+        assert!(
+            memo + rollback <= budget,
+            "{what}: 覚え {memo} + 巻き戻し {rollback} が予算 {budget} を超えた"
+        );
     };
     let mut stopped = false;
     let mut y = 10.0;
@@ -283,7 +324,11 @@ fn assert_samples_of(d: &Document, ch: Channel, stride: u32, what: &str) {
                 let (x, y) = (t.rect.x + i * stride, t.rect.y + j * stride);
                 let want = &whole[(y as usize * w + x as usize) * 4..][..4];
                 let got = &t.pixels[((j * cw + i) * 4) as usize..][..4];
-                assert_eq!(got, want, "{what} {ch:?} 歩幅 {stride} タイル {:?} ({i},{j})", t.coord);
+                assert_eq!(
+                    got, want,
+                    "{what} {ch:?} 歩幅 {stride} タイル {:?} ({i},{j})",
+                    t.coord
+                );
             }
         }
     }
@@ -305,7 +350,11 @@ fn a_coarse_composite_is_the_exact_composite_taken_every_stride_pixels() {
 fn a_stride_that_does_not_divide_the_tile_is_refused() {
     let (d, _) = random_doc(1, 70, 50, 16);
     for stride in [0, 3, 5, 32] {
-        assert!(d.composite_coarse_tiles(Channel::Color, &all_tiles(&d), stride).is_err(), "{stride}");
+        assert!(
+            d.composite_coarse_tiles(Channel::Color, &all_tiles(&d), stride)
+                .is_err(),
+            "{stride}"
+        );
     }
 }
 
@@ -318,7 +367,8 @@ fn with_point_effects(seed: u64) -> Document {
         } else {
             EffectSettings::invert()
         };
-        d.add_filter(id, FilterTarget::Content, FilterSpec::new(fx)).unwrap();
+        d.add_filter(id, FilterTarget::Content, FilterSpec::new(fx))
+            .unwrap();
     }
     d
 }
@@ -328,14 +378,25 @@ fn coarse_effects_of_pointwise_filters_equal_the_exact_output_at_the_sample_poin
     for seed in 0..25u64 {
         let d = with_point_effects(seed);
         // 評価していない（粗く評価する）道
-        assert!(d.effects_pending(Channel::Color, &all_tiles(&d)) || d.layers().iter().all(|l| l.surface(Channel::Color).is_none()));
+        assert!(
+            d.effects_pending(Channel::Color, &all_tiles(&d))
+                || d.layers()
+                    .iter()
+                    .all(|l| l.surface(Channel::Color).is_none())
+        );
         let before = d.effect_counters().blocks_evaluated;
         for stride in [2, 4, 8] {
             let coords = all_tiles(&d);
             // 先に粗く（キャッシュは空）、そのあと正確に（キャッシュが埋まる）
-            let coarse = d.composite_coarse_tiles(Channel::Color, &coords, stride).unwrap();
+            let coarse = d
+                .composite_coarse_tiles(Channel::Color, &coords, stride)
+                .unwrap();
             if stride == 2 {
-                assert_eq!(d.effect_counters().blocks_evaluated, before, "粗い評価はキャッシュに入れない");
+                assert_eq!(
+                    d.effect_counters().blocks_evaluated,
+                    before,
+                    "粗い評価はキャッシュに入れない"
+                );
             }
             let whole = d.composite_channel(Channel::Color, d.bounds()).unwrap();
             let w = d.width() as usize;
@@ -366,7 +427,11 @@ fn with_every_block_evaluated_a_coarse_composite_picks_the_exact_output() {
     assert!(!d.effects_pending(Channel::Color, &coords));
     let blocks = d.effect_counters().blocks_evaluated;
     assert_samples_of(&d, Channel::Color, 4, "評価済み");
-    assert_eq!(d.effect_counters().blocks_evaluated, blocks, "評価し直さない");
+    assert_eq!(
+        d.effect_counters().blocks_evaluated,
+        blocks,
+        "評価し直さない"
+    );
 }
 
 #[test]
@@ -374,14 +439,22 @@ fn effects_are_pending_until_their_blocks_are_evaluated_and_again_after_a_change
     let (mut d, rasters) = random_doc(11, 70, 50, 16);
     let id = paintable(&d, &rasters)[0];
     let fx = d
-        .add_filter(id, FilterTarget::Content, FilterSpec::new(EffectSettings::blur(4)))
+        .add_filter(
+            id,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::blur(4)),
+        )
         .unwrap();
     let coords = all_tiles(&d);
     assert!(d.effects_pending(Channel::Color, &coords));
     let _ = d.composite_tiles(Channel::Color, &coords).unwrap();
     assert!(!d.effects_pending(Channel::Color, &coords));
-    d.set_filter_settings(id, fx, EffectSettings::blur(6), true).unwrap();
-    assert!(d.effects_pending(Channel::Color, &coords), "設定を変えたら評価し直しが要る");
+    d.set_filter_settings(id, fx, EffectSettings::blur(6), true)
+        .unwrap();
+    assert!(
+        d.effects_pending(Channel::Color, &coords),
+        "設定を変えたら評価し直しが要る"
+    );
     assert!(d.is_coalescing());
     d.end_coalescing();
     assert!(!d.is_coalescing());
@@ -393,12 +466,20 @@ fn a_coarse_blur_stays_close_to_the_exact_blur_on_a_smooth_picture() {
     let id = d.add_layer("grad").unwrap();
     for y in 0..64u32 {
         for x in 0..96u32 {
-            d.set_pixel(id, x, y, Rgba8::new((x * 2) as u8, (y * 3) as u8, 128, 255)).unwrap();
+            d.set_pixel(id, x, y, Rgba8::new((x * 2) as u8, (y * 3) as u8, 128, 255))
+                .unwrap();
         }
     }
-    d.add_filter(id, FilterTarget::Content, FilterSpec::new(EffectSettings::blur(8))).unwrap();
+    d.add_filter(
+        id,
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::blur(8)),
+    )
+    .unwrap();
     let coords = all_tiles(&d);
-    let coarse = d.composite_coarse_tiles(Channel::Color, &coords, 4).unwrap();
+    let coarse = d
+        .composite_coarse_tiles(Channel::Color, &coords, 4)
+        .unwrap();
     let exact = d.composite_channel(Channel::Color, d.bounds()).unwrap();
     let (mut worst, mut count) = (0i32, 0);
     for t in &coarse {
@@ -420,5 +501,8 @@ fn a_coarse_blur_stays_close_to_the_exact_blur_on_a_smooth_picture() {
         }
     }
     assert!(count > 100);
-    assert!(worst <= 6, "粗いぼかしは正確なぼかしに近い: 最大の差 {worst}");
+    assert!(
+        worst <= 6,
+        "粗いぼかしは正確なぼかしに近い: 最大の差 {worst}"
+    );
 }

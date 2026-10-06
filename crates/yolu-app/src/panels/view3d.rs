@@ -330,7 +330,13 @@ impl View3dSlot {
     /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない。文字なし、名前と理由はツールチップ）: 3D の絵が元より縮んでいる印
     /// （押せない。`reduced` は縮めた段と、メモリの予算で決まったか）、3D の表示の切り替え（押すとメニュー）、光と環境の設定、モデル全体が
     /// 見える位置へ戻す。返すのは設定のアイコンの矩形（設定のパネルを下に置く）。
-    fn corner(&self, ui: &mut Ui, app: &mut AppState, view: Rect, reduced: Option<(u32, Option<bool>)>) -> Corner {
+    fn corner(
+        &self,
+        ui: &mut Ui,
+        app: &mut AppState,
+        view: Rect,
+        reduced: Option<(u32, Option<bool>)>,
+    ) -> Corner {
         if app.view3d.model.is_none() {
             return Corner::default();
         }
@@ -343,9 +349,13 @@ impl View3dSlot {
         let mut items = Vec::new();
         if let Some((level, by_budget)) = reduced {
             items.push(
-                w::CornerIcon::new("reduced", "warning", reduced_tooltip(lang, level, by_budget))
-                    .indicator()
-                    .color(t::WARNING),
+                w::CornerIcon::new(
+                    "reduced",
+                    "warning",
+                    reduced_tooltip(lang, level, by_budget),
+                )
+                .indicator()
+                .color(t::WARNING),
             );
         }
         items.push(
@@ -360,7 +370,10 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "settings",
                 "light_mode",
-                lang.pick("光・環境・トーンマッピング", "Light, environment, tone mapping"),
+                lang.pick(
+                    "光・環境・トーンマッピング",
+                    "Light, environment, tone mapping",
+                ),
             )
             .selected(app.view3d.display.settings_open),
         );
@@ -368,7 +381,10 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "frame",
                 "target",
-                lang.pick("モデル全体が見える位置へ戻す", "Fit the whole model in view"),
+                lang.pick(
+                    "モデル全体が見える位置へ戻す",
+                    "Fit the whole model in view",
+                ),
             )
             .enabled(!app.is_stroking()),
         );
@@ -383,7 +399,10 @@ impl View3dSlot {
                         kind: PopupKind::View3dShading,
                         state: PopupState::new(
                             &ctx,
-                            Rect::from_min_size(pos2(b.left(), b.bottom() + 2.0), vec2(b.width(), 0.0)),
+                            Rect::from_min_size(
+                                pos2(b.left(), b.bottom() + 2.0),
+                                vec2(b.width(), 0.0),
+                            ),
                         ),
                     });
                 }
@@ -472,7 +491,8 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         return None;
     }
     ui.input(|i| {
-        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN)).then_some(i.modifiers.alt)
+        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN))
+            .then_some(i.modifiers.alt)
     })
 }
 
@@ -579,20 +599,40 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             };
             if tab == SettingsTab::Quality {
                 // アンチエイリアス: 機材が使える数だけ押せる（使えない数は理由をツールチップに）
-                heading(&mut rows, &p, lang.pick("アンチエイリアス", "Anti-aliasing"));
+                heading(
+                    &mut rows,
+                    &p,
+                    lang.pick("アンチエイリアス", "Anti-aliasing"),
+                );
                 let r = rows.row(24.0, 4.0);
                 let supported = d.supported_sample_counts();
                 let shown = d.shown_samples();
                 for (n, cell) in display::SAMPLE_CHOICES.iter().zip(Rows::split(r, 4, 4.0)) {
                     let usable = supported.contains(n);
-                    let label = if *n == 1 { lang.pick("切", "Off").to_owned() } else { format!("{n}×") };
+                    let label = if *n == 1 {
+                        lang.pick("切", "Off").to_owned()
+                    } else {
+                        format!("{n}×")
+                    };
                     let tip = if usable {
-                        lang.pick("縁のぎざぎざをなめらかにする（MSAA）", "Smooths jagged edges (MSAA)")
+                        lang.pick(
+                            "縁のぎざぎざをなめらかにする（MSAA）",
+                            "Smooths jagged edges (MSAA)",
+                        )
                     } else {
                         lang.pick("この機材は対応していません", "Not supported on this device")
                     };
-                    if w::button(ui, cell, ("view3d.set.aa", *n), &label, shown == *n, usable, Some(tip), None)
-                        .clicked()
+                    if w::button(
+                        ui,
+                        cell,
+                        ("view3d.set.aa", *n),
+                        &label,
+                        shown == *n,
+                        usable,
+                        Some(tip),
+                        None,
+                    )
+                    .clicked()
                     {
                         app.apply(Action::View3d(Op::Antialias(*n)));
                     }

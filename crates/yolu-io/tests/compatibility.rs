@@ -25,10 +25,15 @@ fn unity_formats_1_to_6_roundtrip_every_entry() {
         assert_eq!(read.manifest(), rewritten.manifest());
         for s in p.sets() {
             let native = &p.migrated_entries()[&format!("sets/{}/document.utpaint", s.id)];
-            assert_eq!(&native.bytes().unwrap()[..], &s.document.to_bytes().unwrap()[..]);
+            assert_eq!(
+                &native.bytes().unwrap()[..],
+                &s.document.to_bytes().unwrap()[..]
+            );
             if let Some(sel) = &s.selection {
                 assert_eq!(
-                    &p.migrated_entries()[&format!("sets/{}/selection.bin", s.id)].bytes().unwrap()[..],
+                    &p.migrated_entries()[&format!("sets/{}/selection.bin", s.id)]
+                        .bytes()
+                        .unwrap()[..],
                     sel.to_bytes()
                 );
             }
@@ -43,7 +48,10 @@ fn unity_formats_1_to_6_roundtrip_every_entry() {
         assert_eq!(upgraded.info().format, 7);
         assert_eq!(upgraded.sets().len(), p.sets().len());
         for (a, b) in p.sets().iter().zip(upgraded.sets()) {
-            assert_eq!(a.document.to_bytes().unwrap(), b.document.to_bytes().unwrap());
+            assert_eq!(
+                a.document.to_bytes().unwrap(),
+                b.document.to_bytes().unwrap()
+            );
         }
     }
 }
@@ -259,7 +267,9 @@ fn fill_layers_with_a_disabled_channel_and_a_mask_survive_save_and_restore() {
 fn adjustments_survive_save_and_restore_and_version_3_reads() {
     let mut d = one_pixel("base", Rgba8::new(100, 100, 100, 255));
     let hsl = AdjustmentSettings::hue_saturation(-45.0, 0.3, -0.2).unwrap();
-    let hsl_layer = d.add_adjustment_layer("HSL", hsl.clone(), None, None).unwrap();
+    let hsl_layer = d
+        .add_adjustment_layer("HSL", hsl.clone(), None, None)
+        .unwrap();
     d.set_channel_enabled(hsl_layer, Channel::Emission, false)
         .unwrap();
     let levels = AdjustmentSettings::levels(0.1, 0.9, 2.5, 0.2, 0.8).unwrap();

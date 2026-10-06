@@ -10,8 +10,9 @@ mod read;
 mod write;
 use crate::{check, Result};
 pub use bake::{
-    check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode, ExportNote, ExportOptions,
-    ExportPlan, Exported, FillSources, GradientExpansion, NoteAction, RoundedParameter, RoundedValue,
+    check_exportable, export_blockers, export_core, plan_export, ExportControl, ExportMode,
+    ExportNote, ExportOptions, ExportPlan, Exported, FillSources, GradientExpansion, NoteAction,
+    RoundedParameter, RoundedValue,
 };
 pub use bridge::{Blocker, Refusal};
 pub use import::{
@@ -19,7 +20,9 @@ pub use import::{
     ImportDetail, ImportFeature, ImportNote, Unchecked, Verified, ADJUSTMENT_TAG_KEYS,
 };
 pub use read::{read, read_cancellable, read_stream};
-pub use write::{write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written};
+pub use write::{
+    write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompatibilityMode {

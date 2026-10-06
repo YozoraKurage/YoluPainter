@@ -7,11 +7,11 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::m2::{
-    self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label,
-    BrushOp, Edit, EffectKind, UiOp,
+    self, dual_mode_label, kind_label, new_channel_info, texture_mode_label, tip_label, BrushOp,
+    Edit, EffectKind, UiOp,
 };
-use crate::subtool::SubToolAction;
 use crate::state::{Action, AppState};
+use crate::subtool::SubToolAction;
 use crate::ui::menu::Entry;
 
 /// 開いている M2 のポップアップの種類。
@@ -82,9 +82,7 @@ fn tips(
         vec![Entry::item(none, Action::M2Ui(UiOp::Brush(op(None)))).radio(current.is_none())];
     for id in yolu_core::brush::BUILTIN_TIPS {
         // 名前だけ同じで中身が違う（取り込んだ）画像は、組み込みとして印を付けない
-        let on = current.is_some_and(|t| {
-            yolu_core::builtin_tip(id).is_some_and(|b| *b == *t)
-        });
+        let on = current.is_some_and(|t| yolu_core::builtin_tip(id).is_some_and(|b| *b == *t));
         v.push(
             Entry::item(
                 tip_label(app.lang, id),
@@ -99,7 +97,11 @@ fn tips(
 /// 取り込んだ模様（模様から作ったブラシの質感の画像）: 一覧の並びで、ブラシの名前と質感の画像。
 pub fn patterns(
     app: &AppState,
-) -> Vec<(crate::brushes::BrushKey, String, std::sync::Arc<yolu_core::BrushTip>)> {
+) -> Vec<(
+    crate::brushes::BrushKey,
+    String,
+    std::sync::Arc<yolu_core::BrushTip>,
+)> {
     app.brushes
         .lib
         .entries()
@@ -279,20 +281,18 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         ),
         Popup::Texture => {
             let current = app.m2.brush.texture.as_ref().map(|t| &*t.image);
-            let mut v = tips(
-                app,
-                current,
-                lang.pick("なし", "None"),
-                BrushOp::Texture,
-            );
+            let mut v = tips(app, current, lang.pick("なし", "None"), BrushOp::Texture);
             // 取り込んだ模様は、組み込みの質感の後ろに並べる
             let patterns = patterns(app);
             if !patterns.is_empty() {
                 v.push(Entry::Separator);
                 for (key, name, image) in patterns {
                     v.push(
-                        Entry::item(name, Action::M2Ui(UiOp::Brush(BrushOp::PatternTexture(key))))
-                            .radio(current.is_some_and(|t| *t == *image)),
+                        Entry::item(
+                            name,
+                            Action::M2Ui(UiOp::Brush(BrushOp::PatternTexture(key))),
+                        )
+                        .radio(current.is_some_and(|t| *t == *image)),
                     );
                 }
             }
@@ -300,11 +300,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         }
         Popup::DualTip => tips(
             app,
-            app.m2
-                .brush
-                .dual
-                .as_ref()
-                .and_then(|d| d.tip.as_deref()),
+            app.m2.brush.dual.as_ref().and_then(|d| d.tip.as_deref()),
             lang.pick("丸（硬さ）", "Round (hardness)"),
             BrushOp::DualTip,
         ),

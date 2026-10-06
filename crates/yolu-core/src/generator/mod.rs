@@ -9,16 +9,16 @@ mod preview;
 mod procedural;
 mod ramp;
 mod shape;
+pub use crate::curve::CurvePoint;
 pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target};
+pub use mixing::{LuminanceCorrection, MixMode};
+pub(crate) use noisefn::MAX_OCTAVES;
 pub use preview::preview;
 pub use procedural::{
     CellOutput, FractalMode, GrungePreset, NoiseBasis, Procedural, ProceduralSpace,
 };
-pub use crate::curve::CurvePoint;
-pub use mixing::{LuminanceCorrection, MixMode};
 pub use ramp::{ColorStop, OpacityStop, Preset, Ramp};
 pub use shape::{ModelFrame, Shape, Volume};
-pub(crate) use noisefn::MAX_OCTAVES;
 use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -282,7 +282,9 @@ impl Settings {
             || self.axis > 2
             || (self.kind != Kind::PositionGradient && self.axis != 1)
         {
-            return Err(Error::Invalid("ジェネレーターの種類に対して割合・軸が不正です"));
+            return Err(Error::Invalid(
+                "ジェネレーターの種類に対して割合・軸が不正です",
+            ));
         }
         let [x, y, z] = self.direction;
         if self

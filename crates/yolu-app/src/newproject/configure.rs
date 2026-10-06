@@ -6,8 +6,8 @@
 //! 変えたセットは履歴を消す（元へ戻せない）。
 
 use super::{
-    groups_of, limit_error, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
-    SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
+    groups_of, limit_error, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow,
+    Prep, SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, Document, PreparedResize};
 use crate::lang::Lang;
@@ -623,8 +623,14 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
                 .join(sep)
         };
         text += &lang.pick(
-            format!(" 縮小で消えた覚えた選択範囲: {}。", list("・", &|n| format!("{n} 件"))),
-            format!(" Remembered selections lost to the shrink: {}.", list(", ", &|n| n.to_string())),
+            format!(
+                " 縮小で消えた覚えた選択範囲: {}。",
+                list("・", &|n| format!("{n} 件"))
+            ),
+            format!(
+                " Remembered selections lost to the shrink: {}.",
+                list(", ", &|n| n.to_string())
+            ),
         );
     }
     if app.model.is_some() && missing > 0 {
@@ -675,7 +681,10 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
     for (uid, index, one) in prepared {
         match app.set_doc_mut(index).commit_prepared_resize(one) {
             Ok(report) => done.push((
-                Resized { uid, dropped_saved_selections: report.dropped_saved_selections },
+                Resized {
+                    uid,
+                    dropped_saved_selections: report.dropped_saved_selections,
+                },
                 index,
             )),
             Err(e) => {

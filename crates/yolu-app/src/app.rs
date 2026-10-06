@@ -133,8 +133,7 @@ impl<'de> serde::Deserialize<'de> for Tab {
 pub fn default_dock() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
     let surface = dock.main_surface_mut();
-    let [center, left] =
-        surface.split_left(
+    let [center, left] = surface.split_left(
         NodeIndex::root(),
         0.21,
         vec![Tab::SubTools, Tab::Assets, Tab::Channels],
@@ -434,7 +433,10 @@ impl YoluApp {
     /// すべて残す、など）に戻し、理由を知らせる
     /// （ファイルは、設定を選び直すまで触らない）。
     fn with_settings(settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
-        let (loaded, problems) = settings.as_deref().map(crate::settings::load).unwrap_or_default();
+        let (loaded, problems) = settings
+            .as_deref()
+            .map(crate::settings::load)
+            .unwrap_or_default();
         let lang = loaded.lang;
         let mut app = YoluApp::with_state(
             AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
@@ -446,11 +448,21 @@ impl YoluApp {
             app.state.attach_brush_store(dir.join("brushes"));
             app.state.attach_subtool_store(dir.join("subtools"));
             app.state.ramp_sets.attach(dir.join("gradients"));
-            app.state.view3d.pose.hide_presets.attach(dir.join("hide_presets"));
-            app.state.view3d.pose.pose_presets.attach(dir.join("pose_presets"));
+            app.state
+                .view3d
+                .pose
+                .hide_presets
+                .attach(dir.join("hide_presets"));
+            app.state
+                .view3d
+                .pose
+                .pose_presets
+                .attach(dir.join("pose_presets"));
         }
         // サムネイルは中身の札でキャッシュのフォルダに覚える（作り直せる写し。設定のファイルが無ければ覚えない）
-        app.state.library.attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));
+        app.state
+            .library
+            .attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
         notices.extend(app.state.brush_problem_message());
@@ -465,7 +477,10 @@ impl YoluApp {
             app.state.message = notices.join(" ");
         }
         // 「起動時に更新を確かめる」の選択は、言語の設定と同じフォルダの別のファイル
-        if let Some(path) = settings.as_deref().and_then(crate::update::config::path_for) {
+        if let Some(path) = settings
+            .as_deref()
+            .and_then(crate::update::config::path_for)
+        {
             app.state.update.attach_config(path);
         }
         // 表示の合成の設定（自動のときは、環境変数 `YOLUPAINTER_CANVAS` か自動のまま）
@@ -473,7 +488,9 @@ impl YoluApp {
         if loaded.compositing != crate::settings::Compositing::Auto {
             app.display.set_backend(canvas_backend(loaded.compositing));
         }
-        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) { crate::colorsets::attach(&mut app.state, dir.join("colorsets")); }
+        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
+            crate::colorsets::attach(&mut app.state, dir.join("colorsets"));
+        }
         // ドックの並びと窓の大きさ・位置は、設定のフォルダの layout.json から戻す（読めない・古い・知らないタブは捨てて既定の並び。
         // 理由は診断のログだけ）
         if let Some(path) = settings.as_deref().and_then(crate::layout::path_for) {
@@ -522,7 +539,11 @@ impl YoluApp {
     }
 
     /// 文脈と設定のファイルから作る（試験用。`for_context` に、設定の読み書きを足したもの）。
-    pub fn for_context_with_settings(ctx: &egui::Context, settings: Option<std::path::PathBuf>, pen: PenInput) -> YoluApp {
+    pub fn for_context_with_settings(
+        ctx: &egui::Context,
+        settings: Option<std::path::PathBuf>,
+        pen: PenInput,
+    ) -> YoluApp {
         Self::setup(ctx);
         YoluApp::with_settings(settings, pen)
     }
@@ -556,7 +577,10 @@ impl YoluApp {
         }
         *saved = now.clone();
         if crate::settings::save(path, &now).is_err() {
-            self.state.message = now.lang.pick("設定を保存できません。", "Cannot save the settings.").into();
+            self.state.message = now
+                .lang
+                .pick("設定を保存できません。", "Cannot save the settings.")
+                .into();
         }
     }
 
@@ -625,7 +649,9 @@ impl YoluApp {
         let Some(path) = &self.layout_path else {
             return;
         };
-        let window = self.window_record.and_then(crate::layout::WindowRecord::sanitized);
+        let window = self
+            .window_record
+            .and_then(crate::layout::WindowRecord::sanitized);
         let text = crate::layout::render_with(&self.dock, window.as_ref(), &self.float_rects);
         if !force && text == self.layout_saved {
             return;
@@ -749,7 +775,8 @@ impl YoluApp {
             Some(DialogRequest::New) => {
                 // 保存していない変更は先に聞く（窓を開いてから聞くと、作業を捨てる前に窓の設定が無駄になる）
                 if self.confirm_discard() {
-                    self.state.apply(Action::Project(crate::newproject::NpAction::OpenNew));
+                    self.state
+                        .apply(Action::Project(crate::newproject::NpAction::OpenNew));
                 }
             }
             Some(DialogRequest::ProjectModel) => {
@@ -760,7 +787,9 @@ impl YoluApp {
                     .pick_file()
                 {
                     self.state
-                        .apply(Action::Project(crate::newproject::NpAction::ChooseModel(path)));
+                        .apply(Action::Project(crate::newproject::NpAction::ChooseModel(
+                            path,
+                        )));
                 }
             }
             Some(DialogRequest::Open) => {
@@ -768,7 +797,10 @@ impl YoluApp {
                 if self.confirm_discard() {
                     if let Some(path) = crate::dialog::file()
                         .set_title(lang.pick("プロジェクトを開く", "Open Project"))
-                        .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
+                        .add_filter(
+                            lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
+                            &["ylp"],
+                        )
                         .pick_file()
                     {
                         self.state.apply(Action::OpenProject(path));
@@ -780,7 +812,10 @@ impl YoluApp {
                 let name = format!("{}.ylp", self.state.project_name);
                 if let Some(path) = crate::dialog::file()
                     .set_title(lang.pick("別名で保存", "Save As"))
-                    .add_filter(lang.pick("YoluPainter プロジェクト", "YoluPainter Project"), &["ylp"])
+                    .add_filter(
+                        lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
+                        &["ylp"],
+                    )
                     .set_file_name(name)
                     .save_file()
                 {
@@ -823,7 +858,9 @@ impl YoluApp {
             Some(DialogRequest::ExportChannel) => {
                 let lang = self.state.lang;
                 let mut dialog = crate::dialog::file()
-                    .set_title(lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"))
+                    .set_title(
+                        lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"),
+                    )
                     .add_filter("PNG", &["png"])
                     .set_file_name(crate::export::default_channel_file_name(&self.state));
                 if let Some(dir) = self
@@ -843,15 +880,22 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file()
-                    .set_title(lang.pick("棚の場所", "Library folder"));
-                if let Some(current) = self.state.prefs.settings.library_folder().filter(|d| d.is_dir()) {
+                let mut dialog =
+                    crate::dialog::file().set_title(lang.pick("棚の場所", "Library folder"));
+                if let Some(current) = self
+                    .state
+                    .prefs
+                    .settings
+                    .library_folder()
+                    .filter(|d| d.is_dir())
+                {
                     dialog = dialog.set_directory(current);
                 }
                 if let Some(dir) = dialog.pick_folder() {
-                    self.state.apply(Action::Prefs(crate::prefs::PrefsAction::Set(
-                        crate::prefs::Pref::LibraryFolder(Some(dir)),
-                    )));
+                    self.state
+                        .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
+                            crate::prefs::Pref::LibraryFolder(Some(dir)),
+                        )));
                 }
             }
             Some(DialogRequest::ExportChannelsFolder) => {
@@ -964,8 +1008,9 @@ impl YoluApp {
                     dialog = dialog.set_directory(dir);
                 }
                 if let Some(dir) = dialog.pick_folder() {
-                    self.state
-                        .apply(Action::Brush(crate::brushes::BrushAction::ClipStudioFolder(dir)));
+                    self.state.apply(Action::Brush(
+                        crate::brushes::BrushAction::ClipStudioFolder(dir),
+                    ));
                 }
             }
             None => {}
@@ -1040,7 +1085,11 @@ impl YoluApp {
             .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ylp")));
         if let Some(path) = project {
             if self.state.is_stroking() {
-                self.state.message = self.state.lang.pick("描いている間は開きません。", "Cannot open during a stroke.").into();
+                self.state.message = self
+                    .state
+                    .lang
+                    .pick("描いている間は開きません。", "Cannot open during a stroke.")
+                    .into();
             } else if self.confirm_discard() {
                 self.state.apply(Action::OpenProject(path.clone()));
             }
@@ -1067,10 +1116,9 @@ impl YoluApp {
     /// 行き先は新しいセット: 今のセットの文書を替えると取り消せないので、落としただけでは今の絵に触れない
     /// （文書を替えるときの、保存していない変更の確認はいらない）。
     fn import_dropped_psd(&mut self, dropped: &[std::path::PathBuf]) {
-        let mut psds = dropped.iter().filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("psd"))
-        });
+        let mut psds = dropped
+            .iter()
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("psd")));
         let Some(first) = psds.next() else {
             return;
         };
@@ -1112,13 +1160,19 @@ impl YoluApp {
     pub fn with_render_state(mut self, rs: Option<&eframe::egui_wgpu::RenderState>) -> YoluApp {
         self.renderer3d = rs.map(View3dRenderer::new);
         // アンチエイリアスに選べる数は、この機材が描き先に使える数だけ
-        let supported = self.renderer3d.as_ref().map(|r| r.supported_samples().to_vec()).unwrap_or_default();
+        let supported = self
+            .renderer3d
+            .as_ref()
+            .map(|r| r.supported_samples().to_vec())
+            .unwrap_or_default();
         self.state.view3d.display.set_supported_samples(&supported);
         self.gpu_device = rs.map(|rs| rs.device.clone());
         // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
         self.display.attach_render_state(rs.cloned());
         // アダプターから GPU のメモリの量が分かれば、設定が配る予算に使う（設定のファイルを読んだあとなので、ここで入れる）
-        self.state.prefs.gpu = rs.map_or_else(Default::default, |rs| crate::gpu_memory::Adapter::detect(&rs.adapter.get_info()));
+        self.state.prefs.gpu = rs.map_or_else(Default::default, |rs| {
+            crate::gpu_memory::Adapter::detect(&rs.adapter.get_info())
+        });
         self.apply_gpu_memory();
         self
     }
@@ -1134,7 +1188,10 @@ impl YoluApp {
     }
 
     /// キャンバスの GPU の表示のテクスチャを読み戻す（試験・計測用。乗算済みの RGBA8、行は文書の下から上）。
-    pub fn read_canvas_gpu_display(&mut self, rect: crate::engine::Rect) -> Result<Vec<u8>, String> {
+    pub fn read_canvas_gpu_display(
+        &mut self,
+        rect: crate::engine::Rect,
+    ) -> Result<Vec<u8>, String> {
         self.display.read_gpu_display(rect)
     }
 
@@ -1205,7 +1262,9 @@ impl YoluApp {
 
     /// 3D の面の描き先に機材が使えるサンプル数（昇順。1 を含む。wgpu が無ければ None）。
     pub fn view3d_supported_samples(&self) -> Option<Vec<u32>> {
-        self.renderer3d.as_ref().map(|r| r.supported_samples().to_vec())
+        self.renderer3d
+            .as_ref()
+            .map(|r| r.supported_samples().to_vec())
     }
 
     /// 試験用: 塗った絵を捨てる（次の描きが文書から全部を作り直す）。
@@ -1231,7 +1290,9 @@ impl YoluApp {
         slot: crate::view3d::paint::Slot,
         level: u32,
     ) -> Option<(Vec<u8>, [u32; 2], u32)> {
-        self.renderer3d.as_ref()?.read_other_level(material, slot, level)
+        self.renderer3d
+            .as_ref()?
+            .read_other_level(material, slot, level)
     }
 
     /// 試験用: 絵を持っているほかのテクスチャセットのマテリアル。
@@ -1272,12 +1333,17 @@ impl YoluApp {
     /// Live Link と同じ形のモデルを読む（Live Link が受けたときと同じ道: 記録・テクスチャセットの結び付け・3D の形。描いている
     /// 最中なら、3D の形は終わってから入れ替わる）。つながりの外から読んだものなので Unity には出さない。
     pub fn load_live_link_model(&mut self, model: &yolu_protocol::Model) -> Result<(), String> {
-        self.state.receive_link_model(model, 0).1.map_err(|e| e.to_string())
+        self.state
+            .receive_link_model(model, 0)
+            .1
+            .map_err(|e| e.to_string())
     }
 
     /// Live Link と同じ形のポーズを当てる（描いている最中なら、終わってから）。
     pub fn apply_live_link_pose(&mut self, pose: &yolu_protocol::Pose) -> Result<(), String> {
-        self.state.receive_link_pose(pose).map_err(|e| e.to_string())
+        self.state
+            .receive_link_pose(pose)
+            .map_err(|e| e.to_string())
     }
 
     pub fn pen(&self) -> &PenInput {
@@ -1434,10 +1500,7 @@ impl YoluApp {
                     &shell::menu_titles(self.state.lang),
                     open_menu,
                     // 新しい版があるあいだ、ヘルプの見出しに印を付ける
-                    self.state
-                        .update
-                        .offer()
-                        .map(|_| shell::HELP_MENU),
+                    self.state.update.offer().map(|_| shell::HELP_MENU),
                 ));
                 // 右端: プロジェクトの名前と保存の状態。その左に Live Link の入口（Unity の印）。名前は、メニューの見出しの右から窓の右の縁までの
                 // 幅（最大 352）に収まるように後ろを詰め、印は「見えている名前」の左に置く（長い名前でも、印がメニューの見出しに重ならない）
@@ -1445,7 +1508,9 @@ impl YoluApp {
                     .as_ref()
                     .and_then(|b| b.rects.last())
                     .map_or(r.left() + 6.0, |last| last.right());
-                let room = (content.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0)).clamp(0.0, 352.0);
+                let room =
+                    (content.right() - 8.0 - (menu_end + 6.0 + shell::LINK_ICON_SLOT + 28.0))
+                        .clamp(0.0, 352.0);
                 let style = t::LABEL_DIM.with_color(if self.state.shows_modified() {
                     t::TEXT
                 } else {
@@ -1464,7 +1529,14 @@ impl YoluApp {
                     pos2(content.right() - 8.0 - name_width, r.top()),
                     pos2(content.right() - 8.0, r.bottom()),
                 );
-                let name = format!("{shown}{}", if self.state.shows_modified() { " •" } else { "" });
+                let name = format!(
+                    "{shown}{}",
+                    if self.state.shows_modified() {
+                        " •"
+                    } else {
+                        ""
+                    }
+                );
                 w::text(ui.painter(), title, &name, style, w::Align::Right);
                 if shown != self.state.project_name {
                     // 詰めたときだけ、全体の名前をツールチップに
@@ -1634,7 +1706,9 @@ impl YoluApp {
         self.saving_marked = saving;
         crate::session_end::set_saving(
             saving,
-            self.state.lang.pick("YoluPainter が保存しています", "YoluPainter is saving"),
+            self.state
+                .lang
+                .pick("YoluPainter が保存しています", "YoluPainter is saving"),
         );
     }
 
@@ -1676,7 +1750,12 @@ impl YoluApp {
         }
     }
 
-    fn popups(&mut self, ctx: &egui::Context, bar: &menu::BarOutcome, link_icon: Option<shell::LinkIcon>) {
+    fn popups(
+        &mut self,
+        ctx: &egui::Context,
+        bar: &menu::BarOutcome,
+        link_icon: Option<shell::LinkIcon>,
+    ) {
         let open_bar = match self.state.popup.as_ref().map(|p| p.kind) {
             Some(PopupKind::MenuBar(i)) => Some(i),
             _ => None,
@@ -1695,7 +1774,10 @@ impl YoluApp {
         }
         // Live Link の入口: 押したら窓を開く（開いていれば閉じる）
         if let Some(icon) = link_icon.filter(|i| i.pressed) {
-            if matches!(self.state.popup.as_ref().map(|p| p.kind), Some(PopupKind::LiveLink)) {
+            if matches!(
+                self.state.popup.as_ref().map(|p| p.kind),
+                Some(PopupKind::LiveLink)
+            ) {
                 self.state.popup = None;
             } else if !self.state.is_stroking() {
                 self.state.popup = Some(OpenPopup {
@@ -1865,22 +1947,32 @@ mod tests {
     fn live_link_startup_obeys_settings_and_explicit_launch_flag() {
         let ctx = egui::Context::default();
         for (i, (enabled, flag, expected)) in [
-            (true, false, true), (false, false, false),
-            (false, true, true), (true, true, true),
-        ].into_iter().enumerate() {
+            (true, false, true),
+            (false, false, false),
+            (false, true, true),
+            (true, true, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut app = YoluApp::with_state(AppState::new(64, 64), PenInput::detached());
             let name = format!("yl-start-{}-{i}", std::process::id());
             app.link.set_name(&name).unwrap();
             app.state.prefs.settings.livelink_on_startup = enabled;
             app.state.message = "起動時の知らせ".into();
             let mut args = vec![std::ffi::OsString::from("yolupainter")];
-            if flag { args.push("--livelink".into()); }
+            if flag {
+                args.push("--livelink".into());
+            }
             app.start_live_link(&ctx, args.into_iter());
             assert_eq!(app.state.link.is_on(), expected);
             assert_eq!(app.state.message, "起動時の知らせ");
             assert_eq!(yolu_protocol::link::connect(&name).is_ok(), expected);
             if expected {
-                assert_eq!(app.state.link.status, crate::livelink::LinkStatus::Listening);
+                assert_eq!(
+                    app.state.link.status,
+                    crate::livelink::LinkStatus::Listening
+                );
             }
         }
     }
@@ -1895,8 +1987,14 @@ mod tests {
             app.link.set_name(&name).unwrap();
             app.start_live_link(&ctx, ["yolupainter"].into_iter().map(Into::into));
         }
-        assert_eq!(first.state.link.status, crate::livelink::LinkStatus::Listening);
-        assert!(matches!(second.state.link.status, crate::livelink::LinkStatus::Failed(_)));
+        assert_eq!(
+            first.state.link.status,
+            crate::livelink::LinkStatus::Listening
+        );
+        assert!(matches!(
+            second.state.link.status,
+            crate::livelink::LinkStatus::Failed(_)
+        ));
         assert!(!second.state.link.tooltip(Lang::Ja).is_empty());
         assert!(yolu_protocol::link::connect(&name).is_ok());
     }
@@ -1907,9 +2005,15 @@ mod tests {
             vec!["yolupainter", "--livelink", "sample.ylp"],
             vec!["yolupainter", "sample.ylp", "--livelink"],
         ] {
-            assert_eq!(startup_project(args.into_iter().map(Into::into)), Some("sample.ylp".into()));
+            assert_eq!(
+                startup_project(args.into_iter().map(Into::into)),
+                Some("sample.ylp".into())
+            );
         }
-        assert_eq!(startup_project(["yolupainter", "--livelink"].into_iter().map(Into::into)), None);
+        assert_eq!(
+            startup_project(["yolupainter", "--livelink"].into_iter().map(Into::into)),
+            None
+        );
     }
 
     #[test]
@@ -1939,7 +2043,8 @@ mod tests {
     }
 
     fn startup_app(args: &[&std::path::Path]) -> YoluApp {
-        let mut app = YoluApp::with_state(crate::state::AppState::new(64, 64), PenInput::detached());
+        let mut app =
+            YoluApp::with_state(crate::state::AppState::new(64, 64), PenInput::detached());
         app.open_startup_project(
             std::iter::once(std::ffi::OsString::from("yolupainter"))
                 .chain(args.iter().map(|p| p.as_os_str().to_owned())),
@@ -1960,8 +2065,15 @@ mod tests {
         source.apply(Action::SaveProjectAs(project.clone()));
         assert!(!source.modified, "{}", source.message);
         let app = startup_app(&[&project]);
-        assert_eq!(app.state.project.as_ref().map(|p| p.path().to_path_buf()), Some(project.clone()));
-        assert!(!app.state.message.contains("開けません"), "{}", app.state.message);
+        assert_eq!(
+            app.state.project.as_ref().map(|p| p.path().to_path_buf()),
+            Some(project.clone())
+        );
+        assert!(
+            !app.state.message.contains("開けません"),
+            "{}",
+            app.state.message
+        );
         // 壊れた .ylp・無い .ylp は、開かずに理由を知らせる（元の文書はそのまま）
         let broken = dir.join("Broken.ylp");
         std::fs::write(&broken, b"not a project").unwrap();
@@ -1988,7 +2100,10 @@ mod tests {
     #[test]
     fn startup_message_keeps_all_notices() {
         assert_eq!(startup_message(Lang::Ja, &[]), None);
-        assert_eq!(startup_message(Lang::En, &[Problem::Unreadable]).as_deref(), Some("Cannot read the settings."));
+        assert_eq!(
+            startup_message(Lang::En, &[Problem::Unreadable]).as_deref(),
+            Some("Cannot read the settings.")
+        );
         assert_eq!(
             startup_message(Lang::En, &[Problem::Language("x".into())]).as_deref(),
             Some("Cannot read the language setting.")
@@ -1996,11 +2111,21 @@ mod tests {
         // 読めなかった設定の理由が 2 つ以上なら全部
         let both = startup_message(
             Lang::Ja,
-            &[Problem::Language("x".into()), Problem::Invalid { key: "cpu_threads", value: "0".into() }, Problem::Backups("-2".into())],
+            &[
+                Problem::Language("x".into()),
+                Problem::Invalid {
+                    key: "cpu_threads",
+                    value: "0".into(),
+                },
+                Problem::Backups("-2".into()),
+            ],
         )
         .unwrap();
         assert!(
-            both.contains("言語の設定を読めません") && both.contains("CPU のスレッド") && both.contains("退避を残す数") && !both.contains("Windows Ink"),
+            both.contains("言語の設定を読めません")
+                && both.contains("CPU のスレッド")
+                && both.contains("退避を残す数")
+                && !both.contains("Windows Ink"),
             "{both}"
         );
     }

@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use yolu_core::{Channel, Document, Rgba8};
-use yolu_io::{composite_pngs, DocumentSource, MaterialRef, NativeDocument, NativeValue, Project, SaveTarget, SetSpec};
+use yolu_io::{
+    composite_pngs, DocumentSource, MaterialRef, NativeDocument, NativeValue, Project, SaveTarget,
+    SetSpec,
+};
 use yolu_ops::reply::LayerKindName;
 use yolu_ops::{execute, parse_command, FileHost, OpError, OpHost, PathPolicy, Reply};
 
@@ -37,7 +40,14 @@ impl Fixture {
     }
     /// 1 セット（既定の文書）の .ylp を書く。
     pub fn project(&self, file: &str) -> PathBuf {
-        self.project_with(file, vec![Set::doc("11111111-1111-4111-8111-111111111111", "Body", sample_document())])
+        self.project_with(
+            file,
+            vec![Set::doc(
+                "11111111-1111-4111-8111-111111111111",
+                "Body",
+                sample_document(),
+            )],
+        )
     }
     /// 複数のセットの .ylp を書く（最初のセットが今のセット）。
     pub fn project_with(&self, file: &str, sets: Vec<Set>) -> PathBuf {
@@ -72,19 +82,35 @@ pub struct Set {
 impl Set {
     pub fn doc(id: &str, name: &str, doc: Document) -> Set {
         let composites = composite_pngs(&doc).unwrap();
-        Set { id: id.into(), name: name.into(), source: DocumentSource::from_core(Arc::new(doc)).unwrap(), composites }
+        Set {
+            id: id.into(),
+            name: name.into(),
+            source: DocumentSource::from_core(Arc::new(doc)).unwrap(),
+            composites,
+        }
     }
     /// core が扱えない中身（使わない調整の値が既定でない）を持つ読むだけのセット。
     pub fn unsupported(id: &str, name: &str) -> Set {
         let mut doc = Document::new(16, 16).unwrap();
-        doc.add_adjustment_layer("Adj", yolu_core::AdjustmentSettings::invert(), None, None).unwrap();
+        doc.add_adjustment_layer("Adj", yolu_core::AdjustmentSettings::invert(), None, None)
+            .unwrap();
         let native = NativeDocument::from_core(&doc).unwrap();
-        let native = native.with_value("layers[0].adjustment.hue", NativeValue::Float(10.0)).unwrap();
+        let native = native
+            .with_value("layers[0].adjustment.hue", NativeValue::Float(10.0))
+            .unwrap();
         assert!(!native.core_issues().is_empty());
-        Set { id: id.into(), name: name.into(), source: DocumentSource::from(native), composites: Vec::new() }
+        Set {
+            id: id.into(),
+            name: name.into(),
+            source: DocumentSource::from(native),
+            composites: Vec::new(),
+        }
     }
     fn into_spec(self) -> SetSpec {
-        let material = MaterialRef::Material { name: self.name.clone(), asset: None };
+        let material = MaterialRef::Material {
+            name: self.name.clone(),
+            asset: None,
+        };
         SetSpec {
             id: self.id,
             name: self.name,
@@ -101,13 +127,24 @@ pub fn sample_document() -> Document {
     let base = doc.add_layer("Base").unwrap();
     for y in 0..48 {
         for x in 0..64 {
-            let c = Rgba8::new((x * 4) as u8, (y * 5) as u8, 90, if (x + y) % 7 == 0 { 0 } else { 255 });
+            let c = Rgba8::new(
+                (x * 4) as u8,
+                (y * 5) as u8,
+                90,
+                if (x + y) % 7 == 0 { 0 } else { 255 },
+            );
             doc.set_pixel(base, x, y, c).unwrap();
         }
     }
-    doc.add_fill_layer("Tint", &[(Channel::Color, Rgba8::new(40, 80, 160, 128))], None).unwrap();
+    doc.add_fill_layer(
+        "Tint",
+        &[(Channel::Color, Rgba8::new(40, 80, 160, 128))],
+        None,
+    )
+    .unwrap();
     let inner = doc.add_layer("Inner").unwrap();
-    doc.set_pixel(inner, 3, 4, Rgba8::new(255, 0, 0, 255)).unwrap();
+    doc.set_pixel(inner, 3, 4, Rgba8::new(255, 0, 0, 255))
+        .unwrap();
     doc.group_layers(&[inner], "Group").unwrap();
     doc.clear_history().unwrap();
     doc
@@ -134,16 +171,29 @@ pub fn err(host: &mut dyn OpHost, command: Value) -> OpError {
 
 /// 層の ID を名前から（上から数えて最初）。
 pub fn layer_id(host: &mut dyn OpHost, name: &str) -> String {
-    let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else { panic!() };
-    info.layers.into_iter().find(|l| l.name == name).unwrap_or_else(|| panic!("層 {name} が無い")).id
+    let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else {
+        panic!()
+    };
+    info.layers
+        .into_iter()
+        .find(|l| l.name == name)
+        .unwrap_or_else(|| panic!("層 {name} が無い"))
+        .id
 }
 
 /// 文書の見た目の全部（セットの層の並びと、層ごとの全部）を JSON にして、状態の比べに使う。
 pub fn state(host: &mut dyn OpHost) -> Value {
-    let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else { panic!() };
+    let Reply::Set(info) = ok(host, json!({"command": "set.info"})) else {
+        panic!()
+    };
     let mut layers = Vec::new();
     for l in &info.layers {
-        let Reply::Layer(mut detail) = ok(host, json!({"command": "layer.get", "args": {"layer": l.id}})) else { panic!() };
+        let Reply::Layer(mut detail) = ok(
+            host,
+            json!({"command": "layer.get", "args": {"layer": l.id}}),
+        ) else {
+            panic!()
+        };
         // 値の無い塗りつぶしのチャンネルの「有効」の印は、合成に効かず .ylp に書かれない（core の決まり）ので、比べない
         if detail.summary.kind == LayerKindName::Fill {
             for c in &mut detail.channels {

@@ -207,10 +207,7 @@ fn a_unity_that_asks_for_a_newer_standalone_gets_the_version_to_update_to() {
     let name = listen(&mut h, "newer");
     // Unity のパッケージが、スタンドアロンに求める版（この版より新しい）
     let wanted = V(own_version().major + 1, 2, 0);
-    let _u = Unity::connect(
-        &name,
-        &unity(Some(V(0, 9, 0)), wanted, livelink::FEATURES),
-    );
+    let _u = Unity::connect(&name, &unity(Some(V(0, 9, 0)), wanted, livelink::FEATURES));
     connected(&mut h);
     let link = &h.state().state.link;
     assert_eq!(link.indicator(), LinkIndicator::Skewed);
@@ -241,12 +238,28 @@ fn a_unity_that_asks_for_a_newer_standalone_gets_the_version_to_update_to() {
 /// 機能の印の名前（画面の文と同じ。名前を知らない印は「新しい機能」にまとめる）。
 fn names_of(lang: Lang, mask: u64) -> String {
     let table = [
-        (feature::MATERIAL_VALUES, "マテリアルの値", "Material values"),
+        (
+            feature::MATERIAL_VALUES,
+            "マテリアルの値",
+            "Material values",
+        ),
         (feature::ASSETS, "アセット", "Assets"),
-        (feature::PROJECT_TRANSFER, "プロジェクトの転送", "Project transfer"),
+        (
+            feature::PROJECT_TRANSFER,
+            "プロジェクトの転送",
+            "Project transfer",
+        ),
         (feature::ANIMATION, "アニメーション", "Animation"),
-        (feature::ORIGINAL_TEXTURES, "元のテクスチャ", "Original textures"),
-        (feature::MATERIAL_REQUEST, "マテリアルの頼み", "Material requests"),
+        (
+            feature::ORIGINAL_TEXTURES,
+            "元のテクスチャ",
+            "Original textures",
+        ),
+        (
+            feature::MATERIAL_REQUEST,
+            "マテリアルの頼み",
+            "Material requests",
+        ),
     ];
     let mut names: Vec<&str> = table
         .iter()

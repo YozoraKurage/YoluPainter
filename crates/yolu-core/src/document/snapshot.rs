@@ -142,7 +142,9 @@ mod tests {
         let layer = doc.add_layer("絵").unwrap();
         let brush = BrushSettings::default();
         let mut stroke = doc.begin_stroke(layer, &brush).unwrap();
-        stroke.add_point(&mut doc, 8.0, 8.0, 1.0, DVec2::ZERO).unwrap();
+        stroke
+            .add_point(&mut doc, 8.0, 8.0, 1.0, DVec2::ZERO)
+            .unwrap();
         let revision = doc.revision();
         assert!(matches!(
             doc.capture_snapshot(),
@@ -150,7 +152,10 @@ mod tests {
         ));
         assert_eq!(doc.revision(), revision);
         assert!(doc.has_active_stroke());
-        assert!(doc.end_stroke(stroke).unwrap().changed, "ストロークは続けて終われる");
+        assert!(
+            doc.end_stroke(stroke).unwrap().changed,
+            "ストロークは続けて終われる"
+        );
         assert!(doc.capture_snapshot().is_ok());
     }
 
@@ -161,13 +166,17 @@ mod tests {
         dab(&mut doc, paint, 10.0, 10.0, Rgba8::new(20, 30, 40, 255));
         doc.set_layer_opacity(paint, 0.7, false).unwrap();
         doc.set_layer_clipping(paint, true).unwrap();
-        doc.set_channel_opacity(paint, Channel::Color, Some(0.4), false).unwrap();
+        doc.set_channel_opacity(paint, Channel::Color, Some(0.4), false)
+            .unwrap();
         doc.add_layer_mask(paint).unwrap();
         doc.set_mask_pixel(paint, 1, 2, 200).unwrap();
         doc.set_layer_mask_density(paint, 0.3, false).unwrap();
-        let fill = doc.add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 8, 7, 255))], None).unwrap();
+        let fill = doc
+            .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 8, 7, 255))], None)
+            .unwrap();
         let group = doc.group_layers(&[fill], "組").unwrap();
-        doc.set_layer_locks(paint, crate::LayerLocks::POSITION).unwrap();
+        doc.set_layer_locks(paint, crate::LayerLocks::POSITION)
+            .unwrap();
         let user = doc
             .add_channel(ChannelInfo {
                 name: "Extra".into(),
@@ -176,9 +185,14 @@ mod tests {
                 default: Rgba8::new(5, 5, 5, 255),
             })
             .unwrap();
-        doc.set_selection(Some(crate::SelectionMask::rectangle(&doc, 0, 0, 9, 10))).unwrap();
+        doc.set_selection(Some(crate::SelectionMask::rectangle(&doc, 0, 0, 9, 10)))
+            .unwrap();
         doc.set_id_colors(
-            crate::mesh_maps::IdColorAssignments::new("a".repeat(64), [(0, 0x123456)].into_iter().collect()).unwrap(),
+            crate::mesh_maps::IdColorAssignments::new(
+                "a".repeat(64),
+                [(0, 0x123456)].into_iter().collect(),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(doc.can_undo());
@@ -196,14 +210,31 @@ mod tests {
         assert_eq!(snap.layers().len(), doc.layers().len());
         for (a, b) in snap.layers().iter().zip(doc.layers()) {
             assert_eq!(
-                (a.id(), a.name(), a.parent(), a.opacity(), a.locks(), a.clipping()),
-                (b.id(), b.name(), b.parent(), b.opacity(), b.locks(), b.clipping())
+                (
+                    a.id(),
+                    a.name(),
+                    a.parent(),
+                    a.opacity(),
+                    a.locks(),
+                    a.clipping()
+                ),
+                (
+                    b.id(),
+                    b.name(),
+                    b.parent(),
+                    b.opacity(),
+                    b.locks(),
+                    b.clipping()
+                )
             );
         }
         assert_eq!(snap.layer(group).unwrap().name(), "組");
         let mask = snap.layer(paint).unwrap().mask().unwrap();
         assert_eq!(mask.density(), 0.3);
-        assert_eq!(snap.composite(snap.bounds()).unwrap(), doc.composite(doc.bounds()).unwrap());
+        assert_eq!(
+            snap.composite(snap.bounds()).unwrap(),
+            doc.composite(doc.bounds()).unwrap()
+        );
         for channel in [Channel::Color, Channel::Roughness, user] {
             assert_eq!(
                 snap.composite_channel(channel, snap.bounds()).unwrap(),
@@ -218,7 +249,8 @@ mod tests {
         let layer = doc.add_layer("絵").unwrap();
         dab(&mut doc, layer, 10.0, 10.0, Rgba8::new(20, 30, 40, 255));
         doc.add_layer_mask(layer).unwrap();
-        doc.set_selection(Some(crate::SelectionMask::rectangle(&doc, 0, 0, 9, 10))).unwrap();
+        doc.set_selection(Some(crate::SelectionMask::rectangle(&doc, 0, 0, 9, 10)))
+            .unwrap();
         let snap = doc.capture_snapshot().unwrap();
         let (pixels, selection, revision) = (
             snap.composite(snap.bounds()).unwrap(),
@@ -251,11 +283,16 @@ mod tests {
         let snap = doc.capture_snapshot().unwrap();
         let expected = snap.composite(snap.bounds()).unwrap();
         let reader = std::thread::spawn(move || {
-            (0..20)
-                .all(|_| snap.composite(snap.bounds()).unwrap() == expected)
+            (0..20).all(|_| snap.composite(snap.bounds()).unwrap() == expected)
         });
         for i in 0..20 {
-            dab(&mut doc, layer, 10.0 + i as f64, 10.0, Rgba8::new(200, 0, 0, 255));
+            dab(
+                &mut doc,
+                layer,
+                10.0 + i as f64,
+                10.0,
+                Rgba8::new(200, 0, 0, 255),
+            );
         }
         assert!(reader.join().unwrap());
     }
@@ -265,7 +302,13 @@ mod tests {
         let mut doc = Document::with_tile_size(2048, 2048, 128).unwrap();
         let layer = doc.add_layer("絵").unwrap();
         for i in 0..16 {
-            dab(&mut doc, layer, 64.0 + 128.0 * i as f64, 64.0 + 128.0 * i as f64, Rgba8::new(i as u8 * 10, 90, 30, 255));
+            dab(
+                &mut doc,
+                layer,
+                64.0 + 128.0 * i as f64,
+                64.0 + 128.0 * i as f64,
+                Rgba8::new(i as u8 * 10, 90, 30, 255),
+            );
         }
         let snap = doc.capture_snapshot().unwrap();
         let shared = snap
@@ -277,7 +320,14 @@ mod tests {
             .into_iter()
             .filter(|c| std::sync::Arc::ptr_eq(&buffer(&doc, layer, *c), &buffer(&snap, layer, *c)))
             .count();
-        assert_eq!(shared, snap.layer(layer).unwrap().surface(Channel::Color).unwrap().tile_count());
+        assert_eq!(
+            shared,
+            snap.layer(layer)
+                .unwrap()
+                .surface(Channel::Color)
+                .unwrap()
+                .tile_count()
+        );
         assert!(shared >= 16);
     }
 }

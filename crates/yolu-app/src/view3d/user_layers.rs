@@ -447,7 +447,12 @@ impl UserLayers {
             let r = [dx, dy, dx + dw, dy + dh];
             dirty = Some(match dirty {
                 None => r,
-                Some(d) => [d[0].min(r[0]), d[1].min(r[1]), d[2].max(r[2]), d[3].max(r[3])],
+                Some(d) => [
+                    d[0].min(r[0]),
+                    d[1].min(r[1]),
+                    d[2].max(r[2]),
+                    d[3].max(r[3]),
+                ],
             });
         }
         // 作業用のバッファは文書の帯の大きさになる。持ち続けない
@@ -475,7 +480,9 @@ impl UserLayers {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&state.level_arrays[level - 1]),
+                        resource: wgpu::BindingResource::TextureView(
+                            &state.level_arrays[level - 1],
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -518,7 +525,8 @@ impl UserLayers {
 /// 全部を作るときに合成するタイル（画布全体に効く層・効果があれば全タイル、無ければ層が面を持つタイル。`paint` と同じ決まり）。
 fn full_rects(doc: &Document, channel: Channel, shift: u32) -> Vec<(DocRect, usize)> {
     let whole = doc.layers().iter().any(|l| {
-        (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment) && l.is_channel_enabled(channel))
+        (matches!(l.kind(), LayerKind::Fill | LayerKind::Adjustment)
+            && l.is_channel_enabled(channel))
             || l.has_active_filters(channel)
             || l.mask().is_some_and(|m| m.has_active_filters())
     });
@@ -536,7 +544,12 @@ fn full_rects(doc: &Document, channel: Channel, shift: u32) -> Vec<(DocRect, usi
     rects(doc, &coords, shift)
 }
 
-fn changed_rects(doc: &Document, channel: Channel, since: u64, shift: u32) -> Vec<(DocRect, usize)> {
+fn changed_rects(
+    doc: &Document,
+    channel: Channel,
+    since: u64,
+    shift: u32,
+) -> Vec<(DocRect, usize)> {
     let coords = doc.changed_tiles(channel, since).unwrap_or_default();
     rects(doc, &coords, shift)
 }
@@ -571,7 +584,10 @@ mod tests {
         assert!(bytes <= 1 << 20);
         assert_eq!(plan([1024, 1024], 2, 3, 8192, u64::MAX).0, 3);
         // 1 つでも 2 層で作る（GL）。0 個は持たない
-        assert_eq!(plan([64, 64], 1, 0, 8192, u64::MAX).1, mip_bytes([64, 64], 8));
+        assert_eq!(
+            plan([64, 64], 1, 0, 8192, u64::MAX).1,
+            mip_bytes([64, 64], 8)
+        );
         assert_eq!(plan([64, 64], 0, 0, 8192, u64::MAX), (0, 0));
         // 全体の残りが 0 でも、縮めの下限（1 × 1）で止まる（標準のチャンネルの絵と同じ決まり）
         assert_eq!(plan([1024, 1024], 2, 0, 8192, 0), (10, 8));

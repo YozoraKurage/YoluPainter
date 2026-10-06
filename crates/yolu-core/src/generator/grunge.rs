@@ -6,16 +6,16 @@
 //!
 //! 各式には、N 画素を 1 組で計算する版（`*_lanes`）がある。1 画素の式と同じ演算を同じ順に並べ、分岐はレーンごとの選択に置き換えたもので、
 //! 結果のビットは変わらない。
+#[cfg(target_arch = "x86_64")]
+use super::noisefn::{sin_cos_deg_lanes, unit24_lanes};
+#[cfg(target_arch = "x86_64")]
+use super::procedural::GenLanes;
 use super::{
     noisefn::{cell_hash, hash_unit, sin_cos_deg, unit24, wrap},
     procedural::{Ctx, FractalMode::*, GrungePreset, Layer, NoiseBasis::*},
 };
 #[cfg(target_arch = "x86_64")]
-use super::noisefn::{sin_cos_deg_lanes, unit24_lanes};
-#[cfg(target_arch = "x86_64")]
 use crate::math::simd::{self, Lanes};
-#[cfg(target_arch = "x86_64")]
-use super::procedural::GenLanes;
 
 /// セルの枠（Worley の特徴点を引く座標の写し方）。
 pub(super) struct CellSpec {
@@ -486,7 +486,11 @@ unsafe fn per_hash<V: Lanes>(ids: V::F, f: impl Fn(u32) -> f64) -> V::F {
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-pub(super) unsafe fn eval_lanes<V: GenLanes>(cx: &mut Ctx<'_>, b: [V::F; 3], preset: GrungePreset) -> V::F {
+pub(super) unsafe fn eval_lanes<V: GenLanes>(
+    cx: &mut Ctx<'_>,
+    b: [V::F; 3],
+    preset: GrungePreset,
+) -> V::F {
     V::grunge(cx, b, preset)
 }
 
@@ -607,10 +611,7 @@ pub(super) unsafe fn segments_lanes<V: Lanes>(
         let along = V::abs(V::add(V::mul(cos, rx), V::mul(sin, ry)));
         let perp = V::sub(V::mul(cos, ry), V::mul(sin, rx));
         // 線から幅以上離れた画素は、減衰の項が丸めまで含めて 0 になり、`best` を変えない。全部のレーンがそうなら飛ばす
-        if V::all(V::ge(
-            V::abs(perp),
-            V::splat(sg.width * (1. + 1e-9)),
-        )) {
+        if V::all(V::ge(V::abs(perp), V::splat(sg.width * (1. + 1e-9)))) {
             continue;
         }
         let half = V::splat(sg.half);
@@ -620,7 +621,10 @@ pub(super) unsafe fn segments_lanes<V: Lanes>(
             V::abs(perp),
             V::sqrt(V::add(V::mul(past, past), V::mul(perp, perp))),
         );
-        let taper = V::sub(V::splat(1.), smooth_lanes::<V>(sg.half * 0.5, sg.half, along));
+        let taper = V::sub(
+            V::splat(1.),
+            smooth_lanes::<V>(sg.half * 0.5, sg.half, along),
+        );
         let v = V::mul(
             V::sub(
                 V::splat(1.),
@@ -682,10 +686,7 @@ unsafe fn fingerprints_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
         V::splat(1.),
         smooth_lanes::<V>(0.22, 0.46, V::add(r, V::mul(V::splat(0.1), n2))),
     );
-    V::mul(
-        V::mul(ridge, patch),
-        V::add(half, V::mul(half, vis)),
-    )
+    V::mul(V::mul(ridge, patch), V::add(half, V::mul(half, vis)))
 }
 
 #[inline(always)]
@@ -774,7 +775,12 @@ unsafe fn cracks_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3]) -> V::F {
 
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-unsafe fn drops_lanes<V: Lanes>(cx: &mut Ctx<'_>, b: [V::F; 3], frame: usize, biggest: f64) -> V::F {
+unsafe fn drops_lanes<V: Lanes>(
+    cx: &mut Ctx<'_>,
+    b: [V::F; 3],
+    frame: usize,
+    biggest: f64,
+) -> V::F {
     let (c, _) = cx.cells_body::<V>(b, frame);
     let r1 = unit24_lanes::<V>(c.id);
     let r2 = per_hash::<V>(c.id, |id| hash_unit(id ^ 0x7f4a_7c15));

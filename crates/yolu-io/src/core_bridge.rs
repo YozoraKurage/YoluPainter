@@ -4,11 +4,11 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）。core に無い項目（手動の ID 色）は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    ADJUST_VERSION, MIXING_VERSION, PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
-    check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable, MAX_ENTRY_BYTES,
+    check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
+    MAX_ENTRY_BYTES,
 };
 use std::collections::HashMap;
 use yolu_core::curve::{Curve, CurvePoint};
@@ -340,10 +340,11 @@ impl CoreLoad {
     pub(crate) fn layer(&mut self, f: &Fields<'_>, i: usize) -> Result<()> {
         let p = format!("layers[{i}]");
         let version = self.version;
-        self.locks.push(load_layer(&mut self.doc, f, &p, version).map_err(|e| {
-            let name = f.text(&format!("{p}.name")).unwrap_or_default();
-            e.in_context(format!("{p}「{name}」をcoreにできません"))
-        })?);
+        self.locks
+            .push(load_layer(&mut self.doc, f, &p, version).map_err(|e| {
+                let name = f.text(&format!("{p}.name")).unwrap_or_default();
+                e.in_context(format!("{p}「{name}」をcoreにできません"))
+            })?);
         self.ids.push(LayerId(core_id(f.guid(&format!("{p}.id"))?)));
         self.parents.push(if version >= 6 {
             f.guid(&format!("{p}.parent"))?
@@ -453,7 +454,10 @@ pub(crate) fn check_writable(doc: &Document) -> Result<()> {
     )?;
     check_budget(
         nesting_within_limit(doc),
-        format!("グループの入れ子の上限は{}段です", yolu_core::MAX_GROUP_DEPTH),
+        format!(
+            "グループの入れ子の上限は{}段です",
+            yolu_core::MAX_GROUP_DEPTH
+        ),
     )
 }
 /// 文書を正本の並び（中の版 `version`。C# の `DocumentBinary.Write` と同じ並び）で `sink` へ書く。層の始まりごとに `Sink::layer` を呼ぶ。
@@ -476,7 +480,11 @@ pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     write_head_after_version(&mut w, doc, version)
 }
 /// 1 つの層。
-pub(crate) fn write_layer_to(sink: &mut dyn Sink, layer: &yolu_core::Layer, version: i32) -> Result<()> {
+pub(crate) fn write_layer_to(
+    sink: &mut dyn Sink,
+    layer: &yolu_core::Layer,
+    version: i32,
+) -> Result<()> {
     let mut w = Out {
         sink,
         mixing: version >= MIXING_VERSION,
@@ -538,9 +546,7 @@ pub(crate) fn uses_rust_only_generators(doc: &Document) -> bool {
 /// 文書が、混色（Standard 以外のモード）か混合率曲線を使うグラデーションマップ（調整の層か、層の内容・マスクのフィルターの段。無効な段も数える）を
 /// 持つか。持っていれば正本の版は 25 になり、Unity 版は開けない。
 pub(crate) fn uses_gradient_mixing(doc: &Document) -> bool {
-    let mixes = |c: Option<ColorAdjust>| {
-        matches!(c, Some(ColorAdjust::GradientMap(g)) if g.ramp().uses_mixing())
-    };
+    let mixes = |c: Option<ColorAdjust>| matches!(c, Some(ColorAdjust::GradientMap(g)) if g.ramp().uses_mixing());
     doc.layers().iter().any(|l| {
         l.adjustment().is_some_and(|a| mixes(a.color_adjust()))
             || l.filters()
@@ -719,7 +725,9 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             gradients.push((f.channel(&format!("{g}.channel"))?, read_generator(f, &g)?));
         }
         doc.set_fill_gradients_for_load(id, gradients)
-            .map_err(|e| Error::from(e).in_context("塗りつぶしのグラデーションをcoreにできません"))?;
+            .map_err(|e| {
+                Error::from(e).in_context("塗りつぶしのグラデーションをcoreにできません")
+            })?;
     }
     if version >= 8 && f.boolean(&format!("{p}.has_surface_path"))? {
         let path = read_path(f, &format!("{p}.surface_path"), true, version)?;
@@ -913,10 +921,14 @@ fn read_projection(f: &Fields<'_>, p: &str) -> Result<Projection> {
     let v = |name: &str| f.float(&format!("{p}.{name}"));
     let q = |name: &str| f.float(&format!("{p}.placement.{name}"));
     let mut projection = Projection {
-        mode: ProjectionMode::try_from(u8::try_from(mode).map_err(|_| Error::InvalidData("投影の種類".into()))?)
-            .map_err(|e| Error::InvalidData(e.to_string()))?,
-        wrap: Wrap::try_from(u8::try_from(wrap).map_err(|_| Error::InvalidData("投影の外側".into()))?)
-            .map_err(|e| Error::InvalidData(e.to_string()))?,
+        mode: ProjectionMode::try_from(
+            u8::try_from(mode).map_err(|_| Error::InvalidData("投影の種類".into()))?,
+        )
+        .map_err(|e| Error::InvalidData(e.to_string()))?,
+        wrap: Wrap::try_from(
+            u8::try_from(wrap).map_err(|_| Error::InvalidData("投影の外側".into()))?,
+        )
+        .map_err(|e| Error::InvalidData(e.to_string()))?,
         tiles: [v("tile_u")?, v("tile_v")?],
         offset: [v("offset_u")?, v("offset_v")?],
         rotation: v("rotation")?,
@@ -974,13 +986,15 @@ fn read_generator(f: &Fields<'_>, p: &str) -> Result<generator::Settings> {
         _ => generator::Blend::Subtract,
     };
     g.balance = v("balance")?;
-    g.axis = usize::try_from(f.int(&format!("{p}.axis"))?).map_err(|_| Error::InvalidData("軸".into()))?;
+    g.axis = usize::try_from(f.int(&format!("{p}.axis"))?)
+        .map_err(|_| Error::InvalidData("軸".into()))?;
     g.direction = [v("direction_x")?, v("direction_y")?, v("direction_z")?];
     g.use_bent_normal = f.boolean(&format!("{p}.bent_normal"))?;
     for k in 0..f.int(&format!("{p}.pin_count"))? {
         let pin = format!("{p}.pins[{k}]");
         let map = f.int(&format!("{pin}.kind"))?;
-        let map = map_kind(map).ok_or_else(|| Error::InvalidData(format!("{pin}.kind {map} は範囲外です")))?;
+        let map = map_kind(map)
+            .ok_or_else(|| Error::InvalidData(format!("{pin}.kind {map} は範囲外です")))?;
         g.pins
             .insert(map, f.text(&format!("{pin}.key"))?.to_owned());
     }

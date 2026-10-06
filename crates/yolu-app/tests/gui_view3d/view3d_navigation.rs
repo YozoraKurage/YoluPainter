@@ -36,17 +36,19 @@ fn harness(preferences: Preferences) -> Harness<'static, Fixture> {
         ..app.view3d.camera
     };
     app.prefs.settings.navigation = preferences;
-    let mut h = common::gpu_thread::builder().with_size(rect().size()).build_ui_state(
-        |ui, f: &mut Fixture| {
-            yolu_app::stencil::update_keys(ui.ctx(), &mut f.app);
-            let samples = std::mem::take(&mut f.pen);
-            view3d::input::handle(ui, &mut f.app, rect(), &samples, false);
-        },
-        Fixture {
-            app,
-            pen: Vec::new(),
-        },
-    );
+    let mut h = common::gpu_thread::builder()
+        .with_size(rect().size())
+        .build_ui_state(
+            |ui, f: &mut Fixture| {
+                yolu_app::stencil::update_keys(ui.ctx(), &mut f.app);
+                let samples = std::mem::take(&mut f.pen);
+                view3d::input::handle(ui, &mut f.app, rect(), &samples, false);
+            },
+            Fixture {
+                app,
+                pen: Vec::new(),
+            },
+        );
     h.run();
     h
 }

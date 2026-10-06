@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use yolu_core::{Channel, Document, Rgba8, TileCoord};
 use yolu_io::{
-    composite_pngs, BackupKeep, DocumentSource, Limits, MaterialRef, Project, SaveTarget, SetSpec, Thresholds,
-    WriterInfo,
+    composite_pngs, BackupKeep, DocumentSource, Limits, MaterialRef, Project, SaveTarget, SetSpec,
+    Thresholds, WriterInfo,
 };
 
 struct Dir(PathBuf);
@@ -34,7 +34,11 @@ impl Drop for Dir {
     }
 }
 fn writer() -> WriterInfo {
-    WriterInfo { app: "YoluPainter-rs".into(), version: "0.0.0".into(), unity: "standalone".into() }
+    WriterInfo {
+        app: "YoluPainter-rs".into(),
+        version: "0.0.0".into(),
+        unity: "standalone".into(),
+    }
 }
 fn noise(len: usize, seed: u64) -> Vec<u8> {
     let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
@@ -58,13 +62,22 @@ fn painted(seed: u64, layers: usize) -> Document {
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
-                    let bytes = noise((TILE * TILE * 4) as usize, seed * 1000 + i as u64 * 31 + (ty * n + tx) as u64);
-                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes).unwrap();
+                    let bytes = noise(
+                        (TILE * TILE * 4) as usize,
+                        seed * 1000 + i as u64 * 31 + (ty * n + tx) as u64,
+                    );
+                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes)
+                        .unwrap();
                 }
             }
         }
     }
-    doc.add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(10, 20, 30, 255))], None).unwrap();
+    doc.add_fill_layer(
+        "塗り",
+        &[(Channel::Color, Rgba8::new(10, 20, 30, 255))],
+        None,
+    )
+    .unwrap();
     doc.clear_history().unwrap();
     doc
 }
@@ -85,7 +98,9 @@ fn project() -> Project {
                 name: format!("セット {i}"),
                 material: MaterialRef::PendingSlot(i as u16),
                 composites: composite_pngs(&doc).unwrap(),
-                document: Some(DocumentSource::Core(Arc::new(doc.capture_snapshot().unwrap()))),
+                document: Some(DocumentSource::Core(Arc::new(
+                    doc.capture_snapshot().unwrap(),
+                ))),
             }
         })
         .collect();
@@ -103,7 +118,10 @@ fn small() -> Thresholds {
     }
 }
 fn pool(threads: usize) -> rayon::ThreadPool {
-    rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap()
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .unwrap()
 }
 
 #[test]
@@ -121,13 +139,22 @@ fn the_saved_file_is_the_same_bytes_at_any_thread_count() {
                     let mut target = SaveTarget::create(&path).unwrap();
                     target.save_with(&p, BackupKeep::All).unwrap();
                     // 同じ中身を、メモリへ書いたものとも同じ
-                    assert_eq!(fs::read(&path).unwrap(), p.to_bytes().unwrap(), "{label} {threads} 本");
+                    assert_eq!(
+                        fs::read(&path).unwrap(),
+                        p.to_bytes().unwrap(),
+                        "{label} {threads} 本"
+                    );
                 })
             });
             files.push(fs::read(&path).unwrap());
         }
-        assert!(files.windows(2).all(|w| w[0] == w[1]), "{label}: スレッド数が違っても同じファイル");
-        let version = yolu_io::Package::open(&dir.path("1.ylp"), &Limits::unbounded()).unwrap().manifest_version();
+        assert!(
+            files.windows(2).all(|w| w[0] == w[1]),
+            "{label}: スレッド数が違っても同じファイル"
+        );
+        let version = yolu_io::Package::open(&dir.path("1.ylp"), &Limits::unbounded())
+            .unwrap()
+            .manifest_version();
         assert_eq!(version == 4, label == "大きな形", "{label}");
     }
 }
@@ -140,13 +167,19 @@ fn a_broken_file_is_refused_for_the_same_reason_at_any_thread_count() {
     let path = dir.path("good.ylp");
     small().scoped(|| {
         let p = project();
-        SaveTarget::create(&path).unwrap().save_with(&p, BackupKeep::All).unwrap();
+        SaveTarget::create(&path)
+            .unwrap()
+            .save_with(&p, BackupKeep::All)
+            .unwrap();
     });
     let good = fs::read(&path).unwrap();
     // 圧縮しない合成の PNG の中身を、2 つのセット（名前の順で 2 つ目と 3 つ目）で書き換える
     let mut starts = Vec::new();
     let mut at = 0;
-    while let Some(i) = good[at..].windows(8).position(|w| w == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+    while let Some(i) = good[at..]
+        .windows(8)
+        .position(|w| w == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+    {
         starts.push(at + i);
         at += i + 8;
     }
@@ -160,15 +193,20 @@ fn a_broken_file_is_refused_for_the_same_reason_at_any_thread_count() {
     let reason = |threads: usize| {
         pool(threads).install(|| {
             (0..8)
-                .map(|_| match SaveTarget::open_within(&broken, &Limits::unbounded()) {
-                    Ok(_) => panic!("壊れたのに開けた"),
-                    Err(e) => format!("{e:?}"),
-                })
+                .map(
+                    |_| match SaveTarget::open_within(&broken, &Limits::unbounded()) {
+                        Ok(_) => panic!("壊れたのに開けた"),
+                        Err(e) => format!("{e:?}"),
+                    },
+                )
                 .collect::<Vec<_>>()
         })
     };
     let first = reason(1)[0].clone();
-    assert!(first.contains(SETS[1]) && !first.contains(SETS[2]), "名前の順で前のセットの PNG が先: {first}");
+    assert!(
+        first.contains(SETS[1]) && !first.contains(SETS[2]),
+        "名前の順で前のセットの PNG が先: {first}"
+    );
     for threads in [1, 2, 3, 8] {
         for (i, why) in reason(threads).iter().enumerate() {
             assert_eq!(why, &first, "{threads} 本の {i} 回目");

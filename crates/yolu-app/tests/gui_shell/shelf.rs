@@ -631,10 +631,7 @@ fn headless_the_shelf_survives_save_and_reopen_in_every_kind() {
     let bytes = std::fs::read(&path).unwrap();
     let project = Project::read(&bytes).unwrap();
     assert_eq!(project.resources().len(), 8);
-    assert_eq!(
-        project.info().saved_by.as_ref().unwrap().app,
-        "YoluPainter"
-    );
+    assert_eq!(project.info().saved_by.as_ref().unwrap().app, "YoluPainter");
     let mut again = AppState::new(8, 8);
     again.apply(Action::OpenProject(path.clone()));
     assert_eq!(again.shelf.resources().len(), 8, "{}", again.message);
@@ -1572,7 +1569,10 @@ fn headless_the_io_refusals_a_shelf_can_really_hit_come_from_real_calls() {
     assert_eq!(io_reason(Lang::En, &error), "Contains images");
     // Generator の再固定（実物: フィルターを Generator に書き換え、索引の repin に入れた素材）
     let error = to_core(&generator_pinned_bytes());
-    assert_eq!(io_reason(Lang::Ja, &error), "ジェネレーター付きは置けません");
+    assert_eq!(
+        io_reason(Lang::Ja, &error),
+        "ジェネレーター付きは置けません"
+    );
     assert_eq!(io_reason(Lang::En, &error), "Has pinned generators");
     // 棚の予算
     let mut tiny = Shelf::new(1);
@@ -1641,7 +1641,11 @@ fn headless_saving_a_placed_bundled_group_is_refused_with_a_short_reason_in_both
             s.lang = lang;
             place(&mut s, id);
             let group = s.selected_layer.unwrap();
-            assert!(s.doc.layer(group).unwrap().is_group(), "{id}: {}", s.message);
+            assert!(
+                s.doc.layer(group).unwrap().is_group(),
+                "{id}: {}",
+                s.message
+            );
             s.modified = false;
             let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
             s.apply(Action::Shelf(ShelfOp::SaveMaterial(group)));
@@ -1909,20 +1913,20 @@ fn headless_a_smart_asset_core_cannot_hold_is_listed_marked_exported_whole_and_n
     // フィルター入りの素材は、効果の層が core に入ってから置ける（前は core で扱えない中身として断っていた）
     {
         let mut s = AppState::new(16, 16);
-        s.apply(Action::Shelf(ShelfOp::ImportFile(fixtures().join("filtered.ylsmart"))));
+        s.apply(Action::Shelf(ShelfOp::ImportFile(
+            fixtures().join("filtered.ylsmart"),
+        )));
         let id = ids(&s, "smartMaterial").pop().expect(&s.message);
         s.shelf.inspect_pending(10);
         assert_eq!(s.shelf.block_of(&id), None, "フィルター入りは置ける");
     }
     // 本物の入力: Generator の再固定
-    for (file, block, ja, en) in [
-        (
-            pinned.clone(),
-            "generators",
-            "ジェネレーター付きは置けません",
-            "Has pinned generators",
-        ),
-    ] {
+    for (file, block, ja, en) in [(
+        pinned.clone(),
+        "generators",
+        "ジェネレーター付きは置けません",
+        "Has pinned generators",
+    )] {
         let mut s = AppState::new(16, 16);
         s.apply(Action::Shelf(ShelfOp::ImportFile(file.clone())));
         let id = ids(&s, "smartMaterial").pop().expect(&s.message);
@@ -2008,7 +2012,12 @@ fn headless_a_layer_with_locks_is_saved_to_the_shelf_with_its_locks() {
         s.modified = false;
         s.apply(Action::Shelf(ShelfOp::SaveMaterial(base)));
         s.shelf_wait();
-        assert_eq!(s.shelf.resources().len(), n + 1, "{async_bytes}: {}", s.message);
+        assert_eq!(
+            s.shelf.resources().len(),
+            n + 1,
+            "{async_bytes}: {}",
+            s.message
+        );
         assert!(s.shelf.changed && s.modified, "{}", s.message);
     }
     // 文書のロックは変わらず、棚の素材のロックも持つ
@@ -2515,10 +2524,7 @@ mod ui {
         let before = layers(&h);
         let at = card(&h, "錆びた鉄").center();
         click(&mut h, at);
-        assert_eq!(
-            st(&h).shelf.selected.as_deref(),
-            Some("builtin:rusty-iron")
-        );
+        assert_eq!(st(&h).shelf.selected.as_deref(), Some("builtin:rusty-iron"));
         assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
         // 組み込みは棚に入っていないので、書き出せず消せない（ボタンが効かない）
         assert!(h
@@ -2531,8 +2537,16 @@ mod ui {
             .is_disabled());
         h.get_by_label("置く").click();
         h.run();
-        assert!(st(&h).doc.layers().len() > before.len() + 3, "{}", st(&h).message);
-        assert!(st(&h).message.starts_with("置きました: 錆びた鉄"), "{}", st(&h).message);
+        assert!(
+            st(&h).doc.layers().len() > before.len() + 3,
+            "{}",
+            st(&h).message
+        );
+        assert!(
+            st(&h).message.starts_with("置きました: 錆びた鉄"),
+            "{}",
+            st(&h).message
+        );
         undo(&mut h);
         assert_eq!(layers(&h), before);
         // 右クリックのメニューでも、書き出す・消すは効かない（置くだけが効く）
@@ -2594,11 +2608,23 @@ mod ui {
         h.run();
         assert!(st(&h).doc.layers().len() > 3 + 4, "{}", st(&h).message);
         let names = layers(&h);
-        let group = names.iter().position(|n| n == "錆びた鉄").expect("グループが置かれる");
+        let group = names
+            .iter()
+            .position(|n| n == "錆びた鉄")
+            .expect("グループが置かれる");
         // レイヤー 2 の行の下の隙間に落としたので、レイヤー 1 の上・レイヤー 2 の下に置かれる
-        assert!(names[..group].contains(&"レイヤー 1".to_owned()), "{names:?}");
-        assert!(names[group..].contains(&"レイヤー 2".to_owned()), "{names:?}");
-        assert!(names[group..].contains(&"レイヤー 3".to_owned()), "{names:?}");
+        assert!(
+            names[..group].contains(&"レイヤー 1".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names[group..].contains(&"レイヤー 2".to_owned()),
+            "{names:?}"
+        );
+        assert!(
+            names[group..].contains(&"レイヤー 3".to_owned()),
+            "{names:?}"
+        );
     }
 
     #[test]

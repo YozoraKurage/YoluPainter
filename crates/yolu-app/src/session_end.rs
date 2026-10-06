@@ -43,7 +43,8 @@ mod win {
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Shutdown::{ShutdownBlockReasonCreate, ShutdownBlockReasonDestroy};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_NCDESTROY, WM_QUERYENDSESSION, WNDPROC,
+        CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_NCDESTROY,
+        WM_QUERYENDSESSION, WNDPROC,
     };
 
     use super::SAVING;
@@ -82,7 +83,12 @@ mod win {
         }
     }
 
-    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    unsafe extern "system" fn wndproc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         // 保存の途中の終了の問い合わせには「まだ終われない」と答える（OS は出した理由を見せて待つ）
         if msg == WM_QUERYENDSESSION && SAVING.load(Ordering::Acquire) {
             return LRESULT(0);

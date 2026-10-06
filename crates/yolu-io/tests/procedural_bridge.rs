@@ -338,7 +338,10 @@ fn a_ylp_keeps_the_stages_and_the_version() {
         .save(&again)
         .unwrap();
     let (third, _) = SaveTarget::open(dir.join("again.ylp")).unwrap();
-    assert_eq!(third.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
+    assert_eq!(
+        third.sets()[0].document.to_bytes().unwrap(),
+        native.to_bytes()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

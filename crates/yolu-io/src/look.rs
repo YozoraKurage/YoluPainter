@@ -112,7 +112,11 @@ pub fn read_received(bytes: &[u8]) -> Result<Option<ReceivedLook>> {
             let why = why
                 .as_str()
                 .and_then(MissingImage::from_key)
-                .ok_or_else(|| invalid(format!("look.json の received.missing の {slot} が違います")))?;
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "look.json の received.missing の {slot} が違います"
+                    ))
+                })?;
             missing.insert(slot.clone(), why);
         }
     }
@@ -246,7 +250,12 @@ fn write_body(root: &mut Map<String, Value>, look: &MaterialLook) {
     root.insert("textures".into(), Value::Object(textures));
     root.insert(
         "keywords".into(),
-        Value::Array(look.keywords.iter().map(|k| Value::from(k.as_str())).collect()),
+        Value::Array(
+            look.keywords
+                .iter()
+                .map(|k| Value::from(k.as_str()))
+                .collect(),
+        ),
     );
 }
 
@@ -275,7 +284,10 @@ pub fn write(look: &MaterialLook, previous: Option<&[u8]>) -> Result<Vec<u8>> {
 /// 受けた見た目（`received`）だけを置き換えて書く（None は外す）。利用者の設定と知らないキーは前のエントリのまま（前のエントリが無ければ、
 /// 利用者の設定は既定（標準）で書く。読めない前のエントリには書かずに断る）。絵の画素は書かず、絵のあったスロットは `missing` の `pending` にする。
 /// 利用者の設定が既定で受けた見た目も無いなら None（エントリを消す）。
-pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
+pub fn write_received(
+    received: Option<&ReceivedLook>,
+    previous: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>> {
     // 読めない前のエントリ（新しい形式・壊れた）の上には書かない（利用者の設定を黙って消さない）
     if let Some(b) = previous {
         root_object(b)?;
@@ -323,7 +335,15 @@ pub fn write_received(received: Option<&ReceivedLook>, previous: Option<&[u8]>) 
 }
 
 /// 利用者の設定の本体のキー（これだけのエントリは、既定なら消してよい）。
-const BODY_KEYS: [&str; 7] = ["format", "kind", "shader", "properties", "textures", "keywords", "kindChosen"];
+const BODY_KEYS: [&str; 7] = [
+    "format",
+    "kind",
+    "shader",
+    "properties",
+    "textures",
+    "keywords",
+    "kindChosen",
+];
 
 /// 前のエントリに受けた見た目（`received`）があるか（読めなくても、キーがあれば true）。
 pub fn has_received(previous: &[u8]) -> bool {
@@ -392,7 +412,11 @@ fn value_json(v: &LookValue) -> Value {
 fn channel(name: &str, v: &Value) -> Result<Channel> {
     v.as_u64()
         .and_then(|i| Channel::from_index(i as usize).filter(|_| i < 64))
-        .ok_or_else(|| invalid(format!("look.json の {name} のチャンネルの番号が範囲外です")))
+        .ok_or_else(|| {
+            invalid(format!(
+                "look.json の {name} のチャンネルの番号が範囲外です"
+            ))
+        })
 }
 
 fn plane(name: &str, v: &Value) -> Result<PlaneSource> {
@@ -423,10 +447,11 @@ fn texture(name: &str, v: &Value) -> Result<TextureSource> {
         return Ok(TextureSource::Channel(channel(name, c)?));
     }
     if let Some(p) = o.get("packed") {
-        let a = p
-            .as_array()
-            .filter(|a| a.len() == 4)
-            .ok_or_else(|| invalid(format!("look.json の {name} の packed が 4 つではありません")))?;
+        let a = p.as_array().filter(|a| a.len() == 4).ok_or_else(|| {
+            invalid(format!(
+                "look.json の {name} の packed が 4 つではありません"
+            ))
+        })?;
         let mut planes = [PlaneSource::Zero; 4];
         for (out, x) in planes.iter_mut().zip(a) {
             *out = plane(name, x)?;
@@ -478,7 +503,8 @@ mod tests {
         };
         look.properties
             .insert("_ShadowBorder".into(), LookValue::Float(0.375));
-        look.properties.insert("_UseShadow".into(), LookValue::Int(1));
+        look.properties
+            .insert("_UseShadow".into(), LookValue::Int(1));
         look.properties.insert(
             "_ShadowColor".into(),
             LookValue::Color([0.82, 0.76, 0.85, 1.0]),
@@ -536,7 +562,9 @@ mod tests {
             ..ReceivedLook::default()
         };
         received.look.kind_chosen = false;
-        let with = write_received(Some(&received), Some(&bytes)).unwrap().unwrap();
+        let with = write_received(Some(&received), Some(&bytes))
+            .unwrap()
+            .unwrap();
         assert_eq!(read(&with).unwrap(), look, "利用者の設定はそのまま");
         // 利用者の設定を書き直しても受けた見た目は残る
         let mut changed = look.clone();
@@ -547,11 +575,18 @@ mod tests {
         assert!(has_received(&rewritten));
         assert!(!has_received(&bytes));
         // 知らないキーがあれば、受けた見た目を外してもエントリは残る
-        let mut v: Value = serde_json::from_slice(&write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap()).unwrap();
+        let mut v: Value = serde_json::from_slice(
+            &write_received(Some(&ReceivedLook::default()), None)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
         v["futureKey"] = Value::from(1);
         let kept = write_received(None, Some(&serde_json::to_vec(&v).unwrap())).unwrap();
         assert!(kept.is_some());
-        let plain = write_received(Some(&ReceivedLook::default()), None).unwrap().unwrap();
+        let plain = write_received(Some(&ReceivedLook::default()), None)
+            .unwrap()
+            .unwrap();
         assert_eq!(write_received(None, Some(&plain)).unwrap(), None);
         // 本体が読めない（形式は同じ）エントリは、受けた見た目を外しても消さない
         let mut broken: Value = serde_json::from_slice(&plain).unwrap();
@@ -567,10 +602,14 @@ mod tests {
         let previous = serde_json::to_vec(&v).unwrap();
         let mut changed = sample();
         changed.kind = LookKind::Standard;
-        let rewritten: Value = serde_json::from_slice(&write(&changed, Some(&previous)).unwrap()).unwrap();
+        let rewritten: Value =
+            serde_json::from_slice(&write(&changed, Some(&previous)).unwrap()).unwrap();
         assert_eq!(rewritten["futureKey"], serde_json::json!({"x": [1, 2]}));
         assert_eq!(rewritten["kind"], "standard");
-        assert_eq!(read(&serde_json::to_vec(&rewritten).unwrap()).unwrap(), changed);
+        assert_eq!(
+            read(&serde_json::to_vec(&rewritten).unwrap()).unwrap(),
+            changed
+        );
     }
 
     #[test]
@@ -586,21 +625,46 @@ mod tests {
         assert!(refuse(&|v| v["format"] = Value::from("1")));
         assert!(refuse(&|v| v["kind"] = Value::from("lilToonFur")));
         assert!(refuse(&|v| v["shader"] = Value::from(3)));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"float": "x"})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"color": [1, 2, 3]})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"texture": 1})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"int": 5_000_000_000i64})));
-        assert!(refuse(&|v| v["properties"]["_A"] = serde_json::json!({"float": 1, "int": 1})));
-        assert!(refuse(&|v| v["properties"][""] = serde_json::json!({"float": 1})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"channel": 64})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"channel": -1})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"packed": ["zero"]})));
-        assert!(refuse(&|v| v["textures"]["_T"] =
-            serde_json::json!({"packed": [{"channel": 0, "component": 4}, "one", "one", "one"]})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"image": "00"})));
-        assert!(refuse(&|v| v["textures"]["_T"] =
-            serde_json::json!({"image": "00000000000000000000000000000000"})));
-        assert!(refuse(&|v| v["textures"]["_T"] = serde_json::json!({"lut": 1})));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"float": "x"})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"color": [1, 2, 3]})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"texture": 1})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"int": 5_000_000_000i64})
+        ));
+        assert!(refuse(
+            &|v| v["properties"]["_A"] = serde_json::json!({"float": 1, "int": 1})
+        ));
+        assert!(refuse(
+            &|v| v["properties"][""] = serde_json::json!({"float": 1})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"channel": 64})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"channel": -1})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"packed": ["zero"]})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"packed": [{"channel": 0, "component": 4}, "one", "one", "one"]})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"image": "00"})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] =
+                serde_json::json!({"image": "00000000000000000000000000000000"})
+        ));
+        assert!(refuse(
+            &|v| v["textures"]["_T"] = serde_json::json!({"lut": 1})
+        ));
         assert!(refuse(&|v| v["keywords"] = serde_json::json!(["A", "A"])));
         assert!(read(b"[]").is_err());
         assert!(read(b"{").is_err());
@@ -611,12 +675,20 @@ mod tests {
     fn json_numbers_are_not_rounded_through_text() {
         // f32 → f64 の JSON → f32 で同じ値に戻る（色の値・境界の値を保存で変えない）
         let mut look = MaterialLook::default();
-        for (i, x) in [0.1f32, 1.0 / 3.0, 0.82, 1e-7, 123456.79, -0.0].iter().enumerate() {
-            look.properties.insert(format!("_V{i}"), LookValue::Float(*x));
+        for (i, x) in [0.1f32, 1.0 / 3.0, 0.82, 1e-7, 123456.79, -0.0]
+            .iter()
+            .enumerate()
+        {
+            look.properties
+                .insert(format!("_V{i}"), LookValue::Float(*x));
         }
         let back = read(&write(&look, None).unwrap()).unwrap();
         for (k, v) in &look.properties {
-            assert_eq!(back.properties[k].as_f32().to_bits(), v.as_f32().to_bits(), "{k}");
+            assert_eq!(
+                back.properties[k].as_f32().to_bits(),
+                v.as_f32().to_bits(),
+                "{k}"
+            );
         }
     }
 }

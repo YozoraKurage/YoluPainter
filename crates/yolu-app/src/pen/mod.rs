@@ -9,9 +9,9 @@
 //! egui のポインタの押しをビューが使わない。サイドボタンを押した接触は、egui の部品にも右ボタンとして届ける（`ButtonMap`）。
 
 pub mod adjust;
-pub mod window;
 #[cfg(windows)]
 mod win_ink;
+pub mod window;
 
 use std::sync::{Arc, Mutex};
 
@@ -136,9 +136,7 @@ impl ButtonMap {
     pub fn remap(&mut self, samples: &[PenSample], events: &mut [egui::Event]) {
         for event in events {
             let egui::Event::PointerButton {
-                button,
-                pressed,
-                ..
+                button, pressed, ..
             } = event
             else {
                 continue;

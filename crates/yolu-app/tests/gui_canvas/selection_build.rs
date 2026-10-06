@@ -1067,7 +1067,11 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
         .resize_image(32, 32, yolu_app::engine::CanvasResampling::Nearest)
         .unwrap();
     let saved = s.saved_selections()[0].clone();
-    assert_eq!((saved.mask.width(), saved.mask.height()), (32, 32), "文書の大きさに合わせて作り直す");
+    assert_eq!(
+        (saved.mask.width(), saved.mask.height()),
+        (32, 32),
+        "文書の大きさに合わせて作り直す"
+    );
     // 呼び出せる（大きさが合う）
     s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     recall(&mut s, 0, SelectionCombine::Replace);
@@ -1076,7 +1080,10 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
     s.doc.undo().unwrap();
     s.doc.undo().unwrap();
     s.doc.undo().unwrap();
-    assert_eq!((s.doc.width(), s.saved_selections()[0].mask.width()), (64, 64));
+    assert_eq!(
+        (s.doc.width(), s.saved_selections()[0].mask.width()),
+        (64, 64)
+    );
     // 範囲外の番号は断る
     let steps = s.doc.undo_count();
     recall(&mut s, 5, SelectionCombine::Replace);
@@ -1099,7 +1106,11 @@ fn headless_saved_selections_belong_to_the_texture_set_and_each_save_is_one_undo
     let revision = s.doc.revision();
     s.modified = false;
     save(&mut s, "A");
-    assert_eq!(s.doc.undo_count(), steps + 1, "覚えるのは文書の 1 回の取り消し");
+    assert_eq!(
+        s.doc.undo_count(),
+        steps + 1,
+        "覚えるのは文書の 1 回の取り消し"
+    );
     assert!(s.doc.revision() > revision);
     assert!(s.modified, "保存が要る変更として数える");
     // 描いている間は覚えない
@@ -1177,7 +1188,10 @@ fn headless_renaming_deleting_and_saving_each_undo_and_redo_and_refuse_what_they
     run(&mut s, rect(SelectionCombine::Replace, 30, 30, 50, 50));
     save(&mut s, "B");
     let rename = |s: &mut AppState, index: usize, name: &str| {
-        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index, name: name.into() })));
+        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+            index,
+            name: name.into(),
+        })));
     };
     // 名前を変える: 1 回の取り消し（前後の空白は除く）
     let steps = s.doc.undo_count();
@@ -1232,7 +1246,10 @@ fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
     s.sets.get_mut(index).unwrap().read_only = Some("試験".into());
     let steps = s.doc.undo_count();
     save(&mut s, "B");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "z".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        index: 0,
+        name: "z".into(),
+    })));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert_eq!(saved_names(&s), ["A"]);
     assert_eq!(s.doc.undo_count(), steps);
@@ -1324,16 +1341,30 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     h.run();
     assert_eq!(st(&h).saved_selections()[0].name, "前髪");
     assert_eq!(steps(&h), before + 1);
-    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "決めたら元の表示へ");
-    assert!(h.query_by_label("名前を変える: 前髪").is_some(), "ボタンの名前も新しい名前");
+    assert_eq!(
+        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        None,
+        "決めたら元の表示へ"
+    );
+    assert!(
+        h.query_by_label("名前を変える: 前髪").is_some(),
+        "ボタンの名前も新しい名前"
+    );
     // やめる: 欄を開いて何も打たずに Esc で、名前も段も変わらない
     h.get_by_label("名前を変える: 前髪").click();
     h.run();
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     h.run();
-    assert!(st(&h).sel.saved_window.is_some(), "名前の欄の Esc では、窓は閉じない");
-    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, None, "欄はやめて元の表示へ");
+    assert!(
+        st(&h).sel.saved_window.is_some(),
+        "名前の欄の Esc では、窓は閉じない"
+    );
+    assert_eq!(
+        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        None,
+        "欄はやめて元の表示へ"
+    );
     assert_eq!(st(&h).saved_selections()[0].name, "前髪");
     assert_eq!(steps(&h), before + 1);
     // 閉じる
@@ -1584,7 +1615,10 @@ fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     let label = "クイックマスク（Shift+Q）";
-    assert!(h.query_all_by_label(label).count() == 1, "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）");
+    assert!(
+        h.query_all_by_label(label).count() == 1,
+        "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）"
+    );
     assert!(!lit(&h, label));
     let at = dock_rect(&h, label).center();
     click(&mut h, at);

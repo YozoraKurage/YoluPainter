@@ -21,8 +21,8 @@
     allow(dead_code, unused_imports, unused_macros, unused_variables, unused_mut)
 )]
 
-use super::*;
 use super::blend64::{blend_block, fade_block};
+use super::*;
 use crate::math::simd::{self, to_byte, Lanes, Level};
 
 #[cfg(target_arch = "x86_64")]

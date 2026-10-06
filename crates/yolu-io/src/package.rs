@@ -124,7 +124,10 @@ impl<'l> LimitTally<'l> {
         if let Some(owner) = document_owner(name) {
             let sum = self.documents.entry(owner.to_owned()).or_default();
             *sum = sum.saturating_add(len);
-            check_budget(*sum <= self.limits.document_bytes, OVER_LAYER_PIXELS_DOCUMENT)?;
+            check_budget(
+                *sum <= self.limits.document_bytes,
+                OVER_LAYER_PIXELS_DOCUMENT,
+            )?;
         }
         Ok(())
     }
@@ -285,7 +288,8 @@ impl Released {
 /// 同じ名前か（Windows は大文字小文字を区別しない）。パスの書き方の違い（`.` や `..`）までは見ない。
 fn same_path(a: &Path, b: &Path) -> bool {
     if cfg!(windows) {
-        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+        a.to_string_lossy()
+            .eq_ignore_ascii_case(&b.to_string_lossy())
     } else {
         a == b
     }
@@ -317,7 +321,12 @@ impl Seek for At {
             SeekFrom::End(d) => self.len.checked_add_signed(d),
             SeekFrom::Current(d) => self.pos.checked_add_signed(d),
         };
-        self.pos = pos.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ファイルの先頭より前へは動かせません"))?;
+        self.pos = pos.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ファイルの先頭より前へは動かせません",
+            )
+        })?;
         Ok(self.pos)
     }
 }
@@ -492,7 +501,8 @@ impl Blob {
 }
 /// 開いた .ylp が、保存の置換のために手放された（置換の規則が POSIX でないファイルシステムで、自分の保存が置き換えた。古い版の写しは
 /// もう読めない。保存した後のプロジェクトを使う）。
-pub const SOURCE_RELEASED: &str = "開いた .ylp は保存で置き換えられたため、この写しの中身はもう読めません";
+pub const SOURCE_RELEASED: &str =
+    "開いた .ylp は保存で置き換えられたため、この写しの中身はもう読めません";
 impl ZipRef {
     fn reader(&self) -> Result<Box<dyn Read + Send>> {
         let mut f = self.source.open()?;
@@ -508,7 +518,13 @@ impl ZipRef {
                 crc,
             ))
         } else {
-            Box::new(Verify::new(raw, self.name.clone(), self.len, &self.sha, crc))
+            Box::new(Verify::new(
+                raw,
+                self.name.clone(),
+                self.len,
+                &self.sha,
+                crc,
+            ))
         })
     }
 }
@@ -537,7 +553,10 @@ impl<R: Read> Inflate<R> {
 }
 impl<R: Read> Read for Inflate<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.d.read(buf).map_err(|e| invalid(format!("Deflateが壊れています（{e}）")))?;
+        let n = self
+            .d
+            .read(buf)
+            .map_err(|e| invalid(format!("Deflateが壊れています（{e}）")))?;
         if n == 0 && !buf.is_empty() && self.d.total_in() != self.packed {
             return Err(invalid("Deflateの長さが一致しません"));
         }
@@ -577,7 +596,9 @@ impl<R: Read> Read for Verify<R> {
             return Ok(0);
         }
         // 宣言の長さより 1 バイトだけ多く読めるようにして、長すぎる中身を見つける
-        let want = buf.len().min(self.remaining.saturating_add(1).min(usize::MAX as u64) as usize);
+        let want = buf
+            .len()
+            .min(self.remaining.saturating_add(1).min(usize::MAX as u64) as usize);
         let n = self.inner.read(&mut buf[..want])?;
         if n as u64 > self.remaining {
             return Err(invalid(format!("宣言より長い中身です: {}", self.name)));
@@ -594,11 +615,17 @@ impl<R: Read> Read for Verify<R> {
             }
             let digest = format!("{:x}", std::mem::take(&mut self.sha).finalize());
             if !self.expected.is_empty() && digest != self.expected {
-                return Err(invalid(format!("SHA-256または長さが一致しません: {}", self.name)));
+                return Err(invalid(format!(
+                    "SHA-256または長さが一致しません: {}",
+                    self.name
+                )));
             }
             if let Some((h, want)) = self.crc.take() {
                 if h.finalize() != want {
-                    return Err(invalid(format!("CRCまたは長さが一致しません: {}", self.name)));
+                    return Err(invalid(format!(
+                        "CRCまたは長さが一致しません: {}",
+                        self.name
+                    )));
                 }
             }
         }
@@ -716,7 +743,10 @@ pub struct Package {
 impl Package {
     /// エントリと版から（名前と、正本があることを確かめる。manifest は書くときに作る）。
     pub(crate) fn build(files: Files, level: u32) -> Result<Self> {
-        check_budget(files.len() <= MAX_ENTRIES, "エントリの数の上限を超えています")?;
+        check_budget(
+            files.len() <= MAX_ENTRIES,
+            "エントリの数の上限を超えています",
+        )?;
         for (name, blob) in &files {
             archive::name_check(name, level.min(3), YLP_PREFIX)?;
             check(
@@ -1008,8 +1038,7 @@ impl ParallelDeflate {
             .map_or(4, |n| n.get())
             .clamp(1, 8);
         std::thread::scope(|scope| -> Result<(u32, u64, u64)> {
-            let (job_tx, job_rx) =
-                sync_channel::<Job>(threads * 2);
+            let (job_tx, job_rx) = sync_channel::<Job>(threads * 2);
             let job_rx = Arc::new(std::sync::Mutex::new(job_rx));
             let (done_tx, done_rx) = channel::<(usize, io::Result<Vec<u8>>)>();
             for _ in 0..threads {
@@ -1019,7 +1048,9 @@ impl ParallelDeflate {
                     let Ok(Ok((index, block, dict, last))) = job else {
                         return;
                     };
-                    let tail = dict.as_deref().map(|d| &d[d.len().saturating_sub(Self::DICT)..]);
+                    let tail = dict
+                        .as_deref()
+                        .map(|d| &d[d.len().saturating_sub(Self::DICT)..]);
                     if done.send((index, Self::block(&block, tail, last))).is_err() {
                         return;
                     }
@@ -1066,7 +1097,9 @@ impl ParallelDeflate {
                 out.reserve(out.capacity().max(64 << 10));
             }
             let at = c.total_in() as usize;
-            let status = c.compress_vec(&input[at..], &mut out, flush).map_err(io::Error::other)?;
+            let status = c
+                .compress_vec(&input[at..], &mut out, flush)
+                .map_err(io::Error::other)?;
             let consumed = c.total_in() as usize == input.len();
             let room = out.capacity() > out.len();
             match status {
@@ -1096,7 +1129,10 @@ struct Feed<'o> {
 impl Feed<'_> {
     fn send(&mut self, block: Arc<Vec<u8>>, last: bool) -> io::Result<()> {
         let dict = self.previous.replace(block.clone());
-        let jobs = self.jobs.as_ref().ok_or_else(|| io::Error::other("圧縮が止まりました"))?;
+        let jobs = self
+            .jobs
+            .as_ref()
+            .ok_or_else(|| io::Error::other("圧縮が止まりました"))?;
         jobs.send((self.sent, block, dict, last))
             .map_err(|_| io::Error::other("圧縮のスレッドが止まりました"))?;
         self.sent += 1;
@@ -1114,7 +1150,9 @@ impl Feed<'_> {
                 return Ok(());
             }
             let next = if all {
-                self.done.recv().map_err(|_| io::Error::other("圧縮のスレッドが止まりました"))?
+                self.done
+                    .recv()
+                    .map_err(|_| io::Error::other("圧縮のスレッドが止まりました"))?
             } else {
                 match self.done.try_recv() {
                     Ok(x) => x,
@@ -1125,7 +1163,10 @@ impl Feed<'_> {
         }
     }
     fn push_block(&mut self) -> io::Result<()> {
-        let block = Arc::new(std::mem::replace(&mut self.current, Vec::with_capacity(ParallelDeflate::BLOCK)));
+        let block = Arc::new(std::mem::replace(
+            &mut self.current,
+            Vec::with_capacity(ParallelDeflate::BLOCK),
+        ));
         if let Some(previous) = self.held.replace(block) {
             self.send(previous, false)?;
         }
@@ -1295,7 +1336,10 @@ impl ZipWriter<'_> {
                 len: 0,
             };
             blob.write_to(&mut counting)?;
-            check(counting.len == len, format!("書いた長さが一致しません: {name}"))?;
+            check(
+                counting.len == len,
+                format!("書いた長さが一致しません: {name}"),
+            )?;
             crc = counting.crc.finalize();
             packed = len;
         }
@@ -1329,7 +1373,14 @@ impl ZipWriter<'_> {
         let far = self.zip64 && offset >= self.options.zip64_offset_at;
         let c = &mut self.central;
         put32(c, 0x02014b50);
-        for n in [if far { 45 } else { 20 }, if far { 45 } else { 20 }, 0, method, 0, 33] {
+        for n in [
+            if far { 45 } else { 20 },
+            if far { 45 } else { 20 },
+            0,
+            method,
+            0,
+            33,
+        ] {
             put16(c, n)
         }
         for n in [crc, packed as u32, len as u32] {
@@ -1467,11 +1518,9 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         .ok_or_else(|| Error::InvalidData("ZIP終端がありません".into()))?;
     let eocd = file_len - tail_len + at as u64;
     let e = &tail[at..];
-    check(
-        le16(e, 4) == 0 && le16(e, 6) == 0,
-        "分割ZIPは未対応です",
-    )?;
-    let (count16, disk_count16, size32, start32) = (le16(e, 10), le16(e, 8), le32(e, 12), le32(e, 16));
+    check(le16(e, 4) == 0 && le16(e, 6) == 0, "分割ZIPは未対応です")?;
+    let (count16, disk_count16, size32, start32) =
+        (le16(e, 10), le16(e, 8), le32(e, 12), le32(e, 16));
     let wide = count16 == 0xFFFF || size32 == 0xFFFF_FFFF || start32 == 0xFFFF_FFFF;
     let (count, central_size, central_start, central_end) = if wide {
         // zip64 の終端: 目印（終端の直前 20 バイト）と記録（目印の直前 56 バイト）
@@ -1481,7 +1530,9 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         f.read_exact(&mut loc)?;
         let record_at = le64(&loc, 8);
         check(
-            le32(&loc, 0) == 0x07064b50 && le32(&loc, 4) == 0 && le32(&loc, 16) == 1
+            le32(&loc, 0) == 0x07064b50
+                && le32(&loc, 4) == 0
+                && le32(&loc, 16) == 1
                 && record_at.checked_add(56) == Some(eocd - 20),
             "zip64の終端の目印が不正です",
         )?;
@@ -1506,7 +1557,12 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         (n, size, start, record_at)
     } else {
         check(disk_count16 == count16, "ZIPエントリ数が不正です")?;
-        (u64::from(count16), u64::from(size32), u64::from(start32), eocd)
+        (
+            u64::from(count16),
+            u64::from(size32),
+            u64::from(start32),
+            eocd,
+        )
     };
     check(
         (3..=MAX_ENTRIES as u64 + 2).contains(&count),
@@ -1516,7 +1572,10 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         central_start.checked_add(central_size) == Some(central_end),
         "中央ディレクトリが不正です",
     )?;
-    check_budget(central_size <= MAX_CENTRAL, "中央ディレクトリの予算超過です")?;
+    check_budget(
+        central_size <= MAX_CENTRAL,
+        "中央ディレクトリの予算超過です",
+    )?;
     let mut cd = vec![0u8; central_size as usize];
     f.seek(SeekFrom::Start(central_start))?;
     f.read_exact(&mut cd)?;
@@ -1546,10 +1605,8 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
         let name = std::str::from_utf8(slice(&cd, at + 46, nl)?)
             .map_err(|_| Error::InvalidData("ZIP名がUTF-8ではありません".into()))?
             .to_string();
-        let (packed, len, offset, z) = wide_values(
-            slice(&cd, at + 46 + nl, xl)?,
-            [len32, packed32, offset32],
-        )?;
+        let (packed, len, offset, z) =
+            wide_values(slice(&cd, at + 46 + nl, xl)?, [len32, packed32, offset32])?;
         check(
             needed <= 20 || (needed <= 45 && (z || wide)),
             "ZIP64または新しいZIP機能は未対応です",
@@ -1685,10 +1742,7 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
             listed.len() <= CLASSIC_ENTRIES + 2,
             "ZIPエントリ数が不正です",
         )?;
-        check_budget(
-            manifest_entry.len <= CLASSIC_MANIFEST,
-            "展開の予算超過です",
-        )?;
+        check_budget(manifest_entry.len <= CLASSIC_MANIFEST, "展開の予算超過です")?;
     }
     let mut entries: BTreeMap<String, (u64, String)> = BTreeMap::new();
     let mut total = 0u64;
@@ -1722,12 +1776,17 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
             "予約されたエントリ名です",
         )?;
         check(
-            entries.insert(name.to_owned(), (len, digest.to_owned())).is_none(),
+            entries
+                .insert(name.to_owned(), (len, digest.to_owned()))
+                .is_none(),
             "manifestに重複があります",
         )?;
     }
     if !classic {
-        check_budget(entries.len() <= MAX_ENTRIES, "エントリの数の上限を超えています")?;
+        check_budget(
+            entries.len() <= MAX_ENTRIES,
+            "エントリの数の上限を超えています",
+        )?;
         limit_tally.finish()?;
     }
     // 行の形・名前・予算は全部確かめてから、エントリと突き合わせる（予算超過をほかの食い違いより先に言い分ける）。manifest に
@@ -1778,7 +1837,10 @@ fn read(source: &Source, limits: &Limits, keep: u64) -> Result<Package> {
             })
         } else {
             copy(&mut r, &mut io::sink())?;
-            Ok(Verified { blob, skeleton: None })
+            Ok(Verified {
+                blob,
+                skeleton: None,
+            })
         }
     })?;
     let mut files = Files::new();

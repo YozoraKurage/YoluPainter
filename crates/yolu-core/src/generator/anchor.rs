@@ -166,8 +166,7 @@ impl ValueSource for LayerSample<'_> {
         let mut bytes = [0u8; ROW_CHUNK * 4];
         for (n, chunk) in head.chunks_mut(ROW_CHUNK).enumerate() {
             let bytes = &mut bytes[..chunk.len() * 4];
-            self.source
-                .read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
+            self.source.read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
             for (o, p) in chunk.iter_mut().zip(bytes.chunks_exact(4)) {
                 *o = self.read_value(Rgba8::from_slice(p));
             }

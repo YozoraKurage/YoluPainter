@@ -495,8 +495,16 @@ impl Document {
             + copy.allocated_bytes()
             + self.selection.as_ref().map_or(0, |s| s.history_bytes())
             + copy.selection.as_ref().map_or(0, |s| s.history_bytes())
-            + self.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>()
-            + copy.saved_selections.iter().map(|s| s.mask.history_bytes()).sum::<u64>();
+            + self
+                .saved_selections
+                .iter()
+                .map(|s| s.mask.history_bytes())
+                .sum::<u64>()
+            + copy
+                .saved_selections
+                .iter()
+                .map(|s| s.mask.history_bytes())
+                .sum::<u64>();
         self.commit_copy_kept(copy, cost, Dirty::All)?;
         report.history_over_budget = cost > self.undo_budget;
         if report.history_over_budget {

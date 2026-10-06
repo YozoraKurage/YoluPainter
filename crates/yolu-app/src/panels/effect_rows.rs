@@ -7,7 +7,9 @@
 //! ドロップも、層の行の番号に直してから `m2::drop_target_at` へ渡す）。
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
-use yolu_core::{AnchorId, AnchorPlacement, Document, EffectSettings, FilterId, FilterTarget, LayerId};
+use yolu_core::{
+    AnchorId, AnchorPlacement, Document, EffectSettings, FilterId, FilterTarget, LayerId,
+};
 
 use crate::fx::{names, FxOp, Selected};
 use crate::m2::Row;
@@ -212,7 +214,14 @@ fn open_popup(app: &mut AppState, ctx: &egui::Context, popup: Popup, anchor: Rec
 }
 
 /// 子の行を描く。
-pub fn child_row(ui: &mut Ui, app: &mut AppState, list: Rect, row: Rect, entry: &Entry, child: Child) {
+pub fn child_row(
+    ui: &mut Ui,
+    app: &mut AppState,
+    list: Rect,
+    row: Rect,
+    entry: &Entry,
+    child: Child,
+) {
     match child {
         Child::Effect {
             layer,
@@ -234,7 +243,13 @@ fn guide(painter: &egui::Painter, row: Rect, x: f32, last: bool) {
         row.bottom() - if last { row.height() / 2.0 } else { 0.0 },
         t::SEPARATOR,
     );
-    w::hline(painter, x - 6.0, x - 1.0, row.center().y.round(), t::SEPARATOR);
+    w::hline(
+        painter,
+        x - 6.0,
+        x - 1.0,
+        row.center().y.round(),
+        t::SEPARATOR,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -257,13 +272,9 @@ fn effect_row(
     let (enabled_stage, active) = (effect.enabled(), effect.is_active());
     let is_generator = effect.settings().is_generator();
     let icon = names::effect_icon(effect.settings());
-    let label = names::effect_label(
-        lang,
-        effect,
-        target,
-        app.m2.paint_channel,
-        |c| crate::m2::channel_name(lang, &app.doc, c),
-    );
+    let label = names::effect_label(lang, effect, target, app.m2.paint_channel, |c| {
+        crate::m2::channel_name(lang, &app.doc, c)
+    });
     let reason = if is_generator && active {
         app.doc
             .generator_inactive(layer, id)
@@ -272,10 +283,15 @@ fn effect_row(
             .map(|r| lang.inactive_reason(&r))
             .or_else(|| {
                 let reason = app.doc.generator_fallback(layer, id).ok().flatten()?;
-                let EffectSettings::Generator(g) = effect.settings() else { return None; };
+                let EffectSettings::Generator(g) = effect.settings() else {
+                    return None;
+                };
                 Some(lang.fallback_effect(&yolu_core::FallbackEffect {
-                    layer, layer_name: app.doc.layer(layer)?.name().to_owned(),
-                    mask: target == FilterTarget::Mask, kind: g.kind, reason: yolu_core::InactiveReason::Generator(reason),
+                    layer,
+                    layer_name: app.doc.layer(layer)?.name().to_owned(),
+                    mask: target == FilterTarget::Mask,
+                    kind: g.kind,
+                    reason: yolu_core::InactiveReason::Generator(reason),
                 }))
             })
     } else {
@@ -289,13 +305,26 @@ fn effect_row(
     let painter = ui.painter_at(list);
     if selected {
         w::fill(&painter, row, t::ACCENT_SOFT);
-        w::fill(&painter, Rect::from_min_size(row.min, vec2(3.0, row.height())), t::ACCENT);
+        w::fill(
+            &painter,
+            Rect::from_min_size(row.min, vec2(3.0, row.height())),
+            t::ACCENT,
+        );
     } else if hover {
         w::fill(&painter, row, t::CONTROL_HOVER);
     }
-    w::hline(&painter, row.left() + 28.0, row.right(), row.bottom() - 1.0, t::SEPARATOR);
+    w::hline(
+        &painter,
+        row.left() + 28.0,
+        row.right(),
+        row.bottom() - 1.0,
+        t::SEPARATOR,
+    );
     // 目（有効の切り替え。層の目と同じ列）
-    let eye = Rect::from_min_size(pos2(row.left() + 4.0, row.top() + 2.0), vec2(24.0, row.height() - 4.0));
+    let eye = Rect::from_min_size(
+        pos2(row.left() + 4.0, row.top() + 2.0),
+        vec2(24.0, row.height() - 4.0),
+    );
     let eye_tip = if enabled_stage {
         lang.pick("フィルターを無効にする", "Turn the filter off")
     } else {
@@ -305,7 +334,11 @@ fn effect_row(
         ui,
         eye,
         ("fx.eye", id.0),
-        if enabled_stage { "visibility" } else { "visibility_off" },
+        if enabled_stage {
+            "visibility"
+        } else {
+            "visibility_off"
+        },
         eye_tip,
         false,
         can_edit,
@@ -324,7 +357,13 @@ fn effect_row(
     let mut x = eye.right() + 4.0 + INDENT * entry.depth as f32 + 10.0;
     guide(&painter, row, x, entry.last_child);
     if target == FilterTarget::Mask {
-        w::icon(&painter, Rect::from_min_size(pos2(x, row.top()), vec2(14.0, row.height())), "vignette", t::TEXT_DIM, 12.0);
+        w::icon(
+            &painter,
+            Rect::from_min_size(pos2(x, row.top()), vec2(14.0, row.height())),
+            "vignette",
+            t::TEXT_DIM,
+            12.0,
+        );
         x += 15.0;
     }
     let color = if !enabled_stage {
@@ -334,15 +373,21 @@ fn effect_row(
     } else {
         t::TEXT
     };
-    w::icon(&painter, Rect::from_min_size(pos2(x, row.top()), vec2(16.0, row.height())), icon, color, 13.0);
+    w::icon(
+        &painter,
+        Rect::from_min_size(pos2(x, row.top()), vec2(16.0, row.height())),
+        icon,
+        color,
+        13.0,
+    );
     x += 19.0;
     // 上へ・下へ・消す（マウスの乗った行と選んだ行）
     let buttons = selected || hover;
     let right = row.right() - 4.0 - if buttons { 60.0 } else { 0.0 };
     // 効いていない印
-    let mark = reason.is_some().then(|| {
-        Rect::from_min_size(pos2(right - 18.0, row.top()), vec2(16.0, row.height()))
-    });
+    let mark = reason
+        .is_some()
+        .then(|| Rect::from_min_size(pos2(right - 18.0, row.top()), vec2(16.0, row.height())));
     let text_right = mark.map_or(right, |m| m.left() - 2.0);
     let text_rect = Rect::from_min_max(pos2(x, row.top()), pos2(text_right.max(x), row.bottom()));
     let shown = w::fit(&painter, &label, text_rect.width(), t::LABEL);
@@ -356,16 +401,29 @@ fn effect_row(
     if let Some(mark) = mark {
         w::icon(&painter, mark, "warning", t::WARNING, 13.0);
         let tip = reason.clone().unwrap_or_default();
-        ui.interact(mark, ui.make_persistent_id(("fx.mark", id.0)), Sense::hover())
-            .on_hover_text(tip);
+        ui.interact(
+            mark,
+            ui.make_persistent_id(("fx.mark", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(tip);
     }
     if shown != label {
         let tip_rect = text_rect.intersect(list);
-        ui.interact(tip_rect, ui.make_persistent_id(("fx.name", id.0)), Sense::hover())
-            .on_hover_text(label.clone());
+        ui.interact(
+            tip_rect,
+            ui.make_persistent_id(("fx.name", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(label.clone());
     }
     if buttons {
-        let at = |dx: f32| Rect::from_min_size(pos2(right + dx, row.top() + 1.0), vec2(20.0, row.height() - 2.0));
+        let at = |dx: f32| {
+            Rect::from_min_size(
+                pos2(right + dx, row.top() + 1.0),
+                vec2(20.0, row.height() - 2.0),
+            )
+        };
         if w::icon_button(
             ui,
             at(0.0),
@@ -417,7 +475,8 @@ fn effect_row(
             app.apply(Action::Fx(FxOp::Remove { layer, id }));
         }
     }
-    response.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &label));
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &label));
     // 効いていない理由は、行のどこに乗せても出す（印だけでは小さい）
     let response = match &reason {
         Some(why) => response.on_hover_text(format!("{label}\n{why}")),
@@ -454,46 +513,87 @@ fn anchor_row(
     let selected = app.fx.selected == Some(Selected::Anchor { id });
     let can_edit = app.can_edit();
     let hit = row.intersect(list);
-    let response = ui.interact(hit, ui.make_persistent_id(("fx.anchor", id.0)), Sense::click());
+    let response = ui.interact(
+        hit,
+        ui.make_persistent_id(("fx.anchor", id.0)),
+        Sense::click(),
+    );
     let hover = response.hovered();
     let painter = ui.painter_at(list);
     if selected {
         w::fill(&painter, row, t::ACCENT_SOFT);
-        w::fill(&painter, Rect::from_min_size(row.min, vec2(3.0, row.height())), t::ACCENT);
+        w::fill(
+            &painter,
+            Rect::from_min_size(row.min, vec2(3.0, row.height())),
+            t::ACCENT,
+        );
     } else if hover {
         w::fill(&painter, row, t::CONTROL_HOVER);
     }
-    w::hline(&painter, row.left() + 28.0, row.right(), row.bottom() - 1.0, t::SEPARATOR);
+    w::hline(
+        &painter,
+        row.left() + 28.0,
+        row.right(),
+        row.bottom() - 1.0,
+        t::SEPARATOR,
+    );
     // Anchor には有効・無効が無いので目は出さない（目の列の右から）
     let mut x = row.left() + 4.0 + 24.0 + 4.0 + INDENT * entry.depth as f32 + 10.0;
     guide(&painter, row, x, entry.last_child);
     if placement == AnchorPlacement::Mask {
-        w::icon(&painter, Rect::from_min_size(pos2(x, row.top()), vec2(14.0, row.height())), "vignette", t::TEXT_DIM, 12.0);
+        w::icon(
+            &painter,
+            Rect::from_min_size(pos2(x, row.top()), vec2(14.0, row.height())),
+            "vignette",
+            t::TEXT_DIM,
+            12.0,
+        );
         x += 15.0;
     }
-    w::icon(&painter, Rect::from_min_size(pos2(x, row.top()), vec2(16.0, row.height())), "anchor", t::ACCENT, 13.0);
+    w::icon(
+        &painter,
+        Rect::from_min_size(pos2(x, row.top()), vec2(16.0, row.height())),
+        "anchor",
+        t::ACCENT,
+        13.0,
+    );
     x += 19.0;
     let buttons = selected || hover;
     let right = row.right() - 4.0 - if buttons { 20.0 } else { 0.0 };
     let count = lang.pick(format!("{readers} 段が読む"), format!("read by {readers}"));
-    let count_w = (w::text_width(&painter, &count, t::LABEL_DIM) + 6.0).min((right - x - 40.0).max(0.0));
-    let name_rect = Rect::from_min_max(pos2(x, row.top()), pos2((right - count_w).max(x), row.bottom()));
+    let count_w =
+        (w::text_width(&painter, &count, t::LABEL_DIM) + 6.0).min((right - x - 40.0).max(0.0));
+    let name_rect = Rect::from_min_max(
+        pos2(x, row.top()),
+        pos2((right - count_w).max(x), row.bottom()),
+    );
     let shown = w::fit(&painter, &name, name_rect.width() - 2.0, t::LABEL);
     w::text(
         &painter,
         name_rect,
         &shown,
-        t::LABEL.with_color(if selected { egui::Color32::WHITE } else { t::TEXT }),
+        t::LABEL.with_color(if selected {
+            egui::Color32::WHITE
+        } else {
+            t::TEXT
+        }),
         w::Align::Left,
     );
     if count_w > 20.0 {
-        let count_rect = Rect::from_min_max(pos2(name_rect.right(), row.top()), pos2(right, row.bottom()));
+        let count_rect = Rect::from_min_max(
+            pos2(name_rect.right(), row.top()),
+            pos2(right, row.bottom()),
+        );
         let shown = w::fit(&painter, &count, count_w, t::LABEL_DIM);
         w::text(&painter, count_rect, &shown, t::LABEL_DIM, w::Align::Left);
     }
     if shown != name {
-        ui.interact(name_rect.intersect(list), ui.make_persistent_id(("fx.anchor.name", id.0)), Sense::hover())
-            .on_hover_text(name.clone());
+        ui.interact(
+            name_rect.intersect(list),
+            ui.make_persistent_id(("fx.anchor.name", id.0)),
+            Sense::hover(),
+        )
+        .on_hover_text(name.clone());
     }
     if buttons
         && w::icon_button(
@@ -510,7 +610,8 @@ fn anchor_row(
     {
         app.apply(Action::Fx(FxOp::RemoveAnchor(id)));
     }
-    response.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &name));
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &name));
     if response.clicked() {
         app.apply(Action::Fx(FxOp::SelectAnchor(id)));
     }
@@ -537,7 +638,10 @@ mod tests {
         let mut app = AppState::new(32, 32);
         let layer = app.selected_layer.unwrap();
         app.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        let a = app.doc.add_anchor(layer, AnchorPlacement::Layer, Some("A"), None).unwrap();
+        let a = app
+            .doc
+            .add_anchor(layer, AnchorPlacement::Layer, Some("A"), None)
+            .unwrap();
         for kind in [FilterKind::Blur, FilterKind::Invert] {
             app.apply(Action::Fx(FxOp::AddFilter {
                 target: FilterTarget::Content,
@@ -555,9 +659,30 @@ mod tests {
         assert_eq!(kinds.len(), 1 + 1 + 2 + 1);
         assert!(matches!(kinds[1], Kind::Child(Child::Anchor { id, .. }) if id == a));
         // 画素の段は上（後に掛かる）から: 反転（index 1）、ぼかし（index 0）
-        assert!(matches!(kinds[2], Kind::Child(Child::Effect { index: 1, count: 2, target: FilterTarget::Content, .. })));
-        assert!(matches!(kinds[3], Kind::Child(Child::Effect { index: 0, count: 2, .. })));
-        assert!(matches!(kinds[4], Kind::Child(Child::Effect { target: FilterTarget::Mask, .. })));
+        assert!(matches!(
+            kinds[2],
+            Kind::Child(Child::Effect {
+                index: 1,
+                count: 2,
+                target: FilterTarget::Content,
+                ..
+            })
+        ));
+        assert!(matches!(
+            kinds[3],
+            Kind::Child(Child::Effect {
+                index: 0,
+                count: 2,
+                ..
+            })
+        ));
+        assert!(matches!(
+            kinds[4],
+            Kind::Child(Child::Effect {
+                target: FilterTarget::Mask,
+                ..
+            })
+        ));
         assert!(l.entries[4].last_child && !l.entries[3].last_child);
         assert_eq!(l.height, 30.0 + 4.0 * EFFECT_ROW_HEIGHT);
     }

@@ -1106,7 +1106,9 @@ fn swaps_that_leave_the_pixels_alone_keep_the_evaluation_cache() {
 fn cutting_pixels_from_a_path_layer_is_refused_and_changes_nothing() {
     // パスの層の画素はパスが決めるので切り取らない（C# の CutPixels）。断ってもクリップボードの元・文書・履歴は変わらない
     let Rig {
-        mut doc, path_layer, ..
+        mut doc,
+        path_layer,
+        ..
     } = rig();
     let before = doc.composite(doc.bounds()).unwrap();
     let undo = doc.undo_count();

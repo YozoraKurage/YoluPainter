@@ -17,8 +17,8 @@ mod edits;
 mod effects;
 mod eval;
 mod layer_path;
-mod look;
 pub(crate) mod locks;
+mod look;
 mod material;
 mod merge;
 mod operations;
@@ -29,21 +29,21 @@ mod transform;
 mod warp;
 pub use warp::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint};
 mod triangle_fill;
-pub use structure::MAX_GROUP_DEPTH;
 pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;
 pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
 pub use resize::{CanvasResampling, PreparedResize, ResizeReport};
+pub use structure::MAX_GROUP_DEPTH;
 pub use transform::{Affine2D, Resampling};
 pub use triangle_fill::TriangleFill;
-mod selection;
 mod saved_selections;
+mod selection;
 pub use saved_selections::{
     clean_saved_name, SavedSelection, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
 };
 mod smart;
-mod snapshot;
 mod smart_resample;
+mod snapshot;
 mod structure;
 
 use std::collections::hash_map::RandomState;
@@ -2308,7 +2308,11 @@ impl Document {
         let a = self.active.as_ref()?;
         if !self.journal.memo.enabled()
             || self.triangle_fill.is_some()
-            || self.material.extra.iter().any(|s| s.layer_index != a.layer_index)
+            || self
+                .material
+                .extra
+                .iter()
+                .any(|s| s.layer_index != a.layer_index)
             || self.has_anchor_readers()
         {
             return None;
@@ -2379,18 +2383,18 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         let tiles: Vec<(TileCoord, Rect)> = coords
             .iter()
-            .filter_map(|c| self.tile_rect(*c).filter(|r| !r.is_empty()).map(|r| (*c, r)))
+            .filter_map(|c| {
+                self.tile_rect(*c)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| (*c, r))
+            })
             .collect();
         if tiles.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
-        let eval = self.evaluate_for_composite_in(
-            channel,
-            kind,
-            &eval::Region::Tiles(&wanted),
-            cancel,
-        )?;
+        let eval =
+            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), cancel)?;
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
         let memo = self.memo_request(channel);
@@ -2422,7 +2426,11 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         let tiles: Vec<(TileCoord, Rect)> = coords
             .iter()
-            .filter_map(|c| self.tile_rect(*c).filter(|r| !r.is_empty()).map(|r| (*c, r)))
+            .filter_map(|c| {
+                self.tile_rect(*c)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| (*c, r))
+            })
             .collect();
         if tiles.is_empty() {
             return Ok(Vec::new());

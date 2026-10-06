@@ -138,10 +138,28 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
         if app.transform.advanced.kind == super::advanced::Kind::Mesh {
             group_label(ui, rows, lang.pick("メッシュ", "Mesh"));
             for (id, label, value) in [
-                ("transform.columns", lang.pick("列", "Columns"), app.transform.advanced.columns),
-                ("transform.rows", lang.pick("行", "Rows"), app.transform.advanced.rows),
+                (
+                    "transform.columns",
+                    lang.pick("列", "Columns"),
+                    app.transform.advanced.columns,
+                ),
+                (
+                    "transform.rows",
+                    lang.pick("行", "Rows"),
+                    app.transform.advanced.rows,
+                ),
             ] {
-                if let Some(v) = slider_row(ui, rows, id, label, value as f32, (1.0, 32.0), NumberFormat::int(""), None, true) {
+                if let Some(v) = slider_row(
+                    ui,
+                    rows,
+                    id,
+                    label,
+                    value as f32,
+                    (1.0, 32.0),
+                    NumberFormat::int(""),
+                    None,
+                    true,
+                ) {
                     let v = v.round().clamp(1.0, 32.0) as usize;
                     if id == "transform.columns" {
                         app.transform.advanced.columns = v;
@@ -327,18 +345,34 @@ pub fn liquify_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 }
 
 fn liquify_diameter_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
-    SliderSpec::new(lang.pick("直径", "Diameter"), 1.0, 2048.0, NumberFormat::int(" px"))
+    SliderSpec::new(
+        lang.pick("直径", "Diameter"),
+        1.0,
+        2048.0,
+        NumberFormat::int(" px"),
+    )
 }
 
 fn liquify_strength_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
-    SliderSpec::new(lang.pick("強さ", "Strength"), 0.0, 100.0, NumberFormat::int("%"))
+    SliderSpec::new(
+        lang.pick("強さ", "Strength"),
+        0.0,
+        100.0,
+        NumberFormat::int("%"),
+    )
 }
 
 /// ツールプロパティ（ゆがみ）: 直径と強さ。
 pub fn liquify_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let lang = app.lang;
     let state = &mut app.transform.advanced;
-    let out = w::slider(ui, rows.slider_row(), "props.liquify.diameter", state.diameter as f32, &liquify_diameter_spec(lang));
+    let out = w::slider(
+        ui,
+        rows.slider_row(),
+        "props.liquify.diameter",
+        state.diameter as f32,
+        &liquify_diameter_spec(lang),
+    );
     if out.changed {
         state.diameter = out.value as f64;
     }

@@ -405,7 +405,11 @@ fn discarding_the_last_step_restores_the_size_and_leaves_no_redo() {
     assert!(!d.can_redo(), "やり直しには残らない");
     assert_eq!(d.history_bytes(), kept, "捨てた段の費用は引いてある");
     d.undo().unwrap();
-    assert_eq!(d.discard_last_step(), Ok(false), "戻す段が無ければ何もしない");
+    assert_eq!(
+        d.discard_last_step(),
+        Ok(false),
+        "戻す段が無ければ何もしない"
+    );
 }
 /// 大きさの変更を「準備」と「入れる」に分けて使える: 準備は文書も履歴（Undo・Redo）も変えず、予算で断られても何も残らない。入れると
 /// `resize_image` と同じ結果の 1 段になる。準備のあとに文書が変わった・別の文書へ入れるのは、何も変えずに断る。
@@ -439,7 +443,12 @@ fn a_prepared_resize_changes_nothing_until_committed_and_then_is_one_step() {
     assert_eq!((d.width(), d.height()), (9, 7));
     assert_eq!(pixels(&d, id), before);
     assert_eq!(
-        (d.undo_count(), d.redo_count(), d.revision(), d.history_bytes()),
+        (
+            d.undo_count(),
+            d.redo_count(),
+            d.revision(),
+            d.history_bytes()
+        ),
         (undo, redo, revision, bytes),
         "準備は文書も履歴も変えない"
     );

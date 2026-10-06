@@ -901,7 +901,10 @@ fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
     let doc = Document {
         width: 8,
         height: 8,
-        layers: vec![layer(2, "上", [0, 0, 255, 255]), layer(1, "下", [255, 0, 0, 255])],
+        layers: vec![
+            layer(2, "上", [0, 0, 255, 255]),
+            layer(1, "下", [255, 0, 0, 255]),
+        ],
         composite_rgba: None,
     };
     let mut bytes = psd::write(&doc, &Limits::default()).unwrap();
@@ -911,7 +914,10 @@ fn psd_without_layer_ids_with(path: &Path, dissolve: bool) {
         at += i + 4;
     }
     if dissolve {
-        let i = bytes.windows(8).position(|w| w == b"8BIMnorm").expect("層の記録の合成モード");
+        let i = bytes
+            .windows(8)
+            .position(|w| w == b"8BIMnorm")
+            .expect("層の記録の合成モード");
         bytes[i + 4..i + 8].copy_from_slice(b"diss");
     }
     std::fs::write(path, bytes).unwrap();
@@ -937,13 +943,26 @@ fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_th
     assert!(h.state().state.psd.import_check.is_some());
     assert_eq!(h.state().state.sets.len(), 1, "確かめるまで入れない");
     let texts = window_texts(&h, "psd-import");
-    for want in ["レイヤー ID の欠落・重複", "レイヤーのメタデータ", "変わる", "無視", "下、上"] {
+    for want in [
+        "レイヤー ID の欠落・重複",
+        "レイヤーのメタデータ",
+        "変わる",
+        "無視",
+        "下、上",
+    ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
     // PSD の内部のタグ名（4 文字のキー）は画面に出さない
-    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
     assert!(
-        texts.iter().any(|t| t.contains("Ids.psd") && t.contains("変わる 1") && t.contains("無視 2")),
+        texts
+            .iter()
+            .all(|t| !t.contains("lnsr") && !t.contains("lyid")),
+        "{texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Ids.psd") && t.contains("変わる 1") && t.contains("無視 2")),
         "{texts:?}"
     );
     shot(&mut h, "psd-import", "psd_import_check");
@@ -956,13 +975,25 @@ fn importing_a_psd_that_loses_something_lists_it_first_and_imports_only_after_th
     h.state_mut().state.lang = Lang::En;
     import(&mut h);
     let texts = window_texts(&h, "psd-import");
-    for want in ["Missing or duplicate layer IDs", "Layer metadata", "Changed", "Ignored"] {
+    for want in [
+        "Missing or duplicate layer IDs",
+        "Layer metadata",
+        "Changed",
+        "Ignored",
+    ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
-    assert!(texts.iter().all(|t| !t.contains("lnsr") && !t.contains("lyid")), "{texts:?}");
+    assert!(
+        texts
+            .iter()
+            .all(|t| !t.contains("lnsr") && !t.contains("lyid")),
+        "{texts:?}"
+    );
     // 日本語が残ってよいのは、利用者の名前（層の名前）だけ
     assert!(
-        texts.iter().all(|t| !has_japanese(t) || t == "下, 上" || t == "下"),
+        texts
+            .iter()
+            .all(|t| !has_japanese(t) || t == "下, 上" || t == "下"),
         "{texts:?}"
     );
     shot(&mut h, "psd-import", "psd_import_check_english");
@@ -1277,7 +1308,10 @@ fn headless_baked_mesh_maps_survive_save_and_reopen() {
         "開いたものは保存済み"
     );
     // 開いただけでは古くならない: 焼く設定は保存したマップの条件にそろう（モデルが無いあいだは照合できないので「未確認」）
-    assert_eq!((again.bake.settings.padding, again.bake.settings.ao_samples), (4, 8));
+    assert_eq!(
+        (again.bake.settings.padding, again.bake.settings.ao_samples),
+        (4, 8)
+    );
     let check = again.mesh_map_check(0, MeshMapKind::WorldNormal).unwrap();
     assert_eq!(check.state, MeshMapState::Unverified);
     // 設定を変えれば、前のマップは古い（照合できなくても、条件の違いは分かる）
@@ -1517,12 +1551,19 @@ fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_
         target: PsdTarget::NewSet,
     }));
     s.wait_psd();
-    assert!(s.psd.import_check.is_none(), "層 ID の欠落は無視（確かめずに入る）");
+    assert!(
+        s.psd.import_check.is_none(),
+        "層 ID の欠落は無視（確かめずに入る）"
+    );
     assert_eq!(s.sets.len(), 2);
     let composite = |s: &AppState| s.doc.composite(s.doc.bounds()).unwrap();
     let before = composite(&s);
     let layers = |s: &AppState| -> Vec<(String, u128)> {
-        s.doc.layers().iter().map(|l| (l.name().to_owned(), l.id().0)).collect()
+        s.doc
+            .layers()
+            .iter()
+            .map(|l| (l.name().to_owned(), l.id().0))
+            .collect()
     };
     let ids = layers(&s);
     assert!(ids.iter().all(|(_, id)| id >> 96 > 0));
@@ -1533,7 +1574,11 @@ fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_
     let mut again = AppState::new(32, 32);
     again.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     again.apply(Action::OpenProject(project));
-    let index = again.sets.iter().position(|x| x.name == "Copy").expect("セットの名前");
+    let index = again
+        .sets
+        .iter()
+        .position(|x| x.name == "Copy")
+        .expect("セットの名前");
     again.switch_set(index).unwrap();
     assert!(composite(&again) == before, "同じ絵");
     assert_eq!(layers(&again), ids, "同じ層・同じ ID");
@@ -1542,9 +1587,21 @@ fn headless_a_copy_imported_psd_survives_save_and_reopen_and_never_rewrites_the_
     again.apply(Action::Psd(PsdAction::Export(out.clone())));
     again.wait_psd();
     assert!(out.exists(), "{}", again.message);
-    assert_eq!(std::fs::read(&psd).unwrap(), original, "取り込んだ PSD は書き換えない");
+    assert_eq!(
+        std::fs::read(&psd).unwrap(),
+        original,
+        "取り込んだ PSD は書き換えない"
+    );
     // 取り込んだ文書から、取り込んだファイルと同じ場所へ書き出そうとすると、置き換える前に確かめる
     s.apply(Action::Psd(PsdAction::Export(psd.clone())));
-    assert!(s.psd.confirm.as_ref().is_some_and(|c| c.imported), "{}", s.message);
-    assert_eq!(std::fs::read(&psd).unwrap(), original, "確かめるまで書かない");
+    assert!(
+        s.psd.confirm.as_ref().is_some_and(|c| c.imported),
+        "{}",
+        s.message
+    );
+    assert_eq!(
+        std::fs::read(&psd).unwrap(),
+        original,
+        "確かめるまで書かない"
+    );
 }

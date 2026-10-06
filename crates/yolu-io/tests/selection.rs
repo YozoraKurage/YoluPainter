@@ -143,7 +143,10 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
     let without = reopened.with_selection(&id, None).unwrap();
     let again = Project::read(&without.to_bytes().unwrap()).unwrap();
     assert!(again.sets()[0].selection.is_none());
-    assert_eq!(again.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
+    assert_eq!(
+        again.sets()[0].document.to_bytes().unwrap(),
+        native.to_bytes()
+    );
 
     // 知らないセットと、正本と大きさの合わない選択範囲は断る
     assert!(with

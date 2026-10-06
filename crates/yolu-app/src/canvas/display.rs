@@ -284,7 +284,9 @@ impl CanvasDisplay {
         }
         match &self.viewport {
             Some(v) => self.cpu.unshown_in(&v.visible),
-            None => self.cpu.unshown_in(&DocRect::new(0, 0, self.size.0, self.size.1)),
+            None => self
+                .cpu
+                .unshown_in(&DocRect::new(0, 0, self.size.0, self.size.1)),
         }
     }
 

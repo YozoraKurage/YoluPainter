@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use yolu_core::{Channel, Document, Rgba8, TileCoord};
 use yolu_io::{
-    Archive, Blob, CommitOptions, DocumentSource, GenerationStore, Limits, MaterialRef, NativeDocument,
-    Project, Removal, SaveTarget, SetSpec, Thresholds, WriterInfo,
+    Archive, Blob, CommitOptions, DocumentSource, GenerationStore, Limits, MaterialRef,
+    NativeDocument, Project, Removal, SaveTarget, SetSpec, Thresholds, WriterInfo,
 };
 
 struct Dir(PathBuf);
@@ -63,8 +63,12 @@ fn painted(seed: u64, layers: usize) -> Document {
         for ty in 0..n {
             for tx in 0..n {
                 if !(tx + ty + i as u32).is_multiple_of(3) {
-                    let bytes = noise((TILE * TILE * 4) as usize, seed * 1000 + i as u64 * 31 + (ty * n + tx) as u64);
-                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes).unwrap();
+                    let bytes = noise(
+                        (TILE * TILE * 4) as usize,
+                        seed * 1000 + i as u64 * 31 + (ty * n + tx) as u64,
+                    );
+                    doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes)
+                        .unwrap();
                 }
             }
         }
@@ -77,8 +81,12 @@ fn painted(seed: u64, layers: usize) -> Document {
             doc.import_mask_tile(id, TileCoord::new(1, 1), &m).unwrap();
         }
     }
-    doc.add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(10, 20, 30, 255))], None)
-        .unwrap();
+    doc.add_fill_layer(
+        "塗り",
+        &[(Channel::Color, Rgba8::new(10, 20, 30, 255))],
+        None,
+    )
+    .unwrap();
     doc.clear_history().unwrap();
     doc
 }
@@ -92,7 +100,9 @@ fn spec(id: &str, name: &str, slot: u16, doc: &Document) -> SetSpec {
         id: id.into(),
         name: name.into(),
         material: MaterialRef::PendingSlot(slot),
-        document: Some(DocumentSource::Core(Arc::new(doc.capture_snapshot().unwrap()))),
+        document: Some(DocumentSource::Core(Arc::new(
+            doc.capture_snapshot().unwrap(),
+        ))),
         composites: Vec::new(),
     }
 }
@@ -134,13 +144,18 @@ fn a_big_project_is_split_saved_as_ylp_4_and_opens_back_with_every_pixel() {
             .filter(|n| n.starts_with(&format!("sets/{SET_A}/document.utpaint.")))
             .collect();
         assert!(parts.len() >= 3, "{parts:?}");
-        assert!(!names(&p).iter().any(|n| n.starts_with(&format!("sets/{SET_B}/document.utpaint."))));
+        assert!(!names(&p)
+            .iter()
+            .any(|n| n.starts_with(&format!("sets/{SET_B}/document.utpaint."))));
         let path = dir.path("big.ylp");
         let mut target = SaveTarget::create(&path).unwrap();
         let report = target.save_with(&p, yolu_io::BackupKeep::All).unwrap();
         // 置き換えた後のファイルを指すプロジェクト（正本はファイルの位置から読む）
         let saved = report.project.expect("保存したプロジェクト");
-        assert_eq!(bytes_of(&saved.sets()[0].document.to_core().unwrap()), bytes_of(&a));
+        assert_eq!(
+            bytes_of(&saved.sets()[0].document.to_core().unwrap()),
+            bytes_of(&a)
+        );
         let file = fs::read(&path).unwrap();
         // 外側は YLP-4、今の読み手は断る
         let pkg = yolu_io::Package::read_bytes(&file, &Limits::default()).unwrap();
@@ -149,8 +164,16 @@ fn a_big_project_is_split_saved_as_ylp_4_and_opens_back_with_every_pixel() {
         assert!(old.contains("YOLUPAINTER-YLP-4"), "{old}");
         // 開き直す: 画素はメモリに読まず（ファイルの位置）、core にすると同じ
         let (opened, _) = SaveTarget::open(&path).unwrap();
-        for name in names(&opened).iter().filter(|n| n.contains("document.utpaint.")) {
-            assert!(opened.original_archive().entries()[name].in_memory().is_none(), "{name}");
+        for name in names(&opened)
+            .iter()
+            .filter(|n| n.contains("document.utpaint."))
+        {
+            assert!(
+                opened.original_archive().entries()[name]
+                    .in_memory()
+                    .is_none(),
+                "{name}"
+            );
         }
         let set_a = opened.sets().iter().find(|s| s.id == SET_A).unwrap();
         let set_b = opened.sets().iter().find(|s| s.id == SET_B).unwrap();
@@ -171,7 +194,11 @@ fn a_project_within_the_classic_limits_is_written_byte_for_byte_as_before() {
     let dir = Dir::new();
     // 実物のフィクスチャ（形式 1〜6）: 読んで書き戻すと、今の書き手（Archive）と同じバイト列
     for n in [1, 2, 3, 4, 5, 6] {
-        let bytes = fs::read(format!("{}/tests/fixtures/format{n}.ylp", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let bytes = fs::read(format!(
+            "{}/tests/fixtures/format{n}.ylp",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
         let p = Project::read(&bytes).unwrap();
         let old = Archive::read(&bytes).unwrap().to_bytes().unwrap();
         assert_eq!(p.to_bytes().unwrap(), old, "形式{n}");
@@ -217,7 +244,10 @@ fn missing_extra_and_out_of_order_parts_are_refused() {
     let p = small().scoped(|| project_of(&[(SET_A, &a)]));
     let files = p.original_archive().entries().clone();
     let part = |n: usize| format!("sets/{SET_A}/document.utpaint.{n}");
-    let count = files.keys().filter(|k| k.contains("document.utpaint.")).count();
+    let count = files
+        .keys()
+        .filter(|k| k.contains("document.utpaint."))
+        .count();
     // 1 つ欠けた（最後・途中）、余計な部分、番号の飛び
     let mut last = files.clone();
     last.remove(&part(count));
@@ -233,7 +263,12 @@ fn missing_extra_and_out_of_order_parts_are_refused() {
     let (x, y) = (swapped[&part(1)].clone(), swapped[&part(2)].clone());
     swapped.insert(part(1), y);
     swapped.insert(part(2), x);
-    for (why, f) in [("最後が無い", last), ("途中が無い", middle), ("余計", extra), ("飛び", gap)] {
+    for (why, f) in [
+        ("最後が無い", last),
+        ("途中が無い", middle),
+        ("余計", extra),
+        ("飛び", gap),
+    ] {
         assert!(Project::from_entries(f).is_err(), "{why}");
     }
     // 入れ替えは骨組み（長さだけ）では見つからないこともあるので、中身を読むと断る
@@ -262,8 +297,13 @@ fn recovery_shares_the_parts_of_unchanged_layers_between_generations() {
             .unwrap();
         // 1 つの層の 1 タイルだけを変える
         let last = a.layers()[5].id();
-        a.import_tile(last, Channel::Color, TileCoord::new(0, 0), &noise((TILE * TILE * 4) as usize, 999))
-            .unwrap();
+        a.import_tile(
+            last,
+            Channel::Color,
+            TileCoord::new(0, 0),
+            &noise((TILE * TILE * 4) as usize, 999),
+        )
+        .unwrap();
         let q = project_of(&[(SET_A, &a)]);
         let parts_total: u64 = q
             .original_archive()
@@ -284,11 +324,17 @@ fn recovery_shares_the_parts_of_unchanged_layers_between_generations() {
             .unwrap();
         // 変わった層の部分と小さなエントリ（ヘッダー・project.json など）だけを書いた
         assert!(second.reused_files >= 2, "{second:?}");
-        assert!(second.written_bytes < parts_total / 2, "{second:?} / {parts_total}");
+        assert!(
+            second.written_bytes < parts_total / 2,
+            "{second:?} / {parts_total}"
+        );
         // 戻すと画素まで同じ（部分は置き場のファイルを指し、メモリに読まない）
         let loaded = store.load().unwrap();
         let back = Project::from_entries(loaded.files.clone()).unwrap();
-        assert_eq!(bytes_of(&back.sets()[0].document.to_core().unwrap()), bytes_of(&a));
+        assert_eq!(
+            bytes_of(&back.sets()[0].document.to_core().unwrap()),
+            bytes_of(&a)
+        );
         assert!(loaded
             .files
             .iter()
@@ -325,7 +371,10 @@ fn a_distribution_copy_of_a_big_project_keeps_the_split_document() {
         let path = dir.path("copy.ylp");
         SaveTarget::create(&path).unwrap().save(&copy).unwrap();
         let (opened, _) = SaveTarget::open(&path).unwrap();
-        assert_eq!(bytes_of(&opened.sets()[0].document.to_core().unwrap()), bytes_of(&a));
+        assert_eq!(
+            bytes_of(&opened.sets()[0].document.to_core().unwrap()),
+            bytes_of(&a)
+        );
     });
 }
 
@@ -338,7 +387,11 @@ fn saving_again_copies_unchanged_sets_from_the_file_and_drops_old_parts() {
     small().scoped(|| {
         let p = project_of(&[(SET_A, &a), (SET_B, &b)]);
         let mut target = SaveTarget::create(&path).unwrap();
-        let saved = target.save_with(&p, yolu_io::BackupKeep::All).unwrap().project.unwrap();
+        let saved = target
+            .save_with(&p, yolu_io::BackupKeep::All)
+            .unwrap()
+            .project
+            .unwrap();
         // セット A の層を減らして保存し直す: 部分は減り、古い部分は残らない。セット B はファイルから写す
         let mut fewer = a.capture_snapshot().unwrap();
         let ids: Vec<_> = fewer.layers().iter().map(|l| l.id()).collect();
@@ -365,7 +418,16 @@ fn saving_again_copies_unchanged_sets_from_the_file_and_drops_old_parts() {
         assert_eq!(count(&after, SET_B), count(&before, SET_B));
         let report = target.save_with(&next, yolu_io::BackupKeep::All).unwrap();
         let (opened, _) = SaveTarget::open(&path).unwrap();
-        let get = |id: &str| opened.sets().iter().find(|s| s.id == id).unwrap().document.to_core().unwrap();
+        let get = |id: &str| {
+            opened
+                .sets()
+                .iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .document
+                .to_core()
+                .unwrap()
+        };
         assert_eq!(bytes_of(&get(SET_A)), bytes_of(&fewer));
         assert_eq!(bytes_of(&get(SET_B)), bytes_of(&b));
         assert_eq!(names(&report.project.unwrap()), names(&opened));
@@ -387,7 +449,11 @@ fn an_opened_file_moved_deleted_or_replaced_outside_still_saves_under_another_na
             SaveTarget::create(&path).unwrap().save(&p).unwrap();
             let (opened, mut target) = SaveTarget::open(&path).unwrap();
             // 開いたエントリはメモリに残さず、ファイルの位置で持つ
-            assert!(opened.original_archive().entries().values().any(|b| !b.is_empty() && b.in_memory().is_none()));
+            assert!(opened
+                .original_archive()
+                .entries()
+                .values()
+                .any(|b| !b.is_empty() && b.in_memory().is_none()));
             let mut kept = dir.path("kept.ylp");
             let untouched = fs::read(&path).unwrap();
             match how {
@@ -412,12 +478,29 @@ fn an_opened_file_moved_deleted_or_replaced_outside_still_saves_under_another_na
                     kept = path.clone();
                 }
             }
-            let outside = if how == "deleted" { None } else { Some(fs::read(&kept).unwrap()) };
+            let outside = if how == "deleted" {
+                None
+            } else {
+                Some(fs::read(&kept).unwrap())
+            };
             // 別の名前へ: 中身は開いたときのまま（外で何をされても）
             let copy = dir.path(&format!("copy-{how}.ylp"));
-            SaveTarget::create(&copy).unwrap().save(&opened).unwrap_or_else(|e| panic!("{how}: {e}"));
+            SaveTarget::create(&copy)
+                .unwrap()
+                .save(&opened)
+                .unwrap_or_else(|e| panic!("{how}: {e}"));
             let (again, _) = SaveTarget::open(&copy).unwrap();
-            let core = |p: &Project, id: &str| bytes_of(&p.sets().iter().find(|s| s.id == id).unwrap().document.to_core().unwrap());
+            let core = |p: &Project, id: &str| {
+                bytes_of(
+                    &p.sets()
+                        .iter()
+                        .find(|s| s.id == id)
+                        .unwrap()
+                        .document
+                        .to_core()
+                        .unwrap(),
+                )
+            };
             assert_eq!(core(&again, SET_A), bytes_of(&a), "{how}");
             assert_eq!(core(&again, SET_B), bytes_of(&b), "{how}");
             // 外の変更は、書き換えも消しもしない
@@ -428,10 +511,13 @@ fn an_opened_file_moved_deleted_or_replaced_outside_still_saves_under_another_na
             // 消える OS（Unix・今の Windows の NTFS の POSIX の削除）だけを見る: 開いたままの削除で名前が残る OS（古い Wine など）では、
             // OS が「まだある」と答えるので、保存先が消された判定そのものが働かない
             if how != "deleted" || cfg!(unix) {
-                let refused = target
-                    .save(&opened)
-                    .expect_err(&format!("{how}: 外で変わったあとの同じ名前への保存が通った"));
-                assert!(matches!(refused, yolu_io::Error::SaveConflict(_)), "{how}: {refused:?}");
+                let refused = target.save(&opened).expect_err(&format!(
+                    "{how}: 外で変わったあとの同じ名前への保存が通った"
+                ));
+                assert!(
+                    matches!(refused, yolu_io::Error::SaveConflict(_)),
+                    "{how}: {refused:?}"
+                );
                 if how == "replaced" {
                     assert_ne!(fs::read(&path).unwrap(), untouched);
                 } else {
@@ -459,7 +545,10 @@ fn a_document_source_written_into_a_package_from_memory_round_trips() {
         let p = Project::create(writer(), &[s], SET_A).unwrap();
         assert!(p.sets()[0].document.is_split());
         let back = Project::read(&p.to_bytes().unwrap()).unwrap();
-        assert_eq!(back.sets()[0].document.to_bytes().unwrap(), native.to_bytes());
+        assert_eq!(
+            back.sets()[0].document.to_bytes().unwrap(),
+            native.to_bytes()
+        );
     });
 }
 
@@ -487,12 +576,18 @@ fn measure_a_large_document() {
         for ty in 0..n {
             for tx in 0..n {
                 let bytes = match kind {
-                    "塗り" if (tx * 7 + ty * 3 + i) % 3 != 0 => painted_tile(tile, tx, ty, i as u64),
+                    "塗り" if (tx * 7 + ty * 3 + i) % 3 != 0 => {
+                        painted_tile(tile, tx, ty, i as u64)
+                    }
                     "線画" if (tx + ty * 5 + i) % 4 == 0 => line_tile(tile, tx, ty, i as u64),
-                    "雑音" if (tx + ty) % 2 == 0 => noise((tile * tile * 4) as usize, (i * 100_000 + ty * n + tx) as u64),
+                    "雑音" if (tx + ty) % 2 == 0 => noise(
+                        (tile * tile * 4) as usize,
+                        (i * 100_000 + ty * n + tx) as u64,
+                    ),
                     _ => continue,
                 };
-                doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes).unwrap();
+                doc.import_tile(id, Channel::Color, TileCoord::new(tx, ty), &bytes)
+                    .unwrap();
             }
         }
     }
@@ -502,7 +597,11 @@ fn measure_a_large_document() {
     let pixels: u64 = doc
         .layers()
         .iter()
-        .flat_map(|l| l.surface_channels().into_iter().map(move |c| l.surface(c).unwrap().allocated_bytes()))
+        .flat_map(|l| {
+            l.surface_channels()
+                .into_iter()
+                .map(move |c| l.surface(c).unwrap().allocated_bytes())
+        })
         .sum();
     println!("層の画素 {} MiB", pixels >> 20);
     let dir = Dir::new();
@@ -533,9 +632,13 @@ fn measure_a_large_document() {
     drop(saved);
     rss.reset();
     let t = Instant::now();
-    let (opened, mut target) = SaveTarget::open_within(&path, &Limits::from_layer_pixels(64 << 30)).unwrap();
+    let (opened, mut target) =
+        SaveTarget::open_within(&path, &Limits::from_layer_pixels(64 << 30)).unwrap();
     let opened_in = t.elapsed();
-    let core = opened.sets()[0].document.to_core_within(Some(64 << 30)).unwrap();
+    let core = opened.sets()[0]
+        .document
+        .to_core_within(Some(64 << 30))
+        .unwrap();
     println!(
         "開く: 確かめ {:?}、core へ {:?}、最大 RSS の増え {} MiB（core の文書を含む）",
         opened_in,
@@ -546,7 +649,12 @@ fn measure_a_large_document() {
     let mut edited = core;
     let id = edited.layers()[10].id();
     edited
-        .import_tile(id, Channel::Color, TileCoord::new(0, 0), &noise((tile * tile * 4) as usize, 7))
+        .import_tile(
+            id,
+            Channel::Color,
+            TileCoord::new(0, 0),
+            &noise((tile * tile * 4) as usize, 7),
+        )
         .unwrap();
     let snap = Arc::new(edited.capture_snapshot().unwrap());
     rss.reset();
@@ -558,9 +666,17 @@ fn measure_a_large_document() {
         document: Some(DocumentSource::Core(snap.clone())),
         composites: Vec::new(),
     };
-    let next = opened.with_sets(writer(), std::slice::from_ref(&spec), SET_A).unwrap();
-    target.save_with(&next, yolu_io::BackupKeep::Count(0)).unwrap();
-    println!("上書き保存: {:?}、最大 RSS の増え {} MiB", t.elapsed(), rss.grew() >> 20);
+    let next = opened
+        .with_sets(writer(), std::slice::from_ref(&spec), SET_A)
+        .unwrap();
+    target
+        .save_with(&next, yolu_io::BackupKeep::Count(0))
+        .unwrap();
+    println!(
+        "上書き保存: {:?}、最大 RSS の増え {} MiB",
+        t.elapsed(),
+        rss.grew() >> 20
+    );
     // 書き置き（1 回目は全部、2 回目は 1 つの層だけ違う）
     let store = GenerationStore::new(dir.path("store"));
     rss.reset();
@@ -582,7 +698,12 @@ fn measure_a_large_document() {
         rss.grew() >> 20
     );
     edited
-        .import_tile(id, Channel::Color, TileCoord::new(1, 0), &noise((tile * tile * 4) as usize, 8))
+        .import_tile(
+            id,
+            Channel::Color,
+            TileCoord::new(1, 0),
+            &noise((tile * tile * 4) as usize, 8),
+        )
         .unwrap();
     let snap = Arc::new(edited.capture_snapshot().unwrap());
     let again = opened
@@ -625,7 +746,12 @@ fn painted_tile(tile: u32, tx: u32, ty: u32, seed: u64) -> Vec<u8> {
             let j = jitter[(y * tile + x) as usize] & 3;
             let gx = ((tx * tile + x) / 16) as u8;
             let gy = ((ty * tile + y) / 16) as u8;
-            out.extend_from_slice(&[gx.wrapping_add(j), gy.wrapping_add(seed as u8), 128u8.wrapping_add(j), 255]);
+            out.extend_from_slice(&[
+                gx.wrapping_add(j),
+                gy.wrapping_add(seed as u8),
+                128u8.wrapping_add(j),
+                255,
+            ]);
         }
     }
     out

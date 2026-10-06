@@ -1311,13 +1311,19 @@ mod tests {
                     })
                 })
                 .collect();
-            workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
+            workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap())
+                .collect()
         });
         let mut sorted = taken.clone();
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), 1000, "どのスレッドの番号も重ならない");
-        assert!(taken.iter().all(|id| id % 7 != 0), "使われている番号は飛ばす");
+        assert!(
+            taken.iter().all(|id| id % 7 != 0),
+            "使われている番号は飛ばす"
+        );
         // 番号を読んだファイルの続きから取り、使い切ったら None のまま
         ids.reserve_through(u32::MAX - 1);
         assert_eq!(ids.take(|_| false), Some(u32::MAX));

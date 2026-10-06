@@ -30,7 +30,11 @@ thread_local! {
 /// `prefix-tag-プロセス番号-通し番号` の名前。この試験が終わるとき、鍵・ソケット・ロックのファイルを消す。
 pub fn unique_name(prefix: &str, tag: &str) -> String {
     static N: AtomicU32 = AtomicU32::new(0);
-    let name = format!("{prefix}-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+    let name = format!(
+        "{prefix}-{tag}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    );
     if let Ok(dir) = yolu_protocol::private::link_dir() {
         let _ = SWEEPER.try_with(|s| {
             let mut files = s.0.borrow_mut();

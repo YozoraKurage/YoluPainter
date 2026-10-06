@@ -60,9 +60,15 @@ fn symmetry_app(lang: Lang) -> H {
     let mut h = app(1280.0, 2400.0, 256);
     h.state_mut().state.lang = lang;
     h.run();
-    apply(&mut h, Action::Sel(SelAction::Symmetry(SymOp::Mode(SymmetryMode::Radial))));
+    apply(
+        &mut h,
+        Action::Sel(SelAction::Symmetry(SymOp::Mode(SymmetryMode::Radial))),
+    );
     // 中心を動かしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
-    apply(&mut h, Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.75))));
+    apply(
+        &mut h,
+        Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.75))),
+    );
     // 対称の欄は、ブラシの詳細の窓の「対称」のカテゴリ
     let ui = &mut h.state_mut().state.brushes.ui;
     ui.detail.open = true;
@@ -102,16 +108,25 @@ fn the_symmetry_fields_are_disabled_with_a_reason_for_smudge_and_clone_and_come_
             assert_symmetry_fields(&h, lang, true, "指先・クローン");
             // 理由は、無効にした部品のツールチップ（画面に注記の行は無い）
             for label in symmetry_labels(lang) {
-                assert!(tooltip_shows(&mut h, label, reason), "{lang:?}: {label} のツールチップに理由");
+                assert!(
+                    tooltip_shows(&mut h, label, reason),
+                    "{lang:?}: {label} のツールチップに理由"
+                );
             }
-            assert!(h.query_by_label(reason).is_none(), "{lang:?}: 注記の行は出さない");
+            assert!(
+                h.query_by_label(reason).is_none(),
+                "{lang:?}: 注記の行は出さない"
+            );
             // モードのボタンは押せる（対称を切る・替えるのは、指先・クローンのあいだもできる）
             assert!(!is_disabled(&h, lang.pick("放射状", "Radial")));
             // 効果をペイントに戻せば有効に戻り、理由は出なくなる
             h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
             h.run();
             assert_symmetry_fields(&h, lang, false, "ペイントに戻した");
-            assert!(!tooltip_shows(&mut h, symmetry_labels(lang)[0], reason), "{lang:?}: 理由は消える");
+            assert!(
+                !tooltip_shows(&mut h, symmetry_labels(lang)[0], reason),
+                "{lang:?}: 理由は消える"
+            );
         }
     }
 }
@@ -128,9 +143,15 @@ fn the_symmetry_fields_are_disabled_while_only_the_3d_view_can_be_painted() {
         assert_symmetry_fields(&h, lang, true, "3D だけ");
         let reason = lang.pick("3D では効きません", "No effect in 3D");
         for label in symmetry_labels(lang) {
-            assert!(tooltip_shows(&mut h, label, reason), "{lang:?}: {label} のツールチップに理由");
+            assert!(
+                tooltip_shows(&mut h, label, reason),
+                "{lang:?}: {label} のツールチップに理由"
+            );
         }
-        assert!(h.query_by_label(reason).is_none(), "{lang:?}: 注記の行は出さない");
+        assert!(
+            h.query_by_label(reason).is_none(),
+            "{lang:?}: 注記の行は出さない"
+        );
         click_tab(&mut h, Tab::Canvas);
         h.run();
         assert!(!h.state().state.paints_only_in_3d());
@@ -159,7 +180,10 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         assert_symmetry_fields(&h, lang, false, "並べた");
         // 2D の対称の設定を変えられる
         let before = h.state().state.sel.symmetry.count;
-        apply(&mut h, Action::Sel(SelAction::Symmetry(SymOp::Count(before + 1))));
+        apply(
+            &mut h,
+            Action::Sel(SelAction::Symmetry(SymOp::Count(before + 1))),
+        );
         assert_eq!(h.state().state.sel.symmetry.count, before + 1);
         // キャンバスを 3D の裏へ回すと、3D だけになって無効
         let mut stacked = DockState::new(vec![Tab::Canvas, Tab::View3d]);
@@ -179,8 +203,24 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
 
 fn modify_labels(lang: Lang) -> [&'static str; 7] {
     lang.pick(
-        ["半径", "端を固定", "拡張", "縮小", "境界線", "境界をぼかす", "境界をくっきり"],
-        ["Radius", "Edge lock", "Grow", "Shrink", "Border", "Feather", "Sharpen Edge"],
+        [
+            "半径",
+            "端を固定",
+            "拡張",
+            "縮小",
+            "境界線",
+            "境界をぼかす",
+            "境界をくっきり",
+        ],
+        [
+            "Radius",
+            "Edge lock",
+            "Grow",
+            "Shrink",
+            "Border",
+            "Feather",
+            "Sharpen Edge",
+        ],
     )
 }
 
@@ -194,21 +234,39 @@ fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_
         assert!(h.state().state.doc.selection().is_none());
         let reason = lang.pick("選択範囲なし", "No selection");
         for label in modify_labels(lang) {
-            assert!(is_disabled(&h, label), "{lang:?}: 選択範囲が無いので {label} は無効");
-            assert!(tooltip_shows(&mut h, label, reason), "{lang:?}: {label} のツールチップに理由");
+            assert!(
+                is_disabled(&h, label),
+                "{lang:?}: 選択範囲が無いので {label} は無効"
+            );
+            assert!(
+                tooltip_shows(&mut h, label, reason),
+                "{lang:?}: {label} のツールチップに理由"
+            );
         }
-        assert!(h.query_by_label(reason).is_none(), "{lang:?}: 注記の行は出さない");
+        assert!(
+            h.query_by_label(reason).is_none(),
+            "{lang:?}: 注記の行は出さない"
+        );
         // 選択範囲を作れば有効に戻り、理由は消える
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::All)));
         assert!(h.state().state.doc.selection().is_some());
         for label in modify_labels(lang) {
-            assert!(!is_disabled(&h, label), "{lang:?}: 選択範囲があるので {label} は有効");
-            assert!(!tooltip_shows(&mut h, label, reason), "{lang:?}: {label} の理由は消える");
+            assert!(
+                !is_disabled(&h, label),
+                "{lang:?}: 選択範囲があるので {label} は有効"
+            );
+            assert!(
+                !tooltip_shows(&mut h, label, reason),
+                "{lang:?}: {label} の理由は消える"
+            );
         }
         // 解除すればまた無効
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::Clear)));
         for label in modify_labels(lang) {
-            assert!(is_disabled(&h, label), "{lang:?}: 解除したので {label} は無効");
+            assert!(
+                is_disabled(&h, label),
+                "{lang:?}: 解除したので {label} は無効"
+            );
         }
     }
 }
@@ -219,7 +277,10 @@ fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_
 fn adjustment_app(lang: Lang, paint: Channel) -> H {
     let mut h = app(1280.0, 1000.0, 256);
     h.state_mut().state.lang = lang;
-    apply(&mut h, Action::M2(Edit::NewAdjustment(AdjustmentKind::HueSaturation)));
+    apply(
+        &mut h,
+        Action::M2(Edit::NewAdjustment(AdjustmentKind::HueSaturation)),
+    );
     apply(&mut h, Action::M2Ui(UiOp::PaintChannel(paint)));
     h
 }
@@ -233,25 +294,60 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
     for lang in Lang::ALL {
         let mut h = adjustment_app(lang, Channel::Roughness);
         let name = yolu_app::m2::channel_name(lang, &h.state().state.doc, Channel::Roughness);
-        let reason = lang.pick(format!("{name} には効きません"), format!("No effect on {name}"));
+        let reason = lang.pick(
+            format!("{name} には効きません"),
+            format!("No effect on {name}"),
+        );
         for label in adjustment_labels(lang) {
             // 層の値はカラーのチャンネルの出力に効くので、描くチャンネルが違っても無効にはしない
             assert!(!is_disabled(&h, label), "{lang:?}: {label}");
-            assert!(tooltip_shows(&mut h, label, &reason), "{lang:?}: {label} のツールチップに理由");
+            assert!(
+                tooltip_shows(&mut h, label, &reason),
+                "{lang:?}: {label} のツールチップに理由"
+            );
         }
-        assert!(h.query_by_label(&reason).is_none(), "{lang:?}: 注記の行は出さない");
+        assert!(
+            h.query_by_label(&reason).is_none(),
+            "{lang:?}: 注記の行は出さない"
+        );
         // 直せる: 色相のスライダーの右の方を押すと、層の値が変わる
         let id = h.state().state.selected_layer.unwrap();
-        let before = h.state().state.doc.layer(id).unwrap().adjustment().cloned().unwrap();
+        let before = h
+            .state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .adjustment()
+            .cloned()
+            .unwrap();
         let row = rect_of_field(&h, lang.pick("色相", "Hue"));
-        click(&mut h, egui::pos2(row.left() + row.width() * 0.8, row.bottom() - 3.0));
-        let after = h.state().state.doc.layer(id).unwrap().adjustment().cloned().unwrap();
-        assert_ne!(after.hue(), before.hue(), "{lang:?}: 描くチャンネルが違っても直せる");
+        click(
+            &mut h,
+            egui::pos2(row.left() + row.width() * 0.8, row.bottom() - 3.0),
+        );
+        let after = h
+            .state()
+            .state
+            .doc
+            .layer(id)
+            .unwrap()
+            .adjustment()
+            .cloned()
+            .unwrap();
+        assert_ne!(
+            after.hue(),
+            before.hue(),
+            "{lang:?}: 描くチャンネルが違っても直せる"
+        );
         // カラーのチャンネルに戻せば、理由は出ない
         apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
         for label in adjustment_labels(lang) {
             assert!(!is_disabled(&h, label), "{lang:?}: {label}");
-            assert!(!tooltip_shows(&mut h, label, &reason), "{lang:?}: {label} の理由は消える");
+            assert!(
+                !tooltip_shows(&mut h, label, &reason),
+                "{lang:?}: {label} の理由は消える"
+            );
         }
     }
 }

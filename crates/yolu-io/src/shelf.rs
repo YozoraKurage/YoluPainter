@@ -1,7 +1,7 @@
 //! プロジェクト内の素材。外部の参照先を開かず、検証した埋め込みの写しを保持する。
 use crate::{
-    archive::Files, check, check_budget, is_hash, project, Archive, NativeDocument, NativeValue, Project,
-    Resource, Result, MAX_TOTAL_BYTES,
+    archive::Files, check, check_budget, is_hash, project, Archive, NativeDocument, NativeValue,
+    Project, Resource, Result, MAX_TOTAL_BYTES,
 };
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
@@ -408,7 +408,15 @@ impl Shelf {
         height: u32,
         color_space: &str,
     ) -> Result<String> {
-        self.add_image(id, name, rgba, width, height, color_space, json!({"type":"none"}))
+        self.add_image(
+            id,
+            name,
+            rgba,
+            width,
+            height,
+            color_space,
+            json!({"type":"none"}),
+        )
     }
     pub fn add_file(
         &mut self,

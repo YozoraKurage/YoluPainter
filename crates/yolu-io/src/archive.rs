@@ -391,7 +391,10 @@ fn complete(f: &Files, level: u32, prefix: &str) -> Result<()> {
     )
 }
 /// .ylp に要る正本のエントリ（根か、形式 3 からはどれかのセットの下の `document.utpaint`）があるか。
-pub(crate) fn complete_ylp<'a>(mut names: impl Iterator<Item = &'a String>, level: u32) -> Result<()> {
+pub(crate) fn complete_ylp<'a>(
+    mut names: impl Iterator<Item = &'a String>,
+    level: u32,
+) -> Result<()> {
     check(
         names.any(|n| {
             n == "document.utpaint"
@@ -1853,10 +1856,11 @@ mod tests {
                         let same = read.level == old.level
                             && read.read_manifest() == Some(&old.manifest[..])
                             && read.files.len() == old.files.len()
-                            && read
-                                .files
-                                .iter()
-                                .all(|(k, v)| old.files.get(k).is_some_and(|o| v.in_memory() == Some(&o[..])));
+                            && read.files.iter().all(|(k, v)| {
+                                old.files
+                                    .get(k)
+                                    .is_some_and(|o| v.in_memory() == Some(&o[..]))
+                            });
                         if !same {
                             problems.push(format!("{}: 新しい読み手が違う中身で受理", what()));
                         }
@@ -1902,7 +1906,10 @@ mod tests {
             .map(|(k, v)| (k, crate::Blob::from(v)))
             .collect();
         let zip = t.scoped(|| crate::Package::build(files, 3).unwrap().to_bytes().unwrap());
-        assert!(zip.windows(4).any(|w| w == b"PK\x06\x06"), "zip64 の終端がある");
+        assert!(
+            zip.windows(4).any(|w| w == b"PK\x06\x06"),
+            "zip64 の終端がある"
+        );
         let limits = crate::Limits::default();
         let original = crate::Package::read_bytes(&zip, &limits).unwrap();
         assert_eq!(original.manifest_version(), 4);
@@ -1924,7 +1931,10 @@ mod tests {
                             let same = read.read_manifest() == original.read_manifest()
                                 && read.files.len() == original.files.len()
                                 && read.files.iter().all(|(k, v)| {
-                                    original.files.get(k).is_some_and(|o| v.in_memory() == o.in_memory())
+                                    original
+                                        .files
+                                        .get(k)
+                                        .is_some_and(|o| v.in_memory() == o.in_memory())
                                 });
                             if !same {
                                 problems.push(format!("{}: 違う中身で受理", what()));
@@ -1943,7 +1953,12 @@ mod tests {
                 judge4(&bad, &|| format!("offset {i} ^ {mask:#x}"));
             }
         }
-        let patterns: [&[u8]; 4] = [&[0xff, 0xff, 0xff, 0xff], &[0, 0, 0, 0], &[0xff; 8], &[0; 8]];
+        let patterns: [&[u8]; 4] = [
+            &[0xff, 0xff, 0xff, 0xff],
+            &[0, 0, 0, 0],
+            &[0xff; 8],
+            &[0; 8],
+        ];
         for pattern in patterns {
             for i in 0..=zip.len() - pattern.len() {
                 let mut bad = zip.clone();
@@ -1964,7 +1979,10 @@ mod tests {
             judge4(&zip[..n], &|| format!("切れた {n}"));
         }
         // 網羅が読み手を通っている（ほとんどを断り、時刻の欄などの無害な変更は受ける）
-        assert!(refused > 10_000 && accepted > 10, "断った {refused}、受けた {accepted}");
+        assert!(
+            refused > 10_000 && accepted > 10,
+            "断った {refused}、受けた {accepted}"
+        );
         assert_no_problems(&problems, started);
     }
     /// 全バイト位置の網羅（上の 3 本）が対象にする ZIP の大きさ。「小さな ZIP」の主張を測った範囲に結びつけ、

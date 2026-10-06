@@ -31,7 +31,9 @@ fn bind_after_drop(name: &str) -> Server {
     loop {
         match Server::bind(name, false) {
             Ok(server) => return server,
-            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < deadline => thread::yield_now(),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < deadline => {
+                thread::yield_now()
+            }
             Err(e) => panic!("{name}: 待ち受けをやめたあとも、同じ名前で待ち受けられない: {e}"),
         }
     }
@@ -168,11 +170,15 @@ fn after_the_greeting_frames_of_another_kind_pass_through_raw_and_are_not_refuse
     let listener = Server::bind(&name, false).unwrap();
     let server = thread::spawn(move || {
         let stream = listener.accept().unwrap();
-        let (conn, mut reader, _) = accept(stream, "試験のスタンドアロン", 7, &listener.key()).unwrap();
+        let (conn, mut reader, _) =
+            accept(stream, "試験のスタンドアロン", 7, &listener.key()).unwrap();
         let (frames, stream) = reader.raw();
         let mut stream = stream;
         let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
-        assert_eq!((frame.kind, frame.payload.as_slice()), (REQUEST, &b"ping"[..]));
+        assert_eq!(
+            (frame.kind, frame.payload.as_slice()),
+            (REQUEST, &b"ping"[..])
+        );
         conn.cancel_reads();
         conn.send_raw(RESPONSE, b"pong").unwrap();
         // 閉じるまで待つ（相手の Bye ではなく、枠の切れ目の閉じ）
@@ -187,7 +193,10 @@ fn after_the_greeting_frames_of_another_kind_pass_through_raw_and_are_not_refuse
         let mut stream = stream;
         let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
         // 最初に届くのは返事の枠。知らない種類の枠への `Error`（`next` が返すもの）ではない
-        assert_eq!((frame.kind, frame.payload.as_slice()), (RESPONSE, &b"pong"[..]));
+        assert_eq!(
+            (frame.kind, frame.payload.as_slice()),
+            (RESPONSE, &b"pong"[..])
+        );
     }
     drop(reader);
     drop(conn);
@@ -1204,7 +1213,8 @@ mod windows_pipe {
                 Err(e) => format!("failed: {e}"),
                 Ok(_guard) => {
                     let mut token = std::ptr::null_mut();
-                    let opened = unsafe { OpenThreadToken(GetCurrentThread(), 0x0008, 0, &mut token) };
+                    let opened =
+                        unsafe { OpenThreadToken(GetCurrentThread(), 0x0008, 0, &mut token) };
                     if opened == 0 {
                         format!("anonymous: {}", unsafe { GetLastError() })
                     } else {

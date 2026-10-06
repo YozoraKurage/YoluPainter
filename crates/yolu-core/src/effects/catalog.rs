@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::adjust::{
-    AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust, ColorBalance,
-    Posterize, Threshold,
+    AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust,
+    ColorBalance, Posterize, Threshold,
 };
 use crate::effects::EffectSettings;
 use crate::error::CoreError;
@@ -27,12 +27,20 @@ use crate::ranges;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamType {
     /// 整数（両端を含む）。
-    Integer { min: i64, max: i64 },
+    Integer {
+        min: i64,
+        max: i64,
+    },
     /// 実数（両端を含む）。
-    Number { min: f64, max: f64 },
+    Number {
+        min: f64,
+        max: f64,
+    },
     Bool,
     /// 選択肢のどれか（綴りは小文字の英数字と `_`）。
-    Choice { options: Vec<&'static str> },
+    Choice {
+        options: Vec<&'static str>,
+    },
 }
 
 /// 欄の値。整数も `Number`（整数かどうかは型が見る）。
@@ -85,14 +93,34 @@ impl EffectKind {
 pub enum ParamError {
     UnknownKind(String),
     /// その使い方（フィルターの段・調整の層）にできない種類。
-    WrongTarget { kind: &'static str, adjustment: bool },
+    WrongTarget {
+        kind: &'static str,
+        adjustment: bool,
+    },
     /// 値だけでは足せない・値を変えられない種類（リスト・曲線・参照を持つ）。
-    NotEditable { kind: &'static str },
-    UnknownParam { kind: &'static str, name: String },
-    WrongType { name: &'static str, expected: &'static str },
-    OutOfRange { name: &'static str, min: f64, max: f64 },
-    NotInteger { name: &'static str },
-    UnknownOption { name: &'static str, options: Vec<&'static str> },
+    NotEditable {
+        kind: &'static str,
+    },
+    UnknownParam {
+        kind: &'static str,
+        name: String,
+    },
+    WrongType {
+        name: &'static str,
+        expected: &'static str,
+    },
+    OutOfRange {
+        name: &'static str,
+        min: f64,
+        max: f64,
+    },
+    NotInteger {
+        name: &'static str,
+    },
+    UnknownOption {
+        name: &'static str,
+        options: Vec<&'static str>,
+    },
     /// 欄の組み合わせが、組んだ設定の検査で断られた。
     Refused(CoreError),
 }
@@ -104,7 +132,11 @@ impl std::fmt::Display for ParamError {
             Self::WrongTarget { kind, adjustment } => write!(
                 f,
                 "{kind} は{}にできない",
-                if *adjustment { "調整の層の設定" } else { "フィルターの段" }
+                if *adjustment {
+                    "調整の層の設定"
+                } else {
+                    "フィルターの段"
+                }
             ),
             Self::NotEditable { kind } => write!(f, "{kind} は値の欄では足せない・変えられない"),
             Self::UnknownParam { kind, name } => write!(f, "{kind} に欄 {name} は無い"),
@@ -125,16 +157,26 @@ type Bag = BTreeMap<&'static str, ParamValue>;
 // ───────── 欄の定義 ─────────
 
 fn int<T: Into<i64> + Copy>(r: &std::ops::RangeInclusive<T>) -> ParamType {
-    ParamType::Integer { min: (*r.start()).into(), max: (*r.end()).into() }
+    ParamType::Integer {
+        min: (*r.start()).into(),
+        max: (*r.end()).into(),
+    }
 }
 fn num(r: &std::ops::RangeInclusive<f64>) -> ParamType {
-    ParamType::Number { min: *r.start(), max: *r.end() }
+    ParamType::Number {
+        min: *r.start(),
+        max: *r.end(),
+    }
 }
 fn choice(options: &[&'static str]) -> ParamType {
-    ParamType::Choice { options: options.to_vec() }
+    ParamType::Choice {
+        options: options.to_vec(),
+    }
 }
 
-const BLEND_OPTIONS: [&str; 7] = ["multiply", "replace", "screen", "max", "min", "add", "subtract"];
+const BLEND_OPTIONS: [&str; 7] = [
+    "multiply", "replace", "screen", "max", "min", "add", "subtract",
+];
 const NOISE_SPACE_OPTIONS: [&str; 2] = ["model", "uv"];
 const AXIS_OPTIONS: [&str; 3] = ["x", "y", "z"];
 const SPACE_OPTIONS: [&str; 3] = ["position", "triplanar", "uv"];
@@ -148,7 +190,10 @@ fn preset_options() -> Vec<&'static str> {
 
 /// `(i32::MIN, i32::MAX)` の整数（シード）。
 fn seed_type() -> ParamType {
-    ParamType::Integer { min: i64::from(i32::MIN), max: i64::from(i32::MAX) }
+    ParamType::Integer {
+        min: i64::from(i32::MIN),
+        max: i64::from(i32::MAX),
+    }
 }
 
 /// 色調補正の欄の名前（カラーバランス）。
@@ -224,7 +269,13 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
         "color_balance" => {
             let range = ColorBalance::RANGE;
             for name in BALANCE_NAMES {
-                v.push((name, ParamType::Number { min: -range, max: range }));
+                v.push((
+                    name,
+                    ParamType::Number {
+                        min: -range,
+                        max: range,
+                    },
+                ));
             }
             v.push(("preserve_luminosity", ParamType::Bool));
         }
@@ -265,7 +316,13 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
                 ("basis", choice(&BASIS_OPTIONS)),
                 ("cell_output", choice(&CELL_OPTIONS)),
                 ("fractal", choice(&FRACTAL_OPTIONS)),
-                ("octaves", ParamType::Integer { min: 1, max: i64::from(generator::MAX_OCTAVES) }),
+                (
+                    "octaves",
+                    ParamType::Integer {
+                        min: 1,
+                        max: i64::from(generator::MAX_OCTAVES),
+                    },
+                ),
                 ("lacunarity", num(&ranges::LACUNARITY)),
                 ("gain", num(&ranges::UNIT)),
             ]);
@@ -273,7 +330,12 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
         "grunge" => {
             v.extend(generator_common());
             v.extend(procedural_common());
-            v.push(("preset", ParamType::Choice { options: preset_options() }));
+            v.push((
+                "preset",
+                ParamType::Choice {
+                    options: preset_options(),
+                },
+            ));
         }
         _ => {}
     }
@@ -281,7 +343,14 @@ fn param_types(id: &str) -> Vec<(&'static str, ParamType)> {
 }
 
 /// 一覧の 1 行の元: (id, フィルターのスタック, 調整の層, Generator, 足せる, 値の欄で変えられない中身)。
-type Row = (&'static str, bool, bool, bool, bool, &'static [&'static str]);
+type Row = (
+    &'static str,
+    bool,
+    bool,
+    bool,
+    bool,
+    &'static [&'static str],
+);
 const KIND_ROWS: [Row; 23] = [
     ("blur", true, false, false, true, &[]),
     ("sharpen", true, false, false, true, &[]),
@@ -303,7 +372,14 @@ const KIND_ROWS: [Row; 23] = [
     ("direction", true, false, true, true, &["pins"]),
     ("procedural_noise", true, false, true, true, &["pins"]),
     ("grunge", true, false, true, true, &["pins"]),
-    ("shape_gradient", true, false, true, false, &["volume", "ramp", "pins"]),
+    (
+        "shape_gradient",
+        true,
+        false,
+        true,
+        false,
+        &["volume", "ramp", "pins"],
+    ),
     ("id_color", true, false, true, false, &["id_colors", "pins"]),
     ("anchor", true, false, true, false, &["anchor"]),
 ];
@@ -328,7 +404,17 @@ pub fn kinds() -> &'static [EffectKind] {
                     })
                     .collect();
                 let needs_maps = generator && !matches!(id, "procedural_noise" | "grunge");
-                EffectKind { id, stack, adjustment, generator, needs_maps, addable, rust_only: rust_only(id), params, opaque }
+                EffectKind {
+                    id,
+                    stack,
+                    adjustment,
+                    generator,
+                    needs_maps,
+                    addable,
+                    rust_only: rust_only(id),
+                    params,
+                    opaque,
+                }
             })
             .collect()
     })
@@ -337,12 +423,18 @@ pub fn kinds() -> &'static [EffectKind] {
 /// Rust 版だけの種類か（保存形式の種類の番号・Generator の種類で決める）。
 fn rust_only(id: &str) -> bool {
     let stack = default_stack(id).or_else(|| match id {
-        "gradient_map" => ColorAdjust::default_for(AdjustmentType::GradientMap).map(EffectSettings::from_color_adjust),
-        "tone_curve" => ColorAdjust::default_for(AdjustmentType::ToneCurve).map(EffectSettings::from_color_adjust),
+        "gradient_map" => ColorAdjust::default_for(AdjustmentType::GradientMap)
+            .map(EffectSettings::from_color_adjust),
+        "tone_curve" => ColorAdjust::default_for(AdjustmentType::ToneCurve)
+            .map(EffectSettings::from_color_adjust),
         _ => None,
     });
     match stack {
-        Some(s) => s.type_index() >= 64 || s.generator_settings().is_some_and(|g| g.kind.is_procedural()),
+        Some(s) => {
+            s.type_index() >= 64
+                || s.generator_settings()
+                    .is_some_and(|g| g.kind.is_procedural())
+        }
         None => default_adjustment(id).is_some_and(|a| a.kind().is_rust_only()),
     }
 }
@@ -363,9 +455,9 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         "invert" => EffectSettings::invert(),
         "normalize" => EffectSettings::normalize(),
         "color_balance" => EffectSettings::color_balance(ColorBalance::neutral()),
-        "brightness_contrast" => EffectSettings::from_color_adjust(
-            ColorAdjust::default_for(AdjustmentType::BrightnessContrast)?,
-        ),
+        "brightness_contrast" => EffectSettings::from_color_adjust(ColorAdjust::default_for(
+            AdjustmentType::BrightnessContrast,
+        )?),
         "threshold" => {
             EffectSettings::from_color_adjust(ColorAdjust::default_for(AdjustmentType::Threshold)?)
         }
@@ -374,7 +466,9 @@ fn default_stack(id: &str) -> Option<EffectSettings> {
         }
         "edge_wear" => EffectSettings::generator(generator::Settings::new(G::EdgeWear)),
         "dirt" => EffectSettings::generator(generator::Settings::new(G::Dirt)),
-        "position_gradient" => EffectSettings::generator(generator::Settings::new(G::PositionGradient)),
+        "position_gradient" => {
+            EffectSettings::generator(generator::Settings::new(G::PositionGradient))
+        }
         "thickness" => EffectSettings::generator(generator::Settings::new(G::Thickness)),
         "direction" => EffectSettings::generator(generator::Settings::new(G::Direction)),
         "procedural_noise" => EffectSettings::generator(generator::Settings::new(G::Noise)),
@@ -462,7 +556,13 @@ fn read_generator(g: &generator::Settings) -> Bag {
     let mut b = Bag::new();
     if !matches!(
         g.kind,
-        G::EdgeWear | G::Dirt | G::PositionGradient | G::Thickness | G::Direction | G::Noise | G::Grunge
+        G::EdgeWear
+            | G::Dirt
+            | G::PositionGradient
+            | G::Thickness
+            | G::Direction
+            | G::Noise
+            | G::Grunge
     ) {
         return b;
     }
@@ -560,7 +660,10 @@ fn read_color_adjust(a: &ColorAdjust) -> Bag {
                     b.insert(BALANCE_NAMES[i * 3 + k], n(*value));
                 }
             }
-            b.insert("preserve_luminosity", ParamValue::Bool(cb.preserve_luminosity()));
+            b.insert(
+                "preserve_luminosity",
+                ParamValue::Bool(cb.preserve_luminosity()),
+            );
         }
         ColorAdjust::BrightnessContrast(v) => {
             b.insert("brightness", n(v.brightness()));
@@ -604,19 +707,33 @@ fn read_stack(s: &EffectSettings) -> Option<(&'static str, Bag)> {
                 b.insert("radius", n(f64::from(*radius)));
                 "blur"
             }
-            F::Sharpen { radius, amount, threshold } => {
+            F::Sharpen {
+                radius,
+                amount,
+                threshold,
+            } => {
                 b.insert("radius", n(f64::from(*radius)));
                 b.insert("amount", n(*amount));
                 b.insert("threshold", n(f64::from(*threshold)));
                 "sharpen"
             }
-            F::Noise { amount, seed, monochrome } => {
+            F::Noise {
+                amount,
+                seed,
+                monochrome,
+            } => {
                 b.insert("amount", n(*amount));
                 b.insert("seed", n(f64::from(*seed)));
                 b.insert("monochrome", ParamValue::Bool(*monochrome));
                 "noise"
             }
-            F::Levels { input_black, input_white, gamma, output_black, output_white } => {
+            F::Levels {
+                input_black,
+                input_white,
+                gamma,
+                output_black,
+                output_white,
+            } => {
                 b.insert("input_black", n(*input_black));
                 b.insert("input_white", n(*input_white));
                 b.insert("gamma", n(*gamma));
@@ -732,15 +849,26 @@ fn build_generator(
         g.noise_amount = get_n(bag, "noise_amount");
         g.noise_scale = get_n(bag, "noise_scale");
         g.noise_seed = get_n(bag, "noise_seed") as i32;
-        g.noise_space = if get_c(bag, "noise_space") == "uv" { NoiseSpace::Uv } else { NoiseSpace::Model };
+        g.noise_space = if get_c(bag, "noise_space") == "uv" {
+            NoiseSpace::Uv
+        } else {
+            NoiseSpace::Model
+        };
     }
     match id {
         "dirt" => g.balance = get_n(bag, "balance"),
         "position_gradient" => {
-            g.axis = AXIS_OPTIONS.iter().position(|a| *a == get_c(bag, "axis")).unwrap_or(1);
+            g.axis = AXIS_OPTIONS
+                .iter()
+                .position(|a| *a == get_c(bag, "axis"))
+                .unwrap_or(1);
         }
         "direction" => {
-            g.direction = [get_n(bag, "direction_x"), get_n(bag, "direction_y"), get_n(bag, "direction_z")];
+            g.direction = [
+                get_n(bag, "direction_x"),
+                get_n(bag, "direction_y"),
+                get_n(bag, "direction_z"),
+            ];
             g.use_bent_normal = get_b(bag, "use_bent_normal");
         }
         _ => {}
@@ -754,7 +882,11 @@ fn build_generator(
         };
         p.scale = get_n(bag, "scale");
         p.seed = get_n(bag, "seed") as i32;
-        p.rotation = [get_n(bag, "rotation_x"), get_n(bag, "rotation_y"), get_n(bag, "rotation_z")];
+        p.rotation = [
+            get_n(bag, "rotation_x"),
+            get_n(bag, "rotation_y"),
+            get_n(bag, "rotation_z"),
+        ];
         p.bleed = get_n(bag, "bleed");
         p.blend_width = get_n(bag, "blend_width");
         if id == "procedural_noise" {
@@ -778,7 +910,11 @@ fn build_generator(
             p.gain = get_n(bag, "gain");
         } else {
             let want = get_c(bag, "preset");
-            p.preset = GrungePreset::ALL.iter().copied().find(|x| x.id() == want).unwrap_or(p.preset);
+            p.preset = GrungePreset::ALL
+                .iter()
+                .copied()
+                .find(|x| x.id() == want)
+                .unwrap_or(p.preset);
         }
     }
     g.validate().map_err(|e| match e {
@@ -789,7 +925,11 @@ fn build_generator(
 }
 
 /// フィルターのスタックの段を、欄の値から組む。`base` は変える前の段（Generator のピンなど値の欄に無い中身を残すため。足すときは None）。
-fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<EffectSettings, ParamError> {
+fn build_stack(
+    id: &str,
+    bag: &Bag,
+    base: Option<&EffectSettings>,
+) -> Result<EffectSettings, ParamError> {
     use generator::Kind as G;
     let settings = match id {
         "blur" => EffectSettings::blur(get_n(bag, "radius") as u32),
@@ -815,7 +955,8 @@ fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<Eff
         "color_balance" | "brightness_contrast" | "threshold" | "posterize" => {
             EffectSettings::from_color_adjust(build_color_adjust(id, bag)?)
         }
-        "edge_wear" | "dirt" | "position_gradient" | "thickness" | "direction" | "procedural_noise" | "grunge" => {
+        "edge_wear" | "dirt" | "position_gradient" | "thickness" | "direction"
+        | "procedural_noise" | "grunge" => {
             let kind = match id {
                 "edge_wear" => G::EdgeWear,
                 "dirt" => G::Dirt,
@@ -831,7 +972,11 @@ fn build_stack(id: &str, bag: &Bag, base: Option<&EffectSettings>) -> Result<Eff
             };
             return build_generator(id, start, bag);
         }
-        _ => return Err(ParamError::NotEditable { kind: static_id(id) }),
+        _ => {
+            return Err(ParamError::NotEditable {
+                kind: static_id(id),
+            })
+        }
     };
     // 組んだ設定の検査（欄の組み合わせの条件。チャンネルの種類に依る条件は文書に足すときに見る）
     match &settings {
@@ -863,7 +1008,11 @@ fn build_adjustment(id: &str, bag: &Bag) -> Result<AdjustmentSettings, ParamErro
         "color_balance" | "brightness_contrast" | "threshold" | "posterize" => {
             build_color_adjust(id, bag)?.into_settings()
         }
-        _ => return Err(ParamError::NotEditable { kind: static_id(id) }),
+        _ => {
+            return Err(ParamError::NotEditable {
+                kind: static_id(id),
+            })
+        }
     };
     settings.validate().map_err(refused)?;
     Ok(settings)
@@ -872,7 +1021,12 @@ fn build_adjustment(id: &str, bag: &Bag) -> Result<AdjustmentSettings, ParamErro
 /// 読んだ値を、表の欄の並びにする。
 fn ordered(id: &str, mut bag: Bag) -> Vec<(&'static str, ParamValue)> {
     kind(id)
-        .map(|k| k.params.iter().filter_map(|p| bag.remove(p.name).map(|v| (p.name, v))).collect())
+        .map(|k| {
+            k.params
+                .iter()
+                .filter_map(|p| bag.remove(p.name).map(|v| (p.name, v)))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -891,7 +1045,10 @@ fn overlay(
 ) -> Result<Bag, ParamError> {
     for (name, value) in given {
         let Some(param) = kind.param(name) else {
-            return Err(ParamError::UnknownParam { kind: kind.id, name: name.clone() });
+            return Err(ParamError::UnknownParam {
+                kind: kind.id,
+                name: name.clone(),
+            });
         };
         check_value(param, value)?;
     }
@@ -922,13 +1079,21 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
                 return Err(ParamError::NotInteger { name: param.name });
             }
             if *v < *min as f64 || *v > *max as f64 {
-                return Err(ParamError::OutOfRange { name: param.name, min: *min as f64, max: *max as f64 });
+                return Err(ParamError::OutOfRange {
+                    name: param.name,
+                    min: *min as f64,
+                    max: *max as f64,
+                });
             }
             Ok(())
         }
         (ParamType::Number { min, max }, ParamValue::Number(v)) => {
             if !v.is_finite() || *v < *min || *v > *max {
-                return Err(ParamError::OutOfRange { name: param.name, min: *min, max: *max });
+                return Err(ParamError::OutOfRange {
+                    name: param.name,
+                    min: *min,
+                    max: *max,
+                });
             }
             Ok(())
         }
@@ -937,7 +1102,10 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
             if options.iter().any(|o| *o == v) {
                 Ok(())
             } else {
-                Err(ParamError::UnknownOption { name: param.name, options: options.clone() })
+                Err(ParamError::UnknownOption {
+                    name: param.name,
+                    options: options.clone(),
+                })
             }
         }
         (ty, _) => Err(ParamError::WrongType {
@@ -955,7 +1123,10 @@ fn check_value(param: &Param, value: &ParamValue) -> Result<(), ParamError> {
 fn editable(id: &str, adjustment: bool) -> Result<&'static EffectKind, ParamError> {
     let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
     if (adjustment && !kind.adjustment) || (!adjustment && !kind.stack) {
-        return Err(ParamError::WrongTarget { kind: kind.id, adjustment });
+        return Err(ParamError::WrongTarget {
+            kind: kind.id,
+            adjustment,
+        });
     }
     if !kind.addable {
         return Err(ParamError::NotEditable { kind: kind.id });
@@ -970,24 +1141,36 @@ impl EffectSettings {
     }
     /// 値の欄の値（欄を持たない種類は空。並びは表の欄の並び）。
     pub fn catalog_values(&self) -> Vec<(&'static str, ParamValue)> {
-        read_stack(self).map(|(id, bag)| ordered(id, bag)).unwrap_or_default()
+        read_stack(self)
+            .map(|(id, bag)| ordered(id, bag))
+            .unwrap_or_default()
     }
     /// 値の欄では変えられない中身（グラデーションマップのランプなど。無ければ空）。
     pub fn opaque_parts(&self) -> &'static [&'static str] {
         kind(self.kind_id()).map_or(&[], |k| k.opaque)
     }
     /// 種類の名前と値から、新しい設定を組む（渡さない欄は既定）。
-    pub fn from_catalog(kind_id: &str, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn from_catalog(
+        kind_id: &str,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let kind = editable(kind_id, false)?;
         let bag = overlay(kind, default_bag(kind.id), values)?;
         build_stack(kind.id, &bag, None)
     }
     /// 今の設定に、渡した欄の値だけを重ねた設定（同じ種類のまま。値の欄に無い中身は残す）。
-    pub fn with_catalog_values(&self, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn with_catalog_values(
+        &self,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let id = self.kind_id();
         let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
         if !kind.addable {
-            return if values.is_empty() { Ok(self.clone()) } else { Err(ParamError::NotEditable { kind: kind.id }) };
+            return if values.is_empty() {
+                Ok(self.clone())
+            } else {
+                Err(ParamError::NotEditable { kind: kind.id })
+            };
         }
         let base = read_stack(self).map(|(_, bag)| bag).unwrap_or_default();
         let bag = overlay(kind, base, values)?;
@@ -1010,17 +1193,27 @@ impl AdjustmentSettings {
         kind(self.kind_id()).map_or(&[], |k| k.opaque)
     }
     /// 種類の名前と値から、新しい調整の設定を組む（渡さない欄は既定）。
-    pub fn from_catalog(kind_id: &str, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn from_catalog(
+        kind_id: &str,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let kind = editable(kind_id, true)?;
         let bag = overlay(kind, default_bag(kind.id), values)?;
         build_adjustment(kind.id, &bag)
     }
     /// 今の設定に、渡した欄の値だけを重ねた設定（同じ種類のまま）。
-    pub fn with_catalog_values(&self, values: &BTreeMap<String, ParamValue>) -> Result<Self, ParamError> {
+    pub fn with_catalog_values(
+        &self,
+        values: &BTreeMap<String, ParamValue>,
+    ) -> Result<Self, ParamError> {
         let id = self.kind_id();
         let kind = kind(id).ok_or_else(|| ParamError::UnknownKind(id.to_owned()))?;
         if !kind.addable {
-            return if values.is_empty() { Ok(self.clone()) } else { Err(ParamError::NotEditable { kind: kind.id }) };
+            return if values.is_empty() {
+                Ok(self.clone())
+            } else {
+                Err(ParamError::NotEditable { kind: kind.id })
+            };
         }
         let bag = overlay(kind, read_adjustment(self).1, values)?;
         build_adjustment(kind.id, &bag)

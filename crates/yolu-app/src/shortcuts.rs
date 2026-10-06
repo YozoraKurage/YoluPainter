@@ -318,7 +318,9 @@ mod tests {
                 assert!(!label.is_empty());
                 if lang == Lang::En {
                     assert!(
-                        !label.chars().any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)),
+                        !label
+                            .chars()
+                            .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)),
                         "{label}"
                     );
                 }
@@ -326,7 +328,10 @@ mod tests {
             for context in keymap::CONTEXT_KEYS {
                 assert!(!context.label(lang).is_empty());
                 if lang == Lang::En {
-                    assert!(!context.label(lang).chars().any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)));
+                    assert!(!context
+                        .label(lang)
+                        .chars()
+                        .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)));
                 }
             }
             assert!(rows(&app).len() > bindings().len());
@@ -414,7 +419,18 @@ mod tests {
         // 文字・数字・記号のキー（ショートカット）を `consume_key` で直に読む所は、割り当ての表だけ。窓の Enter・Escape・Tab などの
         // 操作のキーは、その部品が持つ。ここに足すときは、表に足してから使う
         const UI_KEYS: [&str; 12] = [
-            "Enter", "Escape", "Tab", "Space", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End",
+            "Enter",
+            "Escape",
+            "Tab",
+            "Space",
+            "Backspace",
+            "Delete",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
         ];
         fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) {
             for entry in std::fs::read_dir(dir).unwrap().flatten() {
@@ -422,7 +438,11 @@ mod tests {
                 if path.is_dir() {
                     walk(&path, root, out);
                 } else if path.extension().is_some_and(|e| e == "rs") {
-                    let name = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                    let name = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     if name == "keymap.rs" || name == "clipboard/keys.rs" {
                         continue; // 表と、表の割り当てを使う受け口
                     }
@@ -431,7 +451,10 @@ mod tests {
                     for call in code.split(".consume_key(").skip(1) {
                         let args = call.split(')').next().unwrap_or("");
                         if let Some(key) = args.split("Key::").nth(1) {
-                            let key = key.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
+                            let key = key
+                                .split(|c: char| !c.is_ascii_alphanumeric())
+                                .next()
+                                .unwrap_or("");
                             if !UI_KEYS.contains(&key) {
                                 out.push(format!("{name}: Key::{key}"));
                             }
@@ -443,7 +466,10 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut found = Vec::new();
         walk(&root, &root, &mut found);
-        assert!(found.is_empty(), "ショートカットのキーを表の外で直に読んでいる: {found:?}");
+        assert!(
+            found.is_empty(),
+            "ショートカットのキーを表の外で直に読んでいる: {found:?}"
+        );
     }
 
     #[test]
@@ -495,18 +521,31 @@ mod tests {
             .collect();
         assert_eq!(listed.len(), 2);
         for b in listed {
-            let Action::ScreenPick(mode) = b.action else { unreachable!() };
+            let Action::ScreenPick(mode) = b.action else {
+                unreachable!()
+            };
             assert_eq!(key_label(&b), mode.shortcut());
             assert_eq!(b.when, When::Windows);
         }
-        assert!(bindings().iter().all(|b| !matches!(b.action, Action::ScreenPick(_))) || cfg!(windows));
+        assert!(
+            bindings()
+                .iter()
+                .all(|b| !matches!(b.action, Action::ScreenPick(_)))
+                || cfg!(windows)
+        );
     }
 
     #[test]
     fn selection_bindings_are_listed_with_their_conditions() {
         let all = bindings();
-        assert!(all.iter().any(|b| b.action == Action::Sel(SelAction::Edit(SelEdit::ToNewLayer))));
-        assert!(all.iter().any(|b| b.action == Action::Path(PathAction::DeleteSelected)));
-        assert!(all.iter().any(|b| b.action == Action::Clip(ClipAction::Paste)));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Sel(SelAction::Edit(SelEdit::ToNewLayer))));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Path(PathAction::DeleteSelected)));
+        assert!(all
+            .iter()
+            .any(|b| b.action == Action::Clip(ClipAction::Paste)));
     }
 }

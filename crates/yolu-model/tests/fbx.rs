@@ -493,7 +493,12 @@ fn reading_a_file_leaves_it_unchanged() {
     std::fs::write(&path, &text).unwrap();
     // 更新時刻を少し前にしておく（書き直されたら今の時刻になって食い違う。時刻の粒度で同じ値に見えて見逃さない）
     let before = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
-    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(before).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(before)
+        .unwrap();
     let m = load_fbx(&path, &ModelLimits::default()).unwrap();
     assert_eq!(m.rig.name(), "腕", "名前はファイル名");
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
@@ -615,9 +620,16 @@ fn progress_reports_from_zero_to_one_without_going_back() {
     let seen = probe.seen.borrow();
     assert_eq!(seen.first(), Some(&0.0));
     assert_eq!(seen.last(), Some(&1.0));
-    assert!(seen.windows(2).all(|w| w[0] < w[1]), "戻らず、同じ値を繰り返さない");
+    assert!(
+        seen.windows(2).all(|w| w[0] < w[1]),
+        "戻らず、同じ値を繰り返さない"
+    );
     // 解析の間にも細かく来る（解析の終わりの 1 回だけではない）
-    assert!(seen.iter().filter(|f| **f > 0.05 && **f < 0.6).count() > 20, "{}", seen.len());
+    assert!(
+        seen.iter().filter(|f| **f > 0.05 && **f < 0.6).count() > 20,
+        "{}",
+        seen.len()
+    );
     // 間引かれる（面ごと・16 KiB ごとに全部は来ない）
     assert!(seen.len() < 700, "{}", seen.len());
 }
@@ -627,7 +639,11 @@ fn cancelling_during_the_parse_stops_there_and_returns_nothing() {
     let text = big_fbx();
     let probe = Probe::new(Some(0.2));
     let result = run_bytes(text.as_bytes(), &probe);
-    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
+    assert!(
+        matches!(result, Err(ModelError::Cancelled)),
+        "{:?}",
+        result.err()
+    );
     // 旗を立てた呼び返しの次の区切りで止まり、解析の残りも変換も走らない
     assert!(probe.last() < 0.3, "{}", probe.last());
     assert_eq!(ModelError::Cancelled.to_string(), "取り消しました");
@@ -639,9 +655,20 @@ fn cancelling_during_the_conversion_stops_before_the_rig_is_built() {
     // 解析が終わったあとの変換の途中（面の区切り）で止める
     let probe = Probe::new(Some(0.7));
     let result = run_bytes(text.as_bytes(), &probe);
-    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
-    assert!(probe.last() >= 0.7 && probe.last() < 0.98, "{}", probe.last());
-    assert!(!probe.seen.borrow().contains(&1.0), "終わりの知らせは来ない");
+    assert!(
+        matches!(result, Err(ModelError::Cancelled)),
+        "{:?}",
+        result.err()
+    );
+    assert!(
+        probe.last() >= 0.7 && probe.last() < 0.98,
+        "{}",
+        probe.last()
+    );
+    assert!(
+        !probe.seen.borrow().contains(&1.0),
+        "終わりの知らせは来ない"
+    );
 }
 
 #[test]
@@ -686,7 +713,11 @@ fn cancelling_while_the_file_is_read_stops_before_the_parse() {
             progress: Some(&note),
         },
     );
-    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
+    assert!(
+        matches!(result, Err(ModelError::Cancelled)),
+        "{:?}",
+        result.err()
+    );
     assert!(probe.last() <= 0.05, "解析に進まない: {}", probe.last());
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -756,7 +787,11 @@ fn another_thread_can_cancel_a_load_that_is_in_the_middle_of_the_parse() {
         worker.join().unwrap()
     });
     assert!(matches!(result, Err(ModelError::Cancelled)), "{result:?}");
-    assert!(last.load(Ordering::Relaxed) < 300, "{}", last.load(Ordering::Relaxed));
+    assert!(
+        last.load(Ordering::Relaxed) < 300,
+        "{}",
+        last.load(Ordering::Relaxed)
+    );
 }
 
 /// 呼び返しの中の panic は、ufbx の C の関数を抜けずに、解析が戻ってから呼び手へそのまま出る（異常終了にしない）。

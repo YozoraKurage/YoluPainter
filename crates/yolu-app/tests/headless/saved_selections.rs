@@ -39,7 +39,13 @@ impl Drop for TempDir {
 }
 
 fn rect(x0: i64, y0: i64, x1: i64, y1: i64) -> SelEdit {
-    SelEdit::Rect { x0, y0, x1, y1, mode: SelectionCombine::Replace }
+    SelEdit::Rect {
+        x0,
+        y0,
+        x1,
+        y1,
+        mode: SelectionCombine::Replace,
+    }
 }
 fn run(s: &mut AppState, e: SelEdit) {
     s.apply(Action::Sel(SelAction::Edit(e)));
@@ -48,7 +54,10 @@ fn save(s: &mut AppState, name: &str) {
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Save(name.into()))));
 }
 fn names(s: &AppState) -> Vec<String> {
-    s.saved_selections().iter().map(|x| x.name.clone()).collect()
+    s.saved_selections()
+        .iter()
+        .map(|x| x.name.clone())
+        .collect()
 }
 fn open(path: &Path) -> AppState {
     let mut s = AppState::new(64, 64);
@@ -82,11 +91,22 @@ fn headless_saved_selections_survive_save_and_reopen_in_order_and_use_format_8_o
     let (path, s) = project_with_two(&dir);
     let project = on_disk(&path);
     assert_eq!(project.info().format, 8, "使う文書だけ形式 8");
-    assert_eq!(project.original_archive().manifest_version(), 3, "外側の版は変わらない");
+    assert_eq!(
+        project.original_archive().manifest_version(),
+        3,
+        "外側の版は変わらない"
+    );
     let id = project.sets()[0].id.clone();
     let stored = project.saved_selections(&id).unwrap();
     assert!(stored.skipped.is_empty());
-    assert_eq!(stored.items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), ["髪", "服"]);
+    assert_eq!(
+        stored
+            .items
+            .iter()
+            .map(|i| i.name.as_str())
+            .collect::<Vec<_>>(),
+        ["髪", "服"]
+    );
     // 開き直すと、名前・並び・中身が同じで、戻せる段は無く、保存済み
     let again = open(&path);
     assert_eq!(names(&again), ["髪", "服"], "{}", again.message);
@@ -98,8 +118,14 @@ fn headless_saved_selections_survive_save_and_reopen_in_order_and_use_format_8_o
     assert_eq!(again.project.as_ref().unwrap().format(), 8);
     // 呼び戻しもできる（大きさが合う）
     let mut again = again;
-    again.apply(Action::Sel(SelAction::Edit(SelEdit::Recall { index: 1, mode: SelectionCombine::Replace })));
-    assert_eq!(again.doc.selection(), Some(&SelectionMask::rectangle(&again.doc, 30, 10, 60, 50)));
+    again.apply(Action::Sel(SelAction::Edit(SelEdit::Recall {
+        index: 1,
+        mode: SelectionCombine::Replace,
+    })));
+    assert_eq!(
+        again.doc.selection(),
+        Some(&SelectionMask::rectangle(&again.doc, 30, 10, 60, 50))
+    );
 }
 
 #[test]
@@ -107,7 +133,10 @@ fn headless_a_name_change_and_a_delete_are_saved_and_the_last_delete_goes_back_t
     let dir = TempDir::new("edits");
     let (path, _) = project_with_two(&dir);
     let mut s = open(&path);
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "前髪".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        index: 0,
+        name: "前髪".into(),
+    })));
     assert!(s.modified, "名前の変更は保存が要る変更");
     s.apply(Action::SaveProject);
     saved_ok(&s);
@@ -136,7 +165,8 @@ fn headless_a_name_change_and_a_delete_are_saved_and_the_last_delete_goes_back_t
 }
 
 #[test]
-fn headless_a_document_that_does_not_use_them_stays_format_7_and_an_old_format_is_not_given_new_entries() {
+fn headless_a_document_that_does_not_use_them_stays_format_7_and_an_old_format_is_not_given_new_entries(
+) {
     let dir = TempDir::new("plain");
     let path = dir.file("plain.ylp");
     let mut s = AppState::new(64, 64);
@@ -144,12 +174,17 @@ fn headless_a_document_that_does_not_use_them_stays_format_7_and_an_old_format_i
     s.apply(Action::SaveProjectAs(path.clone()));
     saved_ok(&s);
     assert_eq!(on_disk(&path).info().format, 7);
-    assert!(!on_disk(&path).original_archive().entries().keys().any(|n| n.contains("selections.json") || n.contains("/selection-") || n == "pose.json"));
+    assert!(!on_disk(&path)
+        .original_archive()
+        .entries()
+        .keys()
+        .any(|n| n.contains("selections.json") || n.contains("/selection-") || n == "pose.json"));
     // Unity 版が書いた古い形式を開いて保存し直しても、新しいエントリを足さず、形式は 7（8 にならない）
     for n in [3, 6] {
         let old = dir.file(&format!("format{n}.ylp"));
         std::fs::copy(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../yolu-io/tests/fixtures/format{n}.ylp")),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../yolu-io/tests/fixtures/format{n}.ylp")),
             &old,
         )
         .unwrap();
@@ -167,7 +202,9 @@ fn headless_a_document_that_does_not_use_them_stays_format_7_and_an_old_format_i
                 .original_archive()
                 .entries()
                 .keys()
-                .any(|e| e.contains("selections.json") || e.contains("/selection-") || e == "pose.json"),
+                .any(|e| e.contains("selections.json")
+                    || e.contains("/selection-")
+                    || e == "pose.json"),
             "形式 {n}"
         );
     }
@@ -213,18 +250,36 @@ fn headless_saving_after_the_document_was_resized_writes_the_resampled_saved_sel
     s.apply(Action::SaveProject);
     saved_ok(&s);
     let mut s = open(&path);
-    s.doc.resize_image(32, 32, CanvasResampling::Nearest).unwrap();
+    s.doc
+        .resize_image(32, 32, CanvasResampling::Nearest)
+        .unwrap();
     s.modified = true;
     s.apply(Action::SaveProject);
     saved_ok(&s);
     // 古い大きさの残した選択範囲は壊れたエントリではないので、「読めなかった項目を置き換えた」とは言わない
     assert!(!s.message.contains("置き換え"), "{}", s.message);
     let again = open(&path);
-    assert!(again.doc.selection().is_some(), "今の選択範囲も新しい大きさで残る: {}", again.message);
-    assert_eq!((again.doc.width(), again.doc.height()), (32, 32), "{}", again.message);
+    assert!(
+        again.doc.selection().is_some(),
+        "今の選択範囲も新しい大きさで残る: {}",
+        again.message
+    );
+    assert_eq!(
+        (again.doc.width(), again.doc.height()),
+        (32, 32),
+        "{}",
+        again.message
+    );
     assert_eq!(names(&again), ["髪", "服"], "{}", again.message);
-    assert!(again.saved_selections().iter().all(|s| s.mask.width() == 32));
-    assert!(again.message.matches("読めない").count() == 0, "{}", again.message);
+    assert!(again
+        .saved_selections()
+        .iter()
+        .all(|s| s.mask.width() == 32));
+    assert!(
+        again.message.matches("読めない").count() == 0,
+        "{}",
+        again.message
+    );
 }
 
 /// 保存した .ylp にある、残した選択範囲のエントリの名前（索引と中身）。
@@ -241,7 +296,8 @@ fn saved_entries(path: &Path) -> Vec<String> {
 }
 
 #[test]
-fn headless_deleting_every_saved_selection_then_resizing_leaves_no_stale_entry_and_goes_back_to_format_7() {
+fn headless_deleting_every_saved_selection_then_resizing_leaves_no_stale_entry_and_goes_back_to_format_7(
+) {
     let dir = TempDir::new("resize-empty");
     let (path, _) = project_with_two(&dir);
     assert!(!saved_entries(&path).is_empty());
@@ -249,16 +305,35 @@ fn headless_deleting_every_saved_selection_then_resizing_leaves_no_stale_entry_a
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert!(s.saved_selections().is_empty());
-    s.doc.resize_image(32, 32, CanvasResampling::Nearest).unwrap();
+    s.doc
+        .resize_image(32, 32, CanvasResampling::Nearest)
+        .unwrap();
     s.modified = true;
     s.apply(Action::SaveProject);
     saved_ok(&s);
-    assert_eq!(saved_entries(&path), Vec::<String>::new(), "古い大きさのエントリが残らない");
-    assert_eq!(on_disk(&path).info().format, 7, "使わなくなれば形式 7 に戻る");
+    assert_eq!(
+        saved_entries(&path),
+        Vec::<String>::new(),
+        "古い大きさのエントリが残らない"
+    );
+    assert_eq!(
+        on_disk(&path).info().format,
+        7,
+        "使わなくなれば形式 7 に戻る"
+    );
     let again = open(&path);
-    assert_eq!((again.doc.width(), again.doc.height()), (32, 32), "{}", again.message);
+    assert_eq!(
+        (again.doc.width(), again.doc.height()),
+        (32, 32),
+        "{}",
+        again.message
+    );
     assert!(again.saved_selections().is_empty());
-    assert!(!again.message.contains("読めない"), "開き直しに、読めない覚えた選択範囲が出ない: {}", again.message);
+    assert!(
+        !again.message.contains("読めない"),
+        "開き直しに、読めない覚えた選択範囲が出ない: {}",
+        again.message
+    );
 }
 
 #[test]
@@ -277,7 +352,11 @@ fn headless_a_shrink_that_removes_every_saved_selection_drops_the_stale_entries_
     s.modified = true;
     s.apply(Action::SaveProject);
     saved_ok(&s);
-    assert!(s.saved_selections().is_empty(), "縮小で 1 件とも外れる: {}", s.message);
+    assert!(
+        s.saved_selections().is_empty(),
+        "縮小で 1 件とも外れる: {}",
+        s.message
+    );
     assert_eq!(saved_entries(&path), Vec::<String>::new());
     assert_eq!(on_disk(&path).info().format, 7);
     let again = open(&path);
@@ -286,34 +365,50 @@ fn headless_a_shrink_that_removes_every_saved_selection_drops_the_stale_entries_
 }
 
 #[test]
-fn headless_a_saved_selection_the_document_does_not_fit_stays_in_the_file_when_nothing_was_resized() {
+fn headless_a_saved_selection_the_document_does_not_fit_stays_in_the_file_when_nothing_was_resized()
+{
     let dir = TempDir::new("wrong-size-kept");
     let (path, _) = project_with_two(&dir);
     // ファイルの文書の大きさを、残した選択範囲のものと食い違うように変える（壊れた・手で直したファイル）。文書は変えないので、
     // 開いたときに理由つきで飛ばし、保存してもエントリはファイルに残る
     tamper(&path, |files, id| {
         let name = format!("sets/{id}/{INDEX}");
-        let index: serde_json::Value = serde_json::from_slice(&files[&name].bytes().unwrap()).unwrap();
-        let content = index["selections"][0]["content"].as_str().unwrap().to_owned();
+        let index: serde_json::Value =
+            serde_json::from_slice(&files[&name].bytes().unwrap()).unwrap();
+        let content = index["selections"][0]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let leaf = format!("sets/{id}/selection-{content}.bin");
         // 頭の幅（8..12。0..4 は印、4..8 は版）だけ書き換えると中身の印が合わなくなるので、印も付け直す
         let mut bytes = files[&leaf].bytes().unwrap().to_vec();
         bytes[8..12].copy_from_slice(&128i32.to_le_bytes());
         let new_content = format!("{:x}", sha2::Sha256::digest(&bytes))[..32].to_owned();
         files.remove(&leaf);
-        files.insert(format!("sets/{id}/selection-{new_content}.bin"), Blob::from(bytes));
+        files.insert(
+            format!("sets/{id}/selection-{new_content}.bin"),
+            Blob::from(bytes),
+        );
         let mut index = index;
         index["selections"][0]["content"] = serde_json::Value::String(new_content);
         files.insert(name, Blob::from(serde_json::to_vec(&index).unwrap()));
     });
     let mut s = open(&path);
     assert_eq!(names(&s), ["服"], "{}", s.message);
-    assert!(s.message.contains("大きさが違います") && s.message.contains("ファイルには残っています"), "{}", s.message);
+    assert!(
+        s.message.contains("大きさが違います") && s.message.contains("ファイルには残っています"),
+        "{}",
+        s.message
+    );
     let before = saved_entries(&path);
     s.modified = true;
     s.apply(Action::SaveProject);
     saved_ok(&s);
-    assert_eq!(saved_entries(&path), before, "文書を変えていないので、飛ばした項目のエントリも残る");
+    assert_eq!(
+        saved_entries(&path),
+        before,
+        "文書を変えていないので、飛ばした項目のエントリも残る"
+    );
 }
 
 /// 保存した .ylp の中の、残した選択範囲のエントリを書き換えて書き戻す。
@@ -322,7 +417,11 @@ fn tamper(path: &Path, edit: impl FnOnce(&mut yolu_io::Files, &str)) {
     let id = project.sets()[0].id.clone();
     let mut files = project.original_archive().entries().clone();
     edit(&mut files, &id);
-    std::fs::write(path, Project::from_entries(files).unwrap().to_bytes().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        Project::from_entries(files).unwrap().to_bytes().unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -331,13 +430,23 @@ fn headless_an_unreadable_item_is_told_kept_in_the_file_and_replaced_only_when_t
     let (path, _) = project_with_two(&dir);
     // 「服」の中身を消す（索引には残る）
     tamper(&path, |files, id| {
-        let index: serde_json::Value = serde_json::from_slice(&files[&format!("sets/{id}/{INDEX}")].bytes().unwrap()).unwrap();
-        let content = index["selections"][1]["content"].as_str().unwrap().to_owned();
+        let index: serde_json::Value =
+            serde_json::from_slice(&files[&format!("sets/{id}/{INDEX}")].bytes().unwrap()).unwrap();
+        let content = index["selections"][1]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         files.remove(&format!("sets/{id}/selection-{content}.bin"));
     });
     let mut s = open(&path);
     assert_eq!(names(&s), ["髪"], "読める項目は読む");
-    assert!(s.message.contains("服") && s.message.contains("中身がありません") && s.message.contains("ファイルには残っています"), "{}", s.message);
+    assert!(
+        s.message.contains("服")
+            && s.message.contains("中身がありません")
+            && s.message.contains("ファイルには残っています"),
+        "{}",
+        s.message
+    );
     // 何も変えずに保存しても、読めなかった項目はファイルに残る
     s.modified = true;
     s.apply(Action::SaveProject);
@@ -345,10 +454,17 @@ fn headless_an_unreadable_item_is_told_kept_in_the_file_and_replaced_only_when_t
     assert!(!s.message.contains("置き換え"), "{}", s.message);
     let project = on_disk(&path);
     let id = project.sets()[0].id.clone();
-    assert_eq!(project.saved_selections(&id).unwrap().skipped.len(), 1, "読めなかった項目はそのまま");
+    assert_eq!(
+        project.saved_selections(&id).unwrap().skipped.len(),
+        1,
+        "読めなかった項目はそのまま"
+    );
     // 残した選択範囲を変えて保存すると置き換わり、そのことを言う
     let mut s = open(&path);
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "前髪".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        index: 0,
+        name: "前髪".into(),
+    })));
     s.apply(Action::SaveProject);
     saved_ok(&s);
     assert!(s.message.contains("置き換えました"), "{}", s.message);
@@ -362,7 +478,10 @@ fn headless_a_broken_index_opens_the_document_with_a_reason_in_both_languages() 
     let dir = TempDir::new("index");
     let (path, _) = project_with_two(&dir);
     tamper(&path, |files, id| {
-        files.insert(format!("sets/{id}/{INDEX}"), Blob::from(b"{ broken".to_vec()));
+        files.insert(
+            format!("sets/{id}/{INDEX}"),
+            Blob::from(b"{ broken".to_vec()),
+        );
     });
     for lang in Lang::ALL {
         let mut s = AppState::new_in(64, 64, lang);
@@ -372,26 +491,47 @@ fn headless_a_broken_index_opens_the_document_with_a_reason_in_both_languages() 
         let want = lang.pick("索引を読めません", "the index cannot be read");
         assert!(s.message.contains(want), "{}", s.message);
         // 英語の窓に、日本語の理由は出ない（セットの名前は文書が持つ名前のまま）
-        assert_eq!(s.message.contains("索引"), lang == Lang::Ja, "{}", s.message);
+        assert_eq!(
+            s.message.contains("索引"),
+            lang == Lang::Ja,
+            "{}",
+            s.message
+        );
     }
 }
 
 // ───────── 復旧 ─────────
 
 fn plenty() -> SpaceProbe {
-    Arc::new(|_| Some(DiskSpace { total: 1000 << 30, available: 900 << 30 }))
+    Arc::new(|_| {
+        Some(DiskSpace {
+            total: 1000 << 30,
+            available: 900 << 30,
+        })
+    })
 }
 fn session(root: &Path) -> AppState {
     let mut s = AppState::new_in(64, 64, Lang::Ja);
     s.recovery.set_space_probe(Some(plenty()));
     s.recovery
-        .enable(root.to_path_buf(), RecoverySettings { interval_seconds: 15, strokes_between: 0, generations_to_keep: 3, directory: None, ..RecoverySettings::default() })
+        .enable(
+            root.to_path_buf(),
+            RecoverySettings {
+                interval_seconds: 15,
+                strokes_between: 0,
+                generations_to_keep: 3,
+                directory: None,
+                ..RecoverySettings::default()
+            },
+        )
         .unwrap();
     s
 }
 fn write_after(s: &mut AppState, from: Instant) {
     s.recovery_tick_at(from);
-    s.recovery_tick_at(from + Duration::from_secs(s.recovery.settings().interval_seconds as u64 + 1));
+    s.recovery_tick_at(
+        from + Duration::from_secs(s.recovery.settings().interval_seconds as u64 + 1),
+    );
     s.recovery_wait();
 }
 
@@ -408,9 +548,16 @@ fn headless_saved_selections_come_back_after_a_crash_and_the_saved_file_has_them
     write_after(&mut s, Instant::now());
     assert_eq!(s.recovery.checkpoints(), 1);
     // 名前の変更だけでも書き置きになる（絵も選択範囲も変えていない）
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename { index: 0, name: "前髪".into() })));
+    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        index: 0,
+        name: "前髪".into(),
+    })));
     write_after(&mut s, Instant::now() + Duration::from_secs(100));
-    assert_eq!(s.recovery.checkpoints(), 2, "残した選択範囲の変更も書き置きに入る");
+    assert_eq!(
+        s.recovery.checkpoints(),
+        2,
+        "残した選択範囲の変更も書き置きに入る"
+    );
     assert!(s.recovery.is_idle());
     drop(s);
 
@@ -436,7 +583,9 @@ fn headless_a_recovery_of_a_resized_document_with_no_saved_selection_left_has_no
     assert_eq!(names(&s), ["髪", "服"], "{}", s.message);
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
-    s.doc.resize_image(32, 32, CanvasResampling::Nearest).unwrap();
+    s.doc
+        .resize_image(32, 32, CanvasResampling::Nearest)
+        .unwrap();
     s.modified = true;
     write_after(&mut s, Instant::now());
     assert_eq!(s.recovery.checkpoints(), 1);
@@ -444,9 +593,18 @@ fn headless_a_recovery_of_a_resized_document_with_no_saved_selection_left_has_no
 
     let mut s2 = session(&root);
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!((s2.doc.width(), s2.doc.height()), (32, 32), "{}", s2.message);
+    assert_eq!(
+        (s2.doc.width(), s2.doc.height()),
+        (32, 32),
+        "{}",
+        s2.message
+    );
     assert!(s2.saved_selections().is_empty(), "{}", s2.message);
-    assert!(!s2.message.contains("読めない"), "復旧した文書に、古い大きさの項目が出ない: {}", s2.message);
+    assert!(
+        !s2.message.contains("読めない"),
+        "復旧した文書に、古い大きさの項目が出ない: {}",
+        s2.message
+    );
     // 復旧した文書を別の場所へ保存しても、残した選択範囲のエントリは無く、形式 7
     let saved = dir.file("recovered.ylp");
     s2.apply(Action::SaveProjectAs(saved.clone()));

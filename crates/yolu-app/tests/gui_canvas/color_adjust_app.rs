@@ -399,7 +399,12 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
         yolu_app::ui::menu::leaves(&entries)
             .into_iter()
             .find_map(|e| match e {
-                Entry::Item { label, enabled, tooltip, .. } if label.starts_with(kind.name(lang)) => {
+                Entry::Item {
+                    label,
+                    enabled,
+                    tooltip,
+                    ..
+                } if label.starts_with(kind.name(lang)) => {
                     Some((label.clone(), *enabled, tooltip.clone()))
                 }
                 _ => None,
@@ -424,7 +429,10 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     h.state_mut().state.m2.paint_channel = Channel::Normal;
     for kind in FILTER_SIX {
         let (label, enabled, reason) = label_of(&h, kind);
-        assert!(!enabled && reason.is_some() && !label.contains(" — "), "{kind:?} {label}");
+        assert!(
+            !enabled && reason.is_some() && !label.contains(" — "),
+            "{kind:?} {label}"
+        );
     }
     // 英語の画面でも、理由は一般の文（「Unsupported value or operation」）に落ちず、日本語も混ざらない
     h.state_mut().state.set_language(Lang::En);
@@ -432,7 +440,10 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     for kind in FILTER_SIX {
         let (label, _, reason) = label_of(&h, kind);
         let reason = reason.expect(&label);
-        assert!(!has_japanese(&label) && !has_japanese(&reason), "{kind:?} {label} {reason}");
+        assert!(
+            !has_japanese(&label) && !has_japanese(&reason),
+            "{kind:?} {label} {reason}"
+        );
         assert!(
             !reason.contains("Unsupported value or operation"),
             "{kind:?} 法線: {label} {reason}"
@@ -443,7 +454,9 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
         let (label, enabled, reason) = label_of(&h, kind);
         assert!(!enabled, "{label}");
         assert!(
-            reason.as_deref().is_some_and(|r| r.contains("apply only to color channels")),
+            reason
+                .as_deref()
+                .is_some_and(|r| r.contains("apply only to color channels")),
             "{kind:?} {label} {reason:?}"
         );
     }
@@ -541,7 +554,9 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
     crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("mixing.ylp");
-    h.state_mut().state.apply(Action::SaveProjectAs(path.clone()));
+    h.state_mut()
+        .state
+        .apply(Action::SaveProjectAs(path.clone()));
     assert!(
         h.state().state.message.starts_with("保存しました"),
         "{}",
@@ -549,7 +564,11 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
     );
     let mut opened = yolu_app::state::AppState::new(8, 8);
     opened.apply(Action::OpenProject(path));
-    assert!(opened.message.starts_with("開きました"), "{}", opened.message);
+    assert!(
+        opened.message.starts_with("開きました"),
+        "{}",
+        opened.message
+    );
     let again = opened
         .doc
         .layers()
@@ -578,7 +597,11 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
     let steps = undo_count(&h);
     // 色の見本を押して色の選びを開き、四角の中で何度か動かす（1 回のドラッグ）
     scroll_panel_to(&mut h, "分岐点の色（押すと色の選びを開く）");
-    let swatch = rect_of(&h, "分岐点の色（押すと色の選びを開く）", |r| r.left() > 1000.0);
+    let swatch = rect_of(
+        &h,
+        "分岐点の色（押すと色の選びを開く）",
+        |r| r.left() > 1000.0,
+    );
     click(&mut h, swatch.center());
     let popup = yolu_app::panels::ramp_rows::popup_id(("adjustment", id.0));
     let window = yolu_app::panels::color_popup::rect(&h.ctx, popup).expect("色の選びが開く");
@@ -593,7 +616,11 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
         ],
     );
     assert_ne!(value_of(&h, id), first, "その場で色が変わる");
-    assert_eq!(undo_count(&h), steps + 1, "ドラッグは離すまで 1 回の取り消し");
+    assert_eq!(
+        undo_count(&h),
+        steps + 1,
+        "ドラッグは離すまで 1 回の取り消し"
+    );
     // Esc で最初の色へ戻る（戻す変更も 1 回の取り消しとして積む。Undo で選んだ色へ、もう 1 回で最初の色へ）
     h.key_press(egui::Key::Escape);
     h.run();

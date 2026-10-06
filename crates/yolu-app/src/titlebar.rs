@@ -101,7 +101,10 @@ impl Button {
 /// 帯のうち、ボタンを除いた左側（`custom` でなければ帯そのまま）。名前・印はこの右端に寄せる。
 pub fn content_rect(bar: Rect, custom: bool) -> Rect {
     if custom {
-        Rect::from_min_max(bar.min, egui::pos2(bar.right() - BUTTONS_WIDTH, bar.bottom()))
+        Rect::from_min_max(
+            bar.min,
+            egui::pos2(bar.right() - BUTTONS_WIDTH, bar.bottom()),
+        )
     } else {
         bar
     }
@@ -113,7 +116,10 @@ pub fn button_rects(bar: Rect) -> [Rect; 3] {
     let bottom = bar.bottom() - 1.0;
     std::array::from_fn(|i| {
         let x = left + i as f32 * BUTTON_WIDTH;
-        Rect::from_min_max(egui::pos2(x, bar.top()), egui::pos2(x + BUTTON_WIDTH, bottom))
+        Rect::from_min_max(
+            egui::pos2(x, bar.top()),
+            egui::pos2(x + BUTTON_WIDTH, bottom),
+        )
     })
 }
 
@@ -138,7 +144,11 @@ pub fn buttons(ui: &mut Ui, bar: Rect, maximized: bool, lang: Lang) -> Option<Bu
         if let Some(fill) = fill {
             w::fill(p, rect, fill);
         }
-        let color = if hover || down { Color32::WHITE } else { t::TEXT };
+        let color = if hover || down {
+            Color32::WHITE
+        } else {
+            t::TEXT
+        };
         w::icon(p, rect, button.icon(maximized), color, ICON_SIZE);
         if response.on_hover_text(name).clicked() {
             clicked = Some(button);
@@ -154,8 +164,14 @@ pub fn drag_zone(ui: &mut Ui, zone: Rect) -> Response {
 
 /// 帯の何も無い所の操作が窓へ頼むこと: 引き始めで `StartDrag`、ダブルクリックで最大化と元に戻すの切り替え。`blockers`（メニューの見出し・
 /// Live Link の印など、自分の押しを持つ部品の矩形）の上で押したものは、帯の操作にしない。
-pub fn drag_commands(response: &Response, blockers: &[Rect], maximized: bool) -> Vec<ViewportCommand> {
-    let at = response.ctx.input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()));
+pub fn drag_commands(
+    response: &Response,
+    blockers: &[Rect],
+    maximized: bool,
+) -> Vec<ViewportCommand> {
+    let at = response
+        .ctx
+        .input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()));
     if at.is_some_and(|at| blockers.iter().any(|b| b.contains(at))) {
         return Vec::new();
     }
@@ -221,8 +237,14 @@ pub fn cursor_for(direction: ResizeDirection) -> CursorIcon {
 /// 縁の押しを譲る部品か: `rect` の、縁をまたぐ向きの大きさが `YIELD_SIZE` 以下（左右の縁なら幅、上下の縁なら高さ。角はどちらか）。
 fn yields_to(direction: ResizeDirection, rect: Rect) -> bool {
     use ResizeDirection::*;
-    let horizontal = matches!(direction, East | West | NorthEast | NorthWest | SouthEast | SouthWest);
-    let vertical = matches!(direction, North | South | NorthEast | NorthWest | SouthEast | SouthWest);
+    let horizontal = matches!(
+        direction,
+        East | West | NorthEast | NorthWest | SouthEast | SouthWest
+    );
+    let vertical = matches!(
+        direction,
+        North | South | NorthEast | NorthWest | SouthEast | SouthWest
+    );
     (horizontal && rect.width() <= YIELD_SIZE) || (vertical && rect.height() <= YIELD_SIZE)
 }
 
@@ -241,12 +263,14 @@ fn control_under_pointer(ctx: &Context, direction: ResizeDirection) -> bool {
 
 /// 浮かせた窓・メニューなど、帯とパネルの上にある層が `at` を覆っているか。
 fn covered(ctx: &Context, at: Pos2) -> bool {
-    ctx.layer_id_at(at).is_some_and(|layer| layer.order != Order::Background)
+    ctx.layer_id_at(at)
+        .is_some_and(|layer| layer.order != Order::Background)
 }
 
 /// 縁の押しを受けている間か（ビューは、この押しを自分のものにしない）。
 pub fn edge_press_held(ctx: &Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(Id::new(EDGE_PRESS))).unwrap_or(false)
+    ctx.data(|d| d.get_temp::<bool>(Id::new(EDGE_PRESS)))
+        .unwrap_or(false)
 }
 
 /// フレームの始めに呼ぶ。縁を押したら `BeginResize` を送り、ポインタが縁に乗っているときはその向きを返す（ポインタの形は、ほかの部品が
@@ -267,13 +291,20 @@ pub fn edges(ctx: &Context, busy: bool, press_rects: &[Rect]) -> Option<ResizeDi
     let (hover, press, touched) = ctx.input(|i| {
         (
             i.pointer.hover_pos(),
-            if i.pointer.primary_pressed() { i.pointer.press_origin() } else { None },
+            if i.pointer.primary_pressed() {
+                i.pointer.press_origin()
+            } else {
+                None
+            },
             i.events.iter().any(|e| matches!(e, Event::Touch { .. })),
         )
     });
     let at = press.or(hover)?;
     let direction = resize_direction(ctx.content_rect(), at)?;
-    if covered(ctx, at) || control_under_pointer(ctx, direction) || press_rects.iter().any(|r| r.contains(at)) {
+    if covered(ctx, at)
+        || control_under_pointer(ctx, direction)
+        || press_rects.iter().any(|r| r.contains(at))
+    {
         return None;
     }
     if press.is_some() {
@@ -329,7 +360,13 @@ mod tests {
     #[test]
     fn the_inside_and_the_outside_do_not_resize() {
         let w = window();
-        for at in [pos2(500.0, 350.0), pos2(EDGE + 0.5, 350.0), pos2(500.0, EDGE + 0.5), pos2(-1.0, 350.0), pos2(1001.0, 10.0)] {
+        for at in [
+            pos2(500.0, 350.0),
+            pos2(EDGE + 0.5, 350.0),
+            pos2(500.0, EDGE + 0.5),
+            pos2(-1.0, 350.0),
+            pos2(1001.0, 10.0),
+        ] {
             assert_eq!(resize_direction(w, at), None, "{at:?}");
         }
     }
@@ -380,13 +417,24 @@ mod tests {
 
     #[test]
     fn buttons_name_and_command_follow_the_maximized_state() {
-        for (maximized, name_en, icon) in [(false, "Maximize", "window_maximize"), (true, "Restore", "window_restore")] {
+        for (maximized, name_en, icon) in [
+            (false, "Maximize", "window_maximize"),
+            (true, "Restore", "window_restore"),
+        ] {
             assert_eq!(Button::Maximize.name(Lang::En, maximized), name_en);
             assert_eq!(Button::Maximize.icon(maximized), icon);
-            assert!(matches!(Button::Maximize.command(maximized), Some(ViewportCommand::Maximized(m)) if m == !maximized));
+            assert!(
+                matches!(Button::Maximize.command(maximized), Some(ViewportCommand::Maximized(m)) if m == !maximized)
+            );
         }
-        assert!(matches!(Button::Minimize.command(false), Some(ViewportCommand::Minimized(true))));
-        assert!(Button::Close.command(false).is_none(), "閉じるは終了の道を通る");
+        assert!(matches!(
+            Button::Minimize.command(false),
+            Some(ViewportCommand::Minimized(true))
+        ));
+        assert!(
+            Button::Close.command(false).is_none(),
+            "閉じるは終了の道を通る"
+        );
         assert_eq!(Button::Close.name(Lang::Ja, false), "閉じる");
     }
 }
