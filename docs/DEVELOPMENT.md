@@ -8,6 +8,8 @@
 cargo test --workspace --locked
 ```
 
+コマンドラインと MCP サーバーは `cargo test -p yolu-cli`（`cargo clippy -p yolu-cli --all-targets -- -D warnings`）で、作りと試験の分け方は [crates/yolu-cli/README.md](../crates/yolu-cli/README.md) にあります。
+
 GPU・画面の試験には動作する描画バックエンドが必要です。GPU 試験にはアダプターがないと処理を省くものがあるため、結果の passed だけで描画確認済みとは判断せず、標準エラーの理由も確認してください。詳しくは [yolu-gpu](../crates/yolu-gpu/README.md#検証と計測) を参照してください。
 
 Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果と層のロック・層の操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
@@ -57,7 +59,7 @@ tools/repeat-tests.py --rounds 20 --out /tmp/repeat --shuffle --test headless
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度組むだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物の組み（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物を組む場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
-- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app --locked`、core・io・protocol・bridge・link-demo の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
+- Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・bridge・link-demo・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
 - Windows の `target/` は、[samypr100/setup-dev-drive](https://github.com/samypr100/setup-dev-drive)（MIT）で作る Dev Drive（ReFS の VHDX）に載せています（試し。作れなければ通常のディスクで続けます。効果が無ければ外します）。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
@@ -77,7 +79,7 @@ Unity 版へ組み込む場合は、対応する Unity パッケージのルー�
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
 
-core・io・protocol・bridge と app の画面なし試験が対象です。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部を組むと wgpu・egui まで Windows 向けに組むため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+core・io・protocol・bridge・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部を組むと wgpu・egui まで Windows 向けに組むため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
 
 Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 

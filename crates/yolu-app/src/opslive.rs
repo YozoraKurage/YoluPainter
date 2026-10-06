@@ -226,7 +226,7 @@ fn identity() -> Identity {
 impl OpsLink {
     pub fn new() -> OpsLink {
         let (tx, rx) = mpsc::sync_channel(QUEUE);
-        let name = std::env::var("YOLUPAINTER_OPS_NAME")
+        let name = std::env::var(yolu_ops::link::LINK_NAME_ENV)
             .ok()
             .filter(|n| link::valid_link_name(n))
             .unwrap_or_else(|| yolu_ops::link::LINK_NAME.to_owned());

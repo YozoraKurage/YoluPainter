@@ -20,7 +20,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -78,7 +78,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
             "--target"
                 if matches!(
                     command.as_str(),
-                    "build" | "bundle" | "installer" | "symbols"
+                    "build" | "bundle" | "installer" | "mcpb" | "symbols"
                 ) =>
             {
                 target = Some(value(&mut args)?)
@@ -112,7 +112,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
         }
     }
     match command.as_str() {
-        "build" | "bundle" | "installer" | "symbols" => {
+        "build" | "bundle" | "installer" | "mcpb" | "symbols" => {
             let target = target.ok_or("--target が必要です")?;
             if !is_archive_target(&target) {
                 return Err("未対応の配布ターゲットです".into());
@@ -125,6 +125,7 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
                     build(&target, require_update_key)
                 }
                 "bundle" => bundle(&target),
+                "mcpb" => mcpb(&target),
                 "symbols" => symbols(&target),
                 _ => installer(&target),
             }
@@ -217,6 +218,9 @@ fn build(target: &str, require_update_key: bool) -> Result<()> {
         "--locked",
         "-p",
         "yolu-app",
+        // コマンドライン（yolupainter-cli）と MCP サーバーも同じ配布物に入るので、同じ版・同じ組みで作る
+        "-p",
+        "yolu-cli",
         "--target",
         target,
         "--release",
@@ -232,6 +236,8 @@ fn build(target: &str, require_update_key: bool) -> Result<()> {
 /// インストーラーの `installer/yolupainter.nsi` の `DocFiles` も同じ一覧で、試験が突き合わせる。
 const BUNDLED_DOCS: &[&str] = &[
     "docs/GUIDE.md",
+    "docs/CLI.md",
+    "docs/MCP.md",
     "docs/UNITY.md",
     "docs/INSTALL.md",
     "docs/BUILDING.md",
@@ -246,6 +252,8 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/SAVE_FOR_DISTRIBUTION.md",
     "docs/YLP_FORMAT.md",
     "docs/en/GUIDE.md",
+    "docs/en/CLI.md",
+    "docs/en/MCP.md",
     "docs/en/UNITY.md",
     "docs/en/INSTALL.md",
     "docs/en/BUILDING.md",
@@ -269,9 +277,22 @@ fn exe_name(target: &str) -> &'static str {
         "yolupainter"
     }
 }
+/// コマンドラインと MCP サーバーの実行ファイル（アプリと同じ配布物・同じ版。Windows ではコンソールの実行ファイル）。
+fn cli_exe_name(target: &str) -> &'static str {
+    if target.contains("windows") {
+        "yolupainter-cli.exe"
+    } else {
+        "yolupainter-cli"
+    }
+}
+/// 配布物の根に入れる実行ファイル（アプリ・コマンドライン）。
+fn executables(target: &str) -> [&'static str; 2] {
+    [exe_name(target), cli_exe_name(target)]
+}
 /// アーカイブ（zip・tar.gz）とインストーラーの段に入れるファイルの、配布物の中の名前（`/` 区切り）。ここが唯一の一覧。
 fn payload_names(target: &str) -> Vec<String> {
-    std::iter::once(exe_name(target))
+    executables(target)
+        .into_iter()
         .chain(ROOT_FILES.iter().copied())
         .chain(BUNDLED_DOCS.iter().copied())
         .map(str::to_owned)
@@ -338,7 +359,7 @@ fn payload_source(root: &Path, target: &str, license_dir: &Path, name: &str) -> 
     match name {
         "DEPENDENCIES.md" => license_dir.join("THIRD_PARTY.md"),
         "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
-        _ if name == exe_name(target) => {
+        _ if executables(target).contains(&name) => {
             root.join("target").join(target).join("release").join(name)
         }
         _ => root.join(name),
@@ -370,6 +391,8 @@ fn third_party(root: &Path, target: &str) -> Command {
         "--package",
         "yolu-app",
         "--include-update",
+        // 同じ配布物に入るコマンドライン（yolu-cli）の依存も、同じ照合・同じ全文束に入れる
+        "--include-cli",
         "--target",
         target,
         "--bundle",
@@ -447,6 +470,200 @@ fn symbols_archive(pdb: &Path, destination: &Path) -> Result<()> {
         return Err("PDB の大きさが不正です".into());
     }
     write_archive(destination, &[(PDB_FILE.to_owned(), pdb.to_owned())], true)
+}
+/// Claude Desktop に入れる拡張（.mcpb）の名前。Windows の配布物と同じ版・対象で、Release の付属物にする。PDB の付属物と同じく、
+/// 更新の対象ではない（署名つきの更新情報に載せず、アプリは取りに行かない。`updater-json` はこの名前だけを知って読み飛ばし、`verify` は中身の形だけを見る）。
+fn mcpb_name(version: &Version) -> String {
+    format!("yolupainter-{version}-{WINDOWS_ARCHIVE}.mcpb")
+}
+/// .mcpb の中の実行ファイル（`server.entry_point`）。
+const MCPB_SERVER: &str = "server/yolupainter-cli.exe";
+/// .mcpb の中のアイコン。アプリのロゴ（PNG）をそのまま入れる。差し替えるときは `MCPB_LOGO` を替える。
+const MCPB_ICON: &str = "icon.png";
+const MCPB_LOGO: &str = "crates/yolu-app/assets/logo/yolupainter-1024.png";
+/// .mcpb の中のファイルの名前（`/` 区切り）。許諾の全文は、コマンドライン（アプリと同じ組みでの `yolu-cli` の部分木）のもの。
+const MCPB_FILES: &[&str] = &[
+    "manifest.json",
+    MCPB_ICON,
+    "LICENSE",
+    "DEPENDENCIES.md",
+    "THIRD_PARTY_LICENSES.txt",
+    MCPB_SERVER,
+];
+/// 配布物の GitHub の置き場（マニフェストの作者・文書のリンク）。インストーラーの `HOMEPAGE` と同じ。
+const HOMEPAGE: &str = "https://github.com/YozoraKurage/YoluPainter";
+/// .mcpb の `manifest.json`（mcpb の manifest_version 0.3。`server.type` は binary）。ツールの一覧は書かず（`tools_generated`）、
+/// 実行ファイルが `tools/list` で返す物が正本になる（命令を足しても、manifest との食い違いが起きない）。
+fn mcpb_manifest(version: &Version) -> serde_json::Value {
+    serde_json::json!({
+        "manifest_version": "0.3",
+        "name": "yolupainter",
+        "display_name": "YoluPainter",
+        "version": version.to_string(),
+        "description": "Read and edit YoluPainter texture projects (.ylp): layers, masks, effects, previews and exports. Runs locally on this PC.",
+        "long_description": "Lets an AI assistant work with YoluPainter texture projects. It can open a .ylp file directly, or operate the running YoluPainter app when \"Accept external commands\" is turned on in the app's settings. Reading, previewing and editing layers, masks and effects are available; deleting, saving over a file and replacing exported files need an explicit confirmation. Nothing is sent over the network.",
+        "author": {"name": "Yozolab", "url": HOMEPAGE},
+        "repository": {"type": "git", "url": HOMEPAGE},
+        "homepage": HOMEPAGE,
+        "documentation": format!("{HOMEPAGE}/blob/main/docs/en/MCP.md"),
+        "icon": MCPB_ICON,
+        "server": {
+            "type": "binary",
+            "entry_point": MCPB_SERVER,
+            "mcp_config": {
+                "command": format!("${{__dirname}}/{MCPB_SERVER}"),
+                "args": ["mcp"],
+                "env": {},
+            },
+        },
+        "tools_generated": true,
+        "keywords": ["texture", "painting", "3D", "Unity"],
+        "license": "MIT",
+        "compatibility": {"platforms": ["win32"]},
+    })
+}
+/// .mcpb の `manifest.json` が、この xtask の組む形（版が今の版・実行ファイルが入る名前・Windows だけ・引数は `mcp`）であること。
+fn check_mcpb_manifest(manifest: &serde_json::Value, version: &Version) -> Result<()> {
+    let text = |pointer: &str| manifest.pointer(pointer).and_then(|v| v.as_str());
+    let mut problems = Vec::new();
+    if text("/manifest_version") != Some("0.3") {
+        problems.push("manifest_version が 0.3 ではありません".to_owned());
+    }
+    if text("/name") != Some("yolupainter") {
+        problems.push("name が yolupainter ではありません".to_owned());
+    }
+    if text("/version") != Some(version.to_string().as_str()) {
+        problems.push(format!("version が {version} ではありません"));
+    }
+    for required in ["/description", "/author/name"] {
+        if text(required).is_none_or(str::is_empty) {
+            problems.push(format!("{required} がありません"));
+        }
+    }
+    if text("/server/type") != Some("binary") {
+        problems.push("server.type が binary ではありません".to_owned());
+    }
+    if text("/server/entry_point") != Some(MCPB_SERVER) {
+        problems.push(format!(
+            "server.entry_point が {MCPB_SERVER} ではありません"
+        ));
+    }
+    let command = text("/server/mcp_config/command").unwrap_or_default();
+    if command != format!("${{__dirname}}/{MCPB_SERVER}") {
+        problems.push(format!(
+            "server.mcp_config.command が実行ファイルを指していません: {command}"
+        ));
+    }
+    if manifest.pointer("/server/mcp_config/args") != Some(&serde_json::json!(["mcp"])) {
+        problems.push("server.mcp_config.args が [\"mcp\"] ではありません".to_owned());
+    }
+    if manifest.pointer("/compatibility/platforms") != Some(&serde_json::json!(["win32"])) {
+        problems.push(
+            "compatibility.platforms が [\"win32\"] ではありません（実行ファイルは Windows 用）"
+                .to_owned(),
+        );
+    }
+    if text("/icon") != Some(MCPB_ICON) {
+        problems.push(format!("icon が {MCPB_ICON} ではありません"));
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("manifest.json が不正です（{}）", problems.join("／")).into())
+    }
+}
+/// .mcpb の中身: 入っているファイルが `MCPB_FILES` と同じで、`manifest.json` が `check_mcpb_manifest` を通ること。
+fn check_mcpb_archive(bytes: &[u8], version: &Version) -> Result<()> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    let mut found = Vec::new();
+    for index in 0..zip.len() {
+        let file = zip.by_index(index)?;
+        if file.is_file() {
+            found.push(file.name().to_owned());
+        }
+    }
+    found.sort();
+    let mut expected: Vec<String> = MCPB_FILES.iter().map(|n| (*n).to_owned()).collect();
+    expected.sort();
+    if found != expected {
+        return Err(format!(
+            ".mcpb の中身が一覧と違います（入っている: {}／一覧: {}）",
+            found.join("、"),
+            expected.join("、")
+        )
+        .into());
+    }
+    let mut text = String::new();
+    zip.by_name("manifest.json")?
+        .take(1 << 20)
+        .read_to_string(&mut text)?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("manifest.json を読めません: {e}"))?;
+    check_mcpb_manifest(&manifest, version)
+}
+/// コマンドラインの許諾の照合と全文束（`target/third-party/<target>/yolu-cli/`）。.mcpb に入れる。事前確認 `preflight` も同じ命令を使う。
+/// `build` は `-p yolu-app -p yolu-cli` の 1 回の組みで、2 つのクレートの機能が合わさる（単独の木に無い依存が入る）ので、
+/// 数えるのは、その組みでの yolu-cli の部分木（`--built-with yolu-app`）。単独の木で数えると、詰めた exe に入る依存を載せ落とす。
+fn third_party_cli(root: &Path, target: &str) -> Command {
+    let mut command = python(root);
+    command.args([
+        "tools/third-party.py",
+        "--package",
+        "yolu-cli",
+        "--built-with",
+        "yolu-app",
+        "--target",
+        target,
+        "--bundle",
+    ]);
+    command
+}
+/// Claude Desktop に入れる拡張（.mcpb）。zip に `manifest.json`・アイコン・許諾・実行ファイル 1 つ。
+fn mcpb(target: &str) -> Result<()> {
+    if target != WINDOWS_ARCHIVE {
+        return Err(".mcpb は Windows（x86_64-pc-windows-msvc）だけです".into());
+    }
+    let root = root();
+    let version = workspace_version()?;
+    let out = root.join("target/dist");
+    fs::create_dir_all(&out)?;
+    let destination = out.join(mcpb_name(&version));
+    // 前回の成功を今回の失敗と取り違えない。
+    remove_if_present(&destination)?;
+    run(&mut third_party_cli(&root, target))?;
+    let license_dir = root
+        .join("target/third-party")
+        .join(target)
+        .join("yolu-cli");
+    let manifest = mcpb_manifest(&version);
+    check_mcpb_manifest(&manifest, &version)?;
+    let stage = root.join("target/mcpb").join(target);
+    let _ = fs::remove_dir_all(&stage);
+    fs::create_dir_all(&stage)?;
+    let manifest_file = stage.join("manifest.json");
+    fs::write(&manifest_file, serde_json::to_vec_pretty(&manifest)?)?;
+    let sources = |name: &str| -> PathBuf {
+        match name {
+            "manifest.json" => manifest_file.clone(),
+            MCPB_ICON => root.join(MCPB_LOGO),
+            "LICENSE" => root.join("LICENSE"),
+            "DEPENDENCIES.md" => license_dir.join("THIRD_PARTY.md"),
+            "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
+            _ => root
+                .join("target")
+                .join(target)
+                .join("release")
+                .join(cli_exe_name(target)),
+        }
+    };
+    let entries: Vec<(String, PathBuf)> = MCPB_FILES
+        .iter()
+        .map(|name| ((*name).to_owned(), sources(name)))
+        .collect();
+    require_sources(&entries)?;
+    write_archive(&destination, &entries, true)?;
+    println!("配布物: {}", destination.display());
+    Ok(())
 }
 /// NSIS が数字 4 つの版（各 0〜65535）しか受けないので、プレリリース識別子は落とす（文字列の版は別に渡す）。
 fn numeric_version(version: &Version) -> Result<String> {
@@ -571,7 +788,11 @@ fn archive(path: &Path, entries: &[(String, PathBuf)], windows: bool) -> Result<
             let mut file = File::open(source)?;
             let mut header = tar::Header::new_gnu();
             header.set_size(file.metadata()?.len());
-            header.set_mode(if name == "yolupainter" { 0o755 } else { 0o644 });
+            header.set_mode(if name == "yolupainter" || name == "yolupainter-cli" {
+                0o755
+            } else {
+                0o644
+            });
             header.set_cksum();
             tar.append_data(&mut header, name, &mut file)?;
         }
@@ -642,17 +863,19 @@ fn updater(
         });
     }
     // 無関係なファイルを黙って除外しない。入力は配布物専用フォルダにする。
-    // 例外は PDB の付属物 1 つ（`symbols_name`）だけ。更新の対象ではないので、更新情報には載せない。
+    // 例外は付属物だけ（PDB の `symbols_name` と .mcpb の `mcpb_name`）。
     let symbols = symbols_name(&version);
+    let extension = mcpb_name(&version);
     for entry in fs::read_dir(directory)? {
         let name = entry?
             .file_name()
             .into_string()
             .map_err(|_| "配布物名が UTF-8 ではありません")?;
-        if name == symbols {
+        // 例外は付属物の 2 つ（PDB と Claude Desktop の拡張 .mcpb）。どちらも更新の対象ではないので、更新情報には載せない
+        if name == symbols || name == extension {
             let meta = fs::symlink_metadata(directory.join(&name))?;
             if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_ASSET {
-                return Err("PDB の付属物の種類または大きさが不正です".into());
+                return Err(format!("付属物 {name} の種類または大きさが不正です").into());
             }
             continue;
         }
@@ -792,6 +1015,23 @@ fn check_symbols_archive(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// .mcpb のファイルが、通常のファイルで、大きさの上限内で、中身が `check_mcpb_archive` を通ること。
+fn check_mcpb_file(path: &Path, version: &Version) -> Result<()> {
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(format!("{name}: 通常のファイルではありません").into());
+    }
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(MAX_ASSET + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_ASSET {
+        return Err(format!("{name}: 大きさが不正です").into());
+    }
+    check_mcpb_archive(&bytes, version).map_err(|e| format!("{name}: {e}").into())
+}
 /// 公開鍵だけで、アプリと同じ検証（署名・版・大きさ・SHA-256）を通すか確かめる。
 /// 秘密の鍵を取り違えた署名や、配布物と更新情報の食い違いをここで落とす。
 fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<()> {
@@ -836,6 +1076,11 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
     let symbols = directory.join(symbols_name(version));
     if fs::symlink_metadata(&symbols).is_ok() {
         check_symbols_archive(&symbols)?;
+    }
+    // .mcpb があれば、manifest が今の版・実行ファイルが入る形であること（PDB と同じく更新情報には載らないので、形だけ確かめる）。
+    let extension = directory.join(mcpb_name(version));
+    if fs::symlink_metadata(&extension).is_ok() {
+        check_mcpb_file(&extension, version)?;
     }
     // 上で署名と本文が通っているので、ここで確かめるのは「ファイルが無いのに載っている」ことだけ。
     for (target, name) in &absent {
@@ -1398,6 +1643,271 @@ mod tests {
         zip.finish().unwrap();
         assert!(verify_with(&d.0, &public).is_err());
     }
+    /// .mcpb の試験用の組み立て: 本物の manifest と、名前を中身にしたファイルを、`drop` を除き `add` を足して zip にする。
+    fn fake_mcpb(
+        version: &Version,
+        drop: &[&str],
+        add: &[&str],
+        manifest: Option<serde_json::Value>,
+    ) -> Vec<u8> {
+        let d = Scratch::new();
+        let mut entries = Vec::new();
+        for name in MCPB_FILES {
+            if drop.contains(name) {
+                continue;
+            }
+            let source = d.0.join(name.replace('/', "_"));
+            if *name == "manifest.json" {
+                let manifest = manifest.clone().unwrap_or_else(|| mcpb_manifest(version));
+                fs::write(&source, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+            } else {
+                fs::write(&source, name).unwrap();
+            }
+            entries.push(((*name).to_owned(), source));
+        }
+        for name in add {
+            let source = d.0.join("extra");
+            fs::write(&source, name).unwrap();
+            entries.push(((*name).to_owned(), source));
+        }
+        let path = d.0.join("fake.mcpb");
+        archive(&path, &entries, true).unwrap();
+        fs::read(path).unwrap()
+    }
+    /// Claude Desktop の拡張の manifest: binary のサーバーで、実行ファイルは拡張の中の 1 つ、引数は mcp、Windows だけ。
+    #[test]
+    fn the_mcpb_manifest_names_the_binary_server_and_only_windows() {
+        let v = Version::parse("0.4.0-rc.1").unwrap();
+        let manifest = mcpb_manifest(&v);
+        check_mcpb_manifest(&manifest, &v).unwrap();
+        assert_eq!(manifest["manifest_version"], "0.3");
+        assert_eq!(manifest["version"], "0.4.0-rc.1");
+        assert_eq!(manifest["server"]["type"], "binary");
+        assert_eq!(
+            manifest["server"]["entry_point"],
+            "server/yolupainter-cli.exe"
+        );
+        assert_eq!(
+            manifest["server"]["mcp_config"]["command"],
+            "${__dirname}/server/yolupainter-cli.exe"
+        );
+        assert_eq!(
+            manifest["server"]["mcp_config"]["args"],
+            serde_json::json!(["mcp"])
+        );
+        assert_eq!(
+            manifest["compatibility"]["platforms"],
+            serde_json::json!(["win32"])
+        );
+        assert_eq!(
+            MCPB_SERVER,
+            format!("server/{}", cli_exe_name(WINDOWS_ARCHIVE))
+        );
+        assert_eq!(
+            mcpb_name(&v),
+            "yolupainter-0.4.0-rc.1-x86_64-pc-windows-msvc.mcpb"
+        );
+        // 更新の対象の名前とは別（更新情報の鍵にも、更新の対象の配布物の名前にもならない）
+        assert!(TARGETS
+            .iter()
+            .all(|t| asset_name(&v, t).unwrap() != mcpb_name(&v)));
+        // 版が違う・形が違う manifest は断る
+        assert!(check_mcpb_manifest(&manifest, &Version::new(0, 4, 1)).is_err());
+        for (pointer, value) in [
+            ("/server/type", serde_json::json!("node")),
+            ("/server/entry_point", serde_json::json!("server/other.exe")),
+            (
+                "/server/mcp_config/command",
+                serde_json::json!("yolupainter-cli.exe"),
+            ),
+            ("/server/mcp_config/args", serde_json::json!(["serve"])),
+            (
+                "/compatibility/platforms",
+                serde_json::json!(["win32", "linux"]),
+            ),
+            ("/manifest_version", serde_json::json!("0.2")),
+            ("/name", serde_json::json!("other")),
+            ("/icon", serde_json::json!("logo.png")),
+            ("/description", serde_json::json!("")),
+        ] {
+            let mut broken = manifest.clone();
+            *broken.pointer_mut(pointer).unwrap() = value;
+            assert!(check_mcpb_manifest(&broken, &v).is_err(), "{pointer}");
+        }
+    }
+    /// .mcpb の中身: 一覧のファイルだけ（欠けも余りも断る）で、manifest が今の版。
+    #[test]
+    fn the_mcpb_archive_holds_exactly_the_listed_files_and_a_matching_manifest() {
+        let v = Version::new(1, 2, 3);
+        check_mcpb_archive(&fake_mcpb(&v, &[], &[], None), &v).unwrap();
+        // 一覧は、manifest・アイコン・許諾・実行ファイル（フォルダつきの名前）
+        assert!(MCPB_FILES.contains(&"manifest.json") && MCPB_FILES.contains(&MCPB_SERVER));
+        for missing in MCPB_FILES {
+            let error = check_mcpb_archive(&fake_mcpb(&v, &[missing], &[], None), &v).err();
+            assert!(error.is_some(), "{missing} が無くても通った");
+        }
+        assert!(check_mcpb_archive(&fake_mcpb(&v, &[], &["notes.txt"], None), &v).is_err());
+        assert!(
+            check_mcpb_archive(&fake_mcpb(&v, &[], &[], None), &Version::new(9, 9, 9)).is_err()
+        );
+        let mut wrong = mcpb_manifest(&v);
+        wrong["server"]["entry_point"] = serde_json::json!("server/other.exe");
+        assert!(check_mcpb_archive(&fake_mcpb(&v, &[], &[], Some(wrong)), &v).is_err());
+        assert!(check_mcpb_archive(b"not a zip", &v).is_err());
+    }
+    /// .mcpb は更新の対象ではない: 更新情報に載せず、別の版の .mcpb やほかの見知らぬファイルは今までどおり断る。形のおかしい物は断る。
+    #[test]
+    fn updater_leaves_the_mcpb_out_of_the_manifest_and_still_refuses_strangers() {
+        let v = Version::new(1, 2, 3);
+        let d = Scratch::new();
+        fs::write(asset_path(&d.0, &v, 0), b"archive").unwrap();
+        fs::write(asset_path(&d.0, &v, 2), b"setup").unwrap();
+        let extension = d.0.join(mcpb_name(&v));
+        fs::write(&extension, b"mcpb zip").unwrap();
+        updater(v.clone(), &d.0, true, || Ok(disposable_key())).unwrap();
+        let envelope: Envelope =
+            serde_json::from_slice(&fs::read(d.0.join(UPDATER_FILE)).unwrap()).unwrap();
+        let manifest: Manifest = serde_json::from_str(&envelope.payload).unwrap();
+        assert!(manifest.assets.iter().all(|a| !a.name.contains("mcpb")));
+        assert_eq!(manifest.assets.len(), 2);
+        for stranger in [
+            "yolupainter-9.9.9-x86_64-pc-windows-msvc.mcpb",
+            "yolupainter.mcpb",
+            "yolupainter-1.2.3-x86_64-unknown-linux-gnu.mcpb",
+        ] {
+            fs::write(d.0.join(stranger), b"x").unwrap();
+            assert!(
+                updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err(),
+                "{stranger}"
+            );
+            assert_no_metadata(&d.0);
+            fs::remove_file(d.0.join(stranger)).unwrap();
+        }
+        fs::write(&extension, b"").unwrap();
+        assert!(updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err());
+        fs::remove_file(&extension).unwrap();
+        fs::create_dir(&extension).unwrap();
+        assert!(updater(v.clone(), &d.0, true, || Ok(disposable_key())).is_err());
+        assert_no_metadata(&d.0);
+    }
+    /// `verify` は、.mcpb があれば中身の形（一覧のファイル・今の版の manifest）を見る（無くても通る）。
+    #[test]
+    fn verify_checks_the_shape_of_the_mcpb_when_there_is_one() {
+        let v = Version::new(1, 2, 3);
+        let verify_with = |dir: &Path, public: &str| {
+            exec(&[
+                "verify",
+                "--version",
+                "1.2.3",
+                "--assets",
+                dir.to_str().unwrap(),
+                "--public-key",
+                public,
+            ])
+        };
+        let (d, public) = signed_dist(&v, &[0, 1]);
+        verify_with(&d.0, &public).unwrap();
+        let extension = d.0.join(mcpb_name(&v));
+        fs::write(&extension, fake_mcpb(&v, &[], &[], None)).unwrap();
+        verify_with(&d.0, &public).unwrap();
+        fs::write(&extension, fake_mcpb(&v, &[MCPB_SERVER], &[], None)).unwrap();
+        assert!(
+            verify_with(&d.0, &public).is_err(),
+            "実行ファイルが入っていない .mcpb"
+        );
+        fs::write(
+            &extension,
+            fake_mcpb(&Version::new(9, 9, 9), &[], &[], None),
+        )
+        .unwrap();
+        assert!(verify_with(&d.0, &public).is_err(), "版の違う manifest");
+        fs::write(&extension, b"not a zip").unwrap();
+        assert!(verify_with(&d.0, &public).is_err());
+    }
+    /// 実行ファイルの一覧: アプリとコマンドラインの 2 つ。どちらも tar では実行できる印、zip の名前は .exe。
+    #[test]
+    fn both_executables_are_listed_and_the_cli_keeps_its_executable_mode_in_a_tar() {
+        assert_eq!(
+            executables(WINDOWS_ARCHIVE),
+            ["yolupainter.exe", "yolupainter-cli.exe"]
+        );
+        assert_eq!(
+            executables(LINUX_ARCHIVE),
+            ["yolupainter", "yolupainter-cli"]
+        );
+        let d = Scratch::new();
+        let exe = d.0.join("exe");
+        fs::write(&exe, b"fixture").unwrap();
+        let p = d.0.join("test.tar.gz");
+        archive(
+            &p,
+            &[
+                ("yolupainter-cli".into(), exe.clone()),
+                ("docs/CLI.md".into(), exe),
+            ],
+            false,
+        )
+        .unwrap();
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(File::open(p).unwrap()));
+        let modes: Vec<(String, u32)> = tar
+            .entries()
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (
+                    e.path().unwrap().to_string_lossy().into_owned(),
+                    e.header().mode().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            modes,
+            [
+                ("yolupainter-cli".to_owned(), 0o755),
+                ("docs/CLI.md".to_owned(), 0o644)
+            ]
+        );
+    }
+    /// ビルドはアプリとコマンドラインを同じ命令で組み、許諾の照合はコマンドラインの依存を含める。
+    #[test]
+    fn the_build_and_the_license_check_cover_the_cli_too() {
+        let build = fs::read_to_string(root().join("crates/xtask/src/main.rs")).unwrap();
+        assert!(
+            build.contains("\"-p\",\n        \"yolu-cli\","),
+            "build が yolu-cli を組む"
+        );
+        let command = third_party(&root(), WINDOWS_ARCHIVE);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"--include-cli".to_owned()), "{args:?}");
+        let cli = third_party_cli(&root(), WINDOWS_ARCHIVE);
+        let args: Vec<String> = cli
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.windows(2).any(|w| w == ["--package", "yolu-cli"])
+                && args.contains(&"--bundle".to_owned()),
+            "{args:?}"
+        );
+        // .mcpb の exe は `-p yolu-app -p yolu-cli` の組みの物なので、その組みの木で数える
+        assert!(
+            args.windows(2).any(|w| w == ["--built-with", "yolu-app"]),
+            "{args:?}"
+        );
+    }
+    /// `mcpb` は Windows だけ。
+    #[test]
+    fn mcpb_is_for_windows_only() {
+        let error = exec(&["mcpb", "--target", LINUX_ARCHIVE])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Windows"), "{error}");
+        assert!(exec(&["mcpb"]).is_err());
+        assert!(exec(&["mcpb", "--target", "aarch64-apple-darwin"]).is_err());
+    }
     #[test]
     fn archive_replaces_atomically_and_cleans_up_on_failure() {
         let d = Scratch::new();
@@ -1791,9 +2301,9 @@ mod tests {
     }
     #[test]
     fn payload_lists_root_files_and_docs_for_each_target() {
-        for (target, exe) in [
-            (WINDOWS_ARCHIVE, "yolupainter.exe"),
-            (LINUX_ARCHIVE, "yolupainter"),
+        for (target, exe, cli) in [
+            (WINDOWS_ARCHIVE, "yolupainter.exe", "yolupainter-cli.exe"),
+            (LINUX_ARCHIVE, "yolupainter", "yolupainter-cli"),
         ] {
             let names = payload_names(target);
             let mut sorted = names.clone();
@@ -1803,6 +2313,7 @@ mod tests {
             assert!(names.iter().all(|n| !n.contains('\\')), "{target}");
             for expected in [
                 exe,
+                cli,
                 "LICENSE",
                 "README.md",
                 "README.en.md",
@@ -1810,6 +2321,10 @@ mod tests {
                 "DEPENDENCIES.md",
                 "THIRD_PARTY_LICENSES.txt",
                 "docs/GUIDE.md",
+                "docs/CLI.md",
+                "docs/MCP.md",
+                "docs/en/CLI.md",
+                "docs/en/MCP.md",
                 "docs/BRUSH_IMPORT.md",
                 "docs/GRADIENT_MAP.md",
                 "docs/en/GUIDE.md",
@@ -1836,11 +2351,13 @@ mod tests {
                     .1
                     .clone()
             };
-            let exe = exe_name(target);
-            assert_eq!(
-                source(exe),
-                root.join("target").join(target).join("release").join(exe)
-            );
+            // アプリとコマンドラインの実行ファイルは、どちらもビルドの出力（`build` が同じ組みで作る）
+            for built in executables(target) {
+                assert_eq!(
+                    source(built),
+                    root.join("target").join(target).join("release").join(built)
+                );
+            }
             assert_eq!(
                 source("DEPENDENCIES.md"),
                 license_dir.join("THIRD_PARTY.md")
@@ -1851,7 +2368,7 @@ mod tests {
             );
             // 文書と README は、配布物の中と同じ相対の場所のリポジトリのファイル（建てなくても在る）。
             for (name, path) in &entries {
-                if name == exe
+                if executables(target).contains(&name.as_str())
                     || name.starts_with("DEPENDENCIES")
                     || name.starts_with("THIRD_PARTY_L")
                 {
@@ -2133,6 +2650,7 @@ mod tests {
         let name = |rest: &str| {
             rest.trim_end_matches('"')
                 .replace("${EXE}", "yolupainter.exe")
+                .replace("${CLI_EXE}", "yolupainter-cli.exe")
                 .replace("${UNINSTALLER}", "uninstall.exe")
         };
         for line in script.lines().map(str::trim) {

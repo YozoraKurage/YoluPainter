@@ -703,3 +703,48 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
     assert_eq!(old.state.ops.status, OpsStatus::Off);
     assert!(yolu_protocol::link::connect(&name).is_err());
 }
+
+/// コマンドラインの客（`yolu_cli::live`。`yolupainter-cli` の起動中のアプリへの道と、MCP の `file` を省いた呼び出しが使う）が、本物の受け口と
+/// 話せる: 1 回の呼び出しごとにつなぎ、命令が画面の文書に当たり、読む命令が答える。返事を待つ間に受け口を切ると、アプリは返事の代わりに
+/// `Bye` を送って閉じ、客はそれを「受け付けをやめた」（つなげない誤り）として返す（返事でない枠として、古い版のアプリと取り違えない）。
+#[test]
+fn the_command_line_client_talks_to_the_running_app_and_reads_its_bye() {
+    let dir = tmp::test_dir("opslive-cli");
+    let file = dir.join("work.ylp");
+    let (mut live, name) = Live::on("cli");
+    live.app.state.save.background = true;
+    live.app.state.apply(Action::SaveProjectAs(file.clone()));
+    live.app.state.wait_save();
+    live.frame();
+    let config = yolu_cli::live::LiveConfig { name, timeout: Duration::from_secs(60) };
+    let ask = |command: Value| {
+        let config = config.clone();
+        let command = parse_command(&command).expect("命令の形");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(yolu_cli::live::call(&config, &command));
+        });
+        rx
+    };
+    let rx = ask(json!({"command": "layer.add", "args": {"kind": "paint", "name": "CLI の層"}}));
+    let reply = live.until("CLI の編集の返事", |_| rx.try_recv().ok());
+    assert!(matches!(reply, Ok(Reply::Edited(_))), "{reply:?}");
+    assert!(live.layer_names().iter().any(|n| n == "CLI の層"), "画面の文書に当たる: {:?}", live.layer_names());
+    let rx = ask(json!({"command": "doc.info"}));
+    let reply = live.until("CLI の読む返事", |_| rx.try_recv().ok());
+    let Ok(Reply::Doc(doc)) = reply else { panic!("doc.info の返事ではない: {reply:?}") };
+    assert_eq!(PathBuf::from(&doc.path), file);
+    // 保存を止めておき、返事を待っている間に受け口を切る
+    let hold = live.app.state.save.hold_next();
+    let rx = ask(json!({"command": "save", "args": {"confirm": true}}));
+    live.until("保存の開始", |l| l.app.state.is_saving().then_some(()));
+    live.app.state.prefs.settings.external_ops = false;
+    live.frame();
+    assert_eq!(live.app.state.ops.status, OpsStatus::Off);
+    let reply = live.until("切ったあとの客の結果", |_| rx.try_recv().ok());
+    let error = reply.expect_err("返事は来ず、つなげない誤りになる");
+    assert!(yolu_cli::live::is_unreachable(&error), "{error:?}");
+    assert!(error.message.ja.contains("受け付けをやめました"), "{}", error.message.ja);
+    hold.release();
+    live.app.state.wait_save();
+}

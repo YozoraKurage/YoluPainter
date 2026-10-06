@@ -531,6 +531,19 @@
         }
       ]
     },
+    "bytes@1.12.1": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "45f522cacecb1023856e46df79ca625dfc550c94910078bd8aec6e02880b3d42"
+        }
+      ]
+    },
     "calloop-wayland-source@0.3.0": {
       "declared": "MIT",
       "selected": [
@@ -623,6 +636,19 @@
         {
           "path": "NOTICES.md",
           "sha256": "1e2b7ade3fb228130408b9990cae6a7618eb314c75aa0b164bfe485d9d9756ee"
+        }
+      ]
+    },
+    "chrono@0.4.45": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "946c9835d8034d24404f8cfec5f4654cee5dad17e944afc3d06d742cf2882831"
         }
       ]
     },
@@ -1330,7 +1356,33 @@
         }
       ]
     },
+    "futures-channel@0.3.34": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
+        }
+      ]
+    },
     "futures-core@0.3.34": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
+        }
+      ]
+    },
+    "futures-executor@0.3.34": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
         "MIT"
@@ -1386,6 +1438,19 @@
         }
       ]
     },
+    "futures-sink@0.3.34": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
+        }
+      ]
+    },
     "futures-task@0.3.34": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -1400,6 +1465,19 @@
       ]
     },
     "futures-util@0.3.34": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6652c868f35dfe5e8ef636810a4e576b9d663f3a17fb0f5613ad73583e1b88fd"
+        }
+      ]
+    },
+    "futures@0.3.34": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
         "MIT"
@@ -2058,6 +2136,19 @@
         }
       ]
     },
+    "pastey@0.2.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
     "peniko@0.6.1": {
       "declared": "Apache-2.0 OR MIT",
       "selected": [
@@ -2493,6 +2584,20 @@
         {
           "path": "src/backend/xdg_desktop_portal/window_identifier/LICENSE",
           "sha256": "ae26bc7b1bc91fb8648f6a298decbb1a77090a56c9d04e2c23b8365e5f54acb5"
+        }
+      ]
+    },
+    "rmcp@3.5.1": {
+      "declared": "Apache-2.0",
+      "selected": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/79437f291b2c44053d00dcd5db969fd0cca7c887/LICENSE",
+          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
         }
       ]
     },
@@ -2991,6 +3096,45 @@
         {
           "path": "LICENSE-MIT",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "tokio-macros@2.7.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0b83dc40cba89b9922bb84b0a9c7d2768ce37c1d7e138b7424fd4549915778c9"
+        }
+      ]
+    },
+    "tokio-util@0.7.19": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552"
+        }
+      ]
+    },
+    "tokio@1.53.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552"
         }
       ]
     },

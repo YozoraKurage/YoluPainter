@@ -2,7 +2,7 @@
 ; ビルドは `cargo xtask installer --target x86_64-pc-windows-msvc`。xtask が -D で次を渡す。
 ;   VERSION          SemVer の文字列（プレリリースの識別子つき。exe のバージョン情報の ProductVersion と同じ値）
 ;   VERSION_NUMERIC  a.b.c.0（バージョン情報の数字の欄）
-;   STAGE            入れるファイル（exe・LICENSE・README.md・README.en.md・THIRD_PARTY.md・DEPENDENCIES.md・THIRD_PARTY_LICENSES.txt と、docs\ の文書）を集めたフォルダ
+;   STAGE            入れるファイル（exe・コマンドラインの exe（yolupainter-cli.exe）・LICENSE・README.md・README.en.md・THIRD_PARTY.md・DEPENDENCIES.md・THIRD_PARTY_LICENSES.txt と、docs\ の文書）を集めたフォルダ
 ;   OUTFILE          書き出すインストーラー
 ;   ICON             アイコン（crates/yolu-app/assets/logo/yolupainter.ico。exe と同じロゴ）
 ;
@@ -15,7 +15,8 @@
 ;                       /DELETEDATA  アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ）も消す（無音のとき。省略は残す）。
 ;                                    利用者が作った物（個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）は、どちらでも消さない
 ;
-; 実行中のアプリは終了させない。exe が使われている間は待つ（無音は 60 秒まで。超えたら何も変えずに終わり、終了コード 5。/RUN が付いていれば今入っている exe を起こし直す）。
+; 実行中のアプリは終了させない。exe が使われている間（アプリと、MCP の接続などが使っている yolupainter-cli.exe のどちらでも）は待つ
+; （無音は 60 秒まで。超えたら何も変えずに終わり、終了コード 5。/RUN が付いていれば今入っているアプリの exe を起こし直す）。
 ; 文書は DocFiles の一覧から $INSTDIR\docs・$INSTDIR\docs\en に入れ、入れた名前を docs\.installed に記録する。更新は、前の版の記録にある文書を先に消すので、
 ; 前の版にだけあった文書が残らない。アンインストールは一覧の文書と記録を消し、フォルダは空のときだけ消す（利用者が docs に置いたファイルは消さない）。
 
@@ -53,6 +54,8 @@ CRCCheck on
 !define PUBLISHER "Yozolab"
 !define HOMEPAGE "https://github.com/YozoraKurage/YoluPainter"
 !define EXE "yolupainter.exe"
+; コマンドラインと MCP サーバー（アプリと同じ入れ先・同じ版。PATH は変えない）
+!define CLI_EXE "yolupainter-cli.exe"
 !define UNINSTALLER "uninstall.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT}"
 !define EXT_KEY "Software\Classes\.ylp"
@@ -100,8 +103,8 @@ LangString NAME_CORE ${LANG_JAPANESE} "YoluPainter"
 LangString NAME_CORE ${LANG_ENGLISH} "YoluPainter"
 LangString NAME_ASSOC ${LANG_JAPANESE} ".ylp ファイルを YoluPainter で開く"
 LangString NAME_ASSOC ${LANG_ENGLISH} "Open .ylp files with YoluPainter"
-LangString CLOSE_APP ${LANG_JAPANESE} "YoluPainter を終了してから、再試行してください。"
-LangString CLOSE_APP ${LANG_ENGLISH} "Close YoluPainter, then retry."
+LangString CLOSE_APP ${LANG_JAPANESE} "YoluPainter（と、yolupainter-cli を使っているアプリ）を終了してから、再試行してください。"
+LangString CLOSE_APP ${LANG_ENGLISH} "Close YoluPainter (and any app using yolupainter-cli), then retry."
 LangString DELETE_DATA ${LANG_JAPANESE} "設定と復旧のデータも削除しますか？"
 LangString DELETE_DATA ${LANG_ENGLISH} "Also delete settings and recovery data?"
 
@@ -132,18 +135,27 @@ Function RunIfRequested
 FunctionEnd
 
 ; exe が使われている間は待つ（動いている exe は書き込みで開けない）。入れる・消すの前に呼ぶ。
+; アプリの exe と、コマンドラインの exe（MCP のクライアントが動かし続けていることがある）の両方を見る。
 ; ON_TIMEOUT は、待ちの上限を超えて終わる直前にする命令（入れるときだけ、/RUN があれば今の exe を起こす）。
+!macro CheckUnlocked EXENAME
+  ClearErrors
+  ${If} ${FileExists} "$INSTDIR\${EXENAME}"
+    FileOpen $R8 "$INSTDIR\${EXENAME}" a
+    ${If} ${Errors}
+      StrCpy $R6 1
+    ${Else}
+      FileClose $R8
+    ${EndIf}
+  ${EndIf}
+!macroend
 !macro DefineWaitUnlock PREFIX ON_TIMEOUT
 Function ${PREFIX}WaitUnlock
   StrCpy $R9 0
   ${Do}
-    ClearErrors
-    ${IfNot} ${FileExists} "$INSTDIR\${EXE}"
-      ${Break}
-    ${EndIf}
-    FileOpen $R8 "$INSTDIR\${EXE}" a
-    ${IfNot} ${Errors}
-      FileClose $R8
+    StrCpy $R6 0
+    !insertmacro CheckUnlocked "${EXE}"
+    !insertmacro CheckUnlocked "${CLI_EXE}"
+    ${If} $R6 == 0
       ${Break}
     ${EndIf}
     ${If} ${Silent}
@@ -169,6 +181,8 @@ FunctionEnd
 ; xtask の BUNDLED_DOCS と同じ名前の集まりで、xtask の試験が突き合わせる（文書を足したら、両方に足す）。
 !macro DocFiles ACTION
   !insertmacro ${ACTION} "docs" "GUIDE.md"
+  !insertmacro ${ACTION} "docs" "CLI.md"
+  !insertmacro ${ACTION} "docs" "MCP.md"
   !insertmacro ${ACTION} "docs" "UNITY.md"
   !insertmacro ${ACTION} "docs" "INSTALL.md"
   !insertmacro ${ACTION} "docs" "BUILDING.md"
@@ -183,6 +197,8 @@ FunctionEnd
   !insertmacro ${ACTION} "docs" "SAVE_FOR_DISTRIBUTION.md"
   !insertmacro ${ACTION} "docs" "YLP_FORMAT.md"
   !insertmacro ${ACTION} "docs\en" "GUIDE.md"
+  !insertmacro ${ACTION} "docs\en" "CLI.md"
+  !insertmacro ${ACTION} "docs\en" "MCP.md"
   !insertmacro ${ACTION} "docs\en" "UNITY.md"
   !insertmacro ${ACTION} "docs\en" "INSTALL.md"
   !insertmacro ${ACTION} "docs\en" "BUILDING.md"
@@ -260,6 +276,7 @@ Section "$(NAME_CORE)" SecCore
   SetOutPath "$INSTDIR"
   SetOverwrite on
   File "${STAGE}\${EXE}"
+  File "${STAGE}\${CLI_EXE}"
   File "${STAGE}\LICENSE"
   File "${STAGE}\README.md"
   File "${STAGE}\README.en.md"
@@ -324,6 +341,7 @@ FunctionEnd
 Section "Uninstall"
   Call un.WaitUnlock
   Delete "$INSTDIR\${EXE}"
+  Delete "$INSTDIR\${CLI_EXE}"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\README.en.md"

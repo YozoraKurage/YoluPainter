@@ -41,6 +41,7 @@ OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験と Unity 用
 
 - [機能と操作](docs/GUIDE.md)
 - [Unity との連携](docs/UNITY.md)（Live Link・Unity 版との `.ylp` の受け渡し）
+- [コマンドラインと AI からの操作](docs/CLI.md)（`yolupainter-cli`・[MCP サーバー](docs/MCP.md)）
 - [PSD](docs/PSD.md)、[ブラシ](docs/BRUSH.md)、[ブラシの取り込み](docs/BRUSH_IMPORT.md)、[サブツール](docs/SUBTOOLS.md)、[グラデーションマップ](docs/GRADIENT_MAP.md)、[3D ビュー](docs/PREVIEW.md)、[復旧](docs/RECOVERY.md)、[画面](docs/WINDOW.md)、[配布用に保存](docs/SAVE_FOR_DISTRIBUTION.md)、[.ylp の形式](docs/YLP_FORMAT.md)
 - [変更の記録](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 

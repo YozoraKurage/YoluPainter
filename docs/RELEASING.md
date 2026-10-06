@@ -28,6 +28,7 @@ cargo xtask build --target x86_64-pc-windows-msvc --release
 cargo xtask bundle --target x86_64-pc-windows-msvc
 cargo xtask installer --target x86_64-pc-windows-msvc
 cargo xtask symbols --target x86_64-pc-windows-msvc   # Windows だけ。PDB の付属物（下の「PDB の付属物」）
+cargo xtask mcpb --target x86_64-pc-windows-msvc      # Windows だけ。Claude Desktop に入れる拡張（下の「Claude Desktop の拡張（.mcpb）」）
 # Linux では target を x86_64-unknown-linux-gnu に替える（installer は Windows だけ）
 cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 ```
@@ -35,8 +36,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 `bundle` と `installer` は直前に同じコミットからビルドした release 実行ファイルを使います。古いビルドを使わないでください。
 `bundle` と `installer` は `target/dist` に過去の版を残すので、手元で出すときは `target/dist` を空にしてから作ります。
 違う版や余分なファイルが残っていると `updater-json` が拒否します（PDB の付属物 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` の名前だけは例外。CI は毎回まっさらです）。
-出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物。
-実行ファイル、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
+出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物、`mcpb` を走らせたときの `.mcpb`。
+実行ファイル（アプリの `yolupainter` と、コマンドラインと MCP サーバーの `yolupainter-cli`。`build` が同じ命令で組みます）、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
 同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
 開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
 `docs/` に足したファイルは、そのどちらかへ必ず載せます（載せ忘れると `bundle`・`installer` が止まり、`cargo test -p xtask` も落ちます）。
@@ -44,7 +45,7 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 入れる文書の相対のリンクが配布物の中で切れないことも試験が確かめるので、入れない物（`docs/DEVELOPMENT.md`・`CHANGELOG.md`・`crates/` の README など）へは GitHub の URL で張ります。
 インストーラーのスクリプト `installer/yolupainter.nsi` の `DocFiles` にも同じ一覧があり、試験が突き合わせます（文書を足したら両方に足します）。
 `tools/third-party.py` が対象ごとに許諾を照合し、未確認の依存や原文の不一致では束ねません。
-更新クレート（`yolu-update`）はアプリに組み込まれているので、その依存の許諾全文も含めます。
+更新クレート（`yolu-update`）はアプリに組み込まれ、コマンドライン（`yolu-cli`）は同じ配布物に入るので、その依存の許諾全文も含めます（`--include-update --include-cli`）。
 `xtask` 自体は配りません。独自の `CARGO_TARGET_DIR` は使わず、出力を `target/` に揃えてください。
 
 `updater-json` の入力は、その版の配布物だけを置いた専用フォルダです。違う版や余分なファイルは拒否します
@@ -67,6 +68,18 @@ URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<�
 更新の対象ではありません（署名つきの更新情報に載せず、アプリは取りに行きません）。`verify` は、通常のファイルで、空でなく、大きさの上限内で、中身が `yolupainter.pdb` だけであることを見ます。
 `symbols` は PDB を調べる前に前回の付属物を消すので、組み直しに失敗したあとで古い PDB が残りません。
 
+### Claude Desktop の拡張（.mcpb）
+
+`cargo xtask mcpb --target x86_64-pc-windows-msvc` が、`target/dist/yolupainter-<版>-x86_64-pc-windows-msvc.mcpb` を作ります（`build` のあとに。`yolupainter-cli.exe` を使います）。
+中身は zip で、`manifest.json`（mcpb の manifest_version 0.3。`server.type` は `binary`、実行ファイルは `server/yolupainter-cli.exe`、引数は `mcp`、対象は `win32` だけ。ツールの一覧は書かず `tools_generated` にして、
+実行ファイルが `tools/list` で返す物を正本にします）・アイコン（アプリのロゴの PNG）・`LICENSE`・コマンドラインの許諾の全文（`DEPENDENCIES.md`・`THIRD_PARTY_LICENSES.txt`。
+`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`。実行ファイルはアプリと 1 回の組みで作り機能が合わさるので、その組みでの `yolu-cli` の部分木で数えます）・実行ファイル 1 つです。ロゴを替えるときは `crates/xtask/src/main.rs` の `MCPB_LOGO` を替えます。
+
+PDB の付属物と同じく、Release に載せるだけで、更新の対象ではありません。署名つきの更新情報には載せず（アプリは取りに行かず、インストールした拡張は、新しい `.mcpb` を入れ直して替えます）、
+`updater-json` はこの名前（版と対象が今の版と一致する 1 つ）だけを知って読み飛ばし、`verify` は中身の形（一覧のファイルだけで、manifest が今の版・実行ファイルを指す）を見ます。
+`dist-build.yml` の Windows の組みが `xtask mcpb` を走らせ、`target/dist/*` ごと成果物・Release の付属物になります。
+manifest は公式の検証（`npx @anthropic-ai/mcpb validate manifest.json`）が通ることを確かめています。Windows の実機では、Claude Desktop に入れて、ツールが並び、`file` を付けて操作できることを、版ごとに 1 回確かめてください。
+
 ### Windows のインストーラー
 
 NSIS のスクリプトは `installer/yolupainter.nsi` です。利用者ごとのインストール（`%LOCALAPPDATA%\Programs\YoluPainter`、管理者権限なし、64 ビット）で、
@@ -80,7 +93,7 @@ NSIS のスクリプトは `installer/yolupainter.nsi` です。利用者ごと�
 | `/D=<パス>` | 入れ先（最後に置く。省略は前の入れ先） |
 | アンインストーラーの `/S` `/DELETEDATA` | 無音。アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ。`%APPDATA%\YoluPainter` と `%LOCALAPPDATA%\YoluPainter` の名指しした物）は、画面では消すかを聞き、無音では `/DELETEDATA` のときだけ消す。個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットなど利用者が作った物と、知らないファイルは、どちらでも残す（表は `docs/INSTALL.md`） |
 
-実行中のアプリは終了させません。実行ファイルが使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5。`/RUN` が付いていれば今入っている実行ファイルを起こし直します）、
+実行中のアプリは終了させません。実行ファイル（アプリと `yolupainter-cli.exe`。MCP のクライアントが動かし続けていることがあります）が使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5。`/RUN` が付いていれば今入っているアプリの実行ファイルを起こし直します）、
 アンインストーラーは自分が入れたファイルだけを消します（入れ先に利用者のファイルがあれば、入れ先のフォルダは残ります）。
 
 文書は入れ先の `docs\`・`docs\en\` に入ります。入れた文書の名前は `docs\.installed` に記録し、更新（上書き）のとき、前の版の記録にある文書を先に消してから今の版の文書を入れるので、
@@ -145,6 +158,7 @@ cargo xtask preflight --only version --kind prerelease
 | `licenses` | 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ。未確認の依存・原文の不一致・`blocked` で落ちる） |
 | `attributes` | SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か（Windows の checkout で CRLF になると照合が落ちる） |
 | `nsis` | `installer/yolupainter.nsi` の `Target` が、公式の Windows 版 NSIS が持つ stub（`x86-unicode`・`x86-ansi`）か（amd64 の stub は無い） |
+| `mcpb` | Windows の対象で、`.mcpb` の manifest が組めて形が合うか、拡張に入れるロゴの PNG があるか、コマンドラインの許諾の束（`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`）が作れるか |
 | `version` | yolu-app の版のタグ `v<版>` が origin にまだ無いか（`git ls-remote --tags origin`。問い合わせられなければ「飛ばした」と表示する）、`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら `alpha.N`・`beta.N`・`rc.N` の版か |
 | `targets` | `tools/dist-targets.json` の対象が、xtask の配れる対象で、Windows にだけインストーラーがあるか |
 | `workflows` | ワークフローの YAML が読めるか、release.yml の入力と対象の並びが食い違わないか、外の Action が SHA で固定されているか、配る物の手順がキャッシュを使っていないか（`tools/check-workflows.py`。PyYAML が無ければ「飛ばした」） |

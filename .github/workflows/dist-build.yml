@@ -101,6 +101,8 @@ jobs:
           cargo xtask build --target ${{ matrix.target }} --release $REQUIRE_KEY
           cargo xtask bundle --target ${{ matrix.target }}
           if [ "${{ matrix.installer }}" = true ]; then cargo xtask installer --target ${{ matrix.target }}; fi
+          # Claude Desktop に入れる拡張（yolupainter-<版>-<対象>.mcpb。manifest・ロゴ・許諾・yolupainter-cli.exe の zip）。更新の対象ではなく、署名つきの更新情報には載らない
+          if [ "$RUNNER_OS" = Windows ]; then cargo xtask mcpb --target ${{ matrix.target }}; fi
           # PDB を Release の付属物（yolupainter-<版>-<対象>-pdb.zip）にする。更新の対象ではなく、署名つきの更新情報には載らない
           if [ "$RUNNER_OS" = Windows ]; then cargo xtask symbols --target ${{ matrix.target }}; fi
       - name: 目録を作る

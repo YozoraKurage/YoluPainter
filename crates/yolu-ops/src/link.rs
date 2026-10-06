@@ -19,6 +19,8 @@ use crate::wire::{check_version, parse_command};
 
 /// 手元の経路の名前（Live Link の `yolu_protocol::DEFAULT_LINK_NAME` とは別）。
 pub const LINK_NAME: &str = "yolupainter-ops";
+/// 経路の名前を替える環境変数（アプリの受け口と CLI・MCP が同じ名前を読む。試験・2 つのアプリを並べるとき）。
+pub const LINK_NAME_ENV: &str = "YOLUPAINTER_OPS_NAME";
 /// 枠の種類: 要求。
 pub const KIND_REQUEST: u16 = 0x4f50;
 /// 枠の種類: 返事。

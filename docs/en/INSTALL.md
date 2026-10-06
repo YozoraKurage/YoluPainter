@@ -6,8 +6,9 @@ Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). 
 
 - `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. Uninstall through Settings → Apps; you will be asked whether to remove settings and recovery data as well (they remain if no prompt is shown). Things you made are removed in neither case ([table below](#uninstalling-and-your-data)). Use `/S` for silent installation, `/ASSOC=1` to enable file association (`/ASSOC=0` to disable it), and `/RUN` to launch the application after installation. For a silent uninstall use `/S`, and add `/DELETEDATA` to remove settings and recovery data as well.
 - `yolupainter-<version>-x86_64-pc-windows-msvc.zip`: extract and run `yolupainter.exe`; no installation is needed.
+- `yolupainter-<version>-x86_64-pc-windows-msvc.mcpb`: an extension for Claude Desktop ([Operating from an AI assistant](MCP.md)). Double-click it to install. App updates do not replace it.
 
-Both include `README.md` and a `docs` folder (English under `docs/en`) with this document, so they can be read offline.
+Both include the command-line program `yolupainter-cli.exe` ([usage](CLI.md)), `README.md` and a `docs` folder (English under `docs/en`) with this document, so they can be read offline.
 
 ## Updates
 
@@ -30,7 +31,7 @@ Uninstalling removes the installed files (the application, documents, shortcut a
 | `%APPDATA%\YoluPainter\recovery\` | Recovery generations | Removed |
 | `%APPDATA%\YoluPainter\logs\` | Crash records | Removed |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | Thumbnail cache | Removed |
-| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link connection files | Removed |
+| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Connection files of Live Link and of external control (`yolupainter-cli`, MCP) | Removed |
 | `%APPDATA%\YoluPainter\Library\` (the default library folder) | Personal library | Kept |
 | `%APPDATA%\YoluPainter\brushes\` | Your brushes and erasers | Kept |
 | `%APPDATA%\YoluPainter\subtools\` | Your sub-tools | Kept |

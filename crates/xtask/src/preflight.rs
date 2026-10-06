@@ -6,12 +6,17 @@
 //! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か
 //!   （Windows の checkout で CRLF になって照合が落ちた、0.3.0 の配布の失敗）
 //! - `nsis`: インストーラーの台本の `Target` が、公式の Windows 版 NSIS が持つ stub（x86-unicode・x86-ansi）か（amd64 は無く、0.3.0 の配布で落ちた）
+//! - `mcpb`: Claude Desktop の拡張（.mcpb）を作る対象（Windows）で、`manifest.json` が組めて形が合うことと、拡張に入れるコマンドラインの許諾の束
+//!   （`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`）が作れること、拡張に入れるロゴの PNG があること
 //! - `version`: yolu-app の版のタグ `v<版>` が origin にまだ無いか。`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら
 //!   試験版の形（`alpha.N`・`beta.N`・`rc.N`）の版か
 //! - `targets`: `tools/dist-targets.json` の対象が、この xtask が配れる対象（と、Windows はインストーラーつき）か
 //! - `workflows`: ワークフローの YAML が読めるか。release.yml の入力と対象の並びが食い違わないか（`tools/check-workflows.py`）
 //! - `installer`（`--installer` か `--only installer` のときだけ）: Wine で `tools/test-installer.py`（wine32 が要る）
-use super::{python, root, third_party, workspace_version, Result};
+use super::{
+    check_mcpb_manifest, mcpb_manifest, python, root, third_party, third_party_cli,
+    workspace_version, Result, MCPB_LOGO,
+};
 use semver::Version;
 use std::{
     fs,
@@ -26,6 +31,7 @@ pub(crate) const CHECKS: &[&str] = &[
     "licenses",
     "attributes",
     "nsis",
+    "mcpb",
     "version",
     "targets",
     "workflows",
@@ -358,6 +364,40 @@ fn nsis_outcome(script: &str) -> Outcome {
     }
 }
 
+/// .mcpb を作る対象（Windows）の事前確認: manifest が組めて形が合い、ロゴの PNG があり、コマンドラインの許諾の束が作れる。
+fn check_mcpb(root: &Path, offline: bool) -> Outcome {
+    let version = match workspace_version() {
+        Ok(version) => version,
+        Err(error) => return Failed(vec![format!("版を取得できません: {error}")]),
+    };
+    let mut problems = Vec::new();
+    if let Err(error) = check_mcpb_manifest(&mcpb_manifest(&version), &version) {
+        problems.push(error.to_string());
+    }
+    if !root.join(MCPB_LOGO).is_file() {
+        problems.push(format!("拡張に入れるロゴがありません: {MCPB_LOGO}"));
+    }
+    let mut command = third_party_cli(root, WINDOWS_ARCHIVE);
+    if offline {
+        command.arg("--offline");
+    }
+    match command.output() {
+        Err(error) => problems.push(format!("Python を起動できません: {error}")),
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            problems.push("コマンドラインの許諾の照合が失敗しました".to_owned());
+            problems.extend(lines(&output.stderr));
+        }
+    }
+    if problems.is_empty() {
+        Passed(format!(
+            "manifest と許諾の束（yolu-cli）が通る（版 {version}）"
+        ))
+    } else {
+        Failed(limited(problems))
+    }
+}
+
 fn check_nsis(root: &Path) -> Outcome {
     match fs::read_to_string(root.join("installer/yolupainter.nsi")) {
         Ok(script) => nsis_outcome(&script),
@@ -568,6 +608,16 @@ pub(crate) fn run(args: impl Iterator<Item = String>) -> Result<()> {
                 };
                 reports.push(report(&mut out, name, outcome)?)
             }
+            "mcpb" => {
+                // .mcpb を作るのは Windows の対象だけ（installer を作る対象と同じ）
+                let uses_extension = targets.iter().any(|target| *target == WINDOWS_ARCHIVE);
+                let outcome = if uses_extension {
+                    check_mcpb(&root, options.offline)
+                } else {
+                    Skipped("拡張（.mcpb）を作る対象がありません".into())
+                };
+                reports.push(report(&mut out, name, outcome)?)
+            }
             "version" => reports.push(report(&mut out, name, check_version(&root, options.kind))?),
             "targets" => reports.push(report(&mut out, name, check_targets(&root))?),
             "workflows" => reports.push(report(&mut out, name, check_workflows(&root))?),
@@ -687,6 +737,7 @@ mod tests {
                 "licenses",
                 "attributes",
                 "nsis",
+                "mcpb",
                 "version",
                 "targets",
                 "workflows"

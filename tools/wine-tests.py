@@ -67,7 +67,7 @@ def main():
     else:
         # 同じ prefix で前回互換モードを使っていても、DLL 自体は prefix に置かない。
         env.pop('WINEPATH', None)
-    packages = args.package or ['yolu-core', 'yolu-io', 'yolu-protocol', 'yolu-bridge', 'yolu-app']
+    packages = args.package or ['yolu-core', 'yolu-io', 'yolu-protocol', 'yolu-bridge', 'yolu-ops', 'yolu-cli', 'yolu-app']
     cmd = ['cargo', 'test', '--locked', '--target', TARGET, '--no-run',
            '--lib', '--tests', '--message-format=json']
     for package in packages:

@@ -6,8 +6,9 @@
 
 - `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラー）: 利用者ごとにインストールします。管理者権限は要りません。入れ先は `%LOCALAPPDATA%\Programs\YoluPainter`（変えられます）で、スタートメニューに登録し、`.ylp` をこのアプリで開く関連付けは選べます。アンインストールは「設定 → アプリ」から行い、設定と復旧のデータも消すかを聞かれます（聞かれなければ残ります。自分で作った物はどちらでも消えません。[下の表](#アンインストールとデータ)）。画面を出さずに入れるときは `/S`、関連付けは `/ASSOC=1`（付けない `/ASSOC=0`）、入れ終わったあとにアプリを起動するときは `/RUN` を付けます。画面を出さずに消すときは `/S`、設定と復旧のデータも消すときは `/DELETEDATA` を付けます。
 - `yolupainter-<版>-x86_64-pc-windows-msvc.zip`: 展開して `yolupainter.exe` を実行します（インストール不要）。
+- `yolupainter-<版>-x86_64-pc-windows-msvc.mcpb`: Claude Desktop に入れる拡張です（[AI のアシスタントから操作する](MCP.md)）。ダブルクリックで入れます。アプリの更新では入れ替わりません。
 
-どちらにも `README.md` と、この文書を含む `docs` フォルダ（英語は `docs/en`）が入っているので、ネットワークが無くても読めます。
+どちらにも、コマンドラインのプログラム `yolupainter-cli.exe`（[使い方](CLI.md)）と、`README.md` と、この文書を含む `docs` フォルダ（英語は `docs/en`）が入っているので、ネットワークが無くても読めます。
 
 ## 更新
 
@@ -30,7 +31,7 @@
 | `%APPDATA%\YoluPainter\recovery\` | 復旧用の世代 | 消える |
 | `%APPDATA%\YoluPainter\logs\` | クラッシュの記録 | 消える |
 | `%LOCALAPPDATA%\YoluPainter\thumbnails\` | サムネイルのキャッシュ | 消える |
-| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link の接続の置き場 | 消える |
+| `%LOCALAPPDATA%\YoluPainter\LiveLink\` | Live Link と、外からの操作（`yolupainter-cli`・MCP）の接続の置き場 | 消える |
 | `%APPDATA%\YoluPainter\Library\`（棚の場所の既定） | 個人のライブラリ | 残る |
 | `%APPDATA%\YoluPainter\brushes\` | 自分のブラシ・消しゴム | 残る |
 | `%APPDATA%\YoluPainter\subtools\` | 自分のサブツール | 残る |
