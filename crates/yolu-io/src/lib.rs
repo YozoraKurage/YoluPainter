@@ -14,6 +14,8 @@ pub mod look;
 mod native;
 mod package;
 mod project;
+pub mod pose;
+pub mod saved_selections;
 mod selection;
 pub mod shelf;
 pub mod smart;
@@ -25,12 +27,13 @@ pub use package::{
 };
 pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
-    PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    PROCEDURAL_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
-    FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
-    MAX_PROJECT_SETS, MODEL_PATH_MAX,
+    entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet,
+    WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES, ROOT_ENTRIES,
+    SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
 };
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
@@ -40,7 +43,7 @@ pub use generation::{
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
 pub use store::{
-    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveTarget,
+    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveStage, SaveTarget,
     MAX_BACKUPS_TO_KEEP,
 };
 
@@ -108,7 +111,7 @@ impl fmt::Display for Error {
             Self::Core(e) => write!(f, "core: {e}"),
             Self::UnsupportedFormat { format, app, version } => write!(
                 f,
-                ".ylp形式{format}（{app} {version}で保存）は未対応です。対応上限は形式7です"
+                ".ylp形式{format}（{app} {version}で保存）は未対応です。対応上限は形式{MAX_FORMAT}です"
             ),
         }
     }

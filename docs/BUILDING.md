@@ -6,6 +6,8 @@ Rust の stable ツールチェーンと C/C++ のビルド環境が必要です
 
 表示には GPU と対応ドライバーが必要です。描画基盤は [wgpu](https://docs.rs/wgpu/30.0.1/wgpu/struct.Backends.html) で、Windows は Direct3D 12 または Vulkan、Mac は Metal、Linux は Vulkan などを使います。アプリ単体の起動に Unity は必要ありません。
 
+コマンドラインと MCP サーバー（`yolupainter-cli`。[使い方](CLI.md)）も使うときは、同じ命令の `-p yolu-app` を `-p yolu-cli` にして組みます（画面のライブラリを使わないので、組みは短く済みます）。
+
 ## Windows
 
 64 ビットの Windows と、Visual Studio Build Tools の「C++ によるデスクトップ開発」（Windows SDK を含む）、Rust の MSVC ツールチェーンを用意します。PowerShell で実行します。

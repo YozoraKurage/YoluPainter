@@ -15,7 +15,11 @@ use yolu_gpu::{
 /// 表示の許し（1 画素の 1 バイトあたりの最大差）。多段の文書（マスク・塗りつぶし・グループ・チャンネルごとの合成）で 2 以内だった。
 const TOLERANCE: u8 = 2;
 
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
+
 fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
+    gpu_lease::lease();
     let g = match GpuPainter::new(Options::default()) {
         Ok(g) => g,
         Err(e) => {
@@ -98,22 +102,26 @@ fn doc() -> Document {
     Document::with_tile_size(53, 37, 16).unwrap()
 }
 
+/// 入れ子 `levels` 段のグループ（一番内側に塗った層 1 枚）。グループは mode で重ねる（通過でなければ独立して合成する）。
+fn nested(d: &mut Document, levels: usize, mode: BlendMode) -> LayerId {
+    let leaf = d.add_layer("葉").unwrap();
+    let mut inner = leaf;
+    for k in 0..levels {
+        let g = d.group_layers(&[inner], &format!("組 {k}")).unwrap();
+        d.set_layer_blend_mode(g, mode).unwrap();
+        inner = g;
+    }
+    inner
+}
+
 #[test]
-fn unsupported_documents_are_refused_with_a_reason_and_supported_ones_pass() {
+fn only_unknown_channels_and_too_deep_groups_are_refused_with_a_reason() {
     let mut d = doc();
     let a = d.add_layer("a").unwrap();
     let b = d.add_layer("b").unwrap();
     assert_eq!(supports(&d, Channel::Color), Ok(()));
-    // 法線の種類のチャンネル
-    assert_eq!(
-        supports(&d, Channel::Normal),
-        Err(Unsupported::NormalChannel)
-    );
-    assert_eq!(
-        supports(&d, Channel::Normal).unwrap_err().reason(),
-        "法線の種類のチャンネルは GPU で合成できない"
-    );
-    // 塗りつぶし・マスク・チャンネルごとの合成・通過のグループは扱える
+    // 法線の種類のチャンネル・調整の層・独立して合成するグループは、GPU で合成できる
+    assert_eq!(supports(&d, Channel::Normal), Ok(()));
     let fill = d
         .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(1, 2, 3, 200))], None)
         .unwrap();
@@ -126,149 +134,92 @@ fn unsupported_documents_are_refused_with_a_reason_and_supported_ones_pass() {
     )
     .unwrap();
     let g = d.group_layers(&[a, b], "組").unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
-    // 調整の層は、描くなら断り、見えなければ（隠す・不透明度 0）通す
-    let adj = d
-        .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
+    d.add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
         .unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::AdjustmentLayer)
-    );
-    d.set_layer_visible(adj, false).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
-    d.set_layer_visible(adj, true).unwrap();
-    d.set_layer_opacity(adj, 0.0, false).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
-    d.remove_layer(adj).unwrap();
-    // 独立して合成するグループ: 通過でない・不透明度が 1 でない・マスクが効く・クリッピングされる・クリッピングの下地
     d.set_layer_blend_mode(g, BlendMode::Multiply).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
-    d.set_layer_blend_mode(g, BlendMode::PassThrough).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
     d.set_layer_opacity(g, 0.5, false).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
-    d.set_layer_opacity(g, 1.0, false).unwrap();
     d.add_layer_mask(g).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Ok(()),
-        "何も隠さないマスクは通過のまま"
-    );
     d.set_mask_pixel(g, 3, 3, 255).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
-    d.set_layer_mask_enabled(g, false).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
-    d.set_layer_mask_enabled(g, true).unwrap();
-    d.set_layer_visible(g, false).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Ok(()),
-        "見えないグループは落ちるだけ"
-    );
-    d.set_layer_visible(g, true).unwrap();
-    d.remove_layer_mask(g).unwrap();
     let top = d.add_layer("上").unwrap();
     d.move_layer_to(top, None, 1).unwrap(); // グループのすぐ上
     d.set_layer_clipping(top, true).unwrap(); // グループが下地になる
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
-    d.remove_layer(top).unwrap();
-    // クリッピングされたグループ
-    let base = d.add_layer("下地").unwrap();
-    let inner = d.add_layer("中").unwrap();
-    let clipped = d.group_layers(&[inner], "クリップの組").unwrap();
-    d.set_layer_clipping(clipped, true).unwrap();
-    let _ = base;
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
-    // 空のグループ・隠したグループの中の調整は、描かないので通る
-    d.remove_layer(clipped).unwrap();
-    let empty = d.add_group("空", None).unwrap();
     assert_eq!(supports(&d, Channel::Color), Ok(()));
-    let hidden = d.add_group("隠す", None).unwrap();
-    let inner_adj = d
-        .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
-        .unwrap();
-    d.move_layer_to(inner_adj, Some(hidden), 0).unwrap();
+    assert_eq!(supports(&d, Channel::Normal), Ok(()));
+    // 文書にないチャンネル
+    let missing = Channel::from_index(40).unwrap();
+    assert_eq!(supports(&d, missing), Err(Unsupported::UnknownChannel));
     assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::AdjustmentLayer)
+        supports(&d, missing).unwrap_err().reason(),
+        "文書にないチャンネル"
     );
-    d.set_layer_visible(hidden, false).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()));
-    let _ = empty;
+    // グループの入れ子: 独立して合成するグループは 2 語ずつ退避するので 32 段まで
+    let mut deep = doc();
+    nested(&mut deep, 32, BlendMode::Multiply);
+    assert_eq!(supports(&deep, Channel::Color), Ok(()), "32 段");
+    let mut too_deep = doc();
+    nested(&mut too_deep, 33, BlendMode::Multiply);
+    assert_eq!(
+        supports(&too_deep, Channel::Color),
+        Err(Unsupported::GroupDepth)
+    );
+    assert_eq!(
+        supports(&too_deep, Channel::Color).unwrap_err().reason(),
+        "グループの入れ子が GPU で合成できる深さを超える"
+    );
+    // 通過のグループは中身をそのまま下へ重ねる（平らにする）ので、深くしても積みを使わない。不透明度が 1 でなければ 1 語ずつ使う
+    let mut passes = doc();
+    nested(&mut passes, 40, BlendMode::PassThrough);
+    assert_eq!(supports(&passes, Channel::Color), Ok(()), "平らになる通過");
+    // 見えないグループは描かないので、深さに数えない
+    let outer = too_deep
+        .layers()
+        .iter()
+        .find(|l| l.is_group() && l.parent().is_none())
+        .unwrap()
+        .id();
+    too_deep.set_layer_visible(outer, false).unwrap();
+    assert_eq!(supports(&too_deep, Channel::Color), Ok(()), "見えないグループ");
 }
 
 /// 通過のグループのすぐ上に並ぶクリッピングの層が何も描かない（隠す・不透明度 0・空のグループ）なら、core の計画は組を持たない
-/// 通過のグループのまま。描くクリッピングの層があるときだけ、独立して合成するグループになる。
+/// 通過のグループのまま。描くクリッピングの層があるときだけ、独立して合成するグループになる。どちらも CPU と同じ画素になる。
 #[test]
-fn clipping_layers_that_draw_nothing_do_not_isolate_a_pass_through_group() {
+fn clipping_layers_on_a_pass_through_group_follow_the_cpu_plan() {
+    let Some(mut g) = gpu() else { return };
     let mut d = doc();
     let mut rng = Rng(61);
     let a = d.add_layer("a").unwrap();
     let b = d.add_layer("b").unwrap();
+    paint(&mut d, a, &mut rng, &[255, 120]);
+    paint(&mut d, b, &mut rng, &[200, 255, 0]);
+    d.set_layer_blend_mode(b, BlendMode::Multiply).unwrap();
     let group = d.group_layers(&[a, b], "組").unwrap();
+    check(&mut g, &d, "通過のグループ");
     let top = d.add_layer("上").unwrap();
+    paint(&mut d, top, &mut rng, &[255, 90]);
     d.set_layer_clipping(top, true).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup),
-        "描くクリッピングの層が下地のグループを独立にする"
-    );
+    check(&mut g, &d, "描くクリッピングの層が下地のグループを独立にする");
     d.set_layer_visible(top, false).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Ok(()),
-        "隠したクリッピングの層"
-    );
+    check(&mut g, &d, "隠したクリッピングの層");
     d.set_layer_visible(top, true).unwrap();
     d.set_layer_opacity(top, 0.0, false).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()), "不透明度 0");
+    check(&mut g, &d, "不透明度 0");
     d.set_layer_opacity(top, 1.0, false).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
+    check(&mut g, &d, "戻した");
     d.remove_layer(top).unwrap();
     // 空のグループのクリッピングは描かない
     let empty = d.add_group("空", None).unwrap();
     d.set_layer_clipping(empty, true).unwrap();
-    assert_eq!(supports(&d, Channel::Color), Ok(()), "空のグループ");
+    check(&mut g, &d, "空のグループのクリッピング");
     // 描く調整の層のクリッピングは組に入る（グループは独立になる）。隠せば入らない
     let adj = d
         .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
         .unwrap();
     d.move_layer_to(adj, None, 1).unwrap();
     d.set_layer_clipping(adj, true).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Err(Unsupported::IsolatedGroup)
-    );
+    check(&mut g, &d, "調整のクリッピング");
     d.set_layer_visible(adj, false).unwrap();
-    assert_eq!(
-        supports(&d, Channel::Color),
-        Ok(()),
-        "隠した調整のクリッピング"
-    );
-    // 画素も CPU と同じ（組を持たない通過のグループとして合成する）
-    let Some(mut g) = gpu() else { return };
-    paint(&mut d, a, &mut rng, &[255, 120]);
-    paint(&mut d, b, &mut rng, &[200, 255]);
-    d.set_layer_blend_mode(b, BlendMode::Multiply).unwrap();
+    check(&mut g, &d, "隠した調整のクリッピング");
     let hidden_clip = d.add_layer("隠したクリッピング").unwrap();
     d.move_layer_to(hidden_clip, None, 1).unwrap();
     paint(&mut d, hidden_clip, &mut rng, &[255]);
@@ -285,21 +236,16 @@ fn unsupported_update_is_refused_without_breaking_the_compositor() {
     let a = d.add_layer("a").unwrap();
     let mut rng = Rng(7);
     paint(&mut d, a, &mut rng, &[255, 120]);
-    check(&mut g, &d, "調整の前");
-    let adj = d
-        .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
-        .unwrap();
+    check(&mut g, &d, "入れ子の前");
+    let deep = nested(&mut d, 33, BlendMode::Multiply);
     let e = g.update(&d, Channel::Color).unwrap_err();
-    assert!(e.to_string().contains("調整"), "{e}");
+    assert!(e.to_string().contains("入れ子"), "{e}");
     // GPU は失敗扱いにならず、扱える文書に戻れば続けて使える
-    d.remove_layer(adj).unwrap();
-    check(&mut g, &d, "調整を外したあと");
-    let e = g.update(&d, Channel::Normal).unwrap_err();
-    assert!(
-        e.to_string().contains("Normal") || e.to_string().contains("法線"),
-        "{e}"
-    );
-    check(&mut g, &d, "法線を断ったあと");
+    d.remove_layer(deep).unwrap();
+    check(&mut g, &d, "入れ子を外したあと");
+    let e = g.update(&d, Channel::from_index(40).unwrap()).unwrap_err();
+    assert!(e.to_string().contains("チャンネル"), "{e}");
+    check(&mut g, &d, "文書にないチャンネルを断ったあと");
 }
 
 #[test]
@@ -482,12 +428,9 @@ fn pass_through_groups_are_flattened_and_match_cpu() {
     d.undo().unwrap();
     check(&mut g, &d, "解いたグループを戻す");
     d.set_layer_opacity(outer, 0.5, false).unwrap();
-    assert!(
-        g.update(&d, Channel::Color).is_err(),
-        "独立のグループは GPU で合成しない"
-    );
+    check(&mut g, &d, "不透明度 0.5 の通過のグループ（下とフェードする）");
     d.set_layer_opacity(outer, 1.0, false).unwrap();
-    check(&mut g, &d, "独立でなくなったので GPU に戻る");
+    check(&mut g, &d, "平らな通過に戻した");
 }
 
 #[test]
@@ -825,6 +768,7 @@ fn premultiplied_display_is_the_cpu_conversion_of_the_straight_display() {
 
 #[test]
 fn shared_device_and_limited_devices() {
+    gpu_lease::lease();
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let Ok(adapter) =
@@ -1107,6 +1051,7 @@ fn requirements_match_what_update_counts_and_flag_documents_over_the_budget() {
     let wide = Document::with_tile_size(20_000, 16, 16).unwrap();
     let e = resident_requirements(&wide, Channel::Color, &options, &limits).unwrap_err();
     assert!(e.to_string().contains("上限"), "{e}");
-    let e = resident_requirements(&dense, Channel::Normal, &options, &limits).unwrap_err();
-    assert!(e.to_string().contains("法線"), "{e}");
+    let e = resident_requirements(&dense, Channel::from_index(40).unwrap(), &options, &limits)
+        .unwrap_err();
+    assert!(e.to_string().contains("チャンネル"), "{e}");
 }

@@ -7,6 +7,7 @@
     clippy::manual_is_multiple_of
 )]
 
+pub mod c2f;
 pub mod corpus;
 pub mod sut;
 

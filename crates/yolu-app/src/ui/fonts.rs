@@ -4,7 +4,7 @@
 //! 英数字も同じ書体で揃える（egui の既定の Ubuntu Light と組まない）: 同じ書体なら、かなと英字の高さと太さが揃い、行の中で字の
 //! 大きさがばらつかない。egui の既定の書体は、この書体に無い記号（絵文字など）を補う後ろ盾として末尾に残す。
 //! 縦の位置は書体の寸法（ascent 1802・descent 246・1 em = 2048）のとおりで、行の高さの真ん中が漢字の字面の真ん中に合うので、
-//! 補正（`FontTweak`）は入れない（`tests/fonts.rs` が字面の真ん中を測って確かめる）。
+//! 補正（`FontTweak`）は入れない（`tests/gui_shell/fonts.rs` が字面の真ん中を測って確かめる）。
 
 use egui::{FontData, FontDefinitions, FontFamily};
 

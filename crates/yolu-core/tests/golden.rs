@@ -1267,6 +1267,12 @@ fn first_difference(expected: &[u8], actual: &[u8], width: usize) -> String {
 
 #[test]
 fn cases_match_the_csharp_core_byte_for_byte() {
+    // ワーカーで描く経路も C# の出力とバイト一致することを確かめる。既定のしきい値は画素ごとの時間の見積もりで決まり、速いブラシの
+    // 大きなダブは直列で描くので、箱の大きさの下限を 1 にして、複数のタイルにかかるダブは全部ワーカーで描かせる（一度だけ決めて戻さない）
+    static FORCE_WORKERS: std::sync::Once = std::sync::Once::new();
+    FORCE_WORKERS.call_once(|| {
+        yolu_core::brush::set_parallel_dab_pixels(1);
+    });
     let (_, index) = read_index();
     let cases = run_script();
     let mut failures = String::new();

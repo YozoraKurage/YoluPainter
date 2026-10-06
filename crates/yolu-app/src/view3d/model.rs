@@ -85,7 +85,11 @@ impl From<GeometryError> for ViewError {
 }
 impl From<ModelError> for ViewError {
     fn from(e: ModelError) -> Self {
-        Self::Model(e)
+        match e {
+            // 読み込みを取り消したことは、ほかの失敗と区別する（知らせ・取り消しの後始末が同じ道を通る）
+            ModelError::Cancelled => Self::Cancelled,
+            e => Self::Model(e),
+        }
     }
 }
 

@@ -38,6 +38,7 @@ pub use settings::{
 };
 pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
+pub(crate) use writer::Waiter;
 
 use crate::state::{Action, AppState};
 
@@ -390,6 +391,11 @@ impl AppState {
     pub fn recovery_tick_at(&mut self, now: Instant) -> Option<Duration> {
         self.recovery.active.as_ref()?;
         self.recovery_poll();
+        // 保存の間は見張りを止める。保存は開いた .ylp を置き換える（書き置きの読みと重ねない）うえ、「保存していない変更」の印
+        // （`modified`）は保存の結果が出るまで確かでない（保存の頼みが下ろして、保存の間の編集だけを立て直す）
+        if self.is_saving() {
+            return self.recovery.wakeup(now);
+        }
         let modified = self.modified;
         let stroking = self.is_stroking();
         let fingerprint = capture::fingerprint(self);
@@ -518,7 +524,14 @@ impl AppState {
         }
     }
 
-    /// 動いている書き込みが終わるまで待って、結果を受ける（試験・終了前。描画の途中では使わない）。
+    /// 動いている書き込みの終わりを、ほかのスレッドから待てる口（復旧が動いていなければ None）。保存が、開いた .ylp を置き換える前に、
+    /// 書き置きの読みが終わるのを待つために使う。
+    pub(crate) fn recovery_waiter(&self) -> Option<writer::Waiter> {
+        self.recovery.active.as_ref().map(|a| a.writer.waiter())
+    }
+
+    /// 動いている書き込みが終わるまで待って、結果を受ける（試験。描画の途中では使わない）。期限が無いので、終わる前には
+    /// `recovery_wait_within` を使う。
     pub fn recovery_wait(&mut self) {
         if let Some(a) = self.recovery.active.as_ref() {
             a.writer.wait();
@@ -526,10 +539,27 @@ impl AppState {
         self.recovery_poll();
     }
 
+    /// `recovery_wait` の、待つのを `wait` までにする形（終わる前の。遅いディスク・止まったネットワークドライブで終了が固まらないように）。
+    /// 終わっていれば true。間に合わなかった書き込みは走ったままで、確定するまで前の世代が残る（置換は最後の 1 回）。
+    pub fn recovery_wait_within(&mut self, wait: Duration) -> bool {
+        let done = self
+            .recovery
+            .active
+            .as_ref()
+            .is_none_or(|a| a.writer.wait_until(Some(Instant::now() + wait)));
+        self.recovery_poll();
+        done
+    }
+
     /// いまの状態を（変わっていれば）書いて、書き込みが終わるまで待つ。返すのは、いまの状態が書き置きに入っているか
     /// （保存した .ylp と同じ・書き置きが同じならtrue。描いている最中・書き込みの失敗は false）。
     pub fn recovery_flush(&mut self) -> bool {
         self.recovery_flush_until(None)
+    }
+
+    /// `recovery_flush` の、待つのを `wait` までにする形（GPU の装置を失ったなど、急いで書き置きを取るとき）。
+    pub fn recovery_flush_within(&mut self, wait: Duration) -> bool {
+        self.recovery_flush_until(Some(Instant::now() + wait))
     }
 
     /// `recovery_flush` の、待つ期限を付けられる形（終わるときは、遅いディスクで固まらないように期限を付ける）。
@@ -688,6 +718,14 @@ impl AppState {
             return;
         };
         if self.is_stroking() {
+            return;
+        }
+        if self.is_saving() {
+            self.message = format!(
+                "{}: {}",
+                self.lang.pick("開けません", "Cannot open"),
+                crate::project::busy_reason(self.lang)
+            );
             return;
         }
         let limits = yolu_io::Limits::from_layer_pixels(self.load_source_bytes());

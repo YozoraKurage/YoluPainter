@@ -1,0 +1,116 @@
+name: 配る物の組み
+
+# 配る物（zip・インストーラー）を組む手順の本体。ci.yml（main 向けの PR）と release.yml（試験の通った成果物を受け取れなかったとき）の
+# 両方が、この 1 つの手順を呼ぶ。試した物と配る物が同じ命令で組まれ、対象の並びも tools/dist-targets.json の 1 か所に決まる。
+#
+# 成果物は dist-<木>-<対象>（木は git rev-parse HEAD^{tree}。PR の CI は merge の commit の木）。中に catalog.json
+# （木・commit・版・対象・各ファイルの SHA-256）が入る。配布は、同じ木で全部のジョブが成功した PR の CI の成果物をこの名前で探して受け取る（docs/RELEASING.md）。
+#
+# キャッシュは使わない（actions/cache・rust-cache・sccache など）。キャッシュの汚染が配る物に入る道を作らないため。tools/check-workflows.py が確かめる。
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        description: 組む対象（tools/dist.py plan の出力の matrix。JSON）
+        type: string
+        required: true
+      require-update-key:
+        description: 更新用の公開鍵が空なら止める（Draft を作る配布と、PR の CI は入れる）
+        type: boolean
+        required: true
+      update-public-key:
+        description: アプリに組み込む更新用の公開鍵（リポジトリ変数 YOLUPAINTER_UPDATE_PUBLIC_KEY。秘密ではない）
+        type: string
+        default: ''
+      retention-days:
+        description: 成果物の保存日数
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 配る物の組み（${{ matrix.target }}）
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      PYTHON: python
+      # 入っていればアプリに組み込まれ、更新の項目が出る。目録にも載せ、昇格のとき、いまの変数と同じ鍵の物だけを受け取る。
+      YOLUPAINTER_UPDATE_PUBLIC_KEY: ${{ inputs.update-public-key }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Linux のビルド依存
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev pkg-config
+      - name: Rust を準備
+        run: rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.target }}
+      - run: rustup default stable
+      - name: NSIS を準備（インストーラーを作る対象。runner に無ければ Chocolatey で 3.11.0 を入れ、どちらでも 3.11 であることを確かめる）
+        if: ${{ matrix.installer }}
+        shell: pwsh
+        run: |
+          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          $found = Get-Command makensis -ErrorAction SilentlyContinue
+          if ($found) {
+            $makensis = $found.Source
+          } elseif (Test-Path "$nsisDir\makensis.exe") {
+            $makensis = "$nsisDir\makensis.exe"
+          } else {
+            choco install nsis --version=3.11.0 --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS 3.11.0 を入れられません' }
+            $makensis = "$nsisDir\makensis.exe"
+          }
+          # 配布物の作り方を変えないため、入っていた物でも入れた物でも、使うのは 3.11 だけ（版が違えば止める）
+          $version = (& $makensis /VERSION | Out-String).Trim()
+          Write-Host "makensis: ${makensis} (${version})"
+          if ($version -notmatch '^v3\.11(\.0)?$') { throw "NSIS は 3.11 が要ります（${makensis} は ${version}）" }
+          # 確かめた物を、あとの手順（cargo xtask installer）が使う
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf-8
+      # アプリに埋める診断用の ID（版の表示・クラッシュ報告の Git:）。PR の CI は merge の commit（どの履歴にも入らない）を checkout するので、
+      # PR の先頭の commit にする（昇格するのはその木が merge の木と同じ物だけ）。配布の組みと手元は HEAD。
+      - name: 診断用の ID を決める
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python tools/dist.py revision
+      # 組む前に、配る物を作る段が本番で初めて止まる種類の失敗（許諾の照合・表記ファイルの改行・NSIS の stub・版のタグ）を落とす。
+      - name: 事前確認
+        run: cargo xtask preflight --target ${{ matrix.target }}
+      - name: PDB の設定（Windows。クラッシュの記録の番地を、同じ版の関数名・行へ引くための付属物を作る）
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # 行番号つきの PDB を、実行ファイルとは別のファイルに作る（命令は変えない）。PDB を確実に作るため、debug と strip を既定任せにしない
+          echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
+      - name: ビルドと配布物の作成
+        env:
+          REQUIRE_KEY: ${{ inputs.require-update-key && '--require-update-key' || '' }}
+        shell: bash
+        run: |
+          cargo xtask build --target ${{ matrix.target }} --release $REQUIRE_KEY
+          cargo xtask bundle --target ${{ matrix.target }}
+          if [ "${{ matrix.installer }}" = true ]; then cargo xtask installer --target ${{ matrix.target }}; fi
+          # Claude Desktop に入れる拡張（yolupainter-<版>-<対象>.mcpb。manifest・ロゴ・許諾・yolupainter-cli.exe の zip）。更新の対象ではなく、署名つきの更新情報には載らない
+          if [ "$RUNNER_OS" = Windows ]; then cargo xtask mcpb --target ${{ matrix.target }}; fi
+          # PDB を Release の付属物（yolupainter-<版>-<対象>-pdb.zip）にする。更新の対象ではなく、署名つきの更新情報には載らない
+          if [ "$RUNNER_OS" = Windows ]; then cargo xtask symbols --target ${{ matrix.target }}; fi
+      - name: 目録を作る
+        id: catalog
+        run: python tools/dist.py catalog --target ${{ matrix.target }} --assets target/dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.catalog.outputs.name }}
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

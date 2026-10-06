@@ -3,6 +3,7 @@
 //! 点が来ていれば、そのフレームのストロークはペンの点だけで描き、同じペンから egui が作るマウスの代わりの入力は使わない。
 //! ストロークを取り残さない: ボタンを離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）で必ず終える。
 
+pub mod cpu;
 pub mod display;
 pub mod gpu;
 pub mod nav;
@@ -43,11 +44,18 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         pen,
         gesture::foreign_press(ui.ctx(), &response),
     );
-    display.set_document_epoch(app.doc_epoch);
-    display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
-
     let (w_px, h_px) = (app.doc.width(), app.doc.height());
     let view = app.view.view(rect, w_px, h_px);
+    display.set_document_epoch(app.doc_epoch);
+    // 見えている所から上げる（CPU の頁。GPU の道は使わない）
+    display.set_viewport(Some(self::cpu::Viewport {
+        // 何も見えないとき（表示を画面の外へ動かした）は空の矩形。全部が「見えていない」として、近い順に少しずつ上げる
+        visible: view
+            .visible_doc_rect(rect)
+            .unwrap_or(crate::engine::Rect::new(0, 0, 0, 0)),
+        pixel_size: view.pixel_size(),
+    }));
+    display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t::CANVAS_BG);
     display.paint(&painter, &view);

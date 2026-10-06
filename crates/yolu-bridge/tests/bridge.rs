@@ -1,17 +1,14 @@
 //! C の口をそのまま呼ぶ試験（C# と同じ使い方）。相手は同じプロセスの中の自己診断のスタンドアロン（本物のソケットと共有メモリ）。
 
-use std::sync::atomic::{AtomicU32, Ordering};
+#[path = "../../yolu-protocol/tests/support/names.rs"]
+mod names;
+
 use std::time::{Duration, Instant};
 
 use yolu_bridge::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylb-test-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylb-test", tag)
 }
 
 fn wait_for(h: u64, what: &str, mut f: impl FnMut() -> bool) {
@@ -97,6 +94,13 @@ fn connect(name: &str) -> u64 {
 
 /// 四角 1 つ（2 つの三角形）を 2 つのマテリアルで描くモデルを送る。
 fn send_quad_model(h: u64) -> i32 {
+    let generation = quad_model_result(h);
+    assert!(generation >= 1);
+    generation
+}
+
+/// `send_quad_model` の、`ylb_model_send` の返した値をそのまま返す形（混んでいて断られる場合を確かめる）。
+fn quad_model_result(h: u64) -> i32 {
     unsafe {
         let name = "四角";
         assert_eq!(ylb_model_begin(h, name.as_ptr(), name.len() as i32), 0);
@@ -157,9 +161,7 @@ fn send_quad_model(h: u64) -> i32 {
             YLB_E_ARGUMENT
         );
         assert_eq!(ylb_model_submesh(h, mesh, 5, a.as_ptr(), 3), YLB_E_ARGUMENT);
-        let generation = ylb_model_send(h);
-        assert!(generation >= 1);
-        generation
+        ylb_model_send(h)
     }
 }
 
@@ -191,7 +193,7 @@ fn sets(h: u64) -> Vec<YlbSetInfo> {
 
 #[test]
 fn the_version_is_asked_first() {
-    assert_eq!(ylb_abi_version(), 5);
+    assert_eq!(ylb_abi_version(), 7);
     assert_eq!(ylb_protocol_versions(), (1 << 16) | 1);
 }
 
@@ -1143,13 +1145,14 @@ fn material_values_reach_a_standalone_with_the_mark() {
     // 上限ちょうどは送る（同じスロットの絵は、あとの 4 × 2 で置き換わる）
     assert_eq!(send_texture(h, 1, &over[..edge as usize * 4], edge, 1), 1);
     assert_eq!(send_texture(h, 1, &pixels, 4, 2), 1);
-    wait_for(h, "絵", || stats(server).textures == 2);
+    // 同じスロットの絵は、まだ書き始めていなければ列の中で置き換わる（届くのは 1 つか 2 つ）。最後に残るのは、あとの 4 × 2
     let mut t = YlbTestServerTexture::default();
     let s = "_MatCapTex";
-    assert_eq!(
-        unsafe { ylb_test_server_texture(server, 1, s.as_ptr(), s.len() as i32, &mut t) },
-        0
-    );
+    wait_for(h, "絵", || {
+        let found = unsafe { ylb_test_server_texture(server, 1, s.as_ptr(), s.len() as i32, &mut t) };
+        found == 0 && t.width == 4
+    });
+    assert!((1..=2).contains(&stats(server).textures));
     // 真ん中は (2, 1) の画素（行は下から、1 行 4 画素）: 番号 6
     assert_eq!((t.width, t.height, t.srgb), (4, 2, 1));
     assert_eq!(t.center.to_le_bytes(), [60, 20, 30, 255]);
@@ -1192,8 +1195,24 @@ fn send_original(
     state: i32,
     read: i32,
     flags: i32,
+    size: (u32, u32),
+    srgb: i32,
+    pixels: &[u8],
+) -> i32 {
+    send_original_stamped(h, material, slot, state, read, flags, size, srgb, 0, pixels)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_original_stamped(
+    h: u64,
+    material: i32,
+    slot: &str,
+    state: i32,
+    read: i32,
+    flags: i32,
     (width, height): (u32, u32),
     srgb: i32,
+    stamp: u64,
     pixels: &[u8],
 ) -> i32 {
     unsafe {
@@ -1208,8 +1227,54 @@ fn send_original(
             width,
             height,
             srgb,
+            stamp,
             pixels.as_ptr(),
             pixels.len() as i32,
+        )
+    }
+}
+
+/// 取り出した頼み 1 つ（スロットの名前つき）。
+#[derive(Debug, PartialEq, Eq)]
+struct Asked {
+    generation: u32,
+    material: u32,
+    wants: u32,
+    have: u64,
+    slot: String,
+}
+
+/// 溜まっている頼みを全部取り出す。
+fn requests(h: u64) -> Vec<Asked> {
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 1024];
+    loop {
+        let mut r = YlbRequest::default();
+        let n = unsafe { ylb_next_request(h, &mut r, buf.as_mut_ptr(), buf.len() as i32) };
+        if n != 1 {
+            assert_eq!(n, 0, "取り出しの失敗");
+            return out;
+        }
+        out.push(Asked {
+            generation: r.generation,
+            material: r.material,
+            wants: r.wants,
+            have: r.have,
+            slot: String::from_utf8(buf[..r.slot_len as usize].to_vec()).unwrap(),
+        });
+    }
+}
+
+fn ask(server: u64, generation: u32, material: u32, wants: i32, slot: &str, have: u64) -> i32 {
+    unsafe {
+        ylb_test_server_request(
+            server,
+            generation,
+            material,
+            wants,
+            slot.as_ptr(),
+            slot.len() as i32,
+            have,
         )
     }
 }
@@ -1365,6 +1430,449 @@ fn originals_are_not_sent_to_a_standalone_without_the_mark_and_nothing_waits() {
     wait_for(h, "モデルを閉じる知らせ", || stats(server).models_closed == 1);
     let st = stats(server);
     assert_eq!((st.originals, st.held_sets, st.unknown), (0, 0, 0));
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+// ───────── スタンドアロンからの頼み（機能の印 MATERIAL_REQUEST） ─────────
+
+const MARKS_ALL: u64 = yolu_protocol::feature::MATERIAL_VALUES
+    | yolu_protocol::feature::ORIGINAL_TEXTURES
+    | yolu_protocol::feature::MATERIAL_REQUEST;
+
+fn request_server(tag: &str, marks: u64) -> (String, u64) {
+    let name = unique_name(tag);
+    let server = unsafe { ylb_test_server_start(name.as_ptr(), name.len() as i32, 256, 128) };
+    assert_ne!(server, 0);
+    assert_eq!(
+        ylb_test_server_configure(server, pack(v(0, 4, 0)), pack(None), marks),
+        0
+    );
+    (name, server)
+}
+
+#[test]
+fn a_request_from_the_standalone_is_taken_out_with_its_fields() {
+    use yolu_protocol::{feature, WANT_ORIGINAL, WANT_VALUES};
+    assert_ne!(BRIDGE_FEATURES & feature::MATERIAL_REQUEST, 0, "ブリッジは頼みの印を出す");
+    assert_eq!(ABI_VERSION, 7);
+    let (name, server) = request_server("ask", MARKS_ALL);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_ne!(ylb_common_features(h) & feature::MATERIAL_REQUEST, 0);
+    assert!(requests(h).is_empty(), "頼みはまだ無い");
+    // 頼みを引数の確かめどおりに送る: 値・元の絵・両方
+    let generation = send_quad_model(h) as u32;
+    wait_for(h, "モデル", || stats(server).models == 1);
+    // 元の絵を待たせたセットは、スタンドアロン役が自分から頼む（Unity は元の絵を押し出さない）
+    wait_for(h, "自動の頼み", || stats(server).requests == 1);
+    assert_eq!(stats(server).last_request_items, 2);
+    let mut auto = Vec::new();
+    wait_for(h, "自動の頼みの取り出し", || {
+        auto.extend(requests(h));
+        auto.len() >= 2
+    });
+    auto.sort_by_key(|a| a.material);
+    assert_eq!(
+        auto,
+        vec![
+            Asked { generation, material: 0, wants: WANT_ORIGINAL as u32, have: 0, slot: "_MainTex".into() },
+            Asked { generation, material: 1, wants: WANT_ORIGINAL as u32, have: 0, slot: "_MainTex".into() },
+        ]
+    );
+    // 手で頼む（0 の世代は今のモデルの世代）
+    assert_eq!(ask(server, 0, 1, WANT_VALUES as i32, "", 0), 0);
+    assert_eq!(ask(server, 0, 0, (WANT_VALUES | WANT_ORIGINAL) as i32, "_MainTex", 0xfeed_beef_0000_0001), 0);
+    // 同じマテリアル・同じ頼みは 1 つにまとまる（新しい印で答える）
+    assert_eq!(ask(server, 0, 0, (WANT_VALUES | WANT_ORIGINAL) as i32, "_MainTex", 0x77), 0);
+    let mut manual = Vec::new();
+    // 最後に送った頼み（印 0x77）が、ブリッジに届くまで待つ（サーバーが送り終えたことと、ブリッジが受けたことは別）
+    wait_for(h, "手の頼みの取り出し", || {
+        manual.extend(requests(h));
+        manual.iter().any(|a| a.have == 0x77)
+    });
+    // 3 つ目は 2 つ目を置き換えるが（取り出される前なら）、取り出された後に届けば別の項目として並ぶ。どちらでも、あとの頼みの印が最後
+    assert!(manual.iter().any(|a| a.material == 1 && a.wants == WANT_VALUES as u32 && a.slot.is_empty()));
+    let both: Vec<_> = manual.iter().filter(|a| a.material == 0).collect();
+    assert!(!both.is_empty() && both.iter().all(|a| a.wants == 3 && a.slot == "_MainTex"));
+    assert_eq!(both.last().unwrap().have, 0x77, "あとの頼みの印が残る");
+    // 引数の確かめ: 何も頼まない・無い相手
+    assert_eq!(ask(server, 0, 0, 0, "", 0), YLB_E_ARGUMENT);
+    assert_eq!(ask(server + 99, 0, 0, 1, "", 0), YLB_E_HANDLE);
+    // 取り出しの引数: 知らないつながり・領域なし
+    let mut r = YlbRequest::default();
+    assert_eq!(unsafe { ylb_next_request(0, &mut r, std::ptr::null_mut(), 0) }, YLB_E_HANDLE);
+    assert_eq!(unsafe { ylb_next_request(h, std::ptr::null_mut(), std::ptr::null_mut(), 0) }, YLB_E_ARGUMENT);
+    // 小さな領域には、文字の途中で切って入れ、要る長さを返す
+    assert_eq!(ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTexスロット", 0), 0);
+    let mut seen = None;
+    wait_for(h, "切れる頼み", || {
+        let mut buf = [0u8; 10];
+        let mut r = YlbRequest::default();
+        if unsafe { ylb_next_request(h, &mut r, buf.as_mut_ptr(), buf.len() as i32) } == 1 {
+            seen = Some((r.slot_len, buf));
+        }
+        seen.is_some()
+    });
+    let (len, buf) = seen.unwrap();
+    assert_eq!(len as usize, "_MainTexスロット".len());
+    assert_eq!(&buf[..8], "_MainTex".as_bytes());
+    assert_eq!(buf[8], 0, "文字の途中で切らない（ス の 3 バイトは入らないので 1 つも書かない）");
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn requests_do_not_reach_a_bridge_without_the_mark_and_the_standalone_does_not_ask() {
+    use yolu_protocol::{feature, WANT_ORIGINAL};
+    // 頼みの印を知らない（印の無い）スタンドアロン役: 頼めない（YLB_E_STATE）。元の絵は今までどおりブリッジが押し出す必要があり、
+    // スタンドアロンは自分から頼まない
+    let (name, server) = request_server("noask", feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_eq!(ylb_common_features(h) & feature::MATERIAL_REQUEST, 0);
+    send_quad_model(h);
+    wait_for(h, "モデル", || stats(server).models == 1);
+    assert_eq!(ask(server, 0, 0, WANT_ORIGINAL as i32, "_MainTex", 0), YLB_E_STATE);
+    // 押し出す元の絵は、印の無い相手には今までどおり届く
+    let px = small_original();
+    assert_eq!(send_original(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, &px), 1);
+    wait_for(h, "元の絵", || stats(server).originals == 1);
+    let st = stats(server);
+    assert_eq!((st.requests, st.cached_used), (0, 0));
+    assert!(requests(h).is_empty());
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn an_original_with_the_same_stamp_is_answered_without_pixels_and_a_wrong_one_is_asked_again() {
+    use yolu_protocol::feature;
+    let (name, server) = request_server("cached", MARKS_ALL);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    let px = small_original();
+    let first = send_quad_model(h) as u32;
+    wait_for(h, "最初の頼み", || stats(server).requests == 1);
+    let asked = requests(h);
+    assert!(asked.iter().all(|a| a.have == 0), "最初は手元に何も無い: {asked:?}");
+    // 最初の答えは画素つき（印 0xAA01 / 0xAA02）。スタンドアロン役は印の付いた絵を手元に残す
+    assert_eq!(send_original_stamped(h, 0, "_MainTex", 0, 0, 0, (4, 2), 1, 0xAA01, &px), 1);
+    assert_eq!(send_original_stamped(h, 1, "_MainTex", 0, 1, 0, (4, 2), 1, 0xAA02, &px), 1);
+    wait_for(h, "2 つのセット", || sets(h).len() == 2);
+    assert_eq!(original_of(server, 0, "_MainTex").unwrap().stamp, 0xAA01);
+    let wire_kib = stats(server).original_kib;
+    // モデルの送り直し: 手元に印の付いた絵があるので、頼みに印（have）が付く
+    let second = send_quad_model(h) as u32;
+    assert_ne!(first, second);
+    wait_for(h, "2 度目の頼み", || stats(server).requests == 2);
+    let mut again = Vec::new();
+    wait_for(h, "have の付いた頼み", || {
+        again.extend(requests(h));
+        again.len() >= 2
+    });
+    again.sort_by_key(|a| a.material);
+    assert_eq!((again[0].have, again[1].have), (0xAA01, 0xAA02));
+    assert!(again.iter().all(|a| a.generation == second));
+    // 印が同じ: 画素なしの Cached（state 4）で答える。スタンドアロン役は手元の絵を使い、セットが出る
+    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0xAA01, &[]), 1);
+    wait_for(h, "手元の絵のセット", || stats(server).cached_used == 1);
+    wait_for(h, "セット 1 つ", || sets(h).iter().any(|s| s.generation == second && s.material == 0));
+    let st = stats(server);
+    assert_eq!(st.last_original_state, 4, "線の上は画素なし");
+    assert_eq!(st.original_kib, wire_kib, "画素は送っていない");
+    let used = original_of(server, 0, "_MainTex").unwrap();
+    assert_eq!((used.state, used.stamp, used.width, used.height), (0, 0xAA01, 4, 2), "使った絵は手元の絵");
+    assert_eq!(used.center.to_le_bytes(), [90, 105, 7, 255]);
+    // 印が違う（Unity の今の印が変わった）: 手元の絵は使わず、印なしで頼み直す
+    assert_eq!(send_original_stamped(h, 1, "_MainTex", 4, 0, 0, (4, 2), 1, 0xBEEF, &[]), 1);
+    wait_for(h, "使えなかった", || stats(server).cached_missed == 1);
+    let mut redo = Vec::new();
+    wait_for(h, "頼み直し", || {
+        redo.extend(requests(h));
+        !redo.is_empty()
+    });
+    assert_eq!(
+        redo,
+        vec![Asked { generation: second, material: 1, wants: 2, have: 0, slot: "_MainTex".into() }]
+    );
+    // 頼み直しには画素で答える（新しい印）
+    assert_eq!(send_original_stamped(h, 1, "_MainTex", 0, 0, 0, (4, 2), 1, 0xBEEF, &px), 1);
+    wait_for(h, "全部のセット", || sets(h).iter().filter(|s| s.generation == second).count() == 2);
+    assert_eq!(original_of(server, 1, "_MainTex").unwrap().stamp, 0xBEEF);
+    // 引数の確かめ: 印の無い Cached・画素の付いた Cached・知らない様子
+    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 0, &[]), YLB_E_ARGUMENT);
+    assert_eq!(send_original_stamped(h, 0, "_MainTex", 4, 0, 0, (4, 2), 1, 5, &px), YLB_E_ARGUMENT);
+    assert_eq!(send_original_stamped(h, 0, "_MainTex", 5, 0, 0, (4, 2), 1, 5, &[]), YLB_E_ARGUMENT);
+    assert_ne!(ylb_common_features(h) & feature::MATERIAL_REQUEST, 0);
+    assert_eq!(stats(server).unknown, 0);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn a_model_over_the_frame_limit_is_refused_with_a_reason_and_nothing_is_sent() {
+    let (name, server) = request_server("toolarge", MARKS_ALL);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    assert_eq!(ylb_test_set_payload_limit(0, 100), YLB_E_HANDLE);
+    // 上限を 100 バイトにする: 四角のモデルは超えるので、パニック（YLB_E_PANIC）でなく、理由つきの断り
+    assert_eq!(ylb_test_set_payload_limit(h, 100), 0);
+    let result = std::panic::catch_unwind(|| ());
+    assert!(result.is_ok());
+    unsafe {
+        let name = "四角";
+        assert_eq!(ylb_model_begin(h, name.as_ptr(), name.len() as i32), 0);
+        let pos: [f32; 12] = [0., 0., 0., 1., 0., 0., 0., 1., 0., 1., 1., 0.];
+        assert_eq!(
+            ylb_model_mesh(h, "0".as_ptr(), 1, "Quad".as_ptr(), 4, 0, pos.as_ptr(), std::ptr::null(), std::ptr::null(), 4),
+            0
+        );
+        let tri: [i32; 3] = [0, 1, 2];
+        assert_eq!(ylb_model_material(h, 1, std::ptr::null(), 0, std::ptr::null(), 0, 0, std::ptr::null(), 0), 0);
+        assert_eq!(ylb_model_submesh(h, 0, 0, tri.as_ptr(), 3), 0);
+        assert_eq!(ylb_model_send(h), YLB_E_TOO_LARGE);
+    }
+    assert_eq!(stats(server).models, 0, "何も送らない");
+    assert_eq!(ylb_pending_bytes(h), 0);
+    // つながりは保たれ、上限を戻せば同じモデルを送れる
+    assert_eq!(ylb_status(h), 1);
+    assert_eq!(ylb_test_set_payload_limit(h, u64::MAX), 0);
+    assert!(send_quad_model(h) >= 1);
+    wait_for(h, "モデル", || stats(server).models == 1);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+// ───────── 送りの列の上限（読む側が止まっても、積む量が上限を超えない） ─────────
+
+const MIB: usize = 1 << 20;
+
+/// 辺 1024 の絵（4 MiB）を、全部のバイトを `fill` で、スロット `slot` へ送る。
+fn put_texture(h: u64, material: i32, slot: &str, fill: u8) -> i32 {
+    let pixels = vec![fill; 1024 * 1024 * 4];
+    unsafe {
+        ylb_texture_send(
+            h,
+            material,
+            slot.as_ptr(),
+            slot.len() as i32,
+            1024,
+            1024,
+            1,
+            pixels.as_ptr(),
+            pixels.len() as i32,
+        )
+    }
+}
+
+fn texture_center(server: u64, material: u32, slot: &str) -> Option<[u8; 4]> {
+    let mut t = YlbTestServerTexture::default();
+    (unsafe { ylb_test_server_texture(server, material, slot.as_ptr(), slot.len() as i32, &mut t) } == 0)
+        .then(|| t.center.to_le_bytes())
+}
+
+/// モデルを送り、読む側を止めて、上限を `limit` にする。止めた後の少しのあいだ（読みの時間切れの分）は待つ（途中まで読んでいた枠を読み終えさせる）。
+fn stalled(tag: &str, limit: usize) -> (u64, u64) {
+    let (name, server) = request_server(tag, MARKS_ALL);
+    let h = connect(&name);
+    wait_for(h, "つながり", || ylb_status(h) == 1);
+    send_quad_model(h);
+    wait_for(h, "モデル", || stats(server).models == 1);
+    assert_eq!(ylb_test_set_outbox_limit(h, limit as u64), 0);
+    assert_eq!(ylb_test_server_pause_reading(server, 1), 0);
+    std::thread::sleep(Duration::from_millis(400));
+    // Windows の名前付きパイプには読みの時間切れが無く、止める合図の前に読みに入っていた読み手は、次の枠を 1 つ読み終えてから止まる。
+    // 小さなポーズの枠を 1 つ送ってそれを読ませ、止まってから測る（そうしないと、次に積む枠の 1 つが列から抜けて数がずれる）。
+    // Linux は読みの時間切れで止まるので要らない
+    if cfg!(windows) {
+        let pos: [f32; 12] = [0.5, 0.25, 0.125, 1., 0., 0., 0., 1., 0., 1., 1., 0.];
+        assert_eq!(ylb_pose_begin(h), 0);
+        assert_eq!(unsafe { ylb_pose_mesh(h, 0, pos.as_ptr(), std::ptr::null(), 4) }, 0);
+        assert_eq!(ylb_pose_send(h), 1);
+        wait_for(h, "止める前に読みに入っていた分", || stats(server).poses == 1);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    (h, server)
+}
+
+fn resumed(h: u64, server: u64) {
+    assert_eq!(ylb_test_server_pause_reading(server, 0), 0);
+    wait_for(h, "列が空になる", || ylb_pending_bytes(h) == 0);
+}
+
+#[test]
+fn a_reader_that_stops_cannot_make_the_send_queue_grow_past_the_limit() {
+    let limit = 14 * MIB;
+    let (h, server) = stalled("stalled", limit);
+    assert_eq!(ylb_send_room(h), u64::MAX, "空なら、どんな大きさも入る");
+    assert_eq!(ylb_send_room(0), 0, "数の合わないハンドル");
+    // 別々のスロットの絵（置き換えられない）を、断られるまで送る。4 MiB の絵は 3 枚まで（12 MiB ≤ 14 MiB < 16 MiB）
+    let mut accepted = 0;
+    let mut code = 0;
+    for i in 0..20u8 {
+        code = put_texture(h, 0, &format!("_t{i}"), i + 1);
+        if code != 1 {
+            break;
+        }
+        accepted += 1;
+        assert!(ylb_pending_bytes(h) <= limit as u64, "積んだ量が上限を超えた: {}", ylb_pending_bytes(h));
+    }
+    assert_eq!(code, YLB_E_BUSY, "上限で断る（積めた数 {accepted}）");
+    assert_eq!(accepted, 3);
+    let held = ylb_pending_bytes(h);
+    assert!(held > 12 * MIB as u64 && held <= limit as u64);
+    assert_eq!(ylb_send_room(h), limit as u64 - held);
+    // 断られた後も、前に積んだものは変わらない・つながりは保たれる
+    assert_eq!(put_texture(h, 0, "_t9", 9), YLB_E_BUSY);
+    assert_eq!(ylb_pending_bytes(h), held);
+    assert_eq!(ylb_status(h), 1);
+    // 同じスロットの新しい絵は、列の中の古い絵を置き換えるので、満杯でも積める（最新が残る。量は増えない）
+    assert_eq!(put_texture(h, 0, "_t2", 99), 1);
+    assert_eq!(ylb_pending_bytes(h), held);
+    // 相手が読み始めると、置き換えられた古い絵は送られず、残りは全部届く
+    resumed(h, server);
+    wait_for(h, "絵", || stats(server).textures == 3);
+    assert_eq!(texture_center(server, 0, "_t0"), Some([1; 4]));
+    assert_eq!(texture_center(server, 0, "_t1"), Some([2; 4]));
+    assert_eq!(texture_center(server, 0, "_t2"), Some([99; 4]), "置き換えた新しい絵");
+    assert_eq!(texture_center(server, 0, "_t9"), None, "断られた絵は届かない");
+    assert_eq!(stats(server).refused, 0);
+    // 空に戻れば、また積める
+    assert_eq!(ylb_send_room(h), u64::MAX);
+    assert_eq!(put_texture(h, 0, "_t9", 9), 1);
+    wait_for(h, "絵", || stats(server).textures == 4);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn a_model_refused_as_busy_keeps_what_was_built_and_goes_when_the_reader_returns() {
+    let (h, server) = stalled("busymodel", 6 * MIB);
+    assert_eq!(put_texture(h, 0, "_t0", 1), 1);
+    // 積んだ量のすぐ上を上限にする: 四角のモデルでさえ入らない
+    let held = ylb_pending_bytes(h);
+    assert_eq!(ylb_test_set_outbox_limit(h, held + 10), 0);
+    assert_eq!(quad_model_result(h), YLB_E_BUSY, "モデルは置き換えられないので、混んでいれば断る");
+    // 組み立てたモデルは残る（読み直さずに、同じ関数をもう一度呼べる。「組み立てが無い」の YLB_E_STATE にならない）
+    assert_eq!(ylb_model_send(h), YLB_E_BUSY);
+    assert_eq!(ylb_pending_bytes(h), held);
+    // 制御の命令（モデルを閉じる）は混んでいても積む
+    assert_eq!(ylb_model_close(h), 0);
+    assert!(ylb_pending_bytes(h) > held);
+    resumed(h, server);
+    wait_for(h, "モデルを閉じた", || stats(server).models_closed == 1);
+    assert_eq!(stats(server).models, 1, "断られたモデルは届いていない");
+    // 空に戻ったら、組み立てたモデルがそのまま送れる（世代は 1 つ進むだけ）
+    assert_eq!(ylb_model_send(h), 2);
+    wait_for(h, "モデル", || stats(server).models == 2);
+    assert_eq!(stats(server).generation, 2);
+    // 送ってしまえば組み立ては無い
+    assert_eq!(ylb_model_send(h), YLB_E_STATE);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn values_refused_as_busy_keep_their_build_and_replace_the_older_values_in_the_queue() {
+    let (h, server) = stalled("busyvalues", 6 * MIB);
+    assert_eq!(put_texture(h, 0, "_t0", 1), 1);
+    let held = ylb_pending_bytes(h);
+    assert_eq!(ylb_test_set_outbox_limit(h, held + 10), 0);
+    // 組み立てて送る: 断られる。組み立ては残るので、同じ関数をもう一度呼べる
+    assert_eq!(put_values(h, 1), YLB_E_BUSY);
+    assert_eq!(ylb_values_send(h), YLB_E_BUSY);
+    assert_eq!(ylb_pending_bytes(h), held);
+    // 余裕ができたら送れる。同じマテリアルの値をもう一度送ると、列の中の前の値を置き換える（1 つしか届かない）
+    assert_eq!(ylb_test_set_outbox_limit(h, held + 200 * 1024), 0);
+    assert_eq!(ylb_values_send(h), 1);
+    let one = ylb_pending_bytes(h);
+    assert!(one > held);
+    assert_eq!(put_values(h, 1), 1);
+    assert_eq!(ylb_pending_bytes(h), one, "置き換えで増えない");
+    assert_eq!(ylb_values_send(h), YLB_E_STATE, "送ってしまえば組み立ては無い");
+    resumed(h, server);
+    wait_for(h, "値", || stats(server).values == 1);
+    // 届いたあと、少し待っても 2 つ目は来ない
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(stats(server).values, 1);
+    assert_eq!(stats(server).refused, 0);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn an_original_is_refused_as_busy_and_a_newer_one_of_the_slot_replaces_the_queued_one() {
+    let (h, server) = stalled("busyoriginal", 14 * MIB);
+    let big = vec![5u8; 1024 * 1024 * 4];
+    let put = |slot: &str, fill: u8| {
+        let mut px = big.clone();
+        px[0] = fill;
+        send_original_stamped(h, 0, slot, 0, 0, 0, (1024, 1024), 1, 42, &px)
+    };
+    // 先頭の枠は書き始められて列を出る。次からが列の中の枠
+    assert_eq!(put_texture(h, 0, "_t0", 1), 1);
+    assert_eq!(put("_MainTex", 1), 1);
+    let held = ylb_pending_bytes(h);
+    // 同じスロットの新しい元の絵は、列の中の古い元の絵を置き換える（量は増えない）
+    assert_eq!(put("_MainTex", 2), 1);
+    assert_eq!(ylb_pending_bytes(h), held);
+    // 別のスロットは積み増す（置き換えられない）。入らなければ、読まずに分かる量の目安（ylb_send_room）で断られる前に待てる
+    assert_eq!(put("_Other", 3), 1);
+    let room = ylb_send_room(h);
+    assert!(room < (4 * MIB) as u64, "もう 4 MiB の絵は入らない: {room}");
+    assert_eq!(put("_Third", 4), YLB_E_BUSY);
+    resumed(h, server);
+    wait_for(h, "元の絵", || stats(server).originals >= 2);
+    std::thread::sleep(Duration::from_millis(200));
+    // 届いたのは _MainTex（新しい方）と _Other。古い _MainTex は届かない
+    assert_eq!(stats(server).originals, 2);
+    assert_eq!(original_of(server, 0, "_MainTex").map(|o| o.center != 0), Some(true));
+    assert_eq!(stats(server).refused, 0);
+    assert_eq!(ylb_disconnect(h), 0);
+    assert_eq!(ylb_test_server_stop(server), 0);
+}
+
+#[test]
+fn a_material_update_refused_as_busy_keeps_its_build_and_a_newer_one_replaces_the_queued_one() {
+    let (h, server) = stalled("busymaterials", 6 * MIB);
+    assert_eq!(put_texture(h, 0, "_t0", 1), 1);
+    let held = ylb_pending_bytes(h);
+    assert_eq!(ylb_test_set_outbox_limit(h, held + 10), 0);
+    let build = |shader: &str| unsafe {
+        assert_eq!(ylb_materials_begin(h), 0);
+        for (i, m) in ["Body", "Hair"].iter().enumerate() {
+            let idx = ylb_materials_material(
+                h,
+                0,
+                m.as_ptr(),
+                m.len() as i32,
+                std::ptr::null(),
+                0,
+                0,
+                shader.as_ptr(),
+                shader.len() as i32,
+            );
+            assert_eq!(idx, i as i32);
+        }
+    };
+    build("Custom/A");
+    assert_eq!(ylb_materials_send(h), YLB_E_BUSY);
+    assert_eq!(ylb_materials_send(h), YLB_E_BUSY, "組み立ては残る");
+    assert_eq!(ylb_pending_bytes(h), held);
+    // 余裕ができたら送れる。同じ世代の更新をもう一度送ると、列の中の前の更新を置き換える（1 つしか届かない）
+    assert_eq!(ylb_test_set_outbox_limit(h, held + 200 * 1024), 0);
+    assert_eq!(ylb_materials_send(h), 2);
+    let one = ylb_pending_bytes(h);
+    build("Custom/Bee");
+    assert_eq!(ylb_materials_send(h), 2);
+    assert_eq!(ylb_pending_bytes(h), one + 2 * 2, "置き換えなので、新しい更新の分（シェーダー名が 2 文字長い 2 マテリアル）だけ多い");
+    resumed(h, server);
+    wait_for(h, "マテリアルの更新", || stats(server).materials_updates == 1);
+    std::thread::sleep(Duration::from_millis(200));
+    let st = stats(server);
+    assert_eq!(st.materials_updates, 1, "古い更新は届かない");
+    assert_eq!(st.last_materials_shader_len, "Custom/Bee".len() as u32, "最新が残る");
     assert_eq!(ylb_disconnect(h), 0);
     assert_eq!(ylb_test_server_stop(server), 0);
 }

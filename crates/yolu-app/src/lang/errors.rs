@@ -106,8 +106,8 @@ impl Lang {
             }
             Error::SaveConflict(text) => self.pick(text.clone(), "Save target or backup changed".into()),
             Error::UnsupportedFormat { format, app, version } => self.pick(
-                format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 7）"),
-                format!("Unsupported .ylp format: {format} (saved by {app} {version}; maximum 7)"),
+                format!("未対応の .ylp 形式: {format}（{app} {version} で保存。上限 {}）", yolu_io::MAX_FORMAT),
+                format!("Unsupported .ylp format: {format} (saved by {app} {version}; maximum {})", yolu_io::MAX_FORMAT),
             ),
         }
     }
@@ -325,8 +325,8 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "The composite source can only be set before the first dab of a clone or color mixing"
         }
         "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
-        "写像されたダブはクローン・指先・色の混ぜの伸ばすだけ" => {
-            "Mapped dabs need clone, smudge or the smear of color mixing"
+        "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ" => {
+            "Mapped dabs need clone, smudge, blur or the smear of color mixing"
         }
         "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）" => {
             "A mixing brush cannot paint pixel by pixel"
@@ -381,6 +381,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
         "タイルがキャンバスの外" => "Tile outside canvas",
         "タイルのバイト数が違う" => "Invalid tile byte count",
+        "歩幅がタイルの一辺の約数でない" => "The step does not divide the tile edge",
         "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
         "タイルの長さ" => "Tile length",
         "チャンネルの名前" => "Channel name",
@@ -465,6 +466,15 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "選択範囲のタイルの長さ" => "Selection tile length",
         "選択範囲の大きさ" => "Selection size",
         "選択範囲の大きさが文書と違う" => "Selection size does not match document",
+        "選択範囲の名前が空" => "The selection name is empty",
+        "選択範囲の名前が長すぎる" => "The selection name is too long",
+        "選択範囲の名前に制御文字がある" => "The selection name has control characters",
+        "選択範囲の名前が整っていない" => "The selection name has leading or trailing spaces",
+        "選択範囲が無い" => "There is no selection",
+        "残せる選択範囲の数の上限" => "Too many saved selections",
+        "残した選択範囲の番号" => "No such saved selection",
+        "同じ名前の選択範囲がある" => "A saved selection with that name exists",
+        "残した選択範囲を戻せるのは読み込みの直後だけ" => "Saved selections can only be restored right after loading",
         "選択範囲の大きさが違う" => "Selection size mismatch",
         "選択範囲を戻せるのは読み込みの直後だけ" => "Selection restore requires a freshly loaded document",
         "面が無い" => "Surface not found",
@@ -688,12 +698,32 @@ impl Lang {
                 "面がモデルと合わないため、塗れませんでした",
                 "Not painted: the surface does not match the model",
             ),
-            TriangleBudget | PixelBudget | VisibilityBudget | BvhBudget => self.dab_refusal_text(error),
+            TriangleBudget => self.pick(
+                "ブラシがまたがる面が多すぎるため、塗れませんでした",
+                "Not painted: the brush covers too many faces",
+            ),
+            PixelBudget => self.pick(
+                "ブラシの範囲が広すぎるため、塗れませんでした",
+                "Not painted: the brush area is too large",
+            ),
+            VisibilityBudget => self.pick(
+                "見える面の判定が多すぎるため、塗れませんでした",
+                "Not painted: too many points to check for visibility",
+            ),
+            BvhBudget => self.pick(
+                "重なった面が多すぎるため、塗れませんでした",
+                "Not painted: too many overlapping faces under the brush",
+            ),
+            MemoryBudget => self.pick(
+                "1 回の操作のメモリが足りないため、塗れませんでした",
+                "Not painted: not enough memory for one operation",
+            ),
         }
     }
-    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分）を塗れなかった理由。上の 3 つはその打ちだけを飛ばしてストロークは続き
-    /// （終わったあとに知らせる）、下の 4 つ（上限を超えた）はストロークごと取り消す。パスの評価は 7 つとも評価ごと失敗する
-    /// ので、その文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・スナップショット）は使わず、原因を使う人の言葉で短く言う。
+    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分）や対称の写しを塗れなかった理由。どれもその打ち・写しだけを飛ばして
+    /// ストロークは続く（終わったあとに知らせる）。上限の 4 つは、見えない面にも塗る写し（球の中の面）と、写しの点を探す所でだけ
+    /// 起きる。パスの評価はどの断りでも評価ごと失敗するので、その文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・
+    /// スナップショット）は使わず、原因を使う人の言葉で短く言う。
     fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
@@ -710,20 +740,24 @@ impl Lang {
                 "Some parts were not painted: the surface does not match the model",
             ),
             TriangleBudget => self.pick(
-                "ブラシがまたがる面が多すぎるため、取り消しました",
-                "Cancelled: the brush covers too many faces",
+                "写しがまたがる面が多すぎて、塗れなかった所があります",
+                "Some parts were not painted: a copy covers too many faces",
             ),
             PixelBudget => self.pick(
-                "ブラシの範囲が広すぎるため、取り消しました",
-                "Cancelled: the brush area is too large",
+                "写しの範囲が広すぎて、塗れなかった所があります",
+                "Some parts were not painted: a copy covers too large an area",
             ),
             VisibilityBudget => self.pick(
-                "見える面の判定が多すぎるため、取り消しました",
-                "Cancelled: too many points to check for visibility",
+                "見える面の判定が多すぎて、塗れなかった所があります",
+                "Some parts were not painted: too many points to check",
             ),
             BvhBudget => self.pick(
-                "重なった面が多すぎるため、取り消しました",
-                "Cancelled: too many overlapping faces under the brush",
+                "重なった面が多すぎて、写しを塗れなかった所があります",
+                "Some parts were not painted: too many overlapping faces",
+            ),
+            MemoryBudget => self.pick(
+                "1 回の操作のメモリが足りず、塗れなかった所があります",
+                "Some parts were not painted: not enough memory for one operation",
             ),
         }
     }
@@ -820,6 +854,7 @@ impl Lang {
             ),
             ModelError::Parse(e) => format!("Invalid FBX: {e}"),
             ModelError::NoMesh => "No triangle mesh".into(),
+            ModelError::Cancelled => "Cancelled".into(),
             ModelError::Rig(e) => self.rig_error(e),
         }
     }
@@ -1069,7 +1104,7 @@ mod tests {
 
     #[test]
     fn view_and_surface_errors_are_translated_by_kind() {
-        use yolu_core::geometry::{DabRefusal, SurfaceStrokeError};
+        use yolu_core::geometry::SurfaceStrokeError;
         let rig = RigError::TooLarge { what: "ボーン", value: 2, limit: 1 };
         let mut errors = vec![
             ViewError::Stroking,
@@ -1096,6 +1131,7 @@ mod tests {
             ViewError::Model(ModelError::FileTooLarge { bytes: 3 << 20, limit: 1 << 20 }),
             ViewError::Model(ModelError::Parse("bad".into())),
             ViewError::Model(ModelError::NoMesh),
+            ViewError::Model(ModelError::Cancelled),
             ViewError::Model(ModelError::Rig(rig)),
         ];
         for e in [
@@ -1132,15 +1168,7 @@ mod tests {
         ] {
             dabs.push(SurfaceStrokeError::Sampling(e));
         }
-        for d in [
-            DabRefusal::SnapshotChanged,
-            DabRefusal::InvalidArguments,
-            DabRefusal::BindingMismatch,
-            DabRefusal::TriangleBudget,
-            DabRefusal::PixelBudget,
-            DabRefusal::VisibilityBudget,
-            DabRefusal::BvhBudget,
-        ] {
+        for d in DAB_REFUSALS {
             dabs.push(SurfaceStrokeError::Dab(d));
         }
         for e in &dabs {
@@ -1149,9 +1177,9 @@ mod tests {
         }
     }
 
-    const DAB_REFUSALS: [yolu_core::geometry::DabRefusal; 7] = {
+    const DAB_REFUSALS: [yolu_core::geometry::DabRefusal; 8] = {
         use yolu_core::geometry::DabRefusal::*;
-        [SnapshotChanged, InvalidArguments, BindingMismatch, TriangleBudget, PixelBudget, VisibilityBudget, BvhBudget]
+        [SnapshotChanged, InvalidArguments, BindingMismatch, TriangleBudget, PixelBudget, VisibilityBudget, BvhBudget, MemoryBudget]
     };
 
     /// 3D の塗りの断りの文に、内部の言葉を使わない・短い・日英で別々の文であることを確かめる（共通の見張り）。
@@ -1168,27 +1196,24 @@ mod tests {
         }
     }
 
-    /// 3D のブラシのストロークで塗れなかった理由の 7 つの文は、内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
-    /// 上限を超えた 4 つはストロークごと取り消すので、「取り消し」を言う。飛ばすだけの 3 つはそれを言わない（ストロークは残る）。
+    /// 3D のブラシのストロークで塗れなかった理由の 8 つの文は、内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
+    /// どれもその打ち・写しだけを飛ばしてストロークは残るので、「取り消し」を言わず、塗れなかった所があると言う。
     #[test]
     fn dab_refusals_are_told_in_the_users_words() {
-        use yolu_core::geometry::DabRefusal;
         let mut seen = std::collections::BTreeSet::new();
         for refusal in DAB_REFUSALS {
             let (ja, en) = (Lang::Ja.dab_refusal(refusal), Lang::En.dab_refusal(refusal));
             assert_users_words(&mut seen, &format!("{refusal:?}"), ja, en);
-            let cancels = DabRefusal::cancels_stroke(refusal);
-            assert_eq!(ja.contains("取り消"), cancels, "{refusal:?}: {ja}");
-            assert_eq!(en.starts_with("Cancelled"), cancels, "{refusal:?}: {en}");
+            assert!(!ja.contains("取り消") && ja.ends_with("所があります"), "{refusal:?}: {ja}");
+            assert!(en.starts_with("Some parts were not painted"), "{refusal:?}: {en}");
         }
     }
 
-    /// パスの評価では 7 つの断りのどれも評価ごと失敗して何も塗られない（`yolu_core::paths` は種類を問わず `Error::Dab` を返す）。
-    /// 「一部が塗れなかった」とは言わず、飛ばして続ける 3 つは「塗れませんでした」、上限を超えた 4 つは「取り消し」を言う。
-    /// パスの画面の文（`pathtool::path_error_text`）がこの文を使っていることもここで押さえる。
+    /// パスの評価では 8 つの断りのどれも評価ごと失敗して何も塗られない（`yolu_core::paths` は種類を問わず `Error::Dab` を返す）。
+    /// 「一部が塗れなかった」とは言わず、どれも「塗れませんでした」を言う。パスの画面の文（`pathtool::path_error_text`）がこの文を
+    /// 使っていることもここで押さえる。
     #[test]
     fn path_evaluation_refusals_never_claim_a_partial_result() {
-        use yolu_core::geometry::DabRefusal;
         use yolu_core::paths::Error;
         let mut seen = std::collections::BTreeSet::new();
         for refusal in DAB_REFUSALS {
@@ -1200,13 +1225,7 @@ mod tests {
             for part in ["一部", "所があります", "Some parts"] {
                 assert!(!ja.contains(part) && !en.contains(part), "{refusal:?}: {ja} / {en}");
             }
-            if DabRefusal::cancels_stroke(refusal) {
-                assert!(ja.contains("取り消") && en.starts_with("Cancelled"), "{refusal:?}: {ja} / {en}");
-                // 上限を超えた 4 つは、ストロークの文と同じ
-                assert_eq!((ja, en), (Lang::Ja.dab_refusal(refusal), Lang::En.dab_refusal(refusal)));
-            } else {
-                assert!(ja.ends_with("塗れませんでした") && en.starts_with("Not painted"), "{refusal:?}: {ja} / {en}");
-            }
+            assert!(ja.ends_with("塗れませんでした") && en.starts_with("Not painted"), "{refusal:?}: {ja} / {en}");
         }
     }
 

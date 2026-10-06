@@ -173,6 +173,8 @@ fn load_file(
             break;
         };
         let mut brush = imported.brush;
+        // 手ぶれ補正と入り抜きは描き手の設定でブラシに入らない。取り込んだブラシが持つ分は、ブラシの外に持たせる（選んでいる間だけ重ねる）
+        let assist = super::carried_assist(Some(brush.assist));
         // 取り込んだ筆先の原寸（数百画素）がアプリの直径の上限を超えないように
         brush.base.radius = brush.base.radius.clamp(0.5, MAX_RADIUS as f64);
         let mut notes = gaps::fold(&imported.unrepresented);
@@ -182,11 +184,15 @@ fn load_file(
             name: unique_name(&imported.name, &mut work.names),
             group: Group::Imported,
             brush,
-            import: Some(ImportMeta::new(
-                imported.source.label(),
-                matches!(imported.source, brushes::Source::PhotoshopPattern),
-                notes,
-            )),
+            assist,
+            import: Some(
+                ImportMeta::new(
+                    imported.source.label(),
+                    matches!(imported.source, brushes::Source::PhotoshopPattern),
+                    notes,
+                )
+                .with_mapped(imported.mapped),
+            ),
         };
         if let Some(store) = store {
             if let Err(e) = store.save_brush(&user) {
@@ -402,6 +408,7 @@ impl AppState {
                             baseline: super::canonical(&user.brush),
                             edited: None,
                             import: user.import,
+                            assist: user.assist,
                         },
                     );
                     job.report.imported += 1;

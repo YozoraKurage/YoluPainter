@@ -13,6 +13,9 @@
 
 use rayon::prelude::*;
 
+mod rows;
+pub use rows::{blend_row, clip_row, fade_row};
+
 use crate::error::CoreError;
 use crate::math::{require_finite, to_byte, UNIT};
 use crate::types::{BlendMode, Channel, Rect, Rgba8, RowOrder};
@@ -311,7 +314,63 @@ pub fn flip_green(rgba: &mut [u8]) {
     }
 }
 
-/// 出力の 1 行。heights は下・同じ・上の行を height_start、+w、+2w に持つ。
+/// 出力の 1 画素（画素 x）。heights は下・同じ・上の行を 0、+w、+2w に持つ。
+#[allow(clippy::too_many_arguments)]
+fn output_pixel(
+    x: usize,
+    normal: Option<&[u8]>,
+    heights: Option<&[f64]>,
+    w: usize,
+    wrap: bool,
+    s: f64,
+    output: &mut [u8],
+) {
+    let p = match normal {
+        Some(n) => {
+            let i = x * 4;
+            flatten(n[i], n[i + 1], n[i + 2], n[i + 3])
+        }
+        None => (0.0, 0.0, 1.0),
+    };
+    let v = match heights {
+        Some(h) => {
+            let xl = if x > 0 {
+                x - 1
+            } else if wrap {
+                w - 1
+            } else {
+                0
+            };
+            let xr = if x < w - 1 {
+                x + 1
+            } else if wrap {
+                0
+            } else {
+                w - 1
+            };
+            let (below, center, above) = (0, w, 2 * w);
+            let gx = (h[above + xr] + 2.0 * h[center + xr] + h[below + xr]
+                - h[above + xl]
+                - 2.0 * h[center + xl]
+                - h[below + xl])
+                / 8.0;
+            let gy = (h[above + xl] + 2.0 * h[above + x] + h[above + xr]
+                - h[below + xl]
+                - 2.0 * h[below + x]
+                - h[below + xr])
+                / 8.0;
+            let (mut hx, mut hy, mut hz) = (-s * gx, -s * gy, 1.0);
+            normalize(&mut hx, &mut hy, &mut hz);
+            rnm((hx, hy, hz), p)
+        }
+        None => p,
+    };
+    let c = encode(v.0, v.1, v.2, 255);
+    output[x * 4..x * 4 + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+}
+
+/// 出力の 1 行。heights は下・同じ・上の行を height_start、+w、+2w に持つ。内側の画素は SIMD で、端（高さを隣から読む画素）と
+/// 余りは画素ごとの式で。
 #[allow(clippy::too_many_arguments)]
 fn row(
     normal: Option<&[u8]>,
@@ -322,49 +381,10 @@ fn row(
 ) {
     let wrap = settings.edges == HeightEdgeMode::Wrap;
     let s = settings.strength;
-    for x in 0..w {
-        let p = match normal {
-            Some(n) => {
-                let i = x * 4;
-                flatten(n[i], n[i + 1], n[i + 2], n[i + 3])
-            }
-            None => (0.0, 0.0, 1.0),
-        };
-        let v = match heights {
-            Some(h) => {
-                let xl = if x > 0 {
-                    x - 1
-                } else if wrap {
-                    w - 1
-                } else {
-                    0
-                };
-                let xr = if x < w - 1 {
-                    x + 1
-                } else if wrap {
-                    0
-                } else {
-                    w - 1
-                };
-                let (below, center, above) = (0, w, 2 * w);
-                let gx = (h[above + xr] + 2.0 * h[center + xr] + h[below + xr]
-                    - h[above + xl]
-                    - 2.0 * h[center + xl]
-                    - h[below + xl])
-                    / 8.0;
-                let gy = (h[above + xl] + 2.0 * h[above + x] + h[above + xr]
-                    - h[below + xl]
-                    - 2.0 * h[below + x]
-                    - h[below + xr])
-                    / 8.0;
-                let (mut hx, mut hy, mut hz) = (-s * gx, -s * gy, 1.0);
-                normalize(&mut hx, &mut hy, &mut hz);
-                rnm((hx, hy, hz), p)
-            }
-            None => p,
-        };
-        let c = encode(v.0, v.1, v.2, 255);
-        output[x * 4..x * 4 + 4].copy_from_slice(&[c.r, c.g, c.b, 255]);
+    let (start, end) =
+        rows::output_row_at(crate::math::simd::level(), normal, heights, w, s, output);
+    for x in (0..start).chain(end..w) {
+        output_pixel(x, normal, heights, w, wrap, s, output);
     }
 }
 
@@ -406,10 +426,11 @@ pub fn output_from_composites(
         if let Some(hc) = heights_src {
             for r in 0..3 {
                 let rr = edge_row(y as i64 + r as i64 - 1, h as i64, settings.edges) as usize;
-                for x in 0..w {
-                    let i = (rr * w + x) * 4;
-                    heights[r * w + x] = height_of(hc[i], hc[i + 3]);
-                }
+                rows::heights_from_rgba(
+                    crate::math::simd::level(),
+                    &hc[rr * w * 4..(rr + 1) * w * 4],
+                    &mut heights[r * w..(r + 1) * w],
+                );
             }
         }
         row(
@@ -577,9 +598,11 @@ impl Document {
                 &inner[(rr - a) * w * 4..(rr - a + 1) * w * 4]
             };
             let base = ((r + 1) as usize) * w;
-            for x in 0..w {
-                heights[base + x] = height_of(source[x * 4], source[x * 4 + 3]);
-            }
+            rows::heights_from_rgba(
+                crate::math::simd::level(),
+                &source[..w * 4],
+                &mut heights[base..base + w],
+            );
         }
         Ok(())
     }

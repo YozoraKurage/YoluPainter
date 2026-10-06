@@ -11,7 +11,14 @@ const ICON: &str = "assets/logo/yolupainter.ico";
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={ICON}");
-    if let Some(revision) = git(&["rev-parse", "--short", "HEAD"]) {
+    // 配る物の組み（.github/workflows/dist-build.yml）は、PR の CI だと merge の commit（どの履歴にも入らない）を checkout するので、
+    // 診断用の ID をワークフローが環境変数で渡す（PR の先頭の commit。木は配る物と同じ）。渡されなければ HEAD。
+    println!("cargo:rerun-if-env-changed=YOLU_GIT_REV");
+    let revision = env::var("YOLU_GIT_REV")
+        .ok()
+        .filter(|id| is_revision(id))
+        .or_else(|| git(&["rev-parse", "--short", "HEAD"]));
+    if let Some(revision) = revision {
         println!("cargo:rustc-env=YOLU_GIT_REV={revision}");
     }
     // 存在しない経路を rerun-if-changed に渡すと、cargo は毎回「変わった」と見て組み直す。参照が packed-refs にだけある
@@ -46,6 +53,11 @@ fn main() {
     if let Err(error) = resource.compile() {
         panic!("Windows のリソース（アイコン・製品名・版）を埋められません: {error}");
     }
+}
+
+/// 環境変数で渡された ID として受け取れるか（16 進の 7〜40 文字。`cargo:` の行へそのまま書くので、それ以外は使わない）。
+fn is_revision(id: &str) -> bool {
+    (7..=40).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn git(args: &[&str]) -> Option<String> {

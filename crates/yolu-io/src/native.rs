@@ -7,19 +7,19 @@ use std::{
 /// Unity 版（0.2.0 の `DocumentBinary`）が書き、読める正本の一番新しい版。
 pub const UNITY_NATIVE_VERSION: i32 = 21;
 /// 文書のユーザーチャンネル（core の 6〜63）の一覧を足した版。ユーザーチャンネルのある文書だけがこの版になり、
-/// Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「ユーザーチャンネル（正本の版 22）」）。
+/// Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const USER_CHANNELS_VERSION: i32 = 22;
 /// Rust 版だけの Generator の種類（ノイズ 64・グランジ 65）を足した版。版 22 の中身（ユーザーチャンネルの一覧。この版では 0 個も書く）に、
 /// Generator の種類 64・65 とその欄が加わる。これを使う文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る
-/// （形式と決めは README の「手続き型の Generator（正本の版 23）」）。
+/// （形式と決めは docs/YLP_FORMAT.md）。
 pub const PROCEDURAL_VERSION: i32 = 23;
 /// Rust 版だけの色調補正（調整の層とフィルターの段の種類 64〜69: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・
 /// 2 値化・ポスタリゼーション）を足した版。版 23 の中身に、調整・フィルターの種類 64〜69 とその欄（`color_adjust` の並び）が加わる。これを使う
-/// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは README の「色調補正（正本の版 24）」）。
+/// 文書だけがこの版になり、Unity 版の読み手は「Unsupported archive version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const ADJUST_VERSION: i32 = 24;
 /// グラデーションマップの混色（混色モード・輝度の補正）と区間ごとの混合率曲線を足した版。版 24 の中身に、種類 64（グラデーションマップ）の欄の
 /// ランプのあとへ混色の欄が加わる。これらを使うグラデーションマップのある文書だけがこの版になり、Unity 版の読み手は「Unsupported archive
-/// version」で断る（形式と決めは README の「グラデーションマップの混色（正本の版 25）」）。
+/// version」で断る（形式と決めは docs/YLP_FORMAT.md）。
 pub const MIXING_VERSION: i32 = 25;
 /// この読み手が読める一番新しい版。
 pub const MAX_NATIVE_VERSION: i32 = MIXING_VERSION;

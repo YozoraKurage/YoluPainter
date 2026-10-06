@@ -5,7 +5,9 @@
 //!   閉じた曲面の全体を 1 つに展開するものではなく、半径の内側だけ。重なる展開では、アンカーからの幅優先の経路を優先する。
 //! - 図の上の点から画素の参照（最大 4 点の双線形）を作るとき、各点が三角形の UV の外なら、同じ展開の隣の三角形へ運んで読む
 //!   （島の余白の画素を読まない）。
-//! - 三角形の数と図のバイト（1 三角形 128 バイト）には上限があり、超えたら部分の図を返さずに断る。参照の探索の回数にも上限がある。
+//! - 三角形の数と図のバイト（1 三角形 128 バイト）には上限があり、超えたら部分の図を返さずに断る。参照の探索の回数（調べた三角形の数）にも
+//!   上限がある。点から三角形を探すのは、図を作った後に一度だけ組む格子で候補を絞り、候補を図に入れた順に調べる（全部を順に調べたのと
+//!   同じ三角形になる）。
 
 use std::collections::{HashMap, VecDeque};
 
@@ -25,8 +27,8 @@ use crate::brush::{BrushMappedPixel, BrushPixel, BrushSourceTap};
 pub const SAMPLING_CHART_MAX_TRIANGLES: i32 = 2048;
 /// 図の 1 三角形の名目のバイト（C# の NominalBytes）。
 pub const SAMPLING_CHART_TRIANGLE_BYTES: i64 = 128;
-/// 1 つの図で、点から三角形を探す回数の上限（C# の remainingQueries）。
-const LOOKUP_BUDGET: i32 = 2_000_000;
+/// 1 つの図で、点から三角形を探すときに調べる三角形の数の上限（格子で候補を絞るので、1 回に数個）。
+const LOOKUP_BUDGET: i32 = 1 << 26;
 
 /// 図を作れなかった・参照の探索を断った理由。どれもストロークを取り消す。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +81,110 @@ pub struct SamplingChart<'g> {
     index: HashMap<u32, usize>,
     ordered: Vec<Entry>,
     remaining_queries: i32,
+    /// 点から三角形を探す格子（最初に探すときに組む）。
+    grid: Option<ChartGrid>,
+}
+
+/// 図の三角形の格子: 升ごとに、箱が重なる三角形の番号（図に入れた順）。
+struct ChartGrid {
+    min: Vec2,
+    cell: f32,
+    columns: usize,
+    rows: usize,
+    offsets: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl ChartGrid {
+    fn new(entries: &[Entry]) -> ChartGrid {
+        let mut min = Vec2::splat(f32::INFINITY);
+        let mut max = Vec2::splat(f32::NEG_INFINITY);
+        let mut boxes = Vec::with_capacity(entries.len());
+        for e in entries {
+            let lo = v2min(e.a, v2min(e.b, e.c));
+            let hi = v2max(e.a, v2max(e.b, e.c));
+            // 重みの許し（−1e-6）で外側の点も入るので、箱を少し広げる
+            let pad = fmax(hi.x - lo.x, hi.y - lo.y) * 1e-5 + 1e-12;
+            let (lo, hi) = (lo - Vec2::splat(pad), hi + Vec2::splat(pad));
+            min = v2min(min, lo);
+            max = v2max(max, hi);
+            boxes.push((lo, hi));
+        }
+        let size = max - min;
+        let area = fmax(size.x * size.y, 1e-30);
+        // 1 升に三角形が 2 つほど入る大きさ（升の数は三角形の数の 4 倍まで）
+        let mut cell = fmax((area * 2.0 / entries.len().max(1) as f32).sqrt(), 1e-12);
+        let fits = |cell: f32| {
+            let c = (size.x / cell).ceil().max(1.0) as f64;
+            let r = (size.y / cell).ceil().max(1.0) as f64;
+            c * r <= (entries.len() as f64 * 4.0).max(1.0)
+        };
+        while !fits(cell) {
+            cell *= 1.5;
+        }
+        let columns = ((size.x / cell).ceil().max(1.0)) as usize;
+        let rows = ((size.y / cell).ceil().max(1.0)) as usize;
+        let at = |v: f32, lo: f32, n: usize| -> usize {
+            let i = ((v - lo) / cell).floor();
+            if i > 0.0 {
+                (i as usize).min(n - 1)
+            } else {
+                0
+            }
+        };
+        let mut counts = vec![0u32; columns * rows];
+        let range = |(lo, hi): (Vec2, Vec2)| {
+            (
+                at(lo.x, min.x, columns),
+                at(hi.x, min.x, columns),
+                at(lo.y, min.y, rows),
+                at(hi.y, min.y, rows),
+            )
+        };
+        for b in &boxes {
+            let (x0, x1, y0, y1) = range(*b);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    counts[y * columns + x] += 1;
+                }
+            }
+        }
+        let mut offsets = vec![0u32; columns * rows + 1];
+        for i in 0..columns * rows {
+            offsets[i + 1] = offsets[i] + counts[i];
+        }
+        let mut items = vec![0u32; offsets[columns * rows] as usize];
+        let mut cursor: Vec<u32> = offsets[..columns * rows].to_vec();
+        for (i, b) in boxes.iter().enumerate() {
+            let (x0, x1, y0, y1) = range(*b);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let c = y * columns + x;
+                    items[cursor[c] as usize] = i as u32;
+                    cursor[c] += 1;
+                }
+            }
+        }
+        ChartGrid {
+            min,
+            cell,
+            columns,
+            rows,
+            offsets,
+            items,
+        }
+    }
+
+    /// 点の升の候補（図に入れた順）。格子の外なら空。
+    fn candidates(&self, p: Vec2) -> &[u32] {
+        let x = ((p.x - self.min.x) / self.cell).floor();
+        let y = ((p.y - self.min.y) / self.cell).floor();
+        if !(x >= 0.0 && y >= 0.0) || x as usize >= self.columns || y as usize >= self.rows {
+            return &[];
+        }
+        let c = y as usize * self.columns + x as usize;
+        &self.items[self.offsets[c] as usize..self.offsets[c + 1] as usize]
+    }
 }
 
 fn cross2(a: Vec2, b: Vec2) -> f32 {
@@ -159,14 +265,20 @@ impl<'g> SamplingChart<'g> {
         finite2(point).then_some(point)
     }
 
-    /// 図の上の点を含む三角形（図に入れた順に探す）と重み。
+    /// 図の上の点を含む三角形（図に入れた順でいちばん先のもの）と重み。
     fn locate(&mut self, point: Vec2) -> Result<Option<(Entry, Vec3)>, SamplingError> {
-        for i in 0..self.ordered.len() {
+        if !finite2(point) {
+            return Ok(None);
+        }
+        let grid = self
+            .grid
+            .get_or_insert_with(|| ChartGrid::new(&self.ordered));
+        for &i in grid.candidates(point) {
             self.remaining_queries -= 1;
             if self.remaining_queries < 0 {
                 return Err(SamplingError::LookupBudget);
             }
-            let e = self.ordered[i];
+            let e = self.ordered[i as usize];
             if let Some(w) = weights(point, e.a, e.b, e.c) {
                 if w.x >= -1e-6 && w.y >= -1e-6 && w.z >= -1e-6 {
                     return Ok(Some((e, w)));
@@ -174,6 +286,23 @@ impl<'g> SamplingChart<'g> {
             }
         }
         Ok(None)
+    }
+
+    /// 図の上の点にいちばん近いテクセル（その点の三角形の UV の点を含む画素）。図に無い点・文書の外は None。
+    pub fn nearest_texel(
+        &mut self,
+        point: Vec2,
+        width: i32,
+        height: i32,
+    ) -> Result<Option<(i64, i64)>, SamplingError> {
+        let Some((e, b)) = self.locate(point)? else {
+            return Ok(None);
+        };
+        let t = self.owner.triangles[e.triangle as usize];
+        let uv = mix2(t.uv_a, t.uv_b, t.uv_c, b);
+        let x = (uv.x * width as f32).floor() as i64;
+        let y = (uv.y * height as f32).floor() as i64;
+        Ok((x >= 0 && y >= 0 && x < width as i64 && y < height as i64).then_some((x, y)))
     }
 
     /// 図の上の点 point を、ダブの画素 pixel の参照（UV の画素の双線形の 4 点）にする。図に無い点・どの参照も読めない画素は None。
@@ -279,6 +408,7 @@ impl SurfaceGeometry {
             index: HashMap::new(),
             ordered: Vec::new(),
             remaining_queries: LOOKUP_BUDGET,
+            grid: None,
         };
         let add = |chart: &mut SamplingChart<'_>, entry: Entry| -> Result<(), SamplingError> {
             if chart.ordered.len() as i64 >= max_triangles as i64

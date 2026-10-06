@@ -4,10 +4,14 @@
 //! 画面に出すのは文ではなく項目の名前だけなので、注記を項目に畳む（値は捨てる。名前は言語ごと）。畳んだ項目は ID の文字で
 //! ブラシのファイルに残す（`import.gaps`）ので、読み戻しても印と一覧が変わらない。知らない ID は読み飛ばす（情報だけで、
 //! 描き方には関わらない）。注記の種類を足すと、ここの対応がコンパイルで止まる（黙って項目なしにしない）。
+//! ファイルから写せた項目（`SutMapped`）も、同じく ID の文字でブラシのファイルに残す（`import.mapped`）。取り込みの結果をそのまま残すので、
+//! 取り込んだあとに利用者が傾きや筆圧を入れても、ファイルから写した項目には並ばない。
 
-use yolu_io::brushes::{DualNote, SutNote, TextureNote, Unrepresented};
+use yolu_io::brushes::{DualNote, SutMapped, SutNote, TextureNote, Unrepresented};
 
 use crate::lang::Lang;
+
+use super::ImportMeta;
 
 /// 表せなかった項目。並びは一覧に出す順。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -58,10 +62,13 @@ pub enum Gap {
     ColorChange,
     BlendMode,
     PressureCurve,
+    TiltCurve,
+    StartEndDetail,
+    StabilizerStrength,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 46] = [
+    pub const ALL: [Gap; 49] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -108,6 +115,9 @@ impl Gap {
         Gap::ColorChange,
         Gap::BlendMode,
         Gap::PressureCurve,
+        Gap::TiltCurve,
+        Gap::StartEndDetail,
+        Gap::StabilizerStrength,
     ];
 
     /// ファイルに書く名前。
@@ -159,6 +169,9 @@ impl Gap {
             Gap::ColorChange => "color-change",
             Gap::BlendMode => "blend-mode",
             Gap::PressureCurve => "pressure-curve",
+            Gap::TiltCurve => "tilt-curve",
+            Gap::StartEndDetail => "start-end-detail",
+            Gap::StabilizerStrength => "stabilizer-strength",
         }
     }
 
@@ -218,6 +231,9 @@ impl Gap {
             Gap::ColorChange => lang.pick("色の変化", "Color change"),
             Gap::BlendMode => lang.pick("合成モード", "Blend mode"),
             Gap::PressureCurve => lang.pick("筆圧の曲線", "Pressure curve"),
+            Gap::TiltCurve => lang.pick("傾きの曲線", "Tilt curve"),
+            Gap::StartEndDetail => lang.pick("入り抜きの速さ・割合", "Start/end speed and ratio"),
+            Gap::StabilizerStrength => lang.pick("手ぶれ補正の強さ", "Stabilization strength"),
         }
     }
 }
@@ -290,6 +306,9 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             | SutNote::InfluenceUnreadable(_)
             | SutNote::ThicknessPressure => Gap::Controls,
             SutNote::CurveSimplified(_) => Gap::PressureCurve,
+            SutNote::TiltCurve(_) => Gap::TiltCurve,
+            SutNote::StartEndDetail => Gap::StartEndDetail,
+            SutNote::StabilizerStrength => Gap::StabilizerStrength,
             SutNote::SettingsMissing => Gap::PresetSettings,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
@@ -300,6 +319,79 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
         },
         U::PatternSkipped { .. } => return None,
     })
+}
+
+/// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
+pub const MAPPED_ALL: [SutMapped; 9] = [
+    SutMapped::TipImage,
+    SutMapped::Texture,
+    SutMapped::Pressure,
+    SutMapped::Tilt,
+    SutMapped::StartEnd,
+    SutMapped::Stabilizer,
+    SutMapped::TipAngle,
+    SutMapped::AngleRandom,
+    SutMapped::ColorMixing,
+];
+
+/// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
+pub fn mapped_id(item: SutMapped) -> &'static str {
+    match item {
+        SutMapped::TipImage => "tip-image",
+        SutMapped::Texture => "texture",
+        SutMapped::Pressure => "pressure",
+        SutMapped::Tilt => "tilt",
+        SutMapped::StartEnd => "start-end",
+        SutMapped::Stabilizer => "stabilizer",
+        SutMapped::TipAngle => "tip-angle",
+        SutMapped::AngleRandom => "angle-random",
+        SutMapped::ColorMixing => "color-mixing",
+    }
+}
+
+/// ファイルの名前から写せた項目へ（知らない名前は None。新しい版が足した項目は読み飛ばす）。
+pub fn mapped_from_id(id: &str) -> Option<SutMapped> {
+    MAPPED_ALL.into_iter().find(|m| mapped_id(*m) == id)
+}
+
+/// 一覧の行のツールチップ: ブラシの名前（変更ありの印つき）、取り込んだ出どころ、ファイルから写した項目、表せなかった項目。
+/// 写した項目と表せなかった項目は、どちらも取り込みのときに決めてファイルに残した一覧をそのまま出す（今のブラシの設定からは導かない）。
+pub fn row_tooltip(lang: Lang, name: &str, modified: bool, import: Option<&ImportMeta>) -> String {
+    let mut tooltip = if modified {
+        lang.pick(format!("{name}（変更あり）"), format!("{name} (modified)"))
+    } else {
+        name.to_owned()
+    };
+    let Some(meta) = import else {
+        return tooltip;
+    };
+    let mut push = |text: &str| {
+        tooltip.push('\n');
+        tooltip.push_str(text);
+    };
+    let join = |names: Vec<&str>| names.join(lang.pick("、", ", "));
+    if !meta.source.is_empty() {
+        push(&meta.source);
+    }
+    if !meta.mapped.is_empty() {
+        let names = meta.mapped.iter().map(|m| {
+            let (ja, en) = m.texts();
+            lang.pick(ja, en)
+        });
+        push(&format!(
+            "{}{}",
+            lang.pick("写した項目: ", "Carried over: "),
+            join(names.collect())
+        ));
+    }
+    if !meta.gaps.is_empty() {
+        push(&format!(
+            "{}{}",
+            lang.pick("表せなかった項目: ", "Not represented: "),
+            join(meta.gaps.iter().map(|g| g.name(lang)).collect())
+        ));
+    }
+    tooltip
 }
 
 /// 注記の並びを、重ならない項目の一覧（`Gap` の並び）にする。
@@ -338,6 +430,47 @@ mod tests {
             );
         }
         assert_eq!(Gap::from_id("no-such-gap"), None);
+    }
+
+    #[test]
+    fn every_carried_item_has_a_distinct_id_and_a_name_in_both_languages() {
+        let mut ids: Vec<&str> = MAPPED_ALL.iter().map(|m| mapped_id(*m)).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), MAPPED_ALL.len());
+        let mut sorted = MAPPED_ALL;
+        sorted.sort();
+        assert_eq!(sorted, MAPPED_ALL, "並びの順");
+        for item in MAPPED_ALL {
+            assert_eq!(mapped_from_id(mapped_id(item)), Some(item));
+            let (ja, en) = item.texts();
+            assert!(
+                !ja.is_empty() && !en.is_empty() && en.is_ascii(),
+                "{item:?}"
+            );
+        }
+        assert_eq!(mapped_from_id("no-such-item"), None);
+    }
+
+    #[test]
+    fn the_tooltip_lists_the_source_then_what_was_carried_then_what_was_left_out() {
+        let meta = ImportMeta::new(
+            "CLIP STUDIO .sut".into(),
+            false,
+            vec![Gap::Spray, Gap::Noise],
+        )
+        .with_mapped(vec![SutMapped::Pressure]);
+        assert_eq!(
+            row_tooltip(Lang::En, "A", false, Some(&meta)),
+            "A\nCLIP STUDIO .sut\nCarried over: pen pressure\nNot represented: Noise, Spray"
+        );
+        // 何も写せていない・何も表せなかった行は、その行を出さない
+        let bare = ImportMeta::new("GIMP GBR".into(), false, vec![]);
+        assert_eq!(
+            row_tooltip(Lang::En, "B", true, Some(&bare)),
+            "B (modified)\nGIMP GBR"
+        );
+        assert_eq!(row_tooltip(Lang::Ja, "C", false, None), "C");
     }
 
     #[test]

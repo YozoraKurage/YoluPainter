@@ -54,13 +54,24 @@ pub struct YlbTestServerStats {
     pub original_kib: u32,
     /// 元の絵が揃うまで出さずに待たせているセットの数（機能の印 ORIGINAL_TEXTURES を名乗っているときだけ待たせる）。
     pub held_sets: u32,
+    /// 送った頼み（MaterialRequest。印 MATERIAL_REQUEST が双方にあるとき、待たせたセットの元の絵を自分から頼む分と、試験が頼ませた分）の数。
+    pub requests: u32,
+    /// 手元の絵を使った数（Cached の印が手元の絵と合った）と、使えなかった数（手元に無い・印か大きさが違う。頼み直す）。
+    pub cached_used: u32,
+    pub cached_missed: u32,
+    /// 最後に送った頼みの、項目の数。
+    pub last_request_items: u32,
+    /// 最後に受けた元の絵（線の上で受けた様子。手元の絵に置き換える前）の様子（0 絵が付く・1 読めない・2 大きすぎる・3 予算・4 手元の絵を使う）と
+    /// マテリアルの番号。
+    pub last_original_state: u32,
+    pub last_original_material: u32,
 }
 
 /// 自己診断のスタンドアロンが受けた、元の絵 1 つの様子（`ylb_test_server_original`）。
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct YlbTestServerOriginal {
-    /// 0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える。
+    /// 0 絵が付く・1 読めない・2 辺が上限を超える・3 予算を超える・4 手元の絵を使う（画素なし）。
     pub state: u32,
     /// 0 原本のファイル・1 取り込んだ絵・2 GPU を通して。
     pub read: u32,
@@ -73,6 +84,8 @@ pub struct YlbTestServerOriginal {
     /// 真ん中の画素（(幅 / 2, 高さ / 2)。行は下から）と、一番下の左の画素の RGBA を r | g << 8 | b << 16 | a << 24 に詰めたもの（絵が付かなければ 0）。
     pub center: u32,
     pub corner: u32,
+    /// 絵の印（0 は印なし）。
+    pub stamp: u64,
 }
 
 /// 自己診断のスタンドアロンが受けた、描いていないスロットの絵 1 つの様子（`ylb_test_server_texture`）。
@@ -124,6 +137,10 @@ struct Shared {
     originals: std::collections::BTreeMap<(u32, String), MaterialOriginal>,
     /// 元の絵が揃うまで出さないセット（マテリアルの番号ごと。スタンドアロンが、新しく作ったセットを元の絵が入るまで Unity に出さないのと同じ）。
     held: std::collections::BTreeMap<u32, Held>,
+    /// 今のモデルのマテリアルの名前（番号順）。
+    names: Vec<String>,
+    /// 手元の元の絵（マテリアルの名前・スロットごと。印の付いた絵だけ。モデルを替えても残す）。頼みの `have` と、Cached の答えに使う。
+    cache: std::collections::BTreeMap<(String, String), MaterialOriginal>,
 }
 
 /// 元の絵を待たせているセット 1 つ。
@@ -139,6 +156,8 @@ struct Held {
 pub struct TestServer {
     name: String,
     stop: Arc<AtomicBool>,
+    /// 読むのを止めている間は、つながりから何も読まない（試験用。相手が読まないときのブリッジの送りの列を確かめる）。
+    paused: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -165,8 +184,11 @@ impl TestServer {
             textures: Default::default(),
             originals: Default::default(),
             held: Default::default(),
+            names: Vec::new(),
+            cache: Default::default(),
         }));
-        let (s, sh) = (stop.clone(), shared.clone());
+        let paused = Arc::new(AtomicBool::new(false));
+        let (s, sh, pause) = (stop.clone(), shared.clone(), paused.clone());
         let thread = thread::Builder::new()
             .name("yolu-bridge-testserver".into())
             .spawn(move || {
@@ -201,6 +223,10 @@ impl TestServer {
                     lock(&sh).conn = Some(conn.clone());
                     reader.set_timeout(Some(Duration::from_millis(100)));
                     while !s.load(Ordering::Relaxed) {
+                        if pause.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
                         match reader.next(&conn) {
                             Ok(Received::Idle) => continue,
                             Ok(Received::Message(Message::Bye)) | Err(_) => break,
@@ -227,9 +253,15 @@ impl TestServer {
         Ok(TestServer {
             name: name.to_owned(),
             stop,
+            paused,
             shared,
             thread: Some(thread),
         })
+    }
+
+    /// つながりから読むのを止める・再開する（止めている間も、止める合図には応える）。
+    pub fn pause_reading(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
     }
 
     pub fn stop(mut self) {
@@ -325,6 +357,7 @@ impl TestServer {
             height: o.height,
             center: pixel(o.width / 2, o.height / 2),
             corner: pixel(0, 0),
+            stamp: o.stamp,
         })
     }
 
@@ -341,6 +374,40 @@ impl TestServer {
             srgb: t.srgb as u32,
             center: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
         })
+    }
+
+    /// 頼みを 1 つ送る（スタンドアロンが Unity に頼む。`generation` が 0 なら今のモデルの世代）。相手に印が無い・つながっていないなら負。
+    pub fn request(
+        &self,
+        generation: u32,
+        material: u32,
+        wants: u8,
+        slot: &str,
+        have: u64,
+    ) -> i32 {
+        let mut g = lock(&self.shared);
+        let Some(conn) = g.conn.clone() else {
+            return crate::ffi::YLB_E_STATE;
+        };
+        let generation = if generation == 0 { g.generation } else { generation };
+        let message = Message::MaterialRequest(MaterialRequest {
+            generation,
+            items: vec![MaterialWant {
+                material,
+                wants,
+                slot: slot.to_owned(),
+                have,
+            }],
+        });
+        match conn.send_gated(&message) {
+            Ok(true) => {
+                g.stats.requests += 1;
+                g.stats.last_request_items = 1;
+                0
+            }
+            Ok(false) => crate::ffi::YLB_E_STATE,
+            Err(_) => crate::ffi::YLB_E_STATE,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -408,6 +475,15 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
             g.originals.clear();
             g.held.clear();
             g.stats.held_sets = 0;
+            g.names = m
+                .materials
+                .iter()
+                .map(|mat| match &mat.key {
+                    MaterialKey::Unassigned => "Unassigned".to_owned(),
+                    MaterialKey::Material { name, .. } => name.clone(),
+                })
+                .collect();
+            let mut wanted: Vec<MaterialWant> = Vec::new();
             // 元の絵を送ると名乗る相手とつながっているときは、Color の流し込み先に絵の入っているマテリアルのセットを、元の絵が揃うまで
             // 出さない（スタンドアロンが、新しく作ったセットを元の絵が入るまで Unity に出さないのと同じ。出た後の Color は元の絵）
             let waits = conn
@@ -436,6 +512,10 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                     .map(|r| r.property.clone())
                     .collect();
                 if waits && !expected.is_empty() {
+                    for slot in &expected {
+                        let have = g.cache.get(&(name.clone(), slot.clone())).map_or(0, |o| o.stamp);
+                        wanted.push(MaterialWant::original(i as u32, slot.clone(), have));
+                    }
                     g.held.insert(
                         i as u32,
                         Held {
@@ -449,6 +529,18 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                     continue;
                 }
                 publish_set(&mut g, conn, i as u32, &name, &channels, size, tile_size, None);
+            }
+            // 印が双方にあれば、待たせたセットの元の絵を自分から頼む（実際のスタンドアロンと同じ。Unity は頼まれない元の絵を送らない）
+            if !wanted.is_empty() && conn.common_features() & feature::MATERIAL_REQUEST != 0 {
+                let items = wanted.len() as u32;
+                let message = Message::MaterialRequest(MaterialRequest {
+                    generation: m.generation,
+                    items: wanted,
+                });
+                if conn.send_gated(&message).unwrap_or(false) {
+                    g.stats.requests += 1;
+                    g.stats.last_request_items = items;
+                }
             }
         }
         Message::Pose(p) => {
@@ -539,11 +631,52 @@ fn handle(shared: &Mutex<Shared>, conn: &Connection, message: Message, size: u32
                 ));
                 return;
             }
+            let name = g.names.get(o.material as usize).cloned().unwrap_or_default();
+            g.stats.last_original_state = o.state as u32;
+            g.stats.last_original_material = o.material;
+            // 線の上の画素のバイト（手元の絵に置き換える前）
+            let wire_pixels = o.pixels.len();
+            // 手元の絵を使う答え: 印と大きさが手元の絵と合えば、その画素を使う。合わなければ使わず、印なしで頼み直す
+            let mut o = o;
+            if o.state == OriginalState::Cached {
+                let hit = g
+                    .cache
+                    .get(&(name.clone(), o.slot.clone()))
+                    .filter(|c| c.stamp == o.stamp && (c.width, c.height) == (o.width, o.height))
+                    .cloned();
+                match hit {
+                    Some(c) => {
+                        g.stats.cached_used += 1;
+                        o = MaterialOriginal {
+                            generation: o.generation,
+                            material: o.material,
+                            ..c
+                        };
+                    }
+                    None => {
+                        g.stats.cached_missed += 1;
+                        let again = Message::MaterialRequest(MaterialRequest {
+                            generation: o.generation,
+                            items: vec![MaterialWant::original(o.material, o.slot.clone(), 0)],
+                        });
+                        if conn.send_gated(&again).unwrap_or(false) {
+                            g.stats.requests += 1;
+                            g.stats.last_request_items = 1;
+                        }
+                        return;
+                    }
+                }
+            } else if o.state == OriginalState::Image && o.stamp != 0 {
+                if g.cache.len() >= 64 {
+                    g.cache.pop_first();
+                }
+                g.cache.insert((name.clone(), o.slot.clone()), o.clone());
+            }
             g.stats.originals += 1;
             g.stats.original_kib = g
                 .stats
                 .original_kib
-                .saturating_add(o.pixels.len().div_ceil(1024) as u32);
+                .saturating_add(wire_pixels.div_ceil(1024) as u32);
             let (material, slot) = (o.material, o.slot.clone());
             g.originals.insert((material, slot.clone()), o.clone());
             let done = match g.held.get_mut(&material) {

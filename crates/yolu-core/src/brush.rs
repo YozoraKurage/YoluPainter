@@ -15,6 +15,9 @@
 //! - 覆いは C# と同じく float（単精度）で持つ。計算は倍精度で、演算の順も C# と同じ（画素の結果は C# とバイト一致）。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、一致を確かめたのは同じ libm（Linux の glibc）の上。
 //!
+//! - 画素の計算は、道が SIMD（x86_64 の AVX2・SSE4.1）なら、ステンシルを使わないブラシを行ごとにレーンで行う（`rows`。選択範囲・透明部分のロックは、色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式）。
+//!   結果のバイトは画素ごとの式（`YOLU_SIMD=scalar`）と同じ。ワーカーで描くかは、箱の大きさに画素ごとの時間の見積もりを掛けて決める。
+//!
 //! 1 つのストロークは 1 つの面（層の 1 つのチャンネル）へ描く。始めたときの文書の選択範囲の内側だけを、選ばれた量の割合で
 //! 変える（[`apply_at`] の 1 か所）。2D の対称（[`crate::CanvasSymmetry`]）は各ダブを写しへも置く（`symmetric`）。透明部分の
 //! ロックは `keep_alpha`（ストロークを作るときに必ず決める）で、描く画素のアルファと透明画素の RGB を守る。C# の
@@ -50,7 +53,10 @@ mod mix;
 mod mix_stroke;
 mod presets;
 mod pressure;
+#[doc(hidden)]
+pub mod profile;
 pub mod random;
+mod rows;
 mod settings;
 mod sources;
 mod stencil;
@@ -214,6 +220,16 @@ impl BrushSample {
     };
 }
 
+/// 角度（ラジアン）の cos と sin。角度が +0 のときは（libm の結果と同じ）1 と 0 をそのまま返す（回転しない筆先が大半で、三角関数を省く）。
+#[inline]
+fn cos_sin(angle: f64) -> (f64, f64) {
+    if angle.to_bits() == 0 {
+        (1.0, 0.0)
+    } else {
+        (angle.cos(), angle.sin())
+    }
+}
+
 /// 角度 a から b へ短い向きに t だけ進んだ角度（回転の補間。差を ±π に折り返す）。
 #[inline]
 fn lerp_angle(a: f64, b: f64, t: f64) -> f64 {
@@ -245,7 +261,7 @@ pub struct BrushPixel {
 }
 
 /// ストロークが手を付けたタイル 1 枚: 画素ごとのストロークの覆い（0〜1）、ストロークの前のタイル（巻き戻し用の写し）、
-/// ダブごとの色ならストロークの色（画素ごとに straight RGBA 0〜1）。
+/// ダブごとの色ならストロークの色（straight RGBA 0〜1。R・G・B・A の面を TileSize² ずつ並べる）。
 pub(crate) struct StrokeTile {
     wash: Vec<f32>,
     pub before: Option<Tile>,
@@ -893,6 +909,7 @@ impl StrokeState {
         size_factor: f64,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        let _profile = profile::scope(profile::Stage::Stamp);
         let index = self.stamp_count;
         self.stamp_count += 1;
         let brush = self.brush.clone();
@@ -1022,8 +1039,8 @@ impl StrokeState {
                 x: cx,
                 y: cy,
                 radius,
-                cos: angle.cos(),
-                sin: angle.sin(),
+                cos: cos_sin(angle).0,
+                sin: cos_sin(angle).1,
                 roundness,
                 aspect_x: 1.0,
                 aspect_y: 1.0,
@@ -1046,6 +1063,7 @@ impl StrokeState {
 
     /// 2 つ目の筆先のダブを線の長さ limit まで、画素ごとの溜まり（最大）へ置く（C# の StampDual）。
     fn stamp_dual(&mut self, limit: f64) -> Result<(), CoreError> {
+        let _profile = profile::scope(profile::Stage::Dual);
         let brush = self.brush.clone();
         let dual = brush.dual.as_ref().expect("デュアルブラシ");
         while let Some(&d) = self.dual_pending.front() {
@@ -1080,7 +1098,7 @@ impl StrokeState {
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(self.height - 1);
         let angle = dual.angle * std::f64::consts::PI / 180.0;
-        let (cos, sin) = (angle.cos(), angle.sin());
+        let (cos, sin) = cos_sin(angle);
         let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
         if let Some(t) = &dual.tip {
             if t.width() >= t.height() {
@@ -1119,6 +1137,30 @@ impl StrokeState {
                 let (origin_x, origin_y) = (tx * ts, ty * ts);
                 let mut cells = self.dual_coverage.remove(&coord);
                 let mut result = Ok(());
+                // レーンで溜める（道がスカラーなら None で、下の画素ごとの式）
+                let lanes = {
+                    let mut alloc = || {
+                        let next = self.rollback_bytes + 64 + (ts * ts * 4) as u64;
+                        self.ensure_budget(next)?;
+                        self.rollback_bytes = next;
+                        Ok(vec![0.0; (ts * ts) as usize])
+                    };
+                    rows::dual_tile(
+                        &shape,
+                        xs,
+                        ys,
+                        (origin_x, origin_y, ts as usize),
+                        &mut cells,
+                        &mut alloc,
+                    )
+                };
+                if let Some(r) = lanes {
+                    if let Some(c) = cells {
+                        self.dual_coverage.insert(coord, c);
+                    }
+                    r?;
+                    continue;
+                }
                 'tile: for py in ys.0..=ys.1 {
                     let row = (py - origin_y) * ts;
                     for px in xs.0..=xs.1 {
@@ -1195,29 +1237,36 @@ impl StrokeState {
                 "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない",
             ));
         }
-        let frame = match self.prepare_dab(
-            surface,
-            brush,
-            (min_x, max_x),
-            (min_y, max_y),
-            x,
-            y,
-            shape.pressure,
-            true,
-        )? {
+        let prepared = {
+            let _profile = profile::scope(profile::Stage::Prepare);
+            self.prepare_dab(
+                surface,
+                brush,
+                (min_x, max_x),
+                (min_y, max_y),
+                x,
+                y,
+                shape.pressure,
+                true,
+            )?
+        };
+        let frame = match prepared {
             Prepared::Skip => return Ok(false),
             Prepared::Paint => None,
             Prepared::Effect(f) => Some(f),
         };
-        let result = self.dab_pixels(
-            surface,
-            brush,
-            shape,
-            frame.as_ref(),
-            (min_x, max_x),
-            (min_y, max_y),
-            changed,
-        );
+        let result = {
+            let _profile = profile::scope(profile::Stage::Pixels);
+            self.dab_pixels(
+                surface,
+                brush,
+                shape,
+                frame.as_ref(),
+                (min_x, max_x),
+                (min_y, max_y),
+                changed,
+            )
+        };
         self.effect.scratch = 0; // ReleaseEffectDab
         self.frame_cache = frame; // 領域は次のダブで使い回す（中身は作り直す）
         result
@@ -1237,28 +1286,44 @@ impl StrokeState {
         let ts = surface.tile_size() as i64;
         let (min_x, max_x) = xr;
         let (min_y, max_y) = yr;
-        let mut spans: Vec<TileSpan> = Vec::new();
+        // ダブが触るタイル（小さなダブは 4 枚までなので、置き場はスタック）
+        let tiles_across = max_x / ts - min_x / ts + 1;
+        let tile_count = (tiles_across * (max_y / ts - min_y / ts + 1)) as usize;
+        let mut inline_spans = [(TileCoord::new(0, 0), (0, 0), (0, 0)); 4];
+        let mut heap_spans: Vec<TileSpan> = Vec::new();
+        let spans: &mut [TileSpan] = if tile_count <= inline_spans.len() {
+            &mut inline_spans[..tile_count]
+        } else {
+            heap_spans.resize(tile_count, inline_spans[0]);
+            &mut heap_spans
+        };
+        let mut k = 0;
         for ty in min_y / ts..=max_y / ts {
             for tx in min_x / ts..=max_x / ts {
                 let xs = (min_x.max(tx * ts), max_x.min(tx * ts + ts - 1));
                 let ys = (min_y.max(ty * ts), max_y.min(ty * ts + ts - 1));
-                spans.push((TileCoord::new(tx as u32, ty as u32), xs, ys));
+                spans[k] = (TileCoord::new(tx as u32, ty as u32), xs, ys);
+                k += 1;
             }
         }
+        let spans: &[TileSpan] = spans;
         let paint = self.paint(brush, frame);
         let parallel = spans.len() > 1
             && rayon::current_num_threads() > 1
-            && (max_x - min_x + 1) * (max_y - min_y + 1)
-                >= PARALLEL_THRESHOLD.load(Ordering::Relaxed)
-            && self.fits_any_order(surface, &spans, &paint);
+            && worth_parallel(
+                (max_x - min_x + 1) * (max_y - min_y + 1),
+                rows::cost_per_pixel(&paint, shape, self.selection.is_none(), ts as usize),
+            )
+            && self.fits_any_order(surface, spans, &paint);
         if parallel {
             self.parallel_dabs += 1;
-            return Ok(self.dab_parallel(surface, &paint, shape, &spans, changed));
+            return Ok(self.dab_parallel(surface, &paint, shape, spans, changed));
         }
         let mut any = false;
-        for &(coord, xs, ys) in &spans {
+        for &(coord, xs, ys) in spans {
             let dual = self.dual_coverage.remove(&coord);
             let r = self.with_tile(surface, &paint, coord, |cx, held, live| {
+                let _profile = profile::scope(profile::Stage::Kernel);
                 dab_tile(cx, held, live, dual.as_deref(), shape, coord, xs, ys)
             });
             if let Some(d) = dual {
@@ -1998,13 +2063,32 @@ impl<'a> Selected<'a> {
     }
 }
 
-/// 外接の箱がこれ以上（画素）のダブは、タイルごとにワーカーで描く（C# と同じ 128²）。小さいダブはワーカーを起こす費用が勝つ
-/// （半径 40・460 ダブのストロークで、64² にすると 1 本のスレッドの約 2 倍かかった。2026-10-04 の計測）。
+/// 外接の箱がこれ以上（画素）のダブは、タイルごとにワーカーで描く候補になる（C# と同じ 128²）。ただし画素ごとの時間はブラシで 15 倍ほど
+/// 違うので、箱の大きさに画素ごとの時間の見積もり（[`rows::cost_per_pixel`]、ナノ秒）を掛けて、画素ごとの式（30 ナノ秒）で描く箱の
+/// 大きさへ換算してから比べる。ワーカーを起こす費用は、1 つのダブの直列の時間がおよそ 0.5 ミリ秒を超えて初めて勝つ
+/// （幅 128 の硬い丸の 150 ダブは、直列で 4 ミリ秒、ワーカーを使うと 43 ミリ秒。幅 512 の指先・色の混ぜは、ワーカーで 2.4〜3.4 倍速い。1 つのダブが直列で 0.6〜0.8 ミリ秒を超えるあたりが損得の境）。
 pub(crate) const PARALLEL_DAB_PIXELS: i64 = 128 * 128;
 static PARALLEL_THRESHOLD: AtomicI64 = AtomicI64::new(PARALLEL_DAB_PIXELS);
+/// 画素ごとの式（`apply_at`）の画素ごとの時間の見積もり（ナノ秒）。しきい値の換算の基準。
+const SCALAR_PIXEL_NANOS: i64 = 30;
 
-/// 試験のための口（C# の BrushStroke.ParallelDabPixels と同じ役目）: ワーカーで描くダブの外接の箱の下限を変え、前の値を返す。
-/// 小さな画布でもワーカーの経路を通すために使う。どの値でも画素の結果は同じ（経路の選び方だけが変わる）。
+/// 箱が `box_pixels` 画素で、1 画素 `cost` ナノ秒かかるダブを、ワーカーで描く価値があるか。しきい値が既定（128²）未満のときは、
+/// 箱の画素数そのものの下限（試験が小さな箱でもワーカーの経路を通すため）。
+fn worth_parallel(box_pixels: i64, cost: i64) -> bool {
+    worth_parallel_for(PARALLEL_THRESHOLD.load(Ordering::Relaxed), box_pixels, cost)
+}
+
+fn worth_parallel_for(limit: i64, box_pixels: i64, cost: i64) -> bool {
+    if limit < PARALLEL_DAB_PIXELS {
+        box_pixels >= limit
+    } else {
+        box_pixels.saturating_mul(cost) / SCALAR_PIXEL_NANOS >= limit
+    }
+}
+
+/// 試験のための口（C# の BrushStroke.ParallelDabPixels と同じ役目）: ワーカーで描くダブの外接の箱の下限（既定の 128² 以上の値は、
+/// 画素ごとの式で描く箱の大きさへ換算した下限）を変え、前の値を返す。小さな画布でもワーカーの経路を通すために使う。
+/// どの値でも画素の結果は同じ（経路の選び方だけが変わる）。
 #[doc(hidden)]
 pub fn set_parallel_dab_pixels(pixels: i64) -> i64 {
     PARALLEL_THRESHOLD.swap(pixels, Ordering::Relaxed)
@@ -2027,9 +2111,15 @@ fn dab_tile(
     xs: (i64, i64),
     ys: (i64, i64),
 ) -> Result<bool, CoreError> {
+    if matches!(cx.selected, Selected::Nothing) {
+        return Ok(false); // 選択範囲がこのタイルに何も選んでいない: どの画素も `apply_at` の最初で断られる
+    }
     let round = s.tip.is_none() && s.plain && s.dual.is_none() && s.texture.is_none();
     let simple =
         cx.paint.effect == EffectKind::Paint && !cx.paint.tip_colors && cx.paint.stencil.is_none();
+    if let Some(level) = rows::usable(cx, s) {
+        return rows::dab_tile(level, cx, held, live, dual, s, coord, xs, ys);
+    }
     match (round, simple) {
         (true, true) => dab_tile_with::<true, true>(cx, held, live, dual, s, coord, xs, ys),
         (true, false) => dab_tile_with::<true, false>(cx, held, live, dual, s, coord, xs, ys),
@@ -2170,6 +2260,44 @@ fn dab_tile_with<const ROUND: bool, const SIMPLE: bool>(
     Ok(changed)
 }
 
+/// タイルを初めて触る: 覆い（float × TileSize²）と写し（とダブごとの色）を合わせて予算と比べ（写しは共有でも全体を数える）、
+/// ストロークのタイルを作って巻き戻しの数を増やす。ステンシルがあれば、画素ごとに読んだ値（double と色で 12 バイト）も持つ。
+/// `simple` は色を塗るだけ（ダブごとの色・ステンシルなし）と分かっているとき。
+fn new_stroke_tile(
+    cx: &mut PixelContext<'_>,
+    live: &mut LiveTile,
+    simple: bool,
+) -> Result<StrokeTile, CoreError> {
+    let _profile = profile::scope(profile::Stage::FirstTouch);
+    let p = cx.paint;
+    let ts = cx.tile_size;
+    let paint_bytes = if !simple && p.tip_colors {
+        (ts * ts * 16) as u64
+    } else {
+        0
+    };
+    let per_pixel = if !simple && p.stencil.is_some() {
+        16
+    } else {
+        4
+    };
+    let next =
+        *cx.rollback_bytes + 64 + (ts * ts * per_pixel) as u64 + live.byte_size() + paint_bytes;
+    if next.saturating_add(p.scratch) > cx.budgets.stroke {
+        return Err(CoreError::StrokeBudgetExceeded);
+    }
+    let stencil = !simple && p.stencil.is_some();
+    let tile = StrokeTile {
+        wash: vec![0.0; ts * ts],
+        before: live.snapshot(),
+        paint: (!simple && p.tip_colors).then(|| vec![0.0; ts * ts * 4]),
+        stencil_amount: stencil.then(|| vec![f64::NAN; ts * ts]),
+        stencil_color: stencil.then(|| vec![Rgba8::TRANSPARENT; ts * ts]),
+    };
+    *cx.rollback_bytes = next;
+    Ok(tile)
+}
+
 /// 1 画素（C# の ApplyPixelAt の 1 チャンネルの経路。選択範囲の量と、透明部分のロックの `keep_alpha`（アルファと透明画素の RGB を
 /// 守る）はここだけで掛ける）。SIMPLE は色を塗るだけ
 /// （ダブごとの色・効果なし）と分かっているとき（分岐を除いた同じ式）。paper は乗算以外の紙の質感（拡張）: 合わせ方・質感の値・深さ。
@@ -2291,31 +2419,7 @@ fn apply_at<const SIMPLE: bool>(
         }
     }
     if held.is_none() {
-        // タイルを初めて触る: 覆い（float × TileSize²）と写し（とダブごとの色）を合わせて予算と比べる（写しは共有でも全体を数える）。
-        // ステンシルがあれば、画素ごとに読んだ値（double と色で 12 バイト）も
-        let paint_bytes = if !SIMPLE && p.tip_colors {
-            (ts * ts * 16) as u64
-        } else {
-            0
-        };
-        let per_pixel = if !SIMPLE && p.stencil.is_some() {
-            16
-        } else {
-            4
-        };
-        let next =
-            *cx.rollback_bytes + 64 + (ts * ts * per_pixel) as u64 + live.byte_size() + paint_bytes;
-        if next.saturating_add(p.scratch) > cx.budgets.stroke {
-            return Err(CoreError::StrokeBudgetExceeded);
-        }
-        let stencil = !SIMPLE && p.stencil.is_some();
-        let mut tile = StrokeTile {
-            wash: vec![0.0; ts * ts],
-            before: live.snapshot(),
-            paint: (!SIMPLE && p.tip_colors).then(|| vec![0.0; ts * ts * 4]),
-            stencil_amount: stencil.then(|| vec![f64::NAN; ts * ts]),
-            stencil_color: stencil.then(|| vec![Rgba8::TRANSPARENT; ts * ts]),
-        };
+        let mut tile = new_stroke_tile(cx, live, SIMPLE)?;
         if stencil_read {
             if let (Some(a), Some(c)) = (tile.stencil_amount.as_mut(), tile.stencil_color.as_mut())
             {
@@ -2324,7 +2428,6 @@ fn apply_at<const SIMPLE: bool>(
             }
         }
         *held = Some(tile);
-        *cx.rollback_bytes = next;
     }
     let st = held.as_mut().expect("直前に作った");
     let previous = st.wash[local] as f64;
@@ -2337,26 +2440,28 @@ fn apply_at<const SIMPLE: bool>(
     st.wash[local] = accumulated as f32;
     let mut color = p.stroke_color;
     if !SIMPLE && p.tip_colors {
+        // 画素ごとの色は、チャンネルごとの面（R の面・G の面・B の面・A の面の順、1 面は TileSize²）に持つ
         let pc = st.paint.as_mut().expect("ダブごとの色");
-        let o = local * 4;
+        let plane = ts * ts;
+        let o = [local, plane + local, 2 * plane + local, 3 * plane + local];
         let w = f64_min(1.0, flow);
         let d = mixed.unwrap_or(p.dab_color);
         if previous <= 0.0 {
-            pc[o] = d.r as f32 / 255.0;
-            pc[o + 1] = d.g as f32 / 255.0;
-            pc[o + 2] = d.b as f32 / 255.0;
-            pc[o + 3] = d.a as f32 / 255.0;
+            pc[o[0]] = d.r as f32 / 255.0;
+            pc[o[1]] = d.g as f32 / 255.0;
+            pc[o[2]] = d.b as f32 / 255.0;
+            pc[o[3]] = d.a as f32 / 255.0;
         } else {
-            pc[o] += ((d.r as f64 / 255.0 - pc[o] as f64) * w) as f32;
-            pc[o + 1] += ((d.g as f64 / 255.0 - pc[o + 1] as f64) * w) as f32;
-            pc[o + 2] += ((d.b as f64 / 255.0 - pc[o + 2] as f64) * w) as f32;
-            pc[o + 3] += ((d.a as f64 / 255.0 - pc[o + 3] as f64) * w) as f32;
+            pc[o[0]] += ((d.r as f64 / 255.0 - pc[o[0]] as f64) * w) as f32;
+            pc[o[1]] += ((d.g as f64 / 255.0 - pc[o[1]] as f64) * w) as f32;
+            pc[o[2]] += ((d.b as f64 / 255.0 - pc[o[2]] as f64) * w) as f32;
+            pc[o[3]] += ((d.a as f64 / 255.0 - pc[o[3]] as f64) * w) as f32;
         }
         color = Rgba8::new(
-            to_byte(pc[o] as f64),
-            to_byte(pc[o + 1] as f64),
-            to_byte(pc[o + 2] as f64),
-            to_byte(pc[o + 3] as f64),
+            to_byte(pc[o[0]] as f64),
+            to_byte(pc[o[1]] as f64),
+            to_byte(pc[o[2]] as f64),
+            to_byte(pc[o[3]] as f64),
         );
     }
     if !SIMPLE {
@@ -2466,8 +2571,37 @@ fn apply_at<const SIMPLE: bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::lerp_angle;
+    use super::{cos_sin, lerp_angle, worth_parallel_for, PARALLEL_DAB_PIXELS, SCALAR_PIXEL_NANOS};
     use std::f64::consts::PI;
+
+    #[test]
+    fn the_worker_threshold_follows_the_pixel_cost() {
+        let limit = PARALLEL_DAB_PIXELS;
+        // 画素ごとの式（30 ナノ秒）の箱は、今までと同じ 128² から
+        assert!(!worth_parallel_for(limit, limit - 1, SCALAR_PIXEL_NANOS));
+        assert!(worth_parallel_for(limit, limit, SCALAR_PIXEL_NANOS));
+        // 速いブラシは、同じ時間になる大きな箱から（硬い丸は 30 倍）
+        assert!(!worth_parallel_for(limit, limit * 30 - 1, 1));
+        assert!(worth_parallel_for(limit, limit * 30, 1));
+        assert!(!worth_parallel_for(limit, 100_000, 3));
+        assert!(worth_parallel_for(limit, 200_000, 3));
+        assert!(worth_parallel_for(limit, 40_000, 14));
+        // 既定より小さい値は箱の画素数そのものの下限（試験が小さな箱でもワーカーの経路を通す）。0 は常に、最大は決して
+        assert!(worth_parallel_for(1, 1, 1));
+        assert!(worth_parallel_for(0, 0, 1));
+        assert!(!worth_parallel_for(64, 63, 30));
+        assert!(worth_parallel_for(64, 64, 1));
+        assert!(!worth_parallel_for(i64::MAX, i64::MAX, 30));
+    }
+
+    #[test]
+    fn cos_sin_keeps_the_libm_bits() {
+        for a in [0.0f64, -0.0, 0.3, -1.2, PI, 7.0, f64::MIN_POSITIVE] {
+            let (c, s) = cos_sin(a);
+            assert_eq!(c.to_bits(), a.cos().to_bits(), "{a}");
+            assert_eq!(s.to_bits(), a.sin().to_bits(), "{a}");
+        }
+    }
 
     #[test]
     fn rotation_is_interpolated_the_short_way() {

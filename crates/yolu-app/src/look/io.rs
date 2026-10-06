@@ -11,7 +11,6 @@ use yolu_io::Project;
 
 use crate::engine::Document;
 use crate::lang::Lang;
-use crate::state::AppState;
 
 /// 開いた .ylp のセットの見た目の設定を文書へ戻す。読めなければ（壊れた・新しい形式）標準のまま開いて理由を返す（エントリは
 /// ファイルにバイト列のまま残り、見た目を変えない限り保存でも残る）。
@@ -137,32 +136,5 @@ pub fn write_into(
             )
         })?;
     }
-    Ok((project, overwritten))
-}
-
-/// 保存の口: 描けるセット（読むだけのセットは元のバイト列のまま）の見た目の設定を書く。読めなかったエントリを上書きしたセットの
-/// ID も返す（`write_into`）。
-pub fn save_into(state: &AppState, project: Project) -> Result<(Project, Vec<String>), String> {
-    let looks: Vec<(&str, &MaterialLook)> = state
-        .sets
-        .iter()
-        .enumerate()
-        .filter(|(_, set)| set.read_only.is_none())
-        .map(|(i, set)| (set.id.as_str(), state.set_doc(i).look()))
-        .collect();
-    let (project, overwritten) = write_into(project, &looks, state.lang)?;
-    // Unity から受けた値は、設定が入のときだけ書く（切っていれば外す）
-    let keep = state.prefs.settings.livelink_keep_values;
-    let received: Vec<(&str, Option<&ReceivedLook>)> = state
-        .sets
-        .iter()
-        .enumerate()
-        .filter(|(_, set)| set.read_only.is_none())
-        .map(|(i, set)| {
-            let doc = state.set_doc(i);
-            (set.id.as_str(), doc.received_look().filter(|_| keep))
-        })
-        .collect();
-    let project = write_received_into(project, &received, state.lang)?;
     Ok((project, overwritten))
 }

@@ -17,7 +17,7 @@ use crate::ui::menu::PopupState;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 use crate::view3d::brdf::Curve;
-use crate::view3d::display::{self, EnvKind, Op, Shading};
+use crate::view3d::display::{self, EnvKind, Op, SettingsTab, Shading};
 use crate::view3d::render::MeshMapSource;
 use crate::view3d::{gizmo, input, render::View3dRenderer};
 
@@ -174,6 +174,7 @@ impl View3dSlot {
                     ui.ctx().request_repaint();
                 }
                 let stats = renderer.stats;
+                app.view3d.display.drawn_samples = stats.samples;
                 reduced = match app.view3d.display.shading {
                     Shading::MeshMap(_) => (stats.map_level > 0).then_some((stats.map_level, None)),
                     _ => (stats.paint_level > 0)
@@ -501,6 +502,8 @@ fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>)
 
 const PANEL_WIDTH: f32 = 252.0;
 const PANEL_HEIGHT: f32 = 464.0;
+/// 設定のパネルの「画質」の面の高さ（内容が少ないので低い）。
+const QUALITY_HEIGHT: f32 = 204.0;
 
 /// 光・環境・トーンマッピングの設定（見出しの設定のボタンの下に浮かせる小さなパネル）。外を押すか Esc で閉じる。
 fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option<Rect>) {
@@ -512,7 +515,12 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
         (content.right() - width - 6.0).max(content.left() + 4.0),
         w::corner_bottom(content, 3) + 4.0,
     );
-    let panel = Rect::from_min_size(pos, vec2(width, PANEL_HEIGHT));
+    let height = if app.view3d.display.tab == SettingsTab::Quality {
+        QUALITY_HEIGHT
+    } else {
+        PANEL_HEIGHT
+    };
+    let panel = Rect::from_min_size(pos, vec2(width, height));
     // Esc で閉じる浮いた部品として覚える（閉じたフレームも開いている扱い。キャンバスの Esc が先に選択を外さない）
     crate::ui::window::note_open(&ctx);
     egui::Area::new(egui::Id::new("view3d.settings.area"))
@@ -526,7 +534,10 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             w::outline(&p, panel, t::BORDER, 1.0, 4.0);
             let d = app.view3d.display;
             let mut rows = Rows::new(panel, 8.0);
-            if display::navigation_settings(ui, app, &mut rows, content) { return; }
+            let tab = display::settings_tabs(ui, app, &mut rows, content);
+            if tab == SettingsTab::Navigation {
+                return;
+            }
             let heading = |rows: &mut Rows, p: &egui::Painter, title: &str| {
                 let r = rows.row(18.0, 4.0);
                 w::text(
@@ -566,6 +577,103 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     app.apply(Action::View3d(op(out.value)));
                 }
             };
+            if tab == SettingsTab::Quality {
+                // アンチエイリアス: 機材が使える数だけ押せる（使えない数は理由をツールチップに）
+                heading(&mut rows, &p, lang.pick("アンチエイリアス", "Anti-aliasing"));
+                let r = rows.row(24.0, 4.0);
+                let supported = d.supported_sample_counts();
+                let shown = d.shown_samples();
+                for (n, cell) in display::SAMPLE_CHOICES.iter().zip(Rows::split(r, 4, 4.0)) {
+                    let usable = supported.contains(n);
+                    let label = if *n == 1 { lang.pick("切", "Off").to_owned() } else { format!("{n}×") };
+                    let tip = if usable {
+                        lang.pick("縁のぎざぎざをなめらかにする（MSAA）", "Smooths jagged edges (MSAA)")
+                    } else {
+                        lang.pick("この機材は対応していません", "Not supported on this device")
+                    };
+                    if w::button(ui, cell, ("view3d.set.aa", *n), &label, shown == *n, usable, Some(tip), None)
+                        .clicked()
+                    {
+                        app.apply(Action::View3d(Op::Antialias(*n)));
+                    }
+                }
+                // 選んだ数で描けていないとき（描き先のメモリの上限）は、描いている数を短く
+                let r = rows.row(18.0, 4.0);
+                if d.drawn_samples != 0 && d.drawn_samples < shown {
+                    w::text(
+                        ui.painter(),
+                        r,
+                        &lang.pick(
+                            format!("描画は {}×（メモリの上限）", d.drawn_samples),
+                            format!("Drawing at {}× (memory limit)", d.drawn_samples),
+                        ),
+                        t::LABEL_DIM.with_color(t::WARNING),
+                        Align::Left,
+                    );
+                }
+                rows.space(4.0);
+                // ブルーム
+                let r = rows.row(22.0, 4.0);
+                let bloom = w::toggle(
+                    ui,
+                    r,
+                    "view3d.set.bloom",
+                    lang.pick("ブルーム", "Bloom"),
+                    d.post.bloom,
+                    Some(lang.pick(
+                        "明るい所（発光など）の周りをにじませる",
+                        "Adds a glow around bright areas such as emission",
+                    )),
+                    true,
+                );
+                if bloom != d.post.bloom {
+                    app.apply(Action::View3d(Op::Bloom(bloom)));
+                }
+                let mut dragging = false;
+                for (id, label, tip, value, max, op) in [
+                    (
+                        "bloom_strength",
+                        lang.pick("強さ", "Strength"),
+                        lang.pick("にじみの強さ", "Glow amount"),
+                        d.post.bloom_strength,
+                        display::BLOOM_STRENGTH_MAX,
+                        Op::BloomStrength as fn(f32) -> Op,
+                    ),
+                    (
+                        "bloom_threshold",
+                        lang.pick("しきい値", "Threshold"),
+                        lang.pick(
+                            "これより明るい所がにじむ（1 が白）",
+                            "Brightness above which the glow starts (1 is white)",
+                        ),
+                        d.post.bloom_threshold,
+                        display::BLOOM_THRESHOLD_MAX,
+                        Op::BloomThreshold as fn(f32) -> Op,
+                    ),
+                ] {
+                    let r = rows.row(22.0, 4.0);
+                    let spec = SliderSpec::new(
+                        label,
+                        0.0,
+                        max,
+                        NumberFormat {
+                            decimals: 2,
+                            trim: true,
+                            suffix: "",
+                        },
+                    )
+                    .tooltip(tip)
+                    .enabled(d.post.bloom);
+                    let out = w::slider(ui, r, ("view3d.set", id), value, &spec);
+                    if out.changed {
+                        app.apply(Action::View3d(op(out.value)));
+                    }
+                    dragging |= out.active;
+                }
+                // ドラッグしているあいだは設定のファイルへ書かない（離したときの値を 1 回書く）
+                app.view3d.display.post_dragging = dragging;
+                return;
+            }
 
             // 環境
             heading(&mut rows, &p, lang.pick("環境", "Environment"));
@@ -764,8 +872,8 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 false,
                 true,
                 Some(lang.pick(
-                    "光・環境・影・トーンマッピングを既定へ",
-                    "Light, environment, shadows and tone mapping to defaults",
+                    "光・環境・影・トーンマッピング・ブルームを既定へ",
+                    "Light, environment, shadows, tone mapping and bloom to defaults",
                 )),
                 Some("restart_alt"),
             )

@@ -16,14 +16,45 @@ GPU の絵を照らします。見た目の種類を lilToon にしたテクス�
 | チャンネルだけ | Color・Roughness・Metallic・Normal・Emission・Height のどれか 1 つを、光・環境・トーンマッピングなしで値のまま |
 | メッシュマップだけ | 今のテクスチャセットで焼いたメッシュマップ（AO・曲率・法線など）の 1 枚を、光・環境・トーンマッピングなしで値のまま。焼いていない種類は選べず、見ているマップが無くなるとマテリアルへ戻る |
 
-見出しの光のボタンで「光・環境・トーンマッピング」の小さなパネルが開きます（影の入り切りと柔らかさもここ）。
+見出しの光のボタンで小さなパネルが開きます。表示（光・環境・トーンマッピング。影の入り切りと柔らかさもここ）・画質（アンチエイリアスとブルーム）・視点の 3 つの面があります。
 
 - 環境: なし（一様な環境光）・空（Unity 版の既定の勾配）・スタジオ（暗い灰色の背景に面光源。金属の映り込みと回転が分かる）。明るさ・回転・背景に映すか（とそのぼかし）。
   空は上の軸のまわりに対称なので、回転は見た目を変えません。
-- ライト: 強さ・方位・高さ（Unity 版の `PreviewSceneSettings` と同じ。既定の来る向きは (−0.3, 0.65, −0.7)）。
+- ライト: 強さ・方位・高さ（Unity 版の `PreviewSceneSettings` と同じ項目）。既定の来る向きは (−0.3, 0.65, +0.7)、つまりモデルの前（+Z）の斜め上です
+  （Unity 版の既定 (−0.3, 0.65, −0.7) を Z で折り返した向きで、高さと横へのずれは同じ）。Unity は +Z を前にするので、前から見たときに逆光になりません（既定のカメラもモデルの前から見るので、開いた直後から明るい側が見えます）。
 - 影: 主な光からモデル自身へ落ちる影（既定は切）と、その柔らかさ（影の縁のぼかしの広さ。0% は影のマップの 1 画素ぶん、100% はモデルの大きさの約 2.5%）。
   マテリアルと中立の表示で効き、光なしの表示（チャンネルだけ・メッシュマップだけ）では使いません。
 - トーンマッピング: なし・ニュートラル・ACES と露出（EV）。3D ビューの絵だけに当てます（テクスチャの値・書き出し・2D には当てません）。
+
+### 画質（アンチエイリアスとブルーム）
+
+どちらも 3D ビューの絵だけに当てます（テクスチャの値・書き出し・2D・塗るときの当たりには影響しません）。設定のファイル（`view3d_antialias`・`view3d_bloom`・
+`view3d_bloom_strength`・`view3d_bloom_threshold`）に保存します。
+
+- アンチエイリアス: 切・2×・4×・8×（既定 4×）。面を多サンプルで描いて縁をなめらかにします（MSAA）。使える数は GPU で決まり、対応しない数は押せません。
+  描き先のメモリが上限を超える大きさ（大きな窓の高い数・HDR・ブルームの組み合わせ）では、上限に収まる数へ自動で下げます（選んだ数は保ちます）。
+  上限は、設定の「GPU のメモリ」が 3D の絵へ配る量と同じ大きさで、設定の合計（3D の絵・キャンバス・棚への配り）の中ではなく外に足します。描き先が
+  上限まで載ると、合計に加えてその量まで使います（標準で 512 MiB。下の表の 4K の HDR＋ブルームの 4× が約 496 MiB）。3D の絵の取り分から引かないのは、
+  窓の大きさやサンプル数を替えるたびに絵が縮み直すためです。ブルームとトーンマッピングは、多サンプルを 1 つに解決したあとの絵に当てます。
+  確かめたのは、ソフトの描画（llvmpipe の Vulkan）で対応する 1× と 4× です。2×・8× と、Windows の D3D12・Vulkan の実機では確かめていません。
+- ブルーム: 入・切（既定は切）、強さ、しきい値。露出を掛けたあとの明るさ（リニア。1 が白）がしきい値を超えた分を取り出し、縮めながらぼかして足し戻します
+  （トーンマッピングの前）。発光（Emission）の強い所の周りが光って見えます。光なしの表示（チャンネルだけ・メッシュマップだけ）には足しません。切（入で強さ 0 も）のときは
+  ブルームの処理を通らず、同じサンプル数でブルームを入れる前に描いた絵とバイトまで同じです（試験は入と切の往復で確かめています）。アンチエイリアスの既定が 4× になったので、
+  多サンプルなしだった以前の版の絵とは縁が違います。
+
+描き先のメモリの目安（解決後の絵・深度・多サンプルの色・HDR・ブルームの段）:
+
+| 絵の大きさ | 仕上げ | 1× | 2× | 4× | 8× |
+|---|---|---:|---:|---:|---:|
+| 1920×1080 | 8 bit | 16 MiB | 40 MiB | 71 MiB | 134 MiB |
+| 1920×1080 | HDR（トーンマッピング） | 32 MiB | 71 MiB | 119 MiB | 214 MiB |
+| 1920×1080 | HDR＋ブルーム | 37 MiB | 76 MiB | 124 MiB | 219 MiB |
+| 2560×1440 | 8 bit | 28 MiB | 70 MiB | 127 MiB | 239 MiB |
+| 2560×1440 | HDR（トーンマッピング） | 56 MiB | 127 MiB | 211 MiB | 380 MiB |
+| 2560×1440 | HDR＋ブルーム | 66 MiB | 136 MiB | 220 MiB | 389 MiB |
+| 3840×2160 | 8 bit | 63 MiB | 158 MiB | 285 MiB | 538 MiB |
+| 3840×2160 | HDR（トーンマッピング） | 127 MiB | 285 MiB | 475 MiB | 854 MiB |
+| 3840×2160 | HDR＋ブルーム | 148 MiB | 306 MiB | 496 MiB | 875 MiB |
 
 ## チャンネルの意味
 
@@ -81,7 +112,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
   （今のセットだけ別の解像度）ので大きさをそろえて作り直す手間と、層の数の上限が要り、得られるのは下の呼び出し数の分だけなので採りませんでした。
 - メッシュマップだけの表示は、今のセットの面だけに貼ります（ほかのセットの面は絵の無い描き方）。
 
-計測（2026-10-05、`cargo test -p yolu-app --test view3d_sets measure_frames -- --ignored --nocapture`。カメラを回すだけ・絵は同じ・影なし・マテリアル表示・環境はスタジオ。
+計測（2026-10-05、`cargo test -p yolu-app --test gui_view3d view3d_sets::measure_frames -- --ignored --nocapture`。カメラを回すだけ・絵は同じ・影なし・マテリアル表示・環境はスタジオ。
 球を n 個のマテリアルに分け、n 個のセットすべてに Color・Roughness の絵を置く。1 フレームを回して GPU の完了まで待った時間（全体）と `prepare` の CPU の時間、
 同じ実行の 40 フレームの平均、実行 2 回の範囲）。n = 1 は 1 回の描き（従来と同じ）です。セット 64 のときは今のセットのほかに 63 を持ちます（予算に収まる）。
 
@@ -102,7 +133,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
   全体の時間は三角形の数（ピクセルの描き）が決め、セットの数による差は実行ごとのばらつきの中です。
 - Windows の D3D12・Vulkan では呼び出し 1 回の手間はこれより小さいはずですが、未確認です。
 
-切り替えのフレーム（2026-10-05、`cargo test -p yolu-app --test view3d_sets measure_switching -- --ignored --nocapture`。4096² の 3 セット、Color・Roughness・Emission・Normal の
+切り替えのフレーム（2026-10-05、`cargo test -p yolu-app --test gui_view3d view3d_sets::measure_switching -- --ignored --nocapture`。4096² の 3 セット、Color・Roughness・Emission・Normal の
 4 チャンネル、各セットに絵のあるタイルも少し）。今のセットを 9 回替え（1・2・0・1・0・2・1・2・0 の順）、1 フレームを回して GPU の完了まで待った時間（全体）、そのうち絵の同期の時間、
 同期の途中で GPU に持っていた絵の最大。実行 2 回（1 回に 9 フレーム）の平均と、全フレームの最小〜最大。「ほかのセットを見せない」は今のセットの絵だけを同期する形で、
 同じ実行の中で同じ順に測ります。
@@ -122,7 +153,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 柔らかさや光の強さを変えるときは、できている深さをそのまま読みます。一度作ったマップは、影を切っても持ち続けます（入れ直すたびに作り直さない）。影を一度も入れていないあいだは
 1 × 1 の深さを束ねるだけで、16 MiB は要りません。
 
-計測（2026-10-04、71148 三角形の球、4096² の文書、6 チャンネルすべてを使う。`cargo test -p yolu-app --test view3d_look -- --ignored --nocapture measure`）。
+計測（2026-10-04、71148 三角形の球、4096² の文書、6 チャンネルすべてを使う。`cargo test -p yolu-app --test gui_view3d -- --ignored --nocapture view3d_look::measure`）。
 影なし・影ありは、同じ仕事・同じ量を、同じ実行の中で交互に 3 回ずつ測ります（1 回は 20 フレーム）。表は、実行 2 回（3 回ずつ）の平均と、その回ごとの平均の最小〜最大です。
 「全体」は 1 フレームを回して GPU の完了まで待った時間、「CPU」はそのうち `prepare` の CPU の時間（GPU の実行は含まない）です。
 
@@ -152,9 +183,11 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 
 1. Unity 版のプロジェクトのカラースペースを Linear にする。マテリアルは組み込みの Standard にする（Unity 版のプレビューは lilToon を描かない。lilToon の見た目の比べ方は下の
    [lilToon の見た目](#liltoon-の見た目)）。
-2. 同じモデルを両方へ入れる（Live Link で同じモデルを送るか、同じ FBX を開く）。両方で「モデル全体が見える位置へ戻す」を押して、同じカメラ（yaw 25°・pitch 10°）から始める。
+2. 同じモデルを両方へ入れる（Live Link で同じモデルを送るか、同じ FBX を開く）。両方で「モデル全体が見える位置へ戻す」を押す。Unity 版は斜め後ろ（yaw 25°・pitch 10°）から、Rust 版は同じ斜めの角度でモデルの前（+Z 側。yaw 205°・pitch 10°）から始まる（モデルを開いた直後も同じ）ので、同じ向きから比べるには Unity 版のカメラを水平に 180° 回して、前から見る。
 3. Unity 版の 3D ビューを「マテリアル」の見せ方にし、シーンの設定を既定（環境なし・影なし・トーンマッピングなし・露出 0・光は既定）に戻す。
-   Rust 版は光のパネルの「既定に戻す」のあと、環境を「なし」にする。これで光（来る向き・強さ 0.769）と環境光（灰色 0.5 の 0.4 倍）が同じになる。
+   Rust 版は光のパネルの「既定に戻す」のあと、環境を「なし」にし、光の方位を −157°・高さを 40.5° にする（Unity 版の既定の来る向き (−0.3, 0.65, −0.7)。
+   Rust 版の既定は前（+Z）の側から来る向きなので、そのままでは合わない）。画質の面でアンチエイリアスを「切」にする（Unity 版は縁を滑らかにしない）。
+   これで光（来る向き・強さ 0.769）と環境光（灰色 0.5 の 0.4 倍）が同じになる。
 4. 環境ありの比較は、Unity 版を「空」（既定の天頂・地平線・地面の色）、Rust 版も「空」にする。「スタジオ」は Rust 版だけ。
 5. 数値で比べるなら、板（Unity の Quad と同じ向き）を真正面から見て、光を真正面（方位 180°・高さ 0°）に当て、Color (200, 120, 60) の塗りつぶしと
    Metallic・Roughness の塗りつぶしを入れる。中心の画素は、Rust 版の試験が CPU の式で出す値と ±3 で一致する（`the_material_view_matches_the_cpu_brdf_head_on`）:
@@ -172,6 +205,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 
 ### Unity 版との違い（保証の射程）
 
+- 3D ビューの初めのカメラ: Unity 版はモデルの斜め後ろ（−Z 側）から、Rust 版は同じ斜めの角度でモデルの前（+Z 側）から見る。「モデル全体が見える位置へ戻す」も同じ向き。
 - 環境「なし」の映り込み: Rust 版は一様な環境光（灰色 0.5 の 0.4 倍）を映す。Unity 版はプレビューのシーンの既定のプローブで、同じとは確かめていない。
 - 接線: Rust 版は MikkTSpace の角ごとの値、Unity の `RecalculateTangents` は頂点ごとに 1 つにまとめる。UV の継ぎ目・ミラーの境で法線マップの陰影が少し違いうる。
 - テクスチャのミップマップ: Rust 版は箱の平均、Unity はエンジンのミップ。異方性フィルターは Rust 版には無い。
@@ -189,7 +223,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 テクスチャセットごとに、プロパティの「マテリアル」のタブの「見た目」で種類を「標準（PBR）」か「lilToon」にします。lilToon のセットは、3D ビューの
 「マテリアル (PBR)」の表示で lilToon 2.3.4 の式で描きます（中立・チャンネルだけ・メッシュマップだけの表示は種類によらず同じ）。式は lilToon（MIT）の
 シェーダーから WGSL（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）に移したもので、出どころと許諾は [第三者の許諾](../THIRD_PARTY.md#liltoon-の再現式の移植)。
-見た目の設定はセットの .ylp の `look.json` に入ります（形式は `crates/yolu-io/README.md`）。
+見た目の設定はセットの .ylp の `look.json` に入ります（形式は [YLP_FORMAT.md](YLP_FORMAT.md) の「look.json」）。
 
 ### 既定の見た目
 
@@ -307,7 +341,7 @@ Live Link でつないだ Unity のマテリアルが確かめた lilToon（Unit
 Unity の値だけで描いた比べ（2026-10-05。下の「Unity の lilToon との比べ」と同じ場面・同じ Unity の絵・同じ数え方）: `tools/liltoon-reference.cs` は
 場面ごとに、Unity のパッケージの Live Link が送るもの（`LiveLinkMaterialValues` が読む値と、描いていないスロットの絵）を `link_<名前>.txt` にも書き、
 `compare_through_live_link`（手で回す試験）は、利用者の設定を既定（標準）のまま、その値だけからスタンドアロンが受けたときと同じ受けた見た目を作って
-描き、Unity の絵と比べます。通信の道（ブリッジの C の口 → 命令 → スタンドアロン）は、`livelink_values.rs` の試験が本物のブリッジで通します。
+描き、Unity の絵と比べます。通信の道（ブリッジの C の口 → 命令 → スタンドアロン）は、`tests/headless/livelink_values.rs` の試験が本物のブリッジで通します。
 
 | 場面 | 平均 | 95 % | 最大 | 受けた絵 |
 |---|---:|---:|---:|---:|
@@ -399,7 +433,7 @@ Unity のモデルを開くと、スタンドアロンはマテリアルごと�
 
 ### Unity の lilToon との比べ
 
-`crates/yolu-app/tests/liltoon_reference.rs` の手で回す試験が、合成の素材（球・板・試しの人形）の場面ごとに 3D ビューの絵と、Unity で同じ場面を組む記述
+`crates/yolu-app/tests/gui_view3d/liltoon_reference.rs` の手で回す試験が、合成の素材（球・板・試しの人形）の場面ごとに 3D ビューの絵と、Unity で同じ場面を組む記述
 （カメラ・光・環境光の SH・メッシュ・テクスチャ・プロパティ）を書き、`tools/liltoon-reference.cs` を Unity（2022.3.22f1・lilToon 2.3.4）で回して
 同じ場面を lilToon で描き、両方の差を数えます。`tools/liltoon-reference.cs` は回すあいだだけプロジェクトのカラースペースを Linear にし（VRChat と同じリニアの色空間。Unity はその場で
 リニアに替わり（`QualitySettings.activeColorSpace`）、2026-10-05 に撮り直した 34 場面の絵は前の絵と全画素が同じ。同じ道具でガンマのまま撮ると、
@@ -412,11 +446,11 @@ sRGB のテクスチャを読むときのリニアへの直し方が近似で、
 下の表の「実 GPU の GL」の値に余裕を足したもの）。GL の半透明はガンマで重ねるので別の上限です。
 
 ```sh
-LILTOON_REF_DIR=<フォルダ> [LILTOON_REF_ONLY=<場面,…>] cargo test -p yolu-app --test liltoon_reference export_and_render -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> [LILTOON_REF_ONLY=<場面,…>] cargo test -p yolu-app --test gui_view3d liltoon_reference::export_and_render -- --ignored --nocapture
 # Unity で tools/liltoon-reference.cs を回す（`__DIR__` をそのフォルダにする）
-LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference compare -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test gui_view3d liltoon_reference::compare -- --ignored --nocapture
 # Live Link の値だけで描いて比べる（上の Live Link の節の表）
-LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference compare_through_live_link -- --ignored --nocapture
+LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test gui_view3d liltoon_reference::compare_through_live_link -- --ignored --nocapture
 ```
 
 結果（2026-10-05、リニアの色空間で撮り直した Unity の絵と比べて測り直した値。Rust 版は llvmpipe（Vulkan）、Unity は Linux 版のエディタの OpenGL
@@ -479,8 +513,8 @@ LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference c
 - 髪の値の場面（bright_backlight_*）は、1 を超える逆光ライトの色（16.948。リニアで 505.9）と指向性 10 の値で、光が横・後ろから来ると Unity でも縁が白く飛びます
   （3D ビューと同じ所）。逆光ライトは光と視線が向き合うほど強く（指向性はその鋭さ）、16.948 の色では、その強さが 1 % に満たない所でも白く飛びます（場面の色と光で）。
   前の 3D ビューは 1 を超える色を sRGB の式のまま延ばしていたので（16.948 → 約 790、Unity の 1.56 倍）、白い所が Unity より広く出ていました
-  （bright_backlight_side の 95 % が 24）。3D ビューの光の既定の向き (−0.3, 0.65, −0.7) は −Z の側から来るので、Unity で前（+Z）を向いたアバターを顔の側から
-  見ると後ろからの光（逆光）になります。比べの場面と 3D ビューの既定は影を落としません。影を落とす光での逆光ライトは測っていません: lilToon の
+  （bright_backlight_side の 95 % が 24）。Unity 版の光の既定の向き (−0.3, 0.65, −0.7) は −Z の側から来るので、Unity で前（+Z）を向いたアバターを顔の側から
+  見ると後ろからの光（逆光）になります（Rust 版の既定は前の側から来る向きで、顔の側から見ても逆光になりません）。比べの場面と 3D ビューの既定は影を落としません。影を落とす光での逆光ライトは測っていません: lilToon の
   コード（`lil_common_frag.hlsl` の `lilBacklight`）を読んだ限りでは、影を落とす光のとき `_BacklightReceiveShadow` が 1 なら、逆光の強さに
   影の受け方（`fd.attenuation`。影のマップで光が遮られた所は 0）を掛けて、影の中の逆光を消します（3D ビューも同じ式で、影を入れたときの影のマップを使う）。
 - glitter・specular_toon の最大の差は、ラメの粒・トゥーンの光沢の縁の数画素です。ラメの乱数（lilToon の lilHashRGB4）と粒の並びは同じです。
@@ -499,7 +533,7 @@ LILTOON_REF_DIR=<フォルダ> cargo test -p yolu-app --test liltoon_reference c
 
 ### 速さ
 
-計測（2026-10-05、`cargo test -p yolu-app --test liltoon measure -- --ignored --nocapture`。1280 × 800 の窓、2048² の文書に Color・Roughness・Normal の塗りつぶし、
+計測（2026-10-05、`cargo test -p yolu-app --test gui_view3d liltoon::measure -- --ignored --nocapture`。1280 × 800 の窓、2048² の文書に Color・Roughness・Normal の塗りつぶし、
 球（三角形の数は表）、環境はスタジオ、影なし。カメラを回すだけの 1 フレームを回して GPU の完了まで待った時間。同じ実行の中で見た目を交互に 3 回ずつ（1 回は 20 フレーム）
 測り、表は llvmpipe は実行 3 回・実 GPU は実行 2 回の、回ごとの平均の範囲）。「lilToon（全部）」は影・ノーマルマップ・マットキャップ 2 つ・リム・発光 2 つ・輪郭線と、ひな形が作るマスクのユーザーチャンネル 9 枚。
 llvmpipe の「CPU 時間」は、プロセスの CPU 時間（全部のスレッドの合計）の 1 フレームあたりです（ソフトの描画は CPU の仕事なので、混んだ機械でも揺れの小さい比べになります）。
@@ -531,10 +565,10 @@ llvmpipe の「CPU 時間」は、プロセスの CPU 時間（全部のスレ�
 
 ```sh
 cargo test -p yolu-app --lib view3d::                 # 式・環境・接線・矩形の決め方（GPU なし）
-cargo test -p yolu-app --test view3d_look             # 見た目・上げ方・表示の切り替え（スナップショットは llvmpipe）
-cargo test -p yolu-app --test view3d_sets             # 全部のテクスチャセットの絵（切り替え・文書への追従・予算と切り替えの途中の最大・縮め・チャンネル・法線マップ・面隠し・マテリアルの付き直し・64 セット・一覧の印）
-cargo test -p yolu-app --test liltoon                 # lilToon の再現を CPU で書いた lilToon の式と照らす（光・影・ユーザーチャンネルのマスクとそのミップ・カットアウト・半透明・アルファマスク・輪郭線・Undo）、ソフトの描画のパイプラインの作り分けと持つ数、配列と予算、ほかのセットの lilToon
-cargo test -p yolu-app --test liltoon_reference       # Unity の lilToon の絵（tests/liltoon_unity/）との差を場面ごとの上限と照らす
-cargo test -p yolu-app --test liltoon_panel           # 見た目の欄（種類・節の並び・スライダーの Undo・ひな形・スロット・描く口・2 つの節の同じ値・PowerSlider・17 個目の印・全部の機能を入れた節、新しいセットの既定、日英のスナップショット）
-cargo test -p yolu-app --test liltoon_io              # 見た目の設定の保存と開き直し・look.json の無い文書は標準・読めない look.json（上書きの知らせ・読むだけのセット）・復旧・書き出しの lilToon の詰め方・ひな形の失敗・描いている間
+cargo test -p yolu-app --test gui_view3d view3d_look::  # 見た目・上げ方・表示の切り替え（スナップショットは llvmpipe）
+cargo test -p yolu-app --test gui_view3d view3d_sets::  # 全部のテクスチャセットの絵（切り替え・文書への追従・予算と切り替えの途中の最大・縮め・チャンネル・法線マップ・面隠し・マテリアルの付き直し・64 セット・一覧の印）
+cargo test -p yolu-app --test gui_view3d liltoon::  # lilToon の再現を CPU で書いた lilToon の式と照らす（光・影・ユーザーチャンネルのマスクとそのミップ・カットアウト・半透明・アルファマスク・輪郭線・Undo）、ソフトの描画のパイプラインの作り分けと持つ数、配列と予算、ほかのセットの lilToon
+cargo test -p yolu-app --test gui_view3d liltoon_reference::  # Unity の lilToon の絵（tests/liltoon_unity/）との差を場面ごとの上限と照らす
+cargo test -p yolu-app --test gui_view3d liltoon_panel::  # 見た目の欄（種類・節の並び・スライダーの Undo・ひな形・スロット・描く口・2 つの節の同じ値・PowerSlider・17 個目の印・全部の機能を入れた節、新しいセットの既定、日英のスナップショット）
+cargo test -p yolu-app --test headless liltoon_io::  # 見た目の設定の保存と開き直し・look.json の無い文書は標準・読めない look.json（上書きの知らせ・読むだけのセット）・復旧・書き出しの lilToon の詰め方・ひな形の失敗・描いている間
 ```

@@ -6,6 +6,8 @@ You need the stable Rust toolchain and a C/C++ build environment. See the [Rust 
 
 The display requires a GPU and compatible driver. Rendering uses [wgpu](https://docs.rs/wgpu/30.0.1/wgpu/struct.Backends.html): Direct3D 12 or Vulkan on Windows, Metal on Mac, and Vulkan or other backends on Linux. Unity is not required to run the application on its own.
 
+To use the command line and MCP server (`yolupainter-cli`; [usage](CLI.md)) as well, build it the same way with `-p yolu-cli` in place of `-p yolu-app` (it does not use the graphics libraries, so it builds quickly).
+
 ## Windows
 
 Prepare 64-bit Windows, Visual Studio Build Tools with “Desktop development with C++” (including the Windows SDK), and Rust's MSVC toolchain. Run in PowerShell:

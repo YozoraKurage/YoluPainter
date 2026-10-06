@@ -33,6 +33,26 @@ pub enum BackupKeep {
     /// 新しい順にこの数だけ残す。今回の退避も数に入り、必ず残る。0 は退避しない（すでにある退避は消さない）。
     Count(u32),
 }
+/// 保存の段（`SaveTarget::save_with_progress` が各段の始めに知らせる。進み具合の表示のため）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SaveStage {
+    /// 全エントリの長さと SHA-256 を数える（manifest を作る）。
+    Counting,
+    /// 一時ファイルへ流して書く。
+    Writing,
+    /// 書いた一時ファイルを読み直して確かめる。
+    Verifying,
+    /// 前の版を退避して、保存先へ 1 回の置換で確定する。
+    Replacing,
+}
+impl SaveStage {
+    /// 段の数。
+    pub const COUNT: usize = 4;
+    /// 0 から数えた段の番号（`COUNT` 未満）。
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
 /// 保存の結果。置換で確定した後の整理が一部失敗しても保存は成功のままで、理由を `prune_failures` に載せる。
 #[derive(Debug)]
 pub struct SaveReport {
@@ -88,7 +108,11 @@ impl FileStamp {
 /// 開いた時点の印を持つ保存先。前の版を退避し、検証済み一時ファイルから一度だけ置換する。
 /// 同じ保存先への保存は OS のロックで 1 つずつ（残ったロックのファイルは邪魔にならない）。置換の後の失敗は失敗として
 /// 返すが、新しい版は確定していて `stamp()` も新しい版になる。
-#[derive(Debug)]
+///
+/// 複製できる（持つのは保存先の名前と開いた・保存した時の印だけ）: 別のスレッドで保存するとき、元は呼び手に残したまま複製を渡し、
+/// 保存した後の印は戻ってきた複製で置き換える。保存のスレッドが結果を返さずに止まったときは、元の印が古いまま残るので、
+/// 次の保存は外からの書き換えとして断る（印を取り違えて上書きしない）。
+#[derive(Clone, Debug)]
 pub struct SaveTarget {
     path: PathBuf,
     expected: Option<FileStamp>,
@@ -141,6 +165,17 @@ impl SaveTarget {
     /// 退避の保持数を決めて保存する。整理は置換で確定した後だけ、保持数を超えた古い退避を消し、消せなくても保存は成功のまま
     /// （`SaveReport::prune_failures`）。
     pub fn save_with(&mut self, project: &Project, keep: BackupKeep) -> Result<SaveReport> {
+        self.save_with_progress(project, keep, &mut |_| {})
+    }
+    /// `save_with` の、段の始まりを知らせる形（別のスレッドで保存して、進み具合を出すため）。`progress` は保存を動かしているスレッドで、
+    /// 各段の始めに 1 度ずつ呼ばれる（段の順は [`SaveStage`]。失敗した保存は、そこまでの段だけ）。
+    pub fn save_with_progress(
+        &mut self,
+        project: &Project,
+        keep: BackupKeep,
+        progress: &mut dyn FnMut(SaveStage),
+    ) -> Result<SaveReport> {
+        progress(SaveStage::Counting);
         self.save_core(
             project,
             keep,
@@ -148,7 +183,15 @@ impl SaveTarget {
                 try_lock: &mut File::try_lock,
                 move_new: &mut move_without_replacing,
                 remove: &mut remove_file,
-                phase: &mut |_| Ok(()),
+                phase: &mut |name| {
+                    match name {
+                        "memory-verified" => progress(SaveStage::Writing),
+                        "flushed" => progress(SaveStage::Verifying),
+                        "disk-verified" => progress(SaveStage::Replacing),
+                        _ => {}
+                    }
+                    Ok(())
+                },
                 rename: &mut rename_file,
                 busy: &is_busy,
                 sleep: &mut std::thread::sleep,
@@ -213,9 +256,14 @@ impl SaveTarget {
         drop(f);
         (seams.phase)("flushed")?;
         // 書いたものを読み直して確かめる（全エントリの長さ・CRC・SHA-256、manifest が書こうとしたものと同じこと、プロジェクトとして
-        // 読めること）
-        let new_stamp = read_stamp(&pending.path)?;
-        let written = Package::open(&pending.path, &Limits::unbounded())?;
+        // 読めること）。ファイル全体の印と、エントリごとの確かめは互いに独立なので、並べて読む（断る理由の順は今までと同じ: 印が先）
+        let keep_in_memory = crate::package::Thresholds::current().keep_in_memory;
+        let (opened, stamped) = rayon::join(
+            || Package::open_keeping(&pending.path, &Limits::unbounded(), keep_in_memory),
+            || read_stamp(&pending.path),
+        );
+        let new_stamp = stamped?;
+        let written = opened?;
         conflict(
             written.read_manifest() == Some(&plan.manifest[..]),
             "一時ファイルの内容が変化しました",
@@ -3189,5 +3237,89 @@ mod tests {
         release.join().unwrap();
         assert_ne!(fs::read(s.file()).unwrap(), ORIGINAL);
         assert!(s.leftovers().is_empty(), "{:?}", s.names());
+    }
+    /// `save_with_progress` は、各段の始めを 1 度ずつ順に知らせる。外で書き換えられていて断る保存は、断るところまでの段だけ。
+    #[test]
+    fn progress_tells_each_stage_once_in_order_and_stops_where_a_save_is_refused() {
+        let s = Scratch::new();
+        let (p, mut t) = open_original(&s);
+        let mut seen = Vec::new();
+        t.save_with_progress(&changed(&p, "段の知らせ"), BackupKeep::All, &mut |stage| seen.push(stage))
+            .unwrap();
+        assert_eq!(
+            seen,
+            [SaveStage::Counting, SaveStage::Writing, SaveStage::Verifying, SaveStage::Replacing]
+        );
+        assert_eq!(seen.iter().map(|s| s.index()).collect::<Vec<_>>(), [0, 1, 2, 3]);
+        assert_eq!(SaveStage::COUNT, 4);
+        // 外で書き換えられた保存先: 数えて、ロックのあとの確かめで断る（書く段へは進まない）
+        fs::write(s.file(), b"someone else").unwrap();
+        let mut seen = Vec::new();
+        let refused = t
+            .save_with_progress(&changed(&p, "断る"), BackupKeep::All, &mut |stage| seen.push(stage))
+            .unwrap_err();
+        assert!(matches!(refused, Error::SaveConflict(_)), "{refused:?}");
+        assert!(seen.len() <= 2 && seen.first() == Some(&SaveStage::Counting), "{seen:?}");
+        assert_bytes(&fs::read(s.file()).unwrap(), b"someone else", "外のファイルは潰さない");
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
+    }
+    /// 保存先の複製は、持ち主の印を動かさない。複製で保存した後、元の印のまま保存すると、外で変えられたものとして断る（印を取り違えて
+    /// 上書きしない）。保存した複製の印に置き換えれば、次の保存は通る。
+    #[test]
+    fn a_cloned_target_keeps_the_owners_stamp_until_it_is_replaced_by_the_saved_one() {
+        let s = Scratch::new();
+        let (p, mut owner) = open_original(&s);
+        let mut copy = owner.clone();
+        assert_eq!(owner.stamp(), copy.stamp());
+        let after = changed(&p, "複製で保存");
+        copy.save(&after).unwrap();
+        assert_ne!(owner.stamp(), copy.stamp());
+        let written = fs::read(s.file()).unwrap();
+        let refused = owner.save(&changed(&after, "元の印のまま")).unwrap_err();
+        assert!(matches!(&refused, Error::SaveConflict(why) if why.contains("外部で変更")), "{refused:?}");
+        assert_bytes(&fs::read(s.file()).unwrap(), &written, "断ったので、複製の保存のまま");
+        owner = copy;
+        owner.save(&changed(&after, "複製の印で置き換えた")).unwrap();
+        assert_ne!(fs::read(s.file()).unwrap(), written);
+        assert!(s.leftovers().is_empty(), "{:?}", s.names());
+    }
+    /// 書いた一時ファイルが（書いた直後に）壊れていたら、置換の前に断る。断る理由は、確かめを動かすスレッド数に依らず同じで、保存先は前の
+    /// ままで、一時ファイルもロックも残さない。
+    #[test]
+    fn a_broken_temporary_file_is_refused_before_the_replace_for_the_same_reason_at_any_thread_count() {
+        let reasons: Vec<String> = [1usize, 2, 8]
+            .into_iter()
+            .map(|threads| {
+                let s = Scratch::new();
+                let (p, mut t) = open_original(&s);
+                let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+                let folder = s.0.clone();
+                let error = pool
+                    .install(|| {
+                        t.save_inner(&changed(&p, "壊す"), |phase| {
+                            if phase == "flushed" {
+                                // 書き終えた一時ファイルの真ん中あたりの 1 バイトを書き換える
+                                let pending = fs::read_dir(&folder)
+                                    .unwrap()
+                                    .map(|e| e.unwrap().path())
+                                    .find(|p| p.to_string_lossy().ends_with(".pending~"))
+                                    .expect("書いている一時ファイル");
+                                let mut bytes = fs::read(&pending).unwrap();
+                                let at = bytes.len() / 2;
+                                bytes[at] ^= 0xff;
+                                fs::write(&pending, bytes).unwrap();
+                            }
+                            Ok(())
+                        })
+                    })
+                    .expect_err("壊れた一時ファイルは置換しない");
+                assert!(matches!(error, Error::InvalidData(_)), "{error:?}");
+                assert_bytes(&fs::read(s.file()).unwrap(), ORIGINAL, "保存先は前のまま");
+                assert!(s.leftovers().is_empty(), "{:?}", s.names());
+                assert!(!s.backups().exists(), "{:?}", s.names());
+                error.to_string()
+            })
+            .collect();
+        assert!(reasons.windows(2).all(|w| w[0] == w[1]), "{reasons:?}");
     }
 }

@@ -629,6 +629,7 @@ impl Action {
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
         ) || matches!(self, Action::Fill(op) if op.edits_document())
+            || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
     }
@@ -712,6 +713,8 @@ pub struct AppState {
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
     pub link_request: Option<LinkRequest>,
+    /// 外からの操作（CLI・MCP のクライアント）を受けている様子（毎フレーム `OpsLink` から写す。状態の帯の印が読む）。
+    pub ops: crate::opslive::OpsView,
     /// Live Link で入れた「元の絵」の層の印（層の欄が読む。保存しない）。
     pub link_originals: crate::livelink_base::OriginalMarks,
     /// 新規プロジェクトの窓で、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
@@ -737,6 +740,8 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// 配布用に保存（準備した写し・窓の選び・走っている仕事）。
     pub distribute: crate::distribute::DistributeState,
+    /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
+    pub save: crate::project::SaveState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果の層（選んでいる効果の行・効果の入力の覚え）。
@@ -809,8 +814,10 @@ pub enum DialogRequest {
     DistributeSave,
     /// ステンシルの画像（PNG）を選ぶ。
     OpenStencil,
-    /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT。複数）を選ぶ。
+    /// 取り込むブラシのファイル（ABR・GBR・GIH・VBR・PNG・PAT・SUT。複数）を選ぶ。
     ImportBrushes,
+    /// 「CLIP STUDIO から」の窓で、サブツールのフォルダ（CLIP STUDIO の外のフォルダも）を手で選ぶ。
+    ClipStudioFolder,
     /// 新規プロジェクト・プロジェクトの構成の窓で、モデル（FBX）を選ぶ。
     ProjectModel,
     /// 塗りつぶしの画像にする PNG を選ぶ（棚へ取り込む）。
@@ -922,6 +929,7 @@ impl AppState {
             model: None,
             link: LinkView::default(),
             link_request: None,
+            ops: Default::default(),
             link_originals: Default::default(),
             resolution_chosen: false,
             project: None,
@@ -934,6 +942,7 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             distribute: Default::default(),
+            save: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -954,6 +963,15 @@ impl AppState {
             crash: Default::default(),
             recovery: Default::default(),
         }
+    }
+
+    /// 保存の間なら、`what`（断る操作の言い方）と理由（`busy_reason`）を `message` に書いて true。選ぶ窓を開く前の操作が使う。
+    fn refuse_while_saving(&mut self, what: &str) -> bool {
+        if !self.is_saving() {
+            return false;
+        }
+        self.message = format!("{what}: {}", crate::project::busy_reason(self.lang));
+        true
     }
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
@@ -1321,7 +1339,7 @@ impl AppState {
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
             Action::View3d(op) => self.view3d.display.apply(op),
             Action::About => {
-                self.message = format!("YoluPainter {}", env!("CARGO_PKG_VERSION"));
+                self.message = crate::usage::about_text(self.lang, env!("CARGO_PKG_VERSION"));
             }
             Action::SelectSet(uid) => {
                 if let Some(i) = self.sets.index_of(uid) {
@@ -1355,6 +1373,10 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                // 保存の間は、選んでから断るのではなく、窓を開く前に断る
+                if self.refuse_while_saving(self.lang.pick("新しいプロジェクトを作れません", "Cannot create a new project")) {
+                    return;
+                }
                 self.dialog_request = Some(DialogRequest::New)
             }
             Action::NewProject => {
@@ -1367,11 +1389,17 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
+                if self.refuse_while_saving(self.lang.pick("開けません", "Cannot open")) {
+                    return;
+                }
                 self.dialog_request = Some(DialogRequest::Open)
             }
             Action::SaveProjectAsDialog => {
                 if stroking {
                     return refuse(self);
+                }
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                    return;
                 }
                 self.dialog_request = Some(DialogRequest::SaveAs)
             }
@@ -1384,6 +1412,10 @@ impl AppState {
             Action::SaveProject => {
                 if stroking {
                     return refuse(self);
+                }
+                // 保存の間は、保存先を選ぶ窓（まだファイルが無いプロジェクト）も開かずに断る
+                if self.refuse_while_saving(self.lang.pick("保存できません", "Cannot save")) {
+                    return;
                 }
                 match self.project.as_ref().filter(|p| p.is_file()).map(|p| p.path().to_path_buf()) {
                     Some(path) => crate::project::save_from(self, &path),

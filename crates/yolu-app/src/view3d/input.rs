@@ -7,7 +7,7 @@
 //!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて、離すまで変えない（`pen::PenPress`）。
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）は、面のストロークに通す（core の `SurfaceStrokeOptions`）。
 //! - ストロークを取り残さない: 離す・Esc（捨てる）・窓のフォーカスを失う（そこまでを確定）・ボタンを離したのを取りこぼす で必ず終える。
-//!   ストロークの間はカメラもモデルも動かさない（遮蔽の結果を覚えて使うので）。
+//!   ストロークの間はカメラもモデルも動かさない（区画の投影の画素を覚えて使うので）。
 //!
 //! 画面の点はタブの中身の左上からの egui の点。core のカメラも同じ点の大きさで作る（ストロークの間隔は Unity 版と同じく画面の点）。
 
@@ -223,6 +223,8 @@ fn begin(
             stencil: surface_stencil,
             symmetry,
             effect,
+            projection: app.view3d.projection,
+            projection_memory: None,
         },
     ) {
         Ok(s) => {
@@ -878,8 +880,19 @@ fn active_symmetry(app: &AppState) -> Option<SurfaceSymmetrySetup> {
     }
 }
 
-/// ブラシのカーソル: ポインタの下の面の、ブラシの半径の円（面の接平面の円を画面へ写した楕円）。白と黒の二重の線。対称の写しの
-/// 面の上にも水色の円を出す（カメラから見えない所は薄く）。面に当たらなければ描かずに false。
+/// 画面の円の頂点（中心 center・半径 radius は画面の点）。
+fn circle_points(center: Pos2, radius: f32) -> Vec<Pos2> {
+    let segments = ((radius * 0.8).ceil() as usize).clamp(24, 96);
+    (0..=segments)
+        .map(|i| {
+            let a = i as f32 / segments as f32 * std::f32::consts::TAU;
+            center + egui::vec2(a.cos(), a.sin()) * radius
+        })
+        .collect()
+}
+
+/// ブラシのカーソル: ポインタのまわりの、塗る画面の円（半径はポインタの下の面の奥行きで、ブラシの半径を画面へ直したもの）。白と黒の
+/// 二重の線。対称の写しの面の上にも水色の円を出す（カメラから見えない所は薄く）。面に当たらなければ描かずに false。
 pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
     let Some(model) = &app.view3d.model else {
         return false;
@@ -889,11 +902,17 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         return false;
     };
     let radius = world_radius(&model.geometry, app.brush.radius as f64, app.doc.width());
-    let Some(points) = ring_points(&view, rect, hit.position, hit.normal, radius) else {
+    let screen_radius = view.world_radius_to_screen(hit.position, radius);
+    if !(screen_radius > 0.0 && screen_radius.is_finite()) {
         return false;
-    };
+    }
     let painter = ui.painter_at(rect);
-    draw_ring(&painter, points, Color32::from_white_alpha(230), 140);
+    draw_ring(
+        &painter,
+        circle_points(pointer, screen_radius),
+        Color32::from_white_alpha(230),
+        140,
+    );
     // 写しのカーソル（描いている最中は、3D のストローク以外では出さない）
     let Some(sym) = active_symmetry(app) else {
         return true;

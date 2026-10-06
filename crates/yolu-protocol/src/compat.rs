@@ -99,9 +99,16 @@ pub mod feature {
     pub const ANIMATION: u64 = 1 << 3;
     /// 元のテクスチャの受け渡し（Unity が元の絵を送り、スタンドアロンが新しく作ったテクスチャセットの一番下に入れる）。
     pub const ORIGINAL_TEXTURES: u64 = 1 << 4;
+    /// マテリアルの値・元の絵の頼み（スタンドアロンが Unity に「このマテリアルの値・元の絵がほしい」と頼み、Unity は頼まれた元の絵だけを送る。
+    /// 印が双方に立つと、Unity は元の絵を自分から押し出さない）。頼みを受ける（Unity）側も、頼む（スタンドアロン）側も、同じ印を立てる。
+    pub const MATERIAL_REQUEST: u64 = 1 << 5;
     /// この表にある印の全部（これ以外のビットは、新しい相手が足した、名前を知らない機能）。
-    pub const KNOWN: u64 =
-        MATERIAL_VALUES | ASSETS | PROJECT_TRANSFER | ANIMATION | ORIGINAL_TEXTURES;
+    pub const KNOWN: u64 = MATERIAL_VALUES
+        | ASSETS
+        | PROJECT_TRANSFER
+        | ANIMATION
+        | ORIGINAL_TEXTURES
+        | MATERIAL_REQUEST;
     /// 名前を知っている印を、ビットの小さい順に取り出す。
     pub fn known_bits(mask: u64) -> Vec<u64> {
         (0..64)
@@ -110,6 +117,10 @@ pub mod feature {
             .collect()
     }
 }
+
+/// 頼み（`feature::MATERIAL_REQUEST`）を出す・受けるようになった版（スタンドアロンも Unity のパッケージも同じ番号）。印の無い相手を
+/// 「この版以上に上げると頼める」と案内する。互換を壊す変更ではない（印の無い相手とは、頼まずに今までどおりつながる）ので、`MIN_*` は上げない。
+pub const REQUEST_SINCE: AppVersion = AppVersion::new(0, 4, 0);
 
 /// この版のスタンドアロンが求める Unity のパッケージの一番古い版（今は要求なし）。互換を壊す変更を入れるとき、その変更が入る版へ上げる。
 pub const MIN_UNITY_PACKAGE: AppVersion = AppVersion::ZERO;
@@ -264,6 +275,19 @@ impl LinkInfo {
         accepts(self.common_features(), message)
     }
 
+    /// このつながりで頼み（`Kind::MaterialRequest`）を出せるか。出せないなら理由（相手の印が無い。相手を何版以上に上げると頼めるか）。
+    /// 印の無い古い相手には頼まない（相手は知らない命令を `Error` で断るので、先に控える）。
+    pub fn request_support(&self) -> Result<(), RequestUnavailable> {
+        if self.has_feature(feature::MATERIAL_REQUEST) {
+            return Ok(());
+        }
+        Err(RequestUnavailable {
+            peer_version: self.peer.app_version(),
+            update_to: REQUEST_SINCE,
+            own_has_mark: self.own.features & feature::MATERIAL_REQUEST != 0,
+        })
+    }
+
     /// 版のずれ。
     pub fn skew(&self) -> SkewReport {
         let peer_version = self.peer.app_version();
@@ -288,6 +312,17 @@ impl LinkInfo {
     }
 }
 
+/// 頼みを出せない理由（`LinkInfo::request_support`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RequestUnavailable {
+    /// 相手の版（版を名乗らない古い相手は None）。
+    pub peer_version: Option<AppVersion>,
+    /// 相手をこの版以上に上げると頼める。
+    pub update_to: AppVersion,
+    /// こちらに印があるか（無ければ、こちらが頼みを知らない）。
+    pub own_has_mark: bool,
+}
+
 /// 要る印 `need` が `common`（双方の印の共通部分）に全部立っているか。印の要らない（0）ときは常に true。
 /// 印の要る命令を送ってよいかの確かめは、全部ここを通る（`accepts`・`Connection::send_requiring`・ブリッジの送り口・アプリの送り口）。
 pub fn satisfies(common: u64, need: u64) -> bool {
@@ -300,7 +335,7 @@ pub fn accepts(common: u64, message: &Message) -> bool {
 }
 
 /// `accepts` の、命令の種類ごとに要る印の決め方を選べる形（`need_of`）。試験が印の要る表を差し込んで、「どの命令がどの印を要るか」から
-/// 送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す（今は MaterialValues・MaterialTexture が MATERIAL_VALUES を、MaterialOriginal が ORIGINAL_TEXTURES を要る）。
+/// 送らない決めまでを確かめる。実際の送り口は `Kind::required_feature` を渡す（今は MaterialValues・MaterialTexture が MATERIAL_VALUES を、MaterialOriginal が ORIGINAL_TEXTURES を、MaterialRequest が MATERIAL_REQUEST を要る）。
 pub fn accepts_with(common: u64, message: &Message, need_of: impl Fn(Kind) -> u64) -> bool {
     satisfies(common, need_of(message.kind()))
 }

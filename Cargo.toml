@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 publish = false
 license = "MIT"
@@ -14,6 +14,7 @@ yolu-core = { path = "crates/yolu-core" }
 yolu-gpu = { path = "crates/yolu-gpu" }
 yolu-io = { path = "crates/yolu-io" }
 yolu-model = { path = "crates/yolu-model" }
+yolu-ops = { path = "crates/yolu-ops" }
 yolu-protocol = { path = "crates/yolu-protocol" }
 yolu-update = { path = "crates/yolu-update" }
 

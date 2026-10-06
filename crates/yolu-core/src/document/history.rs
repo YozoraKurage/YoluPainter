@@ -27,6 +27,8 @@ pub enum HistoryKind {
     Batch,
     /// 見た目の設定（`Document::set_look`）。
     Look,
+    /// 名前を付けて残した選択範囲の変更（`Document::save_selection` など）。
+    SavedSelections,
 }
 
 impl Document {
@@ -67,6 +69,7 @@ impl Command {
             Self::Path(_) => HistoryKind::Path,
             Self::Compound(_) => HistoryKind::Batch,
             Self::Look { .. } => HistoryKind::Look,
+            Self::SavedSelections { .. } => HistoryKind::SavedSelections,
             _ => HistoryKind::Other,
         }
     }

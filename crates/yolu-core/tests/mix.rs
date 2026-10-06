@@ -1257,15 +1257,17 @@ fn a_3d_smear_with_symmetry_falls_back_to_the_pixel_neighbourhood_and_still_pain
     assert_ne!(px(&d, l, W / 2, H / 2), BLUE);
 }
 
-/// 板の真ん中を 1 回押して離す（ストロークの予算つき）。終わりまで通ったら Ok、どこかで断られたら、そのエラーと、ストロークを取り消した後の文書。
+/// 板の真ん中を 1 回押して離す（ストロークの予算つき。projection は投影の塗りに使ってよいバイトで、None なら文書の予算から）。終わりまで
+/// 通ったら Ok（飛ばしたダブの理由つき）、どこかで断られたら、そのエラーと、ストロークを取り消した後の文書。
 fn surface_dot_within(
     brush: &Brush,
     mirror: bool,
     budget: Option<u64>,
+    projection: Option<u64>,
 ) -> (
     Document,
     LayerId,
-    Result<(), yolu_core::geometry::SurfaceStrokeError>,
+    Result<Option<yolu_core::geometry::DabRefusal>, yolu_core::geometry::SurfaceStrokeError>,
 ) {
     let g = plate();
     let view = front(&g);
@@ -1299,13 +1301,14 @@ fn surface_dot_within(
         1.0,
         SurfaceStrokeOptions {
             symmetry,
+            projection_memory: projection,
             ..SurfaceStrokeOptions::default()
         },
     )
-    .and_then(|mut s| s.finish(&mut d, &mut stroke));
+    .and_then(|mut s| s.finish(&mut d, &mut stroke).map(|()| s.note));
     match &result {
         // 通った: 確定する
-        Ok(()) => {
+        Ok(_) => {
             d.end_stroke(stroke).unwrap();
         }
         // 断られた: 文書が取り消し済みでなければ、呼び手（3D のビュー）がここで取り消す
@@ -1316,8 +1319,52 @@ fn surface_dot_within(
 
 #[test]
 fn a_3d_mix_or_smear_over_the_stroke_budget_cancels_the_whole_stroke() {
-    // 3D の面の混ぜる（面のダブの枠）・伸ばす（写像されたダブの見積もり）・対称付きの伸ばす（箱の積分画像つきの枠）は、ストロークの予算を超えたら
-    // ストロークごと取り消す: ストロークは残らず、画素も履歴も元のまま。同じストロークは、予算が足りれば通る
+    // 3D の面の混ぜる（面のダブの枠）・伸ばす（写像されたダブの見積もりと読み元の図）・対称付きの伸ばす（箱の積分画像つきの枠）は、
+    // 投影の画素が入っても、混ぜる見積もりか読み元の図がストロークの予算を超えたらストロークごと取り消す: ストロークは残らず、画素も履歴も元のまま。
+    // 同じストロークは、予算が足りれば通る
+    use yolu_core::geometry::{SamplingError, SurfaceStrokeError};
+    for (name, brush, mirror, why) in [
+        (
+            "混ぜる",
+            mixing(3.0, RED, MixMode::Mix, 0.5),
+            false,
+            SurfaceStrokeError::Core(CoreError::StrokeBudgetExceeded),
+        ),
+        (
+            "伸ばす",
+            mixing(3.0, RED, MixMode::Smear, 0.5),
+            false,
+            SurfaceStrokeError::Sampling(SamplingError::ChartBudget),
+        ),
+        (
+            "対称付きの伸ばす",
+            mixing(3.0, RED, MixMode::Smear, 0.5),
+            true,
+            SurfaceStrokeError::Core(CoreError::StrokeBudgetExceeded),
+        ),
+    ] {
+        let (open, lo, ok) = surface_dot_within(&brush, mirror, None, None);
+        assert_eq!(ok, Ok(None), "{name}");
+        assert_ne!(
+            px(&open, lo, W / 2, H / 2),
+            BLUE,
+            "{name}: 予算が足りれば塗れる"
+        );
+        let (d, l, result) = surface_dot_within(&brush, mirror, Some(200), Some(64 << 20));
+        assert_eq!(result, Err(why), "{name}");
+        assert!(!d.has_active_stroke(), "{name}");
+        assert_eq!(d.undo_count(), 0, "{name}");
+        assert!(
+            (0..H).all(|y| (0..W).all(|x| px(&d, l, x, y) == BLUE)),
+            "{name}: 画素は元のまま"
+        );
+    }
+}
+
+#[test]
+fn a_3d_mix_whose_projected_texels_do_not_fit_skips_the_dab_and_keeps_the_stroke() {
+    // 投影の画素が 1 回の操作のメモリに入らないダブは、混ぜる見積もりの前に飛ばす（理由を残し、ストロークは取り消さない）。何も塗らない
+    // ストロークは、確定しても履歴に残らない
     for (name, brush, mirror) in [
         ("混ぜる", mixing(3.0, RED, MixMode::Mix, 0.5), false),
         ("伸ばす", mixing(3.0, RED, MixMode::Smear, 0.5), false),
@@ -1327,23 +1374,12 @@ fn a_3d_mix_or_smear_over_the_stroke_budget_cancels_the_whole_stroke() {
             true,
         ),
     ] {
-        let (open, lo, ok) = surface_dot_within(&brush, mirror, None);
-        assert_eq!(ok, Ok(()), "{name}");
-        assert_ne!(
-            px(&open, lo, W / 2, H / 2),
-            BLUE,
-            "{name}: 予算が足りれば塗れる"
-        );
-        let (d, l, result) = surface_dot_within(&brush, mirror, Some(200));
-        let refused = matches!(
+        let (d, l, result) = surface_dot_within(&brush, mirror, Some(200), None);
+        assert_eq!(
             result,
-            Err(yolu_core::geometry::SurfaceStrokeError::Core(
-                CoreError::StrokeBudgetExceeded
-            )) | Err(yolu_core::geometry::SurfaceStrokeError::Sampling(_))
-                | Err(yolu_core::geometry::SurfaceStrokeError::Dab(_))
+            Ok(Some(yolu_core::geometry::DabRefusal::MemoryBudget)),
+            "{name}"
         );
-        assert!(refused, "{name}: {result:?}");
-        println!("{name}: {result:?}");
         assert!(!d.has_active_stroke(), "{name}");
         assert_eq!(d.undo_count(), 0, "{name}");
         assert!(

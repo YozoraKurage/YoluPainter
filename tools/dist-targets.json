@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "comment": "配る対象の一覧。CI（ci.yml の main 向けの PR）・配布（release.yml）・cargo xtask preflight はすべてここを読む。input を持つ対象は、release.yml のその名前の真偽値の入力が入のときだけ組む（CI は入れない）。",
+  "targets": [
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "os": "windows-latest",
+      "installer": true,
+      "input": null
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "os": "ubuntu-22.04",
+      "installer": false,
+      "input": "linux"
+    }
+  ]
+}

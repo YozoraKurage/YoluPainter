@@ -1557,7 +1557,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {
         DialogRequest::ShelfImport => {
-            if let Some(paths) = rfd::FileDialog::new()
+            if let Some(paths) = crate::dialog::file()
                 .set_title(lang.pick(
                     "スマート素材を棚へ読み込む",
                     "Import smart assets to the shelf",
@@ -1575,7 +1575,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let Some(name) = state.shelf.get(&id).map(|r| r.name.clone()) else {
                 return;
             };
-            if let Some(path) = rfd::FileDialog::new()
+            if let Some(path) = crate::dialog::file()
                 .set_title(lang.pick("スマート素材を書き出す", "Export the smart asset"))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .set_file_name(format!("{}.ylsmart", file_stem(&name)))
@@ -1585,7 +1585,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             }
         }
         DialogRequest::LibraryAdd => {
-            if let Some(paths) = rfd::FileDialog::new()
+            if let Some(paths) = crate::dialog::file()
                 .set_title(lang.pick("ライブラリへ足すファイル", "Files to add to the library"))
                 .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
                 .pick_files()
@@ -1598,7 +1598,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 return;
             };
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
-            let yes = rfd::MessageDialog::new()
+            let yes = crate::dialog::message()
                 .set_title("YoluPainter")
                 .set_description(match lang {
                     Lang::Ja => format!(
@@ -1634,7 +1634,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let Some(name) = state.shelf.get(&id).map(|r| r.name.clone()) else {
                 return;
             };
-            let yes = rfd::MessageDialog::new()
+            let yes = crate::dialog::message()
                 .set_title("YoluPainter")
                 .set_description(match lang {
                     Lang::Ja => format!("「{name}」を棚から消しますか？"),

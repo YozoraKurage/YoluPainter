@@ -50,6 +50,43 @@ impl EffectFrame {
         &mut self.pixels[start..start + len]
     }
 
+    /// 画布の画素 (px, py) から右へ n 画素（枠の中に全部あるとき）のバイト（RGBA の並び）を out の先頭へ写す。無ければ false。
+    #[inline]
+    pub(crate) fn run_bytes(&self, px: i64, py: i64, n: usize, out: &mut [u8]) -> bool {
+        let (cx, cy) = (px - self.x, py - self.y);
+        if cx < 0 || cy < 0 || cy >= self.height || cx + n as i64 > self.width {
+            return false;
+        }
+        let start = (cy * self.width + cx) as usize;
+        for (k, p) in self.pixels[start..start + n].iter().enumerate() {
+            out[k * 4..k * 4 + 4].copy_from_slice(&p.to_array());
+        }
+        true
+    }
+
+    /// 積分画像の、画布の箱 [x0, x1) × [y0, y1)（枠の中。`blur` と同じ式）の 4 チャンネルの和。
+    #[inline]
+    pub(crate) fn box_sums(&self, x0: i64, y0: i64, x1: i64, y1: i64) -> [i64; 4] {
+        let stride = (self.width + 1) * 4;
+        let tl = ((y0 - self.y) * stride + (x0 - self.x) * 4) as usize;
+        let tr = ((y0 - self.y) * stride + (x1 - self.x) * 4) as usize;
+        let bl = ((y1 - self.y) * stride + (x0 - self.x) * 4) as usize;
+        let br = ((y1 - self.y) * stride + (x1 - self.x) * 4) as usize;
+        let s = &self.integral;
+        let sum = |c: usize| s[br + c] - s[bl + c] - s[tr + c] + s[tl + c];
+        [sum(0), sum(1), sum(2), sum(3)]
+    }
+
+    /// 積分画像が、画布の箱 [x0, x1) × [y0, y1) を全部含むか。
+    #[inline]
+    pub(crate) fn integral_covers(&self, x0: i64, y0: i64, x1: i64, y1: i64) -> bool {
+        !self.integral.is_empty()
+            && x0 >= self.x
+            && y0 >= self.y
+            && x1 <= self.x + self.width
+            && y1 <= self.y + self.height
+    }
+
     /// 画素 (x, y) の色（枠の中。色の混ぜが下地を 1 画素ずつ読む）。
     #[inline]
     pub(crate) fn pixel(&self, px: i64, py: i64) -> Rgba8 {
@@ -59,28 +96,33 @@ impl EffectFrame {
     /// 積分画像（行ごとの累積の和を上へ足す。R·A・G·A・B·A・A の 4 つ）。
     pub(crate) fn build_integral(&mut self) {
         let stride = ((self.width + 1) * 4) as usize;
+        let width = self.width as usize;
         let mut integral = std::mem::take(&mut self.integral);
         // 使い回しの領域: 書かない 0 行目と 0 列目だけを 0 にする（ほかは下で全部書く）
         integral.resize(stride * (self.height + 1) as usize, 0);
         integral[..stride].fill(0);
         for y in 1..=self.height as usize {
-            integral[y * stride..y * stride + 4].fill(0);
-        }
-        for y in 1..=self.height as usize {
+            // 1 つ上の行（読む）と今の行（書く）を分けて持つ（範囲の確かめを画素ごとに挟まない）
+            let (above, rest) = integral.split_at_mut(y * stride);
+            let up = &above[(y - 1) * stride..];
+            let cur = &mut rest[..stride];
+            cur[..4].fill(0);
             let (mut r, mut g, mut b, mut a) = (0i64, 0i64, 0i64, 0i64);
-            for x in 1..=self.width as usize {
-                let p = self.pixels[(y - 1) * self.width as usize + x - 1];
+            let pixels = &self.pixels[(y - 1) * width..y * width];
+            for ((p, up4), out4) in pixels
+                .iter()
+                .zip(up[4..].chunks_exact(4))
+                .zip(cur[4..].chunks_exact_mut(4))
+            {
                 let pa = p.a as i64;
                 r += p.r as i64 * pa;
                 g += p.g as i64 * pa;
                 b += p.b as i64 * pa;
                 a += pa;
-                let n = y * stride + x * 4;
-                let up = n - stride;
-                integral[n] = integral[up] + r;
-                integral[n + 1] = integral[up + 1] + g;
-                integral[n + 2] = integral[up + 2] + b;
-                integral[n + 3] = integral[up + 3] + a;
+                out4[0] = up4[0] + r;
+                out4[1] = up4[1] + g;
+                out4[2] = up4[2] + b;
+                out4[3] = up4[3] + a;
             }
         }
         self.integral = integral;

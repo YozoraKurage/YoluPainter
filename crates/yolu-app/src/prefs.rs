@@ -56,6 +56,8 @@ pub enum Pref {
     LiveLinkOnStartup(bool),
     /// Unity から受けたマテリアルの値を .ylp に保存するか。
     LiveLinkKeepValues(bool),
+    /// 外からの操作（CLI・MCP のクライアントなど）を受けるか。入れている間だけ待ち受ける（`opslive`）。
+    ExternalOps(bool),
     Budget(BudgetKind, Budget),
     MinUndoSteps(u32),
     /// None は自動。
@@ -168,6 +170,8 @@ impl AppState {
         Settings {
             lang: self.lang,
             color_wheel: self.color.wheel,
+            view3d_post: self.view3d.display.post,
+            view3d_paint: self.view3d.projection,
             ..self.prefs.settings.clone()
         }
     }
@@ -177,6 +181,8 @@ impl AppState {
         self.export.padding = settings.export_padding;
         self.prefs.threads_at_start = settings.cpu_threads;
         self.color.wheel = settings.color_wheel;
+        self.view3d.display.post = settings.view3d_post;
+        self.view3d.projection = settings.view3d_paint;
         // 「すべて残す」を外したときに戻る数も、保存してあった数にする
         if let BackupKeep::Count(n) = settings.backups {
             self.prefs.remembered_backups = n;
@@ -209,6 +215,7 @@ impl AppState {
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
+                Pref::ExternalOps(v) => self.prefs.settings.external_ops = v,
                 Pref::ExportPadding(v) => {
                     if EXPORT_PADDINGS.contains(&v) {
                         self.prefs.settings.export_padding = v;
@@ -462,7 +469,7 @@ fn content_height(gpu_details: bool) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     let slider = t::SLIDER_ROW_HEIGHT + GAP;
     8.0 + HEADING * 5.0 // 節の見出し: 一般・メモリ・処理・3D ビュー・ファイル
-        + dropdown * 4.0 // 一般: 言語・Live Link の起動・受けた値の保存・書き出しの余白
+        + dropdown * 5.0 // 一般: 言語・Live Link の起動・受けた値の保存・外からの操作・書き出しの余白
         + dropdown * 3.0 + slider // メモリ: 予算 3 つ・最小の取り消し段数
         + dropdown * 3.0 + dropdown // 処理: スレッド・合成・GPU のメモリ・詳しく
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
@@ -585,6 +592,21 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         );
         if next != s.livelink_keep_values {
             requests.push(Request::Do(PrefsAction::Set(Pref::LiveLinkKeepValues(next))));
+        }
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("external-ops"),
+            crate::settings::setting_name(lang, "external_ops"),
+            s.external_ops,
+            Some(lang.pick(
+                "この PC の同じユーザーのプログラム（コマンドラインや MCP のクライアントなど）からの操作を受ける。入れている間だけ待ち受け、切るとつながりも閉じる",
+                "Accepts commands from programs of the same user on this PC, such as the command line and MCP clients. It listens only while on; turning it off also closes the connections",
+            )),
+            enabled,
+        );
+        if next != s.external_ops {
+            requests.push(Request::Do(PrefsAction::Set(Pref::ExternalOps(next))));
         }
         requests.extend(choice(
             ui,

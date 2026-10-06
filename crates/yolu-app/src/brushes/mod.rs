@@ -8,6 +8,7 @@
 //! ブラシの設定は文書ではない（Undo に入れない）。ストロークの最中は、ブラシを替える操作を断る。
 
 pub mod builtin;
+pub mod clipstudio;
 pub mod gaps;
 pub mod images;
 pub mod import;
@@ -27,6 +28,7 @@ use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
 
 pub use gaps::Gap;
+use yolu_io::brushes::SutMapped;
 
 /// 利用者のブラシの数の上限（ファイルとメモリを抑える。起動のときに読むファイルの数の上限と同じ。ABR 1 本のプリセットが
 /// 数百になる）。
@@ -197,7 +199,19 @@ pub fn canonical(brush: &Brush) -> Brush {
     }
 }
 
-/// 取り込んだブラシの出どころと、表せなかった項目（ブラシのファイルに残す）。
+/// ブラシが持てる入り抜き・手ぶれ補正（曲線は持たない）。何も無ければ（全部 0）None。範囲は呼ぶ側が検査済みのものを渡す。
+pub fn carried_assist(assist: Option<StrokeAssist>) -> Option<StrokeAssist> {
+    let a = assist?;
+    let carried = StrokeAssist {
+        stabilizer: a.stabilizer,
+        taper_in: a.taper_in,
+        taper_out: a.taper_out,
+        curve: false,
+    };
+    (carried != StrokeAssist::default()).then_some(carried)
+}
+
+/// 取り込んだブラシの出どころと、ファイルから写せた項目・表せなかった項目（どちらもブラシのファイルに残す）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportMeta {
     /// 出どころの名前（`yolu_io::brushes::Source::label`。固有名詞と版だけで、言語によらない）。
@@ -206,17 +220,27 @@ pub struct ImportMeta {
     pub pattern: bool,
     /// 表せなかった項目（並び順に、重ならない）。
     pub gaps: Vec<Gap>,
+    /// ファイルの設定から、このアプリの設定へ写せた項目（並び順に、重ならない。今は CLIP STUDIO のものだけ。取り込みの結果
+    /// `ImportedBrush::mapped` をそのまま残す。取り込んだあとに利用者が設定を変えても変わらない）。
+    pub mapped: Vec<SutMapped>,
 }
 
 impl ImportMeta {
-    /// 項目の並びを整えて作る。
+    /// 項目の並びを整えて作る（写せた項目は空。`with_mapped` で足す）。
     pub fn new(source: String, pattern: bool, gaps: Vec<Gap>) -> ImportMeta {
         ImportMeta {
             source,
             pattern,
             gaps,
+            mapped: Vec::new(),
         }
         .normalized()
+    }
+
+    /// 写せた項目を足す。
+    pub fn with_mapped(mut self, mapped: Vec<SutMapped>) -> ImportMeta {
+        self.mapped = mapped;
+        self.normalized()
     }
 
     /// 項目を並び順にして重なりを除く（保存して読み戻しても同じ値になる形）。
@@ -224,10 +248,14 @@ impl ImportMeta {
         let mut gaps = self.gaps.clone();
         gaps.sort();
         gaps.dedup();
+        let mut mapped = self.mapped.clone();
+        mapped.sort();
+        mapped.dedup();
         ImportMeta {
             source: self.source.clone(),
             pattern: self.pattern,
             gaps,
+            mapped,
         }
     }
 }
@@ -245,6 +273,10 @@ pub struct Entry {
     pub edited: Option<Brush>,
     /// 取り込んだブラシなら、出どころと表せなかった項目。
     pub import: Option<ImportMeta>,
+    /// ブラシが持つ入り抜き・手ぶれ補正（取り込んだブラシが持つ分だけ。ふつうのブラシは None）。手ぶれ補正と入り抜きは描き手の設定
+    /// （ブラシを替えても残る）なので、持つブラシを選んでいる間だけ今の設定に重ね、ほかのブラシへ替えると描き手の設定へ戻す
+    /// （`AppState::brush_apply_carried_assist`）。
+    pub assist: Option<StrokeAssist>,
 }
 
 impl Entry {
@@ -269,6 +301,8 @@ pub struct UserBrush {
     pub group: Group,
     pub brush: Brush,
     pub import: Option<ImportMeta>,
+    /// ブラシが持つ入り抜き・手ぶれ補正（`Entry::assist`）。
+    pub assist: Option<StrokeAssist>,
 }
 
 /// 利用者のブラシの番号の取り出し口。取り込みの仕事（別のスレッド）も同じ口から取るので、画面で足すブラシと番号が重ならない。
@@ -334,6 +368,7 @@ impl BrushLibrary {
                 baseline: b.brush.clone(),
                 edited: None,
                 import: None,
+                assist: None,
             })
             .collect();
         let ids = IdSource::new();
@@ -348,6 +383,7 @@ impl BrushLibrary {
                 baseline: canonical(&u.brush),
                 edited: None,
                 import: u.import,
+                assist: carried_assist(u.assist),
             });
         }
         let mut ordered = Vec::with_capacity(entries.len());
@@ -634,6 +670,10 @@ pub struct BrushesState {
     pub import: import::ImportState,
     /// 詳細の窓の筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
     pub krita: krita::KritaTips,
+    /// 取り込みの窓の「CLIP STUDIO から」。
+    pub csp: clipstudio::CspState,
+    /// 入り抜き・手ぶれ補正を持つブラシを選んでいる間、そのブラシへ替える前の描き手の設定を覚えておく場所（持たないブラシへ替えたら戻す）。
+    pub drawer_assist: Option<StrokeAssist>,
 }
 
 impl Default for BrushesState {
@@ -646,6 +686,8 @@ impl Default for BrushesState {
             samples: sample::SampleCache::default(),
             import: import::ImportState::default(),
             krita: krita::KritaTips::default(),
+            csp: clipstudio::CspState::default(),
+            drawer_assist: None,
         }
     }
 }
@@ -676,6 +718,21 @@ pub enum BrushAction {
     Import(Vec<PathBuf>),
     /// 取り込みをやめる（置いた分は残る）。
     ImportCancel,
+    /// 「CLIP STUDIO から」の窓を開く（CLIP STUDIO のサブツールのフォルダを探す。読むだけ）。
+    ClipStudioOpen,
+    ClipStudioClose,
+    /// フォルダを手で選ぶ窓を頼む。
+    ClipStudioPickFolder,
+    /// 手で選んだフォルダを探す。
+    ClipStudioFolder(PathBuf),
+    /// 今の場所を探し直す。
+    ClipStudioRescan,
+    /// 一覧の行の選びを反転する。
+    ClipStudioToggle(usize),
+    /// 読めた行を全部選ぶ・全部外す。
+    ClipStudioSelectAll(bool),
+    /// 選んだ行を取り込む。
+    ClipStudioImport,
 }
 
 impl AppState {
@@ -715,9 +772,31 @@ impl AppState {
         }
     }
 
-    /// 今のブラシの設定が元と違うか。
+    /// 今のブラシの設定が元と違うか。入り抜き・手ぶれ補正を持つブラシは、今の値がそのブラシの持つ値と違うことも「変えた」に数える
+    /// （描き手の設定だけのブラシは、手ぶれ補正・入り抜きを変えても「変えた」にならない）。
     pub fn brush_is_modified(&self, key: BrushKey) -> bool {
-        self.brushes.lib.is_modified(key, &self.brush_live())
+        self.brushes.lib.is_modified(key, &self.brush_live()) || self.brush_assist_modified(key)
+    }
+
+    /// 持つブラシを選んでいる間に、今の入り抜き・手ぶれ補正を、持つ値から変えたか（曲線の切り替えは描き手の設定なので見ない）。
+    fn brush_assist_modified(&self, key: BrushKey) -> bool {
+        key == self.brushes.lib.current
+            && self
+                .brushes
+                .lib
+                .entry(key)
+                .and_then(|e| e.assist)
+                .is_some_and(|own| carried_assist(Some(self.m2.brush.assist)) != Some(own))
+    }
+
+    /// 一覧の行の見本に使う入り抜き・手ぶれ補正。持つブラシ（`carried`）はその持つ値、持たないブラシは描き手の設定
+    /// （持つブラシを選んでいる間は今の設定にその値が重なっているので、重なる前に覚えた設定）。曲線の切り替えは今の値のまま。
+    pub fn brush_row_assist(&self, carried: Option<StrokeAssist>) -> StrokeAssist {
+        let drawer = self.brushes.drawer_assist.unwrap_or(self.m2.brush.assist);
+        StrokeAssist {
+            curve: self.m2.brush.assist.curve,
+            ..carried.unwrap_or(drawer)
+        }
     }
 
     fn brush_refuse(&mut self) {
@@ -793,6 +872,7 @@ impl AppState {
             group: entry.group,
             brush: entry.baseline.clone(),
             import: entry.import.clone(),
+            assist: entry.assist,
         };
         let result = match &self.brushes.store {
             Some(store) => store.save_brush(&user),
@@ -860,8 +940,9 @@ impl AppState {
         let Some(entry) = self.brushes.lib.entry(key) else {
             return;
         };
-        let (group, brush) = (entry.group, entry.effective().clone());
+        let (group, brush, carried) = (entry.group, entry.effective().clone(), entry.assist);
         self.brush_load(&brush);
+        self.brush_apply_carried_assist(carried);
         let lib = &mut self.brushes.lib;
         lib.current = key;
         lib.last[group.is_eraser() as usize] = key;
@@ -870,6 +951,31 @@ impl AppState {
         self.m2.preset = m2::presets()
             .iter()
             .position(|p| BrushKey::Builtin(p.id) == key);
+    }
+
+    /// 入り抜き・手ぶれ補正を持つブラシ（`Some`）を選んだら、その値を今の設定に重ねる（重ねる前の描き手の設定は覚えておく。持つブラシから
+    /// 持つブラシへ替えるときは、覚えたままにする）。持たないブラシ（`None`）を選んだら、覚えた描き手の設定へ戻す。
+    fn brush_apply_carried_assist(&mut self, carried: Option<StrokeAssist>) {
+        match carried {
+            Some(assist) => {
+                if self.brushes.drawer_assist.is_none() {
+                    self.brushes.drawer_assist = Some(self.m2.brush.assist);
+                }
+                // 曲線の切り替えはブラシが持たない（描き手の設定のまま）
+                self.m2.brush.assist = StrokeAssist {
+                    curve: self.m2.brush.assist.curve,
+                    ..assist
+                };
+            }
+            None => {
+                if let Some(saved) = self.brushes.drawer_assist.take() {
+                    self.m2.brush.assist = StrokeAssist {
+                        curve: self.m2.brush.assist.curve,
+                        ..saved
+                    };
+                }
+            }
+        }
     }
 
     /// ブラシに合わせて道具を替える（消しゴムのグループなら消しゴム、それ以外は描く道具）。
@@ -905,6 +1011,7 @@ impl AppState {
         }
         let lang = self.lang;
         self.brush_sync();
+        let live_assist = self.m2.brush.assist;
         let source_key = from.unwrap_or(self.brushes.lib.current);
         let Some(source) = self.brushes.lib.entry(source_key).cloned() else {
             return;
@@ -917,6 +1024,10 @@ impl AppState {
             ),
         };
         let base = clean_name(&base).unwrap_or_else(|| lang.pick("ブラシ", "Brush").into());
+        let new_assist = source.assist.and_then(|own| {
+            let current = source_key == self.brushes.lib.current;
+            carried_assist(Some(if current { live_assist } else { own }))
+        });
         let store = self.brushes.store.as_ref();
         let lib = &mut self.brushes.lib;
         // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
@@ -952,6 +1063,8 @@ impl AppState {
                     pattern: false,
                     ..m
                 }),
+                // 入り抜き・手ぶれ補正を持つブラシの複製・追加は、その値を引き継ぐ（今のブラシからなら、選んでいる間に変えた今の値）
+                assist: new_assist,
             },
         );
         self.brush_activate(key);
@@ -1094,7 +1207,9 @@ impl AppState {
                     };
                     entry.edited = None;
                     let baseline = entry.baseline.clone();
+                    let carried = entry.assist;
                     self.brush_load(&baseline);
+                    self.brush_apply_carried_assist(carried);
                 } else if let Some(entry) = self.brushes.lib.entry_mut(key) {
                     entry.edited = None;
                 }
@@ -1102,6 +1217,14 @@ impl AppState {
             BrushAction::ImportDialog => self.brush_import_dialog(),
             BrushAction::Import(paths) => self.brush_import_start(paths),
             BrushAction::ImportCancel => self.brush_import_cancel(),
+            BrushAction::ClipStudioOpen => self.brush_csp_open(),
+            BrushAction::ClipStudioClose => self.brush_csp_close(),
+            BrushAction::ClipStudioPickFolder => self.brush_csp_pick_folder(),
+            BrushAction::ClipStudioFolder(folder) => self.brush_csp_folder(folder),
+            BrushAction::ClipStudioRescan => self.brush_csp_scan(),
+            BrushAction::ClipStudioToggle(index) => self.brush_csp_toggle(index),
+            BrushAction::ClipStudioSelectAll(on) => self.brush_csp_select_all(on),
+            BrushAction::ClipStudioImport => self.brush_csp_import(),
             BrushAction::Register(key) => {
                 if !key.is_user() {
                     return;
@@ -1109,14 +1232,25 @@ impl AppState {
                 if self.brush_refuse_while_importing() {
                     return;
                 }
-                if self.brushes.lib.current == key {
+                let is_current = self.brushes.lib.current == key;
+                if is_current {
                     self.brush_sync();
                 }
+                // 持つブラシは、今の入り抜き・手ぶれ補正（全部 0 なら持たない）も、そのブラシの持つ値として登録する
+                let live_assist = carried_assist(Some(self.m2.brush.assist));
+                let mut changed = false;
                 if let Some(entry) = self.brushes.lib.entry_mut(key) {
                     if let Some(edited) = entry.edited.take() {
                         entry.baseline = edited;
-                        self.brush_persist(key);
+                        changed = true;
                     }
+                    if is_current && entry.assist.is_some() && entry.assist != live_assist {
+                        entry.assist = live_assist;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.brush_persist(key);
                 }
             }
         }

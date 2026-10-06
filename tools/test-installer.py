@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """NSIS のインストーラー（installer/yolupainter.nsi）を、Wine で無音のまま端から端まで通して確かめる。
 
-本物の yolupainter.exe の代わりに、起動した印を残すだけの小さな exe（mingw でこの場で作る）を入れる。
+本物の yolupainter.exe・yolupainter-cli.exe の代わりに、起動した印を残すだけの小さな exe（mingw でこの場で作る。2 つとも同じ物）を入れる。
 確かめること: 無音のインストール（入れ先・ショートカット・アンインストールの登録）、.ylp の関連付けの
 有無と更新での引き継ぎ、上書きの更新、/RUN での起こし直し、exe を書き込みで開けない間は待ち、上限を超えたら
-何も変えずに終了コード 5 で終わること（待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる。
+何も変えずに終了コード 5 で終わること（アプリの exe でも、MCP のクライアントが動かし続けることがあるコマンドラインの exe でも。
+待ちの上限は試験用に短くしたインストーラーで、書き込めない exe を使って確かめる。
 上限を超えたときは、/RUN が付いていれば今入っている exe を起こし直し、付いていなければ起こさない）、
 アンインストール（入れたファイルだけを消す・利用者のデータは残す・/DELETEDATA では、アプリが作り直せるデータ（設定・窓の配置・復旧・
 クラッシュの記録・サムネイルのキャッシュ・落とした更新）だけを消し、利用者が作った物（個人のライブラリ・ブラシ・サブツール・
-グラデーション・カラーセット・表示のプリセット）と、知らないファイルは残す）。
+グラデーション・カラーセット・表示のプリセット・ポーズのプリセット）と、知らないファイルは残す）。
 文書（docs\ と docs\en\）は、入れる・上書きで新しい版の中身になる・前の版にだけあった文書が更新で消える・利用者が docs\ に
 置いたファイルと、記録が書き換えられていても入れ先の外には触れない・アンインストールで空になったフォルダだけが消える、を確かめる。
 ショートカットの作業フォルダと、/RUN で起こしたアプリの作業フォルダが入れ先であること（文書を入れたあとで入れ先へ戻す SetOutPath の確かめ）も読む。
@@ -33,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / 'target/test-installer'
 PRODUCT_KEY = r'HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\YoluPainter'
 SCRIPT = ROOT / 'installer/yolupainter.nsi'
+# 入れる実行ファイル（アプリと、コマンドライン・MCP サーバー）
+EXES = ['yolupainter.exe', 'yolupainter-cli.exe']
 ROOT_FILES = ['LICENSE', 'README.md', 'README.en.md', 'THIRD_PARTY.md', 'DEPENDENCIES.md', 'THIRD_PARTY_LICENSES.txt']
 # アプリが %APPDATA%\YoluPainter（設定のフォルダ）と %LOCALAPPDATA%\YoluPainter に作る物。どれがどちらかは docs/INSTALL.md の表と同じ。
 # 作り直せる物（/DELETEDATA で消える）
@@ -41,7 +44,7 @@ REBUILDABLE_ROAMING = ['settings.conf', 'recovery.conf', 'update.conf', 'layout.
 REBUILDABLE_LOCAL = ['thumbnails/ab/cd.png', 'LiveLink/link.sock']
 # 利用者が作った物と、知らないファイル（どちらの答えでも消えない）
 USER_MADE = ['Library/picture.png', 'Library/sub/material.ylsmart', 'brushes/mine.ylbrush', 'subtools/mine.ylsubtool',
-             'gradients/mine.ylgradients', 'hide_presets/mine.ylhide', 'colorsets/mine.ylcolors']
+             'gradients/mine.ylgradients', 'hide_presets/mine.ylhide', 'pose_presets/mine.ylpose', 'colorsets/mine.ylcolors']
 UNKNOWN = ['future-folder/thing.bin', 'notes.txt']
 STAGED_UPDATE = 'updates/yolupainter-0.9.0-x86_64-pc-windows-msvc-setup.exe'
 FAKE_APP = r'''
@@ -167,9 +170,11 @@ def build_installer(version, numeric, name, wait_steps=None, extra_docs=()):
     source = WORK / 'fake-app.c'
     source.write_text(FAKE_APP)
     subprocess.run(['x86_64-w64-mingw32-gcc', '-O1', '-o', stage / 'yolupainter.exe', source], check=True)
+    shutil.copy(stage / 'yolupainter.exe', stage / 'yolupainter-cli.exe')
     # 版ごとに exe の中身を変える（上書きされたかを見分ける）。
-    with open(stage / 'yolupainter.exe', 'ab') as exe:
-        exe.write(f'build {version}'.encode())
+    for exe_name in EXES:
+        with open(stage / exe_name, 'ab') as exe:
+            exe.write(f'build {version}'.encode())
     shutil.copy(ROOT / 'LICENSE', stage / 'LICENSE')
     for file in ROOT_FILES[1:]:
         (stage / file).write_text(f'{file} {version}\n')
@@ -288,10 +293,11 @@ def run(args):
     check(bool(location) and location.lower().endswith(r'\programs\yolupainter'),
           f'既定の入れ先は %LOCALAPPDATA%\\Programs\\YoluPainter（{location}）')
     install = to_unix(location) if location else WORK / 'missing'
-    for name in ['yolupainter.exe', *ROOT_FILES, 'uninstall.exe']:
+    for name in [*EXES, *ROOT_FILES, 'uninstall.exe']:
         check((install / name).is_file(), f'入る: {name}')
     missing = [doc for doc in docs if not (install / Path(*doc.split('\\'))).is_file()]
-    check(not missing and len(docs) >= 16, f'文書が一覧のとおり入る（{len(docs)} 件。無いもの {missing}）')
+    check(not missing and len(docs) >= 20, f'文書が一覧のとおり入る（{len(docs)} 件。無いもの {missing}）')
+    check(r'docs\CLI.md' in docs and r'docs\en\MCP.md' in docs, 'コマンドラインと MCP の文書も入る一覧にある')
     check((install / 'docs/en/GUIDE.md').read_text() == 'docs\\en\\GUIDE.md 0.1.0\n', '入った文書の中身は、その版の段のもの')
     recorded = (install / 'docs/.installed').read_text().split()
     check(recorded == docs, '入れた文書の名前の記録（docs\\.installed）が、一覧のとおりにある')
@@ -316,6 +322,7 @@ def run(args):
     code, _ = run_silent(v2, '/RUN')
     check(code == 0, f'更新の無音のインストールが終わる（終了コード {code}）')
     check(exe.read_bytes() != before and exe.read_bytes().endswith(b'build 0.2.0-rc.1'), 'exe が新しい版に置き換わる')
+    check((install / 'yolupainter-cli.exe').read_bytes().endswith(b'build 0.2.0-rc.1'), 'コマンドラインの exe も、同じ版に置き換わる')
     check(registry(PRODUCT_KEY, 'DisplayVersion') == '0.2.0-rc.1', '登録の版が新しくなる')
     check(registry(PRODUCT_KEY, 'InstallLocation') == location, '更新で入れ先が変わらない')
     check(wait_for(ran), '/RUN で入れ終わったあとにアプリが起きる')
@@ -374,8 +381,9 @@ def run(args):
     # 4b. 待ちの上限: exe を書き込みで開けない間は待ち、上限を超えたら何も変えずに終了コード 5 で終わる。
     #     開けない状態は読み取り専用で作る（Windows の「使用中」と同じく、書き込みで開くのが失敗する）。上限は試験用に 3 秒。
     #     開けるようになれば、同じインストーラーで入る。
+    cli = install / 'yolupainter-cli.exe'
     snapshot = {name: (install / name).read_bytes() for name in
-                ['yolupainter.exe', 'README.md', 'docs/GUIDE.md', 'docs/en/GUIDE.md', 'docs/.installed', 'uninstall.exe']}
+                [*EXES, 'README.md', 'docs/GUIDE.md', 'docs/en/GUIDE.md', 'docs/CLI.md', 'docs/.installed', 'uninstall.exe']}
     version_before = registry(PRODUCT_KEY, 'DisplayVersion')
     ran = Path(str(exe) + '.ran')
     ran.unlink(missing_ok=True)
@@ -414,6 +422,26 @@ def run(args):
     code, _ = run_silent(v1)
     check(code == 0 and exe.read_bytes().endswith(b'build 0.1.0'), '元の版へ戻して、以降の試験へ進む')
 
+    # 4c. コマンドラインの exe（MCP のクライアントが動かし続けていることがある）が使われているときも、アプリの exe は空いていても、同じく待って
+    #     上限で何も変えずに終了コード 5 で終わる（片方だけ置き換わった半端な状態にしない）。
+    snapshot = {name: (install / name).read_bytes() for name in
+                [*EXES, 'README.md', 'docs/GUIDE.md', 'docs/en/GUIDE.md', 'docs/CLI.md', 'docs/.installed', 'uninstall.exe']}
+    cli.chmod(0o444)
+    try:
+        check(not os.access(cli, os.W_OK), '試験の前提: コマンドラインの exe だけを書き込みで開けない状態を作れる')
+        code, seconds = run_silent(v3)
+    finally:
+        cli.chmod(0o644)
+    check(code == 5, f'コマンドラインの exe が使われていても、待ちの上限を超えたら終了コード 5（終了コード {code}）')
+    check(2.0 <= seconds < 30, f'上限（試験用に 3 秒）まで待って終わる（{seconds:.1f} 秒）')
+    check(all((install / name).read_bytes() == data for name, data in snapshot.items()),
+          'アプリの exe が空いていても、何も置き換えない（アプリとコマンドラインの版が食い違わない）')
+    code, _ = run_silent(v3)
+    check(code == 0 and cli.read_bytes().endswith(b'build 0.3.0') and exe.read_bytes().endswith(b'build 0.3.0'),
+          '開けるようになれば、2 つとも同じ版で入る')
+    code, _ = run_silent(v1)
+    check(code == 0 and cli.read_bytes().endswith(b'build 0.1.0'), '元の版へ戻して、以降の試験へ進む')
+
     # 5. アンインストール: 入れたファイルだけを消し、利用者のデータは残す
     data = appdata / 'YoluPainter'
     local = localdata / 'YoluPainter'
@@ -422,7 +450,7 @@ def run(args):
     (install / 'docs/en/mine.txt').write_text('利用者のファイル')
     code, gone = uninstall(install)
     check(code == 0 and gone, f'無音のアンインストールが終わり、アンインストーラー自身も消える（終了コード {code}）')
-    for name in ['yolupainter.exe', *ROOT_FILES, 'uninstall.exe']:
+    for name in [*EXES, *ROOT_FILES, 'uninstall.exe']:
         check(not (install / name).exists(), f'消える: {name}')
     left = [doc for doc in docs if (install / Path(*doc.split('\\'))).exists()]
     check(not left and not (install / 'docs/.installed').exists(), f'入れた文書と記録が全部消える（残り {left}）')
@@ -454,7 +482,7 @@ def run(args):
     check(not local.exists(), '/DELETEDATA で、%LOCALAPPDATA%\\YoluPainter は空になって消える')
     # 利用者が作った物と知らないファイルは、/DELETEDATA でも消えない（持ち主のいるフォルダも残る）。
     missing = [name for name in [*USER_MADE, *UNKNOWN] if not (data / name).is_file()]
-    check(not missing, f'/DELETEDATA でも、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットと、知らないファイルは残る（無い物 {missing}）')
+    check(not missing, f'/DELETEDATA でも、個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセット・ポーズのプリセットと、知らないファイルは残る（無い物 {missing}）')
     check((data / 'brushes/mine.ylbrush').read_text() == 'brushes/mine.ylbrush', '残った利用者の物の中身が変わらない')
     check(registry(r'HKCU\Software\Classes\.ylp') == 'OtherApp.File', '他のアプリに替えられた関連付けには触らない')
     check(wait_gone(install), '入れ先が空になれば消える')

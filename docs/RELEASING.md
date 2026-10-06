@@ -19,13 +19,16 @@ grep -rIlE 'SPDX-License-Identifier:.*GPL|GNU (Lesser|Library) General Public' ~
 ## 版と配布物
 
 `Cargo.toml` の workspace.package.version を更新し、`Cargo.lock` を更新・コミットしてから、そのコミットを配布対象にします。
-版は SemVer です。試験版は `0.1.0-rc.1` のようにプレリリース識別子を付けてください。
+版は SemVer です。試験版（kind=prerelease）は `0.1.0-rc.1` のように、プレリリース識別子を `alpha.N`・`beta.N`・`rc.N`（N は整数）の 1 つにします。
+この形にすると、`rc.2` < `rc.10` < 正式版の順に並び（`rc10` のようにつなげると辞書順で `rc10` < `rc2` になるので認めません）、アプリの「試験版を使う」の設定が見つけられます
+（[試験版の置き場](#試験版の置き場)）。stable は識別子を含む版を使えません。`cargo xtask preflight --kind prerelease` が版の形を確かめます。
 
 ```sh
 cargo xtask build --target x86_64-pc-windows-msvc --release
 cargo xtask bundle --target x86_64-pc-windows-msvc
 cargo xtask installer --target x86_64-pc-windows-msvc
 cargo xtask symbols --target x86_64-pc-windows-msvc   # Windows だけ。PDB の付属物（下の「PDB の付属物」）
+cargo xtask mcpb --target x86_64-pc-windows-msvc      # Windows だけ。Claude Desktop に入れる拡張（下の「Claude Desktop の拡張（.mcpb）」）
 # Linux では target を x86_64-unknown-linux-gnu に替える（installer は Windows だけ）
 cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 ```
@@ -33,8 +36,8 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 `bundle` と `installer` は直前に同じコミットからビルドした release 実行ファイルを使います。古いビルドを使わないでください。
 `bundle` と `installer` は `target/dist` に過去の版を残すので、手元で出すときは `target/dist` を空にしてから作ります。
 違う版や余分なファイルが残っていると `updater-json` が拒否します（PDB の付属物 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` の名前だけは例外。CI は毎回まっさらです）。
-出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物。
-実行ファイル、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
+出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物、`mcpb` を走らせたときの `.mcpb`。
+実行ファイル（アプリの `yolupainter` と、コマンドラインと MCP サーバーの `yolupainter-cli`。`build` が同じ命令で組みます）、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
 同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
 開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
 `docs/` に足したファイルは、そのどちらかへ必ず載せます（載せ忘れると `bundle`・`installer` が止まり、`cargo test -p xtask` も落ちます）。
@@ -42,7 +45,7 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 入れる文書の相対のリンクが配布物の中で切れないことも試験が確かめるので、入れない物（`docs/DEVELOPMENT.md`・`CHANGELOG.md`・`crates/` の README など）へは GitHub の URL で張ります。
 インストーラーのスクリプト `installer/yolupainter.nsi` の `DocFiles` にも同じ一覧があり、試験が突き合わせます（文書を足したら両方に足します）。
 `tools/third-party.py` が対象ごとに許諾を照合し、未確認の依存や原文の不一致では束ねません。
-更新クレート（`yolu-update`）はアプリに組み込まれているので、その依存の許諾全文も含めます。
+更新クレート（`yolu-update`）はアプリに組み込まれ、コマンドライン（`yolu-cli`）は同じ配布物に入るので、その依存の許諾全文も含めます（`--include-update --include-cli`）。
 `xtask` 自体は配りません。独自の `CARGO_TARGET_DIR` は使わず、出力を `target/` に揃えてください。
 
 `updater-json` の入力は、その版の配布物だけを置いた専用フォルダです。違う版や余分なファイルは拒否します
@@ -52,6 +55,7 @@ Windows の zip があるのにインストーラーが無い版も拒否しま�
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
 URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
 `https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
+設定「試験版を使う」を入れたアプリは、これに加えて固定のタグの置き場（`releases/download/updater-beta/updater-v1.json`）も見ます。
 フォークから配る場合は、更新クレートの `RELEASE_BASE`・`UPDATER_URL` も変更してビルドします。
 署名なしの JSON は検査専用で、更新クレートは受理しません。
 
@@ -63,6 +67,18 @@ URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<�
 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` を `target/dist` に作ります。Release の付属物としては載りますが、zip・インストーラーには入らず、
 更新の対象ではありません（署名つきの更新情報に載せず、アプリは取りに行きません）。`verify` は、通常のファイルで、空でなく、大きさの上限内で、中身が `yolupainter.pdb` だけであることを見ます。
 `symbols` は PDB を調べる前に前回の付属物を消すので、組み直しに失敗したあとで古い PDB が残りません。
+
+### Claude Desktop の拡張（.mcpb）
+
+`cargo xtask mcpb --target x86_64-pc-windows-msvc` が、`target/dist/yolupainter-<版>-x86_64-pc-windows-msvc.mcpb` を作ります（`build` のあとに。`yolupainter-cli.exe` を使います）。
+中身は zip で、`manifest.json`（mcpb の manifest_version 0.3。`server.type` は `binary`、実行ファイルは `server/yolupainter-cli.exe`、引数は `mcp`、対象は `win32` だけ。ツールの一覧は書かず `tools_generated` にして、
+実行ファイルが `tools/list` で返す物を正本にします）・アイコン（アプリのロゴの PNG）・`LICENSE`・コマンドラインの許諾の全文（`DEPENDENCIES.md`・`THIRD_PARTY_LICENSES.txt`。
+`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`。実行ファイルはアプリと 1 回の組みで作り機能が合わさるので、その組みでの `yolu-cli` の部分木で数えます）・実行ファイル 1 つです。ロゴを替えるときは `crates/xtask/src/main.rs` の `MCPB_LOGO` を替えます。
+
+PDB の付属物と同じく、Release に載せるだけで、更新の対象ではありません。署名つきの更新情報には載せず（アプリは取りに行かず、インストールした拡張は、新しい `.mcpb` を入れ直して替えます）、
+`updater-json` はこの名前（版と対象が今の版と一致する 1 つ）だけを知って読み飛ばし、`verify` は中身の形（一覧のファイルだけで、manifest が今の版・実行ファイルを指す）を見ます。
+`dist-build.yml` の Windows の組みが `xtask mcpb` を走らせ、`target/dist/*` ごと成果物・Release の付属物になります。
+manifest は公式の検証（`npx @anthropic-ai/mcpb validate manifest.json`）が通ることを確かめています。Windows の実機では、Claude Desktop に入れて、ツールが並び、`file` を付けて操作できることを、版ごとに 1 回確かめてください。
 
 ### Windows のインストーラー
 
@@ -77,7 +93,7 @@ NSIS のスクリプトは `installer/yolupainter.nsi` です。利用者ごと�
 | `/D=<パス>` | 入れ先（最後に置く。省略は前の入れ先） |
 | アンインストーラーの `/S` `/DELETEDATA` | 無音。アプリが作り直せるデータ（設定・窓の配置・復旧・クラッシュの記録・サムネイルのキャッシュ。`%APPDATA%\YoluPainter` と `%LOCALAPPDATA%\YoluPainter` の名指しした物）は、画面では消すかを聞き、無音では `/DELETEDATA` のときだけ消す。個人のライブラリ・ブラシ・サブツール・グラデーション・カラーセット・表示のプリセットなど利用者が作った物と、知らないファイルは、どちらでも残す（表は `docs/INSTALL.md`） |
 
-実行中のアプリは終了させません。実行ファイルが使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5。`/RUN` が付いていれば今入っている実行ファイルを起こし直します）、
+実行中のアプリは終了させません。実行ファイル（アプリと `yolupainter-cli.exe`。MCP のクライアントが動かし続けていることがあります）が使われている間は待ち（無音は 60 秒まで。超えたら何も変えずに終了コード 5。`/RUN` が付いていれば今入っているアプリの実行ファイルを起こし直します）、
 アンインストーラーは自分が入れたファイルだけを消します（入れ先に利用者のファイルがあれば、入れ先のフォルダは残ります）。
 
 文書は入れ先の `docs\`・`docs\en\` に入ります。入れた文書の名前は `docs\.installed` に記録し、更新（上書き）のとき、前の版の記録にある文書を先に消してから今の版の文書を入れるので、
@@ -105,6 +121,156 @@ python3 tools/test-installer.py
 `crates/yolu-app/build.rs` が、製品名 `YoluPainter`・版（workspace の版。プレリリース識別子つき）・作者名・アイコン
 （`crates/yolu-app/assets/logo/yolupainter.ico`）を実行ファイルへ埋めます。インストーラーも同じ製品名・版を持ちます
 （コード署名の条件の「製品名と版のメタデータ」）。
+
+### 配る組みの profile
+
+配る組みは既定の release（`cargo build --release`）です。`lto = "fat"`・`codegen-units = 1`（パニックは unwind のまま）の profile も測りましたが、採りませんでした。
+再測は `python3 tools/bench-profiles.py --app --cold`（その profile の定義はツールが `--config` で与えます。Cargo.toml には入れていません）。
+
+測った範囲（2026-10-05。AMD Ryzen 9 7950X3D の Linux のコンテナ、rustc 1.99.0、cargo の並列 8・sccache なし・インクリメンタルなし、負荷平均 2〜7。
+操作の時間は 1 つの CPU に固定・rayon 1 スレッドで、5 回の中央値を 3 回（profile を交互に）まわした中央値）:
+
+| | release | lto fat・codegen-units 1 |
+|---|---:|---:|
+| yolu-app を冷えた状態から組む | 106 s | 244 s（2.30 倍） |
+| exe の大きさ（Linux） | 68.9 MB | 56.1 MB（0.81 倍） |
+| 重い操作の速さの比（release ÷ 右。1 より大きいほど右が速い） | | 合成 0.993・ブラシ 0.997・書き出し 0.999・保存と開く 1.019・PSD 1.022（51 行の幾何平均 0.999。行ごとには 0.93〜1.08） |
+
+重い操作は 5% も速くならず、組む時間は 2.3 倍でした。GitHub の Windows の runner では、2026-10-05 の 0.3.0 の配布で「ビルドと配布物の作成」の段が 9 分 25 秒だったので、
+2.3 倍なら 20 分を超える見込みで、配る組みの時間が長くなりすぎます。得は exe が約 19% 小さくなることだけでした。
+測ったのは Linux・1 CPU・yolu-core の合成とブラシと書き出し（`bench`・`export_bench`）と、保存・PSD（`tools/profile-bench/io_bench.rs`）で、GPU・画面・複数スレッド・Windows の速さは測っていません。
+
+## 事前確認
+
+配る物を作る段（許諾の照合・梱包・インストーラー）が、本番で初めて走って止まる種類の失敗を、組まずに並べます。手元でも CI の組みの最初でも同じ命令です。
+
+```sh
+cargo xtask preflight                       # 既定の対象（tools/dist-targets.json の、入力が要らない対象）
+cargo xtask preflight --kind stable         # 出す種類も確かめる（stable にプレリリースの版は使えない）
+cargo xtask preflight --kind prerelease     # 試験版は alpha.N・beta.N・rc.N の版だけ
+cargo xtask preflight --target x86_64-unknown-linux-gnu --offline
+cargo xtask preflight --installer           # 加えて、Wine でインストーラーを通す（tools/test-installer.py。wine32 が要る）
+cargo xtask preflight --only version --kind prerelease
+```
+
+| 確かめ | 見ること |
+|---|---|
+| `licenses` | 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ。未確認の依存・原文の不一致・`blocked` で落ちる） |
+| `attributes` | SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か（Windows の checkout で CRLF になると照合が落ちる） |
+| `nsis` | `installer/yolupainter.nsi` の `Target` が、公式の Windows 版 NSIS が持つ stub（`x86-unicode`・`x86-ansi`）か（amd64 の stub は無い） |
+| `mcpb` | Windows の対象で、`.mcpb` の manifest が組めて形が合うか、拡張に入れるロゴの PNG があるか、コマンドラインの許諾の束（`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`）が作れるか |
+| `version` | yolu-app の版のタグ `v<版>` が origin にまだ無いか（`git ls-remote --tags origin`。問い合わせられなければ「飛ばした」と表示する）、`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら `alpha.N`・`beta.N`・`rc.N` の版か |
+| `targets` | `tools/dist-targets.json` の対象が、xtask の配れる対象で、Windows にだけインストーラーがあるか |
+| `workflows` | ワークフローの YAML が読めるか、release.yml の入力と対象の並びが食い違わないか、外の Action が SHA で固定されているか、配る物の手順がキャッシュを使っていないか（`tools/check-workflows.py`。PyYAML が無ければ「飛ばした」） |
+| `installer` | Wine でインストーラーを通す（`--installer` か `--only installer` のときだけ） |
+
+失敗は 1 行ずつ理由つきで並べ、全部を回してから終了コード 1 を返します（最初の 1 つで止めません）。「飛ばした」は失敗にしません。
+
+## 配る物を組む場所と、受け取る道
+
+配る物（zip・インストーラー）は、**main 向けの PR の CI** が組みます。配布（`release.yml`）は、同じ木の物があれば**組み直さずに受け取ります**。
+同じ内容を PR の CI と配布で 2 度組むのは無駄で、試験を通した物と配る物が別の組みになるためです。
+
+- `ci.yml` は main への push では動かしません（main は CI を通した PR からしか変わりません）。main 向けの、同じリポジトリの枝からの PR だけ、試験のジョブと並べて「配る物の組み」
+  （`dist-plan` → `dist`）を走らせます（待ち時間は延びません）。フォークの PR では組みません。
+- 組みの手順は `.github/workflows/dist-build.yml` の 1 つで、`ci.yml` と `release.yml` の両方が呼びます。対象の並びは `tools/dist-targets.json` の 1 か所です
+  （今は Windows だけ。Linux は `release.yml` の入力 `linux` が入のときだけで、CI では組みません。対象を足したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
+  手順は 診断用の ID（`tools/dist.py revision`）→ `cargo xtask preflight` → `cargo xtask build --release --require-update-key` → `bundle` → `installer`（Windows）→ 目録（`tools/dist.py catalog`）→ 成果物のアップロードです。
+- 成果物の名前は `dist-<木>-<対象>`（保存 14 日）。木は `git rev-parse HEAD^{tree}` で、PR の CI は merge の commit の木です。中に `catalog.json`
+  （木・commit・アプリに埋めた ID の元の commit・版・対象・組み込んだ更新用の公開鍵・各ファイルの SHA-256 と大きさ・rustc・runner）が入ります。
+- アプリの版の表示（「0.4.0 · a1b2c3d」）とクラッシュ報告の `Git:` の ID は、PR の CI では**PR の先頭の commit**です。PR の CI が組むのは merge の commit
+  （`refs/pull/N/merge`）で、main にもタグにも入らず、PR を閉じたあとに参照できる保証が無いためです。昇格の条件で、PR の先頭の commit の木は成果物の木（＝配る参照の木）と同じなので、
+  ID は配る物と同じ木の commit を指します。目録の `commit` は組んだ merge の commit、`revision` が ID の元の commit です。配布が組む場合は dispatch した commit です。
+- `release.yml` は、最初に `plan`（対象と、dispatch した参照の木）と `find`（探す）を走らせます。`find` は、その木の成果物を、次の**全部**を満たす実行の中から探します。
+  - `.github/workflows/ci.yml` の `pull_request` の実行で、完了して成功（全部のジョブが `success`。`skipped` も受け取らない）、同じリポジトリの枝からの実行
+  - その実行の `head_sha`（PR の先頭の commit）の木が、GitHub の API で確かめて、成果物の名前の木と同じ
+  - 成果物が期限切れでなく、GitHub が記録した digest があって落とした zip と同じ（digest の記録が無い成果物は確かめようが無いので受け取らない）で、目録の木・対象・組み込んだ公開鍵（いまのリポジトリ変数と同じ）・各ファイルの SHA-256 が合う
+  - 全部の対象が同じ 1 つの実行にそろっている
+- そろえば `build`（組み）を飛ばし、`metadata` が目録の SHA-256 をもう一度確かめて `target/dist` に集めます。そこから先（未署名の更新情報の確認・Draft の署名と作成）は組んだ場合と同じです。
+  そろわなければ（木が違う・期限切れ・成功でない・Linux を足した・鍵が変わった・API が失敗した）、いつもどおり同じ手順で組みます。理由は実行の Summary に 1 行ずつ出ます。
+  入力 `rebuild` を入にすると、探さずに必ず組みます。
+- 配布のワークフロー（`release.yml`・`dist-build.yml`）はキャッシュを使いません（Actions のキャッシュ・rust-cache・sccache）。汚染されたキャッシュが配る物に入る道を作らないためで、
+  `cargo xtask preflight` の `workflows` が確かめます。PR の CI の試験のジョブは今までどおりキャッシュを使います。
+- `metadata` は、受け取る道でも組む道でも、出す今のタグがまだ無いことと種類・版が合うことを `cargo xtask preflight --only version` で確かめ直します（PR の時点の確認とは別に）。
+
+### 安全の筋と、保証しないこと
+
+筋: 成果物の名前の木と、その実行の PR の先頭の木と、いま配ろうとしている参照の木が同じなら、ワークフローの台本（`.github/workflows/` の中身）もソースも同じです。
+つまり成果物は、main に入る台本と同じ台本・同じソースを GitHub の runner が実行して組んだ物です。PR の枝がワークフローを書き換えて、名前だけ main の木を名乗る成果物を作っても、
+その実行の先頭の木は書き換えた物の木なので、受け取りません。PR の先頭の木と merge の木がずれる（PR の枝が main に追いついていない）ときは、名前の木と先頭の木が合わず、組み直します
+（受け取れる機会を捨てて、確かめを守る側に倒しています）。
+
+保証しないこと:
+- 昇格した物に埋まった ID は、Release の対象の commit そのものではありません。PR の先頭の commit で、木は同じですが、main が PR を squash で取り込むと main の履歴には入りません
+  （GitHub の `refs/pull/N/head` から引けますが、その保存は GitHub 任せです）。木が同じことは、成果物の名前と目録で確かめます。
+- 依存のクレートの取得は `Cargo.lock` の固定（チェックサム）に頼ります。PR の時点と配布の時点で別の取得をしても、同じ中身であることまでは確かめません。
+- Rust のツールチェーンは `stable` で、runner のイメージも更新されます。PR の時点と今で版が違い得ます（目録の `rustc`・runner に記録します）。同じ木から同じバイト列になることは保証しません（再現可能な組みではありません）。
+- 更新用の公開鍵はアプリに組み込まれます。PR の後にリポジトリ変数を変えると、目録の鍵と合わず、組み直します。
+- PR の CI の試験が通ったことは、PR の時点の runner・ツールチェーンでの結果です。Windows の実機での確認の代わりにはなりません。
+- 保存は 14 日です。PR を出してから 14 日以上たって配るときは、組み直します。
+
+手元で受け取りの条件を確かめるには、`python3 tools/test-dist.py`（GitHub の API を偽の窓口に置き換えた試験）を回します。
+
+## 試験版の置き場
+
+試験版（kind=prerelease の Release）は、`releases/latest` に出ません。設定「試験版を使う」を入れたアプリが見つけられるように、
+公開した試験版の署名つきの更新情報を、**固定のタグ `updater-beta` の Release** に原本のまま上書きで置きます。
+
+- アプリ（`yolu-update` の `UpdateClient::check_channels`）は、設定が入のとき、stable の置き場（`releases/latest/download/updater-v1.json`）と
+  試験版の置き場（`releases/download/updater-beta/updater-v1.json`）を両方取り、**今の版より新しい方**を勧めます。どちらも同じ鍵・同じ検証です
+  （署名・形式・版・対象・大きさ・SHA-256）。同じ版が両方にあれば stable を勧め、版を下げる更新は勧めません。
+- 切のときは stable の置き場だけを見ます。stable の更新情報に試験版の版が載っていても受けません。試験版を入れていた人が設定を切っても、
+  次の stable が今の版より新しくなるまでは何も勧めません（試験版から正式版へ戻るのは、そのとき）。
+- stable が出れば `releases/latest` が切り替わります。置き場は何もしなくてよく、試験版を使う人にも、試験版より新しい stable が見えます。
+- 確かめの途中で設定を切ると、その確かめは試験版の結果だけを捨て、stable の結果で答えます（今の版より新しい stable があれば勧めます。「最新」と言うのは stable も新しくないときだけ）。
+  ダウンロード中の試験版は取り消し、転送が済んだあとの確かめ・書き込みの間に切った場合も受けません。落とし済みの試験版は、置き場のインストーラーも消します。
+- 失敗の理由（通信できない・検証を通らない）は stable の取得で決めます。試験版の置き場が引けないこと（まだ 1 つも出していない間はいつもそうです）は、理由に混ぜません。
+- 試験版の置き場が引けない（まだ 1 つも出していない間も含む）・署名が合わない・対象の配布物が無いときは、stable の結果だけで答えます。
+  逆に stable が引けないときは、新しい試験版が見つかればそれを勧め、見つからなければ「最新」とは答えずに失敗を伝えます。
+
+### 置き場の決め方の比べ
+
+| 候補 | 認証なしで引けるか | 回数の上限 | キャッシュ | 壊れにくさ | 署名との関係 | 公開の順・運用 |
+|---|---|---|---|---|---|---|
+| **固定のタグの Release の資産**（採用） | 引ける（stable の道と同じ種類の URL） | 無い（Web の配布の道で、API の回数制限の外） | 最初の応答は `no-cache`（stable の道で確かめた）。置き換えは資産の削除と再登録なので、古い写しが返る見込みは低い（置き換えの反映の遅れは測っていない） | アプリが決めた更新情報の形をそのまま返す。GitHub の API の JSON の形に依存しない | 原本の署名つきの更新情報。stable と同じ鍵・同じ形で、アプリは追加の仕組み無しに検証できる | 公開（published）のときに 1 回だけ上書き。Draft のうちは置き場が動かない。置き場の Release を 1 つ持つ |
+| GitHub の API で最新の prerelease を引く（`releases`） | 引ける（認証なし） | 認証なしは 1 時間 60 回・IP ごと。共有の回線の利用者がまとめて止まる | API の応答に依存 | Release の本文などを含む大きな JSON の形・ページ送り・並び（作成日順で stable と混ざる）に依存する | API の応答は署名の外。結局、更新情報を取る 2 回目の通信が要る | Draft は認証が無いと見えない。置き場の更新の手間は要らない |
+| `releases.atom`（フィード）を読む | 引ける | 無い | フィードのキャッシュに依存 | XML の解析と依存の追加。項目から prerelease かを確実に見分けられる保証が無い | 署名の外の指し示しで、2 回目の通信が要る | 置き場の更新の手間は要らない |
+| リポジトリのファイル（`main` の raw）に置く | 引ける | 無い | 数分のキャッシュ | ファイル名は固定 | 署名つきの更新情報を置ける | 保護された `main` へワークフローが push することになり、PR 必須の運用と合わない |
+
+採った理由は、認証と API の回数に頼らず、署名つきの更新情報を原本のまま（再署名なし・秘密鍵に触れずに）置けて、アプリの検証が stable と 1 つで済むことです。
+失うものは、置き場の Release が 1 つ増えること（Releases の一覧に prerelease として出ます）と、置き換えの間の数秒に取得が失敗し得ることです
+（そのときの確かめは stable の結果で答えるので、更新が止まることはありません）。
+
+### 試験版を出す手順
+
+1. 作業ブランチで `Cargo.toml` の workspace.package.version を `0.4.0-rc.1` のように `alpha.N`・`beta.N`・`rc.N` の版にし、`Cargo.lock` を更新してコミットし、main 向けの PR を出します
+   （CI が配る物を組みます。`cargo xtask preflight --kind prerelease` で版の形も確かめられます）。
+2. Actions の「配布物の作成」を kind=prerelease で、まず dry-run=true、次に dry-run=false（environment の承認）で動かします。Draft Release が prerelease の印つきで出ます。
+3. 実機の確認のあとに Draft を公開します。**公開すると `beta-channel.yml` が動き**、公開した Release の配布物をすべて取り、公開鍵だけで署名・版・大きさ・SHA-256・梱包の中身を確かめ直して
+   （`cargo xtask beta-channel`）、`updater-beta` の Release の `updater-v1.json` を上書きします（初めてなら Release を作ります）。
+   置き場の Release は毎回 prerelease・「最新の Release」にしない設定へ付け直すので、stable の `releases/latest` は動きません。
+4. 「試験版を使う」を入れたアプリが、次の更新の確かめで新しい試験版を見つけます。入れていない人には何も変わりません。
+
+`xtask beta-channel` の規則:
+- 版は `alpha.N`・`beta.N`・`rc.N` の形だけ（正式版や別の識別子の版は置き場に載せません）。
+- 置き場の今の更新情報の版が今の版以上なら、置き換えません（古い試験版を後から公開しても、置き場が戻りません）。今の置き場が読めなければ、直すつもりで置きます。
+  この比べは戻し防止の目安で、署名の確かめではありません（アプリが署名を確かめます）。
+- ワークフローは、置き場の Release がまだ無いとき（`release not found`）だけ新しく作ります。取得の失敗など、ほかの失敗は止めます（置き場の版を見ずに上書きしないため）。
+- 失敗したときは、Actions の「Re-run」で同じ公開に対してやり直せます。置き場の Release を手で消したり、prerelease の印を外したりしないでください
+  （外すと `releases/latest` が置き場を指します。次の試験版の公開で付け直されます）。
+
+保証しないこと: 置き場の更新情報は署名つきの過去の物の再送を防げません（stable と同じ）。試験版の置き場への反映は、公開のあと、ワークフローが終わるまで（数分）かかります。
+反映の遅れ（資産の置き換えから、取得する側に新しい中身が返るまで）は測っていません。
+
+### 以前の版との違いと互換
+
+- 失った能力: 以前は、試験版の版で動いているアプリが、stable の更新情報に載った試験版の版も自動で受けていました（今の版がプレリリースなら受ける、という判定）。
+  今は設定「試験版を使う」が入のときだけ受けます。stable の更新情報は preflight が試験版の版を断るので、公式の手順で出した物では起こらない場面ですが、
+  手元で作って stable の置き場に載せた試験版は、設定が切のアプリには届かなくなりました。
+- 設定ファイル: 試験版を入にすると `update.conf` に `use_beta=on` の行が増えます（切のときは旧い版と同じ 1 行だけで、ファイルが無かった人には作りません）。
+  0.3.x はこのファイルを「1 行だけの形」で読むので、行が増えたファイルは読めない選択として扱い、初回の問い（起動時に確かめるか）をもう一度出します。
+  試験版の設定そのものは 0.3.x に無いので、戻したアプリは stable だけを見ます。切にしてから戻せば、旧い 1 行のままです。
+- 配布のワークフロー: kind の既定は prerelease のままですが、prerelease は試験版の形の版しか受け付けなくなりました。正式版の形の版を出すときは kind=stable を選びます。
 
 ## 更新情報の互換
 
@@ -169,20 +335,24 @@ cargo xtask verify --version 0.1.0-rc.1 --assets target/dist --public-key <公�
 1. リポジトリに environment `release` を作り、承認者と利用可能なブランチ／タグを制限します。
 2. **environment の secret** `YOLUPAINTER_UPDATE_PRIVATE_KEY` に秘密鍵ファイルの内容を保存します。リポジトリ全体の secret には置きません。
 3. リポジトリの変数（Variables）`YOLUPAINTER_UPDATE_PUBLIC_KEY` に公開鍵の hex を保存します。公開鍵は秘密ではありません。
-   ビルドのジョブが、この値をアプリへ組み込みます（dry-run=false では、空だとビルドが止まります）。
+   配る物の組みが、この値をアプリへ組み込みます（main 向けの PR の CI の組みと、dry-run=false の配布の組みでは、空だと止まります。成果物の目録にも載り、変数を変えると、PR の CI の成果物は受け取らず組み直します）。
    draft ジョブは署名の直後にこの公開鍵で `verify` を実行し、通らなければ Draft を作りません。
 4. Actions の「配布物の作成」で配布対象のコミットを含むブランチ／タグを選び、kind を prerelease または stable にします。
-5. 最初は **dry-run=true（既定）** で実行します。Windows・Linux をビルドし、未署名 JSON を含む `release-preview` artifact を作ります。secret に触れず、Release は作りません。
+   版が `0.4.0-rc.1` のような試験版なら prerelease、`0.4.0` のようにプレリリース識別子のない正式版の形なら **stable** を選びます。
+   kind の既定は prerelease なので、正式版の形の版を既定のまま動かすと preflight の version で止まります（止まるのは Draft を作る前です）。
+5. 最初は **dry-run=true（既定）** で実行します。同じ木の物が main 向けの PR の CI にあれば受け取り（[配る物を組む場所と、受け取る道](#配る物を組む場所と受け取る道)）、無ければ Windows（`linux` が入なら Linux も）を組み、未署名 JSON を含む `release-preview` artifact を作ります。secret に触れず、Release は作りません。
 6. artifact を取得し、両 OS で展開・起動・同梱文書・許諾全文を確認します。Linux 実行ファイルには実行権限があります。
    Windows はインストーラーで、インストール・起動・更新（前の版のインストーラーで入れた上に入れる）・アンインストールを通します。
 7. 同じコミットに対して dry-run=false で実行し、environment の承認を行います。署名付き JSON とアーカイブを **Draft Release** にアップロードします。
 8. 署名と各配布物の SHA-256・サイズはワークフローが公開鍵で確認済みです。Draft のタグと対象コミット、版、prerelease の状態を確認します。
    本文は空で作られるので、両 OS の実機確認後、管理者が本文を書き、README の「Code signing policy」の節へのリンクを入れて手で公開します。
    **公開した時点で `releases/latest` が切り替わり、アプリの更新の確認がその版を見つけ始めます**（stable のみ。prerelease は `latest` に出ません）。
+   prerelease を公開すると `.github/workflows/beta-channel.yml` が動き、試験版の置き場を更新します（[試験版の置き場](#試験版の置き場)）。
 
 同時実行は 1 本です。実行中の処理は自動取消しません。既存の同じタグの Release は上書きしません。
 失敗後は Draft とタグの状態を確認してから再実行してください。非公開リポジトリでは認証と Actions の利用枠にも注意してください。
-GitHub の prerelease 設定と SemVer のプレリリース識別子は別です。stable はプレリリース識別子を含む版を拒否します。
+版の形と kind は組になっています。kind=prerelease は `alpha.N`・`beta.N`・`rc.N` の版だけ、kind=stable はプレリリース識別子のない版だけを受け付けます
+（`cargo xtask preflight` の version が確かめ、合わなければ Draft を作る前に止まります）。
 
 ## コード署名（SignPath Foundation）
 
@@ -219,7 +389,9 @@ GitHub の prerelease 設定と SemVer のプレリリース識別子は別で�
 ```sh
 cargo test -p yolu-update -p xtask --locked
 python3 tools/test-release-tools.py
-actionlint .github/workflows/release.yml
+python3 tools/test-dist.py
+cargo xtask preflight
+actionlint .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/dist-build.yml .github/workflows/beta-channel.yml
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
@@ -229,7 +401,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 https だけ・時間切れ・読み込み中のサイズ上限・取消を守り、止まらない転送の連なりは失敗にします。転送の回数は、curl は 5 回まで（転送先も https だけ）、
 WinHTTP は 5 回に絞る設定を試み、設定できない環境では OS の既定（10 回）まで、で、https から http へは WinHTTP の既定が断ります。
 現在の API は同期で、取得データをメモリに保持します。更新情報は 1 MiB、配布物は 2 GiB が上限です。
-プレリリースの版を提案するのは、実行中のアプリ自身がプレリリースのときだけです。同じ版・古い版への更新は提案しません。
+試験版を提案するのは、設定「試験版を使う」が入っているときだけです（stable の更新情報に試験版の版が載っていても受けません）。同じ版・古い版への更新は提案しません。
 署名済みの過去の情報の再送による「新しい版を見せない」攻撃への鮮度保証はありません。
 ダウンロードは、利用者が「更新」を押したあとだけ始めます。ダウンロードしたインストーラーは、署名つきの更新情報の SHA-256・大きさで確かめたものを
 利用者ごとの置き場（Windows は `%LOCALAPPDATA%\YoluPainter\updates`）へ置き、走らせる直前にもう一度確かめます。

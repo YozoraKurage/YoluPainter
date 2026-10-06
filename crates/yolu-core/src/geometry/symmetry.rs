@@ -169,7 +169,7 @@ impl RadialSymmetry {
         RadialSymmetry::new(origin, rotation * axis.direction(), count)
     }
 
-    fn rotation(&self, copy: u32) -> Quat {
+    pub(crate) fn rotation(&self, copy: u32) -> Quat {
         // Unity の Quaternion.AngleAxis(360f * copy / Count, Axis)（度）。
         let degrees = 360.0f32 * copy as f32 / self.count as f32;
         Quat::from_axis_angle(self.axis, degrees * (std::f32::consts::PI / 180.0))

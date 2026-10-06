@@ -19,8 +19,12 @@ pub(super) struct Effector {
     pub flags: u32,
     /// 筆圧 0 のときの係数（0〜1）。
     pub pressure_min: f64,
-    /// 曲線の点（x・y とも 0〜1 を期待するが、ここでは丸めない）。最初の曲線が筆圧の曲線。
+    /// 曲線の点（x・y とも 0〜1 を期待するが、ここでは丸めない）。並びはファイルのまま。どの曲線がどの入力のものかは
+    /// [`Effector::pressure_curve`]・[`Effector::tilt_curve`]。
     pub curves: Vec<Vec<(f64, f64)>>,
+    /// ヘッダー（長さ 44）の 9・10 番目の整数: 筆圧の曲線と、筆圧でない 2 つ目の曲線の、バイト数（0 は曲線が無い）。ヘッダーが 44 でないと
+    /// `None`。実物の .sut では、曲線の大きさ（12 + 16 × 点の数）とちょうど合い、傾きだけを使う設定には 2 つ目の枠だけに曲線が付く。
+    slots: Option<[usize; 2]>,
 }
 
 impl Effector {
@@ -28,6 +32,43 @@ impl Effector {
     pub const TILT: u32 = 0x20;
     pub const SPEED: u32 = 0x40;
     pub const RANDOM: u32 = 0x80;
+
+    /// 曲線 1 つのバイト数（3 つの整数 + 点ごとに x・y の `f64`）。
+    fn curve_bytes(points: &[(f64, f64)]) -> usize {
+        12 + 16 * points.len()
+    }
+
+    /// ヘッダーの 2 つの枠（筆圧・筆圧でない 2 つ目）と曲線の並びが、バイト数まで合っているとき、枠ごとの曲線の番号。
+    fn assigned(&self) -> Option<[Option<usize>; 2]> {
+        let slots = self.slots.filter(|s| s.iter().any(|&n| n > 0))?;
+        let mut next = 0;
+        let mut out = [None, None];
+        for (slot, &bytes) in slots.iter().enumerate() {
+            if bytes == 0 {
+                continue;
+            }
+            let curve = self.curves.get(next)?;
+            if Self::curve_bytes(curve) != bytes {
+                return None;
+            }
+            out[slot] = Some(next);
+            next += 1;
+        }
+        (next == self.curves.len()).then_some(out)
+    }
+
+    /// 筆圧の曲線。枠が読めて曲線と合っていれば枠で決め（筆圧の曲線が無ければ None）、読めなければ最初の曲線（点の数 2 以上）。
+    pub fn pressure_curve(&self) -> Option<&[(f64, f64)]> {
+        match self.assigned() {
+            Some([pressure, _]) => pressure.map(|i| self.curves[i].as_slice()),
+            None => self.curves.first().map(Vec::as_slice),
+        }
+    }
+
+    /// 2 つ目の枠の曲線（傾きの曲線）。枠が読めて曲線と合っているときだけ。
+    pub fn tilt_curve(&self) -> Option<&[(f64, f64)]> {
+        self.assigned()?[1].map(|i| self.curves[i].as_slice())
+    }
 }
 
 /// 影響元の BLOB を読む。頭のヘッダー（長さ 40 か 44。先頭の 4 バイトがその長さ）が読めなければ None。
@@ -44,6 +85,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
     }
     let flags = ints[2];
     let pressure_min = (ints[3] as f64 / 100.0).clamp(0.0, 1.0);
+    let slots = (header == 44).then(|| [ints[8] as usize, ints[9] as usize]);
     let mut curves = Vec::new();
     while curves.len() < MAX_CURVES && r.remaining() >= 12 {
         let (Ok(_), Ok(count), Ok(_)) = (r.u32(), r.u32(), r.u32()) else {
@@ -60,6 +102,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
                     flags,
                     pressure_min,
                     curves,
+                    slots,
                 });
             };
             points.push((x, y));
@@ -76,6 +119,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
         flags,
         pressure_min,
         curves,
+        slots,
     })
 }
 

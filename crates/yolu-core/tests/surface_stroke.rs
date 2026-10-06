@@ -6,9 +6,10 @@
 use std::sync::Arc;
 
 use yolu_core::geometry::{
-    pick, CameraView, MirrorOutcome, MirrorPlane, OrbitCamera, RadialSymmetry, SamplingError,
-    SurfaceCloneSource, SurfaceEffect, SurfaceGeometry, SurfaceHit, SurfaceStencil, SurfaceStroke,
-    SurfaceStrokeError, SurfaceStrokeOptions, SurfaceSymmetrySetup, SurfaceTriangle, SymmetryAxis,
+    pick, CameraView, DabRefusal, MirrorOutcome, MirrorPlane, OrbitCamera, RadialSymmetry,
+    SamplingError, SurfaceCloneSource, SurfaceEffect, SurfaceGeometry, SurfaceHit, SurfaceStencil,
+    SurfaceStroke, SurfaceStrokeError, SurfaceStrokeOptions, SurfaceSymmetrySetup, SurfaceTriangle,
+    SymmetryAxis,
 };
 use yolu_core::glam::{Quat, Vec2, Vec3};
 use yolu_core::{
@@ -493,7 +494,7 @@ fn smudge_and_clone_refuse_symmetry_before_painting() {
 }
 
 #[test]
-fn a_stale_clone_source_is_refused_and_a_budget_cancels_the_stroke() {
+fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab() {
     let g = plane();
     let view = front(&g);
     let (mut d, layer) = document();
@@ -528,8 +529,16 @@ fn a_stale_clone_source_is_refused_and_a_budget_cancels_the_stroke() {
     );
     assert!(matches!(s, Err(SurfaceStrokeError::CloneSource)));
     d.cancel_stroke(stroke);
-    // 予算: 参照の見積もりだけで尽きる
+    // 予算: 投影の画素は入るが、読み元の図が 1 回の操作の予算に入らない。ストロークごと取り消す
     d.set_stroke_budget_bytes(1000).unwrap();
+    let clone = |source: SurfaceHit, projection_memory: Option<u64>| SurfaceStrokeOptions {
+        effect: SurfaceEffect::Clone(SurfaceCloneSource {
+            source,
+            destination: None,
+        }),
+        projection_memory,
+        ..Default::default()
+    };
     let (stroke, s) = begin(
         &mut d,
         layer,
@@ -539,19 +548,32 @@ fn a_stale_clone_source_is_refused_and_a_budget_cancels_the_stroke() {
             offset: Default::default(),
         }),
         screen(&view, Vec3::new(1.25, 0.5, 0.0)),
-        SurfaceStrokeOptions {
-            effect: SurfaceEffect::Clone(SurfaceCloneSource {
-                source,
-                destination: None,
-            }),
-            ..Default::default()
-        },
+        clone(source, Some(64 << 20)),
     );
     assert_eq!(
         s.err(),
         Some(SurfaceStrokeError::Sampling(SamplingError::ChartBudget))
     );
     d.cancel_stroke(stroke);
+    assert!(!d.has_active_stroke());
+    assert_eq!(bytes(&d, layer), before);
+    assert_eq!(d.undo_count(), 0);
+    // 投影の画素も入らない: ダブを飛ばして理由を残し、ストロークは取り消さない（何も塗らないので履歴に残らない）
+    let (stroke, s) = begin(
+        &mut d,
+        layer,
+        &g,
+        view,
+        &brush(BrushEffect::Clone {
+            offset: Default::default(),
+        }),
+        screen(&view, Vec3::new(1.25, 0.5, 0.0)),
+        clone(source, None),
+    );
+    let s = s.unwrap();
+    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
+    assert_eq!(s.stats.dabs, 0);
+    assert!(!d.end_stroke(stroke).unwrap().changed);
     assert!(!d.has_active_stroke());
     assert_eq!(bytes(&d, layer), before);
     assert_eq!(d.undo_count(), 0);
@@ -566,13 +588,7 @@ fn a_stale_clone_source_is_refused_and_a_budget_cancels_the_stroke() {
             offset: Default::default(),
         }),
         screen(&view, Vec3::new(1.25, 0.5, 0.0)),
-        SurfaceStrokeOptions {
-            effect: SurfaceEffect::Clone(SurfaceCloneSource {
-                source,
-                destination: None,
-            }),
-            ..Default::default()
-        },
+        clone(source, None),
     );
     assert!(s.is_ok());
     d.cancel_stroke(stroke);
@@ -1256,6 +1272,10 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
     let faint = one_dab(&o, 0.0).0;
     let strong = one_dab(&o, 1.0).0;
     let max_alpha = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| p[3]).max().unwrap();
-    assert!((i32::from(max_alpha(&faint)) - 128).abs() <= 1, "{}", max_alpha(&faint));
+    assert!(
+        (i32::from(max_alpha(&faint)) - 128).abs() <= 1,
+        "{}",
+        max_alpha(&faint)
+    );
     assert_eq!(max_alpha(&strong), 255);
 }

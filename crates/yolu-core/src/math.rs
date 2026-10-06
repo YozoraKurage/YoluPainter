@@ -1,5 +1,7 @@
 //! 丸めと 8 bit の値の表。C# の Core の MathUtil と同じ値を出す（バイト一致の土台）。
 
+pub(crate) mod simd;
+
 /// b / 255.0（すべての b について、割り算と同じ double）。
 pub(crate) static UNIT: [f64; 256] = make_unit();
 

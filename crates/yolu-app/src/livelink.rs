@@ -27,11 +27,14 @@ use yolu_protocol::link::{
 };
 use yolu_protocol::{
     channel, feature, shm::valid_tile_size, AppVersion, Connection, ErrorCode, Hello, Identity,
-    Kind, LinkInfo, Message, Product, Received, Reject, RejectCode, ServerKey, SkewReport, Tile,
-    VersionRefusal, DEFAULT_LINK_NAME, MAX_TEXTURE_SIZE,
+    Kind, LinkInfo, MaterialRequest, MaterialWant, Message, Product, Received,
+    Reject, RejectCode, ServerKey, SkewReport, Tile, VersionRefusal, DEFAULT_LINK_NAME,
+    MAX_REQUEST_ITEMS, MAX_TEXTURE_SIZE,
 };
 
 use crate::engine::{Channel, Document, RowOrder, TileCoord};
+use crate::livelink_pose::PoseSlot;
+use crate::livelink_queue::{message_bytes, pose_bytes, Backlog};
 use crate::model::{ModelSource, SceneModel};
 use crate::state::AppState;
 use crate::lang::Lang;
@@ -45,7 +48,10 @@ pub const AGENT: &str = concat!("YoluPainter ", env!("CARGO_PKG_VERSION"));
 /// マテリアルの値（MATERIAL_VALUES）: Unity の本物の lilToon のマテリアルの値と描いていないスロットの絵を受けて描く（`look::link`）。
 /// 元のテクスチャ（ORIGINAL_TEXTURES）: Unity が送る元の絵を、新しく作ったセット・何も触っていない最初のセットの一番下のレイヤーに入れる
 /// （絵の無いマテリアルは白）（`livelink_base`）。
-pub const FEATURES: u64 = feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES;
+/// マテリアルの頼み（MATERIAL_REQUEST）: 元の絵を待たせたセットのマテリアルと、値が来ない・絵が揃わないマテリアルを、Unity に頼む。
+/// 印が双方にあれば、Unity は元の絵を自分から押し出さず、頼まれたものだけを送る（手元の絵と印が同じなら画素なし）。
+pub const FEATURES: u64 =
+    feature::MATERIAL_VALUES | feature::ORIGINAL_TEXTURES | feature::MATERIAL_REQUEST;
 
 /// Unity に出すチャンネル（セットの共有メモリ。今は Color だけ）。Unity はここにあるチャンネルの流し込み先だけを描いた絵で見せ、ほかの
 /// 流し込み先は元のテクスチャのまま見せる（マテリアルの値で描くときも同じ決まり。`look::link`）。
@@ -270,6 +276,7 @@ fn feature_names(lang: Lang, mask: u64) -> String {
             feature::ASSETS => lang.pick("アセット", "Assets"),
             feature::PROJECT_TRANSFER => lang.pick("プロジェクトの転送", "Project transfer"),
             feature::ORIGINAL_TEXTURES => lang.pick("元のテクスチャ", "Original textures"),
+            feature::MATERIAL_REQUEST => lang.pick("マテリアルの頼み", "Material requests"),
             _ => lang.pick("アニメーション", "Animation"),
         })
         .collect();
@@ -359,6 +366,8 @@ enum Event {
         out: Sender<Out>,
         /// 両側の名乗りと決まった版（使える機能・版のずれ）。
         link: Option<LinkInfo>,
+        /// 読むスレッドが溜めるポーズ（メッシュごとに最新だけ）。
+        pose: Arc<PoseSlot>,
     },
     /// 版が合わないので断った。
     Refused {
@@ -377,6 +386,13 @@ enum Event {
     Message {
         session: u64,
         message: Message,
+        /// 列に積んでいる間の大きさ（`livelink_queue::message_bytes`。取り出したときに帳簿から引く）。
+        bytes: usize,
+    },
+    /// 読むスレッドがポーズを溜め始めた（束 `batch`。`PoseSlot::put`）。この知らせを列の順に読んだときに、その束のポーズを取り出して当てる。
+    PoseReady {
+        session: u64,
+        batch: u64,
     },
     Unknown {
         session: u64,
@@ -420,6 +436,8 @@ struct Active {
     out: Sender<Out>,
     /// このつながりで使える機能の印（双方の共通部分）。
     common_features: u64,
+    /// 読むスレッドが溜めたポーズ（画面のスレッドが、受けた順を守って取り出す）。
+    pose: Arc<PoseSlot>,
 }
 
 impl Active {
@@ -473,6 +491,12 @@ pub struct LiveLink {
     base: crate::livelink_base::LiveBase,
     /// 待ちの時間切れを見るため、待っているあいだ描き直しを頼む窓口（`start` で受け取る）。
     ctx: Option<egui::Context>,
+    /// 読むスレッドが列へ積んだ命令の量（上限に達したら、読むスレッドは画面のスレッドが取り出すまで読まない）。
+    backlog: Arc<Backlog>,
+    /// Unity に出した頼みの数（試験・診断用）。
+    requests_sent: u64,
+    /// 頼めない理由を知らせた（このつながりで 1 度だけ）。
+    request_unavailable_told: bool,
 }
 
 impl Default for LiveLink {
@@ -486,6 +510,8 @@ impl Drop for LiveLink {
         if let Some(a) = self.active.take() {
             let _ = a.out.send(Out::Bye);
         }
+        // 上限で待っている読むスレッドを終わらせる（列の受け手はもう無い）
+        self.backlog.close();
     }
 }
 
@@ -516,6 +542,9 @@ impl LiveLink {
             values: Default::default(),
             base: Default::default(),
             ctx: None,
+            backlog: Backlog::new(),
+            requests_sent: 0,
+            request_unavailable_told: false,
         }
     }
 
@@ -589,6 +618,7 @@ impl LiveLink {
             let ctx = ctx.clone();
             let active = self.active_session.clone();
             let sessions = self.sessions.clone();
+            let backlog = self.backlog.clone();
             let key = listener.key();
             thread::Builder::new()
                 .name("yolu-livelink-listen".into())
@@ -598,10 +628,10 @@ impl LiveLink {
                             Ok(stream) => {
                                 let session = sessions.fetch_add(1, Ordering::Relaxed) + 1;
                                 let (tx, ctx, active) = (tx.clone(), ctx.clone(), active.clone());
-                                let key = key.clone();
+                                let (key, backlog) = (key.clone(), backlog.clone());
                                 let _ = thread::Builder::new()
                                     .name(format!("yolu-livelink-{session}"))
-                                    .spawn(move || serve(stream, session, tx, ctx, active, key));
+                                    .spawn(move || serve(stream, session, tx, ctx, active, key, backlog));
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                 thread::sleep(Duration::from_millis(50))
@@ -659,6 +689,7 @@ impl LiveLink {
         self.published.clear();
         self.failed.clear();
         self.link_info = None;
+        self.request_unavailable_told = false;
         // 受けた値は捨てる（セットの文書に当てた受けた見た目は、最後の値として残る）
         self.values.clear();
         // 元の絵を待たせていたセットは出す（入れた元の絵の層は文書に残る）
@@ -679,6 +710,7 @@ impl LiveLink {
                     version,
                     out,
                     link,
+                    pose,
                 } => {
                     if self.listening.is_none() || self.active.is_some() {
                         // やめた後・つながっている間に来た（待ち受けのスレッドは 2 つ目を断るので、普通は来ない）
@@ -689,6 +721,7 @@ impl LiveLink {
                         session,
                         out,
                         common_features: link.as_ref().map_or(0, LinkInfo::common_features),
+                        pose,
                     });
                     self.link_info = link;
                     self.status = LinkStatus::Connected {
@@ -733,9 +766,29 @@ impl LiveLink {
                     let text = state.lang.pick(format!("Live Link: つなぎ始めで失敗しました: {e}"), format!("Live Link: Handshake failed: {e}"));
                     self.notify(NoticeLevel::Warning, text, state);
                 }
-                Event::Message { session, message } => {
+                Event::Message { session, message, bytes } => {
+                    // 列から出したので、帳簿から引く（読むスレッドが上限で待っていれば、ここで再開する）
+                    self.backlog.release(bytes);
                     if Some(session) == self.current_session() {
                         self.handle(message, state);
+                    }
+                }
+                Event::PoseReady { session, batch } => {
+                    // 読むスレッドが溜めたポーズ（メッシュごとの最新）を、この知らせの位置で当てる。列でこの知らせより前の命令（モデルなど）は、
+                    // もう当てた。後ろの命令が来ていれば、束は列へ流れていて、ここでは取り出せない（`PoseSlot` の「順番」）
+                    if Some(session) == self.current_session() {
+                        if let Some(taken) = self.active.as_ref().and_then(|a| a.pose.take_batch(batch)) {
+                            if taken.dropped > 0 {
+                                let text = state.lang.pick(
+                                    format!("Live Link: Unity からのポーズを {} 件捨てました（溜められる量を超えました）。", taken.dropped),
+                                    format!("Live Link: Dropped {} poses from Unity (over the amount kept).", taken.dropped),
+                                );
+                                self.notify(NoticeLevel::Warning, text, state);
+                            }
+                            if !taken.pose.meshes.is_empty() {
+                                self.handle(Message::Pose(taken.pose), state);
+                            }
+                        }
                     }
                 }
                 Event::Unknown { session, kind } => {
@@ -799,6 +852,8 @@ impl LiveLink {
             if let Some(text) = self.base.poll(state, session, Instant::now()) {
                 self.notify(NoticeLevel::Warning, text, state);
             }
+            // 元の絵を待たせたセット・値が来ないマテリアルを、Unity に頼む
+            self.ask(state, Instant::now());
             // 届くのを待っているあいだは、時間切れを見るために描き直す
             if self.base.waiting() {
                 if let Some(ctx) = &self.ctx {
@@ -806,6 +861,101 @@ impl LiveLink {
                 }
             }
         }
+    }
+
+    /// Unity に頼む: 元の絵を待たせているセットのマテリアルと、値が来ない・絵が揃わないマテリアル（頼みを出せるつながりのとき）。
+    /// 頼みは今のモデルの世代に付ける。つながりに印（マテリアルの頼み）が無い古い Unity には頼まない: 元の絵は Unity が自分から送り、
+    /// 値が来ないまま頼めないときだけ、理由（Unity のパッケージの版）を 1 度知らせる。
+    fn ask(&mut self, state: &mut AppState, now: Instant) {
+        let Some(session) = self.current_session() else {
+            return;
+        };
+        let Some(model) = state
+            .model
+            .as_ref()
+            .filter(|m| m.live && m.source == (ModelSource::LiveLink { session }))
+        else {
+            return;
+        };
+        let generation = model.generation;
+        let common = self.active.as_ref().map_or(0, |a| a.common_features);
+        let support = self.link_info.as_ref().map(LinkInfo::request_support);
+        let can_ask = matches!(support, Some(Ok(())));
+        let mut items: Vec<MaterialWant> = Vec::new();
+        if can_ask {
+            items.extend(self.base.take_requests());
+        }
+        if common & feature::MATERIAL_VALUES != 0 {
+            // 値が来るはずのマテリアル: テクスチャセットが付いていて、マテリアルがあるもの（マテリアルの無い組は、値が無い）
+            let bound: Vec<u32> = state
+                .sets
+                .iter()
+                .filter_map(|s| s.bound)
+                .filter(|m| {
+                    model
+                        .materials
+                        .get(*m as usize)
+                        .is_some_and(|info| info.key != yolu_protocol::MaterialKey::Unassigned)
+                })
+                .collect();
+            let wanted = self.values.wanted(bound, now);
+            if can_ask {
+                items.extend(wanted.into_iter().map(MaterialWant::values));
+            } else if !wanted.is_empty() && !self.request_unavailable_told {
+                self.request_unavailable_told = true;
+                if let Some(Err(reason)) = support {
+                    let line = update_line(state.lang, Product::Unity, Some(reason.update_to));
+                    let text = state.lang.pick(
+                        format!("Live Link: Unity から値を取り直せません（{line}）。"),
+                        format!("Live Link: Cannot ask Unity for the values again ({line})."),
+                    );
+                    self.notify(NoticeLevel::Info, text, state);
+                }
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        let Some(active) = &self.active else {
+            return;
+        };
+        for chunk in items.chunks(MAX_REQUEST_ITEMS) {
+            active.send(Message::MaterialRequest(MaterialRequest {
+                generation,
+                items: chunk.to_vec(),
+            }));
+            self.requests_sent += 1;
+        }
+    }
+
+    /// Unity に出した頼みの数（試験・診断用）。
+    pub fn requests_sent(&self) -> u64 {
+        self.requests_sent
+    }
+
+    /// 読むスレッドが命令の列へ積んでいて、画面のスレッドがまだ取り出していない量（バイト。試験・診断用）。
+    pub fn queued_bytes(&self) -> usize {
+        self.backlog.queued()
+    }
+
+    /// 命令の列に積んでおく量の上限を決める（試験用。既定は `livelink_queue::MAX_QUEUED_BYTES`）。
+    pub fn set_queue_limit(&mut self, bytes: usize) {
+        self.backlog.set_limit(bytes);
+    }
+
+    /// 読むスレッドが溜めている、まだ当てていないポーズの量（位置と法線のバイト。試験・診断用）。
+    pub fn pending_pose_bytes(&self) -> usize {
+        self.active.as_ref().map_or(0, |a| a.pose.pending_bytes())
+    }
+
+    /// 値を頼むまでの猶予と頼み直す間隔を決める（試験用。既定は `look::link` の `ASK_AFTER`・`ASK_AGAIN`）。
+    pub fn set_ask_timing(&mut self, after: Duration, again: Duration) {
+        self.values.set_ask_timing(after, again);
+    }
+
+    /// 手元に残した元の絵（試験・診断用）。
+    pub fn original_cache(&self) -> &crate::livelink_base::OriginalCache {
+        self.base.cache()
     }
 
     /// Unity へ返す誤りの返事。表示の言語に依らず、プロトコルの診断として日本語の文に固定する
@@ -1196,8 +1346,23 @@ fn serve(
     ctx: egui::Context,
     active: Arc<AtomicU64>,
     key: Arc<ServerKey>,
+    backlog: Arc<Backlog>,
 ) {
+    // 読むスレッドが溜めるポーズ（メッシュごとに最新だけ。画面のスレッドが止まっていても膨らまない）。ポーズはほかの命令より先に適用される
+    // 必要があるので、別の命令を列へ積む前に、溜めたポーズを先に列へ流す
+    let pose_slot = Arc::new(PoseSlot::new());
     let wake = |e: Event| {
+        if let Some(taken) = pose_slot.take() {
+            if !taken.pose.meshes.is_empty() {
+                let bytes = pose_bytes(&taken.pose);
+                backlog.add(bytes);
+                let _ = tx.send(Event::Message {
+                    session,
+                    message: Message::Pose(taken.pose),
+                    bytes,
+                });
+            }
+        }
         let _ = tx.send(e);
         ctx.request_repaint();
     };
@@ -1264,8 +1429,14 @@ fn serve(
         version,
         out: out_tx,
         link,
+        pose: pose_slot.clone(),
     });
     loop {
+        // 積んだ量が上限に達していたら、画面のスレッドが取り出すまで次の命令を読まない（ソケットとパイプが詰まる。溜まりはブリッジの送り待ちへ移る。`livelink_queue` の保証の射程）。今のつながりでなくなれば終える
+        if !backlog.wait_for_room(|| active.load(Ordering::Acquire) == session) {
+            release();
+            break;
+        }
         match reader.next(&conn) {
             Ok(Received::Message(Message::Bye)) => {
                 // 自分から抜けて閉じる（Windows は受けの時間切れが無いので、待ち合わない）
@@ -1276,7 +1447,18 @@ fn serve(
                 });
                 break;
             }
-            Ok(Received::Message(message)) => wake(Event::Message { session, message }),
+            Ok(Received::Message(Message::Pose(pose))) => {
+                // 溜め場へ（最新だけ）。溜め場が空だったとき（新しい束）だけ、束の知らせを列へ積んで画面のスレッドを起こす
+                if let Some(batch) = pose_slot.put(pose) {
+                    let _ = tx.send(Event::PoseReady { session, batch });
+                    ctx.request_repaint();
+                }
+            }
+            Ok(Received::Message(message)) => {
+                let bytes = message_bytes(&message);
+                backlog.add(bytes);
+                wake(Event::Message { session, message, bytes })
+            }
             Ok(Received::Unknown(kind)) => wake(Event::Unknown { session, kind }),
             Ok(Received::Malformed(kind, e)) => wake(Event::Malformed {
                 session,
@@ -1299,11 +1481,12 @@ fn serve(
 fn write_loop(conn: Connection, rx: Receiver<Out>) {
     while let Ok(out) = rx.recv() {
         match out {
-            Out::Message(m) => {
-                if conn.send(&m).is_err() {
-                    break;
-                }
-            }
+            Out::Message(m) => match conn.send(&m) {
+                Ok(()) => {}
+                // 枠の上限を超える命令は送らずに捨てる（つながりは保つ。書くスレッドを止めない）
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {}
+                Err(_) => break,
+            },
             Out::Bye => {
                 let _ = conn.send(&Message::Bye);
                 break;
@@ -1335,6 +1518,7 @@ mod tests {
                 session: 1,
                 out,
                 common_features,
+                pose: Arc::new(PoseSlot::new()),
             },
             rx,
         )

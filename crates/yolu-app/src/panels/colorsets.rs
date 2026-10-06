@@ -127,7 +127,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     }
                     ui.separator();
                     if ui.button(lang.pick("読み込み", "Import")).clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
+                        if let Some(path) = crate::dialog::file()
                             .add_filter("GPL / ACO", &["gpl", "aco"])
                             .pick_file()
                         {
@@ -148,7 +148,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         match colorsets::format::write_gpl(app.colorsets.palette()) {
                             Err(e) => report(app, Err(e)),
                             Ok(_) => {
-                                if let Some(path) = rfd::FileDialog::new()
+                                if let Some(path) = crate::dialog::file()
                                     .add_filter("GIMP", &["gpl"])
                                     .set_file_name("palette.gpl")
                                     .save_file()

@@ -579,3 +579,110 @@ fn ylp_4_keeps_the_name_rules() {
     p.write_with(&plan, &mut out).unwrap();
     assert!(Package::read_bytes(&out.into_inner(), &Limits::default()).is_err());
 }
+
+fn pool(threads: usize) -> rayon::ThreadPool {
+    rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap()
+}
+
+/// エントリごとの仕事を並べても、結果は 1 つずつかけたときと同じ（並び・断った理由）。どのスレッド数でも、はじめに断った要素より後ろの
+/// 理由は返らない（前の要素のほうが遅くても）。
+#[test]
+fn work_in_parallel_returns_the_results_in_order_and_the_first_failure_in_order() {
+    let items: Vec<u32> = (0..200).collect();
+    for threads in [1, 2, 3, 8] {
+        let ok = pool(threads).install(|| first_failure_in_order(&items, |n| Ok(n * 2)).unwrap());
+        assert_eq!(ok, items.iter().map(|n| n * 2).collect::<Vec<_>>(), "{threads}");
+        for _ in 0..10 {
+            let failed = pool(threads).install(|| {
+                first_failure_in_order(&items, |n| {
+                    // 前の断り（37）は遅く、後ろの断り（55・150）は速い
+                    if *n == 37 {
+                        std::thread::sleep(std::time::Duration::from_millis(30));
+                    }
+                    match n {
+                        37 | 55 | 150 => Err(Error::InvalidData(format!("断り {n}"))),
+                        _ => Ok(*n),
+                    }
+                })
+            });
+            let Err(Error::InvalidData(why)) = failed else {
+                panic!("断らなかった: {failed:?}");
+            };
+            assert_eq!(why, "断り 37", "{threads} 本");
+        }
+    }
+    // 空
+    assert!(first_failure_in_order::<u32, u32>(&[], |_| unreachable!()).unwrap().is_empty());
+}
+
+/// 1 回目の数え（全エントリの長さと SHA-256・manifest）と、書いたものの読み直し（全エントリの確かめ）は、スレッド数に依らず同じ結果・
+/// 同じ断りの理由（名前の順にいちばん前に壊れたエントリ）。壊れたものは、名前の順で前のエントリの理由が先に出る。
+#[test]
+fn planning_and_verifying_do_not_depend_on_the_thread_count() {
+    let mut files = BTreeMap::new();
+    for i in 0..24u64 {
+        files.insert(format!("{SET}/layer-{i:02}.bin"), noise(2000 + (i as usize) * 777, i + 5));
+    }
+    files.insert(format!("{SET}/document.utpaint"), noise(4000, 99));
+    files.insert(format!("{SET}/composite/Color.png"), fake_png(2000));
+    files.insert("project.json".into(), b"{}".to_vec());
+    let p = package_of(&files, 3);
+    let reference = pool(1).install(|| p.to_bytes().unwrap());
+    for threads in [2, 3, 8] {
+        assert_eq!(pool(threads).install(|| p.to_bytes().unwrap()), reference, "{threads} 本の plan と書き込み");
+    }
+    // 読み直し: 同じ中身（名前・長さ・SHA-256）
+    let digest = |threads: usize, bytes: &[u8]| {
+        pool(threads).install(|| {
+            let read = Package::read_bytes(bytes, &Limits::default()).unwrap();
+            read.entries().iter().map(|(n, b)| (n.clone(), b.len(), b.sha256().unwrap())).collect::<Vec<_>>()
+        })
+    };
+    let expected = digest(1, &reference);
+    assert_eq!(expected.len(), files.len());
+    for threads in [2, 8] {
+        assert_eq!(digest(threads, &reference), expected, "{threads}");
+    }
+    // 壊す: 圧縮しないエントリ（PNG。ファイルの中の位置を印から探せる）を増やして、その中身の 2 つを書き換える
+    let mut with_pngs = files.clone();
+    for i in 0..6u64 {
+        with_pngs.insert(format!("{SET}/composite/Layer{i}.png"), fake_png(1500 + i as usize * 100));
+    }
+    let p = package_of(&with_pngs, 3);
+    let good = p.to_bytes().unwrap();
+    let find = |bytes: &[u8], from: usize, len: usize| -> usize {
+        // fake_png の始まり（PNG の印）を探す
+        (from..bytes.len() - len)
+            .find(|&i| bytes[i..i + 8] == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+            .expect("PNG の印")
+    };
+    let mut starts = Vec::new();
+    let mut at = 0;
+    for _ in 0..7 {
+        at = find(&good, at, 8);
+        starts.push(at);
+        at += 8;
+    }
+    // PNG はファイルの中でも名前の順（Color.png・Layer0.png…）。Layer2 と Layer4 を壊す（名前の順で Layer2 が先に断られる）
+    let mut bad = good.clone();
+    for k in [3usize, 5] {
+        bad[starts[k] + 100] ^= 0xff;
+    }
+    let reason = |threads: usize| {
+        pool(threads).install(|| {
+            (0..5)
+                .map(|_| match Package::read_bytes(&bad, &Limits::default()) {
+                    Ok(_) => panic!("壊れたのに読めた"),
+                    Err(e) => e.to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let first = reason(1)[0].clone();
+    assert!(first.contains("Layer2.png"), "{first}");
+    for threads in [1, 2, 3, 8] {
+        for (i, why) in reason(threads).iter().enumerate() {
+            assert_eq!(why, &first, "{threads} 本の {i} 回目");
+        }
+    }
+}

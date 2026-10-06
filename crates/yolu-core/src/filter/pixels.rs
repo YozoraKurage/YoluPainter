@@ -32,7 +32,7 @@ fn encode(v: [f64; 3], a: u8) -> [u8; 4] {
         a,
     ]
 }
-fn mix(input: [u8; 4], output: [u8; 4], t: f64, normal: bool) -> [u8; 4] {
+pub(super) fn mix(input: [u8; 4], output: [u8; 4], t: f64, normal: bool) -> [u8; 4] {
     if t >= 1.0 {
         return output;
     }
@@ -93,13 +93,7 @@ pub(super) fn neighborhood(
     check: Check<'_>,
 ) -> Result<Vec<u8>, Error> {
     let mut q = zeros::<u16>(buf.len())?;
-    for (p, b) in q.chunks_exact_mut(4).zip(buf.chunks_exact(4)) {
-        let a = u16::from(b[3]);
-        for c in 0..3 {
-            p[c] = u16::from(b[c]) * a;
-        }
-        p[3] = a * 255;
-    }
+    rows::premultiply_at(crate::math::simd::level(), buf, &mut q);
     let radius = s.settings.halo();
     let mut remaining = radius;
     let mut bounds = cur;
@@ -113,57 +107,49 @@ pub(super) fn neighborhood(
         q = box_blur(&q, bounds, target, r, w, h, check)?;
         bounds = target;
     }
+    let level = crate::math::simd::level();
     let mut out = zeros::<u8>(area(next) * 4)?;
+    let nw = next.width as usize;
     for y in 0..next.height {
         check()?;
-        for x in 0..next.width {
-            let i = (y as usize * next.width as usize + x as usize) * 4;
-            let si = ((y + next.y - cur.y) as usize * cur.width as usize
-                + (x + next.x - cur.x) as usize)
-                * 4;
-            let input: [u8; 4] = buf[si..si + 4].try_into().unwrap();
-            let qa = u32::from(q[i + 3]);
+        let o = y as usize * nw * 4;
+        let si =
+            ((y + next.y - cur.y) as usize * cur.width as usize + (next.x - cur.x) as usize) * 4;
+        let input_row = &buf[si..si + nw * 4];
+        let q_row = &q[o..o + nw * 4];
+        let out_row = &mut out[o..o + nw * 4];
+        if rows::finish_row_at(
+            level,
+            &s.settings,
+            ty,
+            s.strength,
+            input_row,
+            q_row,
+            out_row,
+        ) {
+            continue;
+        }
+        // 接空間法線のぼかし: ベクトルを再正規化するので 1 画素ずつ
+        for x in 0..nw {
+            let i = x * 4;
+            let input: [u8; 4] = input_row[i..i + 4].try_into().unwrap();
+            let qa = u32::from(q_row[i + 3]);
             let mut f = input;
-            if let Settings::Sharpen {
-                amount, threshold, ..
-            } = s.settings
-            {
-                if input[3] != 0 && qa != 0 {
-                    for c in 0..3 {
-                        let diff =
-                            f64::from(input[c]) - f64::from(q[i + c]) * 255.0 / f64::from(qa);
-                        if diff.abs() >= f64::from(threshold) {
-                            f[c] = (f64::from(input[c]) + amount * diff + 0.5)
-                                .floor()
-                                .clamp(0.0, 255.0) as u8;
-                        }
-                    }
-                }
-                for c in 0..3 {
-                    f[c] = lerp(input[c], f[c], s.strength);
-                }
+            let a = ((qa + 127) / 255) as u8;
+            if a == 0 {
+                f[3] = 0;
             } else {
-                let a = ((qa + 127) / 255) as u8;
-                if a == 0 {
-                    f[3] = 0;
-                } else if ty == ValueType::TangentNormal {
-                    f = encode(
-                        [
-                            2.0 * f64::from(q[i]) / f64::from(qa) - 1.0,
-                            2.0 * f64::from(q[i + 1]) / f64::from(qa) - 1.0,
-                            2.0 * f64::from(q[i + 2]) / f64::from(qa) - 1.0,
-                        ],
-                        a,
-                    );
-                } else {
-                    for c in 0..3 {
-                        f[c] = ((2 * u32::from(q[i + c]) * 255 + qa) / (2 * qa)).min(255) as u8;
-                    }
-                    f[3] = a;
-                }
-                f = mix(input, f, s.strength, ty == ValueType::TangentNormal);
+                f = encode(
+                    [
+                        2.0 * f64::from(q_row[i]) / f64::from(qa) - 1.0,
+                        2.0 * f64::from(q_row[i + 1]) / f64::from(qa) - 1.0,
+                        2.0 * f64::from(q_row[i + 2]) / f64::from(qa) - 1.0,
+                    ],
+                    a,
+                );
             }
-            out[i..i + 4].copy_from_slice(&f);
+            f = mix(input, f, s.strength, true);
+            out_row[i..i + 4].copy_from_slice(&f);
         }
     }
     Ok(out)
@@ -171,7 +157,23 @@ pub(super) fn neighborhood(
 fn edge(v: i64, n: u32) -> u32 {
     v.clamp(0, i64::from(n) - 1) as u32
 }
+/// 箱ぼかし 1 回（横・縦）。SIMD の道があればそれを、なければ（またはスカラーを選んだとき）下の画素ごとの実装を使う。
 fn box_blur(
+    src: &[u16],
+    a: Rect,
+    b: Rect,
+    r: u32,
+    w: u32,
+    h: u32,
+    check: Check<'_>,
+) -> Result<Vec<u16>, Error> {
+    match rows::box_blur_at(crate::math::simd::level(), src, a, b, r, w, h, check) {
+        Some(result) => result,
+        None => box_blur_scalar(src, a, b, r, w, h, check),
+    }
+}
+/// 箱ぼかし 1 回の画素ごとの実装（SIMD の道の基準）。
+pub(super) fn box_blur_scalar(
     src: &[u16],
     a: Rect,
     b: Rect,

@@ -118,6 +118,11 @@ impl Writer {
         true
     }
 
+    /// 書き込みの終わりを、ほかのスレッドから待てる口（保存の裏のスレッドが、置換の前に書き置きの読みが終わるのを待つ）。
+    pub fn waiter(&self) -> Waiter {
+        Waiter(self.shared.clone())
+    }
+
     pub fn take(&self) -> Option<Outcome> {
         self.shared.0.lock().unwrap().results.pop_front()
     }
@@ -125,6 +130,21 @@ impl Writer {
     /// 置き場を外から変えた（世代を捨てた）あとの、次の確定が期待する札を読み直す。外の書き手の変更を採る口ではない。
     pub fn resync(&self, store: &GenerationStore) {
         self.shared.0.lock().unwrap().token = store.token().ok();
+    }
+}
+
+/// `Writer::waiter` の口。複製でき、別のスレッドへ渡せる。
+#[derive(Clone)]
+pub(crate) struct Waiter(Arc<(Mutex<Inner>, Condvar)>);
+
+impl Waiter {
+    /// 実行中と待ちが全部終わるまで待つ（`Writer::wait` と同じ）。
+    pub fn wait(&self) {
+        let (lock, cvar) = &*self.0;
+        let mut inner = lock.lock().unwrap();
+        while inner.running || inner.pending.is_some() {
+            inner = cvar.wait(inner).unwrap();
+        }
     }
 }
 

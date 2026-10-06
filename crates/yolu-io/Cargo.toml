@@ -5,10 +5,15 @@ license.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+# ストロークの段ごとの時間の計測（examples/stroke_bench_imported.rs）
+stroke-profile = ["yolu-core/stroke-profile"]
+
 [dependencies]
 flate2 = { version = "1", default-features = false, features = ["zlib"] }
 crc32fast = "1"
 sha2 = "0.10"
+rayon = "1.12"   # MIT OR Apache-2.0（保存の確かめ・1 回目の数えを、エントリごとに並べる。yolu-core・yolu-app が既に使っている版）
 serde = "1"
 serde_json = "1"
 png = "0.18"

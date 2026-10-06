@@ -18,7 +18,7 @@ Windows is the primary platform. Mac and Linux support is experimental.
 - Filters, generators that read baked mesh maps (AO, curvature, thickness, ID, and more), noise and grunge, and smart materials
 - The lilToon look in the 3D view
 - Live Link with Unity: open a model in one step and see your colors on the scene's materials (original assets are never modified)
-- PSD layers, groups, masks, and adjustments in and out; import of ABR brushes and CLIP STUDIO (.sut) brush settings
+- PSD layers, groups, masks, and adjustments in and out; import of ABR and CLIP STUDIO (.sut) brushes
 - Export of per-channel PNGs and templates for Unity Standard, URP, HDRP, and lilToon
 - Automatic recovery after a crash
 
@@ -41,7 +41,8 @@ See [docs/en/BUILDING.md](docs/en/BUILDING.md) for each operating system, and [d
 
 - [Features and controls](docs/en/GUIDE.md)
 - [Working with Unity](docs/en/UNITY.md) (Live Link, exchanging `.ylp` files with the Unity version)
-- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md)
+- [Command line and AI assistants](docs/en/CLI.md) (`yolupainter-cli`, the [MCP server](docs/en/MCP.md))
+- In Japanese: [PSD](docs/PSD.md), [brushes](docs/BRUSH.md), [brush import](docs/BRUSH_IMPORT.md), [sub tools](docs/SUBTOOLS.md), [gradient map](docs/GRADIENT_MAP.md), [3D view](docs/PREVIEW.md), [recovery](docs/RECOVERY.md), [window](docs/WINDOW.md), [save for distribution](docs/SAVE_FOR_DISTRIBUTION.md), [the .ylp format](docs/YLP_FORMAT.md)
 - [Changelog](https://github.com/YozoraKurage/YoluPainter/blob/main/CHANGELOG.md)
 
 ## Contact

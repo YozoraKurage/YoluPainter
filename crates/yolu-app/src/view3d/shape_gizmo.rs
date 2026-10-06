@@ -1167,59 +1167,62 @@ mod tests {
         let v = view();
         let s = cube();
         let root = Root::default();
-        // Y の輪（ほぼ水平な輪）の、カメラ側の点から、輪に沿って動かす
+        // Y の輪（ほぼ水平な輪）の、カメラ側（手前）と反対側（奥）の点のどちらを掴んでも、輪に沿って動かした分だけ回る。
+        // 手前の向きはカメラの位置から取る（既定のカメラがモデルのどちら側にあるかに依らない）
         let c = world_center(&s, &root);
         let unit = world_per_point(&v, c);
         let radius = RING_POINTS * unit;
-        let p0 = c + Vec3::new(0.0, 0.0, -radius);
+        let toward = Vec3::new(v.position.x - c.x, 0.0, v.position.z - c.z).normalize();
         let angle = 30f32.to_radians();
-        let p1 = c + Quat::from_axis_angle(Vec3::Y, angle) * (p0 - c);
-        let (a, b) = (v.to_screen(p0).unwrap(), v.to_screen(p1).unwrap());
-        let out = drag(
-            Handle::RotateY,
-            &s,
-            &root,
-            &v,
-            a,
-            b,
-            false,
-            false,
-            Snap::default(),
-        );
-        let turned = rotation_of(&out);
-        assert!(
-            1.0 - turned.dot(Quat::from_axis_angle(Vec3::Y, angle)).abs() < 1e-3,
-            "{:?}",
-            out.rotation
-        );
-        assert!(out.rotation[1].abs() > 20.0);
-        // Ctrl: 15° ずつ
-        let snapped = drag(
-            Handle::RotateY,
-            &s,
-            &root,
-            &v,
-            a,
-            b,
-            false,
-            true,
-            Snap::default(),
-        );
-        let k = snapped.rotation[1] / 15.0;
-        assert!(near(k, k.round(), 1e-3), "{:?}", snapped.rotation);
-        // 動かさなければ形は変わらない
-        let same = drag(
-            Handle::RotateY,
-            &s,
-            &root,
-            &v,
-            a,
-            a,
-            false,
-            false,
-            Snap::default(),
-        );
-        assert_eq!(same, s);
+        for (side, p0) in [("手前", c + toward * radius), ("奥", c - toward * radius)] {
+            let p1 = c + Quat::from_axis_angle(Vec3::Y, angle) * (p0 - c);
+            let (a, b) = (v.to_screen(p0).unwrap(), v.to_screen(p1).unwrap());
+            let out = drag(
+                Handle::RotateY,
+                &s,
+                &root,
+                &v,
+                a,
+                b,
+                false,
+                false,
+                Snap::default(),
+            );
+            let turned = rotation_of(&out);
+            assert!(
+                1.0 - turned.dot(Quat::from_axis_angle(Vec3::Y, angle)).abs() < 1e-3,
+                "{side}: {:?}",
+                out.rotation
+            );
+            assert!(out.rotation[1].abs() > 20.0, "{side}: {:?}", out.rotation);
+            // Ctrl: 15° ずつ
+            let snapped = drag(
+                Handle::RotateY,
+                &s,
+                &root,
+                &v,
+                a,
+                b,
+                false,
+                true,
+                Snap::default(),
+            );
+            let k = snapped.rotation[1] / 15.0;
+            assert!(near(k, k.round(), 1e-3), "{side}: {:?}", snapped.rotation);
+            // 動かさなければ形は変わらない
+            let same = drag(
+                Handle::RotateY,
+                &s,
+                &root,
+                &v,
+                a,
+                a,
+                false,
+                false,
+                Snap::default(),
+            );
+            assert_eq!(same, s, "{side}");
+        }
     }
 
     #[test]

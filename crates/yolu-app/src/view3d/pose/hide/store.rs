@@ -278,7 +278,8 @@ fn file_id(path: &Path) -> Option<u32> {
 
 // ───────── 形式 ─────────
 
-fn escape(text: &str) -> String {
+/// 名前の中の `%`・`/`・`,`・改行を `%XX` にする（ポーズのプリセットの形式も同じ決まり）。
+pub(crate) fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -293,7 +294,8 @@ fn escape(text: &str) -> String {
     out
 }
 
-fn unescape(text: &str) -> Option<String> {
+/// `escape` の逆（`%XX` が正しくない・UTF-8 でないときは None）。
+pub(crate) fn unescape(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

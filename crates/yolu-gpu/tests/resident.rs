@@ -1,6 +1,9 @@
 use yolu_core::{BlendMode, Channel, Document, Rect, Rgba8, TileCoord};
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
 use yolu_gpu::{GpuPainter, Options, ResidentCompositor, ResidentOptions};
 fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
+    gpu_lease::lease();
     let g = match GpuPainter::new(Options::default()) {
         Ok(g) => g,
         Err(e) => {
@@ -93,9 +96,10 @@ fn resident_uploads_only_changed_layer_and_keeps_texture() {
 }
 #[test]
 fn lru_evicts_oldest_and_remains_inside_budget() {
-    // 48×16表示3072、作業域2176、入力のGPU+CPUが2048/タイル。常駐はちょうど2枚。
+    // 48×16表示3072、作業域2192（入力・命令・タイルの有無の印・命令の番号の列を、GPU と転送用で 2 つ）、入力のGPU+CPUが2048/タイル。
+    // 常駐はちょうど2枚。
     let options = ResidentOptions {
-        resident_budget_bytes: 9344,
+        resident_budget_bytes: 9376,
         readback_budget_bytes: 8192,
         batch_tiles: 1,
         ..Default::default()

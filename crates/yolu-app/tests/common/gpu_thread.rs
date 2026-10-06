@@ -1,14 +1,17 @@
 //! 描画試験の窓（wgpu の Instance・Device）の作成・使用・破棄を、同時に 1 つの試験だけに絞る。
 //!
 //! Vulkan（lavapipe）は、別々のスレッドで窓を同時に作ると中（create_bind_group）で落ちることがあった。窓を持つ試験どうしを
-//! 重ねないために、2 つの口がある。どちらも同じ貸し出し（`WINDOWS`）を取るので、混ぜて使っても重ならない。
+//! 重ねないために、3 つの口がある。どれも同じ貸し出し（`WINDOWS`）を取るので、混ぜて使っても重ならない。
 //!
 //! - [`builder`]（kittest の harness を作る入口）: 試験のスレッドが、最初の harness を作る前に貸し出しを取る。持ったまま試験が終わる
 //!   （スレッドが終わる）と放す。`.wgpu()` を呼ばない harness も取る: kittest の既定の描画器は、最初の `render()`（画像の比べ・
 //!   `image_snapshot`）で wgpu の装置を遅れて作るので、描くかどうかは builder の形では見分けられない。したがって、画面を描かない
 //!   harness（CPU だけの部品の試験）も窓を持つ試験と同時には走らない。貸し出しを取らずに並列のままなのは、kittest の harness を
-//!   作らない試験（画面を作らない `headless_` の試験など）だけ。
+//!   作らず、GPU の装置も作らない試験（画面を作らない `headless_` の試験など）だけ。
 //! - [`run`]（試験の本体を常駐の 1 本のスレッドへ送る）: 窓の作成・使用・破棄を同じスレッドで行う。送っている間だけ貸し出しを持つ。
+//! - [`lease`]（直接）: harness を作らなくても GPU の装置を作る試験は、先頭で呼ぶ。製品のスレッドで GPU の確認・ベイクをする試験
+//!   （`BakeBackend::Gpu` を選んで焼くなど。装置は製品のスレッドが作る）と、`canvas_device::begin`（中で呼ぶ）。製品のスレッドが試験の中で
+//!   終わるなら、試験のスレッドが持てば足りる。`window_lease` の `every_gpu_bake_test_takes_the_lease` が、このような試験の呼び忘れを見つける。
 use std::any::Any;
 use std::cell::RefCell;
 use std::sync::{mpsc, Mutex, MutexGuard, Once, OnceLock, PoisonError};
@@ -126,8 +129,9 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
                 payload,
                 location: LAST_PANIC_AT.with(|slot| slot.borrow_mut().take()),
             });
-            // 常駐のスレッドは終わらないので、ジョブごとに放す（ほかの試験の窓を止めない）
+            // 常駐のスレッドは終わらないので、ジョブごとに放す（ほかの試験の窓を止めない）。この試験が控えた一時の物も、ここで消す
             release();
+            crate::common::tmp::sweep();
             let _ = sender.send(result);
         }))
         .expect("描画試験スレッドが生きている");

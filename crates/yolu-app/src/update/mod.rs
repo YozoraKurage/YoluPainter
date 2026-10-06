@@ -3,6 +3,11 @@
 //! 守ること:
 //! - 聞かずに通信しない。起動時の確かめは、初回の問い（`window`）で「はい」を選んだあとだけ。手で確かめる（ヘルプのメニュー）は、押したときだけ。
 //! - 公開鍵は組み込んだ物だけを信じる（`YOLUPAINTER_UPDATE_PUBLIC_KEY`）。組み込んでいないビルドは、更新の項目も窓も出さない。
+//! - 試験版は、設定「試験版を使う」を入れたときだけ、stable の更新情報に加えて試験版の置き場（`BETA_UPDATER_URL`）を見て、新しい方を勧める。
+//!   切のときは stable だけ（stable が載せない試験版は受けない）。版を下げる更新はしないので、試験版を入れていた人が設定を切っても、
+//!   次の stable が今の版より新しくなるまで何も勧めない。どちらの置き場も同じ鍵・同じ検証（`yolu_update::UpdateClient::check_channels`）。
+//!   確かめの途中で設定を切ったら、試験版の結果だけを捨てて stable の結果で答える。ダウンロード中・転送が済んだあとに切ったときも試験版は受けず、
+//!   落とし済みの試験版は置き場のファイルごと消す。失敗の理由は stable の取得で決める（試験版の置き場が引けないことは混ぜない）。
 //! - 新しい版が見つかっても、利用者が押すまでダウンロードしない。落としたファイルは、署名つきの更新情報の SHA-256・大きさで確かめた
 //!   ものだけを置き、走らせる直前にもう一度確かめる。
 //! - 描いている最中は入れない。保存していない変更があるときは、保存してから入れるか聞く。
@@ -26,8 +31,8 @@ use std::sync::Arc;
 
 use egui::Vec2;
 use yolu_update::{
-    release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient, Version,
-    LINUX_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
+    merge_channels, release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
 use crate::lang::Lang;
@@ -51,6 +56,8 @@ pub enum UpdateAction {
     Answer(bool),
     /// 起動時に確かめる設定を替える（ヘルプのメニュー）。今は確かめない。
     SetCheckOnStartup(bool),
+    /// 試験版も勧める設定を替える（ヘルプのメニュー）。今は確かめない。切にすると、見つけていた試験版の提案を消す。
+    SetBeta(bool),
     /// 手で確かめる。
     Check,
     /// 見つかった版へ更新する（Installer はダウンロードを始める。落とし済みなら準備の窓を出す。Page はリリースのページを開く）。
@@ -93,6 +100,8 @@ pub enum Failure {
     Network,
     /// 取れたが、検証を通らない（署名・形式・版・大きさ・SHA-256）。
     Verify,
+    /// 署名つきの更新情報は正しいが、この環境向けの配布物が載っていない。
+    NoAsset,
     /// インストーラーを置き場へ書けない。
     Disk,
     Canceled,
@@ -105,8 +114,30 @@ enum Kind {
     Download { version: Version, total: u64 },
 }
 
+/// 確かめの結果。stable と試験版の置き場の結果を別々に持ち、どちらを数えるかは受け取るときの設定で決める
+/// （確かめの途中で設定を切ったとき、試験版だけを捨てて stable の結果は生かす）。
+struct Checked {
+    stable: Result<Option<AvailableUpdate>, Failure>,
+    /// 試験版の置き場が見つけた新しい版（見なかった・引けなかった・新しくなかったときは None）。
+    beta: Option<AvailableUpdate>,
+}
+
+impl Checked {
+    fn failed(failure: Failure) -> Checked {
+        Checked {
+            stable: Err(failure),
+            beta: None,
+        }
+    }
+
+    /// 勧める版。`beta` が偽なら、試験版の結果は使わない。
+    fn settle(self, beta: bool) -> Result<Option<AvailableUpdate>, Failure> {
+        merge_channels(self.stable, self.beta.filter(|_| beta))
+    }
+}
+
 enum Outcome {
-    Checked(Result<Option<AvailableUpdate>, Failure>),
+    Checked(Checked),
     Downloaded(Result<Ready, Failure>),
 }
 
@@ -131,6 +162,8 @@ pub struct UpdateState {
     target: Option<&'static str>,
     mode: Mode,
     preference: Preference,
+    /// 設定「試験版を使う」。
+    beta: bool,
     config: Option<PathBuf>,
     /// 初回の問いを出している。
     asking: bool,
@@ -183,6 +216,7 @@ impl UpdateState {
             target,
             mode,
             preference: Preference::Unset,
+            beta: false,
             config: None,
             asking: false,
             ask_offset: Vec2::ZERO,
@@ -210,6 +244,11 @@ impl UpdateState {
 
     pub fn preference(&self) -> Preference {
         self.preference
+    }
+
+    /// 設定「試験版を使う」が入っているか。
+    pub fn beta(&self) -> bool {
+        self.beta
     }
 
     pub fn mode(&self) -> Mode {
@@ -270,9 +309,11 @@ impl UpdateState {
         })
     }
 
-    /// 設定のファイル（`update.conf`）を結び付けて、前の選択を読む。読めない選択は、まだ聞いていない扱い。
+    /// 設定のファイル（`update.conf`）を結び付けて、前の選択を読む。読めない選択は、まだ聞いていない扱い（試験版は切）。
     pub fn attach_config(&mut self, path: PathBuf) {
-        self.preference = config::load(&path).unwrap_or(Preference::Unset);
+        let stored = config::load(&path).unwrap_or_default();
+        self.preference = stored.check;
+        self.beta = stored.beta;
         self.config = Some(path);
     }
 
@@ -348,7 +389,9 @@ struct Recording {
 impl Transport for Recording {
     fn get(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, Error> {
         let result = self.inner.get(url, max_bytes);
-        if result.is_err() {
+        // 試験版の置き場は、引けなくても stable の答えを妨げない任意の取得（まだ 1 つも出していない間はいつも 404）。
+        // 失敗の理由は、返ってくる失敗（stable かダウンロード）の理由だけで決める。
+        if result.is_err() && url != BETA_UPDATER_URL {
             self.failed.store(true, Ordering::Relaxed);
         }
         result
@@ -371,32 +414,37 @@ impl Worker {
         UpdateClient::with_public_key(transport, self.key).map_err(|_| Failure::Verify)
     }
 
-    fn failure(&self) -> Failure {
+    fn failure(&self, error: &Error) -> Failure {
         if self.link.is_canceled() {
             Failure::Canceled
         } else if self.failed.load(Ordering::Relaxed) {
             Failure::Network
+        } else if error.is_missing_target() {
+            Failure::NoAsset
         } else {
             Failure::Verify
         }
     }
 
-    fn check(
-        &self,
-        current: &Version,
-        target: &str,
-        allow_prerelease: bool,
-    ) -> Result<Option<AvailableUpdate>, Failure> {
-        self.client()?
-            .check(UPDATER_URL, current, target, allow_prerelease)
-            .map_err(|_| self.failure())
+    /// `beta` なら、stable に加えて試験版の置き場も見る（どちらを勧めるかは、受け取るときに決める）。
+    fn check(&self, current: &Version, target: &str, beta: bool) -> Checked {
+        let client = match self.client() {
+            Ok(client) => client,
+            Err(failure) => return Checked::failed(failure),
+        };
+        let beta_url = beta.then_some(BETA_UPDATER_URL);
+        let (stable, beta) = client.check_each(UPDATER_URL, beta_url, current, target);
+        Checked {
+            stable: stable.map_err(|e| self.failure(&e)),
+            beta,
+        }
     }
 
     fn download(&self, update: AvailableUpdate, staging: Option<&Path>) -> Result<Ready, Failure> {
         let verified = self
             .client()?
             .download(update.approve_download())
-            .map_err(|_| self.failure())?;
+            .map_err(|e| self.failure(&e))?;
         let dir = staging.ok_or(Failure::Disk)?;
         let path =
             stage(dir, &verified.asset().name, verified.bytes()).map_err(|_| Failure::Disk)?;
@@ -502,6 +550,7 @@ fn failure_text(lang: Lang, what: &'static str, failure: Failure) -> String {
     let reason = match failure {
         Failure::Network => lang.pick("通信できません", "connection failed"),
         Failure::Verify => lang.pick("検証を通りません", "verification failed"),
+        Failure::NoAsset => lang.pick("この環境向けの配布物がありません", "no download for this system"),
         Failure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
         Failure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
         Failure::Canceled => {
@@ -542,6 +591,7 @@ impl AppState {
                 }
             }
             UpdateAction::SetCheckOnStartup(on) => self.update_set_preference(on),
+            UpdateAction::SetBeta(on) => self.update_set_beta(on),
             UpdateAction::Check => self.update_start_check(true),
             UpdateAction::Install => self.update_install(),
             UpdateAction::Cancel => {
@@ -560,8 +610,42 @@ impl AppState {
 
     fn update_set_preference(&mut self, on: bool) {
         self.update.preference = if on { Preference::On } else { Preference::Off };
+        self.update_save_config();
+    }
+
+    /// 試験版の設定を替える。切にしたときは、見つけていた試験版の提案・落とし済みや落としている最中の試験版を残さない
+    /// （切にしたら stable だけを勧める）。入にしても、その場では通信しない（次の確かめから効く）。
+    fn update_set_beta(&mut self, on: bool) {
+        self.update.beta = on;
+        if !on {
+            let pre = |version: &Version| !version.pre.is_empty();
+            if self.update.offer.as_ref().is_some_and(|o| pre(&o.version)) {
+                self.update.offer = None;
+            }
+            if let Some(ready) = self.update.ready.take_if(|r| pre(&r.version)) {
+                // 置き場のインストーラーも消す（今の版より新しいファイルは、起動時の片付けでも消えない）。
+                let _ = std::fs::remove_file(&ready.path);
+                self.update.ready_wanted = false;
+                self.update.ready_open = false;
+                self.update.ready_blocked = false;
+            }
+            if let Some(job) = &self.update.job {
+                if matches!(&job.kind, Kind::Download { version, .. } if pre(version)) {
+                    job.link.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        self.update_save_config();
+    }
+
+    /// 更新の設定（起動時の確かめ・試験版）を `update.conf` へ保存する。保存できなくても、この回の選択は効く。
+    fn update_save_config(&mut self) {
+        let stored = config::Stored {
+            check: self.update.preference,
+            beta: self.update.beta,
+        };
         if let Some(path) = &self.update.config {
-            if config::save(path, on).is_err() {
+            if config::save(path, &stored).is_err() {
                 self.message = self
                     .lang
                     .pick(
@@ -594,16 +678,12 @@ impl AppState {
             failed: Arc::new(AtomicBool::new(false)),
         };
         let current = self.update.current.clone();
-        let allow_prerelease = !current.pre.is_empty();
+        let beta = self.update.beta;
         let (tx, rx) = channel();
         let spawned = std::thread::Builder::new()
             .name("yolu-update-check".into())
             .spawn(move || {
-                let _ = tx.send(Outcome::Checked(worker.check(
-                    &current,
-                    target,
-                    allow_prerelease,
-                )));
+                let _ = tx.send(Outcome::Checked(worker.check(&current, target, beta)));
             });
         if let Err(e) = spawned {
             self.message = e.to_string();
@@ -708,7 +788,7 @@ impl AppState {
                 Ok(outcome) => Some(outcome),
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => Some(match job.kind {
-                    Kind::Check { .. } => Outcome::Checked(Err(Failure::Stopped)),
+                    Kind::Check { .. } => Outcome::Checked(Checked::failed(Failure::Stopped)),
                     Kind::Download { .. } => Outcome::Downloaded(Err(Failure::Stopped)),
                 }),
             };
@@ -716,32 +796,44 @@ impl AppState {
                 let job = self.update.job.take().expect("上で見た");
                 let manual = matches!(job.kind, Kind::Check { manual: true });
                 match outcome {
-                    Outcome::Checked(Ok(Some(update))) => {
-                        let version = update.version().clone();
-                        if manual {
-                            self.message = lang.pick(
-                                format!("YoluPainter {version} があります。"),
-                                format!("YoluPainter {version} is available."),
-                            );
+                    // 試験版も見る確かめの途中で設定を切ったときは、試験版の結果だけを捨てて stable の結果で答える（切にしたら stable だけ）。
+                    Outcome::Checked(checked) => match checked.settle(self.update.beta) {
+                        Ok(Some(update)) => {
+                            let version = update.version().clone();
+                            if manual {
+                                self.message = lang.pick(
+                                    format!("YoluPainter {version} があります。"),
+                                    format!("YoluPainter {version} is available."),
+                                );
+                            }
+                            self.update.offer = Some(Offer { version, update });
                         }
-                        self.update.offer = Some(Offer { version, update });
-                    }
-                    Outcome::Checked(Ok(None)) => {
-                        if manual {
-                            self.message = lang
-                                .pick("YoluPainter は最新です。", "YoluPainter is up to date.")
-                                .into();
+                        Ok(None) => {
+                            if manual {
+                                self.message = lang
+                                    .pick("YoluPainter は最新です。", "YoluPainter is up to date.")
+                                    .into();
+                            }
                         }
-                    }
-                    // 起動時の確かめの失敗は、利用者が頼んだことではないので知らせない。
-                    Outcome::Checked(Err(failure)) => {
-                        if manual {
-                            self.message = failure_text(lang, "check", failure);
+                        // 起動時の確かめの失敗は、利用者が頼んだことではないので知らせない。
+                        Err(failure) => {
+                            if manual {
+                                self.message = failure_text(lang, "check", failure);
+                            }
                         }
-                    }
+                    },
                     Outcome::Downloaded(Ok(ready)) => {
-                        self.update.ready = Some(ready);
-                        self.update.ready_wanted = true;
+                        // 転送が済んだあとの確かめ・書き込みの間に、取り消された・試験版の設定が切になったものは受けない
+                        // （置いたファイルも消す。取消は転送の途中でしか見ないので、ここで見る）。
+                        if job.link.is_canceled()
+                            || (!self.update.beta && !ready.version.pre.is_empty())
+                        {
+                            let _ = std::fs::remove_file(&ready.path);
+                            self.message = failure_text(lang, "download", Failure::Canceled);
+                        } else {
+                            self.update.ready = Some(ready);
+                            self.update.ready_wanted = true;
+                        }
                     }
                     Outcome::Downloaded(Err(failure)) => {
                         self.message = failure_text(lang, "download", failure);
@@ -766,6 +858,16 @@ impl AppState {
         if self.update.ready.is_none() {
             return;
         }
+        // 保存の途中は入れ替えない（保存の頼みは「変更あり」を下ろすので、いま入れ替えると、保存が失敗して変更が残っても、更新のために
+        // 終わる流れは確認なしで閉じてしまう）。更新の窓と落としたインストーラーは残し、保存が終わってからやり直せる
+        if self.is_saving() {
+            self.message = format!(
+                "{}: {}",
+                lang.pick("更新できません", "Cannot update"),
+                crate::project::busy_reason(lang)
+            );
+            return;
+        }
         // 保存する前に断る（更新が始まらないのに、保存の窓を出さない）。落としたインストーラーは残す。
         if self.update_blocked_by_another_instance() {
             return;
@@ -785,7 +887,8 @@ impl AppState {
     /// 保存の結果を受けて入れる（フレームの終わりにも呼ぶ。保存先を選ぶ窓が開いている間は待つ）。保存されていなければ入れない。
     /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先の窓を取り消したときだけ。
     pub fn update_finish_save(&mut self) {
-        if !self.update.after_save || self.dialog_request.is_some() {
+        // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
+        if !self.update.after_save || self.dialog_request.is_some() || self.is_saving() {
             return;
         }
         self.update.after_save = false;
@@ -820,6 +923,10 @@ impl AppState {
         let Some(ready) = self.update.ready.clone() else {
             return;
         };
+        // 入れ替えは、保存が終わって「変更あり」の印が確かなときだけ（ここへ来る道はどれも保存の途中を断るが、走らせる直前にも確かめる）
+        if self.is_saving() {
+            return;
+        }
         // 保存の窓を待つ間に別の窓が開いたかもしれないので、走らせる直前にもう一度確かめる。
         if self.update_blocked_by_another_instance() {
             return;
@@ -1023,6 +1130,7 @@ mod tests {
             for failure in [
                 Failure::Network,
                 Failure::Verify,
+                Failure::NoAsset,
                 Failure::Disk,
                 Failure::Stopped,
             ] {
@@ -1036,6 +1144,15 @@ mod tests {
             .starts_with("Cannot check for updates"));
         assert!(failure_text(Lang::Ja, "download", Failure::Verify)
             .starts_with("更新をダウンロードできません"));
+        // 更新情報に対象の配布物が無いのは、検証の失敗とは別の理由で言う
+        assert_eq!(
+            failure_text(Lang::Ja, "check", Failure::NoAsset),
+            "更新を確かめられません: この環境向けの配布物がありません"
+        );
+        assert_eq!(
+            failure_text(Lang::En, "check", Failure::NoAsset),
+            "Cannot check for updates: no download for this system"
+        );
         assert_eq!(
             failure_text(Lang::En, "download", Failure::Canceled),
             "Download canceled."

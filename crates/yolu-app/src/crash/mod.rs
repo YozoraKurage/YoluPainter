@@ -12,8 +12,12 @@ use std::{
 };
 
 mod native;
+mod oom;
 pub mod window;
 pub use native::cleanup;
+pub use oom::RecordingAlloc;
+#[cfg(test)]
+mod robust_tests;
 #[cfg(test)]
 mod tests;
 
@@ -497,6 +501,16 @@ pub fn message(text: &str) {
     if let Some(r) = LOGGER.get() {
         r.message(text);
     }
+}
+/// 普段のログへ診断の 1 行を書く（伏せ字にして、同じ回転のログへ。失敗の文として覚える必要のない、起きたことの記録）。
+pub fn note(text: &str) {
+    if let Some(r) = LOGGER.get() {
+        r.write_line(&one_line(text));
+    }
+}
+/// 落ちた記録の枠（`crash-*.log`）へ、panic ではない出来事（GPU の装置を失った、など）を書く。次の起動で報告の印が出る。
+pub fn event(kind: &str, detail: &str) -> Option<PathBuf> {
+    LOGGER.get()?.record(kind, detail)
 }
 /// 失敗・断り・警告の文を作ったときに通す（文はそのまま返す）。画面に出た文がこれに当たるときだけ、普段のログへ書く。
 pub fn problem<T: AsRef<str>>(text: T) -> T {

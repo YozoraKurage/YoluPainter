@@ -336,6 +336,28 @@ mod imp {
     }
 }
 
+/// 相手のプロセスの持ち主（Windows のアカウントの SID。「S-1-5-21-…」の文字列）が自分と同じか。大文字小文字は区別しない。空の SID は誰とも同じにしない。
+pub fn same_account(own: &str, peer: &str) -> bool {
+    !own.is_empty() && own.eq_ignore_ascii_case(peer)
+}
+
+/// つないだ相手のプロセスの持ち主（OS から取り出した結果 `peer`）と自分の持ち主から、その相手とつながってよいかを決める。別のユーザーの
+/// プロセスは断り、持ち主を取り出せない相手も断る（確かめられない相手を信じない）。Windows の名前付きパイプの両側が、挨拶の前
+/// （何も送る前・読む前）に呼ぶ。Unix の確かめ（実効 UID）は `link::check_peer`。
+pub fn judge_peer_account(own: &str, peer: io::Result<String>) -> io::Result<()> {
+    match peer {
+        Ok(peer) if same_account(own, &peer) => Ok(()),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "つないだ相手が別のユーザーのプロセスです",
+        )),
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("つないだ相手のプロセスの持ち主を確かめられません: {e}"),
+        )),
+    }
+}
+
 /// Windows のセキュリティの手伝い（自分の SID と、自分だけを許す SDDL）。
 #[cfg(windows)]
 pub mod win {
@@ -358,27 +380,55 @@ pub mod win {
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
                 return Err(io::Error::last_os_error());
             }
-            let mut len = 0u32;
-            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
-            let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
-            let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+            let sid = token_user_sid(token);
             CloseHandle(token);
-            if ok == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let user = &*(buf.as_ptr() as *const TOKEN_USER);
-            let mut s: *mut u16 = std::ptr::null_mut();
-            if ConvertSidToStringSidW(user.User.Sid, &mut s) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let mut n = 0;
-            while *s.add(n) != 0 {
-                n += 1;
-            }
-            let out = String::from_utf16_lossy(std::slice::from_raw_parts(s, n));
-            LocalFree(s.cast());
-            Ok(out)
+            sid
         }
+    }
+
+    /// そのプロセス番号のプロセスのユーザーの SID。プロセスを開けない（もう無い・権限が足りない）・トークンを読めないときは失敗する
+    /// （呼び手は、確かめられない相手を信じない）。照会だけの権限（PROCESS_QUERY_LIMITED_INFORMATION）で開く。
+    pub fn process_user_sid(pid: u32) -> io::Result<String> {
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut token: HANDLE = std::ptr::null_mut();
+            let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+            let error = (opened == 0).then(io::Error::last_os_error);
+            CloseHandle(process);
+            if let Some(e) = error {
+                return Err(e);
+            }
+            let sid = token_user_sid(token);
+            CloseHandle(token);
+            sid
+        }
+    }
+
+    /// トークンのユーザーの SID の文字列。
+    unsafe fn token_user_sid(token: HANDLE) -> io::Result<String> {
+        let mut len = 0u32;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+        let ok = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut s: *mut u16 = std::ptr::null_mut();
+        if ConvertSidToStringSidW(user.User.Sid, &mut s) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut n = 0;
+        while *s.add(n) != 0 {
+            n += 1;
+        }
+        let out = String::from_utf16_lossy(std::slice::from_raw_parts(s, n));
+        LocalFree(s.cast());
+        Ok(out)
     }
 
     /// パスのもの（ファイル・フォルダ・`\\\\.\\pipe\\名前` の名前付きパイプ）の DACL を SDDL の文字列で（試験用）。
@@ -714,5 +764,39 @@ mod windows_tests {
         }
         let pipe = format!(r"\\.\pipe\{}", crate::link::pipe_name(&name).unwrap());
         assert_only_me(&win::dacl_sddl(&pipe).unwrap(), "名前付きパイプ");
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    const ME: &str = "S-1-5-21-1111-2222-3333-1001";
+
+    #[test]
+    fn only_the_same_account_is_accepted_and_the_case_does_not_matter() {
+        assert!(same_account(ME, ME));
+        assert!(same_account(ME, &ME.to_ascii_lowercase()));
+        assert!(!same_account(ME, "S-1-5-21-1111-2222-3333-1002"), "別のユーザー");
+        assert!(!same_account(ME, "S-1-5-18"), "SYSTEM も別のアカウント");
+        assert!(!same_account(ME, ""));
+        assert!(!same_account("", ""), "空の SID は誰とも同じにしない");
+    }
+
+    #[test]
+    fn a_peer_that_is_another_account_or_cannot_be_checked_is_refused() {
+        assert!(judge_peer_account(ME, Ok(ME.to_owned())).is_ok());
+        let other = judge_peer_account(ME, Ok("S-1-5-21-1111-2222-3333-1002".into())).unwrap_err();
+        assert_eq!(other.kind(), io::ErrorKind::PermissionDenied);
+        assert!(other.to_string().contains("別のユーザー"), "{other}");
+        // 持ち主を取り出せない（プロセスを開けない・もう無い）相手は信じない。取り出せなかった理由を添える
+        let unknown = judge_peer_account(ME, Err(io::Error::other("アクセスが拒否されました"))).unwrap_err();
+        assert_eq!(unknown.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            unknown.to_string().contains("確かめられません") && unknown.to_string().contains("アクセスが拒否"),
+            "{unknown}"
+        );
+        // 自分の SID が空（取れていない）なら、誰も通さない
+        assert!(judge_peer_account("", Ok(String::new())).is_err());
     }
 }

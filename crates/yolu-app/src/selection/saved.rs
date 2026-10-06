@@ -1,30 +1,23 @@
-//! 名前を付けて覚えた選択範囲（CLIP STUDIO の「選択範囲を保存」・Photoshop のアルファチャンネルに当たる）。今のテクスチャセット
-//! （文書）ごとに、名前と選択範囲の札を覚え、呼び出すときは新規・追加・削除・共通のどれかで今の選択範囲と組み合わせる（1 回の Undo）。
+//! 名前を付けて文書に残した選択範囲。今のテクスチャセット
+//! （文書）ごとに、名前と選択範囲の札を持ち、呼び出すときは新規・追加・削除・共通のどれかで今の選択範囲と組み合わせる（1 回の Undo）。
 //!
-//! 覚えておくのはセッションの中だけで、.ylp には入れない（形式の版を上げる決まりが先に要る）。文書の大きさやタイルの大きさが
-//! 変わると、覚えた選択範囲は呼び出せない（断って理由を出す）。覚えた札の合計はプロジェクト全体で `SAVED_BUDGET_BYTES` までで、
-//! セットを消す・別のプロジェクトを開くと、そのセットの札は捨てる（`sel_prune_saved`）。
+//! 持ち主は core の `Document`（`save_selection`・`rename_saved_selection`・`delete_saved_selection`。どれも 1 回の Undo で、画布の大きさを
+//! 変える操作は残した選択範囲も作り直す）。.ylp には使う文書だけを形式 8 で保存する（`sets/<ID>/selections.json`。`io`）。ここは画面と、
+//! 全体の予算（`SAVED_BUDGET_BYTES`。プロジェクト全体の合計）の確かめだけ。
 
 use egui::{pos2, vec2, Id, Key, Rect, Vec2};
 
 use super::{combine_name, SelAction, SelEdit};
-use crate::engine::{SelectionCombine, SelectionMask};
+use crate::engine::{CoreError, SelectionCombine, SelectionMask};
 use crate::state::{Action, AppState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::ui::window::{self, Spec};
 
-/// 1 つの文書に覚えられる数と、覚えた札のバイト数の合計（プロジェクト全体）の上限。
-pub const MAX_SAVED: usize = 32;
+/// 1 つの文書に残せる数（core の上限）と、残した選択範囲のバイト数の合計（プロジェクト全体）の上限。
+pub use yolu_core::{SavedSelection, MAX_SAVED_SELECTIONS as MAX_SAVED};
 pub const SAVED_BUDGET_BYTES: u64 = 256 << 20;
-
-/// 覚えた選択範囲。
-#[derive(Clone, Debug)]
-pub struct SavedSelection {
-    pub name: String,
-    pub mask: SelectionMask,
-}
 
 /// 窓（開いていれば）の状態。
 #[derive(Clone, Debug, Default)]
@@ -37,6 +30,9 @@ pub struct SavedWindow {
     pub scroll: f32,
     /// 開いた直後に入力欄へフォーカスを置く。
     pub focus: bool,
+    /// 名前を変えている行（並びの番号）と、その欄に初めのフォーカスを渡したか。
+    pub rename: Option<usize>,
+    pub rename_started: bool,
 }
 
 /// 覚えた選択範囲の操作（画面と覚えた一覧だけ。文書は変えない）。
@@ -44,9 +40,19 @@ pub struct SavedWindow {
 pub enum SavedOp {
     OpenWindow,
     CloseWindow,
-    /// 今の選択範囲を名前を付けて覚える（同じ名前があれば入れ替える）。
+    /// 今の選択範囲を名前を付けて残す（同じ名前があれば入れ替える。1 回の Undo）。
     Save(String),
+    /// 消す（1 回の Undo）。
     Delete(usize),
+    /// 名前を変える（1 回の Undo。ほかの選択範囲と同じ名前は断る）。
+    Rename { index: usize, name: String },
+}
+
+impl SavedOp {
+    /// 文書（残した選択範囲）を変える操作か（読むだけのセットでは断る）。
+    pub fn edits_document(&self) -> bool {
+        matches!(self, Self::Save(_) | Self::Delete(_) | Self::Rename { .. })
+    }
 }
 
 const COMBINES: [SelectionCombine; 4] = [
@@ -71,15 +77,13 @@ pub fn creation_icon(mode: SelectionCombine) -> &'static str {
 }
 
 impl AppState {
-    /// 今の文書に覚えた選択範囲。
+    /// 今の文書に残した選択範囲。
     pub fn saved_selections(&self) -> &[SavedSelection] {
-        self.sel
-            .saved
-            .get(&self.sets.current().uid)
-            .map_or(&[][..], Vec::as_slice)
+        self.doc.saved_selections()
     }
 
-    /// 覚えた選択範囲を呼び出すための札（今の文書と大きさが合うときだけ）。
+    /// 残した選択範囲を呼び出すための札（今の文書と大きさが合うときだけ。大きさを変える操作は残した選択範囲も作り直すので、
+    /// 合わないのは読み込みの不整合だけ）。
     pub(super) fn saved_mask(&self, index: usize) -> Result<SelectionMask, String> {
         let lang = self.lang;
         let Some(saved) = self.saved_selections().get(index) else {
@@ -102,7 +106,7 @@ impl AppState {
         Ok(m.clone())
     }
 
-    /// 覚えた選択範囲の操作。
+    /// 残した選択範囲の操作。
     pub fn sel_saved(&mut self, op: SavedOp) {
         let lang = self.lang;
         match op {
@@ -116,10 +120,7 @@ impl AppState {
             }
             SavedOp::CloseWindow => self.sel.saved_window = None,
             SavedOp::Save(name) => {
-                if self.is_stroking() {
-                    self.message = lang
-                        .pick("描いている間はできません。", "Not while drawing.")
-                        .into();
+                if self.refuse_while_stroking() {
                     return;
                 }
                 let Some(mask) = self.doc.selection().cloned() else {
@@ -132,7 +133,6 @@ impl AppState {
                 } else {
                     name
                 };
-                let uid = self.sets.current().uid;
                 let existing = self.saved_selections().iter().position(|s| s.name == name);
                 if existing.is_none() && self.saved_selections().len() >= MAX_SAVED {
                     self.message = lang
@@ -140,9 +140,7 @@ impl AppState {
                         .into();
                     return;
                 }
-                if self.saved_bytes_without(uid, existing) + mask.allocated_bytes()
-                    > self.sel.saved_budget
-                {
+                if self.saved_bytes_without(existing) + mask.allocated_bytes() > self.sel.saved_budget {
                     self.message = lang
                         .pick(
                             "覚えた選択範囲が大きすぎます。",
@@ -151,57 +149,110 @@ impl AppState {
                         .into();
                     return;
                 }
-                let saved = SavedSelection {
-                    name: name.clone(),
-                    mask,
-                };
-                let list = self.sel.saved.entry(uid).or_default();
-                match existing {
-                    Some(i) => list[i] = saved,
-                    None => list.push(saved),
+                let revision = self.doc.revision();
+                match self.doc.save_selection(&name) {
+                    Ok(_) => {
+                        self.message = format!(
+                            "{}: {name}",
+                            lang.pick("選択範囲を覚えました", "Remembered")
+                        );
+                        self.modified |= self.doc.revision() != revision;
+                    }
+                    Err(e) => self.message = self.saved_error(&e),
                 }
-                self.message = format!(
-                    "{}: {name}",
-                    lang.pick("選択範囲を覚えました", "Remembered")
-                );
                 let next = self.default_saved_name();
                 if let Some(win) = self.sel.saved_window.as_mut() {
                     win.name = next;
                 }
             }
             SavedOp::Delete(index) => {
-                let uid = self.sets.current().uid;
-                if let Some(list) = self.sel.saved.get_mut(&uid) {
-                    if index < list.len() {
-                        let gone = list.remove(index);
-                        self.message = format!("{}: {}", lang.pick("削除", "Removed"), gone.name);
+                if self.refuse_while_stroking() {
+                    return;
+                }
+                let Some(gone) = self.saved_selections().get(index).map(|s| s.name.clone()) else {
+                    return;
+                };
+                match self.doc.delete_saved_selection(index) {
+                    Ok(()) => {
+                        self.message = format!("{}: {gone}", lang.pick("削除", "Removed"));
+                        self.modified = true;
+                        if let Some(win) = self.sel.saved_window.as_mut() {
+                            // 消した行より後ろの名前の変更は、番号が 1 つずれる
+                            match win.rename {
+                                Some(r) if r == index => win.rename = None,
+                                Some(r) if r > index => win.rename = Some(r - 1),
+                                _ => {}
+                            }
+                        }
                     }
-                    if list.is_empty() {
-                        self.sel.saved.remove(&uid);
+                    Err(e) => self.message = self.saved_error(&e),
+                }
+            }
+            SavedOp::Rename { index, name } => {
+                if self.refuse_while_stroking() {
+                    return;
+                }
+                let Some(current) = self.saved_selections().get(index).map(|s| s.name.clone()) else {
+                    return;
+                };
+                let name = name.trim().to_owned();
+                if name == current {
+                    return;
+                }
+                match self.doc.rename_saved_selection(index, &name) {
+                    Ok(()) => {
+                        self.message = format!("{}: {name}", lang.pick("名前を変えました", "Renamed"));
+                        self.modified = true;
                     }
+                    Err(e) => self.message = self.saved_error(&e),
                 }
             }
         }
     }
 
-    /// 覚えた札のバイト数の合計（プロジェクト全体）から、セット `uid` の `skip` 番目（入れ替える札）を除いたもの。
-    fn saved_bytes_without(&self, uid: u32, skip: Option<usize>) -> u64 {
-        self.sel
-            .saved
-            .iter()
-            .flat_map(|(u, list)| list.iter().enumerate().map(move |(i, s)| (*u, i, s)))
-            .filter(|(u, i, _)| !(*u == uid && Some(*i) == skip))
-            .map(|(_, _, s)| s.mask.allocated_bytes())
-            .sum()
+    /// 描いている間はできない（知らせて true）。
+    fn refuse_while_stroking(&mut self) -> bool {
+        if self.is_stroking() {
+            self.message = self
+                .lang
+                .pick("描いている間はできません。", "Not while drawing.")
+                .into();
+            return true;
+        }
+        false
     }
 
-    /// 今のプロジェクトに無いセットの覚えた選択範囲を捨てる（セットを消した・別のプロジェクトを開いた。セットの uid は開き直すたびに
-    /// 新しくなるので、残しても呼び出せず、メモリだけが残る）。
-    pub fn sel_prune_saved(&mut self) {
-        let sets = &self.sets;
-        self.sel
-            .saved
-            .retain(|uid, _| sets.index_of(*uid).is_some());
+    /// 残す・名前を変える・消すが断られた理由（名前の決まり・重なり・上限）。
+    fn saved_error(&self, e: &CoreError) -> String {
+        let lang = self.lang;
+        match e {
+            CoreError::InvalidArgument("選択範囲の名前が長すぎる") => lang.pick(
+                format!("名前が長すぎます（{} 文字まで）。", yolu_core::MAX_SAVED_NAME_CHARS),
+                format!("The name is too long (up to {} characters).", yolu_core::MAX_SAVED_NAME_CHARS),
+            ),
+            CoreError::InvalidArgument("同じ名前の選択範囲がある") => lang
+                .pick("同じ名前の選択範囲があります。", "A saved selection with that name exists.")
+                .into(),
+            other => lang.core_error(other),
+        }
+    }
+
+    /// 残した選択範囲のバイト数の合計（プロジェクト全体）から、今のセットの `skip` 番目（入れ替える選択範囲）を除いたもの。
+    fn saved_bytes_without(&self, skip: Option<usize>) -> u64 {
+        let current = self.sets.current().uid;
+        (0..self.sets.len())
+            .flat_map(|i| {
+                let uid = self.sets.get(i).map(|s| s.uid);
+                let skip = (uid == Some(current)).then_some(skip).flatten();
+                self.set_doc(i)
+                    .saved_selections()
+                    .iter()
+                    .enumerate()
+                    .filter(move |(n, _)| Some(*n) != skip)
+                    .map(|(_, s)| s.mask.allocated_bytes())
+                    .collect::<Vec<_>>()
+            })
+            .sum()
     }
 
     /// まだ使っていない既定の名前（選択範囲 1・2・…）。
@@ -216,7 +267,7 @@ impl AppState {
 
 // ───────── 窓 ─────────
 
-const WIDTH: f32 = 380.0;
+const WIDTH: f32 = 420.0;
 const ROW: f32 = 28.0;
 const VISIBLE_ROWS: usize = 8;
 
@@ -247,7 +298,9 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
     let list_h = if rows == 0 { 0.0 } else { shown as f32 * ROW };
     let height = window::HEADER_HEIGHT + 14.0 + 28.0 + 10.0 + list_h + 14.0;
     let keys_free = !ctx.egui_wants_keyboard_input();
-    let esc = keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    // 名前を変えている間の Esc は名前の欄のもの（欄がやめて元の表示へ戻る。窓は閉じない）
+    let esc_pressed = keys_free && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    let esc = esc_pressed && win.rename.is_none();
     let spec = Spec {
         title: window_title(lang),
         icon: Some("save"),
@@ -268,6 +321,8 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             (s.name.clone(), fits)
         })
         .collect();
+    let mut rename_op: Option<(usize, String)> = None;
+    let mut start_rename: Option<usize> = None;
     let closed = window::show(ctx, id, &spec, &mut offset, esc, |ui, frame| {
         let left = frame.body.left() + 14.0;
         let width = frame.body.width() - 28.0;
@@ -297,8 +352,8 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             any_selection && !app.is_stroking(),
             Some(if any_selection {
                 lang.pick(
-                    "今の選択範囲を、この名前で覚える（このセッションの間だけ。プロジェクトには保存されません）",
-                    "Remember the current selection under this name (this session only; it is not saved in the project)",
+                    "今の選択範囲を、この名前で覚える",
+                    "Remember the current selection under this name",
                 )
             } else {
                 lang.pick("選択範囲なし", "No selection")
@@ -333,17 +388,30 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             if row.bottom() < list_rect.top() || row.top() > list_rect.bottom() {
                 continue;
             }
-            let buttons = (COMBINES.len() + 1) as f32 * 28.0 + 4.0;
+            let buttons = (COMBINES.len() + 2) as f32 * 28.0 + 4.0;
             let label = Rect::from_min_size(row.min, vec2(width - buttons - 6.0, ROW));
             let p = ui.painter().clone();
-            let shown = w::fit(&p, name, label.width() - 4.0, t::LABEL);
-            w::text(
-                &p,
-                label,
-                &shown,
-                t::LABEL.with_color(if *fits { t::TEXT } else { t::TEXT_DISABLED }),
-                Align::Left,
-            );
+            if win.rename == Some(i) {
+                // 名前を変えている行: 名前の欄（Enter か外を押して決める。Esc でやめる）
+                let first = !win.rename_started;
+                win.rename_started = true;
+                let out = w::text_field(ui, label.shrink2(vec2(0.0, 2.0)), (id, "rename", i), name, None, first);
+                if let Some(next) = out.committed {
+                    rename_op = Some((i, next));
+                }
+                if !first && !out.focused {
+                    win.rename = None;
+                }
+            } else {
+                let shown = w::fit(&p, name, label.width() - 4.0, t::LABEL);
+                w::text(
+                    &p,
+                    label,
+                    &shown,
+                    t::LABEL.with_color(if *fits { t::TEXT } else { t::TEXT_DISABLED }),
+                    Align::Left,
+                );
+            }
             let mut x = row.right() - buttons;
             for mode in COMBINES {
                 let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
@@ -369,8 +437,16 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             }
             x += 4.0;
             let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
+            let tip = format!("{}: {name}", lang.pick("名前を変える", "Rename"));
+            if w::icon_button(ui, at, (id, "rename-button", i), "edit", &tip, win.rename == Some(i), can_edit, 16.0)
+                .clicked()
+            {
+                start_rename = Some(i);
+            }
+            x += 28.0;
+            let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
             let tip = format!("{} {name}", lang.pick("消す:", "Remove:"));
-            if w::icon_button(ui, at, (id, "delete", i), "delete", &tip, false, true, 16.0)
+            if w::icon_button(ui, at, (id, "delete", i), "delete", &tip, false, can_edit, 16.0)
                 .clicked()
             {
                 actions.push(Action::Sel(SelAction::Saved(SavedOp::Delete(i))));
@@ -379,6 +455,13 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         bar.end(ui, (id, "scroll"), &mut win.scroll);
     });
     win.offset = offset;
+    if let Some(i) = start_rename {
+        win.rename = Some(i);
+        win.rename_started = false;
+    }
+    if let Some((index, name)) = rename_op {
+        actions.push(Action::Sel(SelAction::Saved(SavedOp::Rename { index, name })));
+    }
     // 動かした窓の状態を戻す（操作で閉じた・窓を替えたあとは上書きしない）
     if app.sel.saved_window.is_some() {
         app.sel.saved_window = Some(win);

@@ -4,10 +4,12 @@
 //! Normalize の全域統計は `statistics` で単独に求められ、`Options::statistics` で評価へ渡せる（タイルごとの再走査を避けられる）。
 
 mod pixels;
+mod rows;
 #[cfg(test)]
 mod tests;
 use crate::{
     math::{clamp01, to_byte},
+    ranges,
     BrightnessContrast, ColorBalance, GradientMap, Posterize, Rect, Rgba8, Threshold, ToneCurves,
 };
 use rayon::prelude::*;
@@ -113,18 +115,18 @@ impl Settings {
     }
     pub fn validate(&self, value_type: ValueType) -> Result<(), Error> {
         let valid = match *self {
-            Self::GaussianBlur { radius } => (1..=256).contains(&radius),
+            Self::GaussianBlur { radius } => ranges::BLUR_RADIUS.contains(&radius),
             Self::Sharpen {
                 radius,
                 amount,
                 threshold,
             } => {
-                (1..=64).contains(&radius)
+                ranges::SHARPEN_RADIUS.contains(&radius)
                     && amount.is_finite()
-                    && (0.0..=5.0).contains(&amount)
-                    && threshold <= 255
+                    && ranges::SHARPEN_AMOUNT.contains(&amount)
+                    && ranges::SHARPEN_THRESHOLD.contains(&threshold)
             }
-            Self::Noise { amount, .. } => amount.is_finite() && (0.0..=1.0).contains(&amount),
+            Self::Noise { amount, .. } => amount.is_finite() && ranges::NOISE_AMOUNT.contains(&amount),
             Self::Levels {
                 input_black: b,
                 input_white: w,
@@ -133,12 +135,12 @@ impl Settings {
                 output_white: ow,
             } => {
                 [b, w, g, ob, ow].iter().all(|v| v.is_finite())
-                    && b >= 0.0
-                    && w <= 1.0
+                    && b >= *ranges::LEVELS_UNIT.start()
+                    && w <= *ranges::LEVELS_UNIT.end()
                     && w - b >= 1.0 / 255.0
-                    && (0.1..=9.99).contains(&g)
-                    && (0.0..=1.0).contains(&ob)
-                    && (0.0..=1.0).contains(&ow)
+                    && ranges::GAMMA.contains(&g)
+                    && ranges::LEVELS_UNIT.contains(&ob)
+                    && ranges::LEVELS_UNIT.contains(&ow)
             }
             _ => true,
         };
@@ -253,6 +255,10 @@ impl Source for Image<'_> {
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let i = (y as usize * self.width as usize + x as usize) * 4;
         self.data[i..i + 4].try_into().unwrap()
+    }
+    fn read_row(&self, x: u32, y: u32, out: &mut [u8]) {
+        let start = (y as usize * self.width as usize + x as usize) * 4;
+        out.copy_from_slice(&self.data[start..start + out.len()]);
     }
 }
 
@@ -669,6 +675,23 @@ impl<'a> Engine<'a> {
         }
         Ok(buf)
     }
+    /// 色調補正の段の結果の行（src と同じ並びの RGBA）を out へ（`adjust_pixel` の画素ごとの結果と同じ。カラーバランスだけレーンで）。
+    fn adjust_row(
+        &self,
+        level: crate::math::simd::Level,
+        settings: &Settings,
+        src: &[u8],
+        out: &mut [u8],
+    ) {
+        if let Settings::ColorBalance(c) = settings {
+            crate::adjust::color_balance_rgba(level, c, src, out);
+            return;
+        }
+        for (p, o) in src.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+            let v = adjust_pixel(settings, self.value_type, Rgba8::from_slice(p));
+            o.copy_from_slice(&v.to_array());
+        }
+    }
     fn point(&self, buf: &mut [u8], r: Rect, k: usize, s: &Stage) -> Result<(), Error> {
         let mut lut = [0u8; 256];
         for (v, b) in lut.iter_mut().enumerate() {
@@ -699,50 +722,40 @@ impl<'a> Engine<'a> {
                 _ => v as u8,
             };
         }
-        for (y, row) in buf.chunks_exact_mut(r.width as usize * 4).enumerate() {
+        let level = crate::math::simd::level();
+        let width4 = r.width as usize * 4;
+        // 調整の段が行ごとの結果を置く作業の領域
+        let mut adjusted: Vec<u8> = Vec::new();
+        for (y, row) in buf.chunks_exact_mut(width4).enumerate() {
             self.options.check()?;
-            for (x, p) in row.chunks_exact_mut(4).enumerate() {
-                match s.settings {
-                    Settings::Noise {
-                        amount,
-                        seed,
-                        monochrome,
-                    } => {
-                        let h = pixels::hash(
-                            pixels::hash(pixels::hash(seed as u32) ^ (r.x + x as u32))
-                                ^ (r.y + y as u32),
-                        );
-                        for (c, v) in p[..3].iter_mut().enumerate() {
-                            let u = f64::from(
-                                pixels::hash(h ^ if monochrome { 0 } else { c as u32 }) >> 8,
-                            ) / 16777215.0
-                                * 2.0
-                                - 1.0;
-                            let n = (f64::from(*v) + amount * 127.5 * u + 0.5)
-                                .floor()
-                                .clamp(0.0, 255.0) as u8;
-                            *v = pixels::lerp(*v, n, s.strength);
-                        }
-                    }
-                    Settings::GradientMap(_)
-                    | Settings::ToneCurve(_)
-                    | Settings::ColorBalance(_)
-                    | Settings::BrightnessContrast(_)
-                    | Settings::Threshold(_)
-                    | Settings::Posterize(_) => {
-                        let out = adjust_pixel(&s.settings, self.value_type, Rgba8::from_slice(p));
-                        for (v, o) in p[..3].iter_mut().zip([out.r, out.g, out.b]) {
-                            *v = pixels::lerp(*v, o, s.strength);
-                        }
-                    }
-                    Settings::Generator { slot, blend } => {
+            let y_canvas = r.y + y as u32;
+            match s.settings {
+                Settings::Noise {
+                    amount,
+                    seed,
+                    monochrome,
+                } => rows::noise_row_at(
+                    level, row, r.x, y_canvas, seed, amount, monochrome, s.strength,
+                ),
+                Settings::GradientMap(_)
+                | Settings::ToneCurve(_)
+                | Settings::ColorBalance(_)
+                | Settings::BrightnessContrast(_)
+                | Settings::Threshold(_)
+                | Settings::Posterize(_) => {
+                    adjusted.resize(width4, 0);
+                    self.adjust_row(level, &s.settings, row, &mut adjusted);
+                    rows::lerp_rows_at(level, row, &adjusted, s.strength);
+                }
+                Settings::Generator { slot, blend } => {
+                    for (x, p) in row.chunks_exact_mut(4).enumerate() {
                         if p[3] == 0 && self.value_type != ValueType::Mask {
                             continue;
                         }
                         let Some(g) = self
                             .options
                             .generators
-                            .and_then(|g| g.sample(slot, r.x + x as u32, r.y + y as u32))
+                            .and_then(|g| g.sample(slot, r.x + x as u32, y_canvas))
                         else {
                             continue;
                         };
@@ -758,12 +771,8 @@ impl<'a> Engine<'a> {
                             self.value_type == ValueType::Mask,
                         );
                     }
-                    _ => {
-                        for v in &mut p[..3] {
-                            *v = pixels::lerp(*v, lut[*v as usize], s.strength);
-                        }
-                    }
                 }
+                _ => rows::lut_row_at(level, row, &lut, s.strength),
             }
         }
         Ok(())

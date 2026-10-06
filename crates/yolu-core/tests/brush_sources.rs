@@ -351,8 +351,9 @@ fn wrong_source_types_and_late_composite_setup_refuse_without_leaving_a_stroke()
         Err(CoreError::Unsupported(_))
     ));
     assert!(!d.has_active_stroke());
+    // 色を塗るブラシ（混ぜない）は写像されたダブを受けない（ぼかしは 3D の島の縁で受ける）
     let mut s = d
-        .begin_brush_stroke(layer, &effect_brush(BrushEffect::BLUR))
+        .begin_brush_stroke(layer, &effect_brush(BrushEffect::Paint))
         .unwrap();
     assert!(matches!(
         s.apply_mapped_dab(&mut d, &[m(1, 0)], 1.0, 0, None),

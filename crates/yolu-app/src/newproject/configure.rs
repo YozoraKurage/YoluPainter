@@ -486,6 +486,7 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     app.doc.end_coalescing();
     // モデル
     let mut model_note = None;
+    let mut pose_note = None;
     if plan.model.is_some() {
         if let Prep::Ready { path, model, .. } = std::mem::replace(&mut win.prep, Prep::Idle) {
             pose::install_prepared(&mut app.view3d, *model);
@@ -498,6 +499,9 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
             app.np.model_file = Some(path);
             win.model = None;
             win.reload = false;
+            // 入れたモデルは休みの形から始まる。ファイルのポーズ（pose.json）は、開くときに読み込めなかったモデル（動かした先を選び直す）・
+            // 読み直したモデルにも戻す。戻さないまま保存すると、休みの形として pose.json が消える
+            pose_note = crate::view3d::pose::stored::restore_from_project(app);
         }
     }
     let groups = app.model.as_ref().map(groups_of).unwrap_or_default();
@@ -558,8 +562,8 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
         }
     }
     // 大きさを変えたセットは、履歴を消す（元の大きさへ戻せないので、段が残ると壊れた状態へ戻せてしまう）
-    for uid in &resized {
-        if let Some(i) = app.sets.index_of(*uid) {
+    for uid in resized.iter().map(|r| r.uid) {
+        if let Some(i) = app.sets.index_of(uid) {
             let _ = app.set_doc_mut(i).clear_history();
             if i == app.sets.current_index() {
                 app.view.fit();
@@ -577,6 +581,15 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     app.np.reopening = None;
     // 知らせ
     let missing = app.sets.iter().filter(|s| s.bound.is_none()).count();
+    // 縮小で外れた覚えた選択範囲（履歴を消すので取り消しでも戻らない）。名前の変更を済ませたあとのセットの名前と数
+    let dropped: Vec<(String, usize)> = resized
+        .iter()
+        .filter(|r| r.dropped_saved_selections > 0)
+        .filter_map(|r| {
+            let i = app.sets.index_of(r.uid)?;
+            Some((app.sets.get(i)?.name.clone(), r.dropped_saved_selections))
+        })
+        .collect();
     let mut text = lang
         .pick(
             "プロジェクトの構成を変えました。",
@@ -585,6 +598,9 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
         .to_owned();
     if let Some(name) = model_note {
         text += &lang.pick(format!(" モデル: {name}。"), format!(" Model: {name}."));
+    }
+    if let Some(note) = pose_note {
+        text += &format!(" {note}");
     }
     if !removed_names.is_empty() {
         text += &lang.pick(
@@ -598,6 +614,19 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
             format!(" Resized {}.", resized.len()),
         );
     }
+    if !dropped.is_empty() {
+        let list = |sep: &str, unit: &dyn Fn(usize) -> String| {
+            dropped
+                .iter()
+                .map(|(name, n)| format!("{name} {}", unit(*n)))
+                .collect::<Vec<_>>()
+                .join(sep)
+        };
+        text += &lang.pick(
+            format!(" 縮小で消えた覚えた選択範囲: {}。", list("・", &|n| format!("{n} 件"))),
+            format!(" Remembered selections lost to the shrink: {}.", list(", ", &|n| n.to_string())),
+        );
+    }
     if app.model.is_some() && missing > 0 {
         text += &lang.pick(
             format!(" モデルに無いセット {missing}。"),
@@ -607,9 +636,16 @@ pub(super) fn apply(app: &mut AppState, win: &mut NpWindow) -> Result<String, St
     Ok(text)
 }
 
+/// 大きさを変えたセット（`resample` の結果）。
+struct Resized {
+    uid: u32,
+    /// 縮小で外れた覚えた選択範囲の数。
+    dropped_saved_selections: usize,
+}
+
 /// 大きさを変える。先に全部のセットの結果を準備し（文書も履歴も変えない）、1 つでも断られたら何も変えずに理由を返す。全部が準備できて
-/// から 1 つずつ入れる。変えたセットの uid を返す（履歴は呼ぶ側が消す）。
-fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<u32>, String> {
+/// から 1 つずつ入れる。変えたセットの uid と外れた覚えた選択範囲の数を返す（履歴は呼ぶ側が消す）。
+fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
     let lang = app.lang;
     let mut prepared: Vec<(u32, usize, PreparedResize)> = Vec::new();
     for (uid, size, method) in &plan.resizes {
@@ -635,15 +671,20 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<u32>, String> {
     }
     // 準備はもう済んでいるので、入れるのが断られるのは文書が変わったときだけ（ここでは起きない）。起きたら先に入れたセットを戻す
     // （積んだ段を捨てるだけなので、そのセットの前からの Undo の履歴は戻らない）
-    let mut done: Vec<(u32, usize)> = Vec::new();
+    let mut done: Vec<(Resized, usize)> = Vec::new();
     for (uid, index, one) in prepared {
-        if let Err(e) = app.set_doc_mut(index).commit_prepared_resize(one) {
-            for (_, i) in done.iter().rev() {
-                let _ = app.set_doc_mut(*i).discard_last_step();
+        match app.set_doc_mut(index).commit_prepared_resize(one) {
+            Ok(report) => done.push((
+                Resized { uid, dropped_saved_selections: report.dropped_saved_selections },
+                index,
+            )),
+            Err(e) => {
+                for (_, i) in done.iter().rev() {
+                    let _ = app.set_doc_mut(*i).discard_last_step();
+                }
+                return Err(lang.core_error(&e));
             }
-            return Err(lang.core_error(&e));
         }
-        done.push((uid, index));
     }
-    Ok(done.into_iter().map(|(uid, _)| uid).collect())
+    Ok(done.into_iter().map(|(r, _)| r).collect())
 }

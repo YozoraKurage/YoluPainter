@@ -1,8 +1,11 @@
 //! 本物のソケット（Unix は自分だけのフォルダの Unix ソケット、Windows は名前付きパイプ）での往復・知らない命令を断る・版が合わないと断る・
 //! 鍵（無い・合わない・使い回し・返事の証しが合わない）・別のプロセスの共有メモリのタイルが届く。
 
+#[path = "support/names.rs"]
+mod names;
+
 use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 #[path = "support/wait.rs"]
@@ -15,12 +18,23 @@ use yolu_protocol::link::{self, accept, connect_and_greet, wrong_direction};
 use yolu_protocol::*;
 
 fn unique_name(tag: &str) -> String {
-    static N: AtomicU32 = AtomicU32::new(0);
-    format!(
-        "ylp-test-{tag}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    )
+    names::unique_name("ylp-test", tag)
+}
+
+/// 前の待ち受けをやめた直後に、同じ名前で待ち受け直す。名前のロック（`flock`）は、ファイルを開いた「記述」ごとに持たれる。このプロセスの
+/// ほかの試験のスレッドが子のプロセスを起こしている最中（fork から exec まで）は、その子が開いているファイルの複製を一瞬持っていて、
+/// こちらが閉じてもロックはすぐには外れず、`AddrInUse` になる（4 本のスレッドが子を起こし続ける間に、待ち受け・やめる・同じ名前で待ち受けを
+/// 1000 回繰り返すと、675 回で当たった）。製品の動き（やめた直後の取り直しに、ほかのスレッドが子を起こしていない）の外の話なので、
+/// 外れるまで待つ。本当に外れないなら（上限はハング検出用）、その理由を出して落とす。
+fn bind_after_drop(name: &str) -> Server {
+    let deadline = Instant::now() + wait::WATCHDOG;
+    loop {
+        match Server::bind(name, false) {
+            Ok(server) => return server,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && Instant::now() < deadline => thread::yield_now(),
+            Err(e) => panic!("{name}: 待ち受けをやめたあとも、同じ名前で待ち受けられない: {e}"),
+        }
+    }
 }
 
 /// 鍵を知っているブリッジの挨拶の鍵の欄（nonce は新しく作る）。
@@ -140,6 +154,80 @@ fn messages_round_trip_and_unknown_commands_are_refused_without_dropping_the_lin
         }
         other => panic!("{other:?}"),
     }
+    conn.send(&Message::Bye).unwrap();
+    server.join().unwrap();
+}
+
+/// 挨拶のあとの枠を Live Link の命令にせずに読む口（`ConnectionReader::raw`）: 別の使い手の種類の枠は、知らない命令として断られずにそのまま届き、
+/// 読みを終わらせる口（`cancel_reads`）は、読んでいないときに呼んでも何も壊さない。
+#[test]
+fn after_the_greeting_frames_of_another_kind_pass_through_raw_and_are_not_refused() {
+    const REQUEST: u16 = 0x4f50;
+    const RESPONSE: u16 = 0x4f51;
+    let name = unique_name("raw");
+    let listener = Server::bind(&name, false).unwrap();
+    let server = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let (conn, mut reader, _) = accept(stream, "試験のスタンドアロン", 7, &listener.key()).unwrap();
+        let (frames, stream) = reader.raw();
+        let mut stream = stream;
+        let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
+        assert_eq!((frame.kind, frame.payload.as_slice()), (REQUEST, &b"ping"[..]));
+        conn.cancel_reads();
+        conn.send_raw(RESPONSE, b"pong").unwrap();
+        // 閉じるまで待つ（相手の Bye ではなく、枠の切れ目の閉じ）
+        let closed = frames.read_frame(&mut stream);
+        assert!(closed.is_err() || closed.unwrap().is_none());
+    });
+    let (conn, mut reader, welcome) = connect_and_greet(&name, "試験のクライアント").unwrap();
+    assert_eq!(welcome.session, 7);
+    conn.send_raw(REQUEST, b"ping").unwrap();
+    {
+        let (frames, stream) = reader.raw();
+        let mut stream = stream;
+        let frame = frames.read_frame(&mut stream).unwrap().expect("枠が届く");
+        // 最初に届くのは返事の枠。知らない種類の枠への `Error`（`next` が返すもの）ではない
+        assert_eq!((frame.kind, frame.payload.as_slice()), (RESPONSE, &b"pong"[..]));
+    }
+    drop(reader);
+    drop(conn);
+    server.join().unwrap();
+}
+
+#[test]
+fn a_command_over_the_limit_is_refused_by_send_and_the_link_keeps_working() {
+    // 512 MiB の命令は作らず、上限を狭めて送り口の断りを通す（`send` は `send_within` の上限が 512 MiB のもの）
+    let name = unique_name("over");
+    let listener = Server::bind(&name, false).unwrap();
+    let server = thread::spawn(move || {
+        let stream = listener.accept().unwrap();
+        let (conn, reader, _) = accept(stream, "試験のスタンドアロン", 7, &listener.key()).unwrap();
+        let mut reader = MessageReader::new(conn.clone(), reader);
+        // 断られた命令は 1 バイトも届かない: 次に読めるのは、そのあとに送った命令（枠が壊れていれば区切りを失う）
+        assert_eq!(
+            next_message(&mut reader, &conn),
+            Received::Message(Message::TextureSetRemoved { set: 3 })
+        );
+        // 上限ちょうどの命令は届く
+        assert_eq!(
+            next_message(&mut reader, &conn),
+            Received::Message(Message::Model(model(1)))
+        );
+        assert_eq!(
+            next_message(&mut reader, &conn),
+            Received::Message(Message::Bye)
+        );
+    });
+    let (conn, _reader, _) = wait::connect(&name, None);
+    let big = Message::Model(model(1));
+    let size = big.encode_payload().len();
+    let e = conn.send_within(&big, size - 1).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+    let e = conn.send_within(&big, 0).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+    // 断られたあとも、つながりは使える
+    conn.send(&Message::TextureSetRemoved { set: 3 }).unwrap();
+    conn.send_within(&big, size).unwrap();
     conn.send(&Message::Bye).unwrap();
     server.join().unwrap();
 }
@@ -590,7 +678,7 @@ fn a_second_standalone_cannot_take_the_name_and_the_key_goes_with_the_first() {
     drop(first);
     assert!(!key_path.exists(), "待ち受けをやめたら鍵を消す");
     // 同じ名前でまた待ち受けられ、鍵は新しくなる
-    let again = Server::bind(&name, false).unwrap();
+    let again = bind_after_drop(&name);
     assert_ne!(std::fs::read(&key_path).unwrap(), before);
     drop(again);
 }
@@ -995,9 +1083,7 @@ sys.exit(0 if all(checks.values()) else 1)
     assert!(out.status.success(), "別のユーザーが入れた: {text}");
 }
 
-/// 挨拶を送らない接続は時間切れで落とし、次の接続を受ける（Unix。Windows の名前付きパイプには受けの時間切れが無く、枠を塞がないことを
-/// スタンドアロンの試験が見る）。
-#[cfg(unix)]
+/// 挨拶を送らない接続は時間切れで落とし、次の接続を受ける（Unix は読みの時間切れ、Windows は挨拶の見張りが読みを取り消す）。
 #[test]
 fn a_connection_that_never_greets_is_dropped_after_the_timeout_and_the_next_one_is_served() {
     let name = unique_name("silent");
@@ -1036,4 +1122,110 @@ fn a_connection_that_never_greets_is_dropped_after_the_timeout_and_the_next_one_
     );
     assert!(second.is_ok());
     drop(silent);
+}
+
+/// つないでも何も返さない待ち受けには、ブリッジが決めた時間で見切りをつける（返事を待ち続けて、Unity の主のスレッドの裏で止まらない）。
+#[test]
+fn a_standalone_that_accepts_but_never_answers_makes_the_bridge_give_up_after_the_timeout() {
+    let name = unique_name("mute");
+    let server = Server::bind(&name, false).unwrap();
+    let handle = thread::spawn(move || {
+        // つなぎを受けて、何も返さずに持つ（ブリッジが諦めて閉じるまで）
+        let stream = server.accept().unwrap();
+        thread::sleep(Duration::from_millis(1500));
+        drop(stream);
+        server
+    });
+    let started = Instant::now();
+    let result = link::connect_and_greet_within(
+        &name,
+        &Identity::unity("試験のブリッジ"),
+        Duration::from_millis(300),
+    );
+    let waited = started.elapsed();
+    assert!(
+        matches!(result, Err(LinkError::Protocol(ref t)) if t.contains("挨拶の返事が来ません")),
+        "{:?}",
+        result.map(|_| ())
+    );
+    assert!(
+        waited >= Duration::from_millis(250) && waited < Duration::from_secs(5),
+        "待った時間 {waited:?}"
+    );
+    let _server = handle.join().unwrap();
+}
+
+/// Windows: パイプの相手のプロセスの持ち主を確かめる（自分のプロセスなら通る）。なりすましの段は匿名で、つないだ先は読んだ後でもなりすませない。
+#[cfg(windows)]
+mod windows_pipe {
+    use super::*;
+    use interprocess::local_socket::Stream;
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+    use yolu_protocol::private::win;
+
+    #[test]
+    fn the_owner_of_the_pipe_peer_is_my_own_account() {
+        let me = win::user_sid().unwrap();
+        // 自分のプロセスの持ち主は、自分のアカウント（相手の番号から持ち主を引ける）
+        assert_eq!(win::process_user_sid(std::process::id()).unwrap(), me);
+        // 存在しない番号は引けない（確かめられない相手は信じない）
+        assert!(win::process_user_sid(0xffff_fff0).is_err());
+        // 本物のパイプで、挨拶の前の確かめを通ってつながる（サーバーの側もクライアントの側も、相手は自分のプロセス）
+        let name = unique_name("owner");
+        let server = Server::bind(&name, false).unwrap();
+        let handle = thread::spawn(move || {
+            let stream = server.accept().unwrap();
+            let r = accept(stream, "試験のスタンドアロン", 1, &server.key()).map(|(c, ..)| c);
+            (r, server)
+        });
+        let (conn, _reader, welcome) = connect_and_greet(&name, "試験のブリッジ").unwrap();
+        assert_eq!(welcome.session, 1);
+        let _ = conn.send(&Message::Bye);
+        let (accepted, _server) = handle.join().unwrap();
+        assert!(accepted.is_ok());
+    }
+
+    /// つないだ先が、読んだ後に ImpersonateNamedPipeClient しても、こちらのアカウントでは動けない（匿名）。Wine は段を保存しないので確かめない。
+    #[test]
+    fn the_server_cannot_impersonate_the_bridge_after_reading() {
+        let name = unique_name("sqos");
+        let server = Server::bind(&name, false).unwrap();
+        let handle = thread::spawn(move || {
+            use std::io::Read;
+            let stream = server.accept().unwrap();
+            // クライアントが 1 バイト書くまで待つ（読んだ後でないとなりすませない）
+            let mut one = [0u8; 1];
+            (&stream).read_exact(&mut one).unwrap();
+            let Stream::NamedPipe(pipe) = &stream;
+            let guard = pipe.inner().impersonate_client();
+            let outcome = match guard {
+                // なりすませなかった: 匿名より上の段は得られていない
+                Err(e) => format!("failed: {e}"),
+                Ok(_guard) => {
+                    let mut token = std::ptr::null_mut();
+                    let opened = unsafe { OpenThreadToken(GetCurrentThread(), 0x0008, 0, &mut token) };
+                    if opened == 0 {
+                        format!("anonymous: {}", unsafe { GetLastError() })
+                    } else {
+                        unsafe { windows_sys::Win32::Foundation::CloseHandle(token) };
+                        "token".to_owned()
+                    }
+                }
+            };
+            (outcome, server)
+        });
+        let mut stream = link::connect(&name).unwrap();
+        use std::io::Write;
+        stream.write_all(&[1]).unwrap();
+        let (outcome, _server) = handle.join().unwrap();
+        if win::is_wine() {
+            eprintln!("Wine はなりすましの段を保存しないので確かめません（{outcome}）");
+            return;
+        }
+        assert!(
+            outcome.starts_with("failed") || outcome.starts_with("anonymous"),
+            "匿名の段なら、なりすましたトークンを開けない: {outcome}"
+        );
+    }
 }

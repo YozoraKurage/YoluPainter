@@ -59,6 +59,7 @@ pub mod mesh_maps;
 pub mod normal;
 pub mod padding;
 pub mod paths;
+mod ranges;
 pub mod selection;
 pub mod skin;
 pub mod smart;
@@ -81,9 +82,10 @@ pub use brush::{
 };
 pub use document::{
     Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint,
-    Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, Document, EffectCounters,
+    Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource, CompositedTile, Document, EffectCounters,
     DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
     LayerLocks, LayerMergeReport, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
+    clean_saved_name, SavedSelection, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
     PreparedResize, Resampling, ResizeReport, Stroke, StrokeResult, StrokeStats, TriangleFill,
 };
 pub use effects::{
@@ -103,4 +105,5 @@ pub use types::{
     TileCoord,
 };
 
+pub use composite::MemoStats;
 pub use document::HistoryKind;

@@ -161,12 +161,19 @@ pub struct Settings {
     /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」の窓）。
     pub pressure: PressureAdjust,
     pub navigation: crate::view3d::navigation::Preferences,
+    /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
+    pub view3d_post: crate::view3d::display::PostFx,
+    /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ。ブラシの詳細の「ストローク」の 3D の組）。
+    pub view3d_paint: yolu_core::geometry::ProjectionSettings,
     pub uv_wireframe: bool,
     pub uv_wireframe_color: [u8; 4],
     /// 起動時に Live Link を待ち受けるか（--livelink はこの設定より優先）。
     pub livelink_on_startup: bool,
     /// Live Link で Unity から受けたマテリアルの値を .ylp に保存するか（`look.json` の `received`。既定は保存する）。
     pub livelink_keep_values: bool,
+    /// 外からの操作（CLI・MCP のクライアントなど、同じ PC の同じユーザーのプログラムからの命令）を受けるか。既定は切。入っている間だけ待ち受ける
+    /// （`opslive`）。
+    pub external_ops: bool,
     /// カラーの欄を色相の円と中の四角で出すか（切ると四角と色相の帯）。
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
@@ -189,10 +196,13 @@ impl Default for Settings {
             selection_bar: true,
             pressure: PressureAdjust::default(),
             navigation: crate::view3d::navigation::Preferences::default(),
+            view3d_post: crate::view3d::display::PostFx::default(),
+            view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: true,
+            external_ops: false,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
         }
@@ -344,6 +354,16 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "language" => lang.pick("言語", "Language"),
         "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
         "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
+        "view3d_antialias" => lang.pick("アンチエイリアス", "Anti-aliasing"),
+        "view3d_bloom" => lang.pick("ブルーム", "Bloom"),
+        "view3d_bloom_strength" => lang.pick("ブルームの強さ", "Bloom strength"),
+        "view3d_bloom_threshold" => lang.pick("ブルームのしきい値", "Bloom threshold"),
+        "view3d_paint_hidden" => lang.pick("隠れた所も塗る", "Paint hidden areas"),
+        "view3d_paint_backfaces" => lang.pick("裏の面も塗る", "Paint back faces"),
+        "view3d_paint_falloff" => lang.pick("面の向きで弱める", "Fade by angle"),
+        "view3d_paint_falloff_start" => lang.pick("弱め始め", "Fade start"),
+        "view3d_paint_falloff_end" => lang.pick("塗らない角度", "Fade end"),
+        "view3d_paint_seam_bleed" => lang.pick("継ぎ目のにじみ", "Seam bleed"),
         "export_padding" => lang.pick("書き出しの余白", "Export padding"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
@@ -354,6 +374,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "library_folder" => lang.pick("棚の場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
+        "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
@@ -443,10 +464,34 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 None => invalid("pressure_curve"),
             },
             "view3d_orbit" | "view3d_zoom" => settings.navigation.parse(key.trim(), value, &mut problems),
+            "view3d_antialias" => match value.parse::<u32>().ok().filter(|n| crate::view3d::display::SAMPLE_CHOICES.contains(n)) {
+                Some(n) => settings.view3d_post.antialias = n,
+                None => invalid("view3d_antialias"),
+            },
+            "view3d_bloom" => match value {
+                "on" => settings.view3d_post.bloom = true,
+                "off" => settings.view3d_post.bloom = false,
+                _ => invalid("view3d_bloom"),
+            },
+            "view3d_bloom_strength" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_STRENGTH_MAX).contains(v)) {
+                Some(v) => settings.view3d_post.bloom_strength = v,
+                None => invalid("view3d_bloom_strength"),
+            },
+            "view3d_bloom_threshold" => match value.parse::<f32>().ok().filter(|v| (0.0..=crate::view3d::display::BLOOM_THRESHOLD_MAX).contains(v)) {
+                Some(v) => settings.view3d_post.bloom_threshold = v,
+                None => invalid("view3d_bloom_threshold"),
+            },
+            "view3d_paint_hidden" | "view3d_paint_backfaces" | "view3d_paint_falloff" | "view3d_paint_falloff_start" | "view3d_paint_falloff_end" | "view3d_paint_seam_bleed" => {
+                if let Some(key) = parse_paint(&mut settings.view3d_paint, key.trim(), value) {
+                    invalid(key);
+                }
+            }
             "uv_wireframe" => settings.uv_wireframe = value != "off",
             "uv_wireframe_color" => match crate::uv_wireframe::parse_color(value) { Some(c) => settings.uv_wireframe_color = c, None => invalid("uv_wireframe_color") },
             "livelink_on_startup" => settings.livelink_on_startup = value != "off",
             "livelink_keep_values" => settings.livelink_keep_values = value != "off",
+            // 入れたときだけ書く行（既定は切）。読めない値は切のまま
+            "external_ops" => settings.external_ops = value == "on",
             "color_wheel" => settings.color_wheel = value != "off",
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
@@ -463,6 +508,8 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
             }
         }
     }
+    // 弱め始めと塗らない角度は組で意味を持つ（塗らない角度は弱め始め以上）
+    settings.view3d_paint = settings.view3d_paint.sanitized();
     let (low, high) = (low.unwrap_or(0.0), high.unwrap_or(1.0));
     match PressureAdjust::new(low, high, curve.unwrap_or_default()) {
         Ok(adjust) => settings.pressure = adjust,
@@ -473,6 +520,43 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
         }),
     }
     (settings, problems)
+}
+
+/// 3D の塗りの切り替えの 1 項目を読む（読めなければ、その項目は既定のまま、正しくない項目のキーを返す）。
+fn parse_paint(paint: &mut yolu_core::geometry::ProjectionSettings, key: &str, value: &str) -> Option<&'static str> {
+    let switch = |value: &str| match value {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    };
+    let angle = |value: &str| value.parse::<f32>().ok().filter(|v| (0.0..=90.0).contains(v));
+    match key {
+        "view3d_paint_hidden" => match switch(value) {
+            Some(v) => paint.paint_hidden = v,
+            None => return Some("view3d_paint_hidden"),
+        },
+        "view3d_paint_backfaces" => match switch(value) {
+            Some(v) => paint.paint_backfaces = v,
+            None => return Some("view3d_paint_backfaces"),
+        },
+        "view3d_paint_falloff" => match switch(value) {
+            Some(v) => paint.angle_falloff = v,
+            None => return Some("view3d_paint_falloff"),
+        },
+        "view3d_paint_falloff_start" => match angle(value) {
+            Some(v) => paint.angle_start = v,
+            None => return Some("view3d_paint_falloff_start"),
+        },
+        "view3d_paint_falloff_end" => match angle(value) {
+            Some(v) => paint.angle_end = v,
+            None => return Some("view3d_paint_falloff_end"),
+        },
+        _ => match value.parse::<u32>().ok().filter(|n| *n <= yolu_core::geometry::MAX_SEAM_BLEED) {
+            Some(n) => paint.seam_bleed = n,
+            None => return Some("view3d_paint_seam_bleed"),
+        },
+    }
+    None
 }
 
 fn parse_padding(value: &str) -> Option<i32> {
@@ -563,12 +647,17 @@ fn render(settings: &Settings) -> String {
         text += &format!("pressure_curve={}\n", crate::brushes::store::curve_text(pressure.curve()));
     }
     settings.navigation.write(&mut text);
+    write_post(&mut text, &settings.view3d_post);
+    write_paint(&mut text, &settings.view3d_paint);
     crate::uv_wireframe::save_settings(&mut text, settings);
     if !settings.livelink_on_startup {
         text += "livelink_on_startup=off\n";
     }
     if !settings.livelink_keep_values {
         text += "livelink_keep_values=off\n";
+    }
+    if settings.external_ops {
+        text += "external_ops=on\n";
     }
     if !settings.color_wheel {
         text += "color_wheel=off\n";
@@ -584,6 +673,50 @@ fn render(settings: &Settings) -> String {
         }
     }
     text
+}
+
+/// 3D の絵の仕上げ。既定のものは書かない。範囲の外の値は、書くときに範囲へ収める。
+fn write_post(text: &mut String, post: &crate::view3d::display::PostFx) {
+    use crate::view3d::display::{PostFx, BLOOM_STRENGTH_MAX, BLOOM_THRESHOLD_MAX, SAMPLE_CHOICES};
+    let default = PostFx::default();
+    if post.antialias != default.antialias && SAMPLE_CHOICES.contains(&post.antialias) {
+        *text += &format!("view3d_antialias={}\n", post.antialias);
+    }
+    if post.bloom != default.bloom {
+        *text += if post.bloom { "view3d_bloom=on\n" } else { "view3d_bloom=off\n" };
+    }
+    let value = |v: f32, max: f32| v.is_finite().then(|| v.clamp(0.0, max));
+    if let Some(v) = value(post.bloom_strength, BLOOM_STRENGTH_MAX).filter(|v| *v != default.bloom_strength) {
+        *text += &format!("view3d_bloom_strength={v}\n");
+    }
+    if let Some(v) = value(post.bloom_threshold, BLOOM_THRESHOLD_MAX).filter(|v| *v != default.bloom_threshold) {
+        *text += &format!("view3d_bloom_threshold={v}\n");
+    }
+}
+
+/// 3D の塗りの切り替え。既定のものは書かない。範囲の外の値は、書くときに範囲へ収める。
+fn write_paint(text: &mut String, paint: &yolu_core::geometry::ProjectionSettings) {
+    let default = yolu_core::geometry::ProjectionSettings::default();
+    let paint = paint.sanitized();
+    let switch = |v: bool| if v { "on" } else { "off" };
+    if paint.paint_hidden != default.paint_hidden {
+        *text += &format!("view3d_paint_hidden={}\n", switch(paint.paint_hidden));
+    }
+    if paint.paint_backfaces != default.paint_backfaces {
+        *text += &format!("view3d_paint_backfaces={}\n", switch(paint.paint_backfaces));
+    }
+    if paint.angle_falloff != default.angle_falloff {
+        *text += &format!("view3d_paint_falloff={}\n", switch(paint.angle_falloff));
+    }
+    if paint.angle_start != default.angle_start {
+        *text += &format!("view3d_paint_falloff_start={}\n", paint.angle_start);
+    }
+    if paint.angle_end != default.angle_end {
+        *text += &format!("view3d_paint_falloff_end={}\n", paint.angle_end);
+    }
+    if paint.seam_bleed != default.seam_bleed {
+        *text += &format!("view3d_paint_seam_bleed={}\n", paint.seam_bleed);
+    }
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
@@ -655,10 +788,25 @@ mod tests {
             )
             .unwrap(),
             navigation: crate::view3d::navigation::Preferences::default(),
+            view3d_post: crate::view3d::display::PostFx {
+                antialias: 8,
+                bloom: true,
+                bloom_strength: 1.25,
+                bloom_threshold: 1.5,
+            },
+            view3d_paint: yolu_core::geometry::ProjectionSettings {
+                paint_hidden: true,
+                paint_backfaces: true,
+                angle_falloff: false,
+                angle_start: 60.0,
+                angle_end: 75.0,
+                seam_bleed: 4,
+            },
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: false,
+            external_ops: true,
             color_wheel: true,
             gpu_memory: GpuMemory::Mib(1536),
         }
@@ -673,6 +821,25 @@ mod tests {
         save(&path, &off).unwrap();
         assert_eq!(load(&path), (off, vec![]));
         assert!(std::fs::read_to_string(&path).unwrap().contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn accepting_external_commands_defaults_off_and_survives_restart_only_when_on() {
+        let dir = temp_dir("externalops");
+        let path = dir.join("settings.conf");
+        assert!(!load(&path).0.external_ops, "ファイルが無ければ切");
+        let on = Settings { external_ops: true, ..Settings::default() };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), (on, vec![]));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("external_ops=on"));
+        // 切は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("external_ops"));
+        // この項目を知らない古い設定は切として読む。読めない値も切
+        assert!(!parse("language=ja\nlivelink_keep_values=off\n").0.external_ops);
+        let (settings, problems) = parse("external_ops=maybe\nlanguage=en\n");
+        assert!(!settings.external_ops && problems.is_empty(), "{problems:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -752,6 +919,160 @@ mod tests {
     }
 
     #[test]
+    fn the_3d_finish_defaults_to_four_samples_and_no_bloom_and_is_written_only_when_changed() {
+        use crate::view3d::display::PostFx;
+        let dir = temp_dir("finish");
+        let path = dir.join("settings.conf");
+        let default = PostFx::default();
+        assert_eq!((default.antialias, default.bloom), (4, false));
+        assert_eq!(load(&path).0.view3d_post, default);
+        // 既定は書かない
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
+        // 1 つずつ変えると、その行だけが書かれて読み直せる
+        let cases = [
+            (PostFx { antialias: 1, ..default }, "view3d_antialias=1"),
+            (PostFx { antialias: 2, ..default }, "view3d_antialias=2"),
+            (PostFx { antialias: 8, ..default }, "view3d_antialias=8"),
+            (PostFx { bloom: true, ..default }, "view3d_bloom=on"),
+            (PostFx { bloom_strength: 0.0, ..default }, "view3d_bloom_strength=0"),
+            (PostFx { bloom_strength: 2.0, ..default }, "view3d_bloom_strength=2"),
+            (PostFx { bloom_threshold: 0.0, ..default }, "view3d_bloom_threshold=0"),
+            (PostFx { bloom_threshold: 3.5, ..default }, "view3d_bloom_threshold=3.5"),
+        ];
+        for (post, line) in cases {
+            let settings = Settings { view3d_post: post, ..with_lang(Lang::Ja) };
+            save(&path, &settings).unwrap();
+            let written = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(written, format!("language=ja\n{line}\n"), "{post:?}");
+            assert_eq!(load(&path), (settings, vec![]), "{post:?}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_3d_finish_reads_unchanged() {
+        use crate::view3d::display::PostFx;
+        // 仕上げの項目が無い、前の版が書いたファイル（ほかの項目は全部そのまま読める。仕上げは既定）
+        let old = "language=en\nexport_padding=8\nundo_budget_mib=512\ncompositing=cpu\nview3d_orbit=model\nview3d_zoom=pointer\nuv_wireframe=off\n";
+        let (settings, problems) = parse(old);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.lang, Lang::En);
+        assert_eq!(settings.export_padding, 8);
+        assert_eq!(settings.undo_budget, Budget::Mib(512));
+        assert_eq!(settings.compositing, Compositing::Cpu);
+        assert!(!settings.uv_wireframe);
+        assert_eq!(settings.view3d_post, PostFx::default());
+        // 読んで書き直しても、前の項目の値は同じ（仕上げは既定のままなので行は増えない）
+        let written = render(&settings);
+        assert!(!written.contains("view3d_antialias") && !written.contains("view3d_bloom"), "{written}");
+        assert_eq!(parse(&written), (settings, vec![]));
+    }
+
+    #[test]
+    fn a_bad_3d_finish_value_resets_only_that_item_and_names_it() {
+        use crate::view3d::display::PostFx;
+        let text = "language=en\nview3d_antialias=3\nview3d_bloom=maybe\nview3d_bloom_strength=9\nview3d_bloom_threshold=nan\nexport_padding=8\n";
+        let (settings, problems) = parse(text);
+        assert_eq!(settings.view3d_post, PostFx::default());
+        assert_eq!(settings.export_padding, 8, "ほかの項目は生きる");
+        let keys: Vec<&str> = problems
+            .iter()
+            .filter_map(|p| match p {
+                Problem::Invalid { key, .. } => Some(*key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, ["view3d_antialias", "view3d_bloom", "view3d_bloom_strength", "view3d_bloom_threshold"]);
+        for lang in Lang::ALL {
+            for key in keys.iter().copied() {
+                let name = setting_name(lang, key);
+                assert_ne!(name, setting_name(lang, "unknown_key"), "{key} に名前がある");
+            }
+        }
+        // 範囲の外の値は書かない（読めなくなる）。範囲へ収めて書く
+        let wild = Settings { view3d_post: PostFx { bloom_strength: 99.0, bloom_threshold: f32::NAN, ..PostFx::default() }, ..Settings::default() };
+        let written = render(&wild);
+        assert!(written.contains("view3d_bloom_strength=2\n") && !written.contains("view3d_bloom_threshold"), "{written}");
+    }
+
+    #[test]
+    fn the_3d_paint_switches_survive_a_restart_and_are_written_only_when_changed() {
+        use yolu_core::geometry::ProjectionSettings;
+        let dir = temp_dir("paint3d");
+        let path = dir.join("settings.conf");
+        let default = ProjectionSettings::default();
+        assert_eq!(load(&path).0.view3d_paint, default);
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
+        // 1 つずつ変えると、その行だけが書かれて読み直せる（範囲の端も）
+        let cases = [
+            (ProjectionSettings { paint_hidden: true, ..default }, "view3d_paint_hidden=on"),
+            (ProjectionSettings { paint_backfaces: true, ..default }, "view3d_paint_backfaces=on"),
+            (ProjectionSettings { angle_falloff: false, ..default }, "view3d_paint_falloff=off"),
+            (ProjectionSettings { angle_start: 0.0, ..default }, "view3d_paint_falloff_start=0"),
+            (ProjectionSettings { angle_end: 90.0, ..default }, "view3d_paint_falloff_end=90"),
+            (ProjectionSettings { seam_bleed: 0, ..default }, "view3d_paint_seam_bleed=0"),
+            (ProjectionSettings { seam_bleed: yolu_core::geometry::MAX_SEAM_BLEED, ..default }, "view3d_paint_seam_bleed=16"),
+        ];
+        for (paint, line) in cases {
+            let settings = Settings { view3d_paint: paint, ..with_lang(Lang::Ja) };
+            save(&path, &settings).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("language=ja\n{line}\n"), "{paint:?}");
+            assert_eq!(load(&path), (settings, vec![]), "{paint:?}");
+        }
+        // 画面の切り替えは AppState の設定に出て、読んだ設定は AppState へ入る（起動し直しても同じ）
+        let mut state = crate::state::AppState::new(8, 8);
+        assert_eq!(state.settings().view3d_paint, default);
+        let changed = ProjectionSettings { paint_hidden: true, angle_start: 70.0, angle_end: 88.0, seam_bleed: 5, ..default };
+        state.view3d.projection = changed;
+        save(&path, &state.settings()).unwrap();
+        let mut again = crate::state::AppState::new(8, 8);
+        again.load_settings(load(&path).0);
+        assert_eq!(again.view3d.projection, changed);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_3d_paint_switches_reads_them_as_defaults() {
+        let old = "language=en\nexport_padding=8\nview3d_antialias=8\nuv_wireframe=off\n";
+        let (settings, problems) = parse(old);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(settings.view3d_paint, yolu_core::geometry::ProjectionSettings::default());
+        assert_eq!((settings.export_padding, settings.view3d_post.antialias), (8, 8));
+        assert!(!render(&settings).contains("view3d_paint"));
+    }
+
+    #[test]
+    fn a_bad_3d_paint_value_resets_only_that_item_and_names_it() {
+        use yolu_core::geometry::ProjectionSettings;
+        let text = "language=en\nview3d_paint_hidden=yes\nview3d_paint_backfaces=on\nview3d_paint_falloff=1\nview3d_paint_falloff_start=91\nview3d_paint_falloff_end=nan\nview3d_paint_seam_bleed=17\nexport_padding=8\n";
+        let (settings, problems) = parse(text);
+        assert_eq!(settings.view3d_paint, ProjectionSettings { paint_backfaces: true, ..ProjectionSettings::default() }, "正しい項目は生かす");
+        assert_eq!(settings.export_padding, 8);
+        let keys: Vec<&str> = problems
+            .iter()
+            .filter_map(|p| match p {
+                Problem::Invalid { key, .. } => Some(*key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            ["view3d_paint_hidden", "view3d_paint_falloff", "view3d_paint_falloff_start", "view3d_paint_falloff_end", "view3d_paint_seam_bleed"]
+        );
+        for lang in Lang::ALL {
+            for key in keys.iter().copied() {
+                assert_ne!(setting_name(lang, key), setting_name(lang, "unknown_key"), "{key} に名前がある");
+            }
+        }
+        // 塗らない角度が弱め始めより小さいファイルは、弱め始めに揃えて読む
+        let (settings, problems) = parse("view3d_paint_falloff_start=70\nview3d_paint_falloff_end=50\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!((settings.view3d_paint.angle_start, settings.view3d_paint.angle_end), (70.0, 70.0));
+    }
+
+    #[test]
     fn every_setting_survives_a_restart_and_the_default_ones_are_not_written() {
         let dir = temp_dir("all");
         let path = dir.join("settings.conf");
@@ -775,6 +1096,17 @@ mod tests {
             "pressure_low=0.125",
             "pressure_high=0.875",
             "pressure_curve=0:0,0.4:0.6,1:1",
+            "view3d_antialias=8",
+            "view3d_bloom=on",
+            "view3d_bloom_strength=1.25",
+            "view3d_bloom_threshold=1.5",
+            "view3d_paint_hidden=on",
+            "view3d_paint_backfaces=on",
+            "view3d_paint_falloff=off",
+            "view3d_paint_falloff_start=60",
+            "view3d_paint_falloff_end=75",
+            "view3d_paint_seam_bleed=4",
+            "external_ops=on",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -793,6 +1125,9 @@ mod tests {
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
+        back.external_ops = false;
+        back.view3d_post = crate::view3d::display::PostFx::default();
+        back.view3d_paint = yolu_core::geometry::ProjectionSettings::default();
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値

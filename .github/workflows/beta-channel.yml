@@ -1,0 +1,105 @@
+name: 試験版の更新情報
+
+# 試験版（GitHub の prerelease）の Release を公開したとき、その署名つきの更新情報（updater-v1.json）を、固定のタグ updater-beta の Release に
+# 原本のまま上書きで置く。設定「試験版を使う」を入れたアプリが、stable（releases/latest）と並べてここを見る。docs/RELEASING.md の「試験版の置き場」。
+#
+# - 動くのは公開（published）のとき。Draft のうちは配布物を誰も取れないので、置き場を先に動かさない（prerelease の Draft を公開した場合も
+#   published が起こる。prereleased は Draft からの公開では起こらないので使わない）。stable の Release では何もしない。
+# - 置く前に、公開した今の Release の配布物をすべて取り、公開鍵だけで署名・版・大きさ・SHA-256・梱包の中身を確かめ直す（xtask beta-channel）。
+#   再署名はしないので秘密鍵には触れない。置き場の版が今の版以上なら置き換えない（古い試験版を後から公開しても置き場を戻さない）。
+# - 置き場の Release は prerelease で、「最新の Release」にしない（stable の releases/latest/download/updater-v1.json を動かさないため）。
+#   毎回、その設定を付け直す。
+# - キャッシュは使わない（配る物の道と同じ。tools/check-workflows.py が確かめる）。失敗したら、Actions の「Re-run」で同じ公開のまま再実行できる。
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# 続けて公開した 2 つの試験版が、置き場の比べと上書きの間で追い越し合わない。
+concurrency:
+  group: beta-channel
+  cancel-in-progress: false
+
+env:
+  # crates/yolu-update/src/lib.rs の BETA_CHANNEL_TAG と同じ（tools/check-workflows.py が突き合わせる）
+  CHANNEL_TAG: updater-beta
+
+jobs:
+  channel:
+    name: 試験版の置き場へ
+    # 試験版の Release（タグ v<版>）だけ。置き場自身（updater-beta）は対象外。
+    if: ${{ github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: rustup default stable
+      - name: 署名の確認ツールをビルド
+        run: cargo build --locked -p xtask
+      - name: 公開した Release の配布物を取る
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release download "$TAG" --dir target/dist
+      # 置き場がまだ無い（初めての試験版）ときだけ、無いものとして進める。ほかの失敗（通信など）は止める
+      # （置き場の版を見ずに上書きして、新しい試験版を古い版へ戻さないため）。
+      - name: 今の置き場の更新情報を取る
+        id: held
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! assets=$(gh release view "$CHANNEL_TAG" --json assets --jq '[.assets[].name] | join(" ")' 2>target/held.err); then
+            if grep -q 'release not found' target/held.err; then
+              echo 'exists=false' >> "$GITHUB_OUTPUT"
+              echo '試験版の置き場はまだありません。初めて作ります' >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            cat target/held.err >&2
+            exit 1
+          fi
+          echo 'exists=true' >> "$GITHUB_OUTPUT"
+          case " $assets " in
+            *' updater-v1.json '*) gh release download "$CHANNEL_TAG" --pattern updater-v1.json --dir target/held ;;
+          esac
+      - name: 署名と配布物を確かめて、置き場に置く更新情報を作る
+        env:
+          VERSION_TAG: ${{ github.event.release.tag_name }}
+          PUBLIC_KEY: ${{ vars.YOLUPAINTER_UPDATE_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--version "${VERSION_TAG#v}" --assets target/dist --public-key "$PUBLIC_KEY" --output target/channel)
+          if [ -f target/held/updater-v1.json ]; then args+=(--existing target/held/updater-v1.json); fi
+          target/debug/xtask beta-channel "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: 置き場の Release に置く
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXISTS: ${{ steps.held.outputs.exists }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f target/channel/updater-v1.json ]; then
+            echo '置き場は今のままです（置き場の版が今の版以上）'
+            exit 0
+          fi
+          if [ "$EXISTS" != true ]; then
+            gh release create "$CHANNEL_TAG" target/channel/updater-v1.json --target "$GITHUB_SHA" \
+              --title 'YoluPainter beta update information' --prerelease --latest=false \
+              --notes 'Update information for the pre-release versions of YoluPainter. Please do not delete or edit.'
+          else
+            gh release upload "$CHANNEL_TAG" target/channel/updater-v1.json --clobber
+          fi
+          # 置き場の Release が「最新の Release」になると、stable の更新の確かめ（releases/latest）が置き場を指してしまう。毎回付け直す。
+          gh release edit "$CHANNEL_TAG" --prerelease --latest=false

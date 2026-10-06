@@ -8,7 +8,7 @@
 //! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さな窓
 //! - `io`: .ylp の `selection.bin` との受け渡し
 //! - `pen`: 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す）。`quick`: クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・
-//!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて覚えた選択範囲（セッションの中だけ）
+//!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて残した選択範囲（文書の持ち物。.ylp に保存）
 //!
 //! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
 //! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
@@ -35,7 +35,6 @@ use crate::engine::{
 };
 use crate::lang::Lang;
 use crate::state::{Action, AppState, StrokeSource, Tool};
-use std::collections::HashMap;
 
 pub use self::symmetry::SymmetryState;
 
@@ -156,7 +155,7 @@ pub enum SelEdit {
         mask: SelectionMask,
         mode: SelectionCombine,
     },
-    /// 覚えておいた選択範囲（今の文書のもの。番号は `saved` の並び）を、今の選択範囲と組み合わせる。
+    /// 残しておいた選択範囲（今の文書のもの。番号は `saved_selections` の並び）を、今の選択範囲と組み合わせる。
     Recall {
         index: usize,
         mode: SelectionCombine,
@@ -232,7 +231,7 @@ pub enum SelAction {
     Edit(SelEdit),
     Ui(SelUiOp),
     Symmetry(SymOp),
-    /// 名前を付けて覚えた選択範囲（保存・消す・窓。セッションの中だけ）。
+    /// 名前を付けて残した選択範囲（残す・名前を変える・消す・窓。文書の持ち物で、1 回の Undo。.ylp に保存）。
     Saved(saved::SavedOp),
 }
 
@@ -306,12 +305,11 @@ pub struct SelState {
     /// 重ね表示のタイル（クイックマスクの赤・選択ペンの途中）。
     pub quick_overlay: overlay::TileOverlay,
     pub pen_overlay: overlay::TileOverlay,
-    /// 名前を付けて覚えた選択範囲（テクスチャセットごと。キーはセットの uid）。セッションの中だけで、.ylp には入れない。
-    pub saved: HashMap<u32, Vec<saved::SavedSelection>>,
-    /// 覚えた札の合計（プロジェクト全体）の上限（バイト）と、1 回のペンのストロークの作業の上限。試験が小さい値に替えて断りを通す。
+    /// 残した選択範囲の合計（プロジェクト全体）の上限（バイト）と、1 回のペンのストロークの作業の上限。試験が小さい値に替えて断りを通す。
+    /// 残した選択範囲そのものは文書（core の `Document`）が持つ。
     pub saved_budget: u64,
     pub pen_budget: u64,
-    /// 覚えた選択範囲の窓（開いていれば）。
+    /// 残した選択範囲の窓（開いていれば）。
     pub saved_window: Option<saved::SavedWindow>,
     /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
     pub animate: bool,
@@ -364,7 +362,6 @@ impl Default for SelState {
             quick: false,
             quick_overlay: overlay::TileOverlay::default(),
             pen_overlay: overlay::TileOverlay::default(),
-            saved: HashMap::new(),
             saved_budget: saved::SAVED_BUDGET_BYTES,
             pen_budget: pen::PEN_BUDGET_BYTES,
             saved_window: None,
@@ -857,8 +854,6 @@ impl AppState {
         self.sel.quick = false;
         self.sel.quick_overlay.clear();
         self.sel.pen_overlay.clear();
-        // 別のプロジェクトを開いたときは、前のセットの覚えた選択範囲を捨てる（セットを切り替えるだけなら、全部のセットが残るので何も捨てない）
-        self.sel_prune_saved();
     }
 
     /// 道具を替えたとき: 途中の形を捨てる。

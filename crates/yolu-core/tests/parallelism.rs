@@ -20,7 +20,17 @@ use yolu_core::{
 /// 0 は rayon の既定の数（全プロセッサ）。
 const DEGREES: [usize; 4] = [1, 2, 3, 0];
 
+/// この試験は、直列で描いても、ワーカーで描いても画素が同じことを確かめる。既定のしきい値は画素ごとの時間の見積もりで決まり、速いブラシの
+/// 大きなダブは直列で描くので、小さめの箱もワーカーで描かせる。どの試験にも効くよう、一度だけ決めて戻さない（経路で画素は変わらない）。
+fn force_workers() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        yolu_core::brush::set_parallel_dab_pixels(1);
+    });
+}
+
 fn with_degree<T: Send>(degree: usize, run: impl FnOnce() -> T + Send) -> T {
+    force_workers();
     if degree == 0 {
         return run();
     }

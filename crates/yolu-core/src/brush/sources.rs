@@ -248,11 +248,11 @@ impl StrokeState {
         if !smears
             && !matches!(
                 self.brush.effect,
-                BrushEffect::Clone { .. } | BrushEffect::Smudge { .. }
+                BrushEffect::Clone { .. } | BrushEffect::Smudge { .. } | BrushEffect::Blur { .. }
             )
         {
             return Err(CoreError::Unsupported(
-                "写像されたダブはクローン・指先・色の混ぜの伸ばすだけ",
+                "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ",
             ));
         }
         if points.is_some_and(|p| p.len() != pixels.len()) {

@@ -190,6 +190,7 @@ pub(crate) fn build(
             adjacency_ms,
             bvh_ms,
         },
+        projection_cache: Default::default(),
     })
 }
 

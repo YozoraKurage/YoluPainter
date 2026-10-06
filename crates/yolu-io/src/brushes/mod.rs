@@ -14,6 +14,7 @@
 
 mod abr;
 pub mod bundled;
+pub mod clipstudio;
 mod descriptor;
 mod error;
 mod gimp;
@@ -23,7 +24,6 @@ mod png_tip;
 mod reader;
 mod sut;
 
-use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -34,8 +34,8 @@ pub use error::{
     SkippedPattern, UnsupportedFile,
 };
 pub use notes::{
-    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutNote, SutTarget,
-    TextureNote, Unrepresented, VbrShape,
+    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutMapped, SutNote,
+    SutTarget, TextureNote, Unrepresented, VbrShape,
 };
 pub use reader::MAX_DECODED_BYTES;
 
@@ -104,6 +104,9 @@ pub struct ImportedBrush {
     pub brush: Brush,
     /// このブラシの設定のうち、表せない・近似した・読めなかったもの（ファイル全体の注記は [`ImportedSet::notes`]）。
     pub unrepresented: Vec<Unrepresented>,
+    /// このブラシの設定のうち、このアプリの設定へ写せたもの（今は CLIP STUDIO のものだけ。並びは [`SutMapped`] の順で重ならない）。
+    /// 近似して写したものは、ここにも `unrepresented` にも載る。
+    pub mapped: Vec<SutMapped>,
 }
 
 impl ImportedBrush {
@@ -125,7 +128,16 @@ impl ImportedBrush {
             source,
             brush,
             unrepresented,
+            mapped: Vec::new(),
         })
+    }
+
+    /// 写せた設定の一覧を付ける（並べ直して重なりを除く）。
+    pub(crate) fn with_mapped(mut self, mut mapped: Vec<SutMapped>) -> ImportedBrush {
+        mapped.sort();
+        mapped.dedup();
+        self.mapped = mapped;
+        self
     }
 }
 
@@ -163,18 +175,8 @@ pub fn import(path: &Path) -> Result<ImportedSet, BrushImportError> {
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_default();
     let kind = FileKind::from_extension(&extension)?;
-    let file = std::fs::File::open(path)?;
-    let limit = kind.max_bytes();
-    let length = file.metadata()?.len();
-    if length > limit {
-        return Err(BrushImportError::FileTooLarge { limit });
-    }
-    // 読んでいる間に伸びたファイルでも上限を超えて読まない
-    let mut bytes = Vec::with_capacity(length as usize);
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(BrushImportError::FileTooLarge { limit });
-    }
+    // 共有の読み取りでメモリへ取る（元のファイルへ書かず、読む前後で変わっていないか確かめる）
+    let bytes = clipstudio::read_stable(path, kind.max_bytes())?;
     let name = path.file_name().map(|n| pretty_name(&n.to_string_lossy()));
     import_bytes(kind, &bytes, name.as_deref())
 }

@@ -4,14 +4,18 @@
 //!   しない）。テクスチャは乗算済みで、行は core と同じ下から上（CPU の表示と同じ向き）。乗算済みへの変換の式は CPU の表示
 //!   （`Color32::from_rgba_unmultiplied`）と同じ整数の式だが、合成の画素は GPU が f32、CPU が f64 の丸めなので、窓の絵で最大 1、
 //!   多段の文書で 2 以内の差が出得る（表示だけの差）。
+//! - GPU が合成できる文書: ラスター・塗りつぶし・マスク・クリッピング・26 の合成モード・チャンネルごとの合成・通過でも独立でも
+//!   グループ（不透明度・マスク・クリッピング）・調整の層（全種類）・法線の種類のチャンネル・効果（フィルター・Generator・塗りつぶしの
+//!   グラデーションと投影・マスクのフィルター）のある文書。効果の出力は CPU（core）が評価して、タイルとして GPU へ上げる
+//!   （効果の計算そのものは CPU のまま）。
 //! - 見せるだけの写しで、保存・書き出し・3D ビューの値は core の正本（CPU）から作る。この道は正本を読むだけで書かない。
-//! - 使えないときは理由を覚えて CPU の表示へ落ちる（[`Fallback`]）。理由が文書の中身（調整の層・独立のグループなど）なら
+//! - 使えないときは理由を覚えて CPU の表示へ落ちる（[`Fallback`]）。理由が文書の中身（グループの入れ子が深すぎるなど）なら
 //!   文書が変わったときに、装置や予算の失敗なら文書・チャンネル・層の数が変わったときにだけ、GPU を試し直す。毎フレームは試さない。
 //!   文書を別のものに替えたとき（同じ文書 ID でも）は、[`GpuCanvas::invalidate`] で前の文書の常駐と失敗の記憶を捨てて作り直す。
-//! - 予算（[`RESIDENT_BUDGET`]）は表示のテクスチャ・入力の GPU のコピーと同量の CPU のコピー・作業域の合計。描いたタイルを全部
-//!   常駐させて予算を超える文書は CPU へ落ちる（追い出しながら合成すると、層の不透明度などの全面の変更のたびに全タイルを
-//!   上げ直して、CPU より何倍も遅いため）。予算の境で行き来しないよう、戻るのは予算の 8 割に収まってから。デバイスの上限を
-//!   超える大きさは、GPU を試して失敗した理由を覚えて CPU へ落ちる。
+//! - 予算（[`RESIDENT_BUDGET`]）は表示のテクスチャ・入力の GPU のコピーと同量の CPU のコピー・作業域（命令の並びと調整の表を含む）の
+//!   合計。描いたタイル（効果のある層は持ち得るタイルの上限）を全部常駐させて予算を超える文書は CPU へ落ちる（追い出しながら
+//!   合成すると、層の不透明度などの全面の変更のたびに全タイルを上げ直して、CPU より何倍も遅いため）。予算の境で行き来しないよう、
+//!   戻るのは予算の 8 割に収まってから。デバイスの上限を超える大きさは、GPU を試して失敗した理由を覚えて CPU へ落ちる。
 
 use eframe::egui_wgpu::{self, wgpu};
 use yolu_gpu::{
@@ -59,14 +63,6 @@ impl CanvasBackend {
     }
 }
 
-/// そのチャンネルの合成に、評価で決まる画素（効果）が入るか: 有効なフィルター・塗りつぶしのグラデーションと画像の投影・マスクのフィルター。
-/// 層の画素・塗りつぶしの値を読む GPU の合成には、これが入らない。
-pub fn has_effects(doc: &Document, channel: Channel) -> bool {
-    doc.layers()
-        .iter()
-        .any(|l| l.has_evaluated_output(channel) || l.mask().is_some_and(|m| m.has_active_filters()))
-}
-
 /// 今、表示の合成がどちらか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shown {
@@ -83,11 +79,8 @@ pub enum Fallback {
     NoDevice,
     /// ソフトウェアのアダプター（`Auto` のとき）。
     SoftwareAdapter,
-    /// この文書の中身を GPU で合成できない（調整の層・独立のグループ・法線の種類のチャンネル）。
+    /// この文書の中身を GPU で合成できない（グループの入れ子が深すぎる・文書にないチャンネル）。
     Unsupported(Unsupported),
-    /// 評価で決まる画素（有効なフィルター・Generator・塗りつぶしのグラデーションと投影・マスクの効果）がある。GPU の合成は層の保存した
-    /// 画素と塗りつぶしの値を読むので、効果が入らない。効果の評価は CPU（core）で行う。
-    Effects,
     /// 描いたタイルを全部常駐させると GPU のメモリの予算を超える（文書が小さくなれば戻る）。
     OverBudget,
     /// GPU の初期化・実行の失敗（デバイスの上限の超過を含む）。
@@ -151,31 +144,13 @@ impl Fallback {
                 Unsupported::UnknownChannel => lang
                     .pick("文書にないチャンネルです", "Unknown channel")
                     .into(),
-                Unsupported::NormalChannel => lang
+                Unsupported::GroupDepth => lang
                     .pick(
-                        "法線のチャンネルは GPU で合成できません",
-                        "Normal channels are composited on the CPU",
-                    )
-                    .into(),
-                Unsupported::AdjustmentLayer => lang
-                    .pick(
-                        "調整の層は GPU で合成できません",
-                        "Adjustment layers are composited on the CPU",
-                    )
-                    .into(),
-                Unsupported::IsolatedGroup => lang
-                    .pick(
-                        "独立したグループは GPU で合成できません",
-                        "Isolated groups are composited on the CPU",
+                        "グループの入れ子が深すぎて GPU で合成できません",
+                        "Groups are nested too deeply to composite on the GPU",
                     )
                     .into(),
             },
-            Fallback::Effects => lang
-                .pick(
-                    "効果のある文書は GPU で合成できません",
-                    "Documents with effects are composited on the CPU",
-                )
-                .into(),
             Fallback::OverBudget => lang
                 .pick("GPU のメモリの予算を超えます", "Over the GPU memory budget")
                 .into(),
@@ -217,8 +192,6 @@ impl FailureKey {
 #[derive(Clone, Copy, Debug)]
 struct Checked {
     supported: Result<(), Unsupported>,
-    /// そのチャンネルに、評価で決まる画素（効果）があるか。
-    effects: bool,
     /// 全部を常駐させるのに要る量（見積もれなければ None。デバイスの上限を超える文書は GPU を試して失敗を覚える）。
     needed: Option<u64>,
 }
@@ -338,7 +311,6 @@ impl GpuCanvas {
                 let options = Self::options(self.budget);
                 let c = Checked {
                     supported: yolu_gpu::supports(doc, channel),
-                    effects: has_effects(doc, channel),
                     needed: resident_requirements(doc, channel, &options, &rs.device.limits())
                         .ok()
                         .map(|r| r.total_bytes()),
@@ -349,9 +321,6 @@ impl GpuCanvas {
         };
         if let Err(u) = checked.supported {
             return Some(Fallback::Unsupported(u));
-        }
-        if checked.effects {
-            return Some(Fallback::Effects);
         }
         if policy == CanvasBackend::Auto
             && rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu
@@ -590,46 +559,14 @@ mod tests {
             .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
     }
 
-    /// 効果のある文書は GPU の合成に任せない（GPU は層の保存した画素を読むので、フィルター・Generator が入らない）。
-    #[test]
-    fn documents_with_effects_are_not_left_to_the_gpu_composite() {
-        use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
-        let mut doc = Document::with_tile_size(32, 32, 16).unwrap();
-        let layer = doc.add_layer("a").unwrap();
-        assert!(!has_effects(&doc, Channel::Color));
-        // 無効・強さ 0 の段は結果を変えないので、効果ではない
-        let id = doc
-            .add_filter(
-                layer,
-                FilterTarget::Content,
-                FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]).disabled(),
-            )
-            .unwrap();
-        assert!(!has_effects(&doc, Channel::Color));
-        doc.set_filter_enabled(layer, id, true).unwrap();
-        assert!(has_effects(&doc, Channel::Color));
-        // 描くチャンネルでなければ（そのチャンネルに掛からない段なら）GPU でよい
-        assert!(!has_effects(&doc, Channel::Roughness));
-        doc.remove_filter(layer, id).unwrap();
-        assert!(!has_effects(&doc, Channel::Color));
-        // マスクの効果
-        doc.add_layer_mask(layer).unwrap();
-        doc.add_filter(layer, FilterTarget::Mask, FilterSpec::new(EffectSettings::blur(2))).unwrap();
-        assert!(has_effects(&doc, Channel::Color));
-        assert!(has_effects(&doc, Channel::Roughness), "マスクは全チャンネルで共有");
-    }
-
     #[test]
     fn every_reason_reads_in_both_languages() {
         let reasons = [
             Fallback::Policy,
             Fallback::NoDevice,
             Fallback::SoftwareAdapter,
-            Fallback::Effects,
             Fallback::Unsupported(Unsupported::UnknownChannel),
-            Fallback::Unsupported(Unsupported::NormalChannel),
-            Fallback::Unsupported(Unsupported::AdjustmentLayer),
-            Fallback::Unsupported(Unsupported::IsolatedGroup),
+            Fallback::Unsupported(Unsupported::GroupDepth),
             Fallback::OverBudget,
         ];
         // 失敗は種類ごとに、yolu-gpu の日本語の文を持っていても、画面の言語の文だけを出す

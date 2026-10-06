@@ -420,14 +420,12 @@ fn brush_row(
         if selected {
             live
         } else {
-            let effective = app
-                .brushes
-                .lib
-                .entry(key)
-                .map(|e| e.effective().clone())
-                .unwrap_or_default();
+            let entry = app.brushes.lib.entry(key);
+            let effective = entry.map(|e| e.effective().clone()).unwrap_or_default();
+            // 入り抜き・手ぶれ補正を持つブラシは、見本も持つ値で描く（持たないブラシは、選んでいるブラシによらず描き手の設定）
+            let assist = app.brush_row_assist(entry.and_then(|e| e.assist));
             Brush {
-                assist: live.assist,
+                assist,
                 ..effective
             }
         }
@@ -442,23 +440,7 @@ fn brush_row(
 
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, name));
-    let mut tooltip = if modified {
-        lang.pick(format!("{name}（変更あり）"), format!("{name} (modified)"))
-    } else {
-        name.to_owned()
-    };
-    if let Some(meta) = &import {
-        if !meta.source.is_empty() {
-            tooltip.push('\n');
-            tooltip.push_str(&meta.source);
-        }
-        if !gaps.is_empty() {
-            let names: Vec<&str> = gaps.iter().map(|g| g.name(lang)).collect();
-            tooltip.push('\n');
-            tooltip.push_str(lang.pick("表せなかった項目: ", "Not represented: "));
-            tooltip.push_str(&names.join(lang.pick("、", ", ")));
-        }
-    }
+    let tooltip = crate::brushes::gaps::row_tooltip(lang, name, modified, import.as_ref());
     let _ = response.on_hover_text(tooltip);
 }
 
@@ -533,6 +515,21 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         app.apply(Action::Brush(BrushAction::ImportDialog));
     }
     if with_import {
+        x -= 28.0;
+        if w::icon_button(
+            ui,
+            button(x),
+            "brush.import_csp",
+            "folder_open",
+            lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"),
+            app.brushes.csp.open,
+            !app.brushes.import.is_busy(),
+            17.0,
+        )
+        .clicked()
+        {
+            app.apply(Action::Brush(BrushAction::ClipStudioOpen));
+        }
         x -= 28.0;
     }
     if w::icon_button(

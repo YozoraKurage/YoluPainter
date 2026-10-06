@@ -7,7 +7,7 @@
 use super::*;
 
 impl Document {
-    /// 履歴を持たない保存用の写しを取る。文書・層・チャンネルの ID と属性・マスク・選択範囲・Normal の設定・手動の ID 色・見た目の設定・
+    /// 履歴を持たない保存用の写しを取る。文書・層・チャンネルの ID と属性・マスク・選択範囲・残した選択範囲・Normal の設定・手動の ID 色・見た目の設定・
     /// `revision` を保ち、タイルは共有する（画素のコピーはしない）。呼んだあとは元を編集してよく、写しは別のスレッドへ
     /// 渡して読める。進行中のストロークがあれば断り、元は何も変えない。
     pub fn capture_snapshot(&self) -> Result<Document, CoreError> {
@@ -22,6 +22,7 @@ impl Document {
             channels,
             normal_settings,
             selection,
+            saved_selections,
             id_colors,
             look,
             received_look,
@@ -57,6 +58,7 @@ impl Document {
         copy.channels = channels.clone();
         copy.normal_settings = *normal_settings;
         copy.selection = selection.clone();
+        copy.saved_selections = saved_selections.clone();
         copy.id_colors = id_colors.clone();
         copy.look = look.clone();
         copy.received_look = received_look.clone();

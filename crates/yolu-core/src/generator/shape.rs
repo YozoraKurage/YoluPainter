@@ -76,18 +76,57 @@ impl Volume {
             r[2] * p[0] + r[5] * p[1] + r[8] * p[2],
         ]))
     }
-    pub(super) fn local_value(&self, [x, y, z]: [f64; 3]) -> f64 {
+    pub(super) fn local_value(&self, p: [f64; 3]) -> f64 {
+        self.local().value(p)
+    }
+    /// 形の座標での値の式を、点ごとに変わらない量（半分の大きさ・減衰の幅）を先に出した形で返す。
+    pub(super) fn local(&self) -> Local {
         let [hx, hy, hz] = self.size.map(|s| s / 2.);
-        let band = if self.shape == Shape::Sphere {
-            self.falloff * hx
-        } else {
-            self.falloff * hx.min(hy.min(hz))
+        Local {
+            shape: self.shape,
+            half: [hx, hy, hz],
+            band: if self.shape == Shape::Sphere {
+                self.falloff * hx
+            } else {
+                self.falloff * hx.min(hy.min(hz))
+            },
+            plane_scale: 1. / self.size[1],
+        }
+    }
+}
+/// `Volume::local` の結果。`value` は `Volume::local_value` と同じ式。
+#[derive(Clone, Copy)]
+pub(super) struct Local {
+    shape: Shape,
+    half: [f64; 3],
+    band: f64,
+    plane_scale: f64,
+}
+/// `Local::eval` の形の指定（`Shape` の番号）。
+pub(super) const BOX: u8 = Shape::Box as u8;
+pub(super) const SPHERE: u8 = Shape::Sphere as u8;
+pub(super) const PLANE: u8 = Shape::Plane as u8;
+impl Local {
+    pub(super) fn shape(&self) -> Shape {
+        self.shape
+    }
+    pub(super) fn value(&self, p: [f64; 3]) -> f64 {
+        match self.shape {
+            Shape::Box => self.eval::<BOX>(p),
+            Shape::Sphere => self.eval::<SPHERE>(p),
+            Shape::Plane => self.eval::<PLANE>(p),
+        }
+    }
+    /// 形が決まっている版（行のループの外で形を選ぶ）。
+    #[inline(always)]
+    pub(super) fn eval<const SHAPE: u8>(&self, [x, y, z]: [f64; 3]) -> f64 {
+        let [hx, hy, hz] = self.half;
+        let d = match SHAPE {
+            BOX => (hx - x.abs()).min(hy - y.abs()).min(hz - z.abs()),
+            SPHERE => hx - (x * x + y * y + z * z).sqrt(),
+            _ => return clamp01(0.5 + y * self.plane_scale),
         };
-        let d = match self.shape {
-            Shape::Box => (hx - x.abs()).min(hy - y.abs()).min(hz - z.abs()),
-            Shape::Sphere => hx - (x * x + y * y + z * z).sqrt(),
-            Shape::Plane => return clamp01(0.5 + y * (1. / self.size[1])),
-        };
+        let band = self.band;
         if d <= 0. {
             0.
         } else if band <= 0. || d >= band {

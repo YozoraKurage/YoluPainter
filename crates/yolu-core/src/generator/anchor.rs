@@ -57,6 +57,13 @@ pub fn validate_points(points: &[Point], layer_count: usize) -> Result<(), Error
 pub trait ValueSource: Sync {
     fn dimensions(&self) -> (u32, u32);
     fn value(&self, x: u32, y: u32) -> Option<f64>;
+    /// 行 `y` の `x0` から `out.len()` 画素の値。値を持たない画素は `f64::NAN`（値は有限な 0..1 なので取り違えない）。
+    /// 既定は `value` の繰り返し。連続した行をまとめて読める実装は置き換えられる。
+    fn value_row(&self, x0: u32, y: u32, out: &mut [f64]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = self.value(x0 + i as u32, y).unwrap_or(f64::NAN);
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Read {
@@ -121,6 +128,21 @@ pub struct LayerSample<'a> {
     pub source: &'a dyn Source,
     pub read: Read,
 }
+impl LayerSample<'_> {
+    fn read_value(&self, p: Rgba8) -> f64 {
+        let a = UNIT[p.a as usize];
+        match self.read {
+            Read::Coverage => a,
+            Read::Scalar => UNIT[p.r as usize] * a,
+            Read::Color => {
+                (0.3 * UNIT[p.r as usize] + 0.59 * UNIT[p.g as usize] + 0.11 * UNIT[p.b as usize])
+                    * a
+            }
+        }
+    }
+}
+/// 行をまとめて読むときの 1 回の画素数。
+const ROW_CHUNK: usize = 256;
 impl ValueSource for LayerSample<'_> {
     fn dimensions(&self) -> (u32, u32) {
         self.source.dimensions()
@@ -130,16 +152,26 @@ impl ValueSource for LayerSample<'_> {
         if x >= w || y >= h {
             return None;
         }
-        let p = self.source.pixel(x, y);
-        let a = UNIT[p.a as usize];
-        Some(match self.read {
-            Read::Coverage => a,
-            Read::Scalar => UNIT[p.r as usize] * a,
-            Read::Color => {
-                (0.3 * UNIT[p.r as usize] + 0.59 * UNIT[p.g as usize] + 0.11 * UNIT[p.b as usize])
-                    * a
+        Some(self.read_value(self.source.pixel(x, y)))
+    }
+    fn value_row(&self, x0: u32, y: u32, out: &mut [f64]) {
+        let (w, h) = self.dimensions();
+        let inside = if y >= h || x0 >= w {
+            0
+        } else {
+            out.len().min((w - x0) as usize)
+        };
+        let (head, tail) = out.split_at_mut(inside);
+        tail.fill(f64::NAN);
+        let mut bytes = [0u8; ROW_CHUNK * 4];
+        for (n, chunk) in head.chunks_mut(ROW_CHUNK).enumerate() {
+            let bytes = &mut bytes[..chunk.len() * 4];
+            self.source
+                .read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
+            for (o, p) in chunk.iter_mut().zip(bytes.chunks_exact(4)) {
+                *o = self.read_value(Rgba8::from_slice(p));
             }
-        })
+        }
     }
 }
 #[derive(Clone, Copy)]
@@ -161,7 +193,14 @@ impl Mask<'_> {
         if !self.enabled {
             return 1.;
         }
-        let h = UNIT[self.source.pixel(x, y).a as usize];
+        self.factor_of_alpha(self.source.pixel(x, y).a)
+    }
+    /// マスクの画素のアルファ `a` から見える量（有効なマスク用。無効なら 1）。
+    fn factor_of_alpha(&self, a: u8) -> f64 {
+        if !self.enabled {
+            return 1.;
+        }
+        let h = UNIT[a as usize];
         if self.inverted {
             1. - self.density * (1. - h)
         } else {
@@ -185,6 +224,30 @@ impl ValueSource for MaskSample<'_> {
     fn value(&self, x: u32, y: u32) -> Option<f64> {
         let (w, h) = self.dimensions();
         (x < w && y < h).then(|| self.mask.factor(x, y))
+    }
+    fn value_row(&self, x0: u32, y: u32, out: &mut [f64]) {
+        let (w, h) = self.dimensions();
+        let inside = if y >= h || x0 >= w {
+            0
+        } else {
+            out.len().min((w - x0) as usize)
+        };
+        let (head, tail) = out.split_at_mut(inside);
+        tail.fill(f64::NAN);
+        if !self.mask.enabled {
+            head.fill(1.);
+            return;
+        }
+        let mut bytes = [0u8; ROW_CHUNK * 4];
+        for (n, chunk) in head.chunks_mut(ROW_CHUNK).enumerate() {
+            let bytes = &mut bytes[..chunk.len() * 4];
+            self.mask
+                .source
+                .read_row(x0 + (n * ROW_CHUNK) as u32, y, bytes);
+            for (o, p) in chunk.iter_mut().zip(bytes.chunks_exact(4)) {
+                *o = self.mask.factor_of_alpha(p[3]);
+            }
+        }
     }
 }
 /// 1 チャンネルの評価済み入力。グループのフィルターは統合側で画像へ評価して渡す。

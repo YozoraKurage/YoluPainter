@@ -125,6 +125,12 @@ impl SurfaceGeometry {
                 adjacency_ms: 0.0,
                 bvh_ms,
             },
+            projection_cache: std::sync::Mutex::new(
+                self.projection_cache
+                    .lock()
+                    .map(|c| c.clone())
+                    .unwrap_or_default(),
+            ),
         })
     }
 

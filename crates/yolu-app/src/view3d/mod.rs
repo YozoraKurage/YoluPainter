@@ -112,6 +112,11 @@ pub struct View3dState {
     pub pose: pose::PoseEditor,
     /// クローンの元と設定。
     pub clone: clone_source::CloneState,
+    /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
+    /// （`Settings::view3d_paint`）。
+    pub projection: yolu_core::geometry::ProjectionSettings,
+    /// 3D の塗りの切り替えのスライダーをドラッグしている（その間は設定のファイルに書かず、離したときの値を書く）。
+    pub projection_dragging: bool,
     /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
     /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,

@@ -9,3 +9,7 @@
 
 /tests/snapshots/
 *.diff.png
+
+# Python のバイトコードのキャッシュ（ツールの試験を回すと tools/ に出る）
+__pycache__/
+*.pyc

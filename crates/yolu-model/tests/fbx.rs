@@ -3,10 +3,16 @@
 //! BlendShape の重みを上書きしたポーズ）を、Unity の座標に反転したもの。
 mod common;
 
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
 use common::fbx_ascii::{arm_scene, box_tube, Node, Scene};
 use yolu_core::glam::{DVec3, Quat, Vec3};
 use yolu_core::skin::{Pose, RigBudget, RigError};
-use yolu_model::{load_fbx, load_fbx_bytes, ModelError, ModelLimits};
+use yolu_model::{
+    load_fbx, load_fbx_bytes, load_fbx_bytes_with, load_fbx_with, LoadControl, ModelError,
+    ModelLimits,
+};
 
 fn mirror(v: DVec3) -> Vec3 {
     Vec3::new(-v.x as f32, v.y as f32, v.z as f32)
@@ -485,7 +491,9 @@ fn reading_a_file_leaves_it_unchanged() {
     let path = dir.join("腕.fbx");
     let text = arm_scene().to_ascii();
     std::fs::write(&path, &text).unwrap();
-    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    // 更新時刻を少し前にしておく（書き直されたら今の時刻になって食い違う。時刻の粒度で同じ値に見えて見逃さない）
+    let before = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(before).unwrap();
     let m = load_fbx(&path, &ModelLimits::default()).unwrap();
     assert_eq!(m.rig.name(), "腕", "名前はファイル名");
     assert_eq!(std::fs::read(&path).unwrap(), text.as_bytes());
@@ -542,4 +550,235 @@ fn centimetres_and_z_up_files_read_to_the_same_metres_and_y_up() {
             assert!((*p - q).length() < 1e-5, "{what} の骨: {p} と {q}");
         }
     }
+}
+
+// ---- 読み込みの取り消しと進み具合 ----
+
+/// 数 MB の ASCII の FBX（四角い筒 1 つ。ufbx の解析の呼び返しが何百回も来る大きさ。スキンは無い）。
+fn big_fbx() -> String {
+    let mut scene = Scene {
+        nodes: vec![Node::new("Big", None, [0.0; 3], false)],
+        materials: vec!["A".into(), "B".into()],
+        ..Scene::default()
+    };
+    let mut tube = box_tube("Big", 0, 100.0, 0.0, 0.5, 3000);
+    tube.materials = vec![0, 1];
+    scene.meshes.push(tube);
+    scene.to_ascii()
+}
+
+/// 進み具合を全部覚え、`stop_at` に届いたら旗を立てる（その時点の呼び返しの中で立てるので、止まる場所が決まる）。
+struct Probe {
+    cancel: AtomicBool,
+    seen: RefCell<Vec<f32>>,
+    stop_at: Cell<Option<f32>>,
+}
+
+impl Probe {
+    fn new(stop_at: Option<f32>) -> Probe {
+        Probe {
+            cancel: AtomicBool::new(false),
+            seen: RefCell::new(Vec::new()),
+            stop_at: Cell::new(stop_at),
+        }
+    }
+    fn note(&self, f: f32) {
+        self.seen.borrow_mut().push(f);
+        if self.stop_at.get().is_some_and(|at| f >= at) {
+            self.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    fn last(&self) -> f32 {
+        self.seen.borrow().last().copied().unwrap_or(-1.0)
+    }
+}
+
+fn run_bytes(data: &[u8], probe: &Probe) -> Result<yolu_model::LoadedModel, ModelError> {
+    let note = |f: f32| probe.note(f);
+    load_fbx_bytes_with(
+        data,
+        "大",
+        &ModelLimits::default(),
+        LoadControl {
+            cancel: Some(&probe.cancel),
+            progress: Some(&note),
+        },
+    )
+}
+
+#[test]
+fn progress_reports_from_zero_to_one_without_going_back() {
+    let text = big_fbx();
+    let probe = Probe::new(None);
+    let model = run_bytes(text.as_bytes(), &probe).expect("読める");
+    assert!(model.rig.triangle_count() > 20000);
+    let seen = probe.seen.borrow();
+    assert_eq!(seen.first(), Some(&0.0));
+    assert_eq!(seen.last(), Some(&1.0));
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "戻らず、同じ値を繰り返さない");
+    // 解析の間にも細かく来る（解析の終わりの 1 回だけではない）
+    assert!(seen.iter().filter(|f| **f > 0.05 && **f < 0.6).count() > 20, "{}", seen.len());
+    // 間引かれる（面ごと・16 KiB ごとに全部は来ない）
+    assert!(seen.len() < 700, "{}", seen.len());
+}
+
+#[test]
+fn cancelling_during_the_parse_stops_there_and_returns_nothing() {
+    let text = big_fbx();
+    let probe = Probe::new(Some(0.2));
+    let result = run_bytes(text.as_bytes(), &probe);
+    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
+    // 旗を立てた呼び返しの次の区切りで止まり、解析の残りも変換も走らない
+    assert!(probe.last() < 0.3, "{}", probe.last());
+    assert_eq!(ModelError::Cancelled.to_string(), "取り消しました");
+}
+
+#[test]
+fn cancelling_during_the_conversion_stops_before_the_rig_is_built() {
+    let text = big_fbx();
+    // 解析が終わったあとの変換の途中（面の区切り）で止める
+    let probe = Probe::new(Some(0.7));
+    let result = run_bytes(text.as_bytes(), &probe);
+    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
+    assert!(probe.last() >= 0.7 && probe.last() < 0.98, "{}", probe.last());
+    assert!(!probe.seen.borrow().contains(&1.0), "終わりの知らせは来ない");
+}
+
+#[test]
+fn a_flag_that_is_already_up_stops_before_anything_is_read() {
+    let probe = Probe::new(None);
+    probe.cancel.store(true, Ordering::Relaxed);
+    let text = arm_scene().to_ascii();
+    let result = run_bytes(text.as_bytes(), &probe);
+    assert!(matches!(result, Err(ModelError::Cancelled)));
+    assert!(probe.seen.borrow().is_empty(), "何も始めない");
+
+    let dir = std::env::temp_dir().join(format!("yolu-model-cancel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("腕.fbx");
+    std::fs::write(&path, &text).unwrap();
+    let result = load_fbx_with(
+        &path,
+        &ModelLimits::default(),
+        LoadControl {
+            cancel: Some(&probe.cancel),
+            progress: None,
+        },
+    );
+    assert!(matches!(result, Err(ModelError::Cancelled)));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn cancelling_while_the_file_is_read_stops_before_the_parse() {
+    let dir = std::env::temp_dir().join(format!("yolu-model-cancel-read-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("大.fbx");
+    std::fs::write(&path, big_fbx()).unwrap();
+    // 読み始めの知らせ（0.0）の呼び返しで旗を立てる: 最初の塊を読んだあとの区切りで止まる
+    let probe = Probe::new(Some(0.0));
+    let note = |f: f32| probe.note(f);
+    let result = load_fbx_with(
+        &path,
+        &ModelLimits::default(),
+        LoadControl {
+            cancel: Some(&probe.cancel),
+            progress: Some(&note),
+        },
+    );
+    assert!(matches!(result, Err(ModelError::Cancelled)), "{:?}", result.err());
+    assert!(probe.last() <= 0.05, "解析に進まない: {}", probe.last());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn loading_from_a_file_reports_progress_and_matches_loading_the_bytes() {
+    let dir = std::env::temp_dir().join(format!("yolu-model-progress-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("腕.fbx");
+    let text = arm_scene().to_ascii();
+    std::fs::write(&path, &text).unwrap();
+    let probe = Probe::new(None);
+    let note = |f: f32| probe.note(f);
+    let from_file = load_fbx_with(
+        &path,
+        &ModelLimits::default(),
+        LoadControl {
+            cancel: Some(&probe.cancel),
+            progress: Some(&note),
+        },
+    )
+    .unwrap();
+    let from_bytes = load_fbx(&path, &ModelLimits::default()).unwrap();
+    assert_eq!(from_file.report.triangles, from_bytes.report.triangles);
+    assert_eq!(from_file.rig.name(), "腕");
+    assert_eq!(probe.seen.borrow().first(), Some(&0.0));
+    assert_eq!(probe.seen.borrow().last(), Some(&1.0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 別のスレッドから取り消す: 読み込みのスレッドは、旗が立つまで解析の途中で待ち、立った次の区切りで止まる。
+#[test]
+fn another_thread_can_cancel_a_load_that_is_in_the_middle_of_the_parse() {
+    let text = big_fbx();
+    let cancel = AtomicBool::new(false);
+    let reached = AtomicBool::new(false);
+    let last = AtomicU32::new(0);
+    let result = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            let note = |f: f32| {
+                last.store((f * 1000.0) as u32, Ordering::Relaxed);
+                if f >= 0.2 {
+                    reached.store(true, Ordering::Release);
+                    // 取り消しが来るまで進まない（遅い読み込みの代わり。最大 20 秒で諦める）
+                    let wait = std::time::Instant::now();
+                    while !cancel.load(Ordering::Relaxed) && wait.elapsed().as_secs() < 20 {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+            };
+            load_fbx_bytes_with(
+                text.as_bytes(),
+                "大",
+                &ModelLimits::default(),
+                LoadControl {
+                    cancel: Some(&cancel),
+                    progress: Some(&note),
+                },
+            )
+            .map(|m| m.rig.triangle_count())
+        });
+        while !reached.load(Ordering::Acquire) {
+            assert!(!worker.is_finished(), "取り消す前に終わった");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        cancel.store(true, Ordering::Relaxed);
+        worker.join().unwrap()
+    });
+    assert!(matches!(result, Err(ModelError::Cancelled)), "{result:?}");
+    assert!(last.load(Ordering::Relaxed) < 300, "{}", last.load(Ordering::Relaxed));
+}
+
+/// 呼び返しの中の panic は、ufbx の C の関数を抜けずに、解析が戻ってから呼び手へそのまま出る（異常終了にしない）。
+#[test]
+fn a_panic_in_the_progress_callback_reaches_the_caller_after_the_parse_unwinds() {
+    let text = big_fbx();
+    let note = |f: f32| {
+        if f >= 0.2 {
+            panic!("試験の panic");
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        load_fbx_bytes_with(
+            text.as_bytes(),
+            "大",
+            &ModelLimits::default(),
+            LoadControl {
+                cancel: None,
+                progress: Some(&note),
+            },
+        )
+    }));
+    let payload = outcome.expect_err("panic が出る");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"試験の panic"));
 }

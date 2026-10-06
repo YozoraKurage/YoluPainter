@@ -23,16 +23,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::Vec2;
-use yolu_core::mesh_maps::BakedMeshMap;
-use yolu_core::Document;
-use yolu_io::{
-    composite_pngs, shelf::Shelf, BackupKeep, DocumentSource, Inventory, Project, Removal,
-    SaveTarget, SetSpec,
-};
+use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
-use crate::sets::MaterialRef;
 use crate::state::{Action, AppState, DialogRequest};
 
 /// 準備・書き込みのスレッドのスタック（正本への詰め直しと合成の再帰に足りる大きさ）。
@@ -187,7 +181,7 @@ pub fn default_name(state: &AppState) -> String {
 /// 保存先を選ぶ窓（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（窓は開いたまま）。
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
-    let mut dialog = rfd::FileDialog::new()
+    let mut dialog = crate::dialog::file()
         .set_title(lang.pick("配布用に保存", "Save for Distribution"))
         .add_filter(
             lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
@@ -355,6 +349,15 @@ impl AppState {
             self.message = lang
                 .pick("PSD を処理中です。", "A PSD job is running.")
                 .into();
+            return;
+        }
+        // 保存の間は、開いた .ylp のハンドルから読む写しを作らない（保存が置換のためにそのハンドルを手放すことがある）
+        if self.is_saving() {
+            self.message = format!(
+                "{}: {}",
+                lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                crate::project::busy_reason(lang)
+            );
             return;
         }
         let capture = match capture(self) {
@@ -551,106 +554,16 @@ impl AppState {
 
 // ───────── 材料と組み立て ─────────
 
-/// 1 セット分の材料。
-struct SetCapture {
-    id: String,
-    name: String,
-    material: MaterialRef,
-    /// 文書の写し（読むだけのセットは無い。選択範囲・見た目・Unity の値はここから）。
-    snapshot: Option<Arc<Document>>,
-    /// 正本・合成の PNG を作り直すか（開いた時のファイルに無い、または開いた・保存した時から変わった）。
-    rewrite: bool,
-}
-
-/// 準備の材料（別のスレッドへ渡す。保存 `project::save` と同じ並びで、今の状態の完全な写しを組むもの）。
-struct Capture {
-    sets: Vec<SetCapture>,
-    current: String,
-    base: Option<Arc<Project>>,
-    /// 開いたあとに文書を別の物に替えたセット（古い PSD の原本を持ち越さない）。
-    replaced: Vec<String>,
-    /// アセットの棚（変えていて読めるときだけ。変えていなければ開いたファイルのバイト列のまま）。
-    shelf: Option<Shelf>,
-    /// まだ .ylp に書いていないメッシュマップ（セットの ID ごと）。
-    maps: Vec<(String, Vec<Arc<BakedMeshMap>>)>,
-    model: Option<PathBuf>,
-    /// 開いているファイルの場所（モデルの相対のパスの基準。無ければ空）。
-    open_path: PathBuf,
-    /// Unity から受けた値を写しに書くか（設定。切っていれば外す）。
-    keep_received: bool,
-    lang: Lang,
-}
-
-/// 材料を取る（文書は変えない。写しはタイルを共有する）。取れなければ理由。
-fn capture(state: &AppState) -> Result<Capture, String> {
-    let lang = state.lang;
-    if state.is_stroking() {
-        return Err(lang
-            .pick("描いている間は保存しません", "Cannot save during a stroke")
-            .into());
-    }
-    let base = state.project.as_ref().map(|p| p.project_shared());
-    let mut sets = Vec::with_capacity(state.sets.len());
-    let mut maps = Vec::new();
-    for (i, set) in state.sets.iter().enumerate() {
-        let doc = state.set_doc(i);
-        let in_base = base
-            .as_ref()
-            .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id));
-        let read_only = set.read_only.is_some();
-        if read_only && !in_base {
-            return Err(lang.pick(
-                format!("読むだけのセット「{}」の元の文書がありません", set.name),
-                format!("Original document missing for read-only set “{}”", set.name),
-            ));
-        }
-        let unchanged = set.saved == Some((doc.id(), doc.revision()));
-        let rewrite = !(in_base && (read_only || unchanged));
-        let snapshot = if read_only {
-            None
-        } else {
-            Some(Arc::new(doc.capture_snapshot().map_err(|e| lang.core_error(&e))?))
-        };
-        let unsaved = set.mesh_maps.unsaved();
-        if !unsaved.is_empty() {
-            maps.push((set.id.clone(), unsaved));
-        }
-        sets.push(SetCapture {
-            id: set.id.clone(),
-            name: set.name.clone(),
-            material: set.material.clone(),
-            snapshot,
-            rewrite,
-        });
-    }
-    let replaced = crate::project::replaced_sets(
-        base.as_deref(),
-        state
-            .sets
-            .iter()
-            .enumerate()
-            .filter(|(_, set)| set.read_only.is_none())
-            .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
-    );
-    let open_path = state
+/// 材料（文書の写し・棚・メッシュマップ・モデル）は保存と同じ（`project::capture`）。モデルの相対のパスは、開いているファイルの場所を
+/// 基準にして組み、書くときに選んだ保存先に合わせて付け直す。
+fn capture(state: &AppState) -> Result<crate::project::capture::Capture, String> {
+    let anchor = state
         .project
         .as_ref()
         .filter(|p| p.is_file())
         .map(|p| p.path().to_path_buf())
-        .unwrap_or_default();
-    Ok(Capture {
-        sets,
-        current: state.sets.current().id.clone(),
-        base,
-        replaced,
-        shelf: (state.shelf.changed && state.shelf.unavailable.is_none())
-            .then(|| state.shelf.shelf().clone()),
-        maps,
-        model: state.np.model_file.clone(),
-        open_path,
-        keep_received: state.prefs.settings.livelink_keep_values,
-        lang,
-    })
+        .unwrap_or_else(|| PathBuf::from("untitled.ylp"));
+    crate::project::capture::capture(state, anchor)
 }
 
 fn io_failure(lang: Lang, e: &yolu_io::Error) -> Failure {
@@ -658,133 +571,17 @@ fn io_failure(lang: Lang, e: &yolu_io::Error) -> Failure {
 }
 
 /// 材料から、今の状態の完全な写しの `Project`（保存が書くのと同じ形。除く前）を組む（別のスレッドで動かす）。
-fn build(capture: &Capture, cancel: &AtomicBool) -> Result<Prepared, Failure> {
-    let lang = capture.lang;
-    let io = |e: yolu_io::Error| io_failure(lang, &e);
-    let mut specs = Vec::with_capacity(capture.sets.len());
-    for set in &capture.sets {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(Failure::Canceled);
-        }
-        let (document, composites) = if set.rewrite {
-            let doc = set
-                .snapshot
-                .as_ref()
-                .expect("読むだけのセットは作り直さない");
-            let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
-                Failure::Message(format!(
-                    "{}: {}",
-                    lang.pick(
-                        format!("セット「{}」の文書を作れません", set.name),
-                        format!("Cannot convert texture set “{}” to a document", set.name)
-                    ),
-                    lang.io_error(&e)
-                ))
-            })?;
-            let pngs = composite_pngs(doc).map_err(|e| {
-                Failure::Message(format!(
-                    "{}: {}",
-                    lang.pick(
-                        format!("セット「{}」の合成の PNG を作れません", set.name),
-                        format!(
-                            "Cannot build the composite PNG of texture set “{}”",
-                            set.name
-                        )
-                    ),
-                    lang.io_error(&e)
-                ))
-            })?;
-            (Some(native), pngs)
-        } else {
-            (None, Vec::new())
-        };
-        specs.push(SetSpec {
-            id: set.id.clone(),
-            name: set.name.clone(),
-            material: set.material.clone(),
-            document,
-            composites,
-        });
-    }
-    let writer = crate::project::writer();
-    let mut project = match &capture.base {
-        Some(base) => {
-            let upgraded;
-            let base: &Project = if base.info().format < 7 {
-                upgraded = base.upgraded(writer.clone()).map_err(io)?;
-                &upgraded
-            } else {
-                base
-            };
-            // 開いたあとに消したセットは、写しにも入れない
-            let dropped: Vec<&str> = base
-                .sets()
-                .iter()
-                .map(|s| s.id.as_str())
-                .filter(|id| !capture.sets.iter().any(|s| s.id == *id))
-                .collect();
-            base.with_sets_dropping(writer.clone(), &specs, &capture.current, &dropped)
-                .map_err(io)?
-        }
-        None => Project::create(writer.clone(), &specs, &capture.current).map_err(io)?,
-    };
-    for id in &capture.replaced {
-        project = project.without_imported_original(id).map_err(io)?;
-    }
-    let text = |reason: String| Failure::Message(reason);
-    let selections: Vec<(&str, Option<&yolu_core::SelectionMask>)> = capture
-        .sets
-        .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.selection())))
-        .collect();
-    project = crate::selection::io::write_into(project, &selections, lang).map_err(text)?;
-    let looks: Vec<(&str, &yolu_core::look::MaterialLook)> = capture
-        .sets
-        .iter()
-        .filter_map(|s| s.snapshot.as_ref().map(|d| (s.id.as_str(), d.look())))
-        .collect();
-    project = crate::look::io::write_into(project, &looks, lang)
-        .map_err(text)?
-        .0;
-    let received: Vec<(&str, Option<&yolu_core::look::ReceivedLook>)> = capture
-        .sets
-        .iter()
-        .filter_map(|s| {
-            s.snapshot.as_ref().map(|d| {
-                (
-                    s.id.as_str(),
-                    d.received_look().filter(|_| capture.keep_received),
-                )
-            })
-        })
-        .collect();
-    project = crate::look::io::write_received_into(project, &received, lang).map_err(text)?;
-    for (id, maps) in &capture.maps {
-        for map in maps {
-            project = project.with_mesh_map(id, map).map_err(io)?;
-        }
-    }
-    if let Some(shelf) = &capture.shelf {
-        project = project.with_shelf(shelf, writer).map_err(io)?;
-    }
-    if cancel.load(Ordering::Relaxed) {
-        return Err(Failure::Canceled);
-    }
-    // モデルのファイルの参照: 保存と同じく、開いているファイルからの相対のパス（書くときに、選んだ保存先に合わせて付け直す）
-    let anchor = if capture.open_path.as_os_str().is_empty() {
-        PathBuf::from("untitled.ylp")
-    } else {
-        capture.open_path.clone()
-    };
-    let wanted = capture
-        .model
-        .as_ref()
-        .map(|m| relative_model_path(m, &anchor));
-    if project.view_model().ok().flatten() != wanted {
-        project = project.with_view_model(wanted.as_deref()).map_err(io)?;
-    }
+fn build(
+    capture: &crate::project::capture::Capture,
+    cancel: &AtomicBool,
+) -> Result<Prepared, Failure> {
+    use crate::project::capture::{build, BuildError, BuildProgress};
+    let built = build(capture, Some(cancel), &BuildProgress::default()).map_err(|e| match e {
+        BuildError::Canceled => Failure::Canceled,
+        BuildError::Message(text) => Failure::Message(text),
+    })?;
     Ok(Prepared {
-        project: Arc::new(project),
+        project: Arc::new(built.project),
         model: capture.model.clone(),
     })
 }

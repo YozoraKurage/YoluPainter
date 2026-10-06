@@ -1,7 +1,6 @@
 //! 描画試験の窓の貸し出し（`common/gpu_thread.rs`）の試験と、窓を作る口が貸し出しを通っているかの確かめ。
-#[path = "common/gpu_thread.rs"]
-#[allow(dead_code)]
-mod gpu_thread;
+mod common;
+use common::{canvas_device, gpu_thread};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -137,6 +136,27 @@ fn a_panicking_test_thread_releases_its_lease() {
     assert!(gpu_thread::is_free());
 }
 
+/// GPU 合成の試験が自前で作る装置（`canvas_device::begin`）も、窓と同じ貸し出しを通る。通らないと、窓を持つ試験と同時に別々の装置を作る
+/// （装置が無い環境でも、貸し出しは装置を探す前に取る）。
+#[test]
+fn the_canvas_device_is_taken_through_the_same_lease() {
+    let _serial = serial();
+    let (held, held_rx) = std::sync::mpsc::channel();
+    let (finish, finish_rx) = std::sync::mpsc::channel::<()>();
+    let owner = std::thread::spawn(move || {
+        let device = canvas_device::begin("window_lease");
+        assert!(!gpu_thread::is_free(), "装置を作る間は窓と同じ貸し出しを持つ");
+        held.send(()).unwrap();
+        finish_rx.recv().unwrap();
+        drop(device);
+    });
+    held_rx.recv().unwrap();
+    std::thread::spawn(|| assert!(!gpu_thread::is_free(), "ほかのスレッドから見て空いていない")).join().unwrap();
+    finish.send(()).unwrap();
+    owner.join().unwrap();
+    assert!(gpu_thread::is_free(), "終わったスレッドの貸し出しが残っている");
+}
+
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -176,4 +196,59 @@ fn every_window_is_built_through_the_lease() {
         }
     }
     assert!(bad.is_empty(), "窓を貸し出しを通さずに作っている:\n{}", bad.join("\n"));
+}
+
+/// 窓（harness）を作らなくても、焼く場所に GPU（`Gpu`・`Auto`）を選んで確かめる試験は、製品のスレッドで GPU の装置を作る。
+/// その試験は貸し出し（`gpu_thread::lease`・`builder`・`run`・`canvas_device::begin` のどれか）を取る。呼び忘れを、関数ごとにソースで確かめる
+/// （画面の試験の `fix_gpu_probe` と押すだけの確かめは、`Backend(` を直接 apply しないので対象にならない）。
+#[test]
+fn every_gpu_bake_test_takes_the_lease() {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut files = Vec::new();
+    rust_files(&tests, &mut files);
+    let mut bad = Vec::new();
+    let mut checked = 0;
+    for path in files {
+        let name = path.strip_prefix(&tests).unwrap().to_string_lossy().replace('\\', "/");
+        if name == "window_lease.rs" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        // 行頭の `fn` ごとに区切る（試験の関数は、どのファイルでも行頭から始まる）
+        let mut functions: Vec<(usize, Vec<&str>)> = Vec::new();
+        for (number, line) in text.lines().enumerate() {
+            if line.starts_with("fn ") || line.starts_with("pub fn ") {
+                functions.push((number + 1, Vec::new()));
+            }
+            if let Some((_, body)) = functions.last_mut() {
+                body.push(line);
+            }
+        }
+        for (start, body) in functions {
+            let picks_gpu = body.iter().any(|line| {
+                let code = line.trim_start();
+                !code.starts_with("//")
+                    && (code.contains("BakeBackend::Gpu") || code.contains("BakeBackend::Auto"))
+                    && (code.contains("Backend(BakeBackend") || code.contains("backend = "))
+            });
+            if !picks_gpu {
+                continue;
+            }
+            checked += 1;
+            let takes_lease = body.iter().any(|line| {
+                let code = line.trim_start();
+                !code.starts_with("//")
+                    && (code.contains("gpu_thread::") || code.contains("canvas_device::begin("))
+            });
+            if !takes_lease {
+                bad.push(format!("{name}:{start}: {}", body[0].trim_end()));
+            }
+        }
+    }
+    assert!(checked >= 1, "GPU で焼く試験が 1 つも見つからない（見つけ方が古くなった）");
+    assert!(
+        bad.is_empty(),
+        "GPU を選んで焼く試験が貸し出しを取っていない（先頭で `common::gpu_thread::lease()` を呼ぶ）:\n{}",
+        bad.join("\n")
+    );
 }

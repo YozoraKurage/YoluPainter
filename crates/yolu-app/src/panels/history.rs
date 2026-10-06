@@ -24,6 +24,7 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
         HistoryKind::Path => lang.pick("パスを変える", "Edit path"),
         HistoryKind::Batch => lang.pick("まとめて編集", "Batch edit"),
         HistoryKind::Look => lang.pick("見た目を変える", "Edit look"),
+        HistoryKind::SavedSelections => lang.pick("覚えた選択範囲を変える", "Edit remembered selections"),
     }
 }
 

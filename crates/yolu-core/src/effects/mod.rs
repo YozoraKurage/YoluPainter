@@ -16,6 +16,7 @@ use crate::filter::{self, ValueType};
 use crate::generator;
 use crate::types::{Channel, ChannelKind};
 
+pub mod catalog;
 pub(crate) mod inputs;
 pub use inputs::{EffectInputs, ImageInput, MapInput, ModelFrame};
 

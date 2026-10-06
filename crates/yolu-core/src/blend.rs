@@ -10,6 +10,23 @@ use std::sync::OnceLock;
 use crate::math::{to_byte, UNIT};
 use crate::types::{BlendMode, Rgba8};
 
+pub(crate) mod lanes;
+mod rows;
+
+pub(crate) use rows::{blend_block, fade_block, mix_row_at};
+
+/// 画素の計算（合成・調整・フィルター・Normal チャンネル）が使っている SIMD の道の名前（`"avx2"`・`"sse41"`・`"scalar"`）。
+/// 診断と計測用。CPU が持つ一番広い道を選び、環境変数 `YOLU_SIMD` で下げられる。
+pub fn simd_level_name() -> &'static str {
+    use crate::math::simd::Level;
+    match crate::math::simd::level() {
+        Level::Avx2 => "avx2",
+        Level::Sse41 => "sse41",
+        Level::Scalar => "scalar",
+    }
+}
+pub use rows::{blend_row, clip_row, fade_row, RowAmount};
+
 /// Darker/Lighter Color の和の比較と HardMix の境の余裕（半段）。和は 8 bit の値の和なので、違えば 1/255 以上離れている。
 pub(crate) const TIE_MARGIN: f64 = 0.5 / 255.0;
 /// これより小さい a·c は非正規化数になり得るので、下が透明のときの近道を使わない（C# の MinShortcutAlpha）。

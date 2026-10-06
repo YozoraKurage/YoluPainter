@@ -4,6 +4,8 @@
 //! 増える 2〜16 個で、両端の x は 0 と 1、y は 0〜1。隣り合う点の横の間隔は [`Curve::MIN_GAP`] 以上。評価の式は C# の
 //! `GradientRamp` の値のカーブと同じで、入力は 0〜1 に収めてから 3 次のエルミートで引き、結果も 0〜1 に収める。
 use crate::math::clamp01;
+#[cfg(target_arch = "x86_64")]
+use crate::math::simd::{self, Lanes};
 use std::fmt;
 
 /// カーブの点（横が入力、縦が出力）。
@@ -163,6 +165,55 @@ impl Curve {
                 + (-2. * t3 + 3. * t2) * b.y
                 + (t3 - t2) * h * self.tangents[k],
         )
+    }
+}
+
+impl Curve {
+    /// `value_unchecked` の N 画素ぶん（同じ演算を同じ順で、区間はレーンごとに引く）。値のビットはスカラーと同じ。
+    ///
+    /// # Safety
+    /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn value_lanes<V: Lanes>(&self, input: V::F) -> V::F {
+        let x = simd::clamp01::<V>(input);
+        let last = self.points.len() - 1;
+        // 区間の番号 k（1 から last まで）: 点 1..last のうち x より小さい x を持つものの数 + 1
+        let mut count = V::splat(1.);
+        for p in &self.points[1..last] {
+            count = V::add(
+                count,
+                V::select(V::lt(V::splat(p.x), x), V::splat(1.), V::splat(0.)),
+            );
+        }
+        let mut ks = [0.; 4];
+        V::store_f64(&mut ks, count);
+        let points = &self.points;
+        let tangents = &self.tangents;
+        let ax = V::from_fn(|l| points[ks[l] as usize - 1].x);
+        let ay = V::from_fn(|l| points[ks[l] as usize - 1].y);
+        let bx = V::from_fn(|l| points[ks[l] as usize].x);
+        let by = V::from_fn(|l| points[ks[l] as usize].y);
+        let m0 = V::from_fn(|l| tangents[ks[l] as usize - 1]);
+        let m1 = V::from_fn(|l| tangents[ks[l] as usize]);
+        let h = V::sub(bx, ax);
+        let t = V::div(V::sub(x, ax), h);
+        let t2 = V::mul(t, t);
+        let t3 = V::mul(t2, t);
+        let (one, two, three) = (V::splat(1.), V::splat(2.), V::splat(3.));
+        // (2t³ − 3t² + 1)·a.y + (t³ − 2t² + t)·h·m0 + (−2t³ + 3t²)·b.y + (t³ − t²)·h·m1
+        let h00 = V::add(V::sub(V::mul(two, t3), V::mul(three, t2)), one);
+        let h10 = V::add(V::sub(t3, V::mul(two, t2)), t);
+        let h01 = V::add(V::mul(V::splat(-2.), t3), V::mul(three, t2));
+        let h11 = V::sub(t3, t2);
+        let sum = V::add(
+            V::add(
+                V::add(V::mul(h00, ay), V::mul(V::mul(h10, h), m0)),
+                V::mul(h01, by),
+            ),
+            V::mul(V::mul(h11, h), m1),
+        );
+        simd::clamp01::<V>(sum)
     }
 }
 

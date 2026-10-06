@@ -101,39 +101,46 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
 /// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
+    // 保存の間は、プロジェクトを入れ替える・もう 1 度保存する・配布用に保存するは断る（描く・見るは止めない）
+    let idle = free && !app.is_saving();
     let l = app.lang;
+    // 保存のために押せない項目は、理由をツールチップに出す
+    let why = |entry: Entry<Action>| match app.is_saving() {
+        true => entry.tooltip(crate::project::busy_reason(l)),
+        false => entry,
+    };
     match index {
         0 => {
             let mut entries = vec![
-                Entry::item(
+                why(Entry::item(
                     l.pick("新規プロジェクト…", "New Project…"),
                     Action::NewProjectDialog,
                 )
                 .shortcut("Ctrl+N")
-                .enabled(free),
-                Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
+                .enabled(idle)),
+                why(Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
                     .shortcut("Ctrl+O")
-                    .enabled(free),
-                Entry::item(
+                    .enabled(idle)),
+                why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
-                .enabled(free && app.recovery.is_enabled()),
+                .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
-                Entry::item(l.pick("保存", "Save"), Action::SaveProject)
+                why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
                     .shortcut("Ctrl+S")
-                    .enabled(free),
-                Entry::item(
+                    .enabled(idle)),
+                why(Entry::item(
                     l.pick("別名で保存…", "Save As…"),
                     Action::SaveProjectAsDialog,
                 )
                 .shortcut("Ctrl+Shift+S")
-                .enabled(free),
-                Entry::item(
+                .enabled(idle)),
+                why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
                 )
-                .enabled(free && !app.distribute.is_open() && !app.distribute.is_busy()),
+                .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
                 Entry::Separator,
                 Entry::item(
                     l.pick("プロジェクト設定…", "Project Configuration…"),
@@ -333,6 +340,18 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
             Action::Update(UpdateAction::SetCheckOnStartup(!on)),
         )
         .checked(on),
+    );
+    let beta = app.update.beta();
+    entries.push(
+        Entry::item(
+            l.pick("試験版を使う", "Use Beta Versions"),
+            Action::Update(UpdateAction::SetBeta(!beta)),
+        )
+        .checked(beta)
+        .tooltip(l.pick(
+            "正式版より前の試験版も、更新の候補にします。切ると正式版だけを見ます",
+            "Also offers beta versions as updates. When off, only stable releases are offered",
+        )),
     );
     entries.push(Entry::Separator);
     entries.push(crate::shortcuts::menu_entry(l));
@@ -794,6 +813,16 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
     let mut right = r.right() - 10.0;
+    // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
+    if let Some(indicator) = app.ops.indicator() {
+        let tip = app.ops.tooltip(app.lang);
+        let dot = Rect::from_center_size(pos2(right - OPS_DOT / 2.0, r.center().y), vec2(OPS_DOT, OPS_DOT));
+        p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
+        let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
+        response.on_hover_text(&tip);
+        right = dot.left() - 16.0;
+    }
     for item in app.usage.items(app.lang) {
         let width = w::text_width(&p, &item.text, t::LABEL_DIM);
         let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
@@ -802,6 +831,19 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
         response.on_hover_text(&item.tip);
         right = at.left() - 16.0;
+    }
+}
+
+/// 状態の帯の、外からの操作の印（丸）の直径。
+const OPS_DOT: f32 = 8.0;
+
+/// 外からの操作の印の色。
+pub fn ops_indicator_color(indicator: crate::opslive::OpsIndicator) -> egui::Color32 {
+    use crate::opslive::OpsIndicator;
+    match indicator {
+        OpsIndicator::Waiting => t::ACCENT_DIM,
+        OpsIndicator::Connected => t::OK,
+        OpsIndicator::Failed => t::ERROR,
     }
 }
 

@@ -39,6 +39,9 @@ pub(super) fn create_from_window(app: &mut AppState, win: &mut NpWindow) -> Resu
             .pick("描いている間はできません", "Not while drawing")
             .into());
     }
+    if app.is_saving() {
+        return Err(crate::project::busy_reason(lang).into());
+    }
     if !win.is_ready() {
         return Err(lang
             .pick("モデルを準備できていません", "The model is not ready")

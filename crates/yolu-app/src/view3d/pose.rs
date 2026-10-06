@@ -2,16 +2,23 @@
 //! 差し替えて（隣り合わせはそのまま、BVH は refit）3D ビューのモデルにする。計算は core の `skin` と `geometry`、読み込みは
 //! yolu-model。ここは状態（今のポーズ・選んだ骨・取り消しの並び）と、いつ組み直すかだけ。
 //!
-//! - ポーズの取り消しは画素の取り消しと別の並び（`undo`・`redo`）。ポーズはプロジェクトに入らない見せ方の状態で、画素の履歴は
+//! - ポーズの取り消しは画素の取り消しと別の並び（`undo`・`redo`）。ポーズは文書の画素と別の状態で、画素の履歴は
 //!   文書ごとにメモリの予算で古いものが消えるので、混ぜると片方の都合で片方が消える。ポーズのモードの間は Ctrl+Z がこちらへ来る。
 //! - ストロークの最中はポーズを変えない（描いている間の当たりと遮蔽の覚えは、そのスナップショットのもの）。断って知らせる。
-//! - FBX は別のスレッドで読む（読み込み・変換・休みの形の組み立て）。読み終わったらフレームの初めに入れ替える。
-//! - ポーズはまだ保存しない（保存するなら形式は後で決める）。
-//! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`（どちらもポーズの取り消しの並びとは別の持ち物は持たない:
-//!   数値の編集・戻しは 1 つの取り消しの段、隠すのは見せ方の状態で取り消しの対象ではない）。
+//! - FBX は別のスレッドで読む（読み込み・変換・休みの形の組み立て）。読み終わったらフレームの初めに入れ替える。読み込みは途中で取り消せる
+//!   （`loads`。利用者が取り消す・別のモデルを読み始める・結果の受け口を捨てる・アプリを終える）。取り消した読み込みは途中の物を捨て、今のモデルは
+//!   前のまま（半分だけ入れない）。進み具合は読み込みのスレッドが書き、状態の表示が読む。
+//! - 今のポーズは、プロジェクトのモデル（FBX）のものだけ `.ylp` の根の `pose.json` に残り、同じモデルを開くと戻る（`stored`。形式は上げない状態の
+//!   エントリ）。変えると「変更あり」の印が付く（`sync_modified`）。名前を付けてモデルをまたいで使うのは個人の設定のフォルダのプリセット（`presets`）。
+//! - ポーズの数値の編集と戻しは `edit`、ボーンの影響で面を隠す・隠し方のプリセットは `hide`、ポーズのプリセット（保存・当てる・左右反転）は
+//!   `presets`（どれもポーズの取り消しの並びとは別の持ち物は持たない: 数値の編集・戻し・プリセットを当てるのは 1 つの取り消しの段、
+//!   隠すのは見せ方の状態で取り消しの対象ではない）。
 
 pub mod edit;
 pub mod hide;
+pub mod loads;
+pub mod presets;
+pub mod stored;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -21,10 +28,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use yolu_core::geometry::{
-    model_triangles, BvhUpdate, ModelMesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
+    model_triangles, BvhUpdate, GeometryError, ModelMesh, SurfaceGeometry, DEFAULT_WELD_TOLERANCE,
 };
 use yolu_core::skin::{demo_figure, FigureDetail, Pose, Rig};
-use yolu_model::{load_fbx, ModelLimits};
+use yolu_model::{load_fbx_with, LoadControl, ModelLimits};
+
+use loads::LoadProgress;
 
 use super::model::{ViewError, ViewModel};
 use super::View3dState;
@@ -39,6 +48,8 @@ pub const MAX_POSE_HISTORY: usize = 256;
 pub enum PoseAction {
     /// ファイルを選ぶ窓を頼む（選ばれたら FBX を開く）。
     OpenFbx,
+    /// 読んでいる FBX を取り消す（今のモデルは前のまま）。
+    CancelLoad,
     /// 試しの人形を読む（試験の口。メニューには置かない）。
     LoadFigure,
     /// ポーズのモード（ギズモ）を入れる・切る。
@@ -81,6 +92,10 @@ pub struct PoseSession {
     pub euler_hint: Option<edit::EulerHint>,
     /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
     pub hide: hide::HideState,
+    /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
+    pub preset_notes: Vec<presets::Skipped>,
+    /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。このセッションが始まってから）。「変更あり」の印と復旧の書き置きの鍵。
+    pub edits: u64,
 }
 
 impl PoseSession {
@@ -120,7 +135,15 @@ struct Loading {
     name: String,
     rx: Receiver<Result<Loaded, ViewError>>,
     cancel: Arc<AtomicBool>,
+    progress: Arc<LoadProgress>,
     revision: u32,
+}
+
+impl Drop for Loading {
+    /// 受け口を捨てたら、読み込みも止める（結果の行き先が無い）。
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 3D ビューのポーズの状態（`View3dState::pose`）。
@@ -143,6 +166,17 @@ pub struct PoseEditor {
     pub panel_content: f32,
     /// 隠し方を保存する名前の欄（決めた文字。空なら既定の名前）。
     pub hide_name: String,
+    /// ポーズのプリセット（個人の設定のフォルダ。モデルをまたいで残る）。
+    pub pose_presets: presets::store::Presets,
+    /// ポーズを保存する名前の欄（決めた文字。空なら既定の名前）。
+    pub preset_name: String,
+    /// 名前を変えているプリセットと、その欄に初めのフォーカスを渡したか。
+    pub preset_rename: Option<u32>,
+    pub preset_rename_started: bool,
+    /// 「変更あり」の印へ数え終えた、セッションの `edits`（フレームごとに、増えていれば印を付ける）。
+    pub seen_edits: u64,
+    /// このビューが始めた FBX の読み込みのスレッド（取り消し・終わるときに止まるのを待つため。結果の受け口とは別）。
+    pub loads: loads::Loads,
 }
 
 impl PoseEditor {
@@ -153,6 +187,22 @@ impl PoseEditor {
     pub fn loading_name(&self) -> Option<&str> {
         self.loading.as_ref().map(|l| l.name.as_str())
     }
+    /// 読んでいる FBX の進み具合（読み込みを始めていない・まだ知らせが無ければ None）。
+    pub fn loading_fraction(&self) -> Option<f32> {
+        self.loading.as_ref().and_then(|l| l.progress.fraction())
+    }
+    /// 読んでいる FBX を取り消す（結果は捨てる。今のモデルは前のまま）。
+    pub fn cancel_loading(&mut self) {
+        self.loading = None;
+    }
+    /// このビューが始めた読み込みを全部取り消す（窓の準備・.ylp を開いたときの読み込みを含む。終わるとき）。
+    pub fn cancel_loads(&self) {
+        self.loads.cancel_all();
+    }
+    /// まだ止まっていない読み込みのスレッドの数。
+    pub fn loads_running(&self) -> usize {
+        self.loads.running()
+    }
 }
 
 /// 休みの形のメッシュとスナップショットを組む（読み込みのスレッドでも呼ぶ）。
@@ -161,7 +211,14 @@ fn build_rest(
     revision: u32,
     cancel: Option<&AtomicBool>,
 ) -> Result<(Vec<ModelMesh>, SurfaceGeometry), ViewError> {
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
+    if cancelled() {
+        return Err(ViewError::Cancelled);
+    }
     let meshes = rig.deform(&rig.rest_pose())?;
+    if cancelled() {
+        return Err(ViewError::Cancelled);
+    }
     let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
     if triangles.is_empty() {
         return Err(ViewError::NoTriangles);
@@ -171,7 +228,13 @@ fn build_rest(
             SurfaceGeometry::build_cancelable(triangles, revision, DEFAULT_WELD_TOLERANCE, c)
         }
         None => SurfaceGeometry::new(triangles, revision, DEFAULT_WELD_TOLERANCE),
-    }?;
+    };
+    let geometry = match geometry {
+        Ok(g) => g,
+        // 組む途中で止めたのは、ほかの失敗と区別して「取り消した」にする
+        Err(GeometryError::Canceled) => return Err(ViewError::Cancelled),
+        Err(e) => return Err(e.into()),
+    };
     Ok((meshes, geometry))
 }
 
@@ -210,7 +273,10 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         warnings: loaded.warnings,
         euler_hint: None,
         hide: hide::HideState::default(),
+        preset_notes: Vec::new(),
+        edits: 0,
     });
+    view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
     // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）
     view3d.set_face_mask(None);
@@ -241,24 +307,67 @@ pub fn load_figure(view3d: &mut View3dState) -> Result<(), ViewError> {
     load_rig(view3d, demo_figure(FigureDetail::SMALL))
 }
 
-/// FBX を読んで休みの形まで組む（呼んだスレッドで。取消の旗は読んだあとと、組む途中で見る）。
+/// 進み具合のうち、ファイルの読み込みと変換（yolu-model）が占める分（残りは休みの形の組み立て）。
+const MODEL_SHARE: f32 = 0.85;
+
+/// FBX を読んで休みの形まで組む（呼んだスレッドで。取消の旗は yolu-model の区切りと、組み立ての区切りで見る）。
 fn load_blocking(
     path: &Path,
     limits: &ModelLimits,
     revision: u32,
     cancel: &AtomicBool,
+    progress: &LoadProgress,
 ) -> Result<Loaded, ViewError> {
-    let model = load_fbx(path, limits)?;
+    let note = |fraction: f32| {
+        progress.set(fraction * MODEL_SHARE);
+        #[cfg(test)]
+        loads::hold::tick(path, cancel);
+    };
+    let model = load_fbx_with(
+        path,
+        limits,
+        LoadControl {
+            cancel: Some(cancel),
+            progress: Some(&note),
+        },
+    )?;
     if cancel.load(Ordering::Relaxed) {
         return Err(ViewError::Cancelled);
     }
+    progress.set(MODEL_SHARE);
     let (meshes, rest) = build_rest(&model.rig, revision, Some(cancel))?;
+    progress.set(1.0);
     Ok(Loaded {
         rig: model.rig,
         rest,
         meshes,
         warnings: model.report.warnings,
     })
+}
+
+/// 読み込みのスレッドを始める（結果の受け口・取消の旗・進み具合を返す）。スレッドは `view3d` に登録する（終わるときに止まるのを待つため）。
+fn spawn_load<T: Send + 'static>(
+    view3d: &mut View3dState,
+    path: &Path,
+    limits: ModelLimits,
+    revision: u32,
+    wrap: fn(Loaded) -> T,
+) -> (
+    Receiver<Result<T, ViewError>>,
+    Arc<AtomicBool>,
+    Arc<LoadProgress>,
+) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let progress = Arc::new(LoadProgress::default());
+    let finished = view3d.pose.loads.register(&cancel);
+    let (tx, rx) = channel();
+    let path: PathBuf = path.to_path_buf();
+    let (flag, shared) = (cancel.clone(), progress.clone());
+    std::thread::spawn(move || {
+        let _finished = finished;
+        let _ = tx.send(load_blocking(&path, &limits, revision, &flag, &shared).map(wrap));
+    });
+    (rx, cancel, progress)
 }
 
 /// 別のスレッドで読み終えた、まだ 3D ビューに入れていないモデル（新規プロジェクト・プロジェクトの構成の窓が持ち、決めたときに
@@ -284,6 +393,14 @@ impl PreparedModel {
 pub struct PrepareJob {
     rx: Receiver<Result<PreparedModel, ViewError>>,
     cancel: Arc<AtomicBool>,
+    progress: Arc<LoadProgress>,
+}
+
+impl Drop for PrepareJob {
+    /// 受け口を捨てたら、読み込みも止める（窓を閉じた・別のモデルを読み始めた。結果の行き先が無い）。
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 impl PrepareJob {
@@ -295,9 +412,18 @@ impl PrepareJob {
             Err(TryRecvError::Disconnected) => Some(Err(ViewError::LoadStopped)),
         }
     }
-    /// 取り消す（読み込みは次の区切りで止まり、結果は捨てる）。
+    /// 取り消す（読み込みは次の区切りで止まり、途中の物と結果は捨てる）。
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
+    }
+    /// 進み具合（0〜1。読み込みのスレッドからまだ知らせが無ければ None）。
+    pub fn fraction(&self) -> Option<f32> {
+        self.progress.fraction()
+    }
+    /// 進み具合を知らせる（試験用: 終わらない読み込みの表示を確かめる）。
+    #[doc(hidden)]
+    pub fn report_progress(&self, fraction: f32) {
+        self.progress.set(fraction);
     }
     /// 終わらない読み込み（試験用）。返す送り口を持っているあいだは読み込み中のまま、送れば（失敗で）終わる。
     #[doc(hidden)]
@@ -307,6 +433,7 @@ impl PrepareJob {
             PrepareJob {
                 rx,
                 cancel: Arc::new(AtomicBool::new(false)),
+                progress: Arc::new(LoadProgress::default()),
             },
             tx,
         )
@@ -316,14 +443,38 @@ impl PrepareJob {
 /// FBX を別のスレッドで読み始める（3D ビューには入れない）。`view3d` は世代の番号を取るためだけに借りる。
 pub fn prepare_fbx(view3d: &mut View3dState, path: &Path, limits: ModelLimits) -> PrepareJob {
     let revision = view3d.next_revision();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, PreparedModel);
+    PrepareJob {
+        rx,
+        cancel,
+        progress,
+    }
+}
+
+/// 終わらない読み込みの送り口（`park_loading` が返す。持っているあいだは読み込み中のまま）。
+#[doc(hidden)]
+pub struct ParkedLoad {
+    _tx: std::sync::mpsc::Sender<Result<Loaded, ViewError>>,
+}
+
+/// 終わらない読み込みを置く（試験用: ポーズの欄の「読み込み中」の行と取り消しのボタンを確かめる）。`fraction` は進み具合。
+/// 取り消すか、返す物を捨てると読み込み中でなくなる。
+#[doc(hidden)]
+pub fn park_loading(view3d: &mut View3dState, name: &str, fraction: Option<f32>) -> ParkedLoad {
     let (tx, rx) = channel();
-    let path: PathBuf = path.to_path_buf();
-    let flag = cancel.clone();
-    std::thread::spawn(move || {
-        let _ = tx.send(load_blocking(&path, &limits, revision, &flag).map(PreparedModel));
+    let progress = Arc::new(LoadProgress::default());
+    if let Some(f) = fraction {
+        progress.set(f);
+    }
+    let revision = view3d.next_revision();
+    view3d.pose.loading = Some(Loading {
+        name: name.to_owned(),
+        rx,
+        cancel: Arc::new(AtomicBool::new(false)),
+        progress,
+        revision,
     });
-    PrepareJob { rx, cancel }
+    ParkedLoad { _tx: tx }
 }
 
 /// 読み終えたモデルを 3D ビューに入れる（ポーズのセッションも始まる。描いている最中なら、形はストロークが終わってから入れ替わる）。
@@ -342,25 +493,19 @@ pub fn open_fbx(view3d: &mut View3dState, path: &Path) {
 }
 
 pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits) {
-    if let Some(old) = view3d.pose.loading.take() {
-        old.cancel.store(true, Ordering::Relaxed);
-    }
+    // 前の読み込みは取り消す（新しい方だけが入る。前の受け口を捨てると、スレッドは次の区切りで止まる）
+    view3d.pose.loading = None;
     let revision = view3d.next_revision();
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = channel();
-    let path: PathBuf = path.to_path_buf();
     let name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let flag = cancel.clone();
-    std::thread::spawn(move || {
-        let _ = tx.send(load_blocking(&path, &limits, revision, &flag));
-    });
+    let (rx, cancel, progress) = spawn_load(view3d, path, limits, revision, |loaded| loaded);
     view3d.pose.loading = Some(Loading {
         name,
         rx,
         cancel,
+        progress,
         revision,
     });
 }
@@ -465,6 +610,7 @@ fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
         Arc::new(geometry),
     );
     s.pose = pose;
+    s.edits += 1;
     s.model_revision = revision;
     s.timings = PoseTimings {
         skin_ms,
@@ -502,6 +648,24 @@ pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     if let Some(s) = view3d.pose.session.as_mut() {
         push_undo(s, before);
     }
+    Ok(())
+}
+
+/// 開いた .ylp のポーズを戻す（取り消しの段にも「変更あり」の印にも数えない: 開いた直後の状態）。
+pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
+    let s = view3d
+        .pose
+        .session
+        .as_ref()
+        .ok_or(ViewError::NoPoseModel)?;
+    s.rig.check_pose(&pose)?;
+    apply(view3d, pose)?;
+    if let Some(s) = view3d.pose.session.as_mut() {
+        s.undo.clear();
+        s.redo.clear();
+        s.edits = 0;
+    }
+    view3d.pose.seen_edits = 0;
     Ok(())
 }
 
@@ -617,8 +781,19 @@ pub fn open_file(app: &mut AppState, path: &Path) {
     app.np_apply(crate::newproject::NpAction::OpenModel(path.to_path_buf()));
 }
 
-/// 操作を当てる（`Action::Pose`）。描いている最中は、モードを切ることのほかは断る。
+/// 操作を当てる（`Action::Pose`）。描いている最中は、モードを切ることのほかは断る（読み込みの取り消しは、描いていても通す）。
 pub fn apply_action(app: &mut AppState, action: PoseAction) {
+    if action == PoseAction::CancelLoad {
+        // 読み込みの結果は 3D ビューに入れていない。取り消すと、途中の物を捨てて今のモデルは前のまま
+        if let Some(name) = app.view3d.pose.loading_name().map(str::to_owned) {
+            app.view3d.pose.cancel_loading();
+            app.message = app.lang.pick(
+                format!("{name}の読み込みを取り消しました。"),
+                format!("Cancelled loading {name}."),
+            );
+        }
+        return;
+    }
     if app.is_stroking() {
         app.message = app.lang.view_error(&ViewError::Stroking);
         return;
@@ -629,6 +804,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.dialog_request = Some(DialogRequest::OpenModel);
             Ok(())
         }
+        PoseAction::CancelLoad => Ok(()),
         PoseAction::LoadFigure => load_figure(&mut app.view3d).map(|()| {
             app.view3d.pose.focus = true;
             // 試しの人形はファイルのモデルではない（プロジェクトのモデルの参照は外す）
@@ -676,6 +852,20 @@ pub fn owns_undo(app: &AppState) -> bool {
     app.view3d.pose.mode && app.view3d.pose.session.is_some() && app.view3d.visible
 }
 
+/// ポーズを変えていたら「変更あり」の印を付ける（ポーズは .ylp に残る。プロジェクトのモデルが無い試しの人形のポーズは残らないので数えない）。
+/// 開いたときに戻したポーズ・モデルを入れた直後は変えたことにならない（`restore_pose`・`install`）。
+pub fn sync_modified(app: &mut AppState) {
+    let Some(edits) = app.view3d.pose.session.as_ref().map(|s| s.edits) else {
+        return;
+    };
+    if edits != app.view3d.pose.seen_edits {
+        app.view3d.pose.seen_edits = edits;
+        if app.np.model_file.is_some() {
+            app.modified = true;
+        }
+    }
+}
+
 /// フレームの初めに（app から）: 読み込みを見て、知らせを出す。3D ビューのタブを前に出すなら true。
 pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     // 窓に落とした FBX を開く
@@ -702,6 +892,7 @@ pub fn frame(app: &mut AppState, ctx: &egui::Context) -> bool {
     });
     edit::finish_live_edit(app, down && !focus_lost);
     let (message, installed) = poll_in(&mut app.view3d, app.lang);
+    sync_modified(app);
     // 別のモデルに替わっていたら記録を外し、FBX を入れたらマテリアルごとにセットを結び付ける
     app.sync_rig_model();
     let note = if installed {
@@ -952,7 +1143,7 @@ mod tests {
     }
 
     /// 最小の ASCII の FBX: 三角形 1 つ（UV つき）、骨なし。
-    const TRIANGLE_FBX: &str = "; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n\tFBXVersion: 7400\n}\nGlobalSettings:  {\n\tVersion: 1000\n\tProperties70:  {\n\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",100\n\t}\n}\nObjects:  {\n\tModel: 100, \"Model::Tri\", \"Mesh\" {\n\t\tVersion: 232\n\t}\n\tGeometry: 200, \"Geometry::Tri\", \"Mesh\" {\n\t\tVertices: *9 {\n\t\t\ta: 0,0,0,1,0,0,0,1,0\n\t\t}\n\t\tPolygonVertexIndex: *3 {\n\t\t\ta: 0,1,-3\n\t\t}\n\t\tLayerElementUV: 0 {\n\t\t\tMappingInformationType: \"ByPolygonVertex\"\n\t\t\tReferenceInformationType: \"Direct\"\n\t\t\tUV: *6 {\n\t\t\t\ta: 0,0,1,0,0,1\n\t\t\t}\n\t\t}\n\t\tLayer: 0 {\n\t\t\tLayerElement:  {\n\t\t\t\tType: \"LayerElementUV\"\n\t\t\t\tTypedIndex: 0\n\t\t\t}\n\t\t}\n\t}\n}\nConnections:  {\n\tC: \"OO\",100,0\n\tC: \"OO\",200,100\n}\n";
+    pub(super) const TRIANGLE_FBX: &str = "; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n\tFBXVersion: 7400\n}\nGlobalSettings:  {\n\tVersion: 1000\n\tProperties70:  {\n\t\tP: \"UnitScaleFactor\", \"double\", \"Number\", \"\",100\n\t}\n}\nObjects:  {\n\tModel: 100, \"Model::Tri\", \"Mesh\" {\n\t\tVersion: 232\n\t}\n\tGeometry: 200, \"Geometry::Tri\", \"Mesh\" {\n\t\tVertices: *9 {\n\t\t\ta: 0,0,0,1,0,0,0,1,0\n\t\t}\n\t\tPolygonVertexIndex: *3 {\n\t\t\ta: 0,1,-3\n\t\t}\n\t\tLayerElementUV: 0 {\n\t\t\tMappingInformationType: \"ByPolygonVertex\"\n\t\t\tReferenceInformationType: \"Direct\"\n\t\t\tUV: *6 {\n\t\t\t\ta: 0,0,1,0,0,1\n\t\t\t}\n\t\t}\n\t\tLayer: 0 {\n\t\t\tLayerElement:  {\n\t\t\t\tType: \"LayerElementUV\"\n\t\t\t\tTypedIndex: 0\n\t\t\t}\n\t\t}\n\t}\n}\nConnections:  {\n\tC: \"OO\",100,0\n\tC: \"OO\",200,100\n}\n";
 
     fn wait(app: &mut AppState) -> (Option<String>, bool) {
         wait_for_load(&mut app.view3d)

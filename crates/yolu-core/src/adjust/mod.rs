@@ -5,15 +5,18 @@
 //! カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション。値と式は [`ops`]）で、Unity 版は読めない。
 
 mod ops;
+mod rows;
 
 pub use ops::{
     luminance, BalanceRange, BrightnessContrast, ColorBalance, GradientMap, Posterize, Threshold,
     ToneChannel, ToneCurves,
 };
+pub(crate) use rows::color_balance_rgba;
 
 use crate::blend::mix_rgb;
 use crate::error::CoreError;
 use crate::math::{require_finite, to_byte, UNIT};
+use crate::ranges;
 use crate::types::{BlendMode, ChannelKind, Rgba8};
 use std::sync::Arc;
 
@@ -377,28 +380,23 @@ impl AdjustmentSettings {
         ] {
             require_finite(v, "adjustment")?;
         }
-        if self.input_black < 0.0
-            || self.input_white > 1.0
+        if self.input_black < *ranges::LEVELS_UNIT.start()
+            || self.input_white > *ranges::LEVELS_UNIT.end()
             || self.input_white - self.input_black < 1.0 / 255.0
         {
             return Err(CoreError::InvalidArgument("レベル補正の入力の範囲"));
         }
-        if self.output_black < 0.0
-            || self.output_black > 1.0
-            || self.output_white < 0.0
-            || self.output_white > 1.0
+        if !ranges::LEVELS_UNIT.contains(&self.output_black)
+            || !ranges::LEVELS_UNIT.contains(&self.output_white)
         {
             return Err(CoreError::InvalidArgument("レベル補正の出力の範囲"));
         }
-        if self.gamma < 0.1 || self.gamma > 9.99 {
+        if !ranges::GAMMA.contains(&self.gamma) {
             return Err(CoreError::InvalidArgument("ガンマ（0.1〜9.99）"));
         }
-        if self.hue < -180.0
-            || self.hue > 180.0
-            || self.saturation < -1.0
-            || self.saturation > 1.0
-            || self.lightness < -1.0
-            || self.lightness > 1.0
+        if !ranges::HUE.contains(&self.hue)
+            || !ranges::SATURATION.contains(&self.saturation)
+            || !ranges::SATURATION.contains(&self.lightness)
         {
             return Err(CoreError::InvalidArgument("色相・彩度・明度"));
         }
@@ -549,14 +547,29 @@ impl AdjustmentSettings {
         mix_rgb(below, self.apply_in(channel, below), amount, mode)
     }
 
+    /// 1 行（RGBA）に調整の層を重ねる（各画素は `composite_in` と同じバイト。行の途中の量は `amount` が持つ）。表を使う種類は呼ぶたびに
+    /// 表を作るので、細かく刻まず行や塊でまとめて呼ぶ。
+    pub fn composite_row(
+        &self,
+        channel: ChannelKind,
+        row: &mut [u8],
+        amount: crate::blend::RowAmount<'_>,
+        mode: BlendMode,
+    ) {
+        self.kernel(channel).composite_row(row, amount, mode);
+    }
+
     /// 合成のための速い形（レベル補正の 256 の表を 1 回だけ作る）。
     pub(crate) fn kernel(&self, channel: ChannelKind) -> AdjustKernel {
+        // チャンネルごとに値だけで決まる種類は 256 の表にする（表の値は式そのもの）
         let table = if self.kind == AdjustmentType::Levels {
             let mut t = [0u8; 256];
             for (i, v) in t.iter_mut().enumerate() {
                 *v = self.level(i as u8);
             }
             Some(Box::new(t))
+        } else if let More::Posterize(p) = &self.more {
+            Some(Box::new(p.table()))
         } else {
             None
         };
@@ -605,7 +618,7 @@ fn hue_to_rgb(p: f64, q: f64, mut t: f64) -> f64 {
     p
 }
 
-/// 合成で使う調整（レベル補正は表を引く。表の値は `level` そのもの）。
+/// 合成で使う調整（レベル補正・ポスタリゼーションは表を引く。表の値は式そのもの）。
 pub(crate) struct AdjustKernel {
     settings: AdjustmentSettings,
     channel: ChannelKind,
@@ -613,7 +626,9 @@ pub(crate) struct AdjustKernel {
 }
 
 impl AdjustKernel {
+    /// 1 画素の式。行の核（`composite_row`）はこれと同じバイトを出す（試験が比べる基準）。
     #[inline]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn composite(&self, below: Rgba8, amount: f64, mode: BlendMode) -> Rgba8 {
         if amount <= 0.0 || below.a == 0 {
             return below;

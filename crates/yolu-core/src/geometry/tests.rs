@@ -373,7 +373,10 @@ fn surface_stroke_paints_across_the_seam_and_undoes_in_one_step() {
     }
     s.finish(&mut doc, &mut stroke).unwrap();
     assert!(s.stats.dabs > 5 && s.stats.pixels > 100, "{:?}", s.stats);
-    assert!(s.cache().hits > 0, "重なるダブは覚えた遮蔽を使う");
+    assert!(
+        s.projection_stats().bucket_reuses > 0,
+        "重なるダブは覚えた区画の投影の画素を使う"
+    );
     assert!(doc.end_stroke(stroke).unwrap().changed);
     let painted = |doc: &Document| {
         let mut islands = std::collections::BTreeSet::new();
@@ -392,7 +395,7 @@ fn surface_stroke_paints_across_the_seam_and_undoes_in_one_step() {
 }
 
 #[test]
-fn surface_stroke_skips_other_texture_sets_and_refuses_on_budget() {
+fn surface_stroke_skips_other_texture_sets_and_skips_dabs_that_do_not_fit_in_memory() {
     let mut doc = Document::new(128, 128).unwrap();
     let layer = doc.add_layer("1").unwrap();
     let g = Arc::new(cube());
@@ -420,6 +423,7 @@ fn surface_stroke_skips_other_texture_sets_and_refuses_on_budget() {
         "ほかのテクスチャセットの面は塗らない"
     );
     doc.cancel_stroke(stroke);
+    // 投影の画素がメモリに入らないダブは飛ばして理由を残す（ストロークは取り消さない）
     let mut stroke = doc.begin_stroke(layer, &brush).unwrap();
     let mut s = SurfaceStroke::begin(
         &mut doc,
@@ -432,23 +436,23 @@ fn surface_stroke_skips_other_texture_sets_and_refuses_on_budget() {
         1.0,
     )
     .unwrap();
-    s.set_budget(SurfaceBrushBudget {
-        max_candidate_pixels: 1,
-        ..SurfaceBrushBudget::default()
-    });
-    let mut err = None;
+    assert_eq!(s.stats.dabs, 1);
+    s.set_projection_memory(Some(
+        s.projection_bytes() - s.projection_stats().cached_bytes,
+    ));
     for i in 1..20 {
-        if let Err(e) = s.add(
+        s.add(
             &mut doc,
             &mut stroke,
             center + Vec2::new(i as f32 * 3.0, 0.0),
             1.0,
-        ) {
-            err = Some(e);
-            break;
-        }
+        )
+        .unwrap();
     }
-    assert_eq!(err, Some(SurfaceStrokeError::Dab(DabRefusal::PixelBudget)));
+    s.finish(&mut doc, &mut stroke).unwrap();
+    assert!(s.stats.refused > 0, "{:?}", s.stats);
+    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
+    assert!(doc.end_stroke(stroke).unwrap().changed, "最初のダブは残る");
 }
 
 /// ステンシルを通した 3D のストローク: 画面に貼り付いた画像の白い所だけが塗られる。

@@ -143,6 +143,33 @@ class LicenseChecks(unittest.TestCase):
                 self.assertEqual(licenses.dependency_keys('fixture', 'normal,build', True), {'fixture@1.0.0'})
                 self.assertIn(target, cargo.call_args.args)
 
+    COMBINED_TREE = (
+        '0app v1.0.0 (/w/app)\n1shared v1.0.0\n2heavy v2.0.0\n1gui v3.0.0\n\n'
+        '0cli v1.0.0 (/w/cli)\n1shared v1.0.0\n2heavy v2.0.0\n2libm v0.2.16\n1rmcp v3.5.1\n'
+    )
+
+    def test_the_tree_of_a_product_built_together_with_another_counts_the_unified_features(self):
+        # 同じ cargo の組みで作ると機能が合わさり、単独の木に無い依存（libm）が入る。木は根ごとに分け、重なる部分木も展開された物を読む
+        self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'cli'),
+                         {'cli@1.0.0', 'shared@1.0.0', 'heavy@2.0.0', 'libm@0.2.16', 'rmcp@3.5.1'})
+        self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'app'),
+                         {'app@1.0.0', 'shared@1.0.0', 'heavy@2.0.0', 'gui@3.0.0'}, 'もう一方の根の依存は混ざらない')
+        with self.assertRaises(ValueError):
+            licenses.subtree_keys(self.COMBINED_TREE, 'absent')
+        with self.assertRaises(ValueError):
+            licenses.subtree_keys('0cli v1.0.0\nnot a line\n', 'cli')
+        with patch.object(licenses, 'cargo', return_value=self.COMBINED_TREE) as cargo:
+            keys = licenses.dependency_keys('cli', 'normal,build', True, 'app')
+        self.assertIn('libm@0.2.16', keys)
+        arguments = list(cargo.call_args.args)
+        self.assertEqual([arguments[i + 1] for i, a in enumerate(arguments) if a == '-p'], ['app', 'cli'], '2 つの製品を 1 回の木で')
+        self.assertIn('--no-dedupe', arguments)
+
+    def test_built_with_needs_another_single_product(self):
+        for arguments in (['--built-with', 'yolu-app'], ['--package', 'yolu-cli', '--built-with', 'yolu-cli']):
+            with patch('sys.argv', ['third-party.py', *arguments]), patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit):
+                licenses.main()
+
     def test_update_dependencies_are_explicitly_included(self):
         with patch.object(licenses, 'dependency_keys', side_effect=[set(), set(), {'fixture@1.0.0'}, {'fixture@1.0.0'}]):
             records, _, errors = licenses.inventory('yolu-app', self.metadata, self.config, True, True)

@@ -182,6 +182,7 @@ fn all_messages() -> Vec<Message> {
             height: 3,
             srgb: true,
             pixels: (0..24).collect(),
+            stamp: 0x1234_5678_9abc_def0,
         }),
         Message::MaterialOriginal(MaterialOriginal {
             generation: 3,
@@ -194,6 +195,33 @@ fn all_messages() -> Vec<Message> {
             height: 16384,
             srgb: false,
             pixels: vec![],
+            stamp: 0,
+        }),
+        Message::MaterialOriginal(MaterialOriginal {
+            generation: 3,
+            material: 1,
+            slot: "_MainTex".into(),
+            state: OriginalState::Cached,
+            read: OriginalRead::File,
+            compressed: false,
+            width: 2048,
+            height: 2048,
+            srgb: true,
+            pixels: vec![],
+            stamp: 77,
+        }),
+        Message::MaterialRequest(MaterialRequest {
+            generation: 3,
+            items: vec![
+                MaterialWant::values(0),
+                MaterialWant::original(1, "_MainTex", 77),
+                MaterialWant {
+                    material: 2,
+                    wants: WANT_VALUES | WANT_ORIGINAL,
+                    slot: "_BaseMap".into(),
+                    have: 0,
+                },
+            ],
         }),
         Message::Welcome(Welcome {
             version: 1,
@@ -345,6 +373,23 @@ fn unknown_kinds_and_broken_payloads_are_refused() {
             Message::Reject(r) if r.detail.is_some() => {
                 let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]).unwrap();
                 assert!(matches!(cut, Message::Reject(Reject { detail: None, .. })));
+                continue;
+            }
+            // 元の絵の印も後ろに足した欄（途中で切れていれば印の無い古い送り手の絵。印の要る Cached は読めない）。欄の手前で切れていれば読めない
+            Message::MaterialOriginal(o) => {
+                let cut = Message::decode(m.kind() as u16, &payload[..payload.len() - 1]);
+                if o.state == OriginalState::Cached {
+                    assert!(cut.is_err());
+                } else {
+                    assert!(matches!(
+                        cut,
+                        Ok(Message::MaterialOriginal(MaterialOriginal { stamp: 0, .. }))
+                    ));
+                }
+                assert!(
+                    Message::decode(m.kind() as u16, &payload[..payload.len() - 8 - 1]).is_err(),
+                    "印の手前で切れた中身を読んでしまった"
+                );
                 continue;
             }
             _ => {}

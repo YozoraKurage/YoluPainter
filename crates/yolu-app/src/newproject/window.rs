@@ -376,7 +376,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
     if has_prep_row(win) {
         let row = Rect::from_min_size(pos2(left + LABEL_W, y), vec2(width - LABEL_W, ROW));
         match &win.prep {
-            Prep::Loading { .. } => {
+            Prep::Loading { job, .. } => {
                 let cancel = Rect::from_min_size(pos2(row.right() - 26.0, y), vec2(26.0, ROW));
                 if w::icon_button(
                     ui,
@@ -392,27 +392,18 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
                 {
                     actions.push(NpAction::CancelPrepare);
                 }
+                // 割合が分かれば帯を埋めて % を添え、分からない間は往復する帯
+                let fraction = job.fraction();
+                let label = lang.pick("モデルを準備中", "Preparing the model");
+                let label = match fraction {
+                    Some(f) => format!("{label} {}%", (f * 100.0).floor() as u32),
+                    None => label.to_owned(),
+                };
                 let text_rect = Rect::from_min_size(row.min, vec2(row.width() - 34.0, 14.0));
-                w::text(
-                    &p,
-                    text_rect,
-                    lang.pick("モデルを準備中", "Preparing the model"),
-                    t::LABEL_DIM,
-                    Align::Left,
-                );
-                // 終わりの分からない仕事: 往復する帯
+                w::text(&p, text_rect, &label, t::LABEL_DIM, Align::Left);
                 let bar =
                     Rect::from_min_size(pos2(row.left(), y + 16.0), vec2(row.width() - 34.0, 5.0));
-                w::rounded(&p, bar, t::CONTROL_BG, 3.0);
-                let phase = (ui.ctx().input(|i| i.time) * 1.2).fract() as f32;
-                let wdt = bar.width() * 0.25;
-                let x = bar.left() + (bar.width() - wdt) * (1.0 - (phase * 2.0 - 1.0).abs());
-                w::rounded(
-                    &p,
-                    Rect::from_min_size(pos2(x, bar.top()), vec2(wdt, bar.height())),
-                    t::ACCENT,
-                    3.0,
-                );
+                w::progress_bar(&p, bar, fraction, ui.ctx().input(|i| i.time));
             }
             Prep::Canceled { .. } | Prep::Failed { .. } => {
                 let again = lang.pick("もう一度準備する", "Prepare again");

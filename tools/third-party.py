@@ -31,7 +31,12 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def dependency_keys(package, edges, offline):
+def dependency_keys(package, edges, offline, built_with=None):
+    """`package` が入れる依存の集合。`built_with` を指すと、その製品と同じ cargo の組み（機能が合わさる）で作った物の、`package` の部分木。"""
+    if built_with:
+        text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', TARGET,
+                     '-p', built_with, '-p', package, '-e', edges, '--prefix', 'depth', '--no-dedupe', '--format', '{p}')
+        return subtree_keys(text, package)
     text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', TARGET,
                  '-p', package, '-e', edges, '--prefix', 'none', '--format', '{p}')
     keys = set()
@@ -40,6 +45,28 @@ def dependency_keys(package, edges, offline):
         if not match:
             raise ValueError(f'依存の行を解釈できません: {line}')
         keys.add('@'.join(match.groups()))
+    return keys
+
+
+def subtree_keys(text, package):
+    """`cargo tree --prefix depth --no-dedupe` の出力（根ごとの木が空行で区切られる）から、根 `package` の木に載るクレートを取る。"""
+    keys = set()
+    inside = False
+    found = False
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = re.match(r'^(\d+)(\S+) v(\S+)', line)
+        if not match:
+            raise ValueError(f'依存の行を解釈できません: {line}')
+        depth, name, version = match.groups()
+        if depth == '0':
+            inside = name == package
+            found = found or inside
+        if inside:
+            keys.add(f'{name}@{version}')
+    if not found:
+        raise ValueError(f'{package} の木が出力にありません')
     return keys
 
 
@@ -116,12 +143,14 @@ def bundled_assets(package, config):
     return texts, errors
 
 
-def inventory(package, metadata, config, offline, include_update=False):
-    keys = dependency_keys(package, 'normal,build', offline)
-    normal = dependency_keys(package, 'normal,no-proc-macro', offline)
-    if include_update:
-        keys |= dependency_keys('yolu-update', 'normal,build', offline)
-        normal |= dependency_keys('yolu-update', 'normal,no-proc-macro', offline)
+def inventory(package, metadata, config, offline, include_update=False, include_cli=False, built_with=None):
+    keys = dependency_keys(package, 'normal,build', offline, built_with)
+    normal = dependency_keys(package, 'normal,no-proc-macro', offline, built_with)
+    # 同じ配布物に入る別の製品（自動更新の yolu-update・コマンドラインと MCP サーバーの yolu-cli）の依存も、同じ照合・同じ全文束に入れる
+    for included, wanted in (('yolu-update', include_update), ('yolu-cli', include_cli)):
+        if wanted:
+            keys |= dependency_keys(included, 'normal,build', offline)
+            normal |= dependency_keys(included, 'normal,no-proc-macro', offline)
     records, texts, errors = review_packages(keys, normal, metadata, config, offline)
     bundled_texts, bundled_errors = bundled_assets(package, config)
     return records, texts + bundled_texts, errors + bundled_errors
@@ -228,11 +257,12 @@ def audit_lock(metadata, config, offline):
     return 1 if errors else 0
 
 
-def markdown(package, records, errors, lock_hash):
+def markdown(package, records, errors, lock_hash, built_with=None):
     counts = Counter(' AND '.join(r['selected']) or '未確認' for r in records)
     lines = [f'## {package} の依存一覧', '', f'対象: `{TARGET}`、通常の機能。Cargo.lock SHA-256: `{lock_hash}`。', '',
              f'外部クレート {len(records)} 件（同名の別版は別件）。実行時 {sum(r["role"] == "実行時" for r in records)} 件。', '',
              'ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。', '',
+             *([f'`{built_with}` と同じ cargo の組み（`-p {built_with} -p {package}`）で機能が合わさった、`{package}` の部分木。', ''] if built_with else []),
              '| 選択した許諾（追加条件を含む） | 件数 |', '|---|---:|']
     lines += [f'| {license_id} | {count} |' for license_id, count in sorted(counts.items())]
     lines += ['', '状態: ' + ('要確認。配布用全文束は生成しない。' if errors else 'クレートの許諾照合は成功。'), '',
@@ -254,19 +284,25 @@ def main():
     global TARGET
     use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'xtask', 'all'], default='all')
+    parser.add_argument('--package', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'yolu-cli', 'xtask', 'all'], default='all')
     parser.add_argument('--audit-lock', action='store_true', help='3 対象の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'])
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
+    parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
+    parser.add_argument('--built-with', choices=['yolu-app', 'yolu-bridge', 'yolu-update', 'yolu-cli'],
+                        help='指した製品と同じ cargo の命令で組む物として、--package の依存を数える（機能が合わさって、単独の木に無い依存が入る。'
+                             '`cargo build -p yolu-app -p yolu-cli` で組む yolupainter-cli の .mcpb 用）')
     args = parser.parse_args()
+    if args.built_with and (args.package == 'all' or args.built_with == args.package):
+        parser.error('--built-with は、別の製品を指した --package と一緒に使います')
     TARGET = args.target or 'x86_64-pc-windows-gnu'
     output = OUT / TARGET if args.target else OUT
     output.mkdir(parents=True, exist_ok=True)
-    selected = ['yolu-app', 'yolu-bridge'] if args.package == 'all' else [args.package]
+    selected = ['yolu-app', 'yolu-bridge', 'yolu-cli'] if args.package == 'all' else [args.package]
     if args.audit_lock:
-        if args.bundle or args.target or args.package != 'all' or args.include_update:
+        if args.bundle or args.target or args.package != 'all' or args.include_update or args.include_cli or args.built_with:
             parser.error('--audit-lock は --offline 以外と併用できません')
         config = json.loads(CONFIG.read_text(encoding='utf-8'))
         if config['schema'] != 1:
@@ -285,12 +321,12 @@ def main():
     lock_hash = digest((ROOT / 'Cargo.lock').read_bytes())
     failures = 0
     for package in selected:
-        records, texts, errors = inventory(package, metadata, config, args.offline, args.include_update)
+        records, texts, errors = inventory(package, metadata, config, args.offline, args.include_update, args.include_cli, args.built_with)
         directory = output / package
         directory.mkdir(exist_ok=True)
         (directory / 'inventory.json').write_text(json.dumps({'target': TARGET, 'package': package,
-            'lock_sha256': lock_hash, 'records': records, 'issues': errors}, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-        (directory / 'THIRD_PARTY.md').write_text(markdown(package, records, errors, lock_hash), encoding='utf-8')
+            'built_with': args.built_with, 'lock_sha256': lock_hash, 'records': records, 'issues': errors}, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (directory / 'THIRD_PARTY.md').write_text(markdown(package, records, errors, lock_hash, args.built_with), encoding='utf-8')
         if errors:
             failures += 1
             print(f'{package}: {len(records)} クレート、要確認', file=sys.stderr)

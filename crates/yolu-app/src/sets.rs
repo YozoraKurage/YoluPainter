@@ -924,7 +924,6 @@ impl AppState {
                 }
             }
         }
-        self.sel_prune_saved();
         self.set_scroll = 0.0;
         self.sync_mesh_map_view();
         self.sync_view3d();

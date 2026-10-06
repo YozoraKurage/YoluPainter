@@ -10,7 +10,9 @@
 //!   .ylp からの相対のパスと、ドライブ文字つきの絶対のパスは読む（マップしたネットワークドライブは見分けない: 細工した .ylp は
 //!   利用者のドライブの割り当てを作れない）。構成の「読み直す」は利用者の操作なので、ネットワークのパスでも読める。新規プロジェクトの
 //!   窓の初めのモデルには使わない（利用者が選んだモデルではない）。保存し直しても別の場所の参照には変わらない（'/' 区切りにそろえるだけ。.ylp と同じ共有なら Windows は相対にする）。
-//! - Live Link のモデル（Unity のシーンのもの）が付いているときは、モデルのファイルは読まない（参照だけ残す）。
+//! - 読み終えたら、ファイルのポーズ（根の `pose.json`）を戻す（`view3d::pose::stored`）。
+//! - Live Link のモデル（Unity のシーンのもの）が付いているときは、モデルのファイルは読まない（参照だけ残す。ポーズも戻さず、ファイルのポーズは保存でも
+//!   そのまま残る。Unity から受けるポーズは頂点の位置で、保存しない）。
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -53,6 +55,13 @@ impl Reopen {
     /// 読んでいるファイルの名前。
     pub fn file_name(&self) -> String {
         file_name(&self.path)
+    }
+    /// 読み込みの進み具合（ファイルを確かめている間・まだ知らせが無い間は None）。
+    pub fn fraction(&self) -> Option<f32> {
+        match &self.stage {
+            Stage::Loading(job) => job.fraction(),
+            Stage::Checking(_) => None,
+        }
     }
 }
 
@@ -230,6 +239,10 @@ pub(super) fn poll(app: &mut AppState) {
                     format!(" モデルに無いセット {}。", report.unmatched.len()),
                     format!(" Not in the model: {}.", report.unmatched.len()),
                 );
+            }
+            // ファイルのポーズ（pose.json）を戻す（合わない項目は飛ばして理由をポーズの欄に残す。取り消しの段にも変更の印にもしない）
+            if let Some(note) = crate::view3d::pose::stored::restore_from_project(app) {
+                text += &format!(" {note}");
             }
             text
         }

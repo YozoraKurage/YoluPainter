@@ -1,6 +1,10 @@
 //! YoluPainter（Rust 版）を起動する。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+/// 確保の失敗（メモリ不足）を、落ちる前に記録の先へ書く（`crash::oom`）。
+#[global_allocator]
+static ALLOCATOR: yolu_app::crash::RecordingAlloc = yolu_app::crash::RecordingAlloc;
+
 fn main() -> eframe::Result {
     yolu_app::crash::install();
     let result = yolu_app::crash::guard(start, yolu_app::crash::failure_dialog);
@@ -23,8 +27,15 @@ fn start() -> eframe::Result {
     if yolu_app::titlebar::CUSTOM_FRAME {
         viewport = viewport.with_decorations(false);
     }
-    // 前に終わったときの窓の大きさと位置（設定のフォルダの layout.json）。位置が今のどの画面にも見えなければ、位置は戻さず大きさだけ戻す
-    if let Some(window) = yolu_app::layout::saved_window() {
+    // 前に終わったときの窓の大きさと位置（設定のフォルダの layout.json）。画面を列挙できる OS（Windows）では、画面ごとの拡大率・
+    // 作業領域と突き合わせて置き場所を決める（初回は主の画面の中央。記録の画面が無ければ主の画面の中央）。窓の位置と最大化は、
+    // 窓ができてから最初のフレームで合わせる（`windowpos`）ので、作るときは大きさだけ渡す
+    let record = yolu_app::layout::saved_window();
+    if let Some(place) = yolu_app::windowpos::startup(record.as_ref()) {
+        viewport = viewport.with_inner_size(place.size_points());
+        yolu_app::windowpos::remember(place);
+    } else if let Some(window) = record {
+        // 画面を列挙できない OS: 記録をそのまま戻す。位置が今のどの画面にも見えなければ、位置は戻さず大きさだけ戻す
         viewport = viewport.with_inner_size(window.size);
         if yolu_app::layout::is_visible_on_a_monitor(&window) {
             viewport = viewport.with_position(window.position);
@@ -36,12 +47,19 @@ fn start() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        // 3D ビューのアンチエイリアスに 2× と 8× を選べるよう、機材が持つ形式の機能を装置へ足す
+        wgpu_options: yolu_app::view3d::render::wgpu_configuration(),
         ..Default::default()
     };
     eframe::run_native(
         "YoluPainter",
         options,
-        Box::new(|cc| Ok(Box::new(yolu_app::YoluApp::new(cc)))),
+        Box::new(|cc| {
+            // Windows: ファイルの窓の親になる主の窓を預け、枠を外した窓の最大化を自動で隠すタスクバーに合わせる
+            yolu_app::dialog::set_owner(cc);
+            yolu_app::windowpos::install(cc);
+            Ok(Box::new(yolu_app::YoluApp::new(cc)))
+        }),
     )
 }
 

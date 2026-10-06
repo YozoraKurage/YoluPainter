@@ -1,6 +1,9 @@
 use yolu_core::{BlendMode, BrushSettings, Channel, Document, Rgba8, TileCoord};
+#[path = "support/gpu_lease.rs"]
+mod gpu_lease;
 use yolu_gpu::{Compositor, Dab, GpuPainter, Options};
 fn gpu() -> Option<GpuPainter> {
+    gpu_lease::lease();
     match GpuPainter::new(Options::default()) {
         Ok(g) => {
             eprintln!("GPU 試験: {:?}", g.adapter_info());
@@ -222,9 +225,17 @@ fn invalid_input_budget_and_cpu_fallback() {
     assert!(g
         .brush_dabs(u32::MAX, u32::MAX, &[], &BrushSettings::default(), &[])
         .is_err());
+    // 文書にないチャンネルは断る（法線の種類のチャンネルは合成できる）
+    assert!(g
+        .composite_tiles(
+            &d,
+            Channel::from_index(40).unwrap(),
+            &[TileCoord::new(0, 0)]
+        )
+        .is_err());
     assert!(g
         .composite_tiles(&d, Channel::Normal, &[TileCoord::new(0, 0)])
-        .is_err());
+        .is_ok());
     assert!(g
         .composite_tiles(&d, Channel::Color, &[TileCoord::new(u32::MAX, 0)])
         .is_err());
@@ -241,6 +252,7 @@ fn invalid_input_budget_and_cpu_fallback() {
             }]
         )
         .is_err());
+    gpu_lease::lease();
     let mut small = GpuPainter::new(Options {
         budget_bytes: 1,
         ..Default::default()
@@ -350,4 +362,80 @@ fn multiple_clip_groups_and_channels() {
         .unwrap();
         assert_eq!(expected, t.pixels);
     }
+}
+
+/// 常駐しない合成（`composite_tiles` と `Compositor`）も、独立して合成するグループ・調整の層・効果のある層・法線のチャンネルを CPU と同じ画素にする。
+#[test]
+fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
+    use yolu_core::effects::{EffectSettings, FilterSpec, FilterTarget};
+    use yolu_core::AdjustmentSettings;
+    let Some(mut g) = gpu() else { return };
+    let mut d = Document::with_tile_size(67, 35, 16).unwrap();
+    let mut seed = 0x2468ace1u32;
+    let mut byte = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as u8
+    };
+    let mut layers = Vec::new();
+    for k in 0..4 {
+        let l = d.add_layer("層").unwrap();
+        d.set_channel_enabled(l, Channel::Normal, true).unwrap();
+        for y in 0..35 {
+            for x in 0..67 {
+                let alpha = [255, 200, 0, 90][((x + y + k) % 4) as usize];
+                d.set_pixel(l, x, y, Rgba8::new(byte(), byte(), byte(), alpha))
+                    .unwrap();
+                d.set_channel_pixel(
+                    l,
+                    Channel::Normal,
+                    x,
+                    y,
+                    Rgba8::new(128 + byte() / 8, 128 + byte() / 8, 200 + byte() / 5, alpha),
+                )
+                .unwrap();
+            }
+        }
+        layers.push(l);
+    }
+    d.set_layer_blend_mode(layers[1], BlendMode::Multiply).unwrap();
+    let group = d.group_layers(&[layers[1], layers[2]], "組").unwrap();
+    d.set_layer_blend_mode(group, BlendMode::Normal).unwrap();
+    d.set_layer_opacity(group, 0.7, false).unwrap();
+    d.add_adjustment_layer(
+        "色相",
+        AdjustmentSettings::hue_saturation(40.0, 0.2, 0.0).unwrap(),
+        None,
+        Some(layers[0]),
+    )
+    .unwrap();
+    d.add_filter(
+        layers[3],
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]),
+    )
+    .unwrap();
+    let all = coords(&d);
+    assert!(compare(&mut g, &d, &all, 2) <= 2);
+    // 法線のチャンネル
+    let r = g.composite_tiles(&d, Channel::Normal, &all).unwrap();
+    for t in r.tiles {
+        let mut expected = vec![0; t.pixels.len()];
+        d.composite_into(
+            Channel::Normal,
+            t.rect,
+            &mut expected,
+            yolu_core::RowOrder::BottomUp,
+        )
+        .unwrap();
+        assert!(diff(&expected, &t.pixels) <= 2, "法線");
+    }
+    // 予算で GPU が使えない呼び出しは、CPU の合成が同じ文書を返す
+    let mut fallback = Compositor::new(Options {
+        budget_bytes: 1,
+        ..Default::default()
+    });
+    let out = fallback.composite_tiles(&d, Channel::Color, &all).unwrap();
+    assert_eq!(out.tiles[0].pixels, d.composite(out.tiles[0].rect).unwrap());
 }
