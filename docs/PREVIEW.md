@@ -223,7 +223,7 @@ Height → Normal の設定は層の合成を変えないので、設定が変�
 テクスチャセットごとに、プロパティの「マテリアル」のタブの「見た目」で種類を「標準（PBR）」か「lilToon」にします。lilToon のセットは、3D ビューの
 「マテリアル (PBR)」の表示で lilToon 2.3.4 の式で描きます（中立・チャンネルだけ・メッシュマップだけの表示は種類によらず同じ）。式は lilToon（MIT）の
 シェーダーから WGSL（`crates/yolu-app/src/view3d/shaders/liltoon.wgsl`）に移したもので、出どころと許諾は [第三者の許諾](../THIRD_PARTY.md#liltoon-の再現式の移植)。
-見た目の設定はセットの .ylp の `look.json` に入ります（形式は `crates/yolu-io/README.md`）。
+見た目の設定はセットの .ylp の `look.json` に入ります（形式は [YLP_FORMAT.md](YLP_FORMAT.md) の「look.json」）。
 
 ### 既定の見た目
 

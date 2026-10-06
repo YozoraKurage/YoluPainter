@@ -1,0 +1,784 @@
+# .ylp ファイルの形式
+
+YoluPainter の作業ファイル `.ylp` の仕様です。外の道具（変換・検査・ビルドの途中で .ylp を読むもの）を作る人と、形式を変える人のための文書で、
+この文書が形式の**正本**です。読み書きのコードは `crates/yolu-io`（外側は `package.rs`・`archive.rs`、中身は `project.rs`、正本は `native.rs`・
+`bigdoc.rs`、各エントリはそれぞれの読み手）にあります。コードとこの文書が食い違ったら、それは不具合です。形式を変えるコミットは、同じコミットでこの
+文書を直します（`crates/yolu-io/tests/format_doc.rs` が、書き手のエントリ・版の定数・正本の欄の名前がこの文書に載っているかを確かめます）。
+
+.ylp は作業ファイルで、テクスチャではありません。マテリアルには書き出した PNG を割り当てます（.ylp を配った先に YoluPainter があるとは限らないため）。
+
+## 版の早見
+
+| 層 | 版 | 今の書き手が書くもの |
+|---|---|---|
+| 外側（zip・mimetype・manifest・名前の決まり） | manifest の 1 行目 `YOLUPAINTER-YLP-1`〜`4` | `YLP-3`。今の上限に収まらないファイルだけ `YLP-4` |
+| 中身の形式（エントリの並び・`ylp.json`・`project.json`・`resources.json`） | `ylp.json` の `format`、1〜8 | 7。名前を付けて残した選択範囲を使うファイルだけ 8 |
+| テクスチャセットの正本 `document.utpaint` | `DOTPAINT` の後の版、1〜26 | 使う機能で決まる 21〜25。512 MiB を超える正本だけ 26 |
+| `meshmap-<種類>.bin` | `YLPMMAP` の後の版 1〜3、エンジンの版 2 | 3 |
+| `selection.bin`・`selection-<印>.bin` | `YLSL` の後の版 1 | 1 |
+| `look.json`・`pose.json`・`selections.json` | 各 JSON の `format` 1 | 1 |
+| `.ylsmart`（棚のスマートマテリアル・スマートマスク） | manifest `YOLUPAINTER-SMART-1`、`smart.json` の `format` 1 | 1 |
+| `.ylbrush`（棚の携帯ブラシ） | manifest `YOLUPAINTER-BRUSH-1`、`state.json` の `schema` 1〜3 | 書かない（読んでバイト列のまま残す） |
+
+コードの定数: `project::MAX_FORMAT`（8）・`SAVED_SELECTIONS_FORMAT`（8）、`native::UNITY_NATIVE_VERSION`（21）・`USER_CHANNELS_VERSION`（22）・
+`PROCEDURAL_VERSION`（23）・`ADJUST_VERSION`（24）・`MIXING_VERSION`（25）・`MAX_NATIVE_VERSION`（25）・`SPLIT_VERSION`（26）、`mesh_map::FORMAT_VERSION`（3）、
+`look::FORMAT`・`pose::FORMAT`・`saved_selections::FORMAT`（どれも 1）。
+
+### 読み手ごとの範囲
+
+| 読み手 | 外側 | 中身の形式 | 正本の版 | 知らないエントリ |
+|---|---|---|---|---|
+| このアプリ（0.4.0〜） | `YLP-1`〜`4` | 1〜8 | 1〜26 | 知らせて、バイト列のまま残す |
+| スタンドアロン 0.3.0〜0.3.2 | `YLP-1`〜`4` | 1〜7（8 は書いたアプリを添えて断る） | 1〜26 | 知らせて、バイト列のまま残す（`pose.json` もこの扱い） |
+| Unity 版（Unity のパッケージの EditorWindow とインポーター。0.2.0 から新しい形式を足していない） | `YLP-1`〜`3`（`YLP-4` は断る） | 1〜7（8 は断る） | 1〜21（22 以上は `Unsupported archive version; source retained unchanged.`） | 知らせて、保存で落とす |
+
+どの読み手も、読めないものは**ファイルに触れずに**断ります（一部だけを読んで保存し直し、黙って何かを失うことはありません）。1 つのセットでも正本の版が
+22 以上なら、その .ylp は Unity 版では開けません（Unity 版で開くには、その機能を消して保存し直し、版 21 に戻します）。
+
+## 外側
+
+- zip。先頭は無圧縮の `mimetype`（中身は `application/x-yolupainter`）、次に `manifest.sha256`、続いてエントリを名前の順に置きます。PNG は無圧縮、
+  ほかは Deflate で入れます。zip の日時と圧縮の結果は形式の一部ではありません（同じ中身でもバイト列が同じとは限りません）。
+- `manifest.sha256` は UTF-8 のテキスト。1 行目が外側の版、続く各行が `<SHA-256 の小文字の 16 進 64 桁> <バイト数> <名前>`（名前の順）。中身の正しさは
+  SHA-256 で決め、zip の CRC-32 も確かめます。manifest に無いエントリ・manifest にあってファイルに無いエントリ・長さや SHA-256 の違いは、どれも読まずに
+  断ります。
+- エントリの名前: 英数字と `. - _`、96 バイトまで。`.` で始まる名前・`..` を含む名前・空の名前は断ります。置けるフォルダは外側の版で決まります。
+  - `YOLUPAINTER-YLP-1`（中身の形式 1・2）: 根と `composite/` の下だけ。根に `document.utpaint` が要ります。
+  - `YOLUPAINTER-YLP-2`（中身の形式 3）: 加えて、名前の前に `sets/<ID>/` を 1 つ置けます（ID は小文字のハイフン付きの GUID 36 文字。大文字・ハイフン
+    無し・空の GUID は断る）。`sets/<ID>/composite/` も置けます。`document.utpaint` は根かどれかの `sets/<ID>/` に要ります。
+  - `YOLUPAINTER-YLP-3`（中身の形式 4 から）: 加えて、根の `resources/` の下に 1 段の名前を置けます（その下にフォルダは置けない。`sets/<ID>/resources/` も
+    置けない）。
+  - `YOLUPAINTER-YLP-4`: 名前の決まりは `YLP-3` と同じで、上限と zip64 だけが違います（下）。
+  - 名前の決まりを広げるときは外側の版を上げます。古い読み手は、名前で断る代わりに「新しい YoluPainter で書かれた」と断ります。
+- `YLP-3` までの上限: 1 エントリ 512 MiB、合計 768 MiB、1000 エントリ、manifest 1 MiB、zip64 なし。宣言した長さを超えて展開しません。
+- `YOLUPAINTER-YLP-4`（`package.rs`）: `YLP-3` の上限に収まらないファイルだけ。収まるプロジェクトは `YLP-3` で書き、バイト列も `YLP-4` を足す前と同じです。
+  - 1 エントリは、正本の部分（`document.utpaint.<n>`）が 256 MiB、ほかが 512 MiB まで。エントリは 65000 まで、manifest は 16 MiB まで。
+  - セットごとの正本（`document.utpaint` と部分の長さの合計）は、読み手の設定「レイヤーのメモリ」の予算（256 MiB を下回らない）の 4 倍まで。全体は
+    「正本のあるセットの数 × それ ＋ 768 MiB」まで。この 2 つは読み手の設定で、形式の制約ではありません。書き手は予算を超えても書き、今の予算で開き直せない
+    ことを保存のときに知らせます。読み手は、どの予算かだけを言って展開の前に断ります。
+  - zip64 は要るときだけ使います。4 GiB を超える位置のローカルヘッダーは中央ディレクトリの zip64 の拡張で指し（その記録の版は 45）、65535 を超える
+    エントリか 4 GiB を超える中央ディレクトリは zip64 の終端の記録と目印を書きます。`YLP-3` までのファイルに zip64 の構造があれば断ります。データ記述子は
+    書きませんが、読み手は受けます。
+
+## エントリ
+
+種類の意味:
+
+- **正本**: 失うと作業を失うもの。読めなければ開くのを断ります（Unity 版は `selection.bin` だけ、理由を知らせて無しで開く）。
+- **状態**: 開いた後の画面の状態。読めなければ既定に戻して知らせ、エントリはバイト列のまま残します（書き換えるまで）。
+- **派生**: 正本から作り直せるもの。読めなければ使わずに作り直します。正本の代わりにはしません。
+
+根（コードの一覧は `project::ROOT_ENTRIES`）:
+
+| エントリ | 種類 | 形式 | 中身 | このアプリ |
+|---|---|---|---|---|
+| `ylp.json` | 記録 | 2 から | 中身の形式と書いたアプリ（下） | 書く |
+| `project.json` | 正本 | 3 から | テクスチャセットの並びと今のセット（下） | 書く |
+| `resources.json` | 正本 | 4 から | 棚（プロジェクトのリソース）の並び。棚が空なら書かない（下） | 書く |
+| `resources/<content>.png`・`.ylsmart`・`.ylbrush` | 正本 | 4・5・6 から | 棚の中身（下） | 書く |
+| `view.json` | 状態 | | 画面の状態（下） | `standaloneModel` だけを書き、ほかのキーは残す |
+| `pose.json` | 状態 | 7 から（形式は上げない） | モデルの今のポーズ（下） | 書く |
+| `brush.json` | 状態 | | Unity 版のブラシの設定（`schema` 1〜3） | 書かない（残す） |
+| `thumbnail.png` | 派生 | | Unity 版のインポーターが見る見本（長辺 256 px 以下） | 書かない（残す） |
+| `model.json` | 状態 | | 古い書き手の状態。今の書き手は書かない | 書かない（残す） |
+
+テクスチャセットごと（`sets/<ID>/` の下。形式 2 までは同じ名前で根にあった。コードの一覧は `project::SET_ENTRIES`）:
+
+| エントリ | 種類 | 形式 | 中身 | このアプリ |
+|---|---|---|---|---|
+| `document.utpaint` | 正本 | 1 から | セットの正本（下の「正本」） | 書く |
+| `document.utpaint.<n>` | 正本 | 7 から（形式は上げない） | 正本の版 26 の部分（`<n>` は 1 から続く 10 進） | 512 MiB を超える正本だけ書く |
+| `selection.bin` | 正本 | 1 から | 今の選択範囲（下） | 書く |
+| `selections.json` | 正本 | 8 | 名前を付けて残した選択範囲の索引（下） | 書く |
+| `selection-<印>.bin` | 正本 | 8 | 残した選択範囲の中身（下） | 書く |
+| `look.json` | 状態 | 7 から（形式は上げない） | 3D ビューの見た目の設定（下） | 書く |
+| `composite/<チャンネル>.png` | 派生 | 1 から | 標準のチャンネルの合成（下） | 書く |
+| `meshmap-<種類>.bin` | 派生 | 1 から | 焼いたメッシュマップ（下） | 書く |
+| `imported-original.psd` | 正本 | 2 から | 取り込んだ PSD の原本のバイト列（変えない） | 書かない（残す） |
+
+知らないエントリ（今の形式のどの読み手も知らない名前、並びに無いセットの `sets/<ID>/`）は、開くときに一覧で知らせます。このアプリはバイト列のまま
+残し、Unity 版は保存で落とします。
+
+## 中身の形式の版
+
+| 形式 | 変えたこと | 移行（古い形式を開くとき。メモリの上だけで、ファイルは書き換えない） |
+|---|---|---|
+| 1 | （`ylp.json` の無いファイル） | — |
+| 2 | `ylp.json` を足した。並びは 1 と同じ | なにもしない |
+| 3 | テクスチャセット。根に `project.json`、正本・選択範囲・取り込んだ PSD・合成・メッシュマップはセットごとに `sets/<ID>/` の下。manifest は `YLP-2` | 根の `document.utpaint`・`selection.bin`・`imported-original.psd`・`composite/*`・`meshmap-*.bin` を `sets/<文書の ID>/` へ動かし（ID は正本の頭の文書の ID）、`view.json` の `materialSlot`（無い・読めなければ 0）から 1 つのセットの `project.json` を作る。名前は仮の `Texture Set 1`。ほかのエントリは根に残す |
+| 4 | 棚（`resources.json` と `resources/<content>.png`）。manifest は `YLP-3` | なにもしない |
+| 5 | 棚の種類にスマートマテリアル・スマートマスク（`resources/<SHA-256>.ylsmart`） | なにもしない |
+| 6 | 棚の種類にブラシ（`.ylbrush`）・マテリアル（`.ylsmart`）、Unity のアセットの `localFileID`、置き場の下位の階層 | なにもしない |
+| 7 | テクスチャセットはマテリアルごと。`project.json` の各セットの `materialSlot` をやめ、`material`（マテリアルの鍵）にした。メッシュマップの版 3 | 各セットの `materialSlot` を `"material": { "slot": <番号> }` にする |
+| 8 | 名前を付けて残した選択範囲（`sets/<ID>/selections.json` と `selection-<印>.bin`）。名前の決まりは変わらないので manifest は `YLP-3` のまま。**使うファイルだけ**が 8 で、全部なくなれば 7 に戻る | なにもしない |
+
+- 書くときは今の形式で書きます。古い形式のファイルを開いて保存すると形式 7（残した選択範囲があれば 8）になり、古い読み手では開けなくなります。
+  直前の版は退避に残ります（下の「保存」）。
+- 新しすぎる形式は、どのエントリにも触れずに、形式の番号と書いたアプリを添えて断ります。
+
+## ylp.json（形式 2 から）
+
+```json
+{
+  "format": 7,
+  "savedBy": { "app": "YoluPainter", "version": "0.4.0", "unity": "standalone" },
+  "createdBy": { "app": "YoluPainter", "version": "0.4.0", "unity": "standalone" }
+}
+```
+
+- `format`（整数、2 以上、必須）: 中身の形式。
+- `savedBy`（必須）: 最後に保存したアプリ。`app`・`version`・`unity`（どれも 1〜256 文字）。Unity 版は `unity` に Unity の版を、このアプリは `standalone` を書きます。
+- `createdBy`（省略可）: 最初に作ったアプリ。形式 1 のファイルから作ったものは、分からないので書きません。
+- 知らないキーは読み飛ばします。
+
+正本・記録の JSON（`ylp.json`・`project.json`・`resources.json`、`.ylsmart` の `smart.json`）に共通の決まり: UTF-8 の JSON のオブジェクト。キーの重複・深さ 16 を
+超える入れ子・1024 文字（UTF-16）を超える文字列とキーは断ります。`ylp.json`・`project.json` は 64 KiB、`resources.json` は 1 MiB まで。
+
+## project.json（形式 3 から。この形は形式 7）
+
+```json
+{
+  "sets": [
+    { "id": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", "name": "Body", "material": { "name": "Skin", "guid": "0123456789abcdef0123456789abcdef", "fileId": 2100000 } },
+    { "id": "11111111-2222-3333-4444-555555555555", "name": "Hair", "material": { "name": "Hair" } },
+    { "id": "22222222-3333-4444-5555-666666666666", "name": "Unassigned", "material": { "unassigned": true } },
+    { "id": "33333333-4444-5555-6666-777777777777", "name": "Texture Set 1", "material": { "slot": 0 } }
+  ],
+  "current": "11111111-2222-3333-4444-555555555555"
+}
+```
+
+- `sets`（必須、1〜64 個、並びの順がパネルの順）:
+  - `id`（必須）: 小文字のハイフン付きの GUID。エントリの置き場 `sets/<id>/` の名前。
+  - `name`（必須）: 1〜256 文字、空白だけでない、制御文字なし。大文字小文字を区別せずにほかのセットと重ならない（書き出すファイルの名前に使う）。
+  - `material`（必須、形式 7 から）: 次のどれか 1 つの形（2 つ以上・どれも無いものは断る）。
+    - `name`（0〜256 文字、制御文字なし）と、Unity のアセットなら `guid`（小文字の 16 進 32 文字）と `fileId`（符号付き 64 bit の整数）。`guid` と `fileId` は揃えて書く。
+    - `"unassigned": true`: モデルのマテリアルの無いスロットの全部。
+    - `slot`（0〜65535）: まだマテリアルに結び付けていないスロットの番号（形式 6 までのファイル）。
+    - 同じ `guid`・`fileId` の 2 つ、2 つの `unassigned`、同じ `slot` の 2 つは断る。名前だけの鍵は重なってよい。
+    - モデルのマテリアルへの照合は、識別子 → `unassigned` → 名前（大文字小文字まで同じ、次に区別せず）→ `slot` の順で、1 つのマテリアルは 1 つのセットだけが
+      持つ。合わないセットも開けます（3D に見えないだけ）。
+  - `materialSlot`: 形式 6 まで。形式 7 では読みません（移行が `material` の `slot` にする）。
+- `current`（必須）: 今のセットの `id`（並びにあること）。
+- 知らないキー（根・各セット）は読み飛ばし、書き直すときも残します。決まりに合わないものは開くのを断ります（既定に戻して開かない）。
+- 並びにあるセットに `sets/<id>/document.utpaint` が無ければ断ります。
+
+## 棚（resources.json と resources/。形式 4 から）
+
+```json
+{
+  "resources": [
+    { "id": "aaaaaaaa-0000-4000-8000-000000000001", "kind": "image", "name": "Scratches", "content": "<64 桁の小文字 16 進>", "width": 1024, "height": 1024, "colorSpace": "srgb",
+      "origin": { "type": "unityAsset", "guid": "0123456789abcdef0123456789abcdef", "path": "Assets/Textures/Scratches.png", "stamp": "<Unity の依存ハッシュ>", "localFileID": 2800000 } },
+    { "id": "bbbbbbbb-0000-4000-8000-000000000002", "kind": "smartMaterial", "name": "Rusty", "content": "<ファイルの SHA-256>", "length": 5519,
+      "origin": { "type": "library", "file": "Rusty.ylsmart", "sha256": "<同じ>", "length": 5519 } }
+  ]
+}
+```
+
+- `resources`（必須、0〜256 個、並びの順がパネルの順）。棚が空なら `resources.json` を書きません（無いファイルは棚が空）。
+  - `id`（必須）: 小文字のハイフン付きの GUID。正本の層（塗りつぶしの画像の `resource_id`）と `look.json` の `image` が指す名前。重ならない。
+  - `kind`（必須）: `image`、形式 5 から `smartMaterial`・`smartMask`、形式 6 から `brush`・`material`。知らない種類は断る（落として保存しない）。
+  - `name`（必須）: 1〜256 文字、空白だけでない、制御文字なし。重なってよい。
+  - `content`（必須、64 桁の小文字 16 進）:
+    - `image`: ASCII の `YLPRGBA8`、幅と高さ（32 bit の little-endian）、straight RGBA8 の画素（下の行から）を続けた SHA-256。画素は `resources/<content>.png`。
+    - ほか: ファイルのバイト列の SHA-256。ファイルは `resources/<content>.ylsmart`（`smartMaterial`・`smartMask`・`material`）か `resources/<content>.ylbrush`（`brush`）。
+  - `image` だけ: `width`・`height`（必須、1〜8192。PNG と同じでなければ断る）、`colorSpace`（省略可。`srgb`・`linear`・`unspecified`、既定 `unspecified`）。
+  - `image` 以外: `length`（必須、1〜512 MiB。ファイルの長さと同じ）。
+  - `origin`（省略可、既定は `{ "type": "none" }`）: 出どころ。写しは出どころが消えても使えます。
+    - `none`: 写しだけ。
+    - `unityAsset`: `guid`（32 桁の小文字 16 進）、`path`（1〜1024 文字。見せるだけ）、`stamp`（省略可、0〜128 文字。Unity の依存ハッシュ）、`localFileID`
+      （省略可、符号付き 64 bit。無い・0 は主アセット）、`readThroughGpu`（省略可）。
+    - `file`: `path`（絶対パス、1〜1024 文字）、`sha256`、`length`。
+    - `library`: `file`（置き場の中の `/` 区切りの相対パス。`\`・`:`・空の区間・`.`・`..` は断る）、`sha256`、`length`。
+    - `builtIn`: `key`（1〜64 文字の `a-z 0-9 -`）、`version`（1 以上）。
+  - 2 つのリソースが同じ中身を持ってよく、そのときエントリは 1 つです。
+- `resources/<content>.png`: 色の型 6（RGBA）・8 bit・インターレース無し・補助のチャンクなし（ICC・gAMA を付けない）。透明画素の RGB も保ちます。開くときに全部を
+  復号し、画素のハッシュが名前と、大きさが並びと同じかを確かめます。保存は読んだバイト列をそのまま書きます。
+- `resources/<content>.ylsmart`・`.ylbrush`: 下の「.ylsmart」「.ylbrush」のファイルを、置き場のファイルと同じバイト列で入れます。開くときに長さ・SHA-256・中身の種類を
+  確かめます。
+- 並びにあるのにエントリが無い・壊れているものは、どれかを添えて開くのを断ります。並びに無い `resources/` のエントリは知らないエントリとして知らせます。
+- メモリの予算: 復号した画像の画素・スマートマテリアルのファイルと画素・ブラシのファイルと筆先を合わせて 768 MiB まで。
+
+## view.json（状態）
+
+画面の状態。256 KiB まで、オブジェクトでなければ読みません。知らないキーは残します。
+
+| キー | 書き手 | 中身 |
+|---|---|---|
+| `modelAssetGuid` | Unity 版 | モデルのアセットの GUID（このアプリが新しく作るときは空の文字列） |
+| `selectedChannel` | Unity 版 | 選んだチャンネル（このアプリが新しく作るときは 0） |
+| `visibility` | Unity 版 | `hiddenSets`（非表示のセットの ID）と `hiddenRenderers`（モデルの中の兄弟番号の道とレンダラーの番号。例 `000001/000000:0`）。上限はセット 64・レンダラー 4096・鍵 2048 文字 |
+| `standaloneModel` | このアプリ | `{ "path": <モデルのファイル（FBX など）の .ylp からの相対か絶対の道、1〜1024 文字（UTF-16）、制御文字なし> }` |
+| `materialSlot` | 形式 2 まで | 形式 3 への移行が読む。今は書かない |
+
+## pose.json（状態。根）
+
+モデルの今のポーズ。8 MiB まで。休みの形からの差だけを持ち、骨は名前の道、BlendShape はメッシュの名前と BlendShape の名前の組で持つので、名前の組が
+同じモデルへ戻せます（合わないものは戻すときに理由つきで飛ばす）。ポーズのプリセット（`.ylpose`）と同じ表し方です。
+
+```json
+{
+  "format": 1,
+  "bones": [ { "path": ["Hips", "Spine"], "translation": [0.0, 0.01, 0.0], "rotation": [0.0, 0.0, 0.1, 0.99], "scale": [1.0, 1.0, 1.0] } ],
+  "shapes": [ { "mesh": "Face", "name": "Smile", "weight": 40.0 } ]
+}
+```
+
+- `format`: 1。ほかは読まずに断ります。
+- `bones`（4096 個まで）: `path`（根から骨までの名前の並び、1〜256 段、名前は 1〜256 文字）、`translation`（親の空間での足し算の差、絶対値 1e6 まで）、
+  `rotation`（骨のローカルの差、単位クォータニオン x・y・z・w。長さの許す幅 0.01、読んだ後で正規化。今の回転 = 休みの回転 × 差）、`scale`（休みの大きさとの比、
+  絶対値 1e6 まで）。
+- `shapes`（4096 個まで）: `mesh`・`name`（1〜256 文字）、`weight`（Unity と同じ 0〜100 の目盛り、絶対値 1e4 まで）。
+- 範囲の外・数でない値・単位でない回転・骨や BlendShape の重なり・数の上限を超えたものは、エントリごと断ります（一部だけを読まない）。断ったエントリは
+  バイト列のまま残ります。
+- 形式も正本の版も上げない状態のエントリです。Unity 版は知らないエントリとして知らせて保存で落とし（失うのはポーズだけ）、スタンドアロン 0.3.x はバイト列のまま
+  残します。
+
+## look.json（状態。セットの下）
+
+テクスチャセットの 3D ビューの描き方（`standard` の PBR か `lilToon` の再現か）と、lilToon のときのマテリアルの値。1 MiB まで。標準の見た目で何も設定していない
+セットはエントリを書きません。
+
+```json
+{
+  "format": 1,
+  "kind": "lilToon",
+  "shader": "Hidden/lilToonCutoutOutline",
+  "properties": {
+    "_ShadowBorder": { "float": 0.5 },
+    "_UseShadow": { "int": 1 },
+    "_ShadowColor": { "color": [0.82, 0.76, 0.85, 1.0] },
+    "_MainTex_ST": { "vector": [1.0, 1.0, 0.0, 0.0] }
+  },
+  "textures": {
+    "_MainTex": { "channel": 0 },
+    "_ShadowStrengthMask": { "packed": [ { "channel": 7, "component": 0 }, { "channel": 7, "component": 0 }, "zero", "one" ] },
+    "_MatCapTex": { "image": "<棚の画像の id からハイフンを除いた 32 桁の 16 進>" }
+  },
+  "keywords": [],
+  "kindChosen": true,
+  "received": {
+    "kind": "lilToon",
+    "shader": "Hidden/lilToonTransparent",
+    "source": "lilToon 2.3.4 · Standard/Transparent",
+    "properties": {},
+    "textures": { "_MainTex": { "channel": 0 } },
+    "keywords": [],
+    "missing": { "_MatCapTex": "pending", "_ShadowColorTex": "overBudget" }
+  }
+}
+```
+
+- `format`: 1。2 以上・知らない `kind` は読まずに断り、エントリはそのまま残ります（標準の見た目で開き、見た目を変えずに保存すれば残す。見た目を変えて保存すると
+  今の設定で上書きし、保存の知らせで言う）。
+- `kind`: `standard` か `lilToon`。`shader` は lilToon のシェーダーの名前（描画モードと輪郭線はここから読む）。
+- `properties`: lilToon のプロパティの名前と型（`float`・`int`・`color`・`vector`）。色はガンマの空間（Unity のマテリアルの値と同じ）。知らないプロパティも残す。
+- `textures`: スロット（テクスチャのプロパティの名前）ごとの元。`channel`（標準 0〜5・ユーザーチャンネル 6〜63）、`packed`（R・G・B・A の 4 つを `zero`・`one`・
+  `{ "channel", "component" }` から）、`image`（棚の画像）。文書に無いチャンネルは割り当てなしとして扱う。
+- `kindChosen`（真偽、無ければ偽）: 利用者が描き方を選んだか。選んでいなければ、Unity から受けた値があるとき受けた描き方で描く。
+- `received`（任意）: Live Link で Unity のマテリアルから受けた値。本体と同じ形の `kind`・`shader`・`properties`・`textures`・`keywords` と、出どころの文 `source`、
+  絵の無いスロットの理由 `missing`（`pending`: 届いていない。受けた絵の画素は書かないので、絵のあったスロットもこれ。`overBudget`・`unreadable`）。描くときは受けた値の
+  上に本体を重ねる。
+- 上限: プロパティ 2048・スロット 256・キーワード 256、名前は 1〜128 文字（UTF-16。シェーダーの名前は 256）で制御文字なし、値は有限の数だけ。
+- 書き直すとき、前のエントリが同じ `format` なら知らないキーを残します。
+- 形式も正本の版も上げない状態のエントリです。Unity 版は知らないエントリとして知らせて保存で落とします（失うのは見た目の設定だけ）。
+
+## 選択範囲
+
+### selection.bin（今の選択範囲）
+
+little-endian。
+
+| 欄 | 中身 |
+|---|---|
+| 4 byte | `YLSL` |
+| int | 版（1） |
+| int 幅・高さ・タイルの大きさ | 正本と同じでなければ断る |
+| int タイルの数 | 0〜列 × 行 |
+| タイルごと | int x・int y（左下のタイルが (0, 0)。`y × 列 + x` の昇順）、タイルの大きさ² byte の量（下の行から。0 でない量が 1 つ以上、文書の外の余白は 0） |
+
+量のあるタイルだけを書くので、同じ選択範囲はいつも同じバイト列です。長さが合わない・並びが違う・正本と大きさが違うものは、開くのを断ります（Unity 版は理由を知らせて選択なしで開く）。
+
+### selections.json と selection-<印>.bin（形式 8）
+
+名前を付けて残した選択範囲。
+
+```json
+{ "format": 1, "selections": [ { "name": "前髪", "content": "<中身の印>" } ] }
+```
+
+- 索引 `sets/<ID>/selections.json`（256 KiB まで）: `format`（1。ほかは読まない）、`selections`（並びの順、1 セットに 32 個まで）。`name` は前後の空白がなく、1〜256 文字、
+  制御文字なし、並びの中で重ならない。知らないキーは読み飛ばします。
+- 中身 `sets/<ID>/selection-<印>.bin`: `selection.bin` と同じ `YLSL` の版 1。印は中身のバイト列の SHA-256 の先頭 128 bit（小文字の 16 進 32 桁。エントリの名前が
+  96 バイトまでのため）。同じ中身は 1 つのエントリを共有します。
+- 読み手は、壊れた項目だけを飛ばし（理由つき）、読める項目は読みます。飛ばしたエントリはバイト列のまま残ります（残した選択範囲を書き換えるまで）。文書と大きさが
+  違うものは飛ばします。
+- 書き手は、書き直すときに前の索引と `selection-*.bin` をセットごと全部置き換えます（使われなくなった中身を残さない）。1 つでもエントリがあれば `ylp.json` の `format` を 8 に、
+  全部なくなれば 7 に戻します（外側の `YLP-3` は変えない）。
+
+## composite/<チャンネル>.png（派生）
+
+`<チャンネル>` は `Color`・`Roughness`・`Metallic`・`Height`・`Normal`・`Emission`。どれかの層が有効にしている標準のチャンネルごとに、正本の合成を
+straight RGBA8 の PNG（色の型 6、補助のチャンクなし。PNG なので上の行から）で書きます。`Color` は使う層が無くても書き、Height から Normal を作る設定で
+Height を使っていれば `Normal` も書きます（Normal は OpenGL の向き）。ユーザーチャンネルの合成は書きません。正本を替えたセットの `composite/` は消してから書き直します。
+Unity 版のインポーターは、この並びからセットのチャンネルを出します。
+
+## meshmap-<種類>.bin（派生）
+
+`<種類>` は `WorldNormal`・`Position`・`AmbientOcclusion`・`Curvature`・`Thickness`・`TangentNormal`・`Height`・`Id`・`BentNormal`・`Opacity`（番号 0〜9）。
+little-endian。
+
+| 欄 | 中身 |
+|---|---|
+| 8 byte | `YLPMMAP\0` |
+| int 版・int 種類・int エンジンの版 | 版 1〜3（書くのは 3）、エンジンの版 2 |
+| 文字列 メッシュのハッシュ・トポロジーのハッシュ | 文字列は int の長さ（0〜4096）と UTF-8 |
+| int UV のチャンネル・幅・高さ・スロット・パディング | |
+| int アンチエイリアスの段数 | 版 2 から（版 1 は 1） |
+| int チャンネル数 | 種類で決まる（3 か 1） |
+| int スロットの数と、その数の int のスロットの番号（昇順） | 版 3 から（0〜65536 個）。版 1・2 はスロットの欄の 1 つ（負なら無し） |
+| 文字列 設定の鍵・空間・ポーズ・元 | ID マップの元は `source=<元>;algorithm=2` に、必要ならマテリアル識別（`materials=<SHA-256>`）・手動の色（`manual=<SHA-256>`）の鍵 |
+| double ×6 | 由来の境界箱の最小 x・y・z、最大 x・y・z |
+| int 長さ・Deflate の中身 | 展開すると、覆いの byte（テクセルの数）と、チャンネルごとに 16 bit の値の上位 byte の面と下位 byte の面（行ごとに左の値との差） |
+
+どの条件で焼いたか（由来）が今のモデル・設定と違えば古いとして使いません（焼き直しを促す）。Generator と投影はメッシュマップを読み、無い・古いときは
+値をそのまま出して理由を知らせます。
+
+## 正本（document.utpaint）
+
+テクスチャセットの唯一の正本。読み手は `native.rs`（`NativeDocument::read`）、core の文書との変換は `core_bridge.rs`。
+
+### 値の型
+
+little-endian。
+
+| 型 | バイト |
+|---|---|
+| int | 4（符号付き） |
+| byte | 1 |
+| bool | 1（0 か 1。ほかは断る） |
+| double | 8（IEEE 754。範囲の外・NaN・無限大は断る） |
+| GUID | 16（C# の `Guid.ToByteArray()` の順: 最初の 3 つの区切りは little-endian。空は全部 0） |
+| 文字列 | int の長さ（0〜4096 バイト）と UTF-8 |
+| バイト列 | 決まった長さ（色の RGBA8 は 4、RGB は 3、タイルは タイルの大きさ² × 4） |
+
+座標は左下が原点です。タイルの x・y は左下のタイルが (0, 0)、タイルの中の画素は下の行から、行の中は左から並べます。画素は straight RGBA8 で、透明画素の RGB も
+保ちます。
+
+以下の表の「欄」は、読み手が項目に付ける名前（`NativeDocument::fields()` の道、例 `layers[0].opacity`）です。「版」の欄は、その欄がある正本の版です。
+
+### 頭
+
+| 欄 | 型 | 版 | 中身 |
+|---|---|---|---|
+| `magic` | 8 byte | | `DOTPAINT` |
+| `version` | int | | 1〜25。26 は分けた正本（下）で、続けて int の中の版（21〜25）と int の部分の数（1 以上）が来る |
+| `id` | GUID | | 文書の ID（空でない） |
+| `width`・`height` | int | | 1〜8192 |
+| `tile_size` | int | | 8〜512 の 2 の累乗 |
+| `normal` | 塊 | 7 | `algorithm` int（1）、`derive_from_height` bool、`strength` double（−256〜256）、`edges` int（0 端で止める・1 巻く）、`file_direction` int（0 OpenGL・1 DirectX） |
+| `user_channel_count` | int | 22 | ユーザーチャンネルの数（版 22 は 1〜58、版 23 からは 0〜58） |
+| `user_channels[i]` | 塊 | 22 | `channel` int（6〜63、昇順、歯抜けでよい）、`name` 文字列（1〜128 文字、制御文字なし、標準の 6 つの名前とほかと重ならない）、`kind` int（0 色・1 スカラー・2 法線）、`color_space` int（0 sRGB・1 線形）、`default` RGBA8 |
+| `layer_count` | int | | 0〜2048 |
+| `layers[i]` | 層 | | 層の数だけ（下）。`layers[0]` が一番下 |
+| `manual_id_colors` | 塊 | 19 | 任意。層の後にデータが残っていれば: `tag` 4 byte（`YLID`）、`count` int（1〜4096）、`binding` 文字列（小文字の SHA-256 64 桁。三角形の UV・スロット・レンダラーのトポロジーと、全三角形のメッシュの塊の番号の並びから作る指紋）、`colors[i]`: `part` int（0〜3999999、狭義の昇順）・`rgb` int（0xRRGGBB） |
+
+この後にデータがあれば「新しい読み手が必要」として断ります。
+
+チャンネルの番号: 0 Color・1 Roughness・2 Metallic・3 Height・4 Normal・5 Emission（標準）、6〜63 はユーザーチャンネル（版 22 から、頭の一覧にある番号だけ）。
+以下で「チャンネル」と書いた欄のうち、チャンネルごとの合成・塗りつぶしの値・調整の対象・ラスターのチャンネルはユーザーチャンネルも置けます（個数の上限は
+6 ＋ 一覧の数）。塗りつぶしの画像・グラデーション、フィルター、パスのマテリアルは標準の 0〜5 だけです。同じ並びの中で同じチャンネルは 2 回置けません。
+
+### 層
+
+| 欄 | 型 | 版 | 中身 |
+|---|---|---|---|
+| `id` | GUID | | 空でない。文書の中で重ならない |
+| `name` | 文字列 | | |
+| `visible` | bool | | |
+| `opacity` | double | | 0〜1 |
+| `blend` | int | | 合成モード（下の表、0〜26）。26（通過）はグループだけ |
+| `attributes` | byte | 12 | 属性の印: ビット 0 クリッピング、1 `locks` が続く、2 チャンネルごとの合成が続く（版 14）、3 塗りつぶしの画像と投影が続く（版 16）、4 Anchor が続く（版 20）、5 塗りつぶしのグラデーションが続く（版 21）。その版に無いビットは断る |
+| `locks` | int | 12 | ビット 1 のとき。1〜15: ビット 0 透明部分・1 画素・2 位置・3 すべて |
+| `channel_blend_count` | byte | 14 | ビット 2 のとき。1〜チャンネルの上限 |
+| `channel_blends[i]` | 塊 | 14 | `channel` int、`parts` byte（1〜3: ビット 0 合成モード・1 不透明度）、ビット 0 なら `mode` int（0〜26）、ビット 1 なら `opacity` double（0〜1）。無い部分は層の値に従う |
+| `clipping` | bool | 5〜11 | 版 12 からは属性の印のビット 0 |
+| `kind` | int | 3 | 0 ラスター・1 塗りつぶし（版 3）・2 調整（版 4）・3 グループ（版 6）。版 2 までは 0 |
+| `parent` | GUID | 6 | 親のグループの ID（空は一番上） |
+| `fill_count` | int | 3 | 塗りつぶしでなければ 0 |
+| `fills[i]` | 塊 | 3 | `channel` int、`enabled` bool、`rgba` RGBA8 |
+| `image_count` | int | 16 | ビット 3 のとき（塗りつぶしだけ）。0〜6 |
+| `images[i]` | 塊 | 16 | `channel` int（標準、塗りつぶしの値があるチャンネル）、`resource_id` GUID（棚の画像の `id`。空でない） |
+| `projection` | 塊 | 16 | ビット 3 のとき。下の「投影」。画像が 0 枚なら投影を既定から変えていること |
+| `gradient_count` | int | 21 | ビット 5 のとき（塗りつぶしだけ）。1〜6 |
+| `gradients[i]` | 塊 | 21 | `channel` int（標準、Normal でない、塗りつぶしの値があり画像の無いチャンネル）と、Generator の欄（下。種類 5・アルゴリズムの版 2・合成 Replace であること） |
+| `adjustment` | 塊 | 4 | 調整の層だけ。下の「調整」 |
+| `channel_count` | int | | ラスターでなければ 0 |
+| `channels[i]` | 塊 | | `channel` int、`enabled` bool、タイル（下） |
+| `has_mask` | bool | 2 | |
+| `mask` | 塊 | 2 | `enabled` bool、`inverted` bool、`density` double（0〜1）、タイル（量はアルファ。RGB は 0 でなければ断る） |
+| `has_surface_path` | bool | 8 | ラスターだけ |
+| `surface_path` | 塊 | 8 | 3D のパス（下の「パス」） |
+| `has_filters` | bool | 9 | |
+| `filters` | 塊 | 9 | 中身のフィルター（下）。マスクがあれば続けて `mask.filters`（チャンネルの欄の無いフィルター）。調整・グループの層の中身のフィルターは 0 個 |
+| `has_canvas_path` | bool | 10 | ラスターだけ。3D のパスと両方は持てない |
+| `canvas_path` | 塊 | 10 | 2D のパス（下） |
+| `anchor_flags` | byte | 20 | ビット 4 のとき。1〜3: ビット 0 層の Anchor、ビット 1 マスクの Anchor（マスクが要る） |
+| `anchor`・`mask.anchor` | 塊 | 20 | `id` GUID（空でない、文書の中で重ならない）、`name` 文字列（空白だけでない、128 文字（UTF-16）まで）。Anchor が持つ値は書かない（下の層から作り直す） |
+
+合成モード: 0 Normal・1 Multiply・2 Screen・3 Overlay・4 Darken・5 Lighten・6 ColorDodge・7 ColorBurn・8 LinearDodge・9 LinearBurn・10 HardLight・
+11 SoftLight・12 VividLight・13 LinearLight・14 PinLight・15 HardMix・16 Difference・17 Exclusion・18 Subtract・19 Divide・20 Hue・21 Saturation・22 Color・
+23 Luminosity・24 DarkerColor・25 LighterColor・26 PassThrough。
+
+タイル: `tile_count` int（0〜列 × 行）、`tiles[i]`: `x` int・`y` int（重ならない）、`length` int（タイルの大きさ² × 4 と同じ）、`rgba` バイト列。画素の無いタイルは書きません。
+
+### 投影（projection）
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `algorithm` | int | 1 |
+| `mode` | int | 0 UV・1 トライプラナー・2 平面・3 球・4 円柱・5 デカール（版 17） |
+| `wrap` | int | 0 繰り返す・1 端で止める・2 画像の外を透明に（版 17） |
+| `tile_u`・`tile_v` | double | 0.001〜10000 |
+| `offset_u`・`offset_v` | double | −10000〜10000 |
+| `rotation` | double | −360〜360（度） |
+| `blend_width` | double | 0〜1（トライプラナーの混ぜる幅） |
+| `placement` | 塊 | `center_x`・`center_y`・`center_z`（±1e6）、`rotation_x`・`rotation_y`・`rotation_z`（±360 度、Unity の Z → X → Y の順のオイラー角）、`size_x`・`size_y`・`size_z`（1e-6〜1e6）。モデルのルートの位置と向きを基準にしたシーンの単位（ルートの大きさは掛けない） |
+| `depth_hardness`・`backface_angle`・`backface_hardness` | double | デカールだけ。0〜1・0〜180・0〜1 |
+
+既定は UV・繰り返す・タイル 1・オフセット 0・回転 0・混ぜる幅 0.3・置き場は中心 0・回転 0・大きさ 1。
+
+### Generator
+
+フィルターの種類 6 の段（`filters.items[i].generator`）と、塗りつぶしのグラデーション（`gradients[i]`）が持つ欄。
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `type` | int | 0 EdgeWear・1 Dirt・2 PositionGradient・3 Thickness・4 Direction・5 ShapeGradient（版 13）・6 IdColor（版 15）・7 Anchor（版 20）・64 ノイズ・65 グランジ（版 23）。8〜63 は Unity 版の将来のために空けてあり、断る |
+| `algorithm` | int | 1。ShapeGradient は版 21 から 2（勾配つき）も |
+| `low`・`high` | double | 0〜1（`high − low` は 0.001 以上） |
+| `softness` | double | 0〜1 |
+| `invert` | bool | |
+| `noise_amount` | double | 0〜1（重ねるノイズ） |
+| `noise_scale` | double | 0.001〜1 |
+| `noise_seed` | int | |
+| `noise_space` | int | 0 モデル・1 UV |
+| `blend` | int | 0 Multiply・1 Replace・2 Screen・3 Max・4 Min・5 Add・6 Subtract |
+| `balance` | double | 0〜1（Dirt だけ。ほかは 0.5） |
+| `axis` | int | 0〜2（PositionGradient だけ。ほかは 1） |
+| `direction_x`・`direction_y`・`direction_z` | double | ±1e6（Direction だけ。長さ 0 でない。ほかは (0, 1, 0)） |
+| `bent_normal` | bool | Direction だけ |
+| `pin_count` | int | 0〜8 |
+| `pins[i]` | 塊 | `kind` int（メッシュマップの種類 0〜9。種類ごとに使えるものだけ、重ならない）、`key` 文字列（そのベイクの条件の鍵。小文字の 16 進 64 桁） |
+| `volume` | 塊 | ShapeGradient だけ: `shape` int（0 ボックス・1 球・2 平面）と投影の `placement` と同じ 9 つ、`falloff` double（0〜1） |
+| `ramp` | 塊 | ShapeGradient のアルゴリズムの版 2 だけ。下の「ランプ」 |
+| `tolerance`・`color_count`・`colors[i]` | int | IdColor だけ: 許容の幅 0〜255、色の数 0〜32、色 0xRRGGBB（重ならない） |
+| `anchor_id`・`anchor_channel`・`anchor_read` | GUID・int・int | Anchor だけ: 読む Anchor の ID（まだ選んでいなければ空）、チャンネル（0〜5、Normal でない）、読み方（0 値・1 覆い） |
+| `procedural` | 塊 | ノイズ・グランジだけ（下） |
+
+ピンに使えるメッシュマップ: EdgeWear は Curvature・Position、Dirt は AmbientOcclusion・Curvature・Position、PositionGradient・ShapeGradient・Anchor は Position、
+Thickness は Thickness・Position、IdColor は Id・Position、Direction は WorldNormal・BentNormal・Position、ノイズ・グランジは Position・WorldNormal。
+
+ノイズ・グランジ（`procedural`。重ねるノイズ・`balance`・`axis`・向き・`bent_normal` は既定のまま）:
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `space` | int | 0 位置（3D）・1 トライプラナー・2 UV（周期で巻く） |
+| `scale` | double | 0.001〜1（境界箱の対角線・UV の長い辺に対する 1 セルの割合） |
+| `seed` | int | |
+| `rotation_x`・`rotation_y`・`rotation_z` | double | ±360 度（UV では効かない） |
+| `bleed`・`blend_width` | double | 0〜1（にじみ・トライプラナーの境目の幅） |
+| `basis`・`cell_output`・`fractal`・`octaves`・`lacunarity`・`gain` | int・int・int・int・double・double | ノイズだけ: 基底（0 値・1 Perlin・2 Worley）、セルの出力（0 F1・1 F2・2 F2−F1。Worley 以外は 0）、重ね方（0 fBm・1 ridged・2 turbulence）、オクターブ 1〜8、ラクナリティ 1〜4、ゲイン 0〜1 |
+| `preset` | int | グランジだけ: 0 汚れの斑・1 錆の斑・2 傷の筋・3 ほこり・4 指紋・5 布目・6 ひび・7 飛沫・8 塗装の剥げ・9 木目・10 革のしぼ |
+
+ノイズ・グランジの式は + − × ÷ sqrt floor と整数だけで書き、同じ設定・シード・マップなら、スレッドの数・領域に依らず同じバイトになります。式を変えるときは
+アルゴリズムの版を上げて古い式を残します。
+
+### ランプとカーブ
+
+ランプ（`ramp`）: `colors_count` int（2〜32）、`colors[i]`: `position` double（0〜1、昇順、間隔 0.0001 以上）・`rgb` 3 byte・`midpoint` double（0.01〜0.99）、
+`opacities_count` int（2〜32）、`opacities[i]`: `position`・`opacity` double（0〜1）・`midpoint`、続けて値のカーブ `curve`。
+
+カーブ（`<名前>_count` と `<名前>[i]`）: 点の数 2〜16、各点の `x`・`y` double（0〜1）。`x` は 0 から始まり 1 で終わる昇順で、間隔は 0.02 − 1e-6 以上。
+
+### 調整（adjustment）
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `type` | int | 0 反転・1 レベル補正・2 色相/彩度/明度、版 24 から 64〜69（下）。3〜63 は断る |
+| `algorithm` | int | 1 |
+| `input_black`・`input_white`・`gamma`・`output_black`・`output_white`・`hue`・`saturation`・`lightness` | double | レベル補正は `input_black` ≥ 0・`input_white` ≤ 1・幅 1/255 以上・`gamma` 0.1〜9.99・出力 0〜1。色相/彩度/明度は −180〜180・−1〜1・−1〜1。64 からの種類は既定（0, 1, 1, 0, 1, 0, 0, 0）のまま |
+| `detail` | 塊 | 64 からの種類だけ。下の「色調補正の欄」 |
+| `channel_count`・`channels[i].channel` | int | 対象のチャンネル。色相/彩度・グラデーションマップ・カラーバランスは色のチャンネル（Color・Emission・色のユーザーチャンネル）だけ、トーンカーブ・明るさ/コントラスト・2 値化・ポスタリゼーションは法線に当てない |
+
+### 色調補正の欄（版 24）
+
+調整の層は `detail`、フィルターの段は `adjust` の塊の中。
+
+| 種類 | 欄 |
+|---|---|
+| 64 グラデーションマップ | `reverse` bool、`ramp`。版 25 からは続けて混色: `mix` int（0 通常・1 知覚的・2 リニア）、`luminance` int（0〜4。知覚的でなければ 3）、`segment_count` int（色の分岐点の数 − 1）、`segments[i]`: `enabled` bool と、真なら混合率曲線 `curve` |
+| 65 トーンカーブ | カーブ `composite`・`red`・`green`・`blue` |
+| 66 カラーバランス | `shadows_cyan_red`・`shadows_magenta_green`・`shadows_yellow_blue`、`midtones_…`、`highlights_…` の 9 つの double（−100〜100）、`preserve_luminosity` bool |
+| 67 明るさ/コントラスト | `brightness` double（−150〜150）、`contrast` double（−50〜100） |
+| 68 2 値化 | `level` int（1〜255） |
+| 69 ポスタリゼーション | `levels` int（2〜255） |
+
+### フィルター（filters）
+
+`count` int（0〜32）、`items[i]`:
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `id` | GUID | 空でない。文書の中で重ならない |
+| `type` | int | 0 ぼかし・1 シャープ・2 ノイズ・3 レベル補正・4 反転・5 正規化・6 Generator（版 11）、版 24 から 64〜69（色調補正）。7〜63 は断る |
+| `algorithm` | int | 1 |
+| `enabled` | bool | |
+| `strength` | double | 0〜1 |
+| `channel_count`・`channels[i].channel` | int | 中身のフィルターだけ（マスクのフィルターには無い）: 1〜6 個、標準のチャンネル |
+| `radius` | int | ぼかし 1〜256、シャープ 1〜64、ほかは 0 |
+| `amount` | double | 0〜5（シャープ。ノイズは 0〜1。ほかは 0） |
+| `threshold` | int | 0〜255（シャープだけ。ほかは 0） |
+| `seed`・`monochrome` | int・bool | ノイズだけ（ほかは 0・偽）。色のノイズはスカラーのチャンネルに置けない |
+| `input_black`・`input_white`・`gamma`・`output_black`・`output_white` | double | レベル補正だけ（範囲は調整と同じ）。ほかは既定 |
+| `generator` | 塊 | 種類 6 だけ。Generator の欄 |
+| `adjust` | 塊 | 64 からの種類だけ。色調補正の欄（グラデーションマップ・カラーバランスは色のチャンネルだけで、マスクには置けない） |
+
+Normal に置けるのはぼかしだけ。有効で強さが 0 より大きい段の半径の合計は、チャンネルごとに 512 まで。
+
+### パス（surface_path・canvas_path）
+
+| 欄 | 型 | 中身 |
+|---|---|---|
+| `algorithm` | int | 1 |
+| `id` | GUID | 空でもよい |
+| `channel` | int | 0〜5 |
+| `model_fingerprint` | 文字列 | 3D のパスだけ。1〜128 文字（UTF-16） |
+| `brush` | 塊 | `radius` double（正。3D は 1e6、2D は 4096 まで）、`hardness`・`opacity`・`flow` double（0〜1）、`spacing` double（0.01〜4）、`rgba` RGBA8、`erase`・`pressure_size`・`pressure_opacity`・`pressure_flow` bool |
+| `point_count` | int | 0〜4096 |
+| `points[i]` | 塊 | 3D: `triangle` int（0 以上）と `u`・`v` double（三角形の重心座標、`u + v` ≤ 1）。2D: `x`・`y` double（±1e6、画素の座標）。どちらも `pressure` double（0〜1） |
+| `material_count` | byte | 版 18。0〜6。0 なら `channel` が層の有効なチャンネルであること |
+| `material[i]` | 塊 | 版 18: `channel` int（標準、層にあるチャンネル、重ならない）、`rgba` RGBA8 |
+
+### 文書をまたぐ決まり
+
+- 親（`parent`）は文書にあるグループで、子より上（大きい番号）にあり、グループの子は親のすぐ下に続けて並びます。グループの入れ子はこのアプリでは
+  64 段まで（`yolu_core::MAX_GROUP_DEPTH`。超えるファイルは上限として断る。Unity 版の読み手には上限が無い）。
+- Anchor の ID とフィルターの ID は文書の中で重ならない。Anchor の段が自分の層の Anchor を指すものは断ります。消えた Anchor・読む層より上にある Anchor を指す
+  参照は開くのを断らずにそのまま読み、その段は入力を通して理由を出します（保存しても参照は残る）。
+- 棚に無い `resource_id` は開くのを断らずに ID を残し、塗りつぶしの値を見せて知らせます。
+- 塗りつぶしのグラデーションはアルゴリズムの版 2・合成 Replace であること。
+
+### 正本の版
+
+各版は、それより前の版の並びに欄を足したものです。読み手は 1〜25（と 26）を読み、その版に無い欄・値を持つものは断ります。新しい機能を使わない文書は、前の版と
+同じ並びで版の数だけが違います。
+
+| 版 | 足したもの |
+|---|---|
+| 1 | 層（ID・名前・表示・不透明度・合成モード）とチャンネルのタイル |
+| 2 | 層のラスターマスク |
+| 3 | 層の種類（ラスター・塗りつぶし）と塗りつぶしの値 |
+| 4 | 調整の層 |
+| 5 | クリッピング |
+| 6 | グループ（親の ID、通過） |
+| 7 | Normal の出力の設定 |
+| 8 | 編集できる 3D のパス |
+| 9 | フィルターのスタック |
+| 10 | 2D のパス |
+| 11 | フィルターの種類 6（Generator） |
+| 12 | 層の属性の印とロック |
+| 13 | Generator の種類 5（ShapeGradient）と形の欄 |
+| 14 | チャンネルごとの合成モードと不透明度 |
+| 15 | Generator の種類 6（IdColor） |
+| 16 | 塗りつぶしの画像と投影 |
+| 17 | デカール（投影の種類 5）と外側 2（画像の外を透明に） |
+| 18 | パスのマテリアルの組 |
+| 19 | 手動の ID の色（末尾の塊 `YLID`） |
+| 20 | Anchor（属性のビット 4）と Generator の種類 7 |
+| 21 | ShapeGradient の勾配（アルゴリズムの版 2）、塗りつぶしの直接のグラデーション（属性のビット 5）。Unity 版が書く最後の版 |
+| 22 | ユーザーチャンネル（頭の一覧） |
+| 23 | Generator の種類 64・65（ノイズ・グランジ）。ユーザーチャンネルの一覧は 0 個も書く |
+| 24 | 調整の層・フィルターの段の種類 64〜69（色調補正） |
+| 25 | グラデーションマップの混色と区間ごとの混合率曲線 |
+| 26 | 分けた正本（下） |
+
+このアプリの書き手（`NativeDocument::from_core`）は、使う機能が要る一番小さな版で書きます: グラデーションマップの混色があれば 25、色調補正があれば 24、ノイズ・
+グランジがあれば 23、ユーザーチャンネルがあれば 22、どれも無ければ 21。機能を消して保存し直すと版も下がります。開いたまま変えていない正本は、元のバイト列の
+まま書きます。
+
+版 22 から 25 は、Unity 版に無い機能を使う文書だけを新しい版にするための版です。Unity 版の読み手は版の数だけで、ファイルに触れずに断ります（版 22・23・24 は
+Unity 版の `Runtime/Core` の読み手に読ませた記録がある: `crates/yolu-io/tests/fixtures/*.unity.txt`）。.ylp の形式（7）は上げません（上げると、その機能を使わない
+セットも含めてファイル全体を Unity 版が開けなくなる）。Unity 版が将来版 22 以降を使うときは、この文書の意味をそのまま仕様にして揃えます（同じ版の数が別の
+意味になると、どちらの読み手も相手の文書を読み違える）。種類の番号の 8〜63（Generator）・3〜63（調整）・7〜63（フィルター）は Unity 版の将来のために空けてあり、
+このアプリだけの種類は 64 から振ります。`.ylsmart`（形式 1）にはユーザーチャンネル・64 からの種類を入れません（書き手が理由を添えて断る）。
+
+### 分けた正本（版 26）
+
+中身の正本（中の版 21〜25 の並び）が 512 MiB を超える文書だけを分けて書きます。
+
+| エントリ | 中身 |
+|---|---|
+| `document.utpaint`（ヘッダー） | `DOTPAINT`、int 26、int 中の版、int 部分の数（1 以上）、続けて中の版の並び（`id` から最後まで）からバイト列の値（色・画素。`magic` のほか全部）を抜いたもの |
+| `document.utpaint.1`・`.2`… | バイト列の値を並びの順に。番号は 1 から続く（0 始まり・0 埋め・飛びは断る） |
+
+- 書き手は、2 番目からの層の始まりと、256 MiB を超える手前で区切ります（値 1 つは分けない）。今の部分も次の層の値も 16 MiB に満たなければ層の始まりで
+  区切りません。変わらない層の部分は前と同じ中身になり、復旧の世代で共有されます。
+- 読み手は区切りの位置を決め打ちせず、値が部分の境目をまたがない・空の部分が無い・部分の数（ヘッダーとエントリ）が合う・全部の部分を余りなく使う、を
+  確かめます。読んだ項目は中の版の正本を読んだのと同じです。
+- 部分の名前は今の名前の決まりに収まるので、`YLP-3` に収まる大きさのファイルにも版 26 の正本が入りえます。
+- 古い読み手: スタンドアロンの版 25 までの読み手は「`.version の値 26 は未対応`」、Unity 版は `Unsupported archive version; source retained unchanged.` で断ります。
+  `YLP-4` のファイルは、Unity 版は 832 MiB を超えれば `The file exceeds the read budget.`、それ以下なら 1002 を超えるエントリで `Too many entries.`、1 MiB を
+  超える manifest で `… is larger than allowed.`、ほかは manifest の版で `The file was written by a newer YoluPainter (YOLUPAINTER-YLP-4).` と断ります。
+
+## 開くとき
+
+1. 外側を読み、manifest と全エントリの長さ・CRC・SHA-256 を確かめる（ファイルから開くときは、大きなエントリは位置だけを覚え、要るときに確かめ直しながら読む）。
+2. `ylp.json` を読む（無ければ形式 1）。今より新しい形式なら、どのエントリにも触れずに断る。
+3. 古い形式なら移行の段を順に通す（メモリの上だけ）。
+4. `project.json` を読み、並びの全部のセットの正本と選択範囲、棚の並びと中身を読む。1 つでも読めなければ、開いているプロジェクトは何も変えない。
+5. 知らないエントリを一覧にして知らせる。core の文書にできない正本（手動の ID の色など）は、セットと理由を知らせて読むだけで開く（元のバイト列のまま保存する）。
+
+## 保存
+
+- 書いたものを読み直して確かめ、同じフォルダの一時ファイル（`.<名前>.<数>-<乱数>.pending~`）に書いてフラッシュし、読み直して確かめ、開いた・保存した時点の
+  ファイルの印（SHA-256・長さ・更新時刻）と今のファイルが同じことを確かめてから、最後の 1 回で置き換えます。違えば上書きを断ります（外の書き換え）。途中で
+  失敗しても元のファイルはそのままです。
+- 直前の版は `<ファイル名>-backups~/` に退避します。残す数は設定で決め（既定はすべて）、超えた古いものだけを消します。
+- いつも今の形式で書き、`ylp.json` に保存したアプリと（分かれば）作ったアプリを記録します。
+
+## 復旧の世代
+
+保存していない作業の書き置き（`generation.rs` の `GenerationStore`。.ylp ではない）。置き場の中に `current`・`previous`（世代の名前）、
+`generations/<世代>/manifest.sha256`、`contents/<SHA-256>.bin` を置き、世代を確かめてから `current` を最後に置き換えて確定します。manifest の 1 行目は
+`DOTPAINT-MANIFEST-1`（中身を世代の中に持つ）か `DOTPAINT-MANIFEST-2`（中身は `contents/` にあり、同じ中身は世代の間で 1 つを共有する）、続く行は
+`<SHA-256> <長さ> <名前>` で、名前は .ylp のエントリと同じ範囲（`ylp.json`・`project.json`・`resources.json`・`resources/*`・`sets/<ID>/*` など）です。世代に添える
+一覧用の情報は `recovery.json`（.ylp には入らない）。Unity 版が書いた世代はこのアプリが読めます。逆は、`sets/<ID>/composite/Color.png` のような入れ子の名前を
+含む世代を Unity 版が「Unsafe generation filename」で断ります。量の数え方と置き場は [RECOVERY.md](RECOVERY.md)。
+
+## .ylsmart（スマートマテリアル・スマートマスク）
+
+置き場に置く 1 つのファイルで、.ylp の棚にも同じバイト列で入ります（`smart.rs`）。
+
+- 外側は .ylp と同じ zip の層。`mimetype` は `application/x-yolupainter-smart`、manifest の 1 行目は `YOLUPAINTER-SMART-1`。名前は根と `resources/` の下の 1 段。
+- `smart.json`（正本）: `format`（1）、`kind`（`smartMaterial`・`smartMask`）、`name`、`width`・`height`・`layers`・`channels`（読むときに層と比べ、違えば断る）、
+  `repin`（ベイクへのピンがあった Generator の段の ID。置いた先で付け直す）、`savedBy`（必須）。任意の `thumbnailShape: "sphere"`（見本が球）。知らないキーは読み飛ばす。
+- `layers.utpaint`（正本）: 選んだ層だけを持つ正本（版 1〜21）。保存したテクスチャセットの大きさ。スマートマスクは値の無い塗りつぶしの層 1 つがマスクを持つ。
+  モデルの上のパスは持たない。Generator はベイクへのピンを持たない。
+- `resources.json`・`resources/<content>.png`（層が参照する画像があるとき）: .ylp と同じ形（画像だけ）。
+- `thumbnail.png`（派生）: パネルの見本。
+- `.ylmaterial`（置き場のマテリアル）は、塗りつぶしの層を持つ `.ylsmart` と同じ形です。
+
+## .ylbrush（棚の携帯ブラシ）
+
+.ylp の棚に入る Unity 版のブラシの形（このアプリは読んで、バイト列のまま残す）。zip の層で、`mimetype` は `application/x-yolupainter-brush`、manifest の 1 行目は
+`YOLUPAINTER-BRUSH-1`。`state.json`（`schema` 1〜3。外の筆先の ID `tipId`・`textureId`・`dualTipId` は空であること）、`tip-0.png` から続く筆先（256 枚まで）、
+任意の `texture.png`・`dual.png`。PNG は RGBA8・1〜2048 px。このアプリの利用者のブラシのファイル（設定のフォルダの `brushes/`）は同じ拡張子のテキスト形式で、
+[BRUSH.md](BRUSH.md) にあります。
+
+## 形式を変えるとき
+
+1. **正本・状態のエントリを足す・名前や置き場を変える・意味を変える**ときは中身の形式を上げ（`project::MAX_FORMAT`）、前の形式からの移行を足します。上げないと、
+   古い読み手が知らないエントリを落として保存し、作業を失います。使う文書だけを新しい形式にできるなら、そうします（形式 8 のように）。
+2. 派生のエントリだけを足すときは上げなくてよい（古い読み手は知らないエントリとして知らせ、作り直す）。名前の決まり（置けるフォルダ）を広げるなら外側の版も
+   上げます。状態のエントリは、古い読み手が落としても失うのがその状態だけなら、形式を上げずに足せます（`look.json`・`pose.json`）。
+3. エントリの中身の版だけを変えるときは、そのエントリの版を上げ、古い版も読めるようにします。正本の版を上げるときは、新しい機能を使う文書だけを新しい版で
+   書きます（版 22〜25 のように）。
+4. **同じコミットでこの文書を直します**（版の早見・読み手ごとの範囲・エントリの表・その欄）。`format_doc.rs` が載り忘れを落とします。
+5. 前の形式・版のファイルを試験のフィクスチャにして、開ける・中身が同じに読み書きできることを確かめます（`crates/yolu-io/tests/compatibility.rs` など）。
+
+## 決めたことの理由
+
+形を選んだ理由・採らなかった案・保証の射程。Unity 版の読み手に実際に読ませた記録は `crates/yolu-io/tests/fixtures/*.unity.txt`。
+
+### 見た目の設定を別のエントリにした（`look.json`）
+
+選んだ理由と、採らなかった案:
+
+- **別のエントリ（採用）。** 見た目の設定は画素の意味を変えないので、正本の版を上げると、lilToon の見た目にしただけで Unity 0.2.0 がファイル全体を開けなくなる。
+  別のエントリなら Unity 0.2.0 は開けて、失うのは見た目の設定だけで済む。
+- **正本の版を上げて正本の中に持つ。** 上の互換の損失が大きい。
+- **view.json に入れる。** Unity 版 0.2.0 は view.json を自分の項目（モデル・選んだチャンネル・可視性）だけで書き直す（`JsonUtility`）ので、Unity 版で保存すると落ちるのは同じ。画面の状態と、保存する文書の見た目の値を同じ場所に混ぜない。
+
+### 版 22（ユーザーチャンネル）
+
+Unity 0.2.0 は版22を「Unsupported archive version; source retained unchanged.」で断る。C#の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）にRustが書いた版22を読ませた記録が [`user-channels-v22.unity.txt`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/user-channels-v22.unity.txt) で、外側の .ylp と `project.json` は読め、開く手順のセットの正本の読みで断る（全部のセットを読めてから入れ替えるので、Unityの状態は変わらず、ファイルも書き換えない）。記録の最後の行は、ウィンドウ（`TexturePaintWindow`）が正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもの。
+
+選んだ理由と、採らなかった案:
+
+- **版を上げる（採用）。** Unity版が新しい機能を足すたびに使ってきた決まりで、古い読み手は版の数だけで、ファイルに触れずに断る。ユーザーチャンネルが無い文書は版21のままなので、既存の文書、Rust版で保存した大多数の文書をUnity 0.2.0が開ける。
+- **全部の文書を版22（0個の一覧）で書く。** Unity 0.2.0がRust版で保存した文書を1つも開けなくなる。ユーザーチャンネルを使わない人まで巻き込むので採らない。失うもの: チャンネルを足すと版が22に、全部消すと21に変わる（保存のたびに今の中身で決まる）。
+- **.ylp の形式を8にする。** Unity 0.2.0は `ylp.json` の時点でファイル全体を断る。ユーザーチャンネルを持たないセットも巻き添えになる。形式を上げる決まり（エントリの追加・意味の変更）に当たらない。
+- **ユーザーチャンネルの画素を別のエントリに置き、`document.utpaint` は版21のままにする。** Unity 0.2.0は知らないエントリとして一覧に出すだけで、そのまま開き、保存するとそのエントリを落とす。ユーザーチャンネルを黙って失う保存ができてしまうので、「未対応の情報を黙って捨てない」に反する。
+- **版21のまま番号6〜63を許す。** Unity 0.2.0は `Invalid or duplicate channel` の汎用の文で断り、新しい版が要るとは言えず、破損と区別できない。名前・種類・色空間・既定値の置き場も無い。
+- **`ylp.json` に機能の旗を足す。** Unity 0.2.0は知らないキーを読み飛ばすので、効かない。
+
+移行: 版1〜21はそのまま読め（ユーザーチャンネルの一覧は空）、coreを通して保存すると版21（ユーザーチャンネルがあれば版22）になる。版22を読むRust版は、版21までを読む規則を変えない。版22から21へ戻すには、ユーザーチャンネルを消して保存し直す。
+
+保証の射程と失うもの:
+
+- 1つのセットでも版22なら、その .ylp 全体をUnity 0.2.0は開けない（セットごとには開けない）。Unityで開く必要があるときは、ユーザーチャンネルを消したファイルを保存する。版22から21へ直す移行はUnity側には無い。
+- 版22の意味は上の「正本」の節（頭の `user_channels`）に固定する。Unity版が版22以降を別の意味で使うなら、同じ形式を仕様にして揃える（版の数が食い違うと、どちらの書き手も相手の文書を読み違える）。
+- ユーザーチャンネルはC#に書き手が無いので、その合成はC#の合成との一致を保証しない（coreの合成の式と、往復のバイト一致の範囲）。合成のPNG（`composite/<チャンネル>.png`）は標準のチャンネルだけで、ユーザーチャンネルの分は書かない。
+- 保証の範囲は `Runtime/Core` の読み手（`DocumentBinary`・`YlpFormat`）の結果まで。Unityのウィンドウ（EditorWindow）の操作の結果は範囲に含めない。
+
+### 版 23（ノイズ・グランジ）
+
+評価の約束: 位置（Position）のマップが使える間は、位置から 3D で評価する（UV の島の継ぎ目で模様がずれない）。2D の模様のプリセット（傷の筋・指紋・布目）は、位置の空間では自動でトライプラナー（向きのマップが要る。塗りつぶしの投影と同じ重み）。位置のマップが使えない（無い・古い・大きさが違う・ピンと違う・境界箱が 0）ときは、入力のまま通さず UV の空間に落とし、理由を `BoundGenerator::fallback` と `Document::fallback_effect_list` で返す（値は出ている。UV では x・y の格子を周期で巻くので端で継ぎ目が出ず、回転は効かない）。式は + − × ÷ sqrt floor と整数だけで書き（sin・cos・pow・exp を使わない）、同じ設定・シード・マップなら、スレッド数・領域・ブロックの大きさに依らず同じバイトになる。
+
+Unity 0.2.0 は版23 を、版22 と同じく「Unsupported archive version; source retained unchanged.」で断る。C#の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）にRustが書いた版23を読ませた記録が [`procedural-v23.unity.txt`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/procedural-v23.unity.txt)（正本は [`procedural-v23.utpaint`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/procedural-v23.utpaint)）。
+
+選んだ理由と、採らなかった案:
+
+- **版を上げる（採用）。** ユーザーチャンネルと同じ流儀で、古い読み手は版の数だけで、ファイルに触れずに断る。この種類を使わない文書は版21（ユーザーチャンネルがあれば22）のままなので、Unity 0.2.0が開ける範囲は変わらない。
+- **版21のまま種類 64・65 を許す。** 版の数が食い違うと、どちらの書き手も相手の文書を読み違える（版22 の節と同じ理由）。Unity 版が将来 64 以降を別の意味で使うと、同じ版21 のファイルの意味が割れる。
+- **既存の種類（EdgeWear・Dirt）の「重ねるノイズ」を拡張する。** 同じ種類の画素が Unity 版と変わり、C# の正解との全バイト一致（338事例）を壊す。
+- **.ylsmart（形式1）に入れる。** 形式1 は Unity 版と共有で、版23 の断片を入れた .ylp を Unity 版が棚ごと開けなくなる。ユーザーチャンネルと同じく、この種類を含む素材は `SmartFile::from_core` が理由を添えて断る（`REFUSAL_RUST_GENERATORS`）。失うもの: ノイズ・グランジを使った層を「層から保存」で棚へ入れられない（同梱の素材はコードで作った core の素材を棚の「組み込み」に並べるので影響しない）。形式2 を決めれば入れられる。
+
+移行: 版1〜22はそのまま読める。この種類の段を消して保存し直すと、版21（ユーザーチャンネルがあれば22）に戻る。
+
+保証の射程と失うもの:
+
+- 1つのセットでも版23 なら、その .ylp 全体をUnity 0.2.0は開けない。Unityで開く必要があるときは、ノイズ・グランジの段を消した（または焼き込んだ）ファイルを保存する。
+- 画素は Rust の式で、C#に対応する実装が無い。外部の正解は無く、`tests/procedural-index.txt`（実装を固定するハッシュ。回帰の固定）と性質の試験（決定性・継ぎ目・取消・予算・検査）で守る。式を変えると既存の文書の見た目が変わるので、変えるときはアルゴリズムの版を上げて古い式を残す。
+- 数値の一致は Linux x86_64 で確かめた範囲。Windows での確認は未測定。
+- 保証の範囲は `Runtime/Core` の読み手（`DocumentBinary`・`YlpFormat`）の結果まで。Unityのウィンドウ（EditorWindow）の操作の結果は範囲に含めない。
+
+### 版 24（色調補正）
+
+Unity 0.2.0 は版24 を、版22・23 と同じく「Unsupported archive version; source retained unchanged.」で断る。C#の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）にRustが書いた版24を読ませた記録が [`adjust-v24.unity.txt`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/adjust-v24.unity.txt)（正本は [`adjust-v24.utpaint`](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-io/tests/fixtures/adjust-v24.utpaint)）。
+
+選んだ理由と、採らなかった案:
+
+- **使う文書だけ版を上げる（採用）。** ユーザーチャンネル・手続き型と同じ流儀で、古い読み手は版の数だけで、ファイルに触れずに断る。色調補正を使わない文書は版21・22・23 のままなので、Unity 0.2.0が開ける範囲は変わらない。
+- **使わない文書も版24 に上げる。** Unity 0.2.0 が開けなくなる互換の損失が大きい。
+- **版21のまま種類 64〜69 を許す。** 版の数が食い違うと、どちらの書き手も相手の文書を読み違える。Unity 版が将来 64 以降を別の意味で使うと、同じ版21 のファイルの意味が割れる。
+- **.ylsmart（形式1）に入れる。** 形式1 は Unity 版と共有で、版24 の断片を入れた .ylp を Unity 版が棚ごと開けなくなる。この種類を含む素材は `SmartFile::from_core` が理由を添えて断る（`REFUSAL_RUST_ADJUSTMENTS`）。失うもの: 色調補正を使った層を「層から保存」で棚へ入れられない。形式2 を決めれば入れられる。
+
+移行: 版1〜23はそのまま読める。色調補正の層と段を消して保存し直すと、版21（ユーザーチャンネルがあれば22、ノイズ・グランジがあれば23）に戻る。
+
+保証の射程と失うもの:
+
+- 1つのセットでも版24 なら、その .ylp 全体をUnity 0.2.0は開けない。Unityで開く必要があるときは、色調補正の層と段を消した（または焼き込んだ）ファイルを保存する。
+- 式（輝度の重み・明るさ/コントラストの式など）はRustの式で、PhotoshopやCLIP STUDIOの同名の調整と一致するとは言わない。C#に対応する実装は無い。式を変えると既存の文書の見た目が変わる。
+- PSDの調整レイヤーとしての読み書きは、`crates/yolu-io/README.md` の「PSD・PSB」の表のとおり。
+- 保証の範囲は `Runtime/Core` の読み手（`DocumentBinary`・`YlpFormat`）の結果まで。Unityのウィンドウ（EditorWindow）の操作の結果は範囲に含めない。
+
+### 版 25（グラデーションマップの混色）
+
+Unity 0.2.0 は版25 を、版22〜24 と同じく版の数だけで断る（Unity 版の `DocumentBinary.IsReadable` は 1〜21 だけを読み、21 を超える版を「Unsupported archive version; source retained unchanged.」で断る。版22〜24 は実際に読ませた記録がある。版25 の文書そのものを読ませた記録は、この環境に .NET が無く取れていない）。
+
+選んだ理由と、採らなかった案:
+
+- **使う文書だけ版を上げる（採用）。** 色調補正を使わない文書は 21〜23、使うだけなら 24 のまま。古い読み手が開ける範囲は広がらない。
+- **塗りつぶしのグラデーションのランプにも混色を持たせる。** そのランプの並びは Unity 版と共有（版 21）で、意味を変えられない。混色を持つランプが塗りつぶしのグラデーションに入っていれば、黙って落とさず保存を断る（`Unwritable::GeneratorRampMixing`。画面は塗りつぶしのグラデーションに混色を出さない）。
+- **版24 のまま混色の欄を足す。** 版24 のグラデーションマップを書く既存の書き手と、版の数が同じで並びが違うファイルができ、どちらも相手を読み違える。
+
+移行: 版1〜24はそのまま読める。混色をやめて保存し直すと、版24（ほかの機能が無ければ 21〜23）に戻る。
+
+保証の射程と失うもの:
+
+- 1つのグラデーションマップでも混色を使えば、その .ylp 全体を Unity 0.2.0 は開けない。
+- 混色の式はこのアプリの式で、CLIP STUDIO・Photoshop の同名のモードと画素まで一致するとは言わない。式を変えると既存の文書の見た目が変わるので、変えるときは版を足して古い式を残す。
+- .ylsmart（形式1）には入れない（版24 の色調補正と同じ断り）。

@@ -50,7 +50,7 @@ C# FilterEngine はブロック用の作業バッファを数えるため、同�
 ## ノイズ・グランジ（Rust 版だけの種類）
 
 `Kind::Noise`（64）と `Kind::Grunge`（65）は C# に対応が無く、マップを読まずに位置・向き・UV から値を作る（設定は `Settings::procedural`）。C# の種類（0〜7）と重ならない 64 から振り、
-`.ylp` の保存は正本の版 23（`crates/yolu-io/README.md` の「手続き型の Generator」）。レベル（low・high・softness・invert）がしきい値・コントラストで、blend・強さ・マスクの対象は他の種類と同じ。
+`.ylp` の保存は正本の版 23（`docs/YLP_FORMAT.md` の「Generator」）。レベル（low・high・softness・invert）がしきい値・コントラストで、blend・強さ・マスクの対象は他の種類と同じ。
 
 - ノイズ: 基底は値・Perlin（勾配）・Worley（セル。F1・F2・F2−F1）、重ね方は fBm・ridged・turbulence、オクターブ 1〜8・ラクナリティ 1〜4・ゲイン 0〜1・大きさ・シード・回転・にじみ（座標のゆがみ）。
 - グランジ: プリセットは汚れの斑・錆の斑・傷の筋・ほこり・指紋・布目・ひび・飛沫・塗装の剥げ・木目・革のしぼ（`GrungePreset`）。ノイズの層（`Layer`）としきい値・三角波の組み合わせで、値は 1 が「ある」。

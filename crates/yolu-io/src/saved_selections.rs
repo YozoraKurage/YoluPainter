@@ -93,7 +93,7 @@ pub struct SavedSelections {
 /// セットの下のエントリを葉の名前から引く口（無ければ None）。
 pub(crate) type Entry<'a> = dyn Fn(&str) -> Option<Result<std::sync::Arc<[u8]>>> + 'a;
 
-/// 選択範囲の中身のエントリ名の葉（`selection-<64 桁の 16 進>.bin`）か。
+/// 選択範囲の中身のエントリ名の葉（`selection-<32 桁の 16 進>.bin`）か。
 pub(crate) fn is_content_leaf(leaf: &str) -> bool {
     leaf.strip_prefix(CONTENT_PREFIX)
         .and_then(|rest| rest.strip_suffix(CONTENT_SUFFIX))

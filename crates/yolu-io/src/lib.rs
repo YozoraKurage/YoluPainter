@@ -27,12 +27,13 @@ pub use package::{
 };
 pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
-    PROCEDURAL_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    PROCEDURAL_VERSION, SPLIT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
 pub use project::{
-    FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet, WriterInfo,
-    MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, SAVED_SELECTIONS_FORMAT,
+    entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec, TextureSet,
+    WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES, ROOT_ENTRIES,
+    SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
 };
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,

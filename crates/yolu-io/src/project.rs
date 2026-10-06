@@ -933,24 +933,12 @@ impl Project {
         let resource_entries: HashSet<_> = resources.iter().map(|r| r.entry.as_str()).collect();
         let mut unknown = Vec::new();
         for n in files.keys() {
-            let known = if let Some((id, leaf)) = split_set(n) {
-                ids.contains(id)
-                    && (moves_into_set(leaf)
-                        || leaf == crate::look::ENTRY
-                        || crate::saved_selections::is_entry_leaf(leaf))
+            let known = if let Some((id, _)) = split_set(n) {
+                ids.contains(id) && entry_form(n).is_some()
             } else if n.starts_with("resources/") {
                 resource_entries.contains(n.as_str())
             } else {
-                [
-                    "project.json",
-                    "resources.json",
-                    "view.json",
-                    "brush.json",
-                    "thumbnail.png",
-                    "model.json",
-                    crate::pose::ENTRY,
-                ]
-                .contains(&n.as_str())
+                entry_form(n).is_some()
             };
             if !known {
                 unknown.push(n.clone());
@@ -1100,6 +1088,75 @@ fn set_document(
         }
     }
     SetDocument::stored(header.clone(), parts)
+}
+/// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリ」の表）と同じ一覧で、
+/// `tests/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
+pub const ROOT_ENTRIES: [&str; 8] = [
+    "ylp.json",
+    "project.json",
+    "resources.json",
+    "view.json",
+    crate::pose::ENTRY,
+    "brush.json",
+    "thumbnail.png",
+    "model.json",
+];
+/// 棚の中身のエントリの形（`resources.json` の並びにあるもの。`<content>` は中身のハッシュ）。
+pub const RESOURCE_ENTRIES: [&str; 3] = [
+    "resources/<content>.png",
+    "resources/<content>.ylsmart",
+    "resources/<content>.ylbrush",
+];
+/// セットの下（`sets/<ID>/`）のエントリの形（`<…>` は名前ごとに変わる所）。
+pub const SET_ENTRIES: [&str; 9] = [
+    "document.utpaint",
+    "document.utpaint.<n>",
+    "selection.bin",
+    "selections.json",
+    "selection-<印>.bin",
+    "look.json",
+    "composite/<チャンネル>.png",
+    "meshmap-<種類>.bin",
+    "imported-original.psd",
+];
+/// エントリの名前が、どの形のエントリか（[`ROOT_ENTRIES`]・[`RESOURCE_ENTRIES`]・[`SET_ENTRIES`] の 1 つ。知らない名前は None）。
+/// 名前の形だけを見て、並びにあるか（セットの ID・棚の中身）は見ない。
+pub fn entry_form(name: &str) -> Option<&'static str> {
+    if let Some((_, leaf)) = split_set(name) {
+        let form = if leaf == "document.utpaint" {
+            0
+        } else if part_number(leaf).is_some() {
+            1
+        } else if leaf == "selection.bin" {
+            2
+        } else if leaf == crate::saved_selections::INDEX {
+            3
+        } else if crate::saved_selections::is_entry_leaf(leaf) {
+            4
+        } else if leaf == crate::look::ENTRY {
+            5
+        } else if leaf.starts_with("composite/") {
+            6
+        } else if leaf.starts_with("meshmap-") && leaf.ends_with(".bin") {
+            7
+        } else if leaf == crate::distribution::IMPORTED_ORIGINAL {
+            8
+        } else {
+            return None;
+        };
+        return Some(SET_ENTRIES[form]);
+    }
+    if let Some(rest) = name.strip_prefix("resources/") {
+        let (content, ext) = rest.rsplit_once('.')?;
+        return is_hash(content)
+            .then(|| {
+                RESOURCE_ENTRIES
+                    .into_iter()
+                    .find(|f| f.rsplit_once('.').is_some_and(|(_, e)| e == ext))
+            })
+            .flatten();
+    }
+    ROOT_ENTRIES.into_iter().find(|n| *n == name)
 }
 fn moves_into_set(n: &str) -> bool {
     ["document.utpaint", "selection.bin", "imported-original.psd"].contains(&n)
