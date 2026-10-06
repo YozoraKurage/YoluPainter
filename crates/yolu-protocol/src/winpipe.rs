@@ -57,7 +57,14 @@ pub(crate) fn connect_anonymous(pipe: &str) -> Result<Stream, Connect> {
     };
     PipeStream::try_from(OwnedHandle::from(file))
         .map(Stream::from)
-        .map_err(|_| Connect::Wrap)
+        .map_err(|e| {
+            // 診断（マージしない）: 包めずに開き直すと、相手には閉じた 1 本目と 2 本目のつながりが来る
+            eprintln!(
+                "YOLU_PIPE_DIAG: 口を包めず開き直す（{:?}、{:?}）",
+                e.details, e.cause
+            );
+            Connect::Wrap
+        })
 }
 
 /// 挨拶の見張りが取り消す先の、パイプの口の番号（`Stream` が生きている間だけ使う）。

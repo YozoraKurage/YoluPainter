@@ -139,7 +139,7 @@ jobs:
         run: cargo build -p yolu-app -p yolu-cli --locked
       - name: 描画を使わないクレートの試験
         if: ${{ !cancelled() }}
-        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli -- --test-threads=1
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli -- --test-threads=1 --nocapture
       - name: アプリの単体試験（画面なし）
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --lib --locked -- --test-threads=1
