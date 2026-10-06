@@ -1,7 +1,7 @@
 name: CI
 
-# main は CI 必須の PR からしか変わらない（ruleset）。main への push では組み直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
-# 配る物は main 向けの PR の CI（下の dist）が組み、配布（release.yml）はその成果物を受け取る。
+# main は CI 必須の PR からしか変わらない（ruleset）。main への push ではビルドし直さず、main-tested.yml が「PR で試した中身か」だけを確かめる。
+# 配る物は main 向けの PR の CI（下の dist）がビルドし、配布（release.yml）はその成果物を受け取る。
 on:
   pull_request:
   workflow_dispatch:
@@ -17,7 +17,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 組み直しが長い（アプリの試験の実行形式は 9 本。結合試験は 4 本の束と直下の 3 本）ので、画面の試験は別のジョブに分けて並べて回す。
+  # ビルドし直しが長い（アプリの試験の実行形式は 9 本。結合試験は 4 本の束と直下の 3 本）ので、画面の試験は別のジョブに分けて並べて回す。
   #
   # runs-on は ubuntu-latest にしない。収録済みの正解は glibc と Mesa の版に結びつく（描画しないクレートの golden は glibc の tan・atan・
   # atan2 とビット一致、画面の正解は Mesa の lavapipe）。ubuntu-latest は 2026-10-19 から Ubuntu 26 に移るので、glibc・Mesa を測り直して
@@ -37,7 +37,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
@@ -74,7 +74,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
@@ -121,7 +121,7 @@ jobs:
   windows:
     name: Windows のビルドと画面なし試験
     runs-on: windows-latest
-    # キャッシュの無い回は、組みだけで 40 分を超える（0.4.0 で yolu-cli・rmcp と試験の実行ファイルが増えた）。一度通ってキャッシュが残れば短くなる
+    # キャッシュの無い回は、ビルドだけで 40 分を超える（0.4.0 で yolu-cli・rmcp と試験の実行ファイルが増えた）。一度通ってキャッシュが残れば短くなる
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -133,7 +133,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # 試験が落ちた回でも組んだ結果を残す（残さないと落ちている間は毎回 10 分以上かけて組み直す）
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
       - name: アプリのビルド
         run: cargo build -p yolu-app -p yolu-cli --locked
@@ -160,10 +160,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- livelink_request::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
-  # 配る物の組み。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
-  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、組み直さず受け取る。
+  # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
+  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
   dist-plan:
-    name: 配る物の組みの計画
+    name: 配る物のビルドの計画
     if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -178,7 +178,7 @@ jobs:
         run: python3 tools/dist.py plan
 
   dist:
-    name: 配る物の組み
+    name: 配る物のビルド
     needs: dist-plan
     uses: ./.github/workflows/dist-build.yml
     with:

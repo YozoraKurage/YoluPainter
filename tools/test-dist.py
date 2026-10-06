@@ -406,7 +406,7 @@ class Find(Scratch):
         self.assertEqual(decision.run_id, 2)
 
     def test_a_missing_target_in_ci_means_rebuild(self):
-        # Linux を足した配布で、CI は Windows だけ組んでいる。
+        # Linux を足した配布で、CI は Windows だけビルドしている。
         gh = self.good()
         decision = self.promoted(gh, targets=(WINDOWS, LINUX))
         self.assertFalse(decision.promote)
@@ -426,7 +426,7 @@ class Find(Scratch):
         self.assertTrue(any('digest' in reason for reason in decision.reasons))
 
     def test_an_artifact_without_a_recorded_digest_is_not_promoted(self):
-        # digest が無い（キーごと無い・null・空）成果物は確かめようが無いので受け取らない。次の実行があればそちら、無ければ組み直す。
+        # digest が無い（キーごと無い・null・空）成果物は確かめようが無いので受け取らない。次の実行があればそちら、無ければビルドし直す。
         for missing in ('absent', None, ''):
             with self.subTest(missing):
                 gh = self.good(run_id=100)

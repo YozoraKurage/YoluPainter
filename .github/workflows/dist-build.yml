@@ -1,7 +1,7 @@
-name: 配る物の組み
+name: 配る物のビルド
 
-# 配る物（zip・インストーラー）を組む手順の本体。ci.yml（main 向けの PR）と release.yml（試験の通った成果物を受け取れなかったとき）の
-# 両方が、この 1 つの手順を呼ぶ。試した物と配る物が同じ命令で組まれ、対象の並びも tools/dist-targets.json の 1 か所に決まる。
+# 配る物（zip・インストーラー）をビルドする手順の本体。ci.yml（main 向けの PR）と release.yml（試験の通った成果物を受け取れなかったとき）の
+# 両方が、この 1 つの手順を呼ぶ。試した物と配る物が同じ命令でビルドされ、対象の並びも tools/dist-targets.json の 1 か所に決まる。
 #
 # 成果物は dist-<木>-<対象>（木は git rev-parse HEAD^{tree}。PR の CI は merge の commit の木）。中に catalog.json
 # （木・commit・版・対象・各ファイルの SHA-256）が入る。配布は、同じ木で全部のジョブが成功した PR の CI の成果物をこの名前で探して受け取る（docs/RELEASING.md）。
@@ -11,7 +11,7 @@ on:
   workflow_call:
     inputs:
       matrix:
-        description: 組む対象（tools/dist.py plan の出力の matrix。JSON）
+        description: ビルドする対象（tools/dist.py plan の出力の matrix。JSON）
         type: string
         required: true
       require-update-key:
@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   build:
-    name: 配る物の組み（${{ matrix.target }}）
+    name: 配る物のビルド（${{ matrix.target }}）
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(inputs.matrix) }}
@@ -78,12 +78,12 @@ jobs:
           # 確かめた物を、あとの手順（cargo xtask installer）が使う
           "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf-8
       # アプリに埋める診断用の ID（版の表示・クラッシュ報告の Git:）。PR の CI は merge の commit（どの履歴にも入らない）を checkout するので、
-      # PR の先頭の commit にする（昇格するのはその木が merge の木と同じ物だけ）。配布の組みと手元は HEAD。
+      # PR の先頭の commit にする（昇格するのはその木が merge の木と同じ物だけ）。配布のビルドと手元は HEAD。
       - name: 診断用の ID を決める
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python tools/dist.py revision
-      # 組む前に、配る物を作る段が本番で初めて止まる種類の失敗（許諾の照合・表記ファイルの改行・NSIS の stub・版のタグ）を落とす。
+      # ビルドする前に、配る物を作る段が本番で初めて止まる種類の失敗（許諾の照合・表記ファイルの改行・NSIS の stub・版のタグ）を落とす。
       - name: 事前確認
         run: cargo xtask preflight --target ${{ matrix.target }}
       - name: PDB の設定（Windows。クラッシュの記録の番地を、同じ版の関数名・行へ引くための付属物を作る）

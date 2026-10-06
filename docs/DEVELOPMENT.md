@@ -18,7 +18,7 @@ Unity 版 C# との照合には、リポジトリに収録された人工デー�
 
 ### yolu-app の結合試験の置き方
 
-`crates/yolu-app/tests/` の試験は、性質ごとに数本の実行ファイル（「束」）にまとめています。1 ファイルを 1 本の実行ファイルにすると、試験の数だけアプリ全体のリンクと共通部品の組み直しが増え、`target/` が試験の実行ファイルだけで 10 GB を超えるためです。
+`crates/yolu-app/tests/` の試験は、性質ごとに数本の実行ファイル（「束」）にまとめています。1 ファイルを 1 本の実行ファイルにすると、試験の数だけアプリ全体のリンクと共通部品のビルドし直しが増え、`target/` が試験の実行ファイルだけで 10 GB を超えるためです。
 
 | 束（`cargo test -p yolu-app --test <束>`） | 中身 |
 | --- | --- |
@@ -38,10 +38,10 @@ cargo test -p yolu-app --test gui_canvas layerops::undo      # ファイル名�
 cargo test -p yolu-app -- --list | grep layerops             # どの束にあるか（`Running tests/<束>/main.rs` の下）
 ```
 
-- **新しい試験を足す**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行足します。足し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけでは組まれず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
+- **新しい試験を足す**: 画面を作らないなら `headless/`、作る（`common::app`・`common::gpu_thread::builder`）なら内容に近い `gui_*/` にファイルを置き、その束の `main.rs` に `mod 名前;` を 1 行足します。足し忘れは `headless/bundle_layout.rs` が落ちて知らせます（置いただけではビルドされず、走らないのに通るため）。ファイルの先頭で `use crate::common;` と書くと、共通部品（`tests/common/`）を `common::…` で使えます。
 - 直下（`tests/<名前>.rs`）に置いた 1 ファイル 1 本の試験を束へ移すには、`git mv tests/<名前>.rs tests/<束>/<名前>.rs`、ファイル先頭の `mod common;` を `use crate::common;` に替え、束の `main.rs` に `mod <名前>;` を足し、コメントや文書の `--test <名前>` を `--test <束> <名前>::` に直します（試験の名前は `<名前>::<元の名前>` になります）。
 - **直下に 1 ファイル 1 本で置く**のは、プロセス全体の状態（rayon の全体のプール・環境変数・窓の貸し出しの数え・覚えた窓の置き場所）を変える・数える試験だけです。束の中の試験どうしは同じプロセスで走るので、そのような試験を混ぜると順序で結果が変わります。
-- **窓（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。窓を持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` は窓ごとに装置と 3D のパイプラインを組み直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵は窓ごとに作り直します。窓を作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
+- **窓（harness）は必ず `common::gpu_thread::builder()` から作る**（`Harness::builder` などを直接使うと `window_lease` が落ちます）。窓を持つ試験は貸し出しで 1 つずつ走ります（lavapipe の中で同時に装置を作ると落ちることがあったため）。描画の設定は `common::app` か `.renderer(common::shared_gpu::renderer())`（`.wgpu()` は窓ごとに装置と 3D のパイプラインをビルドし直すので使いません。例外は、装置を破棄する・誤りの受け口を付けて共用の装置を壊す `gpu_lost` と、製品と同じ装置の設定が要る `view3d_fx` で、自前の装置を貸し出しの中で作ります）。GPU の接続はプロセスで 1 つを共有し、`Renderer`・テクスチャ・3D の絵は窓ごとに作り直します。窓を作らなくても GPU の装置を作る試験（製品のスレッドで GPU の確認・ベイクをする試験、`common::canvas_device::begin`）は、先頭で `common::gpu_thread::lease()` を取ります（`canvas_device::begin` は中で取ります）。
 - `crates/yolu-gpu/tests/` の GPU 試験は、装置（`GpuPainter::new` など）を作る前に `support::gpu_lease::lease()` を呼びます。同じ実行ファイルの別の試験のスレッドと装置を同時に作って使うと、lavapipe の中でプロセスごと落ちることがあったためです（1 つの試験が装置を何個作っても 1 回の貸し出しで足ります）。
 - **一時のフォルダ**は `common::tmp::test_dir(タグ)`（試験が終わると消えます）か、自分で作った所で `common::tmp::clean_up_after_test(&dir)` を呼びます。**Live Link の名前**は `common::names::unique_name(接頭辞, タグ)` で作ると、鍵・ソケット・ロックのファイルも試験の終わりに消えます（ロックのファイルは製品が消さないため）。調べるために残したいときは `YOLUPAINTER_KEEP_TEST_FILES=1` を付けます。
 - 「書き直さない」を更新時刻で確かめるときは、`common::tmp::backdate(&path)` で更新時刻を少し前にしてから比べます（時刻の粒度より早い書き直しを見逃さず、`sleep` を待たない）。
@@ -54,11 +54,11 @@ tools/repeat-tests.py --rounds 20 --out /tmp/repeat --test gui_canvas --test gui
 tools/repeat-tests.py --rounds 20 --out /tmp/repeat --shuffle --test headless
 ```
 
-組み直しの時間は、ほとんどが yolu-app のライブラリ 1 つの rustc です（葉の 1 ファイルを変えたあと: `cargo check` 約 6 秒、`cargo build` 約 20 秒、`cargo test -p yolu-app --test headless --no-run` 約 25 秒。リンクは 1 本 1 秒前後）。環境変数 `CARGO_INCREMENTAL=0` を付けていなければ、dev の組みは増分で、同じ変更の後の組み直しは 3〜5 秒になります（キャッシュは `target/debug/incremental` に約 1.4 GB。ディスクが厳しいときだけ 0 にします）。
+ビルドし直しの時間は、ほとんどが yolu-app のライブラリ 1 つの rustc です（葉の 1 ファイルを変えたあと: `cargo check` 約 6 秒、`cargo build` 約 20 秒、`cargo test -p yolu-app --test headless --no-run` 約 25 秒。リンクは 1 本 1 秒前後）。環境変数 `CARGO_INCREMENTAL=0` を付けていなければ、dev のビルドは増分で、同じ変更の後のビルドし直しは 3〜5 秒になります（キャッシュは `target/debug/incremental` に約 1.4 GB。ディスクが厳しいときだけ 0 にします）。
 
 ## CI
 
-`.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度組むだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物の組み（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物を組む場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
+`.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・bridge・link-demo・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
@@ -80,7 +80,7 @@ Unity 版へ組み込む場合は、対応する Unity パッケージのルー�
 
 Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
 
-core・io・protocol・bridge・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部を組むと wgpu・egui まで Windows 向けに組むため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
+core・io・protocol・bridge・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、名前付きパイプでアプリの代わりの待ち受けにつなぐ試験を含みます）。`--package yolu-protocol --package yolu-bridge` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、Live Link の通信だけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
 
 Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ機械の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
 

@@ -117,14 +117,14 @@ def check(root):
     else:
         on = triggers(ci)
         if 'push' in on:
-            problems.append('ci.yml: push で動かさない（main は CI を通した PR からしか変わらない。同じ中身をもう一度組むだけになる）')
+            problems.append('ci.yml: push で動かさない（main は CI を通した PR からしか変わらない。同じ中身をもう一度ビルドするだけになる）')
         for needed in ('pull_request', 'workflow_dispatch'):
             if needed not in on:
                 problems.append(f'ci.yml: {needed} で動きません')
         conditions = ' '.join(str(job.get('if', '')) for job in ci['jobs'].values())
         for needle in ("github.base_ref == 'main'", 'github.event.pull_request.head.repo.full_name == github.repository'):
             if needle not in conditions:
-                problems.append(f'ci.yml: 配る物の組みの条件に {needle} がありません（main 向けの、同じリポジトリの PR だけで組む）')
+                problems.append(f'ci.yml: 配る物のビルドの条件に {needle} がありません（main 向けの、同じリポジトリの PR だけでビルドする）')
 
     release = documents.get('release.yml')
     if release is None:
@@ -146,7 +146,7 @@ def check(root):
             if needle not in condition:
                 problems.append(f'release.yml: draft の条件に {needle} がありません（build が skipped の回にも下書きを作る）')
 
-    # 配る物の組みは 1 つの手順（dist-build.yml）を ci.yml と release.yml の両方が呼ぶ。
+    # 配る物のビルドは 1 つの手順（dist-build.yml）を ci.yml と release.yml の両方が呼ぶ。
     build = documents.get('dist-build.yml')
     if build is None:
         problems.append('dist-build.yml がありません')
@@ -154,7 +154,7 @@ def check(root):
         problems.append('dist-build.yml: workflow_call で呼べません')
     for name in ('ci.yml', 'release.yml'):
         if name in documents and DIST_BUILD not in list(uses_of(documents[name])):
-            problems.append(f'{name}: 配る物の組み（{DIST_BUILD}）を呼んでいません')
+            problems.append(f'{name}: 配る物のビルド（{DIST_BUILD}）を呼んでいません')
 
     # 試験版の更新情報の置き場（公開した試験版の署名を確かめ直して、固定のタグの Release へ置く）。
     beta = documents.get(BETA_CHANNEL)

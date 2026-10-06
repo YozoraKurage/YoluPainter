@@ -149,7 +149,7 @@ class LicenseChecks(unittest.TestCase):
     )
 
     def test_the_tree_of_a_product_built_together_with_another_counts_the_unified_features(self):
-        # 同じ cargo の組みで作ると機能が合わさり、単独の木に無い依存（libm）が入る。木は根ごとに分け、重なる部分木も展開された物を読む
+        # 同じ cargo のビルドで作ると機能が合わさり、単独の木に無い依存（libm）が入る。木は根ごとに分け、重なる部分木も展開された物を読む
         self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'cli'),
                          {'cli@1.0.0', 'shared@1.0.0', 'heavy@2.0.0', 'libm@0.2.16', 'rmcp@3.5.1'})
         self.assertEqual(licenses.subtree_keys(self.COMBINED_TREE, 'app'),

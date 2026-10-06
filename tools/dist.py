@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""配る物の組みと、試験の通った成果物の昇格をつなぐ。標準ライブラリだけで動く（Windows の runner でも）。
+"""配る物のビルドと、試験の通った成果物の昇格をつなぐ。標準ライブラリだけで動く（Windows の runner でも）。
 
-  plan     対象の一覧（tools/dist-targets.json）から、組みの matrix と、いまの木（ファイルの木の SHA）を出す
+  plan     対象の一覧（tools/dist-targets.json）から、ビルドの matrix と、いまの木（ファイルの木の SHA）を出す
   revision アプリに埋める診断用の ID を決め、あとの手順の環境（GITHUB_ENV）へ渡す
-  catalog  組んだ配る物の目録（catalog.json）を書き、成果物の名前（dist-<木>-<対象>）を出す
+  catalog  ビルドした配る物の目録（catalog.json）を書き、成果物の名前（dist-<木>-<対象>）を出す
   find     配布の前に、同じ木で、全部のジョブが成功した PR の CI の成果物を探し、確かめる（受け取れるか・理由）
   install  受け取った成果物の目録を確かめ、配る物だけを 1 つのフォルダへ集める
 
@@ -158,7 +158,7 @@ def embedded_revision(environment, head):
 
     PR の CI が checkout するのは merge の commit（refs/pull/N/merge）で、main にもタグにも入らず、PR を閉じたあとに参照できる保証も無い。
     昇格した配る物にその ID が入ると、どの commit にも対応しないので、PR の先頭の commit（PR_HEAD_SHA。昇格の条件で、その木は成果物の名前の木と同じ）を使う。
-    PR でない（配布の組み・手元）ときは HEAD。PR_HEAD_SHA が空でなく形も違うなら、黙って merge の commit に戻さず断る。
+    PR でない（配布のビルド・手元）ときは HEAD。PR_HEAD_SHA が空でなく形も違うなら、黙って merge の commit に戻さず断る。
     """
     given = (environment.get('PR_HEAD_SHA') or '').strip().lower()
     if given and not FULL_SHA.match(given):
@@ -366,7 +366,7 @@ def judge_run(gh, repo, run_id, tree):
 def fetch_artifact(gh, repo, artifact, work, tree, target, update_public_key):
     """成果物を落として展開し、digest と目録を確かめる。問題の一覧（空なら使える）を返す。"""
     # digest は GitHub が成果物の zip に付けた SHA-256。目録は zip の中の自己申告なので、zip の差し替えを見つける手は digest だけになる。
-    # 記録が無い成果物は確かめようが無いので受け取らず、組み直しに倒す（確かめを黙って外さない）。
+    # 記録が無い成果物は確かめようが無いので受け取らず、ビルドし直しに倒す（確かめを黙って外さない）。
     digest = artifact.get('digest')
     if not digest:
         return [f'{artifact["name"]}: GitHub が記録した digest が無いので、zip を確かめられません']
@@ -385,7 +385,7 @@ def fetch_artifact(gh, repo, artifact, work, tree, target, update_public_key):
 
 def find(gh, repo, tree, targets, work, update_public_key, rebuild=False):
     if rebuild:
-        return Decision(False, None, ['入力 rebuild が入なので、必ず組む'])
+        return Decision(False, None, ['入力 rebuild が入なので、必ずビルドする'])
     reasons = []
     candidates = {}  # 対象 -> {実行 id: 成果物}
     verdicts = {}
@@ -435,13 +435,13 @@ def cmd_find(args):
         decision = find(Gh(), args.repo, args.tree, targets, args.work,
                         os.environ.get('YOLUPAINTER_UPDATE_PUBLIC_KEY', ''), rebuild)
     except (DistError, OSError, ValueError, KeyError) as exc:
-        # 探す段の失敗で配布を止めない（組み直せば足りる）。理由は Summary に残る。
-        decision = Decision(False, None, [f'探す段で失敗したので組む: {exc}'])
+        # 探す段の失敗で配布を止めない（ビルドし直せば足りる）。理由は Summary に残る。
+        decision = Decision(False, None, [f'探す段で失敗したのでビルドする: {exc}'])
     lines = ['## 配る物の出どころ', '', f'- 木: `{args.tree}`', f'- 対象: {", ".join(targets)}']
     if decision.promote:
-        lines += [f'- 結果: 試験の通った CI の実行 {decision.run_id} の成果物を受け取る（組みを飛ばす）']
+        lines += [f'- 結果: 試験の通った CI の実行 {decision.run_id} の成果物を受け取る（ビルドを飛ばす）']
     else:
-        lines += ['- 結果: 組む', *[f'  - {reason}' for reason in decision.reasons]]
+        lines += ['- 結果: ビルドする', *[f'  - {reason}' for reason in decision.reasons]]
     write_summary(lines)
     write_output('promote', 'true' if decision.promote else 'false')
     write_output('run-id', decision.run_id or '')
@@ -485,7 +485,7 @@ def cmd_install(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest='command', required=True)
-    p = sub.add_parser('plan', help='組みの matrix・対象・木を出す')
+    p = sub.add_parser('plan', help='ビルドの matrix・対象・木を出す')
     p.add_argument('--input', action='append', default=[], help='NAME=true|false（release.yml の入力）')
     p.set_defaults(run=cmd_plan)
     p = sub.add_parser('revision', help='アプリに埋める診断用の ID を決めて GITHUB_ENV へ渡す')
