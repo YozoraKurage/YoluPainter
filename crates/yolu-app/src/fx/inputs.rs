@@ -741,13 +741,15 @@ impl AppState {
     /// セットの文書を入れ替える（今のセットなら画面の文書。選んでいる層・選択の状態は新しい文書に合わせる）。
     fn put_set_doc(&mut self, index: usize, doc: Document) {
         if index == self.sets.current_index() {
-            self.doc = doc;
-            self.document_replaced(); // キャンバスの表示は前の文書の合成を捨てる
-            self.fx.selected = None;
-            self.selected_layer = None;
-            self.sel_doc_changed();
-            self.ensure_selection();
-            self.sync_view3d();
+            // 同じ文書を編集できるようにするだけで大きさは変わらないので、表示は今のまま
+            self.install_document(
+                doc,
+                crate::sets::Keep {
+                    selected_layer: None,
+                    view: None,
+                    layer_scroll: Some(0.0),
+                },
+            );
         } else {
             self.sets.replace_stashed_doc(index, doc);
             self.sync_view3d();
@@ -986,5 +988,21 @@ mod tests {
         }];
         let ja = missing_text(Lang::Ja, &other, &names, &broken);
         assert!(!ja.contains("画像を読めません"), "{ja}");
+    }
+
+    /// 入力がそろったセットの文書を今のセットへ入れると、前の文書を指す画面の途中の状態と層の欄のスクロールを戻し、表示は今のまま
+    /// （同じ文書を編集できるようにするだけで、大きさは変わらない）。
+    #[test]
+    fn putting_the_current_sets_document_settles_the_ui_and_keeps_the_view() {
+        use crate::sets::install_testing::{assert_settled, stir, zoom};
+        let mut s = AppState::new(32, 32);
+        let view = zoom(&mut s);
+        stir(&mut s);
+        let (doc, _) = crate::state::blank_document(32, 32);
+        s.put_set_doc(s.sets.current_index(), doc);
+        assert_settled(&s, "put_set_doc");
+        assert_eq!(s.view, view, "表示は今のまま");
+        assert_eq!(s.layer_scroll, 0.0);
+        assert!(s.selected_layer.is_some());
     }
 }

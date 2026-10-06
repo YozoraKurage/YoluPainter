@@ -1151,20 +1151,11 @@ impl AppState {
                 switched = self.switch_set(index).is_ok();
             }
             PsdTarget::CurrentSet => {
-                self.doc = doc;
-                self.document_replaced();
-                self.selected_layer = None;
-                self.layer_scroll = 0.0;
-                self.renaming = None;
-                self.layer_drag = None;
-                self.popup = None;
-                // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
-                self.sel_doc_changed();
-                self.ensure_selection();
                 if let Some(set) = self.sets.get_mut(self.sets.current_index()) {
                     set.saved = None;
                 }
-                self.sync_view3d();
+                // 大きさが変わりうるので、表示は既定に戻す
+                self.install_document(doc, crate::sets::Keep::reset());
             }
         }
         self.modified = true;
@@ -3563,5 +3554,21 @@ mod tests {
             .unwrap()
             .contains("Layer memory"));
         assert_eq!(dir.files(), ["huge.psd", "wide.psd"], "書いていない");
+    }
+
+    /// PSD を今のセットへ入れると、前の文書を指す画面の途中の状態を戻し、表示も既定に戻す（大きさが変わりうる）。
+    #[test]
+    fn importing_into_the_current_set_settles_the_ui_and_resets_the_view() {
+        use crate::sets::install_testing::{assert_settled, stir, zoom};
+        let mut s = AppState::new(32, 32);
+        zoom(&mut s);
+        stir(&mut s);
+        let (doc, _) = crate::state::blank_document(64, 64);
+        assert!(s.install_psd(doc, PsdTarget::CurrentSet, "a.psd"));
+        assert_settled(&s, "PSD を今のセットへ");
+        assert_eq!(s.view, crate::canvas::view::ViewState::default());
+        assert_eq!(s.layer_scroll, 0.0);
+        assert!(s.selected_layer.is_some());
+        assert!(s.modified);
     }
 }

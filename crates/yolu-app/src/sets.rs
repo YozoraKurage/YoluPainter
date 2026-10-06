@@ -129,6 +129,28 @@ pub fn fit_side(longest: u32) -> u32 {
     longest.clamp(256, 4096).next_power_of_two().min(4096)
 }
 
+/// 今の文書を替えるときに、呼ぶ側が決める物（`AppState::install_document`）。
+#[derive(Clone, Debug, Default)]
+pub struct Keep {
+    /// 選ぶ層（None は選ばない。`ensure_selection` が決め直す）。
+    pub selected_layer: Option<LayerId>,
+    /// 表示（拡大・位置。None は今の表示のまま）。
+    pub view: Option<ViewState>,
+    /// 層の欄のスクロール（None は今のまま）。
+    pub layer_scroll: Option<f32>,
+}
+
+impl Keep {
+    /// 層を選ばず、表示を既定に、層の欄を先頭に戻す（大きさの変わりうる別の文書）。
+    pub fn reset() -> Keep {
+        Keep {
+            selected_layer: None,
+            view: Some(ViewState::default()),
+            layer_scroll: Some(0.0),
+        }
+    }
+}
+
 /// 今のセットでないあいだにしまっておく文書と表示の状態。
 pub struct Stash {
     pub doc: Document,
@@ -607,29 +629,54 @@ impl AppState {
             .stash
             .take()
             .expect("今でないセットは文書をしまっている");
+        // 今の文書をしまってから入れる（予算の同期が、ほかのセットのしまった文書を読む）
         let outgoing = Stash {
             doc: std::mem::replace(&mut self.doc, incoming.doc),
             selected_layer: self.selected_layer,
-            view: std::mem::replace(&mut self.view, incoming.view),
+            view: std::mem::take(&mut self.view),
             layer_scroll: self.layer_scroll,
         };
         let previous = self.sets.current;
         self.sets.list[previous].stash = Some(outgoing);
         self.sets.current = index;
+        self.settle_installed_document(Keep {
+            selected_layer: incoming.selected_layer,
+            view: Some(incoming.view),
+            layer_scroll: Some(incoming.layer_scroll),
+        });
+        Ok(())
+    }
+
+    /// 今の文書を `doc` に替える（今の文書を替える口はすべてここを通る）。前の文書を指す画面の途中の状態（名前の変更・層のドラッグ・
+    /// ポップアップ・選んだ効果）はいつも戻し、選択・3D ビュー・予算を新しい文書に合わせる。選んだ層・表示・層のスクロールは `keep` の
+    /// とおり。
+    pub fn install_document(&mut self, doc: Document, keep: Keep) {
+        self.doc = doc;
+        self.settle_installed_document(keep);
+    }
+
+    /// [`install_document`](Self::install_document) の、文書を入れたあとの段（`switch_set` は今の文書をしまってから入れるので、ここを
+    /// 直に呼ぶ）。
+    fn settle_installed_document(&mut self, keep: Keep) {
         self.document_replaced();
-        self.selected_layer = incoming.selected_layer;
-        self.layer_scroll = incoming.layer_scroll;
+        self.selected_layer = keep.selected_layer;
+        if let Some(view) = keep.view {
+            self.view = view;
+        }
+        if let Some(scroll) = keep.layer_scroll {
+            self.layer_scroll = scroll;
+        }
         // 前の文書のレイヤーを指す途中の操作は捨てる
         self.renaming = None;
         self.layer_drag = None;
         self.popup = None;
         self.fx.selected = None;
+        // 前の文書の座標で打った多角形の点・量を聞く窓は、新しい文書へ持ち越さない
         self.sel_doc_changed();
         self.ensure_selection();
         self.sync_view3d();
         // 予算はプロジェクト全体: 今のセットの文書に、設定からほかのセットの使用量を引いた分を入れ直す
         self.sync_budgets();
-        Ok(())
     }
 
     /// 今の文書を別のものに替えた（`doc` に別の `Document` を入れた）ことを知らせる。同じ文書 ID の別の中身（保存した ID が戻る
@@ -656,22 +703,12 @@ impl AppState {
             self.fx.inputs.forget_set(set.uid);
         }
         if index == self.sets.current_index() {
-            self.doc = doc;
-            self.document_replaced();
-            self.view = ViewState::default();
-            self.layer_scroll = 0.0;
-            self.selected_layer = None;
-            self.renaming = None;
-            self.layer_drag = None;
-            self.popup = None;
-            self.fx.selected = None;
-            self.sel_doc_changed();
-            self.ensure_selection();
+            self.install_document(doc, Keep::reset());
         } else {
             self.sets.replace_untouched_stashed_doc(index, doc);
+            self.sync_view3d();
+            self.sync_budgets();
         }
-        self.sync_view3d();
-        self.sync_budgets();
     }
 
     /// セットの並びを丸ごと置き換える（開いたとき）。`current` の文書が `self.doc` になる。
@@ -683,7 +720,6 @@ impl AppState {
     /// 選んだマテリアルだけをセットにする）。
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
-        self.doc = doc;
         self.drafting.rulers.clear();
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
@@ -691,22 +727,11 @@ impl AppState {
         self.fx.inputs.image_limit = image_limit;
         // 新規プロジェクトの窓で作ったときだけ、作ったあとで立てる（窓で選んだ解像度）
         self.resolution_chosen = false;
-        self.document_replaced();
-        self.selected_layer = None;
-        self.view = ViewState::default();
-        self.layer_scroll = 0.0;
-        self.renaming = None;
         self.renaming_set = None;
-        self.layer_drag = None;
-        self.popup = None;
-        self.sel_doc_changed();
-        self.ensure_selection();
-        if create_missing {
-            self.bind_model();
-        } else {
-            self.bind_model_only();
-        }
-        self.sync_budgets();
+        // モデルのマテリアルに結び付けてから文書を入れる（3D ビューの同期は、描くマテリアルが決まったあとの 1 回）。結び付けは
+        // セットの並びとモデルだけを読み書きし、今の文書には触らない
+        self.bind_model_to_sets(create_missing);
+        self.install_document(doc, Keep::reset());
     }
 
     /// 今のモデル（無ければどれにも付けない）のマテリアルにセットを結び付け、セットの無いマテリアルにはセットを作る。
@@ -1039,6 +1064,47 @@ impl AppState {
     }
 }
 
+/// 試験の支え: 今の文書を替える口の試験（`install_document`）が、前の文書を指す画面の途中の状態を立てて、戻ったことを確かめる。
+#[cfg(test)]
+pub(crate) mod install_testing {
+    use crate::state::{AppState, OpenPopup, PopupKind};
+
+    /// 名前の変更・層のドラッグ・ポップアップ・効果の選びを、今の文書の層に向けて立て、層の欄をずらす。
+    pub(crate) fn stir(app: &mut AppState) {
+        let layer = app
+            .selected_layer
+            .or_else(|| app.doc.layers().first().map(|l| l.id()))
+            .expect("層がある");
+        app.renaming = Some(layer);
+        app.layer_drag = Some(crate::m2::LayerDrag {
+            id: layer,
+            target: None,
+        });
+        app.popup = Some(OpenPopup {
+            kind: PopupKind::LayerContext(layer),
+            state: crate::ui::menu::PopupState::new(&egui::Context::default(), egui::Rect::ZERO),
+        });
+        app.fx.selected = Some(crate::fx::Selected::Anchor {
+            id: yolu_core::AnchorId(1),
+        });
+        app.layer_scroll = 37.0;
+    }
+
+    /// 前の文書を指す途中の状態が戻った。
+    pub(crate) fn assert_settled(app: &AppState, what: &str) {
+        assert!(app.renaming.is_none(), "{what}: 名前の変更");
+        assert!(app.layer_drag.is_none(), "{what}: 層のドラッグ");
+        assert!(app.popup.is_none(), "{what}: ポップアップ");
+        assert!(app.fx.selected.is_none(), "{what}: 効果の選び");
+    }
+
+    /// 表示を既定から動かす。
+    pub(crate) fn zoom(app: &mut AppState) -> crate::canvas::view::ViewState {
+        app.view.zoom = 3.0;
+        app.view
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1293,5 +1359,74 @@ mod tests {
         s.bind_model();
         assert_eq!(s.sets.current().name, "顔", "利用者の付けた名前は残す");
         assert_eq!(s.sets.current().bound, Some(0));
+    }
+
+    // ───────── 今の文書を替える口 ─────────
+
+    use super::install_testing::{assert_settled, stir, zoom};
+
+    /// 64 × 64 の 2 つ目のセットを足した状態。
+    fn with_second_set() -> AppState {
+        let mut s = AppState::new(32, 32);
+        let (doc, _) = crate::state::blank_document(64, 64);
+        s.sets.push(
+            guid_string(doc.id()),
+            "B".into(),
+            false,
+            MaterialRef::Unassigned,
+            None,
+            doc,
+        );
+        s
+    }
+
+    #[test]
+    fn switching_sets_settles_the_ui_and_keeps_each_sets_view_and_scroll() {
+        let mut s = with_second_set();
+        let first_view = zoom(&mut s);
+        stir(&mut s);
+        s.switch_set(1).unwrap();
+        assert_settled(&s, "switch_set");
+        assert_eq!(
+            s.view,
+            crate::canvas::view::ViewState::default(),
+            "入れ替え先の表示"
+        );
+        assert_eq!(s.layer_scroll, 0.0, "入れ替え先のスクロール");
+        assert!(s.selected_layer.is_some(), "選び直す");
+        stir(&mut s);
+        s.switch_set(0).unwrap();
+        assert_settled(&s, "switch_set（戻す）");
+        assert_eq!(s.view, first_view, "しまっていた表示");
+        assert_eq!(s.layer_scroll, 37.0, "しまっていたスクロール");
+    }
+
+    #[test]
+    fn swapping_an_untouched_document_settles_the_ui_and_resets_the_view() {
+        let mut s = AppState::new(32, 32);
+        zoom(&mut s);
+        stir(&mut s);
+        let (doc, _) = crate::state::blank_document(64, 64);
+        s.swap_untouched_set_document(s.sets.current_index(), doc);
+        assert_settled(&s, "swap_untouched_set_document");
+        assert_eq!(s.view, crate::canvas::view::ViewState::default());
+        assert_eq!(s.layer_scroll, 0.0);
+        assert_eq!(s.doc.width(), 64);
+    }
+
+    #[test]
+    fn replacing_the_sets_settles_the_ui_and_resets_the_view() {
+        let mut s = AppState::new(32, 32);
+        zoom(&mut s);
+        stir(&mut s);
+        s.renaming_set = Some(s.sets.current().uid);
+        let (doc, _) = crate::state::blank_document(64, 64);
+        let sets = TextureSets::first(&doc);
+        s.replace_sets_with(sets, doc, true);
+        assert_settled(&s, "replace_sets_with");
+        assert!(s.renaming_set.is_none(), "セットの名前の変更");
+        assert_eq!(s.view, crate::canvas::view::ViewState::default());
+        assert_eq!(s.layer_scroll, 0.0);
+        assert!(s.selected_layer.is_some());
     }
 }
