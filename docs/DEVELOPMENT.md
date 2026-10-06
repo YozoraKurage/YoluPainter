@@ -60,7 +60,6 @@ tools/repeat-tests.py --rounds 20 --out /tmp/repeat --shuffle --test headless
 
 - Linux（`ubuntu-latest`）: `cargo test --workspace --locked` と `cargo clippy --workspace --all-targets --locked -- -D warnings`。Xvfb、Mesa とビルド用のパッケージを導入し（画面の書体はアプリに同梱しているので、OS の書体は入れません）、`WGPU_BACKEND=gl`、`LIBGL_ALWAYS_SOFTWARE=1`、`GALLIUM_DRIVER=llvmpipe` でソフトウェア描画を選びます。試験は同時の描画負荷を抑えるため直列に実行し、`--nocapture` で GPU 試験が省かれた理由もログに残します。
 - Windows（`windows-latest`、MSVC）: `cargo build -p yolu-app -p yolu-cli --locked`、core・io・protocol・bridge・link-demo・ops・cli の試験、app の `--lib` と、束の中の `headless_` の試験（`--test gui_shell -- livelink::headless_ update::headless_`・`--test headless -- brush_list::headless_ recovery::headless_ livelink_request::headless_ saved_selections::headless_ pose_saved::headless_`。復旧の OS のロックと置換、Live Link の名前付きパイプ、.ylp の置換を含む）。GPU・画面の統合試験は対象外です。
-- Windows の `target/` は、[samypr100/setup-dev-drive](https://github.com/samypr100/setup-dev-drive)（MIT）で作る Dev Drive（ReFS の VHDX）に載せています（試し。作れなければ通常のディスクで続けます。効果が無ければ外します）。
 - 両 OS で [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
 `cargo fmt --check` は既存の `crates/yolu-core/src/geometry/query.rs` に整形差分があるため、まだ必須検査にしていません。コードの整形を別途済ませてから追加してください。

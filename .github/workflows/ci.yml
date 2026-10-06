@@ -121,23 +121,12 @@ jobs:
   windows:
     name: Windows のビルドと画面なし試験
     runs-on: windows-latest
-    # キャッシュが外れたとき（Cargo.lock が変わった後の初回）は、組みだけで 40 分を超える（0.4.0 で yolu-cli・rmcp が増えた）
-    timeout-minutes: 90
+    # キャッシュの無い回は、組みだけで 40 分を超える（0.4.0 で yolu-cli・rmcp と試験の実行ファイルが増えた）。一度通ってキャッシュが残れば短くなる
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # 試し（Windows の runner ではまだ動かしていない）: target/ を Dev Drive（ReFS の VHDX。ウイルス対策の走査が非同期になる）に載せる。MIT。
-      # continue-on-error が守るのは、Dev Drive を作れなかったとき（通常のディスクで続ける）だけ。作れたあとに領域が足りなくなって試験の段が落ちるのは救わない。
-      # 大きさは action の README の推奨（公開 runner の空き約 15GB を下回らせる）に合わせた 12GB。VHDX は使った分だけ増える形（既定の Dynamic）。target/ の実測は無いので、
-      # 領域不足で落ちたら drive-path に空きの大きい C: の絶対パスを指定する。前後の実行時間を比べて、効かなければ外す。
-      # キャッシュより前に置く（キャッシュの復元と保存が Dev Drive の上で行われる）。
-      - name: Dev Drive を target/ に用意
-        continue-on-error: true
-        uses: samypr100/setup-dev-drive@562171fe8df7401fdf582d766cd3b6ab80d5b1a0 # v4.1.0
-        with:
-          drive-size: 12GB
-          mount-path: target
       - name: Rust の準備
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:

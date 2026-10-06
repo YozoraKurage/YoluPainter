@@ -1682,6 +1682,17 @@ fn stalled(tag: &str, limit: usize) -> (u64, u64) {
     assert_eq!(ylb_test_set_outbox_limit(h, limit as u64), 0);
     assert_eq!(ylb_test_server_pause_reading(server, 1), 0);
     std::thread::sleep(Duration::from_millis(400));
+    // Windows の名前付きパイプには読みの時間切れが無く、止める合図の前に読みに入っていた読み手は、次の枠を 1 つ読み終えてから止まる。
+    // 小さなポーズの枠を 1 つ送ってそれを読ませ、止まってから測る（そうしないと、次に積む枠の 1 つが列から抜けて数がずれる）。
+    // Linux は読みの時間切れで止まるので要らない
+    if cfg!(windows) {
+        let pos: [f32; 12] = [0.5, 0.25, 0.125, 1., 0., 0., 0., 1., 0., 1., 1., 0.];
+        assert_eq!(ylb_pose_begin(h), 0);
+        assert_eq!(unsafe { ylb_pose_mesh(h, 0, pos.as_ptr(), std::ptr::null(), 4) }, 0);
+        assert_eq!(ylb_pose_send(h), 1);
+        wait_for(h, "止める前に読みに入っていた分", || stats(server).poses == 1);
+        std::thread::sleep(Duration::from_millis(100));
+    }
     (h, server)
 }
 
