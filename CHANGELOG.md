@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1
+
+### 日本語
+
+- **層の合成の速さ**: 層の合成（合成モード・クリッピング・調整の層の混ぜ・通過のグループ）を単精度（f32）で計算し、1 スレッドで 1.6〜2.2 倍ほど速くしました。保存済みの文書を開き直すと、合成モードを重ねた所でごく一部の画素が 1〜2 段変わることがあります。色相・彩度・カラー・輝度・ハードミックス・覆い焼き・焼き込み・除算を重ねた所では、境目の画素がもっと変わることがあります。層の画素そのものは変わりません。
+- **ソースからのビルド**: Generator の式を分け、`yolu-core` のビルドの時間を約 5 分の 1 にしました（Generator の結果と速さは変わりません）。
+
+### English
+
+- **Layer compositing speed**: Layer compositing (blend modes, clipping, adjustment layer mixing and pass-through groups) now runs in single precision (f32) and is about 1.6–2.2× faster on one thread. Reopening a saved document can change a small number of pixels by one or two levels where blend modes are stacked, and boundary pixels can change more where Hue, Saturation, Color, Luminosity, Hard Mix, Color Dodge, Color Burn or Divide are stacked. The layer pixels themselves do not change.
+- **Building from source**: The Generator code is split so that building `yolu-core` takes about a fifth of the time (Generator results and speed are unchanged).
+
 ## 0.4.0
 
 ### 日本語
