@@ -1,5 +1,7 @@
 //! ベイクの試験（画面なし）。試しの立方体と、Live Link と同じ形のモデルを別のスレッドで焼き、結果・取消・捨てる条件・古さの判定を確かめる。
 
+use std::time::Instant;
+
 use yolu_core::mesh_maps::{MeshMapKind, MeshMapStaleReason, MeshMapState};
 use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, MeshPose, Model, Pose, Submesh};
 

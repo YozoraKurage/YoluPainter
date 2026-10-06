@@ -42,10 +42,13 @@ use yolu_io::shelf::Shelf;
 use self::cache::Cache;
 use self::probe::{Limits, Target};
 use self::service::{Service, Work};
+use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::shelf::{
     Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
+use crate::state::AppState;
+use crate::windows::CloseJob;
 
 /// ライブラリのファイルの項目の ID の前置き（プロジェクトの棚の ID は UUID、組み込みは `builtin:` なので重ならない）。
 pub const LIBRARY_PREFIX: &str = "library:";
@@ -269,6 +272,20 @@ fn probe_kind(kind: files::Kind) -> ItemKind {
         files::Kind::Material => ItemKind::Material,
     }
 }
+
+/// ライブラリのフォルダへの書き込み（閉じる前の確かめ・止める。やめた書き込みのスレッドも、終わるまで待つ）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    close: Some(|app| {
+        app.library
+            .write
+            .is_some()
+            .then_some(CloseJob::LibraryWrite)
+    }),
+    cancel: Some(AppState::cancel_library_write),
+    ..JobSpec::new("library.write", |app| {
+        app.library.busy_reason(app.lang).is_some()
+    })
+};
 
 /// 個人のライブラリの状態（一覧・見た結果・選び・書き込みの仕事）。
 pub struct LibraryState {

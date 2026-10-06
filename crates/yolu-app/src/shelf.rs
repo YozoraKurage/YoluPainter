@@ -42,10 +42,12 @@ use yolu_io::smart::{
 use yolu_io::{NativeValue, Project, Resource};
 
 use crate::engine::{Channel, CoreError, Document, LayerId};
+use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
 use crate::state::{AppState, DialogRequest};
+use crate::windows::CloseJob;
 
 /// 棚の素材のメモリの予算（Unity 版の既定は RAM の 1/16 を 256〜4096 MiB に収めた値。ここでは固定）。
 pub const SHELF_BUDGET: u64 = 512 * 1024 * 1024;
@@ -1663,30 +1665,51 @@ pub fn io_reason(lang: Lang, e: &yolu_io::Error) -> String {
     }
 }
 
+/// 素材の保存・ライブラリからの取り込み（閉じる前の確かめ・止める。やめた保存のスレッドも、終わるまで待つ）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    close: Some(|app| match app.shelf.pending_save() {
+        Some(true) => Some(CloseJob::ShelfImport),
+        Some(false) => Some(CloseJob::ShelfSave),
+        None => None,
+    }),
+    cancel: Some(AppState::cancel_shelf_save),
+    ..JobSpec::new("shelf", |app| app.shelf.saves_running() > 0)
+};
+
 impl AppState {
+    /// ライブラリのフォルダへの書き込みをやめる（スレッドは次の区切りまで走る）。
+    pub(crate) fn cancel_library_write(&mut self) {
+        if let Some(w) = self.library.write.take() {
+            self.message = format!(
+                "{}: {}",
+                self.lang.pick("書き込みをやめました", "Cancelled writing"),
+                w.name
+            );
+        }
+    }
+
+    /// 素材の保存・ライブラリからの取り込みをやめる（スレッドは次の区切りまで走る）。
+    pub(crate) fn cancel_shelf_save(&mut self) {
+        if let Some(p) = self.shelf.saving.take() {
+            self.message = format!(
+                "{}: {}",
+                if p.from_library {
+                    self.lang
+                        .pick("取り込みをやめました", "Cancelled importing")
+                } else {
+                    self.lang.pick("保存をやめました", "Cancelled saving")
+                },
+                p.name
+            );
+        }
+    }
+
     /// 棚の操作を当てる。断られたら何も変えず、理由をステータスバーへ。
     pub fn shelf_apply(&mut self, op: ShelfOp) {
         // 書き出しをやめるのは、描いている間でもできる（棚にも文書にも触らない）
         if op == ShelfOp::CancelSave {
-            if let Some(w) = self.library.write.take() {
-                self.message = format!(
-                    "{}: {}",
-                    self.lang.pick("書き込みをやめました", "Cancelled writing"),
-                    w.name
-                );
-            }
-            if let Some(p) = self.shelf.saving.take() {
-                self.message = format!(
-                    "{}: {}",
-                    if p.from_library {
-                        self.lang
-                            .pick("取り込みをやめました", "Cancelled importing")
-                    } else {
-                        self.lang.pick("保存をやめました", "Cancelled saving")
-                    },
-                    p.name
-                );
-            }
+            self.cancel_library_write();
+            self.cancel_shelf_save();
             return;
         }
         if self.is_stroking() {

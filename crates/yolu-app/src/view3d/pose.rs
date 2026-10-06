@@ -36,7 +36,7 @@ use loads::LoadProgress;
 
 use super::model::{ViewError, ViewModel};
 use super::View3dState;
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::state::{AppState, DialogRequest};
 
@@ -171,6 +171,16 @@ pub struct PoseEditor {
     /// このビューが始めた FBX の読み込みのスレッド（取り消し・終わるときに止まるのを待つため。結果の受け口とは別）。
     pub loads: loads::Loads,
 }
+
+/// このビューが始めた FBX の読み込み（終わる前に止める。読むだけの仕事なので、閉じる前の確かめには入れない）。登録した旗は、結果の
+/// 受け口を捨てたあとのスレッドの分も持つ。
+pub(crate) const JOB: JobSpec = JobSpec {
+    cancel: Some(|app| {
+        app.view3d.pose.cancel_loading();
+        app.view3d.pose.cancel_loads();
+    }),
+    ..JobSpec::new("fbx", |app| app.view3d.pose.loads_running() > 0)
+};
 
 impl PoseEditor {
     pub fn is_loading(&self) -> bool {

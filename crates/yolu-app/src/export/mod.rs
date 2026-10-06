@@ -20,7 +20,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use egui::Vec2;
 use yolu_core::export::{
@@ -36,8 +35,9 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
-use crate::jobs::{Cancel, Polled, Worker};
-use crate::state::{AppState, DialogRequest};
+use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
+use crate::state::{Action, AppState, DialogRequest};
+use crate::windows::CloseJob;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -180,6 +180,31 @@ impl ExportState {
         })
     }
 }
+
+/// 書き出し（札・閉じる前の確かめ・止める）。書き出しの確かめの窓は、キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.export.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {} {}/{}",
+                lang.pick("書き出し", "Exporting"),
+                p.template,
+                p.index,
+                p.total
+            ),
+            fraction: Some((p.index.saturating_sub(1)) as f32 / p.total.max(1) as f32),
+            cancel: Some(Action::Export(ExportAction::Cancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| app.export.is_exporting().then_some(CloseJob::Export)),
+    cancel: Some(|app| app.apply(Action::Export(ExportAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_export),
+    modal: Some(|app| app.export.confirm.is_some()),
+    ..JobSpec::new("export", |app| app.export.is_exporting())
+};
 
 /// 注意の文。
 pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
@@ -1003,18 +1028,12 @@ impl AppState {
     /// 試験用: 書き出しが終わるまで待って受ける（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_export(&mut self) {
-        let start = Instant::now();
-        while self.export.job.is_some() {
-            self.poll_export();
-            if self.export.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "書き出しが終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "書き出しが終わらない（ハング検出上限）",
+            |s| s.export.job.is_some(),
+            Self::poll_export,
+        );
     }
 }
 

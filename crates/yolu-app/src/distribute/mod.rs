@@ -19,15 +19,15 @@ pub mod window;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use egui::Vec2;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
 use crate::state::{Action, AppState, DialogRequest};
+use crate::windows::CloseJob;
 
 /// 準備・書き込みのスレッドのスタック（正本への詰め直しと合成の再帰に足りる大きさ）。
 const THREAD_STACK: usize = 8 * 1024 * 1024;
@@ -178,6 +178,36 @@ impl DistributeState {
         })
     }
 }
+
+/// 配布用に保存（札・閉じる前の確かめ・止める）。除く物の窓と置き換えの確かめは、キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.distribute.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}",
+                if p.writing {
+                    lang.pick("配布用に保存中", "Saving for distribution")
+                } else {
+                    lang.pick(
+                        "配布用の写しを準備中",
+                        "Preparing the copy for distribution",
+                    )
+                },
+                p.file
+            ),
+            fraction: None,
+            cancel: Some(Action::Distribute(DistributeAction::CancelJob)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| app.distribute.is_busy().then_some(CloseJob::Distribute)),
+    cancel: Some(|app| app.apply(Action::Distribute(DistributeAction::CancelJob))),
+    poll_while_stopping: Some(AppState::poll_distribute),
+    modal: Some(|app| app.distribute.window_visible() || app.distribute.replace.is_some()),
+    ..JobSpec::new("distribute", |app| app.distribute.is_busy())
+};
 
 /// 保存先を選ぶ窓に出す初めのファイル名（今の名前に短い接尾辞を付けて、開いている作業用のファイルと区別する）。
 pub fn default_name(state: &AppState) -> String {
@@ -545,18 +575,12 @@ impl AppState {
     /// 試験用: 配布用に保存の仕事が終わるまで待って受ける（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_distribute(&mut self) {
-        let start = Instant::now();
-        while self.distribute.job.is_some() {
-            self.poll_distribute();
-            if self.distribute.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "配布用に保存の処理が終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "配布用に保存の処理が終わらない（ハング検出上限）",
+            |s| s.distribute.job.is_some(),
+            Self::poll_distribute,
+        );
     }
 }
 

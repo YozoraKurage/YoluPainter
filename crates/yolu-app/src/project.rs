@@ -24,7 +24,7 @@ use yolu_core::mesh_maps::MeshMapKind;
 use yolu_io::{Project, SaveTarget, SetDocument, WriterInfo};
 
 pub(crate) mod capture;
-mod save;
+pub(crate) mod save;
 pub use save::{
     busy_reason, save_for_ops, save_from, SaveHold, SaveOutcome, SaveProgress, SaveState,
     SavedFacts,

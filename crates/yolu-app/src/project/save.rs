@@ -15,13 +15,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_io::{BackupKeep, Project, SaveStage, SaveTarget};
 
 use super::capture::{build, capture, BuildError, BuildProgress, Capture, THREAD_STACK};
 use super::{backup_text, reopen_note, same_file, ProjectFile};
+use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::state::AppState;
 
@@ -173,6 +174,24 @@ pub fn busy_reason(lang: Lang) -> &'static str {
     lang.pick("保存の途中です", "A save is in progress")
 }
 
+/// 保存（札。取り消せない）。終わる頼みを保存が終わるまで待たせている間は、キーの割り当てを止める。保存は閉じる前の確かめにも、
+/// 止める仕事にも入れない（閉じる流れが終わるまで待つ。`YoluApp::close_flow`）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.save_progress()?;
+        Some(JobCard {
+            text: format!("{} — {}", lang.pick("保存しています", "Saving"), p.file),
+            fraction: Some(p.fraction),
+            // 保存は途中で止めない（検証した一時ファイルからの 1 回の置換で確定させる）
+            cancel: None,
+            canceling: false,
+        })
+    }),
+    modal: Some(crate::windows::waiting_to_close),
+    ..JobSpec::new("save", AppState::is_saving)
+};
+
 impl AppState {
     /// 保存の仕事が動いているか（裏のスレッド。終わりは `poll_save` が受ける）。
     pub fn is_saving(&self) -> bool {
@@ -211,18 +230,12 @@ impl AppState {
     /// 描画の途中では使わない。
     #[doc(hidden)]
     pub fn wait_save(&mut self) {
-        let start = Instant::now();
-        while self.save.job.is_some() {
-            self.poll_save();
-            if self.save.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "保存の処理が終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "保存の処理が終わらない（ハング検出上限）",
+            |s| s.save.job.is_some(),
+            Self::poll_save,
+        );
     }
 }
 

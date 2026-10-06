@@ -27,7 +27,6 @@ pub mod window;
 use std::collections::{HashSet, VecDeque};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Instant;
 
 use yolu_gpu::{bake_mesh_maps, GpuBakeSlot};
 pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMethod};
@@ -40,10 +39,11 @@ use yolu_core::mesh_maps::{
     MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind, MeshMapState,
 };
 
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
-use crate::state::AppState;
+use crate::state::{Action, AppState};
 use crate::view3d::model::ViewModel;
+use crate::windows::CloseJob;
 
 /// ベイクの操作（`Action::Bake`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -250,6 +250,59 @@ impl BakeState {
             canceling: job.worker.is_canceled(),
         })
     }
+}
+
+// ───────── 仕事の表 ─────────
+
+/// ベイク（窓を閉じているあいだは札を出す）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(card),
+    close: Some(|app| app.bake.is_baking().then_some(CloseJob::Bake)),
+    cancel: Some(|app| app.apply(Action::Bake(BakeAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_bake),
+    ..JobSpec::new("bake", |app| app.bake.is_baking())
+};
+
+/// 窓の状態表示のための確かめ（モデルの入力を作る・GPU が使えるかを見る）。描き直すだけ（止めて待たない）。
+pub(crate) const CHECK_JOB: JobSpec = JobSpec {
+    repaint: true,
+    ..JobSpec::new("bake.check", |app| {
+        app.bake.is_checking() || app.bake.is_probing_gpu()
+    })
+};
+
+fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
+    if app.bake.window.is_some() {
+        return None;
+    }
+    let p = app.bake.progress()?;
+    let set = if p.total > 1 {
+        format!(
+            "{} {}/{}: {} · ",
+            lang.pick("セット", "Set"),
+            p.index,
+            p.total,
+            p.set
+        )
+    } else {
+        String::new()
+    };
+    Some(JobCard {
+        text: format!(
+            "{} — {set}{}… {}%",
+            lang.pick("メッシュマップをベイク", "Baking mesh maps"),
+            if p.canceling {
+                lang.pick("取り消し中", "Canceling").to_owned()
+            } else {
+                phase_label(lang, &p.phase)
+            },
+            (p.fraction * 100.0) as i32
+        ),
+        fraction: Some(p.fraction as f32),
+        cancel: Some(Action::Bake(BakeAction::Cancel)),
+        canceling: p.canceling,
+    })
 }
 
 // ───────── 名前 ─────────
@@ -1201,18 +1254,12 @@ impl AppState {
     /// 試験用: 焼いている仕事が終わるまで待って入れる（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_bake(&mut self) {
-        let start = Instant::now();
-        while self.bake.job.is_some() {
-            self.poll_bake();
-            if self.bake.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "ベイクが終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "ベイクが終わらない（ハング検出上限）",
+            |s| s.bake.job.is_some(),
+            Self::poll_bake,
+        );
     }
 }
 

@@ -3,7 +3,7 @@
 
 use egui::{pos2, vec2, Id, Key, Order, Rect, Sense, UiBuilder, Vec2};
 
-use crate::bake::{self, BakeAction};
+use crate::bake;
 use crate::export::{self, ExportAction};
 use crate::lang::Lang;
 use crate::psd::PsdAction;
@@ -241,18 +241,7 @@ pub fn show_list_with(
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::shortcuts::show(ctx, app);
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
-    if app.bake.is_baking()
-        || app.bake.is_checking()
-        || app.bake.is_probing_gpu()
-        || app.export.is_exporting()
-        || app.psd.is_busy()
-        || app.distribute.is_busy()
-        || app.np_is_busy()
-        || app.update.is_busy()
-        || app.brushes.import.is_busy()
-        || app.is_saving()
-        || app.brushes.csp.is_busy()
-    {
+    if crate::jobs::repaint_needed(app) {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
     bake::window::show(ctx, app);
@@ -275,30 +264,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     app.release_idle_bake_input();
 }
 
-/// 確かめの窓や結果の窓が開いている（キーの割り当てを止める）。
+/// 確かめの窓や結果の窓が開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal`）。
 pub fn modal_open(app: &AppState) -> bool {
-    app.export.confirm.is_some()
-        || app.psd.confirm.is_some()
-        || app.psd.options_open
-        || app.psd.notes_confirm.is_some()
-        || app.psd.import_check.is_some()
-        || app.distribute.window_visible()
-        || app.distribute.replace.is_some()
-        || app.update.window_open()
-        || app
-            .recovery
-            .window
-            .as_ref()
-            .is_some_and(|w| w.confirm.is_some())
-        || app.np.window.is_some()
-        || app.np.remove_confirm.is_some()
-        || app.layer_ops.merge_confirm.is_some()
-        || app.brushes.csp.open
-        || waiting_to_close(app)
+    crate::jobs::modal_open(app)
 }
 
 /// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。
-fn waiting_to_close(app: &AppState) -> bool {
+pub(crate) fn waiting_to_close(app: &AppState) -> bool {
     app.quit && app.is_saving()
 }
 
@@ -602,157 +574,11 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
     }
 }
 
-/// 長い仕事（ベイクの窓を閉じているあいだのベイク・書き出し・PSD）の札。右下に出し、進み具合と取消を見せる。
+/// 長い仕事（ベイクの窓を閉じているあいだのベイク・書き出し・PSD など。仕事の表 `jobs::JOBS` の `card`）の札。右下に出し、
+/// 進み具合と取消を見せる。
 fn job_card(ctx: &egui::Context, app: &mut AppState) {
-    struct Entry {
-        id: &'static str,
-        text: String,
-        fraction: Option<f32>,
-        /// 取り消す操作（保存は取り消せない）。
-        cancel: Option<Action>,
-        canceling: bool,
-    }
     let lang: Lang = app.lang;
-    let mut entries: Vec<Entry> = Vec::new();
-    if app.bake.window.is_none() {
-        if let Some(p) = app.bake.progress() {
-            let set = if p.total > 1 {
-                format!(
-                    "{} {}/{}: {} · ",
-                    lang.pick("セット", "Set"),
-                    p.index,
-                    p.total,
-                    p.set
-                )
-            } else {
-                String::new()
-            };
-            entries.push(Entry {
-                id: "bake",
-                text: format!(
-                    "{} — {set}{}… {}%",
-                    lang.pick("メッシュマップをベイク", "Baking mesh maps"),
-                    if p.canceling {
-                        lang.pick("取り消し中", "Canceling").to_owned()
-                    } else {
-                        bake::phase_label(lang, &p.phase)
-                    },
-                    (p.fraction * 100.0) as i32
-                ),
-                fraction: Some(p.fraction as f32),
-                cancel: Some(Action::Bake(BakeAction::Cancel)),
-                canceling: p.canceling,
-            });
-        }
-    }
-    if let Some(p) = app.export.progress() {
-        entries.push(Entry {
-            id: "export",
-            text: format!(
-                "{} — {} {}/{}",
-                lang.pick("書き出し", "Exporting"),
-                p.template,
-                p.index,
-                p.total
-            ),
-            fraction: Some((p.index.saturating_sub(1)) as f32 / p.total.max(1) as f32),
-            cancel: Some(Action::Export(ExportAction::Cancel)),
-            canceling: p.canceling,
-        });
-    }
-    if let Some(p) = app.psd.progress() {
-        entries.push(Entry {
-            id: "psd",
-            text: format!(
-                "{} — {}",
-                if p.importing {
-                    lang.pick("PSD を読み込み中", "Reading PSD")
-                } else {
-                    lang.pick("PSD を書き出し中", "Writing PSD")
-                },
-                p.file
-            ),
-            fraction: None,
-            cancel: Some(Action::Psd(PsdAction::Cancel)),
-            canceling: p.canceling,
-        });
-    }
-    if let Some(p) = app.distribute.progress() {
-        entries.push(Entry {
-            id: "distribute",
-            text: format!(
-                "{} — {}",
-                if p.writing {
-                    lang.pick("配布用に保存中", "Saving for distribution")
-                } else {
-                    lang.pick(
-                        "配布用の写しを準備中",
-                        "Preparing the copy for distribution",
-                    )
-                },
-                p.file
-            ),
-            fraction: None,
-            cancel: Some(Action::Distribute(
-                crate::distribute::DistributeAction::CancelJob,
-            )),
-            canceling: p.canceling,
-        });
-    }
-    if let Some(p) = app.brushes.import.progress() {
-        entries.push(Entry {
-            id: "brush-import",
-            text: format!(
-                "{} — {}{}",
-                lang.pick("ブラシを取り込み中", "Importing brushes"),
-                p.file,
-                if p.total > 1 {
-                    format!(" ({}/{})", p.index, p.total)
-                } else {
-                    String::new()
-                }
-            ),
-            fraction: None,
-            cancel: Some(Action::Brush(crate::brushes::BrushAction::ImportCancel)),
-            canceling: p.canceling,
-        });
-    }
-    if let Some(p) = app.save_progress() {
-        entries.push(Entry {
-            id: "save",
-            text: format!("{} — {}", lang.pick("保存しています", "Saving"), p.file),
-            fraction: Some(p.fraction),
-            // 保存は途中で止めない（検証した一時ファイルからの 1 回の置換で確定させる）
-            cancel: None,
-            canceling: false,
-        });
-    }
-    if let Some(r) = &app.np.reopening {
-        entries.push(Entry {
-            id: "model",
-            text: format!(
-                "{} — {}",
-                lang.pick("モデルを読み込み中", "Loading the model"),
-                r.file_name()
-            ),
-            fraction: r.fraction(),
-            cancel: Some(Action::Project(crate::newproject::NpAction::CancelReopen)),
-            canceling: false,
-        });
-    }
-    if let Some(p) = app.update.progress() {
-        entries.push(Entry {
-            id: "update",
-            text: format!(
-                "{} — {}",
-                lang.pick("更新をダウンロード中", "Downloading update"),
-                p.version
-            ),
-            fraction: Some(p.fraction),
-            cancel: Some(Action::Update(crate::update::UpdateAction::Cancel)),
-            canceling: p.canceling,
-        });
-    }
+    let entries = crate::jobs::cards(app, lang);
     if entries.is_empty() {
         return;
     }
@@ -776,7 +602,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
             let p = ui.painter().clone();
             w::rounded(&p, rect, t::PANEL_BG, 6.0);
             w::outline(&p, rect, t::SEPARATOR, 1.0, 6.0);
-            for (i, e) in entries.iter().enumerate() {
+            for (i, (id, e)) in entries.iter().enumerate() {
                 let row = Rect::from_min_size(
                     pos2(rect.left() + 10.0, rect.top() + 4.0 + i as f32 * row_h),
                     vec2(rect.width() - 20.0, row_h),
@@ -806,7 +632,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                 if w::icon_button(
                     ui,
                     button,
-                    ("yolu.job.cancel", e.id),
+                    ("yolu.job.cancel", *id),
                     "close",
                     &format!(
                         "{}: {}",
@@ -943,42 +769,10 @@ impl CloseJob {
     }
 }
 
-/// 閉じると取り消される、走っている仕事（一覧の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは済んでいる）も、
-/// 走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
+/// 閉じると取り消される、走っている仕事（仕事の表 `jobs::JOBS` の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは
+/// 済んでいる）も、走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
 pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
-    let mut jobs = Vec::new();
-    if app.bake.is_baking() {
-        jobs.push(CloseJob::Bake);
-    }
-    if app.export.is_exporting() {
-        jobs.push(CloseJob::Export);
-    }
-    if let Some(progress) = app.psd.progress() {
-        jobs.push(if progress.importing {
-            CloseJob::PsdImport
-        } else {
-            CloseJob::PsdExport
-        });
-    }
-    if app.distribute.is_busy() {
-        jobs.push(CloseJob::Distribute);
-    }
-    // 更新は、ダウンロードだけが利用者の待つ仕事（起動時の確かめは待っていない）
-    if app.update.progress().is_some() {
-        jobs.push(CloseJob::UpdateDownload);
-    }
-    if app.brushes.import.is_busy() {
-        jobs.push(CloseJob::BrushImport);
-    }
-    if app.library.write.is_some() {
-        jobs.push(CloseJob::LibraryWrite);
-    }
-    match app.shelf.pending_save() {
-        Some(true) => jobs.push(CloseJob::ShelfImport),
-        Some(false) => jobs.push(CloseJob::ShelfSave),
-        None => {}
-    }
-    jobs
+    crate::jobs::close_jobs(app)
 }
 
 /// 閉じる前の確かめの文。保存していない変更（`modified`）と、閉じると取り消される仕事（`jobs`）を、1 つの問いにまとめる。
@@ -1008,41 +802,10 @@ pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
     }
 }
 
-/// 終わる前に、走っている仕事（ベイク・書き出し・PSD・配布用に保存・更新・ブラシの取り込み・ライブラリと素材の書き込み・FBX の読み込み）を
-/// 取り消して、止まるのを少し待つ（書きかけの一時ファイルを残さないため。取消は次の区切りで効くので、待つのは `wait` まで）。
-/// FBX の読み込みは読むだけの仕事（何も書かない）なので、閉じる前の確かめ（`close_jobs`）には入れない。ここで止めて、メモリを使い続けない。
+/// 終わる前に、走っている仕事（ベイク・書き出し・PSD・配布用に保存・ブラシの取り込み・更新・ライブラリと素材の書き込み・FBX の読み込み。
+/// 仕事の表 `jobs::JOBS` の `cancel`）を取り消して、止まるのを少し待つ（書きかけの一時ファイルを残さないため。取消は次の区切りで効くので、
+/// 待つのは `wait` まで）。FBX の読み込みは読むだけの仕事（何も書かない）なので、閉じる前の確かめ（`close_jobs`）には入れない。ここで
+/// 止めて、メモリを使い続けない。
 pub fn stop_jobs(app: &mut AppState, wait: std::time::Duration) {
-    app.apply(Action::Bake(BakeAction::Cancel));
-    app.apply(Action::Export(ExportAction::Cancel));
-    app.apply(Action::Psd(PsdAction::Cancel));
-    app.apply(Action::Distribute(
-        crate::distribute::DistributeAction::CancelJob,
-    ));
-    app.apply(Action::Update(crate::update::UpdateAction::Cancel));
-    app.apply(Action::Brush(crate::brushes::BrushAction::ImportCancel));
-    // ライブラリのフォルダへの書き込みと素材の保存・取り込み（やめても、スレッドは次の区切りまで走る）
-    app.shelf_apply(crate::shelf::ShelfOp::CancelSave);
-    // FBX の読み込み（ポーズの欄・新規／構成の窓・.ylp を開いたとき）。登録した旗は、結果の受け口を捨てたあとのスレッドの分も持つ
-    app.view3d.pose.cancel_loading();
-    app.view3d.pose.cancel_loads();
-    let start = std::time::Instant::now();
-    while (app.bake.is_baking()
-        || app.export.is_exporting()
-        || app.psd.is_busy()
-        || app.distribute.is_busy()
-        || app.update.is_busy()
-        || app.brushes.import.is_busy()
-        || app.shelf.saves_running() > 0
-        || app.view3d.pose.loads_running() > 0
-        || app.library.busy_reason(app.lang).is_some())
-        && start.elapsed() < wait
-    {
-        app.poll_bake();
-        app.poll_export();
-        app.poll_psd();
-        app.poll_distribute();
-        app.poll_update();
-        app.poll_brush_import();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    crate::jobs::stop(app, wait);
 }

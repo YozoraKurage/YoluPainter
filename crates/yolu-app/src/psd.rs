@@ -24,7 +24,6 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use egui::Vec2;
 use yolu_core::{Channel, Document};
@@ -33,11 +32,12 @@ use yolu_io::psd::{
     ExportMode, ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
-use crate::state::{AppState, DialogRequest};
+use crate::state::{Action, AppState, DialogRequest};
+use crate::windows::CloseJob;
 
 /// 取り込み・書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（文書は `MAX_GROUP_DEPTH` 段まで。取り込みは統合画像と
 /// 照らすために合成し、書き出しは計画で再帰する）の再帰に足りる大きさ（合成の実測は `MAX_GROUP_DEPTH` の説明: 64 段は Linux で 320KB。
@@ -410,6 +410,45 @@ impl PsdState {
         })
     }
 }
+
+/// PSD の取り込み・書き出し（札・閉じる前の確かめ・止める）。置き換え・設定・書く前・取り込みの確かめの窓は、キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.psd.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}",
+                if p.importing {
+                    lang.pick("PSD を読み込み中", "Reading PSD")
+                } else {
+                    lang.pick("PSD を書き出し中", "Writing PSD")
+                },
+                p.file
+            ),
+            fraction: None,
+            cancel: Some(Action::Psd(PsdAction::Cancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| {
+        let progress = app.psd.progress()?;
+        Some(if progress.importing {
+            CloseJob::PsdImport
+        } else {
+            CloseJob::PsdExport
+        })
+    }),
+    cancel: Some(|app| app.apply(Action::Psd(PsdAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_psd),
+    modal: Some(|app| {
+        app.psd.confirm.is_some()
+            || app.psd.options_open
+            || app.psd.notes_confirm.is_some()
+            || app.psd.import_check.is_some()
+    }),
+    ..JobSpec::new("psd", |app| app.psd.is_busy())
+};
 
 fn file_name(path: &Path) -> String {
     path.file_name()
@@ -1135,18 +1174,12 @@ impl AppState {
     /// 試験用: PSD の仕事が終わるまで待って受ける（待ちの上限は 120 秒）。
     #[doc(hidden)]
     pub fn wait_psd(&mut self) {
-        let start = Instant::now();
-        while self.psd.job.is_some() {
-            self.poll_psd();
-            if self.psd.job.is_none() {
-                break;
-            }
-            assert!(
-                start.elapsed().as_secs() < 120,
-                "PSD の処理が終わらない（ハング検出上限）"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        crate::jobs::wait_until_idle(
+            self,
+            "PSD の処理が終わらない（ハング検出上限）",
+            |s| s.psd.job.is_some(),
+            Self::poll_psd,
+        );
     }
 }
 

@@ -13,7 +13,7 @@ use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobSpec, Polled, Worker};
 use crate::state::{AppState, DialogRequest};
 
 /// 一覧の 1 行の中身（見本まで読めたか）。
@@ -121,6 +121,13 @@ impl CspState {
         self.job = None;
     }
 }
+
+/// 「CLIP STUDIO から」の探す仕事（描き直すだけ。読むだけなので止めない）。窓はキーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    modal: Some(|app| app.brushes.csp.open),
+    ..JobSpec::new("brushes.csp", |app| app.brushes.csp.is_busy())
+};
 
 fn shown_path(base: &[PathBuf], path: &std::path::Path) -> String {
     let relative = base

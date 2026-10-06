@@ -26,6 +26,7 @@ use egui::Vec2;
 pub use reopen::{is_network_path, relative_model_path, resolve_model_path, Reopen};
 
 use crate::engine::{CanvasResampling, Channel, Document, NormalSettings, NormalYDirection};
+use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::model::SceneModel;
 use crate::sets::{match_materials, material_from_link, name_for, MaterialRef};
@@ -499,6 +500,27 @@ pub enum NpAction {
     /// .ylp を開いたときに読んでいるモデルを取り消す。
     CancelReopen,
 }
+
+/// プロジェクトの構成の窓のモデルの読み込みと、開いたあとのモデルの読み直し（読み直しは札を出す）。構成の窓と、セットを消す確かめは、
+/// キーの割り当てを止める。読み込みは閉じる前の確かめに入れない（読むだけの仕事。止めるのは FBX の読み込みの行 `view3d::pose::JOB`）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let r = app.np.reopening.as_ref()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}",
+                lang.pick("モデルを読み込み中", "Loading the model"),
+                r.file_name()
+            ),
+            fraction: r.fraction(),
+            cancel: Some(crate::state::Action::Project(NpAction::CancelReopen)),
+            canceling: false,
+        })
+    }),
+    modal: Some(|app| app.np.window.is_some() || app.np.remove_confirm.is_some()),
+    ..JobSpec::new("model", AppState::np_is_busy)
+};
 
 impl AppState {
     /// 新規プロジェクト・プロジェクトの構成の操作を当てる。

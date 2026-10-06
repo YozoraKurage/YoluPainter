@@ -11,6 +11,7 @@ use egui::Vec2;
 use yolu_core::{Affine2D, LayerLocks, LayerMergeReport, Resampling};
 
 use crate::engine::{Channel, CoreError, LayerId, LayerKind};
+use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::AppState;
@@ -40,6 +41,12 @@ pub struct MergeConfirm {
     /// 変わるチャンネルごとの画素数（番号の順）。
     pub channels: Vec<(Channel, u64)>,
 }
+
+/// 層の統合の確かめ（キーの割り当てを止める）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    modal: Some(|app| app.layer_ops.merge_confirm.is_some()),
+    ..JobSpec::new("layers.merge", crate::jobs::never)
+};
 
 /// 画面の状態。
 #[derive(Debug, Default)]

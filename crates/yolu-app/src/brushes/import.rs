@@ -18,9 +18,10 @@ use super::store::{BrushStore, StoreError};
 use super::{
     clean_name, gaps, BrushAction, BrushKey, Entry, Group, IdSource, ImportMeta, UserBrush,
 };
-use crate::jobs::{Polled, Worker};
+use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
-use crate::state::{AppState, DialogRequest, MAX_RADIUS};
+use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
+use crate::windows::CloseJob;
 
 /// 仕事の途中経過（進み具合の札が読む）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -259,6 +260,38 @@ impl ImportState {
         })
     }
 }
+
+/// ブラシの取り込み（札・閉じる前の確かめ・止める）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.brushes.import.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}{}",
+                lang.pick("ブラシを取り込み中", "Importing brushes"),
+                p.file,
+                if p.total > 1 {
+                    format!(" ({}/{})", p.index, p.total)
+                } else {
+                    String::new()
+                }
+            ),
+            fraction: None,
+            cancel: Some(Action::Brush(super::BrushAction::ImportCancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| {
+        app.brushes
+            .import
+            .is_busy()
+            .then_some(CloseJob::BrushImport)
+    }),
+    cancel: Some(|app| app.apply(Action::Brush(super::BrushAction::ImportCancel))),
+    poll_while_stopping: Some(AppState::poll_brush_import),
+    ..JobSpec::new("brush-import", |app| app.brushes.import.is_busy())
+};
 
 impl AppState {
     /// 取り込む窓を開く頼み。

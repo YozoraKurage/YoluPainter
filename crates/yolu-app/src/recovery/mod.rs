@@ -41,6 +41,7 @@ pub use space::{reserve as space_reserve, system_probe, DiskSpace, SpaceProbe};
 pub use text::recovered_name;
 pub(crate) use writer::Waiter;
 
+use crate::jobs::JobSpec;
 use crate::state::{Action, AppState};
 
 /// 復旧の失敗。画面は種類から短い理由を作る（`Lang::recovery_error`）。
@@ -139,6 +140,17 @@ struct Active {
     /// 時間を待たずに書く（フォーカスを失った・終わる前）。
     force: bool,
 }
+
+/// 復旧の窓の確かめ（キーの割り当てを止める）。
+pub(crate) const JOB: JobSpec = JobSpec {
+    modal: Some(|app| {
+        app.recovery
+            .window
+            .as_ref()
+            .is_some_and(|w| w.confirm.is_some())
+    }),
+    ..JobSpec::new("recovery", crate::jobs::never)
+};
 
 /// アプリの状態の中の、復旧の状態。
 #[derive(Default)]

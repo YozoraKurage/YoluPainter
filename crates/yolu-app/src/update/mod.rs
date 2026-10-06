@@ -35,8 +35,10 @@ use yolu_update::{
     Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
+use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::state::AppState;
+use crate::windows::CloseJob;
 pub use config::Preference;
 use http::{HttpTransport, Link};
 
@@ -154,6 +156,35 @@ pub struct Progress {
     pub fraction: f32,
     pub canceling: bool,
 }
+
+/// 更新の確かめとダウンロード（ダウンロードだけが札と閉じる前の確かめに出る。起動時の確かめは利用者が待っていない）。更新の窓は、
+/// キーの割り当てを止める。
+pub(crate) const JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let p = app.update.progress()?;
+        Some(JobCard {
+            text: format!(
+                "{} — {}",
+                lang.pick("更新をダウンロード中", "Downloading update"),
+                p.version
+            ),
+            fraction: Some(p.fraction),
+            cancel: Some(crate::state::Action::Update(UpdateAction::Cancel)),
+            canceling: p.canceling,
+        })
+    }),
+    close: Some(|app| {
+        app.update
+            .progress()
+            .is_some()
+            .then_some(CloseJob::UpdateDownload)
+    }),
+    cancel: Some(|app| app.apply(crate::state::Action::Update(UpdateAction::Cancel))),
+    poll_while_stopping: Some(AppState::poll_update),
+    modal: Some(|app| app.update.window_open()),
+    ..JobSpec::new("update", |app| app.update.is_busy())
+};
 
 pub struct UpdateState {
     key: Option<[u8; 32]>,
