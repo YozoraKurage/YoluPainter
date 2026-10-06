@@ -139,6 +139,12 @@ def check(root):
                 problems.append(f'release.yml: 入力 {name} は既定が切の真偽値にする')
         for name in sorted(set(inputs) - FIXED_INPUTS - switches):
             problems.append(f'release.yml: 入力 {name} を使う対象が tools/dist-targets.json にありません')
+        # 下書きは、成果物を受け取って build が skipped の回にも作る。状態の関数が無いと暗に success() が付き、skipped の build につられて飛ばされる。
+        draft = (release.get('jobs') or {}).get('draft') or {}
+        condition = str(draft.get('if', ''))
+        for needle in ('!cancelled()', "needs.metadata.result == 'success'", '!inputs.dry-run'):
+            if needle not in condition:
+                problems.append(f'release.yml: draft の条件に {needle} がありません（build が skipped の回にも下書きを作る）')
 
     # 配る物の組みは 1 つの手順（dist-build.yml）を ci.yml と release.yml の両方が呼ぶ。
     build = documents.get('dist-build.yml')

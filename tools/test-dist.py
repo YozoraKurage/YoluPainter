@@ -625,6 +625,10 @@ class Workflows(unittest.TestCase):
             'dist-build not called': ('ci.yml', yaml_edit(not_called), '呼んでいません'),
             'condition lost': ('ci.yml', yaml_edit(lose_condition), 'github.base_ref'),
             'broken yaml': ('release.yml', lambda t: t + '\n  bad: [\n', 'YAML を読めません'),
+            # 状態の関数の無い下書きの条件は、成果物を受け取って build が skipped の回に下書きまで飛ばす
+            'draft skipped with build': ('release.yml', lambda t: t.replace(
+                "if: ${{ !cancelled() && !inputs.dry-run && needs.metadata.result == 'success' }}",
+                'if: ${{ !inputs.dry-run }}'), "draft の条件に !cancelled()"),
         }
         for name, (file, edit, text) in cases.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as d:

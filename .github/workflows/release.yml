@@ -157,7 +157,9 @@ jobs:
           retention-days: 7
 
   draft:
-    if: ${{ !inputs.dry-run }}
+    # 状態の関数（!cancelled()）を明示する。書かないと暗に success() が付き、CI の成果物を受け取って build が skipped の回に、
+    # metadata が成功していても下書きまで飛ばされる（needs の先の skipped が伝わる）。
+    if: ${{ !cancelled() && !inputs.dry-run && needs.metadata.result == 'success' }}
     needs: metadata
     runs-on: ubuntu-22.04
     environment: release
