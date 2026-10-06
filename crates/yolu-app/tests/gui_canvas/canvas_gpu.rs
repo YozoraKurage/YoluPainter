@@ -47,12 +47,6 @@ fn canvas_app(doc_w: u32, doc_h: u32, policy: CanvasBackend) -> Harness<'static,
     h
 }
 
-/// ひらがな・カタカナ・漢字・全角の記号があるか（英語の文に日本語が残っていないかの確かめ）。
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 struct Rng(u32);
 impl Rng {
     fn byte(&mut self) -> u8 {

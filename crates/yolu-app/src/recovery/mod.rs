@@ -283,9 +283,6 @@ impl RecoveryState {
     pub fn take_open_request(&mut self) -> Option<OpenRequest> {
         self.open_request.take()
     }
-    pub fn has_open_request(&self) -> bool {
-        self.open_request.is_some()
-    }
 
     /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧の窓を開いた
     /// 状態にする。始められなければ Err（復旧は動かない）。返すのは、前の実行の後片付けで気づいたこと。

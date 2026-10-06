@@ -93,11 +93,6 @@ fn tooltip_text(h: &H, needle: &str) -> Option<String> {
         .find(|text| text.contains(needle))
 }
 
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 #[derive(Debug)]
 struct Dropped(PathBuf);
 

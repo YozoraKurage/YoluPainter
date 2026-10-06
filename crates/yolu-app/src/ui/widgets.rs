@@ -3,8 +3,8 @@
 //! 試験と読み上げのため、押せる部品には名前（`WidgetInfo`）を付ける（egui_kittest は名前で部品を探す）。
 
 use egui::{
-    pos2, vec2, Align2, Color32, Id, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui,
-    WidgetInfo, WidgetType,
+    pos2, vec2, Color32, Id, Painter, Rect, Response, Sense, Stroke, StrokeKind, Ui, WidgetInfo,
+    WidgetType,
 };
 
 use super::icons;
@@ -1616,14 +1616,5 @@ impl Rows {
                 )
             })
             .collect()
-    }
-}
-
-/// テキストの配置（左上・中央）の別名。
-pub fn align2(a: Align) -> Align2 {
-    match a {
-        Align::Left => Align2::LEFT_CENTER,
-        Align::Center => Align2::CENTER_CENTER,
-        Align::Right => Align2::RIGHT_CENTER,
     }
 }

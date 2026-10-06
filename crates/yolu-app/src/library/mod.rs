@@ -366,11 +366,6 @@ impl LibraryState {
         self.cache = dir.map(|d| Arc::new(Cache::new(d)));
     }
 
-    /// 上限を指定してキャッシュを付ける（試験用）。
-    pub fn attach_cache_with(&mut self, cache: Cache) {
-        self.cache = Some(Arc::new(cache));
-    }
-
     pub fn cache(&self) -> Option<&Arc<Cache>> {
         self.cache.as_ref()
     }
@@ -566,10 +561,6 @@ impl LibraryState {
     /// 個数の上限で打ち切ったか。
     pub fn truncated(&self) -> bool {
         self.truncated
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
     }
 
     pub fn entry(&self, rel: &str) -> Option<&files::Entry> {

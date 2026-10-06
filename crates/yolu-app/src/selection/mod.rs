@@ -30,8 +30,8 @@ pub mod shape;
 pub mod symmetry;
 
 use crate::engine::{
-    CanvasSymmetry, CoreError, DVec2, Document, LayerKind, SelectionCombine, SelectionMask,
-    SymmetryMode, DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
+    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask, SymmetryMode,
+    DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
 use crate::lang::Lang;
 use crate::state::{Action, AppState, StrokeSource, Tool};
@@ -905,9 +905,4 @@ impl AppState {
             .filter(|s| s.enabled());
         result
     }
-}
-
-/// 文書の選択範囲があるか。
-pub fn has_selection(doc: &Document) -> bool {
-    doc.selection().is_some()
 }

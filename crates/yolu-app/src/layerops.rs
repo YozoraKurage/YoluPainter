@@ -157,10 +157,6 @@ impl AppState {
             .collect()
     }
 
-    pub fn is_layer_selected(&self, id: LayerId) -> bool {
-        self.selected_layer == Some(id) || self.selected_layers().contains(&id)
-    }
-
     /// 2 つ以上選んでいるか。
     pub fn has_multiple_layers_selected(&self) -> bool {
         self.selected_layers().len() > 1

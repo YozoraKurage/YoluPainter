@@ -186,12 +186,6 @@ impl AppState {
         inactive_reason(self, layer, InactiveTarget::Decal).map(|r| self.lang.inactive_reason(&r))
     }
 
-    /// チャンネルのグラデーションが今は値を見せている理由。
-    pub fn fill_gradient_problem(&self, layer: LayerId, channel: Channel) -> Option<String> {
-        inactive_reason(self, layer, InactiveTarget::FillGradient(channel))
-            .map(|r| self.lang.inactive_reason(&r))
-    }
-
     /// 3D のモデルの外形（無ければ `None`）。
     pub fn model_bounds(&self) -> Option<yolu_core::geometry::Bounds> {
         self.view3d.model.as_ref().map(|m| m.geometry.bounds())

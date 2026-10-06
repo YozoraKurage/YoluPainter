@@ -2376,11 +2376,6 @@ fn drawn_texts(shape: &Shape, out: &mut Vec<String>) {
     }
 }
 
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 /// 描いた文字が、描く先のクリップの中に横にはみ出していない。
 fn clipped_texts(h: &Harness<'_, YoluApp>) -> Vec<String> {
     fn walk(shape: &Shape, clip: Rect, out: &mut Vec<String>) {

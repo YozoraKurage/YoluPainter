@@ -252,11 +252,6 @@ impl CanvasDisplay {
         self.viewport = viewport;
     }
 
-    /// 1 フレームに合成してよい時間（見えているタイルと、見えていないタイル）。
-    pub fn set_frame_budget(&mut self, budget: FrameBudget) {
-        self.budget = budget;
-    }
-
     /// CPU の頁でまだ正確でないタイルの数（GPU の道では 0）。
     pub fn pending_tiles(&self) -> usize {
         if self.shown == Shown::Cpu {

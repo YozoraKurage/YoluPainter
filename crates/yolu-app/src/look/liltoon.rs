@@ -46,10 +46,6 @@ impl Prop {
     pub fn label(&self, lang: Lang) -> &'static str {
         lang.pick(self.ja, self.en)
     }
-
-    pub fn is_color(&self) -> bool {
-        matches!(self.kind, Kind::Color { .. })
-    }
 }
 
 const BLEND: &[(&str, &str)] = &[
@@ -1239,11 +1235,6 @@ pub fn section_props(section: Section) -> impl Iterator<Item = &'static str> {
 /// 発光の色の 2 つ（`[lilHDR]` だけの色は普通の色と同じ）。
 pub fn is_linear_color(name: &str) -> bool {
     matches!(name, "_EmissionColor" | "_Emission2ndColor")
-}
-
-/// Unity の `[Gamma]` の数（リニアの色空間では、Unity が値を sRGB → リニアにして渡す）。lilToon では金属度と反射率。
-pub fn is_gamma_float(name: &str) -> bool {
-    matches!(name, "_Metallic" | "_Reflectance")
 }
 
 /// プロパティの表から名前で（無ければ None）。

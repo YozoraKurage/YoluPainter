@@ -119,11 +119,6 @@ impl PressureAdjust {
         })
     }
 
-    /// 曲線だけの値（t は 0〜1。下限・上限を通したあとの横軸）。窓が曲線を描くのに使う。
-    pub fn curve_at(&self, t: f32) -> f32 {
-        self.curve.apply(t.clamp(0.0, 1.0) as f64).clamp(0.0, 1.0) as f32
-    }
-
     /// ペンの筆圧 p（0〜1）をブラシへ渡す筆圧にする。既定なら p そのもの。
     pub fn apply(&self, pressure: f32) -> f32 {
         if self.is_default() {

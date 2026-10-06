@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use common::fbx::{ascii_fbx, mesh, temp_dir, write_fbx};
-use common::{app, click, key, menu_title, popup_item, rect_of};
+use common::{app, click, has_japanese, key, menu_title, popup_item, rect_of};
 use egui::{Key, Modifiers, Rect};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
@@ -2499,11 +2499,6 @@ fn window_texts(h: &H) -> Vec<String> {
         }
     }
     out
-}
-
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
 }
 
 fn gui() -> H {

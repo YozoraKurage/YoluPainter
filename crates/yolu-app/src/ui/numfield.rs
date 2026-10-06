@@ -3,7 +3,7 @@
 //! 打つ欄になり、Enter で決め（範囲の外は端へ）、Esc か外を押すとやめる。ドラッグ中の変更を 1 回の Undo にまとめるのは、欄を並べる側
 //! （`changed` のたびに `coalesce` で渡し、離したらまとめを終える）。軸の色の下線は X・Y・Z の見分け。
 
-use egui::{pos2, vec2, Color32, Id, Rect, Sense, Ui, WidgetInfo};
+use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo};
 
 use super::theme as t;
 use super::widgets::{fit, outline, rounded, text, Align};
@@ -300,9 +300,4 @@ fn draw_box(
             if enabled { c } else { c.gamma_multiply(0.4) },
         );
     }
-}
-
-/// 同じ名前を作った欄の ID（試験が欄を探す）。
-pub fn field_id(id_salt: impl egui::AsIdSalt, ui: &Ui) -> Id {
-    ui.make_persistent_id(id_salt)
 }

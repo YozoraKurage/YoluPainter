@@ -50,14 +50,6 @@ pub struct Listing {
 }
 
 impl Listing {
-    /// 見本まで読み終えた行の数。
-    pub fn peeked(&self) -> usize {
-        self.rows
-            .iter()
-            .filter(|r| !matches!(r.state, RowState::Pending))
-            .count()
-    }
-
     /// 取り込める（読めた）行の数。
     pub fn ready(&self) -> usize {
         self.rows

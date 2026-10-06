@@ -72,41 +72,6 @@ pub fn open_popup(
     });
 }
 
-/// 筆圧に従わせられるスライダー（2 行目の右にペンのボタン）。
-#[allow(clippy::too_many_arguments)]
-pub fn pen_slider(
-    ui: &mut Ui,
-    rows: &mut Rows,
-    id: &str,
-    spec: SliderSpec,
-    shown: f32,
-    pressure: &mut bool,
-    pen_tooltip: &str,
-) -> Option<f32> {
-    const PEN: f32 = 24.0;
-    let row = rows.slider_row();
-    let out = w::slider(ui, row, id, shown, &spec.inset(PEN + 4.0));
-    let button = Rect::from_min_size(
-        pos2(row.right() - PEN, row.bottom() - 20.0),
-        vec2(PEN, 20.0),
-    );
-    if w::icon_button(
-        ui,
-        button,
-        (id, "pen"),
-        "stylus",
-        pen_tooltip,
-        *pressure,
-        true,
-        15.0,
-    )
-    .clicked()
-    {
-        *pressure = !*pressure;
-    }
-    out.changed.then_some(out.value)
-}
-
 /// 大見出し（開閉を覚える）。返すのは (開いているか, 既定に戻す頼み)。
 pub fn section(
     ui: &mut Ui,

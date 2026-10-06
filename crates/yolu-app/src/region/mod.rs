@@ -116,14 +116,6 @@ pub fn kind_name(lang: Lang, kind: SurfaceRegionKind) -> &'static str {
     }
 }
 
-/// 範囲の種類の並び（メニューの順）。
-pub const KINDS: [SurfaceRegionKind; 4] = [
-    SurfaceRegionKind::Triangle,
-    SurfaceRegionKind::MeshPart,
-    SurfaceRegionKind::UvIsland,
-    SurfaceRegionKind::Material,
-];
-
 impl AppState {
     /// 範囲の道具の操作を当てる（描いている間は断る）。
     pub fn region_apply(&mut self, action: RegionAction) {

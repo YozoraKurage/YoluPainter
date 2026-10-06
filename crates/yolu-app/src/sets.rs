@@ -33,11 +33,6 @@ pub fn material_from_link(key: &LinkKey) -> MaterialRef {
     }
 }
 
-/// 鍵の、人に見せる説明（名前だけ。アセットの識別子やスロットの番号は出さない。詳しくは `material_tooltip_in`）。
-pub fn describe_material(material: &MaterialRef) -> String {
-    describe_material_in(material, crate::lang::Lang::Ja)
-}
-
 pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
         MaterialRef::Material { name, .. } => lang.pick(

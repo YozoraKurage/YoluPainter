@@ -1320,10 +1320,6 @@ fn in_window(h: &Harness<'_, YoluApp>, window: &str, label: &str) -> egui::Pos2 
     rect_of(h, label, |r| area.contains_rect(r)).center()
 }
 
-fn has_japanese(text: &str) -> bool {
-    text.chars().any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 /// 窓を開いた画面（Unity 版が作った .ylp を開いて、メニューから）。
 fn window_app(dir: &TempDir) -> (Harness<'static, YoluApp>, PathBuf) {
     let path = dir.path("Work.ylp");

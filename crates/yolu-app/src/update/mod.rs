@@ -381,15 +381,6 @@ impl UpdateState {
         self.other_instance = other_instance;
     }
 
-    /// 試験用: 見つかった版を直接入れる（通信を通さずに窓・メニューを見る）。
-    #[doc(hidden)]
-    pub fn set_offer_for_test(&mut self, update: AvailableUpdate) {
-        self.offer = Some(Offer {
-            version: update.version().clone(),
-            update,
-        });
-    }
-
     /// ヘルプのメニューの「更新」の項目の名前。
     pub fn install_label(&self, lang: Lang) -> Option<String> {
         let offer = self.offer.as_ref()?;

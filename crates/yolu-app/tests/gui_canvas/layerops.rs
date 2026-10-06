@@ -18,12 +18,6 @@ const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
 const GREEN: Rgba8 = Rgba8::new(0, 255, 0, 255);
 const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
 
-/// ひらがな・カタカナ・漢字・全角の記号があるか。
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 fn state(size: u32) -> AppState {
     AppState::new(size, size)
 }

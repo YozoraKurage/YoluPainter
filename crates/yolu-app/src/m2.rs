@@ -46,11 +46,6 @@ impl AdjustmentKind {
         AdjustmentKind::Posterize,
     ];
 
-    /// 色調補正の 6 種（Rust 版だけの種類）か。
-    pub fn is_color_adjust(self) -> bool {
-        !matches!(self, Self::Invert | Self::Levels | Self::HueSaturation)
-    }
-
     /// 既定の値の設定。
     pub fn settings(self) -> AdjustmentSettings {
         match self {

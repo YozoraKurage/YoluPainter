@@ -203,11 +203,6 @@ pub fn roughness_of_mip(mip: u32) -> f32 {
 /// 中立の表示の環境の映り込みの粗さ（誘電体。塗った値は変えず、形を読む手がかりとして足す。Unity 版の `NeutralReflectionRoughness`）。
 pub const NEUTRAL_REFLECTION_ROUGHNESS: f32 = 0.5;
 
-/// 中立の表示の映り込みの重み（F0 = 0.04 から 0.5 へ、Schlick の 5 乗）。
-pub fn neutral_fresnel(nv: f32) -> f32 {
-    0.04 + (0.5 - 0.04) * pow5(1.0 - nv)
-}
-
 // ───────── トーンマッピング（PreviewToneMap） ─────────
 
 /// 曲線。

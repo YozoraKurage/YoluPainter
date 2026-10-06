@@ -93,11 +93,6 @@ impl Tool {
     pub fn is_region(self) -> bool {
         self.def().region
     }
-    /// 押した瞬間に終わるツール（バケツ・ID の色で選択・スポイト）。ストロークもドラッグも持たないので、押しっぱなしのペンの次の点で
-    /// 押し直さないよう、入力の側が押している間の印（`pen_press`）を持つ。
-    pub fn is_one_shot(self) -> bool {
-        self.def().one_shot
-    }
 }
 
 /// ブラシの設定（画面の値。Unity 版の BrushState と同じ既定値）。

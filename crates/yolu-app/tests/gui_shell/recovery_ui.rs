@@ -159,11 +159,6 @@ fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
     }
     out
 }
-fn has_japanese(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 /// 窓の中だけを撮って、正解の絵と比べる。
 fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     let rect = window(h);

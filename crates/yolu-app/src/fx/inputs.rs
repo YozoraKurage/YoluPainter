@@ -35,22 +35,6 @@ use yolu_core::{
 use crate::lang::Lang;
 use crate::state::AppState;
 
-/// 焼いたマップの種類から、Generator が読む種類へ（番号の並びは同じ）。
-pub fn map_kind(kind: MeshMapKind) -> MapKind {
-    match kind {
-        MeshMapKind::WorldNormal => MapKind::WorldNormal,
-        MeshMapKind::Position => MapKind::Position,
-        MeshMapKind::AmbientOcclusion => MapKind::AmbientOcclusion,
-        MeshMapKind::Curvature => MapKind::Curvature,
-        MeshMapKind::Thickness => MapKind::Thickness,
-        MeshMapKind::TangentNormal => MapKind::TangentNormal,
-        MeshMapKind::Height => MapKind::Height,
-        MeshMapKind::Id => MapKind::Id,
-        MeshMapKind::BentNormal => MapKind::BentNormal,
-        MeshMapKind::Opacity => MapKind::Opacity,
-    }
-}
-
 /// Generator が読む種類から、焼いたマップの種類へ。
 pub fn mesh_kind(kind: MapKind) -> MeshMapKind {
     match kind {

@@ -16,11 +16,6 @@ use yolu_app::{
     Tab, YoluApp,
 };
 
-/// ひらがな・カタカナ・漢字・全角の記号があるか（英語の画面に日本語が残っていないかの確かめ）。
-fn has_japanese(text: &str) -> bool {
-    text.chars().any(|c| matches!(c, '\u{3000}'..='\u{30ff}' | '\u{4e00}'..='\u{9fff}' | '\u{ff00}'..='\u{ffef}'))
-}
-
 fn text_shapes(shape: &Shape, clip: Rect, labels: &mut Vec<String>) {
     match shape {
         Shape::Vec(shapes) => {
