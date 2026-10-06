@@ -166,6 +166,76 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- livelink_request::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
+  # 測り（取り込まない。測ったら消す）: Windows の試験のビルドで、リンカーを MSVC の link.exe から rust-lld に替えると縮むか。
+  # windows のジョブと同じ依存のキャッシュを読むだけ（保存しない）。試験の実行ファイルを消して、link.exe → rust-lld → link.exe の順に
+  # 同じ cargo test --no-run をビルドし直し、cargo の timings（実行ファイルごとのビルドとリンクの時間）を成果物に残す。
+  # 最後に、描画しないクレートの試験を既定の並列（--test-threads を付けない）で回して、Windows で並べて通るか・何秒かを見る。
+  windows-link-measure:
+    name: Windows のリンクの測り（取り込まない）
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: windows
+          save-if: false
+      - name: アプリのビルド（windows のジョブと同じ）
+        run: cargo build -p yolu-app -p yolu-cli --locked
+      - name: 試験のビルドを 3 回（link.exe・rust-lld・link.exe）
+        shell: bash
+        run: |
+          set -u
+          out="$RUNNER_TEMP/link-measure"
+          mkdir -p "$out"
+          build() {
+            local label=$1
+            # 試験の実行ファイルだけを消して、同じ物をビルドし直す（ライブラリはリンカーが変わったときだけビルドし直される）
+            find target/debug/deps -maxdepth 1 \( -name '*.exe' -o -name '*.pdb' \) -delete
+            local i=0
+            for args in \
+              "-p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli" \
+              "-p yolu-app --lib" \
+              "-p yolu-app --test gui_shell" \
+              "-p yolu-app --test headless"; do
+              i=$((i + 1))
+              local started=$(date +%s)
+              local code=0
+              # shellcheck disable=SC2086
+              cargo test --locked --no-run --timings $args > "$out/$label-$i.log" 2>&1 || code=$?
+              echo "$label $i: $(( $(date +%s) - started )) 秒（終了コード $code）: cargo test --no-run $args" | tee -a "$out/summary.txt"
+              cp target/cargo-timings/cargo-timing.html "$out/$label-$i.html"
+              echo "  ビルドした単位: $(grep -c 'Compiling' "$out/$label-$i.log" || true)" | tee -a "$out/summary.txt"
+            done
+          }
+          build link-exe-1
+          export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=rust-lld
+          build rust-lld
+          unset CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER
+          build link-exe-2
+          cat "$out/summary.txt"
+      - name: 描画しないクレートの試験を既定の並列で（windows のジョブは --test-threads=1）
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          started=$(date +%s)
+          code=0
+          cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-bridge -p yolu-link-demo -p yolu-ops -p yolu-cli || code=$?
+          echo "既定の並列: $(( $(date +%s) - started )) 秒（終了コード $code）"
+          exit $code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: windows-link-measure
+          path: ${{ runner.temp }}/link-measure
+          if-no-files-found: ignore
+
   # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
   # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
   dist-plan:
