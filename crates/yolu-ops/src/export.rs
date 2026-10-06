@@ -6,8 +6,7 @@
 //! - 文書は変えない。効いていない効果（マップ・モデルの入力が無い Generator など）は、書き出しに入らないことを `notes` に書く。
 //! - 塗り広げ（パディング）・焼いた AO は、モデルから作るもので、画面なしでは渡せないので使わない。
 
-use std::fs::{self, OpenOptions};
-use std::io::Seek;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
@@ -17,7 +16,7 @@ use yolu_io::export::{
     existing_files, file_name, plan_template, sanitize, write_images, write_template, ExportFile,
     Overwrite, PlanSet, SetExport, WriteOptions,
 };
-use yolu_io::psd::{self, Compression, ExportControl, ExportOptions, NoteAction};
+use yolu_io::psd::{self, ExportControl, ExportOptions, NoteAction};
 
 use crate::command::{ExportChannelsArgs, ExportPsdArgs, ExportTexturesArgs, PsdMode};
 use crate::doc_ops::inactive_texts;
@@ -247,23 +246,6 @@ fn note_text(note: &psd::ExportNote) -> Text {
     Text::new(note.message(), en)
 }
 
-/// 一時ファイルの持ち主（置き換える前に失敗・panic で手放すと消す）。
-struct Temp(Option<PathBuf>);
-
-impl Temp {
-    fn path(&self) -> &Path {
-        self.0.as_deref().expect("手放していない一時ファイル")
-    }
-}
-
-impl Drop for Temp {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = fs::remove_file(path);
-        }
-    }
-}
-
 fn io_error(what: &str, path: &Path, e: &std::io::Error) -> OpError {
     OpError::new(
         ErrorCode::Io,
@@ -277,8 +259,6 @@ fn psd_file(
     policy: &PathPolicy,
     args: &ExportPsdArgs,
 ) -> Result<Reply, OpError> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     let doc = view.editable_doc()?;
     let path = policy.resolve(&args.path)?;
     let is_psd = path
@@ -340,61 +320,38 @@ fn psd_file(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| io_error("フォルダを作れません", dir, &e))?;
-    let temp_path = dir.join(format!(
-        ".yolu-export-{}-{}.pending~",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .read(true)
-        .write(true)
-        .open(&temp_path)
-        .map_err(|e| io_error("一時ファイルを作れません", &temp_path, &e))?;
-    let temp = Temp(Some(temp_path));
-    let written = plan
-        .write_psd(doc, &ctl, &mut file, Compression::Rle)
-        .map_err(|e| OpError::from_io(&yolu_io::Error::from(e)))?;
-    file.sync_all()
-        .map_err(|e| io_error("書き出しを確定できません", temp.path(), &e))?;
-    // 読み戻して確かめる（読めない・書いたものと違う PSD は置き換えない）
-    file.rewind()
-        .map_err(|e| io_error("読み戻せません", temp.path(), &e))?;
-    let verified = psd::verify_stream(&mut std::io::BufReader::new(&file), None)
-        .map_err(|e| OpError::from_io(&e))?;
-    let mismatch = || {
-        OpError::new(
+    // 一時ファイルへ書いて同期し、読み戻して確かめてから確定する（読めない・書いたものと違う PSD は置き換えない）。新しいファイルは
+    // 「あれば失敗」の hard_link（確かめたあとに、別のファイルができていても上書きしない）
+    let how = if replaced {
+        psd::Commit::Replace
+    } else {
+        psd::Commit::CreateNew
+    };
+    psd::write_verified(&path, &plan, doc, &ctl, how).map_err(|e| match e {
+        psd::WriteError::NotAFile => OpError::new(
+            ErrorCode::PathRefused,
+            "行き先が通常のファイルではありません",
+            "The destination is not a regular file",
+        )
+        .with_data(json!({"path": path.display().to_string()})),
+        psd::WriteError::CreateTemp { temp, source } => {
+            io_error("一時ファイルを作れません", &temp, &source)
+        }
+        psd::WriteError::Write(e) => OpError::from_io(&yolu_io::Error::from(e)),
+        psd::WriteError::Sync { temp, source } => {
+            io_error("書き出しを確定できません", &temp, &source)
+        }
+        psd::WriteError::Rewind { temp, source } => io_error("読み戻せません", &temp, &source),
+        psd::WriteError::ReadBack(e) | psd::WriteError::Compare(e) => OpError::from_io(&e),
+        psd::WriteError::Mismatch => OpError::new(
             ErrorCode::Io,
             "書いた PSD の読み戻しが一致しません（置き換えていません）",
             "The written PSD did not read back identically; nothing was replaced",
-        )
-    };
-    if verified.bytes != written.bytes || verified.layers != written.layers {
-        return Err(mismatch());
-    }
-    file.rewind()
-        .map_err(|e| io_error("読み戻せません", temp.path(), &e))?;
-    if !written
-        .checksum
-        .matches(&mut file, None)
-        .map_err(|e| OpError::from_io(&e))?
-    {
-        return Err(mismatch());
-    }
-    drop(file);
-    // 置き換える。新しいファイルは「あれば失敗」の hard_link（確かめたあとに、別のファイルができていても上書きしない）
-    if replaced {
-        fs::rename(temp.path(), &path).map_err(|e| io_error("置き換えられません", &path, &e))?;
-    } else {
-        match fs::hard_link(temp.path(), &path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(confirm_files(std::slice::from_ref(&path)))
-            }
-            Err(e) => return Err(io_error("書けません", &path, &e)),
-        }
-    }
-    // rename で一時ファイルは無くなっている。hard_link のときは、ここで Temp が消す
+        ),
+        psd::WriteError::Commit(e) if replaced => io_error("置き換えられません", &path, &e),
+        psd::WriteError::Commit(e) => io_error("書けません", &path, &e),
+        psd::WriteError::Exists => confirm_files(std::slice::from_ref(&path)),
+    })?;
     let mut notes: Vec<Text> = plan.notes.iter().map(note_text).collect();
     notes.extend(inactive_texts(doc));
     Ok(Reply::Exported(Exported {

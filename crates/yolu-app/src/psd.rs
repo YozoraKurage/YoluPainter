@@ -20,7 +20,6 @@
 //!   PSD の 2 GiB は圧縮したあとの大きさで書きながら見る。超えたら層の名前つきの理由（`Overrun`）で断り、一時ファイルは残さない。
 //!   取り込んだ PSD と同じファイル・複数のチャンネルで名前が重なるファイルは、置き換える前に確かめる。
 
-use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -28,8 +27,8 @@ use std::sync::Arc;
 use egui::Vec2;
 use yolu_core::{Channel, Document};
 use yolu_io::psd::{
-    self, Compression, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError,
-    ExportMode, ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
+    self, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError, ExportMode,
+    ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
@@ -1263,82 +1262,56 @@ fn plan_worker(
 }
 
 /// 別のスレッドの書き出し: チャンネルごとに、PSD を一時ファイルへ層を 1 枚ずつ流して書き（焼く・圧縮する。メモリには層 1 枚ぶんだけ）、流して読み戻して
-/// 確かめ、全部が済んでから最後に置き換える。途中の失敗・取消では一時ファイルを消し、元のファイルは変えない。
+/// 確かめ（`yolu_io::psd::stage_verified`）、全部が済んでから最後に置き換える。途中の失敗・取消では一時ファイルを消し、元のファイルは変えない。
 fn write_worker(run: Run, cancel: &AtomicBool) -> Result<Output, Failure> {
     let ctl = ExportControl {
         cancel: Some(cancel),
         source_budget: Some(run.budget),
         ..ExportControl::default()
     };
-    let mut staged: Vec<Staged> = Vec::with_capacity(run.targets.len());
-    let result = (|| -> Result<(), Failure> {
-        for ((_, path), plan) in run.targets.iter().zip(&run.plans) {
-            let written = Cell::new(None);
-            staged.push(stage(
-                path,
-                |out| {
-                    let w = plan
-                        .write_psd(&run.snapshot, &ctl, out, Compression::Rle)
-                        .map_err(export_failure)?;
-                    written.set(Some(w));
-                    Ok(())
-                },
-                |temp| verify_written(temp, written.get(), cancel),
-            )?);
-            if cancel.load(Ordering::Relaxed) {
-                return Err(Failure::Canceled);
-            }
+    // 一時ファイルは持ち主（`psd::Staged`）が消す（途中で抜けても）
+    let mut staged: Vec<psd::Staged> = Vec::with_capacity(run.targets.len());
+    for ((_, path), plan) in run.targets.iter().zip(&run.plans) {
+        staged.push(
+            psd::stage_verified(path, plan, &run.snapshot, &ctl)
+                .map_err(|e| write_failure(path, e))?,
+        );
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Failure::Canceled);
         }
-        Ok(())
-    })();
-    if let Err(e) = result {
-        // 一時ファイルは持ち主（`Temp`）が消す
-        drop(staged);
-        return Err(e);
     }
-    let files: Vec<(PathBuf, usize)> = staged.iter().map(|s| (s.path.clone(), s.len)).collect();
+    let files: Vec<(PathBuf, usize)> = staged
+        .iter()
+        .map(|s| (s.path().to_path_buf(), s.len() as usize))
+        .collect();
     commit(staged)?;
     Ok(Output::Exported { files })
 }
 
-/// 書いた PSD を読み戻して確かめる。まず、最後まで流して読み戻す（`psd::verify_stream`。全層・マスク・統合画像の全行を復号し、長さと層の数が書いたものと合う。
-/// 壊れている理由はここで言える）。つぎに、書いたバイト列と一致するか（書きながら数えた CRC-32 と長さ。構造を壊さない画素のビット化けも見つける）。
-/// 読めない・書いたものと違う PSD は置き換えない。
-fn verify_written(
-    path: &Path,
-    written: Option<psd::Written>,
-    cancel: &AtomicBool,
-) -> Result<(), Failure> {
-    use std::io::Seek;
-    let mismatch = || {
-        Failure::message(
+/// 検証つきの書き出しの失敗を、画面の理由にする。読み戻しの失敗は、壊れている（読めない）か、ファイルの読み込みの失敗か取消か。
+fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
+    use psd::WriteError as W;
+    match e {
+        W::NotAFile if path.file_name().is_none() => {
+            Failure::message("ファイル名がありません", "The file has no name")
+        }
+        W::NotAFile => Failure::message(
+            format!("通常のファイルではありません: {}", path.display()),
+            format!("Not a regular file: {}", path.display()),
+        ),
+        W::CreateTemp { source, .. } | W::Sync { source, .. } | W::Rewind { source, .. } => {
+            Failure::File(source)
+        }
+        W::Write(e) => export_failure(e),
+        W::ReadBack(e) if is_cancel(&e) => Failure::Canceled,
+        W::ReadBack(e) => Failure::Unreadable(e),
+        W::Compare(e) => read_failure(e),
+        W::Mismatch => Failure::message(
             "書いたファイルの読み戻しが一致しません",
             "The written file does not read back identically",
-        )
-    };
-    let file = std::fs::File::open(path).map_err(Failure::File)?;
-    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
-    let verified = psd::verify_stream(&mut reader, Some(cancel)).map_err(|e| {
-        if is_cancel(&e) {
-            Failure::Canceled
-        } else {
-            Failure::Unreadable(e)
-        }
-    })?;
-    let written = written
-        .filter(|w| w.bytes == verified.bytes && w.layers == verified.layers)
-        .ok_or_else(mismatch)?;
-    let mut file = reader.into_inner();
-    file.seek(std::io::SeekFrom::Start(0))
-        .map_err(Failure::File)?;
-    if written
-        .checksum
-        .matches(&mut file, Some(cancel))
-        .map_err(read_failure)?
-    {
-        Ok(())
-    } else {
-        Err(mismatch())
+        ),
+        W::Commit(e) => Failure::File(e),
+        W::Exists => Failure::File(std::io::ErrorKind::AlreadyExists.into()),
     }
 }
 
@@ -1351,89 +1324,36 @@ fn read_failure(e: yolu_io::Error) -> Failure {
     }
 }
 
-/// 一時ファイル。持っている間は、失敗・取消・panic の巻き戻しでも消える（書き先のフォルダに巨大な書きかけを残さない）。置き換えが済んだら `release` で手放す。
-struct Temp(Option<PathBuf>);
-
-impl Temp {
-    fn path(&self) -> &Path {
-        self.0.as_deref().expect("手放していない一時ファイル")
-    }
-
-    /// 置き換えが済んで、もう一時ファイルは無い（消さない）。
-    fn release(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for Temp {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
-
-/// 一時ファイルへ書いて確かめた、まだ置き換えていないファイル（捨てると一時ファイルも消える）。
-struct Staged {
-    path: PathBuf,
-    temp: Temp,
-    len: usize,
-}
-
-/// 同じフォルダの一時ファイルへ `fill` で書き（1 MiB の緩衝つき。ファイルの終わりまで書いて同期する）、`check` で確かめる（途中で失敗・取消・panic したら
-/// 一時ファイルを消す）。通常のファイル以外の先は断る。
+/// 同じフォルダの一時ファイルへ `fill` で書き、`check` で確かめる（試験用: PSD でない中身で、一時ファイルの後始末と置き換えを確かめる）。
+#[cfg(test)]
 fn stage(
     path: &Path,
-    fill: impl FnOnce(&mut std::io::BufWriter<std::fs::File>) -> Result<(), Failure>,
+    fill: impl FnOnce(&mut std::io::BufWriter<&mut std::fs::File>) -> Result<(), Failure>,
     check: impl FnOnce(&Path) -> Result<(), Failure>,
-) -> Result<Staged, Failure> {
-    use std::io::Write;
-    let dir = path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| Failure::message("ファイル名がありません", "The file has no name"))?
-        .to_string_lossy();
-    if let Ok(meta) = std::fs::symlink_metadata(path) {
-        if !meta.is_file() {
-            return Err(Failure::message(
-                format!("通常のファイルではありません: {}", path.display()),
-                format!("Not a regular file: {}", path.display()),
-            ));
-        }
-    }
-    let temp_path = dir.join(format!(".{name}.{}.tmp~", std::process::id()));
-    // 作れなかったとき（同じ名前が既にあるとき）は、自分のファイルではないので消さない。作れたら、ここから先は持ち主（`Temp`）が消す
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)
-        .map_err(Failure::File)?;
-    let temp = Temp(Some(temp_path));
-    let len = (|| -> Result<u64, Failure> {
-        let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
-        fill(&mut out)?;
-        out.flush().map_err(Failure::File)?;
-        let file = out
-            .into_inner()
-            .map_err(|e| Failure::File(e.into_error()))?;
-        file.sync_all().map_err(Failure::File)?;
-        drop(file);
-        check(temp.path())?;
-        Ok(std::fs::metadata(temp.path()).map_err(Failure::File)?.len())
-    })()?;
-    Ok(Staged {
-        path: path.to_path_buf(),
-        temp,
-        len: len as usize,
-    })
+) -> Result<psd::Staged, Failure> {
+    psd::stage_with(
+        path,
+        fill,
+        |temp, _| check(temp),
+        |e| write_failure(path, e),
+    )
+}
+
+/// 書いた PSD を読み戻して確かめる（試験用: 書いた長さ・層の数・CRC を与えて、確かめの断り方を見る。`None` は書いた記録が無い）。
+#[cfg(test)]
+fn verify_written(
+    path: &Path,
+    written: Option<psd::Written>,
+    cancel: &AtomicBool,
+) -> Result<(), Failure> {
+    let written = written.ok_or_else(|| write_failure(path, psd::WriteError::Mismatch))?;
+    let mut file = std::fs::File::open(path).map_err(Failure::File)?;
+    psd::check_written(path, &mut file, written, Some(cancel)).map_err(|e| write_failure(path, e))
 }
 
 /// 同じ中身の書き出しを試験で使う: バイト列を書いて、読み戻して一致を確かめる。
 #[cfg(test)]
-fn stage_bytes(path: &Path, bytes: &[u8]) -> Result<Staged, Failure> {
+fn stage_bytes(path: &Path, bytes: &[u8]) -> Result<psd::Staged, Failure> {
     use std::io::Write;
     stage(
         path,
@@ -1450,18 +1370,19 @@ fn stage_bytes(path: &Path, bytes: &[u8]) -> Result<Staged, Failure> {
     )
 }
 
-/// 最後に 1 回ずつ置き換える。途中で失敗したら、残りの一時ファイルを消し（捨てた `Staged` が消す）、済んだ分は置き換わっていると知らせる。
-fn commit(staged: Vec<Staged>) -> Result<(), Failure> {
-    for (done, mut s) in staged.into_iter().enumerate() {
-        match std::fs::rename(s.temp.path(), &s.path) {
-            Ok(()) => s.temp.release(),
-            Err(e) => {
-                return Err(if done == 0 {
-                    Failure::File(e)
-                } else {
-                    Failure::PartlyReplaced { done, cause: e }
-                });
-            }
+/// 最後に 1 回ずつ置き換える。途中で失敗したら、残りの一時ファイルを消し（捨てた `psd::Staged` が消す）、済んだ分は置き換わっていると知らせる。
+fn commit(staged: Vec<psd::Staged>) -> Result<(), Failure> {
+    for (done, s) in staged.into_iter().enumerate() {
+        if let Err(e) = s.commit(psd::Commit::Replace) {
+            let cause = match e {
+                psd::WriteError::Commit(e) => e,
+                other => std::io::Error::other(other.to_string()),
+            };
+            return Err(if done == 0 {
+                Failure::File(cause)
+            } else {
+                Failure::PartlyReplaced { done, cause }
+            });
         }
     }
     Ok(())
@@ -1479,7 +1400,7 @@ mod tests {
     use crate::state::Action;
     use std::sync::atomic::AtomicU32;
     use yolu_core::{Channel, LayerId, TileCoord};
-    use yolu_io::psd::{CompatibilityMode, Limits};
+    use yolu_io::psd::{CompatibilityMode, Compression, Limits};
 
     /// 試験用の一時フォルダ（終わると消す）。
     struct Dir(PathBuf);
@@ -2489,13 +2410,13 @@ mod tests {
         let [a, b, c] = ["a", "b", "c"].map(|n| dir.0.join(format!("{n}.psd")));
         std::fs::write(&a, b"old-a").unwrap();
         std::fs::write(&b, b"old-b").unwrap();
-        let staged: Vec<Staged> = [&a, &b, &c]
+        let staged: Vec<psd::Staged> = [&a, &b, &c]
             .iter()
             .map(|p| stage_bytes(p, b"new").unwrap())
             .collect();
         assert_eq!(dir.files().len(), 5, "元の 2 つと一時ファイル 3 つ");
         // 2 つ目の一時ファイルを無くして、その置き換えを失敗させる
-        std::fs::remove_file(staged[1].temp.path()).unwrap();
+        std::fs::remove_file(staged[1].temp_path()).unwrap();
         let err = commit(staged).unwrap_err();
         assert!(
             matches!(err, Failure::PartlyReplaced { done: 1, .. }),
@@ -2527,11 +2448,11 @@ mod tests {
         let dir = Dir::new("first");
         let [a, b] = ["a", "b"].map(|n| dir.0.join(format!("{n}.psd")));
         std::fs::write(&a, b"old-a").unwrap();
-        let staged: Vec<Staged> = [&a, &b]
+        let staged: Vec<psd::Staged> = [&a, &b]
             .iter()
             .map(|p| stage_bytes(p, b"new").unwrap())
             .collect();
-        std::fs::remove_file(staged[0].temp.path()).unwrap();
+        std::fs::remove_file(staged[0].temp_path()).unwrap();
         let err = commit(staged).unwrap_err();
         assert!(matches!(err, Failure::File(_)), "{err:?}");
         assert_eq!(std::fs::read(&a).unwrap(), b"old-a");
@@ -2592,7 +2513,7 @@ mod tests {
             |_| Ok(()),
         )
         .unwrap();
-        assert_eq!(staged.len, 3);
+        assert_eq!(staged.len(), 3);
         assert_eq!(std::fs::read(&path).unwrap(), b"old");
         commit(vec![staged]).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
@@ -2643,18 +2564,19 @@ mod tests {
         }));
         assert!(result.is_err());
         assert_eq!(dir.files(), ["b.psd"]);
-        // 同じ名前が既にあって一時ファイルを作れなかったときは、自分のものではないので消さない
-        let name = format!(".b.psd.{}.tmp~", std::process::id());
-        std::fs::write(dir.0.join(&name), b"not ours").unwrap();
+        // ほかのプロセスの一時ファイル（同じ形の名前）は自分のものではないので、書いても失敗しても消さない（自分の一時ファイルは
+        // プロセスの番号と通し番号で重ならない）
+        let name = ".b.psd.1-0.pending~";
+        std::fs::write(dir.0.join(name), b"not ours").unwrap();
         let err = stage(
             &b,
             |out| out.write_all(b"new").map_err(Failure::File),
-            |_| Ok(()),
+            |_| Err(Failure::Canceled),
         )
         .map(|_| ())
         .unwrap_err();
-        assert!(matches!(err, Failure::File(_)), "{err:?}");
-        assert_eq!(std::fs::read(dir.0.join(&name)).unwrap(), b"not ours");
+        assert!(matches!(err, Failure::Canceled), "{err:?}");
+        assert_eq!(std::fs::read(dir.0.join(name)).unwrap(), b"not ours");
     }
 
     /// 書いている途中（先頭を書いた直後）の取消は、一時ファイルを残さず、元のファイルのまま。書き出しの道（`write_psd` を一時ファイルへ）で。

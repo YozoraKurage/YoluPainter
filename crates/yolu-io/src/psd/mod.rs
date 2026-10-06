@@ -7,6 +7,7 @@ mod composite;
 mod descriptor;
 mod import;
 mod read;
+mod verified;
 mod write;
 use crate::{check, Result};
 pub use bake::{
@@ -20,6 +21,9 @@ pub use import::{
     ImportDetail, ImportFeature, ImportNote, Unchecked, Verified, ADJUSTMENT_TAG_KEYS,
 };
 pub use read::{read, read_cancellable, read_stream};
+pub use verified::{
+    check_written, stage_verified, stage_with, write_verified, Commit, Staged, WriteError,
+};
 pub use write::{
     write, write_edited, write_with, Checksum, Compression, ExportError, Overrun, Written,
 };
