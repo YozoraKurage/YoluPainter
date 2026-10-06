@@ -1,7 +1,7 @@
 // 正本の C# Core に人工入力を通す。出力は全バイトの SHA-256。行の種類は mat・edge（マテリアルの塗り）、mask-mat・mask-edge（マスクの塗り）、
 // lock・lockmask（層のロックを立てた層への塗り・グラデーション・三角形の塗り・ストローク。断った層・持ち主・ロックと、断ったあとの文書、通ったときの Undo/Redo まで。
 // チャンネルごとに透明な画素が違う画素と、文書の選択範囲、マスクの無い層も含む）、locknr（塗りつぶし・調整・グループの層に書いたとき、型の拒否とロックの拒否のどちらが先か）、
-// id・uv・uvx（ID の色・UV の配置）、tri（三角形の和集合）、rollback・rollback-fill（ストロークの巻き戻しのバイト数。ハッシュでなく数）。Rust 側の試験（crates/yolu-core/tests/material_golden.rs）が行の鍵を数えて照らす。
+// id・uv・uvx（ID の色・UV の配置）、tri（三角形の和集合）、rollback・rollback-fill（ストロークの巻き戻しのバイト数。ハッシュでなく数）。Rust 側の試験（crates/yolu-core/tests/reference/material_golden.rs）が行の鍵を数えて照らす。
 using System;
 using System.IO;
 using System.Linq;

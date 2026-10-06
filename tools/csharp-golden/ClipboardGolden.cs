@@ -1,5 +1,5 @@
 // 層の画素のコピー・カット・結合してコピー・ペースト・置き換えと、複数の編集のまとめ（Batch）を実 C# Core に通す。
-// Rust 側 crates/yolu-core/tests/clipboard_golden.rs と同じ台本・出力順。事例ごとの出力（結果の型・写し・履歴のバイト数・文書の
+// Rust 側 crates/yolu-core/tests/reference/clipboard_golden.rs と同じ台本・出力順。事例ごとの出力（結果の型・写し・履歴のバイト数・文書の
 // 全状態と、Undo・Redo の後の状態）の SHA-256 を index.txt に書く（全部を保存すると、同じ人工の文書の状態が事例の数だけ積まれて
 // 大きくなる）。食い違ったときは環境変数 GOLDEN_FULL=フォルダ で、事例ごとの出力そのものを <事例>.bin に書いて Rust 側の出力
 // （CLIPBOARD_GOLDEN_DUMP=フォルダ）と比べる。

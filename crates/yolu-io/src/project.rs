@@ -1116,7 +1116,7 @@ fn set_document(
     SetDocument::stored(header.clone(), parts)
 }
 /// 根のエントリ（`resources/`・`sets/<ID>/` の下のほか）の名前。形式の仕様（`docs/YLP_FORMAT.md` の「エントリ」の表）と同じ一覧で、
-/// `tests/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
+/// `tests/ylp/format_doc.rs` が仕様に載っているかを確かめる。エントリを足すときは、ここと仕様を同じコミットで直す。
 pub const ROOT_ENTRIES: [&str; 8] = [
     "ylp.json",
     "project.json",

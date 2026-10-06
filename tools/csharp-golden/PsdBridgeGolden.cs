@@ -1,4 +1,4 @@
-// 人工データを実 C# Core の PSD の写し（PsdBridge.Export・Import と PsdCodec）に通す。Rust 側 crates/yolu-io/tests/psd_golden.rs と同じ台本。
+// 人工データを実 C# Core の PSD の写し（PsdBridge.Export・Import と PsdCodec）に通す。Rust 側 crates/yolu-io/tests/psd_io/psd_golden.rs と同じ台本。
 // 出力（<出力先>/）:
 //   index.txt          事例の一覧（名前と種類）と出どころ
 //   <事例>.psd         書き出し事例: PsdBridge.Export(Color) → PsdCodec.Write のバイト列。取り込み事例: PsdCodec.Write で組んだ PSD
@@ -219,7 +219,7 @@ static class PsdBridgeGolden
         return PsdCodec.Write(d);
     }
 
-    // ---- 中身の文字列（Rust の tests/psd_golden.rs の snapshot と同じ形） ----
+    // ---- 中身の文字列（Rust の crates/yolu-io/tests/psd_io/psd_golden.rs の snapshot と同じ形） ----
 
     static ulong Fnv(IEnumerable<byte> bytes)
     {

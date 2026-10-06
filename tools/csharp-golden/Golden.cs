@@ -119,7 +119,7 @@ namespace YoluPainterRs.Golden
         }
 
         /// <summary>yolu-io の試験の正解: 70×50・タイル 16 の文書の選択範囲を作り、selection-名前.bin（SelectionBinary.Write）と
-        /// selection-名前.amounts（画布の量、下の行から行優先）を書く。作り方は crates/yolu-io/tests/selection.rs と揃える。</summary>
+        /// selection-名前.amounts（画布の量、下の行から行優先）を書く。作り方は crates/yolu-io/tests/ylp/selection.rs と揃える。</summary>
         static void SelectionFixtures(string outDir)
         {
             Directory.CreateDirectory(outDir);

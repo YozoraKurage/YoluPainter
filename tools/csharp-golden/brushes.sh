@@ -15,7 +15,7 @@ build="$repo/target/csharp-golden/brushes"
 mkdir -p "$build" "$out"
 api="$unity/UnityReferenceAssemblies/unity-4.8-api"
 export CARGO_INCREMENTAL=0
-BRUSH_CORPUS_OUT="$build/inputs.bin" cargo test -p yolu-io --test brush_golden export_corpus -- --ignored --exact >/dev/null
+BRUSH_CORPUS_OUT="$build/inputs.bin" cargo test -p yolu-io --test brushes brush_golden::export_corpus -- --ignored --exact >/dev/null
 {
   echo '-nologo -target:exe -langversion:9.0 -optimize+ -nostdlib+ -nowarn:CS1591,CS0618'
   echo "-out:\"$build/brushes.exe\""

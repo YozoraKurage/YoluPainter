@@ -1,6 +1,7 @@
 //! ブラシの振る舞い（Unity 版の C# の Core の試験 BrushTests・BrushDynamicsTests・StrokeAssistTests・StrokeCurveTests・
 //! BrushEffectTests のうち、1 つの面へ描くストロークの範囲を移したもの。値は C# の試験の期待値そのもの）と、C# に無い拡張
 //! （筆先の反転・紙の質感のモード）の試験。マスクへの効果のブラシはここ、複数チャンネルは material.rs、スレッド数は parallelism.rs、保存の部分はまだ無いので移していない（選択範囲は selection.rs、透明部分のロックは docops.rs の試験）。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を試験の間だけ 1 にして戻す。束のほかの試験のダブの経路を変え、戻すときに、同じ時に走るほかの試験が決めた値も消す。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::HashSet;

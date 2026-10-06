@@ -1,3 +1,5 @@
+//! パスの試験（C# の正解との照合・指紋・断り方）。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を試験の間だけ 0 にして戻す。束のほかの試験のダブの経路を変え、戻すときに、同じ時に走るほかの試験が決めた値も消す。
 use std::sync::atomic::AtomicBool;
 use yolu_core::{
     geometry::*,

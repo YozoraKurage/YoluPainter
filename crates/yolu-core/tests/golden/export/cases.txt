@@ -1,5 +1,5 @@
 # YoluPainter-rs の書き出し（テンプレートとパディング）の yolu-core と Unity 版の C# の Core を照らし合わせる事例
-# （両方がこの台本を読む。tests/export_golden.rs と tools/csharp-golden/ExportGolden.cs）。1 行 1 命令、# から行末はコメント。
+# （両方がこの台本を読む。tests/reference/export_golden.rs と tools/csharp-golden/ExportGolden.cs）。1 行 1 命令、# から行末はコメント。
 # 文書（Golden の台本の部分集合）:
 #   case 名前 / canvas 幅 高さ タイル
 #   layer 名前 モード 不透明度 中身 [hidden] [clip]     Color の層を一番上へ（中身: empty | random:種 | sparse:種 | solid:R,G,B,A）

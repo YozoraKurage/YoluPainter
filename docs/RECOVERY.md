@@ -103,7 +103,7 @@ Unity 版の復旧は、Unity プロジェクトの `Library/YoluPainter/recover
 ## 確かめ方
 
 ```text
-cargo test -p yolu-io --test generation        世代の置き場（量の数え方・書く前の空きの確かめ）
+cargo test -p yolu-io --test projects generation::   世代の置き場（量の数え方・書く前の空きの確かめ）
 cargo test -p yolu-app --lib recovery::        上限の消し方・空きの守り・設定
 cargo test -p yolu-app --test headless recovery::   書き置きと上限・空きの守り・窓の数え直し
 cargo test -p yolu-app --test gui_shell recovery_ui::   窓（使う量・詳しく・使用中）

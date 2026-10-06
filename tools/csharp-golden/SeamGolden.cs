@@ -1,5 +1,5 @@
 // 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）と層のロック・層の操作のつなぎ目を、実 C# の PaintDocument に通す。
-// Rust 側 crates/yolu-core/tests/seam_golden.rs と同じ台本・同じ人工の文書・同じ書き出しの並び。事例ごとに SHA-256 を 1 行（名前 ハッシュ）。
+// Rust 側 crates/yolu-core/tests/reference/seam_golden.rs と同じ台本・同じ人工の文書・同じ書き出しの並び。事例ごとに SHA-256 を 1 行（名前 ハッシュ）。
 //   golden             全事例の「名前 ハッシュ」を標準出力へ
 //   dump <名前> <出力>   1 事例の生のバイト列（Rust 側の SEAM_DUMP_DIR と cmp で比べて、食い違いの場所を探す）
 // 人工の画素・画像・パスだけ（ユーザーのデータは使わない）。メッシュマップは渡さない（Generator の Anchor は使える。形のグラデーションなど
@@ -482,7 +482,7 @@ static class SeamGolden
         }));
         yield return ("merge-visible-rig", () => Op(() => { var r = MakeRig(); return (r.D, () => r.D.MergeVisible("merged", null, 255)); }));
         // 土台の Anchor を読む段は外しておく（結合で土台の Anchor が無くなると読む段は入力のまま通すようになり、見た目が変わる。C# の結合の
-        // 報告は、その変化を数えそこなう: 派生の Anchor のキャッシュが古い。Rust は数える。crates/yolu-core/tests/seam_ops.rs で確かめる）
+        // 報告は、その変化を数えそこなう: 派生の Anchor のキャッシュが古い。Rust は数える。crates/yolu-core/tests/effects/seam_ops.rs で確かめる）
         yield return ("merge-down-path-onto-base", () => Op(() => { var r = MakeRig(); var d = r.D; d.RemoveFilter(r.Mid, r.Reader); d.MoveLayer(r.PathLayer, 1); return (d, () => d.MergeDown(r.PathLayer, 255)); }));
         yield return ("merge-group-path", () => Op(() =>
         {
@@ -508,7 +508,7 @@ static class SeamGolden
             return (d, () => d.MergeDown(upper, 255));
         }));
         // 下の層の下に見える層を置いて、分離の結合にしない（マスクが効果ごと結果に残る結合）。分離の結合は下のマスクのフィルターも焼くが、
-        // C# はそのマスクの効いていない Generator を見ずに黙って落とす。Rust は意図して断る（crates/yolu-core/tests/seam_ops.rs で確かめる）
+        // C# はそのマスクの効いていない Generator を見ずに黙って落とす。Rust は意図して断る（crates/yolu-core/tests/effects/seam_ops.rs で確かめる）
         yield return ("merge-inactive-lower-mask", () => Op(() =>
         {
             var d = NewDoc(); var (lower, upper) = Pair(d);

@@ -2,7 +2,7 @@
 // 同じ入力を通して作る（Core と一緒に組んで Mono で走らせる）。
 //   golden <cases.txt> <出力のフォルダ>   台本の事例を走らせ、index.txt と <事例>.bin を書く
 //   bench [回数]                          4096² のテンプレートの Build とパディング（覆い・塗り広げ）の時間を測る
-// 台本の読み方・乱数・出力の書き方は crates/yolu-core/tests/export_golden.rs と揃えてある（片方を変えたら両方を変える）。
+// 台本の読み方・乱数・出力の書き方は crates/yolu-core/tests/reference/export_golden.rs と揃えてある（片方を変えたら両方を変える）。
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;

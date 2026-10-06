@@ -56,6 +56,33 @@ tools/repeat-tests.py --rounds 20 --out /tmp/repeat --shuffle --test headless
 
 ビルドし直しの時間は、ほとんどが yolu-app のライブラリ 1 つの rustc です（葉の 1 ファイルを変えたあと: `cargo check` 約 6 秒、`cargo build` 約 20 秒、`cargo test -p yolu-app --test headless --no-run` 約 25 秒。リンクは 1 本 1 秒前後）。環境変数 `CARGO_INCREMENTAL=0` を付けていなければ、dev のビルドは増分で、同じ変更の後のビルドし直しは 3〜5 秒になります（キャッシュは `target/debug/incremental` に約 1.4 GB。ディスクが厳しいときだけ 0 にします）。
 
+### yolu-core・yolu-io の結合試験の置き方
+
+yolu-app と同じく、`crates/yolu-core/tests/`・`crates/yolu-io/tests/` の試験も性質ごとの束（`tests/<束>/main.rs`）にまとめています。試験の名前は `<ファイル名>::<試験名>` です。
+
+| クレート | 束（`--test <束>`） | 中身 |
+| --- | --- | --- |
+| yolu-core | `edit` | 層・層の操作・選択範囲・コピーとペースト・履歴・チャンネル・色調補正・書き出し・2D の合成 |
+| | `effects` | フィルター・Generator・Anchor・パス・スマートマテリアルと、層のロック・層の操作とのつなぎ目 |
+| | `reference` | 実 C# Core の正解・収録したハッシュとの全バイトの照合 |
+| | `surface` | 3D の面への投影・面のストローク・対称・メッシュのマップ・ブラシの参照元・ステンシル・チャンネルの塗り |
+| | `brush`・`document`・`golden`・`mix`・`parallelism`・`paths`・`pressure`（直下の 1 ファイル 1 本） | ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を変える、またはその値に頼ってダブの経路を確かめる試験 |
+| yolu-io | `brushes` | ブラシの取り込み（同梱の筆先・GIMP・Photoshop・CLIP STUDIO の形式・信頼できないファイル） |
+| | `psd_io` | PSD の書き出し・取り込み・焼き込み・調整レイヤー・C# の正解との照合 |
+| | `ylp` | .ylp の形式の読み書き・前の版との互換・断り方・C# の書き手との一致・形式の仕様の文書 |
+| | `projects` | 大きな .ylp・復旧の世代・ライブラリ・棚・配布用の写し・保存の並列・新しいプロジェクト |
+| | `mesh` | メッシュのマップのベイク・レイの探索（BVH） |
+
+```sh
+cargo test -p yolu-core --test reference                 # 1 つの束
+cargo test -p yolu-core --test reference seam_golden::   # 束の中の 1 ファイル（以前の `--test seam_golden`）
+cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test format_doc`
+```
+
+- 足し方は yolu-app と同じです（内容に近い束のフォルダにファイルを置き、その `main.rs` に `mod 名前;` を足す）。足し忘れと、直下に理由の無い 1 ファイル 1 本が増えたことは、`yolu-core/tests/edit/bundle_layout.rs`・`yolu-io/tests/ylp/bundle_layout.rs` が落ちて知らせます。
+- 共通の部品（`attach_support`・`golden_update`・`brush_files` など）は、束の `main.rs` で `#[path]` を付けて 1 度だけ宣言し、ファイルでは `use crate::<部品>;` と書きます。`include_str!`・`include_bytes!` の道はファイルの場所から数えます（束のフォルダの 1 つ上が `tests/`）。
+- 使用メモリ（VmHWM）を測る手で回す試験（`#[ignore]` の `bigdoc::measure`・`psd_stream::measure`）は、名前で絞って回します（束のほかの試験と同じプロセスで同時に走ると、測りが乱れます）。
+
 ## CI
 
 `.github/workflows/ci.yml` は `pull_request`・`workflow_dispatch` で起動します（同じブランチの古い実行は取り消します）。`main` への push では動かしません（main は CI を通した PR からしか変わらず、push の CI は PR の最後の CI と同じ中身をもう一度ビルドするだけになるため）。main 向けの PR では、試験のジョブと並べて、配る物のビルド（`dist-plan` → `dist`。`.github/workflows/dist-build.yml`）も走ります。配布はその成果物を受け取ります（[RELEASING.md](RELEASING.md#配る物をビルドする場所と受け取る道)）。外の Actions はコミットの SHA で固定し、版の名前をコメントに書いています。上げるときは、その版のタグが指すコミットを確かめてから SHA を書き換えます。

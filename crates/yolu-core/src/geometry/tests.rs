@@ -1,4 +1,4 @@
-//! 面の計算の試験（C# との照合は tests/surface_golden.rs）。
+//! 面の計算の試験（C# との照合は tests/reference/surface_golden.rs）。
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;

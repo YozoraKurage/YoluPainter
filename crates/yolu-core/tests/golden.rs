@@ -5,6 +5,7 @@
 //! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
 //! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
 //! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最初の試験で 1 にして戻さず、並列の経路を通ったダブがあることを確かめる。束のほかの試験の経路を変え、ほかの試験が閾値を変えると外れる。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::HashMap;

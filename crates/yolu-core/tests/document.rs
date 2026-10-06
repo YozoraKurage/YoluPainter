@@ -1,5 +1,6 @@
 //! 文書の振る舞い（Unity 版の C# の Core の試験 CoreTests・ClippingTests・ChangeTrackingTests・IntegrationTests・
 //! BrushDynamicsTests の M1 の範囲を移したもの。値は C# の試験の期待値そのもの）。
+//! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を 1 にして、ワーカーの経路を通ったダブの数を確かめる。同じプロセスのほかの試験が閾値を戻す・上げると外れる。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use sha2::{Digest, Sha256};

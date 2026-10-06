@@ -1,4 +1,4 @@
-// 人工データを実 C# Core に通す。Rust 側 tests/docops_golden.rs と同じ台本・出力順。
+// 人工データを実 C# Core に通す。Rust 側 crates/yolu-core/tests/reference/docops_golden.rs と同じ台本・出力順。
 using System;
 using System.IO;
 using System.Linq;

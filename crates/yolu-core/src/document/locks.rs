@@ -89,7 +89,7 @@ impl Document {
     /// 画素を書く入口が、書く前に必ず通る関門。ロックで断る（画像・すべて、消すなら透明部分も）か、書くなら透明部分のロックで
     /// アルファを守るか（`true`）を返す。検査と守り方を別々に扱うと、新しい書き込み口が黙ってロックを迂回するので、
     /// 返した値は `StrokeState::new` の `keep_alpha` や塗りつぶしの式へそのまま渡す（どちらも必須の引数で、渡し忘れはコンパイルで落ちる。
-    /// ただし false を書く入口は通るので、足し忘れを見つけるのは入口の表 `tests/docops.rs` の `write_entries` の網羅だけ）。マスクへの
+    /// ただし false を書く入口は通るので、足し忘れを見つけるのは入口の表 `tests/edit/docops.rs` の `write_entries` の網羅だけ）。マスクへの
     /// 書き込みは透明部分のロックの対象外で、すべてのロックだけで断る（`refuse_lock`）。
     pub(crate) fn pixel_write_guard(&self, id: LayerId, erase: bool) -> Result<bool, CoreError> {
         self.ensure_pixels_editable(id, erase)?;

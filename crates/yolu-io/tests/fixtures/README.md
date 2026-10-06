@@ -16,15 +16,15 @@
 | `rust-written-locks-v21.utpaint`・`.unity.txt`・`.composite` | `locks-v21` を編集してロックを付け外し・複製した版21をRustの `from_core` が書いたもの（固定のIDで、試験が同じバイト列を作ることを確かめる）と、それをUnity 0.2.0の `DocumentBinary` に読ませた記録（読めて、書き直すと同じバイト列、層ごとの自分のロックと効くロック）、C#の全チャンネルの合成 |
 | `user-channels-v22.utpaint` | Rustの `from_core` が書いた版22（ユーザーチャンネル3つ、番号6・8・9）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる） |
 | `user-channels-v22.unity.txt` | 上の版22を、Unity 0.2.0の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open`（`Runtime/Core` をそのままコンパイル）に読ませた結果。`TexturePaintWindow.ReadTextureSets` の行は、ウィンドウが正本の読みの失敗に付ける文を、読み手の例外から同じ形に組み立てたもので、行の名前もそう記す |
-| `adjust-v24.utpaint` | Rustの `from_core` が書いた版24（色調補正の6種: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2値化・ポスタリゼーションを、調整の層6つと塗りつぶしの層のフィルターの段6つ・マスクの段1つに）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる）。作り直しは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test adjust_bridge version_24` |
+| `adjust-v24.utpaint` | Rustの `from_core` が書いた版24（色調補正の6種: グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2値化・ポスタリゼーションを、調整の層6つと塗りつぶしの層のフィルターの段6つ・マスクの段1つに）。C#に書き手が無いので、この書き手のバイト列を正解として固定する（試験が同じバイト列を作ることを確かめる）。作り直しは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp adjust_bridge::version_24` |
 | `adjust-v24.unity.txt` | 上の版24を、Unity 0.2.0（タグ `0.2.0` の `Runtime/Core` をそのままコンパイル）の `DocumentBinary.Read` / `ReadId` / `YlpFormat.Open` に読ませた結果（`generate.py --adjust`）。版22・23と同じく「Unsupported archive version」で断る記録 |
 | `rust-written-v21.utpaint` | Rustの `from_core` が書いた版21（`m2-groups` を開いて、塗りつぶし・調整・マスク・複製したグループ・チャンネルごとの合成を編集したもの）。ユーザーチャンネルが無い文書をUnity 0.2.0が読めることの正解 |
 | `rust-written-v21.unity.txt`・`rust-written-v21.composite` | 上の版21をUnity 0.2.0の `DocumentBinary.ReadId` / `Read` に読ませ、`Write` で書き直したバイト列が元と同じか、層の数を記録したものと、C#の全チャンネルの合成（`m2-*.composite` と同じ並び） |
 | `unity-generation/` | Unity 0.2.0 の `GenerationStore.Commit`（`Runtime/Core` をそのままコンパイル）が書いた復旧用の置き場。確定 2 回（正本・選択範囲・resources・`recovery.json`。変わらない中身は共有）。Rust の `GenerationStore` が読めること・一覧に出せること・続けて確定できることの正解 |
 | `rust-generation.unity.txt` | 開いた `format6.ylp` のエントリをそのまま世代にした置き場（`as-opened`）と、`sets/<ID>/` の下の入れ子の名前を除いたもの（`flat-names`）を、Unity 0.2.0 の `GenerationStore.Load` に読ませた結果。前者は「Unsafe generation filename」で断られ、後者は読める（Rust の世代の名前の範囲が Unity 版より広い記録） |
 | `selection/selection-*.bin` と `.amounts` | 70×50画素・タイル16の文書で作った選択範囲（矩形・楕円・多角形の組み合わせ、ぼかし、全選択、反転、何も選ばない）のC#の `SelectionBinary.Write` の出力と、画布の量の生の並び（下の行から）。Rustで同じ選択範囲を作り、書いたバイト列が全バイト一致することと、読んで同じ量に戻ることを確かめる |
-| `brushes/cases.txt`・`brushes/fuzz.txt`・`brushes/source.txt` | ブラシ形式の取り込み（`tests/brush_golden.rs`）。Rust の試験が組んだ入力（手で組んだ 88 事例と、同梱の Krita の GIMP 形式の実ファイル 37 個（`.gbr`・`.gih`）と、手で組んだ事例を壊した約 1.1 万の入力。`tests/brush_files/corpus.rs`）を、Unity 版の `GimpBrushReader`・`PhotoshopBrushReader`・`PhotoshopPatternReader`（`Runtime/Core` を原文のまま組む）に通した結果。`cases.txt` は事例ごとの取り込めたか・断ったかと設定の指紋、`fuzz.txt` は壊した入力ごとの結果と指紋の短縮、`source.txt` は C# の原文の指紋。`tools/csharp-golden/brushes.sh` で作り直す |
-| `brushes/png-tips.txt` | 同梱の Krita の PNG の筆先 39 個の被覆率（暗いほど塗り、白と透明は塗らない）の指紋。別の復号器（Pillow）で求める（`tools/brush-fixtures/png_tips.py`）。`tests/brush_bundled.rs` が Rust の読み手と比べる |
+| `brushes/cases.txt`・`brushes/fuzz.txt`・`brushes/source.txt` | ブラシ形式の取り込み（`tests/brushes/brush_golden.rs`）。Rust の試験が組んだ入力（手で組んだ 88 事例と、同梱の Krita の GIMP 形式の実ファイル 37 個（`.gbr`・`.gih`）と、手で組んだ事例を壊した約 1.1 万の入力。`tests/brush_files/corpus.rs`）を、Unity 版の `GimpBrushReader`・`PhotoshopBrushReader`・`PhotoshopPatternReader`（`Runtime/Core` を原文のまま組む）に通した結果。`cases.txt` は事例ごとの取り込めたか・断ったかと設定の指紋、`fuzz.txt` は壊した入力ごとの結果と指紋の短縮、`source.txt` は C# の原文の指紋。`tools/csharp-golden/brushes.sh` で作り直す |
+| `brushes/png-tips.txt` | 同梱の Krita の PNG の筆先 39 個の被覆率（暗いほど塗り、白と透明は塗らない）の指紋。別の復号器（Pillow）で求める（`tools/brush-fixtures/png_tips.py`）。`tests/brushes/brush_bundled.rs` が Rust の読み手と比べる |
 
 旧正本のデータは各版の基礎配置を表す人工データであり、全版と全属性の組合せを網羅するものではない。
 
@@ -55,15 +55,15 @@ python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --m2
 Rustが書く正解の正本（版22と版21）と、Unity 0.2.0の読み手の記録の取り直し。正本を作り直したときだけ:
 
 ```sh
-YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test m2_bridge version_22_fixture version_21
+YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp -- m2_bridge::version_22_fixture m2_bridge::version_21
 python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --user-channels --rust-written
 ```
 
-層のロックの正本（C#の書き手）と、Rustが書いたロックつきの版21をUnity版の読み手に読ませる記録の取り直し（Rustが書く正本は `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test layer_locks rust_written` で作り直してから）:
+層のロックの正本（C#の書き手）と、Rustが書いたロックつきの版21をUnity版の読み手に読ませる記録の取り直し（Rustが書く正本は `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written` で作り直してから）:
 
 ```sh
 python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --locks
-YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test layer_locks rust_written
+YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written
 python3 tools/io-fixtures/generate.py --source "$UNITY_SOURCE" --rust-written-locks
 ```
 
