@@ -3,7 +3,7 @@ use super::*;
 use crate::{Error, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
 use yolu_core::{
-    blend::{blend, blend_rgb, clip_onto, fade},
+    blend::{blend, clip_onto, fade, mix_rgb},
     CoreError, Rgba8,
 };
 fn mode(m: BlendMode) -> yolu_core::BlendMode {
@@ -265,24 +265,8 @@ fn adjust(
         // 6 種は上で core の式に任せて戻っている
         _ => [c.r, c.g, c.b],
     };
-    let dr = f64::from(c.r) / 255.0;
-    let dg = f64::from(c.g) / 255.0;
-    let db = f64::from(c.b) / 255.0;
-    let (r, g, b) = blend_rgb(
-        mode(m),
-        dr,
-        dg,
-        db,
-        f64::from(rgb[0]) / 255.0,
-        f64::from(rgb[1]) / 255.0,
-        f64::from(rgb[2]) / 255.0,
-    );
-    Rgba8::new(
-        byte(dr + (r - dr) * amount),
-        byte(dg + (g - dg) * amount),
-        byte(db + (b - db) * amount),
-        c.a,
-    )
+    // 合成モードと量の混ぜは core の調整の層と同じ式
+    mix_rgb(c, Rgba8::new(rgb[0], rgb[1], rgb[2], c.a), amount, mode(m))
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! `tools/csharp-golden/run-seam.sh dump <名前> <出力>` の結果と cmp で比べる。
 //! メッシュマップは渡さない（Generator の Anchor は使える。マップを要る段は入力のまま通す＝効いていない効果）。
 mod attach_support;
+mod golden_update;
 mod seam_support;
 use attach_support::{paint, H, W};
 use seam_support::{path_points, rendered};
@@ -1665,7 +1666,15 @@ fn csharp_seam_golden_matches_every_case() {
                 let want = golden
                     .get(name.as_str())
                     .unwrap_or_else(|| panic!("正解に無い事例: {name}"));
-                if hex(&Sha256::digest(&bytes)) != *want {
+                let got = hex(&Sha256::digest(&bytes));
+                if got != *want && golden_update::updating() {
+                    if degree == 1 {
+                        let path = golden_update::tests_dir().join("golden/seam.txt");
+                        golden_update::replace_line(&path, name, &format!("{name} {got}"));
+                    }
+                    continue;
+                }
+                if got != *want {
                     if let Some(dir) = &dump {
                         std::fs::write(std::path::Path::new(dir).join(name), &bytes).unwrap();
                     }

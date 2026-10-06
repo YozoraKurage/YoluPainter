@@ -12,6 +12,8 @@ cargo test --workspace --locked
 
 GPU・画面の試験には動作する描画バックエンドが必要です。GPU 試験にはアダプターがないと処理を省くものがあるため、結果の passed だけで描画確認済みとは判断せず、標準エラーの理由も確認してください。詳しくは [yolu-gpu](../crates/yolu-gpu/README.md#検証と計測) を参照してください。
 
+層の合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。ブラシの画素・Normal のチャンネル・フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
+
 Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果と層のロック・層の操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
 ### yolu-app の結合試験の置き方

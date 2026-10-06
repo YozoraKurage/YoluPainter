@@ -6,6 +6,7 @@
 // 画素の格子を (x, y) の添字で見比べる試験なので、添字の範囲の繰り返しの方が読みやすい。
 #![allow(clippy::needless_range_loop)]
 
+mod golden_update;
 use sha2::{Digest, Sha256};
 use yolu_core::*;
 
@@ -599,7 +600,14 @@ fn csharp_clipboard_all_bytes_and_parallelism() {
                     std::fs::write(format!("{dir}/{}.bin", p[0]), &actual).unwrap();
                 }
                 let digest = hex(&Sha256::digest(&actual));
-                if digest != p[4] || actual.len().to_string() != p[5] {
+                let differs = digest != p[4] || actual.len().to_string() != p[5];
+                if differs && golden_update::updating() {
+                    if degree == 1 {
+                        let path = golden_update::tests_dir().join("golden/clipboard/index.txt");
+                        let line = format!("{} {} {} {} {digest} {}", p[0], p[1], p[2], p[3], actual.len());
+                        golden_update::replace_line(&path, p[0], &line);
+                    }
+                } else if differs {
                     bad.push(format!("{} ({} bytes, C# {})", p[0], actual.len(), p[5]));
                 }
                 *ops.entry(p[1]).or_default() += 1;

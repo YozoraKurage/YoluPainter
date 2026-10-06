@@ -8,7 +8,7 @@
 //!    計算する。デュアルの合わせと紙の質感（乗算）も覆いの行へレーンで掛ける。
 //! 2. 当ての行: ストロークの覆い（`wash`）への寄せ・描く前のタイルとの合成・面への書き込みをレーンで行う。色を塗る・消すは
 //!    [`apply_range`]、指先・クローン・ぼかしは [`effect`]、ダブごとの色・色の混ぜは [`color`]。合成は
-//!    [`crate::blend::blend_block`]（合成の行の核と同じ式）で、近道（上が不透明で量 1・下が透明）も同じ条件で選ぶ。
+//!    [`super::blend64::blend_block`]（画素ごとの式と同じ f64 の Normal）で、近道（上が不透明で量 1・下が透明）も同じ条件で選ぶ。
 //!
 //! 演算の順はスカラーの式と同じ（積和へまとめない、`a * b * c` は `(a * b) * c`）。丸の覆いは、距離の 2 乗で確実に硬さの内側・確実に
 //! 外の画素を、平方根と割り算なしで決める（余裕 1e-9 は丸めの誤差よりずっと大きい）。行は、円か筆先の矩形にかかる区間へ狭める
@@ -22,8 +22,7 @@
 )]
 
 use super::*;
-use crate::blend::lanes::NORMAL;
-use crate::blend::{blend_block, fade_block};
+use super::blend64::{blend_block, fade_block};
 use crate::math::simd::{self, to_byte, Lanes, Level};
 
 #[cfg(target_arch = "x86_64")]
@@ -957,7 +956,7 @@ unsafe fn apply_range<V: F32Lanes>(
             unsafe { keeping_block::<V>(start, color, V::mul(V::min(one, accumulated), selected)) }
         } else {
             let src = unsafe { V::splat_px(color) };
-            match unsafe { blend_block::<V, NORMAL>(start, src, V::min(one, accumulated)) } {
+            match unsafe { blend_block::<V>(start, src, V::min(one, accumulated)) } {
                 Some(out) => out,
                 None => start,
             }

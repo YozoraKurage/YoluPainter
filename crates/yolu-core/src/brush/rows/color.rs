@@ -192,7 +192,7 @@ pub(super) unsafe fn apply_color_range<V: F32Lanes>(
             Some(Tile::Uniform(c)) => V::splat_px(c.to_array()),
             Some(Tile::Data(d)) => V::load(&d[local * 4..]),
         };
-        let next = match blend_block::<V, NORMAL>(start, color, V::min(one, accumulated)) {
+        let next = match blend_block::<V>(start, color, V::min(one, accumulated)) {
             Some(out) => out,
             None => start,
         };

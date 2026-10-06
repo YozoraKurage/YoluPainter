@@ -1,5 +1,7 @@
-//! Unity 版の C# の Core の出力（tests/golden、tools/csharp-golden/run.sh で作る）とのバイト一致。
-//! 台本（golden/cases.txt）を C# と同じ規則で走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と出力の画素を比べる。
+//! 正解の出力（tests/golden）とのバイト一致。台本（golden/cases.txt）を走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と
+//! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力（tools/csharp-golden/run.sh）で、合成の式が f32 のこの crate の
+//! 式になってから、合成を通る出力（.rgba と sweeps の行）はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1` で違った正解だけを
+//! 書き直す。撮り直したら差分を見て、意図した変化だけかを確かめる）。ブラシの画素と Normal のチャンネルの式は f64 のままで、今も C# と同じ値。
 //! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
 //! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
 //! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。
@@ -101,6 +103,38 @@ impl Fnv {
 
 fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
+}
+
+/// 正解の撮り直しの間か（`YOLU_GOLDEN_UPDATE`）。撮り直しでは、違った正解を今の出力で書き直し、比べの失敗にしない。
+fn updating() -> bool {
+    std::env::var_os("YOLU_GOLDEN_UPDATE").is_some()
+}
+
+/// index.txt の事例 `name` の出来事の行を `lines` に書き換える（撮り直し）。
+fn rewrite_case_events(name: &str, lines: &[String]) {
+    let path = golden_dir().join("index.txt");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in text.lines() {
+        if line.starts_with("case ") {
+            skipping = line.starts_with(&format!("case {name} params="));
+            out.push_str(line);
+            out.push('\n');
+            if skipping {
+                for l in lines {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+            }
+            continue;
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    std::fs::write(&path, out).unwrap();
 }
 
 /// 事例の名前 → (params の指紋, 出来事の行)。
@@ -1266,8 +1300,8 @@ fn first_difference(expected: &[u8], actual: &[u8], width: usize) -> String {
 }
 
 #[test]
-fn cases_match_the_csharp_core_byte_for_byte() {
-    // ワーカーで描く経路も C# の出力とバイト一致することを確かめる。既定のしきい値は画素ごとの時間の見積もりで決まり、速いブラシの
+fn cases_match_the_recorded_outputs_byte_for_byte() {
+    // ワーカーで描く経路も正解とバイト一致することを確かめる。既定のしきい値は画素ごとの時間の見積もりで決まり、速いブラシの
     // 大きなダブは直列で描くので、箱の大きさの下限を 1 にして、複数のタイルにかかるダブは全部ワーカーで描かせる（一度だけ決めて戻さない）
     static FORCE_WORKERS: std::sync::Once = std::sync::Once::new();
     FORCE_WORKERS.call_once(|| {
@@ -1278,6 +1312,7 @@ fn cases_match_the_csharp_core_byte_for_byte() {
     let mut failures = String::new();
     let mut outputs = 0;
     let mut bytes = 0;
+    let mut updated = 0;
     for (name, c) in &cases {
         let Some((params, events)) = index.get(name) else {
             let _ = writeln!(failures, "{name}: index.txt に無い（run.sh で作り直す）");
@@ -1319,17 +1354,25 @@ fn cases_match_the_csharp_core_byte_for_byte() {
                 .parse()
                 .unwrap();
             if expected != *out {
-                let _ = writeln!(
-                    failures,
-                    "{name} の出力 {n}（{line}）: {}",
-                    first_difference(&expected, out, width)
-                );
+                if updating() {
+                    std::fs::write(&path, out).unwrap();
+                    updated += 1;
+                } else {
+                    let _ = writeln!(
+                        failures,
+                        "{name} の出力 {n}（{line}）: {}",
+                        first_difference(&expected, out, width)
+                    );
+                }
             }
             outputs += 1;
             bytes += out.len();
         }
     }
-    assert!(failures.is_empty(), "C# の Core と違う:\n{failures}");
+    assert!(failures.is_empty(), "正解と違う:\n{failures}");
+    if updated > 0 {
+        eprintln!("正解を撮り直した出力: {updated}");
+    }
     let parallel: u64 = cases.iter().map(|(_, c)| c.parallel_dabs).sum();
     let by_case: Vec<String> = cases
         .iter()
@@ -1346,14 +1389,14 @@ fn cases_match_the_csharp_core_byte_for_byte() {
         cases.len()
     );
     eprintln!(
-        "C# の Core とバイト一致: {} 事例、{outputs} 出力、{bytes} バイト（ワーカーで描いたダブ {parallel}: {}）",
+        "正解とバイト一致: {} 事例、{outputs} 出力、{bytes} バイト（ワーカーで描いたダブ {parallel}: {}）",
         cases.len(),
         by_case.join(", ")
     );
 }
 
 #[test]
-fn pixel_formulas_match_the_csharp_core_on_random_sweeps() {
+fn pixel_formulas_match_the_recorded_sweeps() {
     let (_, index) = read_index();
     let (_, events) = index.get("sweeps").expect("sweeps が無い");
     let mut mine = Vec::new();
@@ -1422,6 +1465,11 @@ fn pixel_formulas_match_the_csharp_core_on_random_sweeps() {
             mine.push(format!("sweep adjust{k}_{} {}", m.name(), f.hex()));
         }
     }
+    if updating() && *events != mine {
+        rewrite_case_events("sweeps", &mine);
+        eprintln!("sweeps の行を撮り直した");
+        return;
+    }
     let wrong: Vec<_> = events
         .iter()
         .zip(&mine)
@@ -1431,7 +1479,7 @@ fn pixel_formulas_match_the_csharp_core_on_random_sweeps() {
     assert_eq!(events.len(), mine.len());
     assert!(
         wrong.is_empty(),
-        "画素の式が C# と違う:\n{}",
+        "画素の式が正解と違う:\n{}",
         wrong.join("\n")
     );
 }

@@ -43,7 +43,7 @@ fn composites(doc: &Document) -> Vec<u8> {
 }
 
 #[test]
-fn csharp_m2_documents_roundtrip_byte_for_byte_and_composite_every_channel() {
+fn csharp_m2_documents_roundtrip_byte_for_byte_and_composite_like_the_recorded_bytes() {
     for name in FIXTURES {
         let original = read(&format!("{name}.utpaint"));
         let native = NativeDocument::read(&original).unwrap();
@@ -65,10 +65,17 @@ fn csharp_m2_documents_roundtrip_byte_for_byte_and_composite_every_channel() {
             original,
             "{name}: C# の正本を core にして書き戻すとバイト一致"
         );
+        let got = composites(&core);
+        if std::env::var_os("YOLU_GOLDEN_UPDATE").is_some() && got != read(&format!("{name}.composite")) {
+            let path = format!("{}/tests/fixtures/{name}.composite", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(path, &got).unwrap();
+            continue;
+        }
+        // 正解の合成は、合成の式が f32 の core の式になってから core で撮り直した（`YOLU_GOLDEN_UPDATE=1`）
         assert_eq!(
-            composites(&core),
+            got,
             read(&format!("{name}.composite")),
-            "{name}: 全チャンネルの合成と Normal のファイル出力が C# と全バイト一致"
+            "{name}: 全チャンネルの合成と Normal のファイル出力が正解と全バイト一致"
         );
     }
 }
@@ -848,7 +855,7 @@ fn version_21_fixture_is_what_this_writer_produces() {
 }
 
 /// 上の版 21 を Unity 0.2.0 の読み手（`DocumentBinary`、`Runtime/Core` をそのままコンパイル）に読ませた記録。読めて、書き直すと同じ
-/// バイト列になり、C# の全チャンネルの合成が Rust の合成と全バイト一致する。
+/// バイト列になる（画素の合成は Unity 版と揃えない。合成の式は f32 の core の式が正本）。
 #[test]
 fn unity_0_2_0_reads_and_resaves_the_version_21_this_writer_produces() {
     let edited = edited_groups_document();
@@ -871,11 +878,6 @@ fn unity_0_2_0_reads_and_resaves_the_version_21_this_writer_produces() {
             "DocumentBinary.Write(Read) == input: True".to_string(),
             format!("Layers: {}", edited.layers().len()),
         ]
-    );
-    assert_eq!(
-        composites(&edited),
-        read("rust-written-v21.composite"),
-        "C# が読んだ文書の全チャンネルの合成が Rust の合成と全バイト一致"
     );
 }
 

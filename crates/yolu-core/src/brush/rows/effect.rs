@@ -282,7 +282,7 @@ pub(super) unsafe fn apply_effect_range<V: F32Lanes, const KIND: u8>(
         let amount = V::min(one, accumulated);
         let mut next = if KIND == CLONE {
             // 選択範囲の量は 1（`fade(.., 1)` は中身そのもの）
-            match blend_block::<V, NORMAL>(start, sampled, amount) {
+            match blend_block::<V>(start, sampled, amount) {
                 Some(out) => out,
                 None => start,
             }

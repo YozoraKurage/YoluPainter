@@ -1,5 +1,6 @@
 //! 効果（フィルターのスタック・Generator・Anchor・塗りつぶしの画像と投影・グラデーション）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書の全チャンネルの合成・層ごとの評価した出力・入力。
+//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書の層ごとの評価した出力・入力。
+//! 全チャンネルの合成（`*.composite`）は、合成の式が f32 の core の式になってから core で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。
 use yolu_core::generator::{MapKind, MapState};
 use yolu_core::{
     Channel, Document, EffectInputs, ImageId, ImageInput, MapInput, ModelFrame, Rect, Rgba8,
@@ -212,17 +213,22 @@ fn csharp_effect_documents_roundtrip_byte_for_byte() {
 }
 
 #[test]
-fn csharp_effect_documents_composite_every_channel_like_csharp() {
+fn effect_documents_composite_every_channel_like_the_recorded_bytes() {
     for name in FIXTURES {
         let (_, core) = open(name);
         let got = composites(&core);
         let want = read(&format!("{name}.composite"));
+        if got != want && std::env::var_os("YOLU_GOLDEN_UPDATE").is_some() {
+            let path = format!("{}/tests/fixtures/{name}.composite", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(path, &got).unwrap();
+            continue;
+        }
         assert_eq!(got.len(), want.len(), "{name}");
         if got != want {
             let at = got.iter().zip(&want).position(|(a, b)| a != b).unwrap();
             let plane = core.width() as usize * core.height() as usize * 4;
             panic!(
-                "{name}: 合成が C# と違う: チャンネル順の {} 枚目の画素 {} ({} 個違う)",
+                "{name}: 合成が正解と違う: チャンネル順の {} 枚目の画素 {} ({} 個違う)",
                 at / plane,
                 (at % plane) / 4,
                 got.iter().zip(&want).filter(|(a, b)| a != b).count()
@@ -325,7 +331,7 @@ fn legacy_versions_with_effects_read_and_migrate_like_csharp() {
     }
 }
 
-/// ブロックの大きさは結果を変えない（C# の正解と全バイト一致のまま、評価のブロックを替える）。
+/// ブロックの大きさは結果を変えない（正解と全バイト一致のまま、評価のブロックを替える）。
 #[test]
 fn block_size_does_not_change_the_pixels() {
     for name in FIXTURES {
@@ -1108,14 +1114,6 @@ fn csharp_reads_and_resaves_the_effects_document_this_writer_produces() {
             "DocumentBinary.Write(Read) == input: True".to_string(),
             format!("Layers: {}", edited.layers().len()),
         ]
-    );
-    let got = composites(&edited);
-    let want = read("rust-written-effects-v21.composite");
-    assert_eq!(got.len(), want.len());
-    assert!(
-        got == want,
-        "C# が読んだ文書の全チャンネルの合成が Rust と違う（{} バイト）",
-        got.iter().zip(&want).filter(|(a, b)| a != b).count()
     );
     let bad = layer_output_mismatches(&edited, &read("rust-written-effects-v21.layers"));
     assert!(

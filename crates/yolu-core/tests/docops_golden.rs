@@ -1,4 +1,5 @@
 //! 実 C# Core の正解との比較。台本・人工画素・状態の並びは DocOpsGolden.cs と対。
+mod golden_update;
 use std::path::Path;
 use yolu_core::*;
 fn pattern(x: u32, y: u32, c: u32, seed: u32) -> Rgba8 {
@@ -616,6 +617,12 @@ fn csharp_docops_all_bytes_and_parallelism() {
                 let p: Vec<_> = line.split_whitespace().collect();
                 let expected = std::fs::read(root.join(format!("{}.bin", p[0]))).unwrap();
                 let actual = run(p[1], p[2].parse().unwrap(), p[3].parse().unwrap());
+                if actual != expected && golden_update::updating() {
+                    if degree == 1 {
+                        std::fs::write(root.join(format!("{}.bin", p[0])), &actual).unwrap();
+                    }
+                    continue;
+                }
                 assert_eq!(
                     actual.len(),
                     expected.len(),

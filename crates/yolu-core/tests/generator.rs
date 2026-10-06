@@ -1,4 +1,5 @@
 mod generator_support;
+mod golden_update;
 use generator_support::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -71,7 +72,13 @@ fn csharp_all_generators_and_ramps_match_every_byte() {
                 29,
             )
         };
-        assert_eq!(hash(&bytes), expected, "{name}");
+        let got = hash(&bytes);
+        if got != expected && golden_update::updating() {
+            let path = golden_update::tests_dir().join("generator-index.txt");
+            golden_update::replace_line(&path, name, &format!("{name} {got}"));
+            continue;
+        }
+        assert_eq!(got, expected, "{name}");
         if let Ok(dir) = std::env::var("YOLU_GENERATOR_GOLDEN") {
             let expected =
                 std::fs::read(std::path::Path::new(&dir).join(format!("{name}.rgba"))).unwrap();

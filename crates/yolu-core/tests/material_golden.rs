@@ -1,4 +1,5 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
+mod golden_update;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use yolu_core::{
@@ -242,6 +243,16 @@ fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 /// golden/material.txt の「鍵 → ハッシュ」。鍵は最後の語を除いた行頭の語を空白でつないだもの。同じ鍵が 2 回あれば落とす。
+/// 出力の SHA-256 を正解と比べる（撮り直しの間は、違えば material.txt の行を書き直す）。
+fn check(g: &HashMap<String, String>, key: &str, bytes: &[u8]) {
+    let got = sha(bytes);
+    if golden_update::updating() && got != g[key] {
+        let path = golden_update::tests_dir().join("golden/material.txt");
+        golden_update::replace_line(&path, key, &format!("{key} {got}"));
+        return;
+    }
+    assert_eq!(got, g[key], "{key}");
+}
 fn golden() -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in include_str!("golden/material.txt")
@@ -778,7 +789,7 @@ fn csharp_all_bytes_at_both_parallel_degrees() {
                 for v in 0..4 {
                     let bytes = pool(degree).install(|| run(&sc, mode, v));
                     let key = format!("{} {degree} {mode} {v}", sc.name);
-                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    check(&g, &key, &bytes);
                     checked += 1;
                 }
             }
@@ -796,7 +807,7 @@ fn csharp_mask_all_bytes_at_both_parallel_degrees() {
                 for v in 0..4 {
                     let bytes = pool(degree).install(|| run_mask(&sc, mode, v));
                     let key = format!("mask-{} {degree} {mode} {v}", sc.name);
-                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    check(&g, &key, &bytes);
                     checked += 1;
                 }
             }
@@ -1180,7 +1191,7 @@ fn csharp_locked_layer_writes_all_bytes_at_both_parallel_degrees() {
                 for v in 0..8 {
                     let bytes = pool(degree).install(|| run_lock(kind, lock_case, v));
                     let key = format!("lock {degree} {kind} {lock_case} {v}");
-                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    check(&g, &key, &bytes);
                     checked += 1;
                 }
             }
@@ -1200,7 +1211,7 @@ fn csharp_locked_layer_mask_writes_all_bytes_at_both_parallel_degrees() {
                 for v in 0..8 {
                     let bytes = pool(degree).install(|| run_lock_mask(kind, lock_case, v));
                     let key = format!("lockmask {degree} {kind} {lock_case} {v}");
-                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    check(&g, &key, &bytes);
                     checked += 1;
                 }
             }
@@ -1220,7 +1231,7 @@ fn csharp_non_raster_layer_writes_order_type_and_lock_refusals_the_same() {
                 for v in 0..2 {
                     let bytes = pool(1).install(|| run_lock_kind(entry, target, lock_case, v));
                     let key = format!("locknr {entry} {target} {lock_case} {v}");
-                    assert_eq!(sha(&bytes), g[&key], "{key}");
+                    check(&g, &key, &bytes);
                     checked += 1;
                 }
             }

@@ -46,6 +46,7 @@
 //! assert!(doc.end_stroke(stroke).unwrap().changed); // 確定で、待たせた曲線の最後の区間も描く
 //! ```
 
+mod blend64;
 pub mod curve;
 mod dynamics;
 mod effects;
@@ -87,12 +88,12 @@ pub use stencil::{
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
 
-use crate::blend::{blend, fade};
+use blend64::{blend, fade};
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite, to_byte};
 use crate::selection::{Amounts, SelectionMask};
 use crate::surface::{Growth, LiveTile, Surface, Tile};
-use crate::types::{BlendMode, Channel, ChannelKind, Rgba8, TileCoord};
+use crate::types::{Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
 use dynamics::{f64_max, f64_min};
 use effects::{mix_effect, EffectFrame};
@@ -2496,7 +2497,7 @@ fn apply_at<const SIMPLE: bool>(
                     f64_min(1.0, accumulated) * selected,
                 )
             } else {
-                blend(start, color, f64_min(1.0, accumulated), BlendMode::Normal)
+                blend(start, color, f64_min(1.0, accumulated))
             };
             // 選択範囲の量だけ、描く前の画素から寄せる（塗りも消しゴムも。C# の Fade(start, next, selected)）
             if selected < 1.0 && !p.keep_alpha {
@@ -2548,7 +2549,7 @@ fn apply_at<const SIMPLE: bool>(
             } else if effect == EffectKind::Clone {
                 fade(
                     start,
-                    blend(start, sampled, f64_min(1.0, accumulated), BlendMode::Normal),
+                    blend(start, sampled, f64_min(1.0, accumulated)),
                     selected,
                 )
             } else {
