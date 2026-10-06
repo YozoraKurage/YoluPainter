@@ -6,8 +6,8 @@
 
 - **コマンドラインと AI からの操作**: 同梱の `yolupainter-cli` で、.ylp をアプリを開かずに、またはいま開いている文書を、同じ命令（読む・見本の画像・層と効果と値の編集・書き出し・保存）で操作できます。`yolupainter-cli mcp` は MCP サーバーで、Claude Desktop（Release に `.mcpb` を付けます）・Claude Code などの AI のアシスタントからつなげます。起動中のアプリへの操作は、設定「外からの操作を受ける」を入れたときだけ受けます（[詳しくは](docs/CLI.md)）。
 - **速さ**: 結果の画素は変えずに速くしました。
-  - 2D のブラシ: 大きなブラシほど速く、柔らかい丸・筆先・質感・指先・ぼかし・色の混ぜで 2〜6 倍ほど。
-  - 合成・調整・フィルター・Normal の計算を CPU の SIMD（AVX2・SSE4.1）で。Generator（エッジの摩耗・汚れ・ノイズ・グランジなど）は数倍〜十数倍。
+  - 2D のブラシ: 2〜6 倍ほど（大きなブラシほど効きます。柔らかい丸・筆先・質感・指先・ぼかし・色の混ぜ）。
+  - 合成・調整・フィルター・Normal の計算を CPU の SIMD（AVX2・SSE4.1）で。Generator（エッジの摩耗・汚れ・ノイズ・グランジなど）は 5〜20 倍ほど。
   - 効果のスライダーを動かしている間は粗い絵ですぐに見せ、2D の表示は見えている所から仕上げます。キャンバスの GPU の表示が、独立したグループ・調整の層・法線・効果のある文書にも効きます。
   - 保存は裏で動き、保存している間も描けます。
 - **3D の塗り**: 大きなブラシ・面の重なった所でも、ストロークを取り消さずに塗ります。隠れた所・裏の面・面の向きで弱める・継ぎ目のにじみを、ブラシの「3D」の欄で選べます。
@@ -26,8 +26,8 @@
 
 - **Command line and AI assistants**: The bundled `yolupainter-cli` runs the same commands (read, preview images, edit layers, effects and values, export, save) on a .ylp without opening the app, or on the document open in the app. `yolupainter-cli mcp` is an MCP server for AI assistants such as Claude Desktop (an `.mcpb` is attached to the release) and Claude Code. The running app accepts commands only while "Accept external commands" is on in its settings ([details](docs/en/CLI.md)).
 - **Speed**: Faster without changing the resulting pixels.
-  - 2D brushes: the larger the brush, the bigger the gain; roughly 2–6× for soft round, tip images, textures, smudge, blur and color mixing.
-  - Compositing, adjustments, filters and Normal use CPU SIMD (AVX2, SSE4.1). Generators (edge wear, dirt, noise, grunge and so on) are several to more than ten times faster.
+  - 2D brushes: about 2–6× faster, most with large brushes (soft round, tip images, textures, smudge, blur and color mixing).
+  - Compositing, adjustments, filters and Normal use CPU SIMD (AVX2, SSE4.1). Generators (edge wear, dirt, noise, grunge and so on) are about 5–20× faster.
   - While you drag an effect slider, a coarse image shows at once, and the 2D view finishes the visible area first. The canvas GPU display now also covers isolated groups, adjustment layers, normals and documents with effects.
   - Saving runs in the background, and you can keep painting while it saves.
 - **3D painting**: Large brushes and overlapping faces no longer cancel strokes. Choose how hidden areas, back faces, facing angle falloff and seam bleeding behave in the brush's "3D" section.
