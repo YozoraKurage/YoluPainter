@@ -768,7 +768,7 @@ unsafe fn load_live<V: Lanes>(live: &LiveTile, pixel: usize) -> [V::F; 4] {
         match live {
             LiveTile::Absent => [V::splat(0.0); 4],
             LiveTile::Uniform(c) => V::splat_px(c.to_array()),
-            LiveTile::Shared(d) => V::load(&d[pixel * 4..]),
+            LiveTile::Shared(_, d) => V::load(&d[pixel * 4..]),
             LiveTile::Owned(v) => V::load(&v[pixel * 4..]),
         }
     }
@@ -929,10 +929,10 @@ unsafe fn apply_range<V: F32Lanes>(
                 V::select(active, accumulated, previous),
             );
         }
-        let start = match &st.before {
+        let start = match &st.before_px {
             None => [zero; 4],
-            Some(Tile::Uniform(c)) => unsafe { V::splat_px(c.to_array()) },
-            Some(Tile::Data(d)) => unsafe { V::load(&d[local * 4..]) },
+            Some(Pixels::Uniform(c)) => unsafe { V::splat_px(c.to_array()) },
+            Some(Pixels::Data(d)) => unsafe { V::load(&d[local * 4..]) },
         };
         let next = if s.erase {
             // alpha = to_byte(start.a / 255 * (1 - accumulated * color.a / 255))、0 なら透明（RGB も 0）

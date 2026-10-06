@@ -429,9 +429,6 @@ impl Layer {
             _ => Ok(Rgba8::TRANSPARENT),
         }
     }
-    pub(crate) fn pixel_or_transparent(&self, channel: Channel, x: u32, y: u32) -> Rgba8 {
-        self.pixel(channel, x, y).unwrap_or(Rgba8::TRANSPARENT)
-    }
     /// 全チャンネルの面とマスクの画素のバイト数。
     pub fn allocated_bytes(&self) -> u64 {
         self.surfaces

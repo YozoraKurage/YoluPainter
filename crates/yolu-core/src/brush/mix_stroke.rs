@@ -194,7 +194,7 @@ impl StrokeState {
             (y0, y1),
             composite,
             mode == MixMode::Mix,
-        );
+        )?;
         if blur > 0 {
             frame.build_integral();
         }
@@ -360,7 +360,7 @@ impl StrokeState {
         yr: (i64, i64),
         composite: bool,
         from_start: bool,
-    ) {
+    ) -> Result<(), CoreError> {
         let ts = surface.tile_size() as i64;
         let source = if composite {
             self.source.as_ref()
@@ -380,14 +380,14 @@ impl StrokeState {
                     source.read_row(py, px, out);
                 } else {
                     let coord = TileCoord::new(tx as u32, ty as u32);
-                    let tile: Option<&Tile> = match (from_start, self.tiles.get(&coord)) {
-                        (true, Some(held)) => held.before.as_ref(),
-                        _ => surface.tile(coord),
+                    let tile: Option<Pixels> = match (from_start, self.tiles.get(&coord)) {
+                        (true, Some(held)) => held.before_px.clone(),
+                        _ => surface.read(coord)?,
                     };
-                    match tile {
+                    match &tile {
                         None => {} // 枠は透明で始まる
-                        Some(Tile::Uniform(c)) => out.fill(*c),
-                        Some(Tile::Data(d)) => {
+                        Some(Pixels::Uniform(c)) => out.fill(*c),
+                        Some(Pixels::Data(d)) => {
                             let start = (row + (px - tx * ts) as usize) * 4;
                             for (o, p) in out
                                 .iter_mut()
@@ -401,5 +401,6 @@ impl StrokeState {
                 px = end + 1;
             }
         }
+        Ok(())
     }
 }

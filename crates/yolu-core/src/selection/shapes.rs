@@ -238,7 +238,9 @@ impl SelectionMask {
                 band + tile_bytes * rayon::current_num_threads() as u128,
                 budget,
             )?;
-            return Ok(match source {
+            // ディスクから読めないタイルがあれば、選択範囲を作らずに誤りを返す
+            let failed = std::sync::OnceLock::new();
+            let mask = match source {
                 Some(l) => Self::build_tiles(
                     w,
                     h,
@@ -246,7 +248,10 @@ impl SelectionMask {
                     (0, 0, w as i64, h as i64),
                     |coord, xs, ys, out| {
                         let mut bytes = vec![0u8; tile_bytes as usize];
-                        layer_tile(l, channel, w, h, ts, coord, &mut bytes);
+                        if let Err(e) = layer_tile(l, channel, w, h, ts, coord, &mut bytes) {
+                            let _ = failed.set(e);
+                            return false;
+                        }
                         let t = ts as i64;
                         let (bx, by) = (coord.x as i64 * t, coord.y as i64 * t);
                         let mut any = false;
@@ -262,8 +267,12 @@ impl SelectionMask {
                         any
                     },
                 ),
-                None => wand_composite_everywhere(doc, channel, &matches),
-            });
+                None => wand_composite_everywhere(doc, channel, &matches)?,
+            };
+            return match failed.into_inner() {
+                Some(e) => Err(e),
+                None => Ok(mask),
+            };
         }
         // 走査線の塗りつぶし: 種から 4 近傍でつながる、条件に合う画素の集まり（どの順で辿っても同じ集まりになる）。
         // 作業は、選んだ印・タイルごとの「合うか」の印・待ちの連の列（最悪の長さで見積もる。下の `max_pending_runs`）
@@ -411,7 +420,7 @@ impl Reference<'_> {
     fn tile(&self, coord: TileCoord, out: &mut [u8]) -> Result<(), CoreError> {
         let (w, h, ts) = (self.doc.width(), self.doc.height(), self.doc.tile_size());
         match self.layer {
-            Some(l) => layer_tile(l, self.channel, w, h, ts, coord, out),
+            Some(l) => layer_tile(l, self.channel, w, h, ts, coord, out)?,
             None => {
                 let rect = self.doc.tile_rect(coord).expect("キャンバスの中のタイル");
                 let mut region = vec![0u8; rect.width as usize * rect.height as usize * 4];
@@ -445,12 +454,12 @@ fn layer_tile(
     ts: u32,
     coord: TileCoord,
     out: &mut [u8],
-) {
+) -> Result<(), CoreError> {
     out.fill(0);
     match layer.kind() {
         LayerKind::Raster => {
             if let Some(s) = layer.surface(channel) {
-                s.copy_tile(coord, out).expect("キャンバスの中のタイル");
+                s.copy_tile(coord, out)?;
             }
         }
         LayerKind::Fill => {
@@ -458,7 +467,7 @@ fn layer_tile(
                 .fill_value(channel)
                 .filter(|v| *v != Rgba8::TRANSPARENT)
             else {
-                return;
+                return Ok(());
             };
             let w = (width - coord.x * ts).min(ts) as usize;
             let h = (height - coord.y * ts).min(ts) as usize;
@@ -471,10 +480,15 @@ fn layer_tile(
         }
         LayerKind::Adjustment | LayerKind::Group => {}
     }
+    Ok(())
 }
 
 /// 合成が基準の、つながりを見ない自動選択: タイル 1 行の帯ずつ合成し（合成は中で並列）、帯の中のタイルを並列に調べる。
-fn wand_composite_everywhere<F>(doc: &Document, channel: Channel, matches: &F) -> SelectionMask
+fn wand_composite_everywhere<F>(
+    doc: &Document,
+    channel: Channel,
+    matches: &F,
+) -> Result<SelectionMask, CoreError>
 where
     F: Fn(Rgba8) -> bool + Sync,
 {
@@ -490,8 +504,7 @@ where
             Rect::new(0, y0, w, rows),
             &mut band,
             RowOrder::BottomUp,
-        )
-        .expect("キャンバスの中の帯");
+        )?;
         let tiles: Vec<(TileCoord, Option<super::Amounts>)> = (0..w.div_ceil(ts))
             .into_par_iter()
             .map(|tx| {
@@ -521,7 +534,7 @@ where
             .collect();
         map.extend(tiles.into_iter().filter_map(|(c, t)| t.map(|t| (c, t))));
     }
-    SelectionMask::from_map(w, h, ts, map)
+    Ok(SelectionMask::from_map(w, h, ts, map))
 }
 
 /// 画素ごとの印（ビットの並び）。

@@ -72,6 +72,8 @@ use crate::types::{
 
 pub use crate::layer::{Layer, LayerId};
 #[cfg(test)]
+mod cache_tests;
+#[cfg(test)]
 mod memo_tests;
 pub use eval::EffectCounters;
 pub(crate) use eval::EvalSet;
@@ -1198,6 +1200,19 @@ impl Document {
         self.refresh_anchor_readers();
     }
 
+    /// 層の画素・マスクに、ディスクのキャッシュから読めなかったタイルがあるか（読もうとして失敗したものだけ。履歴の写しは見ない）。
+    pub fn has_unreadable_tiles(&self) -> bool {
+        self.layers.iter().any(|l| {
+            l.surfaces
+                .iter()
+                .flatten()
+                .any(Surface::has_unreadable_tiles)
+                || l.mask
+                    .as_ref()
+                    .is_some_and(|m| m.surface.has_unreadable_tiles())
+        })
+    }
+
     /// 履歴（Undo・Redo）を消す。
     pub fn clear_history(&mut self) -> Result<(), CoreError> {
         self.ensure_loadable()?;
@@ -2299,7 +2314,6 @@ impl Document {
             }
             None => composite::composite_into(&stack, self.tile_size, rect, out, order),
         }
-        Ok(())
     }
 
     /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別の層へ書く
@@ -2398,7 +2412,8 @@ impl Document {
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
         let memo = self.memo_request(channel);
-        let images = composite::composite_tiles_into(&stack, self.tile_size, &rects, memo.as_ref());
+        let images =
+            composite::composite_tiles_into(&stack, self.tile_size, &rects, memo.as_ref())?;
         Ok(tiles
             .into_iter()
             .zip(images)
@@ -2443,7 +2458,8 @@ impl Document {
         };
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
-        let images = composite::composite_coarse_tiles_into(&stack, self.tile_size, &rects, stride);
+        let images =
+            composite::composite_coarse_tiles_into(&stack, self.tile_size, &rects, stride)?;
         Ok(tiles
             .into_iter()
             .zip(images)
@@ -2473,7 +2489,7 @@ impl Document {
         }
         let eval = self.evaluate_for_composite(channel, kind, rect, None)?;
         let stack = Stack::new(&self.layers[..index], channel, kind, Some(&eval));
-        composite::composite_into(&stack, self.tile_size, rect, &mut out, RowOrder::BottomUp);
+        composite::composite_into(&stack, self.tile_size, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
@@ -2491,7 +2507,7 @@ impl Document {
             None,
         )?;
         let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
-        Ok(composite::composite_pixel(&stack, x, y))
+        composite::composite_pixel(&stack, x, y)
     }
 
     fn check_rect(&self, rect: Rect) -> Result<(), CoreError> {

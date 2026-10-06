@@ -830,6 +830,8 @@ pub enum DialogRequest {
     FillImage,
     /// 新しい塗りつぶしの層の画像にする PNG を選ぶ（棚へ取り込み、その画像と投影で層を作る）。
     NewFillImage(yolu_core::fill_image::ProjectionMode),
+    /// ディスクキャッシュの置き場所のフォルダを選ぶ。
+    PrefsCacheFolder,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。

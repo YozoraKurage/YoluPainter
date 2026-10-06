@@ -7,7 +7,7 @@ use super::{Document, Target};
 use crate::effects::LayerPath;
 use crate::math::to_byte;
 use crate::paths::{render_canvas, CanvasPath, CanvasPoint, Options};
-use crate::surface::Tile;
+use crate::surface::{PixelReader, Tile};
 use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
 use rayon::prelude::*;
 
@@ -101,53 +101,12 @@ struct Span {
     inside: bool,
 }
 
-/// 元の面を、直前に読んだタイルを覚えて読む（C# の TileReader）。読み手ごとに 1 つ作り、共有しない。
-struct Reader<'a> {
-    surface: &'a Surface,
-    tile_size: u32,
-    at: (u32, u32),
-    tile: Option<&'a Tile>,
-}
-impl<'a> Reader<'a> {
-    fn new(surface: &'a Surface) -> Self {
-        Self {
-            surface,
-            tile_size: surface.tile_size(),
-            at: (u32::MAX, u32::MAX),
-            tile: None,
-        }
-    }
-    /// 画布の中の画素。無いタイルは透明。
-    #[inline]
-    fn get(&mut self, x: u32, y: u32) -> Rgba8 {
-        debug_assert!(x < self.surface.width() && y < self.surface.height());
-        let ts = self.tile_size;
-        let at = (x / ts, y / ts);
-        if at != self.at {
-            self.at = at;
-            self.tile = self.surface.tile(TileCoord::new(at.0, at.1));
-        }
-        self.tile.map_or(Rgba8::TRANSPARENT, |t| {
-            t.get((((y % ts) * ts + x % ts) * 4) as usize)
-        })
-    }
-    /// 画布の外は透明。
-    #[inline]
-    fn get_or_transparent(&mut self, x: i64, y: i64) -> Rgba8 {
-        if x < 0 || y < 0 || x >= self.surface.width() as i64 || y >= self.surface.height() as i64 {
-            Rgba8::TRANSPARENT
-        } else {
-            self.get(x as u32, y as u32)
-        }
-    }
-}
-
 /// 行き先の画素が元のどこから来るか。
 trait Mapping: Sync {
     /// 行き先の [lo, hi]（両端を含む）が読む元の範囲。全部が元の外なら None。
     fn span_x(&self, lo: u32, hi: u32) -> Option<Span>;
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span>;
-    fn pixel(&self, source: &mut Reader<'_>, normal: bool, x: u32, y: u32) -> Rgba8;
+    fn pixel(&self, source: &mut PixelReader<'_>, normal: bool, x: u32, y: u32) -> Rgba8;
 }
 /// 整数比の重みで拡大・縮小する（resize_image）。
 struct Resampled {
@@ -161,7 +120,7 @@ impl Mapping for Resampled {
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span> {
         Some(self.ys.span(lo, hi))
     }
-    fn pixel(&self, source: &mut Reader<'_>, normal: bool, x: u32, y: u32) -> Rgba8 {
+    fn pixel(&self, source: &mut PixelReader<'_>, normal: bool, x: u32, y: u32) -> Rgba8 {
         resampled_pixel(
             source,
             &self.xs.0[x as usize],
@@ -193,8 +152,8 @@ impl Mapping for Shifted {
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span> {
         Self::span(lo, hi, self.offset.1, self.source.1)
     }
-    fn pixel(&self, source: &mut Reader<'_>, _normal: bool, x: u32, y: u32) -> Rgba8 {
-        source.get_or_transparent(
+    fn pixel(&self, source: &mut PixelReader<'_>, _normal: bool, x: u32, y: u32) -> Rgba8 {
+        source.pixel(
             x as i64 - self.offset.0 as i64,
             y as i64 - self.offset.1 as i64,
         )
@@ -202,13 +161,13 @@ impl Mapping for Shifted {
 }
 
 fn resampled_pixel(
-    source: &mut Reader<'_>,
+    source: &mut PixelReader<'_>,
     xs: &[(u32, f64)],
     ys: &[(u32, f64)],
     normal: bool,
 ) -> Rgba8 {
     if xs.len() == 1 && ys.len() == 1 {
-        return source.get(xs[0].0, ys[0].0);
+        return source.pixel(xs[0].0 as i64, ys[0].0 as i64);
     }
     let (mut a, mut r, mut g, mut b, mut zw, mut zr, mut zg, mut zb) =
         (0., 0., 0., 0., 0., 0., 0., 0.);
@@ -223,7 +182,7 @@ fn resampled_pixel(
             if w <= 0. {
                 continue;
             }
-            let p = source.get(x, y);
+            let p = source.pixel(x as i64, y as i64);
             if let Some(f) = first {
                 if p != f {
                     same = false;
@@ -282,6 +241,28 @@ fn resampled_pixel(
 struct Budget {
     used: u64,
     limit: Option<u64>,
+}
+
+/// A だけの RGBA の面（[`super::transform::selection_surface`] の逆）から選択範囲を作る。作ったばかりの面でも、裏の書き手が上限を
+/// 超えた分をディスクへ逃がしていることがあるので、読めないタイルは誤りで返す（選ばれていないことにしない）。
+pub(super) fn selection_from_surface(surface: &Surface) -> Result<crate::SelectionMask, CoreError> {
+    let n = (surface.tile_size() * surface.tile_size()) as usize;
+    let mut tiles = Vec::new();
+    for coord in surface.tile_coords() {
+        let Some(tile) = surface.read(coord)? else {
+            continue;
+        };
+        let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
+        if amounts.iter().any(|&a| a != 0) {
+            tiles.push((coord, amounts));
+        }
+    }
+    crate::SelectionMask::from_amount_tiles(
+        surface.width(),
+        surface.height(),
+        surface.tile_size(),
+        tiles,
+    )
 }
 
 /// 元の面から、寸法の違う行き先の面を作る。行き先のタイルごとに、読む元のタイルが 1 枚も無ければ飛ばし、全部が同じ一様な
@@ -348,7 +329,7 @@ fn resample_surface(
                 let (x0, y0) = (coord.x * ts, coord.y * ts);
                 let (tw, th) = (ts.min(width - x0), ts.min(height - y0));
                 let mut bytes = vec![0; source.tile_bytes()];
-                let mut reader = Reader::new(source);
+                let mut reader = PixelReader::new(source);
                 for y in 0..th {
                     for x in 0..tw {
                         let p = match uniform {
@@ -359,9 +340,10 @@ fn resample_surface(
                         bytes[at..at + 4].copy_from_slice(&p.to_array());
                     }
                 }
-                (coord, Tile::from_bytes(&bytes))
+                reader.finish()?;
+                Ok((coord, Tile::from_vec(bytes)))
             })
-            .collect();
+            .collect::<Result<_, CoreError>>()?;
         for (coord, tile) in tiles {
             budget.used += tile.as_ref().map_or(0, Tile::byte_size);
             if budget.limit.is_some_and(|limit| budget.used > limit) {
@@ -534,13 +516,7 @@ impl Document {
                 limit: None,
             },
         )?;
-        let n = (self.tile_size * self.tile_size) as usize;
-        let tiles = resized.tile_coords().into_iter().filter_map(|coord| {
-            let tile = resized.tile(coord)?;
-            let amounts: Vec<u8> = (0..n).map(|i| tile.get(i * 4).a).collect();
-            amounts.iter().any(|&a| a != 0).then_some((coord, amounts))
-        });
-        crate::SelectionMask::from_amount_tiles(width, height, self.tile_size, tiles)
+        selection_from_surface(&resized)
     }
     fn check_resize(width: u32, height: u32) -> Result<(), CoreError> {
         if width == 0
@@ -790,7 +766,7 @@ mod tests {
         map: &dyn Mapping,
         normal: bool,
     ) -> Vec<u8> {
-        let mut reader = Reader::new(source);
+        let mut reader = PixelReader::new(source);
         let mut out = Vec::new();
         for y in 0..height {
             for x in 0..width {

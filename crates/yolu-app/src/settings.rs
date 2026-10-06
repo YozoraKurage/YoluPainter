@@ -136,6 +136,34 @@ impl Compositing {
     }
 }
 
+/// ディスクキャッシュに使う量の上限の指定: 自動（64 GiB と、置き場所の起動したときの空きの半分の小さい方）か GiB。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiskLimit {
+    Auto,
+    Gib(u32),
+}
+
+impl DiskLimit {
+    /// 選択肢（自動のほかに並べる GiB）。
+    pub const CHOICES: [u32; 8] = [4, 8, 16, 32, 64, 128, 256, 512];
+    /// 指定できる GiB の範囲。
+    pub const RANGE: (u32, u32) = (1, 4096);
+    /// 自動の上限（GiB）。
+    pub const AUTO_MAX_GIB: u32 = 64;
+
+    /// バイト。自動は 64 GiB と、空き（分かれば）の半分の小さい方。
+    pub fn bytes(self, free: Option<u64>) -> u64 {
+        const GIB: u64 = 1 << 30;
+        match self {
+            DiskLimit::Auto => {
+                let most = DiskLimit::AUTO_MAX_GIB as u64 * GIB;
+                free.map_or(most, |f| (f / 2).min(most))
+            }
+            DiskLimit::Gib(n) => n as u64 * GIB,
+        }
+    }
+}
+
 /// 書き出しの余白に選べる値（テクセル。-1 は届くかぎり全部、0 は塗り広げない）。
 pub const EXPORT_PADDINGS: [i32; 8] = [0, 2, 4, 8, 16, 32, 64, -1];
 /// 書き出しの余白の既定。
@@ -186,6 +214,12 @@ pub struct Settings {
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
     pub gpu_memory: GpuMemory,
+    /// メモリの予算（レイヤーのメモリ＋取り消し履歴）を超えた分のタイルの中身を、ディスクへ逃がすか（`yolu_core::tile_cache`）。既定は入。
+    pub disk_cache: bool,
+    /// ディスクキャッシュのファイルを置くフォルダ（None は OS の一時フォルダ）。
+    pub disk_cache_folder: Option<PathBuf>,
+    /// ディスクキャッシュに使う量の上限。
+    pub disk_cache_limit: DiskLimit,
 }
 
 impl Default for Settings {
@@ -213,6 +247,9 @@ impl Default for Settings {
             external_ops: false,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
+            disk_cache: true,
+            disk_cache_folder: None,
+            disk_cache_limit: DiskLimit::Auto,
         }
     }
 }
@@ -263,6 +300,29 @@ impl Settings {
     /// 棚の場所（設定になければ既定。設定のフォルダも分からなければ None）。
     pub fn library_folder(&self) -> Option<PathBuf> {
         self.library_folder.clone().or_else(default_library_folder)
+    }
+
+    /// ディスクキャッシュの置き場所（設定になければ OS の一時フォルダ）。
+    pub fn disk_cache_folder(&self) -> PathBuf {
+        self.disk_cache_folder
+            .clone()
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
+    /// タイルの中身を逃がす係に入れる設定。メモリの上限は、レイヤーのメモリと取り消し履歴の予算の和。`free` は置き場所の、起動した
+    /// ときの空き（自動のディスクの上限の元。分からなければ None）。
+    pub fn cache_settings(
+        &self,
+        ram_mib: u64,
+        free: Option<u64>,
+    ) -> yolu_core::tile_cache::CacheSettings {
+        let budgets = self.budgets(ram_mib);
+        yolu_core::tile_cache::CacheSettings {
+            enabled: self.disk_cache,
+            folder: Some(self.disk_cache_folder()),
+            memory_limit: budgets.source.saturating_add(budgets.undo),
+            disk_limit: self.disk_cache_limit.bytes(free),
+        }
     }
 }
 
@@ -399,6 +459,9 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
         "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
+        "disk_cache" => lang.pick("ディスクキャッシュ", "Disk cache"),
+        "disk_cache_folder" => lang.pick("キャッシュの場所", "Cache folder"),
+        "disk_cache_limit_gib" => lang.pick("キャッシュの上限", "Cache limit"),
         _ => lang.pick("設定", "Setting"),
     }
 }
@@ -559,6 +622,16 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
                 Some(v) => settings.gpu_memory = v,
                 None => invalid("gpu_memory"),
             },
+            // 切ったときだけ書く行（既定は入）。読めない値は入のまま
+            "disk_cache" => settings.disk_cache = value != "off",
+            "disk_cache_folder" => match parse_folder(value) {
+                Some(v) => settings.disk_cache_folder = v,
+                None => invalid("disk_cache_folder"),
+            },
+            "disk_cache_limit_gib" => match parse_disk_limit(value) {
+                Some(v) => settings.disk_cache_limit = v,
+                None => invalid("disk_cache_limit_gib"),
+            },
             other => {
                 if let Some(kind) = BudgetKind::ALL.into_iter().find(|k| k.key() == other) {
                     match parse_budget(kind, value) {
@@ -649,6 +722,16 @@ fn parse_budget(kind: BudgetKind, value: &str) -> Option<Budget> {
     let n: u32 = value.parse().ok()?;
     let (lo, hi) = kind.range();
     (lo..=hi).contains(&n).then_some(Budget::Mib(n))
+}
+
+/// `auto` か、範囲の中の GiB。
+fn parse_disk_limit(value: &str) -> Option<DiskLimit> {
+    if value == "auto" {
+        return Some(DiskLimit::Auto);
+    }
+    let n: u32 = value.parse().ok()?;
+    let (lo, hi) = DiskLimit::RANGE;
+    (lo..=hi).contains(&n).then_some(DiskLimit::Gib(n))
 }
 
 /// `auto` か 1〜上限の数（Some(None) が自動）。
@@ -751,6 +834,23 @@ fn render(settings: &Settings) -> String {
         let shown = folder.to_string_lossy();
         if !shown.contains('\n') {
             text += &format!("library_folder={shown}\n");
+        }
+    }
+    if !settings.disk_cache {
+        text += "disk_cache=off\n";
+    }
+    if let DiskLimit::Gib(n) = settings.disk_cache_limit {
+        let (lo, hi) = DiskLimit::RANGE;
+        text += &format!("disk_cache_limit_gib={}\n", n.clamp(lo, hi));
+    }
+    if let Some(folder) = settings
+        .disk_cache_folder
+        .as_ref()
+        .filter(|p| p.is_absolute())
+    {
+        let shown = folder.to_string_lossy();
+        if !shown.contains('\n') {
+            text += &format!("disk_cache_folder={shown}\n");
         }
     }
     text
@@ -899,6 +999,9 @@ mod tests {
             external_ops: true,
             color_wheel: true,
             gpu_memory: GpuMemory::Mib(1536),
+            disk_cache: false,
+            disk_cache_folder: Some(dir.join("cache")),
+            disk_cache_limit: DiskLimit::Gib(16),
         }
     }
 
@@ -1413,6 +1516,8 @@ mod tests {
             "view3d_paint_falloff_end=75",
             "view3d_paint_seam_bleed=4",
             "external_ops=on",
+            "disk_cache=off",
+            "disk_cache_limit_gib=16",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -1434,6 +1539,9 @@ mod tests {
         back.external_ops = false;
         back.view3d_post = crate::view3d::display::PostFx::default();
         back.view3d_paint = yolu_core::geometry::ProjectionSettings::default();
+        back.disk_cache = true;
+        back.disk_cache_folder = None;
+        back.disk_cache_limit = DiskLimit::Auto;
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値
@@ -2026,5 +2134,94 @@ mod tests {
             "language=en\nbackups=3\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_disk_cache_settings_survive_a_restart_and_broken_values_fall_back_one_by_one() {
+        let dir = temp_dir("disk-cache");
+        let path = dir.join("settings.conf");
+        let folder = dir.join("cache");
+        let chosen = Settings {
+            lang: Lang::En,
+            disk_cache: false,
+            disk_cache_folder: Some(folder.clone()),
+            disk_cache_limit: DiskLimit::Gib(16),
+            ..Settings::default()
+        };
+        save(&path, &chosen).unwrap();
+        assert_eq!(load(&path), (chosen.clone(), vec![]));
+        let written = std::fs::read_to_string(&path).unwrap();
+        for line in ["disk_cache=off", "disk_cache_limit_gib=16"] {
+            assert!(written.lines().any(|l| l == line), "{line}\n{written}");
+        }
+        assert!(written.contains("disk_cache_folder="), "{written}");
+        // 既定（入・一時フォルダ・自動）は書かない
+        save(&path, &with_lang(Lang::En)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
+        // 正しくない値は、その項目だけ既定へ
+        for (line, key) in [
+            ("disk_cache_limit_gib=0", "disk_cache_limit_gib"),
+            ("disk_cache_limit_gib=5000", "disk_cache_limit_gib"),
+            ("disk_cache_limit_gib=lots", "disk_cache_limit_gib"),
+            ("disk_cache_folder=relative/cache", "disk_cache_folder"),
+        ] {
+            let (read, problems) = parse(&format!("language=en\n{line}\nbackups=3\n"));
+            assert_eq!(read.disk_cache_limit, DiskLimit::Auto, "{line}");
+            assert_eq!(read.disk_cache_folder, None, "{line}");
+            assert_eq!(read.backups, BackupKeep::Count(3), "{line}");
+            assert!(
+                matches!(&problems[..], [Problem::Invalid { key: k, .. }] if *k == key),
+                "{line}: {problems:?}"
+            );
+        }
+        assert!(
+            parse("disk_cache=nonsense\n").0.disk_cache,
+            "読めない値は入のまま"
+        );
+        for lang in Lang::ALL {
+            for key in ["disk_cache", "disk_cache_folder", "disk_cache_limit_gib"] {
+                assert_ne!(
+                    setting_name(lang, key),
+                    setting_name(lang, "unknown"),
+                    "{key}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_cache_limits_follow_the_budgets_and_the_free_space() {
+        const GIB: u64 = 1 << 30;
+        let s = Settings {
+            undo_budget: Budget::Mib(512),
+            source_budget: Budget::Mib(4096),
+            ..Settings::default()
+        };
+        let c = s.cache_settings(16384, Some(100 * GIB));
+        assert!(c.enabled);
+        assert_eq!(
+            c.memory_limit,
+            (512 + 4096) * 1024 * 1024,
+            "レイヤーのメモリと取り消し履歴の和"
+        );
+        assert_eq!(c.disk_limit, 50 * GIB, "自動は空きの半分");
+        assert_eq!(
+            s.cache_settings(16384, Some(1000 * GIB)).disk_limit,
+            64 * GIB,
+            "自動は 64 GiB まで"
+        );
+        assert_eq!(s.cache_settings(16384, None).disk_limit, 64 * GIB);
+        assert_eq!(c.folder, Some(std::env::temp_dir()));
+        let chosen = Settings {
+            disk_cache: false,
+            disk_cache_limit: DiskLimit::Gib(8),
+            disk_cache_folder: Some(PathBuf::from("/cache")),
+            ..s
+        };
+        let c = chosen.cache_settings(16384, Some(GIB));
+        assert!(!c.enabled);
+        assert_eq!(c.disk_limit, 8 * GIB, "指定は空きによらない");
+        assert_eq!(c.folder, Some(PathBuf::from("/cache")));
     }
 }

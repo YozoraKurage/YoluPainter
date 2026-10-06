@@ -90,7 +90,11 @@ mod tests {
     use glam::DVec2;
 
     /// 層の Color のタイルの画素の持ち主（共有しているかを `Arc` の同一性で見る）。
-    fn buffer(doc: &Document, layer: LayerId, coord: TileCoord) -> std::sync::Arc<Vec<u8>> {
+    fn buffer(
+        doc: &Document,
+        layer: LayerId,
+        coord: TileCoord,
+    ) -> std::sync::Arc<crate::tile_cache::TileCell> {
         let surface = doc.layer(layer).unwrap().surface(Channel::Color).unwrap();
         match surface.tiles.get(&coord) {
             Some(Tile::Data(d)) => d.clone(),

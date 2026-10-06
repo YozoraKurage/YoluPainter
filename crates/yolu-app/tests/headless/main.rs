@@ -14,6 +14,7 @@ mod bucket;
 mod bundle_layout;
 mod colorsets;
 mod dialog_parent;
+mod disk_cache;
 mod effects;
 mod fillfx;
 mod liltoon_io;

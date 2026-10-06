@@ -228,13 +228,13 @@ impl Document {
                                     let mut a = vec![0u8; (ts * ts) as usize];
                                     if !sel.copy_tile(coord, &mut a).expect("文書の中のタイル")
                                     {
-                                        return None; // 選ばれていないタイルは変わらない
+                                        return Ok(None); // 選ばれていないタイルは変わらない
                                     }
                                     picked = Some(a);
                                 }
                                 bytes.fill(0);
                                 if let Some(t) = original {
-                                    t.copy_to(bytes);
+                                    t.copy_to(bytes)?;
                                 }
                                 let bits = samples[&coord].as_deref();
                                 let w = (width - coord.x * ts).min(ts);
@@ -270,10 +270,10 @@ impl Document {
                                         bytes[i * 4..i * 4 + 4].copy_from_slice(&next.to_array());
                                     }
                                 }
-                                Some(Tile::from_bytes(bytes))
+                                Ok(Some(Tile::from_bytes(bytes)))
                             },
                         )
-                        .collect()
+                        .collect::<Result<_, CoreError>>()?
                 };
                 for (&coord, after) in chunk.iter().zip(computed) {
                     // 選ばれていないタイルも、C# と同じく写しを取って巻き戻しの予算に数える

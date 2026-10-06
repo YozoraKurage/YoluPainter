@@ -91,7 +91,7 @@ pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite, to_byte};
 use crate::selection::{Amounts, SelectionMask};
-use crate::surface::{Growth, LiveTile, Surface, Tile};
+use crate::surface::{Growth, LiveTile, Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, Rgba8, TileCoord};
 use crate::LayerId;
 use blend64::{blend, fade};
@@ -266,6 +266,8 @@ pub struct BrushPixel {
 pub(crate) struct StrokeTile {
     wash: Vec<f32>,
     pub before: Option<Tile>,
+    /// `before` の読んだ中身（ストロークの間は持ったまま。画素ごとに読む所はこれを読む）。
+    pub before_px: Option<Pixels>,
     paint: Option<Vec<f32>>,
     /// ステンシルがあるとき: ダブが初めて届いたときに読んだ量（NaN は未読）と色。ストロークの間、画素のステンシルの上の位置は
     /// 変わらないので 1 回だけ読む（重なったダブが何度も読まない）。
@@ -1318,7 +1320,7 @@ impl StrokeState {
             && self.fits_any_order(surface, spans, &paint);
         if parallel {
             self.parallel_dabs += 1;
-            return Ok(self.dab_parallel(surface, &paint, shape, spans, changed));
+            return self.dab_parallel(surface, &paint, shape, spans, changed);
         }
         let mut any = false;
         for &(coord, xs, ys) in spans {
@@ -1469,17 +1471,17 @@ impl StrokeState {
             while px <= x1 {
                 let tx = px / ts;
                 let coord = TileCoord::new(tx as u32, ty as u32);
-                let tile: Option<&Tile> = match (clone, self.tiles.get(&coord)) {
-                    (true, Some(held)) => held.before.as_ref(),
-                    _ => surface.tile(coord),
+                let tile: Option<Pixels> = match (clone, self.tiles.get(&coord)) {
+                    (true, Some(held)) => held.before_px.clone(),
+                    _ => surface.read(coord)?,
                 };
                 let end = x1.min(tx * ts + ts - 1);
                 let len = (end - px + 1) as usize;
                 let out = frame.row_mut(py, px, len);
-                match tile {
+                match &tile {
                     None => {} // 枠は透明で始まる
-                    Some(Tile::Uniform(c)) => out.fill(*c),
-                    Some(Tile::Data(d)) => {
+                    Some(Pixels::Uniform(c)) => out.fill(*c),
+                    Some(Pixels::Data(d)) => {
                         let start = (row + (px - tx * ts) as usize) * 4;
                         for (o, p) in out
                             .iter_mut()
@@ -1534,19 +1536,26 @@ impl StrokeState {
         shape: &DabShape<'_>,
         spans: &[TileSpan],
         changed: &mut Vec<TileCoord>,
-    ) -> bool {
+    ) -> Result<bool, CoreError> {
         let ts = surface.tile_size() as usize;
-        let mut work: Vec<(TileSpan, Option<StrokeTile>, LiveTile)> = spans
-            .iter()
-            .map(|&span| {
-                let coord = span.0;
-                (
-                    span,
-                    self.tiles.remove(&coord),
-                    LiveTile::from(surface.tiles.remove(&coord)),
-                )
-            })
-            .collect();
+        let mut work: Vec<(TileSpan, Option<StrokeTile>, LiveTile)> =
+            Vec::with_capacity(spans.len());
+        for &span in spans {
+            let coord = span.0;
+            match LiveTile::take(surface, coord) {
+                Ok(live) => work.push((span, self.tiles.remove(&coord), live)),
+                Err(e) => {
+                    // 読めないタイルがあれば何も描かずに戻す（取り出したタイルは元の場所へ）
+                    for ((coord, _, _), held, live) in work {
+                        if let Some(h) = held {
+                            self.tiles.insert(coord, h);
+                        }
+                        live.put_back(surface, coord);
+                    }
+                    return Err(e);
+                }
+            }
+        }
         let dual = &self.dual_coverage;
         let selection = self.selection.as_ref();
         let unlimited = Budgets {
@@ -1585,9 +1594,7 @@ impl StrokeState {
             if let Some(h) = held {
                 self.tiles.insert(coord, h);
             }
-            if let Some(l) = live.into_tile() {
-                surface.tiles.insert(coord, l);
-            }
+            live.put_back(surface, coord);
             self.rollback_bytes += rollback;
             surface.allocated += allocated;
             if painted {
@@ -1595,7 +1602,7 @@ impl StrokeState {
                 any = true;
             }
         }
-        any
+        Ok(any)
     }
 
     /// 画素ごとに筆圧を渡す呼び出し用: 筆圧を応えに通した係数。同じ筆圧が続く間（1 つのダブの画素）は直前の結果を使う。
@@ -1761,7 +1768,10 @@ impl StrokeState {
             let point = points.map(|v| v[i]);
             let coord = TileCoord::new((p.x / ts) as u32, (p.y / ts) as u32);
             let local = ((p.y % ts) * ts + p.x % ts) as usize;
-            cursor.move_to(self, surface, coord);
+            if let Err(e) = cursor.move_to(self, surface, coord) {
+                result = Err(e);
+                break;
+            }
             let r = cursor.with(self, surface, paint, |cx, held, live| {
                 apply_at::<false>(
                     cx, held, live, coord, local, p.coverage, pressure, 1.0, 1.0, None, point,
@@ -1806,8 +1816,8 @@ impl StrokeState {
             &mut LiveTile,
         ) -> Result<bool, CoreError>,
     {
+        let mut live = LiveTile::take(surface, coord)?;
         let mut held = self.tiles.remove(&coord);
-        let mut live = LiveTile::from(surface.tiles.remove(&coord));
         let ts = surface.tile_size() as usize;
         let mut cx = PixelContext {
             paint,
@@ -1824,9 +1834,7 @@ impl StrokeState {
         if let Some(h) = held {
             self.tiles.insert(coord, h);
         }
-        if let Some(l) = live.into_tile() {
-            surface.tiles.insert(coord, l);
-        }
+        live.put_back(surface, coord);
         result
     }
 }
@@ -1840,14 +1848,21 @@ struct TileCursor {
 }
 
 impl TileCursor {
-    fn move_to(&mut self, state: &mut StrokeState, surface: &mut Surface, coord: TileCoord) {
+    fn move_to(
+        &mut self,
+        state: &mut StrokeState,
+        surface: &mut Surface,
+        coord: TileCoord,
+    ) -> Result<(), CoreError> {
         if self.coord == Some(coord) {
-            return;
+            return Ok(());
         }
         self.release(state, surface);
+        let live = LiveTile::take(surface, coord)?;
         self.coord = Some(coord);
         self.held = state.tiles.remove(&coord);
-        self.live = Some(LiveTile::from(surface.tiles.remove(&coord)));
+        self.live = Some(live);
+        Ok(())
     }
 
     fn with<F>(
@@ -1890,8 +1905,8 @@ impl TileCursor {
             if let Some(h) = self.held.take() {
                 state.tiles.insert(coord, h);
             }
-            if let Some(l) = self.live.take().and_then(|l| l.into_tile()) {
-                surface.tiles.insert(coord, l);
+            if let Some(l) = self.live.take() {
+                l.put_back(surface, coord);
             }
         }
     }
@@ -2288,9 +2303,11 @@ fn new_stroke_tile(
         return Err(CoreError::StrokeBudgetExceeded);
     }
     let stencil = !simple && p.stencil.is_some();
+    let (before, before_px) = live.snapshot();
     let tile = StrokeTile {
         wash: vec![0.0; ts * ts],
-        before: live.snapshot(),
+        before,
+        before_px,
         paint: (!simple && p.tip_colors).then(|| vec![0.0; ts * ts * 4]),
         stencil_amount: stencil.then(|| vec![f64::NAN; ts * ts]),
         stencil_color: stencil.then(|| vec![Rgba8::TRANSPARENT; ts * ts]),
@@ -2475,7 +2492,7 @@ fn apply_at<const SIMPLE: bool>(
         }
     }
     let start = st
-        .before
+        .before_px
         .as_ref()
         .map_or(Rgba8::TRANSPARENT, |t| t.get(local * 4));
     let effect = if SIMPLE { EffectKind::Paint } else { p.effect };

@@ -296,7 +296,7 @@ pub(super) fn prepare<'a>(
     let hits = have.len() as u64;
     let nodes = plan.nodes.len();
     let compute =
-        |w: &mut Worker<'a>, c: TileCoord, d: (usize, usize)| plan.tile_memo(&positions, w, c, d);
+        |w: &mut Worker, c: TileCoord, d: (usize, usize)| plan.tile_memo(&positions, w, c, d);
     let built: Vec<(TileCoord, TileMemo)> = if want.len() < 4 {
         let mut w = Worker::new(nodes, depth);
         want.iter()
@@ -316,10 +316,12 @@ pub(super) fn prepare<'a>(
         let same = g.key.as_ref().is_some_and(|k| {
             k.stroke == req.stroke && k.channel == req.channel && k.foreign == req.foreign
         });
+        // ディスクから読めないタイルがあった覚えは残さない（この合成は誤りで終わる）
+        let readable = plan.failed.get().is_none();
         for (c, t) in built {
             let t = Arc::new(t);
             // 同じ文書で合成が並んで走っても、覚えの合計が予算を超えないよう、入れる時にも確かめる（入らなければ今回だけ使う）
-            if same && g.bytes + t.bytes() <= req.limit && !g.tiles.contains_key(&c) {
+            if readable && same && g.bytes + t.bytes() <= req.limit && !g.tiles.contains_key(&c) {
                 g.bytes += t.bytes();
                 g.tiles.insert(c, t.clone());
             }
@@ -371,7 +373,7 @@ impl<'a> Plan<'a> {
     fn tile_memo(
         &self,
         route: &[usize],
-        w: &mut Worker<'a>,
+        w: &mut Worker,
         coord: TileCoord,
         (tw, th): (usize, usize),
     ) -> TileMemo {
@@ -413,7 +415,7 @@ impl<'a> Plan<'a> {
         res: &mut [u8],
         out: Out,
         g: Geom,
-        st: &TileState<'a>,
+        st: &TileState,
         scratch: &mut [Level],
     ) {
         let pos = r.route[r.depth];

@@ -274,10 +274,10 @@ pub(super) unsafe fn apply_effect_range<V: F32Lanes, const KIND: u8>(
             &mut st.wash[local..],
             V::select(active, accumulated, previous),
         );
-        let start = match &st.before {
+        let start = match &st.before_px {
             None => [zero; 4],
-            Some(Tile::Uniform(c)) => V::splat_px(c.to_array()),
-            Some(Tile::Data(d)) => V::load(&d[local * 4..]),
+            Some(Pixels::Uniform(c)) => V::splat_px(c.to_array()),
+            Some(Pixels::Data(d)) => V::load(&d[local * 4..]),
         };
         let amount = V::min(one, accumulated);
         let mut next = if KIND == CLONE {

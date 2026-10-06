@@ -4,7 +4,7 @@ use super::operations::Dirty;
 use super::Document;
 use crate::composite::{self, Stack};
 use crate::effects::EffectSettings;
-use crate::surface::Tile;
+use crate::surface::{Readers, Tile};
 use crate::{
     BlendMode, Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind, LayerLocks, Rgba8,
     Surface, TileCoord,
@@ -214,12 +214,13 @@ impl Document {
         }
         Ok(())
     }
-    /// 画素ごとの式 render(x, y) で組んだ面（結合の方法ごとに式が違う `merge_down` 用）。
-    fn merge_surface(
+    /// 画素ごとの式 render(読み手, x, y) で組んだ面（結合の方法ごとに式が違う `merge_down` 用）。読み手はタイルごとに 1 つ
+    /// （画素ごとにタイルを引き直さない）で、ディスクから読めない画素があれば面を組まずに誤りを返す。
+    fn merge_surface<'r>(
         &self,
         coords: &BTreeSet<TileCoord>,
         budget: &mut u64,
-        render: impl Fn(u32, u32) -> Rgba8 + Sync,
+        render: impl Fn(&mut Readers<'r>, u32, u32) -> Rgba8 + Sync,
     ) -> Result<Surface, CoreError> {
         let ts = self.tile_size;
         self.merge_surface_tiles(coords, budget, |batch| {
@@ -227,15 +228,19 @@ impl Document {
                 .par_iter()
                 .map(|&coord| {
                     let mut bytes = vec![0; (ts * ts * 4) as usize];
+                    let mut readers = Readers::default();
                     for y in 0..ts.min(self.height - coord.y * ts) {
                         for x in 0..ts.min(self.width - coord.x * ts) {
-                            let p = render(coord.x * ts + x, coord.y * ts + y);
+                            let p = render(&mut readers, coord.x * ts + x, coord.y * ts + y);
                             let at = ((y * ts + x) * 4) as usize;
                             bytes[at..at + 4].copy_from_slice(&p.to_array());
                         }
                     }
-                    Tile::from_bytes(&bytes)
+                    readers.finish()?;
+                    Ok(Tile::from_vec(bytes))
                 })
+                .collect::<Vec<Result<_, CoreError>>>()
+                .into_iter()
                 .collect()
         })
     }
@@ -267,7 +272,7 @@ impl Document {
                         *p = [0; 4];
                     }
                 }
-                Tile::from_bytes(&bytes)
+                Tile::from_vec(bytes)
             })
         })
     }
@@ -277,12 +282,12 @@ impl Document {
         &self,
         coords: &BTreeSet<TileCoord>,
         budget: &mut u64,
-        render: impl Fn(&[TileCoord]) -> Vec<Option<Tile>>,
+        render: impl Fn(&[TileCoord]) -> Result<Vec<Option<Tile>>, CoreError>,
     ) -> Result<Surface, CoreError> {
         let mut out = Surface::new(self.width, self.height, self.tile_size);
         let coords: Vec<_> = coords.iter().copied().collect();
         for batch in coords.chunks(rayon::current_num_threads().clamp(1, 64) * 2) {
-            let tiles = render(batch);
+            let tiles = render(batch)?;
             debug_assert_eq!(tiles.len(), batch.len());
             for (&coord, t) in batch.iter().zip(tiles) {
                 if let Some(t) = t {
@@ -460,17 +465,18 @@ impl Document {
             let upper_stack = Stack::new(&upper_layers, c, kind, Some(&upper_eval));
             let isolated_stack = Stack::new(&isolated, c, kind, Some(&eval));
             let isolated_plan = isolated_stack.plan();
-            let surface = self.merge_surface(&coords, &mut budget, |x, y| {
+            let surface = self.merge_surface(&coords, &mut budget, |readers, x, y| {
                 // 保存している画素（透明の下に残る RGB を守る所で使う）と、層の出力（効果を通した画素）
-                let raw = lower.pixel_or_transparent(c, x, y);
+                let raw = composite::raw_layer_pixel(readers, lower, c, x, y);
                 let below = if on {
-                    isolated_stack.layer_pixel(0, x, y)
+                    isolated_stack.layer_pixel(readers, 0, x, y)
                 } else {
                     Rgba8::TRANSPARENT
                 };
                 let p = match method {
                     MergeMethod::Isolated => composite::evaluate_pixel(
                         &isolated_stack,
+                        readers,
                         &isolated_plan,
                         Rgba8::TRANSPARENT,
                         x,
@@ -496,11 +502,12 @@ impl Document {
                                     },
                                 )) =>
                     {
-                        let amount = upper.opacity_in(c) * upper_stack.mask_factor(0, x, y);
+                        let amount =
+                            upper.opacity_in(c) * upper_stack.mask_factor(readers, 0, x, y);
                         if let Some(a) = &upper.adjustment {
                             a.composite(below, amount, upper.blend_mode_in(c))
                         } else {
-                            let p = upper_stack.layer_pixel(0, x, y);
+                            let p = upper_stack.layer_pixel(readers, 0, x, y);
                             if normal {
                                 crate::normal::clip_onto(below, p, amount, upper.blend_mode_in(c))
                             } else {
@@ -509,7 +516,7 @@ impl Document {
                         }
                     }
                     MergeMethod::OntoLowerLayer if upper_on => {
-                        composite::evaluate_pixel(&upper_stack, &upper_plan, below, x, y)
+                        composite::evaluate_pixel(&upper_stack, readers, &upper_plan, below, x, y)
                     }
                     _ => below,
                 };
@@ -908,7 +915,7 @@ impl Document {
                     let mut v = Vec::new();
                     for y in rect.y..rect.y + rect.height {
                         for x in rect.x..rect.x + rect.width {
-                            v.extend_from_slice(&result.pixel_or_transparent(c, x, y).to_array());
+                            v.extend_from_slice(&result.pixel(c, x, y)?.to_array());
                         }
                     }
                     v

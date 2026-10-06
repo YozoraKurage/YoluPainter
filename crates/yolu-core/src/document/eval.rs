@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use super::Document;
 use crate::composite::{Entry, Stack};
@@ -27,7 +27,7 @@ use crate::fill_image::{
 use crate::filter::{self, GeneratorInput, ValueType};
 use crate::generator::{self, anchor, BoundGenerator, MapKind, MapState};
 use crate::layer::LayerId;
-use crate::surface::{Surface, Tile};
+use crate::surface::{Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, LayerKind, Rect, Rgba8, TileCoord};
 
 /// 評価の入力の元: 層のチャンネルの画素（内容）か、層のラスターマスク。
@@ -345,12 +345,19 @@ pub(super) fn cancelled(cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
     }
 }
 
-/// 評価の途中の読み元: タイルの面（層の画素・マスク）。
+/// 評価の途中の読み元: タイルの面（層の画素・マスク）。ディスクから読めないタイルは誤りを覚えて 0 を返す（評価の後に
+/// `with_env` が誤りを返すので、その出力は使わない）。
 struct SurfaceSource<'a> {
     surface: Option<&'a Surface>,
     width: u32,
     height: u32,
-    tile_size: u32,
+    failed: OnceLock<CoreError>,
+}
+
+impl SurfaceSource<'_> {
+    fn latch(&self, e: CoreError) {
+        let _ = self.failed.set(e);
+    }
 }
 
 impl filter::Source for SurfaceSource<'_> {
@@ -358,35 +365,23 @@ impl filter::Source for SurfaceSource<'_> {
         (self.width, self.height)
     }
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
-        self.surface
-            .and_then(|s| s.pixel(x, y).ok())
-            .map_or([0; 4], Rgba8::to_array)
+        match self.surface.map(|s| s.pixel(x, y)) {
+            None | Some(Err(CoreError::InvalidArgument(_))) => [0; 4],
+            Some(Ok(p)) => p.to_array(),
+            Some(Err(e)) => {
+                self.latch(e);
+                [0; 4]
+            }
+        }
     }
     fn read_row(&self, x: u32, y: u32, out: &mut [u8]) {
         let Some(surface) = self.surface else {
             out.fill(0);
             return;
         };
-        let ts = self.tile_size;
-        let n = out.len() / 4;
-        let mut i = 0usize;
-        while i < n {
-            let px = x + i as u32;
-            let run = ((ts - px % ts) as usize).min(n - i);
-            let dst = &mut out[i * 4..(i + run) * 4];
-            match surface.tile(TileCoord::new(px / ts, y / ts)) {
-                None => dst.fill(0),
-                Some(Tile::Uniform(c)) => {
-                    for p in dst.chunks_exact_mut(4) {
-                        p.copy_from_slice(&c.to_array());
-                    }
-                }
-                Some(Tile::Data(d)) => {
-                    let at = (((y % ts) * ts + px % ts) * 4) as usize;
-                    dst.copy_from_slice(&d[at..at + run * 4]);
-                }
-            }
-            i += run;
+        if let Err(e) = surface.read_row(x, y, out) {
+            out.fill(0);
+            self.latch(e);
         }
     }
 }
@@ -510,7 +505,7 @@ struct TileView {
     coord: TileCoord,
     tile_size: u32,
     dims: (u32, u32),
-    tile: Option<Tile>,
+    tile: Option<Pixels>,
 }
 
 impl generator::Source for TileView {
@@ -1519,11 +1514,11 @@ impl Document {
             return Ok(Rgba8::TRANSPARENT);
         }
         if l.has_evaluated_output(channel) {
-            return Ok(self
+            return self
                 .layer_output_tile(index, channel, coord, None)?
-                .map_or(Rgba8::TRANSPARENT, |t| {
+                .map_or(Ok(Rgba8::TRANSPARENT), |t| {
                     t.get((((y % ts) * ts + x % ts) * 4) as usize)
-                }));
+                });
         }
         l.pixel(channel, x, y)
     }
@@ -1538,9 +1533,10 @@ impl Document {
             return Err(CoreError::Unsupported("層にマスクが無い"));
         }
         let ts = self.tile_size;
-        Ok(self
-            .mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
-            .map_or(0, |t| t.get((((y % ts) * ts + x % ts) * 4) as usize).a))
+        self.mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
+            .map_or(Ok(0), |t| {
+                t.get((((y % ts) * ts + x % ts) * 4) as usize).map(|p| p.a)
+            })
     }
 
     // ───────── ブロックの評価 ─────────
@@ -1821,7 +1817,7 @@ impl Document {
                     surface,
                     width: self.width,
                     height: self.height,
-                    tile_size: self.tile_size,
+                    failed: OnceLock::new(),
                 })
             }
             Some(f) => {
@@ -1863,12 +1859,19 @@ impl Document {
                 }))
             }
         };
-        body(&Env {
+        let result = body(&Env {
             source: &source,
             value_type: cfg.value_type,
             stages: &stages,
             generators: &stage_input,
-        })
+        });
+        // 読み元のタイルをディスクから読めなかった評価は使わない（キャッシュにも入れない）
+        if let ChainSource::Surface(s) = &source {
+            if let Some(e) = s.failed.get() {
+                return Err(e.clone());
+            }
+        }
+        result
     }
 
     /// 画像のミップマップ（変換と輝度はチャンネルの種類で決まる。同じ中身・変換・輝度は 1 つを共有し、予算で古いものから捨てる）。
@@ -1951,11 +1954,18 @@ impl Document {
                     AnchorPlacement::Layer => {
                         self.anchor_layer_tile(host, r.channel, coord, cancel)?
                     }
-                    AnchorPlacement::Mask => self.mask_output_tile(host, coord, cancel)?.map(|t| {
-                        let mut bytes = vec![0u8; (self.tile_size * self.tile_size * 4) as usize];
-                        t.copy_to(&mut bytes);
-                        Arc::new(bytes)
-                    }),
+                    AnchorPlacement::Mask => match self.mask_output_tile(host, coord, cancel)? {
+                        None => None,
+                        Some(t) => Some(match t.read()? {
+                            Pixels::Data(d) => d,
+                            uniform => {
+                                let mut bytes =
+                                    vec![0u8; (self.tile_size * self.tile_size * 4) as usize];
+                                uniform.copy_to(&mut bytes);
+                                Arc::new(bytes)
+                            }
+                        }),
+                    },
                 })
             })
             .collect::<Result<Vec<_>, CoreError>>()?;
@@ -2016,7 +2026,10 @@ impl Document {
                     coord,
                     tile_size: ts,
                     dims,
-                    tile: self.layer_output_tile(i, channel, coord, cancel)?,
+                    tile: self
+                        .layer_output_tile(i, channel, coord, cancel)?
+                        .map(|t| t.read())
+                        .transpose()?,
                 })
             } else {
                 None
@@ -2027,7 +2040,10 @@ impl Document {
                     coord,
                     tile_size: ts,
                     dims,
-                    tile: self.mask_output_tile(i, coord, cancel)?,
+                    tile: self
+                        .mask_output_tile(i, coord, cancel)?
+                        .map(|t| t.read())
+                        .transpose()?,
                 })
             } else {
                 None
@@ -2434,7 +2450,7 @@ fn covered_tile(bytes: Vec<u8>) -> Tile {
     if bytes.chunks_exact(4).all(|p| p == first.to_array()) {
         Tile::Uniform(first)
     } else {
-        Tile::Data(Arc::new(bytes))
+        Tile::kept(bytes)
     }
 }
 

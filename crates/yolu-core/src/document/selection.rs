@@ -257,7 +257,9 @@ impl Document {
         let mut changes: Vec<TileChange> = Vec::new();
         let mut failure = None;
         'batches: for chunk in coords.chunks(batch) {
-            let computed: Vec<Option<(bool, Option<Tile>)>> = {
+            // 選ばれていないタイルは None、ほかは（今と同じか, 書いた後のタイル）
+            type Computed = Option<(bool, Option<Tile>)>;
+            let computed: Vec<Result<Computed, CoreError>> = {
                 let surface = &*surface;
                 chunk
                     .par_iter()
@@ -266,13 +268,11 @@ impl Document {
                         if let Some(m) = &effective {
                             if !m.copy_tile(coord, &mut amounts).expect("文書の中のタイル")
                             {
-                                return None; // 選ばれていないタイル
+                                return Ok(None); // 選ばれていないタイル
                             }
                         }
                         let mut bytes = vec![0u8; n * 4];
-                        surface
-                            .copy_tile(coord, &mut bytes)
-                            .expect("文書の中のタイル");
+                        surface.copy_tile(coord, &mut bytes)?;
                         let w = (width - coord.x * ts).min(ts) as usize;
                         let h = (height - coord.y * ts).min(ts) as usize;
                         let t = ts as usize;
@@ -293,12 +293,22 @@ impl Document {
                                 bytes[o..o + 4].copy_from_slice(&next.to_array());
                             }
                         }
-                        let after = Tile::from_bytes(&bytes);
-                        Some((Tile::same(surface.tile(coord), after.as_ref()), after))
+                        let after = Tile::from_vec(bytes);
+                        Ok(Some((
+                            Tile::same(surface.tile(coord), after.as_ref()),
+                            after,
+                        )))
                     })
                     .collect()
             };
             for (&coord, result) in chunk.iter().zip(computed) {
+                let result = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        failure = Some(e);
+                        break 'batches;
+                    }
+                };
                 let Some((same, after)) = result else {
                     continue; // 選ばれていないタイル
                 };

@@ -42,6 +42,8 @@ pub enum CoreError {
     Clipboard(crate::ClipboardRefusal),
     /// `Document::batch` の編集の中では、ストローク・Undo・Redo・履歴を消す書き込みはできない（まとめは入れ子にもできない）。
     BatchActive,
+    /// ディスクへ逃がしたタイルの中身を読み戻せない（キャッシュのファイルが読めない）。読めない中身は透明として扱わない。
+    TileUnreadable,
 }
 
 impl fmt::Display for CoreError {
@@ -71,6 +73,7 @@ impl fmt::Display for CoreError {
             }
             CoreError::Clipboard(reason) => write!(f, "{reason}"),
             CoreError::BatchActive => write!(f, "まとめた編集の途中ではできない"),
+            CoreError::TileUnreadable => write!(f, "ディスクのキャッシュからタイルを読めない"),
         }
     }
 }

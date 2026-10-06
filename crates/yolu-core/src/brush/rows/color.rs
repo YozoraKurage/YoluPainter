@@ -187,10 +187,10 @@ pub(super) unsafe fn apply_color_range<V: F32Lanes>(
             V::store_f32(&mut paint[at..], V::select(active, value, old));
             color[c] = to_byte::<V>(value);
         }
-        let start = match &st.before {
+        let start = match &st.before_px {
             None => [zero; 4],
-            Some(Tile::Uniform(c)) => V::splat_px(c.to_array()),
-            Some(Tile::Data(d)) => V::load(&d[local * 4..]),
+            Some(Pixels::Uniform(c)) => V::splat_px(c.to_array()),
+            Some(Pixels::Data(d)) => V::load(&d[local * 4..]),
         };
         let next = match blend_block::<V>(start, color, V::min(one, accumulated)) {
             Some(out) => out,

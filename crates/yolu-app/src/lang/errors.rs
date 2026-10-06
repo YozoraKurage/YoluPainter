@@ -58,6 +58,7 @@ impl Lang {
             CoreError::WorkingBudgetExceeded => "Working memory budget exceeded".into(),
             CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
             CoreError::BatchActive => "Not allowed inside a batch of edits".into(),
+            CoreError::TileUnreadable => "Cannot read a tile back from the disk cache".into(),
         }
     }
 
@@ -1384,7 +1385,7 @@ mod tests {
         ]
         .into_iter()
         .map(CoreError::Clipboard)
-        .chain([CoreError::BatchActive])
+        .chain([CoreError::BatchActive, CoreError::TileUnreadable])
         .collect();
         let english: Vec<String> = errors.iter().map(|e| Lang::En.core_error(e)).collect();
         for (i, (error, en)) in errors.iter().zip(&english).enumerate() {

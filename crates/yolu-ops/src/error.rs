@@ -177,6 +177,10 @@ impl OpError {
                 ErrorCode::Busy,
                 "Not allowed inside a batch of edits".into(),
             ),
+            CoreError::TileUnreadable => (
+                ErrorCode::Io,
+                "A tile could not be read back from the disk cache".into(),
+            ),
             CoreError::Unsupported(what) => (
                 ErrorCode::Unsupported,
                 if what.is_ascii() {

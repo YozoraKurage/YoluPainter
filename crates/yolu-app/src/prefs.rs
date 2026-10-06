@@ -9,6 +9,11 @@
 //!   超えているときは画素を捨てず、予算をその量まで広げて知らせる（それ以上は足せない）。
 //! - **CPU のスレッド**は rayon の全体のスレッドプールで、起動のときに決まる（`settings::apply_thread_setting`）。変えた値は次の起動から
 //!   効くので、窓に「再起動で反映」と出す。
+//! - **ディスクキャッシュ**（既定は入）は、メモリの上限（レイヤーのメモリと取り消し履歴の予算の和）を超えた分のタイルの中身を、置き場所の
+//!   フォルダのキャッシュのファイルへ逃がす（`yolu_core::tile_cache`。どのセットの・層の・取り消しの写しのタイルかは区別せず、使っていない
+//!   ものから）。入のときは、今のセットの画素の予算を「メモリの上限＋ディスクの上限 − ほかのセットの画素」にする。ディスクの上限の自動は
+//!   64 GiB と、置き場所の空き（そのフォルダで初めて測ったとき）の半分の小さい方。ディスクから読めないタイルが出たら、それを持つセットを
+//!   読むだけにする（保存は開いたときの中身のまま。`check_tile_cache`）。
 //! - **表示の合成**は 2D のキャンバスの表示の方針（`YoluApp::apply_compositing` がキャンバスの表示に入れる。自動は環境変数
 //!   `YOLUPAINTER_CANVAS` か自動）。保存・書き出し・3D ビューの値の合成は、どれでも CPU が正本。
 
@@ -21,8 +26,8 @@ use crate::gpu_memory::{self, GpuMemory};
 use crate::lang::Lang;
 use crate::m2::UiOp;
 use crate::settings::{
-    system_memory_mib, Budget, BudgetKind, Compositing, Settings, EXPORT_PADDINGS, MAX_CPU_THREADS,
-    MAX_MIN_UNDO_STEPS,
+    system_memory_mib, Budget, BudgetKind, Compositing, DiskLimit, Settings, EXPORT_PADDINGS,
+    MAX_CPU_THREADS, MAX_MIN_UNDO_STEPS,
 };
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::ui::menu::{Entry, PopupState};
@@ -71,6 +76,12 @@ pub enum Pref {
     OrbitCenter(OrbitCenter),
     /// 3D ビューのズームの中心。
     ZoomCenter(ZoomCenter),
+    /// ディスクキャッシュの入切。
+    DiskCache(bool),
+    /// ディスクキャッシュの上限。
+    DiskCacheLimit(DiskLimit),
+    /// ディスクキャッシュの置き場所（None は OS の一時フォルダ）。
+    DiskCacheFolder(Option<PathBuf>),
 }
 
 /// 選択肢のポップアップの種類。
@@ -84,6 +95,7 @@ pub enum PrefChoice {
     GpuMemory,
     OrbitCenter,
     ZoomCenter,
+    DiskCacheLimit,
 }
 
 /// 設定の窓の操作（`Action::Prefs`）。
@@ -98,6 +110,10 @@ pub enum PrefsAction {
     ChooseLibraryFolder,
     /// GPU のメモリの「詳しく」を開く・閉じる（窓の中だけの状態。設定には書かない）。
     GpuDetails(bool),
+    /// ディスクキャッシュの置き場所のフォルダを選ぶ窓を頼む。
+    ChooseCacheFolder,
+    /// ディスクキャッシュの「詳しく」（上限・置き場所）を開く・閉じる（窓の中だけの状態。設定には書かない）。
+    CacheDetails(bool),
 }
 
 /// 設定の窓の状態と、いま選んでいる設定。
@@ -126,11 +142,17 @@ pub struct PrefsState {
     pub gpu: gpu_memory::Adapter,
     /// GPU のメモリの「詳しく」を開いているか（窓の中だけの状態）。
     pub gpu_details: bool,
+    /// ディスクキャッシュの「詳しく」を開いているか（窓の中だけの状態）。
+    pub cache_details: bool,
     /// 合計のスライダーを押し始めたときの「GPU のメモリ」の選び（自動・段・指定）。Esc で止めたとき、押し始めの量ではなく
     /// この選びへ戻す（量へ戻すと、自動・段が「指定」に置き換わる）。押していないあいだは None。
     gpu_memory_before_drag: Option<GpuMemory>,
     /// 窓の中のずらした量（小さい画面で中身が窓に収まらないとき、共通のスクロールで送る）。
     scroll: f32,
+    /// ディスクキャッシュの置き場所ごとの、そこで初めて測った空き（バイト。分からなければ None）。自動のディスクの上限の元。試験は値を入れる。
+    pub cache_free: Vec<(PathBuf, Option<u64>)>,
+    /// 前のフレームまでに見た、ディスクから読めなかった回数（`tile_cache::read_failures`。増えたら読めないタイルを持つセットを探す）。
+    cache_failures: u64,
 }
 
 impl Default for PrefsState {
@@ -148,8 +170,11 @@ impl Default for PrefsState {
             over: None,
             gpu: gpu_memory::Adapter::default(),
             gpu_details: false,
+            cache_details: false,
             gpu_memory_before_drag: None,
             scroll: 0.0,
+            cache_free: Vec::new(),
+            cache_failures: yolu_core::tile_cache::read_failures(),
         }
     }
 }
@@ -214,6 +239,10 @@ impl AppState {
                 self.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
             }
             PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
+            PrefsAction::CacheDetails(open) => self.prefs.cache_details = open,
+            PrefsAction::ChooseCacheFolder => {
+                self.dialog_request = Some(DialogRequest::PrefsCacheFolder)
+            }
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
                 Pref::LiveLinkKeepValues(v) => self.prefs.settings.livelink_keep_values = v,
@@ -266,8 +295,122 @@ impl AppState {
                     }
                     folder => self.prefs.settings.library_folder = folder,
                 },
+                Pref::DiskCache(on) => {
+                    self.prefs.settings.disk_cache = on;
+                    self.prefs.managed = true;
+                    self.sync_budgets();
+                }
+                Pref::DiskCacheLimit(limit) => {
+                    let (lo, hi) = DiskLimit::RANGE;
+                    self.prefs.settings.disk_cache_limit = match limit {
+                        DiskLimit::Gib(n) => DiskLimit::Gib(n.clamp(lo, hi)),
+                        auto => auto,
+                    };
+                    self.prefs.managed = true;
+                    self.sync_budgets();
+                }
+                Pref::DiskCacheFolder(folder) => match folder {
+                    Some(path) if !path.is_absolute() => {
+                        self.message = lang
+                            .pick(
+                                "キャッシュの場所は絶対パスで指定します。",
+                                "The cache folder must be an absolute path.",
+                            )
+                            .into();
+                    }
+                    folder => {
+                        self.prefs.settings.disk_cache_folder = folder;
+                        self.prefs.managed = true;
+                        self.sync_budgets();
+                    }
+                },
             },
         }
+    }
+
+    /// タイルの中身を逃がす係に入れる設定（置き場所の空きは、そのフォルダで初めて測った値を使い回す）。
+    fn cache_settings(&mut self) -> yolu_core::tile_cache::CacheSettings {
+        let folder = self.prefs.settings.disk_cache_folder();
+        if !self.prefs.cache_free.iter().any(|(f, _)| *f == folder) {
+            let free = crate::recovery::system_probe()(&folder).map(|d| d.available);
+            self.prefs.cache_free.push((folder, free));
+        }
+        self.prefs
+            .settings
+            .cache_settings(self.prefs.ram_mib, self.cache_free_now())
+    }
+
+    /// ディスクから読めなかったタイルが出たら（`tile_cache::read_failures` が増えたら）、読めないタイルを持つセットを読むだけにして
+    /// 知らせる。読むだけのセットは描けず、保存は開いたときの中身のまま書く（欠けた中身を書かない）。毎フレーム呼べる。
+    pub fn check_tile_cache(&mut self) {
+        let failures = yolu_core::tile_cache::read_failures();
+        if failures == self.prefs.cache_failures {
+            return;
+        }
+        self.prefs.cache_failures = failures;
+        let lang = self.lang;
+        let reason = lang.pick(
+            "ディスクのキャッシュから読めないタイルがあります",
+            "Some tiles cannot be read back from the disk cache",
+        );
+        // 保存したプロジェクトの中にあるセットは、開いたときの中身のまま書ける。無いセット（新しいプロジェクト・前の保存の後に
+        // 追加したセット）は元の中身が無く、読めるほかのセットを含めて、保存も復旧用の書き置きも全体が断られる
+        let base = self.project.as_ref().map(|p| p.project_shared());
+        let (mut names, mut unsaved) = (Vec::new(), Vec::new());
+        for i in 0..self.sets.len() {
+            if self.sets.get(i).is_some_and(|s| s.read_only.is_some())
+                || !self.set_doc(i).has_unreadable_tiles()
+            {
+                continue;
+            }
+            if let Some(set) = self.sets.get_mut(i) {
+                set.read_only = Some(reason.into());
+                set.waiting_inputs = false;
+                names.push(set.name.clone());
+                if !base
+                    .as_ref()
+                    .is_some_and(|b| b.sets().iter().any(|s| s.id == set.id))
+                {
+                    unsaved.push(set.name.clone());
+                }
+            }
+        }
+        if names.is_empty() {
+            return;
+        }
+        // どのセットか・保存できないものを、短い理由として添える
+        let ja = |v: &[String]| v.iter().map(|n| format!("「{n}」")).collect::<String>();
+        let en = |v: &[String]| {
+            let quoted: Vec<String> = v.iter().map(|n| format!("\"{n}\"")).collect();
+            quoted.join(", ")
+        };
+        let (mut ja_why, mut en_why) = (Vec::new(), Vec::new());
+        if names.len() > unsaved.len() {
+            ja_why.push("最後に保存した後の編集は保存できません".to_owned());
+            en_why.push("Edits since the last save cannot be saved".to_owned());
+        }
+        if !unsaved.is_empty() {
+            ja_why.push(format!(
+                "{}は保存したことが無いため、プロジェクトの保存も復旧用の書き置きもできません",
+                ja(&unsaved)
+            ));
+            en_why.push(format!(
+                "{} has never been saved, so the project cannot be saved or checkpointed",
+                en(&unsaved)
+            ));
+        }
+        self.message = lang.pick(
+            format!(
+                "テクスチャセット{}を読むだけにしました: {reason}。{}",
+                ja(&names),
+                ja_why.join("。")
+            ),
+            format!(
+                "Texture set {} is now read-only: {reason}. {}",
+                en(&names),
+                en_why.join(". ")
+            ),
+        );
     }
 
     /// 選んだ予算を今のセットの文書に入れる（全体の予算から、ほかのセットが使っている量を引く）。入れる値が今と同じなら何もしない
@@ -278,6 +421,16 @@ impl AppState {
             return;
         }
         let wanted = self.prefs.settings.budgets(self.prefs.ram_mib);
+        // ディスクキャッシュが入なら、画素の予算はメモリの上限＋ディスクの上限（書けなくなった後は、そのとき使っていた量まで）
+        let cache = self.cache_settings();
+        yolu_core::tile_cache::configure(&cache);
+        let total_source = if cache.enabled {
+            cache
+                .memory_limit
+                .saturating_add(usable_disk(cache.disk_limit))
+        } else {
+            wanted.source
+        };
         let current = self.sets.current_index();
         let (mut other_source, mut other_history) = (0u64, 0u64);
         for i in (0..self.sets.len()).filter(|&i| i != current) {
@@ -286,7 +439,7 @@ impl AppState {
             other_history = other_history.saturating_add(doc.history_bytes());
         }
         let undo = wanted.undo.saturating_sub(other_history);
-        let source = wanted.source.saturating_sub(other_source);
+        let source = total_source.saturating_sub(other_source);
         let own = self.doc.allocated_bytes();
         let over = source < own;
         let id = self.doc.id();
@@ -321,7 +474,20 @@ impl AppState {
 
     /// 読み込み（.ylp を開く・書き出しが写した文書を戻す）で 1 つの文書に許す層の画素のバイト数。
     pub fn load_source_bytes(&self) -> u64 {
-        self.prefs.settings.load_source_bytes(self.prefs.ram_mib)
+        let plain = self.prefs.settings.load_source_bytes(self.prefs.ram_mib);
+        // ディスクキャッシュを係に入れている間は、メモリの上限＋ディスクの上限まで（`sync_budgets` と同じ）
+        if !(self.prefs.managed && self.prefs.settings.disk_cache) {
+            return plain;
+        }
+        let cache = self
+            .prefs
+            .settings
+            .cache_settings(self.prefs.ram_mib, self.cache_free_now());
+        plain.max(
+            cache
+                .memory_limit
+                .saturating_add(usable_disk(cache.disk_limit)),
+        )
     }
 
     /// GPU のメモリの設定とアダプターから配った 3 つの予算（3D の絵・キャンバスの合成・棚のサムネイル。`YoluApp` が変わったときに入れる）。
@@ -353,6 +519,39 @@ fn budget_name(lang: Lang, kind: BudgetKind, budget: Budget, ram_mib: u64) -> St
             lang.pick(format!("自動（{mib} MiB）"), format!("Auto ({mib} MiB)"))
         }
         Budget::Mib(n) => format!("{n} MiB"),
+    }
+}
+
+/// ディスクに置ける量: 上限（書けなくなった後は、そのとき置いていた量まで）。
+fn usable_disk(limit: u64) -> u64 {
+    let status = yolu_core::tile_cache::status();
+    if status.write_failed {
+        status.disk_bytes.min(limit)
+    } else {
+        limit
+    }
+}
+
+/// ディスクキャッシュの上限の名前（自動は今の置き場所での量を添える）。
+fn disk_limit_name(lang: Lang, limit: DiskLimit, free: Option<u64>) -> String {
+    match limit {
+        DiskLimit::Auto => {
+            let gib = DiskLimit::Auto.bytes(free) >> 30;
+            lang.pick(format!("自動（{gib} GiB）"), format!("Auto ({gib} GiB)"))
+        }
+        DiskLimit::Gib(n) => format!("{n} GiB"),
+    }
+}
+
+impl AppState {
+    /// 今の置き場所で測った空き（まだ測っていなければ None）。
+    fn cache_free_now(&self) -> Option<u64> {
+        let folder = self.prefs.settings.disk_cache_folder();
+        self.prefs
+            .cache_free
+            .iter()
+            .find(|(measured, _)| *measured == folder)
+            .and_then(|(_, free)| *free)
     }
 }
 
@@ -459,6 +658,21 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
                     .tooltip(c.tip(lang))
             })
             .collect(),
+        PrefChoice::DiskCacheLimit => {
+            let free = app.cache_free_now();
+            let mut values = vec![DiskLimit::Auto];
+            values.extend(DiskLimit::CHOICES.iter().map(|n| DiskLimit::Gib(*n)));
+            if !values.contains(&s.disk_cache_limit) {
+                values.push(s.disk_cache_limit);
+            }
+            values
+                .into_iter()
+                .map(|l| {
+                    Entry::item(disk_limit_name(lang, l, free), set(Pref::DiskCacheLimit(l)))
+                        .radio(s.disk_cache_limit == l)
+                })
+                .collect()
+        }
         PrefChoice::GpuMemory => {
             let mut entries: Vec<Entry<Action>> = GpuMemory::LEVELS
                 .into_iter()
@@ -491,12 +705,14 @@ const HEADING: f32 = 24.0;
 
 /// 窓の中身（見出しの帯の下）の高さの見積もり。描く行の数と合わせる（試験が、実際に並べた高さと同じであることを確かめる）。
 /// 画面に収まらなければ、窓は画面の高さにして、中身は共通のスクロールで送る。
-fn content_height(gpu_details: bool) -> f32 {
+fn content_height(gpu_details: bool, cache_details: bool) -> f32 {
     let dropdown = t::ROW_HEIGHT + GAP;
     let slider = t::SLIDER_ROW_HEIGHT + GAP;
     8.0 + HEADING * 5.0 // 節の見出し: 一般・メモリ・処理・3D ビュー・ファイル
         + dropdown * 5.0 // 一般: 言語・Live Link の起動・受けた値の保存・外からの操作・書き出しの余白
         + dropdown * 3.0 + slider // メモリ: 予算 3 つ・最小の取り消し段数
+        + dropdown * 2.0 // メモリ: ディスクキャッシュ・詳しく
+        + if cache_details { dropdown * 3.0 } else { 0.0 } // キャッシュの上限・置き場所（パスとボタン）
         + dropdown * 3.0 + dropdown // 処理: スレッド・合成・GPU のメモリ・詳しく
         + if gpu_details { slider } else { 0.0 } // GPU のメモリの合計
         + dropdown * 3.0 // 3D ビュー: 回転の中心・ズームの中心・UV ワイヤーフレーム
@@ -505,13 +721,93 @@ fn content_height(gpu_details: bool) -> f32 {
         + 8.0
 }
 
-fn window_height(gpu_details: bool) -> f32 {
-    window::HEADER_HEIGHT + content_height(gpu_details)
+fn window_height(gpu_details: bool, cache_details: bool) -> f32 {
+    window::HEADER_HEIGHT + content_height(gpu_details, cache_details)
 }
 
 /// 最後に描いた中身の高さ（見出しの帯の下。画面の点。開いていなければ None）。試験が、見積もりと実際の並びの食い違いを見つける。
 pub fn drawn_content_height(ctx: &egui::Context) -> Option<f32> {
     ctx.data(|d| d.get_temp(window_id().with("content")))
+}
+
+/// フォルダの 2 行（ラベルとパス、その下に「選ぶ…」「既定に戻す」）。押したボタン（選ぶ・既定に戻す）を返す。
+#[allow(clippy::too_many_arguments)]
+fn folder_rows(
+    ui: &mut egui::Ui,
+    rows: &mut w::Rows,
+    lang: Lang,
+    key: &str,
+    label: &str,
+    shown: &str,
+    choose_tip: &str,
+    default_tip: &str,
+    can_default: bool,
+    enabled: bool,
+) -> (bool, bool) {
+    let row = rows.row(t::ROW_HEIGHT, GAP);
+    let p = ui.painter().clone();
+    w::text(
+        &p,
+        Rect::from_min_size(row.min, vec2(LABEL_WIDTH, row.height())),
+        label,
+        t::LABEL,
+        Align::Left,
+    );
+    let path_rect = Rect::from_min_max(pos2(row.left() + LABEL_WIDTH, row.top()), row.max);
+    w::rounded(&p, path_rect, t::CONTROL_BG, 3.0);
+    w::outline(&p, path_rect, t::BORDER, 1.0, 3.0);
+    let fitted = w::fit(&p, shown, path_rect.width() - 14.0, t::LABEL_DIM);
+    w::text(
+        &p,
+        Rect::from_min_max(pos2(path_rect.left() + 7.0, path_rect.top()), path_rect.max),
+        &fitted,
+        t::LABEL_DIM,
+        Align::Left,
+    );
+    ui.interact(
+        path_rect,
+        window_id().with((key, "path")),
+        egui::Sense::hover(),
+    )
+    .on_hover_text(shown);
+    let row = rows.row(t::ROW_HEIGHT, GAP);
+    let (choose, default) = (
+        lang.pick("選ぶ…", "Choose…"),
+        lang.pick("既定に戻す", "Default"),
+    );
+    let widths = [choose, default].map(|s| w::text_width(&p, s, t::LABEL) + 24.0);
+    let right = row.right();
+    let default_rect = Rect::from_min_size(
+        pos2(right - widths[1], row.top()),
+        vec2(widths[1], row.height()),
+    );
+    let choose_rect = Rect::from_min_size(
+        pos2(default_rect.left() - GAP - widths[0], row.top()),
+        vec2(widths[0], row.height()),
+    );
+    let chose = w::button(
+        ui,
+        choose_rect,
+        ("prefs", format!("{key}-choose")),
+        choose,
+        false,
+        enabled,
+        Some(choose_tip),
+        None,
+    )
+    .clicked();
+    let reset = w::button(
+        ui,
+        default_rect,
+        ("prefs", format!("{key}-default")),
+        default,
+        false,
+        enabled && can_default,
+        Some(default_tip),
+        None,
+    )
+    .clicked();
+    (chose, reset)
 }
 
 /// 開いていれば窓を描き、選んだ値を `Action` として当てる。
@@ -525,7 +821,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let spec = Spec {
         title: lang.pick("設定", "Settings"),
         icon: Some("tune"),
-        size: vec2(WIDTH, window_height(app.prefs.gpu_details)),
+        size: vec2(
+            WIDTH,
+            window_height(app.prefs.gpu_details, app.prefs.cache_details),
+        ),
         modal: false,
         close_label: lang.pick("閉じる", "Close"),
     };
@@ -538,9 +837,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let cores = app.prefs.cores;
     let restart = s.cpu_threads != app.prefs.threads_at_start;
     let library = s.library_folder();
+    let cache_free = app.cache_free_now();
     let keep_all = s.backups == BackupKeep::All;
     let backup_count = app.prefs.shown_backups();
     let (gpu_details, gpu_total) = (app.prefs.gpu_details, app.gpu_total_mib());
+    let cache_details = app.prefs.cache_details;
     let mut dragging = false;
     let mut gpu_dragging = false;
     let mut scroll = app.prefs.scroll;
@@ -550,7 +851,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let body = frame.body;
         let previous = ctx
             .data(|d| d.get_temp::<f32>(content_id))
-            .unwrap_or_else(|| content_height(gpu_details));
+            .unwrap_or_else(|| content_height(gpu_details, cache_details));
         let bar = Scroll::begin(ui, body, previous, &mut scroll);
         let area = Rect::from_min_max(
             pos2(body.left(), body.top() - scroll),
@@ -719,6 +1020,72 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 out.value.round().clamp(0.0, MAX_MIN_UNDO_STEPS as f32) as u32,
             ))));
         }
+        let next = w::toggle(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            id.with("disk-cache"),
+            crate::settings::setting_name(lang, "disk_cache"),
+            s.disk_cache,
+            Some(lang.pick(
+                "レイヤーのメモリと取り消し履歴の予算を超えた分のタイルを、使っていないものからディスクへ移して続けます。切ると、予算を超える操作は断ります",
+                "Moves the tiles beyond the layer memory and undo history budgets to the disk, least recently used first, so work can go on. When off, edits beyond the budgets are refused",
+            )),
+            enabled,
+        );
+        if next != s.disk_cache {
+            requests.push(Request::Do(PrefsAction::Set(Pref::DiskCache(next))));
+        }
+        let open = w::subsection_header(
+            ui,
+            rows.row(t::ROW_HEIGHT, GAP),
+            ("prefs", "cache-details"),
+            lang.pick("詳しく", "Details"),
+            cache_details,
+        );
+        if open != cache_details {
+            requests.push(Request::Do(PrefsAction::CacheDetails(open)));
+        }
+        if cache_details {
+            let r = rows.row(t::ROW_HEIGHT, GAP);
+            let (response, b) = w::dropdown(
+                ui,
+                r,
+                ("prefs", "disk-cache-limit"),
+                Some(crate::settings::setting_name(lang, "disk_cache_limit_gib")),
+                &disk_limit_name(lang, s.disk_cache_limit, cache_free),
+                Some(lang.pick(
+                    "ディスクキャッシュに使う量の上限。自動は 64 GiB と、置き場所の空きの半分の小さい方。満杯なら、超える操作は断ります",
+                    "The most disk space the cache may use. Automatic is 64 GiB or half the free space of the folder, whichever is smaller. When it is full, edits beyond it are refused",
+                )),
+                enabled && s.disk_cache,
+                LABEL_WIDTH,
+            );
+            if response.clicked() {
+                requests.push(Request::Open(PrefChoice::DiskCacheLimit, b));
+            }
+            let shown = s.disk_cache_folder().display().to_string();
+            let (choose, reset) = folder_rows(
+                ui,
+                &mut rows,
+                lang,
+                "cache",
+                crate::settings::setting_name(lang, "disk_cache_folder"),
+                &shown,
+                lang.pick(
+                    "キャッシュのファイルを置くフォルダを選ぶ。速いドライブ（SSD）ほど、移したタイルを戻すのが速い",
+                    "Choose the folder for the cache file. A faster drive (SSD) brings moved tiles back faster",
+                ),
+                lang.pick("OS の一時フォルダに戻す", "Back to the system temporary folder"),
+                s.disk_cache_folder.is_some(),
+                enabled && s.disk_cache,
+            );
+            if choose {
+                requests.push(Request::Do(PrefsAction::ChooseCacheFolder));
+            }
+            if reset {
+                requests.push(Request::Do(PrefsAction::Set(Pref::DiskCacheFolder(None))));
+            }
+        }
         section(ui, &mut rows, false, lang.pick("処理", "Processing"));
         let mut threads = threads_name(lang, s.cpu_threads, cores);
         if restart {
@@ -842,73 +1209,26 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         dragging |= crate::uv_wireframe::settings_row(ui, &mut rows, app);
         section(ui, &mut rows, false, lang.pick("ファイル", "Files"));
         // 棚の場所: ラベルとパス、その下にボタン
-        let row = rows.row(t::ROW_HEIGHT, GAP);
-        let p = ui.painter().clone();
-        w::text(
-            &p,
-            Rect::from_min_size(row.min, vec2(LABEL_WIDTH, row.height())),
-            lang.pick("棚の場所", "Library folder"),
-            t::LABEL,
-            Align::Left,
-        );
         let shown = library
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let path_rect = Rect::from_min_max(pos2(row.left() + LABEL_WIDTH, row.top()), row.max);
-        w::rounded(&p, path_rect, t::CONTROL_BG, 3.0);
-        w::outline(&p, path_rect, t::BORDER, 1.0, 3.0);
-        let fitted = w::fit(&p, &shown, path_rect.width() - 14.0, t::LABEL_DIM);
-        w::text(
-            &p,
-            Rect::from_min_max(pos2(path_rect.left() + 7.0, path_rect.top()), path_rect.max),
-            &fitted,
-            t::LABEL_DIM,
-            Align::Left,
-        );
-        ui.interact(path_rect, id.with("library-path"), egui::Sense::hover())
-            .on_hover_text(&shown);
-        let row = rows.row(t::ROW_HEIGHT, GAP);
-        let (choose, default) = (
-            lang.pick("選ぶ…", "Choose…"),
-            lang.pick("既定に戻す", "Default"),
-        );
-        let widths = [choose, default].map(|s| w::text_width(&p, s, t::LABEL) + 24.0);
-        let right = row.right();
-        let default_rect = Rect::from_min_size(
-            pos2(right - widths[1], row.top()),
-            vec2(widths[1], row.height()),
-        );
-        let choose_rect = Rect::from_min_size(
-            pos2(default_rect.left() - GAP - widths[0], row.top()),
-            vec2(widths[0], row.height()),
-        );
-        if w::button(
+        let (choose, reset) = folder_rows(
             ui,
-            choose_rect,
-            ("prefs", "library-choose"),
-            choose,
-            false,
+            &mut rows,
+            lang,
+            "library",
+            lang.pick("棚の場所", "Library folder"),
+            &shown,
+            lang.pick("棚の場所のフォルダを選ぶ", "Choose the library folder"),
+            lang.pick("既定の場所に戻す", "Back to the default folder"),
+            s.library_folder.is_some(),
             enabled,
-            Some(lang.pick("棚の場所のフォルダを選ぶ", "Choose the library folder")),
-            None,
-        )
-        .clicked()
-        {
+        );
+        if choose {
             requests.push(Request::Do(PrefsAction::ChooseLibraryFolder));
         }
-        if w::button(
-            ui,
-            default_rect,
-            ("prefs", "library-default"),
-            default,
-            false,
-            enabled && s.library_folder.is_some(),
-            Some(lang.pick("既定の場所に戻す", "Back to the default folder")),
-            None,
-        )
-        .clicked()
-        {
+        if reset {
             requests.push(Request::Do(PrefsAction::Set(Pref::LibraryFolder(None))));
         }
         // 退避を残す数: スライダー（すべて残す間は動かせない）と「すべて残す」

@@ -460,7 +460,8 @@ fn pick(h: &mut Harness<'static, YoluApp>, label: &str, item: &str) {
 fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total() {
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
-    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    // 詳しくを開いた窓が全部見える高さ（800 では、メモリの節のディスクキャッシュの分だけ中身を送る）
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
     h.state_mut().state.prefs.gpu = Adapter::default();
     open_settings(&mut h);
     // 棚の場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
@@ -473,7 +474,7 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     h.run();
     let closed = window_rect(&h);
     let _ = h.get_by_label("GPU のメモリ: 自動");
-    let _ = h.get_by_label("詳しく");
+    let _ = gpu_details(&h, "詳しく");
     // 段を選ぶ（窓の行に数は出ない）
     pick(&mut h, "GPU のメモリ: 自動", "高");
     h.run();
@@ -481,7 +482,7 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::High);
     assert_eq!(h.state().gpu_budgets_applied(), expect(GpuMemory::High));
     // 詳しく: 合計のスライダーが出て、窓が伸びる（最後の行も窓の中）
-    h.get_by_label("詳しく").click();
+    gpu_details(&h, "詳しく").click();
     h.run();
     assert!(h.state().state.prefs.gpu_details);
     let open = window_rect(&h);
@@ -509,11 +510,11 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     // 英語
     pick(&mut h, "言語: 日本語", "English");
     let _ = h.get_by_label("GPU memory: Standard");
-    let _ = h.get_by_label("Details");
+    let _ = gpu_details(&h, "Details");
     assert!(window_rect(&h).contains_rect(h.get_by_label("Keep all").rect()));
     shot(&mut h, "prefs_gpu_details_english");
     // 閉じると、次に開いたときは閉じた形
-    h.get_by_label("Details").click();
+    gpu_details(&h, "Details").click();
     h.run();
     assert!(!h.state().state.prefs.gpu_details);
     assert!((window_rect(&h).height() - closed.height()).abs() < 0.5);
@@ -601,9 +602,16 @@ fn a_settings_file_without_the_key_starts_automatic_and_a_broken_value_says_why_
 
 // ───────── 合計のスライダーをドラッグする ─────────
 
+/// GPU のメモリの「詳しく」（処理の節。メモリの節のディスクキャッシュにも同じ名前があるので、下の方）。
+fn gpu_details<'h>(h: &'h Harness<'_, YoluApp>, label: &'h str) -> egui_kittest::Node<'h> {
+    h.query_all_by_label(label)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap_or_else(|| panic!("「{label}」が無い"))
+}
+
 /// 「詳しく」を開いて、合計のスライダーの溝の上の点（左端 0 から右端 1 の割合）を返す関数を作る。
 fn total_slider(h: &mut Harness<'static, YoluApp>, lang_total: &str) -> impl Fn(f32) -> egui::Pos2 {
-    h.get_by_label("詳しく").click();
+    gpu_details(h, "詳しく").click();
     h.run();
     let rect = h
         .get_by_role_and_label(egui::accesskit::Role::Slider, lang_total)

@@ -68,6 +68,7 @@ pub mod smart;
 pub mod smart_library;
 mod surface;
 mod symmetry;
+pub mod tile_cache;
 mod types;
 pub mod uv_layout;
 

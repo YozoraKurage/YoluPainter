@@ -443,6 +443,11 @@ impl YoluApp {
             pen,
         );
         app.state.load_settings(loaded.clone());
+        // 前のプロセスが残したディスクキャッシュのファイル（電源が落ちたときなど）を、起動の邪魔をしないよう裏で消す
+        let cache_folder = loaded.disk_cache_folder();
+        let _ = std::thread::Builder::new()
+            .name("yolu-cache-sweep".into())
+            .spawn(move || yolu_core::tile_cache::remove_stale_files(&cache_folder));
         // 利用者のブラシは設定のフォルダの brushes/（読めないファイルは読み飛ばし、知らせる）
         if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
             app.state.attach_brush_store(dir.join("brushes"));
@@ -895,6 +900,21 @@ impl YoluApp {
                     self.state
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::LibraryFolder(Some(dir)),
+                        )));
+                }
+            }
+            Some(DialogRequest::PrefsCacheFolder) => {
+                let lang = self.state.lang;
+                let mut dialog =
+                    crate::dialog::file().set_title(lang.pick("キャッシュの場所", "Cache folder"));
+                let current = self.state.prefs.settings.disk_cache_folder();
+                if current.is_dir() {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    self.state
+                        .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
+                            crate::prefs::Pref::DiskCacheFolder(Some(dir)),
                         )));
                 }
             }
@@ -1428,6 +1448,7 @@ impl YoluApp {
         self.state.poll_bake();
         self.state.poll_export();
         self.state.sync_budgets();
+        self.state.check_tile_cache();
         self.state.poll_psd();
         self.note_dropped_psds();
         self.state.poll_distribute();

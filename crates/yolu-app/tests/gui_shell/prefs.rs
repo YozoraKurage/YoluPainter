@@ -30,6 +30,15 @@ fn state() -> AppState {
     s
 }
 
+/// ディスクキャッシュを切った設定（画素の予算が設定の値そのものになる。キャッシュの入った予算は
+/// `headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_the_settings`）。
+fn without_cache() -> Settings {
+    Settings {
+        disk_cache: false,
+        ..Settings::default()
+    }
+}
+
 fn labels(entries: &[yolu_app::ui::menu::Entry<Action>]) -> Vec<String> {
     entries
         .iter()
@@ -59,7 +68,7 @@ fn headless_an_unmanaged_state_keeps_the_core_budgets_until_settings_are_loaded(
         "設定を読んでいない状態は、core の既定のまま"
     );
     // 設定を読むと自動の予算（16 GB: 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024）
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     s.sync_budgets();
     assert_eq!(s.doc.undo_budget_bytes(), 2048 * MIB);
     assert_eq!(s.doc.source_budget_bytes(), 8192 * MIB);
@@ -70,7 +79,7 @@ fn headless_an_unmanaged_state_keeps_the_core_budgets_until_settings_are_loaded(
 #[test]
 fn headless_choosing_a_budget_changes_the_current_document_and_new_documents_follow() {
     let mut s = state();
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(512)));
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(4096)));
@@ -125,7 +134,7 @@ fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_t
     let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
     shape.expect("3D に読める");
     assert_eq!(s.sets.len(), 2);
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     // 全体の予算: 画素 16 MiB（最小）・取り消し履歴 64 MiB・最小の取り消し段数 9
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(64)));
@@ -198,7 +207,7 @@ fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
     s.prefs.ram_mib = 1 << 20;
     let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
     shape.expect("3D に読める");
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     s.sync_budgets();
     let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
     assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB);
@@ -241,7 +250,7 @@ fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so
     s.prefs.ram_mib = 16384;
     let (_, shape) = s.receive_link_model(&two_sets_model(), 0);
     shape.expect("3D に読める");
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     // 1 つ目のセットが 20 MiB（2048 × 2048 の 1 層は 16 MiB なので 2 層）使っているところへ、全体の予算 16 MiB
     let first = s.sets.current_index();
     for _ in 0..2 {
@@ -324,7 +333,7 @@ fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_w
 ) {
     let mut s = AppState::new(4096, 4096);
     s.prefs.ram_mib = 16384;
-    s.load_settings(Settings::default());
+    s.load_settings(without_cache());
     // 描いている間は入れず、終わったフレームで入れる
     let layer = s.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
@@ -511,6 +520,12 @@ fn settings_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// 機械によらないキャッシュの置き場所（窓の絵に出る）と、そこの空きとして見せる量（自動のディスクの上限はその半分の 50 GiB）。
+fn fixed_cache_folder() -> PathBuf {
+    PathBuf::from(if cfg!(windows) { "C:\\Cache" } else { "/Cache" })
+}
+const FIXED_CACHE_FREE: u64 = 100 * 1024 * MIB;
+
 fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp> {
     let path = path.to_path_buf();
     let mut h = common::gpu_thread::builder()
@@ -525,6 +540,10 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
         });
     h.state_mut().state.prefs.ram_mib = 16384;
     h.state_mut().state.prefs.cores = 8;
+    // 作るときのフレームで測った値があれば置き換える
+    let free = &mut h.state_mut().state.prefs.cache_free;
+    free.retain(|(f, _)| *f != fixed_cache_folder());
+    free.push((fixed_cache_folder(), Some(FIXED_CACHE_FREE)));
     h.run();
     h
 }
@@ -535,6 +554,13 @@ fn open_settings(h: &mut Harness<'static, YoluApp>) {
     click(h, at);
     let item = popup_item(h, "設定…").center();
     click(h, item);
+}
+
+/// 同じ名前の要素のうち、いちばん下にあるもの。
+fn lowest<'h>(h: &'h Harness<'_, YoluApp>, label: &'h str) -> egui_kittest::Node<'h> {
+    h.query_all_by_label(label)
+        .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap_or_else(|| panic!("「{label}」が無い"))
 }
 
 fn window_rect(h: &Harness<'_, YoluApp>) -> Rect {
@@ -574,6 +600,12 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
         .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
             shelf,
         )))));
+    // キャッシュの置き場所も（既定は OS の一時フォルダで、機械で違う）
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Set(Pref::DiskCacheFolder(
+            Some(fixed_cache_folder()),
+        ))));
     h.run();
     let window = window_rect(&h);
     shot(&mut h, "prefs_window");
@@ -589,7 +621,9 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     pick(&mut h, "取り消し履歴: 自動（2048 MiB）", "512 MiB");
     assert_eq!(h.state().state.doc.undo_budget_bytes(), 512 * MIB);
     pick(&mut h, "レイヤーのメモリ: 自動（8192 MiB）", "4096 MiB");
-    assert_eq!(h.state().state.doc.source_budget_bytes(), 4096 * MIB);
+    // ディスクキャッシュが入（既定）: 画素の予算は、メモリの上限（レイヤーのメモリ＋取り消し履歴）＋ディスクの上限（空き 100 GiB の半分）
+    let with_cache = (4096 + 512) * MIB + FIXED_CACHE_FREE / 2;
+    assert_eq!(h.state().state.doc.source_budget_bytes(), with_cache);
     pick(&mut h, "1 回の操作: 自動（1024 MiB）", "256 MiB");
     assert_eq!(h.state().state.doc.stroke_budget_bytes(), 256 * MIB);
     pick(&mut h, "表示の合成: 自動", "CPU");
@@ -643,7 +677,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     assert!(!s.settings().livelink_on_startup);
     assert_eq!(s.prefs.settings.compositing, Compositing::Cpu);
     assert_eq!(s.doc.undo_budget_bytes(), 512 * MIB, "文書にも入っている");
-    assert_eq!(s.doc.source_budget_bytes(), 4096 * MIB);
+    assert_eq!(s.doc.source_budget_bytes(), with_cache);
     assert_eq!(s.doc.stroke_budget_bytes(), 256 * MIB);
     assert_eq!(s.message, "");
 }
@@ -672,9 +706,10 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         h.state().state.doc.minimum_undo_steps(),
         h.state().state.prefs.settings.min_undo_steps as usize
     );
-    // 棚の場所: 初めは既定（「既定に戻す」は押せない）。選ぶ窓を頼み、選んだ場所が出る
+    // 棚の場所: 初めは既定（「既定に戻す」は押せない）。選ぶ窓を頼み、選んだ場所が出る。ボタンの名前はキャッシュの場所と同じなので、
+    // 下の節（ファイル）の方を押す
     assert_eq!(h.state().state.prefs.settings.library_folder, None);
-    h.get_by_label("選ぶ…").click();
+    lowest(&h, "選ぶ…").click();
     h.run();
     assert_eq!(
         h.state().state.dialog_request,
@@ -691,7 +726,7 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         h.state().state.prefs.settings.library_folder,
         Some(folder.clone())
     );
-    h.get_by_label("既定に戻す").click();
+    lowest(&h, "既定に戻す").click();
     h.run();
     assert_eq!(h.state().state.prefs.settings.library_folder, None);
     // 設定のファイルに入った棚の場所は、次の起動で読める
@@ -811,6 +846,7 @@ fn headless_loading_allows_the_set_budget_but_never_less_than_the_core_default()
     // 状態からも同じ値（設定の窓で選ぶと変わる）
     let mut state = state();
     assert_eq!(state.load_source_bytes(), 8192 * MIB);
+    set(&mut state, Pref::DiskCache(false));
     set(
         &mut state,
         Pref::Budget(BudgetKind::Source, Budget::Mib(4096)),
@@ -854,10 +890,13 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
     open_settings(&mut h);
     for lang in Lang::ALL {
         english(&mut h, lang);
-        for details in [false, true] {
+        for (details, cache) in [(false, false), (true, false), (false, true), (true, true)] {
             h.state_mut()
                 .state
                 .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
+            h.state_mut()
+                .state
+                .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
             h.run();
             h.run();
             let window = window_rect(&h);
@@ -865,7 +904,7 @@ fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_lang
             let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
             assert!(
                 (body - drawn).abs() < 0.5,
-                "{lang:?} 詳しく={details}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
+                "{lang:?} 詳しく={details} キャッシュの詳しく={cache}: 窓の中身 {body} と、並べた高さ {drawn} が違う"
             );
         }
     }
@@ -1213,4 +1252,145 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     assert!(!std::fs::read_to_string(&path)
         .unwrap()
         .contains("external_ops"));
+}
+
+/// ディスクキャッシュが入（既定）なら、今のセットの画素の予算は「メモリの上限（レイヤーのメモリ＋取り消し履歴）＋ディスクの上限 − ほかの
+/// セットの画素」。自動のディスクの上限は 64 GiB と置き場所の空きの半分の小さい方（空きは置き場所で初めて測った値）。切ると、キャッシュの無い
+/// 予算に戻る。
+#[test]
+fn headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_the_settings() {
+    use yolu_app::settings::DiskLimit;
+    const GIB: u64 = 1024 * MIB;
+    let mut s = state();
+    s.prefs
+        .cache_free
+        .push((std::env::temp_dir(), Some(40 * GIB)));
+    s.load_settings(Settings::default());
+    s.sync_budgets();
+    // 16 GB: レイヤーのメモリ 8 GiB・取り消し 2 GiB、空き 40 GiB の半分 20 GiB
+    assert_eq!(s.doc.source_budget_bytes(), 10 * GIB + 20 * GIB);
+    assert_eq!(s.load_source_bytes(), 30 * GIB);
+    assert_eq!(
+        s.doc.undo_budget_bytes(),
+        2 * GIB,
+        "取り消しの予算は変えない"
+    );
+    set(&mut s, Pref::DiskCacheLimit(DiskLimit::Gib(8)));
+    assert_eq!(s.doc.source_budget_bytes(), 18 * GIB);
+    set(&mut s, Pref::DiskCacheLimit(DiskLimit::Gib(99_999)));
+    assert_eq!(
+        s.prefs.settings.disk_cache_limit,
+        DiskLimit::Gib(4096),
+        "範囲に丸める"
+    );
+    set(&mut s, Pref::DiskCacheLimit(DiskLimit::Auto));
+    // 空きの多い置き場所では 64 GiB まで
+    let roomy = std::env::temp_dir().join("roomy");
+    s.prefs.cache_free.push((roomy.clone(), Some(1000 * GIB)));
+    set(&mut s, Pref::DiskCacheFolder(Some(roomy.clone())));
+    assert_eq!(s.prefs.settings.disk_cache_folder, Some(roomy));
+    assert_eq!(s.doc.source_budget_bytes(), 10 * GIB + 64 * GIB);
+    // 相対パスは断る（今の場所のまま）
+    s.message.clear();
+    set(
+        &mut s,
+        Pref::DiskCacheFolder(Some(PathBuf::from("relative/cache"))),
+    );
+    assert!(s.prefs.settings.disk_cache_folder.is_some());
+    assert_eq!(s.message, "キャッシュの場所は絶対パスで指定します。");
+    // 選択肢: 自動（今の場所での量）と GiB の並び
+    let names = labels(&entries(&s, PrefChoice::DiskCacheLimit));
+    assert_eq!(names[0], "自動（64 GiB）");
+    assert_eq!(
+        names[1..],
+        ["4 GiB", "8 GiB", "16 GiB", "32 GiB", "64 GiB", "128 GiB", "256 GiB", "512 GiB"]
+    );
+    // 切ると、キャッシュの無い予算
+    set(&mut s, Pref::DiskCache(false));
+    assert_eq!(s.doc.source_budget_bytes(), 8 * GIB);
+    assert_eq!(s.load_source_bytes(), 8 * GIB);
+    // 場所を選ぶ窓・既定に戻す
+    s.apply(Action::Prefs(PrefsAction::ChooseCacheFolder));
+    assert_eq!(s.dialog_request, Some(DialogRequest::PrefsCacheFolder));
+    set(&mut s, Pref::DiskCacheFolder(None));
+    assert_eq!(s.prefs.settings.disk_cache_folder, None);
+}
+
+/// 同じ名前の要素のうち、いちばん上にあるもの。
+fn highest<'h>(h: &'h Harness<'_, YoluApp>, label: &'h str) -> egui_kittest::Node<'h> {
+    h.query_all_by_label(label)
+        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+        .unwrap_or_else(|| panic!("「{label}」が無い"))
+}
+
+/// メモリの節のディスクキャッシュ: 入切・詳しく（上限・置き場所）の欄で選んだ値が設定のファイルと文書の予算に入る。日英の絵。
+#[test]
+fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_both_languages() {
+    const GIB: u64 = 1024 * MIB;
+    let dir = settings_dir("disk-cache");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 1000.0));
+    open_settings(&mut h);
+    // 窓に出る場所は、機械によらない場所にして撮る
+    let shelf = PathBuf::from(if cfg!(windows) { "C:\\Shelf" } else { "/Shelf" });
+    for pref in [
+        Pref::LibraryFolder(Some(shelf)),
+        Pref::DiskCacheFolder(Some(fixed_cache_folder())),
+    ] {
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::Set(pref)));
+    }
+    h.run();
+    // 詳しく（メモリの節の方。処理の節の GPU のメモリにもある）
+    highest(&h, "詳しく").click();
+    h.run();
+    assert!(h.state().state.prefs.cache_details);
+    shot(&mut h, "prefs_disk_cache");
+    english(&mut h, Lang::En);
+    shot(&mut h, "prefs_disk_cache_english");
+    english(&mut h, Lang::Ja);
+    // 上限を選ぶ
+    let at = h
+        .get_by_label("キャッシュの上限: 自動（50 GiB）")
+        .rect()
+        .center();
+    click(&mut h, at);
+    let at = popup_item(&h, "16 GiB").center();
+    click(&mut h, at);
+    assert_eq!(
+        h.state().state.prefs.settings.disk_cache_limit,
+        yolu_app::settings::DiskLimit::Gib(16)
+    );
+    // 画素の予算: メモリの上限（8192 + 2048 MiB）＋ディスクの上限
+    assert_eq!(
+        h.state().state.doc.source_budget_bytes(),
+        10 * GIB + 16 * GIB
+    );
+    // 置き場所を選ぶ窓を頼む（棚の場所の「選ぶ…」より上の方）
+    highest(&h, "選ぶ…").click();
+    h.run();
+    assert_eq!(
+        h.state().state.dialog_request,
+        Some(DialogRequest::PrefsCacheFolder)
+    );
+    h.state_mut().state.dialog_request = None;
+    // 切ると、キャッシュの無い予算
+    h.get_by_label("ディスクキャッシュ").click();
+    h.run();
+    assert!(!h.state().state.prefs.settings.disk_cache);
+    assert_eq!(h.state().state.doc.source_budget_bytes(), 8 * GIB);
+    h.run();
+    let written = std::fs::read_to_string(&path).unwrap();
+    for line in ["disk_cache=off", "disk_cache_limit_gib=16"] {
+        assert!(written.lines().any(|l| l == line), "{line}\n{written}");
+    }
+    assert!(written.contains("disk_cache_folder="), "{written}");
+    drop(h);
+    // 次の起動も同じ設定
+    let h = app_with_settings(&path, vec2(1280.0, 1000.0));
+    let s = &h.state().state.prefs.settings;
+    assert!(!s.disk_cache);
+    assert_eq!(s.disk_cache_limit, yolu_app::settings::DiskLimit::Gib(16));
+    assert_eq!(s.disk_cache_folder, Some(fixed_cache_folder()));
 }

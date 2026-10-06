@@ -14,6 +14,8 @@
 //! - タイルの経路は行ごとの核（[`crate::blend::blend_row`] など。実行時に AVX2・SSE4.1・スカラーを選ぶ）で重ねる。画素ごとの参照
 //!   （`evaluate_pixel`）と同じバイトで、歩幅つきの読み（粗い合成）は 64 画素ずつ詰めて核へ渡す。
 
+use std::sync::{Arc, OnceLock};
+
 use rayon::prelude::*;
 
 mod memo;
@@ -23,9 +25,10 @@ pub(crate) use memo::{Memo, MemoRequest};
 use crate::adjust::AdjustKernel;
 use crate::blend::{blend, blend_row, clip_onto, clip_row, fade, fade_row, RowAmount};
 use crate::document::EvalSet;
+use crate::error::CoreError;
 use crate::layer::{Layer, LayerId};
 use crate::normal;
-use crate::surface::{Surface, Tile};
+use crate::surface::{Readers, Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
 
 /// 合成の 1 段: 層（またはグループ）と、その組に入るクリッピングされた層（下から上）。グループは中身の計画を持つ。
@@ -54,6 +57,23 @@ impl Entry {
         layers[self.layer].is_group()
             && self.mode == BlendMode::PassThrough
             && self.clips.is_empty()
+    }
+}
+
+/// 層そのものの画素（`Layer::pixel` の、面を readers で読む形。ディスクから読めない画素は透明で、readers が誤りを覚える）。
+pub(crate) fn raw_layer_pixel<'a>(
+    readers: &mut Readers<'a>,
+    layer: &'a Layer,
+    channel: Channel,
+    x: u32,
+    y: u32,
+) -> Rgba8 {
+    match layer.kind {
+        LayerKind::Raster => layer
+            .surface(channel)
+            .map_or(Rgba8::TRANSPARENT, |s| readers.pixel(s, x, y)),
+        LayerKind::Fill => layer.fill_value(channel).unwrap_or(Rgba8::TRANSPARENT),
+        _ => Rgba8::TRANSPARENT,
     }
 }
 
@@ -101,20 +121,33 @@ impl<'a> Stack<'a> {
     fn evaluated_mask(&self, layer: usize) -> Option<&'a Surface> {
         self.eval.and_then(|e| e.masks.get(&layer))
     }
-    /// 層の画素（マスク・不透明度・合成の前。評価した出力があればそれ）。
-    pub(crate) fn layer_pixel(&self, layer: usize, x: u32, y: u32) -> Rgba8 {
+    /// 層の画素（マスク・不透明度・合成の前。評価した出力があればそれ。中身の無い所・調整・グループは透明）。面は readers で読む
+    /// （ディスクから読めない画素は透明で、readers が誤りを覚える）。
+    pub(crate) fn layer_pixel(
+        &self,
+        readers: &mut Readers<'a>,
+        layer: usize,
+        x: u32,
+        y: u32,
+    ) -> Rgba8 {
         match self.evaluated_content(layer) {
-            Some(s) => s.pixel(x, y).unwrap_or(Rgba8::TRANSPARENT),
-            None => self.layers[layer].pixel_or_transparent(self.channel, x, y),
+            Some(s) => readers.pixel(s, x, y),
+            None => raw_layer_pixel(readers, &self.layers[layer], self.channel, x, y),
         }
     }
     /// 層のマスクが層のアルファに掛ける値。
-    pub(crate) fn mask_factor(&self, layer: usize, x: u32, y: u32) -> f64 {
+    pub(crate) fn mask_factor(
+        &self,
+        readers: &mut Readers<'a>,
+        layer: usize,
+        x: u32,
+        y: u32,
+    ) -> f64 {
         match &self.layers[layer].mask {
             None => 1.0,
             Some(m) => {
                 let surface = self.evaluated_mask(layer).unwrap_or(&m.surface);
-                m.factor(surface.pixel(x, y).map_or(0, |p| p.a))
+                m.factor(readers.pixel(surface, x, y).a)
             }
         }
     }
@@ -246,8 +279,9 @@ fn stack_fade(normal: bool, backdrop: Rgba8, inner: Rgba8, amount: f64) -> Rgba8
     }
 }
 
-pub(crate) fn evaluate_pixel(
-    stack: &Stack<'_>,
+pub(crate) fn evaluate_pixel<'a>(
+    stack: &Stack<'a>,
+    readers: &mut Readers<'a>,
     plan: &[Entry],
     backdrop: Rgba8,
     x: u32,
@@ -258,33 +292,33 @@ pub(crate) fn evaluate_pixel(
     let mut result = backdrop;
     for entry in plan {
         let layer = &layers[entry.layer];
-        let amount = entry.opacity * stack.mask_factor(entry.layer, x, y);
+        let amount = entry.opacity * stack.mask_factor(readers, entry.layer, x, y);
         if layer.kind == LayerKind::Adjustment {
             let a = layer.adjustment.as_ref().expect("調整の層は設定を持つ");
             result = a.composite_in(stack.kind, result, amount, entry.mode);
             continue;
         }
         if entry.passes_through(layers) {
-            let inner = evaluate_pixel(stack, &entry.children, result, x, y);
+            let inner = evaluate_pixel(stack, readers, &entry.children, result, x, y);
             result = stack_fade(normal, result, inner, amount);
             continue;
         }
         let mut group = if layer.is_group() {
-            evaluate_pixel(stack, &entry.children, Rgba8::TRANSPARENT, x, y)
+            evaluate_pixel(stack, readers, &entry.children, Rgba8::TRANSPARENT, x, y)
         } else {
-            stack.layer_pixel(entry.layer, x, y)
+            stack.layer_pixel(readers, entry.layer, x, y)
         };
         for clip in &entry.clips {
             let c = &layers[clip.layer];
-            let clip_amount = clip.opacity * stack.mask_factor(clip.layer, x, y);
+            let clip_amount = clip.opacity * stack.mask_factor(readers, clip.layer, x, y);
             if c.kind == LayerKind::Adjustment {
                 let a = c.adjustment.as_ref().expect("調整の層は設定を持つ");
                 group = a.composite_in(stack.kind, group, clip_amount, clip.mode);
             } else {
                 let over = if c.is_group() {
-                    evaluate_pixel(stack, &clip.children, Rgba8::TRANSPARENT, x, y)
+                    evaluate_pixel(stack, readers, &clip.children, Rgba8::TRANSPARENT, x, y)
                 } else {
-                    stack.layer_pixel(clip.layer, x, y)
+                    stack.layer_pixel(readers, clip.layer, x, y)
                 };
                 group = stack_clip(normal, group, over, clip_amount, clip.blend_mode());
             }
@@ -295,8 +329,11 @@ pub(crate) fn evaluate_pixel(
 }
 
 /// 画素 1 つの合成（C# の CompositePixel。タイルの経路と照らし合わせる参照の式）。
-pub(crate) fn composite_pixel(stack: &Stack<'_>, x: u32, y: u32) -> Rgba8 {
-    evaluate_pixel(stack, &stack.plan(), Rgba8::TRANSPARENT, x, y)
+pub(crate) fn composite_pixel(stack: &Stack<'_>, x: u32, y: u32) -> Result<Rgba8, CoreError> {
+    let mut readers = Readers::default();
+    let p = evaluate_pixel(stack, &mut readers, &stack.plan(), Rgba8::TRANSPARENT, x, y);
+    readers.finish()?;
+    Ok(p)
 }
 
 // ───────── 行の核 ─────────
@@ -397,6 +434,8 @@ struct Plan<'a> {
     tile_size: usize,
     /// 粗い合成の歩幅（1 なら全画素）。
     stride: usize,
+    /// タイルをディスクから読めなかったときの誤り（読めなかったタイルは無いものとして進め、終わりに誤りを返す）。
+    failed: OnceLock<CoreError>,
 }
 
 impl Node<'_> {
@@ -435,6 +474,7 @@ impl<'a> Plan<'a> {
             normal: stack.kind == ChannelKind::Normal,
             tile_size,
             stride,
+            failed: OnceLock::new(),
         };
         p.roots = plan.iter().map(|e| p.add(stack, e)).collect();
         p
@@ -516,29 +556,19 @@ impl<'a> Plan<'a> {
     }
 }
 
-/// あるタイルでの層の画素・マスクの読み元。
-#[derive(Clone, Copy)]
-enum Src<'a> {
+/// あるタイルでの層の画素・マスクの読み元（全画素のタイルは読んだ中身を持つ。持っている間はディスクへ逃がさない）。
+#[derive(Clone)]
+enum Src {
     Absent,
     Uniform([u8; 4]),
-    Data(&'a [u8]),
-}
-
-impl<'a> Src<'a> {
-    fn of(tile: Option<&'a Tile>) -> Src<'a> {
-        match tile {
-            None => Src::Absent,
-            Some(Tile::Uniform(c)) => Src::Uniform(c.to_array()),
-            Some(Tile::Data(d)) => Src::Data(&d[..]),
-        }
-    }
+    Data(Arc<Vec<u8>>),
 }
 
 /// 1 つのタイルの、層ごとの有無と読み元（ワーカーごとに 1 つ）。
-struct TileState<'a> {
+struct TileState {
     present: Vec<bool>,
-    pixels: Vec<Src<'a>>,
-    masks: Vec<Src<'a>>,
+    pixels: Vec<Src>,
+    masks: Vec<Src>,
 }
 
 /// 計算する矩形（タイルの中の位置: 左の画素 x、下の行 y、行数、画素数）。
@@ -561,8 +591,28 @@ struct Level {
 const ZERO4: [u8; 4] = [0; 4];
 
 impl<'a> Plan<'a> {
+    /// タイルの読み元。ディスクから読めなければ誤りを覚えて無いものとする（合成の終わりに `result` が誤りを返す）。
+    fn src(&self, tile: Option<&Tile>) -> Src {
+        match tile {
+            None => Src::Absent,
+            Some(Tile::Uniform(c)) => Src::Uniform(c.to_array()),
+            Some(Tile::Data(d)) => match d.bytes() {
+                Ok(bytes) => Src::Data(bytes),
+                Err(e) => {
+                    let _ = self.failed.set(e);
+                    Src::Absent
+                }
+            },
+        }
+    }
+
+    /// 合成の間のタイルが全部読めたか。
+    fn result(&self) -> Result<(), CoreError> {
+        self.failed.get().map_or(Ok(()), |e| Err(e.clone()))
+    }
+
     /// タイルを読み込む（C# の Node.Load）。nodes の下に画素（ラスター・塗りつぶし）があれば true。
-    fn load(&self, ids: &[usize], coord: TileCoord, st: &mut TileState<'a>) -> bool {
+    fn load(&self, ids: &[usize], coord: TileCoord, st: &mut TileState) -> bool {
         let mut any = false;
         for &id in ids {
             let n = &self.nodes[id];
@@ -584,7 +634,7 @@ impl<'a> Plan<'a> {
                     pixels = false;
                 }
                 Content::Raster(s) => {
-                    let src = Src::of(s.tile(coord));
+                    let src = self.src(s.tile(coord));
                     st.present[id] = !matches!(src, Src::Absent);
                     st.pixels[id] = src;
                     pixels = st.present[id];
@@ -597,7 +647,7 @@ impl<'a> Plan<'a> {
             }
             if st.present[id] {
                 if let Some((m, _)) = &n.mask {
-                    st.masks[id] = match Src::of(m.tile(coord)) {
+                    st.masks[id] = match self.src(m.tile(coord)) {
                         Src::Absent => Src::Uniform(ZERO4), // 無いタイル = 何も隠さない
                         s => s,
                     };
@@ -650,10 +700,10 @@ impl<'a> Plan<'a> {
         work
     }
 
-    fn rows<'s>(&self, src: &'s Src<'a>, g: Geom, geo: Geo) -> Rows<'s> {
+    fn rows<'s>(&self, src: &'s Src, g: Geom, geo: Geo) -> Rows<'s> {
         match src {
             Src::Data(d) => Rows {
-                bytes: d,
+                bytes: &d[..],
                 off: (g.y * geo.sample * geo.tile + g.x * geo.sample) * 4,
                 stride: geo.tile * geo.sample * 4,
                 step: 4 * geo.sample,
@@ -668,7 +718,7 @@ impl<'a> Plan<'a> {
         }
     }
 
-    fn amount<'s>(&'s self, id: usize, g: Geom, st: &'s TileState<'a>) -> Amount<'s> {
+    fn amount<'s>(&'s self, id: usize, g: Geom, st: &'s TileState) -> Amount<'s> {
         let n = &self.nodes[id];
         Amount {
             opacity: n.opacity,
@@ -687,7 +737,7 @@ impl<'a> Plan<'a> {
         res: &mut [u8],
         out: Out,
         g: Geom,
-        st: &TileState<'a>,
+        st: &TileState,
         scratch: &mut [Level],
     ) {
         for &id in ids {
@@ -703,7 +753,7 @@ impl<'a> Plan<'a> {
         res: &mut [u8],
         out: Out,
         g: Geom,
-        st: &TileState<'a>,
+        st: &TileState,
         scratch: &mut [Level],
         resume: Option<memo::Resume<'_>>,
     ) {
@@ -721,7 +771,7 @@ impl<'a> Plan<'a> {
         res: &mut [u8],
         out: Out,
         g: Geom,
-        st: &TileState<'a>,
+        st: &TileState,
         scratch: &mut [Level],
         resume: Option<memo::Resume<'_>>,
     ) {
@@ -961,12 +1011,12 @@ const MINIMUM_BAND_WORK: u64 = 1 << 18;
 const WORK_SCAN_TILES: u64 = 256;
 
 /// ワーカーごとの道具（タイルの状態と深さごとの作業の矩形）。
-struct Worker<'a> {
-    st: TileState<'a>,
+struct Worker {
+    st: TileState,
     scratch: Vec<Level>,
 }
 
-impl<'a> Worker<'a> {
+impl Worker {
     fn new(nodes: usize, depth: usize) -> Self {
         Worker {
             st: TileState {
@@ -987,7 +1037,7 @@ pub(crate) fn composite_into(
     rect: Rect,
     out: &mut [u8],
     order: RowOrder,
-) {
+) -> Result<(), CoreError> {
     composite_entries_into(stack, &stack.plan(), tile_size, rect, out, order)
 }
 
@@ -999,7 +1049,7 @@ pub(crate) fn composite_into_memo(
     out: &mut [u8],
     order: RowOrder,
     memo: &MemoRequest<'_>,
-) {
+) -> Result<(), CoreError> {
     composite_entries_with(
         stack,
         &stack.plan(),
@@ -1019,7 +1069,7 @@ pub(crate) fn composite_entries_into(
     rect: Rect,
     out: &mut [u8],
     order: RowOrder,
-) {
+) -> Result<(), CoreError> {
     composite_entries_with(stack, entries, tile_size, rect, out, order, None)
 }
 
@@ -1031,13 +1081,13 @@ fn composite_entries_with(
     out: &mut [u8],
     order: RowOrder,
     memo: Option<&MemoRequest<'_>>,
-) {
+) -> Result<(), CoreError> {
     if rect.is_empty() {
-        return;
+        return Ok(());
     }
     if entries.is_empty() {
         out.fill(0);
-        return;
+        return Ok(());
     }
     let plan = Plan::build(stack, entries, tile_size);
     let depth = plan_depth(entries);
@@ -1053,6 +1103,7 @@ fn composite_entries_with(
     });
     let work = plan.work(rect, layer_count, run.as_ref());
     composite_plan_into(&plan, depth, work, rect, out, order, run.as_ref());
+    plan.result()
 }
 
 /// 計画を、矩形を行の帯に割って重ねる（仕事が小さければ、呼んだスレッドだけで）。work は `Plan::work` の見積り。
@@ -1133,7 +1184,7 @@ pub(crate) fn composite_tiles_into(
     tile_size: u32,
     regions: &[Rect],
     memo: Option<&MemoRequest<'_>>,
-) -> Vec<Vec<u8>> {
+) -> Result<Vec<Vec<u8>>, CoreError> {
     composite_tiles_with(stack, tile_size, regions, memo, |_, image| image)
 }
 
@@ -1146,15 +1197,15 @@ pub(crate) fn composite_tiles_with<R: Send>(
     regions: &[Rect],
     memo: Option<&MemoRequest<'_>>,
     finish: impl Fn(usize, Vec<u8>) -> R + Sync,
-) -> Vec<R> {
+) -> Result<Vec<R>, CoreError> {
     let size = |r: &Rect| r.width as usize * r.height as usize * 4;
     let entries = stack.plan();
     if entries.is_empty() {
-        return regions
+        return Ok(regions
             .iter()
             .enumerate()
             .map(|(i, r)| finish(i, vec![0u8; size(r)]))
-            .collect();
+            .collect());
     }
     let plan = Plan::build(stack, &entries, tile_size);
     let depth = plan_depth(&entries);
@@ -1168,12 +1219,7 @@ pub(crate) fn composite_tiles_with<R: Send>(
         memo::prepare(&plan, &entries, m, &coords, depth)
     });
     let run = run.as_ref();
-    fn one<'a>(
-        plan: &Plan<'a>,
-        w: &mut Worker<'a>,
-        r: &Rect,
-        run: Option<&memo::MemoRun>,
-    ) -> Vec<u8> {
+    fn one<'a>(plan: &Plan<'a>, w: &mut Worker, r: &Rect, run: Option<&memo::MemoRun>) -> Vec<u8> {
         let mut out = vec![0u8; r.width as usize * r.height as usize * 4];
         if !r.is_empty() {
             let ts = plan.tile_size as u32;
@@ -1193,7 +1239,7 @@ pub(crate) fn composite_tiles_with<R: Send>(
         out
     }
     let plan = &plan;
-    if regions.len() < PARALLEL_MINIMUM_TILES {
+    let results = if regions.len() < PARALLEL_MINIMUM_TILES {
         // 少ない枚数でも、1 枚の仕事が大きければ（詰まった文書）、そのタイルを帯に割ってワーカーへ分ける
         let layer_count = count_entries(&entries).max(1);
         let mut w = Worker::new(nodes, depth);
@@ -1235,7 +1281,9 @@ pub(crate) fn composite_tiles_with<R: Send>(
                 |w, (i, r)| finish(i, one(plan, w, r, run)),
             )
             .collect()
-    }
+    };
+    plan.result()?;
+    Ok(results)
 }
 
 /// 散らばったタイルの、歩幅 stride で拾った粗い合成（表示の仮の絵）。regions のどれも 1 枚のタイルの中の矩形で、結果は regions と同じ並びの
@@ -1246,7 +1294,7 @@ pub(crate) fn composite_coarse_tiles_into(
     tile_size: u32,
     regions: &[Rect],
     stride: u32,
-) -> Vec<Vec<u8>> {
+) -> Result<Vec<Vec<u8>>, CoreError> {
     let dims = |r: &Rect| {
         (
             r.width.div_ceil(stride) as usize,
@@ -1255,18 +1303,18 @@ pub(crate) fn composite_coarse_tiles_into(
     };
     let entries = stack.plan();
     if entries.is_empty() {
-        return regions
+        return Ok(regions
             .iter()
             .map(|r| {
                 let (w, h) = dims(r);
                 vec![0u8; w * h * 4]
             })
-            .collect();
+            .collect());
     }
     let plan = Plan::build_strided(stack, &entries, stride as usize, tile_size as usize);
     let depth = plan_depth(&entries);
     let nodes = plan.nodes.len();
-    fn one<'a>(plan: &Plan<'a>, w: &mut Worker<'a>, r: &Rect, stride: u32) -> Vec<u8> {
+    fn one<'a>(plan: &Plan<'a>, w: &mut Worker, r: &Rect, stride: u32) -> Vec<u8> {
         let (ow, oh) = (
             r.width.div_ceil(stride) as usize,
             r.height.div_ceil(stride) as usize,
@@ -1298,7 +1346,7 @@ pub(crate) fn composite_coarse_tiles_into(
         out
     }
     let plan = &plan;
-    if regions.len() < PARALLEL_MINIMUM_TILES {
+    let results = if regions.len() < PARALLEL_MINIMUM_TILES {
         let mut w = Worker::new(nodes, depth);
         regions
             .iter()
@@ -1309,7 +1357,9 @@ pub(crate) fn composite_coarse_tiles_into(
             .par_iter()
             .map_init(|| Worker::new(nodes, depth), |w, r| one(plan, w, r, stride))
             .collect()
-    }
+    };
+    plan.result()?;
+    Ok(results)
 }
 
 /// タイルの束がこの枚数より少ないときは、呼んだスレッドだけで合成する（1 枚が 0.1 ms 前後で、ワーカーを起こす費用に見合わない）。
@@ -1319,7 +1369,7 @@ const PARALLEL_MINIMUM_TILES: usize = 4;
 #[allow(clippy::too_many_arguments)]
 fn composite_band<'a>(
     plan: &Plan<'a>,
-    w: &mut Worker<'a>,
+    w: &mut Worker,
     rect: Rect,
     y0: u32,
     y1: u32,
