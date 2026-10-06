@@ -1,7 +1,8 @@
+mod rows;
 use super::*;
 use crate::{
     math::{clamp01, to_byte, UNIT},
-    Rect, Rgba8,
+    Rect,
 };
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -211,32 +212,35 @@ impl<'a> BoundGenerator<'a> {
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
     }
+    fn scalar_at(&self, k: MapKind, i: usize) -> Option<f64> {
+        let m = self.map(k);
+        if m.coverage[i] == 0 {
+            None
+        } else {
+            Some(m.data[i] as f64 / 65535.)
+        }
+    }
+    fn vector_at(&self, k: MapKind, i: usize) -> Option<[f64; 3]> {
+        let m = self.map(k);
+        if m.coverage[i] == 0 {
+            None
+        } else {
+            Some([
+                m.data[i * 3] as f64,
+                m.data[i * 3 + 1] as f64,
+                m.data[i * 3 + 2] as f64,
+            ])
+        }
+    }
+    /// 1 画素の値。行の評価（`value_row`）はこの式と同じ値を出す（試験で全画素を比べる）。
     pub fn value(&self, x: u32, y: u32) -> Option<f64> {
         if x >= self.width || y >= self.height || self.inactive.is_some() {
             return None;
         }
         let i = y as usize * self.width as usize + x as usize;
         let g = self.g;
-        let scalar = |k| {
-            let m = self.map(k);
-            if m.coverage[i] == 0 {
-                None
-            } else {
-                Some(m.data[i] as f64 / 65535.)
-            }
-        };
-        let vector = |k| {
-            let m = self.map(k);
-            if m.coverage[i] == 0 {
-                None
-            } else {
-                Some([
-                    m.data[i * 3] as f64,
-                    m.data[i * 3 + 1] as f64,
-                    m.data[i * 3 + 2] as f64,
-                ])
-            }
-        };
+        let scalar = |k| self.scalar_at(k, i);
+        let vector = |k| self.vector_at(k, i);
         let base = match g.kind {
             Kind::EdgeWear => clamp01(2. * (scalar(MapKind::Curvature)? - 0.5)),
             Kind::Dirt => {
@@ -285,20 +289,7 @@ impl<'a> BoundGenerator<'a> {
                 }
             }
             Kind::Anchor => self.anchor?.value(x, y)?,
-            Kind::Noise | Kind::Grunge => {
-                let plan = self.plan.as_ref().expect("束縛済み");
-                let position = if plan.needs_position() {
-                    Some(vector(MapKind::Position)?)
-                } else {
-                    None
-                };
-                let normal = if plan.mode == procedural::Mode::Triplanar {
-                    Some(vector(MapKind::WorldNormal)?)
-                } else {
-                    None
-                };
-                plan.value(x, y, (self.width, self.height), position, normal)?
-            }
+            Kind::Noise | Kind::Grunge => self.procedural_value(x, y, i)?,
             Kind::ShapeGradient => {
                 let [x, y, z] = vector(MapKind::Position)?;
                 let m = self.matrix;
@@ -328,10 +319,47 @@ impl<'a> BoundGenerator<'a> {
                 let p = vector(MapKind::Position)?;
                 std::array::from_fn(|i| p[i] * self.noise_scale[i])
             };
-            let m = clamp01((noise::fractal(p, self.seeds) - 0.3) / 0.4);
+            let m = clamp01((noise::fractal_pixel(p, self.seeds) - 0.3) / 0.4);
             t *= 1. - g.noise_amount * (m * m * (3. - 2. * m));
         }
         Some(t)
+    }
+    /// ノイズ・グランジの 1 画素の基底の値（レベル・反転の前）。`i` は画素の添字。格子の覚えはスレッドごとに持ち、同じ計画の呼びどうしで
+    /// 使い回す（画素を隣へ進める呼びでは同じ格子の中の hash を引き直さない。計画が変われば捨てる）。
+    fn procedural_value(&self, x: u32, y: u32, i: usize) -> Option<f64> {
+        use std::cell::RefCell;
+        thread_local! {
+            static SCRATCH: RefCell<Option<procedural::PlanScratch>> = const { RefCell::new(None) };
+        }
+        let plan = self.plan.as_ref().expect("束縛済み");
+        SCRATCH.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let scratch = match &mut *slot {
+                Some(scratch) if scratch.fits(plan) => scratch,
+                other => other.insert(plan.scratch()),
+            };
+            self.procedural_value_with(x, y, i, scratch)
+        })
+    }
+    fn procedural_value_with(
+        &self,
+        x: u32,
+        y: u32,
+        i: usize,
+        scratch: &mut procedural::PlanScratch,
+    ) -> Option<f64> {
+        let plan = self.plan.as_ref().expect("束縛済み");
+        let position = if plan.needs_position() {
+            Some(self.vector_at(MapKind::Position, i)?)
+        } else {
+            None
+        };
+        let normal = if plan.mode == procedural::Mode::Triplanar {
+            Some(self.vector_at(MapKind::WorldNormal, i)?)
+        } else {
+            None
+        };
+        plan.value(x, y, (self.width, self.height), position, normal, scratch)
     }
     pub fn sample(&self, x: u32, y: u32, scalar: bool) -> Option<Generated> {
         let value = self.value(x, y)?;
@@ -339,56 +367,6 @@ impl<'a> BoundGenerator<'a> {
             None => Generated::Scalar(value),
             Some(r) => Generated::Mapped(r.evaluate_unchecked(value, scalar).to_array()),
         })
-    }
-    fn apply(&self, source: Rgba8, x: u32, y: u32, target: Target, strength: f64) -> Rgba8 {
-        if target != Target::Mask && source.a == 0 {
-            return source;
-        }
-        let Some(value) = self.sample(x, y, target != Target::Color) else {
-            return source;
-        };
-        let u = |b: u8| UNIT[b as usize];
-        if target == Target::Mask {
-            let v = match value {
-                Generated::Scalar(v) => v,
-                Generated::Mapped(p) => u(p[0]) * u(p[3]),
-            };
-            return Rgba8::new(
-                0,
-                0,
-                0,
-                255 - to_byte(combine(self.g.blend, 1. - u(source.a), v, strength)),
-            );
-        }
-        let (rgb, a) = match value {
-            Generated::Scalar(v) => ([v; 3], source.a),
-            Generated::Mapped(p) => (
-                [u(p[0]), u(p[1]), u(p[2])],
-                to_byte(u(source.a) * (1. - strength + strength * u(p[3]))),
-            ),
-        };
-        Rgba8::new(
-            to_byte(combine(self.g.blend, u(source.r), rgb[0], strength)),
-            to_byte(combine(self.g.blend, u(source.g), rgb[1], strength)),
-            to_byte(combine(self.g.blend, u(source.b), rgb[2], strength)),
-            a,
-        )
-    }
-}
-pub fn combine(blend: Blend, s: f64, v: f64, strength: f64) -> f64 {
-    let c = match blend {
-        Blend::Multiply => s * v,
-        Blend::Replace => v,
-        Blend::Screen => 1. - (1. - s) * (1. - v),
-        Blend::Max => s.max(v),
-        Blend::Min => s.min(v),
-        Blend::Add => (s + v).min(1.),
-        Blend::Subtract => (s - v).max(0.),
-    };
-    if strength >= 1. {
-        c
-    } else {
-        s + (c - s) * strength
     }
 }
 pub(super) fn allocate(
@@ -418,13 +396,24 @@ pub(super) fn allocate(
             budget: options.budget_bytes,
         });
     }
-    let size = usize::try_from(needed).map_err(|_| Error::Allocation)?;
-    let mut pixels = Vec::new();
-    pixels
-        .try_reserve_exact(size)
-        .map_err(|_| Error::Allocation)?;
-    pixels.resize(size, 0);
-    Ok(pixels)
+    zeroed(usize::try_from(needed).map_err(|_| Error::Allocation)?)
+}
+/// 0 で埋めた `size` バイト。確保できなければ `Error::Allocation`。大きい確保は OS から 0 のページをそのまま受け取る（`alloc_zeroed`）ので、
+/// 確保のスレッドで 0 を書き込む列を通らず、ページへの最初の書き込み（行の評価）がそれぞれのスレッドで進む。
+/// `vec![0; n]` は確保に失敗すると中断して `Error::Allocation` を返せず、失敗を返す 0 埋めの確保は安定版の標準ライブラリに無いので、`unsafe` を使う。
+fn zeroed(size: usize) -> Result<Vec<u8>, Error> {
+    if size == 0 {
+        return Ok(Vec::new());
+    }
+    let layout = std::alloc::Layout::array::<u8>(size).map_err(|_| Error::Allocation)?;
+    // SAFETY: layout の大きさは 0 でない。確保できなければ null が返る
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    if ptr.is_null() {
+        return Err(Error::Allocation);
+    }
+    // SAFETY: ptr は大域の割り当て器から、`Vec<u8>` と同じ配置（大きさ `size`・整列 1）で確保した、0 で初期化済みのメモリ。
+    // 長さ・容量はその確保の大きさに一致する
+    Ok(unsafe { Vec::from_raw_parts(ptr, size, size) })
 }
 pub fn evaluate(
     source: &dyn Source,
@@ -440,32 +429,54 @@ pub fn evaluate(
         ));
     }
     let mut pixels = allocate(region, source.dimensions(), options)?;
+    let width = region.width as usize;
     pixels
-        .par_chunks_mut(region.width as usize * 4)
+        .par_chunks_mut(width * 4)
         .enumerate()
-        .try_for_each(|(row, bytes)| -> Result<(), Error> {
-            options.check()?;
-            let y = region.y + row as u32;
-            for (col, dst) in bytes.chunks_exact_mut(4).enumerate() {
-                let x = region.x + col as u32;
-                let mut src = source.pixel(x, y);
+        .try_for_each_init(
+            || rows::Scratch::new(g, width),
+            |scratch, (row, bytes)| -> Result<(), Error> {
+                options.check()?;
+                let y = region.y + row as u32;
+                source.read_row(region.x, y, bytes);
                 if target == Target::Mask {
-                    src.r = 0;
-                    src.g = 0;
-                    src.b = 0;
+                    for p in bytes.chunks_exact_mut(4) {
+                        p[..3].fill(0);
+                    }
                 }
-                let p = if strength == 0. {
-                    src
-                } else {
-                    g.apply(src, x, y, target, strength)
-                };
-                dst.copy_from_slice(&p.to_array());
-            }
-            Ok(())
-        })?;
+                // 強さ 0・マップが使えない段は入力のまま（値を作らない）
+                if strength != 0. && g.inactive.is_none() {
+                    g.value_row(region.x, y, &mut scratch.values, &mut scratch.aux);
+                    g.apply_row(bytes, &scratch.values, target, strength, scratch.aux.level);
+                }
+                Ok(())
+            },
+        )?;
     options.check()?;
     Ok(Output {
         pixels,
         inactive: g.inactive.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zeroed_gives_zeros_and_refuses_what_cannot_be_allocated() {
+        assert!(zeroed(0).unwrap().is_empty());
+        for size in [1, 7, 4096, 5_000_003, 40 << 20] {
+            let v = zeroed(size).unwrap();
+            assert_eq!((v.len(), v.capacity()), (size, size));
+            assert!(v.iter().all(|b| *b == 0), "{size}");
+        }
+        // 書き込めて、解放しても壊れない
+        let mut v = zeroed(1 << 20).unwrap();
+        v.iter_mut().enumerate().for_each(|(i, b)| *b = i as u8);
+        assert_eq!(v[255], 255);
+        drop(v);
+        assert_eq!(zeroed(usize::MAX), Err(Error::Allocation));
+        assert_eq!(zeroed(isize::MAX as usize), Err(Error::Allocation));
+    }
 }

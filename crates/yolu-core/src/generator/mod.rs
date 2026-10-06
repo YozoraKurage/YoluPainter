@@ -408,6 +408,13 @@ pub enum Inactive {
 pub trait Source: Sync {
     fn dimensions(&self) -> (u32, u32);
     fn pixel(&self, x: u32, y: u32) -> crate::Rgba8;
+    /// 行 `y` の `x0` から `out.len() / 4` 画素を RGBA8 で `out` に書く。既定は `pixel` の繰り返し（読む順は左から右）で、連続した画像は
+    /// 行をまとめてコピーできる。
+    fn read_row(&self, x0: u32, y: u32, out: &mut [u8]) {
+        for (i, d) in out.chunks_exact_mut(4).enumerate() {
+            d.copy_from_slice(&self.pixel(x0 + i as u32, y).to_array());
+        }
+    }
 }
 #[derive(Clone, Copy)]
 pub struct Image<'a> {
@@ -439,5 +446,9 @@ impl Source for Image<'_> {
     }
     fn pixel(&self, x: u32, y: u32) -> crate::Rgba8 {
         crate::Rgba8::from_slice(&self.data[(y as usize * self.width as usize + x as usize) * 4..])
+    }
+    fn read_row(&self, x0: u32, y: u32, out: &mut [u8]) {
+        let start = (y as usize * self.width as usize + x0 as usize) * 4;
+        out.copy_from_slice(&self.data[start..start + out.len()]);
     }
 }

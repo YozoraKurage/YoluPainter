@@ -6,6 +6,8 @@
 use super::mixing::{mix, LuminanceCorrection, MixMode};
 use super::{unit, Error};
 use crate::curve::{Curve, CurvePoint};
+#[cfg(target_arch = "x86_64")]
+use crate::math::simd::{self, Lanes};
 use crate::{
     math::{clamp01, to_byte},
     Rgba8,
@@ -312,6 +314,122 @@ impl Ramp {
     }
 }
 
+/// 区間の重み（`sample_unchecked` の `weight` の N 画素ぶん）。
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+unsafe fn weight_lanes<V: Lanes>(x: V::F, a: V::F, b: V::F, m: V::F) -> V::F {
+    let (half, one) = (V::splat(0.5), V::splat(1.));
+    let t = simd::clamp01::<V>(V::div(V::sub(x, a), V::sub(b, a)));
+    let low = V::div(V::mul(half, t), m);
+    let high = V::add(half, V::div(V::mul(half, V::sub(t, m)), V::sub(one, m)));
+    V::select(V::le(t, m), low, high)
+}
+/// `(v + 0.5).floor() as u8`（0〜255 に収めた整数の値）。
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+unsafe fn byte_lanes<V: Lanes>(v: V::F) -> V::F {
+    V::min(
+        V::max(V::floor(V::add(v, V::splat(0.5))), V::splat(0.)),
+        V::splat(255.),
+    )
+}
+impl Ramp {
+    /// `evaluate_unchecked` の N 画素ぶん（結果は R・G・B・A のレーン。0〜255 の整数の値）。値のカーブ・区間の重み・色の補間・不透明度は
+    /// 1 画素の式と同じ演算を同じ順に並べたもので、バイトは同じ。通常（`Standard`）の混色で混合率曲線の無いランプだけをレーンで計算し、
+    /// 知覚的・リニアの混色（`powf`・`cbrt` を使う）や混合率曲線があるランプは 1 画素ずつ。
+    ///
+    /// # Safety
+    /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    pub(super) unsafe fn evaluate_lanes<V: Lanes>(&self, input: V::F, scalar: bool) -> [V::F; 4] {
+        let x = self.curve.value_lanes::<V>(input);
+        if self.mix != MixMode::Standard || !self.segments.is_empty() {
+            let mut at = [0.; 4];
+            V::store_f64(&mut at, x);
+            let mut out = [[0.; 4]; 4];
+            for k in 0..V::N {
+                let c = self.sample_unchecked(at[k], scalar).to_array();
+                for (ch, lane) in out.iter_mut().enumerate() {
+                    lane[k] = f64::from(c[ch]);
+                }
+            }
+            return [
+                V::load_f64(&out[0]),
+                V::load_f64(&out[1]),
+                V::load_f64(&out[2]),
+                V::load_f64(&out[3]),
+            ];
+        }
+        // 区間の番号: 位置が x より小さい分岐点の数 + 1（`sample_unchecked` の `while` と同じ）
+        let (mut ci, mut ai) = (V::splat(1.), V::splat(1.));
+        let (one, zero) = (V::splat(1.), V::splat(0.));
+        for c in &self.colors[1..self.colors.len() - 1] {
+            ci = V::add(ci, V::select(V::lt(V::splat(c.position), x), one, zero));
+        }
+        for a in &self.opacities[1..self.opacities.len() - 1] {
+            ai = V::add(ai, V::select(V::lt(V::splat(a.position), x), one, zero));
+        }
+        let (mut cs, mut as_) = ([0.; 4], [0.; 4]);
+        V::store_f64(&mut cs, ci);
+        V::store_f64(&mut as_, ai);
+        let (colors, opacities) = (&self.colors, &self.opacities);
+        let c0 = |l: usize| &colors[cs[l] as usize - 1];
+        let c1 = |l: usize| &colors[cs[l] as usize];
+        let a0 = |l: usize| &opacities[as_[l] as usize - 1];
+        let a1 = |l: usize| &opacities[as_[l] as usize];
+        let t = weight_lanes::<V>(
+            x,
+            V::from_fn(|l| c0(l).position),
+            V::from_fn(|l| c1(l).position),
+            V::from_fn(|l| c0(l).midpoint),
+        );
+        let u = weight_lanes::<V>(
+            x,
+            V::from_fn(|l| a0(l).position),
+            V::from_fn(|l| a1(l).position),
+            V::from_fn(|l| a0(l).midpoint),
+        );
+        let mut rgb = [zero; 3];
+        for (ch, out) in rgb.iter_mut().enumerate() {
+            let pick = |c: &ColorStop| {
+                f64::from(match ch {
+                    0 => c.color.r,
+                    1 => c.color.g,
+                    _ => c.color.b,
+                })
+            };
+            let (ca, cb) = (V::from_fn(|l| pick(c0(l))), V::from_fn(|l| pick(c1(l))));
+            // 両端（t ≤ 0・t ≥ 1）は端の色そのもの
+            *out = V::select(
+                V::le(t, zero),
+                ca,
+                V::select(V::ge(t, one), cb, V::add(ca, V::mul(V::sub(cb, ca), t))),
+            );
+        }
+        if scalar {
+            let luma = V::add(
+                V::add(
+                    V::mul(V::splat(0.2126), rgb[0]),
+                    V::mul(V::splat(0.7152), rgb[1]),
+                ),
+                V::mul(V::splat(0.0722), rgb[2]),
+            );
+            rgb = [luma; 3];
+        }
+        let (o0, o1) = (
+            V::from_fn(|l| a0(l).opacity),
+            V::from_fn(|l| a1(l).opacity),
+        );
+        [
+            byte_lanes::<V>(rgb[0]),
+            byte_lanes::<V>(rgb[1]),
+            byte_lanes::<V>(rgb[2]),
+            simd::to_byte::<V>(V::add(o0, V::mul(V::sub(o1, o0), u))),
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
     BlackWhite,
@@ -361,5 +479,134 @@ impl Ramp {
             None,
         )
         .unwrap()
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::*;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn byte(&mut self) -> u8 {
+            (self.next() >> 8) as u8
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+    /// `n` 個の、間隔が 0.0001 以上で 0..1 の位置（端を含むことがある）。
+    fn positions(rng: &mut Rng, n: usize) -> Vec<f64> {
+        loop {
+            let mut v: Vec<f64> = (0..n).map(|_| (rng.unit() * 1000.).round() / 1000.).collect();
+            if rng.below(2) == 0 {
+                v[0] = 0.;
+                v[n - 1] = 1.;
+            }
+            v.sort_by(f64::total_cmp);
+            if v.windows(2).all(|w| w[1] - w[0] >= 0.0001) {
+                return v;
+            }
+        }
+    }
+    fn random_ramp(rng: &mut Rng, mode: MixMode, with_segments: bool) -> Ramp {
+        let nc = 2 + rng.below(6);
+        let na = 2 + rng.below(5);
+        let colors = positions(rng, nc)
+            .into_iter()
+            .map(|position| ColorStop {
+                position,
+                color: Rgba8::new(rng.byte(), rng.byte(), rng.byte(), rng.byte()),
+                midpoint: 0.01 + 0.98 * rng.unit(),
+            })
+            .collect();
+        let opacities = positions(rng, na)
+            .into_iter()
+            .map(|position| OpacityStop {
+                position,
+                opacity: rng.unit(),
+                midpoint: 0.01 + 0.98 * rng.unit(),
+            })
+            .collect();
+        let curve = (rng.below(2) == 0).then(|| {
+            let mut points = vec![CurvePoint { x: 0., y: rng.unit() }];
+            let mut x = 0.;
+            while x + 0.05 < 0.9 && points.len() < 6 {
+                x += 0.05 + 0.2 * rng.unit();
+                if x < 0.97 {
+                    points.push(CurvePoint { x, y: rng.unit() });
+                }
+            }
+            points.push(CurvePoint { x: 1., y: rng.unit() });
+            points
+        });
+        let mut ramp = Ramp::new(colors, opacities, curve).unwrap();
+        ramp = ramp.with_mixing(mode, LuminanceCorrection::High);
+        if with_segments {
+            ramp = ramp
+                .with_segment_curve(0, Some(Ramp::curve_from_midpoint(0.3)))
+                .unwrap();
+        }
+        ramp
+    }
+
+    /// SIMD の道（AVX2・SSE4.1）の N 画素ぶんのランプの色は、1 画素の式とバイトまで同じ。分岐点の数・中点・値のカーブ・混色・
+    /// 混合率曲線をいろいろに変え、分岐点ちょうどの入力・両端・範囲外を通る。
+    #[test]
+    fn lane_ramps_equal_the_scalar_evaluation_on_every_simd_level() {
+        #[allow(clippy::needless_range_loop)]
+        unsafe fn check<V: Lanes>() {
+            let mut rng = Rng(0x5eed);
+            let mut checked = 0;
+            for round in 0..120 {
+                let mode = MixMode::ALL[round % 3];
+                let ramp = random_ramp(&mut rng, mode, round % 7 == 6);
+                let mut inputs = vec![0., 1., 0.5, -0.25, 1.75, 0.0001, 0.9999];
+                for s in ramp.colors().iter().map(|c| c.position) {
+                    inputs.extend([s, s - 1e-9, s + 1e-9]);
+                }
+                for s in ramp.opacities().iter().map(|a| a.position) {
+                    inputs.extend([s, s - 1e-9, s + 1e-9]);
+                }
+                inputs.extend((0..400).map(|_| rng.unit()));
+                for scalar in [false, true] {
+                    for chunk in inputs.chunks(V::N) {
+                        if chunk.len() < V::N {
+                            continue;
+                        }
+                        let lanes = ramp.evaluate_lanes::<V>(V::load_f64(chunk), scalar);
+                        let mut got = [[0.; 4]; 4];
+                        for (ch, lane) in lanes.into_iter().enumerate() {
+                            V::store_f64(&mut got[ch], lane);
+                        }
+                        for k in 0..V::N {
+                            let want = ramp.evaluate_unchecked(chunk[k], scalar).to_array();
+                            for ch in 0..4 {
+                                assert_eq!(
+                                    got[ch][k] as u8,
+                                    want[ch],
+                                    "round {round} {mode:?} scalar {scalar} 入力 {} チャンネル {ch}",
+                                    chunk[k]
+                                );
+                                assert_eq!(got[ch][k], f64::from(want[ch]));
+                            }
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+            assert!(checked > 20_000, "{checked}");
+        }
+        crate::math::simd::on_each_level!(check);
     }
 }
