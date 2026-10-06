@@ -455,11 +455,11 @@ impl BrushLibrary {
 
     /// 今のブラシの設定が元と違うか（`live` は今の設定）。ほかのブラシは覚えている変更で見る。
     pub fn is_modified(&self, key: BrushKey, live: &Brush) -> bool {
-        match self.entry(key) {
-            Some(e) if key == self.current => *live != e.baseline,
-            Some(e) => e.edited.is_some(),
-            None => false,
-        }
+        crate::userfiles::is_modified(
+            self.entry(key).map(|e| (&e.baseline, e.edited.is_some())),
+            key == self.current,
+            live,
+        )
     }
 
     /// `key` を `at` へ動かす（同じグループの中だけ。動かしたら true）。
@@ -492,18 +492,11 @@ impl BrushLibrary {
     }
 
     fn unused_name(&self, base: &str) -> String {
-        let taken = |name: &str| {
+        crate::userfiles::unused_name(base, |name| {
             self.entries
                 .iter()
                 .any(|e| e.key.is_user() && e.name == name)
-        };
-        if !taken(base) {
-            return base.to_owned();
-        }
-        (2..)
-            .map(|n| format!("{base} {n}"))
-            .find(|name| !taken(name))
-            .expect("名前は尽きない")
+        })
     }
 }
 

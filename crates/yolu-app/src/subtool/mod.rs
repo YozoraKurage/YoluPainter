@@ -208,11 +208,11 @@ impl PresetList {
 
     /// 今のサブツールの設定が基準と違うか（`live` は今の設定）。ほかのサブツールは覚えている変更で見る。
     pub fn is_modified(&self, key: Key, live: &Values) -> bool {
-        match self.entry(key) {
-            Some(e) if key == self.current => *live != e.baseline,
-            Some(e) => e.edited.is_some(),
-            None => false,
-        }
+        crate::userfiles::is_modified(
+            self.entry(key).map(|e| (&e.baseline, e.edited.is_some())),
+            key == self.current,
+            live,
+        )
     }
 
     /// 保存する利用者のプリセット（基準の設定。番号の順）。
@@ -235,18 +235,11 @@ impl PresetList {
     }
 
     fn unused_name(&self, base: &str) -> String {
-        let taken = |name: &str| {
+        crate::userfiles::unused_name(base, |name| {
             self.entries
                 .iter()
                 .any(|e| e.key.is_user() && e.name == name)
-        };
-        if !taken(base) {
-            return base.to_owned();
-        }
-        (2..)
-            .map(|n| format!("{base} {n}"))
-            .find(|name| !taken(name))
-            .expect("名前は尽きない")
+        })
     }
 }
 

@@ -78,6 +78,7 @@ pub mod transform;
 pub mod ui;
 pub mod update;
 pub mod usage;
+pub mod userfiles;
 pub mod uv_wireframe;
 pub mod view3d;
 pub mod windowpos;
