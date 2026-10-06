@@ -35,10 +35,12 @@ fn put(path: &Path, bytes: &[u8]) {
 }
 
 /// フォルダの下の全部の項目（相対パス・種類・大きさ・更新時刻）。「読んだだけ」を確かめるために、読む前後で比べる。
+/// 値は項目のパスから読み直す。Windows の `DirEntry::metadata` はフォルダの一覧に残った値で、ほかの手が開いて書いている
+/// ファイルの大きさや、中の項目が増えたフォルダの更新時刻が遅れて変わるため、読む前後の比べが「読んだだけ」と無関係に揺れる。
 fn listing(dir: &Path) -> Vec<(String, bool, u64, Option<SystemTime>)> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, bool, u64, Option<SystemTime>)>) {
         for entry in std::fs::read_dir(dir).unwrap().flatten() {
-            let meta = entry.metadata().unwrap();
+            let meta = std::fs::symlink_metadata(entry.path()).unwrap();
             let rel = entry
                 .path()
                 .strip_prefix(base)
